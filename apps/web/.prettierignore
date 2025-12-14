@@ -8,9 +8,6 @@ bun.lockb
 # Build Output
 .svelte-kit
 build
-apps/*/.svelte-kit
-apps/*/build
 
-# Miscellaneous
+# Static files
 /static/
-apps/*/static/
