@@ -1,50 +1,126 @@
-# [PROJECT_NAME] Constitution
-<!-- Example: Spec Constitution, TaskFlow Constitution, etc. -->
+<!--
+=== Sync Impact Report ===
+Version change: 0.0.0 → 1.0.0
+Modified principles: N/A (initial constitution)
+Added sections: Core Principles (4), Technology Constraints, Development Workflow, Governance
+Removed sections: None
+Templates requiring updates:
+  - .specify/templates/plan-template.md ✅ (Constitution Check section compatible)
+  - .specify/templates/spec-template.md ✅ (User stories + testing structure compatible)
+  - .specify/templates/tasks-template.md ✅ (TDD workflow compatible)
+  - .specify/templates/checklist-template.md ✅ (No changes needed)
+Follow-up TODOs: None
+========================
+-->
+
+# Perseus Constitution
 
 ## Core Principles
 
-### [PRINCIPLE_1_NAME]
-<!-- Example: I. Library-First -->
-[PRINCIPLE_1_DESCRIPTION]
-<!-- Example: Every feature starts as a standalone library; Libraries must be self-contained, independently testable, documented; Clear purpose required - no organizational-only libraries -->
+### I. Type Safety
 
-### [PRINCIPLE_2_NAME]
-<!-- Example: II. CLI Interface -->
-[PRINCIPLE_2_DESCRIPTION]
-<!-- Example: Every library exposes functionality via CLI; Text in/out protocol: stdin/args → stdout, errors → stderr; Support JSON + human-readable formats -->
+All code MUST use strict TypeScript with full type coverage:
 
-### [PRINCIPLE_3_NAME]
-<!-- Example: III. Test-First (NON-NEGOTIABLE) -->
-[PRINCIPLE_3_DESCRIPTION]
-<!-- Example: TDD mandatory: Tests written → User approved → Tests fail → Then implement; Red-Green-Refactor cycle strictly enforced -->
+- No `any` types except in explicitly justified edge cases (documented inline)
+- All function parameters and return types MUST be explicitly typed
+- Shared types live in `src/lib/types/` (web) or dedicated type files
+- Generic types preferred over type assertions
+- `unknown` over `any` when type is truly unknown
 
-### [PRINCIPLE_4_NAME]
-<!-- Example: IV. Integration Testing -->
-[PRINCIPLE_4_DESCRIPTION]
-<!-- Example: Focus areas requiring integration tests: New library contract tests, Contract changes, Inter-service communication, Shared schemas -->
+**Rationale**: Type safety prevents runtime errors, enables confident refactoring, and serves as
+living documentation.
 
-### [PRINCIPLE_5_NAME]
-<!-- Example: V. Observability, VI. Versioning & Breaking Changes, VII. Simplicity -->
-[PRINCIPLE_5_DESCRIPTION]
-<!-- Example: Text I/O ensures debuggability; Structured logging required; Or: MAJOR.MINOR.BUILD format; Or: Start simple, YAGNI principles -->
+### II. Test-First Development (NON-NEGOTIABLE)
 
-## [SECTION_2_NAME]
-<!-- Example: Additional Constraints, Security Requirements, Performance Standards, etc. -->
+TDD cycle MUST be followed for all feature work:
 
-[SECTION_2_CONTENT]
-<!-- Example: Technology stack requirements, compliance standards, deployment policies, etc. -->
+1. Write tests that describe expected behavior
+2. Verify tests FAIL (red)
+3. Implement minimum code to pass tests (green)
+4. Refactor while keeping tests green
 
-## [SECTION_3_NAME]
-<!-- Example: Development Workflow, Review Process, Quality Gates, etc. -->
+Test requirements:
+- Unit tests for all services, utilities, and complex logic
+- Component tests for Svelte components with user interactions
+- E2E tests for critical user journeys
+- Tests MUST run in CI before merge
 
-[SECTION_3_CONTENT]
-<!-- Example: Code review requirements, testing gates, deployment approval process, etc. -->
+**Rationale**: TDD ensures code correctness, drives better design, and provides regression safety.
+
+### III. Component-Based Architecture
+
+UI code MUST follow component-based principles:
+
+- Components are self-contained with clear inputs (props) and outputs (events)
+- Shared components live in `src/lib/components/`
+- Page-specific components live alongside their routes
+- Components MUST NOT directly access global state; use props or stores
+- Favor composition over inheritance
+
+**Rationale**: Isolated components are easier to test, reuse, and maintain.
+
+### IV. Simplicity (YAGNI)
+
+All implementations MUST follow minimum viable complexity:
+
+- Implement only what is explicitly required
+- No speculative features or "just in case" abstractions
+- Three similar instances before extracting a pattern
+- Choose boring technology over novel solutions
+- Delete code rather than comment it out
+
+**Rationale**: Simpler code is easier to understand, debug, and modify.
+
+## Technology Constraints
+
+### Static Export Requirement
+
+The web application (`@perseus/web`) MUST remain statically exportable:
+
+- No server-side rendering (SSR) dependencies
+- No server-only load functions (`+page.server.ts` with non-prerenderable data)
+- All data fetching happens client-side or at build time
+- Adapter: `@sveltejs/adapter-static`
+
+**Verification**: `bun run build` MUST succeed without SSR-related errors.
+
+### Stack Boundaries
+
+- **Web**: SvelteKit 2, Svelte 5, Tailwind CSS v4, TypeScript
+- **API**: Hono, Bun runtime, TypeScript
+- **Testing**: Vitest (unit/component), Playwright (E2E)
+- **Package Manager**: Bun (monorepo workspaces)
+
+## Development Workflow
+
+### Code Quality Gates
+
+Before any PR merge:
+
+1. `bun run check` - TypeScript type checking passes
+2. `bun run lint` - ESLint and Prettier checks pass
+3. `bun run test:unit` - All unit tests pass
+4. `bun run build` - Production build succeeds
+
+### Commit Standards
+
+- Commits SHOULD be atomic (one logical change per commit)
+- Commit messages follow conventional commits format: `type(scope): description`
+- Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`
 
 ## Governance
-<!-- Example: Constitution supersedes all other practices; Amendments require documentation, approval, migration plan -->
 
-[GOVERNANCE_RULES]
-<!-- Example: All PRs/reviews must verify compliance; Complexity must be justified; Use [GUIDANCE_FILE] for runtime development guidance -->
+This constitution supersedes all other development practices in this repository.
 
-**Version**: [CONSTITUTION_VERSION] | **Ratified**: [RATIFICATION_DATE] | **Last Amended**: [LAST_AMENDED_DATE]
-<!-- Example: Version: 2.1.1 | Ratified: 2025-06-13 | Last Amended: 2025-07-16 -->
+**Amendments**:
+- Proposed changes MUST be documented with rationale
+- Changes require version bump following semver (MAJOR for principle changes, MINOR for additions,
+  PATCH for clarifications)
+- All existing code SHOULD be migrated to comply with amended principles
+
+**Compliance**:
+- All PRs MUST verify compliance with constitution principles
+- Violations require explicit justification in PR description
+- Constitution Check in plan.md MUST pass before implementation
+
+**Version**: 1.0.0 | **Ratified**: 2025-12-14 | **Last Amended**: 2025-12-14
