@@ -10,6 +10,7 @@ node_modules
 /build
 apps/*/.svelte-kit
 apps/*/build
+apps/*/dist
 
 # Turborepo
 .turbo

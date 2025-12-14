@@ -4,7 +4,7 @@
 	"tasks": {
 		"build": {
 			"dependsOn": ["^build"],
-			"outputs": ["build/**", ".svelte-kit/**"],
+			"outputs": ["build/**", ".svelte-kit/**", "dist/**"],
 			"env": ["NODE_ENV"]
 		},
 		"dev": {
@@ -12,6 +12,11 @@
 			"persistent": true
 		},
 		"preview": {
+			"cache": false,
+			"persistent": true
+		},
+		"start": {
+			"dependsOn": ["build"],
 			"cache": false,
 			"persistent": true
 		},
