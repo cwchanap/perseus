@@ -65,3 +65,10 @@ bun run test:e2e
 - No trailing commas
 - 100 char line width
 - Prettier + ESLint for formatting and linting
+
+## Active Technologies
+- TypeScript 5.9 (strict mode) (001-jigsaw-puzzle)
+- JSON files (metadata) + filesystem folders (images) on API server (001-jigsaw-puzzle)
+
+## Recent Changes
+- 001-jigsaw-puzzle: Added TypeScript 5.9 (strict mode)
