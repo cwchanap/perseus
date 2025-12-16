@@ -81,8 +81,23 @@ export async function getPuzzle(puzzleId: string): Promise<Puzzle | null> {
 }
 
 // Update puzzle metadata
-export async function updatePuzzle(puzzle: Puzzle): Promise<void> {
-  await writeFile(getMetadataPath(puzzle.id), JSON.stringify(puzzle, null, 2), 'utf-8');
+export async function updatePuzzle(puzzle: Puzzle): Promise<boolean> {
+  const metadataPath = getMetadataPath(puzzle.id);
+
+  try {
+    await access(metadataPath);
+  } catch {
+    return false;
+  }
+
+  try {
+    await writeFile(metadataPath, JSON.stringify(puzzle, null, 2), 'utf-8');
+    return true;
+  } catch (error) {
+    console.error(`Failed to update puzzle metadata for ${puzzle.id}`);
+    console.error(error);
+    return false;
+  }
 }
 
 // Delete a puzzle and all its files
@@ -115,12 +130,6 @@ export async function listPuzzles(): Promise<PuzzleSummary[]> {
         }
       }
     }
-
-    // Sort by creation date, newest first
-    puzzles.sort((a, b) => {
-      // We need to fetch full puzzle data for sorting, but for now just return as-is
-      return 0;
-    });
 
     return puzzles;
   } catch {

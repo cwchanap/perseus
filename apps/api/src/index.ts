@@ -8,7 +8,17 @@ import admin from './routes/admin';
 const app = new Hono();
 
 // Initialize storage on startup
-await initializeStorage();
+try {
+	await initializeStorage();
+} catch (error) {
+	console.error('Failed to initialize storage');
+	if (error instanceof Error) {
+		console.error(error.stack || error.message);
+	} else {
+		console.error(error);
+	}
+	process.exit(1);
+}
 
 // Middleware
 app.use('*', logger());

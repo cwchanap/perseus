@@ -5,7 +5,13 @@ import { sign, verify } from 'hono/jwt';
 
 const SESSION_COOKIE = 'admin_session';
 const SESSION_DURATION_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
-const JWT_SECRET = process.env.JWT_SECRET || 'perseus-dev-secret-change-in-production';
+const JWT_SECRET = (() => {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    throw new Error('JWT_SECRET environment variable is required');
+  }
+  return secret;
+})();
 
 export interface SessionPayload {
   sessionId: string;
