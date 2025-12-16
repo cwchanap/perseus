@@ -132,7 +132,11 @@ admin.post('/puzzles', requireAuth, async (c) => {
     });
 
     // Save puzzle metadata
-    await storePuzzle(result.puzzle);
+    const saved = await storePuzzle(result.puzzle);
+    if (!saved) {
+      await deleteStoredPuzzle(id);
+      return c.json({ error: 'internal_error', message: 'Failed to save puzzle metadata' }, 500);
+    }
 
     return c.json(result.puzzle, 201);
   } catch (error) {
