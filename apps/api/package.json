@@ -11,7 +11,8 @@
 		"lint": "prettier --check . && eslint ."
 	},
 	"dependencies": {
-		"hono": "^4.6.14"
+		"hono": "^4.6.14",
+		"sharp": "^0.34.5"
 	},
 	"devDependencies": {
 		"@eslint/compat": "^1.4.0",

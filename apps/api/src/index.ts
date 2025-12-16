@@ -1,12 +1,24 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
+import { initializeStorage } from './services/storage';
+import puzzles from './routes/puzzles';
+import admin from './routes/admin';
 
 const app = new Hono();
 
+// Initialize storage on startup
+await initializeStorage();
+
 // Middleware
 app.use('*', logger());
-app.use('*', cors());
+app.use(
+	'*',
+	cors({
+		origin: ['http://localhost:5173', 'http://localhost:4173'],
+		credentials: true
+	})
+);
 
 // Routes
 app.get('/', (c) => {
@@ -21,11 +33,9 @@ app.get('/health', (c) => {
 	return c.json({ status: 'ok' });
 });
 
-// Example API route
-app.get('/api/hello', (c) => {
-	const name = c.req.query('name') || 'World';
-	return c.json({ message: `Hello, ${name}!` });
-});
+// Mount route groups
+app.route('/api/puzzles', puzzles);
+app.route('/api/admin', admin);
 
 const port = process.env.PORT || 3000;
 
