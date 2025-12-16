@@ -10,6 +10,7 @@ const TEST_PUZZLES_DIR = join(TEST_DATA_DIR, 'puzzles');
 
 process.env.DATA_DIR = TEST_DATA_DIR;
 process.env.JWT_SECRET = 'test-jwt-secret';
+process.env.ADMIN_PASSKEY = 'test-admin-passkey';
 
 let app: typeof import('../index').default;
 

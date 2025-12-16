@@ -1,5 +1,6 @@
 // Admin routes for authentication and puzzle management
 import { Hono } from 'hono';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import {
   createSession,
   setSessionCookie,
@@ -14,7 +15,15 @@ import { MAX_FILE_SIZE, ALLOWED_MIME_TYPES } from '../types';
 
 const admin = new Hono();
 
-const ADMIN_PASSKEY = process.env.ADMIN_PASSKEY || 'admin';
+const ADMIN_PASSKEY = (() => {
+	const passkey = process.env.ADMIN_PASSKEY;
+	if (!passkey) {
+		throw new Error('ADMIN_PASSKEY environment variable is required');
+	}
+	return passkey;
+})();
+
+const ADMIN_PASSKEY_DIGEST = createHash('sha256').update(ADMIN_PASSKEY).digest();
 const DATA_DIR = process.env.DATA_DIR || './data';
 
 // POST /api/admin/login - Admin login
@@ -27,7 +36,10 @@ admin.post('/login', async (c) => {
       return c.json({ error: 'bad_request', message: 'Passkey is required' }, 400);
     }
 
-    if (passkey !== ADMIN_PASSKEY) {
+		const passkeyDigest = createHash('sha256').update(passkey).digest();
+		const isValidPasskey = timingSafeEqual(passkeyDigest, ADMIN_PASSKEY_DIGEST);
+
+		if (!isValidPasskey) {
       return c.json({ error: 'unauthorized', message: 'Invalid passkey' }, 401);
     }
 
@@ -73,8 +85,12 @@ admin.post('/puzzles', requireAuth, async (c) => {
     const image = formData.get('image');
 
     // Validate required fields
-    if (!name || typeof name !== 'string') {
+    if (!name || typeof name !== 'string' || name.trim().length === 0) {
       return c.json({ error: 'bad_request', message: 'Name is required' }, 400);
+    }
+
+    if (name.length > 255) {
+      return c.json({ error: 'bad_request', message: 'Name must be at most 255 characters' }, 400);
     }
 
     if (!pieceCountStr) {
