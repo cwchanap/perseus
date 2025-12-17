@@ -15,18 +15,41 @@ const JWT_SECRET = (() => {
 
 export interface SessionPayload {
   sessionId: string;
+  userId: string;
+  username?: string;
+  role?: string;
   createdAt: number;
   exp: number;
   [key: string]: unknown;
 }
 
-export async function createSession(): Promise<string> {
+export async function createSession(user: {
+  userId: string;
+  username?: string;
+  role?: string;
+}): Promise<string> {
+  if (!user || typeof user.userId !== 'string' || user.userId.trim().length === 0) {
+    throw new Error('userId is required');
+  }
+
+  if (user.username !== undefined && (typeof user.username !== 'string' || user.username.trim().length === 0)) {
+    throw new Error('username must be a non-empty string');
+  }
+
+  if (user.role !== undefined && (typeof user.role !== 'string' || user.role.trim().length === 0)) {
+    throw new Error('role must be a non-empty string');
+  }
+
   const now = Date.now();
   const payload: SessionPayload = {
     sessionId: crypto.randomUUID(),
+    userId: user.userId.trim(),
     createdAt: now,
     exp: Math.floor((now + SESSION_DURATION_MS) / 1000) // JWT exp is in seconds
   };
+
+  if (user.username) payload.username = user.username.trim();
+  if (user.role) payload.role = user.role.trim();
 
   return await sign(payload, JWT_SECRET);
 }
@@ -34,7 +57,13 @@ export async function createSession(): Promise<string> {
 export async function verifySession(token: string): Promise<SessionPayload | null> {
   try {
     const payload = await verify(token, JWT_SECRET);
-    return payload as unknown as SessionPayload;
+    const session = payload as unknown as SessionPayload;
+
+    if (typeof session.userId !== 'string' || session.userId.trim().length === 0) {
+      return null;
+    }
+
+    return session;
   } catch {
     return null;
   }
@@ -86,9 +115,15 @@ export const optionalAuth = createMiddleware(async (c, next) => {
   const token = getSessionToken(c);
 
   if (token) {
-    const session = await verifySession(token);
-    if (session) {
-      c.set('session', session);
+    try {
+      const session = await verifySession(token);
+      if (session) {
+        c.set('session', session);
+      } else {
+        clearSessionCookie(c);
+      }
+    } catch {
+      clearSessionCookie(c);
     }
   }
 

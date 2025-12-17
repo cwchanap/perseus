@@ -1,6 +1,6 @@
 // Puzzle generator service using Sharp for image processing
 import sharp from 'sharp';
-import { mkdir, writeFile } from 'fs/promises';
+import { mkdir } from 'fs/promises';
 import path from 'path';
 import type { Puzzle, PuzzlePiece, AllowedPieceCount } from '../types';
 
@@ -52,8 +52,11 @@ export async function generatePuzzle(
   // Get image metadata
   const image = sharp(imageBuffer);
   const metadata = await image.metadata();
-  const imageWidth = metadata.width || 800;
-  const imageHeight = metadata.height || 600;
+  if (metadata.width === undefined || metadata.height === undefined) {
+    throw new Error('Invalid image metadata: missing width or height');
+  }
+  const imageWidth = metadata.width;
+  const imageHeight = metadata.height;
 
   // Generate thumbnail
   const thumbnailPath = path.join(puzzleDir, 'thumbnail.jpg');
@@ -64,8 +67,10 @@ export async function generatePuzzle(
 
   // Calculate grid dimensions
   const { rows, cols } = getGridDimensions(pieceCount);
-  const pieceWidth = Math.floor(imageWidth / cols);
-  const pieceHeight = Math.floor(imageHeight / rows);
+  const basePieceWidth = Math.floor(imageWidth / cols);
+  const extraWidth = imageWidth % cols;
+  const basePieceHeight = Math.floor(imageHeight / rows);
+  const extraHeight = imageHeight % rows;
 
   // Generate pieces
   const pieces: PuzzlePiece[] = [];
@@ -77,22 +82,26 @@ export async function generatePuzzle(
       const piecePath = path.join(piecesDir, `${pieceId}.png`);
 
       // Extract piece from image
+      const left = col * basePieceWidth;
+      const top = row * basePieceHeight;
+      const width = basePieceWidth + (col === cols - 1 ? extraWidth : 0);
+      const height = basePieceHeight + (row === rows - 1 ? extraHeight : 0);
       await sharp(imageBuffer)
         .extract({
-          left: col * pieceWidth,
-          top: row * pieceHeight,
-          width: pieceWidth,
-          height: pieceHeight
+          left,
+          top,
+          width,
+          height
         })
         .png()
         .toFile(piecePath);
 
       // Determine edge types based on position
       const edges = {
-        top: row === 0 ? 'flat' : (pieceId % 2 === 0 ? 'tab' : 'blank'),
-        right: col === cols - 1 ? 'flat' : (pieceId % 2 === 0 ? 'blank' : 'tab'),
-        bottom: row === rows - 1 ? 'flat' : (pieceId % 2 === 0 ? 'blank' : 'tab'),
-        left: col === 0 ? 'flat' : (pieceId % 2 === 0 ? 'tab' : 'blank')
+        top: row === 0 ? 'flat' : ((row - 1) % 2 === 0 ? 'blank' : 'tab'),
+        right: col === cols - 1 ? 'flat' : (col % 2 === 0 ? 'tab' : 'blank'),
+        bottom: row === rows - 1 ? 'flat' : (row % 2 === 0 ? 'tab' : 'blank'),
+        left: col === 0 ? 'flat' : ((col - 1) % 2 === 0 ? 'blank' : 'tab')
       } as const;
 
       pieces.push({

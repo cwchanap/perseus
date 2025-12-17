@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
   import type { PuzzlePiece } from '$lib/types/puzzle';
   import { getPieceImageUrl } from '$lib/services/api';
 
@@ -6,9 +7,21 @@
     piece: PuzzlePiece;
     isPlaced: boolean;
     onDragStart?: (piece: PuzzlePiece) => void;
+    onDragMove?: (piece: PuzzlePiece, x: number, y: number) => void;
+    onDragEnd?: (piece: PuzzlePiece, x: number, y: number) => void;
   }
 
-  let { piece, isPlaced, onDragStart }: Props = $props();
+  let { piece, isPlaced, onDragStart, onDragMove, onDragEnd }: Props = $props();
+
+  let isTouchDragging = $state(false);
+  let touchTranslateX = $state(0);
+  let touchTranslateY = $state(0);
+  let activeTouchId: number | null = null;
+  let startClientX = 0;
+  let startClientY = 0;
+  let lastClientX = 0;
+  let lastClientY = 0;
+  let activeDropZone: HTMLElement | null = null;
 
   function handleDragStart(event: DragEvent) {
     if (isPlaced || !event.dataTransfer) return;
@@ -18,16 +31,177 @@
     onDragStart?.(piece);
   }
 
+  function getTouchById(list: TouchList, id: number) {
+    for (let i = 0; i < list.length; i++) {
+      const t = list.item(i);
+      if (t && t.identifier === id) return t;
+    }
+    return null;
+  }
+
+  function getDropZoneAtPoint(x: number, y: number): HTMLElement | null {
+    const element = document.elementFromPoint(x, y);
+    if (!element) return null;
+    return element.closest('.drop-zone') as HTMLElement | null;
+  }
+
+  function createDataTransfer(pieceId: number): DataTransfer {
+    if (typeof DataTransfer !== 'undefined') {
+      const dt = new DataTransfer();
+      dt.setData('text/plain', pieceId.toString());
+      dt.effectAllowed = 'move';
+      return dt;
+    }
+
+    return {
+      getData: (type: string) => (type === 'text/plain' ? pieceId.toString() : ''),
+      setData: () => {}
+    } as unknown as DataTransfer;
+  }
+
+  function dispatchSyntheticDragEvent(
+    target: HTMLElement,
+    type: 'dragover' | 'dragleave' | 'drop',
+    dataTransfer?: DataTransfer
+  ) {
+    let event: DragEvent;
+    try {
+      event = new DragEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer
+      });
+    } catch {
+      event = new Event(type, { bubbles: true, cancelable: true }) as DragEvent;
+      if (dataTransfer) {
+        try {
+          Object.defineProperty(event, 'dataTransfer', { value: dataTransfer });
+        } catch {
+        }
+      }
+    }
+
+    if (dataTransfer && !('dataTransfer' in event)) {
+      try {
+        Object.defineProperty(event, 'dataTransfer', { value: dataTransfer });
+      } catch {
+      }
+    }
+
+    target.dispatchEvent(event);
+  }
+
+  function cleanupTouchListeners() {
+    window.removeEventListener('touchmove', handleWindowTouchMove);
+    window.removeEventListener('touchend', handleWindowTouchEnd);
+    window.removeEventListener('touchcancel', handleWindowTouchEnd);
+  }
+
+  function resetTouchDragState() {
+    isTouchDragging = false;
+    touchTranslateX = 0;
+    touchTranslateY = 0;
+    activeTouchId = null;
+    startClientX = 0;
+    startClientY = 0;
+    lastClientX = 0;
+    lastClientY = 0;
+
+    if (activeDropZone) {
+      dispatchSyntheticDragEvent(activeDropZone, 'dragleave');
+      activeDropZone = null;
+    }
+  }
+
+  function handleWindowTouchMove(event: TouchEvent) {
+    if (!isTouchDragging || activeTouchId === null) return;
+    const touch = getTouchById(event.touches, activeTouchId);
+    if (!touch) return;
+
+    event.preventDefault();
+
+    lastClientX = touch.clientX;
+    lastClientY = touch.clientY;
+    touchTranslateX = lastClientX - startClientX;
+    touchTranslateY = lastClientY - startClientY;
+    onDragMove?.(piece, lastClientX, lastClientY);
+
+    const dropZone = getDropZoneAtPoint(lastClientX, lastClientY);
+    if (dropZone !== activeDropZone) {
+      if (activeDropZone) {
+        dispatchSyntheticDragEvent(activeDropZone, 'dragleave');
+      }
+      activeDropZone = dropZone;
+      if (activeDropZone) {
+        dispatchSyntheticDragEvent(activeDropZone, 'dragover');
+      }
+    } else if (activeDropZone) {
+      dispatchSyntheticDragEvent(activeDropZone, 'dragover');
+    }
+  }
+
+  function handleWindowTouchEnd(event: TouchEvent) {
+    if (!isTouchDragging || activeTouchId === null) {
+      cleanupTouchListeners();
+      resetTouchDragState();
+      return;
+    }
+
+    const touch = getTouchById(event.changedTouches, activeTouchId);
+    if (touch) {
+      lastClientX = touch.clientX;
+      lastClientY = touch.clientY;
+    }
+
+    const dropZone = getDropZoneAtPoint(lastClientX, lastClientY);
+    if (dropZone) {
+      const dt = createDataTransfer(piece.id);
+      dispatchSyntheticDragEvent(dropZone, 'drop', dt);
+    }
+
+    onDragEnd?.(piece, lastClientX, lastClientY);
+    cleanupTouchListeners();
+    resetTouchDragState();
+  }
+
   function handleTouchStart(event: TouchEvent) {
     if (isPlaced) return;
+
+    const touch = event.changedTouches.item(0);
+    if (!touch) return;
+
+    event.preventDefault();
+    if (isTouchDragging) {
+      cleanupTouchListeners();
+      resetTouchDragState();
+    }
+
+    activeTouchId = touch.identifier;
+    startClientX = touch.clientX;
+    startClientY = touch.clientY;
+    lastClientX = touch.clientX;
+    lastClientY = touch.clientY;
+    isTouchDragging = true;
+
+    window.addEventListener('touchmove', handleWindowTouchMove, { passive: false });
+    window.addEventListener('touchend', handleWindowTouchEnd);
+    window.addEventListener('touchcancel', handleWindowTouchEnd);
     onDragStart?.(piece);
   }
+
+  onDestroy(() => {
+    cleanupTouchListeners();
+    resetTouchDragState();
+  });
 </script>
 
 <div
-  class="puzzle-piece relative cursor-grab select-none transition-transform hover:scale-105"
+  class="puzzle-piece relative cursor-grab select-none transition-transform hover:scale-105 touch-none"
   class:opacity-50={isPlaced}
   class:cursor-not-allowed={isPlaced}
+  class:cursor-grabbing={isTouchDragging}
+  class:z-50={isTouchDragging}
+  class:pointer-events-none={isTouchDragging}
   draggable={!isPlaced}
   ondragstart={handleDragStart}
   ontouchstart={handleTouchStart}
@@ -35,6 +209,11 @@
   aria-label="Puzzle piece {piece.id}"
   data-testid="puzzle-piece"
   data-piece-id={piece.id}
+  style={
+    isTouchDragging
+      ? `transform: translate3d(${touchTranslateX}px, ${touchTranslateY}px, 0);`
+      : undefined
+  }
 >
   <img
     src={getPieceImageUrl(piece.puzzleId, piece.id)}
@@ -45,7 +224,7 @@
 </div>
 
 <style>
-  .puzzle-piece:active {
+  .puzzle-piece:not(.cursor-not-allowed):active {
     cursor: grabbing;
   }
 </style>

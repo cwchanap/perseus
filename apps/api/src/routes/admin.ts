@@ -43,7 +43,11 @@ admin.post('/login', async (c) => {
       return c.json({ error: 'unauthorized', message: 'Invalid passkey' }, 401);
     }
 
-    const token = await createSession();
+    const token = await createSession({
+			userId: 'admin',
+			username: 'admin',
+			role: 'admin'
+		});
     setSessionCookie(c, token);
 
     return c.json({ success: true });

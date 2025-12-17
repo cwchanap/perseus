@@ -2,19 +2,50 @@
 import { Hono } from 'hono';
 import { getPuzzle, listPuzzlesSorted, getThumbnailPath, getPieceImagePath } from '../services/storage';
 import { readFile } from 'node:fs/promises';
+import { extname } from 'node:path';
 
 const puzzles = new Hono();
 
+function getImageContentType(filePath: string): string {
+	const ext = extname(filePath).toLowerCase();
+	if (ext === '.png') return 'image/png';
+	if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
+	if (ext === '.webp') return 'image/webp';
+	return 'application/octet-stream';
+}
+
 // GET /api/puzzles - List all puzzles
 puzzles.get('/', async (c) => {
-  const puzzleList = await listPuzzlesSorted();
-  return c.json({ puzzles: puzzleList });
+	try {
+		const puzzleList = await listPuzzlesSorted();
+		return c.json({ puzzles: puzzleList });
+	} catch (error) {
+		console.error('Failed to list puzzles');
+		if (error instanceof Error) {
+			console.error(error.stack || error.message);
+		} else {
+			console.error(error);
+		}
+		return c.json({ error: 'internal_error', message: 'Failed to list puzzles' }, 500);
+	}
 });
 
 // GET /api/puzzles/:id - Get puzzle details
 puzzles.get('/:id', async (c) => {
   const id = c.req.param('id');
-  const puzzle = await getPuzzle(id);
+  let puzzle: Awaited<ReturnType<typeof getPuzzle>>;
+
+  try {
+		puzzle = await getPuzzle(id);
+	} catch (error) {
+		console.error('Failed to retrieve puzzle');
+		if (error instanceof Error) {
+			console.error(error.stack || error.message);
+		} else {
+			console.error(error);
+		}
+		return c.json({ error: 'internal_error', message: 'Failed to retrieve puzzle' }, 500);
+	}
 
   if (!puzzle) {
     return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
@@ -26,7 +57,19 @@ puzzles.get('/:id', async (c) => {
 // GET /api/puzzles/:id/thumbnail - Get puzzle thumbnail image
 puzzles.get('/:id/thumbnail', async (c) => {
   const id = c.req.param('id');
-  const puzzle = await getPuzzle(id);
+	let puzzle: Awaited<ReturnType<typeof getPuzzle>>;
+
+	try {
+		puzzle = await getPuzzle(id);
+	} catch (error) {
+		console.error('Failed to retrieve puzzle');
+		if (error instanceof Error) {
+			console.error(error.stack || error.message);
+		} else {
+			console.error(error);
+		}
+		return c.json({ error: 'internal_error', message: 'Failed to retrieve puzzle' }, 500);
+	}
 
   if (!puzzle) {
     return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
@@ -39,8 +82,18 @@ puzzles.get('/:id/thumbnail', async (c) => {
       'Content-Type': 'image/jpeg',
       'Cache-Control': 'public, max-age=86400'
     });
-  } catch {
-    return c.json({ error: 'not_found', message: 'Thumbnail not found' }, 404);
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code === 'ENOENT' || (error instanceof Error && error.message === 'Invalid puzzleId')) {
+      return c.json({ error: 'not_found', message: 'Thumbnail not found' }, 404);
+    }
+    console.error('Failed to retrieve thumbnail');
+    if (error instanceof Error) {
+      console.error(error.stack || error.message);
+    } else {
+      console.error(error);
+    }
+    return c.json({ error: 'internal_error', message: 'Failed to retrieve thumbnail' }, 500);
   }
 });
 
@@ -54,7 +107,19 @@ puzzles.get('/:id/pieces/:pieceId/image', async (c) => {
     return c.json({ error: 'invalid_piece_id', message: 'Invalid piece ID' }, 400);
   }
 
-  const puzzle = await getPuzzle(id);
+  let puzzle: Awaited<ReturnType<typeof getPuzzle>>;
+
+  try {
+    puzzle = await getPuzzle(id);
+  } catch (error) {
+    console.error('Failed to retrieve puzzle');
+    if (error instanceof Error) {
+      console.error(error.stack || error.message);
+    } else {
+      console.error(error);
+    }
+    return c.json({ error: 'internal_error', message: 'Failed to retrieve puzzle' }, 500);
+  }
 
   if (!puzzle) {
     return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
@@ -68,11 +133,21 @@ puzzles.get('/:id/pieces/:pieceId/image', async (c) => {
     const piecePath = getPieceImagePath(id, pieceId);
     const imageData = await readFile(piecePath);
     return c.body(imageData, 200, {
-      'Content-Type': 'image/png',
+      'Content-Type': getImageContentType(piecePath),
       'Cache-Control': 'public, max-age=86400'
     });
-  } catch {
-    return c.json({ error: 'not_found', message: 'Piece image not found' }, 404);
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code === 'ENOENT' || (error instanceof Error && error.message === 'Invalid puzzleId')) {
+      return c.json({ error: 'not_found', message: 'Piece image not found' }, 404);
+    }
+    console.error('Failed to retrieve piece image');
+    if (error instanceof Error) {
+      console.error(error.stack || error.message);
+    } else {
+      console.error(error);
+    }
+    return c.json({ error: 'internal_error', message: 'Failed to retrieve piece image' }, 500);
   }
 });
 

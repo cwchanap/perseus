@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { logout, createPuzzle, deletePuzzle, fetchPuzzles, ApiError } from '$lib/services/api';
   import type { PuzzleSummary } from '$lib/types/puzzle';
@@ -7,8 +7,10 @@
   const ALLOWED_PIECE_COUNTS = [9, 16, 25, 36, 49, 64, 100];
 
   let loggingOut = $state(false);
+  let logoutError: string | null = $state(null);
   let puzzles: PuzzleSummary[] = $state([]);
   let loadingPuzzles = $state(true);
+  let puzzlesError: string | null = $state(null);
 
   // Form state
   let name = $state('');
@@ -18,6 +20,7 @@
   let creating = $state(false);
   let formError: string | null = $state(null);
   let successMessage: string | null = $state(null);
+  let successTimeout: ReturnType<typeof setTimeout> | null = null;
 
   // Delete state
   let deletingId: string | null = $state(null);
@@ -26,11 +29,21 @@
     await loadPuzzles();
   });
 
+  onDestroy(() => {
+    if (successTimeout !== null) {
+      clearTimeout(successTimeout);
+      successTimeout = null;
+    }
+  });
+
   async function loadPuzzles() {
     loadingPuzzles = true;
+    puzzlesError = null;
     try {
       puzzles = await fetchPuzzles();
-    } catch {
+    } catch (e) {
+      console.error('Failed to load puzzles', e);
+      puzzlesError = e instanceof ApiError ? e.message : 'Failed to load puzzles';
       puzzles = [];
     } finally {
       loadingPuzzles = false;
@@ -39,8 +52,17 @@
 
   async function handleLogout() {
     loggingOut = true;
-    await logout();
-    goto('/admin/login');
+		logoutError = null;
+
+		try {
+			await logout();
+			goto('/admin/login');
+		} catch (e) {
+			console.error('Failed to logout', e);
+			logoutError = 'Failed to logout';
+		} finally {
+			loggingOut = false;
+		}
   }
 
   function handleImageSelect(event: Event) {
@@ -88,8 +110,10 @@
       clearForm();
       await loadPuzzles();
 
-      setTimeout(() => {
+      if (successTimeout !== null) clearTimeout(successTimeout);
+      successTimeout = setTimeout(() => {
         successMessage = null;
+        successTimeout = null;
       }, 3000);
     } catch (e) {
       if (e instanceof ApiError) {
@@ -143,6 +167,12 @@
         </button>
       </div>
     </header>
+
+		{#if logoutError}
+			<div class="mb-6 rounded-md bg-red-50 p-4 text-red-600">
+				{logoutError}
+			</div>
+		{/if}
 
     <div class="grid gap-8 lg:grid-cols-2">
       <!-- Create Puzzle Form -->
@@ -260,7 +290,11 @@
 
         {#if loadingPuzzles}
           <div class="flex items-center justify-center py-8">
-            <div class="h-6 w-6 animate-spin rounded-full border-3 border-blue-500 border-t-transparent"></div>
+            <div class="h-6 w-6 animate-spin rounded-full border-2 border-blue-500 border-t-transparent"></div>
+          </div>
+        {:else if puzzlesError}
+          <div class="py-8 text-center text-red-600">
+            <p>{puzzlesError}</p>
           </div>
         {:else if puzzles.length === 0}
           <div class="py-8 text-center text-gray-500">
