@@ -1,5 +1,25 @@
 <script lang="ts">
   import { page } from '$app/stores';
+
+  function getSafeErrorMessage(error: unknown): string | null {
+    if (!error || typeof error !== 'object') return null;
+
+    const anyError = error as Record<string, unknown>;
+    const status = typeof anyError.status === 'number' ? anyError.status : null;
+    const name = typeof anyError.name === 'string' ? anyError.name : null;
+
+    if (name === 'TypeError') {
+      return 'Network error. Please check your connection and try again.';
+    }
+
+    if (status === 401) return 'Your session has expired. Please log in again.';
+    if (status === 403) return 'You do not have permission to view this page.';
+    if (status === 413) return 'That file is too large. Please try a smaller one.';
+    if (status && status >= 500) return 'The server encountered an error. Please try again later.';
+    if (status && status >= 400) return 'Something went wrong. Please try again.';
+
+    return null;
+  }
 </script>
 
 <svelte:head>
@@ -27,8 +47,8 @@
     <p class="mb-8 text-gray-600">
       {#if $page.status === 404}
         The page you're looking for doesn't exist or has been moved.
-      {:else if $page.error?.message}
-        {$page.error.message}
+      {:else if $page.error}
+        {getSafeErrorMessage($page.error) ?? 'An unexpected error occurred. Please try again.'}
       {:else}
         An unexpected error occurred. Please try again.
       {/if}

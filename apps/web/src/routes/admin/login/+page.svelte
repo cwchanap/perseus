@@ -14,6 +14,7 @@
     try {
       const result = await login(passkey);
       if (result.success) {
+        passkey = '';
         goto('/admin');
       } else {
         error = result.error || 'Login failed';

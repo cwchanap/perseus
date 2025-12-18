@@ -65,10 +65,25 @@ export async function login(passkey: string): Promise<LoginResponse> {
 }
 
 export async function logout(): Promise<void> {
-  await fetch(`${API_BASE}/api/admin/logout`, {
-    method: 'POST',
-    credentials: 'include'
-  });
+  try {
+    const response = await fetch(`${API_BASE}/api/admin/logout`, {
+      method: 'POST',
+      credentials: 'include'
+    });
+
+    if (!response.ok) {
+      const responseText = await response.text().catch(() => '');
+      const message = `Logout failed (${response.status} ${response.statusText})${
+        responseText ? `: ${responseText}` : ''
+      }`;
+      throw new Error(message);
+    }
+  } catch (error) {
+    if (error instanceof Error) {
+      throw error;
+    }
+    throw new Error('Logout failed');
+  }
 }
 
 export async function checkSession(): Promise<boolean> {

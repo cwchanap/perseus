@@ -8,8 +8,15 @@
 
   let checking = $state(true);
   let authenticated = $state(false);
+  let redirecting = $state(false);
 
-  const isLoginPage = $derived($page.url.pathname.includes('/admin/login'));
+  const isLoginPage = $derived($page.url.pathname === '/admin/login');
+
+  function redirectToLogin() {
+    if (redirecting) return;
+    redirecting = true;
+    goto('/admin/login');
+  }
 
   onMount(async () => {
     // Skip auth check on login page
@@ -22,7 +29,7 @@
     authenticated = isAuthenticated;
 
     if (!isAuthenticated) {
-      goto('/admin/login');
+      redirectToLogin();
     }
 
     checking = false;
@@ -30,12 +37,18 @@
 
   // Re-check when route changes (but not on login page)
   $effect(() => {
-    if (!isLoginPage && !checking) {
+    if (!isLoginPage && !checking && !redirecting) {
       checkSession().then((isAuth) => {
         if (!isAuth) {
-          goto('/admin/login');
+          redirectToLogin();
         }
       });
+    }
+  });
+
+  $effect(() => {
+    if (!isLoginPage && !checking && !authenticated) {
+      redirectToLogin();
     }
   });
 </script>
@@ -51,4 +64,11 @@
   </div>
 {:else if authenticated}
   {@render children()}
+{:else}
+  <div class="flex min-h-screen items-center justify-center bg-gray-50">
+    <div class="flex items-center gap-3">
+      <div class="h-6 w-6 animate-spin rounded-full border-3 border-blue-500 border-t-transparent"></div>
+      <span class="text-gray-600">Not authenticated. Redirecting...</span>
+    </div>
+  </div>
 {/if}

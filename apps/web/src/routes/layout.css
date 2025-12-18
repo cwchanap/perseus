@@ -3,7 +3,7 @@
 /* Responsive design utilities */
 @media (max-width: 640px) {
   .puzzle-board {
-    max-width: 100vw;
+    max-width: 100%;
     overflow-x: auto;
   }
 }
@@ -24,10 +24,6 @@
 /* Smooth animations */
 .puzzle-piece {
   transition: transform 0.15s ease-out, opacity 0.15s ease-out;
-}
-
-/* Disable text selection during drag */
-.puzzle-piece {
   -webkit-user-select: none;
   user-select: none;
   -webkit-touch-callout: none;

@@ -13,8 +13,12 @@
 
   let dragOverCell: { x: number; y: number } | null = $state(null);
 
-  function isPiecePlaced(x: number, y: number): PlacedPiece | undefined {
-    return placedPieces.find((p) => p.x === x && p.y === y);
+  function isPiecePlaced(
+    x: number,
+    y: number,
+    excludePieceId?: number
+  ): PlacedPiece | undefined {
+    return placedPieces.find((p) => p.x === x && p.y === y && p.pieceId !== excludePieceId);
   }
 
   function getPieceAtPosition(x: number, y: number): PuzzlePiece | undefined {
@@ -39,15 +43,19 @@
     event.preventDefault();
     dragOverCell = null;
 
-    const pieceIdStr = event.dataTransfer?.getData('text/plain');
+    if (!event.dataTransfer) return;
+
+    const pieceIdStr = event.dataTransfer.getData('text/plain');
     if (!pieceIdStr) return;
 
     const pieceId = parseInt(pieceIdStr, 10);
+    if (Number.isNaN(pieceId)) return;
+
     const piece = puzzle.pieces.find((p) => p.id === pieceId);
     if (!piece) return;
 
     // Check if cell is already occupied
-    if (isPiecePlaced(x, y)) return;
+    if (isPiecePlaced(x, y, pieceId)) return;
 
     // Check if piece is placed in correct position
     if (piece.correctX === x && piece.correctY === y) {

@@ -50,7 +50,7 @@
 
   function handlePiecePlaced(pieceId: number, x: number, y: number) {
     const newPlacement: PlacedPiece = { pieceId, x, y };
-    placedPieces = [...placedPieces, newPlacement];
+    placedPieces = [...placedPieces.filter((p) => p.pieceId !== pieceId), newPlacement];
 
     // Save progress
     if (puzzle) {
