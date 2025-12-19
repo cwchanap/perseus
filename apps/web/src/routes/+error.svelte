@@ -1,5 +1,6 @@
 <script lang="ts">
   import { page } from '$app/stores';
+  import { goto } from '$app/navigation';
 
   function getSafeErrorMessage(error: unknown): string | null {
     if (!error || typeof error !== 'object') return null;
@@ -19,6 +20,32 @@
     if (status && status >= 400) return 'Something went wrong. Please try again.';
 
     return null;
+  }
+
+  function handleGoBack() {
+    if (typeof window === 'undefined') return;
+
+    let referrerUrl: URL | null = null;
+    try {
+      if (document.referrer) {
+        referrerUrl = new URL(document.referrer);
+      }
+    } catch {
+      referrerUrl = null;
+    }
+
+    const isSameOrigin = referrerUrl?.origin === window.location.origin;
+    const isDifferentPage =
+      referrerUrl !== null &&
+      (referrerUrl.pathname !== window.location.pathname ||
+        referrerUrl.search !== window.location.search);
+
+    if (window.history.length > 1 && isSameOrigin && isDifferentPage) {
+      window.history.back();
+      return;
+    }
+
+    void goto('/');
   }
 </script>
 
@@ -62,7 +89,7 @@
         Go to Gallery
       </a>
       <button
-        onclick={() => history.back()}
+        onclick={() => handleGoBack()}
         class="rounded-md bg-gray-200 px-6 py-3 font-medium text-gray-700 hover:bg-gray-300"
       >
         Go Back

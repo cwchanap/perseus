@@ -5,29 +5,18 @@ test.describe('Puzzle Solving Page', () => {
   test('should show 404 page for non-existent puzzle', async ({ page }) => {
     await page.goto('/puzzle/non-existent-id');
 
-    // Should show error or redirect
+    // Should show a not-found style message
     const errorMessage = page.getByText(/not found|no longer available/i);
-    const homeLink = page.getByRole('link', { name: /home|back|gallery/i });
-
-    // Either error message or home link should be visible
-    const hasError = await errorMessage.isVisible().catch(() => false);
-    const hasHomeLink = await homeLink.isVisible().catch(() => false);
-
-    expect(hasError || hasHomeLink).toBeTruthy();
+    await expect(errorMessage).toBeVisible();
   });
 
-  test('should display puzzle board when puzzle exists', async ({ page }) => {
-    // This test requires a seeded puzzle - will pass once admin creates puzzles
+  test.skip('should display puzzle board when puzzle exists', async ({ page }) => {
+    // Requires deterministic seeding/mocking of a known puzzle id
     await page.goto('/puzzle/test-puzzle');
 
-    // Check for puzzle board or 404
+    // Puzzle board must be visible for an existing puzzle
     const puzzleBoard = page.locator('[data-testid="puzzle-board"]');
-    const notFound = page.getByText(/not found|no longer available/i);
-
-    const hasPuzzle = await puzzleBoard.isVisible().catch(() => false);
-    const hasNotFound = await notFound.isVisible().catch(() => false);
-
-    expect(hasPuzzle || hasNotFound).toBeTruthy();
+    await expect(puzzleBoard).toBeVisible();
   });
 
   test('should have back to gallery link', async ({ page }) => {
