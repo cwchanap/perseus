@@ -53,9 +53,50 @@
       return dt;
     }
 
+    const store = new Map<string, string>();
+    const items: DataTransferItem[] = [];
+    const emptyItemList = items as unknown as DataTransferItemList;
+    const emptyFileList = [] as unknown as FileList;
+    const getTypes = () => Array.from(store.keys());
+
+    store.set('text/plain', pieceId.toString());
+    items.push({
+      kind: 'string',
+      type: 'text/plain',
+      getAsFile: () => null,
+      getAsString: (callback: (data: string) => void) => callback(pieceId.toString())
+    } as unknown as DataTransferItem);
+
     return {
-      getData: (type: string) => (type === 'text/plain' ? pieceId.toString() : ''),
-      setData: () => {}
+      dropEffect: 'none',
+      effectAllowed: 'move',
+      get types() {
+        return getTypes();
+      },
+      files: emptyFileList,
+      items: emptyItemList,
+      clearData(format?: string) {
+        if (format) {
+          store.delete(format);
+          const idx = items.findIndex((i) => i.type === format);
+          if (idx >= 0) items.splice(idx, 1);
+        } else {
+          store.clear();
+          items.splice(0, items.length);
+        }
+      },
+      getData: (type: string) => store.get(type) ?? '',
+      setData(format: string, data: string) {
+        store.set(format, data);
+        if (!items.find((i) => i.type === format)) {
+          items.push({
+            kind: 'string',
+            type: format,
+            getAsFile: () => null,
+            getAsString: (callback: (value: string) => void) => callback(data)
+          } as unknown as DataTransferItem);
+        }
+      }
     } as unknown as DataTransfer;
   }
 

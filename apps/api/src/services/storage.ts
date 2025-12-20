@@ -5,6 +5,13 @@ import { mkdir, readFile, writeFile, readdir, rm, access } from 'node:fs/promise
 import { join, resolve, relative, isAbsolute } from 'node:path';
 import type { Puzzle, PuzzleSummary } from '../types/index';
 
+export class InvalidPuzzleIdError extends Error {
+	constructor(message = 'Invalid puzzleId') {
+		super(message);
+		this.name = 'InvalidPuzzleIdError';
+	}
+}
+
 const DATA_DIR = process.env.DATA_DIR || './data';
 const PUZZLES_DIR = join(DATA_DIR, 'puzzles');
 const PUZZLES_DIR_RESOLVED = resolve(PUZZLES_DIR);
@@ -22,16 +29,16 @@ function isValidPuzzleId(puzzleId: string): boolean {
 }
 
 function resolvePuzzlePath(puzzleId: string, ...segments: string[]): string {
-  if (!isValidPuzzleId(puzzleId)) {
-    throw new Error('Invalid puzzleId');
-  }
+	if (!isValidPuzzleId(puzzleId)) {
+		throw new InvalidPuzzleIdError();
+	}
 
-  const fullPath = resolve(PUZZLES_DIR, puzzleId, ...segments);
-  const rel = relative(PUZZLES_DIR_RESOLVED, fullPath);
+	const fullPath = resolve(PUZZLES_DIR, puzzleId, ...segments);
+	const rel = relative(PUZZLES_DIR_RESOLVED, fullPath);
 
-  if (rel.startsWith('..') || isAbsolute(rel)) {
-    throw new Error('Invalid puzzleId');
-  }
+	if (rel.startsWith('..') || isAbsolute(rel)) {
+		throw new InvalidPuzzleIdError();
+	}
 
   return fullPath;
 }

@@ -93,7 +93,8 @@ admin.post('/puzzles', requireAuth, async (c) => {
       return c.json({ error: 'bad_request', message: 'Name is required' }, 400);
     }
 
-    if (name.length > 255) {
+    const trimmedName = name.trim();
+    if (trimmedName.length > 255) {
       return c.json({ error: 'bad_request', message: 'Name must be at most 255 characters' }, 400);
     }
 
@@ -129,7 +130,7 @@ admin.post('/puzzles', requireAuth, async (c) => {
     // Generate puzzle pieces and thumbnail
     const result = await generatePuzzle({
       id,
-      name: name.trim(),
+      name: trimmedName,
       pieceCount,
       imageBuffer,
       outputDir: `${DATA_DIR}/puzzles`

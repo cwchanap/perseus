@@ -59,11 +59,58 @@ export async function verifySession(token: string): Promise<SessionPayload | nul
     const payload = await verify(token, JWT_SECRET);
     const session = payload as unknown as SessionPayload;
 
+    // Validate sessionId
+    if (typeof session.sessionId !== 'string' || session.sessionId.trim().length === 0) {
+      return null;
+    }
+
+    // Validate userId
     if (typeof session.userId !== 'string' || session.userId.trim().length === 0) {
       return null;
     }
 
-    return session;
+    // Validate createdAt (number or ISO string)
+    let createdAt: number;
+    if (typeof session.createdAt === 'number') {
+      createdAt = session.createdAt;
+    } else if (typeof session.createdAt === 'string') {
+      const parsed = new Date(session.createdAt).getTime();
+      if (isNaN(parsed)) {
+        return null;
+      }
+      createdAt = parsed;
+    } else {
+      return null;
+    }
+
+    // Validate exp (number or ISO string)
+    let exp: number;
+    if (typeof session.exp === 'number') {
+      exp = session.exp;
+    } else if (typeof session.exp === 'string') {
+      const parsed = new Date(session.exp).getTime();
+      if (isNaN(parsed)) {
+        return null;
+      }
+      exp = parsed;
+    } else {
+      return null;
+    }
+
+    // Validate timestamp relationships: exp > now and createdAt <= exp
+    const now = Date.now();
+    if (exp <= now || createdAt > exp) {
+      return null;
+    }
+
+    // Return normalized session with trimmed strings
+    return {
+      ...session,
+      sessionId: session.sessionId.trim(),
+      userId: session.userId.trim(),
+      createdAt,
+      exp
+    };
   } catch {
     return null;
   }

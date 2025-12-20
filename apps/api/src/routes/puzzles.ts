@@ -1,6 +1,6 @@
 // Puzzle routes for public access
 import { Hono } from 'hono';
-import { getPuzzle, listPuzzlesSorted, getThumbnailPath, getPieceImagePath } from '../services/storage';
+import { getPuzzle, listPuzzlesSorted, getThumbnailPath, getPieceImagePath, InvalidPuzzleIdError } from '../services/storage';
 import { readFile } from 'node:fs/promises';
 import { extname } from 'node:path';
 
@@ -82,19 +82,19 @@ puzzles.get('/:id/thumbnail', async (c) => {
       'Content-Type': 'image/jpeg',
       'Cache-Control': 'public, max-age=86400'
     });
-  } catch (error) {
-    const err = error as NodeJS.ErrnoException;
-    if (err.code === 'ENOENT' || (error instanceof Error && error.message === 'Invalid puzzleId')) {
-      return c.json({ error: 'not_found', message: 'Thumbnail not found' }, 404);
-    }
-    console.error('Failed to retrieve thumbnail');
-    if (error instanceof Error) {
-      console.error(error.stack || error.message);
-    } else {
-      console.error(error);
-    }
-    return c.json({ error: 'internal_error', message: 'Failed to retrieve thumbnail' }, 500);
-  }
+	} catch (error) {
+		const err = error as NodeJS.ErrnoException;
+		if (err.code === 'ENOENT' || error instanceof InvalidPuzzleIdError) {
+			return c.json({ error: 'not_found', message: 'Thumbnail not found' }, 404);
+		}
+		console.error('Failed to retrieve thumbnail');
+		if (error instanceof Error) {
+			console.error(error.stack || error.message);
+		} else {
+			console.error(error);
+		}
+		return c.json({ error: 'internal_error', message: 'Failed to retrieve thumbnail' }, 500);
+	}
 });
 
 // GET /api/puzzles/:id/pieces/:pieceId/image - Get piece image
@@ -136,19 +136,19 @@ puzzles.get('/:id/pieces/:pieceId/image', async (c) => {
       'Content-Type': getImageContentType(piecePath),
       'Cache-Control': 'public, max-age=86400'
     });
-  } catch (error) {
-    const err = error as NodeJS.ErrnoException;
-    if (err.code === 'ENOENT' || (error instanceof Error && error.message === 'Invalid puzzleId')) {
-      return c.json({ error: 'not_found', message: 'Piece image not found' }, 404);
-    }
-    console.error('Failed to retrieve piece image');
-    if (error instanceof Error) {
-      console.error(error.stack || error.message);
-    } else {
-      console.error(error);
-    }
-    return c.json({ error: 'internal_error', message: 'Failed to retrieve piece image' }, 500);
-  }
+	} catch (error) {
+		const err = error as NodeJS.ErrnoException;
+		if (err.code === 'ENOENT' || error instanceof InvalidPuzzleIdError) {
+			return c.json({ error: 'not_found', message: 'Piece image not found' }, 404);
+		}
+		console.error('Failed to retrieve piece image');
+		if (error instanceof Error) {
+			console.error(error.stack || error.message);
+		} else {
+			console.error(error);
+		}
+		return c.json({ error: 'internal_error', message: 'Failed to retrieve piece image' }, 500);
+	}
 });
 
 export default puzzles;
