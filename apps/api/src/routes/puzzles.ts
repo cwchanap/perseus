@@ -57,44 +57,32 @@ puzzles.get('/:id', async (c) => {
 // GET /api/puzzles/:id/thumbnail - Get puzzle thumbnail image
 puzzles.get('/:id/thumbnail', async (c) => {
   const id = c.req.param('id');
-	let puzzle: Awaited<ReturnType<typeof getPuzzle>>;
-
-	try {
-		puzzle = await getPuzzle(id);
-	} catch (error) {
-		console.error('Failed to retrieve puzzle');
-		if (error instanceof Error) {
-			console.error(error.stack || error.message);
-		} else {
-			console.error(error);
-		}
-		return c.json({ error: 'internal_error', message: 'Failed to retrieve puzzle' }, 500);
-	}
-
-  if (!puzzle) {
-    return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
-  }
-
   try {
+    const puzzle = await getPuzzle(id);
+
+    if (!puzzle) {
+      return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
+    }
+
     const thumbnailPath = getThumbnailPath(id);
     const imageData = await readFile(thumbnailPath);
     return c.body(imageData, 200, {
-      'Content-Type': 'image/jpeg',
+      'Content-Type': getImageContentType(thumbnailPath),
       'Cache-Control': 'public, max-age=86400'
     });
-	} catch (error) {
-		const err = error as NodeJS.ErrnoException;
-		if (err.code === 'ENOENT' || error instanceof InvalidPuzzleIdError) {
-			return c.json({ error: 'not_found', message: 'Thumbnail not found' }, 404);
-		}
-		console.error('Failed to retrieve thumbnail');
-		if (error instanceof Error) {
-			console.error(error.stack || error.message);
-		} else {
-			console.error(error);
-		}
-		return c.json({ error: 'internal_error', message: 'Failed to retrieve thumbnail' }, 500);
-	}
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code === 'ENOENT' || error instanceof InvalidPuzzleIdError) {
+      return c.json({ error: 'not_found', message: 'Thumbnail not found' }, 404);
+    }
+    console.error('Failed to retrieve thumbnail');
+    if (error instanceof Error) {
+      console.error(error.stack || error.message);
+    } else {
+      console.error(error);
+    }
+    return c.json({ error: 'internal_error', message: 'Failed to retrieve thumbnail' }, 500);
+  }
 });
 
 // GET /api/puzzles/:id/pieces/:pieceId/image - Get piece image
