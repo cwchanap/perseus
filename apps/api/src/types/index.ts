@@ -27,7 +27,7 @@ export interface Puzzle {
   gridRows: number;
   imageWidth: number;
   imageHeight: number;
-  createdAt: string;
+  createdAt: number;
   pieces: PuzzlePiece[];
 }
 

@@ -28,7 +28,7 @@ async function seedPuzzle(puzzleId: string): Promise<void> {
 				gridRows: 3,
 				imageWidth: 300,
 				imageHeight: 300,
-				createdAt: new Date().toISOString(),
+				createdAt: Date.now(),
 				pieces: []
 			},
 			null,

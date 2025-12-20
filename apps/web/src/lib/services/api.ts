@@ -8,7 +8,9 @@ import type {
   ErrorResponse
 } from '$lib/types/puzzle';
 
-const API_BASE = 'http://localhost:3000';
+import { env } from '$env/dynamic/public';
+
+const API_BASE = env.PUBLIC_API_BASE ?? 'http://localhost:3000';
 
 class ApiError extends Error {
   constructor(

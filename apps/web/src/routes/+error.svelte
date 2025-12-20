@@ -1,6 +1,9 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
+
+  let showGoBack = false;
 
   function getSafeErrorMessage(error: unknown): string | null {
     if (!error || typeof error !== 'object') return null;
@@ -22,8 +25,8 @@
     return null;
   }
 
-  function handleGoBack() {
-    if (typeof window === 'undefined') return;
+  function canSafelyGoBack(): boolean {
+    if (typeof window === 'undefined') return false;
 
     let referrerUrl: URL | null = null;
     try {
@@ -40,13 +43,21 @@
       (referrerUrl.pathname !== window.location.pathname ||
         referrerUrl.search !== window.location.search);
 
-    if (window.history.length > 1 && isSameOrigin && isDifferentPage) {
+    return window.history.length > 1 && isSameOrigin && isDifferentPage;
+  }
+
+  function handleGoBack() {
+    if (canSafelyGoBack()) {
       window.history.back();
       return;
     }
 
     void goto('/');
   }
+
+  onMount(() => {
+    showGoBack = canSafelyGoBack();
+  });
 </script>
 
 <svelte:head>
@@ -88,12 +99,14 @@
       >
         Go to Gallery
       </a>
-      <button
-        onclick={() => handleGoBack()}
-        class="rounded-md bg-gray-200 px-6 py-3 font-medium text-gray-700 hover:bg-gray-300"
-      >
-        Go Back
-      </button>
+      {#if showGoBack}
+        <button
+          onclick={() => handleGoBack()}
+          class="rounded-md bg-gray-200 px-6 py-3 font-medium text-gray-700 hover:bg-gray-300"
+        >
+          Go Back
+        </button>
+      {/if}
     </div>
   </div>
 </main>

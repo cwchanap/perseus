@@ -117,16 +117,17 @@ export async function generatePuzzle(
     }
   }
 
+  // Construct puzzle metadata
   const puzzle: Puzzle = {
-    id,
+    id: id,
     name,
     pieceCount,
-    gridRows: rows,
     gridCols: cols,
+    gridRows: rows,
     imageWidth,
     imageHeight,
     pieces,
-    createdAt: new Date().toISOString()
+    createdAt: Date.now()
   };
 
   return {

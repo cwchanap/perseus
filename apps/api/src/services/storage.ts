@@ -131,7 +131,10 @@ export async function createPuzzle(puzzle: Puzzle): Promise<boolean> {
 export async function getPuzzle(puzzleId: string): Promise<Puzzle | null> {
   try {
     const data = await readFile(getMetadataPath(puzzleId), 'utf-8');
-    return JSON.parse(data) as Puzzle;
+    const parsed = JSON.parse(data) as Puzzle;
+    const createdAt =
+      typeof parsed.createdAt === 'number' ? parsed.createdAt : new Date(parsed.createdAt).getTime();
+    return { ...parsed, createdAt };
   } catch {
     return null;
   }
@@ -176,9 +179,9 @@ export async function deletePuzzle(puzzleId: string): Promise<boolean> {
   }
 }
 
-async function listPuzzlesWithDate(): Promise<Array<{ summary: PuzzleSummary; createdAt: string }>> {
+async function listPuzzlesWithDate(): Promise<Array<{ summary: PuzzleSummary; createdAt: number }>> {
   const entries = await readdir(PUZZLES_DIR, { withFileTypes: true });
-  const puzzlesWithDate: Array<{ summary: PuzzleSummary; createdAt: string }> = [];
+  const puzzlesWithDate: Array<{ summary: PuzzleSummary; createdAt: number }> = [];
 
   for (const entry of entries) {
     if (entry.isDirectory()) {
@@ -216,7 +219,7 @@ export async function listPuzzlesSorted(): Promise<PuzzleSummary[]> {
     const puzzlesWithDate = await listPuzzlesWithDate();
 
     // Sort by creation date, newest first
-    puzzlesWithDate.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    puzzlesWithDate.sort((a, b) => b.createdAt - a.createdAt);
 
     return puzzlesWithDate.map((p) => p.summary);
   } catch {

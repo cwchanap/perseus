@@ -24,10 +24,7 @@ test.describe('Puzzle Solving Page', () => {
 
     // Should have navigation back to main page
     const backLink = page.getByRole('link', { name: /back|home|gallery/i });
-    const backLinkVisible = await backLink.isVisible().catch(() => false);
-
-    // Either back link exists or we're on error page
-    expect(backLinkVisible || (await page.url()).includes('/puzzle/')).toBeTruthy();
+    await expect(backLink).toBeVisible();
   });
 });
 
