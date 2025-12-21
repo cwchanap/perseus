@@ -78,6 +78,32 @@ async function handleResponse<T>(response: Response): Promise<T> {
   return parsedBody as T;
 }
 
+async function handleVoidResponse(response: Response): Promise<void> {
+  if (!response.ok) {
+    const parsedError = await parseJsonSafely(response);
+    const { error, message } = normalizeErrorPayload(parsedError, response.statusText);
+    throw new ApiError(response.status, error, message);
+  }
+
+  if (response.status === 204) {
+    return;
+  }
+
+  const contentLength = response.headers.get('content-length');
+  const contentType = response.headers.get('content-type')?.toLowerCase();
+
+  if (contentLength === '0' || !contentType) {
+    return;
+  }
+
+  if (!contentType.includes('application/json')) {
+    return;
+  }
+
+  // Best-effort parse to surface malformed JSON responses
+  await parseJsonSafely(response);
+}
+
 // Puzzle endpoints
 export async function fetchPuzzles(): Promise<PuzzleSummary[]> {
   const response = await fetch(`${API_BASE}/api/puzzles`);
@@ -115,7 +141,7 @@ export async function logout(): Promise<void> {
     credentials: 'include'
   });
 
-  await handleResponse<void>(response);
+  await handleVoidResponse(response);
 }
 
 export async function checkSession(): Promise<boolean> {

@@ -10,7 +10,7 @@ import {
   requireAuth
 } from '../middleware/auth';
 import { generatePuzzle, isValidPieceCount } from '../services/puzzle-generator';
-import { createPuzzle as storePuzzle, deletePuzzle as deleteStoredPuzzle } from '../services/storage';
+import { createPuzzle as storePuzzle, deletePuzzle as deleteStoredPuzzle, puzzleExists } from '../services/storage';
 import { MAX_FILE_SIZE, ALLOWED_MIME_TYPES } from '../types';
 
 const admin = new Hono();
@@ -163,13 +163,19 @@ admin.post('/puzzles', requireAuth, async (c) => {
 
 // DELETE /api/admin/puzzles/:id - Delete puzzle (protected)
 admin.delete('/puzzles/:id', requireAuth, async (c) => {
-  const id = c.req.param('id');
+	const id = c.req.param('id');
 
-  const deleted = await deleteStoredPuzzle(id);
+	const exists = await puzzleExists(id);
 
-  if (!deleted) {
-    return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
-  }
+	if (!exists) {
+		return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
+	}
+
+	const deleted = await deleteStoredPuzzle(id);
+
+	if (!deleted) {
+		return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
+	}
 
   return c.body(null, 204);
 });

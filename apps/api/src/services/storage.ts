@@ -178,13 +178,19 @@ export async function updatePuzzle(puzzle: Puzzle): Promise<boolean> {
 
 // Delete a puzzle and all its files
 export async function deletePuzzle(puzzleId: string): Promise<boolean> {
-  try {
-    const puzzleDir = getPuzzleDir(puzzleId);
-    await rm(puzzleDir, { recursive: true, force: true });
-    return true;
-  } catch {
-    return false;
-  }
+	try {
+		const puzzleDir = getPuzzleDir(puzzleId);
+		try {
+			await access(puzzleDir);
+		} catch {
+			return false;
+		}
+
+		await rm(puzzleDir, { recursive: true, force: true });
+		return true;
+	} catch {
+		return false;
+	}
 }
 
 async function listPuzzlesWithDate(): Promise<Array<{ summary: PuzzleSummary; createdAt: number }>> {
