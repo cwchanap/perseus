@@ -5,6 +5,19 @@ import { initializeStorage } from './services/storage';
 import puzzles from './routes/puzzles';
 import admin from './routes/admin';
 
+function requireEnv(name: string): string {
+	const value = process.env[name];
+	if (!value || value.trim().length === 0) {
+		console.error(`Missing required environment variable: ${name}`);
+		process.exit(1);
+	}
+	return value;
+}
+
+// Validate required env vars early
+requireEnv('JWT_SECRET');
+requireEnv('ADMIN_PASSKEY');
+
 const app = new Hono();
 
 // Initialize storage on startup
