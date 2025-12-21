@@ -51,8 +51,19 @@ admin.post('/login', async (c) => {
     setSessionCookie(c, token);
 
     return c.json({ success: true });
-  } catch {
-    return c.json({ error: 'bad_request', message: 'Invalid request body' }, 400);
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err && (err.name === 'SyntaxError' || err.code === 'ERR_INVALID_ARG_TYPE')) {
+      return c.json({ error: 'bad_request', message: 'Invalid request body' }, 400);
+    }
+
+    console.error('Failed to process admin login');
+    if (error instanceof Error) {
+      console.error(error.stack || error.message);
+    } else {
+      console.error(error);
+    }
+    return c.json({ error: 'internal_error', message: 'Failed to process login' }, 500);
   }
 });
 
