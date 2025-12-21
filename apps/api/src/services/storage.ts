@@ -17,15 +17,16 @@ const PUZZLES_DIR = join(DATA_DIR, 'puzzles');
 const PUZZLES_DIR_RESOLVED = resolve(PUZZLES_DIR);
 
 function isValidPuzzleId(puzzleId: string): boolean {
-  if (puzzleId.length === 0 || puzzleId.length > 128) {
-    return false;
-  }
+	if (puzzleId.length === 0 || puzzleId.length > 128) {
+		return false;
+	}
 
-  if (!/^[a-zA-Z0-9_-]+$/.test(puzzleId)) {
-    return false;
-  }
+	// Allow alphanumerics plus single underscores/hyphens (no leading/trailing or consecutive)
+	if (!/^[A-Za-z0-9](?:[A-Za-z0-9]|[-_](?=[A-Za-z0-9]))*$/.test(puzzleId)) {
+		return false;
+	}
 
-  return true;
+	return true;
 }
 
 function resolvePuzzlePath(puzzleId: string, ...segments: string[]): string {
