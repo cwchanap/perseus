@@ -83,23 +83,23 @@ export async function verifySession(token: string): Promise<SessionPayload | nul
       return null;
     }
 
-    // Validate exp (number or ISO string)
-    let exp: number;
+    // Validate exp (number or ISO string) — JWT exp is seconds; normalize to ms
+    let expMs: number;
     if (typeof session.exp === 'number') {
-      exp = session.exp;
+      expMs = session.exp < 1_000_000_000_000 ? session.exp * 1000 : session.exp;
     } else if (typeof session.exp === 'string') {
       const parsed = new Date(session.exp).getTime();
       if (isNaN(parsed)) {
         return null;
       }
-      exp = parsed;
+      expMs = parsed;
     } else {
       return null;
     }
 
     // Validate timestamp relationships: exp > now and createdAt <= exp
     const now = Date.now();
-    if (exp <= now || createdAt > exp) {
+    if (expMs <= now || createdAt > expMs) {
       return null;
     }
 
@@ -109,7 +109,7 @@ export async function verifySession(token: string): Promise<SessionPayload | nul
       sessionId: session.sessionId.trim(),
       userId: session.userId.trim(),
       createdAt,
-      exp
+      exp: expMs
     };
   } catch {
     return null;
