@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { page } from '@vitest/browser/context';
 import PuzzleCard from '../PuzzleCard.svelte';
+import { getThumbnailUrl } from '$lib/services/api';
 import type { PuzzleSummary } from '$lib/types/puzzle';
 
 describe('PuzzleCard', () => {
@@ -37,6 +38,6 @@ describe('PuzzleCard', () => {
 
     const img = page.getByRole('img');
     await expect.element(img).toHaveAttribute('alt', 'Test Puzzle');
-    await expect.element(img).toHaveAttribute('src', '/api/puzzles/test-puzzle-123/thumbnail');
+    await expect.element(img).toHaveAttribute('src', getThumbnailUrl(mockPuzzle.id));
   });
 });

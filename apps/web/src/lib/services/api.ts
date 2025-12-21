@@ -23,16 +23,59 @@ class ApiError extends Error {
   }
 }
 
+function parseJsonSafely(response: Response): Promise<unknown> {
+  return response
+    .clone()
+    .json()
+    .catch(() => null);
+}
+
+function normalizeErrorPayload(
+  payload: unknown,
+  fallbackMessage: string
+): { error: string; message: string } {
+  if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+    const record = payload as Record<string, unknown>;
+    const error = typeof record.error === 'string' ? record.error : undefined;
+    const message = typeof record.message === 'string' ? record.message : undefined;
+
+    return {
+      error: error ?? 'Unknown error',
+      message: message ?? fallbackMessage
+    };
+  }
+
+  return {
+    error: 'Unknown error',
+    message: fallbackMessage
+  };
+}
+
 async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
-    const errorData = (await response.json().catch(() => ({}))) as ErrorResponse;
-    throw new ApiError(
-      response.status,
-      errorData.error || 'Unknown error',
-      errorData.message || response.statusText
+    const parsedError = await parseJsonSafely(response);
+    const { error, message } = normalizeErrorPayload(parsedError, response.statusText);
+    throw new ApiError(response.status, error, message);
+  }
+
+  let parsedBody: unknown;
+  try {
+    parsedBody = await response.json();
+  } catch {
+    throw new Error(`Invalid JSON response (${response.status} ${response.statusText})`);
+  }
+
+  if (parsedBody === null || parsedBody === undefined) {
+    throw new Error(`Invalid JSON response (${response.status} ${response.statusText})`);
+  }
+
+  if (typeof parsedBody !== 'object' || Array.isArray(parsedBody)) {
+    throw new Error(
+      `Unexpected response format (${response.status} ${response.statusText}): expected object`
     );
   }
-  return response.json() as Promise<T>;
+
+  return parsedBody as T;
 }
 
 // Puzzle endpoints
@@ -67,25 +110,12 @@ export async function login(passkey: string): Promise<LoginResponse> {
 }
 
 export async function logout(): Promise<void> {
-  try {
-    const response = await fetch(`${API_BASE}/api/admin/logout`, {
-      method: 'POST',
-      credentials: 'include'
-    });
+  const response = await fetch(`${API_BASE}/api/admin/logout`, {
+    method: 'POST',
+    credentials: 'include'
+  });
 
-    if (!response.ok) {
-      const responseText = await response.text().catch(() => '');
-      const message = `Logout failed (${response.status} ${response.statusText})${
-        responseText ? `: ${responseText}` : ''
-      }`;
-      throw new Error(message);
-    }
-  } catch (error) {
-    if (error instanceof Error) {
-      throw error;
-    }
-    throw new Error('Logout failed');
-  }
+  await handleResponse<void>(response);
 }
 
 export async function checkSession(): Promise<boolean> {

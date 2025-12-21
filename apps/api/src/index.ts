@@ -35,25 +35,17 @@ try {
 
 // Middleware
 const DEFAULT_ALLOWED_ORIGINS = ['http://localhost:5173', 'http://localhost:4173'];
-const allowedOrigins = (() => {
-	const envValue = process.env.ALLOWED_ORIGINS;
-	const envOrigins = envValue
-		? envValue
-				.split(',')
-				.map((origin) => origin.trim())
-				.filter((origin) => origin.length > 0)
-		: [];
+const envOrigins = (process.env.ALLOWED_ORIGINS || '')
+	.split(',')
+	.map((origin) => origin.trim())
+	.filter((origin) => origin.length > 0);
 
-	if (envOrigins.length > 0) {
-		return envOrigins;
-	}
+if (process.env.NODE_ENV === 'production' && envOrigins.length === 0) {
+	throw new Error('ALLOWED_ORIGINS must be set in production');
+}
 
-	if (process.env.NODE_ENV !== 'production') {
-		return DEFAULT_ALLOWED_ORIGINS;
-	}
-
-	return envOrigins;
-})();
+const allowedOrigins =
+	envOrigins.length > 0 ? envOrigins : process.env.NODE_ENV !== 'production' ? DEFAULT_ALLOWED_ORIGINS : envOrigins;
 
 app.use('*', logger());
 app.use(
