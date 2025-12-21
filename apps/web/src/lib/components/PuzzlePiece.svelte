@@ -88,13 +88,18 @@
       getData: (type: string) => store.get(type) ?? '',
       setData(format: string, data: string) {
         store.set(format, data);
-        if (!items.find((i) => i.type === format)) {
-          items.push({
-            kind: 'string',
-            type: format,
-            getAsFile: () => null,
-            getAsString: (callback: (value: string) => void) => callback(data)
-          } as unknown as DataTransferItem);
+        const existingIndex = items.findIndex((i) => i.type === format);
+        const item = {
+          kind: 'string',
+          type: format,
+          getAsFile: () => null,
+          getAsString: (callback: (value: string) => void) => callback(data)
+        } as unknown as DataTransferItem;
+
+        if (existingIndex >= 0) {
+          items.splice(existingIndex, 1, item);
+        } else {
+          items.push(item);
         }
       }
     } as unknown as DataTransfer;

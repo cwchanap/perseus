@@ -41,7 +41,8 @@ const envOrigins = (process.env.ALLOWED_ORIGINS || '')
 	.filter((origin) => origin.length > 0);
 
 if (process.env.NODE_ENV === 'production' && envOrigins.length === 0) {
-	throw new Error('ALLOWED_ORIGINS must be set in production');
+	console.error('ALLOWED_ORIGINS must be set in production');
+	process.exit(1);
 }
 
 const allowedOrigins =
