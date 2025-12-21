@@ -1,35 +1,41 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
-  import type { PuzzlePiece } from '$lib/types/puzzle';
-  import { getPieceImageUrl } from '$lib/services/api';
+	import { onDestroy } from 'svelte';
+	import type { PuzzlePiece } from '$lib/types/puzzle';
+	import { getPieceImageUrl } from '$lib/services/api';
+	import { selectedPieceId, setSelectedPiece, clearSelectedPiece } from '$lib/stores/pieceSelection';
 
-  interface Props {
-    piece: PuzzlePiece;
-    isPlaced: boolean;
-    onDragStart?: (piece: PuzzlePiece) => void;
-    onDragMove?: (piece: PuzzlePiece, x: number, y: number) => void;
-    onDragEnd?: (piece: PuzzlePiece, x: number, y: number) => void;
-  }
+	interface Props {
+		piece: PuzzlePiece;
+		isPlaced: boolean;
+		onDragStart?: (piece: PuzzlePiece) => void;
+		onDragMove?: (piece: PuzzlePiece, x: number, y: number) => void;
+		onDragEnd?: (piece: PuzzlePiece, x: number, y: number) => void;
+	}
 
-  let { piece, isPlaced, onDragStart, onDragMove, onDragEnd }: Props = $props();
+	let { piece, isPlaced, onDragStart, onDragMove, onDragEnd }: Props = $props();
 
-  let isTouchDragging = $state(false);
-  let touchTranslateX = $state(0);
-  let touchTranslateY = $state(0);
-  let activeTouchId: number | null = null;
-  let startClientX = 0;
-  let startClientY = 0;
-  let lastClientX = 0;
-  let lastClientY = 0;
-  let activeDropZone: HTMLElement | null = null;
+	let isTouchDragging = $state(false);
+	let touchTranslateX = $state(0);
+	let touchTranslateY = $state(0);
+	let activeTouchId: number | null = null;
+	let startClientX = 0;
+	let startClientY = 0;
+	let lastClientX = 0;
+	let lastClientY = 0;
+	let activeDropZone: HTMLElement | null = null;
+	let currentSelectedId = $state<number | null>(null);
 
-  function handleDragStart(event: DragEvent) {
-    if (isPlaced || !event.dataTransfer) return;
+	const unsubscribeSelection = selectedPieceId.subscribe((value) => {
+		currentSelectedId = value;
+	});
 
-    event.dataTransfer.setData('text/plain', piece.id.toString());
-    event.dataTransfer.effectAllowed = 'move';
-    onDragStart?.(piece);
-  }
+	function handleDragStart(event: DragEvent) {
+		if (isPlaced || !event.dataTransfer) return;
+
+		event.dataTransfer.setData('text/plain', piece.id.toString());
+		event.dataTransfer.effectAllowed = 'move';
+		onDragStart?.(piece);
+	}
 
   function getTouchById(list: TouchList, id: number) {
     for (let i = 0; i < list.length; i++) {
@@ -210,63 +216,85 @@
     resetTouchDragState();
   }
 
-  function handleTouchStart(event: TouchEvent) {
-    if (isPlaced) return;
+	function handleTouchStart(event: TouchEvent) {
+		if (isPlaced) return;
 
-    const touch = event.changedTouches.item(0);
-    if (!touch) return;
+		const touch = event.changedTouches.item(0);
+		if (!touch) return;
 
-    event.preventDefault();
-    if (isTouchDragging) {
-      cleanupTouchListeners();
-      resetTouchDragState();
-    }
+		event.preventDefault();
+		if (isTouchDragging) {
+			cleanupTouchListeners();
+			resetTouchDragState();
+		}
 
-    activeTouchId = touch.identifier;
-    startClientX = touch.clientX;
-    startClientY = touch.clientY;
-    lastClientX = touch.clientX;
-    lastClientY = touch.clientY;
-    isTouchDragging = true;
+		activeTouchId = touch.identifier;
+		startClientX = touch.clientX;
+		startClientY = touch.clientY;
+		lastClientX = touch.clientX;
+		lastClientY = touch.clientY;
+		isTouchDragging = true;
 
-    window.addEventListener('touchmove', handleWindowTouchMove, { passive: false });
-    window.addEventListener('touchend', handleWindowTouchEnd);
-    window.addEventListener('touchcancel', handleWindowTouchEnd);
-    onDragStart?.(piece);
-  }
+		window.addEventListener('touchmove', handleWindowTouchMove, { passive: false });
+		window.addEventListener('touchend', handleWindowTouchEnd);
+		window.addEventListener('touchcancel', handleWindowTouchEnd);
+		onDragStart?.(piece);
+	}
 
-  onDestroy(() => {
-    cleanupTouchListeners();
-    resetTouchDragState(true);
-  });
+	function handleKeyDown(event: KeyboardEvent) {
+		if (isPlaced) return;
+		if (event.key !== 'Enter' && event.key !== ' ') return;
+		event.preventDefault();
+
+		if (currentSelectedId === piece.id) {
+			clearSelectedPiece();
+		} else {
+			setSelectedPiece(piece.id);
+			onDragStart?.(piece);
+		}
+	}
+
+	onDestroy(() => {
+		cleanupTouchListeners();
+		resetTouchDragState(true);
+		unsubscribeSelection();
+	});
 </script>
 
 <div
-  class="puzzle-piece relative cursor-grab select-none transition-transform hover:scale-105 touch-none"
-  class:opacity-50={isPlaced}
-  class:cursor-not-allowed={isPlaced}
-  class:cursor-grabbing={isTouchDragging}
-  class:z-50={isTouchDragging}
-  class:pointer-events-none={isTouchDragging}
-  draggable={!isPlaced}
-  ondragstart={handleDragStart}
-  ontouchstart={handleTouchStart}
-  role="img"
-  aria-label="Puzzle piece {piece.id}"
-  data-testid="puzzle-piece"
-  data-piece-id={piece.id}
-  style={
-    isTouchDragging
-      ? `transform: translate3d(${touchTranslateX}px, ${touchTranslateY}px, 0);`
-      : undefined
-  }
+	class="puzzle-piece relative cursor-grab select-none transition-transform hover:scale-105 touch-none focus:outline-none"
+	class:opacity-50={isPlaced}
+	class:cursor-not-allowed={isPlaced}
+	class:cursor-grabbing={isTouchDragging}
+	class:z-50={isTouchDragging}
+	class:pointer-events-none={isTouchDragging}
+	class:ring-2={currentSelectedId === piece.id}
+	class:ring-blue-400={currentSelectedId === piece.id}
+	draggable={!isPlaced}
+	ondragstart={handleDragStart}
+	ontouchstart={handleTouchStart}
+	onkeydown={handleKeyDown}
+	role="button"
+	tabindex={isPlaced ? -1 : 0}
+	aria-label="Puzzle piece {piece.id}"
+	aria-grabbed={currentSelectedId === piece.id}
+	aria-pressed={currentSelectedId === piece.id}
+	aria-disabled={isPlaced}
+	data-testid="puzzle-piece"
+	data-piece-id={piece.id}
+	data-selected={currentSelectedId === piece.id}
+	style={
+		isTouchDragging
+			? `transform: translate3d(${touchTranslateX}px, ${touchTranslateY}px, 0);`
+			: undefined
+	}
 >
-  <img
-    src={getPieceImageUrl(piece.puzzleId, piece.id)}
-    alt="Piece {piece.id}"
-    class="pointer-events-none h-full w-full object-contain"
-    draggable="false"
-  />
+	<img
+		src={getPieceImageUrl(piece.puzzleId, piece.id)}
+		alt="Piece {piece.id}"
+		class="pointer-events-none h-full w-full object-contain"
+		draggable="false"
+	/>
 </div>
 
 <style>

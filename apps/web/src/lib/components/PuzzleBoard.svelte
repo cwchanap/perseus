@@ -1,78 +1,99 @@
 <script lang="ts">
-  import type { Puzzle, PuzzlePiece, PlacedPiece } from '$lib/types/puzzle';
-  import { getPieceImageUrl } from '$lib/services/api';
+	import { onDestroy } from 'svelte';
+	import type { Puzzle, PuzzlePiece, PlacedPiece } from '$lib/types/puzzle';
+	import { getPieceImageUrl } from '$lib/services/api';
+	import { selectedPieceId, clearSelectedPiece } from '$lib/stores/pieceSelection';
 
-  interface Props {
-    puzzle: Puzzle;
-    placedPieces: PlacedPiece[];
-    onPiecePlaced: (pieceId: number, x: number, y: number) => void;
-    onIncorrectPlacement: (pieceId: number) => void;
-  }
+	interface Props {
+		puzzle: Puzzle;
+		placedPieces: PlacedPiece[];
+		onPiecePlaced: (pieceId: number, x: number, y: number) => void;
+		onIncorrectPlacement: (pieceId: number) => void;
+	}
 
-  let { puzzle, placedPieces, onPiecePlaced, onIncorrectPlacement }: Props = $props();
+	let { puzzle, placedPieces, onPiecePlaced, onIncorrectPlacement }: Props = $props();
 
-  let dragOverCell: { x: number; y: number } | null = $state(null);
+	let dragOverCell: { x: number; y: number } | null = $state(null);
+	let currentSelectedId = $state<number | null>(null);
 
-  function isPiecePlaced(
-    x: number,
-    y: number,
-    excludePieceId?: number
-  ): PlacedPiece | undefined {
-    return placedPieces.find((p) => p.x === x && p.y === y && p.pieceId !== excludePieceId);
-  }
+	const unsubscribeSelection = selectedPieceId.subscribe((value) => {
+		currentSelectedId = value;
+	});
 
-  function getPieceAtPosition(x: number, y: number): PuzzlePiece | undefined {
-    const placed = isPiecePlaced(x, y);
-    if (!placed) return undefined;
-    return puzzle.pieces.find((p) => p.id === placed.pieceId);
-  }
+	function isPiecePlaced(
+		x: number,
+		y: number,
+		excludePieceId?: number
+	): PlacedPiece | undefined {
+		return placedPieces.find((p) => p.x === x && p.y === y && p.pieceId !== excludePieceId);
+	}
 
-  function handleDragOver(event: DragEvent, x: number, y: number) {
-    event.preventDefault();
-    if (event.dataTransfer) {
-      event.dataTransfer.dropEffect = 'move';
-    }
-    dragOverCell = { x, y };
-  }
+	function getPieceAtPosition(x: number, y: number): PuzzlePiece | undefined {
+		const placed = isPiecePlaced(x, y);
+		if (!placed) return undefined;
+		return puzzle.pieces.find((p) => p.id === placed.pieceId);
+	}
 
-  function handleDragLeave() {
-    dragOverCell = null;
-  }
+	function handleDragOver(event: DragEvent, x: number, y: number) {
+		event.preventDefault();
+		if (event.dataTransfer) {
+			event.dataTransfer.dropEffect = 'move';
+		}
+		dragOverCell = { x, y };
+	}
 
-  function handleDrop(event: DragEvent, x: number, y: number) {
-    event.preventDefault();
-    dragOverCell = null;
+	function handleDragLeave() {
+		dragOverCell = null;
+	}
 
-    if (!event.dataTransfer) return;
+	function placePiece(pieceId: number, x: number, y: number): void {
+		const piece = puzzle.pieces.find((p) => p.id === pieceId);
+		if (!piece) return;
 
-    const pieceIdStr = event.dataTransfer.getData('text/plain');
-    if (!pieceIdStr) return;
+		if (isPiecePlaced(x, y, pieceId)) return;
 
-    const pieceId = parseInt(pieceIdStr, 10);
-    if (Number.isNaN(pieceId)) return;
+		if (piece.correctX === x && piece.correctY === y) {
+			onPiecePlaced(pieceId, x, y);
+		} else {
+			onIncorrectPlacement(pieceId);
+		}
+	}
 
-    const piece = puzzle.pieces.find((p) => p.id === pieceId);
-    if (!piece) return;
+	function handleDrop(event: DragEvent, x: number, y: number) {
+		event.preventDefault();
+		dragOverCell = null;
 
-    // Check if cell is already occupied
-    if (isPiecePlaced(x, y, pieceId)) return;
+		if (!event.dataTransfer) return;
 
-    // Check if piece is placed in correct position
-    if (piece.correctX === x && piece.correctY === y) {
-      onPiecePlaced(pieceId, x, y);
-    } else {
-      onIncorrectPlacement(pieceId);
-    }
-  }
+		const pieceIdStr = event.dataTransfer.getData('text/plain');
+		if (!pieceIdStr) return;
 
-  function getCellStyle(x: number, y: number): string {
-    const isOver = dragOverCell?.x === x && dragOverCell?.y === y;
-    const hasPlaced = isPiecePlaced(x, y);
+		const pieceId = parseInt(pieceIdStr, 10);
+		if (Number.isNaN(pieceId)) return;
 
-    if (hasPlaced) return 'bg-transparent';
-    if (isOver) return 'bg-blue-100 border-blue-400';
-    return 'bg-gray-100 border-gray-300';
-  }
+		placePiece(pieceId, x, y);
+	}
+
+	function handleKeyDown(event: KeyboardEvent, x: number, y: number) {
+		if (event.key !== 'Enter' && event.key !== ' ') return;
+		if (currentSelectedId === null) return;
+		event.preventDefault();
+		placePiece(currentSelectedId, x, y);
+		clearSelectedPiece();
+	}
+
+	function getCellStyle(x: number, y: number): string {
+		const isOver = dragOverCell?.x === x && dragOverCell?.y === y;
+		const hasPlaced = isPiecePlaced(x, y);
+
+		if (hasPlaced) return 'bg-transparent';
+		if (isOver) return 'bg-blue-100 border-blue-400';
+		return 'bg-gray-100 border-gray-300';
+	}
+
+	onDestroy(() => {
+		unsubscribeSelection();
+	});
 </script>
 
 <div
@@ -88,6 +109,7 @@
         ondragover={(e) => handleDragOver(e, x, y)}
         ondragleave={handleDragLeave}
         ondrop={(e) => handleDrop(e, x, y)}
+        onkeydown={(e) => handleKeyDown(e, x, y)}
         data-testid="drop-zone"
         data-x={x}
         data-y={y}

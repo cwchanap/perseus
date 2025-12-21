@@ -9,6 +9,7 @@ import {
   verifySession,
   requireAuth
 } from '../middleware/auth';
+import { loginRateLimit, resetLoginAttempts } from '../middleware/rate-limit';
 import { generatePuzzle, isValidPieceCount } from '../services/puzzle-generator';
 import { createPuzzle as storePuzzle, deletePuzzle as deleteStoredPuzzle, puzzleExists } from '../services/storage';
 import { MAX_FILE_SIZE, ALLOWED_MIME_TYPES } from '../types';
@@ -27,7 +28,7 @@ const ADMIN_PASSKEY_DIGEST = createHash('sha256').update(ADMIN_PASSKEY).digest()
 const DATA_DIR = process.env.DATA_DIR || './data';
 
 // POST /api/admin/login - Admin login
-admin.post('/login', async (c) => {
+admin.post('/login', loginRateLimit, async (c) => {
   try {
     const body = await c.req.json();
     const { passkey } = body as { passkey?: string };
@@ -49,6 +50,7 @@ admin.post('/login', async (c) => {
 			role: 'admin'
 		});
     setSessionCookie(c, token);
+		resetLoginAttempts(c);
 
     return c.json({ success: true });
   } catch (error) {
