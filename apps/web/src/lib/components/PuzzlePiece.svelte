@@ -138,7 +138,7 @@
     window.removeEventListener('touchcancel', handleWindowTouchEnd);
   }
 
-  function resetTouchDragState() {
+  function resetTouchDragState(forceLeave = false) {
     isTouchDragging = false;
     touchTranslateX = 0;
     touchTranslateY = 0;
@@ -148,7 +148,7 @@
     lastClientX = 0;
     lastClientY = 0;
 
-    if (activeDropZone) {
+    if (activeDropZone && forceLeave) {
       dispatchSyntheticDragEvent(activeDropZone, 'dragleave');
       activeDropZone = null;
     }
@@ -232,7 +232,7 @@
 
   onDestroy(() => {
     cleanupTouchListeners();
-    resetTouchDragState();
+    resetTouchDragState(true);
   });
 </script>
 

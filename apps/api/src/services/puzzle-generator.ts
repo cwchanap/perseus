@@ -76,7 +76,12 @@ export async function generatePuzzle(
   const pieces: PuzzlePiece[] = [];
   const piecePaths: string[] = [];
 
+  const bottomEdgesForAbove: Array<'flat' | 'tab' | 'blank'> = new Array(cols).fill('flat');
+  const opposite = (edge: 'flat' | 'tab' | 'blank'): 'flat' | 'tab' | 'blank' =>
+    edge === 'tab' ? 'blank' : edge === 'blank' ? 'tab' : 'flat';
+
   for (let row = 0; row < rows; row++) {
+    let leftEdgeForNext = 'flat' as 'flat' | 'tab' | 'blank';
     for (let col = 0; col < cols; col++) {
       const pieceId = row * cols + col;
       const piecePath = path.join(piecesDir, `${pieceId}.png`);
@@ -96,12 +101,20 @@ export async function generatePuzzle(
         .png()
         .toFile(piecePath);
 
-      // Determine edge types based on position
+      // Determine edge types with matched neighbors
+      const topEdge = row === 0 ? 'flat' : opposite(bottomEdgesForAbove[col]);
+      const rightEdge = col === cols - 1 ? 'flat' : ((row + col) % 2 === 0 ? 'tab' : 'blank');
+      const bottomEdge = row === rows - 1 ? 'flat' : ((row + col) % 2 === 0 ? 'blank' : 'tab');
+      const leftEdge = col === 0 ? 'flat' : opposite(leftEdgeForNext);
+
+      bottomEdgesForAbove[col] = bottomEdge;
+      leftEdgeForNext = rightEdge;
+
       const edges = {
-        top: row === 0 ? 'flat' : ((row - 1) % 2 === 0 ? 'blank' : 'tab'),
-        right: col === cols - 1 ? 'flat' : (col % 2 === 0 ? 'tab' : 'blank'),
-        bottom: row === rows - 1 ? 'flat' : (row % 2 === 0 ? 'tab' : 'blank'),
-        left: col === 0 ? 'flat' : ((col - 1) % 2 === 0 ? 'blank' : 'tab')
+        top: topEdge,
+        right: rightEdge,
+        bottom: bottomEdge,
+        left: leftEdge
       } as const;
 
       pieces.push({

@@ -71,7 +71,11 @@
   // Re-check when route changes (but not on login page)
   $effect(() => {
     if (isLoginPage || redirecting) return;
-    void runSessionCheck();
+    sessionCheckQueued = true;
+    if (!sessionCheckInFlight) {
+      sessionCheckQueued = false;
+      void runSessionCheck();
+    }
   });
 
   $effect(() => {
