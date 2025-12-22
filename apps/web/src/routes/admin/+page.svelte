@@ -2,6 +2,7 @@
   import { onDestroy, onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { logout, createPuzzle, deletePuzzle, fetchPuzzles, ApiError } from '$lib/services/api';
+  import { clearProgress } from '$lib/services/progress';
   import type { PuzzleSummary } from '$lib/types/puzzle';
 
   const ALLOWED_PIECE_COUNTS = [9, 16, 25, 36, 49, 64, 100];
@@ -150,6 +151,7 @@
 
     try {
       await deletePuzzle(puzzleId);
+      clearProgress(puzzleId);
       await loadPuzzles();
     } catch (e) {
       alert('Failed to delete puzzle');

@@ -71,11 +71,11 @@
   // Re-check when route changes (but not on login page)
   $effect(() => {
     if (isLoginPage || redirecting) return;
-    sessionCheckQueued = true;
-    if (!sessionCheckInFlight) {
-      sessionCheckQueued = false;
-      void runSessionCheck();
+    if (sessionCheckInFlight) {
+      sessionCheckQueued = true;
+      return;
     }
+    void runSessionCheck();
   });
 
   $effect(() => {
@@ -89,10 +89,8 @@
   {@render children()}
 {:else if checking}
   <div class="flex min-h-screen items-center justify-center bg-gray-50">
-    <div class="flex items-center gap-3">
-      <div class="h-6 w-6 animate-spin rounded-full border-3 border-blue-500 border-t-transparent"></div>
-      <span class="text-gray-600">Checking authentication...</span>
-    </div>
+    <div class="h-6 w-6 animate-spin rounded-full border-3 border-blue-500 border-t-transparent"></div>
+    <span class="text-gray-600">Checking authentication...</span>
   </div>
 {:else if authenticated}
   {@render children()}
