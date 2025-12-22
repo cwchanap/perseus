@@ -17,6 +17,7 @@
   let pieceCount = $state(16);
   let imageFile: File | null = $state(null);
   let imagePreview: string | null = $state(null);
+  let imageInput: HTMLInputElement | null = $state(null);
   let creating = $state(false);
   let formError: string | null = $state(null);
   let successMessage: string | null = $state(null);
@@ -65,6 +66,14 @@
 		}
   }
 
+  function clearSelectedImage() {
+    imageFile = null;
+    imagePreview = null;
+    if (imageInput) {
+      imageInput.value = '';
+    }
+  }
+
   function handleImageSelect(event: Event) {
     const input = event.target as HTMLInputElement;
     const file = input.files?.[0];
@@ -75,6 +84,15 @@
       reader.onload = (e) => {
         imagePreview = e.target?.result as string;
       };
+      reader.onerror = () => {
+        console.error('Failed to read image for preview', reader.error);
+        clearSelectedImage();
+        formError = 'Failed to load image preview';
+      };
+      reader.onabort = () => {
+        clearSelectedImage();
+        formError = 'Image preview was aborted';
+      };
       reader.readAsDataURL(file);
     }
   }
@@ -82,8 +100,7 @@
   function clearForm() {
     name = '';
     pieceCount = 16;
-    imageFile = null;
-    imagePreview = null;
+    clearSelectedImage();
     formError = null;
   }
 
@@ -239,7 +256,7 @@
                   />
                   <button
                     type="button"
-                    onclick={() => { imageFile = null; imagePreview = null; }}
+                    onclick={clearSelectedImage}
                     class="absolute right-0 top-0 rounded-full bg-red-500 p-1 text-white hover:bg-red-600"
                     aria-label="Remove image"
                   >
@@ -256,6 +273,7 @@
                   <span class="mt-2 text-sm text-gray-500">Click to upload image</span>
                   <span class="text-xs text-gray-400">JPEG, PNG, WebP (max 10MB)</span>
                   <input
+                    bind:this={imageInput}
                     type="file"
                     accept="image/jpeg,image/png,image/webp"
                     class="hidden"

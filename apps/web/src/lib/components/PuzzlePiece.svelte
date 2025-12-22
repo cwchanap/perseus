@@ -23,6 +23,7 @@
 	let lastClientX = 0;
 	let lastClientY = 0;
 	let activeDropZone: HTMLElement | null = null;
+	let touchListenersAttached = false;
 	let currentSelectedId = $state<number | null>(null);
 
 	const unsubscribeSelection = selectedPieceId.subscribe((value) => {
@@ -147,6 +148,7 @@
     window.removeEventListener('touchmove', handleWindowTouchMove);
     window.removeEventListener('touchend', handleWindowTouchEnd);
     window.removeEventListener('touchcancel', handleWindowTouchEnd);
+		touchListenersAttached = false;
   }
 
   function resetTouchDragState(forceLeave = false) {
@@ -223,7 +225,7 @@
 		if (!touch) return;
 
 		event.preventDefault();
-		if (isTouchDragging) {
+		if (touchListenersAttached) {
 			cleanupTouchListeners();
 			resetTouchDragState();
 		}
@@ -238,6 +240,7 @@
 		window.addEventListener('touchmove', handleWindowTouchMove, { passive: false });
 		window.addEventListener('touchend', handleWindowTouchEnd);
 		window.addEventListener('touchcancel', handleWindowTouchEnd);
+		touchListenersAttached = true;
 		onDragStart?.(piece);
 	}
 
