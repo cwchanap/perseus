@@ -28,14 +28,9 @@ function getClientKey(c: Context): string {
 }
 
 function applyWindow(entry: AttemptRecord, now: number): void {
-	if (entry.blockedUntil && entry.blockedUntil > now) {
-		return;
-	}
-
 	if (now - entry.windowStart > ATTEMPT_WINDOW_MS) {
 		entry.attempts = 0;
 		entry.windowStart = now;
-		entry.blockedUntil = undefined;
 	}
 }
 
@@ -96,3 +91,18 @@ export function resetLoginAttempts(c: Context): void {
 	if (!key) return;
 	loginAttempts.delete(key);
 }
+
+// Clean up entries older than 1 hour
+function cleanupOldEntries(): void {
+	const now = Date.now();
+	const maxAge = 60 * 60 * 1000; // 1 hour
+
+	for (const [key, entry] of loginAttempts.entries()) {
+		if (now - entry.windowStart > maxAge && (!entry.blockedUntil || entry.blockedUntil < now)) {
+			loginAttempts.delete(key);
+		}
+	}
+}
+
+// Run cleanup every 30 minutes
+setInterval(cleanupOldEntries, 30 * 60 * 1000);
