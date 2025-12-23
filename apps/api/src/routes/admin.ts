@@ -176,7 +176,7 @@ admin.delete('/puzzles/:id', requireAuth, async (c) => {
 	const deleted = await deleteStoredPuzzle(id);
 
 	if (!deleted) {
-		return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
+		return c.json({ error: 'internal_error', message: 'Failed to delete puzzle' }, 500);
 	}
 
   return c.body(null, 204);

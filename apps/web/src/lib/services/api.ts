@@ -181,14 +181,8 @@ export async function deletePuzzle(id: string): Promise<void> {
     method: 'DELETE',
     credentials: 'include'
   });
-  if (!response.ok && response.status !== 204) {
-    const errorData = (await response.json().catch(() => ({}))) as ErrorResponse;
-    throw new ApiError(
-      response.status,
-      errorData.error || 'Unknown error',
-      errorData.message || response.statusText
-    );
-  }
+
+  await handleVoidResponse(response);
 }
 
 export { ApiError };

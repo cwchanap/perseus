@@ -265,7 +265,7 @@
 </script>
 
 <div
-	class="puzzle-piece relative cursor-grab select-none transition-transform hover:scale-105 touch-none focus:outline-none"
+	class="puzzle-piece relative cursor-grab select-none transition-transform hover:scale-105 touch-none focus:outline-hidden"
 	class:opacity-50={isPlaced}
 	class:cursor-not-allowed={isPlaced}
 	class:cursor-grabbing={isTouchDragging}
