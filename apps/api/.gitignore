@@ -13,3 +13,6 @@ Thumbs.db
 
 # Build
 *.log
+
+# Puzzle data storage
+data/
