@@ -28,6 +28,10 @@ function getClientKey(c: Context): string {
 }
 
 function applyWindow(entry: AttemptRecord, now: number): void {
+	if (entry.blockedUntil && entry.blockedUntil > now) {
+		return;
+	}
+
 	if (now - entry.windowStart > ATTEMPT_WINDOW_MS) {
 		entry.attempts = 0;
 		entry.windowStart = now;
