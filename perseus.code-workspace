@@ -1,0 +1,52 @@
+{
+	"folders": [
+		{
+			"name": "Workspace Root",
+			"path": "."
+		},
+		{
+			"name": "Web App",
+			"path": "apps/web"
+		},
+		{
+			"name": "API",
+			"path": "apps/api"
+		}
+	],
+	"settings": {
+		"files.associations": {
+			"*.css": "tailwindcss"
+		},
+		"editor.formatOnSave": true,
+		"editor.codeActionsOnSave": {
+			"source.fixAll.eslint": "explicit"
+		},
+		"typescript.preferences.autoImportFileExcludePatterns": [
+			"**/node_modules/**"
+		],
+		"search.exclude": {
+			"**/node_modules": true,
+			"**/dist": true,
+			"**/build": true,
+			"**/.turbo": true
+		},
+		"files.watcherExclude": {
+			"**/.git/objects/**": true,
+			"**/.git/subtree-cache/**": true,
+			"**/node_modules/**": true,
+			"**/dist/**": true,
+			"**/build/**": true,
+			"**/.turbo/**": true
+		}
+	},
+	"extensions": {
+		"recommendations": [
+			"svelte.svelte-vscode",
+			"bradlc.vscode-tailwindcss",
+			"esbenp.prettier-vscode",
+			"dbaeumer.vscode-eslint",
+			"ms-vscode.vscode-typescript-next",
+			"oven.bun-vscode"
+		]
+	}
+}
