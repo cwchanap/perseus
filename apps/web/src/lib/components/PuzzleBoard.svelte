@@ -20,11 +20,7 @@
 		currentSelectedId = value;
 	});
 
-	function isPiecePlaced(
-		x: number,
-		y: number,
-		excludePieceId?: number
-	): PlacedPiece | undefined {
+	function isPiecePlaced(x: number, y: number, excludePieceId?: number): PlacedPiece | undefined {
 		return placedPieces.find((p) => p.x === x && p.y === y && p.pieceId !== excludePieceId);
 	}
 
@@ -97,34 +93,34 @@
 </script>
 
 <div
-  class="puzzle-board grid gap-0.5 rounded-lg bg-gray-200 p-1"
-  style="grid-template-columns: repeat({puzzle.gridCols}, 1fr); aspect-ratio: {puzzle.imageWidth} / {puzzle.imageHeight};"
-  data-testid="puzzle-board"
+	class="puzzle-board grid gap-0.5 rounded-lg bg-gray-200 p-1"
+	style="grid-template-columns: repeat({puzzle.gridCols}, 1fr); aspect-ratio: {puzzle.imageWidth} / {puzzle.imageHeight};"
+	data-testid="puzzle-board"
 >
-  {#each { length: puzzle.gridRows } as _, y}
-    {#each { length: puzzle.gridCols } as _, x}
-      {@const placedPiece = getPieceAtPosition(x, y)}
-      <div
-        class="drop-zone relative border-2 border-dashed transition-colors {getCellStyle(x, y)}"
-        ondragover={(e) => handleDragOver(e, x, y)}
-        ondragleave={handleDragLeave}
-        ondrop={(e) => handleDrop(e, x, y)}
-        onkeydown={(e) => handleKeyDown(e, x, y)}
-        data-testid="drop-zone"
-        data-x={x}
-        data-y={y}
-        role="button"
-        tabindex="0"
-        aria-label="Drop zone at position {x}, {y}"
-      >
-        {#if placedPiece}
-          <img
-            src={getPieceImageUrl(puzzle.id, placedPiece.id)}
-            alt="Placed piece"
-            class="absolute inset-0 h-full w-full object-contain"
-          />
-        {/if}
-      </div>
-    {/each}
-  {/each}
+	{#each Array(puzzle.gridRows) as _, y (y)}
+		{#each Array(puzzle.gridCols) as _, x (x)}
+			{@const placedPiece = getPieceAtPosition(x, y)}
+			<div
+				class="drop-zone relative border-2 border-dashed transition-colors {getCellStyle(x, y)}"
+				ondragover={(e) => handleDragOver(e, x, y)}
+				ondragleave={handleDragLeave}
+				ondrop={(e) => handleDrop(e, x, y)}
+				onkeydown={(e) => handleKeyDown(e, x, y)}
+				data-testid="drop-zone"
+				data-x={x}
+				data-y={y}
+				role="button"
+				tabindex="0"
+				aria-label="Drop zone at position {x}, {y}"
+			>
+				{#if placedPiece}
+					<img
+						src={getPieceImageUrl(puzzle.id, placedPiece.id)}
+						alt="Placed piece"
+						class="absolute inset-0 h-full w-full object-contain"
+					/>
+				{/if}
+			</div>
+		{/each}
+	{/each}
 </div>

@@ -1,11 +1,10 @@
 // API client service for Jigsaw Puzzle Web App
 import type {
-  Puzzle,
-  PuzzleSummary,
-  PuzzleListResponse,
-  LoginResponse,
-  SessionResponse,
-  ErrorResponse
+	Puzzle,
+	PuzzleSummary,
+	PuzzleListResponse,
+	LoginResponse,
+	SessionResponse
 } from '$lib/types/puzzle';
 
 import { env } from '$env/dynamic/public';
@@ -13,176 +12,172 @@ import { env } from '$env/dynamic/public';
 const API_BASE = env.PUBLIC_API_BASE ?? 'http://localhost:3000';
 
 class ApiError extends Error {
-  constructor(
-    public status: number,
-    public error: string,
-    message: string
-  ) {
-    super(message);
-    this.name = 'ApiError';
-  }
+	constructor(
+		public status: number,
+		public error: string,
+		message: string
+	) {
+		super(message);
+		this.name = 'ApiError';
+	}
 }
 
 function parseJsonSafely(response: Response): Promise<unknown> {
-  return response
-    .clone()
-    .json()
-    .catch(() => null);
+	return response
+		.clone()
+		.json()
+		.catch(() => null);
 }
 
 function normalizeErrorPayload(
-  payload: unknown,
-  fallbackMessage: string
+	payload: unknown,
+	fallbackMessage: string
 ): { error: string; message: string } {
-  if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
-    const record = payload as Record<string, unknown>;
-    const error = typeof record.error === 'string' ? record.error : undefined;
-    const message = typeof record.message === 'string' ? record.message : undefined;
+	if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+		const record = payload as Record<string, unknown>;
+		const error = typeof record.error === 'string' ? record.error : undefined;
+		const message = typeof record.message === 'string' ? record.message : undefined;
 
-    return {
-      error: error ?? 'Unknown error',
-      message: message ?? fallbackMessage
-    };
-  }
+		return {
+			error: error ?? 'Unknown error',
+			message: message ?? fallbackMessage
+		};
+	}
 
-  return {
-    error: 'Unknown error',
-    message: fallbackMessage
-  };
+	return {
+		error: 'Unknown error',
+		message: fallbackMessage
+	};
 }
 
 async function handleResponse<T>(response: Response): Promise<T> {
-  if (!response.ok) {
-    const parsedError = await parseJsonSafely(response);
-    const { error, message } = normalizeErrorPayload(parsedError, response.statusText);
-    throw new ApiError(response.status, error, message);
-  }
+	if (!response.ok) {
+		const parsedError = await parseJsonSafely(response);
+		const { error, message } = normalizeErrorPayload(parsedError, response.statusText);
+		throw new ApiError(response.status, error, message);
+	}
 
-  let parsedBody: unknown;
-  try {
-    parsedBody = await response.json();
-  } catch {
-    throw new Error(`Invalid JSON response (${response.status} ${response.statusText})`);
-  }
+	let parsedBody: unknown;
+	try {
+		parsedBody = await response.json();
+	} catch {
+		throw new Error(`Invalid JSON response (${response.status} ${response.statusText})`);
+	}
 
-  if (parsedBody === null || parsedBody === undefined) {
-    throw new Error(`Invalid JSON response (${response.status} ${response.statusText})`);
-  }
+	if (parsedBody === null || parsedBody === undefined) {
+		throw new Error(`Invalid JSON response (${response.status} ${response.statusText})`);
+	}
 
-  if (typeof parsedBody !== 'object' || Array.isArray(parsedBody)) {
-    throw new Error(
-      `Unexpected response format (${response.status} ${response.statusText}): expected object`
-    );
-  }
+	if (typeof parsedBody !== 'object' || Array.isArray(parsedBody)) {
+		throw new Error(
+			`Unexpected response format (${response.status} ${response.statusText}): expected object`
+		);
+	}
 
-  return parsedBody as T;
+	return parsedBody as T;
 }
 
 async function handleVoidResponse(response: Response): Promise<void> {
-  if (!response.ok) {
-    const parsedError = await parseJsonSafely(response);
-    const { error, message } = normalizeErrorPayload(parsedError, response.statusText);
-    throw new ApiError(response.status, error, message);
-  }
+	if (!response.ok) {
+		const parsedError = await parseJsonSafely(response);
+		const { error, message } = normalizeErrorPayload(parsedError, response.statusText);
+		throw new ApiError(response.status, error, message);
+	}
 
-  if (response.status === 204) {
-    return;
-  }
+	if (response.status === 204) {
+		return;
+	}
 
-  const contentLength = response.headers.get('content-length');
-  const contentType = response.headers.get('content-type')?.toLowerCase();
+	const contentLength = response.headers.get('content-length');
+	const contentType = response.headers.get('content-type')?.toLowerCase();
 
-  if (contentLength === '0' || !contentType) {
-    return;
-  }
+	if (contentLength === '0' || !contentType) {
+		return;
+	}
 
-  if (!contentType.includes('application/json')) {
-    return;
-  }
+	if (!contentType.includes('application/json')) {
+		return;
+	}
 
-  // Best-effort parse to surface malformed JSON responses
-  await parseJsonSafely(response);
+	// Best-effort parse to surface malformed JSON responses
+	await parseJsonSafely(response);
 }
 
 // Puzzle endpoints
 export async function fetchPuzzles(): Promise<PuzzleSummary[]> {
-  const response = await fetch(`${API_BASE}/api/puzzles`);
-  const data = await handleResponse<PuzzleListResponse>(response);
-  return data.puzzles;
+	const response = await fetch(`${API_BASE}/api/puzzles`);
+	const data = await handleResponse<PuzzleListResponse>(response);
+	return data.puzzles;
 }
 
 export async function fetchPuzzle(id: string): Promise<Puzzle> {
-  const response = await fetch(`${API_BASE}/api/puzzles/${id}`);
-  return handleResponse<Puzzle>(response);
+	const response = await fetch(`${API_BASE}/api/puzzles/${id}`);
+	return handleResponse<Puzzle>(response);
 }
 
 export function getThumbnailUrl(puzzleId: string): string {
-  return `${API_BASE}/api/puzzles/${puzzleId}/thumbnail`;
+	return `${API_BASE}/api/puzzles/${puzzleId}/thumbnail`;
 }
 
 export function getPieceImageUrl(puzzleId: string, pieceId: number): string {
-  return `${API_BASE}/api/puzzles/${puzzleId}/pieces/${pieceId}/image`;
+	return `${API_BASE}/api/puzzles/${puzzleId}/pieces/${pieceId}/image`;
 }
 
 // Admin auth endpoints
 export async function login(passkey: string): Promise<LoginResponse> {
-  const response = await fetch(`${API_BASE}/api/admin/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: JSON.stringify({ passkey })
-  });
-  return handleResponse<LoginResponse>(response);
+	const response = await fetch(`${API_BASE}/api/admin/login`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		credentials: 'include',
+		body: JSON.stringify({ passkey })
+	});
+	return handleResponse<LoginResponse>(response);
 }
 
 export async function logout(): Promise<void> {
-  const response = await fetch(`${API_BASE}/api/admin/logout`, {
-    method: 'POST',
-    credentials: 'include'
-  });
+	const response = await fetch(`${API_BASE}/api/admin/logout`, {
+		method: 'POST',
+		credentials: 'include'
+	});
 
-  await handleVoidResponse(response);
+	await handleVoidResponse(response);
 }
 
 export async function checkSession(): Promise<boolean> {
-  try {
-    const response = await fetch(`${API_BASE}/api/admin/session`, {
-      credentials: 'include'
-    });
-    if (!response.ok) return false;
-    const data = await handleResponse<SessionResponse>(response);
-    return data.authenticated;
-  } catch {
-    return false;
-  }
+	try {
+		const response = await fetch(`${API_BASE}/api/admin/session`, {
+			credentials: 'include'
+		});
+		if (!response.ok) return false;
+		const data = await handleResponse<SessionResponse>(response);
+		return data.authenticated;
+	} catch {
+		return false;
+	}
 }
 
 // Admin puzzle management
-export async function createPuzzle(
-  name: string,
-  pieceCount: number,
-  image: File
-): Promise<Puzzle> {
-  const formData = new FormData();
-  formData.append('name', name);
-  formData.append('pieceCount', pieceCount.toString());
-  formData.append('image', image);
+export async function createPuzzle(name: string, pieceCount: number, image: File): Promise<Puzzle> {
+	const formData = new FormData();
+	formData.append('name', name);
+	formData.append('pieceCount', pieceCount.toString());
+	formData.append('image', image);
 
-  const response = await fetch(`${API_BASE}/api/admin/puzzles`, {
-    method: 'POST',
-    credentials: 'include',
-    body: formData
-  });
-  return handleResponse<Puzzle>(response);
+	const response = await fetch(`${API_BASE}/api/admin/puzzles`, {
+		method: 'POST',
+		credentials: 'include',
+		body: formData
+	});
+	return handleResponse<Puzzle>(response);
 }
 
 export async function deletePuzzle(id: string): Promise<void> {
-  const response = await fetch(`${API_BASE}/api/admin/puzzles/${id}`, {
-    method: 'DELETE',
-    credentials: 'include'
-  });
+	const response = await fetch(`${API_BASE}/api/admin/puzzles/${id}`, {
+		method: 'DELETE',
+		credentials: 'include'
+	});
 
-  await handleVoidResponse(response);
+	await handleVoidResponse(response);
 }
 
 export { ApiError };

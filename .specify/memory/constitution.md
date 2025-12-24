@@ -40,6 +40,7 @@ TDD cycle MUST be followed for all feature work:
 4. Refactor while keeping tests green
 
 Test requirements:
+
 - Unit tests for all services, utilities, and complex logic
 - Component tests for Svelte components with user interactions
 - E2E tests for critical user journeys
@@ -113,12 +114,14 @@ Before any PR merge:
 This constitution supersedes all other development practices in this repository.
 
 **Amendments**:
+
 - Proposed changes MUST be documented with rationale
 - Changes require version bump following semver (MAJOR for principle changes, MINOR for additions,
   PATCH for clarifications)
 - All existing code SHOULD be migrated to comply with amended principles
 
 **Compliance**:
+
 - All PRs MUST verify compliance with constitution principles
 - Violations require explicit justification in PR description
 - Constitution Check in plan.md MUST pass before implementation

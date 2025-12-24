@@ -1,8 +1,13 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
+	import { SvelteMap } from 'svelte/reactivity';
 	import type { PuzzlePiece } from '$lib/types/puzzle';
 	import { getPieceImageUrl } from '$lib/services/api';
-	import { selectedPieceId, setSelectedPiece, clearSelectedPiece } from '$lib/stores/pieceSelection';
+	import {
+		selectedPieceId,
+		setSelectedPiece,
+		clearSelectedPiece
+	} from '$lib/stores/pieceSelection';
 
 	interface Props {
 		piece: PuzzlePiece;
@@ -38,185 +43,187 @@
 		onDragStart?.(piece);
 	}
 
-  function getTouchById(list: TouchList, id: number) {
-    for (let i = 0; i < list.length; i++) {
-      const t = list.item(i);
-      if (t && t.identifier === id) return t;
-    }
-    return null;
-  }
+	function getTouchById(list: TouchList, id: number) {
+		for (let i = 0; i < list.length; i++) {
+			const t = list.item(i);
+			if (t && t.identifier === id) return t;
+		}
+		return null;
+	}
 
-  function getDropZoneAtPoint(x: number, y: number): HTMLElement | null {
-    const element = document.elementFromPoint(x, y);
-    if (!element) return null;
-    return element.closest('.drop-zone') as HTMLElement | null;
-  }
+	function getDropZoneAtPoint(x: number, y: number): HTMLElement | null {
+		const element = document.elementFromPoint(x, y);
+		if (!element) return null;
+		return element.closest('.drop-zone') as HTMLElement | null;
+	}
 
-  function createDataTransfer(pieceId: number): DataTransfer {
-    if (typeof DataTransfer !== 'undefined') {
-      const dt = new DataTransfer();
-      dt.setData('text/plain', pieceId.toString());
-      dt.effectAllowed = 'move';
-      return dt;
-    }
+	function createDataTransfer(pieceId: number): DataTransfer {
+		if (typeof DataTransfer !== 'undefined') {
+			const dt = new DataTransfer();
+			dt.setData('text/plain', pieceId.toString());
+			dt.effectAllowed = 'move';
+			return dt;
+		}
 
-    const store = new Map<string, string>();
-    const items: DataTransferItem[] = [];
-    const emptyItemList = items as unknown as DataTransferItemList;
-    const emptyFileList = [] as unknown as FileList;
-    const getTypes = () => Array.from(store.keys());
+		const store = new SvelteMap<string, string>();
+		const items: DataTransferItem[] = [];
+		const emptyItemList = items as unknown as DataTransferItemList;
+		const emptyFileList = [] as unknown as FileList;
+		const getTypes = () => Array.from(store.keys());
 
-    store.set('text/plain', pieceId.toString());
-    items.push({
-      kind: 'string',
-      type: 'text/plain',
-      getAsFile: () => null,
-      getAsString: (callback: (data: string) => void) => callback(pieceId.toString())
-    } as unknown as DataTransferItem);
+		store.set('text/plain', pieceId.toString());
+		items.push({
+			kind: 'string',
+			type: 'text/plain',
+			getAsFile: () => null,
+			getAsString: (callback: (data: string) => void) => callback(pieceId.toString())
+		} as unknown as DataTransferItem);
 
-    return {
-      dropEffect: 'none',
-      effectAllowed: 'move',
-      get types() {
-        return getTypes();
-      },
-      files: emptyFileList,
-      items: emptyItemList,
-      clearData(format?: string) {
-        if (format) {
-          store.delete(format);
-          const idx = items.findIndex((i) => i.type === format);
-          if (idx >= 0) items.splice(idx, 1);
-        } else {
-          store.clear();
-          items.splice(0, items.length);
-        }
-      },
-      getData: (type: string) => store.get(type) ?? '',
-      setData(format: string, data: string) {
-        store.set(format, data);
-        const existingIndex = items.findIndex((i) => i.type === format);
-        const item = {
-          kind: 'string',
-          type: format,
-          getAsFile: () => null,
-          getAsString: (callback: (value: string) => void) => callback(data)
-        } as unknown as DataTransferItem;
+		return {
+			dropEffect: 'none',
+			effectAllowed: 'move',
+			get types() {
+				return getTypes();
+			},
+			files: emptyFileList,
+			items: emptyItemList,
+			clearData(format?: string) {
+				if (format) {
+					store.delete(format);
+					const idx = items.findIndex((i) => i.type === format);
+					if (idx >= 0) items.splice(idx, 1);
+				} else {
+					store.clear();
+					items.splice(0, items.length);
+				}
+			},
+			getData: (type: string) => store.get(type) ?? '',
+			setData(format: string, data: string) {
+				store.set(format, data);
+				const existingIndex = items.findIndex((i) => i.type === format);
+				const item = {
+					kind: 'string',
+					type: format,
+					getAsFile: () => null,
+					getAsString: (callback: (value: string) => void) => callback(data)
+				} as unknown as DataTransferItem;
 
-        if (existingIndex >= 0) {
-          items.splice(existingIndex, 1, item);
-        } else {
-          items.push(item);
-        }
-      }
-    } as unknown as DataTransfer;
-  }
+				if (existingIndex >= 0) {
+					items.splice(existingIndex, 1, item);
+				} else {
+					items.push(item);
+				}
+			}
+		} as unknown as DataTransfer;
+	}
 
-  function dispatchSyntheticDragEvent(
-    target: HTMLElement,
-    type: 'dragover' | 'dragleave' | 'drop',
-    dataTransfer?: DataTransfer
-  ) {
-    let event: DragEvent;
-    try {
-      event = new DragEvent(type, {
-        bubbles: true,
-        cancelable: true,
-        dataTransfer
-      });
-    } catch {
-      event = new Event(type, { bubbles: true, cancelable: true }) as DragEvent;
-      if (dataTransfer) {
-        try {
-          Object.defineProperty(event, 'dataTransfer', { value: dataTransfer });
-        } catch {
-        }
-      }
-    }
+	function dispatchSyntheticDragEvent(
+		target: HTMLElement,
+		type: 'dragover' | 'dragleave' | 'drop',
+		dataTransfer?: DataTransfer
+	) {
+		let event: DragEvent;
+		try {
+			event = new DragEvent(type, {
+				bubbles: true,
+				cancelable: true,
+				dataTransfer
+			});
+		} catch {
+			event = new Event(type, { bubbles: true, cancelable: true }) as DragEvent;
+			if (dataTransfer) {
+				try {
+					Object.defineProperty(event, 'dataTransfer', { value: dataTransfer });
+				} catch {
+					// Ignore if dataTransfer property cannot be defined
+				}
+			}
+		}
 
-    if (dataTransfer && !('dataTransfer' in event)) {
-      try {
-        Object.defineProperty(event, 'dataTransfer', { value: dataTransfer });
-      } catch {
-      }
-    }
+		if (dataTransfer && !('dataTransfer' in event)) {
+			try {
+				Object.defineProperty(event, 'dataTransfer', { value: dataTransfer });
+			} catch {
+				// Ignore if dataTransfer property cannot be defined
+			}
+		}
 
-    target.dispatchEvent(event);
-  }
+		target.dispatchEvent(event);
+	}
 
-  function cleanupTouchListeners() {
-    window.removeEventListener('touchmove', handleWindowTouchMove);
-    window.removeEventListener('touchend', handleWindowTouchEnd);
-    window.removeEventListener('touchcancel', handleWindowTouchEnd);
+	function cleanupTouchListeners() {
+		window.removeEventListener('touchmove', handleWindowTouchMove);
+		window.removeEventListener('touchend', handleWindowTouchEnd);
+		window.removeEventListener('touchcancel', handleWindowTouchEnd);
 		touchListenersAttached = false;
-  }
+	}
 
-  function resetTouchDragState(forceLeave = false) {
-    isTouchDragging = false;
-    touchTranslateX = 0;
-    touchTranslateY = 0;
-    activeTouchId = null;
-    startClientX = 0;
-    startClientY = 0;
-    lastClientX = 0;
-    lastClientY = 0;
+	function resetTouchDragState(forceLeave = false) {
+		isTouchDragging = false;
+		touchTranslateX = 0;
+		touchTranslateY = 0;
+		activeTouchId = null;
+		startClientX = 0;
+		startClientY = 0;
+		lastClientX = 0;
+		lastClientY = 0;
 
-    if (activeDropZone && forceLeave) {
-      dispatchSyntheticDragEvent(activeDropZone, 'dragleave');
-      activeDropZone = null;
-    }
-  }
+		if (activeDropZone && forceLeave) {
+			dispatchSyntheticDragEvent(activeDropZone, 'dragleave');
+			activeDropZone = null;
+		}
+	}
 
-  function handleWindowTouchMove(event: TouchEvent) {
-    if (!isTouchDragging || activeTouchId === null) return;
-    const touch = getTouchById(event.touches, activeTouchId);
-    if (!touch) return;
+	function handleWindowTouchMove(event: TouchEvent) {
+		if (!isTouchDragging || activeTouchId === null) return;
+		const touch = getTouchById(event.touches, activeTouchId);
+		if (!touch) return;
 
-    event.preventDefault();
+		event.preventDefault();
 
-    lastClientX = touch.clientX;
-    lastClientY = touch.clientY;
-    touchTranslateX = lastClientX - startClientX;
-    touchTranslateY = lastClientY - startClientY;
-    onDragMove?.(piece, lastClientX, lastClientY);
+		lastClientX = touch.clientX;
+		lastClientY = touch.clientY;
+		touchTranslateX = lastClientX - startClientX;
+		touchTranslateY = lastClientY - startClientY;
+		onDragMove?.(piece, lastClientX, lastClientY);
 
-    const dropZone = getDropZoneAtPoint(lastClientX, lastClientY);
-    if (dropZone !== activeDropZone) {
-      if (activeDropZone) {
-        dispatchSyntheticDragEvent(activeDropZone, 'dragleave');
-      }
-      activeDropZone = dropZone;
-      if (activeDropZone) {
-        dispatchSyntheticDragEvent(activeDropZone, 'dragover');
-      }
-    } else if (activeDropZone) {
-      dispatchSyntheticDragEvent(activeDropZone, 'dragover');
-    }
-  }
+		const dropZone = getDropZoneAtPoint(lastClientX, lastClientY);
+		if (dropZone !== activeDropZone) {
+			if (activeDropZone) {
+				dispatchSyntheticDragEvent(activeDropZone, 'dragleave');
+			}
+			activeDropZone = dropZone;
+			if (activeDropZone) {
+				dispatchSyntheticDragEvent(activeDropZone, 'dragover');
+			}
+		} else if (activeDropZone) {
+			dispatchSyntheticDragEvent(activeDropZone, 'dragover');
+		}
+	}
 
-  function handleWindowTouchEnd(event: TouchEvent) {
-    if (!isTouchDragging || activeTouchId === null) {
-      cleanupTouchListeners();
-      resetTouchDragState();
-      return;
-    }
+	function handleWindowTouchEnd(event: TouchEvent) {
+		if (!isTouchDragging || activeTouchId === null) {
+			cleanupTouchListeners();
+			resetTouchDragState();
+			return;
+		}
 
-    const touch = getTouchById(event.changedTouches, activeTouchId);
-    if (touch) {
-      lastClientX = touch.clientX;
-      lastClientY = touch.clientY;
-    }
+		const touch = getTouchById(event.changedTouches, activeTouchId);
+		if (touch) {
+			lastClientX = touch.clientX;
+			lastClientY = touch.clientY;
+		}
 
-    const dropZone = getDropZoneAtPoint(lastClientX, lastClientY);
-    if (dropZone) {
-      const dt = createDataTransfer(piece.id);
-      dispatchSyntheticDragEvent(dropZone, 'drop', dt);
-    }
+		const dropZone = getDropZoneAtPoint(lastClientX, lastClientY);
+		if (dropZone) {
+			const dt = createDataTransfer(piece.id);
+			dispatchSyntheticDragEvent(dropZone, 'drop', dt);
+		}
 
-    onDragEnd?.(piece, lastClientX, lastClientY);
-    cleanupTouchListeners();
-    resetTouchDragState();
-  }
+		onDragEnd?.(piece, lastClientX, lastClientY);
+		cleanupTouchListeners();
+		resetTouchDragState();
+	}
 
 	function handleTouchStart(event: TouchEvent) {
 		if (isPlaced) return;
@@ -265,7 +272,7 @@
 </script>
 
 <div
-	class="puzzle-piece relative cursor-grab select-none transition-transform hover:scale-105 touch-none focus:outline-hidden"
+	class="puzzle-piece relative cursor-grab touch-none transition-transform select-none hover:scale-105 focus:outline-hidden"
 	class:opacity-50={isPlaced}
 	class:cursor-not-allowed={isPlaced}
 	class:cursor-grabbing={isTouchDragging}
@@ -286,11 +293,9 @@
 	data-testid="puzzle-piece"
 	data-piece-id={piece.id}
 	data-selected={currentSelectedId === piece.id}
-	style={
-		isTouchDragging
-			? `transform: translate3d(${touchTranslateX}px, ${touchTranslateY}px, 0);`
-			: undefined
-	}
+	style={isTouchDragging
+		? `transform: translate3d(${touchTranslateX}px, ${touchTranslateY}px, 0);`
+		: undefined}
 >
 	<img
 		src={getPieceImageUrl(piece.puzzleId, piece.id)}
@@ -301,7 +306,7 @@
 </div>
 
 <style>
-  .puzzle-piece:not(.cursor-not-allowed):active {
-    cursor: grabbing;
-  }
+	.puzzle-piece:not(.cursor-not-allowed):active {
+		cursor: grabbing;
+	}
 </style>

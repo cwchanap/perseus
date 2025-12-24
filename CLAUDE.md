@@ -42,10 +42,12 @@ bun run test:e2e
 ## Architecture
 
 ### Monorepo Structure
+
 - `apps/web` - SvelteKit frontend with static adapter, Tailwind CSS v4, Vitest for unit tests, Playwright for E2E
 - `apps/api` - Hono HTTP API running on Bun (port 3000)
 
 ### Web App (`@perseus/web`)
+
 - **Framework**: SvelteKit with static adapter (SSG)
 - **Styling**: Tailwind CSS v4 via Vite plugin
 - **Testing**: Vitest with browser-mode Playwright for Svelte component tests
@@ -53,6 +55,7 @@ bun run test:e2e
 - **Lib**: `src/lib/` - Shared components and utilities
 
 ### API (`@perseus/api`)
+
 - **Runtime**: Bun
 - **Framework**: Hono with CORS and logger middleware
 - **Entry**: `src/index.ts` - Single-file API with routes defined inline
@@ -67,8 +70,10 @@ bun run test:e2e
 - Prettier + ESLint for formatting and linting
 
 ## Active Technologies
+
 - TypeScript 5.9 (strict mode) (001-jigsaw-puzzle)
 - JSON files (metadata) + filesystem folders (images) on API server (001-jigsaw-puzzle)
 
 ## Recent Changes
+
 - 001-jigsaw-puzzle: Added TypeScript 5.9 (strict mode)

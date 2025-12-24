@@ -46,7 +46,8 @@ if (process.env.NODE_ENV === 'production' && envOrigins.length === 0) {
 }
 
 const isProd = process.env.NODE_ENV === 'production';
-const allowedOrigins = envOrigins.length > 0 ? envOrigins : isProd ? envOrigins : DEFAULT_ALLOWED_ORIGINS;
+const allowedOrigins =
+	envOrigins.length > 0 ? envOrigins : isProd ? envOrigins : DEFAULT_ALLOWED_ORIGINS;
 
 app.use('*', logger());
 app.use(
