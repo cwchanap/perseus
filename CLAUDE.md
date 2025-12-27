@@ -58,8 +58,10 @@ bun run test:e2e
 
 - **Runtime**: Bun
 - **Framework**: Hono with CORS and logger middleware
-- **Entry**: `src/index.ts` - Single-file API with routes defined inline
-- **Endpoints**: `/` (info), `/health`, `/api/hello`
+- **Entry**: `src/index.ts` - Main entry point with middleware and route mounting
+- **Route Groups**: Routes organized in `src/routes/` (puzzles, admin)
+- **Services**: Business logic in `src/services/` (storage, puzzle-generator)
+- **Environment**: Requires `JWT_SECRET`, `ADMIN_PASSKEY` in production; `ALLOWED_ORIGINS` for CORS
 
 ## Code Style
 
@@ -68,6 +70,17 @@ bun run test:e2e
 - No trailing commas
 - 100 char line width
 - Prettier + ESLint for formatting and linting
+- Pre-commit hooks via Husky + lint-staged (auto-formats on commit)
+
+## Environment Variables
+
+API requires:
+
+- `JWT_SECRET` - JWT signing secret (required in production)
+- `ADMIN_PASSKEY` - Admin authentication passkey (required in production)
+- `ALLOWED_ORIGINS` - Comma-separated CORS origins (required in production)
+- `PORT` - API port (default: 3000)
+- `NODE_ENV` - Environment mode (development/production)
 
 ## Active Technologies
 

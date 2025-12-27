@@ -6,6 +6,7 @@
 	import type { Puzzle, PlacedPiece } from '$lib/types/puzzle';
 	import PuzzleBoard from '$lib/components/PuzzleBoard.svelte';
 	import PuzzlePiece from '$lib/components/PuzzlePiece.svelte';
+	import { shuffleArray } from '$lib/utils/shuffle';
 	import { resolve } from '$app/paths';
 
 	let puzzle: Puzzle | null = $state(null);
@@ -14,8 +15,16 @@
 	let placedPieces: PlacedPiece[] = $state([]);
 	let showCelebration = $state(false);
 	let rejectedPiece: number | null = $state(null);
+	let shuffledPieceIds: number[] = $state([]);
 
 	const puzzleId = $derived($page.params.id);
+
+	// Get pieces in shuffled order
+	const shuffledPieces = $derived(
+		puzzle
+			? shuffledPieceIds.map((id) => puzzle!.pieces.find((p) => p.id === id)!).filter(Boolean)
+			: []
+	);
 
 	$effect(() => {
 		if (puzzleId) {
@@ -29,6 +38,9 @@
 
 		try {
 			puzzle = await fetchPuzzle(id);
+
+			// Shuffle piece order for display
+			shuffledPieceIds = shuffleArray(puzzle.pieces.map((p) => p.id));
 
 			// Restore progress from localStorage
 			const savedProgress = getProgress(id);
@@ -79,6 +91,8 @@
 			placedPieces = [];
 			clearProgress(puzzle.id);
 			showCelebration = false;
+			// Reshuffle pieces for new game
+			shuffledPieceIds = shuffleArray(puzzle.pieces.map((p) => p.id));
 		}
 	}
 
@@ -168,7 +182,7 @@
 					<div class="rounded-lg bg-white p-4 shadow-md">
 						<h2 class="mb-4 text-lg font-semibold text-gray-900">Puzzle Pieces</h2>
 						<div class="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-3">
-							{#each puzzle.pieces as piece (piece.id)}
+							{#each shuffledPieces as piece (piece.id)}
 								{#if !isPiecePlaced(piece.id)}
 									<div
 										class="aspect-square rounded border-2 p-1 transition-all"

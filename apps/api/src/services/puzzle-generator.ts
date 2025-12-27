@@ -2,7 +2,8 @@
 import sharp from 'sharp';
 import { mkdir } from 'fs/promises';
 import path from 'path';
-import type { Puzzle, PuzzlePiece, AllowedPieceCount } from '../types';
+import type { Puzzle, PuzzlePiece, AllowedPieceCount, EdgeConfig } from '../types';
+import { generateJigsawSvgMask, TAB_RATIO } from '../utils/jigsawPath';
 
 const THUMBNAIL_SIZE = 300;
 const ALLOWED_PIECE_COUNTS: AllowedPieceCount[] = [9, 16, 25, 36, 49, 64, 100];
@@ -88,22 +89,42 @@ export async function generatePuzzle(
 			const pieceId = row * cols + col;
 			const piecePath = path.join(piecesDir, `${pieceId}.png`);
 
-			// Extract piece from image
-			const left = col * basePieceWidth;
-			const top = row * basePieceHeight;
-			const width = basePieceWidth + (col === cols - 1 ? extraWidth : 0);
-			const height = basePieceHeight + (row === rows - 1 ? extraHeight : 0);
-			await sharp(imageBuffer)
-				.extract({
-					left,
-					top,
-					width,
-					height
-				})
-				.png()
-				.toFile(piecePath);
+			// Calculate base piece dimensions
+			const baseWidth = basePieceWidth + (col === cols - 1 ? extraWidth : 0);
+			const baseHeight = basePieceHeight + (row === rows - 1 ? extraHeight : 0);
 
-			// Determine edge types with matched neighbors
+			// Calculate overlap for jigsaw tabs (TAB_RATIO of piece size on each side)
+			const overlapX = Math.floor(basePieceWidth * TAB_RATIO);
+			const overlapY = Math.floor(basePieceHeight * TAB_RATIO);
+
+			// Target size: base piece + overlap on all sides (140% of base)
+			const targetWidth = baseWidth + 2 * overlapX;
+			const targetHeight = baseHeight + 2 * overlapY;
+
+			// Calculate extraction bounds with overlap
+			const baseLeft = col * basePieceWidth;
+			const baseTop = row * basePieceHeight;
+
+			// Calculate ideal extraction bounds (may extend outside image)
+			const idealLeft = baseLeft - overlapX;
+			const idealTop = baseTop - overlapY;
+
+			// Clamp extraction to image boundaries
+			const extractLeft = Math.max(0, idealLeft);
+			const extractTop = Math.max(0, idealTop);
+			const extractRight = Math.min(imageWidth, idealLeft + targetWidth);
+			const extractBottom = Math.min(imageHeight, idealTop + targetHeight);
+
+			const extractWidth = extractRight - extractLeft;
+			const extractHeight = extractBottom - extractTop;
+
+			// Calculate padding needed for edge pieces
+			const padLeft = extractLeft - idealLeft;
+			const padTop = extractTop - idealTop;
+			const padRight = targetWidth - extractWidth - padLeft;
+			const padBottom = targetHeight - extractHeight - padTop;
+
+			// Determine edge types with matched neighbors (needed before masking)
 			const topEdge = row === 0 ? 'flat' : opposite(bottomEdgesForAbove[col]);
 			const rightEdge = col === cols - 1 ? 'flat' : (row + col) % 2 === 0 ? 'tab' : 'blank';
 			const bottomEdge = row === rows - 1 ? 'flat' : (row + col) % 2 === 0 ? 'blank' : 'tab';
@@ -112,12 +133,44 @@ export async function generatePuzzle(
 			bottomEdgesForAbove[col] = bottomEdge;
 			leftEdgeForNext = rightEdge;
 
-			const edges = {
+			const edges: EdgeConfig = {
 				top: topEdge,
 				right: rightEdge,
 				bottom: bottomEdge,
 				left: leftEdge
-			} as const;
+			};
+
+			// Extract piece with padding for consistent 140% size
+			const extractedPiece = await sharp(imageBuffer)
+				.extract({
+					left: extractLeft,
+					top: extractTop,
+					width: extractWidth,
+					height: extractHeight
+				})
+				.extend({
+					top: padTop,
+					bottom: padBottom,
+					left: padLeft,
+					right: padRight,
+					background: { r: 0, g: 0, b: 0, alpha: 0 }
+				})
+				.png()
+				.toBuffer();
+
+			// Generate jigsaw mask SVG and apply it
+			const jigsawMask = generateJigsawSvgMask(edges, targetWidth, targetHeight);
+
+			// Apply mask using composite with dest-in blend
+			await sharp(extractedPiece)
+				.composite([
+					{
+						input: jigsawMask,
+						blend: 'dest-in'
+					}
+				])
+				.png()
+				.toFile(piecePath);
 
 			pieces.push({
 				id: pieceId,

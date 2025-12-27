@@ -6,7 +6,16 @@
 			"Bash(bun --version:*)",
 			"Bash(bun run check:*)",
 			"Bash(bun run lint:*)",
-			"Bash(bun run test:unit:*)"
+			"Bash(bun run test:unit:*)",
+			"Bash(bun run format:*)",
+			"Bash(bun test:*)",
+			"mcp__chrome-devtools__navigate_page",
+			"mcp__chrome-devtools__take_snapshot",
+			"mcp__chrome-devtools__click",
+			"mcp__chrome-devtools__take_screenshot",
+			"mcp__chrome-devtools__drag",
+			"mcp__chrome-devtools__select_page",
+			"Bash(bun vitest:*)"
 		]
 	}
 }
