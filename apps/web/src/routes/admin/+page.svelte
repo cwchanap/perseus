@@ -1,7 +1,14 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { logout, createPuzzle, deletePuzzle, fetchPuzzles, ApiError } from '$lib/services/api';
+	import {
+		logout,
+		createPuzzle,
+		deletePuzzle,
+		fetchPuzzles,
+		getThumbnailUrl,
+		ApiError
+	} from '$lib/services/api';
 	import { clearProgress } from '$lib/services/progress';
 	import type { PuzzleSummary } from '$lib/types/puzzle';
 	import { resolve } from '$app/paths';
@@ -346,7 +353,7 @@
 							<div class="flex items-center justify-between rounded-md border border-gray-200 p-3">
 								<div class="flex items-center gap-3">
 									<img
-										src={puzzle.thumbnailUrl}
+										src={getThumbnailUrl(puzzle.id)}
 										alt={puzzle.name}
 										class="h-12 w-12 rounded object-cover"
 									/>

@@ -35,6 +35,11 @@
 		currentSelectedId = value;
 	});
 
+	// Piece sizing constants (must match server TAB_RATIO = 0.2)
+	const TAB_RATIO = 0.2;
+	const expansionFactor = 1 + 2 * TAB_RATIO; // 1.4 (140%)
+	const baseOffset = TAB_RATIO / expansionFactor; // ~14.29%
+
 	function handleDragStart(event: DragEvent) {
 		if (isPlaced || !event.dataTransfer) return;
 
@@ -272,7 +277,7 @@
 </script>
 
 <div
-	class="puzzle-piece relative cursor-grab touch-none transition-transform select-none hover:scale-105 focus:outline-hidden"
+	class="puzzle-piece relative h-full w-full cursor-grab touch-none transition-transform select-none hover:scale-105 focus:outline-hidden"
 	class:opacity-50={isPlaced}
 	class:cursor-not-allowed={isPlaced}
 	class:cursor-grabbing={isTouchDragging}
@@ -297,16 +302,53 @@
 		? `transform: translate3d(${touchTranslateX}px, ${touchTranslateY}px, 0);`
 		: undefined}
 >
-	<img
-		src={getPieceImageUrl(piece.puzzleId, piece.id)}
-		alt="Piece {piece.id}"
-		class="pointer-events-none h-full w-full object-contain"
-		draggable="false"
-	/>
+	<!-- Shadow wrapper: drop-shadow respects PNG transparency -->
+	<div
+		class="piece-shadow-wrapper h-full w-full"
+		class:dragging={isTouchDragging}
+		class:placed={isPlaced}
+	>
+		<!-- Pre-masked jigsaw piece from server (140% size, offset to show tabs) -->
+		<div
+			class="pointer-events-none relative"
+			style="
+				width: {expansionFactor * 100}%;
+				height: {expansionFactor * 100}%;
+				left: -{baseOffset * 100}%;
+				top: -{baseOffset * 100}%;
+			"
+		>
+			<img
+				src={getPieceImageUrl(piece.puzzleId, piece.id)}
+				alt="Piece {piece.id}"
+				class="h-full w-full"
+				draggable="false"
+			/>
+		</div>
+	</div>
 </div>
 
 <style>
+	.puzzle-piece {
+		overflow: visible;
+	}
+
 	.puzzle-piece:not(.cursor-not-allowed):active {
 		cursor: grabbing;
+	}
+
+	/* Drop shadow that respects clip-path shape */
+	.piece-shadow-wrapper {
+		filter: drop-shadow(2px 4px 6px rgba(0, 0, 0, 0.25));
+	}
+
+	/* Lifted/dragging state - more prominent shadow */
+	.piece-shadow-wrapper.dragging {
+		filter: drop-shadow(4px 8px 12px rgba(0, 0, 0, 0.35));
+	}
+
+	/* Placed piece - subtle shadow */
+	.piece-shadow-wrapper.placed {
+		filter: drop-shadow(1px 2px 3px rgba(0, 0, 0, 0.15));
 	}
 </style>

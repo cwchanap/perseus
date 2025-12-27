@@ -90,10 +90,15 @@
 	onDestroy(() => {
 		unsubscribeSelection();
 	});
+
+	// Piece sizing constants (must match server TAB_RATIO = 0.2)
+	const TAB_RATIO = 0.2;
+	const expansionFactor = 1 + 2 * TAB_RATIO; // 1.4 (140%)
+	const baseOffset = TAB_RATIO / expansionFactor; // ~14.29%
 </script>
 
 <div
-	class="puzzle-board grid gap-0.5 rounded-lg bg-gray-200 p-1"
+	class="puzzle-board grid gap-0 rounded-lg bg-gray-200 p-1"
 	style="grid-template-columns: repeat({puzzle.gridCols}, 1fr); aspect-ratio: {puzzle.imageWidth} / {puzzle.imageHeight};"
 	data-testid="puzzle-board"
 >
@@ -101,7 +106,10 @@
 		{#each Array(puzzle.gridCols) as _, x (x)}
 			{@const placedPiece = getPieceAtPosition(x, y)}
 			<div
-				class="drop-zone relative border-2 border-dashed transition-colors {getCellStyle(x, y)}"
+				class="drop-zone relative overflow-visible border border-dashed transition-colors {getCellStyle(
+					x,
+					y
+				)}"
 				ondragover={(e) => handleDragOver(e, x, y)}
 				ondragleave={handleDragLeave}
 				ondrop={(e) => handleDrop(e, x, y)}
@@ -114,13 +122,32 @@
 				aria-label="Drop zone at position {x}, {y}"
 			>
 				{#if placedPiece}
-					<img
-						src={getPieceImageUrl(puzzle.id, placedPiece.id)}
-						alt="Placed piece"
-						class="absolute inset-0 h-full w-full object-contain"
-					/>
+					<!-- Pre-masked jigsaw piece from server (140% size, offset to align base with cell) -->
+					<div
+						class="placed-piece-shadow pointer-events-none absolute"
+						style="
+							z-index: {y * puzzle.gridCols + x + 1};
+							width: {expansionFactor * 100}%;
+							height: {expansionFactor * 100}%;
+							left: -{baseOffset * 100}%;
+							top: -{baseOffset * 100}%;
+						"
+					>
+						<img
+							src={getPieceImageUrl(puzzle.id, placedPiece.id)}
+							alt="Placed piece"
+							class="h-full w-full"
+						/>
+					</div>
 				{/if}
 			</div>
 		{/each}
 	{/each}
 </div>
+
+<style>
+	/* Subtle shadow for placed pieces */
+	.placed-piece-shadow {
+		filter: drop-shadow(1px 2px 3px rgba(0, 0, 0, 0.15));
+	}
+</style>
