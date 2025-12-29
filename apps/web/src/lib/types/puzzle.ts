@@ -35,7 +35,6 @@ export interface PuzzleSummary {
 	id: string;
 	name: string;
 	pieceCount: number;
-	thumbnailUrl: string;
 }
 
 export interface PlacedPiece {

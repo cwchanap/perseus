@@ -3,7 +3,8 @@ import sharp from 'sharp';
 import { mkdir } from 'fs/promises';
 import path from 'path';
 import type { Puzzle, PuzzlePiece, AllowedPieceCount, EdgeConfig } from '../types';
-import { generateJigsawSvgMask, TAB_RATIO } from '../utils/jigsawPath';
+import { generateJigsawSvgMask } from '../utils/jigsawPath';
+import { TAB_RATIO } from '../constants/puzzle';
 
 const THUMBNAIL_SIZE = 300;
 const ALLOWED_PIECE_COUNTS: AllowedPieceCount[] = [9, 16, 25, 36, 49, 64, 100];
@@ -93,9 +94,9 @@ export async function generatePuzzle(
 			const baseWidth = basePieceWidth + (col === cols - 1 ? extraWidth : 0);
 			const baseHeight = basePieceHeight + (row === rows - 1 ? extraHeight : 0);
 
-			// Calculate overlap for jigsaw tabs (TAB_RATIO of piece size on each side)
-			const overlapX = Math.floor(basePieceWidth * TAB_RATIO);
-			const overlapY = Math.floor(basePieceHeight * TAB_RATIO);
+			// Calculate overlap for jigsaw tabs (TAB_RATIO of actual piece size on each side)
+			const overlapX = Math.floor(baseWidth * TAB_RATIO);
+			const overlapY = Math.floor(baseHeight * TAB_RATIO);
 
 			// Target size: base piece + overlap on all sides (140% of base)
 			const targetWidth = baseWidth + 2 * overlapX;

@@ -209,8 +209,7 @@ async function listPuzzlesWithDate(): Promise<
 					summary: {
 						id: puzzle.id,
 						name: puzzle.name,
-						pieceCount: puzzle.pieceCount,
-						thumbnailUrl: `/api/puzzles/${puzzle.id}/thumbnail`
+						pieceCount: puzzle.pieceCount
 					},
 					createdAt: puzzle.createdAt
 				});
