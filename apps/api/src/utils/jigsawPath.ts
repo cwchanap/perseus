@@ -39,13 +39,13 @@ const BEZIER_POINTS = {
 };
 
 interface EdgeParams {
-	baseStart: number;
-	baseEnd: number;
-	tabExtend: number;
+	startX: number;
+	startY: number;
+	endX: number;
+	endY: number;
 	tabStartPos: number;
 	tabEndPos: number;
-	width: number;
-	height: number;
+	tabExtend: number;
 }
 
 interface Point {
@@ -70,7 +70,7 @@ function transformPoint(
 	isTab: boolean,
 	params: EdgeParams
 ): Point {
-	const { baseStart, baseEnd, tabExtend, tabStartPos, tabEndPos } = params;
+	const { startX, startY, endX, endY, tabExtend, tabStartPos, tabEndPos } = params;
 	const tabWidth = tabEndPos - tabStartPos;
 
 	// Map localX from [-0.5, 0.5] to [tabStartPos, tabEndPos]
@@ -81,13 +81,13 @@ function transformPoint(
 
 	switch (side) {
 		case 'top':
-			return { x: edgePos, y: baseStart - perpOffset };
+			return { x: edgePos, y: startY - perpOffset };
 		case 'right':
-			return { x: baseEnd + perpOffset, y: edgePos };
+			return { x: endX + perpOffset, y: edgePos };
 		case 'bottom':
-			return { x: edgePos, y: baseEnd + perpOffset };
+			return { x: edgePos, y: endY + perpOffset };
 		case 'left':
-			return { x: baseStart - perpOffset, y: edgePos };
+			return { x: startX - perpOffset, y: edgePos };
 	}
 }
 
@@ -98,36 +98,36 @@ function getEdgeCorners(
 	side: 'top' | 'right' | 'bottom' | 'left',
 	params: EdgeParams
 ): { start: Point; tabStart: Point; tabEnd: Point; end: Point } {
-	const { baseStart, baseEnd, tabStartPos, tabEndPos } = params;
+	const { startX, startY, endX, endY, tabStartPos, tabEndPos } = params;
 
 	switch (side) {
 		case 'top':
 			return {
-				start: { x: baseStart, y: baseStart },
-				tabStart: { x: tabStartPos, y: baseStart },
-				tabEnd: { x: tabEndPos, y: baseStart },
-				end: { x: baseEnd, y: baseStart }
+				start: { x: startX, y: startY },
+				tabStart: { x: tabStartPos, y: startY },
+				tabEnd: { x: tabEndPos, y: startY },
+				end: { x: endX, y: startY }
 			};
 		case 'right':
 			return {
-				start: { x: baseEnd, y: baseStart },
-				tabStart: { x: baseEnd, y: tabStartPos },
-				tabEnd: { x: baseEnd, y: tabEndPos },
-				end: { x: baseEnd, y: baseEnd }
+				start: { x: endX, y: startY },
+				tabStart: { x: endX, y: tabStartPos },
+				tabEnd: { x: endX, y: tabEndPos },
+				end: { x: endX, y: endY }
 			};
 		case 'bottom':
 			return {
-				start: { x: baseEnd, y: baseEnd },
-				tabStart: { x: tabEndPos, y: baseEnd },
-				tabEnd: { x: tabStartPos, y: baseEnd },
-				end: { x: baseStart, y: baseEnd }
+				start: { x: endX, y: endY },
+				tabStart: { x: tabEndPos, y: endY },
+				tabEnd: { x: tabStartPos, y: endY },
+				end: { x: startX, y: endY }
 			};
 		case 'left':
 			return {
-				start: { x: baseStart, y: baseEnd },
-				tabStart: { x: baseStart, y: tabEndPos },
-				tabEnd: { x: baseStart, y: tabStartPos },
-				end: { x: baseStart, y: baseStart }
+				start: { x: startX, y: endY },
+				tabStart: { x: startX, y: tabEndPos },
+				tabEnd: { x: startX, y: tabStartPos },
+				end: { x: startX, y: startY }
 			};
 	}
 }
@@ -224,51 +224,44 @@ export function generateJigsawPath(edges: EdgeConfig, width: number, height: num
 	const edgeLengthX = baseEndX - baseStartX;
 	const edgeLengthY = baseEndY - baseStartY;
 
-	// For horizontal edges (top/bottom)
-	const hParams: EdgeParams = {
-		baseStart: baseStartX,
-		baseEnd: baseEndX,
-		tabExtend: tabExtendY,
+	const topParams: EdgeParams = {
+		startX: baseStartX,
+		startY: baseStartY,
+		endX: baseEndX,
+		endY: baseStartY,
 		tabStartPos: baseStartX + edgeLengthX * TAB_START,
 		tabEndPos: baseStartX + edgeLengthX * TAB_END,
-		width,
-		height
-	};
-
-	// For vertical edges (left/right)
-	const vParams: EdgeParams = {
-		baseStart: baseStartY,
-		baseEnd: baseEndY,
-		tabExtend: tabExtendX,
-		tabStartPos: baseStartY + edgeLengthY * TAB_START,
-		tabEndPos: baseStartY + edgeLengthY * TAB_END,
-		width,
-		height
-	};
-
-	// Create params with correct base values for each edge
-	const topParams: EdgeParams = {
-		...hParams,
-		baseStart: baseStartY, // Y coordinate for top edge baseline
-		baseEnd: baseEndX
+		tabExtend: tabExtendY
 	};
 
 	const rightParams: EdgeParams = {
-		...vParams,
-		baseStart: baseStartY,
-		baseEnd: baseEndX // X coordinate for right edge baseline
+		startX: baseEndX,
+		startY: baseStartY,
+		endX: baseEndX,
+		endY: baseEndY,
+		tabStartPos: baseStartY + edgeLengthY * TAB_START,
+		tabEndPos: baseStartY + edgeLengthY * TAB_END,
+		tabExtend: tabExtendX
 	};
 
 	const bottomParams: EdgeParams = {
-		...hParams,
-		baseStart: baseStartX,
-		baseEnd: baseEndY // Y coordinate for bottom edge baseline
+		startX: baseStartX,
+		startY: baseEndY,
+		endX: baseEndX,
+		endY: baseEndY,
+		tabStartPos: baseStartX + edgeLengthX * TAB_START,
+		tabEndPos: baseStartX + edgeLengthX * TAB_END,
+		tabExtend: tabExtendY
 	};
 
 	const leftParams: EdgeParams = {
-		...vParams,
-		baseStart: baseStartX, // X coordinate for left edge baseline
-		baseEnd: baseEndY
+		startX: baseStartX,
+		startY: baseStartY,
+		endX: baseStartX,
+		endY: baseEndY,
+		tabStartPos: baseStartY + edgeLengthY * TAB_START,
+		tabEndPos: baseStartY + edgeLengthY * TAB_END,
+		tabExtend: tabExtendX
 	};
 
 	const pathParts: string[] = [];

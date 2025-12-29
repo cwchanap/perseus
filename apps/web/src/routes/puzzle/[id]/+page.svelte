@@ -3,7 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { fetchPuzzle, ApiError } from '$lib/services/api';
 	import { getProgress, saveProgress, clearProgress } from '$lib/services/progress';
-	import type { Puzzle, PlacedPiece } from '$lib/types/puzzle';
+	import type { Puzzle, PlacedPiece, PuzzlePiece as TPuzzlePiece } from '$lib/types/puzzle';
 	import PuzzleBoard from '$lib/components/PuzzleBoard.svelte';
 	import PuzzlePiece from '$lib/components/PuzzlePiece.svelte';
 	import { shuffleArray } from '$lib/utils/shuffle';
@@ -19,11 +19,22 @@
 
 	const puzzleId = $derived($page.params.id);
 
+	// Create a Map for O(1) piece lookup
+	const piecesMap = $derived.by(() => {
+		const map = new Map<number, TPuzzlePiece>();
+		if (puzzle) {
+			for (const p of puzzle.pieces) {
+				map.set(p.id, p);
+			}
+		}
+		return map;
+	});
+
 	// Get pieces in shuffled order
 	const shuffledPieces = $derived(
-		puzzle
-			? shuffledPieceIds.map((id) => puzzle!.pieces.find((p) => p.id === id)!).filter(Boolean)
-			: []
+		shuffledPieceIds
+			.map((id) => piecesMap.get(id))
+			.filter((p): p is TPuzzlePiece => p !== undefined)
 	);
 
 	$effect(() => {

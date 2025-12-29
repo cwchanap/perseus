@@ -279,7 +279,8 @@ describe('Path coordinate bounds', () => {
 		const numbers = path.match(/[\d.]+/g)!.map(parseFloat);
 
 		// Some Y coordinates should be near 0 (tab extending to top)
+		// Y-coordinates are at odd indices (1, 3, 5...)
 		const minY = Math.min(...numbers.filter((_, i) => i % 2 === 1));
-		expect(minY).toBeLessThan(width * 0.15); // Tab should extend into margin area
+		expect(minY).toBeLessThan(height * 0.15); // Tab should extend into vertical margin area
 	});
 });
