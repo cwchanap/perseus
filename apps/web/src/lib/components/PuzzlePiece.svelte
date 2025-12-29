@@ -8,6 +8,7 @@
 		setSelectedPiece,
 		clearSelectedPiece
 	} from '$lib/stores/pieceSelection';
+	import { TAB_RATIO, EXPANSION_FACTOR, BASE_OFFSET } from '$lib/constants/puzzle';
 
 	interface Props {
 		piece: PuzzlePiece;
@@ -34,11 +35,6 @@
 	const unsubscribeSelection = selectedPieceId.subscribe((value) => {
 		currentSelectedId = value;
 	});
-
-	// Piece sizing constants (must match server TAB_RATIO = 0.2)
-	const TAB_RATIO = 0.2;
-	const expansionFactor = 1 + 2 * TAB_RATIO; // 1.4 (140%)
-	const baseOffset = TAB_RATIO / expansionFactor; // ~14.29%
 
 	function handleDragStart(event: DragEvent) {
 		if (isPlaced || !event.dataTransfer) return;
@@ -312,10 +308,10 @@
 		<div
 			class="pointer-events-none relative"
 			style="
-				width: {expansionFactor * 100}%;
-				height: {expansionFactor * 100}%;
-				left: -{baseOffset * 100}%;
-				top: -{baseOffset * 100}%;
+				width: {EXPANSION_FACTOR * 100}%;
+				height: {EXPANSION_FACTOR * 100}%;
+				left: -{BASE_OFFSET * 100}%;
+				top: -{BASE_OFFSET * 100}%;
 			"
 		>
 			<img

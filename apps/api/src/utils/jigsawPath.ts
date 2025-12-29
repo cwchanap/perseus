@@ -2,9 +2,7 @@
 // Generates SVG mask for Sharp to apply jigsaw shape to puzzle pieces
 
 import type { EdgeConfig, EdgeType } from '../types';
-
-// Tab size as fraction of base piece dimension (20%)
-export const TAB_RATIO = 0.2;
+import { TAB_RATIO } from '../constants/puzzle';
 
 // Tab width as fraction of edge length (40% of edge is the tab)
 const TAB_WIDTH_RATIO = 0.4;

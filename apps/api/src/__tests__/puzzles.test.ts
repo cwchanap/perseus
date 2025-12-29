@@ -76,12 +76,11 @@ describe('GET /api/puzzles', () => {
 		expect(Array.isArray(data.puzzles)).toBe(true);
 		expect(data.puzzles.length).toBeGreaterThan(0);
 		expect(data.puzzles.length).toBe(1);
-		// Each puzzle should have id, name, pieceCount, thumbnailUrl
+		// Each puzzle should have id, name, pieceCount
 		for (const puzzle of data.puzzles as PuzzleSummary[]) {
 			expect(puzzle).toHaveProperty('id');
 			expect(puzzle).toHaveProperty('name');
 			expect(puzzle).toHaveProperty('pieceCount');
-			expect(puzzle).toHaveProperty('thumbnailUrl');
 		}
 	});
 });

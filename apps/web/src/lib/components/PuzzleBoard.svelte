@@ -3,6 +3,7 @@
 	import type { Puzzle, PuzzlePiece, PlacedPiece } from '$lib/types/puzzle';
 	import { getPieceImageUrl } from '$lib/services/api';
 	import { selectedPieceId, clearSelectedPiece } from '$lib/stores/pieceSelection';
+	import { TAB_RATIO, EXPANSION_FACTOR, BASE_OFFSET } from '$lib/constants/puzzle';
 
 	interface Props {
 		puzzle: Puzzle;
@@ -90,11 +91,6 @@
 	onDestroy(() => {
 		unsubscribeSelection();
 	});
-
-	// Piece sizing constants (must match server TAB_RATIO = 0.2)
-	const TAB_RATIO = 0.2;
-	const expansionFactor = 1 + 2 * TAB_RATIO; // 1.4 (140%)
-	const baseOffset = TAB_RATIO / expansionFactor; // ~14.29%
 </script>
 
 <div
@@ -127,10 +123,10 @@
 						class="placed-piece-shadow pointer-events-none absolute"
 						style="
 							z-index: {y * puzzle.gridCols + x + 1};
-							width: {expansionFactor * 100}%;
-							height: {expansionFactor * 100}%;
-							left: -{baseOffset * 100}%;
-							top: -{baseOffset * 100}%;
+							width: {EXPANSION_FACTOR * 100}%;
+							height: {EXPANSION_FACTOR * 100}%;
+							left: -{BASE_OFFSET * 100}%;
+							top: -{BASE_OFFSET * 100}%;
 						"
 					>
 						<img
