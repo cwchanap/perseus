@@ -8,6 +8,7 @@ export default defineConfig({
 
 	test: {
 		expect: { requireAssertions: true },
+		setupFiles: ['src/vitest.setup.ts'],
 
 		projects: [
 			{
