@@ -4,8 +4,6 @@
 import type { EdgeConfig, EdgeType } from '../types';
 import { TAB_RATIO } from '../constants/puzzle';
 
-export { TAB_RATIO };
-
 // Tab width as fraction of edge length (40% of edge is the tab)
 const TAB_WIDTH_RATIO = 0.4;
 
