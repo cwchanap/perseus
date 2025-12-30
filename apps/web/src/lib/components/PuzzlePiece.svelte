@@ -8,7 +8,7 @@
 		setSelectedPiece,
 		clearSelectedPiece
 	} from '$lib/stores/pieceSelection';
-	import { TAB_RATIO, EXPANSION_FACTOR, BASE_OFFSET } from '$lib/constants/puzzle';
+	import { EXPANSION_FACTOR, BASE_OFFSET } from '$lib/constants/puzzle';
 
 	interface Props {
 		piece: PuzzlePiece;

@@ -3,6 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { fetchPuzzle, ApiError } from '$lib/services/api';
 	import { getProgress, saveProgress, clearProgress } from '$lib/services/progress';
+	import { SvelteMap } from 'svelte/reactivity';
 	import type { Puzzle, PlacedPiece, PuzzlePiece as TPuzzlePiece } from '$lib/types/puzzle';
 	import PuzzleBoard from '$lib/components/PuzzleBoard.svelte';
 	import PuzzlePiece from '$lib/components/PuzzlePiece.svelte';
@@ -19,9 +20,9 @@
 
 	const puzzleId = $derived($page.params.id);
 
-	// Create a Map for O(1) piece lookup
+	// Create a SvelteMap for O(1) piece lookup
 	const piecesMap = $derived.by(() => {
-		const map = new Map<number, TPuzzlePiece>();
+		const map = new SvelteMap<number, TPuzzlePiece>();
 		if (puzzle) {
 			for (const p of puzzle.pieces) {
 				map.set(p.id, p);
