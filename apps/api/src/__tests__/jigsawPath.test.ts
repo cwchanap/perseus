@@ -1,11 +1,7 @@
 // Unit tests for jigsaw path generation
 import { describe, it, expect } from 'bun:test';
-import {
-	generateJigsawPath,
-	generateJigsawSvgMask,
-	getExpansionFactor,
-	TAB_RATIO
-} from '../utils/jigsawPath';
+import { generateJigsawPath, generateJigsawSvgMask, getExpansionFactor } from '../utils/jigsawPath';
+import { TAB_RATIO } from '../constants/puzzle';
 import type { EdgeConfig } from '../types';
 
 describe('jigsawPath constants', () => {
