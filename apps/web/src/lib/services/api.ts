@@ -6,10 +6,9 @@ import type {
 	LoginResponse,
 	SessionResponse
 } from '$lib/types/puzzle';
+import { PUBLIC_API_BASE } from '$env/static/public';
 
-import { env } from '$env/dynamic/public';
-
-const API_BASE = env.PUBLIC_API_BASE ?? 'http://localhost:3000';
+const API_BASE = PUBLIC_API_BASE ?? 'http://localhost:3000';
 
 class ApiError extends Error {
 	constructor(
