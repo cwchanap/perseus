@@ -18,11 +18,13 @@ type SharpFactory = typeof sharpType;
 
 let sharpFactory: SharpFactory | null = null;
 
-async function getSharp(): Promise<SharpFactory> {
+async function getSharp(
+	load: () => Promise<unknown> = () => import('sharp')
+): Promise<SharpFactory> {
 	if (sharpFactory) return sharpFactory;
 
 	try {
-		const mod = await import('sharp');
+		const mod = await load();
 		const resolved =
 			(mod as unknown as { default?: SharpFactory }).default ?? (mod as unknown as SharpFactory);
 		sharpFactory = resolved;
@@ -31,6 +33,14 @@ async function getSharp(): Promise<SharpFactory> {
 		const cause = error instanceof Error ? error : new Error(String(error));
 		throw new Error('Image processing dependency "sharp" is not available', { cause });
 	}
+}
+
+export function __resetSharpFactoryForTests(): void {
+	sharpFactory = null;
+}
+
+export async function __getSharpForTests(load?: () => Promise<unknown>): Promise<SharpFactory> {
+	return getSharp(load);
 }
 
 function getGridDimensions(pieceCount: AllowedPieceCount): GridDimensions {

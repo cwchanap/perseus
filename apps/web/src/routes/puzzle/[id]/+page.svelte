@@ -20,7 +20,7 @@
 
 	const puzzleId = $derived($page.params.id);
 
-	// Create a SvelteMap for O(1) piece lookup
+	// Use SvelteMap so Svelte 5 can track reactive changes while keeping O(1) piece lookup
 	const piecesMap = $derived.by(() => {
 		const map = new SvelteMap<number, TPuzzlePiece>();
 		if (puzzle) {

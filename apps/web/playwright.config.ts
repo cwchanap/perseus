@@ -9,7 +9,7 @@ export default defineConfig({
 			command: 'bun run build && bun run start',
 			port: 3999,
 			cwd: '../api',
-			reuseExistingServer: false,
+			reuseExistingServer: !process.env.CI,
 			env: {
 				...process.env,
 				PORT: '3999',
