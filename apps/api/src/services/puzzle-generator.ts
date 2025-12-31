@@ -1,5 +1,5 @@
 // Puzzle generator service using Sharp for image processing
-import sharp from 'sharp';
+import type sharpType from 'sharp';
 import { mkdir } from 'fs/promises';
 import path from 'path';
 import type { Puzzle, PuzzlePiece, AllowedPieceCount, EdgeConfig } from '../types';
@@ -12,6 +12,24 @@ const ALLOWED_PIECE_COUNTS: AllowedPieceCount[] = [9, 16, 25, 36, 49, 64, 100];
 interface GridDimensions {
 	rows: number;
 	cols: number;
+}
+
+type SharpFactory = typeof sharpType;
+
+let sharpFactory: SharpFactory | null = null;
+
+async function getSharp(): Promise<SharpFactory> {
+	if (sharpFactory) return sharpFactory;
+
+	try {
+		const mod = await import('sharp');
+		const resolved =
+			(mod as unknown as { default?: SharpFactory }).default ?? (mod as unknown as SharpFactory);
+		sharpFactory = resolved;
+		return sharpFactory;
+	} catch {
+		throw new Error('Image processing dependency "sharp" is not available');
+	}
 }
 
 function getGridDimensions(pieceCount: AllowedPieceCount): GridDimensions {
@@ -41,6 +59,7 @@ export async function generatePuzzle(
 	options: GeneratePuzzleOptions
 ): Promise<GeneratePuzzleResult> {
 	const { id, name, pieceCount, imageBuffer, outputDir } = options;
+	const sharp = await getSharp();
 
 	if (!isValidPieceCount(pieceCount)) {
 		throw new Error(
