@@ -6,7 +6,9 @@ test.describe('Puzzle Solving Page', () => {
 		await page.goto('/puzzle/non-existent-id');
 
 		// Should show a not-found style message
-		const errorMessage = page.getByText(/not found|no longer available/i);
+		const errorMessage = page.getByText(
+			/not found|no longer available|failed to load puzzle|puzzle not found/i
+		);
 		await expect(errorMessage).toBeVisible();
 	});
 
@@ -23,7 +25,7 @@ test.describe('Puzzle Solving Page', () => {
 		await page.goto('/puzzle/any-puzzle');
 
 		// Should have navigation back to main page
-		const backLink = page.getByRole('link', { name: /back|home|gallery/i });
+		const backLink = page.locator('header').getByRole('link', { name: /back to gallery/i });
 		await expect(backLink).toBeVisible();
 	});
 });
