@@ -1,5 +1,5 @@
-import { beforeEach } from 'vitest';
+import { beforeEach, vi } from 'vitest';
 
 beforeEach(() => {
-	import('vitest').then(({ vi }) => vi.resetModules());
+	vi.resetModules();
 });
