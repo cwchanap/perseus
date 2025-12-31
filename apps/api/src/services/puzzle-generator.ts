@@ -27,8 +27,9 @@ async function getSharp(): Promise<SharpFactory> {
 			(mod as unknown as { default?: SharpFactory }).default ?? (mod as unknown as SharpFactory);
 		sharpFactory = resolved;
 		return sharpFactory;
-	} catch {
-		throw new Error('Image processing dependency "sharp" is not available');
+	} catch (error) {
+		const cause = error instanceof Error ? error : new Error(String(error));
+		throw new Error('Image processing dependency "sharp" is not available', { cause });
 	}
 }
 
