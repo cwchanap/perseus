@@ -6,6 +6,8 @@ import type {
 	LoginResponse,
 	SessionResponse
 } from '$lib/types/puzzle';
+// NOTE: This app is built with adapter-static, so public env vars are embedded at build time.
+// Set PUBLIC_API_BASE before building to target a different API.
 import { PUBLIC_API_BASE } from '$env/static/public';
 
 const API_BASE = PUBLIC_API_BASE ?? 'http://localhost:3000';

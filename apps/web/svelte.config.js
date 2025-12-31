@@ -7,6 +7,8 @@ const config = {
 	// for more information about preprocessors
 	preprocess: vitePreprocess(),
 
+	// Static hosting SPA fallback.
+	// Some static hosts (e.g. Surge) expect a `200.html` fallback for client-side routing.
 	kit: { adapter: adapter({ fallback: '200.html' }) }
 };
 
