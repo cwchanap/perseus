@@ -13,27 +13,26 @@ test.describe('Main Gallery Page', () => {
 		await page.goto('/');
 		await expect(page.getByTestId('loading-state')).toBeHidden();
 
-		// Either the empty state OR the puzzle grid should be visible
 		const emptyState = page.getByTestId('empty-state');
 		const puzzleGrid = page.getByTestId('puzzle-grid');
 		const errorState = page.getByTestId('error-state');
 
 		await expect(errorState).toBeHidden();
-		await expect(emptyState.or(puzzleGrid)).toBeVisible();
+		await expect(puzzleGrid).toBeHidden();
+		await expect(emptyState).toBeVisible();
 	});
 
 	test('should display puzzle cards when puzzles exist', async ({ page }) => {
-		// This test will pass once puzzles are seeded
 		await page.goto('/');
 		await expect(page.getByTestId('loading-state')).toBeHidden();
 
-		// Either puzzle grid or empty state should be visible
 		const puzzleGrid = page.getByTestId('puzzle-grid');
 		const emptyState = page.getByTestId('empty-state');
 		const errorState = page.getByTestId('error-state');
 
 		await expect(errorState).toBeHidden();
-		await expect(puzzleGrid.or(emptyState)).toBeVisible();
+		await expect(puzzleGrid).toBeVisible();
+		await expect(emptyState).toBeHidden();
 	});
 
 	test('should navigate to puzzle page when clicking a card', async ({ page }) => {
