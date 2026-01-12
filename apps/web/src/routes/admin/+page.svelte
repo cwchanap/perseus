@@ -13,7 +13,7 @@
 	import type { PuzzleSummary } from '$lib/types/puzzle';
 	import { resolve } from '$app/paths';
 
-	const ALLOWED_PIECE_COUNTS = [9, 16, 25, 36, 49, 64, 100];
+	const ALLOWED_PIECE_COUNT = 225; // 15x15 grid
 
 	let loggingOut = $state(false);
 	let logoutError: string | null = $state(null);
@@ -23,7 +23,7 @@
 
 	// Form state
 	let name = $state('');
-	let pieceCount = $state(16);
+	let pieceCount = $state(ALLOWED_PIECE_COUNT);
 	let imageFile: File | null = $state(null);
 	let imagePreview: string | null = $state(null);
 	let imageInput: HTMLInputElement | null = $state(null);
@@ -35,8 +35,12 @@
 	// Delete state
 	let deletingId: string | null = $state(null);
 
+	// Polling interval for processing puzzles
+	let pollInterval: ReturnType<typeof setInterval> | null = null;
+
 	onMount(async () => {
 		await loadPuzzles();
+		startPollingIfNeeded();
 	});
 
 	onDestroy(() => {
@@ -44,7 +48,27 @@
 			clearTimeout(successTimeout);
 			successTimeout = null;
 		}
+		if (pollInterval !== null) {
+			clearInterval(pollInterval);
+			pollInterval = null;
+		}
 	});
+
+	function startPollingIfNeeded() {
+		// Check if any puzzles are processing
+		const hasProcessing = puzzles.some((p) => p.status === 'processing');
+		if (hasProcessing && pollInterval === null) {
+			pollInterval = setInterval(async () => {
+				await loadPuzzles();
+				// Stop polling if no more processing puzzles
+				const stillProcessing = puzzles.some((p) => p.status === 'processing');
+				if (!stillProcessing && pollInterval !== null) {
+					clearInterval(pollInterval);
+					pollInterval = null;
+				}
+			}, 3000); // Poll every 3 seconds
+		}
+	}
 
 	async function loadPuzzles() {
 		loadingPuzzles = true;
@@ -108,7 +132,7 @@
 
 	function clearForm() {
 		name = '';
-		pieceCount = 16;
+		pieceCount = ALLOWED_PIECE_COUNT;
 		clearSelectedImage();
 		formError = null;
 	}
@@ -132,9 +156,10 @@
 
 		try {
 			await createPuzzle(name.trim(), pieceCount, imageFile);
-			successMessage = 'Puzzle created successfully!';
+			successMessage = 'Puzzle creation started! It will appear below once processing begins.';
 			clearForm();
 			await loadPuzzles();
+			startPollingIfNeeded();
 
 			if (successTimeout !== null) clearTimeout(successTimeout);
 			successTimeout = setTimeout(() => {
@@ -232,23 +257,17 @@
 						/>
 					</div>
 
-					<!-- Piece Count -->
+					<!-- Piece Count (fixed at 225) -->
 					<div>
 						<label for="pieceCount" class="mb-2 block text-sm font-medium text-gray-700">
 							Number of Pieces
 						</label>
-						<select
-							id="pieceCount"
-							bind:value={pieceCount}
-							class="w-full rounded-md border border-gray-300 px-4 py-2 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 focus:outline-none"
-							disabled={creating}
+						<div
+							class="w-full rounded-md border border-gray-300 bg-gray-50 px-4 py-2 text-gray-700"
 						>
-							{#each ALLOWED_PIECE_COUNTS as count (count)}
-								<option value={count}
-									>{count} pieces ({Math.sqrt(count)}×{Math.sqrt(count)} grid)</option
-								>
-							{/each}
-						</select>
+							{ALLOWED_PIECE_COUNT} pieces (15×15 grid)
+						</div>
+						<input type="hidden" name="pieceCount" value={pieceCount} />
 					</div>
 
 					<!-- Image Upload -->
@@ -352,14 +371,63 @@
 						{#each puzzles as puzzle (puzzle.id)}
 							<div class="flex items-center justify-between rounded-md border border-gray-200 p-3">
 								<div class="flex items-center gap-3">
-									<img
-										src={getThumbnailUrl(puzzle.id)}
-										alt={puzzle.name}
-										class="h-12 w-12 rounded object-cover"
-									/>
+									{#if puzzle.status === 'processing'}
+										<div class="flex h-12 w-12 items-center justify-center rounded bg-gray-100">
+											<div
+												class="h-5 w-5 animate-spin rounded-full border-2 border-blue-500 border-t-transparent"
+											></div>
+										</div>
+									{:else if puzzle.status === 'failed'}
+										<div class="flex h-12 w-12 items-center justify-center rounded bg-red-100">
+											<svg
+												class="h-6 w-6 text-red-500"
+												fill="none"
+												viewBox="0 0 24 24"
+												stroke="currentColor"
+											>
+												<path
+													stroke-linecap="round"
+													stroke-linejoin="round"
+													stroke-width="2"
+													d="M6 18L18 6M6 6l12 12"
+												/>
+											</svg>
+										</div>
+									{:else}
+										<img
+											src={getThumbnailUrl(puzzle.id)}
+											alt={puzzle.name}
+											class="h-12 w-12 rounded object-cover"
+										/>
+									{/if}
 									<div>
-										<p class="font-medium text-gray-900">{puzzle.name}</p>
-										<p class="text-sm text-gray-500">{puzzle.pieceCount} pieces</p>
+										<div class="flex items-center gap-2">
+											<p class="font-medium text-gray-900">{puzzle.name}</p>
+											{#if puzzle.status === 'processing'}
+												<span
+													class="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700"
+													>Processing</span
+												>
+											{:else if puzzle.status === 'failed'}
+												<span
+													class="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700"
+													>Failed</span
+												>
+											{:else}
+												<span
+													class="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700"
+													>Ready</span
+												>
+											{/if}
+										</div>
+										<p class="text-sm text-gray-500">
+											{puzzle.pieceCount} pieces
+											{#if puzzle.status === 'processing' && puzzle.progress}
+												<span class="text-blue-600"
+													>({puzzle.progress.generatedPieces}/{puzzle.progress.totalPieces})</span
+												>
+											{/if}
+										</p>
 									</div>
 								</div>
 								<button

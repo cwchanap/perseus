@@ -1,28 +1,24 @@
 {
-	"name": "@perseus/api",
+	"name": "@perseus/workflows",
 	"private": true,
 	"version": "0.0.1",
 	"type": "module",
 	"scripts": {
 		"dev": "wrangler dev",
-		"dev:bun": "bun run --watch src/index.ts",
-		"build": "bun build src/index.ts --outdir dist --target bun",
 		"deploy": "wrangler deploy",
-		"start": "bun run dist/index.js",
 		"test": "vitest run",
-		"test:unit": "vitest run",
 		"test:watch": "vitest",
 		"check": "tsc --noEmit",
 		"lint": "prettier --check . && eslint ."
 	},
 	"dependencies": {
-		"hono": "^4.6.14"
+		"@cf-wasm/photon": "^0.3.4",
+		"@cf-wasm/resvg": "^0.3.3"
 	},
 	"devDependencies": {
 		"@cloudflare/workers-types": "^4.20241230.0",
 		"@eslint/compat": "^1.4.0",
 		"@eslint/js": "^9.39.1",
-		"@types/bun": "^1.1.15",
 		"eslint": "^9.39.1",
 		"eslint-config-prettier": "^10.1.8",
 		"globals": "^16.5.0",

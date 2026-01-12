@@ -10,7 +10,8 @@ describe('PuzzleCard', () => {
 	const mockPuzzle: PuzzleSummary = {
 		id: 'test-puzzle-123',
 		name: 'Test Puzzle',
-		pieceCount: 25
+		pieceCount: 25,
+		status: 'ready'
 	};
 
 	it('should render puzzle name', async () => {

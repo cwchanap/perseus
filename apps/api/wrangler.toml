@@ -1,0 +1,38 @@
+#:schema node_modules/wrangler/config-schema.json
+name = "perseus"
+main = "src/worker.ts"
+compatibility_date = "2024-12-30"
+compatibility_flags = ["nodejs_compat"]
+
+# Serve static assets from the web app build
+[assets]
+directory = "../web/build"
+
+# R2 bucket for puzzle assets
+[[r2_buckets]]
+binding = "PUZZLES_BUCKET"
+bucket_name = "perseus"
+
+# KV namespace for puzzle metadata
+[[kv_namespaces]]
+binding = "PUZZLE_METADATA"
+id = "5d87620636f741c09502f3d39f077ef1"
+
+# Cross-script workflow binding to workflows worker
+[[workflows]]
+name = "perseus"
+binding = "PUZZLE_WORKFLOW"
+class_name = "PerseusWorkflow"
+script_name = "workflows"
+
+# Environment variables (secrets set via wrangler secret)
+[vars]
+# NODE_ENV = "production"
+# ALLOWED_ORIGINS = "https://example.com"
+
+# Local development overrides
+[env.dev]
+name = "perseus-dev"
+
+[env.dev.vars]
+NODE_ENV = "development"

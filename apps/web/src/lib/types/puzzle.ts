@@ -31,10 +31,20 @@ export interface Puzzle {
 	pieces: PuzzlePiece[];
 }
 
+export type PuzzleStatus = 'processing' | 'ready' | 'failed';
+
+export interface PuzzleGenerationProgress {
+	totalPieces: number;
+	generatedPieces: number;
+	updatedAt: number;
+}
+
 export interface PuzzleSummary {
 	id: string;
 	name: string;
 	pieceCount: number;
+	status: PuzzleStatus;
+	progress?: PuzzleGenerationProgress;
 }
 
 export interface PlacedPiece {
