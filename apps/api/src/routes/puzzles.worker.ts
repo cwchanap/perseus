@@ -36,7 +36,7 @@ puzzles.get('/:id', async (c) => {
 
 		return c.json(puzzle);
 	} catch (error) {
-		console.error('Failed to retrieve puzzle', error);
+		console.error(`Failed to retrieve puzzle ${id}:`, error);
 		return c.json({ error: 'internal_error', message: 'Failed to retrieve puzzle' }, 500);
 	}
 });
@@ -67,7 +67,7 @@ puzzles.get('/:id/thumbnail', async (c) => {
 			}
 		});
 	} catch (error) {
-		console.error('Failed to retrieve thumbnail', error);
+		console.error(`Failed to retrieve thumbnail for puzzle ${id}:`, error);
 		return c.json({ error: 'internal_error', message: 'Failed to retrieve thumbnail' }, 500);
 	}
 });
@@ -108,7 +108,7 @@ puzzles.get('/:id/pieces/:pieceId/image', async (c) => {
 			}
 		});
 	} catch (error) {
-		console.error('Failed to retrieve piece image', error);
+		console.error(`Failed to retrieve piece ${pieceId} for puzzle ${id}:`, error);
 		return c.json({ error: 'internal_error', message: 'Failed to retrieve piece image' }, 500);
 	}
 });

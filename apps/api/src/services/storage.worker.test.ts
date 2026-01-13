@@ -9,6 +9,9 @@ import {
 	getOriginalKey,
 	getThumbnailKey,
 	getPieceKey,
+	uploadOriginalImage,
+	getImage,
+	deletePuzzleAssets,
 	type PuzzleMetadata
 } from './storage.worker';
 
@@ -199,6 +202,126 @@ describe('KV Metadata Operations', () => {
 				status: samplePuzzle.status,
 				progress: undefined
 			});
+		});
+	});
+});
+
+// Mock R2Bucket
+function createMockR2Bucket() {
+	const store = new Map<string, { data: ArrayBuffer; contentType: string }>();
+	return {
+		put: vi.fn(
+			async (
+				key: string,
+				data: ArrayBuffer,
+				options?: { httpMetadata?: { contentType: string } }
+			) => {
+				store.set(key, {
+					data,
+					contentType: options?.httpMetadata?.contentType || 'application/octet-stream'
+				});
+			}
+		),
+		get: vi.fn(async (key: string) => {
+			const item = store.get(key);
+			if (!item) return null;
+			return {
+				arrayBuffer: async () => item.data,
+				httpMetadata: { contentType: item.contentType }
+			};
+		}),
+		delete: vi.fn(async (keys: string | string[]) => {
+			const keysArray = Array.isArray(keys) ? keys : [keys];
+			for (const key of keysArray) {
+				store.delete(key);
+			}
+		}),
+		_store: store
+	};
+}
+
+describe('R2 Asset Operations', () => {
+	describe('uploadOriginalImage', () => {
+		it('should upload image with correct key and content type', async () => {
+			const mockBucket = createMockR2Bucket();
+			const imageData = new ArrayBuffer(100);
+
+			await uploadOriginalImage(
+				mockBucket as unknown as R2Bucket,
+				'puzzle-123',
+				imageData,
+				'image/jpeg'
+			);
+
+			expect(mockBucket.put).toHaveBeenCalledWith('puzzles/puzzle-123/original', imageData, {
+				httpMetadata: { contentType: 'image/jpeg' }
+			});
+		});
+	});
+
+	describe('getImage', () => {
+		it('should return image data and content type when exists', async () => {
+			const mockBucket = createMockR2Bucket();
+			const imageData = new Uint8Array([1, 2, 3, 4]).buffer;
+			mockBucket._store.set('puzzles/puzzle-123/thumbnail.jpg', {
+				data: imageData,
+				contentType: 'image/jpeg'
+			});
+
+			const result = await getImage(
+				mockBucket as unknown as R2Bucket,
+				'puzzles/puzzle-123/thumbnail.jpg'
+			);
+
+			expect(result).not.toBeNull();
+			expect(result?.contentType).toBe('image/jpeg');
+			expect(result?.data).toEqual(imageData);
+		});
+
+		it('should return null when image does not exist', async () => {
+			const mockBucket = createMockR2Bucket();
+
+			const result = await getImage(mockBucket as unknown as R2Bucket, 'nonexistent');
+
+			expect(result).toBeNull();
+		});
+	});
+
+	describe('deletePuzzleAssets', () => {
+		it('should delete original, thumbnail, and all piece images', async () => {
+			const mockBucket = createMockR2Bucket();
+			const pieceCount = 4;
+
+			await deletePuzzleAssets(mockBucket as unknown as R2Bucket, 'puzzle-123', pieceCount);
+
+			// Should have been called with all keys
+			expect(mockBucket.delete).toHaveBeenCalled();
+			const deleteCall = mockBucket.delete.mock.calls[0][0] as string[];
+			expect(deleteCall).toContain('puzzles/puzzle-123/original');
+			expect(deleteCall).toContain('puzzles/puzzle-123/thumbnail.jpg');
+			expect(deleteCall).toContain('puzzles/puzzle-123/pieces/0.png');
+			expect(deleteCall).toContain('puzzles/puzzle-123/pieces/1.png');
+			expect(deleteCall).toContain('puzzles/puzzle-123/pieces/2.png');
+			expect(deleteCall).toContain('puzzles/puzzle-123/pieces/3.png');
+		});
+
+		it('should batch delete when piece count exceeds 1000', async () => {
+			const mockBucket = createMockR2Bucket();
+			const pieceCount = 1500; // Will need 2 batches
+
+			await deletePuzzleAssets(mockBucket as unknown as R2Bucket, 'puzzle-123', pieceCount);
+
+			// Should have been called twice (2 batches)
+			expect(mockBucket.delete).toHaveBeenCalledTimes(2);
+
+			// First batch should have 1000 items
+			const firstBatch = mockBucket.delete.mock.calls[0][0] as string[];
+			expect(firstBatch.length).toBe(1000);
+
+			// Second batch should have remaining items (1502 total - 1000 = 502)
+			// 1500 pieces + original + thumbnail = 1502 total
+			const secondBatch = mockBucket.delete.mock.calls[1][0] as string[];
+			expect(secondBatch.length).toBe(502);
 		});
 	});
 });

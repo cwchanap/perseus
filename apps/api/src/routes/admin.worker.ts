@@ -8,6 +8,7 @@ import {
 	deletePuzzleAssets,
 	puzzleExists,
 	uploadOriginalImage,
+	getPuzzle,
 	type PuzzleMetadata
 } from '../services/storage.worker';
 import {
@@ -199,29 +200,33 @@ admin.post('/puzzles', requireAuth, async (c) => {
 admin.delete('/puzzles/:id', requireAuth, async (c) => {
 	const id = c.req.param('id');
 
-	const exists = await puzzleExists(c.env.PUZZLE_METADATA, id);
+	try {
+		const exists = await puzzleExists(c.env.PUZZLE_METADATA, id);
 
-	if (!exists) {
-		return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
-	}
+		if (!exists) {
+			return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
+		}
 
-	// Get puzzle to know piece count for asset deletion
-	const { getPuzzle } = await import('../services/storage.worker');
-	const puzzle = await getPuzzle(c.env.PUZZLE_METADATA, id);
+		// Get puzzle to know piece count for asset deletion
+		const puzzle = await getPuzzle(c.env.PUZZLE_METADATA, id);
 
-	// Delete assets from R2
-	if (puzzle) {
-		await deletePuzzleAssets(c.env.PUZZLES_BUCKET, id, puzzle.pieceCount);
-	}
+		// Delete assets from R2
+		if (puzzle) {
+			await deletePuzzleAssets(c.env.PUZZLES_BUCKET, id, puzzle.pieceCount);
+		}
 
-	// Delete metadata from KV
-	const deleted = await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
+		// Delete metadata from KV
+		const deleted = await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
 
-	if (!deleted) {
+		if (!deleted) {
+			return c.json({ error: 'internal_error', message: 'Failed to delete puzzle' }, 500);
+		}
+
+		return c.body(null, 204);
+	} catch (error) {
+		console.error(`Error deleting puzzle ${id}:`, error);
 		return c.json({ error: 'internal_error', message: 'Failed to delete puzzle' }, 500);
 	}
-
-	return c.body(null, 204);
 });
 
 export default admin;

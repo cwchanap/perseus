@@ -76,7 +76,13 @@ export async function verifySession(env: Env, token: string): Promise<SessionPay
 		if (payload.exp < Date.now()) return null;
 
 		return payload;
-	} catch {
+	} catch (error) {
+		// Log unexpected errors for debugging (malformed tokens are expected and not logged)
+		if (error instanceof SyntaxError) {
+			// Invalid JSON in token payload - expected for tampered tokens
+			return null;
+		}
+		console.error('Unexpected error during session verification:', error);
 		return null;
 	}
 }

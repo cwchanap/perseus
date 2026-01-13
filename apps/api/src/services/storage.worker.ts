@@ -78,7 +78,8 @@ export async function deletePuzzleMetadata(kv: KVNamespace, puzzleId: string): P
 	try {
 		await kv.delete(puzzleKey(puzzleId));
 		return true;
-	} catch {
+	} catch (error) {
+		console.error(`Failed to delete puzzle metadata for ${puzzleId}:`, error);
 		return false;
 	}
 }

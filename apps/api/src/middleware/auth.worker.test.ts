@@ -120,6 +120,39 @@ describe('Session Token Management', () => {
 
 			expect(session).toBeNull();
 		});
+
+		it('should return null for expired token', async () => {
+			// Create a token that is already expired by manipulating the payload
+			const expiredPayload = {
+				userId: 'admin',
+				username: 'admin',
+				role: 'admin',
+				iat: Date.now() - 100000,
+				exp: Date.now() - 50000 // Expired 50 seconds ago
+			};
+
+			const encoder = new TextEncoder();
+			const payloadJson = JSON.stringify(expiredPayload);
+			const payloadB64 = btoa(payloadJson);
+
+			// Create valid signature for the expired payload
+			const key = await crypto.subtle.importKey(
+				'raw',
+				encoder.encode(mockEnv.JWT_SECRET!),
+				{ name: 'HMAC', hash: 'SHA-256' },
+				false,
+				['sign']
+			);
+
+			const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(payloadB64));
+			const signatureB64 = btoa(String.fromCharCode(...new Uint8Array(signature)));
+
+			const expiredToken = `${payloadB64}.${signatureB64}`;
+
+			const session = await verifySession(mockEnv as Env, expiredToken);
+
+			expect(session).toBeNull();
+		});
 	});
 });
 

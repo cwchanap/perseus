@@ -15,7 +15,8 @@
 			"mcp__chrome-devtools__take_screenshot",
 			"mcp__chrome-devtools__drag",
 			"mcp__chrome-devtools__select_page",
-			"Bash(bun vitest:*)"
+			"Bash(bun vitest:*)",
+			"Bash(bun run test)"
 		]
 	}
 }

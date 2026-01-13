@@ -42,6 +42,12 @@ app.use('*', async (c, next) => {
 
 	const allowedOrigins = envOrigins.length > 0 ? envOrigins : isProd ? [] : DEFAULT_ALLOWED_ORIGINS;
 
+	if (isProd && allowedOrigins.length === 0) {
+		console.warn(
+			'WARNING: ALLOWED_ORIGINS not configured in production - all CORS requests will be blocked'
+		);
+	}
+
 	return cors({
 		origin: allowedOrigins,
 		credentials: true

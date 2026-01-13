@@ -181,12 +181,6 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 						const extractWidth = extractRight - extractLeft;
 						const extractHeight = extractBottom - extractTop;
 
-						// Calculate padding needed for edge pieces
-						const _padLeft = extractLeft - idealLeft;
-						const _padTop = extractTop - idealTop;
-						const _padRight = targetWidth - extractWidth - _padLeft;
-						const _padBottom = targetHeight - extractHeight - _padTop;
-
 						// Determine edge types
 						const topEdge: EdgeType = row === 0 ? 'flat' : opposite(bottomEdgesForAbove[col]);
 						const rightEdge: EdgeType =
