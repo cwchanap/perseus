@@ -86,16 +86,20 @@ export async function deletePuzzleMetadata(kv: KVNamespace, puzzleId: string): P
 
 // List all puzzles from KV (sorted by createdAt desc)
 export async function listPuzzles(kv: KVNamespace): Promise<PuzzleSummary[]> {
-	const list = await kv.list({ prefix: 'puzzle:' });
-	const puzzles: PuzzleMetadata[] = [];
+	const keys: { name: string }[] = [];
+	let cursor: string | undefined;
 
-	// Fetch all puzzle metadata
-	for (const key of list.keys) {
-		const data = await kv.get(key.name, 'json');
-		if (data) {
-			puzzles.push(data as PuzzleMetadata);
+	while (true) {
+		const list = await kv.list({ prefix: 'puzzle:', cursor });
+		keys.push(...list.keys);
+		if (list.list_complete) {
+			break;
 		}
+		cursor = list.cursor;
 	}
+
+	const fetched = await Promise.all(keys.map((k) => kv.get(k.name, 'json')));
+	const puzzles = fetched.filter((p): p is PuzzleMetadata => p !== null) as PuzzleMetadata[];
 
 	// Sort by createdAt descending
 	puzzles.sort((a, b) => b.createdAt - a.createdAt);

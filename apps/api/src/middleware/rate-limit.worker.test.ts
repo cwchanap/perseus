@@ -55,10 +55,7 @@ describe('loginRateLimit Middleware', () => {
 		// Make 5 failed attempts
 		for (let i = 0; i < 5; i++) {
 			const res = await app.fetch(createFailRequest(ip), mockEnv);
-			// First 4 should pass through, 5th triggers lockout
-			if (i < 4) {
-				expect(res.status).toBe(401); // Our mock returns 401 for fail
-			}
+			expect(res.status).toBe(401); // Our mock returns 401 for fail
 		}
 
 		// 6th attempt should be blocked

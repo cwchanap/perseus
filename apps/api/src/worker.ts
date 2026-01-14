@@ -27,6 +27,8 @@ export interface Env {
 // Create Hono app with typed env
 const app = new Hono<{ Bindings: Env }>();
 
+let loggedAllowedOriginsWarning = false;
+
 // Middleware
 app.use('*', logger());
 
@@ -42,7 +44,8 @@ app.use('*', async (c, next) => {
 
 	const allowedOrigins = envOrigins.length > 0 ? envOrigins : isProd ? [] : DEFAULT_ALLOWED_ORIGINS;
 
-	if (isProd && allowedOrigins.length === 0) {
+	if (!loggedAllowedOriginsWarning && isProd && allowedOrigins.length === 0) {
+		loggedAllowedOriginsWarning = true;
 		console.warn(
 			'WARNING: ALLOWED_ORIGINS not configured in production - all CORS requests will be blocked'
 		);

@@ -51,10 +51,11 @@ admin.post('/login', loginRateLimit, async (c) => {
 		const passkeyArr = new Uint8Array(passkeyHash);
 		const expectedArr = new Uint8Array(expectedHash);
 
-		let isValid = passkeyArr.length === expectedArr.length;
+		let diff = passkeyArr.length ^ expectedArr.length;
 		for (let i = 0; i < passkeyArr.length; i++) {
-			isValid = isValid && passkeyArr[i] === expectedArr[i];
+			diff |= passkeyArr[i] ^ expectedArr[i];
 		}
+		const isValid = diff === 0;
 
 		if (!isValid) {
 			return c.json({ error: 'unauthorized', message: 'Invalid passkey' }, 401);

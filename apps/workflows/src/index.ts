@@ -33,8 +33,9 @@ async function updateMetadata(
 
 // Grid dimension calculator
 function getGridDimensions(pieceCount: number): { rows: number; cols: number } {
-	const sqrt = Math.sqrt(pieceCount);
-	return { rows: sqrt, cols: sqrt };
+	const cols = Math.ceil(Math.sqrt(pieceCount));
+	const rows = Math.ceil(pieceCount / cols);
+	return { rows, cols };
 }
 
 // Edge type helper
@@ -153,6 +154,9 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 
 					for (let col = 0; col < cols; col++) {
 						const pieceId = row * cols + col;
+						if (pieceId >= totalPieces) {
+							break;
+						}
 
 						// Calculate base piece dimensions
 						const baseWidth = basePieceWidth + (col === cols - 1 ? extraWidth : 0);
@@ -248,7 +252,7 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 					srcImage.free();
 
 					// Update progress in metadata
-					const generatedPieces = (row + 1) * cols;
+					const generatedPieces = Math.min((row + 1) * cols, totalPieces);
 					const currentMeta = await getMetadata(this.env.PUZZLE_METADATA, puzzleId);
 					if (currentMeta) {
 						const updatedPieces = [...(currentMeta.pieces || []), ...pieces];

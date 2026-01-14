@@ -134,6 +134,7 @@ describe('Admin Routes', () => {
 			expect(res.status).toBe(200);
 			const body = (await res.json()) as { success: boolean };
 			expect(body.success).toBe(true);
+			expect(clearSessionCookie).toHaveBeenCalled();
 		});
 	});
 

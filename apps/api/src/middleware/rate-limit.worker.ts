@@ -63,7 +63,7 @@ export async function loginRateLimit(
 	entry.attempts++;
 
 	// Check if should lock out
-	if (entry.attempts >= MAX_LOGIN_ATTEMPTS) {
+	if (entry.attempts > MAX_LOGIN_ATTEMPTS) {
 		entry.lockedUntil = now + LOCKOUT_DURATION_MS;
 		rateLimitStore.set(key, entry);
 		return c.json(
