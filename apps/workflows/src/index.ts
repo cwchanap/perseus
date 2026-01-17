@@ -43,6 +43,30 @@ function opposite(edge: EdgeType): EdgeType {
 	return edge === 'tab' ? 'blank' : edge === 'blank' ? 'tab' : 'flat';
 }
 
+// Deterministic edge calculation helpers
+// These compute edges based on position alone, ensuring consistency across workflow steps
+function getBottomEdge(row: number, col: number, rows: number): EdgeType {
+	if (row === rows - 1) return 'flat';
+	return (row + col) % 2 === 0 ? 'blank' : 'tab';
+}
+
+function getRightEdge(row: number, col: number, cols: number): EdgeType {
+	if (col === cols - 1) return 'flat';
+	return (row + col) % 2 === 0 ? 'tab' : 'blank';
+}
+
+function getTopEdge(row: number, col: number, rows: number): EdgeType {
+	if (row === 0) return 'flat';
+	// Top edge is opposite of the bottom edge of the piece above (row - 1, col)
+	return opposite(getBottomEdge(row - 1, col, rows));
+}
+
+function getLeftEdge(row: number, col: number, cols: number): EdgeType {
+	if (col === 0) return 'flat';
+	// Left edge is opposite of the right edge of the piece to the left (row, col - 1)
+	return opposite(getRightEdge(row, col - 1, cols));
+}
+
 export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 	async run(event: WorkflowEvent<WorkflowParams>, step: WorkflowStep): Promise<void> {
 		const { puzzleId } = event.payload;
@@ -146,10 +170,6 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 					const basePieceHeight = Math.floor(srcH / rows);
 					const extraHeight = srcH % rows;
 
-					// Track edge states for this row
-					const bottomEdgesForAbove: EdgeType[] = new Array(cols).fill('flat');
-					let leftEdgeForNext: EdgeType = 'flat';
-
 					const pieces: PuzzlePiece[] = [];
 
 					for (let col = 0; col < cols; col++) {
@@ -185,22 +205,13 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 						const extractWidth = extractRight - extractLeft;
 						const extractHeight = extractBottom - extractTop;
 
-						// Determine edge types
-						const topEdge: EdgeType = row === 0 ? 'flat' : opposite(bottomEdgesForAbove[col]);
-						const rightEdge: EdgeType =
-							col === cols - 1 ? 'flat' : (row + col) % 2 === 0 ? 'tab' : 'blank';
-						const bottomEdge: EdgeType =
-							row === rows - 1 ? 'flat' : (row + col) % 2 === 0 ? 'blank' : 'tab';
-						const leftEdge: EdgeType = col === 0 ? 'flat' : opposite(leftEdgeForNext);
-
-						bottomEdgesForAbove[col] = bottomEdge;
-						leftEdgeForNext = rightEdge;
-
+						// Determine edge types using deterministic calculation
+						// This ensures edges are consistent across workflow steps
 						const edges: EdgeConfig = {
-							top: topEdge,
-							right: rightEdge,
-							bottom: bottomEdge,
-							left: leftEdge
+							top: getTopEdge(row, col, rows),
+							right: getRightEdge(row, col, cols),
+							bottom: getBottomEdge(row, col, rows),
+							left: getLeftEdge(row, col, cols)
 						};
 
 						// Extract piece region from source image using crop function

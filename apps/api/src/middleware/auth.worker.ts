@@ -15,6 +15,19 @@ interface SessionPayload {
 	iat: number;
 }
 
+// Runtime validation for session payload
+function isValidSessionPayload(obj: unknown): obj is SessionPayload {
+	if (typeof obj !== 'object' || obj === null) return false;
+	const payload = obj as Record<string, unknown>;
+	return (
+		typeof payload.userId === 'string' &&
+		typeof payload.username === 'string' &&
+		typeof payload.role === 'string' &&
+		typeof payload.exp === 'number' &&
+		typeof payload.iat === 'number'
+	);
+}
+
 // Create a JWT-like session token using WebCrypto
 export async function createSession(
 	env: Env,
@@ -70,10 +83,14 @@ export async function verifySession(env: Env, token: string): Promise<SessionPay
 
 		// Parse and validate payload
 		const payloadJson = atob(payloadB64);
-		const payload = JSON.parse(payloadJson) as SessionPayload;
+		const parsed = JSON.parse(payloadJson);
+
+		// Validate payload structure
+		if (!isValidSessionPayload(parsed)) return null;
 
 		// Check expiration
-		if (payload.exp < Date.now()) return null;
+		if (parsed.exp < Date.now()) return null;
+		const payload = parsed;
 
 		return payload;
 	} catch (error) {

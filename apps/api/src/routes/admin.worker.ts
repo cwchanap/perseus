@@ -153,10 +153,9 @@ admin.post('/puzzles', requireAuth, async (c) => {
 		// Generate puzzle ID
 		const id = crypto.randomUUID();
 
-		// Calculate grid dimensions
-		const sqrt = Math.sqrt(pieceCount);
-		const gridCols = sqrt;
-		const gridRows = sqrt;
+		// Calculate grid dimensions (must match workflow calculation)
+		const gridCols = Math.ceil(Math.sqrt(pieceCount));
+		const gridRows = Math.ceil(pieceCount / gridCols);
 
 		// Create initial puzzle metadata with processing status
 		const puzzleMetadata: PuzzleMetadata = {
