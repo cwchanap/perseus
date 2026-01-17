@@ -73,6 +73,7 @@ describe('KV Metadata Operations', () => {
 		imageHeight: 800,
 		createdAt: Date.now(),
 		status: 'ready',
+		version: 0,
 		pieces: []
 	};
 

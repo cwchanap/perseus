@@ -264,10 +264,11 @@
 						</label>
 						<div
 							class="w-full rounded-md border border-gray-300 bg-gray-50 px-4 py-2 text-gray-700"
+							aria-hidden="true"
 						>
 							{ALLOWED_PIECE_COUNT} pieces (15×15 grid)
 						</div>
-						<input type="hidden" name="pieceCount" value={pieceCount} />
+						<input id="pieceCount" type="hidden" name="pieceCount" value={pieceCount} />
 					</div>
 
 					<!-- Image Upload -->
@@ -378,12 +379,17 @@
 											></div>
 										</div>
 									{:else if puzzle.status === 'failed'}
-										<div class="flex h-12 w-12 items-center justify-center rounded bg-red-100">
+										<div
+											class="flex h-12 w-12 items-center justify-center rounded bg-red-100"
+											aria-label="Puzzle failed"
+											role="img"
+										>
 											<svg
 												class="h-6 w-6 text-red-500"
 												fill="none"
 												viewBox="0 0 24 24"
 												stroke="currentColor"
+												aria-hidden="true"
 											>
 												<path
 													stroke-linecap="round"

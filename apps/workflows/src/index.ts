@@ -23,17 +23,53 @@ async function updateMetadata(
 	puzzleId: string,
 	updates: Partial<PuzzleMetadata>
 ): Promise<void> {
-	const existing = await getMetadata(kv, puzzleId);
-	if (!existing) {
-		throw new Error(`Puzzle ${puzzleId} not found`);
+	const maxRetries = 3;
+	const baseDelay = 50; // ms
+
+	for (let attempt = 0; attempt < maxRetries; attempt++) {
+		const existing = await getMetadata(kv, puzzleId);
+		if (!existing) {
+			throw new Error(`Puzzle ${puzzleId} not found`);
+		}
+
+		const currentVersion = existing.version ?? 0;
+		const updated: PuzzleMetadata = {
+			...existing,
+			...updates,
+			version: currentVersion + 1
+		};
+
+		// Write updated metadata
+		await kv.put(`puzzle:${puzzleId}`, JSON.stringify(updated));
+
+		// Verify our write succeeded by reading back and checking version
+		const current = await getMetadata(kv, puzzleId);
+		if (current?.version === updated.version) {
+			// Our write succeeded
+			return;
+		}
+
+		// Version mismatch - another update occurred, retry
+		if (attempt < maxRetries - 1) {
+			const delay = baseDelay * Math.pow(2, attempt);
+			await new Promise((resolve) => setTimeout(resolve, delay));
+		}
 	}
-	const updated = { ...existing, ...updates };
-	await kv.put(`puzzle:${puzzleId}`, JSON.stringify(updated));
+
+	throw new Error(
+		`Failed to update puzzle ${puzzleId} after ${maxRetries} attempts due to concurrent updates`
+	);
 }
 
 // Grid dimension calculator
 function getGridDimensions(pieceCount: number): { rows: number; cols: number } {
+	// Validate input - guard against zero or negative values
+	if (pieceCount <= 0) {
+		return { rows: 0, cols: 0 };
+	}
+
 	const cols = Math.ceil(Math.sqrt(pieceCount));
+	// cols will always be >= 1 for pieceCount >= 1
 	const rows = Math.ceil(pieceCount / cols);
 	return { rows, cols };
 }
@@ -217,10 +253,6 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 						// Extract piece region from source image using crop function
 						const pieceImage = crop(srcImage, extractLeft, extractTop, extractWidth, extractHeight);
 
-						// For edge pieces, the extracted region may be smaller than target
-						// We'll use the piece as-is (the mask will handle transparency)
-						const canvas = pieceImage;
-
 						// Generate jigsaw mask SVG
 						const maskSvg = generateJigsawSvgMask(edges, targetWidth, targetHeight);
 
@@ -233,15 +265,29 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 						// Load mask as PhotonImage
 						const maskImage = PhotonImage.new_from_byteslice(maskPng);
 
-						// Apply mask (blend with alpha)
-						// Note: Photon doesn't have apply_alpha_mask, use blend instead
-						// For now, output the cropped piece without mask
-						// TODO: Implement proper masking with available Photon functions
-						maskImage.free();
+						// Apply mask by manipulating raw bytes
+						// Get raw bytes from both images (RGBA format, 4 bytes per pixel)
+						const pieceBytes = pieceImage.get_bytes();
+						const maskBytes = maskImage.get_bytes();
 
-						// Encode as PNG
-						const pngBytes = canvas.get_bytes();
-						canvas.free();
+						// Copy alpha channel from mask to piece (4th byte in each RGBA pixel)
+						// The mask is grayscale where white = transparent, black = opaque
+						for (let i = 0; i < pieceBytes.length; i += 4) {
+							// Invert mask luminance for alpha: black (0) = opaque (255), white (255) = transparent (0)
+							const luminance = maskBytes[i]; // All channels are same in grayscale
+							pieceBytes[i + 3] = 255 - luminance;
+						}
+
+						// Create new PhotonImage from modified bytes
+						const maskedPiece = PhotonImage.new_from_byteslice(pieceBytes);
+
+						// Free original images
+						maskImage.free();
+						pieceImage.free();
+
+						// Encode masked piece as PNG
+						const pngBytes = maskedPiece.get_bytes();
+						maskedPiece.free();
 
 						// Upload piece to R2
 						await this.env.PUZZLES_BUCKET.put(

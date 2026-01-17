@@ -40,11 +40,13 @@ export async function createSession(
 		exp: now + SESSION_DURATION_MS
 	};
 
-	const encoder = new TextEncoder();
+	// Unicode-safe base64 encoding
 	const payloadJson = JSON.stringify(payload);
-	const payloadB64 = btoa(payloadJson);
+	const payloadBytes = new TextEncoder().encode(payloadJson);
+	const payloadB64 = btoa(String.fromCharCode(...payloadBytes));
 
 	// Create HMAC signature
+	const encoder = new TextEncoder();
 	const key = await crypto.subtle.importKey(
 		'raw',
 		encoder.encode(env.JWT_SECRET),
@@ -82,7 +84,8 @@ export async function verifySession(env: Env, token: string): Promise<SessionPay
 		if (!isValid) return null;
 
 		// Parse and validate payload
-		const payloadJson = atob(payloadB64);
+		const payloadBytes = Uint8Array.from(atob(payloadB64), (c) => c.charCodeAt(0));
+		const payloadJson = new TextDecoder().decode(payloadBytes);
 		const parsed = JSON.parse(payloadJson);
 
 		// Validate payload structure

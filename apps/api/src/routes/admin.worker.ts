@@ -8,6 +8,7 @@ import {
 	deletePuzzleAssets,
 	puzzleExists,
 	uploadOriginalImage,
+	deleteOriginalImage,
 	getPuzzle,
 	type PuzzleMetadata
 } from '../services/storage.worker';
@@ -157,7 +158,18 @@ admin.post('/puzzles', requireAuth, async (c) => {
 		const gridCols = Math.ceil(Math.sqrt(pieceCount));
 		const gridRows = Math.ceil(pieceCount / gridCols);
 
-		// Create initial puzzle metadata with processing status
+		// Prepare image buffer
+		const imageBuffer = await image.arrayBuffer();
+
+		// Step 1: Upload original image to R2 first
+		try {
+			await uploadOriginalImage(c.env.PUZZLES_BUCKET, id, imageBuffer, image.type);
+		} catch (error) {
+			console.error('Failed to upload original image:', error);
+			return c.json({ error: 'internal_error', message: 'Failed to upload image' }, 500);
+		}
+
+		// Step 2: Create puzzle metadata with processing status
 		const puzzleMetadata: PuzzleMetadata = {
 			id,
 			name: trimmedName,
@@ -173,21 +185,33 @@ admin.post('/puzzles', requireAuth, async (c) => {
 				generatedPieces: 0,
 				updatedAt: Date.now()
 			},
-			pieces: []
+			pieces: [],
+			version: 0 // Initial version for optimistic concurrency
 		};
 
-		// Store metadata in KV
-		await createPuzzleMetadata(c.env.PUZZLE_METADATA, puzzleMetadata);
+		try {
+			// Store metadata in KV
+			await createPuzzleMetadata(c.env.PUZZLE_METADATA, puzzleMetadata);
+		} catch (error) {
+			console.error('Failed to create puzzle metadata:', error);
+			// Clean up the uploaded image
+			await deleteOriginalImage(c.env.PUZZLES_BUCKET, id);
+			return c.json({ error: 'internal_error', message: 'Failed to create puzzle metadata' }, 500);
+		}
 
-		// Upload original image to R2
-		const imageBuffer = await image.arrayBuffer();
-		await uploadOriginalImage(c.env.PUZZLES_BUCKET, id, imageBuffer, image.type);
-
-		// Trigger workflow for puzzle generation
-		await c.env.PUZZLE_WORKFLOW.create({
-			id,
-			params: { puzzleId: id }
-		});
+		// Step 3: Trigger workflow for puzzle generation
+		try {
+			await c.env.PUZZLE_WORKFLOW.create({
+				id,
+				params: { puzzleId: id }
+			});
+		} catch (error) {
+			console.error('Failed to trigger workflow:', error);
+			// Clean up both metadata and image
+			await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
+			await deleteOriginalImage(c.env.PUZZLES_BUCKET, id);
+			return c.json({ error: 'internal_error', message: 'Failed to start puzzle processing' }, 500);
+		}
 
 		return c.json(puzzleMetadata, 201);
 	} catch (error) {

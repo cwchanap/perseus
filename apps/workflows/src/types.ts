@@ -40,6 +40,8 @@ export interface PuzzleMetadata {
 	progress?: PuzzleProgress;
 	error?: { message: string };
 	pieces: PuzzlePiece[];
+	// Version for optimistic concurrency control
+	version: number;
 }
 
 export interface WorkflowParams {

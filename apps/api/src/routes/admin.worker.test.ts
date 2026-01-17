@@ -342,6 +342,7 @@ describe('Admin Routes', () => {
 				imageHeight: 800,
 				createdAt: Date.now(),
 				status: 'ready',
+				version: 0,
 				pieces: []
 			});
 			vi.mocked(deletePuzzleAssets).mockResolvedValue(undefined);
@@ -371,6 +372,7 @@ describe('Admin Routes', () => {
 				imageHeight: 800,
 				createdAt: Date.now(),
 				status: 'ready',
+				version: 0,
 				pieces: []
 			});
 			vi.mocked(deletePuzzleAssets).mockResolvedValue(undefined);

@@ -33,6 +33,8 @@ export interface PuzzleMetadata {
 	progress?: PuzzleProgress;
 	error?: { message: string };
 	pieces: PuzzlePiece[];
+	// Version for optimistic concurrency control
+	version: number;
 }
 
 export interface PuzzleSummary {
@@ -56,21 +58,53 @@ export async function getPuzzle(kv: KVNamespace, puzzleId: string): Promise<Puzz
 
 // Create initial puzzle metadata in KV (for processing state)
 export async function createPuzzleMetadata(kv: KVNamespace, puzzle: PuzzleMetadata): Promise<void> {
-	await kv.put(puzzleKey(puzzle.id), JSON.stringify(puzzle));
+	// Initialize version if not set
+	const puzzleWithVersion = { ...puzzle, version: puzzle.version ?? 0 };
+	await kv.put(puzzleKey(puzzleWithVersion.id), JSON.stringify(puzzleWithVersion));
 }
 
-// Update puzzle metadata in KV
+// Update puzzle metadata in KV with optimistic concurrency control
 export async function updatePuzzleMetadata(
 	kv: KVNamespace,
 	puzzleId: string,
 	updates: Partial<PuzzleMetadata>
 ): Promise<void> {
-	const existing = await getPuzzle(kv, puzzleId);
-	if (!existing) {
-		throw new Error(`Puzzle ${puzzleId} not found`);
+	const maxRetries = 3;
+	const baseDelay = 50; // ms
+
+	for (let attempt = 0; attempt < maxRetries; attempt++) {
+		const existing = await getPuzzle(kv, puzzleId);
+		if (!existing) {
+			throw new Error(`Puzzle ${puzzleId} not found`);
+		}
+
+		const currentVersion = existing.version ?? 0;
+		const updated: PuzzleMetadata = {
+			...existing,
+			...updates,
+			version: currentVersion + 1
+		};
+
+		// Write updated metadata
+		await kv.put(puzzleKey(puzzleId), JSON.stringify(updated));
+
+		// Verify our write succeeded by reading back and checking version
+		const current = await getPuzzle(kv, puzzleId);
+		if (current?.version === updated.version) {
+			// Our write succeeded
+			return;
+		}
+
+		// Version mismatch - another update occurred, retry
+		if (attempt < maxRetries - 1) {
+			const delay = baseDelay * Math.pow(2, attempt);
+			await new Promise((resolve) => setTimeout(resolve, delay));
+		}
 	}
-	const updated = { ...existing, ...updates };
-	await kv.put(puzzleKey(puzzleId), JSON.stringify(updated));
+
+	throw new Error(
+		`Failed to update puzzle ${puzzleId} after ${maxRetries} attempts due to concurrent updates`
+	);
 }
 
 // Delete puzzle metadata from KV
@@ -143,6 +177,17 @@ export async function uploadOriginalImage(
 	await bucket.put(getOriginalKey(puzzleId), data, {
 		httpMetadata: { contentType }
 	});
+}
+
+// Delete original image from R2
+export async function deleteOriginalImage(bucket: R2Bucket, puzzleId: string): Promise<boolean> {
+	try {
+		await bucket.delete(getOriginalKey(puzzleId));
+		return true;
+	} catch (error) {
+		console.error(`Failed to delete original image for puzzle ${puzzleId}:`, error);
+		return false;
+	}
 }
 
 // Get image from R2

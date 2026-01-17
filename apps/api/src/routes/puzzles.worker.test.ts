@@ -47,7 +47,8 @@ const samplePuzzle = {
 	imageHeight: 800,
 	createdAt: Date.now(),
 	status: 'ready' as const,
-	pieces: []
+	pieces: [],
+	version: 0
 };
 
 describe('Puzzles Routes', () => {
