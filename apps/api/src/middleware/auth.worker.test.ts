@@ -158,7 +158,7 @@ describe('Session Token Management', () => {
 
 describe('Cookie Management', () => {
 	describe('getSessionToken', () => {
-		it('should return undefined when no cookie is set', () => {
+		it('should return undefined when no cookie is set', async () => {
 			const app = new Hono();
 			let result: string | undefined;
 
@@ -169,7 +169,7 @@ describe('Cookie Management', () => {
 
 			// Make request without cookie
 			const req = new Request('http://localhost/test');
-			app.fetch(req);
+			await app.fetch(req);
 
 			// Note: getSessionToken returns undefined for no cookie
 			expect(result).toBeUndefined();
