@@ -113,10 +113,11 @@ export function getSessionToken(c: Context): string | undefined {
 }
 
 // Set session cookie
-export function setSessionCookie(c: Context, token: string): void {
+export function setSessionCookie(c: Context<{ Bindings: Env }>, token: string): void {
+	const isSecure = c.env.NODE_ENV === 'production';
 	setCookie(c, SESSION_COOKIE_NAME, token, {
 		httpOnly: true,
-		secure: true,
+		secure: isSecure,
 		sameSite: 'Lax',
 		path: '/',
 		maxAge: SESSION_DURATION_MS / 1000

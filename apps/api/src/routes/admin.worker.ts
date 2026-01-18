@@ -68,7 +68,7 @@ admin.post('/login', loginRateLimit, async (c) => {
 			role: 'admin'
 		});
 		setSessionCookie(c, token);
-		resetLoginAttempts(c);
+		await resetLoginAttempts(c);
 
 		return c.json({ success: true });
 	} catch (error) {

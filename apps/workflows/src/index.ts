@@ -278,15 +278,17 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 							pieceBytes[i + 3] = 255 - luminance;
 						}
 
-						// Create new PhotonImage from modified bytes
-						const maskedPiece = PhotonImage.new_from_byteslice(pieceBytes);
+						// Create new PhotonImage from modified raw RGBA bytes using correct constructor
+						const pieceWidth = pieceImage.get_width();
+						const pieceHeight = pieceImage.get_height();
+						const maskedPiece = PhotonImage.new(pieceBytes, pieceWidth, pieceHeight);
 
 						// Free original images
 						maskImage.free();
 						pieceImage.free();
 
 						// Encode masked piece as PNG
-						const pngBytes = maskedPiece.get_bytes();
+						const pngBytes = maskedPiece.get_bytes_png();
 						maskedPiece.free();
 
 						// Upload piece to R2
