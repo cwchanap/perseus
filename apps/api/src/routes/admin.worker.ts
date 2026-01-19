@@ -38,6 +38,12 @@ admin.post('/login', loginRateLimit, async (c) => {
 			return c.json({ error: 'bad_request', message: 'Passkey is required' }, 400);
 		}
 
+		// Validate ADMIN_PASSKEY is configured
+		if (!c.env.ADMIN_PASSKEY) {
+			console.error('ADMIN_PASSKEY environment variable is not configured');
+			return c.json({ error: 'internal_error', message: 'Server configuration error' }, 500);
+		}
+
 		// Use WebCrypto for constant-time comparison
 		const encoder = new TextEncoder();
 		const passkeyBytes = encoder.encode(passkey);

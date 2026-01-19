@@ -45,9 +45,22 @@ import { verifySession, getSessionToken, clearSessionCookie } from '../middlewar
 
 // Create mock environment
 function createMockEnv(): Env {
+	const mockKVStore = new Map<string, any>();
+	const mockKV = {
+		get: vi.fn(async (key: string) => {
+			return mockKVStore.get(key) || null;
+		}),
+		put: vi.fn(async (key: string, value: string) => {
+			mockKVStore.set(key, JSON.parse(value));
+		}),
+		delete: vi.fn(async (key: string) => {
+			mockKVStore.delete(key);
+		})
+	} as unknown as KVNamespace;
+
 	return {
 		PUZZLES_BUCKET: {} as R2Bucket,
-		PUZZLE_METADATA: {} as KVNamespace,
+		PUZZLE_METADATA: mockKV,
 		PUZZLE_WORKFLOW: {
 			create: vi.fn().mockResolvedValue({ id: 'workflow-123' }),
 			get: vi.fn()
@@ -76,6 +89,22 @@ describe('Admin Routes', () => {
 	});
 
 	describe('POST /api/admin/login', () => {
+		it('should return 500 when ADMIN_PASSKEY is not configured', async () => {
+			const envWithoutPasskey = { ...mockEnv, ADMIN_PASSKEY: undefined };
+			const res = await app.fetch(
+				new Request('http://localhost/api/admin/login', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ passkey: 'any-passkey' })
+				}),
+				envWithoutPasskey
+			);
+
+			expect(res.status).toBe(500);
+			const body = (await res.json()) as { error: string };
+			expect(body.error).toBe('internal_error');
+		});
+
 		it('should return 400 when passkey is missing', async () => {
 			const res = await app.fetch(
 				new Request('http://localhost/api/admin/login', {

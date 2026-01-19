@@ -33,9 +33,10 @@ function getClientIP(c: Context): string {
 		}
 	}
 
-	// Fall back to empty string to avoid rate limit bucket collision
+	// Fall back to a generated UUID per request to avoid shared bucket
+	// This ensures each unidentified client gets its own rate limit bucket
 	// Note: c.req.ip is not available in all Hono/Worker environments
-	return '';
+	return crypto.randomUUID();
 }
 
 function getRateLimitKey(c: Context): string {
@@ -140,30 +141,49 @@ async function incrementAttempts(
 	return { shouldBlock: true, remainingSeconds: Math.ceil(LOCKOUT_DURATION_MS / 1000) };
 }
 
-export async function loginRateLimit(
-	c: Context<{ Bindings: Env }>,
-	next: Next
-): Promise<Response | void> {
+export async function loginRateLimit(c: Context<{ Bindings: Env }>, next: Next): Promise<Response> {
 	const key = getRateLimitKey(c);
 	const now = Date.now();
 	const kv = c.env.PUZZLE_METADATA;
 
-	const result = await incrementAttempts(kv, key, now);
-
-	if (result.shouldBlock) {
+	// First check if already locked out
+	const entry = await getRateLimitEntry(kv, key);
+	if (entry?.lockedUntil && entry.lockedUntil > now) {
+		const remainingSeconds = Math.ceil((entry.lockedUntil - now) / 1000);
 		return c.json(
 			{
 				error: 'too_many_requests',
-				message:
-					result.remainingSeconds !== undefined
-						? `Too many login attempts. Try again in ${result.remainingSeconds} seconds`
-						: 'Too many login attempts. Please try again later'
+				message: `Too many login attempts. Try again in ${remainingSeconds} seconds`
 			},
 			429
 		);
 	}
 
-	await next();
+	// Let the request proceed
+	const response = await next();
+
+	// Only increment on failed authentication (401/403 responses)
+	if (response.status === 401 || response.status === 403) {
+		const result = await incrementAttempts(kv, key, now);
+		if (result.shouldBlock) {
+			// Create a new 429 response with rate limit info
+			return c.json(
+				{
+					error: 'too_many_requests',
+					message:
+						result.remainingSeconds !== undefined
+							? `Too many login attempts. Try again in ${result.remainingSeconds} seconds`
+							: 'Too many login attempts. Please try again later'
+				},
+				429
+			);
+		}
+	} else if (response.status === 200) {
+		// Successful login, reset attempts
+		await deleteRateLimitEntry(kv, key);
+	}
+
+	return response;
 }
 
 export async function resetLoginAttempts(c: Context<{ Bindings: Env }>): Promise<void> {

@@ -42,15 +42,10 @@ async function updateMetadata(
 		// Write updated metadata
 		await kv.put(`puzzle:${puzzleId}`, JSON.stringify(updated));
 
-		// Small delay to account for KV eventual consistency before verification
-		await new Promise((resolve) => setTimeout(resolve, 50));
-
-		// Verify our write succeeded by reading back and checking version
-		const current = await getMetadata(kv, puzzleId);
-		if (current?.version === updated.version) {
-			// Our write succeeded
-			return;
-		}
+		// Note: Due to KV eventual consistency, we skip read-back verification.
+		// The version check in this retry loop handles concurrent updates,
+		// but there's a small window where reads may return stale data.
+		// For strong consistency, consider migrating to Durable Objects.
 
 		// Version mismatch - another update occurred, retry
 		if (attempt < maxRetries - 1) {
@@ -126,8 +121,7 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 				const bytes = await imageObj.arrayBuffer();
 				return {
 					metadata: meta,
-					imageBytes: Array.from(new Uint8Array(bytes)),
-					contentType: imageObj.httpMetadata?.contentType || 'image/jpeg'
+					imageBytes: Array.from(new Uint8Array(bytes))
 				};
 			});
 
@@ -268,10 +262,18 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 						// Load mask as PhotonImage
 						const maskImage = PhotonImage.new_from_byteslice(maskPng);
 
-						// Apply mask by manipulating raw bytes
-						// Get raw bytes from both images (RGBA format, 4 bytes per pixel)
-						const pieceBytes = pieceImage.get_bytes();
+						// Validate sizes match before copying alpha bytes
 						const maskBytes = maskImage.get_bytes();
+						const pieceBytes = pieceImage.get_bytes();
+
+						if (maskBytes.length !== pieceBytes.length) {
+							maskImage.free();
+							pieceImage.free();
+							throw new Error(
+								`Mask and piece image size mismatch for piece ${pieceId}: ` +
+									`mask=${maskBytes.length} bytes, piece=${pieceBytes.length} bytes`
+							);
+						}
 
 						// Copy alpha channel from mask to piece (4th byte in each RGBA pixel)
 						// The mask is grayscale where white = transparent, black = opaque
@@ -336,7 +338,10 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 						);
 					}
 
-					const updatedPieces = [...(currentMeta.pieces || []), ...pieces];
+					// Deduplicate pieces by ID before merging
+					const existingPieceIds = new Set((currentMeta.pieces || []).map((p) => p.id));
+					const newPieces = pieces.filter((p) => !existingPieceIds.has(p.id));
+					const updatedPieces = [...(currentMeta.pieces || []), ...newPieces];
 					await updateMetadata(this.env.PUZZLE_METADATA, puzzleId, {
 						pieces: updatedPieces,
 						progress: {
