@@ -264,11 +264,9 @@
 						</label>
 						<div
 							class="w-full rounded-md border border-gray-300 bg-gray-50 px-4 py-2 text-gray-700"
-							aria-hidden="true"
 						>
 							{ALLOWED_PIECE_COUNT} pieces (15×15 grid)
 						</div>
-						<input id="pieceCount" type="hidden" name="pieceCount" value={pieceCount} />
 					</div>
 
 					<!-- Image Upload -->
@@ -376,7 +374,10 @@
 										<div class="flex h-12 w-12 items-center justify-center rounded bg-gray-100">
 											<div
 												class="h-5 w-5 animate-spin rounded-full border-2 border-blue-500 border-t-transparent"
+												role="status"
+												aria-label="Processing puzzle"
 											></div>
+											<span class="sr-only">Processing puzzle</span>
 										</div>
 									{:else if puzzle.status === 'failed'}
 										<div

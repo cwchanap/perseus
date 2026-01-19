@@ -50,6 +50,37 @@ function puzzleKey(id: string): string {
 	return `puzzle:${id}`;
 }
 
+function lockKey(id: string): string {
+	return `lock:${id}`;
+}
+
+// Distributed lock helpers for KV
+async function acquireLock(kv: KVNamespace, key: string, timeoutMs: number): Promise<boolean> {
+	const lockValue = Date.now().toString();
+	try {
+		const existing = await kv.get(key);
+		if (existing) {
+			// Lock already held
+			return false;
+		}
+		await kv.put(key, lockValue, {
+			expirationTtl: Math.ceil(timeoutMs / 1000)
+		});
+		return true;
+	} catch (error) {
+		console.error('Failed to acquire lock:', error);
+		return false;
+	}
+}
+
+async function releaseLock(kv: KVNamespace, key: string): Promise<void> {
+	try {
+		await kv.delete(key);
+	} catch (error) {
+		console.error('Failed to release lock:', error);
+	}
+}
+
 // Get puzzle metadata from KV
 export async function getPuzzle(kv: KVNamespace, puzzleId: string): Promise<PuzzleMetadata | null> {
 	const data = await kv.get(puzzleKey(puzzleId), 'json');
@@ -63,48 +94,60 @@ export async function createPuzzleMetadata(kv: KVNamespace, puzzle: PuzzleMetada
 	await kv.put(puzzleKey(puzzleWithVersion.id), JSON.stringify(puzzleWithVersion));
 }
 
-// Update puzzle metadata in KV with optimistic concurrency control
+// Update puzzle metadata in KV with optimistic concurrency control and distributed lock
 export async function updatePuzzleMetadata(
 	kv: KVNamespace,
 	puzzleId: string,
 	updates: Partial<PuzzleMetadata>
 ): Promise<void> {
+	const lockTimeout = 5000; // 5 seconds
+	const acquired = await acquireLock(kv, lockKey(puzzleId), lockTimeout);
+	if (!acquired) {
+		throw new Error(
+			`Failed to acquire lock for puzzle ${puzzleId} update. Another update is in progress.`
+		);
+	}
+
 	const maxRetries = 3;
 	const baseDelay = 50; // ms
 
-	for (let attempt = 0; attempt < maxRetries; attempt++) {
-		const existing = await getPuzzle(kv, puzzleId);
-		if (!existing) {
-			throw new Error(`Puzzle ${puzzleId} not found`);
+	try {
+		for (let attempt = 0; attempt < maxRetries; attempt++) {
+			const existing = await getPuzzle(kv, puzzleId);
+			if (!existing) {
+				throw new Error(`Puzzle ${puzzleId} not found`);
+			}
+
+			const currentVersion = existing.version ?? 0;
+			const updated: PuzzleMetadata = {
+				...existing,
+				...updates,
+				version: currentVersion + 1
+			};
+
+			// Write updated metadata
+			await kv.put(puzzleKey(puzzleId), JSON.stringify(updated));
+
+			// Verify our write succeeded by reading back and checking version
+			const current = await getPuzzle(kv, puzzleId);
+			if (current?.version === updated.version) {
+				// Our write succeeded
+				return;
+			}
+
+			// Version mismatch - another update occurred, retry
+			if (attempt < maxRetries - 1) {
+				const delay = baseDelay * Math.pow(2, attempt);
+				await new Promise((resolve) => setTimeout(resolve, delay));
+			}
 		}
 
-		const currentVersion = existing.version ?? 0;
-		const updated: PuzzleMetadata = {
-			...existing,
-			...updates,
-			version: currentVersion + 1
-		};
-
-		// Write updated metadata
-		await kv.put(puzzleKey(puzzleId), JSON.stringify(updated));
-
-		// Verify our write succeeded by reading back and checking version
-		const current = await getPuzzle(kv, puzzleId);
-		if (current?.version === updated.version) {
-			// Our write succeeded
-			return;
-		}
-
-		// Version mismatch - another update occurred, retry
-		if (attempt < maxRetries - 1) {
-			const delay = baseDelay * Math.pow(2, attempt);
-			await new Promise((resolve) => setTimeout(resolve, delay));
-		}
+		throw new Error(
+			`Failed to update puzzle ${puzzleId} after ${maxRetries} attempts due to concurrent updates`
+		);
+	} finally {
+		await releaseLock(kv, lockKey(puzzleId));
 	}
-
-	throw new Error(
-		`Failed to update puzzle ${puzzleId} after ${maxRetries} attempts due to concurrent updates`
-	);
 }
 
 // Delete puzzle metadata from KV
@@ -209,7 +252,7 @@ export async function deletePuzzleAssets(
 	bucket: R2Bucket,
 	puzzleId: string,
 	pieceCount: number
-): Promise<void> {
+): Promise<{ success: boolean; failedKeys: string[] }> {
 	const keysToDelete: string[] = [getOriginalKey(puzzleId), getThumbnailKey(puzzleId)];
 
 	// Add all piece keys
@@ -217,10 +260,19 @@ export async function deletePuzzleAssets(
 		keysToDelete.push(getPieceKey(puzzleId, i));
 	}
 
+	const failedKeys: string[] = [];
+
 	// Delete in batches (R2 supports up to 1000 keys per delete)
 	const batchSize = 1000;
 	for (let i = 0; i < keysToDelete.length; i += batchSize) {
 		const batch = keysToDelete.slice(i, i + batchSize);
-		await bucket.delete(batch);
+		try {
+			await bucket.delete(batch);
+		} catch (error) {
+			console.error(`Failed to delete batch for puzzle ${puzzleId}:`, batch, error);
+			failedKeys.push(...batch);
+		}
 	}
+
+	return { success: failedKeys.length === 0, failedKeys };
 }

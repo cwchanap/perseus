@@ -6,7 +6,6 @@ import {
 	createPuzzleMetadata,
 	deletePuzzleMetadata,
 	deletePuzzleAssets,
-	puzzleExists,
 	uploadOriginalImage,
 	deleteOriginalImage,
 	getPuzzle,
@@ -225,18 +224,17 @@ admin.delete('/puzzles/:id', requireAuth, async (c) => {
 	const id = c.req.param('id');
 
 	try {
-		const exists = await puzzleExists(c.env.PUZZLE_METADATA, id);
+		// Get puzzle directly to avoid TOCTOU race condition
+		const puzzle = await getPuzzle(c.env.PUZZLE_METADATA, id);
 
-		if (!exists) {
+		if (!puzzle) {
 			return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
 		}
 
-		// Get puzzle to know piece count for asset deletion
-		const puzzle = await getPuzzle(c.env.PUZZLE_METADATA, id);
-
 		// Delete assets from R2
-		if (puzzle) {
-			await deletePuzzleAssets(c.env.PUZZLES_BUCKET, id, puzzle.pieceCount);
+		const deleteResult = await deletePuzzleAssets(c.env.PUZZLES_BUCKET, id, puzzle.pieceCount);
+		if (!deleteResult.success) {
+			console.error(`Failed to delete some assets for puzzle ${id}:`, deleteResult.failedKeys);
 		}
 
 		// Delete metadata from KV

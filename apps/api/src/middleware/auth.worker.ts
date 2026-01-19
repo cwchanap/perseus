@@ -15,6 +15,11 @@ interface SessionPayload {
 	iat: number;
 }
 
+// Auth variables for Hono context
+export interface AuthVariables {
+	session: Omit<SessionPayload, 'exp' | 'iat'>;
+}
+
 // Runtime validation for session payload
 function isValidSessionPayload(obj: unknown): obj is SessionPayload {
 	if (typeof obj !== 'object' || obj === null) return false;
@@ -97,11 +102,14 @@ export async function verifySession(env: Env, token: string): Promise<SessionPay
 
 		return payload;
 	} catch (error) {
-		// Log unexpected errors for debugging (malformed tokens are expected and not logged)
-		if (error instanceof SyntaxError) {
-			// Invalid JSON in token payload - expected for tampered tokens
+		// Suppress logging for expected errors (invalid base64 or JSON in tampered tokens)
+		const isExpectedError =
+			error instanceof SyntaxError ||
+			(error instanceof DOMException && error.name === 'InvalidCharacterError');
+		if (isExpectedError) {
 			return null;
 		}
+		// Log truly unexpected errors for debugging
 		console.error('Unexpected error during session verification:', error);
 		return null;
 	}
@@ -133,7 +141,7 @@ export function clearSessionCookie(c: Context): void {
 
 // Authentication middleware
 export async function requireAuth(
-	c: Context<{ Bindings: Env }>,
+	c: Context<{ Bindings: Env; Variables: AuthVariables }>,
 	next: Next
 ): Promise<Response | void> {
 	const token = getSessionToken(c);
@@ -148,6 +156,13 @@ export async function requireAuth(
 		clearSessionCookie(c);
 		return c.json({ error: 'unauthorized', message: 'Invalid or expired session' }, 401);
 	}
+
+	// Store session on context for downstream handlers
+	c.set('session', {
+		userId: session.userId,
+		username: session.username,
+		role: session.role
+	});
 
 	await next();
 }

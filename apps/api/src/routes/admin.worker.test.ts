@@ -1,7 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Hono } from 'hono';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import admin from './admin.worker';
 import type { Env } from '../worker';
+import type { AuthVariables } from '../middleware/auth.worker';
 
 // Mock storage functions
 vi.mock('../services/storage.worker', () => ({
@@ -37,7 +38,6 @@ import {
 	createPuzzleMetadata,
 	deletePuzzleMetadata,
 	deletePuzzleAssets,
-	puzzleExists,
 	uploadOriginalImage,
 	getPuzzle
 } from '../services/storage.worker';
@@ -60,7 +60,7 @@ function createMockEnv(): Env {
 
 // Create app with admin routes mounted
 function createApp() {
-	const app = new Hono<{ Bindings: Env }>();
+	const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 	app.route('/api/admin', admin);
 	return app;
 }
@@ -316,7 +316,7 @@ describe('Admin Routes', () => {
 
 	describe('DELETE /api/admin/puzzles/:id', () => {
 		it('should return 404 when puzzle does not exist', async () => {
-			vi.mocked(puzzleExists).mockResolvedValue(false);
+			vi.mocked(getPuzzle).mockResolvedValue(null);
 
 			const res = await app.fetch(
 				new Request('http://localhost/api/admin/puzzles/nonexistent', {
@@ -331,7 +331,6 @@ describe('Admin Routes', () => {
 		});
 
 		it('should delete puzzle and return 204', async () => {
-			vi.mocked(puzzleExists).mockResolvedValue(true);
 			vi.mocked(getPuzzle).mockResolvedValue({
 				id: 'puzzle-123',
 				name: 'Test',
@@ -345,7 +344,7 @@ describe('Admin Routes', () => {
 				version: 0,
 				pieces: []
 			});
-			vi.mocked(deletePuzzleAssets).mockResolvedValue(undefined);
+			vi.mocked(deletePuzzleAssets).mockResolvedValue({ success: true, failedKeys: [] });
 			vi.mocked(deletePuzzleMetadata).mockResolvedValue(true);
 
 			const res = await app.fetch(
@@ -361,7 +360,6 @@ describe('Admin Routes', () => {
 		});
 
 		it('should return 500 when deletion fails', async () => {
-			vi.mocked(puzzleExists).mockResolvedValue(true);
 			vi.mocked(getPuzzle).mockResolvedValue({
 				id: 'puzzle-123',
 				name: 'Test',
@@ -375,7 +373,7 @@ describe('Admin Routes', () => {
 				version: 0,
 				pieces: []
 			});
-			vi.mocked(deletePuzzleAssets).mockResolvedValue(undefined);
+			vi.mocked(deletePuzzleAssets).mockResolvedValue({ success: true, failedKeys: [] });
 			vi.mocked(deletePuzzleMetadata).mockResolvedValue(false);
 
 			const res = await app.fetch(

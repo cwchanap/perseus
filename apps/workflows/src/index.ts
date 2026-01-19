@@ -29,7 +29,7 @@ async function updateMetadata(
 	for (let attempt = 0; attempt < maxRetries; attempt++) {
 		const existing = await getMetadata(kv, puzzleId);
 		if (!existing) {
-			throw new Error(`Puzzle ${puzzleId} not found`);
+			throw new Error(`Puzzle ${puzzleId} not found in PUZZLE_METADATA`);
 		}
 
 		const currentVersion = existing.version ?? 0;
@@ -41,6 +41,9 @@ async function updateMetadata(
 
 		// Write updated metadata
 		await kv.put(`puzzle:${puzzleId}`, JSON.stringify(updated));
+
+		// Small delay to account for KV eventual consistency before verification
+		await new Promise((resolve) => setTimeout(resolve, 50));
 
 		// Verify our write succeeded by reading back and checking version
 		const current = await getMetadata(kv, puzzleId);
@@ -57,7 +60,7 @@ async function updateMetadata(
 	}
 
 	throw new Error(
-		`Failed to update puzzle ${puzzleId} after ${maxRetries} attempts due to concurrent updates`
+		`Failed to update puzzle ${puzzleId} in PUZZLE_METADATA after ${maxRetries} retries due to concurrent updates`
 	);
 }
 
@@ -253,12 +256,12 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 						// Extract piece region from source image using crop function
 						const pieceImage = crop(srcImage, extractLeft, extractTop, extractWidth, extractHeight);
 
-						// Generate jigsaw mask SVG
-						const maskSvg = generateJigsawSvgMask(edges, targetWidth, targetHeight);
+						// Generate jigsaw mask SVG using actual extracted dimensions
+						const maskSvg = generateJigsawSvgMask(edges, extractWidth, extractHeight);
 
 						// Render SVG mask to PNG using Resvg
 						const resvg = new Resvg(maskSvg, {
-							fitTo: { mode: 'width', value: targetWidth }
+							fitTo: { mode: 'width', value: extractWidth }
 						});
 						const maskPng = resvg.render().asPng();
 
@@ -312,18 +315,36 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 
 					// Update progress in metadata
 					const generatedPieces = Math.min((row + 1) * cols, totalPieces);
-					const currentMeta = await getMetadata(this.env.PUZZLE_METADATA, puzzleId);
-					if (currentMeta) {
-						const updatedPieces = [...(currentMeta.pieces || []), ...pieces];
-						await updateMetadata(this.env.PUZZLE_METADATA, puzzleId, {
-							pieces: updatedPieces,
-							progress: {
-								totalPieces,
-								generatedPieces,
-								updatedAt: Date.now()
-							}
-						});
+
+					// Retry logic for fetching metadata with exponential backoff
+					const maxRetries = 3;
+					let currentMeta: PuzzleMetadata | null = null;
+
+					for (let attempt = 0; attempt < maxRetries; attempt++) {
+						currentMeta = await getMetadata(this.env.PUZZLE_METADATA, puzzleId);
+						if (currentMeta) break;
+
+						if (attempt < maxRetries - 1) {
+							const delay = 100 * Math.pow(2, attempt);
+							await new Promise((resolve) => setTimeout(resolve, delay));
+						}
 					}
+
+					if (!currentMeta) {
+						throw new Error(
+							`Failed to retrieve metadata for puzzle ${puzzleId} after ${maxRetries} retries. Namespace: PUZZLE_METADATA`
+						);
+					}
+
+					const updatedPieces = [...(currentMeta.pieces || []), ...pieces];
+					await updateMetadata(this.env.PUZZLE_METADATA, puzzleId, {
+						pieces: updatedPieces,
+						progress: {
+							totalPieces,
+							generatedPieces,
+							updatedAt: Date.now()
+						}
+					});
 				});
 			}
 
