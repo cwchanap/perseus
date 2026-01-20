@@ -39,15 +39,6 @@ describe('loginRateLimit Middleware', () => {
 		});
 	};
 
-	const createFailRequest = (ip: string = '127.0.0.1') => {
-		return new Request('http://localhost/login-fail', {
-			method: 'POST',
-			headers: {
-				'cf-connecting-ip': ip
-			}
-		});
-	};
-
 	it('should allow first request', async () => {
 		const res = await app.fetch(createRequest('1.1.1.1'), mockEnv);
 		expect(res.status).toBe(200);
