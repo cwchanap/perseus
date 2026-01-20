@@ -259,9 +259,7 @@
 
 					<!-- Piece Count (fixed at 225) -->
 					<div>
-						<label for="pieceCount" class="mb-2 block text-sm font-medium text-gray-700">
-							Number of Pieces
-						</label>
+						<span class="mb-2 block text-sm font-medium text-gray-700"> Number of Pieces </span>
 						<div
 							class="w-full rounded-md border border-gray-300 bg-gray-50 px-4 py-2 text-gray-700"
 						>

@@ -58,13 +58,15 @@ function lockKey(id: string): string {
 async function acquireLock(kv: KVNamespace, key: string, timeoutMs: number): Promise<boolean> {
 	const lockValue = Date.now().toString();
 	try {
+		// Note: This lock is best-effort and non-atomic (TOCTOU race between get and put).
+		// For strict mutual exclusion, consider using Durable Objects or another atomic lock mechanism.
 		const existing = await kv.get(key);
 		if (existing) {
 			// Lock already held
 			return false;
 		}
 		await kv.put(key, lockValue, {
-			expirationTtl: Math.ceil(timeoutMs / 1000)
+			expirationTtl: Math.max(Math.ceil(timeoutMs / 1000), 60)
 		});
 		return true;
 	} catch (error) {

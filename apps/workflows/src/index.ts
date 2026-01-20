@@ -42,10 +42,12 @@ async function updateMetadata(
 		// Write updated metadata
 		await kv.put(`puzzle:${puzzleId}`, JSON.stringify(updated));
 
-		// Note: Due to KV eventual consistency, we skip read-back verification.
-		// The version check in this retry loop handles concurrent updates,
-		// but there's a small window where reads may return stale data.
-		// For strong consistency, consider migrating to Durable Objects.
+		// Verify our write succeeded by reading back and checking version
+		const latest = await getMetadata(kv, puzzleId);
+		if (latest?.version === currentVersion + 1) {
+			// Our write succeeded
+			return;
+		}
 
 		// Version mismatch - another update occurred, retry
 		if (attempt < maxRetries - 1) {
@@ -366,14 +368,24 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 			});
 		} catch (error) {
 			// Mark puzzle as failed
+			const originalError = error;
 			await step.do('mark-failed', async () => {
-				const message = error instanceof Error ? error.message : 'Unknown error';
-				await updateMetadata(this.env.PUZZLE_METADATA, puzzleId, {
-					status: 'failed',
-					error: { message }
-				});
+				try {
+					const message = originalError instanceof Error ? originalError.message : 'Unknown error';
+					await updateMetadata(this.env.PUZZLE_METADATA, puzzleId, {
+						status: 'failed',
+						error: { message }
+					});
+				} catch (markErr) {
+					// Log mark-failed error without overwriting original error
+					console.error(
+						`Failed to mark puzzle ${puzzleId} as failed:`,
+						markErr instanceof Error ? markErr : markErr
+					);
+					console.error('Original error:', originalError);
+				}
 			});
-			throw error;
+			throw originalError;
 		}
 	}
 }

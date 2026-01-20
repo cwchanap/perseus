@@ -160,10 +160,10 @@ export async function loginRateLimit(c: Context<{ Bindings: Env }>, next: Next):
 	}
 
 	// Let the request proceed
-	const response = await next();
+	await next();
 
 	// Only increment on failed authentication (401/403 responses)
-	if (response.status === 401 || response.status === 403) {
+	if (c.res.status === 401 || c.res.status === 403) {
 		const result = await incrementAttempts(kv, key, now);
 		if (result.shouldBlock) {
 			// Create a new 429 response with rate limit info
@@ -178,12 +178,10 @@ export async function loginRateLimit(c: Context<{ Bindings: Env }>, next: Next):
 				429
 			);
 		}
-	} else if (response.status === 200) {
+	} else if (c.res.status === 200) {
 		// Successful login, reset attempts
 		await deleteRateLimitEntry(kv, key);
 	}
-
-	return response;
 }
 
 export async function resetLoginAttempts(c: Context<{ Bindings: Env }>): Promise<void> {
