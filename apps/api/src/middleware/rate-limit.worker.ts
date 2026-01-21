@@ -159,7 +159,7 @@ export async function loginRateLimit(c: Context<{ Bindings: Env }>, next: Next):
 		);
 	}
 
-	// Let the request proceed
+	// Let request proceed
 	await next();
 
 	// Only increment on failed authentication (401/403 responses)
@@ -182,6 +182,8 @@ export async function loginRateLimit(c: Context<{ Bindings: Env }>, next: Next):
 		// Successful login, reset attempts
 		await deleteRateLimitEntry(kv, key);
 	}
+
+	return c.res as Response;
 }
 
 export async function resetLoginAttempts(c: Context<{ Bindings: Env }>): Promise<void> {

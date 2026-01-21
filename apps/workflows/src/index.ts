@@ -6,6 +6,10 @@ import type { WorkflowParams, PuzzleMetadata, PuzzlePiece, EdgeConfig, EdgeType 
 import { TAB_RATIO, THUMBNAIL_SIZE, MAX_IMAGE_DIMENSION } from './types';
 import { generateJigsawSvgMask } from './utils/jigsaw-path';
 
+// Maximum image size in bytes (50MB)
+// This is a safety limit to prevent workflow step payload issues
+const MAX_IMAGE_BYTES = 50 * 1024 * 1024;
+
 export interface Env {
 	PUZZLES_BUCKET: R2Bucket;
 	PUZZLE_METADATA: KVNamespace;
@@ -104,6 +108,14 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 				}
 
 				const bytes = await imageObj.arrayBuffer();
+
+				// Validate image size to prevent workflow step payload issues
+				if (bytes.byteLength > MAX_IMAGE_BYTES) {
+					throw new Error(
+						`Image size ${bytes.byteLength} bytes exceeds maximum ${MAX_IMAGE_BYTES} bytes. Please use a smaller image.`
+					);
+				}
+
 				return {
 					metadata: meta,
 					imageBytes: Array.from(new Uint8Array(bytes))
@@ -362,10 +374,7 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 					});
 				} catch (markErr) {
 					// Log mark-failed error without overwriting original error
-					console.error(
-						`Failed to mark puzzle ${puzzleId} as failed:`,
-						markErr instanceof Error ? markErr : markErr
-					);
+					console.error(`Failed to mark puzzle ${puzzleId} as failed:`, markErr);
 					console.error('Original error:', originalError);
 				}
 			});

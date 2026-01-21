@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
 	getPuzzle,
 	createPuzzleMetadata,
@@ -12,6 +12,8 @@ import {
 	uploadOriginalImage,
 	getImage,
 	deletePuzzleAssets,
+	acquireLock,
+	releaseLock,
 	type PuzzleMetadata
 } from './storage.worker';
 
@@ -119,6 +121,7 @@ describe('KV Metadata Operations', () => {
 			const stored = JSON.parse(mockKV._store.get('puzzle:test-puzzle-1')!);
 			expect(stored.status).toBe('processing');
 			expect(stored.name).toBe('Test Puzzle');
+			expect(stored.version).toBe(1); // Version should be incremented
 		});
 
 		it('should throw error when puzzle does not exist', async () => {
@@ -129,6 +132,45 @@ describe('KV Metadata Operations', () => {
 					status: 'ready'
 				})
 			).rejects.toThrow('Puzzle nonexistent not found');
+		});
+
+		it('should increment version on update', async () => {
+			const mockKV = createMockKV();
+			const puzzleWithVersion = { ...samplePuzzle, version: 5 };
+			mockKV._store.set('puzzle:test-puzzle-1', JSON.stringify(puzzleWithVersion));
+
+			await updatePuzzleMetadata(mockKV as unknown as KVNamespace, 'test-puzzle-1', {
+				status: 'ready'
+			});
+
+			const stored = JSON.parse(mockKV._store.get('puzzle:test-puzzle-1')!);
+			expect(stored.version).toBe(6);
+		});
+
+		it('should release lock after successful update', async () => {
+			const mockKV = createMockKV();
+			mockKV._store.set('puzzle:test-puzzle-1', JSON.stringify(samplePuzzle));
+
+			await updatePuzzleMetadata(mockKV as unknown as KVNamespace, 'test-puzzle-1', {
+				status: 'processing'
+			});
+
+			// Lock should be released after update
+			expect(mockKV._store.has('lock:test-puzzle-1')).toBe(false);
+		});
+
+		it('should release lock when puzzle not found', async () => {
+			const mockKV = createMockKV();
+
+			await expect(
+				updatePuzzleMetadata(mockKV as unknown as KVNamespace, 'nonexistent', {
+					status: 'ready'
+				})
+			).rejects.toThrow();
+
+			// Lock should still be released even on error
+			// (Note: The lock is acquired in the finally block, so we expect it to not exist)
+			expect(mockKV._store.has('lock:nonexistent')).toBe(false);
 		});
 	});
 
@@ -203,6 +245,110 @@ describe('KV Metadata Operations', () => {
 				status: samplePuzzle.status,
 				progress: undefined
 			});
+		});
+	});
+});
+
+describe('Lock Operations', () => {
+	describe('acquireLock', () => {
+		it('should return lock token when lock is acquired', async () => {
+			const mockKV = createMockKV();
+			const token = await acquireLock(mockKV as unknown as KVNamespace, 'lock:test-lock', 5000);
+
+			expect(token).toBeTruthy();
+			expect(typeof token).toBe('string');
+			expect(mockKV._store.has('lock:test-lock')).toBe(true);
+		});
+
+		it('should return null when lock is already held', async () => {
+			const mockKV = createMockKV();
+			mockKV._store.set('lock:test-lock', 'existing-token');
+
+			const token = await acquireLock(mockKV as unknown as KVNamespace, 'lock:test-lock', 5000);
+
+			expect(token).toBeNull();
+		});
+
+		it('should set expiration TTL on lock', async () => {
+			const mockKV = createMockKV();
+			await acquireLock(mockKV as unknown as KVNamespace, 'lock:test-lock', 5000);
+
+			// Verify put was called with expirationTtl
+			expect(mockKV.put).toHaveBeenCalledWith(
+				'lock:test-lock',
+				expect.any(String),
+				expect.objectContaining({
+					expirationTtl: expect.any(Number)
+				})
+			);
+		});
+
+		it('should return null on error', async () => {
+			const mockKV = {
+				get: vi.fn(() => {
+					throw new Error('KV error');
+				})
+			} as unknown as KVNamespace;
+
+			const token = await acquireLock(mockKV, 'lock:test-lock', 5000);
+
+			expect(token).toBeNull();
+		});
+	});
+
+	describe('releaseLock', () => {
+		it('should delete lock when token matches', async () => {
+			const mockKV = createMockKV();
+			mockKV._store.set('lock:test-lock', 'token-123');
+
+			await releaseLock(mockKV as unknown as KVNamespace, 'lock:test-lock', 'token-123');
+
+			expect(mockKV._store.has('lock:test-lock')).toBe(false);
+			expect(mockKV.delete).toHaveBeenCalledWith('lock:test-lock');
+		});
+
+		it('should not delete lock when token does not match', async () => {
+			const mockKV = createMockKV();
+			mockKV._store.set('lock:test-lock', 'token-123');
+			const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+			await releaseLock(mockKV as unknown as KVNamespace, 'lock:test-lock', 'token-456');
+
+			// Lock should still exist
+			expect(mockKV._store.get('lock:test-lock')).toBe('token-123');
+			// Delete should not have been called
+			expect(mockKV.delete).not.toHaveBeenCalled();
+			// Warning should have been logged
+			expect(consoleWarnSpy).toHaveBeenCalled();
+
+			consoleWarnSpy.mockRestore();
+		});
+
+		it('should not delete lock when lock does not exist', async () => {
+			const mockKV = createMockKV();
+			const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+			await releaseLock(mockKV as unknown as KVNamespace, 'lock:test-lock', 'token-123');
+
+			expect(mockKV.delete).not.toHaveBeenCalled();
+			expect(consoleWarnSpy).toHaveBeenCalled();
+
+			consoleWarnSpy.mockRestore();
+		});
+
+		it('should handle errors gracefully', async () => {
+			const mockKV = {
+				get: vi.fn(() => {
+					throw new Error('KV error');
+				})
+			} as unknown as KVNamespace;
+			const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+			await releaseLock(mockKV, 'lock:test-lock', 'token-123');
+
+			expect(consoleErrorSpy).toHaveBeenCalledWith('Failed to release lock:', expect.any(Error));
+
+			consoleErrorSpy.mockRestore();
 		});
 	});
 });

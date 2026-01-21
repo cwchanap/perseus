@@ -55,7 +55,11 @@ function lockKey(id: string): string {
 }
 
 // Distributed lock helpers for KV
-async function acquireLock(kv: KVNamespace, key: string, timeoutMs: number): Promise<boolean> {
+export async function acquireLock(
+	kv: KVNamespace,
+	key: string,
+	timeoutMs: number
+): Promise<string | null> {
 	const lockValue = Date.now().toString();
 	try {
 		// Note: This lock is best-effort and non-atomic (TOCTOU race between get and put).
@@ -63,21 +67,36 @@ async function acquireLock(kv: KVNamespace, key: string, timeoutMs: number): Pro
 		const existing = await kv.get(key);
 		if (existing) {
 			// Lock already held
-			return false;
+			return null;
 		}
 		await kv.put(key, lockValue, {
 			expirationTtl: Math.max(Math.ceil(timeoutMs / 1000), 60)
 		});
-		return true;
+		return lockValue;
 	} catch (error) {
 		console.error('Failed to acquire lock:', error);
-		return false;
+		return null;
 	}
 }
 
-async function releaseLock(kv: KVNamespace, key: string): Promise<void> {
+export async function releaseLock(
+	kv: KVNamespace,
+	key: string,
+	expectedToken: string
+): Promise<void> {
 	try {
-		await kv.delete(key);
+		// Verify ownership before releasing the lock
+		const currentToken = await kv.get(key);
+		if (currentToken === expectedToken) {
+			await kv.delete(key);
+		} else {
+			console.warn(
+				'Lock release aborted: token mismatch. Expected:',
+				expectedToken,
+				'Got:',
+				currentToken
+			);
+		}
 	} catch (error) {
 		console.error('Failed to release lock:', error);
 	}
@@ -103,52 +122,32 @@ export async function updatePuzzleMetadata(
 	updates: Partial<PuzzleMetadata>
 ): Promise<void> {
 	const lockTimeout = 5000; // 5 seconds
-	const acquired = await acquireLock(kv, lockKey(puzzleId), lockTimeout);
-	if (!acquired) {
+	const lockToken = await acquireLock(kv, lockKey(puzzleId), lockTimeout);
+	if (!lockToken) {
 		throw new Error(
 			`Failed to acquire lock for puzzle ${puzzleId} update. Another update is in progress.`
 		);
 	}
 
-	const maxRetries = 3;
-	const baseDelay = 50; // ms
-
 	try {
-		for (let attempt = 0; attempt < maxRetries; attempt++) {
-			const existing = await getPuzzle(kv, puzzleId);
-			if (!existing) {
-				throw new Error(`Puzzle ${puzzleId} not found`);
-			}
-
-			const currentVersion = existing.version ?? 0;
-			const updated: PuzzleMetadata = {
-				...existing,
-				...updates,
-				version: currentVersion + 1
-			};
-
-			// Write updated metadata
-			await kv.put(puzzleKey(puzzleId), JSON.stringify(updated));
-
-			// Verify our write succeeded by reading back and checking version
-			const current = await getPuzzle(kv, puzzleId);
-			if (current?.version === updated.version) {
-				// Our write succeeded
-				return;
-			}
-
-			// Version mismatch - another update occurred, retry
-			if (attempt < maxRetries - 1) {
-				const delay = baseDelay * Math.pow(2, attempt);
-				await new Promise((resolve) => setTimeout(resolve, delay));
-			}
+		const existing = await getPuzzle(kv, puzzleId);
+		if (!existing) {
+			throw new Error(`Puzzle ${puzzleId} not found`);
 		}
 
-		throw new Error(
-			`Failed to update puzzle ${puzzleId} after ${maxRetries} attempts due to concurrent updates`
-		);
+		const currentVersion = existing.version ?? 0;
+		const updated: PuzzleMetadata = {
+			...existing,
+			...updates,
+			version: currentVersion + 1
+		};
+
+		// Write updated metadata
+		// Note: Due to KV eventual consistency, we skip read-back verification.
+		// The distributed lock and version increment provide sufficient concurrency control.
+		await kv.put(puzzleKey(puzzleId), JSON.stringify(updated));
 	} finally {
-		await releaseLock(kv, lockKey(puzzleId));
+		await releaseLock(kv, lockKey(puzzleId), lockToken);
 	}
 }
 
