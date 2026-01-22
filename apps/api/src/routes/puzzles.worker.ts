@@ -10,6 +10,13 @@ import {
 	getImage
 } from '../services/storage.worker';
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const MAX_PIECE_ID = 10000; // Well above MAX_PIECES (250)
+
+function validatePuzzleId(id: string): boolean {
+	return UUID_REGEX.test(id);
+}
+
 const puzzles = new Hono<{ Bindings: Env }>();
 
 // GET /api/puzzles - List all puzzles
@@ -26,6 +33,10 @@ puzzles.get('/', async (c) => {
 // GET /api/puzzles/:id - Get puzzle details
 puzzles.get('/:id', async (c) => {
 	const id = c.req.param('id');
+
+	if (!validatePuzzleId(id)) {
+		return c.json({ error: 'bad_request', message: 'Invalid puzzle ID format' }, 400);
+	}
 
 	try {
 		const puzzle = await getPuzzle(c.env.PUZZLE_METADATA, id);
@@ -44,6 +55,10 @@ puzzles.get('/:id', async (c) => {
 // GET /api/puzzles/:id/thumbnail - Get puzzle thumbnail image
 puzzles.get('/:id/thumbnail', async (c) => {
 	const id = c.req.param('id');
+
+	if (!validatePuzzleId(id)) {
+		return c.json({ error: 'bad_request', message: 'Invalid puzzle ID format' }, 400);
+	}
 
 	try {
 		const puzzle = await getPuzzle(c.env.PUZZLE_METADATA, id);
@@ -78,7 +93,11 @@ puzzles.get('/:id/pieces/:pieceId/image', async (c) => {
 	const pieceIdStr = c.req.param('pieceId');
 	const pieceId = parseInt(pieceIdStr, 10);
 
-	if (isNaN(pieceId) || pieceId < 0) {
+	if (!validatePuzzleId(id)) {
+		return c.json({ error: 'bad_request', message: 'Invalid puzzle ID format' }, 400);
+	}
+
+	if (isNaN(pieceId) || pieceId < 0 || pieceId > MAX_PIECE_ID) {
 		return c.json({ error: 'invalid_piece_id', message: 'Invalid piece ID' }, 400);
 	}
 
