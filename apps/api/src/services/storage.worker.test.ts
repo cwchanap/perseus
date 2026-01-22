@@ -43,6 +43,24 @@ function createMockKV() {
 	};
 }
 
+function createMockDurableObjectNamespace(
+	handler: (body: { puzzleId?: string; updates?: Partial<PuzzleMetadata> }) => Response
+) {
+	const stub = {
+		fetch: vi.fn(async (_url: string, init?: RequestInit) => {
+			const body = init?.body ? JSON.parse(init.body.toString()) : {};
+			return handler(body);
+		})
+	};
+
+	const namespace = {
+		idFromName: vi.fn((name: string) => name),
+		get: vi.fn(() => stub)
+	};
+
+	return { namespace, stub };
+}
+
 describe('Storage Key Helpers', () => {
 	describe('getOriginalKey', () => {
 		it('should return correct path for original image', () => {
@@ -111,66 +129,38 @@ describe('KV Metadata Operations', () => {
 
 	describe('updatePuzzleMetadata', () => {
 		it('should update existing puzzle metadata', async () => {
-			const mockKV = createMockKV();
-			mockKV._store.set('puzzle:test-puzzle-1', JSON.stringify(samplePuzzle));
+			const { namespace, stub } = createMockDurableObjectNamespace((body) => {
+				return new Response(JSON.stringify({ success: true }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				});
+			});
 
-			await updatePuzzleMetadata(mockKV as unknown as KVNamespace, 'test-puzzle-1', {
+			await updatePuzzleMetadata(namespace as unknown as DurableObjectNamespace, 'test-puzzle-1', {
 				status: 'processing'
 			});
 
-			const stored = JSON.parse(mockKV._store.get('puzzle:test-puzzle-1')!);
-			expect(stored.status).toBe('processing');
-			expect(stored.name).toBe('Test Puzzle');
-			expect(stored.version).toBe(1); // Version should be incremented
+			expect(stub.fetch).toHaveBeenCalledTimes(1);
+			const body = JSON.parse((stub.fetch.mock.calls[0]?.[1]?.body as string | undefined) ?? '{}');
+			expect(body).toEqual({
+				puzzleId: 'test-puzzle-1',
+				updates: { status: 'processing' }
+			});
 		});
 
 		it('should throw error when puzzle does not exist', async () => {
-			const mockKV = createMockKV();
+			const { namespace } = createMockDurableObjectNamespace(() => {
+				return new Response(JSON.stringify({ message: 'Puzzle nonexistent not found' }), {
+					status: 404,
+					headers: { 'Content-Type': 'application/json' }
+				});
+			});
 
 			await expect(
-				updatePuzzleMetadata(mockKV as unknown as KVNamespace, 'nonexistent', {
+				updatePuzzleMetadata(namespace as unknown as DurableObjectNamespace, 'nonexistent', {
 					status: 'ready'
 				})
 			).rejects.toThrow('Puzzle nonexistent not found');
-		});
-
-		it('should increment version on update', async () => {
-			const mockKV = createMockKV();
-			const puzzleWithVersion = { ...samplePuzzle, version: 5 };
-			mockKV._store.set('puzzle:test-puzzle-1', JSON.stringify(puzzleWithVersion));
-
-			await updatePuzzleMetadata(mockKV as unknown as KVNamespace, 'test-puzzle-1', {
-				status: 'ready'
-			});
-
-			const stored = JSON.parse(mockKV._store.get('puzzle:test-puzzle-1')!);
-			expect(stored.version).toBe(6);
-		});
-
-		it('should release lock after successful update', async () => {
-			const mockKV = createMockKV();
-			mockKV._store.set('puzzle:test-puzzle-1', JSON.stringify(samplePuzzle));
-
-			await updatePuzzleMetadata(mockKV as unknown as KVNamespace, 'test-puzzle-1', {
-				status: 'processing'
-			});
-
-			// Lock should be released after update
-			expect(mockKV._store.has('lock:test-puzzle-1')).toBe(false);
-		});
-
-		it('should release lock when puzzle not found', async () => {
-			const mockKV = createMockKV();
-
-			await expect(
-				updatePuzzleMetadata(mockKV as unknown as KVNamespace, 'nonexistent', {
-					status: 'ready'
-				})
-			).rejects.toThrow();
-
-			// Lock should still be released even on error
-			// (Note: The lock is acquired in the finally block, so we expect it to not exist)
-			expect(mockKV._store.has('lock:nonexistent')).toBe(false);
 		});
 	});
 
@@ -251,22 +241,40 @@ describe('KV Metadata Operations', () => {
 
 describe('Lock Operations', () => {
 	describe('acquireLock', () => {
-		it('should return lock token when lock is acquired', async () => {
-			const mockKV = createMockKV();
-			const token = await acquireLock(mockKV as unknown as KVNamespace, 'lock:test-lock', 5000);
+		it('should return error status when KV fails', async () => {
+			const mockKV = {
+				get: vi.fn(() => {
+					throw new Error('KV connection failed');
+				})
+			} as unknown as KVNamespace;
 
-			expect(token).toBeTruthy();
-			expect(typeof token).toBe('string');
-			expect(mockKV._store.has('lock:test-lock')).toBe(true);
+			const result = await acquireLock(mockKV, 'lock:test-lock', 5000);
+
+			expect(result.status).toBe('error');
+			if (result.status === 'error') {
+				expect(result.error.message).toBe('KV connection failed');
+			}
 		});
 
-		it('should return null when lock is already held', async () => {
+		it('should return held status when lock is already held', async () => {
 			const mockKV = createMockKV();
 			mockKV._store.set('lock:test-lock', 'existing-token');
 
-			const token = await acquireLock(mockKV as unknown as KVNamespace, 'lock:test-lock', 5000);
+			const result = await acquireLock(mockKV as unknown as KVNamespace, 'lock:test-lock', 5000);
 
-			expect(token).toBeNull();
+			expect(result.status).toBe('held');
+		});
+
+		it('should return acquired status with token on success', async () => {
+			const mockKV = createMockKV();
+
+			const result = await acquireLock(mockKV as unknown as KVNamespace, 'lock:test-lock', 5000);
+
+			expect(result.status).toBe('acquired');
+			if (result.status === 'acquired') {
+				expect(result.token).toBeTruthy();
+				expect(typeof result.token).toBe('string');
+			}
 		});
 
 		it('should set expiration TTL on lock', async () => {
@@ -281,18 +289,6 @@ describe('Lock Operations', () => {
 					expirationTtl: expect.any(Number)
 				})
 			);
-		});
-
-		it('should return null on error', async () => {
-			const mockKV = {
-				get: vi.fn(() => {
-					throw new Error('KV error');
-				})
-			} as unknown as KVNamespace;
-
-			const token = await acquireLock(mockKV, 'lock:test-lock', 5000);
-
-			expect(token).toBeNull();
 		});
 	});
 

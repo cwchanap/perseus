@@ -2,6 +2,11 @@
 
 import type { PuzzleStatus, PuzzleProgress } from '../types/workflow';
 
+export type LockResult =
+	| { status: 'acquired'; token: string }
+	| { status: 'held' }
+	| { status: 'error'; error: Error };
+
 export type EdgeType = 'flat' | 'tab' | 'blank';
 
 export interface EdgeConfig {
@@ -50,16 +55,12 @@ function puzzleKey(id: string): string {
 	return `puzzle:${id}`;
 }
 
-function lockKey(id: string): string {
-	return `lock:${id}`;
-}
-
 // Distributed lock helpers for KV
 export async function acquireLock(
 	kv: KVNamespace,
 	key: string,
 	timeoutMs: number
-): Promise<string | null> {
+): Promise<LockResult> {
 	const lockValue = Date.now().toString();
 	try {
 		// Note: This lock is best-effort and non-atomic (TOCTOU race between get and put).
@@ -67,15 +68,15 @@ export async function acquireLock(
 		const existing = await kv.get(key);
 		if (existing) {
 			// Lock already held
-			return null;
+			return { status: 'held' };
 		}
 		await kv.put(key, lockValue, {
 			expirationTtl: Math.max(Math.ceil(timeoutMs / 1000), 60)
 		});
-		return lockValue;
+		return { status: 'acquired', token: lockValue };
 	} catch (error) {
 		console.error('Failed to acquire lock:', error);
-		return null;
+		return { status: 'error', error: error instanceof Error ? error : new Error(String(error)) };
 	}
 }
 
@@ -115,39 +116,25 @@ export async function createPuzzleMetadata(kv: KVNamespace, puzzle: PuzzleMetada
 	await kv.put(puzzleKey(puzzleWithVersion.id), JSON.stringify(puzzleWithVersion));
 }
 
-// Update puzzle metadata in KV with optimistic concurrency control and distributed lock
+// Update puzzle metadata via Durable Object for strong consistency
 export async function updatePuzzleMetadata(
-	kv: KVNamespace,
+	metadataDO: DurableObjectNamespace,
 	puzzleId: string,
 	updates: Partial<PuzzleMetadata>
 ): Promise<void> {
-	const lockTimeout = 5000; // 5 seconds
-	const lockToken = await acquireLock(kv, lockKey(puzzleId), lockTimeout);
-	if (!lockToken) {
-		throw new Error(
-			`Failed to acquire lock for puzzle ${puzzleId} update. Another update is in progress.`
-		);
-	}
+	const id = metadataDO.idFromName(puzzleId);
+	const stub = metadataDO.get(id);
+	const response = await stub.fetch('https://puzzle-metadata/update', {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json'
+		},
+		body: JSON.stringify({ puzzleId, updates })
+	});
 
-	try {
-		const existing = await getPuzzle(kv, puzzleId);
-		if (!existing) {
-			throw new Error(`Puzzle ${puzzleId} not found`);
-		}
-
-		const currentVersion = existing.version ?? 0;
-		const updated: PuzzleMetadata = {
-			...existing,
-			...updates,
-			version: currentVersion + 1
-		};
-
-		// Write updated metadata
-		// Note: Due to KV eventual consistency, we skip read-back verification.
-		// The distributed lock and version increment provide sufficient concurrency control.
-		await kv.put(puzzleKey(puzzleId), JSON.stringify(updated));
-	} finally {
-		await releaseLock(kv, lockKey(puzzleId), lockToken);
+	if (!response.ok) {
+		const payload = (await response.json().catch(() => null)) as { message?: string } | null;
+		throw new Error(payload?.message ?? `Failed to update puzzle ${puzzleId}`);
 	}
 }
 
