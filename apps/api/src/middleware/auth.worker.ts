@@ -33,6 +33,15 @@ function isValidSessionPayload(obj: unknown): obj is SessionPayload {
 	);
 }
 
+function bytesToBase64(bytes: Uint8Array): string {
+	const chunkSize = 0x8000;
+	let binary = '';
+	for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+		binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+	}
+	return btoa(binary);
+}
+
 // Create a JWT-like session token using WebCrypto
 export async function createSession(
 	env: Env,
@@ -48,7 +57,7 @@ export async function createSession(
 	// Unicode-safe base64 encoding
 	const payloadJson = JSON.stringify(payload);
 	const payloadBytes = new TextEncoder().encode(payloadJson);
-	const payloadB64 = btoa(String.fromCharCode(...payloadBytes));
+	const payloadB64 = bytesToBase64(payloadBytes);
 
 	// Create HMAC signature
 	const encoder = new TextEncoder();
@@ -61,7 +70,7 @@ export async function createSession(
 	);
 
 	const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(payloadB64));
-	const signatureB64 = btoa(String.fromCharCode(...new Uint8Array(signature)));
+	const signatureB64 = bytesToBase64(new Uint8Array(signature));
 
 	return `${payloadB64}.${signatureB64}`;
 }
@@ -109,9 +118,9 @@ export async function verifySession(env: Env, token: string): Promise<SessionPay
 		if (isExpectedError) {
 			return null;
 		}
-		// Log truly unexpected errors for debugging
+		// Unexpected errors should propagate for proper error handling
 		console.error('Unexpected error during session verification:', error);
-		return null;
+		throw error;
 	}
 }
 
@@ -150,19 +159,26 @@ export async function requireAuth(
 		return c.json({ error: 'unauthorized', message: 'Authentication required' }, 401);
 	}
 
-	const session = await verifySession(c.env, token);
+	try {
+		const session = await verifySession(c.env, token);
 
-	if (!session) {
-		clearSessionCookie(c);
-		return c.json({ error: 'unauthorized', message: 'Invalid or expired session' }, 401);
+		if (!session) {
+			// Invalid or expired session
+			clearSessionCookie(c);
+			return c.json({ error: 'unauthorized', message: 'Invalid or expired session' }, 401);
+		}
+
+		// Store session on context for downstream handlers
+		c.set('session', {
+			userId: session.userId,
+			username: session.username,
+			role: session.role
+		});
+
+		await next();
+	} catch (error) {
+		// Unexpected error during verification - return 500
+		console.error('Session verification failed unexpectedly:', error);
+		return c.json({ error: 'internal_error', message: 'Authentication system error' }, 500);
 	}
-
-	// Store session on context for downstream handlers
-	c.set('session', {
-		userId: session.userId,
-		username: session.username,
-		role: session.role
-	});
-
-	await next();
 }

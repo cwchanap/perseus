@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { Hono } from 'hono';
 import { createSession, verifySession, getSessionToken, requireAuth } from './auth.worker';
 import type { Env } from '../worker';
@@ -153,6 +153,27 @@ describe('Session Token Management', () => {
 
 			expect(session).toBeNull();
 		});
+
+		it('should throw on unexpected crypto errors', async () => {
+			const mockEnv = {
+				JWT_SECRET: 'test-secret-key'
+			};
+
+			// Create a token that will cause crypto.subtle to fail
+			const badToken = 'validbase64==.validbase64=='; // Valid format but will fail signature verification in an unexpected way
+
+			// Mock crypto.subtle.importKey to throw unexpected error
+			const originalImportKey = crypto.subtle.importKey;
+			crypto.subtle.importKey = vi.fn(() => {
+				return Promise.reject(new Error('Unexpected crypto error'));
+			}) as any;
+
+			await expect(verifySession(mockEnv as Env, badToken)).rejects.toThrow(
+				'Unexpected crypto error'
+			);
+
+			crypto.subtle.importKey = originalImportKey;
+		});
 	});
 });
 
@@ -189,5 +210,35 @@ describe('requireAuth Middleware', () => {
 		expect(res.status).toBe(401);
 		const body = (await res.json()) as { error: string };
 		expect(body.error).toBe('unauthorized');
+	});
+
+	it('should return 500 when session verification throws unexpected error', async () => {
+		const app = new Hono<{ Bindings: Env }>();
+
+		// Mock crypto.subtle.importKey to throw unexpected error
+		const originalImportKey = crypto.subtle.importKey;
+		crypto.subtle.importKey = vi.fn(() => {
+			return Promise.reject(new Error('Crypto system failure'));
+		}) as any;
+
+		app.use('/protected/*', requireAuth);
+		app.get('/protected/resource', (c) => c.json({ data: 'secret' }));
+
+		// Create a request with a token cookie
+		const req = new Request('http://localhost/protected/resource', {
+			headers: {
+				Cookie: 'perseus_session=some.token'
+			}
+		});
+
+		const res = await app.fetch(req, mockEnv as Env);
+
+		expect(res.status).toBe(500);
+		const body = (await res.json()) as { error: string; message: string };
+		expect(body.error).toBe('internal_error');
+		expect(body.message).toBe('Authentication system error');
+
+		// Restore original function
+		crypto.subtle.importKey = originalImportKey;
 	});
 });
