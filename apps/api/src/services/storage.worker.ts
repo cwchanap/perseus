@@ -61,7 +61,7 @@ export async function acquireLock(
 	key: string,
 	timeoutMs: number
 ): Promise<LockResult> {
-	const lockValue = Date.now().toString();
+	const lockValue = crypto.randomUUID();
 	try {
 		// Note: This lock is best-effort and non-atomic (TOCTOU race between get and put).
 		// For strict mutual exclusion, consider using Durable Objects or another atomic lock mechanism.
