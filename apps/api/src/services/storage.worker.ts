@@ -86,20 +86,28 @@ export async function releaseLock(
 	expectedToken: string
 ): Promise<void> {
 	try {
-		// Verify ownership before releasing the lock
 		const currentToken = await kv.get(key);
-		if (currentToken === expectedToken) {
-			await kv.delete(key);
-		} else {
+
+		// Only delete if the token matches (we still own the lock)
+		if (!currentToken) {
 			console.warn(
-				'Lock release aborted: token mismatch. Expected:',
-				expectedToken,
-				'Got:',
-				currentToken
+				`Attempted to release lock ${key} but it doesn't exist (may have already expired)`
 			);
+			return;
 		}
+
+		if (currentToken !== expectedToken) {
+			console.warn(
+				`Attempted to release lock ${key} but token doesn't match. Lock may have been taken over.`
+			);
+			return;
+		}
+
+		await kv.delete(key);
 	} catch (error) {
 		console.error('Failed to release lock:', error);
+		// Re-throw to inform caller of lock release failure
+		throw error;
 	}
 }
 

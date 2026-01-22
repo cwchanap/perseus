@@ -44,7 +44,11 @@ function createMockKV() {
 }
 
 function createMockDurableObjectNamespace(
-	handler: (body: { puzzleId?: string; updates?: Partial<PuzzleMetadata> }) => Response
+	handler: (body: { puzzleId?: string; updates?: Partial<PuzzleMetadata> }) => Response = () =>
+		new Response(JSON.stringify({ success: true }), {
+			status: 200,
+			headers: { 'Content-Type': 'application/json' }
+		})
 ) {
 	const stub = {
 		fetch: vi.fn(async (_url: string, init?: RequestInit) => {
@@ -129,12 +133,7 @@ describe('KV Metadata Operations', () => {
 
 	describe('updatePuzzleMetadata', () => {
 		it('should update existing puzzle metadata', async () => {
-			const { namespace, stub } = createMockDurableObjectNamespace((body) => {
-				return new Response(JSON.stringify({ success: true }), {
-					status: 200,
-					headers: { 'Content-Type': 'application/json' }
-				});
-			});
+			const { namespace, stub } = createMockDurableObjectNamespace();
 
 			await updatePuzzleMetadata(namespace as unknown as DurableObjectNamespace, 'test-puzzle-1', {
 				status: 'processing'
@@ -332,19 +331,27 @@ describe('Lock Operations', () => {
 			consoleWarnSpy.mockRestore();
 		});
 
-		it('should handle errors gracefully', async () => {
+		it('should throw when KV get fails', async () => {
 			const mockKV = {
 				get: vi.fn(() => {
 					throw new Error('KV error');
 				})
 			} as unknown as KVNamespace;
-			const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-			await releaseLock(mockKV, 'lock:test-lock', 'token-123');
+			await expect(releaseLock(mockKV, 'lock:test-lock', 'token-123')).rejects.toThrow('KV error');
+		});
 
-			expect(consoleErrorSpy).toHaveBeenCalledWith('Failed to release lock:', expect.any(Error));
+		it('should throw when lock release fails', async () => {
+			const mockKV = {
+				get: vi.fn(() => Promise.resolve('token-123')),
+				delete: vi.fn(() => {
+					throw new Error('KV delete failed');
+				})
+			} as unknown as KVNamespace;
 
-			consoleErrorSpy.mockRestore();
+			await expect(releaseLock(mockKV, 'lock:test-lock', 'token-123')).rejects.toThrow(
+				'KV delete failed'
+			);
 		});
 	});
 });
