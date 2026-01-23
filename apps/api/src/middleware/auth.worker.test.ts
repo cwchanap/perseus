@@ -242,3 +242,101 @@ describe('requireAuth Middleware', () => {
 		crypto.subtle.importKey = originalImportKey;
 	});
 });
+
+describe('requireAuth with valid token', () => {
+	it('should populate session context and call next', async () => {
+		const app = new Hono<{ Bindings: Env }>();
+
+		// Create a valid session token
+		const token = await createSession(mockEnv as Env, {
+			userId: 'user-123',
+			username: 'testuser',
+			role: 'admin'
+		});
+
+		let capturedSession: any = null;
+
+		app.use('/protected/*', requireAuth);
+		app.get('/protected/resource', (c) => {
+			// Capture the session from context
+			capturedSession = c.get('session');
+			return c.json({ data: 'secret' });
+		});
+
+		// Create a request with a valid session cookie
+		const req = new Request('http://localhost/protected/resource', {
+			headers: {
+				Cookie: `perseus_session=${token}`
+			}
+		});
+
+		const res = await app.fetch(req, mockEnv as Env);
+
+		// Verify response is successful
+		expect(res.status).toBe(200);
+
+		// Verify session data was set on context
+		expect(capturedSession).toEqual({
+			userId: 'user-123',
+			username: 'testuser',
+			role: 'admin'
+		});
+	});
+
+	it('should return 401 for expired token', async () => {
+		const app = new Hono<{ Bindings: Env }>();
+
+		// Create an expired token (manually construct with past expiration)
+		const payload = {
+			userId: 'user-123',
+			username: 'testuser',
+			role: 'admin',
+			iat: Date.now() - 100000,
+			exp: Date.now() - 1000 // 1 second ago
+		};
+
+		const payloadJson = JSON.stringify(payload);
+		const encoder = new TextEncoder();
+		const payloadBytes = encoder.encode(payloadJson);
+		const secretBytes = encoder.encode(mockEnv.JWT_SECRET!);
+		const key = await crypto.subtle.importKey(
+			'raw',
+			secretBytes,
+			{ name: 'HMAC', hash: 'SHA-256' },
+			false,
+			['sign']
+		);
+
+		// Helper function from auth.worker.ts
+		function bytesToBase64(bytes: Uint8Array): string {
+			const CHUNK_SIZE = 0x8000;
+			const chunks = [];
+			for (let i = 0; i < bytes.length; i += CHUNK_SIZE) {
+				const chunk = bytes.subarray(i, i + CHUNK_SIZE);
+				chunks.push(String.fromCharCode.apply(null, Array.from(chunk)));
+			}
+			return btoa(chunks.join(''));
+		}
+
+		const payloadB64 = bytesToBase64(new Uint8Array(payloadBytes));
+		const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(payloadB64));
+		const signatureB64 = bytesToBase64(new Uint8Array(signature));
+		const expiredToken = `${payloadB64}.${signatureB64}`;
+
+		app.use('/protected/*', requireAuth);
+		app.get('/protected/resource', (c) => c.json({ data: 'secret' }));
+
+		// Create a request with an expired session cookie
+		const req = new Request('http://localhost/protected/resource', {
+			headers: {
+				Cookie: `perseus_session=${expiredToken}`
+			}
+		});
+
+		const res = await app.fetch(req, mockEnv as Env);
+
+		expect(res.status).toBe(401);
+		const body = (await res.json()) as { error: string };
+		expect(body.error).toBe('unauthorized');
+	});
+});
