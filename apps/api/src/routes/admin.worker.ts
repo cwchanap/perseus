@@ -76,7 +76,9 @@ admin.post('/login', loginRateLimit, async (c) => {
 		const passkeyHash = await crypto.subtle.digest('SHA-256', passkeyBytes);
 		const expectedHash = await crypto.subtle.digest('SHA-256', expectedBytes);
 
-		// Compare hashes (timing-safe via equal length comparison)
+		// Constant-time comparison using XOR accumulation to prevent timing attacks
+		// The hash comparison is timing-safe because we XOR all bytes and check the result,
+		// rather than short-circuiting on the first mismatch
 		const passkeyArr = new Uint8Array(passkeyHash);
 		const expectedArr = new Uint8Array(expectedHash);
 
