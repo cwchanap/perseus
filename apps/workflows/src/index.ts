@@ -13,10 +13,11 @@ const MAX_IMAGE_BYTES = 50 * 1024 * 1024;
 export interface Env {
 	PUZZLES_BUCKET: R2Bucket;
 	PUZZLE_METADATA: KVNamespace;
+	PUZZLE_METADATA_DO: DurableObjectNamespace;
 	PUZZLE_WORKFLOW: Workflow;
 }
 
-// Helper to get/update puzzle metadata from KV
+// Helper to get puzzle metadata from KV and update via Durable Object
 export async function getMetadata(
 	kv: KVNamespace,
 	puzzleId: string
@@ -26,26 +27,72 @@ export async function getMetadata(
 }
 
 export async function updateMetadata(
-	kv: KVNamespace,
+	metadataDO: DurableObjectNamespace,
 	puzzleId: string,
 	updates: Partial<PuzzleMetadata>
 ): Promise<void> {
-	const existing = await getMetadata(kv, puzzleId);
-	if (!existing) {
-		throw new Error(`Puzzle ${puzzleId} not found in PUZZLE_METADATA`);
+	const id = metadataDO.idFromName(puzzleId);
+	const stub = metadataDO.get(id);
+	const response = await stub.fetch('https://puzzle-metadata/update', {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json'
+		},
+		body: JSON.stringify({ puzzleId, updates })
+	});
+
+	if (!response.ok) {
+		const payload = (await response.json().catch(() => null)) as { message?: string } | null;
+		throw new Error(payload?.message ?? `Failed to update puzzle ${puzzleId}`);
+	}
+}
+
+export class PuzzleMetadataDO {
+	private state: DurableObjectState;
+	private env: Env;
+
+	constructor(state: DurableObjectState, env: Env) {
+		this.state = state;
+		this.env = env;
 	}
 
-	const currentVersion = existing.version ?? 0;
-	const updated: PuzzleMetadata = {
-		...existing,
-		...updates,
-		version: currentVersion + 1
-	};
+	async fetch(request: Request): Promise<Response> {
+		const url = new URL(request.url);
+		if (request.method !== 'POST' || url.pathname !== '/update') {
+			return new Response('Not found', { status: 404 });
+		}
 
-	// Write updated metadata
-	// Note: Due to KV eventual consistency, we skip read-back verification.
-	// Optimistic locking still works via version increment.
-	await kv.put(`puzzle:${puzzleId}`, JSON.stringify(updated));
+		const body = (await request.json().catch(() => null)) as {
+			puzzleId?: string;
+			updates?: Partial<PuzzleMetadata>;
+		} | null;
+		if (!body || typeof body.puzzleId !== 'string' || typeof body.updates !== 'object') {
+			return Response.json({ message: 'Invalid update payload' }, { status: 400 });
+		}
+
+		const { puzzleId, updates } = body;
+		const stored = await this.state.storage.get<PuzzleMetadata>('metadata');
+		const existing = stored ?? (await getMetadata(this.env.PUZZLE_METADATA, puzzleId));
+		if (!existing) {
+			return Response.json(
+				{ message: `Puzzle ${puzzleId} not found in PUZZLE_METADATA` },
+				{ status: 404 }
+			);
+		}
+
+		const currentVersion = existing.version ?? 0;
+		const updated: PuzzleMetadata = {
+			...existing,
+			...updates,
+			id: existing.id,
+			version: currentVersion + 1
+		};
+
+		await this.state.storage.put('metadata', updated);
+		await this.env.PUZZLE_METADATA.put(`puzzle:${puzzleId}`, JSON.stringify(updated));
+
+		return Response.json({ success: true, version: updated.version });
+	}
 }
 
 // Grid dimension calculator
@@ -55,10 +102,32 @@ function getGridDimensions(pieceCount: number): { rows: number; cols: number } {
 		return { rows: 0, cols: 0 };
 	}
 
-	const cols = Math.ceil(Math.sqrt(pieceCount));
-	// cols will always be >= 1 for pieceCount >= 1
-	const rows = Math.ceil(pieceCount / cols);
+	const sqrt = Math.floor(Math.sqrt(pieceCount));
+	for (let i = sqrt; i >= 1; i -= 1) {
+		if (pieceCount % i === 0) {
+			return { rows: i, cols: pieceCount / i };
+		}
+	}
+
+	const rows = Math.max(1, Math.floor(Math.sqrt(pieceCount)));
+	const cols = Math.ceil(pieceCount / rows);
 	return { rows, cols };
+}
+
+async function loadOriginalImageBytes(env: Env, puzzleId: string): Promise<Uint8Array> {
+	const imageObj = await env.PUZZLES_BUCKET.get(`puzzles/${puzzleId}/original`);
+	if (!imageObj) {
+		throw new Error(`Original image not found for puzzle ${puzzleId}`);
+	}
+
+	const bytes = await imageObj.arrayBuffer();
+	if (bytes.byteLength > MAX_IMAGE_BYTES) {
+		throw new Error(
+			`Image size ${bytes.byteLength} bytes exceeds maximum ${MAX_IMAGE_BYTES} bytes. Please use a smaller image.`
+		);
+	}
+
+	return new Uint8Array(bytes);
 }
 
 // Edge type helper
@@ -96,36 +165,19 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 
 		try {
 			// Step 1: Load metadata and original image
-			const { metadata, imageBytes } = await step.do('load-image', async () => {
+			const metadata = await step.do('load-image', async () => {
 				const meta = await getMetadata(this.env.PUZZLE_METADATA, puzzleId);
 				if (!meta) {
 					throw new Error(`Puzzle ${puzzleId} not found`);
 				}
 
-				const imageObj = await this.env.PUZZLES_BUCKET.get(`puzzles/${puzzleId}/original`);
-				if (!imageObj) {
-					throw new Error(`Original image not found for puzzle ${puzzleId}`);
-				}
-
-				const bytes = await imageObj.arrayBuffer();
-
-				// Validate image size to prevent workflow step payload issues
-				if (bytes.byteLength > MAX_IMAGE_BYTES) {
-					throw new Error(
-						`Image size ${bytes.byteLength} bytes exceeds maximum ${MAX_IMAGE_BYTES} bytes. Please use a smaller image.`
-					);
-				}
-
-				return {
-					metadata: meta,
-					imageBytes: Array.from(new Uint8Array(bytes))
-				};
+				return meta;
 			});
 
 			// Step 2: Decode image and validate dimensions using Photon
 			const { width, height } = await step.do('decode-validate', async () => {
 				const { PhotonImage } = await import('@cf-wasm/photon');
-				const bytes = new Uint8Array(imageBytes);
+				const bytes = await loadOriginalImageBytes(this.env, puzzleId);
 				const image = PhotonImage.new_from_byteslice(bytes);
 
 				const w = image.get_width();
@@ -141,7 +193,7 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 
 			// Update metadata with image dimensions
 			await step.do('update-dimensions', async () => {
-				await updateMetadata(this.env.PUZZLE_METADATA, puzzleId, {
+				await updateMetadata(this.env.PUZZLE_METADATA_DO, puzzleId, {
 					imageWidth: width,
 					imageHeight: height
 				});
@@ -150,7 +202,7 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 			// Step 3: Generate thumbnail
 			await step.do('generate-thumbnail', async () => {
 				const { PhotonImage, resize, crop, SamplingFilter } = await import('@cf-wasm/photon');
-				const bytes = new Uint8Array(imageBytes);
+				const bytes = await loadOriginalImageBytes(this.env, puzzleId);
 				const image = PhotonImage.new_from_byteslice(bytes);
 
 				// Calculate thumbnail dimensions (cover fit)
@@ -189,8 +241,7 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 				await step.do(`generate-row-${row}`, async () => {
 					const { PhotonImage, crop } = await import('@cf-wasm/photon');
 					const { Resvg } = await import('@cf-wasm/resvg');
-
-					const bytes = new Uint8Array(imageBytes);
+					const bytes = await loadOriginalImageBytes(this.env, puzzleId);
 					const srcImage = PhotonImage.new_from_byteslice(bytes);
 					const srcW = srcImage.get_width();
 					const srcH = srcImage.get_height();
@@ -281,17 +332,16 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 						}
 
 						// Create new PhotonImage from modified raw RGBA bytes using correct constructor
-						const pieceWidth = pieceImage.get_width();
-						const pieceHeight = pieceImage.get_height();
-						// eslint-disable-next-line @typescript-eslint/no-explicit-any
-						const maskedPiece = (PhotonImage as any).new(pieceBytes, pieceWidth, pieceHeight);
+						const maskedPiece = PhotonImage.new_from_byteslice(pieceBytes);
 
 						// Free original images
 						maskImage.free();
 						pieceImage.free();
 
 						// Encode masked piece as PNG
-						const pngBytes = maskedPiece.get_bytes_png();
+						const pngBytes = (
+							maskedPiece as unknown as { get_bytes_png: () => Uint8Array }
+						).get_bytes_png();
 						maskedPiece.free();
 
 						// Upload piece to R2
@@ -340,7 +390,7 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 					const existingPieceIds = new Set((currentMeta.pieces || []).map((p) => p.id));
 					const newPieces = pieces.filter((p) => !existingPieceIds.has(p.id));
 					const updatedPieces = [...(currentMeta.pieces || []), ...newPieces];
-					await updateMetadata(this.env.PUZZLE_METADATA, puzzleId, {
+					await updateMetadata(this.env.PUZZLE_METADATA_DO, puzzleId, {
 						pieces: updatedPieces,
 						progress: {
 							totalPieces,
@@ -353,7 +403,7 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 
 			// Step 5: Mark puzzle as ready
 			await step.do('finalize', async () => {
-				await updateMetadata(this.env.PUZZLE_METADATA, puzzleId, {
+				await updateMetadata(this.env.PUZZLE_METADATA_DO, puzzleId, {
 					status: 'ready',
 					progress: {
 						totalPieces,
@@ -363,20 +413,43 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 				});
 			});
 		} catch (error) {
-			// Mark puzzle as failed
+			// Mark puzzle as failed with retry logic
 			const originalError = error;
 			await step.do('mark-failed', async () => {
-				try {
-					const message = originalError instanceof Error ? originalError.message : 'Unknown error';
-					await updateMetadata(this.env.PUZZLE_METADATA, puzzleId, {
-						status: 'failed',
-						error: { message }
-					});
-				} catch (markErr) {
-					// Log mark-failed error without overwriting original error
-					console.error(`Failed to mark puzzle ${puzzleId} as failed:`, markErr);
-					console.error('Original error:', originalError);
+				const maxRetries = 3;
+				let lastError: unknown;
+
+				for (let attempt = 0; attempt < maxRetries; attempt++) {
+					try {
+						const message =
+							originalError instanceof Error ? originalError.message : 'Unknown error';
+						await updateMetadata(this.env.PUZZLE_METADATA_DO, puzzleId, {
+							status: 'failed',
+							error: { message }
+						});
+						return; // Success
+					} catch (markErr) {
+						lastError = markErr;
+						console.error(
+							`Failed to mark puzzle ${puzzleId} as failed (attempt ${attempt + 1}/${maxRetries}):`,
+							markErr
+						);
+
+						if (attempt < maxRetries - 1) {
+							// Exponential backoff
+							const delay = 100 * Math.pow(2, attempt);
+							await new Promise((resolve) => setTimeout(resolve, delay));
+						}
+					}
 				}
+
+				// All retries failed - log extensively
+				console.error(
+					`CRITICAL: Failed to mark puzzle ${puzzleId} as failed after ${maxRetries} retries`
+				);
+				console.error('Last error:', lastError);
+				console.error('Original workflow error:', originalError);
+				// Note: Puzzle will remain in 'processing' state - manual cleanup required
 			});
 			throw originalError;
 		}
