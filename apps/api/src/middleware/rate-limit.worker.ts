@@ -34,8 +34,13 @@ function getClientIP(c: Context): string {
 	}
 
 	// Fall back to a generated UUID per request to avoid shared bucket
-	// This ensures each unidentified client gets its own rate limit bucket
+	// WARNING: This effectively disables rate limiting for clients without identifiable IPs,
+	// as each request creates a new bucket. This is intentional to avoid DoS via shared bucket,
+	// but means rate limiting is IP-dependent and degrades to per-request when IP unavailable.
 	// Note: c.req.ip is not available in all Hono/Worker environments
+	console.warn(
+		'Rate limiting: No client IP available, using per-request UUID (rate limiting ineffective)'
+	);
 	return crypto.randomUUID();
 }
 
@@ -56,6 +61,13 @@ async function getRateLimitEntry(
 		const data = await kv.get(getKVKey(key), 'json');
 		return data as RateLimitEntry | null;
 	}
+	// Log warning about in-memory fallback
+	// PRODUCTION IMPACT: In-memory storage is not distributed across workers,
+	// so rate limiting will only work within a single worker instance.
+	// Multiple worker instances can each have their own rate limit counters.
+	console.warn(
+		'Rate limiting using in-memory storage (not distributed) - KV namespace not configured'
+	);
 	return rateLimitStore.get(key) || null;
 }
 
