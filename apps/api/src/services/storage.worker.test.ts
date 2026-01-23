@@ -10,6 +10,7 @@ import {
 	getThumbnailKey,
 	getPieceKey,
 	uploadOriginalImage,
+	deleteOriginalImage,
 	getImage,
 	deletePuzzleAssets,
 	acquireLock,
@@ -434,6 +435,42 @@ describe('R2 Asset Operations', () => {
 			const result = await getImage(mockBucket as unknown as R2Bucket, 'nonexistent');
 
 			expect(result).toBeNull();
+		});
+	});
+
+	describe('deleteOriginalImage', () => {
+		it('should delete original image and return true', async () => {
+			const mockBucket = createMockR2Bucket();
+			mockBucket._store.set('puzzles/puzzle-123/original', {
+				data: new ArrayBuffer(100),
+				contentType: 'image/jpeg'
+			});
+
+			const result = await deleteOriginalImage(mockBucket as unknown as R2Bucket, 'puzzle-123');
+
+			expect(result).toBe(true);
+			expect(mockBucket.delete).toHaveBeenCalledWith('puzzles/puzzle-123/original');
+			expect(mockBucket._store.has('puzzles/puzzle-123/original')).toBe(false);
+		});
+
+		it('should return false and log error on delete failure', async () => {
+			const mockBucket = {
+				delete: vi.fn(() => {
+					throw new Error('R2 delete failed');
+				})
+			} as unknown as R2Bucket;
+
+			const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+			const result = await deleteOriginalImage(mockBucket, 'puzzle-123');
+
+			expect(result).toBe(false);
+			expect(consoleErrorSpy).toHaveBeenCalledWith(
+				expect.stringContaining('Failed to delete original image'),
+				expect.any(Error)
+			);
+
+			consoleErrorSpy.mockRestore();
 		});
 	});
 
