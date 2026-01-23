@@ -28,13 +28,36 @@ const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const ALLOWED_PIECE_COUNT = 225; // 15x15 grid
 
+function getGridDimensions(pieceCount: number): { rows: number; cols: number } {
+	if (pieceCount <= 0) {
+		return { rows: 0, cols: 0 };
+	}
+
+	const sqrt = Math.floor(Math.sqrt(pieceCount));
+	for (let i = sqrt; i >= 1; i -= 1) {
+		if (pieceCount % i === 0) {
+			return { rows: i, cols: pieceCount / i };
+		}
+	}
+
+	const rows = Math.max(1, Math.floor(Math.sqrt(pieceCount)));
+	const cols = Math.ceil(pieceCount / rows);
+	return { rows, cols };
+}
+
 // POST /api/admin/login - Admin login
 admin.post('/login', loginRateLimit, async (c) => {
 	try {
-		const body = await c.req.json();
+		let body;
+		try {
+			body = await c.req.json();
+		} catch (parseError) {
+			return c.json({ error: 'bad_request', message: 'Invalid JSON body' }, 400);
+		}
+
 		const { passkey } = body as { passkey?: string };
 
-		if (!passkey) {
+		if (!passkey || typeof passkey !== 'string') {
 			return c.json({ error: 'bad_request', message: 'Passkey is required' }, 400);
 		}
 
@@ -160,8 +183,7 @@ admin.post('/puzzles', requireAuth, async (c) => {
 		const id = crypto.randomUUID();
 
 		// Calculate grid dimensions (must match workflow calculation)
-		const gridCols = Math.ceil(Math.sqrt(pieceCount));
-		const gridRows = Math.ceil(pieceCount / gridCols);
+		const { rows: gridRows, cols: gridCols } = getGridDimensions(pieceCount);
 
 		// Prepare image buffer
 		const imageBuffer = await image.arrayBuffer();
