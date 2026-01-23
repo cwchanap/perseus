@@ -1,60 +1,150 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { Hono } from 'hono';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { loginRateLimit, resetLoginAttempts } from './rate-limit.worker';
-import type { Env } from '../worker';
+import type { Context, Next } from 'hono';
 
-// Mock rate limit
-vi.mock('../middleware/rate-limit.worker', () => ({
-	loginRateLimit: vi.fn((c, next) => next()),
-	resetLoginAttempts: vi.fn()
-}));
+// Mock KV namespace
+function createMockKV() {
+	const store = new Map<string, string>();
+	return {
+		get: vi.fn(async (key: string, type?: string) => {
+			const value = store.get(key);
+			if (!value) return null;
+			if (type === 'json') return JSON.parse(value);
+			return value;
+		}),
+		put: vi.fn(async (key: string, value: string, options?: any) => {
+			store.set(key, value);
+		}),
+		delete: vi.fn(async (key: string) => {
+			store.delete(key);
+		}),
+		_store: store
+	};
+}
 
-describe('loginRateLimit Middleware', () => {
-	let app: Hono<{ Bindings: Env }>;
-	const mockEnv = {} as Env;
+function createMockContext(ip: string = '127.0.0.1', kv?: any): Context<any> {
+	return {
+		env: {
+			PUZZLE_METADATA: kv
+		},
+		req: {
+			header: vi.fn((name: string) => {
+				if (name === 'cf-connecting-ip') return ip;
+				if (name === 'x-forwarded-for') return ip;
+				return null;
+			})
+		},
+		json: vi.fn((body, status) => ({ body, status })),
+		res: { status: 200 } as any
+	} as any;
+}
 
-	beforeEach(() => {
-		app = new Hono<{ Bindings: Env }>();
-		app.post('/login', loginRateLimit, (c) => {
-			resetLoginAttempts(c);
-			return c.json({ success: true });
+describe('Rate Limit Middleware', () => {
+	describe('loginRateLimit', () => {
+		it('should allow request when no previous attempts', async () => {
+			const mockKV = createMockKV();
+			const mockContext = createMockContext('127.0.0.1', mockKV);
+			const next = vi.fn();
+
+			await loginRateLimit(mockContext, next);
+
+			expect(next).toHaveBeenCalled();
 		});
-		app.post('/login-fail', loginRateLimit, (c) => {
-			// Simulate failed login without resetting attempts
-			// The middleware will increment attempts after this returns 401
-			return c.json({ success: false }, 401);
-		});
-		app.post('/login-forbidden', loginRateLimit, (c) => {
-			// Simulate forbidden login (403)
-			return c.json({ success: false }, 403);
-		});
-	});
 
-	const createRequest = (ip: string = '127.0.0.1') => {
-		return new Request('http://localhost/login', {
-			method: 'POST',
-			headers: {
-				'cf-connecting-ip': ip
+		it('should allow request with less than 5 failed attempts', async () => {
+			const mockKV = createMockKV();
+			const key = 'ratelimit:login:127.0.0.1';
+			mockKV._store.set(
+				key,
+				JSON.stringify({
+					attempts: 3,
+					lockedUntil: null
+				})
+			);
+
+			const mockContext = createMockContext('127.0.0.1', mockKV);
+			const next = vi.fn();
+
+			await loginRateLimit(mockContext, next);
+
+			expect(next).toHaveBeenCalled();
+		});
+
+		it('should block request after 5 failed attempts', async () => {
+			const mockKV = createMockKV();
+			const key = 'ratelimit:login:127.0.0.1';
+			const lockoutUntil = Date.now() + 15 * 60 * 1000; // 15 minutes from now
+
+			mockKV._store.set(
+				key,
+				JSON.stringify({
+					attempts: 5,
+					lockedUntil: lockoutUntil
+				})
+			);
+
+			const mockContext = createMockContext('127.0.0.1', mockKV);
+			const next = vi.fn();
+
+			const response = await loginRateLimit(mockContext, next);
+
+			expect(next).not.toHaveBeenCalled();
+			expect(response.status).toBe(429);
+			expect(response.body.error).toBe('too_many_requests');
+		});
+
+		it('should use cf-connecting-ip header for client identification', async () => {
+			const mockKV = createMockKV();
+			const mockContext = createMockContext('192.168.1.1', mockKV);
+			const next = vi.fn();
+
+			await loginRateLimit(mockContext, next);
+
+			expect(next).toHaveBeenCalled();
+			// Verify KV key includes IP
+			const calls = mockKV.put.mock.calls;
+			if (calls.length > 0) {
+				const key = calls[0][0];
+				expect(key).toContain('192.168.1.1');
 			}
 		});
-	};
 
-	it('should allow first request', async () => {
-		const res = await app.fetch(createRequest('1.1.1.1'), mockEnv);
-		expect(res.status).toBe(200);
+		it('should use in-memory storage when KV is undefined', async () => {
+			const mockContext = createMockContext('127.0.0.1', undefined);
+			const next = vi.fn();
+
+			await loginRateLimit(mockContext, next);
+
+			expect(next).toHaveBeenCalled();
+		});
 	});
 
-	it('should allow multiple successful requests (rate limit resets on success)', async () => {
-		for (let i = 0; i < 10; i++) {
-			const res = await app.fetch(createRequest('2.2.2.2'), mockEnv);
-			expect(res.status).toBe(200);
-		}
-	});
+	describe('resetLoginAttempts', () => {
+		it('should delete rate limit entry on successful login', async () => {
+			const mockKV = createMockKV();
+			const key = 'ratelimit:login:127.0.0.1';
+			mockKV._store.set(
+				key,
+				JSON.stringify({
+					attempts: 3,
+					lockedUntil: null
+				})
+			);
 
-	// Skipping rate limiting tests for now since mocking the internal state is complex
-	// TODO: Properly test the new behavior where middleware checks for lockout before calling next()
-	it('should track attempts per IP separately', async () => {
-		// This test passes with the mock
-		expect(true).toBe(true);
+			const mockContext = createMockContext('127.0.0.1', mockKV);
+
+			await resetLoginAttempts(mockContext);
+
+			expect(mockKV.delete).toHaveBeenCalledWith(expect.stringContaining('127.0.0.1'));
+		});
+
+		it('should handle missing KV gracefully', async () => {
+			const mockContext = createMockContext('127.0.0.1', undefined);
+
+			// Should not throw when KV is undefined
+			await resetLoginAttempts(mockContext);
+			// Test passes if no error is thrown
+			expect(true).toBe(true);
+		});
 	});
 });
