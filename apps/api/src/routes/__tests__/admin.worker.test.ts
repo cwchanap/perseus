@@ -1,5 +1,31 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+// Mock the storage and auth modules before importing admin
+vi.mock('../../services/storage.worker', () => ({
+	getPuzzle: vi.fn(),
+	deletePuzzleAssets: vi.fn(),
+	deletePuzzleMetadata: vi.fn(),
+	createPuzzleMetadata: vi.fn(),
+	uploadOriginalImage: vi.fn(),
+	deleteOriginalImage: vi.fn()
+}));
+
+vi.mock('../../middleware/auth.worker', () => ({
+	verifySession: vi.fn(),
+	requireAuth: async (c: any, next: any) => {
+		// Simulate successful authentication
+		c.set('session', { userId: 'admin', username: 'admin', role: 'admin' });
+		return next();
+	},
+	createSession: vi.fn(),
+	setSessionCookie: vi.fn(),
+	clearSessionCookie: vi.fn(),
+	getSessionToken: vi.fn(() => 'valid-token')
+}));
+
 import admin from '../admin.worker';
+import * as storage from '../../services/storage.worker';
+import * as auth from '../../middleware/auth.worker';
 
 describe('Admin Routes - JSON Parsing', () => {
 	const mockEnv = {
@@ -45,6 +71,78 @@ describe('Admin Routes - JSON Parsing', () => {
 
 			const body = await res.json();
 			expect(body.error).toBe('bad_request');
+		});
+	});
+});
+
+describe('Admin Routes - Puzzle Deletion', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	afterEach(() => {
+		vi.clearAllMocks();
+	});
+
+	describe('DELETE /puzzles/:id', () => {
+		it('should return 207 when some assets fail to delete', async () => {
+			// Mock getPuzzle to return a valid puzzle
+			(storage.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
+				id: 'test-puzzle',
+				name: 'Test Puzzle',
+				pieceCount: 4,
+				gridCols: 2,
+				gridRows: 2,
+				imageWidth: 100,
+				imageHeight: 100,
+				createdAt: Date.now(),
+				status: 'ready',
+				pieces: [],
+				version: 0
+			});
+
+			// Mock deletePuzzleAssets to return partial failure
+			(storage.deletePuzzleAssets as ReturnType<typeof vi.fn>).mockResolvedValue({
+				success: false,
+				failedKeys: ['puzzles/test-puzzle/pieces/0.png', 'puzzles/test-puzzle/pieces/1.png']
+			});
+
+			// Mock deletePuzzleMetadata to return success
+			(storage.deletePuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+
+			// Mock auth to allow the request
+			(auth.verifySession as ReturnType<typeof vi.fn>).mockResolvedValue({
+				userId: 'admin',
+				username: 'admin',
+				role: 'admin'
+			});
+
+			const mockEnv = {
+				ADMIN_PASSKEY: 'test-passkey',
+				JWT_SECRET: 'test-secret',
+				PUZZLE_METADATA: {} as KVNamespace,
+				PUZZLES_BUCKET: {} as R2Bucket
+			};
+
+			const req = new Request('http://localhost/puzzles/test-puzzle', {
+				method: 'DELETE',
+				headers: {
+					cookie: 'session=valid.token'
+				}
+			});
+
+			const res = await admin.fetch(req, mockEnv);
+
+			// Should return 207, but currently returns 204
+			expect(res.status).toBe(207);
+
+			const body = await res.json();
+			expect(body.success).toBe(true);
+			expect(body.warning).toBe('Puzzle metadata deleted but some assets failed to delete');
+			expect(body.failedAssets).toEqual([
+				'puzzles/test-puzzle/pieces/0.png',
+				'puzzles/test-puzzle/pieces/1.png'
+			]);
 		});
 	});
 });

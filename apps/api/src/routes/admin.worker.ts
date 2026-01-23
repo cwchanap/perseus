@@ -261,15 +261,25 @@ admin.delete('/puzzles/:id', requireAuth, async (c) => {
 
 		// Delete assets from R2
 		const deleteResult = await deletePuzzleAssets(c.env.PUZZLES_BUCKET, id, puzzle.pieceCount);
-		if (!deleteResult.success) {
-			console.error(`Failed to delete some assets for puzzle ${id}:`, deleteResult.failedKeys);
-		}
 
 		// Delete metadata from KV
 		const deleted = await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
 
 		if (!deleted) {
 			return c.json({ error: 'internal_error', message: 'Failed to delete puzzle' }, 500);
+		}
+
+		// If some assets failed to delete, return 207 Multi-Status
+		if (!deleteResult.success) {
+			console.error(`Failed to delete some assets for puzzle ${id}:`, deleteResult.failedKeys);
+			return c.json(
+				{
+					success: true,
+					warning: 'Puzzle metadata deleted but some assets failed to delete',
+					failedAssets: deleteResult.failedKeys
+				},
+				207
+			);
 		}
 
 		return c.body(null, 204);
