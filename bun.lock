@@ -74,6 +74,7 @@
       "dependencies": {
         "@cf-wasm/photon": "^0.3.4",
         "@cf-wasm/resvg": "^0.3.3",
+        "@perseus/types": "workspace:*",
       },
       "devDependencies": {
         "@cloudflare/workers-types": "^4.20241230.0",

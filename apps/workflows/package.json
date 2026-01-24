@@ -12,6 +12,7 @@
 		"lint": "prettier --check . && eslint ."
 	},
 	"dependencies": {
+		"@perseus/types": "workspace:*",
 		"@cf-wasm/photon": "^0.3.4",
 		"@cf-wasm/resvg": "^0.3.3"
 	},
