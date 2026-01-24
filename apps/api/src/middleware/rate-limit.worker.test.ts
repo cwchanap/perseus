@@ -90,7 +90,7 @@ describe('Rate Limit Middleware', () => {
 
 			expect(next).not.toHaveBeenCalled();
 			expect(response.status).toBe(429);
-			expect(response.body.error).toBe('too_many_requests');
+			expect((response.body as any).error).toBe('too_many_requests');
 		});
 
 		it('should use cf-connecting-ip header for client identification', async () => {

@@ -259,7 +259,7 @@ describe('requireAuth with valid token', () => {
 		app.use('/protected/*', requireAuth);
 		app.get('/protected/resource', (c) => {
 			// Capture the session from context
-			capturedSession = c.get('session');
+			capturedSession = (c as any).get('session');
 			return c.json({ data: 'secret' });
 		});
 

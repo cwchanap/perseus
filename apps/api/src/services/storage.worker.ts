@@ -1,46 +1,21 @@
 // Worker-compatible storage service using KV for metadata and R2 for assets
 
-import type { PuzzleStatus, PuzzleProgress } from '../types/workflow';
+import type {
+	EdgeType,
+	EdgeConfig,
+	PuzzlePiece,
+	PuzzleMetadata,
+	PuzzleStatus,
+	PuzzleProgress
+} from '@perseus/types';
+
+// Re-export types for backward compatibility
+export type { EdgeType, EdgeConfig, PuzzlePiece, PuzzleMetadata, PuzzleStatus, PuzzleProgress };
 
 export type LockResult =
 	| { status: 'acquired'; token: string }
 	| { status: 'held' }
 	| { status: 'error'; error: Error };
-
-export type EdgeType = 'flat' | 'tab' | 'blank';
-
-export interface EdgeConfig {
-	top: EdgeType;
-	right: EdgeType;
-	bottom: EdgeType;
-	left: EdgeType;
-}
-
-export interface PuzzlePiece {
-	id: number;
-	puzzleId: string;
-	correctX: number;
-	correctY: number;
-	edges: EdgeConfig;
-	imagePath: string;
-}
-
-export interface PuzzleMetadata {
-	id: string;
-	name: string;
-	pieceCount: number;
-	gridCols: number;
-	gridRows: number;
-	imageWidth: number;
-	imageHeight: number;
-	createdAt: number;
-	status: PuzzleStatus;
-	progress?: PuzzleProgress;
-	error?: { message: string };
-	pieces: PuzzlePiece[];
-	// Version for optimistic concurrency control
-	version: number;
-}
 
 export interface PuzzleSummary {
 	id: string;

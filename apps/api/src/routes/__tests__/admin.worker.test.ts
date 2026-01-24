@@ -50,7 +50,7 @@ describe('Admin Routes - JSON Parsing', () => {
 			// Verify status code first
 			expect(res.status).toBe(400);
 
-			const body = await res.json();
+			const body = (await res.json()) as any;
 			expect(body.error).toBe('bad_request');
 			expect(body.message).toContain('Invalid JSON');
 		});
@@ -69,7 +69,7 @@ describe('Admin Routes - JSON Parsing', () => {
 			// Verify status code
 			expect(res.status).toBe(400);
 
-			const body = await res.json();
+			const body = (await res.json()) as any;
 			expect(body.error).toBe('bad_request');
 		});
 	});
@@ -136,7 +136,7 @@ describe('Admin Routes - Puzzle Deletion', () => {
 			// Should return 207, but currently returns 204
 			expect(res.status).toBe(207);
 
-			const body = await res.json();
+			const body = (await res.json()) as any;
 			expect(body.success).toBe(true);
 			expect(body.warning).toBe('Puzzle metadata deleted but some assets failed to delete');
 			expect(body.failedAssets).toEqual([
