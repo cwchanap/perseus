@@ -52,7 +52,7 @@ admin.post('/login', loginRateLimit, async (c) => {
 		let body;
 		try {
 			body = await c.req.json();
-		} catch (parseError) {
+		} catch {
 			return c.json({ error: 'bad_request', message: 'Invalid JSON body' }, 400);
 		}
 
