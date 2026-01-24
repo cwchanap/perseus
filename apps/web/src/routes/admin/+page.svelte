@@ -59,9 +59,9 @@
 		const hasProcessing = puzzles.some((p) => p.status === 'processing');
 		if (hasProcessing && pollInterval === null) {
 			pollInterval = setInterval(async () => {
-				await loadPuzzles();
+				const latestPuzzles = await loadPuzzles();
 				// Stop polling if no more processing puzzles
-				const stillProcessing = puzzles.some((p) => p.status === 'processing');
+				const stillProcessing = latestPuzzles.some((p) => p.status === 'processing');
 				if (!stillProcessing && pollInterval !== null) {
 					clearInterval(pollInterval);
 					pollInterval = null;
@@ -70,15 +70,17 @@
 		}
 	}
 
-	async function loadPuzzles() {
+	async function loadPuzzles(): Promise<PuzzleSummary[]> {
 		loadingPuzzles = true;
 		puzzlesError = null;
 		try {
 			puzzles = await fetchPuzzles();
+			return puzzles;
 		} catch (e) {
 			console.error('Failed to load puzzles', e);
 			puzzlesError = e instanceof ApiError ? e.message : 'Failed to load puzzles';
 			puzzles = [];
+			return [];
 		} finally {
 			loadingPuzzles = false;
 		}

@@ -1,6 +1,7 @@
 // Worker-compatible admin routes for authentication and puzzle management
 
 import { Hono } from 'hono';
+import { DEFAULT_PIECE_COUNT } from '@perseus/types';
 import type { Env } from '../worker';
 import {
 	createPuzzleMetadata,
@@ -26,7 +27,7 @@ const admin = new Hono<{ Bindings: Env }>();
 // Constraints
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
-const ALLOWED_PIECE_COUNT = 225; // 15x15 grid
+const ALLOWED_PIECE_COUNT = DEFAULT_PIECE_COUNT;
 
 function getGridDimensions(pieceCount: number): { rows: number; cols: number } {
 	if (pieceCount <= 0) {

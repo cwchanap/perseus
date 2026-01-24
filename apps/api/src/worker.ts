@@ -16,6 +16,7 @@ interface WorkflowBinding<T = unknown> {
 export interface Env {
 	PUZZLES_BUCKET: R2Bucket;
 	PUZZLE_METADATA: KVNamespace;
+	PUZZLE_METADATA_DO: DurableObjectNamespace;
 	PUZZLE_WORKFLOW: WorkflowBinding<WorkflowParams>;
 	JWT_SECRET: string;
 	ADMIN_PASSKEY: string;

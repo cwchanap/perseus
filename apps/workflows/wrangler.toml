@@ -19,3 +19,12 @@ bucket_name = "perseus"
 [[kv_namespaces]]
 binding = "PUZZLE_METADATA"
 id = "5d87620636f741c09502f3d39f077ef1"
+
+[durable_objects]
+bindings = [
+	{ name = "PUZZLE_METADATA_DO", class_name = "PuzzleMetadataDO" }
+]
+
+[[migrations]]
+tag = "v1"
+new_classes = ["PuzzleMetadataDO"]

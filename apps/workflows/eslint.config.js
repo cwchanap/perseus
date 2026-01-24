@@ -7,6 +7,7 @@ import ts from 'typescript-eslint';
 import prettier from 'eslint-config-prettier';
 
 const gitignorePath = fileURLToPath(new URL('../../.gitignore', import.meta.url));
+const tsconfigRootDir = fileURLToPath(new URL('.', import.meta.url));
 
 export default defineConfig(
 	includeIgnoreFile(gitignorePath),
@@ -15,7 +16,10 @@ export default defineConfig(
 	prettier,
 	{
 		languageOptions: {
-			globals: { ...globals.node }
+			globals: { ...globals.node },
+			parserOptions: {
+				tsconfigRootDir
+			}
 		},
 		rules: {
 			'no-undef': 'off',
