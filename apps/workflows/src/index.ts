@@ -310,38 +310,37 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 						// Load mask as PhotonImage
 						const maskImage = PhotonImage.new_from_byteslice(maskPng);
 
-						// Validate sizes match before copying alpha bytes
-						const maskBytes = maskImage.get_bytes();
-						const pieceBytes = pieceImage.get_bytes();
+						// Get raw RGBA pixel data for both images
+						const maskPixels = maskImage.get_raw_pixels();
+						const piecePixels = pieceImage.get_raw_pixels();
 
-						if (maskBytes.length !== pieceBytes.length) {
+						// Validate sizes match before copying alpha channel
+						if (maskPixels.length !== piecePixels.length) {
 							maskImage.free();
 							pieceImage.free();
 							throw new Error(
-								`Mask and piece image size mismatch for piece ${pieceId}: ` +
-									`mask=${maskBytes.length} bytes, piece=${pieceBytes.length} bytes`
+								`Mask and piece image pixel count mismatch for piece ${pieceId}: ` +
+									`mask=${maskPixels.length} pixels, piece=${piecePixels.length} pixels`
 							);
 						}
 
 						// Copy alpha channel from mask to piece (4th byte in each RGBA pixel)
 						// The mask is grayscale where white = transparent, black = opaque
-						for (let i = 0; i < pieceBytes.length; i += 4) {
+						for (let i = 0; i < piecePixels.length; i += 4) {
 							// Invert mask luminance for alpha: black (0) = opaque (255), white (255) = transparent (0)
-							const luminance = maskBytes[i]; // All channels are same in grayscale
-							pieceBytes[i + 3] = 255 - luminance;
+							const luminance = maskPixels[i]; // All channels are same in grayscale
+							piecePixels[i + 3] = 255 - luminance;
 						}
 
-						// Create new PhotonImage from modified raw RGBA bytes using correct constructor
-						const maskedPiece = PhotonImage.new_from_byteslice(pieceBytes);
+						// Create new PhotonImage from modified raw RGBA bytes
+						const maskedPiece = new PhotonImage(piecePixels, extractWidth, extractHeight);
 
 						// Free original images
 						maskImage.free();
 						pieceImage.free();
 
 						// Encode masked piece as PNG
-						const pngBytes = (
-							maskedPiece as unknown as { get_bytes_png: () => Uint8Array }
-						).get_bytes_png();
+						const pngBytes = maskedPiece.get_bytes();
 						maskedPiece.free();
 
 						// Upload piece to R2
