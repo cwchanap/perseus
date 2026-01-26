@@ -20,6 +20,7 @@
 	let puzzles: PuzzleSummary[] = $state([]);
 	let loadingPuzzles = $state(true);
 	let puzzlesError: string | null = $state(null);
+	let puzzlesFetchInFlight = $state(false);
 
 	// Form state
 	let name = $state('');
@@ -59,30 +60,43 @@
 		const hasProcessing = puzzles.some((p) => p.status === 'processing');
 		if (hasProcessing && pollInterval === null) {
 			pollInterval = setInterval(async () => {
-				const latestPuzzles = await loadPuzzles();
-				// Stop polling if no more processing puzzles
-				const stillProcessing = latestPuzzles.some((p) => p.status === 'processing');
-				if (!stillProcessing && pollInterval !== null) {
-					clearInterval(pollInterval);
-					pollInterval = null;
+				if (puzzlesFetchInFlight) return;
+				puzzlesFetchInFlight = true;
+				try {
+					const latestPuzzles = await loadPuzzles(true);
+					// Stop polling if no more processing puzzles
+					const stillProcessing = latestPuzzles.some((p) => p.status === 'processing');
+					if (!stillProcessing && pollInterval !== null) {
+						clearInterval(pollInterval);
+						pollInterval = null;
+					}
+				} finally {
+					puzzlesFetchInFlight = false;
 				}
 			}, 3000); // Poll every 3 seconds
 		}
 	}
 
-	async function loadPuzzles(): Promise<PuzzleSummary[]> {
-		loadingPuzzles = true;
-		puzzlesError = null;
+	async function loadPuzzles(silent = false): Promise<PuzzleSummary[]> {
+		if (!silent) {
+			loadingPuzzles = true;
+			puzzlesError = null;
+		}
 		try {
 			puzzles = await fetchPuzzles();
 			return puzzles;
 		} catch (e) {
 			console.error('Failed to load puzzles', e);
-			puzzlesError = e instanceof ApiError ? e.message : 'Failed to load puzzles';
-			puzzles = [];
-			return [];
+			if (!silent) {
+				puzzlesError = e instanceof ApiError ? e.message : 'Failed to load puzzles';
+				puzzles = [];
+				return [];
+			}
+			return puzzles;
 		} finally {
-			loadingPuzzles = false;
+			if (!silent) {
+				loadingPuzzles = false;
+			}
 		}
 	}
 

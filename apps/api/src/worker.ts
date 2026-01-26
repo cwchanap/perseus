@@ -45,11 +45,26 @@ app.use('*', async (c, next) => {
 
 	const allowedOrigins = envOrigins.length > 0 ? envOrigins : isProd ? [] : DEFAULT_ALLOWED_ORIGINS;
 
-	if (!loggedAllowedOriginsWarning && isProd && allowedOrigins.length === 0) {
-		loggedAllowedOriginsWarning = true;
-		console.warn(
-			'WARNING: ALLOWED_ORIGINS not configured in production - all CORS requests will be blocked'
-		);
+	if (isProd) {
+		const missingEnv = [];
+		if (allowedOrigins.length === 0) missingEnv.push('ALLOWED_ORIGINS');
+		if (!env.JWT_SECRET) missingEnv.push('JWT_SECRET');
+		if (!env.ADMIN_PASSKEY) missingEnv.push('ADMIN_PASSKEY');
+
+		if (missingEnv.length > 0) {
+			if (!loggedAllowedOriginsWarning) {
+				loggedAllowedOriginsWarning = true;
+				console.warn(`Missing required production env vars: ${missingEnv.join(', ')}`);
+			}
+
+			return c.json(
+				{
+					error: 'server_misconfigured',
+					message: `Missing required production env vars: ${missingEnv.join(', ')}`
+				},
+				500
+			);
+		}
 	}
 
 	return cors({

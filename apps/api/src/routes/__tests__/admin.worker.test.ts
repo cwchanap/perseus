@@ -134,7 +134,7 @@ describe('Admin Routes - Puzzle Deletion', () => {
 
 			const res = await admin.fetch(req, mockEnv);
 
-			// Should return 207, but currently returns 204
+			// Should return 207
 			expect(res.status).toBe(207);
 
 			const body = (await res.json()) as any;

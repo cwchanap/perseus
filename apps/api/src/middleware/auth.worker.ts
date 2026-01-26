@@ -78,7 +78,9 @@ export async function createSession(
 // Verify session token
 export async function verifySession(env: Env, token: string): Promise<SessionPayload | null> {
 	try {
-		const [payloadB64, signatureB64] = token.split('.');
+		const parts = token.split('.');
+		if (parts.length !== 2) return null;
+		const [payloadB64, signatureB64] = parts;
 		if (!payloadB64 || !signatureB64) return null;
 
 		const encoder = new TextEncoder();

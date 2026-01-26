@@ -97,17 +97,17 @@ describe('Rate Limit Middleware', () => {
 		it('should use cf-connecting-ip header for client identification', async () => {
 			const mockKV = createMockKV();
 			const mockContext = createMockContext('192.168.1.1', mockKV);
-			const next = vi.fn();
+			const next = vi.fn(async () => {
+				(mockContext.res as any).status = 401;
+			});
 
 			await loginRateLimit(mockContext, next);
 
 			expect(next).toHaveBeenCalled();
 			// Verify KV key includes IP
-			const calls = mockKV.put.mock.calls;
-			if (calls.length > 0) {
-				const key = calls[0][0];
-				expect(key).toContain('192.168.1.1');
-			}
+			expect(mockKV.put).toHaveBeenCalled();
+			const key = mockKV.put.mock.calls[0][0];
+			expect(key).toContain('192.168.1.1');
 		});
 
 		it('should use in-memory storage when KV is undefined', async () => {
