@@ -14,7 +14,8 @@
 		"test:unit": "vitest --run --browser",
 		"test:unit:watch": "vitest",
 		"test": "bun run test:unit && bun run test:e2e",
-		"test:e2e": "playwright test"
+		"test:e2e": "playwright test",
+		"test:install-browsers": "playwright install --with-deps chromium chromium-headless-shell"
 	},
 	"devDependencies": {
 		"@eslint/compat": "^1.4.0",

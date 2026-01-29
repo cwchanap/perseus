@@ -24,7 +24,7 @@ jobs:
         run: bun install
 
       - name: Install Playwright browsers
-        run: bunx playwright install --with-deps chromium chromium-headless-shell
+        run: bun run --cwd apps/web test:install-browsers
 
       - name: Run E2E tests
         run: bun run test:e2e
