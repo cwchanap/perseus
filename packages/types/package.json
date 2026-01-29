@@ -2,12 +2,16 @@
 	"name": "@perseus/types",
 	"version": "0.0.1",
 	"type": "module",
-	"main": "./src/index.ts",
-	"types": "./src/index.ts",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
 	"exports": {
-		".": "./src/index.ts"
+		".": {
+			"types": "./dist/index.d.ts",
+			"default": "./dist/index.js"
+		}
 	},
 	"scripts": {
+		"build": "tsc",
 		"test:unit": "tsc --noEmit"
 	}
 }

@@ -66,7 +66,13 @@ export class PuzzleMetadataDO {
 			puzzleId?: string;
 			updates?: Partial<PuzzleMetadata>;
 		} | null;
-		if (!body || typeof body.puzzleId !== 'string' || typeof body.updates !== 'object') {
+		if (
+			!body ||
+			typeof body.puzzleId !== 'string' ||
+			typeof body.updates !== 'object' ||
+			body.updates === null ||
+			Array.isArray(body.updates)
+		) {
 			return Response.json({ message: 'Invalid update payload' }, { status: 400 });
 		}
 
