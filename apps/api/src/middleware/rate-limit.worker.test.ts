@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { loginRateLimit, resetLoginAttempts } from './rate-limit.worker';
 import type { Context, Next } from 'hono';
 

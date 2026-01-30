@@ -1,6 +1,5 @@
 {
 	"compilerOptions": {
-		"composite": true,
 		"outDir": "./dist",
 		"rootDir": "./src",
 		"target": "ES2022",

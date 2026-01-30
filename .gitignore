@@ -11,6 +11,8 @@ node_modules
 apps/*/.svelte-kit
 apps/*/build
 apps/*/dist
+packages/*/dist
+*.tsbuildinfo
 
 # Turborepo
 .turbo
