@@ -27,7 +27,7 @@ export interface PuzzleProgress {
 	updatedAt: number;
 }
 
-export interface PuzzleMetadata {
+interface PuzzleMetadataBase {
 	id: string;
 	name: string;
 	pieceCount: number;
@@ -36,13 +36,29 @@ export interface PuzzleMetadata {
 	imageWidth: number;
 	imageHeight: number;
 	createdAt: number;
-	status: PuzzleStatus;
-	progress?: PuzzleProgress;
-	error?: { message: string };
 	pieces: PuzzlePiece[];
-	// Version for optimistic concurrency control
 	version: number;
 }
+
+interface ProcessingPuzzle extends PuzzleMetadataBase {
+	status: 'processing';
+	progress: PuzzleProgress;
+	error?: never;
+}
+
+interface ReadyPuzzle extends PuzzleMetadataBase {
+	status: 'ready';
+	progress?: never;
+	error?: never;
+}
+
+interface FailedPuzzle extends PuzzleMetadataBase {
+	status: 'failed';
+	progress?: never;
+	error: { message: string };
+}
+
+export type PuzzleMetadata = ProcessingPuzzle | ReadyPuzzle | FailedPuzzle;
 
 export interface WorkflowParams {
 	puzzleId: string;
