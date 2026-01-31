@@ -78,9 +78,14 @@ async function setRateLimitEntry(
 	entry: RateLimitEntry
 ): Promise<void> {
 	if (kv) {
-		// Set with TTL slightly longer than lockout duration to auto-cleanup
-		const ttl = Math.ceil(LOCKOUT_DURATION_MS / 1000) + 60;
-		await kv.put(getKVKey(key), JSON.stringify(entry), { expirationTtl: ttl });
+		try {
+			// Set with TTL slightly longer than lockout duration to auto-cleanup
+			const ttl = Math.ceil(LOCKOUT_DURATION_MS / 1000) + 60;
+			await kv.put(getKVKey(key), JSON.stringify(entry), { expirationTtl: ttl });
+		} catch (error) {
+			console.error('KV write failed, falling back to in-memory:', error);
+			rateLimitStore.set(key, entry);
+		}
 	} else {
 		rateLimitStore.set(key, entry);
 	}
@@ -89,7 +94,11 @@ async function setRateLimitEntry(
 // Delete rate limit entry from KV or memory
 async function deleteRateLimitEntry(kv: KVNamespace | undefined, key: string): Promise<void> {
 	if (kv) {
-		await kv.delete(getKVKey(key));
+		try {
+			await kv.delete(getKVKey(key));
+		} catch (error) {
+			console.error('KV delete failed, continuing:', error);
+		}
 	} else {
 		rateLimitStore.delete(key);
 	}
