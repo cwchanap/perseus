@@ -8,6 +8,7 @@ import type {
 	PuzzleStatus,
 	PuzzleProgress
 } from '@perseus/types';
+import { validatePuzzleMetadata } from '@perseus/types';
 
 // Re-export types for backward compatibility
 export type { EdgeType, EdgeConfig, PuzzlePiece, PuzzleMetadata, PuzzleStatus, PuzzleProgress };
@@ -89,6 +90,10 @@ export async function releaseLock(
 // Get puzzle metadata from KV
 export async function getPuzzle(kv: KVNamespace, puzzleId: string): Promise<PuzzleMetadata | null> {
 	const data = await kv.get(puzzleKey(puzzleId), 'json');
+	if (data && !validatePuzzleMetadata(data)) {
+		console.error(`Invalid puzzle metadata for ${puzzleId}:`, data);
+		return null;
+	}
 	return data as PuzzleMetadata | null;
 }
 
