@@ -331,7 +331,9 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 						}
 
 						// Copy alpha channel from mask to piece (4th byte in each RGBA pixel)
-						// The mask is grayscale where white = transparent, black = opaque
+						// The SVG mask uses white=opaque (visible), black=transparent (cut out)
+						// But alpha channel uses 0=transparent, 255=opaque
+						// So we invert the mask luminance when copying to the alpha channel
 						for (let i = 0; i < piecePixels.length; i += 4) {
 							// Invert mask luminance for alpha: black (0) = opaque (255), white (255) = transparent (0)
 							const luminance = maskPixels[i]; // All channels are same in grayscale
