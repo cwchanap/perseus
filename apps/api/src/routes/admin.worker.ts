@@ -225,7 +225,13 @@ admin.post('/puzzles', requireAuth, async (c) => {
 		} catch (error) {
 			console.error('Failed to create puzzle metadata:', error);
 			// Clean up the uploaded image
-			await deleteOriginalImage(c.env.PUZZLES_BUCKET, id);
+			const cleanupResult = await deleteOriginalImage(c.env.PUZZLES_BUCKET, id);
+			if (!cleanupResult.success) {
+				console.error(
+					'Failed to cleanup original image after metadata creation failure:',
+					cleanupResult.error
+				);
+			}
 			return c.json({ error: 'internal_error', message: 'Failed to create puzzle metadata' }, 500);
 		}
 
@@ -238,8 +244,20 @@ admin.post('/puzzles', requireAuth, async (c) => {
 		} catch (error) {
 			console.error('Failed to trigger workflow:', error);
 			// Clean up both metadata and image
-			await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
-			await deleteOriginalImage(c.env.PUZZLES_BUCKET, id);
+			const metadataCleanup = await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
+			if (!metadataCleanup.success) {
+				console.error(
+					'Failed to cleanup puzzle metadata after workflow trigger failure:',
+					metadataCleanup.error
+				);
+			}
+			const imageCleanup = await deleteOriginalImage(c.env.PUZZLES_BUCKET, id);
+			if (!imageCleanup.success) {
+				console.error(
+					'Failed to cleanup original image after workflow trigger failure:',
+					imageCleanup.error
+				);
+			}
 			return c.json({ error: 'internal_error', message: 'Failed to start puzzle processing' }, 500);
 		}
 
@@ -266,9 +284,10 @@ admin.delete('/puzzles/:id', requireAuth, async (c) => {
 		const deleteResult = await deletePuzzleAssets(c.env.PUZZLES_BUCKET, id, puzzle.pieceCount);
 
 		// Delete metadata from KV
-		const deleted = await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
+		const metadataResult = await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
 
-		if (!deleted) {
+		if (!metadataResult.success) {
+			console.error('Failed to delete puzzle metadata:', metadataResult.error);
 			return c.json({ error: 'internal_error', message: 'Failed to delete puzzle' }, 500);
 		}
 
