@@ -272,6 +272,12 @@ admin.post('/puzzles', requireAuth, async (c) => {
 admin.delete('/puzzles/:id', requireAuth, async (c) => {
 	const id = c.req.param('id');
 
+	// Validate UUID format
+	const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+	if (!uuidRegex.test(id)) {
+		return c.json({ error: 'bad_request', message: 'Invalid puzzle ID format' }, 400);
+	}
+
 	try {
 		// Get puzzle directly to avoid TOCTOU race condition
 		const puzzle = await getPuzzle(c.env.PUZZLE_METADATA, id);
