@@ -97,9 +97,14 @@ describe('KV Metadata Operations', () => {
 		imageWidth: 1000,
 		imageHeight: 800,
 		createdAt: Date.now(),
-		status: 'ready',
+		status: 'processing',
 		version: 0,
-		pieces: []
+		pieces: [],
+		progress: {
+			totalPieces: 225,
+			generatedPieces: 0,
+			updatedAt: Date.now()
+		}
 	};
 
 	describe('getPuzzle', () => {
@@ -171,7 +176,7 @@ describe('KV Metadata Operations', () => {
 
 			const result = await deletePuzzleMetadata(mockKV as unknown as KVNamespace, 'test-puzzle-1');
 
-			expect(result).toBe(true);
+			expect(result.success).toBe(true);
 			expect(mockKV.delete).toHaveBeenCalledWith('puzzle:test-puzzle-1');
 		});
 	});
@@ -233,7 +238,7 @@ describe('KV Metadata Operations', () => {
 				name: samplePuzzle.name,
 				pieceCount: samplePuzzle.pieceCount,
 				status: samplePuzzle.status,
-				progress: undefined
+				progress: samplePuzzle.progress
 			});
 		});
 	});
@@ -448,7 +453,7 @@ describe('R2 Asset Operations', () => {
 
 			const result = await deleteOriginalImage(mockBucket as unknown as R2Bucket, 'puzzle-123');
 
-			expect(result).toBe(true);
+			expect(result.success).toBe(true);
 			expect(mockBucket.delete).toHaveBeenCalledWith('puzzles/puzzle-123/original');
 			expect(mockBucket._store.has('puzzles/puzzle-123/original')).toBe(false);
 		});
@@ -464,7 +469,8 @@ describe('R2 Asset Operations', () => {
 
 			const result = await deleteOriginalImage(mockBucket, 'puzzle-123');
 
-			expect(result).toBe(false);
+			expect(result.success).toBe(false);
+			expect(result.error).toBeInstanceOf(Error);
 			expect(consoleErrorSpy).toHaveBeenCalledWith(
 				expect.stringContaining('Failed to delete original image'),
 				expect.any(Error)

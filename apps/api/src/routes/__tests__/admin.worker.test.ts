@@ -89,7 +89,7 @@ describe('Admin Routes - Puzzle Deletion', () => {
 		it('should return 207 when some assets fail to delete', async () => {
 			// Mock getPuzzle to return a valid puzzle
 			(storage.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
-				id: 'test-puzzle',
+				id: '550e8400-e29b-41d4-a716-446655440000',
 				name: 'Test Puzzle',
 				pieceCount: 4,
 				gridCols: 2,
@@ -109,7 +109,9 @@ describe('Admin Routes - Puzzle Deletion', () => {
 			});
 
 			// Mock deletePuzzleMetadata to return success
-			(storage.deletePuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+			(storage.deletePuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue({
+				success: true
+			});
 
 			// Mock auth to allow the request
 			(auth.verifySession as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -125,7 +127,7 @@ describe('Admin Routes - Puzzle Deletion', () => {
 				PUZZLES_BUCKET: {} as R2Bucket
 			};
 
-			const req = new Request('http://localhost/puzzles/test-puzzle', {
+			const req = new Request('http://localhost/puzzles/550e8400-e29b-41d4-a716-446655440000', {
 				method: 'DELETE',
 				headers: {
 					cookie: 'session=valid.token'
@@ -138,7 +140,8 @@ describe('Admin Routes - Puzzle Deletion', () => {
 			expect(res.status).toBe(207);
 
 			const body = (await res.json()) as any;
-			expect(body.success).toBe(true);
+			expect(body.success).toBe(false);
+			expect(body.partialSuccess).toBe(true);
 			expect(body.warning).toBe('Puzzle metadata deleted but some assets failed to delete');
 			expect(body.failedAssets).toEqual([
 				'puzzles/test-puzzle/pieces/0.png',

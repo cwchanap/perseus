@@ -302,7 +302,8 @@ admin.delete('/puzzles/:id', requireAuth, async (c) => {
 			console.error(`Failed to delete some assets for puzzle ${id}:`, deleteResult.failedKeys);
 			return c.json(
 				{
-					success: true,
+					success: false,
+					partialSuccess: true,
 					warning: 'Puzzle metadata deleted but some assets failed to delete',
 					failedAssets: deleteResult.failedKeys
 				},
