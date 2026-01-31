@@ -87,8 +87,7 @@ app.get('/api', (c) => {
 	});
 });
 
-// Import and mount route handlers (to be refactored)
-// These will be created as Worker-compatible modules
+// Import and mount route handlers
 import puzzles from './routes/puzzles.worker';
 import admin from './routes/admin.worker';
 
