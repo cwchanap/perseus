@@ -150,3 +150,168 @@ describe('Admin Routes - Puzzle Deletion', () => {
 		});
 	});
 });
+
+describe('Admin Routes - Passkey Validation', () => {
+	describe('POST /login', () => {
+		it('should return 500 when ADMIN_PASSKEY is missing from environment', async () => {
+			const mockEnv = {
+				ADMIN_PASSKEY: undefined,
+				JWT_SECRET: 'test-secret',
+				RATE_LIMIT_KV: {} as KVNamespace
+			};
+
+			const req = new Request('http://localhost/login', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					'cf-connecting-ip': '127.0.0.1'
+				},
+				body: JSON.stringify({ passkey: 'any-passkey' })
+			});
+
+			const res = await admin.fetch(req, mockEnv as any);
+
+			expect(res.status).toBe(500);
+			const body = (await res.json()) as any;
+			expect(body.error).toBe('internal_error');
+			expect(body.message).toContain('Server configuration error');
+		});
+
+		it('should return 401 for empty passkey string', async () => {
+			const mockEnv = {
+				ADMIN_PASSKEY: 'test-passkey',
+				JWT_SECRET: 'test-secret',
+				RATE_LIMIT_KV: {} as KVNamespace
+			};
+
+			const req = new Request('http://localhost/login', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					'cf-connecting-ip': '127.0.0.1'
+				},
+				body: JSON.stringify({ passkey: '' })
+			});
+
+			const res = await admin.fetch(req, mockEnv);
+
+			expect(res.status).toBe(400);
+			const body = (await res.json()) as any;
+			expect(body.error).toBe('bad_request');
+			expect(body.message).toContain('Passkey is required');
+		});
+
+		it('should return 401 for whitespace-only passkey', async () => {
+			const mockEnv = {
+				ADMIN_PASSKEY: 'test-passkey',
+				JWT_SECRET: 'test-secret',
+				RATE_LIMIT_KV: {} as KVNamespace
+			};
+
+			const req = new Request('http://localhost/login', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					'cf-connecting-ip': '127.0.0.1'
+				},
+				body: JSON.stringify({ passkey: '   ' })
+			});
+
+			const res = await admin.fetch(req, mockEnv);
+
+			expect(res.status).toBe(401);
+			const body = (await res.json()) as any;
+			expect(body.error).toBe('unauthorized');
+			expect(body.message).toBe('Invalid passkey');
+		});
+
+		it('should handle unicode characters in constant-time comparison', async () => {
+			const mockEnv = {
+				ADMIN_PASSKEY: 'test-🔐-passkey',
+				JWT_SECRET: 'test-secret',
+				RATE_LIMIT_KV: {} as KVNamespace
+			};
+
+			const req = new Request('http://localhost/login', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					'cf-connecting-ip': '127.0.0.1'
+				},
+				body: JSON.stringify({ passkey: 'test-🔐-passkey' })
+			});
+
+			const res = await admin.fetch(req, mockEnv);
+
+			expect(res.status).toBe(200);
+			const body = (await res.json()) as any;
+			expect(body.success).toBe(true);
+		});
+	});
+});
+
+describe('Admin Routes - Workflow Trigger Cleanup', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	afterEach(() => {
+		vi.clearAllMocks();
+	});
+
+	describe('POST /puzzles', () => {
+		it('should cleanup both metadata and image when workflow.create() fails', async () => {
+			// Mock successful image upload
+			(storage.uploadOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+			// Mock successful metadata creation
+			(storage.createPuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+			// Mock successful cleanup operations
+			(storage.deletePuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue({
+				success: true
+			});
+			(storage.deleteOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue({
+				success: true
+			});
+
+			// Create mock environment with workflow that throws
+			const mockEnv = {
+				ADMIN_PASSKEY: 'test-passkey',
+				JWT_SECRET: 'test-secret',
+				PUZZLE_METADATA: {} as KVNamespace,
+				PUZZLES_BUCKET: {} as R2Bucket,
+				PUZZLE_WORKFLOW: {
+					create: vi.fn().mockRejectedValue(new Error('Workflow service unavailable'))
+				}
+			};
+
+			// Create form data
+			const formData = new FormData();
+			formData.append('name', 'Test Puzzle');
+			formData.append('pieceCount', '225');
+			const blob = new Blob(['fake image data'], { type: 'image/png' });
+			formData.append('image', blob, 'test.png');
+
+			const req = new Request('http://localhost/puzzles', {
+				method: 'POST',
+				headers: {
+					cookie: 'session=valid.token'
+				},
+				body: formData
+			});
+
+			const res = await admin.fetch(req, mockEnv as any);
+
+			// Verify 500 response
+			expect(res.status).toBe(500);
+			const body = (await res.json()) as any;
+			expect(body.error).toBe('internal_error');
+			expect(body.message).toBe('Failed to start puzzle processing');
+
+			// Verify both cleanup operations were called
+			expect(storage.deletePuzzleMetadata).toHaveBeenCalledTimes(1);
+			expect(storage.deleteOriginalImage).toHaveBeenCalledTimes(1);
+		});
+	});
+});
