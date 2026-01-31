@@ -122,13 +122,16 @@ export async function updatePuzzleMetadata(
 }
 
 // Delete puzzle metadata from KV
-export async function deletePuzzleMetadata(kv: KVNamespace, puzzleId: string): Promise<boolean> {
+export async function deletePuzzleMetadata(
+	kv: KVNamespace,
+	puzzleId: string
+): Promise<{ success: boolean; error?: Error }> {
 	try {
 		await kv.delete(puzzleKey(puzzleId));
-		return true;
+		return { success: true };
 	} catch (error) {
 		console.error(`Failed to delete puzzle metadata for ${puzzleId}:`, error);
-		return false;
+		return { success: false, error: error as Error };
 	}
 }
 
@@ -194,13 +197,16 @@ export async function uploadOriginalImage(
 }
 
 // Delete original image from R2
-export async function deleteOriginalImage(bucket: R2Bucket, puzzleId: string): Promise<boolean> {
+export async function deleteOriginalImage(
+	bucket: R2Bucket,
+	puzzleId: string
+): Promise<{ success: boolean; error?: Error }> {
 	try {
 		await bucket.delete(getOriginalKey(puzzleId));
-		return true;
+		return { success: true };
 	} catch (error) {
 		console.error(`Failed to delete original image for puzzle ${puzzleId}:`, error);
-		return false;
+		return { success: false, error: error as Error };
 	}
 }
 
