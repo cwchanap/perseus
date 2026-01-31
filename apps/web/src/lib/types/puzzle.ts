@@ -1,6 +1,10 @@
 // Shared types for Jigsaw Puzzle Web App
 // Based on data-model.md specification
 
+import type { PuzzleProgress as PuzzleGenerationProgress } from '@perseus/types';
+
+export type { PuzzleGenerationProgress };
+
 export type EdgeType = 'flat' | 'tab' | 'blank';
 
 export interface EdgeConfig {
@@ -32,12 +36,6 @@ export interface Puzzle {
 }
 
 export type PuzzleStatus = 'processing' | 'ready' | 'failed';
-
-export interface PuzzleGenerationProgress {
-	totalPieces: number;
-	generatedPieces: number;
-	updatedAt: number;
-}
 
 export interface PuzzleSummary {
 	id: string;

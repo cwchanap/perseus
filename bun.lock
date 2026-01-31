@@ -39,6 +39,9 @@
     "apps/web": {
       "name": "@perseus/web",
       "version": "0.0.1",
+      "dependencies": {
+        "@perseus/types": "workspace:*",
+      },
       "devDependencies": {
         "@eslint/compat": "^1.4.0",
         "@eslint/js": "^9.39.1",

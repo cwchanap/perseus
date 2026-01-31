@@ -17,6 +17,9 @@
 		"test:e2e": "playwright test",
 		"test:install-browsers": "playwright install --with-deps chromium --only-shell"
 	},
+	"dependencies": {
+		"@perseus/types": "workspace:*"
+	},
 	"devDependencies": {
 		"@eslint/compat": "^1.4.0",
 		"@eslint/js": "^9.39.1",
