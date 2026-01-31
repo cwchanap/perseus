@@ -2,8 +2,22 @@
 // Handles async puzzle generation via Cloudflare Workflows
 
 import { WorkflowEntrypoint, WorkflowStep, WorkflowEvent } from 'cloudflare:workers';
-import type { WorkflowParams, PuzzleMetadata, PuzzlePiece, EdgeConfig, EdgeType } from './types';
-import { TAB_RATIO, THUMBNAIL_SIZE, MAX_IMAGE_DIMENSION } from './types';
+import type {
+	WorkflowParams,
+	PuzzleMetadata,
+	PuzzlePiece,
+	EdgeConfig,
+	EdgeType,
+	ReadyPuzzle,
+	FailedPuzzle
+} from './types';
+import {
+	TAB_RATIO,
+	THUMBNAIL_SIZE,
+	MAX_IMAGE_DIMENSION,
+	validateWorkflowParams,
+	createPuzzleProgress
+} from './types';
 import { generateJigsawSvgMask } from './utils/jigsaw-path';
 
 // Maximum image size in bytes (50MB)
@@ -87,12 +101,38 @@ export class PuzzleMetadataDO {
 		}
 
 		const currentVersion = existing.version ?? 0;
-		const updated: PuzzleMetadata = {
-			...existing,
-			...updates,
-			id: existing.id,
-			version: currentVersion + 1
-		};
+		// Apply updates while maintaining discriminated union invariants
+		let updated: PuzzleMetadata;
+		if (updates.status === 'ready') {
+			// ReadyPuzzle has progress?: never, error?: never
+			updated = {
+				...existing,
+				...updates,
+				id: existing.id,
+				status: 'ready',
+				version: currentVersion + 1,
+				progress: undefined,
+				error: undefined
+			} as ReadyPuzzle;
+		} else if (updates.status === 'failed') {
+			// FailedPuzzle has progress?: never
+			updated = {
+				...existing,
+				...updates,
+				id: existing.id,
+				status: 'failed',
+				version: currentVersion + 1,
+				progress: undefined
+			} as FailedPuzzle;
+		} else {
+			// ProcessingPuzzle or no status change
+			updated = {
+				...existing,
+				...updates,
+				id: existing.id,
+				version: currentVersion + 1
+			} as PuzzleMetadata;
+		}
 
 		await this.state.storage.put('metadata', updated);
 		await this.env.PUZZLE_METADATA.put(`puzzle:${puzzleId}`, JSON.stringify(updated));
@@ -102,6 +142,9 @@ export class PuzzleMetadataDO {
 }
 
 // Grid dimension calculator
+// Finds the most square-like grid for the given piece count by finding the largest
+// factor of pieceCount that is <= sqrt(pieceCount), making that the row count.
+// This ensures rows <= cols and produces a balanced grid (e.g., 225 -> 15x15).
 function getGridDimensions(pieceCount: number): { rows: number; cols: number } {
 	// Validate input - guard against zero or negative values
 	if (pieceCount <= 0) {
@@ -167,6 +210,11 @@ function getLeftEdge(row: number, col: number, cols: number): EdgeType {
 
 export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 	async run(event: WorkflowEvent<WorkflowParams>, step: WorkflowStep): Promise<void> {
+		// Validate workflow parameters
+		if (!validateWorkflowParams(event.payload)) {
+			throw new Error('Invalid workflow parameters: puzzleId must be a valid UUID');
+		}
+
 		const { puzzleId } = event.payload;
 
 		try {
@@ -331,9 +379,8 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 						}
 
 						// Copy alpha channel from mask to piece (4th byte in each RGBA pixel)
-						// The SVG mask uses white=opaque (visible), black=transparent (cut out)
-						// But alpha channel uses 0=transparent, 255=opaque
-						// So we invert the mask luminance when copying to the alpha channel
+						// The mask uses white (255) for opaque regions and black (0) for transparent
+						// We invert when copying to alpha: white -> 255 alpha (opaque), black -> 0 alpha (transparent)
 						for (let i = 0; i < piecePixels.length; i += 4) {
 							// Invert mask luminance for alpha: black (0) = opaque (255), white (255) = transparent (0)
 							const luminance = maskPixels[i]; // All channels are same in grayscale
@@ -397,13 +444,10 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 					const existingPieceIds = new Set((currentMeta.pieces || []).map((p) => p.id));
 					const newPieces = pieces.filter((p) => !existingPieceIds.has(p.id));
 					const updatedPieces = [...(currentMeta.pieces || []), ...newPieces];
+					const progress = createPuzzleProgress(totalPieces, generatedPieces);
 					await updateMetadata(this.env.PUZZLE_METADATA_DO, puzzleId, {
 						pieces: updatedPieces,
-						progress: {
-							totalPieces,
-							generatedPieces,
-							updatedAt: Date.now()
-						}
+						progress
 					});
 				});
 			}

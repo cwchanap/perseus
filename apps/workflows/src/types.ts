@@ -6,6 +6,8 @@ export type {
 	PuzzleStatus,
 	PuzzleProgress,
 	PuzzleMetadata,
+	ReadyPuzzle,
+	FailedPuzzle,
 	WorkflowParams
 } from '@perseus/types';
 
@@ -15,5 +17,7 @@ export {
 	MAX_IMAGE_DIMENSION,
 	MAX_PIECES,
 	DEFAULT_PIECE_COUNT,
-	THUMBNAIL_SIZE
+	THUMBNAIL_SIZE,
+	validateWorkflowParams,
+	createPuzzleProgress
 } from '@perseus/types';
