@@ -155,6 +155,12 @@ export async function listPuzzles(kv: KVNamespace): Promise<PuzzleSummary[]> {
 	}
 
 	const fetched = await Promise.all(keys.map((k) => kv.get(k.name, 'json')));
+	const nullCount = fetched.filter((p) => p === null).length;
+	if (nullCount > 0) {
+		console.warn(
+			`listPuzzles: ${nullCount} keys returned null (data corruption or eventual consistency)`
+		);
+	}
 	const puzzles = fetched.filter((p): p is PuzzleMetadata => p !== null) as PuzzleMetadata[];
 
 	// Sort by createdAt descending
