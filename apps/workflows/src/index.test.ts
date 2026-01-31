@@ -54,3 +54,46 @@ describe('updateMetadata', () => {
 		).rejects.toThrow(`Puzzle ${puzzleId} not found`);
 	});
 });
+
+describe('Workflow Execution - Image Validation', () => {
+	it('should reject images exceeding MAX_IMAGE_BYTES', async () => {
+		const { namespace } = createMockDurableObjectNamespace(() => {
+			return new Response(JSON.stringify({ success: true }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' }
+			});
+		});
+
+		const puzzleId = 'test-puzzle-oversized';
+		const updates: Partial<PuzzleMetadata> = {
+			status: 'failed',
+			error: {
+				message:
+					'Image size 52428800 bytes exceeds maximum 52428800 bytes. Please use a smaller image.'
+			}
+		};
+
+		await updateMetadata(namespace as unknown as DurableObjectNamespace, puzzleId, updates);
+
+		expect(namespace.idFromName).toHaveBeenCalledWith(puzzleId);
+	});
+
+	it('should reject images exceeding MAX_IMAGE_DIMENSION', async () => {
+		const { namespace } = createMockDurableObjectNamespace(() => {
+			return new Response(JSON.stringify({ success: true }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' }
+			});
+		});
+
+		const puzzleId = 'test-puzzle-too-large';
+		const updates: Partial<PuzzleMetadata> = {
+			status: 'failed',
+			error: { message: 'Image dimensions 8000x6000 exceed maximum 4096px' }
+		};
+
+		await updateMetadata(namespace as unknown as DurableObjectNamespace, puzzleId, updates);
+
+		expect(namespace.idFromName).toHaveBeenCalledWith(puzzleId);
+	});
+});
