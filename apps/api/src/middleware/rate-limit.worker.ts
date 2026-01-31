@@ -55,7 +55,8 @@ function getKVKey(key: string): string {
 // Get rate limit entry from KV or memory
 async function getRateLimitEntry(
 	kv: KVNamespace | undefined,
-	key: string
+	key: string,
+	env?: string
 ): Promise<RateLimitEntry | null> {
 	if (kv) {
 		const data = await kv.get(getKVKey(key), 'json');
@@ -65,9 +66,15 @@ async function getRateLimitEntry(
 	// PRODUCTION IMPACT: In-memory storage is not distributed across workers,
 	// so rate limiting will only work within a single worker instance.
 	// Multiple worker instances can each have their own rate limit counters.
-	console.warn(
-		'Rate limiting using in-memory storage (not distributed) - KV namespace not configured'
-	);
+	if (env === 'production') {
+		console.error(
+			'[CRITICAL] Rate limiting using in-memory storage in production - KV namespace not configured. Rate limiting is per-worker, not distributed.'
+		);
+	} else {
+		console.warn(
+			'Rate limiting using in-memory storage (not distributed) - KV namespace not configured'
+		);
+	}
 	return rateLimitStore.get(key) || null;
 }
 
@@ -108,13 +115,14 @@ async function deleteRateLimitEntry(kv: KVNamespace | undefined, key: string): P
 async function incrementAttempts(
 	kv: KVNamespace | undefined,
 	key: string,
-	now: number
+	now: number,
+	env?: string
 ): Promise<{ shouldBlock: boolean; remainingSeconds?: number }> {
 	const maxRetries = 3;
 	const baseDelay = 50; // ms
 
 	for (let attempt = 0; attempt < maxRetries; attempt++) {
-		const entry = await getRateLimitEntry(kv, key);
+		const entry = await getRateLimitEntry(kv, key, env);
 
 		// Check if locked out
 		if (entry?.lockedUntil && entry.lockedUntil > now) {
@@ -141,7 +149,7 @@ async function incrementAttempts(
 		await setRateLimitEntry(kv, key, newEntry);
 
 		// Verify our write took effect (detect race condition)
-		const current = await getRateLimitEntry(kv, key);
+		const current = await getRateLimitEntry(kv, key, env);
 		if (current?.attempts === newEntry.attempts) {
 			// Our write succeeded
 			if (current.lockedUntil && current.lockedUntil > now) {
@@ -166,9 +174,10 @@ export async function loginRateLimit(c: Context<{ Bindings: Env }>, next: Next):
 	const key = getRateLimitKey(c);
 	const now = Date.now();
 	const kv = c.env.PUZZLE_METADATA;
+	const env = c.env.NODE_ENV;
 
 	// First check if already locked out
-	const entry = await getRateLimitEntry(kv, key);
+	const entry = await getRateLimitEntry(kv, key, env);
 	if (entry?.lockedUntil && entry.lockedUntil > now) {
 		const remainingSeconds = Math.ceil((entry.lockedUntil - now) / 1000);
 		return c.json(
@@ -185,7 +194,7 @@ export async function loginRateLimit(c: Context<{ Bindings: Env }>, next: Next):
 
 	// Only increment on failed authentication (401/403 responses)
 	if (c.res.status === 401 || c.res.status === 403) {
-		const result = await incrementAttempts(kv, key, now);
+		const result = await incrementAttempts(kv, key, now, env);
 		if (result.shouldBlock) {
 			// Create a new 429 response with rate limit info
 			return c.json(
