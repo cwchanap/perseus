@@ -11,7 +11,7 @@ import {
 } from '../services/storage.worker';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const MAX_PIECE_ID = 10000; // Well above MAX_PIECES (250)
+const MAX_PIECE_ID = 10000; // Validation ceiling, significantly above any expected piece count
 
 function validatePuzzleId(id: string): boolean {
 	return UUID_REGEX.test(id);
