@@ -137,7 +137,7 @@ export function setSessionCookie(c: Context<{ Bindings: Env }>, token: string): 
 		secure: isSecure,
 		sameSite: 'Lax',
 		path: '/',
-		maxAge: SESSION_DURATION_MS / 1000
+		maxAge: SESSION_DURATION_MS / 1000 // maxAge is in seconds
 	});
 }
 
