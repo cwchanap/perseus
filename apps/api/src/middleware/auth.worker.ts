@@ -59,7 +59,6 @@ export async function createSession(
 	const payloadBytes = new TextEncoder().encode(payloadJson);
 	const payloadB64 = bytesToBase64(payloadBytes);
 
-	// Create HMAC signature
 	const encoder = new TextEncoder();
 	const key = await crypto.subtle.importKey(
 		'raw',
@@ -85,7 +84,6 @@ export async function verifySession(env: Env, token: string): Promise<SessionPay
 
 		const encoder = new TextEncoder();
 
-		// Verify signature
 		const key = await crypto.subtle.importKey(
 			'raw',
 			encoder.encode(env.JWT_SECRET),
