@@ -148,4 +148,36 @@ describe('Rate Limit Middleware', () => {
 			expect(true).toBe(true);
 		});
 	});
+
+	describe('lockout expiry', () => {
+		it('should reset attempts after lockout expires', async () => {
+			const mockKV = createMockKV();
+			const key = 'ratelimit:login:127.0.0.1';
+			const expiredLockout = Date.now() - 1000; // 1 second ago
+
+			mockKV._store.set(
+				key,
+				JSON.stringify({
+					attempts: 5,
+					lockedUntil: expiredLockout
+				})
+			);
+
+			const mockContext = createMockContext('127.0.0.1', mockKV);
+			const next = vi.fn(async () => {
+				(mockContext.res as any).status = 401; // Simulate failed login
+			});
+
+			await loginRateLimit(mockContext, next);
+
+			expect(next).toHaveBeenCalled();
+
+			// Verify attempts were reset to 1 (not accumulated past lockout)
+			expect(mockKV.put).toHaveBeenCalled();
+			const putCall = mockKV.put.mock.calls[0];
+			const savedEntry = JSON.parse(putCall[1]);
+			expect(savedEntry.attempts).toBe(1);
+			expect(savedEntry.lockedUntil).toBeNull();
+		});
+	});
 });
