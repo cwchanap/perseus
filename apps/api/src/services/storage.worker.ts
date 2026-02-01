@@ -10,7 +10,7 @@ import type {
 } from '@perseus/types';
 import { validatePuzzleMetadata } from '@perseus/types';
 
-// Re-export types for backward compatibility
+// Re-export types so consumers don't need to import from @perseus/types directly
 export type { EdgeType, EdgeConfig, PuzzlePiece, PuzzleMetadata, PuzzleStatus, PuzzleProgress };
 
 export type LockResult =
