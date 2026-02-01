@@ -150,7 +150,7 @@ admin.post('/puzzles', requireAuth, async (c) => {
 			return c.json({ error: 'bad_request', message: 'Name must be at most 255 characters' }, 400);
 		}
 
-		// Validate piece count (only 225 allowed for now)
+		// Validate piece count (currently restricted to DEFAULT_PIECE_COUNT)
 		if (!pieceCountStr) {
 			return c.json({ error: 'bad_request', message: 'Piece count is required' }, 400);
 		}
