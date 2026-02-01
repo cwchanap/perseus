@@ -6,6 +6,7 @@ import type { Env } from '../worker';
 
 const MAX_LOGIN_ATTEMPTS = 5;
 const LOCKOUT_DURATION_MS = 15 * 60 * 1000; // 15 minutes
+// Rate limit keys share PUZZLE_METADATA namespace (puzzle keys use 'puzzle:' prefix)
 const RATE_LIMIT_KEY_PREFIX = 'ratelimit:';
 
 interface RateLimitEntry {
