@@ -12,6 +12,9 @@ const TAB_START = (1 - TAB_WIDTH_RATIO) / 2; // 0.3
 const TAB_END = (1 + TAB_WIDTH_RATIO) / 2; // 0.7
 
 // Bezier curve shape parameters for classic jigsaw tabs
+// Coordinates are in a normalized local space: x in [-0.5, 0.5] along the edge,
+// y in [0, 1] perpendicular to the edge (0 = edge baseline, 1 = tab tip).
+// Four cubic Bezier curves (c1-c4) form the complete tab shape.
 const BEZIER_POINTS = {
 	c1Start: { x: -0.5, y: 0.0 },
 	c1Cp1: { x: -0.5, y: 0.15 },
