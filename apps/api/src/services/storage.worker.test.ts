@@ -125,6 +125,29 @@ describe('KV Metadata Operations', () => {
 
 			expect(result).toBeNull();
 		});
+
+		it('should return null when puzzle metadata is invalid', async () => {
+			const mockKV = createMockKV();
+			const invalidPuzzle = {
+				...samplePuzzle,
+				status: 'ready',
+				pieceCount: 2,
+				gridCols: 1,
+				gridRows: 2,
+				pieces: []
+			};
+			mockKV._store.set('puzzle:test-puzzle-1', JSON.stringify(invalidPuzzle));
+			const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+			const result = await getPuzzle(mockKV as unknown as KVNamespace, 'test-puzzle-1');
+
+			expect(result).toBeNull();
+			expect(errorSpy).toHaveBeenCalledWith(
+				'Invalid puzzle metadata for test-puzzle-1:',
+				invalidPuzzle
+			);
+			errorSpy.mockRestore();
+		});
 	});
 
 	describe('createPuzzleMetadata', () => {

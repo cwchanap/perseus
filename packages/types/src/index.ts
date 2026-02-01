@@ -102,19 +102,39 @@ export function createPuzzleProgress(totalPieces: number, generatedPieces: numbe
 export function validatePuzzleMetadata(meta: unknown): meta is PuzzleMetadata {
 	if (typeof meta !== 'object' || meta === null) return false;
 	const m = meta as Partial<PuzzleMetadata>;
+	const isNumber = (value: unknown): value is number =>
+		typeof value === 'number' && Number.isFinite(value);
+	const validStatuses: PuzzleStatus[] = ['processing', 'ready', 'failed'];
+
+	const hasValidProgress = (value: unknown): value is PuzzleProgress => {
+		if (typeof value !== 'object' || value === null) return false;
+		const progress = value as Record<string, unknown>;
+		return (
+			isNumber(progress.totalPieces) &&
+			isNumber(progress.generatedPieces) &&
+			isNumber(progress.updatedAt)
+		);
+	};
 
 	// Check required fields exist
-	if (!m.id || !m.name || typeof m.pieceCount !== 'number') return false;
+	if (typeof m.id !== 'string' || typeof m.name !== 'string') return false;
+	if (!isNumber(m.pieceCount) || !isNumber(m.gridCols) || !isNumber(m.gridRows)) return false;
+	if (!isNumber(m.imageWidth) || !isNumber(m.imageHeight)) return false;
+	if (!isNumber(m.createdAt) || !isNumber(m.version)) return false;
+	if (!Array.isArray(m.pieces)) return false;
+	if (!m.status || !validStatuses.includes(m.status)) return false;
 
 	// Validate grid math
-	if (m.gridCols && m.gridRows && m.pieceCount) {
-		if (m.gridCols * m.gridRows !== m.pieceCount) return false;
-	}
+	if (m.gridCols * m.gridRows !== m.pieceCount) return false;
 
 	// Validate status-field consistency
-	if (m.status === 'processing' && !m.progress) return false;
-	if (m.status === 'failed' && !m.error) return false;
-	if (m.status === 'ready' && m.pieces && m.pieces.length !== m.pieceCount) return false;
+	if (m.status === 'processing' && !hasValidProgress(m.progress)) return false;
+	if (m.status === 'failed') {
+		if (typeof m.error !== 'object' || m.error === null) return false;
+		const error = m.error as Record<string, unknown>;
+		if (typeof error.message !== 'string') return false;
+	}
+	if (m.status === 'ready' && m.pieces.length !== m.pieceCount) return false;
 
 	return true;
 }

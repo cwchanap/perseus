@@ -60,7 +60,9 @@ app.use('*', async (c, next) => {
 			return c.json(
 				{
 					error: 'server_misconfigured',
-					message: `Missing required production env vars: ${missingEnv.join(', ')}`
+					message: isProd
+						? 'Server configuration error'
+						: `Missing required production env vars: ${missingEnv.join(', ')}`
 				},
 				500
 			);

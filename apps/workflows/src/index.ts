@@ -22,7 +22,7 @@ import { generateJigsawSvgMask } from './utils/jigsaw-path';
 
 // Maximum image size in bytes (50MB)
 // This is a safety limit to prevent workflow step payload issues
-const MAX_IMAGE_BYTES = 50 * 1024 * 1024;
+export const MAX_IMAGE_BYTES = 50 * 1024 * 1024;
 
 export interface Env {
 	PUZZLES_BUCKET: R2Bucket;
@@ -101,6 +101,7 @@ export class PuzzleMetadataDO {
 		}
 
 		const currentVersion = existing.version ?? 0;
+		const previous = stored ?? existing;
 		// Apply updates while maintaining discriminated union invariants
 		let updated: PuzzleMetadata;
 		if (updates.status === 'ready') {
@@ -134,8 +135,19 @@ export class PuzzleMetadataDO {
 			} as PuzzleMetadata;
 		}
 
-		await this.state.storage.put('metadata', updated);
-		await this.env.PUZZLE_METADATA.put(`puzzle:${puzzleId}`, JSON.stringify(updated));
+		try {
+			await this.env.PUZZLE_METADATA.put(`puzzle:${puzzleId}`, JSON.stringify(updated));
+			await this.state.storage.put('metadata', updated);
+		} catch (error) {
+			console.error(`Failed to persist metadata for puzzle ${puzzleId}:`, error);
+			try {
+				await this.env.PUZZLE_METADATA.put(`puzzle:${puzzleId}`, JSON.stringify(previous));
+				await this.state.storage.put('metadata', previous);
+			} catch (rollbackError) {
+				console.error(`Failed to rollback metadata for puzzle ${puzzleId}:`, rollbackError);
+			}
+			return Response.json({ message: 'Failed to persist puzzle metadata' }, { status: 500 });
+		}
 
 		return Response.json({ success: true, version: updated.version });
 	}
@@ -379,8 +391,8 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 						}
 
 						// Copy alpha channel from mask to piece (4th byte in each RGBA pixel)
-						// The mask uses white (255) for opaque regions and black (0) for transparent
-						// We invert when copying to alpha: white -> 255 alpha (opaque), black -> 0 alpha (transparent)
+						// The mask uses black (0) for opaque regions and white (255) for transparent
+						// We invert when copying to alpha: black -> 255 alpha (opaque), white -> 0 alpha (transparent)
 						for (let i = 0; i < piecePixels.length; i += 4) {
 							// Invert mask luminance for alpha: black (0) = opaque (255), white (255) = transparent (0)
 							const luminance = maskPixels[i]; // All channels are same in grayscale
