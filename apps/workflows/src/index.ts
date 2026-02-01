@@ -452,15 +452,10 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 				});
 			}
 
-			// Step 5: Mark puzzle as ready
+			// Step 5: Mark puzzle as ready (progress field is removed when status changes to ready)
 			await step.do('finalize', async () => {
 				await updateMetadata(this.env.PUZZLE_METADATA_DO, puzzleId, {
-					status: 'ready',
-					progress: {
-						totalPieces,
-						generatedPieces: totalPieces,
-						updatedAt: Date.now()
-					}
+					status: 'ready'
 				});
 			});
 		} catch (error) {

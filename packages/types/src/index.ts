@@ -40,19 +40,19 @@ interface PuzzleMetadataBase {
 	version: number;
 }
 
-interface ProcessingPuzzle extends PuzzleMetadataBase {
+export interface ProcessingPuzzle extends PuzzleMetadataBase {
 	status: 'processing';
 	progress: PuzzleProgress;
 	error?: never;
 }
 
-interface ReadyPuzzle extends PuzzleMetadataBase {
+export interface ReadyPuzzle extends PuzzleMetadataBase {
 	status: 'ready';
 	progress?: never;
 	error?: never;
 }
 
-interface FailedPuzzle extends PuzzleMetadataBase {
+export interface FailedPuzzle extends PuzzleMetadataBase {
 	status: 'failed';
 	progress?: never;
 	error: { message: string };
