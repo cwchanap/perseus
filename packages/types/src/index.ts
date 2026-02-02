@@ -130,11 +130,17 @@ export function validatePuzzleMetadata(meta: unknown): meta is PuzzleMetadata {
 	// Validate status-field consistency
 	if (m.status === 'processing' && !hasValidProgress(m.progress)) return false;
 	if (m.status === 'failed') {
+		if (hasValidProgress(m.progress)) return false;
 		if (typeof m.error !== 'object' || m.error === null) return false;
 		const error = m.error as Record<string, unknown>;
 		if (typeof error.message !== 'string') return false;
 	}
-	if (m.status === 'ready' && m.pieces.length !== m.pieceCount) return false;
+	if (m.status === 'ready') {
+		if (m.pieces.length !== m.pieceCount) return false;
+		const errorValue = (m as Record<string, unknown>).error;
+		if (typeof errorValue !== 'undefined' && errorValue !== null) return false;
+		if (hasValidProgress(m.progress)) return false;
+	}
 
 	return true;
 }

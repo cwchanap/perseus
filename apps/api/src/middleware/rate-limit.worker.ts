@@ -142,7 +142,7 @@ async function incrementAttempts(
 		}
 
 		// Check if should lock out
-		if (newEntry.attempts > MAX_LOGIN_ATTEMPTS) {
+		if (newEntry.attempts >= MAX_LOGIN_ATTEMPTS) {
 			newEntry.lockedUntil = now + LOCKOUT_DURATION_MS;
 		}
 

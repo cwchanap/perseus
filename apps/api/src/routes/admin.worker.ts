@@ -155,7 +155,17 @@ admin.post('/puzzles', requireAuth, async (c) => {
 			return c.json({ error: 'bad_request', message: 'Piece count is required' }, 400);
 		}
 
-		const pieceCount = parseInt(pieceCountStr.toString(), 10);
+		const pieceCount = Number(pieceCountStr.toString());
+		if (!Number.isFinite(pieceCount) || !Number.isInteger(pieceCount)) {
+			return c.json(
+				{
+					error: 'bad_request',
+					message: `Invalid piece count. Only ${ALLOWED_PIECE_COUNT} pieces allowed`
+				},
+				400
+			);
+		}
+
 		if (pieceCount !== ALLOWED_PIECE_COUNT) {
 			return c.json(
 				{

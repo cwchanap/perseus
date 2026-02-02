@@ -260,6 +260,39 @@ describe('Admin Routes - Workflow Trigger Cleanup', () => {
 	});
 
 	describe('POST /puzzles', () => {
+		it('should reject pieceCount with trailing characters', async () => {
+			const mockEnv = {
+				ADMIN_PASSKEY: 'test-passkey',
+				JWT_SECRET: 'test-secret',
+				PUZZLE_METADATA: {} as KVNamespace,
+				PUZZLES_BUCKET: {} as R2Bucket,
+				PUZZLE_WORKFLOW: {
+					create: vi.fn()
+				}
+			};
+
+			const formData = new FormData();
+			formData.append('name', 'Test Puzzle');
+			formData.append('pieceCount', '225abc');
+			const blob = new Blob(['fake image data'], { type: 'image/png' });
+			formData.append('image', blob, 'test.png');
+
+			const req = new Request('http://localhost/puzzles', {
+				method: 'POST',
+				headers: {
+					cookie: 'session=valid.token'
+				},
+				body: formData
+			});
+
+			const res = await admin.fetch(req, mockEnv as any);
+
+			expect(res.status).toBe(400);
+			const body = (await res.json()) as any;
+			expect(body.error).toBe('bad_request');
+			expect(body.message).toContain('Invalid piece count');
+		});
+
 		it('should cleanup both metadata and image when workflow.create() fails', async () => {
 			// Mock successful image upload
 			(storage.uploadOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
