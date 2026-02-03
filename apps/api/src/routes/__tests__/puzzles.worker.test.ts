@@ -69,5 +69,25 @@ describe('Puzzle Routes - UUID Validation', () => {
 			expect(res.status).toBe(400);
 			expect(body.error).toBe('invalid_piece_id');
 		});
+
+		it('should return 400 for pieceId with trailing characters (parseInt coercion)', async () => {
+			const validUuid = '550e8400-e29b-41d4-a716-446655440000';
+			const req = new Request(`http://localhost/${validUuid}/pieces/1abc/image`);
+			const res = await puzzles.fetch(req, mockEnv);
+			const body = (await res.json()) as any;
+
+			expect(res.status).toBe(400);
+			expect(body.error).toBe('invalid_piece_id');
+		});
+
+		it('should return 400 for decimal pieceId', async () => {
+			const validUuid = '550e8400-e29b-41d4-a716-446655440000';
+			const req = new Request(`http://localhost/${validUuid}/pieces/1.5/image`);
+			const res = await puzzles.fetch(req, mockEnv);
+			const body = (await res.json()) as any;
+
+			expect(res.status).toBe(400);
+			expect(body.error).toBe('invalid_piece_id');
+		});
 	});
 });

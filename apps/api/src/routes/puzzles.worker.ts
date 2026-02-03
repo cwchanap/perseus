@@ -11,10 +11,22 @@ import {
 } from '../services/storage.worker';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const PIECE_ID_REGEX = /^\d+$/; // Only non-negative base-10 integers
 const MAX_PIECE_ID = 10000; // Validation ceiling, significantly above any expected piece count
 
 function validatePuzzleId(id: string): boolean {
 	return UUID_REGEX.test(id);
+}
+
+function validatePieceId(id: string): number | null {
+	if (!PIECE_ID_REGEX.test(id)) {
+		return null;
+	}
+	const num = parseInt(id, 10);
+	if (num > MAX_PIECE_ID) {
+		return null;
+	}
+	return num;
 }
 
 const puzzles = new Hono<{ Bindings: Env }>();
@@ -91,13 +103,13 @@ puzzles.get('/:id/thumbnail', async (c) => {
 puzzles.get('/:id/pieces/:pieceId/image', async (c) => {
 	const id = c.req.param('id');
 	const pieceIdStr = c.req.param('pieceId');
-	const pieceId = parseInt(pieceIdStr, 10);
+	const pieceId = validatePieceId(pieceIdStr);
 
 	if (!validatePuzzleId(id)) {
 		return c.json({ error: 'bad_request', message: 'Invalid puzzle ID format' }, 400);
 	}
 
-	if (isNaN(pieceId) || pieceId < 0 || pieceId > MAX_PIECE_ID) {
+	if (pieceId === null) {
 		return c.json({ error: 'invalid_piece_id', message: 'Invalid piece ID' }, 400);
 	}
 
