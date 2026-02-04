@@ -31,11 +31,13 @@ function validatePieceId(id: string): number | null {
 
 const puzzles = new Hono<{ Bindings: Env }>();
 
-// GET /api/puzzles - List all puzzles
+// GET /api/puzzles - List all ready puzzles
 puzzles.get('/', async (c) => {
 	try {
 		const puzzleList = await listPuzzles(c.env.PUZZLE_METADATA);
-		return c.json({ puzzles: puzzleList });
+		// Filter to only ready puzzles - public UI expects thumbnails/pieces to exist
+		const readyPuzzles = puzzleList.filter((p) => p.status === 'ready');
+		return c.json({ puzzles: readyPuzzles });
 	} catch (error) {
 		console.error('Failed to list puzzles', error);
 		return c.json({ error: 'internal_error', message: 'Failed to list puzzles' }, 500);

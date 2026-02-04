@@ -75,7 +75,11 @@ app.use('*', async (c, next) => {
 	})(c, next);
 });
 
-// Health check
+// Health check (also at /health for backward compatibility)
+app.get('/health', (c) => {
+	return c.json({ status: 'ok' });
+});
+
 app.get('/api/health', (c) => {
 	return c.json({ status: 'ok' });
 });

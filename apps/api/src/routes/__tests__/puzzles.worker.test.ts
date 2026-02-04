@@ -1,12 +1,69 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import puzzles from '../puzzles.worker';
+import * as storage from '../../services/storage.worker';
+
+vi.mock('../../services/storage.worker');
 
 describe('Puzzle Routes - UUID Validation', () => {
 	const mockEnv = {
 		PUZZLE_METADATA: {} as KVNamespace,
 		PUZZLES_BUCKET: {} as R2Bucket
 	};
+
+	describe('GET / - List puzzles', () => {
+		it('should only return ready puzzles', async () => {
+			const mockPuzzles = [
+				{
+					id: '550e8400-e29b-41d4-a716-446655440001',
+					name: 'Ready Puzzle',
+					pieceCount: 4,
+					status: 'ready'
+				},
+				{
+					id: '550e8400-e29b-41d4-a716-446655440002',
+					name: 'Processing Puzzle',
+					pieceCount: 4,
+					status: 'processing'
+				},
+				{
+					id: '550e8400-e29b-41d4-a716-446655440003',
+					name: 'Failed Puzzle',
+					pieceCount: 4,
+					status: 'failed'
+				}
+			];
+			vi.mocked(storage.listPuzzles).mockResolvedValue(mockPuzzles as any);
+
+			const req = new Request('http://localhost/');
+			const res = await puzzles.fetch(req, mockEnv);
+			const body = (await res.json()) as any;
+
+			expect(res.status).toBe(200);
+			expect(body.puzzles).toHaveLength(1);
+			expect(body.puzzles[0].id).toBe('550e8400-e29b-41d4-a716-446655440001');
+			expect(body.puzzles[0].status).toBe('ready');
+		});
+
+		it('should return empty array when no ready puzzles exist', async () => {
+			const mockPuzzles = [
+				{
+					id: '550e8400-e29b-41d4-a716-446655440002',
+					name: 'Processing Puzzle',
+					pieceCount: 4,
+					status: 'processing'
+				}
+			];
+			vi.mocked(storage.listPuzzles).mockResolvedValue(mockPuzzles as any);
+
+			const req = new Request('http://localhost/');
+			const res = await puzzles.fetch(req, mockEnv);
+			const body = (await res.json()) as any;
+
+			expect(res.status).toBe(200);
+			expect(body.puzzles).toHaveLength(0);
+		});
+	});
 
 	describe('GET /:id', () => {
 		it('should return 400 for invalid UUID format', async () => {
