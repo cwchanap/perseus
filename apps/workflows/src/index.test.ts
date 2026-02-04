@@ -14,14 +14,88 @@ import type { WorkflowParams } from './types';
 
 let mockWidth = 100;
 let mockHeight = 100;
+let photonInstances: Array<{ free: ReturnType<typeof vi.fn> }> = [];
+
+class PhotonImageMock {
+	private width: number;
+	private height: number;
+	private pixels: Uint8Array;
+	free: ReturnType<typeof vi.fn>;
+
+	constructor(pixels?: Uint8Array, width?: number, height?: number) {
+		this.width = width ?? mockWidth;
+		this.height = height ?? mockHeight;
+		this.pixels = pixels ?? new Uint8Array(this.width * this.height * 4);
+		this.free = vi.fn();
+	}
+
+	get_width() {
+		return this.width;
+	}
+
+	get_height() {
+		return this.height;
+	}
+
+	get_raw_pixels() {
+		return this.pixels;
+	}
+
+	get_bytes() {
+		return this.pixels;
+	}
+
+	get_bytes_jpeg() {
+		return new Uint8Array([1, 2, 3]);
+	}
+}
 
 vi.mock('@cf-wasm/photon', () => ({
-	PhotonImage: {
-		new_from_byteslice: vi.fn(() => ({
-			get_width: () => mockWidth,
-			get_height: () => mockHeight,
-			free: vi.fn()
-		}))
+	PhotonImage: Object.assign(PhotonImageMock, {
+		new_from_byteslice: vi.fn((bytes?: Uint8Array) => {
+			const width = (bytes as { __width?: number } | undefined)?.__width ?? mockWidth;
+			const height = (bytes as { __height?: number } | undefined)?.__height ?? mockHeight;
+			const image = new PhotonImageMock(undefined, width, height);
+			photonInstances.push(image);
+			return image;
+		})
+	}),
+	crop: vi.fn((_image: PhotonImageMock, _x: number, _y: number, width: number, height: number) => {
+		const image = new PhotonImageMock(undefined, width, height);
+		photonInstances.push(image);
+		return image;
+	}),
+	resize: vi.fn((_image: PhotonImageMock, width: number, height: number) => {
+		const image = new PhotonImageMock(undefined, width, height);
+		photonInstances.push(image);
+		return image;
+	}),
+	SamplingFilter: {
+		Lanczos3: 3
+	}
+}));
+
+vi.mock('@cf-wasm/resvg', () => ({
+	Resvg: class {
+		private width: number;
+		private height: number;
+
+		constructor(svg: string, options?: { fitTo?: { value?: number } }) {
+			this.width = options?.fitTo?.value ?? 1;
+			const match = svg.match(/height="(\d+)"/u);
+			this.height = match ? Number(match[1]) : this.width;
+		}
+
+		render() {
+			return {
+				asPng: () => {
+					const bytes = new Uint8Array(this.width * this.height * 4);
+					(bytes as { __width?: number }).__width = this.width;
+					(bytes as { __height?: number }).__height = this.height;
+					return bytes;
+				}
+			};
+		}
 	}
 }));
 
@@ -47,7 +121,8 @@ function createMockBucket(bytes: ArrayBuffer) {
 	return {
 		get: vi.fn(async () => ({
 			arrayBuffer: vi.fn(async () => bytes)
-		}))
+		})),
+		put: vi.fn(async () => undefined)
 	};
 }
 
@@ -138,6 +213,42 @@ describe('updateMetadata', () => {
 			})
 		).rejects.toThrow(`Puzzle ${puzzleId} not found`);
 	});
+
+	it('frees the source image after generating a row of pieces', async () => {
+		const puzzleId = sampleMetadata.id;
+		const minimalMetadata: PuzzleMetadata = {
+			...sampleMetadata,
+			pieceCount: 1,
+			gridCols: 1,
+			gridRows: 1
+		};
+		const { namespace } = createMockDurableObjectNamespace(() => {
+			return new Response(JSON.stringify({ success: true }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' }
+			});
+		});
+		const env = {
+			PUZZLES_BUCKET: createMockBucket(new ArrayBuffer(8)),
+			PUZZLE_METADATA: createMockKv(minimalMetadata),
+			PUZZLE_METADATA_DO: namespace as unknown as DurableObjectNamespace,
+			PUZZLE_WORKFLOW: {} as Workflow
+		} as unknown as Env;
+		const step = createMockStep();
+		const workflow = new TestWorkflow();
+		workflow.setEnv(env);
+
+		const event: WorkflowEvent<WorkflowParams> = {
+			payload: { puzzleId },
+			timestamp: new Date(),
+			instanceId: 'test-instance'
+		};
+
+		await workflow.run(event, step);
+
+		const sourceImage = photonInstances[2];
+		expect(sourceImage?.free).toHaveBeenCalled();
+	});
 });
 
 describe('image masking helpers', () => {
@@ -165,6 +276,7 @@ describe('Workflow Execution - Image Validation', () => {
 	afterEach(() => {
 		mockWidth = 100;
 		mockHeight = 100;
+		photonInstances = [];
 		vi.restoreAllMocks();
 	});
 

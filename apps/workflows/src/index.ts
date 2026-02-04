@@ -457,6 +457,8 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 						});
 					}
 
+					srcImage.free();
+
 					// Update progress in metadata
 					const generatedPieces = Math.min((row + 1) * cols, totalPieces);
 
