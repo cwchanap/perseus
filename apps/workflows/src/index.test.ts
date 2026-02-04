@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { updateMetadata, PerseusWorkflow, MAX_IMAGE_BYTES } from './index';
+import {
+	updateMetadata,
+	PerseusWorkflow,
+	MAX_IMAGE_BYTES,
+	padPixelsToTarget,
+	applyMaskAlpha
+} from './index';
 import type { PuzzleMetadata } from './types';
 import { MAX_IMAGE_DIMENSION } from './types';
 import type { Env } from './index';
@@ -131,6 +137,27 @@ describe('updateMetadata', () => {
 				status: 'ready'
 			})
 		).rejects.toThrow(`Puzzle ${puzzleId} not found`);
+	});
+});
+
+describe('image masking helpers', () => {
+	it('pads piece pixels into target dimensions with offsets', () => {
+		const sourcePixels = new Uint8Array([255, 0, 0, 255, 0, 255, 0, 255]);
+		const padded = padPixelsToTarget(sourcePixels, 2, 1, 4, 3, 1, 1);
+
+		expect(padded).toHaveLength(4 * 3 * 4);
+		const start = (1 * 4 + 1) * 4;
+		expect(padded.slice(start, start + 8)).toEqual(sourcePixels);
+	});
+
+	it('copies mask alpha into piece pixels', () => {
+		const piecePixels = new Uint8Array([10, 10, 10, 0, 20, 20, 20, 0]);
+		const maskPixels = new Uint8Array([0, 0, 0, 200, 0, 0, 0, 100]);
+
+		applyMaskAlpha(piecePixels, maskPixels);
+
+		expect(piecePixels[3]).toBe(200);
+		expect(piecePixels[7]).toBe(100);
 	});
 });
 

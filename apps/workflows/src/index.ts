@@ -61,6 +61,31 @@ export async function updateMetadata(
 	}
 }
 
+export function padPixelsToTarget(
+	sourcePixels: Uint8Array,
+	sourceWidth: number,
+	sourceHeight: number,
+	targetWidth: number,
+	targetHeight: number,
+	offsetX: number,
+	offsetY: number
+): Uint8Array {
+	const padded = new Uint8Array(targetWidth * targetHeight * 4);
+	const rowBytes = sourceWidth * 4;
+	for (let y = 0; y < sourceHeight; y += 1) {
+		const sourceStart = y * rowBytes;
+		const targetStart = ((y + offsetY) * targetWidth + offsetX) * 4;
+		padded.set(sourcePixels.subarray(sourceStart, sourceStart + rowBytes), targetStart);
+	}
+	return padded;
+}
+
+export function applyMaskAlpha(piecePixels: Uint8Array, maskPixels: Uint8Array): void {
+	for (let i = 0; i < piecePixels.length; i += 4) {
+		piecePixels[i + 3] = maskPixels[i + 3];
+	}
+}
+
 export class PuzzleMetadataDO {
 	private state: DurableObjectState;
 	private env: Env;
@@ -351,6 +376,8 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 
 						const extractWidth = extractRight - extractLeft;
 						const extractHeight = extractBottom - extractTop;
+						const offsetX = extractLeft - idealLeft;
+						const offsetY = extractTop - idealTop;
 
 						// Determine edge types using deterministic calculation
 						// This ensures edges are consistent across workflow steps
@@ -364,12 +391,12 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 						// Extract piece region from source image using crop function
 						const pieceImage = crop(srcImage, extractLeft, extractTop, extractWidth, extractHeight);
 
-						// Generate jigsaw mask SVG using actual extracted dimensions
-						const maskSvg = generateJigsawSvgMask(edges, extractWidth, extractHeight);
+						// Generate jigsaw mask SVG using target dimensions
+						const maskSvg = generateJigsawSvgMask(edges, targetWidth, targetHeight);
 
 						// Render SVG mask to PNG using Resvg
 						const resvg = new Resvg(maskSvg, {
-							fitTo: { mode: 'width', value: extractWidth }
+							fitTo: { mode: 'width', value: targetWidth }
 						});
 						const maskPng = resvg.render().asPng();
 
@@ -379,28 +406,31 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 						// Get raw RGBA pixel data for both images
 						const maskPixels = maskImage.get_raw_pixels();
 						const piecePixels = pieceImage.get_raw_pixels();
+						const paddedPiecePixels = padPixelsToTarget(
+							piecePixels,
+							extractWidth,
+							extractHeight,
+							targetWidth,
+							targetHeight,
+							offsetX,
+							offsetY
+						);
 
 						// Validate sizes match before copying alpha channel
-						if (maskPixels.length !== piecePixels.length) {
+						if (maskPixels.length !== paddedPiecePixels.length) {
 							maskImage.free();
 							pieceImage.free();
 							throw new Error(
 								`Mask and piece image pixel count mismatch for piece ${pieceId}: ` +
-									`mask=${maskPixels.length} pixels, piece=${piecePixels.length} pixels`
+									`mask=${maskPixels.length} pixels, piece=${paddedPiecePixels.length} pixels`
 							);
 						}
 
 						// Copy alpha channel from mask to piece (4th byte in each RGBA pixel)
-						// The mask uses black (0) for opaque regions and white (255) for transparent
-						// We invert when copying to alpha: black -> 255 alpha (opaque), white -> 0 alpha (transparent)
-						for (let i = 0; i < piecePixels.length; i += 4) {
-							// Invert mask luminance for alpha: black (0) = opaque (255), white (255) = transparent (0)
-							const luminance = maskPixels[i]; // All channels are same in grayscale
-							piecePixels[i + 3] = 255 - luminance;
-						}
+						applyMaskAlpha(paddedPiecePixels, maskPixels);
 
 						// Create new PhotonImage from modified raw RGBA bytes
-						const maskedPiece = new PhotonImage(piecePixels, extractWidth, extractHeight);
+						const maskedPiece = new PhotonImage(paddedPiecePixels, targetWidth, targetHeight);
 
 						// Free original images
 						maskImage.free();
@@ -426,8 +456,6 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 							imagePath: `pieces/${pieceId}.png`
 						});
 					}
-
-					srcImage.free();
 
 					// Update progress in metadata
 					const generatedPieces = Math.min((row + 1) * cols, totalPieces);
