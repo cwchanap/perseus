@@ -60,9 +60,7 @@ app.use('*', async (c, next) => {
 			return c.json(
 				{
 					error: 'server_misconfigured',
-					message: isProd
-						? 'Server configuration error'
-						: `Missing required production env vars: ${missingEnv.join(', ')}`
+					message: 'Server configuration error'
 				},
 				500
 			);
@@ -105,8 +103,8 @@ export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
 		const url = new URL(request.url);
 
-		// Route /api/* and /health to Hono app
-		if (url.pathname.startsWith('/api') || url.pathname === '/health') {
+		// Route /api and /api/* plus /health to Hono app
+		if (url.pathname === '/api' || url.pathname.startsWith('/api/') || url.pathname === '/health') {
 			return app.fetch(request, env, ctx);
 		}
 

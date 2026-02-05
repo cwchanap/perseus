@@ -1,6 +1,5 @@
-// Puzzle generator service using Sharp for image processing
-import type sharpType from 'sharp';
-import { mkdir } from 'fs/promises';
+// Puzzle generator service using WASM image processing for worker compatibility
+import { mkdir, writeFile } from 'fs/promises';
 import path from 'path';
 import type { Puzzle, PuzzlePiece, AllowedPieceCount, EdgeConfig } from '../types';
 import { generateJigsawSvgMask } from '../utils/jigsawPath';
@@ -14,33 +13,60 @@ interface GridDimensions {
 	cols: number;
 }
 
-type SharpFactory = typeof sharpType;
+type PhotonModule = typeof import('@cf-wasm/photon');
+type ResvgModule = typeof import('@cf-wasm/resvg');
 
-let sharpFactory: SharpFactory | null = null;
+interface ImageTooling {
+	PhotonImage: PhotonModule['PhotonImage'];
+	resize: PhotonModule['resize'];
+	crop: PhotonModule['crop'];
+	SamplingFilter: PhotonModule['SamplingFilter'];
+	Resvg: ResvgModule['Resvg'];
+}
 
-async function getSharp(
-	load: () => Promise<unknown> = () => import('sharp')
-): Promise<SharpFactory> {
-	if (sharpFactory) return sharpFactory;
+let imageTooling: ImageTooling | null = null;
+
+async function getImageTooling(
+	loadPhoton: () => Promise<unknown> = () => import('@cf-wasm/photon'),
+	loadResvg: () => Promise<unknown> = () => import('@cf-wasm/resvg')
+): Promise<ImageTooling> {
+	if (imageTooling) return imageTooling;
 
 	try {
-		const mod = await load();
-		const resolved =
-			(mod as unknown as { default?: SharpFactory }).default ?? (mod as unknown as SharpFactory);
-		sharpFactory = resolved;
-		return sharpFactory;
+		const photon = (await loadPhoton()) as PhotonModule;
+		const resvg = (await loadResvg()) as ResvgModule;
+
+		if (!photon?.PhotonImage || !resvg?.Resvg) {
+			throw new Error('Missing exports from image processing modules');
+		}
+
+		imageTooling = {
+			PhotonImage: photon.PhotonImage,
+			resize: photon.resize,
+			crop: photon.crop,
+			SamplingFilter: photon.SamplingFilter,
+			Resvg: resvg.Resvg
+		};
+
+		return imageTooling;
 	} catch (error) {
 		const cause = error instanceof Error ? error : new Error(String(error));
-		throw new Error('Image processing dependency "sharp" is not available', { cause });
+		throw new Error(
+			'Image processing dependencies "@cf-wasm/photon" or "@cf-wasm/resvg" are not available',
+			{ cause }
+		);
 	}
 }
 
-export function __resetSharpFactoryForTests(): void {
-	sharpFactory = null;
+export function __resetImageToolingForTests(): void {
+	imageTooling = null;
 }
 
-export async function __getSharpForTests(load?: () => Promise<unknown>): Promise<SharpFactory> {
-	return getSharp(load);
+export async function __getImageToolingForTests(
+	loadPhoton?: () => Promise<unknown>,
+	loadResvg?: () => Promise<unknown>
+): Promise<ImageTooling> {
+	return getImageTooling(loadPhoton, loadResvg);
 }
 
 function getGridDimensions(pieceCount: AllowedPieceCount): GridDimensions {
@@ -66,11 +92,36 @@ export interface GeneratePuzzleResult {
 	piecePaths: string[];
 }
 
+function padPixelsToTarget(
+	sourcePixels: Uint8Array,
+	sourceWidth: number,
+	sourceHeight: number,
+	targetWidth: number,
+	targetHeight: number,
+	offsetX: number,
+	offsetY: number
+): Uint8Array {
+	const padded = new Uint8Array(targetWidth * targetHeight * 4);
+	const rowBytes = sourceWidth * 4;
+	for (let y = 0; y < sourceHeight; y += 1) {
+		const sourceStart = y * rowBytes;
+		const targetStart = ((y + offsetY) * targetWidth + offsetX) * 4;
+		padded.set(sourcePixels.subarray(sourceStart, sourceStart + rowBytes), targetStart);
+	}
+	return padded;
+}
+
+function applyMaskAlpha(piecePixels: Uint8Array, maskPixels: Uint8Array): void {
+	for (let i = 0; i < piecePixels.length; i += 4) {
+		piecePixels[i + 3] = maskPixels[i + 3];
+	}
+}
+
 export async function generatePuzzle(
 	options: GeneratePuzzleOptions
 ): Promise<GeneratePuzzleResult> {
 	const { id, name, pieceCount, imageBuffer, outputDir } = options;
-	const sharp = await getSharp();
+	const { PhotonImage, resize, crop, SamplingFilter, Resvg } = await getImageTooling();
 
 	if (!isValidPieceCount(pieceCount)) {
 		throw new Error(
@@ -83,21 +134,33 @@ export async function generatePuzzle(
 	const piecesDir = path.join(puzzleDir, 'pieces');
 	await mkdir(piecesDir, { recursive: true });
 
-	// Get image metadata
-	const image = sharp(imageBuffer);
-	const metadata = await image.metadata();
-	if (metadata.width === undefined || metadata.height === undefined) {
-		throw new Error('Invalid image metadata: missing width or height');
-	}
-	const imageWidth = metadata.width;
-	const imageHeight = metadata.height;
+	const sourceBytes = new Uint8Array(
+		imageBuffer.buffer,
+		imageBuffer.byteOffset,
+		imageBuffer.byteLength
+	);
+	const sourceImage = PhotonImage.new_from_byteslice(sourceBytes);
+
+	const imageWidth = sourceImage.get_width();
+	const imageHeight = sourceImage.get_height();
 
 	// Generate thumbnail
 	const thumbnailPath = path.join(puzzleDir, 'thumbnail.jpg');
-	await image
-		.resize(THUMBNAIL_SIZE, THUMBNAIL_SIZE, { fit: 'cover' })
-		.jpeg({ quality: 80 })
-		.toFile(thumbnailPath);
+	const thumbnailSource = PhotonImage.new_from_byteslice(sourceBytes);
+	const srcW = thumbnailSource.get_width();
+	const srcH = thumbnailSource.get_height();
+	const scale = Math.max(THUMBNAIL_SIZE / srcW, THUMBNAIL_SIZE / srcH);
+	const newW = Math.round(srcW * scale);
+	const newH = Math.round(srcH * scale);
+	const resized = resize(thumbnailSource, newW, newH, SamplingFilter.Lanczos3);
+	thumbnailSource.free();
+	const cropX = Math.floor((newW - THUMBNAIL_SIZE) / 2);
+	const cropY = Math.floor((newH - THUMBNAIL_SIZE) / 2);
+	const cropped = crop(resized, cropX, cropY, THUMBNAIL_SIZE, THUMBNAIL_SIZE);
+	resized.free();
+	const jpegBytes = cropped.get_bytes_jpeg(80);
+	cropped.free();
+	await writeFile(thumbnailPath, Buffer.from(jpegBytes));
 
 	// Calculate grid dimensions
 	const { rows, cols } = getGridDimensions(pieceCount);
@@ -171,37 +234,48 @@ export async function generatePuzzle(
 				left: leftEdge
 			};
 
-			// Extract piece with padding for consistent 140% size
-			const extractedPiece = await sharp(imageBuffer)
-				.extract({
-					left: extractLeft,
-					top: extractTop,
-					width: extractWidth,
-					height: extractHeight
-				})
-				.extend({
-					top: padTop,
-					bottom: padBottom,
-					left: padLeft,
-					right: padRight,
-					background: { r: 0, g: 0, b: 0, alpha: 0 }
-				})
-				.png()
-				.toBuffer();
+			// Extract piece region from source image
+			const pieceImage = crop(sourceImage, extractLeft, extractTop, extractWidth, extractHeight);
+			const piecePixels = pieceImage.get_raw_pixels();
+			const paddedPiecePixels = padPixelsToTarget(
+				piecePixels,
+				extractWidth,
+				extractHeight,
+				targetWidth,
+				targetHeight,
+				padLeft,
+				padTop
+			);
 
 			// Generate jigsaw mask SVG and apply it
-			const jigsawMask = generateJigsawSvgMask(edges, targetWidth, targetHeight);
+			const jigsawMask = generateJigsawSvgMask(edges, targetWidth, targetHeight).toString('utf-8');
+			const resvg = new Resvg(jigsawMask, {
+				fitTo: { mode: 'width', value: targetWidth }
+			});
+			const maskPng = resvg.render().asPng();
+			const maskImage = PhotonImage.new_from_byteslice(maskPng);
+			const maskPixels = maskImage.get_raw_pixels();
 
-			// Apply mask using composite with dest-in blend
-			await sharp(extractedPiece)
-				.composite([
-					{
-						input: jigsawMask,
-						blend: 'dest-in'
-					}
-				])
-				.png()
-				.toFile(piecePath);
+			if (maskPixels.length !== paddedPiecePixels.length) {
+				maskImage.free();
+				pieceImage.free();
+				sourceImage.free();
+				throw new Error(
+					`Mask and piece image pixel count mismatch for piece ${pieceId}: ` +
+						`mask=${maskPixels.length} pixels, piece=${paddedPiecePixels.length} pixels`
+				);
+			}
+
+			applyMaskAlpha(paddedPiecePixels, maskPixels);
+
+			const maskedPiece = new PhotonImage(paddedPiecePixels, targetWidth, targetHeight);
+			maskImage.free();
+			pieceImage.free();
+
+			const pngBytes = maskedPiece.get_bytes();
+			maskedPiece.free();
+
+			await writeFile(piecePath, Buffer.from(pngBytes));
 
 			pieces.push({
 				id: pieceId,
@@ -215,6 +289,8 @@ export async function generatePuzzle(
 			piecePaths.push(piecePath);
 		}
 	}
+
+	sourceImage.free();
 
 	// Construct puzzle metadata
 	const puzzle: Puzzle = {

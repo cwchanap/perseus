@@ -52,6 +52,31 @@ describe('Rate Limit Middleware', () => {
 			expect(next).toHaveBeenCalled();
 		});
 
+		it('should reset invalid rate limit entry from KV', async () => {
+			const mockKV = createMockKV();
+			const key = 'ratelimit:login:127.0.0.1';
+			mockKV._store.set(
+				key,
+				JSON.stringify({
+					attempts: 'invalid',
+					lockedUntil: 'invalid'
+				})
+			);
+			const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			const mockContext = createMockContext('127.0.0.1', mockKV);
+			const next = vi.fn(async () => {
+				(mockContext.res as any).status = 401;
+			});
+
+			await loginRateLimit(mockContext, next);
+
+			expect(next).toHaveBeenCalled();
+			const savedEntry = JSON.parse(mockKV._store.get(key) ?? '{}');
+			expect(savedEntry.attempts).toBe(1);
+			expect(savedEntry.lockedUntil).toBeNull();
+			consoleWarnSpy.mockRestore();
+		});
+
 		it('should allow request with less than 5 failed attempts', async () => {
 			const mockKV = createMockKV();
 			const key = 'ratelimit:login:127.0.0.1';

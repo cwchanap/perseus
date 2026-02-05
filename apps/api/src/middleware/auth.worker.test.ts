@@ -6,7 +6,19 @@ import type { Env } from '../worker';
 
 // Mock environment
 const mockEnv: Partial<Env> = {
-	JWT_SECRET: 'test-secret-key-for-testing-purposes'
+	JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+	PUZZLE_METADATA: {
+		_store: new Map<string, string>(),
+		get: vi.fn(async function (this: { _store: Map<string, string> }, key: string) {
+			return this._store.get(key) ?? null;
+		}),
+		put: vi.fn(async function (this: { _store: Map<string, string> }, key: string, value: string) {
+			this._store.set(key, value);
+		}),
+		delete: vi.fn(async function (this: { _store: Map<string, string> }, key: string) {
+			this._store.delete(key);
+		})
+	} as unknown as KVNamespace
 };
 
 describe('Session Token Management', () => {
@@ -17,6 +29,7 @@ describe('Session Token Management', () => {
 				username: 'admin',
 				role: 'admin'
 			});
+			await (mockEnv as Env).PUZZLE_METADATA?.put?.(`session:${token}`, '1');
 
 			expect(token).toBeDefined();
 			expect(typeof token).toBe('string');
@@ -29,6 +42,7 @@ describe('Session Token Management', () => {
 				username: 'admin',
 				role: 'admin'
 			});
+			await (mockEnv as Env).PUZZLE_METADATA?.put?.(`session:${token1}`, '1');
 
 			// Wait a bit to ensure different timestamp
 			await new Promise((resolve) => setTimeout(resolve, 10));
@@ -38,6 +52,7 @@ describe('Session Token Management', () => {
 				username: 'admin',
 				role: 'admin'
 			});
+			await (mockEnv as Env).PUZZLE_METADATA?.put?.(`session:${token2}`, '1');
 
 			expect(token1).not.toBe(token2);
 		});
@@ -50,6 +65,7 @@ describe('Session Token Management', () => {
 				username: 'admin',
 				role: 'admin'
 			});
+			await (mockEnv as Env).PUZZLE_METADATA?.put?.(`session:${token}`, '1');
 
 			const session = await verifySession(mockEnv as Env, token);
 
@@ -114,7 +130,7 @@ describe('Session Token Management', () => {
 			});
 
 			const differentEnv: Partial<Env> = {
-				JWT_SECRET: 'different-secret'
+				JWT_SECRET: 'different-secret-should-not-match-1234567890'
 			};
 
 			const session = await verifySession(differentEnv as Env, token);
@@ -149,6 +165,7 @@ describe('Session Token Management', () => {
 			const signatureB64 = btoa(String.fromCharCode(...new Uint8Array(signature)));
 
 			const expiredToken = `${payloadB64}.${signatureB64}`;
+			await (mockEnv as Env).PUZZLE_METADATA?.put?.(`session:${expiredToken}`, '1');
 
 			const session = await verifySession(mockEnv as Env, expiredToken);
 
@@ -157,7 +174,7 @@ describe('Session Token Management', () => {
 
 		it('should throw on unexpected crypto errors', async () => {
 			const mockEnv = {
-				JWT_SECRET: 'test-secret-key'
+				JWT_SECRET: 'test-secret-key-should-be-long-enough-123456'
 			};
 
 			// Create a token that will cause crypto.subtle to fail
@@ -168,12 +185,13 @@ describe('Session Token Management', () => {
 			crypto.subtle.importKey = vi.fn(() => {
 				return Promise.reject(new Error('Unexpected crypto error'));
 			}) as any;
-
-			await expect(verifySession(mockEnv as Env, badToken)).rejects.toThrow(
-				'Unexpected crypto error'
-			);
-
-			crypto.subtle.importKey = originalImportKey;
+			try {
+				await expect(verifySession(mockEnv as Env, badToken)).rejects.toThrow(
+					'Unexpected crypto error'
+				);
+			} finally {
+				crypto.subtle.importKey = originalImportKey;
+			}
 		});
 	});
 });
@@ -221,26 +239,27 @@ describe('requireAuth Middleware', () => {
 		crypto.subtle.importKey = vi.fn(() => {
 			return Promise.reject(new Error('Crypto system failure'));
 		}) as any;
+		try {
+			app.use('/protected/*', requireAuth);
+			app.get('/protected/resource', (c) => c.json({ data: 'secret' }));
 
-		app.use('/protected/*', requireAuth);
-		app.get('/protected/resource', (c) => c.json({ data: 'secret' }));
+			// Create a request with a token cookie
+			const req = new Request('http://localhost/protected/resource', {
+				headers: {
+					Cookie: 'perseus_session=some.token'
+				}
+			});
 
-		// Create a request with a token cookie
-		const req = new Request('http://localhost/protected/resource', {
-			headers: {
-				Cookie: 'perseus_session=some.token'
-			}
-		});
+			const res = await app.fetch(req, mockEnv as Env);
 
-		const res = await app.fetch(req, mockEnv as Env);
-
-		expect(res.status).toBe(500);
-		const body = (await res.json()) as { error: string; message: string };
-		expect(body.error).toBe('internal_error');
-		expect(body.message).toBe('Authentication system error');
-
-		// Restore original function
-		crypto.subtle.importKey = originalImportKey;
+			expect(res.status).toBe(500);
+			const body = (await res.json()) as { error: string; message: string };
+			expect(body.error).toBe('internal_error');
+			expect(body.message).toBe('Authentication system error');
+		} finally {
+			// Restore original function
+			crypto.subtle.importKey = originalImportKey;
+		}
 	});
 });
 
@@ -254,6 +273,7 @@ describe('requireAuth with valid token', () => {
 			username: 'testuser',
 			role: 'admin'
 		});
+		await (mockEnv as Env).PUZZLE_METADATA?.put?.(`session:${token}`, '1');
 
 		let capturedSession: any = null;
 
@@ -323,6 +343,7 @@ describe('requireAuth with valid token', () => {
 		const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(payloadB64));
 		const signatureB64 = bytesToBase64(new Uint8Array(signature));
 		const expiredToken = `${payloadB64}.${signatureB64}`;
+		await (mockEnv as Env).PUZZLE_METADATA?.put?.(`session:${expiredToken}`, '1');
 
 		app.use('/protected/*', requireAuth);
 		app.get('/protected/resource', (c) => c.json({ data: 'secret' }));

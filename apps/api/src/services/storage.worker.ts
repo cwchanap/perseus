@@ -160,7 +160,15 @@ export async function listPuzzles(kv: KVNamespace): Promise<PuzzleSummary[]> {
 			`listPuzzles: ${nullCount} keys returned null (data corruption or eventual consistency)`
 		);
 	}
-	const puzzles = fetched.filter((p): p is PuzzleMetadata => p !== null) as PuzzleMetadata[];
+	const puzzles: PuzzleMetadata[] = [];
+	fetched.forEach((puzzle, index) => {
+		if (puzzle === null) return;
+		if (!validatePuzzleMetadata(puzzle)) {
+			console.warn(`Invalid puzzle metadata for ${keys[index].name}:`, puzzle);
+			return;
+		}
+		puzzles.push(puzzle);
+	});
 
 	// Sort by createdAt descending
 	puzzles.sort((a, b) => b.createdAt - a.createdAt);

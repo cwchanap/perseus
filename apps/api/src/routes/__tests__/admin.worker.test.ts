@@ -21,7 +21,8 @@ vi.mock('../../middleware/auth.worker', () => ({
 	createSession: vi.fn(),
 	setSessionCookie: vi.fn(),
 	clearSessionCookie: vi.fn(),
-	getSessionToken: vi.fn(() => 'valid-token')
+	getSessionToken: vi.fn(() => 'valid-token'),
+	revokeSession: vi.fn()
 }));
 
 import admin from '../admin.worker';
@@ -31,7 +32,7 @@ import * as auth from '../../middleware/auth.worker';
 describe('Admin Routes - JSON Parsing', () => {
 	const mockEnv = {
 		ADMIN_PASSKEY: 'test-passkey',
-		JWT_SECRET: 'test-secret',
+		JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
 		RATE_LIMIT_KV: {} as KVNamespace
 	};
 
@@ -122,7 +123,7 @@ describe('Admin Routes - Puzzle Deletion', () => {
 
 			const mockEnv = {
 				ADMIN_PASSKEY: 'test-passkey',
-				JWT_SECRET: 'test-secret',
+				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
 				PUZZLE_METADATA: {} as KVNamespace,
 				PUZZLES_BUCKET: {} as R2Bucket
 			};
@@ -156,7 +157,7 @@ describe('Admin Routes - Passkey Validation', () => {
 		it('should return 500 when ADMIN_PASSKEY is missing from environment', async () => {
 			const mockEnv = {
 				ADMIN_PASSKEY: undefined,
-				JWT_SECRET: 'test-secret',
+				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
 				RATE_LIMIT_KV: {} as KVNamespace
 			};
 
@@ -177,10 +178,10 @@ describe('Admin Routes - Passkey Validation', () => {
 			expect(body.message).toContain('Server configuration error');
 		});
 
-		it('should return 401 for empty passkey string', async () => {
+		it('should return 400 for empty passkey string', async () => {
 			const mockEnv = {
 				ADMIN_PASSKEY: 'test-passkey',
-				JWT_SECRET: 'test-secret',
+				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
 				RATE_LIMIT_KV: {} as KVNamespace
 			};
 
@@ -204,7 +205,7 @@ describe('Admin Routes - Passkey Validation', () => {
 		it('should return 401 for whitespace-only passkey', async () => {
 			const mockEnv = {
 				ADMIN_PASSKEY: 'test-passkey',
-				JWT_SECRET: 'test-secret',
+				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
 				RATE_LIMIT_KV: {} as KVNamespace
 			};
 
@@ -228,7 +229,7 @@ describe('Admin Routes - Passkey Validation', () => {
 		it('should handle unicode characters in constant-time comparison', async () => {
 			const mockEnv = {
 				ADMIN_PASSKEY: 'test-🔐-passkey',
-				JWT_SECRET: 'test-secret',
+				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
 				RATE_LIMIT_KV: {} as KVNamespace
 			};
 
@@ -263,7 +264,7 @@ describe('Admin Routes - Workflow Trigger Cleanup', () => {
 		it('should reject pieceCount with trailing characters', async () => {
 			const mockEnv = {
 				ADMIN_PASSKEY: 'test-passkey',
-				JWT_SECRET: 'test-secret',
+				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
 				PUZZLE_METADATA: {} as KVNamespace,
 				PUZZLES_BUCKET: {} as R2Bucket,
 				PUZZLE_WORKFLOW: {
@@ -311,7 +312,7 @@ describe('Admin Routes - Workflow Trigger Cleanup', () => {
 			// Create mock environment with workflow that throws
 			const mockEnv = {
 				ADMIN_PASSKEY: 'test-passkey',
-				JWT_SECRET: 'test-secret',
+				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
 				PUZZLE_METADATA: {} as KVNamespace,
 				PUZZLES_BUCKET: {} as R2Bucket,
 				PUZZLE_WORKFLOW: {

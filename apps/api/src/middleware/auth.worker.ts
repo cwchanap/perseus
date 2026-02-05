@@ -6,6 +6,10 @@ import type { Env } from '../worker';
 
 const SESSION_COOKIE_NAME = 'perseus_session';
 const SESSION_DURATION_MS = 24 * 60 * 60 * 1000; // 24 hours
+const MIN_JWT_SECRET_LENGTH = 32;
+const SESSION_STORE_PREFIX = 'session:';
+const sessionFallbackStore = new Map<string, number>();
+let loggedSessionStoreFallback = false;
 
 interface SessionPayload {
 	userId: string;
@@ -42,6 +46,61 @@ function bytesToBase64(bytes: Uint8Array): string {
 	return btoa(binary);
 }
 
+function assertJwtSecret(env: Env): string {
+	const secret = env.JWT_SECRET?.trim();
+	if (!secret || secret.length < MIN_JWT_SECRET_LENGTH) {
+		throw new Error('JWT_SECRET missing or too short');
+	}
+	return secret;
+}
+
+function getSessionStoreKey(token: string): string {
+	return `${SESSION_STORE_PREFIX}${token}`;
+}
+
+async function persistSession(env: Env, token: string, expMs: number): Promise<void> {
+	const key = getSessionStoreKey(token);
+	const ttlSeconds = Math.max(1, Math.ceil((expMs - Date.now()) / 1000));
+	if (env.PUZZLE_METADATA) {
+		try {
+			await env.PUZZLE_METADATA.put(key, '1', { expirationTtl: ttlSeconds });
+			return;
+		} catch (error) {
+			console.error('Failed to persist session, falling back to in-memory store:', error);
+		}
+	}
+	if (!loggedSessionStoreFallback) {
+		loggedSessionStoreFallback = true;
+		console.warn('Session storage using in-memory fallback - KV namespace not configured');
+	}
+	sessionFallbackStore.set(key, expMs);
+}
+
+async function isSessionActive(env: Env, token: string): Promise<boolean> {
+	const key = getSessionStoreKey(token);
+	if (env.PUZZLE_METADATA) {
+		try {
+			const stored = await env.PUZZLE_METADATA.get(key);
+			if (stored !== null) return true;
+		} catch (error) {
+			console.error('Failed to read session store, checking in-memory fallback:', error);
+		}
+	}
+	return sessionFallbackStore.has(key);
+}
+
+export async function revokeSession(env: Env, token: string): Promise<void> {
+	const key = getSessionStoreKey(token);
+	if (env.PUZZLE_METADATA) {
+		try {
+			await env.PUZZLE_METADATA.delete(key);
+		} catch (error) {
+			console.error('Failed to delete session from store:', error);
+		}
+	}
+	sessionFallbackStore.delete(key);
+}
+
 // Create a JWT-like session token using WebCrypto
 export async function createSession(
 	env: Env,
@@ -59,10 +118,11 @@ export async function createSession(
 	const payloadBytes = new TextEncoder().encode(payloadJson);
 	const payloadB64 = bytesToBase64(payloadBytes);
 
+	const secret = assertJwtSecret(env);
 	const encoder = new TextEncoder();
 	const key = await crypto.subtle.importKey(
 		'raw',
-		encoder.encode(env.JWT_SECRET),
+		encoder.encode(secret),
 		{ name: 'HMAC', hash: 'SHA-256' },
 		false,
 		['sign']
@@ -71,7 +131,9 @@ export async function createSession(
 	const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(payloadB64));
 	const signatureB64 = bytesToBase64(new Uint8Array(signature));
 
-	return `${payloadB64}.${signatureB64}`;
+	const token = `${payloadB64}.${signatureB64}`;
+	await persistSession(env, token, payload.exp);
+	return token;
 }
 
 // Verify session token
@@ -82,11 +144,12 @@ export async function verifySession(env: Env, token: string): Promise<SessionPay
 		const [payloadB64, signatureB64] = parts;
 		if (!payloadB64 || !signatureB64) return null;
 
+		const secret = assertJwtSecret(env);
 		const encoder = new TextEncoder();
 
 		const key = await crypto.subtle.importKey(
 			'raw',
-			encoder.encode(env.JWT_SECRET),
+			encoder.encode(secret),
 			{ name: 'HMAC', hash: 'SHA-256' },
 			false,
 			['verify']
@@ -108,6 +171,9 @@ export async function verifySession(env: Env, token: string): Promise<SessionPay
 		// Check expiration
 		if (parsed.exp < Date.now()) return null;
 		const payload = parsed;
+
+		const active = await isSessionActive(env, token);
+		if (!active) return null;
 
 		return payload;
 	} catch (error) {

@@ -176,13 +176,13 @@ export class PuzzleMetadataDO {
 		}
 
 		try {
-			await this.env.PUZZLE_METADATA.put(`puzzle:${puzzleId}`, JSON.stringify(updated));
 			await this.state.storage.put('metadata', updated);
+			await this.env.PUZZLE_METADATA.put(`puzzle:${puzzleId}`, JSON.stringify(updated));
 		} catch (error) {
 			console.error(`Failed to persist metadata for puzzle ${puzzleId}:`, error);
 			try {
-				await this.env.PUZZLE_METADATA.put(`puzzle:${puzzleId}`, JSON.stringify(previous));
 				await this.state.storage.put('metadata', previous);
+				await this.env.PUZZLE_METADATA.put(`puzzle:${puzzleId}`, JSON.stringify(previous));
 			} catch (rollbackError) {
 				console.error(`Failed to rollback metadata for puzzle ${puzzleId}:`, rollbackError);
 			}

@@ -1,52 +1,88 @@
 import { describe, it, expect, beforeEach } from 'bun:test';
-import { __getSharpForTests, __resetSharpFactoryForTests } from '../services/puzzle-generator';
+import {
+	__getImageToolingForTests,
+	__resetImageToolingForTests
+} from '../services/puzzle-generator';
 
-describe('getSharp (lazy loader)', () => {
+describe('getImageTooling (lazy loader)', () => {
 	beforeEach(() => {
-		__resetSharpFactoryForTests();
+		__resetImageToolingForTests();
 	});
 
-	it('resolves CommonJS-style module (module itself is the factory)', async () => {
-		const factory = (() => undefined) as unknown as typeof import('sharp');
-		const resolved = await __getSharpForTests(async () => factory);
-		expect(resolved).toBe(factory);
+	it('resolves modules with required exports', async () => {
+		const photon = {
+			PhotonImage: class FakePhotonImage {},
+			resize: () => undefined,
+			crop: () => undefined,
+			SamplingFilter: { Lanczos3: 1 }
+		};
+		const resvg = {
+			Resvg: class FakeResvg {}
+		};
+
+		const resolved = (await __getImageToolingForTests(
+			async () => photon,
+			async () => resvg
+		)) as unknown as { PhotonImage: unknown; Resvg: unknown };
+
+		expect(resolved.PhotonImage).toBe(photon.PhotonImage);
+		expect(resolved.Resvg).toBe(resvg.Resvg);
 	});
 
-	it('resolves ESM-style module (default export is the factory)', async () => {
-		const factory = (() => undefined) as unknown as typeof import('sharp');
-		const resolved = await __getSharpForTests(async () => ({ default: factory }));
-		expect(resolved).toBe(factory);
-	});
-
-	it('caches the resolved factory', async () => {
-		const first = (() => undefined) as unknown as typeof import('sharp');
-		const second = (() => undefined) as unknown as typeof import('sharp');
+	it('caches the resolved modules', async () => {
+		const photon = {
+			PhotonImage: class FakePhotonImage {},
+			resize: () => undefined,
+			crop: () => undefined,
+			SamplingFilter: { Lanczos3: 1 }
+		};
+		const resvg = {
+			Resvg: class FakeResvg {}
+		};
+		const photonAlt = {
+			PhotonImage: class FakePhotonImageAlt {},
+			resize: () => undefined,
+			crop: () => undefined,
+			SamplingFilter: { Lanczos3: 1 }
+		};
+		const resvgAlt = {
+			Resvg: class FakeResvgAlt {}
+		};
 
 		let calls = 0;
 		const loader1 = async () => {
 			calls++;
-			return { default: first };
+			return photon;
 		};
 		const loader2 = async () => {
 			calls++;
-			return { default: second };
+			return photonAlt;
 		};
 
-		const resolved1 = await __getSharpForTests(loader1);
-		const resolved2 = await __getSharpForTests(loader2);
+		const resolved1 = (await __getImageToolingForTests(loader1, async () => resvg)) as unknown as {
+			PhotonImage: unknown;
+			Resvg: unknown;
+		};
+		const resolved2 = (await __getImageToolingForTests(
+			loader2,
+			async () => resvgAlt
+		)) as unknown as { PhotonImage: unknown; Resvg: unknown };
 
-		expect(resolved1).toBe(first);
-		expect(resolved2).toBe(first);
+		expect(resolved1.PhotonImage).toBe(photon.PhotonImage);
+		expect(resolved2.PhotonImage).toBe(photon.PhotonImage);
+		expect(resolved2.Resvg).toBe(resvg.Resvg);
 		expect(calls).toBe(1);
 	});
 
-	it('throws a helpful error when sharp is unavailable', async () => {
-		const loader = async () => {
-			throw new Error('Cannot find module');
-		};
-
-		await expect(__getSharpForTests(loader)).rejects.toMatchObject({
-			message: 'Image processing dependency "sharp" is not available'
+	it('throws a helpful error when modules are unavailable', async () => {
+		await expect(
+			__getImageToolingForTests(
+				async () => ({}),
+				async () => ({})
+			)
+		).rejects.toMatchObject({
+			message:
+				'Image processing dependencies "@cf-wasm/photon" or "@cf-wasm/resvg" are not available'
 		});
 	});
 });

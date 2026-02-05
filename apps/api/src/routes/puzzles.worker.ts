@@ -122,6 +122,10 @@ puzzles.get('/:id/pieces/:pieceId/image', async (c) => {
 			return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
 		}
 
+		if (typeof puzzle.pieceCount !== 'number' || !Number.isFinite(puzzle.pieceCount)) {
+			return c.json({ error: 'unavailable', message: 'Puzzle metadata incomplete' }, 409);
+		}
+
 		if (pieceId >= puzzle.pieceCount) {
 			return c.json({ error: 'not_found', message: 'Piece not found' }, 404);
 		}

@@ -117,6 +117,20 @@ describe('Puzzle Routes - UUID Validation', () => {
 			expect(body.error).toBe('invalid_piece_id');
 		});
 
+		it('should return 409 when puzzle metadata is incomplete', async () => {
+			const validUuid = '550e8400-e29b-41d4-a716-446655440000';
+			vi.mocked(storage.getPuzzle).mockResolvedValueOnce({
+				id: validUuid,
+				pieceCount: undefined
+			} as any);
+			const req = new Request(`http://localhost/${validUuid}/pieces/0/image`);
+			const res = await puzzles.fetch(req, mockEnv);
+			const body = (await res.json()) as any;
+
+			expect(res.status).toBe(409);
+			expect(body.error).toBe('unavailable');
+		});
+
 		it('should return 400 for pieceId exceeding maximum', async () => {
 			const validUuid = '550e8400-e29b-41d4-a716-446655440000';
 			const req = new Request(`http://localhost/${validUuid}/pieces/10001/image`);

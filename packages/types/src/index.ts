@@ -93,6 +93,12 @@ export function validateWorkflowParams(params: unknown): params is WorkflowParam
 }
 
 export function createPuzzleProgress(totalPieces: number, generatedPieces: number): PuzzleProgress {
+	if (!Number.isFinite(totalPieces) || !Number.isInteger(totalPieces)) {
+		throw new Error('totalPieces must be a finite integer');
+	}
+	if (!Number.isFinite(generatedPieces) || !Number.isInteger(generatedPieces)) {
+		throw new Error('generatedPieces must be a finite integer');
+	}
 	if (totalPieces <= 0) throw new Error('totalPieces must be positive');
 	if (generatedPieces < 0) throw new Error('generatedPieces cannot be negative');
 	if (generatedPieces > totalPieces) throw new Error('generatedPieces exceeds totalPieces');
@@ -128,9 +134,14 @@ export function validatePuzzleMetadata(meta: unknown): meta is PuzzleMetadata {
 	if (m.gridCols * m.gridRows !== m.pieceCount) return false;
 
 	// Validate status-field consistency
-	if (m.status === 'processing' && !hasValidProgress(m.progress)) return false;
+	if (m.status === 'processing') {
+		if (!hasValidProgress(m.progress)) return false;
+		const errorValue = (m as Record<string, unknown>).error;
+		if (typeof errorValue !== 'undefined' && errorValue !== null) return false;
+	}
 	if (m.status === 'failed') {
-		if (hasValidProgress(m.progress)) return false;
+		const progressValue = (m as Record<string, unknown>).progress;
+		if (typeof progressValue !== 'undefined' && progressValue !== null) return false;
 		if (typeof m.error !== 'object' || m.error === null) return false;
 		const error = m.error as Record<string, unknown>;
 		if (typeof error.message !== 'string') return false;
@@ -139,7 +150,8 @@ export function validatePuzzleMetadata(meta: unknown): meta is PuzzleMetadata {
 		if (m.pieces.length !== m.pieceCount) return false;
 		const errorValue = (m as Record<string, unknown>).error;
 		if (typeof errorValue !== 'undefined' && errorValue !== null) return false;
-		if (hasValidProgress(m.progress)) return false;
+		const progressValue = (m as Record<string, unknown>).progress;
+		if (typeof progressValue !== 'undefined' && progressValue !== null) return false;
 	}
 
 	return true;

@@ -149,6 +149,26 @@ describe('KV Metadata Operations', () => {
 			errorSpy.mockRestore();
 		});
 
+		it('should return null when processing puzzle includes error', async () => {
+			const mockKV = createMockKV();
+			const invalidPuzzle = {
+				...samplePuzzle,
+				status: 'processing',
+				error: { message: 'Should not be here' }
+			};
+			mockKV._store.set('puzzle:test-puzzle-1', JSON.stringify(invalidPuzzle));
+			const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+			const result = await getPuzzle(mockKV as unknown as KVNamespace, 'test-puzzle-1');
+
+			expect(result).toBeNull();
+			expect(errorSpy).toHaveBeenCalledWith(
+				'Invalid puzzle metadata for test-puzzle-1:',
+				invalidPuzzle
+			);
+			errorSpy.mockRestore();
+		});
+
 		it('should return null when failed puzzle includes progress', async () => {
 			const mockKV = createMockKV();
 			const invalidPuzzle = {
@@ -176,10 +196,26 @@ describe('KV Metadata Operations', () => {
 
 		it('should return null when ready puzzle includes progress or error', async () => {
 			const mockKV = createMockKV();
+			const samplePiece = {
+				id: 0,
+				puzzleId: samplePuzzle.id,
+				correctX: 0,
+				correctY: 0,
+				edges: {
+					top: 'flat',
+					right: 'flat',
+					bottom: 'flat',
+					left: 'flat'
+				},
+				imagePath: 'pieces/0.png'
+			};
 			const invalidPuzzle = {
 				...samplePuzzle,
 				status: 'ready',
-				pieces: new Array(samplePuzzle.pieceCount).fill(samplePuzzle.pieces[0] ?? null),
+				pieces: Array.from({ length: samplePuzzle.pieceCount }, (_value, index) => ({
+					...samplePiece,
+					id: index
+				})),
 				progress: {
 					totalPieces: 225,
 					generatedPieces: 225,

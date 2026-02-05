@@ -17,6 +17,7 @@ import {
 	setSessionCookie,
 	clearSessionCookie,
 	getSessionToken,
+	revokeSession,
 	verifySession,
 	requireAuth
 } from '../middleware/auth.worker';
@@ -41,9 +42,7 @@ function getGridDimensions(pieceCount: number): { rows: number; cols: number } {
 		}
 	}
 
-	const rows = Math.max(1, Math.floor(Math.sqrt(pieceCount)));
-	const cols = Math.ceil(pieceCount / rows);
-	return { rows, cols };
+	return { rows: 1, cols: pieceCount };
 }
 
 // POST /api/admin/login - Admin login
@@ -110,6 +109,10 @@ admin.post('/login', loginRateLimit, async (c) => {
 
 // POST /api/admin/logout - Admin logout
 admin.post('/logout', async (c) => {
+	const token = getSessionToken(c);
+	if (token) {
+		await revokeSession(c.env, token);
+	}
 	clearSessionCookie(c);
 	return c.json({ success: true });
 });
@@ -147,7 +150,13 @@ admin.get('/puzzles', requireAuth, async (c) => {
 // POST /api/admin/puzzles - Create new puzzle (protected)
 admin.post('/puzzles', requireAuth, async (c) => {
 	try {
-		const formData = await c.req.formData();
+		let formData: FormData;
+		try {
+			formData = await c.req.formData();
+		} catch (error) {
+			console.error('Failed to parse puzzle form data', error);
+			return c.json({ error: 'bad_request', message: 'Invalid form data' }, 400);
+		}
 		const name = formData.get('name');
 		const pieceCountStr = formData.get('pieceCount');
 		const image = formData.get('image');
@@ -308,16 +317,16 @@ admin.delete('/puzzles/:id', requireAuth, async (c) => {
 			return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
 		}
 
-		// Delete assets from R2
-		const deleteResult = await deletePuzzleAssets(c.env.PUZZLES_BUCKET, id, puzzle.pieceCount);
-
-		// Delete metadata from KV
+		// Delete metadata from KV first
 		const metadataResult = await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
 
 		if (!metadataResult.success) {
 			console.error('Failed to delete puzzle metadata:', metadataResult.error);
 			return c.json({ error: 'internal_error', message: 'Failed to delete puzzle' }, 500);
 		}
+
+		// Delete assets from R2
+		const deleteResult = await deletePuzzleAssets(c.env.PUZZLES_BUCKET, id, puzzle.pieceCount);
 
 		// If some assets failed to delete, return 207 Multi-Status
 		if (!deleteResult.success) {

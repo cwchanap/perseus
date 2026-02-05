@@ -16,6 +16,17 @@ interface RateLimitEntry {
 
 // In-memory rate limit store (fallback for development/testing)
 const rateLimitStore = new Map<string, RateLimitEntry>();
+let loggedInMemoryFallback = false;
+
+function isRateLimitEntry(value: unknown): value is RateLimitEntry {
+	if (typeof value !== 'object' || value === null) return false;
+	const entry = value as Record<string, unknown>;
+	const attempts = entry.attempts;
+	const lockedUntil = entry.lockedUntil;
+	if (typeof attempts !== 'number' || !Number.isFinite(attempts)) return false;
+	if (lockedUntil === null) return true;
+	return typeof lockedUntil === 'number' && Number.isFinite(lockedUntil);
+}
 
 function getClientIP(c: Context): string {
 	// Cloudflare provides the client IP in CF-Connecting-IP header (preferred)
@@ -61,20 +72,33 @@ async function getRateLimitEntry(
 ): Promise<RateLimitEntry | null> {
 	if (kv) {
 		const data = await kv.get(getKVKey(key), 'json');
-		return data as RateLimitEntry | null;
+		if (data === null) {
+			return null;
+		}
+		if (!isRateLimitEntry(data)) {
+			console.warn('Invalid rate limit entry, resetting:', { key: getKVKey(key), data });
+			return null;
+		}
+		return data;
 	}
 	// Log warning about in-memory fallback
 	// PRODUCTION IMPACT: In-memory storage is not distributed across workers,
 	// so rate limiting will only work within a single worker instance.
 	// Multiple worker instances can each have their own rate limit counters.
 	if (env === 'production') {
-		console.error(
-			'[CRITICAL] Rate limiting using in-memory storage in production - KV namespace not configured. Rate limiting is per-worker, not distributed.'
-		);
+		if (!loggedInMemoryFallback) {
+			loggedInMemoryFallback = true;
+			console.error(
+				'[CRITICAL] Rate limiting using in-memory storage in production - KV namespace not configured. Rate limiting is per-worker, not distributed.'
+			);
+		}
 	} else {
-		console.warn(
-			'Rate limiting using in-memory storage (not distributed) - KV namespace not configured'
-		);
+		if (!loggedInMemoryFallback) {
+			loggedInMemoryFallback = true;
+			console.warn(
+				'Rate limiting using in-memory storage (not distributed) - KV namespace not configured'
+			);
+		}
 	}
 	return rateLimitStore.get(key) || null;
 }
@@ -112,63 +136,45 @@ async function deleteRateLimitEntry(kv: KVNamespace | undefined, key: string): P
 	}
 }
 
-// Atomic increment attempt with backoff to mitigate race conditions
+// Increment attempts and evaluate lockout based on current state
 async function incrementAttempts(
 	kv: KVNamespace | undefined,
 	key: string,
 	now: number,
 	env?: string
 ): Promise<{ shouldBlock: boolean; remainingSeconds?: number }> {
-	const maxRetries = 3;
-	const baseDelay = 50; // ms
+	const entry = await getRateLimitEntry(kv, key, env);
 
-	for (let attempt = 0; attempt < maxRetries; attempt++) {
-		const entry = await getRateLimitEntry(kv, key, env);
-
-		// Check if locked out
-		if (entry?.lockedUntil && entry.lockedUntil > now) {
-			const remainingSeconds = Math.ceil((entry.lockedUntil - now) / 1000);
-			return { shouldBlock: true, remainingSeconds };
-		}
-
-		// Reset if lockout expired
-		let newEntry: RateLimitEntry;
-		if (entry?.lockedUntil && entry.lockedUntil <= now) {
-			newEntry = { attempts: 1, lockedUntil: null };
-		} else if (!entry) {
-			newEntry = { attempts: 1, lockedUntil: null };
-		} else {
-			newEntry = { ...entry, attempts: entry.attempts + 1 };
-		}
-
-		// Check if should lock out
-		if (newEntry.attempts >= MAX_LOGIN_ATTEMPTS) {
-			newEntry.lockedUntil = now + LOCKOUT_DURATION_MS;
-		}
-
-		// Write back
-		await setRateLimitEntry(kv, key, newEntry);
-
-		// Verify our write took effect (detect race condition)
-		const current = await getRateLimitEntry(kv, key, env);
-		if (current?.attempts === newEntry.attempts) {
-			// Our write succeeded
-			if (current.lockedUntil && current.lockedUntil > now) {
-				const remainingSeconds = Math.ceil((current.lockedUntil - now) / 1000);
-				return { shouldBlock: true, remainingSeconds };
-			}
-			return { shouldBlock: false };
-		}
-
-		// Race condition detected, retry with exponential backoff
-		if (attempt < maxRetries - 1) {
-			const delay = baseDelay * Math.pow(2, attempt);
-			await new Promise((resolve) => setTimeout(resolve, delay));
-		}
+	// Check if locked out
+	if (entry?.lockedUntil && entry.lockedUntil > now) {
+		const remainingSeconds = Math.ceil((entry.lockedUntil - now) / 1000);
+		return { shouldBlock: true, remainingSeconds };
 	}
 
-	// If all retries failed, be conservative and block
-	return { shouldBlock: true, remainingSeconds: Math.ceil(LOCKOUT_DURATION_MS / 1000) };
+	// Reset if lockout expired
+	let newEntry: RateLimitEntry;
+	if (entry?.lockedUntil && entry.lockedUntil <= now) {
+		newEntry = { attempts: 1, lockedUntil: null };
+	} else if (!entry) {
+		newEntry = { attempts: 1, lockedUntil: null };
+	} else {
+		newEntry = { ...entry, attempts: entry.attempts + 1 };
+	}
+
+	// Check if should lock out
+	if (newEntry.attempts >= MAX_LOGIN_ATTEMPTS) {
+		newEntry.lockedUntil = now + LOCKOUT_DURATION_MS;
+	}
+
+	// Write back
+	await setRateLimitEntry(kv, key, newEntry);
+
+	if (newEntry.lockedUntil && newEntry.lockedUntil > now) {
+		const remainingSeconds = Math.ceil((newEntry.lockedUntil - now) / 1000);
+		return { shouldBlock: true, remainingSeconds };
+	}
+
+	return { shouldBlock: false };
 }
 
 export async function loginRateLimit(c: Context<{ Bindings: Env }>, next: Next): Promise<Response> {
@@ -195,7 +201,8 @@ export async function loginRateLimit(c: Context<{ Bindings: Env }>, next: Next):
 
 	// Only increment on failed authentication (401/403 responses)
 	if (c.res.status === 401 || c.res.status === 403) {
-		const result = await incrementAttempts(kv, key, now, env);
+		const attemptTime = Date.now();
+		const result = await incrementAttempts(kv, key, attemptTime, env);
 		if (result.shouldBlock) {
 			// Create a new 429 response with rate limit info
 			return c.json(
