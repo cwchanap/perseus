@@ -105,8 +105,8 @@ export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
 		const url = new URL(request.url);
 
-		// Route /api/* to Hono app
-		if (url.pathname.startsWith('/api')) {
+		// Route /api/* and /health to Hono app
+		if (url.pathname.startsWith('/api') || url.pathname === '/health') {
 			return app.fetch(request, env, ctx);
 		}
 

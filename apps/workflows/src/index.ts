@@ -127,6 +127,18 @@ export class PuzzleMetadataDO {
 
 		const currentVersion = existing.version ?? 0;
 		const previous = stored ?? existing;
+
+		// Merge pieces arrays to avoid overwriting with stale data
+		// This handles the case where workflow sends only new row pieces
+		let mergedPieces = existing.pieces || [];
+		if (updates.pieces && Array.isArray(updates.pieces) && updates.pieces.length > 0) {
+			const existingIds = new Set(mergedPieces.map((p) => p.id));
+			const newPieces = updates.pieces.filter((p) => !existingIds.has(p.id));
+			if (newPieces.length > 0) {
+				mergedPieces = [...mergedPieces, ...newPieces];
+			}
+		}
+
 		// Apply updates while maintaining discriminated union invariants
 		let updated: PuzzleMetadata;
 		if (updates.status === 'ready') {
@@ -137,6 +149,7 @@ export class PuzzleMetadataDO {
 				id: existing.id,
 				status: 'ready',
 				version: currentVersion + 1,
+				pieces: updates.pieces ?? mergedPieces,
 				progress: undefined,
 				error: undefined
 			} as ReadyPuzzle;
@@ -148,15 +161,17 @@ export class PuzzleMetadataDO {
 				id: existing.id,
 				status: 'failed',
 				version: currentVersion + 1,
+				pieces: updates.pieces ?? mergedPieces,
 				progress: undefined
 			} as FailedPuzzle;
 		} else {
-			// ProcessingPuzzle or no status change
+			// ProcessingPuzzle or no status change - merge pieces
 			updated = {
 				...existing,
 				...updates,
 				id: existing.id,
-				version: currentVersion + 1
+				version: currentVersion + 1,
+				pieces: mergedPieces
 			} as PuzzleMetadata;
 		}
 
@@ -461,35 +476,12 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 
 					// Update progress in metadata
 					const generatedPieces = Math.min((row + 1) * cols, totalPieces);
-
-					// Retry logic for fetching metadata with exponential backoff
-					const maxRetries = 3;
-					let currentMeta: PuzzleMetadata | null = null;
-
-					for (let attempt = 0; attempt < maxRetries; attempt++) {
-						currentMeta = await getMetadata(this.env.PUZZLE_METADATA, puzzleId);
-						if (currentMeta) break;
-
-						if (attempt < maxRetries - 1) {
-							const delay = 100 * Math.pow(2, attempt);
-							await new Promise((resolve) => setTimeout(resolve, delay));
-						}
-					}
-
-					if (!currentMeta) {
-						throw new Error(
-							`Failed to retrieve metadata for puzzle ${puzzleId} after ${maxRetries} retries. Namespace: PUZZLE_METADATA`
-						);
-					}
-
-					// Deduplicate pieces by ID before merging
-					const existingPieceIds = new Set((currentMeta.pieces || []).map((p) => p.id));
-					const newPieces = pieces.filter((p) => !existingPieceIds.has(p.id));
-					const updatedPieces = [...(currentMeta.pieces || []), ...newPieces];
 					const progress = createPuzzleProgress(totalPieces, generatedPieces);
+
+					// Send new pieces to DO - DO merges with stored state to avoid stale KV issues
 					await updateMetadata(this.env.PUZZLE_METADATA_DO, puzzleId, {
-						pieces: updatedPieces,
-						progress
+						progress,
+						pieces
 					});
 				});
 			}

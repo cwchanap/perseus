@@ -132,6 +132,18 @@ admin.get('/session', async (c) => {
 	return c.json({ authenticated: true });
 });
 
+// GET /api/admin/puzzles - List all puzzles for admin (includes processing/failed)
+admin.get('/puzzles', requireAuth, async (c) => {
+	try {
+		const { listPuzzles } = await import('../services/storage.worker');
+		const puzzleList = await listPuzzles(c.env.PUZZLE_METADATA);
+		return c.json({ puzzles: puzzleList });
+	} catch (error) {
+		console.error('Failed to list puzzles for admin', error);
+		return c.json({ error: 'internal_error', message: 'Failed to list puzzles' }, 500);
+	}
+});
+
 // POST /api/admin/puzzles - Create new puzzle (protected)
 admin.post('/puzzles', requireAuth, async (c) => {
 	try {
