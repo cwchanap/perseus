@@ -34,7 +34,7 @@ vi.mock('cloudflare:workers', () => ({
 	WorkflowEvent: MockWorkflowEvent
 }));
 
-// Re-export for use in tests
+// Re-export for use in tests (value exports so instanceof and new work)
 export { MockWorkflowEntrypoint as WorkflowEntrypoint };
-export type WorkflowStep = MockWorkflowStep;
-export type WorkflowEvent<T> = MockWorkflowEvent<T>;
+export { MockWorkflowStep as WorkflowStep };
+export { MockWorkflowEvent as WorkflowEvent };

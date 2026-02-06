@@ -14,7 +14,7 @@ import { validatePuzzleMetadata } from '@perseus/types';
 export type { EdgeType, EdgeConfig, PuzzlePiece, PuzzleMetadata, PuzzleStatus, PuzzleProgress };
 
 export type LockResult =
-	| { status: 'acquired'; token: string }
+	| { status: 'acquired'; token: string; ttlMs: number }
 	| { status: 'held' }
 	| { status: 'error'; error: Error };
 
@@ -46,10 +46,18 @@ export async function acquireLock(
 			// Lock already held
 			return { status: 'held' };
 		}
-		await kv.put(key, lockValue, {
-			expirationTtl: Math.max(Math.ceil(timeoutMs / 1000), 60)
-		});
-		return { status: 'acquired', token: lockValue };
+		// KV enforces a minimum TTL of 60s; compute the actual TTL so callers know the real expiry
+		const ttlSeconds = Math.max(Math.ceil(timeoutMs / 1000), 60);
+		const ttlMs = ttlSeconds * 1000;
+		await kv.put(key, lockValue, { expirationTtl: ttlSeconds });
+
+		// Verify the write to guard against TOCTOU races where another writer won
+		const stored = await kv.get(key);
+		if (stored !== lockValue) {
+			return { status: 'held' };
+		}
+
+		return { status: 'acquired', token: lockValue, ttlMs };
 	} catch (error) {
 		console.error('Failed to acquire lock:', error);
 		return { status: 'error', error: error instanceof Error ? error : new Error(String(error)) };

@@ -17,8 +17,8 @@
 			"mcp__chrome-devtools__select_page",
 			"Bash(bun vitest:*)",
 			"Bash(bun run test)",
-			"Bash(bun install:*)",
-			"Bash(git stash:*)"
+			"Bash(bun install)",
+			"Bash(git stash*)"
 		]
 	}
 }

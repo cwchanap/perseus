@@ -145,22 +145,32 @@ async function deleteRateLimitEntry(kv: KVNamespace | undefined, key: string): P
 	}
 }
 
-// Increment attempts and evaluate lockout based on current state
-async function incrementAttempts(
+// Check lockout status and optionally increment attempts in a single read-modify-write.
+// Note: KV does not support atomic compare-and-set, so there is an inherent TOCTOU window
+// between get and put. For strict atomicity under high concurrency, use a Durable Object
+// with an atomic incrementAndGet(key, ...) method. For login rate limiting, the small
+// race window is acceptable — worst case an extra attempt slips through before lockout.
+async function checkAndIncrement(
 	kv: KVNamespace | undefined,
 	key: string,
 	now: number,
-	env?: string
+	env?: string,
+	increment = false
 ): Promise<{ shouldBlock: boolean; remainingSeconds?: number }> {
 	const entry = await getRateLimitEntry(kv, key, env);
 
-	// Check if locked out
+	// Check if currently locked out
 	if (entry?.lockedUntil && entry.lockedUntil > now) {
 		const remainingSeconds = Math.ceil((entry.lockedUntil - now) / 1000);
 		return { shouldBlock: true, remainingSeconds };
 	}
 
-	// Reset if lockout expired
+	// If not incrementing, just report not blocked
+	if (!increment) {
+		return { shouldBlock: false };
+	}
+
+	// Reset if lockout expired, create new, or increment existing
 	let newEntry: RateLimitEntry;
 	if (entry?.lockedUntil && entry.lockedUntil <= now) {
 		newEntry = { attempts: 1, lockedUntil: null };
@@ -175,7 +185,7 @@ async function incrementAttempts(
 		newEntry.lockedUntil = now + LOCKOUT_DURATION_MS;
 	}
 
-	// Write back
+	// Write back immediately after read to minimize TOCTOU window
 	await setRateLimitEntry(kv, key, newEntry);
 
 	if (newEntry.lockedUntil && newEntry.lockedUntil > now) {
@@ -192,14 +202,13 @@ export async function loginRateLimit(c: Context<{ Bindings: Env }>, next: Next):
 	const kv = c.env.PUZZLE_METADATA;
 	const env = c.env.NODE_ENV;
 
-	// First check if already locked out
-	const entry = await getRateLimitEntry(kv, key, env);
-	if (entry?.lockedUntil && entry.lockedUntil > now) {
-		const remainingSeconds = Math.ceil((entry.lockedUntil - now) / 1000);
+	// Single read to check lockout (no separate pre-read + increment to avoid double TOCTOU)
+	const preCheck = await checkAndIncrement(kv, key, now, env, false);
+	if (preCheck.shouldBlock) {
 		return c.json(
 			{
 				error: 'too_many_requests',
-				message: `Too many login attempts. Try again in ${remainingSeconds} seconds`
+				message: `Too many login attempts. Try again in ${preCheck.remainingSeconds} seconds`
 			},
 			429
 		);
@@ -211,9 +220,8 @@ export async function loginRateLimit(c: Context<{ Bindings: Env }>, next: Next):
 	// Only increment on failed authentication (401/403 responses)
 	if (c.res.status === 401 || c.res.status === 403) {
 		const attemptTime = Date.now();
-		const result = await incrementAttempts(kv, key, attemptTime, env);
+		const result = await checkAndIncrement(kv, key, attemptTime, env, true);
 		if (result.shouldBlock) {
-			// Create a new 429 response with rate limit info
 			return c.json(
 				{
 					error: 'too_many_requests',

@@ -38,13 +38,16 @@
 
 	// Polling interval for processing puzzles
 	let pollInterval: ReturnType<typeof setInterval> | null = null;
+	let mounted = false;
 
 	onMount(async () => {
+		mounted = true;
 		await loadPuzzles();
 		startPollingIfNeeded();
 	});
 
 	onDestroy(() => {
+		mounted = false;
 		if (successTimeout !== null) {
 			clearTimeout(successTimeout);
 			successTimeout = null;
@@ -60,10 +63,12 @@
 		const hasProcessing = puzzles.some((p) => p.status === 'processing');
 		if (hasProcessing && pollInterval === null) {
 			pollInterval = setInterval(async () => {
+				if (!mounted) return;
 				if (puzzlesFetchInFlight) return;
 				puzzlesFetchInFlight = true;
 				try {
 					const latestPuzzles = await loadPuzzles(true);
+					if (!mounted) return;
 					// Stop polling if no more processing puzzles
 					const stillProcessing = latestPuzzles.some((p) => p.status === 'processing');
 					if (!stillProcessing && pollInterval !== null) {
@@ -71,7 +76,9 @@
 						pollInterval = null;
 					}
 				} finally {
-					puzzlesFetchInFlight = false;
+					if (mounted) {
+						puzzlesFetchInFlight = false;
+					}
 				}
 			}, 3000); // Poll every 3 seconds
 		}

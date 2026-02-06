@@ -81,8 +81,34 @@ describe('getImageTooling (lazy loader)', () => {
 				async () => ({})
 			)
 		).rejects.toMatchObject({
-			message:
-				'Image processing dependencies "@cf-wasm/photon" or "@cf-wasm/resvg" are not available'
+			message: expect.stringContaining('Missing exports from image processing modules')
+		});
+	});
+
+	it('lists all missing symbols in the error message', async () => {
+		await expect(
+			__getImageToolingForTests(
+				async () => ({}),
+				async () => ({})
+			)
+		).rejects.toMatchObject({
+			message: expect.stringContaining('photon.PhotonImage')
+		});
+
+		__resetImageToolingForTests();
+
+		await expect(
+			__getImageToolingForTests(
+				async () => ({
+					PhotonImage: class {},
+					resize: () => undefined,
+					crop: () => undefined,
+					SamplingFilter: { Lanczos3: 1 }
+				}),
+				async () => ({})
+			)
+		).rejects.toMatchObject({
+			message: expect.stringContaining('resvg.Resvg')
 		});
 	});
 });

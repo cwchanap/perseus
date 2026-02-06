@@ -8,6 +8,8 @@ const SESSION_COOKIE_NAME = 'perseus_session';
 const SESSION_DURATION_MS = 24 * 60 * 60 * 1000; // 24 hours
 const MIN_JWT_SECRET_LENGTH = 32;
 const SESSION_STORE_PREFIX = 'session:';
+// In-memory fallback for local development ONLY. Not safe for production use —
+// state is not shared across Worker isolates and is lost on restart.
 const sessionFallbackStore = new Map<string, number>();
 let loggedSessionStoreFallback = false;
 
@@ -78,9 +80,17 @@ async function persistSession(env: Env, token: string, expMs: number): Promise<v
 			console.error('Failed to persist session, falling back to in-memory store:', error);
 		}
 	}
+	// In-memory fallback is only allowed in development; fail fast in production.
+	if (env.NODE_ENV !== 'development') {
+		throw new Error(
+			'KV namespace PUZZLE_METADATA is not configured. Session storage requires KV in production.'
+		);
+	}
 	if (!loggedSessionStoreFallback) {
 		loggedSessionStoreFallback = true;
-		console.warn('Session storage using in-memory fallback - KV namespace not configured');
+		console.warn(
+			'[DEV ONLY] Session storage using in-memory fallback — not distributed, not persisted across restarts'
+		);
 	}
 	cleanupExpiredSessions();
 	sessionFallbackStore.set(key, expMs);
@@ -95,6 +105,10 @@ async function isSessionActive(env: Env, token: string): Promise<boolean> {
 		} catch (error) {
 			console.error('Failed to read session store, checking in-memory fallback:', error);
 		}
+	}
+	// In-memory fallback is only available in development
+	if (env.NODE_ENV !== 'development') {
+		return false;
 	}
 	cleanupExpiredSessions();
 	const expMs = sessionFallbackStore.get(key);
@@ -113,6 +127,7 @@ export async function revokeSession(env: Env, token: string): Promise<void> {
 			console.error('Failed to delete session from store:', error);
 		}
 	}
+	// Always clean up fallback store regardless of environment (idempotent)
 	cleanupExpiredSessions();
 	sessionFallbackStore.delete(key);
 }

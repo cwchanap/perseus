@@ -36,8 +36,16 @@ async function getImageTooling(
 		const photon = (await loadPhoton()) as PhotonModule;
 		const resvg = (await loadResvg()) as ResvgModule;
 
-		if (!photon?.PhotonImage || !resvg?.Resvg) {
-			throw new Error('Missing exports from image processing modules');
+		const missingSymbols: string[] = [];
+		if (!photon?.PhotonImage) missingSymbols.push('photon.PhotonImage');
+		if (!photon?.resize) missingSymbols.push('photon.resize');
+		if (!photon?.crop) missingSymbols.push('photon.crop');
+		if (!photon?.SamplingFilter) missingSymbols.push('photon.SamplingFilter');
+		if (!resvg?.Resvg) missingSymbols.push('resvg.Resvg');
+		if (missingSymbols.length > 0) {
+			throw new Error(
+				`Missing exports from image processing modules: ${missingSymbols.join(', ')}`
+			);
 		}
 
 		imageTooling = {
@@ -140,187 +148,194 @@ export async function generatePuzzle(
 		imageBuffer.byteLength
 	);
 	const sourceImage = PhotonImage.new_from_byteslice(sourceBytes);
+	let sourceImageFreed = false;
 
-	const imageWidth = sourceImage.get_width();
-	const imageHeight = sourceImage.get_height();
-
-	// Generate thumbnail
-	const thumbnailPath = path.join(puzzleDir, 'thumbnail.jpg');
-	let thumbnailSource: InstanceType<typeof PhotonImage> | null = null;
-	let resized: InstanceType<typeof PhotonImage> | null = null;
-	let cropped: InstanceType<typeof PhotonImage> | null = null;
-	let jpegBytes: Uint8Array;
 	try {
-		thumbnailSource = PhotonImage.new_from_byteslice(sourceBytes);
-		const srcW = thumbnailSource.get_width();
-		const srcH = thumbnailSource.get_height();
-		const scale = Math.max(THUMBNAIL_SIZE / srcW, THUMBNAIL_SIZE / srcH);
-		const newW = Math.round(srcW * scale);
-		const newH = Math.round(srcH * scale);
-		resized = resize(thumbnailSource, newW, newH, SamplingFilter.Lanczos3);
-		thumbnailSource.free();
-		thumbnailSource = null;
-		const cropX = Math.floor((newW - THUMBNAIL_SIZE) / 2);
-		const cropY = Math.floor((newH - THUMBNAIL_SIZE) / 2);
-		cropped = crop(resized, cropX, cropY, THUMBNAIL_SIZE, THUMBNAIL_SIZE);
-		resized.free();
-		resized = null;
-		jpegBytes = cropped.get_bytes_jpeg(80);
-		cropped.free();
-		cropped = null;
-	} finally {
-		if (cropped) cropped.free();
-		if (resized) resized.free();
-		if (thumbnailSource) thumbnailSource.free();
-	}
-	await writeFile(thumbnailPath, Buffer.from(jpegBytes));
+		const imageWidth = sourceImage.get_width();
+		const imageHeight = sourceImage.get_height();
 
-	// Calculate grid dimensions
-	const { rows, cols } = getGridDimensions(pieceCount);
-	const basePieceWidth = Math.floor(imageWidth / cols);
-	const extraWidth = imageWidth % cols;
-	const basePieceHeight = Math.floor(imageHeight / rows);
-	const extraHeight = imageHeight % rows;
+		// Generate thumbnail
+		const thumbnailPath = path.join(puzzleDir, 'thumbnail.jpg');
+		let thumbnailSource: InstanceType<typeof PhotonImage> | null = null;
+		let resized: InstanceType<typeof PhotonImage> | null = null;
+		let cropped: InstanceType<typeof PhotonImage> | null = null;
+		let jpegBytes: Uint8Array;
+		try {
+			thumbnailSource = PhotonImage.new_from_byteslice(sourceBytes);
+			const srcW = thumbnailSource.get_width();
+			const srcH = thumbnailSource.get_height();
+			const scale = Math.max(THUMBNAIL_SIZE / srcW, THUMBNAIL_SIZE / srcH);
+			const newW = Math.round(srcW * scale);
+			const newH = Math.round(srcH * scale);
+			resized = resize(thumbnailSource, newW, newH, SamplingFilter.Lanczos3);
+			thumbnailSource.free();
+			thumbnailSource = null;
+			const cropX = Math.floor((newW - THUMBNAIL_SIZE) / 2);
+			const cropY = Math.floor((newH - THUMBNAIL_SIZE) / 2);
+			cropped = crop(resized, cropX, cropY, THUMBNAIL_SIZE, THUMBNAIL_SIZE);
+			resized.free();
+			resized = null;
+			jpegBytes = cropped.get_bytes_jpeg(80);
+			cropped.free();
+			cropped = null;
+		} finally {
+			if (cropped) cropped.free();
+			if (resized) resized.free();
+			if (thumbnailSource) thumbnailSource.free();
+		}
+		await writeFile(thumbnailPath, Buffer.from(jpegBytes));
 
-	// Generate pieces
-	const pieces: PuzzlePiece[] = [];
-	const piecePaths: string[] = [];
+		// Calculate grid dimensions
+		const { rows, cols } = getGridDimensions(pieceCount);
+		const basePieceWidth = Math.floor(imageWidth / cols);
+		const extraWidth = imageWidth % cols;
+		const basePieceHeight = Math.floor(imageHeight / rows);
+		const extraHeight = imageHeight % rows;
 
-	const bottomEdgesForAbove: Array<'flat' | 'tab' | 'blank'> = new Array(cols).fill('flat');
-	const opposite = (edge: 'flat' | 'tab' | 'blank'): 'flat' | 'tab' | 'blank' =>
-		edge === 'tab' ? 'blank' : edge === 'blank' ? 'tab' : 'flat';
+		// Generate pieces
+		const pieces: PuzzlePiece[] = [];
+		const piecePaths: string[] = [];
 
-	for (let row = 0; row < rows; row++) {
-		let leftEdgeForNext = 'flat' as 'flat' | 'tab' | 'blank';
-		for (let col = 0; col < cols; col++) {
-			const pieceId = row * cols + col;
-			const piecePath = path.join(piecesDir, `${pieceId}.png`);
+		const bottomEdgesForAbove: Array<'flat' | 'tab' | 'blank'> = new Array(cols).fill('flat');
+		const opposite = (edge: 'flat' | 'tab' | 'blank'): 'flat' | 'tab' | 'blank' =>
+			edge === 'tab' ? 'blank' : edge === 'blank' ? 'tab' : 'flat';
 
-			// Calculate base piece dimensions
-			const baseWidth = basePieceWidth + (col === cols - 1 ? extraWidth : 0);
-			const baseHeight = basePieceHeight + (row === rows - 1 ? extraHeight : 0);
+		for (let row = 0; row < rows; row++) {
+			let leftEdgeForNext = 'flat' as 'flat' | 'tab' | 'blank';
+			for (let col = 0; col < cols; col++) {
+				const pieceId = row * cols + col;
+				const piecePath = path.join(piecesDir, `${pieceId}.png`);
 
-			// Calculate overlap for jigsaw tabs (TAB_RATIO of actual piece size on each side)
-			const overlapX = Math.floor(baseWidth * TAB_RATIO);
-			const overlapY = Math.floor(baseHeight * TAB_RATIO);
+				// Calculate base piece dimensions
+				const baseWidth = basePieceWidth + (col === cols - 1 ? extraWidth : 0);
+				const baseHeight = basePieceHeight + (row === rows - 1 ? extraHeight : 0);
 
-			// Target size: base piece + overlap on all sides (140% of base)
-			const targetWidth = baseWidth + 2 * overlapX;
-			const targetHeight = baseHeight + 2 * overlapY;
+				// Calculate overlap for jigsaw tabs (TAB_RATIO of actual piece size on each side)
+				const overlapX = Math.floor(baseWidth * TAB_RATIO);
+				const overlapY = Math.floor(baseHeight * TAB_RATIO);
 
-			// Calculate extraction bounds with overlap
-			const baseLeft = col * basePieceWidth;
-			const baseTop = row * basePieceHeight;
+				// Target size: base piece + overlap on all sides (140% of base)
+				const targetWidth = baseWidth + 2 * overlapX;
+				const targetHeight = baseHeight + 2 * overlapY;
 
-			// Calculate ideal extraction bounds (may extend outside image)
-			const idealLeft = baseLeft - overlapX;
-			const idealTop = baseTop - overlapY;
+				// Calculate extraction bounds with overlap
+				const baseLeft = col * basePieceWidth;
+				const baseTop = row * basePieceHeight;
 
-			// Clamp extraction to image boundaries
-			const extractLeft = Math.max(0, idealLeft);
-			const extractTop = Math.max(0, idealTop);
-			const extractRight = Math.min(imageWidth, idealLeft + targetWidth);
-			const extractBottom = Math.min(imageHeight, idealTop + targetHeight);
+				// Calculate ideal extraction bounds (may extend outside image)
+				const idealLeft = baseLeft - overlapX;
+				const idealTop = baseTop - overlapY;
 
-			const extractWidth = extractRight - extractLeft;
-			const extractHeight = extractBottom - extractTop;
+				// Clamp extraction to image boundaries
+				const extractLeft = Math.max(0, idealLeft);
+				const extractTop = Math.max(0, idealTop);
+				const extractRight = Math.min(imageWidth, idealLeft + targetWidth);
+				const extractBottom = Math.min(imageHeight, idealTop + targetHeight);
 
-			// Calculate padding needed for edge pieces
-			const padLeft = extractLeft - idealLeft;
-			const padTop = extractTop - idealTop;
+				const extractWidth = extractRight - extractLeft;
+				const extractHeight = extractBottom - extractTop;
 
-			// Determine edge types with matched neighbors (needed before masking)
-			const topEdge = row === 0 ? 'flat' : opposite(bottomEdgesForAbove[col]);
-			const rightEdge = col === cols - 1 ? 'flat' : (row + col) % 2 === 0 ? 'tab' : 'blank';
-			const bottomEdge = row === rows - 1 ? 'flat' : (row + col) % 2 === 0 ? 'blank' : 'tab';
-			const leftEdge = col === 0 ? 'flat' : opposite(leftEdgeForNext);
+				// Calculate padding needed for edge pieces
+				const padLeft = extractLeft - idealLeft;
+				const padTop = extractTop - idealTop;
 
-			bottomEdgesForAbove[col] = bottomEdge;
-			leftEdgeForNext = rightEdge;
+				// Determine edge types with matched neighbors (needed before masking)
+				const topEdge = row === 0 ? 'flat' : opposite(bottomEdgesForAbove[col]);
+				const rightEdge = col === cols - 1 ? 'flat' : (row + col) % 2 === 0 ? 'tab' : 'blank';
+				const bottomEdge = row === rows - 1 ? 'flat' : (row + col) % 2 === 0 ? 'blank' : 'tab';
+				const leftEdge = col === 0 ? 'flat' : opposite(leftEdgeForNext);
 
-			const edges: EdgeConfig = {
-				top: topEdge,
-				right: rightEdge,
-				bottom: bottomEdge,
-				left: leftEdge
-			};
+				bottomEdgesForAbove[col] = bottomEdge;
+				leftEdgeForNext = rightEdge;
 
-			// Extract piece region from source image
-			const pieceImage = crop(sourceImage, extractLeft, extractTop, extractWidth, extractHeight);
-			const piecePixels = pieceImage.get_raw_pixels();
-			const paddedPiecePixels = padPixelsToTarget(
-				piecePixels,
-				extractWidth,
-				extractHeight,
-				targetWidth,
-				targetHeight,
-				padLeft,
-				padTop
-			);
+				const edges: EdgeConfig = {
+					top: topEdge,
+					right: rightEdge,
+					bottom: bottomEdge,
+					left: leftEdge
+				};
 
-			// Generate jigsaw mask SVG and apply it
-			const jigsawMask = generateJigsawSvgMask(edges, targetWidth, targetHeight).toString('utf-8');
-			const resvg = new Resvg(jigsawMask, {
-				fitTo: { mode: 'width', value: targetWidth }
-			});
-			const maskPng = resvg.render().asPng();
-			const maskImage = PhotonImage.new_from_byteslice(maskPng);
-			const maskPixels = maskImage.get_raw_pixels();
+				// Extract piece region from source image
+				const pieceImage = crop(sourceImage, extractLeft, extractTop, extractWidth, extractHeight);
+				const piecePixels = pieceImage.get_raw_pixels();
+				const paddedPiecePixels = padPixelsToTarget(
+					piecePixels,
+					extractWidth,
+					extractHeight,
+					targetWidth,
+					targetHeight,
+					padLeft,
+					padTop
+				);
 
-			if (maskPixels.length !== paddedPiecePixels.length) {
+				// Generate jigsaw mask SVG and apply it
+				const jigsawMask = generateJigsawSvgMask(edges, targetWidth, targetHeight).toString(
+					'utf-8'
+				);
+				const resvg = new Resvg(jigsawMask, {
+					fitTo: { mode: 'width', value: targetWidth }
+				});
+				const maskPng = resvg.render().asPng();
+				const maskImage = PhotonImage.new_from_byteslice(maskPng);
+				const maskPixels = maskImage.get_raw_pixels();
+
+				if (maskPixels.length !== paddedPiecePixels.length) {
+					maskImage.free();
+					pieceImage.free();
+					throw new Error(
+						`Mask and piece image pixel count mismatch for piece ${pieceId}: ` +
+							`mask=${maskPixels.length} pixels, piece=${paddedPiecePixels.length} pixels`
+					);
+				}
+
+				applyMaskAlpha(paddedPiecePixels, maskPixels);
+
+				const maskedPiece = new PhotonImage(paddedPiecePixels, targetWidth, targetHeight);
 				maskImage.free();
 				pieceImage.free();
-				sourceImage.free();
-				throw new Error(
-					`Mask and piece image pixel count mismatch for piece ${pieceId}: ` +
-						`mask=${maskPixels.length} pixels, piece=${paddedPiecePixels.length} pixels`
-				);
+
+				const pngBytes = maskedPiece.get_bytes();
+				maskedPiece.free();
+
+				await writeFile(piecePath, Buffer.from(pngBytes));
+
+				pieces.push({
+					id: pieceId,
+					puzzleId: id,
+					correctX: col,
+					correctY: row,
+					edges,
+					imagePath: `pieces/${pieceId}.png`
+				});
+
+				piecePaths.push(piecePath);
 			}
-
-			applyMaskAlpha(paddedPiecePixels, maskPixels);
-
-			const maskedPiece = new PhotonImage(paddedPiecePixels, targetWidth, targetHeight);
-			maskImage.free();
-			pieceImage.free();
-
-			const pngBytes = maskedPiece.get_bytes();
-			maskedPiece.free();
-
-			await writeFile(piecePath, Buffer.from(pngBytes));
-
-			pieces.push({
-				id: pieceId,
-				puzzleId: id,
-				correctX: col,
-				correctY: row,
-				edges,
-				imagePath: `pieces/${pieceId}.png`
-			});
-
-			piecePaths.push(piecePath);
 		}
+
+		sourceImage.free();
+		sourceImageFreed = true;
+
+		// Construct puzzle metadata
+		const puzzle: Puzzle = {
+			id: id,
+			name,
+			pieceCount,
+			gridCols: cols,
+			gridRows: rows,
+			imageWidth,
+			imageHeight,
+			pieces,
+			createdAt: Date.now()
+		};
+
+		return {
+			puzzle,
+			thumbnailPath,
+			piecePaths
+		};
+	} finally {
+		if (!sourceImageFreed) sourceImage.free();
 	}
-
-	sourceImage.free();
-
-	// Construct puzzle metadata
-	const puzzle: Puzzle = {
-		id: id,
-		name,
-		pieceCount,
-		gridCols: cols,
-		gridRows: rows,
-		imageWidth,
-		imageHeight,
-		pieces,
-		createdAt: Date.now()
-	};
-
-	return {
-		puzzle,
-		thumbnailPath,
-		piecePaths
-	};
 }
 
 export { ALLOWED_PIECE_COUNTS, isValidPieceCount };
