@@ -228,8 +228,6 @@ export async function generatePuzzle(
 			// Calculate padding needed for edge pieces
 			const padLeft = extractLeft - idealLeft;
 			const padTop = extractTop - idealTop;
-			const padRight = targetWidth - extractWidth - padLeft;
-			const padBottom = targetHeight - extractHeight - padTop;
 
 			// Determine edge types with matched neighbors (needed before masking)
 			const topEdge = row === 0 ? 'flat' : opposite(bottomEdgesForAbove[col]);
