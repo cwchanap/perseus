@@ -261,6 +261,11 @@ function getLeftEdge(row: number, col: number, cols: number): EdgeType {
 }
 
 export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
+	// Test seam: allows tests to set environment without accessing private fields
+	protected setEnvOnWorkflow(env: Env): void {
+		this.env = env;
+	}
+
 	async run(event: WorkflowEvent<WorkflowParams>, step: WorkflowStep): Promise<void> {
 		// Validate workflow parameters
 		if (!validateWorkflowParams(event.payload)) {

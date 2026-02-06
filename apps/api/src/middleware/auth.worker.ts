@@ -69,7 +69,7 @@ function getSessionStoreKey(token: string): string {
 
 async function persistSession(env: Env, token: string, expMs: number): Promise<void> {
 	const key = getSessionStoreKey(token);
-	const ttlSeconds = Math.max(1, Math.ceil((expMs - Date.now()) / 1000));
+	const ttlSeconds = Math.max(60, Math.ceil((expMs - Date.now()) / 1000));
 	if (env.PUZZLE_METADATA) {
 		try {
 			await env.PUZZLE_METADATA.put(key, '1', { expirationTtl: ttlSeconds });
@@ -213,7 +213,7 @@ export function getSessionToken(c: Context): string | undefined {
 
 // Set session cookie
 export function setSessionCookie(c: Context<{ Bindings: Env }>, token: string): void {
-	const isSecure = c.env.NODE_ENV === 'production';
+	const isSecure = c.env.NODE_ENV !== 'development';
 	setCookie(c, SESSION_COOKIE_NAME, token, {
 		httpOnly: true,
 		secure: isSecure,

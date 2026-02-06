@@ -10,6 +10,7 @@ import {
 	uploadOriginalImage,
 	deleteOriginalImage,
 	getPuzzle,
+	listPuzzles,
 	type PuzzleMetadata
 } from '../services/storage.worker';
 import {
@@ -183,7 +184,6 @@ admin.get('/session', async (c) => {
 // GET /api/admin/puzzles - List all puzzles for admin (includes processing/failed)
 admin.get('/puzzles', requireAuth, async (c) => {
 	try {
-		const { listPuzzles } = await import('../services/storage.worker');
 		const puzzleList = await listPuzzles(c.env.PUZZLE_METADATA);
 		return c.json({ puzzles: puzzleList });
 	} catch (error) {

@@ -1,8 +1,9 @@
 // Unit tests for puzzle generator
 import { describe, it, expect, beforeAll, afterAll } from 'bun:test';
-import { mkdir, rm, readFile } from 'node:fs/promises';
+import { mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { deflateSync } from 'node:zlib';
 import {
 	generatePuzzle,
 	ALLOWED_PIECE_COUNTS,
@@ -11,13 +12,95 @@ import {
 
 const TEST_OUTPUT_DIR = join(tmpdir(), `perseus-puzzle-gen-tests-${process.pid}`);
 
-const TEST_IMAGE_URL = new URL('../../../../sample.png', import.meta.url);
 let cachedImageBuffer: Buffer | null = null;
 
-// Load a static test image buffer (dimensions not critical for these tests)
+// Generate a minimal valid 100x100 RGBA PNG in memory
+function generateTestPng(): Buffer {
+	const width = 100;
+	const height = 100;
+	const pixels = new Uint8Array(width * height * 4);
+
+	// Fill with a simple gradient pattern
+	for (let y = 0; y < height; y++) {
+		for (let x = 0; x < width; x++) {
+			const idx = (y * width + x) * 4;
+			pixels[idx] = (x * 255) / width; // R
+			pixels[idx + 1] = (y * 255) / height; // G
+			pixels[idx + 2] = 128; // B
+			pixels[idx + 3] = 255; // A
+		}
+	}
+
+	// PNG signature
+	const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+	// Helper to create a chunk
+	function createChunk(type: string, data: Buffer): Buffer {
+		const typeBuffer = Buffer.from(type, 'ascii');
+		const lenBuffer = Buffer.alloc(4);
+		lenBuffer.writeUInt32BE(data.length, 0);
+		const crcBuffer = Buffer.alloc(4);
+		const crcData = Buffer.concat([typeBuffer, data]);
+		crcBuffer.writeUInt32BE(crc32(crcData), 0);
+		return Buffer.concat([lenBuffer, typeBuffer, data, crcBuffer]);
+	}
+
+	// Simple CRC32 implementation
+	function crc32(data: Buffer): number {
+		const table = new Int32Array(256);
+		for (let i = 0; i < 256; i++) {
+			let c = i;
+			for (let j = 0; j < 8; j++) {
+				c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+			}
+			table[i] = c;
+		}
+		let crc = -1;
+		for (let i = 0; i < data.length; i++) {
+			crc = table[(crc ^ data[i]) & 0xff] ^ (crc >>> 8);
+		}
+		return (crc ^ -1) >>> 0;
+	}
+
+	// IHDR chunk
+	const ihdrData = Buffer.alloc(13);
+	ihdrData.writeUInt32BE(width, 0);
+	ihdrData.writeUInt32BE(height, 4);
+	ihdrData[8] = 8; // bit depth
+	ihdrData[9] = 6; // color type (RGBA)
+	ihdrData[10] = 0; // compression
+	ihdrData[11] = 0; // filter
+	ihdrData[12] = 0; // interlace
+	const ihdrChunk = createChunk('IHDR', ihdrData);
+
+	// IDAT chunk (compressed image data)
+	const rawData = Buffer.alloc(height * (1 + width * 4));
+	for (let y = 0; y < height; y++) {
+		rawData[y * (1 + width * 4)] = 0; // filter byte
+		for (let x = 0; x < width; x++) {
+			const srcIdx = (y * width + x) * 4;
+			const dstIdx = y * (1 + width * 4) + 1 + x * 4;
+			rawData[dstIdx] = pixels[srcIdx];
+			rawData[dstIdx + 1] = pixels[srcIdx + 1];
+			rawData[dstIdx + 2] = pixels[srcIdx + 2];
+			rawData[dstIdx + 3] = pixels[srcIdx + 3];
+		}
+	}
+
+	// Compress using zlib deflate
+	const compressed = deflateSync(rawData);
+	const idatChunk = createChunk('IDAT', compressed);
+
+	// IEND chunk
+	const iendChunk = createChunk('IEND', Buffer.alloc(0));
+
+	return Buffer.concat([signature, ihdrChunk, idatChunk, iendChunk]);
+}
+
+// Return a cached in-memory test image buffer
 async function createTestImage(): Promise<Buffer> {
 	if (!cachedImageBuffer) {
-		cachedImageBuffer = await readFile(TEST_IMAGE_URL);
+		cachedImageBuffer = generateTestPng();
 	}
 	return cachedImageBuffer;
 }

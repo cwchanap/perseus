@@ -157,7 +157,7 @@ class TestWorkflow extends PerseusWorkflow {
 	}
 
 	setEnv(env: Env) {
-		this.env = env;
+		this.setEnvOnWorkflow(env);
 	}
 }
 
