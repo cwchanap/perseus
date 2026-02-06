@@ -271,7 +271,7 @@ admin.post('/puzzles', requireAuth, async (c) => {
 
 		// Step 1: Upload original image to R2 first
 		try {
-			await uploadOriginalImage(c.env.PUZZLES_BUCKET, id, imageBuffer, image.type);
+			await uploadOriginalImage(c.env.PUZZLES_BUCKET, id, imageBuffer, detectedType);
 		} catch (error) {
 			console.error('Failed to upload original image:', error);
 			return c.json({ error: 'internal_error', message: 'Failed to upload image' }, 500);
