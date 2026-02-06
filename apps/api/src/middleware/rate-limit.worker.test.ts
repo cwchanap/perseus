@@ -199,6 +199,30 @@ describe('Rate Limit Middleware', () => {
 		});
 	});
 
+	describe('KV failure handling', () => {
+		it('should fail open when KV read throws', async () => {
+			const failingKV = {
+				get: vi.fn(() => {
+					throw new Error('KV outage');
+				}),
+				put: vi.fn(async () => {}),
+				delete: vi.fn(async () => {})
+			};
+			const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			const mockContext = createMockContext('127.0.0.1', failingKV);
+			const next = vi.fn();
+
+			await loginRateLimit(mockContext, next);
+
+			expect(next).toHaveBeenCalled();
+			expect(consoleWarnSpy).toHaveBeenCalledWith(
+				expect.stringContaining('KV read failed'),
+				expect.any(Error)
+			);
+			consoleWarnSpy.mockRestore();
+		});
+	});
+
 	describe('lockout expiry', () => {
 		it('should reset attempts after lockout expires', async () => {
 			const mockKV = createMockKV();

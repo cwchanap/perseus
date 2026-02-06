@@ -17,7 +17,9 @@ bucket_name = "perseus"
 [[kv_namespaces]]
 binding = "PUZZLE_METADATA"
 id = "5d87620636f741c09502f3d39f077ef1"
-preview_id = "5d87620636f741c09502f3d39f077ef1"
+# Preview namespace must be distinct from production to avoid data leakage.
+# Generate with: wrangler kv namespace create "PUZZLE_METADATA" --preview
+preview_id = "preview_5d87620636f741c09502f3d39f077ef1"
 
 [durable_objects]
 bindings = [

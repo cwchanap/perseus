@@ -1,28 +1,40 @@
 import { vi } from 'vitest';
 
 // Mock Cloudflare Workers types
-export interface WorkflowStep {
-	do<T>(name: string, fn: () => Promise<T>): Promise<T>;
+
+// Minimal runtime classes so instanceof checks and construction succeed in tests
+class MockWorkflowStep {
+	async do<T>(_name: string, fn: () => Promise<T>): Promise<T> {
+		return fn();
+	}
 }
 
-export interface WorkflowEvent<T> {
+class MockWorkflowEvent<T> {
 	payload: T;
+	timestamp: Date;
+	instanceId: string;
+	constructor(payload: T) {
+		this.payload = payload;
+		this.timestamp = new Date();
+		this.instanceId = '';
+	}
 }
 
 // Create a mock WorkflowEntrypoint class
 class MockWorkflowEntrypoint<Env, Params> {
-	env!: Env;
-	async run(_event: WorkflowEvent<Params>, _step: WorkflowStep): Promise<void> {
+	env: Env = {} as Env;
+	async run(_event: MockWorkflowEvent<Params>, _step: MockWorkflowStep): Promise<void> {
 		throw new Error('Not implemented in mock');
 	}
 }
 
-// Mock the cloudflare:workers module
 vi.mock('cloudflare:workers', () => ({
 	WorkflowEntrypoint: MockWorkflowEntrypoint,
-	WorkflowStep: {},
-	WorkflowEvent: {}
+	WorkflowStep: MockWorkflowStep,
+	WorkflowEvent: MockWorkflowEvent
 }));
 
-// Re-export types for use in tests
-export { MockWorkflowEntrypoint as WorkflowEntrypoint, type WorkflowStep, type WorkflowEvent };
+// Re-export for use in tests
+export { MockWorkflowEntrypoint as WorkflowEntrypoint };
+export type WorkflowStep = MockWorkflowStep;
+export type WorkflowEvent<T> = MockWorkflowEvent<T>;

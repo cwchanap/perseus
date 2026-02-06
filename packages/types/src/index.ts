@@ -78,6 +78,17 @@ export const THUMBNAIL_SIZE = 300;
 
 // Validation functions
 
+export function isPuzzlePiece(piece: unknown): piece is PuzzlePiece {
+	if (typeof piece !== 'object' || piece === null) return false;
+	const p = piece as Record<string, unknown>;
+	if (typeof p.id !== 'number' || !Number.isFinite(p.id)) return false;
+	if (typeof p.puzzleId !== 'string') return false;
+	if (typeof p.correctX !== 'number' || !Number.isFinite(p.correctX)) return false;
+	if (typeof p.correctY !== 'number' || !Number.isFinite(p.correctY)) return false;
+	if (typeof p.imagePath !== 'string') return false;
+	return validateEdgeConfig(p.edges);
+}
+
 export function validateEdgeConfig(edges: unknown): edges is EdgeConfig {
 	if (typeof edges !== 'object' || edges === null) return false;
 	const e = edges as Record<string, unknown>;
@@ -127,7 +138,7 @@ export function validatePuzzleMetadata(meta: unknown): meta is PuzzleMetadata {
 	if (!isNumber(m.pieceCount) || !isNumber(m.gridCols) || !isNumber(m.gridRows)) return false;
 	if (!isNumber(m.imageWidth) || !isNumber(m.imageHeight)) return false;
 	if (!isNumber(m.createdAt) || !isNumber(m.version)) return false;
-	if (!Array.isArray(m.pieces)) return false;
+	if (!Array.isArray(m.pieces) || !m.pieces.every(isPuzzlePiece)) return false;
 	if (!m.status || !validStatuses.includes(m.status)) return false;
 
 	// Validate grid math

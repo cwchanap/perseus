@@ -408,23 +408,33 @@ describe('Lock Operations', () => {
 	});
 
 	describe('releaseLock', () => {
-		it('should delete lock when token matches', async () => {
+		it('should delete lock when token matches and return true', async () => {
 			const mockKV = createMockKV();
 			mockKV._store.set('lock:test-lock', 'token-123');
 
-			await releaseLock(mockKV as unknown as KVNamespace, 'lock:test-lock', 'token-123');
+			const result = await releaseLock(
+				mockKV as unknown as KVNamespace,
+				'lock:test-lock',
+				'token-123'
+			);
 
+			expect(result).toBe(true);
 			expect(mockKV._store.has('lock:test-lock')).toBe(false);
 			expect(mockKV.delete).toHaveBeenCalledWith('lock:test-lock');
 		});
 
-		it('should not delete lock when token does not match', async () => {
+		it('should not delete lock when token does not match and return false', async () => {
 			const mockKV = createMockKV();
 			mockKV._store.set('lock:test-lock', 'token-123');
 			const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-			await releaseLock(mockKV as unknown as KVNamespace, 'lock:test-lock', 'token-456');
+			const result = await releaseLock(
+				mockKV as unknown as KVNamespace,
+				'lock:test-lock',
+				'token-456'
+			);
 
+			expect(result).toBe(false);
 			// Lock should still exist
 			expect(mockKV._store.get('lock:test-lock')).toBe('token-123');
 			// Delete should not have been called
@@ -435,12 +445,17 @@ describe('Lock Operations', () => {
 			consoleWarnSpy.mockRestore();
 		});
 
-		it('should not delete lock when lock does not exist', async () => {
+		it('should not delete lock when lock does not exist and return false', async () => {
 			const mockKV = createMockKV();
 			const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-			await releaseLock(mockKV as unknown as KVNamespace, 'lock:test-lock', 'token-123');
+			const result = await releaseLock(
+				mockKV as unknown as KVNamespace,
+				'lock:test-lock',
+				'token-123'
+			);
 
+			expect(result).toBe(false);
 			expect(mockKV.delete).not.toHaveBeenCalled();
 			expect(consoleWarnSpy).toHaveBeenCalled();
 

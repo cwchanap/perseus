@@ -146,20 +146,33 @@ export async function generatePuzzle(
 
 	// Generate thumbnail
 	const thumbnailPath = path.join(puzzleDir, 'thumbnail.jpg');
-	const thumbnailSource = PhotonImage.new_from_byteslice(sourceBytes);
-	const srcW = thumbnailSource.get_width();
-	const srcH = thumbnailSource.get_height();
-	const scale = Math.max(THUMBNAIL_SIZE / srcW, THUMBNAIL_SIZE / srcH);
-	const newW = Math.round(srcW * scale);
-	const newH = Math.round(srcH * scale);
-	const resized = resize(thumbnailSource, newW, newH, SamplingFilter.Lanczos3);
-	thumbnailSource.free();
-	const cropX = Math.floor((newW - THUMBNAIL_SIZE) / 2);
-	const cropY = Math.floor((newH - THUMBNAIL_SIZE) / 2);
-	const cropped = crop(resized, cropX, cropY, THUMBNAIL_SIZE, THUMBNAIL_SIZE);
-	resized.free();
-	const jpegBytes = cropped.get_bytes_jpeg(80);
-	cropped.free();
+	let thumbnailSource: InstanceType<typeof PhotonImage> | null = null;
+	let resized: InstanceType<typeof PhotonImage> | null = null;
+	let cropped: InstanceType<typeof PhotonImage> | null = null;
+	let jpegBytes: Uint8Array;
+	try {
+		thumbnailSource = PhotonImage.new_from_byteslice(sourceBytes);
+		const srcW = thumbnailSource.get_width();
+		const srcH = thumbnailSource.get_height();
+		const scale = Math.max(THUMBNAIL_SIZE / srcW, THUMBNAIL_SIZE / srcH);
+		const newW = Math.round(srcW * scale);
+		const newH = Math.round(srcH * scale);
+		resized = resize(thumbnailSource, newW, newH, SamplingFilter.Lanczos3);
+		thumbnailSource.free();
+		thumbnailSource = null;
+		const cropX = Math.floor((newW - THUMBNAIL_SIZE) / 2);
+		const cropY = Math.floor((newH - THUMBNAIL_SIZE) / 2);
+		cropped = crop(resized, cropX, cropY, THUMBNAIL_SIZE, THUMBNAIL_SIZE);
+		resized.free();
+		resized = null;
+		jpegBytes = cropped.get_bytes_jpeg(80);
+		cropped.free();
+		cropped = null;
+	} finally {
+		if (cropped) cropped.free();
+		if (resized) resized.free();
+		if (thumbnailSource) thumbnailSource.free();
+	}
 	await writeFile(thumbnailPath, Buffer.from(jpegBytes));
 
 	// Calculate grid dimensions

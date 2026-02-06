@@ -56,30 +56,33 @@ export async function acquireLock(
 	}
 }
 
+// Best-effort lock release. Returns true if the lock was deleted while our token was current,
+// false otherwise. Note: KV does not support atomic compare-and-delete, so there is an
+// inherent TOCTOU window between get and delete. For strict mutual exclusion, use Durable Objects.
 export async function releaseLock(
 	kv: KVNamespace,
 	key: string,
 	expectedToken: string
-): Promise<void> {
+): Promise<boolean> {
 	try {
 		const currentToken = await kv.get(key);
 
-		// Only delete if the token matches (we still own the lock)
 		if (!currentToken) {
 			console.warn(
 				`Attempted to release lock ${key} but it doesn't exist (may have already expired)`
 			);
-			return;
+			return false;
 		}
 
 		if (currentToken !== expectedToken) {
 			console.warn(
 				`Attempted to release lock ${key} but token doesn't match. Lock may have been taken over.`
 			);
-			return;
+			return false;
 		}
 
 		await kv.delete(key);
+		return true;
 	} catch (error) {
 		console.error('Failed to release lock:', error);
 		// Re-throw to inform caller of lock release failure

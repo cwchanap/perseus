@@ -210,9 +210,9 @@ function getGridDimensions(pieceCount: number): { rows: number; cols: number } {
 		}
 	}
 
-	const rows = Math.max(1, Math.floor(Math.sqrt(pieceCount)));
-	const cols = Math.ceil(pieceCount / rows);
-	return { rows, cols };
+	// Unreachable: the loop always returns at i===1 since pieceCount % 1 === 0
+	// but TypeScript needs a return path
+	return { rows: 1, cols: pieceCount };
 }
 
 async function loadOriginalImageBytes(env: Env, puzzleId: string): Promise<Uint8Array> {

@@ -29,6 +29,9 @@ import admin from '../admin.worker';
 import * as storage from '../../services/storage.worker';
 import * as auth from '../../middleware/auth.worker';
 
+// Valid PNG magic bytes header for test blobs
+const PNG_HEADER = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0, 0]);
+
 describe('Admin Routes - JSON Parsing', () => {
 	const mockEnv = {
 		ADMIN_PASSKEY: 'test-passkey',
@@ -275,7 +278,7 @@ describe('Admin Routes - Workflow Trigger Cleanup', () => {
 			const formData = new FormData();
 			formData.append('name', 'Test Puzzle');
 			formData.append('pieceCount', '225abc');
-			const blob = new Blob(['fake image data'], { type: 'image/png' });
+			const blob = new Blob([PNG_HEADER], { type: 'image/png' });
 			formData.append('image', blob, 'test.png');
 
 			const req = new Request('http://localhost/puzzles', {
@@ -324,7 +327,7 @@ describe('Admin Routes - Workflow Trigger Cleanup', () => {
 			const formData = new FormData();
 			formData.append('name', 'Test Puzzle');
 			formData.append('pieceCount', '225');
-			const blob = new Blob(['fake image data'], { type: 'image/png' });
+			const blob = new Blob([PNG_HEADER], { type: 'image/png' });
 			formData.append('image', blob, 'test.png');
 
 			const req = new Request('http://localhost/puzzles', {
@@ -346,6 +349,84 @@ describe('Admin Routes - Workflow Trigger Cleanup', () => {
 			// Verify both cleanup operations were called
 			expect(storage.deletePuzzleMetadata).toHaveBeenCalledTimes(1);
 			expect(storage.deleteOriginalImage).toHaveBeenCalledTimes(1);
+		});
+	});
+});
+
+describe('Admin Routes - Magic Bytes Validation', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	describe('POST /puzzles', () => {
+		it('should reject file with spoofed MIME type but invalid magic bytes', async () => {
+			const mockEnv = {
+				ADMIN_PASSKEY: 'test-passkey',
+				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+				PUZZLE_METADATA: {} as KVNamespace,
+				PUZZLES_BUCKET: {} as R2Bucket,
+				PUZZLE_WORKFLOW: {
+					create: vi.fn()
+				}
+			};
+
+			const formData = new FormData();
+			formData.append('name', 'Test Puzzle');
+			formData.append('pieceCount', '225');
+			// File claims to be PNG but has invalid magic bytes
+			const blob = new Blob(['fake image data'], { type: 'image/png' });
+			formData.append('image', blob, 'test.png');
+
+			const req = new Request('http://localhost/puzzles', {
+				method: 'POST',
+				headers: {
+					cookie: 'session=valid.token'
+				},
+				body: formData
+			});
+
+			const res = await admin.fetch(req, mockEnv as any);
+
+			expect(res.status).toBe(400);
+			const body = (await res.json()) as any;
+			expect(body.error).toBe('bad_request');
+			expect(body.message).toContain('Invalid file type');
+		});
+
+		it('should accept file with valid JPEG magic bytes', async () => {
+			(storage.uploadOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.createPuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+			const mockEnv = {
+				ADMIN_PASSKEY: 'test-passkey',
+				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+				PUZZLE_METADATA: {} as KVNamespace,
+				PUZZLES_BUCKET: {} as R2Bucket,
+				PUZZLE_WORKFLOW: {
+					create: vi.fn().mockResolvedValue(undefined)
+				}
+			};
+
+			// Valid JPEG magic bytes
+			const jpegHeader = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0]);
+			const formData = new FormData();
+			formData.append('name', 'Test Puzzle');
+			formData.append('pieceCount', '225');
+			const blob = new Blob([jpegHeader], { type: 'image/jpeg' });
+			formData.append('image', blob, 'test.jpg');
+
+			const req = new Request('http://localhost/puzzles', {
+				method: 'POST',
+				headers: {
+					cookie: 'session=valid.token'
+				},
+				body: formData
+			});
+
+			const res = await admin.fetch(req, mockEnv as any);
+
+			// Should pass validation (201 or later error, but not 400 for file type)
+			expect(res.status).not.toBe(400);
 		});
 	});
 });

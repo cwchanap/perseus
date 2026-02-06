@@ -11,6 +11,15 @@ const SESSION_STORE_PREFIX = 'session:';
 const sessionFallbackStore = new Map<string, number>();
 let loggedSessionStoreFallback = false;
 
+function cleanupExpiredSessions(): void {
+	const now = Date.now();
+	for (const [key, expMs] of sessionFallbackStore) {
+		if (expMs <= now) {
+			sessionFallbackStore.delete(key);
+		}
+	}
+}
+
 interface SessionPayload {
 	userId: string;
 	username: string;
@@ -73,6 +82,7 @@ async function persistSession(env: Env, token: string, expMs: number): Promise<v
 		loggedSessionStoreFallback = true;
 		console.warn('Session storage using in-memory fallback - KV namespace not configured');
 	}
+	cleanupExpiredSessions();
 	sessionFallbackStore.set(key, expMs);
 }
 
@@ -86,7 +96,12 @@ async function isSessionActive(env: Env, token: string): Promise<boolean> {
 			console.error('Failed to read session store, checking in-memory fallback:', error);
 		}
 	}
-	return sessionFallbackStore.has(key);
+	cleanupExpiredSessions();
+	const expMs = sessionFallbackStore.get(key);
+	if (expMs === undefined) return false;
+	if (expMs > Date.now()) return true;
+	sessionFallbackStore.delete(key);
+	return false;
 }
 
 export async function revokeSession(env: Env, token: string): Promise<void> {
@@ -98,6 +113,7 @@ export async function revokeSession(env: Env, token: string): Promise<void> {
 			console.error('Failed to delete session from store:', error);
 		}
 	}
+	cleanupExpiredSessions();
 	sessionFallbackStore.delete(key);
 }
 

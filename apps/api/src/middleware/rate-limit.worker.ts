@@ -17,6 +17,7 @@ interface RateLimitEntry {
 // In-memory rate limit store (fallback for development/testing)
 const rateLimitStore = new Map<string, RateLimitEntry>();
 let loggedInMemoryFallback = false;
+let warnedMissingIP = false;
 
 function isRateLimitEntry(value: unknown): value is RateLimitEntry {
 	if (typeof value !== 'object' || value === null) return false;
@@ -50,9 +51,12 @@ function getClientIP(c: Context): string {
 	// as each request creates a new bucket. This is intentional to avoid DoS via shared bucket,
 	// but means rate limiting is IP-dependent and degrades to per-request when IP unavailable.
 	// Note: c.req.ip is not available in all Hono/Worker environments
-	console.warn(
-		'Rate limiting: No client IP available, using per-request UUID (rate limiting ineffective)'
-	);
+	if (!warnedMissingIP) {
+		warnedMissingIP = true;
+		console.warn(
+			'Rate limiting: No client IP available, using per-request UUID (rate limiting ineffective)'
+		);
+	}
 	return crypto.randomUUID();
 }
 
@@ -71,15 +75,20 @@ async function getRateLimitEntry(
 	env?: string
 ): Promise<RateLimitEntry | null> {
 	if (kv) {
-		const data = await kv.get(getKVKey(key), 'json');
-		if (data === null) {
+		try {
+			const data = await kv.get(getKVKey(key), 'json');
+			if (data === null) {
+				return null;
+			}
+			if (!isRateLimitEntry(data)) {
+				console.warn('Invalid rate limit entry, resetting:', { key: getKVKey(key), data });
+				return null;
+			}
+			return data;
+		} catch (error) {
+			console.warn(`KV read failed for ${getKVKey(key)}, failing open:`, error);
 			return null;
 		}
-		if (!isRateLimitEntry(data)) {
-			console.warn('Invalid rate limit entry, resetting:', { key: getKVKey(key), data });
-			return null;
-		}
-		return data;
 	}
 	// Log warning about in-memory fallback
 	// PRODUCTION IMPACT: In-memory storage is not distributed across workers,
