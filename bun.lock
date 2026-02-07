@@ -1,6 +1,5 @@
 {
   "lockfileVersion": 1,
-  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "perseus",
@@ -17,14 +16,16 @@
       "name": "@perseus/api",
       "version": "0.0.1",
       "dependencies": {
+        "@cf-wasm/photon": "^0.3.4",
+        "@cf-wasm/resvg": "^0.3.3",
         "@perseus/types": "workspace:*",
         "hono": "^4.6.14",
-        "sharp": "^0.34.5",
       },
       "devDependencies": {
         "@cloudflare/workers-types": "^4.20241230.0",
         "@eslint/compat": "^1.4.0",
         "@eslint/js": "^9.39.1",
+        "@perseus/web": "workspace:*",
         "@types/bun": "^1.1.15",
         "eslint": "^9.39.1",
         "eslint-config-prettier": "^10.1.8",
@@ -96,6 +97,9 @@
     "packages/types": {
       "name": "@perseus/types",
       "version": "0.0.1",
+      "devDependencies": {
+        "typescript": "^5.9.0",
+      },
     },
   },
   "packages": {
