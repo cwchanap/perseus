@@ -181,6 +181,11 @@ const sampleMetadata: PuzzleMetadata = {
 };
 
 describe('updateMetadata', () => {
+	afterEach(() => {
+		photonInstances = [];
+		vi.restoreAllMocks();
+	});
+
 	it('should forward update requests to durable object', async () => {
 		const { namespace, stub } = createMockDurableObjectNamespace(() => {
 			return new Response(JSON.stringify({ success: true }), {
@@ -246,7 +251,7 @@ describe('updateMetadata', () => {
 
 		await workflow.run(event, step);
 
-		const sourceImage = photonInstances[2];
+		const sourceImage = photonInstances[4];
 		expect(sourceImage?.free).toHaveBeenCalled();
 	});
 });

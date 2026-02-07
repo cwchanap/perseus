@@ -364,6 +364,18 @@ admin.delete('/puzzles/:id', requireAuth, async (c) => {
 			return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
 		}
 
+		// Block deletion if puzzle is still processing to avoid orphaned R2 objects
+		if (puzzle.status === 'processing') {
+			return c.json(
+				{
+					error: 'conflict',
+					message:
+						'Cannot delete puzzle while it is being processed. Please wait for processing to complete.'
+				},
+				409
+			);
+		}
+
 		// Delete metadata from KV first
 		const metadataResult = await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
 

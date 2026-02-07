@@ -172,7 +172,7 @@ export async function generatePuzzle(
 			thumbnailSource = null;
 			const cropX = Math.floor((newW - THUMBNAIL_SIZE) / 2);
 			const cropY = Math.floor((newH - THUMBNAIL_SIZE) / 2);
-			cropped = crop(resized, cropX, cropY, THUMBNAIL_SIZE, THUMBNAIL_SIZE);
+			cropped = crop(resized, cropX, cropY, cropX + THUMBNAIL_SIZE, cropY + THUMBNAIL_SIZE);
 			resized.free();
 			resized = null;
 			jpegBytes = cropped.get_bytes_jpeg(80);
@@ -256,7 +256,13 @@ export async function generatePuzzle(
 				};
 
 				// Extract piece region from source image
-				const pieceImage = crop(sourceImage, extractLeft, extractTop, extractWidth, extractHeight);
+				const pieceImage = crop(
+					sourceImage,
+					extractLeft,
+					extractTop,
+					extractLeft + extractWidth,
+					extractTop + extractHeight
+				);
 				const piecePixels = pieceImage.get_raw_pixels();
 				const paddedPiecePixels = padPixelsToTarget(
 					piecePixels,
