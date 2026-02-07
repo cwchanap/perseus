@@ -228,7 +228,7 @@ export function getSessionToken(c: Context): string | undefined {
 
 // Set session cookie
 export function setSessionCookie(c: Context<{ Bindings: Env }>, token: string): void {
-	const isSecure = c.env.NODE_ENV !== 'development';
+	const isSecure = c.env.NODE_ENV === 'production';
 	setCookie(c, SESSION_COOKIE_NAME, token, {
 		httpOnly: true,
 		secure: isSecure,
