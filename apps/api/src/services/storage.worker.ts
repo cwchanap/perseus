@@ -145,8 +145,9 @@ export async function deletePuzzleMetadata(
 		await kv.delete(puzzleKey(puzzleId));
 		return { success: true };
 	} catch (error) {
-		console.error(`Failed to delete puzzle metadata for ${puzzleId}:`, error);
-		return { success: false, error: error as Error };
+		const normalizedError = error instanceof Error ? error : new Error(String(error));
+		console.error(`Failed to delete puzzle metadata for ${puzzleId}:`, normalizedError);
+		return { success: false, error: normalizedError };
 	}
 }
 
@@ -234,8 +235,9 @@ export async function deleteOriginalImage(
 		await bucket.delete(getOriginalKey(puzzleId));
 		return { success: true };
 	} catch (error) {
-		console.error(`Failed to delete original image for puzzle ${puzzleId}:`, error);
-		return { success: false, error: error as Error };
+		const normalizedError = error instanceof Error ? error : new Error(String(error));
+		console.error(`Failed to delete original image for puzzle ${puzzleId}:`, normalizedError);
+		return { success: false, error: normalizedError };
 	}
 }
 

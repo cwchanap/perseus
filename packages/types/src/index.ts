@@ -93,7 +93,10 @@ export function validateEdgeConfig(edges: unknown): edges is EdgeConfig {
 	if (typeof edges !== 'object' || edges === null) return false;
 	const e = edges as Record<string, unknown>;
 	const validTypes: EdgeType[] = ['flat', 'tab', 'blank'];
-	return ['top', 'right', 'bottom', 'left'].every((dir) => validTypes.includes(e[dir] as EdgeType));
+	return ['top', 'right', 'bottom', 'left'].every((dir) => {
+		const val = e[dir];
+		return typeof val === 'string' && validTypes.includes(val as EdgeType);
+	});
 }
 
 export function validateWorkflowParams(params: unknown): params is WorkflowParams {

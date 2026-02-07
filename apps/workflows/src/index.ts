@@ -126,7 +126,7 @@ export class PuzzleMetadataDO {
 		}
 
 		const currentVersion = existing.version ?? 0;
-		const previous = stored ?? existing;
+		const _previous = stored ?? existing; // Kept for potential future rollback needs
 
 		// Merge pieces arrays to avoid overwriting with stale data
 		// This handles the case where workflow sends only new row pieces
@@ -176,17 +176,20 @@ export class PuzzleMetadataDO {
 		}
 
 		try {
-			await this.state.storage.put('metadata', updated);
+			// Use a transaction for DO write - committed only after successful DO update
+			await this.state.storage.transaction(async () => {
+				await this.state.storage.put('metadata', updated);
+			});
+
+			// KV is treated as eventually consistent - write after successful DO transaction
+			// This approach avoids the need for complex rollback logic
 			await this.env.PUZZLE_METADATA.put(`puzzle:${puzzleId}`, JSON.stringify(updated));
 		} catch (error) {
 			console.error(`Failed to persist metadata for puzzle ${puzzleId}:`, error);
-			try {
-				await this.state.storage.put('metadata', previous);
-				await this.env.PUZZLE_METADATA.put(`puzzle:${puzzleId}`, JSON.stringify(previous));
-			} catch (rollbackError) {
-				console.error(`Failed to rollback metadata for puzzle ${puzzleId}:`, rollbackError);
-			}
-			return Response.json({ message: 'Failed to persist puzzle metadata' }, { status: 500 });
+			return Response.json(
+				{ message: 'Failed to persist puzzle metadata', error: String(error) },
+				{ status: 500 }
+			);
 		}
 
 		return Response.json({ success: true, version: updated.version });

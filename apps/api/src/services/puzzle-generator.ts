@@ -277,27 +277,41 @@ export async function generatePuzzle(
 				});
 				const maskPng = resvg.render().asPng();
 				const maskImage = PhotonImage.new_from_byteslice(maskPng);
-				const maskPixels = maskImage.get_raw_pixels();
 
-				if (maskPixels.length !== paddedPiecePixels.length) {
-					maskImage.free();
-					pieceImage.free();
-					throw new Error(
-						`Mask and piece image pixel count mismatch for piece ${pieceId}: ` +
-							`mask=${maskPixels.length} pixels, piece=${paddedPiecePixels.length} pixels`
-					);
+				let maskImageFreed = false;
+				let pieceImageFreed = false;
+				let maskedPiece: InstanceType<typeof PhotonImage> | null = null;
+
+				try {
+					const maskPixels = maskImage.get_raw_pixels();
+
+					if (maskPixels.length !== paddedPiecePixels.length) {
+						throw new Error(
+							`Mask and piece image pixel count mismatch for piece ${pieceId}: ` +
+								`mask=${maskPixels.length} pixels, piece=${paddedPiecePixels.length} pixels`
+						);
+					}
+
+					applyMaskAlpha(paddedPiecePixels, maskPixels);
+
+					maskedPiece = new PhotonImage(paddedPiecePixels, targetWidth, targetHeight);
+					const pngBytes = maskedPiece.get_bytes();
+
+					await writeFile(piecePath, Buffer.from(pngBytes));
+				} finally {
+					if (!maskImageFreed) {
+						maskImage.free();
+						maskImageFreed = true;
+					}
+					if (!pieceImageFreed) {
+						pieceImage.free();
+						pieceImageFreed = true;
+					}
+					if (maskedPiece) {
+						maskedPiece.free();
+						maskedPiece = null;
+					}
 				}
-
-				applyMaskAlpha(paddedPiecePixels, maskPixels);
-
-				const maskedPiece = new PhotonImage(paddedPiecePixels, targetWidth, targetHeight);
-				maskImage.free();
-				pieceImage.free();
-
-				const pngBytes = maskedPiece.get_bytes();
-				maskedPiece.free();
-
-				await writeFile(piecePath, Buffer.from(pngBytes));
 
 				pieces.push({
 					id: pieceId,

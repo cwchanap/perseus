@@ -28,8 +28,6 @@ export interface Env {
 // Create Hono app with typed env
 const app = new Hono<{ Bindings: Env }>();
 
-let loggedAllowedOriginsWarning = false;
-
 // Middleware
 app.use('*', logger());
 
@@ -52,10 +50,7 @@ app.use('*', async (c, next) => {
 		if (!env.ADMIN_PASSKEY) missingEnv.push('ADMIN_PASSKEY');
 
 		if (missingEnv.length > 0) {
-			if (!loggedAllowedOriginsWarning) {
-				loggedAllowedOriginsWarning = true;
-				console.warn(`Missing required production env vars: ${missingEnv.join(', ')}`);
-			}
+			console.warn(`Missing required production env vars: ${missingEnv.join(', ')}`);
 
 			return c.json(
 				{
