@@ -1,24 +1,24 @@
 #:schema node_modules/wrangler/config-schema.json
-name = "workflows"
+name = "workflows-dev"
 main = "src/index.ts"
 compatibility_date = "2024-12-30"
 compatibility_flags = ["nodejs_compat"]
 
 # Workflow definition
 [[workflows]]
-name = "perseus"
+name = "perseus-dev"
 binding = "PUZZLE_WORKFLOW"
 class_name = "PerseusWorkflow"
 
 # R2 bucket for puzzle assets
 [[r2_buckets]]
 binding = "PUZZLES_BUCKET"
-bucket_name = "perseus"
+bucket_name = "perseus-dev"
 
-# KV namespace for puzzle metadata - ID set via environment-specific config or env var
+# KV namespace for puzzle metadata - development namespace
 [[kv_namespaces]]
 binding = "PUZZLE_METADATA"
-id = "${PUZZLE_METADATA_KV_ID}"
+id = "5d87620636f741c09502f3d39f077ef1"
 
 [durable_objects]
 bindings = [

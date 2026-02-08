@@ -58,7 +58,7 @@ describe('generateJigsawPath', () => {
 		const path = generateJigsawPath(edges, 100, 100);
 
 		// Should have multiple curve sections
-		const curveCount = (path.match(/C /g) || []).length;
+		const curveCount = (path.match(/[Cc](?=[\d\s-])/g) || []).length;
 		expect(curveCount).toBeGreaterThan(4); // Multiple curves for all non-flat edges
 	});
 

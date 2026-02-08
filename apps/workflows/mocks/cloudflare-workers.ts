@@ -13,7 +13,7 @@ export interface WorkflowEvent<T> {
 }
 
 // Create a mock WorkflowEntrypoint class
-class _MockWorkflowEntrypoint<Env, _Params> {
+export class _MockWorkflowEntrypoint<Env, _Params> {
 	env!: Env;
 	async run(_event: WorkflowEvent<_Params>, _step: WorkflowStep): Promise<void> {
 		throw new Error('Not implemented in mock');

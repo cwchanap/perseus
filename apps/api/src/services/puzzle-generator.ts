@@ -256,39 +256,40 @@ export async function generatePuzzle(
 				};
 
 				// Extract piece region from source image
-				const pieceImage = crop(
-					sourceImage,
-					extractLeft,
-					extractTop,
-					extractLeft + extractWidth,
-					extractTop + extractHeight
-				);
-				const piecePixels = pieceImage.get_raw_pixels();
-				const paddedPiecePixels = padPixelsToTarget(
-					piecePixels,
-					extractWidth,
-					extractHeight,
-					targetWidth,
-					targetHeight,
-					padLeft,
-					padTop
-				);
-
-				// Generate jigsaw mask SVG and apply it
-				const jigsawMask = generateJigsawSvgMask(edges, targetWidth, targetHeight).toString(
-					'utf-8'
-				);
-				const resvg = new Resvg(jigsawMask, {
-					fitTo: { mode: 'width', value: targetWidth }
-				});
-				const maskPng = resvg.render().asPng();
-				const maskImage = PhotonImage.new_from_byteslice(maskPng);
-
-				let maskImageFreed = false;
-				let pieceImageFreed = false;
+				let pieceImage: InstanceType<typeof PhotonImage> | null = null;
+				let maskImage: InstanceType<typeof PhotonImage> | null = null;
 				let maskedPiece: InstanceType<typeof PhotonImage> | null = null;
+				let resvg: InstanceType<typeof Resvg> | null = null;
 
 				try {
+					pieceImage = crop(
+						sourceImage,
+						extractLeft,
+						extractTop,
+						extractLeft + extractWidth,
+						extractTop + extractHeight
+					);
+					const piecePixels = pieceImage.get_raw_pixels();
+					const paddedPiecePixels = padPixelsToTarget(
+						piecePixels,
+						extractWidth,
+						extractHeight,
+						targetWidth,
+						targetHeight,
+						padLeft,
+						padTop
+					);
+
+					// Generate jigsaw mask SVG and apply it
+					const jigsawMask = generateJigsawSvgMask(edges, targetWidth, targetHeight).toString(
+						'utf-8'
+					);
+					resvg = new Resvg(jigsawMask, {
+						fitTo: { mode: 'width', value: targetWidth }
+					});
+					const maskPng = resvg.render().asPng();
+					maskImage = PhotonImage.new_from_byteslice(maskPng);
+
 					const maskPixels = maskImage.get_raw_pixels();
 
 					if (maskPixels.length !== paddedPiecePixels.length) {
@@ -305,18 +306,16 @@ export async function generatePuzzle(
 
 					await writeFile(piecePath, Buffer.from(pngBytes));
 				} finally {
-					if (!maskImageFreed) {
-						maskImage.free();
-						maskImageFreed = true;
-					}
-					if (!pieceImageFreed) {
-						pieceImage.free();
-						pieceImageFreed = true;
-					}
 					if (maskedPiece) {
 						maskedPiece.free();
-						maskedPiece = null;
 					}
+					if (maskImage) {
+						maskImage.free();
+					}
+					if (pieceImage) {
+						pieceImage.free();
+					}
+					// resvg doesn't have a free method, it's cleaned up by GC
 				}
 
 				pieces.push({

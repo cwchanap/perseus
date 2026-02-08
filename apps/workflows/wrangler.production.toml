@@ -15,7 +15,7 @@ class_name = "PerseusWorkflow"
 binding = "PUZZLES_BUCKET"
 bucket_name = "perseus"
 
-# KV namespace for puzzle metadata - ID set via environment-specific config or env var
+# KV namespace for puzzle metadata - production namespace (set via env var or replace with actual ID)
 [[kv_namespaces]]
 binding = "PUZZLE_METADATA"
 id = "${PUZZLE_METADATA_KV_ID}"

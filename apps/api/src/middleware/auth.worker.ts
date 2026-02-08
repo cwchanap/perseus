@@ -65,12 +65,17 @@ function assertJwtSecret(env: Env): string {
 	return secret;
 }
 
-function getSessionStoreKey(token: string): string {
-	return `${SESSION_STORE_PREFIX}${token}`;
+async function getSessionStoreKey(token: string): Promise<string> {
+	const encoder = new TextEncoder();
+	const data = encoder.encode(token);
+	const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+	const hashArray = Array.from(new Uint8Array(hashBuffer));
+	const hexDigest = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+	return `${SESSION_STORE_PREFIX}${hexDigest}`;
 }
 
 async function persistSession(env: Env, token: string, expMs: number): Promise<void> {
-	const key = getSessionStoreKey(token);
+	const key = await getSessionStoreKey(token);
 	const ttlSeconds = Math.max(60, Math.ceil((expMs - Date.now()) / 1000));
 	if (env.PUZZLE_METADATA) {
 		try {
@@ -97,7 +102,7 @@ async function persistSession(env: Env, token: string, expMs: number): Promise<v
 }
 
 async function isSessionActive(env: Env, token: string): Promise<boolean> {
-	const key = getSessionStoreKey(token);
+	const key = await getSessionStoreKey(token);
 	if (env.PUZZLE_METADATA) {
 		try {
 			const stored = await env.PUZZLE_METADATA.get(key);
@@ -119,7 +124,7 @@ async function isSessionActive(env: Env, token: string): Promise<boolean> {
 }
 
 export async function revokeSession(env: Env, token: string): Promise<void> {
-	const key = getSessionStoreKey(token);
+	const key = await getSessionStoreKey(token);
 	if (env.PUZZLE_METADATA) {
 		try {
 			await env.PUZZLE_METADATA.delete(key);
