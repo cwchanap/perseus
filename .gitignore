@@ -11,6 +11,7 @@ node_modules
 apps/*/.svelte-kit
 apps/*/build
 apps/*/dist
+apps/*/dist-test
 packages/*/dist
 *.tsbuildinfo
 
