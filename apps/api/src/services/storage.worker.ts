@@ -51,11 +51,11 @@ export async function acquireLock(
 		const ttlMs = ttlSeconds * 1000;
 		await kv.put(key, lockValue, { expirationTtl: ttlSeconds });
 
-		// Verify the write to guard against TOCTOU races where another writer won
-		const stored = await kv.get(key);
-		if (stored !== lockValue) {
-			return { status: 'held' };
-		}
+		// Note: We intentionally skip verify-after-write here because KV is eventually
+		// consistent — a read immediately after write may return stale data, causing
+		// false negatives that make the lock permanently fail. The initial check-then-put
+		// already has a TOCTOU window; an unreliable verify step only makes it worse.
+		// For strict mutual exclusion, use Durable Objects.
 
 		return { status: 'acquired', token: lockValue, ttlMs };
 	} catch (error) {

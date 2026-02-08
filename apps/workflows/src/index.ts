@@ -16,6 +16,7 @@ import {
 	THUMBNAIL_SIZE,
 	MAX_IMAGE_DIMENSION,
 	validateWorkflowParams,
+	validatePuzzleMetadata,
 	createPuzzleProgress
 } from './types';
 import { generateJigsawSvgMask } from './utils/jigsaw-path';
@@ -37,6 +38,10 @@ export async function getMetadata(
 	puzzleId: string
 ): Promise<PuzzleMetadata | null> {
 	const data = await kv.get(`puzzle:${puzzleId}`, 'json');
+	if (data && !validatePuzzleMetadata(data)) {
+		console.error(`Invalid puzzle metadata for ${puzzleId}:`, data);
+		return null;
+	}
 	return data as PuzzleMetadata | null;
 }
 

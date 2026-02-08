@@ -19,5 +19,6 @@ export {
 	DEFAULT_PIECE_COUNT,
 	THUMBNAIL_SIZE,
 	validateWorkflowParams,
+	validatePuzzleMetadata,
 	createPuzzleProgress
 } from '@perseus/types';

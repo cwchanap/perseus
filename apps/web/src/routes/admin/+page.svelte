@@ -5,7 +5,7 @@
 		logout,
 		createPuzzle,
 		deletePuzzle,
-		fetchPuzzles,
+		fetchAdminPuzzles,
 		getThumbnailUrl,
 		ApiError
 	} from '$lib/services/api';
@@ -90,7 +90,7 @@
 			puzzlesError = null;
 		}
 		try {
-			puzzles = await fetchPuzzles();
+			puzzles = await fetchAdminPuzzles();
 			return puzzles;
 		} catch (e) {
 			console.error('Failed to load puzzles', e);

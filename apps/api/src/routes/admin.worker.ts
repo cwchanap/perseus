@@ -22,7 +22,7 @@ import {
 	verifySession,
 	requireAuth
 } from '../middleware/auth.worker';
-import { loginRateLimit, resetLoginAttempts } from '../middleware/rate-limit.worker';
+import { loginRateLimit } from '../middleware/rate-limit.worker';
 
 const admin = new Hono<{ Bindings: Env }>();
 
@@ -144,7 +144,7 @@ admin.post('/login', loginRateLimit, async (c) => {
 			role: 'admin'
 		});
 		setSessionCookie(c, token);
-		await resetLoginAttempts(c);
+		// Rate limit reset is handled by loginRateLimit middleware on 200 response
 
 		return c.json({ success: true });
 	} catch (error) {

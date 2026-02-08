@@ -12,6 +12,7 @@ const RATE_LIMIT_KEY_PREFIX = 'ratelimit:';
 interface RateLimitEntry {
 	attempts: number;
 	lockedUntil: number | null;
+	lastAttemptAt: number;
 }
 
 // In-memory rate limit store (fallback for development/testing)
@@ -24,6 +25,9 @@ function cleanupExpiredEntries(): void {
 	const now = Date.now();
 	for (const [key, entry] of rateLimitStore) {
 		if (entry.lockedUntil !== null && entry.lockedUntil <= now) {
+			rateLimitStore.delete(key);
+		} else if (entry.lockedUntil === null && now - entry.lastAttemptAt >= LOCKOUT_DURATION_MS) {
+			// Expire stale entries that never reached lockout
 			rateLimitStore.delete(key);
 		}
 	}
@@ -183,11 +187,11 @@ async function checkAndIncrement(
 	// Reset if lockout expired, create new, or increment existing
 	let newEntry: RateLimitEntry;
 	if (entry?.lockedUntil && entry.lockedUntil <= now) {
-		newEntry = { attempts: 1, lockedUntil: null };
+		newEntry = { attempts: 1, lockedUntil: null, lastAttemptAt: now };
 	} else if (!entry) {
-		newEntry = { attempts: 1, lockedUntil: null };
+		newEntry = { attempts: 1, lockedUntil: null, lastAttemptAt: now };
 	} else {
-		newEntry = { ...entry, attempts: entry.attempts + 1 };
+		newEntry = { ...entry, attempts: entry.attempts + 1, lastAttemptAt: now };
 	}
 
 	// Check if should lock out

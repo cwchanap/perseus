@@ -15,10 +15,14 @@ class_name = "PerseusWorkflow"
 binding = "PUZZLES_BUCKET"
 bucket_name = "perseus"
 
-# KV namespace for puzzle metadata - ID set via environment-specific config or env var
+# KV namespace for puzzle metadata
+# NOTE: Use environment-specific configs for deployment:
+#   wrangler deploy --config wrangler.dev.toml
+#   wrangler deploy --config wrangler.production.toml
+# This base ID matches the dev namespace for local development.
 [[kv_namespaces]]
 binding = "PUZZLE_METADATA"
-id = "${PUZZLE_METADATA_KV_ID}"
+id = "5d87620636f741c09502f3d39f077ef1"
 
 [durable_objects]
 bindings = [

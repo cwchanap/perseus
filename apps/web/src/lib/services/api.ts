@@ -158,6 +158,14 @@ export async function checkSession(): Promise<boolean> {
 }
 
 // Admin puzzle management
+export async function fetchAdminPuzzles(): Promise<PuzzleSummary[]> {
+	const response = await fetch(`${API_BASE}/api/admin/puzzles`, {
+		credentials: 'include'
+	});
+	const data = await handleResponse<PuzzleListResponse>(response);
+	return data.puzzles;
+}
+
 export async function createPuzzle(name: string, pieceCount: number, image: File): Promise<Puzzle> {
 	const formData = new FormData();
 	formData.append('name', name);

@@ -15,10 +15,12 @@ class_name = "PerseusWorkflow"
 binding = "PUZZLES_BUCKET"
 bucket_name = "perseus"
 
-# KV namespace for puzzle metadata - production namespace (set via env var or replace with actual ID)
+# KV namespace for puzzle metadata - production namespace
+# TODO: Replace with the actual production KV namespace ID before deploying.
+# Wrangler does NOT support shell-style variable interpolation in TOML files.
 [[kv_namespaces]]
 binding = "PUZZLE_METADATA"
-id = "${PUZZLE_METADATA_KV_ID}"
+id = "REPLACE_WITH_PRODUCTION_KV_NAMESPACE_ID"
 
 [durable_objects]
 bindings = [
