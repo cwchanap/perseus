@@ -11,7 +11,8 @@ const SESSION_STORE_PREFIX = 'session:';
 // In-memory fallback for local development ONLY. Not safe for production use —
 // state is not shared across Worker isolates and is lost on restart.
 const sessionFallbackStore = new Map<string, number>();
-let loggedSessionStoreFallback = false;
+const SESSION_WARN_INTERVAL_MS = 5 * 60 * 1000; // Re-log warnings every 5 minutes
+let lastSessionStoreFallbackWarn = 0;
 
 function cleanupExpiredSessions(): void {
 	const now = Date.now();
@@ -91,8 +92,9 @@ async function persistSession(env: Env, token: string, expMs: number): Promise<v
 			'KV namespace PUZZLE_METADATA is not configured. Session storage requires KV in production.'
 		);
 	}
-	if (!loggedSessionStoreFallback) {
-		loggedSessionStoreFallback = true;
+	const warnNow = Date.now();
+	if (warnNow - lastSessionStoreFallbackWarn >= SESSION_WARN_INTERVAL_MS) {
+		lastSessionStoreFallbackWarn = warnNow;
 		console.warn(
 			'[DEV ONLY] Session storage using in-memory fallback — not distributed, not persisted across restarts'
 		);
@@ -106,9 +108,11 @@ async function isSessionActive(env: Env, token: string): Promise<boolean> {
 	if (env.PUZZLE_METADATA) {
 		try {
 			const stored = await env.PUZZLE_METADATA.get(key);
-			if (stored !== null) return true;
+			// KV is authoritative — if it returns null, session is not active
+			return stored !== null;
 		} catch (error) {
 			console.error('Failed to read session store, checking in-memory fallback:', error);
+			// Fall through to in-memory only on KV read failure
 		}
 	}
 	// In-memory fallback is only available in development
@@ -130,6 +134,10 @@ export async function revokeSession(env: Env, token: string): Promise<void> {
 			await env.PUZZLE_METADATA.delete(key);
 		} catch (error) {
 			console.error('Failed to delete session from store:', error);
+			// In production, re-throw so callers know the session wasn't revoked
+			if (env.NODE_ENV !== 'development') {
+				throw error;
+			}
 		}
 	}
 	// Always clean up fallback store regardless of environment (idempotent)

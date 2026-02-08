@@ -209,8 +209,9 @@
 			await deletePuzzle(puzzleId);
 			clearProgress(puzzleId);
 			await loadPuzzles();
-		} catch (_e) {
-			alert('Failed to delete puzzle');
+		} catch (e) {
+			const message = e instanceof ApiError ? e.message : 'Failed to delete puzzle';
+			alert(message);
 		} finally {
 			deletingId = null;
 		}
@@ -460,8 +461,9 @@
 								</div>
 								<button
 									onclick={() => handleDelete(puzzle.id)}
-									disabled={deletingId === puzzle.id}
+									disabled={deletingId === puzzle.id || puzzle.status === 'processing'}
 									class="rounded-md bg-red-100 px-3 py-1 text-sm text-red-600 hover:bg-red-200 disabled:opacity-50"
+									title={puzzle.status === 'processing' ? 'Cannot delete while processing' : ''}
 								>
 									{deletingId === puzzle.id ? 'Deleting...' : 'Delete'}
 								</button>

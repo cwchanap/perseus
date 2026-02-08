@@ -333,7 +333,7 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 				// Center crop to exact thumbnail size
 				const cropX = Math.floor((newW - THUMBNAIL_SIZE) / 2);
 				const cropY = Math.floor((newH - THUMBNAIL_SIZE) / 2);
-				const cropped = crop(resized, cropX, cropY, THUMBNAIL_SIZE, THUMBNAIL_SIZE);
+				const cropped = crop(resized, cropX, cropY, cropX + THUMBNAIL_SIZE, cropY + THUMBNAIL_SIZE);
 				resized.free();
 
 				// Encode as JPEG
@@ -412,7 +412,13 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 						};
 
 						// Extract piece region from source image using crop function
-						const pieceImage = crop(srcImage, extractLeft, extractTop, extractWidth, extractHeight);
+						const pieceImage = crop(
+							srcImage,
+							extractLeft,
+							extractTop,
+							extractLeft + extractWidth,
+							extractTop + extractHeight
+						);
 
 						// Generate jigsaw mask SVG using target dimensions
 						const maskSvg = generateJigsawSvgMask(edges, targetWidth, targetHeight);

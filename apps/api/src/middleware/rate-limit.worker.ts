@@ -16,8 +16,18 @@ interface RateLimitEntry {
 
 // In-memory rate limit store (fallback for development/testing)
 const rateLimitStore = new Map<string, RateLimitEntry>();
-let loggedInMemoryFallback = false;
-let warnedMissingIP = false;
+const WARN_INTERVAL_MS = 5 * 60 * 1000; // Re-log warnings every 5 minutes
+let lastInMemoryFallbackWarn = 0;
+let lastMissingIPWarn = 0;
+
+function cleanupExpiredEntries(): void {
+	const now = Date.now();
+	for (const [key, entry] of rateLimitStore) {
+		if (entry.lockedUntil !== null && entry.lockedUntil <= now) {
+			rateLimitStore.delete(key);
+		}
+	}
+}
 
 function isRateLimitEntry(value: unknown): value is RateLimitEntry {
 	if (typeof value !== 'object' || value === null) return false;
@@ -51,8 +61,9 @@ function getClientIP(c: Context): string {
 	// as each request creates a new bucket. This is intentional to avoid DoS via shared bucket,
 	// but means rate limiting is IP-dependent and degrades to per-request when IP unavailable.
 	// Note: c.req.ip is not available in all Hono/Worker environments
-	if (!warnedMissingIP) {
-		warnedMissingIP = true;
+	const now = Date.now();
+	if (now - lastMissingIPWarn >= WARN_INTERVAL_MS) {
+		lastMissingIPWarn = now;
 		console.warn(
 			'Rate limiting: No client IP available, using per-request UUID (rate limiting ineffective)'
 		);
@@ -94,21 +105,20 @@ async function getRateLimitEntry(
 	// PRODUCTION IMPACT: In-memory storage is not distributed across workers,
 	// so rate limiting will only work within a single worker instance.
 	// Multiple worker instances can each have their own rate limit counters.
-	if (env === 'production') {
-		if (!loggedInMemoryFallback) {
-			loggedInMemoryFallback = true;
+	const warnNow = Date.now();
+	if (warnNow - lastInMemoryFallbackWarn >= WARN_INTERVAL_MS) {
+		lastInMemoryFallbackWarn = warnNow;
+		if (env === 'production') {
 			console.error(
 				'[CRITICAL] Rate limiting using in-memory storage in production - KV namespace not configured. Rate limiting is per-worker, not distributed.'
 			);
-		}
-	} else {
-		if (!loggedInMemoryFallback) {
-			loggedInMemoryFallback = true;
+		} else {
 			console.warn(
 				'Rate limiting using in-memory storage (not distributed) - KV namespace not configured'
 			);
 		}
 	}
+	cleanupExpiredEntries();
 	return rateLimitStore.get(key) || null;
 }
 
@@ -132,7 +142,7 @@ async function setRateLimitEntry(
 	}
 }
 
-// Delete rate limit entry from KV or memory
+// Delete rate limit entry from KV and memory
 async function deleteRateLimitEntry(kv: KVNamespace | undefined, key: string): Promise<void> {
 	if (kv) {
 		try {
@@ -140,9 +150,9 @@ async function deleteRateLimitEntry(kv: KVNamespace | undefined, key: string): P
 		} catch (error) {
 			console.error('KV delete failed, continuing:', error);
 		}
-	} else {
-		rateLimitStore.delete(key);
 	}
+	// Always clean in-memory store to avoid stale entries from KV write fallback
+	rateLimitStore.delete(key);
 }
 
 // Check lockout status and optionally increment attempts in a single read-modify-write.
