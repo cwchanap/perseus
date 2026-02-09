@@ -4,6 +4,6 @@ export default defineConfig({
 	test: {
 		globals: true,
 		include: ['src/**/*.test.ts'],
-		exclude: ['src/__tests__/**'] // Exclude old bun:test based tests
+		exclude: ['src/__tests__/puzzles.test.ts'] // Depends on Bun runtime (filesystem-based server)
 	}
 });

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'bun:test';
+import { describe, it, expect, beforeEach } from 'vitest';
 import {
 	__getImageToolingForTests,
 	__resetImageToolingForTests
@@ -81,7 +81,10 @@ describe('getImageTooling (lazy loader)', () => {
 				async () => ({})
 			)
 		).rejects.toMatchObject({
-			message: expect.stringContaining('Missing exports from image processing modules')
+			message: expect.stringContaining('not available'),
+			cause: expect.objectContaining({
+				message: expect.stringContaining('Missing exports from image processing modules')
+			})
 		});
 	});
 
@@ -92,7 +95,9 @@ describe('getImageTooling (lazy loader)', () => {
 				async () => ({})
 			)
 		).rejects.toMatchObject({
-			message: expect.stringContaining('photon.PhotonImage')
+			cause: expect.objectContaining({
+				message: expect.stringContaining('photon.PhotonImage')
+			})
 		});
 
 		__resetImageToolingForTests();
@@ -108,7 +113,9 @@ describe('getImageTooling (lazy loader)', () => {
 				async () => ({})
 			)
 		).rejects.toMatchObject({
-			message: expect.stringContaining('resvg.Resvg')
+			cause: expect.objectContaining({
+				message: expect.stringContaining('resvg.Resvg')
+			})
 		});
 	});
 });

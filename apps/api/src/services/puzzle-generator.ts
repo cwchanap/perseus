@@ -281,9 +281,7 @@ export async function generatePuzzle(
 					);
 
 					// Generate jigsaw mask SVG and apply it
-					const jigsawMask = generateJigsawSvgMask(edges, targetWidth, targetHeight).toString(
-						'utf-8'
-					);
+					const jigsawMask = generateJigsawSvgMask(edges, targetWidth, targetHeight);
 					resvg = new Resvg(jigsawMask, {
 						fitTo: { mode: 'width', value: targetWidth }
 					});

@@ -16,8 +16,10 @@ binding = "PUZZLES_BUCKET"
 bucket_name = "perseus"
 
 # KV namespace for puzzle metadata - production namespace
-# TODO: Replace with the actual production KV namespace ID before deploying.
-# Wrangler does NOT support shell-style variable interpolation in TOML files.
+# IMPORTANT: Replace the id below with the actual production KV namespace ID.
+# The pre-deploy script (scripts/validate-wrangler-config.sh) will block deployment
+# if the placeholder is still present. Wrangler does NOT support shell-style variable
+# interpolation in TOML files.
 [[kv_namespaces]]
 binding = "PUZZLE_METADATA"
 id = "REPLACE_WITH_PRODUCTION_KV_NAMESPACE_ID"

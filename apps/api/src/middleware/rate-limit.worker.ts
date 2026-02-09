@@ -38,9 +38,13 @@ function isRateLimitEntry(value: unknown): value is RateLimitEntry {
 	const entry = value as Record<string, unknown>;
 	const attempts = entry.attempts;
 	const lockedUntil = entry.lockedUntil;
+	const lastAttemptAt = entry.lastAttemptAt;
 	if (typeof attempts !== 'number' || !Number.isFinite(attempts)) return false;
-	if (lockedUntil === null) return true;
-	return typeof lockedUntil === 'number' && Number.isFinite(lockedUntil);
+	if (typeof lastAttemptAt !== 'number' || !Number.isFinite(lastAttemptAt)) return false;
+	if (lockedUntil !== null && (typeof lockedUntil !== 'number' || !Number.isFinite(lockedUntil))) {
+		return false;
+	}
+	return true;
 }
 
 function getClientIP(c: Context): string {

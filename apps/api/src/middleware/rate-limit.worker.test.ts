@@ -84,7 +84,8 @@ describe('Rate Limit Middleware', () => {
 				key,
 				JSON.stringify({
 					attempts: 3,
-					lockedUntil: null
+					lockedUntil: null,
+					lastAttemptAt: Date.now()
 				})
 			);
 
@@ -103,7 +104,8 @@ describe('Rate Limit Middleware', () => {
 				key,
 				JSON.stringify({
 					attempts: 4,
-					lockedUntil: null
+					lockedUntil: null,
+					lastAttemptAt: Date.now()
 				})
 			);
 
@@ -130,7 +132,8 @@ describe('Rate Limit Middleware', () => {
 				key,
 				JSON.stringify({
 					attempts: 5,
-					lockedUntil: lockoutUntil
+					lockedUntil: lockoutUntil,
+					lastAttemptAt: Date.now()
 				})
 			);
 
@@ -178,7 +181,8 @@ describe('Rate Limit Middleware', () => {
 				key,
 				JSON.stringify({
 					attempts: 3,
-					lockedUntil: null
+					lockedUntil: null,
+					lastAttemptAt: Date.now()
 				})
 			);
 
@@ -233,7 +237,8 @@ describe('Rate Limit Middleware', () => {
 				key,
 				JSON.stringify({
 					attempts: 5,
-					lockedUntil: expiredLockout
+					lockedUntil: expiredLockout,
+					lastAttemptAt: Date.now() - 2000
 				})
 			);
 

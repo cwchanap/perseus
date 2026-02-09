@@ -49,13 +49,19 @@ function isValidSessionPayload(obj: unknown): obj is SessionPayload {
 	);
 }
 
-function bytesToBase64(bytes: Uint8Array): string {
+function bytesToBase64URL(bytes: Uint8Array): string {
 	const chunkSize = 0x8000;
 	let binary = '';
 	for (let offset = 0; offset < bytes.length; offset += chunkSize) {
 		binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
 	}
-	return btoa(binary);
+	return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function base64URLToBytes(b64url: string): Uint8Array {
+	const padded =
+		b64url.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (b64url.length % 4)) % 4);
+	return Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));
 }
 
 function assertJwtSecret(env: Env): string {
@@ -160,7 +166,7 @@ export async function createSession(
 	// Unicode-safe base64 encoding
 	const payloadJson = JSON.stringify(payload);
 	const payloadBytes = new TextEncoder().encode(payloadJson);
-	const payloadB64 = bytesToBase64(payloadBytes);
+	const payloadB64 = bytesToBase64URL(payloadBytes);
 
 	const secret = assertJwtSecret(env);
 	const encoder = new TextEncoder();
@@ -173,7 +179,7 @@ export async function createSession(
 	);
 
 	const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(payloadB64));
-	const signatureB64 = bytesToBase64(new Uint8Array(signature));
+	const signatureB64 = bytesToBase64URL(new Uint8Array(signature));
 
 	const token = `${payloadB64}.${signatureB64}`;
 	await persistSession(env, token, payload.exp);
@@ -199,13 +205,18 @@ export async function verifySession(env: Env, token: string): Promise<SessionPay
 			['verify']
 		);
 
-		const signature = Uint8Array.from(atob(signatureB64), (c) => c.charCodeAt(0));
-		const isValid = await crypto.subtle.verify('HMAC', key, signature, encoder.encode(payloadB64));
+		const signatureBytes = base64URLToBytes(signatureB64);
+		const isValid = await crypto.subtle.verify(
+			'HMAC',
+			key,
+			signatureBytes.buffer as ArrayBuffer,
+			encoder.encode(payloadB64)
+		);
 
 		if (!isValid) return null;
 
 		// Parse and validate payload
-		const payloadBytes = Uint8Array.from(atob(payloadB64), (c) => c.charCodeAt(0));
+		const payloadBytes = base64URLToBytes(payloadB64);
 		const payloadJson = new TextDecoder().decode(payloadBytes);
 		const parsed = JSON.parse(payloadJson);
 

@@ -39,10 +39,39 @@ export async function getMetadata(
 ): Promise<PuzzleMetadata | null> {
 	const data = await kv.get(`puzzle:${puzzleId}`, 'json');
 	if (data && !validatePuzzleMetadata(data)) {
-		console.error(`Invalid puzzle metadata for ${puzzleId}:`, data);
+		const diagnostics = getValidationDiagnostics(data);
+		console.error(`Invalid puzzle metadata for ${puzzleId}: ${diagnostics}`);
 		return null;
 	}
 	return data as PuzzleMetadata | null;
+}
+
+function getValidationDiagnostics(meta: unknown): string {
+	const issues: string[] = [];
+	if (typeof meta !== 'object' || meta === null) {
+		return 'not an object';
+	}
+	const m = meta as Record<string, unknown>;
+	if (typeof m.id !== 'string') issues.push('missing or invalid id');
+	if (typeof m.name !== 'string') issues.push('missing or invalid name');
+	if (typeof m.pieceCount !== 'number') issues.push('missing or invalid pieceCount');
+	if (typeof m.gridCols !== 'number') issues.push('missing or invalid gridCols');
+	if (typeof m.gridRows !== 'number') issues.push('missing or invalid gridRows');
+	if (typeof m.imageWidth !== 'number') issues.push('missing or invalid imageWidth');
+	if (typeof m.imageHeight !== 'number') issues.push('missing or invalid imageHeight');
+	if (typeof m.createdAt !== 'number') issues.push('missing or invalid createdAt');
+	if (typeof m.version !== 'number') issues.push('missing or invalid version');
+	if (!Array.isArray(m.pieces)) issues.push('pieces is not an array');
+	if (typeof m.status !== 'string') issues.push('missing or invalid status');
+	if (
+		typeof m.gridCols === 'number' &&
+		typeof m.gridRows === 'number' &&
+		typeof m.pieceCount === 'number' &&
+		m.gridCols * m.gridRows !== m.pieceCount
+	) {
+		issues.push(`grid math mismatch: ${m.gridCols}x${m.gridRows} != ${m.pieceCount}`);
+	}
+	return issues.length > 0 ? issues.join(', ') : 'unknown validation failure';
 }
 
 export async function updateMetadata(
@@ -180,21 +209,36 @@ export class PuzzleMetadataDO {
 			} as PuzzleMetadata;
 		}
 
+		// DO is the source of truth — its failure is fatal
 		try {
-			// Use a transaction for DO write - committed only after successful DO update
 			await this.state.storage.transaction(async () => {
 				await this.state.storage.put('metadata', updated);
 			});
-
-			// KV is treated as eventually consistent - write after successful DO transaction
-			// This approach avoids the need for complex rollback logic
-			await this.env.PUZZLE_METADATA.put(`puzzle:${puzzleId}`, JSON.stringify(updated));
 		} catch (error) {
-			console.error(`Failed to persist metadata for puzzle ${puzzleId}:`, error);
+			console.error(`Failed to persist metadata in DO for puzzle ${puzzleId}:`, error);
 			return Response.json(
 				{ message: 'Failed to persist puzzle metadata', error: String(error) },
 				{ status: 500 }
 			);
+		}
+
+		// KV is eventually consistent — retry with backoff, but don't fail the request
+		const kvMaxRetries = 3;
+		for (let attempt = 0; attempt < kvMaxRetries; attempt++) {
+			try {
+				await this.env.PUZZLE_METADATA.put(`puzzle:${puzzleId}`, JSON.stringify(updated));
+				break; // Success
+			} catch (kvError) {
+				if (attempt < kvMaxRetries - 1) {
+					const delay = 100 * Math.pow(2, attempt);
+					await new Promise((resolve) => setTimeout(resolve, delay));
+				} else {
+					console.warn(
+						`KV write failed for puzzle ${puzzleId} after ${kvMaxRetries} attempts, DO is authoritative:`,
+						kvError
+					);
+				}
+			}
 		}
 
 		return Response.json({ success: true, version: updated.version });
@@ -362,136 +406,142 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 					const { Resvg } = await import('@cf-wasm/resvg');
 					const bytes = await loadOriginalImageBytes(this.env, puzzleId);
 					const srcImage = PhotonImage.new_from_byteslice(bytes);
-					const srcW = srcImage.get_width();
-					const srcH = srcImage.get_height();
-
-					const basePieceWidth = Math.floor(srcW / cols);
-					const extraWidth = srcW % cols;
-					const basePieceHeight = Math.floor(srcH / rows);
-					const extraHeight = srcH % rows;
 
 					const pieces: PuzzlePiece[] = [];
 
-					for (let col = 0; col < cols; col++) {
-						const pieceId = row * cols + col;
-						if (pieceId >= totalPieces) {
-							break;
+					try {
+						const srcW = srcImage.get_width();
+						const srcH = srcImage.get_height();
+
+						const basePieceWidth = Math.floor(srcW / cols);
+						const extraWidth = srcW % cols;
+						const basePieceHeight = Math.floor(srcH / rows);
+						const extraHeight = srcH % rows;
+
+						for (let col = 0; col < cols; col++) {
+							const pieceId = row * cols + col;
+							if (pieceId >= totalPieces) {
+								break;
+							}
+
+							// Calculate base piece dimensions
+							const baseWidth = basePieceWidth + (col === cols - 1 ? extraWidth : 0);
+							const baseHeight = basePieceHeight + (row === rows - 1 ? extraHeight : 0);
+
+							// Calculate overlap for jigsaw tabs
+							const overlapX = Math.floor(baseWidth * TAB_RATIO);
+							const overlapY = Math.floor(baseHeight * TAB_RATIO);
+
+							// Target size: base piece + overlap on all sides (140% of base)
+							const targetWidth = baseWidth + 2 * overlapX;
+							const targetHeight = baseHeight + 2 * overlapY;
+
+							// Calculate extraction bounds
+							const baseLeft = col * basePieceWidth;
+							const baseTop = row * basePieceHeight;
+							const idealLeft = baseLeft - overlapX;
+							const idealTop = baseTop - overlapY;
+
+							// Clamp extraction to image boundaries
+							const extractLeft = Math.max(0, idealLeft);
+							const extractTop = Math.max(0, idealTop);
+							const extractRight = Math.min(srcW, idealLeft + targetWidth);
+							const extractBottom = Math.min(srcH, idealTop + targetHeight);
+
+							const extractWidth = extractRight - extractLeft;
+							const extractHeight = extractBottom - extractTop;
+							const offsetX = extractLeft - idealLeft;
+							const offsetY = extractTop - idealTop;
+
+							// Determine edge types using deterministic calculation
+							// This ensures edges are consistent across workflow steps
+							const edges: EdgeConfig = {
+								top: getTopEdge(row, col, rows),
+								right: getRightEdge(row, col, cols),
+								bottom: getBottomEdge(row, col, rows),
+								left: getLeftEdge(row, col, cols)
+							};
+
+							// Extract piece region from source image using crop function
+							let pieceImage = null;
+							let maskImage = null;
+							let maskedPiece = null;
+
+							try {
+								pieceImage = crop(
+									srcImage,
+									extractLeft,
+									extractTop,
+									extractLeft + extractWidth,
+									extractTop + extractHeight
+								);
+
+								// Generate jigsaw mask SVG using target dimensions
+								const maskSvg = generateJigsawSvgMask(edges, targetWidth, targetHeight);
+
+								// Render SVG mask to PNG using Resvg
+								const resvg = new Resvg(maskSvg, {
+									fitTo: { mode: 'width', value: targetWidth }
+								});
+								const maskPng = resvg.render().asPng();
+
+								// Load mask as PhotonImage
+								maskImage = PhotonImage.new_from_byteslice(maskPng);
+
+								// Get raw RGBA pixel data for both images
+								const maskPixels = maskImage.get_raw_pixels();
+								const piecePixels = pieceImage.get_raw_pixels();
+								const paddedPiecePixels = padPixelsToTarget(
+									piecePixels,
+									extractWidth,
+									extractHeight,
+									targetWidth,
+									targetHeight,
+									offsetX,
+									offsetY
+								);
+
+								// Validate sizes match before copying alpha channel
+								if (maskPixels.length !== paddedPiecePixels.length) {
+									throw new Error(
+										`Mask and piece image pixel count mismatch for piece ${pieceId}: ` +
+											`mask=${maskPixels.length} pixels, piece=${paddedPiecePixels.length} pixels`
+									);
+								}
+
+								// Copy alpha channel from mask to piece (4th byte in each RGBA pixel)
+								applyMaskAlpha(paddedPiecePixels, maskPixels);
+
+								// Create new PhotonImage from modified raw RGBA bytes
+								maskedPiece = new PhotonImage(paddedPiecePixels, targetWidth, targetHeight);
+
+								// Encode masked piece as PNG
+								const pngBytes = maskedPiece.get_bytes();
+
+								// Upload piece to R2
+								await this.env.PUZZLES_BUCKET.put(
+									`puzzles/${puzzleId}/pieces/${pieceId}.png`,
+									pngBytes,
+									{ httpMetadata: { contentType: 'image/png' } }
+								);
+							} finally {
+								if (maskedPiece) maskedPiece.free();
+								if (maskImage) maskImage.free();
+								if (pieceImage) pieceImage.free();
+							}
+
+							pieces.push({
+								id: pieceId,
+								puzzleId,
+								correctX: col,
+								correctY: row,
+								edges,
+								imagePath: `pieces/${pieceId}.png`
+							});
 						}
-
-						// Calculate base piece dimensions
-						const baseWidth = basePieceWidth + (col === cols - 1 ? extraWidth : 0);
-						const baseHeight = basePieceHeight + (row === rows - 1 ? extraHeight : 0);
-
-						// Calculate overlap for jigsaw tabs
-						const overlapX = Math.floor(baseWidth * TAB_RATIO);
-						const overlapY = Math.floor(baseHeight * TAB_RATIO);
-
-						// Target size: base piece + overlap on all sides (140% of base)
-						const targetWidth = baseWidth + 2 * overlapX;
-						const targetHeight = baseHeight + 2 * overlapY;
-
-						// Calculate extraction bounds
-						const baseLeft = col * basePieceWidth;
-						const baseTop = row * basePieceHeight;
-						const idealLeft = baseLeft - overlapX;
-						const idealTop = baseTop - overlapY;
-
-						// Clamp extraction to image boundaries
-						const extractLeft = Math.max(0, idealLeft);
-						const extractTop = Math.max(0, idealTop);
-						const extractRight = Math.min(srcW, idealLeft + targetWidth);
-						const extractBottom = Math.min(srcH, idealTop + targetHeight);
-
-						const extractWidth = extractRight - extractLeft;
-						const extractHeight = extractBottom - extractTop;
-						const offsetX = extractLeft - idealLeft;
-						const offsetY = extractTop - idealTop;
-
-						// Determine edge types using deterministic calculation
-						// This ensures edges are consistent across workflow steps
-						const edges: EdgeConfig = {
-							top: getTopEdge(row, col, rows),
-							right: getRightEdge(row, col, cols),
-							bottom: getBottomEdge(row, col, rows),
-							left: getLeftEdge(row, col, cols)
-						};
-
-						// Extract piece region from source image using crop function
-						const pieceImage = crop(
-							srcImage,
-							extractLeft,
-							extractTop,
-							extractLeft + extractWidth,
-							extractTop + extractHeight
-						);
-
-						// Generate jigsaw mask SVG using target dimensions
-						const maskSvg = generateJigsawSvgMask(edges, targetWidth, targetHeight);
-
-						// Render SVG mask to PNG using Resvg
-						const resvg = new Resvg(maskSvg, {
-							fitTo: { mode: 'width', value: targetWidth }
-						});
-						const maskPng = resvg.render().asPng();
-
-						// Load mask as PhotonImage
-						const maskImage = PhotonImage.new_from_byteslice(maskPng);
-
-						// Get raw RGBA pixel data for both images
-						const maskPixels = maskImage.get_raw_pixels();
-						const piecePixels = pieceImage.get_raw_pixels();
-						const paddedPiecePixels = padPixelsToTarget(
-							piecePixels,
-							extractWidth,
-							extractHeight,
-							targetWidth,
-							targetHeight,
-							offsetX,
-							offsetY
-						);
-
-						// Validate sizes match before copying alpha channel
-						if (maskPixels.length !== paddedPiecePixels.length) {
-							maskImage.free();
-							pieceImage.free();
-							throw new Error(
-								`Mask and piece image pixel count mismatch for piece ${pieceId}: ` +
-									`mask=${maskPixels.length} pixels, piece=${paddedPiecePixels.length} pixels`
-							);
-						}
-
-						// Copy alpha channel from mask to piece (4th byte in each RGBA pixel)
-						applyMaskAlpha(paddedPiecePixels, maskPixels);
-
-						// Create new PhotonImage from modified raw RGBA bytes
-						const maskedPiece = new PhotonImage(paddedPiecePixels, targetWidth, targetHeight);
-
-						// Free original images
-						maskImage.free();
-						pieceImage.free();
-
-						// Encode masked piece as PNG
-						const pngBytes = maskedPiece.get_bytes();
-						maskedPiece.free();
-
-						// Upload piece to R2
-						await this.env.PUZZLES_BUCKET.put(
-							`puzzles/${puzzleId}/pieces/${pieceId}.png`,
-							pngBytes,
-							{ httpMetadata: { contentType: 'image/png' } }
-						);
-
-						pieces.push({
-							id: pieceId,
-							puzzleId,
-							correctX: col,
-							correctY: row,
-							edges,
-							imagePath: `pieces/${pieceId}.png`
-						});
+					} finally {
+						srcImage.free();
 					}
-
-					srcImage.free();
 
 					// Update progress in metadata
 					const generatedPieces = Math.min((row + 1) * cols, totalPieces);

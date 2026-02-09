@@ -104,7 +104,7 @@ describe('Session Token Management', () => {
 				role: 'admin'
 			});
 
-			// Tamper with the payload
+			// Tamper with the payload (use Base64URL encoding to match production format)
 			const [, signature] = token.split('.');
 			const fakePayload = btoa(
 				JSON.stringify({
@@ -114,7 +114,10 @@ describe('Session Token Management', () => {
 					iat: Date.now(),
 					exp: Date.now() + 100000
 				})
-			);
+			)
+				.replace(/\+/g, '-')
+				.replace(/\//g, '_')
+				.replace(/=+$/g, '');
 			const tamperedToken = `${fakePayload}.${signature}`;
 
 			const session = await verifySession(mockEnv as Env, tamperedToken);
@@ -150,7 +153,10 @@ describe('Session Token Management', () => {
 
 			const encoder = new TextEncoder();
 			const payloadJson = JSON.stringify(expiredPayload);
-			const payloadB64 = btoa(payloadJson);
+			const payloadB64 = btoa(payloadJson)
+				.replace(/\+/g, '-')
+				.replace(/\//g, '_')
+				.replace(/=+$/g, '');
 
 			// Create valid signature for the expired payload
 			const key = await crypto.subtle.importKey(
@@ -162,7 +168,10 @@ describe('Session Token Management', () => {
 			);
 
 			const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(payloadB64));
-			const signatureB64 = btoa(String.fromCharCode(...new Uint8Array(signature)));
+			const signatureB64 = btoa(String.fromCharCode(...new Uint8Array(signature)))
+				.replace(/\+/g, '-')
+				.replace(/\//g, '_')
+				.replace(/=+$/g, '');
 
 			const expiredToken = `${payloadB64}.${signatureB64}`;
 			await (mockEnv as Env).PUZZLE_METADATA?.put?.(`session:${expiredToken}`, '1');
@@ -328,20 +337,20 @@ describe('requireAuth with valid token', () => {
 			['sign']
 		);
 
-		// Helper function from auth.worker.ts
-		function bytesToBase64(bytes: Uint8Array): string {
+		// Helper function from auth.worker.ts (Base64URL variant)
+		function bytesToBase64URL(bytes: Uint8Array): string {
 			const CHUNK_SIZE = 0x8000;
 			const chunks = [];
 			for (let i = 0; i < bytes.length; i += CHUNK_SIZE) {
 				const chunk = bytes.subarray(i, i + CHUNK_SIZE);
 				chunks.push(String.fromCharCode.apply(null, Array.from(chunk)));
 			}
-			return btoa(chunks.join(''));
+			return btoa(chunks.join('')).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 		}
 
-		const payloadB64 = bytesToBase64(new Uint8Array(payloadBytes));
+		const payloadB64 = bytesToBase64URL(new Uint8Array(payloadBytes));
 		const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(payloadB64));
-		const signatureB64 = bytesToBase64(new Uint8Array(signature));
+		const signatureB64 = bytesToBase64URL(new Uint8Array(signature));
 		const expiredToken = `${payloadB64}.${signatureB64}`;
 		await (mockEnv as Env).PUZZLE_METADATA?.put?.(`session:${expiredToken}`, '1');
 
