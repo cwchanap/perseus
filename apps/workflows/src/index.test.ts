@@ -1,11 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import {
-	updateMetadata,
-	PerseusWorkflow,
-	MAX_IMAGE_BYTES,
-	padPixelsToTarget,
-	applyMaskAlpha
-} from './index';
+import { PerseusWorkflow } from './index';
+import { MAX_IMAGE_BYTES, updateMetadata, padPixelsToTarget, applyMaskAlpha } from './helpers';
 import type { PuzzleMetadata } from './types';
 import { MAX_IMAGE_DIMENSION } from './types';
 import type { Env } from './index';

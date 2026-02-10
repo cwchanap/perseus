@@ -157,7 +157,14 @@ admin.post('/login', loginRateLimit, async (c) => {
 admin.post('/logout', async (c) => {
 	const token = getSessionToken(c);
 	if (token) {
-		await revokeSession(c.env, token);
+		try {
+			await revokeSession(c.env, token);
+		} catch (error) {
+			// Log the error but continue to clear the cookie
+			// This ensures the user can still "log out" locally even if
+			// server-side revocation fails (e.g., KV issues in production)
+			console.error('Failed to revoke session server-side:', error);
+		}
 	}
 	clearSessionCookie(c);
 	return c.json({ success: true });

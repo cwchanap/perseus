@@ -34,6 +34,7 @@ app.use('*', logger());
 app.use('*', async (c, next) => {
 	const env = c.env;
 	const isProd = env.NODE_ENV === 'production';
+	const isDev = env.NODE_ENV === 'development';
 
 	const DEFAULT_ALLOWED_ORIGINS = ['http://localhost:5173', 'http://localhost:4173'];
 	const envOrigins = (env.ALLOWED_ORIGINS || '')
@@ -41,16 +42,18 @@ app.use('*', async (c, next) => {
 		.map((origin) => origin.trim())
 		.filter((origin) => origin.length > 0);
 
-	const allowedOrigins = envOrigins.length > 0 ? envOrigins : isProd ? [] : DEFAULT_ALLOWED_ORIGINS;
+	// Fail-closed: only allow localhost origins in explicit development mode
+	// When NODE_ENV is unset or production, require explicit ALLOWED_ORIGINS
+	const allowedOrigins = envOrigins.length > 0 ? envOrigins : isDev ? DEFAULT_ALLOWED_ORIGINS : [];
 
-	if (isProd) {
+	if (isProd || !isDev) {
 		const missingEnv = [];
 		if (allowedOrigins.length === 0) missingEnv.push('ALLOWED_ORIGINS');
-		if (!env.JWT_SECRET) missingEnv.push('JWT_SECRET');
-		if (!env.ADMIN_PASSKEY) missingEnv.push('ADMIN_PASSKEY');
+		if (isProd && !env.JWT_SECRET) missingEnv.push('JWT_SECRET');
+		if (isProd && !env.ADMIN_PASSKEY) missingEnv.push('ADMIN_PASSKEY');
 
 		if (missingEnv.length > 0) {
-			console.warn(`Missing required production env vars: ${missingEnv.join(', ')}`);
+			console.warn(`Missing required env vars: ${missingEnv.join(', ')}`);
 
 			return c.json(
 				{
