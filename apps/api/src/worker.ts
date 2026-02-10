@@ -42,11 +42,13 @@ app.use('*', async (c, next) => {
 		.map((origin) => origin.trim())
 		.filter((origin) => origin.length > 0);
 
-	// Fail-closed: only allow localhost origins in explicit development mode
-	// When NODE_ENV is unset or production, require explicit ALLOWED_ORIGINS
-	const allowedOrigins = envOrigins.length > 0 ? envOrigins : isDev ? DEFAULT_ALLOWED_ORIGINS : [];
+	// Fail-closed: only allow localhost origins in development mode (explicit or unset)
+	// When NODE_ENV is explicitly set to production, require explicit ALLOWED_ORIGINS
+	const isExplicitDev = isDev || !env.NODE_ENV;
+	const allowedOrigins =
+		envOrigins.length > 0 ? envOrigins : isExplicitDev ? DEFAULT_ALLOWED_ORIGINS : [];
 
-	if (isProd || !isDev) {
+	if (isProd) {
 		const missingEnv = [];
 		if (allowedOrigins.length === 0) missingEnv.push('ALLOWED_ORIGINS');
 		if (isProd && !env.JWT_SECRET) missingEnv.push('JWT_SECRET');
