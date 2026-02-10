@@ -8,7 +8,7 @@ import type {
 	PuzzleStatus,
 	PuzzleProgress
 } from '@perseus/types';
-import { validatePuzzleMetadata } from '@perseus/types';
+import { validatePuzzleMetadata, validatePuzzleMetadataLight } from '@perseus/types';
 
 // Re-export types so consumers don't need to import from @perseus/types directly
 export type { EdgeType, EdgeConfig, PuzzlePiece, PuzzleMetadata, PuzzleStatus, PuzzleProgress };
@@ -175,7 +175,8 @@ export async function listPuzzles(kv: KVNamespace): Promise<PuzzleSummary[]> {
 	const puzzles: PuzzleMetadata[] = [];
 	fetched.forEach((puzzle, index) => {
 		if (puzzle === null) return;
-		if (!validatePuzzleMetadata(puzzle)) {
+		// Use lightweight validation for listing to avoid O(n*pieces) overhead
+		if (!validatePuzzleMetadataLight(puzzle)) {
 			console.warn(`Invalid puzzle metadata for ${keys[index].name}:`, puzzle);
 			return;
 		}

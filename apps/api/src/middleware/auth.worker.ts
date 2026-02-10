@@ -65,9 +65,13 @@ function base64URLToBytes(b64url: string): Uint8Array {
 }
 
 function assertJwtSecret(env: Env): string {
-	const secret = env.JWT_SECRET?.trim();
+	const secret = env.JWT_SECRET;
 	if (!secret || secret.length < MIN_JWT_SECRET_LENGTH) {
 		throw new Error('JWT_SECRET missing or too short');
+	}
+	// Warn if secret contains leading/trailing whitespace (may indicate accidental whitespace in secrets manager)
+	if (secret !== secret.trim()) {
+		console.warn('JWT_SECRET contains leading or trailing whitespace - ensure this is intentional');
 	}
 	return secret;
 }

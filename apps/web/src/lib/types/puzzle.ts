@@ -37,6 +37,17 @@ export interface Puzzle {
 
 export type PuzzleStatus = 'processing' | 'ready' | 'failed';
 
+/**
+ * Full puzzle metadata including status fields.
+ * Used for admin operations like createPuzzle which returns processing status.
+ */
+export interface PuzzleMetadata extends Puzzle {
+	status: PuzzleStatus;
+	progress?: PuzzleGenerationProgress;
+	version: number;
+	error?: { message: string };
+}
+
 export interface PuzzleSummary {
 	id: string;
 	name: string;

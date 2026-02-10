@@ -170,3 +170,61 @@ export function validatePuzzleMetadata(meta: unknown): meta is PuzzleMetadata {
 
 	return true;
 }
+
+/**
+ * Lightweight validation for listing operations.
+ * Skips expensive piece-by-piece validation to improve performance on list operations.
+ * Only validates core metadata fields and structure.
+ */
+export function validatePuzzleMetadataLight(meta: unknown): meta is PuzzleMetadata {
+	if (typeof meta !== 'object' || meta === null) return false;
+	const m = meta as Partial<PuzzleMetadata>;
+	const isNumber = (value: unknown): value is number =>
+		typeof value === 'number' && Number.isFinite(value);
+	const validStatuses: PuzzleStatus[] = ['processing', 'ready', 'failed'];
+
+	const hasValidProgress = (value: unknown): value is PuzzleProgress => {
+		if (typeof value !== 'object' || value === null) return false;
+		const progress = value as Record<string, unknown>;
+		return (
+			isNumber(progress.totalPieces) &&
+			isNumber(progress.generatedPieces) &&
+			isNumber(progress.updatedAt)
+		);
+	};
+
+	// Check required fields exist (lightweight - no piece validation)
+	if (typeof m.id !== 'string' || typeof m.name !== 'string') return false;
+	if (!isNumber(m.pieceCount) || !isNumber(m.gridCols) || !isNumber(m.gridRows)) return false;
+	if (!isNumber(m.imageWidth) || !isNumber(m.imageHeight)) return false;
+	if (!isNumber(m.createdAt) || !isNumber(m.version)) return false;
+	if (!Array.isArray(m.pieces)) return false; // Only check that pieces is an array
+	if (!m.status || !validStatuses.includes(m.status)) return false;
+
+	// Validate grid math
+	if (m.gridCols * m.gridRows !== m.pieceCount) return false;
+
+	// Validate status-field consistency
+	if (m.status === 'processing') {
+		if (!hasValidProgress(m.progress)) return false;
+		const errorValue = (m as Record<string, unknown>).error;
+		if (typeof errorValue !== 'undefined' && errorValue !== null) return false;
+	}
+	if (m.status === 'failed') {
+		const progressValue = (m as Record<string, unknown>).progress;
+		if (typeof progressValue !== 'undefined' && progressValue !== null) return false;
+		if (typeof m.error !== 'object' || m.error === null) return false;
+		const error = m.error as Record<string, unknown>;
+		if (typeof error.message !== 'string') return false;
+	}
+	if (m.status === 'ready') {
+		// Light validation: just check pieces count matches, not each piece's structure
+		if (m.pieces.length !== m.pieceCount) return false;
+		const errorValue = (m as Record<string, unknown>).error;
+		if (typeof errorValue !== 'undefined' && errorValue !== null) return false;
+		const progressValue = (m as Record<string, unknown>).progress;
+		if (typeof progressValue !== 'undefined' && progressValue !== null) return false;
+	}
+
+	return true;
+}

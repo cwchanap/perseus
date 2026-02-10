@@ -1,6 +1,7 @@
 // API client service for Jigsaw Puzzle Web App
 import type {
 	Puzzle,
+	PuzzleMetadata,
 	PuzzleSummary,
 	PuzzleListResponse,
 	LoginResponse,
@@ -166,7 +167,11 @@ export async function fetchAdminPuzzles(): Promise<PuzzleSummary[]> {
 	return data.puzzles;
 }
 
-export async function createPuzzle(name: string, pieceCount: number, image: File): Promise<Puzzle> {
+export async function createPuzzle(
+	name: string,
+	pieceCount: number,
+	image: File
+): Promise<PuzzleMetadata> {
 	const formData = new FormData();
 	formData.append('name', name);
 	formData.append('pieceCount', pieceCount.toString());
@@ -177,7 +182,7 @@ export async function createPuzzle(name: string, pieceCount: number, image: File
 		credentials: 'include',
 		body: formData
 	});
-	return handleResponse<Puzzle>(response);
+	return handleResponse<PuzzleMetadata>(response);
 }
 
 export async function deletePuzzle(id: string): Promise<void> {

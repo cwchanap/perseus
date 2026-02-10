@@ -122,15 +122,20 @@ admin.post('/login', loginRateLimit, async (c) => {
 		const passkeyHash = await crypto.subtle.digest('SHA-256', passkeyBytes);
 		const expectedHash = await crypto.subtle.digest('SHA-256', expectedBytes);
 
-		// Constant-time comparison using XOR accumulation to prevent timing attacks
-		// The hash comparison is timing-safe because we XOR all bytes and check the result,
-		// rather than short-circuiting on the first mismatch
+		// Constant-time comparison using XOR accumulation to prevent timing attacks.
+		// NOTE: This comparison is designed for equal-length inputs (SHA-256 hashes).
+		// Both passkeyArr and expectedArr are always 32 bytes, so the length check is
+		// technically always 0. We use Math.max() for loop bounds as defense-in-depth
+		// in case this code is ever refactored to compare non-hash values.
 		const passkeyArr = new Uint8Array(passkeyHash);
 		const expectedArr = new Uint8Array(expectedHash);
 
 		let diff = passkeyArr.length ^ expectedArr.length;
-		for (let i = 0; i < passkeyArr.length; i++) {
-			diff |= passkeyArr[i] ^ expectedArr[i];
+		const maxLength = Math.max(passkeyArr.length, expectedArr.length);
+		for (let i = 0; i < maxLength; i++) {
+			const a = i < passkeyArr.length ? passkeyArr[i] : 0;
+			const b = i < expectedArr.length ? expectedArr[i] : 0;
+			diff |= a ^ b;
 		}
 		const isValid = diff === 0;
 
@@ -172,20 +177,26 @@ admin.post('/logout', async (c) => {
 
 // GET /api/admin/session - Check admin session
 admin.get('/session', async (c) => {
-	const token = getSessionToken(c);
+	try {
+		const token = getSessionToken(c);
 
-	if (!token) {
-		return c.json({ authenticated: false });
+		if (!token) {
+			return c.json({ authenticated: false });
+		}
+
+		const session = await verifySession(c.env, token);
+
+		if (!session) {
+			clearSessionCookie(c);
+			return c.json({ authenticated: false });
+		}
+
+		return c.json({ authenticated: true });
+	} catch (error) {
+		// Unexpected error during session verification (e.g., JWT_SECRET misconfiguration)
+		console.error('Session verification failed unexpectedly:', error);
+		return c.json({ authenticated: false }, 500);
 	}
-
-	const session = await verifySession(c.env, token);
-
-	if (!session) {
-		clearSessionCookie(c);
-		return c.json({ authenticated: false });
-	}
-
-	return c.json({ authenticated: true });
 });
 
 // GET /api/admin/puzzles - List all puzzles for admin (includes processing/failed)

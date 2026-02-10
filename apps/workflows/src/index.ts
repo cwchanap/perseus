@@ -64,6 +64,21 @@ export class PuzzleMetadataDO {
 		}
 
 		const { puzzleId, updates } = body;
+
+		// Get or initialize this DO's puzzleId from storage
+		let doPuzzleId = await this.state.storage.get<string>('puzzleId');
+		if (!doPuzzleId) {
+			// First call: store the puzzleId for future validation
+			doPuzzleId = puzzleId;
+			await this.state.storage.put('puzzleId', doPuzzleId);
+		} else if (doPuzzleId !== puzzleId) {
+			// Reject requests where puzzleId doesn't match this DO's identity
+			return Response.json(
+				{ message: 'Puzzle ID mismatch: request puzzleId does not match DO identity' },
+				{ status: 403 }
+			);
+		}
+
 		const stored = await this.state.storage.get<PuzzleMetadata>('metadata');
 		const existing = stored ?? (await getMetadata(this.env.PUZZLE_METADATA, puzzleId));
 		if (!existing) {
