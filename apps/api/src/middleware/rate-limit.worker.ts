@@ -21,6 +21,13 @@ const WARN_INTERVAL_MS = 5 * 60 * 1000; // Re-log warnings every 5 minutes
 let lastInMemoryFallbackWarn = 0;
 let lastMissingIPWarn = 0;
 
+// Reset function for testing - clears all in-memory rate limit entries
+export function __resetRateLimitStore(): void {
+	rateLimitStore.clear();
+	lastInMemoryFallbackWarn = 0;
+	lastMissingIPWarn = 0;
+}
+
 function cleanupExpiredEntries(): void {
 	const now = Date.now();
 	for (const [key, entry] of rateLimitStore) {
@@ -87,50 +94,94 @@ function getKVKey(key: string): string {
 	return `${RATE_LIMIT_KEY_PREFIX}${key}`;
 }
 
+// Merge two rate limit entries, choosing the most restrictive/most recent state
+function mergeRateLimitEntries(kvEntry: RateLimitEntry, memEntry: RateLimitEntry): RateLimitEntry {
+	const now = Date.now();
+
+	// Determine which entry is more restrictive:
+	// 1. If one is locked and the other isn't, prefer the locked one
+	const kvLocked = kvEntry.lockedUntil !== null && kvEntry.lockedUntil > now;
+	const memLocked = memEntry.lockedUntil !== null && memEntry.lockedUntil > now;
+
+	if (kvLocked && !memLocked) return kvEntry;
+	if (!kvLocked && memLocked) return memEntry;
+
+	// Both locked or both unlocked - prefer the one with later lockout time
+	if (kvLocked && memLocked) {
+		return kvEntry.lockedUntil! >= memEntry.lockedUntil! ? kvEntry : memEntry;
+	}
+
+	// Both unlocked - prefer the one with more attempts or more recent activity
+	if (kvEntry.attempts !== memEntry.attempts) {
+		return kvEntry.attempts > memEntry.attempts ? kvEntry : memEntry;
+	}
+
+	// Same attempts - prefer the one with more recent activity
+	return kvEntry.lastAttemptAt >= memEntry.lastAttemptAt ? kvEntry : memEntry;
+}
+
 // Get rate limit entry from KV or memory
 async function getRateLimitEntry(
 	kv: KVNamespace | undefined,
 	key: string,
 	env?: string
 ): Promise<RateLimitEntry | null> {
+	let kvEntry: RateLimitEntry | null = null;
+
 	if (kv) {
 		try {
 			const data = await kv.get(getKVKey(key), 'json');
-			if (data === null) {
-				return null;
-			}
-			if (!isRateLimitEntry(data)) {
+			if (data !== null && isRateLimitEntry(data)) {
+				kvEntry = data;
+			} else if (data !== null) {
 				console.warn('Invalid rate limit entry, resetting:', { key: getKVKey(key), data });
-				return null;
 			}
-			return data;
 		} catch (error) {
-			console.warn(`KV read failed for ${getKVKey(key)}, failing open:`, error);
-			return null;
+			console.warn(`KV read failed for ${getKVKey(key)}:`, error);
+			// Continue to check in-memory store even on KV error
 		}
 	}
-	// Log warning about in-memory fallback
-	// PRODUCTION IMPACT: In-memory storage is not distributed across workers,
-	// so rate limiting will only work within a single worker instance.
-	// Multiple worker instances can each have their own rate limit counters.
-	const warnNow = Date.now();
-	if (warnNow - lastInMemoryFallbackWarn >= WARN_INTERVAL_MS) {
-		lastInMemoryFallbackWarn = warnNow;
-		if (env === 'production') {
-			console.error(
-				'[CRITICAL] Rate limiting using in-memory storage in production - KV namespace not configured. Rate limiting is per-worker, not distributed.'
-			);
-		} else {
-			console.warn(
-				'Rate limiting using in-memory storage (not distributed) - KV namespace not configured'
-			);
-		}
-	}
+
+	// Always check in-memory store for potentially newer data
 	cleanupExpiredEntries();
-	return rateLimitStore.get(key) || null;
+	const memEntry = rateLimitStore.get(key) || null;
+
+	// If we have both entries, merge them (most restrictive wins)
+	if (kvEntry && memEntry) {
+		return mergeRateLimitEntries(kvEntry, memEntry);
+	}
+
+	// If we only have one, return it
+	if (kvEntry) return kvEntry;
+
+	// Log warning about in-memory fallback only when KV is not configured
+	if (!kv && memEntry) {
+		return memEntry;
+	}
+
+	if (!kv) {
+		// PRODUCTION IMPACT: In-memory storage is not distributed across workers,
+		// so rate limiting will only work within a single worker instance.
+		// Multiple worker instances can each have their own rate limit counters.
+		const warnNow = Date.now();
+		if (warnNow - lastInMemoryFallbackWarn >= WARN_INTERVAL_MS) {
+			lastInMemoryFallbackWarn = warnNow;
+			if (env === 'production') {
+				console.error(
+					'[CRITICAL] Rate limiting using in-memory storage in production - KV namespace not configured. Rate limiting is per-worker, not distributed.'
+				);
+			} else {
+				console.warn(
+					'Rate limiting using in-memory storage (not distributed) - KV namespace not configured'
+				);
+			}
+		}
+	}
+
+	return memEntry;
 }
 
-// Set rate limit entry in KV or memory
+// Set rate limit entry in KV or memory (write-through caching)
 async function setRateLimitEntry(
 	kv: KVNamespace | undefined,
 	key: string,
@@ -141,6 +192,8 @@ async function setRateLimitEntry(
 			// Set with TTL slightly longer than lockout duration to auto-cleanup
 			const ttl = Math.ceil(LOCKOUT_DURATION_MS / 1000) + 60;
 			await kv.put(getKVKey(key), JSON.stringify(entry), { expirationTtl: ttl });
+			// Write-through: also update in-memory cache for read consistency
+			rateLimitStore.set(key, entry);
 		} catch (error) {
 			console.error('KV write failed, falling back to in-memory:', error);
 			rateLimitStore.set(key, entry);

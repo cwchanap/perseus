@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars */
-import { describe, it, expect, vi } from 'vitest';
-import { loginRateLimit, resetLoginAttempts } from './rate-limit.worker';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { loginRateLimit, resetLoginAttempts, __resetRateLimitStore } from './rate-limit.worker';
 import type { Context, Next } from 'hono';
 
 // Mock KV namespace
@@ -41,6 +41,10 @@ function createMockContext(ip: string = '127.0.0.1', kv?: any): Context<any> {
 }
 
 describe('Rate Limit Middleware', () => {
+	beforeEach(() => {
+		__resetRateLimitStore();
+	});
+
 	describe('loginRateLimit', () => {
 		it('should allow request when no previous attempts', async () => {
 			const mockKV = createMockKV();

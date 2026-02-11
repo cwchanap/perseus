@@ -116,14 +116,31 @@ async function persistSession(env: Env, token: string, expMs: number): Promise<v
 async function isSessionActive(env: Env, token: string): Promise<boolean> {
 	const key = await getSessionStoreKey(token);
 	if (env.PUZZLE_METADATA) {
-		try {
-			const stored = await env.PUZZLE_METADATA.get(key);
-			// KV is authoritative — if it returns null, session is not active
-			return stored !== null;
-		} catch (error) {
-			console.error('Failed to read session store, checking in-memory fallback:', error);
-			// Fall through to in-memory only on KV read failure
+		let lastError: Error | undefined;
+		const maxRetries = 3;
+		for (let attempt = 0; attempt < maxRetries; attempt++) {
+			try {
+				const stored = await env.PUZZLE_METADATA.get(key);
+				// KV is authoritative — if it returns null, session is not active
+				return stored !== null;
+			} catch (error) {
+				lastError = error instanceof Error ? error : new Error(String(error));
+				console.error(
+					`Failed to read session store (attempt ${attempt + 1}/${maxRetries}):`,
+					lastError
+				);
+				if (attempt < maxRetries - 1) {
+					const delay = 100 * Math.pow(2, attempt);
+					await new Promise((resolve) => setTimeout(resolve, delay));
+				}
+			}
 		}
+		// All retries failed - in production, surface the error; in development, fall through
+		if (env.NODE_ENV !== 'development' && lastError) {
+			throw lastError;
+		}
+		// In development, fall through to in-memory fallback
+		console.warn('KV read failed after retries, falling back to in-memory store');
 	}
 	// In-memory fallback is only available in development
 	if (env.NODE_ENV !== 'development') {

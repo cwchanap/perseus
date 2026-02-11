@@ -76,7 +76,7 @@ export interface CreatePuzzleRequest {
 }
 
 export interface CreatePuzzleResponse {
-	puzzle: Puzzle;
+	puzzle: PuzzleMetadata;
 }
 
 export interface LoginRequest {

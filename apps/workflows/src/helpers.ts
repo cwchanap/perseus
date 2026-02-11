@@ -82,6 +82,36 @@ export function padPixelsToTarget(
 	offsetX: number,
 	offsetY: number
 ): Uint8Array {
+	// Validate offsetX and offsetY are non-negative
+	if (offsetX < 0 || offsetY < 0) {
+		throw new RangeError(
+			`padPixelsToTarget: offsets must be non-negative, got offsetX=${offsetX}, offsetY=${offsetY}`
+		);
+	}
+
+	// Validate source fits within target at the given offset
+	if (offsetX + sourceWidth > targetWidth) {
+		throw new RangeError(
+			`padPixelsToTarget: source width (${sourceWidth}) at offsetX (${offsetX}) exceeds target width (${targetWidth}): ` +
+				`offsetX + sourceWidth = ${offsetX + sourceWidth} > targetWidth (${targetWidth})`
+		);
+	}
+	if (offsetY + sourceHeight > targetHeight) {
+		throw new RangeError(
+			`padPixelsToTarget: source height (${sourceHeight}) at offsetY (${offsetY}) exceeds target height (${targetHeight}): ` +
+				`offsetY + sourceHeight = ${offsetY + sourceHeight} > targetHeight (${targetHeight})`
+		);
+	}
+
+	// Validate sourcePixels length matches expected dimensions
+	const expectedSourceLength = sourceWidth * sourceHeight * 4;
+	if (sourcePixels.length !== expectedSourceLength) {
+		throw new TypeError(
+			`padPixelsToTarget: sourcePixels length (${sourcePixels.length}) does not match expected size ` +
+				`for ${sourceWidth}x${sourceHeight} RGBA image (${expectedSourceLength} bytes = ${sourceWidth * sourceHeight} pixels * 4 channels)`
+		);
+	}
+
 	const padded = new Uint8Array(targetWidth * targetHeight * 4);
 	const rowBytes = sourceWidth * 4;
 	for (let y = 0; y < sourceHeight; y += 1) {
@@ -93,7 +123,17 @@ export function padPixelsToTarget(
 }
 
 export function applyMaskAlpha(piecePixels: Uint8Array, maskPixels: Uint8Array): void {
-	for (let i = 0; i < piecePixels.length; i += 4) {
+	// Validate that maskPixels has enough data for all RGBA quads in piecePixels
+	if (maskPixels.length < piecePixels.length) {
+		throw new RangeError(
+			`applyMaskAlpha: maskPixels length (${maskPixels.length}) is less than piecePixels length (${piecePixels.length}). ` +
+				`Mask must have at least ${piecePixels.length} bytes (${piecePixels.length / 4} RGBA pixels) but only has ${maskPixels.length} bytes (${Math.floor(maskPixels.length / 4)} pixels).`
+		);
+	}
+
+	// Only iterate up to the safe bound to avoid reading past the end of either array
+	const safeLength = Math.min(piecePixels.length, maskPixels.length);
+	for (let i = 0; i < safeLength; i += 4) {
 		piecePixels[i + 3] = maskPixels[i + 3];
 	}
 }

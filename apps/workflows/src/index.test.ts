@@ -7,6 +7,32 @@ import type { Env } from './index';
 import type { WorkflowEvent, WorkflowStep } from 'cloudflare:workers';
 import type { WorkflowParams } from './types';
 
+// Mock cloudflare:workers module
+vi.mock('cloudflare:workers', async () => {
+	// Base DurableObject class mock
+	class MockDurableObject {
+		protected ctx: DurableObjectState;
+		protected env: Record<string, unknown>;
+
+		constructor(state: DurableObjectState, env: Record<string, unknown>) {
+			this.ctx = state;
+			this.env = env;
+		}
+	}
+
+	return {
+		DurableObject: MockDurableObject,
+		WorkflowEntrypoint: class {
+			protected env: Record<string, unknown> = {};
+			constructor(_ctx: ExecutionContext, env: Record<string, unknown>) {
+				this.env = env;
+			}
+		},
+		WorkflowStep: {},
+		WorkflowEvent: {}
+	};
+});
+
 let mockWidth = 100;
 let mockHeight = 100;
 let photonInstances: Array<{ free: ReturnType<typeof vi.fn> }> = [];

@@ -8,20 +8,17 @@ compatibility_flags = ["nodejs_compat"]
 [assets]
 directory = "../web/build"
 
-# R2 bucket for puzzle assets
-# NOTE: For production deployment, create environment-specific configs or override via CLI.
+# R2 bucket for puzzle assets (environment-specific configs override this)
+# The binding name "PUZZLES_BUCKET" is preserved across all environments.
 [[r2_buckets]]
 binding = "PUZZLES_BUCKET"
-bucket_name = "perseus-local"
+bucket_name = "perseus-production"
 
-# KV namespace for puzzle metadata
-# NOTE: Use environment-specific configs for deployment:
-#   wrangler deploy --config wrangler.dev.toml
-#   wrangler deploy --config wrangler.production.toml
-# This base ID is a placeholder - use wrangler.dev.toml for local development.
+# KV namespace for puzzle metadata (environment-specific configs override this)
+# The binding name "PUZZLE_METADATA" is preserved across all environments.
 [[kv_namespaces]]
 binding = "PUZZLE_METADATA"
-id = "REPLACE_WITH_KV_NAMESPACE_ID"
+id = ""
 
 [durable_objects]
 bindings = [
@@ -46,3 +43,13 @@ name = "perseus-dev"
 
 [env.dev.vars]
 NODE_ENV = "development"
+
+# Development R2 bucket override
+[[env.dev.r2_buckets]]
+binding = "PUZZLES_BUCKET"
+bucket_name = "perseus-local"
+
+# Development KV namespace (empty id triggers auto-generated preview namespace)
+[[env.dev.kv_namespaces]]
+binding = "PUZZLE_METADATA"
+id = ""

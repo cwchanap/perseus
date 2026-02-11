@@ -292,8 +292,9 @@ export async function generatePuzzle(
 
 					if (maskPixels.length !== paddedPiecePixels.length) {
 						throw new Error(
-							`Mask and piece image pixel count mismatch for piece ${pieceId}: ` +
-								`mask=${maskPixels.length} pixels, piece=${paddedPiecePixels.length} pixels`
+							`Mask and piece image byte count mismatch for piece ${pieceId}: ` +
+								`mask=${maskPixels.length} bytes, piece=${paddedPiecePixels.length} bytes ` +
+								`(expected ${maskPixels.length / 4} pixels vs ${paddedPiecePixels.length / 4} pixels)`
 						);
 					}
 

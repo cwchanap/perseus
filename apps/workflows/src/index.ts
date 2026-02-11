@@ -1,7 +1,7 @@
 // Perseus Workflows Worker
 // Handles async puzzle generation via Cloudflare Workflows
 
-import { WorkflowEntrypoint, WorkflowStep, WorkflowEvent } from 'cloudflare:workers';
+import { DurableObject, WorkflowEntrypoint, WorkflowStep, WorkflowEvent } from 'cloudflare:workers';
 import type {
 	WorkflowParams,
 	PuzzleMetadata,
@@ -34,15 +34,7 @@ export interface Env {
 	PUZZLE_WORKFLOW: Workflow;
 }
 
-export class PuzzleMetadataDO {
-	private state: DurableObjectState;
-	private env: Env;
-
-	constructor(state: DurableObjectState, env: Env) {
-		this.state = state;
-		this.env = env;
-	}
-
+export class PuzzleMetadataDO extends DurableObject<Env> {
 	async fetch(request: Request): Promise<Response> {
 		const url = new URL(request.url);
 		if (request.method !== 'POST' || url.pathname !== '/update') {
@@ -66,11 +58,11 @@ export class PuzzleMetadataDO {
 		const { puzzleId, updates } = body;
 
 		// Get or initialize this DO's puzzleId from storage
-		let doPuzzleId = await this.state.storage.get<string>('puzzleId');
+		let doPuzzleId = await this.ctx.storage.get<string>('puzzleId');
 		if (!doPuzzleId) {
 			// First call: store the puzzleId for future validation
 			doPuzzleId = puzzleId;
-			await this.state.storage.put('puzzleId', doPuzzleId);
+			await this.ctx.storage.put('puzzleId', doPuzzleId);
 		} else if (doPuzzleId !== puzzleId) {
 			// Reject requests where puzzleId doesn't match this DO's identity
 			return Response.json(
@@ -79,7 +71,7 @@ export class PuzzleMetadataDO {
 			);
 		}
 
-		const stored = await this.state.storage.get<PuzzleMetadata>('metadata');
+		const stored = await this.ctx.storage.get<PuzzleMetadata>('metadata');
 		const existing = stored ?? (await getMetadata(this.env.PUZZLE_METADATA, puzzleId));
 		if (!existing) {
 			return Response.json(
@@ -95,8 +87,8 @@ export class PuzzleMetadataDO {
 		// This handles the case where workflow sends only new row pieces
 		let mergedPieces = existing.pieces || [];
 		if (updates.pieces && Array.isArray(updates.pieces) && updates.pieces.length > 0) {
-			const existingIds = new Set(mergedPieces.map((p) => p.id));
-			const newPieces = updates.pieces.filter((p) => !existingIds.has(p.id));
+			const existingIds = new Set(mergedPieces.map((p: PuzzlePiece) => p.id));
+			const newPieces = updates.pieces.filter((p: PuzzlePiece) => !existingIds.has(p.id));
 			if (newPieces.length > 0) {
 				mergedPieces = [...mergedPieces, ...newPieces];
 			}
@@ -112,7 +104,7 @@ export class PuzzleMetadataDO {
 				id: existing.id,
 				status: 'ready',
 				version: currentVersion + 1,
-				pieces: updates.pieces ?? mergedPieces,
+				pieces: mergedPieces,
 				progress: undefined,
 				error: undefined
 			} as ReadyPuzzle;
@@ -124,7 +116,7 @@ export class PuzzleMetadataDO {
 				id: existing.id,
 				status: 'failed',
 				version: currentVersion + 1,
-				pieces: updates.pieces ?? mergedPieces,
+				pieces: mergedPieces,
 				progress: undefined
 			} as FailedPuzzle;
 		} else {
@@ -140,8 +132,8 @@ export class PuzzleMetadataDO {
 
 		// DO is the source of truth — its failure is fatal
 		try {
-			await this.state.storage.transaction(async () => {
-				await this.state.storage.put('metadata', updated);
+			await this.ctx.storage.transaction(async () => {
+				await this.ctx.storage.put('metadata', updated);
 			});
 		} catch (error) {
 			console.error(`Failed to persist metadata in DO for puzzle ${puzzleId}:`, error);

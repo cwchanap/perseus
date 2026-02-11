@@ -425,8 +425,8 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 
 			const res = await admin.fetch(req, mockEnv as any);
 
-			// Should pass validation (201 or later error, but not 400 for file type)
-			expect(res.status).not.toBe(400);
+			// Should successfully accept the valid JPEG
+			expect(res.status).toBe(201);
 		});
 	});
 });

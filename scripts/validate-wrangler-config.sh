@@ -18,8 +18,8 @@ for config in apps/*/wrangler.production.toml; do
     EXIT_CODE=1
   fi
 
-  # Check for empty id values in kv_namespaces
-  if grep -E '^id\s*=\s*""' "$config" >/dev/null 2>&1; then
+  # Check for empty id values in kv_namespaces (allow leading whitespace)
+  if grep -qE '^\s*id\s*=\s*""' "$config"; then
     echo "ERROR: $config contains an empty KV namespace id." >&2
     EXIT_CODE=1
   fi
