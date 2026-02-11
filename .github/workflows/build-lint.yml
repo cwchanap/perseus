@@ -29,5 +29,10 @@ jobs:
       - name: Run type check
         run: bun run check
 
+      - name: Validate wrangler production configs
+        run: bash scripts/validate-wrangler-config.sh
+        # Note: @perseus/api build uses wrangler.toml without separate production config
+        # The api's production KV namespace ID must be set in the main section of wrangler.toml
+
       - name: Build
         run: bun run build

@@ -29,7 +29,6 @@ describe('Session Token Management', () => {
 				username: 'admin',
 				role: 'admin'
 			});
-			await (mockEnv as Env).PUZZLE_METADATA?.put?.(`session:${token}`, '1');
 
 			expect(token).toBeDefined();
 			expect(typeof token).toBe('string');
@@ -42,7 +41,6 @@ describe('Session Token Management', () => {
 				username: 'admin',
 				role: 'admin'
 			});
-			await (mockEnv as Env).PUZZLE_METADATA?.put?.(`session:${token1}`, '1');
 
 			// Wait a bit to ensure different timestamp
 			await new Promise((resolve) => setTimeout(resolve, 10));
@@ -52,7 +50,6 @@ describe('Session Token Management', () => {
 				username: 'admin',
 				role: 'admin'
 			});
-			await (mockEnv as Env).PUZZLE_METADATA?.put?.(`session:${token2}`, '1');
 
 			expect(token1).not.toBe(token2);
 		});
@@ -65,7 +62,6 @@ describe('Session Token Management', () => {
 				username: 'admin',
 				role: 'admin'
 			});
-			await (mockEnv as Env).PUZZLE_METADATA?.put?.(`session:${token}`, '1');
 
 			const session = await verifySession(mockEnv as Env, token);
 
@@ -174,7 +170,6 @@ describe('Session Token Management', () => {
 				.replace(/=+$/g, '');
 
 			const expiredToken = `${payloadB64}.${signatureB64}`;
-			await (mockEnv as Env).PUZZLE_METADATA?.put?.(`session:${expiredToken}`, '1');
 
 			const session = await verifySession(mockEnv as Env, expiredToken);
 
@@ -282,7 +277,6 @@ describe('requireAuth with valid token', () => {
 			username: 'testuser',
 			role: 'admin'
 		});
-		await (mockEnv as Env).PUZZLE_METADATA?.put?.(`session:${token}`, '1');
 
 		let capturedSession: any = null;
 
@@ -352,7 +346,6 @@ describe('requireAuth with valid token', () => {
 		const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(payloadB64));
 		const signatureB64 = bytesToBase64URL(new Uint8Array(signature));
 		const expiredToken = `${payloadB64}.${signatureB64}`;
-		await (mockEnv as Env).PUZZLE_METADATA?.put?.(`session:${expiredToken}`, '1');
 
 		app.use('/protected/*', requireAuth);
 		app.get('/protected/resource', (c) => c.json({ data: 'secret' }));

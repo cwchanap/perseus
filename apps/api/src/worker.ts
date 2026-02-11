@@ -22,6 +22,7 @@ export interface Env {
 	ADMIN_PASSKEY: string;
 	ALLOWED_ORIGINS?: string;
 	NODE_ENV?: string;
+	TRUSTED_PROXY?: string;
 	ASSETS: Fetcher;
 }
 

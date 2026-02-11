@@ -61,13 +61,25 @@ function getClientIP(c: Context): string {
 		return cfIP;
 	}
 
-	// Fall back to x-forwarded-for, but parse the leftmost (original client) IP
+	// Check for trusted proxy configuration before accepting x-forwarded-for
+	const trustXFF = process.env.TRUSTED_PROXY === 'true' || c.env.TRUSTED_PROXY === 'true';
 	const xff = c.req.header('x-forwarded-for');
-	if (xff) {
+	if (xff && trustXFF) {
 		// x-forwarded-for format: "client, proxy1, proxy2, ..."
 		const clientIP = xff.split(',')[0].trim();
 		if (clientIP) {
 			return clientIP;
+		}
+	}
+
+	// Log warning when x-forwarded-for is present but not trusted
+	if (xff && !trustXFF) {
+		const now = Date.now();
+		if (now - lastMissingIPWarn >= WARN_INTERVAL_MS) {
+			lastMissingIPWarn = now;
+			console.warn(
+				'Rate limiting: Ignoring untrusted x-forwarded-for header (set TRUSTED_PROXY=true to enable). Rate limiting requires Cloudflare or a trusted proxy that sets CF-Connecting-IP.'
+			);
 		}
 	}
 
@@ -76,6 +88,11 @@ function getClientIP(c: Context): string {
 	// as each request creates a new bucket. This is intentional to avoid DoS via shared bucket,
 	// but means rate limiting is IP-dependent and degrades to per-request when IP unavailable.
 	// Note: c.req.ip is not available in all Hono/Worker environments
+	//
+	// For effective rate limiting, ensure one of the following:
+	// 1. Running on Cloudflare Workers (CF-Connecting-IP header set automatically)
+	// 2. Using a trusted proxy that sets CF-Connecting-IP header
+	// 3. Setting TRUSTED_PROXY=true to accept x-forwarded-for from a trusted source
 	const now = Date.now();
 	if (now - lastMissingIPWarn >= WARN_INTERVAL_MS) {
 		lastMissingIPWarn = now;
