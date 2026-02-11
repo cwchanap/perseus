@@ -11,10 +11,10 @@ binding = "PUZZLE_WORKFLOW"
 class_name = "PerseusWorkflow"
 
 # R2 bucket for puzzle assets
-# NOTE: Use environment-specific configs for deployment. This is a placeholder.
+# NOTE: For production deployment, use wrangler.production.toml or override via CLI.
 [[r2_buckets]]
 binding = "PUZZLES_BUCKET"
-bucket_name = "REPLACE_WITH_R2_BUCKET_NAME"
+bucket_name = "perseus-local"
 
 # KV namespace for puzzle metadata
 # NOTE: Use environment-specific configs for deployment:

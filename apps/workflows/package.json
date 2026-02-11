@@ -4,7 +4,7 @@
 	"version": "0.0.1",
 	"type": "module",
 	"scripts": {
-		"dev": "wrangler dev",
+		"dev": "wrangler dev --config wrangler.dev.toml",
 		"deploy": "wrangler deploy",
 		"test": "vitest run",
 		"test:unit": "vitest run",
