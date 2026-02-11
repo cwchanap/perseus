@@ -11,7 +11,9 @@ import type {
 // Set PUBLIC_API_BASE before building to target a different API.
 import { PUBLIC_API_BASE } from '$env/static/public';
 
-const API_BASE = PUBLIC_API_BASE ?? 'http://localhost:3000';
+// Use empty string (same-origin) as default for Workers deployment.
+// In dev, explicitly set PUBLIC_API_BASE to 'http://localhost:3000'.
+const API_BASE = PUBLIC_API_BASE || '';
 
 class ApiError extends Error {
 	constructor(

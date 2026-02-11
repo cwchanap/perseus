@@ -14,6 +14,9 @@ const sessionFallbackStore = new Map<string, number>();
 const SESSION_WARN_INTERVAL_MS = 5 * 60 * 1000; // Re-log warnings every 5 minutes
 let lastSessionStoreFallbackWarn = 0;
 
+// Track session keys that are stored in fallback (for isSessionActive to check)
+const sessionFallbackKeys = new Set<string>();
+
 function cleanupExpiredSessions(): void {
 	const now = Date.now();
 	for (const [key, expMs] of sessionFallbackStore) {
@@ -91,9 +94,20 @@ async function persistSession(env: Env, token: string, expMs: number): Promise<v
 	if (env.PUZZLE_METADATA) {
 		try {
 			await env.PUZZLE_METADATA.put(key, '1', { expirationTtl: ttlSeconds });
+			// Successfully stored in KV, remove from fallback tracking if present
+			sessionFallbackKeys.delete(key);
 			return;
 		} catch (error) {
-			console.error('Failed to persist session, falling back to in-memory store:', error);
+			// KV exists but write failed - don't fall through to fallback in production
+			// as it creates inconsistency (write to fallback, read from KV)
+			console.error('Failed to persist session to KV:', error);
+			if (env.NODE_ENV !== 'development') {
+				throw new Error(
+					`Session storage failed: ${error instanceof Error ? error.message : String(error)}`
+				);
+			}
+			// In development, log warning and fall through to fallback
+			console.warn('KV write failed in development, using in-memory fallback');
 		}
 	}
 	// In-memory fallback is only allowed in development; fail fast in production.
@@ -111,6 +125,7 @@ async function persistSession(env: Env, token: string, expMs: number): Promise<v
 	}
 	cleanupExpiredSessions();
 	sessionFallbackStore.set(key, expMs);
+	sessionFallbackKeys.add(key);
 }
 
 async function isSessionActive(env: Env, token: string): Promise<boolean> {
@@ -118,11 +133,19 @@ async function isSessionActive(env: Env, token: string): Promise<boolean> {
 	if (env.PUZZLE_METADATA) {
 		let lastError: Error | undefined;
 		const maxRetries = 3;
+		let kvReturnedNull = false;
 		for (let attempt = 0; attempt < maxRetries; attempt++) {
 			try {
 				const stored = await env.PUZZLE_METADATA.get(key);
-				// KV is authoritative — if it returns null, session is not active
-				return stored !== null;
+				// KV has the session - it's active
+				if (stored !== null) {
+					// Clean up fallback tracking if present (session was migrated)
+					sessionFallbackKeys.delete(key);
+					return true;
+				}
+				// KV returned null - session may be in fallback or truly not active
+				kvReturnedNull = true;
+				break;
 			} catch (error) {
 				lastError = error instanceof Error ? error : new Error(String(error));
 				console.error(
@@ -135,22 +158,41 @@ async function isSessionActive(env: Env, token: string): Promise<boolean> {
 				}
 			}
 		}
-		// All retries failed - in production, surface the error; in development, fall through
-		if (env.NODE_ENV !== 'development' && lastError) {
-			throw lastError;
+		// If KV returned null, check fallback (for sessions written before KV was available)
+		if (kvReturnedNull && sessionFallbackKeys.has(key)) {
+			return checkFallbackSession(key);
 		}
-		// In development, fall through to in-memory fallback
-		console.warn('KV read failed after retries, falling back to in-memory store');
+		// All retries failed - in production, surface the error; in development, check fallback
+		if (lastError) {
+			if (env.NODE_ENV !== 'development') {
+				throw lastError;
+			}
+			// In development, check fallback if KV is unavailable
+			console.warn('KV read failed after retries, checking in-memory fallback');
+			if (sessionFallbackKeys.has(key)) {
+				return checkFallbackSession(key);
+			}
+		}
+		// Session not found in KV and not in fallback
+		return false;
 	}
-	// In-memory fallback is only available in development
+	// KV not configured - use fallback in development only
 	if (env.NODE_ENV !== 'development') {
 		return false;
 	}
+	return checkFallbackSession(key);
+}
+
+function checkFallbackSession(key: string): boolean {
 	cleanupExpiredSessions();
 	const expMs = sessionFallbackStore.get(key);
-	if (expMs === undefined) return false;
+	if (expMs === undefined) {
+		sessionFallbackKeys.delete(key);
+		return false;
+	}
 	if (expMs > Date.now()) return true;
 	sessionFallbackStore.delete(key);
+	sessionFallbackKeys.delete(key);
 	return false;
 }
 
@@ -170,6 +212,7 @@ export async function revokeSession(env: Env, token: string): Promise<void> {
 	// Always clean up fallback store regardless of environment (idempotent)
 	cleanupExpiredSessions();
 	sessionFallbackStore.delete(key);
+	sessionFallbackKeys.delete(key);
 }
 
 // Create a JWT-like session token using WebCrypto

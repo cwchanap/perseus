@@ -33,8 +33,8 @@ app.use('*', logger());
 
 app.use('*', async (c, next) => {
 	const env = c.env;
-	const isProd = env.NODE_ENV === 'production';
 	const isDev = env.NODE_ENV === 'development';
+	const isProd = !isDev; // Treat unset/staging/production as production
 
 	const DEFAULT_ALLOWED_ORIGINS = ['http://localhost:5173', 'http://localhost:4173'];
 	const envOrigins = (env.ALLOWED_ORIGINS || '')
@@ -42,20 +42,23 @@ app.use('*', async (c, next) => {
 		.map((origin) => origin.trim())
 		.filter((origin) => origin.length > 0);
 
-	// Fail-closed: only allow localhost origins in development mode (explicit or unset)
-	// When NODE_ENV is explicitly set to production, require explicit ALLOWED_ORIGINS
-	const isExplicitDev = isDev || !env.NODE_ENV;
-	const allowedOrigins =
-		envOrigins.length > 0 ? envOrigins : isExplicitDev ? DEFAULT_ALLOWED_ORIGINS : [];
+	// In dev: allow localhost if no origins specified
+	// In prod (including unset NODE_ENV): require explicit ALLOWED_ORIGINS
+	const allowedOrigins = isDev
+		? envOrigins.length > 0
+			? envOrigins
+			: DEFAULT_ALLOWED_ORIGINS
+		: envOrigins;
 
+	// Always validate critical env vars in production (including unset NODE_ENV)
 	if (isProd) {
 		const missingEnv = [];
 		if (allowedOrigins.length === 0) missingEnv.push('ALLOWED_ORIGINS');
-		if (isProd && !env.JWT_SECRET) missingEnv.push('JWT_SECRET');
-		if (isProd && !env.ADMIN_PASSKEY) missingEnv.push('ADMIN_PASSKEY');
+		if (!env.JWT_SECRET) missingEnv.push('JWT_SECRET');
+		if (!env.ADMIN_PASSKEY) missingEnv.push('ADMIN_PASSKEY');
 
 		if (missingEnv.length > 0) {
-			console.warn(`Missing required env vars: ${missingEnv.join(', ')}`);
+			console.error(`Missing required env vars in production: ${missingEnv.join(', ')}`);
 
 			return c.json(
 				{
