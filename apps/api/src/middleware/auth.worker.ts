@@ -316,7 +316,9 @@ export function getSessionToken(c: Context): string | undefined {
 
 // Set session cookie
 export function setSessionCookie(c: Context<{ Bindings: Env }>, token: string): void {
-	const isSecure = c.env.NODE_ENV === 'production';
+	// Default to secure unless explicitly in development
+	// This aligns with worker.ts where unset NODE_ENV is treated as production
+	const isSecure = c.env.NODE_ENV !== 'development';
 	setCookie(c, SESSION_COOKIE_NAME, token, {
 		httpOnly: true,
 		secure: isSecure,

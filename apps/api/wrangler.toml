@@ -14,11 +14,12 @@ directory = "../web/build"
 binding = "PUZZLES_BUCKET"
 bucket_name = "perseus-production"
 
-# KV namespace for puzzle metadata (environment-specific configs override this)
+# KV namespace for puzzle metadata (environment-specific configs must provide this)
 # The binding name "PUZZLE_METADATA" is preserved across all environments.
-[[kv_namespaces]]
-binding = "PUZZLE_METADATA"
-id = ""
+# Example:
+# [[kv_namespaces]]
+# binding = "PUZZLE_METADATA"
+# id = "your-namespace-id"
 
 [durable_objects]
 bindings = [
