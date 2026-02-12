@@ -109,6 +109,26 @@ export async function getPuzzle(kv: KVNamespace, puzzleId: string): Promise<Puzz
 
 // Create initial puzzle metadata in KV (for processing state)
 export async function createPuzzleMetadata(kv: KVNamespace, puzzle: PuzzleMetadata): Promise<void> {
+	// Validate required fields
+	if (!puzzle.id || typeof puzzle.id !== 'string' || puzzle.id.trim() === '') {
+		throw new Error('Puzzle ID is required and must be a non-empty string');
+	}
+	if (!puzzle.name || typeof puzzle.name !== 'string') {
+		throw new Error('Puzzle name is required and must be a string');
+	}
+	if (typeof puzzle.pieceCount !== 'number' || puzzle.pieceCount <= 0) {
+		throw new Error('Puzzle pieceCount is required and must be a positive number');
+	}
+	if (puzzle.version !== undefined && typeof puzzle.version !== 'number') {
+		throw new Error('Puzzle version must be a number if provided');
+	}
+
+	// Check if puzzle already exists to prevent accidental overwrites
+	const existing = await kv.get(puzzleKey(puzzle.id));
+	if (existing !== null) {
+		throw new Error(`Puzzle with ID "${puzzle.id}" already exists`);
+	}
+
 	// Initialize version if not set
 	const puzzleWithVersion = { ...puzzle, version: puzzle.version ?? 0 };
 	await kv.put(puzzleKey(puzzleWithVersion.id), JSON.stringify(puzzleWithVersion));

@@ -200,10 +200,8 @@ describe('Rate Limit Middleware', () => {
 		it('should handle missing KV gracefully', async () => {
 			const mockContext = createMockContext('127.0.0.1', undefined);
 
-			// Should not throw when KV is undefined
-			await resetLoginAttempts(mockContext);
-			// Test passes if no error is thrown
-			expect(true).toBe(true);
+			// Should not throw when KV is undefined - verify promise resolves
+			await expect(resetLoginAttempts(mockContext)).resolves.toBeUndefined();
 		});
 	});
 

@@ -68,8 +68,8 @@ export interface ErrorResponse {
 
 // Allowed piece counts for puzzle creation
 // DEPRECATED: This is for the old Bun-based dev server only.
-// Production Workers use @perseus/types which defines DEFAULT_PIECE_COUNT = 225
-export const ALLOWED_PIECE_COUNTS = [9, 16, 25, 36, 49, 64, 100] as const;
+// Note: 225 (15x15) is preserved for compatibility during migration from @perseus/types DEFAULT_PIECE_COUNT
+export const ALLOWED_PIECE_COUNTS = [9, 16, 25, 36, 49, 64, 100, 225] as const;
 export type AllowedPieceCount = (typeof ALLOWED_PIECE_COUNTS)[number];
 
 // File upload constraints

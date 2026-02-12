@@ -22,6 +22,7 @@ function cleanupExpiredSessions(): void {
 	for (const [key, expMs] of sessionFallbackStore) {
 		if (expMs <= now) {
 			sessionFallbackStore.delete(key);
+			sessionFallbackKeys.delete(key);
 		}
 	}
 }

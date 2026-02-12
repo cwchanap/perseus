@@ -20,10 +20,11 @@ bucket_name = "perseus-local"
 # NOTE: Use environment-specific configs for deployment:
 #   wrangler deploy --config wrangler.dev.toml
 #   wrangler deploy --config wrangler.production.toml
-# This base ID is a placeholder - use wrangler.dev.toml for local development.
+# Local development uses preview_id for wrangler dev sessions
 [[kv_namespaces]]
 binding = "PUZZLE_METADATA"
-id = "REPLACE_WITH_KV_NAMESPACE_ID"
+id = "local-workflows-kv"
+preview_id = "local-workflows-kv-preview"
 
 [durable_objects]
 bindings = [

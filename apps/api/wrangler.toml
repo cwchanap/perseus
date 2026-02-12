@@ -16,10 +16,10 @@ bucket_name = "perseus-production"
 
 # KV namespace for puzzle metadata (environment-specific configs must provide this)
 # The binding name "PUZZLE_METADATA" is preserved across all environments.
-# Example:
-# [[kv_namespaces]]
-# binding = "PUZZLE_METADATA"
-# id = "your-namespace-id"
+# IMPORTANT: Replace "REPLACE_WITH_PRODUCTION_KV_NAMESPACE_ID" with actual KV namespace ID before deployment
+[[kv_namespaces]]
+binding = "PUZZLE_METADATA"
+id = "REPLACE_WITH_PRODUCTION_KV_NAMESPACE_ID"
 
 [durable_objects]
 bindings = [
@@ -50,7 +50,8 @@ NODE_ENV = "development"
 binding = "PUZZLES_BUCKET"
 bucket_name = "perseus-local"
 
-# Development KV namespace (empty id triggers auto-generated preview namespace)
+# Development KV namespace with preview_id for local development
 [[env.dev.kv_namespaces]]
 binding = "PUZZLE_METADATA"
-id = ""
+id = "local-dev-kv"
+preview_id = "local-dev-kv-preview"
