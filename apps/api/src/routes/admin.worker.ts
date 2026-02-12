@@ -195,7 +195,8 @@ admin.get('/session', async (c) => {
 	} catch (error) {
 		// Unexpected error during session verification (e.g., JWT_SECRET misconfiguration)
 		console.error('Session verification failed unexpectedly:', error);
-		return c.json({ authenticated: false }, 500);
+		const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+		return c.json({ error: 'Session verification failed', message: errorMessage }, 500);
 	}
 });
 

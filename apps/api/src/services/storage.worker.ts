@@ -108,13 +108,19 @@ export async function getPuzzle(kv: KVNamespace, puzzleId: string): Promise<Puzz
 }
 
 // Create initial puzzle metadata in KV (for processing state)
+// NOTE: This function has a TOCTOU (Time-of-Check-Time-of-Use) race condition between the
+// existence check (kv.get) and the write (kv.put). For concurrent callers, the same puzzle ID
+// may pass the existence check simultaneously, resulting in only one write succeeding (the
+// second kv.put will overwrite). To prevent this, callers MUST acquire a distributed lock
+// (via acquireLock) using the puzzle ID as the lock key before calling this function, or
+// ensure puzzle IDs are unique (e.g., UUIDs generated via crypto.randomUUID()).
 export async function createPuzzleMetadata(kv: KVNamespace, puzzle: PuzzleMetadata): Promise<void> {
 	// Validate required fields
 	if (!puzzle.id || typeof puzzle.id !== 'string' || puzzle.id.trim() === '') {
 		throw new Error('Puzzle ID is required and must be a non-empty string');
 	}
-	if (!puzzle.name || typeof puzzle.name !== 'string') {
-		throw new Error('Puzzle name is required and must be a string');
+	if (!puzzle.name || typeof puzzle.name !== 'string' || puzzle.name.trim() === '') {
+		throw new Error('Puzzle name is required and must be a non-empty string');
 	}
 	if (typeof puzzle.pieceCount !== 'number' || puzzle.pieceCount <= 0) {
 		throw new Error('Puzzle pieceCount is required and must be a positive number');
@@ -124,6 +130,7 @@ export async function createPuzzleMetadata(kv: KVNamespace, puzzle: PuzzleMetada
 	}
 
 	// Check if puzzle already exists to prevent accidental overwrites
+	// WARNING: This check is non-atomic. See TOCTOU note in function documentation above.
 	const existing = await kv.get(puzzleKey(puzzle.id));
 	if (existing !== null) {
 		throw new Error(`Puzzle with ID "${puzzle.id}" already exists`);

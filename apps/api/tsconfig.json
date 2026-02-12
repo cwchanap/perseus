@@ -4,7 +4,7 @@
 		"module": "ESNext",
 		"lib": ["ES2022"],
 		"moduleResolution": "bundler",
-		"types": ["bun", "@cloudflare/workers-types"],
+		"types": ["@cloudflare/workers-types"],
 		"allowJs": true,
 		"checkJs": true,
 		"esModuleInterop": true,

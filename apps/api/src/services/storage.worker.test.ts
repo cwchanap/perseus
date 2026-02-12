@@ -245,6 +245,52 @@ describe('KV Metadata Operations', () => {
 
 			expect(mockKV.put).toHaveBeenCalledWith('puzzle:test-puzzle-1', JSON.stringify(samplePuzzle));
 		});
+
+		it('should throw error for empty string puzzle ID', async () => {
+			const mockKV = createMockKV();
+			const invalidPuzzle = { ...samplePuzzle, id: '' };
+
+			await expect(
+				createPuzzleMetadata(mockKV as unknown as KVNamespace, invalidPuzzle)
+			).rejects.toThrow('Puzzle ID is required and must be a non-empty string');
+		});
+
+		it('should throw error for whitespace-only puzzle ID', async () => {
+			const mockKV = createMockKV();
+			const invalidPuzzle = { ...samplePuzzle, id: '   ' };
+
+			await expect(
+				createPuzzleMetadata(mockKV as unknown as KVNamespace, invalidPuzzle)
+			).rejects.toThrow('Puzzle ID is required and must be a non-empty string');
+		});
+
+		it('should throw error for empty string puzzle name', async () => {
+			const mockKV = createMockKV();
+			const invalidPuzzle = { ...samplePuzzle, name: '' };
+
+			await expect(
+				createPuzzleMetadata(mockKV as unknown as KVNamespace, invalidPuzzle)
+			).rejects.toThrow('Puzzle name is required and must be a non-empty string');
+		});
+
+		it('should throw error for whitespace-only puzzle name', async () => {
+			const mockKV = createMockKV();
+			const invalidPuzzle = { ...samplePuzzle, name: '   ' };
+
+			await expect(
+				createPuzzleMetadata(mockKV as unknown as KVNamespace, invalidPuzzle)
+			).rejects.toThrow('Puzzle name is required and must be a non-empty string');
+		});
+
+		it('should throw error when puzzle already exists (TOCTOU check)', async () => {
+			const mockKV = createMockKV();
+			// Pre-populate the KV store to simulate existing puzzle
+			mockKV._store.set('puzzle:test-puzzle-1', JSON.stringify(samplePuzzle));
+
+			await expect(
+				createPuzzleMetadata(mockKV as unknown as KVNamespace, samplePuzzle)
+			).rejects.toThrow('Puzzle with ID "test-puzzle-1" already exists');
+		});
 	});
 
 	describe('updatePuzzleMetadata', () => {

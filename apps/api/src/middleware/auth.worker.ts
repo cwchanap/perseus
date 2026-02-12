@@ -179,7 +179,11 @@ async function isSessionActive(env: Env, token: string): Promise<boolean> {
 	}
 	// KV not configured - use fallback in development only
 	if (env.NODE_ENV !== 'development') {
-		return false;
+		console.error(
+			'PUZZLE_METADATA not configured: KV namespace is required for session storage in production. ' +
+				'Please configure the PUZZLE_METADATA KV namespace binding in wrangler.toml'
+		);
+		throw new Error('PUZZLE_METADATA not configured');
 	}
 	return checkFallbackSession(key);
 }

@@ -12,14 +12,15 @@ directory = "../web/build"
 # The binding name "PUZZLES_BUCKET" is preserved across all environments.
 [[r2_buckets]]
 binding = "PUZZLES_BUCKET"
-bucket_name = "perseus-production"
+bucket_name = "perseus-local"
 
 # KV namespace for puzzle metadata (environment-specific configs must provide this)
 # The binding name "PUZZLE_METADATA" is preserved across all environments.
-# IMPORTANT: Replace "REPLACE_WITH_PRODUCTION_KV_NAMESPACE_ID" with actual KV namespace ID before deployment
+# For production, use wrangler.production.toml which contains the real KV namespace ID.
 [[kv_namespaces]]
 binding = "PUZZLE_METADATA"
-id = "REPLACE_WITH_PRODUCTION_KV_NAMESPACE_ID"
+id = "local-dev-kv"
+preview_id = "local-dev-kv-preview"
 
 [durable_objects]
 bindings = [
