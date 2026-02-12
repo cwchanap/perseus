@@ -300,20 +300,32 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 				const resized = resize(image, newW, newH, SamplingFilter.Lanczos3);
 				image.free();
 
-				// Center crop to exact thumbnail size
-				const cropX = Math.floor((newW - THUMBNAIL_SIZE) / 2);
-				const cropY = Math.floor((newH - THUMBNAIL_SIZE) / 2);
-				const cropped = crop(resized, cropX, cropY, cropX + THUMBNAIL_SIZE, cropY + THUMBNAIL_SIZE);
-				resized.free();
+				try {
+					// Center crop to exact thumbnail size
+					const cropX = Math.floor((newW - THUMBNAIL_SIZE) / 2);
+					const cropY = Math.floor((newH - THUMBNAIL_SIZE) / 2);
+					const cropped = crop(
+						resized,
+						cropX,
+						cropY,
+						cropX + THUMBNAIL_SIZE,
+						cropY + THUMBNAIL_SIZE
+					);
 
-				// Encode as JPEG
-				const jpegBytes = cropped.get_bytes_jpeg(80);
-				cropped.free();
+					try {
+						// Encode as JPEG
+						const jpegBytes = cropped.get_bytes_jpeg(80);
 
-				// Upload to R2
-				await this.env.PUZZLES_BUCKET.put(`puzzles/${puzzleId}/thumbnail.jpg`, jpegBytes, {
-					httpMetadata: { contentType: 'image/jpeg' }
-				});
+						// Upload to R2
+						await this.env.PUZZLES_BUCKET.put(`puzzles/${puzzleId}/thumbnail.jpg`, jpegBytes, {
+							httpMetadata: { contentType: 'image/jpeg' }
+						});
+					} finally {
+						if (cropped) cropped.free();
+					}
+				} finally {
+					if (resized) resized.free();
+				}
 			});
 
 			// Step 4: Generate pieces

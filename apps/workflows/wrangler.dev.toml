@@ -13,7 +13,7 @@ class_name = "PerseusWorkflow"
 # R2 bucket for puzzle assets
 [[r2_buckets]]
 binding = "PUZZLES_BUCKET"
-bucket_name = "perseus-dev"
+bucket_name = "perseus-local"
 
 # KV namespace for puzzle metadata - development namespace
 [[kv_namespaces]]

@@ -5,7 +5,7 @@
 	"type": "module",
 	"scripts": {
 		"dev": "wrangler dev --config wrangler.dev.toml",
-		"deploy": "wrangler deploy",
+		"deploy": "wrangler deploy --config wrangler.production.toml",
 		"test": "vitest run",
 		"test:unit": "vitest run",
 		"test:watch": "vitest",
