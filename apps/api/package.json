@@ -6,9 +6,9 @@
 	"scripts": {
 		"dev": "wrangler dev --port 3000 --env dev",
 		"dev:bun": "bun run --watch src/index.ts",
-		"build": "wrangler deploy --dry-run --outdir dist",
+		"build": "wrangler deploy --dry-run --outdir dist --config wrangler.production.toml",
 		"build:bun": "bun build src/index.ts --outdir dist --target bun",
-		"deploy": "wrangler deploy",
+		"deploy": "wrangler deploy --config wrangler.production.toml",
 		"start": "wrangler dev --local",
 		"start:bun": "bun run dist/index.js",
 		"test": "vitest run",

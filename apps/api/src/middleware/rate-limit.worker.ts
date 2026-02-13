@@ -288,13 +288,11 @@ async function checkAndIncrement(
 
 export async function loginRateLimit(c: Context<{ Bindings: Env }>, next: Next): Promise<Response> {
 	const key = getRateLimitKey(c);
-	const now = Date.now();
 	const kv = c.env.PUZZLE_METADATA;
 	const env = c.env.NODE_ENV;
 
-	// Check and increment before next() to short-circuit when limit is reached
-	const attemptTime = Date.now();
-	const result = await checkAndIncrement(kv, key, attemptTime, env, true);
+	// Check current lockout status before auth handler runs.
+	const result = await checkAndIncrement(kv, key, Date.now(), env, false);
 	if (result.shouldBlock) {
 		return c.json(
 			{
@@ -314,6 +312,9 @@ export async function loginRateLimit(c: Context<{ Bindings: Env }>, next: Next):
 	// On successful login (200), reset attempts
 	if (c.res.status === 200) {
 		await deleteRateLimitEntry(kv, key);
+	} else if (c.res.status === 401 || c.res.status === 403) {
+		// Only count failed authentication attempts.
+		await checkAndIncrement(kv, key, Date.now(), env, true);
 	}
 
 	return c.res;

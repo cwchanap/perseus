@@ -156,6 +156,36 @@ describe('Admin Routes - Puzzle Deletion', () => {
 	});
 });
 
+describe('Admin Routes - Logout', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it('should return 500 when session revocation fails', async () => {
+		(auth.revokeSession as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('KV unavailable'));
+
+		const mockEnv = {
+			ADMIN_PASSKEY: 'test-passkey',
+			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890'
+		};
+
+		const req = new Request('http://localhost/logout', {
+			method: 'POST',
+			headers: {
+				cookie: 'session=valid.token'
+			}
+		});
+
+		const res = await admin.fetch(req, mockEnv as any);
+
+		expect(res.status).toBe(500);
+		const body = (await res.json()) as any;
+		expect(body.error).toBe('internal_error');
+		expect(body.message).toBe('Failed to revoke session');
+		expect(auth.clearSessionCookie).not.toHaveBeenCalled();
+	});
+});
+
 describe('Admin Routes - Passkey Validation', () => {
 	beforeEach(() => {
 		__resetRateLimitStore();

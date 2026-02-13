@@ -120,13 +120,35 @@ describe('Rate Limit Middleware', () => {
 
 			const response = await loginRateLimit(mockContext, next);
 
-			// With increment before next(), next() is NOT called when limit is reached
-			// because we short-circuit and return 429 immediately after incrementing to 5
-			expect(next).not.toHaveBeenCalled();
-			expect(response.status).toBe(429);
+			expect(next).toHaveBeenCalled();
+			expect(response.status).toBe(401);
 			const savedEntry = JSON.parse(mockKV._store.get(key) ?? '{}');
 			expect(savedEntry.attempts).toBe(5);
 			expect(savedEntry.lockedUntil).not.toBeNull();
+		});
+
+		it('should allow correct credentials on 5th attempt and reset attempts', async () => {
+			const mockKV = createMockKV();
+			const key = 'ratelimit:login:127.0.0.1';
+			mockKV._store.set(
+				key,
+				JSON.stringify({
+					attempts: 4,
+					lockedUntil: null,
+					lastAttemptAt: Date.now()
+				})
+			);
+
+			const mockContext = createMockContext('127.0.0.1', mockKV);
+			const next = vi.fn(async () => {
+				(mockContext.res as any).status = 200;
+			});
+
+			const response = await loginRateLimit(mockContext, next);
+
+			expect(next).toHaveBeenCalled();
+			expect(response.status).toBe(200);
+			expect(mockKV._store.get(key)).toBeUndefined();
 		});
 
 		it('should block request after 5 failed attempts', async () => {

@@ -206,8 +206,16 @@
 		deletingId = puzzleId;
 
 		try {
-			await deletePuzzle(puzzleId);
+			const deleteResult = await deletePuzzle(puzzleId);
 			clearProgress(puzzleId);
+			if (deleteResult?.partialSuccess) {
+				successMessage = deleteResult.warning;
+				if (successTimeout !== null) clearTimeout(successTimeout);
+				successTimeout = setTimeout(() => {
+					successMessage = null;
+					successTimeout = null;
+				}, 5000);
+			}
 			await loadPuzzles();
 		} catch (e) {
 			const message = e instanceof ApiError ? e.message : 'Failed to delete puzzle';

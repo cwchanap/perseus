@@ -96,6 +96,13 @@ export interface SessionResponse {
 	authenticated: boolean;
 }
 
+export interface DeletePuzzleResponse {
+	success: false;
+	partialSuccess: true;
+	warning: string;
+	failedAssets: string[];
+}
+
 export interface ErrorResponse {
 	error: string;
 	message: string;

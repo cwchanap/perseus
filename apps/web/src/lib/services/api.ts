@@ -5,7 +5,8 @@ import type {
 	PuzzleSummary,
 	PuzzleListResponse,
 	LoginResponse,
-	SessionResponse
+	SessionResponse,
+	DeletePuzzleResponse
 } from '$lib/types/puzzle';
 // NOTE: This app is built with adapter-static, so public env vars are embedded at build time.
 // Set PUBLIC_API_BASE before building to target a different API.
@@ -187,13 +188,18 @@ export async function createPuzzle(
 	return handleResponse<PuzzleMetadata>(response);
 }
 
-export async function deletePuzzle(id: string): Promise<void> {
+export async function deletePuzzle(id: string): Promise<DeletePuzzleResponse | null> {
 	const response = await fetch(`${API_BASE}/api/admin/puzzles/${id}`, {
 		method: 'DELETE',
 		credentials: 'include'
 	});
 
+	if (response.status === 207) {
+		return handleResponse<DeletePuzzleResponse>(response);
+	}
+
 	await handleVoidResponse(response);
+	return null;
 }
 
 export { ApiError };
