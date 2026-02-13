@@ -376,7 +376,11 @@ admin.delete('/puzzles/:id', requireAuth, async (c) => {
 	}
 
 	try {
-		// Get puzzle directly to avoid TOCTOU race condition
+		// Get puzzle to check status before deletion
+		// Note: There is a small TOCTOU window between getPuzzle and deletePuzzleMetadata
+		// where the puzzle status could change. This endpoint accepts that risk for simplicity.
+		// The status check prevents deletion of processing puzzles, but a race could still occur
+		// if processing completes between the check and the delete.
 		const puzzle = await getPuzzle(c.env.PUZZLE_METADATA, id);
 
 		if (!puzzle) {

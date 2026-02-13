@@ -4,6 +4,7 @@
 	"version": "0.0.1",
 	"type": "module",
 	"scripts": {
+		"build": "echo 'No build step required for Workers'",
 		"dev": "wrangler dev --config wrangler.dev.toml",
 		"deploy": "wrangler deploy --config wrangler.production.toml",
 		"test": "vitest run",

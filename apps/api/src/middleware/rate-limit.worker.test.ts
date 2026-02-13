@@ -120,7 +120,9 @@ describe('Rate Limit Middleware', () => {
 
 			const response = await loginRateLimit(mockContext, next);
 
-			expect(next).toHaveBeenCalled();
+			// With increment before next(), next() is NOT called when limit is reached
+			// because we short-circuit and return 429 immediately after incrementing to 5
+			expect(next).not.toHaveBeenCalled();
 			expect(response.status).toBe(429);
 			const savedEntry = JSON.parse(mockKV._store.get(key) ?? '{}');
 			expect(savedEntry.attempts).toBe(5);

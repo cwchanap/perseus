@@ -278,7 +278,7 @@ export async function verifySession(env: Env, token: string): Promise<SessionPay
 		const isValid = await crypto.subtle.verify(
 			'HMAC',
 			key,
-			signatureBytes.buffer as ArrayBuffer,
+			signatureBytes,
 			encoder.encode(payloadB64)
 		);
 
@@ -334,8 +334,12 @@ export function setSessionCookie(c: Context<{ Bindings: Env }>, token: string): 
 }
 
 // Clear session cookie
-export function clearSessionCookie(c: Context): void {
+export function clearSessionCookie(c: Parameters<typeof deleteCookie>[0]): void {
+	const isSecure = c.env.NODE_ENV !== 'development';
 	deleteCookie(c, SESSION_COOKIE_NAME, {
+		httpOnly: true,
+		secure: isSecure,
+		sameSite: 'Lax',
 		path: '/'
 	});
 }

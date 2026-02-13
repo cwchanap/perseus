@@ -20,12 +20,14 @@ const rateLimitStore = new Map<string, RateLimitEntry>();
 const WARN_INTERVAL_MS = 5 * 60 * 1000; // Re-log warnings every 5 minutes
 let lastInMemoryFallbackWarn = 0;
 let lastMissingIPWarn = 0;
+let lastUntrustedXFFWarn = 0;
 
 // Reset function for testing - clears all in-memory rate limit entries
 export function __resetRateLimitStore(): void {
 	rateLimitStore.clear();
 	lastInMemoryFallbackWarn = 0;
 	lastMissingIPWarn = 0;
+	lastUntrustedXFFWarn = 0;
 }
 
 function cleanupExpiredEntries(): void {
@@ -62,7 +64,7 @@ function getClientIP(c: Context): string {
 	}
 
 	// Check for trusted proxy configuration before accepting x-forwarded-for
-	const trustXFF = process.env.TRUSTED_PROXY === 'true' || c.env.TRUSTED_PROXY === 'true';
+	const trustXFF = c.env.TRUSTED_PROXY === 'true';
 	const xff = c.req.header('x-forwarded-for');
 	if (xff && trustXFF) {
 		// x-forwarded-for format: "client, proxy1, proxy2, ..."
@@ -75,8 +77,8 @@ function getClientIP(c: Context): string {
 	// Log warning when x-forwarded-for is present but not trusted
 	if (xff && !trustXFF) {
 		const now = Date.now();
-		if (now - lastMissingIPWarn >= WARN_INTERVAL_MS) {
-			lastMissingIPWarn = now;
+		if (now - lastUntrustedXFFWarn >= WARN_INTERVAL_MS) {
+			lastUntrustedXFFWarn = now;
 			console.warn(
 				'Rate limiting: Ignoring untrusted x-forwarded-for header (set TRUSTED_PROXY=true to enable). Rate limiting requires Cloudflare or a trusted proxy that sets CF-Connecting-IP.'
 			);
@@ -290,13 +292,17 @@ export async function loginRateLimit(c: Context<{ Bindings: Env }>, next: Next):
 	const kv = c.env.PUZZLE_METADATA;
 	const env = c.env.NODE_ENV;
 
-	// Single read to check lockout (no separate pre-read + increment to avoid double TOCTOU)
-	const preCheck = await checkAndIncrement(kv, key, now, env, false);
-	if (preCheck.shouldBlock) {
+	// Check and increment before next() to short-circuit when limit is reached
+	const attemptTime = Date.now();
+	const result = await checkAndIncrement(kv, key, attemptTime, env, true);
+	if (result.shouldBlock) {
 		return c.json(
 			{
 				error: 'too_many_requests',
-				message: `Too many login attempts. Try again in ${preCheck.remainingSeconds} seconds`
+				message:
+					result.remainingSeconds !== undefined
+						? `Too many login attempts. Try again in ${result.remainingSeconds} seconds`
+						: 'Too many login attempts. Please try again later'
 			},
 			429
 		);
@@ -305,28 +311,12 @@ export async function loginRateLimit(c: Context<{ Bindings: Env }>, next: Next):
 	// Let request proceed
 	await next();
 
-	// Only increment on failed authentication (401/403 responses)
-	if (c.res.status === 401 || c.res.status === 403) {
-		const attemptTime = Date.now();
-		const result = await checkAndIncrement(kv, key, attemptTime, env, true);
-		if (result.shouldBlock) {
-			return c.json(
-				{
-					error: 'too_many_requests',
-					message:
-						result.remainingSeconds !== undefined
-							? `Too many login attempts. Try again in ${result.remainingSeconds} seconds`
-							: 'Too many login attempts. Please try again later'
-				},
-				429
-			);
-		}
-	} else if (c.res.status === 200) {
-		// Successful login, reset attempts
+	// On successful login (200), reset attempts
+	if (c.res.status === 200) {
 		await deleteRateLimitEntry(kv, key);
 	}
 
-	return c.res as Response;
+	return c.res;
 }
 
 export async function resetLoginAttempts(c: Context<{ Bindings: Env }>): Promise<void> {

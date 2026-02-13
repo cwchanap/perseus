@@ -28,6 +28,7 @@ vi.mock('../../middleware/auth.worker', () => ({
 import admin from '../admin.worker';
 import * as storage from '../../services/storage.worker';
 import * as auth from '../../middleware/auth.worker';
+import { __resetRateLimitStore } from '../../middleware/rate-limit.worker';
 
 // Valid PNG magic bytes header for test blobs
 const PNG_HEADER = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0, 0]);
@@ -156,6 +157,10 @@ describe('Admin Routes - Puzzle Deletion', () => {
 });
 
 describe('Admin Routes - Passkey Validation', () => {
+	beforeEach(() => {
+		__resetRateLimitStore();
+	});
+
 	describe('POST /login', () => {
 		it('should return 500 when ADMIN_PASSKEY is missing from environment', async () => {
 			const mockEnv = {

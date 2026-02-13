@@ -396,8 +396,8 @@ describe('Image dimensions', () => {
 			outputDir: TEST_OUTPUT_DIR
 		});
 
-		expect(result.puzzle.imageWidth).toBeGreaterThan(0);
-		expect(result.puzzle.imageHeight).toBeGreaterThan(0);
+		expect(result.puzzle.imageWidth).toBe(100);
+		expect(result.puzzle.imageHeight).toBe(100);
 	});
 
 	it('should handle non-square images', async () => {
