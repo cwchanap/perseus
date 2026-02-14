@@ -81,7 +81,6 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 		}
 
 		const currentVersion = existing.version ?? 0;
-		const _previous = stored ?? existing; // Kept for potential future rollback needs
 
 		// Merge pieces arrays to avoid overwriting with stale data
 		// This handles the case where workflow sends only new row pieces
@@ -154,7 +153,7 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 					const delay = 100 * Math.pow(2, attempt);
 					await new Promise((resolve) => setTimeout(resolve, delay));
 				} else {
-					console.warn(
+					console.error(
 						`KV write failed for puzzle ${puzzleId} after ${kvMaxRetries} attempts, DO is authoritative:`,
 						kvError
 					);
@@ -541,8 +540,8 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 // Export default for wrangler
 export default {
 	async fetch(_request: Request, _env: Env): Promise<Response> {
-		// This worker doesn't serve HTTP requests directly
-		// It only exposes the Workflow binding
-		return new Response('Perseus Workflows Worker', { status: 200 });
+		// This worker processes puzzles via Workflow and Durable Object bindings.
+		// It does not serve public HTTP endpoints.
+		return new Response('Not Found', { status: 404 });
 	}
 };

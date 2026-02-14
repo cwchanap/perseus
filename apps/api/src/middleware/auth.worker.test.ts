@@ -1,27 +1,44 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Hono } from 'hono';
-import { createSession, verifySession, getSessionToken, requireAuth } from './auth.worker';
+import {
+	createSession,
+	verifySession,
+	getSessionToken,
+	requireAuth,
+	revokeSession
+} from './auth.worker';
 import type { Env } from '../worker';
 
+function createMockKVStore() {
+	const store = new Map<string, string>();
+	return {
+		_store: store,
+		get: vi.fn(async function (key: string) {
+			return store.get(key) ?? null;
+		}),
+		put: vi.fn(async function (key: string, value: string) {
+			store.set(key, value);
+		}),
+		delete: vi.fn(async function (key: string) {
+			store.delete(key);
+		})
+	} as unknown as KVNamespace;
+}
+
 // Mock environment
+let mockKV = createMockKVStore();
 const mockEnv: Partial<Env> = {
 	JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
-	PUZZLE_METADATA: {
-		_store: new Map<string, string>(),
-		get: vi.fn(async function (this: { _store: Map<string, string> }, key: string) {
-			return this._store.get(key) ?? null;
-		}),
-		put: vi.fn(async function (this: { _store: Map<string, string> }, key: string, value: string) {
-			this._store.set(key, value);
-		}),
-		delete: vi.fn(async function (this: { _store: Map<string, string> }, key: string) {
-			this._store.delete(key);
-		})
-	} as unknown as KVNamespace
+	PUZZLE_METADATA: mockKV
 };
 
 describe('Session Token Management', () => {
+	beforeEach(() => {
+		mockKV = createMockKVStore();
+		mockEnv.PUZZLE_METADATA = mockKV;
+	});
+
 	describe('createSession', () => {
 		it('should create a valid session token', async () => {
 			const token = await createSession(mockEnv as Env, {
@@ -177,24 +194,21 @@ describe('Session Token Management', () => {
 		});
 
 		it('should throw on unexpected crypto errors', async () => {
-			const mockEnv = {
+			const testEnv = {
 				JWT_SECRET: 'test-secret-key-should-be-long-enough-123456'
 			};
 
-			// Create a token that will cause crypto.subtle to fail
-			const badToken = 'validbase64==.validbase64=='; // Valid format but will fail signature verification in an unexpected way
+			const badToken = 'validbase64==.validbase64==';
 
-			// Mock crypto.subtle.importKey to throw unexpected error
-			const originalImportKey = crypto.subtle.importKey;
-			crypto.subtle.importKey = vi.fn(() => {
-				return Promise.reject(new Error('Unexpected crypto error'));
-			}) as any;
+			const importKeySpy = vi
+				.spyOn(crypto.subtle, 'importKey')
+				.mockRejectedValue(new Error('Unexpected crypto error'));
 			try {
-				await expect(verifySession(mockEnv as Env, badToken)).rejects.toThrow(
+				await expect(verifySession(testEnv as Env, badToken)).rejects.toThrow(
 					'Unexpected crypto error'
 				);
 			} finally {
-				crypto.subtle.importKey = originalImportKey;
+				importKeySpy.mockRestore();
 			}
 		});
 	});
@@ -238,16 +252,13 @@ describe('requireAuth Middleware', () => {
 	it('should return 500 when session verification throws unexpected error', async () => {
 		const app = new Hono<{ Bindings: Env }>();
 
-		// Mock crypto.subtle.importKey to throw unexpected error
-		const originalImportKey = crypto.subtle.importKey;
-		crypto.subtle.importKey = vi.fn(() => {
-			return Promise.reject(new Error('Crypto system failure'));
-		}) as any;
+		const importKeySpy = vi
+			.spyOn(crypto.subtle, 'importKey')
+			.mockRejectedValue(new Error('Crypto system failure'));
 		try {
 			app.use('/protected/*', requireAuth);
 			app.get('/protected/resource', (c) => c.json({ data: 'secret' }));
 
-			// Create a request with a token cookie
 			const req = new Request('http://localhost/protected/resource', {
 				headers: {
 					Cookie: 'perseus_session=some.token'
@@ -261,8 +272,7 @@ describe('requireAuth Middleware', () => {
 			expect(body.error).toBe('internal_error');
 			expect(body.message).toBe('Authentication system error');
 		} finally {
-			// Restore original function
-			crypto.subtle.importKey = originalImportKey;
+			importKeySpy.mockRestore();
 		}
 	});
 });
@@ -362,5 +372,67 @@ describe('requireAuth with valid token', () => {
 		expect(res.status).toBe(401);
 		const body = (await res.json()) as { error: string };
 		expect(body.error).toBe('unauthorized');
+	});
+});
+
+describe('revokeSession', () => {
+	beforeEach(() => {
+		mockKV = createMockKVStore();
+		mockEnv.PUZZLE_METADATA = mockKV;
+	});
+
+	it('should delete session from KV', async () => {
+		const token = await createSession(mockEnv as Env, {
+			userId: 'admin',
+			username: 'admin',
+			role: 'admin'
+		});
+
+		// Verify session exists before revocation
+		const sessionBefore = await verifySession(mockEnv as Env, token);
+		expect(sessionBefore).not.toBeNull();
+
+		await revokeSession(mockEnv as Env, token);
+
+		// Verify session is revoked
+		const sessionAfter = await verifySession(mockEnv as Env, token);
+		expect(sessionAfter).toBeNull();
+	});
+
+	it('should re-throw on KV failure in production', async () => {
+		const prodEnv: Partial<Env> = {
+			...mockEnv,
+			NODE_ENV: 'production',
+			PUZZLE_METADATA: {
+				get: vi.fn(),
+				put: vi.fn(),
+				delete: vi.fn(() => {
+					throw new Error('KV unavailable');
+				})
+			} as unknown as KVNamespace
+		};
+
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		await expect(revokeSession(prodEnv as Env, 'any-token')).rejects.toThrow('KV unavailable');
+	});
+
+	it('should swallow KV failure in development', async () => {
+		const devEnv: Partial<Env> = {
+			...mockEnv,
+			NODE_ENV: 'development',
+			PUZZLE_METADATA: {
+				get: vi.fn(),
+				put: vi.fn(),
+				delete: vi.fn(() => {
+					throw new Error('KV unavailable');
+				})
+			} as unknown as KVNamespace
+		};
+
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		// Should not throw in development
+		await expect(revokeSession(devEnv as Env, 'any-token')).resolves.toBeUndefined();
 	});
 });

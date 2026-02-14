@@ -6,6 +6,7 @@ export type {
 	PuzzleStatus,
 	PuzzleProgress,
 	PuzzleMetadata,
+	PuzzleSummary,
 	ReadyPuzzle,
 	FailedPuzzle,
 	WorkflowParams

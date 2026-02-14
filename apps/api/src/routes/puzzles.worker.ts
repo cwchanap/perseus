@@ -34,7 +34,7 @@ const puzzles = new Hono<{ Bindings: Env }>();
 // GET /api/puzzles - List all ready puzzles
 puzzles.get('/', async (c) => {
 	try {
-		const puzzleList = await listPuzzles(c.env.PUZZLE_METADATA);
+		const { puzzles: puzzleList } = await listPuzzles(c.env.PUZZLE_METADATA);
 		// Filter to only ready puzzles - public UI expects thumbnails/pieces to exist
 		const readyPuzzles = puzzleList.filter((p) => p.status === 'ready');
 		return c.json({ puzzles: readyPuzzles });

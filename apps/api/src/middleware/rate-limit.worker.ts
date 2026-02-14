@@ -156,7 +156,11 @@ async function getRateLimitEntry(
 				console.warn('Invalid rate limit entry, resetting:', { key: getKVKey(key), data });
 			}
 		} catch (error) {
-			console.warn(`KV read failed for ${getKVKey(key)}:`, error);
+			if (env === 'production') {
+				console.error(`[CRITICAL] KV read failed for ${getKVKey(key)}:`, error);
+			} else {
+				console.warn(`KV read failed for ${getKVKey(key)}:`, error);
+			}
 			// Continue to check in-memory store even on KV error
 		}
 	}
@@ -204,7 +208,8 @@ async function getRateLimitEntry(
 async function setRateLimitEntry(
 	kv: KVNamespace | undefined,
 	key: string,
-	entry: RateLimitEntry
+	entry: RateLimitEntry,
+	env?: string
 ): Promise<void> {
 	if (kv) {
 		try {
@@ -214,7 +219,14 @@ async function setRateLimitEntry(
 			// Write-through: also update in-memory cache for read consistency
 			rateLimitStore.set(key, entry);
 		} catch (error) {
-			console.error('KV write failed, falling back to in-memory:', error);
+			if (env === 'production') {
+				console.error(
+					'[CRITICAL] KV write failed in production, falling back to in-memory:',
+					error
+				);
+			} else {
+				console.error('KV write failed, falling back to in-memory:', error);
+			}
 			rateLimitStore.set(key, entry);
 		}
 	} else {
@@ -223,12 +235,20 @@ async function setRateLimitEntry(
 }
 
 // Delete rate limit entry from KV and memory
-async function deleteRateLimitEntry(kv: KVNamespace | undefined, key: string): Promise<void> {
+async function deleteRateLimitEntry(
+	kv: KVNamespace | undefined,
+	key: string,
+	env?: string
+): Promise<void> {
 	if (kv) {
 		try {
 			await kv.delete(getKVKey(key));
 		} catch (error) {
-			console.error('KV delete failed, continuing:', error);
+			if (env === 'production') {
+				console.error('[CRITICAL] KV delete failed in production:', error);
+			} else {
+				console.error('KV delete failed, continuing:', error);
+			}
 		}
 	}
 	// Always clean in-memory store to avoid stale entries from KV write fallback
@@ -276,7 +296,7 @@ async function checkAndIncrement(
 	}
 
 	// Write back immediately after read to minimize TOCTOU window
-	await setRateLimitEntry(kv, key, newEntry);
+	await setRateLimitEntry(kv, key, newEntry, env);
 
 	if (newEntry.lockedUntil && newEntry.lockedUntil > now) {
 		const remainingSeconds = Math.ceil((newEntry.lockedUntil - now) / 1000);
@@ -309,12 +329,17 @@ export async function loginRateLimit(c: Context<{ Bindings: Env }>, next: Next):
 	// Let request proceed
 	await next();
 
-	// On successful login (200), reset attempts
-	if (c.res.status === 200) {
-		await deleteRateLimitEntry(kv, key);
-	} else if (c.res.status === 401 || c.res.status === 403) {
-		// Only count failed authentication attempts.
-		await checkAndIncrement(kv, key, Date.now(), env, true);
+	// Post-auth rate limit tracking — wrapped in try-catch so KV failures
+	// don't mask the original auth response
+	try {
+		if (c.res.status === 200) {
+			await deleteRateLimitEntry(kv, key, env);
+		} else if (c.res.status === 401 || c.res.status === 403) {
+			// Only count failed authentication attempts.
+			await checkAndIncrement(kv, key, Date.now(), env, true);
+		}
+	} catch (error) {
+		console.error('Rate limit post-auth tracking failed:', error);
 	}
 
 	return c.res;
@@ -323,5 +348,6 @@ export async function loginRateLimit(c: Context<{ Bindings: Env }>, next: Next):
 export async function resetLoginAttempts(c: Context<{ Bindings: Env }>): Promise<void> {
 	const key = getRateLimitKey(c);
 	const kv = c.env.PUZZLE_METADATA;
-	await deleteRateLimitEntry(kv, key);
+	const env = c.env.NODE_ENV;
+	await deleteRateLimitEntry(kv, key, env);
 }

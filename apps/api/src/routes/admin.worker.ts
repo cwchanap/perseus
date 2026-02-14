@@ -70,7 +70,8 @@ async function detectImageType(file: File | Blob): Promise<string | null> {
 			return 'image/webp';
 		}
 		return null;
-	} catch {
+	} catch (error) {
+		console.error('Failed to detect image type from file bytes:', error);
 		return null;
 	}
 }
@@ -122,11 +123,7 @@ admin.post('/login', loginRateLimit, async (c) => {
 		const passkeyHash = await crypto.subtle.digest('SHA-256', passkeyBytes);
 		const expectedHash = await crypto.subtle.digest('SHA-256', expectedBytes);
 
-		// Constant-time comparison using XOR accumulation to prevent timing attacks.
-		// NOTE: This comparison is designed for equal-length inputs (SHA-256 hashes).
-		// Both passkeyArr and expectedArr are always 32 bytes, so the length check is
-		// technically always 0. We use Math.max() for loop bounds as defense-in-depth
-		// in case this code is ever refactored to compare non-hash values.
+		// Constant-time comparison via XOR over fixed-length SHA-256 hashes
 		const passkeyArr = new Uint8Array(passkeyHash);
 		const expectedArr = new Uint8Array(expectedHash);
 
@@ -201,7 +198,7 @@ admin.get('/session', async (c) => {
 // GET /api/admin/puzzles - List all puzzles for admin (includes processing/failed)
 admin.get('/puzzles', requireAuth, async (c) => {
 	try {
-		const puzzleList = await listPuzzles(c.env.PUZZLE_METADATA);
+		const { puzzles: puzzleList } = await listPuzzles(c.env.PUZZLE_METADATA);
 		return c.json({ puzzles: puzzleList });
 	} catch (error) {
 		console.error('Failed to list puzzles for admin', error);

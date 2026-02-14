@@ -126,7 +126,7 @@ describe('KV Metadata Operations', () => {
 			expect(result).toBeNull();
 		});
 
-		it('should return null when puzzle metadata is invalid', async () => {
+		it('should throw when puzzle metadata is corrupt', async () => {
 			const mockKV = createMockKV();
 			const invalidPuzzle = {
 				...samplePuzzle,
@@ -137,19 +137,13 @@ describe('KV Metadata Operations', () => {
 				pieces: []
 			};
 			mockKV._store.set('puzzle:test-puzzle-1', JSON.stringify(invalidPuzzle));
-			const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
-			const result = await getPuzzle(mockKV as unknown as KVNamespace, 'test-puzzle-1');
-
-			expect(result).toBeNull();
-			expect(errorSpy).toHaveBeenCalledWith(
-				'Invalid puzzle metadata for test-puzzle-1:',
-				invalidPuzzle
+			await expect(getPuzzle(mockKV as unknown as KVNamespace, 'test-puzzle-1')).rejects.toThrow(
+				'Corrupt puzzle metadata for test-puzzle-1'
 			);
-			errorSpy.mockRestore();
 		});
 
-		it('should return null when processing puzzle includes error', async () => {
+		it('should throw when processing puzzle includes error', async () => {
 			const mockKV = createMockKV();
 			const invalidPuzzle = {
 				...samplePuzzle,
@@ -157,19 +151,13 @@ describe('KV Metadata Operations', () => {
 				error: { message: 'Should not be here' }
 			};
 			mockKV._store.set('puzzle:test-puzzle-1', JSON.stringify(invalidPuzzle));
-			const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
-			const result = await getPuzzle(mockKV as unknown as KVNamespace, 'test-puzzle-1');
-
-			expect(result).toBeNull();
-			expect(errorSpy).toHaveBeenCalledWith(
-				'Invalid puzzle metadata for test-puzzle-1:',
-				invalidPuzzle
+			await expect(getPuzzle(mockKV as unknown as KVNamespace, 'test-puzzle-1')).rejects.toThrow(
+				'Corrupt puzzle metadata for test-puzzle-1'
 			);
-			errorSpy.mockRestore();
 		});
 
-		it('should return null when failed puzzle includes progress', async () => {
+		it('should throw when failed puzzle includes progress', async () => {
 			const mockKV = createMockKV();
 			const invalidPuzzle = {
 				...samplePuzzle,
@@ -182,19 +170,13 @@ describe('KV Metadata Operations', () => {
 				}
 			};
 			mockKV._store.set('puzzle:test-puzzle-1', JSON.stringify(invalidPuzzle));
-			const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
-			const result = await getPuzzle(mockKV as unknown as KVNamespace, 'test-puzzle-1');
-
-			expect(result).toBeNull();
-			expect(errorSpy).toHaveBeenCalledWith(
-				'Invalid puzzle metadata for test-puzzle-1:',
-				invalidPuzzle
+			await expect(getPuzzle(mockKV as unknown as KVNamespace, 'test-puzzle-1')).rejects.toThrow(
+				'Corrupt puzzle metadata for test-puzzle-1'
 			);
-			errorSpy.mockRestore();
 		});
 
-		it('should return null when ready puzzle includes progress or error', async () => {
+		it('should throw when ready puzzle includes progress or error', async () => {
 			const mockKV = createMockKV();
 			const samplePiece = {
 				id: 0,
@@ -224,16 +206,10 @@ describe('KV Metadata Operations', () => {
 				error: { message: 'Should not be here' }
 			};
 			mockKV._store.set('puzzle:test-puzzle-1', JSON.stringify(invalidPuzzle));
-			const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
-			const result = await getPuzzle(mockKV as unknown as KVNamespace, 'test-puzzle-1');
-
-			expect(result).toBeNull();
-			expect(errorSpy).toHaveBeenCalledWith(
-				'Invalid puzzle metadata for test-puzzle-1:',
-				invalidPuzzle
+			await expect(getPuzzle(mockKV as unknown as KVNamespace, 'test-puzzle-1')).rejects.toThrow(
+				'Corrupt puzzle metadata for test-puzzle-1'
 			);
-			errorSpy.mockRestore();
 		});
 	});
 
@@ -362,7 +338,8 @@ describe('KV Metadata Operations', () => {
 
 			const result = await listPuzzles(mockKV as unknown as KVNamespace);
 
-			expect(result).toEqual([]);
+			expect(result.puzzles).toEqual([]);
+			expect(result.invalidCount).toBe(0);
 		});
 
 		it('should return puzzle summaries sorted by createdAt descending', async () => {
@@ -377,10 +354,10 @@ describe('KV Metadata Operations', () => {
 
 			const result = await listPuzzles(mockKV as unknown as KVNamespace);
 
-			expect(result).toHaveLength(3);
-			expect(result[0].id).toBe('puzzle-2'); // Most recent first
-			expect(result[1].id).toBe('puzzle-3');
-			expect(result[2].id).toBe('puzzle-1');
+			expect(result.puzzles).toHaveLength(3);
+			expect(result.puzzles[0].id).toBe('puzzle-2'); // Most recent first
+			expect(result.puzzles[1].id).toBe('puzzle-3');
+			expect(result.puzzles[2].id).toBe('puzzle-1');
 		});
 
 		it('should return only summary fields', async () => {
@@ -389,7 +366,7 @@ describe('KV Metadata Operations', () => {
 
 			const result = await listPuzzles(mockKV as unknown as KVNamespace);
 
-			expect(result[0]).toEqual({
+			expect(result.puzzles[0]).toEqual({
 				id: samplePuzzle.id,
 				name: samplePuzzle.name,
 				pieceCount: samplePuzzle.pieceCount,

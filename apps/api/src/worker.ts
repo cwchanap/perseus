@@ -26,10 +26,8 @@ export interface Env {
 	ASSETS: Fetcher;
 }
 
-// Create Hono app with typed env
 const app = new Hono<{ Bindings: Env }>();
 
-// Middleware
 app.use('*', logger());
 
 app.use('*', async (c, next) => {
@@ -95,25 +93,38 @@ app.get('/api', (c) => {
 	});
 });
 
-// Import and mount route handlers
 import puzzles from './routes/puzzles.worker';
 import admin from './routes/admin.worker';
 
 app.route('/api/puzzles', puzzles);
 app.route('/api/admin', admin);
 
-// Export for Cloudflare Workers
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-		const url = new URL(request.url);
+		try {
+			const url = new URL(request.url);
 
-		// Route /api and /api/* plus /health to Hono app
-		if (url.pathname === '/api' || url.pathname.startsWith('/api/') || url.pathname === '/health') {
-			return app.fetch(request, env, ctx);
+			if (
+				url.pathname === '/api' ||
+				url.pathname.startsWith('/api/') ||
+				url.pathname === '/health'
+			) {
+				return app.fetch(request, env, ctx);
+			}
+
+			return env.ASSETS.fetch(request);
+		} catch (error) {
+			console.error('Unhandled error in worker fetch:', error);
+			return new Response(
+				JSON.stringify({
+					error: 'internal_error',
+					message: 'An unexpected error occurred'
+				}),
+				{
+					status: 500,
+					headers: { 'Content-Type': 'application/json' }
+				}
+			);
 		}
-
-		// Serve static assets for all other routes
-		// The assets binding handles SPA fallback via wrangler config
-		return env.ASSETS.fetch(request);
 	}
 };

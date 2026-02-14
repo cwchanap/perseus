@@ -1,4 +1,5 @@
-// Puzzle generator service using WASM image processing for worker compatibility
+// Puzzle generator service for Bun/Node.js runtime (not worker-compatible).
+// See apps/workflows for the Cloudflare Workers version.
 import { mkdir, writeFile } from 'fs/promises';
 import path from 'path';
 import type { Puzzle, PuzzlePiece, AllowedPieceCount, EdgeConfig } from '../types';

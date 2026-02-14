@@ -1,5 +1,6 @@
-// Shared types for Jigsaw Puzzle API
-// Based on data-model.md specification
+// LEGACY: Types for the Bun-based dev server (non-worker).
+// Worker code imports from @perseus/types via storage.worker.ts re-exports.
+// Do not add new types here — use @perseus/types instead.
 
 export type EdgeType = 'flat' | 'tab' | 'blank';
 

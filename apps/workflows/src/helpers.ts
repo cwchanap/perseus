@@ -1,5 +1,6 @@
-// Helper functions and constants for the workflows worker
-// These are NOT exported from the main entry point to avoid workerd issues
+// Helper functions and constants for the workflows worker.
+// These are NOT exported from the main entry point because workerd
+// restricts top-level imports in modules that export Durable Objects.
 
 import type { PuzzleMetadata } from './types';
 
@@ -13,12 +14,14 @@ export async function getMetadata(
 	puzzleId: string
 ): Promise<PuzzleMetadata | null> {
 	const data = await kv.get(`puzzle:${puzzleId}`, 'json');
-	if (data && !validatePuzzleMetadata(data)) {
+	if (data === null) return null;
+	if (!validatePuzzleMetadata(data)) {
 		const diagnostics = getValidationDiagnostics(data);
-		console.error(`Invalid puzzle metadata for ${puzzleId}: ${diagnostics}`);
-		return null;
+		throw new Error(
+			`Corrupt puzzle metadata for ${puzzleId}: data exists but fails validation (${diagnostics})`
+		);
 	}
-	return data as PuzzleMetadata | null;
+	return data as PuzzleMetadata;
 }
 
 function getValidationDiagnostics(meta: unknown): string {
@@ -69,7 +72,9 @@ export async function updateMetadata(
 
 	if (!response.ok) {
 		const payload = (await response.json().catch(() => null)) as { message?: string } | null;
-		throw new Error(payload?.message ?? `Failed to update puzzle ${puzzleId}`);
+		throw new Error(
+			payload?.message ?? `Failed to update puzzle ${puzzleId} (HTTP ${response.status})`
+		);
 	}
 }
 

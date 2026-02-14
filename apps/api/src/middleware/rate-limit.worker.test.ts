@@ -253,6 +253,62 @@ describe('Rate Limit Middleware', () => {
 		});
 	});
 
+	describe('IP detection edge cases', () => {
+		it('should use UUID fallback when cf-connecting-ip is null and XFF is untrusted', async () => {
+			const mockKV = createMockKV();
+			const mockContext = {
+				env: {
+					PUZZLE_METADATA: mockKV,
+					TRUSTED_PROXY: undefined
+				},
+				req: {
+					header: vi.fn((name: string) => {
+						if (name === 'cf-connecting-ip') return null;
+						if (name === 'x-forwarded-for') return '10.0.0.1';
+						return null;
+					})
+				},
+				json: vi.fn((body, status) => ({ body, status })),
+				res: { status: 200 } as any
+			} as any;
+			const next = vi.fn();
+
+			const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+			await loginRateLimit(mockContext, next);
+
+			expect(next).toHaveBeenCalled();
+			// Each request gets a unique UUID key, so no rate state accumulates
+			consoleWarnSpy.mockRestore();
+		});
+	});
+
+	describe('successful login reset', () => {
+		it('should reset rate limit state on 200 response', async () => {
+			const mockKV = createMockKV();
+			const key = 'ratelimit:login:127.0.0.1';
+			mockKV._store.set(
+				key,
+				JSON.stringify({
+					attempts: 3,
+					lockedUntil: null,
+					lastAttemptAt: Date.now()
+				})
+			);
+
+			const mockContext = createMockContext('127.0.0.1', mockKV);
+			const next = vi.fn(async () => {
+				(mockContext.res as any).status = 200;
+			});
+
+			await loginRateLimit(mockContext, next);
+
+			expect(next).toHaveBeenCalled();
+			// Rate limit entry should be deleted after successful login
+			expect(mockKV.delete).toHaveBeenCalledWith(expect.stringContaining('127.0.0.1'));
+		});
+	});
+
 	describe('lockout expiry', () => {
 		it('should reset attempts after lockout expires', async () => {
 			const mockKV = createMockKV();

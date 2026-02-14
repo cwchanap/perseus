@@ -33,7 +33,10 @@ describe('Puzzle Routes - UUID Validation', () => {
 					status: 'failed'
 				}
 			];
-			vi.mocked(storage.listPuzzles).mockResolvedValue(mockPuzzles as any);
+			vi.mocked(storage.listPuzzles).mockResolvedValue({
+				puzzles: mockPuzzles,
+				invalidCount: 0
+			} as any);
 
 			const req = new Request('http://localhost/');
 			const res = await puzzles.fetch(req, mockEnv);
@@ -54,7 +57,10 @@ describe('Puzzle Routes - UUID Validation', () => {
 					status: 'processing'
 				}
 			];
-			vi.mocked(storage.listPuzzles).mockResolvedValue(mockPuzzles as any);
+			vi.mocked(storage.listPuzzles).mockResolvedValue({
+				puzzles: mockPuzzles,
+				invalidCount: 0
+			} as any);
 
 			const req = new Request('http://localhost/');
 			const res = await puzzles.fetch(req, mockEnv);
@@ -159,6 +165,66 @@ describe('Puzzle Routes - UUID Validation', () => {
 
 			expect(res.status).toBe(400);
 			expect(body.error).toBe('invalid_piece_id');
+		});
+	});
+
+	describe('GET /:id/thumbnail - success path', () => {
+		it('should return image with correct Content-Type and Cache-Control', async () => {
+			const validUuid = '550e8400-e29b-41d4-a716-446655440000';
+			vi.mocked(storage.getPuzzle).mockResolvedValueOnce({
+				id: validUuid,
+				name: 'Test',
+				pieceCount: 4,
+				gridCols: 2,
+				gridRows: 2,
+				imageWidth: 100,
+				imageHeight: 100,
+				createdAt: Date.now(),
+				status: 'ready',
+				pieces: [],
+				version: 0
+			} as any);
+			vi.mocked(storage.getImage).mockResolvedValueOnce({
+				data: new ArrayBuffer(8),
+				contentType: 'image/jpeg'
+			});
+
+			const req = new Request(`http://localhost/${validUuid}/thumbnail`);
+			const res = await puzzles.fetch(req, mockEnv);
+
+			expect(res.status).toBe(200);
+			expect(res.headers.get('Content-Type')).toBe('image/jpeg');
+			expect(res.headers.get('Cache-Control')).toBe('public, max-age=86400');
+		});
+	});
+
+	describe('GET /:id/pieces/:pieceId/image - success path', () => {
+		it('should return image data on success', async () => {
+			const validUuid = '550e8400-e29b-41d4-a716-446655440000';
+			vi.mocked(storage.getPuzzle).mockResolvedValueOnce({
+				id: validUuid,
+				name: 'Test',
+				pieceCount: 4,
+				gridCols: 2,
+				gridRows: 2,
+				imageWidth: 100,
+				imageHeight: 100,
+				createdAt: Date.now(),
+				status: 'ready',
+				pieces: [],
+				version: 0
+			} as any);
+			vi.mocked(storage.getImage).mockResolvedValueOnce({
+				data: new ArrayBuffer(16),
+				contentType: 'image/png'
+			});
+
+			const req = new Request(`http://localhost/${validUuid}/pieces/0/image`);
+			const res = await puzzles.fetch(req, mockEnv);
+
+			expect(res.status).toBe(200);
+			expect(res.headers.get('Content-Type')).toBe('image/png');
+			expect(res.headers.get('Cache-Control')).toBe('public, max-age=86400');
 		});
 	});
 });

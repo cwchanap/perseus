@@ -60,6 +60,33 @@ export interface FailedPuzzle extends PuzzleMetadataBase {
 
 export type PuzzleMetadata = ProcessingPuzzle | ReadyPuzzle | FailedPuzzle;
 
+export interface PuzzleSummary {
+	id: string;
+	name: string;
+	pieceCount: number;
+	status: PuzzleStatus;
+	progress?: PuzzleProgress;
+}
+
+// API response types shared between API and web
+export interface LoginResponse {
+	success: boolean;
+	error?: string;
+}
+
+export interface SessionResponse {
+	authenticated: boolean;
+}
+
+export interface PuzzleListResponse {
+	puzzles: PuzzleSummary[];
+}
+
+export interface ErrorResponse {
+	error: string;
+	message: string;
+}
+
 export interface WorkflowParams {
 	puzzleId: string;
 }

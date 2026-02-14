@@ -6,25 +6,26 @@ import type {
 	PuzzlePiece,
 	PuzzleMetadata,
 	PuzzleStatus,
-	PuzzleProgress
+	PuzzleProgress,
+	PuzzleSummary
 } from '@perseus/types';
 import { validatePuzzleMetadata, validatePuzzleMetadataLight } from '@perseus/types';
 
 // Re-export types so consumers don't need to import from @perseus/types directly
-export type { EdgeType, EdgeConfig, PuzzlePiece, PuzzleMetadata, PuzzleStatus, PuzzleProgress };
+export type {
+	EdgeType,
+	EdgeConfig,
+	PuzzlePiece,
+	PuzzleMetadata,
+	PuzzleStatus,
+	PuzzleProgress,
+	PuzzleSummary
+};
 
 export type LockResult =
 	| { status: 'acquired'; token: string; ttlMs: number }
 	| { status: 'held' }
 	| { status: 'error'; error: Error };
-
-export interface PuzzleSummary {
-	id: string;
-	name: string;
-	pieceCount: number;
-	status: PuzzleStatus;
-	progress?: PuzzleProgress;
-}
 
 // KV key helpers
 function puzzleKey(id: string): string {
@@ -100,11 +101,11 @@ export async function releaseLock(
 
 export async function getPuzzle(kv: KVNamespace, puzzleId: string): Promise<PuzzleMetadata | null> {
 	const data = await kv.get(puzzleKey(puzzleId), 'json');
-	if (data && !validatePuzzleMetadata(data)) {
-		console.error(`Invalid puzzle metadata for ${puzzleId}:`, data);
-		return null;
+	if (data === null) return null;
+	if (!validatePuzzleMetadata(data)) {
+		throw new Error(`Corrupt puzzle metadata for ${puzzleId}: data exists but fails validation`);
 	}
-	return data as PuzzleMetadata | null;
+	return data as PuzzleMetadata;
 }
 
 // Create initial puzzle metadata in KV (for processing state)
@@ -159,7 +160,9 @@ export async function updatePuzzleMetadata(
 
 	if (!response.ok) {
 		const payload = (await response.json().catch(() => null)) as { message?: string } | null;
-		throw new Error(payload?.message ?? `Failed to update puzzle ${puzzleId}`);
+		throw new Error(
+			payload?.message ?? `Failed to update puzzle ${puzzleId} (HTTP ${response.status})`
+		);
 	}
 }
 
@@ -179,7 +182,9 @@ export async function deletePuzzleMetadata(
 }
 
 // List all puzzles from KV (sorted by createdAt desc)
-export async function listPuzzles(kv: KVNamespace): Promise<PuzzleSummary[]> {
+export async function listPuzzles(
+	kv: KVNamespace
+): Promise<{ puzzles: PuzzleSummary[]; invalidCount: number }> {
 	const keys: { name: string }[] = [];
 	let cursor: string | undefined;
 
@@ -195,32 +200,41 @@ export async function listPuzzles(kv: KVNamespace): Promise<PuzzleSummary[]> {
 	const fetched = await Promise.all(keys.map((k) => kv.get(k.name, 'json')));
 	const nullCount = fetched.filter((p) => p === null).length;
 	if (nullCount > 0) {
-		console.warn(
+		console.error(
 			`listPuzzles: ${nullCount} keys returned null (data corruption or eventual consistency)`
 		);
 	}
+	let invalidCount = nullCount;
 	const puzzles: PuzzleMetadata[] = [];
 	fetched.forEach((puzzle, index) => {
 		if (puzzle === null) return;
 		// Use lightweight validation for listing to avoid O(n*pieces) overhead
 		if (!validatePuzzleMetadataLight(puzzle)) {
-			console.warn(`Invalid puzzle metadata for ${keys[index].name}:`, puzzle);
+			invalidCount++;
+			console.error(`Invalid puzzle metadata for ${keys[index].name}:`, puzzle);
 			return;
 		}
 		puzzles.push(puzzle);
 	});
 
+	if (invalidCount > 0) {
+		console.error(`listPuzzles: ${invalidCount} invalid entries out of ${keys.length} total keys`);
+	}
+
 	// Sort by createdAt descending
 	puzzles.sort((a, b) => b.createdAt - a.createdAt);
 
 	// Map to summaries
-	return puzzles.map((p) => ({
-		id: p.id,
-		name: p.name,
-		pieceCount: p.pieceCount,
-		status: p.status,
-		progress: p.progress
-	}));
+	return {
+		puzzles: puzzles.map((p) => ({
+			id: p.id,
+			name: p.name,
+			pieceCount: p.pieceCount,
+			status: p.status,
+			progress: p.progress
+		})),
+		invalidCount
+	};
 }
 
 // Check if puzzle exists in KV
@@ -274,13 +288,18 @@ export async function getImage(
 	bucket: R2Bucket,
 	key: string
 ): Promise<{ data: ArrayBuffer; contentType: string } | null> {
-	const obj = await bucket.get(key);
-	if (!obj) return null;
+	try {
+		const obj = await bucket.get(key);
+		if (!obj) return null;
 
-	return {
-		data: await obj.arrayBuffer(),
-		contentType: obj.httpMetadata?.contentType || 'application/octet-stream'
-	};
+		return {
+			data: await obj.arrayBuffer(),
+			contentType: obj.httpMetadata?.contentType || 'application/octet-stream'
+		};
+	} catch (error) {
+		console.error(`Failed to get image from R2 (key: ${key}):`, error);
+		throw error;
+	}
 }
 
 // Delete all puzzle assets from R2
