@@ -56,3 +56,16 @@ bucket_name = "perseus-local"
 binding = "PUZZLE_METADATA"
 id = "local-dev-kv"
 preview_id = "local-dev-kv-preview"
+
+# Development durable_objects binding to workflows-dev worker
+[env.dev.durable_objects]
+bindings = [
+	{ name = "PUZZLE_METADATA_DO", class_name = "PuzzleMetadataDO", script_name = "workflows-dev" }
+]
+
+# Development workflow binding to workflows-dev worker
+[[env.dev.workflows]]
+name = "perseus-dev"
+binding = "PUZZLE_WORKFLOW"
+class_name = "PerseusWorkflow"
+script_name = "workflows-dev"
