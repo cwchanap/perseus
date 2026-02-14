@@ -6,7 +6,8 @@ import {
 	verifySession,
 	getSessionToken,
 	requireAuth,
-	revokeSession
+	revokeSession,
+	clearSessionCookie
 } from './auth.worker';
 import type { Env } from '../worker';
 
@@ -231,6 +232,27 @@ describe('Cookie Management', () => {
 
 			// Note: getSessionToken returns undefined for no cookie
 			expect(result).toBeUndefined();
+		});
+	});
+
+	describe('clearSessionCookie', () => {
+		it('should clear cookie when called from context with Variables typing', async () => {
+			const app = new Hono<{ Bindings: Env; Variables: { foo: string } }>();
+
+			app.get('/logout', (c) => {
+				clearSessionCookie(c);
+				return c.json({ success: true });
+			});
+
+			const req = new Request('http://localhost/logout', {
+				headers: {
+					Cookie: 'perseus_session=token'
+				}
+			});
+			const res = await app.fetch(req, mockEnv as Env);
+
+			expect(res.status).toBe(200);
+			expect(res.headers.get('Set-Cookie')).toContain('perseus_session=');
 		});
 	});
 });

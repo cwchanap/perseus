@@ -82,6 +82,16 @@ describe('Puzzle Routes - UUID Validation', () => {
 			expect(body.message).toContain('Invalid puzzle ID format');
 		});
 
+		it('should return 400 for non-v4 UUID format', async () => {
+			// Version nibble is "1" here, not "4"
+			const req = new Request('http://localhost/550e8400-e29b-11d4-a716-446655440000');
+			const res = await puzzles.fetch(req, mockEnv);
+			const body = (await res.json()) as any;
+
+			expect(res.status).toBe(400);
+			expect(body.error).toBe('bad_request');
+		});
+
 		it('should return 400 for space character ID', async () => {
 			const req = new Request('http://localhost/%20');
 			const res = await puzzles.fetch(req, mockEnv);
@@ -89,6 +99,35 @@ describe('Puzzle Routes - UUID Validation', () => {
 
 			expect(res.status).toBe(400);
 			expect(body.error).toBe('bad_request');
+		});
+
+		it('should return 404 for non-ready puzzle metadata', async () => {
+			const validUuid = '550e8400-e29b-41d4-a716-446655440000';
+			vi.mocked(storage.getPuzzle).mockResolvedValueOnce({
+				id: validUuid,
+				name: 'Processing Puzzle',
+				pieceCount: 4,
+				gridCols: 2,
+				gridRows: 2,
+				imageWidth: 100,
+				imageHeight: 100,
+				createdAt: Date.now(),
+				status: 'processing',
+				pieces: [],
+				version: 0,
+				progress: {
+					totalPieces: 4,
+					generatedPieces: 0,
+					updatedAt: Date.now()
+				}
+			} as any);
+
+			const req = new Request(`http://localhost/${validUuid}`);
+			const res = await puzzles.fetch(req, mockEnv);
+			const body = (await res.json()) as any;
+
+			expect(res.status).toBe(404);
+			expect(body.error).toBe('not_found');
 		});
 	});
 
@@ -100,6 +139,35 @@ describe('Puzzle Routes - UUID Validation', () => {
 
 			expect(res.status).toBe(400);
 			expect(body.error).toBe('bad_request');
+		});
+
+		it('should return 404 for non-ready puzzle', async () => {
+			const validUuid = '550e8400-e29b-41d4-a716-446655440000';
+			vi.mocked(storage.getPuzzle).mockResolvedValueOnce({
+				id: validUuid,
+				name: 'Processing Puzzle',
+				pieceCount: 4,
+				gridCols: 2,
+				gridRows: 2,
+				imageWidth: 100,
+				imageHeight: 100,
+				createdAt: Date.now(),
+				status: 'processing',
+				pieces: [],
+				version: 0,
+				progress: {
+					totalPieces: 4,
+					generatedPieces: 0,
+					updatedAt: Date.now()
+				}
+			} as any);
+
+			const req = new Request(`http://localhost/${validUuid}/thumbnail`);
+			const res = await puzzles.fetch(req, mockEnv);
+			const body = (await res.json()) as any;
+
+			expect(res.status).toBe(404);
+			expect(body.error).toBe('not_found');
 		});
 	});
 
@@ -127,7 +195,16 @@ describe('Puzzle Routes - UUID Validation', () => {
 			const validUuid = '550e8400-e29b-41d4-a716-446655440000';
 			vi.mocked(storage.getPuzzle).mockResolvedValueOnce({
 				id: validUuid,
-				pieceCount: undefined
+				name: 'Broken Ready Puzzle',
+				pieceCount: undefined,
+				gridCols: 2,
+				gridRows: 2,
+				imageWidth: 100,
+				imageHeight: 100,
+				createdAt: Date.now(),
+				status: 'ready',
+				pieces: [],
+				version: 0
 			} as any);
 			const req = new Request(`http://localhost/${validUuid}/pieces/0/image`);
 			const res = await puzzles.fetch(req, mockEnv);
@@ -135,6 +212,31 @@ describe('Puzzle Routes - UUID Validation', () => {
 
 			expect(res.status).toBe(409);
 			expect(body.error).toBe('unavailable');
+		});
+
+		it('should return 404 for non-ready puzzle', async () => {
+			const validUuid = '550e8400-e29b-41d4-a716-446655440000';
+			vi.mocked(storage.getPuzzle).mockResolvedValueOnce({
+				id: validUuid,
+				name: 'Failed Puzzle',
+				pieceCount: 4,
+				gridCols: 2,
+				gridRows: 2,
+				imageWidth: 100,
+				imageHeight: 100,
+				createdAt: Date.now(),
+				status: 'failed',
+				pieces: [],
+				version: 0,
+				error: { message: 'failed' }
+			} as any);
+
+			const req = new Request(`http://localhost/${validUuid}/pieces/0/image`);
+			const res = await puzzles.fetch(req, mockEnv);
+			const body = (await res.json()) as any;
+
+			expect(res.status).toBe(404);
+			expect(body.error).toBe('not_found');
 		});
 
 		it('should return 400 for pieceId exceeding maximum', async () => {

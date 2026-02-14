@@ -10,7 +10,7 @@ import {
 	getImage
 } from '../services/storage.worker';
 
-const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PIECE_ID_REGEX = /^\d+$/; // Only non-negative base-10 integers
 const MAX_PIECE_ID = 10000; // Validation ceiling, significantly above any expected piece count
 
@@ -59,6 +59,10 @@ puzzles.get('/:id', async (c) => {
 			return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
 		}
 
+		if (puzzle.status !== 'ready') {
+			return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
+		}
+
 		return c.json(puzzle);
 	} catch (error) {
 		console.error(`Failed to retrieve puzzle ${id}:`, error);
@@ -78,6 +82,10 @@ puzzles.get('/:id/thumbnail', async (c) => {
 		const puzzle = await getPuzzle(c.env.PUZZLE_METADATA, id);
 
 		if (!puzzle) {
+			return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
+		}
+
+		if (puzzle.status !== 'ready') {
 			return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
 		}
 
@@ -119,6 +127,10 @@ puzzles.get('/:id/pieces/:pieceId/image', async (c) => {
 		const puzzle = await getPuzzle(c.env.PUZZLE_METADATA, id);
 
 		if (!puzzle) {
+			return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
+		}
+
+		if (puzzle.status !== 'ready') {
 			return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
 		}
 

@@ -139,6 +139,9 @@ export async function createPuzzleMetadata(kv: KVNamespace, puzzle: PuzzleMetada
 
 	// Initialize version if not set
 	const puzzleWithVersion = { ...puzzle, version: puzzle.version ?? 0 };
+	if (!validatePuzzleMetadata(puzzleWithVersion)) {
+		throw new Error('Invalid puzzle metadata structure');
+	}
 	await kv.put(puzzleKey(puzzleWithVersion.id), JSON.stringify(puzzleWithVersion));
 }
 

@@ -222,6 +222,20 @@ describe('KV Metadata Operations', () => {
 			expect(mockKV.put).toHaveBeenCalledWith('puzzle:test-puzzle-1', JSON.stringify(samplePuzzle));
 		});
 
+		it('should reject puzzle metadata with invalid grid structure', async () => {
+			const mockKV = createMockKV();
+			const invalidPuzzle = {
+				...samplePuzzle,
+				gridCols: 14,
+				gridRows: 15,
+				pieceCount: 225
+			};
+
+			await expect(
+				createPuzzleMetadata(mockKV as unknown as KVNamespace, invalidPuzzle)
+			).rejects.toThrow('Invalid puzzle metadata structure');
+		});
+
 		it('should throw error for empty string puzzle ID', async () => {
 			const mockKV = createMockKV();
 			const invalidPuzzle = { ...samplePuzzle, id: '' };
