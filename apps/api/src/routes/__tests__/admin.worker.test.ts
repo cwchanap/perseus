@@ -161,12 +161,13 @@ describe('Admin Routes - Logout', () => {
 		vi.clearAllMocks();
 	});
 
-	it('should still return 200 and clear cookie when session revocation fails', async () => {
+	it('should return 200 and clear cookie when session revocation fails in development', async () => {
 		(auth.revokeSession as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('KV unavailable'));
 
 		const mockEnv = {
 			ADMIN_PASSKEY: 'test-passkey',
-			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890'
+			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+			NODE_ENV: 'development'
 		};
 
 		const req = new Request('http://localhost/logout', {
@@ -178,12 +179,39 @@ describe('Admin Routes - Logout', () => {
 
 		const res = await admin.fetch(req, mockEnv as any);
 
-		// Even if server-side revocation fails, the client cookie should be cleared
-		// and the logout should appear successful to the client
+		// In development, session revocation failure should still return success
+		// and clear the client cookie for debugging convenience
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as any;
 		expect(body.success).toBe(true);
 		expect(auth.clearSessionCookie).toHaveBeenCalled();
+	});
+
+	it('should return 500 when session revocation fails in production', async () => {
+		(auth.revokeSession as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('KV unavailable'));
+
+		const mockEnv = {
+			ADMIN_PASSKEY: 'test-passkey',
+			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+			NODE_ENV: 'production'
+		};
+
+		const req = new Request('http://localhost/logout', {
+			method: 'POST',
+			headers: {
+				cookie: 'session=valid.token'
+			}
+		});
+
+		const res = await admin.fetch(req, mockEnv as any);
+
+		// In production, session revocation failure is a security concern
+		// - the client should be notified and retry
+		expect(res.status).toBe(500);
+		const body = (await res.json()) as any;
+		expect(body.error).toBe('internal_error');
+		expect(body.message).toBe('Failed to revoke session. Please try again.');
+		expect(auth.clearSessionCookie).not.toHaveBeenCalled();
 	});
 });
 

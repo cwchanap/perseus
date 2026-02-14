@@ -162,8 +162,20 @@ admin.post('/logout', async (c) => {
 		try {
 			await revokeSession(c.env, token);
 		} catch (error) {
-			// Log the server-side error but still clear client cookie and return success
+			// In production, session revocation failure is a security concern.
+			// We must not silently suppress this - the client needs to know and retry.
 			console.error('Failed to revoke session server-side:', error);
+			// In production, return an error so the client can retry
+			if (c.env.NODE_ENV !== 'development') {
+				return c.json(
+					{
+						error: 'internal_error',
+						message: 'Failed to revoke session. Please try again.'
+					},
+					500
+				);
+			}
+			// In development, fall through to clear cookie for debugging convenience
 		}
 	}
 	clearSessionCookie(c);
@@ -362,6 +374,7 @@ admin.post('/puzzles', requireAuth, async (c) => {
 // DELETE /api/admin/puzzles/:id - Delete puzzle (protected)
 admin.delete('/puzzles/:id', requireAuth, async (c) => {
 	const id = c.req.param('id');
+	const force = c.req.query('force') === 'true';
 
 	// Validate UUID format
 	const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -381,13 +394,14 @@ admin.delete('/puzzles/:id', requireAuth, async (c) => {
 			return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
 		}
 
-		// Block deletion if puzzle is still processing to avoid orphaned R2 objects
-		if (puzzle.status === 'processing') {
+		// Block deletion if puzzle is still processing unless force=true
+		// Force delete allows cleanup of stuck puzzles where workflow failed to mark them as failed
+		if (puzzle.status === 'processing' && !force) {
 			return c.json(
 				{
 					error: 'conflict',
 					message:
-						'Cannot delete puzzle while it is being processed. Please wait for processing to complete.'
+						'Cannot delete puzzle while it is being processed. Please wait for processing to complete, or use force=true to delete a stuck puzzle.'
 				},
 				409
 			);

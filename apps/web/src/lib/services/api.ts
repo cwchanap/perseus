@@ -188,8 +188,16 @@ export async function createPuzzle(
 	return handleResponse<PuzzleMetadata>(response);
 }
 
-export async function deletePuzzle(id: string): Promise<DeletePuzzleResponse | null> {
-	const response = await fetch(`${API_BASE}/api/admin/puzzles/${id}`, {
+export async function deletePuzzle(
+	id: string,
+	options?: { force?: boolean }
+): Promise<DeletePuzzleResponse | null> {
+	const url = new URL(`${API_BASE}/api/admin/puzzles/${id}`);
+	if (options?.force) {
+		url.searchParams.set('force', 'true');
+	}
+
+	const response = await fetch(url.toString(), {
 		method: 'DELETE',
 		credentials: 'include'
 	});

@@ -288,42 +288,47 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 				const bytes = await loadOriginalImageBytes(this.env, puzzleId);
 				const image = PhotonImage.new_from_byteslice(bytes);
 
-				// Calculate thumbnail dimensions (cover fit)
-				const srcW = image.get_width();
-				const srcH = image.get_height();
-				const scale = Math.max(THUMBNAIL_SIZE / srcW, THUMBNAIL_SIZE / srcH);
-				const newW = Math.round(srcW * scale);
-				const newH = Math.round(srcH * scale);
-
-				// Resize
-				const resized = resize(image, newW, newH, SamplingFilter.Lanczos3);
-				image.free();
-
+				let resized = null;
 				try {
-					// Center crop to exact thumbnail size
-					const cropX = Math.floor((newW - THUMBNAIL_SIZE) / 2);
-					const cropY = Math.floor((newH - THUMBNAIL_SIZE) / 2);
-					const cropped = crop(
-						resized,
-						cropX,
-						cropY,
-						cropX + THUMBNAIL_SIZE,
-						cropY + THUMBNAIL_SIZE
-					);
+					// Calculate thumbnail dimensions (cover fit)
+					const srcW = image.get_width();
+					const srcH = image.get_height();
+					const scale = Math.max(THUMBNAIL_SIZE / srcW, THUMBNAIL_SIZE / srcH);
+					const newW = Math.round(srcW * scale);
+					const newH = Math.round(srcH * scale);
+
+					// Resize
+					resized = resize(image, newW, newH, SamplingFilter.Lanczos3);
 
 					try {
-						// Encode as JPEG
-						const jpegBytes = cropped.get_bytes_jpeg(80);
+						// Center crop to exact thumbnail size
+						const cropX = Math.floor((newW - THUMBNAIL_SIZE) / 2);
+						const cropY = Math.floor((newH - THUMBNAIL_SIZE) / 2);
+						const cropped = crop(
+							resized,
+							cropX,
+							cropY,
+							cropX + THUMBNAIL_SIZE,
+							cropY + THUMBNAIL_SIZE
+						);
 
-						// Upload to R2
-						await this.env.PUZZLES_BUCKET.put(`puzzles/${puzzleId}/thumbnail.jpg`, jpegBytes, {
-							httpMetadata: { contentType: 'image/jpeg' }
-						});
+						try {
+							// Encode as JPEG
+							const jpegBytes = cropped.get_bytes_jpeg(80);
+
+							// Upload to R2
+							await this.env.PUZZLES_BUCKET.put(`puzzles/${puzzleId}/thumbnail.jpg`, jpegBytes, {
+								httpMetadata: { contentType: 'image/jpeg' }
+							});
+						} finally {
+							if (cropped) cropped.free();
+						}
 					} finally {
-						if (cropped) cropped.free();
+						if (resized) resized.free();
 					}
 				} finally {
-					if (resized) resized.free();
+					// Always free the original image, even if resize() throws
+					image.free();
 				}
 			});
 

@@ -200,15 +200,18 @@
 		}
 	}
 
-	async function handleDelete(puzzleId: string) {
-		if (!confirm('Are you sure you want to delete this puzzle?')) return;
+	async function handleDelete(puzzleId: string, isProcessing: boolean = false) {
+		const confirmMessage = isProcessing
+			? 'This puzzle is still processing. Force delete may leave orphaned assets. Continue?'
+			: 'Are you sure you want to delete this puzzle?';
+		if (!confirm(confirmMessage)) return;
 
 		deletingId = puzzleId;
 
 		try {
-			const deleteResult = await deletePuzzle(puzzleId);
+			const deleteResult = await deletePuzzle(puzzleId, { force: isProcessing });
 			clearProgress(puzzleId);
-			if (deleteResult?.partialSuccess) {
+			if (deleteResult && 'partialSuccess' in deleteResult && deleteResult.partialSuccess) {
 				successMessage = deleteResult.warning;
 				if (successTimeout !== null) clearTimeout(successTimeout);
 				successTimeout = setTimeout(() => {
@@ -468,12 +471,20 @@
 									</div>
 								</div>
 								<button
-									onclick={() => handleDelete(puzzle.id)}
-									disabled={deletingId === puzzle.id || puzzle.status === 'processing'}
+									onclick={() => handleDelete(puzzle.id, puzzle.status === 'processing')}
+									disabled={deletingId === puzzle.id}
 									class="rounded-md bg-red-100 px-3 py-1 text-sm text-red-600 hover:bg-red-200 disabled:opacity-50"
-									title={puzzle.status === 'processing' ? 'Cannot delete while processing' : ''}
+									title={puzzle.status === 'processing'
+										? 'Force delete stuck puzzle'
+										: 'Delete puzzle'}
 								>
-									{deletingId === puzzle.id ? 'Deleting...' : 'Delete'}
+									{#if deletingId === puzzle.id}
+										Deleting...
+									{:else if puzzle.status === 'processing'}
+										Force Delete
+									{:else}
+										Delete
+									{/if}
 								</button>
 							</div>
 						{/each}

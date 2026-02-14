@@ -17,6 +17,13 @@ let lastSessionStoreFallbackWarn = 0;
 // Track session keys that are stored in fallback (for isSessionActive to check)
 const sessionFallbackKeys = new Set<string>();
 
+// Grace period for newly created sessions to handle KV eventual consistency.
+// When a session is created, it's added here and treated as valid even if KV
+// hasn't propagated yet. This prevents login flaps where a follow-up request
+// lands before KV propagation completes.
+const SESSION_GRACE_PERIOD_MS = 10_000; // 10 seconds grace period
+const sessionGracePeriod = new Map<string, number>(); // key -> timestamp when grace expires
+
 function cleanupExpiredSessions(): void {
 	const now = Date.now();
 	for (const [key, expMs] of sessionFallbackStore) {
@@ -25,6 +32,28 @@ function cleanupExpiredSessions(): void {
 			sessionFallbackKeys.delete(key);
 		}
 	}
+}
+
+// Clean up expired grace period entries
+function cleanupExpiredGracePeriod(): void {
+	const now = Date.now();
+	for (const [key, expiresAt] of sessionGracePeriod) {
+		if (expiresAt <= now) {
+			sessionGracePeriod.delete(key);
+		}
+	}
+}
+
+// Check if a session key is in its grace period (newly created, KV may not have propagated)
+function isInGracePeriod(key: string): boolean {
+	cleanupExpiredGracePeriod();
+	const expiresAt = sessionGracePeriod.get(key);
+	if (expiresAt === undefined) return false;
+	if (expiresAt <= Date.now()) {
+		sessionGracePeriod.delete(key);
+		return false;
+	}
+	return true;
 }
 
 interface SessionPayload {
@@ -95,7 +124,10 @@ async function persistSession(env: Env, token: string, expMs: number): Promise<v
 	if (env.PUZZLE_METADATA) {
 		try {
 			await env.PUZZLE_METADATA.put(key, '1', { expirationTtl: ttlSeconds });
-			// Successfully stored in KV, remove from fallback tracking if present
+			// Successfully stored in KV. Add to grace period to handle eventual consistency:
+			// if a follow-up request checks session before KV propagation, we still treat it as valid.
+			sessionGracePeriod.set(key, Date.now() + SESSION_GRACE_PERIOD_MS);
+			// Remove from fallback tracking if present
 			sessionFallbackKeys.delete(key);
 			return;
 		} catch (error) {
@@ -140,11 +172,12 @@ async function isSessionActive(env: Env, token: string): Promise<boolean> {
 				const stored = await env.PUZZLE_METADATA.get(key);
 				// KV has the session - it's active
 				if (stored !== null) {
-					// Clean up fallback tracking if present (session was migrated)
+					// Clean up fallback tracking and grace period if present (session confirmed in KV)
 					sessionFallbackKeys.delete(key);
+					sessionGracePeriod.delete(key);
 					return true;
 				}
-				// KV returned null - session may be in fallback or truly not active
+				// KV returned null - session may be in fallback, grace period, or truly not active
 				kvReturnedNull = true;
 				break;
 			} catch (error) {
@@ -158,6 +191,11 @@ async function isSessionActive(env: Env, token: string): Promise<boolean> {
 					await new Promise((resolve) => setTimeout(resolve, delay));
 				}
 			}
+		}
+		// Check grace period first - if session was just created, treat as valid
+		// This handles KV eventual consistency for newly created sessions
+		if (kvReturnedNull && isInGracePeriod(key)) {
+			return true;
 		}
 		// If KV returned null, check fallback (for sessions written before KV was available)
 		if (kvReturnedNull && sessionFallbackKeys.has(key)) {
@@ -174,7 +212,7 @@ async function isSessionActive(env: Env, token: string): Promise<boolean> {
 				return checkFallbackSession(key);
 			}
 		}
-		// Session not found in KV and not in fallback
+		// Session not found in KV and not in fallback or grace period
 		return false;
 	}
 	// KV not configured - use fallback in development only
@@ -214,10 +252,11 @@ export async function revokeSession(env: Env, token: string): Promise<void> {
 			}
 		}
 	}
-	// Always clean up fallback store regardless of environment (idempotent)
+	// Always clean up fallback store and grace period regardless of environment (idempotent)
 	cleanupExpiredSessions();
 	sessionFallbackStore.delete(key);
 	sessionFallbackKeys.delete(key);
+	sessionGracePeriod.delete(key);
 }
 
 // Create a JWT-like session token using WebCrypto
