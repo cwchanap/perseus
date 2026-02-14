@@ -69,9 +69,26 @@ export interface CreatePuzzleResponse {
 	puzzle: PuzzleMetadata;
 }
 
-export interface DeletePuzzleResponse {
+// Discriminated union for delete puzzle response
+export interface DeletePuzzleSuccess {
+	success: true;
+	deletedIds: string[];
+}
+
+export interface DeletePuzzlePartialSuccess {
 	success: false;
 	partialSuccess: true;
 	warning: string;
 	failedAssets: string[];
 }
+
+export interface DeletePuzzleFailure {
+	success: false;
+	partialSuccess: false;
+	error: string;
+}
+
+export type DeletePuzzleResponse =
+	| DeletePuzzleSuccess
+	| DeletePuzzlePartialSuccess
+	| DeletePuzzleFailure;

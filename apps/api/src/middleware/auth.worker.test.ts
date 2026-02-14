@@ -252,7 +252,9 @@ describe('Cookie Management', () => {
 			const res = await app.fetch(req, mockEnv as Env);
 
 			expect(res.status).toBe(200);
-			expect(res.headers.get('Set-Cookie')).toContain('perseus_session=');
+			const setCookie = res.headers.get('Set-Cookie');
+			expect(setCookie).toContain('perseus_session=');
+			expect(setCookie).toContain('Max-Age=0');
 		});
 	});
 });
@@ -434,9 +436,12 @@ describe('revokeSession', () => {
 			} as unknown as KVNamespace
 		};
 
-		vi.spyOn(console, 'error').mockImplementation(() => {});
-
-		await expect(revokeSession(prodEnv as Env, 'any-token')).rejects.toThrow('KV unavailable');
+		const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		try {
+			await expect(revokeSession(prodEnv as Env, 'any-token')).rejects.toThrow('KV unavailable');
+		} finally {
+			spy.mockRestore();
+		}
 	});
 
 	it('should swallow KV failure in development', async () => {
@@ -452,9 +457,12 @@ describe('revokeSession', () => {
 			} as unknown as KVNamespace
 		};
 
-		vi.spyOn(console, 'error').mockImplementation(() => {});
-
-		// Should not throw in development
-		await expect(revokeSession(devEnv as Env, 'any-token')).resolves.toBeUndefined();
+		const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		try {
+			// Should not throw in development
+			await expect(revokeSession(devEnv as Env, 'any-token')).resolves.toBeUndefined();
+		} finally {
+			spy.mockRestore();
+		}
 	});
 });

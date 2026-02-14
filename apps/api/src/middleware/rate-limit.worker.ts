@@ -67,10 +67,53 @@ function getClientIP(c: Context): string {
 	const trustXFF = c.env.TRUSTED_PROXY === 'true';
 	const xff = c.req.header('x-forwarded-for');
 	if (xff && trustXFF) {
-		// x-forwarded-for format: "client, proxy1, proxy2, ..."
-		const clientIP = xff.split(',')[0].trim();
-		if (clientIP) {
-			return clientIP;
+		// SECURITY: Only trust X-Forwarded-For if the immediate peer is a known proxy.
+		// This prevents IP spoofing from untrusted clients.
+		const trustedProxyList = c.env.TRUSTED_PROXY_LIST
+			? c.env.TRUSTED_PROXY_LIST.split(',')
+					.map((ip: string) => ip.trim())
+					.filter((ip: string) => ip)
+			: [];
+
+		// Get the immediate peer IP (available in Cloudflare Workers via c.req.ip)
+		// Note: c.req.ip may not be available in all environments
+		const peerIP = (c.req as { ip?: string }).ip;
+
+		// If TRUSTED_PROXY_LIST is configured, verify the peer is trusted
+		// If TRUSTED_PROXY_LIST is not configured but TRUSTED_PROXY is true,
+		// we still accept X-Forwarded-For for backward compatibility (with a warning)
+		if (trustedProxyList.length > 0 && peerIP) {
+			if (trustedProxyList.includes(peerIP)) {
+				// Peer is a trusted proxy, safe to use X-Forwarded-For
+				const clientIP = xff.split(',')[0].trim();
+				if (clientIP) {
+					return clientIP;
+				}
+			} else {
+				// Peer is not trusted - log warning and fall through
+				const now = Date.now();
+				if (now - lastUntrustedXFFWarn >= WARN_INTERVAL_MS) {
+					lastUntrustedXFFWarn = now;
+					console.warn(
+						`Rate limiting: X-Forwarded-For rejected - peer ${peerIP} not in TRUSTED_PROXY_LIST. Possible IP spoofing attempt.`
+					);
+				}
+			}
+		} else if (trustedProxyList.length === 0) {
+			// Backward compatibility: no TRUSTED_PROXY_LIST configured
+			// Log warning about security recommendation
+			const now = Date.now();
+			if (now - lastUntrustedXFFWarn >= WARN_INTERVAL_MS) {
+				lastUntrustedXFFWarn = now;
+				console.warn(
+					'Rate limiting: TRUSTED_PROXY=true but TRUSTED_PROXY_LIST not configured. For security, set TRUSTED_PROXY_LIST to the IP addresses of your trusted proxies.'
+				);
+			}
+			// Still use X-Forwarded-For for backward compatibility
+			const clientIP = xff.split(',')[0].trim();
+			if (clientIP) {
+				return clientIP;
+			}
 		}
 	}
 

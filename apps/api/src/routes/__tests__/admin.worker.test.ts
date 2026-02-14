@@ -161,7 +161,7 @@ describe('Admin Routes - Logout', () => {
 		vi.clearAllMocks();
 	});
 
-	it('should return 500 when session revocation fails', async () => {
+	it('should still return 200 and clear cookie when session revocation fails', async () => {
 		(auth.revokeSession as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('KV unavailable'));
 
 		const mockEnv = {
@@ -178,11 +178,12 @@ describe('Admin Routes - Logout', () => {
 
 		const res = await admin.fetch(req, mockEnv as any);
 
-		expect(res.status).toBe(500);
+		// Even if server-side revocation fails, the client cookie should be cleared
+		// and the logout should appear successful to the client
+		expect(res.status).toBe(200);
 		const body = (await res.json()) as any;
-		expect(body.error).toBe('internal_error');
-		expect(body.message).toBe('Failed to revoke session');
-		expect(auth.clearSessionCookie).not.toHaveBeenCalled();
+		expect(body.success).toBe(true);
+		expect(auth.clearSessionCookie).toHaveBeenCalled();
 	});
 });
 

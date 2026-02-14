@@ -69,13 +69,23 @@ describe('Worker Entry Point', () => {
 	});
 
 	describe('routing', () => {
-		const validEnv = {
-			NODE_ENV: 'development',
-			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
-			ADMIN_PASSKEY: 'test-passkey',
-			ALLOWED_ORIGINS: '',
-			ASSETS: { fetch: vi.fn(() => new Response('static asset')) }
+		let validEnv: {
+			NODE_ENV: string;
+			JWT_SECRET: string;
+			ADMIN_PASSKEY: string;
+			ALLOWED_ORIGINS: string;
+			ASSETS: { fetch: ReturnType<typeof vi.fn> };
 		};
+
+		beforeEach(() => {
+			validEnv = {
+				NODE_ENV: 'development',
+				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+				ADMIN_PASSKEY: 'test-passkey',
+				ALLOWED_ORIGINS: '',
+				ASSETS: { fetch: vi.fn(() => new Response('static asset')) }
+			};
+		});
 
 		it('should route /api/health to Hono', async () => {
 			const req = new Request('http://localhost/api/health');

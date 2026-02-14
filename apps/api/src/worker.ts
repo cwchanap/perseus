@@ -23,6 +23,12 @@ export interface Env {
 	ALLOWED_ORIGINS?: string;
 	NODE_ENV?: string;
 	TRUSTED_PROXY?: string;
+	/** Comma-separated list of trusted proxy IPs. Only used when TRUSTED_PROXY=true.
+	 * When set, X-Forwarded-For is only trusted if the immediate peer (c.req.ip or connection remote address)
+	 * is in this list. This prevents IP spoofing from untrusted clients.
+	 * IMPORTANT: Only enable TRUSTED_PROXY=true when behind a reverse proxy that overwrites X-Forwarded-For.
+	 */
+	TRUSTED_PROXY_LIST?: string;
 	ASSETS: Fetcher;
 }
 
@@ -115,6 +121,13 @@ export default {
 			return env.ASSETS.fetch(request);
 		} catch (error) {
 			console.error('Unhandled error in worker fetch:', error);
+			const origin = request.headers.get('origin');
+			const corsHeaders: Record<string, string> = {
+				'Content-Type': 'application/json',
+				'Access-Control-Allow-Origin': origin || '*',
+				'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+				'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+			};
 			return new Response(
 				JSON.stringify({
 					error: 'internal_error',
@@ -122,7 +135,7 @@ export default {
 				}),
 				{
 					status: 500,
-					headers: { 'Content-Type': 'application/json' }
+					headers: corsHeaders
 				}
 			);
 		}

@@ -162,8 +162,8 @@ admin.post('/logout', async (c) => {
 		try {
 			await revokeSession(c.env, token);
 		} catch (error) {
+			// Log the server-side error but still clear client cookie and return success
 			console.error('Failed to revoke session server-side:', error);
-			return c.json({ error: 'internal_error', message: 'Failed to revoke session' }, 500);
 		}
 	}
 	clearSessionCookie(c);
@@ -190,8 +190,7 @@ admin.get('/session', async (c) => {
 	} catch (error) {
 		// Unexpected error during session verification (e.g., JWT_SECRET misconfiguration)
 		console.error('Session verification failed unexpectedly:', error);
-		const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-		return c.json({ error: 'Session verification failed', message: errorMessage }, 500);
+		return c.json({ error: 'internal_error', message: 'Session verification failed' }, 500);
 	}
 });
 
