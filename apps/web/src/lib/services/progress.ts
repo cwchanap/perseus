@@ -1,5 +1,5 @@
 // Progress service for localStorage persistence
-import type { PuzzleProgress, PlacedPiece } from '$lib/types/puzzle';
+import type { GameProgress, PlacedPiece } from '$lib/types/puzzle';
 
 const PROGRESS_KEY_PREFIX = 'puzzle-progress-';
 
@@ -7,13 +7,13 @@ function getStorageKey(puzzleId: string): string {
 	return `${PROGRESS_KEY_PREFIX}${puzzleId}`;
 }
 
-export function getProgress(puzzleId: string): PuzzleProgress | null {
+export function getProgress(puzzleId: string): GameProgress | null {
 	if (typeof window === 'undefined') return null;
 
 	try {
 		const data = localStorage.getItem(getStorageKey(puzzleId));
 		if (!data) return null;
-		return JSON.parse(data) as PuzzleProgress;
+		return JSON.parse(data) as GameProgress;
 	} catch {
 		return null;
 	}
@@ -22,7 +22,7 @@ export function getProgress(puzzleId: string): PuzzleProgress | null {
 export function saveProgress(puzzleId: string, placedPieces: PlacedPiece[]): void {
 	if (typeof window === 'undefined') return;
 
-	const progress: PuzzleProgress = {
+	const progress: GameProgress = {
 		puzzleId,
 		placedPieces,
 		lastUpdated: new Date().toISOString()

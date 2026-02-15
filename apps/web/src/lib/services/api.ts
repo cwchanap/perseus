@@ -1,16 +1,20 @@
 // API client service for Jigsaw Puzzle Web App
 import type {
 	Puzzle,
+	PuzzleMetadata,
 	PuzzleSummary,
 	PuzzleListResponse,
 	LoginResponse,
-	SessionResponse
+	SessionResponse,
+	DeletePuzzleResponse
 } from '$lib/types/puzzle';
 // NOTE: This app is built with adapter-static, so public env vars are embedded at build time.
 // Set PUBLIC_API_BASE before building to target a different API.
 import { PUBLIC_API_BASE } from '$env/static/public';
 
-const API_BASE = PUBLIC_API_BASE ?? 'http://localhost:3000';
+// Use empty string (same-origin) as default for Workers deployment.
+// In dev, explicitly set PUBLIC_API_BASE to 'http://localhost:3000'.
+const API_BASE = PUBLIC_API_BASE || '';
 
 class ApiError extends Error {
 	constructor(
@@ -158,7 +162,19 @@ export async function checkSession(): Promise<boolean> {
 }
 
 // Admin puzzle management
-export async function createPuzzle(name: string, pieceCount: number, image: File): Promise<Puzzle> {
+export async function fetchAdminPuzzles(): Promise<PuzzleSummary[]> {
+	const response = await fetch(`${API_BASE}/api/admin/puzzles`, {
+		credentials: 'include'
+	});
+	const data = await handleResponse<PuzzleListResponse>(response);
+	return data.puzzles;
+}
+
+export async function createPuzzle(
+	name: string,
+	pieceCount: number,
+	image: File
+): Promise<PuzzleMetadata> {
 	const formData = new FormData();
 	formData.append('name', name);
 	formData.append('pieceCount', pieceCount.toString());
@@ -169,16 +185,30 @@ export async function createPuzzle(name: string, pieceCount: number, image: File
 		credentials: 'include',
 		body: formData
 	});
-	return handleResponse<Puzzle>(response);
+	return handleResponse<PuzzleMetadata>(response);
 }
 
-export async function deletePuzzle(id: string): Promise<void> {
-	const response = await fetch(`${API_BASE}/api/admin/puzzles/${id}`, {
+export async function deletePuzzle(
+	id: string,
+	options?: { force?: boolean }
+): Promise<DeletePuzzleResponse | null> {
+	// Build URL as string to avoid new URL() throwing when API_BASE is empty
+	let urlString = `${API_BASE}/api/admin/puzzles/${id}`;
+	if (options?.force) {
+		urlString += '?force=true';
+	}
+
+	const response = await fetch(urlString, {
 		method: 'DELETE',
 		credentials: 'include'
 	});
 
+	if (response.status === 207) {
+		return handleResponse<DeletePuzzleResponse>(response);
+	}
+
 	await handleVoidResponse(response);
+	return null;
 }
 
 export { ApiError };

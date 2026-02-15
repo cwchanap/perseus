@@ -4,27 +4,39 @@
 	"version": "0.0.1",
 	"type": "module",
 	"scripts": {
-		"dev": "bun run --watch src/index.ts",
-		"build": "bun build src/index.ts --outdir dist --target bun",
-		"start": "bun run dist/index.js",
-		"test": "bun test",
-		"test:unit": "bun test",
+		"dev": "wrangler dev --port 3000 --env dev",
+		"dev:bun": "bun run --watch src/index.ts",
+		"build": "wrangler deploy --dry-run --outdir dist --config wrangler.production.toml",
+		"build:bun": "bun build src/index.ts --outdir dist --target bun",
+		"deploy": "wrangler deploy --config wrangler.production.toml",
+		"start": "wrangler dev --local",
+		"start:bun": "bun run dist/index.js",
+		"test": "vitest run",
+		"test:unit": "vitest run",
+		"test:watch": "vitest",
 		"check": "tsc --noEmit",
 		"lint": "prettier --check . && eslint ."
 	},
 	"dependencies": {
-		"hono": "^4.6.14",
-		"sharp": "^0.34.5"
+		"@perseus/types": "workspace:*",
+		"@cf-wasm/photon": "^0.3.4",
+		"@cf-wasm/resvg": "^0.3.3",
+		"hono": "^4.6.14"
 	},
 	"devDependencies": {
+		"@cloudflare/workers-types": "^4.20241230.0",
 		"@eslint/compat": "^1.4.0",
 		"@eslint/js": "^9.39.1",
+		"@perseus/web": "workspace:*",
+		"@types/node": "^22",
 		"@types/bun": "^1.1.15",
 		"eslint": "^9.39.1",
 		"eslint-config-prettier": "^10.1.8",
 		"globals": "^16.5.0",
 		"prettier": "^3.7.4",
 		"typescript": "^5.9.3",
-		"typescript-eslint": "^8.48.1"
+		"typescript-eslint": "^8.48.1",
+		"vitest": "^4.0.18",
+		"wrangler": "^4.60.0"
 	}
 }

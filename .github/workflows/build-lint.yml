@@ -29,5 +29,12 @@ jobs:
       - name: Run type check
         run: bun run check
 
+      - name: Validate wrangler production configs
+        if: github.event_name == 'push'
+        run: bash scripts/validate-wrangler-config.sh
+        # Note: Only runs on push to main/develop branches (not on PRs).
+        # This ensures production configs are validated before deployment
+        # without blocking normal PR CI.
+
       - name: Build
         run: bun run build

@@ -6,7 +6,7 @@ export default defineConfig({
 	},
 	webServer: [
 		{
-			command: 'bun run build && bun run start',
+			command: 'bun run build:bun && bun run start:bun',
 			port: 3999,
 			cwd: '../api',
 			reuseExistingServer: !process.env.CI,

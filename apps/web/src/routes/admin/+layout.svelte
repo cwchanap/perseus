@@ -10,6 +10,7 @@
 	let checking = $state(true);
 	let authenticated = $state(false);
 	let redirecting = $state(false);
+	let currentPath = $state('');
 	let sessionCheckToken = 0;
 	let sessionCheckInFlight = false;
 	let sessionCheckQueued = false;
@@ -60,6 +61,8 @@
 	}
 
 	onMount(async () => {
+		currentPath = $page.url.pathname;
+
 		// Skip auth check on login page
 		if (isLoginPage) {
 			checking = false;
@@ -69,13 +72,21 @@
 		await runSessionCheck();
 	});
 
-	// Re-check when route changes (but not on login page)
+	// Re-check when route path changes (but not on login page)
 	$effect(() => {
+		const pathname = $page.url.pathname;
 		if (isLoginPage || redirecting) return;
+		if (pathname === currentPath) {
+			return;
+		}
+
+		currentPath = pathname;
+
 		if (sessionCheckInFlight) {
 			sessionCheckQueued = true;
 			return;
 		}
+
 		void runSessionCheck();
 	});
 

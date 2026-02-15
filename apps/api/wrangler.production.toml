@@ -1,0 +1,39 @@
+#:schema node_modules/wrangler/config-schema.json
+name = "perseus"
+main = "src/worker.ts"
+compatibility_date = "2024-12-30"
+compatibility_flags = ["nodejs_compat"]
+
+# Serve static assets from the web app build
+[assets]
+directory = "../web/build"
+
+# R2 bucket for puzzle assets - production bucket
+[[r2_buckets]]
+binding = "PUZZLES_BUCKET"
+bucket_name = "perseus-production"
+
+# KV namespace for puzzle metadata - production namespace
+# IMPORTANT: Replace the id below with the actual production KV namespace ID.
+# The pre-deploy script (scripts/validate-wrangler-config.sh) will block deployment
+# if the placeholder is still present. Wrangler does NOT support shell-style variable
+# interpolation in TOML files.
+[[kv_namespaces]]
+binding = "PUZZLE_METADATA"
+id = "REQUIRED_PRODUCTION_PUZZLE_METADATA_KV_NAMESPACE_ID"
+
+[durable_objects]
+bindings = [
+	{ name = "PUZZLE_METADATA_DO", class_name = "PuzzleMetadataDO", script_name = "workflows" }
+]
+
+# Cross-script workflow binding to workflows worker
+[[workflows]]
+name = "perseus"
+binding = "PUZZLE_WORKFLOW"
+class_name = "PerseusWorkflow"
+script_name = "workflows"
+
+# Environment variables (secrets set via wrangler secret)
+[vars]
+NODE_ENV = "production"

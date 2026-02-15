@@ -1,7 +1,7 @@
 // Component test for PuzzleCard
 import { describe, it, expect } from 'vitest';
 import { render } from 'vitest-browser-svelte';
-import { page } from '@vitest/browser/context';
+import { page } from 'vitest/browser';
 import PuzzleCard from '../PuzzleCard.svelte';
 import { getThumbnailUrl } from '$lib/services/api';
 import type { PuzzleSummary } from '$lib/types/puzzle';
@@ -10,7 +10,8 @@ describe('PuzzleCard', () => {
 	const mockPuzzle: PuzzleSummary = {
 		id: 'test-puzzle-123',
 		name: 'Test Puzzle',
-		pieceCount: 25
+		pieceCount: 25,
+		status: 'ready'
 	};
 
 	it('should render puzzle name', async () => {

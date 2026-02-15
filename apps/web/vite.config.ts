@@ -8,25 +8,13 @@ export default defineConfig({
 
 	test: {
 		expect: { requireAssertions: true },
-		setupFiles: ['src/vitest.setup.ts'],
-
-		projects: [
-			{
-				extends: './vite.config.ts',
-
-				test: {
-					name: 'client',
-
-					browser: {
-						enabled: true,
-						provider: playwright(),
-						instances: [{ browser: 'chromium', headless: true }]
-					},
-
-					include: ['src/**/*.svelte.{test,spec}.{js,ts}'],
-					exclude: ['src/lib/server/**']
-				}
-			}
-		]
+		setupFiles: ['vitest-browser-svelte', 'src/vitest.setup.ts'],
+		browser: {
+			enabled: true,
+			provider: playwright(),
+			instances: [{ browser: 'chromium', headless: true }]
+		},
+		include: ['src/**/*.{test,spec}.{js,ts}', 'src/**/*.svelte.{test,spec}.{js,ts}'],
+		exclude: ['src/lib/server/**']
 	}
 });

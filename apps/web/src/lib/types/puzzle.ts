@@ -1,24 +1,38 @@
 // Shared types for Jigsaw Puzzle Web App
-// Based on data-model.md specification
+// Types shared with the API are imported from @perseus/types
 
-export type EdgeType = 'flat' | 'tab' | 'blank';
+import type {
+	EdgeType,
+	EdgeConfig,
+	PuzzlePiece,
+	PuzzleStatus,
+	PuzzleProgress as PuzzleGenerationProgress,
+	PuzzleMetadata,
+	PuzzleSummary,
+	LoginResponse,
+	SessionResponse,
+	PuzzleListResponse,
+	ErrorResponse
+} from '@perseus/types';
 
-export interface EdgeConfig {
-	top: EdgeType;
-	right: EdgeType;
-	bottom: EdgeType;
-	left: EdgeType;
-}
+// Re-export shared types for convenience
+export type {
+	EdgeType,
+	EdgeConfig,
+	PuzzlePiece,
+	PuzzleStatus,
+	PuzzleGenerationProgress,
+	PuzzleMetadata,
+	PuzzleSummary,
+	LoginResponse,
+	SessionResponse,
+	PuzzleListResponse,
+	ErrorResponse
+};
 
-export interface PuzzlePiece {
-	id: number;
-	puzzleId: string;
-	correctX: number;
-	correctY: number;
-	edges: EdgeConfig;
-	imagePath: string;
-}
-
+/**
+ * Flat puzzle shape for component props (no status/version fields).
+ */
 export interface Puzzle {
 	id: string;
 	name: string;
@@ -31,25 +45,20 @@ export interface Puzzle {
 	pieces: PuzzlePiece[];
 }
 
-export interface PuzzleSummary {
-	id: string;
-	name: string;
-	pieceCount: number;
-}
-
 export interface PlacedPiece {
 	pieceId: number;
 	x: number;
 	y: number;
 }
 
-export interface PuzzleProgress {
+/** Game-play progress tracking (local to the web app). */
+export interface GameProgress {
 	puzzleId: string;
 	placedPieces: PlacedPiece[];
 	lastUpdated: string;
 }
 
-// API request/response types
+// API request/response types (web-only)
 export interface CreatePuzzleRequest {
 	name: string;
 	pieceCount: number;
@@ -57,27 +66,29 @@ export interface CreatePuzzleRequest {
 }
 
 export interface CreatePuzzleResponse {
-	puzzle: Puzzle;
+	puzzle: PuzzleMetadata;
 }
 
-export interface LoginRequest {
-	passkey: string;
+// Discriminated union for delete puzzle response
+export interface DeletePuzzleSuccess {
+	success: true;
+	deletedIds: string[];
 }
 
-export interface LoginResponse {
-	success: boolean;
-	error?: string;
+export interface DeletePuzzlePartialSuccess {
+	success: false;
+	partialSuccess: true;
+	warning: string;
+	failedAssets: string[];
 }
 
-export interface PuzzleListResponse {
-	puzzles: PuzzleSummary[];
-}
-
-export interface SessionResponse {
-	authenticated: boolean;
-}
-
-export interface ErrorResponse {
+export interface DeletePuzzleFailure {
+	success: false;
+	partialSuccess: false;
 	error: string;
-	message: string;
 }
+
+export type DeletePuzzleResponse =
+	| DeletePuzzleSuccess
+	| DeletePuzzlePartialSuccess
+	| DeletePuzzleFailure;

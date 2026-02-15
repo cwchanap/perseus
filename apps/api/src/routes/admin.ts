@@ -103,7 +103,7 @@ admin.post('/puzzles', requireAuth, async (c) => {
 		const formData = await c.req.formData();
 		const name = formData.get('name');
 		const pieceCountStr = formData.get('pieceCount');
-		const image = formData.get('image');
+		const image = formData.get('image') as File | string | null;
 
 		// Validate required fields
 		if (!name || typeof name !== 'string' || name.trim().length === 0) {

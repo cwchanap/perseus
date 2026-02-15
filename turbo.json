@@ -21,7 +21,6 @@
 			"persistent": true
 		},
 		"check": {
-			"dependsOn": ["^build"],
 			"outputs": []
 		},
 		"check:watch": {
@@ -29,11 +28,9 @@
 			"persistent": true
 		},
 		"lint": {
-			"dependsOn": ["^build"],
 			"outputs": []
 		},
 		"test": {
-			"dependsOn": ["build"],
 			"outputs": ["test-results/**"]
 		},
 		"test:unit": {
@@ -41,7 +38,6 @@
 			"outputs": []
 		},
 		"test:e2e": {
-			"dependsOn": ["build"],
 			"outputs": ["test-results/**", "playwright-report/**"]
 		}
 	}

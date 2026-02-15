@@ -1,5 +1,6 @@
-// Shared types for Jigsaw Puzzle API
-// Based on data-model.md specification
+// LEGACY: Types for the Bun-based dev server (non-worker).
+// Worker code imports from @perseus/types via storage.worker.ts re-exports.
+// Do not add new types here — use @perseus/types instead.
 
 export type EdgeType = 'flat' | 'tab' | 'blank';
 
@@ -67,7 +68,9 @@ export interface ErrorResponse {
 }
 
 // Allowed piece counts for puzzle creation
-export const ALLOWED_PIECE_COUNTS = [9, 16, 25, 36, 49, 64, 100] as const;
+// DEPRECATED: This is for the old Bun-based dev server only.
+// Note: 225 (15x15) is preserved for compatibility during migration from @perseus/types DEFAULT_PIECE_COUNT
+export const ALLOWED_PIECE_COUNTS = [9, 16, 25, 36, 49, 64, 100, 225] as const;
 export type AllowedPieceCount = (typeof ALLOWED_PIECE_COUNTS)[number];
 
 // File upload constraints

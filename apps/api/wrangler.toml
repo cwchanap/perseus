@@ -1,0 +1,71 @@
+#:schema node_modules/wrangler/config-schema.json
+name = "perseus"
+main = "src/worker.ts"
+compatibility_date = "2024-12-30"
+compatibility_flags = ["nodejs_compat"]
+
+# Serve static assets from the web app build
+[assets]
+directory = "../web/build"
+
+# R2 bucket for puzzle assets (environment-specific configs override this)
+# The binding name "PUZZLES_BUCKET" is preserved across all environments.
+[[r2_buckets]]
+binding = "PUZZLES_BUCKET"
+bucket_name = "perseus-local"
+
+# KV namespace for puzzle metadata (environment-specific configs must provide this)
+# The binding name "PUZZLE_METADATA" is preserved across all environments.
+# For production, use wrangler.production.toml which contains the real KV namespace ID.
+[[kv_namespaces]]
+binding = "PUZZLE_METADATA"
+id = "local-dev-kv"
+preview_id = "local-dev-kv-preview"
+
+[durable_objects]
+bindings = [
+	{ name = "PUZZLE_METADATA_DO", class_name = "PuzzleMetadataDO", script_name = "workflows" }
+]
+
+# Cross-script workflow binding to workflows worker
+[[workflows]]
+name = "perseus"
+binding = "PUZZLE_WORKFLOW"
+class_name = "PerseusWorkflow"
+script_name = "workflows"
+
+# Environment variables (secrets set via wrangler secret)
+[vars]
+NODE_ENV = "production"
+# ALLOWED_ORIGINS = "https://example.com"
+
+# Local development overrides
+[env.dev]
+name = "perseus-dev"
+
+[env.dev.vars]
+NODE_ENV = "development"
+
+# Development R2 bucket override
+[[env.dev.r2_buckets]]
+binding = "PUZZLES_BUCKET"
+bucket_name = "perseus-local"
+
+# Development KV namespace with preview_id for local development
+[[env.dev.kv_namespaces]]
+binding = "PUZZLE_METADATA"
+id = "local-dev-kv"
+preview_id = "local-dev-kv-preview"
+
+# Development durable_objects binding to workflows-dev worker
+[env.dev.durable_objects]
+bindings = [
+	{ name = "PUZZLE_METADATA_DO", class_name = "PuzzleMetadataDO", script_name = "workflows-dev" }
+]
+
+# Development workflow binding to workflows-dev worker
+[[env.dev.workflows]]
+name = "perseus-dev"
+binding = "PUZZLE_WORKFLOW"
+class_name = "PerseusWorkflow"
+script_name = "workflows-dev"
