@@ -11,8 +11,8 @@
 		"deploy": "wrangler deploy --config wrangler.production.toml",
 		"start": "wrangler dev --local",
 		"start:bun": "bun run dist/index.js",
-		"test": "vitest run",
-		"test:unit": "vitest run",
+		"test": "vitest run --coverage",
+		"test:unit": "vitest run --coverage",
 		"test:watch": "vitest",
 		"check": "tsc --noEmit",
 		"lint": "prettier --check . && eslint ."

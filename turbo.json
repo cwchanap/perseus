@@ -34,8 +34,7 @@
 			"outputs": ["test-results/**"]
 		},
 		"test:unit": {
-			"cache": false,
-			"outputs": []
+			"outputs": ["coverage/**"]
 		},
 		"test:e2e": {
 			"outputs": ["test-results/**", "playwright-report/**"]

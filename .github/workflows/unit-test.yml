@@ -26,5 +26,13 @@ jobs:
       - name: Install Playwright browsers
         run: bun run --cwd apps/web test:install-browsers
 
-      - name: Run unit tests
+      - name: Run unit tests with coverage
         run: bun run test:unit
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./apps/*/coverage/lcov.info
+          flags: unittest
+          fail_ci_if_error: true

@@ -7,8 +7,8 @@
 		"build": "echo 'No build step required for Workers'",
 		"dev": "wrangler dev --config wrangler.dev.toml",
 		"deploy": "wrangler deploy --config wrangler.production.toml",
-		"test": "vitest run",
-		"test:unit": "vitest run",
+		"test": "vitest run --coverage",
+		"test:unit": "vitest run --coverage",
 		"test:watch": "vitest",
 		"check": "tsc --noEmit",
 		"lint": "prettier --check . && eslint ."

@@ -15,6 +15,11 @@ export default defineConfig({
 			instances: [{ browser: 'chromium', headless: true }]
 		},
 		include: ['src/**/*.{test,spec}.{js,ts}', 'src/**/*.svelte.{test,spec}.{js,ts}'],
-		exclude: ['src/lib/server/**']
+		exclude: ['src/lib/server/**'],
+		coverage: {
+			provider: 'v8',
+			reporter: ['lcov', 'text', 'html'],
+			reportsDirectory: './coverage'
+		}
 	}
 });
