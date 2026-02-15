@@ -20,7 +20,7 @@ bucket_name = "perseus-production"
 # interpolation in TOML files.
 [[kv_namespaces]]
 binding = "PUZZLE_METADATA"
-id = "REPLACE_WITH_PRODUCTION_KV_NAMESPACE_ID"
+id = "REQUIRED_PRODUCTION_PUZZLE_METADATA_KV_NAMESPACE_ID"
 
 [durable_objects]
 bindings = [

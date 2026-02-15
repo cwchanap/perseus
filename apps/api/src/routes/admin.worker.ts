@@ -75,7 +75,6 @@ async function detectImageType(file: File | Blob): Promise<string | null> {
 		return null;
 	}
 }
-const ALLOWED_PIECE_COUNT = DEFAULT_PIECE_COUNT;
 
 function getGridDimensions(pieceCount: number): { rows: number; cols: number } {
 	if (pieceCount <= 0) {
@@ -251,17 +250,17 @@ admin.post('/puzzles', requireAuth, async (c) => {
 			return c.json(
 				{
 					error: 'bad_request',
-					message: `Invalid piece count. Only ${ALLOWED_PIECE_COUNT} pieces allowed`
+					message: `Invalid piece count. Only ${DEFAULT_PIECE_COUNT} pieces allowed`
 				},
 				400
 			);
 		}
 
-		if (pieceCount !== ALLOWED_PIECE_COUNT) {
+		if (pieceCount !== DEFAULT_PIECE_COUNT) {
 			return c.json(
 				{
 					error: 'bad_request',
-					message: `Invalid piece count. Only ${ALLOWED_PIECE_COUNT} pieces allowed`
+					message: `Invalid piece count. Only ${DEFAULT_PIECE_COUNT} pieces allowed`
 				},
 				400
 			);
