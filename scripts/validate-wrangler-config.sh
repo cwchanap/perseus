@@ -5,7 +5,11 @@
 
 set -uo pipefail
 
-PLACEHOLDER="REPLACE_WITH_PRODUCTION_KV_NAMESPACE_ID"
+# Different apps use different placeholder strings for their KV namespace IDs
+PLACEHOLDERS=(
+	"REPLACE_WITH_PRODUCTION_KV_NAMESPACE_ID"
+	"REQUIRED_PRODUCTION_PUZZLE_METADATA_KV_NAMESPACE_ID"
+)
 EXIT_CODE=0
 
 # Validate both wrangler.production.toml and base wrangler.toml files
@@ -16,10 +20,12 @@ for config in apps/*/wrangler.production.toml apps/*/wrangler.toml; do
 
 	# Only check for placeholders in production configs or base configs (not env.dev sections)
 	# For base wrangler.toml files, we only check if they have production-specific placeholders
-	if grep -q "$PLACEHOLDER" "$config"; then
-		echo "ERROR: $config contains placeholder '$PLACEHOLDER'. Replace with the actual KV namespace ID before deploying." >&2
-		EXIT_CODE=1
-	fi
+	for placeholder in "${PLACEHOLDERS[@]}"; do
+		if grep -q "$placeholder" "$config"; then
+			echo "ERROR: $config contains placeholder '$placeholder'. Replace with the actual KV namespace ID before deploying." >&2
+			EXIT_CODE=1
+		fi
+	done
 
 	# Check for empty id values in kv_namespaces (allow leading whitespace)
 	if grep -qE '^\s*id\s*=\s*""' "$config"; then

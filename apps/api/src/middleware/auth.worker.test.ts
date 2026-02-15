@@ -89,6 +89,73 @@ describe('Session Token Management', () => {
 			expect(session?.role).toBe('admin');
 		});
 
+		it('should use grace period when KV returns null for fresh session', async () => {
+			// Simulate KV returning null (eventual consistency not yet propagated)
+			const kvWithNull = {
+				get: vi.fn(async () => null),
+				put: vi.fn(),
+				delete: vi.fn()
+			} as unknown as KVNamespace;
+
+			const envWithNullKV = {
+				...mockEnv,
+				PUZZLE_METADATA: kvWithNull
+			} as Env;
+
+			// Create session - this populates the grace period
+			const token = await createSession(envWithNullKV, {
+				userId: 'admin',
+				username: 'admin',
+				role: 'admin'
+			});
+
+			// Verify should succeed due to grace period (same isolate)
+			const session = await verifySession(envWithNullKV, token);
+
+			expect(session).not.toBeNull();
+			expect(session?.userId).toBe('admin');
+			// KV.get should have been called but returned null
+			expect(kvWithNull.get).toHaveBeenCalled();
+		});
+
+		it('should fail verification when KV returns null and grace period expired', async () => {
+			// Use fake timers to simulate grace period expiration
+			vi.useFakeTimers();
+
+			try {
+				// Simulate KV returning null (eventual consistency not yet propagated)
+				const kvWithNull = {
+					get: vi.fn(async () => null),
+					put: vi.fn(),
+					delete: vi.fn()
+				} as unknown as KVNamespace;
+
+				const envWithNullKV = {
+					...mockEnv,
+					PUZZLE_METADATA: kvWithNull
+				} as Env;
+
+				// Create session
+				const token = await createSession(envWithNullKV, {
+					userId: 'admin',
+					username: 'admin',
+					role: 'admin'
+				});
+
+				// Simulate grace period expiration (10 seconds + 1ms)
+				// Note: In production, this also happens when the follow-up request
+				// lands on a different Worker isolate (grace period is isolate-local)
+				vi.advanceTimersByTime(10001);
+
+				// After grace period expires, verification should fail
+				// because KV still returns null
+				const session = await verifySession(envWithNullKV, token);
+				expect(session).toBeNull();
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
 		it('should return null for invalid token format', async () => {
 			const session = await verifySession(mockEnv as Env, 'invalid-token');
 

@@ -21,6 +21,12 @@ const sessionFallbackKeys = new Set<string>();
 // When a session is created, it's added here and treated as valid even if KV
 // hasn't propagated yet. This prevents login flaps where a follow-up request
 // lands before KV propagation completes.
+//
+// IMPORTANT LIMITATION: This Map is isolate-local memory. In Cloudflare Workers,
+// requests may land on different isolates. The grace period only works when
+// the login request and subsequent auth request hit the same isolate. For
+// full cross-isolate consistency, consider migrating session storage to
+// Durable Objects (PUZZLE_METADATA_DO is already configured).
 const SESSION_GRACE_PERIOD_MS = 10_000; // 10 seconds grace period
 const sessionGracePeriod = new Map<string, number>(); // key -> timestamp when grace expires
 
