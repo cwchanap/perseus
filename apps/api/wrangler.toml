@@ -36,7 +36,7 @@ script_name = "workflows"
 
 # Environment variables (secrets set via wrangler secret)
 [vars]
-# NODE_ENV = "production"
+NODE_ENV = "production"
 # ALLOWED_ORIGINS = "https://example.com"
 
 # Local development overrides

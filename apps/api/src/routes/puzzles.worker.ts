@@ -92,7 +92,7 @@ puzzles.get('/:id/thumbnail', async (c) => {
 		const image = await getImage(c.env.PUZZLES_BUCKET, getThumbnailKey(id));
 
 		if (!image) {
-			// Thumbnail not yet generated (puzzle may be processing)
+			// Thumbnail missing for puzzle marked ready — inconsistent state / asset missing
 			return c.json({ error: 'not_found', message: 'Thumbnail not found' }, 404);
 		}
 
@@ -145,7 +145,7 @@ puzzles.get('/:id/pieces/:pieceId/image', async (c) => {
 		const image = await getImage(c.env.PUZZLES_BUCKET, getPieceKey(id, pieceId));
 
 		if (!image) {
-			// Piece not yet generated (puzzle may be processing)
+			// Piece image not found despite puzzle being 'ready' — piece may have failed generation or be missing
 			return c.json({ error: 'not_found', message: 'Piece image not found' }, 404);
 		}
 

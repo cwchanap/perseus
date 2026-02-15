@@ -121,10 +121,24 @@ export default {
 			return env.ASSETS.fetch(request);
 		} catch (error) {
 			console.error('Unhandled error in worker fetch:', error);
-			const origin = request.headers.get('origin');
+			const requestOrigin = request.headers.get('origin');
+			// Validate origin against allowed origins before setting CORS header
+			const isDev = env.NODE_ENV === 'development';
+			const DEFAULT_ALLOWED_ORIGINS = ['http://localhost:5173', 'http://localhost:4173'];
+			const envOrigins = (env.ALLOWED_ORIGINS || '')
+				.split(',')
+				.map((origin) => origin.trim())
+				.filter((origin) => origin.length > 0);
+			const allowedOrigins = isDev
+				? envOrigins.length > 0
+					? envOrigins
+					: DEFAULT_ALLOWED_ORIGINS
+				: envOrigins;
+			const validatedOrigin =
+				requestOrigin && allowedOrigins.includes(requestOrigin) ? requestOrigin : '*';
 			const corsHeaders: Record<string, string> = {
 				'Content-Type': 'application/json',
-				'Access-Control-Allow-Origin': origin || '*',
+				'Access-Control-Allow-Origin': validatedOrigin,
 				'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
 				'Access-Control-Allow-Headers': 'Content-Type, Authorization'
 			};

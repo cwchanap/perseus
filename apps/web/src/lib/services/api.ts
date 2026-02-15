@@ -192,12 +192,13 @@ export async function deletePuzzle(
 	id: string,
 	options?: { force?: boolean }
 ): Promise<DeletePuzzleResponse | null> {
-	const url = new URL(`${API_BASE}/api/admin/puzzles/${id}`);
+	// Build URL as string to avoid new URL() throwing when API_BASE is empty
+	let urlString = `${API_BASE}/api/admin/puzzles/${id}`;
 	if (options?.force) {
-		url.searchParams.set('force', 'true');
+		urlString += '?force=true';
 	}
 
-	const response = await fetch(url.toString(), {
+	const response = await fetch(urlString, {
 		method: 'DELETE',
 		credentials: 'include'
 	});

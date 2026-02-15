@@ -3,7 +3,7 @@
 # Ensures production wrangler configs do not contain placeholder values.
 # Usage: ./scripts/validate-wrangler-config.sh
 
-set -euo pipefail
+set -uo pipefail
 
 PLACEHOLDER="REPLACE_WITH_PRODUCTION_KV_NAMESPACE_ID"
 EXIT_CODE=0
