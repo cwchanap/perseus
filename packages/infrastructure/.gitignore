@@ -1,0 +1,21 @@
+# Pulumi
+Pulumi.*.yaml
+!.pulumi/Pulumi.yaml
+!.pulumi/Pulumi.dev.yaml
+!.pulumi/Pulumi.prod.yaml
+.pulumi/
+*.pem
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.js
+*.js.map
+*.d.ts
+*.d.ts.map
+
+# Environment
+.env
+.env.local

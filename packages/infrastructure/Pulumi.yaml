@@ -1,0 +1,4 @@
+name: perseus-infrastructure
+runtime: nodejs
+description: Perseus Cloudflare infrastructure managed by Pulumi
+main: dist/index.js

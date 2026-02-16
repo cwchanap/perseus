@@ -11,6 +11,18 @@
 		{
 			"name": "API",
 			"path": "apps/api"
+		},
+		{
+			"name": "Workflows",
+			"path": "apps/workflows"
+		},
+		{
+			"name": "Infrastructure",
+			"path": "packages/infrastructure"
+		},
+		{
+			"name": "Types",
+			"path": "packages/types"
 		}
 	],
 	"settings": {
