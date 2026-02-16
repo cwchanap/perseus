@@ -1,0 +1,22 @@
+{
+	"name": "@perseus/infrastructure",
+	"version": "0.0.1",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"build": "tsc",
+		"postinstall": "pulumi install",
+		"pulumi:preview": "pulumi preview",
+		"pulumi:up": "pulumi up",
+		"pulumi:destroy": "pulumi destroy",
+		"pulumi:refresh": "pulumi refresh"
+	},
+	"dependencies": {
+		"@pulumi/pulumi": "^3.144.0",
+		"@pulumi/cloudflare": "^5.48.0"
+	},
+	"devDependencies": {
+		"@types/node": "^22.10.0",
+		"typescript": "^5.9.0"
+	}
+}

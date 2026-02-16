@@ -38,6 +38,14 @@
 		},
 		"test:e2e": {
 			"outputs": ["test-results/**", "playwright-report/**"]
+		},
+		"pulumi:preview": {
+			"cache": false,
+			"outputs": []
+		},
+		"pulumi:up": {
+			"cache": false,
+			"outputs": []
 		}
 	}
 }
