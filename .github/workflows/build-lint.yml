@@ -29,12 +29,22 @@ jobs:
       - name: Run type check
         run: bun run check
 
-      - name: Validate wrangler production configs
-        if: github.event_name == 'push'
-        run: bash scripts/validate-wrangler-config.sh
-        # Note: Only runs on push to main/develop branches (not on PRs).
-        # This ensures production configs are validated before deployment
-        # without blocking normal PR CI.
-
       - name: Build
         run: bun run build
+
+      - name: Setup Pulumi
+        uses: pulumi/actions@v5
+        with:
+          command: version
+
+      - name: Pulumi Preview (infrastructure validation)
+        if: github.event_name == 'pull_request'
+        working-directory: packages/infrastructure
+        run: |
+          pulumi login --local
+          pulumi stack select production 2>/dev/null || pulumi stack init production
+          pulumi config set cloudflareAccountId ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          pulumi preview
+        env:
+          PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
