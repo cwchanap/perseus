@@ -35,6 +35,15 @@ jobs:
       - name: Build web app
         run: bun run build --filter=@perseus/web
 
+      - name: Build API worker
+        run: bun run build --filter=@perseus/api
+
+      - name: Build workflows worker
+        run: bun run build --filter=@perseus/workflows
+
+      - name: Build infrastructure
+        run: bun run build --filter=@perseus/infrastructure
+
       - name: Setup Pulumi
         uses: pulumi/actions@v5
         with:
