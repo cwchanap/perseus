@@ -13,7 +13,22 @@ export interface WorkerBindings {
 		binding: string;
 		bucketName: pulumi.Input<string>;
 	}>;
+	durableObjects?: Array<{
+		binding: string;
+		className: string;
+		scriptName?: string;
+	}>;
+	workflows?: Array<{
+		binding: string;
+		workflowName: string;
+		className: string;
+		scriptName?: string;
+	}>;
 	envVars?: Record<string, string>;
+}
+
+export interface AssetsConfig {
+	directory: string;
 }
 
 function readWorkerCode(workerPath: string): string {
@@ -26,67 +41,116 @@ function readWorkerCode(workerPath: string): string {
 	return fs.readFileSync(fullPath, 'utf-8');
 }
 
-function createPlainTextBindings(
-	envVars: Record<string, string> | undefined
-): cloudflare.types.input.WorkersScriptPlainTextBinding[] | undefined {
-	if (!envVars || Object.keys(envVars).length === 0) {
-		return undefined;
+function buildBindings(bindings: WorkerBindings): cloudflare.types.input.WorkersScriptBinding[] {
+	const result: cloudflare.types.input.WorkersScriptBinding[] = [];
+
+	// KV namespace bindings
+	for (const kv of bindings.kvNamespaces || []) {
+		result.push({
+			name: kv.binding,
+			type: 'kv_namespace',
+			namespaceId: kv.namespaceId
+		});
 	}
-	return Object.entries(envVars).map(([name, text]) => ({
-		name,
-		text
-	}));
+
+	// R2 bucket bindings
+	for (const r2 of bindings.r2Buckets || []) {
+		result.push({
+			name: r2.binding,
+			type: 'r2_bucket',
+			bucketName: r2.bucketName
+		});
+	}
+
+	// Durable Object bindings
+	for (const dObj of bindings.durableObjects || []) {
+		result.push({
+			name: dObj.binding,
+			type: 'durable_object_namespace',
+			className: dObj.className,
+			scriptName: dObj.scriptName
+		});
+	}
+
+	// Workflow bindings
+	for (const wf of bindings.workflows || []) {
+		result.push({
+			name: wf.binding,
+			type: 'workflow',
+			workflowName: wf.workflowName,
+			className: wf.className,
+			scriptName: wf.scriptName
+		});
+	}
+
+	// Plain text environment variables
+	if (bindings.envVars) {
+		for (const [name, text] of Object.entries(bindings.envVars)) {
+			result.push({
+				name,
+				type: 'plain_text',
+				text
+			});
+		}
+	}
+
+	return result;
 }
 
 export function createWorkflowsWorker(bindings: WorkerBindings = {}) {
-	const kvNamespaceBindings =
-		bindings.kvNamespaces?.map((kv) => ({
-			name: kv.binding,
-			namespaceId: kv.namespaceId
-		})) || [];
-
-	const r2BucketBindings =
-		bindings.r2Buckets?.map((r2) => ({
-			name: r2.binding,
-			bucketName: r2.bucketName
-		})) || [];
-
 	return new cloudflare.WorkersScript('workflows-worker', {
 		accountId: accountId,
-		name: naming.workerWorkflows,
+		scriptName: naming.workerWorkflows,
 		content: readWorkerCode(paths.workflowsWorker),
-		module: true,
 		compatibilityDate: compatibility.date,
 		compatibilityFlags: compatibility.flags,
-		kvNamespaceBindings: kvNamespaceBindings.length > 0 ? kvNamespaceBindings : undefined,
-		r2BucketBindings: r2BucketBindings.length > 0 ? r2BucketBindings : undefined,
-		plainTextBindings: createPlainTextBindings(bindings.envVars)
+		bindings: buildBindings(bindings),
+		migrations: {
+			newTag: 'v1',
+			newClasses: ['PuzzleMetadataDO']
+		}
 	});
 }
 
-export function createApiWorker(bindings: WorkerBindings = {}) {
-	const kvNamespaceBindings =
-		bindings.kvNamespaces?.map((kv) => ({
-			name: kv.binding,
-			namespaceId: kv.namespaceId
-		})) || [];
+export function createApiWorker(
+	bindings: WorkerBindings = {},
+	assets?: AssetsConfig,
+	workflowsScript?: cloudflare.WorkersScript
+) {
+	const scriptBindings = buildBindings(bindings);
 
-	const r2BucketBindings =
-		bindings.r2Buckets?.map((r2) => ({
-			name: r2.binding,
-			bucketName: r2.bucketName
-		})) || [];
+	// Add cross-script bindings that reference the workflows worker
+	if (workflowsScript) {
+		// Durable Object binding to workflows script
+		scriptBindings.push({
+			name: 'PUZZLE_METADATA_DO',
+			type: 'durable_object_namespace',
+			className: 'PuzzleMetadataDO',
+			scriptName: workflowsScript.scriptName
+		});
+
+		// Workflow binding to workflows script
+		scriptBindings.push({
+			name: 'PUZZLE_WORKFLOW',
+			type: 'workflow',
+			workflowName: naming.workflow,
+			className: 'PerseusWorkflow',
+			scriptName: workflowsScript.scriptName
+		});
+	}
 
 	return new cloudflare.WorkersScript('api-worker', {
 		accountId: accountId,
-		name: naming.workerApi,
+		scriptName: naming.workerApi,
 		content: readWorkerCode(paths.apiWorker),
-		module: true,
 		compatibilityDate: compatibility.date,
 		compatibilityFlags: compatibility.flags,
-		kvNamespaceBindings: kvNamespaceBindings.length > 0 ? kvNamespaceBindings : undefined,
-		r2BucketBindings: r2BucketBindings.length > 0 ? r2BucketBindings : undefined,
-		plainTextBindings: createPlainTextBindings(bindings.envVars)
+		bindings: scriptBindings,
+		assets: assets
+			? {
+					directory: assets.directory
+				}
+			: undefined
 	});
 }
 
@@ -98,6 +162,6 @@ export function createWorkerRoute(
 	return new cloudflare.WorkersRoute('api-route', {
 		zoneId: zoneId,
 		pattern: pattern,
-		scriptName: worker.name
+		script: worker.scriptName
 	});
 }

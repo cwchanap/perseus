@@ -18,7 +18,7 @@ export const compatibility = {
 };
 
 export const paths = {
-	apiWorker: 'apps/api/src/worker.ts',
-	workflowsWorker: 'apps/workflows/src/index.ts',
+	apiWorker: 'apps/api/dist/worker.js',
+	workflowsWorker: 'apps/workflows/dist/index.js',
 	webAssets: 'apps/web/build'
 };
