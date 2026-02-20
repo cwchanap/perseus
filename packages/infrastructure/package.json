@@ -5,7 +5,8 @@
 	"type": "module",
 	"scripts": {
 		"build": "tsc",
-		"postinstall": "command -v pulumi > /dev/null 2>&1 && pulumi install || echo 'Skipping pulumi install: Pulumi CLI not found. Install from https://pulumi.com/docs/get-started/install'",
+		"postinstall": "echo 'Skipping automatic pulumi install during dependency install'",
+		"pulumi:install": "command -v pulumi > /dev/null 2>&1 && pulumi install || echo 'Skipping pulumi install: Pulumi CLI not found. Install from https://pulumi.com/docs/get-started/install'",
 		"pulumi:preview": "pulumi preview",
 		"pulumi:up": "pulumi up",
 		"pulumi:destroy": "pulumi destroy",

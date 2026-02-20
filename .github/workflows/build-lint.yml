@@ -39,6 +39,7 @@ jobs:
         if: github.event_name == 'pull_request'
         working-directory: packages/infrastructure
         run: |
+          pulumi install
           pulumi stack select production --create
           pulumi preview
         env:
