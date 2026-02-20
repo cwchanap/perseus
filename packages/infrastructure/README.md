@@ -154,7 +154,7 @@ const jwtSecret = config.requireSecret('jwtSecret');
 
 ## Complete Wrangler Replacement
 
-To completely eliminate wrangler.toml files:
+To eliminate wrangler.toml files:
 
 1. ✅ Move resource definitions to Pulumi (done)
 2. ✅ Move environment variables to Pulumi (done)

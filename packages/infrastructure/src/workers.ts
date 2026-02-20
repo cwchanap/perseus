@@ -31,12 +31,22 @@ export interface AssetsConfig {
 	directory: string;
 }
 
+interface WorkerScriptConfig {
+	logicalName: string;
+	scriptName: string;
+	workerPath: string;
+	bindings: cloudflare.types.input.WorkersScriptBinding[];
+	migrations?: { newTag: string; newClasses: string[] };
+	assets?: { directory: string };
+}
+
 function readWorkerCode(workerPath: string): string {
 	const infraDir = path.dirname(new URL(import.meta.url).pathname);
 	const fullPath = path.resolve(infraDir, '../../../', workerPath);
 	if (!fs.existsSync(fullPath)) {
-		console.warn(`Worker code not found at ${fullPath}, using placeholder`);
-		return `export default { async fetch(request) { return new Response('Worker not built yet'); } };`;
+		throw new Error(
+			`Worker code not found at ${fullPath}. Run the build for the worker package before deploying.`
+		);
 	}
 	return fs.readFileSync(fullPath, 'utf-8');
 }
@@ -97,18 +107,26 @@ function buildBindings(bindings: WorkerBindings): cloudflare.types.input.Workers
 	return result;
 }
 
-export function createWorkflowsWorker(bindings: WorkerBindings = {}) {
-	return new cloudflare.WorkersScript('workflows-worker', {
+function createWorkerScript(config: WorkerScriptConfig): cloudflare.WorkersScript {
+	return new cloudflare.WorkersScript(config.logicalName, {
 		accountId: accountId,
-		scriptName: naming.workerWorkflows,
-		content: readWorkerCode(paths.workflowsWorker),
+		scriptName: config.scriptName,
+		content: readWorkerCode(config.workerPath),
 		compatibilityDate: compatibility.date,
 		compatibilityFlags: compatibility.flags,
+		bindings: config.bindings,
+		...(config.migrations ? { migrations: config.migrations } : {}),
+		...(config.assets ? { assets: config.assets } : {})
+	});
+}
+
+export function createWorkflowsWorker(bindings: WorkerBindings = {}) {
+	return createWorkerScript({
+		logicalName: 'workflows-worker',
+		scriptName: naming.workerWorkflows,
+		workerPath: paths.workflowsWorker,
 		bindings: buildBindings(bindings),
-		migrations: {
-			newTag: 'v1',
-			newClasses: ['PuzzleMetadataDO']
-		}
+		migrations: { newTag: 'v1', newClasses: ['PuzzleMetadataDO'] }
 	});
 }
 
@@ -139,18 +157,12 @@ export function createApiWorker(
 		});
 	}
 
-	return new cloudflare.WorkersScript('api-worker', {
-		accountId: accountId,
+	return createWorkerScript({
+		logicalName: 'api-worker',
 		scriptName: naming.workerApi,
-		content: readWorkerCode(paths.apiWorker),
-		compatibilityDate: compatibility.date,
-		compatibilityFlags: compatibility.flags,
+		workerPath: paths.apiWorker,
 		bindings: scriptBindings,
-		assets: assets
-			? {
-					directory: assets.directory
-				}
-			: undefined
+		...(assets ? { assets: { directory: assets.directory } } : {})
 	});
 }
 

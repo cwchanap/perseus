@@ -6,7 +6,7 @@ import { naming, paths } from './config.js';
 const r2Bucket = createR2Bucket();
 const kvNamespace = createKVNamespace();
 
-const workflowsWorker = createWorkflowsWorker({
+const commonBindings = {
 	kvNamespaces: [
 		{
 			binding: 'PUZZLE_METADATA',
@@ -19,6 +19,13 @@ const workflowsWorker = createWorkflowsWorker({
 			bucketName: r2Bucket.name
 		}
 	],
+	envVars: {
+		NODE_ENV: 'production'
+	}
+};
+
+const workflowsWorker = createWorkflowsWorker({
+	...commonBindings,
 	durableObjects: [
 		{
 			binding: 'PUZZLE_METADATA_DO',
@@ -31,30 +38,11 @@ const workflowsWorker = createWorkflowsWorker({
 			workflowName: naming.workflow,
 			className: 'PerseusWorkflow'
 		}
-	],
-	envVars: {
-		NODE_ENV: 'production'
-	}
+	]
 });
 
 const apiWorker = createApiWorker(
-	{
-		kvNamespaces: [
-			{
-				binding: 'PUZZLE_METADATA',
-				namespaceId: kvNamespace.id
-			}
-		],
-		r2Buckets: [
-			{
-				binding: 'PUZZLES_BUCKET',
-				bucketName: r2Bucket.name
-			}
-		],
-		envVars: {
-			NODE_ENV: 'production'
-		}
-	},
+	commonBindings,
 	{
 		// Assets configuration for serving static web app files
 		directory: paths.webAssets
