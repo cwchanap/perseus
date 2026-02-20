@@ -1,8 +1,5 @@
 # Pulumi
 Pulumi.*.yaml
-!.pulumi/Pulumi.yaml
-!.pulumi/Pulumi.dev.yaml
-!.pulumi/Pulumi.prod.yaml
 .pulumi/
 *.pem
 

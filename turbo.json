@@ -40,10 +40,12 @@
 			"outputs": ["test-results/**", "playwright-report/**"]
 		},
 		"pulumi:preview": {
+			"dependsOn": ["build"],
 			"cache": false,
 			"outputs": []
 		},
 		"pulumi:up": {
+			"dependsOn": ["build"],
 			"cache": false,
 			"outputs": []
 		}
