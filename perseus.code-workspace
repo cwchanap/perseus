@@ -11,6 +11,18 @@
 		{
 			"name": "API",
 			"path": "apps/api"
+		},
+		{
+			"name": "Workflows",
+			"path": "apps/workflows"
+		},
+		{
+			"name": "Infrastructure",
+			"path": "packages/infrastructure"
+		},
+		{
+			"name": "Types",
+			"path": "packages/types"
 		}
 	],
 	"settings": {
@@ -21,7 +33,9 @@
 		"editor.codeActionsOnSave": {
 			"source.fixAll.eslint": "explicit"
 		},
-		"typescript.preferences.autoImportFileExcludePatterns": ["**/node_modules/**"],
+		"typescript.preferences.autoImportFileExcludePatterns": [
+			"**/node_modules/**"
+		],
 		"search.exclude": {
 			"**/node_modules": true,
 			"**/dist": true,
@@ -35,7 +49,7 @@
 			"**/dist/**": true,
 			"**/build/**": true,
 			"**/.turbo/**": true
-		}
+		},
 	},
 	"extensions": {
 		"recommendations": [

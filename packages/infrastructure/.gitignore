@@ -1,0 +1,14 @@
+# Pulumi
+Pulumi.*.yaml
+.pulumi/
+*.pem
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment
+.env
+.env.local
