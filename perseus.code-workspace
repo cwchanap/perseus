@@ -50,9 +50,6 @@
 			"**/build/**": true,
 			"**/.turbo/**": true
 		},
-		"chat.tools.terminal.autoApprove": {
-			"npx tsc": true
-		}
 	},
 	"extensions": {
 		"recommendations": [

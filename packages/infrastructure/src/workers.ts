@@ -139,22 +139,26 @@ export function createApiWorker(
 
 	// Add cross-script bindings that reference the workflows worker
 	if (workflowsScript) {
-		// Durable Object binding to workflows script
-		scriptBindings.push({
-			name: 'PUZZLE_METADATA_DO',
-			type: 'durable_object_namespace',
-			className: 'PuzzleMetadataDO',
-			scriptName: workflowsScript.scriptName
-		});
+		// Durable Object binding to workflows script (only if not already present)
+		if (!scriptBindings.some((b) => b.name === 'PUZZLE_METADATA_DO')) {
+			scriptBindings.push({
+				name: 'PUZZLE_METADATA_DO',
+				type: 'durable_object_namespace',
+				className: 'PuzzleMetadataDO',
+				scriptName: workflowsScript.scriptName
+			});
+		}
 
-		// Workflow binding to workflows script
-		scriptBindings.push({
-			name: 'PUZZLE_WORKFLOW',
-			type: 'workflow',
-			workflowName: naming.workflow,
-			className: 'PerseusWorkflow',
-			scriptName: workflowsScript.scriptName
-		});
+		// Workflow binding to workflows script (only if not already present)
+		if (!scriptBindings.some((b) => b.name === 'PUZZLE_WORKFLOW')) {
+			scriptBindings.push({
+				name: 'PUZZLE_WORKFLOW',
+				type: 'workflow',
+				workflowName: naming.workflow,
+				className: 'PerseusWorkflow',
+				scriptName: workflowsScript.scriptName
+			});
+		}
 	}
 
 	return createWorkerScript({
@@ -169,9 +173,10 @@ export function createApiWorker(
 export function createWorkerRoute(
 	worker: cloudflare.WorkersScript,
 	pattern: string,
-	zoneId: string
+	zoneId: string,
+	logicalName: string = 'api-route'
 ) {
-	return new cloudflare.WorkersRoute('api-route', {
+	return new cloudflare.WorkersRoute(logicalName, {
 		zoneId: zoneId,
 		pattern: pattern,
 		script: worker.scriptName
