@@ -42,7 +42,6 @@ jobs:
         if: github.event_name == 'pull_request'
         working-directory: packages/infrastructure
         run: |
-          pulumi install --use-bun
           pulumi stack select production
           pulumi config set cloudflareAccountId --secret <<< "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}"
           pulumi preview
