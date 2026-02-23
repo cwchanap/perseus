@@ -1,4 +1,10 @@
 import * as pulumi from '@pulumi/pulumi';
+import * as path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const repoRoot = path.resolve(__dirname, '../../..');
 
 const config = new pulumi.Config();
 
@@ -6,9 +12,9 @@ export const accountId = config.require('cloudflareAccountId');
 
 export const naming = {
 	workerApi: 'perseus',
-	workerWorkflows: 'workflows',
-	r2Bucket: 'perseus-production',
-	kvNamespace: 'perseus-kv-production',
+	workerWorkflows: 'perseus-workflows',
+	r2Bucket: 'perseus',
+	kvNamespace: 'perseus',
 	workflow: 'perseus'
 };
 
@@ -18,7 +24,7 @@ export const compatibility = {
 };
 
 export const paths = {
-	apiWorker: 'apps/api/dist/worker.js',
-	workflowsWorker: 'apps/workflows/dist/index.js',
-	webAssets: '../../apps/web/build'
+	apiWorker: path.join(repoRoot, 'apps/api/dist/worker.js'),
+	workflowsWorker: path.join(repoRoot, 'apps/workflows/dist/index.js'),
+	webAssets: path.join(repoRoot, 'apps/web/build')
 };

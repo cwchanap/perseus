@@ -44,13 +44,12 @@ const workflowsWorker = createWorkflowsWorker({
 const apiWorker = createApiWorker(
 	commonBindings,
 	{
-		// Assets configuration for serving static web app files
 		directory: paths.webAssets
 	},
-	workflowsWorker // Pass workflows worker for cross-script bindings
+	workflowsWorker
 );
 
 export const r2BucketName = r2Bucket.name;
 export const kvNamespaceId = kvNamespace.id;
-export const workflowsWorkerName = workflowsWorker.scriptName;
-export const apiWorkerName = apiWorker.scriptName;
+export const workflowsWorkerName = workflowsWorker.workerName;
+export const apiWorkerName = apiWorker.workerName;

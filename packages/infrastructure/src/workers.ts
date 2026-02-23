@@ -31,30 +31,47 @@ export interface AssetsConfig {
 	directory: string;
 }
 
-interface WorkerScriptConfig {
-	logicalName: string;
-	scriptName: string;
-	workerPath: string;
-	bindings: cloudflare.types.input.WorkersScriptBinding[];
-	migrations?: { newTag: string; newClasses: string[] };
-	assets?: { directory: string };
-}
+function getModules(
+	distDir: string,
+	mainModule: string
+): cloudflare.types.input.WorkerVersionModule[] {
+	const modules: cloudflare.types.input.WorkerVersionModule[] = [];
 
-function readWorkerCode(workerPath: string): string {
-	const infraDir = path.dirname(new URL(import.meta.url).pathname);
-	const fullPath = path.resolve(infraDir, '../../../', workerPath);
-	if (!fs.existsSync(fullPath)) {
-		throw new Error(
-			`Worker code not found at ${fullPath}. Run the build for the worker package before deploying.`
-		);
+	const files = fs.readdirSync(distDir);
+	for (const file of files) {
+		const filePath = path.join(distDir, file);
+		const stat = fs.statSync(filePath);
+
+		if (!stat.isFile()) continue;
+
+		let contentType: string;
+		if (file.endsWith('.js') || file.endsWith('.mjs')) {
+			contentType = 'application/javascript+module';
+		} else if (file.endsWith('.wasm')) {
+			contentType = 'application/wasm';
+		} else {
+			continue;
+		}
+
+		modules.push({
+			name: file,
+			contentFile: filePath,
+			contentType
+		});
 	}
-	return fs.readFileSync(fullPath, 'utf-8');
+
+	if (!modules.some((m) => m.name === mainModule)) {
+		throw new Error(`Main module "${mainModule}" not found in ${distDir}`);
+	}
+
+	return modules;
 }
 
-function buildBindings(bindings: WorkerBindings): cloudflare.types.input.WorkersScriptBinding[] {
-	const result: cloudflare.types.input.WorkersScriptBinding[] = [];
+function buildVersionBindings(
+	bindings: WorkerBindings
+): cloudflare.types.input.WorkerVersionBinding[] {
+	const result: cloudflare.types.input.WorkerVersionBinding[] = [];
 
-	// KV namespace bindings
 	for (const kv of bindings.kvNamespaces || []) {
 		result.push({
 			name: kv.binding,
@@ -63,7 +80,6 @@ function buildBindings(bindings: WorkerBindings): cloudflare.types.input.Workers
 		});
 	}
 
-	// R2 bucket bindings
 	for (const r2 of bindings.r2Buckets || []) {
 		result.push({
 			name: r2.binding,
@@ -72,7 +88,6 @@ function buildBindings(bindings: WorkerBindings): cloudflare.types.input.Workers
 		});
 	}
 
-	// Durable Object bindings
 	for (const dObj of bindings.durableObjects || []) {
 		result.push({
 			name: dObj.binding,
@@ -82,7 +97,6 @@ function buildBindings(bindings: WorkerBindings): cloudflare.types.input.Workers
 		});
 	}
 
-	// Workflow bindings
 	for (const wf of bindings.workflows || []) {
 		result.push({
 			name: wf.binding,
@@ -93,7 +107,6 @@ function buildBindings(bindings: WorkerBindings): cloudflare.types.input.Workers
 		});
 	}
 
-	// Plain text environment variables
 	if (bindings.envVars) {
 		for (const [name, text] of Object.entries(bindings.envVars)) {
 			result.push({
@@ -107,71 +120,160 @@ function buildBindings(bindings: WorkerBindings): cloudflare.types.input.Workers
 	return result;
 }
 
-function createWorkerScript(config: WorkerScriptConfig): cloudflare.WorkersScript {
-	return new cloudflare.WorkersScript(config.logicalName, {
-		accountId: accountId,
-		scriptName: config.scriptName,
-		content: readWorkerCode(config.workerPath),
-		compatibilityDate: compatibility.date,
-		compatibilityFlags: compatibility.flags,
-		bindings: config.bindings,
-		...(config.migrations ? { migrations: config.migrations } : {}),
-		...(config.assets ? { assets: config.assets } : {})
-	});
-}
+export function createWorkflowsWorker(bindings: WorkerBindings = {}): {
+	worker: cloudflare.Worker;
+	version: cloudflare.WorkerVersion;
+	workerName: string;
+} {
+	const distDir = path.dirname(paths.workflowsWorker);
+	const mainModule = path.basename(paths.workflowsWorker);
 
-export function createWorkflowsWorker(bindings: WorkerBindings = {}) {
-	return createWorkerScript({
-		logicalName: 'workflows-worker',
-		scriptName: naming.workerWorkflows,
-		workerPath: paths.workflowsWorker,
-		bindings: buildBindings(bindings),
-		migrations: { newTag: 'v1', newClasses: ['PuzzleMetadataDO'] }
+	const versionBindings = buildVersionBindings(bindings);
+	const doBinding = versionBindings.find((b) => b.name === 'PUZZLE_METADATA_DO');
+	const bindingsWithoutDo = versionBindings.filter((b) => b.name !== 'PUZZLE_METADATA_DO');
+
+	const worker = new cloudflare.Worker('workflows-worker', {
+		accountId: accountId,
+		name: naming.workerWorkflows
 	});
+
+	const initialVersion = new cloudflare.WorkerVersion(
+		'workflows-worker-version',
+		{
+			accountId: accountId,
+			workerId: worker.name,
+			mainModule: mainModule,
+			modules: getModules(distDir, mainModule),
+			bindings: bindingsWithoutDo,
+			compatibilityDate: compatibility.date,
+			compatibilityFlags: compatibility.flags,
+			migrations: { newTag: 'v1', newClasses: ['PuzzleMetadataDO'] }
+		},
+		{ dependsOn: worker }
+	);
+
+	const initialDeployment = new cloudflare.WorkersDeployment(
+		'workflows-worker-deployment',
+		{
+			accountId: accountId,
+			scriptName: naming.workerWorkflows,
+			strategy: 'percentage',
+			versions: [{ percentage: 100, versionId: initialVersion.id }]
+		},
+		{ dependsOn: initialVersion }
+	);
+
+	const workflow = new cloudflare.Workflow(
+		'perseus-workflow',
+		{
+			accountId: accountId,
+			workflowName: naming.workflow,
+			className: 'PerseusWorkflow',
+			scriptName: naming.workerWorkflows
+		},
+		{ dependsOn: initialDeployment }
+	);
+
+	if (doBinding) {
+		const versionWithDo = new cloudflare.WorkerVersion(
+			'workflows-worker-version-do',
+			{
+				accountId: accountId,
+				workerId: worker.name,
+				mainModule: mainModule,
+				modules: getModules(distDir, mainModule),
+				bindings: versionBindings,
+				compatibilityDate: compatibility.date,
+				compatibilityFlags: compatibility.flags
+			},
+			{ dependsOn: workflow }
+		);
+
+		const deploymentWithDo = new cloudflare.WorkersDeployment(
+			'workflows-worker-deployment-do',
+			{
+				accountId: accountId,
+				scriptName: naming.workerWorkflows,
+				strategy: 'percentage',
+				versions: [{ percentage: 100, versionId: versionWithDo.id }]
+			},
+			{ dependsOn: versionWithDo }
+		);
+
+		return { worker, version: versionWithDo, workerName: naming.workerWorkflows };
+	}
+
+	return { worker, version: initialVersion, workerName: naming.workerWorkflows };
 }
 
 export function createApiWorker(
 	bindings: WorkerBindings = {},
 	assets?: AssetsConfig,
-	workflowsScript?: cloudflare.WorkersScript
-) {
-	const scriptBindings = buildBindings(bindings);
+	workflowsWorker?: { workerName: string; version: cloudflare.WorkerVersion }
+): { worker: cloudflare.Worker; version: cloudflare.WorkerVersion; workerName: string } {
+	const distDir = path.dirname(paths.apiWorker);
+	const mainModule = path.basename(paths.apiWorker);
+	const scriptBindings = buildVersionBindings(bindings);
 
-	// Add cross-script bindings that reference the workflows worker
-	if (workflowsScript) {
-		// Durable Object binding to workflows script (only if not already present)
+	if (workflowsWorker) {
 		if (!scriptBindings.some((b) => b.name === 'PUZZLE_METADATA_DO')) {
 			scriptBindings.push({
 				name: 'PUZZLE_METADATA_DO',
 				type: 'durable_object_namespace',
 				className: 'PuzzleMetadataDO',
-				scriptName: workflowsScript.scriptName
+				scriptName: workflowsWorker.workerName
 			});
 		}
 
-		// Workflow binding to workflows script (only if not already present)
 		if (!scriptBindings.some((b) => b.name === 'PUZZLE_WORKFLOW')) {
 			scriptBindings.push({
 				name: 'PUZZLE_WORKFLOW',
 				type: 'workflow',
 				workflowName: naming.workflow,
 				className: 'PerseusWorkflow',
-				scriptName: workflowsScript.scriptName
+				scriptName: workflowsWorker.workerName
 			});
 		}
 	}
 
-	return createWorkerScript({
-		logicalName: 'api-worker',
-		scriptName: naming.workerApi,
-		workerPath: paths.apiWorker,
-		bindings: scriptBindings,
-		...(assets ? { assets: { directory: assets.directory } } : {})
+	const worker = new cloudflare.Worker('api-worker', {
+		accountId: accountId,
+		name: naming.workerApi
 	});
+
+	const version = new cloudflare.WorkerVersion(
+		'api-worker-version',
+		{
+			accountId: accountId,
+			workerId: worker.name,
+			mainModule: mainModule,
+			modules: getModules(distDir, mainModule),
+			bindings: scriptBindings,
+			compatibilityDate: compatibility.date,
+			compatibilityFlags: compatibility.flags,
+			...(assets ? { assets: { directory: assets.directory } } : {})
+		},
+		{
+			dependsOn: workflowsWorker ? [worker, workflowsWorker.version] : [worker]
+		}
+	);
+
+	const deployment = new cloudflare.WorkersDeployment(
+		'api-worker-deployment',
+		{
+			accountId: accountId,
+			scriptName: naming.workerApi,
+			strategy: 'percentage',
+			versions: [{ percentage: 100, versionId: version.id }]
+		},
+		{ dependsOn: version }
+	);
+
+	return { worker, version, workerName: naming.workerApi };
 }
 
 export function createWorkerRoute(
-	worker: cloudflare.WorkersScript,
+	workerName: string,
 	pattern: string,
 	zoneId: string,
 	logicalName: string = 'api-route'
@@ -179,6 +281,6 @@ export function createWorkerRoute(
 	return new cloudflare.WorkersRoute(logicalName, {
 		zoneId: zoneId,
 		pattern: pattern,
-		script: worker.scriptName
+		script: workerName
 	});
 }
