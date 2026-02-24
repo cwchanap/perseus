@@ -15,14 +15,15 @@ concurrency:
   group: pulumi-deploy
   cancel-in-progress: false
 
+permissions:
+  id-token: write
+  contents: read
+
 jobs:
   deploy:
     name: Deploy to Production
     runs-on: ubuntu-latest
     environment: production
-    permissions:
-      id-token: write
-      contents: read
 
     steps:
       - name: Checkout repository
@@ -48,8 +49,16 @@ jobs:
       - name: Build infrastructure
         run: bun run build --filter=@perseus/infrastructure
 
+      - name: Authenticate with Pulumi
+        uses: pulumi/auth-actions@v1
+        with:
+          organization: ${{ vars.PULUMI_ORG }}
+          requested-token-type: urn:pulumi:token-type:access_token:organization
+
       - name: Setup Pulumi
-        run: PULUMI_INSTALL_VERSION=3.144.0 curl -fsSL https://get.pulumi.com | sh && echo "$HOME/.pulumi/bin" >> $GITHUB_PATH
+        uses: pulumi/actions@v6
+        with:
+          pulumi-version: '3.144.0'
 
       - name: Configure Pulumi stack
         working-directory: packages/infrastructure
