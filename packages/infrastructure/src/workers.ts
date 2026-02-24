@@ -24,7 +24,7 @@ export interface WorkerBindings {
 		className: string;
 		scriptName?: string;
 	}>;
-	envVars?: Record<string, string>;
+	envVars?: Record<string, pulumi.Input<string>>;
 }
 
 export interface AssetsConfig {
@@ -152,17 +152,6 @@ export function createWorkflowsWorker(bindings: WorkerBindings = {}): {
 		{ dependsOn: worker }
 	);
 
-	const initialDeployment = new cloudflare.WorkersDeployment(
-		'workflows-worker-deployment',
-		{
-			accountId: accountId,
-			scriptName: naming.workerWorkflows,
-			strategy: 'percentage',
-			versions: [{ percentage: 100, versionId: initialVersion.id }]
-		},
-		{ dependsOn: initialVersion }
-	);
-
 	const workflow = new cloudflare.Workflow(
 		'perseus-workflow',
 		{
@@ -171,7 +160,7 @@ export function createWorkflowsWorker(bindings: WorkerBindings = {}): {
 			className: 'PerseusWorkflow',
 			scriptName: naming.workerWorkflows
 		},
-		{ dependsOn: initialDeployment }
+		{ dependsOn: initialVersion }
 	);
 
 	if (doBinding) {
@@ -190,7 +179,7 @@ export function createWorkflowsWorker(bindings: WorkerBindings = {}): {
 		);
 
 		const deploymentWithDo = new cloudflare.WorkersDeployment(
-			'workflows-worker-deployment-do',
+			'workflows-worker-deployment',
 			{
 				accountId: accountId,
 				scriptName: naming.workerWorkflows,
@@ -202,6 +191,17 @@ export function createWorkflowsWorker(bindings: WorkerBindings = {}): {
 
 		return { worker, version: versionWithDo, workerName: naming.workerWorkflows };
 	}
+
+	const initialDeployment = new cloudflare.WorkersDeployment(
+		'workflows-worker-deployment',
+		{
+			accountId: accountId,
+			scriptName: naming.workerWorkflows,
+			strategy: 'percentage',
+			versions: [{ percentage: 100, versionId: initialVersion.id }]
+		},
+		{ dependsOn: workflow }
+	);
 
 	return { worker, version: initialVersion, workerName: naming.workerWorkflows };
 }
