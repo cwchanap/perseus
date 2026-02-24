@@ -25,6 +25,7 @@ export interface WorkerBindings {
 		scriptName?: string;
 	}>;
 	envVars?: Record<string, pulumi.Input<string>>;
+	secretVars?: Record<string, pulumi.Input<string>>;
 }
 
 export interface AssetsConfig {
@@ -35,6 +36,13 @@ function getModules(
 	distDir: string,
 	mainModule: string
 ): cloudflare.types.input.WorkerVersionModule[] {
+	if (!fs.existsSync(distDir)) {
+		throw new Error(
+			`Build output not found at: ${distDir}\n` +
+				`Run the build step first: bun run build --filter=@perseus/${path.basename(path.dirname(distDir))}`
+		);
+	}
+
 	const modules: cloudflare.types.input.WorkerVersionModule[] = [];
 
 	const files = fs.readdirSync(distDir);
@@ -117,6 +125,16 @@ function buildVersionBindings(
 		}
 	}
 
+	if (bindings.secretVars) {
+		for (const [name, text] of Object.entries(bindings.secretVars)) {
+			result.push({
+				name,
+				type: 'secret_text',
+				text
+			});
+		}
+	}
+
 	return result;
 }
 
@@ -178,7 +196,7 @@ export function createWorkflowsWorker(bindings: WorkerBindings = {}): {
 			{ dependsOn: workflow }
 		);
 
-		const deploymentWithDo = new cloudflare.WorkersDeployment(
+		void new cloudflare.WorkersDeployment(
 			'workflows-worker-deployment',
 			{
 				accountId: accountId,
@@ -192,7 +210,7 @@ export function createWorkflowsWorker(bindings: WorkerBindings = {}): {
 		return { worker, version: versionWithDo, workerName: naming.workerWorkflows };
 	}
 
-	const initialDeployment = new cloudflare.WorkersDeployment(
+	void new cloudflare.WorkersDeployment(
 		'workflows-worker-deployment',
 		{
 			accountId: accountId,
@@ -207,9 +225,9 @@ export function createWorkflowsWorker(bindings: WorkerBindings = {}): {
 }
 
 export function createApiWorker(
-	bindings: WorkerBindings = {},
-	assets?: AssetsConfig,
-	workflowsWorker?: { workerName: string; version: cloudflare.WorkerVersion }
+	bindings: WorkerBindings,
+	assets: AssetsConfig | undefined,
+	workflowsWorker: { workerName: string; version: cloudflare.WorkerVersion }
 ): { worker: cloudflare.Worker; version: cloudflare.WorkerVersion; workerName: string } {
 	const distDir = path.dirname(paths.apiWorker);
 	const mainModule = path.basename(paths.apiWorker);

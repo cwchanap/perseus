@@ -55,27 +55,47 @@ jobs:
           organization: ${{ vars.PULUMI_ORG }}
           requested-token-type: urn:pulumi:token-type:access_token:organization
 
+      - name: Validate required secrets
+        run: |
+          missing=()
+          [ -z "$CF_ACCOUNT_ID" ] && missing+=("CLOUDFLARE_ACCOUNT_ID")
+          [ -z "$CLOUDFLARE_API_TOKEN" ] && missing+=("CLOUDFLARE_API_TOKEN")
+          [ -z "$JWT_SECRET" ] && missing+=("JWT_SECRET")
+          [ -z "$ADMIN_PASSKEY" ] && missing+=("ADMIN_PASSKEY")
+          [ -z "$PULUMI_CONFIG_PASSPHRASE" ] && missing+=("PULUMI_CONFIG_PASSPHRASE")
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "ERROR: The following required secrets are not configured:"
+            printf '  - %s\n' "${missing[@]}"
+            exit 1
+          fi
+        env:
+          CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          ADMIN_PASSKEY: ${{ secrets.ADMIN_PASSKEY }}
+          PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE }}
+
       - name: Setup Pulumi
         uses: pulumi/actions@v6
         with:
-          pulumi-version: '3.144.0'
+          pulumi-version: '3.160.0'
 
       - name: Configure Pulumi stack
         working-directory: packages/infrastructure
         run: |
           pulumi stack select production --create
-          pulumi config set cloudflareAccountId ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          if [ -n "${{ secrets.ALLOWED_ORIGINS }}" ]; then
-            pulumi config set allowedOrigins "${{ secrets.ALLOWED_ORIGINS }}"
+          pulumi config set cloudflareAccountId "$CF_ACCOUNT_ID"
+          if [ -n "$ALLOWED_ORIGINS" ]; then
+            pulumi config set allowedOrigins "$ALLOWED_ORIGINS"
           fi
-          if [ -n "${{ secrets.JWT_SECRET }}" ]; then
-            pulumi config set --secret jwtSecret "${{ secrets.JWT_SECRET }}"
-          fi
-          if [ -n "${{ secrets.ADMIN_PASSKEY }}" ]; then
-            pulumi config set --secret adminPasskey "${{ secrets.ADMIN_PASSKEY }}"
-          fi
+          pulumi config set --secret jwtSecret "$JWT_SECRET"
+          pulumi config set adminPasskey "$ADMIN_PASSKEY"
         env:
           PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE }}
+          CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          ALLOWED_ORIGINS: ${{ secrets.ALLOWED_ORIGINS }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          ADMIN_PASSKEY: ${{ secrets.ADMIN_PASSKEY }}
 
       - name: Pulumi Preview
         working-directory: packages/infrastructure
