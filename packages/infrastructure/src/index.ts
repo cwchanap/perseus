@@ -23,8 +23,10 @@ const commonBindings = {
 	envVars: {
 		NODE_ENV: 'production',
 		ALLOWED_ORIGINS: config.get('allowedOrigins') || '',
-		JWT_SECRET: config.getSecret('jwtSecret') || '',
-		ADMIN_PASSKEY: config.getSecret('adminPasskey') || ''
+		ADMIN_PASSKEY: config.require('adminPasskey')
+	},
+	secretVars: {
+		JWT_SECRET: config.requireSecret('jwtSecret')
 	}
 };
 
