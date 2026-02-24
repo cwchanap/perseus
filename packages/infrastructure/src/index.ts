@@ -3,6 +3,7 @@ import { createR2Bucket, createKVNamespace } from './resources.js';
 import { createWorkflowsWorker, createApiWorker } from './workers.js';
 import { naming, paths } from './config.js';
 
+const config = new pulumi.Config();
 const r2Bucket = createR2Bucket();
 const kvNamespace = createKVNamespace();
 
@@ -20,7 +21,10 @@ const commonBindings = {
 		}
 	],
 	envVars: {
-		NODE_ENV: 'production'
+		NODE_ENV: 'production',
+		ALLOWED_ORIGINS: config.get('allowedOrigins') || '',
+		JWT_SECRET: config.getSecret('jwtSecret') || '',
+		ADMIN_PASSKEY: config.getSecret('adminPasskey') || ''
 	}
 };
 
