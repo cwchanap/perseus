@@ -53,9 +53,6 @@ jobs:
       - name: Build workflows worker
         run: bun run build --filter=@perseus/workflows
 
-      - name: Build infrastructure
-        run: bun run build --filter=@perseus/infrastructure
-
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -64,7 +61,6 @@ jobs:
             apps/api/dist
             apps/workflows/dist
             apps/web/build
-            packages/infrastructure/dist
           retention-days: 1
 
   preview:
@@ -88,6 +84,9 @@ jobs:
 
       - name: Install dependencies
         run: bun install
+
+      - name: Build infrastructure
+        run: bun run build --filter=@perseus/infrastructure
 
       - name: Authenticate with Pulumi
         uses: pulumi/auth-actions@v1
@@ -129,6 +128,9 @@ jobs:
 
       - name: Install dependencies
         run: bun install
+
+      - name: Build infrastructure
+        run: bun run build --filter=@perseus/infrastructure
 
       - name: Authenticate with Pulumi
         uses: pulumi/auth-actions@v1
