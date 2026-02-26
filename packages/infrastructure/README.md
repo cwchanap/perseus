@@ -14,7 +14,7 @@ This package contains Pulumi infrastructure-as-code definitions for the Perseus 
 ### Workers
 
 - **API Worker** (`perseus`): Main API with KV and R2 bindings
-- **Workflows Worker** (`workflows`): Background workflow processing with KV and R2 bindings
+- **Workflows Worker** (`perseus-workflows`): Background workflow processing with KV and R2 bindings
 
 ### Storage
 
@@ -91,24 +91,21 @@ This creates/updates:
 - R2 bucket (`perseus-production`)
 - KV namespace (`perseus-kv-production`)
 - API Worker (`perseus`) with bindings
-- Workflows Worker (`workflows`) with bindings
+- Workflows Worker (`perseus-workflows`) with bindings
 
-### 3. Upload Static Assets (Optional)
+### 3. Upload Puzzle Assets to R2 (Optional)
 
-If your Worker serves static assets, upload them to R2:
+If you have puzzle assets (images, metadata files), upload them to the R2 bucket:
 
 ```bash
-cd apps/web
-# Upload build directory to R2 (using wrangler for now)
-wrangler r2 object put perseus-production/index.html --file build/index.html
-# Or use a script to upload all assets
+# Upload puzzle assets to R2 (using wrangler or AWS S3-compatible CLI)
+wrangler r2 object put perseus-production/puzzles/example.png --file ./assets/example.png
 ```
 
-**Note:** Static asset upload is not handled by Pulumi because:
+**Note:**
 
-1. R2 object upload isn't directly supported by the Pulumi Cloudflare provider
-2. Assets change frequently and should be deployed separately from infrastructure
-3. You can use wrangler, AWS CLI (S3-compatible), or a custom script
+- **Web static assets** (HTML, CSS, JS) are deployed automatically via Workers Assets when Pulumi deploys the API worker (configured via `assets: { directory: paths.webAssets }`)
+- **Puzzle assets** (images, metadata) should be uploaded to the R2 bucket separately using wrangler, AWS CLI (S3-compatible), or a custom script
 
 ## Migration from Wrangler
 
