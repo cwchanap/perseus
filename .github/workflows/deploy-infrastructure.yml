@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'packages/infrastructure/**'
+      - 'packages/types/**'
       - 'apps/api/**'
       - 'apps/workflows/**'
       - 'apps/web/**'
