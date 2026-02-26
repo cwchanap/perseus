@@ -191,7 +191,8 @@ export function createWorkflowsWorker(bindings: WorkerBindings = {}): {
 				modules: getModules(distDir, mainModule),
 				bindings: versionBindings,
 				compatibilityDate: compatibility.date,
-				compatibilityFlags: compatibility.flags
+				compatibilityFlags: compatibility.flags,
+				migrations: { newTag: 'v1', newClasses: ['PuzzleMetadataDO'] }
 			},
 			{ dependsOn: workflow }
 		);
