@@ -9,14 +9,6 @@ on:
       - 'apps/workflows/**'
       - 'apps/web/**'
       - '.github/workflows/deploy-infrastructure.yml'
-  pull_request:
-    branches: [main]
-    paths:
-      - 'packages/infrastructure/**'
-      - 'apps/api/**'
-      - 'apps/workflows/**'
-      - 'apps/web/**'
-      - '.github/workflows/deploy-infrastructure.yml'
   workflow_dispatch:
 
 concurrency:
@@ -57,10 +49,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-artifacts
-          path: |
-            apps/api/dist
-            apps/workflows/dist
-            apps/web/build
+          path: apps/
           retention-days: 1
 
   preview:
