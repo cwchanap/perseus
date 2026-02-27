@@ -45,28 +45,33 @@ function getModules(
 
 	const modules: cloudflare.types.input.WorkerVersionModule[] = [];
 
-	const files = fs.readdirSync(distDir);
-	for (const file of files) {
-		const filePath = path.join(distDir, file);
-		const stat = fs.statSync(filePath);
+	function walkDir(currentDir: string) {
+		const entries = fs.readdirSync(currentDir, { withFileTypes: true });
+		for (const entry of entries) {
+			const fullPath = path.join(currentDir, entry.name);
+			if (entry.isDirectory()) {
+				walkDir(fullPath);
+			} else if (entry.isFile()) {
+				let contentType: string;
+				if (entry.name.endsWith('.js') || entry.name.endsWith('.mjs')) {
+					contentType = 'application/javascript+module';
+				} else if (entry.name.endsWith('.wasm')) {
+					contentType = 'application/wasm';
+				} else {
+					continue;
+				}
 
-		if (!stat.isFile()) continue;
-
-		let contentType: string;
-		if (file.endsWith('.js') || file.endsWith('.mjs')) {
-			contentType = 'application/javascript+module';
-		} else if (file.endsWith('.wasm')) {
-			contentType = 'application/wasm';
-		} else {
-			continue;
+				const relativePath = path.relative(distDir, fullPath);
+				modules.push({
+					name: relativePath,
+					contentFile: fullPath,
+					contentType
+				});
+			}
 		}
-
-		modules.push({
-			name: file,
-			contentFile: filePath,
-			contentType
-		});
 	}
+
+	walkDir(distDir);
 
 	if (!modules.some((m) => m.name === mainModule)) {
 		throw new Error(`Main module "${mainModule}" not found in ${distDir}`);
@@ -147,8 +152,12 @@ export function createWorkflowsWorker(bindings: WorkerBindings = {}): {
 	const mainModule = path.basename(paths.workflowsWorker);
 
 	const versionBindings = buildVersionBindings(bindings);
-	const doBinding = versionBindings.find((b) => b.name === 'PUZZLE_METADATA_DO');
-	const bindingsWithoutDo = versionBindings.filter((b) => b.name !== 'PUZZLE_METADATA_DO');
+	const doBinding = versionBindings.find(
+		(b) => b.name === 'PUZZLE_METADATA_DO' && b.type === 'durable_object_namespace'
+	);
+	const bindingsWithoutDo = versionBindings.filter(
+		(b) => !(b.name === 'PUZZLE_METADATA_DO' && b.type === 'durable_object_namespace')
+	);
 
 	const worker = new cloudflare.Worker('workflows-worker', {
 		accountId: accountId,
