@@ -1,10 +1,15 @@
 // Component test for PuzzleCard
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
 import PuzzleCard from '../PuzzleCard.svelte';
 import { getThumbnailUrl } from '$lib/services/api';
+import { getBestTime } from '$lib/services/stats';
 import type { PuzzleSummary } from '$lib/types/puzzle';
+
+vi.mock('$lib/services/stats', () => ({
+	getBestTime: vi.fn().mockReturnValue(null)
+}));
 
 describe('PuzzleCard', () => {
 	const mockPuzzle: PuzzleSummary = {
@@ -39,5 +44,41 @@ describe('PuzzleCard', () => {
 		const img = page.getByRole('img');
 		await expect.element(img).toHaveAttribute('alt', 'Test Puzzle');
 		await expect.element(img).toHaveAttribute('src', getThumbnailUrl(mockPuzzle.id));
+	});
+
+	it('should not show best time badge when no best time exists', async () => {
+		vi.mocked(getBestTime).mockReturnValue(null);
+		render(PuzzleCard, { puzzle: mockPuzzle });
+
+		const bestTimeBadge = page.getByTestId('card-best-time');
+		await expect.element(bestTimeBadge).not.toBeInTheDocument();
+	});
+
+	it('should display best time when a personal best exists', async () => {
+		vi.mocked(getBestTime).mockReturnValue(125); // 02:05
+		render(PuzzleCard, { puzzle: mockPuzzle });
+
+		const bestTimeBadge = page.getByTestId('card-best-time');
+		await expect.element(bestTimeBadge).toBeVisible();
+		await expect.element(page.getByText('🏆 02:05')).toBeVisible();
+	});
+
+	it('should render category badge when puzzle has a category', async () => {
+		const puzzleWithCategory: PuzzleSummary = {
+			...mockPuzzle,
+			category: 'Animals'
+		};
+		render(PuzzleCard, { puzzle: puzzleWithCategory });
+
+		const badge = page.getByTestId('category-badge');
+		await expect.element(badge).toBeVisible();
+		await expect.element(badge).toHaveTextContent('Animals');
+	});
+
+	it('should not render category badge when puzzle has no category', async () => {
+		render(PuzzleCard, { puzzle: mockPuzzle });
+
+		const badge = page.getByTestId('category-badge');
+		await expect.element(badge).not.toBeInTheDocument();
 	});
 });

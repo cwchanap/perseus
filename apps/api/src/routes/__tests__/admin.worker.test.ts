@@ -8,7 +8,8 @@ vi.mock('../../services/storage.worker', () => ({
 	deletePuzzleMetadata: vi.fn(),
 	createPuzzleMetadata: vi.fn(),
 	uploadOriginalImage: vi.fn(),
-	deleteOriginalImage: vi.fn()
+	deleteOriginalImage: vi.fn(),
+	listPuzzles: vi.fn()
 }));
 
 vi.mock('../../middleware/auth.worker', () => ({
@@ -737,5 +738,153 @@ describe('Admin Routes - Metadata Creation Failure Cleanup', () => {
 
 		expect(res.status).toBe(500);
 		expect(storage.deleteOriginalImage).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe('Admin Routes - GET /puzzles', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	const mockEnv = {
+		ADMIN_PASSKEY: 'test-passkey',
+		JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+		PUZZLE_METADATA: {} as KVNamespace
+	};
+
+	it('should return list of puzzles', async () => {
+		const mockPuzzleList = [
+			{ id: '550e8400-e29b-41d4-a716-446655440000', name: 'Test', pieceCount: 4, status: 'ready' }
+		];
+		(storage.listPuzzles as ReturnType<typeof vi.fn>).mockResolvedValue({
+			puzzles: mockPuzzleList
+		});
+
+		const req = new Request('http://localhost/puzzles', {
+			method: 'GET',
+			headers: { cookie: 'session=valid.token' }
+		});
+
+		const res = await admin.fetch(req, mockEnv as any);
+
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as any;
+		expect(body.puzzles).toEqual(mockPuzzleList);
+	});
+
+	it('should return 500 when listPuzzles throws', async () => {
+		(storage.listPuzzles as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('KV error'));
+
+		const req = new Request('http://localhost/puzzles', {
+			method: 'GET',
+			headers: { cookie: 'session=valid.token' }
+		});
+
+		const res = await admin.fetch(req, mockEnv as any);
+
+		expect(res.status).toBe(500);
+		const body = (await res.json()) as any;
+		expect(body.error).toBe('internal_error');
+	});
+});
+
+describe('Admin Routes - Force Delete', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	const mockEnv = {
+		ADMIN_PASSKEY: 'test-passkey',
+		JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+		PUZZLE_METADATA: {} as KVNamespace,
+		PUZZLES_BUCKET: {} as R2Bucket
+	};
+
+	it('should allow force deletion of processing puzzle with force=true', async () => {
+		(storage.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
+			id: '550e8400-e29b-41d4-a716-446655440000',
+			name: 'Stuck Puzzle',
+			pieceCount: 4,
+			status: 'processing',
+			pieces: [],
+			version: 0
+		});
+		(storage.deletePuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue({
+			success: true
+		});
+		(storage.deletePuzzleAssets as ReturnType<typeof vi.fn>).mockResolvedValue({
+			success: true,
+			failedKeys: []
+		});
+
+		const req = new Request(
+			'http://localhost/puzzles/550e8400-e29b-41d4-a716-446655440000?force=true',
+			{
+				method: 'DELETE',
+				headers: { cookie: 'session=valid.token' }
+			}
+		);
+
+		const res = await admin.fetch(req, mockEnv as any);
+
+		expect(res.status).toBe(204);
+	});
+});
+
+describe('Admin Routes - Category Validation', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	const mockEnv = {
+		ADMIN_PASSKEY: 'test-passkey',
+		JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+		PUZZLE_METADATA: {} as KVNamespace,
+		PUZZLES_BUCKET: {} as R2Bucket,
+		PUZZLE_WORKFLOW: { create: vi.fn().mockResolvedValue(undefined) }
+	};
+
+	it('should return 400 for an invalid category', async () => {
+		const formData = new FormData();
+		formData.append('name', 'Test Puzzle');
+		formData.append('pieceCount', '225');
+		formData.append('category', 'InvalidCategory');
+		const blob = new Blob([PNG_HEADER], { type: 'image/png' });
+		formData.append('image', blob, 'test.png');
+
+		const req = new Request('http://localhost/puzzles', {
+			method: 'POST',
+			headers: { cookie: 'session=valid.token' },
+			body: formData
+		});
+
+		const res = await admin.fetch(req, mockEnv as any);
+
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as any;
+		expect(body.error).toBe('bad_request');
+		expect(body.message).toContain('Invalid category');
+	});
+
+	it('should accept a valid category and return 201', async () => {
+		(storage.uploadOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+		(storage.createPuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+		const formData = new FormData();
+		formData.append('name', 'Nature Puzzle');
+		formData.append('pieceCount', '225');
+		formData.append('category', 'Nature');
+		const blob = new Blob([PNG_HEADER], { type: 'image/png' });
+		formData.append('image', blob, 'test.png');
+
+		const req = new Request('http://localhost/puzzles', {
+			method: 'POST',
+			headers: { cookie: 'session=valid.token' },
+			body: formData
+		});
+
+		const res = await admin.fetch(req, mockEnv as any);
+
+		expect(res.status).toBe(201);
 	});
 });
