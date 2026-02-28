@@ -1,12 +1,17 @@
 <script lang="ts">
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
+	import { onDestroy } from 'svelte';
 	import { fetchPuzzle, ApiError } from '$lib/services/api';
 	import { getProgress, saveProgress, clearProgress } from '$lib/services/progress';
+	import { getBestTime, saveCompletionTime } from '$lib/services/stats';
+	import { createTimerStore, formatTime } from '$lib/stores/timer';
+	import type { TimerState } from '$lib/stores/timer';
 	import { SvelteMap } from 'svelte/reactivity';
 	import type { Puzzle, PlacedPiece, PuzzlePiece as TPuzzlePiece } from '$lib/types/puzzle';
 	import PuzzleBoard from '$lib/components/PuzzleBoard.svelte';
 	import PuzzlePiece from '$lib/components/PuzzlePiece.svelte';
+	import GameTimer from '$lib/components/GameTimer.svelte';
 	import { shuffleArray } from '$lib/utils/shuffle';
 	import { resolve } from '$app/paths';
 
@@ -17,6 +22,21 @@
 	let showCelebration = $state(false);
 	let rejectedPiece: number | null = $state(null);
 	let shuffledPieceIds: number[] = $state([]);
+
+	// Timer and statistics state
+	const timer = createTimerStore();
+	let timerState: TimerState = $state({ elapsed: 0, running: false });
+	let timerStarted = $state(false);
+	let bestTime: number | null = $state(null);
+	let isNewBest = $state(false);
+
+	timer.subscribe((state) => {
+		timerState = state;
+	});
+
+	onDestroy(() => {
+		timer.destroy();
+	});
 
 	const puzzleId = $derived($page.params.id);
 
@@ -59,6 +79,14 @@
 			if (savedProgress) {
 				placedPieces = savedProgress.placedPieces;
 			}
+
+			// Load best time
+			bestTime = getBestTime(id);
+
+			// Reset timer for resumed puzzles
+			timer.reset();
+			timerStarted = false;
+			isNewBest = false;
 		} catch (e) {
 			if (e instanceof ApiError && e.status === 404) {
 				// Clear any saved progress for non-existent puzzle
@@ -73,6 +101,12 @@
 	}
 
 	function handlePiecePlaced(pieceId: number, x: number, y: number) {
+		// Start timer on first interaction
+		if (!timerStarted) {
+			timerStarted = true;
+			timer.start();
+		}
+
 		const newPlacement: PlacedPiece = { pieceId, x, y };
 		placedPieces = [...placedPieces.filter((p) => p.pieceId !== pieceId), newPlacement];
 
@@ -83,11 +117,21 @@
 
 		// Check for completion
 		if (puzzle && placedPieces.length === puzzle.pieceCount) {
+			timer.pause();
+			// Record time and check if new best
+			isNewBest = saveCompletionTime(puzzle.id, timerState.elapsed);
+			bestTime = getBestTime(puzzle.id);
 			showCelebration = true;
 		}
 	}
 
 	function handleIncorrectPlacement(pieceId: number) {
+		// Start timer on first interaction (even failed attempts)
+		if (!timerStarted) {
+			timerStarted = true;
+			timer.start();
+		}
+
 		rejectedPiece = pieceId;
 		setTimeout(() => {
 			rejectedPiece = null;
@@ -103,6 +147,9 @@
 			placedPieces = [];
 			clearProgress(puzzle.id);
 			showCelebration = false;
+			timer.reset();
+			timerStarted = false;
+			isNewBest = false;
 			// Reshuffle pieces for new game
 			shuffledPieceIds = shuffleArray(puzzle.pieces.map((p) => p.id));
 		}
@@ -140,6 +187,9 @@
 					<p class="text-sm text-gray-500">
 						{placedPieces.length} / {puzzle.pieceCount} pieces placed
 					</p>
+					<div class="mt-1 flex justify-end">
+						<GameTimer {timerState} {bestTime} />
+					</div>
 				</div>
 			{/if}
 		</header>
@@ -226,6 +276,12 @@
 				<div class="mb-4 text-6xl">🎉</div>
 				<h2 class="text-2xl font-bold text-gray-900">Congratulations!</h2>
 				<p class="mt-2 text-gray-600">You completed the puzzle!</p>
+				<p class="mt-1 text-lg font-semibold text-gray-800">
+					Time: {formatTime(timerState.elapsed)}
+				</p>
+				{#if isNewBest}
+					<p class="mt-1 text-sm font-medium text-yellow-600">🏆 New Personal Best!</p>
+				{/if}
 				<div class="mt-6 flex justify-center gap-4">
 					<button
 						onclick={handlePlayAgain}

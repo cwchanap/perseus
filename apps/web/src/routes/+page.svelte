@@ -3,11 +3,24 @@
 	import { fetchPuzzles, ApiError } from '$lib/services/api';
 	import type { PuzzleSummary } from '$lib/types/puzzle';
 	import PuzzleCard from '$lib/components/PuzzleCard.svelte';
+	import CategoryFilter from '$lib/components/CategoryFilter.svelte';
+	import { CATEGORY_ALL } from '$lib/constants/categories';
 	import { resolve } from '$app/paths';
 
 	let puzzles: PuzzleSummary[] = $state([]);
 	let loading = $state(true);
 	let error: string | null = $state(null);
+	let selectedCategory: string = $state(CATEGORY_ALL);
+
+	const filteredPuzzles = $derived(
+		selectedCategory === CATEGORY_ALL
+			? puzzles
+			: puzzles.filter((p) => p.category === selectedCategory)
+	);
+
+	function handleCategorySelect(category: string) {
+		selectedCategory = category;
+	}
 
 	onMount(async () => {
 		try {
@@ -33,6 +46,11 @@
 		<header class="mb-8">
 			<h1 class="text-3xl font-bold text-gray-900">Jigsaw Puzzles</h1>
 			<p class="mt-2 text-gray-600">Select a puzzle to start solving</p>
+			{#if puzzles.length > 0}
+				<div class="mt-4">
+					<CategoryFilter selected={selectedCategory} onSelect={handleCategorySelect} />
+				</div>
+			{/if}
 		</header>
 
 		{#if loading}
@@ -78,12 +96,23 @@
 					Go to Admin Portal
 				</a>
 			</div>
+		{:else if filteredPuzzles.length === 0}
+			<div class="rounded-lg bg-white p-12 text-center shadow-sm">
+				<h2 class="text-xl font-semibold text-gray-900">No puzzles in this category</h2>
+				<p class="mt-2 text-gray-500">Try selecting a different category.</p>
+				<button
+					onclick={() => (selectedCategory = CATEGORY_ALL)}
+					class="mt-4 rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700"
+				>
+					Show All
+				</button>
+			</div>
 		{:else}
 			<div
 				class="grid grid-cols-1 gap-6 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4"
 				data-testid="puzzle-grid"
 			>
-				{#each puzzles as puzzle (puzzle.id)}
+				{#each filteredPuzzles as puzzle (puzzle.id)}
 					<PuzzleCard {puzzle} />
 				{/each}
 			</div>
