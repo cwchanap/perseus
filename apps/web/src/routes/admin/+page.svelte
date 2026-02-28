@@ -316,7 +316,7 @@
 							class="w-full rounded-md border border-gray-300 px-4 py-2 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
 						>
 							<option value="">No category</option>
-							{#each PUZZLE_CATEGORIES as cat}
+							{#each PUZZLE_CATEGORIES as cat (cat)}
 								<option value={cat}>{cat}</option>
 							{/each}
 						</select>

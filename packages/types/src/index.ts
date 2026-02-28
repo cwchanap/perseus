@@ -141,6 +141,12 @@ export function validateEdgeConfig(edges: unknown): edges is EdgeConfig {
 	});
 }
 
+function isValidOptionalCategory(category: unknown): boolean {
+	if (category === undefined || category === null) return true;
+	if (typeof category !== 'string') return false;
+	return PUZZLE_CATEGORIES.includes(category as PuzzleCategory);
+}
+
 export function validateWorkflowParams(params: unknown): params is WorkflowParams {
 	if (typeof params !== 'object' || params === null) return false;
 	const p = params as Record<string, unknown>;
@@ -212,11 +218,7 @@ export function validatePuzzleMetadata(meta: unknown): meta is PuzzleMetadata {
 
 	// Validate optional category field
 	const categoryValue = (m as Record<string, unknown>).category;
-	if (categoryValue !== undefined && categoryValue !== null) {
-		if (typeof categoryValue !== 'string') return false;
-		const validCategories: readonly string[] = PUZZLE_CATEGORIES;
-		if (!validCategories.includes(categoryValue)) return false;
-	}
+	if (!isValidOptionalCategory(categoryValue)) return false;
 
 	return true;
 }
@@ -278,11 +280,7 @@ export function validatePuzzleMetadataLight(meta: unknown): meta is PuzzleMetada
 
 	// Validate optional category field
 	const categoryValue = (m as Record<string, unknown>).category;
-	if (categoryValue !== undefined && categoryValue !== null) {
-		if (typeof categoryValue !== 'string') return false;
-		const validCategories: readonly string[] = PUZZLE_CATEGORIES;
-		if (!validCategories.includes(categoryValue)) return false;
-	}
+	if (!isValidOptionalCategory(categoryValue)) return false;
 
 	return true;
 }
