@@ -14,8 +14,14 @@ export interface TimerStore extends Readable<TimerState> {
 }
 
 export function formatTime(totalSeconds: number): string {
-	const minutes = Math.floor(totalSeconds / 60);
-	const seconds = totalSeconds % 60;
+	const clamped = Math.max(0, totalSeconds);
+	const hours = Math.floor(clamped / 3600);
+	const minutes = Math.floor((clamped % 3600) / 60);
+	const seconds = clamped % 60;
+
+	if (hours > 0) {
+		return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+	}
 	return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 

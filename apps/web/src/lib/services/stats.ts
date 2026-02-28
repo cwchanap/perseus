@@ -19,7 +19,19 @@ export function getStats(puzzleId: string): PuzzleStats | null {
 	try {
 		const data = localStorage.getItem(getStorageKey(puzzleId));
 		if (!data) return null;
-		return JSON.parse(data) as PuzzleStats;
+		const parsed = JSON.parse(data);
+		if (
+			typeof parsed === 'object' &&
+			parsed !== null &&
+			typeof parsed.puzzleId === 'string' &&
+			typeof parsed.bestTime === 'number' &&
+			typeof parsed.completedAt === 'string' &&
+			typeof parsed.totalCompletions === 'number'
+		) {
+			return parsed as PuzzleStats;
+		}
+		localStorage.removeItem(getStorageKey(puzzleId));
+		return null;
 	} catch {
 		return null;
 	}
