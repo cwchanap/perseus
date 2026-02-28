@@ -1,7 +1,8 @@
 // Worker-compatible admin routes for authentication and puzzle management
 
 import { Hono } from 'hono';
-import { DEFAULT_PIECE_COUNT } from '@perseus/types';
+import { DEFAULT_PIECE_COUNT, PUZZLE_CATEGORIES } from '@perseus/types';
+import type { PuzzleCategory } from '@perseus/types';
 import type { Env } from '../worker';
 import {
 	createPuzzleMetadata,
@@ -271,6 +272,24 @@ admin.post('/puzzles', requireAuth, async (c) => {
 			return c.json({ error: 'bad_request', message: 'Image file is required' }, 400);
 		}
 
+		// Validate optional category
+		const categoryStr = formData.get('category');
+		let category: PuzzleCategory | undefined;
+		if (categoryStr && typeof categoryStr === 'string' && categoryStr.trim().length > 0) {
+			const trimmedCategory = categoryStr.trim();
+			const validCategories: readonly string[] = PUZZLE_CATEGORIES;
+			if (!validCategories.includes(trimmedCategory)) {
+				return c.json(
+					{
+						error: 'bad_request',
+						message: `Invalid category. Allowed: ${PUZZLE_CATEGORIES.join(', ')}`
+					},
+					400
+				);
+			}
+			category = trimmedCategory as PuzzleCategory;
+		}
+
 		if (image.size > MAX_FILE_SIZE) {
 			return c.json({ error: 'bad_request', message: 'File size exceeds 10MB limit' }, 400);
 		}
@@ -305,6 +324,7 @@ admin.post('/puzzles', requireAuth, async (c) => {
 		const puzzleMetadata: PuzzleMetadata = {
 			id,
 			name: trimmedName,
+			...(category && { category }),
 			pieceCount,
 			gridCols,
 			gridRows,

@@ -21,6 +21,19 @@ export interface PuzzlePiece {
 
 export type PuzzleStatus = 'processing' | 'ready' | 'failed';
 
+// Puzzle categories
+export const PUZZLE_CATEGORIES = [
+	'Animals',
+	'Nature',
+	'Art',
+	'Architecture',
+	'Abstract',
+	'Food',
+	'Travel'
+] as const;
+
+export type PuzzleCategory = (typeof PUZZLE_CATEGORIES)[number];
+
 export interface PuzzleProgress {
 	totalPieces: number;
 	generatedPieces: number;
@@ -30,6 +43,7 @@ export interface PuzzleProgress {
 interface PuzzleMetadataBase {
 	id: string;
 	name: string;
+	category?: PuzzleCategory;
 	pieceCount: number;
 	gridCols: number;
 	gridRows: number;
@@ -66,6 +80,7 @@ export interface PuzzleSummary {
 	pieceCount: number;
 	status: PuzzleStatus;
 	progress?: PuzzleProgress;
+	category?: PuzzleCategory;
 }
 
 // API response types shared between API and web
@@ -195,6 +210,14 @@ export function validatePuzzleMetadata(meta: unknown): meta is PuzzleMetadata {
 		if (typeof progressValue !== 'undefined' && progressValue !== null) return false;
 	}
 
+	// Validate optional category field
+	const categoryValue = (m as Record<string, unknown>).category;
+	if (categoryValue !== undefined && categoryValue !== null) {
+		if (typeof categoryValue !== 'string') return false;
+		const validCategories: readonly string[] = PUZZLE_CATEGORIES;
+		if (!validCategories.includes(categoryValue)) return false;
+	}
+
 	return true;
 }
 
@@ -251,6 +274,14 @@ export function validatePuzzleMetadataLight(meta: unknown): meta is PuzzleMetada
 		if (typeof errorValue !== 'undefined' && errorValue !== null) return false;
 		const progressValue = (m as Record<string, unknown>).progress;
 		if (typeof progressValue !== 'undefined' && progressValue !== null) return false;
+	}
+
+	// Validate optional category field
+	const categoryValue = (m as Record<string, unknown>).category;
+	if (categoryValue !== undefined && categoryValue !== null) {
+		if (typeof categoryValue !== 'string') return false;
+		const validCategories: readonly string[] = PUZZLE_CATEGORIES;
+		if (!validCategories.includes(categoryValue)) return false;
 	}
 
 	return true;

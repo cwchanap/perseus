@@ -12,7 +12,8 @@ import type {
 	LoginResponse,
 	SessionResponse,
 	PuzzleListResponse,
-	ErrorResponse
+	ErrorResponse,
+	PuzzleCategory
 } from '@perseus/types';
 
 // Re-export shared types for convenience
@@ -27,7 +28,8 @@ export type {
 	LoginResponse,
 	SessionResponse,
 	PuzzleListResponse,
-	ErrorResponse
+	ErrorResponse,
+	PuzzleCategory
 };
 
 /**
@@ -43,6 +45,7 @@ export interface Puzzle {
 	imageHeight: number;
 	createdAt: number;
 	pieces: PuzzlePiece[];
+	category?: PuzzleCategory;
 }
 
 export interface PlacedPiece {

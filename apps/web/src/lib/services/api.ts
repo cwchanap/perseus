@@ -173,12 +173,16 @@ export async function fetchAdminPuzzles(): Promise<PuzzleSummary[]> {
 export async function createPuzzle(
 	name: string,
 	pieceCount: number,
-	image: File
+	image: File,
+	category?: string
 ): Promise<PuzzleMetadata> {
 	const formData = new FormData();
 	formData.append('name', name);
 	formData.append('pieceCount', pieceCount.toString());
 	formData.append('image', image);
+	if (category) {
+		formData.append('category', category);
+	}
 
 	const response = await fetch(`${API_BASE}/api/admin/puzzles`, {
 		method: 'POST',

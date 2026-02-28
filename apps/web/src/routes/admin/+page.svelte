@@ -10,6 +10,7 @@
 		ApiError
 	} from '$lib/services/api';
 	import { clearProgress } from '$lib/services/progress';
+	import { PUZZLE_CATEGORIES, type PuzzleCategory } from '$lib/constants/categories';
 	import type { PuzzleSummary } from '$lib/types/puzzle';
 	import { resolve } from '$app/paths';
 
@@ -24,6 +25,7 @@
 
 	// Form state
 	let name = $state('');
+	let category: PuzzleCategory | '' = $state('');
 	let pieceCount = $state(ALLOWED_PIECE_COUNT);
 	let imageFile: File | null = $state(null);
 	let imagePreview: string | null = $state(null);
@@ -155,6 +157,7 @@
 
 	function clearForm() {
 		name = '';
+		category = '';
 		pieceCount = ALLOWED_PIECE_COUNT;
 		clearSelectedImage();
 		formError = null;
@@ -178,7 +181,7 @@
 		creating = true;
 
 		try {
-			await createPuzzle(name.trim(), pieceCount, imageFile);
+			await createPuzzle(name.trim(), pieceCount, imageFile, category || undefined);
 			successMessage = 'Puzzle creation started! It will appear below once processing begins.';
 			clearForm();
 			await loadPuzzles();
@@ -300,6 +303,23 @@
 						>
 							{ALLOWED_PIECE_COUNT} pieces (15×15 grid)
 						</div>
+					</div>
+
+					<!-- Category -->
+					<div>
+						<label for="category" class="mb-2 block text-sm font-medium text-gray-700">
+							Category (optional)
+						</label>
+						<select
+							id="category"
+							bind:value={category}
+							class="w-full rounded-md border border-gray-300 px-4 py-2 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+						>
+							<option value="">No category</option>
+							{#each PUZZLE_CATEGORIES as cat}
+								<option value={cat}>{cat}</option>
+							{/each}
+						</select>
 					</div>
 
 					<!-- Image Upload -->

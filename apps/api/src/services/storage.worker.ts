@@ -7,9 +7,14 @@ import type {
 	PuzzleMetadata,
 	PuzzleStatus,
 	PuzzleProgress,
-	PuzzleSummary
+	PuzzleSummary,
+	PuzzleCategory
 } from '@perseus/types';
-import { validatePuzzleMetadata, validatePuzzleMetadataLight } from '@perseus/types';
+import {
+	validatePuzzleMetadata,
+	validatePuzzleMetadataLight,
+	PUZZLE_CATEGORIES
+} from '@perseus/types';
 
 // Re-export types so consumers don't need to import from @perseus/types directly
 export type {
@@ -19,8 +24,11 @@ export type {
 	PuzzleMetadata,
 	PuzzleStatus,
 	PuzzleProgress,
-	PuzzleSummary
+	PuzzleSummary,
+	PuzzleCategory
 };
+
+export { PUZZLE_CATEGORIES };
 
 export type LockResult =
 	| { status: 'acquired'; token: string; ttlMs: number }
@@ -234,7 +242,8 @@ export async function listPuzzles(
 			name: p.name,
 			pieceCount: p.pieceCount,
 			status: p.status,
-			progress: p.progress
+			progress: p.progress,
+			category: p.category
 		})),
 		invalidCount
 	};
