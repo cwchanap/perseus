@@ -14,6 +14,7 @@ import { generatePuzzle, isValidPieceCount } from '../services/puzzle-generator'
 import {
 	createPuzzle as storePuzzle,
 	deletePuzzle as deleteStoredPuzzle,
+	listPuzzles,
 	puzzleExists
 } from '../services/storage';
 import { MAX_FILE_SIZE, ALLOWED_MIME_TYPES } from '../types';
@@ -95,6 +96,17 @@ admin.get('/session', async (c) => {
 	}
 
 	return c.json({ authenticated: true });
+});
+
+// GET /api/admin/puzzles - List all puzzles for admin
+admin.get('/puzzles', requireAuth, async (c) => {
+	try {
+		const puzzleList = await listPuzzles();
+		return c.json({ puzzles: puzzleList });
+	} catch (error) {
+		console.error('Failed to list puzzles for admin', error);
+		return c.json({ error: 'internal_error', message: 'Failed to list puzzles' }, 500);
+	}
 });
 
 // POST /api/admin/puzzles - Create new puzzle (protected)
