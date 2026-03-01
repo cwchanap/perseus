@@ -49,11 +49,13 @@ export function saveCompletionTime(puzzleId: string, timeSeconds: number): boole
 		const existing = getStats(puzzleId);
 		const now = new Date().toISOString();
 		const isNewBest = !existing || timeSeconds < existing.bestTime;
+		const bestTime = existing && !isNewBest ? existing.bestTime : timeSeconds;
+		const completedAt = existing && !isNewBest ? existing.completedAt : now;
 
 		const stats: PuzzleStats = {
 			puzzleId,
-			bestTime: isNewBest ? timeSeconds : existing!.bestTime,
-			completedAt: isNewBest ? now : existing!.completedAt,
+			bestTime,
+			completedAt,
 			totalCompletions: (existing?.totalCompletions ?? 0) + 1
 		};
 

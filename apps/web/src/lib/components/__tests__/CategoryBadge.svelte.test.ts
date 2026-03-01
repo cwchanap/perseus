@@ -20,7 +20,7 @@ describe('CategoryBadge', () => {
 		await expect.element(badge).not.toBeInTheDocument();
 	});
 
-	it('applies the correct color classes for different categories', async () => {
+	it('applies the correct color classes for Nature category', async () => {
 		render(CategoryBadge, { category: 'Nature' as PuzzleCategory });
 
 		const badge = page.getByTestId('category-badge');

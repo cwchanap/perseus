@@ -1,15 +1,15 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { deletePuzzle, fetchPuzzles, fetchPuzzle, checkSession } from '../api';
 
+beforeEach(() => {
+	vi.restoreAllMocks();
+});
+
+afterEach(() => {
+	vi.unstubAllGlobals();
+});
+
 describe('API Service - deletePuzzle', () => {
-	beforeEach(() => {
-		vi.restoreAllMocks();
-	});
-
-	afterEach(() => {
-		vi.unstubAllGlobals();
-	});
-
 	it('returns partial deletion details for 207 responses', async () => {
 		vi.stubGlobal(
 			'fetch',
@@ -37,6 +37,10 @@ describe('API Service - deletePuzzle', () => {
 			warning: 'Puzzle metadata deleted but some assets failed to delete',
 			failedAssets: ['puzzles/abc/pieces/0.png']
 		});
+		expect(fetch).toHaveBeenCalledWith(expect.stringMatching(/\/api\/admin\/puzzles\/abc$/), {
+			method: 'DELETE',
+			credentials: 'include'
+		});
 	});
 
 	it('returns null for 204 responses', async () => {
@@ -52,18 +56,14 @@ describe('API Service - deletePuzzle', () => {
 		const result = await deletePuzzle('abc');
 
 		expect(result).toBeNull();
+		expect(fetch).toHaveBeenCalledWith(expect.stringMatching(/\/api\/admin\/puzzles\/abc$/), {
+			method: 'DELETE',
+			credentials: 'include'
+		});
 	});
 });
 
 describe('API Service - fetchPuzzles', () => {
-	beforeEach(() => {
-		vi.restoreAllMocks();
-	});
-
-	afterEach(() => {
-		vi.unstubAllGlobals();
-	});
-
 	it('returns list of puzzles on success', async () => {
 		const mockPuzzles = [
 			{ id: 'p1', name: 'Puzzle 1', pieceCount: 25, status: 'ready' },
@@ -82,6 +82,7 @@ describe('API Service - fetchPuzzles', () => {
 		const result = await fetchPuzzles();
 
 		expect(result).toEqual(mockPuzzles);
+		expect(fetch).toHaveBeenCalledWith(expect.stringMatching(/\/api\/puzzles$/));
 	});
 
 	it('throws ApiError on non-ok response', async () => {
@@ -100,14 +101,6 @@ describe('API Service - fetchPuzzles', () => {
 });
 
 describe('API Service - fetchPuzzle', () => {
-	beforeEach(() => {
-		vi.restoreAllMocks();
-	});
-
-	afterEach(() => {
-		vi.unstubAllGlobals();
-	});
-
 	it('returns puzzle data on success', async () => {
 		const mockPuzzle = {
 			id: 'p1',
@@ -133,6 +126,7 @@ describe('API Service - fetchPuzzle', () => {
 		const result = await fetchPuzzle('p1');
 
 		expect(result).toEqual(mockPuzzle);
+		expect(fetch).toHaveBeenCalledWith(expect.stringMatching(/\/api\/puzzles\/p1$/));
 	});
 
 	it('throws ApiError when puzzle is not found', async () => {
@@ -151,14 +145,6 @@ describe('API Service - fetchPuzzle', () => {
 });
 
 describe('API Service - checkSession', () => {
-	beforeEach(() => {
-		vi.restoreAllMocks();
-	});
-
-	afterEach(() => {
-		vi.unstubAllGlobals();
-	});
-
 	it('returns true when session is authenticated', async () => {
 		vi.stubGlobal(
 			'fetch',
@@ -172,6 +158,9 @@ describe('API Service - checkSession', () => {
 
 		const result = await checkSession();
 		expect(result).toBe(true);
+		expect(fetch).toHaveBeenCalledWith(expect.stringMatching(/\/api\/admin\/session$/), {
+			credentials: 'include'
+		});
 	});
 
 	it('returns false when response is not ok', async () => {

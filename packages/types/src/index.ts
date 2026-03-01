@@ -141,6 +141,7 @@ export function validateEdgeConfig(edges: unknown): edges is EdgeConfig {
 	});
 }
 
+// Accept null in addition to undefined for defensive parsing of legacy/loose JSON payloads.
 function isValidOptionalCategory(category: unknown): boolean {
 	if (category === undefined || category === null) return true;
 	if (typeof category !== 'string') return false;
