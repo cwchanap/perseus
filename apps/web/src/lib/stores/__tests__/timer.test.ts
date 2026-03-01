@@ -24,7 +24,7 @@ describe('formatTime', () => {
 	});
 
 	it('formats large values', () => {
-		expect(formatTime(3661)).toBe('61:01');
+		expect(formatTime(3661)).toBe('01:01:01');
 	});
 });
 

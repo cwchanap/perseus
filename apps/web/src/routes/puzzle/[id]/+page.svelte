@@ -29,12 +29,25 @@
 	let timerStarted = $state(false);
 	let bestTime: number | null = $state(null);
 	let isNewBest = $state(false);
+	let timerUnsubscribe: (() => void) | null = null;
 
-	timer.subscribe((state) => {
+	timerUnsubscribe = timer.subscribe((state) => {
 		timerState = state;
 	});
 
 	onDestroy(() => {
+		if (timerUnsubscribe) {
+			timerUnsubscribe();
+			timerUnsubscribe = null;
+		}
+		timer.destroy();
+	});
+
+	onDestroy(() => {
+		if (timerUnsubscribe) {
+			timerUnsubscribe();
+			timerUnsubscribe = null;
+		}
 		timer.destroy();
 	});
 
