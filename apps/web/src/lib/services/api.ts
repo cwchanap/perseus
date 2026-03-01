@@ -6,7 +6,8 @@ import type {
 	PuzzleListResponse,
 	LoginResponse,
 	SessionResponse,
-	DeletePuzzleResponse
+	DeletePuzzleResponse,
+	PuzzleCategory
 } from '$lib/types/puzzle';
 // NOTE: This app is built with adapter-static, so public env vars are embedded at build time.
 // Set PUBLIC_API_BASE before building to target a different API.
@@ -174,7 +175,7 @@ export async function createPuzzle(
 	name: string,
 	pieceCount: number,
 	image: File,
-	category?: string
+	category?: PuzzleCategory
 ): Promise<PuzzleMetadata> {
 	const formData = new FormData();
 	formData.append('name', name);
