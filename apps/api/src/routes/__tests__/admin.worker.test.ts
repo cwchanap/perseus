@@ -886,5 +886,9 @@ describe('Admin Routes - Category Validation', () => {
 		const res = await admin.fetch(req, mockEnv as any);
 
 		expect(res.status).toBe(201);
+		expect(storage.createPuzzleMetadata).toHaveBeenCalledWith(
+			mockEnv.PUZZLE_METADATA,
+			expect.objectContaining({ category: 'Nature' })
+		);
 	});
 });

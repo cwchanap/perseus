@@ -25,6 +25,14 @@ describe('Stats Service', () => {
 			localStorage.setItem(`puzzle-stats-${puzzleId}`, 'invalid json{{{');
 			expect(getStats(puzzleId)).toBeNull();
 		});
+
+		it('returns null and removes stats for valid JSON with invalid structure', () => {
+			const storageKey = `puzzle-stats-${puzzleId}`;
+			localStorage.setItem(storageKey, JSON.stringify({ puzzleId }));
+
+			expect(getStats(puzzleId)).toBeNull();
+			expect(localStorage.getItem(storageKey)).toBeNull();
+		});
 	});
 
 	describe('getBestTime', () => {

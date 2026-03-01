@@ -1,5 +1,5 @@
 // Component test for PuzzleCard
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
 import PuzzleCard from '../PuzzleCard.svelte';
@@ -18,6 +18,11 @@ describe('PuzzleCard', () => {
 		pieceCount: 25,
 		status: 'ready'
 	};
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		vi.mocked(getBestTime).mockReturnValue(null);
+	});
 
 	it('should render puzzle name', async () => {
 		render(PuzzleCard, { puzzle: mockPuzzle });

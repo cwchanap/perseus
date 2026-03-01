@@ -58,6 +58,7 @@ describe('/+page.svelte', () => {
 		await expect.element(page.getByTestId('loading-state')).toBeVisible();
 
 		resolvePromise([]);
+		await expect.element(page.getByTestId('loading-state')).not.toBeInTheDocument();
 	});
 
 	it('should show empty state when no puzzles exist', async () => {
