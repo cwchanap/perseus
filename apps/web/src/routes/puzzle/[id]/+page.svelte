@@ -43,14 +43,6 @@
 		timer.destroy();
 	});
 
-	onDestroy(() => {
-		if (timerUnsubscribe) {
-			timerUnsubscribe();
-			timerUnsubscribe = null;
-		}
-		timer.destroy();
-	});
-
 	const puzzleId = $derived($page.params.id);
 
 	// Use SvelteMap so Svelte 5 can track reactive changes while keeping O(1) piece lookup
