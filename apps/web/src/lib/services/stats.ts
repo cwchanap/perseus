@@ -35,7 +35,11 @@ export function getStats(puzzleId: string): PuzzleStats | null {
 	} catch (e) {
 		if (e instanceof SyntaxError) {
 			console.error('Failed to parse puzzle stats from localStorage:', e);
-			localStorage.removeItem(getStorageKey(puzzleId));
+			try {
+				localStorage.removeItem(getStorageKey(puzzleId));
+			} catch {
+				// best effort cleanup
+			}
 		} else {
 			console.error('Failed to read puzzle stats from localStorage:', e);
 		}
