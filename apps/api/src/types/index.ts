@@ -2,6 +2,10 @@
 // Worker code imports from @perseus/types via storage.worker.ts re-exports.
 // Do not add new types here — use @perseus/types instead.
 
+import { PUZZLE_CATEGORIES } from '@perseus/types';
+export type { PuzzleCategory } from '@perseus/types';
+export { PUZZLE_CATEGORIES };
+
 export type EdgeType = 'flat' | 'tab' | 'blank';
 
 export interface EdgeConfig {
@@ -30,12 +34,14 @@ export interface Puzzle {
 	imageHeight: number;
 	createdAt: number;
 	pieces: PuzzlePiece[];
+	category?: PuzzleCategory;
 }
 
 export interface PuzzleSummary {
 	id: string;
 	name: string;
 	pieceCount: number;
+	category?: PuzzleCategory;
 }
 
 export interface AdminSession {

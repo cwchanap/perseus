@@ -17,7 +17,8 @@ import {
 	listPuzzles,
 	puzzleExists
 } from '../services/storage';
-import { MAX_FILE_SIZE, ALLOWED_MIME_TYPES } from '../types';
+import { MAX_FILE_SIZE, ALLOWED_MIME_TYPES, PUZZLE_CATEGORIES } from '../types';
+import type { PuzzleCategory } from '../types';
 
 const admin = new Hono();
 
@@ -159,6 +160,23 @@ admin.post('/puzzles', requireAuth, async (c) => {
 			);
 		}
 
+		// Validate optional category
+		const categoryStr = formData.get('category');
+		let category: PuzzleCategory | undefined;
+		if (categoryStr && typeof categoryStr === 'string' && categoryStr.trim().length > 0) {
+			const trimmedCategory = categoryStr.trim();
+			if (!(PUZZLE_CATEGORIES as readonly string[]).includes(trimmedCategory)) {
+				return c.json(
+					{
+						error: 'bad_request',
+						message: `Invalid category. Allowed: ${PUZZLE_CATEGORIES.join(', ')}`
+					},
+					400
+				);
+			}
+			category = trimmedCategory as PuzzleCategory;
+		}
+
 		// Generate puzzle ID
 		const id = crypto.randomUUID();
 
@@ -175,13 +193,14 @@ admin.post('/puzzles', requireAuth, async (c) => {
 		});
 
 		// Save puzzle metadata
-		const saved = await storePuzzle(result.puzzle);
+		const puzzleToStore = category ? { ...result.puzzle, category } : result.puzzle;
+		const saved = await storePuzzle(puzzleToStore);
 		if (!saved) {
 			await deleteStoredPuzzle(id);
 			return c.json({ error: 'internal_error', message: 'Failed to save puzzle metadata' }, 500);
 		}
 
-		return c.json(result.puzzle, 201);
+		return c.json(puzzleToStore, 201);
 	} catch (error) {
 		console.error('Error creating puzzle:', error);
 		return c.json({ error: 'internal_error', message: 'Failed to create puzzle' }, 500);
