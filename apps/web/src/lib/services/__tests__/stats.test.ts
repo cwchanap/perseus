@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { getStats, getBestTime, saveCompletionTime, clearStats } from '../stats';
 
 describe('Stats Service', () => {
@@ -24,6 +24,7 @@ describe('Stats Service', () => {
 		it('returns null for malformed JSON in localStorage', () => {
 			localStorage.setItem(`puzzle-stats-${puzzleId}`, 'invalid json{{{');
 			expect(getStats(puzzleId)).toBeNull();
+			expect(localStorage.getItem(`puzzle-stats-${puzzleId}`)).toBeNull();
 		});
 
 		it('returns null and removes stats for valid JSON with invalid structure', () => {
@@ -82,6 +83,35 @@ describe('Stats Service', () => {
 			saveCompletionTime(puzzleId, 120);
 			const secondStats = getStats(puzzleId);
 			expect(secondStats?.completedAt).toBe(firstStats?.completedAt);
+		});
+
+		it('returns correct isNewBest even when localStorage.setItem throws', () => {
+			// Set up a previous best
+			localStorage.setItem(
+				`puzzle-stats-${puzzleId}`,
+				JSON.stringify({
+					puzzleId,
+					bestTime: 100,
+					completedAt: new Date().toISOString(),
+					totalCompletions: 1
+				})
+			);
+
+			// Make setItem throw
+			vi.spyOn(localStorage, 'setItem').mockImplementationOnce(() => {
+				throw new DOMException('QuotaExceededError');
+			});
+
+			// A new best time (faster) should still return true
+			const result = saveCompletionTime(puzzleId, 50);
+			expect(result).toBe(true);
+
+			// Not a new best (slower) should still return false
+			vi.spyOn(localStorage, 'setItem').mockImplementationOnce(() => {
+				throw new DOMException('QuotaExceededError');
+			});
+			const result2 = saveCompletionTime(puzzleId, 200);
+			expect(result2).toBe(false);
 		});
 	});
 
