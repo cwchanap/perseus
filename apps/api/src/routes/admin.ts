@@ -147,19 +147,6 @@ admin.post('/puzzles', requireAuth, async (c) => {
 			return c.json({ error: 'bad_request', message: 'Image file is required' }, 400);
 		}
 
-		// Validate file size
-		if (image.size > MAX_FILE_SIZE) {
-			return c.json({ error: 'bad_request', message: 'File size exceeds 10MB limit' }, 400);
-		}
-
-		// Validate MIME type
-		if (!ALLOWED_MIME_TYPES.includes(image.type as (typeof ALLOWED_MIME_TYPES)[number])) {
-			return c.json(
-				{ error: 'bad_request', message: 'Invalid file type. Allowed: JPEG, PNG, WebP' },
-				400
-			);
-		}
-
 		// Validate optional category
 		const categoryStr = formData.get('category');
 		let category: PuzzleCategory | undefined;
@@ -175,6 +162,19 @@ admin.post('/puzzles', requireAuth, async (c) => {
 				);
 			}
 			category = trimmedCategory as PuzzleCategory;
+		}
+
+		// Validate file size
+		if (image.size > MAX_FILE_SIZE) {
+			return c.json({ error: 'bad_request', message: 'File size exceeds 10MB limit' }, 400);
+		}
+
+		// Validate MIME type
+		if (!ALLOWED_MIME_TYPES.includes(image.type as (typeof ALLOWED_MIME_TYPES)[number])) {
+			return c.json(
+				{ error: 'bad_request', message: 'Invalid file type. Allowed: JPEG, PNG, WebP' },
+				400
+			);
 		}
 
 		// Generate puzzle ID

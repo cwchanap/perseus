@@ -3,7 +3,8 @@
 // Do not add new types here — use @perseus/types instead.
 
 import { PUZZLE_CATEGORIES } from '@perseus/types';
-export type { PuzzleCategory } from '@perseus/types';
+import type { PuzzleCategory } from '@perseus/types';
+export type { PuzzleCategory };
 export { PUZZLE_CATEGORIES };
 
 export type EdgeType = 'flat' | 'tab' | 'blank';
