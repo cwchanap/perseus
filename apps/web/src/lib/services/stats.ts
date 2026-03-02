@@ -32,7 +32,13 @@ export function getStats(puzzleId: string): PuzzleStats | null {
 		}
 		localStorage.removeItem(getStorageKey(puzzleId));
 		return null;
-	} catch {
+	} catch (e) {
+		if (e instanceof SyntaxError) {
+			console.error('Failed to parse puzzle stats from localStorage:', e);
+			localStorage.removeItem(getStorageKey(puzzleId));
+		} else {
+			console.error('Failed to read puzzle stats from localStorage:', e);
+		}
 		return null;
 	}
 }
@@ -45,26 +51,26 @@ export function getBestTime(puzzleId: string): number | null {
 export function saveCompletionTime(puzzleId: string, timeSeconds: number): boolean {
 	if (typeof window === 'undefined') return false;
 
+	const existing = getStats(puzzleId);
+	const now = new Date().toISOString();
+	const isNewBest = !existing || timeSeconds < existing.bestTime;
+	const bestTime = existing && !isNewBest ? existing.bestTime : timeSeconds;
+	const completedAt = existing && !isNewBest ? existing.completedAt : now;
+
+	const stats: PuzzleStats = {
+		puzzleId,
+		bestTime,
+		completedAt,
+		totalCompletions: (existing?.totalCompletions ?? 0) + 1
+	};
+
 	try {
-		const existing = getStats(puzzleId);
-		const now = new Date().toISOString();
-		const isNewBest = !existing || timeSeconds < existing.bestTime;
-		const bestTime = existing && !isNewBest ? existing.bestTime : timeSeconds;
-		const completedAt = existing && !isNewBest ? existing.completedAt : now;
-
-		const stats: PuzzleStats = {
-			puzzleId,
-			bestTime,
-			completedAt,
-			totalCompletions: (existing?.totalCompletions ?? 0) + 1
-		};
-
 		localStorage.setItem(getStorageKey(puzzleId), JSON.stringify(stats));
-		return isNewBest;
 	} catch (e) {
 		console.error('Failed to save puzzle stats:', e);
-		return false;
+		// Return isNewBest anyway so UI correctly shows personal best even if save failed
 	}
+	return isNewBest;
 }
 
 export function clearStats(puzzleId: string): void {
