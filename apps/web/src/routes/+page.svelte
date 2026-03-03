@@ -5,12 +5,13 @@
 	import PuzzleCard from '$lib/components/PuzzleCard.svelte';
 	import CategoryFilter from '$lib/components/CategoryFilter.svelte';
 	import { CATEGORY_ALL } from '$lib/constants/categories';
+	import type { PuzzleCategory } from '$lib/constants/categories';
 	import { resolve } from '$app/paths';
 
 	let puzzles: PuzzleSummary[] = $state([]);
 	let loading = $state(true);
 	let error: string | null = $state(null);
-	let selectedCategory: string = $state(CATEGORY_ALL);
+	let selectedCategory: PuzzleCategory | typeof CATEGORY_ALL = $state(CATEGORY_ALL);
 
 	const filteredPuzzles = $derived(
 		selectedCategory === CATEGORY_ALL
@@ -18,7 +19,7 @@
 			: puzzles.filter((p) => p.category === selectedCategory)
 	);
 
-	function handleCategorySelect(category: string) {
+	function handleCategorySelect(category: PuzzleCategory | typeof CATEGORY_ALL) {
 		selectedCategory = category;
 	}
 
