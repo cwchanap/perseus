@@ -1,14 +1,18 @@
 <script lang="ts">
 	import { PUZZLE_CATEGORIES, CATEGORY_ALL } from '$lib/constants/categories';
+	import type { PuzzleCategory } from '$lib/constants/categories';
 
 	interface Props {
-		selected: string;
-		onSelect: (category: string) => void;
+		selected: PuzzleCategory | typeof CATEGORY_ALL;
+		onSelect: (category: PuzzleCategory | typeof CATEGORY_ALL) => void;
 	}
 
 	let { selected, onSelect }: Props = $props();
 
-	const allCategories: string[] = [CATEGORY_ALL, ...PUZZLE_CATEGORIES];
+	const allCategories: (PuzzleCategory | typeof CATEGORY_ALL)[] = [
+		CATEGORY_ALL,
+		...PUZZLE_CATEGORIES
+	];
 </script>
 
 <div
