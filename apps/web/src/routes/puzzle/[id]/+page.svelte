@@ -105,12 +105,15 @@
 		}
 	}
 
-	function handlePiecePlaced(pieceId: number, x: number, y: number) {
-		// Start timer on first interaction
+	function ensureTimerStarted() {
 		if (!timerStarted) {
 			timerStarted = true;
 			timer.start();
 		}
+	}
+
+	function handlePiecePlaced(pieceId: number, x: number, y: number) {
+		ensureTimerStarted();
 
 		const newPlacement: PlacedPiece = { pieceId, x, y };
 		placedPieces = [...placedPieces.filter((p) => p.pieceId !== pieceId), newPlacement];
@@ -131,11 +134,7 @@
 	}
 
 	function handleIncorrectPlacement(pieceId: number) {
-		// Start timer on first interaction (even failed attempts)
-		if (!timerStarted) {
-			timerStarted = true;
-			timer.start();
-		}
+		ensureTimerStarted();
 
 		rejectedPiece = pieceId;
 		setTimeout(() => {
@@ -285,7 +284,9 @@
 					Time: {formatTime(timerState.elapsed)}
 				</p>
 				{#if isNewBest}
-					<p class="mt-1 text-sm font-medium text-yellow-600">🏆 New Personal Best!</p>
+					<p class="mt-1 text-sm font-medium text-yellow-600">
+						🏆 New Personal Best! {formatTime(bestTime ?? 0)}
+					</p>
 				{/if}
 				<div class="mt-6 flex justify-center gap-4">
 					<button
