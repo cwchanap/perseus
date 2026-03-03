@@ -145,8 +145,11 @@ export async function getPuzzle(puzzleId: string): Promise<Puzzle | null> {
 				? parsed.createdAt
 				: new Date(parsed.createdAt).getTime();
 		return { ...parsed, createdAt };
-	} catch {
-		return null;
+	} catch (error) {
+		const err = error as NodeJS.ErrnoException;
+		if (err.code === 'ENOENT') return null; // expected: puzzle doesn't exist
+		console.error(`Failed to read puzzle metadata for ${puzzleId}:`, error);
+		throw error; // propagate unexpected errors (corrupt file, permission denied, etc.)
 	}
 }
 
@@ -223,24 +226,16 @@ async function listPuzzlesWithDate(): Promise<
 
 // List all puzzles
 export async function listPuzzles(): Promise<PuzzleSummary[]> {
-	try {
-		const puzzlesWithDate = await listPuzzlesWithDate();
-		return puzzlesWithDate.map((p) => p.summary);
-	} catch {
-		return [];
-	}
+	const puzzlesWithDate = await listPuzzlesWithDate();
+	return puzzlesWithDate.map((p) => p.summary);
 }
 
 // Get puzzles sorted by creation date
 export async function listPuzzlesSorted(): Promise<PuzzleSummary[]> {
-	try {
-		const puzzlesWithDate = await listPuzzlesWithDate();
+	const puzzlesWithDate = await listPuzzlesWithDate();
 
-		// Sort by creation date, newest first
-		puzzlesWithDate.sort((a, b) => b.createdAt - a.createdAt);
+	// Sort by creation date, newest first
+	puzzlesWithDate.sort((a, b) => b.createdAt - a.createdAt);
 
-		return puzzlesWithDate.map((p) => p.summary);
-	} catch {
-		return [];
-	}
+	return puzzlesWithDate.map((p) => p.summary);
 }
