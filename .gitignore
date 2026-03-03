@@ -28,6 +28,9 @@ Thumbs.db
 !.env.example
 !.env.test
 
+# Claude
+.claude/settings.local.json
+
 # Vite
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
