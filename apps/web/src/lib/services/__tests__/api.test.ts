@@ -1,5 +1,6 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
-import { deletePuzzle, fetchPuzzles, fetchPuzzle, checkSession } from '../api';
+import { createPuzzle, deletePuzzle, fetchPuzzles, fetchPuzzle, checkSession } from '../api';
+import type { PuzzleCategory } from '$lib/types/puzzle';
 
 beforeEach(() => {
 	vi.restoreAllMocks();
@@ -175,5 +176,60 @@ describe('API Service - checkSession', () => {
 
 		const result = await checkSession();
 		expect(result).toBe(false);
+	});
+});
+
+describe('API Service - createPuzzle', () => {
+	const mockPuzzleMetadata = {
+		id: 'p1',
+		name: 'Test Puzzle',
+		pieceCount: 25,
+		status: 'ready',
+		createdAt: 0
+	};
+
+	it('appends category to FormData when category is provided', async () => {
+		let capturedBody: FormData | undefined;
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockImplementation((_url: string, options: RequestInit) => {
+				capturedBody = options.body as FormData;
+				return Promise.resolve(
+					new Response(JSON.stringify(mockPuzzleMetadata), {
+						status: 200,
+						headers: { 'Content-Type': 'application/json' }
+					})
+				);
+			})
+		);
+
+		const image = new File(['data'], 'test.png', { type: 'image/png' });
+		const category: PuzzleCategory = 'Animals';
+		await createPuzzle('Test Puzzle', 25, image, category);
+
+		expect(capturedBody).toBeInstanceOf(FormData);
+		expect(capturedBody!.get('category')).toBe('Animals');
+	});
+
+	it('does not append category to FormData when category is undefined', async () => {
+		let capturedBody: FormData | undefined;
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockImplementation((_url: string, options: RequestInit) => {
+				capturedBody = options.body as FormData;
+				return Promise.resolve(
+					new Response(JSON.stringify(mockPuzzleMetadata), {
+						status: 200,
+						headers: { 'Content-Type': 'application/json' }
+					})
+				);
+			})
+		);
+
+		const image = new File(['data'], 'test.png', { type: 'image/png' });
+		await createPuzzle('Test Puzzle', 25, image, undefined);
+
+		expect(capturedBody).toBeInstanceOf(FormData);
+		expect(capturedBody!.get('category')).toBeNull();
 	});
 });
