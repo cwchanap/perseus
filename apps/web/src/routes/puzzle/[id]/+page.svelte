@@ -285,7 +285,7 @@
 				</p>
 				{#if isNewBest}
 					<p class="mt-1 text-sm font-medium text-yellow-600">
-						🏆 New Personal Best! {formatTime(bestTime ?? 0)}
+						🏆 New Personal Best! {formatTime(bestTime ?? timerState.elapsed)}
 					</p>
 				{/if}
 				<div class="mt-6 flex justify-center gap-4">
