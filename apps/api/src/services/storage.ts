@@ -148,6 +148,7 @@ export async function getPuzzle(puzzleId: string): Promise<Puzzle | null> {
 	} catch (error) {
 		const err = error as NodeJS.ErrnoException;
 		if (err.code === 'ENOENT') return null; // expected: puzzle doesn't exist
+		if (error instanceof InvalidPuzzleIdError) return null; // invalid puzzle ID treated as not found
 		console.error(`Failed to read puzzle metadata for ${puzzleId}:`, error);
 		throw error; // propagate unexpected errors (corrupt file, permission denied, etc.)
 	}
