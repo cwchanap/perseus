@@ -16,7 +16,7 @@
 </script>
 
 <div
-	class="flex flex-wrap gap-2"
+	class="filter-row"
 	data-testid="category-filter"
 	role="radiogroup"
 	aria-label="Filter by category"
@@ -25,8 +25,8 @@
 		<button
 			type="button"
 			onclick={() => onSelect(cat)}
-			class="rounded-full px-3 py-1 text-sm font-medium transition-colors
-				{selected === cat ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}"
+			class="filter-btn"
+			class:active={selected === cat}
 			role="radio"
 			aria-checked={selected === cat}
 		>
@@ -34,3 +34,55 @@
 		</button>
 	{/each}
 </div>
+
+<style>
+	.filter-row {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.4rem;
+	}
+
+	.filter-btn {
+		font-family: var(--font-display);
+		font-size: 0.58rem;
+		font-weight: 600;
+		letter-spacing: 0.18em;
+		text-transform: uppercase;
+		padding: 0.4rem 0.875rem;
+		border: 1px solid var(--border);
+		color: var(--text-2);
+		background: transparent;
+		cursor: pointer;
+		transition:
+			color 0.15s ease,
+			border-color 0.15s ease,
+			background 0.15s ease,
+			box-shadow 0.15s ease;
+		position: relative;
+	}
+
+	.filter-btn:hover {
+		border-color: var(--accent-dim);
+		color: var(--accent);
+		background: var(--accent-glow);
+	}
+
+	.filter-btn.active {
+		border-color: var(--accent);
+		color: var(--accent);
+		background: var(--accent-glow);
+		box-shadow: 0 0 18px var(--accent-glow);
+		text-shadow: 0 0 8px var(--accent);
+	}
+
+	.filter-btn.active::after {
+		content: '';
+		position: absolute;
+		bottom: -1px;
+		left: 0;
+		right: 0;
+		height: 2px;
+		background: var(--accent);
+		box-shadow: 0 0 8px var(--accent);
+	}
+</style>

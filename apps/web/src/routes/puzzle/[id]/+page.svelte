@@ -162,56 +162,81 @@
 	function handleGoHome() {
 		goto(resolve('/'));
 	}
+
+	const progressPct = $derived.by(() => {
+		if (!puzzle) return 0;
+		return Math.round((placedPieces.length / puzzle.pieceCount) * 100);
+	});
 </script>
 
 <svelte:head>
-	<title>{puzzle?.name || 'Puzzle'} | Perseus</title>
+	<title>{puzzle?.name || 'Mission'} | Perseus Arcade</title>
 </svelte:head>
 
-<main class="min-h-screen bg-gray-50">
-	<div class="mx-auto max-w-7xl px-4 py-4 sm:px-6 lg:px-8">
-		<!-- Header -->
-		<header class="mb-4 flex items-center justify-between">
-			<div class="flex items-center gap-4">
-				<a href={resolve('/')} class="flex items-center gap-2 text-gray-600 hover:text-gray-900">
-					<svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-						<path
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							stroke-width="2"
-							d="M10 19l-7-7m0 0l7-7m-7 7h18"
-						/>
-					</svg>
-					Back to Gallery
-				</a>
-			</div>
-			{#if puzzle}
-				<div class="text-right">
-					<h1 class="text-xl font-bold text-gray-900">{puzzle.name}</h1>
-					<p class="text-sm text-gray-500">
-						{placedPieces.length} / {puzzle.pieceCount} pieces placed
-					</p>
-					<div class="mt-1 flex justify-end">
-						<GameTimer {timerState} {bestTime} />
-					</div>
-				</div>
-			{/if}
-		</header>
-
-		{#if loading}
-			<div class="flex items-center justify-center py-12">
-				<div
-					class="h-8 w-8 animate-spin rounded-full border-4 border-blue-500 border-t-transparent"
-				></div>
-				<span class="ml-3 text-gray-600">Loading puzzle...</span>
-			</div>
-		{:else if error}
-			<div class="rounded-lg bg-red-50 p-12 text-center">
+<div class="puzzle-page">
+	<!-- HUD Header -->
+	<header class="hud-header">
+		<div class="hud-left">
+			<a href={resolve('/')} class="back-btn">
 				<svg
-					class="mx-auto h-16 w-16 text-red-400"
+					class="back-icon"
 					fill="none"
 					viewBox="0 0 24 24"
 					stroke="currentColor"
+					aria-hidden="true"
+				>
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						stroke-width="2"
+						d="M10 19l-7-7m0 0l7-7m-7 7h18"
+					/>
+				</svg>
+				<span>ARCADE</span>
+			</a>
+		</div>
+
+		{#if puzzle}
+			<div class="hud-center">
+				<div class="mission-tag">// MISSION</div>
+				<div class="mission-name">{puzzle.name.toUpperCase()}</div>
+			</div>
+
+			<div class="hud-right">
+				<div class="progress-stat">
+					<span class="stat-label">PIECES</span>
+					<span class="stat-value"
+						>{placedPieces.length}<span class="stat-total">/{puzzle.pieceCount}</span></span
+					>
+				</div>
+				<div class="hud-divider"></div>
+				<GameTimer {timerState} {bestTime} />
+			</div>
+		{/if}
+	</header>
+
+	<!-- Progress bar -->
+	{#if puzzle}
+		<div class="progress-bar-wrap">
+			<div class="progress-bar-fill" style="width: {progressPct}%"></div>
+		</div>
+	{/if}
+
+	<!-- Content -->
+	<main class="puzzle-main">
+		{#if loading}
+			<div class="state-center">
+				<div class="loading-ring"></div>
+				<span class="state-label">LOADING MISSION...</span>
+			</div>
+		{:else if error}
+			<div class="error-panel">
+				<svg
+					class="err-icon"
+					fill="none"
+					viewBox="0 0 24 24"
+					stroke="currentColor"
+					aria-hidden="true"
 				>
 					<path
 						stroke-linecap="round"
@@ -220,20 +245,18 @@
 						d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
 					/>
 				</svg>
-				<h2 class="mt-4 text-xl font-semibold text-gray-900">{error}</h2>
-				<p class="mt-2 text-gray-500">This puzzle may have been deleted.</p>
-				<a
-					href={resolve('/')}
-					class="mt-6 inline-block rounded-md bg-blue-600 px-6 py-3 text-white hover:bg-blue-700"
-				>
-					Back to Gallery
-				</a>
+				<h2 class="err-title">{error}</h2>
+				<p class="err-sub">This mission may have been deleted.</p>
+				<a href={resolve('/')} class="arcade-btn">RETURN TO ARCADE</a>
 			</div>
 		{:else if puzzle}
-			<div class="grid gap-6 lg:grid-cols-3">
-				<!-- Puzzle Board -->
-				<div class="lg:col-span-2">
-					<div class="rounded-lg bg-white p-4 shadow-md">
+			<div class="game-layout">
+				<!-- Board panel -->
+				<div class="board-panel">
+					<div class="panel-header">
+						<span class="panel-tag">PUZZLE BOARD</span>
+					</div>
+					<div class="board-wrap">
 						<PuzzleBoard
 							{puzzle}
 							{placedPieces}
@@ -243,85 +266,562 @@
 					</div>
 				</div>
 
-				<!-- Pieces Tray -->
-				<div class="lg:col-span-1">
-					<div class="rounded-lg bg-white p-4 shadow-md">
-						<h2 class="mb-4 text-lg font-semibold text-gray-900">Puzzle Pieces</h2>
-						<div class="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-3">
-							{#each shuffledPieces as piece (piece.id)}
-								{#if !isPiecePlaced(piece.id)}
-									<div
-										class="aspect-square rounded border-2 p-1 transition-all"
-										class:border-red-500={rejectedPiece === piece.id}
-										class:animate-shake={rejectedPiece === piece.id}
-										class:border-gray-200={rejectedPiece !== piece.id}
-									>
-										<PuzzlePiece {piece} isPlaced={false} />
-									</div>
-								{/if}
-							{/each}
-						</div>
-						{#if placedPieces.length === puzzle.pieceCount}
-							<p class="mt-4 text-center font-semibold text-green-600">All pieces placed!</p>
-						{/if}
+				<!-- Inventory panel -->
+				<div class="inventory-panel">
+					<div class="panel-header">
+						<span class="panel-tag">INVENTORY</span>
+						<span class="inv-count">{puzzle.pieceCount - placedPieces.length} LEFT</span>
 					</div>
+					<div class="pieces-grid">
+						{#each shuffledPieces as piece (piece.id)}
+							{#if !isPiecePlaced(piece.id)}
+								<div
+									class="piece-slot"
+									class:rejected={rejectedPiece === piece.id}
+									class:animate-shake={rejectedPiece === piece.id}
+								>
+									<PuzzlePiece {piece} isPlaced={false} />
+								</div>
+							{/if}
+						{/each}
+					</div>
+					{#if placedPieces.length === puzzle.pieceCount}
+						<div class="complete-msg">
+							<span class="complete-icon">◆</span>
+							ALL PIECES PLACED
+						</div>
+					{/if}
 				</div>
 			</div>
 		{/if}
-	</div>
+	</main>
+</div>
 
-	<!-- Celebration Modal -->
-	{#if showCelebration}
-		<div
-			class="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-			data-testid="celebration-modal"
-		>
-			<div class="mx-4 max-w-md rounded-lg bg-white p-8 text-center shadow-xl">
-				<div class="mb-4 text-6xl">🎉</div>
-				<h2 class="text-2xl font-bold text-gray-900">Congratulations!</h2>
-				<p class="mt-2 text-gray-600">You completed the puzzle!</p>
-				<p class="mt-1 text-lg font-semibold text-gray-800">
-					Time: {formatTime(timerState.elapsed)}
-				</p>
-				{#if isNewBest}
-					<p class="mt-1 text-sm font-medium text-yellow-600">
-						🏆 New Personal Best! {formatTime(bestTime ?? timerState.elapsed)}
-					</p>
-				{/if}
-				<div class="mt-6 flex justify-center gap-4">
-					<button
-						onclick={handlePlayAgain}
-						class="rounded-md bg-blue-600 px-6 py-3 text-white hover:bg-blue-700"
-					>
-						Play Again
-					</button>
-					<button
-						onclick={handleGoHome}
-						class="rounded-md bg-gray-200 px-6 py-3 text-gray-700 hover:bg-gray-300"
-					>
-						Back to Gallery
-					</button>
+<!-- Mission Complete Modal -->
+{#if showCelebration}
+	<div class="modal-backdrop" data-testid="celebration-modal">
+		<div class="modal-box">
+			<div class="modal-scan-line"></div>
+			<div class="modal-top-line"></div>
+
+			<div class="modal-tag">// MISSION COMPLETE</div>
+			<div class="modal-rank">S RANK</div>
+
+			<h2 class="modal-title">{puzzle?.name?.toUpperCase()}</h2>
+
+			<div class="modal-stats">
+				<div class="modal-stat">
+					<span class="mstat-label">FINAL TIME</span>
+					<span class="mstat-value">{formatTime(timerState.elapsed)}</span>
 				</div>
+				{#if isNewBest}
+					<div class="modal-stat new-best">
+						<span class="mstat-label">PERSONAL BEST</span>
+						<span class="mstat-value gold">{formatTime(bestTime ?? timerState.elapsed)}</span>
+						<span class="new-record-badge">NEW RECORD</span>
+					</div>
+				{/if}
+			</div>
+
+			<div class="modal-bottom-line"></div>
+
+			<div class="modal-actions">
+				<button onclick={handlePlayAgain} class="arcade-btn">PLAY AGAIN</button>
+				<button onclick={handleGoHome} class="arcade-btn-ghost">BACK TO ARCADE</button>
 			</div>
 		</div>
-	{/if}
-</main>
+	</div>
+{/if}
 
 <style>
-	@keyframes shake {
-		0%,
-		100% {
-			transform: translateX(0);
-		}
-		25% {
-			transform: translateX(-5px);
-		}
-		75% {
-			transform: translateX(5px);
+	/* ===== PAGE STRUCTURE ===== */
+	.puzzle-page {
+		min-height: 100vh;
+		background-color: var(--bg-0);
+		background-image:
+			linear-gradient(rgba(0, 240, 255, 0.02) 1px, transparent 1px),
+			linear-gradient(90deg, rgba(0, 240, 255, 0.02) 1px, transparent 1px);
+		background-size: 40px 40px;
+		display: flex;
+		flex-direction: column;
+	}
+
+	/* ===== HUD HEADER ===== */
+	.hud-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 0.75rem 1.25rem;
+		background: var(--bg-1);
+		border-bottom: 1px solid var(--border);
+		gap: 1rem;
+		flex-shrink: 0;
+	}
+
+	.hud-left {
+		flex-shrink: 0;
+	}
+
+	.back-btn {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		font-family: var(--font-display);
+		font-size: 0.6rem;
+		font-weight: 600;
+		letter-spacing: 0.2em;
+		color: var(--text-2);
+		text-decoration: none;
+		transition: color 0.15s ease;
+		padding: 0.3rem 0;
+	}
+
+	.back-btn:hover {
+		color: var(--accent);
+	}
+
+	.back-icon {
+		width: 0.875rem;
+		height: 0.875rem;
+	}
+
+	.hud-center {
+		flex: 1;
+		text-align: center;
+		min-width: 0;
+	}
+
+	.mission-tag {
+		font-family: var(--font-mono);
+		font-size: 0.55rem;
+		color: var(--accent);
+		letter-spacing: 0.2em;
+		opacity: 0.6;
+	}
+
+	.mission-name {
+		font-family: var(--font-display);
+		font-size: 0.8rem;
+		font-weight: 700;
+		letter-spacing: 0.1em;
+		color: var(--text-0);
+		text-overflow: ellipsis;
+		overflow: hidden;
+		white-space: nowrap;
+	}
+
+	.hud-right {
+		display: flex;
+		align-items: center;
+		gap: 0.875rem;
+		flex-shrink: 0;
+	}
+
+	.progress-stat {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-end;
+		gap: 0.1rem;
+	}
+
+	.stat-label {
+		font-family: var(--font-mono);
+		font-size: 0.5rem;
+		letter-spacing: 0.2em;
+		color: var(--text-2);
+	}
+
+	.stat-value {
+		font-family: var(--font-mono);
+		font-size: 0.9rem;
+		color: var(--text-0);
+		letter-spacing: 0.05em;
+	}
+
+	.stat-total {
+		color: var(--text-2);
+		font-size: 0.75rem;
+	}
+
+	.hud-divider {
+		width: 1px;
+		height: 2rem;
+		background: var(--border);
+	}
+
+	/* Progress bar */
+	.progress-bar-wrap {
+		height: 2px;
+		background: var(--bg-3);
+		flex-shrink: 0;
+	}
+
+	.progress-bar-fill {
+		height: 100%;
+		background: var(--accent);
+		box-shadow: 0 0 8px var(--accent);
+		transition: width 0.3s ease;
+	}
+
+	/* ===== MAIN CONTENT ===== */
+	.puzzle-main {
+		flex: 1;
+		padding: 1.25rem;
+		overflow: auto;
+	}
+
+	.state-center {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		padding: 5rem 0;
+		gap: 1.5rem;
+	}
+
+	.loading-ring {
+		width: 2.5rem;
+		height: 2.5rem;
+		border: 2px solid var(--border);
+		border-top-color: var(--accent);
+		border-radius: 50%;
+		animation: spin-cw 0.75s linear infinite;
+		box-shadow: 0 0 20px var(--accent-glow);
+	}
+
+	.state-label {
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		letter-spacing: 0.25em;
+		color: var(--accent);
+		animation: neon-flicker 3s ease-in-out infinite;
+	}
+
+	/* Error panel */
+	.error-panel {
+		max-width: 32rem;
+		margin: 3rem auto;
+		background: var(--bg-1);
+		border: 1px solid var(--hot);
+		padding: 3rem 2rem;
+		text-align: center;
+		box-shadow: 0 0 40px var(--hot-glow);
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.875rem;
+	}
+
+	.err-icon {
+		width: 3rem;
+		height: 3rem;
+		color: var(--hot);
+		filter: drop-shadow(0 0 8px var(--hot));
+	}
+
+	.err-title {
+		font-family: var(--font-display);
+		font-size: 1rem;
+		font-weight: 700;
+		color: var(--text-0);
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+	}
+
+	.err-sub {
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		color: var(--text-2);
+	}
+
+	/* ===== GAME LAYOUT ===== */
+	.game-layout {
+		display: grid;
+		grid-template-columns: 1fr;
+		gap: 1.25rem;
+		max-width: 80rem;
+		margin: 0 auto;
+	}
+
+	@media (min-width: 1024px) {
+		.game-layout {
+			grid-template-columns: 1fr 280px;
 		}
 	}
 
-	.animate-shake {
-		animation: shake 0.3s ease-in-out;
+	/* Board panel */
+	.board-panel {
+		background: var(--bg-1);
+		border: 1px solid var(--border);
+	}
+
+	.panel-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 0.625rem 1rem;
+		border-bottom: 1px solid var(--border);
+		background: var(--bg-2);
+	}
+
+	.panel-tag {
+		font-family: var(--font-display);
+		font-size: 0.6rem;
+		font-weight: 600;
+		letter-spacing: 0.2em;
+		color: var(--text-2);
+	}
+
+	.board-wrap {
+		padding: 1rem;
+		overflow: auto;
+	}
+
+	/* Inventory panel */
+	.inventory-panel {
+		background: var(--bg-1);
+		border: 1px solid var(--border);
+		display: flex;
+		flex-direction: column;
+	}
+
+	.inv-count {
+		font-family: var(--font-mono);
+		font-size: 0.6rem;
+		color: var(--accent);
+		letter-spacing: 0.15em;
+	}
+
+	.pieces-grid {
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		gap: 0.375rem;
+		padding: 0.875rem;
+		overflow-y: auto;
+		flex: 1;
+	}
+
+	@media (min-width: 640px) and (max-width: 1023px) {
+		.pieces-grid {
+			grid-template-columns: repeat(4, 1fr);
+		}
+	}
+
+	.piece-slot {
+		aspect-ratio: 1;
+		border: 1px solid var(--border);
+		padding: 0.2rem;
+		transition: border-color 0.15s ease;
+	}
+
+	.piece-slot.rejected {
+		border-color: var(--hot);
+		box-shadow: 0 0 12px var(--hot-glow);
+	}
+
+	.complete-msg {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.5rem;
+		padding: 0.875rem;
+		font-family: var(--font-display);
+		font-size: 0.65rem;
+		font-weight: 700;
+		letter-spacing: 0.2em;
+		color: var(--green);
+		text-shadow: 0 0 12px var(--green);
+		border-top: 1px solid var(--border);
+	}
+
+	.complete-icon {
+		font-size: 0.5rem;
+		text-shadow: 0 0 8px var(--green);
+	}
+
+	/* ===== ARCADE BUTTON ===== */
+	.arcade-btn {
+		display: inline-block;
+		font-family: var(--font-display);
+		font-size: 0.62rem;
+		font-weight: 700;
+		letter-spacing: 0.2em;
+		text-transform: uppercase;
+		text-decoration: none;
+		border: 1px solid var(--accent);
+		color: var(--accent);
+		background: transparent;
+		padding: 0.625rem 1.75rem;
+		cursor: pointer;
+		transition: all 0.2s ease;
+	}
+
+	.arcade-btn:hover {
+		background: var(--accent-glow);
+		box-shadow: 0 0 25px var(--accent-glow-strong);
+		text-shadow: 0 0 10px var(--accent);
+	}
+
+	.arcade-btn-ghost {
+		display: inline-block;
+		font-family: var(--font-display);
+		font-size: 0.62rem;
+		font-weight: 700;
+		letter-spacing: 0.2em;
+		text-transform: uppercase;
+		border: 1px solid var(--border);
+		color: var(--text-1);
+		background: transparent;
+		padding: 0.625rem 1.75rem;
+		cursor: pointer;
+		transition: all 0.2s ease;
+	}
+
+	.arcade-btn-ghost:hover {
+		border-color: var(--border-bright);
+		color: var(--text-0);
+	}
+
+	/* ===== CELEBRATION MODAL ===== */
+	.modal-backdrop {
+		position: fixed;
+		inset: 0;
+		z-index: 50;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: rgba(4, 4, 13, 0.9);
+		backdrop-filter: blur(6px);
+	}
+
+	.modal-box {
+		position: relative;
+		background: var(--bg-1);
+		border: 1px solid var(--accent);
+		padding: 2.5rem 2rem;
+		text-align: center;
+		max-width: 24rem;
+		width: calc(100% - 2rem);
+		box-shadow:
+			0 0 60px var(--accent-glow-strong),
+			0 0 120px var(--accent-glow),
+			inset 0 0 60px rgba(0, 240, 255, 0.03);
+		animation: celebration-in 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+		overflow: hidden;
+	}
+
+	/* Animated scan line inside modal */
+	.modal-scan-line {
+		position: absolute;
+		left: 0;
+		right: 0;
+		height: 2px;
+		background: linear-gradient(90deg, transparent, var(--accent-dim), transparent);
+		animation: scan 2s linear infinite;
+		pointer-events: none;
+	}
+
+	@keyframes scan {
+		0% {
+			top: -2px;
+		}
+		100% {
+			top: calc(100% + 2px);
+		}
+	}
+
+	.modal-top-line,
+	.modal-bottom-line {
+		height: 1px;
+		background: linear-gradient(90deg, transparent, var(--accent), transparent);
+		opacity: 0.4;
+		margin: 0.75rem 0;
+	}
+
+	.modal-tag {
+		font-family: var(--font-mono);
+		font-size: 0.6rem;
+		color: var(--accent);
+		letter-spacing: 0.2em;
+		opacity: 0.7;
+		margin-bottom: 0.5rem;
+	}
+
+	.modal-rank {
+		font-family: var(--font-display);
+		font-size: 3rem;
+		font-weight: 900;
+		color: var(--accent);
+		text-shadow:
+			0 0 30px var(--accent),
+			0 0 60px var(--accent-glow-strong);
+		letter-spacing: 0.2em;
+		line-height: 1;
+		animation: neon-flicker 4s ease-in-out infinite;
+	}
+
+	.modal-title {
+		font-family: var(--font-display);
+		font-size: 0.75rem;
+		font-weight: 600;
+		letter-spacing: 0.15em;
+		color: var(--text-1);
+		margin-top: 0.5rem;
+		text-overflow: ellipsis;
+		overflow: hidden;
+		white-space: nowrap;
+	}
+
+	.modal-stats {
+		margin: 1.25rem 0;
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+	}
+
+	.modal-stat {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.2rem;
+	}
+
+	.mstat-label {
+		font-family: var(--font-mono);
+		font-size: 0.58rem;
+		letter-spacing: 0.25em;
+		color: var(--text-2);
+	}
+
+	.mstat-value {
+		font-family: var(--font-mono);
+		font-size: 1.5rem;
+		letter-spacing: 0.1em;
+		color: var(--text-0);
+	}
+
+	.mstat-value.gold {
+		color: var(--gold);
+		text-shadow: 0 0 15px var(--gold-glow);
+	}
+
+	.new-record-badge {
+		font-family: var(--font-display);
+		font-size: 0.55rem;
+		font-weight: 700;
+		letter-spacing: 0.25em;
+		color: var(--gold);
+		border: 1px solid var(--gold-dim);
+		padding: 0.15rem 0.625rem;
+		text-shadow: 0 0 8px var(--gold);
+		box-shadow: 0 0 15px var(--gold-glow);
+	}
+
+	.modal-actions {
+		display: flex;
+		justify-content: center;
+		gap: 0.875rem;
+		flex-wrap: wrap;
+		padding-top: 0.5rem;
 	}
 </style>

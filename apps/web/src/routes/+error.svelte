@@ -65,49 +65,143 @@
 	<title>Error | Perseus</title>
 </svelte:head>
 
-<main class="flex min-h-screen items-center justify-center bg-gray-50 px-4">
-	<div class="max-w-md text-center">
-		<div class="mb-6 text-6xl">
-			{#if $page.status === 404}
-				🔍
-			{:else}
-				⚠️
-			{/if}
+<main class="error-main">
+	<div class="error-box">
+		<div class="error-code">
+			{$page.status}
 		</div>
-
-		<h1 class="mb-2 text-4xl font-bold text-gray-900">
+		<div class="error-line"></div>
+		<h1 class="error-title">
 			{#if $page.status === 404}
-				Page Not Found
+				SECTOR NOT FOUND
 			{:else}
-				Something Went Wrong
+				SYSTEM ERROR
 			{/if}
 		</h1>
-
-		<p class="mb-8 text-gray-600">
+		<p class="error-sub">
 			{#if $page.status === 404}
-				The page you're looking for doesn't exist or has been moved.
+				The mission you're looking for doesn't exist or has been removed.
 			{:else if $page.error}
 				{getSafeErrorMessage($page.error) ?? 'An unexpected error occurred. Please try again.'}
 			{:else}
 				An unexpected error occurred. Please try again.
 			{/if}
 		</p>
-
-		<div class="flex justify-center gap-4">
-			<a
-				href={resolve('/')}
-				class="rounded-md bg-blue-600 px-6 py-3 font-medium text-white hover:bg-blue-700"
-			>
-				Go to Gallery
-			</a>
+		<div class="error-actions">
+			<a href={resolve('/')} class="arcade-btn">RETURN TO ARCADE</a>
 			{#if showGoBack}
-				<button
-					onclick={() => handleGoBack()}
-					class="rounded-md bg-gray-200 px-6 py-3 font-medium text-gray-700 hover:bg-gray-300"
-				>
-					Go Back
-				</button>
+				<button onclick={() => handleGoBack()} class="arcade-btn-ghost">GO BACK</button>
 			{/if}
 		</div>
 	</div>
 </main>
+
+<style>
+	.error-main {
+		min-height: 100vh;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background-color: var(--bg-0);
+		background-image:
+			linear-gradient(rgba(0, 240, 255, 0.025) 1px, transparent 1px),
+			linear-gradient(90deg, rgba(0, 240, 255, 0.025) 1px, transparent 1px);
+		background-size: 48px 48px;
+		padding: 1.5rem;
+	}
+
+	.error-box {
+		max-width: 26rem;
+		width: 100%;
+		text-align: center;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 1rem;
+	}
+
+	.error-code {
+		font-family: var(--font-display);
+		font-size: clamp(4rem, 15vw, 7rem);
+		font-weight: 900;
+		letter-spacing: 0.1em;
+		color: var(--hot);
+		text-shadow:
+			0 0 30px var(--hot),
+			0 0 60px var(--hot-glow);
+		line-height: 1;
+	}
+
+	.error-line {
+		width: 100%;
+		height: 1px;
+		background: linear-gradient(90deg, transparent, var(--hot), transparent);
+		opacity: 0.4;
+	}
+
+	.error-title {
+		font-family: var(--font-display);
+		font-size: 1.1rem;
+		font-weight: 700;
+		letter-spacing: 0.15em;
+		color: var(--text-0);
+	}
+
+	.error-sub {
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		color: var(--text-2);
+		letter-spacing: 0.05em;
+		line-height: 1.6;
+	}
+
+	.error-actions {
+		display: flex;
+		gap: 0.75rem;
+		flex-wrap: wrap;
+		justify-content: center;
+		margin-top: 0.5rem;
+	}
+
+	.arcade-btn {
+		display: inline-block;
+		font-family: var(--font-display);
+		font-size: 0.62rem;
+		font-weight: 700;
+		letter-spacing: 0.2em;
+		text-transform: uppercase;
+		text-decoration: none;
+		border: 1px solid var(--accent);
+		color: var(--accent);
+		background: transparent;
+		padding: 0.625rem 1.75rem;
+		cursor: pointer;
+		transition: all 0.2s ease;
+	}
+
+	.arcade-btn:hover {
+		background: var(--accent-glow);
+		box-shadow: 0 0 25px var(--accent-glow-strong);
+		text-shadow: 0 0 10px var(--accent);
+	}
+
+	.arcade-btn-ghost {
+		display: inline-block;
+		font-family: var(--font-display);
+		font-size: 0.62rem;
+		font-weight: 700;
+		letter-spacing: 0.2em;
+		text-transform: uppercase;
+		border: 1px solid var(--border);
+		color: var(--text-1);
+		background: transparent;
+		padding: 0.625rem 1.75rem;
+		cursor: pointer;
+		transition: all 0.2s ease;
+	}
+
+	.arcade-btn-ghost:hover {
+		border-color: var(--border-bright);
+		color: var(--text-0);
+	}
+</style>

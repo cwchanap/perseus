@@ -110,6 +110,6 @@ describe('/+page.svelte', () => {
 		const abstractButton = page.getByRole('radio', { name: 'Abstract' });
 		await abstractButton.click();
 
-		await expect.element(page.getByText('No puzzles in this category')).toBeVisible();
+		await expect.element(page.getByText('NO MISSIONS IN THIS SECTOR')).toBeVisible();
 	});
 });

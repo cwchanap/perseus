@@ -1,6 +1,187 @@
 @import 'tailwindcss';
 
-/* Responsive design utilities */
+/* ===== DESIGN TOKENS ===== */
+:root {
+	--bg-0: #04040d;
+	--bg-1: #0a0a18;
+	--bg-2: #111122;
+	--bg-3: #1a1a30;
+	--border: #22224a;
+	--border-bright: #33336a;
+
+	--accent: #00f0ff;
+	--accent-dim: rgba(0, 240, 255, 0.5);
+	--accent-glow: rgba(0, 240, 255, 0.12);
+	--accent-glow-strong: rgba(0, 240, 255, 0.28);
+
+	--hot: #ff0066;
+	--hot-dim: rgba(255, 0, 102, 0.5);
+	--hot-glow: rgba(255, 0, 102, 0.2);
+
+	--gold: #ffe600;
+	--gold-dim: rgba(255, 230, 0, 0.5);
+	--gold-glow: rgba(255, 230, 0, 0.18);
+
+	--green: #00ff88;
+	--green-glow: rgba(0, 255, 136, 0.2);
+
+	--text-0: #dcdcff;
+	--text-1: #8888bb;
+	--text-2: #505080;
+
+	--font-display: 'Orbitron', 'Courier New', monospace;
+	--font-mono: 'Share Tech Mono', 'Courier New', monospace;
+	--font-body: 'Rajdhani', 'Trebuchet MS', sans-serif;
+}
+
+/* ===== GLOBAL BASE ===== */
+html {
+	background-color: var(--bg-0);
+	color: var(--text-0);
+}
+
+body {
+	background-color: var(--bg-0);
+	color: var(--text-0);
+	font-family: var(--font-body);
+	min-height: 100vh;
+}
+
+/* Scanline CRT overlay */
+body::after {
+	content: '';
+	position: fixed;
+	inset: 0;
+	background: repeating-linear-gradient(
+		0deg,
+		transparent,
+		transparent 3px,
+		rgba(0, 0, 0, 0.04) 3px,
+		rgba(0, 0, 0, 0.04) 4px
+	);
+	pointer-events: none;
+	z-index: 9999;
+}
+
+/* ===== ANIMATIONS ===== */
+@keyframes skeleton-pulse {
+	0%,
+	100% {
+		opacity: 0.25;
+	}
+	50% {
+		opacity: 0.5;
+	}
+}
+
+@keyframes spin-cw {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+@keyframes neon-flicker {
+	0%,
+	92%,
+	100% {
+		opacity: 1;
+	}
+	94% {
+		opacity: 0.7;
+	}
+	96% {
+		opacity: 1;
+	}
+	98% {
+		opacity: 0.5;
+	}
+}
+
+@keyframes float {
+	0%,
+	100% {
+		transform: translateY(0);
+	}
+	50% {
+		transform: translateY(-6px);
+	}
+}
+
+@keyframes shake {
+	0%,
+	100% {
+		transform: translateX(0);
+	}
+	20% {
+		transform: translateX(-6px);
+	}
+	40% {
+		transform: translateX(6px);
+	}
+	60% {
+		transform: translateX(-4px);
+	}
+	80% {
+		transform: translateX(4px);
+	}
+}
+
+@keyframes glow-pulse {
+	0%,
+	100% {
+		box-shadow: 0 0 8px var(--accent-glow);
+	}
+	50% {
+		box-shadow: 0 0 20px var(--accent-glow-strong);
+	}
+}
+
+@keyframes slide-up {
+	from {
+		opacity: 0;
+		transform: translateY(20px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+@keyframes celebration-in {
+	from {
+		opacity: 0;
+		transform: scale(0.85);
+	}
+	to {
+		opacity: 1;
+		transform: scale(1);
+	}
+}
+
+/* ===== GLOBAL COMPONENT STYLES ===== */
+
+/* Skeleton loading */
+.skeleton {
+	animation: skeleton-pulse 1.5s ease-in-out infinite;
+	background: linear-gradient(90deg, var(--bg-2) 0%, var(--bg-3) 50%, var(--bg-2) 100%);
+}
+
+/* Puzzle pieces (game board interaction) */
+.puzzle-piece {
+	transition:
+		transform 0.15s ease-out,
+		opacity 0.15s ease-out,
+		filter 0.15s ease-out;
+	-webkit-user-select: none;
+	user-select: none;
+	-webkit-touch-callout: none;
+}
+
+.animate-shake {
+	animation: shake 0.4s ease-in-out;
+}
+
+/* Responsive board */
 @media (max-width: 640px) {
 	.puzzle-board {
 		max-width: 100%;
@@ -8,7 +189,7 @@
 	}
 }
 
-/* Touch-friendly interactions */
+/* Touch targets */
 @media (pointer: coarse) {
 	.puzzle-piece {
 		min-width: 44px;
@@ -19,30 +200,4 @@
 		min-width: 44px;
 		min-height: 44px;
 	}
-}
-
-/* Smooth animations */
-.puzzle-piece {
-	transition:
-		transform 0.15s ease-out,
-		opacity 0.15s ease-out;
-	-webkit-user-select: none;
-	user-select: none;
-	-webkit-touch-callout: none;
-}
-
-/* Loading skeleton animation */
-@keyframes skeleton-pulse {
-	0%,
-	100% {
-		opacity: 0.4;
-	}
-	50% {
-		opacity: 0.7;
-	}
-}
-
-.skeleton {
-	animation: skeleton-pulse 1.5s ease-in-out infinite;
-	background: linear-gradient(90deg, #e5e7eb 0%, #f3f4f6 50%, #e5e7eb 100%);
 }
