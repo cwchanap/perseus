@@ -7,6 +7,8 @@ compatibility_flags = ["nodejs_compat"]
 # Serve static assets from the web app build
 [assets]
 directory = "../web/build"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
 
 # R2 bucket for puzzle assets (environment-specific configs override this)
 # The binding name "PUZZLES_BUCKET" is preserved across all environments.

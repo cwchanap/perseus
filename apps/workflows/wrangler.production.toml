@@ -13,7 +13,7 @@ class_name = "PerseusWorkflow"
 # R2 bucket for puzzle assets
 [[r2_buckets]]
 binding = "PUZZLES_BUCKET"
-bucket_name = "perseus-production"
+bucket_name = "perseus"
 
 # KV namespace for puzzle metadata - production namespace
 # IMPORTANT: Replace the id below with the actual production KV namespace ID.
@@ -22,7 +22,7 @@ bucket_name = "perseus-production"
 # interpolation in TOML files.
 [[kv_namespaces]]
 binding = "PUZZLE_METADATA"
-id = "REPLACE_WITH_PRODUCTION_KV_NAMESPACE_ID"
+id = "ae95a94b22e3414ab022c335390c67aa"
 
 [durable_objects]
 bindings = [
