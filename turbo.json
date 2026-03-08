@@ -5,7 +5,7 @@
 		"build": {
 			"dependsOn": ["^build"],
 			"outputs": ["build/**", ".svelte-kit/**", "dist/**"],
-			"env": ["NODE_ENV"]
+			"env": ["NODE_ENV", "PUBLIC_API_BASE"]
 		},
 		"dev": {
 			"cache": false,
@@ -47,7 +47,12 @@
 		"pulumi:up": {
 			"dependsOn": ["build"],
 			"cache": false,
-			"outputs": []
+			"outputs": [],
+			"passThroughEnv": [
+				"PULUMI_CONFIG_PASSPHRASE",
+				"PULUMI_CONFIG_PASSPHRASE_FILE",
+				"CLOUDFLARE_API_TOKEN"
+			]
 		}
 	}
 }

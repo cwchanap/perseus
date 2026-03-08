@@ -30,6 +30,7 @@ export interface WorkerBindings {
 
 export interface AssetsConfig {
 	directory: string;
+	binding?: string;
 }
 
 function getModules(
@@ -269,6 +270,10 @@ export function createApiWorker(
 				scriptName: workflowsWorker.workerName
 			});
 		}
+	}
+
+	if (assets && !scriptBindings.some((b) => b.name === 'ASSETS')) {
+		scriptBindings.push({ name: 'ASSETS', type: 'assets' });
 	}
 
 	const worker = new cloudflare.Worker('api-worker', {
