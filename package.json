@@ -20,6 +20,7 @@
 		"test": "turbo test",
 		"test:unit": "turbo test:unit",
 		"test:e2e": "turbo test:e2e",
+		"deploy": "PUBLIC_API_BASE= turbo build && turbo pulumi:up --filter=@perseus/infrastructure",
 		"prepare": "husky"
 	},
 	"devDependencies": {

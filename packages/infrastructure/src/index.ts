@@ -21,7 +21,8 @@ const commonBindings = {
 		}
 	],
 	envVars: {
-		NODE_ENV: 'production'
+		NODE_ENV: 'production',
+		ALLOWED_ORIGINS: config.require('ALLOWED_ORIGINS')
 	},
 	secretVars: {
 		JWT_SECRET: config.requireSecret('jwtSecret'),
