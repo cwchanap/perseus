@@ -161,7 +161,16 @@ export function createWorkflowsWorker(bindings: WorkerBindings = {}): {
 
 	const worker = new cloudflare.Worker('workflows-worker', {
 		accountId: accountId,
-		name: naming.workerWorkflows
+		name: naming.workerWorkflows,
+		observability: {
+			enabled: true,
+			headSamplingRate: 1,
+			logs: {
+				enabled: true,
+				headSamplingRate: 1,
+				invocationLogs: true
+			}
+		}
 	});
 
 	const initialVersion = new cloudflare.WorkerVersion(
@@ -173,8 +182,7 @@ export function createWorkflowsWorker(bindings: WorkerBindings = {}): {
 			modules: getModules(distDir, mainModule),
 			bindings: bindingsWithoutDo,
 			compatibilityDate: compatibility.date,
-			compatibilityFlags: compatibility.flags,
-			migrations: { newTag: 'v1', newClasses: ['PuzzleMetadataDO'] }
+			compatibilityFlags: compatibility.flags
 		},
 		{ dependsOn: worker }
 	);
@@ -200,8 +208,7 @@ export function createWorkflowsWorker(bindings: WorkerBindings = {}): {
 				modules: getModules(distDir, mainModule),
 				bindings: versionBindings,
 				compatibilityDate: compatibility.date,
-				compatibilityFlags: compatibility.flags,
-				migrations: { newTag: 'v1', newClasses: ['PuzzleMetadataDO'] }
+				compatibilityFlags: compatibility.flags
 			},
 			{ dependsOn: workflow }
 		);
@@ -266,7 +273,16 @@ export function createApiWorker(
 
 	const worker = new cloudflare.Worker('api-worker', {
 		accountId: accountId,
-		name: naming.workerApi
+		name: naming.workerApi,
+		observability: {
+			enabled: true,
+			headSamplingRate: 1,
+			logs: {
+				enabled: true,
+				headSamplingRate: 1,
+				invocationLogs: true
+			}
+		}
 	});
 
 	const version = new cloudflare.WorkerVersion(

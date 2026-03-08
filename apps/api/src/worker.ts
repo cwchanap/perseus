@@ -118,7 +118,13 @@ export default {
 				return app.fetch(request, env, ctx);
 			}
 
-			return env.ASSETS.fetch(request);
+			const assetResponse = await env.ASSETS.fetch(request);
+			// SvelteKit static adapter uses 200.html as the SPA fallback, but
+			// Cloudflare Workers Assets expects index.html. Serve 200.html manually.
+			if (assetResponse.status === 404) {
+				return env.ASSETS.fetch(new Request(new URL('/200.html', request.url).toString()));
+			}
+			return assetResponse;
 		} catch (error) {
 			console.error('Unhandled error in worker fetch:', error);
 			const requestOrigin = request.headers.get('origin');

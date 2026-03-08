@@ -7,11 +7,13 @@ compatibility_flags = ["nodejs_compat"]
 # Serve static assets from the web app build
 [assets]
 directory = "../web/build"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
 
 # R2 bucket for puzzle assets - production bucket
 [[r2_buckets]]
 binding = "PUZZLES_BUCKET"
-bucket_name = "perseus-production"
+bucket_name = "perseus"
 
 # KV namespace for puzzle metadata - production namespace
 # IMPORTANT: Replace the id below with the actual production KV namespace ID.
@@ -20,7 +22,7 @@ bucket_name = "perseus-production"
 # interpolation in TOML files.
 [[kv_namespaces]]
 binding = "PUZZLE_METADATA"
-id = "REQUIRED_PRODUCTION_PUZZLE_METADATA_KV_NAMESPACE_ID"
+id = "ae95a94b22e3414ab022c335390c67aa"
 
 [durable_objects]
 bindings = [

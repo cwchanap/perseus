@@ -21,7 +21,7 @@ export const accountId = config.require('cloudflareAccountId');
 export const naming = {
 	workerApi: 'perseus',
 	workerWorkflows: 'perseus-workflows',
-	r2Bucket: 'perseus-production',
+	r2Bucket: 'perseus',
 	kvNamespace: 'perseus-kv-production',
 	workflow: 'perseus'
 };
