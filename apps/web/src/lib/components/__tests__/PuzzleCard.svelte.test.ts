@@ -33,7 +33,7 @@ describe('PuzzleCard', () => {
 	it('should render piece count', async () => {
 		render(PuzzleCard, { puzzle: mockPuzzle });
 
-		await expect.element(page.getByText('25 pieces')).toBeVisible();
+		await expect.element(page.getByText('25 PCS')).toBeVisible();
 	});
 
 	it('should link to puzzle page', async () => {
@@ -65,7 +65,7 @@ describe('PuzzleCard', () => {
 
 		const bestTimeBadge = page.getByTestId('card-best-time');
 		await expect.element(bestTimeBadge).toBeVisible();
-		await expect.element(page.getByText('🏆 02:05')).toBeVisible();
+		await expect.element(page.getByText('◆ 02:05')).toBeVisible();
 	});
 
 	it('should render category badge when puzzle has a category', async () => {

@@ -100,23 +100,45 @@
 {#if isLoginPage}
 	{@render children()}
 {:else if checking}
-	<div class="flex min-h-screen items-center justify-center bg-gray-50">
-		<div class="flex items-center gap-3">
-			<div
-				class="h-6 w-6 animate-spin rounded-full border-3 border-blue-500 border-t-transparent"
-			></div>
-			<span class="text-gray-600">Checking authentication...</span>
-		</div>
+	<div class="auth-state">
+		<div class="auth-spinner"></div>
+		<span class="auth-label">VERIFYING ACCESS...</span>
 	</div>
 {:else if authenticated}
 	{@render children()}
 {:else}
-	<div class="flex min-h-screen items-center justify-center bg-gray-50">
-		<div class="flex items-center gap-3">
-			<div
-				class="h-6 w-6 animate-spin rounded-full border-3 border-blue-500 border-t-transparent"
-			></div>
-			<span class="text-gray-600">Not authenticated. Redirecting...</span>
-		</div>
+	<div class="auth-state">
+		<div class="auth-spinner"></div>
+		<span class="auth-label">REDIRECTING...</span>
 	</div>
 {/if}
+
+<style>
+	.auth-state {
+		min-height: 100vh;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		background-color: var(--bg-0);
+		gap: 1.25rem;
+	}
+
+	.auth-spinner {
+		width: 2.5rem;
+		height: 2.5rem;
+		border: 2px solid var(--border);
+		border-top-color: var(--accent);
+		border-radius: 50%;
+		animation: spin-cw 0.75s linear infinite;
+		box-shadow: 0 0 20px var(--accent-glow);
+	}
+
+	.auth-label {
+		font-family: var(--font-mono);
+		font-size: 0.7rem;
+		letter-spacing: 0.25em;
+		color: var(--accent);
+		animation: neon-flicker 3s ease-in-out infinite;
+	}
+</style>
