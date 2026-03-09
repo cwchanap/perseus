@@ -21,11 +21,11 @@ test.describe('Puzzle Solving Page', () => {
 		await expect(puzzleBoard).toBeVisible();
 	});
 
-	test('should have back to gallery link', async ({ page }) => {
+	test('should have back navigation link', async ({ page }) => {
 		await page.goto('/puzzle/any-puzzle');
 
 		// Should have navigation back to main page
-		const backLink = page.locator('header').getByRole('link', { name: /back to gallery/i });
+		const backLink = page.locator('header').getByTestId('back-to-arcade-link');
 		await expect(backLink).toBeVisible();
 	});
 });

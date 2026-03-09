@@ -9,23 +9,10 @@
 </script>
 
 {#if category}
-	<span class="cat-badge" data-testid="category-badge">
+	<span
+		class="inline-flex items-center border border-[var(--accent-dim)] bg-[rgba(4,4,13,0.8)] px-2 py-[0.2rem] text-[0.58rem] font-[var(--font-mono)] tracking-[0.18em] text-[var(--accent)] uppercase backdrop-blur-[4px]"
+		data-testid="category-badge"
+	>
 		{category}
 	</span>
 {/if}
-
-<style>
-	.cat-badge {
-		display: inline-flex;
-		align-items: center;
-		font-family: var(--font-mono);
-		font-size: 0.58rem;
-		letter-spacing: 0.18em;
-		padding: 0.2rem 0.5rem;
-		background: rgba(4, 4, 13, 0.8);
-		border: 1px solid var(--accent-dim);
-		color: var(--accent);
-		backdrop-filter: blur(4px);
-		text-transform: uppercase;
-	}
-</style>
