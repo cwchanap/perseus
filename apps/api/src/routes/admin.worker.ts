@@ -358,6 +358,30 @@ admin.post('/puzzles', requireAuth, async (c) => {
 		}
 
 		// Step 3: Trigger workflow for puzzle generation
+		if (!c.env.PUZZLE_WORKFLOW || typeof c.env.PUZZLE_WORKFLOW.create !== 'function') {
+			const metadataCleanup = await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
+			if (!metadataCleanup.success) {
+				console.error(
+					'Failed to cleanup puzzle metadata after missing workflow binding:',
+					metadataCleanup.error
+				);
+			}
+			const imageCleanup = await deleteOriginalImage(c.env.PUZZLES_BUCKET, id);
+			if (!imageCleanup.success) {
+				console.error(
+					'Failed to cleanup original image after missing workflow binding:',
+					imageCleanup.error
+				);
+			}
+			return c.json(
+				{
+					error: 'service_unavailable',
+					message: 'Puzzle workflow is not configured for this environment'
+				},
+				503
+			);
+		}
+
 		try {
 			await c.env.PUZZLE_WORKFLOW.create({
 				id,

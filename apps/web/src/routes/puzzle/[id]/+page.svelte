@@ -177,7 +177,12 @@
 	<!-- HUD Header -->
 	<header class="hud-header">
 		<div class="hud-left">
-			<a href={resolve('/')} class="back-btn">
+			<a
+				href={resolve('/')}
+				class="back-btn"
+				aria-label="Return to arcade"
+				data-testid="back-to-arcade-link"
+			>
 				<svg
 					class="back-icon"
 					fill="none"

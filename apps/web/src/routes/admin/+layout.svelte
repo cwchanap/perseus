@@ -100,14 +100,14 @@
 {#if isLoginPage}
 	{@render children()}
 {:else if checking}
-	<div class="auth-state">
+	<div class="auth-state" role="status" aria-live="polite">
 		<div class="auth-spinner"></div>
 		<span class="auth-label">VERIFYING ACCESS...</span>
 	</div>
 {:else if authenticated}
 	{@render children()}
 {:else}
-	<div class="auth-state">
+	<div class="auth-state" role="status" aria-live="polite">
 		<div class="auth-spinner"></div>
 		<span class="auth-label">REDIRECTING...</span>
 	</div>
