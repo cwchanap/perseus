@@ -163,9 +163,74 @@
 		goto(resolve('/'));
 	}
 
+	// Focus management for modal accessibility
+	function manageModalFocus(node: HTMLElement, isOpen: boolean) {
+		let previousFocus: HTMLElement | null = null;
+		let focusableElements: HTMLElement[] = [];
+		let firstElement: HTMLElement | null = null;
+		let lastElement: HTMLElement | null = null;
+
+		// Get all focusable elements within the modal
+		const getFocusableElements = (element: HTMLElement) => {
+			return Array.from(
+				element.querySelectorAll<HTMLElement>(
+					'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+				)
+			).filter((el) => !el.hasAttribute('disabled') && el.offsetParent !== null);
+		};
+
+		// Trap focus within the modal
+		const trapFocus = (e: KeyboardEvent) => {
+			if (e.key !== 'Tab') return;
+
+			if (e.shiftKey) {
+				// Shift+Tab
+				if (document.activeElement === firstElement) {
+					e.preventDefault();
+					lastElement?.focus();
+				}
+			} else {
+				// Tab
+				if (document.activeElement === lastElement) {
+					e.preventDefault();
+					firstElement?.focus();
+				}
+			}
+		};
+
+		if (isOpen) {
+			// Save current focus
+			previousFocus = document.activeElement as HTMLElement;
+
+			// Get focusable elements
+			focusableElements = getFocusableElements(node);
+			firstElement = focusableElements[0] || null;
+			lastElement = focusableElements[focusableElements.length - 1] || null;
+
+			// Move focus to first element
+			setTimeout(() => firstElement?.focus(), 100);
+
+			// Add event listeners
+			document.addEventListener('keydown', trapFocus);
+		}
+
+		return {
+			destroy() {
+				// Remove event listeners
+				document.removeEventListener('keydown', trapFocus);
+
+				// Restore focus when modal closes
+				if (previousFocus) {
+					setTimeout(() => previousFocus?.focus(), 0);
+				}
+			}
+		};
+	}
+
 	const progressPct = $derived.by(() => {
-		if (!puzzle) return 0;
-		return Math.round((placedPieces.length / puzzle.pieceCount) * 100);
+		if (!puzzle || puzzle.pieceCount === 0) return 0;
+		if (placedPieces.length >= puzzle.pieceCount) return 100;
+		return Math.floor((placedPieces.length / puzzle.pieceCount) * 100);
 	});
 </script>
 
@@ -228,7 +293,7 @@
 	{/if}
 
 	<!-- Content -->
-	<main class="puzzle-main">
+	<main class="puzzle-main" inert={showCelebration}>
 		{#if loading}
 			<div class="state-center">
 				<div class="loading-ring"></div>
@@ -304,15 +369,26 @@
 
 <!-- Mission Complete Modal -->
 {#if showCelebration}
-	<div class="modal-backdrop" data-testid="celebration-modal">
-		<div class="modal-box">
+	<div
+		class="modal-backdrop"
+		data-testid="celebration-modal"
+		role="presentation"
+		onkeydown={(e) => e.key === 'Escape' && (showCelebration = false)}
+	>
+		<div
+			class="modal-box"
+			role="dialog"
+			aria-modal="true"
+			aria-labelledby="modal-title"
+			use:manageModalFocus={showCelebration}
+		>
 			<div class="modal-scan-line"></div>
 			<div class="modal-top-line"></div>
 
 			<div class="modal-tag">// MISSION COMPLETE</div>
 			<div class="modal-rank">S RANK</div>
 
-			<h2 class="modal-title">{puzzle?.name?.toUpperCase()}</h2>
+			<h2 id="modal-title" class="modal-title">{puzzle?.name?.toUpperCase()}</h2>
 
 			<div class="modal-stats">
 				<div class="modal-stat">
@@ -828,5 +904,50 @@
 		gap: 0.875rem;
 		flex-wrap: wrap;
 		padding-top: 0.5rem;
+	}
+
+	/* ===== REDUCED MOTION ACCESSIBILITY ===== */
+	@media (prefers-reduced-motion: reduce) {
+		.progress-bar-fill {
+			transition: none;
+		}
+
+		.loading-ring {
+			animation: none;
+			box-shadow: none;
+		}
+
+		.state-label {
+			animation: none;
+		}
+
+		.modal-scan-line {
+			animation: none;
+		}
+
+		.modal-box {
+			animation: none;
+		}
+
+		.modal-rank {
+			animation: none;
+		}
+
+		.piece-slot.rejected {
+			box-shadow: none;
+		}
+
+		.arcade-btn:hover {
+			box-shadow: none;
+			text-shadow: none;
+		}
+
+		.err-icon {
+			filter: none;
+		}
+
+		.error-panel {
+			box-shadow: none;
+		}
 	}
 </style>

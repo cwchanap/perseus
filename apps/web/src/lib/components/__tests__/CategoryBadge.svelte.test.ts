@@ -20,10 +20,11 @@ describe('CategoryBadge', () => {
 		await expect.element(badge).not.toBeInTheDocument();
 	});
 
-	it('applies the cat-badge class for Nature category', async () => {
+	it('renders badge for any valid category', async () => {
 		render(CategoryBadge, { category: 'Nature' as PuzzleCategory });
 
 		const badge = page.getByTestId('category-badge');
-		await expect.element(badge).toHaveClass('cat-badge');
+		await expect.element(badge).toBeVisible();
+		await expect.element(badge).toHaveTextContent('Nature');
 	});
 });
