@@ -41,7 +41,11 @@ app.use('*', async (c, next) => {
 	const isDev = env.NODE_ENV === 'development';
 	const isProd = !isDev; // Treat unset/staging/production as production
 
-	const DEFAULT_ALLOWED_ORIGINS = ['http://localhost:5173', 'http://localhost:4173'];
+	const DEFAULT_ALLOWED_ORIGINS = [
+		'http://localhost:5173',
+		'http://localhost:4173',
+		'http://localhost:4692'
+	];
 	const envOrigins = (env.ALLOWED_ORIGINS || '')
 		.split(',')
 		.map((origin) => origin.trim())
@@ -130,7 +134,11 @@ export default {
 			const requestOrigin = request.headers.get('origin');
 			// Validate origin against allowed origins before setting CORS header
 			const isDev = env.NODE_ENV === 'development';
-			const DEFAULT_ALLOWED_ORIGINS = ['http://localhost:5173', 'http://localhost:4173'];
+			const DEFAULT_ALLOWED_ORIGINS = [
+				'http://localhost:5173',
+				'http://localhost:4173',
+				'http://localhost:4692'
+			];
 			const envOrigins = (env.ALLOWED_ORIGINS || '')
 				.split(',')
 				.map((origin) => origin.trim())
