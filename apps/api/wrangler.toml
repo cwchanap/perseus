@@ -65,9 +65,9 @@ bindings = [
 	{ name = "PUZZLE_METADATA_DO", class_name = "PuzzleMetadataDO", script_name = "workflows-dev" }
 ]
 
-# Development workflow binding to workflows-dev worker - disabled for local dev due to USER_WORKFLOW bug
-# [[env.dev.workflows]]
-# name = "perseus-dev"
-# binding = "PUZZLE_WORKFLOW"
-# class_name = "PerseusWorkflow"
-# script_name = "workflows-dev"
+# Development workflow binding to workflows-dev worker
+[[env.dev.workflows]]
+name = "perseus-dev"
+binding = "PUZZLE_WORKFLOW"
+class_name = "PerseusWorkflow"
+script_name = "workflows-dev"
