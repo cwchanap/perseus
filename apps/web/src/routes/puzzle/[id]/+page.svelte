@@ -293,7 +293,7 @@
 	{/if}
 
 	<!-- Content -->
-	<main class="puzzle-main" inert={showCelebration}>
+	<main class="puzzle-main" inert={showCelebration} aria-hidden={showCelebration}>
 		{#if loading}
 			<div class="state-center">
 				<div class="loading-ring"></div>
