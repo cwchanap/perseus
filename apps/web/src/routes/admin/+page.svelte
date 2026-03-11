@@ -392,7 +392,7 @@
 					<div class="admin-alert admin-alert--error">{puzzlesError}</div>
 				{:else if puzzles.length === 0}
 					<div class="panel-empty">
-						<p>No missions found. Create your first puzzle.</p>
+						<p>No missions found. Create your first mission.</p>
 					</div>
 				{:else}
 					<div class="puzzle-list">

@@ -96,9 +96,9 @@
 			if (e instanceof ApiError && e.status === 404) {
 				// Clear any saved progress for non-existent puzzle
 				clearProgress(id);
-				error = 'Puzzle no longer available';
+				error = 'Mission no longer available';
 			} else {
-				error = 'Failed to load puzzle';
+				error = 'Failed to load mission';
 			}
 		} finally {
 			loading = false;
@@ -169,6 +169,8 @@
 		let focusableElements: HTMLElement[] = [];
 		let firstElement: HTMLElement | null = null;
 		let lastElement: HTMLElement | null = null;
+		let focusTimeout: ReturnType<typeof setTimeout> | null = null;
+		let restoreFocusTimeout: ReturnType<typeof setTimeout> | null = null;
 
 		// Get all focusable elements within the modal
 		const getFocusableElements = (element: HTMLElement) => {
@@ -208,7 +210,7 @@
 			lastElement = focusableElements[focusableElements.length - 1] || null;
 
 			// Move focus to first element
-			setTimeout(() => firstElement?.focus(), 100);
+			focusTimeout = setTimeout(() => firstElement?.focus(), 100);
 
 			// Add event listeners
 			document.addEventListener('keydown', trapFocus);
@@ -216,12 +218,21 @@
 
 		return {
 			destroy() {
+				if (focusTimeout !== null) {
+					clearTimeout(focusTimeout);
+					focusTimeout = null;
+				}
+				if (restoreFocusTimeout !== null) {
+					clearTimeout(restoreFocusTimeout);
+					restoreFocusTimeout = null;
+				}
+
 				// Remove event listeners
 				document.removeEventListener('keydown', trapFocus);
 
 				// Restore focus when modal closes
 				if (previousFocus) {
-					setTimeout(() => previousFocus?.focus(), 0);
+					restoreFocusTimeout = setTimeout(() => previousFocus?.focus(), 0);
 				}
 			}
 		};
@@ -718,49 +729,6 @@
 	.complete-icon {
 		font-size: 0.5rem;
 		text-shadow: 0 0 8px var(--green);
-	}
-
-	/* ===== ARCADE BUTTON ===== */
-	.arcade-btn {
-		display: inline-block;
-		font-family: var(--font-display);
-		font-size: 0.62rem;
-		font-weight: 700;
-		letter-spacing: 0.2em;
-		text-transform: uppercase;
-		text-decoration: none;
-		border: 1px solid var(--accent);
-		color: var(--accent);
-		background: transparent;
-		padding: 0.625rem 1.75rem;
-		cursor: pointer;
-		transition: all 0.2s ease;
-	}
-
-	.arcade-btn:hover {
-		background: var(--accent-glow);
-		box-shadow: 0 0 25px var(--accent-glow-strong);
-		text-shadow: 0 0 10px var(--accent);
-	}
-
-	.arcade-btn-ghost {
-		display: inline-block;
-		font-family: var(--font-display);
-		font-size: 0.62rem;
-		font-weight: 700;
-		letter-spacing: 0.2em;
-		text-transform: uppercase;
-		border: 1px solid var(--border);
-		color: var(--text-1);
-		background: transparent;
-		padding: 0.625rem 1.75rem;
-		cursor: pointer;
-		transition: all 0.2s ease;
-	}
-
-	.arcade-btn-ghost:hover {
-		border-color: var(--border-bright);
-		color: var(--text-0);
 	}
 
 	/* ===== CELEBRATION MODAL ===== */

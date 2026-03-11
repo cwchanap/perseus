@@ -11,6 +11,7 @@ describe('CategoryBadge', () => {
 		const badge = page.getByTestId('category-badge');
 		await expect.element(badge).toBeVisible();
 		await expect.element(badge).toHaveTextContent('Animals');
+		await expect.element(badge).toHaveClass(/category-badge/);
 	});
 
 	it('renders nothing when category is undefined', async () => {
