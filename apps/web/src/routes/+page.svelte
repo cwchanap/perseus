@@ -324,19 +324,7 @@
 
 	/* Arcade button */
 	.arcade-btn {
-		display: inline-block;
-		font-family: var(--font-display);
 		font-size: 0.65rem;
-		font-weight: 700;
-		letter-spacing: 0.2em;
-		text-transform: uppercase;
-		text-decoration: none;
-		border: 1px solid var(--accent);
-		color: var(--accent);
-		background: transparent;
-		padding: 0.625rem 1.75rem;
-		cursor: pointer;
-		transition: all 0.2s ease;
 		margin-top: 0.5rem;
 		position: relative;
 		overflow: hidden;
@@ -349,12 +337,6 @@
 		background: linear-gradient(135deg, var(--accent-glow) 0%, transparent 60%);
 		opacity: 0;
 		transition: opacity 0.2s ease;
-	}
-
-	.arcade-btn:hover {
-		background: var(--accent-glow);
-		box-shadow: 0 0 25px var(--accent-glow-strong);
-		text-shadow: 0 0 10px var(--accent);
 	}
 
 	.arcade-btn:hover::before {

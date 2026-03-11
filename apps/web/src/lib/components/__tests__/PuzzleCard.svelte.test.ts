@@ -51,6 +51,13 @@ describe('PuzzleCard', () => {
 		await expect.element(img).toHaveAttribute('src', getThumbnailUrl(mockPuzzle.id));
 	});
 
+	it('should mark overlay play label as decorative', async () => {
+		render(PuzzleCard, { puzzle: mockPuzzle });
+
+		const overlay = page.getByTestId('card-overlay');
+		await expect.element(overlay).toHaveAttribute('aria-hidden', 'true');
+	});
+
 	it('should not show best time badge when no best time exists', async () => {
 		vi.mocked(getBestTime).mockReturnValue(null);
 		render(PuzzleCard, { puzzle: mockPuzzle });

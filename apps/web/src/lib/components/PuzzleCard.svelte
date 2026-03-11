@@ -23,7 +23,7 @@
 <a href={resolve(`/puzzle/${puzzle.id}`)} class="puzzle-card" data-testid="puzzle-card">
 	<div class="card-image-wrap">
 		<img src={getThumbnailUrl(puzzle.id)} alt={puzzle.name} class="card-image" loading="lazy" />
-		<div class="card-overlay">
+		<div class="card-overlay" aria-hidden="true" data-testid="card-overlay">
 			<span class="play-label">▶ PLAY</span>
 		</div>
 		<!-- Corner accent brackets -->
