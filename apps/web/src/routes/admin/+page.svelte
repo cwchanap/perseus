@@ -360,7 +360,11 @@
 						</div>
 					</div>
 
-					<button type="submit" disabled={creating || !name || !imageFile} class="submit-btn">
+					<button
+						type="submit"
+						disabled={creating || !name.trim() || !imageFile}
+						class="submit-btn"
+					>
 						{#if creating}
 							<span class="btn-inner">
 								<span class="btn-spinner"></span>

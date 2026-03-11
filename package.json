@@ -30,14 +30,13 @@
 		"prettier": "^3.7.4",
 		"prettier-plugin-svelte": "^3.4.0",
 		"prettier-plugin-tailwindcss": "^0.7.2",
-		"turbo": "^2.3.3"
+		"turbo": "^2.3.3",
+		"wrangler": "4.60.0"
 	},
 	"lint-staged": {
 		"*.{js,ts,svelte,json,md,css,html}": [
 			"prettier --write"
 		]
 	},
-	"dependencies": {
-		"wrangler": "^4.71.0"
-	}
+	"dependencies": {}
 }

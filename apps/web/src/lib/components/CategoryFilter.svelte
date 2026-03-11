@@ -15,74 +15,23 @@
 	];
 </script>
 
-<div
-	class="filter-row"
-	data-testid="category-filter"
-	role="radiogroup"
-	aria-label="Filter by category"
->
+<fieldset class="flex flex-wrap gap-[0.4rem]" data-testid="category-filter">
+	<legend class="sr-only">Filter by category</legend>
 	{#each allCategories as cat (cat)}
-		<button
-			type="button"
-			onclick={() => onSelect(cat)}
-			class="filter-btn"
-			class:active={selected === cat}
-			role="radio"
-			aria-checked={selected === cat}
-		>
-			{cat}
-		</button>
+		<label class="relative">
+			<input
+				type="radio"
+				name="puzzle-category"
+				value={cat}
+				checked={selected === cat}
+				onchange={() => onSelect(cat)}
+				class="peer sr-only"
+			/>
+			<span
+				class="relative inline-flex cursor-pointer items-center border border-(--border) px-3.5 py-[0.4rem] text-[0.58rem] font-(--font-display) tracking-[0.18em] text-(--text-2) uppercase transition-[color,border-color,background,box-shadow,text-shadow] duration-150 ease-in-out peer-checked:border-(--accent) peer-checked:bg-(--accent-glow) peer-checked:text-(--accent) peer-checked:[box-shadow:0_0_18px_var(--accent-glow)] peer-checked:[text-shadow:0_0_8px_var(--accent)] after:pointer-events-none after:absolute after:right-0 after:-bottom-px after:left-0 after:h-[2px] after:bg-(--accent) after:opacity-0 after:[box-shadow:0_0_8px_var(--accent)] after:transition-opacity after:duration-150 after:ease-in-out after:content-[''] peer-checked:after:opacity-100 hover:border-(--accent-dim) hover:bg-(--accent-glow) hover:text-(--accent)"
+			>
+				{cat}
+			</span>
+		</label>
 	{/each}
-</div>
-
-<style>
-	.filter-row {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.4rem;
-	}
-
-	.filter-btn {
-		font-family: var(--font-display);
-		font-size: 0.58rem;
-		font-weight: 600;
-		letter-spacing: 0.18em;
-		text-transform: uppercase;
-		padding: 0.4rem 0.875rem;
-		border: 1px solid var(--border);
-		color: var(--text-2);
-		background: transparent;
-		cursor: pointer;
-		transition:
-			color 0.15s ease,
-			border-color 0.15s ease,
-			background 0.15s ease,
-			box-shadow 0.15s ease;
-		position: relative;
-	}
-
-	.filter-btn:hover {
-		border-color: var(--accent-dim);
-		color: var(--accent);
-		background: var(--accent-glow);
-	}
-
-	.filter-btn.active {
-		border-color: var(--accent);
-		color: var(--accent);
-		background: var(--accent-glow);
-		box-shadow: 0 0 18px var(--accent-glow);
-		text-shadow: 0 0 8px var(--accent);
-	}
-
-	.filter-btn.active::after {
-		content: '';
-		position: absolute;
-		bottom: -1px;
-		left: 0;
-		right: 0;
-		height: 2px;
-		background: var(--accent);
-		box-shadow: 0 0 8px var(--accent);
-	}
-</style>
+</fieldset>

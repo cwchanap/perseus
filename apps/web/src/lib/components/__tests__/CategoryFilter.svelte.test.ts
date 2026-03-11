@@ -5,7 +5,7 @@ import CategoryFilter from '../CategoryFilter.svelte';
 import { PUZZLE_CATEGORIES, CATEGORY_ALL } from '$lib/constants/categories';
 
 describe('CategoryFilter', () => {
-	it('renders a button for each category including All', async () => {
+	it('renders a radio option for each category including All', async () => {
 		render(CategoryFilter, { selected: CATEGORY_ALL, onSelect: vi.fn() });
 
 		const filter = page.getByTestId('category-filter');
@@ -13,20 +13,20 @@ describe('CategoryFilter', () => {
 
 		// All + each puzzle category
 		const allButtons = page.getByRole('radio');
-		await expect.element(allButtons.nth(0)).toHaveTextContent(CATEGORY_ALL);
+		await expect.element(allButtons.nth(0)).toHaveAccessibleName(CATEGORY_ALL);
 		for (let i = 0; i < PUZZLE_CATEGORIES.length; i++) {
-			await expect.element(allButtons.nth(i + 1)).toHaveTextContent(PUZZLE_CATEGORIES[i]);
+			await expect.element(allButtons.nth(i + 1)).toHaveAccessibleName(PUZZLE_CATEGORIES[i]);
 		}
 	});
 
-	it('marks the selected category as aria-checked=true', async () => {
+	it('marks only the selected radio as checked', async () => {
 		render(CategoryFilter, { selected: 'Animals', onSelect: vi.fn() });
 
 		const animalsButton = page.getByRole('radio', { name: 'Animals' });
-		await expect.element(animalsButton).toHaveAttribute('aria-checked', 'true');
+		await expect.element(animalsButton).toBeChecked();
 
 		const allButton = page.getByRole('radio', { name: CATEGORY_ALL });
-		await expect.element(allButton).toHaveAttribute('aria-checked', 'false');
+		await expect.element(allButton).not.toBeChecked();
 	});
 
 	it('calls onSelect with the category when a button is clicked', async () => {
@@ -47,5 +47,12 @@ describe('CategoryFilter', () => {
 		await allButton.click();
 
 		expect(onSelect).toHaveBeenCalledWith(CATEGORY_ALL);
+	});
+
+	it('uses a shared native radio name for grouping', async () => {
+		render(CategoryFilter, { selected: 'Animals', onSelect: vi.fn() });
+
+		const animalsButton = page.getByRole('radio', { name: 'Animals' });
+		await expect.element(animalsButton).toHaveAttribute('name', 'puzzle-category');
 	});
 });

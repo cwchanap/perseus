@@ -415,6 +415,47 @@ describe('Admin Routes - Workflow Trigger Cleanup', () => {
 			expect(storage.deletePuzzleMetadata).toHaveBeenCalledTimes(1);
 			expect(storage.deleteOriginalImage).toHaveBeenCalledTimes(1);
 		});
+
+		it('should return 503 and cleanup when workflow binding is missing', async () => {
+			(storage.uploadOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.createPuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.deletePuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue({
+				success: true
+			});
+			(storage.deleteOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue({
+				success: true
+			});
+
+			const mockEnv = {
+				ADMIN_PASSKEY: 'test-passkey',
+				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+				PUZZLE_METADATA: {} as KVNamespace,
+				PUZZLES_BUCKET: {} as R2Bucket
+			};
+
+			const formData = new FormData();
+			formData.append('name', 'Test Puzzle');
+			formData.append('pieceCount', '225');
+			const blob = new Blob([PNG_HEADER], { type: 'image/png' });
+			formData.append('image', blob, 'test.png');
+
+			const req = new Request('http://localhost/puzzles', {
+				method: 'POST',
+				headers: {
+					cookie: 'session=valid.token'
+				},
+				body: formData
+			});
+
+			const res = await admin.fetch(req, mockEnv as any);
+
+			expect(res.status).toBe(503);
+			const body = (await res.json()) as any;
+			expect(body.error).toBe('service_unavailable');
+			expect(body.message).toContain('not configured');
+			expect(storage.deletePuzzleMetadata).toHaveBeenCalledTimes(1);
+			expect(storage.deleteOriginalImage).toHaveBeenCalledTimes(1);
+		});
 	});
 });
 
