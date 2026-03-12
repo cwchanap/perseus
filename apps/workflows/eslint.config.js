@@ -12,7 +12,7 @@ const tsconfigRootDir = fileURLToPath(new URL('.', import.meta.url));
 export default defineConfig(
 	includeIgnoreFile(gitignorePath),
 	{
-		ignores: ['dist-test/**']
+		ignores: ['dist/**', 'dist-test/**', 'coverage/**']
 	},
 	js.configs.recommended,
 	...ts.configs.recommended,
