@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
+	import { onMount } from 'svelte';
 	import { resolve } from '$app/paths';
 
 	let showGoBack = false;
@@ -65,20 +65,30 @@
 	<title>Error | Perseus</title>
 </svelte:head>
 
-<main class="error-main">
-	<div class="error-box">
-		<div class="error-code">
+<main
+	class="flex min-h-screen items-center justify-center bg-(--bg-0) [background-image:linear-gradient(rgba(0,240,255,0.025)_1px,transparent_1px),linear-gradient(90deg,rgba(0,240,255,0.025)_1px,transparent_1px)]
+[background-size:48px_48px]
+px-6"
+>
+	<div class="flex w-full max-w-[26rem] flex-col items-center gap-4 text-center">
+		<div
+			class="text-[clamp(4rem,15vw,7rem)] leading-none font-(--font-display) font-black
+tracking-[0.1em] text-(--hot)
+[text-shadow:0_0_30px_var(--hot),0_0_60px_var(--hot-glow)]"
+		>
 			{$page.status}
 		</div>
-		<div class="error-line"></div>
-		<h1 class="error-title">
+		<div
+			class="h-px w-full bg-[linear-gradient(90deg,transparent,var(--hot),transparent)] opacity-40"
+		></div>
+		<h1 class="text-[1.1rem] font-(--font-display) font-bold tracking-[0.15em] text-(--text-0)">
 			{#if $page.status === 404}
 				SECTOR NOT FOUND
 			{:else}
 				SYSTEM ERROR
 			{/if}
 		</h1>
-		<p class="error-sub">
+		<p class="text-[0.75rem] leading-[1.6] font-(--font-mono) tracking-[0.05em] text-(--text-2)">
 			{#if $page.status === 404}
 				The mission you're looking for doesn't exist or has been removed.
 			{:else if $page.error}
@@ -87,79 +97,28 @@
 				An unexpected error occurred. Please try again.
 			{/if}
 		</p>
-		<div class="error-actions">
-			<a href={resolve('/')} class="arcade-btn">RETURN TO ARCADE</a>
+		<div class="mt-2 flex flex-wrap justify-center gap-3">
+			<a
+				href={resolve('/')}
+				class="border border-(--accent) px-7 py-2.5 text-[0.62rem] font-(--font-display)
+font-bold tracking-[0.2em] text-(--accent) uppercase transition-all duration-200
+hover:bg-(--accent-glow)
+hover:[box-shadow:0_0_25px_var(--accent-glow-strong)]
+hover:[text-shadow:0_0_10px_var(--accent)]"
+			>
+				RETURN TO ARCADE
+			</a>
 			{#if showGoBack}
-				<button onclick={() => handleGoBack()} class="arcade-btn-ghost">GO BACK</button>
+				<button
+					onclick={() => handleGoBack()}
+					class="border border-(--border) px-7 py-2.5 text-[0.62rem]
+font-(--font-display) font-bold tracking-[0.2em] text-(--text-1) uppercase
+transition-all duration-200 hover:border-(--border-bright)
+hover:text-(--text-0)"
+				>
+					GO BACK
+				</button>
 			{/if}
 		</div>
 	</div>
 </main>
-
-<style>
-	.error-main {
-		min-height: 100vh;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		background-color: var(--bg-0);
-		background-image:
-			linear-gradient(rgba(0, 240, 255, 0.025) 1px, transparent 1px),
-			linear-gradient(90deg, rgba(0, 240, 255, 0.025) 1px, transparent 1px);
-		background-size: 48px 48px;
-		padding: 1.5rem;
-	}
-
-	.error-box {
-		max-width: 26rem;
-		width: 100%;
-		text-align: center;
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 1rem;
-	}
-
-	.error-code {
-		font-family: var(--font-display);
-		font-size: clamp(4rem, 15vw, 7rem);
-		font-weight: 900;
-		letter-spacing: 0.1em;
-		color: var(--hot);
-		text-shadow:
-			0 0 30px var(--hot),
-			0 0 60px var(--hot-glow);
-		line-height: 1;
-	}
-
-	.error-line {
-		width: 100%;
-		height: 1px;
-		background: linear-gradient(90deg, transparent, var(--hot), transparent);
-		opacity: 0.4;
-	}
-
-	.error-title {
-		font-family: var(--font-display);
-		font-size: 1.1rem;
-		font-weight: 700;
-		letter-spacing: 0.15em;
-		color: var(--text-0);
-	}
-
-	.error-sub {
-		font-family: var(--font-mono);
-		font-size: 0.75rem;
-		color: var(--text-2);
-		letter-spacing: 0.05em;
-		line-height: 1.6;
-	}
-
-	.error-actions {
-		display: flex;
-		gap: 0.75rem;
-		flex-wrap: wrap;
-		justify-content: center;
-		margin-top: 0.5rem;
-	}
-</style>

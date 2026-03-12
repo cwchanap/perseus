@@ -14,7 +14,7 @@ import type {
 import { PUBLIC_API_BASE } from '$env/static/public';
 
 // Use empty string (same-origin) as default for Workers deployment.
-// In dev, explicitly set PUBLIC_API_BASE to 'http://localhost:3000'.
+// In local dev, explicitly set PUBLIC_API_BASE to 'http://localhost:4690'.
 const API_BASE = PUBLIC_API_BASE || '';
 
 class ApiError extends Error {

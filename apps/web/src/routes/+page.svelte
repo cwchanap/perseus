@@ -42,47 +42,125 @@
 	<title>Puzzle Arcade | Perseus</title>
 </svelte:head>
 
-<main class="game-main">
-	<div class="content-wrap">
-		<header class="game-header">
-			<div class="header-line"></div>
-			<div class="header-inner">
-				<div class="title-block">
-					<div class="system-tag">// PERSEUS SYSTEM v1.0</div>
-					<h1 class="game-title">PUZZLE<span class="title-glow">ARCADE</span></h1>
+<main
+	class="min-h-screen bg-(--bg-0)
+[background-image:linear-gradient(rgba(0,240,255,0.025)_1px,transparent_1px),linear-gradient(90deg,rgba(0,240,255,0.025)_1px,transparent_1px)]
+[background-size:48px_48px]"
+>
+	<div class="mx-auto max-w-[80rem] px-6 pt-8 pb-16 sm:px-8 sm:pt-10">
+		<header class="mb-12">
+			<div
+				class="h-px bg-[linear-gradient(90deg,transparent_0%,var(--accent)_30%,var(--accent)_70%,transparent_100%)] opacity-40"
+			></div>
+			<div class="flex items-end justify-between gap-4 py-5 max-sm:flex-col max-sm:items-start">
+				<div class="shrink-0">
+					<div
+						class="mb-1 text-[0.65rem] font-(--font-mono) tracking-[0.2em] text-(--accent) opacity-60"
+					>
+						// PERSEUS SYSTEM v1.0
+					</div>
+					<h1
+						class="text-[clamp(1.75rem,5vw,3.25rem)] leading-none font-(--font-display)
+font-black tracking-[0.06em] text-(--text-0) uppercase"
+					>
+						PUZZLE
+						<span
+							class="ml-[0.3em] text-(--accent)
+[text-shadow:0_0_20px_var(--accent),0_0_50px_var(--accent-glow-strong)]"
+						>
+							ARCADE
+						</span>
+					</h1>
 				</div>
-				<div class="header-right">
-					<span class="directive-label">SELECT YOUR MISSION</span>
+				<div
+					class="flex flex-col items-end gap-[0.3rem] text-right max-sm:items-start max-sm:text-left"
+				>
+					<span
+						class="text-[0.7rem] font-(--font-mono) tracking-[0.25em] text-(--text-2) uppercase"
+					>
+						SELECT YOUR MISSION
+					</span>
 					{#if puzzles.length > 0}
-						<span class="count-display">{filteredPuzzles.length} AVAILABLE</span>
+						<span
+							class="text-[0.7rem] font-(--font-mono) tracking-[0.15em] text-(--accent) opacity-70"
+						>
+							{filteredPuzzles.length} AVAILABLE
+						</span>
 					{/if}
 				</div>
 			</div>
-			<div class="header-line"></div>
+			<div
+				class="h-px bg-[linear-gradient(90deg,transparent_0%,var(--accent)_30%,var(--accent)_70%,transparent_100%)] opacity-40"
+			></div>
 
 			{#if puzzles.length > 0}
-				<div class="filter-row">
+				<div class="pt-5">
 					<CategoryFilter selected={selectedCategory} onSelect={handleCategorySelect} />
 				</div>
 			{/if}
 		</header>
 
 		{#if loading}
-			<div class="state-panel" data-testid="loading-state">
-				<div class="loading-ring"></div>
-				<span class="state-label">SCANNING MISSIONS...</span>
+			<div
+				class="flex flex-col items-center justify-center gap-6 py-24"
+				data-testid="loading-state"
+				role="status"
+				aria-live="polite"
+			>
+				<div
+					class="h-11 w-11 rounded-full border-2 border-(--border) border-t-(--accent)
+[box-shadow:0_0_20px_var(--accent-glow)]
+motion-safe:animate-[spin-cw_0.75s_linear_infinite] motion-reduce:animate-none
+motion-reduce:[box-shadow:none]"
+				></div>
+				<span
+					class="text-[0.75rem] font-(--font-mono) tracking-[0.25em] text-(--accent)
+motion-safe:animate-[neon-flicker_3s_ease-in-out_infinite]
+motion-reduce:animate-none"
+				>
+					SCANNING MISSIONS...
+				</span>
 			</div>
 		{:else if error}
-			<div class="error-panel" data-testid="error-state">
-				<div class="error-code">SYS_ERR</div>
-				<p class="error-msg">{error}</p>
-				<button onclick={() => window.location.reload()} class="arcade-btn">RETRY SCAN</button>
+			<div
+				class="mx-auto flex max-w-[32rem] flex-col items-center gap-4 border border-(--hot)
+bg-(--bg-1) px-8 py-12 text-center
+[box-shadow:0_0_40px_var(--hot-glow),inset_0_0_40px_rgba(255,0,102,0.04)]"
+				data-testid="error-state"
+			>
+				<div
+					class="text-[1.75rem] font-(--font-display) font-black tracking-[0.15em] text-(--hot)
+[text-shadow:0_0_25px_var(--hot)]"
+				>
+					SYS_ERR
+				</div>
+				<p class="text-[0.8rem] font-(--font-mono) tracking-[0.05em] text-(--text-1)">{error}</p>
+				<button
+					onclick={() => window.location.reload()}
+					class="relative mt-2 overflow-hidden border border-(--accent) px-7 py-2.5
+text-[0.65rem] font-(--font-display) font-bold tracking-[0.2em]
+text-(--accent) uppercase transition-all duration-200
+before:pointer-events-none before:absolute before:inset-0
+before:bg-[linear-gradient(135deg,var(--accent-glow)_0%,transparent_60%)]
+before:opacity-0 before:transition-opacity before:duration-200
+hover:bg-(--accent-glow)
+hover:[box-shadow:0_0_25px_var(--accent-glow-strong)]
+hover:[text-shadow:0_0_10px_var(--accent)] hover:before:opacity-100"
+				>
+					RETRY SCAN
+				</button>
 			</div>
 		{:else if puzzles.length === 0}
-			<div class="empty-panel" data-testid="empty-state">
-				<div class="empty-icon">
+			<div
+				class="flex flex-col items-center gap-4 border border-(--border) bg-(--bg-1) px-8 py-16 text-center"
+				data-testid="empty-state"
+			>
+				<div
+					class="opacity-35 motion-safe:animate-[float_3s_ease-in-out_infinite]
+motion-reduce:animate-none"
+				>
 					<svg
-						class="icon-svg"
+						class="h-16 w-16 text-(--text-1)"
 						fill="none"
 						viewBox="0 0 24 24"
 						stroke="currentColor"
@@ -96,20 +174,64 @@
 						/>
 					</svg>
 				</div>
-				<h2 class="empty-title">NO MISSIONS AVAILABLE</h2>
-				<p class="empty-sub">Initialize the system via the admin portal.</p>
-				<a href={resolve('/admin')} class="arcade-btn">ADMIN PORTAL</a>
+				<h2
+					class="text-[1rem] font-(--font-display) font-bold tracking-[0.12em] text-(--text-1)
+uppercase"
+				>
+					NO MISSIONS AVAILABLE
+				</h2>
+				<p class="text-[0.9rem] tracking-[0.05em] text-(--text-2)">
+					Initialize the system via the admin portal.
+				</p>
+				<a
+					href={resolve('/admin')}
+					class="relative mt-2 overflow-hidden border border-(--accent) px-7 py-2.5
+text-[0.65rem] font-(--font-display) font-bold tracking-[0.2em]
+text-(--accent) uppercase transition-all duration-200
+before:pointer-events-none before:absolute before:inset-0
+before:bg-[linear-gradient(135deg,var(--accent-glow)_0%,transparent_60%)]
+before:opacity-0 before:transition-opacity before:duration-200
+hover:bg-(--accent-glow)
+hover:[box-shadow:0_0_25px_var(--accent-glow-strong)]
+hover:[text-shadow:0_0_10px_var(--accent)] hover:before:opacity-100"
+				>
+					ADMIN PORTAL
+				</a>
 			</div>
 		{:else if filteredPuzzles.length === 0}
-			<div class="empty-panel">
-				<h2 class="empty-title">NO MISSIONS IN THIS SECTOR</h2>
-				<p class="empty-sub">Select a different category filter to continue.</p>
-				<button onclick={() => (selectedCategory = CATEGORY_ALL)} class="arcade-btn">
+			<div
+				class="flex flex-col items-center gap-4 border border-(--border) bg-(--bg-1) px-8 py-16 text-center"
+			>
+				<h2
+					class="text-[1rem] font-(--font-display) font-bold tracking-[0.12em] text-(--text-1)
+uppercase"
+				>
+					NO MISSIONS IN THIS SECTOR
+				</h2>
+				<p class="text-[0.9rem] tracking-[0.05em] text-(--text-2)">
+					Select a different category filter to continue.
+				</p>
+				<button
+					onclick={() => (selectedCategory = CATEGORY_ALL)}
+					class="relative mt-2 overflow-hidden border border-(--accent) px-7 py-2.5
+text-[0.65rem] font-(--font-display) font-bold tracking-[0.2em]
+text-(--accent) uppercase transition-all duration-200
+before:pointer-events-none before:absolute before:inset-0
+before:bg-[linear-gradient(135deg,var(--accent-glow)_0%,transparent_60%)]
+before:opacity-0 before:transition-opacity before:duration-200
+hover:bg-(--accent-glow)
+hover:[box-shadow:0_0_25px_var(--accent-glow-strong)]
+hover:[text-shadow:0_0_10px_var(--accent)] hover:before:opacity-100"
+				>
 					CLEAR FILTER
 				</button>
 			</div>
 		{:else}
-			<div class="puzzle-grid" data-testid="puzzle-grid">
+			<div
+				class="grid grid-cols-1 gap-5 motion-safe:animate-[slide-up_0.4s_ease-out]
+motion-reduce:animate-none sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4"
+				data-testid="puzzle-grid"
+			>
 				{#each filteredPuzzles as puzzle (puzzle.id)}
 					<PuzzleCard {puzzle} />
 				{/each}
@@ -117,255 +239,3 @@
 		{/if}
 	</div>
 </main>
-
-<style>
-	.game-main {
-		min-height: 100vh;
-		background-color: var(--bg-0);
-		background-image:
-			linear-gradient(rgba(0, 240, 255, 0.025) 1px, transparent 1px),
-			linear-gradient(90deg, rgba(0, 240, 255, 0.025) 1px, transparent 1px);
-		background-size: 48px 48px;
-	}
-
-	.content-wrap {
-		max-width: 80rem;
-		margin: 0 auto;
-		padding: 2rem 1.5rem 4rem;
-	}
-
-	@media (min-width: 640px) {
-		.content-wrap {
-			padding: 2.5rem 2rem 4rem;
-		}
-	}
-
-	/* Header */
-	.game-header {
-		margin-bottom: 3rem;
-	}
-
-	.header-line {
-		height: 1px;
-		background: linear-gradient(
-			90deg,
-			transparent 0%,
-			var(--accent) 30%,
-			var(--accent) 70%,
-			transparent 100%
-		);
-		opacity: 0.4;
-	}
-
-	.header-inner {
-		display: flex;
-		align-items: flex-end;
-		justify-content: space-between;
-		padding: 1.25rem 0;
-		gap: 1rem;
-	}
-
-	.title-block {
-		flex-shrink: 0;
-	}
-
-	.system-tag {
-		font-family: var(--font-mono);
-		font-size: 0.65rem;
-		color: var(--accent);
-		letter-spacing: 0.2em;
-		opacity: 0.6;
-		margin-bottom: 0.25rem;
-	}
-
-	.game-title {
-		font-family: var(--font-display);
-		font-size: clamp(1.75rem, 5vw, 3.25rem);
-		font-weight: 900;
-		letter-spacing: 0.06em;
-		color: var(--text-0);
-		line-height: 1;
-		text-transform: uppercase;
-	}
-
-	.title-glow {
-		color: var(--accent);
-		text-shadow:
-			0 0 20px var(--accent),
-			0 0 50px var(--accent-glow-strong);
-		margin-left: 0.3em;
-	}
-
-	.header-right {
-		text-align: right;
-		display: flex;
-		flex-direction: column;
-		gap: 0.3rem;
-		align-items: flex-end;
-	}
-
-	.directive-label {
-		font-family: var(--font-mono);
-		font-size: 0.7rem;
-		letter-spacing: 0.25em;
-		color: var(--text-2);
-		text-transform: uppercase;
-	}
-
-	.count-display {
-		font-family: var(--font-mono);
-		font-size: 0.7rem;
-		letter-spacing: 0.15em;
-		color: var(--accent);
-		opacity: 0.7;
-	}
-
-	.filter-row {
-		padding-top: 1.25rem;
-	}
-
-	/* Loading state */
-	.state-panel {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		justify-content: center;
-		padding: 6rem 0;
-		gap: 1.5rem;
-	}
-
-	.loading-ring {
-		width: 2.75rem;
-		height: 2.75rem;
-		border: 2px solid var(--border);
-		border-top-color: var(--accent);
-		border-radius: 50%;
-		animation: spin-cw 0.75s linear infinite;
-		box-shadow: 0 0 20px var(--accent-glow);
-	}
-
-	.state-label {
-		font-family: var(--font-mono);
-		font-size: 0.75rem;
-		letter-spacing: 0.25em;
-		color: var(--accent);
-		animation: neon-flicker 3s ease-in-out infinite;
-	}
-
-	/* Error state */
-	.error-panel {
-		background: var(--bg-1);
-		border: 1px solid var(--hot);
-		padding: 3rem 2rem;
-		text-align: center;
-		box-shadow:
-			0 0 40px var(--hot-glow),
-			inset 0 0 40px rgba(255, 0, 102, 0.04);
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 1rem;
-	}
-
-	.error-code {
-		font-family: var(--font-display);
-		font-size: 1.75rem;
-		font-weight: 900;
-		color: var(--hot);
-		text-shadow: 0 0 25px var(--hot);
-		letter-spacing: 0.15em;
-	}
-
-	.error-msg {
-		font-family: var(--font-mono);
-		font-size: 0.8rem;
-		color: var(--text-1);
-		letter-spacing: 0.05em;
-	}
-
-	/* Empty state */
-	.empty-panel {
-		background: var(--bg-1);
-		border: 1px solid var(--border);
-		padding: 4rem 2rem;
-		text-align: center;
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 1rem;
-	}
-
-	.empty-icon {
-		opacity: 0.35;
-		animation: float 3s ease-in-out infinite;
-	}
-
-	.icon-svg {
-		width: 4rem;
-		height: 4rem;
-		color: var(--text-1);
-	}
-
-	.empty-title {
-		font-family: var(--font-display);
-		font-size: 1rem;
-		font-weight: 700;
-		color: var(--text-1);
-		letter-spacing: 0.12em;
-		text-transform: uppercase;
-	}
-
-	.empty-sub {
-		font-family: var(--font-body);
-		font-size: 0.9rem;
-		color: var(--text-2);
-		letter-spacing: 0.05em;
-	}
-
-	/* Arcade button */
-	.arcade-btn {
-		font-size: 0.65rem;
-		margin-top: 0.5rem;
-		position: relative;
-		overflow: hidden;
-	}
-
-	.arcade-btn::before {
-		content: '';
-		position: absolute;
-		inset: 0;
-		background: linear-gradient(135deg, var(--accent-glow) 0%, transparent 60%);
-		opacity: 0;
-		transition: opacity 0.2s ease;
-	}
-
-	.arcade-btn:hover::before {
-		opacity: 1;
-	}
-
-	/* Puzzle grid */
-	.puzzle-grid {
-		display: grid;
-		grid-template-columns: repeat(1, 1fr);
-		gap: 1.25rem;
-		animation: slide-up 0.4s ease-out;
-	}
-
-	@media (min-width: 540px) {
-		.puzzle-grid {
-			grid-template-columns: repeat(2, 1fr);
-		}
-	}
-
-	@media (min-width: 768px) {
-		.puzzle-grid {
-			grid-template-columns: repeat(3, 1fr);
-		}
-	}
-
-	@media (min-width: 1024px) {
-		.puzzle-grid {
-			grid-template-columns: repeat(4, 1fr);
-		}
-	}
-</style>
