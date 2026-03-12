@@ -52,7 +52,9 @@ describe('CategoryFilter', () => {
 	it('uses a shared native radio name for grouping', async () => {
 		render(CategoryFilter, { selected: 'Animals', onSelect: vi.fn() });
 
-		const animalsButton = page.getByRole('radio', { name: 'Animals' });
-		await expect.element(animalsButton).toHaveAttribute('name', 'puzzle-category');
+		const radios = page.getByRole('radio');
+		for (let i = 0; i <= PUZZLE_CATEGORIES.length; i++) {
+			await expect.element(radios.nth(i)).toHaveAttribute('name', 'puzzle-category');
+		}
 	});
 });

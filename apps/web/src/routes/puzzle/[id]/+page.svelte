@@ -18,6 +18,7 @@
 	let puzzle: Puzzle | null = $state(null);
 	let loading = $state(true);
 	let error: string | null = $state(null);
+	let errorStatus: number | null = $state(null);
 	let placedPieces: PlacedPiece[] = $state([]);
 	let showCelebration = $state(false);
 	let rejectedPiece: number | null = $state(null);
@@ -72,6 +73,7 @@
 	async function loadPuzzle(id: string) {
 		loading = true;
 		error = null;
+		errorStatus = null;
 
 		try {
 			puzzle = await fetchPuzzle(id);
@@ -93,6 +95,7 @@
 			timerStarted = false;
 			isNewBest = false;
 		} catch (e) {
+			errorStatus = e instanceof ApiError ? e.status : null;
 			if (e instanceof ApiError && e.status === 404) {
 				// Clear any saved progress for non-existent puzzle
 				clearProgress(id);
@@ -249,7 +252,7 @@
 	<title>{puzzle?.name || 'Mission'} | Perseus Arcade</title>
 </svelte:head>
 
-<div class="puzzle-page">
+<div class="puzzle-page" inert={showCelebration} aria-hidden={showCelebration}>
 	<!-- HUD Header -->
 	<header class="hud-header">
 		<div class="hud-left">
@@ -304,7 +307,7 @@
 	{/if}
 
 	<!-- Content -->
-	<main class="puzzle-main" inert={showCelebration} aria-hidden={showCelebration}>
+	<main class="puzzle-main">
 		{#if loading}
 			<div class="state-center">
 				<div class="loading-ring"></div>
@@ -327,7 +330,13 @@
 					/>
 				</svg>
 				<h2 class="err-title">{error}</h2>
-				<p class="err-sub">This mission may have been deleted.</p>
+				<p class="err-sub">
+					{#if errorStatus === 404}
+						This mission may have been deleted.
+					{:else}
+						An error occurred while loading the mission. Please try again later.
+					{/if}
+				</p>
 				<a href={resolve('/')} class="arcade-btn">RETURN TO ARCADE</a>
 			</div>
 		{:else if puzzle}

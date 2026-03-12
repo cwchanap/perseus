@@ -411,9 +411,17 @@ describe('Admin Routes - Workflow Trigger Cleanup', () => {
 			expect(body.error).toBe('internal_error');
 			expect(body.message).toBe('Failed to start puzzle processing');
 
-			// Verify both cleanup operations were called
-			expect(storage.deletePuzzleMetadata).toHaveBeenCalledTimes(1);
-			expect(storage.deleteOriginalImage).toHaveBeenCalledTimes(1);
+			const createdPuzzleMetadata = (storage.createPuzzleMetadata as ReturnType<typeof vi.fn>).mock
+				.calls[0][1];
+
+			expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(
+				mockEnv.PUZZLE_METADATA,
+				createdPuzzleMetadata.id
+			);
+			expect(storage.deleteOriginalImage).toHaveBeenCalledWith(
+				mockEnv.PUZZLES_BUCKET,
+				createdPuzzleMetadata.id
+			);
 		});
 
 		it('should return 503 and cleanup when workflow binding is missing', async () => {
@@ -453,8 +461,17 @@ describe('Admin Routes - Workflow Trigger Cleanup', () => {
 			const body = (await res.json()) as any;
 			expect(body.error).toBe('service_unavailable');
 			expect(body.message).toContain('not configured');
-			expect(storage.deletePuzzleMetadata).toHaveBeenCalledTimes(1);
-			expect(storage.deleteOriginalImage).toHaveBeenCalledTimes(1);
+			const createdPuzzleMetadata = (storage.createPuzzleMetadata as ReturnType<typeof vi.fn>).mock
+				.calls[0][1];
+
+			expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(
+				mockEnv.PUZZLE_METADATA,
+				createdPuzzleMetadata.id
+			);
+			expect(storage.deleteOriginalImage).toHaveBeenCalledWith(
+				mockEnv.PUZZLES_BUCKET,
+				createdPuzzleMetadata.id
+			);
 		});
 	});
 });
