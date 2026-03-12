@@ -6,17 +6,8 @@ bun.lock
 bun.lockb
 
 # Build Output
-.svelte-kit
-build
 dist
-apps/*/.svelte-kit
-apps/*/build
-apps/*/dist
+dist-test
 
 # Test Coverage
 coverage
-apps/*/coverage
-
-# Miscellaneous
-/static/
-apps/*/static/
