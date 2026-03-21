@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { MAX_IMAGE_BYTES, padPixelsToTarget, applyMaskAlpha, getMetadata } from './helpers';
 
 // ─── MAX_IMAGE_BYTES ──────────────────────────────────────────────────────────
