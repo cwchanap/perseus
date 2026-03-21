@@ -118,7 +118,7 @@ describe('verifySession', () => {
 			.replace(/\+/g, '-')
 			.replace(/\//g, '_')
 			.replace(/=+$/, '');
-		const tampered = `${fakePayload}.${parts[1]}.${parts[2]}`;
+		const tampered = `${parts[0]}.${fakePayload}.${parts[2]}`;
 		expect(await verifySession(tampered)).toBeNull();
 	});
 

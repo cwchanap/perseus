@@ -222,24 +222,41 @@ describe('loginRateLimit – IP detection', () => {
 		const ip = uniqueIp();
 		const app = new Hono();
 		app.use('/login', loginRateLimit);
-		app.post('/login', (c) => c.json({}, 200 as any));
+		app.post('/login', (c) => c.json({}, 401 as any));
 
-		const res = await app.fetch(
+		const makeRealIpReq = () =>
 			new Request('http://localhost/login', {
 				method: 'POST',
 				headers: { 'x-real-ip': ip, 'user-agent': 'test' }
-			})
-		);
-		expect(res.status).toBe(200);
+			});
+
+		// Exhaust the 5-attempt window using x-real-ip as the IP source
+		for (let i = 0; i < 5; i++) {
+			const res = await app.fetch(makeRealIpReq());
+			expect(res.status).toBe(401); // allowed through
+		}
+
+		// 6th request must be blocked — confirms key derivation used x-real-ip
+		const blocked = await app.fetch(makeRealIpReq());
+		expect(blocked.status).toBe(429);
 	});
 
 	it('uses "unknown" when no IP header is present', async () => {
 		const app = new Hono();
 		app.use('/login', loginRateLimit);
-		app.post('/login', (c) => c.json({}, 200 as any));
+		app.post('/login', (c) => c.json({}, 401 as any));
 
 		// No IP headers, no user-agent → key = "unknown|unknown"
-		const res = await app.fetch(new Request('http://localhost/login', { method: 'POST' }));
-		expect(res.status).toBe(200);
+		const makeAnonymousReq = () => new Request('http://localhost/login', { method: 'POST' });
+
+		// Exhaust the 5-attempt window
+		for (let i = 0; i < 5; i++) {
+			const res = await app.fetch(makeAnonymousReq());
+			expect(res.status).toBe(401); // allowed through
+		}
+
+		// 6th request must be blocked — confirms "unknown|unknown" key accumulates state
+		const blocked = await app.fetch(makeAnonymousReq());
+		expect(blocked.status).toBe(429);
 	});
 });

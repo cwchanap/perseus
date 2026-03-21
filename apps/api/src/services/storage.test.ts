@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { Puzzle } from '../types/index';
@@ -8,8 +8,10 @@ import type { Puzzle } from '../types/index';
 // We set it before the dynamic import so it points to a temp directory.
 let tempDir: string;
 let storageModule: typeof import('./storage');
+let savedOriginalDataDir: string | undefined;
 
 beforeAll(async () => {
+	savedOriginalDataDir = process.env.DATA_DIR;
 	tempDir = await mkdtemp(join(tmpdir(), 'perseus-storage-test-'));
 	process.env.DATA_DIR = tempDir;
 	// Dynamic import so DATA_DIR is set before the module initializes
@@ -19,6 +21,11 @@ beforeAll(async () => {
 
 afterAll(async () => {
 	await rm(tempDir, { recursive: true, force: true });
+	if (savedOriginalDataDir === undefined) {
+		delete process.env.DATA_DIR;
+	} else {
+		process.env.DATA_DIR = savedOriginalDataDir;
+	}
 });
 
 function makePuzzle(id: string, overrides: Partial<Puzzle> = {}): Puzzle {
@@ -168,12 +175,20 @@ describe('getPuzzle', () => {
 	});
 
 	it('normalises createdAt to a number even if stored as string', async () => {
-		const { createPuzzle, getPuzzle } = storageModule;
-		// Store with numeric createdAt; storage.ts will read it back as number
+		const { createPuzzle, getPuzzle, getPuzzleDir } = storageModule;
 		const puzzle = makePuzzle('get-date-test', { createdAt: 1700000000000 });
 		await createPuzzle(puzzle);
+
+		// Overwrite the metadata file so createdAt is a JSON string instead of a number,
+		// exercising the `new Date(parsed.createdAt).getTime()` branch in getPuzzle.
+		const metadataPath = join(getPuzzleDir('get-date-test'), 'metadata.json');
+		const raw = JSON.parse(await readFile(metadataPath, 'utf-8')) as Record<string, unknown>;
+		raw.createdAt = '2023-11-15T00:00:00.000Z'; // ISO string representation
+		await writeFile(metadataPath, JSON.stringify(raw), 'utf-8');
+
 		const retrieved = await getPuzzle('get-date-test');
 		expect(typeof retrieved?.createdAt).toBe('number');
+		expect(retrieved?.createdAt).toBe(new Date('2023-11-15T00:00:00.000Z').getTime());
 	});
 });
 
