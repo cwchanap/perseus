@@ -244,42 +244,22 @@ describe('deletePuzzle', () => {
 // ─── listPuzzles / listPuzzlesSorted ──────────────────────────────────────────
 
 describe('listPuzzles and listPuzzlesSorted', () => {
-	// Use a fresh storage module import with a dedicated sub-dir to avoid
-	// interference from other tests creating puzzles in the same temp dir.
-	let listModule: typeof import('./storage');
-	let listTempDir: string;
-
-	beforeAll(async () => {
-		listTempDir = await mkdtemp(join(tmpdir(), 'perseus-list-test-'));
-		const prevDataDir = process.env.DATA_DIR;
-		process.env.DATA_DIR = listTempDir;
-		// Force a fresh module with the new DATA_DIR
-		listModule = await import('./storage?list-test');
-		await listModule.initializeStorage();
-		process.env.DATA_DIR = prevDataDir;
-	});
-
-	afterAll(async () => {
-		await rm(listTempDir, { recursive: true, force: true });
-	});
-
+	// Wipe and re-create the puzzles directory before each test so the list
+	// results are not polluted by puzzles created in other describe blocks.
 	beforeEach(async () => {
-		// Clean up by removing and re-initialising puzzles dir
-		const { rm: rmFs } = await import('node:fs/promises');
-		const { join: joinPath } = await import('node:path');
-		await rmFs(joinPath(listTempDir, 'puzzles'), { recursive: true, force: true });
-		await listModule.initializeStorage();
+		await rm(join(tempDir, 'puzzles'), { recursive: true, force: true });
+		await storageModule.initializeStorage();
 	});
 
 	it('listPuzzles returns empty array when no puzzles exist', async () => {
-		const result = await listModule.listPuzzles();
+		const result = await storageModule.listPuzzles();
 		expect(result).toEqual([]);
 	});
 
 	it('listPuzzles returns summaries of created puzzles', async () => {
-		await listModule.createPuzzle(makePuzzle('list-a', { name: 'Alpha' }));
-		await listModule.createPuzzle(makePuzzle('list-b', { name: 'Beta' }));
-		const result = await listModule.listPuzzles();
+		await storageModule.createPuzzle(makePuzzle('list-a', { name: 'Alpha' }));
+		await storageModule.createPuzzle(makePuzzle('list-b', { name: 'Beta' }));
+		const result = await storageModule.listPuzzles();
 		expect(result).toHaveLength(2);
 		const names = result.map((p) => p.name).sort();
 		expect(names).toEqual(['Alpha', 'Beta']);
@@ -287,9 +267,11 @@ describe('listPuzzles and listPuzzlesSorted', () => {
 
 	it('listPuzzlesSorted returns puzzles ordered newest first', async () => {
 		const now = Date.now();
-		await listModule.createPuzzle(makePuzzle('list-old', { name: 'Old', createdAt: now - 5000 }));
-		await listModule.createPuzzle(makePuzzle('list-new', { name: 'New', createdAt: now }));
-		const result = await listModule.listPuzzlesSorted();
+		await storageModule.createPuzzle(
+			makePuzzle('list-old', { name: 'Old', createdAt: now - 5000 })
+		);
+		await storageModule.createPuzzle(makePuzzle('list-new', { name: 'New', createdAt: now }));
+		const result = await storageModule.listPuzzlesSorted();
 		expect(result[0].name).toBe('New');
 		expect(result[1].name).toBe('Old');
 	});
