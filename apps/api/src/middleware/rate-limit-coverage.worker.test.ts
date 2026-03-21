@@ -206,6 +206,151 @@ describe('rate-limit in-memory with prior entry', () => {
 	});
 });
 
+describe('rate-limit KV read error - production critical logging', () => {
+	beforeEach(() => {
+		__resetRateLimitStore();
+	});
+
+	it('logs [CRITICAL] when KV.get throws in production mode', async () => {
+		const failingKV = {
+			get: vi.fn(() => {
+				throw new Error('KV outage');
+			}),
+			put: vi.fn(async () => {}),
+			delete: vi.fn(async () => {})
+		};
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const ctx = createContext('7.7.7.7', failingKV, 'production');
+		const next = vi.fn();
+
+		await loginRateLimit(ctx, next);
+
+		expect(consoleSpy).toHaveBeenCalledWith(
+			expect.stringContaining('[CRITICAL] KV read failed'),
+			expect.any(Error)
+		);
+		consoleSpy.mockRestore();
+	});
+});
+
+describe('rate-limit mergeRateLimitEntries - both KV and in-memory have entries', () => {
+	beforeEach(() => {
+		__resetRateLimitStore();
+	});
+
+	it('merges KV and in-memory entries when both exist (most restrictive wins)', async () => {
+		const kv = {
+			get: vi.fn(async () => null),
+			put: vi.fn(async () => {}),
+			delete: vi.fn(async () => {})
+		};
+		const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+		// First failed login — writes to both KV mock and in-memory rateLimitStore
+		const ctx1 = createContext('3.3.3.3', kv, 'development');
+		const next1 = vi.fn(async () => {
+			ctx1.res.status = 401;
+		});
+		await loginRateLimit(ctx1, next1);
+
+		// At this point rateLimitStore has an entry. Now make KV.get return the stored entry
+		// so that getRateLimitEntry finds entries in BOTH places, hitting mergeRateLimitEntries.
+		const storedEntry = kv.put.mock.calls[0]?.[1];
+		kv.get = vi.fn(async () => (storedEntry ? JSON.parse(storedEntry as string) : null));
+
+		// Second failed login — KV returns entry, rateLimitStore also has entry → merge
+		const ctx2 = createContext('3.3.3.3', kv, 'development');
+		const next2 = vi.fn(async () => {
+			ctx2.res.status = 401;
+		});
+		await loginRateLimit(ctx2, next2);
+
+		// Both calls should have allowed the request through (only 2 attempts, below limit)
+		expect(next1).toHaveBeenCalled();
+		expect(next2).toHaveBeenCalled();
+
+		consoleSpy.mockRestore();
+	});
+});
+
+describe('rate-limit trusted proxy with peer IP not in list', () => {
+	beforeEach(() => {
+		__resetRateLimitStore();
+	});
+
+	it('warns and falls through to UUID when peerIP is not in TRUSTED_PROXY_LIST', async () => {
+		const kv = {
+			get: vi.fn(async () => null),
+			put: vi.fn(async () => {}),
+			delete: vi.fn(async () => {})
+		};
+		// Context: TRUSTED_PROXY=true, TRUSTED_PROXY_LIST configured but peerIP is NOT in list
+		const ctx: any = {
+			env: {
+				PUZZLE_METADATA: kv,
+				TRUSTED_PROXY: 'true',
+				TRUSTED_PROXY_LIST: '10.0.0.1,10.0.0.2'
+			},
+			req: {
+				ip: '192.168.99.99', // not in TRUSTED_PROXY_LIST
+				header: vi.fn((name: string) => {
+					if (name === 'cf-connecting-ip') return null;
+					if (name === 'x-forwarded-for') return '203.0.113.1';
+					return null;
+				})
+			},
+			json: vi.fn((body: any, status: number) => ({ body, status })),
+			res: { status: 200 } as any
+		};
+
+		const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const next = vi.fn();
+
+		await loginRateLimit(ctx, next);
+
+		// Should warn about untrusted peer and use UUID fallback (effective rate limiting disabled)
+		expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('X-Forwarded-For rejected'));
+		expect(next).toHaveBeenCalled();
+		warnSpy.mockRestore();
+	});
+
+	it('uses XFF IP when peerIP is in TRUSTED_PROXY_LIST', async () => {
+		const kv = {
+			get: vi.fn(async () => null),
+			put: vi.fn(async () => {}),
+			delete: vi.fn(async () => {})
+		};
+		const ctx: any = {
+			env: {
+				PUZZLE_METADATA: kv,
+				TRUSTED_PROXY: 'true',
+				TRUSTED_PROXY_LIST: '10.0.0.1,10.0.0.2'
+			},
+			req: {
+				ip: '10.0.0.1', // IS in TRUSTED_PROXY_LIST
+				header: vi.fn((name: string) => {
+					if (name === 'cf-connecting-ip') return null;
+					if (name === 'x-forwarded-for') return '203.0.113.5';
+					return null;
+				})
+			},
+			json: vi.fn((body: any, status: number) => ({ body, status })),
+			res: { status: 401 } as any
+		};
+
+		const next = vi.fn(async () => {
+			ctx.res.status = 401;
+		});
+
+		await loginRateLimit(ctx, next);
+
+		expect(next).toHaveBeenCalled();
+		// KV key should contain the XFF IP (203.0.113.5), not the peer IP
+		const putCall = kv.put.mock.calls[0]?.[0] as string | undefined;
+		expect(putCall).toContain('203.0.113.5');
+	});
+});
+
 describe('rate-limit post-auth tracking - 403 response', () => {
 	beforeEach(() => {
 		__resetRateLimitStore();

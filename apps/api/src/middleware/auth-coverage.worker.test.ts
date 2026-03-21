@@ -370,3 +370,250 @@ describe('verifySession - KV read failure paths', () => {
 		}
 	});
 });
+
+describe('isSessionActive - KV throws error (retry logic)', () => {
+	beforeEach(() => {
+		mockKV = createMockKVStore();
+		baseEnv.PUZZLE_METADATA = mockKV;
+	});
+
+	it('retries on KV error and returns false when all retries fail (no fallback) in dev', async () => {
+		// Use an async throwing KV so retries complete without fake timers
+		const throwingKV = {
+			get: vi.fn(async () => {
+				throw new Error('KV connection error');
+			}),
+			put: vi.fn(async () => {}),
+			delete: vi.fn(async () => {})
+		} as unknown as KVNamespace;
+
+		const env: Env = {
+			...baseEnv,
+			NODE_ENV: 'development',
+			PUZZLE_METADATA: throwingKV
+		} as unknown as Env;
+
+		// Create a fresh token stored in a separate working KV (not in throwingKV fallback)
+		const freshKV = createMockKVStore();
+		const freshEnv: Env = {
+			...baseEnv,
+			PUZZLE_METADATA: freshKV
+		} as Env;
+		const token = await createSession(freshEnv, {
+			userId: 'admin',
+			username: 'admin',
+			role: 'admin'
+		});
+
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+		const result = await verifySession(env, token);
+
+		// All retries failed, no fallback → returns null (session not found)
+		expect(result).toBeNull();
+		// Error should have been logged for each retry attempt
+		expect(consoleSpy).toHaveBeenCalledWith(
+			expect.stringContaining('Failed to read session store'),
+			expect.any(Error)
+		);
+		// Dev fallback warning should be logged
+		expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('KV read failed after retries'));
+
+		consoleSpy.mockRestore();
+		warnSpy.mockRestore();
+	}, 10000);
+
+	it('throws when all KV retries fail in production mode', async () => {
+		const throwingKV = {
+			get: vi.fn(async () => {
+				throw new Error('KV production outage');
+			}),
+			put: vi.fn(async () => {}),
+			delete: vi.fn(async () => {})
+		} as unknown as KVNamespace;
+
+		const env: Env = {
+			...baseEnv,
+			NODE_ENV: 'production',
+			PUZZLE_METADATA: throwingKV
+		} as unknown as Env;
+
+		// Create token with a working KV so it's not in the throwingKV fallback
+		const freshKV = createMockKVStore();
+		const freshEnv: Env = { ...baseEnv, PUZZLE_METADATA: freshKV } as Env;
+		const token = await createSession(freshEnv, {
+			userId: 'admin',
+			username: 'admin',
+			role: 'admin'
+		});
+
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		await expect(verifySession(env, token)).rejects.toThrow('KV production outage');
+
+		consoleSpy.mockRestore();
+	}, 10000);
+
+	it('uses fallback session when KV retries fail in development and fallback exists', async () => {
+		// Create session using dev in-memory fallback (no KV)
+		const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const devEnvNoKV: Env = {
+			...baseEnv,
+			NODE_ENV: 'development',
+			PUZZLE_METADATA: undefined
+		} as unknown as Env;
+
+		const token = await createSession(devEnvNoKV, {
+			userId: 'admin',
+			username: 'admin',
+			role: 'admin'
+		});
+		warnSpy.mockRestore();
+
+		// Now verify with a KV that always throws — should fall through to in-memory fallback
+		const throwingKV = {
+			get: vi.fn(async () => {
+				throw new Error('KV error');
+			}),
+			put: vi.fn(async () => {}),
+			delete: vi.fn(async () => {})
+		} as unknown as KVNamespace;
+
+		const env: Env = {
+			...baseEnv,
+			NODE_ENV: 'development',
+			PUZZLE_METADATA: throwingKV
+		} as unknown as Env;
+
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const warnSpy2 = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+		const result = await verifySession(env, token);
+
+		// Should find session in fallback store
+		expect(result).not.toBeNull();
+		expect(result?.userId).toBe('admin');
+
+		consoleSpy.mockRestore();
+		warnSpy2.mockRestore();
+	}, 10000);
+});
+
+describe('isSessionActive - no KV configured', () => {
+	it('throws in production when PUZZLE_METADATA is not configured', async () => {
+		const prodEnvNoKV: Env = {
+			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+			NODE_ENV: 'production',
+			PUZZLE_METADATA: undefined
+		} as unknown as Env;
+
+		// We can't call createSession with this env (it would throw), so build token manually
+		const encoder = new TextEncoder();
+		const payload = {
+			userId: 'admin',
+			username: 'admin',
+			role: 'admin',
+			iat: Date.now(),
+			exp: Date.now() + 86400000
+		};
+		const payloadB64 = btoa(JSON.stringify(payload))
+			.replace(/\+/g, '-')
+			.replace(/\//g, '_')
+			.replace(/=+$/g, '');
+		const key = await crypto.subtle.importKey(
+			'raw',
+			encoder.encode(prodEnvNoKV.JWT_SECRET),
+			{ name: 'HMAC', hash: 'SHA-256' },
+			false,
+			['sign']
+		);
+		const sig = await crypto.subtle.sign('HMAC', key, encoder.encode(payloadB64));
+		const sigB64 = btoa(String.fromCharCode(...new Uint8Array(sig)))
+			.replace(/\+/g, '-')
+			.replace(/\//g, '_')
+			.replace(/=+$/g, '');
+		const token = `${payloadB64}.${sigB64}`;
+
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		await expect(verifySession(prodEnvNoKV, token)).rejects.toThrow(
+			'PUZZLE_METADATA not configured'
+		);
+
+		consoleSpy.mockRestore();
+	});
+});
+
+describe('checkFallbackSession edge cases', () => {
+	it('returns false for a session not in the fallback store', async () => {
+		// Verify with dev no-KV env and a token that was never stored in fallback
+		const devEnvNoKV: Env = {
+			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+			NODE_ENV: 'development',
+			PUZZLE_METADATA: undefined
+		} as unknown as Env;
+
+		const encoder = new TextEncoder();
+		const payload = {
+			userId: 'admin',
+			username: 'admin',
+			role: 'admin',
+			iat: Date.now(),
+			exp: Date.now() + 86400000
+		};
+		const payloadB64 = btoa(JSON.stringify(payload))
+			.replace(/\+/g, '-')
+			.replace(/\//g, '_')
+			.replace(/=+$/g, '');
+		const key = await crypto.subtle.importKey(
+			'raw',
+			encoder.encode(devEnvNoKV.JWT_SECRET),
+			{ name: 'HMAC', hash: 'SHA-256' },
+			false,
+			['sign']
+		);
+		const sig = await crypto.subtle.sign('HMAC', key, encoder.encode(payloadB64));
+		const sigB64 = btoa(String.fromCharCode(...new Uint8Array(sig)))
+			.replace(/\+/g, '-')
+			.replace(/\//g, '_')
+			.replace(/=+$/g, '');
+		// This token has a valid signature but was never stored in the fallback
+		const token = `${payloadB64}.${sigB64}`;
+
+		const result = await verifySession(devEnvNoKV, token);
+
+		// Token validates cryptographically but isn't in the fallback store → null
+		expect(result).toBeNull();
+	});
+
+	it('returns false for an expired fallback session', async () => {
+		vi.useFakeTimers();
+
+		try {
+			// Create a dev session (no KV) which goes into the in-memory fallback
+			const devEnvNoKV: Env = {
+				...baseEnv,
+				NODE_ENV: 'development',
+				PUZZLE_METADATA: undefined
+			} as unknown as Env;
+
+			const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			const token = await createSession(devEnvNoKV, {
+				userId: 'admin',
+				username: 'admin',
+				role: 'admin'
+			});
+			warnSpy.mockRestore();
+
+			// Advance time past the 24-hour session expiry + grace period
+			vi.advanceTimersByTime(25 * 60 * 60 * 1000);
+
+			// Verify should now fail — fallback session is expired
+			const result = await verifySession(devEnvNoKV, token);
+			expect(result).toBeNull();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+});
