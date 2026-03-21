@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import { listPuzzles, deletePuzzleAssets, getImage } from './storage.worker';
-import type { PuzzleMetadata } from './storage.worker';
+import type { PuzzleMetadata } from '@perseus/types';
 
 function makePuzzleMetadata(id: string): PuzzleMetadata {
 	return {

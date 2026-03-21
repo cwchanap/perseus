@@ -163,28 +163,32 @@ describe('rate-limit in-memory with prior entry', () => {
 		__resetRateLimitStore();
 	});
 
-	it('returns existing in-memory entry when kv is undefined (covers !kv && memEntry path)', async () => {
-		// Make a first request without KV to seed in-memory store
-		const ctx1 = createContext('1.1.1.1', undefined, 'development');
-		const next1 = vi.fn(async () => {
-			ctx1.res.status = 401; // failed login seeds in-memory
-		});
-
+	it('accumulates in-memory attempts and blocks after MAX_LOGIN_ATTEMPTS (covers !kv && memEntry path)', async () => {
 		const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-		await loginRateLimit(ctx1, next1);
+
+		// Exhaust all 5 allowed attempts (MAX_LOGIN_ATTEMPTS = 5) via failed logins
+		for (let i = 1; i <= 5; i++) {
+			const ctx = createContext('1.1.1.1', undefined, 'development');
+			const next = vi.fn(async () => {
+				ctx.res.status = 401; // each failed login increments in-memory counter
+			});
+			await loginRateLimit(ctx, next);
+		}
+
 		consoleSpy.mockRestore();
 
-		// Second request for same IP, still no KV - should find the in-memory entry
-		const ctx2 = createContext('1.1.1.1', undefined, 'development');
-		const next2 = vi.fn(async () => {
-			ctx2.res.status = 401;
-		});
+		// The 6th request for the same IP (no KV) must hit the !kv && memEntry branch
+		// and find the locked-out entry — next should NOT be called and the returned
+		// response must carry status 429 (loginRateLimit returns c.json(..., 429) directly).
+		const ctx6 = createContext('1.1.1.1', undefined, 'development');
+		const next6 = vi.fn();
 		const consoleSpy2 = vi.spyOn(console, 'warn').mockImplementation(() => {});
-		await loginRateLimit(ctx2, next2);
+		const response6 = await loginRateLimit(ctx6, next6);
 		consoleSpy2.mockRestore();
 
-		// next2 should have been called (not blocked after just 2 attempts)
-		expect(next2).toHaveBeenCalled();
+		expect(next6).not.toHaveBeenCalled();
+		// c.json() in the mock returns { body, status } — status must be 429
+		expect((response6 as any).status).toBe(429);
 	});
 
 	it('logs production critical error when KV not configured', async () => {
