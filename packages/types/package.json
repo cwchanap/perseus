@@ -13,7 +13,7 @@
 	},
 	"scripts": {
 		"build": "tsc",
-		"test:unit": "vitest run --coverage"
+		"test:unit": "tsc --noEmit && vitest run --coverage"
 	},
 	"devDependencies": {
 		"typescript": "^5.9.0",

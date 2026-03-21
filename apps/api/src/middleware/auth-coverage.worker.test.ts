@@ -305,31 +305,68 @@ describe('assertJwtSecret - whitespace warning', () => {
 });
 
 describe('verifySession - KV read failure paths', () => {
-	it('returns null when session not found in KV (kvReturnedNull=true, no grace period)', async () => {
-		const env: Env = {
-			...baseEnv,
-			NODE_ENV: 'development',
-			PUZZLE_METADATA: {
-				get: vi.fn(async () => null), // Always return null - session not stored
-				put: vi.fn(async () => {}),
-				delete: vi.fn(async () => {})
-			} as unknown as KVNamespace
-		} as unknown as Env;
+	it('(A) returns null on KV miss when grace period has expired', async () => {
+		// Create the token using KV so createSession populates the grace period entry,
+		// then advance time past SESSION_GRACE_PERIOD_MS (10 s) so the grace period is gone.
+		vi.useFakeTimers();
+		try {
+			const envWithKV: Env = { ...baseEnv } as Env;
+			const token = await createSession(envWithKV, {
+				userId: 'admin',
+				username: 'admin',
+				role: 'admin'
+			});
 
-		// Create a token but bypass KV storage (use a valid token format)
-		const envWithKV: Env = { ...baseEnv } as Env;
-		const token = await createSession(envWithKV, {
-			userId: 'admin',
-			username: 'admin',
-			role: 'admin'
-		});
+			// Advance system clock beyond the 10-second grace period
+			vi.advanceTimersByTime(11_000);
 
-		// Now verify against KV that always returns null
-		// Grace period has NOT expired yet, so this will actually pass due to grace period
-		// Let's just verify it returns something valid
-		const result = await verifySession(env, token);
-		// Either null (KV returned null, no grace period) or the session payload
-		// depends on grace period timing - this exercises the isSessionActive path
-		expect(result === null || typeof result === 'object').toBe(true);
+			// Now verify against a KV that always returns null — grace period is gone
+			const env: Env = {
+				...baseEnv,
+				NODE_ENV: 'development',
+				PUZZLE_METADATA: {
+					get: vi.fn(async () => null),
+					put: vi.fn(async () => {}),
+					delete: vi.fn(async () => {})
+				} as unknown as KVNamespace
+			} as unknown as Env;
+
+			const result = await verifySession(env, token);
+			expect(result).toBeNull();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('(B) returns session payload when KV misses but grace period is still active', async () => {
+		// Freeze time so the grace period set by createSession is still valid during verifySession.
+		vi.useFakeTimers();
+		try {
+			// createSession stores the token in baseEnv's KV and registers the grace period.
+			const envWithKV: Env = { ...baseEnv } as Env;
+			const token = await createSession(envWithKV, {
+				userId: 'admin',
+				username: 'admin',
+				role: 'admin'
+			});
+
+			// Do NOT advance time — grace period (10 s) has not expired yet.
+			// Verify against a KV that returns null to force the grace-period branch.
+			const env: Env = {
+				...baseEnv,
+				NODE_ENV: 'development',
+				PUZZLE_METADATA: {
+					get: vi.fn(async () => null),
+					put: vi.fn(async () => {}),
+					delete: vi.fn(async () => {})
+				} as unknown as KVNamespace
+			} as unknown as Env;
+
+			const result = await verifySession(env, token);
+			expect(result).not.toBeNull();
+			expect(typeof result).toBe('object');
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });
