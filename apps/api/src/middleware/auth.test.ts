@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import { Hono } from 'hono';
 
 // auth.ts reads JWT_SECRET eagerly via an IIFE at module-load time.
