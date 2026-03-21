@@ -1,9 +1,18 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Hono } from 'hono';
 
 // auth.ts reads JWT_SECRET eagerly via an IIFE at module-load time.
 // Set it before the dynamic import below so the module initialises successfully.
+const originalJwtSecret = process.env.JWT_SECRET;
 process.env.JWT_SECRET = 'test-secret-key-for-bun-auth-testing-1234567890';
+
+afterAll(() => {
+	if (originalJwtSecret === undefined) {
+		delete process.env.JWT_SECRET;
+	} else {
+		process.env.JWT_SECRET = originalJwtSecret;
+	}
+});
 
 // Dynamically import so the env var above is visible when the module runs.
 let createSession: typeof import('./auth').createSession;
