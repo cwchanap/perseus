@@ -11,7 +11,7 @@ function uniqueIp(): string {
 
 // Build a minimal Hono app with loginRateLimit and a handler that optionally
 // returns 401 (to simulate a failed login) or 200.
-function makeApp(ip: string, handlerStatus: number = 200) {
+function makeApp(handlerStatus: number = 200) {
 	const app = new Hono();
 	app.use('/login', loginRateLimit);
 	app.post('/login', (c) => {
@@ -38,7 +38,7 @@ function req(ip: string): Request {
 describe('loginRateLimit – first attempt is always allowed', () => {
 	it('passes through on the very first request', async () => {
 		const ip = uniqueIp();
-		const app = makeApp(ip, 200);
+		const app = makeApp(200);
 		const res = await app.fetch(req(ip));
 		expect(res.status).toBe(200);
 	});
@@ -49,7 +49,7 @@ describe('loginRateLimit – first attempt is always allowed', () => {
 describe('loginRateLimit – accumulates failures', () => {
 	it('allows up to MAX_ATTEMPTS (5) failed requests', async () => {
 		const ip = uniqueIp();
-		const app = makeApp(ip, 401);
+		const app = makeApp(401);
 
 		// Attempts 1-5 should all be forwarded to the handler (not blocked by middleware)
 		for (let i = 1; i <= 5; i++) {
@@ -61,7 +61,7 @@ describe('loginRateLimit – accumulates failures', () => {
 
 	it('blocks with 429 after MAX_ATTEMPTS exceeded', async () => {
 		const ip = uniqueIp();
-		const app = makeApp(ip, 401);
+		const app = makeApp(401);
 
 		// Exhaust the allowed attempts
 		for (let i = 0; i < 5; i++) {
@@ -77,7 +77,7 @@ describe('loginRateLimit – accumulates failures', () => {
 
 	it('includes Retry-After header when blocked', async () => {
 		const ip = uniqueIp();
-		const app = makeApp(ip, 401);
+		const app = makeApp(401);
 
 		for (let i = 0; i < 5; i++) {
 			await app.fetch(req(ip));
@@ -97,18 +97,18 @@ describe('resetLoginAttempts', () => {
 	it('clears the rate limit so subsequent requests are allowed again', async () => {
 		const ip = uniqueIp();
 		// Fail 4 times (within limit)
-		const failApp = makeApp(ip, 401);
+		const failApp = makeApp(401);
 		for (let i = 0; i < 4; i++) {
 			await failApp.fetch(req(ip));
 		}
 
 		// One successful login resets the counter
-		const successApp = makeApp(ip, 200);
+		const successApp = makeApp(200);
 		const successRes = await successApp.fetch(req(ip));
 		expect(successRes.status).toBe(200);
 
 		// Now subsequent requests should be allowed again (counter was reset)
-		const failApp2 = makeApp(ip, 401);
+		const failApp2 = makeApp(401);
 		const res = await failApp2.fetch(req(ip));
 		expect(res.status).toBe(401); // allowed through (not 429)
 	});
@@ -132,7 +132,7 @@ describe('loginRateLimit – window expiry', () => {
 		vi.useFakeTimers();
 		try {
 			const ip = uniqueIp();
-			const app = makeApp(ip, 401);
+			const app = makeApp(401);
 
 			// Make 4 failed attempts within the window
 			for (let i = 0; i < 4; i++) {
@@ -161,7 +161,7 @@ describe('loginRateLimit – block expiry', () => {
 		vi.useFakeTimers();
 		try {
 			const ip = uniqueIp();
-			const app = makeApp(ip, 401);
+			const app = makeApp(401);
 
 			// Trigger a block
 			for (let i = 0; i < 6; i++) {
