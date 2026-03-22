@@ -21,40 +21,12 @@ describe('CATEGORY_COLORS', () => {
 		}
 	});
 
-	it('contains both background and text color classes for Animals', () => {
-		expect(CATEGORY_COLORS['Animals']).toContain('bg-');
-		expect(CATEGORY_COLORS['Animals']).toContain('text-');
-	});
-
-	it('contains both background and text color classes for Nature', () => {
-		expect(CATEGORY_COLORS['Nature']).toContain('bg-');
-		expect(CATEGORY_COLORS['Nature']).toContain('text-');
-	});
-
-	it('contains both background and text color classes for Art', () => {
-		expect(CATEGORY_COLORS['Art']).toContain('bg-');
-		expect(CATEGORY_COLORS['Art']).toContain('text-');
-	});
-
-	it('contains both background and text color classes for Architecture', () => {
-		expect(CATEGORY_COLORS['Architecture']).toContain('bg-');
-		expect(CATEGORY_COLORS['Architecture']).toContain('text-');
-	});
-
-	it('contains both background and text color classes for Abstract', () => {
-		expect(CATEGORY_COLORS['Abstract']).toContain('bg-');
-		expect(CATEGORY_COLORS['Abstract']).toContain('text-');
-	});
-
-	it('contains both background and text color classes for Food', () => {
-		expect(CATEGORY_COLORS['Food']).toContain('bg-');
-		expect(CATEGORY_COLORS['Food']).toContain('text-');
-	});
-
-	it('contains both background and text color classes for Travel', () => {
-		expect(CATEGORY_COLORS['Travel']).toContain('bg-');
-		expect(CATEGORY_COLORS['Travel']).toContain('text-');
-	});
+	for (const category of PUZZLE_CATEGORIES) {
+		it(`contains both background and text color classes for ${category}`, () => {
+			expect(CATEGORY_COLORS[category]).toContain('bg-');
+			expect(CATEGORY_COLORS[category]).toContain('text-');
+		});
+	}
 
 	it('has exactly 7 entries matching PUZZLE_CATEGORIES length', () => {
 		expect(Object.keys(CATEGORY_COLORS)).toHaveLength(PUZZLE_CATEGORIES.length);
