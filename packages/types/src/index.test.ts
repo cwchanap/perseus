@@ -475,6 +475,10 @@ describe('validatePuzzleMetadata', () => {
 		expect(validatePuzzleMetadata(makeMeta({ category: 'Robots' }))).toBe(false);
 	});
 
+	it('returns false when category is a non-string value', () => {
+		expect(validatePuzzleMetadata(makeMeta({ category: 42 }))).toBe(false);
+	});
+
 	it('returns false when a piece is invalid', () => {
 		expect(
 			validatePuzzleMetadata(
@@ -579,5 +583,76 @@ describe('validatePuzzleMetadataLight', () => {
 
 	it('returns false for invalid category', () => {
 		expect(validatePuzzleMetadataLight(makeMeta({ category: 'Unknown' }))).toBe(false);
+	});
+
+	it('returns false when category is a non-string value', () => {
+		expect(validatePuzzleMetadataLight(makeMeta({ category: 42 }))).toBe(false);
+	});
+
+	it('returns false when id is not a string', () => {
+		expect(validatePuzzleMetadataLight(makeMeta({ id: 999 }))).toBe(false);
+	});
+
+	it('returns false when gridCols is not a number', () => {
+		expect(validatePuzzleMetadataLight(makeMeta({ gridCols: 'two' }))).toBe(false);
+	});
+
+	it('returns false when imageWidth is not a number', () => {
+		expect(validatePuzzleMetadataLight(makeMeta({ imageWidth: 'wide' }))).toBe(false);
+	});
+
+	it('returns false when createdAt is missing', () => {
+		expect(validatePuzzleMetadataLight(makeMeta({ createdAt: undefined }))).toBe(false);
+	});
+
+	it('returns false for processing puzzle with error field set', () => {
+		const meta = makeMeta({
+			status: 'processing',
+			pieces: [],
+			pieceCount: 9,
+			gridCols: 3,
+			gridRows: 3,
+			progress: { totalPieces: 9, generatedPieces: 3, updatedAt: Date.now() },
+			error: { message: 'should not be here' }
+		});
+		expect(validatePuzzleMetadataLight(meta)).toBe(false);
+	});
+
+	it('returns false for failed puzzle with non-object error', () => {
+		const meta = makeMeta({
+			status: 'failed',
+			pieces: [],
+			pieceCount: 9,
+			gridCols: 3,
+			gridRows: 3,
+			error: 'not an object'
+		});
+		expect(validatePuzzleMetadataLight(meta)).toBe(false);
+	});
+
+	it('returns false for failed puzzle with error missing message property', () => {
+		const meta = makeMeta({
+			status: 'failed',
+			pieces: [],
+			pieceCount: 9,
+			gridCols: 3,
+			gridRows: 3,
+			error: { code: 123 }
+		});
+		expect(validatePuzzleMetadataLight(meta)).toBe(false);
+	});
+
+	it('returns false for ready puzzle with error field set', () => {
+		const meta = makeMeta({
+			error: { message: 'should not be here' }
+		}) as Record<string, unknown>;
+		expect(validatePuzzleMetadataLight(meta)).toBe(false);
+	});
+
+	it('returns false for ready puzzle with progress field set', () => {
+		const meta = makeMeta({
+			progress: { totalPieces: 1, generatedPieces: 1, updatedAt: Date.now() }
+		}) as Record<string, unknown>;
+		expect(validatePuzzleMetadataLight(meta)).toBe(false);
 	});
 });
