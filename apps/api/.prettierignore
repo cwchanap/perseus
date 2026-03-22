@@ -8,5 +8,8 @@ bun.lockb
 # Build Output
 dist
 
+# Coverage Reports
+coverage
+
 # Dependencies
 node_modules
