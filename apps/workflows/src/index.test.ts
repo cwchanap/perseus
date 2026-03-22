@@ -81,8 +81,8 @@ vi.mock('@cf-wasm/photon', () => ({
 			return image;
 		})
 	}),
-	crop: vi.fn((_image: PhotonImageMock, _x: number, _y: number, width: number, height: number) => {
-		const image = new PhotonImageMock(undefined, width, height);
+	crop: vi.fn((_image: PhotonImageMock, x: number, y: number, x2: number, y2: number) => {
+		const image = new PhotonImageMock(undefined, x2 - x, y2 - y);
 		photonInstances.push(image);
 		return image;
 	}),
@@ -387,5 +387,199 @@ describe('Workflow Execution - Image Validation', () => {
 				error: { message }
 			}
 		});
+	});
+});
+
+describe('Workflow Execution - Parameter Validation', () => {
+	afterEach(() => {
+		mockWidth = 100;
+		mockHeight = 100;
+		photonInstances = [];
+		vi.restoreAllMocks();
+	});
+
+	it('throws for non-UUID puzzleId', async () => {
+		const workflow = new TestWorkflow();
+		workflow.setEnv({} as Env);
+
+		const event = {
+			payload: { puzzleId: 'not-a-uuid' },
+			timestamp: new Date(),
+			instanceId: 'test-instance'
+		};
+
+		await expect(
+			workflow.run(event as WorkflowEvent<WorkflowParams>, createMockStep())
+		).rejects.toThrow('Invalid workflow parameters');
+	});
+
+	it('throws for empty puzzleId', async () => {
+		const workflow = new TestWorkflow();
+		workflow.setEnv({} as Env);
+
+		const event = {
+			payload: { puzzleId: '' },
+			timestamp: new Date(),
+			instanceId: 'test-instance'
+		};
+
+		await expect(
+			workflow.run(event as WorkflowEvent<WorkflowParams>, createMockStep())
+		).rejects.toThrow('Invalid workflow parameters');
+	});
+});
+
+describe('Workflow Execution - Resource Loading', () => {
+	afterEach(() => {
+		mockWidth = 100;
+		mockHeight = 100;
+		photonInstances = [];
+		vi.restoreAllMocks();
+	});
+
+	it('marks puzzle as failed when metadata not found', async () => {
+		const puzzleId = sampleMetadata.id;
+		const { namespace, stub } = createMockDurableObjectNamespace(() => {
+			return new Response(JSON.stringify({ success: true }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' }
+			});
+		});
+		const env = {
+			PUZZLES_BUCKET: createMockBucket(new ArrayBuffer(8)),
+			PUZZLE_METADATA: { get: vi.fn(async () => null) }, // not found
+			PUZZLE_METADATA_DO: namespace as unknown as DurableObjectNamespace,
+			PUZZLE_WORKFLOW: {} as Workflow
+		} as unknown as Env;
+
+		const workflow = new TestWorkflow();
+		workflow.setEnv(env);
+
+		const event: WorkflowEvent<WorkflowParams> = {
+			payload: { puzzleId },
+			timestamp: new Date(),
+			instanceId: 'test-instance'
+		};
+
+		await expect(workflow.run(event, createMockStep())).rejects.toThrow('not found');
+
+		expect(stub.fetch).toHaveBeenCalledTimes(1);
+		const body = JSON.parse((stub.fetch.mock.calls[0]?.[1]?.body as string | undefined) ?? '{}');
+		expect(body.updates.status).toBe('failed');
+	});
+
+	it('marks puzzle as failed when original image not found in R2', async () => {
+		const puzzleId = sampleMetadata.id;
+		const { namespace, stub } = createMockDurableObjectNamespace(() => {
+			return new Response(JSON.stringify({ success: true }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' }
+			});
+		});
+		const nullBucket = {
+			get: vi.fn(async () => null), // image not in R2
+			put: vi.fn(async () => undefined)
+		};
+		const env = {
+			PUZZLES_BUCKET: nullBucket,
+			PUZZLE_METADATA: createMockKv(sampleMetadata),
+			PUZZLE_METADATA_DO: namespace as unknown as DurableObjectNamespace,
+			PUZZLE_WORKFLOW: {} as Workflow
+		} as unknown as Env;
+
+		const workflow = new TestWorkflow();
+		workflow.setEnv(env);
+
+		const event: WorkflowEvent<WorkflowParams> = {
+			payload: { puzzleId },
+			timestamp: new Date(),
+			instanceId: 'test-instance'
+		};
+
+		await expect(workflow.run(event, createMockStep())).rejects.toThrow(
+			`Original image not found for puzzle ${puzzleId}`
+		);
+
+		expect(stub.fetch).toHaveBeenCalledTimes(1);
+		const body = JSON.parse((stub.fetch.mock.calls[0]?.[1]?.body as string | undefined) ?? '{}');
+		expect(body.updates.status).toBe('failed');
+	});
+});
+
+describe('Workflow Execution - Multi-piece Grid', () => {
+	afterEach(() => {
+		mockWidth = 100;
+		mockHeight = 100;
+		photonInstances = [];
+		vi.restoreAllMocks();
+	});
+
+	it('completes successfully for a 2x2 (4-piece) puzzle exercising edge helpers', async () => {
+		const fourPieceMetadata: PuzzleMetadata = {
+			...sampleMetadata,
+			pieceCount: 4,
+			gridCols: 2,
+			gridRows: 2
+		};
+		const puzzleId = fourPieceMetadata.id;
+
+		const { namespace } = createMockDurableObjectNamespace(() => {
+			return new Response(JSON.stringify({ success: true }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' }
+			});
+		});
+		const env = {
+			PUZZLES_BUCKET: createMockBucket(new ArrayBuffer(8)),
+			PUZZLE_METADATA: createMockKv(fourPieceMetadata),
+			PUZZLE_METADATA_DO: namespace as unknown as DurableObjectNamespace,
+			PUZZLE_WORKFLOW: {} as Workflow
+		} as unknown as Env;
+
+		const workflow = new TestWorkflow();
+		workflow.setEnv(env);
+
+		const event: WorkflowEvent<WorkflowParams> = {
+			payload: { puzzleId },
+			timestamp: new Date(),
+			instanceId: 'test-instance'
+		};
+
+		// Should complete without throwing
+		await expect(workflow.run(event, createMockStep())).resolves.toBeUndefined();
+	});
+
+	it('completes successfully for a 3x3 (9-piece) puzzle covering non-border edge types', async () => {
+		const ninePieceMetadata: PuzzleMetadata = {
+			...sampleMetadata,
+			pieceCount: 9,
+			gridCols: 3,
+			gridRows: 3
+		};
+		const puzzleId = ninePieceMetadata.id;
+
+		const { namespace } = createMockDurableObjectNamespace(() => {
+			return new Response(JSON.stringify({ success: true }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' }
+			});
+		});
+		const env = {
+			PUZZLES_BUCKET: createMockBucket(new ArrayBuffer(8)),
+			PUZZLE_METADATA: createMockKv(ninePieceMetadata),
+			PUZZLE_METADATA_DO: namespace as unknown as DurableObjectNamespace,
+			PUZZLE_WORKFLOW: {} as Workflow
+		} as unknown as Env;
+
+		const workflow = new TestWorkflow();
+		workflow.setEnv(env);
+
+		const event: WorkflowEvent<WorkflowParams> = {
+			payload: { puzzleId },
+			timestamp: new Date(),
+			instanceId: 'test-instance'
+		};
+
+		await expect(workflow.run(event, createMockStep())).resolves.toBeUndefined();
 	});
 });
