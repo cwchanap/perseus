@@ -523,7 +523,7 @@ describe('Workflow Execution - Multi-piece Grid', () => {
 		};
 		const puzzleId = fourPieceMetadata.id;
 
-		const { namespace } = createMockDurableObjectNamespace(() => {
+		const { namespace, stub } = createMockDurableObjectNamespace(() => {
 			return new Response(JSON.stringify({ success: true }), {
 				status: 200,
 				headers: { 'Content-Type': 'application/json' }
@@ -545,8 +545,19 @@ describe('Workflow Execution - Multi-piece Grid', () => {
 			instanceId: 'test-instance'
 		};
 
-		// Should complete without throwing
 		await expect(workflow.run(event, createMockStep())).resolves.toBeUndefined();
+
+		// Final DO call should mark puzzle as ready
+		const calls = stub.fetch.mock.calls;
+		const lastBody = JSON.parse((calls[calls.length - 1]?.[1]?.body as string | undefined) ?? '{}');
+		expect(lastBody.updates.status).toBe('ready');
+
+		// Piece uploads: row updates each send cols (2) pieces; 2 rows * 2 cols = 4 total
+		const allPieces = calls.flatMap((c: [string, RequestInit?]) => {
+			const b = JSON.parse((c[1]?.body as string | undefined) ?? '{}');
+			return b.updates?.pieces ?? [];
+		});
+		expect(allPieces).toHaveLength(fourPieceMetadata.pieceCount);
 	});
 
 	it('completes successfully for a 3x3 (9-piece) puzzle covering non-border edge types', async () => {
@@ -558,7 +569,7 @@ describe('Workflow Execution - Multi-piece Grid', () => {
 		};
 		const puzzleId = ninePieceMetadata.id;
 
-		const { namespace } = createMockDurableObjectNamespace(() => {
+		const { namespace, stub } = createMockDurableObjectNamespace(() => {
 			return new Response(JSON.stringify({ success: true }), {
 				status: 200,
 				headers: { 'Content-Type': 'application/json' }
@@ -581,5 +592,17 @@ describe('Workflow Execution - Multi-piece Grid', () => {
 		};
 
 		await expect(workflow.run(event, createMockStep())).resolves.toBeUndefined();
+
+		// Final DO call should mark puzzle as ready
+		const calls = stub.fetch.mock.calls;
+		const lastBody = JSON.parse((calls[calls.length - 1]?.[1]?.body as string | undefined) ?? '{}');
+		expect(lastBody.updates.status).toBe('ready');
+
+		// Piece uploads: row updates each send cols (3) pieces; 3 rows * 3 cols = 9 total
+		const allPieces = calls.flatMap((c: [string, RequestInit?]) => {
+			const b = JSON.parse((c[1]?.body as string | undefined) ?? '{}');
+			return b.updates?.pieces ?? [];
+		});
+		expect(allPieces).toHaveLength(ninePieceMetadata.pieceCount);
 	});
 });

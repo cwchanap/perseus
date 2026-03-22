@@ -65,7 +65,7 @@ function createStorage(initial: StorageInit = {}) {
 
 function createKV(metadata: PuzzleMetadata | null = baseMetadata) {
 	return {
-		get: vi.fn(async () => metadata),
+		get: vi.fn(async (_key: string, type?: string) => (type === 'json' ? metadata : null)),
 		put: vi.fn(async () => undefined)
 	};
 }
