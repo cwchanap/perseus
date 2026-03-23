@@ -28,7 +28,7 @@ describe('CATEGORY_COLORS', () => {
 		});
 	}
 
-	it('has exactly 7 entries matching PUZZLE_CATEGORIES length', () => {
+	it('has entries matching PUZZLE_CATEGORIES length', () => {
 		expect(Object.keys(CATEGORY_COLORS)).toHaveLength(PUZZLE_CATEGORIES.length);
 	});
 
