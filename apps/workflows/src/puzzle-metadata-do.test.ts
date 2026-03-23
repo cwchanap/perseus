@@ -64,8 +64,14 @@ function createStorage(initial: StorageInit = {}) {
 }
 
 function createKV(metadata: PuzzleMetadata | null = baseMetadata) {
+	const expectedKey = metadata ? `puzzle:${metadata.id}` : undefined;
 	return {
-		get: vi.fn(async (_key: string, type?: string) => (type === 'json' ? metadata : null)),
+		get: vi.fn(async (key: string, type?: string) => {
+			if (expectedKey !== undefined) {
+				expect(key).toBe(expectedKey);
+			}
+			return type === 'json' ? metadata : null;
+		}),
 		put: vi.fn(async () => undefined)
 	};
 }
@@ -202,7 +208,7 @@ describe('PuzzleMetadataDO.fetch - metadata resolution', () => {
 	it('reads metadata from KV when not in storage', async () => {
 		const { durableObj, kv } = makeDO({}, baseMetadata);
 		const response = await postRequest(durableObj, { puzzleId: 'test-puzzle', updates: {} });
-		expect(kv.get).toHaveBeenCalled();
+		expect(kv.get).toHaveBeenCalledWith('puzzle:test-puzzle', 'json');
 		expect(response.status).toBe(200);
 	});
 });
