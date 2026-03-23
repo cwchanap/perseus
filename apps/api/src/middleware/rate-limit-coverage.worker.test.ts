@@ -206,6 +206,179 @@ describe('rate-limit in-memory with prior entry', () => {
 	});
 });
 
+describe('rate-limit KV read failure in production', () => {
+	beforeEach(() => {
+		__resetRateLimitStore();
+	});
+
+	it('logs [CRITICAL] on KV read failure in production', async () => {
+		const failingKV = {
+			get: vi.fn(() => {
+				throw new Error('KV outage in production');
+			}),
+			put: vi.fn(async () => {}),
+			delete: vi.fn(async () => {})
+		};
+		const ctx = {
+			env: {
+				PUZZLE_METADATA: failingKV,
+				NODE_ENV: 'production'
+			},
+			req: {
+				header: vi.fn((name: string) => {
+					if (name === 'cf-connecting-ip') return '10.10.10.10';
+					return null;
+				})
+			},
+			json: vi.fn((body: unknown, status: number) => ({ body, status })),
+			res: { status: 200 }
+		} as unknown as Parameters<typeof loginRateLimit>[0];
+
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const next = vi.fn();
+		await loginRateLimit(ctx, next);
+
+		expect(next).toHaveBeenCalled();
+		expect(consoleSpy).toHaveBeenCalledWith(
+			expect.stringContaining('[CRITICAL] KV read failed'),
+			expect.any(Error)
+		);
+		consoleSpy.mockRestore();
+	});
+});
+
+describe('rate-limit KV and in-memory entry merge', () => {
+	beforeEach(() => {
+		__resetRateLimitStore();
+	});
+
+	it('merges KV and in-memory entries when both exist for the same IP', async () => {
+		const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+		// Step 1: populate in-memory store via a failed login with no KV
+		const ctx1 = {
+			env: { PUZZLE_METADATA: undefined, NODE_ENV: 'development' },
+			req: {
+				header: vi.fn((name: string) => {
+					if (name === 'cf-connecting-ip') return '5.5.5.5';
+					return null;
+				})
+			},
+			json: vi.fn((body: unknown, status: number) => ({ body, status })),
+			res: { status: 200 }
+		} as unknown as Parameters<typeof loginRateLimit>[0];
+		const next1 = vi.fn(async () => {
+			(ctx1.res as { status: number }).status = 401;
+		});
+		await loginRateLimit(ctx1, next1);
+		warnSpy.mockRestore();
+
+		// Step 2: call again with KV that also has an entry — triggers merge path
+		const kvEntry = { attempts: 3, lockedUntil: null, lastAttemptAt: Date.now() };
+		const kv = {
+			get: vi.fn(async (_key: string, type: string) => (type === 'json' ? kvEntry : null)),
+			put: vi.fn(async () => {}),
+			delete: vi.fn(async () => {})
+		};
+		const ctx2 = {
+			env: { PUZZLE_METADATA: kv, NODE_ENV: 'development' },
+			req: {
+				header: vi.fn((name: string) => {
+					if (name === 'cf-connecting-ip') return '5.5.5.5';
+					return null;
+				})
+			},
+			json: vi.fn((body: unknown, status: number) => ({ body, status })),
+			res: { status: 200 }
+		} as unknown as Parameters<typeof loginRateLimit>[0];
+		const next2 = vi.fn();
+		await loginRateLimit(ctx2, next2);
+
+		// Merge should have run; KV entry (3 attempts) wins over memory (1 attempt).
+		// 3 < 5 so not blocked — next still called.
+		expect(next2).toHaveBeenCalled();
+		expect(kv.get).toHaveBeenCalled();
+	});
+});
+
+describe('rate-limit trusted proxy with TRUSTED_PROXY_LIST', () => {
+	beforeEach(() => {
+		__resetRateLimitStore();
+	});
+
+	it('uses X-Forwarded-For when peer IP is in TRUSTED_PROXY_LIST', async () => {
+		const mockKV = {
+			get: vi.fn(async () => null),
+			put: vi.fn(async () => {}),
+			delete: vi.fn(async () => {})
+		};
+		const ctx = {
+			env: {
+				PUZZLE_METADATA: mockKV,
+				NODE_ENV: 'development',
+				TRUSTED_PROXY: 'true',
+				TRUSTED_PROXY_LIST: '10.0.0.1,10.0.0.2'
+			},
+			req: {
+				header: vi.fn((name: string) => {
+					if (name === 'cf-connecting-ip') return null;
+					if (name === 'x-forwarded-for') return '192.168.100.1';
+					return null;
+				}),
+				ip: '10.0.0.1' // peer IP is in the trusted list
+			},
+			json: vi.fn((body: unknown, status: number) => ({ body, status })),
+			res: { status: 200 }
+		} as unknown as Parameters<typeof loginRateLimit>[0];
+
+		const next = vi.fn(async () => {
+			(ctx.res as { status: number }).status = 401;
+		});
+		await loginRateLimit(ctx, next);
+
+		expect(next).toHaveBeenCalled();
+		// The KV key should include the real client IP from X-Forwarded-For
+		expect(mockKV.put).toHaveBeenCalled();
+		const kvKey: string = mockKV.put.mock.calls[0][0];
+		expect(kvKey).toContain('192.168.100.1');
+	});
+
+	it('falls through to UUID fallback when peer IP is NOT in TRUSTED_PROXY_LIST', async () => {
+		const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const mockKV = {
+			get: vi.fn(async () => null),
+			put: vi.fn(async () => {}),
+			delete: vi.fn(async () => {})
+		};
+		const ctx = {
+			env: {
+				PUZZLE_METADATA: mockKV,
+				NODE_ENV: 'development',
+				TRUSTED_PROXY: 'true',
+				TRUSTED_PROXY_LIST: '10.0.0.1'
+			},
+			req: {
+				header: vi.fn((name: string) => {
+					if (name === 'cf-connecting-ip') return null;
+					if (name === 'x-forwarded-for') return '192.168.100.1';
+					return null;
+				}),
+				ip: '9.9.9.9' // peer IP NOT in trusted list
+			},
+			json: vi.fn((body: unknown, status: number) => ({ body, status })),
+			res: { status: 200 }
+		} as unknown as Parameters<typeof loginRateLimit>[0];
+
+		const next = vi.fn();
+		await loginRateLimit(ctx, next);
+
+		expect(next).toHaveBeenCalled();
+		expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('X-Forwarded-For rejected'));
+		consoleSpy.mockRestore();
+	});
+});
+
 describe('rate-limit post-auth tracking - 403 response', () => {
 	beforeEach(() => {
 		__resetRateLimitStore();

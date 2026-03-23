@@ -304,6 +304,156 @@ describe('assertJwtSecret - whitespace warning', () => {
 	});
 });
 
+describe('verifySession - in-memory fallback (no KV configured)', () => {
+	it('returns valid session when KV is not configured and session is in fallback store', async () => {
+		// Create a session with no KV → goes to in-memory fallback
+		const noKvDevEnv: Env = {
+			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+			NODE_ENV: 'development',
+			PUZZLE_METADATA: undefined
+		} as unknown as Env;
+
+		const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+		const token = await createSession(noKvDevEnv, {
+			userId: 'fallback-user',
+			username: 'fallback-user',
+			role: 'user'
+		});
+
+		warnSpy.mockRestore();
+
+		// Verify against same no-KV env — checkFallbackSession should return true
+		const warnSpy2 = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const result = await verifySession(noKvDevEnv, token);
+		warnSpy2.mockRestore();
+
+		expect(result).not.toBeNull();
+		expect(result?.userId).toBe('fallback-user');
+	});
+
+	it('throws when KV is not configured in production', async () => {
+		const prodNoKvEnv: Env = {
+			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+			NODE_ENV: 'production',
+			PUZZLE_METADATA: undefined
+		} as unknown as Env;
+
+		// createSession throws before we get to verifySession in production without KV
+		await expect(
+			createSession(prodNoKvEnv, { userId: 'u', username: 'u', role: 'admin' })
+		).rejects.toThrow('KV namespace PUZZLE_METADATA is not configured');
+	});
+
+	it('returns null for unknown token when no KV configured in development', async () => {
+		const noKvDevEnv: Env = {
+			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+			NODE_ENV: 'development',
+			PUZZLE_METADATA: undefined
+		} as unknown as Env;
+
+		// Create a real token, then verify a completely different (unknown) token
+		const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+		// Build a valid-looking token with a known secret but not in the fallback store
+		const unknownToken = await createSession(
+			{ ...noKvDevEnv, PUZZLE_METADATA: createMockKVStore() } as unknown as Env,
+			{ userId: 'ghost', username: 'ghost', role: 'user' }
+		);
+
+		// Verify against no-KV env — this session was NOT stored in the fallback store
+		const result = await verifySession(noKvDevEnv, unknownToken);
+		warnSpy.mockRestore();
+
+		// Should return null since the session is not in the in-memory fallback
+		expect(result).toBeNull();
+	});
+});
+
+describe('isSessionActive - KV retry failure paths', () => {
+	it('throws in production when all KV read retries fail', { timeout: 10_000 }, async () => {
+		// First create a valid token via a working KV env
+		const workingKv = createMockKVStore();
+		const tokenEnv: Env = {
+			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+			NODE_ENV: 'development',
+			PUZZLE_METADATA: workingKv
+		} as unknown as Env;
+		const token = await createSession(tokenEnv, {
+			userId: 'retry-user',
+			username: 'retry-user',
+			role: 'admin'
+		});
+
+		// Now verify with a KV that always throws
+		const alwaysThrowingKv = {
+			get: vi.fn(() => {
+				throw new Error('KV unavailable');
+			}),
+			put: vi.fn(async () => {}),
+			delete: vi.fn(async () => {})
+		} as unknown as KVNamespace;
+
+		const prodRetryEnv: Env = {
+			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+			NODE_ENV: 'production',
+			PUZZLE_METADATA: alwaysThrowingKv
+		} as unknown as Env;
+
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		await expect(verifySession(prodRetryEnv, token)).rejects.toThrow('KV unavailable');
+
+		consoleSpy.mockRestore();
+	});
+
+	it(
+		'checks in-memory fallback after KV retries fail in development',
+		{ timeout: 10_000 },
+		async () => {
+			// Create session in NO-KV dev environment → goes to in-memory fallback
+			const noKvDevEnv: Env = {
+				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+				NODE_ENV: 'development',
+				PUZZLE_METADATA: undefined
+			} as unknown as Env;
+			const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			const token = await createSession(noKvDevEnv, {
+				userId: 'dev-fallback',
+				username: 'dev-fallback',
+				role: 'admin'
+			});
+			warnSpy.mockRestore();
+
+			// Now verify with a KV that always throws in DEV mode
+			const throwingKv = {
+				get: vi.fn(() => {
+					throw new Error('KV down in dev');
+				}),
+				put: vi.fn(async () => {}),
+				delete: vi.fn(async () => {})
+			} as unknown as KVNamespace;
+
+			const devRetryEnv: Env = {
+				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+				NODE_ENV: 'development',
+				PUZZLE_METADATA: throwingKv
+			} as unknown as Env;
+
+			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const warnSpy2 = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+			// After all retries fail, dev mode checks the in-memory fallback
+			const result = await verifySession(devRetryEnv, token);
+			expect(result).not.toBeNull();
+			expect(result?.userId).toBe('dev-fallback');
+
+			consoleSpy.mockRestore();
+			warnSpy2.mockRestore();
+		}
+	);
+});
+
 describe('verifySession - KV read failure paths', () => {
 	it('(A) returns null on KV miss when grace period has expired', async () => {
 		// Create the token using KV so createSession populates the grace period entry,
