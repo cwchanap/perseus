@@ -251,6 +251,138 @@ describe('requireAuth middleware', () => {
 	});
 });
 
+// ─── verifySession — string / non-standard exp & createdAt edge cases ─────────
+
+describe('verifySession — edge cases', () => {
+	it('handles valid ISO string exp (covers string exp path)', async () => {
+		const { sign } = await import('hono/jwt');
+		const now = Date.now();
+		// Build a payload with exp as an ISO date string instead of a numeric Unix timestamp.
+		// hono/jwt's verify passes because NaN < numericNow === false (no "expired" throw),
+		// so verifySession receives exp as a string and exercises the else-if branch.
+		const payload = {
+			sessionId: crypto.randomUUID(),
+			userId: 'iso-exp-user',
+			createdAt: now - 1000,
+			exp: new Date(now + 86_400_000).toISOString()
+		};
+		const token = await sign(payload, process.env.JWT_SECRET!);
+		const session = await verifySession(token);
+		// The string ISO date is parseable → expMs is in the future → session returned
+		expect(session).not.toBeNull();
+		expect(session?.userId).toBe('iso-exp-user');
+	});
+
+	it('returns null when string exp cannot be parsed as a date', async () => {
+		const { sign } = await import('hono/jwt');
+		const now = Date.now();
+		const payload = {
+			sessionId: crypto.randomUUID(),
+			userId: 'bad-exp-user',
+			createdAt: now - 1000,
+			exp: 'not-a-date' // isNaN(new Date('not-a-date').getTime()) === true
+		};
+		const token = await sign(payload, process.env.JWT_SECRET!);
+		expect(await verifySession(token)).toBeNull();
+	});
+
+	it('returns null when exp is neither number nor string', async () => {
+		const { sign } = await import('hono/jwt');
+		const now = Date.now();
+		// {} coerces to NaN in numeric comparison, so hono verify doesn't throw,
+		// but the else branch in verifySession returns null.
+		const payload = {
+			sessionId: crypto.randomUUID(),
+			userId: 'obj-exp-user',
+			createdAt: now - 1000,
+			exp: {} as unknown as number
+		};
+		const token = await sign(payload, process.env.JWT_SECRET!);
+		expect(await verifySession(token)).toBeNull();
+	});
+
+	it('returns null for token with empty sessionId', async () => {
+		const { sign } = await import('hono/jwt');
+		const now = Date.now();
+		const payload = {
+			sessionId: '', // empty string → trim().length === 0 → null
+			userId: 'user-1',
+			createdAt: now - 1000,
+			exp: Math.floor((now + 86_400_000) / 1000)
+		};
+		const token = await sign(payload, process.env.JWT_SECRET!);
+		expect(await verifySession(token)).toBeNull();
+	});
+
+	it('returns null for token with empty userId', async () => {
+		const { sign } = await import('hono/jwt');
+		const now = Date.now();
+		const payload = {
+			sessionId: crypto.randomUUID(),
+			userId: '', // empty string → trim().length === 0 → null
+			createdAt: now - 1000,
+			exp: Math.floor((now + 86_400_000) / 1000)
+		};
+		const token = await sign(payload, process.env.JWT_SECRET!);
+		expect(await verifySession(token)).toBeNull();
+	});
+
+	it('handles valid ISO string createdAt (covers string createdAt path)', async () => {
+		const { sign } = await import('hono/jwt');
+		const now = Date.now();
+		const payload = {
+			sessionId: crypto.randomUUID(),
+			userId: 'iso-createdat-user',
+			createdAt: new Date(now - 5_000).toISOString(), // ISO string
+			exp: Math.floor((now + 86_400_000) / 1000)
+		};
+		const token = await sign(payload, process.env.JWT_SECRET!);
+		const session = await verifySession(token);
+		expect(session).not.toBeNull();
+		expect(session?.userId).toBe('iso-createdat-user');
+	});
+
+	it('returns null when string createdAt cannot be parsed', async () => {
+		const { sign } = await import('hono/jwt');
+		const now = Date.now();
+		const payload = {
+			sessionId: crypto.randomUUID(),
+			userId: 'bad-createdat-user',
+			createdAt: 'not-a-date', // isNaN(new Date('not-a-date').getTime()) === true
+			exp: Math.floor((now + 86_400_000) / 1000)
+		};
+		const token = await sign(payload, process.env.JWT_SECRET!);
+		expect(await verifySession(token)).toBeNull();
+	});
+
+	it('returns null when createdAt is neither number nor string', async () => {
+		const { sign } = await import('hono/jwt');
+		const now = Date.now();
+		const payload = {
+			sessionId: crypto.randomUUID(),
+			userId: 'null-createdat-user',
+			createdAt: null as unknown as number, // null triggers the else branch
+			exp: Math.floor((now + 86_400_000) / 1000)
+		};
+		const token = await sign(payload, process.env.JWT_SECRET!);
+		expect(await verifySession(token)).toBeNull();
+	});
+
+	it('returns null when createdAt is after expMs (impossible timestamp relationship)', async () => {
+		const { sign } = await import('hono/jwt');
+		const now = Date.now();
+		const payload = {
+			sessionId: crypto.randomUUID(),
+			userId: 'future-created-user',
+			// createdAt is well after expMs — violates valid session invariant
+			createdAt: now + 20_000,
+			exp: Math.floor((now + 10_000) / 1000) // expires 10 s from now (seconds)
+		};
+		const token = await sign(payload, process.env.JWT_SECRET!);
+		expect(await verifySession(token)).toBeNull();
+	});
+});
+
 // ─── optionalAuth middleware ──────────────────────────────────────────────────
 
 describe('optionalAuth middleware', () => {

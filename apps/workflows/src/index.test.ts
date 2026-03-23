@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { PerseusWorkflow } from './index';
+import workflowWorker from './index';
 import { MAX_IMAGE_BYTES, updateMetadata, padPixelsToTarget, applyMaskAlpha } from './helpers';
 import type { PuzzleMetadata } from './types';
 import { MAX_IMAGE_DIMENSION } from './types';
@@ -238,6 +239,23 @@ describe('updateMetadata', () => {
 				status: 'ready'
 			})
 		).rejects.toThrow(`Puzzle ${puzzleId} not found`);
+	});
+
+	it('uses generic HTTP error message when response body has no message field', async () => {
+		const puzzleId = 'no-message-puzzle';
+		const { namespace } = createMockDurableObjectNamespace(() => {
+			// Response without a 'message' field — exercises the ?? fallback in updateMetadata
+			return new Response(JSON.stringify({ error: 'internal error' }), {
+				status: 500,
+				headers: { 'Content-Type': 'application/json' }
+			});
+		});
+
+		await expect(
+			updateMetadata(namespace as unknown as DurableObjectNamespace, puzzleId, {
+				status: 'ready'
+			})
+		).rejects.toThrow(`Failed to update puzzle ${puzzleId} (HTTP 500)`);
 	});
 
 	it('frees the source image after generating a row of pieces', async () => {
@@ -503,6 +521,92 @@ describe('Workflow Execution - Resource Loading', () => {
 		expect(stub.fetch).toHaveBeenCalledTimes(1);
 		const body = JSON.parse((stub.fetch.mock.calls[0]?.[1]?.body as string | undefined) ?? '{}');
 		expect(body.updates.status).toBe('failed');
+	});
+});
+
+describe('Default export fetch handler', () => {
+	it('returns 404 Not Found for all HTTP requests', async () => {
+		const response = await workflowWorker.fetch(
+			new Request('https://example.com/anything'),
+			{} as Env
+		);
+		expect(response.status).toBe(404);
+		expect(await response.text()).toBe('Not Found');
+	});
+
+	it('returns 404 for POST requests too', async () => {
+		const response = await workflowWorker.fetch(
+			new Request('https://example.com/api/data', { method: 'POST' }),
+			{} as Env
+		);
+		expect(response.status).toBe(404);
+	});
+});
+
+describe('Workflow Execution - mark-failed retry exhaustion', () => {
+	afterEach(() => {
+		mockWidth = 100;
+		mockHeight = 100;
+		photonInstances = [];
+		vi.restoreAllMocks();
+	});
+
+	it('logs CRITICAL and rethrows when all mark-failed retries fail', async () => {
+		vi.useFakeTimers();
+		try {
+			const puzzleId = sampleMetadata.id;
+
+			// DO always returns 500 → updateMetadata throws on every attempt
+			const alwaysFailingDO = {
+				idFromName: vi.fn(() => 'test-id'),
+				get: vi.fn(() => ({
+					fetch: vi.fn(
+						async () =>
+							new Response(JSON.stringify({ message: 'DO unavailable' }), {
+								status: 500
+							})
+					)
+				}))
+			};
+
+			const env = {
+				// null bucket triggers "image not found" → enters catch → triggers mark-failed
+				PUZZLES_BUCKET: { get: vi.fn(async () => null), put: vi.fn(async () => {}) },
+				PUZZLE_METADATA: createMockKv(sampleMetadata),
+				PUZZLE_METADATA_DO: alwaysFailingDO as unknown as DurableObjectNamespace,
+				PUZZLE_WORKFLOW: {} as Workflow
+			} as unknown as Env;
+
+			const workflow = new TestWorkflow();
+			workflow.setEnv(env);
+
+			const event: WorkflowEvent<WorkflowParams> = {
+				payload: { puzzleId },
+				timestamp: new Date(),
+				instanceId: 'test-retry-instance'
+			};
+
+			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+			// Set up the rejection handler before advancing timers to avoid unhandled rejection.
+			const assertionPromise = expect(workflow.run(event, createMockStep())).rejects.toThrow(
+				`Original image not found for puzzle ${puzzleId}`
+			);
+
+			// Advance timers to flush the exponential-backoff sleeps (100 ms + 200 ms)
+			await vi.runAllTimersAsync();
+			await assertionPromise;
+
+			// CRITICAL error must have been logged after all retries failed.
+			// The log call uses a single string argument (no second arg).
+			expect(consoleSpy).toHaveBeenCalledWith(
+				expect.stringContaining(`CRITICAL: Failed to mark puzzle ${puzzleId} as failed`)
+			);
+
+			consoleSpy.mockRestore();
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });
 

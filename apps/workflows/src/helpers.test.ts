@@ -248,4 +248,25 @@ describe('getMetadata', () => {
 		const kv = makeKV('invalid-string-data');
 		await expect(getMetadata(kv, 'puzzle-1')).rejects.toThrow(/not an object/);
 	});
+
+	it('reports "unknown validation failure" when metadata passes field-level checks but fails overall validation', async () => {
+		// status is a non-empty string (passes getValidationDiagnostics typeof check)
+		// but is not one of the valid statuses (fails validatePuzzleMetadata),
+		// so getValidationDiagnostics finds no issues → returns 'unknown validation failure'.
+		const dataWithUnknownStatus = {
+			id: 'test-id',
+			name: 'Test Puzzle',
+			pieceCount: 9,
+			gridCols: 3,
+			gridRows: 3,
+			imageWidth: 300,
+			imageHeight: 300,
+			createdAt: Date.now(),
+			version: 1,
+			pieces: [],
+			status: 'unknown' // valid string but not 'processing' | 'ready' | 'failed'
+		};
+		const kv = makeKV(dataWithUnknownStatus);
+		await expect(getMetadata(kv, 'test-id')).rejects.toThrow(/unknown validation failure/);
+	});
 });
