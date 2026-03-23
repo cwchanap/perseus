@@ -217,8 +217,8 @@ describe('PuzzleMetadataDO.fetch - status transitions', () => {
 		expect(response.status).toBe(200);
 		const stored = storage._store['metadata'] as PuzzleMetadata;
 		expect(stored.status).toBe('ready');
-		expect((stored as Record<string, unknown>).progress).toBeUndefined();
-		expect((stored as Record<string, unknown>).error).toBeUndefined();
+		expect((stored as unknown as Record<string, unknown>).progress).toBeUndefined();
+		expect((stored as unknown as Record<string, unknown>).error).toBeUndefined();
 	});
 
 	it('transitions to failed status and clears progress', async () => {
@@ -230,7 +230,7 @@ describe('PuzzleMetadataDO.fetch - status transitions', () => {
 		expect(response.status).toBe(200);
 		const stored = storage._store['metadata'] as PuzzleMetadata;
 		expect(stored.status).toBe('failed');
-		expect((stored as Record<string, unknown>).progress).toBeUndefined();
+		expect((stored as unknown as Record<string, unknown>).progress).toBeUndefined();
 	});
 
 	it('updates processing status without changing status field', async () => {
@@ -272,7 +272,7 @@ describe('PuzzleMetadataDO.fetch - piece merging', () => {
 			puzzleId: 'test-puzzle',
 			correctX: 0,
 			correctY: 0,
-			edges: { top: 'flat', right: 'tab', bottom: 'blank', left: 'flat' },
+			edges: { top: 'flat', right: 'tab', bottom: 'blank', left: 'flat' } as const,
 			imagePath: 'pieces/0.png'
 		};
 		const newPiece = {
@@ -280,7 +280,7 @@ describe('PuzzleMetadataDO.fetch - piece merging', () => {
 			puzzleId: 'test-puzzle',
 			correctX: 1,
 			correctY: 0,
-			edges: { top: 'flat', right: 'flat', bottom: 'tab', left: 'blank' },
+			edges: { top: 'flat', right: 'flat', bottom: 'tab', left: 'blank' } as const,
 			imagePath: 'pieces/1.png'
 		};
 		const { durableObj, storage } = makeDO({
@@ -302,7 +302,7 @@ describe('PuzzleMetadataDO.fetch - piece merging', () => {
 			puzzleId: 'test-puzzle',
 			correctX: 0,
 			correctY: 0,
-			edges: { top: 'flat', right: 'tab', bottom: 'blank', left: 'flat' },
+			edges: { top: 'flat', right: 'tab', bottom: 'blank', left: 'flat' } as const,
 			imagePath: 'pieces/0.png'
 		};
 		const { durableObj, storage } = makeDO({
@@ -323,7 +323,7 @@ describe('PuzzleMetadataDO.fetch - piece merging', () => {
 			puzzleId: 'test-puzzle',
 			correctX: 0,
 			correctY: 0,
-			edges: { top: 'flat', right: 'tab', bottom: 'blank', left: 'flat' },
+			edges: { top: 'flat', right: 'tab', bottom: 'blank', left: 'flat' } as const,
 			imagePath: 'pieces/0.png'
 		};
 		const { durableObj, storage } = makeDO({
@@ -370,7 +370,7 @@ describe('PuzzleMetadataDO.fetch - storage and KV sync', () => {
 	it('KV put contains JSON with updated metadata', async () => {
 		const { durableObj, kv } = makeDO({ metadata: baseMetadata });
 		await postRequest(durableObj, { puzzleId: 'test-puzzle', updates: { status: 'ready' } });
-		const putCall = kv.put.mock.calls[0];
+		const putCall = kv.put.mock.calls[0] as unknown as [string, string] | undefined;
 		const jsonStr = putCall?.[1] as string;
 		const parsed = JSON.parse(jsonStr) as PuzzleMetadata;
 		expect(parsed.status).toBe('ready');
