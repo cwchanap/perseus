@@ -344,7 +344,7 @@ describe('rate-limit trusted proxy with TRUSTED_PROXY_LIST', () => {
 		expect(kvKey).toContain('192.168.100.1');
 	});
 
-	it('falls through to UUID fallback when peer IP is NOT in TRUSTED_PROXY_LIST', async () => {
+	it('logs X-Forwarded-For rejection warning when peer IP is NOT in TRUSTED_PROXY_LIST', async () => {
 		const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 		const mockKV = {
 			get: vi.fn(async () => null),

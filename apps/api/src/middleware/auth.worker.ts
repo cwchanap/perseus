@@ -265,6 +265,13 @@ export async function revokeSession(env: Env, token: string): Promise<void> {
 	sessionGracePeriod.delete(key);
 }
 
+/** Test-only: reset all module-level session state between tests. */
+export function __resetSessionStore(): void {
+	sessionFallbackStore.clear();
+	sessionFallbackKeys.clear();
+	sessionGracePeriod.clear();
+}
+
 // Create a JWT-like session token using WebCrypto
 export async function createSession(
 	env: Env,

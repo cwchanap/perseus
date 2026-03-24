@@ -249,10 +249,10 @@ describe('getMetadata', () => {
 		await expect(getMetadata(kv, 'puzzle-1')).rejects.toThrow(/not an object/);
 	});
 
-	it('reports "unknown validation failure" when metadata passes field-level checks but fails overall validation', async () => {
+	it('reports "unknown validation failure" when field checks pass but enum validation fails', async () => {
 		// status is a non-empty string (passes getValidationDiagnostics typeof check)
-		// but is not one of the valid statuses (fails validatePuzzleMetadata),
-		// so getValidationDiagnostics finds no issues → returns 'unknown validation failure'.
+		// but not a valid status enum value (fails validatePuzzleMetadata),
+		// so getValidationDiagnostics finds no issues → 'unknown validation failure'.
 		const dataWithUnknownStatus = {
 			id: 'test-id',
 			name: 'Test Puzzle',

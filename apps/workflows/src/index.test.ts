@@ -540,6 +540,7 @@ describe('Default export fetch handler', () => {
 			{} as Env
 		);
 		expect(response.status).toBe(404);
+		expect(await response.text()).toBe('Not Found');
 	});
 });
 
