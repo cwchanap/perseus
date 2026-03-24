@@ -340,7 +340,8 @@ describe('rate-limit trusted proxy with TRUSTED_PROXY_LIST', () => {
 		expect(next).toHaveBeenCalled();
 		// The KV key should include the real client IP from X-Forwarded-For
 		expect(mockKV.put).toHaveBeenCalled();
-		const kvKey: string = mockKV.put.mock.calls[0][0];
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const kvKey: string = (mockKV.put.mock.calls as any)[0][0];
 		expect(kvKey).toContain('192.168.100.1');
 	});
 
