@@ -265,7 +265,8 @@ describe('verifySession — edge cases', () => {
 			userId: 'iso-exp-user',
 			createdAt: now - 1000,
 			exp: new Date(now + 86_400_000).toISOString()
-		};
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		} as any;
 		const token = await sign(payload, process.env.JWT_SECRET!);
 		const session = await verifySession(token);
 		// The string ISO date is parseable → expMs is in the future → session returned
@@ -281,7 +282,8 @@ describe('verifySession — edge cases', () => {
 			userId: 'bad-exp-user',
 			createdAt: now - 1000,
 			exp: 'not-a-date' // isNaN(new Date('not-a-date').getTime()) === true
-		};
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		} as any;
 		const token = await sign(payload, process.env.JWT_SECRET!);
 		expect(await verifySession(token)).toBeNull();
 	});
