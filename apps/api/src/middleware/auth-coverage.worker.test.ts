@@ -5,7 +5,13 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Hono } from 'hono';
-import { setSessionCookie, clearSessionCookie, createSession, verifySession } from './auth.worker';
+import {
+	setSessionCookie,
+	clearSessionCookie,
+	createSession,
+	verifySession,
+	__resetSessionStore
+} from './auth.worker';
 import type { Env } from '../worker';
 
 function createMockKVStore() {
@@ -371,6 +377,10 @@ describe('verifySession - in-memory fallback (no KV configured)', () => {
 });
 
 describe('isSessionActive - KV retry failure paths', () => {
+	beforeEach(() => {
+		__resetSessionStore();
+	});
+
 	it('throws in production when all KV read retries fail', { timeout: 10_000 }, async () => {
 		// First create a valid token via a working KV env
 		const workingKv = createMockKVStore();
