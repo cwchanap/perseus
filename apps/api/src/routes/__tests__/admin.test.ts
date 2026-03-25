@@ -18,6 +18,13 @@ vi.mock('../../middleware/auth', () => ({
 	requireAuth: vi.fn().mockImplementation(async (_c: any, next: any) => next())
 }));
 
+// Mock rate-limit to prevent the module-level loginAttempts Map from accumulating
+// state across tests and to avoid the setInterval timer that leaks into other tests.
+vi.mock('../../middleware/rate-limit', () => ({
+	loginRateLimit: vi.fn().mockImplementation(async (_c: any, next: any) => next()),
+	resetLoginAttempts: vi.fn()
+}));
+
 vi.mock('../../services/puzzle-generator', () => ({
 	generatePuzzle: vi.fn(),
 	isValidPieceCount: vi.fn().mockReturnValue(true)
