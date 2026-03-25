@@ -261,7 +261,11 @@ describe('POST /puzzles', () => {
 	function buildFormData(fields: Record<string, string | Blob>): FormData {
 		const fd = new FormData();
 		for (const [key, value] of Object.entries(fields)) {
-			fd.append(key, value);
+			if (value instanceof Blob) {
+				fd.append(key, value);
+			} else {
+				fd.append(key, value);
+			}
 		}
 		return fd;
 	}
