@@ -710,4 +710,96 @@ describe('Workflow Execution - Multi-piece Grid', () => {
 		});
 		expect(allPieces).toHaveLength(ninePieceMetadata.pieceCount);
 	});
+
+	it('completes for a 2x3 (6-piece) non-square puzzle exercising getGridDimensions', async () => {
+		// 6 pieces: getGridDimensions(6) → rows=2, cols=3 (non-square path)
+		const sixPieceMetadata: PuzzleMetadata = {
+			...sampleMetadata,
+			pieceCount: 6,
+			gridCols: 3,
+			gridRows: 2
+		};
+		const puzzleId = sixPieceMetadata.id;
+
+		const { namespace, stub } = createMockDurableObjectNamespace(() => {
+			return new Response(JSON.stringify({ success: true }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' }
+			});
+		});
+		const env = {
+			PUZZLES_BUCKET: createMockBucket(new ArrayBuffer(8)),
+			PUZZLE_METADATA: createMockKv(sixPieceMetadata),
+			PUZZLE_METADATA_DO: namespace as unknown as DurableObjectNamespace,
+			PUZZLE_WORKFLOW: {} as Workflow
+		} as unknown as Env;
+
+		const workflow = new TestWorkflow();
+		workflow.setEnv(env);
+
+		const event: WorkflowEvent<WorkflowParams> = {
+			payload: { puzzleId },
+			timestamp: new Date(),
+			instanceId: 'test-instance'
+		};
+
+		await expect(workflow.run(event, createMockStep())).resolves.toBeUndefined();
+
+		const calls = stub.fetch.mock.calls;
+		const lastBody = JSON.parse((calls[calls.length - 1]?.[1]?.body as string | undefined) ?? '{}');
+		expect(lastBody.updates.status).toBe('ready');
+
+		// All 6 pieces should be generated across 2 rows × 3 cols
+		const allPieces = calls.flatMap((c: [string, RequestInit?]) => {
+			const b = JSON.parse((c[1]?.body as string | undefined) ?? '{}');
+			return b.updates?.pieces ?? [];
+		});
+		expect(allPieces).toHaveLength(sixPieceMetadata.pieceCount);
+	});
+
+	it('completes for a 1x7 (7-piece) puzzle where getGridDimensions falls back to 1 row', async () => {
+		// 7 is prime: getGridDimensions(7) → rows=1, cols=7
+		const sevenPieceMetadata: PuzzleMetadata = {
+			...sampleMetadata,
+			pieceCount: 7,
+			gridCols: 7,
+			gridRows: 1
+		};
+		const puzzleId = sevenPieceMetadata.id;
+
+		const { namespace, stub } = createMockDurableObjectNamespace(() => {
+			return new Response(JSON.stringify({ success: true }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' }
+			});
+		});
+		const env = {
+			PUZZLES_BUCKET: createMockBucket(new ArrayBuffer(8)),
+			PUZZLE_METADATA: createMockKv(sevenPieceMetadata),
+			PUZZLE_METADATA_DO: namespace as unknown as DurableObjectNamespace,
+			PUZZLE_WORKFLOW: {} as Workflow
+		} as unknown as Env;
+
+		const workflow = new TestWorkflow();
+		workflow.setEnv(env);
+
+		const event: WorkflowEvent<WorkflowParams> = {
+			payload: { puzzleId },
+			timestamp: new Date(),
+			instanceId: 'test-instance'
+		};
+
+		await expect(workflow.run(event, createMockStep())).resolves.toBeUndefined();
+
+		const calls = stub.fetch.mock.calls;
+		const lastBody = JSON.parse((calls[calls.length - 1]?.[1]?.body as string | undefined) ?? '{}');
+		expect(lastBody.updates.status).toBe('ready');
+
+		// All 7 pieces should be generated in a single row
+		const allPieces = calls.flatMap((c: [string, RequestInit?]) => {
+			const b = JSON.parse((c[1]?.body as string | undefined) ?? '{}');
+			return b.updates?.pieces ?? [];
+		});
+		expect(allPieces).toHaveLength(sevenPieceMetadata.pieceCount);
+	});
 });
