@@ -397,7 +397,7 @@ describe('API Service - deletePuzzle with force option', () => {
 		);
 
 		await deletePuzzle('abc', { force: false });
-		expect(capturedUrl).not.toContain('force=true');
+		expect(capturedUrl).not.toMatch(/[?&]force=/);
 	});
 });
 
@@ -438,6 +438,7 @@ describe('API Service - handleResponse edge cases (via fetchPuzzle)', () => {
 			vi.fn().mockResolvedValue(
 				new Response(JSON.stringify({ error: 'oops' }), {
 					status: 400,
+					statusText: 'Bad Request',
 					headers: { 'Content-Type': 'application/json' }
 				})
 			)
@@ -446,6 +447,7 @@ describe('API Service - handleResponse edge cases (via fetchPuzzle)', () => {
 		const err = await fetchPuzzle('p1').catch((e) => e);
 		expect(err).toBeInstanceOf(ApiError);
 		expect(err.error).toBe('oops');
+		expect(err.message).toBe('Bad Request');
 	});
 
 	it('throws ApiError with Unknown error when response body is not an object', async () => {

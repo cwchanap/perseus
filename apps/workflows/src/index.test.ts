@@ -755,6 +755,16 @@ describe('Workflow Execution - Multi-piece Grid', () => {
 			return b.updates?.pieces ?? [];
 		});
 		expect(allPieces).toHaveLength(sixPieceMetadata.pieceCount);
+
+		// Each row should emit exactly 3 pieces (cols=3)
+		const batchSizes = calls
+			.map((c: [string, RequestInit?]) => {
+				const b = JSON.parse((c[1]?.body as string | undefined) ?? '{}');
+				return (b.updates?.pieces as unknown[] | undefined) ?? [];
+			})
+			.filter((pieces: unknown[]) => pieces.length > 0)
+			.map((pieces: unknown[]) => pieces.length);
+		expect(batchSizes).toEqual([3, 3]);
 	});
 
 	it('completes for a 1x7 (7-piece) puzzle where getGridDimensions falls back to 1 row', async () => {
@@ -801,5 +811,15 @@ describe('Workflow Execution - Multi-piece Grid', () => {
 			return b.updates?.pieces ?? [];
 		});
 		expect(allPieces).toHaveLength(sevenPieceMetadata.pieceCount);
+
+		// The single row should emit all 7 pieces in one batch
+		const batchSizes = calls
+			.map((c: [string, RequestInit?]) => {
+				const b = JSON.parse((c[1]?.body as string | undefined) ?? '{}');
+				return (b.updates?.pieces as unknown[] | undefined) ?? [];
+			})
+			.filter((pieces: unknown[]) => pieces.length > 0)
+			.map((pieces: unknown[]) => pieces.length);
+		expect(batchSizes).toEqual([7]);
 	});
 });
