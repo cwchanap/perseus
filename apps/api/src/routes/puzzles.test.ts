@@ -6,7 +6,7 @@ vi.mock('node:fs/promises', () => ({
 	readFile: vi.fn()
 }));
 
-vi.mock('../../services/storage', () => {
+vi.mock('../services/storage', () => {
 	class InvalidPuzzleIdError extends Error {
 		constructor(message = 'Invalid puzzleId') {
 			super(message);
@@ -22,8 +22,8 @@ vi.mock('../../services/storage', () => {
 	};
 });
 
-import puzzles from '../puzzles';
-import * as storage from '../../services/storage';
+import puzzles from './puzzles';
+import * as storage from '../services/storage';
 import * as fsPromises from 'node:fs/promises';
 
 const PUZZLE_ID = 'test-puzzle-abc';
@@ -98,6 +98,7 @@ describe('GET / - List puzzles', () => {
 
 		const res = await puzzles.fetch(new Request('http://localhost/'));
 		expect(res.status).toBe(500);
+		expect(consoleSpy).toHaveBeenCalled();
 		consoleSpy.mockRestore();
 	});
 });
@@ -146,6 +147,7 @@ describe('GET /:id - Get puzzle by ID', () => {
 
 		const res = await puzzles.fetch(new Request(`http://localhost/${PUZZLE_ID}`));
 		expect(res.status).toBe(500);
+		expect(consoleSpy).toHaveBeenCalled();
 		consoleSpy.mockRestore();
 	});
 });
@@ -264,6 +266,7 @@ describe('GET /:id/thumbnail - Get thumbnail image', () => {
 
 		const res = await puzzles.fetch(new Request(`http://localhost/${PUZZLE_ID}/thumbnail`));
 		expect(res.status).toBe(500);
+		expect(consoleSpy).toHaveBeenCalled();
 		consoleSpy.mockRestore();
 	});
 });
@@ -395,6 +398,7 @@ describe('GET /:id/pieces/:pieceId/image - Get piece image', () => {
 
 		const res = await puzzles.fetch(new Request(`http://localhost/${PUZZLE_ID}/pieces/0/image`));
 		expect(res.status).toBe(500);
+		expect(consoleSpy).toHaveBeenCalled();
 		consoleSpy.mockRestore();
 	});
 });
