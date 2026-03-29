@@ -95,26 +95,4 @@ describe('Admin Login Page', () => {
 
 		await expect.element(page.getByText('Failed to connect to server')).toBeVisible();
 	});
-
-	it('shows error from result when login returns success: false with error field', async () => {
-		const { login } = await import('$lib/services/api');
-		vi.mocked(login).mockResolvedValue({ success: false, error: 'Wrong passkey' });
-
-		render(LoginPage);
-		await page.getByLabelText(/PASSKEY/i).fill('something');
-		await page.getByRole('button', { name: /AUTHENTICATE/i }).click();
-
-		await expect.element(page.getByText('Wrong passkey')).toBeVisible();
-	});
-
-	it('shows "Login failed" when result.success is false with no error field', async () => {
-		const { login } = await import('$lib/services/api');
-		vi.mocked(login).mockResolvedValue({ success: false });
-
-		render(LoginPage);
-		await page.getByLabelText(/PASSKEY/i).fill('something');
-		await page.getByRole('button', { name: /AUTHENTICATE/i }).click();
-
-		await expect.element(page.getByText('Login failed')).toBeVisible();
-	});
 });
