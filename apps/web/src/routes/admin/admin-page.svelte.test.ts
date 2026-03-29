@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
 import AdminPage from './+page.svelte';
+import type { PuzzleSummary } from '$lib/types/puzzle';
 
 vi.mock('$lib/services/api', () => {
 	class MockApiError extends Error {
@@ -36,14 +37,14 @@ vi.mock('$app/paths', () => ({
 	resolve: (p: string) => p
 }));
 
-const mockPuzzles = [
+const mockPuzzles: PuzzleSummary[] = [
 	{ id: 'p1', name: 'Forest Scene', pieceCount: 225, status: 'ready' },
 	{
 		id: 'p2',
 		name: 'City Lights',
 		pieceCount: 225,
 		status: 'processing',
-		progress: { generatedPieces: 10, totalPieces: 225 }
+		progress: { generatedPieces: 10, totalPieces: 225, updatedAt: 0 }
 	},
 	{ id: 'p3', name: 'Broken Puzzle', pieceCount: 225, status: 'failed' }
 ];
@@ -77,7 +78,7 @@ describe('Admin Page', () => {
 
 	it('renders list of puzzles after loading', async () => {
 		const { fetchAdminPuzzles } = await import('$lib/services/api');
-		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles as never);
+		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
 		render(AdminPage);
 
 		await expect.element(page.getByText('Forest Scene')).toBeVisible();
@@ -87,7 +88,7 @@ describe('Admin Page', () => {
 
 	it('shows PROCESSING badge for puzzles with processing status', async () => {
 		const { fetchAdminPuzzles } = await import('$lib/services/api');
-		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles as never);
+		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
 		render(AdminPage);
 
 		await expect.element(page.getByText('PROCESSING')).toBeVisible();
@@ -95,7 +96,7 @@ describe('Admin Page', () => {
 
 	it('shows FAILED badge for puzzles with failed status', async () => {
 		const { fetchAdminPuzzles } = await import('$lib/services/api');
-		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles as never);
+		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
 		render(AdminPage);
 
 		await expect.element(page.getByText('FAILED')).toBeVisible();
@@ -103,7 +104,7 @@ describe('Admin Page', () => {
 
 	it('shows READY badge for puzzles with ready status', async () => {
 		const { fetchAdminPuzzles } = await import('$lib/services/api');
-		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles as never);
+		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
 		render(AdminPage);
 
 		await expect.element(page.getByText('READY')).toBeVisible();
@@ -128,14 +129,12 @@ describe('Admin Page', () => {
 		await expect.element(page.getByText('Service temporarily unavailable')).toBeVisible();
 	});
 
-	it('shows form validation error when name is empty and form is submitted', async () => {
+	it('disables the submit button when name and image are empty', async () => {
 		const { fetchAdminPuzzles } = await import('$lib/services/api');
 		vi.mocked(fetchAdminPuzzles).mockResolvedValue([]);
 		render(AdminPage);
 
-		// Submit without filling anything — name is empty
 		const submitBtn = page.getByRole('button', { name: /CREATE MISSION/i });
-		// Button is disabled when name/image are empty, so we force submit via form
 		await expect.element(submitBtn).toBeDisabled();
 	});
 
@@ -167,7 +166,7 @@ describe('Admin Page', () => {
 
 	it('shows puzzle count in mission database panel', async () => {
 		const { fetchAdminPuzzles } = await import('$lib/services/api');
-		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles as never);
+		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
 		render(AdminPage);
 
 		// "3 TOTAL" should appear once puzzles are loaded
