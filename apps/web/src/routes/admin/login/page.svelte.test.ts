@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
 import LoginPage from './+page.svelte';
+import { login, ApiError } from '$lib/services/api';
+import { goto } from '$app/navigation';
 
 vi.mock('$lib/services/api', () => {
 	class MockApiError extends Error {
@@ -60,8 +62,6 @@ describe('Admin Login Page', () => {
 	});
 
 	it('navigates to /admin after successful login', async () => {
-		const { login } = await import('$lib/services/api');
-		const { goto } = await import('$app/navigation');
 		vi.mocked(login).mockResolvedValue({ success: true });
 
 		render(LoginPage);
@@ -74,7 +74,6 @@ describe('Admin Login Page', () => {
 	});
 
 	it('shows error message when login fails with ApiError', async () => {
-		const { login, ApiError } = await import('$lib/services/api');
 		vi.mocked(login).mockRejectedValue(new ApiError(401, 'unauthorized', 'Invalid passkey'));
 
 		render(LoginPage);
@@ -86,7 +85,6 @@ describe('Admin Login Page', () => {
 	});
 
 	it('shows generic error when login throws non-ApiError', async () => {
-		const { login } = await import('$lib/services/api');
 		vi.mocked(login).mockRejectedValue(new Error('Network failure'));
 
 		render(LoginPage);
