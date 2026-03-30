@@ -69,6 +69,7 @@ describe('Admin Login Page', () => {
 		await page.getByRole('button', { name: /AUTHENTICATE/i }).click();
 
 		await vi.waitFor(() => {
+			expect(login).toHaveBeenCalledWith('correct-passkey');
 			expect(goto).toHaveBeenCalledWith('/admin');
 		});
 	});
@@ -80,6 +81,7 @@ describe('Admin Login Page', () => {
 		await page.getByLabelText(/PASSKEY/i).fill('wrongkey');
 		await page.getByRole('button', { name: /AUTHENTICATE/i }).click();
 
+		expect(login).toHaveBeenCalledWith('wrongkey');
 		await expect.element(page.getByRole('alert')).toBeVisible();
 		await expect.element(page.getByText('Invalid passkey')).toBeVisible();
 	});
@@ -91,6 +93,7 @@ describe('Admin Login Page', () => {
 		await page.getByLabelText(/PASSKEY/i).fill('something');
 		await page.getByRole('button', { name: /AUTHENTICATE/i }).click();
 
+		expect(login).toHaveBeenCalledWith('something');
 		await expect.element(page.getByText('Failed to connect to server')).toBeVisible();
 	});
 });
