@@ -3,6 +3,8 @@ import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
 import { createRawSnippet } from 'svelte';
 import AdminLayout from './+layout.svelte';
+import { checkSession } from '$lib/services/api';
+import { goto } from '$app/navigation';
 
 // Hoisted mutable page store so individual tests can set the URL
 const mockPage = vi.hoisted(() => {
@@ -66,7 +68,6 @@ describe('Admin Layout', () => {
 	});
 
 	it('shows checking/loading state while session check is in flight', async () => {
-		const { checkSession } = await import('$lib/services/api');
 		// Never resolves during this test
 		vi.mocked(checkSession).mockReturnValue(new Promise(() => {}));
 
@@ -77,7 +78,6 @@ describe('Admin Layout', () => {
 	});
 
 	it('renders children after session check confirms authentication', async () => {
-		const { checkSession } = await import('$lib/services/api');
 		vi.mocked(checkSession).mockResolvedValue(true);
 
 		render(AdminLayout, { children: makeChildren() });
@@ -86,8 +86,6 @@ describe('Admin Layout', () => {
 	});
 
 	it('redirects to /admin/login when session check returns false', async () => {
-		const { checkSession } = await import('$lib/services/api');
-		const { goto } = await import('$app/navigation');
 		vi.mocked(checkSession).mockResolvedValue(false);
 
 		render(AdminLayout, { children: makeChildren() });
@@ -98,8 +96,6 @@ describe('Admin Layout', () => {
 	});
 
 	it('redirects to /admin/login when session check throws', async () => {
-		const { checkSession } = await import('$lib/services/api');
-		const { goto } = await import('$app/navigation');
 		vi.mocked(checkSession).mockRejectedValue(new Error('Network error'));
 
 		render(AdminLayout, { children: makeChildren() });
@@ -110,7 +106,6 @@ describe('Admin Layout', () => {
 	});
 
 	it('shows redirecting state after unauthenticated session check', async () => {
-		const { checkSession } = await import('$lib/services/api');
 		vi.mocked(checkSession).mockResolvedValue(false);
 
 		render(AdminLayout, { children: makeChildren() });

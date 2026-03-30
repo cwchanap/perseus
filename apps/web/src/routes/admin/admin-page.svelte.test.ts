@@ -1,8 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
 import AdminPage from './+page.svelte';
 import type { PuzzleSummary } from '$lib/types/puzzle';
+import { fetchAdminPuzzles, logout, ApiError } from '$lib/services/api';
+import { goto } from '$app/navigation';
 
 vi.mock('$lib/services/api', () => {
 	class MockApiError extends Error {
@@ -55,14 +57,12 @@ describe('Admin Page', () => {
 	});
 
 	it('renders the admin control panel heading', async () => {
-		const { fetchAdminPuzzles } = await import('$lib/services/api');
 		vi.mocked(fetchAdminPuzzles).mockResolvedValue([]);
 		render(AdminPage);
 		await expect.element(page.getByRole('heading', { name: /CONTROL PANEL/i })).toBeVisible();
 	});
 
 	it('shows CREATE MISSION form panel', async () => {
-		const { fetchAdminPuzzles } = await import('$lib/services/api');
 		vi.mocked(fetchAdminPuzzles).mockResolvedValue([]);
 		render(AdminPage);
 		// The panel header uses a <span> with this exact text
@@ -70,48 +70,62 @@ describe('Admin Page', () => {
 	});
 
 	it('shows empty state when no puzzles exist', async () => {
-		const { fetchAdminPuzzles } = await import('$lib/services/api');
 		vi.mocked(fetchAdminPuzzles).mockResolvedValue([]);
 		render(AdminPage);
 		await expect.element(page.getByText(/No missions found/i)).toBeVisible();
 	});
 
-	it('renders list of puzzles after loading', async () => {
-		const { fetchAdminPuzzles } = await import('$lib/services/api');
-		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
-		render(AdminPage);
+	// Tests rendering mockPuzzles (which includes a 'processing' puzzle that triggers
+	// setInterval polling) use fake timers so the interval never fires during the test.
+	describe('puzzle list rendering', () => {
+		beforeEach(() => {
+			vi.useFakeTimers();
+		});
 
-		await expect.element(page.getByText('Forest Scene')).toBeVisible();
-		await expect.element(page.getByText('City Lights')).toBeVisible();
-		await expect.element(page.getByText('Broken Puzzle')).toBeVisible();
-	});
+		afterEach(() => {
+			vi.useRealTimers();
+		});
 
-	it('shows PROCESSING badge for puzzles with processing status', async () => {
-		const { fetchAdminPuzzles } = await import('$lib/services/api');
-		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
-		render(AdminPage);
+		it('renders list of puzzles after loading', async () => {
+			vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
+			render(AdminPage);
 
-		await expect.element(page.getByText('PROCESSING')).toBeVisible();
-	});
+			await expect.element(page.getByText('Forest Scene')).toBeVisible();
+			await expect.element(page.getByText('City Lights')).toBeVisible();
+			await expect.element(page.getByText('Broken Puzzle')).toBeVisible();
+		});
 
-	it('shows FAILED badge for puzzles with failed status', async () => {
-		const { fetchAdminPuzzles } = await import('$lib/services/api');
-		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
-		render(AdminPage);
+		it('shows PROCESSING badge for puzzles with processing status', async () => {
+			vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
+			render(AdminPage);
 
-		await expect.element(page.getByText('FAILED')).toBeVisible();
-	});
+			await expect.element(page.getByText('PROCESSING')).toBeVisible();
+		});
 
-	it('shows READY badge for puzzles with ready status', async () => {
-		const { fetchAdminPuzzles } = await import('$lib/services/api');
-		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
-		render(AdminPage);
+		it('shows FAILED badge for puzzles with failed status', async () => {
+			vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
+			render(AdminPage);
 
-		await expect.element(page.getByText('READY')).toBeVisible();
+			await expect.element(page.getByText('FAILED')).toBeVisible();
+		});
+
+		it('shows READY badge for puzzles with ready status', async () => {
+			vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
+			render(AdminPage);
+
+			await expect.element(page.getByText('READY')).toBeVisible();
+		});
+
+		it('shows puzzle count in mission database panel', async () => {
+			vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
+			render(AdminPage);
+
+			// "3 TOTAL" should appear once puzzles are loaded
+			await expect.element(page.getByText('3 TOTAL')).toBeVisible();
+		});
 	});
 
 	it('shows error state when fetching puzzles fails', async () => {
-		const { fetchAdminPuzzles } = await import('$lib/services/api');
 		vi.mocked(fetchAdminPuzzles).mockRejectedValue(new Error('Network error'));
 		render(AdminPage);
 
@@ -120,7 +134,6 @@ describe('Admin Page', () => {
 	});
 
 	it('shows ApiError message when puzzle fetch fails with ApiError', async () => {
-		const { fetchAdminPuzzles, ApiError } = await import('$lib/services/api');
 		vi.mocked(fetchAdminPuzzles).mockRejectedValue(
 			new ApiError(503, 'service_unavailable', 'Service temporarily unavailable')
 		);
@@ -130,7 +143,6 @@ describe('Admin Page', () => {
 	});
 
 	it('disables the submit button when name and image are empty', async () => {
-		const { fetchAdminPuzzles } = await import('$lib/services/api');
 		vi.mocked(fetchAdminPuzzles).mockResolvedValue([]);
 		render(AdminPage);
 
@@ -139,8 +151,6 @@ describe('Admin Page', () => {
 	});
 
 	it('navigates to /admin/login after successful logout', async () => {
-		const { fetchAdminPuzzles, logout } = await import('$lib/services/api');
-		const { goto } = await import('$app/navigation');
 		vi.mocked(fetchAdminPuzzles).mockResolvedValue([]);
 		vi.mocked(logout).mockResolvedValue(undefined);
 		render(AdminPage);
@@ -153,7 +163,6 @@ describe('Admin Page', () => {
 	});
 
 	it('shows logout error when logout fails', async () => {
-		const { fetchAdminPuzzles, logout } = await import('$lib/services/api');
 		vi.mocked(fetchAdminPuzzles).mockResolvedValue([]);
 		vi.mocked(logout).mockRejectedValue(new Error('Logout failed'));
 		render(AdminPage);
@@ -162,14 +171,5 @@ describe('Admin Page', () => {
 
 		await expect.element(page.getByRole('alert')).toBeVisible();
 		await expect.element(page.getByText('Failed to logout')).toBeVisible();
-	});
-
-	it('shows puzzle count in mission database panel', async () => {
-		const { fetchAdminPuzzles } = await import('$lib/services/api');
-		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
-		render(AdminPage);
-
-		// "3 TOTAL" should appear once puzzles are loaded
-		await expect.element(page.getByText('3 TOTAL')).toBeVisible();
 	});
 });
