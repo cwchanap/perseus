@@ -95,26 +95,15 @@ describe('Admin Page', () => {
 			await expect.element(page.getByText('Broken Puzzle')).toBeVisible();
 		});
 
-		it('shows PROCESSING badge for puzzles with processing status', async () => {
-			vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
-			render(AdminPage);
+		it.each(['PROCESSING', 'FAILED', 'READY'])(
+			'shows %s badge for the matching puzzle status',
+			async (badge) => {
+				vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
+				render(AdminPage);
 
-			await expect.element(page.getByText('PROCESSING')).toBeVisible();
-		});
-
-		it('shows FAILED badge for puzzles with failed status', async () => {
-			vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
-			render(AdminPage);
-
-			await expect.element(page.getByText('FAILED')).toBeVisible();
-		});
-
-		it('shows READY badge for puzzles with ready status', async () => {
-			vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
-			render(AdminPage);
-
-			await expect.element(page.getByText('READY')).toBeVisible();
-		});
+				await expect.element(page.getByText(badge)).toBeVisible();
+			}
+		);
 
 		it('shows puzzle count in mission database panel', async () => {
 			vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
