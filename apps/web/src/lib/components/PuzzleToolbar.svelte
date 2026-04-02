@@ -1,16 +1,33 @@
 <script lang="ts">
-	export let onUndo: () => void;
-	export let onRedo: () => void;
-	export let onHint: () => void;
-	export let onReferenceDown: () => void;
-	export let onReferenceUp: () => void;
-	export let onZoomIn: () => void;
-	export let onZoomOut: () => void;
-	export let onResetView: () => void;
-	export let onRotationToggle: () => void;
-	export let canUndo: boolean;
-	export let canRedo: boolean;
-	export let rotationEnabled: boolean;
+	interface Props {
+		onUndo: () => void;
+		onRedo: () => void;
+		onHint: () => void;
+		onReferenceDown: () => void;
+		onReferenceUp: () => void;
+		onZoomIn: () => void;
+		onZoomOut: () => void;
+		onResetView: () => void;
+		onRotationToggle: () => void;
+		canUndo: boolean;
+		canRedo: boolean;
+		rotationEnabled: boolean;
+	}
+
+	let {
+		onUndo,
+		onRedo,
+		onHint,
+		onReferenceDown,
+		onReferenceUp,
+		onZoomIn,
+		onZoomOut,
+		onResetView,
+		onRotationToggle,
+		canUndo,
+		canRedo,
+		rotationEnabled
+	}: Props = $props();
 </script>
 
 <div data-testid="puzzle-toolbar" class="toolbar">

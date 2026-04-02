@@ -1,13 +1,17 @@
 <script lang="ts">
 	import { getReferenceImageUrl } from '$lib/services/api';
 
-	export let puzzleId: string;
-	export let active: boolean;
+	interface Props {
+		puzzleId: string;
+		active: boolean;
+	}
+
+	let { puzzleId, active }: Props = $props();
 </script>
 
 {#if active}
 	<div data-testid="reference-overlay" class="overlay">
-		<img src={getReferenceImageUrl(puzzleId)} alt="" class="reference-image" />
+		<img src={getReferenceImageUrl(puzzleId)} alt="Puzzle reference" class="reference-image" />
 	</div>
 {/if}
 
