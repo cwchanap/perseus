@@ -60,21 +60,23 @@
 		dragOverCell = null;
 	}
 
-	function placePiece(pieceId: number, x: number, y: number): void {
+	function placePiece(pieceId: number, x: number, y: number): boolean {
 		const piece = puzzle.pieces.find((p) => p.id === pieceId);
-		if (!piece) return;
+		if (!piece) return false;
 
 		if (canPlacePiece && !canPlacePiece(pieceId)) {
 			onIncorrectPlacement(pieceId);
-			return;
+			return false;
 		}
 
-		if (isPiecePlaced(x, y, pieceId)) return;
+		if (isPiecePlaced(x, y, pieceId)) return false;
 
 		if (piece.correctX === x && piece.correctY === y) {
 			onPiecePlaced(pieceId, x, y);
+			return true;
 		} else {
 			onIncorrectPlacement(pieceId);
+			return false;
 		}
 	}
 
@@ -97,8 +99,10 @@
 		if (event.key !== 'Enter' && event.key !== ' ') return;
 		if (currentSelectedId === null) return;
 		event.preventDefault();
-		placePiece(currentSelectedId, x, y);
-		clearSelectedPiece();
+		const didPlace = placePiece(currentSelectedId, x, y);
+		if (didPlace) {
+			clearSelectedPiece();
+		}
 	}
 
 	function getCellStyle(x: number, y: number): string {
