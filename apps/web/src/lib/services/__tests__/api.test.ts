@@ -10,6 +10,7 @@ import {
 	fetchAdminPuzzles,
 	getThumbnailUrl,
 	getPieceImageUrl,
+	getReferenceImageUrl,
 	ApiError
 } from '../api';
 import type { PuzzleCategory } from '$lib/types/puzzle';
@@ -264,6 +265,13 @@ describe('API Service - getPieceImageUrl', () => {
 	it('returns URL with piece ID 0', () => {
 		const url = getPieceImageUrl('puzzle-x', 0);
 		expect(url).toMatch(/\/api\/puzzles\/puzzle-x\/pieces\/0\/image$/);
+	});
+});
+
+describe('API Service - getReferenceImageUrl', () => {
+	it('returns correct reference image URL for a given puzzle ID', () => {
+		const url = getReferenceImageUrl('abc-123');
+		expect(url).toMatch(/\/api\/puzzles\/abc-123\/reference$/);
 	});
 });
 
