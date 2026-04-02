@@ -17,6 +17,7 @@ packages/*/dist
 
 # Turborepo
 .turbo
+.worktrees/
 
 # OS
 .DS_Store
