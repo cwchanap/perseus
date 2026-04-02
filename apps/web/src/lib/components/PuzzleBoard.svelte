@@ -4,18 +4,35 @@
 	import { getPieceImageUrl } from '$lib/services/api';
 	import { selectedPieceId, clearSelectedPiece } from '$lib/stores/pieceSelection';
 	import { EXPANSION_FACTOR, BASE_OFFSET } from '$lib/constants/puzzle';
+	import ReferenceOverlay from './ReferenceOverlay.svelte';
 
 	interface Props {
 		puzzle: Puzzle;
 		placedPieces: PlacedPiece[];
 		onPiecePlaced: (pieceId: number, x: number, y: number) => void;
 		onIncorrectPlacement: (pieceId: number) => void;
+		activeHintTarget?: { x: number; y: number } | null;
+		showReferenceOverlay?: boolean;
+		canPlacePiece?: (pieceId: number) => boolean;
+		onBoardPointerDown?: (event: PointerEvent) => void;
 	}
 
-	let { puzzle, placedPieces, onPiecePlaced, onIncorrectPlacement }: Props = $props();
+	let {
+		puzzle,
+		placedPieces,
+		onPiecePlaced,
+		onIncorrectPlacement,
+		activeHintTarget = null,
+		showReferenceOverlay = false,
+		canPlacePiece,
+		onBoardPointerDown
+	}: Props = $props();
 
 	let dragOverCell: { x: number; y: number } | null = $state(null);
 	let currentSelectedId = $state<number | null>(null);
+	const cellAspectRatio = $derived(
+		`${puzzle.imageWidth / puzzle.gridCols} / ${puzzle.imageHeight / puzzle.gridRows}`
+	);
 
 	const unsubscribeSelection = selectedPieceId.subscribe((value) => {
 		currentSelectedId = value;
@@ -46,6 +63,11 @@
 	function placePiece(pieceId: number, x: number, y: number): void {
 		const piece = puzzle.pieces.find((p) => p.id === pieceId);
 		if (!piece) return;
+
+		if (canPlacePiece && !canPlacePiece(pieceId)) {
+			onIncorrectPlacement(pieceId);
+			return;
+		}
 
 		if (isPiecePlaced(x, y, pieceId)) return;
 
@@ -88,6 +110,14 @@
 		return 'bg-gray-100 border-gray-300';
 	}
 
+	function isHintTarget(x: number, y: number): boolean {
+		return activeHintTarget?.x === x && activeHintTarget?.y === y;
+	}
+
+	function handleBoardPointerDown(event: PointerEvent) {
+		onBoardPointerDown?.(event);
+	}
+
 	onDestroy(() => {
 		unsubscribeSelection();
 	});
@@ -95,8 +125,13 @@
 
 <div
 	class="puzzle-board grid gap-0 rounded-lg bg-gray-200 p-1"
-	style="grid-template-columns: repeat({puzzle.gridCols}, 1fr); aspect-ratio: {puzzle.imageWidth} / {puzzle.imageHeight};"
+	style="
+		grid-template-columns: repeat({puzzle.gridCols}, 1fr);
+		grid-template-rows: repeat({puzzle.gridRows}, 1fr);
+		aspect-ratio: {puzzle.imageWidth} / {puzzle.imageHeight};
+	"
 	data-testid="puzzle-board"
+	onpointerdown={handleBoardPointerDown}
 >
 	{#each Array(puzzle.gridRows) as _, y (y)}
 		{#each Array(puzzle.gridCols) as _, x (x)}
@@ -116,7 +151,18 @@
 				role="button"
 				tabindex="0"
 				aria-label="Drop zone at position {x}, {y}"
+				style="aspect-ratio: {cellAspectRatio};"
 			>
+				{#if isHintTarget(x, y)}
+					<div
+						class="pointer-events-none absolute inset-1 rounded-md border-2 border-amber-400 bg-amber-200/40"
+						data-testid="hint-target"
+						data-x={x}
+						data-y={y}
+						aria-hidden="true"
+					></div>
+				{/if}
+
 				{#if placedPiece}
 					<!-- Pre-masked jigsaw piece from server (140% size, offset to align base with cell) -->
 					<div
@@ -140,6 +186,8 @@
 		{/each}
 	{/each}
 </div>
+
+<ReferenceOverlay puzzleId={puzzle.id} active={showReferenceOverlay} />
 
 <style>
 	/* Subtle shadow for placed pieces */

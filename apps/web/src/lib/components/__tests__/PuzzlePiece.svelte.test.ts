@@ -1,8 +1,7 @@
 // Component tests for PuzzlePiece
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render } from 'vitest-browser-svelte';
-import { page } from 'vitest/browser';
-import { userEvent } from '@vitest/browser/context';
+import { page, userEvent } from 'vitest/browser';
 import PuzzlePiece from '../PuzzlePiece.svelte';
 import type { PuzzlePiece as PuzzlePieceType } from '$lib/types/puzzle';
 
@@ -181,6 +180,83 @@ describe('PuzzlePiece', () => {
 			await expect
 				.element(page.getByTestId('puzzle-piece'))
 				.toHaveAttribute('aria-grabbed', 'false');
+		});
+	});
+
+	describe('rotation support', () => {
+		it('does not render a rotate control when rotation is disabled', async () => {
+			render(PuzzlePiece, { piece: mockPiece, isPlaced: false });
+
+			const rotateButton = page.getByRole('button', { name: 'Rotate piece 7' });
+			await expect.poll(() => rotateButton.query()).toBeNull();
+		});
+
+		it('renders a rotate control when rotation is enabled for an unplaced piece', async () => {
+			render(PuzzlePiece, {
+				piece: mockPiece,
+				isPlaced: false,
+				rotationEnabled: true
+			});
+
+			await expect.element(page.getByRole('button', { name: 'Rotate piece 7' })).toBeVisible();
+		});
+
+		it('calls onRotate when the rotate control is clicked', async () => {
+			const onRotate = vi.fn();
+
+			render(PuzzlePiece, {
+				piece: mockPiece,
+				isPlaced: false,
+				rotationEnabled: true,
+				onRotate
+			});
+
+			await userEvent.click(page.getByRole('button', { name: 'Rotate piece 7' }));
+			expect(onRotate).toHaveBeenCalledWith(7);
+		});
+
+		it('keeps the rotate control outside the piece interactive element', async () => {
+			render(PuzzlePiece, {
+				piece: mockPiece,
+				isPlaced: false,
+				rotationEnabled: true
+			});
+
+			const pieceElement = await page.getByTestId('puzzle-piece').element();
+			const rotateButton = await page.getByRole('button', { name: 'Rotate piece 7' }).element();
+
+			expect(pieceElement.contains(rotateButton)).toBe(false);
+		});
+
+		it('calls onRotate when r and R are pressed while the piece is focused', async () => {
+			const onRotate = vi.fn();
+
+			render(PuzzlePiece, {
+				piece: mockPiece,
+				isPlaced: false,
+				rotationEnabled: true,
+				onRotate
+			});
+
+			const el = page.getByTestId('puzzle-piece');
+			await el.click();
+			await userEvent.keyboard('r');
+			await userEvent.keyboard('R');
+
+			expect(onRotate).toHaveBeenNthCalledWith(1, 7);
+			expect(onRotate).toHaveBeenNthCalledWith(2, 7);
+		});
+
+		it('applies the current rotation to the piece visual', async () => {
+			render(PuzzlePiece, {
+				piece: mockPiece,
+				isPlaced: false,
+				rotation: 90
+			});
+
+			await expect
+				.element(page.getByTestId('puzzle-piece-visual'))
+				.toHaveAttribute('style', 'transform: rotate(90deg);');
 		});
 	});
 
