@@ -129,6 +129,10 @@ export function getPieceImageUrl(puzzleId: string, pieceId: number): string {
 	return `${API_BASE}/api/puzzles/${puzzleId}/pieces/${pieceId}/image`;
 }
 
+export function getReferenceImageUrl(puzzleId: string): string {
+	return `${API_BASE}/api/puzzles/${puzzleId}/reference`;
+}
+
 // Admin auth endpoints
 export async function login(passkey: string): Promise<LoginResponse> {
 	const response = await fetch(`${API_BASE}/api/admin/login`, {
