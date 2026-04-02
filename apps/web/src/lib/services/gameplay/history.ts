@@ -45,20 +45,12 @@ export function createHistory<T>(initialState?: T, maxSize = 50): History<T> {
 		},
 
 		canUndo(): boolean {
-			if (currentIndex <= 0) {
-				// At index 0 or below
-				if (hasInitialState && !hasTrimmed && states.length === 1) {
-					// Still at untouched initial state
-					return false;
-				}
-				if (hasTrimmed) {
-					// Can't go past trimmed history
-					return false;
-				}
-				// Started empty, can go to -1
-				return currentIndex === 0;
-			}
-			return true;
+			// Can undo if we're beyond the minimum allowed index
+			// - If started with initial state: minimum is index 0
+			// - If started empty: minimum is index -1 (after first undo, returns undefined)
+			// - After trimming: minimum is index 0 (can't go past trimmed history)
+			const minIndex = hasInitialState || hasTrimmed ? 0 : -1;
+			return currentIndex > minIndex;
 		},
 
 		canRedo(): boolean {

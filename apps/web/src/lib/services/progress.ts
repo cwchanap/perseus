@@ -1,5 +1,6 @@
 // Progress service for localStorage persistence
 import type { GameProgress, PlacedPiece } from '$lib/types/puzzle';
+import type { Rotation } from './gameplay/rotation';
 
 const PROGRESS_KEY_PREFIX = 'puzzle-progress-';
 
@@ -23,7 +24,7 @@ export function saveProgress(
 	puzzleId: string,
 	placedPieces: PlacedPiece[],
 	rotationEnabled = false,
-	pieceRotations: Record<number, 0 | 90 | 180 | 270> = {}
+	pieceRotations: Record<number, Rotation> = {}
 ): void {
 	if (typeof window === 'undefined') return;
 

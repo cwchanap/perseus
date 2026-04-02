@@ -35,6 +35,38 @@ describe('History Helper', () => {
 			expect(h.canUndo()).toBe(false);
 			expect(h.getCurrent()).toBe(2);
 		});
+
+		it('should handle initial state with one push correctly', () => {
+			const h = createHistory<string>('initial');
+			h.push('first');
+
+			// Should be able to undo back to initial
+			expect(h.canUndo()).toBe(true);
+			expect(h.getCurrent()).toBe('first');
+
+			const undoResult = h.undo();
+			expect(undoResult).toBe('initial');
+			expect(h.getCurrent()).toBe('initial');
+
+			// At initial state, cannot undo further
+			expect(h.canUndo()).toBe(false);
+		});
+
+		it('should handle empty history with one push correctly', () => {
+			const h = createHistory<string>();
+			h.push('first');
+
+			// Should be able to undo to empty state
+			expect(h.canUndo()).toBe(true);
+			expect(h.getCurrent()).toBe('first');
+
+			const undoResult = h.undo();
+			expect(undoResult).toBeUndefined();
+			expect(h.getCurrent()).toBeUndefined();
+
+			// At empty state, cannot undo further
+			expect(h.canUndo()).toBe(false);
+		});
 	});
 
 	describe('push', () => {
