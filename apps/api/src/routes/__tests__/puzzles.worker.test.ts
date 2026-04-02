@@ -366,6 +366,36 @@ describe('Puzzle Routes - UUID Validation', () => {
 		});
 	});
 
+	describe('GET /:id/reference - null puzzle path', () => {
+		it('should return 404 when getPuzzle resolves to null', async () => {
+			const validUuid = '550e8400-e29b-41d4-a716-446655440000';
+			vi.mocked(storage.getPuzzle).mockResolvedValueOnce(null);
+
+			const req = new Request(`http://localhost/${validUuid}/reference`);
+			const res = await puzzles.fetch(req, mockEnv);
+			const body = (await res.json()) as any;
+
+			expect(res.status).toBe(404);
+			expect(body.error).toBe('not_found');
+			expect(body.message).toBe('Puzzle not found');
+		});
+	});
+
+	describe('GET /:id/reference - unexpected error path', () => {
+		it('should return 500 when getPuzzle throws an unexpected error', async () => {
+			const validUuid = '550e8400-e29b-41d4-a716-446655440000';
+			vi.mocked(storage.getPuzzle).mockRejectedValueOnce(new Error('Database connection failed'));
+
+			const req = new Request(`http://localhost/${validUuid}/reference`);
+			const res = await puzzles.fetch(req, mockEnv);
+			const body = (await res.json()) as any;
+
+			expect(res.status).toBe(500);
+			expect(body.error).toBe('internal_error');
+			expect(body.message).toBe('Failed to retrieve reference image');
+		});
+	});
+
 	describe('GET /:id/thumbnail - success path', () => {
 		it('should return image with correct Content-Type and Cache-Control', async () => {
 			const validUuid = '550e8400-e29b-41d4-a716-446655440000';
