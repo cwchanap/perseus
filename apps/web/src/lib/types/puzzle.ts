@@ -15,6 +15,7 @@ import type {
 	ErrorResponse,
 	PuzzleCategory
 } from '@perseus/types';
+import type { Rotation } from '$lib/services/gameplay/rotation';
 
 // Re-export shared types for convenience
 export type {
@@ -59,7 +60,7 @@ export interface GameProgress {
 	puzzleId: string;
 	placedPieces: PlacedPiece[];
 	rotationEnabled: boolean;
-	pieceRotations: Record<number, 0 | 90 | 180 | 270>;
+	pieceRotations: Record<number, Rotation>;
 	lastUpdated: string;
 }
 
