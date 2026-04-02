@@ -3,6 +3,7 @@
 	import { SvelteMap } from 'svelte/reactivity';
 	import type { PuzzlePiece } from '$lib/types/puzzle';
 	import { getPieceImageUrl } from '$lib/services/api';
+	import type { Rotation } from '$lib/services/gameplay/rotation';
 	import {
 		selectedPieceId,
 		setSelectedPiece,
@@ -16,9 +17,21 @@
 		onDragStart?: (piece: PuzzlePiece) => void;
 		onDragMove?: (piece: PuzzlePiece, x: number, y: number) => void;
 		onDragEnd?: (piece: PuzzlePiece, x: number, y: number) => void;
+		rotationEnabled?: boolean;
+		rotation?: Rotation;
+		onRotate?: (pieceId: number) => void;
 	}
 
-	let { piece, isPlaced, onDragStart, onDragMove, onDragEnd }: Props = $props();
+	let {
+		piece,
+		isPlaced,
+		onDragStart,
+		onDragMove,
+		onDragEnd,
+		rotationEnabled = false,
+		rotation = 0,
+		onRotate
+	}: Props = $props();
 
 	let isTouchDragging = $state(false);
 	let touchTranslateX = $state(0);
@@ -254,6 +267,11 @@
 
 	function handleKeyDown(event: KeyboardEvent) {
 		if (isPlaced) return;
+		if (rotationEnabled && (event.key === 'r' || event.key === 'R')) {
+			event.preventDefault();
+			onRotate?.(piece.id);
+			return;
+		}
 		if (event.key !== 'Enter' && event.key !== ' ') return;
 		event.preventDefault();
 
@@ -265,6 +283,16 @@
 		}
 	}
 
+	function handleRotateClick(event: MouseEvent) {
+		event.preventDefault();
+		event.stopPropagation();
+		onRotate?.(piece.id);
+	}
+
+	function stopRotateEventPropagation(event: Event) {
+		event.stopPropagation();
+	}
+
 	onDestroy(() => {
 		cleanupTouchListeners();
 		resetTouchDragState(true);
@@ -273,53 +301,78 @@
 </script>
 
 <div
-	class="puzzle-piece relative h-full w-full cursor-grab touch-none transition-transform select-none hover:scale-105 focus:outline-hidden"
-	class:opacity-50={isPlaced}
-	class:cursor-not-allowed={isPlaced}
-	class:cursor-grabbing={isTouchDragging}
+	class="puzzle-piece-wrapper relative h-full w-full"
 	class:z-50={isTouchDragging}
 	class:pointer-events-none={isTouchDragging}
-	class:ring-2={currentSelectedId === piece.id}
-	class:ring-blue-400={currentSelectedId === piece.id}
-	draggable={!isPlaced}
-	ondragstart={handleDragStart}
-	ontouchstart={handleTouchStart}
-	onkeydown={handleKeyDown}
-	role="button"
-	tabindex={isPlaced ? -1 : 0}
-	aria-label="Puzzle piece {piece.id}"
-	aria-grabbed={currentSelectedId === piece.id}
-	aria-pressed={currentSelectedId === piece.id}
-	aria-disabled={isPlaced}
-	data-testid="puzzle-piece"
-	data-piece-id={piece.id}
-	data-selected={currentSelectedId === piece.id}
 	style={isTouchDragging
 		? `transform: translate3d(${touchTranslateX}px, ${touchTranslateY}px, 0);`
 		: undefined}
 >
-	<!-- Shadow wrapper: drop-shadow respects PNG transparency -->
-	<div
-		class="piece-shadow-wrapper h-full w-full"
-		class:dragging={isTouchDragging}
-		class:placed={isPlaced}
-	>
-		<!-- Pre-masked jigsaw piece from server (140% size, offset to show tabs) -->
-		<div
-			class="pointer-events-none relative"
-			style="
-				width: {EXPANSION_FACTOR * 100}%;
-				height: {EXPANSION_FACTOR * 100}%;
-				left: -{BASE_OFFSET * 100}%;
-				top: -{BASE_OFFSET * 100}%;
-			"
+	{#if rotationEnabled && !isPlaced}
+		<button
+			type="button"
+			class="absolute top-1 right-1 z-10 rounded-full bg-white/90 px-2 py-1 text-xs font-medium text-gray-800 shadow-sm ring-1 ring-gray-300 transition hover:bg-white focus:ring-2 focus:ring-blue-400 focus:outline-hidden"
+			aria-label="Rotate piece {piece.id}"
+			data-testid="rotate-piece-button"
+			onclick={handleRotateClick}
+			onkeydown={stopRotateEventPropagation}
+			onpointerdown={stopRotateEventPropagation}
+			ontouchstart={stopRotateEventPropagation}
 		>
-			<img
-				src={getPieceImageUrl(piece.puzzleId, piece.id)}
-				alt="Piece {piece.id}"
-				class="h-full w-full"
-				draggable="false"
-			/>
+			↻
+		</button>
+	{/if}
+
+	<div
+		class="puzzle-piece h-full w-full cursor-grab touch-none transition-transform select-none hover:scale-105 focus:outline-hidden"
+		class:opacity-50={isPlaced}
+		class:cursor-not-allowed={isPlaced}
+		class:cursor-grabbing={isTouchDragging}
+		class:ring-2={currentSelectedId === piece.id}
+		class:ring-blue-400={currentSelectedId === piece.id}
+		draggable={!isPlaced}
+		ondragstart={handleDragStart}
+		ontouchstart={handleTouchStart}
+		onkeydown={handleKeyDown}
+		role="button"
+		tabindex={isPlaced ? -1 : 0}
+		aria-label="Puzzle piece {piece.id}"
+		aria-grabbed={currentSelectedId === piece.id}
+		aria-pressed={currentSelectedId === piece.id}
+		aria-disabled={isPlaced}
+		data-testid="puzzle-piece"
+		data-piece-id={piece.id}
+		data-selected={currentSelectedId === piece.id}
+	>
+		<!-- Shadow wrapper: drop-shadow respects PNG transparency -->
+		<div
+			class="piece-visual h-full w-full transition-transform"
+			data-testid="puzzle-piece-visual"
+			style="transform: rotate({rotation}deg);"
+		>
+			<div
+				class="piece-shadow-wrapper h-full w-full"
+				class:dragging={isTouchDragging}
+				class:placed={isPlaced}
+			>
+				<!-- Pre-masked jigsaw piece from server (140% size, offset to show tabs) -->
+				<div
+					class="pointer-events-none relative"
+					style="
+						width: {EXPANSION_FACTOR * 100}%;
+						height: {EXPANSION_FACTOR * 100}%;
+						left: -{BASE_OFFSET * 100}%;
+						top: -{BASE_OFFSET * 100}%;
+					"
+				>
+					<img
+						src={getPieceImageUrl(piece.puzzleId, piece.id)}
+						alt="Piece {piece.id}"
+						class="h-full w-full"
+						draggable="false"
+					/>
+				</div>
+			</div>
 		</div>
 	</div>
 </div>
@@ -331,6 +384,10 @@
 
 	.puzzle-piece:not(.cursor-not-allowed):active {
 		cursor: grabbing;
+	}
+
+	.piece-visual {
+		transform-origin: center;
 	}
 
 	/* Drop shadow that respects clip-path shape */
