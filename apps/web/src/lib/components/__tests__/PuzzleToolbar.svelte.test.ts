@@ -1,7 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
-import { page } from 'vitest/browser';
-import { userEvent } from '@vitest/browser/context';
+import { page, userEvent } from 'vitest/browser';
 import PuzzleToolbar from '../PuzzleToolbar.svelte';
 
 describe('PuzzleToolbar', () => {
@@ -361,6 +360,88 @@ describe('PuzzleToolbar', () => {
 
 			const refButton = page.getByLabelText('Reference');
 			await refButton.element().dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+			expect(onReferenceUp).toHaveBeenCalledOnce();
+		});
+
+		it('calls onReferenceUp on reference button pointer leave', async () => {
+			const onReferenceUp = vi.fn();
+			render(PuzzleToolbar, {
+				onUndo: vi.fn(),
+				onRedo: vi.fn(),
+				onHint: vi.fn(),
+				onReferenceDown: vi.fn(),
+				onReferenceUp,
+				onZoomIn: vi.fn(),
+				onZoomOut: vi.fn(),
+				onResetView: vi.fn(),
+				onRotationToggle: vi.fn(),
+				canUndo: false,
+				canRedo: false,
+				rotationEnabled: false
+			});
+
+			const refButton = page.getByLabelText('Reference');
+			await refButton.element().dispatchEvent(new PointerEvent('pointerleave', { bubbles: true }));
+			expect(onReferenceUp).toHaveBeenCalledOnce();
+		});
+
+		it('calls onReferenceDown/Up on reference button Space key press', async () => {
+			const onReferenceDown = vi.fn();
+			const onReferenceUp = vi.fn();
+			render(PuzzleToolbar, {
+				onUndo: vi.fn(),
+				onRedo: vi.fn(),
+				onHint: vi.fn(),
+				onReferenceDown,
+				onReferenceUp,
+				onZoomIn: vi.fn(),
+				onZoomOut: vi.fn(),
+				onResetView: vi.fn(),
+				onRotationToggle: vi.fn(),
+				canUndo: false,
+				canRedo: false,
+				rotationEnabled: false
+			});
+
+			const refButton = page.getByLabelText('Reference');
+			await refButton
+				.element()
+				.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+			expect(onReferenceDown).toHaveBeenCalledOnce();
+
+			await refButton
+				.element()
+				.dispatchEvent(new KeyboardEvent('keyup', { key: ' ', bubbles: true }));
+			expect(onReferenceUp).toHaveBeenCalledOnce();
+		});
+
+		it('calls onReferenceDown/Up on reference button Enter key press', async () => {
+			const onReferenceDown = vi.fn();
+			const onReferenceUp = vi.fn();
+			render(PuzzleToolbar, {
+				onUndo: vi.fn(),
+				onRedo: vi.fn(),
+				onHint: vi.fn(),
+				onReferenceDown,
+				onReferenceUp,
+				onZoomIn: vi.fn(),
+				onZoomOut: vi.fn(),
+				onResetView: vi.fn(),
+				onRotationToggle: vi.fn(),
+				canUndo: false,
+				canRedo: false,
+				rotationEnabled: false
+			});
+
+			const refButton = page.getByLabelText('Reference');
+			await refButton
+				.element()
+				.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+			expect(onReferenceDown).toHaveBeenCalledOnce();
+
+			await refButton
+				.element()
+				.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true }));
 			expect(onReferenceUp).toHaveBeenCalledOnce();
 		});
 	});
