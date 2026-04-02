@@ -18,6 +18,8 @@ vi.mock('$lib/stores/pieceSelection', () => ({
 	clearSelectedPiece: vi.fn()
 }));
 
+import { clearSelectedPiece } from '$lib/stores/pieceSelection';
+
 // Mock the API
 vi.mock('$lib/services/api', () => ({
 	getPieceImageUrl: vi.fn(
@@ -156,6 +158,29 @@ describe('PuzzleBoard', () => {
 		expect(canPlacePiece).toHaveBeenCalledWith(0);
 		expect(onIncorrectPlacement).toHaveBeenCalledWith(0);
 		expect(onPiecePlaced).not.toHaveBeenCalled();
+		expect(vi.mocked(clearSelectedPiece)).not.toHaveBeenCalled();
+	});
+
+	it('should clear keyboard selection only after a successful placement', async () => {
+		const puzzle = createMockPuzzle(3);
+		const onPiecePlaced = vi.fn();
+		mockSelectedId = 0;
+
+		render(PuzzleBoard, {
+			puzzle,
+			placedPieces: [],
+			onPiecePlaced,
+			onIncorrectPlacement: vi.fn()
+		});
+
+		const dropZone = await page
+			.getByRole('button', { name: 'Drop zone at position 0, 0' })
+			.element();
+		dropZone.focus();
+		dropZone.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+
+		expect(onPiecePlaced).toHaveBeenCalledWith(0, 0, 0);
+		expect(vi.mocked(clearSelectedPiece)).toHaveBeenCalledOnce();
 	});
 
 	it('should call onBoardPointerDown when the board receives a pointerdown event', async () => {
