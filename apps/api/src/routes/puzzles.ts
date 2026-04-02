@@ -5,6 +5,7 @@ import {
 	listPuzzlesSorted,
 	getThumbnailPath,
 	getPieceImagePath,
+	getOriginalImagePath,
 	InvalidPuzzleIdError
 } from '../services/storage';
 import { readFile } from 'node:fs/promises';
@@ -88,6 +89,37 @@ puzzles.get('/:id/thumbnail', async (c) => {
 			console.error(error);
 		}
 		return c.json({ error: 'internal_error', message: 'Failed to retrieve thumbnail' }, 500);
+	}
+});
+
+// GET /api/puzzles/:id/reference - Get reference image
+puzzles.get('/:id/reference', async (c) => {
+	const id = c.req.param('id');
+	try {
+		const puzzle = await getPuzzle(id);
+
+		if (!puzzle) {
+			return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
+		}
+
+		const originalPath = getOriginalImagePath(id);
+		const imageData = await readFile(originalPath);
+		return c.body(imageData, 200, {
+			'Content-Type': getImageContentType(originalPath),
+			'Cache-Control': 'public, max-age=86400'
+		});
+	} catch (error) {
+		const err = error as NodeJS.ErrnoException;
+		if (err.code === 'ENOENT' || error instanceof InvalidPuzzleIdError) {
+			return c.json({ error: 'not_found', message: 'Reference image not found' }, 404);
+		}
+		console.error('Failed to retrieve reference image');
+		if (error instanceof Error) {
+			console.error(error.stack || error.message);
+		} else {
+			console.error(error);
+		}
+		return c.json({ error: 'internal_error', message: 'Failed to retrieve reference image' }, 500);
 	}
 });
 

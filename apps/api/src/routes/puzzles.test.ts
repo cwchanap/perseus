@@ -18,6 +18,7 @@ vi.mock('../services/storage', () => {
 		listPuzzlesSorted: vi.fn(),
 		getThumbnailPath: vi.fn().mockReturnValue('/fake/thumbnail.jpg'),
 		getPieceImagePath: vi.fn().mockReturnValue('/fake/pieces/0.png'),
+		getOriginalImagePath: vi.fn().mockReturnValue('/fake/original.jpg'),
 		InvalidPuzzleIdError
 	};
 });
@@ -471,6 +472,125 @@ describe('GET /:id/pieces/:pieceId/image - Get piece image', () => {
 		expect(body.error).toBe('internal_error');
 		expect(body.message).toBe('Failed to retrieve puzzle');
 		expect(consoleSpy).toHaveBeenCalledWith('non-error string from getPuzzle');
+		consoleSpy.mockRestore();
+	});
+});
+
+// ─── GET /:id/reference ───────────────────────────────────────────────────────
+
+describe('GET /:id/reference - Get reference image', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		vi.mocked(storage.getOriginalImagePath).mockReturnValue('/fake/original.jpg');
+	});
+
+	it('returns 200 with image data and jpeg content-type for .jpg', async () => {
+		vi.mocked(storage.getPuzzle).mockResolvedValue(makePuzzle());
+		vi.mocked(storage.getOriginalImagePath).mockReturnValue('/fake/original.jpg');
+		vi.mocked(fsPromises.readFile).mockResolvedValue(Buffer.from([0xff, 0xd8]) as any);
+
+		const res = await puzzles.fetch(new Request(`http://localhost/${PUZZLE_ID}/reference`));
+		expect(res.status).toBe(200);
+		expect(res.headers.get('Content-Type')).toBe('image/jpeg');
+		expect(res.headers.get('Cache-Control')).toBe('public, max-age=86400');
+	});
+
+	it('returns image/jpeg for .jpeg extension', async () => {
+		vi.mocked(storage.getPuzzle).mockResolvedValue(makePuzzle());
+		vi.mocked(storage.getOriginalImagePath).mockReturnValue('/fake/original.jpeg');
+		vi.mocked(fsPromises.readFile).mockResolvedValue(Buffer.from([1, 2, 3]) as any);
+
+		const res = await puzzles.fetch(new Request(`http://localhost/${PUZZLE_ID}/reference`));
+		expect(res.status).toBe(200);
+		expect(res.headers.get('Content-Type')).toBe('image/jpeg');
+	});
+
+	it('returns image/png for .png extension', async () => {
+		vi.mocked(storage.getPuzzle).mockResolvedValue(makePuzzle());
+		vi.mocked(storage.getOriginalImagePath).mockReturnValue('/fake/original.png');
+		vi.mocked(fsPromises.readFile).mockResolvedValue(Buffer.from([0x89, 0x50]) as any);
+
+		const res = await puzzles.fetch(new Request(`http://localhost/${PUZZLE_ID}/reference`));
+		expect(res.status).toBe(200);
+		expect(res.headers.get('Content-Type')).toBe('image/png');
+	});
+
+	it('returns image/webp for .webp extension', async () => {
+		vi.mocked(storage.getPuzzle).mockResolvedValue(makePuzzle());
+		vi.mocked(storage.getOriginalImagePath).mockReturnValue('/fake/original.webp');
+		vi.mocked(fsPromises.readFile).mockResolvedValue(Buffer.from([1, 2, 3]) as any);
+
+		const res = await puzzles.fetch(new Request(`http://localhost/${PUZZLE_ID}/reference`));
+		expect(res.status).toBe(200);
+		expect(res.headers.get('Content-Type')).toBe('image/webp');
+	});
+
+	it('returns application/octet-stream for unknown extension', async () => {
+		vi.mocked(storage.getPuzzle).mockResolvedValue(makePuzzle());
+		vi.mocked(storage.getOriginalImagePath).mockReturnValue('/fake/original.bin');
+		vi.mocked(fsPromises.readFile).mockResolvedValue(Buffer.from([1, 2, 3]) as any);
+
+		const res = await puzzles.fetch(new Request(`http://localhost/${PUZZLE_ID}/reference`));
+		expect(res.status).toBe(200);
+		expect(res.headers.get('Content-Type')).toBe('application/octet-stream');
+	});
+
+	it('returns 404 when puzzle is not found', async () => {
+		vi.mocked(storage.getPuzzle).mockResolvedValue(null);
+
+		const res = await puzzles.fetch(new Request(`http://localhost/${PUZZLE_ID}/reference`));
+		expect(res.status).toBe(404);
+		const body = (await res.json()) as any;
+		expect(body.error).toBe('not_found');
+		expect(body.message).toContain('Puzzle not found');
+	});
+
+	it('returns 404 when original image file not found (ENOENT)', async () => {
+		vi.mocked(storage.getPuzzle).mockResolvedValue(makePuzzle());
+		const enoentError = Object.assign(new Error('ENOENT: no such file'), { code: 'ENOENT' });
+		vi.mocked(fsPromises.readFile).mockRejectedValue(enoentError);
+
+		const res = await puzzles.fetch(new Request(`http://localhost/${PUZZLE_ID}/reference`));
+		expect(res.status).toBe(404);
+		const body = (await res.json()) as any;
+		expect(body.error).toBe('not_found');
+		expect(body.message).toBe('Reference image not found');
+	});
+
+	it('returns 404 when getOriginalImagePath throws InvalidPuzzleIdError', async () => {
+		vi.mocked(storage.getPuzzle).mockResolvedValue(makePuzzle());
+		vi.mocked(storage.getOriginalImagePath).mockImplementation(() => {
+			throw new (storage as any).InvalidPuzzleIdError('bad id');
+		});
+
+		const res = await puzzles.fetch(new Request(`http://localhost/${PUZZLE_ID}/reference`));
+		expect(res.status).toBe(404);
+		const body = (await res.json()) as any;
+		expect(body.error).toBe('not_found');
+		expect(body.message).toBe('Reference image not found');
+	});
+
+	it('returns 500 when readFile throws an unexpected error', async () => {
+		vi.mocked(storage.getPuzzle).mockResolvedValue(makePuzzle());
+		vi.mocked(fsPromises.readFile).mockRejectedValue(new Error('permission denied'));
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const res = await puzzles.fetch(new Request(`http://localhost/${PUZZLE_ID}/reference`));
+		expect(res.status).toBe(500);
+		const body = (await res.json()) as any;
+		expect(body.error).toBe('internal_error');
+		expect(body.message).toContain('Failed to retrieve reference image');
+		consoleSpy.mockRestore();
+	});
+
+	it('logs non-Error exceptions in reference image error handler', async () => {
+		vi.mocked(storage.getPuzzle).mockResolvedValue(makePuzzle());
+		vi.mocked(fsPromises.readFile).mockRejectedValue('raw string error');
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const res = await puzzles.fetch(new Request(`http://localhost/${PUZZLE_ID}/reference`));
+		expect(res.status).toBe(500);
+		expect(consoleSpy).toHaveBeenCalled();
 		consoleSpy.mockRestore();
 	});
 });

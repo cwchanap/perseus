@@ -7,6 +7,7 @@ import {
 	listPuzzles,
 	getThumbnailKey,
 	getPieceKey,
+	getOriginalKey,
 	getImage
 } from '../services/storage.worker';
 
@@ -106,6 +107,44 @@ puzzles.get('/:id/thumbnail', async (c) => {
 	} catch (error) {
 		console.error(`Failed to retrieve thumbnail for puzzle ${id}:`, error);
 		return c.json({ error: 'internal_error', message: 'Failed to retrieve thumbnail' }, 500);
+	}
+});
+
+// GET /api/puzzles/:id/reference - Get reference image
+puzzles.get('/:id/reference', async (c) => {
+	const id = c.req.param('id');
+
+	if (!validatePuzzleId(id)) {
+		return c.json({ error: 'bad_request', message: 'Invalid puzzle ID format' }, 400);
+	}
+
+	try {
+		const puzzle = await getPuzzle(c.env.PUZZLE_METADATA, id);
+
+		if (!puzzle) {
+			return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
+		}
+
+		if (puzzle.status !== 'ready') {
+			return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
+		}
+
+		const image = await getImage(c.env.PUZZLES_BUCKET, getOriginalKey(id));
+
+		if (!image) {
+			return c.json({ error: 'not_found', message: 'Reference image not found' }, 404);
+		}
+
+		return new Response(image.data, {
+			status: 200,
+			headers: {
+				'Content-Type': image.contentType,
+				'Cache-Control': 'public, max-age=86400'
+			}
+		});
+	} catch (error) {
+		console.error(`Failed to retrieve reference image for puzzle ${id}:`, error);
+		return c.json({ error: 'internal_error', message: 'Failed to retrieve reference image' }, 500);
 	}
 });
 
