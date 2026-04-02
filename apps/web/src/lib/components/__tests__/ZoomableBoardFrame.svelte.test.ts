@@ -1,7 +1,15 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
+import { createRawSnippet } from 'svelte';
 import ZoomableBoardFrame from '../ZoomableBoardFrame.svelte';
+
+function makeChildren(text = 'zoom-frame-child') {
+	return createRawSnippet(() => ({
+		render: () => `<span data-testid="zoom-frame-child">${text}</span>`,
+		setup: () => {}
+	}));
+}
 
 describe('ZoomableBoardFrame', () => {
 	describe('rendering', () => {
@@ -14,6 +22,18 @@ describe('ZoomableBoardFrame', () => {
 			});
 
 			await expect.element(page.getByTestId('zoomable-board-frame')).toBeInTheDocument();
+		});
+
+		it('renders child content via snippet props', async () => {
+			render(ZoomableBoardFrame, {
+				scale: 1,
+				panX: 0,
+				panY: 0,
+				onWheel: vi.fn(),
+				children: makeChildren()
+			});
+
+			await expect.element(page.getByTestId('zoom-frame-child')).toBeVisible();
 		});
 	});
 

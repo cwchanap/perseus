@@ -1,12 +1,15 @@
 <script lang="ts">
+	import type { Snippet } from 'svelte';
+
 	interface Props {
 		scale: number;
 		panX: number;
 		panY: number;
 		onWheel: (event: WheelEvent) => void;
+		children?: Snippet;
 	}
 
-	let { scale, panX, panY, onWheel }: Props = $props();
+	let { scale, panX, panY, onWheel, children }: Props = $props();
 </script>
 
 <div
@@ -15,7 +18,7 @@
 	style="transform: translate({panX}px, {panY}px) scale({scale});"
 	onwheel={onWheel}
 >
-	<slot />
+	{@render children?.()}
 </div>
 
 <style>
