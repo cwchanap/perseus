@@ -1,8 +1,12 @@
 <script lang="ts">
-	export let scale: number;
-	export let panX: number;
-	export let panY: number;
-	export let onWheel: (event: WheelEvent) => void;
+	interface Props {
+		scale: number;
+		panX: number;
+		panY: number;
+		onWheel: (event: WheelEvent) => void;
+	}
+
+	let { scale, panX, panY, onWheel }: Props = $props();
 </script>
 
 <div

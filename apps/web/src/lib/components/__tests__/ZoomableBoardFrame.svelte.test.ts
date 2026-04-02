@@ -27,7 +27,9 @@ describe('ZoomableBoardFrame', () => {
 			});
 
 			const frame = page.getByTestId('zoomable-board-frame');
-			await expect.element(frame).toBeInTheDocument();
+			const style = await frame.element().getAttribute('style');
+			expect(style).toContain('translate(100px, 50px)');
+			expect(style).toContain('scale(1.5)');
 		});
 
 		it('applies scale of 1 correctly', async () => {
@@ -39,7 +41,9 @@ describe('ZoomableBoardFrame', () => {
 			});
 
 			const frame = page.getByTestId('zoomable-board-frame');
-			await expect.element(frame).toBeInTheDocument();
+			const style = await frame.element().getAttribute('style');
+			expect(style).toContain('translate(0px, 0px)');
+			expect(style).toContain('scale(1)');
 		});
 
 		it('applies scale less than 1 correctly', async () => {
@@ -51,7 +55,8 @@ describe('ZoomableBoardFrame', () => {
 			});
 
 			const frame = page.getByTestId('zoomable-board-frame');
-			await expect.element(frame).toBeInTheDocument();
+			const style = await frame.element().getAttribute('style');
+			expect(style).toContain('scale(0.5)');
 		});
 
 		it('applies scale greater than 1 correctly', async () => {
@@ -63,7 +68,8 @@ describe('ZoomableBoardFrame', () => {
 			});
 
 			const frame = page.getByTestId('zoomable-board-frame');
-			await expect.element(frame).toBeInTheDocument();
+			const style = await frame.element().getAttribute('style');
+			expect(style).toContain('scale(2)');
 		});
 	});
 

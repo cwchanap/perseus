@@ -1,10 +1,14 @@
 <script lang="ts">
-	export let active: boolean;
-	export let targetX: number | undefined;
-	export let targetY: number | undefined;
-	export let cellSize: number;
+	interface Props {
+		active: boolean;
+		targetX: number | undefined;
+		targetY: number | undefined;
+		cellSize: number;
+	}
 
-	$: hasTarget = targetX !== undefined && targetY !== undefined;
+	let { active, targetX, targetY, cellSize }: Props = $props();
+
+	const hasTarget = $derived(targetX !== undefined && targetY !== undefined);
 </script>
 
 {#if active}
