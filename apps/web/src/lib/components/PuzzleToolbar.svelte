@@ -28,6 +28,19 @@
 		aria-label="Reference"
 		onpointerdown={onReferenceDown}
 		onpointerup={onReferenceUp}
+		onpointerleave={onReferenceUp}
+		onkeydown={(e) => {
+			if (e.key === ' ' || e.key === 'Enter') {
+				e.preventDefault();
+				onReferenceDown();
+			}
+		}}
+		onkeyup={(e) => {
+			if (e.key === ' ' || e.key === 'Enter') {
+				e.preventDefault();
+				onReferenceUp();
+			}
+		}}
 		class="toolbar-button"
 	>
 		Reference
