@@ -69,4 +69,47 @@ describe('Progress Service', () => {
 			expect(hasProgress(puzzleId)).toBe(true);
 		});
 	});
+
+	describe('rotation persistence', () => {
+		it('should persist rotationEnabled flag', () => {
+			saveProgress(puzzleId, [], true);
+
+			const result = getProgress(puzzleId);
+			expect(result?.rotationEnabled).toBe(true);
+		});
+
+		it('should default rotationEnabled to false', () => {
+			saveProgress(puzzleId, []);
+
+			const result = getProgress(puzzleId);
+			expect(result?.rotationEnabled).toBe(false);
+		});
+
+		it('should persist pieceRotations', () => {
+			const rotations = { 0: 90, 1: 180, 2: 270 } as const;
+			saveProgress(puzzleId, [], false, rotations);
+
+			const result = getProgress(puzzleId);
+			expect(result?.pieceRotations).toEqual(rotations);
+		});
+
+		it('should default pieceRotations to empty object', () => {
+			saveProgress(puzzleId, []);
+
+			const result = getProgress(puzzleId);
+			expect(result?.pieceRotations).toEqual({});
+		});
+
+		it('should persist both rotation fields together', () => {
+			const placedPieces: PlacedPiece[] = [{ pieceId: 0, x: 0, y: 0 }];
+			const rotations = { 1: 90, 2: 180 } as const;
+
+			saveProgress(puzzleId, placedPieces, true, rotations);
+
+			const result = getProgress(puzzleId);
+			expect(result?.rotationEnabled).toBe(true);
+			expect(result?.pieceRotations).toEqual(rotations);
+			expect(result?.placedPieces).toEqual(placedPieces);
+		});
+	});
 });

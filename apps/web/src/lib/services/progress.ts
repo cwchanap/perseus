@@ -19,12 +19,19 @@ export function getProgress(puzzleId: string): GameProgress | null {
 	}
 }
 
-export function saveProgress(puzzleId: string, placedPieces: PlacedPiece[]): void {
+export function saveProgress(
+	puzzleId: string,
+	placedPieces: PlacedPiece[],
+	rotationEnabled = false,
+	pieceRotations: Record<number, 0 | 90 | 180 | 270> = {}
+): void {
 	if (typeof window === 'undefined') return;
 
 	const progress: GameProgress = {
 		puzzleId,
 		placedPieces,
+		rotationEnabled,
+		pieceRotations,
 		lastUpdated: new Date().toISOString()
 	};
 

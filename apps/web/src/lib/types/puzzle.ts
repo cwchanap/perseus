@@ -58,6 +58,8 @@ export interface PlacedPiece {
 export interface GameProgress {
 	puzzleId: string;
 	placedPieces: PlacedPiece[];
+	rotationEnabled: boolean;
+	pieceRotations: Record<number, 0 | 90 | 180 | 270>;
 	lastUpdated: string;
 }
 
