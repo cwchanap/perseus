@@ -25,6 +25,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
+		pointer-events: none;
 		background: rgba(0, 0, 0, 0.8);
 		z-index: 1000;
 	}

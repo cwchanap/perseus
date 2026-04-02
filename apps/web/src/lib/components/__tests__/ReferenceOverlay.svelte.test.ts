@@ -37,6 +37,18 @@ describe('ReferenceOverlay', () => {
 
 			await expect.element(page.getByTestId('reference-overlay')).toBeVisible();
 		});
+
+		it('does not capture pointer events', async () => {
+			render(ReferenceOverlay, {
+				puzzleId: 'test-puzzle',
+				active: true
+			});
+
+			const overlay = await page.getByTestId('reference-overlay').element();
+			const pointerEvents = getComputedStyle(overlay).pointerEvents;
+
+			expect(pointerEvents).toBe('none');
+		});
 	});
 
 	describe('when inactive', () => {
