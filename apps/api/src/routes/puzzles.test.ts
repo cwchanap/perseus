@@ -28,6 +28,13 @@ import * as fsPromises from 'node:fs/promises';
 
 const PUZZLE_ID = 'test-puzzle-abc';
 
+/** Creates an Error with no stack trace (empty string), forcing `error.stack || error.message` to use message. */
+function errorWithoutStack(message: string): Error {
+	const err = new Error(message);
+	Object.defineProperty(err, 'stack', { value: '', configurable: true });
+	return err;
+}
+
 function makePuzzle(overrides: Record<string, any> = {}): any {
 	return {
 		id: PUZZLE_ID,
@@ -92,6 +99,16 @@ describe('GET / - List puzzles', () => {
 		consoleSpy.mockRestore();
 	});
 
+	it('uses error.message when error.stack is empty (line 31 || branch)', async () => {
+		vi.mocked(storage.listPuzzlesSorted).mockRejectedValue(errorWithoutStack('no-stack message'));
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const res = await puzzles.fetch(new Request('http://localhost/'));
+		expect(res.status).toBe(500);
+		expect(consoleSpy).toHaveBeenCalledWith('no-stack message');
+		consoleSpy.mockRestore();
+	});
+
 	it('logs non-Error exceptions when listPuzzlesSorted throws a string', async () => {
 		vi.mocked(storage.listPuzzlesSorted).mockRejectedValue('string error');
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -138,6 +155,16 @@ describe('GET /:id - Get puzzle by ID', () => {
 		expect(res.status).toBe(500);
 		const body = (await res.json()) as any;
 		expect(body.error).toBe('internal_error');
+		consoleSpy.mockRestore();
+	});
+
+	it('uses error.message when error.stack is empty in GET /:id (line 49 || branch)', async () => {
+		vi.mocked(storage.getPuzzle).mockRejectedValue(errorWithoutStack('no-stack-get-id'));
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const res = await puzzles.fetch(new Request(`http://localhost/${PUZZLE_ID}`));
+		expect(res.status).toBe(500);
+		expect(consoleSpy).toHaveBeenCalledWith('no-stack-get-id');
 		consoleSpy.mockRestore();
 	});
 
@@ -246,6 +273,17 @@ describe('GET /:id/thumbnail - Get thumbnail image', () => {
 		expect(body.message).toBe('Thumbnail not found');
 	});
 
+	it('uses error.message when error.stack is empty in thumbnail handler (line 86 || branch)', async () => {
+		vi.mocked(storage.getPuzzle).mockResolvedValue(makePuzzle());
+		vi.mocked(fsPromises.readFile).mockRejectedValue(errorWithoutStack('no-stack-thumbnail'));
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const res = await puzzles.fetch(new Request(`http://localhost/${PUZZLE_ID}/thumbnail`));
+		expect(res.status).toBe(500);
+		expect(consoleSpy).toHaveBeenCalledWith('no-stack-thumbnail');
+		consoleSpy.mockRestore();
+	});
+
 	it('returns 500 when readFile throws an unexpected error', async () => {
 		vi.mocked(storage.getPuzzle).mockResolvedValue(makePuzzle());
 		vi.mocked(fsPromises.readFile).mockRejectedValue(new Error('permission denied'));
@@ -323,6 +361,16 @@ describe('GET /:id/pieces/:pieceId/image - Get piece image', () => {
 		consoleSpy.mockRestore();
 	});
 
+	it('uses error.message when error.stack is empty in piece image getPuzzle catch (line 111 || branch)', async () => {
+		vi.mocked(storage.getPuzzle).mockRejectedValue(errorWithoutStack('no-stack-get-puzzle'));
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const res = await puzzles.fetch(new Request(`http://localhost/${PUZZLE_ID}/pieces/0/image`));
+		expect(res.status).toBe(500);
+		expect(consoleSpy).toHaveBeenCalledWith('no-stack-get-puzzle');
+		consoleSpy.mockRestore();
+	});
+
 	it('returns 404 when puzzle not found for piece image request', async () => {
 		vi.mocked(storage.getPuzzle).mockResolvedValue(null);
 
@@ -391,6 +439,17 @@ describe('GET /:id/pieces/:pieceId/image - Get piece image', () => {
 		consoleSpy.mockRestore();
 	});
 
+	it('uses error.message when error.stack is empty in piece image readFile catch (line 140 || branch)', async () => {
+		vi.mocked(storage.getPuzzle).mockResolvedValue(makePuzzle({ pieceCount: 4 }));
+		vi.mocked(fsPromises.readFile).mockRejectedValue(errorWithoutStack('no-stack-readfile'));
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const res = await puzzles.fetch(new Request(`http://localhost/${PUZZLE_ID}/pieces/0/image`));
+		expect(res.status).toBe(500);
+		expect(consoleSpy).toHaveBeenCalledWith('no-stack-readfile');
+		consoleSpy.mockRestore();
+	});
+
 	it('logs non-Error exceptions in piece image error handler', async () => {
 		vi.mocked(storage.getPuzzle).mockResolvedValue(makePuzzle({ pieceCount: 4 }));
 		vi.mocked(fsPromises.readFile).mockRejectedValue('string error');
@@ -399,6 +458,19 @@ describe('GET /:id/pieces/:pieceId/image - Get piece image', () => {
 		const res = await puzzles.fetch(new Request(`http://localhost/${PUZZLE_ID}/pieces/0/image`));
 		expect(res.status).toBe(500);
 		expect(consoleSpy).toHaveBeenCalled();
+		consoleSpy.mockRestore();
+	});
+
+	it('logs non-Error when getPuzzle throws a non-Error in piece image handler (line 113)', async () => {
+		vi.mocked(storage.getPuzzle).mockRejectedValue('non-error string from getPuzzle');
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const res = await puzzles.fetch(new Request(`http://localhost/${PUZZLE_ID}/pieces/0/image`));
+		expect(res.status).toBe(500);
+		const body = (await res.json()) as any;
+		expect(body.error).toBe('internal_error');
+		expect(body.message).toBe('Failed to retrieve puzzle');
+		expect(consoleSpy).toHaveBeenCalledWith('non-error string from getPuzzle');
 		consoleSpy.mockRestore();
 	});
 });
