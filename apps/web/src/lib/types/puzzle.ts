@@ -15,7 +15,7 @@ import type {
 	ErrorResponse,
 	PuzzleCategory
 } from '@perseus/types';
-import type { Rotation } from '$lib/services/gameplay/rotation';
+import type { Rotation } from '$lib/types/gameplay';
 
 // Re-export shared types for convenience
 export type {

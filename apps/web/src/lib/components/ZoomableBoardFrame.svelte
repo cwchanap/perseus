@@ -14,16 +14,9 @@
 
 <div
 	data-testid="zoomable-board-frame"
-	class="frame"
+	class="origin-center transition-transform duration-100 ease-out"
 	style="transform: translate({panX}px, {panY}px) scale({scale});"
 	onwheel={onWheel}
 >
 	{@render children?.()}
 </div>
-
-<style>
-	.frame {
-		transform-origin: center;
-		transition: transform 0.1s ease-out;
-	}
-</style>

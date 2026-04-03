@@ -149,5 +149,17 @@ describe('History Helper', () => {
 			expect(history.canRedo()).toBe(false);
 			expect(history.getCurrent()).toBeUndefined();
 		});
+
+		it('should allow undo back to empty history after clearing an initial state', () => {
+			const h = createHistory<string>('initial');
+
+			h.clear();
+			h.push('next');
+
+			expect(h.canUndo()).toBe(true);
+			expect(h.undo()).toBeUndefined();
+			expect(h.getCurrent()).toBeUndefined();
+			expect(h.canUndo()).toBe(false);
+		});
 	});
 });

@@ -9,7 +9,7 @@
 	import type { TimerState } from '$lib/stores/timer';
 	import { SvelteMap } from 'svelte/reactivity';
 	import type { Puzzle, PlacedPiece, PuzzlePiece as TPuzzlePiece } from '$lib/types/puzzle';
-	import type { Rotation } from '$lib/services/gameplay/rotation';
+	import type { Rotation } from '$lib/types/gameplay';
 	import type { ViewportBounds } from '$lib/services/gameplay/viewport';
 	import PuzzleBoard from '$lib/components/PuzzleBoard.svelte';
 	import PuzzlePiece from '$lib/components/PuzzlePiece.svelte';
@@ -31,6 +31,11 @@
 	const REJECTED_DURATION_MS = 500;
 	const HINT_DURATION_MS = 1800;
 	const ZOOM_STEP = 0.2;
+
+	interface PlacementHistoryState {
+		placedPieces: PlacedPiece[];
+		pieceRotations: Record<number, Rotation>;
+	}
 
 	let puzzle: Puzzle | null = $state(null);
 	let loading = $state(true);
@@ -69,7 +74,10 @@
 	let selectionUnsubscribe: (() => void) | null = null;
 	let rejectedPieceTimeout: ReturnType<typeof setTimeout> | null = null;
 	let hintTimeout: ReturnType<typeof setTimeout> | null = null;
-	let placementHistory = createHistory<PlacedPiece[]>([]);
+	let placementHistory = createHistory<PlacementHistoryState>({
+		placedPieces: [],
+		pieceRotations: {}
+	});
 	let activePanPointerId: number | null = null;
 	let panStartClientX = 0;
 	let panStartClientY = 0;
@@ -167,6 +175,20 @@
 		return pieces.map((piece) => ({ ...piece }));
 	}
 
+	function clonePieceRotations(rotations: Record<number, Rotation>): Record<number, Rotation> {
+		return { ...rotations };
+	}
+
+	function createPlacementHistoryState(
+		nextPlacedPieces: PlacedPiece[] = placedPieces,
+		nextPieceRotations: Record<number, Rotation> = pieceRotations
+	): PlacementHistoryState {
+		return {
+			placedPieces: clonePlacedPieces(nextPlacedPieces),
+			pieceRotations: clonePieceRotations(nextPieceRotations)
+		};
+	}
+
 	function getRotationSeed(value: string): number {
 		let hash = 0;
 		for (const char of value) {
@@ -210,8 +232,13 @@
 		canRedo = placementHistory.canRedo();
 	}
 
-	function resetPlacementHistory(initialState: PlacedPiece[] = []) {
-		placementHistory = createHistory<PlacedPiece[]>(clonePlacedPieces(initialState));
+	function resetPlacementHistory(
+		initialPlacedPieces: PlacedPiece[] = [],
+		initialPieceRotations: Record<number, Rotation> = {}
+	) {
+		placementHistory = createHistory<PlacementHistoryState>(
+			createPlacementHistoryState(initialPlacedPieces, initialPieceRotations)
+		);
 		updateHistoryControls();
 	}
 
@@ -294,7 +321,7 @@
 			timer.reset();
 			timerStarted = false;
 			isNewBest = false;
-			resetPlacementHistory(restoredPlacedPieces);
+			resetPlacementHistory(restoredPlacedPieces, pieceRotations);
 			pendingViewportReset = true;
 		} catch (e) {
 			errorStatus = e instanceof ApiError ? e.status : null;
@@ -351,8 +378,12 @@
 			newPlacement
 		];
 
+		if (placedPieces.length === 0) {
+			resetPlacementHistory(placedPieces, pieceRotations);
+		}
+
 		placedPieces = nextPlacedPieces;
-		placementHistory.push(clonePlacedPieces(nextPlacedPieces));
+		placementHistory.push(createPlacementHistoryState(nextPlacedPieces, pieceRotations));
 		updateHistoryControls();
 		persistProgress(nextPlacedPieces);
 		syncCompletionState(previousCount, nextPlacedPieces);
@@ -420,9 +451,10 @@
 		if (previousState === undefined) return;
 
 		const previousCount = placedPieces.length;
-		placedPieces = clonePlacedPieces(previousState);
+		placedPieces = clonePlacedPieces(previousState.placedPieces);
+		pieceRotations = clonePieceRotations(previousState.pieceRotations);
 		updateHistoryControls();
-		persistProgress(placedPieces);
+		persistProgress(placedPieces, rotationEnabled, pieceRotations);
 		syncCompletionState(previousCount, placedPieces);
 	}
 
@@ -431,9 +463,10 @@
 		if (nextState === undefined) return;
 
 		const previousCount = placedPieces.length;
-		placedPieces = clonePlacedPieces(nextState);
+		placedPieces = clonePlacedPieces(nextState.placedPieces);
+		pieceRotations = clonePieceRotations(nextState.pieceRotations);
 		updateHistoryControls();
-		persistProgress(placedPieces);
+		persistProgress(placedPieces, rotationEnabled, pieceRotations);
 		syncCompletionState(previousCount, placedPieces);
 	}
 
@@ -595,7 +628,7 @@
 		isNewBest = false;
 		clearSelectedPiece();
 		shuffledPieceIds = shuffleArray(puzzle.pieces.map((piece) => piece.id));
-		resetPlacementHistory([]);
+		resetPlacementHistory([], {});
 		pendingViewportReset = true;
 	}
 

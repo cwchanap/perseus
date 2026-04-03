@@ -13,7 +13,7 @@ export interface History<T> {
 export function createHistory<T>(initialState?: T, maxSize = 50): History<T> {
 	let states: T[] = initialState !== undefined ? [initialState] : [];
 	let currentIndex = initialState !== undefined ? 0 : -1;
-	const hasInitialState = initialState !== undefined;
+	let hasInitialState = initialState !== undefined;
 	let hasTrimmed = false;
 
 	return {
@@ -64,6 +64,7 @@ export function createHistory<T>(initialState?: T, maxSize = 50): History<T> {
 		clear(): void {
 			states = [];
 			currentIndex = -1;
+			hasInitialState = false;
 			hasTrimmed = false;
 		}
 	};

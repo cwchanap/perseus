@@ -3,7 +3,7 @@ import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
 import PuzzlePage from './+page.svelte';
 import type { GameProgress, PlacedPiece, Puzzle, PuzzlePiece } from '$lib/types/puzzle';
-import type { Rotation } from '$lib/services/gameplay/rotation';
+import type { Rotation } from '$lib/types/gameplay';
 
 const mockPageStore = vi.hoisted(() => {
 	type PageValue = {
@@ -314,7 +314,7 @@ describe('Puzzle route gameplay integration', () => {
 		window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 2 }));
 		await expect.element(page.getByTestId('reference-overlay')).toBeVisible();
 
-		referenceButton.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1 }));
+		window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1 }));
 
 		await expect.poll(() => page.getByTestId('reference-overlay').query()).toBeNull();
 	});
@@ -388,6 +388,40 @@ describe('Puzzle route gameplay integration', () => {
 			[{ pieceId: 0, x: 0, y: 0 }],
 			false,
 			{}
+		);
+	});
+
+	it('restores piece rotations when undoing and redoing placement history', async () => {
+		await renderPuzzlePage();
+
+		await page.getByLabelText('Rotation mode').click();
+		await page.getByRole('button', { name: 'Rotate piece 1' }).click();
+		await placePiece(0, 0, 0);
+
+		expect(saveProgress).toHaveBeenLastCalledWith(
+			'test-puzzle',
+			[{ pieceId: 0, x: 0, y: 0 }],
+			true,
+			{ 0: 0, 1: 90 }
+		);
+
+		await page.getByRole('button', { name: 'Rotate piece 1' }).click();
+		expect(saveProgress).toHaveBeenLastCalledWith(
+			'test-puzzle',
+			[{ pieceId: 0, x: 0, y: 0 }],
+			true,
+			{ 0: 0, 1: 180 }
+		);
+
+		await page.getByLabelText('Undo').click();
+		expect(saveProgress).toHaveBeenLastCalledWith('test-puzzle', [], true, { 0: 0, 1: 90 });
+
+		await page.getByLabelText('Redo').click();
+		expect(saveProgress).toHaveBeenLastCalledWith(
+			'test-puzzle',
+			[{ pieceId: 0, x: 0, y: 0 }],
+			true,
+			{ 0: 0, 1: 90 }
 		);
 	});
 

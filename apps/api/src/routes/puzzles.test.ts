@@ -545,6 +545,30 @@ describe('GET /:id/reference - Get reference image', () => {
 		expect(body.message).toContain('Puzzle not found');
 	});
 
+	it('returns 404 when puzzle ready flag is false', async () => {
+		vi.mocked(storage.getPuzzle).mockResolvedValue(makePuzzle({ ready: false }));
+
+		const res = await puzzles.fetch(new Request(`http://localhost/${PUZZLE_ID}/reference`));
+		expect(res.status).toBe(404);
+		const body = (await res.json()) as any;
+		expect(body.error).toBe('not_found');
+		expect(body.message).toBe('Puzzle not found');
+		expect(storage.getOriginalImagePath).not.toHaveBeenCalled();
+		expect(fsPromises.readFile).not.toHaveBeenCalled();
+	});
+
+	it('returns 404 when puzzle status is not ready', async () => {
+		vi.mocked(storage.getPuzzle).mockResolvedValue(makePuzzle({ status: 'processing' }));
+
+		const res = await puzzles.fetch(new Request(`http://localhost/${PUZZLE_ID}/reference`));
+		expect(res.status).toBe(404);
+		const body = (await res.json()) as any;
+		expect(body.error).toBe('not_found');
+		expect(body.message).toBe('Puzzle not found');
+		expect(storage.getOriginalImagePath).not.toHaveBeenCalled();
+		expect(fsPromises.readFile).not.toHaveBeenCalled();
+	});
+
 	it('returns 404 when original image file not found (ENOENT)', async () => {
 		vi.mocked(storage.getPuzzle).mockResolvedValue(makePuzzle());
 		const enoentError = Object.assign(new Error('ENOENT: no such file'), { code: 'ENOENT' });

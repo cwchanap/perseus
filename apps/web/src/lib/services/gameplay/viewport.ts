@@ -51,6 +51,10 @@ export function calculateFitZoom(
 	viewportHeight: number,
 	paddingFactor = 0.9
 ): number {
+	if (puzzleWidth <= 0 || puzzleHeight <= 0) {
+		return 0;
+	}
+
 	const widthRatio = viewportWidth / puzzleWidth;
 	const heightRatio = viewportHeight / puzzleHeight;
 	const baseZoom = Math.min(widthRatio, heightRatio);

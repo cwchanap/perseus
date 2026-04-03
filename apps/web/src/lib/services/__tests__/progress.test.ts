@@ -25,6 +25,26 @@ describe('Progress Service', () => {
 			expect(result?.puzzleId).toBe(puzzleId);
 			expect(result?.placedPieces).toEqual(placedPieces);
 		});
+
+		it('should normalize legacy progress records without rotation fields', () => {
+			const placedPieces: PlacedPiece[] = [{ pieceId: 0, x: 0, y: 0 }];
+
+			localStorage.setItem(
+				`puzzle-progress-${puzzleId}`,
+				JSON.stringify({
+					puzzleId,
+					placedPieces,
+					lastUpdated: '2024-01-01T00:00:00.000Z'
+				})
+			);
+
+			const result = getProgress(puzzleId);
+
+			expect(result).not.toBeNull();
+			expect(result?.placedPieces).toEqual(placedPieces);
+			expect(result?.rotationEnabled).toBe(false);
+			expect(result?.pieceRotations).toEqual({});
+		});
 	});
 
 	describe('saveProgress', () => {
