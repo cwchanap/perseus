@@ -24,8 +24,7 @@ describe('ReferenceOverlay', () => {
 				active: true
 			});
 
-			const overlay = page.getByTestId('reference-overlay');
-			const img = overlay.locator('img');
+			const img = page.getByRole('img', { name: 'Puzzle reference' });
 			await expect.element(img).toHaveAttribute('src', '/api/puzzles/test-puzzle/reference');
 		});
 
