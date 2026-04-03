@@ -327,6 +327,7 @@ describe('Puzzle route gameplay integration', () => {
 
 		await expect.element(page.getByTestId('hint-target')).toHaveAttribute('data-x', '1');
 		await expect.element(page.getByTestId('hint-target')).toHaveAttribute('data-y', '0');
+		await expect.element(page.getByTestId('piece-slot-1')).toHaveClass(/hinted/);
 	});
 
 	it('toggles rotation mode, rotates tray pieces, and blocks placement until upright', async () => {
@@ -337,6 +338,7 @@ describe('Puzzle route gameplay integration', () => {
 			.element(page.getByLabelText('Rotation mode'))
 			.toHaveAttribute('aria-pressed', 'true');
 		await expect.element(page.getByRole('button', { name: 'Rotate piece 0' })).toBeVisible();
+		await expect.element(page.getByLabelText('Rotation mode')).toBeDisabled();
 
 		await page.getByRole('button', { name: 'Rotate piece 0' }).click();
 		await expect
@@ -387,5 +389,27 @@ describe('Puzzle route gameplay integration', () => {
 			false,
 			{}
 		);
+	});
+
+	it('supports keyboard shortcuts for undo and redo without clearing hint state', async () => {
+		await renderPuzzlePage();
+		await placePiece(0, 0, 0);
+		await selectPiece(1);
+		await page.getByLabelText('Hint').click();
+
+		await expect.element(page.getByTestId('hint-target')).toHaveAttribute('data-x', '1');
+		await expect.element(page.getByTestId('piece-slot-1')).toHaveClass(/hinted/);
+
+		window.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }));
+
+		await expect.element(page.getByText('0/2')).toBeVisible();
+		await expect.element(page.getByTestId('hint-target')).toHaveAttribute('data-x', '1');
+		await expect.element(page.getByTestId('piece-slot-1')).toHaveClass(/hinted/);
+
+		window.dispatchEvent(new KeyboardEvent('keydown', { key: 'y', ctrlKey: true, bubbles: true }));
+
+		await expect.element(page.getByText('1/2')).toBeVisible();
+		await expect.element(page.getByTestId('hint-target')).toHaveAttribute('data-x', '1');
+		await expect.element(page.getByTestId('piece-slot-1')).toHaveClass(/hinted/);
 	});
 });

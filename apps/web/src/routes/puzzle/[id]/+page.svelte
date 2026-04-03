@@ -43,6 +43,7 @@
 	let rotationEnabled = $state(false);
 	let pieceRotations = $state<Record<number, Rotation>>({});
 	let showReferenceOverlay = $state(false);
+	let activeHintPieceId = $state<number | null>(null);
 	let activeHintTarget = $state<{ x: number; y: number } | null>(null);
 	let canUndo = $state(false);
 	let canRedo = $state(false);
@@ -87,6 +88,7 @@
 		window.addEventListener('pointermove', handleWindowPointerMove);
 		window.addEventListener('pointerup', handleWindowPointerUp, true);
 		window.addEventListener('pointercancel', handleWindowPointerUp, true);
+		window.addEventListener('keydown', handleWindowKeyDown);
 	}
 
 	onDestroy(() => {
@@ -114,6 +116,7 @@
 			window.removeEventListener('pointermove', handleWindowPointerMove);
 			window.removeEventListener('pointerup', handleWindowPointerUp, true);
 			window.removeEventListener('pointercancel', handleWindowPointerUp, true);
+			window.removeEventListener('keydown', handleWindowKeyDown);
 		}
 
 		clearSelectedPiece();
@@ -337,7 +340,9 @@
 
 	function handlePiecePlaced(pieceId: number, x: number, y: number) {
 		ensureTimerStarted();
-		clearHintTarget();
+		if (activeHintPieceId === pieceId) {
+			clearHintTarget();
+		}
 
 		const previousCount = placedPieces.length;
 		const newPlacement: PlacedPiece = { pieceId, x, y };
@@ -376,13 +381,16 @@
 			clearTimeout(hintTimeout);
 			hintTimeout = null;
 		}
+		activeHintPieceId = null;
 		activeHintTarget = null;
 	}
 
-	function showHintTarget(target: { x: number; y: number }) {
+	function showHintTarget(pieceId: number, target: { x: number; y: number }) {
 		clearHintTarget();
+		activeHintPieceId = pieceId;
 		activeHintTarget = target;
 		hintTimeout = setTimeout(() => {
+			activeHintPieceId = null;
 			activeHintTarget = null;
 			hintTimeout = null;
 		}, HINT_DURATION_MS);
@@ -400,7 +408,7 @@
 		const hintedPiece = piecesMap.get(hintPieceId);
 		if (!hintedPiece) return;
 
-		showHintTarget({ x: hintedPiece.correctX, y: hintedPiece.correctY });
+		showHintTarget(hintPieceId, { x: hintedPiece.correctX, y: hintedPiece.correctY });
 	}
 
 	function canPlacePiece(pieceId: number): boolean {
@@ -414,7 +422,6 @@
 		const previousCount = placedPieces.length;
 		placedPieces = clonePlacedPieces(previousState);
 		updateHistoryControls();
-		clearHintTarget();
 		persistProgress(placedPieces);
 		syncCompletionState(previousCount, placedPieces);
 	}
@@ -426,9 +433,12 @@
 		const previousCount = placedPieces.length;
 		placedPieces = clonePlacedPieces(nextState);
 		updateHistoryControls();
-		clearHintTarget();
 		persistProgress(placedPieces);
 		syncCompletionState(previousCount, placedPieces);
+	}
+
+	function isRotationToggleLocked(): boolean {
+		return timerStarted || placedPieces.length > 0 || rotationEnabled;
 	}
 
 	function handleReferenceDown(event?: PointerEvent | KeyboardEvent) {
@@ -454,7 +464,7 @@
 	}
 
 	function handleRotationToggle() {
-		if (!puzzle) return;
+		if (!puzzle || isRotationToggleLocked()) return;
 
 		const nextRotationEnabled = !rotationEnabled;
 		const nextPieceRotations = nextRotationEnabled
@@ -545,6 +555,26 @@
 
 		isPanning = false;
 		activePanPointerId = null;
+	}
+
+	function handleWindowKeyDown(event: KeyboardEvent) {
+		if (showCelebration) return;
+
+		const key = event.key.toLowerCase();
+		const modifierPressed = event.metaKey || event.ctrlKey;
+		const isUndoShortcut = modifierPressed && !event.shiftKey && key === 'z';
+		const isRedoShortcut = modifierPressed && ((event.shiftKey && key === 'z') || key === 'y');
+
+		if (isUndoShortcut) {
+			event.preventDefault();
+			handleUndo();
+			return;
+		}
+
+		if (isRedoShortcut) {
+			event.preventDefault();
+			handleRedo();
+		}
 	}
 
 	function handlePlayAgain() {
@@ -746,6 +776,7 @@
 							{canUndo}
 							{canRedo}
 							{rotationEnabled}
+							rotationToggleDisabled={isRotationToggleLocked()}
 						/>
 					</div>
 					<div class="board-wrap">
@@ -788,6 +819,8 @@
 									class="piece-slot"
 									class:rejected={rejectedPiece === piece.id}
 									class:animate-shake={rejectedPiece === piece.id}
+									class:hinted={activeHintPieceId === piece.id}
+									data-testid={`piece-slot-${piece.id}`}
 								>
 									<PuzzlePiece
 										{piece}
@@ -1177,6 +1210,11 @@
 	.piece-slot.rejected {
 		border-color: var(--hot);
 		box-shadow: 0 0 12px var(--hot-glow);
+	}
+
+	.piece-slot.hinted {
+		border-color: var(--accent);
+		box-shadow: 0 0 14px var(--accent-glow);
 	}
 
 	.complete-msg {

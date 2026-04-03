@@ -18,7 +18,8 @@ describe('PuzzleToolbar', () => {
 				onRotationToggle: vi.fn(),
 				canUndo: false,
 				canRedo: false,
-				rotationEnabled: false
+				rotationEnabled: false,
+				rotationToggleDisabled: false
 			});
 
 			await expect.element(page.getByTestId('puzzle-toolbar')).toBeInTheDocument();
@@ -37,7 +38,8 @@ describe('PuzzleToolbar', () => {
 				onRotationToggle: vi.fn(),
 				canUndo: false,
 				canRedo: false,
-				rotationEnabled: false
+				rotationEnabled: false,
+				rotationToggleDisabled: false
 			});
 
 			await expect.element(page.getByLabelText('Undo')).toBeInTheDocument();
@@ -65,7 +67,8 @@ describe('PuzzleToolbar', () => {
 				onRotationToggle: vi.fn(),
 				canUndo: false,
 				canRedo: false,
-				rotationEnabled: false
+				rotationEnabled: false,
+				rotationToggleDisabled: false
 			});
 
 			await expect.element(page.getByLabelText('Undo')).toBeDisabled();
@@ -103,7 +106,8 @@ describe('PuzzleToolbar', () => {
 				onRotationToggle: vi.fn(),
 				canUndo: false,
 				canRedo: false,
-				rotationEnabled: false
+				rotationEnabled: false,
+				rotationToggleDisabled: false
 			});
 
 			await expect.element(page.getByLabelText('Redo')).toBeDisabled();
@@ -163,11 +167,32 @@ describe('PuzzleToolbar', () => {
 				onRotationToggle: vi.fn(),
 				canUndo: false,
 				canRedo: false,
-				rotationEnabled: true
+				rotationEnabled: true,
+				rotationToggleDisabled: false
 			});
 
 			const toggleButton = page.getByLabelText('Rotation mode');
 			await expect.element(toggleButton).toHaveAttribute('aria-pressed', 'true');
+		});
+
+		it('disables rotation mode when rotationToggleDisabled is true', async () => {
+			render(PuzzleToolbar, {
+				onUndo: vi.fn(),
+				onRedo: vi.fn(),
+				onHint: vi.fn(),
+				onReferenceDown: vi.fn(),
+				onReferenceUp: vi.fn(),
+				onZoomIn: vi.fn(),
+				onZoomOut: vi.fn(),
+				onResetView: vi.fn(),
+				onRotationToggle: vi.fn(),
+				canUndo: false,
+				canRedo: false,
+				rotationEnabled: true,
+				rotationToggleDisabled: true
+			});
+
+			await expect.element(page.getByLabelText('Rotation mode')).toBeDisabled();
 		});
 	});
 
