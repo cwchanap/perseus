@@ -28,15 +28,25 @@ describe('HintOverlay', () => {
 		});
 
 		it('positions highlight at correct location based on targetX, targetY, and cellSize', async () => {
+			const targetX = 2;
+			const targetY = 1;
+			const cellSize = 100;
+
 			render(HintOverlay, {
 				active: true,
-				targetX: 2,
-				targetY: 1,
-				cellSize: 100
+				targetX,
+				targetY,
+				cellSize
 			});
 
 			const highlight = page.getByTestId('hint-highlight');
-			await expect.element(highlight).toBeInTheDocument();
+			const highlightElement = await highlight.element();
+			const styles = getComputedStyle(highlightElement);
+
+			expect(styles.left).toBe(`${targetX * cellSize}px`);
+			expect(styles.top).toBe(`${targetY * cellSize}px`);
+			expect(styles.width).toBe(`${cellSize}px`);
+			expect(styles.height).toBe(`${cellSize}px`);
 		});
 	});
 

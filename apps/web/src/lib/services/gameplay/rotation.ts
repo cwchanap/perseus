@@ -1,6 +1,8 @@
 // Rotation helper
 
-export type Rotation = 0 | 90 | 180 | 270;
+import type { Rotation } from '$lib/types/gameplay';
+
+export type { Rotation } from '$lib/types/gameplay';
 
 /**
  * Normalizes any angle to a valid rotation (0 | 90 | 180 | 270).

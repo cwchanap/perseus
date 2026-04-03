@@ -103,5 +103,15 @@ describe('Viewport Helper', () => {
 			// min ratio: 0.5 * 1.0 = 0.5
 			expect(zoom).toBeCloseTo(0.5);
 		});
+
+		it('should return 0 when puzzle width is not positive', () => {
+			expect(calculateFitZoom(0, 500, 500, 500)).toBe(0);
+			expect(calculateFitZoom(-100, 500, 500, 500)).toBe(0);
+		});
+
+		it('should return 0 when puzzle height is not positive', () => {
+			expect(calculateFitZoom(500, 0, 500, 500)).toBe(0);
+			expect(calculateFitZoom(500, -100, 500, 500)).toBe(0);
+		});
 	});
 });

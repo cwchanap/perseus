@@ -2,8 +2,8 @@
 	import { onDestroy } from 'svelte';
 	import { SvelteMap } from 'svelte/reactivity';
 	import type { PuzzlePiece } from '$lib/types/puzzle';
+	import type { Rotation } from '$lib/types/gameplay';
 	import { getPieceImageUrl } from '$lib/services/api';
-	import type { Rotation } from '$lib/services/gameplay/rotation';
 	import {
 		selectedPieceId,
 		setSelectedPiece,

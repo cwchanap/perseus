@@ -32,18 +32,26 @@
 		rotationEnabled,
 		rotationToggleDisabled = false
 	}: Props = $props();
+
+	const toolbarButtonClass =
+		'rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-900 shadow-sm transition-colors enabled:cursor-pointer enabled:hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50';
+	const pressedRotationButtonClass =
+		'border-indigo-400 bg-indigo-100 text-indigo-900 enabled:hover:bg-indigo-100';
 </script>
 
-<div data-testid="puzzle-toolbar" class="toolbar">
-	<button aria-label="Undo" disabled={!canUndo} onclick={onUndo} class="toolbar-button">
+<div
+	data-testid="puzzle-toolbar"
+	class="flex flex-wrap items-center gap-2 rounded-lg bg-white/90 p-4 shadow-[0_2px_8px_rgba(0,0,0,0.1)]"
+>
+	<button aria-label="Undo" disabled={!canUndo} onclick={onUndo} class={toolbarButtonClass}>
 		Undo
 	</button>
 
-	<button aria-label="Redo" disabled={!canRedo} onclick={onRedo} class="toolbar-button">
+	<button aria-label="Redo" disabled={!canRedo} onclick={onRedo} class={toolbarButtonClass}>
 		Redo
 	</button>
 
-	<button aria-label="Hint" onclick={onHint} class="toolbar-button"> Hint </button>
+	<button aria-label="Hint" onclick={onHint} class={toolbarButtonClass}> Hint </button>
 
 	<button
 		aria-label="Reference"
@@ -62,58 +70,24 @@
 				onReferenceUp(e);
 			}
 		}}
-		class="toolbar-button"
+		class={toolbarButtonClass}
 	>
 		Reference
 	</button>
 
-	<button aria-label="Zoom out" onclick={onZoomOut} class="toolbar-button"> - </button>
+	<button aria-label="Zoom out" onclick={onZoomOut} class={toolbarButtonClass}> - </button>
 
-	<button aria-label="Zoom in" onclick={onZoomIn} class="toolbar-button"> + </button>
+	<button aria-label="Zoom in" onclick={onZoomIn} class={toolbarButtonClass}> + </button>
 
-	<button aria-label="Reset view" onclick={onResetView} class="toolbar-button"> Reset </button>
+	<button aria-label="Reset view" onclick={onResetView} class={toolbarButtonClass}> Reset </button>
 
 	<button
 		aria-label="Rotation mode"
 		aria-pressed={rotationEnabled ? 'true' : 'false'}
 		disabled={rotationToggleDisabled}
 		onclick={onRotationToggle}
-		class="toolbar-button"
+		class={`${toolbarButtonClass} ${rotationEnabled ? pressedRotationButtonClass : ''}`}
 	>
 		Rotate
 	</button>
 </div>
-
-<style>
-	.toolbar {
-		display: flex;
-		gap: 0.5rem;
-		padding: 1rem;
-		background: rgba(255, 255, 255, 0.9);
-		border-radius: 0.5rem;
-		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-	}
-
-	.toolbar-button {
-		padding: 0.5rem 1rem;
-		border: 1px solid #ccc;
-		border-radius: 0.25rem;
-		background: white;
-		cursor: pointer;
-		transition: background-color 0.2s;
-	}
-
-	.toolbar-button:hover:not(:disabled) {
-		background: #f0f0f0;
-	}
-
-	.toolbar-button:disabled {
-		opacity: 0.5;
-		cursor: not-allowed;
-	}
-
-	.toolbar-button[aria-pressed='true'] {
-		background: #e0e7ff;
-		border-color: #818cf8;
-	}
-</style>

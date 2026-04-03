@@ -21,6 +21,24 @@ function getImageContentType(filePath: string): string {
 	return 'application/octet-stream';
 }
 
+function isPuzzleReady(puzzle: unknown): boolean {
+	if (typeof puzzle !== 'object' || puzzle === null) {
+		return true;
+	}
+
+	const candidate = puzzle as { ready?: boolean; status?: string };
+
+	if (typeof candidate.ready === 'boolean') {
+		return candidate.ready;
+	}
+
+	if (typeof candidate.status === 'string') {
+		return candidate.status === 'ready';
+	}
+
+	return true;
+}
+
 // GET /api/puzzles - List all puzzles
 puzzles.get('/', async (c) => {
 	try {
@@ -98,7 +116,7 @@ puzzles.get('/:id/reference', async (c) => {
 	try {
 		const puzzle = await getPuzzle(id);
 
-		if (!puzzle) {
+		if (!puzzle || !isPuzzleReady(puzzle)) {
 			return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
 		}
 

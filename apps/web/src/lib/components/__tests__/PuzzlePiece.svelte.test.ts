@@ -212,6 +212,7 @@ describe('PuzzlePiece', () => {
 			});
 
 			await userEvent.click(page.getByRole('button', { name: 'Rotate piece 7' }));
+			expect(onRotate).toHaveBeenCalledTimes(1);
 			expect(onRotate).toHaveBeenCalledWith(7);
 		});
 
@@ -243,6 +244,7 @@ describe('PuzzlePiece', () => {
 			await userEvent.keyboard('r');
 			await userEvent.keyboard('R');
 
+			expect(onRotate).toHaveBeenCalledTimes(2);
 			expect(onRotate).toHaveBeenNthCalledWith(1, 7);
 			expect(onRotate).toHaveBeenNthCalledWith(2, 7);
 		});

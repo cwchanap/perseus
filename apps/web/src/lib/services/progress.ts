@@ -1,6 +1,9 @@
 // Progress service for localStorage persistence
 import type { GameProgress, PlacedPiece } from '$lib/types/puzzle';
-import type { Rotation } from './gameplay/rotation';
+import type { Rotation } from '$lib/types/gameplay';
+
+type StoredGameProgress = Omit<GameProgress, 'rotationEnabled' | 'pieceRotations'> &
+	Partial<Pick<GameProgress, 'rotationEnabled' | 'pieceRotations'>>;
 
 const PROGRESS_KEY_PREFIX = 'puzzle-progress-';
 
@@ -14,7 +17,13 @@ export function getProgress(puzzleId: string): GameProgress | null {
 	try {
 		const data = localStorage.getItem(getStorageKey(puzzleId));
 		if (!data) return null;
-		return JSON.parse(data) as GameProgress;
+		const progress = JSON.parse(data) as StoredGameProgress;
+
+		return {
+			...progress,
+			rotationEnabled: progress.rotationEnabled ?? false,
+			pieceRotations: progress.pieceRotations ?? {}
+		} as GameProgress;
 	} catch {
 		return null;
 	}

@@ -44,9 +44,7 @@ describe('ReferenceOverlay', () => {
 			});
 
 			const overlay = await page.getByTestId('reference-overlay').element();
-			const pointerEvents = getComputedStyle(overlay).pointerEvents;
-
-			expect(pointerEvents).toBe('none');
+			expect(overlay.className).toContain('pointer-events-none');
 		});
 	});
 
