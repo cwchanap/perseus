@@ -412,4 +412,41 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.element(page.getByTestId('hint-target')).toHaveAttribute('data-x', '1');
 		await expect.element(page.getByTestId('piece-slot-1')).toHaveClass(/hinted/);
 	});
+
+	it('clears hint state when navigating to a different puzzle', async () => {
+		const nextPuzzle: Puzzle = {
+			...createMockPuzzle(),
+			id: 'next-puzzle',
+			name: 'Next Mission',
+			pieces: [
+				createPiece(0, 0, 0, { puzzleId: 'next-puzzle' }),
+				createPiece(1, 1, 0, { puzzleId: 'next-puzzle' })
+			]
+		};
+
+		vi.mocked(fetchPuzzle).mockImplementation(async (id: string) =>
+			id === 'next-puzzle' ? nextPuzzle : createMockPuzzle()
+		);
+
+		render(PuzzlePage);
+		await expect.element(page.getByTestId('puzzle-board')).toBeVisible();
+
+		await selectPiece(1);
+		await page.getByLabelText('Hint').click();
+		await expect.element(page.getByTestId('hint-target')).toHaveAttribute('data-x', '1');
+		await expect.element(page.getByTestId('piece-slot-1')).toHaveClass(/hinted/);
+
+		mockPageStore.set({
+			url: { pathname: '/puzzle/next-puzzle' },
+			params: { id: 'next-puzzle' },
+			route: { id: '/puzzle/[id]' },
+			status: 200,
+			error: null
+		});
+
+		await expect.element(page.getByText('NEXT MISSION')).toBeVisible();
+		expect(page.getByTestId('hint-target').query()).toBeNull();
+		const nextPieceSlot = await page.getByTestId('piece-slot-1').element();
+		expect(nextPieceSlot.classList.contains('hinted')).toBe(false);
+	});
 });
