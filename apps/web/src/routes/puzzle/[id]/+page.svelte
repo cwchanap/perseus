@@ -288,7 +288,7 @@
 			);
 			showCelebration = false;
 			showReferenceOverlay = false;
-			activeHintTarget = null;
+			clearHintTarget();
 			clearSelectedPiece();
 			bestTime = getBestTime(id);
 			timer.reset();
