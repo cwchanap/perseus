@@ -9,11 +9,28 @@
 	import type { TimerState } from '$lib/stores/timer';
 	import { SvelteMap } from 'svelte/reactivity';
 	import type { Puzzle, PlacedPiece, PuzzlePiece as TPuzzlePiece } from '$lib/types/puzzle';
+	import type { Rotation } from '$lib/services/gameplay/rotation';
+	import type { ViewportBounds } from '$lib/services/gameplay/viewport';
 	import PuzzleBoard from '$lib/components/PuzzleBoard.svelte';
 	import PuzzlePiece from '$lib/components/PuzzlePiece.svelte';
+	import PuzzleToolbar from '$lib/components/PuzzleToolbar.svelte';
+	import ZoomableBoardFrame from '$lib/components/ZoomableBoardFrame.svelte';
 	import GameTimer from '$lib/components/GameTimer.svelte';
 	import { shuffleArray } from '$lib/utils/shuffle';
 	import { resolve } from '$app/paths';
+	import { selectedPieceId, clearSelectedPiece } from '$lib/stores/pieceSelection';
+	import { createHistory } from '$lib/services/gameplay/history';
+	import { getHintPieceId } from '$lib/services/gameplay/hints';
+	import {
+		rotateClockwise,
+		generateRandomRotations,
+		isUpright
+	} from '$lib/services/gameplay/rotation';
+	import { clampZoom, clampPan, calculateFitZoom } from '$lib/services/gameplay/viewport';
+
+	const REJECTED_DURATION_MS = 500;
+	const HINT_DURATION_MS = 1800;
+	const ZOOM_STEP = 0.2;
 
 	let puzzle: Puzzle | null = $state(null);
 	let loading = $state(true);
@@ -23,52 +40,227 @@
 	let showCelebration = $state(false);
 	let rejectedPiece: number | null = $state(null);
 	let shuffledPieceIds: number[] = $state([]);
+	let rotationEnabled = $state(false);
+	let pieceRotations = $state<Record<number, Rotation>>({});
+	let showReferenceOverlay = $state(false);
+	let activeHintTarget = $state<{ x: number; y: number } | null>(null);
+	let canUndo = $state(false);
+	let canRedo = $state(false);
+	let currentSelectedPieceId = $state<number | null>(null);
+	let boardViewportElement = $state<HTMLElement | null>(null);
+	let zoom = $state(1);
+	let minZoom = $state(1);
+	let maxZoom = $state(3);
+	let panX = $state(0);
+	let panY = $state(0);
+	let isPanning = $state(false);
+	let pendingViewportReset = $state(false);
+	let referencePointerId = $state<number | null>(null);
+	let referenceHoldSource = $state<'pointer' | 'keyboard' | null>(null);
 
-	// Timer and statistics state
 	const timer = createTimerStore();
 	let timerState: TimerState = $state({ elapsed: 0, running: false });
 	let timerStarted = $state(false);
 	let bestTime: number | null = $state(null);
 	let isNewBest = $state(false);
+
 	let timerUnsubscribe: (() => void) | null = null;
+	let selectionUnsubscribe: (() => void) | null = null;
+	let rejectedPieceTimeout: ReturnType<typeof setTimeout> | null = null;
+	let hintTimeout: ReturnType<typeof setTimeout> | null = null;
+	let placementHistory = createHistory<PlacedPiece[]>([]);
+	let activePanPointerId: number | null = null;
+	let panStartClientX = 0;
+	let panStartClientY = 0;
+	let panOriginX = 0;
+	let panOriginY = 0;
 
 	timerUnsubscribe = timer.subscribe((state) => {
 		timerState = state;
 	});
+
+	selectionUnsubscribe = selectedPieceId.subscribe((value) => {
+		currentSelectedPieceId = value;
+	});
+
+	if (typeof window !== 'undefined') {
+		window.addEventListener('pointermove', handleWindowPointerMove);
+		window.addEventListener('pointerup', handleWindowPointerUp, true);
+		window.addEventListener('pointercancel', handleWindowPointerUp, true);
+	}
 
 	onDestroy(() => {
 		if (timerUnsubscribe) {
 			timerUnsubscribe();
 			timerUnsubscribe = null;
 		}
+
+		if (selectionUnsubscribe) {
+			selectionUnsubscribe();
+			selectionUnsubscribe = null;
+		}
+
+		if (rejectedPieceTimeout !== null) {
+			clearTimeout(rejectedPieceTimeout);
+			rejectedPieceTimeout = null;
+		}
+
+		if (hintTimeout !== null) {
+			clearTimeout(hintTimeout);
+			hintTimeout = null;
+		}
+
+		if (typeof window !== 'undefined') {
+			window.removeEventListener('pointermove', handleWindowPointerMove);
+			window.removeEventListener('pointerup', handleWindowPointerUp, true);
+			window.removeEventListener('pointercancel', handleWindowPointerUp, true);
+		}
+
+		clearSelectedPiece();
 		timer.destroy();
 	});
 
 	const puzzleId = $derived($page.params.id);
+	const placedPieceIds = $derived.by(
+		() => new Set(placedPieces.map((placement) => placement.pieceId))
+	);
+	const canPanBoard = $derived(zoom > minZoom + 0.001);
 
-	// Use SvelteMap so Svelte 5 can track reactive changes while keeping O(1) piece lookup
 	const piecesMap = $derived.by(() => {
 		const map = new SvelteMap<number, TPuzzlePiece>();
 		if (puzzle) {
-			for (const p of puzzle.pieces) {
-				map.set(p.id, p);
+			for (const piece of puzzle.pieces) {
+				map.set(piece.id, piece);
 			}
 		}
 		return map;
 	});
 
-	// Get pieces in shuffled order
 	const shuffledPieces = $derived(
 		shuffledPieceIds
 			.map((id) => piecesMap.get(id))
-			.filter((p): p is TPuzzlePiece => p !== undefined)
+			.filter((piece): piece is TPuzzlePiece => piece !== undefined)
 	);
+
+	const progressPct = $derived.by(() => {
+		if (!puzzle || puzzle.pieceCount === 0) return 0;
+		if (placedPieces.length >= puzzle.pieceCount) return 100;
+		return Math.floor((placedPieces.length / puzzle.pieceCount) * 100);
+	});
 
 	$effect(() => {
 		if (puzzleId) {
-			loadPuzzle(puzzleId);
+			void loadPuzzle(puzzleId);
 		}
 	});
+
+	$effect(() => {
+		if (!pendingViewportReset || !puzzle || !boardViewportElement) return;
+		resetViewport();
+		pendingViewportReset = false;
+	});
+
+	function clonePlacedPieces(pieces: PlacedPiece[]): PlacedPiece[] {
+		return pieces.map((piece) => ({ ...piece }));
+	}
+
+	function getRotationSeed(value: string): number {
+		let hash = 0;
+		for (const char of value) {
+			hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+		}
+		return hash || 1;
+	}
+
+	function getViewportBounds(scale = zoom): ViewportBounds {
+		if (!puzzle || !boardViewportElement) {
+			return { minX: 0, maxX: 0, minY: 0, maxY: 0 };
+		}
+
+		const viewportWidth = boardViewportElement.clientWidth;
+		const viewportHeight = boardViewportElement.clientHeight;
+		const scaledWidth = puzzle.imageWidth * scale;
+		const scaledHeight = puzzle.imageHeight * scale;
+		const maxOffsetX = Math.max(0, (scaledWidth - viewportWidth) / 2);
+		const maxOffsetY = Math.max(0, (scaledHeight - viewportHeight) / 2);
+
+		return {
+			minX: -maxOffsetX,
+			maxX: maxOffsetX,
+			minY: -maxOffsetY,
+			maxY: maxOffsetY
+		};
+	}
+
+	function getFitZoom(): number {
+		if (!puzzle || !boardViewportElement) return 1;
+
+		const viewportWidth = boardViewportElement.clientWidth;
+		const viewportHeight = boardViewportElement.clientHeight;
+		if (viewportWidth === 0 || viewportHeight === 0) return 1;
+
+		return calculateFitZoom(puzzle.imageWidth, puzzle.imageHeight, viewportWidth, viewportHeight);
+	}
+
+	function updateHistoryControls() {
+		canUndo = placementHistory.canUndo();
+		canRedo = placementHistory.canRedo();
+	}
+
+	function resetPlacementHistory(initialState: PlacedPiece[] = []) {
+		placementHistory = createHistory<PlacedPiece[]>(clonePlacedPieces(initialState));
+		updateHistoryControls();
+	}
+
+	function createInitialRotations(
+		puzzleData: Puzzle,
+		placements: PlacedPiece[],
+		enabled: boolean,
+		savedRotations: Record<number, Rotation> = {}
+	): Record<number, Rotation> {
+		if (!enabled) {
+			return { ...savedRotations };
+		}
+
+		const rotations = Object.fromEntries(
+			puzzleData.pieces.map((piece) => [piece.id, (savedRotations[piece.id] ?? 0) as Rotation])
+		) as Record<number, Rotation>;
+
+		const placedIds = new Set(placements.map((placement) => placement.pieceId));
+		const missingIds = puzzleData.pieces
+			.map((piece) => piece.id)
+			.filter((pieceId) => !placedIds.has(pieceId) && savedRotations[pieceId] === undefined);
+
+		if (missingIds.length === 0) {
+			return rotations;
+		}
+
+		const generated = generateRandomRotations(
+			missingIds,
+			getRotationSeed(`${puzzleData.id}:${missingIds.join(',')}`)
+		);
+
+		return {
+			...rotations,
+			...generated
+		};
+	}
+
+	function getDisplayedRotation(pieceId: number): Rotation {
+		return rotationEnabled ? (pieceRotations[pieceId] ?? 0) : 0;
+	}
+
+	function persistProgress(
+		nextPlacedPieces: PlacedPiece[] = placedPieces,
+		nextRotationEnabled = rotationEnabled,
+		nextPieceRotations: Record<number, Rotation> = pieceRotations
+	) {
+		if (!puzzle) return;
+
+		saveProgress(puzzle.id, clonePlacedPieces(nextPlacedPieces), nextRotationEnabled, {
+			...nextPieceRotations
+		});
+	}
 
 	async function loadPuzzle(id: string) {
 		loading = true;
@@ -76,28 +268,34 @@
 		errorStatus = null;
 
 		try {
-			puzzle = await fetchPuzzle(id);
-
-			// Shuffle piece order for display
-			shuffledPieceIds = shuffleArray(puzzle.pieces.map((p) => p.id));
-
-			// Restore progress from localStorage
+			const loadedPuzzle = await fetchPuzzle(id);
 			const savedProgress = getProgress(id);
-			if (savedProgress) {
-				placedPieces = savedProgress.placedPieces;
-			}
+			const restoredPlacedPieces = clonePlacedPieces(savedProgress?.placedPieces ?? []);
+			const restoredRotationEnabled = savedProgress?.rotationEnabled ?? false;
 
-			// Load best time
+			puzzle = loadedPuzzle;
+			shuffledPieceIds = shuffleArray(loadedPuzzle.pieces.map((piece) => piece.id));
+			placedPieces = restoredPlacedPieces;
+			rotationEnabled = restoredRotationEnabled;
+			pieceRotations = createInitialRotations(
+				loadedPuzzle,
+				restoredPlacedPieces,
+				restoredRotationEnabled,
+				savedProgress?.pieceRotations ?? {}
+			);
+			showCelebration = false;
+			showReferenceOverlay = false;
+			activeHintTarget = null;
+			clearSelectedPiece();
 			bestTime = getBestTime(id);
-
-			// Reset timer for resumed puzzles
 			timer.reset();
 			timerStarted = false;
 			isNewBest = false;
+			resetPlacementHistory(restoredPlacedPieces);
+			pendingViewportReset = true;
 		} catch (e) {
 			errorStatus = e instanceof ApiError ? e.status : null;
 			if (e instanceof ApiError && e.status === 404) {
-				// Clear any saved progress for non-existent puzzle
 				clearProgress(id);
 				error = 'Mission no longer available';
 			} else {
@@ -115,58 +313,266 @@
 		}
 	}
 
-	function handlePiecePlaced(pieceId: number, x: number, y: number) {
-		ensureTimerStarted();
+	function syncCompletionState(previousCount: number, nextPlacedPieces: PlacedPiece[]) {
+		if (!puzzle) return;
 
-		const newPlacement: PlacedPiece = { pieceId, x, y };
-		placedPieces = [...placedPieces.filter((p) => p.pieceId !== pieceId), newPlacement];
+		const wasComplete = previousCount >= puzzle.pieceCount;
+		const isComplete = nextPlacedPieces.length >= puzzle.pieceCount;
 
-		// Save progress
-		if (puzzle) {
-			saveProgress(puzzle.id, placedPieces);
-		}
-
-		// Check for completion
-		if (puzzle && placedPieces.length === puzzle.pieceCount) {
+		if (isComplete && !wasComplete) {
 			timer.pause();
-			// Record time and check if new best
 			isNewBest = saveCompletionTime(puzzle.id, timerState.elapsed);
 			bestTime = getBestTime(puzzle.id);
 			showCelebration = true;
+			return;
 		}
+
+		if (!isComplete && wasComplete) {
+			showCelebration = false;
+			if (timerStarted) {
+				timer.resume();
+			}
+		}
+	}
+
+	function handlePiecePlaced(pieceId: number, x: number, y: number) {
+		ensureTimerStarted();
+		clearHintTarget();
+
+		const previousCount = placedPieces.length;
+		const newPlacement: PlacedPiece = { pieceId, x, y };
+		const nextPlacedPieces = [
+			...placedPieces.filter((placement) => placement.pieceId !== pieceId),
+			newPlacement
+		];
+
+		placedPieces = nextPlacedPieces;
+		placementHistory.push(clonePlacedPieces(nextPlacedPieces));
+		updateHistoryControls();
+		persistProgress(nextPlacedPieces);
+		syncCompletionState(previousCount, nextPlacedPieces);
 	}
 
 	function handleIncorrectPlacement(pieceId: number) {
 		ensureTimerStarted();
 
+		if (rejectedPieceTimeout !== null) {
+			clearTimeout(rejectedPieceTimeout);
+		}
+
 		rejectedPiece = pieceId;
-		setTimeout(() => {
+		rejectedPieceTimeout = setTimeout(() => {
 			rejectedPiece = null;
-		}, 500);
+			rejectedPieceTimeout = null;
+		}, REJECTED_DURATION_MS);
 	}
 
 	function isPiecePlaced(pieceId: number): boolean {
-		return placedPieces.some((p) => p.pieceId === pieceId);
+		return placedPieceIds.has(pieceId);
+	}
+
+	function clearHintTarget() {
+		if (hintTimeout !== null) {
+			clearTimeout(hintTimeout);
+			hintTimeout = null;
+		}
+		activeHintTarget = null;
+	}
+
+	function showHintTarget(target: { x: number; y: number }) {
+		clearHintTarget();
+		activeHintTarget = target;
+		hintTimeout = setTimeout(() => {
+			activeHintTarget = null;
+			hintTimeout = null;
+		}, HINT_DURATION_MS);
+	}
+
+	function handleHint() {
+		if (!puzzle) return;
+
+		const hintPieceId = getHintPieceId(shuffledPieceIds, placedPieceIds, currentSelectedPieceId);
+		if (hintPieceId === null) {
+			clearHintTarget();
+			return;
+		}
+
+		const hintedPiece = piecesMap.get(hintPieceId);
+		if (!hintedPiece) return;
+
+		showHintTarget({ x: hintedPiece.correctX, y: hintedPiece.correctY });
+	}
+
+	function canPlacePiece(pieceId: number): boolean {
+		return !rotationEnabled || isUpright(pieceRotations[pieceId] ?? 0);
+	}
+
+	function handleUndo() {
+		const previousState = placementHistory.undo();
+		if (previousState === undefined) return;
+
+		const previousCount = placedPieces.length;
+		placedPieces = clonePlacedPieces(previousState);
+		updateHistoryControls();
+		clearHintTarget();
+		persistProgress(placedPieces);
+		syncCompletionState(previousCount, placedPieces);
+	}
+
+	function handleRedo() {
+		const nextState = placementHistory.redo();
+		if (nextState === undefined) return;
+
+		const previousCount = placedPieces.length;
+		placedPieces = clonePlacedPieces(nextState);
+		updateHistoryControls();
+		clearHintTarget();
+		persistProgress(placedPieces);
+		syncCompletionState(previousCount, placedPieces);
+	}
+
+	function handleReferenceDown(event?: PointerEvent | KeyboardEvent) {
+		const isPointerEvent = event instanceof PointerEvent;
+
+		referenceHoldSource = isPointerEvent ? 'pointer' : 'keyboard';
+		referencePointerId = isPointerEvent ? event.pointerId : null;
+		showReferenceOverlay = true;
+	}
+
+	function handleReferenceUp(event?: PointerEvent | KeyboardEvent) {
+		if (event instanceof PointerEvent) {
+			return;
+		}
+
+		if (referenceHoldSource === 'pointer') {
+			return;
+		}
+
+		showReferenceOverlay = false;
+		referencePointerId = null;
+		referenceHoldSource = null;
+	}
+
+	function handleRotationToggle() {
+		if (!puzzle) return;
+
+		const nextRotationEnabled = !rotationEnabled;
+		const nextPieceRotations = nextRotationEnabled
+			? createInitialRotations(puzzle, placedPieces, true, pieceRotations)
+			: pieceRotations;
+
+		rotationEnabled = nextRotationEnabled;
+		pieceRotations = nextPieceRotations;
+		persistProgress(placedPieces, nextRotationEnabled, nextPieceRotations);
+	}
+
+	function handlePieceRotate(pieceId: number) {
+		if (!rotationEnabled || isPiecePlaced(pieceId)) return;
+
+		const nextPieceRotations = {
+			...pieceRotations,
+			[pieceId]: rotateClockwise(pieceRotations[pieceId] ?? 0)
+		} as Record<number, Rotation>;
+
+		pieceRotations = nextPieceRotations;
+		persistProgress(placedPieces, rotationEnabled, nextPieceRotations);
+	}
+
+	function setView(nextZoom: number, nextPanX = panX, nextPanY = panY) {
+		const clampedScale = clampZoom(nextZoom, minZoom, maxZoom);
+		const clampedPan = clampPan(nextPanX, nextPanY, getViewportBounds(clampedScale));
+		zoom = clampedScale;
+		panX = clampedPan.x;
+		panY = clampedPan.y;
+	}
+
+	function resetViewport() {
+		const fitZoom = getFitZoom();
+		minZoom = fitZoom;
+		maxZoom = Math.max(fitZoom * 3, fitZoom + 1, 3);
+		zoom = fitZoom;
+		panX = 0;
+		panY = 0;
+		isPanning = false;
+		activePanPointerId = null;
+	}
+
+	function handleZoomIn() {
+		setView(zoom + ZOOM_STEP);
+	}
+
+	function handleZoomOut() {
+		setView(zoom - ZOOM_STEP);
+	}
+
+	function handleBoardWheel(event: WheelEvent) {
+		event.preventDefault();
+		const zoomFactor = event.deltaY < 0 ? 1 + ZOOM_STEP : 1 - ZOOM_STEP;
+		setView(zoom * zoomFactor);
+	}
+
+	function handleBoardPointerDown(event: PointerEvent) {
+		if (!canPanBoard) return;
+		if (event.pointerType === 'mouse' && event.button !== 0) return;
+
+		event.preventDefault();
+		isPanning = true;
+		activePanPointerId = event.pointerId;
+		panStartClientX = event.clientX;
+		panStartClientY = event.clientY;
+		panOriginX = panX;
+		panOriginY = panY;
+	}
+
+	function handleWindowPointerMove(event: PointerEvent) {
+		if (!isPanning || activePanPointerId !== event.pointerId) return;
+
+		const deltaX = event.clientX - panStartClientX;
+		const deltaY = event.clientY - panStartClientY;
+		const clampedPan = clampPan(panOriginX + deltaX, panOriginY + deltaY, getViewportBounds());
+		panX = clampedPan.x;
+		panY = clampedPan.y;
+	}
+
+	function handleWindowPointerUp(event: PointerEvent) {
+		if (referenceHoldSource === 'pointer' && referencePointerId === event.pointerId) {
+			showReferenceOverlay = false;
+			referencePointerId = null;
+			referenceHoldSource = null;
+		}
+
+		if (activePanPointerId !== event.pointerId) return;
+
+		isPanning = false;
+		activePanPointerId = null;
 	}
 
 	function handlePlayAgain() {
-		if (puzzle) {
-			placedPieces = [];
-			clearProgress(puzzle.id);
-			showCelebration = false;
-			timer.reset();
-			timerStarted = false;
-			isNewBest = false;
-			// Reshuffle pieces for new game
-			shuffledPieceIds = shuffleArray(puzzle.pieces.map((p) => p.id));
-		}
+		if (!puzzle) return;
+
+		placedPieces = [];
+		rotationEnabled = false;
+		pieceRotations = {};
+		showReferenceOverlay = false;
+		showCelebration = false;
+		clearHintTarget();
+		rejectedPiece = null;
+		referencePointerId = null;
+		referenceHoldSource = null;
+		clearProgress(puzzle.id);
+		timer.reset();
+		timerStarted = false;
+		isNewBest = false;
+		clearSelectedPiece();
+		shuffledPieceIds = shuffleArray(puzzle.pieces.map((piece) => piece.id));
+		resetPlacementHistory([]);
+		pendingViewportReset = true;
 	}
 
 	function handleGoHome() {
 		goto(resolve('/'));
 	}
 
-	// Focus management for modal accessibility
 	function manageModalFocus(node: HTMLElement, isOpen: boolean) {
 		let previousFocus: HTMLElement | null = null;
 		let focusableElements: HTMLElement[] = [];
@@ -175,7 +581,6 @@
 		let focusTimeout: ReturnType<typeof setTimeout> | null = null;
 		let restoreFocusTimeout: ReturnType<typeof setTimeout> | null = null;
 
-		// Get all focusable elements within the modal
 		const getFocusableElements = (element: HTMLElement) => {
 			return Array.from(
 				element.querySelectorAll<HTMLElement>(
@@ -184,38 +589,26 @@
 			).filter((el) => !el.hasAttribute('disabled') && el.offsetParent !== null);
 		};
 
-		// Trap focus within the modal
 		const trapFocus = (e: KeyboardEvent) => {
 			if (e.key !== 'Tab') return;
 
 			if (e.shiftKey) {
-				// Shift+Tab
 				if (document.activeElement === firstElement) {
 					e.preventDefault();
 					lastElement?.focus();
 				}
-			} else {
-				// Tab
-				if (document.activeElement === lastElement) {
-					e.preventDefault();
-					firstElement?.focus();
-				}
+			} else if (document.activeElement === lastElement) {
+				e.preventDefault();
+				firstElement?.focus();
 			}
 		};
 
 		if (isOpen) {
-			// Save current focus
 			previousFocus = document.activeElement as HTMLElement;
-
-			// Get focusable elements
 			focusableElements = getFocusableElements(node);
 			firstElement = focusableElements[0] || null;
 			lastElement = focusableElements[focusableElements.length - 1] || null;
-
-			// Move focus to first element
 			focusTimeout = setTimeout(() => firstElement?.focus(), 100);
-
-			// Add event listeners
 			document.addEventListener('keydown', trapFocus);
 		}
 
@@ -230,22 +623,14 @@
 					restoreFocusTimeout = null;
 				}
 
-				// Remove event listeners
 				document.removeEventListener('keydown', trapFocus);
 
-				// Restore focus when modal closes
 				if (previousFocus) {
 					restoreFocusTimeout = setTimeout(() => previousFocus?.focus(), 0);
 				}
 			}
 		};
 	}
-
-	const progressPct = $derived.by(() => {
-		if (!puzzle || puzzle.pieceCount === 0) return 0;
-		if (placedPieces.length >= puzzle.pieceCount) return 100;
-		return Math.floor((placedPieces.length / puzzle.pieceCount) * 100);
-	});
 </script>
 
 <svelte:head>
@@ -340,19 +725,53 @@
 				<a href={resolve('/')} class="arcade-btn">RETURN TO ARCADE</a>
 			</div>
 		{:else if puzzle}
+			{@const currentPuzzle = puzzle}
 			<div class="game-layout">
 				<!-- Board panel -->
 				<div class="board-panel">
 					<div class="panel-header">
 						<span class="panel-tag">PUZZLE BOARD</span>
 					</div>
-					<div class="board-wrap">
-						<PuzzleBoard
-							{puzzle}
-							{placedPieces}
-							onPiecePlaced={handlePiecePlaced}
-							onIncorrectPlacement={handleIncorrectPlacement}
+					<div class="board-toolbar">
+						<PuzzleToolbar
+							onUndo={handleUndo}
+							onRedo={handleRedo}
+							onHint={handleHint}
+							onReferenceDown={(event) => handleReferenceDown(event)}
+							onReferenceUp={(event) => handleReferenceUp(event)}
+							onZoomIn={handleZoomIn}
+							onZoomOut={handleZoomOut}
+							onResetView={resetViewport}
+							onRotationToggle={handleRotationToggle}
+							{canUndo}
+							{canRedo}
+							{rotationEnabled}
 						/>
+					</div>
+					<div class="board-wrap">
+						<div
+							class="board-viewport"
+							class:can-pan={canPanBoard}
+							class:is-panning={isPanning}
+							bind:this={boardViewportElement}
+						>
+							<ZoomableBoardFrame scale={zoom} {panX} {panY} onWheel={handleBoardWheel}>
+								{#snippet children()}
+									<div class="board-canvas" style="width: {currentPuzzle.imageWidth}px;">
+										<PuzzleBoard
+											puzzle={currentPuzzle}
+											{placedPieces}
+											onPiecePlaced={handlePiecePlaced}
+											onIncorrectPlacement={handleIncorrectPlacement}
+											{activeHintTarget}
+											{showReferenceOverlay}
+											{canPlacePiece}
+											onBoardPointerDown={handleBoardPointerDown}
+										/>
+									</div>
+								{/snippet}
+							</ZoomableBoardFrame>
+						</div>
 					</div>
 				</div>
 
@@ -360,7 +779,7 @@
 				<div class="inventory-panel">
 					<div class="panel-header">
 						<span class="panel-tag">INVENTORY</span>
-						<span class="inv-count">{puzzle.pieceCount - placedPieces.length} LEFT</span>
+						<span class="inv-count">{currentPuzzle.pieceCount - placedPieces.length} LEFT</span>
 					</div>
 					<div class="pieces-grid">
 						{#each shuffledPieces as piece (piece.id)}
@@ -370,12 +789,18 @@
 									class:rejected={rejectedPiece === piece.id}
 									class:animate-shake={rejectedPiece === piece.id}
 								>
-									<PuzzlePiece {piece} isPlaced={false} />
+									<PuzzlePiece
+										{piece}
+										isPlaced={false}
+										{rotationEnabled}
+										rotation={getDisplayedRotation(piece.id)}
+										onRotate={handlePieceRotate}
+									/>
 								</div>
 							{/if}
 						{/each}
 					</div>
-					{#if placedPieces.length === puzzle.pieceCount}
+					{#if placedPieces.length === currentPuzzle.pieceCount}
 						<div class="complete-msg">
 							<span class="complete-icon">◆</span>
 							ALL PIECES PLACED
@@ -676,6 +1101,40 @@
 	.board-wrap {
 		padding: 1rem;
 		overflow: auto;
+	}
+
+	.board-toolbar {
+		padding: 0.75rem 1rem 0;
+	}
+
+	.board-toolbar :global(.toolbar) {
+		flex-wrap: wrap;
+	}
+
+	.board-viewport {
+		min-height: 18rem;
+		overflow: hidden;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		touch-action: none;
+	}
+
+	.board-viewport.can-pan {
+		cursor: grab;
+	}
+
+	.board-viewport.is-panning {
+		cursor: grabbing;
+	}
+
+	.board-canvas {
+		max-width: 100%;
+		margin: 0 auto;
+	}
+
+	.board-canvas :global(.puzzle-board) {
+		width: 100%;
 	}
 
 	/* Inventory panel */
