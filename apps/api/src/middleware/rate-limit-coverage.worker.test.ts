@@ -3,7 +3,7 @@
  * Additional coverage tests for rate-limit.worker.ts
  * Covers KV write/delete failure paths and post-auth tracking errors.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { loginRateLimit, resetLoginAttempts, __resetRateLimitStore } from './rate-limit.worker';
 
 function createFailingPutKV() {
@@ -380,6 +380,53 @@ describe('rate-limit trusted proxy with TRUSTED_PROXY_LIST', () => {
 	});
 });
 
+describe('rate-limit trusted proxy backward-compat (no TRUSTED_PROXY_LIST, line 115)', () => {
+	beforeEach(() => {
+		__resetRateLimitStore();
+	});
+
+	it('uses X-Forwarded-For IP when TRUSTED_PROXY=true but no TRUSTED_PROXY_LIST is configured', async () => {
+		const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const mockKV = {
+			get: vi.fn(async () => null),
+			put: vi.fn(async () => {}),
+			delete: vi.fn(async () => {})
+		};
+		const ctx = {
+			env: {
+				PUZZLE_METADATA: mockKV,
+				NODE_ENV: 'development',
+				TRUSTED_PROXY: 'true'
+				// No TRUSTED_PROXY_LIST → triggers backward-compat path
+			},
+			req: {
+				header: vi.fn((name: string) => {
+					if (name === 'cf-connecting-ip') return null;
+					if (name === 'x-forwarded-for') return '10.20.30.40';
+					return null;
+				}),
+				ip: undefined // no peer IP info
+			},
+			json: vi.fn((body: unknown, status: number) => ({ body, status })),
+			res: { status: 200 }
+		} as unknown as Parameters<typeof loginRateLimit>[0];
+
+		const next = vi.fn(async () => {
+			(ctx.res as { status: number }).status = 401;
+		});
+
+		await loginRateLimit(ctx, next);
+
+		expect(next).toHaveBeenCalled();
+		// The XFF IP (10.20.30.40) should have been used in the KV key
+		expect(mockKV.put).toHaveBeenCalled();
+		const kvKey: string = (mockKV.put.mock.calls as any)[0][0];
+		expect(kvKey).toContain('10.20.30.40');
+
+		warnSpy.mockRestore();
+	});
+});
+
 describe('rate-limit post-auth tracking - 403 response', () => {
 	beforeEach(() => {
 		__resetRateLimitStore();
@@ -421,5 +468,244 @@ describe('rate-limit post-auth tracking - 403 response', () => {
 		// No KV put or delete for non-auth responses
 		expect(kv.put).not.toHaveBeenCalled();
 		expect(kv.delete).not.toHaveBeenCalled();
+	});
+});
+
+describe('mergeRateLimitEntries - both locked (line 173)', () => {
+	beforeEach(() => {
+		__resetRateLimitStore();
+	});
+
+	it('returns KV entry when both KV and memory entries are locked (KV lockedUntil >= mem lockedUntil)', async () => {
+		const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+		// Step 1: Trigger 5 failed logins with no KV → in-memory store gets locked entry
+		for (let i = 0; i < 5; i++) {
+			const ctx = {
+				env: { PUZZLE_METADATA: undefined, NODE_ENV: 'development' },
+				req: { header: vi.fn((name: string) => (name === 'cf-connecting-ip' ? '7.7.7.7' : null)) },
+				json: vi.fn((body: unknown, status: number) => ({ body, status })),
+				res: { status: 200 }
+			} as unknown as Parameters<typeof loginRateLimit>[0];
+			const next = vi.fn(async () => {
+				(ctx.res as { status: number }).status = 401;
+			});
+			await loginRateLimit(ctx, next);
+		}
+		consoleSpy.mockRestore();
+
+		// Memory is now locked. Step 2: Provide a KV that also returns a locked entry.
+		// KV's lockedUntil is further in the future, so KV entry wins.
+		const kvLockedUntil = Date.now() + 30 * 60 * 1000;
+		const lockedKvEntry = { attempts: 5, lockedUntil: kvLockedUntil, lastAttemptAt: Date.now() };
+		const kv = {
+			get: vi.fn(async (_key: string, type: string) =>
+				type === 'json' ? lockedKvEntry : JSON.stringify(lockedKvEntry)
+			),
+			put: vi.fn(async () => {}),
+			delete: vi.fn(async () => {})
+		};
+
+		const ctx = {
+			env: { PUZZLE_METADATA: kv, NODE_ENV: 'development' },
+			req: { header: vi.fn((name: string) => (name === 'cf-connecting-ip' ? '7.7.7.7' : null)) },
+			json: vi.fn((body: unknown, status: number) => ({ body, status })),
+			res: { status: 200 }
+		} as unknown as Parameters<typeof loginRateLimit>[0];
+		const next = vi.fn();
+
+		const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		await loginRateLimit(ctx, next);
+		errSpy.mockRestore();
+
+		// Both are locked → merge picks the one with later lockedUntil (KV)
+		// The request should be blocked (429) since both entries are locked
+		expect(next).not.toHaveBeenCalled();
+		// json should have been called with 429
+		expect((ctx.json as ReturnType<typeof vi.fn>).mock.calls[0][1]).toBe(429);
+	});
+});
+
+describe('mergeRateLimitEntries - same attempts, use most recent lastAttemptAt (line 182)', () => {
+	beforeEach(() => {
+		__resetRateLimitStore();
+	});
+
+	it('returns KV entry when both unlocked, same attempts, KV has more recent lastAttemptAt', async () => {
+		vi.useFakeTimers();
+		try {
+			const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+			// Step 1: make 1 failed login with no KV → memory gets entry with attempts=1, lastAttemptAt=T
+			const ctx1 = {
+				env: { PUZZLE_METADATA: undefined, NODE_ENV: 'development' },
+				req: { header: vi.fn((name: string) => (name === 'cf-connecting-ip' ? '8.8.8.8' : null)) },
+				json: vi.fn((body: unknown, status: number) => ({ body, status })),
+				res: { status: 200 }
+			} as unknown as Parameters<typeof loginRateLimit>[0];
+			const next1 = vi.fn(async () => {
+				(ctx1.res as { status: number }).status = 401;
+			});
+			await loginRateLimit(ctx1, next1);
+
+			// Advance time by 1 second so KV entry's lastAttemptAt will be more recent
+			vi.advanceTimersByTime(1000);
+
+			// Step 2: KV returns entry with same attempts=1 but more recent lastAttemptAt (now + 1s)
+			const kvEntry = { attempts: 1, lockedUntil: null, lastAttemptAt: Date.now() };
+			const kv = {
+				get: vi.fn(async (_key: string, type: string) =>
+					type === 'json' ? kvEntry : JSON.stringify(kvEntry)
+				),
+				put: vi.fn(async () => {}),
+				delete: vi.fn(async () => {})
+			};
+
+			const ctx2 = {
+				env: { PUZZLE_METADATA: kv, NODE_ENV: 'development' },
+				req: { header: vi.fn((name: string) => (name === 'cf-connecting-ip' ? '8.8.8.8' : null)) },
+				json: vi.fn((body: unknown, status: number) => ({ body, status })),
+				res: { status: 200 }
+			} as unknown as Parameters<typeof loginRateLimit>[0];
+			const next2 = vi.fn(async () => {
+				(ctx2.res as { status: number }).status = 401;
+			});
+
+			await loginRateLimit(ctx2, next2);
+			warnSpy.mockRestore();
+
+			// Not locked yet (only 2 total attempts across both calls), so next is called
+			expect(next2).toHaveBeenCalled();
+			// KV put should have been called to record the merged entry
+			expect(kv.put).toHaveBeenCalled();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+});
+
+describe('cleanupExpiredEntries - expired locked entry (line 37)', () => {
+	beforeEach(() => {
+		__resetRateLimitStore();
+	});
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it('removes locked entry from store when lockedUntil has passed', async () => {
+		vi.useFakeTimers();
+		const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+		// Trigger 5 failed logins with no KV → memory gets locked entry
+		for (let i = 0; i < 5; i++) {
+			const ctx = {
+				env: { PUZZLE_METADATA: undefined, NODE_ENV: 'development' },
+				req: {
+					header: vi.fn((name: string) => (name === 'cf-connecting-ip' ? '11.11.11.11' : null))
+				},
+				json: vi.fn((body: unknown, status: number) => ({ body, status })),
+				res: { status: 200 }
+			} as unknown as Parameters<typeof loginRateLimit>[0];
+			const next = vi.fn(async () => {
+				(ctx.res as { status: number }).status = 401;
+			});
+			await loginRateLimit(ctx, next);
+		}
+
+		// Advance time past lockout (15 min) AND past LOCKOUT_DURATION_MS for stale cleanup
+		vi.advanceTimersByTime(16 * 60 * 1000);
+
+		// Make a new request - cleanupExpiredEntries should remove the expired locked entry
+		const freshCtx = {
+			env: { PUZZLE_METADATA: undefined, NODE_ENV: 'development' },
+			req: {
+				header: vi.fn((name: string) => (name === 'cf-connecting-ip' ? '11.11.11.11' : null))
+			},
+			json: vi.fn((body: unknown, status: number) => ({ body, status })),
+			res: { status: 200 }
+		} as unknown as Parameters<typeof loginRateLimit>[0];
+		const freshNext = vi.fn(async () => {
+			(freshCtx.res as { status: number }).status = 401;
+		});
+		await loginRateLimit(freshCtx, freshNext);
+		warnSpy.mockRestore();
+
+		// After cleanup and the new (single) failed attempt, should NOT be blocked
+		expect(freshNext).toHaveBeenCalled();
+	});
+
+	it('removes stale unlocked entry from store when lastAttemptAt is too old (line 40)', async () => {
+		vi.useFakeTimers();
+		const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+		// Single failed login with no KV → memory gets unlocked entry with 1 attempt
+		const ctx = {
+			env: { PUZZLE_METADATA: undefined, NODE_ENV: 'development' },
+			req: {
+				header: vi.fn((name: string) => (name === 'cf-connecting-ip' ? '12.12.12.12' : null))
+			},
+			json: vi.fn((body: unknown, status: number) => ({ body, status })),
+			res: { status: 200 }
+		} as unknown as Parameters<typeof loginRateLimit>[0];
+		const next = vi.fn(async () => {
+			(ctx.res as { status: number }).status = 401;
+		});
+		await loginRateLimit(ctx, next);
+
+		// Advance time past LOCKOUT_DURATION_MS (15 min) for stale entry cleanup
+		vi.advanceTimersByTime(16 * 60 * 1000);
+
+		// Make a new request - cleanupExpiredEntries should remove the stale unlocked entry
+		const freshCtx = {
+			env: { PUZZLE_METADATA: undefined, NODE_ENV: 'development' },
+			req: {
+				header: vi.fn((name: string) => (name === 'cf-connecting-ip' ? '12.12.12.12' : null))
+			},
+			json: vi.fn((body: unknown, status: number) => ({ body, status })),
+			res: { status: 200 }
+		} as unknown as Parameters<typeof loginRateLimit>[0];
+		const freshNext = vi.fn(async () => {
+			(freshCtx.res as { status: number }).status = 401;
+		});
+		await loginRateLimit(freshCtx, freshNext);
+		warnSpy.mockRestore();
+
+		// Entry was cleaned up; this is the first fresh attempt, so not blocked
+		expect(freshNext).toHaveBeenCalled();
+	});
+});
+
+describe('isRateLimitEntry - invalid lockedUntil (line 54)', () => {
+	beforeEach(() => {
+		__resetRateLimitStore();
+	});
+
+	it('logs warning and resets when KV returns entry with non-numeric lockedUntil', async () => {
+		const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+		// KV returns an entry where lockedUntil is a string (invalid)
+		const malformedEntry = { attempts: 3, lockedUntil: 'not-a-number', lastAttemptAt: Date.now() };
+		const kv = {
+			get: vi.fn(async (_key: string, type: string) =>
+				type === 'json' ? malformedEntry : JSON.stringify(malformedEntry)
+			),
+			put: vi.fn(async () => {}),
+			delete: vi.fn(async () => {})
+		};
+
+		const ctx = {
+			env: { PUZZLE_METADATA: kv, NODE_ENV: 'development' },
+			req: {
+				header: vi.fn((name: string) => (name === 'cf-connecting-ip' ? '13.13.13.13' : null))
+			},
+			json: vi.fn((body: unknown, status: number) => ({ body, status })),
+			res: { status: 200 }
+		} as unknown as Parameters<typeof loginRateLimit>[0];
+		const next = vi.fn();
+		await loginRateLimit(ctx, next);
+		warnSpy.mockRestore();
+
+		// Invalid entry → warning logged, treated as no entry → not blocked
+		expect(next).toHaveBeenCalled();
 	});
 });
