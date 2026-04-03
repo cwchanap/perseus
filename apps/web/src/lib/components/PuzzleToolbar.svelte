@@ -12,6 +12,7 @@
 		canUndo: boolean;
 		canRedo: boolean;
 		rotationEnabled: boolean;
+		rotationToggleDisabled?: boolean;
 	}
 
 	let {
@@ -26,7 +27,8 @@
 		onRotationToggle,
 		canUndo,
 		canRedo,
-		rotationEnabled
+		rotationEnabled,
+		rotationToggleDisabled = false
 	}: Props = $props();
 </script>
 
@@ -72,6 +74,7 @@
 	<button
 		aria-label="Rotation mode"
 		aria-pressed={rotationEnabled ? 'true' : 'false'}
+		disabled={rotationToggleDisabled}
 		onclick={onRotationToggle}
 		class="toolbar-button"
 	>
