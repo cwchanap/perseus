@@ -1,10 +1,12 @@
 <script lang="ts">
+	type ReferenceHoldEvent = PointerEvent | KeyboardEvent;
+
 	interface Props {
 		onUndo: () => void;
 		onRedo: () => void;
 		onHint: () => void;
-		onReferenceDown: () => void;
-		onReferenceUp: () => void;
+		onReferenceDown: (event?: ReferenceHoldEvent) => void;
+		onReferenceUp: (event?: ReferenceHoldEvent) => void;
 		onZoomIn: () => void;
 		onZoomOut: () => void;
 		onResetView: () => void;
@@ -45,19 +47,19 @@
 
 	<button
 		aria-label="Reference"
-		onpointerdown={onReferenceDown}
-		onpointerup={onReferenceUp}
-		onpointerleave={onReferenceUp}
+		onpointerdown={(event) => onReferenceDown(event)}
+		onpointerup={(event) => onReferenceUp(event)}
+		onpointerleave={(event) => onReferenceUp(event)}
 		onkeydown={(e) => {
 			if (e.key === ' ' || e.key === 'Enter') {
 				e.preventDefault();
-				onReferenceDown();
+				onReferenceDown(e);
 			}
 		}}
 		onkeyup={(e) => {
 			if (e.key === ' ' || e.key === 'Enter') {
 				e.preventDefault();
-				onReferenceUp();
+				onReferenceUp(e);
 			}
 		}}
 		class="toolbar-button"

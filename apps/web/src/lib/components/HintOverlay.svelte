@@ -8,22 +8,19 @@
 
 	let { active, targetX, targetY, cellSize }: Props = $props();
 
-	const hasTarget = $derived(targetX !== undefined && targetY !== undefined);
+	const highlightStyle = $derived.by(() => {
+		if (targetX === undefined || targetY === undefined) {
+			return null;
+		}
+
+		return `left: ${targetX * cellSize}px; top: ${targetY * cellSize}px; width: ${cellSize}px; height: ${cellSize}px;`;
+	});
 </script>
 
 {#if active}
 	<div data-testid="hint-overlay" class="overlay">
-		{#if hasTarget}
-			<div
-				data-testid="hint-highlight"
-				class="highlight"
-				style="
-					left: {targetX * cellSize}px;
-					top: {targetY * cellSize}px;
-					width: {cellSize}px;
-					height: {cellSize}px;
-				"
-			></div>
+		{#if highlightStyle}
+			<div data-testid="hint-highlight" class="highlight" style={highlightStyle}></div>
 		{/if}
 	</div>
 {/if}

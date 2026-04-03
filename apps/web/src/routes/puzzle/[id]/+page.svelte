@@ -767,8 +767,8 @@
 							onUndo={handleUndo}
 							onRedo={handleRedo}
 							onHint={handleHint}
-							onReferenceDown={(event) => handleReferenceDown(event)}
-							onReferenceUp={(event) => handleReferenceUp(event)}
+							onReferenceDown={handleReferenceDown}
+							onReferenceUp={handleReferenceUp}
 							onZoomIn={handleZoomIn}
 							onZoomOut={handleZoomOut}
 							onResetView={resetViewport}
@@ -787,20 +787,18 @@
 							bind:this={boardViewportElement}
 						>
 							<ZoomableBoardFrame scale={zoom} {panX} {panY} onWheel={handleBoardWheel}>
-								{#snippet children()}
-									<div class="board-canvas" style="width: {currentPuzzle.imageWidth}px;">
-										<PuzzleBoard
-											puzzle={currentPuzzle}
-											{placedPieces}
-											onPiecePlaced={handlePiecePlaced}
-											onIncorrectPlacement={handleIncorrectPlacement}
-											{activeHintTarget}
-											{showReferenceOverlay}
-											{canPlacePiece}
-											onBoardPointerDown={handleBoardPointerDown}
-										/>
-									</div>
-								{/snippet}
+								<div class="board-canvas" style="width: {currentPuzzle.imageWidth}px;">
+									<PuzzleBoard
+										puzzle={currentPuzzle}
+										{placedPieces}
+										onPiecePlaced={handlePiecePlaced}
+										onIncorrectPlacement={handleIncorrectPlacement}
+										{activeHintTarget}
+										{showReferenceOverlay}
+										{canPlacePiece}
+										onBoardPointerDown={handleBoardPointerDown}
+									/>
+								</div>
 							</ZoomableBoardFrame>
 						</div>
 					</div>
