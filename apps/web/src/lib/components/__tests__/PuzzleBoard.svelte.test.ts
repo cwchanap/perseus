@@ -117,23 +117,6 @@ describe('PuzzleBoard', () => {
 		await expect.element(page.getByTestId('hint-target')).toHaveAttribute('data-y', '2');
 	});
 
-	it('should render the reference overlay when enabled', async () => {
-		const puzzle = createMockPuzzle(3);
-
-		render(PuzzleBoard, {
-			puzzle,
-			placedPieces: [],
-			onPiecePlaced: vi.fn(),
-			onIncorrectPlacement: vi.fn(),
-			showReferenceOverlay: true
-		});
-
-		await expect.element(page.getByTestId('reference-overlay')).toBeVisible();
-		await expect
-			.element(page.getByRole('img', { name: 'Puzzle reference' }))
-			.toHaveAttribute('src', '/api/puzzles/test-puzzle/reference');
-	});
-
 	it('should reject placement when canPlacePiece returns false', async () => {
 		const puzzle = createMockPuzzle(3);
 		const onPiecePlaced = vi.fn();

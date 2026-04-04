@@ -1,6 +1,7 @@
 // Admin routes for authentication and puzzle management
 import { Hono } from 'hono';
 import { createHash, timingSafeEqual } from 'node:crypto';
+import { writeFileSync } from 'node:fs';
 import {
 	createSession,
 	setSessionCookie,
@@ -15,7 +16,8 @@ import {
 	createPuzzle as storePuzzle,
 	deletePuzzle as deleteStoredPuzzle,
 	listPuzzles,
-	puzzleExists
+	puzzleExists,
+	getOriginalImagePath
 } from '../services/storage';
 import { MAX_FILE_SIZE, ALLOWED_MIME_TYPES, PUZZLE_CATEGORIES } from '../types';
 import type { PuzzleCategory } from '../types';
@@ -182,6 +184,9 @@ admin.post('/puzzles', requireAuth, async (c) => {
 
 		// Read image buffer
 		const imageBuffer = Buffer.from(await image.arrayBuffer());
+
+		// Persist original image for the /reference endpoint
+		writeFileSync(getOriginalImagePath(id), imageBuffer);
 
 		// Generate puzzle pieces and thumbnail
 		const result = await generatePuzzle({
