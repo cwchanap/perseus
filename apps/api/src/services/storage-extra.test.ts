@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * Extra coverage tests for storage.ts.
  * Covers: initializeStorage throwing a non-EEXIST error (line 53),
