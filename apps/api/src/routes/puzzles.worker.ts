@@ -64,7 +64,7 @@ puzzles.get('/:id', async (c) => {
 			return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
 		}
 
-		return c.json(puzzle);
+		return c.json({ ...puzzle, hasReference: true });
 	} catch (error) {
 		console.error(`Failed to retrieve puzzle ${id}:`, error);
 		return c.json({ error: 'internal_error', message: 'Failed to retrieve puzzle' }, 500);

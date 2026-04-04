@@ -39,6 +39,14 @@ function isPuzzleReady(puzzle: unknown): boolean {
 	return true;
 }
 
+function puzzleHasReference(puzzleId: string): boolean {
+	try {
+		return findOriginalImagePath(puzzleId) !== null;
+	} catch {
+		return false;
+	}
+}
+
 // GET /api/puzzles - List all puzzles
 puzzles.get('/', async (c) => {
 	try {
@@ -76,7 +84,7 @@ puzzles.get('/:id', async (c) => {
 		return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
 	}
 
-	return c.json(puzzle);
+	return c.json({ ...puzzle, hasReference: puzzleHasReference(id) });
 });
 
 // GET /api/puzzles/:id/thumbnail - Get puzzle thumbnail image

@@ -131,12 +131,36 @@ describe('GET /:id - Get puzzle by ID', () => {
 
 	it('returns 200 with puzzle data when found', async () => {
 		vi.mocked(storage.getPuzzle).mockResolvedValue(makePuzzle());
+		vi.mocked(storage.findOriginalImagePath).mockReturnValue('/fake/original.jpg');
 
 		const res = await puzzles.fetch(new Request(`http://localhost/${PUZZLE_ID}`));
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as any;
 		expect(body.id).toBe(PUZZLE_ID);
 		expect(body.name).toBe('Test Puzzle');
+		expect(body.hasReference).toBe(true);
+	});
+
+	it('returns hasReference false when no original image exists', async () => {
+		vi.mocked(storage.getPuzzle).mockResolvedValue(makePuzzle());
+		vi.mocked(storage.findOriginalImagePath).mockReturnValue(null);
+
+		const res = await puzzles.fetch(new Request(`http://localhost/${PUZZLE_ID}`));
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as any;
+		expect(body.hasReference).toBe(false);
+	});
+
+	it('returns hasReference false when findOriginalImagePath throws', async () => {
+		vi.mocked(storage.getPuzzle).mockResolvedValue(makePuzzle());
+		vi.mocked(storage.findOriginalImagePath).mockImplementation(() => {
+			throw new (storage as any).InvalidPuzzleIdError('bad id');
+		});
+
+		const res = await puzzles.fetch(new Request(`http://localhost/${PUZZLE_ID}`));
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as any;
+		expect(body.hasReference).toBe(false);
 	});
 
 	it('returns 404 with not_found when puzzle does not exist', async () => {

@@ -115,6 +115,9 @@ admin.get('/puzzles', requireAuth, async (c) => {
 
 // POST /api/admin/puzzles - Create new puzzle (protected)
 admin.post('/puzzles', requireAuth, async (c) => {
+	let puzzleDirCreated = false;
+	let id = '';
+
 	try {
 		const formData = await c.req.formData();
 		const name = formData.get('name');
@@ -181,13 +184,14 @@ admin.post('/puzzles', requireAuth, async (c) => {
 		}
 
 		// Generate puzzle ID
-		const id = crypto.randomUUID();
+		id = crypto.randomUUID();
 
 		// Read image buffer
 		const imageBuffer = Buffer.from(await image.arrayBuffer());
 
 		// Persist original image for the /reference endpoint
 		mkdirSync(getPuzzleDir(id), { recursive: true });
+		puzzleDirCreated = true;
 		writeFileSync(getOriginalImagePath(id, image.type), imageBuffer);
 
 		// Generate puzzle pieces and thumbnail
@@ -210,6 +214,14 @@ admin.post('/puzzles', requireAuth, async (c) => {
 		return c.json(puzzleToStore, 201);
 	} catch (error) {
 		console.error('Error creating puzzle:', error);
+		// Clean up the puzzle directory if it was created before the failure
+		if (puzzleDirCreated) {
+			try {
+				await deleteStoredPuzzle(id);
+			} catch (cleanupError) {
+				console.error('Failed to clean up puzzle directory after error:', cleanupError);
+			}
+		}
 		return c.json({ error: 'internal_error', message: 'Failed to create puzzle' }, 500);
 	}
 });

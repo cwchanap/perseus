@@ -30,11 +30,18 @@ vi.mock('../../services/puzzle-generator', () => ({
 	isValidPieceCount: vi.fn().mockReturnValue(true)
 }));
 
+vi.mock('node:fs', () => ({
+	mkdirSync: vi.fn(),
+	writeFileSync: vi.fn()
+}));
+
 vi.mock('../../services/storage', () => ({
 	createPuzzle: vi.fn().mockResolvedValue(true),
 	deletePuzzle: vi.fn().mockResolvedValue(true),
 	listPuzzles: vi.fn().mockResolvedValue([]),
-	puzzleExists: vi.fn().mockResolvedValue(false)
+	puzzleExists: vi.fn().mockResolvedValue(false),
+	getPuzzleDir: vi.fn().mockReturnValue('/fake/data/puzzles/test-id'),
+	getOriginalImagePath: vi.fn().mockReturnValue('/fake/data/puzzles/test-id/original.jpg')
 }));
 
 afterAll(() => {
@@ -381,6 +388,24 @@ describe('POST /puzzles', () => {
 		const body = await res.json();
 		expect(body.error).toBe('bad_request');
 		expect(body.message).toContain('255');
+	});
+
+	it('cleans up puzzle directory when generatePuzzle throws', async () => {
+		(generatorMock.generatePuzzle as ReturnType<typeof vi.fn>).mockRejectedValue(
+			new Error('Generation failed')
+		);
+
+		const fd = buildFormData({
+			name: 'Test Puzzle',
+			pieceCount: '25',
+			image: new Blob(['data'], { type: 'image/png' })
+		});
+		const req = new Request('http://localhost/puzzles', { method: 'POST', body: fd });
+		const res = await app.fetch(req);
+		expect(res.status).toBe(500);
+		const body = await res.json();
+		expect(body.error).toBe('internal_error');
+		expect(storageMock.deletePuzzle).toHaveBeenCalled();
 	});
 });
 

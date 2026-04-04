@@ -15,6 +15,7 @@
 		canRedo: boolean;
 		rotationEnabled: boolean;
 		rotationToggleDisabled?: boolean;
+		hasReference?: boolean;
 	}
 
 	let {
@@ -30,7 +31,8 @@
 		canUndo,
 		canRedo,
 		rotationEnabled,
-		rotationToggleDisabled = false
+		rotationToggleDisabled = false,
+		hasReference = true
 	}: Props = $props();
 
 	const toolbarButtonClass =
@@ -53,27 +55,29 @@
 
 	<button aria-label="Hint" onclick={onHint} class={toolbarButtonClass}> Hint </button>
 
-	<button
-		aria-label="Reference"
-		onpointerdown={(event) => onReferenceDown(event)}
-		onpointerup={(event) => onReferenceUp(event)}
-		onpointerleave={(event) => onReferenceUp(event)}
-		onkeydown={(e) => {
-			if (e.key === ' ' || e.key === 'Enter') {
-				e.preventDefault();
-				onReferenceDown(e);
-			}
-		}}
-		onkeyup={(e) => {
-			if (e.key === ' ' || e.key === 'Enter') {
-				e.preventDefault();
-				onReferenceUp(e);
-			}
-		}}
-		class={toolbarButtonClass}
-	>
-		Reference
-	</button>
+	{#if hasReference}
+		<button
+			aria-label="Reference"
+			onpointerdown={(event) => onReferenceDown(event)}
+			onpointerup={(event) => onReferenceUp(event)}
+			onpointerleave={(event) => onReferenceUp(event)}
+			onkeydown={(e) => {
+				if (e.key === ' ' || e.key === 'Enter') {
+					e.preventDefault();
+					onReferenceDown(e);
+				}
+			}}
+			onkeyup={(e) => {
+				if (e.key === ' ' || e.key === 'Enter') {
+					e.preventDefault();
+					onReferenceUp(e);
+				}
+			}}
+			class={toolbarButtonClass}
+		>
+			Reference
+		</button>
+	{/if}
 
 	<button aria-label="Zoom out" onclick={onZoomOut} class={toolbarButtonClass}> - </button>
 
