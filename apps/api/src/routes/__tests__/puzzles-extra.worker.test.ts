@@ -4,7 +4,7 @@
  * Covers missing branches: null puzzle, missing thumbnail/piece images, out-of-bounds piece IDs,
  * success paths for GET /:id, and error path for GET /.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import puzzles from '../puzzles.worker';
 import * as storage from '../../services/storage.worker';
 
@@ -31,10 +31,20 @@ const readyPuzzle = {
 	version: 0
 };
 
+// Centralise console.error spy so it's always restored, even on test failure.
+let consoleSpy: ReturnType<typeof vi.spyOn>;
+
+beforeEach(() => {
+	consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+});
+
+afterEach(() => {
+	consoleSpy.mockRestore();
+});
+
 describe('GET / - error path', () => {
 	it('should return 500 when listPuzzles throws', async () => {
 		vi.mocked(storage.listPuzzles).mockRejectedValueOnce(new Error('KV unavailable'));
-		vi.spyOn(console, 'error').mockImplementation(() => {});
 
 		const req = new Request('http://localhost/');
 		const res = await puzzles.fetch(req, mockEnv);
@@ -71,7 +81,6 @@ describe('GET /:id - additional branches', () => {
 
 	it('should return 500 when getPuzzle throws', async () => {
 		vi.mocked(storage.getPuzzle).mockRejectedValueOnce(new Error('KV error'));
-		vi.spyOn(console, 'error').mockImplementation(() => {});
 
 		const req = new Request(`http://localhost/${VALID_UUID}`);
 		const res = await puzzles.fetch(req, mockEnv);
@@ -109,7 +118,6 @@ describe('GET /:id/thumbnail - additional branches', () => {
 
 	it('should return 500 when getPuzzle throws in thumbnail route', async () => {
 		vi.mocked(storage.getPuzzle).mockRejectedValueOnce(new Error('KV failure'));
-		vi.spyOn(console, 'error').mockImplementation(() => {});
 
 		const req = new Request(`http://localhost/${VALID_UUID}/thumbnail`);
 		const res = await puzzles.fetch(req, mockEnv);
@@ -160,7 +168,6 @@ describe('GET /:id/pieces/:pieceId/image - additional branches', () => {
 
 	it('should return 500 when getPuzzle throws in piece route', async () => {
 		vi.mocked(storage.getPuzzle).mockRejectedValueOnce(new Error('Storage failure'));
-		vi.spyOn(console, 'error').mockImplementation(() => {});
 
 		const req = new Request(`http://localhost/${VALID_UUID}/pieces/0/image`);
 		const res = await puzzles.fetch(req, mockEnv);

@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * Coverage for rate-limit.ts cleanupOldEntries (lines 95-107).
  *
