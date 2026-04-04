@@ -5,7 +5,7 @@ import {
 	listPuzzlesSorted,
 	getThumbnailPath,
 	getPieceImagePath,
-	getOriginalImagePath,
+	findOriginalImagePath,
 	InvalidPuzzleIdError
 } from '../services/storage';
 import { readFile } from 'node:fs/promises';
@@ -120,7 +120,10 @@ puzzles.get('/:id/reference', async (c) => {
 			return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
 		}
 
-		const originalPath = getOriginalImagePath(id);
+		const originalPath = findOriginalImagePath(id);
+		if (!originalPath) {
+			return c.json({ error: 'not_found', message: 'Reference image not found' }, 404);
+		}
 		const imageData = await readFile(originalPath);
 		return c.body(imageData, 200, {
 			'Content-Type': getImageContentType(originalPath),

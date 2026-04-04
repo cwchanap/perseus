@@ -19,6 +19,7 @@ vi.mock('../services/storage', () => {
 		getThumbnailPath: vi.fn().mockReturnValue('/fake/thumbnail.jpg'),
 		getPieceImagePath: vi.fn().mockReturnValue('/fake/pieces/0.png'),
 		getOriginalImagePath: vi.fn().mockReturnValue('/fake/original.jpg'),
+		findOriginalImagePath: vi.fn().mockReturnValue('/fake/original.jpg'),
 		InvalidPuzzleIdError
 	};
 });
@@ -481,12 +482,12 @@ describe('GET /:id/pieces/:pieceId/image - Get piece image', () => {
 describe('GET /:id/reference - Get reference image', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
-		vi.mocked(storage.getOriginalImagePath).mockReturnValue('/fake/original.jpg');
+		vi.mocked(storage.findOriginalImagePath).mockReturnValue('/fake/original.jpg');
 	});
 
 	it('returns 200 with image data and jpeg content-type for .jpg', async () => {
 		vi.mocked(storage.getPuzzle).mockResolvedValue(makePuzzle());
-		vi.mocked(storage.getOriginalImagePath).mockReturnValue('/fake/original.jpg');
+		vi.mocked(storage.findOriginalImagePath).mockReturnValue('/fake/original.jpg');
 		vi.mocked(fsPromises.readFile).mockResolvedValue(Buffer.from([0xff, 0xd8]) as any);
 
 		const res = await puzzles.fetch(new Request(`http://localhost/${PUZZLE_ID}/reference`));
@@ -497,7 +498,7 @@ describe('GET /:id/reference - Get reference image', () => {
 
 	it('returns image/jpeg for .jpeg extension', async () => {
 		vi.mocked(storage.getPuzzle).mockResolvedValue(makePuzzle());
-		vi.mocked(storage.getOriginalImagePath).mockReturnValue('/fake/original.jpeg');
+		vi.mocked(storage.findOriginalImagePath).mockReturnValue('/fake/original.jpeg');
 		vi.mocked(fsPromises.readFile).mockResolvedValue(Buffer.from([1, 2, 3]) as any);
 
 		const res = await puzzles.fetch(new Request(`http://localhost/${PUZZLE_ID}/reference`));
@@ -507,7 +508,7 @@ describe('GET /:id/reference - Get reference image', () => {
 
 	it('returns image/png for .png extension', async () => {
 		vi.mocked(storage.getPuzzle).mockResolvedValue(makePuzzle());
-		vi.mocked(storage.getOriginalImagePath).mockReturnValue('/fake/original.png');
+		vi.mocked(storage.findOriginalImagePath).mockReturnValue('/fake/original.png');
 		vi.mocked(fsPromises.readFile).mockResolvedValue(Buffer.from([0x89, 0x50]) as any);
 
 		const res = await puzzles.fetch(new Request(`http://localhost/${PUZZLE_ID}/reference`));
@@ -517,7 +518,7 @@ describe('GET /:id/reference - Get reference image', () => {
 
 	it('returns image/webp for .webp extension', async () => {
 		vi.mocked(storage.getPuzzle).mockResolvedValue(makePuzzle());
-		vi.mocked(storage.getOriginalImagePath).mockReturnValue('/fake/original.webp');
+		vi.mocked(storage.findOriginalImagePath).mockReturnValue('/fake/original.webp');
 		vi.mocked(fsPromises.readFile).mockResolvedValue(Buffer.from([1, 2, 3]) as any);
 
 		const res = await puzzles.fetch(new Request(`http://localhost/${PUZZLE_ID}/reference`));
@@ -527,7 +528,7 @@ describe('GET /:id/reference - Get reference image', () => {
 
 	it('returns application/octet-stream for unknown extension', async () => {
 		vi.mocked(storage.getPuzzle).mockResolvedValue(makePuzzle());
-		vi.mocked(storage.getOriginalImagePath).mockReturnValue('/fake/original.bin');
+		vi.mocked(storage.findOriginalImagePath).mockReturnValue('/fake/original.bin');
 		vi.mocked(fsPromises.readFile).mockResolvedValue(Buffer.from([1, 2, 3]) as any);
 
 		const res = await puzzles.fetch(new Request(`http://localhost/${PUZZLE_ID}/reference`));
@@ -553,7 +554,7 @@ describe('GET /:id/reference - Get reference image', () => {
 		const body = (await res.json()) as any;
 		expect(body.error).toBe('not_found');
 		expect(body.message).toBe('Puzzle not found');
-		expect(storage.getOriginalImagePath).not.toHaveBeenCalled();
+		expect(storage.findOriginalImagePath).not.toHaveBeenCalled();
 		expect(fsPromises.readFile).not.toHaveBeenCalled();
 	});
 
@@ -565,7 +566,7 @@ describe('GET /:id/reference - Get reference image', () => {
 		const body = (await res.json()) as any;
 		expect(body.error).toBe('not_found');
 		expect(body.message).toBe('Puzzle not found');
-		expect(storage.getOriginalImagePath).not.toHaveBeenCalled();
+		expect(storage.findOriginalImagePath).not.toHaveBeenCalled();
 		expect(fsPromises.readFile).not.toHaveBeenCalled();
 	});
 
@@ -581,9 +582,20 @@ describe('GET /:id/reference - Get reference image', () => {
 		expect(body.message).toBe('Reference image not found');
 	});
 
-	it('returns 404 when getOriginalImagePath throws InvalidPuzzleIdError', async () => {
+	it('returns 404 when findOriginalImagePath returns null', async () => {
 		vi.mocked(storage.getPuzzle).mockResolvedValue(makePuzzle());
-		vi.mocked(storage.getOriginalImagePath).mockImplementation(() => {
+		vi.mocked(storage.findOriginalImagePath).mockReturnValue(null);
+
+		const res = await puzzles.fetch(new Request(`http://localhost/${PUZZLE_ID}/reference`));
+		expect(res.status).toBe(404);
+		const body = (await res.json()) as any;
+		expect(body.error).toBe('not_found');
+		expect(body.message).toBe('Reference image not found');
+	});
+
+	it('returns 404 when findOriginalImagePath throws InvalidPuzzleIdError', async () => {
+		vi.mocked(storage.getPuzzle).mockResolvedValue(makePuzzle());
+		vi.mocked(storage.findOriginalImagePath).mockImplementation(() => {
 			throw new (storage as any).InvalidPuzzleIdError('bad id');
 		});
 
