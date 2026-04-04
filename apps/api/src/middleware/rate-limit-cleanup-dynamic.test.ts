@@ -15,6 +15,10 @@ vi.useFakeTimers();
 // Dynamic import so rate-limit.ts runs its setInterval with fake timers active.
 const { loginRateLimit } = await import('./rate-limit');
 
+// Verify the module-level setInterval(cleanupOldEntries, 30 * 60 * 1000) was
+// registered with fake timers, not real ones.
+expect(vi.getTimerCount()).toBe(1);
+
 afterAll(() => {
 	vi.useRealTimers();
 });
@@ -47,10 +51,19 @@ describe('rate-limit.ts - cleanupOldEntries via dynamic import + fake timers', (
 		const res1 = await app.fetch(req(ip));
 		expect(res1.status).toBe(401);
 
+		// Spy on Map.prototype.delete to prove cleanupOldEntries actually removes
+		// the stale entry from loginAttempts (as opposed to applyWindow merely
+		// resetting it in place, which would yield the same status code).
+		const deleteSpy = vi.spyOn(Map.prototype, 'delete');
+
 		// Advance 91 min total: cleanup fires at 30, 60, 90-minute marks.
 		// At 30 and 60 min the entry is ≤60 min old → skipped.
 		// At 90 min the entry is 90 min old (>60 min maxAge) → deleted.
 		vi.advanceTimersByTime(91 * 60 * 1000);
+
+		// Verify cleanupOldEntries called delete() on the loginAttempts Map.
+		expect(deleteSpy).toHaveBeenCalled();
+		deleteSpy.mockRestore();
 
 		// Entry should be gone; fresh request goes straight through to the handler.
 		const res2 = await app.fetch(req(ip));
@@ -68,9 +81,17 @@ describe('rate-limit.ts - cleanupOldEntries via dynamic import + fake timers', (
 		const blockedRes = await app.fetch(req(ip));
 		expect(blockedRes.status).toBe(429);
 
+		// Spy before advancing to prove cleanupOldEntries deletes the entry,
+		// not just that block-expiry logic clears blockedUntil on the next request.
+		const deleteSpy = vi.spyOn(Map.prototype, 'delete');
+
 		// Advance 91 min: by then windowStart is >60 min old AND the 15-min block
 		// has long expired (blockedUntil < now) → cleanupOldEntries deletes the entry.
 		vi.advanceTimersByTime(91 * 60 * 1000);
+
+		// Verify the entry was removed from the map during timer advancement.
+		expect(deleteSpy).toHaveBeenCalled();
+		deleteSpy.mockRestore();
 
 		const freshRes = await app.fetch(req(ip));
 		expect(freshRes.status).toBe(401); // treated as a brand-new client
