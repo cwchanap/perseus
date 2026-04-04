@@ -70,6 +70,7 @@
 	let timerStarted = $state(false);
 	let bestTime: number | null = $state(null);
 	let isNewBest = $state(false);
+	let completionRecorded = $state(false);
 
 	let timerUnsubscribe: (() => void) | null = null;
 	let selectionUnsubscribe: (() => void) | null = null;
@@ -170,6 +171,35 @@
 		if (!pendingViewportReset || !puzzle || !boardViewportElement) return;
 		resetViewport();
 		pendingViewportReset = false;
+	});
+
+	function recomputeZoomBounds() {
+		if (!puzzle || !boardViewportElement) return;
+		const fitZoom = getFitZoom();
+		minZoom = fitZoom;
+		maxZoom = Math.max(fitZoom * 3, fitZoom + 1, 3);
+		if (zoom < minZoom) {
+			zoom = minZoom;
+			panX = 0;
+			panY = 0;
+		} else if (zoom > maxZoom) {
+			zoom = maxZoom;
+			panX = 0;
+			panY = 0;
+		} else {
+			const clampedPan = clampPan(panX, panY, getViewportBounds(zoom));
+			panX = clampedPan.x;
+			panY = clampedPan.y;
+		}
+	}
+
+	$effect(() => {
+		if (!boardViewportElement) return;
+		const observer = new ResizeObserver(() => {
+			recomputeZoomBounds();
+		});
+		observer.observe(boardViewportElement);
+		return () => observer.disconnect();
 	});
 
 	function clonePlacedPieces(pieces: PlacedPiece[]): PlacedPiece[] {
@@ -322,6 +352,7 @@
 			timer.reset();
 			timerStarted = false;
 			isNewBest = false;
+			completionRecorded = false;
 			resetPlacementHistory(restoredPlacedPieces, pieceRotations);
 			pendingViewportReset = true;
 		} catch (e) {
@@ -352,8 +383,11 @@
 
 		if (isComplete && !wasComplete) {
 			timer.pause();
-			isNewBest = saveCompletionTime(puzzle.id, timerState.elapsed);
-			bestTime = getBestTime(puzzle.id);
+			if (!completionRecorded) {
+				isNewBest = saveCompletionTime(puzzle.id, timerState.elapsed);
+				bestTime = getBestTime(puzzle.id);
+				completionRecorded = true;
+			}
 			showCelebration = true;
 			return;
 		}
@@ -627,6 +661,7 @@
 		timer.reset();
 		timerStarted = false;
 		isNewBest = false;
+		completionRecorded = false;
 		clearSelectedPiece();
 		shuffledPieceIds = shuffleArray(puzzle.pieces.map((piece) => piece.id));
 		resetPlacementHistory([], {});
