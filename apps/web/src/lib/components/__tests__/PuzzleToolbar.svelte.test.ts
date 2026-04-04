@@ -470,4 +470,65 @@ describe('PuzzleToolbar', () => {
 			expect(onReferenceUp).toHaveBeenCalledOnce();
 		});
 	});
+
+	describe('hasReference gating', () => {
+		it('shows Reference button when hasReference is true', async () => {
+			render(PuzzleToolbar, {
+				onUndo: vi.fn(),
+				onRedo: vi.fn(),
+				onHint: vi.fn(),
+				onReferenceDown: vi.fn(),
+				onReferenceUp: vi.fn(),
+				onZoomIn: vi.fn(),
+				onZoomOut: vi.fn(),
+				onResetView: vi.fn(),
+				onRotationToggle: vi.fn(),
+				canUndo: false,
+				canRedo: false,
+				rotationEnabled: false,
+				hasReference: true
+			});
+
+			await expect.element(page.getByLabelText('Reference')).toBeInTheDocument();
+		});
+
+		it('hides Reference button when hasReference is false', async () => {
+			render(PuzzleToolbar, {
+				onUndo: vi.fn(),
+				onRedo: vi.fn(),
+				onHint: vi.fn(),
+				onReferenceDown: vi.fn(),
+				onReferenceUp: vi.fn(),
+				onZoomIn: vi.fn(),
+				onZoomOut: vi.fn(),
+				onResetView: vi.fn(),
+				onRotationToggle: vi.fn(),
+				canUndo: false,
+				canRedo: false,
+				rotationEnabled: false,
+				hasReference: false
+			});
+
+			await expect.element(page.getByLabelText('Reference')).not.toBeInTheDocument();
+		});
+
+		it('shows Reference button by default when hasReference is not provided', async () => {
+			render(PuzzleToolbar, {
+				onUndo: vi.fn(),
+				onRedo: vi.fn(),
+				onHint: vi.fn(),
+				onReferenceDown: vi.fn(),
+				onReferenceUp: vi.fn(),
+				onZoomIn: vi.fn(),
+				onZoomOut: vi.fn(),
+				onResetView: vi.fn(),
+				onRotationToggle: vi.fn(),
+				canUndo: false,
+				canRedo: false,
+				rotationEnabled: false
+			});
+
+			await expect.element(page.getByLabelText('Reference')).toBeInTheDocument();
+		});
+	});
 });

@@ -47,6 +47,7 @@ export interface Puzzle {
 	createdAt: number;
 	pieces: PuzzlePiece[];
 	category?: PuzzleCategory;
+	hasReference?: boolean;
 }
 
 export interface PlacedPiece {

@@ -847,6 +847,7 @@
 							{canRedo}
 							{rotationEnabled}
 							rotationToggleDisabled={isRotationToggleLocked()}
+							hasReference={currentPuzzle.hasReference !== false}
 						/>
 					</div>
 					<div class="board-wrap">
