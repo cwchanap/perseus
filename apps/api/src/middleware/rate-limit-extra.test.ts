@@ -13,6 +13,10 @@ vi.useFakeTimers();
 
 const { loginRateLimit, resetLoginAttempts } = await import('./rate-limit');
 
+// Verify the module-level setInterval was registered with the fake-timer
+// infrastructure (not with real timers that we can't control).
+expect(vi.getTimerCount()).toBe(1);
+
 afterAll(() => {
 	vi.useRealTimers();
 });
@@ -50,10 +54,19 @@ describe('rate-limit.ts - cleanupOldEntries via fake timers', () => {
 			await app.fetch(req(ip));
 		}
 
-		// Advance time past the 1-hour max-age threshold; cleanup fires at 30 and 60-min marks
+		// Spy on Map.prototype.delete before advancing time so we can prove that
+		// cleanupOldEntries actually removes the entry from the map — the same
+		// status code would result from applyWindow merely resetting attempts in place.
+		const deleteSpy = vi.spyOn(Map.prototype, 'delete');
+
+		// Advance past the 1-hour max-age threshold; cleanup fires at 30 and 60-min
+		// marks (entries not old enough yet), then again at 91 min (entry deleted).
 		vi.advanceTimersByTime(61 * 60 * 1000);
-		// Fire the 30-minute cleanup interval one more time (total elapsed: 91 min)
 		vi.advanceTimersByTime(30 * 60 * 1000);
+
+		// Verify cleanupOldEntries called delete() during the timer advancement.
+		expect(deleteSpy).toHaveBeenCalled();
+		deleteSpy.mockRestore();
 
 		// After cleanup the entry is gone — a fresh request counts as attempt #1, not #5
 		const res = await app.fetch(req(ip));
@@ -69,8 +82,15 @@ describe('rate-limit.ts - cleanupOldEntries via fake timers', () => {
 			await app.fetch(req(ip));
 		}
 
+		// Spy before advancing time to verify cleanupOldEntries deletes the entry,
+		// not just the block-clear branch in loginRateLimit.
+		const deleteSpy = vi.spyOn(Map.prototype, 'delete');
+
 		// Advance 91 min — entry is >1 hour old AND the 15-min block has long expired
 		vi.advanceTimersByTime(91 * 60 * 1000);
+
+		expect(deleteSpy).toHaveBeenCalled();
+		deleteSpy.mockRestore();
 
 		// The entry should have been removed by cleanup.
 		// A fresh request is treated as attempt #1 (not blocked).
@@ -79,8 +99,8 @@ describe('rate-limit.ts - cleanupOldEntries via fake timers', () => {
 	});
 });
 
-describe('rate-limit.ts - blocked entry after window reset remains blocked until explicit unblock', () => {
-	it('a new request after the block expires is allowed through', async () => {
+describe('rate-limit.ts - block expires automatically after BLOCK_DURATION_MS', () => {
+	it('request is allowed through once the block duration has elapsed', async () => {
 		const ip = uniqueIp();
 		const app = makeApp(401);
 
