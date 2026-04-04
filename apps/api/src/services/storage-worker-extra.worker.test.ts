@@ -40,7 +40,7 @@ function makePuzzle(overrides?: Partial<PuzzleMetadata>): PuzzleMetadata {
 			}
 		],
 		...overrides
-	};
+	} as PuzzleMetadata;
 }
 
 describe('createPuzzleMetadata - version undefined defaults to 0 (line 149, ?? operator)', () => {
