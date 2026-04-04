@@ -3,6 +3,7 @@
 
 import { mkdir, readFile, writeFile, readdir, rm, access } from 'node:fs/promises';
 import { join, resolve, relative, isAbsolute } from 'node:path';
+import { existsSync } from 'node:fs';
 import type { Puzzle, PuzzleSummary } from '../types/index';
 
 export class InvalidPuzzleIdError extends Error {
@@ -71,8 +72,24 @@ function getMetadataPath(puzzleId: string): string {
 }
 
 // Get original image path
-export function getOriginalImagePath(puzzleId: string): string {
-	return resolvePuzzlePath(puzzleId, 'original.jpg');
+export function getOriginalImagePath(puzzleId: string, mimeType?: string): string {
+	const ext = mimeTypeToExt(mimeType ?? 'image/jpeg');
+	return resolvePuzzlePath(puzzleId, `original${ext}`);
+}
+
+// Find original image path by probing supported extensions
+export function findOriginalImagePath(puzzleId: string): string | null {
+	for (const ext of ['.jpg', '.png', '.webp']) {
+		const p = resolvePuzzlePath(puzzleId, `original${ext}`);
+		if (existsSync(p)) return p;
+	}
+	return null;
+}
+
+function mimeTypeToExt(mimeType: string): string {
+	if (mimeType === 'image/png') return '.png';
+	if (mimeType === 'image/webp') return '.webp';
+	return '.jpg';
 }
 
 // Get thumbnail path

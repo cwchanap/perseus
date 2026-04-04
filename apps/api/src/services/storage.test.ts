@@ -95,6 +95,24 @@ describe('path helpers', () => {
 		expect(path.endsWith('original.jpg')).toBe(true);
 	});
 
+	it('getOriginalImagePath returns .png extension for image/png mime type', () => {
+		const { getOriginalImagePath } = storageModule;
+		const path = getOriginalImagePath('my-puzzle', 'image/png');
+		expect(path.endsWith('original.png')).toBe(true);
+	});
+
+	it('getOriginalImagePath returns .webp extension for image/webp mime type', () => {
+		const { getOriginalImagePath } = storageModule;
+		const path = getOriginalImagePath('my-puzzle', 'image/webp');
+		expect(path.endsWith('original.webp')).toBe(true);
+	});
+
+	it('findOriginalImagePath returns null when no original image exists', () => {
+		const { findOriginalImagePath } = storageModule;
+		const result = findOriginalImagePath('nonexistent-puzzle');
+		expect(result).toBeNull();
+	});
+
 	it('getThumbnailPath returns a path ending in thumbnail.jpg', () => {
 		const { getThumbnailPath } = storageModule;
 		const path = getThumbnailPath('my-puzzle');
