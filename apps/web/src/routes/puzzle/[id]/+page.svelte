@@ -16,6 +16,7 @@
 	import PuzzleToolbar from '$lib/components/PuzzleToolbar.svelte';
 	import ZoomableBoardFrame from '$lib/components/ZoomableBoardFrame.svelte';
 	import GameTimer from '$lib/components/GameTimer.svelte';
+	import ReferenceOverlay from '$lib/components/ReferenceOverlay.svelte';
 	import { shuffleArray } from '$lib/utils/shuffle';
 	import { resolve } from '$app/paths';
 	import { selectedPieceId, clearSelectedPiece } from '$lib/stores/pieceSelection';
@@ -789,6 +790,7 @@
 			</div>
 		{:else if puzzle}
 			{@const currentPuzzle = puzzle}
+			<ReferenceOverlay puzzleId={currentPuzzle.id} active={showReferenceOverlay} />
 			<div class="game-layout">
 				<!-- Board panel -->
 				<div class="board-panel">
@@ -827,7 +829,6 @@
 										onPiecePlaced={handlePiecePlaced}
 										onIncorrectPlacement={handleIncorrectPlacement}
 										{activeHintTarget}
-										{showReferenceOverlay}
 										{canPlacePiece}
 										onBoardPointerDown={handleBoardPointerDown}
 									/>

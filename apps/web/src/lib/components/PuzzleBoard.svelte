@@ -4,7 +4,6 @@
 	import { getPieceImageUrl } from '$lib/services/api';
 	import { selectedPieceId, clearSelectedPiece } from '$lib/stores/pieceSelection';
 	import { EXPANSION_FACTOR, BASE_OFFSET } from '$lib/constants/puzzle';
-	import ReferenceOverlay from './ReferenceOverlay.svelte';
 
 	interface Props {
 		puzzle: Puzzle;
@@ -12,7 +11,6 @@
 		onPiecePlaced: (pieceId: number, x: number, y: number) => void;
 		onIncorrectPlacement: (pieceId: number) => void;
 		activeHintTarget?: { x: number; y: number } | null;
-		showReferenceOverlay?: boolean;
 		canPlacePiece?: (pieceId: number) => boolean;
 		onBoardPointerDown?: (event: PointerEvent) => void;
 	}
@@ -23,7 +21,6 @@
 		onPiecePlaced,
 		onIncorrectPlacement,
 		activeHintTarget = null,
-		showReferenceOverlay = false,
 		canPlacePiece,
 		onBoardPointerDown
 	}: Props = $props();
@@ -190,8 +187,6 @@
 		{/each}
 	{/each}
 </div>
-
-<ReferenceOverlay puzzleId={puzzle.id} active={showReferenceOverlay} />
 
 <style>
 	/* Subtle shadow for placed pieces */
