@@ -1,12 +1,21 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * Extra coverage tests for rate-limit.ts (Bun runtime).
- * Covers: cleanupOldEntries (lines 96-104) via fake timers,
- * and calculateRetryAfterMs fallback branch (line 41).
+ * Covers: cleanupOldEntries (lines 96-104) via fake timers installed before
+ * the module is loaded, and the block-expiry path in applyWindow.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterAll } from 'vitest';
 import { Hono } from 'hono';
-import { loginRateLimit, resetLoginAttempts } from './rate-limit';
+
+// Install fake timers BEFORE rate-limit.ts is imported so the module-level
+// setInterval(cleanupOldEntries, 30 * 60 * 1000) registers with fake timers.
+vi.useFakeTimers();
+
+const { loginRateLimit, resetLoginAttempts } = await import('./rate-limit');
+
+afterAll(() => {
+	vi.useRealTimers();
+});
 
 // Each test uses a unique IP to avoid cross-test state in the module-level Map.
 let ipCounter = 1000;
@@ -33,82 +42,62 @@ function req(ip: string): Request {
 
 describe('rate-limit.ts - cleanupOldEntries via fake timers', () => {
 	it('cleans up entries older than 1 hour when the 30-min interval fires', async () => {
-		vi.useFakeTimers();
-		try {
-			const ip = uniqueIp();
-			const app = makeApp(401);
+		const ip = uniqueIp();
+		const app = makeApp(401);
 
-			// Create a rate-limit entry by making 1 failed request
+		// Make 4 failed requests to build up attempts (but not trigger the block at 5+)
+		for (let i = 0; i < 4; i++) {
 			await app.fetch(req(ip));
-
-			// Advance time by 61 minutes (past the 1-hour max-age threshold)
-			vi.advanceTimersByTime(61 * 60 * 1000);
-
-			// Fire the 30-minute cleanup interval
-			vi.advanceTimersByTime(30 * 60 * 1000);
-
-			// After cleanup, the entry should be gone — the IP should be able to
-			// make requests as if it's brand new (not blocked)
-			const app2 = makeApp(401);
-			const res = await app2.fetch(req(ip));
-			// Should be forwarded to handler (not blocked), because the old entry was deleted
-			expect(res.status).toBe(401);
-		} finally {
-			vi.useRealTimers();
 		}
+
+		// Advance time past the 1-hour max-age threshold; cleanup fires at 30 and 60-min marks
+		vi.advanceTimersByTime(61 * 60 * 1000);
+		// Fire the 30-minute cleanup interval one more time (total elapsed: 91 min)
+		vi.advanceTimersByTime(30 * 60 * 1000);
+
+		// After cleanup the entry is gone — a fresh request counts as attempt #1, not #5
+		const res = await app.fetch(req(ip));
+		expect(res.status).toBe(401); // not 429; still below the attempt threshold
 	});
 
 	it('cleans up entries older than 1 hour that had an expired block (covers blockedUntil < now branch)', async () => {
-		vi.useFakeTimers();
-		try {
-			const ip = uniqueIp();
-			const app = makeApp(401);
+		const ip = uniqueIp();
+		const app = makeApp(401);
 
-			// Create a blocked entry by making 6 requests (6th triggers the block)
-			for (let i = 0; i < 6; i++) {
-				await app.fetch(req(ip));
-			}
-
-			// Advance 61 minutes — entry is now >1 hour old AND the 15-min block has expired
-			vi.advanceTimersByTime(61 * 60 * 1000);
-
-			// Fire the cleanup interval (runs every 30 minutes)
-			vi.advanceTimersByTime(30 * 60 * 1000);
-
-			// The entry should have been removed by cleanup (was >1 hour old with expired block).
-			// A new request should be treated as a fresh start (allowed through, not 429).
-			const freshRes = await app.fetch(req(ip));
-			expect(freshRes.status).toBe(401);
-		} finally {
-			vi.useRealTimers();
+		// Trigger a block (6 requests → 6th exceeds MAX_ATTEMPTS)
+		for (let i = 0; i < 6; i++) {
+			await app.fetch(req(ip));
 		}
+
+		// Advance 91 min — entry is >1 hour old AND the 15-min block has long expired
+		vi.advanceTimersByTime(91 * 60 * 1000);
+
+		// The entry should have been removed by cleanup.
+		// A fresh request is treated as attempt #1 (not blocked).
+		const freshRes = await app.fetch(req(ip));
+		expect(freshRes.status).toBe(401);
 	});
 });
 
 describe('rate-limit.ts - blocked entry after window reset remains blocked until explicit unblock', () => {
 	it('a new request after the block expires is allowed through', async () => {
-		vi.useFakeTimers();
-		try {
-			const ip = uniqueIp();
-			const app = makeApp(401);
+		const ip = uniqueIp();
+		const app = makeApp(401);
 
-			// Trigger a block (6 requests)
-			for (let i = 0; i < 6; i++) {
-				await app.fetch(req(ip));
-			}
-
-			// Verify blocked
-			const blockedRes = await app.fetch(req(ip));
-			expect(blockedRes.status).toBe(429);
-
-			// Advance past the 15-minute block period
-			vi.advanceTimersByTime(15 * 60 * 1000 + 1);
-
-			// Now allowed — the block expiry clears the entry on next request
-			const allowedRes = await app.fetch(req(ip));
-			expect(allowedRes.status).toBe(401);
-		} finally {
-			vi.useRealTimers();
+		// Trigger a block (6 requests)
+		for (let i = 0; i < 6; i++) {
+			await app.fetch(req(ip));
 		}
+
+		// Verify blocked
+		const blockedRes = await app.fetch(req(ip));
+		expect(blockedRes.status).toBe(429);
+
+		// Advance past the 15-minute block period
+		vi.advanceTimersByTime(15 * 60 * 1000 + 1);
+
+		// Now allowed — the block expiry clears the entry on next request
+		const allowedRes = await app.fetch(req(ip));
+		expect(allowedRes.status).toBe(401);
 	});
 });

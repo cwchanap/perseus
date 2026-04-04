@@ -148,32 +148,38 @@ describe('POST /login - non-SyntaxError catch block (lines 68-74)', () => {
 		(authMock.createSession as ReturnType<typeof vi.fn>).mockRejectedValue(
 			new Error('JWT signing failed')
 		);
-		vi.spyOn(console, 'error').mockImplementation(() => {});
-
-		const req = new Request('http://localhost/login', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ passkey: 'extra-test-admin-passkey' })
-		});
-		const res = await app.fetch(req);
-		expect(res.status).toBe(500);
-		const body = await res.json();
-		expect(body.error).toBe('internal_error');
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		try {
+			const req = new Request('http://localhost/login', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ passkey: 'extra-test-admin-passkey' })
+			});
+			const res = await app.fetch(req);
+			expect(res.status).toBe(500);
+			const body = await res.json();
+			expect(body.error).toBe('internal_error');
+		} finally {
+			consoleSpy.mockRestore();
+		}
 	});
 
 	it('returns 500 when createSession throws a non-Error value (covers line 72)', async () => {
 		(authMock.createSession as ReturnType<typeof vi.fn>).mockRejectedValue('string error');
-		vi.spyOn(console, 'error').mockImplementation(() => {});
-
-		const req = new Request('http://localhost/login', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ passkey: 'extra-test-admin-passkey' })
-		});
-		const res = await app.fetch(req);
-		expect(res.status).toBe(500);
-		const body = await res.json();
-		expect(body.error).toBe('internal_error');
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		try {
+			const req = new Request('http://localhost/login', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ passkey: 'extra-test-admin-passkey' })
+			});
+			const res = await app.fetch(req);
+			expect(res.status).toBe(500);
+			const body = await res.json();
+			expect(body.error).toBe('internal_error');
+		} finally {
+			consoleSpy.mockRestore();
+		}
 	});
 });
 
@@ -220,19 +226,22 @@ describe('POST /puzzles - error paths', () => {
 		(generatorMock.generatePuzzle as ReturnType<typeof vi.fn>).mockRejectedValue(
 			new Error('Image processing failed')
 		);
-		vi.spyOn(console, 'error').mockImplementation(() => {});
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		try {
+			const fd = buildFormData({
+				name: 'My Puzzle',
+				pieceCount: '25',
+				image: new Blob([new Uint8Array(100)], { type: 'image/png' })
+			});
+			const req = new Request('http://localhost/puzzles', { method: 'POST', body: fd });
+			const res = await app.fetch(req);
 
-		const fd = buildFormData({
-			name: 'My Puzzle',
-			pieceCount: '25',
-			image: new Blob([new Uint8Array(100)], { type: 'image/png' })
-		});
-		const req = new Request('http://localhost/puzzles', { method: 'POST', body: fd });
-		const res = await app.fetch(req);
-
-		expect(res.status).toBe(500);
-		const body = await res.json();
-		expect(body.error).toBe('internal_error');
-		expect(body.message).toContain('Failed to create puzzle');
+			expect(res.status).toBe(500);
+			const body = await res.json();
+			expect(body.error).toBe('internal_error');
+			expect(body.message).toContain('Failed to create puzzle');
+		} finally {
+			consoleSpy.mockRestore();
+		}
 	});
 });

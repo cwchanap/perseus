@@ -6,7 +6,7 @@
  * - metadata + image cleanup failures when workflow binding is missing
  * - metadata cleanup failure when metadata creation itself fails
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('../../services/storage.worker', () => ({
 	getPuzzle: vi.fn(),
@@ -63,6 +63,10 @@ describe('Admin Worker - GET /session error catch (lines 204-205)', () => {
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 	});
 
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
 	it('returns 500 when verifySession throws unexpectedly', async () => {
 		vi.mocked(authWorker.verifySession).mockRejectedValue(new Error('JWT_SECRET misconfigured'));
 
@@ -90,6 +94,10 @@ describe('Admin Worker - POST /login error catch (lines 153-154)', () => {
 		__resetRateLimitStore();
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 		vi.spyOn(console, 'warn').mockImplementation(() => {});
+	});
+
+	afterEach(() => {
+		vi.restoreAllMocks();
 	});
 
 	it('returns 500 when createSession throws unexpectedly after valid passkey', async () => {
@@ -121,6 +129,10 @@ describe('Admin Worker - POST /puzzles cleanup failure branches', () => {
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 	});
 
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
 	it('returns 400 when request body cannot be parsed as form data (lines 227-228)', async () => {
 		const mockEnv = { ...baseEnv, PUZZLE_WORKFLOW: { create: vi.fn() } };
 
@@ -135,9 +147,7 @@ describe('Admin Worker - POST /puzzles cleanup failure branches', () => {
 			body: 'this is not valid multipart data at all'
 		});
 
-		const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 		const res = await admin.fetch(req, mockEnv as any);
-		errSpy.mockRestore();
 
 		// Should return 400 for invalid form data
 		expect(res.status).toBe(400);

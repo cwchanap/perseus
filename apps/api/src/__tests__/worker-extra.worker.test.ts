@@ -152,7 +152,7 @@ describe('Worker - error handler CORS branches', () => {
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 	});
 
-	it('should include valid origin in CORS header when error occurs and origin is allowed', async () => {
+	it('includes allowed origin in CORS header on error', async () => {
 		const env = {
 			NODE_ENV: 'development',
 			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
@@ -197,7 +197,7 @@ describe('Worker - error handler CORS branches', () => {
 		expect(res.headers.get('Access-Control-Allow-Origin')).toBe('*');
 	});
 
-	it('should use DEFAULT_ALLOWED_ORIGINS in dev mode when ALLOWED_ORIGINS is empty and error occurs (line 149)', async () => {
+	it('uses DEFAULT_ALLOWED_ORIGINS in dev mode when ALLOWED_ORIGINS is empty on error', async () => {
 		const env = {
 			NODE_ENV: 'development',
 			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',

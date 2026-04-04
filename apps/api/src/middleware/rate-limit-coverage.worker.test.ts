@@ -516,11 +516,13 @@ describe('mergeRateLimitEntries - both locked (line 173)', () => {
 
 		const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 		await loginRateLimit(ctx, next);
-		errSpy.mockRestore();
 
 		// Both are locked → merge picks the one with later lockedUntil (KV)
 		// The request should be blocked (429) since both entries are locked
 		expect(next).not.toHaveBeenCalled();
+		// No unexpected errors should have been logged during this branch
+		expect(errSpy).not.toHaveBeenCalled();
+		errSpy.mockRestore();
 		// json should have been called with 429
 		expect((ctx.json as ReturnType<typeof vi.fn>).mock.calls[0][1]).toBe(429);
 	});

@@ -5,7 +5,7 @@
  * - isSessionActive: production branch when PUZZLE_METADATA not configured (lines 226-230)
  * - checkFallbackSession: expired session cleanup (lines 243-245)
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createSession, verifySession, __resetSessionStore } from './auth.worker';
 import type { Env } from '../worker';
 
@@ -24,6 +24,13 @@ function createMockKVStore() {
 }
 
 beforeEach(() => {
+	__resetSessionStore();
+});
+
+afterEach(() => {
+	vi.restoreAllMocks();
+	vi.clearAllMocks();
+	vi.useRealTimers();
 	__resetSessionStore();
 });
 
