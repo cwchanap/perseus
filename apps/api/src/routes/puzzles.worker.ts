@@ -64,7 +64,10 @@ puzzles.get('/:id', async (c) => {
 			return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
 		}
 
-		return c.json({ ...puzzle, hasReference: true });
+		// Check R2 for original image existence rather than hardcoding true —
+		// puzzles created before the reference-upload patch won't have the asset.
+		const originalObj = await c.env.PUZZLES_BUCKET.head(getOriginalKey(id));
+		return c.json({ ...puzzle, hasReference: originalObj !== null });
 	} catch (error) {
 		console.error(`Failed to retrieve puzzle ${id}:`, error);
 		return c.json({ error: 'internal_error', message: 'Failed to retrieve puzzle' }, 500);
