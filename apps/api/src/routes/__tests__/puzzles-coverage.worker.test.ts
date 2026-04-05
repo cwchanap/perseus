@@ -7,7 +7,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import puzzles from '../puzzles.worker';
 import * as storage from '../../services/storage.worker';
 
-vi.mock('../../services/storage.worker');
+vi.mock('../../services/storage.worker', async () => {
+	const actual = await vi.importActual('../../services/storage.worker');
+	return {
+		...actual,
+		getPuzzle: vi.fn(),
+		listPuzzles: vi.fn(),
+		getImage: vi.fn()
+	};
+});
 
 const mockEnv = {
 	PUZZLE_METADATA: {} as KVNamespace,
@@ -88,6 +96,65 @@ describe('Puzzle Piece Image - additional coverage', () => {
 			expect.any(Error)
 		);
 		consoleSpy.mockRestore();
+	});
+});
+
+describe('GET /:id - hasReference derived from R2 head', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it('returns hasReference true when original image exists in R2', async () => {
+		const mockHead = vi
+			.fn()
+			.mockResolvedValue({ size: 1234, httpMetadata: { contentType: 'image/jpeg' } });
+		const env = {
+			PUZZLE_METADATA: {} as KVNamespace,
+			PUZZLES_BUCKET: { head: mockHead } as unknown as R2Bucket
+		};
+		vi.mocked(storage.getPuzzle).mockResolvedValue(makeReadyPuzzle(4));
+
+		const req = new Request(`http://localhost/${VALID_UUID}`);
+		const res = await puzzles.fetch(req, env);
+		const body = (await res.json()) as any;
+
+		expect(res.status).toBe(200);
+		expect(body.hasReference).toBe(true);
+		expect(mockHead).toHaveBeenCalledWith(`puzzles/${VALID_UUID}/original`);
+	});
+
+	it('returns hasReference false when original image is missing from R2', async () => {
+		const mockHead = vi.fn().mockResolvedValue(null);
+		const env = {
+			PUZZLE_METADATA: {} as KVNamespace,
+			PUZZLES_BUCKET: { head: mockHead } as unknown as R2Bucket
+		};
+		vi.mocked(storage.getPuzzle).mockResolvedValue(makeReadyPuzzle(4));
+
+		const req = new Request(`http://localhost/${VALID_UUID}`);
+		const res = await puzzles.fetch(req, env);
+		const body = (await res.json()) as any;
+
+		expect(res.status).toBe(200);
+		expect(body.hasReference).toBe(false);
+		expect(mockHead).toHaveBeenCalledWith(`puzzles/${VALID_UUID}/original`);
+	});
+
+	it('returns hasReference false when R2 head throws', async () => {
+		const mockHead = vi.fn().mockRejectedValue(new Error('R2 unavailable'));
+		const env = {
+			PUZZLE_METADATA: {} as KVNamespace,
+			PUZZLES_BUCKET: { head: mockHead } as unknown as R2Bucket
+		};
+		vi.mocked(storage.getPuzzle).mockResolvedValue(makeReadyPuzzle(4));
+
+		const req = new Request(`http://localhost/${VALID_UUID}`);
+		const res = await puzzles.fetch(req, env);
+
+		// The head failure propagates as a 500 since it's inside the try block
+		expect(res.status).toBe(500);
+		const body = (await res.json()) as any;
+		expect(body.error).toBe('internal_error');
 	});
 });
 
