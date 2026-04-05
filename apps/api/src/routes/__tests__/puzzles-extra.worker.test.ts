@@ -10,11 +10,6 @@ import * as storage from '../../services/storage.worker';
 
 vi.mock('../../services/storage.worker');
 
-const mockEnv = {
-	PUZZLE_METADATA: {} as KVNamespace,
-	PUZZLES_BUCKET: {} as R2Bucket
-};
-
 const VALID_UUID = '550e8400-e29b-41d4-a716-446655440000';
 
 const readyPuzzle = {
@@ -31,11 +26,21 @@ const readyPuzzle = {
 	version: 0
 };
 
-// Centralise console.error spy so it's always restored, even on test failure.
+const mockEnv = {
+	PUZZLE_METADATA: {} as KVNamespace,
+	PUZZLES_BUCKET: {
+		head: vi.fn().mockResolvedValue(null)
+	} as unknown as R2Bucket
+};
+
 let consoleSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
 	consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+	vi.mocked(storage.getPuzzle).mockReset();
+	vi.mocked(storage.listPuzzles).mockReset();
+	vi.mocked(storage.getImage).mockReset();
+	mockEnv.PUZZLES_BUCKET.head = vi.fn().mockResolvedValue(null);
 });
 
 afterEach(() => {
@@ -69,6 +74,10 @@ describe('GET /:id - additional branches', () => {
 
 	it('should return 200 with puzzle data for a ready puzzle', async () => {
 		vi.mocked(storage.getPuzzle).mockResolvedValueOnce(readyPuzzle as any);
+		(mockEnv.PUZZLES_BUCKET.head as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+			size: 1024,
+			httpMetadata: { contentType: 'image/jpeg' }
+		});
 
 		const req = new Request(`http://localhost/${VALID_UUID}`);
 		const res = await puzzles.fetch(req, mockEnv);
@@ -77,6 +86,19 @@ describe('GET /:id - additional branches', () => {
 		expect(res.status).toBe(200);
 		expect(body.id).toBe(VALID_UUID);
 		expect(body.name).toBe('Test Puzzle');
+		expect(body.hasReference).toBe(true);
+	});
+
+	it('should return 200 with hasReference false when no original in R2', async () => {
+		vi.mocked(storage.getPuzzle).mockResolvedValueOnce(readyPuzzle as any);
+		(mockEnv.PUZZLES_BUCKET.head as ReturnType<typeof vi.fn>).mockResolvedValueOnce(null);
+
+		const req = new Request(`http://localhost/${VALID_UUID}`);
+		const res = await puzzles.fetch(req, mockEnv);
+		const body = (await res.json()) as any;
+
+		expect(res.status).toBe(200);
+		expect(body.hasReference).toBe(false);
 	});
 
 	it('should return 500 when getPuzzle throws', async () => {

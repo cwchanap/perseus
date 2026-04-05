@@ -31,11 +31,18 @@ vi.mock('../../services/puzzle-generator', () => ({
 	isValidPieceCount: vi.fn().mockReturnValue(true)
 }));
 
+vi.mock('node:fs', () => ({
+	mkdirSync: vi.fn(),
+	writeFileSync: vi.fn()
+}));
+
 vi.mock('../../services/storage', () => ({
 	createPuzzle: vi.fn().mockResolvedValue(true),
 	deletePuzzle: vi.fn().mockResolvedValue(true),
 	listPuzzles: vi.fn().mockResolvedValue([]),
-	puzzleExists: vi.fn().mockResolvedValue(false)
+	puzzleExists: vi.fn().mockResolvedValue(false),
+	getPuzzleDir: vi.fn().mockReturnValue('/fake/data/puzzles/test-id'),
+	getOriginalImagePath: vi.fn().mockReturnValue('/fake/data/puzzles/test-id/original.jpg')
 }));
 
 afterAll(() => {
