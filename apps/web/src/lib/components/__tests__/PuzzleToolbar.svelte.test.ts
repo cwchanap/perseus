@@ -3,44 +3,41 @@ import { render } from 'vitest-browser-svelte';
 import { page, userEvent } from 'vitest/browser';
 import PuzzleToolbar from '../PuzzleToolbar.svelte';
 
+function createToolbarProps(
+	overrides: Partial<Parameters<typeof render<typeof PuzzleToolbar>>[1]> = {}
+) {
+	return {
+		onUndo: vi.fn(),
+		onRedo: vi.fn(),
+		onHint: vi.fn(),
+		onReferenceDown: vi.fn(),
+		onReferenceUp: vi.fn(),
+		onZoomIn: vi.fn(),
+		onZoomOut: vi.fn(),
+		onResetView: vi.fn(),
+		onRotationToggle: vi.fn(),
+		canUndo: false,
+		canRedo: false,
+		rotationEnabled: false,
+		rotationToggleDisabled: false,
+		...overrides
+	};
+}
+
+function renderToolbar(overrides: Parameters<typeof createToolbarProps>[0] = {}) {
+	return render(PuzzleToolbar, createToolbarProps(overrides));
+}
+
 describe('PuzzleToolbar', () => {
 	describe('rendering', () => {
 		it('renders the toolbar container', async () => {
-			render(PuzzleToolbar, {
-				onUndo: vi.fn(),
-				onRedo: vi.fn(),
-				onHint: vi.fn(),
-				onReferenceDown: vi.fn(),
-				onReferenceUp: vi.fn(),
-				onZoomIn: vi.fn(),
-				onZoomOut: vi.fn(),
-				onResetView: vi.fn(),
-				onRotationToggle: vi.fn(),
-				canUndo: false,
-				canRedo: false,
-				rotationEnabled: false,
-				rotationToggleDisabled: false
-			});
+			renderToolbar();
 
 			await expect.element(page.getByTestId('puzzle-toolbar')).toBeInTheDocument();
 		});
 
 		it('renders all control buttons', async () => {
-			render(PuzzleToolbar, {
-				onUndo: vi.fn(),
-				onRedo: vi.fn(),
-				onHint: vi.fn(),
-				onReferenceDown: vi.fn(),
-				onReferenceUp: vi.fn(),
-				onZoomIn: vi.fn(),
-				onZoomOut: vi.fn(),
-				onResetView: vi.fn(),
-				onRotationToggle: vi.fn(),
-				canUndo: false,
-				canRedo: false,
-				rotationEnabled: false,
-				rotationToggleDisabled: false
-			});
+			renderToolbar();
 
 			await expect.element(page.getByLabelText('Undo')).toBeInTheDocument();
 			await expect.element(page.getByLabelText('Redo')).toBeInTheDocument();
@@ -55,79 +52,25 @@ describe('PuzzleToolbar', () => {
 
 	describe('undo/redo state', () => {
 		it('disables undo button when canUndo is false', async () => {
-			render(PuzzleToolbar, {
-				onUndo: vi.fn(),
-				onRedo: vi.fn(),
-				onHint: vi.fn(),
-				onReferenceDown: vi.fn(),
-				onReferenceUp: vi.fn(),
-				onZoomIn: vi.fn(),
-				onZoomOut: vi.fn(),
-				onResetView: vi.fn(),
-				onRotationToggle: vi.fn(),
-				canUndo: false,
-				canRedo: false,
-				rotationEnabled: false,
-				rotationToggleDisabled: false
-			});
+			renderToolbar({ canUndo: false });
 
 			await expect.element(page.getByLabelText('Undo')).toBeDisabled();
 		});
 
 		it('enables undo button when canUndo is true', async () => {
-			render(PuzzleToolbar, {
-				onUndo: vi.fn(),
-				onRedo: vi.fn(),
-				onHint: vi.fn(),
-				onReferenceDown: vi.fn(),
-				onReferenceUp: vi.fn(),
-				onZoomIn: vi.fn(),
-				onZoomOut: vi.fn(),
-				onResetView: vi.fn(),
-				onRotationToggle: vi.fn(),
-				canUndo: true,
-				canRedo: false,
-				rotationEnabled: false
-			});
+			renderToolbar({ canUndo: true });
 
 			await expect.element(page.getByLabelText('Undo')).toBeEnabled();
 		});
 
 		it('disables redo button when canRedo is false', async () => {
-			render(PuzzleToolbar, {
-				onUndo: vi.fn(),
-				onRedo: vi.fn(),
-				onHint: vi.fn(),
-				onReferenceDown: vi.fn(),
-				onReferenceUp: vi.fn(),
-				onZoomIn: vi.fn(),
-				onZoomOut: vi.fn(),
-				onResetView: vi.fn(),
-				onRotationToggle: vi.fn(),
-				canUndo: false,
-				canRedo: false,
-				rotationEnabled: false,
-				rotationToggleDisabled: false
-			});
+			renderToolbar({ canRedo: false });
 
 			await expect.element(page.getByLabelText('Redo')).toBeDisabled();
 		});
 
 		it('enables redo button when canRedo is true', async () => {
-			render(PuzzleToolbar, {
-				onUndo: vi.fn(),
-				onRedo: vi.fn(),
-				onHint: vi.fn(),
-				onReferenceDown: vi.fn(),
-				onReferenceUp: vi.fn(),
-				onZoomIn: vi.fn(),
-				onZoomOut: vi.fn(),
-				onResetView: vi.fn(),
-				onRotationToggle: vi.fn(),
-				canUndo: false,
-				canRedo: true,
-				rotationEnabled: false
-			});
+			renderToolbar({ canRedo: true });
 
 			await expect.element(page.getByLabelText('Redo')).toBeEnabled();
 		});
@@ -135,62 +78,21 @@ describe('PuzzleToolbar', () => {
 
 	describe('rotation toggle', () => {
 		it('shows rotation mode inactive when rotationEnabled is false', async () => {
-			render(PuzzleToolbar, {
-				onUndo: vi.fn(),
-				onRedo: vi.fn(),
-				onHint: vi.fn(),
-				onReferenceDown: vi.fn(),
-				onReferenceUp: vi.fn(),
-				onZoomIn: vi.fn(),
-				onZoomOut: vi.fn(),
-				onResetView: vi.fn(),
-				onRotationToggle: vi.fn(),
-				canUndo: false,
-				canRedo: false,
-				rotationEnabled: false
-			});
+			renderToolbar({ rotationEnabled: false });
 
 			const toggleButton = page.getByLabelText('Rotation mode');
 			await expect.element(toggleButton).toHaveAttribute('aria-pressed', 'false');
 		});
 
 		it('shows rotation mode active when rotationEnabled is true', async () => {
-			render(PuzzleToolbar, {
-				onUndo: vi.fn(),
-				onRedo: vi.fn(),
-				onHint: vi.fn(),
-				onReferenceDown: vi.fn(),
-				onReferenceUp: vi.fn(),
-				onZoomIn: vi.fn(),
-				onZoomOut: vi.fn(),
-				onResetView: vi.fn(),
-				onRotationToggle: vi.fn(),
-				canUndo: false,
-				canRedo: false,
-				rotationEnabled: true,
-				rotationToggleDisabled: false
-			});
+			renderToolbar({ rotationEnabled: true, rotationToggleDisabled: false });
 
 			const toggleButton = page.getByLabelText('Rotation mode');
 			await expect.element(toggleButton).toHaveAttribute('aria-pressed', 'true');
 		});
 
 		it('disables rotation mode when rotationToggleDisabled is true', async () => {
-			render(PuzzleToolbar, {
-				onUndo: vi.fn(),
-				onRedo: vi.fn(),
-				onHint: vi.fn(),
-				onReferenceDown: vi.fn(),
-				onReferenceUp: vi.fn(),
-				onZoomIn: vi.fn(),
-				onZoomOut: vi.fn(),
-				onResetView: vi.fn(),
-				onRotationToggle: vi.fn(),
-				canUndo: false,
-				canRedo: false,
-				rotationEnabled: true,
-				rotationToggleDisabled: true
-			});
+			renderToolbar({ rotationEnabled: true, rotationToggleDisabled: true });
 
 			await expect.element(page.getByLabelText('Rotation mode')).toBeDisabled();
 		});
@@ -199,20 +101,7 @@ describe('PuzzleToolbar', () => {
 	describe('callbacks', () => {
 		it('calls onUndo when undo button is clicked', async () => {
 			const onUndo = vi.fn();
-			render(PuzzleToolbar, {
-				onUndo,
-				onRedo: vi.fn(),
-				onHint: vi.fn(),
-				onReferenceDown: vi.fn(),
-				onReferenceUp: vi.fn(),
-				onZoomIn: vi.fn(),
-				onZoomOut: vi.fn(),
-				onResetView: vi.fn(),
-				onRotationToggle: vi.fn(),
-				canUndo: true,
-				canRedo: false,
-				rotationEnabled: false
-			});
+			renderToolbar({ onUndo, canUndo: true });
 
 			await userEvent.click(page.getByLabelText('Undo'));
 			expect(onUndo).toHaveBeenCalledOnce();
@@ -220,20 +109,7 @@ describe('PuzzleToolbar', () => {
 
 		it('calls onRedo when redo button is clicked', async () => {
 			const onRedo = vi.fn();
-			render(PuzzleToolbar, {
-				onUndo: vi.fn(),
-				onRedo,
-				onHint: vi.fn(),
-				onReferenceDown: vi.fn(),
-				onReferenceUp: vi.fn(),
-				onZoomIn: vi.fn(),
-				onZoomOut: vi.fn(),
-				onResetView: vi.fn(),
-				onRotationToggle: vi.fn(),
-				canUndo: false,
-				canRedo: true,
-				rotationEnabled: false
-			});
+			renderToolbar({ onRedo, canRedo: true });
 
 			await userEvent.click(page.getByLabelText('Redo'));
 			expect(onRedo).toHaveBeenCalledOnce();
@@ -241,20 +117,7 @@ describe('PuzzleToolbar', () => {
 
 		it('calls onHint when hint button is clicked', async () => {
 			const onHint = vi.fn();
-			render(PuzzleToolbar, {
-				onUndo: vi.fn(),
-				onRedo: vi.fn(),
-				onHint,
-				onReferenceDown: vi.fn(),
-				onReferenceUp: vi.fn(),
-				onZoomIn: vi.fn(),
-				onZoomOut: vi.fn(),
-				onResetView: vi.fn(),
-				onRotationToggle: vi.fn(),
-				canUndo: false,
-				canRedo: false,
-				rotationEnabled: false
-			});
+			renderToolbar({ onHint });
 
 			await userEvent.click(page.getByLabelText('Hint'));
 			expect(onHint).toHaveBeenCalledOnce();
@@ -262,20 +125,7 @@ describe('PuzzleToolbar', () => {
 
 		it('calls onZoomIn when zoom in button is clicked', async () => {
 			const onZoomIn = vi.fn();
-			render(PuzzleToolbar, {
-				onUndo: vi.fn(),
-				onRedo: vi.fn(),
-				onHint: vi.fn(),
-				onReferenceDown: vi.fn(),
-				onReferenceUp: vi.fn(),
-				onZoomIn,
-				onZoomOut: vi.fn(),
-				onResetView: vi.fn(),
-				onRotationToggle: vi.fn(),
-				canUndo: false,
-				canRedo: false,
-				rotationEnabled: false
-			});
+			renderToolbar({ onZoomIn });
 
 			await userEvent.click(page.getByLabelText('Zoom in'));
 			expect(onZoomIn).toHaveBeenCalledOnce();
@@ -283,20 +133,7 @@ describe('PuzzleToolbar', () => {
 
 		it('calls onZoomOut when zoom out button is clicked', async () => {
 			const onZoomOut = vi.fn();
-			render(PuzzleToolbar, {
-				onUndo: vi.fn(),
-				onRedo: vi.fn(),
-				onHint: vi.fn(),
-				onReferenceDown: vi.fn(),
-				onReferenceUp: vi.fn(),
-				onZoomIn: vi.fn(),
-				onZoomOut,
-				onResetView: vi.fn(),
-				onRotationToggle: vi.fn(),
-				canUndo: false,
-				canRedo: false,
-				rotationEnabled: false
-			});
+			renderToolbar({ onZoomOut });
 
 			await userEvent.click(page.getByLabelText('Zoom out'));
 			expect(onZoomOut).toHaveBeenCalledOnce();
@@ -304,20 +141,7 @@ describe('PuzzleToolbar', () => {
 
 		it('calls onResetView when reset view button is clicked', async () => {
 			const onResetView = vi.fn();
-			render(PuzzleToolbar, {
-				onUndo: vi.fn(),
-				onRedo: vi.fn(),
-				onHint: vi.fn(),
-				onReferenceDown: vi.fn(),
-				onReferenceUp: vi.fn(),
-				onZoomIn: vi.fn(),
-				onZoomOut: vi.fn(),
-				onResetView,
-				onRotationToggle: vi.fn(),
-				canUndo: false,
-				canRedo: false,
-				rotationEnabled: false
-			});
+			renderToolbar({ onResetView });
 
 			await userEvent.click(page.getByLabelText('Reset view'));
 			expect(onResetView).toHaveBeenCalledOnce();
@@ -325,20 +149,7 @@ describe('PuzzleToolbar', () => {
 
 		it('calls onRotationToggle when rotation mode button is clicked', async () => {
 			const onRotationToggle = vi.fn();
-			render(PuzzleToolbar, {
-				onUndo: vi.fn(),
-				onRedo: vi.fn(),
-				onHint: vi.fn(),
-				onReferenceDown: vi.fn(),
-				onReferenceUp: vi.fn(),
-				onZoomIn: vi.fn(),
-				onZoomOut: vi.fn(),
-				onResetView: vi.fn(),
-				onRotationToggle,
-				canUndo: false,
-				canRedo: false,
-				rotationEnabled: false
-			});
+			renderToolbar({ onRotationToggle });
 
 			await userEvent.click(page.getByLabelText('Rotation mode'));
 			expect(onRotationToggle).toHaveBeenCalledOnce();
@@ -346,20 +157,7 @@ describe('PuzzleToolbar', () => {
 
 		it('calls onReferenceDown on reference button pointer down', async () => {
 			const onReferenceDown = vi.fn();
-			render(PuzzleToolbar, {
-				onUndo: vi.fn(),
-				onRedo: vi.fn(),
-				onHint: vi.fn(),
-				onReferenceDown,
-				onReferenceUp: vi.fn(),
-				onZoomIn: vi.fn(),
-				onZoomOut: vi.fn(),
-				onResetView: vi.fn(),
-				onRotationToggle: vi.fn(),
-				canUndo: false,
-				canRedo: false,
-				rotationEnabled: false
-			});
+			renderToolbar({ onReferenceDown });
 
 			const refButton = page.getByLabelText('Reference');
 			await refButton.element().dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
@@ -368,20 +166,7 @@ describe('PuzzleToolbar', () => {
 
 		it('calls onReferenceUp on reference button pointer up', async () => {
 			const onReferenceUp = vi.fn();
-			render(PuzzleToolbar, {
-				onUndo: vi.fn(),
-				onRedo: vi.fn(),
-				onHint: vi.fn(),
-				onReferenceDown: vi.fn(),
-				onReferenceUp,
-				onZoomIn: vi.fn(),
-				onZoomOut: vi.fn(),
-				onResetView: vi.fn(),
-				onRotationToggle: vi.fn(),
-				canUndo: false,
-				canRedo: false,
-				rotationEnabled: false
-			});
+			renderToolbar({ onReferenceUp });
 
 			const refButton = page.getByLabelText('Reference');
 			await refButton.element().dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
@@ -390,20 +175,7 @@ describe('PuzzleToolbar', () => {
 
 		it('calls onReferenceUp on reference button pointer leave', async () => {
 			const onReferenceUp = vi.fn();
-			render(PuzzleToolbar, {
-				onUndo: vi.fn(),
-				onRedo: vi.fn(),
-				onHint: vi.fn(),
-				onReferenceDown: vi.fn(),
-				onReferenceUp,
-				onZoomIn: vi.fn(),
-				onZoomOut: vi.fn(),
-				onResetView: vi.fn(),
-				onRotationToggle: vi.fn(),
-				canUndo: false,
-				canRedo: false,
-				rotationEnabled: false
-			});
+			renderToolbar({ onReferenceUp });
 
 			const refButton = page.getByLabelText('Reference');
 			await refButton.element().dispatchEvent(new PointerEvent('pointerleave', { bubbles: true }));
@@ -413,20 +185,7 @@ describe('PuzzleToolbar', () => {
 		it('calls onReferenceDown/Up on reference button Space key press', async () => {
 			const onReferenceDown = vi.fn();
 			const onReferenceUp = vi.fn();
-			render(PuzzleToolbar, {
-				onUndo: vi.fn(),
-				onRedo: vi.fn(),
-				onHint: vi.fn(),
-				onReferenceDown,
-				onReferenceUp,
-				onZoomIn: vi.fn(),
-				onZoomOut: vi.fn(),
-				onResetView: vi.fn(),
-				onRotationToggle: vi.fn(),
-				canUndo: false,
-				canRedo: false,
-				rotationEnabled: false
-			});
+			renderToolbar({ onReferenceDown, onReferenceUp });
 
 			const refButton = page.getByLabelText('Reference');
 			await refButton
@@ -443,20 +202,7 @@ describe('PuzzleToolbar', () => {
 		it('calls onReferenceDown/Up on reference button Enter key press', async () => {
 			const onReferenceDown = vi.fn();
 			const onReferenceUp = vi.fn();
-			render(PuzzleToolbar, {
-				onUndo: vi.fn(),
-				onRedo: vi.fn(),
-				onHint: vi.fn(),
-				onReferenceDown,
-				onReferenceUp,
-				onZoomIn: vi.fn(),
-				onZoomOut: vi.fn(),
-				onResetView: vi.fn(),
-				onRotationToggle: vi.fn(),
-				canUndo: false,
-				canRedo: false,
-				rotationEnabled: false
-			});
+			renderToolbar({ onReferenceDown, onReferenceUp });
 
 			const refButton = page.getByLabelText('Reference');
 			await refButton
@@ -473,60 +219,19 @@ describe('PuzzleToolbar', () => {
 
 	describe('hasReference gating', () => {
 		it('shows Reference button when hasReference is true', async () => {
-			render(PuzzleToolbar, {
-				onUndo: vi.fn(),
-				onRedo: vi.fn(),
-				onHint: vi.fn(),
-				onReferenceDown: vi.fn(),
-				onReferenceUp: vi.fn(),
-				onZoomIn: vi.fn(),
-				onZoomOut: vi.fn(),
-				onResetView: vi.fn(),
-				onRotationToggle: vi.fn(),
-				canUndo: false,
-				canRedo: false,
-				rotationEnabled: false,
-				hasReference: true
-			});
+			renderToolbar({ hasReference: true });
 
 			await expect.element(page.getByLabelText('Reference')).toBeInTheDocument();
 		});
 
 		it('hides Reference button when hasReference is false', async () => {
-			render(PuzzleToolbar, {
-				onUndo: vi.fn(),
-				onRedo: vi.fn(),
-				onHint: vi.fn(),
-				onReferenceDown: vi.fn(),
-				onReferenceUp: vi.fn(),
-				onZoomIn: vi.fn(),
-				onZoomOut: vi.fn(),
-				onResetView: vi.fn(),
-				onRotationToggle: vi.fn(),
-				canUndo: false,
-				canRedo: false,
-				rotationEnabled: false,
-				hasReference: false
-			});
+			renderToolbar({ hasReference: false });
 
 			await expect.element(page.getByLabelText('Reference')).not.toBeInTheDocument();
 		});
 
 		it('shows Reference button by default when hasReference is not provided', async () => {
-			render(PuzzleToolbar, {
-				onUndo: vi.fn(),
-				onRedo: vi.fn(),
-				onHint: vi.fn(),
-				onReferenceDown: vi.fn(),
-				onReferenceUp: vi.fn(),
-				onZoomIn: vi.fn(),
-				onZoomOut: vi.fn(),
-				onResetView: vi.fn(),
-				onRotationToggle: vi.fn(),
-				canUndo: false,
-				canRedo: false,
-				rotationEnabled: false
-			});
+			renderToolbar();
 
 			await expect.element(page.getByLabelText('Reference')).toBeInTheDocument();
 		});
