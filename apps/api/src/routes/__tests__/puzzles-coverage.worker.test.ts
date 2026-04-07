@@ -140,21 +140,27 @@ describe('GET /:id - hasReference derived from R2 head', () => {
 		expect(mockHead).toHaveBeenCalledWith(`puzzles/${VALID_UUID}/original`);
 	});
 
-	it('returns hasReference false when R2 head throws', async () => {
+	it('returns hasReference false when R2 head throws (graceful degradation)', async () => {
 		const mockHead = vi.fn().mockRejectedValue(new Error('R2 unavailable'));
 		const env = {
 			PUZZLE_METADATA: {} as KVNamespace,
 			PUZZLES_BUCKET: { head: mockHead } as unknown as R2Bucket
 		};
 		vi.mocked(storage.getPuzzle).mockResolvedValue(makeReadyPuzzle(4));
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
 		const req = new Request(`http://localhost/${VALID_UUID}`);
 		const res = await puzzles.fetch(req, env);
 
-		// The head failure propagates as a 500 since it's inside the try block
-		expect(res.status).toBe(500);
+		// R2 failure degrades gracefully: puzzle is still returned with hasReference false
+		expect(res.status).toBe(200);
 		const body = (await res.json()) as any;
-		expect(body.error).toBe('internal_error');
+		expect(body.hasReference).toBe(false);
+		expect(consoleSpy).toHaveBeenCalledWith(
+			expect.stringContaining('Failed to check R2 reference'),
+			expect.any(Error)
+		);
+		consoleSpy.mockRestore();
 	});
 });
 

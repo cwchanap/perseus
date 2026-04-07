@@ -66,8 +66,16 @@ puzzles.get('/:id', async (c) => {
 
 		// Check R2 for original image existence rather than hardcoding true —
 		// puzzles created before the reference-upload patch won't have the asset.
-		const originalObj = await c.env.PUZZLES_BUCKET.head(getOriginalKey(id));
-		return c.json({ ...puzzle, hasReference: originalObj !== null });
+		// Degrade gracefully if R2 is unavailable — hasReference is display-only.
+		let hasReference = false;
+		try {
+			const originalObj = await c.env.PUZZLES_BUCKET.head(getOriginalKey(id));
+			hasReference = originalObj !== null;
+		} catch (r2Error) {
+			console.error(`Failed to check R2 reference for puzzle ${id}:`, r2Error);
+		}
+
+		return c.json({ ...puzzle, hasReference });
 	} catch (error) {
 		console.error(`Failed to retrieve puzzle ${id}:`, error);
 		return c.json({ error: 'internal_error', message: 'Failed to retrieve puzzle' }, 500);

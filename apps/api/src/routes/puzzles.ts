@@ -23,7 +23,7 @@ function getImageContentType(filePath: string): string {
 
 function isPuzzleReady(puzzle: unknown): boolean {
 	if (typeof puzzle !== 'object' || puzzle === null) {
-		return true;
+		return false;
 	}
 
 	const candidate = puzzle as { ready?: boolean; status?: string };
@@ -42,7 +42,11 @@ function isPuzzleReady(puzzle: unknown): boolean {
 function puzzleHasReference(puzzleId: string): boolean {
 	try {
 		return findOriginalImagePath(puzzleId) !== null;
-	} catch {
+	} catch (error) {
+		if (error instanceof InvalidPuzzleIdError) {
+			return false;
+		}
+		console.error(`Unexpected error checking reference image for puzzle ${puzzleId}:`, error);
 		return false;
 	}
 }

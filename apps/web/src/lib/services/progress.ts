@@ -24,7 +24,8 @@ export function getProgress(puzzleId: string): GameProgress | null {
 			rotationEnabled: progress.rotationEnabled ?? false,
 			pieceRotations: progress.pieceRotations ?? {}
 		} as GameProgress;
-	} catch {
+	} catch (error) {
+		console.error(`Failed to load puzzle progress for ${puzzleId}:`, error);
 		return null;
 	}
 }

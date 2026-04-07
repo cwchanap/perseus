@@ -30,10 +30,14 @@ vi.mock('../../services/puzzle-generator', () => ({
 	isValidPieceCount: vi.fn().mockReturnValue(true)
 }));
 
-vi.mock('node:fs', () => ({
-	mkdirSync: vi.fn(),
-	writeFileSync: vi.fn()
-}));
+vi.mock('node:fs/promises', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('node:fs/promises')>();
+	return {
+		...actual,
+		mkdir: vi.fn().mockResolvedValue(undefined),
+		writeFile: vi.fn().mockResolvedValue(undefined)
+	};
+});
 
 vi.mock('../../services/storage', () => ({
 	createPuzzle: vi.fn().mockResolvedValue(true),

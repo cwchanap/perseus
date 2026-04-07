@@ -1,7 +1,7 @@
 // Admin routes for authentication and puzzle management
 import { Hono } from 'hono';
 import { createHash, timingSafeEqual } from 'node:crypto';
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { writeFile, mkdir } from 'node:fs/promises';
 import {
 	createSession,
 	setSessionCookie,
@@ -190,9 +190,9 @@ admin.post('/puzzles', requireAuth, async (c) => {
 		const imageBuffer = Buffer.from(await image.arrayBuffer());
 
 		// Persist original image for the /reference endpoint
-		mkdirSync(getPuzzleDir(id), { recursive: true });
+		await mkdir(getPuzzleDir(id), { recursive: true });
 		puzzleDirCreated = true;
-		writeFileSync(getOriginalImagePath(id, image.type), imageBuffer);
+		await writeFile(getOriginalImagePath(id, image.type), imageBuffer);
 
 		// Generate puzzle pieces and thumbnail
 		const result = await generatePuzzle({
@@ -207,7 +207,10 @@ admin.post('/puzzles', requireAuth, async (c) => {
 		const puzzleToStore = category ? { ...result.puzzle, category } : result.puzzle;
 		const saved = await storePuzzle(puzzleToStore);
 		if (!saved) {
-			await deleteStoredPuzzle(id);
+			const cleaned = await deleteStoredPuzzle(id);
+			if (!cleaned) {
+				console.error(`Failed to clean up puzzle directory ${id} after metadata save failure`);
+			}
 			return c.json({ error: 'internal_error', message: 'Failed to save puzzle metadata' }, 500);
 		}
 

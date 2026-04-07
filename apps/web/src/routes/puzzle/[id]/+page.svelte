@@ -254,6 +254,12 @@
 		const viewportWidth = boardViewportElement.clientWidth;
 		const viewportHeight = boardViewportElement.clientHeight;
 		if (viewportWidth === 0 || viewportHeight === 0) return 1;
+		if (puzzle.imageWidth <= 0 || puzzle.imageHeight <= 0) {
+			console.error(
+				`Puzzle ${puzzle.id} has invalid dimensions: ${puzzle.imageWidth}x${puzzle.imageHeight}`
+			);
+			return 1;
+		}
 
 		return calculateFitZoom(puzzle.imageWidth, puzzle.imageHeight, viewportWidth, viewportHeight);
 	}
@@ -361,6 +367,7 @@
 				clearProgress(id);
 				error = 'Mission no longer available';
 			} else {
+				console.error(`Failed to load puzzle ${id}:`, e);
 				error = 'Failed to load mission';
 			}
 		} finally {
