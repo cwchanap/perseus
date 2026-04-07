@@ -48,6 +48,7 @@ function makePuzzle(overrides: Record<string, any> = {}): any {
 		imageHeight: 100,
 		createdAt: Date.now(),
 		pieces: [],
+		status: 'ready',
 		...overrides
 	};
 }
@@ -553,6 +554,18 @@ describe('GET /:id/reference - Get reference image', () => {
 
 	it('returns 404 when puzzle status is not ready', async () => {
 		vi.mocked(storage.getPuzzle).mockResolvedValue(makePuzzle({ status: 'processing' }));
+
+		const res = await puzzles.fetch(new Request(`http://localhost/${PUZZLE_ID}/reference`));
+		expect(res.status).toBe(404);
+		const body = (await res.json()) as any;
+		expect(body.error).toBe('not_found');
+		expect(body.message).toBe('Puzzle not found');
+		expect(storage.findOriginalImagePath).not.toHaveBeenCalled();
+		expect(fsPromises.readFile).not.toHaveBeenCalled();
+	});
+
+	it('returns 404 when puzzle has neither ready flag nor status (fail-closed)', async () => {
+		vi.mocked(storage.getPuzzle).mockResolvedValue(makePuzzle({ status: undefined }));
 
 		const res = await puzzles.fetch(new Request(`http://localhost/${PUZZLE_ID}/reference`));
 		expect(res.status).toBe(404);
