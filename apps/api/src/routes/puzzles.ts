@@ -36,7 +36,7 @@ function isPuzzleReady(puzzle: unknown): boolean {
 		return candidate.status === 'ready';
 	}
 
-	return true;
+	return false;
 }
 
 function puzzleHasReference(puzzleId: string): boolean {

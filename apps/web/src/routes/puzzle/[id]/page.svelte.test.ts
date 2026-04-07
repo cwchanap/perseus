@@ -211,7 +211,8 @@ function createMockPuzzle(): Puzzle {
 		imageWidth: 200,
 		imageHeight: 100,
 		createdAt: 1704067200000,
-		pieces: [createPiece(0, 0, 0), createPiece(1, 1, 0)]
+		pieces: [createPiece(0, 0, 0), createPiece(1, 1, 0)],
+		hasReference: true
 	};
 }
 
