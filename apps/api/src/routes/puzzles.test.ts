@@ -509,56 +509,25 @@ describe('GET /:id/reference - Get reference image', () => {
 		vi.mocked(storage.findOriginalImagePath).mockReturnValue('/fake/original.jpg');
 	});
 
-	it('returns 200 with image data and jpeg content-type for .jpg', async () => {
-		vi.mocked(storage.getPuzzle).mockResolvedValue(makePuzzle());
-		vi.mocked(storage.findOriginalImagePath).mockReturnValue('/fake/original.jpg');
-		vi.mocked(fsPromises.readFile).mockResolvedValue(Buffer.from([0xff, 0xd8]) as any);
+	it.each([
+		{ ext: '.jpg', contentType: 'image/jpeg' },
+		{ ext: '.jpeg', contentType: 'image/jpeg' },
+		{ ext: '.png', contentType: 'image/png' },
+		{ ext: '.webp', contentType: 'image/webp' },
+		{ ext: '.bin', contentType: 'application/octet-stream' }
+	] satisfies Array<{ ext: string; contentType: string }>)(
+		'returns 200 with $contentType for $ext extension',
+		async ({ ext, contentType }) => {
+			vi.mocked(storage.getPuzzle).mockResolvedValue(makePuzzle());
+			vi.mocked(storage.findOriginalImagePath).mockReturnValue(`/fake/original${ext}`);
+			vi.mocked(fsPromises.readFile).mockResolvedValue(Buffer.from([1, 2, 3]) as any);
 
-		const res = await puzzles.fetch(new Request(`http://localhost/${PUZZLE_ID}/reference`));
-		expect(res.status).toBe(200);
-		expect(res.headers.get('Content-Type')).toBe('image/jpeg');
-		expect(res.headers.get('Cache-Control')).toBe('public, max-age=86400');
-	});
-
-	it('returns image/jpeg for .jpeg extension', async () => {
-		vi.mocked(storage.getPuzzle).mockResolvedValue(makePuzzle());
-		vi.mocked(storage.findOriginalImagePath).mockReturnValue('/fake/original.jpeg');
-		vi.mocked(fsPromises.readFile).mockResolvedValue(Buffer.from([1, 2, 3]) as any);
-
-		const res = await puzzles.fetch(new Request(`http://localhost/${PUZZLE_ID}/reference`));
-		expect(res.status).toBe(200);
-		expect(res.headers.get('Content-Type')).toBe('image/jpeg');
-	});
-
-	it('returns image/png for .png extension', async () => {
-		vi.mocked(storage.getPuzzle).mockResolvedValue(makePuzzle());
-		vi.mocked(storage.findOriginalImagePath).mockReturnValue('/fake/original.png');
-		vi.mocked(fsPromises.readFile).mockResolvedValue(Buffer.from([0x89, 0x50]) as any);
-
-		const res = await puzzles.fetch(new Request(`http://localhost/${PUZZLE_ID}/reference`));
-		expect(res.status).toBe(200);
-		expect(res.headers.get('Content-Type')).toBe('image/png');
-	});
-
-	it('returns image/webp for .webp extension', async () => {
-		vi.mocked(storage.getPuzzle).mockResolvedValue(makePuzzle());
-		vi.mocked(storage.findOriginalImagePath).mockReturnValue('/fake/original.webp');
-		vi.mocked(fsPromises.readFile).mockResolvedValue(Buffer.from([1, 2, 3]) as any);
-
-		const res = await puzzles.fetch(new Request(`http://localhost/${PUZZLE_ID}/reference`));
-		expect(res.status).toBe(200);
-		expect(res.headers.get('Content-Type')).toBe('image/webp');
-	});
-
-	it('returns application/octet-stream for unknown extension', async () => {
-		vi.mocked(storage.getPuzzle).mockResolvedValue(makePuzzle());
-		vi.mocked(storage.findOriginalImagePath).mockReturnValue('/fake/original.bin');
-		vi.mocked(fsPromises.readFile).mockResolvedValue(Buffer.from([1, 2, 3]) as any);
-
-		const res = await puzzles.fetch(new Request(`http://localhost/${PUZZLE_ID}/reference`));
-		expect(res.status).toBe(200);
-		expect(res.headers.get('Content-Type')).toBe('application/octet-stream');
-	});
+			const res = await puzzles.fetch(new Request(`http://localhost/${PUZZLE_ID}/reference`));
+			expect(res.status).toBe(200);
+			expect(res.headers.get('Content-Type')).toBe(contentType);
+			expect(res.headers.get('Cache-Control')).toBe('public, max-age=86400');
+		}
+	);
 
 	it('returns 404 when puzzle is not found', async () => {
 		vi.mocked(storage.getPuzzle).mockResolvedValue(null);
