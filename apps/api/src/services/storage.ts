@@ -185,7 +185,11 @@ export async function updatePuzzle(puzzle: Puzzle): Promise<boolean> {
 
 	try {
 		await access(metadataPath);
-	} catch {
+	} catch (error) {
+		const err = error as NodeJS.ErrnoException;
+		if (err.code !== 'ENOENT') {
+			console.error(`Unexpected error accessing metadata for puzzle ${puzzle.id}:`, error);
+		}
 		return false;
 	}
 
@@ -211,7 +215,8 @@ export async function deletePuzzle(puzzleId: string): Promise<boolean> {
 
 		await rm(puzzleDir, { recursive: true, force: true });
 		return true;
-	} catch {
+	} catch (error) {
+		console.error(`Failed to delete puzzle directory for ${puzzleId}:`, error);
 		return false;
 	}
 }
