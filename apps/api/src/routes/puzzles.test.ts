@@ -564,16 +564,13 @@ describe('GET /:id/reference - Get reference image', () => {
 		expect(fsPromises.readFile).not.toHaveBeenCalled();
 	});
 
-	it('returns 404 when puzzle has neither ready flag nor status (fail-closed)', async () => {
+	it('returns 200 when puzzle has neither ready flag nor status (legacy Bun shape treated as ready)', async () => {
 		vi.mocked(storage.getPuzzle).mockResolvedValue(makePuzzle({ status: undefined }));
+		vi.mocked(fsPromises.readFile).mockResolvedValue(Buffer.from([1, 2, 3]) as any);
 
 		const res = await puzzles.fetch(new Request(`http://localhost/${PUZZLE_ID}/reference`));
-		expect(res.status).toBe(404);
-		const body = (await res.json()) as any;
-		expect(body.error).toBe('not_found');
-		expect(body.message).toBe('Puzzle not found');
-		expect(storage.findOriginalImagePath).not.toHaveBeenCalled();
-		expect(fsPromises.readFile).not.toHaveBeenCalled();
+		expect(res.status).toBe(200);
+		expect(res.headers.get('Content-Type')).toBe('image/jpeg');
 	});
 
 	it('returns 404 when original image file not found (ENOENT)', async () => {
