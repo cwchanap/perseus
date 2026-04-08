@@ -45,10 +45,13 @@ export function isUpright(rotation: Rotation): boolean {
  * Uses a linear congruential generator (LCG).
  */
 function seededRandom(seed: number): () => number {
-	let state = seed;
+	let state = seed | 0;
 	return () => {
-		state = (state * 1103515245 + 12345) % 2147483648;
-		return state / 2147483648;
+		// Use Math.imul and bitwise OR to stay in 32-bit integer range,
+		// avoiding JavaScript floating-point precision loss that would
+		// break cross-engine determinism of this LCG.
+		state = (Math.imul(state, 1103515245) + 12345) | 0;
+		return (state >>> 0) / 2147483648;
 	};
 }
 
