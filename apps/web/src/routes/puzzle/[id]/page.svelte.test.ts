@@ -392,7 +392,7 @@ describe('Puzzle route gameplay integration', () => {
 		);
 	});
 
-	it('restores piece rotations when undoing and redoing placement history', async () => {
+	it('records rotation-only changes as undo steps and restores them correctly', async () => {
 		await renderPuzzlePage();
 
 		await page.getByLabelText('Rotation mode').click();
@@ -414,15 +414,35 @@ describe('Puzzle route gameplay integration', () => {
 			{ 0: 0, 1: 180 }
 		);
 
+		// First undo reverses the rotation (180 -> 90), piece remains placed
+		await page.getByLabelText('Undo').click();
+		expect(saveProgress).toHaveBeenLastCalledWith(
+			'test-puzzle',
+			[{ pieceId: 0, x: 0, y: 0 }],
+			true,
+			{ 0: 0, 1: 90 }
+		);
+
+		// Second undo removes the placement, rotation preserved from pre-placement state
 		await page.getByLabelText('Undo').click();
 		expect(saveProgress).toHaveBeenLastCalledWith('test-puzzle', [], true, { 0: 0, 1: 90 });
 
+		// Redo re-applies the placement
 		await page.getByLabelText('Redo').click();
 		expect(saveProgress).toHaveBeenLastCalledWith(
 			'test-puzzle',
 			[{ pieceId: 0, x: 0, y: 0 }],
 			true,
 			{ 0: 0, 1: 90 }
+		);
+
+		// Second redo re-applies the rotation
+		await page.getByLabelText('Redo').click();
+		expect(saveProgress).toHaveBeenLastCalledWith(
+			'test-puzzle',
+			[{ pieceId: 0, x: 0, y: 0 }],
+			true,
+			{ 0: 0, 1: 180 }
 		);
 	});
 
@@ -483,5 +503,42 @@ describe('Puzzle route gameplay integration', () => {
 		expect(page.getByTestId('hint-target').query()).toBeNull();
 		const nextPieceSlot = await page.getByTestId('piece-slot-1').element();
 		expect(nextPieceSlot.classList.contains('hinted')).toBe(false);
+	});
+
+	it('clears rejected-piece state when navigating to a different puzzle', async () => {
+		const nextPuzzle: Puzzle = {
+			...createMockPuzzle(),
+			id: 'next-puzzle',
+			name: 'Next Mission',
+			pieces: [
+				createPiece(0, 0, 0, { puzzleId: 'next-puzzle' }),
+				createPiece(1, 1, 0, { puzzleId: 'next-puzzle' })
+			]
+		};
+
+		vi.mocked(fetchPuzzle).mockImplementation(async (id: string) =>
+			id === 'next-puzzle' ? nextPuzzle : createMockPuzzle()
+		);
+
+		render(PuzzlePage);
+		await expect.element(page.getByTestId('puzzle-board')).toBeVisible();
+
+		// Trigger an incorrect placement: piece 0 at wrong position (1, 0)
+		await selectPiece(0);
+		await placeSelectedPieceAt(1, 0);
+		await expect.element(page.getByTestId('piece-slot-0')).toHaveClass('rejected');
+
+		// Navigate to a different puzzle
+		mockPageStore.set({
+			url: { pathname: '/puzzle/next-puzzle' },
+			params: { id: 'next-puzzle' },
+			route: { id: '/puzzle/[id]' },
+			status: 200,
+			error: null
+		});
+
+		await expect.element(page.getByText('NEXT MISSION')).toBeVisible();
+		const nextSlot = await page.getByTestId('piece-slot-0').element();
+		expect(nextSlot.classList.contains('rejected')).toBe(false);
 	});
 });

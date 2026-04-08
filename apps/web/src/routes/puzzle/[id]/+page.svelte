@@ -354,6 +354,11 @@
 			showReferenceOverlay = false;
 			clearHintTarget();
 			clearSelectedPiece();
+			if (rejectedPieceTimeout !== null) {
+				clearTimeout(rejectedPieceTimeout);
+				rejectedPieceTimeout = null;
+			}
+			rejectedPiece = null;
 			bestTime = getBestTime(id);
 			timer.reset();
 			timerStarted = false;
@@ -560,11 +565,8 @@
 		} as Record<number, Rotation>;
 
 		pieceRotations = nextPieceRotations;
-
-		if (placementHistory.canRedo()) {
-			placementHistory.push(createPlacementHistoryState(placedPieces, nextPieceRotations));
-			updateHistoryControls();
-		}
+		placementHistory.push(createPlacementHistoryState(placedPieces, nextPieceRotations));
+		updateHistoryControls();
 
 		persistProgress(placedPieces, rotationEnabled, nextPieceRotations);
 	}
