@@ -129,5 +129,36 @@ describe('Rotation Helper', () => {
 			const rotations = generateRandomRotations([]);
 			expect(rotations).toEqual({});
 		});
+
+		it('should only produce valid rotations with any seed', () => {
+			const validRotations: Rotation[] = [0, 90, 180, 270];
+			const pieceIds = Array.from({ length: 100 }, (_, i) => i);
+
+			// Test a wide range of seeds to catch normalization bugs
+			// (dividing by 2^31 instead of 2^32 causes ~half the indices to be out of range)
+			const seeds = [0, 1, 42, 12345, 999999, 2147483647, -1, -42];
+			for (const seed of seeds) {
+				const rotations = generateRandomRotations(pieceIds, seed);
+				for (const [id, rotation] of Object.entries(rotations)) {
+					expect(validRotations).toContain(rotation);
+				}
+			}
+		});
+
+		it('should distribute seeded rotations across all four values', () => {
+			const pieceIds = Array.from({ length: 200 }, (_, i) => i);
+			const rotations = generateRandomRotations(pieceIds, 42);
+			const counts: Record<number, number> = { 0: 0, 90: 0, 180: 0, 270: 0 };
+
+			for (const rotation of Object.values(rotations)) {
+				counts[rotation]++;
+			}
+
+			// Each rotation value should appear at least once in 200 pieces
+			expect(counts[0]).toBeGreaterThan(0);
+			expect(counts[90]).toBeGreaterThan(0);
+			expect(counts[180]).toBeGreaterThan(0);
+			expect(counts[270]).toBeGreaterThan(0);
+		});
 	});
 });
