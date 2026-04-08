@@ -560,6 +560,12 @@
 		} as Record<number, Rotation>;
 
 		pieceRotations = nextPieceRotations;
+
+		if (placementHistory.canRedo()) {
+			placementHistory.push(createPlacementHistoryState(placedPieces, nextPieceRotations));
+			updateHistoryControls();
+		}
+
 		persistProgress(placedPieces, rotationEnabled, nextPieceRotations);
 	}
 
