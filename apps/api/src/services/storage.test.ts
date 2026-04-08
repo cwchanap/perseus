@@ -113,6 +113,17 @@ describe('path helpers', () => {
 		expect(result).toBeNull();
 	});
 
+	it('findOriginalImagePath discovers .jpeg extension', async () => {
+		const { createPuzzle, getPuzzleDir, findOriginalImagePath } = storageModule;
+		const puzzle = makePuzzle('find-jpeg-test');
+		await createPuzzle(puzzle);
+		// Write a file with .jpeg extension (legacy/migrated data scenario)
+		const jpegPath = join(getPuzzleDir('find-jpeg-test'), 'original.jpeg');
+		await writeFile(jpegPath, 'fake-jpeg-data');
+		const result = findOriginalImagePath('find-jpeg-test');
+		expect(result).toBe(jpegPath);
+	});
+
 	it('getThumbnailPath returns a path ending in thumbnail.jpg', () => {
 		const { getThumbnailPath } = storageModule;
 		const path = getThumbnailPath('my-puzzle');

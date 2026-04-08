@@ -79,7 +79,7 @@ export function getOriginalImagePath(puzzleId: string, mimeType?: string): strin
 
 // Find original image path by probing supported extensions
 export function findOriginalImagePath(puzzleId: string): string | null {
-	for (const ext of ['.jpg', '.png', '.webp']) {
+	for (const ext of ['.jpg', '.jpeg', '.png', '.webp']) {
 		const p = resolvePuzzlePath(puzzleId, `original${ext}`);
 		if (existsSync(p)) return p;
 	}
