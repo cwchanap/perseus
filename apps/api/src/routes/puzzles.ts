@@ -36,7 +36,9 @@ function isPuzzleReady(puzzle: unknown): boolean {
 		return candidate.status === 'ready';
 	}
 
-	return false;
+	// Bun dev server returns legacy Puzzle shape (no ready/status fields).
+	// If a puzzle exists on the filesystem, it's inherently ready — there's no async workflow.
+	return true;
 }
 
 function puzzleHasReference(puzzleId: string): boolean {
