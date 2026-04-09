@@ -215,6 +215,21 @@ describe('PuzzleToolbar', () => {
 				.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true }));
 			expect(onReferenceUp).toHaveBeenCalledOnce();
 		});
+
+		it('calls onReferenceUp when reference button loses focus during keyboard hold', async () => {
+			const onReferenceDown = vi.fn();
+			const onReferenceUp = vi.fn();
+			renderToolbar({ onReferenceDown, onReferenceUp });
+
+			const refButton = page.getByLabelText('Reference');
+			await refButton
+				.element()
+				.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+			expect(onReferenceDown).toHaveBeenCalledOnce();
+
+			await refButton.element().dispatchEvent(new FocusEvent('blur', { bubbles: true }));
+			expect(onReferenceUp).toHaveBeenCalledOnce();
+		});
 	});
 
 	describe('hasReference gating', () => {
