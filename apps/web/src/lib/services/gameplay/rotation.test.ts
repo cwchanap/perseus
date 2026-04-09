@@ -139,7 +139,7 @@ describe('Rotation Helper', () => {
 			const seeds = [0, 1, 42, 12345, 999999, 2147483647, -1, -42];
 			for (const seed of seeds) {
 				const rotations = generateRandomRotations(pieceIds, seed);
-				for (const [id, rotation] of Object.entries(rotations)) {
+				for (const [_id, rotation] of Object.entries(rotations)) {
 					expect(validRotations).toContain(rotation);
 				}
 			}
