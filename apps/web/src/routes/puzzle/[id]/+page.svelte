@@ -518,7 +518,7 @@
 	}
 
 	function isRotationToggleLocked(): boolean {
-		return timerStarted || placedPieces.length > 0 || rotationEnabled;
+		return placedPieces.length > 0 || rotationEnabled;
 	}
 
 	function handleReferenceDown(event?: PointerEvent | KeyboardEvent) {
@@ -1233,11 +1233,11 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		touch-action: none;
 	}
 
 	.board-viewport.can-pan {
 		cursor: grab;
+		touch-action: none;
 	}
 
 	.board-viewport.is-panning {

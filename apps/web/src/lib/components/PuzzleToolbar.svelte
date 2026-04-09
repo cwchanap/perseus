@@ -73,6 +73,7 @@
 					onReferenceUp(e);
 				}
 			}}
+			onblur={() => onReferenceUp()}
 			class={toolbarButtonClass}
 		>
 			Reference

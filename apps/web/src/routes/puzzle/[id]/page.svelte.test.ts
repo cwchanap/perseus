@@ -392,6 +392,32 @@ describe('Puzzle route gameplay integration', () => {
 		);
 	});
 
+	it('re-enables rotation toggle after undoing back to empty board', async () => {
+		await renderPuzzlePage();
+
+		await expect.element(page.getByLabelText('Rotation mode')).toBeEnabled();
+
+		await placePiece(0, 0, 0);
+		await expect.element(page.getByText('1/2')).toBeVisible();
+		await expect.element(page.getByLabelText('Rotation mode')).toBeDisabled();
+
+		await page.getByLabelText('Undo').click();
+		await expect.element(page.getByText('0/2')).toBeVisible();
+		await expect.element(page.getByLabelText('Rotation mode')).toBeEnabled();
+	});
+
+	it('keeps rotation toggle enabled after incorrect placement with no pieces placed', async () => {
+		await renderPuzzlePage();
+
+		await expect.element(page.getByLabelText('Rotation mode')).toBeEnabled();
+
+		await selectPiece(0);
+		await placeSelectedPieceAt(1, 0);
+		await expect.element(page.getByTestId('piece-slot-0')).toHaveClass('rejected');
+
+		await expect.element(page.getByLabelText('Rotation mode')).toBeEnabled();
+	});
+
 	it('records rotation-only changes as undo steps and restores them correctly', async () => {
 		await renderPuzzlePage();
 
