@@ -425,10 +425,6 @@
 			newPlacement
 		];
 
-		if (placedPieces.length === 0) {
-			resetPlacementHistory(placedPieces, pieceRotations);
-		}
-
 		placedPieces = nextPlacedPieces;
 		placementHistory.push(createPlacementHistoryState(nextPlacedPieces, pieceRotations));
 		updateHistoryControls();
