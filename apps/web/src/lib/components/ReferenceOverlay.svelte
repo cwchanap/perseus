@@ -17,7 +17,7 @@
 {#if active}
 	<div
 		data-testid="reference-overlay"
-		class="pointer-events-none fixed inset-0 z-[1000] flex items-center justify-center bg-black/80"
+		class="fixed inset-0 z-[1000] flex items-center justify-center bg-black/80"
 	>
 		{#if imageError}
 			<p class="text-sm text-white/70">Reference image unavailable</p>
