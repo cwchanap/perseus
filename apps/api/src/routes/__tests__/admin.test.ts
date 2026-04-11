@@ -8,6 +8,8 @@ const originalJwtSecret = process.env.JWT_SECRET;
 process.env.ADMIN_PASSKEY = 'test-admin-passkey-for-bun';
 process.env.JWT_SECRET = 'test-jwt-secret-for-bun-admin-testing-12345';
 
+const PNG_HEADER = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0, 0]);
+
 // Mock all dependencies before admin.ts is imported (vi.mock is hoisted)
 vi.mock('../../middleware/auth', () => ({
 	createSession: vi.fn().mockResolvedValue('mock-session-token'),
@@ -291,7 +293,7 @@ describe('POST /puzzles', () => {
 	it('returns 400 when name is missing', async () => {
 		const fd = buildFormData({
 			pieceCount: '25',
-			image: new Blob(['data'], { type: 'image/png' })
+			image: new Blob([PNG_HEADER], { type: 'image/png' })
 		});
 		const req = new Request('http://localhost/puzzles', { method: 'POST', body: fd });
 		const res = await app.fetch(req);
@@ -304,7 +306,7 @@ describe('POST /puzzles', () => {
 	it('returns 400 when pieceCount is missing', async () => {
 		const fd = buildFormData({
 			name: 'Test Puzzle',
-			image: new Blob(['data'], { type: 'image/png' })
+			image: new Blob([PNG_HEADER], { type: 'image/png' })
 		});
 		const req = new Request('http://localhost/puzzles', { method: 'POST', body: fd });
 		const res = await app.fetch(req);
@@ -319,7 +321,7 @@ describe('POST /puzzles', () => {
 		const fd = buildFormData({
 			name: 'Test Puzzle',
 			pieceCount: '7',
-			image: new Blob(['data'], { type: 'image/png' })
+			image: new Blob([PNG_HEADER], { type: 'image/png' })
 		});
 		const req = new Request('http://localhost/puzzles', { method: 'POST', body: fd });
 		const res = await app.fetch(req);
@@ -340,7 +342,9 @@ describe('POST /puzzles', () => {
 	});
 
 	it('returns 400 when image exceeds 10MB', async () => {
-		const largeBlob = new Blob([new Uint8Array(11 * 1024 * 1024)], { type: 'image/jpeg' });
+		const largeBuf = new Uint8Array(11 * 1024 * 1024);
+		largeBuf.set([0xff, 0xd8, 0xff, 0xe0], 0);
+		const largeBlob = new Blob([largeBuf], { type: 'image/jpeg' });
 		const fd = buildFormData({ name: 'Test Puzzle', pieceCount: '25', image: largeBlob });
 		const req = new Request('http://localhost/puzzles', { method: 'POST', body: fd });
 		const res = await app.fetch(req);
@@ -364,12 +368,26 @@ describe('POST /puzzles', () => {
 		expect(body.message).toContain('Invalid file type');
 	});
 
+	it('returns 400 when file content does not match any known image format', async () => {
+		const fd = buildFormData({
+			name: 'Test Puzzle',
+			pieceCount: '25',
+			image: new Blob([new Uint8Array(100)], { type: 'image/png' })
+		});
+		const req = new Request('http://localhost/puzzles', { method: 'POST', body: fd });
+		const res = await app.fetch(req);
+		expect(res.status).toBe(400);
+		const body = await res.json();
+		expect(body.error).toBe('bad_request');
+		expect(body.message).toContain('Invalid file type');
+	});
+
 	it('returns 400 for invalid category', async () => {
 		const fd = buildFormData({
 			name: 'Test Puzzle',
 			pieceCount: '25',
 			category: 'InvalidCategory',
-			image: new Blob(['data'], { type: 'image/png' })
+			image: new Blob([PNG_HEADER], { type: 'image/png' })
 		});
 		const req = new Request('http://localhost/puzzles', { method: 'POST', body: fd });
 		const res = await app.fetch(req);
@@ -384,7 +402,7 @@ describe('POST /puzzles', () => {
 		const fd = buildFormData({
 			name: longName,
 			pieceCount: '25',
-			image: new Blob(['data'], { type: 'image/png' })
+			image: new Blob([PNG_HEADER], { type: 'image/png' })
 		});
 		const req = new Request('http://localhost/puzzles', { method: 'POST', body: fd });
 		const res = await app.fetch(req);
@@ -404,7 +422,7 @@ describe('POST /puzzles', () => {
 			const fd = buildFormData({
 				name: 'Test Puzzle',
 				pieceCount: '25',
-				image: new Blob(['data'], { type: 'image/png' })
+				image: new Blob([PNG_HEADER], { type: 'image/png' })
 			});
 			const req = new Request('http://localhost/puzzles', { method: 'POST', body: fd });
 			const res = await app.fetch(req);

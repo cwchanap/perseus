@@ -12,6 +12,9 @@ const originalJwtSecret = process.env.JWT_SECRET;
 process.env.ADMIN_PASSKEY = 'extra-test-admin-passkey';
 process.env.JWT_SECRET = 'extra-test-jwt-secret-for-bun-12345678901234';
 
+const PNG_HEADER = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0, 0]);
+const JPEG_HEADER = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0]);
+
 vi.mock('../../middleware/auth', () => ({
 	createSession: vi.fn().mockResolvedValue('mock-session-token'),
 	setSessionCookie: vi.fn(),
@@ -109,7 +112,7 @@ describe('POST /puzzles - success paths', () => {
 		const fd = buildFormData({
 			name: 'My Puzzle',
 			pieceCount: '25',
-			image: new Blob([new Uint8Array(100)], { type: 'image/png' })
+			image: new Blob([PNG_HEADER], { type: 'image/png' })
 		});
 		const req = new Request('http://localhost/puzzles', { method: 'POST', body: fd });
 		const res = await app.fetch(req);
@@ -124,7 +127,7 @@ describe('POST /puzzles - success paths', () => {
 			name: 'Nature Puzzle',
 			pieceCount: '25',
 			category: 'Nature',
-			image: new Blob([new Uint8Array(100)], { type: 'image/jpeg' })
+			image: new Blob([JPEG_HEADER], { type: 'image/jpeg' })
 		});
 		const req = new Request('http://localhost/puzzles', { method: 'POST', body: fd });
 		const res = await app.fetch(req);
@@ -139,7 +142,7 @@ describe('POST /puzzles - success paths', () => {
 			name: 'Animal Puzzle',
 			pieceCount: '25',
 			category: 'Animals',
-			image: new Blob([new Uint8Array(100)], { type: 'image/png' })
+			image: new Blob([PNG_HEADER], { type: 'image/png' })
 		});
 		const req = new Request('http://localhost/puzzles', { method: 'POST', body: fd });
 		await app.fetch(req);
@@ -147,6 +150,21 @@ describe('POST /puzzles - success paths', () => {
 		expect(storageMock.createPuzzle).toHaveBeenCalledWith(
 			expect.objectContaining({ category: 'Animals' })
 		);
+	});
+
+	it('uses detected image type from magic bytes, not the reported MIME type', async () => {
+		// JPEG bytes with a spoofed image/png MIME type
+		const fd = buildFormData({
+			name: 'Spoofed Puzzle',
+			pieceCount: '25',
+			image: new Blob([JPEG_HEADER], { type: 'image/png' })
+		});
+		const req = new Request('http://localhost/puzzles', { method: 'POST', body: fd });
+		const res = await app.fetch(req);
+
+		expect(res.status).toBe(201);
+		// getOriginalImagePath should be called with the detected type 'image/jpeg', not 'image/png'
+		expect(storageMock.getOriginalImagePath).toHaveBeenCalledWith(expect.any(String), 'image/jpeg');
 	});
 });
 
@@ -207,7 +225,7 @@ describe('POST /puzzles - error paths', () => {
 		const fd = buildFormData({
 			name: 'My Puzzle',
 			pieceCount: '25',
-			image: new Blob([new Uint8Array(100)], { type: 'image/png' })
+			image: new Blob([PNG_HEADER], { type: 'image/png' })
 		});
 		const req = new Request('http://localhost/puzzles', { method: 'POST', body: fd });
 		const res = await app.fetch(req);
@@ -225,7 +243,7 @@ describe('POST /puzzles - error paths', () => {
 		const fd = buildFormData({
 			name: 'My Puzzle',
 			pieceCount: '25',
-			image: new Blob([new Uint8Array(100)], { type: 'image/png' })
+			image: new Blob([PNG_HEADER], { type: 'image/png' })
 		});
 		const req = new Request('http://localhost/puzzles', { method: 'POST', body: fd });
 		await app.fetch(req);
@@ -242,7 +260,7 @@ describe('POST /puzzles - error paths', () => {
 			const fd = buildFormData({
 				name: 'My Puzzle',
 				pieceCount: '25',
-				image: new Blob([new Uint8Array(100)], { type: 'image/png' })
+				image: new Blob([PNG_HEADER], { type: 'image/png' })
 			});
 			const req = new Request('http://localhost/puzzles', { method: 'POST', body: fd });
 			const res = await app.fetch(req);
