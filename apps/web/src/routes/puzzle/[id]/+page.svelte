@@ -517,7 +517,7 @@
 	}
 
 	function isRotationToggleLocked(): boolean {
-		return placedPieces.length > 0 || rotationEnabled;
+		return placedPieces.length > 0;
 	}
 
 	function handleReferenceDown(event?: PointerEvent | KeyboardEvent) {
@@ -647,6 +647,9 @@
 			referencePointerId = null;
 			referenceHoldSource = null;
 		}
+
+		isPanning = false;
+		activePanPointerId = null;
 	}
 
 	function handleWindowKeyDown(event: KeyboardEvent) {
@@ -880,6 +883,7 @@
 							class:can-pan={canPanBoard}
 							class:is-panning={isPanning}
 							bind:this={boardViewportElement}
+							data-testid="board-viewport"
 						>
 							<ZoomableBoardFrame scale={zoom} {panX} {panY} onWheel={handleBoardWheel}>
 								<div class="board-canvas" style="width: {currentPuzzle.imageWidth}px;">
