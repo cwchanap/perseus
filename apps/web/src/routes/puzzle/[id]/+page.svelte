@@ -99,6 +99,7 @@
 		window.addEventListener('pointerup', handleWindowPointerUp, true);
 		window.addEventListener('pointercancel', handleWindowPointerUp, true);
 		window.addEventListener('keydown', handleWindowKeyDown);
+		window.addEventListener('blur', handleWindowBlur);
 	}
 
 	onDestroy(() => {
@@ -127,6 +128,7 @@
 			window.removeEventListener('pointerup', handleWindowPointerUp, true);
 			window.removeEventListener('pointercancel', handleWindowPointerUp, true);
 			window.removeEventListener('keydown', handleWindowKeyDown);
+			window.removeEventListener('blur', handleWindowBlur);
 		}
 
 		clearSelectedPiece();
@@ -637,6 +639,14 @@
 
 		isPanning = false;
 		activePanPointerId = null;
+	}
+
+	function handleWindowBlur() {
+		if (referenceHoldSource === 'pointer') {
+			showReferenceOverlay = false;
+			referencePointerId = null;
+			referenceHoldSource = null;
+		}
 	}
 
 	function handleWindowKeyDown(event: KeyboardEvent) {

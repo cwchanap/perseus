@@ -36,6 +36,52 @@ const ADMIN_PASSKEY = (() => {
 const ADMIN_PASSKEY_DIGEST = createHash('sha256').update(ADMIN_PASSKEY).digest();
 const DATA_DIR = process.env.DATA_DIR || './data';
 
+// Detect image MIME type from magic bytes
+async function detectImageType(file: File | Blob): Promise<string | null> {
+	try {
+		const header = await file.slice(0, 12).arrayBuffer();
+		const bytes = new Uint8Array(header);
+		if (bytes.length < 4) return null;
+
+		// JPEG: starts with FF D8 FF
+		if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+			return 'image/jpeg';
+		}
+		// PNG: starts with 89 50 4E 47 0D 0A 1A 0A
+		if (
+			bytes[0] === 0x89 &&
+			bytes[1] === 0x50 &&
+			bytes[2] === 0x4e &&
+			bytes[3] === 0x47 &&
+			bytes.length >= 8 &&
+			bytes[4] === 0x0d &&
+			bytes[5] === 0x0a &&
+			bytes[6] === 0x1a &&
+			bytes[7] === 0x0a
+		) {
+			return 'image/png';
+		}
+		// WebP: starts with RIFF....WEBP
+		if (
+			bytes.length >= 12 &&
+			bytes[0] === 0x52 &&
+			bytes[1] === 0x49 &&
+			bytes[2] === 0x46 &&
+			bytes[3] === 0x46 &&
+			bytes[8] === 0x57 &&
+			bytes[9] === 0x45 &&
+			bytes[10] === 0x42 &&
+			bytes[11] === 0x50
+		) {
+			return 'image/webp';
+		}
+		return null;
+	} catch (error) {
+		console.error('Failed to detect image type from file bytes:', error);
+		return null;
+	}
+}
+
 // POST /api/admin/login - Admin login
 admin.post('/login', loginRateLimit, async (c) => {
 	try {
@@ -175,8 +221,12 @@ admin.post('/puzzles', requireAuth, async (c) => {
 			return c.json({ error: 'bad_request', message: 'File size exceeds 10MB limit' }, 400);
 		}
 
-		// Validate MIME type
-		if (!ALLOWED_MIME_TYPES.includes(image.type as (typeof ALLOWED_MIME_TYPES)[number])) {
+		// Validate file type via magic bytes instead of trusting image.type
+		const detectedType = await detectImageType(image);
+		if (
+			!detectedType ||
+			!ALLOWED_MIME_TYPES.includes(detectedType as (typeof ALLOWED_MIME_TYPES)[number])
+		) {
 			return c.json(
 				{ error: 'bad_request', message: 'Invalid file type. Allowed: JPEG, PNG, WebP' },
 				400
@@ -189,10 +239,10 @@ admin.post('/puzzles', requireAuth, async (c) => {
 		// Read image buffer
 		const imageBuffer = Buffer.from(await image.arrayBuffer());
 
-		// Persist original image for the /reference endpoint
+		// Persist original image for the /reference endpoint using detected type
 		await mkdir(getPuzzleDir(id), { recursive: true });
 		puzzleDirCreated = true;
-		await writeFile(getOriginalImagePath(id, image.type), imageBuffer);
+		await writeFile(getOriginalImagePath(id, detectedType), imageBuffer);
 
 		// Generate puzzle pieces and thumbnail
 		const result = await generatePuzzle({

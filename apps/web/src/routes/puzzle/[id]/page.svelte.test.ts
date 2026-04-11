@@ -321,6 +321,19 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.poll(() => page.getByTestId('reference-overlay').query()).toBeNull();
 	});
 
+	it('clears reference overlay on window blur', async () => {
+		await renderPuzzlePage();
+
+		const referenceButton = await page.getByLabelText('Reference').element();
+		referenceButton.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
+
+		await expect.element(page.getByTestId('reference-overlay')).toBeVisible();
+
+		window.dispatchEvent(new Event('blur'));
+
+		await expect.poll(() => page.getByTestId('reference-overlay').query()).toBeNull();
+	});
+
 	it('uses the selected tray piece when showing a hint target', async () => {
 		await renderPuzzlePage();
 		await selectPiece(1);
