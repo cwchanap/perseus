@@ -334,6 +334,51 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.poll(() => page.getByTestId('reference-overlay').query()).toBeNull();
 	});
 
+	it('allows toggling rotation off when restored with rotation enabled but no placed pieces', async () => {
+		setSavedProgress({
+			placedPieces: [],
+			rotationEnabled: true,
+			pieceRotations: { 0: 90, 1: 180 }
+		});
+
+		await renderPuzzlePage();
+
+		await expect
+			.element(page.getByLabelText('Rotation mode'))
+			.toHaveAttribute('aria-pressed', 'true');
+		await expect.element(page.getByLabelText('Rotation mode')).toBeEnabled();
+
+		await page.getByLabelText('Rotation mode').click();
+
+		await expect
+			.element(page.getByLabelText('Rotation mode'))
+			.toHaveAttribute('aria-pressed', 'false');
+	});
+
+	it('clears pan state on window blur', async () => {
+		await renderPuzzlePage();
+
+		// Zoom in so canPanBoard becomes true
+		await page.getByLabelText('Zoom in').click();
+
+		const puzzleBoard = await page.getByTestId('puzzle-board').element();
+		puzzleBoard.dispatchEvent(
+			new PointerEvent('pointerdown', {
+				bubbles: true,
+				pointerId: 3,
+				clientX: 100,
+				clientY: 100,
+				button: 0
+			})
+		);
+
+		await expect.element(page.getByTestId('board-viewport')).toHaveClass(/is-panning/);
+
+		window.dispatchEvent(new Event('blur'));
+
+		await expect.element(page.getByTestId('board-viewport')).not.toHaveClass(/is-panning/);
+	});
+
 	it('uses the selected tray piece when showing a hint target', async () => {
 		await renderPuzzlePage();
 		await selectPiece(1);
@@ -353,7 +398,7 @@ describe('Puzzle route gameplay integration', () => {
 			.element(page.getByLabelText('Rotation mode'))
 			.toHaveAttribute('aria-pressed', 'true');
 		await expect.element(page.getByRole('button', { name: 'Rotate piece 0' })).toBeVisible();
-		await expect.element(page.getByLabelText('Rotation mode')).toBeDisabled();
+		await expect.element(page.getByLabelText('Rotation mode')).toBeEnabled();
 
 		await page.getByRole('button', { name: 'Rotate piece 0' }).click();
 		await expect
