@@ -407,7 +407,6 @@
 		if (!isComplete && wasComplete) {
 			showCelebration = false;
 			isNewBest = false;
-			completionRecorded = false;
 			if (timerStarted) {
 				timer.resume();
 			}
@@ -556,6 +555,8 @@
 
 	function handlePieceRotate(pieceId: number) {
 		if (!rotationEnabled || isPiecePlaced(pieceId)) return;
+
+		ensureTimerStarted();
 
 		const nextPieceRotations = {
 			...pieceRotations,

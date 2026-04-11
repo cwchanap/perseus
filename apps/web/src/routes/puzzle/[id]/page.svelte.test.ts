@@ -569,7 +569,7 @@ describe('Puzzle route gameplay integration', () => {
 		expect(nextSlot.classList.contains('rejected')).toBe(false);
 	});
 
-	it('resets completion flags when undoing a solved puzzle and re-saves on redo', async () => {
+	it('does not re-record completion on undo/redo of the final move', async () => {
 		await renderPuzzlePage();
 
 		await placePiece(0, 0, 0);
@@ -588,9 +588,20 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.element(page.getByText('1/2')).toBeVisible();
 		await expect.poll(() => page.getByTestId('celebration-modal').query()).toBeNull();
 
-		// Redo — should re-complete and call saveCompletionTime again
+		// Redo — should re-show celebration but NOT call saveCompletionTime again
 		await page.getByLabelText('Redo').click();
 		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
-		expect(saveCompletionTime).toHaveBeenCalledTimes(2);
+		expect(saveCompletionTime).toHaveBeenCalledTimes(1);
+	});
+
+	it('starts the timer when rotating a piece before any placement', async () => {
+		await renderPuzzlePage();
+
+		await expect.element(page.getByTestId('game-timer')).toHaveClass('timer-block timer-off');
+
+		await page.getByLabelText('Rotation mode').click();
+		await page.getByRole('button', { name: 'Rotate piece 0' }).click();
+
+		await expect.element(page.getByTestId('game-timer')).toHaveClass('timer-block timer-on');
 	});
 });
