@@ -406,6 +406,8 @@
 
 		if (!isComplete && wasComplete) {
 			showCelebration = false;
+			isNewBest = false;
+			completionRecorded = false;
 			if (timerStarted) {
 				timer.resume();
 			}
