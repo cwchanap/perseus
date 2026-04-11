@@ -177,6 +177,7 @@ vi.mock('$lib/stores/timer', () => ({
 
 import { fetchPuzzle } from '$lib/services/api';
 import { saveProgress } from '$lib/services/progress';
+import { saveCompletionTime } from '$lib/services/stats';
 import { clearSelectedPiece, setSelectedPiece } from '$lib/stores/pieceSelection';
 
 function createPiece(
@@ -566,5 +567,30 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.element(page.getByText('NEXT MISSION')).toBeVisible();
 		const nextSlot = await page.getByTestId('piece-slot-0').element();
 		expect(nextSlot.classList.contains('rejected')).toBe(false);
+	});
+
+	it('resets completion flags when undoing a solved puzzle and re-saves on redo', async () => {
+		await renderPuzzlePage();
+
+		await placePiece(0, 0, 0);
+		await placePiece(1, 1, 0);
+
+		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+		expect(saveCompletionTime).toHaveBeenCalledTimes(1);
+
+		// Close the celebration modal via Escape on the modal element
+		const modal = await page.getByTestId('celebration-modal').element();
+		modal.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+		await expect.poll(() => page.getByTestId('celebration-modal').query()).toBeNull();
+
+		// Undo the last piece — should transition from complete to incomplete
+		await page.getByLabelText('Undo').click();
+		await expect.element(page.getByText('1/2')).toBeVisible();
+		await expect.poll(() => page.getByTestId('celebration-modal').query()).toBeNull();
+
+		// Redo — should re-complete and call saveCompletionTime again
+		await page.getByLabelText('Redo').click();
+		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+		expect(saveCompletionTime).toHaveBeenCalledTimes(2);
 	});
 });
