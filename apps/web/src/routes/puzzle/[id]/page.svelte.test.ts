@@ -178,7 +178,8 @@ vi.mock('$lib/stores/timer', () => ({
 import { fetchPuzzle } from '$lib/services/api';
 import { saveProgress } from '$lib/services/progress';
 import { saveCompletionTime } from '$lib/services/stats';
-import { clearSelectedPiece, setSelectedPiece } from '$lib/stores/pieceSelection';
+import { get } from 'svelte/store';
+import { clearSelectedPiece, selectedPieceId, setSelectedPiece } from '$lib/stores/pieceSelection';
 
 function createPiece(
 	id: number,
@@ -650,6 +651,28 @@ describe('Puzzle route gameplay integration', () => {
 		await page.getByLabelText('Redo').click();
 		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
 		expect(saveCompletionTime).toHaveBeenCalledTimes(1);
+	});
+
+	it('clears tray selection when redo re-places the selected piece', async () => {
+		await renderPuzzlePage();
+		await placePiece(0, 0, 0);
+
+		// Undo: piece 0 goes back to the tray
+		await page.getByLabelText('Undo').click();
+		await expect.element(page.getByText('0/2')).toBeVisible();
+
+		// Select piece 0 from the tray via keyboard
+		await selectPiece(0);
+		await expect
+			.element(page.getByLabelText('Puzzle piece 0'))
+			.toHaveAttribute('data-selected', 'true');
+
+		// Redo: piece 0 is placed back on the board
+		await page.getByLabelText('Redo').click();
+		await expect.element(page.getByText('1/2')).toBeVisible();
+
+		// Selection should be cleared since piece 0 is now on the board
+		expect(get(selectedPieceId)).toBeNull();
 	});
 
 	it('starts the timer when rotating a piece before any placement', async () => {

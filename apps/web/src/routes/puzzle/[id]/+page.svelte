@@ -514,6 +514,10 @@
 		updateHistoryControls();
 		persistProgress(placedPieces, rotationEnabled, pieceRotations);
 		syncCompletionState(previousCount, placedPieces);
+
+		if (currentSelectedPieceId !== null && placedPieceIds.has(currentSelectedPieceId)) {
+			clearSelectedPiece();
+		}
 	}
 
 	function isRotationToggleLocked(): boolean {
