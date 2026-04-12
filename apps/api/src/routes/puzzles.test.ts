@@ -164,6 +164,38 @@ describe('GET /:id - Get puzzle by ID', () => {
 		expect(body.hasReference).toBe(false);
 	});
 
+	it('returns 404 when puzzle ready flag is false', async () => {
+		vi.mocked(storage.getPuzzle).mockResolvedValue(makePuzzle({ ready: false }));
+
+		const res = await puzzles.fetch(new Request(`http://localhost/${PUZZLE_ID}`));
+		expect(res.status).toBe(404);
+		const body = (await res.json()) as any;
+		expect(body.error).toBe('not_found');
+		expect(body.message).toBe('Puzzle not found');
+		expect(storage.findOriginalImagePath).not.toHaveBeenCalled();
+	});
+
+	it('returns 404 when puzzle status is not ready', async () => {
+		vi.mocked(storage.getPuzzle).mockResolvedValue(makePuzzle({ status: 'processing' }));
+
+		const res = await puzzles.fetch(new Request(`http://localhost/${PUZZLE_ID}`));
+		expect(res.status).toBe(404);
+		const body = (await res.json()) as any;
+		expect(body.error).toBe('not_found');
+		expect(body.message).toBe('Puzzle not found');
+		expect(storage.findOriginalImagePath).not.toHaveBeenCalled();
+	});
+
+	it('returns 200 when puzzle has neither ready flag nor status', async () => {
+		vi.mocked(storage.getPuzzle).mockResolvedValue(makePuzzle({ status: undefined }));
+		vi.mocked(storage.findOriginalImagePath).mockReturnValue('/fake/original.jpg');
+
+		const res = await puzzles.fetch(new Request(`http://localhost/${PUZZLE_ID}`));
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as any;
+		expect(body.hasReference).toBe(true);
+	});
+
 	it('returns 404 with not_found when puzzle does not exist', async () => {
 		vi.mocked(storage.getPuzzle).mockResolvedValue(null);
 

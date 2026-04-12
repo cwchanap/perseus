@@ -90,6 +90,10 @@ puzzles.get('/:id', async (c) => {
 		return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
 	}
 
+	if (!isPuzzleReady(puzzle)) {
+		return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
+	}
+
 	return c.json({ ...puzzle, hasReference: puzzleHasReference(id) });
 });
 

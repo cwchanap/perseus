@@ -21,6 +21,15 @@ describe('History Helper', () => {
 			expect(h.getCurrent()).toBe('initial');
 		});
 
+		it('should throw when maxSize is less than 1', () => {
+			expect(() => createHistory<string>(undefined, 0)).toThrow(
+				new RangeError('History maxSize must be an integer greater than 0')
+			);
+			expect(() => createHistory<string>(undefined, -1)).toThrow(
+				new RangeError('History maxSize must be an integer greater than 0')
+			);
+		});
+
 		it('should accept max size', () => {
 			const h = createHistory<number>(0, 3);
 			h.push(1);

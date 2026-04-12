@@ -229,6 +229,17 @@ function setSavedProgress(progress: Partial<GameProgress>) {
 	};
 }
 
+function createDeferred<T>() {
+	let resolve!: (value: T) => void;
+	let reject!: (reason?: unknown) => void;
+	const promise = new Promise<T>((res, rej) => {
+		resolve = res;
+		reject = rej;
+	});
+
+	return { promise, resolve, reject };
+}
+
 async function renderPuzzlePage() {
 	vi.mocked(fetchPuzzle).mockResolvedValue(createMockPuzzle());
 	render(PuzzlePage);
@@ -390,6 +401,20 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.element(page.getByTestId('board-viewport')).not.toHaveClass(/is-panning/);
 	});
 
+	it('clears the selected tray piece on window blur', async () => {
+		await renderPuzzlePage();
+		await selectPiece(0);
+
+		expect(get(selectedPieceId)).toBe(0);
+
+		window.dispatchEvent(new Event('blur'));
+
+		expect(get(selectedPieceId)).toBeNull();
+		await expect
+			.element(page.getByLabelText('Puzzle piece 0'))
+			.toHaveAttribute('data-selected', 'false');
+	});
+
 	it('uses the selected tray piece when showing a hint target', async () => {
 		await renderPuzzlePage();
 		await selectPiece(1);
@@ -542,6 +567,27 @@ describe('Puzzle route gameplay integration', () => {
 		);
 	});
 
+	it('restores rotation mode from history snapshots during redo', async () => {
+		await renderPuzzlePage();
+
+		await page.getByLabelText('Rotation mode').click();
+		await page.getByRole('button', { name: 'Rotate piece 1' }).click();
+		await page.getByLabelText('Rotation mode').click();
+
+		await expect
+			.element(page.getByLabelText('Rotation mode'))
+			.toHaveAttribute('aria-pressed', 'false');
+
+		await page.getByLabelText('Undo').click();
+		await page.getByLabelText('Redo').click();
+
+		await expect
+			.element(page.getByLabelText('Rotation mode'))
+			.toHaveAttribute('aria-pressed', 'true');
+		await expect.element(page.getByRole('button', { name: 'Rotate piece 1' })).toBeVisible();
+		expect(saveProgress).toHaveBeenLastCalledWith('test-puzzle', [], true, { 0: 0, 1: 90 });
+	});
+
 	it('supports keyboard shortcuts for undo and redo without clearing hint state', async () => {
 		await renderPuzzlePage();
 		await placePiece(0, 0, 0);
@@ -636,6 +682,53 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.element(page.getByText('NEXT MISSION')).toBeVisible();
 		const nextSlot = await page.getByTestId('piece-slot-0').element();
 		expect(nextSlot.classList.contains('rejected')).toBe(false);
+	});
+
+	it('ignores stale puzzle load results after navigating to a new puzzle', async () => {
+		const firstLoad = createDeferred<Puzzle>();
+		const secondLoad = createDeferred<Puzzle>();
+		const nextPuzzle: Puzzle = {
+			...createMockPuzzle(),
+			id: 'next-puzzle',
+			name: 'Next Mission',
+			pieces: [
+				createPiece(0, 0, 0, { puzzleId: 'next-puzzle' }),
+				createPiece(1, 1, 0, { puzzleId: 'next-puzzle' })
+			]
+		};
+
+		vi.mocked(fetchPuzzle).mockImplementation((id: string) => {
+			if (id === 'test-puzzle') {
+				return firstLoad.promise;
+			}
+
+			if (id === 'next-puzzle') {
+				return secondLoad.promise;
+			}
+
+			return Promise.reject(new Error(`Unexpected puzzle id: ${id}`));
+		});
+
+		render(PuzzlePage);
+		await expect.poll(() => vi.mocked(fetchPuzzle).mock.calls.length).toBe(1);
+
+		mockPageStore.set({
+			url: { pathname: '/puzzle/next-puzzle' },
+			params: { id: 'next-puzzle' },
+			route: { id: '/puzzle/[id]' },
+			status: 200,
+			error: null
+		});
+
+		await expect.poll(() => vi.mocked(fetchPuzzle).mock.calls.length).toBe(2);
+
+		firstLoad.resolve(createMockPuzzle());
+		await expect.element(page.getByText('LOADING MISSION...')).toBeVisible();
+		await expect.poll(() => page.getByText('TEST MISSION').query()).toBeNull();
+
+		secondLoad.resolve(nextPuzzle);
+		await expect.element(page.getByText('NEXT MISSION')).toBeVisible();
+		await expect.poll(() => page.getByText('TEST MISSION').query()).toBeNull();
 	});
 
 	it('does not re-record completion on undo/redo of the final move', async () => {
