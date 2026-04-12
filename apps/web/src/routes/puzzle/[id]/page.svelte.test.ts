@@ -312,6 +312,16 @@ describe('Puzzle route gameplay integration', () => {
 		referenceButton.dispatchEvent(
 			new PointerEvent('pointerleave', { bubbles: true, pointerId: 1 })
 		);
+
+		await expect.poll(() => page.getByTestId('reference-overlay').query()).toBeNull();
+	});
+
+	it('dismisses reference overlay via global window pointerup with matching pointer id', async () => {
+		await renderPuzzlePage();
+
+		const referenceButton = await page.getByLabelText('Reference').element();
+		referenceButton.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
+
 		await expect.element(page.getByTestId('reference-overlay')).toBeVisible();
 
 		window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 2 }));
