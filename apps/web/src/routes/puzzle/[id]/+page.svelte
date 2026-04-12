@@ -533,11 +533,7 @@
 	}
 
 	function handleReferenceUp(event?: PointerEvent | KeyboardEvent) {
-		if (event instanceof PointerEvent) {
-			return;
-		}
-
-		if (referenceHoldSource === 'pointer') {
+		if (referenceHoldSource === 'pointer' && !(event instanceof PointerEvent)) {
 			return;
 		}
 
