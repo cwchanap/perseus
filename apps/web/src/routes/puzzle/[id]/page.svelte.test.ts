@@ -356,6 +356,19 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.poll(() => page.getByTestId('reference-overlay').query()).toBeNull();
 	});
 
+	it('clears keyboard-held reference overlay on window blur', async () => {
+		await renderPuzzlePage();
+
+		const referenceButton = await page.getByLabelText('Reference').element();
+		referenceButton.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+
+		await expect.element(page.getByTestId('reference-overlay')).toBeVisible();
+
+		window.dispatchEvent(new Event('blur'));
+
+		await expect.poll(() => page.getByTestId('reference-overlay').query()).toBeNull();
+	});
+
 	it('allows toggling rotation off when restored with rotation enabled but no placed pieces', async () => {
 		setSavedProgress({
 			placedPieces: [],

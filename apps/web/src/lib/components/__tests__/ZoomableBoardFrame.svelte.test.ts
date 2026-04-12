@@ -93,6 +93,49 @@ describe('ZoomableBoardFrame', () => {
 		});
 	});
 
+	describe('transition classes', () => {
+		it('includes transition classes when not panning', async () => {
+			render(ZoomableBoardFrame, {
+				scale: 1,
+				panX: 0,
+				panY: 0,
+				isPanning: false,
+				onWheel: vi.fn()
+			});
+
+			const frame = page.getByTestId('zoomable-board-frame');
+			await expect.element(frame).toHaveClass('transition-transform');
+			await expect.element(frame).toHaveClass('duration-100');
+			await expect.element(frame).toHaveClass('ease-out');
+		});
+
+		it('includes transition classes by default (no isPanning prop)', async () => {
+			render(ZoomableBoardFrame, {
+				scale: 1,
+				panX: 0,
+				panY: 0,
+				onWheel: vi.fn()
+			});
+
+			const frame = page.getByTestId('zoomable-board-frame');
+			await expect.element(frame).toHaveClass('transition-transform');
+		});
+
+		it('omits transition classes when panning', async () => {
+			render(ZoomableBoardFrame, {
+				scale: 1,
+				panX: 0,
+				panY: 0,
+				isPanning: true,
+				onWheel: vi.fn()
+			});
+
+			const frame = page.getByTestId('zoomable-board-frame');
+			await expect.element(frame).not.toHaveClass('transition-transform');
+			await expect.element(frame).not.toHaveClass('duration-100');
+		});
+	});
+
 	describe('wheel events', () => {
 		it('calls onWheel when wheel event occurs', async () => {
 			const onWheel = vi.fn();
