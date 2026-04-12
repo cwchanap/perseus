@@ -663,11 +663,9 @@
 	}
 
 	function handleWindowBlur() {
-		if (referenceHoldSource === 'pointer') {
-			showReferenceOverlay = false;
-			referencePointerId = null;
-			referenceHoldSource = null;
-		}
+		showReferenceOverlay = false;
+		referencePointerId = null;
+		referenceHoldSource = null;
 
 		clearSelectedPiece();
 		isPanning = false;
@@ -911,7 +909,7 @@
 							bind:this={boardViewportElement}
 							data-testid="board-viewport"
 						>
-							<ZoomableBoardFrame scale={zoom} {panX} {panY} onWheel={handleBoardWheel}>
+							<ZoomableBoardFrame scale={zoom} {panX} {panY} {isPanning} onWheel={handleBoardWheel}>
 								<div class="board-canvas mx-auto" style="width: {currentPuzzle.imageWidth}px;">
 									<PuzzleBoard
 										puzzle={currentPuzzle}
