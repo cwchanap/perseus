@@ -148,7 +148,9 @@ describe('POST /puzzles - success paths', () => {
 		await app.fetch(req);
 
 		expect(storageMock.createPuzzle).toHaveBeenCalledWith(
-			expect.objectContaining({ category: 'Animals' })
+			expect.objectContaining({
+				category: 'Animals'
+			})
 		);
 	});
 

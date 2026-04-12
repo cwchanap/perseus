@@ -11,6 +11,10 @@ export interface History<T> {
 }
 
 export function createHistory<T>(initialState?: T, maxSize = 50): History<T> {
+	if (!Number.isInteger(maxSize) || maxSize < 1) {
+		throw new RangeError('History maxSize must be an integer greater than 0');
+	}
+
 	let states: T[] = initialState !== undefined ? [initialState] : [];
 	let currentIndex = initialState !== undefined ? 0 : -1;
 	let hasInitialState = initialState !== undefined;

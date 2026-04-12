@@ -36,6 +36,7 @@
 	interface PlacementHistoryState {
 		placedPieces: PlacedPiece[];
 		pieceRotations: Record<number, Rotation>;
+		rotationEnabled: boolean;
 	}
 
 	let puzzle: Puzzle | null = $state(null);
@@ -78,13 +79,15 @@
 	let hintTimeout: ReturnType<typeof setTimeout> | null = null;
 	let placementHistory = createHistory<PlacementHistoryState>({
 		placedPieces: [],
-		pieceRotations: {}
+		pieceRotations: {},
+		rotationEnabled: false
 	});
 	let activePanPointerId: number | null = null;
 	let panStartClientX = 0;
 	let panStartClientY = 0;
 	let panOriginX = 0;
 	let panOriginY = 0;
+	let activeLoadRequestId = 0;
 
 	timerUnsubscribe = timer.subscribe((state) => {
 		timerState = state;
@@ -131,6 +134,7 @@
 			window.removeEventListener('blur', handleWindowBlur);
 		}
 
+		activeLoadRequestId += 1;
 		clearSelectedPiece();
 		timer.destroy();
 	});
@@ -214,11 +218,13 @@
 
 	function createPlacementHistoryState(
 		nextPlacedPieces: PlacedPiece[] = placedPieces,
-		nextPieceRotations: Record<number, Rotation> = pieceRotations
+		nextPieceRotations: Record<number, Rotation> = pieceRotations,
+		nextRotationEnabled = rotationEnabled
 	): PlacementHistoryState {
 		return {
 			placedPieces: clonePlacedPieces(nextPlacedPieces),
-			pieceRotations: clonePieceRotations(nextPieceRotations)
+			pieceRotations: clonePieceRotations(nextPieceRotations),
+			rotationEnabled: nextRotationEnabled
 		};
 	}
 
@@ -273,10 +279,15 @@
 
 	function resetPlacementHistory(
 		initialPlacedPieces: PlacedPiece[] = [],
-		initialPieceRotations: Record<number, Rotation> = {}
+		initialPieceRotations: Record<number, Rotation> = {},
+		initialRotationEnabled = rotationEnabled
 	) {
 		placementHistory = createHistory<PlacementHistoryState>(
-			createPlacementHistoryState(initialPlacedPieces, initialPieceRotations)
+			createPlacementHistoryState(
+				initialPlacedPieces,
+				initialPieceRotations,
+				initialRotationEnabled
+			)
 		);
 		updateHistoryControls();
 	}
@@ -332,26 +343,30 @@
 	}
 
 	async function loadPuzzle(id: string) {
+		const requestId = ++activeLoadRequestId;
 		loading = true;
 		error = null;
 		errorStatus = null;
 
 		try {
 			const loadedPuzzle = await fetchPuzzle(id);
+			if (requestId !== activeLoadRequestId) return;
+
 			const savedProgress = getProgress(id);
 			const restoredPlacedPieces = clonePlacedPieces(savedProgress?.placedPieces ?? []);
 			const restoredRotationEnabled = savedProgress?.rotationEnabled ?? false;
-
-			puzzle = loadedPuzzle;
-			shuffledPieceIds = shuffleArray(loadedPuzzle.pieces.map((piece) => piece.id));
-			placedPieces = restoredPlacedPieces;
-			rotationEnabled = restoredRotationEnabled;
-			pieceRotations = createInitialRotations(
+			const restoredPieceRotations = createInitialRotations(
 				loadedPuzzle,
 				restoredPlacedPieces,
 				restoredRotationEnabled,
 				savedProgress?.pieceRotations ?? {}
 			);
+
+			puzzle = loadedPuzzle;
+			shuffledPieceIds = shuffleArray(loadedPuzzle.pieces.map((piece) => piece.id));
+			placedPieces = restoredPlacedPieces;
+			rotationEnabled = restoredRotationEnabled;
+			pieceRotations = restoredPieceRotations;
 			showCelebration = false;
 			showReferenceOverlay = false;
 			clearHintTarget();
@@ -366,9 +381,11 @@
 			timerStarted = false;
 			isNewBest = false;
 			completionRecorded = false;
-			resetPlacementHistory(restoredPlacedPieces, pieceRotations);
+			resetPlacementHistory(restoredPlacedPieces, restoredPieceRotations, restoredRotationEnabled);
 			pendingViewportReset = true;
 		} catch (e) {
+			if (requestId !== activeLoadRequestId) return;
+
 			errorStatus = e instanceof ApiError ? e.status : null;
 			if (e instanceof ApiError && e.status === 404) {
 				clearProgress(id);
@@ -378,7 +395,9 @@
 				error = 'Failed to load mission';
 			}
 		} finally {
-			loading = false;
+			if (requestId === activeLoadRequestId) {
+				loading = false;
+			}
 		}
 	}
 
@@ -499,8 +518,9 @@
 		const previousCount = placedPieces.length;
 		placedPieces = clonePlacedPieces(previousState.placedPieces);
 		pieceRotations = clonePieceRotations(previousState.pieceRotations);
+		rotationEnabled = previousState.rotationEnabled;
 		updateHistoryControls();
-		persistProgress(placedPieces, rotationEnabled, pieceRotations);
+		persistProgress(placedPieces, previousState.rotationEnabled, pieceRotations);
 		syncCompletionState(previousCount, placedPieces);
 	}
 
@@ -511,8 +531,9 @@
 		const previousCount = placedPieces.length;
 		placedPieces = clonePlacedPieces(nextState.placedPieces);
 		pieceRotations = clonePieceRotations(nextState.pieceRotations);
+		rotationEnabled = nextState.rotationEnabled;
 		updateHistoryControls();
-		persistProgress(placedPieces, rotationEnabled, pieceRotations);
+		persistProgress(placedPieces, nextState.rotationEnabled, pieceRotations);
 		syncCompletionState(previousCount, placedPieces);
 
 		if (currentSelectedPieceId !== null && placedPieceIds.has(currentSelectedPieceId)) {
@@ -648,6 +669,7 @@
 			referenceHoldSource = null;
 		}
 
+		clearSelectedPiece();
 		isPanning = false;
 		activePanPointerId = null;
 	}
@@ -691,7 +713,7 @@
 		completionRecorded = false;
 		clearSelectedPiece();
 		shuffledPieceIds = shuffleArray(puzzle.pieces.map((piece) => piece.id));
-		resetPlacementHistory([], {});
+		resetPlacementHistory([], {}, false);
 		pendingViewportReset = true;
 	}
 
@@ -859,7 +881,7 @@
 					<div class="panel-header">
 						<span class="panel-tag">PUZZLE BOARD</span>
 					</div>
-					<div class="board-toolbar">
+					<div class="board-toolbar px-4 pt-3">
 						<PuzzleToolbar
 							onUndo={handleUndo}
 							onRedo={handleRedo}
@@ -879,14 +901,18 @@
 					</div>
 					<div class="board-wrap">
 						<div
-							class="board-viewport"
-							class:can-pan={canPanBoard}
-							class:is-panning={isPanning}
+							class={`board-viewport flex min-h-72 items-center justify-center overflow-hidden ${
+								isPanning
+									? 'is-panning cursor-grabbing'
+									: canPanBoard
+										? 'can-pan cursor-grab touch-none'
+										: ''
+							}`}
 							bind:this={boardViewportElement}
 							data-testid="board-viewport"
 						>
 							<ZoomableBoardFrame scale={zoom} {panX} {panY} onWheel={handleBoardWheel}>
-								<div class="board-canvas" style="width: {currentPuzzle.imageWidth}px;">
+								<div class="board-canvas mx-auto" style="width: {currentPuzzle.imageWidth}px;">
 									<PuzzleBoard
 										puzzle={currentPuzzle}
 										{placedPieces}
@@ -912,10 +938,13 @@
 						{#each shuffledPieces as piece (piece.id)}
 							{#if !isPiecePlaced(piece.id)}
 								<div
-									class="piece-slot"
-									class:rejected={rejectedPiece === piece.id}
-									class:animate-shake={rejectedPiece === piece.id}
-									class:hinted={activeHintPieceId === piece.id}
+									class={`piece-slot aspect-square border border-(--border) p-[0.2rem] transition-[border-color,box-shadow] duration-150 ${
+										activeHintPieceId === piece.id
+											? 'hinted border-(--accent) shadow-[0_0_14px_var(--accent-glow)]'
+											: rejectedPiece === piece.id
+												? 'rejected animate-shake border-(--hot) shadow-[0_0_12px_var(--hot-glow)]'
+												: ''
+									}`}
 									data-testid={`piece-slot-${piece.id}`}
 								>
 									<PuzzlePiece
@@ -1232,39 +1261,6 @@
 		overflow: auto;
 	}
 
-	.board-toolbar {
-		padding: 0.75rem 1rem 0;
-	}
-
-	.board-toolbar :global(.toolbar) {
-		flex-wrap: wrap;
-	}
-
-	.board-viewport {
-		min-height: 18rem;
-		overflow: hidden;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-	}
-
-	.board-viewport.can-pan {
-		cursor: grab;
-		touch-action: none;
-	}
-
-	.board-viewport.is-panning {
-		cursor: grabbing;
-	}
-
-	.board-canvas {
-		margin: 0 auto;
-	}
-
-	.board-canvas :global(.puzzle-board) {
-		width: 100%;
-	}
-
 	/* Inventory panel */
 	.inventory-panel {
 		background: var(--bg-1);
@@ -1293,23 +1289,6 @@
 		.pieces-grid {
 			grid-template-columns: repeat(4, 1fr);
 		}
-	}
-
-	.piece-slot {
-		aspect-ratio: 1;
-		border: 1px solid var(--border);
-		padding: 0.2rem;
-		transition: border-color 0.15s ease;
-	}
-
-	.piece-slot.rejected {
-		border-color: var(--hot);
-		box-shadow: 0 0 12px var(--hot-glow);
-	}
-
-	.piece-slot.hinted {
-		border-color: var(--accent);
-		box-shadow: 0 0 14px var(--accent-glow);
 	}
 
 	.complete-msg {
