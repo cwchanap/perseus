@@ -573,6 +573,10 @@
 
 		rotationEnabled = nextRotationEnabled;
 		pieceRotations = nextPieceRotations;
+		placementHistory.push(
+			createPlacementHistoryState(placedPieces, nextPieceRotations, nextRotationEnabled)
+		);
+		updateHistoryControls();
 		persistProgress(placedPieces, nextRotationEnabled, nextPieceRotations);
 	}
 
