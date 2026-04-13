@@ -580,7 +580,7 @@ describe('Puzzle route gameplay integration', () => {
 		);
 	});
 
-	it('restores rotation mode from history snapshots during redo', async () => {
+	it('restores rotation mode from history snapshots during undo and redo', async () => {
 		await renderPuzzlePage();
 
 		await page.getByLabelText('Rotation mode').click();
@@ -591,14 +591,60 @@ describe('Puzzle route gameplay integration', () => {
 			.element(page.getByLabelText('Rotation mode'))
 			.toHaveAttribute('aria-pressed', 'false');
 
+		// Undo reverts the rotation toggle-off
 		await page.getByLabelText('Undo').click();
-		await page.getByLabelText('Redo').click();
-
 		await expect
 			.element(page.getByLabelText('Rotation mode'))
 			.toHaveAttribute('aria-pressed', 'true');
 		await expect.element(page.getByRole('button', { name: 'Rotate piece 1' })).toBeVisible();
 		expect(saveProgress).toHaveBeenLastCalledWith('test-puzzle', [], true, { 0: 0, 1: 90 });
+
+		// Redo re-applies the rotation toggle-off
+		await page.getByLabelText('Redo').click();
+		await expect
+			.element(page.getByLabelText('Rotation mode'))
+			.toHaveAttribute('aria-pressed', 'false');
+		expect(saveProgress).toHaveBeenLastCalledWith('test-puzzle', [], false, { 0: 0, 1: 90 });
+	});
+
+	it('pushes rotation toggle onto undo stack without any piece placements', async () => {
+		await renderPuzzlePage();
+
+		await expect.element(page.getByLabelText('Undo')).toBeDisabled();
+
+		// Toggle rotation on — should be undoable
+		await page.getByLabelText('Rotation mode').click();
+		await expect
+			.element(page.getByLabelText('Rotation mode'))
+			.toHaveAttribute('aria-pressed', 'true');
+		await expect.element(page.getByLabelText('Undo')).toBeEnabled();
+
+		// Toggle rotation off — another undo step
+		await page.getByLabelText('Rotation mode').click();
+		await expect
+			.element(page.getByLabelText('Rotation mode'))
+			.toHaveAttribute('aria-pressed', 'false');
+
+		// Undo should revert the toggle-off
+		await page.getByLabelText('Undo').click();
+		await expect
+			.element(page.getByLabelText('Rotation mode'))
+			.toHaveAttribute('aria-pressed', 'true');
+		expect(saveProgress).toHaveBeenLastCalledWith('test-puzzle', [], true, { 0: 0, 1: 0 });
+
+		// Undo again should revert the toggle-on
+		await page.getByLabelText('Undo').click();
+		await expect
+			.element(page.getByLabelText('Rotation mode'))
+			.toHaveAttribute('aria-pressed', 'false');
+		expect(saveProgress).toHaveBeenLastCalledWith('test-puzzle', [], false, {});
+
+		// Redo should re-enable rotation
+		await page.getByLabelText('Redo').click();
+		await expect
+			.element(page.getByLabelText('Rotation mode'))
+			.toHaveAttribute('aria-pressed', 'true');
+		expect(saveProgress).toHaveBeenLastCalledWith('test-puzzle', [], true, { 0: 0, 1: 0 });
 	});
 
 	it('supports keyboard shortcuts for undo and redo without clearing hint state', async () => {
