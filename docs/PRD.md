@@ -1,22 +1,24 @@
 # Perseus - Product Requirements Document
 
-> **Version:** 1.0
-> **Last Updated:** January 2026
-> **Status:** Draft
-> **Owner:** Product Team
+> **Version:** 2.0
+> **Last Updated:** 2026-03-31
+> **Status:** Current product baseline
+> **Owner:** Product + Engineering
+> **Source of truth:** Repository implementation on `main`
 
 ## Table of Contents
 
 1. [Executive Summary](#executive-summary)
-2. [Background & Context](#background--context)
-3. [Goals & Success Criteria](#goals--success-criteria)
-4. [User Personas](#user-personas)
-5. [Feature Roadmap](#feature-roadmap)
-6. [Detailed Requirements](#detailed-requirements)
-7. [Metrics & Analytics](#metrics--analytics)
-8. [Launch Strategy](#launch-strategy)
-9. [Dependencies & Risks](#dependencies--risks)
+2. [Product Overview](#product-overview)
+3. [Current Product Scope](#current-product-scope)
+4. [Requirements Status](#requirements-status)
+5. [Current Product Constraints](#current-product-constraints)
+6. [Roadmap](#roadmap)
+7. [Metrics & Analytics Status](#metrics--analytics-status)
+8. [Quality & Testing Status](#quality--testing-status)
+9. [Risks & Dependencies](#risks--dependencies)
 10. [Appendix](#appendix)
+11. [Document History](#document-history)
 
 ---
 
@@ -24,1201 +26,465 @@
 
 ### Vision
 
-Transform Perseus from a single-player puzzle application into an engaging, community-driven puzzle platform that combines competitive gameplay, social interaction, and personalized progression.
+Perseus is currently a polished single-player jigsaw puzzle arcade with an admin content
+pipeline and cloud-based puzzle generation. The near-term goal is to strengthen the solo
+gameplay loop and operating model before expanding into social, competitive, or account-based
+features.
 
-### Current State
+### Current Product Position
 
-Perseus is a web-based jigsaw puzzle application where players solve interactive puzzles through drag-and-drop mechanics. Admins can upload images to generate puzzles with configurable piece counts (9-100 pieces) and interlocking edges.
+As implemented today, Perseus lets anonymous players browse ready puzzles, filter them by
+category, solve them with mouse, touch, or keyboard input, and track personal bests and
+in-progress boards locally in the browser. Admins can authenticate with a passkey, upload
+source images, monitor asynchronous processing, and delete puzzles when needed.
 
-**Current Users:** Early adopters, casual puzzle enthusiasts
-**Current Engagement:** Single-session gameplay, no retention features
-**Current Monetization:** None (free platform)
+In the production architecture, Perseus runs on Cloudflare Workers and uses Cloudflare
+Workflows, R2, KV, and a Durable Object to generate and store puzzle assets.
 
-### Strategic Goals
+### What Perseus is today
 
-1. **Increase Engagement** - Boost daily active users from baseline to 1,000+ within 3 months
-2. **Build Community** - Enable social features to create viral growth loops
-3. **Improve Retention** - Achieve 40%+ 7-day return rate through gamification
-4. **Expand Accessibility** - Make puzzles playable by users of all abilities
-5. **Enable Content Growth** - Provide admins with tools to scale content creation
+- A single-player puzzle experience with local progress and best-time tracking
+- A curated content platform with admin upload and processing workflows
+- A Cloudflare-native backend for puzzle generation and asset delivery
+- A dark, arcade-styled web experience with category-based discovery
 
-### Key Metrics
+### What Perseus is not yet
 
-| Metric                | Current | 3-Month Target | 6-Month Target |
-| --------------------- | ------- | -------------- | -------------- |
-| Daily Active Users    | ~50     | 1,000          | 5,000          |
-| 7-Day Retention       | ~10%    | 40%            | 50%            |
-| Avg. Session Duration | ~5 min  | 10 min         | 15 min         |
-| Puzzles Completed/Day | ~20     | 500            | 2,000          |
-
----
-
-## Background & Context
-
-### Market Opportunity
-
-The digital puzzle market is growing, with competitors like Jigsaw Planet (2M+ users) and Jigidi (5M+ users) demonstrating strong demand. However, these platforms lack:
-
-- **Modern UX**: Outdated interfaces, poor mobile experience
-- **Social Features**: Limited multiplayer or community elements
-- **Gamification**: Minimal progression systems or achievements
-
-Perseus can differentiate by offering a modern, social-first puzzle experience.
-
-### User Research Insights
-
-**Survey Results (n=50 players):**
-
-- 80% want timing/statistics to track improvement
-- 65% interested in competing against friends or global players
-- 55% would play daily if there were new challenges
-- 40% frustrated by lack of progress tracking
-
-**Usability Testing:**
-
-- Current completion rate: 60% (40% abandon mid-puzzle)
-- Main abandonment reason: "No sense of progression"
-- Positive feedback: Smooth drag-and-drop, attractive puzzle visuals
-
-### Current Limitations
-
-**Player Experience:**
-
-- No timing or statistics
-- No difficulty variations
-- No help for stuck players
-- Limited controls for large puzzles
-
-**Engagement:**
-
-- No reason to return daily
-- No goals or achievements
-- No puzzle organization
-- No sense of collection
-
-**Social:**
-
-- Entirely single-player
-- No leaderboards or rankings
-- Cannot share accomplishments
-- No collaborative play
-
-**Admin:**
-
-- Manual puzzle creation only
-- No content scheduling
-- No performance analytics
-- Limited puzzle variety
-
-**Technical:**
-
-- Device-locked progress (localStorage only)
-- No offline support
-- Limited accessibility features
-- No dark mode
+- No player accounts or cloud progress sync
+- No daily challenge or leaderboards
+- No achievements, sharing, multiplayer, hints, undo/redo, or offline mode
+- No product analytics baseline in the codebase
 
 ---
 
-## Goals & Success Criteria
+## Product Overview
 
-### Business Goals
+### Primary users
 
-**Q1 2026:**
+1. **Players**  
+   Anonymous visitors who want a quick, polished jigsaw puzzle experience with some replay
+   value.
 
-- Launch core engagement features (timer, categories, daily challenge)
-- Achieve 1,000 DAU
-- Establish baseline metrics for iteration
+2. **Admins**  
+   Internal operators who upload images, categorize puzzles, monitor processing, and remove
+   broken or unwanted content.
 
-**Q2 2026:**
+### Core player journey
 
-- Launch social features (leaderboards, sharing)
-- Achieve 40% 7-day retention
-- Generate 10,000 puzzle completions/week
+1. Land on the gallery at `/`
+2. Browse available puzzles and optionally filter by category
+3. Open a puzzle and solve it with drag-and-drop, touch, or keyboard
+4. See timer, progress, and personal best feedback
+5. Replay to beat a local personal best
 
-**Q3 2026:**
+### Core admin journey
 
-- Launch advanced features (multiplayer, PWA)
-- Achieve 5,000 DAU
-- Enable content partnerships (photographers, artists)
-
-### Product Goals
-
-**Engagement:**
-
-- Players complete 2+ puzzles per session (currently 1)
-- Average session duration 10+ minutes (currently ~5 min)
-- Daily challenge participation: 30% of DAU
-
-**Retention:**
-
-- 7-day return rate: 40% (currently ~10%)
-- 30-day return rate: 20% (currently ~5%)
-- Daily challenge streak: 500+ active 7-day streaks
-
-**Social:**
-
-- 20% of completions result in social share
-- 100+ active multiplayer rooms daily
-- Leaderboard submission rate: 30% of completions
-
-**Accessibility:**
-
-- Lighthouse accessibility score: 100
-- WCAG AA compliance: 100%
-- Keyboard-only navigation: Fully supported
+1. Log in via passkey at `/admin/login`
+2. Open the protected admin panel at `/admin`
+3. Upload an image with name and optional category
+4. Wait while the cloud workflow generates puzzle assets
+5. Monitor progress, failure, or ready status
+6. Delete or force-delete puzzles when necessary
 
 ---
 
-## User Personas
+## Current Product Scope
 
-### Persona 1: Casual Player (Primary - 60% of users)
+### Player experience
 
-**Profile:**
+The current player product is centered on a single-player gallery and solve loop:
 
-- Age: 25-45
-- Device: Mobile & Desktop
-- Play Time: 15-30 min sessions during breaks
-- Motivation: Relaxation, mental break from work
+- Public gallery of ready puzzles
+- Client-side category filtering and category badges
+- Puzzle solving with mouse drag-and-drop
+- Touch drag emulation for mobile and touch devices
+- Keyboard piece selection and placement
+- Progress bar and placed-piece counter
+- Auto-starting timer with tab visibility pause/resume behavior
+- Local per-puzzle progress persistence in `localStorage`
+- Local per-puzzle personal best tracking in `localStorage`
+- Completion modal with replay flow
 
-**Pain Points:**
+### Admin experience
 
-- Gets stuck on difficult puzzles, no hints available
-- Can't track improvement over time
-- Bored without variety or progression
-- Forgets to return without reminders
+The current admin product supports content creation and moderation:
 
-**Needs:**
+- Passkey-based authentication
+- Session-protected admin routes
+- Upload flow with client-side image preview
+- Optional category assignment
+- Async cloud generation with progress polling
+- Status-aware admin list for `processing`, `ready`, and `failed` puzzles
+- Delete and force-delete actions
 
-- Quick, satisfying puzzle experiences
-- Optional hints when stuck
-- Sense of progress and achievement
-- Reasons to return daily
+### Platform scope
 
-**Success Scenario:**
-"I complete a 25-piece puzzle during lunch, beat my personal best, earn an achievement, and get excited about tomorrow's daily challenge."
+The deployed product architecture uses a Cloudflare-native backend:
 
----
-
-### Persona 2: Puzzle Enthusiast (Secondary - 25% of users)
-
-**Profile:**
-
-- Age: 35-65
-- Device: Desktop preferred, occasional tablet
-- Play Time: 1-2 hour sessions, multiple times per week
-- Motivation: Challenge, mastery, competition
-
-**Pain Points:**
-
-- No way to compete against others
-- Can't track detailed statistics
-- Large puzzles (100 pieces) difficult to navigate
-- No difficulty variations
-
-**Needs:**
-
-- Challenging puzzles with statistics
-- Leaderboards and rankings
-- Zoom/pan controls for large puzzles
-- Achievement system
-
-**Success Scenario:**
-"I complete a 100-piece puzzle, see I ranked #15 globally, share my time on Twitter, and challenge my friend to beat it."
+- Hono API routes for public and admin operations
+- Cloudflare Worker serving API routes and static web assets
+- Cloudflare Workflow for async piece generation
+- Durable Object for authoritative metadata updates
+- KV for cached metadata, session keys, and rate-limit state
+- R2 for original images, thumbnails, and generated piece images
 
 ---
 
-### Persona 3: Social Player (Emerging - 15% of users)
+## Requirements Status
 
-**Profile:**
+### 1. Player discovery and gallery
 
-- Age: 18-35
-- Device: Mobile-first
-- Play Time: Short bursts, often with friends
-- Motivation: Social connection, fun competition
+| Requirement                              | Status          | Notes                                                                  |
+| ---------------------------------------- | --------------- | ---------------------------------------------------------------------- |
+| Gallery loads available puzzles from API | Implemented     | Public gallery calls `GET /api/puzzles` and renders ready puzzles only |
+| Empty, loading, and error states         | Implemented     | All major gallery states are handled in UI                             |
+| Category filtering                       | Implemented     | `All` plus 7 categories; filtering is client-side                      |
+| Category badges on puzzle cards          | Implemented     | Badge is shown when a puzzle has a category                            |
+| Search                                   | Not implemented | No text search UI or search endpoint exists                            |
+| Pagination / infinite scroll             | Not implemented | Gallery loads all ready puzzles in one response                        |
 
-**Pain Points:**
+**Implementation references:** `apps/web/src/routes/+page.svelte`,
+`apps/web/src/lib/components/PuzzleCard.svelte`,
+`apps/web/src/lib/components/CategoryFilter.svelte`, `packages/types/src/index.ts`
 
-- Can't play with friends
-- No way to share accomplishments
-- Solo experience feels isolating
-- No friendly competition
+### 2. Puzzle gameplay
 
-**Needs:**
+| Requirement                           | Status          | Notes                                              |
+| ------------------------------------- | --------------- | -------------------------------------------------- |
+| Board rendering and piece tray        | Implemented     | Grid board and shuffled inventory are fully wired  |
+| Mouse drag-and-drop placement         | Implemented     | Uses HTML drag and drop on board cells             |
+| Touch drag support                    | Implemented     | Touch gestures synthesize drag/drop events         |
+| Keyboard placement                    | Implemented     | Pieces and drop zones support keyboard interaction |
+| Incorrect placement feedback          | Implemented     | Rejected piece gets temporary shake feedback       |
+| Progress bar and placed-piece counter | Implemented     | Visible during play                                |
+| Completion modal with replay          | Implemented     | Includes final time and replay/back actions        |
+| Hint system                           | Not implemented | No hint UI or hint logic exists                    |
+| Undo / redo                           | Not implemented | No move history stack exists                       |
+| Zoom / pan                            | Not implemented | No viewport controls or pinch-zoom exist           |
+| Reference image overlay               | Not implemented | No "peek at full image" flow exists                |
+| Piece rotation / difficulty modes     | Not implemented | Current product uses fixed orientation             |
 
-- Multiplayer co-op mode
-- Easy sharing to social media
-- Leaderboards with friends
-- Fun, casual atmosphere
+**Implementation references:** `apps/web/src/routes/puzzle/[id]/+page.svelte`,
+`apps/web/src/lib/components/PuzzleBoard.svelte`,
+`apps/web/src/lib/components/PuzzlePiece.svelte`
 
-**Success Scenario:**
-"I invite my friend to solve a puzzle together in real-time, we complete it, and I share our time on Instagram to challenge other friends."
+### 3. Timer, replay, and personal progress
 
----
+| Requirement                         | Status          | Notes                                      |
+| ----------------------------------- | --------------- | ------------------------------------------ |
+| Game timer                          | Implemented     | Starts on first placement                  |
+| Pause timer when tab becomes hidden | Implemented     | Visibility-aware timer behavior exists     |
+| Personal best per puzzle            | Implemented     | Stored locally only                        |
+| Completion count per puzzle         | Implemented     | Stored locally only                        |
+| Resume in-progress puzzle           | Implemented     | Restores placed pieces from `localStorage` |
+| Cross-device progress sync          | Not implemented | No player account or server-side progress  |
+| Global / shared stats               | Not implemented | No server-side score submission exists     |
 
-## Feature Roadmap
+**Important limitation:** Progress and stats are device-local only and can be lost if browser
+storage is cleared.
 
-### Phase 1: Core Engagement (Weeks 1-6)
+**Implementation references:** `apps/web/src/lib/stores/timer.ts`,
+`apps/web/src/lib/components/GameTimer.svelte`, `apps/web/src/lib/services/progress.ts`,
+`apps/web/src/lib/services/stats.ts`
 
-**Goal:** Increase session duration and create habit loops
+### 4. Accessibility and input coverage
 
-| Feature                      | User Value                                  | Priority    | Complexity |
-| ---------------------------- | ------------------------------------------- | ----------- | ---------- |
-| Timer & Statistics           | Track improvement, personal goals           | Must Have   | Low        |
-| Puzzle Categories            | Better discovery, themed collections        | Must Have   | Low        |
-| Daily Challenge              | Daily return habit, leaderboard competition | Should Have | Medium     |
-| Dark Mode                    | Comfortable nighttime play                  | Should Have | Low        |
-| Sound Effects                | Satisfying feedback, enhanced experience    | Should Have | Low        |
-| Accessibility (Keyboard Nav) | Inclusive gameplay                          | Must Have   | Medium     |
+| Requirement                                   | Status                | Notes                                             |
+| --------------------------------------------- | --------------------- | ------------------------------------------------- |
+| Keyboard support for core puzzle interactions | Implemented           | Piece selection and placement are supported       |
+| Focus handling in completion modal            | Implemented           | Focus trap and focus restore behavior are present |
+| ARIA roles and labels on key controls         | Implemented           | Present across puzzle and admin flows             |
+| Reduced-motion-aware UI treatments            | Partially implemented | Some motion-safe / motion-reduce handling exists  |
+| Screen reader placement announcements         | Not implemented       | No live region updates for gameplay events        |
+| High contrast mode                            | Not implemented       | No dedicated accessibility theme exists           |
+| Dedicated accessibility settings              | Not implemented       | No settings surface exists                        |
 
-**Success Metrics:**
+**Implementation references:** `apps/web/src/routes/puzzle/[id]/+page.svelte`,
+`apps/web/src/lib/components/PuzzleBoard.svelte`,
+`apps/web/src/lib/components/PuzzlePiece.svelte`,
+`apps/web/src/routes/admin/+layout.svelte`
 
-- Session duration: 5min → 10min
-- Completion rate: 60% → 75%
-- Return rate (next day): 15% → 25%
+### 5. Admin authentication and route protection
 
----
+| Requirement                        | Status          | Notes                                                                 |
+| ---------------------------------- | --------------- | --------------------------------------------------------------------- |
+| Passkey login                      | Implemented     | Admin login posts to `/api/admin/login`                               |
+| Protected admin routes             | Implemented     | Client checks session before rendering protected routes               |
+| Logout                             | Implemented     | Session cookie is cleared; Worker variant also revokes stored session |
+| Login rate limiting                | Implemented     | 5 attempts per window with lockout behavior                           |
+| Player accounts                    | Not implemented | Admin is the only authenticated role                                  |
+| Multiple admin roles / permissions | Not implemented | Single admin role only                                                |
 
-### Phase 2: Gamification & Social (Weeks 7-12)
+**Implementation references:** `apps/web/src/routes/admin/login/+page.svelte`,
+`apps/web/src/routes/admin/+layout.svelte`, `apps/api/src/routes/admin.worker.ts`,
+`apps/api/src/middleware/auth.worker.ts`,
+`apps/api/src/middleware/rate-limit.worker.ts`
 
-**Goal:** Build community and enable viral growth
+### 6. Admin content management
 
-| Feature             | User Value                             | Priority    | Complexity |
-| ------------------- | -------------------------------------- | ----------- | ---------- |
-| Achievement System  | Goals, progression, motivation         | Should Have | Medium     |
-| Global Leaderboards | Competition, status                    | Should Have | Medium     |
-| Share Completion    | Viral growth, social proof             | Should Have | Medium     |
-| Hint System         | Reduce frustration, improve completion | Should Have | Low        |
-| Undo/Redo           | Safety net, experimentation            | Should Have | Low        |
+| Requirement                         | Status          | Notes                                                   |
+| ----------------------------------- | --------------- | ------------------------------------------------------- |
+| Upload image and create puzzle      | Implemented     | Name, optional category, and image upload are supported |
+| Image validation                    | Implemented     | File size and MIME validation are enforced              |
+| Category assignment                 | Implemented     | Uses shared category list                               |
+| Async processing status             | Implemented     | Admin list shows `processing`, `ready`, and `failed`    |
+| Processing progress display         | Implemented     | Generated piece count is shown while processing         |
+| Delete ready puzzle                 | Implemented     | Available in admin list                                 |
+| Force-delete processing puzzle      | Implemented     | Explicit force-delete flow exists                       |
+| Edit puzzle metadata after creation | Not implemented | No rename, recategorize, or republish flow exists       |
+| Schedule puzzle publication         | Not implemented | No scheduling or publish date support exists            |
+| Daily challenge assignment          | Not implemented | No date-based featured puzzle model exists              |
 
-**Success Metrics:**
+**Implementation references:** `apps/web/src/routes/admin/+page.svelte`,
+`apps/api/src/routes/admin.worker.ts`, `packages/types/src/index.ts`
 
-- 7-day retention: 25% → 40%
-- Social shares: 0 → 20% of completions
-- Achievement unlocks: 50% of players unlock 3+
+### 7. Backend and platform operations
 
----
+| Requirement                          | Status          | Notes                                                        |
+| ------------------------------------ | --------------- | ------------------------------------------------------------ |
+| Public API for ready puzzles         | Implemented     | Public API exposes ready content only                        |
+| Admin API for all puzzle states      | Implemented     | Admin API includes processing and failed items               |
+| Static asset serving from API Worker | Implemented     | Production Worker also serves web assets                     |
+| Async cloud puzzle generation        | Implemented     | Cloudflare Workflow processes uploads                        |
+| Strongly consistent metadata updates | Implemented     | Durable Object is authoritative                              |
+| Cached metadata store                | Implemented     | KV is used as an eventually consistent cache                 |
+| Observability / invocation logs      | Implemented     | Pulumi enables Worker observability and logs                 |
+| Product analytics / event tracking   | Not implemented | No analytics SDK or event pipeline exists                    |
+| Realtime multiplayer infrastructure  | Not implemented | No room model, websocket flow, or shared player state exists |
 
-### Phase 3: Advanced Features (Weeks 13-20)
-
-**Goal:** Deepen engagement and enable advanced use cases
-
-| Feature                     | User Value                  | Priority    | Complexity |
-| --------------------------- | --------------------------- | ----------- | ---------- |
-| Multiplayer Co-op           | Social play, unique feature | Could Have  | High       |
-| PWA & Offline Support       | Install app, play anywhere  | Should Have | Medium     |
-| Cloud Progress Sync         | Cross-device continuity     | Should Have | Medium     |
-| Zoom & Pan                  | Better UX for large puzzles | Should Have | Medium     |
-| Piece Rotation (Difficulty) | Increased challenge         | Could Have  | Medium     |
-
-**Success Metrics:**
-
-- PWA installs: 10% of active users
-- Multiplayer sessions: 100+ daily
-- Cloud sync adoption: 30% of users
-
----
-
-### Phase 4: Content & Analytics (Weeks 21+)
-
-**Goal:** Scale content and optimize performance
-
-| Feature                   | User Value                    | Priority    | Complexity |
-| ------------------------- | ----------------------------- | ----------- | ---------- |
-| Admin Analytics Dashboard | Data-driven content decisions | Should Have | Medium     |
-| Puzzle Scheduling         | Automated content pipeline    | Should Have | Low        |
-| Bulk Upload               | Efficient content creation    | Could Have  | Low        |
-| Custom Piece Shapes       | Variety, novelty              | Could Have  | High       |
-
----
-
-## Detailed Requirements
-
-### 1. Timer & Statistics
-
-**Problem:** Players have no way to track performance or improvement over time.
-
-**User Stories:**
-
-- As a casual player, I want to see how long I'm taking so I can set personal goals
-- As an enthusiast, I want to beat my personal best and track improvement
-- As a competitive player, I want accurate timing for leaderboard submissions
-
-**Requirements:**
-
-| ID  | Requirement                                            | Priority    | User Value                         |
-| --- | ------------------------------------------------------ | ----------- | ---------------------------------- |
-| T-1 | Display elapsed timer during gameplay (MM:SS format)   | Must Have   | Progress awareness, goal-setting   |
-| T-2 | Pause timer when browser tab is inactive               | Must Have   | Fair timing, prevents cheating     |
-| T-3 | Show completion time in celebration modal              | Must Have   | Immediate feedback, satisfaction   |
-| T-4 | Store personal best time per puzzle                    | Should Have | Track improvement, motivation      |
-| T-5 | Display personal best on puzzle card and game page     | Should Have | Clear goals, competition with self |
-| T-6 | Track "first-try accuracy" (% pieces placed correctly) | Could Have  | Skill insight, mastery tracking    |
-
-**Success Criteria:**
-
-- 80% of players view timer during first session
-- 40% of players attempt to beat personal best on repeat plays
-- 15% increase in puzzle replay rate
-
-**Out of Scope:**
-
-- Global average times (covered by leaderboards)
-- Time-based achievements (separate feature)
-- Timer customization settings
+**Implementation references:** `apps/api/src/worker.ts`,
+`apps/api/src/routes/puzzles.worker.ts`, `apps/workflows/src/index.ts`,
+`packages/infrastructure/src/index.ts`, `packages/infrastructure/src/workers.ts`
 
 ---
 
-### 2. Puzzle Categories & Collections
+## Current Product Constraints
 
-**Problem:** Players can't find puzzles matching their interests or track completion progress.
+### Fixed production puzzle size
 
-**User Stories:**
+The current production upload flow is intentionally fixed to **225 pieces (15x15)**. The web
+admin UI hard-codes this value, shared types define `DEFAULT_PIECE_COUNT = 225`, and the Worker
+admin route rejects other piece counts.
 
-- As a player, I want to filter puzzles by theme so I can find ones I enjoy
-- As a collector, I want to see which puzzles I've completed and which remain
-- As an admin, I want to organize content for better discovery
+This is the most important current gameplay constraint and should be treated as part of the
+product baseline until a broader difficulty or piece-count strategy is implemented.
 
-**Requirements:**
+### Public content visibility
 
-| ID  | Requirement                                                                       | Priority    | User Value                        |
-| --- | --------------------------------------------------------------------------------- | ----------- | --------------------------------- |
-| C-1 | Predefined categories: Animals, Nature, Art, Architecture, Abstract, Food, Travel | Must Have   | Better discovery, personalization |
-| C-2 | Admin assigns category when creating puzzle                                       | Must Have   | Organized content                 |
-| C-3 | Category filter dropdown on gallery page                                          | Must Have   | Quick filtering, focused browsing |
-| C-4 | Visual category badge on puzzle cards                                             | Should Have | At-a-glance identification        |
-| C-5 | Completion checkmark on solved puzzles                                            | Should Have | Sense of progress, collection     |
-| C-6 | "My Collection" view showing completed puzzles                                    | Should Have | Achievement visibility            |
-| C-7 | Category progress tracking (e.g., "5/10 Nature puzzles")                          | Could Have  | Completionist motivation          |
+Only puzzles with `status: 'ready'` are visible in the public gallery and public puzzle routes.
+Processing or failed puzzles remain admin-only.
 
-**Success Criteria:**
+### Local-only player state
 
-- 60% of users filter by category within first 3 sessions
-- 25% of users complete all puzzles in at least one category
-- Category-based completion increases by 30%
+Player progress and best times are stored only in the browser. There is no user identity, no
+server-side progress backup, and no shared leaderboard submission path.
 
----
+### Single-theme product
 
-### 3. Daily Challenge
+The current UI ships in a dark neon visual style. There is **no theme toggle**, even though the
+product already presents a dark visual treatment.
 
-**Problem:** No reason to return daily; no competitive element to drive engagement.
+### Storage model is content-first, not player-first
 
-**User Stories:**
+The current storage stack is optimized for puzzle metadata and generated assets, not for
+user-centric features such as leaderboards, cross-device sync, social graphs, or long-lived
+player profiles.
 
-- As a casual player, I want a daily puzzle to give me a reason to return
-- As a competitive player, I want to compare my time against others
-- As a streak-focused player, I want to maintain consecutive days
+### Dual runtime parity is not perfect
 
-**Requirements:**
-
-| ID  | Requirement                                            | Priority    | User Value                          |
-| --- | ------------------------------------------------------ | ----------- | ----------------------------------- |
-| D-1 | Featured "Daily Challenge" section on homepage         | Must Have   | Clear call-to-action, visibility    |
-| D-2 | Same puzzle for all players on a given day (UTC-based) | Must Have   | Fair competition, community feeling |
-| D-3 | Leaderboard showing top 10 times for the day           | Should Have | Competition, status                 |
-| D-4 | Player's own rank and time displayed                   | Should Have | Personal context, motivation        |
-| D-5 | Streak tracking (consecutive days completed)           | Should Have | Habit formation, commitment         |
-| D-6 | Visual streak indicator (e.g., "🔥 7 day streak")      | Should Have | Pride, motivation to continue       |
-| D-7 | Admin interface to schedule daily puzzles in advance   | Must Have   | Content planning, consistency       |
-| D-8 | Fallback to random puzzle if none scheduled            | Should Have | Reliability                         |
-
-**Success Criteria:**
-
-- 30% of DAU attempt daily challenge
-- 500+ daily challenge completions per day (at 1,000 DAU)
-- 200+ active 7-day streaks
-- 15% of players return specifically for daily challenge
-
-**Out of Scope:**
-
-- Multiple daily challenges (easy/medium/hard)
-- Weekly or monthly challenges
-- Daily challenge rewards/prizes
+The repo still contains Bun and Worker runtime variants. The current product baseline should be
+considered the **Cloudflare Worker path**, since that is the production architecture and the more
+fully hardened implementation.
 
 ---
 
-### 4. Achievement System
+## Roadmap
 
-**Problem:** No goals beyond puzzle completion; no sense of progression or mastery.
+### Now: strengthen the current single-player product
 
-**User Stories:**
+| Initiative                                 | Status      | Why it matters                                                                             |
+| ------------------------------------------ | ----------- | ------------------------------------------------------------------------------------------ |
+| Add real product analytics                 | Not started | The repo currently has no code-backed DAU, retention, or funnel metrics                    |
+| Close single-player usability gaps         | Not started | Reference image, hints, and zoom/pan are the clearest player quality-of-life gaps          |
+| Resolve piece-count strategy               | Not started | Current 225-piece lock limits casual entry and runtime parity                              |
+| Finish realistic puzzle E2E coverage       | In progress | Gallery E2E exists, but full puzzle interaction coverage depends on seeded puzzle fixtures |
+| Add admin edit and content lifecycle tools | Not started | Admins can create and delete content but cannot edit, schedule, or stage it                |
 
-- As a goal-oriented player, I want achievements to work toward
-- As a completionist, I want to see my collection of unlocked achievements
-- As a casual player, I want surprising rewards for milestones
+**Recommendation:** Keep the next phase focused on the existing solo experience before adding
+community or social features.
 
-**Requirements:**
+### Next: add repeat-play loops and server-backed competition
 
-| ID  | Requirement                                                                | Priority    | User Value                            |
-| --- | -------------------------------------------------------------------------- | ----------- | ------------------------------------- |
-| A-1 | Achievement unlock notifications (toast/modal)                             | Must Have   | Immediate reward, dopamine hit        |
-| A-2 | Achievement gallery showing locked and unlocked                            | Must Have   | Goal visibility, progression tracking |
-| A-3 | Multiple achievement categories: Speed, Completion, Skill, Streak, Special | Should Have | Variety, multiple paths to success    |
-| A-4 | Progress tracking for multi-step achievements                              | Should Have | Motivation, transparency              |
-| A-5 | Rarity tiers (Common, Rare, Epic, Legendary)                               | Should Have | Prestige, collection value            |
-| A-6 | Secret achievements (hidden until unlocked)                                | Could Have  | Surprise, discovery                   |
-| A-7 | Share achievement unlocks on social media                                  | Could Have  | Viral growth, pride                   |
+| Initiative                   | Status      | Notes                                                                       |
+| ---------------------------- | ----------- | --------------------------------------------------------------------------- |
+| Daily challenge              | Not started | Natural next step for repeat engagement, but needs server-backed scheduling |
+| Leaderboards                 | Not started | Requires new persistence and anti-abuse design                              |
+| Player identity / cloud sync | Not started | Prerequisite for cross-device progress and durable competition              |
+| Admin scheduling             | Not started | Needed to manage featured or date-based content                             |
+| Admin analytics dashboard    | Not started | Depends on product analytics instrumentation                                |
 
-**Initial Achievement Set (20-30 total):**
+**Recommendation:** Treat `daily challenge + leaderboard + player identity` as one coherent
+product wave rather than isolated features.
 
-**Completion:**
+### Later: expand beyond the single-player core
 
-- First Steps (Complete 1 puzzle)
-- Collector (Complete 10 puzzles)
-- Completionist (Complete all puzzles in a category)
-- Centurion (Complete a 100-piece puzzle)
-
-**Speed:**
-
-- Speed Demon (Complete any puzzle under 2 minutes)
-- Lightning Fast (Complete any puzzle under 1 minute)
-
-**Skill:**
-
-- Perfect Run (Complete with 100% first-try accuracy)
-- Self-Sufficient (Complete without using hints)
-
-**Streak:**
-
-- Dedicated (7-day daily challenge streak)
-- Streak Master (30-day daily challenge streak)
-
-**Special:**
-
-- Night Owl (Complete between midnight-5am)
-- Early Bird (Complete between 5am-7am)
-
-**Success Criteria:**
-
-- 70% of players unlock at least 1 achievement
-- 50% of players unlock 3+ achievements
-- 20% of players view achievement gallery
+| Initiative                        | Status      | Notes                                                     |
+| --------------------------------- | ----------- | --------------------------------------------------------- |
+| Achievements / progression system | Not started | Depends on reliable player identity and event tracking    |
+| Share completion                  | Not started | Best paired with server-backed stats or daily challenge   |
+| PWA / offline support             | Not started | Requires service worker and offline asset strategy        |
+| Multiplayer co-op                 | Not started | Requires new realtime architecture and shared state model |
+| Advanced difficulty modes         | Not started | Includes rotation or broader piece-count personalization  |
+| Sound effects                     | Not started | Pure UX enhancement, not core product leverage yet        |
 
 ---
 
-### 5. Global Leaderboards
+## Metrics & Analytics Status
 
-**Problem:** No competitive element; players can't compare performance globally.
+### Current status
 
-**User Stories:**
+The repository does **not** contain a product analytics pipeline. There is no evidence-backed
+DAU, retention, session duration, abandonment, or conversion reporting in the codebase today.
 
-- As a competitive player, I want to see how I rank globally
-- As a casual player, I want context for whether my time is good
-- As a social player, I want to challenge friends to beat my time
+### What is measurable today
 
-**Requirements:**
+| Area                     | Current availability   | Notes                                                                         |
+| ------------------------ | ---------------------- | ----------------------------------------------------------------------------- |
+| Puzzle processing state  | Available              | Admin UI exposes `processing`, `ready`, and `failed` plus generation progress |
+| Workflow / platform logs | Available              | Worker observability and invocation logs are configured in infrastructure     |
+| Player personal best     | Available locally only | Stored in browser `localStorage`, not aggregated                              |
+| Player completion count  | Available locally only | Stored per puzzle in `localStorage`, not reported centrally                   |
+| Product funnel metrics   | Not available          | Requires analytics implementation                                             |
+| Retention / DAU          | Not available          | Requires analytics implementation                                             |
 
-| ID  | Requirement                                           | Priority    | User Value                          |
-| --- | ----------------------------------------------------- | ----------- | ----------------------------------- |
-| L-1 | Per-puzzle leaderboard (top 100 times)                | Must Have   | Competition, goal-setting           |
-| L-2 | Global leaderboard (best average across all puzzles)  | Should Have | Overall skill ranking               |
-| L-3 | Time period filters (All Time, This Month, This Week) | Should Have | Fresh competition, multiple chances |
-| L-4 | Nickname submission on completion                     | Must Have   | Identity, personalization           |
-| L-5 | Player's own rank highlighted                         | Must Have   | Personal context                    |
-| L-6 | Rank badges (🥇🥈🥉) for top 3                        | Should Have | Status, recognition                 |
-| L-7 | Anti-cheat: Server-side time validation               | Should Have | Fair competition, trust             |
+### Recommended first analytics events
 
-**Success Criteria:**
+When analytics is added, the first event set should stay close to the current product:
 
-- 30% of completions submit to leaderboard
-- Top 100 slots fill within 1 week for popular puzzles
-- 10% of players check leaderboards daily
+- `gallery_viewed`
+- `category_filtered`
+- `puzzle_opened`
+- `first_piece_placed`
+- `puzzle_completed`
+- `puzzle_abandoned`
+- `personal_best_beaten`
+- `admin_login_succeeded`
+- `admin_upload_started`
+- `puzzle_generation_failed`
+- `puzzle_generation_completed`
 
-**Out of Scope:**
+### Suggested first measurable KPIs
 
-- Friend-only leaderboards (future social feature)
-- Prize/reward distribution
-- Verified speedrun categories
+Once instrumentation exists, the first dashboard should answer:
 
----
-
-### 6. Share Completion
-
-**Problem:** No way to share accomplishments; no viral growth mechanism.
-
-**User Stories:**
-
-- As a proud player, I want to share my completion on social media
-- As a competitive player, I want to challenge friends to beat my time
-- As a casual player, I want a shareable image showing my achievement
-
-**Requirements:**
-
-| ID  | Requirement                                 | Priority    | User Value                        |
-| --- | ------------------------------------------- | ----------- | --------------------------------- |
-| S-1 | "Share" button on completion modal          | Must Have   | Discoverability, ease of use      |
-| S-2 | Auto-generated share image (puzzle + stats) | Must Have   | Visual appeal, shareability       |
-| S-3 | Copy link to clipboard                      | Must Have   | Cross-platform sharing            |
-| S-4 | Direct share to Twitter, Facebook           | Should Have | Reduced friction, viral potential |
-| S-5 | Challenge link ("Beat my time: 2:34")       | Should Have | Viral loop, friend engagement     |
-| S-6 | Download share image locally                | Should Have | Flexibility, user control         |
-
-**Share Image Content:**
-
-- Puzzle thumbnail
-- Puzzle name and piece count
-- Completion time
-- Rank (if top 100)
-- "Can you beat my time?" call-to-action
-- Link to puzzle
-
-**Success Criteria:**
-
-- 20% of completions result in share
-- 10% of new users arrive via shared links
-- 100+ social media shares per week
-
-**Out of Scope:**
-
-- Instagram story format (different aspect ratio)
-- Video/GIF share
-- Share templates/customization
+- How many players open a puzzle after viewing the gallery?
+- What percent of started puzzles are completed?
+- Which categories drive the highest start and completion rates?
+- How often are puzzles replayed to improve personal best?
+- How reliable is generation success or failure by upload?
+- How long does generation take end-to-end?
 
 ---
 
-### 7. Multiplayer Co-op Mode
+## Quality & Testing Status
 
-**Problem:** Entirely solo experience; no way to play with friends or family.
+### Automated testing in the repo
 
-**User Stories:**
+| Area                        | Current status                                                                      |
+| --------------------------- | ----------------------------------------------------------------------------------- |
+| Web component / route tests | Strong coverage across core routes, components, services, and stores                |
+| API tests                   | Strong coverage across routes, storage, auth, rate limiting, and Worker variants    |
+| Workflow tests              | Good unit coverage around helper logic, types, DO logic, and workflow behavior      |
+| End-to-end tests            | Present but partial; gallery coverage is stronger than full puzzle solving coverage |
 
-- As a social player, I want to solve puzzles with friends in real-time
-- As a family, we want a collaborative activity we can do together
-- As a competitive duo, we want to race against other pairs
+### Current E2E gap
 
-**Requirements:**
+The web E2E suite covers the gallery and basic puzzle route behavior, but several
+interaction-heavy puzzle tests are still skipped because the suite lacks a deterministic seeded
+puzzle strategy in CI.
 
-| ID  | Requirement                                     | Priority    | User Value                              |
-| --- | ----------------------------------------------- | ----------- | --------------------------------------- |
-| M-1 | Create/join room with shareable code            | Must Have   | Easy invite, no account required        |
-| M-2 | Real-time cursor visibility (see other players) | Should Have | Coordination, fun interaction           |
-| M-3 | Piece claiming (locked when someone picks up)   | Must Have   | Prevent conflicts, smooth collaboration |
-| M-4 | Player list showing room participants           | Should Have | Awareness, social context               |
-| M-5 | Shared timer for the group                      | Should Have | Team goal, shared achievement           |
-| M-6 | Quick reactions/emojis (👍🎉❤️)                 | Could Have  | Fun, communication                      |
-| M-7 | Text chat                                       | Could Have  | Coordination, social bonding            |
-| M-8 | Room host controls (kick, restart)              | Could Have  | Moderation, control                     |
-| M-9 | Max 4-8 players per room                        | Must Have   | Manageable, not chaotic                 |
+### Recent engineering direction
 
-**Success Criteria:**
-
-- 100+ active multiplayer rooms daily
-- Average 2.5 players per room
-- 60% completion rate for multiplayer sessions
-- 40% of multiplayer players invite others
-
-**Out of Scope:**
-
-- Voice chat (too complex, use external tools)
-- Competitive mode (race to complete)
-- Persistent rooms
+Recent commits on `main` show sustained work on coverage hardening across web, API, and
+workflows. This suggests the codebase is in a stabilization and test-improvement phase rather
+than a broad feature-expansion phase.
 
 ---
 
-### 8. Hint System
-
-**Problem:** Players get stuck and abandon puzzles; no assistance available.
-
-**User Stories:**
-
-- As a stuck player, I want hints to make progress without giving up
-- As a completionist, I want limited hints to maintain challenge
-- As a learner, I want hints that teach strategy, not just solve for me
-
-**Requirements:**
-
-| ID  | Requirement                                        | Priority    | User Value                             |
-| --- | -------------------------------------------------- | ----------- | -------------------------------------- |
-| H-1 | "Hint" button visible in game UI                   | Must Have   | Discoverability                        |
-| H-2 | Limited hints per puzzle (default: 3)              | Must Have   | Preserve challenge, strategic use      |
-| H-3 | Hint Type 1: Highlight all edge pieces             | Should Have | Beginner-friendly, strategic hint      |
-| H-4 | Hint Type 2: Show ghost outline (1 piece location) | Should Have | Direct assistance, limited impact      |
-| H-5 | Hint Type 3: Auto-place one piece                  | Could Have  | Last resort, strong assist             |
-| H-6 | Hint usage tracked in stats                        | Should Have | Context for achievements, leaderboards |
-| H-7 | Cooldown between hints (30 seconds)                | Could Have  | Prevent spam, encourage thinking       |
-
-**Success Criteria:**
-
-- Completion rate increases from 60% to 75%
-- 40% of players use at least 1 hint
-- Average hints used: 1.5 per completion
-- Abandonment rate decreases by 30%
-
-**Out of Scope:**
-
-- Hint refills/purchases (no monetization)
-- AI-powered hints
-- Hint tutorials
-
----
-
-### 9. Undo/Redo Support
-
-**Problem:** Accidental piece placements frustrate players; no safety net.
-
-**User Stories:**
-
-- As a player, I want to undo accidental drops
-- As an experimenter, I want to try piece placements without commitment
-- As a perfectionist, I want to redo undone actions
-
-**Requirements:**
-
-| ID  | Requirement                                       | Priority    | User Value                          |
-| --- | ------------------------------------------------- | ----------- | ----------------------------------- |
-| U-1 | Undo button (Ctrl+Z) reverts last placement       | Must Have   | Error recovery, reduced frustration |
-| U-2 | Redo button (Ctrl+Shift+Z) restores undone action | Must Have   | Flexibility, experimentation        |
-| U-3 | Undo stack (last 10-20 moves)                     | Should Have | Multiple undo levels                |
-| U-4 | Visual enable/disable state on buttons            | Must Have   | Clarity, UX feedback                |
-| U-5 | Clear undo stack on puzzle reset                  | Must Have   | Fresh start, no confusion           |
-
-**Success Criteria:**
-
-- 50% of players use undo at least once
-- Average 3 undos per session
-- Player satisfaction increases (measured in surveys)
-
-**Out of Scope:**
-
-- Undo hint usage
-- Undo timer (time continues)
-- Persistent undo across page refresh
-
----
-
-### 10. Zoom & Pan for Large Puzzles
-
-**Problem:** Large puzzles (64-100 pieces) difficult to see and navigate.
-
-**User Stories:**
-
-- As an enthusiast, I want to zoom in to see piece details
-- As a mobile player, I want to pan around large puzzles easily
-- As a desktop player, I want mouse wheel zoom for quick navigation
-
-**Requirements:**
-
-| ID  | Requirement                               | Priority    | User Value                     |
-| --- | ----------------------------------------- | ----------- | ------------------------------ |
-| Z-1 | Zoom controls (+/- buttons, scroll wheel) | Must Have   | Better visibility, ease of use |
-| Z-2 | Click-drag to pan when zoomed             | Must Have   | Navigation, exploration        |
-| Z-3 | Pinch-to-zoom on mobile                   | Must Have   | Mobile-friendly, intuitive     |
-| Z-4 | "Fit to screen" reset button              | Must Have   | Quick reset, orientation       |
-| Z-5 | Zoom follows cursor position              | Should Have | Precise control, UX polish     |
-| Z-6 | Minimap (optional)                        | Could Have  | Overview, navigation aid       |
-
-**Success Criteria:**
-
-- 80% of 64+ piece puzzle sessions use zoom
-- Average 5 zoom actions per large puzzle
-- Completion rate for 100-piece puzzles increases from 40% to 60%
-
-**Out of Scope:**
-
-- Zoom for small puzzles (<36 pieces)
-- Keyboard zoom shortcuts
-- Zoom animation customization
-
----
-
-### 11. Piece Rotation (Difficulty Mode)
-
-**Problem:** No difficulty variation; advanced players want more challenge.
-
-**User Stories:**
-
-- As an expert, I want rotated pieces for increased difficulty
-- As a player, I want to choose difficulty level
-- As a casual player, I want easy mode (no rotation)
-
-**Requirements:**
-
-| ID  | Requirement                             | Priority    | User Value                            |
-| --- | --------------------------------------- | ----------- | ------------------------------------- |
-| R-1 | Difficulty selector (Easy/Medium/Hard)  | Must Have   | Player choice, accessibility          |
-| R-2 | Easy: No rotation (current behavior)    | Must Have   | Backward compatibility, accessibility |
-| R-3 | Medium: 90° rotation (4 orientations)   | Should Have | Moderate challenge increase           |
-| R-4 | Hard: Free rotation with angle snap     | Could Have  | Maximum challenge                     |
-| R-5 | Desktop: Right-click or R key to rotate | Should Have | Discoverability, accessibility        |
-| R-6 | Mobile: Two-finger twist gesture        | Should Have | Touch-friendly, intuitive             |
-| R-7 | Visual rotation indicator               | Should Have | Clarity, feedback                     |
-
-**Success Criteria:**
-
-- 30% of players try medium/hard difficulty
-- 15% of completions use rotation mode
-- Average time increases 2x on medium, 3x on hard
-
-**Out of Scope:**
-
-- Irregular piece orientations (not 90° aligned)
-- Rotation-specific achievements (too niche)
-- Per-puzzle difficulty override
-
----
-
-### 12. PWA & Offline Support
-
-**Problem:** Can't install app; no offline play during travel.
-
-**User Stories:**
-
-- As a commuter, I want to install the app and play offline
-- As a mobile user, I want quick access from home screen
-- As a traveler, I want puzzles available without internet
-
-**Requirements:**
-
-| ID   | Requirement                               | Priority    | User Value                         |
-| ---- | ----------------------------------------- | ----------- | ---------------------------------- |
-| PW-1 | Web app manifest for installability       | Must Have   | App-like experience, convenience   |
-| PW-2 | Service worker for offline caching        | Must Have   | Reliability, availability          |
-| PW-3 | Cache puzzle images for offline play      | Should Have | Core functionality offline         |
-| PW-4 | Offline indicator in UI                   | Should Have | Clarity, expectation setting       |
-| PW-5 | Sync progress when back online            | Should Have | Seamless experience                |
-| PW-6 | "Save for offline" button on puzzle cards | Could Have  | User control, bandwidth management |
-
-**Success Criteria:**
-
-- 10% of active users install PWA
-- 5% of sessions are offline
-- Offline completion rate matches online rate
-
----
-
-### 13. Cloud Progress Sync
-
-**Problem:** Progress locked to one device; data loss on cache clear.
-
-**User Stories:**
-
-- As a multi-device user, I want progress to sync across devices
-- As a cautious user, I want progress backed up in case of device loss
-- As a guest, I want to continue without creating an account
-
-**Requirements:**
-
-| ID   | Requirement                                        | Priority    | User Value                     |
-| ---- | -------------------------------------------------- | ----------- | ------------------------------ |
-| CL-1 | Optional user registration (email or social login) | Must Have   | Cross-device sync, data safety |
-| CL-2 | Guest mode (current localStorage) remains default  | Must Have   | Low friction, accessibility    |
-| CL-3 | Auto-sync on login                                 | Must Have   | Seamless experience            |
-| CL-4 | Conflict resolution (local vs. cloud)              | Should Have | Data integrity, user control   |
-| CL-5 | Account settings (password, delete account)        | Should Have | User control, GDPR compliance  |
-
-**Success Criteria:**
-
-- 30% of active users create accounts
-- 80% of account users sync across 2+ devices
-- <1% data loss incidents
-
-**Out of Scope:**
-
-- Forced account creation
-- Social features requiring accounts (follow, friends)
-- Account-gated content
-
----
-
-### 14. Admin: Analytics Dashboard
-
-**Problem:** No visibility into puzzle performance or player behavior.
-
-**User Stories:**
-
-- As an admin, I want to see which puzzles are popular
-- As a content creator, I want to understand completion rates
-- As a product manager, I want to track engagement trends
-
-**Requirements:**
-
-| ID   | Requirement                            | Priority    | User Value           |
-| ---- | -------------------------------------- | ----------- | -------------------- |
-| AN-1 | View count per puzzle                  | Must Have   | Popularity tracking  |
-| AN-2 | Completion count per puzzle            | Must Have   | Success metrics      |
-| AN-3 | Average completion time per puzzle     | Should Have | Difficulty insight   |
-| AN-4 | Completion rate (started vs. finished) | Should Have | Drop-off analysis    |
-| AN-5 | Time-series charts (daily/weekly)      | Could Have  | Trend identification |
-| AN-6 | Category performance comparison        | Could Have  | Content strategy     |
-
-**Success Criteria:**
-
-- Admins use analytics weekly for content decisions
-- Top 10 puzzles identified and promoted
-- Underperforming puzzles improved or removed
-
----
-
-### 15. Admin: Puzzle Scheduling
-
-**Problem:** Manual daily challenge assignment; no content pipeline.
-
-**User Stories:**
-
-- As an admin, I want to schedule puzzles in advance
-- As a content planner, I want to assign daily challenges for the month
-- As a busy admin, I want automation to reduce manual work
-
-**Requirements:**
-
-| ID   | Requirement                                        | Priority    | User Value             |
-| ---- | -------------------------------------------------- | ----------- | ---------------------- |
-| PS-1 | Set publish date when creating puzzle              | Must Have   | Content planning       |
-| PS-2 | Hide scheduled puzzles until publish date          | Must Have   | Surprise, anticipation |
-| PS-3 | Assign puzzle as daily challenge for specific date | Must Have   | Automation             |
-| PS-4 | Calendar view of scheduled content                 | Should Have | Planning visibility    |
-| PS-5 | Bulk schedule (CSV import)                         | Could Have  | Efficiency             |
-
-**Success Criteria:**
-
-- 90% of daily challenges scheduled 1+ week in advance
-- Admin time spent on scheduling reduces by 50%
-
----
-
-### 16. Accessibility Improvements
-
-**Problem:** Limited accessibility for users with disabilities.
-
-**User Stories:**
-
-- As a keyboard-only user, I want full navigation support
-- As a screen reader user, I want clear announcements
-- As a colorblind user, I want high contrast options
-
-**Requirements:**
-
-| ID   | Requirement                                       | Priority    | User Value                  |
-| ---- | ------------------------------------------------- | ----------- | --------------------------- |
-| AC-1 | Full keyboard navigation (Tab, Enter, Arrow keys) | Must Have   | Accessibility, inclusivity  |
-| AC-2 | Screen reader announcements for piece placement   | Should Have | Non-visual feedback         |
-| AC-3 | High contrast mode toggle                         | Should Have | Visual impairment support   |
-| AC-4 | Reduce motion option                              | Should Have | Vestibular disorder support |
-| AC-5 | Focus indicators on all interactive elements      | Must Have   | Keyboard navigation clarity |
-| AC-6 | ARIA labels on all components                     | Should Have | Screen reader support       |
-
-**Success Criteria:**
-
-- Lighthouse accessibility score: 100
-- WCAG AA compliance: 100%
-- 5% of users enable accessibility features
-
----
-
-### 17. Dark Mode
-
-**Problem:** Uncomfortable to play at night; no theme options.
-
-**User Stories:**
-
-- As a night player, I want dark mode for comfortable viewing
-- As a theme-conscious user, I want the app to match my system preference
-
-**Requirements:**
-
-| ID   | Requirement                                          | Priority    | User Value                  |
-| ---- | ---------------------------------------------------- | ----------- | --------------------------- |
-| DM-1 | Dark theme with appropriate color palette            | Must Have   | Eye comfort, preference     |
-| DM-2 | Auto-detect system preference (prefers-color-scheme) | Should Have | Automatic, seamless         |
-| DM-3 | Manual toggle in header/settings                     | Should Have | User control                |
-| DM-4 | Persist preference in localStorage                   | Should Have | Consistency across sessions |
-
-**Success Criteria:**
-
-- 40% of users use dark mode
-- 90% of night sessions (8pm-6am) use dark mode
-
----
-
-### 18. Sound Effects
-
-**Problem:** No audio feedback; experience feels flat.
-
-**User Stories:**
-
-- As a player, I want satisfying audio when placing pieces correctly
-- As a completionist, I want a celebration sound on puzzle completion
-- As a quiet player, I want to mute sounds easily
-
-**Requirements:**
-
-| ID   | Requirement                               | Priority    | User Value                  |
-| ---- | ----------------------------------------- | ----------- | --------------------------- |
-| SF-1 | Sound: Correct piece placement (click)    | Must Have   | Satisfaction, feedback      |
-| SF-2 | Sound: Incorrect placement (subtle error) | Should Have | Feedback, learning          |
-| SF-3 | Sound: Puzzle completion (celebration)    | Must Have   | Reward, celebration         |
-| SF-4 | Mute toggle with persistence              | Must Have   | User control, accessibility |
-| SF-5 | Volume slider (optional)                  | Could Have  | Fine-grained control        |
-
-**Success Criteria:**
-
-- 70% of users keep sounds enabled
-- Sound effects mentioned positively in 30% of feedback
-
----
-
-## Metrics & Analytics
-
-### Primary Metrics (North Star)
-
-**Daily Active Users (DAU)**
-
-- Current: ~50
-- 3-Month Target: 1,000
-- 6-Month Target: 5,000
-- Measurement: Unique users who complete at least 1 puzzle per day
-
-**7-Day Retention Rate**
-
-- Current: ~10%
-- 3-Month Target: 40%
-- 6-Month Target: 50%
-- Measurement: % of new users who return within 7 days
-
-### Secondary Metrics
-
-**Engagement:**
-
-- Average session duration: 5min → 10min
-- Puzzles completed per session: 1 → 2
-- Sessions per user per week: 1.5 → 3
-
-**Content:**
-
-- Daily challenge participation: 30% of DAU
-- Category exploration: 60% of users filter by category
-- Puzzle completion rate: 60% → 75%
-
-**Social:**
-
-- Social shares per 100 completions: 0 → 20
-- Multiplayer rooms per day: 0 → 100
-- Leaderboard submissions: 30% of completions
-
-**Monetization (Future):**
-
-- PWA install rate: 10% of users
-- Account creation rate: 30% of users
-
-### Analytics Events to Track
-
-```
-# Core Events
-puzzle_started
-puzzle_completed
-puzzle_abandoned
-
-# Engagement Events
-timer_viewed
-personal_best_beaten
-achievement_unlocked
-daily_challenge_completed
-streak_extended
-
-# Social Events
-leaderboard_submitted
-puzzle_shared
-multiplayer_room_created
-multiplayer_room_joined
-
-# Feature Usage Events
-hint_used
-undo_action
-zoom_activated
-dark_mode_toggled
-```
-
-### Success Thresholds for Launch
-
-**Must Meet (Go/No-Go):**
-
-- No P0 bugs
-- Performance: 60fps on target devices
-- Accessibility: Lighthouse score 90+
-- Core features functional (timer, categories, daily challenge)
-
-**Should Meet (Monitor Post-Launch):**
-
-- 25% 7-day retention within 2 weeks
-- 500+ DAU within 4 weeks
-- <5% negative feedback
-- No security vulnerabilities
-
----
-
-## Launch Strategy
-
-### Rollout Plan
-
-**Week 1-2: Internal Beta**
-
-- Audience: Team + 10 beta testers
-- Goal: Bug identification, UX validation
-- Success: No P0/P1 bugs, positive feedback
-
-**Week 3-4: Limited Public Beta**
-
-- Audience: 100 invited users
-- Goal: Validate engagement metrics
-- Success: 30%+ 7-day retention, 2+ sessions/week
-
-**Week 5-6: Public Launch**
-
-- Audience: All users
-- Goal: Scale to 1,000 DAU
-- Success: Meet primary metric targets
-
-### Feature Flags
-
-**Phase 1 Features (Launch Day):**
-
-- Timer & Statistics ✅
-- Puzzle Categories ✅
-- Dark Mode ✅
-- Sound Effects ✅
-- Accessibility ✅
-
-**Phase 2 Features (Week 2 Post-Launch):**
-
-- Daily Challenge (after leaderboard stability)
-- Achievement System
-- Global Leaderboards
-
-**Phase 3 Features (Week 4 Post-Launch):**
-
-- Share Completion
-- Hint System
-- Undo/Redo
-
-### Communication Plan
-
-**Pre-Launch (Week -2):**
-
-- Blog post: "What's coming to Perseus"
-- Social media teasers
-- Email to existing users (if applicable)
-
-**Launch Day:**
-
-- In-app announcement modal
-- Blog post: "Introducing new Perseus features"
-- Social media campaign
-- Product Hunt launch (optional)
-
-**Post-Launch:**
-
-- Weekly progress updates
-- Feature highlight posts
-- User testimonials/success stories
-
----
-
-## Dependencies & Risks
-
-### Technical Dependencies
-
-**Infrastructure:**
-
-- Database setup (SQLite or PostgreSQL) for leaderboards, daily challenge
-- WebSocket server for multiplayer
-- Cloud storage for user accounts (optional)
-
-**Third-Party Services:**
-
-- Social login (Google, GitHub OAuth)
-- Image CDN (optional, for performance)
-- Analytics platform (Plausible, PostHog, or custom)
-
-### Feature Dependencies
-
-**Blocks:**
-
-- Daily Challenge blocks: Leaderboards (shared component)
-- Achievements blocks: Timer & Statistics (data source)
-- Cloud Sync blocks: User accounts
-
-**Critical Path:**
-
-- Timer & Statistics → Daily Challenge → Leaderboards
-- Categories → Daily Challenge (content organization)
-
-### Risks & Mitigations
-
-| Risk                                 | Probability | Impact | Mitigation                                            |
-| ------------------------------------ | ----------- | ------ | ----------------------------------------------------- |
-| Low user adoption                    | Medium      | High   | Marketing push, viral share features                  |
-| Performance issues with leaderboards | Medium      | Medium | Caching, database optimization, load testing          |
-| Multiplayer latency/bugs             | High        | Medium | Phased rollout, extensive testing, clear expectations |
-| Accessibility compliance gaps        | Low         | High   | WCAG audit, keyboard navigation testing               |
-| Cheat/spam on leaderboards           | Medium      | Medium | Server-side validation, rate limiting, moderation     |
-| Development delays                   | Medium      | Medium | Prioritize must-haves, descope could-haves if needed  |
+## Risks & Dependencies
+
+### Product risks
+
+| Risk                                | Impact                                                  | Mitigation                                                                                |
+| ----------------------------------- | ------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| No analytics baseline               | Product prioritization remains guess-driven             | Implement analytics before setting user growth targets                                    |
+| Local-only progress and stats       | Player history is lost across devices or storage clears | Add player identity and cloud sync before promising durable progression                   |
+| Fixed 225-piece production flow     | Limits onboarding flexibility and product breadth       | Decide whether to keep a single canonical difficulty or reintroduce multiple piece counts |
+| No server-backed competition model  | Daily challenge and leaderboards cannot launch cleanly  | Add persistence designed for rankings and submissions                                     |
+| Admin tooling is create/delete only | Content ops may become cumbersome as the catalog grows  | Add edit, scheduling, and operational views                                               |
+
+### Technical dependencies for future roadmap
+
+- **Leaderboards, daily challenge, and accounts** need new server-side persistence and player
+  identity
+- **Multiplayer** needs realtime shared state, likely via Durable Object room coordination or
+  another realtime transport
+- **PWA / offline** needs a service worker, cache policy, and offline asset lifecycle design
+- **Advanced analytics** needs event collection, storage, privacy policy, and dashboarding
+  choices
 
 ---
 
 ## Appendix
 
-### A. Competitive Analysis
+### Key implementation references
 
-| Feature         | Perseus | Jigsaw Planet | Jigidi  | Differentiation             |
-| --------------- | ------- | ------------- | ------- | --------------------------- |
-| Modern UI       | ✅      | ❌            | ❌      | Clean, mobile-first design  |
-| Multiplayer     | Planned | ❌            | ❌      | Unique feature              |
-| Daily Challenge | Planned | ✅            | ✅      | With leaderboards + streaks |
-| Achievements    | Planned | ❌            | Limited | Comprehensive system        |
-| Personal Bests  | Planned | ❌            | ❌      | Self-improvement focus      |
-| PWA/Offline     | Planned | ❌            | ❌      | Play anywhere               |
-| Dark Mode       | Planned | ❌            | ❌      | Modern UX                   |
+- Web gallery: `apps/web/src/routes/+page.svelte`
+- Puzzle play route: `apps/web/src/routes/puzzle/[id]/+page.svelte`
+- Puzzle board: `apps/web/src/lib/components/PuzzleBoard.svelte`
+- Puzzle piece interactions: `apps/web/src/lib/components/PuzzlePiece.svelte`
+- Timer: `apps/web/src/lib/stores/timer.ts`
+- Local progress: `apps/web/src/lib/services/progress.ts`
+- Local stats: `apps/web/src/lib/services/stats.ts`
+- Admin UI: `apps/web/src/routes/admin/+page.svelte`
+- Admin auth gate: `apps/web/src/routes/admin/+layout.svelte`
+- API Worker entry: `apps/api/src/worker.ts`
+- Public puzzle routes: `apps/api/src/routes/puzzles.worker.ts`
+- Admin routes: `apps/api/src/routes/admin.worker.ts`
+- Worker auth: `apps/api/src/middleware/auth.worker.ts`
+- Worker rate limit: `apps/api/src/middleware/rate-limit.worker.ts`
+- Workflow and Durable Object: `apps/workflows/src/index.ts`
+- Shared product types: `packages/types/src/index.ts`
+- Cloudflare infrastructure: `packages/infrastructure/src/index.ts`,
+  `packages/infrastructure/src/workers.ts`
 
-**Key Differentiators:**
+### Explicitly out of current scope
 
-1. Social-first approach (multiplayer, sharing)
-2. Modern, accessible UX
-3. Personal progression (achievements, stats)
-4. Mobile-optimized experience
+These features are not present in the implementation and should be treated as future work rather
+than current commitments:
 
-### B. User Research Data
-
-**Survey Insights (n=50):**
-
-- 80% want timing/statistics
-- 65% interested in competition
-- 55% would play daily with new challenges
-- 40% frustrated by lack of progress
-- 30% want multiplayer
-
-**Usability Test Results:**
-
-- Current completion rate: 60%
-- Main abandonment: "No sense of progression"
-- Positive: Drag-and-drop UX, visuals
-- Requested: Undo, hints, zoom
-
-### C. Glossary
-
-| Term               | Definition                                                     |
-| ------------------ | -------------------------------------------------------------- |
-| DAU                | Daily Active Users - unique users completing 1+ puzzle per day |
-| 7-Day Retention    | % of new users who return within 7 days                        |
-| Personal Best (PB) | Fastest completion time for a puzzle by a user                 |
-| Daily Challenge    | Featured puzzle all players solve on same day                  |
-| Streak             | Consecutive days completing daily challenge                    |
-| Leaderboard        | Rankings of fastest completion times                           |
-| Achievement        | Unlockable milestone reward                                    |
-| PWA                | Progressive Web App - installable web application              |
+- Daily challenge
+- Leaderboards
+- Achievements
+- Social sharing
+- Multiplayer
+- Hints
+- Undo / redo
+- Zoom / pan
+- Reference image overlay
+- Player accounts
+- Cloud progress sync
+- PWA / offline mode
+- Admin analytics dashboard
+- Admin scheduling / publish controls
+- Theme toggle
+- Sound effects
 
 ---
 
 ## Document History
 
-| Version | Date         | Author       | Changes                                          |
-| ------- | ------------ | ------------ | ------------------------------------------------ |
-| 1.0     | January 2026 | Product Team | Initial PRD - comprehensive feature requirements |
-
----
-
-**Next Steps:**
-
-1. Review and approve PRD with stakeholders
-2. Prioritize Phase 1 features for immediate implementation
-3. Create technical specifications for approved features
-4. Set up analytics infrastructure
-5. Begin Phase 1 development (Timer, Categories, Daily Challenge)
+| Version | Date         | Author       | Changes                                                                                        |
+| ------- | ------------ | ------------ | ---------------------------------------------------------------------------------------------- |
+| 2.0     | 2026-03-31   | Copilot      | Rewrote PRD to match implemented repository status, current constraints, and realistic roadmap |
+| 1.0     | January 2026 | Product Team | Initial aspirational PRD with future feature requirements                                      |
