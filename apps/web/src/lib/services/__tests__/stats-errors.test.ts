@@ -15,15 +15,15 @@ describe('Stats Service - error handling', () => {
 
 	describe('getStats - non-SyntaxError from localStorage', () => {
 		it('returns null when localStorage.getItem throws a DOMException (non-SyntaxError path)', () => {
-			vi.spyOn(localStorage, 'getItem').mockImplementationOnce(() => {
-				throw new DOMException('SecurityError: access denied');
+			vi.spyOn(Storage.prototype, 'getItem').mockImplementationOnce(() => {
+				throw new DOMException('access denied', 'SecurityError');
 			});
 
 			expect(getStats(puzzleId)).toBeNull();
 		});
 
 		it('returns null when localStorage.getItem throws a generic Error', () => {
-			vi.spyOn(localStorage, 'getItem').mockImplementationOnce(() => {
+			vi.spyOn(Storage.prototype, 'getItem').mockImplementationOnce(() => {
 				throw new Error('Unexpected error');
 			});
 
@@ -34,7 +34,7 @@ describe('Stats Service - error handling', () => {
 	describe('getStats - SyntaxError with cleanup failure', () => {
 		it('still returns null when SyntaxError occurs but removeItem also throws', () => {
 			localStorage.setItem(`puzzle-stats-${puzzleId}`, 'invalid json{{{');
-			vi.spyOn(localStorage, 'removeItem').mockImplementationOnce(() => {
+			vi.spyOn(Storage.prototype, 'removeItem').mockImplementationOnce(() => {
 				throw new Error('Cannot remove item');
 			});
 
@@ -44,15 +44,15 @@ describe('Stats Service - error handling', () => {
 
 	describe('clearStats - localStorage errors', () => {
 		it('does not throw when localStorage.removeItem throws a DOMException', () => {
-			vi.spyOn(localStorage, 'removeItem').mockImplementationOnce(() => {
-				throw new DOMException('SecurityError');
+			vi.spyOn(Storage.prototype, 'removeItem').mockImplementationOnce(() => {
+				throw new DOMException('access denied', 'SecurityError');
 			});
 
 			expect(() => clearStats(puzzleId)).not.toThrow();
 		});
 
 		it('does not throw when localStorage.removeItem throws a generic Error', () => {
-			vi.spyOn(localStorage, 'removeItem').mockImplementationOnce(() => {
+			vi.spyOn(Storage.prototype, 'removeItem').mockImplementationOnce(() => {
 				throw new Error('Storage unavailable');
 			});
 
