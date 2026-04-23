@@ -18,6 +18,8 @@ describe('generateJigsawPath - all edge type permutations', () => {
 						expect(path).toMatch(/^M\s/);
 						expect(path).toMatch(/Z$/);
 
+						expect(path).not.toContain('NaN');
+						expect(path).not.toContain('Infinity');
 						const numbers = path.match(/[\d.]+/g)!.map(parseFloat);
 						for (const n of numbers) {
 							expect(Number.isFinite(n)).toBe(true);
@@ -109,12 +111,14 @@ describe('generateJigsawPath - tab vs blank perpendicular directions', () => {
 		const tabTop: EdgeConfig = { top: 'tab', right: 'flat', bottom: 'flat', left: 'flat' };
 		const blankTop: EdgeConfig = { top: 'blank', right: 'flat', bottom: 'flat', left: 'flat' };
 
-		const tabNums = generateJigsawPath(tabTop, 100, 100)
-			.match(/[\d.]+/g)!
-			.map(parseFloat);
-		const blankNums = generateJigsawPath(blankTop, 100, 100)
-			.match(/[\d.]+/g)!
-			.map(parseFloat);
+		const tabPath = generateJigsawPath(tabTop, 100, 100);
+		const blankPath = generateJigsawPath(blankTop, 100, 100);
+		expect(tabPath).not.toContain('NaN');
+		expect(blankPath).not.toContain('NaN');
+		expect(tabPath).not.toContain('Infinity');
+		expect(blankPath).not.toContain('Infinity');
+		const tabNums = tabPath.match(/[\d.]+/g)!.map(parseFloat);
+		const blankNums = blankPath.match(/[\d.]+/g)!.map(parseFloat);
 
 		const minTabY = Math.min(...tabNums.filter((_, i) => i % 2 === 1));
 		const minBlankY = Math.min(...blankNums.filter((_, i) => i % 2 === 1));
@@ -128,6 +132,8 @@ describe('generateJigsawPath - coordinate validity for large dimensions', () => 
 		const edges: EdgeConfig = { top: 'tab', right: 'blank', bottom: 'tab', left: 'blank' };
 		const path = generateJigsawPath(edges, 1000, 800);
 
+		expect(path).not.toContain('NaN');
+		expect(path).not.toContain('Infinity');
 		const numbers = path.match(/[\d.]+/g)!.map(parseFloat);
 		for (const n of numbers) {
 			expect(Number.isFinite(n)).toBe(true);
