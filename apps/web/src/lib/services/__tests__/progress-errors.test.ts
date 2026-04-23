@@ -15,7 +15,7 @@ describe('Progress Service - error handling', () => {
 
 	describe('getProgress - localStorage errors', () => {
 		it('returns null when localStorage.getItem throws', () => {
-			vi.spyOn(localStorage, 'getItem').mockImplementationOnce(() => {
+			vi.spyOn(Storage.prototype, 'getItem').mockImplementationOnce(() => {
 				throw new Error('Unexpected storage error');
 			});
 
@@ -29,8 +29,8 @@ describe('Progress Service - error handling', () => {
 		});
 
 		it('returns null when localStorage.getItem throws a DOMException', () => {
-			vi.spyOn(localStorage, 'getItem').mockImplementationOnce(() => {
-				throw new DOMException('SecurityError: access denied');
+			vi.spyOn(Storage.prototype, 'getItem').mockImplementationOnce(() => {
+				throw new DOMException('access denied', 'SecurityError');
 			});
 
 			expect(getProgress(puzzleId)).toBeNull();
@@ -39,15 +39,15 @@ describe('Progress Service - error handling', () => {
 
 	describe('saveProgress - localStorage errors', () => {
 		it('does not throw when localStorage.setItem throws QuotaExceededError', () => {
-			vi.spyOn(localStorage, 'setItem').mockImplementationOnce(() => {
-				throw new DOMException('QuotaExceededError');
+			vi.spyOn(Storage.prototype, 'setItem').mockImplementationOnce(() => {
+				throw new DOMException('quota exceeded', 'QuotaExceededError');
 			});
 
 			expect(() => saveProgress(puzzleId, [])).not.toThrow();
 		});
 
 		it('does not throw when localStorage.setItem throws a generic Error', () => {
-			vi.spyOn(localStorage, 'setItem').mockImplementationOnce(() => {
+			vi.spyOn(Storage.prototype, 'setItem').mockImplementationOnce(() => {
 				throw new Error('Storage unavailable');
 			});
 
@@ -57,15 +57,15 @@ describe('Progress Service - error handling', () => {
 
 	describe('clearProgress - localStorage errors', () => {
 		it('does not throw when localStorage.removeItem throws a DOMException', () => {
-			vi.spyOn(localStorage, 'removeItem').mockImplementationOnce(() => {
-				throw new DOMException('SecurityError');
+			vi.spyOn(Storage.prototype, 'removeItem').mockImplementationOnce(() => {
+				throw new DOMException('access denied', 'SecurityError');
 			});
 
 			expect(() => clearProgress(puzzleId)).not.toThrow();
 		});
 
 		it('does not throw when localStorage.removeItem throws a generic Error', () => {
-			vi.spyOn(localStorage, 'removeItem').mockImplementationOnce(() => {
+			vi.spyOn(Storage.prototype, 'removeItem').mockImplementationOnce(() => {
 				throw new Error('Cannot remove');
 			});
 
