@@ -13,6 +13,8 @@ describe('generateJigsawPath - non-square dimensions', () => {
 		expect(path).toMatch(/Z$/);
 		expect(path).toMatch(/C\s/);
 
+		expect(path).not.toContain('NaN');
+		expect(path).not.toContain('Infinity');
 		const numbers = path.match(/[\d.]+/g)!.map(parseFloat);
 		for (const n of numbers) {
 			expect(Number.isFinite(n)).toBe(true);
@@ -40,6 +42,8 @@ describe('generateJigsawPath - non-square dimensions', () => {
 		const edges: EdgeConfig = { top: 'tab', right: 'blank', bottom: 'blank', left: 'tab' };
 		const path = generateJigsawPath(edges, 160, 80);
 
+		expect(path).not.toContain('NaN');
+		expect(path).not.toContain('Infinity');
 		const numbers = path.match(/[\d.]+/g)!.map(parseFloat);
 		expect(numbers.length).toBeGreaterThan(0);
 		for (const n of numbers) {
@@ -59,7 +63,9 @@ describe('generateJigsawPath - blank edge coordinate bounds', () => {
 		const expansion = 1 + 2 * TAB_RATIO;
 		const baseStartY = (TAB_RATIO / expansion) * height;
 
-		// Extract all numbers from path; Y-values are at even indices after the initial M (1, 3, 5...)
+		expect(path).not.toContain('NaN');
+		expect(path).not.toContain('Infinity');
+		// Parsed numbers alternate x, y; Y-values are at odd indices (1, 3, 5…)
 		const allNums = path.match(/[\d.]+/g)!.map(parseFloat);
 		// Skip the M coordinate pair; remaining pairs alternate x, y
 		// Simply check that all values are within [0, height]
@@ -84,6 +90,10 @@ describe('generateJigsawPath - blank edge coordinate bounds', () => {
 		const tabPath = generateJigsawPath(tabEdges, width, height);
 		const blankPath = generateJigsawPath(blankEdges, width, height);
 
+		expect(tabPath).not.toContain('NaN');
+		expect(blankPath).not.toContain('NaN');
+		expect(tabPath).not.toContain('Infinity');
+		expect(blankPath).not.toContain('Infinity');
 		const tabNums = tabPath.match(/[\d.]+/g)!.map(parseFloat);
 		const blankNums = blankPath.match(/[\d.]+/g)!.map(parseFloat);
 
