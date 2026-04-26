@@ -1,7 +1,7 @@
 # Perseus - Product Requirements Document
 
-> **Version:** 2.0
-> **Last Updated:** 2026-03-31
+> **Version:** 2.1
+> **Last Updated:** 2026-04-25
 > **Status:** Current product baseline
 > **Owner:** Product + Engineering
 > **Source of truth:** Repository implementation on `main`
@@ -52,7 +52,8 @@ Workflows, R2, KV, and a Durable Object to generate and store puzzle assets.
 
 - No player accounts or cloud progress sync
 - No daily challenge or leaderboards
-- No achievements, sharing, multiplayer, hints, undo/redo, or offline mode
+- No achievements, sharing, or multiplayer
+- No offline mode (no service worker or PWA packaging)
 - No product analytics baseline in the codebase
 
 ---
@@ -101,9 +102,14 @@ The current player product is centered on a single-player gallery and solve loop
 - Keyboard piece selection and placement
 - Progress bar and placed-piece counter
 - Auto-starting timer with tab visibility pause/resume behavior
-- Local per-puzzle progress persistence in `localStorage`
+- Local per-puzzle progress persistence in `localStorage` (including rotation state)
 - Local per-puzzle personal best tracking in `localStorage`
 - Completion modal with replay flow
+- Undo / redo (in-memory move history stack, up to 50 states; Cmd/Ctrl+Z / Cmd/Ctrl+Y shortcuts)
+- Hint system (highlights the target cell for the selected or next unplaced piece for 1.8 s)
+- Zoom and pan (mouse wheel / toolbar buttons; pan by pointer drag when zoomed in; fit-to-viewport reset)
+- Reference image overlay (hold the Reference button or key to peek at the full source image; auto-dismisses on release or window blur)
+- Piece rotation mode (optional; toggled before first placement; pieces must be upright to place; rotation state persisted and undoable)
 
 ### Admin experience
 
@@ -149,36 +155,43 @@ The deployed product architecture uses a Cloudflare-native backend:
 
 ### 2. Puzzle gameplay
 
-| Requirement                           | Status          | Notes                                              |
-| ------------------------------------- | --------------- | -------------------------------------------------- |
-| Board rendering and piece tray        | Implemented     | Grid board and shuffled inventory are fully wired  |
-| Mouse drag-and-drop placement         | Implemented     | Uses HTML drag and drop on board cells             |
-| Touch drag support                    | Implemented     | Touch gestures synthesize drag/drop events         |
-| Keyboard placement                    | Implemented     | Pieces and drop zones support keyboard interaction |
-| Incorrect placement feedback          | Implemented     | Rejected piece gets temporary shake feedback       |
-| Progress bar and placed-piece counter | Implemented     | Visible during play                                |
-| Completion modal with replay          | Implemented     | Includes final time and replay/back actions        |
-| Hint system                           | Not implemented | No hint UI or hint logic exists                    |
-| Undo / redo                           | Not implemented | No move history stack exists                       |
-| Zoom / pan                            | Not implemented | No viewport controls or pinch-zoom exist           |
-| Reference image overlay               | Not implemented | No "peek at full image" flow exists                |
-| Piece rotation / difficulty modes     | Not implemented | Current product uses fixed orientation             |
+| Requirement                           | Status      | Notes                                                                                                                                        |
+| ------------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Board rendering and piece tray        | Implemented | Grid board and shuffled inventory are fully wired                                                                                            |
+| Mouse drag-and-drop placement         | Implemented | Uses HTML drag and drop on board cells                                                                                                       |
+| Touch drag support                    | Implemented | Touch gestures synthesize drag/drop events                                                                                                   |
+| Keyboard placement                    | Implemented | Pieces and drop zones support keyboard interaction                                                                                           |
+| Incorrect placement feedback          | Implemented | Rejected piece gets temporary shake feedback                                                                                                 |
+| Progress bar and placed-piece counter | Implemented | Visible during play                                                                                                                          |
+| Completion modal with replay          | Implemented | Includes final time and replay/back actions                                                                                                  |
+| Hint system                           | Implemented | `getHintPieceId` selects target piece; board cell glows for 1.8 s; toolbar Hint button triggers flow                                         |
+| Undo / redo                           | Implemented | In-memory `createHistory` stack (cap 50); covers placements and rotation changes; Cmd/Ctrl+Z/Y shortcuts wired                               |
+| Zoom / pan                            | Implemented | Mouse-wheel zoom, toolbar +/− buttons, pointer-drag pan when zoomed, fit-to-viewport reset via `ZoomableBoardFrame`                          |
+| Reference image overlay               | Implemented | Hold-to-peek via `ReferenceOverlay`; served from `GET /api/puzzles/:id/reference`; hidden when no reference exists                           |
+| Piece rotation mode                   | Implemented | Optional mode toggled before first placement; 90° clockwise per click; upright required to place; seeded random init; persisted and undoable |
 
 **Implementation references:** `apps/web/src/routes/puzzle/[id]/+page.svelte`,
 `apps/web/src/lib/components/PuzzleBoard.svelte`,
-`apps/web/src/lib/components/PuzzlePiece.svelte`
+`apps/web/src/lib/components/PuzzlePiece.svelte`,
+`apps/web/src/lib/components/PuzzleToolbar.svelte`,
+`apps/web/src/lib/components/ReferenceOverlay.svelte`,
+`apps/web/src/lib/components/ZoomableBoardFrame.svelte`,
+`apps/web/src/lib/services/gameplay/history.ts`,
+`apps/web/src/lib/services/gameplay/hints.ts`,
+`apps/web/src/lib/services/gameplay/rotation.ts`,
+`apps/web/src/lib/services/gameplay/viewport.ts`
 
 ### 3. Timer, replay, and personal progress
 
-| Requirement                         | Status          | Notes                                      |
-| ----------------------------------- | --------------- | ------------------------------------------ |
-| Game timer                          | Implemented     | Starts on first placement                  |
-| Pause timer when tab becomes hidden | Implemented     | Visibility-aware timer behavior exists     |
-| Personal best per puzzle            | Implemented     | Stored locally only                        |
-| Completion count per puzzle         | Implemented     | Stored locally only                        |
-| Resume in-progress puzzle           | Implemented     | Restores placed pieces from `localStorage` |
-| Cross-device progress sync          | Not implemented | No player account or server-side progress  |
-| Global / shared stats               | Not implemented | No server-side score submission exists     |
+| Requirement                         | Status          | Notes                                                                              |
+| ----------------------------------- | --------------- | ---------------------------------------------------------------------------------- |
+| Game timer                          | Implemented     | Starts on first placement or first piece rotation                                  |
+| Pause timer when tab becomes hidden | Implemented     | Visibility-aware timer behavior exists                                             |
+| Personal best per puzzle            | Implemented     | Stored locally only                                                                |
+| Completion count per puzzle         | Implemented     | Stored locally only                                                                |
+| Resume in-progress puzzle           | Implemented     | Restores placed pieces, rotation mode, and per-piece rotations from `localStorage` |
+| Cross-device progress sync          | Not implemented | No player account or server-side progress                                          |
+| Global / shared stats               | Not implemented | No server-side score submission exists                                             |
 
 **Important limitation:** Progress and stats are device-local only and can be lost if browser
 storage is cleared.
@@ -222,35 +235,36 @@ storage is cleared.
 
 ### 6. Admin content management
 
-| Requirement                         | Status          | Notes                                                   |
-| ----------------------------------- | --------------- | ------------------------------------------------------- |
-| Upload image and create puzzle      | Implemented     | Name, optional category, and image upload are supported |
-| Image validation                    | Implemented     | File size and MIME validation are enforced              |
-| Category assignment                 | Implemented     | Uses shared category list                               |
-| Async processing status             | Implemented     | Admin list shows `processing`, `ready`, and `failed`    |
-| Processing progress display         | Implemented     | Generated piece count is shown while processing         |
-| Delete ready puzzle                 | Implemented     | Available in admin list                                 |
-| Force-delete processing puzzle      | Implemented     | Explicit force-delete flow exists                       |
-| Edit puzzle metadata after creation | Not implemented | No rename, recategorize, or republish flow exists       |
-| Schedule puzzle publication         | Not implemented | No scheduling or publish date support exists            |
-| Daily challenge assignment          | Not implemented | No date-based featured puzzle model exists              |
+| Requirement                         | Status          | Notes                                                                                                                             |
+| ----------------------------------- | --------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Upload image and create puzzle      | Implemented     | Name, optional category, and image upload are supported; original image is persisted in R2 and used as the player reference image |
+| Image validation                    | Implemented     | File size and MIME validation are enforced                                                                                        |
+| Category assignment                 | Implemented     | Uses shared category list                                                                                                         |
+| Async processing status             | Implemented     | Admin list shows `processing`, `ready`, and `failed`                                                                              |
+| Processing progress display         | Implemented     | Generated piece count is shown while processing                                                                                   |
+| Delete ready puzzle                 | Implemented     | Available in admin list                                                                                                           |
+| Force-delete processing puzzle      | Implemented     | Explicit force-delete flow exists                                                                                                 |
+| Edit puzzle metadata after creation | Not implemented | No rename, recategorize, or republish flow exists                                                                                 |
+| Schedule puzzle publication         | Not implemented | No scheduling or publish date support exists                                                                                      |
+| Daily challenge assignment          | Not implemented | No date-based featured puzzle model exists                                                                                        |
 
 **Implementation references:** `apps/web/src/routes/admin/+page.svelte`,
 `apps/api/src/routes/admin.worker.ts`, `packages/types/src/index.ts`
 
 ### 7. Backend and platform operations
 
-| Requirement                          | Status          | Notes                                                        |
-| ------------------------------------ | --------------- | ------------------------------------------------------------ |
-| Public API for ready puzzles         | Implemented     | Public API exposes ready content only                        |
-| Admin API for all puzzle states      | Implemented     | Admin API includes processing and failed items               |
-| Static asset serving from API Worker | Implemented     | Production Worker also serves web assets                     |
-| Async cloud puzzle generation        | Implemented     | Cloudflare Workflow processes uploads                        |
-| Strongly consistent metadata updates | Implemented     | Durable Object is authoritative                              |
-| Cached metadata store                | Implemented     | KV is used as an eventually consistent cache                 |
-| Observability / invocation logs      | Implemented     | Pulumi enables Worker observability and logs                 |
-| Product analytics / event tracking   | Not implemented | No analytics SDK or event pipeline exists                    |
-| Realtime multiplayer infrastructure  | Not implemented | No room model, websocket flow, or shared player state exists |
+| Requirement                          | Status          | Notes                                                                                                                                                                 |
+| ------------------------------------ | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Public API for ready puzzles         | Implemented     | Public API exposes ready content only                                                                                                                                 |
+| Admin API for all puzzle states      | Implemented     | Admin API includes processing and failed items                                                                                                                        |
+| Static asset serving from API Worker | Implemented     | Production Worker also serves web assets                                                                                                                              |
+| Async cloud puzzle generation        | Implemented     | Cloudflare Workflow processes uploads                                                                                                                                 |
+| Strongly consistent metadata updates | Implemented     | Durable Object is authoritative                                                                                                                                       |
+| Cached metadata store                | Implemented     | KV is used as an eventually consistent cache                                                                                                                          |
+| Public reference image endpoint      | Implemented     | `GET /api/puzzles/:id/reference` serves original image from R2; `hasReference` field on puzzle responses reflects R2 presence; graceful degradation if R2 unavailable |
+| Observability / invocation logs      | Implemented     | Pulumi enables Worker observability and logs                                                                                                                          |
+| Product analytics / event tracking   | Not implemented | No analytics SDK or event pipeline exists                                                                                                                             |
+| Realtime multiplayer infrastructure  | Not implemented | No room model, websocket flow, or shared player state exists                                                                                                          |
 
 **Implementation references:** `apps/api/src/worker.ts`,
 `apps/api/src/routes/puzzles.worker.ts`, `apps/workflows/src/index.ts`,
@@ -302,13 +316,13 @@ fully hardened implementation.
 
 ### Now: strengthen the current single-player product
 
-| Initiative                                 | Status      | Why it matters                                                                             |
-| ------------------------------------------ | ----------- | ------------------------------------------------------------------------------------------ |
-| Add real product analytics                 | Not started | The repo currently has no code-backed DAU, retention, or funnel metrics                    |
-| Close single-player usability gaps         | Not started | Reference image, hints, and zoom/pan are the clearest player quality-of-life gaps          |
-| Resolve piece-count strategy               | Not started | Current 225-piece lock limits casual entry and runtime parity                              |
-| Finish realistic puzzle E2E coverage       | In progress | Gallery E2E exists, but full puzzle interaction coverage depends on seeded puzzle fixtures |
-| Add admin edit and content lifecycle tools | Not started | Admins can create and delete content but cannot edit, schedule, or stage it                |
+| Initiative                                 | Status      | Why it matters                                                                                  |
+| ------------------------------------------ | ----------- | ----------------------------------------------------------------------------------------------- |
+| Add real product analytics                 | Not started | The repo currently has no code-backed DAU, retention, or funnel metrics                         |
+| Close single-player usability gaps         | Done        | Reference image, hints, zoom/pan, undo/redo, and piece rotation were all shipped in this period |
+| Resolve piece-count strategy               | Not started | Current 225-piece lock limits casual entry and runtime parity                                   |
+| Finish realistic puzzle E2E coverage       | In progress | Gallery E2E exists, but full puzzle interaction coverage depends on seeded puzzle fixtures      |
+| Add admin edit and content lifecycle tools | Not started | Admins can create and delete content but cannot edit, schedule, or stage it                     |
 
 **Recommendation:** Keep the next phase focused on the existing solo experience before adding
 community or social features.
@@ -390,12 +404,12 @@ Once instrumentation exists, the first dashboard should answer:
 
 ### Automated testing in the repo
 
-| Area                        | Current status                                                                      |
-| --------------------------- | ----------------------------------------------------------------------------------- |
-| Web component / route tests | Strong coverage across core routes, components, services, and stores                |
-| API tests                   | Strong coverage across routes, storage, auth, rate limiting, and Worker variants    |
-| Workflow tests              | Good unit coverage around helper logic, types, DO logic, and workflow behavior      |
-| End-to-end tests            | Present but partial; gallery coverage is stronger than full puzzle solving coverage |
+| Area                        | Current status                                                                                                                       |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Web component / route tests | Strong coverage across core routes, components, services, stores, and the new gameplay services (history, hints, rotation, viewport) |
+| API tests                   | Strong coverage across routes, storage, auth, rate limiting, and Worker variants; branch coverage improved from ~81.9% to ~92.1%     |
+| Workflow tests              | Good unit coverage around helper logic, types, DO logic, and workflow behavior                                                       |
+| End-to-end tests            | Present but partial; gallery coverage is stronger than full puzzle solving coverage                                                  |
 
 ### Current E2E gap
 
@@ -405,9 +419,18 @@ puzzle strategy in CI.
 
 ### Recent engineering direction
 
-Recent commits on `main` show sustained work on coverage hardening across web, API, and
-workflows. This suggests the codebase is in a stabilization and test-improvement phase rather
-than a broad feature-expansion phase.
+The period from 2026-03-31 to 2026-04-25 delivered two distinct phases:
+
+1. **Feature expansion** — Hints, undo/redo, zoom/pan, reference image overlay, and piece
+   rotation were all shipped as part of the gameplay controls work (Tasks 2 and 3). The public
+   reference image API (`GET /api/puzzles/:id/reference`) and the `hasReference` field were added
+   to both Bun and Worker routes.
+
+2. **Stabilization and coverage hardening** — After the feature work landed, a focused set of
+   commits improved branch coverage from approximately 81.9% to 92.1% in the API, added Worker
+   route tests for admin and puzzle paths, refactored test helpers, and fixed several edge-case
+   bugs (duplicate completion, undo of solved state, rotation toggle lock, pointer ID tracking,
+   magic-byte image validation, pan state on blur, seeded random normalization).
 
 ---
 
@@ -415,13 +438,14 @@ than a broad feature-expansion phase.
 
 ### Product risks
 
-| Risk                                | Impact                                                  | Mitigation                                                                                |
-| ----------------------------------- | ------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| No analytics baseline               | Product prioritization remains guess-driven             | Implement analytics before setting user growth targets                                    |
-| Local-only progress and stats       | Player history is lost across devices or storage clears | Add player identity and cloud sync before promising durable progression                   |
-| Fixed 225-piece production flow     | Limits onboarding flexibility and product breadth       | Decide whether to keep a single canonical difficulty or reintroduce multiple piece counts |
-| No server-backed competition model  | Daily challenge and leaderboards cannot launch cleanly  | Add persistence designed for rankings and submissions                                     |
-| Admin tooling is create/delete only | Content ops may become cumbersome as the catalog grows  | Add edit, scheduling, and operational views                                               |
+| Risk                                | Impact                                                  | Mitigation                                                                                                           |
+| ----------------------------------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| No analytics baseline               | Product prioritization remains guess-driven             | Implement analytics before setting user growth targets                                                               |
+| Local-only progress and stats       | Player history is lost across devices or storage clears | Add player identity and cloud sync before promising durable progression                                              |
+| Fixed 225-piece production flow     | Limits onboarding flexibility and product breadth       | Decide whether to keep a single canonical difficulty or reintroduce multiple piece counts                            |
+| No server-backed competition model  | Daily challenge and leaderboards cannot launch cleanly  | Add persistence designed for rankings and submissions                                                                |
+| Admin tooling is create/delete only | Content ops may become cumbersome as the catalog grows  | Add edit, scheduling, and operational views                                                                          |
+| E2E interaction coverage gap        | Regression risk for the new gameplay controls           | Add seeded puzzle fixtures in CI so hint, undo/redo, zoom, rotation, and reference flows can be exercised end-to-end |
 
 ### Technical dependencies for future roadmap
 
@@ -443,13 +467,20 @@ than a broad feature-expansion phase.
 - Puzzle play route: `apps/web/src/routes/puzzle/[id]/+page.svelte`
 - Puzzle board: `apps/web/src/lib/components/PuzzleBoard.svelte`
 - Puzzle piece interactions: `apps/web/src/lib/components/PuzzlePiece.svelte`
+- Puzzle toolbar (undo/redo, hint, reference, zoom, rotation controls): `apps/web/src/lib/components/PuzzleToolbar.svelte`
+- Reference overlay: `apps/web/src/lib/components/ReferenceOverlay.svelte`
+- Zoom/pan board frame: `apps/web/src/lib/components/ZoomableBoardFrame.svelte`
+- Undo/redo history helper: `apps/web/src/lib/services/gameplay/history.ts`
+- Hint strategy helper: `apps/web/src/lib/services/gameplay/hints.ts`
+- Rotation helpers (normalize, clockwise, seeded random init): `apps/web/src/lib/services/gameplay/rotation.ts`
+- Viewport helpers (clamp zoom/pan, fit-zoom): `apps/web/src/lib/services/gameplay/viewport.ts`
 - Timer: `apps/web/src/lib/stores/timer.ts`
-- Local progress: `apps/web/src/lib/services/progress.ts`
+- Local progress (includes rotation state): `apps/web/src/lib/services/progress.ts`
 - Local stats: `apps/web/src/lib/services/stats.ts`
 - Admin UI: `apps/web/src/routes/admin/+page.svelte`
 - Admin auth gate: `apps/web/src/routes/admin/+layout.svelte`
 - API Worker entry: `apps/api/src/worker.ts`
-- Public puzzle routes: `apps/api/src/routes/puzzles.worker.ts`
+- Public puzzle routes (includes reference endpoint): `apps/api/src/routes/puzzles.worker.ts`
 - Admin routes: `apps/api/src/routes/admin.worker.ts`
 - Worker auth: `apps/api/src/middleware/auth.worker.ts`
 - Worker rate limit: `apps/api/src/middleware/rate-limit.worker.ts`
@@ -468,10 +499,6 @@ than current commitments:
 - Achievements
 - Social sharing
 - Multiplayer
-- Hints
-- Undo / redo
-- Zoom / pan
-- Reference image overlay
 - Player accounts
 - Cloud progress sync
 - PWA / offline mode
@@ -484,7 +511,8 @@ than current commitments:
 
 ## Document History
 
-| Version | Date         | Author       | Changes                                                                                        |
-| ------- | ------------ | ------------ | ---------------------------------------------------------------------------------------------- |
-| 2.0     | 2026-03-31   | Copilot      | Rewrote PRD to match implemented repository status, current constraints, and realistic roadmap |
-| 1.0     | January 2026 | Product Team | Initial aspirational PRD with future feature requirements                                      |
+| Version | Date         | Author       | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ------- | ------------ | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2.1     | 2026-04-25   | Claude Code  | Updated status fields to reflect April 2026 feature work: hints, undo/redo, zoom/pan, reference image overlay, and piece rotation are all implemented; added public reference image API row; updated progress persistence note to include rotation state; marked "Close single-player usability gaps" roadmap item as Done; updated test coverage figures; added E2E interaction coverage gap to risks; removed now-implemented items from out-of-scope list; added new gameplay service implementation references; updated Document History |
+| 2.0     | 2026-03-31   | Copilot      | Rewrote PRD to match implemented repository status, current constraints, and realistic roadmap                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| 1.0     | January 2026 | Product Team | Initial aspirational PRD with future feature requirements                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
