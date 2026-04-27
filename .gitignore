@@ -32,11 +32,14 @@ Thumbs.db
 # Claude
 .claude/settings.local.json
 
+# Superpowers brainstorm sessions
+.superpowers/
+
 # Vite
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 
-specs/
+/specs/
 
 sample.png
 coverage/
