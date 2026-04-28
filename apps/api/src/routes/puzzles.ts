@@ -2,12 +2,14 @@
 import { Hono } from 'hono';
 import {
 	getPuzzle,
-	listPuzzlesSorted,
+	listPuzzlesPage,
 	getThumbnailPath,
 	getPieceImagePath,
 	findOriginalImagePath,
 	InvalidPuzzleIdError
 } from '../services/storage';
+import { PUZZLE_CATEGORIES } from '../types/index';
+import type { PuzzleCategory } from '../types/index';
 import { readFile } from 'node:fs/promises';
 import { extname } from 'node:path';
 
@@ -55,16 +57,25 @@ function puzzleHasReference(puzzleId: string): boolean {
 
 // GET /api/puzzles - List all puzzles
 puzzles.get('/', async (c) => {
+	const q = c.req.query('q') || undefined;
+
+	const categoryParam = c.req.query('category');
+	const category =
+		categoryParam && PUZZLE_CATEGORIES.includes(categoryParam as PuzzleCategory)
+			? (categoryParam as PuzzleCategory)
+			: undefined;
+
+	const rawOffset = parseInt(c.req.query('offset') ?? '0', 10);
+	const offset = Number.isFinite(rawOffset) && rawOffset >= 0 ? rawOffset : 0;
+
+	const rawLimit = parseInt(c.req.query('limit') ?? '20', 10);
+	const limit = Number.isFinite(rawLimit) && rawLimit >= 1 && rawLimit <= 100 ? rawLimit : 20;
+
 	try {
-		const puzzleList = await listPuzzlesSorted();
-		return c.json({ puzzles: puzzleList });
+		const result = await listPuzzlesPage({ q, category, offset, limit });
+		return c.json(result);
 	} catch (error) {
-		console.error('Failed to list puzzles');
-		if (error instanceof Error) {
-			console.error(error.stack || error.message);
-		} else {
-			console.error(error);
-		}
+		console.error('Failed to list puzzles', error);
 		return c.json({ error: 'internal_error', message: 'Failed to list puzzles' }, 500);
 	}
 });
