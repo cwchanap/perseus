@@ -4,7 +4,7 @@
 import { mkdir, readFile, writeFile, readdir, rm, access } from 'node:fs/promises';
 import { join, resolve, relative, isAbsolute } from 'node:path';
 import { existsSync } from 'node:fs';
-import type { Puzzle, PuzzleSummary } from '../types/index';
+import type { Puzzle, PuzzleSummary, PuzzleCategory } from '../types/index';
 
 export class InvalidPuzzleIdError extends Error {
 	constructor(message = 'Invalid puzzleId') {
@@ -261,4 +261,30 @@ export async function listPuzzlesSorted(): Promise<PuzzleSummary[]> {
 	puzzlesWithDate.sort((a, b) => b.createdAt - a.createdAt);
 
 	return puzzlesWithDate.map((p) => p.summary);
+}
+
+export async function listPuzzlesPage(params: {
+	q?: string;
+	category?: PuzzleCategory;
+	offset: number;
+	limit: number;
+}): Promise<{ puzzles: PuzzleSummary[]; total: number; offset: number; limit: number }> {
+	const puzzlesWithDate = await listPuzzlesWithDate();
+	puzzlesWithDate.sort((a, b) => b.createdAt - a.createdAt);
+
+	let filtered = puzzlesWithDate.map((p) => p.summary);
+
+	if (params.category) {
+		filtered = filtered.filter((p) => p.category === params.category);
+	}
+
+	if (params.q) {
+		const q = params.q.toLowerCase();
+		filtered = filtered.filter((p) => p.name.toLowerCase().includes(q));
+	}
+
+	const total = filtered.length;
+	const page = filtered.slice(params.offset, params.offset + params.limit);
+
+	return { puzzles: page, total, offset: params.offset, limit: params.limit };
 }

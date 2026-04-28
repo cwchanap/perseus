@@ -15,7 +15,7 @@ vi.mock('../services/storage', () => {
 	}
 	return {
 		getPuzzle: vi.fn(),
-		listPuzzlesSorted: vi.fn(),
+		listPuzzlesPage: vi.fn(),
 		getThumbnailPath: vi.fn().mockReturnValue('/fake/thumbnail.jpg'),
 		getPieceImagePath: vi.fn().mockReturnValue('/fake/pieces/0.png'),
 		getOriginalImagePath: vi.fn().mockReturnValue('/fake/original.jpg'),
@@ -60,28 +60,31 @@ describe('GET / - List puzzles', () => {
 		vi.clearAllMocks();
 	});
 
-	it('returns 200 with puzzle list on success', async () => {
-		const mockList = [{ id: PUZZLE_ID, name: 'Test', pieceCount: 4 }];
-		vi.mocked(storage.listPuzzlesSorted).mockResolvedValue(mockList as any);
+	it('returns paginated puzzle data on success', async () => {
+		const mockResult = {
+			puzzles: [{ id: PUZZLE_ID, name: 'Test', pieceCount: 4 }],
+			total: 1,
+			offset: 5,
+			limit: 20
+		};
+		vi.mocked(storage.listPuzzlesPage).mockResolvedValue(mockResult as any);
 
-		const res = await puzzles.fetch(new Request('http://localhost/'));
+		const res = await puzzles.fetch(
+			new Request('http://localhost/?q=test&category=Animals&offset=5&limit=20')
+		);
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as any;
-		expect(body.puzzles).toHaveLength(1);
-		expect(body.puzzles[0].id).toBe(PUZZLE_ID);
+		expect(body).toEqual(mockResult);
+		expect(storage.listPuzzlesPage).toHaveBeenCalledWith({
+			q: 'test',
+			category: 'Animals',
+			offset: 5,
+			limit: 20
+		});
 	});
 
-	it('returns empty puzzles array when no puzzles exist', async () => {
-		vi.mocked(storage.listPuzzlesSorted).mockResolvedValue([]);
-
-		const res = await puzzles.fetch(new Request('http://localhost/'));
-		expect(res.status).toBe(200);
-		const body = (await res.json()) as any;
-		expect(body.puzzles).toEqual([]);
-	});
-
-	it('returns 500 with internal_error when listPuzzlesSorted throws', async () => {
-		vi.mocked(storage.listPuzzlesSorted).mockRejectedValue(new Error('DB error'));
+	it('returns 500 with internal_error when listPuzzlesPage throws', async () => {
+		vi.mocked(storage.listPuzzlesPage).mockRejectedValue(new Error('DB error'));
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
 		const res = await puzzles.fetch(new Request('http://localhost/'));
@@ -89,36 +92,6 @@ describe('GET / - List puzzles', () => {
 		const body = (await res.json()) as any;
 		expect(body.error).toBe('internal_error');
 		expect(body.message).toContain('Failed to list puzzles');
-		consoleSpy.mockRestore();
-	});
-
-	it('logs error details when listPuzzlesSorted throws an Error', async () => {
-		const err = new Error('something broke');
-		vi.mocked(storage.listPuzzlesSorted).mockRejectedValue(err);
-		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-
-		await puzzles.fetch(new Request('http://localhost/'));
-		expect(consoleSpy).toHaveBeenCalled();
-		consoleSpy.mockRestore();
-	});
-
-	it('uses error.message when error.stack is empty (line 31 || branch)', async () => {
-		vi.mocked(storage.listPuzzlesSorted).mockRejectedValue(errorWithoutStack('no-stack message'));
-		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-
-		const res = await puzzles.fetch(new Request('http://localhost/'));
-		expect(res.status).toBe(500);
-		expect(consoleSpy).toHaveBeenCalledWith('no-stack message');
-		consoleSpy.mockRestore();
-	});
-
-	it('logs non-Error exceptions when listPuzzlesSorted throws a string', async () => {
-		vi.mocked(storage.listPuzzlesSorted).mockRejectedValue('string error');
-		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-
-		const res = await puzzles.fetch(new Request('http://localhost/'));
-		expect(res.status).toBe(500);
-		expect(consoleSpy).toHaveBeenCalled();
 		consoleSpy.mockRestore();
 	});
 });

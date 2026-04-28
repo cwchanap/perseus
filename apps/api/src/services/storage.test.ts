@@ -305,3 +305,61 @@ describe('listPuzzles and listPuzzlesSorted', () => {
 		expect(result[1].name).toBe('Old');
 	});
 });
+
+describe('listPuzzlesPage', () => {
+	beforeEach(async () => {
+		await rm(join(tempDir, 'puzzles'), { recursive: true, force: true });
+		await storageModule.initializeStorage();
+	});
+
+	it('returns empty result when no puzzles exist', async () => {
+		const result = await storageModule.listPuzzlesPage({ offset: 0, limit: 20 });
+		expect(result).toEqual({ puzzles: [], total: 0, offset: 0, limit: 20 });
+	});
+
+	it('returns the correct page slice', async () => {
+		await storageModule.createPuzzle(makePuzzle('page-a', { name: 'A' }));
+		await storageModule.createPuzzle(makePuzzle('page-b', { name: 'B' }));
+		await storageModule.createPuzzle(makePuzzle('page-c', { name: 'C' }));
+
+		const result = await storageModule.listPuzzlesPage({ offset: 1, limit: 1 });
+
+		expect(result.total).toBe(3);
+		expect(result.offset).toBe(1);
+		expect(result.limit).toBe(1);
+		expect(result.puzzles).toHaveLength(1);
+		expect(result.puzzles[0].name).toBe('B');
+	});
+
+	it('filters by q', async () => {
+		await storageModule.createPuzzle(makePuzzle('page-cat', { name: 'Cat Puzzle' }));
+		await storageModule.createPuzzle(makePuzzle('page-dog', { name: 'Dog Puzzle' }));
+
+		const result = await storageModule.listPuzzlesPage({
+			q: 'cat',
+			offset: 0,
+			limit: 20
+		});
+
+		expect(result.total).toBe(1);
+		expect(result.puzzles).toHaveLength(1);
+		expect(result.puzzles[0].name).toBe('Cat Puzzle');
+	});
+
+	it('filters by category', async () => {
+		await storageModule.createPuzzle(
+			makePuzzle('page-animals', { name: 'Animals', category: 'Animals' })
+		);
+		await storageModule.createPuzzle(makePuzzle('page-art', { name: 'Art', category: 'Art' }));
+
+		const result = await storageModule.listPuzzlesPage({
+			category: 'Animals',
+			offset: 0,
+			limit: 20
+		});
+
+		expect(result.total).toBe(1);
+		expect(result.puzzles).toHaveLength(1);
+		expect(result.puzzles[0].category).toBe('Animals');
+	});
+});
