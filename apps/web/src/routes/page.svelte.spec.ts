@@ -117,19 +117,25 @@ describe('/+page.svelte', () => {
 	});
 
 	it('should show no puzzles in category message when filter has no matches', async () => {
-		vi.mocked(fetchPuzzles).mockResolvedValue({
-			puzzles: mockPuzzles,
-			total: mockPuzzles.length,
-			offset: 0,
-			limit: 20
-		});
+		vi.mocked(fetchPuzzles)
+			.mockResolvedValueOnce({
+				puzzles: mockPuzzles,
+				total: mockPuzzles.length,
+				offset: 0,
+				limit: 20
+			})
+			.mockResolvedValueOnce({
+				puzzles: [],
+				total: 0,
+				offset: 0,
+				limit: 20
+			});
 		render(Page);
 
-		// Click on a category with no puzzles
 		await expect.element(page.getByTestId('category-filter')).toBeVisible();
 		const abstractButton = page.getByRole('radio', { name: 'Abstract' });
 		await abstractButton.click();
 
-		await expect.element(page.getByText('NO MISSIONS IN THIS SECTOR')).toBeVisible();
+		await expect.element(page.getByTestId('no-results-state')).toBeVisible();
 	});
 });

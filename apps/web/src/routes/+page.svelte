@@ -4,6 +4,7 @@
 	import type { PuzzleSummary } from '$lib/types/puzzle';
 	import PuzzleCard from '$lib/components/PuzzleCard.svelte';
 	import CategoryFilter from '$lib/components/CategoryFilter.svelte';
+	import SearchBar from '$lib/components/SearchBar.svelte';
 	import { CATEGORY_ALL } from '$lib/constants/categories';
 	import type { PuzzleCategory } from '$lib/constants/categories';
 	import { resolve } from '$app/paths';
@@ -11,32 +12,96 @@
 	let puzzles: PuzzleSummary[] = $state([]);
 	let loading = $state(true);
 	let error: string | null = $state(null);
+	let loadMoreError = $state(false);
 	let selectedCategory: PuzzleCategory | typeof CATEGORY_ALL = $state(CATEGORY_ALL);
+	let searchQuery = $state('');
+	let debouncedQuery = $state('');
+	let total = $state(0);
+	let loadingMore = $state(false);
+	let hasMore = $derived(puzzles.length < total);
 
-	const filteredPuzzles = $derived(
-		selectedCategory === CATEGORY_ALL
-			? puzzles
-			: puzzles.filter((p) => p.category === selectedCategory)
-	);
+	// Debounce raw input into debouncedQuery (300 ms)
+	$effect(() => {
+		const q = searchQuery;
+		const timer = setTimeout(() => {
+			debouncedQuery = q;
+		}, 300);
+		return () => clearTimeout(timer);
+	});
+
+	// Re-fetch whenever debouncedQuery or selectedCategory changes
+	$effect(() => {
+		const q = debouncedQuery;
+		const cat = selectedCategory;
+
+		loading = true;
+		error = null;
+		loadMoreError = false;
+
+		const controller = new AbortController();
+		const catParam = cat === CATEGORY_ALL ? undefined : (cat as PuzzleCategory);
+
+		fetchPuzzles({ q: q || undefined, category: catParam, offset: 0 })
+			.then((result) => {
+				if (controller.signal.aborted) return;
+				puzzles = result.puzzles;
+				total = result.total;
+			})
+			.catch((e) => {
+				if (controller.signal.aborted) return;
+				error = e instanceof ApiError ? e.message : 'Failed to load puzzles. Please try again.';
+			})
+			.finally(() => {
+				if (!controller.signal.aborted) loading = false;
+			});
+
+		return () => controller.abort();
+	});
+
+	async function loadNextPage() {
+		if (loadingMore || !hasMore) return;
+		loadingMore = true;
+		loadMoreError = false;
+		const catParam =
+			selectedCategory === CATEGORY_ALL ? undefined : (selectedCategory as PuzzleCategory);
+		try {
+			const result = await fetchPuzzles({
+				q: debouncedQuery || undefined,
+				category: catParam,
+				offset: puzzles.length
+			});
+			puzzles = [...puzzles, ...result.puzzles];
+			total = result.total;
+		} catch {
+			loadMoreError = true;
+		} finally {
+			loadingMore = false;
+		}
+	}
+
+	onMount(() => {
+		const sentinel = document.querySelector('[data-testid="scroll-sentinel"]');
+		if (!sentinel) return;
+
+		const observer = new IntersectionObserver(
+			(entries) => {
+				if (entries[0].isIntersecting) loadNextPage();
+			},
+			{ rootMargin: '200px' }
+		);
+
+		observer.observe(sentinel);
+		return () => observer.disconnect();
+	});
 
 	function handleCategorySelect(category: PuzzleCategory | typeof CATEGORY_ALL) {
 		selectedCategory = category;
 	}
 
-	onMount(async () => {
-		try {
-			const response = await fetchPuzzles();
-			puzzles = response.puzzles;
-		} catch (e) {
-			if (e instanceof ApiError) {
-				error = e.message;
-			} else {
-				error = 'Failed to load puzzles. Please try again.';
-			}
-		} finally {
-			loading = false;
-		}
-	});
+	function clearFilters() {
+		searchQuery = '';
+		selectedCategory = CATEGORY_ALL;
+	}
 </script>
 
 <svelte:head>
@@ -81,11 +146,11 @@ font-black tracking-[0.06em] text-(--text-0) uppercase"
 					>
 						SELECT YOUR MISSION
 					</span>
-					{#if puzzles.length > 0}
+					{#if total > 0}
 						<span
 							class="text-[0.7rem] font-(--font-mono) tracking-[0.15em] text-(--accent) opacity-70"
 						>
-							{filteredPuzzles.length} AVAILABLE
+							{total} AVAILABLE
 						</span>
 					{/if}
 				</div>
@@ -94,8 +159,9 @@ font-black tracking-[0.06em] text-(--text-0) uppercase"
 				class="h-px bg-[linear-gradient(90deg,transparent_0%,var(--accent)_30%,var(--accent)_70%,transparent_100%)] opacity-40"
 			></div>
 
-			{#if puzzles.length > 0}
-				<div class="pt-5">
+			{#if !loading}
+				<div class="flex flex-col gap-3 pt-5">
+					<SearchBar value={searchQuery} onInput={(v) => (searchQuery = v)} />
 					<CategoryFilter selected={selectedCategory} onSelect={handleCategorySelect} />
 				</div>
 			{/if}
@@ -151,7 +217,7 @@ hover:[text-shadow:0_0_10px_var(--accent)] hover:before:opacity-100"
 					RETRY SCAN
 				</button>
 			</div>
-		{:else if puzzles.length === 0}
+		{:else if total === 0 && !debouncedQuery && selectedCategory === CATEGORY_ALL}
 			<div
 				class="flex flex-col items-center gap-4 border border-(--border) bg-(--bg-1) px-8 py-16 text-center"
 				data-testid="empty-state"
@@ -199,21 +265,22 @@ hover:[text-shadow:0_0_10px_var(--accent)] hover:before:opacity-100"
 					ADMIN PORTAL
 				</a>
 			</div>
-		{:else if filteredPuzzles.length === 0}
+		{:else if total === 0}
 			<div
 				class="flex flex-col items-center gap-4 border border-(--border) bg-(--bg-1) px-8 py-16 text-center"
+				data-testid="no-results-state"
 			>
 				<h2
 					class="text-[1rem] font-(--font-display) font-bold tracking-[0.12em] text-(--text-1)
 uppercase"
 				>
-					NO MISSIONS IN THIS SECTOR
+					NO MISSIONS MATCH YOUR SCAN
 				</h2>
 				<p class="text-[0.9rem] tracking-[0.05em] text-(--text-2)">
-					Select a different category filter to continue.
+					Try a different search term or category.
 				</p>
 				<button
-					onclick={() => (selectedCategory = CATEGORY_ALL)}
+					onclick={clearFilters}
 					class="relative mt-2 overflow-hidden border border-(--accent) px-7 py-2.5
 text-[0.65rem] font-(--font-display) font-bold tracking-[0.2em]
 text-(--accent) uppercase transition-all duration-200
@@ -223,8 +290,9 @@ before:opacity-0 before:transition-opacity before:duration-200
 hover:bg-(--accent-glow)
 hover:[box-shadow:0_0_25px_var(--accent-glow-strong)]
 hover:[text-shadow:0_0_10px_var(--accent)] hover:before:opacity-100"
+					data-testid="clear-filters-btn"
 				>
-					CLEAR FILTER
+					CLEAR FILTERS
 				</button>
 			</div>
 		{:else}
@@ -233,10 +301,38 @@ hover:[text-shadow:0_0_10px_var(--accent)] hover:before:opacity-100"
 motion-reduce:animate-none sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4"
 				data-testid="puzzle-grid"
 			>
-				{#each filteredPuzzles as puzzle (puzzle.id)}
+				{#each puzzles as puzzle (puzzle.id)}
 					<PuzzleCard {puzzle} />
 				{/each}
 			</div>
+
+			{#if loadingMore}
+				<div
+					class="flex justify-center py-8"
+					role="status"
+					aria-live="polite"
+					data-testid="load-more-spinner"
+				>
+					<div
+						class="h-8 w-8 rounded-full border-2 border-(--border) border-t-(--accent)
+[box-shadow:0_0_15px_var(--accent-glow)]
+motion-safe:animate-[spin-cw_0.75s_linear_infinite] motion-reduce:animate-none"
+					></div>
+				</div>
+			{:else if loadMoreError}
+				<div class="flex justify-center py-8" data-testid="load-more-error">
+					<button
+						onclick={loadNextPage}
+						class="border border-(--hot) px-6 py-2 text-[0.65rem] font-(--font-mono)
+tracking-[0.15em] text-(--hot) uppercase transition-colors duration-150
+hover:bg-[rgba(255,0,102,0.08)]"
+					>
+						RETRY LOAD
+					</button>
+				</div>
+			{/if}
+
+			<div data-testid="scroll-sentinel" class="h-px" aria-hidden="true"></div>
 		{/if}
 	</div>
 </main>
