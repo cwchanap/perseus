@@ -25,7 +25,8 @@
 
 	onMount(async () => {
 		try {
-			puzzles = await fetchPuzzles();
+			const response = await fetchPuzzles();
+			puzzles = response.puzzles;
 		} catch (e) {
 			if (e instanceof ApiError) {
 				error = e.message;

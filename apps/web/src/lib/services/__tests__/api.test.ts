@@ -174,7 +174,9 @@ describe('API Service - fetchPuzzles', () => {
 			)
 		);
 
-		await expect(fetchPuzzles()).rejects.toMatchObject({ status: 500 });
+		const error = await fetchPuzzles().catch((e) => e);
+		expect(error).toBeInstanceOf(ApiError);
+		expect(error).toMatchObject({ status: 500 });
 	});
 });
 

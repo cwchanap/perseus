@@ -3,7 +3,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import Page from './+page.svelte';
 import { fetchPuzzles } from '$lib/services/api';
-import type { PuzzleSummary } from '$lib/types/puzzle';
+import type { PuzzleListResponse, PuzzleSummary } from '$lib/types/puzzle';
 
 vi.mock('$lib/services/api', () => {
 	class MockApiError extends Error {
@@ -35,7 +35,12 @@ const mockPuzzles: PuzzleSummary[] = [
 
 describe('/+page.svelte', () => {
 	beforeEach(() => {
-		vi.mocked(fetchPuzzles).mockResolvedValue([]);
+		vi.mocked(fetchPuzzles).mockResolvedValue({
+			puzzles: [],
+			total: 0,
+			offset: 0,
+			limit: 20
+		});
 	});
 
 	it('should render h1', async () => {
@@ -46,9 +51,9 @@ describe('/+page.svelte', () => {
 	});
 
 	it('should show loading state while fetching', async () => {
-		let resolvePromise!: (value: PuzzleSummary[]) => void;
+		let resolvePromise!: (value: PuzzleListResponse) => void;
 		vi.mocked(fetchPuzzles).mockReturnValue(
-			new Promise<PuzzleSummary[]>((res) => {
+			new Promise<PuzzleListResponse>((res) => {
 				resolvePromise = res;
 			})
 		);
@@ -57,19 +62,24 @@ describe('/+page.svelte', () => {
 
 		await expect.element(page.getByTestId('loading-state')).toBeVisible();
 
-		resolvePromise([]);
+		resolvePromise({ puzzles: [], total: 0, offset: 0, limit: 20 });
 		await expect.element(page.getByTestId('loading-state')).not.toBeInTheDocument();
 	});
 
 	it('should show empty state when no puzzles exist', async () => {
-		vi.mocked(fetchPuzzles).mockResolvedValue([]);
+		vi.mocked(fetchPuzzles).mockResolvedValue({ puzzles: [], total: 0, offset: 0, limit: 20 });
 		render(Page);
 
 		await expect.element(page.getByTestId('empty-state')).toBeVisible();
 	});
 
 	it('should show puzzle grid when puzzles are loaded', async () => {
-		vi.mocked(fetchPuzzles).mockResolvedValue(mockPuzzles);
+		vi.mocked(fetchPuzzles).mockResolvedValue({
+			puzzles: mockPuzzles,
+			total: mockPuzzles.length,
+			offset: 0,
+			limit: 20
+		});
 		render(Page);
 
 		await expect.element(page.getByTestId('puzzle-grid')).toBeVisible();
@@ -95,14 +105,24 @@ describe('/+page.svelte', () => {
 	});
 
 	it('should show category filter when puzzles are loaded', async () => {
-		vi.mocked(fetchPuzzles).mockResolvedValue(mockPuzzles);
+		vi.mocked(fetchPuzzles).mockResolvedValue({
+			puzzles: mockPuzzles,
+			total: mockPuzzles.length,
+			offset: 0,
+			limit: 20
+		});
 		render(Page);
 
 		await expect.element(page.getByTestId('category-filter')).toBeVisible();
 	});
 
 	it('should show no puzzles in category message when filter has no matches', async () => {
-		vi.mocked(fetchPuzzles).mockResolvedValue(mockPuzzles);
+		vi.mocked(fetchPuzzles).mockResolvedValue({
+			puzzles: mockPuzzles,
+			total: mockPuzzles.length,
+			offset: 0,
+			limit: 20
+		});
 		render(Page);
 
 		// Click on a category with no puzzles
