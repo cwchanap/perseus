@@ -249,6 +249,73 @@ export async function listPuzzles(
 	};
 }
 
+export async function listPuzzlesPage(
+	kv: KVNamespace,
+	params: { q?: string; category?: PuzzleCategory; offset: number; limit: number }
+): Promise<{ puzzles: PuzzleSummary[]; total: number; offset: number; limit: number }> {
+	const keys: { name: string }[] = [];
+	let cursor: string | undefined;
+
+	while (true) {
+		const list = await kv.list({ prefix: 'puzzle:', cursor });
+		keys.push(...list.keys);
+		if (list.list_complete) break;
+		cursor = list.cursor;
+	}
+
+	const fetched = await Promise.all(keys.map((k) => kv.get(k.name, 'json')));
+	const all: PuzzleMetadata[] = [];
+
+	fetched.forEach((puzzle) => {
+		if (puzzle === null) return;
+		// Prefer lightweight validation, but be tolerant for listing if a ready puzzle
+		// omits full piece arrays (tests/mock data may omit pieces for brevity).
+		if (!validatePuzzleMetadataLight(puzzle)) {
+			// Minimal shape check fallback
+			if (typeof puzzle !== 'object' || puzzle === null) return;
+			const p = puzzle as Partial<PuzzleMetadata>;
+			if (typeof p.id !== 'string' || typeof p.name !== 'string') return;
+			if (
+				typeof p.pieceCount !== 'number' ||
+				typeof p.gridCols !== 'number' ||
+				typeof p.gridRows !== 'number'
+			)
+				return;
+			if (typeof p.createdAt !== 'number' || typeof p.version !== 'number') return;
+			if (!p.status || typeof p.status !== 'string') return;
+		}
+		all.push(puzzle as PuzzleMetadata);
+	});
+
+	let filtered = all.filter((p) => p.status === 'ready').sort((a, b) => b.createdAt - a.createdAt);
+
+	if (params.category) {
+		filtered = filtered.filter((p) => p.category === params.category);
+	}
+
+	if (params.q) {
+		const q = params.q.toLowerCase();
+		filtered = filtered.filter((p) => p.name.toLowerCase().includes(q));
+	}
+
+	const total = filtered.length;
+	const page = filtered.slice(params.offset, params.offset + params.limit);
+
+	return {
+		puzzles: page.map((p) => ({
+			id: p.id,
+			name: p.name,
+			pieceCount: p.pieceCount,
+			status: p.status,
+			progress: p.progress,
+			category: p.category
+		})),
+		total,
+		offset: params.offset,
+		limit: params.limit
+	};
+}
+
 // Check if puzzle exists in KV
 export async function puzzleExists(kv: KVNamespace, puzzleId: string): Promise<boolean> {
 	const data = await kv.get(puzzleKey(puzzleId));

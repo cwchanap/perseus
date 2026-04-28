@@ -5,6 +5,7 @@ import {
 	updatePuzzleMetadata,
 	deletePuzzleMetadata,
 	listPuzzles,
+	listPuzzlesPage,
 	puzzleExists,
 	getOriginalKey,
 	getThumbnailKey,
@@ -678,5 +679,139 @@ describe('R2 Asset Operations', () => {
 			const secondBatch = mockBucket.delete.mock.calls[1][0] as string[];
 			expect(secondBatch.length).toBe(502);
 		});
+	});
+});
+
+describe('listPuzzlesPage', () => {
+	function makeReadyPuzzle(overrides: Partial<PuzzleMetadata> = {}): PuzzleMetadata {
+		return {
+			id: 'p-default',
+			name: 'Test Puzzle',
+			pieceCount: 225,
+			gridCols: 15,
+			gridRows: 15,
+			imageWidth: 1000,
+			imageHeight: 800,
+			createdAt: 1000,
+			status: 'ready',
+			version: 0,
+			pieces: [],
+			...overrides
+		} as PuzzleMetadata;
+	}
+
+	it('returns empty result when no puzzles exist', async () => {
+		const kv = createMockKV();
+		const result = await listPuzzlesPage(kv as unknown as KVNamespace, {
+			offset: 0,
+			limit: 20
+		});
+		expect(result).toEqual({ puzzles: [], total: 0, offset: 0, limit: 20 });
+	});
+
+	it('excludes non-ready puzzles', async () => {
+		const kv = createMockKV();
+		kv._store.set('puzzle:r1', JSON.stringify(makeReadyPuzzle({ id: 'r1', status: 'ready' })));
+		kv._store.set(
+			'puzzle:p1',
+			JSON.stringify(
+				makeReadyPuzzle({
+					id: 'p1',
+					status: 'processing',
+					progress: { totalPieces: 225, generatedPieces: 0, updatedAt: 0 }
+				} as unknown as PuzzleMetadata)
+			)
+		);
+
+		const result = await listPuzzlesPage(kv as unknown as KVNamespace, { offset: 0, limit: 20 });
+		expect(result.total).toBe(1);
+		expect(result.puzzles[0].id).toBe('r1');
+	});
+
+	it('returns correct page slice', async () => {
+		const kv = createMockKV();
+		for (let i = 0; i < 5; i++) {
+			kv._store.set(
+				`puzzle:p${i}`,
+				JSON.stringify(makeReadyPuzzle({ id: `p${i}`, name: `Puzzle ${i}`, createdAt: i }))
+			);
+		}
+
+		const result = await listPuzzlesPage(kv as unknown as KVNamespace, { offset: 2, limit: 2 });
+		expect(result.total).toBe(5);
+		expect(result.puzzles).toHaveLength(2);
+		expect(result.offset).toBe(2);
+		expect(result.limit).toBe(2);
+	});
+
+	it('filters by q — case-insensitive substring on name', async () => {
+		const kv = createMockKV();
+		kv._store.set(
+			'puzzle:a',
+			JSON.stringify(makeReadyPuzzle({ id: 'a', name: 'Mountain Forest' }))
+		);
+		kv._store.set('puzzle:b', JSON.stringify(makeReadyPuzzle({ id: 'b', name: 'Ocean View' })));
+
+		const result = await listPuzzlesPage(kv as unknown as KVNamespace, {
+			q: 'FOREST',
+			offset: 0,
+			limit: 20
+		});
+		expect(result.total).toBe(1);
+		expect(result.puzzles[0].id).toBe('a');
+	});
+
+	it('filters by category', async () => {
+		const kv = createMockKV();
+		kv._store.set(
+			'puzzle:a',
+			JSON.stringify(makeReadyPuzzle({ id: 'a', name: 'A', category: 'Nature' }))
+		);
+		kv._store.set(
+			'puzzle:b',
+			JSON.stringify(makeReadyPuzzle({ id: 'b', name: 'B', category: 'Art' }))
+		);
+
+		const result = await listPuzzlesPage(kv as unknown as KVNamespace, {
+			category: 'Nature',
+			offset: 0,
+			limit: 20
+		});
+		expect(result.total).toBe(1);
+		expect(result.puzzles[0].id).toBe('a');
+	});
+
+	it('combines q and category filters', async () => {
+		const kv = createMockKV();
+		kv._store.set(
+			'puzzle:a',
+			JSON.stringify(makeReadyPuzzle({ id: 'a', name: 'Mountain Forest', category: 'Nature' }))
+		);
+		kv._store.set(
+			'puzzle:b',
+			JSON.stringify(makeReadyPuzzle({ id: 'b', name: 'Mountain Art', category: 'Art' }))
+		);
+		kv._store.set(
+			'puzzle:c',
+			JSON.stringify(makeReadyPuzzle({ id: 'c', name: 'Ocean View', category: 'Nature' }))
+		);
+
+		const result = await listPuzzlesPage(kv as unknown as KVNamespace, {
+			q: 'mountain',
+			category: 'Nature',
+			offset: 0,
+			limit: 20
+		});
+		expect(result.total).toBe(1);
+		expect(result.puzzles[0].id).toBe('a');
+	});
+
+	it('returns empty puzzles when offset exceeds total', async () => {
+		const kv = createMockKV();
+		kv._store.set('puzzle:p1', JSON.stringify(makeReadyPuzzle({ id: 'p1' })));
+
+		const result = await listPuzzlesPage(kv as unknown as KVNamespace, { offset: 100, limit: 20 });
+		expect(result.total).toBe(1);
+		expect(result.puzzles).toHaveLength(0);
 	});
 });
