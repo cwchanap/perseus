@@ -63,6 +63,9 @@ export interface LoginResponse {
 
 export interface PuzzleListResponse {
 	puzzles: PuzzleSummary[];
+	total: number;
+	offset: number;
+	limit: number;
 }
 
 export interface SessionResponse {
