@@ -39,6 +39,10 @@ const VALID_PUZZLE_CATEGORIES = new Set(
 		: TYPE_PUZZLE_CATEGORIES) as readonly PuzzleCategory[]
 );
 
+function isPuzzleCategory(value: string): value is PuzzleCategory {
+	return VALID_PUZZLE_CATEGORIES.has(value as PuzzleCategory);
+}
+
 function parseOffset(value: string | null): number {
 	if (value === null) return 0;
 	const rawOffset = parseInt(value ?? '0', 10);
@@ -53,7 +57,7 @@ function parseLimit(value: string | null): number {
 
 function parseCategory(value: string | null | undefined): PuzzleCategory | undefined {
 	if (value == null) return undefined;
-	return VALID_PUZZLE_CATEGORIES.has(value) ? (value as PuzzleCategory) : undefined;
+	return isPuzzleCategory(value) ? value : undefined;
 }
 
 const puzzles = new Hono<{ Bindings: Env }>();
