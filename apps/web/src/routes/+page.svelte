@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { fetchPuzzles, ApiError } from '$lib/services/api';
 	import type { PuzzleSummary } from '$lib/types/puzzle';
 	import PuzzleCard from '$lib/components/PuzzleCard.svelte';
@@ -18,6 +17,7 @@
 	let debouncedQuery = $state('');
 	let total = $state(0);
 	let loadingMore = $state(false);
+	let scrollSentinel = $state<HTMLDivElement | null>(null);
 	let hasMore = $derived(puzzles.length < total);
 
 	// Debounce raw input into debouncedQuery (300 ms)
@@ -58,6 +58,21 @@
 		return () => controller.abort();
 	});
 
+	$effect(() => {
+		const sentinel = scrollSentinel;
+		if (!sentinel) return;
+
+		const observer = new IntersectionObserver(
+			(entries) => {
+				if (entries[0].isIntersecting) loadNextPage();
+			},
+			{ rootMargin: '200px' }
+		);
+
+		observer.observe(sentinel);
+		return () => observer.disconnect();
+	});
+
 	async function loadNextPage() {
 		if (loadingMore || !hasMore) return;
 		loadingMore = true;
@@ -78,21 +93,6 @@
 			loadingMore = false;
 		}
 	}
-
-	onMount(() => {
-		const sentinel = document.querySelector('[data-testid="scroll-sentinel"]');
-		if (!sentinel) return;
-
-		const observer = new IntersectionObserver(
-			(entries) => {
-				if (entries[0].isIntersecting) loadNextPage();
-			},
-			{ rootMargin: '200px' }
-		);
-
-		observer.observe(sentinel);
-		return () => observer.disconnect();
-	});
 
 	function handleCategorySelect(category: PuzzleCategory | typeof CATEGORY_ALL) {
 		selectedCategory = category;
@@ -332,7 +332,12 @@ hover:bg-[rgba(255,0,102,0.08)]"
 				</div>
 			{/if}
 
-			<div data-testid="scroll-sentinel" class="h-px" aria-hidden="true"></div>
+			<div
+				bind:this={scrollSentinel}
+				data-testid="scroll-sentinel"
+				class="h-px"
+				aria-hidden="true"
+			></div>
 		{/if}
 	</div>
 </main>
