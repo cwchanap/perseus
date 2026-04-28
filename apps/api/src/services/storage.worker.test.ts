@@ -684,7 +684,7 @@ describe('R2 Asset Operations', () => {
 
 describe('listPuzzlesPage', () => {
 	function makeReadyPuzzle(overrides: Partial<PuzzleMetadata> = {}): PuzzleMetadata {
-		return {
+		const puzzle = {
 			id: 'p-default',
 			name: 'Test Puzzle',
 			pieceCount: 225,
@@ -698,6 +698,24 @@ describe('listPuzzlesPage', () => {
 			pieces: [],
 			...overrides
 		} as PuzzleMetadata;
+
+		if (puzzle.status === 'ready' && puzzle.pieces.length !== puzzle.pieceCount) {
+			puzzle.pieces = Array.from({ length: puzzle.pieceCount }, (_value, index) => ({
+				id: index,
+				puzzleId: puzzle.id,
+				correctX: index % puzzle.gridCols,
+				correctY: Math.floor(index / puzzle.gridCols),
+				edges: {
+					top: 'flat',
+					right: 'flat',
+					bottom: 'flat',
+					left: 'flat'
+				},
+				imagePath: `pieces/${index}.png`
+			}));
+		}
+
+		return puzzle;
 	}
 
 	it('returns empty result when no puzzles exist', async () => {
