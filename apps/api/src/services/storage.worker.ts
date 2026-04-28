@@ -268,22 +268,7 @@ export async function listPuzzlesPage(
 
 	fetched.forEach((puzzle) => {
 		if (puzzle === null) return;
-		// Prefer lightweight validation, but be tolerant for listing if a ready puzzle
-		// omits full piece arrays (tests/mock data may omit pieces for brevity).
-		if (!validatePuzzleMetadataLight(puzzle)) {
-			// Minimal shape check fallback
-			if (typeof puzzle !== 'object' || puzzle === null) return;
-			const p = puzzle as Partial<PuzzleMetadata>;
-			if (typeof p.id !== 'string' || typeof p.name !== 'string') return;
-			if (
-				typeof p.pieceCount !== 'number' ||
-				typeof p.gridCols !== 'number' ||
-				typeof p.gridRows !== 'number'
-			)
-				return;
-			if (typeof p.createdAt !== 'number' || typeof p.version !== 'number') return;
-			if (!p.status || typeof p.status !== 'string') return;
-		}
+		if (!validatePuzzleMetadataLight(puzzle)) return;
 		all.push(puzzle as PuzzleMetadata);
 	});
 
