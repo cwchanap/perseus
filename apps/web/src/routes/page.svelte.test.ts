@@ -39,9 +39,15 @@ const makePuzzle = (id: string, overrides: Partial<PuzzleSummary> = {}): PuzzleS
 	...overrides
 });
 
+type FetchPuzzlesResult = Awaited<ReturnType<typeof fetchPuzzles>>;
+
 const observe = vi.fn();
 const disconnect = vi.fn();
+let intersectionCallback: IntersectionObserverCallback | null = null;
 class MockIntersectionObserver {
+	constructor(callback: IntersectionObserverCallback) {
+		intersectionCallback = callback;
+	}
 	observe = observe;
 	disconnect = disconnect;
 	unobserve = vi.fn();
@@ -51,6 +57,7 @@ class MockIntersectionObserver {
 describe('Gallery Page', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		intersectionCallback = null;
 		vi.stubGlobal('IntersectionObserver', MockIntersectionObserver as never);
 		vi.mocked(fetchPuzzles).mockResolvedValue({ puzzles: [], total: 0, offset: 0, limit: 20 });
 	});
@@ -132,5 +139,77 @@ describe('Gallery Page', () => {
 		render(GalleryPage);
 
 		await expect.element(page.getByTestId('search-input')).toBeVisible();
+	});
+
+	it('does not append stale next-page results after the query changes', async () => {
+		let resolveStalePage: ((value: FetchPuzzlesResult) => void) | undefined;
+		const stalePagePromise = new Promise<FetchPuzzlesResult>((resolve) => {
+			resolveStalePage = resolve;
+		});
+
+		vi.mocked(fetchPuzzles).mockImplementation(async (params) => {
+			const { q, offset = 0 } = params ?? {};
+			if (!q && offset === 0) {
+				return {
+					puzzles: [makePuzzle('old-1', { name: 'Old Initial Result' })],
+					total: 2,
+					offset: 0,
+					limit: 20
+				};
+			}
+
+			if (!q && offset === 1) {
+				return stalePagePromise;
+			}
+
+			if (q === 'fresh' && offset === 0) {
+				return {
+					puzzles: [makePuzzle('fresh-1', { name: 'Fresh Query Result' })],
+					total: 1,
+					offset: 0,
+					limit: 20
+				};
+			}
+
+			return { puzzles: [], total: 0, offset, limit: 20 };
+		});
+
+		render(GalleryPage);
+
+		await expect.element(page.getByText('Old Initial Result')).toBeVisible();
+		await expect.element(page.getByTestId('scroll-sentinel')).toBeInTheDocument();
+		expect(intersectionCallback).not.toBeNull();
+
+		intersectionCallback?.(
+			[{ isIntersecting: true } as IntersectionObserverEntry],
+			{} as IntersectionObserver
+		);
+
+		await vi.waitFor(() => {
+			expect(fetchPuzzles).toHaveBeenCalledWith(
+				expect.objectContaining({ q: undefined, category: undefined, offset: 1 })
+			);
+		});
+
+		await page.getByTestId('search-input').fill('fresh');
+
+		await vi.waitFor(() => {
+			expect(fetchPuzzles).toHaveBeenCalledWith(
+				expect.objectContaining({ q: 'fresh', category: undefined, offset: 0 })
+			);
+		});
+		await expect.element(page.getByText('Fresh Query Result')).toBeVisible();
+
+		resolveStalePage?.({
+			puzzles: [makePuzzle('old-2', { name: 'Stale Page Result' })],
+			total: 2,
+			offset: 1,
+			limit: 20
+		});
+		await stalePagePromise;
+		await Promise.resolve();
+
+		expect(document.querySelectorAll('[data-testid="puzzle-card"]')).toHaveLength(1);
+		expect(document.body.textContent).not.toContain('Stale Page Result');
 	});
 });

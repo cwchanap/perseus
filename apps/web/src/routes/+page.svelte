@@ -19,6 +19,7 @@
 	let loadingMore = $state(false);
 	let scrollSentinel = $state<HTMLDivElement | null>(null);
 	let hasMore = $derived(puzzles.length < total);
+	let queryVersion = 0;
 
 	// Debounce raw input into debouncedQuery (300 ms)
 	$effect(() => {
@@ -33,9 +34,11 @@
 	$effect(() => {
 		const q = debouncedQuery;
 		const cat = selectedCategory;
+		const version = ++queryVersion;
 
 		loading = true;
 		error = null;
+		loadingMore = false;
 		loadMoreError = false;
 
 		const controller = new AbortController();
@@ -43,16 +46,16 @@
 
 		fetchPuzzles({ q: q || undefined, category: catParam, offset: 0 })
 			.then((result) => {
-				if (controller.signal.aborted) return;
+				if (controller.signal.aborted || version !== queryVersion) return;
 				puzzles = result.puzzles;
 				total = result.total;
 			})
 			.catch((e) => {
-				if (controller.signal.aborted) return;
+				if (controller.signal.aborted || version !== queryVersion) return;
 				error = e instanceof ApiError ? e.message : 'Failed to load puzzles. Please try again.';
 			})
 			.finally(() => {
-				if (!controller.signal.aborted) loading = false;
+				if (!controller.signal.aborted && version === queryVersion) loading = false;
 			});
 
 		return () => controller.abort();
@@ -75,6 +78,7 @@
 
 	async function loadNextPage() {
 		if (loadingMore || !hasMore) return;
+		const version = queryVersion;
 		loadingMore = true;
 		loadMoreError = false;
 		const catParam =
@@ -85,12 +89,14 @@
 				category: catParam,
 				offset: puzzles.length
 			});
+			if (version !== queryVersion) return;
 			puzzles = [...puzzles, ...result.puzzles];
 			total = result.total;
 		} catch {
+			if (version !== queryVersion) return;
 			loadMoreError = true;
 		} finally {
-			loadingMore = false;
+			if (version === queryVersion) loadingMore = false;
 		}
 	}
 
