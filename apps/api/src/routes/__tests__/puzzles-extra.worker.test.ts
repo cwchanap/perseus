@@ -38,7 +38,7 @@ let consoleSpy: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
 	consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 	vi.mocked(storage.getPuzzle).mockReset();
-	vi.mocked(storage.listPuzzles).mockReset();
+	vi.mocked(storage.listPuzzlesPage).mockReset();
 	vi.mocked(storage.getImage).mockReset();
 	mockEnv.PUZZLES_BUCKET.head = vi.fn().mockResolvedValue(null);
 });
@@ -48,8 +48,8 @@ afterEach(() => {
 });
 
 describe('GET / - error path', () => {
-	it('should return 500 when listPuzzles throws', async () => {
-		vi.mocked(storage.listPuzzles).mockRejectedValueOnce(new Error('KV unavailable'));
+	it('should return 500 when listPuzzlesPage throws', async () => {
+		vi.mocked(storage.listPuzzlesPage).mockRejectedValueOnce(new Error('KV unavailable'));
 
 		const req = new Request('http://localhost/');
 		const res = await puzzles.fetch(req, mockEnv);

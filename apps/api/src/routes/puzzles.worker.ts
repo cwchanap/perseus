@@ -1,10 +1,13 @@
 // Worker-compatible puzzle routes for public access
 
 import { Hono } from 'hono';
+import { PUZZLE_CATEGORIES as TYPE_PUZZLE_CATEGORIES } from '@perseus/types';
 import type { Env } from '../worker';
+import type { PuzzleCategory } from '../services/storage.worker';
 import {
 	getPuzzle,
-	listPuzzles,
+	listPuzzlesPage,
+	PUZZLE_CATEGORIES,
 	getThumbnailKey,
 	getPieceKey,
 	getOriginalKey,
@@ -30,15 +33,50 @@ function validatePieceId(id: string): number | null {
 	return num;
 }
 
+const VALID_PUZZLE_CATEGORIES = new Set(
+	(PUZZLE_CATEGORIES?.length
+		? PUZZLE_CATEGORIES
+		: TYPE_PUZZLE_CATEGORIES) as readonly PuzzleCategory[]
+);
+
+function parseOffset(value: string | null): number {
+	if (value === null) return 0;
+	const parsed = Number(value);
+	if (!Number.isFinite(parsed) || parsed < 0) return 0;
+	return Math.floor(parsed);
+}
+
+function parseLimit(value: string | null): number {
+	if (value === null) return 20;
+	const parsed = Number(value);
+	if (!Number.isFinite(parsed)) return 20;
+	const normalized = Math.floor(parsed);
+	if (normalized < 1 || normalized > 100) return 20;
+	return normalized;
+}
+
+function parseCategory(value: string | null | undefined): PuzzleCategory | undefined {
+	if (value == null) return undefined;
+	return VALID_PUZZLE_CATEGORIES.has(value) ? (value as PuzzleCategory) : undefined;
+}
+
 const puzzles = new Hono<{ Bindings: Env }>();
 
 // GET /api/puzzles - List all ready puzzles
 puzzles.get('/', async (c) => {
 	try {
-		const { puzzles: puzzleList } = await listPuzzles(c.env.PUZZLE_METADATA);
-		// Filter to only ready puzzles - public UI expects thumbnails/pieces to exist
-		const readyPuzzles = puzzleList.filter((p) => p.status === 'ready');
-		return c.json({ puzzles: readyPuzzles });
+		const searchParams = new URL(c.req.url).searchParams;
+		const q = searchParams.get('q') ?? undefined;
+		const category = parseCategory(searchParams.get('category'));
+		const offset = parseOffset(searchParams.get('offset'));
+		const limit = parseLimit(searchParams.get('limit'));
+		const result = await listPuzzlesPage(c.env.PUZZLE_METADATA, {
+			q,
+			category,
+			offset,
+			limit
+		});
+		return c.json(result);
 	} catch (error) {
 		console.error('Failed to list puzzles', error);
 		return c.json({ error: 'internal_error', message: 'Failed to list puzzles' }, 500);

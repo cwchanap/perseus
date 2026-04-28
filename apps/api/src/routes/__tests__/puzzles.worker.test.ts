@@ -12,62 +12,86 @@ describe('Puzzle Routes - UUID Validation', () => {
 	};
 
 	describe('GET / - List puzzles', () => {
-		it('should only return ready puzzles', async () => {
-			const mockPuzzles = [
-				{
-					id: '550e8400-e29b-41d4-a716-446655440001',
-					name: 'Ready Puzzle',
-					pieceCount: 4,
-					status: 'ready'
-				},
-				{
-					id: '550e8400-e29b-41d4-a716-446655440002',
-					name: 'Processing Puzzle',
-					pieceCount: 4,
-					status: 'processing'
-				},
-				{
-					id: '550e8400-e29b-41d4-a716-446655440003',
-					name: 'Failed Puzzle',
-					pieceCount: 4,
-					status: 'failed'
-				}
-			];
-			vi.mocked(storage.listPuzzles).mockResolvedValue({
-				puzzles: mockPuzzles,
-				invalidCount: 0
-			} as any);
+		it('should return a paginated response with search and category filters', async () => {
+			const result = {
+				puzzles: [
+					{
+						id: '550e8400-e29b-41d4-a716-446655440001',
+						name: 'Ready Puzzle',
+						pieceCount: 4,
+						status: 'ready'
+					}
+				],
+				total: 1,
+				offset: 10,
+				limit: 5
+			};
+			vi.mocked(storage.listPuzzlesPage).mockResolvedValue(result as any);
 
-			const req = new Request('http://localhost/');
+			const req = new Request('http://localhost/?q=ready&category=Nature&offset=10&limit=5');
 			const res = await puzzles.fetch(req, mockEnv);
 			const body = (await res.json()) as any;
 
 			expect(res.status).toBe(200);
-			expect(body.puzzles).toHaveLength(1);
-			expect(body.puzzles[0].id).toBe('550e8400-e29b-41d4-a716-446655440001');
-			expect(body.puzzles[0].status).toBe('ready');
+			expect(body).toEqual(result);
+			expect(vi.mocked(storage.listPuzzlesPage)).toHaveBeenCalledWith(mockEnv.PUZZLE_METADATA, {
+				q: 'ready',
+				category: 'Nature',
+				offset: 10,
+				limit: 5
+			});
 		});
 
-		it('should return empty array when no ready puzzles exist', async () => {
-			const mockPuzzles = [
-				{
-					id: '550e8400-e29b-41d4-a716-446655440002',
-					name: 'Processing Puzzle',
-					pieceCount: 4,
-					status: 'processing'
-				}
-			];
-			vi.mocked(storage.listPuzzles).mockResolvedValue({
-				puzzles: mockPuzzles,
-				invalidCount: 0
+		it('should pass undefined for invalid category and clamp offset and limit', async () => {
+			vi.mocked(storage.listPuzzlesPage).mockResolvedValue({
+				puzzles: [],
+				total: 0,
+				offset: 0,
+				limit: 20
 			} as any);
+
+			const req = new Request('http://localhost/?category=invalid&offset=-5&limit=200');
+			const res = await puzzles.fetch(req, mockEnv);
+
+			expect(res.status).toBe(200);
+			expect(vi.mocked(storage.listPuzzlesPage)).toHaveBeenCalledWith(mockEnv.PUZZLE_METADATA, {
+				q: undefined,
+				category: undefined,
+				offset: 0,
+				limit: 20
+			});
+		});
+
+		it('should parse offset and limit from query string', async () => {
+			vi.mocked(storage.listPuzzlesPage).mockResolvedValue({
+				puzzles: [],
+				total: 0,
+				offset: 3,
+				limit: 7
+			} as any);
+
+			const req = new Request('http://localhost/?offset=3&limit=7');
+			const res = await puzzles.fetch(req, mockEnv);
+
+			expect(res.status).toBe(200);
+			expect(vi.mocked(storage.listPuzzlesPage)).toHaveBeenCalledWith(mockEnv.PUZZLE_METADATA, {
+				q: undefined,
+				category: undefined,
+				offset: 3,
+				limit: 7
+			});
+		});
+
+		it('should return 500 when storage fails', async () => {
+			vi.mocked(storage.listPuzzlesPage).mockRejectedValue(new Error('storage failure'));
 
 			const req = new Request('http://localhost/');
 			const res = await puzzles.fetch(req, mockEnv);
 			const body = (await res.json()) as any;
 
-			expect(res.status).toBe(200);
-			expect(body.puzzles).toHaveLength(0);
+			expect(res.status).toBe(500);
+			expect(body.error).toBe('internal_error');
+			expect(body.message).toBe('Failed to list puzzles');
 		});
 	});
 
