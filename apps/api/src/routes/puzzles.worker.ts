@@ -41,18 +41,14 @@ const VALID_PUZZLE_CATEGORIES = new Set(
 
 function parseOffset(value: string | null): number {
 	if (value === null) return 0;
-	const parsed = Number(value);
-	if (!Number.isFinite(parsed) || parsed < 0) return 0;
-	return Math.floor(parsed);
+	const rawOffset = parseInt(value ?? '0', 10);
+	return Number.isFinite(rawOffset) && rawOffset >= 0 ? rawOffset : 0;
 }
 
 function parseLimit(value: string | null): number {
 	if (value === null) return 20;
-	const parsed = Number(value);
-	if (!Number.isFinite(parsed)) return 20;
-	const normalized = Math.floor(parsed);
-	if (normalized < 1 || normalized > 100) return 20;
-	return normalized;
+	const rawLimit = parseInt(value ?? '20', 10);
+	return Number.isFinite(rawLimit) && rawLimit >= 1 && rawLimit <= 100 ? rawLimit : 20;
 }
 
 function parseCategory(value: string | null | undefined): PuzzleCategory | undefined {
