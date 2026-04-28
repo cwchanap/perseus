@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
 import GalleryPage from './+page.svelte';
@@ -39,10 +39,24 @@ const makePuzzle = (id: string, overrides: Partial<PuzzleSummary> = {}): PuzzleS
 	...overrides
 });
 
+const observe = vi.fn();
+const disconnect = vi.fn();
+class MockIntersectionObserver {
+	observe = observe;
+	disconnect = disconnect;
+	unobserve = vi.fn();
+	takeRecords = vi.fn();
+}
+
 describe('Gallery Page', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		vi.stubGlobal('IntersectionObserver', MockIntersectionObserver as never);
 		vi.mocked(fetchPuzzles).mockResolvedValue({ puzzles: [], total: 0, offset: 0, limit: 20 });
+	});
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
 	});
 
 	it('shows puzzle cards when puzzles are returned', async () => {
@@ -89,6 +103,21 @@ describe('Gallery Page', () => {
 		await vi.waitFor(() => {
 			expect(fetchPuzzles).toHaveBeenCalledWith(expect.objectContaining({ q: 'forest' }));
 		});
+	});
+
+	it('attaches the observer after the sentinel renders', async () => {
+		vi.mocked(fetchPuzzles).mockResolvedValue({
+			puzzles: [makePuzzle('p1')],
+			total: 1,
+			offset: 0,
+			limit: 20
+		});
+
+		render(GalleryPage);
+
+		await expect.element(page.getByTestId('scroll-sentinel')).toBeInTheDocument();
+		await vi.waitFor(() => expect(observe).toHaveBeenCalledTimes(1));
+		expect(observe).toHaveBeenCalledWith(expect.any(HTMLElement));
 	});
 
 	it('shows error state on initial fetch failure', async () => {
