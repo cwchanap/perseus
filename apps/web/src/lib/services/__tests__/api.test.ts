@@ -78,15 +78,20 @@ describe('API Service - deletePuzzle', () => {
 });
 
 describe('API Service - fetchPuzzles', () => {
-	it('returns list of puzzles on success', async () => {
-		const mockPuzzles = [
-			{ id: 'p1', name: 'Puzzle 1', pieceCount: 25, status: 'ready' },
-			{ id: 'p2', name: 'Puzzle 2', pieceCount: 100, status: 'ready' }
-		];
+	it('returns paginated puzzle response on success', async () => {
+		const responseBody = {
+			puzzles: [
+				{ id: 'p1', name: 'Puzzle 1', pieceCount: 25, status: 'ready' },
+				{ id: 'p2', name: 'Puzzle 2', pieceCount: 100, status: 'ready' }
+			],
+			total: 2,
+			offset: 0,
+			limit: 20
+		};
 		vi.stubGlobal(
 			'fetch',
 			vi.fn().mockResolvedValue(
-				new Response(JSON.stringify({ puzzles: mockPuzzles }), {
+				new Response(JSON.stringify(responseBody), {
 					status: 200,
 					headers: { 'Content-Type': 'application/json' }
 				})
@@ -95,7 +100,66 @@ describe('API Service - fetchPuzzles', () => {
 
 		const result = await fetchPuzzles();
 
-		expect(result).toEqual(mockPuzzles);
+		expect(result).toEqual(responseBody);
+		expect(fetch).toHaveBeenCalledWith(expect.stringMatching(/\/api\/puzzles$/));
+	});
+
+	it('appends q, category, offset, and limit query params when provided', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue(
+				new Response(
+					JSON.stringify({
+						puzzles: [],
+						total: 0,
+						offset: 10,
+						limit: 5
+					}),
+					{
+						status: 200,
+						headers: { 'Content-Type': 'application/json' }
+					}
+				)
+			)
+		);
+
+		await fetchPuzzles({ q: 'cats', category: 'Animals', offset: 10, limit: 5 });
+
+		expect(fetch).toHaveBeenCalledWith(
+			expect.stringMatching(/\/api\/puzzles\?(.+&)?q=cats(&.+)?$/)
+		);
+		expect(fetch).toHaveBeenCalledWith(
+			expect.stringMatching(/\/api\/puzzles\?(.+&)?category=Animals(&.+)?$/)
+		);
+		expect(fetch).toHaveBeenCalledWith(
+			expect.stringMatching(/\/api\/puzzles\?(.+&)?offset=10(&.+)?$/)
+		);
+		expect(fetch).toHaveBeenCalledWith(
+			expect.stringMatching(/\/api\/puzzles\?(.+&)?limit=5(&.+)?$/)
+		);
+	});
+
+	it('omits undefined and default query params', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue(
+				new Response(
+					JSON.stringify({
+						puzzles: [],
+						total: 0,
+						offset: 0,
+						limit: 20
+					}),
+					{
+						status: 200,
+						headers: { 'Content-Type': 'application/json' }
+					}
+				)
+			)
+		);
+
+		await fetchPuzzles({ offset: 0, limit: 20, q: undefined, category: undefined });
+
 		expect(fetch).toHaveBeenCalledWith(expect.stringMatching(/\/api\/puzzles$/));
 	});
 

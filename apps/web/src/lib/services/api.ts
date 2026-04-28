@@ -110,10 +110,23 @@ async function handleVoidResponse(response: Response): Promise<void> {
 }
 
 // Puzzle endpoints
-export async function fetchPuzzles(): Promise<PuzzleSummary[]> {
-	const response = await fetch(`${API_BASE}/api/puzzles`);
-	const data = await handleResponse<PuzzleListResponse>(response);
-	return data.puzzles;
+export async function fetchPuzzles(params?: {
+	q?: string;
+	category?: PuzzleCategory;
+	offset?: number;
+	limit?: number;
+}): Promise<{ puzzles: PuzzleSummary[]; total: number; offset: number; limit: number }> {
+	const searchParams = new URLSearchParams();
+	if (params?.q) searchParams.set('q', params.q);
+	if (params?.category) searchParams.set('category', params.category);
+	if (params?.offset && params.offset > 0) searchParams.set('offset', String(params.offset));
+	if (params?.limit && params.limit !== 20) searchParams.set('limit', String(params.limit));
+	const query = searchParams.toString();
+	const url = query ? `${API_BASE}/api/puzzles?${query}` : `${API_BASE}/api/puzzles`;
+	const response = await fetch(url);
+	return handleResponse<{ puzzles: PuzzleSummary[]; total: number; offset: number; limit: number }>(
+		response
+	);
 }
 
 export async function fetchPuzzle(id: string): Promise<Puzzle> {
