@@ -10,6 +10,7 @@
 
 	let puzzles: PuzzleSummary[] = $state([]);
 	let loading = $state(true);
+	let initialLoadComplete = $state(false);
 	let error: string | null = $state(null);
 	let loadMoreError = $state(false);
 	let selectedCategory: PuzzleCategory | typeof CATEGORY_ALL = $state(CATEGORY_ALL);
@@ -55,7 +56,10 @@
 				error = e instanceof ApiError ? e.message : 'Failed to load puzzles. Please try again.';
 			})
 			.finally(() => {
-				if (!controller.signal.aborted && version === queryVersion) loading = false;
+				if (!controller.signal.aborted && version === queryVersion) {
+					loading = false;
+					initialLoadComplete = true;
+				}
 			});
 
 		return () => controller.abort();
@@ -166,7 +170,7 @@ font-black tracking-[0.06em] text-(--text-0) uppercase"
 				class="h-px bg-[linear-gradient(90deg,transparent_0%,var(--accent)_30%,var(--accent)_70%,transparent_100%)] opacity-40"
 			></div>
 
-			{#if !loading}
+			{#if initialLoadComplete}
 				<div class="flex flex-col gap-3 pt-5">
 					<SearchBar value={searchQuery} onInput={(v) => (searchQuery = v)} />
 					<CategoryFilter selected={selectedCategory} onSelect={handleCategorySelect} />
