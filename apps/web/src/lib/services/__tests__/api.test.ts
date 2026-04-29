@@ -104,6 +104,34 @@ describe('API Service - fetchPuzzles', () => {
 		expect(fetch).toHaveBeenCalledWith(expect.stringMatching(/\/api\/puzzles$/));
 	});
 
+	it('forwards an abort signal to fetch when provided', async () => {
+		const controller = new AbortController();
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue(
+				new Response(
+					JSON.stringify({
+						puzzles: [],
+						total: 0,
+						offset: 0,
+						limit: 20
+					}),
+					{
+						status: 200,
+						headers: { 'Content-Type': 'application/json' }
+					}
+				)
+			)
+		);
+
+		await fetchPuzzles({ signal: controller.signal });
+
+		expect(fetch).toHaveBeenCalledWith(
+			expect.stringMatching(/\/api\/puzzles$/),
+			expect.objectContaining({ signal: controller.signal })
+		);
+	});
+
 	it('appends q, category, offset, and limit query params when provided', async () => {
 		vi.stubGlobal(
 			'fetch',
