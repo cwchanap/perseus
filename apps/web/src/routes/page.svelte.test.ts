@@ -113,6 +113,54 @@ describe('Gallery Page', () => {
 		});
 	});
 
+	it('keeps the search input visible while a refetch is in flight after initial load', async () => {
+		let resolveRefetch: ((value: FetchPuzzlesResult) => void) | undefined;
+
+		mockedFetchPuzzles.mockImplementation(async (params) => {
+			const { q, offset = 0 } = params ?? {};
+
+			if (!q && offset === 0) {
+				return {
+					puzzles: [makePuzzle('p1', { name: 'Initial Result' })],
+					total: 1,
+					offset: 0,
+					limit: 20
+				};
+			}
+
+			if (q === 'forest' && offset === 0) {
+				return new Promise<FetchPuzzlesResult>((resolve) => {
+					resolveRefetch = resolve;
+				});
+			}
+
+			return { puzzles: [], total: 0, offset, limit: 20 };
+		});
+
+		render(GalleryPage);
+
+		await expect.element(page.getByText('Initial Result')).toBeVisible();
+
+		const input = page.getByTestId('search-input');
+		await expect.element(input).toBeVisible();
+		await input.fill('forest');
+
+		await vi.waitFor(() => {
+			expect(fetchPuzzles).toHaveBeenCalledWith(
+				expect.objectContaining({ q: 'forest', category: undefined, offset: 0 })
+			);
+		});
+		await expect.element(page.getByTestId('loading-state')).toBeVisible();
+		await expect.element(page.getByTestId('search-input')).toBeVisible();
+
+		resolveRefetch?.({
+			puzzles: [makePuzzle('p2', { name: 'Filtered Result' })],
+			total: 1,
+			offset: 0,
+			limit: 20
+		});
+	});
+
 	it('attaches the observer after the sentinel renders', async () => {
 		mockedFetchPuzzles.mockResolvedValue({
 			puzzles: [makePuzzle('p1')],
