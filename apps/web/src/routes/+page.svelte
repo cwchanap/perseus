@@ -106,6 +106,7 @@
 
 	function clearFilters() {
 		searchQuery = '';
+		debouncedQuery = '';
 		selectedCategory = CATEGORY_ALL;
 	}
 </script>

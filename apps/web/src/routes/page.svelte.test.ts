@@ -40,6 +40,7 @@ const makePuzzle = (id: string, overrides: Partial<PuzzleSummary> = {}): PuzzleS
 });
 
 type FetchPuzzlesResult = Awaited<ReturnType<typeof fetchPuzzles>>;
+const mockedFetchPuzzles = vi.mocked(fetchPuzzles);
 
 const observe = vi.fn();
 const disconnect = vi.fn();
@@ -59,7 +60,7 @@ describe('Gallery Page', () => {
 		vi.clearAllMocks();
 		intersectionCallback = null;
 		vi.stubGlobal('IntersectionObserver', MockIntersectionObserver as never);
-		vi.mocked(fetchPuzzles).mockResolvedValue({ puzzles: [], total: 0, offset: 0, limit: 20 });
+		mockedFetchPuzzles.mockResolvedValue({ puzzles: [], total: 0, offset: 0, limit: 20 });
 	});
 
 	afterEach(() => {
@@ -67,7 +68,7 @@ describe('Gallery Page', () => {
 	});
 
 	it('shows puzzle cards when puzzles are returned', async () => {
-		vi.mocked(fetchPuzzles).mockResolvedValue({
+		mockedFetchPuzzles.mockResolvedValue({
 			puzzles: [makePuzzle('p1'), makePuzzle('p2')],
 			total: 2,
 			offset: 0,
@@ -90,7 +91,7 @@ describe('Gallery Page', () => {
 	});
 
 	it('shows no-results state when total is 0 and query is active', async () => {
-		vi.mocked(fetchPuzzles).mockResolvedValue({ puzzles: [], total: 0, offset: 0, limit: 20 });
+		mockedFetchPuzzles.mockResolvedValue({ puzzles: [], total: 0, offset: 0, limit: 20 });
 		render(GalleryPage);
 
 		const input = page.getByTestId('search-input');
@@ -113,7 +114,7 @@ describe('Gallery Page', () => {
 	});
 
 	it('attaches the observer after the sentinel renders', async () => {
-		vi.mocked(fetchPuzzles).mockResolvedValue({
+		mockedFetchPuzzles.mockResolvedValue({
 			puzzles: [makePuzzle('p1')],
 			total: 1,
 			offset: 0,
@@ -128,7 +129,7 @@ describe('Gallery Page', () => {
 	});
 
 	it('shows error state on initial fetch failure', async () => {
-		vi.mocked(fetchPuzzles).mockRejectedValue(new ApiError(500, 'internal_error', 'Server error'));
+		mockedFetchPuzzles.mockRejectedValue(new ApiError(500, 'internal_error', 'Server error'));
 
 		render(GalleryPage);
 
@@ -141,13 +142,85 @@ describe('Gallery Page', () => {
 		await expect.element(page.getByTestId('search-input')).toBeVisible();
 	});
 
+	it('clears the search immediately when filters are reset', async () => {
+		mockedFetchPuzzles.mockImplementation(async (params) => {
+			const { q, category, offset = 0 } = params ?? {};
+
+			if (!q && !category && offset === 0) {
+				return {
+					puzzles: [makePuzzle('nature-1', { name: 'Forest Scene', category: 'Nature' })],
+					total: 1,
+					offset: 0,
+					limit: 20
+				};
+			}
+
+			if (q === 'forest' && !category && offset === 0) {
+				return {
+					puzzles: [makePuzzle('nature-1', { name: 'Forest Scene', category: 'Nature' })],
+					total: 1,
+					offset: 0,
+					limit: 20
+				};
+			}
+
+			if (q === 'forest' && category === 'Nature' && offset === 0) {
+				return {
+					puzzles: [],
+					total: 0,
+					offset: 0,
+					limit: 20
+				};
+			}
+
+			return { puzzles: [], total: 0, offset, limit: 20 };
+		});
+
+		render(GalleryPage);
+
+		await expect.element(page.getByText('Forest Scene')).toBeVisible();
+
+		const callsBeforeSearch = mockedFetchPuzzles.mock.calls.length;
+		await page.getByTestId('search-input').fill('forest');
+
+		await vi.waitFor(() => {
+			expect(mockedFetchPuzzles.mock.calls.length).toBeGreaterThan(callsBeforeSearch);
+		});
+		await vi.waitFor(() => {
+			expect(fetchPuzzles).toHaveBeenCalledWith(
+				expect.objectContaining({ q: 'forest', category: undefined, offset: 0 })
+			);
+		});
+
+		const callsBeforeCategoryChange = mockedFetchPuzzles.mock.calls.length;
+		await page.getByRole('radio', { name: 'Nature' }).click();
+
+		await vi.waitFor(() => {
+			expect(mockedFetchPuzzles.mock.calls.length).toBeGreaterThan(callsBeforeCategoryChange);
+		});
+		await expect.element(page.getByTestId('no-results-state')).toBeVisible();
+
+		const callsBeforeClear = mockedFetchPuzzles.mock.calls.length;
+		await page.getByTestId('clear-filters-btn').click();
+
+		await vi.waitFor(() => {
+			expect(mockedFetchPuzzles.mock.calls.length).toBeGreaterThan(callsBeforeClear);
+		});
+
+		expect(mockedFetchPuzzles.mock.calls[callsBeforeClear]?.[0]).toMatchObject({
+			q: undefined,
+			category: undefined,
+			offset: 0
+		});
+	});
+
 	it('does not append stale next-page results after the query changes', async () => {
 		let resolveStalePage: ((value: FetchPuzzlesResult) => void) | undefined;
 		const stalePagePromise = new Promise<FetchPuzzlesResult>((resolve) => {
 			resolveStalePage = resolve;
 		});
 
-		vi.mocked(fetchPuzzles).mockImplementation(async (params) => {
+		mockedFetchPuzzles.mockImplementation(async (params) => {
 			const { q, offset = 0 } = params ?? {};
 			if (!q && offset === 0) {
 				return {
