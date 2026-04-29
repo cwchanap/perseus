@@ -257,8 +257,12 @@ export async function listPuzzles(): Promise<PuzzleSummary[]> {
 export async function listPuzzlesSorted(): Promise<PuzzleSummary[]> {
 	const puzzlesWithDate = await listPuzzlesWithDate();
 
-	// Sort by creation date, newest first
-	puzzlesWithDate.sort((a, b) => b.createdAt - a.createdAt);
+	// Sort by creation date descending, tiebreak on id for deterministic order
+	puzzlesWithDate.sort((a, b) => {
+		const dateDiff = b.createdAt - a.createdAt;
+		if (dateDiff !== 0) return dateDiff;
+		return a.summary.id < b.summary.id ? -1 : a.summary.id > b.summary.id ? 1 : 0;
+	});
 
 	return puzzlesWithDate.map((p) => p.summary);
 }
@@ -270,7 +274,11 @@ export async function listPuzzlesPage(params: {
 	limit: number;
 }): Promise<{ puzzles: PuzzleSummary[]; total: number; offset: number; limit: number }> {
 	const puzzlesWithDate = await listPuzzlesWithDate();
-	puzzlesWithDate.sort((a, b) => b.createdAt - a.createdAt);
+	puzzlesWithDate.sort((a, b) => {
+		const dateDiff = b.createdAt - a.createdAt;
+		if (dateDiff !== 0) return dateDiff;
+		return a.summary.id < b.summary.id ? -1 : a.summary.id > b.summary.id ? 1 : 0;
+	});
 
 	let filtered = puzzlesWithDate.map((p) => p.summary);
 

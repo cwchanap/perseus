@@ -1,13 +1,11 @@
 // Worker-compatible puzzle routes for public access
 
 import { Hono } from 'hono';
-import { PUZZLE_CATEGORIES as TYPE_PUZZLE_CATEGORIES } from '@perseus/types';
+import { PUZZLE_CATEGORIES, type PuzzleCategory } from '@perseus/types';
 import type { Env } from '../worker';
-import type { PuzzleCategory } from '../services/storage.worker';
 import {
 	getPuzzle,
 	listPuzzlesPage,
-	PUZZLE_CATEGORIES,
 	getThumbnailKey,
 	getPieceKey,
 	getOriginalKey,
@@ -33,11 +31,7 @@ function validatePieceId(id: string): number | null {
 	return num;
 }
 
-const VALID_PUZZLE_CATEGORIES = new Set(
-	(PUZZLE_CATEGORIES?.length
-		? PUZZLE_CATEGORIES
-		: TYPE_PUZZLE_CATEGORIES) as readonly PuzzleCategory[]
-);
+const VALID_PUZZLE_CATEGORIES = new Set(PUZZLE_CATEGORIES as readonly PuzzleCategory[]);
 
 function isPuzzleCategory(value: string): value is PuzzleCategory {
 	return VALID_PUZZLE_CATEGORIES.has(value as PuzzleCategory);
