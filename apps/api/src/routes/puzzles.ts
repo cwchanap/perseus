@@ -15,6 +15,8 @@ import { extname } from 'node:path';
 
 const puzzles = new Hono();
 
+const VALID_CATEGORIES = new Set(PUZZLE_CATEGORIES as readonly PuzzleCategory[]);
+
 function getImageContentType(filePath: string): string {
 	const ext = extname(filePath).toLowerCase();
 	if (ext === '.png') return 'image/png';
@@ -61,7 +63,7 @@ puzzles.get('/', async (c) => {
 
 	const categoryParam = c.req.query('category');
 	const category =
-		categoryParam && PUZZLE_CATEGORIES.includes(categoryParam as PuzzleCategory)
+		categoryParam && VALID_CATEGORIES.has(categoryParam as PuzzleCategory)
 			? (categoryParam as PuzzleCategory)
 			: undefined;
 

@@ -781,14 +781,12 @@ describe('API Service - fetchPuzzles', () => {
 		];
 		vi.stubGlobal(
 			'fetch',
-			vi
-				.fn()
-				.mockResolvedValue(
-					new Response(JSON.stringify({ puzzles: mockPuzzles, total: 2, offset: 0, limit: 20 }), {
-						status: 200,
-						headers: { 'Content-Type': 'application/json' }
-					})
-				)
+			vi.fn().mockResolvedValue(
+				new Response(JSON.stringify({ puzzles: mockPuzzles, total: 2, offset: 0, limit: 20 }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				})
+			)
 		);
 
 		const result = await fetchPuzzles();
@@ -899,6 +897,7 @@ export async function fetchPuzzles(params?: {
 	category?: PuzzleCategory;
 	offset?: number;
 	limit?: number;
+	signal?: AbortSignal;
 }): Promise<{ puzzles: PuzzleSummary[]; total: number; offset: number; limit: number }> {
 	const searchParams = new URLSearchParams();
 	if (params?.q) searchParams.set('q', params.q);
@@ -907,7 +906,9 @@ export async function fetchPuzzles(params?: {
 	if (params?.limit && params.limit !== 20) searchParams.set('limit', String(params.limit));
 	const query = searchParams.toString();
 	const url = query ? `${API_BASE}/api/puzzles?${query}` : `${API_BASE}/api/puzzles`;
-	const response = await fetch(url);
+	const fetchOpts: RequestInit = {};
+	if (params?.signal) fetchOpts.signal = params.signal;
+	const response = await fetch(url, fetchOpts);
 	return handleResponse<{ puzzles: PuzzleSummary[]; total: number; offset: number; limit: number }>(
 		response
 	);

@@ -437,6 +437,11 @@ describe('Gallery Page', () => {
 			);
 		});
 
+		// Badge should be hidden while refetch is pending (total is reset to 0)
+		await vi.waitFor(() => {
+			expect(document.querySelector('[data-testid="availability-badge"]')).toBeNull();
+		});
+
 		searchResolve?.({
 			puzzles: [makePuzzle('p2', { name: 'Searched' })],
 			total: 1,

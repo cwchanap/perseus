@@ -39,7 +39,7 @@ Gains four optional query parameters:
 | `q`        | string         | —       | Case-insensitive substring match on `name`; omit to skip        |
 | `category` | PuzzleCategory | —       | Exact match against valid category list; invalid values ignored |
 | `offset`   | integer ≥ 0    | `0`     | Non-numeric or negative values fall back to `0`                 |
-| `limit`    | integer 1–100  | `20`    | Out-of-range values clamped to `[1, 100]`                       |
+| `limit`    | integer 1–100  | `20`    | Non-numeric or out-of-range values fall back to `20`            |
 
 Response shape (replaces the existing `{ puzzles: PuzzleSummary[] }`):
 
