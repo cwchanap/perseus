@@ -44,7 +44,7 @@
 		const controller = new AbortController();
 		const catParam = cat === CATEGORY_ALL ? undefined : (cat as PuzzleCategory);
 
-		fetchPuzzles({ q: q || undefined, category: catParam, offset: 0 })
+		fetchPuzzles({ q: q || undefined, category: catParam, offset: 0, signal: controller.signal })
 			.then((result) => {
 				if (controller.signal.aborted || version !== queryVersion) return;
 				puzzles = result.puzzles;
