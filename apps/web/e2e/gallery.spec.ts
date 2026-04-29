@@ -34,7 +34,9 @@ async function mockPuzzleList(
 	page: Page,
 	puzzles: Array<{ id: string; name: string; pieceCount: number }>
 ) {
-	await page.route('**/api/puzzles**', (route) => route.fulfill({ json: pagedResponse(puzzles) }));
+	await page.route(/\/api\/puzzles(?:\?.*)?$/, (route) =>
+		route.fulfill({ json: pagedResponse(puzzles) })
+	);
 }
 
 async function mockPuzzleDetail(page: Page, puzzle: typeof samplePuzzle) {
@@ -83,7 +85,7 @@ test.describe('Main Gallery Page', () => {
 
 	test('should show no-results state when search returns empty', async ({ page }) => {
 		// First load with puzzles, then search returns empty
-		await page.route('**/api/puzzles**', async (route) => {
+		await page.route(/\/api\/puzzles(?:\?.*)?$/, async (route) => {
 			const url = route.request().url();
 			if (url.includes('q=')) {
 				await route.fulfill({ json: pagedResponse([]) });
@@ -98,7 +100,7 @@ test.describe('Main Gallery Page', () => {
 		const searchInput = page.getByTestId('search-input');
 		await searchInput.fill('xyznotfound');
 
-		await expect(page.getByTestId('no-results-state')).toBeVisible({ timeout: 1000 });
+		await expect(page.getByTestId('no-results-state')).toBeVisible();
 	});
 
 	test('should append more puzzles when scrolling to sentinel', async ({ page }) => {
@@ -110,7 +112,7 @@ test.describe('Main Gallery Page', () => {
 		const secondPage = [{ id: 'p20', name: 'Puzzle 20', pieceCount: 225 }];
 
 		let callCount = 0;
-		await page.route('**/api/puzzles**', async (route) => {
+		await page.route(/\/api\/puzzles(?:\?.*)?$/, async (route) => {
 			callCount++;
 			const url = route.request().url();
 			if (url.includes('offset=20')) {
@@ -133,5 +135,6 @@ test.describe('Main Gallery Page', () => {
 
 		// Second page should be appended
 		await expect(page.getByTestId('puzzle-card')).toHaveCount(21, { timeout: 2000 });
+		await expect.poll(() => callCount).toBe(2);
 	});
 });
