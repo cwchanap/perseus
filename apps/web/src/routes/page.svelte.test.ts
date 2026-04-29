@@ -333,4 +333,67 @@ describe('Gallery Page', () => {
 		expect(document.querySelectorAll('[data-testid="puzzle-card"]')).toHaveLength(1);
 		expect(document.body.textContent).not.toContain('Stale Page Result');
 	});
+
+	it('aborts an in-flight next-page request when the query changes', async () => {
+		let nextPageSignal: AbortSignal | undefined;
+
+		mockedFetchPuzzles.mockImplementation(async (params) => {
+			const { q, offset = 0 } = params ?? {};
+			if (!q && offset === 0) {
+				return {
+					puzzles: [makePuzzle('old-1', { name: 'Old Initial Result' })],
+					total: 2,
+					offset: 0,
+					limit: 20
+				};
+			}
+
+			if (!q && offset === 1) {
+				nextPageSignal = params?.signal;
+				return new Promise<FetchPuzzlesResult>((_, reject) => {
+					params?.signal?.addEventListener(
+						'abort',
+						() => reject(new DOMException('Aborted', 'AbortError')),
+						{ once: true }
+					);
+				});
+			}
+
+			if (q === 'fresh' && offset === 0) {
+				return {
+					puzzles: [makePuzzle('fresh-1', { name: 'Fresh Query Result' })],
+					total: 1,
+					offset: 0,
+					limit: 20
+				};
+			}
+
+			return { puzzles: [], total: 0, offset, limit: 20 };
+		});
+
+		render(GalleryPage);
+
+		await expect.element(page.getByText('Old Initial Result')).toBeVisible();
+		expect(intersectionCallback).not.toBeNull();
+
+		intersectionCallback?.(
+			[{ isIntersecting: true } as IntersectionObserverEntry],
+			{} as IntersectionObserver
+		);
+
+		await vi.waitFor(() => {
+			expect(fetchPuzzles).toHaveBeenCalledWith(
+				expect.objectContaining({ q: undefined, category: undefined, offset: 1 })
+			);
+		});
+		expect(nextPageSignal).toBeInstanceOf(AbortSignal);
+		expect(nextPageSignal?.aborted).toBe(false);
+
+		await page.getByTestId('search-input').fill('fresh');
+
+		await vi.waitFor(() => {
+			expect(nextPageSignal?.aborted).toBe(true);
+		});
+		await expect.element(page.getByText('Fresh Query Result')).toBeVisible();
+	});
 });
