@@ -318,9 +318,9 @@ describe('listPuzzlesPage', () => {
 	});
 
 	it('returns the correct page slice', async () => {
-		await storageModule.createPuzzle(makePuzzle('page-a', { name: 'A' }));
-		await storageModule.createPuzzle(makePuzzle('page-b', { name: 'B' }));
-		await storageModule.createPuzzle(makePuzzle('page-c', { name: 'C' }));
+		await storageModule.createPuzzle(makePuzzle('page-a', { name: 'A', createdAt: 3000 }));
+		await storageModule.createPuzzle(makePuzzle('page-b', { name: 'B', createdAt: 2000 }));
+		await storageModule.createPuzzle(makePuzzle('page-c', { name: 'C', createdAt: 1000 }));
 
 		const result = await storageModule.listPuzzlesPage({ offset: 1, limit: 1 });
 
