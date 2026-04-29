@@ -1,11 +1,13 @@
-// E2E test for main page gallery
 import { test, expect, type Page } from '@playwright/test';
 
-const samplePuzzleSummary = {
-	id: 'puzzle-1',
-	name: 'Test Puzzle',
-	pieceCount: 1
-};
+const pagedResponse = (puzzles: Array<{ id: string; name: string; pieceCount: number }>) => ({
+	puzzles,
+	total: puzzles.length,
+	offset: 0,
+	limit: 20
+});
+
+const samplePuzzleSummary = { id: 'puzzle-1', name: 'Test Puzzle', pieceCount: 1 };
 
 const samplePuzzle = {
 	id: 'puzzle-1',
@@ -22,12 +24,7 @@ const samplePuzzle = {
 			puzzleId: 'puzzle-1',
 			correctX: 0,
 			correctY: 0,
-			edges: {
-				top: 'flat',
-				right: 'flat',
-				bottom: 'flat',
-				left: 'flat'
-			},
+			edges: { top: 'flat', right: 'flat', bottom: 'flat', left: 'flat' },
 			imagePath: 'placeholder'
 		}
 	]
@@ -37,7 +34,7 @@ async function mockPuzzleList(
 	page: Page,
 	puzzles: Array<{ id: string; name: string; pieceCount: number }>
 ) {
-	await page.route('**/api/puzzles', (route) => route.fulfill({ json: { puzzles } }));
+	await page.route('**/api/puzzles**', (route) => route.fulfill({ json: pagedResponse(puzzles) }));
 }
 
 async function mockPuzzleDetail(page: Page, puzzle: typeof samplePuzzle) {
@@ -48,8 +45,6 @@ test.describe('Main Gallery Page', () => {
 	test('should display the gallery page', async ({ page }) => {
 		await mockPuzzleList(page, []);
 		await page.goto('/');
-
-		// Page should load successfully
 		await expect(page).toHaveTitle(/Perseus|Jigsaw/i);
 	});
 
@@ -58,13 +53,9 @@ test.describe('Main Gallery Page', () => {
 		await page.goto('/');
 		await expect(page.getByTestId('loading-state')).toBeHidden();
 
-		const emptyState = page.getByTestId('empty-state');
-		const puzzleGrid = page.getByTestId('puzzle-grid');
-		const errorState = page.getByTestId('error-state');
-
-		await expect(errorState).toBeHidden();
-		await expect(puzzleGrid).toBeHidden();
-		await expect(emptyState).toBeVisible();
+		await expect(page.getByTestId('error-state')).toBeHidden();
+		await expect(page.getByTestId('puzzle-grid')).toBeHidden();
+		await expect(page.getByTestId('empty-state')).toBeVisible();
 	});
 
 	test('should display puzzle cards when puzzles exist', async ({ page }) => {
@@ -72,13 +63,9 @@ test.describe('Main Gallery Page', () => {
 		await page.goto('/');
 		await expect(page.getByTestId('loading-state')).toBeHidden();
 
-		const puzzleGrid = page.getByTestId('puzzle-grid');
-		const emptyState = page.getByTestId('empty-state');
-		const errorState = page.getByTestId('error-state');
-
-		await expect(errorState).toBeHidden();
-		await expect(puzzleGrid).toBeVisible();
-		await expect(emptyState).toBeHidden();
+		await expect(page.getByTestId('error-state')).toBeHidden();
+		await expect(page.getByTestId('puzzle-grid')).toBeVisible();
+		await expect(page.getByTestId('empty-state')).toBeHidden();
 		await expect(page.getByTestId('puzzle-card')).toHaveCount(1);
 	});
 
@@ -92,5 +79,59 @@ test.describe('Main Gallery Page', () => {
 		await expect(puzzleCard).toBeVisible();
 		await puzzleCard.click();
 		await expect(page).toHaveURL(/\/puzzle\/puzzle-1/);
+	});
+
+	test('should show no-results state when search returns empty', async ({ page }) => {
+		// First load with puzzles, then search returns empty
+		await page.route('**/api/puzzles**', async (route) => {
+			const url = route.request().url();
+			if (url.includes('q=')) {
+				await route.fulfill({ json: pagedResponse([]) });
+			} else {
+				await route.fulfill({ json: pagedResponse([samplePuzzleSummary]) });
+			}
+		});
+
+		await page.goto('/');
+		await expect(page.getByTestId('loading-state')).toBeHidden();
+
+		const searchInput = page.getByTestId('search-input');
+		await searchInput.fill('xyznotfound');
+
+		await expect(page.getByTestId('no-results-state')).toBeVisible({ timeout: 1000 });
+	});
+
+	test('should append more puzzles when scrolling to sentinel', async ({ page }) => {
+		const firstPage = Array.from({ length: 20 }, (_, i) => ({
+			id: `p${i}`,
+			name: `Puzzle ${i}`,
+			pieceCount: 225
+		}));
+		const secondPage = [{ id: 'p20', name: 'Puzzle 20', pieceCount: 225 }];
+
+		let callCount = 0;
+		await page.route('**/api/puzzles**', async (route) => {
+			callCount++;
+			const url = route.request().url();
+			if (url.includes('offset=20')) {
+				await route.fulfill({
+					json: { puzzles: secondPage, total: 21, offset: 20, limit: 20 }
+				});
+			} else {
+				await route.fulfill({
+					json: { puzzles: firstPage, total: 21, offset: 0, limit: 20 }
+				});
+			}
+		});
+
+		await page.goto('/');
+		await expect(page.getByTestId('loading-state')).toBeHidden();
+		await expect(page.getByTestId('puzzle-grid')).toBeVisible();
+
+		// Scroll sentinel into view
+		await page.getByTestId('scroll-sentinel').scrollIntoViewIfNeeded();
+
+		// Second page should be appended
+		await expect(page.getByTestId('puzzle-card')).toHaveCount(21, { timeout: 2000 });
 	});
 });
