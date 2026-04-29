@@ -21,6 +21,7 @@
 	let scrollSentinel = $state<HTMLDivElement | null>(null);
 	let hasMore = $derived(puzzles.length < total);
 	let queryVersion = 0;
+	let loadMoreController: AbortController | null = null;
 
 	// Debounce raw input into debouncedQuery (300 ms)
 	$effect(() => {
@@ -36,6 +37,8 @@
 		const q = debouncedQuery;
 		const cat = selectedCategory;
 		const version = ++queryVersion;
+		loadMoreController?.abort();
+		loadMoreController = null;
 
 		loading = true;
 		error = null;
@@ -83,6 +86,8 @@
 	async function loadNextPage() {
 		if (loadingMore || !hasMore) return;
 		const version = queryVersion;
+		const controller = new AbortController();
+		loadMoreController = controller;
 		loadingMore = true;
 		loadMoreError = false;
 		const catParam =
@@ -91,16 +96,22 @@
 			const result = await fetchPuzzles({
 				q: debouncedQuery || undefined,
 				category: catParam,
-				offset: puzzles.length
+				offset: puzzles.length,
+				signal: controller.signal
 			});
-			if (version !== queryVersion) return;
+			if (controller.signal.aborted || version !== queryVersion) return;
 			puzzles = [...puzzles, ...result.puzzles];
 			total = result.total;
 		} catch {
-			if (version !== queryVersion) return;
+			if (controller.signal.aborted || version !== queryVersion) return;
 			loadMoreError = true;
 		} finally {
-			if (version === queryVersion) loadingMore = false;
+			if (loadMoreController === controller) {
+				loadMoreController = null;
+			}
+			if (!controller.signal.aborted && version === queryVersion) {
+				loadingMore = false;
+			}
 		}
 	}
 
