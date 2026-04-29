@@ -396,4 +396,56 @@ describe('Gallery Page', () => {
 		});
 		await expect.element(page.getByText('Fresh Query Result')).toBeVisible();
 	});
+
+	it('clears total during refetch so stale availability badge is hidden', async () => {
+		let searchResolve: ((value: FetchPuzzlesResult) => void) | undefined;
+		const searchPromise = new Promise<FetchPuzzlesResult>((resolve) => {
+			searchResolve = resolve;
+		});
+
+		mockedFetchPuzzles.mockImplementation(async (params) => {
+			const { q, offset = 0 } = params ?? {};
+
+			if (!q && offset === 0) {
+				return {
+					puzzles: [makePuzzle('p1', { name: 'Initial' })],
+					total: 100,
+					offset: 0,
+					limit: 20
+				};
+			}
+
+			if (q === 'search' && offset === 0) {
+				return searchPromise;
+			}
+
+			return { puzzles: [], total: 0, offset, limit: 20 };
+		});
+
+		render(GalleryPage);
+
+		await expect.element(page.getByText('Initial')).toBeVisible();
+		const badgeInitial = page.getByTestId('availability-badge');
+		await expect.element(badgeInitial).toBeVisible();
+
+		const input = page.getByTestId('search-input');
+		await input.fill('search');
+
+		await vi.waitFor(() => {
+			expect(mockedFetchPuzzles).toHaveBeenCalledWith(
+				expect.objectContaining({ q: 'search', offset: 0 })
+			);
+		});
+
+		searchResolve?.({
+			puzzles: [makePuzzle('p2', { name: 'Searched' })],
+			total: 1,
+			offset: 0,
+			limit: 20
+		});
+
+		await expect.element(page.getByText('Searched')).toBeVisible();
+		const badgeAfter = page.getByTestId('availability-badge');
+		await expect.element(badgeAfter).toBeVisible();
+	});
 });

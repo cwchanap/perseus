@@ -42,6 +42,7 @@
 
 		loading = true;
 		error = null;
+		total = 0;
 		loadingMore = false;
 		loadMoreError = false;
 
@@ -171,6 +172,7 @@ font-black tracking-[0.06em] text-(--text-0) uppercase"
 					{#if total > 0}
 						<span
 							class="text-[0.7rem] font-(--font-mono) tracking-[0.15em] text-(--accent) opacity-70"
+							data-testid="availability-badge"
 						>
 							{total} AVAILABLE
 						</span>
