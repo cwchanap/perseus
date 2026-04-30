@@ -382,4 +382,17 @@ describe('listPuzzlesPage', () => {
 		expect(result.puzzles[1].id).toBe('page-beta');
 		expect(result.puzzles[2].id).toBe('page-gamma');
 	});
+
+	it('returns good puzzles and skips corrupt entries without throwing', async () => {
+		await storageModule.createPuzzle(makePuzzle('good-puzzle', { name: 'Good Puzzle' }));
+		await storageModule.createPuzzle(makePuzzle('corrupt-puzzle', { name: 'Will be corrupted' }));
+
+		const metadataPath = join(storageModule.getPuzzleDir('corrupt-puzzle'), 'metadata.json');
+		await writeFile(metadataPath, 'not-valid-json', 'utf-8');
+
+		const result = await storageModule.listPuzzlesPage({ offset: 0, limit: 20 });
+
+		expect(result.total).toBe(1);
+		expect(result.puzzles[0].id).toBe('good-puzzle');
+	});
 });

@@ -60,7 +60,7 @@ const puzzles = new Hono<{ Bindings: Env }>();
 puzzles.get('/', async (c) => {
 	try {
 		const searchParams = new URL(c.req.url).searchParams;
-		const q = searchParams.get('q') ?? undefined;
+		const q = searchParams.get('q') || undefined;
 		const category = parseCategory(searchParams.get('category'));
 		const offset = parseOffset(searchParams.get('offset'));
 		const limit = parseLimit(searchParams.get('limit'));

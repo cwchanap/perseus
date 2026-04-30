@@ -874,4 +874,47 @@ describe('listPuzzlesPage', () => {
 		expect(result.puzzles[1].id).toBe('p-beta');
 		expect(result.puzzles[2].id).toBe('p-gamma');
 	});
+
+	it('fetches all keys across multiple KV list pages', async () => {
+		const kv = createMockKV();
+		kv._store.set('puzzle:a', JSON.stringify(makeReadyPuzzle({ id: 'a', name: 'Alpha' })));
+		kv._store.set('puzzle:b', JSON.stringify(makeReadyPuzzle({ id: 'b', name: 'Beta' })));
+
+		let callCount = 0;
+		kv.list.mockImplementation(async () => {
+			callCount++;
+			if (callCount === 1) {
+				return { keys: [{ name: 'puzzle:a' }], list_complete: false, cursor: 'cursor1' };
+			}
+			return { keys: [{ name: 'puzzle:b' }], list_complete: true, cursor: undefined };
+		});
+
+		const result = await listPuzzlesPage(kv as unknown as KVNamespace, { offset: 0, limit: 20 });
+		expect(result.total).toBe(2);
+		expect(kv.list).toHaveBeenCalledTimes(2);
+		const ids = result.puzzles.map((p) => p.id).sort();
+		expect(ids).toEqual(['a', 'b']);
+	});
+
+	it('logs a console error for null KV entries and excludes them from results', async () => {
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const kv = createMockKV();
+		kv._store.set('puzzle:good', JSON.stringify(makeReadyPuzzle({ id: 'good' })));
+
+		// Force kv.get to return null for puzzle:missing even though list returns its key
+		const originalGet = kv.get.getMockImplementation() ?? (async () => null);
+		kv.get.mockImplementation(async (key: string, type?: string) => {
+			if (key === 'puzzle:missing') return null;
+			return originalGet(key, type);
+		});
+		kv._store.set('puzzle:missing', 'placeholder'); // ensures list sees the key
+
+		const result = await listPuzzlesPage(kv as unknown as KVNamespace, { offset: 0, limit: 20 });
+
+		expect(result.total).toBe(1);
+		expect(result.puzzles[0].id).toBe('good');
+		expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('null'));
+
+		consoleSpy.mockRestore();
+	});
 });

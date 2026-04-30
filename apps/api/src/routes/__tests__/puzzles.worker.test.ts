@@ -93,6 +93,23 @@ describe('Puzzle Routes - UUID Validation', () => {
 			expect(body.error).toBe('internal_error');
 			expect(body.message).toBe('Failed to list puzzles');
 		});
+
+		it('treats empty ?q= param as no filter (passes undefined, not empty string)', async () => {
+			vi.mocked(storage.listPuzzlesPage).mockResolvedValue({
+				puzzles: [],
+				total: 0,
+				offset: 0,
+				limit: 20
+			} as any);
+
+			const req = new Request('http://localhost/?q=');
+			await puzzles.fetch(req, mockEnv);
+
+			const calls = vi.mocked(storage.listPuzzlesPage).mock.calls;
+			expect(calls.length).toBeGreaterThan(0);
+			const [, params] = calls[calls.length - 1];
+			expect(params.q).toBeUndefined();
+		});
 	});
 
 	describe('GET /:id', () => {
