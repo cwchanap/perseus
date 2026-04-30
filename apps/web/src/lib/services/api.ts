@@ -3,7 +3,6 @@ import type {
 	Puzzle,
 	PuzzleMetadata,
 	PuzzleSummary,
-	PuzzleListResponse,
 	LoginResponse,
 	SessionResponse,
 	DeletePuzzleResponse,
@@ -185,7 +184,7 @@ export async function fetchAdminPuzzles(): Promise<PuzzleSummary[]> {
 	const response = await fetch(`${API_BASE}/api/admin/puzzles`, {
 		credentials: 'include'
 	});
-	const data = await handleResponse<PuzzleListResponse>(response);
+	const data = await handleResponse<{ puzzles: PuzzleSummary[] }>(response);
 	return data.puzzles;
 }
 

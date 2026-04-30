@@ -389,6 +389,25 @@ describe('KV Metadata Operations', () => {
 				progress: samplePuzzle.progress
 			});
 		});
+
+		it('should break ties deterministically by id when createdAt is equal', async () => {
+			const mockKV = createMockKV();
+			const sharedTimestamp = 5000;
+			const puzzle1 = { ...samplePuzzle, id: 'puzzle-beta', createdAt: sharedTimestamp };
+			const puzzle2 = { ...samplePuzzle, id: 'puzzle-alpha', createdAt: sharedTimestamp };
+			const puzzle3 = { ...samplePuzzle, id: 'puzzle-gamma', createdAt: sharedTimestamp };
+
+			mockKV._store.set('puzzle:puzzle-beta', JSON.stringify(puzzle1));
+			mockKV._store.set('puzzle:puzzle-alpha', JSON.stringify(puzzle2));
+			mockKV._store.set('puzzle:puzzle-gamma', JSON.stringify(puzzle3));
+
+			const result = await listPuzzles(mockKV as unknown as KVNamespace);
+
+			expect(result.puzzles).toHaveLength(3);
+			expect(result.puzzles[0].id).toBe('puzzle-alpha');
+			expect(result.puzzles[1].id).toBe('puzzle-beta');
+			expect(result.puzzles[2].id).toBe('puzzle-gamma');
+		});
 	});
 });
 
@@ -831,5 +850,28 @@ describe('listPuzzlesPage', () => {
 		const result = await listPuzzlesPage(kv as unknown as KVNamespace, { offset: 100, limit: 20 });
 		expect(result.total).toBe(1);
 		expect(result.puzzles).toHaveLength(0);
+	});
+
+	it('breaks ties deterministically by id when createdAt is equal', async () => {
+		const kv = createMockKV();
+		const sharedTimestamp = 5000;
+		kv._store.set(
+			'puzzle:p-beta',
+			JSON.stringify(makeReadyPuzzle({ id: 'p-beta', name: 'Beta', createdAt: sharedTimestamp }))
+		);
+		kv._store.set(
+			'puzzle:p-alpha',
+			JSON.stringify(makeReadyPuzzle({ id: 'p-alpha', name: 'Alpha', createdAt: sharedTimestamp }))
+		);
+		kv._store.set(
+			'puzzle:p-gamma',
+			JSON.stringify(makeReadyPuzzle({ id: 'p-gamma', name: 'Gamma', createdAt: sharedTimestamp }))
+		);
+
+		const result = await listPuzzlesPage(kv as unknown as KVNamespace, { offset: 0, limit: 20 });
+		expect(result.total).toBe(3);
+		expect(result.puzzles[0].id).toBe('p-alpha');
+		expect(result.puzzles[1].id).toBe('p-beta');
+		expect(result.puzzles[2].id).toBe('p-gamma');
 	});
 });
