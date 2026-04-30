@@ -269,12 +269,31 @@ export async function listPuzzlesPage(
 
 	const fetched = await Promise.all(keys.map((k) => kv.get(k.name, 'json')));
 	const all: PuzzleMetadata[] = [];
+	let nullCount = 0;
+	let invalidCount = 0;
 
-	fetched.forEach((puzzle) => {
-		if (puzzle === null) return;
-		if (!validatePuzzleMetadataLight(puzzle)) return;
+	fetched.forEach((puzzle, index) => {
+		if (puzzle === null) {
+			nullCount++;
+			return;
+		}
+		if (!validatePuzzleMetadataLight(puzzle)) {
+			invalidCount++;
+			return;
+		}
 		all.push(puzzle as PuzzleMetadata);
 	});
+
+	if (nullCount > 0) {
+		console.error(
+			`listPuzzlesPage: ${nullCount} keys returned null out of ${keys.length} total (data corruption or replication lag)`
+		);
+	}
+	if (invalidCount > 0) {
+		console.error(
+			`listPuzzlesPage: ${invalidCount} invalid metadata entries out of ${keys.length} total`
+		);
+	}
 
 	let filtered = all
 		.filter((p) => p.status === 'ready')

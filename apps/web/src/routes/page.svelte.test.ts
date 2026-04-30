@@ -453,4 +453,117 @@ describe('Gallery Page', () => {
 		const badgeAfter = page.getByTestId('availability-badge');
 		await expect.element(badgeAfter).toBeVisible();
 	});
+
+	it('shows load-more error element when next-page fetch fails', async () => {
+		mockedFetchPuzzles.mockImplementation(async (params) => {
+			const { offset = 0 } = params ?? {};
+			if (offset === 0) {
+				return { puzzles: [makePuzzle('p1')], total: 2, offset: 0, limit: 20 };
+			}
+			throw new ApiError(500, 'internal_error', 'Server error');
+		});
+
+		render(GalleryPage);
+		await expect.element(page.getByTestId('scroll-sentinel')).toBeInTheDocument();
+		expect(intersectionCallback).not.toBeNull();
+
+		intersectionCallback?.(
+			[{ isIntersecting: true } as IntersectionObserverEntry],
+			{} as IntersectionObserver
+		);
+
+		await expect.element(page.getByTestId('load-more-error')).toBeVisible();
+	});
+
+	it('clears load-more error and appends puzzles when retry button is clicked', async () => {
+		let loadMoreCallCount = 0;
+		mockedFetchPuzzles.mockImplementation(async (params) => {
+			const { offset = 0 } = params ?? {};
+			if (offset === 0) {
+				return { puzzles: [makePuzzle('p1')], total: 2, offset: 0, limit: 20 };
+			}
+			loadMoreCallCount++;
+			if (loadMoreCallCount === 1) throw new ApiError(500, 'internal_error', 'Server error');
+			return { puzzles: [makePuzzle('p2')], total: 2, offset: 1, limit: 20 };
+		});
+
+		render(GalleryPage);
+		await expect.element(page.getByTestId('scroll-sentinel')).toBeInTheDocument();
+
+		intersectionCallback?.(
+			[{ isIntersecting: true } as IntersectionObserverEntry],
+			{} as IntersectionObserver
+		);
+		await expect.element(page.getByTestId('load-more-error')).toBeVisible();
+
+		await page.getByTestId('load-more-error').getByRole('button').click();
+
+		await vi.waitFor(() => {
+			expect(document.querySelector('[data-testid="load-more-error"]')).toBeNull();
+		});
+		const cards = page.getByTestId('puzzle-card');
+		await expect.element(cards.nth(1)).toBeVisible();
+	});
+
+	it('does not auto-retry load-more on intersection when in error state', async () => {
+		mockedFetchPuzzles.mockImplementation(async (params) => {
+			const { offset = 0 } = params ?? {};
+			if (offset === 0) {
+				return { puzzles: [makePuzzle('p1')], total: 2, offset: 0, limit: 20 };
+			}
+			throw new ApiError(500, 'internal_error', 'Server error');
+		});
+
+		render(GalleryPage);
+		await expect.element(page.getByTestId('scroll-sentinel')).toBeInTheDocument();
+
+		intersectionCallback?.(
+			[{ isIntersecting: true } as IntersectionObserverEntry],
+			{} as IntersectionObserver
+		);
+		await expect.element(page.getByTestId('load-more-error')).toBeVisible();
+
+		const callsBeforeReIntersect = mockedFetchPuzzles.mock.calls.length;
+
+		intersectionCallback?.(
+			[{ isIntersecting: true } as IntersectionObserverEntry],
+			{} as IntersectionObserver
+		);
+
+		await Promise.resolve();
+		expect(mockedFetchPuzzles.mock.calls.length).toBe(callsBeforeReIntersect);
+	});
+
+	it('treats whitespace-only search as no filter after a real search term', async () => {
+		mockedFetchPuzzles.mockResolvedValue({
+			puzzles: [makePuzzle('p1')],
+			total: 1,
+			offset: 0,
+			limit: 20
+		});
+
+		render(GalleryPage);
+		await expect.element(page.getByTestId('search-input')).toBeVisible();
+
+		const input = page.getByTestId('search-input');
+		await input.fill('forest');
+
+		// Wait for the debounced real-search call
+		await vi.waitFor(() => {
+			expect(mockedFetchPuzzles).toHaveBeenCalledWith(expect.objectContaining({ q: 'forest' }));
+		});
+
+		const callsAfterRealSearch = mockedFetchPuzzles.mock.calls.length;
+		await input.fill('   ');
+
+		// Wait for the debounced whitespace call (debouncedQuery changes from 'forest' to '')
+		await vi.waitFor(() => {
+			expect(mockedFetchPuzzles.mock.calls.length).toBeGreaterThan(callsAfterRealSearch);
+		});
+
+		// Whitespace was trimmed: call must use q: undefined, never q: '   '
+		const newCalls = mockedFetchPuzzles.mock.calls.slice(callsAfterRealSearch);
+		const hasWhitespaceQuery = newCalls.some(([params]) => params?.q === '   ');
+		expect(hasWhitespaceQuery).toBe(false);
+	});
 });

@@ -229,17 +229,21 @@ async function listPuzzlesWithDate(): Promise<
 
 	for (const entry of entries) {
 		if (entry.isDirectory()) {
-			const puzzle = await getPuzzle(entry.name);
-			if (puzzle) {
-				puzzlesWithDate.push({
-					summary: {
-						id: puzzle.id,
-						name: puzzle.name,
-						pieceCount: puzzle.pieceCount,
-						category: puzzle.category
-					},
-					createdAt: puzzle.createdAt
-				});
+			try {
+				const puzzle = await getPuzzle(entry.name);
+				if (puzzle) {
+					puzzlesWithDate.push({
+						summary: {
+							id: puzzle.id,
+							name: puzzle.name,
+							pieceCount: puzzle.pieceCount,
+							category: puzzle.category
+						},
+						createdAt: puzzle.createdAt
+					});
+				}
+			} catch (err) {
+				console.error(`Skipping corrupt puzzle entry '${entry.name}':`, err);
 			}
 		}
 	}

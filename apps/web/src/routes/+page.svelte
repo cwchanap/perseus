@@ -23,11 +23,11 @@
 	let queryVersion = 0;
 	let loadMoreController: AbortController | null = null;
 
-	// Debounce raw input into debouncedQuery (300 ms)
+	// Debounce raw input into debouncedQuery (300 ms), trimming whitespace
 	$effect(() => {
 		const q = searchQuery;
 		const timer = setTimeout(() => {
-			debouncedQuery = q;
+			debouncedQuery = q.trim();
 		}, 300);
 		return () => clearTimeout(timer);
 	});
@@ -75,7 +75,7 @@
 
 		const observer = new IntersectionObserver(
 			(entries) => {
-				if (entries[0].isIntersecting) loadNextPage();
+				if (entries[0].isIntersecting && !loadMoreError) loadNextPage();
 			},
 			{ rootMargin: '200px' }
 		);
@@ -103,14 +103,14 @@
 			if (controller.signal.aborted || version !== queryVersion) return;
 			puzzles = [...puzzles, ...result.puzzles];
 			total = result.total;
-		} catch {
+		} catch (e) {
+			const isAbort = e instanceof DOMException && e.name === 'AbortError';
+			if (!isAbort) console.error('Failed to load next page:', e);
 			if (controller.signal.aborted || version !== queryVersion) return;
 			loadMoreError = true;
 		} finally {
 			if (loadMoreController === controller) {
 				loadMoreController = null;
-			}
-			if (!controller.signal.aborted && version === queryVersion) {
 				loadingMore = false;
 			}
 		}
