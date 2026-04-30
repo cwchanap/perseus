@@ -362,4 +362,24 @@ describe('listPuzzlesPage', () => {
 		expect(result.puzzles).toHaveLength(1);
 		expect(result.puzzles[0].category).toBe('Animals');
 	});
+
+	it('breaks ties deterministically by id when createdAt is equal', async () => {
+		const sharedTimestamp = 5000;
+		await storageModule.createPuzzle(
+			makePuzzle('page-beta', { name: 'Beta', createdAt: sharedTimestamp })
+		);
+		await storageModule.createPuzzle(
+			makePuzzle('page-alpha', { name: 'Alpha', createdAt: sharedTimestamp })
+		);
+		await storageModule.createPuzzle(
+			makePuzzle('page-gamma', { name: 'Gamma', createdAt: sharedTimestamp })
+		);
+
+		const result = await storageModule.listPuzzlesPage({ offset: 0, limit: 20 });
+
+		expect(result.total).toBe(3);
+		expect(result.puzzles[0].id).toBe('page-alpha');
+		expect(result.puzzles[1].id).toBe('page-beta');
+		expect(result.puzzles[2].id).toBe('page-gamma');
+	});
 });

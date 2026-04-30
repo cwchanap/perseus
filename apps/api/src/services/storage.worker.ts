@@ -232,8 +232,12 @@ export async function listPuzzles(
 		console.error(`listPuzzles: ${invalidCount} invalid entries out of ${keys.length} total keys`);
 	}
 
-	// Sort by createdAt descending
-	puzzles.sort((a, b) => b.createdAt - a.createdAt);
+	// Sort by createdAt descending, tiebreak on id for deterministic order
+	puzzles.sort((a, b) => {
+		const dateDiff = b.createdAt - a.createdAt;
+		if (dateDiff !== 0) return dateDiff;
+		return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+	});
 
 	// Map to summaries
 	return {
@@ -272,7 +276,13 @@ export async function listPuzzlesPage(
 		all.push(puzzle as PuzzleMetadata);
 	});
 
-	let filtered = all.filter((p) => p.status === 'ready').sort((a, b) => b.createdAt - a.createdAt);
+	let filtered = all
+		.filter((p) => p.status === 'ready')
+		.sort((a, b) => {
+			const dateDiff = b.createdAt - a.createdAt;
+			if (dateDiff !== 0) return dateDiff;
+			return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+		});
 
 	if (params.category) {
 		filtered = filtered.filter((p) => p.category === params.category);
