@@ -98,6 +98,7 @@ export interface PuzzleListResponse {
 	total: number;
 	offset: number;
 	limit: number;
+	nextCursor?: string;
 }
 
 export interface ErrorResponse {

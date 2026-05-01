@@ -64,11 +64,13 @@ puzzles.get('/', async (c) => {
 		const category = parseCategory(searchParams.get('category'));
 		const offset = parseOffset(searchParams.get('offset'));
 		const limit = parseLimit(searchParams.get('limit'));
+		const cursor = searchParams.get('cursor') || undefined;
 		const result = await listPuzzlesPage(c.env.PUZZLE_METADATA, {
 			q,
 			category,
 			offset,
-			limit
+			limit,
+			cursor
 		});
 		return c.json(result);
 	} catch (error) {

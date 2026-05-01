@@ -276,7 +276,14 @@ export async function listPuzzlesPage(params: {
 	category?: PuzzleCategory;
 	offset: number;
 	limit: number;
-}): Promise<{ puzzles: PuzzleSummary[]; total: number; offset: number; limit: number }> {
+	cursor?: string;
+}): Promise<{
+	puzzles: PuzzleSummary[];
+	total: number;
+	offset: number;
+	limit: number;
+	nextCursor?: string;
+}> {
 	const puzzlesWithDate = await listPuzzlesWithDate();
 	puzzlesWithDate.sort((a, b) => {
 		const dateDiff = b.createdAt - a.createdAt;
@@ -284,19 +291,66 @@ export async function listPuzzlesPage(params: {
 		return a.summary.id < b.summary.id ? -1 : a.summary.id > b.summary.id ? 1 : 0;
 	});
 
-	let filtered = puzzlesWithDate.map((p) => p.summary);
+	let filtered = puzzlesWithDate;
 
 	if (params.category) {
-		filtered = filtered.filter((p) => p.category === params.category);
+		filtered = filtered.filter((p) => p.summary.category === params.category);
 	}
 
 	if (params.q) {
 		const q = params.q.toLowerCase();
-		filtered = filtered.filter((p) => p.name.toLowerCase().includes(q));
+		filtered = filtered.filter((p) => p.summary.name.toLowerCase().includes(q));
 	}
 
 	const total = filtered.length;
-	const page = filtered.slice(params.offset, params.offset + params.limit);
 
-	return { puzzles: page, total, offset: params.offset, limit: params.limit };
+	// Cursor-based pagination: skip to the item after the cursor position
+	if (params.cursor) {
+		let parsed: { createdAt: number; id: string } | null = null;
+		try {
+			const decoded = JSON.parse(atob(params.cursor)) as { createdAt: number; id: string };
+			if (typeof decoded?.createdAt === 'number' && typeof decoded?.id === 'string') {
+				parsed = decoded;
+			}
+		} catch {
+			// Invalid cursor, treat as offset 0
+		}
+
+		if (parsed) {
+			const cursorIndex = filtered.findIndex(
+				(e) => e.createdAt === parsed!.createdAt && e.summary.id === parsed!.id
+			);
+			if (cursorIndex >= 0) {
+				filtered = filtered.slice(cursorIndex + 1);
+			} else {
+				filtered = filtered.filter((e) => {
+					if (e.createdAt !== parsed!.createdAt) return e.createdAt < parsed!.createdAt;
+					return e.summary.id > parsed!.id;
+				});
+			}
+		}
+	} else {
+		filtered = filtered.slice(params.offset);
+	}
+
+	const page = filtered.slice(0, params.limit);
+	const summaries = page.map((p) => p.summary);
+
+	const nextCursor =
+		page.length < params.limit
+			? undefined
+			: btoa(
+					JSON.stringify({
+						createdAt: page[page.length - 1].createdAt,
+						id: page[page.length - 1].summary.id
+					})
+				);
+
+	return {
+		puzzles: summaries,
+		total,
+		offset: params.cursor ? 0 : params.offset,
+		limit: params.limit,
+		nextCursor
+	};
 }

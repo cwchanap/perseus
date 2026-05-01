@@ -177,13 +177,14 @@ export async function updatePuzzleMetadata(
 	}
 }
 
-// Delete puzzle metadata from KV
+// Delete puzzle metadata from KV and invalidate gallery index cache
 export async function deletePuzzleMetadata(
 	kv: KVNamespace,
 	puzzleId: string
 ): Promise<{ success: boolean; error?: Error }> {
 	try {
 		await kv.delete(puzzleKey(puzzleId));
+		await invalidateGalleryIndex(kv);
 		return { success: true };
 	} catch (error) {
 		const normalizedError = error instanceof Error ? error : new Error(String(error));
@@ -336,10 +337,65 @@ async function getGalleryIndex(kv: KVNamespace): Promise<GalleryIndexEntry[]> {
 	return buildGalleryIndex(kv);
 }
 
+// Invalidate the cached gallery index so the next list request rebuilds it from
+// current KV data. Call this after any mutation that changes puzzle visibility
+// (create, delete, status transition to ready/failed).
+export async function invalidateGalleryIndex(kv: KVNamespace): Promise<void> {
+	try {
+		await kv.delete(GALLERY_INDEX_KEY);
+	} catch (error) {
+		// Best-effort: a failed delete just means the stale index lives until
+		// TTL expiry (60 s). Log but don't propagate.
+		console.error('Failed to invalidate gallery index cache:', error);
+	}
+}
+
+// Cursor type for stable pagination — encodes the sort position of the last
+// item in a page so the next page starts right after it, even if items are
+// inserted/removed between requests.
+type PageCursor = { createdAt: number; id: string };
+
+function encodeCursor(entry: GalleryIndexEntry): string {
+	return btoa(JSON.stringify({ createdAt: entry.createdAt, id: entry.id }));
+}
+
+function decodeCursor(cursor: string): PageCursor | null {
+	try {
+		const parsed = JSON.parse(atob(cursor)) as PageCursor;
+		if (typeof parsed?.createdAt === 'number' && typeof parsed?.id === 'string') {
+			return parsed;
+		}
+		return null;
+	} catch {
+		return null;
+	}
+}
+
+// Returns true when `entry` comes strictly after `cursor` in the sorted order
+// (createdAt DESC, id ASC).
+function isAfterCursor(entry: GalleryIndexEntry, cursor: PageCursor): boolean {
+	if (entry.createdAt !== cursor.createdAt) {
+		return entry.createdAt < cursor.createdAt;
+	}
+	return entry.id > cursor.id;
+}
+
 export async function listPuzzlesPage(
 	kv: KVNamespace,
-	params: { q?: string; category?: PuzzleCategory; offset: number; limit: number }
-): Promise<{ puzzles: PuzzleSummary[]; total: number; offset: number; limit: number }> {
+	params: {
+		q?: string;
+		category?: PuzzleCategory;
+		offset: number;
+		limit: number;
+		cursor?: string;
+	}
+): Promise<{
+	puzzles: PuzzleSummary[];
+	total: number;
+	offset: number;
+	limit: number;
+	nextCursor?: string;
+}> {
 	const entries = await getGalleryIndex(kv);
 
 	let filtered = entries.filter((p) => p.status === 'ready');
@@ -354,20 +410,50 @@ export async function listPuzzlesPage(
 	}
 
 	const total = filtered.length;
-	const page = filtered.slice(params.offset, params.offset + params.limit);
+
+	// When a cursor is provided, skip items up to and including the cursor
+	// position. This is more stable than offset when items are inserted/removed
+	// between pages.
+	if (params.cursor) {
+		const parsed = decodeCursor(params.cursor);
+		if (parsed) {
+			const cursorIndex = filtered.findIndex(
+				(e) => e.createdAt === parsed.createdAt && e.id === parsed.id
+			);
+			if (cursorIndex >= 0) {
+				filtered = filtered.slice(cursorIndex + 1);
+			} else {
+				// Cursor item no longer in filtered set (e.g. deleted or changed
+				// status). Fall back to returning everything after the cursor's
+				// sort position.
+				filtered = filtered.filter((e) => isAfterCursor(e, parsed));
+			}
+		}
+		// If cursor is invalid, treat as offset 0
+	} else {
+		filtered = filtered.slice(params.offset);
+	}
+
+	const page = filtered.slice(0, params.limit);
+
+	const summaries = page.map((p) => ({
+		id: p.id,
+		name: p.name,
+		pieceCount: p.pieceCount,
+		status: p.status,
+		progress: p.progress,
+		category: p.category
+	}));
+
+	// Attach nextCursor when there are more items
+	const nextCursor = page.length < params.limit ? undefined : encodeCursor(page[page.length - 1]);
 
 	return {
-		puzzles: page.map((p) => ({
-			id: p.id,
-			name: p.name,
-			pieceCount: p.pieceCount,
-			status: p.status,
-			progress: p.progress,
-			category: p.category
-		})),
+		puzzles: summaries,
 		total,
-		offset: params.offset,
-		limit: params.limit
+		offset: params.cursor ? 0 : params.offset,
+		limit: params.limit,
+		nextCursor
 	};
 }
 
