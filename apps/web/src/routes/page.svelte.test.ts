@@ -269,21 +269,22 @@ describe('Gallery Page', () => {
 		});
 
 		mockedFetchPuzzles.mockImplementation(async (params) => {
-			const { q, offset = 0 } = params ?? {};
-			if (!q && offset === 0) {
+			const { q, cursor } = params ?? {};
+			if (!q && !cursor) {
 				return {
 					puzzles: [makePuzzle('old-1', { name: 'Old Initial Result' })],
 					total: 2,
 					offset: 0,
-					limit: 20
+					limit: 20,
+					nextCursor: 'cursor-page2'
 				};
 			}
 
-			if (!q && offset === 1) {
+			if (!q && cursor === 'cursor-page2') {
 				return stalePagePromise;
 			}
 
-			if (q === 'fresh' && offset === 0) {
+			if (q === 'fresh' && !cursor) {
 				return {
 					puzzles: [makePuzzle('fresh-1', { name: 'Fresh Query Result' })],
 					total: 1,
@@ -292,7 +293,7 @@ describe('Gallery Page', () => {
 				};
 			}
 
-			return { puzzles: [], total: 0, offset, limit: 20 };
+			return { puzzles: [], total: 0, offset: 0, limit: 20 };
 		});
 
 		render(GalleryPage);
@@ -308,7 +309,7 @@ describe('Gallery Page', () => {
 
 		await vi.waitFor(() => {
 			expect(fetchPuzzles).toHaveBeenCalledWith(
-				expect.objectContaining({ q: undefined, category: undefined, offset: 1 })
+				expect.objectContaining({ q: undefined, category: undefined, cursor: 'cursor-page2' })
 			);
 		});
 
@@ -316,7 +317,7 @@ describe('Gallery Page', () => {
 
 		await vi.waitFor(() => {
 			expect(fetchPuzzles).toHaveBeenCalledWith(
-				expect.objectContaining({ q: 'fresh', category: undefined, offset: 0 })
+				expect.objectContaining({ q: 'fresh', category: undefined })
 			);
 		});
 		await expect.element(page.getByText('Fresh Query Result')).toBeVisible();
@@ -338,17 +339,18 @@ describe('Gallery Page', () => {
 		let nextPageSignal: AbortSignal | undefined;
 
 		mockedFetchPuzzles.mockImplementation(async (params) => {
-			const { q, offset = 0 } = params ?? {};
-			if (!q && offset === 0) {
+			const { q, cursor } = params ?? {};
+			if (!q && !cursor) {
 				return {
 					puzzles: [makePuzzle('old-1', { name: 'Old Initial Result' })],
 					total: 2,
 					offset: 0,
-					limit: 20
+					limit: 20,
+					nextCursor: 'cursor-page2'
 				};
 			}
 
-			if (!q && offset === 1) {
+			if (!q && cursor === 'cursor-page2') {
 				nextPageSignal = params?.signal;
 				return new Promise<FetchPuzzlesResult>((_, reject) => {
 					params?.signal?.addEventListener(
@@ -359,7 +361,7 @@ describe('Gallery Page', () => {
 				});
 			}
 
-			if (q === 'fresh' && offset === 0) {
+			if (q === 'fresh' && !cursor) {
 				return {
 					puzzles: [makePuzzle('fresh-1', { name: 'Fresh Query Result' })],
 					total: 1,
@@ -368,7 +370,7 @@ describe('Gallery Page', () => {
 				};
 			}
 
-			return { puzzles: [], total: 0, offset, limit: 20 };
+			return { puzzles: [], total: 0, offset: 0, limit: 20 };
 		});
 
 		render(GalleryPage);
@@ -383,7 +385,7 @@ describe('Gallery Page', () => {
 
 		await vi.waitFor(() => {
 			expect(fetchPuzzles).toHaveBeenCalledWith(
-				expect.objectContaining({ q: undefined, category: undefined, offset: 1 })
+				expect.objectContaining({ q: undefined, category: undefined, cursor: 'cursor-page2' })
 			);
 		});
 		expect(nextPageSignal).toBeInstanceOf(AbortSignal);
@@ -456,9 +458,15 @@ describe('Gallery Page', () => {
 
 	it('shows load-more error element when next-page fetch fails', async () => {
 		mockedFetchPuzzles.mockImplementation(async (params) => {
-			const { offset = 0 } = params ?? {};
-			if (offset === 0) {
-				return { puzzles: [makePuzzle('p1')], total: 2, offset: 0, limit: 20 };
+			const { cursor } = params ?? {};
+			if (!cursor) {
+				return {
+					puzzles: [makePuzzle('p1')],
+					total: 2,
+					offset: 0,
+					limit: 20,
+					nextCursor: 'cursor-page2'
+				};
 			}
 			throw new ApiError(500, 'internal_error', 'Server error');
 		});
@@ -478,13 +486,19 @@ describe('Gallery Page', () => {
 	it('clears load-more error and appends puzzles when retry button is clicked', async () => {
 		let loadMoreCallCount = 0;
 		mockedFetchPuzzles.mockImplementation(async (params) => {
-			const { offset = 0 } = params ?? {};
-			if (offset === 0) {
-				return { puzzles: [makePuzzle('p1')], total: 2, offset: 0, limit: 20 };
+			const { cursor } = params ?? {};
+			if (!cursor) {
+				return {
+					puzzles: [makePuzzle('p1')],
+					total: 2,
+					offset: 0,
+					limit: 20,
+					nextCursor: 'cursor-page2'
+				};
 			}
 			loadMoreCallCount++;
 			if (loadMoreCallCount === 1) throw new ApiError(500, 'internal_error', 'Server error');
-			return { puzzles: [makePuzzle('p2')], total: 2, offset: 1, limit: 20 };
+			return { puzzles: [makePuzzle('p2')], total: 2, offset: 0, limit: 20 };
 		});
 
 		render(GalleryPage);
@@ -507,9 +521,15 @@ describe('Gallery Page', () => {
 
 	it('does not auto-retry load-more on intersection when in error state', async () => {
 		mockedFetchPuzzles.mockImplementation(async (params) => {
-			const { offset = 0 } = params ?? {};
-			if (offset === 0) {
-				return { puzzles: [makePuzzle('p1')], total: 2, offset: 0, limit: 20 };
+			const { cursor } = params ?? {};
+			if (!cursor) {
+				return {
+					puzzles: [makePuzzle('p1')],
+					total: 2,
+					offset: 0,
+					limit: 20,
+					nextCursor: 'cursor-page2'
+				};
 			}
 			throw new ApiError(500, 'internal_error', 'Server error');
 		});
@@ -541,9 +561,15 @@ describe('Gallery Page', () => {
 		});
 
 		mockedFetchPuzzles.mockImplementation(async (params) => {
-			const { offset = 0 } = params ?? {};
-			if (offset === 0) {
-				return { puzzles: [makePuzzle('p1')], total: 5, offset: 0, limit: 20 };
+			const { cursor } = params ?? {};
+			if (!cursor) {
+				return {
+					puzzles: [makePuzzle('p1')],
+					total: 5,
+					offset: 0,
+					limit: 20,
+					nextCursor: 'cursor-page2'
+				};
 			}
 			return loadMorePromise;
 		});
@@ -559,7 +585,9 @@ describe('Gallery Page', () => {
 		);
 
 		await vi.waitFor(() => {
-			expect(fetchPuzzles).toHaveBeenCalledWith(expect.objectContaining({ offset: 1 }));
+			expect(fetchPuzzles).toHaveBeenCalledWith(
+				expect.objectContaining({ cursor: 'cursor-page2' })
+			);
 		});
 
 		const callsWhileLoading = mockedFetchPuzzles.mock.calls.length;
@@ -574,7 +602,7 @@ describe('Gallery Page', () => {
 		expect(mockedFetchPuzzles.mock.calls.length).toBe(callsWhileLoading);
 
 		// Clean up the pending promise
-		resolveLoadMore?.({ puzzles: [makePuzzle('p2')], total: 5, offset: 1, limit: 20 });
+		resolveLoadMore?.({ puzzles: [makePuzzle('p2')], total: 5, offset: 0, limit: 20 });
 		await loadMorePromise;
 	});
 

@@ -16,6 +16,7 @@ import {
 	deletePuzzleAssets,
 	acquireLock,
 	releaseLock,
+	invalidateGalleryIndex,
 	type PuzzleMetadata
 } from './storage.worker';
 
@@ -325,6 +326,16 @@ describe('KV Metadata Operations', () => {
 
 			expect(result.success).toBe(true);
 			expect(mockKV.delete).toHaveBeenCalledWith('puzzle:test-puzzle-1');
+		});
+
+		it('should invalidate gallery index cache on delete', async () => {
+			const mockKV = createMockKV();
+			mockKV._store.set('puzzle:test-puzzle-1', JSON.stringify(samplePuzzle));
+			mockKV._store.set('gallery:sorted-index', JSON.stringify([{ id: 'test-puzzle-1' }]));
+
+			await deletePuzzleMetadata(mockKV as unknown as KVNamespace, 'test-puzzle-1');
+
+			expect(mockKV.delete).toHaveBeenCalledWith('gallery:sorted-index');
 		});
 	});
 
@@ -955,6 +966,181 @@ describe('listPuzzlesPage', () => {
 		expect(result.total).toBe(1);
 		expect(result.puzzles[0].id).toBe('good');
 		expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('null'));
+
+		consoleSpy.mockRestore();
+	});
+
+	describe('cursor-based pagination', () => {
+		it('returns nextCursor when there are more items', async () => {
+			const kv = createMockKV();
+			for (let i = 0; i < 5; i++) {
+				kv._store.set(
+					`puzzle:p${i}`,
+					JSON.stringify(makeReadyPuzzle({ id: `p${i}`, name: `Puzzle ${i}`, createdAt: i }))
+				);
+			}
+
+			const result = await listPuzzlesPage(kv as unknown as KVNamespace, {
+				offset: 0,
+				limit: 2
+			});
+			expect(result.puzzles).toHaveLength(2);
+			expect(result.nextCursor).toBeDefined();
+			expect(result.total).toBe(5);
+		});
+
+		it('does not return nextCursor on last page', async () => {
+			const kv = createMockKV();
+			kv._store.set('puzzle:p0', JSON.stringify(makeReadyPuzzle({ id: 'p0', createdAt: 0 })));
+			kv._store.set('puzzle:p1', JSON.stringify(makeReadyPuzzle({ id: 'p1', createdAt: 1 })));
+
+			const result = await listPuzzlesPage(kv as unknown as KVNamespace, {
+				offset: 0,
+				limit: 20
+			});
+			expect(result.puzzles).toHaveLength(2);
+			expect(result.nextCursor).toBeUndefined();
+		});
+
+		it('fetches next page using cursor', async () => {
+			const kv = createMockKV();
+			for (let i = 0; i < 5; i++) {
+				kv._store.set(
+					`puzzle:p${i}`,
+					JSON.stringify(makeReadyPuzzle({ id: `p${i}`, name: `Puzzle ${i}`, createdAt: i }))
+				);
+			}
+
+			// Page 1
+			const page1 = await listPuzzlesPage(kv as unknown as KVNamespace, {
+				offset: 0,
+				limit: 2
+			});
+			expect(page1.puzzles).toHaveLength(2);
+			expect(page1.nextCursor).toBeDefined();
+
+			// Page 2 using cursor
+			const page2 = await listPuzzlesPage(kv as unknown as KVNamespace, {
+				offset: 0,
+				limit: 2,
+				cursor: page1.nextCursor
+			});
+			expect(page2.puzzles).toHaveLength(2);
+			// Should not duplicate any items from page 1
+			const page1Ids = new Set(page1.puzzles.map((p) => p.id));
+			for (const p of page2.puzzles) {
+				expect(page1Ids.has(p.id)).toBe(false);
+			}
+
+			// Page 3 using cursor
+			const page3 = await listPuzzlesPage(kv as unknown as KVNamespace, {
+				offset: 0,
+				limit: 2,
+				cursor: page2.nextCursor
+			});
+			expect(page3.puzzles).toHaveLength(1);
+			expect(page3.nextCursor).toBeUndefined();
+		});
+
+		it('cursor works with category filter', async () => {
+			const kv = createMockKV();
+			kv._store.set(
+				'puzzle:a',
+				JSON.stringify(makeReadyPuzzle({ id: 'a', name: 'A', category: 'Nature', createdAt: 100 }))
+			);
+			kv._store.set(
+				'puzzle:b',
+				JSON.stringify(makeReadyPuzzle({ id: 'b', name: 'B', category: 'Nature', createdAt: 200 }))
+			);
+			kv._store.set(
+				'puzzle:c',
+				JSON.stringify(makeReadyPuzzle({ id: 'c', name: 'C', category: 'Art', createdAt: 300 }))
+			);
+
+			const page1 = await listPuzzlesPage(kv as unknown as KVNamespace, {
+				offset: 0,
+				limit: 1,
+				category: 'Nature'
+			});
+			expect(page1.puzzles).toHaveLength(1);
+			expect(page1.puzzles[0].id).toBe('b'); // newest first
+
+			const page2 = await listPuzzlesPage(kv as unknown as KVNamespace, {
+				offset: 0,
+				limit: 1,
+				category: 'Nature',
+				cursor: page1.nextCursor
+			});
+			expect(page2.puzzles).toHaveLength(1);
+			expect(page2.puzzles[0].id).toBe('a');
+		});
+
+		it('cursor works with search query', async () => {
+			const kv = createMockKV();
+			kv._store.set(
+				'puzzle:a',
+				JSON.stringify(makeReadyPuzzle({ id: 'a', name: 'Mountain Forest', createdAt: 100 }))
+			);
+			kv._store.set(
+				'puzzle:b',
+				JSON.stringify(makeReadyPuzzle({ id: 'b', name: 'Mountain Lake', createdAt: 200 }))
+			);
+			kv._store.set(
+				'puzzle:c',
+				JSON.stringify(makeReadyPuzzle({ id: 'c', name: 'Ocean View', createdAt: 300 }))
+			);
+
+			const page1 = await listPuzzlesPage(kv as unknown as KVNamespace, {
+				offset: 0,
+				limit: 1,
+				q: 'mountain'
+			});
+			expect(page1.puzzles[0].id).toBe('b');
+
+			const page2 = await listPuzzlesPage(kv as unknown as KVNamespace, {
+				offset: 0,
+				limit: 1,
+				q: 'mountain',
+				cursor: page1.nextCursor
+			});
+			expect(page2.puzzles[0].id).toBe('a');
+		});
+
+		it('treats invalid cursor as offset 0', async () => {
+			const kv = createMockKV();
+			kv._store.set('puzzle:a', JSON.stringify(makeReadyPuzzle({ id: 'a', createdAt: 100 })));
+
+			const result = await listPuzzlesPage(kv as unknown as KVNamespace, {
+				offset: 0,
+				limit: 20,
+				cursor: 'not-valid-base64!!!'
+			});
+			expect(result.puzzles).toHaveLength(1);
+		});
+	});
+});
+
+describe('invalidateGalleryIndex', () => {
+	it('deletes the gallery index cache key', async () => {
+		const kv = createMockKV();
+		kv._store.set('gallery:sorted-index', JSON.stringify([{ id: 'a' }]));
+
+		await invalidateGalleryIndex(kv as unknown as KVNamespace);
+
+		expect(kv.delete).toHaveBeenCalledWith('gallery:sorted-index');
+		expect(kv._store.has('gallery:sorted-index')).toBe(false);
+	});
+
+	it('does not throw when delete fails', async () => {
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const kv = {
+			delete: vi.fn(async () => {
+				throw new Error('KV error');
+			})
+		} as unknown as KVNamespace;
+
+		await expect(invalidateGalleryIndex(kv)).resolves.toBeUndefined();
+		expect(consoleSpy).toHaveBeenCalled();
 
 		consoleSpy.mockRestore();
 	});

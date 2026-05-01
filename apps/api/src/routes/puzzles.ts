@@ -73,8 +73,10 @@ puzzles.get('/', async (c) => {
 	const rawLimit = parseInt(c.req.query('limit') ?? '20', 10);
 	const limit = Number.isFinite(rawLimit) && rawLimit >= 1 && rawLimit <= 100 ? rawLimit : 20;
 
+	const cursor = c.req.query('cursor') || undefined;
+
 	try {
-		const result = await listPuzzlesPage({ q, category, offset, limit });
+		const result = await listPuzzlesPage({ q, category, offset, limit, cursor });
 		return c.json(result);
 	} catch (error) {
 		console.error('Failed to list puzzles', error);

@@ -22,6 +22,7 @@
 	let hasMore = $derived(puzzles.length < total);
 	let queryVersion = 0;
 	let loadMoreController: AbortController | null = null;
+	let nextCursor: string | undefined = $state(undefined);
 
 	// Debounce raw input into debouncedQuery (300 ms), trimming whitespace
 	$effect(() => {
@@ -45,6 +46,7 @@
 		total = 0;
 		loadingMore = false;
 		loadMoreError = false;
+		nextCursor = undefined;
 
 		const controller = new AbortController();
 		const catParam = cat === CATEGORY_ALL ? undefined : (cat as PuzzleCategory);
@@ -54,6 +56,7 @@
 				if (controller.signal.aborted || version !== queryVersion) return;
 				puzzles = result.puzzles;
 				total = result.total;
+				nextCursor = result.nextCursor;
 			})
 			.catch((e) => {
 				if (controller.signal.aborted || version !== queryVersion) return;
@@ -97,12 +100,13 @@
 			const result = await fetchPuzzles({
 				q: debouncedQuery || undefined,
 				category: catParam,
-				offset: puzzles.length,
+				cursor: nextCursor,
 				signal: controller.signal
 			});
 			if (controller.signal.aborted || version !== queryVersion) return;
 			puzzles = [...puzzles, ...result.puzzles];
 			total = result.total;
+			nextCursor = result.nextCursor;
 		} catch (e) {
 			const isAbort = e instanceof DOMException && e.name === 'AbortError';
 			if (!isAbort) console.error('Failed to load next page:', e);

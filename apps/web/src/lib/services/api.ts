@@ -114,19 +114,32 @@ export async function fetchPuzzles(params?: {
 	category?: PuzzleCategory;
 	offset?: number;
 	limit?: number;
+	cursor?: string;
 	signal?: AbortSignal;
-}): Promise<{ puzzles: PuzzleSummary[]; total: number; offset: number; limit: number }> {
+}): Promise<{
+	puzzles: PuzzleSummary[];
+	total: number;
+	offset: number;
+	limit: number;
+	nextCursor?: string;
+}> {
 	const searchParams = new URLSearchParams();
 	if (params?.q) searchParams.set('q', params.q);
 	if (params?.category) searchParams.set('category', params.category);
-	if (params?.offset && params.offset > 0) searchParams.set('offset', String(params.offset));
+	if (params?.cursor) searchParams.set('cursor', params.cursor);
+	if (!params?.cursor && params?.offset && params.offset > 0)
+		searchParams.set('offset', String(params.offset));
 	if (params?.limit && params.limit !== 20) searchParams.set('limit', String(params.limit));
 	const query = searchParams.toString();
 	const url = query ? `${API_BASE}/api/puzzles?${query}` : `${API_BASE}/api/puzzles`;
 	const response = params?.signal ? await fetch(url, { signal: params.signal }) : await fetch(url);
-	return handleResponse<{ puzzles: PuzzleSummary[]; total: number; offset: number; limit: number }>(
-		response
-	);
+	return handleResponse<{
+		puzzles: PuzzleSummary[];
+		total: number;
+		offset: number;
+		limit: number;
+		nextCursor?: string;
+	}>(response);
 }
 
 export async function fetchPuzzle(id: string): Promise<Puzzle> {

@@ -65,14 +65,25 @@ function createStorage(initial: StorageInit = {}) {
 
 function createKV(metadata: PuzzleMetadata | null = baseMetadata) {
 	const expectedKey = metadata ? `puzzle:${metadata.id}` : undefined;
+	const store: Record<string, string> = {};
+	if (metadata) {
+		store[`puzzle:${metadata.id}`] = JSON.stringify(metadata);
+	}
 	return {
 		get: vi.fn(async (key: string, type?: string) => {
 			if (expectedKey !== undefined) {
 				expect(key).toBe(expectedKey);
 			}
-			return type === 'json' ? metadata : null;
+			const value = store[key];
+			return type === 'json' && value ? JSON.parse(value) : (value ?? null);
 		}),
-		put: vi.fn(async () => undefined)
+		put: vi.fn(async (key: string, value: string) => {
+			store[key] = value;
+		}),
+		delete: vi.fn(async (key: string) => {
+			delete store[key];
+		}),
+		_store: store
 	};
 }
 
@@ -391,5 +402,34 @@ describe('PuzzleMetadataDO.fetch - storage and KV sync', () => {
 		});
 		const stored = storage._store['metadata'] as PuzzleMetadata;
 		expect(stored.id).toBe('test-puzzle');
+	});
+});
+
+describe('PuzzleMetadataDO.fetch - gallery index cache invalidation', () => {
+	it('invalidates gallery index when status transitions to ready', async () => {
+		const { durableObj, kv } = makeDO({ metadata: baseMetadata });
+		await postRequest(durableObj, {
+			puzzleId: 'test-puzzle',
+			updates: { status: 'ready' }
+		});
+		expect(kv.delete).toHaveBeenCalledWith('gallery:sorted-index');
+	});
+
+	it('invalidates gallery index when status transitions to failed', async () => {
+		const { durableObj, kv } = makeDO({ metadata: baseMetadata });
+		await postRequest(durableObj, {
+			puzzleId: 'test-puzzle',
+			updates: { status: 'failed', error: { message: 'Something went wrong' } }
+		});
+		expect(kv.delete).toHaveBeenCalledWith('gallery:sorted-index');
+	});
+
+	it('does not invalidate gallery index for progress-only updates', async () => {
+		const { durableObj, kv } = makeDO({ metadata: baseMetadata });
+		await postRequest(durableObj, {
+			puzzleId: 'test-puzzle',
+			updates: { progress: { totalPieces: 4, generatedPieces: 2, updatedAt: Date.now() } }
+		});
+		expect(kv.delete).not.toHaveBeenCalledWith('gallery:sorted-index');
 	});
 });

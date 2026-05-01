@@ -161,6 +161,17 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 			}
 		}
 
+		// Invalidate gallery index cache when visibility-affecting mutations occur
+		// (status transitions to ready/failed) so the gallery reflects changes
+		// immediately instead of waiting for TTL expiry.
+		if (updates.status === 'ready' || updates.status === 'failed') {
+			try {
+				await this.env.PUZZLE_METADATA.delete('gallery:sorted-index');
+			} catch (cacheError) {
+				console.error('Failed to invalidate gallery index cache:', cacheError);
+			}
+		}
+
 		return Response.json({ success: true, version: updated.version });
 	}
 }
