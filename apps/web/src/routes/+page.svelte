@@ -75,7 +75,7 @@
 
 		const observer = new IntersectionObserver(
 			(entries) => {
-				if (entries[0].isIntersecting && !loadMoreError) loadNextPage();
+				if (entries[0].isIntersecting && !loadMoreError && !loadingMore && hasMore) loadNextPage();
 			},
 			{ rootMargin: '200px' }
 		);

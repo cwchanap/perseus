@@ -534,6 +534,75 @@ describe('Gallery Page', () => {
 		expect(mockedFetchPuzzles.mock.calls.length).toBe(callsBeforeReIntersect);
 	});
 
+	it('does not trigger loadNextPage from observer when already loading more', async () => {
+		let resolveLoadMore: ((value: FetchPuzzlesResult) => void) | undefined;
+		const loadMorePromise = new Promise<FetchPuzzlesResult>((resolve) => {
+			resolveLoadMore = resolve;
+		});
+
+		mockedFetchPuzzles.mockImplementation(async (params) => {
+			const { offset = 0 } = params ?? {};
+			if (offset === 0) {
+				return { puzzles: [makePuzzle('p1')], total: 5, offset: 0, limit: 20 };
+			}
+			return loadMorePromise;
+		});
+
+		render(GalleryPage);
+		await expect.element(page.getByTestId('scroll-sentinel')).toBeInTheDocument();
+		expect(intersectionCallback).not.toBeNull();
+
+		// First intersection triggers loadNextPage
+		intersectionCallback?.(
+			[{ isIntersecting: true } as IntersectionObserverEntry],
+			{} as IntersectionObserver
+		);
+
+		await vi.waitFor(() => {
+			expect(fetchPuzzles).toHaveBeenCalledWith(expect.objectContaining({ offset: 1 }));
+		});
+
+		const callsWhileLoading = mockedFetchPuzzles.mock.calls.length;
+
+		// Second intersection while loadingMore is true should NOT call loadNextPage
+		intersectionCallback?.(
+			[{ isIntersecting: true } as IntersectionObserverEntry],
+			{} as IntersectionObserver
+		);
+		await Promise.resolve();
+
+		expect(mockedFetchPuzzles.mock.calls.length).toBe(callsWhileLoading);
+
+		// Clean up the pending promise
+		resolveLoadMore?.({ puzzles: [makePuzzle('p2')], total: 5, offset: 1, limit: 20 });
+		await loadMorePromise;
+	});
+
+	it('does not trigger loadNextPage from observer when all items are loaded', async () => {
+		mockedFetchPuzzles.mockResolvedValue({
+			puzzles: [makePuzzle('p1')],
+			total: 1,
+			offset: 0,
+			limit: 20
+		});
+
+		render(GalleryPage);
+		await expect.element(page.getByTestId('scroll-sentinel')).toBeInTheDocument();
+		expect(intersectionCallback).not.toBeNull();
+
+		// Sentinel is visible but hasMore is false (puzzles.length === total)
+		intersectionCallback?.(
+			[{ isIntersecting: true } as IntersectionObserverEntry],
+			{} as IntersectionObserver
+		);
+
+		// Only the initial fetch should have been called, no offset=1 call
+		await vi.waitFor(() => {
+			expect(fetchPuzzles).toHaveBeenCalledTimes(1);
+		});
+		expect(fetchPuzzles).toHaveBeenCalledWith(expect.objectContaining({ offset: 0 }));
+	});
+
 	it('treats whitespace-only search as no filter after a real search term', async () => {
 		mockedFetchPuzzles.mockResolvedValue({
 			puzzles: [makePuzzle('p1')],

@@ -253,10 +253,23 @@ export async function listPuzzles(
 	};
 }
 
-export async function listPuzzlesPage(
-	kv: KVNamespace,
-	params: { q?: string; category?: PuzzleCategory; offset: number; limit: number }
-): Promise<{ puzzles: PuzzleSummary[]; total: number; offset: number; limit: number }> {
+// Cached sorted index for gallery listing — avoids a full KV scan + fan-out on every request.
+// The index stores lightweight entries (no pieces array) sorted by createdAt desc and is
+// rebuilt from scratch on cache miss. A short TTL means changes propagate within seconds.
+const GALLERY_INDEX_KEY = 'gallery:sorted-index';
+const GALLERY_INDEX_TTL_SECONDS = 60;
+
+type GalleryIndexEntry = {
+	id: string;
+	name: string;
+	pieceCount: number;
+	status: PuzzleStatus;
+	progress?: PuzzleProgress;
+	category?: PuzzleCategory;
+	createdAt: number;
+};
+
+async function buildGalleryIndex(kv: KVNamespace): Promise<GalleryIndexEntry[]> {
 	const keys: { name: string }[] = [];
 	let cursor: string | undefined;
 
@@ -268,11 +281,11 @@ export async function listPuzzlesPage(
 	}
 
 	const fetched = await Promise.all(keys.map((k) => kv.get(k.name, 'json')));
-	const all: PuzzleMetadata[] = [];
+	const entries: GalleryIndexEntry[] = [];
 	let nullCount = 0;
 	let invalidCount = 0;
 
-	fetched.forEach((puzzle, index) => {
+	fetched.forEach((puzzle) => {
 		if (puzzle === null) {
 			nullCount++;
 			return;
@@ -281,27 +294,55 @@ export async function listPuzzlesPage(
 			invalidCount++;
 			return;
 		}
-		all.push(puzzle as PuzzleMetadata);
+		const p = puzzle as PuzzleMetadata;
+		entries.push({
+			id: p.id,
+			name: p.name,
+			pieceCount: p.pieceCount,
+			status: p.status,
+			progress: p.progress,
+			category: p.category,
+			createdAt: p.createdAt
+		});
 	});
 
 	if (nullCount > 0) {
 		console.error(
-			`listPuzzlesPage: ${nullCount} keys returned null out of ${keys.length} total (data corruption or replication lag)`
+			`buildGalleryIndex: ${nullCount} keys returned null out of ${keys.length} total (data corruption or replication lag)`
 		);
 	}
 	if (invalidCount > 0) {
 		console.error(
-			`listPuzzlesPage: ${invalidCount} invalid metadata entries out of ${keys.length} total`
+			`buildGalleryIndex: ${invalidCount} invalid metadata entries out of ${keys.length} total`
 		);
 	}
 
-	let filtered = all
-		.filter((p) => p.status === 'ready')
-		.sort((a, b) => {
-			const dateDiff = b.createdAt - a.createdAt;
-			if (dateDiff !== 0) return dateDiff;
-			return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
-		});
+	entries.sort((a, b) => {
+		const dateDiff = b.createdAt - a.createdAt;
+		if (dateDiff !== 0) return dateDiff;
+		return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+	});
+
+	await kv.put(GALLERY_INDEX_KEY, JSON.stringify(entries), {
+		expirationTtl: GALLERY_INDEX_TTL_SECONDS
+	});
+
+	return entries;
+}
+
+async function getGalleryIndex(kv: KVNamespace): Promise<GalleryIndexEntry[]> {
+	const cached = await kv.get(GALLERY_INDEX_KEY, 'json');
+	if (Array.isArray(cached)) return cached as GalleryIndexEntry[];
+	return buildGalleryIndex(kv);
+}
+
+export async function listPuzzlesPage(
+	kv: KVNamespace,
+	params: { q?: string; category?: PuzzleCategory; offset: number; limit: number }
+): Promise<{ puzzles: PuzzleSummary[]; total: number; offset: number; limit: number }> {
+	const entries = await getGalleryIndex(kv);
+
+	let filtered = entries.filter((p) => p.status === 'ready');
 
 	if (params.category) {
 		filtered = filtered.filter((p) => p.category === params.category);

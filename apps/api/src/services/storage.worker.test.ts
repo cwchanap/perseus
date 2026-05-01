@@ -896,6 +896,47 @@ describe('listPuzzlesPage', () => {
 		expect(ids).toEqual(['a', 'b']);
 	});
 
+	it('caches the sorted index after first call and reads from cache on subsequent calls', async () => {
+		const kv = createMockKV();
+		kv._store.set(
+			'puzzle:a',
+			JSON.stringify(makeReadyPuzzle({ id: 'a', name: 'Alpha', createdAt: 100 }))
+		);
+		kv._store.set(
+			'puzzle:b',
+			JSON.stringify(makeReadyPuzzle({ id: 'b', name: 'Beta', createdAt: 200 }))
+		);
+
+		// First call — should trigger full scan and write the cache
+		const result1 = await listPuzzlesPage(kv as unknown as KVNamespace, { offset: 0, limit: 20 });
+		expect(result1.total).toBe(2);
+		expect(kv.list).toHaveBeenCalledTimes(1);
+		expect(kv.put).toHaveBeenCalledWith(
+			'gallery:sorted-index',
+			expect.any(String),
+			expect.objectContaining({ expirationTtl: 60 })
+		);
+
+		// Second call — should read from cache, no additional kv.list calls
+		const result2 = await listPuzzlesPage(kv as unknown as KVNamespace, { offset: 0, limit: 1 });
+		expect(result2.total).toBe(2);
+		expect(result2.puzzles).toHaveLength(1);
+		expect(kv.list).toHaveBeenCalledTimes(1); // still 1, not 2
+	});
+
+	it('rebuilds cache when cached value is not an array', async () => {
+		const kv = createMockKV();
+		kv._store.set('gallery:sorted-index', JSON.stringify({ corrupted: true })); // non-array JSON
+		kv._store.set(
+			'puzzle:a',
+			JSON.stringify(makeReadyPuzzle({ id: 'a', name: 'Alpha', createdAt: 100 }))
+		);
+
+		const result = await listPuzzlesPage(kv as unknown as KVNamespace, { offset: 0, limit: 20 });
+		expect(result.total).toBe(1);
+		expect(kv.list).toHaveBeenCalledTimes(1); // fell through to full scan
+	});
+
 	it('logs a console error for null KV entries and excludes them from results', async () => {
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 		const kv = createMockKV();
