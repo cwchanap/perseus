@@ -6,3 +6,4 @@ reviews:
     - '!.specify/**'
     - '!**/drizzle/migrations/**'
     - '!CLAUDE.md'
+    - '!docs/superpowers/**'
