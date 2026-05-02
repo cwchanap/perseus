@@ -35,13 +35,22 @@ function createMockKV() {
 		delete: vi.fn(async (key: string) => {
 			store.delete(key);
 		}),
-		list: vi.fn(async (options?: { prefix?: string; cursor?: string }) => {
-			const prefix = options?.prefix || '';
-			const keys = Array.from(store.keys())
-				.filter((k) => k.startsWith(prefix))
-				.map((name) => ({ name }));
-			return { keys, list_complete: true, cursor: undefined };
-		}),
+		list: vi.fn(
+			async (options?: {
+				prefix?: string;
+				cursor?: string;
+			}): Promise<{
+				keys: { name: string }[];
+				list_complete: boolean;
+				cursor?: string;
+			}> => {
+				const prefix = options?.prefix || '';
+				const keys = Array.from(store.keys())
+					.filter((k) => k.startsWith(prefix))
+					.map((name) => ({ name }));
+				return { keys, list_complete: true, cursor: undefined };
+			}
+		),
 		_store: store
 	};
 }
