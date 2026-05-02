@@ -110,18 +110,19 @@ test.describe('Main Gallery Page', () => {
 			pieceCount: 225
 		}));
 		const secondPage = [{ id: 'p20', name: 'Puzzle 20', pieceCount: 225 }];
+		const cursorValue = 'cursor-page-2';
 
 		let callCount = 0;
 		await page.route(/\/api\/puzzles(?:\?.*)?$/, async (route) => {
 			callCount++;
 			const url = route.request().url();
-			if (url.includes('offset=20')) {
+			if (url.includes(`cursor=${cursorValue}`)) {
 				await route.fulfill({
 					json: { puzzles: secondPage, total: 21, offset: 20, limit: 20 }
 				});
 			} else {
 				await route.fulfill({
-					json: { puzzles: firstPage, total: 21, offset: 0, limit: 20 }
+					json: { puzzles: firstPage, total: 21, offset: 0, limit: 20, nextCursor: cursorValue }
 				});
 			}
 		});
