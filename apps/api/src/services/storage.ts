@@ -336,15 +336,16 @@ export async function listPuzzlesPage(params: {
 	const page = filtered.slice(0, params.limit);
 	const summaries = page.map((p) => p.summary);
 
+	// Attach nextCursor only when more items remain beyond this page
 	const nextCursor =
-		page.length < params.limit
-			? undefined
-			: btoa(
+		filtered.length > params.limit
+			? btoa(
 					JSON.stringify({
 						createdAt: page[page.length - 1].createdAt,
 						id: page[page.length - 1].summary.id
 					})
-				);
+				)
+			: undefined;
 
 	return {
 		puzzles: summaries,

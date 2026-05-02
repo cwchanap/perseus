@@ -383,6 +383,66 @@ describe('listPuzzlesPage', () => {
 		expect(result.puzzles[2].id).toBe('page-gamma');
 	});
 
+	it('does not return nextCursor when result count equals limit', async () => {
+		await storageModule.createPuzzle(makePuzzle('cursor-a', { name: 'A', createdAt: 3000 }));
+		await storageModule.createPuzzle(makePuzzle('cursor-b', { name: 'B', createdAt: 2000 }));
+
+		const result = await storageModule.listPuzzlesPage({ offset: 0, limit: 2 });
+
+		expect(result.puzzles).toHaveLength(2);
+		expect(result.nextCursor).toBeUndefined();
+	});
+
+	it('returns nextCursor when more items remain beyond page', async () => {
+		await storageModule.createPuzzle(makePuzzle('cursor-a', { name: 'A', createdAt: 3000 }));
+		await storageModule.createPuzzle(makePuzzle('cursor-b', { name: 'B', createdAt: 2000 }));
+		await storageModule.createPuzzle(makePuzzle('cursor-c', { name: 'C', createdAt: 1000 }));
+
+		const result = await storageModule.listPuzzlesPage({ offset: 0, limit: 2 });
+
+		expect(result.puzzles).toHaveLength(2);
+		expect(result.nextCursor).toBeDefined();
+	});
+
+	it('does not return nextCursor on last page via cursor', async () => {
+		await storageModule.createPuzzle(makePuzzle('cursor-a', { name: 'A', createdAt: 3000 }));
+		await storageModule.createPuzzle(makePuzzle('cursor-b', { name: 'B', createdAt: 2000 }));
+		await storageModule.createPuzzle(makePuzzle('cursor-c', { name: 'C', createdAt: 1000 }));
+
+		const page1 = await storageModule.listPuzzlesPage({ offset: 0, limit: 2 });
+		expect(page1.nextCursor).toBeDefined();
+
+		const page2 = await storageModule.listPuzzlesPage({
+			offset: 0,
+			limit: 2,
+			cursor: page1.nextCursor
+		});
+
+		expect(page2.puzzles).toHaveLength(1);
+		expect(page2.nextCursor).toBeUndefined();
+	});
+
+	it('does not return nextCursor when filtered results equal limit', async () => {
+		await storageModule.createPuzzle(
+			makePuzzle('cursor-cat', { name: 'Cat', createdAt: 3000, category: 'Animals' })
+		);
+		await storageModule.createPuzzle(
+			makePuzzle('cursor-dog', { name: 'Dog', createdAt: 2000, category: 'Animals' })
+		);
+		await storageModule.createPuzzle(
+			makePuzzle('cursor-art', { name: 'Art', createdAt: 1000, category: 'Art' })
+		);
+
+		const result = await storageModule.listPuzzlesPage({
+			category: 'Animals',
+			offset: 0,
+			limit: 2
+		});
+
+		expect(result.puzzles).toHaveLength(2);
+		expect(result.nextCursor).toBeUndefined();
+	});
+
 	it('returns good puzzles and skips corrupt entries without throwing', async () => {
 		await storageModule.createPuzzle(makePuzzle('good-puzzle', { name: 'Good Puzzle' }));
 		await storageModule.createPuzzle(makePuzzle('corrupt-puzzle', { name: 'Will be corrupted' }));
