@@ -445,8 +445,9 @@ export async function listPuzzlesPage(
 		category: p.category
 	}));
 
-	// Attach nextCursor when there are more items
-	const nextCursor = page.length < params.limit ? undefined : encodeCursor(page[page.length - 1]);
+	// Attach nextCursor only when more items remain beyond this page
+	const nextCursor =
+		filtered.length > params.limit ? encodeCursor(page[page.length - 1]) : undefined;
 
 	return {
 		puzzles: summaries,

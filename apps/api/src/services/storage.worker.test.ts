@@ -1011,6 +1011,24 @@ describe('listPuzzlesPage', () => {
 			expect(result.nextCursor).toBeUndefined();
 		});
 
+		it('does not return nextCursor when result count equals limit', async () => {
+			const kv = createMockKV();
+			// Exactly 3 items with limit=3 — no next page should be signaled
+			for (let i = 0; i < 3; i++) {
+				kv._store.set(
+					`puzzle:p${i}`,
+					JSON.stringify(makeReadyPuzzle({ id: `p${i}`, name: `Puzzle ${i}`, createdAt: i }))
+				);
+			}
+
+			const result = await listPuzzlesPage(kv as unknown as KVNamespace, {
+				offset: 0,
+				limit: 3
+			});
+			expect(result.puzzles).toHaveLength(3);
+			expect(result.nextCursor).toBeUndefined();
+		});
+
 		it('fetches next page using cursor', async () => {
 			const kv = createMockKV();
 			for (let i = 0; i < 5; i++) {
