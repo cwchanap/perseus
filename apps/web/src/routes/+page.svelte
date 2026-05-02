@@ -19,10 +19,10 @@
 	let total = $state(0);
 	let loadingMore = $state(false);
 	let scrollSentinel = $state<HTMLDivElement | null>(null);
+	let nextCursor: string | undefined = $state(undefined);
 	let hasMore = $derived(nextCursor !== undefined);
 	let queryVersion = 0;
 	let loadMoreController: AbortController | null = null;
-	let nextCursor: string | undefined = $state(undefined);
 
 	// Debounce raw input into debouncedQuery (300 ms), trimming whitespace
 	$effect(() => {
