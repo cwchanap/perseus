@@ -94,6 +94,66 @@ describe('Puzzle Routes - UUID Validation', () => {
 			expect(body.message).toBe('Failed to list puzzles');
 		});
 
+		it('should reject offset with trailing non-numeric characters', async () => {
+			vi.mocked(storage.listPuzzlesPage).mockResolvedValue({
+				puzzles: [],
+				total: 0,
+				offset: 0,
+				limit: 20
+			} as any);
+
+			const req = new Request('http://localhost/?offset=10abc');
+			const res = await puzzles.fetch(req, mockEnv);
+
+			expect(res.status).toBe(200);
+			expect(vi.mocked(storage.listPuzzlesPage)).toHaveBeenCalledWith(mockEnv.PUZZLE_METADATA, {
+				q: undefined,
+				category: undefined,
+				offset: 0,
+				limit: 20
+			});
+		});
+
+		it('should reject limit with trailing non-numeric characters', async () => {
+			vi.mocked(storage.listPuzzlesPage).mockResolvedValue({
+				puzzles: [],
+				total: 0,
+				offset: 0,
+				limit: 20
+			} as any);
+
+			const req = new Request('http://localhost/?limit=5foo');
+			const res = await puzzles.fetch(req, mockEnv);
+
+			expect(res.status).toBe(200);
+			expect(vi.mocked(storage.listPuzzlesPage)).toHaveBeenCalledWith(mockEnv.PUZZLE_METADATA, {
+				q: undefined,
+				category: undefined,
+				offset: 0,
+				limit: 20
+			});
+		});
+
+		it('should reject decimal offset and limit values', async () => {
+			vi.mocked(storage.listPuzzlesPage).mockResolvedValue({
+				puzzles: [],
+				total: 0,
+				offset: 0,
+				limit: 20
+			} as any);
+
+			const req = new Request('http://localhost/?offset=3.5&limit=7.9');
+			const res = await puzzles.fetch(req, mockEnv);
+
+			expect(res.status).toBe(200);
+			expect(vi.mocked(storage.listPuzzlesPage)).toHaveBeenCalledWith(mockEnv.PUZZLE_METADATA, {
+				q: undefined,
+				category: undefined,
+				offset: 0,
+				limit: 20
+			});
+		});
+
 		it('treats empty ?q= param as no filter (passes undefined, not empty string)', async () => {
 			vi.mocked(storage.listPuzzlesPage).mockResolvedValue({
 				puzzles: [],

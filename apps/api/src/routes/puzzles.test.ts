@@ -83,6 +83,60 @@ describe('GET / - List puzzles', () => {
 		});
 	});
 
+	it('rejects offset with trailing non-numeric characters', async () => {
+		vi.mocked(storage.listPuzzlesPage).mockResolvedValue({
+			puzzles: [],
+			total: 0,
+			offset: 0,
+			limit: 20
+		} as any);
+
+		const res = await puzzles.fetch(new Request('http://localhost/?offset=10abc'));
+		expect(res.status).toBe(200);
+		expect(storage.listPuzzlesPage).toHaveBeenCalledWith(
+			expect.objectContaining({
+				offset: 0,
+				limit: 20
+			})
+		);
+	});
+
+	it('rejects limit with trailing non-numeric characters', async () => {
+		vi.mocked(storage.listPuzzlesPage).mockResolvedValue({
+			puzzles: [],
+			total: 0,
+			offset: 0,
+			limit: 20
+		} as any);
+
+		const res = await puzzles.fetch(new Request('http://localhost/?limit=5foo'));
+		expect(res.status).toBe(200);
+		expect(storage.listPuzzlesPage).toHaveBeenCalledWith(
+			expect.objectContaining({
+				offset: 0,
+				limit: 20
+			})
+		);
+	});
+
+	it('rejects decimal offset and limit values', async () => {
+		vi.mocked(storage.listPuzzlesPage).mockResolvedValue({
+			puzzles: [],
+			total: 0,
+			offset: 0,
+			limit: 20
+		} as any);
+
+		const res = await puzzles.fetch(new Request('http://localhost/?offset=3.5&limit=7.9'));
+		expect(res.status).toBe(200);
+		expect(storage.listPuzzlesPage).toHaveBeenCalledWith(
+			expect.objectContaining({
+				offset: 0,
+				limit: 20
+			})
+		);
+	});
+
 	it('returns 500 with internal_error when listPuzzlesPage throws', async () => {
 		vi.mocked(storage.listPuzzlesPage).mockRejectedValue(new Error('DB error'));
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});

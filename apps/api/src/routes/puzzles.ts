@@ -67,11 +67,15 @@ puzzles.get('/', async (c) => {
 			? (categoryParam as PuzzleCategory)
 			: undefined;
 
-	const rawOffset = parseInt(c.req.query('offset') ?? '0', 10);
-	const offset = Number.isFinite(rawOffset) && rawOffset >= 0 ? rawOffset : 0;
+	const rawOffset = Number(c.req.query('offset') ?? '0');
+	const offset =
+		Number.isFinite(rawOffset) && Number.isInteger(rawOffset) && rawOffset >= 0 ? rawOffset : 0;
 
-	const rawLimit = parseInt(c.req.query('limit') ?? '20', 10);
-	const limit = Number.isFinite(rawLimit) && rawLimit >= 1 && rawLimit <= 100 ? rawLimit : 20;
+	const rawLimit = Number(c.req.query('limit') ?? '20');
+	const limit =
+		Number.isFinite(rawLimit) && Number.isInteger(rawLimit) && rawLimit >= 1 && rawLimit <= 100
+			? rawLimit
+			: 20;
 
 	const cursor = c.req.query('cursor') || undefined;
 

@@ -39,14 +39,18 @@ function isPuzzleCategory(value: string): value is PuzzleCategory {
 
 function parseOffset(value: string | null): number {
 	if (value === null) return 0;
-	const rawOffset = parseInt(value ?? '0', 10);
-	return Number.isFinite(rawOffset) && rawOffset >= 0 ? rawOffset : 0;
+	const rawOffset = Number(value);
+	return Number.isFinite(rawOffset) && Number.isInteger(rawOffset) && rawOffset >= 0
+		? rawOffset
+		: 0;
 }
 
 function parseLimit(value: string | null): number {
 	if (value === null) return 20;
-	const rawLimit = parseInt(value ?? '20', 10);
-	return Number.isFinite(rawLimit) && rawLimit >= 1 && rawLimit <= 100 ? rawLimit : 20;
+	const rawLimit = Number(value);
+	return Number.isFinite(rawLimit) && Number.isInteger(rawLimit) && rawLimit >= 1 && rawLimit <= 100
+		? rawLimit
+		: 20;
 }
 
 function parseCategory(value: string | null | undefined): PuzzleCategory | undefined {
