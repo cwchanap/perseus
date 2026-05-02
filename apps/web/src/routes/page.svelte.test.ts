@@ -618,17 +618,75 @@ describe('Gallery Page', () => {
 		await expect.element(page.getByTestId('scroll-sentinel')).toBeInTheDocument();
 		expect(intersectionCallback).not.toBeNull();
 
-		// Sentinel is visible but hasMore is false (puzzles.length === total)
+		// Sentinel is visible but hasMore is false (nextCursor is undefined)
 		intersectionCallback?.(
 			[{ isIntersecting: true } as IntersectionObserverEntry],
 			{} as IntersectionObserver
 		);
 
-		// Only the initial fetch should have been called, no offset=1 call
+		// Only the initial fetch should have been called, no next-page call
 		await vi.waitFor(() => {
 			expect(fetchPuzzles).toHaveBeenCalledTimes(1);
 		});
 		expect(fetchPuzzles).toHaveBeenCalledWith(expect.objectContaining({ offset: 0 }));
+	});
+
+	it('does not fetch duplicates when total grows beyond loaded count but nextCursor is absent', async () => {
+		mockedFetchPuzzles.mockImplementation(async (params) => {
+			const { cursor } = params ?? {};
+			if (!cursor) {
+				return {
+					puzzles: [makePuzzle('p1')],
+					total: 3,
+					offset: 0,
+					limit: 20,
+					nextCursor: 'cursor-page2'
+				};
+			}
+			if (cursor === 'cursor-page2') {
+				// Simulates a new puzzle inserted: total=4 but this was the last page (no nextCursor)
+				return {
+					puzzles: [makePuzzle('p2')],
+					total: 4,
+					offset: 1,
+					limit: 20
+				};
+			}
+			return { puzzles: [], total: 0, offset: 0, limit: 20 };
+		});
+
+		render(GalleryPage);
+		await expect.element(page.getByTestId('scroll-sentinel')).toBeInTheDocument();
+		expect(intersectionCallback).not.toBeNull();
+
+		// Trigger load-next-page
+		intersectionCallback?.(
+			[{ isIntersecting: true } as IntersectionObserverEntry],
+			{} as IntersectionObserver
+		);
+
+		await vi.waitFor(() => {
+			expect(fetchPuzzles).toHaveBeenCalledWith(
+				expect.objectContaining({ cursor: 'cursor-page2' })
+			);
+		});
+
+		// Wait for the result to be processed
+		await vi.waitFor(() => {
+			expect(document.querySelectorAll('[data-testid="puzzle-card"]')).toHaveLength(2);
+		});
+
+		// Now hasMore should be false (nextCursor is undefined) even though puzzles.length(2) < total(4)
+		const callsBeforeReIntersect = mockedFetchPuzzles.mock.calls.length;
+
+		intersectionCallback?.(
+			[{ isIntersecting: true } as IntersectionObserverEntry],
+			{} as IntersectionObserver
+		);
+		await Promise.resolve();
+
+		// No additional fetch should have been triggered
+		expect(mockedFetchPuzzles.mock.calls.length).toBe(callsBeforeReIntersect);
 	});
 
 	it('treats whitespace-only search as no filter after a real search term', async () => {

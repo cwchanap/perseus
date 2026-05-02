@@ -19,7 +19,7 @@
 	let total = $state(0);
 	let loadingMore = $state(false);
 	let scrollSentinel = $state<HTMLDivElement | null>(null);
-	let hasMore = $derived(puzzles.length < total);
+	let hasMore = $derived(nextCursor !== undefined);
 	let queryVersion = 0;
 	let loadMoreController: AbortController | null = null;
 	let nextCursor: string | undefined = $state(undefined);
