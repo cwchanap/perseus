@@ -952,7 +952,8 @@ describe('listPuzzlesPage', () => {
 			JSON.stringify(makeReadyPuzzle({ id: 'a', name: 'Alpha', createdAt: 100 }))
 		);
 
-		kv.put.mockImplementation(async (key: string, _value: string) => {
+		// eslint-disable-next-line @typescript-eslint/no-unused-vars
+		kv.put.mockImplementation(async (key: string, _value?: string) => {
 			if (key === 'gallery:sorted-index') {
 				throw new Error('KV write quota exceeded');
 			}
