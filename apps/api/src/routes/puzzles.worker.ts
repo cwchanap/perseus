@@ -37,20 +37,20 @@ function isPuzzleCategory(value: string): value is PuzzleCategory {
 	return VALID_PUZZLE_CATEGORIES.has(value as PuzzleCategory);
 }
 
+const DECIMAL_INT_REGEX = /^\d+$/;
+
 function parseOffset(value: string | null): number {
 	if (value === null) return 0;
+	if (!DECIMAL_INT_REGEX.test(value)) return 0;
 	const rawOffset = Number(value);
-	return Number.isFinite(rawOffset) && Number.isInteger(rawOffset) && rawOffset >= 0
-		? rawOffset
-		: 0;
+	return rawOffset >= 0 ? rawOffset : 0;
 }
 
 function parseLimit(value: string | null): number {
 	if (value === null) return 20;
+	if (!DECIMAL_INT_REGEX.test(value)) return 20;
 	const rawLimit = Number(value);
-	return Number.isFinite(rawLimit) && Number.isInteger(rawLimit) && rawLimit >= 1 && rawLimit <= 100
-		? rawLimit
-		: 20;
+	return rawLimit >= 1 && rawLimit <= 100 ? rawLimit : 20;
 }
 
 function parseCategory(value: string | null | undefined): PuzzleCategory | undefined {

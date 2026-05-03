@@ -1171,6 +1171,46 @@ describe('listPuzzlesPage', () => {
 			});
 			expect(result.puzzles).toHaveLength(1);
 		});
+
+		it('cursor tokens are URL-safe (no + / = characters)', async () => {
+			const kv = createMockKV();
+			for (let i = 0; i < 5; i++) {
+				kv._store.set(
+					`puzzle:p${i}`,
+					JSON.stringify(makeReadyPuzzle({ id: `p${i}`, name: `Puzzle ${i}`, createdAt: i }))
+				);
+			}
+
+			const result = await listPuzzlesPage(kv as unknown as KVNamespace, {
+				offset: 0,
+				limit: 2
+			});
+			expect(result.nextCursor).toBeDefined();
+			// Cursor should be Base64URL-encoded: no +, /, or = characters
+			expect(result.nextCursor).not.toMatch(/[+/=]/);
+		});
+
+		it('decodes legacy standard-Base64 cursors for backward compatibility', async () => {
+			const kv = createMockKV();
+			for (let i = 0; i < 5; i++) {
+				kv._store.set(
+					`puzzle:p${i}`,
+					JSON.stringify(makeReadyPuzzle({ id: `p${i}`, name: `Puzzle ${i}`, createdAt: i }))
+				);
+			}
+
+			// Manually create a standard Base64 cursor (old format)
+			const legacyCursor = btoa(JSON.stringify({ createdAt: 3, id: 'p3' }));
+
+			const result = await listPuzzlesPage(kv as unknown as KVNamespace, {
+				offset: 0,
+				limit: 20,
+				cursor: legacyCursor
+			});
+			// Cursor points after p3 (createdAt=3). In DESC order, remaining are p2, p1, p0.
+			expect(result.puzzles).toHaveLength(3);
+			expect(result.puzzles.map((p) => p.id)).toEqual(['p2', 'p1', 'p0']);
+		});
 	});
 });
 

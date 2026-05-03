@@ -137,6 +137,60 @@ describe('GET / - List puzzles', () => {
 		);
 	});
 
+	it('rejects scientific notation offset and limit', async () => {
+		vi.mocked(storage.listPuzzlesPage).mockResolvedValue({
+			puzzles: [],
+			total: 0,
+			offset: 0,
+			limit: 20
+		} as any);
+
+		const res = await puzzles.fetch(new Request('http://localhost/?offset=1e2&limit=2e1'));
+		expect(res.status).toBe(200);
+		expect(storage.listPuzzlesPage).toHaveBeenCalledWith(
+			expect.objectContaining({
+				offset: 0,
+				limit: 20
+			})
+		);
+	});
+
+	it('rejects hex offset and limit', async () => {
+		vi.mocked(storage.listPuzzlesPage).mockResolvedValue({
+			puzzles: [],
+			total: 0,
+			offset: 0,
+			limit: 20
+		} as any);
+
+		const res = await puzzles.fetch(new Request('http://localhost/?offset=0x10&limit=0xff'));
+		expect(res.status).toBe(200);
+		expect(storage.listPuzzlesPage).toHaveBeenCalledWith(
+			expect.objectContaining({
+				offset: 0,
+				limit: 20
+			})
+		);
+	});
+
+	it('rejects whitespace-padded offset and limit', async () => {
+		vi.mocked(storage.listPuzzlesPage).mockResolvedValue({
+			puzzles: [],
+			total: 0,
+			offset: 0,
+			limit: 20
+		} as any);
+
+		const res = await puzzles.fetch(new Request('http://localhost/?offset=%2010%20&limit=%205%20'));
+		expect(res.status).toBe(200);
+		expect(storage.listPuzzlesPage).toHaveBeenCalledWith(
+			expect.objectContaining({
+				offset: 0,
+				limit: 20
+			})
+		);
+	});
+
 	it('returns 500 with internal_error when listPuzzlesPage throws', async () => {
 		vi.mocked(storage.listPuzzlesPage).mockRejectedValue(new Error('DB error'));
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});

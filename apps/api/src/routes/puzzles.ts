@@ -67,15 +67,14 @@ puzzles.get('/', async (c) => {
 			? (categoryParam as PuzzleCategory)
 			: undefined;
 
-	const rawOffset = Number(c.req.query('offset') ?? '0');
-	const offset =
-		Number.isFinite(rawOffset) && Number.isInteger(rawOffset) && rawOffset >= 0 ? rawOffset : 0;
+	const DECIMAL_INT = /^\d+$/;
+	const rawOffsetStr = c.req.query('offset') ?? '0';
+	const rawOffset = DECIMAL_INT.test(rawOffsetStr) ? Number(rawOffsetStr) : NaN;
+	const offset = !isNaN(rawOffset) && rawOffset >= 0 ? rawOffset : 0;
 
-	const rawLimit = Number(c.req.query('limit') ?? '20');
-	const limit =
-		Number.isFinite(rawLimit) && Number.isInteger(rawLimit) && rawLimit >= 1 && rawLimit <= 100
-			? rawLimit
-			: 20;
+	const rawLimitStr = c.req.query('limit') ?? '20';
+	const rawLimit = DECIMAL_INT.test(rawLimitStr) ? Number(rawLimitStr) : NaN;
+	const limit = !isNaN(rawLimit) && rawLimit >= 1 && rawLimit <= 100 ? rawLimit : 20;
 
 	const cursor = c.req.query('cursor') || undefined;
 
