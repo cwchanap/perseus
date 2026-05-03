@@ -308,7 +308,12 @@ export async function listPuzzlesPage(params: {
 	if (params.cursor) {
 		let parsed: { createdAt: number; id: string } | null = null;
 		try {
-			const decoded = JSON.parse(atob(params.cursor)) as { createdAt: number; id: string };
+			// Convert Base64URL back to standard Base64 for atob
+			let b64 = params.cursor.replace(/-/g, '+').replace(/_/g, '/');
+			const pad = b64.length % 4;
+			if (pad === 2) b64 += '==';
+			else if (pad === 3) b64 += '=';
+			const decoded = JSON.parse(atob(b64)) as { createdAt: number; id: string };
 			if (typeof decoded?.createdAt === 'number' && typeof decoded?.id === 'string') {
 				parsed = decoded;
 			}
@@ -337,6 +342,7 @@ export async function listPuzzlesPage(params: {
 	const summaries = page.map((p) => p.summary);
 
 	// Attach nextCursor only when more items remain beyond this page
+	// Use Base64URL encoding (no +/=) so cursors are safe in query strings
 	const nextCursor =
 		filtered.length > params.limit
 			? btoa(
@@ -345,6 +351,9 @@ export async function listPuzzlesPage(params: {
 						id: page[page.length - 1].summary.id
 					})
 				)
+					.replace(/\+/g, '-')
+					.replace(/\//g, '_')
+					.replace(/=+$/, '')
 			: undefined;
 
 	return {

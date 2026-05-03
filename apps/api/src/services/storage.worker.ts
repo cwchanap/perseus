@@ -362,12 +362,20 @@ export async function invalidateGalleryIndex(kv: KVNamespace): Promise<void> {
 type PageCursor = { createdAt: number; id: string };
 
 function encodeCursor(entry: GalleryIndexEntry): string {
-	return btoa(JSON.stringify({ createdAt: entry.createdAt, id: entry.id }));
+	const b64 = btoa(JSON.stringify({ createdAt: entry.createdAt, id: entry.id }));
+	// Convert standard Base64 to Base64URL: replace +/ with -_ and strip padding
+	return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
 function decodeCursor(cursor: string): PageCursor | null {
 	try {
-		const parsed = JSON.parse(atob(cursor)) as PageCursor;
+		// Convert Base64URL back to standard Base64 for atob
+		let b64 = cursor.replace(/-/g, '+').replace(/_/g, '/');
+		// Restore padding
+		const pad = b64.length % 4;
+		if (pad === 2) b64 += '==';
+		else if (pad === 3) b64 += '=';
+		const parsed = JSON.parse(atob(b64)) as PageCursor;
 		if (typeof parsed?.createdAt === 'number' && typeof parsed?.id === 'string') {
 			return parsed;
 		}

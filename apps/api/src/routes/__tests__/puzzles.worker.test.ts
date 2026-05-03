@@ -154,6 +154,66 @@ describe('Puzzle Routes - UUID Validation', () => {
 			});
 		});
 
+		it('should reject scientific notation offset and limit', async () => {
+			vi.mocked(storage.listPuzzlesPage).mockResolvedValue({
+				puzzles: [],
+				total: 0,
+				offset: 0,
+				limit: 20
+			} as any);
+
+			const req = new Request('http://localhost/?offset=1e2&limit=2e1');
+			const res = await puzzles.fetch(req, mockEnv);
+
+			expect(res.status).toBe(200);
+			expect(vi.mocked(storage.listPuzzlesPage)).toHaveBeenCalledWith(mockEnv.PUZZLE_METADATA, {
+				q: undefined,
+				category: undefined,
+				offset: 0,
+				limit: 20
+			});
+		});
+
+		it('should reject hex offset and limit', async () => {
+			vi.mocked(storage.listPuzzlesPage).mockResolvedValue({
+				puzzles: [],
+				total: 0,
+				offset: 0,
+				limit: 20
+			} as any);
+
+			const req = new Request('http://localhost/?offset=0x10&limit=0xff');
+			const res = await puzzles.fetch(req, mockEnv);
+
+			expect(res.status).toBe(200);
+			expect(vi.mocked(storage.listPuzzlesPage)).toHaveBeenCalledWith(mockEnv.PUZZLE_METADATA, {
+				q: undefined,
+				category: undefined,
+				offset: 0,
+				limit: 20
+			});
+		});
+
+		it('should reject whitespace-padded offset and limit', async () => {
+			vi.mocked(storage.listPuzzlesPage).mockResolvedValue({
+				puzzles: [],
+				total: 0,
+				offset: 0,
+				limit: 20
+			} as any);
+
+			const req = new Request('http://localhost/?offset=%2010%20&limit=%205%20');
+			const res = await puzzles.fetch(req, mockEnv);
+
+			expect(res.status).toBe(200);
+			expect(vi.mocked(storage.listPuzzlesPage)).toHaveBeenCalledWith(mockEnv.PUZZLE_METADATA, {
+				q: undefined,
+				category: undefined,
+				offset: 0,
+				limit: 20
+			});
+		});
+
 		it('treats empty ?q= param as no filter (passes undefined, not empty string)', async () => {
 			vi.mocked(storage.listPuzzlesPage).mockResolvedValue({
 				puzzles: [],
