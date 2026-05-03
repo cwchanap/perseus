@@ -944,6 +944,32 @@ describe('listPuzzlesPage', () => {
 		expect(kv.list).toHaveBeenCalledTimes(1); // still 1, not 2
 	});
 
+	it('returns results even when cache write fails', async () => {
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const kv = createMockKV();
+		kv._store.set(
+			'puzzle:a',
+			JSON.stringify(makeReadyPuzzle({ id: 'a', name: 'Alpha', createdAt: 100 }))
+		);
+
+		kv.put.mockImplementation(async (key: string, _value: string) => {
+			if (key === 'gallery:sorted-index') {
+				throw new Error('KV write quota exceeded');
+			}
+		});
+
+		const result = await listPuzzlesPage(kv as unknown as KVNamespace, { offset: 0, limit: 20 });
+
+		expect(result.total).toBe(1);
+		expect(result.puzzles[0].id).toBe('a');
+		expect(consoleSpy).toHaveBeenCalledWith(
+			'Failed to write gallery index cache:',
+			expect.any(Error)
+		);
+
+		consoleSpy.mockRestore();
+	});
+
 	it('rebuilds cache when cached value is not an array', async () => {
 		const kv = createMockKV();
 		kv._store.set('gallery:sorted-index', JSON.stringify({ corrupted: true })); // non-array JSON

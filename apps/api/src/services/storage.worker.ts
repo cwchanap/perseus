@@ -324,9 +324,15 @@ async function buildGalleryIndex(kv: KVNamespace): Promise<GalleryIndexEntry[]> 
 		return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 	});
 
-	await kv.put(GALLERY_INDEX_KEY, JSON.stringify(entries), {
-		expirationTtl: GALLERY_INDEX_TTL_SECONDS
-	});
+	try {
+		await kv.put(GALLERY_INDEX_KEY, JSON.stringify(entries), {
+			expirationTtl: GALLERY_INDEX_TTL_SECONDS
+		});
+	} catch (error) {
+		// Best-effort: cache write failure should not prevent gallery listing.
+		// The next request will rebuild the index from KV data again.
+		console.error('Failed to write gallery index cache:', error);
+	}
 
 	return entries;
 }
