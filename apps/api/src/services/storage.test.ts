@@ -315,6 +315,7 @@ describe('listPuzzlesPage', () => {
 	it('returns empty result when no puzzles exist', async () => {
 		const result = await storageModule.listPuzzlesPage({ offset: 0, limit: 20 });
 		expect(result).toEqual({ puzzles: [], total: 0, offset: 0, limit: 20 });
+		expect(result).not.toHaveProperty('nextCursor');
 	});
 
 	it('returns the correct page slice', async () => {
@@ -390,7 +391,7 @@ describe('listPuzzlesPage', () => {
 		const result = await storageModule.listPuzzlesPage({ offset: 0, limit: 2 });
 
 		expect(result.puzzles).toHaveLength(2);
-		expect(result.nextCursor).toBeUndefined();
+		expect(result).not.toHaveProperty('nextCursor');
 	});
 
 	it('returns nextCursor when more items remain beyond page', async () => {
@@ -419,7 +420,7 @@ describe('listPuzzlesPage', () => {
 		});
 
 		expect(page2.puzzles).toHaveLength(1);
-		expect(page2.nextCursor).toBeUndefined();
+		expect(page2).not.toHaveProperty('nextCursor');
 	});
 
 	it('does not return nextCursor when filtered results equal limit', async () => {
@@ -440,7 +441,7 @@ describe('listPuzzlesPage', () => {
 		});
 
 		expect(result.puzzles).toHaveLength(2);
-		expect(result.nextCursor).toBeUndefined();
+		expect(result).not.toHaveProperty('nextCursor');
 	});
 
 	it('returns good puzzles and skips corrupt entries without throwing', async () => {

@@ -764,6 +764,7 @@ describe('listPuzzlesPage', () => {
 			limit: 20
 		});
 		expect(result).toEqual({ puzzles: [], total: 0, offset: 0, limit: 20 });
+		expect(result).not.toHaveProperty('nextCursor');
 	});
 
 	it('excludes non-ready puzzles', async () => {
@@ -1035,7 +1036,7 @@ describe('listPuzzlesPage', () => {
 				limit: 20
 			});
 			expect(result.puzzles).toHaveLength(2);
-			expect(result.nextCursor).toBeUndefined();
+			expect(result).not.toHaveProperty('nextCursor');
 		});
 
 		it('does not return nextCursor when result count equals limit', async () => {
@@ -1053,7 +1054,7 @@ describe('listPuzzlesPage', () => {
 				limit: 3
 			});
 			expect(result.puzzles).toHaveLength(3);
-			expect(result.nextCursor).toBeUndefined();
+			expect(result).not.toHaveProperty('nextCursor');
 		});
 
 		it('fetches next page using cursor', async () => {
@@ -1093,7 +1094,7 @@ describe('listPuzzlesPage', () => {
 				cursor: page2.nextCursor
 			});
 			expect(page3.puzzles).toHaveLength(1);
-			expect(page3.nextCursor).toBeUndefined();
+			expect(page3).not.toHaveProperty('nextCursor');
 		});
 
 		it('cursor works with category filter', async () => {

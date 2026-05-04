@@ -361,6 +361,6 @@ export async function listPuzzlesPage(params: {
 		total,
 		offset: params.cursor ? 0 : params.offset,
 		limit: params.limit,
-		nextCursor
+		...(nextCursor ? { nextCursor } : {})
 	};
 }
