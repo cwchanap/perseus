@@ -93,7 +93,7 @@ jobs:
           config-map: |
             cloudflareAccountId:
               value: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-            allowedOrigins:
+            ALLOWED_ORIGINS:
               value: ${{ secrets.ALLOWED_ORIGINS }}
             jwtSecret:
               value: ${{ secrets.JWT_SECRET }}
@@ -149,7 +149,7 @@ jobs:
           config-map: |
             cloudflareAccountId:
               value: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-            allowedOrigins:
+            ALLOWED_ORIGINS:
               value: ${{ secrets.ALLOWED_ORIGINS }}
             jwtSecret:
               value: ${{ secrets.JWT_SECRET }}
