@@ -54,41 +54,13 @@ function readEntryRaw(id: string): StoredQuickPuzzle | null {
 	}
 }
 
-const SAVED_AT_KEY_PREFIX = `${QUICK_PUZZLE_KEY_PREFIX}savedAt:`;
-
-function readSavedAt(id: string): number | null {
-	if (!isBrowser()) return null;
-	const raw = localStorage.getItem(`${SAVED_AT_KEY_PREFIX}${id}`);
-	if (!raw) return null;
-	const n = Number(raw);
-	return Number.isFinite(n) ? n : null;
-}
-
-function writeSavedAt(id: string, savedAt: number): void {
-	if (!isBrowser()) return;
-	localStorage.setItem(`${SAVED_AT_KEY_PREFIX}${id}`, String(savedAt));
-}
-
-function removeSavedAt(id: string): void {
-	if (!isBrowser()) return;
-	localStorage.removeItem(`${SAVED_AT_KEY_PREFIX}${id}`);
-}
-
 function removeEntry(id: string): void {
 	if (!isBrowser()) return;
 	localStorage.removeItem(`${QUICK_PUZZLE_KEY_PREFIX}${id}`);
-	removeSavedAt(id);
 }
 
-/**
- * An entry is expired when the later of its declared createdAt or its actual savedAt,
- * plus TTL, has passed. Using the later of the two prevents fresh saves with an
- * artificially old createdAt from being immediately pruned, while still letting
- * legitimate future-dated createdAt values extend the lifetime.
- */
-function isExpired(entry: StoredQuickPuzzle, savedAt: number | null, now: number): boolean {
-	const basis = savedAt == null ? entry.createdAt : Math.max(entry.createdAt, savedAt);
-	return basis + QUICK_PUZZLE_TTL_MS <= now;
+function isExpired(entry: StoredQuickPuzzle, now: number): boolean {
+	return entry.createdAt + QUICK_PUZZLE_TTL_MS <= now;
 }
 
 /**
@@ -108,7 +80,7 @@ export function listQuick(): StoredQuickPuzzle[] {
 		const entry = readEntryRaw(id);
 		if (!entry) continue; // orphan or schema mismatch
 
-		if (isExpired(entry, readSavedAt(id), now)) {
+		if (isExpired(entry, now)) {
 			removeEntry(id);
 			continue;
 		}
@@ -134,7 +106,7 @@ export function getQuick(id: string): StoredQuickPuzzle | null {
 	const entry = readEntryRaw(id);
 	if (!entry) return null;
 
-	if (isExpired(entry, readSavedAt(id), Date.now())) {
+	if (isExpired(entry, Date.now())) {
 		removeEntry(id);
 		return null;
 	}
@@ -150,41 +122,30 @@ export function getQuick(id: string): StoredQuickPuzzle | null {
 export function saveQuick(stored: StoredQuickPuzzle): { persisted: boolean } {
 	if (!isBrowser()) return { persisted: false };
 
-	const index = readIndexRaw();
-	// Strip any existing occurrence of stored.id so the prepend below is canonical.
-	let ids = index.ids.filter((existing) => existing !== stored.id);
-	let evicted = ids.length !== index.ids.length;
+	// listQuick prunes expired/orphaned entries first, freeing space.
+	const survivors = listQuick();
+	let ids = survivors.map((p) => p.id);
 
 	// Evict oldest while at or above cap (we're about to add one).
 	while (ids.length >= QUICK_PUZZLE_MAX_COUNT) {
 		const evictId = ids[ids.length - 1];
 		removeEntry(evictId);
 		ids = ids.slice(0, -1);
-		evicted = true;
 	}
 
 	try {
 		localStorage.setItem(`${QUICK_PUZZLE_KEY_PREFIX}${stored.id}`, JSON.stringify(stored));
 	} catch {
-		// Only reflect evictions if any happened; otherwise leave the index untouched.
-		if (evicted) {
-			writeIndex({ ids, schemaVersion: QUICK_PUZZLE_SCHEMA_VERSION });
-		}
-		// QuotaExceededError or other write failure: do not add the failed id to the index.
+		// Reflect any mid-flight eviction back to the index, but do NOT add the failed id.
+		writeIndex({ ids, schemaVersion: QUICK_PUZZLE_SCHEMA_VERSION });
 		return { persisted: false };
 	}
 
-	// Record save time in a side-channel so TTL pruning isn't fooled by an
-	// artificially old createdAt. Best-effort: if this write fails (e.g. quota),
-	// the puzzle is still persisted and listQuick falls back to createdAt.
-	try {
-		writeSavedAt(stored.id, Date.now());
-	} catch {
-		// ignore — fallback to createdAt-based TTL
-	}
-
-	const newIds = [stored.id, ...ids].slice(0, QUICK_PUZZLE_MAX_COUNT);
-	writeIndex({ ids: newIds, schemaVersion: QUICK_PUZZLE_SCHEMA_VERSION });
+	const dedupedIds = [stored.id, ...ids.filter((id) => id !== stored.id)].slice(
+		0,
+		QUICK_PUZZLE_MAX_COUNT
+	);
+	writeIndex({ ids: dedupedIds, schemaVersion: QUICK_PUZZLE_SCHEMA_VERSION });
 	return { persisted: true };
 }
 
