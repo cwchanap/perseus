@@ -42,17 +42,18 @@ describe('saveQuick', () => {
 	});
 
 	it('prepends new puzzle so list is newest-first', () => {
-		saveQuick(makePuzzle({ id: 'q-1', createdAt: 1000 }));
-		saveQuick(makePuzzle({ id: 'q-2', createdAt: 2000 }));
+		saveQuick(makePuzzle({ id: 'q-1', createdAt: Date.now() - 2000 }));
+		saveQuick(makePuzzle({ id: 'q-2', createdAt: Date.now() - 1000 }));
 		const index = JSON.parse(localStorage.getItem(QUICK_PUZZLE_INDEX_KEY)!);
 		expect(index.ids).toEqual(['q-2', 'q-1']);
 	});
 
 	it('evicts oldest when index already has 5 entries', () => {
+		const now = Date.now();
 		for (let i = 1; i <= 5; i++) {
-			saveQuick(makePuzzle({ id: `q-${i}`, createdAt: i * 1000 }));
+			saveQuick(makePuzzle({ id: `q-${i}`, createdAt: now - (10 - i) * 1000 }));
 		}
-		saveQuick(makePuzzle({ id: 'q-6', createdAt: 6000 }));
+		saveQuick(makePuzzle({ id: 'q-6', createdAt: now }));
 
 		const index = JSON.parse(localStorage.getItem(QUICK_PUZZLE_INDEX_KEY)!);
 		expect(index.ids).toEqual(['q-6', 'q-5', 'q-4', 'q-3', 'q-2']);
@@ -149,8 +150,8 @@ describe('listQuick', () => {
 	});
 
 	it('returns puzzles in newest-first order', () => {
-		saveQuick(makePuzzle({ id: 'q-a', createdAt: 1000 }));
-		saveQuick(makePuzzle({ id: 'q-b', createdAt: 2000 }));
+		saveQuick(makePuzzle({ id: 'q-a', createdAt: Date.now() - 2000 }));
+		saveQuick(makePuzzle({ id: 'q-b', createdAt: Date.now() - 1000 }));
 		const list = listQuick();
 		expect(list.map((p) => p.id)).toEqual(['q-b', 'q-a']);
 	});
