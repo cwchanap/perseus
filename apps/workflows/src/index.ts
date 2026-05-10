@@ -7,7 +7,6 @@ import type {
 	PuzzleMetadata,
 	PuzzlePiece,
 	EdgeConfig,
-	EdgeType,
 	ReadyPuzzle,
 	FailedPuzzle
 } from './types';
@@ -18,7 +17,14 @@ import {
 	validateWorkflowParams,
 	createPuzzleProgress
 } from './types';
-import { generateJigsawSvgMask } from '@perseus/types';
+import {
+	generateJigsawSvgMask,
+	getGridDimensions,
+	getTopEdge,
+	getRightEdge,
+	getBottomEdge,
+	getLeftEdge
+} from '@perseus/types';
 import {
 	MAX_IMAGE_BYTES,
 	getMetadata,
@@ -176,28 +182,6 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 	}
 }
 
-// Grid dimension calculator
-// Finds the most square-like grid for the given piece count by finding the largest
-// factor of pieceCount that is <= sqrt(pieceCount), making that the row count.
-// This ensures rows <= cols and produces a balanced grid (e.g., 225 -> 15x15).
-function getGridDimensions(pieceCount: number): { rows: number; cols: number } {
-	// Validate input - guard against zero or negative values
-	if (pieceCount <= 0) {
-		return { rows: 0, cols: 0 };
-	}
-
-	const sqrt = Math.floor(Math.sqrt(pieceCount));
-	for (let i = sqrt; i >= 1; i -= 1) {
-		if (pieceCount % i === 0) {
-			return { rows: i, cols: pieceCount / i };
-		}
-	}
-
-	// Unreachable: the loop always returns at i===1 since pieceCount % 1 === 0
-	// but TypeScript needs a return path
-	return { rows: 1, cols: pieceCount };
-}
-
 async function loadOriginalImageBytes(env: Env, puzzleId: string): Promise<Uint8Array> {
 	const imageObj = await env.PUZZLES_BUCKET.get(`puzzles/${puzzleId}/original`);
 	if (!imageObj) {
@@ -212,35 +196,6 @@ async function loadOriginalImageBytes(env: Env, puzzleId: string): Promise<Uint8
 	}
 
 	return new Uint8Array(bytes);
-}
-
-// Edge type helper
-function opposite(edge: EdgeType): EdgeType {
-	return edge === 'tab' ? 'blank' : edge === 'blank' ? 'tab' : 'flat';
-}
-
-// Deterministic edge calculation helpers
-// These compute edges based on position alone, ensuring consistency across workflow steps
-function getBottomEdge(row: number, col: number, rows: number): EdgeType {
-	if (row === rows - 1) return 'flat';
-	return (row + col) % 2 === 0 ? 'blank' : 'tab';
-}
-
-function getRightEdge(row: number, col: number, cols: number): EdgeType {
-	if (col === cols - 1) return 'flat';
-	return (row + col) % 2 === 0 ? 'tab' : 'blank';
-}
-
-function getTopEdge(row: number, col: number, rows: number): EdgeType {
-	if (row === 0) return 'flat';
-	// Top edge is opposite of the bottom edge of the piece above (row - 1, col)
-	return opposite(getBottomEdge(row - 1, col, rows));
-}
-
-function getLeftEdge(row: number, col: number, cols: number): EdgeType {
-	if (col === 0) return 'flat';
-	// Left edge is opposite of the right edge of the piece to the left (row, col - 1)
-	return opposite(getRightEdge(row, col - 1, cols));
 }
 
 export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
