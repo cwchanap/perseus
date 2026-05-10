@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { generateJigsawPath, generateJigsawSvgMask } from './jigsaw-path';
-import type { EdgeConfig } from '../types';
+import type { EdgeConfig } from './index';
 
 describe('generateJigsawPath', () => {
 	it('should generate a valid SVG path for all flat edges', () => {

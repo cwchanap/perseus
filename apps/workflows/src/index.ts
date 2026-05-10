@@ -18,7 +18,7 @@ import {
 	validateWorkflowParams,
 	createPuzzleProgress
 } from './types';
-import { generateJigsawSvgMask } from './utils/jigsaw-path';
+import { generateJigsawSvgMask } from '@perseus/types';
 import {
 	MAX_IMAGE_BYTES,
 	getMetadata,
