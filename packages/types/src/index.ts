@@ -291,3 +291,5 @@ export function validatePuzzleMetadataLight(meta: unknown): meta is PuzzleMetada
 
 // Jigsaw mask path geometry (used by workflow generation and browser-side quick-puzzle generation)
 export { generateJigsawPath, generateJigsawSvgMask } from './jigsaw-path';
+
+export { getGridDimensions, getTopEdge, getRightEdge, getBottomEdge, getLeftEdge } from './grid';
