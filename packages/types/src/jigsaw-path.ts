@@ -1,8 +1,8 @@
 // Jigsaw Path Generator for Worker-based Masking
 // Generates SVG mask for puzzle pieces
 
-import type { EdgeConfig, EdgeType } from '../types';
-import { TAB_RATIO } from '../types';
+import type { EdgeConfig, EdgeType } from './index';
+import { TAB_RATIO } from './index';
 
 // Tab width as fraction of edge length (40% of edge is the tab)
 const TAB_WIDTH_RATIO = 0.4;

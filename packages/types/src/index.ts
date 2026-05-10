@@ -288,3 +288,6 @@ export function validatePuzzleMetadataLight(meta: unknown): meta is PuzzleMetada
 
 	return true;
 }
+
+// Jigsaw mask path geometry (used by workflow generation and browser-side quick-puzzle generation)
+export { generateJigsawPath, generateJigsawSvgMask } from './jigsaw-path';

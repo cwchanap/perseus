@@ -1,7 +1,7 @@
 // Extra coverage tests for the workflows jigsaw-path utility
 import { describe, it, expect } from 'vitest';
 import { generateJigsawPath, generateJigsawSvgMask } from './jigsaw-path';
-import type { EdgeConfig } from '../types';
+import type { EdgeConfig } from './index';
 
 describe('generateJigsawPath - all edge type permutations', () => {
 	const edgeTypes = ['flat', 'tab', 'blank'] as const;
