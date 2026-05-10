@@ -1,4 +1,4 @@
-// Extra coverage tests for the workflows jigsaw-path utility
+// Extra coverage tests for the jigsaw-path utility
 import { describe, it, expect } from 'vitest';
 import { generateJigsawPath, generateJigsawSvgMask } from './jigsaw-path';
 import type { EdgeConfig } from './index';

@@ -1,5 +1,5 @@
-// Jigsaw Path Generator for Worker-based Masking
-// Generates SVG mask for puzzle pieces
+// Jigsaw Path Generator — generates SVG mask paths for puzzle pieces.
+// Isomorphic: shared between the Cloudflare Workflow and the browser-side quick-puzzle generator.
 
 import type { EdgeConfig, EdgeType } from './index';
 import { TAB_RATIO } from './index';
