@@ -86,6 +86,49 @@ describe('saveQuick', () => {
 			spy.mockRestore();
 		}
 	});
+
+	it('persists eviction but not failed id when QuotaExceededError fires after eviction', () => {
+		// Pre-fill index with the 5-puzzle cap, ascending createdAt.
+		const now = Date.now();
+		for (let i = 1; i <= 5; i++) {
+			saveQuick(makePuzzle({ id: `q-${i}`, createdAt: now - (10 - i) * 1000 }));
+		}
+		expect(
+			(JSON.parse(localStorage.getItem(QUICK_PUZZLE_INDEX_KEY)!) as { ids: string[] }).ids
+		).toEqual(['q-5', 'q-4', 'q-3', 'q-2', 'q-1']);
+
+		// Throw only on the new puzzle's per-puzzle write; allow index writes and existing
+		// keys to pass through (eviction uses removeItem, not setItem, so unaffected).
+		const original = Storage.prototype.setItem;
+		const spy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (
+			this: Storage,
+			key: string,
+			value: string
+		) {
+			if (key === `${QUICK_PUZZLE_KEY_PREFIX}q-new`) {
+				throw new DOMException('Quota exceeded', 'QuotaExceededError');
+			}
+			original.call(this, key, value);
+		});
+
+		try {
+			const result = saveQuick(makePuzzle({ id: 'q-new', createdAt: now }));
+			expect(result).toEqual({ persisted: false });
+
+			// q-1 (oldest) should have been evicted before the failing setItem.
+			expect(localStorage.getItem(`${QUICK_PUZZLE_KEY_PREFIX}q-1`)).toBeNull();
+			// Index should reflect the eviction but NOT include q-new.
+			const indexAfter = JSON.parse(localStorage.getItem(QUICK_PUZZLE_INDEX_KEY)!) as {
+				ids: string[];
+			};
+			expect(indexAfter.ids).toEqual(['q-5', 'q-4', 'q-3', 'q-2']);
+			expect(indexAfter.ids).not.toContain('q-new');
+			// q-new's per-puzzle key was not created.
+			expect(localStorage.getItem(`${QUICK_PUZZLE_KEY_PREFIX}q-new`)).toBeNull();
+		} finally {
+			spy.mockRestore();
+		}
+	});
 });
 
 describe('getQuick', () => {
