@@ -5,6 +5,8 @@ import { page } from 'vitest/browser';
 import PuzzleBoard from '../PuzzleBoard.svelte';
 import type { Puzzle, PlacedPiece, PuzzlePiece } from '$lib/types/puzzle';
 
+const resolveImage = (piece: { id: number }) => `/test/${piece.id}.png`;
+
 let mockSelectedId: number | null = null;
 
 // Mock the stores
@@ -19,14 +21,6 @@ vi.mock('$lib/stores/pieceSelection', () => ({
 }));
 
 import { clearSelectedPiece } from '$lib/stores/pieceSelection';
-
-// Mock the API
-vi.mock('$lib/services/api', () => ({
-	getPieceImageUrl: vi.fn(
-		(puzzleId: string, pieceId: number) => `/api/puzzles/${puzzleId}/pieces/${pieceId}/image`
-	),
-	getReferenceImageUrl: vi.fn((puzzleId: string) => `/api/puzzles/${puzzleId}/reference`)
-}));
 
 function createMockPuzzle(gridSize: number = 3): Puzzle {
 	const pieces: PuzzlePiece[] = [];
@@ -78,7 +72,8 @@ describe('PuzzleBoard', () => {
 			puzzle,
 			placedPieces,
 			onPiecePlaced,
-			onIncorrectPlacement
+			onIncorrectPlacement,
+			resolveImage
 		});
 
 		await expect.element(page.getByTestId('puzzle-board')).toBeVisible();
@@ -94,11 +89,13 @@ describe('PuzzleBoard', () => {
 			puzzle,
 			placedPieces,
 			onPiecePlaced,
-			onIncorrectPlacement
+			onIncorrectPlacement,
+			resolveImage
 		});
 
 		// Check that image is rendered for placed piece
 		await expect.element(page.getByRole('img').first()).toBeVisible();
+		await expect.element(page.getByRole('img').first()).toHaveAttribute('src', '/test/0.png');
 	});
 
 	it('should render a hint marker for the active hint target', async () => {
@@ -109,7 +106,8 @@ describe('PuzzleBoard', () => {
 			placedPieces: [],
 			onPiecePlaced: vi.fn(),
 			onIncorrectPlacement: vi.fn(),
-			activeHintTarget: { x: 1, y: 2 }
+			activeHintTarget: { x: 1, y: 2 },
+			resolveImage
 		});
 
 		await expect.element(page.getByTestId('hint-target')).toBeInTheDocument();
@@ -129,7 +127,8 @@ describe('PuzzleBoard', () => {
 			placedPieces: [],
 			onPiecePlaced,
 			onIncorrectPlacement,
-			canPlacePiece
+			canPlacePiece,
+			resolveImage
 		});
 
 		const dropZone = await page
@@ -153,7 +152,8 @@ describe('PuzzleBoard', () => {
 			puzzle,
 			placedPieces: [],
 			onPiecePlaced,
-			onIncorrectPlacement: vi.fn()
+			onIncorrectPlacement: vi.fn(),
+			resolveImage
 		});
 
 		const dropZone = await page
@@ -175,7 +175,8 @@ describe('PuzzleBoard', () => {
 			placedPieces: [],
 			onPiecePlaced: vi.fn(),
 			onIncorrectPlacement: vi.fn(),
-			onBoardPointerDown
+			onBoardPointerDown,
+			resolveImage
 		});
 
 		await page
