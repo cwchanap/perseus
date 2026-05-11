@@ -2,7 +2,8 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { onDestroy } from 'svelte';
-	import { fetchPuzzle, ApiError } from '$lib/services/api';
+	import { ApiError } from '$lib/services/api';
+	import { loadPuzzleSource, type LoadedPuzzleSource } from '$lib/services/puzzleSource';
 	import { getProgress, saveProgress, clearProgress } from '$lib/services/progress';
 	import { getBestTime, saveCompletionTime } from '$lib/services/stats';
 	import { createTimerStore, formatTime } from '$lib/stores/timer';
@@ -40,6 +41,7 @@
 	}
 
 	let puzzle: Puzzle | null = $state(null);
+	let puzzleSource: LoadedPuzzleSource | null = $state(null);
 	let loading = $state(true);
 	let error: string | null = $state(null);
 	let errorStatus: number | null = $state(null);
@@ -135,6 +137,10 @@
 		}
 
 		activeLoadRequestId += 1;
+		if (puzzleSource) {
+			puzzleSource.cleanup();
+			puzzleSource = null;
+		}
 		clearSelectedPiece();
 		timer.destroy();
 	});
@@ -349,8 +355,18 @@
 		errorStatus = null;
 
 		try {
-			const loadedPuzzle = await fetchPuzzle(id);
-			if (requestId !== activeLoadRequestId) return;
+			// Clean up any prior source's blob URLs before loading a new one.
+			if (puzzleSource) {
+				puzzleSource.cleanup();
+				puzzleSource = null;
+			}
+			const source = await loadPuzzleSource(id);
+			if (requestId !== activeLoadRequestId) {
+				source.cleanup();
+				return;
+			}
+			const loadedPuzzle = source.puzzle;
+			puzzleSource = source;
 
 			const savedProgress = getProgress(id);
 			const restoredPlacedPieces = clonePlacedPieces(savedProgress?.placedPieces ?? []);
@@ -876,7 +892,10 @@
 			</div>
 		{:else if puzzle}
 			{@const currentPuzzle = puzzle}
-			<ReferenceOverlay imageUrl={null} active={showReferenceOverlay} />
+			<ReferenceOverlay
+				imageUrl={puzzleSource?.resolveReferenceImage() ?? null}
+				active={showReferenceOverlay}
+			/>
 			<div class="game-layout">
 				<!-- Board panel -->
 				<div class="board-panel">
@@ -923,6 +942,7 @@
 										{activeHintTarget}
 										{canPlacePiece}
 										onBoardPointerDown={handleBoardPointerDown}
+										resolveImage={puzzleSource!.resolvePieceImage}
 									/>
 								</div>
 							</ZoomableBoardFrame>
@@ -955,6 +975,7 @@
 										{rotationEnabled}
 										rotation={getDisplayedRotation(piece.id)}
 										onRotate={handlePieceRotate}
+										resolveImage={puzzleSource!.resolvePieceImage}
 									/>
 								</div>
 							{/if}
