@@ -876,7 +876,7 @@
 			</div>
 		{:else if puzzle}
 			{@const currentPuzzle = puzzle}
-			<ReferenceOverlay puzzleId={currentPuzzle.id} active={showReferenceOverlay} />
+			<ReferenceOverlay imageUrl={null} active={showReferenceOverlay} />
 			<div class="game-layout">
 				<!-- Board panel -->
 				<div class="board-panel">
