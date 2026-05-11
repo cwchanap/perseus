@@ -54,6 +54,22 @@ describe('generateQuickPuzzle', () => {
 		for (let i = 0; i < 4; i++) {
 			expect(result.pieceBlobUrls.get(i)).toMatch(/^blob:/);
 		}
+
+		// Round-trip: decode piece 0 back to verify it's a real PNG with the expected dimensions.
+		const piece0Url = result.pieceBlobUrls.get(0)!;
+		const piece0Response = await fetch(piece0Url);
+		const piece0Blob = await piece0Response.blob();
+		expect(piece0Blob.type).toBe('image/png');
+		const piece0Bitmap = await createImageBitmap(piece0Blob);
+		expect(piece0Bitmap.width).toBeGreaterThan(0);
+		expect(piece0Bitmap.height).toBeGreaterThan(0);
+		// Width/height should reflect base piece size + 2x overlap (TAB_RATIO = 0.2, so 1.4x).
+		// For a 4-piece (2x2) grid of a 400x400 image, base piece is ~200x200, target ~280x280.
+		expect(piece0Bitmap.width).toBeGreaterThanOrEqual(200);
+		expect(piece0Bitmap.width).toBeLessThanOrEqual(320);
+		expect(piece0Bitmap.height).toBeGreaterThanOrEqual(200);
+		expect(piece0Bitmap.height).toBeLessThanOrEqual(320);
+		piece0Bitmap.close?.();
 	});
 
 	it('downscales images larger than the max dimension', async () => {
