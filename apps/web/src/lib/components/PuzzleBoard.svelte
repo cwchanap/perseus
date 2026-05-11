@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
 	import type { Puzzle, PuzzlePiece, PlacedPiece } from '$lib/types/puzzle';
-	import { getPieceImageUrl } from '$lib/services/api';
 	import { selectedPieceId, clearSelectedPiece } from '$lib/stores/pieceSelection';
 	import { EXPANSION_FACTOR, BASE_OFFSET } from '$lib/constants/puzzle';
 
@@ -13,6 +12,7 @@
 		activeHintTarget?: { x: number; y: number } | null;
 		canPlacePiece?: (pieceId: number) => boolean;
 		onBoardPointerDown?: (event: PointerEvent) => void;
+		resolveImage?: (piece: PuzzlePiece) => string;
 	}
 
 	let {
@@ -22,7 +22,10 @@
 		onIncorrectPlacement,
 		activeHintTarget = null,
 		canPlacePiece,
-		onBoardPointerDown
+		onBoardPointerDown,
+		resolveImage = (p: PuzzlePiece) => {
+			throw new Error(`resolveImage prop is required for PuzzleBoard (piece ${p.id})`);
+		}
 	}: Props = $props();
 
 	let dragOverCell: { x: number; y: number } | null = $state(null);
@@ -176,11 +179,7 @@
 							top: -{BASE_OFFSET * 100}%;
 						"
 					>
-						<img
-							src={getPieceImageUrl(puzzle.id, placedPiece.id)}
-							alt="Placed piece"
-							class="h-full w-full"
-						/>
+						<img src={resolveImage(placedPiece)} alt="Placed piece" class="h-full w-full" />
 					</div>
 				{/if}
 			</div>
