@@ -5,6 +5,8 @@ import { page, userEvent } from 'vitest/browser';
 import PuzzlePiece from '../PuzzlePiece.svelte';
 import type { PuzzlePiece as PuzzlePieceType } from '$lib/types/puzzle';
 
+const resolveImage = (piece: { id: number }) => `/test/${piece.id}.png`;
+
 // Track which piece id is "selected" in the store mock
 let mockSelectedId: number | null = null;
 
@@ -23,12 +25,6 @@ vi.mock('$lib/stores/pieceSelection', () => {
 		clearSelectedPiece
 	};
 });
-
-vi.mock('$lib/services/api', () => ({
-	getPieceImageUrl: vi.fn(
-		(puzzleId: string, pieceId: number) => `/api/puzzles/${puzzleId}/pieces/${pieceId}/image`
-	)
-}));
 
 // Import the mocked modules so we can inspect calls in tests
 import { setSelectedPiece, clearSelectedPiece } from '$lib/stores/pieceSelection';
@@ -50,7 +46,7 @@ describe('PuzzlePiece', () => {
 
 	describe('rendering', () => {
 		it('renders with data-testid and data-piece-id attributes', async () => {
-			render(PuzzlePiece, { piece: mockPiece, isPlaced: false });
+			render(PuzzlePiece, { piece: mockPiece, isPlaced: false, resolveImage });
 
 			const el = page.getByTestId('puzzle-piece');
 			await expect.element(el).toBeInTheDocument();
@@ -58,7 +54,7 @@ describe('PuzzlePiece', () => {
 		});
 
 		it('renders with correct aria-label', async () => {
-			render(PuzzlePiece, { piece: mockPiece, isPlaced: false });
+			render(PuzzlePiece, { piece: mockPiece, isPlaced: false, resolveImage });
 
 			await expect
 				.element(page.getByTestId('puzzle-piece'))
@@ -66,21 +62,19 @@ describe('PuzzlePiece', () => {
 		});
 
 		it('renders the piece image with correct src', async () => {
-			render(PuzzlePiece, { piece: mockPiece, isPlaced: false });
+			render(PuzzlePiece, { piece: mockPiece, isPlaced: false, resolveImage });
 
-			await expect
-				.element(page.getByRole('img'))
-				.toHaveAttribute('src', '/api/puzzles/puzzle-abc/pieces/7/image');
+			await expect.element(page.getByRole('img')).toHaveAttribute('src', '/test/7.png');
 		});
 
 		it('renders the piece image with correct alt text', async () => {
-			render(PuzzlePiece, { piece: mockPiece, isPlaced: false });
+			render(PuzzlePiece, { piece: mockPiece, isPlaced: false, resolveImage });
 
 			await expect.element(page.getByRole('img')).toHaveAttribute('alt', 'Piece 7');
 		});
 
 		it('image is not draggable (prevents default browser drag)', async () => {
-			render(PuzzlePiece, { piece: mockPiece, isPlaced: false });
+			render(PuzzlePiece, { piece: mockPiece, isPlaced: false, resolveImage });
 
 			await expect.element(page.getByRole('img')).toHaveAttribute('draggable', 'false');
 		});
@@ -88,19 +82,19 @@ describe('PuzzlePiece', () => {
 
 	describe('when not placed', () => {
 		it('is draggable', async () => {
-			render(PuzzlePiece, { piece: mockPiece, isPlaced: false });
+			render(PuzzlePiece, { piece: mockPiece, isPlaced: false, resolveImage });
 
 			await expect.element(page.getByTestId('puzzle-piece')).toHaveAttribute('draggable', 'true');
 		});
 
 		it('has tabindex 0 for keyboard accessibility', async () => {
-			render(PuzzlePiece, { piece: mockPiece, isPlaced: false });
+			render(PuzzlePiece, { piece: mockPiece, isPlaced: false, resolveImage });
 
 			await expect.element(page.getByTestId('puzzle-piece')).toHaveAttribute('tabindex', '0');
 		});
 
 		it('is not marked aria-disabled', async () => {
-			render(PuzzlePiece, { piece: mockPiece, isPlaced: false });
+			render(PuzzlePiece, { piece: mockPiece, isPlaced: false, resolveImage });
 
 			await expect
 				.element(page.getByTestId('puzzle-piece'))
@@ -108,7 +102,7 @@ describe('PuzzlePiece', () => {
 		});
 
 		it('has button role', async () => {
-			render(PuzzlePiece, { piece: mockPiece, isPlaced: false });
+			render(PuzzlePiece, { piece: mockPiece, isPlaced: false, resolveImage });
 
 			await expect.element(page.getByTestId('puzzle-piece')).toHaveAttribute('role', 'button');
 		});
@@ -116,19 +110,19 @@ describe('PuzzlePiece', () => {
 
 	describe('when placed', () => {
 		it('is not draggable', async () => {
-			render(PuzzlePiece, { piece: mockPiece, isPlaced: true });
+			render(PuzzlePiece, { piece: mockPiece, isPlaced: true, resolveImage });
 
 			await expect.element(page.getByTestId('puzzle-piece')).toHaveAttribute('draggable', 'false');
 		});
 
 		it('has tabindex -1 (removed from tab order)', async () => {
-			render(PuzzlePiece, { piece: mockPiece, isPlaced: true });
+			render(PuzzlePiece, { piece: mockPiece, isPlaced: true, resolveImage });
 
 			await expect.element(page.getByTestId('puzzle-piece')).toHaveAttribute('tabindex', '-1');
 		});
 
 		it('is marked aria-disabled', async () => {
-			render(PuzzlePiece, { piece: mockPiece, isPlaced: true });
+			render(PuzzlePiece, { piece: mockPiece, isPlaced: true, resolveImage });
 
 			await expect
 				.element(page.getByTestId('puzzle-piece'))
@@ -139,7 +133,7 @@ describe('PuzzlePiece', () => {
 	describe('selection state', () => {
 		it('shows data-selected=false when no piece is selected', async () => {
 			mockSelectedId = null;
-			render(PuzzlePiece, { piece: mockPiece, isPlaced: false });
+			render(PuzzlePiece, { piece: mockPiece, isPlaced: false, resolveImage });
 
 			await expect
 				.element(page.getByTestId('puzzle-piece'))
@@ -148,7 +142,7 @@ describe('PuzzlePiece', () => {
 
 		it('shows data-selected=false when a different piece is selected', async () => {
 			mockSelectedId = 99;
-			render(PuzzlePiece, { piece: mockPiece, isPlaced: false });
+			render(PuzzlePiece, { piece: mockPiece, isPlaced: false, resolveImage });
 
 			await expect
 				.element(page.getByTestId('puzzle-piece'))
@@ -157,7 +151,7 @@ describe('PuzzlePiece', () => {
 
 		it('shows data-selected=true when this piece is selected', async () => {
 			mockSelectedId = 7;
-			render(PuzzlePiece, { piece: mockPiece, isPlaced: false });
+			render(PuzzlePiece, { piece: mockPiece, isPlaced: false, resolveImage });
 
 			await expect
 				.element(page.getByTestId('puzzle-piece'))
@@ -166,7 +160,7 @@ describe('PuzzlePiece', () => {
 
 		it('shows aria-grabbed=true when this piece is selected', async () => {
 			mockSelectedId = 7;
-			render(PuzzlePiece, { piece: mockPiece, isPlaced: false });
+			render(PuzzlePiece, { piece: mockPiece, isPlaced: false, resolveImage });
 
 			await expect
 				.element(page.getByTestId('puzzle-piece'))
@@ -175,7 +169,7 @@ describe('PuzzlePiece', () => {
 
 		it('shows aria-grabbed=false when not selected', async () => {
 			mockSelectedId = null;
-			render(PuzzlePiece, { piece: mockPiece, isPlaced: false });
+			render(PuzzlePiece, { piece: mockPiece, isPlaced: false, resolveImage });
 
 			await expect
 				.element(page.getByTestId('puzzle-piece'))
@@ -185,7 +179,7 @@ describe('PuzzlePiece', () => {
 
 	describe('rotation support', () => {
 		it('does not render a rotate control when rotation is disabled', async () => {
-			render(PuzzlePiece, { piece: mockPiece, isPlaced: false });
+			render(PuzzlePiece, { piece: mockPiece, isPlaced: false, resolveImage });
 
 			const rotateButton = page.getByRole('button', { name: 'Rotate piece 7' });
 			await expect.poll(() => rotateButton.query()).toBeNull();
@@ -195,6 +189,7 @@ describe('PuzzlePiece', () => {
 			render(PuzzlePiece, {
 				piece: mockPiece,
 				isPlaced: false,
+				resolveImage,
 				rotationEnabled: true
 			});
 
@@ -207,6 +202,7 @@ describe('PuzzlePiece', () => {
 			render(PuzzlePiece, {
 				piece: mockPiece,
 				isPlaced: false,
+				resolveImage,
 				rotationEnabled: true,
 				onRotate
 			});
@@ -220,6 +216,7 @@ describe('PuzzlePiece', () => {
 			render(PuzzlePiece, {
 				piece: mockPiece,
 				isPlaced: false,
+				resolveImage,
 				rotationEnabled: true
 			});
 
@@ -235,6 +232,7 @@ describe('PuzzlePiece', () => {
 			render(PuzzlePiece, {
 				piece: mockPiece,
 				isPlaced: false,
+				resolveImage,
 				rotationEnabled: true,
 				onRotate
 			});
@@ -253,6 +251,7 @@ describe('PuzzlePiece', () => {
 			render(PuzzlePiece, {
 				piece: mockPiece,
 				isPlaced: false,
+				resolveImage,
 				rotation: 90
 			});
 
@@ -267,7 +266,7 @@ describe('PuzzlePiece', () => {
 			mockSelectedId = null;
 			const onDragStart = vi.fn();
 
-			render(PuzzlePiece, { piece: mockPiece, isPlaced: false, onDragStart });
+			render(PuzzlePiece, { piece: mockPiece, isPlaced: false, resolveImage, onDragStart });
 
 			const el = page.getByTestId('puzzle-piece');
 			await el.click();
@@ -279,7 +278,7 @@ describe('PuzzlePiece', () => {
 
 		it('calls clearSelectedPiece on Enter when this piece is already selected', async () => {
 			mockSelectedId = 7;
-			render(PuzzlePiece, { piece: mockPiece, isPlaced: false });
+			render(PuzzlePiece, { piece: mockPiece, isPlaced: false, resolveImage });
 
 			const el = page.getByTestId('puzzle-piece');
 			await el.click();
@@ -291,7 +290,7 @@ describe('PuzzlePiece', () => {
 		it('placed pieces have tabindex=-1 so they receive no keyboard focus', async () => {
 			// When isPlaced=true the component sets tabindex=-1 and aria-disabled=true,
 			// removing the piece from the tab order so users cannot keyboard-activate it.
-			render(PuzzlePiece, { piece: mockPiece, isPlaced: true });
+			render(PuzzlePiece, { piece: mockPiece, isPlaced: true, resolveImage });
 
 			const el = page.getByTestId('puzzle-piece');
 			await expect.element(el).toHaveAttribute('tabindex', '-1');
@@ -302,7 +301,7 @@ describe('PuzzlePiece', () => {
 			mockSelectedId = null;
 			const onDragStart = vi.fn();
 
-			render(PuzzlePiece, { piece: mockPiece, isPlaced: false, onDragStart });
+			render(PuzzlePiece, { piece: mockPiece, isPlaced: false, resolveImage, onDragStart });
 
 			const el = page.getByTestId('puzzle-piece');
 			await el.click();
@@ -315,7 +314,7 @@ describe('PuzzlePiece', () => {
 		it('ignores other key presses', async () => {
 			const onDragStart = vi.fn();
 
-			render(PuzzlePiece, { piece: mockPiece, isPlaced: false, onDragStart });
+			render(PuzzlePiece, { piece: mockPiece, isPlaced: false, resolveImage, onDragStart });
 
 			const el = page.getByTestId('puzzle-piece');
 			await el.click();
