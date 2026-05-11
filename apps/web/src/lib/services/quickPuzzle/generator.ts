@@ -73,10 +73,17 @@ function blobToDataUrl(blob: Blob): Promise<string> {
 
 function svgStringToImage(svg: string): Promise<HTMLImageElement> {
 	return new Promise((resolve, reject) => {
-		const url = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svg)));
+		const blob = new Blob([svg], { type: 'image/svg+xml' });
+		const url = URL.createObjectURL(blob);
 		const img = new Image();
-		img.onload = () => resolve(img);
-		img.onerror = () => reject(new Error('Failed to load SVG mask'));
+		img.onload = () => {
+			URL.revokeObjectURL(url);
+			resolve(img);
+		};
+		img.onerror = () => {
+			URL.revokeObjectURL(url);
+			reject(new Error('Failed to load SVG mask'));
+		};
 		img.src = url;
 	});
 }
@@ -211,7 +218,12 @@ async function renderPiece(
 ): Promise<string> {
 	const canvas = new OffscreenCanvas(bounds.targetWidth, bounds.targetHeight);
 	const ctx = canvas.getContext('2d');
-	if (!ctx) throw new Error('OffscreenCanvas 2D context unavailable');
+	if (!ctx) {
+		throw new QuickPuzzleValidationError(
+			'unsupported-browser',
+			"Your browser doesn't support quick puzzles."
+		);
+	}
 
 	ctx.drawImage(
 		source,
@@ -251,6 +263,13 @@ export async function generateQuickPuzzle(
 ): Promise<GenerateResult> {
 	validateUploadFile(file);
 	validatePieceCount(pieceCount);
+
+	if (typeof OffscreenCanvas === 'undefined' || typeof createImageBitmap === 'undefined') {
+		throw new QuickPuzzleValidationError(
+			'unsupported-browser',
+			"Your browser doesn't support quick puzzles."
+		);
+	}
 
 	const decoded = await decodeAndDownscale(file);
 	const { rows, cols } = getGridDimensions(pieceCount);
