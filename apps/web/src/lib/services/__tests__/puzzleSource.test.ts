@@ -10,13 +10,21 @@ vi.mock('$lib/services/api', () => ({
 	ApiError: class ApiError extends Error {
 		constructor(
 			public status: number,
-			public errorCode: string,
+			public error: string,
 			message: string
 		) {
 			super(message);
 		}
 	}
 }));
+
+vi.mock('$lib/services/quickPuzzle', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('$lib/services/quickPuzzle')>();
+	return {
+		...actual,
+		openQuick: vi.fn(actual.openQuick)
+	};
+});
 
 import * as api from '$lib/services/api';
 
@@ -51,6 +59,9 @@ describe('loadPuzzleSource', () => {
 	});
 
 	it('falls through to the API when local source returns null for a quick id', async () => {
+		const { openQuick } = await import('$lib/services/quickPuzzle');
+		const openQuickSpy = openQuick as ReturnType<typeof vi.fn>;
+
 		const fakePuzzle = {
 			id: 'q-not-stored',
 			name: 'Server-stored quick',
@@ -66,6 +77,8 @@ describe('loadPuzzleSource', () => {
 
 		const result = await loadPuzzleSource('q-not-stored');
 		expect(result.source).toBe('api');
+		expect(openQuickSpy).toHaveBeenCalledWith('q-not-stored');
+		expect(api.fetchPuzzle).toHaveBeenCalledWith('q-not-stored');
 	});
 
 	it('uses the local source for q- IDs that resolve via openQuick', async () => {
