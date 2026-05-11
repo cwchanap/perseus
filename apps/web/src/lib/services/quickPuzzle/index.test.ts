@@ -128,4 +128,24 @@ describe('evictBlobUrls', () => {
 
 		deleteQuick(result.stored.id);
 	});
+
+	it('makes previously-returned resolver throw after eviction', async () => {
+		const canvas = new OffscreenCanvas(200, 200);
+		canvas.getContext('2d')!.fillRect(0, 0, 200, 200);
+		const blob = await canvas.convertToBlob({ type: 'image/jpeg' });
+		const file = new File([blob], 'a.jpg', { type: 'image/jpeg' });
+
+		const created = await createQuick(file, 4, 'StaleResolver');
+		const opened = await openQuick(created.stored.id);
+		const resolver = opened!.resolvePieceImage;
+		const firstPiece = created.stored.pieces[0];
+
+		// Before eviction the resolver works.
+		expect(resolver(firstPiece)).toMatch(/^blob:/);
+
+		evictBlobUrls(created.stored.id);
+
+		// After eviction the captured resolver should throw, not return a stale URL.
+		expect(() => resolver(firstPiece)).toThrow(/unavailable/);
+	});
 });

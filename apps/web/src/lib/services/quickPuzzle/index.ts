@@ -8,6 +8,11 @@ import { QuickPuzzleValidationError, type QuickPieceMeta, type StoredQuickPuzzle
 
 export interface OpenedQuickPuzzle {
 	stored: StoredQuickPuzzle;
+	/**
+	 * Resolves a piece's image to its in-memory blob URL.
+	 * Throws if `evictBlobUrls(stored.id)` or `removeQuick(stored.id)` has been called.
+	 * Callers must avoid resolving piece images after triggering cache eviction.
+	 */
 	resolvePieceImage: (piece: Pick<PuzzlePiece | QuickPieceMeta, 'id'>) => string;
 	resolveReferenceImage: () => string;
 }
@@ -36,11 +41,14 @@ export function evictBlobUrls(id: string): void {
 	sessionOnlyMetadata.delete(id);
 }
 
-function buildResolver(stored: StoredQuickPuzzle, urls: Map<number, string>) {
+function buildResolver(stored: StoredQuickPuzzle) {
 	return (piece: Pick<PuzzlePiece | QuickPieceMeta, 'id'>): string => {
-		const url = urls.get(piece.id);
+		const urls = pieceUrlCache.get(stored.id);
+		const url = urls?.get(piece.id);
 		if (!url) {
-			throw new Error(`Quick puzzle ${stored.id} missing piece ${piece.id} in cache`);
+			throw new Error(
+				`Quick puzzle ${stored.id} piece ${piece.id} unavailable (cache evicted or not rendered)`
+			);
 		}
 		return url;
 	};
@@ -84,7 +92,7 @@ export async function openQuick(id: string): Promise<OpenedQuickPuzzle | null> {
 
 	return {
 		stored,
-		resolvePieceImage: buildResolver(stored, urls),
+		resolvePieceImage: buildResolver(stored),
 		resolveReferenceImage: () => stored.imageDataUrl
 	};
 }
