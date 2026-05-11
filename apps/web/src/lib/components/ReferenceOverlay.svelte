@@ -1,12 +1,10 @@
 <script lang="ts">
-	import { getReferenceImageUrl } from '$lib/services/api';
-
 	interface Props {
-		puzzleId: string;
+		imageUrl?: string | null;
 		active: boolean;
 	}
 
-	let { puzzleId, active }: Props = $props();
+	let { imageUrl = null, active }: Props = $props();
 	let imageError = $state(false);
 
 	$effect(() => {
@@ -19,11 +17,11 @@
 		data-testid="reference-overlay"
 		class="pointer-events-none fixed inset-0 z-[1000] flex items-center justify-center bg-black/80"
 	>
-		{#if imageError}
+		{#if imageError || imageUrl === null}
 			<p class="text-sm text-white/70">Reference image unavailable</p>
 		{:else}
 			<img
-				src={getReferenceImageUrl(puzzleId)}
+				src={imageUrl}
 				alt="Puzzle reference"
 				class="max-h-[90%] max-w-[90%] rounded-md object-contain shadow-lg"
 				onerror={() => (imageError = true)}
