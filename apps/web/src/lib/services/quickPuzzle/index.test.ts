@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { createQuick, openQuick, evictBlobUrls, getReferenceImage } from './index';
+import { createQuick, openQuick, evictBlobUrls, removeQuick, getReferenceImage } from './index';
 import { deleteQuick } from './storage';
 
 async function makeTestImageFile(width = 200, height = 200): Promise<File> {
@@ -79,8 +79,15 @@ describe('openQuick', () => {
 			expect(opened!.stored.name).toBe('SessionOnly');
 			expect(opened!.resolvePieceImage(created.stored.pieces[0])).toMatch(/^blob:/);
 
+			// evictBlobUrls preserves session-only metadata so the puzzle remains reopenable.
 			evictBlobUrls(created.stored.id);
-			// After evict, openQuick can no longer find it.
+			const reopened = await openQuick(created.stored.id);
+			expect(reopened).not.toBeNull();
+			expect(reopened!.stored.name).toBe('SessionOnly');
+			expect(reopened!.resolvePieceImage(created.stored.pieces[0])).toMatch(/^blob:/);
+
+			// removeQuick is the explicit kill-switch that drops session-only metadata too.
+			removeQuick(created.stored.id);
 			expect(await openQuick(created.stored.id)).toBeNull();
 		} finally {
 			spy.mockRestore();
