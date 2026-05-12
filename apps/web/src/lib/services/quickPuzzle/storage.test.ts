@@ -242,6 +242,8 @@ describe('listQuick', () => {
 		expect(list.map((p) => p.id)).toEqual(['q-good']);
 		const indexAfter = JSON.parse(localStorage.getItem(QUICK_PUZZLE_INDEX_KEY)!);
 		expect(indexAfter.ids).toEqual(['q-good']);
+		// Corrupt per-puzzle key must also be removed to free localStorage quota
+		expect(localStorage.getItem(`${QUICK_PUZZLE_KEY_PREFIX}q-bad`)).toBeNull();
 	});
 
 	it('drops orphaned index entries (per-puzzle key missing)', () => {
@@ -252,6 +254,20 @@ describe('listQuick', () => {
 
 		const list = listQuick();
 		expect(list.map((p) => p.id)).toEqual(['q-keep']);
+	});
+
+	it('removes per-puzzle key when entry has corrupt JSON', () => {
+		saveQuick(makePuzzle({ id: 'q-keep' }));
+		// Write corrupt data that will fail JSON.parse
+		localStorage.setItem(`${QUICK_PUZZLE_KEY_PREFIX}q-corrupt`, '{not json');
+		const index = JSON.parse(localStorage.getItem(QUICK_PUZZLE_INDEX_KEY)!);
+		index.ids = ['q-corrupt', ...index.ids];
+		localStorage.setItem(QUICK_PUZZLE_INDEX_KEY, JSON.stringify(index));
+
+		const list = listQuick();
+		expect(list.map((p) => p.id)).toEqual(['q-keep']);
+		// Corrupt per-puzzle key must be removed to free localStorage quota
+		expect(localStorage.getItem(`${QUICK_PUZZLE_KEY_PREFIX}q-corrupt`)).toBeNull();
 	});
 
 	it('drops entries past 7-day TTL', () => {

@@ -84,7 +84,10 @@ export function listQuick(): StoredQuickPuzzle[] {
 
 	for (const id of index.ids) {
 		const entry = readEntryRaw(id);
-		if (!entry) continue; // orphan or schema mismatch
+		if (!entry) {
+			removeEntry(id); // remove orphaned/corrupt per-puzzle key to free quota
+			continue;
+		}
 
 		if (isExpired(entry, now)) {
 			removeEntry(id);
