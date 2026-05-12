@@ -13,7 +13,7 @@
 	interface Props {
 		piece: PuzzlePiece;
 		isPlaced: boolean;
-		resolveImage?: (piece: PuzzlePiece) => string;
+		resolveImage: (piece: PuzzlePiece) => string;
 		onDragStart?: (piece: PuzzlePiece) => void;
 		onDragMove?: (piece: PuzzlePiece, x: number, y: number) => void;
 		onDragEnd?: (piece: PuzzlePiece, x: number, y: number) => void;
@@ -25,9 +25,7 @@
 	let {
 		piece,
 		isPlaced,
-		resolveImage = (p: PuzzlePiece) => {
-			throw new Error(`resolveImage prop is required for PuzzlePiece (piece ${p.id})`);
-		},
+		resolveImage,
 		onDragStart,
 		onDragMove,
 		onDragEnd,
