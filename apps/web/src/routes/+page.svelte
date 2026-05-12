@@ -173,6 +173,13 @@ font-black tracking-[0.06em] text-(--text-0) uppercase"
 					>
 						SELECT YOUR MISSION
 					</span>
+					<a
+						href={resolve('/quick')}
+						class="text-[0.65rem] font-(--font-mono) tracking-[0.2em] text-(--accent) opacity-80 hover:opacity-100"
+						data-testid="quick-puzzle-link"
+					>
+						→ QUICK PUZZLE
+					</a>
 					{#if total > 0}
 						<span
 							class="text-[0.7rem] font-(--font-mono) tracking-[0.15em] text-(--accent) opacity-70"
