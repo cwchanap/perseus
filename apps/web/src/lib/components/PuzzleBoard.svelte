@@ -12,7 +12,7 @@
 		activeHintTarget?: { x: number; y: number } | null;
 		canPlacePiece?: (pieceId: number) => boolean;
 		onBoardPointerDown?: (event: PointerEvent) => void;
-		resolveImage?: (piece: PuzzlePiece) => string;
+		resolveImage: (piece: PuzzlePiece) => string;
 	}
 
 	let {
@@ -23,9 +23,7 @@
 		activeHintTarget = null,
 		canPlacePiece,
 		onBoardPointerDown,
-		resolveImage = (p: PuzzlePiece) => {
-			throw new Error(`resolveImage prop is required for PuzzleBoard (piece ${p.id})`);
-		}
+		resolveImage
 	}: Props = $props();
 
 	let dragOverCell: { x: number; y: number } | null = $state(null);
