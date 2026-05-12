@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { generateQuickPuzzle, validateUploadFile } from './generator';
 import { QuickPuzzleValidationError } from './types';
 
@@ -75,14 +75,18 @@ describe('generateQuickPuzzle', () => {
 	it('downscales images larger than the max dimension', async () => {
 		const file = await makeTestImageFile(2400, 1800);
 		const result = await generateQuickPuzzle(file, 4, 'Big');
+		const maxDimension = Math.max(result.stored.imageWidth, result.stored.imageHeight);
 
-		expect(Math.max(result.stored.imageWidth, result.stored.imageHeight)).toBeLessThanOrEqual(1200);
+		expect(maxDimension).toBeLessThanOrEqual(1200);
 	});
 
 	it('rejects piece counts outside [4, 100]', async () => {
 		const file = await makeTestImageFile(200, 200);
-		await expect(generateQuickPuzzle(file, 3, 'x')).rejects.toThrow(QuickPuzzleValidationError);
-		await expect(generateQuickPuzzle(file, 101, 'x')).rejects.toThrow(QuickPuzzleValidationError);
+		const tooFewPieces = generateQuickPuzzle(file, 3, 'x');
+		const tooManyPieces = generateQuickPuzzle(file, 101, 'x');
+
+		await expect(tooFewPieces).rejects.toThrow(QuickPuzzleValidationError);
+		await expect(tooManyPieces).rejects.toThrow(QuickPuzzleValidationError);
 	});
 
 	it('reports progress via the optional onProgress callback', async () => {
@@ -93,5 +97,33 @@ describe('generateQuickPuzzle', () => {
 		});
 		expect(calls.length).toBeGreaterThan(0);
 		expect(calls[calls.length - 1]).toEqual({ done: 4, total: 4 });
+	});
+
+	it('closes decoded bitmap when piece rendering fails', async () => {
+		const decodedClose = vi.fn();
+		const decodedBitmap = {
+			width: 100,
+			height: 100,
+			close: decodedClose
+		} as unknown as ImageBitmap;
+		const originalCreateImageBitmap = globalThis.createImageBitmap;
+		const file = await makeTestImageFile(100, 100);
+
+		vi.stubGlobal(
+			'createImageBitmap',
+			vi.fn((image: ImageBitmapSource) => {
+				if (image instanceof Blob && !(image instanceof File)) {
+					return Promise.resolve(decodedBitmap);
+				}
+				return originalCreateImageBitmap(image);
+			})
+		);
+
+		try {
+			await expect(generateQuickPuzzle(file, 4, 'x')).rejects.toThrow();
+			expect(decodedClose).toHaveBeenCalledTimes(1);
+		} finally {
+			vi.unstubAllGlobals();
+		}
 	});
 });

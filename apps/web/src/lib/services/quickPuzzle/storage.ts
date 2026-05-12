@@ -63,6 +63,12 @@ function isExpired(entry: StoredQuickPuzzle, now: number): boolean {
 	return entry.createdAt + QUICK_PUZZLE_TTL_MS <= now;
 }
 
+function isQuotaExceededError(error: unknown): boolean {
+	if (typeof error !== 'object' || error === null) return false;
+	const { name } = error as { name?: unknown };
+	return name === 'QuotaExceededError' || name === 'NS_ERROR_DOM_QUOTA_REACHED';
+}
+
 /**
  * Read all surviving puzzles, newest-first.
  * Side effects: drops orphaned, expired, and schema-mismatched entries from the index
@@ -135,7 +141,15 @@ export function saveQuick(stored: StoredQuickPuzzle): { persisted: boolean } {
 
 	try {
 		localStorage.setItem(`${QUICK_PUZZLE_KEY_PREFIX}${stored.id}`, JSON.stringify(stored));
-	} catch {
+	} catch (error) {
+		if (!isQuotaExceededError(error)) {
+			console.error('Failed to save quick puzzle to localStorage', {
+				id: stored.id,
+				keyPrefix: QUICK_PUZZLE_KEY_PREFIX,
+				error
+			});
+			throw error;
+		}
 		// Reflect any mid-flight eviction back to the index, but do NOT add the failed id.
 		writeIndex({ ids, schemaVersion: QUICK_PUZZLE_SCHEMA_VERSION });
 		return { persisted: false };

@@ -129,6 +129,34 @@ describe('saveQuick', () => {
 			spy.mockRestore();
 		}
 	});
+
+	it('rethrows unexpected storage write errors', () => {
+		const error = new TypeError('bad write');
+		const original = Storage.prototype.setItem;
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+		const spy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (
+			this: Storage,
+			key: string,
+			value: string
+		) {
+			if (key === `${QUICK_PUZZLE_KEY_PREFIX}q-new`) {
+				throw error;
+			}
+			original.call(this, key, value);
+		});
+
+		try {
+			expect(() => saveQuick(makePuzzle({ id: 'q-new' }))).toThrow('bad write');
+			expect(consoleSpy).toHaveBeenCalledWith('Failed to save quick puzzle to localStorage', {
+				id: 'q-new',
+				keyPrefix: QUICK_PUZZLE_KEY_PREFIX,
+				error
+			});
+		} finally {
+			spy.mockRestore();
+			consoleSpy.mockRestore();
+		}
+	});
 });
 
 describe('getQuick', () => {

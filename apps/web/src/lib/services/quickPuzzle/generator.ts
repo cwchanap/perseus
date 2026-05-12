@@ -168,20 +168,22 @@ export async function generateQuickPuzzle(
 	let done = 0;
 	options.onProgress?.(done, pieces.length);
 
-	for (const piece of pieces) {
-		const bounds = computePieceBounds(piece.correctY, piece.correctX, {
-			rows,
-			cols,
-			srcWidth: decoded.width,
-			srcHeight: decoded.height
-		});
-		const url = await renderPiece(decoded.bitmap, piece, bounds);
-		pieceBlobUrls.set(piece.id, url);
-		done += 1;
-		options.onProgress?.(done, pieces.length);
+	try {
+		for (const piece of pieces) {
+			const bounds = computePieceBounds(piece.correctY, piece.correctX, {
+				rows,
+				cols,
+				srcWidth: decoded.width,
+				srcHeight: decoded.height
+			});
+			const url = await renderPiece(decoded.bitmap, piece, bounds);
+			pieceBlobUrls.set(piece.id, url);
+			done += 1;
+			options.onProgress?.(done, pieces.length);
+		}
+	} finally {
+		decoded.bitmap.close?.();
 	}
-
-	decoded.bitmap.close?.();
 
 	const stored: StoredQuickPuzzle = {
 		id: generateId(),

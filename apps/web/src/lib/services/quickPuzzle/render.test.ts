@@ -63,4 +63,16 @@ describe('canvasToBlob', () => {
 		expect(blob.type).toBe('image/png');
 		expect(blob.size).toBeGreaterThan(0);
 	});
+
+	it('rejects with QuickPuzzleValidationError when blob export is unsupported', async () => {
+		const canvas = {
+			width: 1,
+			height: 1,
+			getContext: () => null
+		} as unknown as Parameters<typeof canvasToBlob>[0];
+		await expect(canvasToBlob(canvas)).rejects.toThrow(QuickPuzzleValidationError);
+		await expect(canvasToBlob(canvas)).rejects.toMatchObject({
+			code: 'unsupported-browser'
+		});
+	});
 });
