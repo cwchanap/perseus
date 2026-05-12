@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
-	import { onDestroy } from 'svelte';
+	import { onDestroy, untrack } from 'svelte';
 	import { ApiError } from '$lib/services/api';
 	import { loadPuzzleSource, type LoadedPuzzleSource } from '$lib/services/puzzleSource';
 	import { getProgress, saveProgress, clearProgress } from '$lib/services/progress';
@@ -356,8 +356,11 @@
 
 		try {
 			// Clean up any prior source's blob URLs before loading a new one.
-			if (puzzleSource) {
-				puzzleSource.cleanup();
+			// Read via `untrack` so this effect-driven function does not subscribe to
+			// `puzzleSource` writes (which would re-trigger the effect in a loop).
+			const priorSource = untrack(() => puzzleSource);
+			if (priorSource) {
+				priorSource.cleanup();
 				puzzleSource = null;
 			}
 			const source = await loadPuzzleSource(id);
