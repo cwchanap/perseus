@@ -1,6 +1,65 @@
 import { TAB_RATIO, generateJigsawSvgMask } from '@perseus/types';
 import { QuickPuzzleValidationError, type QuickPieceMeta } from './types';
 
+/**
+ * A minimal canvas interface that both OffscreenCanvas and HTMLCanvasElement
+ * can satisfy for our needs (2D context + PNG/JPEG blob export).
+ */
+type RenderCanvas = {
+	width: number;
+	height: number;
+	getContext(contextId: '2d'): CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
+	convertToBlob?(options?: { type?: string; quality?: number }): Promise<Blob>;
+	toBlob?(callback: BlobCallback, type?: string, quality?: number): void;
+};
+
+/**
+ * Create a canvas at the given dimensions. Prefers OffscreenCanvas. Falls back
+ * to a detached HTMLCanvasElement (never appended to the DOM). Throws
+ * `QuickPuzzleValidationError('unsupported-browser', ...)` if neither is available.
+ */
+export function createRenderCanvas(width: number, height: number): RenderCanvas {
+	if (typeof OffscreenCanvas !== 'undefined') {
+		return new OffscreenCanvas(width, height);
+	}
+	if (typeof document !== 'undefined' && typeof document.createElement === 'function') {
+		const canvas = document.createElement('canvas');
+		canvas.width = width;
+		canvas.height = height;
+		return canvas as unknown as RenderCanvas;
+	}
+	throw new QuickPuzzleValidationError(
+		'unsupported-browser',
+		"Your browser doesn't support quick puzzles."
+	);
+}
+
+/**
+ * Export a canvas to a Blob. Uses `convertToBlob` (OffscreenCanvas) when
+ * available, falls back to `toBlob` (HTMLCanvasElement).
+ */
+export function canvasToBlob(
+	canvas: RenderCanvas,
+	options: { type?: string; quality?: number } = {}
+): Promise<Blob> {
+	if (typeof canvas.convertToBlob === 'function') {
+		return canvas.convertToBlob(options);
+	}
+	if (typeof canvas.toBlob === 'function') {
+		return new Promise((resolve, reject) => {
+			canvas.toBlob!(
+				(blob) => {
+					if (blob) resolve(blob);
+					else reject(new Error('Canvas toBlob produced no blob'));
+				},
+				options.type,
+				options.quality
+			);
+		});
+	}
+	return Promise.reject(new Error('Canvas does not support blob export'));
+}
+
 export interface PieceBounds {
 	extractLeft: number;
 	extractTop: number;
@@ -95,7 +154,7 @@ export async function renderPiece(
 	piece: QuickPieceMeta,
 	bounds: PieceBounds
 ): Promise<string> {
-	const canvas = new OffscreenCanvas(bounds.targetWidth, bounds.targetHeight);
+	const canvas = createRenderCanvas(bounds.targetWidth, bounds.targetHeight);
 	const ctx = canvas.getContext('2d');
 	if (!ctx) {
 		throw new QuickPuzzleValidationError(
@@ -122,6 +181,6 @@ export async function renderPiece(
 	ctx.drawImage(maskImg, 0, 0, bounds.targetWidth, bounds.targetHeight);
 	ctx.globalCompositeOperation = 'source-over';
 
-	const blob = await canvas.convertToBlob({ type: 'image/png' });
+	const blob = await canvasToBlob(canvas, { type: 'image/png' });
 	return URL.createObjectURL(blob);
 }

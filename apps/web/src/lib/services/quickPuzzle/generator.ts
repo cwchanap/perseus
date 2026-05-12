@@ -7,7 +7,7 @@ import {
 	type EdgeConfig
 } from '@perseus/types';
 
-import { computePieceBounds, renderPiece } from './render';
+import { computePieceBounds, renderPiece, createRenderCanvas, canvasToBlob } from './render';
 import {
 	QUICK_PUZZLE_ALLOWED_MIMES,
 	QUICK_PUZZLE_DEFAULT_PIECES,
@@ -91,7 +91,7 @@ async function decodeAndDownscale(file: File): Promise<{
 	const targetW = Math.round(source.width * scale);
 	const targetH = Math.round(source.height * scale);
 
-	const canvas = new OffscreenCanvas(targetW, targetH);
+	const canvas = createRenderCanvas(targetW, targetH);
 	const ctx = canvas.getContext('2d');
 	if (!ctx) {
 		throw new QuickPuzzleValidationError(
@@ -102,7 +102,7 @@ async function decodeAndDownscale(file: File): Promise<{
 	ctx.drawImage(source, 0, 0, targetW, targetH);
 	source.close?.();
 
-	const blob = await canvas.convertToBlob({
+	const blob = await canvasToBlob(canvas, {
 		type: 'image/jpeg',
 		quality: QUICK_PUZZLE_JPEG_QUALITY
 	});
@@ -150,7 +150,10 @@ export async function generateQuickPuzzle(
 	validateUploadFile(file);
 	validatePieceCount(pieceCount);
 
-	if (typeof OffscreenCanvas === 'undefined' || typeof createImageBitmap === 'undefined') {
+	const hasOffscreen = typeof OffscreenCanvas !== 'undefined';
+	const hasDomCanvas =
+		typeof document !== 'undefined' && typeof document.createElement === 'function';
+	if (typeof createImageBitmap === 'undefined' || (!hasOffscreen && !hasDomCanvas)) {
 		throw new QuickPuzzleValidationError(
 			'unsupported-browser',
 			"Your browser doesn't support quick puzzles."
