@@ -38,7 +38,9 @@ export function evictBlobUrls(id: string): void {
 		for (const url of urls.values()) URL.revokeObjectURL(url);
 		pieceUrlCache.delete(id);
 	}
-	sessionOnlyMetadata.delete(id);
+	// NOTE: session-only metadata is intentionally preserved here.
+	// The play page calls this on unmount; the puzzle must remain reopenable
+	// for the rest of the session until removeQuick or page reload.
 }
 
 function buildResolver(stored: StoredQuickPuzzle) {
@@ -112,6 +114,7 @@ export function listQuick(): StoredQuickPuzzle[] {
 
 export function removeQuick(id: string): void {
 	evictBlobUrls(id);
+	sessionOnlyMetadata.delete(id);
 	deleteQuick(id);
 }
 
