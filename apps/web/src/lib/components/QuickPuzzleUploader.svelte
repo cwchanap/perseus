@@ -25,6 +25,10 @@
 	let name = $state('');
 	let pieceCount = $state(QUICK_PUZZLE_DEFAULT_PIECES);
 	let error = $state<string | null>(null);
+	const pieceRangeMessage = [
+		`Choose between ${QUICK_PUZZLE_MIN_PIECES}`,
+		`and ${QUICK_PUZZLE_MAX_PIECES} pieces.`
+	].join(' ');
 
 	function deriveName(filename: string): string {
 		const dot = filename.lastIndexOf('.');
@@ -77,7 +81,7 @@
 			pieceCount < QUICK_PUZZLE_MIN_PIECES ||
 			pieceCount > QUICK_PUZZLE_MAX_PIECES
 		) {
-			error = `Choose between ${QUICK_PUZZLE_MIN_PIECES} and ${QUICK_PUZZLE_MAX_PIECES} pieces.`;
+			error = pieceRangeMessage;
 			return;
 		}
 
@@ -87,6 +91,7 @@
 	const progressPct = $derived(
 		progress && progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0
 	);
+	let widthStyle = $derived(`width: ${progressPct}%;`);
 </script>
 
 <form
@@ -139,10 +144,10 @@
 	{#if busy && progress}
 		<div class="space-y-1" data-testid="quick-uploader-progress">
 			<div class="h-1 w-full overflow-hidden rounded bg-(--bg-3)">
-				<div class="h-full bg-(--accent) transition-[width]" style="width: {progressPct}%;"></div>
+				<div class="h-full bg-(--accent) transition-[width]" style={widthStyle}></div>
 			</div>
 			<p class="text-xs text-(--text-2)">
-				Generating piece {progress.done} / {progress.total}…
+				Generating piece {progress.done}/{progress.total}…
 			</p>
 		</div>
 	{/if}

@@ -1,6 +1,8 @@
 import { TAB_RATIO, generateJigsawSvgMask } from '@perseus/types';
 import { QuickPuzzleValidationError, type QuickPieceMeta } from './types';
 
+type RenderContext = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
+
 /**
  * A minimal canvas interface that both OffscreenCanvas and HTMLCanvasElement
  * can satisfy for our needs (2D context + PNG/JPEG blob export).
@@ -8,7 +10,7 @@ import { QuickPuzzleValidationError, type QuickPieceMeta } from './types';
 type RenderCanvas = {
 	width: number;
 	height: number;
-	getContext(contextId: '2d'): CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
+	getContext(contextId: '2d'): RenderContext;
 	convertToBlob?(options?: { type?: string; quality?: number }): Promise<Blob>;
 	toBlob?(callback: BlobCallback, type?: string, quality?: number): void;
 };
@@ -57,7 +59,9 @@ export function canvasToBlob(
 			);
 		});
 	}
-	return Promise.reject(new Error('Canvas does not support blob export'));
+	return Promise.reject(
+		new QuickPuzzleValidationError('unsupported-browser', 'Canvas does not support blob export')
+	);
 }
 
 export interface PieceBounds {
