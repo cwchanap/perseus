@@ -126,7 +126,9 @@ export function getQuick(id: string): StoredQuickPuzzle | null {
 /**
  * Persist a new puzzle. Evicts oldest entries until index has < QUICK_PUZZLE_MAX_COUNT.
  * Returns { persisted: false } if the per-puzzle write throws QuotaExceededError;
- * the index is left unchanged in that case.
+ * any evicted entries are removed from the index (and their per-puzzle keys deleted)
+ * even when the new puzzle fails to persist — the freed space may allow a retry.
+ * Non-quota errors are rethrown.
  */
 export function saveQuick(stored: StoredQuickPuzzle): { persisted: boolean } {
 	if (!isBrowser()) return { persisted: false };
