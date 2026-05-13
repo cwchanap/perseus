@@ -55,6 +55,28 @@ describe('openQuick', () => {
 		evictBlobUrls(id);
 	});
 
+	it('deduplicates concurrent renders for the same id', async () => {
+		const file = await makeTestImageFile();
+		const created = await createQuick(file, 4, 'Race');
+		const id = created.stored.id;
+
+		// Evict so both calls need to re-render.
+		evictBlobUrls(id);
+
+		// Fire two concurrent openQuick calls without awaiting either.
+		const [openedA, openedB] = await Promise.all([openQuick(id), openQuick(id)]);
+
+		// Both must resolve successfully and share the same URL map —
+		// the second call should piggyback on the first's in-flight render
+		// rather than producing a separate set of blob URLs.
+		const piece0 = created.stored.pieces[0];
+		const urlA = openedA!.resolvePieceImage(piece0);
+		const urlB = openedB!.resolvePieceImage(piece0);
+		expect(urlA).toBe(urlB);
+
+		evictBlobUrls(id);
+	});
+
 	it('finds session-only puzzles when storage save failed', async () => {
 		// Make every per-puzzle setItem fail to simulate quota exhaustion.
 		const original = Storage.prototype.setItem;

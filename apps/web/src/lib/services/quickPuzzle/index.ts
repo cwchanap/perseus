@@ -20,8 +20,11 @@ export interface OpenedQuickPuzzle {
 //  - pieceUrlCache: puzzleId -> (pieceId -> object URL) — populated whenever piece bitmaps exist for this session.
 //  - sessionOnlyMetadata: puzzleId -> StoredQuickPuzzle — for puzzles whose persist failed (quota), so the
 //    play page can still find them via openQuick within the same session. Cleared when evictBlobUrls is called.
+//  - inflightRenders: puzzleId -> Promise<Map<number, string>> — deduplicates concurrent openQuick calls
+//    so only one render runs per id at a time.
 const pieceUrlCache = new Map<string, Map<number, string>>();
 const sessionOnlyMetadata = new Map<string, StoredQuickPuzzle>();
+const inflightRenders = new Map<string, Promise<Map<number, string>>>();
 
 function setCache(id: string, urls: Map<number, string>): void {
 	const existing = pieceUrlCache.get(id);
@@ -29,6 +32,7 @@ function setCache(id: string, urls: Map<number, string>): void {
 		for (const url of existing.values()) URL.revokeObjectURL(url);
 	}
 	pieceUrlCache.set(id, urls);
+	inflightRenders.delete(id);
 }
 
 export function evictBlobUrls(id: string): void {
@@ -37,6 +41,7 @@ export function evictBlobUrls(id: string): void {
 		for (const url of urls.values()) URL.revokeObjectURL(url);
 		pieceUrlCache.delete(id);
 	}
+	inflightRenders.delete(id);
 	// NOTE: session-only metadata is intentionally preserved here.
 	// The play page calls this on unmount; the puzzle must remain reopenable
 	// for the rest of the session until removeQuick or page reload.
@@ -87,7 +92,17 @@ export async function openQuick(id: string): Promise<OpenedQuickPuzzle | null> {
 
 	let urls = pieceUrlCache.get(id);
 	if (!urls) {
-		urls = await renderPiecesFromStored(stored);
+		// Deduplicate: if a render is already in-flight for this id, await it
+		// instead of starting a second render that would revoke the first's URLs.
+		let inflight = inflightRenders.get(id);
+		if (!inflight) {
+			inflight = renderPiecesFromStored(stored);
+			inflightRenders.set(id, inflight);
+			// Ensure the inflight entry is cleaned up even if the render rejects,
+			// so a future call can retry.
+			inflight.catch(() => inflightRenders.delete(id));
+		}
+		urls = await inflight;
 		setCache(id, urls);
 	}
 
