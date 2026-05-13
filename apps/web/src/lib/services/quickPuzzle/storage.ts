@@ -57,6 +57,9 @@ function readEntryRaw(id: string): StoredQuickPuzzle | null {
 function removeEntry(id: string): void {
 	if (!isBrowser()) return;
 	localStorage.removeItem(`${QUICK_PUZZLE_KEY_PREFIX}${id}`);
+	// Clean up companion progress and stats keys to avoid localStorage leaks
+	localStorage.removeItem(`puzzle-progress-${id}`);
+	localStorage.removeItem(`puzzle-stats-${id}`);
 }
 
 function isExpired(entry: StoredQuickPuzzle, now: number): boolean {

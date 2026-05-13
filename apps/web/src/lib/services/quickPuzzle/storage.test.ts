@@ -8,6 +8,9 @@ import {
 	type StoredQuickPuzzle
 } from './types';
 
+const PROGRESS_KEY_PREFIX = 'puzzle-progress-';
+const STATS_KEY_PREFIX = 'puzzle-stats-';
+
 function makePuzzle(overrides: Partial<StoredQuickPuzzle> = {}): StoredQuickPuzzle {
 	return {
 		id: 'q-test-id',
@@ -23,6 +26,11 @@ function makePuzzle(overrides: Partial<StoredQuickPuzzle> = {}): StoredQuickPuzz
 		schemaVersion: QUICK_PUZZLE_SCHEMA_VERSION,
 		...overrides
 	};
+}
+
+function seedCompanionKeys(id: string): void {
+	localStorage.setItem(`${PROGRESS_KEY_PREFIX}${id}`, JSON.stringify({ puzzleId: id }));
+	localStorage.setItem(`${STATS_KEY_PREFIX}${id}`, JSON.stringify({ puzzleId: id, bestTime: 42 }));
 }
 
 describe('saveQuick', () => {
@@ -53,11 +61,14 @@ describe('saveQuick', () => {
 		for (let i = 1; i <= 5; i++) {
 			saveQuick(makePuzzle({ id: `q-${i}`, createdAt: now - (10 - i) * 1000 }));
 		}
+		seedCompanionKeys('q-1');
 		saveQuick(makePuzzle({ id: 'q-6', createdAt: now }));
 
 		const index = JSON.parse(localStorage.getItem(QUICK_PUZZLE_INDEX_KEY)!);
 		expect(index.ids).toEqual(['q-6', 'q-5', 'q-4', 'q-3', 'q-2']);
 		expect(localStorage.getItem(`${QUICK_PUZZLE_KEY_PREFIX}q-1`)).toBeNull();
+		expect(localStorage.getItem(`${PROGRESS_KEY_PREFIX}q-1`)).toBeNull();
+		expect(localStorage.getItem(`${STATS_KEY_PREFIX}q-1`)).toBeNull();
 	});
 
 	it('returns { persisted: false } and does not mutate index on QuotaExceededError', () => {
@@ -184,11 +195,14 @@ describe('getQuick', () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(start);
 		saveQuick(makePuzzle({ id: 'q-old', createdAt: start }));
+		seedCompanionKeys('q-old');
 
 		// Advance just past 7 days
 		vi.setSystemTime(start + QUICK_PUZZLE_TTL_MS + 1);
 		expect(getQuick('q-old')).toBeNull();
 		expect(localStorage.getItem(`${QUICK_PUZZLE_KEY_PREFIX}q-old`)).toBeNull();
+		expect(localStorage.getItem(`${PROGRESS_KEY_PREFIX}q-old`)).toBeNull();
+		expect(localStorage.getItem(`${STATS_KEY_PREFIX}q-old`)).toBeNull();
 	});
 
 	it('returns null when stored entry has mismatched schemaVersion', () => {
@@ -276,10 +290,13 @@ describe('listQuick', () => {
 		vi.setSystemTime(start);
 		saveQuick(makePuzzle({ id: 'q-old', createdAt: start }));
 		saveQuick(makePuzzle({ id: 'q-new', createdAt: start + 1000 }));
+		seedCompanionKeys('q-old');
 
 		vi.setSystemTime(start + QUICK_PUZZLE_TTL_MS + 1);
 		const list = listQuick();
 		expect(list.map((p) => p.id)).toEqual(['q-new']);
+		expect(localStorage.getItem(`${PROGRESS_KEY_PREFIX}q-old`)).toBeNull();
+		expect(localStorage.getItem(`${STATS_KEY_PREFIX}q-old`)).toBeNull();
 	});
 });
 
@@ -291,9 +308,12 @@ describe('deleteQuick', () => {
 	it('removes per-puzzle key and index entry', () => {
 		saveQuick(makePuzzle({ id: 'q-a' }));
 		saveQuick(makePuzzle({ id: 'q-b' }));
+		seedCompanionKeys('q-a');
 		deleteQuick('q-a');
 
 		expect(localStorage.getItem(`${QUICK_PUZZLE_KEY_PREFIX}q-a`)).toBeNull();
+		expect(localStorage.getItem(`${PROGRESS_KEY_PREFIX}q-a`)).toBeNull();
+		expect(localStorage.getItem(`${STATS_KEY_PREFIX}q-a`)).toBeNull();
 		const index = JSON.parse(localStorage.getItem(QUICK_PUZZLE_INDEX_KEY)!);
 		expect(index.ids).toEqual(['q-b']);
 	});
