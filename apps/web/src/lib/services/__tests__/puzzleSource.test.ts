@@ -27,6 +27,7 @@ vi.mock('$lib/services/quickPuzzle', async (importOriginal) => {
 });
 
 import * as api from '$lib/services/api';
+import { ApiError } from '$lib/services/api';
 
 describe('loadPuzzleSource', () => {
 	beforeEach(() => {
@@ -58,27 +59,18 @@ describe('loadPuzzleSource', () => {
 		expect(result.resolveReferenceImage()).toContain('/api/puzzles/server-id/reference');
 	});
 
-	it('falls through to the API when local source returns null for a quick id', async () => {
+	it('throws 404 for quick-puzzle ids that are not found locally', async () => {
 		const { openQuick } = await import('$lib/services/quickPuzzle');
 		const openQuickSpy = openQuick as ReturnType<typeof vi.fn>;
 
-		const fakePuzzle = {
-			id: 'q-not-stored',
-			name: 'Server-stored quick',
-			pieceCount: 4,
-			gridCols: 2,
-			gridRows: 2,
-			imageWidth: 100,
-			imageHeight: 100,
-			createdAt: 0,
-			pieces: []
-		};
-		(api.fetchPuzzle as ReturnType<typeof vi.fn>).mockResolvedValueOnce(fakePuzzle);
+		// openQuick returns null for expired/evicted quick puzzles
+		openQuickSpy.mockResolvedValueOnce(null);
 
-		const result = await loadPuzzleSource('q-not-stored');
-		expect(result.source).toBe('api');
-		expect(openQuickSpy).toHaveBeenCalledWith('q-not-stored');
-		expect(api.fetchPuzzle).toHaveBeenCalledWith('q-not-stored');
+		await expect(loadPuzzleSource('q-missing')).rejects.toThrow(ApiError);
+		await expect(loadPuzzleSource('q-missing')).rejects.toMatchObject({ status: 404 });
+
+		// The API should never be called with a q- id
+		expect(api.fetchPuzzle).not.toHaveBeenCalledWith(expect.stringMatching(/^q-/));
 	});
 
 	it('uses the local source for q- IDs that resolve via openQuick', async () => {

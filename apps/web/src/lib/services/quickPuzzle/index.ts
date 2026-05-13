@@ -17,17 +17,28 @@ export interface OpenedQuickPuzzle {
 }
 
 // Module-level caches:
-//  - pieceUrlCache: puzzleId -> (pieceId -> object URL) — populated whenever piece bitmaps exist for this session.
-//  - sessionOnlyMetadata: puzzleId -> StoredQuickPuzzle — for puzzles whose persist failed (quota), so the
-//    play page can still find them via openQuick within the same session. Cleared when evictBlobUrls is called.
-//  - inflightRenders: puzzleId -> Promise<Map<number, string>> — deduplicates concurrent openQuick calls
-//    so only one render runs per id at a time.
+//  - pieceUrlCache: puzzleId -> (pieceId -> object URL) — populated whenever piece bitmaps
+//    exist for this session. The cache OWNS every object URL it holds; overwriting an entry
+//    for a given id revokes the prior URLs (see setCache). evictBlobUrls revokes and removes.
+//  - sessionOnlyMetadata: puzzleId -> StoredQuickPuzzle — for puzzles whose persist failed
+//    (quota), so the play page can still find them via openQuick within the same session.
+//    Intentionally preserved by evictBlobUrls (the puzzle remains playable until removeQuick
+//    or page reload). Cleared only by removeQuick.
+//  - inflightRenders: puzzleId -> Promise<Map<number, string>> — deduplicates concurrent
+//    openQuick calls so only one render runs per id at a time.
 const pieceUrlCache = new Map<string, Map<number, string>>();
 const sessionOnlyMetadata = new Map<string, StoredQuickPuzzle>();
 const inflightRenders = new Map<string, Promise<Map<number, string>>>();
 
 function setCache(id: string, urls: Map<number, string>): void {
 	const existing = pieceUrlCache.get(id);
+	// Identity guard: concurrent openQuick callers sharing the same inflight promise
+	// receive the same Map reference. If existing === urls, the cache already holds
+	// exactly this map — revoking would kill every piece URL.
+	if (existing === urls) {
+		inflightRenders.delete(id);
+		return;
+	}
 	if (existing) {
 		for (const url of existing.values()) URL.revokeObjectURL(url);
 	}
@@ -73,12 +84,19 @@ export async function createQuick(
 	const { stored, pieceBlobUrls } = await generateQuickPuzzle(file, pieceCount, name, options);
 	setCache(stored.id, pieceBlobUrls);
 
-	const { persisted } = saveQuick(stored);
-	if (!persisted) {
-		// Keep metadata in memory so openQuick can find this puzzle for the rest of the session.
-		sessionOnlyMetadata.set(stored.id, stored);
+	try {
+		const { persisted } = saveQuick(stored);
+		if (!persisted) {
+			// Keep metadata in memory so openQuick can find this puzzle for the rest of the session.
+			sessionOnlyMetadata.set(stored.id, stored);
+		}
+		return { stored, persisted };
+	} catch (err) {
+		// Non-quota error from saveQuick (e.g. SecurityError): clean up the blob URLs
+		// we just cached since nothing will be able to use this puzzle.
+		evictBlobUrls(stored.id);
+		throw err;
 	}
-	return { stored, persisted };
 }
 
 /**

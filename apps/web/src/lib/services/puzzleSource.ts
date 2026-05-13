@@ -1,4 +1,5 @@
 import { fetchPuzzle, getPieceImageUrl, getReferenceImageUrl } from '$lib/services/api';
+import { ApiError } from '$lib/services/api';
 import { evictBlobUrls, openQuick } from '$lib/services/quickPuzzle';
 import { QUICK_PUZZLE_ID_PREFIX } from '$lib/services/quickPuzzle/types';
 import type { Puzzle, PuzzlePiece } from '$lib/types/puzzle';
@@ -48,7 +49,10 @@ export async function loadPuzzleSource(id: string): Promise<LoadedPuzzleSource> 
 				cleanup: () => evictBlobUrls(id)
 			};
 		}
-		// fall through to API
+		// Quick-puzzle ids are local-only — never send them to the API.
+		// Throw a 404-equivalent so the puzzle page shows the right message
+		// without leaking a device-local id to the server.
+		throw new ApiError(404, 'not_found', 'Quick puzzle no longer available');
 	}
 
 	const fetched = await fetchPuzzle(id);

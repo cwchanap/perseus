@@ -181,6 +181,10 @@ export async function generateQuickPuzzle(
 			done += 1;
 			options.onProgress?.(done, pieces.length);
 		}
+	} catch (err) {
+		// Revoke any piece URLs created before the failure to avoid leaking blob URLs.
+		for (const u of pieceBlobUrls.values()) URL.revokeObjectURL(u);
+		throw err;
 	} finally {
 		decoded.bitmap.close?.();
 	}

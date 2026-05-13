@@ -29,6 +29,35 @@ describe('createQuick', () => {
 
 		evictBlobUrls(result.stored.id);
 	});
+
+	it('evicts blob URLs when saveQuick throws a non-quota error', async () => {
+		const revokeSpy = vi.spyOn(URL, 'revokeObjectURL');
+		const original = Storage.prototype.setItem;
+		const spy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (
+			this: Storage,
+			key: string,
+			value: string
+		) {
+			if (key.startsWith('quickPuzzle:') && key !== 'quickPuzzle:index') {
+				throw new TypeError('SecurityError: storage access denied');
+			}
+			original.call(this, key, value);
+		});
+
+		try {
+			const file = await makeTestImageFile();
+			await expect(createQuick(file, 4, 'Fail')).rejects.toThrow('SecurityError');
+
+			// Blob URLs should have been revoked via evictBlobUrls
+			expect(revokeSpy).toHaveBeenCalled();
+
+			// The puzzle should not be in session-only metadata (openQuick returns null)
+			expect(await openQuick(expect.any(String))).toBeNull();
+		} finally {
+			spy.mockRestore();
+			revokeSpy.mockRestore();
+		}
+	});
 });
 
 describe('openQuick', () => {
@@ -73,6 +102,13 @@ describe('openQuick', () => {
 		const urlA = openedA!.resolvePieceImage(piece0);
 		const urlB = openedB!.resolvePieceImage(piece0);
 		expect(urlA).toBe(urlB);
+
+		// The shared URLs must still be functional (not revoked by setCache
+		// when both callers deposit the same Map reference).
+		const resp = await fetch(urlA);
+		const blob = await resp.blob();
+		expect(blob.size).toBeGreaterThan(0);
+		expect(blob.type).toBe('image/png');
 
 		evictBlobUrls(id);
 	});

@@ -126,4 +126,41 @@ describe('generateQuickPuzzle', () => {
 			vi.unstubAllGlobals();
 		}
 	});
+
+	it('revokes prior piece blob URLs when mid-loop render fails', async () => {
+		const file = await makeTestImageFile(200, 200);
+		const originalCreateObjectURL = URL.createObjectURL;
+		const revokeSpy = vi.spyOn(URL, 'revokeObjectURL');
+		let createCount = 0;
+
+		// Make URL.createObjectURL succeed once (for decodeAndDownscale's canvasToBlob
+		// doesn't use createObjectURL — it uses FileReader for data URLs) then fail.
+		// Actually, renderPiece calls URL.createObjectURL at the end. So we count those.
+		vi.stubGlobal(
+			'URL',
+			class extends URL {
+				static createObjectURL(blob: Blob) {
+					createCount++;
+					// First call: the downscale path uses canvasToBlob then blobToDataUrl
+					// (FileReader), not createObjectURL. So the first createObjectURL call
+					// is from renderPiece for piece 0. Let it succeed. Second call = piece 1 → fail.
+					if (createCount > 1) {
+						throw new Error('render failed');
+					}
+					return originalCreateObjectURL.call(URL, blob);
+				}
+				static revokeObjectURL = URL.revokeObjectURL;
+			}
+		);
+
+		try {
+			await expect(generateQuickPuzzle(file, 4, 'Leak Test')).rejects.toThrow('render failed');
+
+			// The first piece's blob URL should have been revoked in the catch block
+			expect(revokeSpy).toHaveBeenCalled();
+		} finally {
+			vi.unstubAllGlobals();
+			revokeSpy.mockRestore();
+		}
+	});
 });
