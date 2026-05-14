@@ -214,3 +214,47 @@ describe('evictBlobUrls', () => {
 		expect(() => resolver(firstPiece)).toThrow(/unavailable/);
 	});
 });
+
+describe('openQuick partial render failure', () => {
+	beforeEach(() => {
+		localStorage.clear();
+	});
+
+	it('revokes partial blob URLs when renderPiece fails mid-loop', async () => {
+		const revokeSpy = vi.spyOn(URL, 'revokeObjectURL');
+
+		// Create a real puzzle so we have a stored entry with pieces.
+		const file = await makeTestImageFile();
+		const created = await createQuick(file, 4, 'PartialFail');
+		evictBlobUrls(created.stored.id);
+
+		// Mock OffscreenCanvas.convertToBlob to fail after the first successful call.
+		// This simulates a renderPiece failure mid-loop.
+		let blobCallCount = 0;
+		const originalConvertToBlob = OffscreenCanvas.prototype.convertToBlob;
+		const blobSpy = vi
+			.spyOn(OffscreenCanvas.prototype, 'convertToBlob')
+			.mockImplementation(function (this: OffscreenCanvas, options?: BlobPropertyBag) {
+				blobCallCount++;
+				if (blobCallCount > 1) {
+					return Promise.reject(new Error('Simulated render failure'));
+				}
+				return originalConvertToBlob.call(this, options);
+			});
+
+		try {
+			await expect(openQuick(created.stored.id)).rejects.toThrow('Simulated render failure');
+
+			// The first piece's blob URL should have been revoked during cleanup.
+			const revokeCalls = revokeSpy.mock.calls.map((c) => c[0] as string);
+			// Filter to only blob: URLs (not SVG mask URLs which are also revoked)
+			const blobUrlRevokes = revokeCalls.filter((url) => url.startsWith('blob:'));
+			// The first piece blob URL should have been revoked in the catch block
+			expect(blobUrlRevokes.length).toBeGreaterThanOrEqual(1);
+		} finally {
+			blobSpy.mockRestore();
+			revokeSpy.mockRestore();
+			evictBlobUrls(created.stored.id);
+		}
+	});
+});

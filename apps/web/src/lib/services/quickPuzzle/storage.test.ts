@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { saveQuick, getQuick, listQuick, deleteQuick } from './storage';
+import {
+	saveQuick,
+	getQuick,
+	listQuick,
+	deleteQuick,
+	_resetStorageAvailableCache
+} from './storage';
 import {
 	QUICK_PUZZLE_INDEX_KEY,
 	QUICK_PUZZLE_KEY_PREFIX,
@@ -320,5 +326,57 @@ describe('deleteQuick', () => {
 
 	it('is a no-op for unknown ids', () => {
 		expect(() => deleteQuick('q-missing')).not.toThrow();
+	});
+});
+
+describe('blocked localStorage (SecurityError)', () => {
+	// Simulate blocked site storage by making all localStorage methods throw.
+	function blockLocalStorage() {
+		const spies = [
+			vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+				throw new DOMException('The operation is insecure.', 'SecurityError');
+			}),
+			vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+				throw new DOMException('The operation is insecure.', 'SecurityError');
+			}),
+			vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
+				throw new DOMException('The operation is insecure.', 'SecurityError');
+			})
+		];
+		return spies;
+	}
+
+	beforeEach(() => {
+		_resetStorageAvailableCache();
+	});
+
+	afterEach(() => {
+		_resetStorageAvailableCache();
+		vi.restoreAllMocks();
+	});
+
+	it('saveQuick returns { persisted: false } without throwing', () => {
+		const spies = blockLocalStorage();
+		const result = saveQuick(makePuzzle({ id: 'q-blocked' }));
+		expect(result).toEqual({ persisted: false });
+		spies.forEach((s) => s.mockRestore());
+	});
+
+	it('getQuick returns null without throwing', () => {
+		const spies = blockLocalStorage();
+		expect(getQuick('q-blocked')).toBeNull();
+		spies.forEach((s) => s.mockRestore());
+	});
+
+	it('listQuick returns empty array without throwing', () => {
+		const spies = blockLocalStorage();
+		expect(listQuick()).toEqual([]);
+		spies.forEach((s) => s.mockRestore());
+	});
+
+	it('deleteQuick does not throw', () => {
+		const spies = blockLocalStorage();
+		expect(() => deleteQuick('q-blocked')).not.toThrow();
+		spies.forEach((s) => s.mockRestore());
 	});
 });

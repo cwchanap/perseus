@@ -164,9 +164,14 @@ async function renderPiecesFromStored(stored: StoredQuickPuzzle): Promise<Map<nu
 			srcWidth: stored.imageWidth,
 			srcHeight: stored.imageHeight
 		};
-		for (const piece of stored.pieces) {
-			const bounds = computePieceBounds(piece.correctY, piece.correctX, grid);
-			urls.set(piece.id, await renderPiece(bitmap, piece, bounds));
+		try {
+			for (const piece of stored.pieces) {
+				const bounds = computePieceBounds(piece.correctY, piece.correctX, grid);
+				urls.set(piece.id, await renderPiece(bitmap, piece, bounds));
+			}
+		} catch (err) {
+			for (const url of urls.values()) URL.revokeObjectURL(url);
+			throw err;
 		}
 		return urls;
 	} finally {
