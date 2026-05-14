@@ -52,7 +52,7 @@ describe('createQuick', () => {
 			expect(revokeSpy).toHaveBeenCalled();
 
 			// The puzzle should not be in session-only metadata (openQuick returns null)
-			expect(await openQuick(expect.any(String))).toBeNull();
+			expect(await openQuick('q-nonexistent')).toBeNull();
 		} finally {
 			spy.mockRestore();
 			revokeSpy.mockRestore();
