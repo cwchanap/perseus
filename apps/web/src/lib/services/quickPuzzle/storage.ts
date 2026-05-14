@@ -8,12 +8,32 @@ import {
 	type StoredQuickPuzzle
 } from './types';
 
-function isBrowser(): boolean {
-	return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
+let _storageAvailable: boolean | null = null;
+
+function isStorageAvailable(): boolean {
+	if (_storageAvailable !== null) return _storageAvailable;
+	if (typeof window === 'undefined') {
+		_storageAvailable = false;
+		return false;
+	}
+	try {
+		const key = '__qp_probe__';
+		localStorage.setItem(key, '1');
+		localStorage.removeItem(key);
+		_storageAvailable = true;
+	} catch {
+		_storageAvailable = false;
+	}
+	return _storageAvailable;
+}
+
+/** @internal Reset the cached availability flag (for tests only). */
+export function _resetStorageAvailableCache(): void {
+	_storageAvailable = null;
 }
 
 function readIndexRaw(): QuickPuzzleIndex {
-	if (!isBrowser()) return { ids: [], schemaVersion: QUICK_PUZZLE_SCHEMA_VERSION };
+	if (!isStorageAvailable()) return { ids: [], schemaVersion: QUICK_PUZZLE_SCHEMA_VERSION };
 	const raw = localStorage.getItem(QUICK_PUZZLE_INDEX_KEY);
 	if (!raw) return { ids: [], schemaVersion: QUICK_PUZZLE_SCHEMA_VERSION };
 
@@ -35,12 +55,12 @@ function readIndexRaw(): QuickPuzzleIndex {
 }
 
 function writeIndex(index: QuickPuzzleIndex): void {
-	if (!isBrowser()) return;
+	if (!isStorageAvailable()) return;
 	localStorage.setItem(QUICK_PUZZLE_INDEX_KEY, JSON.stringify(index));
 }
 
 function readEntryRaw(id: string): StoredQuickPuzzle | null {
-	if (!isBrowser()) return null;
+	if (!isStorageAvailable()) return null;
 	const raw = localStorage.getItem(`${QUICK_PUZZLE_KEY_PREFIX}${id}`);
 	if (!raw) return null;
 
@@ -55,7 +75,7 @@ function readEntryRaw(id: string): StoredQuickPuzzle | null {
 }
 
 function removeEntry(id: string): void {
-	if (!isBrowser()) return;
+	if (!isStorageAvailable()) return;
 	localStorage.removeItem(`${QUICK_PUZZLE_KEY_PREFIX}${id}`);
 	// Clean up companion progress and stats keys to avoid localStorage leaks
 	localStorage.removeItem(`puzzle-progress-${id}`);
@@ -78,7 +98,7 @@ function isQuotaExceededError(error: unknown): boolean {
  * and removes their per-puzzle keys.
  */
 export function listQuick(): StoredQuickPuzzle[] {
-	if (!isBrowser()) return [];
+	if (!isStorageAvailable()) return [];
 
 	const index = readIndexRaw();
 	const now = Date.now();
@@ -113,7 +133,7 @@ export function listQuick(): StoredQuickPuzzle[] {
  * Does not modify the index for orphan/expiry of a single id — leave that to listQuick.
  */
 export function getQuick(id: string): StoredQuickPuzzle | null {
-	if (!isBrowser()) return null;
+	if (!isStorageAvailable()) return null;
 
 	const entry = readEntryRaw(id);
 	if (!entry) return null;
@@ -134,7 +154,7 @@ export function getQuick(id: string): StoredQuickPuzzle | null {
  * Non-quota errors are rethrown.
  */
 export function saveQuick(stored: StoredQuickPuzzle): { persisted: boolean } {
-	if (!isBrowser()) return { persisted: false };
+	if (!isStorageAvailable()) return { persisted: false };
 
 	// listQuick prunes expired/orphaned entries first, freeing space.
 	const survivors = listQuick();
@@ -175,7 +195,7 @@ export function saveQuick(stored: StoredQuickPuzzle): { persisted: boolean } {
  * Delete a puzzle and remove it from the index. No-op for unknown ids.
  */
 export function deleteQuick(id: string): void {
-	if (!isBrowser()) return;
+	if (!isStorageAvailable()) return;
 
 	removeEntry(id);
 	const index = readIndexRaw();
