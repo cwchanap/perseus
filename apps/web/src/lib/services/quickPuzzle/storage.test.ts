@@ -380,3 +380,160 @@ describe('blocked localStorage (SecurityError)', () => {
 		spies.forEach((s) => s.mockRestore());
 	});
 });
+
+describe('full localStorage (QuotaExceededError on writes)', () => {
+	beforeEach(() => {
+		localStorage.clear();
+		_resetStorageAvailableCache();
+	});
+
+	afterEach(() => {
+		_resetStorageAvailableCache();
+		vi.useRealTimers();
+		vi.restoreAllMocks();
+	});
+
+	/**
+	 * Pre-seed a valid puzzle then mock all setItem calls to throw QuotaExceededError,
+	 * simulating a full localStorage where reads/removals still work but writes fail.
+	 */
+	function fillAndBlockWrites() {
+		const puzzle = makePuzzle({ id: 'q-existing' });
+		localStorage.setItem(`${QUICK_PUZZLE_KEY_PREFIX}q-existing`, JSON.stringify(puzzle));
+		localStorage.setItem(
+			QUICK_PUZZLE_INDEX_KEY,
+			JSON.stringify({
+				ids: ['q-existing'],
+				schemaVersion: QUICK_PUZZLE_SCHEMA_VERSION
+			})
+		);
+		return vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+			throw new DOMException('Quota exceeded', 'QuotaExceededError');
+		});
+	}
+
+	it('listQuick returns existing entries when storage is full', () => {
+		const spy = fillAndBlockWrites();
+		try {
+			const list = listQuick();
+			expect(list).toHaveLength(1);
+			expect(list[0].id).toBe('q-existing');
+		} finally {
+			spy.mockRestore();
+		}
+	});
+
+	it('getQuick returns existing entry when storage is full', () => {
+		const spy = fillAndBlockWrites();
+		try {
+			const entry = getQuick('q-existing');
+			expect(entry).not.toBeNull();
+			expect(entry!.id).toBe('q-existing');
+		} finally {
+			spy.mockRestore();
+		}
+	});
+
+	it('deleteQuick removes per-puzzle key even when index write fails', () => {
+		const spy = fillAndBlockWrites();
+		try {
+			expect(() => deleteQuick('q-existing')).not.toThrow();
+			// removeItem still works; only setItem throws on full storage
+			expect(localStorage.getItem(`${QUICK_PUZZLE_KEY_PREFIX}q-existing`)).toBeNull();
+		} finally {
+			spy.mockRestore();
+		}
+	});
+
+	it('listQuick prunes expired entries and removes per-puzzle key when writes fail', () => {
+		const start = new Date('2026-05-01T00:00:00Z').getTime();
+		vi.useFakeTimers();
+		vi.setSystemTime(start);
+
+		const expired = makePuzzle({ id: 'q-expired', createdAt: start - QUICK_PUZZLE_TTL_MS - 1 });
+		localStorage.setItem(`${QUICK_PUZZLE_KEY_PREFIX}q-expired`, JSON.stringify(expired));
+		localStorage.setItem(
+			QUICK_PUZZLE_INDEX_KEY,
+			JSON.stringify({
+				ids: ['q-expired'],
+				schemaVersion: QUICK_PUZZLE_SCHEMA_VERSION
+			})
+		);
+
+		const spy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+			throw new DOMException('Quota exceeded', 'QuotaExceededError');
+		});
+
+		try {
+			const list = listQuick();
+			expect(list).toEqual([]);
+			// Per-puzzle key removed even though index write failed
+			expect(localStorage.getItem(`${QUICK_PUZZLE_KEY_PREFIX}q-expired`)).toBeNull();
+		} finally {
+			spy.mockRestore();
+		}
+	});
+});
+
+describe('saveQuick index-write failure', () => {
+	beforeEach(() => {
+		localStorage.clear();
+		_resetStorageAvailableCache();
+	});
+
+	afterEach(() => {
+		_resetStorageAvailableCache();
+		vi.restoreAllMocks();
+	});
+
+	it('returns { persisted: false } and cleans up when per-puzzle write succeeds but index write fails', () => {
+		// Mock setItem to fail only for the index key
+		const original = Storage.prototype.setItem;
+		const spy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (
+			this: Storage,
+			key: string,
+			value: string
+		) {
+			if (key === QUICK_PUZZLE_INDEX_KEY) {
+				throw new DOMException('Quota exceeded', 'QuotaExceededError');
+			}
+			original.call(this, key, value);
+		});
+
+		try {
+			const result = saveQuick(makePuzzle({ id: 'q-new' }));
+			expect(result).toEqual({ persisted: false });
+			// Per-puzzle key should be cleaned up (not orphaned in localStorage)
+			expect(localStorage.getItem(`${QUICK_PUZZLE_KEY_PREFIX}q-new`)).toBeNull();
+		} finally {
+			spy.mockRestore();
+		}
+	});
+
+	it('preserves existing entries when index write fails after per-puzzle write', () => {
+		saveQuick(makePuzzle({ id: 'q-old' }));
+
+		const original = Storage.prototype.setItem;
+		const spy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (
+			this: Storage,
+			key: string,
+			value: string
+		) {
+			if (key === QUICK_PUZZLE_INDEX_KEY) {
+				throw new DOMException('Quota exceeded', 'QuotaExceededError');
+			}
+			original.call(this, key, value);
+		});
+
+		try {
+			const result = saveQuick(makePuzzle({ id: 'q-new' }));
+			expect(result).toEqual({ persisted: false });
+			// Existing entry should still be in localStorage
+			expect(localStorage.getItem(`${QUICK_PUZZLE_KEY_PREFIX}q-old`)).not.toBeNull();
+			// New entry should be cleaned up
+			expect(localStorage.getItem(`${QUICK_PUZZLE_KEY_PREFIX}q-new`)).toBeNull();
+		} finally {
+			spy.mockRestore();
+		}
+	});
+});

@@ -21,8 +21,10 @@ function isStorageAvailable(): boolean {
 		localStorage.setItem(key, '1');
 		localStorage.removeItem(key);
 		_storageAvailable = true;
-	} catch {
-		_storageAvailable = false;
+	} catch (error) {
+		// QuotaExceededError means storage is full, not unavailable.
+		// Existing keys are still readable and removable; only new writes fail.
+		_storageAvailable = isQuotaExceededError(error);
 	}
 	return _storageAvailable;
 }
@@ -54,9 +56,15 @@ function readIndexRaw(): QuickPuzzleIndex {
 	}
 }
 
-function writeIndex(index: QuickPuzzleIndex): void {
-	if (!isStorageAvailable()) return;
-	localStorage.setItem(QUICK_PUZZLE_INDEX_KEY, JSON.stringify(index));
+function writeIndex(index: QuickPuzzleIndex): boolean {
+	if (!isStorageAvailable()) return false;
+	try {
+		localStorage.setItem(QUICK_PUZZLE_INDEX_KEY, JSON.stringify(index));
+		return true;
+	} catch (error) {
+		if (isQuotaExceededError(error)) return false;
+		throw error;
+	}
 }
 
 function readEntryRaw(id: string): StoredQuickPuzzle | null {
@@ -187,7 +195,17 @@ export function saveQuick(stored: StoredQuickPuzzle): { persisted: boolean } {
 		0,
 		QUICK_PUZZLE_MAX_COUNT
 	);
-	writeIndex({ ids: dedupedIds, schemaVersion: QUICK_PUZZLE_SCHEMA_VERSION });
+	const indexWritten = writeIndex({
+		ids: dedupedIds,
+		schemaVersion: QUICK_PUZZLE_SCHEMA_VERSION
+	});
+	if (!indexWritten) {
+		// Per-puzzle data saved but index update failed (quota). Remove the
+		// orphaned entry and report not persisted — createQuick will fall back
+		// to session-only metadata.
+		removeEntry(stored.id);
+		return { persisted: false };
+	}
 	return { persisted: true };
 }
 
