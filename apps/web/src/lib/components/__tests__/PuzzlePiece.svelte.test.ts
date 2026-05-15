@@ -4,6 +4,7 @@ import { render } from 'vitest-browser-svelte';
 import { page, userEvent } from 'vitest/browser';
 import PuzzlePiece from '../PuzzlePiece.svelte';
 import type { PuzzlePiece as PuzzlePieceType } from '$lib/types/puzzle';
+import { BASE_OFFSET, EXPANSION_FACTOR, TAB_RATIO } from '$lib/constants/puzzle';
 
 const resolveImage = (piece: { id: number }) => `/test/${piece.id}.png`;
 
@@ -77,6 +78,26 @@ describe('PuzzlePiece', () => {
 			render(PuzzlePiece, { piece: mockPiece, isPlaced: false, resolveImage });
 
 			await expect.element(page.getByRole('img')).toHaveAttribute('draggable', 'false');
+		});
+
+		it('aligns the piece base image bounds with its slot', async () => {
+			render(PuzzlePiece, { piece: mockPiece, isPlaced: false, resolveImage });
+
+			const image = await page.getByRole('img').element();
+			const imageWrapper = image.parentElement;
+			expect(imageWrapper).not.toBeNull();
+
+			const expandedWidth = parseFloat(imageWrapper!.style.width) / 100;
+			const expandedHeight = parseFloat(imageWrapper!.style.height) / 100;
+			const leftOffset = parseFloat(imageWrapper!.style.left) / 100;
+			const topOffset = parseFloat(imageWrapper!.style.top) / 100;
+
+			expect(expandedWidth).toBeCloseTo(EXPANSION_FACTOR);
+			expect(expandedHeight).toBeCloseTo(EXPANSION_FACTOR);
+			expect(leftOffset).toBeCloseTo(-TAB_RATIO);
+			expect(topOffset).toBeCloseTo(-TAB_RATIO);
+			expect(leftOffset + BASE_OFFSET * expandedWidth).toBeCloseTo(0);
+			expect(topOffset + BASE_OFFSET * expandedHeight).toBeCloseTo(0);
 		});
 	});
 

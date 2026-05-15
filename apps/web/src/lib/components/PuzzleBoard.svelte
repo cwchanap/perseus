@@ -2,7 +2,7 @@
 	import { onDestroy } from 'svelte';
 	import type { Puzzle, PuzzlePiece, PlacedPiece } from '$lib/types/puzzle';
 	import { selectedPieceId, clearSelectedPiece } from '$lib/stores/pieceSelection';
-	import { EXPANSION_FACTOR, BASE_OFFSET } from '$lib/constants/puzzle';
+	import { EXPANSION_FACTOR, TAB_RATIO } from '$lib/constants/puzzle';
 
 	interface Props {
 		puzzle: Puzzle;
@@ -169,8 +169,8 @@
 							z-index: {y * puzzle.gridCols + x + 1};
 							width: {EXPANSION_FACTOR * 100}%;
 							height: {EXPANSION_FACTOR * 100}%;
-							left: -{BASE_OFFSET * 100}%;
-							top: -{BASE_OFFSET * 100}%;
+							left: -{TAB_RATIO * 100}%;
+							top: -{TAB_RATIO * 100}%;
 						"
 					>
 						<img src={resolveImage(placedPiece)} alt="Placed piece" class="h-full w-full" />

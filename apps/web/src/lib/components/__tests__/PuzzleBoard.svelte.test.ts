@@ -4,6 +4,7 @@ import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
 import PuzzleBoard from '../PuzzleBoard.svelte';
 import type { Puzzle, PlacedPiece, PuzzlePiece } from '$lib/types/puzzle';
+import { BASE_OFFSET, EXPANSION_FACTOR, TAB_RATIO } from '$lib/constants/puzzle';
 
 const resolveImage = (piece: { id: number }) => `/test/${piece.id}.png`;
 
@@ -96,6 +97,35 @@ describe('PuzzleBoard', () => {
 		// Check that image is rendered for placed piece
 		await expect.element(page.getByRole('img').first()).toBeVisible();
 		await expect.element(page.getByRole('img').first()).toHaveAttribute('src', '/test/0.png');
+	});
+
+	it('should align placed piece base image bounds with the drop zone', async () => {
+		const puzzle = createMockPuzzle(3);
+		const placedPieces: PlacedPiece[] = [{ pieceId: 0, x: 0, y: 0 }];
+
+		render(PuzzleBoard, {
+			puzzle,
+			placedPieces,
+			onPiecePlaced: vi.fn(),
+			onIncorrectPlacement: vi.fn(),
+			resolveImage
+		});
+
+		const placedImage = await page.getByRole('img').first().element();
+		const placedWrapper = placedImage.parentElement;
+		expect(placedWrapper).not.toBeNull();
+
+		const expandedWidth = parseFloat(placedWrapper!.style.width) / 100;
+		const expandedHeight = parseFloat(placedWrapper!.style.height) / 100;
+		const leftOffset = parseFloat(placedWrapper!.style.left) / 100;
+		const topOffset = parseFloat(placedWrapper!.style.top) / 100;
+
+		expect(expandedWidth).toBeCloseTo(EXPANSION_FACTOR);
+		expect(expandedHeight).toBeCloseTo(EXPANSION_FACTOR);
+		expect(leftOffset).toBeCloseTo(-TAB_RATIO);
+		expect(topOffset).toBeCloseTo(-TAB_RATIO);
+		expect(leftOffset + BASE_OFFSET * expandedWidth).toBeCloseTo(0);
+		expect(topOffset + BASE_OFFSET * expandedHeight).toBeCloseTo(0);
 	});
 
 	it('should render a hint marker for the active hint target', async () => {

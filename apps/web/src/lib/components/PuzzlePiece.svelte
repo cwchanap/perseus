@@ -8,7 +8,7 @@
 		setSelectedPiece,
 		clearSelectedPiece
 	} from '$lib/stores/pieceSelection';
-	import { EXPANSION_FACTOR, BASE_OFFSET } from '$lib/constants/puzzle';
+	import { EXPANSION_FACTOR, TAB_RATIO } from '$lib/constants/puzzle';
 
 	interface Props {
 		piece: PuzzlePiece;
@@ -362,8 +362,8 @@
 					style="
 						width: {EXPANSION_FACTOR * 100}%;
 						height: {EXPANSION_FACTOR * 100}%;
-						left: -{BASE_OFFSET * 100}%;
-						top: -{BASE_OFFSET * 100}%;
+						left: -{TAB_RATIO * 100}%;
+						top: -{TAB_RATIO * 100}%;
 					"
 				>
 					<img
