@@ -22,6 +22,7 @@ import {
 } from '../services/storage';
 import { MAX_FILE_SIZE, ALLOWED_MIME_TYPES, PUZZLE_CATEGORIES } from '../types';
 import type { PuzzleCategory } from '../types';
+import { DEFAULT_PUZZLE_ASPECT_RATIO, isPuzzleAspectRatio } from '@perseus/types';
 
 const admin = new Hono();
 
@@ -168,6 +169,7 @@ admin.post('/puzzles', requireAuth, async (c) => {
 		const formData = await c.req.formData();
 		const name = formData.get('name');
 		const pieceCountStr = formData.get('pieceCount');
+		const aspectRatioStr = formData.get('aspectRatio');
 		const image = formData.get('image') as File | string | null;
 
 		// Validate required fields
@@ -184,12 +186,26 @@ admin.post('/puzzles', requireAuth, async (c) => {
 			return c.json({ error: 'bad_request', message: 'Piece count is required' }, 400);
 		}
 
-		const pieceCount = parseInt(pieceCountStr.toString(), 10);
-		if (!isValidPieceCount(pieceCount)) {
+		const aspectRatio =
+			typeof aspectRatioStr === 'string' && aspectRatioStr.trim().length > 0
+				? aspectRatioStr.trim()
+				: DEFAULT_PUZZLE_ASPECT_RATIO;
+		if (!isPuzzleAspectRatio(aspectRatio)) {
 			return c.json(
 				{
 					error: 'bad_request',
-					message: 'Invalid piece count. Allowed: 9, 16, 25, 36, 49, 64, 100'
+					message: 'Invalid aspect ratio. Allowed: 1:1, 4:3, 3:4'
+				},
+				400
+			);
+		}
+
+		const pieceCount = Number(pieceCountStr.toString());
+		if (!Number.isInteger(pieceCount) || !isValidPieceCount(pieceCount, aspectRatio)) {
+			return c.json(
+				{
+					error: 'bad_request',
+					message: `Invalid piece count for ${aspectRatio}`
 				},
 				400
 			);
@@ -249,6 +265,7 @@ admin.post('/puzzles', requireAuth, async (c) => {
 			id,
 			name: trimmedName,
 			pieceCount,
+			aspectRatio,
 			imageBuffer,
 			outputDir: `${DATA_DIR}/puzzles`
 		});

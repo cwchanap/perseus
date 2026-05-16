@@ -3,8 +3,8 @@
 // Do not add new types here — use @perseus/types instead.
 
 import { PUZZLE_CATEGORIES } from '@perseus/types';
-import type { PuzzleCategory } from '@perseus/types';
-export type { PuzzleCategory };
+import type { PuzzleCategory, PuzzleAspectRatio } from '@perseus/types';
+export type { PuzzleCategory, PuzzleAspectRatio };
 export { PUZZLE_CATEGORIES };
 
 export type EdgeType = 'flat' | 'tab' | 'blank';
@@ -28,6 +28,7 @@ export interface PuzzlePiece {
 export interface Puzzle {
 	id: string;
 	name: string;
+	aspectRatio?: PuzzleAspectRatio;
 	pieceCount: number;
 	gridCols: number;
 	gridRows: number;
@@ -43,6 +44,7 @@ export interface PuzzleSummary {
 	name: string;
 	pieceCount: number;
 	category?: PuzzleCategory;
+	aspectRatio?: PuzzleAspectRatio;
 }
 
 export interface AdminSession {
@@ -81,8 +83,10 @@ export interface ErrorResponse {
 // Allowed piece counts for puzzle creation
 // DEPRECATED: This is for the old Bun-based dev server only.
 // Note: 225 (15x15) is preserved for compatibility during migration from @perseus/types DEFAULT_PIECE_COUNT
-export const ALLOWED_PIECE_COUNTS = [9, 16, 25, 36, 49, 64, 100, 225] as const;
-export type AllowedPieceCount = (typeof ALLOWED_PIECE_COUNTS)[number];
+export const ALLOWED_PIECE_COUNTS = [
+	4, 9, 12, 16, 25, 36, 48, 49, 64, 81, 100, 108, 121, 144, 169, 192, 196, 225
+] as const;
+export type AllowedPieceCount = number;
 
 // File upload constraints
 export const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB

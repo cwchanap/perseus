@@ -4,6 +4,27 @@
 
 import type { EdgeType } from './index';
 
+export const PUZZLE_ASPECT_RATIOS = ['1:1', '4:3', '3:4'] as const;
+
+export type PuzzleAspectRatio = (typeof PUZZLE_ASPECT_RATIOS)[number];
+
+export const DEFAULT_PUZZLE_ASPECT_RATIO: PuzzleAspectRatio = '1:1';
+
+interface BaseGrid {
+	rows: number;
+	cols: number;
+}
+
+const BASE_GRIDS: Record<PuzzleAspectRatio, BaseGrid> = {
+	'1:1': { rows: 1, cols: 1 },
+	'4:3': { rows: 3, cols: 4 },
+	'3:4': { rows: 4, cols: 3 }
+};
+
+export function isPuzzleAspectRatio(value: unknown): value is PuzzleAspectRatio {
+	return typeof value === 'string' && (PUZZLE_ASPECT_RATIOS as readonly string[]).includes(value);
+}
+
 /**
  * Find the most square-like grid for a given piece count.
  * Picks the largest factor of `pieceCount` that is <= sqrt(pieceCount) as the row count,
@@ -23,6 +44,58 @@ export function getGridDimensions(pieceCount: number): { rows: number; cols: num
 
 	// Unreachable: the loop always returns at i===1 since pieceCount % 1 === 0.
 	return { rows: 1, cols: pieceCount };
+}
+
+export function getGridDimensionsForAspectRatio(
+	pieceCount: number,
+	aspectRatio: PuzzleAspectRatio
+): { rows: number; cols: number } {
+	if (!Number.isInteger(pieceCount) || pieceCount <= 0) {
+		return { rows: 0, cols: 0 };
+	}
+
+	const base = BASE_GRIDS[aspectRatio];
+	const basePieceCount = base.rows * base.cols;
+	if (pieceCount % basePieceCount !== 0) {
+		return { rows: 0, cols: 0 };
+	}
+
+	const scaleSquared = pieceCount / basePieceCount;
+	const scale = Math.sqrt(scaleSquared);
+	if (!Number.isInteger(scale)) {
+		return { rows: 0, cols: 0 };
+	}
+
+	return {
+		rows: base.rows * scale,
+		cols: base.cols * scale
+	};
+}
+
+export function isValidPieceCountForAspectRatio(
+	pieceCount: number,
+	aspectRatio: PuzzleAspectRatio
+): boolean {
+	const { rows, cols } = getGridDimensionsForAspectRatio(pieceCount, aspectRatio);
+	return rows > 0 && cols > 0 && rows * cols === pieceCount;
+}
+
+export function getAllowedPieceCountsForAspectRatio(
+	aspectRatio: PuzzleAspectRatio,
+	minPieces: number,
+	maxPieces: number
+): number[] {
+	const base = BASE_GRIDS[aspectRatio];
+	const basePieceCount = base.rows * base.cols;
+	const counts: number[] = [];
+
+	for (let scale = 1; ; scale += 1) {
+		const count = basePieceCount * scale * scale;
+		if (count > maxPieces) break;
+		if (count >= minPieces) counts.push(count);
+	}
+
+	return counts;
 }
 
 function opposite(edge: EdgeType): EdgeType {

@@ -20,6 +20,7 @@ import {
 import {
 	generateJigsawSvgMask,
 	getGridDimensions,
+	getGridDimensionsForAspectRatio,
 	getTopEdge,
 	getRightEdge,
 	getBottomEdge,
@@ -299,7 +300,9 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 			});
 
 			// Step 4: Generate pieces
-			const { rows, cols } = getGridDimensions(metadata.pieceCount);
+			const { rows, cols } = metadata.aspectRatio
+				? getGridDimensionsForAspectRatio(metadata.pieceCount, metadata.aspectRatio)
+				: getGridDimensions(metadata.pieceCount);
 			const totalPieces = metadata.pieceCount;
 
 			// Process pieces in batches (rows) to checkpoint progress

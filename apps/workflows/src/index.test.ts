@@ -767,6 +767,56 @@ describe('Workflow Execution - Multi-piece Grid', () => {
 		expect(batchSizes).toEqual([3, 3]);
 	});
 
+	it('uses aspect-ratio metadata to generate portrait grids', async () => {
+		const portraitMetadata: PuzzleMetadata = {
+			...sampleMetadata,
+			pieceCount: 48,
+			gridCols: 6,
+			gridRows: 8,
+			aspectRatio: '3:4'
+		};
+		const puzzleId = portraitMetadata.id;
+
+		const { namespace, stub } = createMockDurableObjectNamespace(() => {
+			return new Response(JSON.stringify({ success: true }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' }
+			});
+		});
+		const env = {
+			PUZZLES_BUCKET: createMockBucket(new ArrayBuffer(8)),
+			PUZZLE_METADATA: createMockKv(portraitMetadata),
+			PUZZLE_METADATA_DO: namespace as unknown as DurableObjectNamespace,
+			PUZZLE_WORKFLOW: {} as Workflow
+		} as unknown as Env;
+
+		const workflow = new TestWorkflow();
+		workflow.setEnv(env);
+
+		const event: WorkflowEvent<WorkflowParams> = {
+			payload: { puzzleId },
+			timestamp: new Date(),
+			instanceId: 'test-instance'
+		};
+
+		await expect(workflow.run(event, createMockStep())).resolves.toBeUndefined();
+
+		const batchSizes = stub.fetch.mock.calls
+			.map((c: [string, RequestInit?]) => {
+				const b = JSON.parse((c[1]?.body as string | undefined) ?? '{}');
+				return (b.updates?.pieces as unknown[] | undefined) ?? [];
+			})
+			.filter((pieces: unknown[]) => pieces.length > 0)
+			.map((pieces: unknown[]) => pieces.length);
+		const allPieces = stub.fetch.mock.calls.flatMap((c: [string, RequestInit?]) => {
+			const b = JSON.parse((c[1]?.body as string | undefined) ?? '{}');
+			return b.updates?.pieces ?? [];
+		});
+
+		expect(batchSizes).toEqual([6, 6, 6, 6, 6, 6, 6, 6]);
+		expect(allPieces).toHaveLength(48);
+	});
+
 	it('completes for a 1x7 (7-piece) puzzle where getGridDimensions falls back to 1 row', async () => {
 		// 7 is prime: getGridDimensions(7) → rows=1, cols=7
 		const sevenPieceMetadata: PuzzleMetadata = {

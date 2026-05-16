@@ -1,5 +1,15 @@
 import { describe, it, expect } from 'vitest';
-import { getGridDimensions, getTopEdge, getRightEdge, getBottomEdge, getLeftEdge } from './grid';
+import {
+	getGridDimensions,
+	getTopEdge,
+	getRightEdge,
+	getBottomEdge,
+	getLeftEdge,
+	getGridDimensionsForAspectRatio,
+	getAllowedPieceCountsForAspectRatio,
+	isValidPieceCountForAspectRatio,
+	isPuzzleAspectRatio
+} from './grid';
 
 describe('getGridDimensions', () => {
 	it('returns balanced grid for square piece counts', () => {
@@ -22,6 +32,42 @@ describe('getGridDimensions', () => {
 	it('returns {0, 0} for zero or negative counts', () => {
 		expect(getGridDimensions(0)).toEqual({ rows: 0, cols: 0 });
 		expect(getGridDimensions(-5)).toEqual({ rows: 0, cols: 0 });
+	});
+});
+
+describe('aspect-ratio grid helpers', () => {
+	it('returns square grids for 1:1 counts', () => {
+		expect(getGridDimensionsForAspectRatio(225, '1:1')).toEqual({ rows: 15, cols: 15 });
+		expect(getGridDimensionsForAspectRatio(16, '1:1')).toEqual({ rows: 4, cols: 4 });
+	});
+
+	it('returns landscape and portrait grids with square-cell ratios', () => {
+		expect(getGridDimensionsForAspectRatio(48, '4:3')).toEqual({ rows: 6, cols: 8 });
+		expect(getGridDimensionsForAspectRatio(48, '3:4')).toEqual({ rows: 8, cols: 6 });
+		expect(getGridDimensionsForAspectRatio(192, '4:3')).toEqual({ rows: 12, cols: 16 });
+		expect(getGridDimensionsForAspectRatio(192, '3:4')).toEqual({ rows: 16, cols: 12 });
+	});
+
+	it('rejects counts that do not match the selected aspect-ratio formula', () => {
+		expect(isValidPieceCountForAspectRatio(24, '1:1')).toBe(false);
+		expect(isValidPieceCountForAspectRatio(24, '4:3')).toBe(false);
+		expect(isValidPieceCountForAspectRatio(25, '4:3')).toBe(false);
+		expect(getGridDimensionsForAspectRatio(24, '3:4')).toEqual({ rows: 0, cols: 0 });
+	});
+
+	it('lists allowed counts within a bounded range', () => {
+		expect(getAllowedPieceCountsForAspectRatio('1:1', 4, 100)).toEqual([
+			4, 9, 16, 25, 36, 49, 64, 81, 100
+		]);
+		expect(getAllowedPieceCountsForAspectRatio('4:3', 4, 250)).toEqual([12, 48, 108, 192]);
+		expect(getAllowedPieceCountsForAspectRatio('3:4', 4, 100)).toEqual([12, 48]);
+	});
+
+	it('recognizes supported puzzle aspect ratios', () => {
+		expect(isPuzzleAspectRatio('1:1')).toBe(true);
+		expect(isPuzzleAspectRatio('4:3')).toBe(true);
+		expect(isPuzzleAspectRatio('3:4')).toBe(true);
+		expect(isPuzzleAspectRatio('16:9')).toBe(false);
 	});
 });
 

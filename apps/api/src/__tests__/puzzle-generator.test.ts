@@ -116,19 +116,23 @@ afterAll(async () => {
 
 describe('ALLOWED_PIECE_COUNTS', () => {
 	it('should contain expected piece counts', () => {
+		expect(ALLOWED_PIECE_COUNTS).toContain(4);
 		expect(ALLOWED_PIECE_COUNTS).toContain(9);
+		expect(ALLOWED_PIECE_COUNTS).toContain(12);
 		expect(ALLOWED_PIECE_COUNTS).toContain(16);
 		expect(ALLOWED_PIECE_COUNTS).toContain(25);
 		expect(ALLOWED_PIECE_COUNTS).toContain(36);
+		expect(ALLOWED_PIECE_COUNTS).toContain(48);
 		expect(ALLOWED_PIECE_COUNTS).toContain(49);
 		expect(ALLOWED_PIECE_COUNTS).toContain(64);
 		expect(ALLOWED_PIECE_COUNTS).toContain(100);
+		expect(ALLOWED_PIECE_COUNTS).toContain(192);
 	});
 
-	it('should only contain perfect squares', () => {
+	it('should only contain counts within the generation maximum', () => {
 		for (const count of ALLOWED_PIECE_COUNTS) {
-			const sqrt = Math.sqrt(count);
-			expect(Number.isInteger(sqrt)).toBe(true);
+			expect(count).toBeGreaterThanOrEqual(4);
+			expect(count).toBeLessThanOrEqual(250);
 		}
 	});
 });
@@ -144,9 +148,16 @@ describe('isValidPieceCount', () => {
 		expect(isValidPieceCount(100)).toBe(true);
 	});
 
+	it('should return true for valid aspect-ratio counts', () => {
+		expect(isValidPieceCount(48, '4:3')).toBe(true);
+		expect(isValidPieceCount(48, '3:4')).toBe(true);
+		expect(isValidPieceCount(192, '4:3')).toBe(true);
+	});
+
 	it('should return false for invalid piece counts', () => {
 		expect(isValidPieceCount(0)).toBe(false);
 		expect(isValidPieceCount(1)).toBe(false);
+		expect(isValidPieceCount(12)).toBe(false);
 		expect(isValidPieceCount(10)).toBe(false);
 		expect(isValidPieceCount(15)).toBe(false);
 		expect(isValidPieceCount(50)).toBe(false);
@@ -205,6 +216,25 @@ describe('generatePuzzle', () => {
 		expect(result.puzzle.gridCols).toBe(4);
 		expect(result.puzzle.gridRows).toBe(4);
 		expect(result.puzzle.pieces.length).toBe(16);
+	});
+
+	it('should generate portrait grid metadata when an aspect ratio is selected', async () => {
+		const imageBuffer = await createTestImage();
+
+		const result = await generatePuzzle({
+			id: 'test-portrait-pieces',
+			name: 'Test Portrait Pieces',
+			pieceCount: 12,
+			aspectRatio: '3:4',
+			imageBuffer,
+			outputDir: TEST_OUTPUT_DIR
+		});
+
+		expect(result.puzzle.aspectRatio).toBe('3:4');
+		expect(result.puzzle.pieceCount).toBe(12);
+		expect(result.puzzle.gridCols).toBe(3);
+		expect(result.puzzle.gridRows).toBe(4);
+		expect(result.puzzle.pieces.length).toBe(12);
 	});
 
 	it('should generate correct number of piece files', async () => {

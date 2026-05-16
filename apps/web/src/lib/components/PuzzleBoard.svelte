@@ -28,9 +28,6 @@
 
 	let dragOverCell: { x: number; y: number } | null = $state(null);
 	let currentSelectedId = $state<number | null>(null);
-	const cellAspectRatio = $derived(
-		`${puzzle.imageWidth / puzzle.gridCols} / ${puzzle.imageHeight / puzzle.gridRows}`
-	);
 
 	const unsubscribeSelection = selectedPieceId.subscribe((value) => {
 		currentSelectedId = value;
@@ -130,7 +127,7 @@
 	style="
 		grid-template-columns: repeat({puzzle.gridCols}, 1fr);
 		grid-template-rows: repeat({puzzle.gridRows}, 1fr);
-		aspect-ratio: {puzzle.imageWidth} / {puzzle.imageHeight};
+		aspect-ratio: {puzzle.gridCols} / {puzzle.gridRows};
 	"
 	data-testid="puzzle-board"
 	onpointerdown={handleBoardPointerDown}
@@ -153,7 +150,7 @@
 				role="button"
 				tabindex="0"
 				aria-label="Drop zone at position {x}, {y}"
-				style="aspect-ratio: {cellAspectRatio};"
+				style="aspect-ratio: 1 / 1;"
 			>
 				{#if isHintTarget(x, y)}
 					<div

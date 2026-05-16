@@ -1,4 +1,4 @@
-import type { EdgeConfig } from '@perseus/types';
+import type { EdgeConfig, PuzzleAspectRatio } from '@perseus/types';
 
 export interface QuickPieceMeta {
 	id: number; // row * cols + col
@@ -10,6 +10,7 @@ export interface QuickPieceMeta {
 export interface StoredQuickPuzzle {
 	id: string; // 'q-' + crypto.randomUUID()
 	name: string; // derived from filename, max 80 chars
+	aspectRatio?: PuzzleAspectRatio;
 	pieceCount: number;
 	gridRows: number;
 	gridCols: number;
@@ -54,6 +55,7 @@ export const QUICK_PUZZLE_MAX_DIMENSION = 1200; // longest side in px after down
 export const QUICK_PUZZLE_JPEG_QUALITY = 0.8;
 export const QUICK_PUZZLE_MIN_PIECES = 4;
 export const QUICK_PUZZLE_MAX_PIECES = 100;
-export const QUICK_PUZZLE_DEFAULT_PIECES = 24;
+export const QUICK_PUZZLE_DEFAULT_ASPECT_RATIO: PuzzleAspectRatio = '1:1';
+export const QUICK_PUZZLE_DEFAULT_PIECES = 16;
 export const QUICK_PUZZLE_ID_PREFIX = 'q-';
 export const QUICK_PUZZLE_ALLOWED_MIMES = ['image/jpeg', 'image/png', 'image/webp'] as const;

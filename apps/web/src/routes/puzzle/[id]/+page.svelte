@@ -24,6 +24,10 @@
 	import { createHistory } from '$lib/services/gameplay/history';
 	import { getHintPieceId } from '$lib/services/gameplay/hints';
 	import {
+		getResponsivePuzzleBoardMetrics,
+		type ResponsivePuzzleBoardMetrics
+	} from '$lib/services/puzzleLayout';
+	import {
 		rotateClockwise,
 		generateRandomRotations,
 		isUpright
@@ -67,6 +71,8 @@
 	let pendingViewportReset = $state(false);
 	let referencePointerId = $state<number | null>(null);
 	let referenceHoldSource = $state<'pointer' | 'keyboard' | null>(null);
+	let viewportWidth = $state(typeof window !== 'undefined' ? window.innerWidth : 1280);
+	let viewportHeight = $state(typeof window !== 'undefined' ? window.innerHeight : 900);
 
 	const timer = createTimerStore();
 	let timerState: TimerState = $state({ elapsed: 0, running: false });
@@ -105,6 +111,7 @@
 		window.addEventListener('pointercancel', handleWindowPointerUp, true);
 		window.addEventListener('keydown', handleWindowKeyDown);
 		window.addEventListener('blur', handleWindowBlur);
+		window.addEventListener('resize', handleWindowResize);
 	}
 
 	onDestroy(() => {
@@ -134,6 +141,7 @@
 			window.removeEventListener('pointercancel', handleWindowPointerUp, true);
 			window.removeEventListener('keydown', handleWindowKeyDown);
 			window.removeEventListener('blur', handleWindowBlur);
+			window.removeEventListener('resize', handleWindowResize);
 		}
 
 		activeLoadRequestId += 1;
@@ -150,6 +158,14 @@
 		() => new Set(placedPieces.map((placement) => placement.pieceId))
 	);
 	const canPanBoard = $derived(zoom > minZoom + 0.001);
+	const boardMetrics: ResponsivePuzzleBoardMetrics | null = $derived(
+		puzzle
+			? getResponsivePuzzleBoardMetrics(puzzle, {
+					width: viewportWidth,
+					height: viewportHeight
+				})
+			: null
+	);
 
 	const piecesMap = $derived.by(() => {
 		const map = new SvelteMap<number, TPuzzlePiece>();
@@ -214,6 +230,12 @@
 		return () => observer.disconnect();
 	});
 
+	function handleWindowResize() {
+		viewportWidth = window.innerWidth;
+		viewportHeight = window.innerHeight;
+		recomputeZoomBounds();
+	}
+
 	function clonePlacedPieces(pieces: PlacedPiece[]): PlacedPiece[] {
 		return pieces.map((piece) => ({ ...piece }));
 	}
@@ -249,8 +271,10 @@
 
 		const viewportWidth = boardViewportElement.clientWidth;
 		const viewportHeight = boardViewportElement.clientHeight;
-		const scaledWidth = puzzle.imageWidth * scale;
-		const scaledHeight = puzzle.imageHeight * scale;
+		const boardWidth = boardMetrics?.boardWidth ?? puzzle.imageWidth;
+		const boardHeight = boardMetrics?.boardHeight ?? puzzle.imageHeight;
+		const scaledWidth = boardWidth * scale;
+		const scaledHeight = boardHeight * scale;
 		const maxOffsetX = Math.max(0, (scaledWidth - viewportWidth) / 2);
 		const maxOffsetY = Math.max(0, (scaledHeight - viewportHeight) / 2);
 
@@ -268,14 +292,16 @@
 		const viewportWidth = boardViewportElement.clientWidth;
 		const viewportHeight = boardViewportElement.clientHeight;
 		if (viewportWidth === 0 || viewportHeight === 0) return 1;
-		if (puzzle.imageWidth <= 0 || puzzle.imageHeight <= 0) {
+		const boardWidth = boardMetrics?.boardWidth ?? puzzle.imageWidth;
+		const boardHeight = boardMetrics?.boardHeight ?? puzzle.imageHeight;
+		if (boardWidth <= 0 || boardHeight <= 0) {
 			console.error(
-				`Puzzle ${puzzle.id} has invalid dimensions: ${puzzle.imageWidth}x${puzzle.imageHeight}`
+				`Puzzle ${puzzle.id} has invalid board dimensions: ${boardWidth}x${boardHeight}`
 			);
 			return 1;
 		}
 
-		return calculateFitZoom(puzzle.imageWidth, puzzle.imageHeight, viewportWidth, viewportHeight);
+		return Math.min(1, calculateFitZoom(boardWidth, boardHeight, viewportWidth, viewportHeight, 1));
 	}
 
 	function updateHistoryControls() {
@@ -895,11 +921,18 @@
 			</div>
 		{:else if puzzle}
 			{@const currentPuzzle = puzzle}
+			{@const currentBoardMetrics = boardMetrics}
 			<ReferenceOverlay
 				imageUrl={puzzleSource?.resolveReferenceImage() ?? null}
 				active={showReferenceOverlay}
 			/>
-			<div class="game-layout">
+			<div
+				class="game-layout"
+				data-board-tier={currentBoardMetrics?.tier}
+				style={currentBoardMetrics
+					? `--board-width: ${currentBoardMetrics.boardWidth}px; --board-height: ${currentBoardMetrics.boardHeight}px; --board-cell-size: ${currentBoardMetrics.cellSize}px; --piece-slot-size: ${currentBoardMetrics.pieceSlotSize}px;`
+					: ''}
+			>
 				<!-- Board panel -->
 				<div class="board-panel">
 					<div class="panel-header">
@@ -936,7 +969,12 @@
 							data-testid="board-viewport"
 						>
 							<ZoomableBoardFrame scale={zoom} {panX} {panY} {isPanning} onWheel={handleBoardWheel}>
-								<div class="board-canvas mx-auto" style="width: {currentPuzzle.imageWidth}px;">
+								<div
+									class="board-canvas mx-auto"
+									style={currentBoardMetrics
+										? `--board-width: ${currentBoardMetrics.boardWidth}px; --board-height: ${currentBoardMetrics.boardHeight}px; --board-cell-size: ${currentBoardMetrics.cellSize}px; width: var(--board-width); height: var(--board-height);`
+										: `width: ${currentPuzzle.imageWidth}px;`}
+								>
 									<PuzzleBoard
 										puzzle={currentPuzzle}
 										{placedPieces}
@@ -970,6 +1008,9 @@
 												? 'rejected animate-shake border-(--hot) shadow-[0_0_12px_var(--hot-glow)]'
 												: ''
 									}`}
+									style={currentBoardMetrics
+										? `--piece-slot-size: ${currentBoardMetrics.pieceSlotSize}px;`
+										: ''}
 									data-testid={`piece-slot-${piece.id}`}
 								>
 									<PuzzlePiece
@@ -1246,16 +1287,26 @@
 
 	/* ===== GAME LAYOUT ===== */
 	.game-layout {
+		--piece-slot-size: 4rem;
+		--inventory-gap: 0.375rem;
+		--inventory-pad: 0.875rem;
 		display: grid;
 		grid-template-columns: 1fr;
 		gap: 1.25rem;
-		max-width: 80rem;
+		max-width: min(96rem, calc(100vw - 2rem));
 		margin: 0 auto;
 	}
 
 	@media (min-width: 1024px) {
 		.game-layout {
-			grid-template-columns: 1fr 280px;
+			grid-template-columns:
+				minmax(0, 1fr)
+				minmax(
+					17.5rem,
+					calc(
+						var(--piece-slot-size) * 3 + var(--inventory-gap) * 2 + var(--inventory-pad) * 2 + 2px
+					)
+				);
 		}
 	}
 
@@ -1283,8 +1334,14 @@
 	}
 
 	.board-wrap {
-		padding: 1rem;
+		padding: clamp(0.75rem, 2vw, 1.25rem);
 		overflow: auto;
+	}
+
+	.board-canvas {
+		width: var(--board-width);
+		height: var(--board-height);
+		max-width: 100%;
 	}
 
 	/* Inventory panel */
@@ -1304,17 +1361,30 @@
 
 	.pieces-grid {
 		display: grid;
-		grid-template-columns: repeat(3, 1fr);
-		gap: 0.375rem;
-		padding: 0.875rem;
+		grid-template-columns: repeat(
+			auto-fill,
+			minmax(var(--piece-slot-size), var(--piece-slot-size))
+		);
+		justify-content: center;
+		align-content: start;
+		gap: var(--inventory-gap);
+		padding: var(--inventory-pad);
 		overflow-y: auto;
 		flex: 1;
 	}
 
 	@media (min-width: 640px) and (max-width: 1023px) {
 		.pieces-grid {
-			grid-template-columns: repeat(4, 1fr);
+			grid-template-columns: repeat(
+				auto-fill,
+				minmax(var(--piece-slot-size), var(--piece-slot-size))
+			);
 		}
+	}
+
+	.piece-slot {
+		width: var(--piece-slot-size);
+		height: var(--piece-slot-size);
 	}
 
 	.complete-msg {

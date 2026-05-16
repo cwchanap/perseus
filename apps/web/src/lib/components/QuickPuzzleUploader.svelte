@@ -1,6 +1,12 @@
 <script lang="ts">
 	import {
+		getAllowedPieceCountsForAspectRatio,
+		isPuzzleAspectRatio,
+		type PuzzleAspectRatio
+	} from '@perseus/types';
+	import {
 		QUICK_PUZZLE_ALLOWED_MIMES,
+		QUICK_PUZZLE_DEFAULT_ASPECT_RATIO,
 		QUICK_PUZZLE_DEFAULT_PIECES,
 		QUICK_PUZZLE_MAX_PIECES,
 		QUICK_PUZZLE_MAX_UPLOAD_BYTES,
@@ -9,6 +15,7 @@
 
 	interface SubmitArgs {
 		file: File;
+		aspectRatio: PuzzleAspectRatio;
 		pieceCount: number;
 		name: string;
 	}
@@ -23,12 +30,27 @@
 
 	let file: File | null = $state(null);
 	let name = $state('');
+	let aspectRatio = $state<PuzzleAspectRatio>(QUICK_PUZZLE_DEFAULT_ASPECT_RATIO);
 	let pieceCount = $state(QUICK_PUZZLE_DEFAULT_PIECES);
 	let error = $state<string | null>(null);
-	const pieceRangeMessage = [
-		`Choose between ${QUICK_PUZZLE_MIN_PIECES}`,
-		`and ${QUICK_PUZZLE_MAX_PIECES} pieces.`
-	].join(' ');
+	const defaultPiecesByAspect: Record<PuzzleAspectRatio, number> = {
+		'1:1': QUICK_PUZZLE_DEFAULT_PIECES,
+		'4:3': 48,
+		'3:4': 48
+	};
+	const aspectLabels: Record<PuzzleAspectRatio, string> = {
+		'1:1': '1:1 Square',
+		'4:3': '4:3 Landscape',
+		'3:4': '3:4 Portrait'
+	};
+	const allowedPieceCounts = $derived(
+		getAllowedPieceCountsForAspectRatio(
+			aspectRatio,
+			QUICK_PUZZLE_MIN_PIECES,
+			QUICK_PUZZLE_MAX_PIECES
+		)
+	);
+	const pieceRangeMessage = $derived(`Choose a valid ${aspectRatio} piece count.`);
 
 	function deriveName(filename: string): string {
 		const dot = filename.lastIndexOf('.');
@@ -62,10 +84,25 @@
 	}
 
 	function handlePieceInput(event: Event) {
-		const target = event.target as HTMLInputElement;
+		const target = event.target as HTMLSelectElement;
 		const raw = target.value;
 		const parsed = Number.parseInt(raw, 10);
 		pieceCount = Number.isFinite(parsed) ? parsed : 0;
+	}
+
+	function handleAspectChange(event: Event) {
+		const target = event.target as HTMLSelectElement;
+		if (!isPuzzleAspectRatio(target.value)) return;
+
+		aspectRatio = target.value;
+		const nextAllowed = getAllowedPieceCountsForAspectRatio(
+			aspectRatio,
+			QUICK_PUZZLE_MIN_PIECES,
+			QUICK_PUZZLE_MAX_PIECES
+		);
+		if (!nextAllowed.includes(pieceCount)) {
+			pieceCount = defaultPiecesByAspect[aspectRatio] ?? nextAllowed[0] ?? 0;
+		}
 	}
 
 	function handleSubmit(event: Event) {
@@ -79,13 +116,14 @@
 		if (
 			!Number.isInteger(pieceCount) ||
 			pieceCount < QUICK_PUZZLE_MIN_PIECES ||
-			pieceCount > QUICK_PUZZLE_MAX_PIECES
+			pieceCount > QUICK_PUZZLE_MAX_PIECES ||
+			!allowedPieceCounts.includes(pieceCount)
 		) {
 			error = pieceRangeMessage;
 			return;
 		}
 
-		onSubmit({ file, pieceCount, name: name.trim() || deriveName(file.name) });
+		onSubmit({ file, aspectRatio, pieceCount, name: name.trim() || deriveName(file.name) });
 	}
 
 	const progressPct = $derived(
@@ -124,17 +162,33 @@
 	</label>
 
 	<label class="block text-sm">
-		<span class="mb-1 block text-(--text-2)">Pieces</span>
-		<input
-			type="number"
+		<span class="mb-1 block text-(--text-2)">Aspect Ratio</span>
+		<select
 			class="w-full rounded border border-(--border) bg-(--bg-1) p-2 text-(--text-0)"
-			min={QUICK_PUZZLE_MIN_PIECES}
-			max={QUICK_PUZZLE_MAX_PIECES}
+			value={aspectRatio}
+			onchange={handleAspectChange}
+			disabled={busy}
+			data-testid="quick-uploader-aspect"
+		>
+			{#each Object.entries(aspectLabels) as [value, label] (value)}
+				<option {value}>{label}</option>
+			{/each}
+		</select>
+	</label>
+
+	<label class="block text-sm">
+		<span class="mb-1 block text-(--text-2)">Pieces</span>
+		<select
+			class="w-full rounded border border-(--border) bg-(--bg-1) p-2 text-(--text-0)"
 			value={pieceCount}
 			oninput={handlePieceInput}
 			disabled={busy}
 			data-testid="quick-uploader-pieces"
-		/>
+		>
+			{#each allowedPieceCounts as count (count)}
+				<option value={count}>{count}</option>
+			{/each}
+		</select>
 	</label>
 
 	{#if error}

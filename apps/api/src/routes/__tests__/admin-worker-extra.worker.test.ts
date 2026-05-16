@@ -213,10 +213,11 @@ describe('Admin Worker - POST /puzzles cleanup failure branches', () => {
 		expect(body.message).toBe('Piece count is required');
 	});
 
-	it('returns 400 when pieceCount is a valid integer but not DEFAULT_PIECE_COUNT (line 261)', async () => {
+	it('returns 400 when pieceCount does not match the selected aspect ratio', async () => {
 		const formData = new FormData();
 		formData.append('name', 'Test Puzzle');
-		formData.append('pieceCount', '100'); // Valid integer but not 225
+		formData.append('aspectRatio', '4:3');
+		formData.append('pieceCount', '100');
 		const blob = new Blob([PNG_HEADER], { type: 'image/png' });
 		formData.append('image', blob, 'test.png');
 

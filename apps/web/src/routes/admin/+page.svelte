@@ -11,10 +11,34 @@
 	} from '$lib/services/api';
 	import { clearProgress } from '$lib/services/progress';
 	import { PUZZLE_CATEGORIES, type PuzzleCategory } from '$lib/constants/categories';
+	import { normalizePuzzleImageFile } from '$lib/services/puzzleImage';
 	import type { PuzzleSummary } from '$lib/types/puzzle';
 	import { resolve } from '$app/paths';
+	import {
+		DEFAULT_PUZZLE_ASPECT_RATIO,
+		MAX_IMAGE_DIMENSION,
+		getAllowedPieceCountsForAspectRatio,
+		isPuzzleAspectRatio,
+		type PuzzleAspectRatio
+	} from '@perseus/types';
 
-	const ALLOWED_PIECE_COUNT = 225; // 15x15 grid
+	const MIN_ADMIN_PIECES = 4;
+	const MAX_ADMIN_PIECES = 250;
+	const ADMIN_DEFAULT_PIECES_BY_ASPECT: Record<PuzzleAspectRatio, number> = {
+		'1:1': 225,
+		'4:3': 192,
+		'3:4': 192
+	};
+	const ADMIN_ASPECT_LABELS: Record<PuzzleAspectRatio, string> = {
+		'1:1': '1:1 Square',
+		'4:3': '4:3 Landscape',
+		'3:4': '3:4 Portrait'
+	};
+	const ADMIN_ASPECT_STYLE: Record<PuzzleAspectRatio, string> = {
+		'1:1': 'aspect-ratio: 1 / 1;',
+		'4:3': 'aspect-ratio: 4 / 3;',
+		'3:4': 'aspect-ratio: 3 / 4;'
+	};
 
 	let loggingOut = $state(false);
 	let logoutError: string | null = $state(null);
@@ -26,7 +50,8 @@
 	// Form state
 	let name = $state('');
 	let category: PuzzleCategory | '' = $state('');
-	let pieceCount = $state(ALLOWED_PIECE_COUNT);
+	let aspectRatio = $state<PuzzleAspectRatio>(DEFAULT_PUZZLE_ASPECT_RATIO);
+	let pieceCount = $state(ADMIN_DEFAULT_PIECES_BY_ASPECT[DEFAULT_PUZZLE_ASPECT_RATIO]);
 	let imageFile: File | null = $state(null);
 	let imagePreview: string | null = $state(null);
 	let imageInput: HTMLInputElement | null = $state(null);
@@ -41,6 +66,10 @@
 	// Polling interval for processing puzzles
 	let pollInterval: ReturnType<typeof setInterval> | null = null;
 	let mounted = false;
+	const allowedPieceCounts = $derived(
+		getAllowedPieceCountsForAspectRatio(aspectRatio, MIN_ADMIN_PIECES, MAX_ADMIN_PIECES)
+	);
+	const previewAspectStyle = $derived(ADMIN_ASPECT_STYLE[aspectRatio]);
 
 	onMount(async () => {
 		mounted = true;
@@ -155,10 +184,32 @@
 		}
 	}
 
+	function handleAspectChange(event: Event) {
+		const input = event.target as HTMLSelectElement;
+		if (!isPuzzleAspectRatio(input.value)) return;
+
+		aspectRatio = input.value;
+		const nextAllowed = getAllowedPieceCountsForAspectRatio(
+			aspectRatio,
+			MIN_ADMIN_PIECES,
+			MAX_ADMIN_PIECES
+		);
+		if (!nextAllowed.includes(pieceCount)) {
+			pieceCount = ADMIN_DEFAULT_PIECES_BY_ASPECT[aspectRatio] ?? nextAllowed[0] ?? 0;
+		}
+	}
+
+	function handlePieceCountChange(event: Event) {
+		const input = event.target as HTMLSelectElement;
+		const parsed = Number.parseInt(input.value, 10);
+		pieceCount = Number.isFinite(parsed) ? parsed : 0;
+	}
+
 	function clearForm() {
 		name = '';
 		category = '';
-		pieceCount = ALLOWED_PIECE_COUNT;
+		aspectRatio = DEFAULT_PUZZLE_ASPECT_RATIO;
+		pieceCount = ADMIN_DEFAULT_PIECES_BY_ASPECT[DEFAULT_PUZZLE_ASPECT_RATIO];
 		clearSelectedImage();
 		formError = null;
 	}
@@ -178,10 +229,28 @@
 			return;
 		}
 
+		if (!allowedPieceCounts.includes(pieceCount)) {
+			formError = `Choose a valid ${aspectRatio} piece count`;
+			return;
+		}
+
 		creating = true;
 
 		try {
-			await createPuzzle(name.trim(), pieceCount, imageFile, category || undefined);
+			const normalizedImage = await normalizePuzzleImageFile(imageFile, {
+				aspectRatio,
+				pieceCount,
+				maxDimension: MAX_IMAGE_DIMENSION,
+				type: 'image/jpeg',
+				quality: 0.88
+			});
+			await createPuzzle(
+				name.trim(),
+				pieceCount,
+				normalizedImage,
+				category || undefined,
+				aspectRatio
+			);
 			successMessage = 'Puzzle creation started! It will appear below once processing begins.';
 			clearForm();
 			await loadPuzzles();
@@ -194,6 +263,8 @@
 			}, 3000);
 		} catch (e) {
 			if (e instanceof ApiError) {
+				formError = e.message;
+			} else if (e instanceof Error) {
 				formError = e.message;
 			} else {
 				formError = 'Failed to create puzzle';
@@ -349,13 +420,44 @@ focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
 						<span
 							class="text-[0.55rem] font-(--font-display) font-semibold tracking-[0.2em] text-(--text-2)"
 						>
+							ASPECT RATIO
+						</span>
+						<select
+							value={aspectRatio}
+							onchange={handleAspectChange}
+							disabled={creating}
+							class="w-full appearance-none border border-(--border) bg-(--bg-0) px-3.5 py-2.5
+text-[0.8rem] font-(--font-mono) text-(--text-0)
+transition-[border-color,box-shadow] duration-150 focus:border-(--accent)
+focus:[box-shadow:0_0_12px_var(--accent-glow)] focus:outline-none
+disabled:cursor-not-allowed disabled:opacity-50"
+						>
+							{#each Object.entries(ADMIN_ASPECT_LABELS) as [value, label] (value)}
+								<option {value}>{label}</option>
+							{/each}
+						</select>
+					</div>
+
+					<div class="flex flex-col gap-1.5">
+						<span
+							class="text-[0.55rem] font-(--font-display) font-semibold tracking-[0.2em] text-(--text-2)"
+						>
 							PIECE COUNT
 						</span>
-						<div
-							class="border border-(--border) bg-(--bg-0) px-3.5 py-2.5 text-[0.75rem] font-(--font-mono) text-(--text-2)"
+						<select
+							value={pieceCount}
+							onchange={handlePieceCountChange}
+							disabled={creating}
+							class="w-full appearance-none border border-(--border) bg-(--bg-0) px-3.5 py-2.5
+text-[0.8rem] font-(--font-mono) text-(--text-0)
+transition-[border-color,box-shadow] duration-150 focus:border-(--accent)
+focus:[box-shadow:0_0_12px_var(--accent-glow)] focus:outline-none
+disabled:cursor-not-allowed disabled:opacity-50"
 						>
-							{ALLOWED_PIECE_COUNT} pieces (15×15 grid)
-						</div>
+							{#each allowedPieceCounts as count (count)}
+								<option value={count}>{count} pieces</option>
+							{/each}
+						</select>
 					</div>
 
 					<div class="flex flex-col gap-1.5">
@@ -395,8 +497,8 @@ disabled:cursor-not-allowed disabled:opacity-50"
 							class="border border-dashed border-(--border-bright) bg-(--bg-0) p-6 transition-colors duration-150 hover:border-(--accent-dim)"
 						>
 							{#if imagePreview}
-								<div class="relative flex justify-center">
-									<img src={imagePreview} alt="Preview" class="max-h-48 object-contain" />
+								<div class="relative mx-auto w-full max-w-80" style={previewAspectStyle}>
+									<img src={imagePreview} alt="Preview" class="h-full w-full object-cover" />
 									<button
 										type="button"
 										onclick={clearSelectedImage}
