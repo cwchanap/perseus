@@ -8,6 +8,7 @@ import type {
 	DeletePuzzleResponse,
 	PuzzleCategory
 } from '$lib/types/puzzle';
+import type { PuzzleAspectRatio } from '@perseus/types';
 // NOTE: This app is built with adapter-static, so public env vars are embedded at build time.
 // Set PUBLIC_API_BASE before building to target a different API.
 import { PUBLIC_API_BASE } from '$env/static/public';
@@ -205,11 +206,15 @@ export async function createPuzzle(
 	name: string,
 	pieceCount: number,
 	image: File,
-	category?: PuzzleCategory
+	category?: PuzzleCategory,
+	aspectRatio?: PuzzleAspectRatio
 ): Promise<PuzzleMetadata> {
 	const formData = new FormData();
 	formData.append('name', name);
 	formData.append('pieceCount', pieceCount.toString());
+	if (aspectRatio) {
+		formData.append('aspectRatio', aspectRatio);
+	}
 	formData.append('image', image);
 	if (category) {
 		formData.append('category', category);

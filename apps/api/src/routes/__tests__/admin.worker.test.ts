@@ -362,6 +362,50 @@ describe('Admin Routes - Workflow Trigger Cleanup', () => {
 			expect(body.message).toContain('Invalid piece count');
 		});
 
+		it('should accept a portrait aspect ratio and store matching grid metadata', async () => {
+			(storage.uploadOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.createPuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+			const mockEnv = {
+				ADMIN_PASSKEY: 'test-passkey',
+				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+				PUZZLE_METADATA: {} as KVNamespace,
+				PUZZLES_BUCKET: {} as R2Bucket,
+				PUZZLE_WORKFLOW: {
+					create: vi.fn().mockResolvedValue(undefined)
+				}
+			};
+
+			const formData = new FormData();
+			formData.append('name', 'Portrait Puzzle');
+			formData.append('pieceCount', '48');
+			formData.append('aspectRatio', '3:4');
+			const blob = new Blob([PNG_HEADER], { type: 'image/png' });
+			formData.append('image', blob, 'test.png');
+
+			const req = new Request('http://localhost/puzzles', {
+				method: 'POST',
+				headers: {
+					cookie: 'session=valid.token'
+				},
+				body: formData
+			});
+
+			const res = await admin.fetch(req, mockEnv as any);
+
+			expect(res.status).toBe(201);
+			expect(storage.createPuzzleMetadata).toHaveBeenCalledWith(
+				mockEnv.PUZZLE_METADATA,
+				expect.objectContaining({
+					name: 'Portrait Puzzle',
+					pieceCount: 48,
+					aspectRatio: '3:4',
+					gridCols: 6,
+					gridRows: 8
+				})
+			);
+		});
+
 		it('should cleanup both metadata and image when workflow.create() fails', async () => {
 			// Mock successful image upload
 			(storage.uploadOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);

@@ -13,7 +13,8 @@ import type {
 	SessionResponse,
 	PuzzleListResponse,
 	ErrorResponse,
-	PuzzleCategory
+	PuzzleCategory,
+	PuzzleAspectRatio
 } from '@perseus/types';
 import type { Rotation } from '$lib/types/gameplay';
 
@@ -30,7 +31,8 @@ export type {
 	SessionResponse,
 	PuzzleListResponse,
 	ErrorResponse,
-	PuzzleCategory
+	PuzzleCategory,
+	PuzzleAspectRatio
 };
 
 /**

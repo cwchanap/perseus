@@ -89,6 +89,32 @@ describe('generateQuickPuzzle', () => {
 		await expect(tooManyPieces).rejects.toThrow(QuickPuzzleValidationError);
 	});
 
+	it('rejects counts that are not allowed for the selected aspect ratio', async () => {
+		const file = await makeTestImageFile(200, 200);
+
+		await expect(
+			generateQuickPuzzle(file, 24, 'Bad Square', { aspectRatio: '1:1' })
+		).rejects.toMatchObject({
+			code: 'piece-count-out-of-range'
+		});
+	});
+
+	it('normalizes portrait images and uses a portrait grid with square cells', async () => {
+		const file = await makeTestImageFile(400, 300);
+		const result = await generateQuickPuzzle(file, 12, 'Portrait', { aspectRatio: '3:4' });
+		const cellWidth = result.stored.imageWidth / result.stored.gridCols;
+		const cellHeight = result.stored.imageHeight / result.stored.gridRows;
+
+		expect(result.stored.aspectRatio).toBe('3:4');
+		expect(result.stored.gridRows).toBe(4);
+		expect(result.stored.gridCols).toBe(3);
+		expect(result.stored.imageWidth * 4).toBe(result.stored.imageHeight * 3);
+		expect(cellWidth).toBe(cellHeight);
+		expect(Number.isInteger(cellWidth)).toBe(true);
+		expect(result.stored.pieces).toHaveLength(12);
+		expect(result.pieceBlobUrls.size).toBe(12);
+	});
+
 	it('reports progress via the optional onProgress callback', async () => {
 		const file = await makeTestImageFile(200, 200);
 		const calls: Array<{ done: number; total: number }> = [];

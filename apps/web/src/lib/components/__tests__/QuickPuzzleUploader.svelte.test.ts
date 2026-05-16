@@ -62,10 +62,26 @@ describe('QuickPuzzleUploader', () => {
 		const submit = page.getByRole('button', { name: /create puzzle/i });
 		await submit.click();
 		expect(onSubmit).not.toHaveBeenCalled();
-		await expect.element(page.getByText(/between 4 and 100/i)).toBeInTheDocument();
+		await expect.element(page.getByText(/valid 1:1 piece count/i)).toBeInTheDocument();
 	});
 
-	it('calls onSubmit with file + pieceCount + name', async () => {
+	it('limits piece choices to the selected aspect ratio', async () => {
+		render(QuickPuzzleUploader, { onSubmit: vi.fn() });
+
+		const aspectSelect = await page.getByLabelText(/aspect ratio/i).element();
+		(aspectSelect as HTMLSelectElement).value = '4:3';
+		(aspectSelect as HTMLSelectElement).dispatchEvent(new Event('change', { bubbles: true }));
+
+		const pieceSelect = await page.getByLabelText(/pieces/i).element();
+		const values = Array.from((pieceSelect as HTMLSelectElement).options).map(
+			(option) => option.value
+		);
+
+		expect(values).toEqual(['12', '48']);
+		expect((pieceSelect as HTMLSelectElement).value).toBe('48');
+	});
+
+	it('calls onSubmit with file + aspectRatio + pieceCount + name', async () => {
 		const onSubmit = vi.fn();
 		render(QuickPuzzleUploader, { onSubmit });
 		const file = makeFile('forest.jpg', 'image/jpeg');
@@ -73,11 +89,16 @@ describe('QuickPuzzleUploader', () => {
 		(fileInput as HTMLInputElement).files = makeFileList([file]);
 		(fileInput as HTMLInputElement).dispatchEvent(new Event('change', { bubbles: true }));
 
+		const aspectSelect = await page.getByLabelText(/aspect ratio/i).element();
+		(aspectSelect as HTMLSelectElement).value = '3:4';
+		(aspectSelect as HTMLSelectElement).dispatchEvent(new Event('change', { bubbles: true }));
+
 		const submit = page.getByRole('button', { name: /create puzzle/i });
 		await submit.click();
 		expect(onSubmit).toHaveBeenCalledWith({
 			file,
-			pieceCount: 24,
+			aspectRatio: '3:4',
+			pieceCount: 48,
 			name: 'forest'
 		});
 	});

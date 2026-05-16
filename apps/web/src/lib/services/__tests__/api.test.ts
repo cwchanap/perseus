@@ -339,6 +339,28 @@ describe('API Service - createPuzzle', () => {
 		expect(capturedBody).toBeInstanceOf(FormData);
 		expect(capturedBody!.get('category')).toBeNull();
 	});
+
+	it('appends the selected aspect ratio to FormData', async () => {
+		let capturedBody: FormData | undefined;
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockImplementation((_url: string, options: RequestInit) => {
+				capturedBody = options.body as FormData;
+				return Promise.resolve(
+					new Response(JSON.stringify(mockPuzzleMetadata), {
+						status: 200,
+						headers: { 'Content-Type': 'application/json' }
+					})
+				);
+			})
+		);
+
+		const image = new File(['data'], 'test.png', { type: 'image/png' });
+		await createPuzzle('Test Puzzle', 48, image, undefined, '3:4');
+
+		expect(capturedBody).toBeInstanceOf(FormData);
+		expect(capturedBody!.get('aspectRatio')).toBe('3:4');
+	});
 });
 
 // ─── URL helpers ─────────────────────────────────────────────────────────────

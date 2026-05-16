@@ -8,7 +8,8 @@ import type {
 	PuzzleStatus,
 	PuzzleProgress,
 	PuzzleSummary,
-	PuzzleCategory
+	PuzzleCategory,
+	PuzzleAspectRatio
 } from '@perseus/types';
 import {
 	validatePuzzleMetadata,
@@ -25,7 +26,8 @@ export type {
 	PuzzleStatus,
 	PuzzleProgress,
 	PuzzleSummary,
-	PuzzleCategory
+	PuzzleCategory,
+	PuzzleAspectRatio
 };
 
 export { PUZZLE_CATEGORIES };
@@ -246,6 +248,7 @@ export async function listPuzzles(
 			id: p.id,
 			name: p.name,
 			pieceCount: p.pieceCount,
+			aspectRatio: p.aspectRatio,
 			status: p.status,
 			progress: p.progress,
 			category: p.category
@@ -264,6 +267,7 @@ type GalleryIndexEntry = {
 	id: string;
 	name: string;
 	pieceCount: number;
+	aspectRatio?: PuzzleAspectRatio;
 	status: PuzzleStatus;
 	progress?: PuzzleProgress;
 	category?: PuzzleCategory;
@@ -300,6 +304,7 @@ async function buildGalleryIndex(kv: KVNamespace): Promise<GalleryIndexEntry[]> 
 			id: p.id,
 			name: p.name,
 			pieceCount: p.pieceCount,
+			aspectRatio: p.aspectRatio,
 			status: p.status,
 			progress: p.progress,
 			category: p.category,
@@ -454,6 +459,7 @@ export async function listPuzzlesPage(
 		id: p.id,
 		name: p.name,
 		pieceCount: p.pieceCount,
+		aspectRatio: p.aspectRatio,
 		status: p.status,
 		progress: p.progress,
 		category: p.category

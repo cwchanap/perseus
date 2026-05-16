@@ -1,7 +1,13 @@
 // Worker-compatible admin routes for authentication and puzzle management
 
 import { Hono } from 'hono';
-import { DEFAULT_PIECE_COUNT, PUZZLE_CATEGORIES } from '@perseus/types';
+import {
+	DEFAULT_PUZZLE_ASPECT_RATIO,
+	PUZZLE_CATEGORIES,
+	getGridDimensionsForAspectRatio,
+	isPuzzleAspectRatio,
+	isValidPieceCountForAspectRatio
+} from '@perseus/types';
 import type { PuzzleCategory } from '@perseus/types';
 import type { Env } from '../worker';
 import {
@@ -75,21 +81,6 @@ async function detectImageType(file: File | Blob): Promise<string | null> {
 		console.error('Failed to detect image type from file bytes:', error);
 		return null;
 	}
-}
-
-function getGridDimensions(pieceCount: number): { rows: number; cols: number } {
-	if (pieceCount <= 0) {
-		return { rows: 0, cols: 0 };
-	}
-
-	const sqrt = Math.floor(Math.sqrt(pieceCount));
-	for (let i = sqrt; i >= 1; i -= 1) {
-		if (pieceCount % i === 0) {
-			return { rows: i, cols: pieceCount / i };
-		}
-	}
-
-	return { rows: 1, cols: pieceCount };
 }
 
 // POST /api/admin/login - Admin login
@@ -229,6 +220,7 @@ admin.post('/puzzles', requireAuth, async (c) => {
 		}
 		const name = formData.get('name');
 		const pieceCountStr = formData.get('pieceCount');
+		const aspectRatioStr = formData.get('aspectRatio');
 		const image = formData.get('image') as File | string | null;
 
 		// Validate name
@@ -241,9 +233,23 @@ admin.post('/puzzles', requireAuth, async (c) => {
 			return c.json({ error: 'bad_request', message: 'Name must be at most 255 characters' }, 400);
 		}
 
-		// Validate piece count (currently restricted to DEFAULT_PIECE_COUNT)
+		// Validate piece count for the selected fixed aspect ratio.
 		if (!pieceCountStr) {
 			return c.json({ error: 'bad_request', message: 'Piece count is required' }, 400);
+		}
+
+		const aspectRatio =
+			typeof aspectRatioStr === 'string' && aspectRatioStr.trim().length > 0
+				? aspectRatioStr.trim()
+				: DEFAULT_PUZZLE_ASPECT_RATIO;
+		if (!isPuzzleAspectRatio(aspectRatio)) {
+			return c.json(
+				{
+					error: 'bad_request',
+					message: 'Invalid aspect ratio. Allowed: 1:1, 4:3, 3:4'
+				},
+				400
+			);
 		}
 
 		const pieceCount = Number(pieceCountStr.toString());
@@ -251,17 +257,17 @@ admin.post('/puzzles', requireAuth, async (c) => {
 			return c.json(
 				{
 					error: 'bad_request',
-					message: `Invalid piece count. Only ${DEFAULT_PIECE_COUNT} pieces allowed`
+					message: `Invalid piece count for ${aspectRatio}`
 				},
 				400
 			);
 		}
 
-		if (pieceCount !== DEFAULT_PIECE_COUNT) {
+		if (pieceCount < 4 || !isValidPieceCountForAspectRatio(pieceCount, aspectRatio)) {
 			return c.json(
 				{
 					error: 'bad_request',
-					message: `Invalid piece count. Only ${DEFAULT_PIECE_COUNT} pieces allowed`
+					message: `Invalid piece count for ${aspectRatio}`
 				},
 				400
 			);
@@ -307,7 +313,10 @@ admin.post('/puzzles', requireAuth, async (c) => {
 		const id = crypto.randomUUID();
 
 		// Calculate grid dimensions (must match workflow calculation)
-		const { rows: gridRows, cols: gridCols } = getGridDimensions(pieceCount);
+		const { rows: gridRows, cols: gridCols } = getGridDimensionsForAspectRatio(
+			pieceCount,
+			aspectRatio
+		);
 
 		// Prepare image buffer
 		const imageBuffer = await image.arrayBuffer();
@@ -325,6 +334,7 @@ admin.post('/puzzles', requireAuth, async (c) => {
 			id,
 			name: trimmedName,
 			...(category && { category }),
+			aspectRatio,
 			pieceCount,
 			gridCols,
 			gridRows,

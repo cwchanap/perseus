@@ -412,6 +412,26 @@ describe('POST /puzzles', () => {
 		expect(body.message).toContain('255');
 	});
 
+	it('passes the selected aspect ratio into validation and generation', async () => {
+		const fd = buildFormData({
+			name: 'Landscape Puzzle',
+			pieceCount: '48',
+			aspectRatio: '4:3',
+			image: new Blob([PNG_HEADER], { type: 'image/png' })
+		});
+		const req = new Request('http://localhost/puzzles', { method: 'POST', body: fd });
+		const res = await app.fetch(req);
+
+		expect(res.status).toBe(201);
+		expect(generatorMock.isValidPieceCount).toHaveBeenCalledWith(48, '4:3');
+		expect(generatorMock.generatePuzzle).toHaveBeenCalledWith(
+			expect.objectContaining({
+				pieceCount: 48,
+				aspectRatio: '4:3'
+			})
+		);
+	});
+
 	it('cleans up puzzle directory when generatePuzzle throws', async () => {
 		(generatorMock.generatePuzzle as ReturnType<typeof vi.fn>).mockRejectedValue(
 			new Error('Generation failed')

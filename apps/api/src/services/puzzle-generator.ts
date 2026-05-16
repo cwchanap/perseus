@@ -2,12 +2,26 @@
 // See apps/workflows for the Cloudflare Workers version.
 import { mkdir, writeFile } from 'fs/promises';
 import path from 'path';
-import type { Puzzle, PuzzlePiece, AllowedPieceCount, EdgeConfig } from '../types';
+import type { Puzzle, PuzzlePiece, EdgeConfig } from '../types';
+import {
+	DEFAULT_PUZZLE_ASPECT_RATIO,
+	MAX_PIECES,
+	getAllowedPieceCountsForAspectRatio,
+	getGridDimensionsForAspectRatio,
+	isValidPieceCountForAspectRatio,
+	type PuzzleAspectRatio
+} from '@perseus/types';
 import { generateJigsawSvgMask } from '../utils/jigsawPath';
 import { TAB_RATIO } from '../constants/puzzle';
 
 const THUMBNAIL_SIZE = 300;
-const ALLOWED_PIECE_COUNTS: AllowedPieceCount[] = [9, 16, 25, 36, 49, 64, 100];
+const ALLOWED_PIECE_COUNTS = Array.from(
+	new Set([
+		...getAllowedPieceCountsForAspectRatio('1:1', 4, MAX_PIECES),
+		...getAllowedPieceCountsForAspectRatio('4:3', 4, MAX_PIECES),
+		...getAllowedPieceCountsForAspectRatio('3:4', 4, MAX_PIECES)
+	])
+).sort((a, b) => a - b);
 
 interface GridDimensions {
 	rows: number;
@@ -78,19 +92,22 @@ export async function __getImageToolingForTests(
 	return getImageTooling(loadPhoton, loadResvg);
 }
 
-function getGridDimensions(pieceCount: AllowedPieceCount): GridDimensions {
-	const sqrt = Math.sqrt(pieceCount);
-	return { rows: sqrt, cols: sqrt };
+function getGridDimensions(pieceCount: number, aspectRatio: PuzzleAspectRatio): GridDimensions {
+	return getGridDimensionsForAspectRatio(pieceCount, aspectRatio);
 }
 
-function isValidPieceCount(count: number): count is AllowedPieceCount {
-	return ALLOWED_PIECE_COUNTS.includes(count as AllowedPieceCount);
+function isValidPieceCount(
+	count: number,
+	aspectRatio: PuzzleAspectRatio = DEFAULT_PUZZLE_ASPECT_RATIO
+): boolean {
+	return count >= 4 && count <= MAX_PIECES && isValidPieceCountForAspectRatio(count, aspectRatio);
 }
 
 export interface GeneratePuzzleOptions {
 	id: string;
 	name: string;
 	pieceCount: number;
+	aspectRatio?: PuzzleAspectRatio;
 	imageBuffer: Buffer;
 	outputDir: string;
 }
@@ -129,12 +146,19 @@ function applyMaskAlpha(piecePixels: Uint8Array, maskPixels: Uint8Array): void {
 export async function generatePuzzle(
 	options: GeneratePuzzleOptions
 ): Promise<GeneratePuzzleResult> {
-	const { id, name, pieceCount, imageBuffer, outputDir } = options;
+	const {
+		id,
+		name,
+		pieceCount,
+		aspectRatio = DEFAULT_PUZZLE_ASPECT_RATIO,
+		imageBuffer,
+		outputDir
+	} = options;
 	const { PhotonImage, resize, crop, SamplingFilter, Resvg } = await getImageTooling();
 
-	if (!isValidPieceCount(pieceCount)) {
+	if (!isValidPieceCount(pieceCount, aspectRatio)) {
 		throw new Error(
-			`Invalid piece count: ${pieceCount}. Allowed values: ${ALLOWED_PIECE_COUNTS.join(', ')}`
+			`Invalid piece count: ${pieceCount} for ${aspectRatio}. Allowed values: ${ALLOWED_PIECE_COUNTS.join(', ')}`
 		);
 	}
 
@@ -187,7 +211,7 @@ export async function generatePuzzle(
 		await writeFile(thumbnailPath, Buffer.from(jpegBytes));
 
 		// Calculate grid dimensions
-		const { rows, cols } = getGridDimensions(pieceCount);
+		const { rows, cols } = getGridDimensions(pieceCount, aspectRatio);
 		const basePieceWidth = Math.floor(imageWidth / cols);
 		const extraWidth = imageWidth % cols;
 		const basePieceHeight = Math.floor(imageHeight / rows);
@@ -338,6 +362,7 @@ export async function generatePuzzle(
 		const puzzle: Puzzle = {
 			id: id,
 			name,
+			aspectRatio,
 			pieceCount,
 			gridCols: cols,
 			gridRows: rows,

@@ -1,7 +1,21 @@
 // Shared types for Perseus monorepo
 // Eliminates duplication between api and workflows packages
 
+import { isPuzzleAspectRatio } from './grid';
+import type { PuzzleAspectRatio } from './grid';
+
 export type EdgeType = 'flat' | 'tab' | 'blank';
+
+export type { PuzzleAspectRatio } from './grid';
+
+export {
+	PUZZLE_ASPECT_RATIOS,
+	DEFAULT_PUZZLE_ASPECT_RATIO,
+	getGridDimensionsForAspectRatio,
+	isValidPieceCountForAspectRatio,
+	getAllowedPieceCountsForAspectRatio
+} from './grid';
+export { isPuzzleAspectRatio };
 
 export interface EdgeConfig {
 	top: EdgeType;
@@ -44,6 +58,7 @@ interface PuzzleMetadataBase {
 	id: string;
 	name: string;
 	category?: PuzzleCategory;
+	aspectRatio?: PuzzleAspectRatio;
 	pieceCount: number;
 	gridCols: number;
 	gridRows: number;
@@ -81,6 +96,7 @@ export interface PuzzleSummary {
 	status: PuzzleStatus;
 	progress?: PuzzleProgress;
 	category?: PuzzleCategory;
+	aspectRatio?: PuzzleAspectRatio;
 }
 
 // API response types shared between API and web
@@ -149,6 +165,13 @@ function isValidOptionalCategory(category: unknown): category is PuzzleCategory 
 	if (category === undefined) return true;
 	if (typeof category !== 'string') return false;
 	return PUZZLE_CATEGORIES.includes(category as PuzzleCategory);
+}
+
+function isValidOptionalAspectRatio(
+	aspectRatio: unknown
+): aspectRatio is PuzzleAspectRatio | undefined {
+	if (aspectRatio === undefined) return true;
+	return isPuzzleAspectRatio(aspectRatio);
 }
 
 export function validateWorkflowParams(params: unknown): params is WorkflowParams {
@@ -224,6 +247,9 @@ export function validatePuzzleMetadata(meta: unknown): meta is PuzzleMetadata {
 	const categoryValue = (m as Record<string, unknown>).category;
 	if (!isValidOptionalCategory(categoryValue)) return false;
 
+	const aspectRatioValue = (m as Record<string, unknown>).aspectRatio;
+	if (!isValidOptionalAspectRatio(aspectRatioValue)) return false;
+
 	return true;
 }
 
@@ -285,6 +311,9 @@ export function validatePuzzleMetadataLight(meta: unknown): meta is PuzzleMetada
 	// Validate optional category field
 	const categoryValue = (m as Record<string, unknown>).category;
 	if (!isValidOptionalCategory(categoryValue)) return false;
+
+	const aspectRatioValue = (m as Record<string, unknown>).aspectRatio;
+	if (!isValidOptionalAspectRatio(aspectRatioValue)) return false;
 
 	return true;
 }

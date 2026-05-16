@@ -1,15 +1,19 @@
 import {
-	getGridDimensions,
+	getGridDimensionsForAspectRatio,
 	getTopEdge,
 	getRightEdge,
 	getBottomEdge,
 	getLeftEdge,
+	isValidPieceCountForAspectRatio,
+	type PuzzleAspectRatio,
 	type EdgeConfig
 } from '@perseus/types';
 
-import { computePieceBounds, renderPiece, createRenderCanvas, canvasToBlob } from './render';
+import { computePieceBounds, renderPiece } from './render';
+import { normalizePuzzleImage } from '../puzzleImage';
 import {
 	QUICK_PUZZLE_ALLOWED_MIMES,
+	QUICK_PUZZLE_DEFAULT_ASPECT_RATIO,
 	QUICK_PUZZLE_DEFAULT_PIECES,
 	QUICK_PUZZLE_ID_PREFIX,
 	QUICK_PUZZLE_JPEG_QUALITY,
@@ -25,6 +29,7 @@ import {
 
 export interface GenerateOptions {
 	onProgress?: (done: number, total: number) => void;
+	aspectRatio?: PuzzleAspectRatio;
 }
 
 export interface GenerateResult {
@@ -45,15 +50,16 @@ export function validateUploadFile(file: File): void {
 	}
 }
 
-function validatePieceCount(count: number): void {
+function validatePieceCount(count: number, aspectRatio: PuzzleAspectRatio): void {
 	if (
 		!Number.isInteger(count) ||
 		count < QUICK_PUZZLE_MIN_PIECES ||
-		count > QUICK_PUZZLE_MAX_PIECES
+		count > QUICK_PUZZLE_MAX_PIECES ||
+		!isValidPieceCountForAspectRatio(count, aspectRatio)
 	) {
 		throw new QuickPuzzleValidationError(
 			'piece-count-out-of-range',
-			`Choose between ${QUICK_PUZZLE_MIN_PIECES} and ${QUICK_PUZZLE_MAX_PIECES} pieces.`
+			`Choose a valid ${aspectRatio} piece count between ${QUICK_PUZZLE_MIN_PIECES} and ${QUICK_PUZZLE_MAX_PIECES}.`
 		);
 	}
 }
@@ -70,49 +76,45 @@ function blobToDataUrl(blob: Blob): Promise<string> {
 	});
 }
 
-async function decodeAndDownscale(file: File): Promise<{
+async function decodeAndNormalize(
+	file: File,
+	pieceCount: number,
+	aspectRatio: PuzzleAspectRatio
+): Promise<{
 	bitmap: ImageBitmap;
 	width: number;
 	height: number;
 	imageDataUrl: string;
 }> {
-	let source: ImageBitmap;
+	let normalized;
 	try {
-		source = await createImageBitmap(file);
-	} catch {
+		normalized = await normalizePuzzleImage(file, {
+			aspectRatio,
+			pieceCount,
+			maxDimension: QUICK_PUZZLE_MAX_DIMENSION,
+			type: 'image/jpeg',
+			quality: QUICK_PUZZLE_JPEG_QUALITY
+		});
+	} catch (err) {
+		if (err instanceof QuickPuzzleValidationError) throw err;
 		throw new QuickPuzzleValidationError(
 			'decode-failed',
 			"Couldn't read this image. Try a different file."
 		);
 	}
 
-	const longest = Math.max(source.width, source.height);
-	const scale = longest > QUICK_PUZZLE_MAX_DIMENSION ? QUICK_PUZZLE_MAX_DIMENSION / longest : 1;
-	const targetW = Math.round(source.width * scale);
-	const targetH = Math.round(source.height * scale);
-
-	const canvas = createRenderCanvas(targetW, targetH);
-	const ctx = canvas.getContext('2d');
-	if (!ctx) {
-		throw new QuickPuzzleValidationError(
-			'unsupported-browser',
-			"Your browser doesn't support quick puzzles."
-		);
-	}
-	ctx.drawImage(source, 0, 0, targetW, targetH);
-	source.close?.();
-
-	const blob = await canvasToBlob(canvas, {
-		type: 'image/jpeg',
-		quality: QUICK_PUZZLE_JPEG_QUALITY
-	});
-	const imageDataUrl = await blobToDataUrl(blob);
+	const imageDataUrl = await blobToDataUrl(normalized.blob);
 
 	// Re-decode the downscaled blob so subsequent piece extraction operates on the
 	// final, normalised pixel data (otherwise we'd pull from the larger source).
-	const finalBitmap = await createImageBitmap(blob);
+	const finalBitmap = await createImageBitmap(normalized.blob);
 
-	return { bitmap: finalBitmap, width: targetW, height: targetH, imageDataUrl };
+	return {
+		bitmap: finalBitmap,
+		width: normalized.width,
+		height: normalized.height,
+		imageDataUrl
+	};
 }
 
 function buildPieceMeta(rows: number, cols: number, pieceCount: number): QuickPieceMeta[] {
@@ -148,7 +150,8 @@ export async function generateQuickPuzzle(
 	options: GenerateOptions = {}
 ): Promise<GenerateResult> {
 	validateUploadFile(file);
-	validatePieceCount(pieceCount);
+	const aspectRatio = options.aspectRatio ?? QUICK_PUZZLE_DEFAULT_ASPECT_RATIO;
+	validatePieceCount(pieceCount, aspectRatio);
 
 	const hasOffscreen = typeof OffscreenCanvas !== 'undefined';
 	const hasDomCanvas =
@@ -160,8 +163,8 @@ export async function generateQuickPuzzle(
 		);
 	}
 
-	const decoded = await decodeAndDownscale(file);
-	const { rows, cols } = getGridDimensions(pieceCount);
+	const decoded = await decodeAndNormalize(file, pieceCount, aspectRatio);
+	const { rows, cols } = getGridDimensionsForAspectRatio(pieceCount, aspectRatio);
 	const pieces = buildPieceMeta(rows, cols, pieceCount);
 	const pieceBlobUrls = new Map<number, string>();
 
@@ -192,6 +195,7 @@ export async function generateQuickPuzzle(
 	const stored: StoredQuickPuzzle = {
 		id: generateId(),
 		name: (name || 'Untitled').slice(0, 80),
+		aspectRatio,
 		pieceCount,
 		gridRows: rows,
 		gridCols: cols,

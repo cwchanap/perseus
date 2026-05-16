@@ -5,6 +5,7 @@
 	import QuickPuzzleList from '$lib/components/QuickPuzzleList.svelte';
 	import { createQuick, listQuick, removeQuick } from '$lib/services/quickPuzzle';
 	import type { StoredQuickPuzzle } from '$lib/services/quickPuzzle/types';
+	import type { PuzzleAspectRatio } from '@perseus/types';
 
 	let puzzles: StoredQuickPuzzle[] = $state([]);
 	let busy = $state(false);
@@ -21,10 +22,12 @@
 
 	async function handleSubmit({
 		file,
+		aspectRatio,
 		pieceCount,
 		name
 	}: {
 		file: File;
+		aspectRatio: PuzzleAspectRatio;
 		pieceCount: number;
 		name: string;
 	}) {
@@ -33,6 +36,7 @@
 		progress = { done: 0, total: pieceCount };
 		try {
 			const result = await createQuick(file, pieceCount, name, {
+				aspectRatio,
 				onProgress: (done, total) => {
 					progress = { done, total };
 				}
