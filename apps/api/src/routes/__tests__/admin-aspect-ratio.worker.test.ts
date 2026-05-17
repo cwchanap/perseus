@@ -165,6 +165,92 @@ function makeWebP(width: number, height: number): Blob {
 	return new Blob([buf], { type: 'image/webp' });
 }
 
+// Build a minimal WebP (VP8X extended) with the given width/height.
+// VP8X layout (relative to header buffer starting at file offset 12):
+//   [0..3] FourCC "VP8X" | [4..7] ChunkSize | [8] Flags | [9..11] Reserved
+//   [12..14] CanvasWidth-1 (24-bit LE) | [15..17] CanvasHeight-1 (24-bit LE)
+function makeWebPVp8x(width: number, height: number): Blob {
+	const vp8xChunkSize = 10;
+	const riffSize = 4 + 8 + vp8xChunkSize; // "WEBP" + VP8X chunk header + VP8X chunk data
+	const buf = new ArrayBuffer(12 + riffSize);
+	const view = new DataView(buf);
+
+	// RIFF header
+	view.setUint8(0, 0x52); // 'R'
+	view.setUint8(1, 0x49); // 'I'
+	view.setUint8(2, 0x46); // 'F'
+	view.setUint8(3, 0x46); // 'F'
+	view.setUint32(4, riffSize, true);
+	view.setUint8(8, 0x57); // 'W'
+	view.setUint8(9, 0x45); // 'E'
+	view.setUint8(10, 0x42); // 'B'
+	view.setUint8(11, 0x50); // 'P'
+
+	// VP8X chunk header
+	const off = 12;
+	view.setUint8(off, 0x56); // 'V'
+	view.setUint8(off + 1, 0x50); // 'P'
+	view.setUint8(off + 2, 0x38); // '8'
+	view.setUint8(off + 3, 0x58); // 'X'
+	view.setUint32(off + 4, vp8xChunkSize, true);
+
+	// VP8X chunk data
+	const dataOff = off + 8;
+	view.setUint8(dataOff, 0x10); // flags: has alpha bit set
+	// bytes dataOff+1..3: reserved (0)
+	// Canvas Width Minus One (24-bit LE) at dataOff+4 = header offset 12
+	const wMinusOne = width - 1;
+	view.setUint8(dataOff + 4, wMinusOne & 0xff);
+	view.setUint8(dataOff + 5, (wMinusOne >> 8) & 0xff);
+	view.setUint8(dataOff + 6, (wMinusOne >> 16) & 0xff);
+	// Canvas Height Minus One (24-bit LE) at dataOff+7 = header offset 15
+	const hMinusOne = height - 1;
+	view.setUint8(dataOff + 7, hMinusOne & 0xff);
+	view.setUint8(dataOff + 8, (hMinusOne >> 8) & 0xff);
+	view.setUint8(dataOff + 9, (hMinusOne >> 16) & 0xff);
+
+	return new Blob([buf], { type: 'image/webp' });
+}
+
+// Build a minimal WebP (VP8L lossless) with the given width/height.
+// VP8L layout (relative to header buffer starting at file offset 12):
+//   [0..3] FourCC "VP8L" | [4..7] ChunkSize | [8] Signature (0x2f)
+//   [9..12] packed uint32 LE: width-1 (14 bits) | height-1 (14 bits) | alpha_hint (1 bit)
+function makeWebPVp8l(width: number, height: number): Blob {
+	const vp8lChunkSize = 5; // signature(1) + packed size(4)
+	const riffSize = 4 + 8 + vp8lChunkSize;
+	const buf = new ArrayBuffer(12 + riffSize);
+	const view = new DataView(buf);
+
+	// RIFF header
+	view.setUint8(0, 0x52); // 'R'
+	view.setUint8(1, 0x49); // 'I'
+	view.setUint8(2, 0x46); // 'F'
+	view.setUint8(3, 0x46); // 'F'
+	view.setUint32(4, riffSize, true);
+	view.setUint8(8, 0x57); // 'W'
+	view.setUint8(9, 0x45); // 'E'
+	view.setUint8(10, 0x42); // 'B'
+	view.setUint8(11, 0x50); // 'P'
+
+	// VP8L chunk header
+	const off = 12;
+	view.setUint8(off, 0x56); // 'V'
+	view.setUint8(off + 1, 0x50); // 'P'
+	view.setUint8(off + 2, 0x38); // '8'
+	view.setUint8(off + 3, 0x4c); // 'L'
+	view.setUint32(off + 4, vp8lChunkSize, true);
+
+	// VP8L chunk data
+	const dataOff = off + 8;
+	view.setUint8(dataOff, 0x2f); // VP8L signature
+	// Pack: width-1 (14 bits) | height-1 (14 bits) | alpha_hint (1 bit) | version (3 bits)
+	const packed = ((width - 1) & 0x3fff) | (((height - 1) & 0x3fff) << 14);
+	view.setUint32(dataOff + 1, packed, true);
+
+	return new Blob([buf], { type: 'image/webp' });
+}
+
 describe('Admin Routes - Image aspect ratio validation', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -397,5 +483,104 @@ describe('Admin Routes - Image aspect ratio validation', () => {
 		// Should NOT reject on aspect ratio — proceeds to upload (which may fail,
 		// but the aspect ratio check itself should pass gracefully)
 		expect(res.status).not.toBe(400);
+	});
+
+	it('accepts VP8X WebP with matching 4:3 aspect ratio', async () => {
+		const blob = makeWebPVp8x(400, 300);
+		const formData = new FormData();
+		formData.append('name', 'VP8X Landscape');
+		formData.append('pieceCount', '12');
+		formData.append('aspectRatio', '4:3');
+		formData.append('image', blob, 'test.webp');
+
+		const req = new Request('http://localhost/puzzles', {
+			method: 'POST',
+			headers: { cookie: 'session=valid.token' },
+			body: formData
+		});
+
+		const res = await admin.fetch(req, baseEnv as any);
+
+		expect(res.status).toBe(201);
+	});
+
+	it('accepts VP8X WebP with matching 3:4 aspect ratio', async () => {
+		const blob = makeWebPVp8x(300, 400);
+		const formData = new FormData();
+		formData.append('name', 'VP8X Portrait');
+		formData.append('pieceCount', '12');
+		formData.append('aspectRatio', '3:4');
+		formData.append('image', blob, 'test.webp');
+
+		const req = new Request('http://localhost/puzzles', {
+			method: 'POST',
+			headers: { cookie: 'session=valid.token' },
+			body: formData
+		});
+
+		const res = await admin.fetch(req, baseEnv as any);
+
+		expect(res.status).toBe(201);
+	});
+
+	it('rejects VP8X WebP with wrong aspect ratio', async () => {
+		const blob = makeWebPVp8x(500, 500);
+		const formData = new FormData();
+		formData.append('name', 'VP8X Square');
+		formData.append('pieceCount', '12');
+		formData.append('aspectRatio', '3:4');
+		formData.append('image', blob, 'test.webp');
+
+		const req = new Request('http://localhost/puzzles', {
+			method: 'POST',
+			headers: { cookie: 'session=valid.token' },
+			body: formData
+		});
+
+		const res = await admin.fetch(req, baseEnv as any);
+
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as any;
+		expect(body.message).toContain('does not match requested ratio');
+	});
+
+	it('accepts VP8L WebP with matching 4:3 aspect ratio', async () => {
+		const blob = makeWebPVp8l(400, 300);
+		const formData = new FormData();
+		formData.append('name', 'VP8L Landscape');
+		formData.append('pieceCount', '12');
+		formData.append('aspectRatio', '4:3');
+		formData.append('image', blob, 'test.webp');
+
+		const req = new Request('http://localhost/puzzles', {
+			method: 'POST',
+			headers: { cookie: 'session=valid.token' },
+			body: formData
+		});
+
+		const res = await admin.fetch(req, baseEnv as any);
+
+		expect(res.status).toBe(201);
+	});
+
+	it('rejects VP8L WebP with wrong aspect ratio', async () => {
+		const blob = makeWebPVp8l(500, 500);
+		const formData = new FormData();
+		formData.append('name', 'VP8L Square');
+		formData.append('pieceCount', '12');
+		formData.append('aspectRatio', '4:3');
+		formData.append('image', blob, 'test.webp');
+
+		const req = new Request('http://localhost/puzzles', {
+			method: 'POST',
+			headers: { cookie: 'session=valid.token' },
+			body: formData
+		});
+
+		const res = await admin.fetch(req, baseEnv as any);
+
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as any;
+		expect(body.message).toContain('does not match requested ratio');
 	});
 });
