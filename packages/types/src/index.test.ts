@@ -502,12 +502,16 @@ describe('validatePuzzleMetadata', () => {
 
 	it('returns false when pieceCount is invalid for the given aspectRatio', () => {
 		// 3:4 aspect ratio with 225 pieces → 225 is not valid for 3:4
+		// Use 'processing' status so validation reaches the aspectRatio cross-check
+		// (status: 'ready' would fail earlier on pieces.length !== pieceCount)
 		const meta = makeMeta({
+			status: 'processing',
 			aspectRatio: '3:4',
 			pieceCount: 225,
 			gridCols: 15,
 			gridRows: 15,
-			pieces: []
+			pieces: [],
+			progress: { totalPieces: 225, generatedPieces: 0, updatedAt: Date.now() }
 		});
 		expect(validatePuzzleMetadata(meta)).toBe(false);
 	});
@@ -659,12 +663,16 @@ describe('validatePuzzleMetadataLight', () => {
 	});
 
 	it('returns false when pieceCount is invalid for the given aspectRatio', () => {
+		// 3:4 aspect ratio with 225 pieces → 225 is not valid for 3:4
+		// Use 'processing' status so validation reaches the aspectRatio cross-check
 		const meta = makeMeta({
+			status: 'processing',
 			aspectRatio: '3:4',
 			pieceCount: 225,
 			gridCols: 15,
 			gridRows: 15,
-			pieces: []
+			pieces: [],
+			progress: { totalPieces: 225, generatedPieces: 0, updatedAt: Date.now() }
 		});
 		expect(validatePuzzleMetadataLight(meta)).toBe(false);
 	});

@@ -129,14 +129,22 @@ export async function normalizePuzzleImage(
 	}
 }
 
+function getExtensionForMimeType(mimeType: string): string {
+	if (mimeType === 'image/png') return 'png';
+	if (mimeType === 'image/webp') return 'webp';
+	return 'jpg';
+}
+
 export async function normalizePuzzleImageFile(
 	file: File,
 	options: NormalizePuzzleImageOptions
 ): Promise<File> {
 	const normalized = await normalizePuzzleImage(file, options);
 	const stem = file.name.replace(/\.[^.]*$/, '') || 'puzzle';
-	return new File([normalized.blob], `${stem}-${options.aspectRatio.replace(':', 'x')}.jpg`, {
-		type: normalized.blob.type || 'image/jpeg',
+	const mimeType = normalized.blob.type || 'image/jpeg';
+	const ext = getExtensionForMimeType(mimeType);
+	return new File([normalized.blob], `${stem}-${options.aspectRatio.replace(':', 'x')}.${ext}`, {
+		type: mimeType,
 		lastModified: Date.now()
 	});
 }
