@@ -162,12 +162,12 @@ async function parseImageDimensions(
 				return { width: w, height: h };
 			}
 			if (fourCC === 'VP8X') {
-				// Extended: 1-byte flags + 3-byte canvas-width-1 (LE) + 3-byte canvas-height-1 (LE)
-				// Relative to header: 4 + 4 + 1 = offset 9 for width, offset 12 for height
-				if (header.byteLength < 16) return null;
+				// Extended: 1-byte flags + 3-byte reserved + 3-byte canvas-width-1 + 3-byte canvas-height-1
+				// Relative to header: 4(fourCC) + 4(chunkSize) + 1(flags) + 3(reserved) = offset 12 for width, offset 15 for height
+				if (header.byteLength < 18) return null;
 				const bytes = new Uint8Array(header);
-				const w = (bytes[9] | (bytes[10] << 8) | (bytes[11] << 16)) + 1;
-				const h = (bytes[12] | (bytes[13] << 8) | (bytes[14] << 16)) + 1;
+				const w = (bytes[12] | (bytes[13] << 8) | (bytes[14] << 16)) + 1;
+				const h = (bytes[15] | (bytes[16] << 8) | (bytes[17] << 16)) + 1;
 				return { width: w, height: h };
 			}
 			return null;
