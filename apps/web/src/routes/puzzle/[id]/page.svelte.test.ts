@@ -296,25 +296,38 @@ describe('Puzzle route gameplay integration', () => {
 	});
 
 	it('sizes the board responsively and makes tray slots match board cells', async () => {
-		Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1280 });
-		Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 });
-		const puzzle = createMockPuzzle();
-		vi.mocked(fetchPuzzle).mockResolvedValue(puzzle);
-		render(PuzzlePage);
-		await expect.element(page.getByTestId('puzzle-board')).toBeVisible();
+		const originalInnerWidth = window.innerWidth;
+		const originalInnerHeight = window.innerHeight;
+		try {
+			Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1280 });
+			Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 });
+			const puzzle = createMockPuzzle();
+			vi.mocked(fetchPuzzle).mockResolvedValue(puzzle);
+			render(PuzzlePage);
+			await expect.element(page.getByTestId('puzzle-board')).toBeVisible();
 
-		const expected = getResponsivePuzzleBoardMetrics(puzzle, { width: 1280, height: 900 });
-		const boardCanvas = document.querySelector<HTMLElement>('.board-canvas');
-		expect(boardCanvas).not.toBeNull();
+			const expected = getResponsivePuzzleBoardMetrics(puzzle, { width: 1280, height: 900 });
+			const boardCanvas = document.querySelector<HTMLElement>('.board-canvas');
+			expect(boardCanvas).not.toBeNull();
 
-		const boardWidth = boardCanvas!.style.getPropertyValue('--board-width').trim();
-		const cellSize = boardCanvas!.style.getPropertyValue('--board-cell-size').trim();
-		expect(boardWidth).toBe(`${expected.boardWidth}px`);
-		expect(cellSize).toBe(`${expected.cellSize}px`);
-		expect(boardCanvas!.style.width).not.toBe(`${puzzle.imageWidth}px`);
+			const boardWidth = boardCanvas!.style.getPropertyValue('--board-width').trim();
+			const cellSize = boardCanvas!.style.getPropertyValue('--board-cell-size').trim();
+			expect(boardWidth).toBe(`${expected.boardWidth}px`);
+			expect(cellSize).toBe(`${expected.cellSize}px`);
+			expect(boardCanvas!.style.width).not.toBe(`${puzzle.imageWidth}px`);
 
-		const pieceSlot = await page.getByTestId('piece-slot-0').element();
-		expect(pieceSlot.style.getPropertyValue('--piece-slot-size').trim()).toBe(cellSize);
+			const pieceSlot = await page.getByTestId('piece-slot-0').element();
+			expect(pieceSlot.style.getPropertyValue('--piece-slot-size').trim()).toBe(cellSize);
+		} finally {
+			Object.defineProperty(window, 'innerWidth', {
+				configurable: true,
+				value: originalInnerWidth
+			});
+			Object.defineProperty(window, 'innerHeight', {
+				configurable: true,
+				value: originalInnerHeight
+			});
+		}
 	});
 
 	it('restores saved rotation state and placed pieces from progress', async () => {

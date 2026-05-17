@@ -157,8 +157,9 @@ export async function generatePuzzle(
 	const { PhotonImage, resize, crop, SamplingFilter, Resvg } = await getImageTooling();
 
 	if (!isValidPieceCount(pieceCount, aspectRatio)) {
+		const allowedForRatio = getAllowedPieceCountsForAspectRatio(aspectRatio, 4, MAX_PIECES);
 		throw new Error(
-			`Invalid piece count: ${pieceCount} for ${aspectRatio}. Allowed values: ${ALLOWED_PIECE_COUNTS.join(', ')}`
+			`Invalid piece count: ${pieceCount} for ${aspectRatio}. Allowed values: ${allowedForRatio.join(', ')}`
 		);
 	}
 
