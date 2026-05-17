@@ -3,6 +3,7 @@
 import { Hono } from 'hono';
 import {
 	DEFAULT_PUZZLE_ASPECT_RATIO,
+	MAX_PIECES,
 	PUZZLE_CATEGORIES,
 	getGridDimensionsForAspectRatio,
 	isPuzzleAspectRatio,
@@ -263,7 +264,17 @@ admin.post('/puzzles', requireAuth, async (c) => {
 			);
 		}
 
-		if (pieceCount < 4 || !isValidPieceCountForAspectRatio(pieceCount, aspectRatio)) {
+		if (pieceCount < 4 || pieceCount > MAX_PIECES) {
+			return c.json(
+				{
+					error: 'bad_request',
+					message: `Piece count must be between 4 and ${MAX_PIECES}`
+				},
+				400
+			);
+		}
+
+		if (!isValidPieceCountForAspectRatio(pieceCount, aspectRatio)) {
 			return c.json(
 				{
 					error: 'bad_request',

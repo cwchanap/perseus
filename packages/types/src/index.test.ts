@@ -475,6 +475,56 @@ describe('validatePuzzleMetadata', () => {
 		expect(validatePuzzleMetadata(makeMeta({ category: 'Robots' }))).toBe(false);
 	});
 
+	it('returns true for valid aspectRatio with matching grid dimensions', () => {
+		// 3:4 aspect ratio, 48 pieces → 8 rows × 6 cols
+		const meta = makeMeta({
+			aspectRatio: '3:4',
+			pieceCount: 48,
+			gridCols: 6,
+			gridRows: 8,
+			pieces: Array.from({ length: 48 }, (_, i) =>
+				makePiece({ id: i, correctX: i % 6, correctY: Math.floor(i / 6) })
+			)
+		});
+		expect(validatePuzzleMetadata(meta)).toBe(true);
+	});
+
+	it('returns false when aspectRatio grid dimensions do not match stored gridRows/gridCols', () => {
+		// 3:4 aspect ratio, 48 pieces → should be 8 rows × 6 cols, but we pass 15×15
+		const meta = makeMeta({
+			aspectRatio: '3:4',
+			pieceCount: 48,
+			gridCols: 15,
+			gridRows: 15
+		});
+		expect(validatePuzzleMetadata(meta)).toBe(false);
+	});
+
+	it('returns false when pieceCount is invalid for the given aspectRatio', () => {
+		// 3:4 aspect ratio with 225 pieces → 225 is not valid for 3:4
+		const meta = makeMeta({
+			aspectRatio: '3:4',
+			pieceCount: 225,
+			gridCols: 15,
+			gridRows: 15,
+			pieces: []
+		});
+		expect(validatePuzzleMetadata(meta)).toBe(false);
+	});
+
+	it('returns true when aspectRatio is undefined (no cross-validation)', () => {
+		// No aspectRatio set - only grid math check applies
+		const meta = makeMeta({
+			pieceCount: 6,
+			gridCols: 3,
+			gridRows: 2,
+			pieces: Array.from({ length: 6 }, (_, i) =>
+				makePiece({ id: i, correctX: i % 3, correctY: Math.floor(i / 3) })
+			)
+		});
+		expect(validatePuzzleMetadata(meta)).toBe(true);
+	});
+
 	it('returns false when category is a non-string value', () => {
 		expect(validatePuzzleMetadata(makeMeta({ category: 42 }))).toBe(false);
 	});
@@ -583,6 +633,52 @@ describe('validatePuzzleMetadataLight', () => {
 
 	it('returns false for invalid category', () => {
 		expect(validatePuzzleMetadataLight(makeMeta({ category: 'Unknown' }))).toBe(false);
+	});
+
+	it('returns true for valid aspectRatio with matching grid dimensions', () => {
+		const meta = makeMeta({
+			aspectRatio: '3:4',
+			pieceCount: 48,
+			gridCols: 6,
+			gridRows: 8,
+			pieces: Array.from({ length: 48 }, (_, i) =>
+				makePiece({ id: i, correctX: i % 6, correctY: Math.floor(i / 6) })
+			)
+		});
+		expect(validatePuzzleMetadataLight(meta)).toBe(true);
+	});
+
+	it('returns false when aspectRatio grid dimensions do not match stored gridRows/gridCols', () => {
+		const meta = makeMeta({
+			aspectRatio: '3:4',
+			pieceCount: 48,
+			gridCols: 15,
+			gridRows: 15
+		});
+		expect(validatePuzzleMetadataLight(meta)).toBe(false);
+	});
+
+	it('returns false when pieceCount is invalid for the given aspectRatio', () => {
+		const meta = makeMeta({
+			aspectRatio: '3:4',
+			pieceCount: 225,
+			gridCols: 15,
+			gridRows: 15,
+			pieces: []
+		});
+		expect(validatePuzzleMetadataLight(meta)).toBe(false);
+	});
+
+	it('returns true when aspectRatio is undefined (no cross-validation)', () => {
+		const meta = makeMeta({
+			pieceCount: 6,
+			gridCols: 3,
+			gridRows: 2,
+			pieces: Array.from({ length: 6 }, (_, i) =>
+				makePiece({ id: i, correctX: i % 3, correctY: Math.floor(i / 3) })
+			)
+		});
+		expect(validatePuzzleMetadataLight(meta)).toBe(true);
 	});
 
 	it('returns false when category is a non-string value', () => {

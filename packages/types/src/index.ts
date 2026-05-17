@@ -1,7 +1,11 @@
 // Shared types for Perseus monorepo
 // Eliminates duplication between api and workflows packages
 
-import { isPuzzleAspectRatio } from './grid';
+import {
+	isPuzzleAspectRatio,
+	isValidPieceCountForAspectRatio,
+	getGridDimensionsForAspectRatio
+} from './grid';
 import type { PuzzleAspectRatio } from './grid';
 
 export type EdgeType = 'flat' | 'tab' | 'blank';
@@ -250,6 +254,13 @@ export function validatePuzzleMetadata(meta: unknown): meta is PuzzleMetadata {
 	const aspectRatioValue = (m as Record<string, unknown>).aspectRatio;
 	if (!isValidOptionalAspectRatio(aspectRatioValue)) return false;
 
+	// Cross-validate aspectRatio consistency with pieceCount and grid dimensions
+	if (aspectRatioValue) {
+		if (!isValidPieceCountForAspectRatio(m.pieceCount, aspectRatioValue)) return false;
+		const expected = getGridDimensionsForAspectRatio(m.pieceCount, aspectRatioValue);
+		if (expected.rows !== m.gridRows || expected.cols !== m.gridCols) return false;
+	}
+
 	return true;
 }
 
@@ -314,6 +325,13 @@ export function validatePuzzleMetadataLight(meta: unknown): meta is PuzzleMetada
 
 	const aspectRatioValue = (m as Record<string, unknown>).aspectRatio;
 	if (!isValidOptionalAspectRatio(aspectRatioValue)) return false;
+
+	// Cross-validate aspectRatio consistency with pieceCount and grid dimensions
+	if (aspectRatioValue) {
+		if (!isValidPieceCountForAspectRatio(m.pieceCount, aspectRatioValue)) return false;
+		const expected = getGridDimensionsForAspectRatio(m.pieceCount, aspectRatioValue);
+		if (expected.rows !== m.gridRows || expected.cols !== m.gridCols) return false;
+	}
 
 	return true;
 }
