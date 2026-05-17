@@ -57,7 +57,7 @@ describe('QuickPuzzleUploader', () => {
 
 		const pieceInput = await page.getByLabelText(/pieces/i).element();
 		(pieceInput as HTMLInputElement).value = '3';
-		(pieceInput as HTMLInputElement).dispatchEvent(new Event('input', { bubbles: true }));
+		(pieceInput as HTMLInputElement).dispatchEvent(new Event('change', { bubbles: true }));
 
 		const submit = page.getByRole('button', { name: /create puzzle/i });
 		await submit.click();

@@ -303,6 +303,11 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 			const { rows, cols } = metadata.aspectRatio
 				? getGridDimensionsForAspectRatio(metadata.pieceCount, metadata.aspectRatio)
 				: getGridDimensions(metadata.pieceCount);
+			if (rows <= 0 || cols <= 0 || rows * cols !== metadata.pieceCount) {
+				throw new Error(
+					`Invalid grid dimensions for puzzle ${puzzleId}: pieceCount=${metadata.pieceCount}, aspectRatio=${metadata.aspectRatio ?? 'default'}, rows=${rows}, cols=${cols}`
+				);
+			}
 			const totalPieces = metadata.pieceCount;
 
 			// Process pieces in batches (rows) to checkpoint progress

@@ -451,4 +451,46 @@ describe('Admin Worker - POST /puzzles cleanup failure branches', () => {
 		expect(body.message).toBe('Failed to create puzzle metadata');
 		expect(storage.deleteOriginalImage).toHaveBeenCalledTimes(1);
 	});
+
+	it('returns 400 when pieceCount exceeds MAX_PIECES (250)', async () => {
+		const formData = new FormData();
+		formData.append('name', 'Huge Puzzle');
+		formData.append('pieceCount', '300');
+		const blob = new Blob([PNG_HEADER], { type: 'image/png' });
+		formData.append('image', blob, 'test.png');
+
+		const mockEnv = { ...baseEnv, PUZZLE_WORKFLOW: { create: vi.fn() } };
+		const req = new Request('http://localhost/puzzles', {
+			method: 'POST',
+			headers: { cookie: 'session=valid.token' },
+			body: formData
+		});
+
+		const res = await admin.fetch(req, mockEnv as any);
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as any;
+		expect(body.error).toBe('bad_request');
+		expect(body.message).toContain('between 4 and 250');
+	});
+
+	it('returns 400 when pieceCount is below minimum (4)', async () => {
+		const formData = new FormData();
+		formData.append('name', 'Tiny Puzzle');
+		formData.append('pieceCount', '2');
+		const blob = new Blob([PNG_HEADER], { type: 'image/png' });
+		formData.append('image', blob, 'test.png');
+
+		const mockEnv = { ...baseEnv, PUZZLE_WORKFLOW: { create: vi.fn() } };
+		const req = new Request('http://localhost/puzzles', {
+			method: 'POST',
+			headers: { cookie: 'session=valid.token' },
+			body: formData
+		});
+
+		const res = await admin.fetch(req, mockEnv as any);
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as any;
+		expect(body.error).toBe('bad_request');
+		expect(body.message).toContain('between 4 and 250');
+	});
 });

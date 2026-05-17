@@ -872,4 +872,45 @@ describe('Workflow Execution - Multi-piece Grid', () => {
 			.map((pieces: unknown[]) => pieces.length);
 		expect(batchSizes).toEqual([7]);
 	});
+
+	it('throws and marks puzzle failed when metadata has invalid aspectRatio/grid combination', async () => {
+		// Metadata with aspectRatio '4:3' but pieceCount=7 which is invalid for 4:3
+		// The cross-validation in validatePuzzleMetadata now catches this at load time
+		const corruptMetadata: PuzzleMetadata = {
+			...sampleMetadata,
+			pieceCount: 7,
+			gridCols: 7,
+			gridRows: 1,
+			aspectRatio: '4:3'
+		};
+		const puzzleId = corruptMetadata.id;
+
+		const { namespace, stub } = createMockDurableObjectNamespace(() => {
+			return new Response(JSON.stringify({ success: true }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' }
+			});
+		});
+		const env = {
+			PUZZLES_BUCKET: createMockBucket(new ArrayBuffer(8)),
+			PUZZLE_METADATA: createMockKv(corruptMetadata),
+			PUZZLE_METADATA_DO: namespace as unknown as DurableObjectNamespace,
+			PUZZLE_WORKFLOW: {} as Workflow
+		} as unknown as Env;
+
+		const workflow = new TestWorkflow();
+		workflow.setEnv(env);
+
+		const event: WorkflowEvent<WorkflowParams> = {
+			payload: { puzzleId },
+			timestamp: new Date(),
+			instanceId: 'test-instance'
+		};
+
+		await expect(workflow.run(event, createMockStep())).rejects.toThrow('Corrupt puzzle metadata');
+
+		// Should have been marked as failed
+		const body = JSON.parse((stub.fetch.mock.calls[0]?.[1]?.body as string | undefined) ?? '{}');
+		expect(body.updates.status).toBe('failed');
+	});
 });

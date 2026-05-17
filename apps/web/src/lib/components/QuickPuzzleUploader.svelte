@@ -181,7 +181,7 @@
 		<select
 			class="w-full rounded border border-(--border) bg-(--bg-1) p-2 text-(--text-0)"
 			value={pieceCount}
-			oninput={handlePieceInput}
+			onchange={handlePieceInput}
 			disabled={busy}
 			data-testid="quick-uploader-pieces"
 		>
