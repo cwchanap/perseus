@@ -59,9 +59,9 @@ export function getResponsivePuzzleBoardMetrics(
 	const tier = getPuzzleBoardViewportTier(viewport.width);
 	const gridCols = Math.max(1, puzzle.gridCols);
 	const gridRows = Math.max(1, puzzle.gridRows);
-	const gridAspect = gridCols / gridRows;
+	const imageAspect = puzzle.imageWidth / Math.max(1, puzzle.imageHeight);
 	const targetLongEdge = TIER_LONG_EDGE[tier];
-	const targetWidth = gridAspect >= 1 ? targetLongEdge : targetLongEdge * gridAspect;
+	const targetWidth = imageAspect >= 1 ? targetLongEdge : targetLongEdge * imageAspect;
 	const viewportWidthCap = Math.max(
 		MIN_BOARD_CELL_SIZE * gridCols,
 		viewport.width - getWidthReserve(tier)
@@ -70,7 +70,7 @@ export function getResponsivePuzzleBoardMetrics(
 		MIN_BOARD_CELL_SIZE * gridRows,
 		viewport.height - getHeightReserve(tier)
 	);
-	const heightWidthCap = viewportHeightCap * gridAspect;
+	const heightWidthCap = viewportHeightCap * imageAspect;
 	const desktopWidthCap =
 		tier === 'small' || tier === 'medium'
 			? Number.POSITIVE_INFINITY
@@ -86,8 +86,8 @@ export function getResponsivePuzzleBoardMetrics(
 
 	return {
 		tier,
-		boardWidth: roundMetric(cellSize * gridCols),
-		boardHeight: roundMetric(cellSize * gridRows),
+		boardWidth: roundMetric(boardWidth),
+		boardHeight: roundMetric(boardWidth / imageAspect),
 		cellSize: roundMetric(cellSize),
 		pieceSlotSize: roundMetric(cellSize)
 	};

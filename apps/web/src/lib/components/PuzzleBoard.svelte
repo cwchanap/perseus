@@ -127,7 +127,7 @@
 	style="
 		grid-template-columns: repeat({puzzle.gridCols}, 1fr);
 		grid-template-rows: repeat({puzzle.gridRows}, 1fr);
-		aspect-ratio: {puzzle.gridCols} / {puzzle.gridRows};
+		aspect-ratio: {puzzle.imageWidth} / {puzzle.imageHeight};
 	"
 	data-testid="puzzle-board"
 	onpointerdown={handleBoardPointerDown}
@@ -150,7 +150,6 @@
 				role="button"
 				tabindex="0"
 				aria-label="Drop zone at position {x}, {y}"
-				style="aspect-ratio: 1 / 1;"
 			>
 				{#if isHintTarget(x, y)}
 					<div
