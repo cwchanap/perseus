@@ -1,4 +1,5 @@
-import { describe, it, expect } from 'vitest';
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
 	getCoverCropBounds,
 	getNormalizedPuzzleDimensions,
@@ -6,6 +7,16 @@ import {
 	normalizePuzzleImageFile
 } from './puzzleImage';
 import type { PuzzleAspectRatio } from '@perseus/types';
+import { createRenderCanvas, canvasToBlob } from './quickPuzzle/render';
+
+vi.mock('./quickPuzzle/render', async (importOriginal) => {
+	const actual = (await importOriginal()) as Record<string, any>;
+	return {
+		...actual,
+		createRenderCanvas: vi.fn(actual.createRenderCanvas),
+		canvasToBlob: vi.fn(actual.canvasToBlob)
+	};
+});
 
 async function makeTestImageFile(
 	width = 200,
@@ -244,5 +255,57 @@ describe('normalizePuzzleImageFile', () => {
 			maxDimension: 1200
 		});
 		expect(result.name).toBe('landscape-4x3.jpg');
+	});
+});
+
+describe('normalizePuzzleImage coverage gaps', () => {
+	const baseOpts = {
+		aspectRatio: '1:1' as PuzzleAspectRatio,
+		pieceCount: 4,
+		maxDimension: 1200
+	};
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	it('throws when canvas 2d context is null', async () => {
+		vi.mocked(createRenderCanvas).mockReturnValueOnce({
+			width: 200,
+			height: 200,
+			getContext: () => null
+		} as any);
+
+		const file = await makeTestImageFile(200, 200);
+		await expect(normalizePuzzleImage(file, baseOpts)).rejects.toThrow(
+			"Your browser doesn't support image resizing."
+		);
+	});
+
+	it('handles source without close method in finally block', async () => {
+		vi.spyOn(globalThis, 'createImageBitmap').mockResolvedValueOnce({
+			width: 200,
+			height: 200
+		} as any);
+		vi.mocked(createRenderCanvas).mockReturnValueOnce({
+			width: 200,
+			height: 200,
+			getContext: () => null
+		} as any);
+
+		const file = await makeTestImageFile(200, 200);
+		await expect(normalizePuzzleImage(file, baseOpts)).rejects.toThrow(
+			"Your browser doesn't support image resizing."
+		);
+	});
+
+	it('falls back to image/jpeg when blob has empty type', async () => {
+		const blobNoType = new Blob([], { type: '' });
+		vi.mocked(canvasToBlob).mockResolvedValueOnce(blobNoType);
+
+		const file = await makeTestImageFile(200, 200);
+		const result = await normalizePuzzleImageFile(file, baseOpts);
+		expect(result.type).toBe('image/jpeg');
+		expect(result.name).toMatch(/\.jpg$/);
 	});
 });

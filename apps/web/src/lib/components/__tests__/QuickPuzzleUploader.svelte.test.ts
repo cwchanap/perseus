@@ -190,4 +190,20 @@ describe('QuickPuzzleUploader', () => {
 		(fileInput as HTMLInputElement).dispatchEvent(new Event('change', { bubbles: true }));
 		await expect.element(page.getByText(/JPEG, PNG, or WebP/)).not.toBeInTheDocument();
 	});
+
+	it('hides progress bar when busy without progress data', async () => {
+		render(QuickPuzzleUploader, { onSubmit: vi.fn(), busy: true });
+		await expect.element(page.getByRole('button', { name: /generating/i })).toBeInTheDocument();
+		await expect.element(page.getByTestId('quick-uploader-progress')).not.toBeInTheDocument();
+	});
+
+	it('shows progress section when total is zero', async () => {
+		render(QuickPuzzleUploader, {
+			onSubmit: vi.fn(),
+			busy: true,
+			progress: { done: 0, total: 0 }
+		});
+		await expect.element(page.getByTestId('quick-uploader-progress')).toBeVisible();
+		await expect.element(page.getByText(/Generating piece 0\/0/)).toBeInTheDocument();
+	});
 });

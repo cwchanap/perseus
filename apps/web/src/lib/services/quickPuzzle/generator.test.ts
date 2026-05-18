@@ -2,6 +2,14 @@ import { describe, it, expect, vi } from 'vitest';
 import { generateQuickPuzzle, validateUploadFile } from './generator';
 import { QuickPuzzleValidationError } from './types';
 
+vi.mock('../puzzleImage', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../puzzleImage')>();
+	return {
+		...actual,
+		normalizePuzzleImage: vi.fn(actual.normalizePuzzleImage)
+	};
+});
+
 async function makeTestImageFile(width = 200, height = 200): Promise<File> {
 	const canvas = new OffscreenCanvas(width, height);
 	const ctx = canvas.getContext('2d')!;
@@ -234,5 +242,57 @@ describe('generateQuickPuzzle', () => {
 		} finally {
 			vi.unstubAllGlobals();
 		}
+	});
+
+	it('throws unsupported-browser when createImageBitmap is unavailable', async () => {
+		const file = await makeTestImageFile(200, 200);
+		vi.stubGlobal('createImageBitmap', undefined);
+		try {
+			await expect(generateQuickPuzzle(file, 4, 'x')).rejects.toMatchObject({
+				code: 'unsupported-browser'
+			});
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
+
+	it('rejects when FileReader does not return a string', async () => {
+		const file = await makeTestImageFile(200, 200);
+		const OriginalFileReader = globalThis.FileReader;
+		vi.stubGlobal(
+			'FileReader',
+			class extends OriginalFileReader {
+				readAsDataURL(_blob: Blob) {
+					Object.defineProperty(this, 'result', { value: null, configurable: true });
+					this.onload?.(new Event('load') as ProgressEvent<FileReader>);
+				}
+			}
+		);
+		try {
+			await expect(generateQuickPuzzle(file, 4, 'x')).rejects.toThrow(
+				'FileReader did not return a string'
+			);
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
+
+	it('re-throws QuickPuzzleValidationError from normalizePuzzleImage', async () => {
+		const file = await makeTestImageFile(200, 200);
+		const validationError = new QuickPuzzleValidationError('decode-failed', 'bad');
+		const { normalizePuzzleImage } = await import('../puzzleImage');
+		vi.mocked(normalizePuzzleImage).mockRejectedValueOnce(validationError);
+		await expect(generateQuickPuzzle(file, 4, 'x')).rejects.toBe(validationError);
+		vi.mocked(normalizePuzzleImage).mockRestore();
+	});
+
+	it('wraps non-validation errors from normalizePuzzleImage', async () => {
+		const file = await makeTestImageFile(200, 200);
+		const { normalizePuzzleImage } = await import('../puzzleImage');
+		vi.mocked(normalizePuzzleImage).mockRejectedValueOnce(new Error('generic failure'));
+		await expect(generateQuickPuzzle(file, 4, 'x')).rejects.toMatchObject({
+			code: 'decode-failed'
+		});
+		vi.mocked(normalizePuzzleImage).mockRestore();
 	});
 });
