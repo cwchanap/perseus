@@ -19,7 +19,7 @@ test.describe('Quick puzzle', () => {
 		// 1. Upload + submit
 		await page.getByTestId('quick-uploader-file').setInputFiles(FIXTURE);
 		await expect(page.getByTestId('quick-uploader-name')).toHaveValue('test-image');
-		await page.getByTestId('quick-uploader-pieces').fill('4');
+		await page.getByTestId('quick-uploader-pieces').selectOption('4');
 		await page.getByTestId('quick-uploader-submit').click();
 
 		// 2. Redirect to play page
