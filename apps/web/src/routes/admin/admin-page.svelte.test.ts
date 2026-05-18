@@ -252,6 +252,7 @@ describe('Admin Page', () => {
 		});
 
 		it('auto-clears success message after timeout', async () => {
+			vi.useFakeTimers();
 			vi.mocked(fetchAdminPuzzles).mockResolvedValue([]);
 			vi.mocked(normalizePuzzleImageFile).mockResolvedValue(
 				new File(['normalized'], 'norm.jpg', { type: 'image/jpeg' })
@@ -271,6 +272,10 @@ describe('Admin Page', () => {
 			});
 
 			await expect.element(page.getByText(/Puzzle creation started/)).toBeVisible();
+
+			await vi.advanceTimersByTimeAsync(3000);
+			await expect.element(page.getByText(/Puzzle creation started/)).not.toBeInTheDocument();
+			vi.useRealTimers();
 		});
 
 		it('shows ApiError message on submit failure', async () => {
