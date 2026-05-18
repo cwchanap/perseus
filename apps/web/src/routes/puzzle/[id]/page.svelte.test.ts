@@ -176,9 +176,9 @@ vi.mock('$lib/stores/timer', () => ({
 	})
 }));
 
-import { fetchPuzzle } from '$lib/services/api';
+import { fetchPuzzle, ApiError } from '$lib/services/api';
 import { saveProgress, clearProgress } from '$lib/services/progress';
-import { saveCompletionTime } from '$lib/services/stats';
+import { saveCompletionTime, getBestTime } from '$lib/services/stats';
 import { get } from 'svelte/store';
 import { goto } from '$app/navigation';
 import { clearSelectedPiece, selectedPieceId, setSelectedPiece } from '$lib/stores/pieceSelection';
@@ -987,6 +987,32 @@ describe('Puzzle route gameplay integration', () => {
 
 		frameEl.dispatchEvent(new WheelEvent('wheel', { deltaY: 100, bubbles: true }));
 		expect(await getScale()).toBe(initialScale);
+	});
+
+	it('shows 404 error panel when puzzle is not found', async () => {
+		vi.mocked(fetchPuzzle).mockRejectedValue(new ApiError(404, 'not_found', 'Puzzle not found'));
+		render(PuzzlePage);
+		await expect.element(page.getByText('Mission no longer available')).toBeVisible();
+		await expect.element(page.getByText(/This mission may have been deleted/)).toBeVisible();
+		await expect.element(page.getByText('RETURN TO ARCADE')).toBeVisible();
+	});
+
+	it('shows generic error panel for non-404 load failures', async () => {
+		vi.mocked(fetchPuzzle).mockRejectedValue(new Error('Network error'));
+		render(PuzzlePage);
+		await expect.element(page.getByText('Failed to load mission')).toBeVisible();
+		await expect.element(page.getByText(/An error occurred while loading/)).toBeVisible();
+	});
+
+	it('shows NEW RECORD badge when completion is a new personal best', async () => {
+		vi.mocked(saveCompletionTime).mockReturnValueOnce(true);
+		vi.mocked(getBestTime).mockReturnValueOnce(null).mockReturnValueOnce(42);
+		await renderPuzzlePage();
+		await placePiece(0, 0, 0);
+		await placePiece(1, 1, 0);
+		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+		await expect.element(page.getByText('NEW RECORD')).toBeVisible();
+		await expect.element(page.getByText('PERSONAL BEST')).toBeVisible();
 	});
 
 	it('updates viewport dimensions on window resize', async () => {

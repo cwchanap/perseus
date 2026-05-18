@@ -538,4 +538,76 @@ describe('Admin Page', () => {
 			vi.useRealTimers();
 		});
 	});
+
+	it('shows LOGGING OUT... text while logout is in progress', async () => {
+		vi.mocked(fetchAdminPuzzles).mockResolvedValue([]);
+		let resolveLogout!: () => void;
+		vi.mocked(logout).mockImplementation(
+			() =>
+				new Promise<void>((resolve) => {
+					resolveLogout = resolve;
+				})
+		);
+		render(AdminPage);
+		await page.getByRole('button', { name: /LOGOUT/i }).click();
+		await expect.element(page.getByRole('button', { name: /LOGGING OUT/i })).toBeVisible();
+		await expect.element(page.getByRole('button', { name: /LOGGING OUT/i })).toBeDisabled();
+		resolveLogout();
+	});
+
+	it('shows INITIALIZING... spinner while creating puzzle', async () => {
+		vi.mocked(fetchAdminPuzzles).mockResolvedValue([]);
+		vi.mocked(normalizePuzzleImageFile).mockImplementation(
+			() =>
+				new Promise<File>((resolve) => {
+					resolve(new File(['normalized'], 'norm.jpg', { type: 'image/jpeg' }));
+				})
+		);
+		vi.mocked(createPuzzle).mockImplementation(() => new Promise(() => {}));
+		render(AdminPage);
+		const nameInput = page.getByPlaceholder('Enter puzzle name');
+		await nameInput.fill('My Puzzle');
+		const fileInput = page.getByLabelText('CLICK TO UPLOAD');
+		const file = new File(['data'], 'test.jpg', { type: 'image/jpeg' });
+		await fileInput.upload(file);
+		await page.getByRole('button', { name: /CREATE MISSION/i }).click();
+		await expect.element(page.getByText(/INITIALIZING/)).toBeVisible();
+	});
+
+	it('shows ... on delete button while deletion is in progress', async () => {
+		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
+		vi.spyOn(window, 'confirm').mockReturnValue(true);
+		let resolveDelete!: (value: any) => void;
+		vi.mocked(deletePuzzle).mockImplementation(
+			() =>
+				new Promise((resolve) => {
+					resolveDelete = resolve;
+				})
+		);
+		render(AdminPage);
+		await vi.waitFor(() => {
+			expect(page.getByText('Forest Scene')).toBeVisible();
+		});
+		await page.getByRole('button', { name: 'DELETE' }).first().click();
+		await expect.element(page.getByText('...')).toBeVisible();
+		resolveDelete(null);
+	});
+
+	it('hides progress count for processing puzzle without progress data', async () => {
+		vi.useFakeTimers();
+		vi.mocked(fetchAdminPuzzles).mockResolvedValue([
+			{
+				id: 'p-no-progress',
+				name: 'Stuck Puzzle',
+				pieceCount: 100,
+				status: 'processing'
+			}
+		]);
+		render(AdminPage);
+		await expect.element(page.getByText('Stuck Puzzle')).toBeVisible();
+		await expect.element(page.getByText('PROCESSING')).toBeVisible();
+		await expect.element(page.getByText('100 pieces', { exact: true }).nth(1)).toBeVisible();
+		await expect.element(page.getByText(/\(\d+\/\d+\)/)).not.toBeInTheDocument();
+		vi.useRealTimers();
+	});
 });
