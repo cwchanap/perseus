@@ -153,6 +153,31 @@ describe('generateQuickPuzzle', () => {
 		}
 	});
 
+	it('uses fallback id when crypto.randomUUID is unavailable', async () => {
+		const original = crypto.randomUUID;
+		const file = await makeTestImageFile(200, 200);
+
+		Object.defineProperty(crypto, 'randomUUID', {
+			value: undefined,
+			configurable: true,
+			writable: true
+		});
+
+		try {
+			const result = await generateQuickPuzzle(file, 4, 'Fallback');
+			expect(result.stored.id).toMatch(/^q-/);
+			expect(result.stored.id).not.toMatch(
+				/^q-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+			);
+		} finally {
+			Object.defineProperty(crypto, 'randomUUID', {
+				value: original,
+				configurable: true,
+				writable: true
+			});
+		}
+	});
+
 	it('revokes prior piece blob URLs when mid-loop render fails', async () => {
 		const file = await makeTestImageFile(200, 200);
 		const originalCreateObjectURL = URL.createObjectURL;
@@ -187,6 +212,27 @@ describe('generateQuickPuzzle', () => {
 		} finally {
 			vi.unstubAllGlobals();
 			revokeSpy.mockRestore();
+		}
+	});
+
+	it('uses fallback ID format when crypto.randomUUID is not available', async () => {
+		const _originalRandomUUID = crypto.randomUUID;
+		const file = await makeTestImageFile(200, 200);
+
+		try {
+			vi.stubGlobal('crypto', {
+				...crypto,
+				randomUUID: undefined
+			});
+
+			const result = await generateQuickPuzzle(file, 4, 'Fallback');
+
+			expect(result.stored.id).toMatch(/^q-/);
+			expect(result.stored.id).not.toMatch(
+				/^q-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+			);
+		} finally {
+			vi.unstubAllGlobals();
 		}
 	});
 });

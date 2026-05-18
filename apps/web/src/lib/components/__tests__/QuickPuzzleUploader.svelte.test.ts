@@ -102,4 +102,92 @@ describe('QuickPuzzleUploader', () => {
 			name: 'forest'
 		});
 	});
+
+	it('clears file when no file selected in change event', async () => {
+		const onSubmit = vi.fn();
+		render(QuickPuzzleUploader, { onSubmit });
+		const fileInput = await page.getByLabelText(/image/i).element();
+		(fileInput as HTMLInputElement).files = makeFileList([makeFile('a.jpg', 'image/jpeg')]);
+		(fileInput as HTMLInputElement).dispatchEvent(new Event('change', { bubbles: true }));
+		const submit = page.getByRole('button', { name: /create puzzle/i });
+		await expect.element(submit).toBeEnabled();
+		(fileInput as HTMLInputElement).files = makeFileList([]);
+		(fileInput as HTMLInputElement).dispatchEvent(new Event('change', { bubbles: true }));
+		await expect.element(submit).toBeDisabled();
+	});
+
+	it('derives name from filename without extension', async () => {
+		render(QuickPuzzleUploader, { onSubmit: vi.fn() });
+		const fileInput = await page.getByLabelText(/image/i).element();
+		(fileInput as HTMLInputElement).files = makeFileList([makeFile('nodot', 'image/jpeg')]);
+		(fileInput as HTMLInputElement).dispatchEvent(new Event('change', { bubbles: true }));
+		await expect.element(page.getByLabelText(/name/i)).toHaveValue('nodot');
+	});
+
+	it('uses derived name when name field is empty on submit', async () => {
+		const onSubmit = vi.fn();
+		render(QuickPuzzleUploader, { onSubmit });
+		const file = makeFile('forest.jpg', 'image/jpeg');
+		const fileInput = await page.getByLabelText(/image/i).element();
+		(fileInput as HTMLInputElement).files = makeFileList([file]);
+		(fileInput as HTMLInputElement).dispatchEvent(new Event('change', { bubbles: true }));
+		await page.getByLabelText(/name/i).fill('');
+		const submit = page.getByRole('button', { name: /create puzzle/i });
+		await submit.click();
+		expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ name: 'forest' }));
+	});
+
+	it('does not change aspect ratio for invalid value', async () => {
+		render(QuickPuzzleUploader, { onSubmit: vi.fn() });
+		const aspectSelect = await page.getByLabelText(/aspect ratio/i).element();
+		(aspectSelect as HTMLSelectElement).value = '16:9';
+		(aspectSelect as HTMLSelectElement).dispatchEvent(new Event('change', { bubbles: true }));
+		const pieceSelect = await page.getByLabelText(/pieces/i).element();
+		const values = Array.from((pieceSelect as HTMLSelectElement).options).map(
+			(option) => option.value
+		);
+		expect(values).toContain('16');
+	});
+
+	it('shows progress bar when busy and progress provided', async () => {
+		render(QuickPuzzleUploader, {
+			onSubmit: vi.fn(),
+			busy: true,
+			progress: { done: 2, total: 4 }
+		});
+		await expect.element(page.getByText(/Generating piece 2\/4/)).toBeInTheDocument();
+	});
+
+	it('shows generating text when busy', async () => {
+		render(QuickPuzzleUploader, { onSubmit: vi.fn(), busy: true });
+		await expect.element(page.getByRole('button', { name: /generating/i })).toBeInTheDocument();
+	});
+
+	it('resets piece count to default when switching aspect ratio', async () => {
+		const onSubmit = vi.fn();
+		render(QuickPuzzleUploader, { onSubmit });
+		const file = makeFile('test.jpg', 'image/jpeg');
+		const fileInput = await page.getByLabelText(/image/i).element();
+		(fileInput as HTMLInputElement).files = makeFileList([file]);
+		(fileInput as HTMLInputElement).dispatchEvent(new Event('change', { bubbles: true }));
+		const aspectSelect = await page.getByLabelText(/aspect ratio/i).element();
+		(aspectSelect as HTMLSelectElement).value = '4:3';
+		(aspectSelect as HTMLSelectElement).dispatchEvent(new Event('change', { bubbles: true }));
+		const submit = page.getByRole('button', { name: /create puzzle/i });
+		await submit.click();
+		expect(onSubmit).toHaveBeenCalledWith(
+			expect.objectContaining({ pieceCount: 48, aspectRatio: '4:3' })
+		);
+	});
+
+	it('hides error after selecting a valid file', async () => {
+		render(QuickPuzzleUploader, { onSubmit: vi.fn() });
+		const fileInput = await page.getByLabelText(/image/i).element();
+		(fileInput as HTMLInputElement).files = makeFileList([makeFile('a.gif', 'image/gif')]);
+		(fileInput as HTMLInputElement).dispatchEvent(new Event('change', { bubbles: true }));
+		await expect.element(page.getByText(/JPEG, PNG, or WebP/)).toBeInTheDocument();
+		(fileInput as HTMLInputElement).files = makeFileList([makeFile('b.jpg', 'image/jpeg')]);
+		(fileInput as HTMLInputElement).dispatchEvent(new Event('change', { bubbles: true }));
+		await expect.element(page.getByText(/JPEG, PNG, or WebP/)).not.toBeInTheDocument();
+	});
 });
