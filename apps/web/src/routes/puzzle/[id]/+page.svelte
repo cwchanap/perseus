@@ -1341,7 +1341,6 @@
 	.board-canvas {
 		width: var(--board-width);
 		height: var(--board-height);
-		max-width: 100%;
 	}
 
 	/* Inventory panel */
