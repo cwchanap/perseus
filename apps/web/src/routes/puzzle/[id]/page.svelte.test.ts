@@ -177,9 +177,10 @@ vi.mock('$lib/stores/timer', () => ({
 }));
 
 import { fetchPuzzle } from '$lib/services/api';
-import { saveProgress } from '$lib/services/progress';
+import { saveProgress, clearProgress } from '$lib/services/progress';
 import { saveCompletionTime } from '$lib/services/stats';
 import { get } from 'svelte/store';
+import { goto } from '$app/navigation';
 import { clearSelectedPiece, selectedPieceId, setSelectedPiece } from '$lib/stores/pieceSelection';
 
 function createPiece(
@@ -882,5 +883,148 @@ describe('Puzzle route gameplay integration', () => {
 		await page.getByRole('button', { name: 'Rotate piece 0' }).click();
 
 		await expect.element(page.getByTestId('game-timer')).toHaveClass('timer-block timer-on');
+	});
+
+	it('resets all game state when clicking PLAY AGAIN in celebration modal', async () => {
+		await renderPuzzlePage();
+
+		await placePiece(0, 0, 0);
+		await placePiece(1, 1, 0);
+		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+
+		await page.getByRole('button', { name: 'PLAY AGAIN' }).click();
+
+		await expect.poll(() => page.getByTestId('celebration-modal').query()).toBeNull();
+		await expect.element(page.getByText('0/2')).toBeVisible();
+		await expect.element(page.getByTestId('game-timer')).toHaveClass('timer-block timer-off');
+		await expect.element(page.getByLabelText('Puzzle piece 0')).toBeVisible();
+		await expect.element(page.getByLabelText('Puzzle piece 1')).toBeVisible();
+		await expect.element(page.getByLabelText('Undo')).toBeDisabled();
+		await expect.element(page.getByLabelText('Redo')).toBeDisabled();
+		expect(clearProgress).toHaveBeenCalledWith('test-puzzle');
+	});
+
+	it('navigates to home when clicking BACK TO ARCADE in celebration modal', async () => {
+		await renderPuzzlePage();
+
+		await placePiece(0, 0, 0);
+		await placePiece(1, 1, 0);
+		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+
+		await page.getByRole('button', { name: 'BACK TO ARCADE' }).click();
+
+		expect(goto).toHaveBeenCalledWith('/');
+	});
+
+	it('traps Tab focus within the celebration modal', async () => {
+		await renderPuzzlePage();
+
+		await placePiece(0, 0, 0);
+		await placePiece(1, 1, 0);
+		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+
+		const playAgainBtn = await page.getByRole('button', { name: 'PLAY AGAIN' }).element();
+		const backToArcadeBtn = await page.getByRole('button', { name: 'BACK TO ARCADE' }).element();
+
+		backToArcadeBtn.focus();
+		expect(document.activeElement).toBe(backToArcadeBtn);
+		document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab' }));
+		expect(document.activeElement).toBe(playAgainBtn);
+
+		playAgainBtn.focus();
+		expect(document.activeElement).toBe(playAgainBtn);
+		document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true }));
+		expect(document.activeElement).toBe(backToArcadeBtn);
+	});
+
+	it('blocks undo and redo keyboard shortcuts while celebration modal is open', async () => {
+		await renderPuzzlePage();
+
+		await placePiece(0, 0, 0);
+		await placePiece(1, 1, 0);
+		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+
+		const callsBefore = vi.mocked(saveProgress).mock.calls.length;
+
+		window.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }));
+		window.dispatchEvent(new KeyboardEvent('keydown', { key: 'y', ctrlKey: true, bubbles: true }));
+
+		expect(vi.mocked(saveProgress).mock.calls.length).toBe(callsBefore);
+	});
+
+	it('zooms in and out via toolbar buttons', async () => {
+		await renderPuzzlePage();
+
+		const getScale = async () => {
+			const el = await page.getByTestId('zoomable-board-frame').element();
+			const match = el.getAttribute('style')?.match(/scale\(([\d.]+)\)/);
+			return match ? parseFloat(match[1]) : NaN;
+		};
+
+		const initialScale = await getScale();
+
+		await page.getByLabelText('Zoom in').click();
+		expect(await getScale()).toBeGreaterThan(initialScale);
+
+		await page.getByLabelText('Zoom out').click();
+		expect(await getScale()).toBe(initialScale);
+	});
+
+	it('zooms the board on wheel events', async () => {
+		await renderPuzzlePage();
+
+		const getScale = async () => {
+			const el = await page.getByTestId('zoomable-board-frame').element();
+			const match = el.getAttribute('style')?.match(/scale\(([\d.]+)\)/);
+			return match ? parseFloat(match[1]) : NaN;
+		};
+
+		const initialScale = await getScale();
+
+		const frameEl = await page.getByTestId('zoomable-board-frame').element();
+		frameEl.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, bubbles: true }));
+		expect(await getScale()).toBeGreaterThan(initialScale);
+
+		frameEl.dispatchEvent(new WheelEvent('wheel', { deltaY: 100, bubbles: true }));
+		expect(await getScale()).toBe(initialScale);
+	});
+
+	it('updates viewport dimensions on window resize', async () => {
+		const originalInnerWidth = window.innerWidth;
+		const originalInnerHeight = window.innerHeight;
+		try {
+			Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1280 });
+			Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 });
+
+			await renderPuzzlePage();
+
+			const getBoardWidth = () => {
+				const boardCanvas = document.querySelector<HTMLElement>('.board-canvas');
+				return boardCanvas?.style.getPropertyValue('--board-width').trim() ?? '';
+			};
+
+			const initialWidth = getBoardWidth();
+
+			Object.defineProperty(window, 'innerWidth', {
+				configurable: true,
+				value: 600
+			});
+			Object.defineProperty(window, 'innerHeight', {
+				configurable: true,
+				value: 400
+			});
+			window.dispatchEvent(new Event('resize'));
+
+			await expect.poll(() => getBoardWidth()).not.toBe(initialWidth);
+		} finally {
+			Object.defineProperty(window, 'innerWidth', {
+				configurable: true,
+				value: originalInnerWidth
+			});
+			Object.defineProperty(window, 'innerHeight', {
+				configurable: true,
+				value: originalInnerHeight
+			});
+		}
 	});
 });
