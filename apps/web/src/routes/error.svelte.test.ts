@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
 import ErrorPage from './+error.svelte';
+import { goto } from '$app/navigation';
 
 // Hoisted mutable page store for controlling $page.status / $page.error
 const mockPage = vi.hoisted(() => {
@@ -162,8 +163,64 @@ describe('+error.svelte', () => {
 			.toBeVisible();
 	});
 
+	it('shows fallback message when error is not an object', async () => {
+		mockPage.set({
+			url: { pathname: '/error' },
+			status: 500,
+			error: 'plain failure'
+		});
+		render(ErrorPage);
+		await expect
+			.element(page.getByText('An unexpected error occurred. Please try again.'))
+			.toBeVisible();
+	});
+
 	it('renders return to arcade link', async () => {
 		render(ErrorPage);
 		await expect.element(page.getByRole('link', { name: /RETURN TO ARCADE/i })).toBeVisible();
+	});
+
+	it('does not show the go-back control when the referrer cannot be parsed', async () => {
+		const referrerSpy = vi.spyOn(document, 'referrer', 'get').mockReturnValue('http://[');
+		try {
+			render(ErrorPage);
+			await expect.poll(() => page.getByRole('button', { name: /GO BACK/i }).query()).toBeNull();
+		} finally {
+			referrerSpy.mockRestore();
+		}
+	});
+
+	it('uses browser history when the referrer is a safe previous page', async () => {
+		const referrerSpy = vi
+			.spyOn(document, 'referrer', 'get')
+			.mockReturnValue(`${window.location.origin}/previous`);
+		const lengthSpy = vi.spyOn(window.history, 'length', 'get').mockReturnValue(2);
+		const backSpy = vi.spyOn(window.history, 'back').mockImplementation(() => undefined);
+		try {
+			render(ErrorPage);
+			await page.getByRole('button', { name: /GO BACK/i }).click();
+			expect(backSpy).toHaveBeenCalledOnce();
+			expect(goto).not.toHaveBeenCalled();
+		} finally {
+			referrerSpy.mockRestore();
+			lengthSpy.mockRestore();
+			backSpy.mockRestore();
+		}
+	});
+
+	it('falls back to the gallery when a visible go-back control is no longer safe', async () => {
+		let referrer = `${window.location.origin}/previous`;
+		const referrerSpy = vi.spyOn(document, 'referrer', 'get').mockImplementation(() => referrer);
+		const lengthSpy = vi.spyOn(window.history, 'length', 'get').mockReturnValue(2);
+		try {
+			render(ErrorPage);
+			await expect.element(page.getByRole('button', { name: /GO BACK/i })).toBeVisible();
+			referrer = '';
+			await page.getByRole('button', { name: /GO BACK/i }).click();
+			expect(goto).toHaveBeenCalledWith('/');
+		} finally {
+			referrerSpy.mockRestore();
+			lengthSpy.mockRestore();
+		}
 	});
 });

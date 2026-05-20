@@ -217,4 +217,43 @@ describe('PuzzleBoard', () => {
 		expect(onBoardPointerDown).toHaveBeenCalledOnce();
 		expect(onBoardPointerDown.mock.calls[0][0]).toBeInstanceOf(PointerEvent);
 	});
+
+	it('should accept a desktop drag/drop placement with the dragged piece id', async () => {
+		const puzzle = createMockPuzzle(3);
+		const onPiecePlaced = vi.fn();
+		const onIncorrectPlacement = vi.fn();
+
+		render(PuzzleBoard, {
+			puzzle,
+			placedPieces: [],
+			onPiecePlaced,
+			onIncorrectPlacement,
+			resolveImage
+		});
+
+		const dropZone = await page
+			.getByRole('button', { name: 'Drop zone at position 0, 0' })
+			.element();
+		const dataTransfer = new DataTransfer();
+		dataTransfer.setData('text/plain', '0');
+
+		dropZone.dispatchEvent(
+			new DragEvent('dragover', {
+				bubbles: true,
+				cancelable: true,
+				dataTransfer
+			})
+		);
+		dropZone.dispatchEvent(new DragEvent('dragleave', { bubbles: true }));
+		dropZone.dispatchEvent(
+			new DragEvent('drop', {
+				bubbles: true,
+				cancelable: true,
+				dataTransfer
+			})
+		);
+
+		expect(onPiecePlaced).toHaveBeenCalledWith(0, 0, 0);
+		expect(onIncorrectPlacement).not.toHaveBeenCalled();
+	});
 });
