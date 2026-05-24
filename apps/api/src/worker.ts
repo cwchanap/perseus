@@ -4,6 +4,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
+import { DEFAULT_DEV_ORIGINS } from './services/player-auth.shared';
 import type { WorkflowParams } from './types/workflow';
 
 // Workflow binding type (Cloudflare Workers)
@@ -44,11 +45,7 @@ app.use('*', async (c, next) => {
 	const isDev = env.NODE_ENV === 'development';
 	const isProd = !isDev; // Treat unset/staging/production as production
 
-	const DEFAULT_ALLOWED_ORIGINS = [
-		'http://localhost:5173',
-		'http://localhost:4173',
-		'http://localhost:4692'
-	];
+	const DEFAULT_ALLOWED_ORIGINS = DEFAULT_DEV_ORIGINS;
 	const envOrigins = (env.ALLOWED_ORIGINS || '')
 		.split(',')
 		.map((origin) => origin.trim())
@@ -139,11 +136,7 @@ export default {
 			const requestOrigin = request.headers.get('origin');
 			// Validate origin against allowed origins before setting CORS header
 			const isDev = env.NODE_ENV === 'development';
-			const DEFAULT_ALLOWED_ORIGINS = [
-				'http://localhost:5173',
-				'http://localhost:4173',
-				'http://localhost:4692'
-			];
+			const DEFAULT_ALLOWED_ORIGINS = DEFAULT_DEV_ORIGINS;
 			const envOrigins = (env.ALLOWED_ORIGINS || '')
 				.split(',')
 				.map((origin) => origin.trim())

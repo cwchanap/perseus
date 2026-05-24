@@ -145,8 +145,10 @@ Admin allowlist routes use the existing admin `requireAuth` middleware. Emails a
 trimmed, and validated before storage. Adding an existing email is idempotent. Removing an email
 prevents future sign-ins and revokes known active sessions for the linked player.
 
-`returnTo` accepts only same-origin app paths that start with `/` and do not start with `//`.
-Invalid or missing return targets fall back to `/`.
+`returnTo` accepts same-origin app paths that start with `/` and do not start with `//`.
+Absolute `http(s)` URLs are also accepted when the origin is in the server's `ALLOWED_ORIGINS`
+allowlist (in development, this falls back to default localhost origins when `ALLOWED_ORIGINS` is
+unset). Invalid or missing return targets fall back to `/`.
 
 ## Frontend UX
 

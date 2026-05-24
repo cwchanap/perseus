@@ -9,6 +9,7 @@ import {
 	createPkcePair,
 	exchangeGoogleCode,
 	parseReturnTo,
+	resolveAllowedOrigins,
 	verifyGoogleIdToken
 } from '../services/player-auth.shared';
 import {
@@ -144,7 +145,10 @@ auth.use('*', async (c, next) => {
 auth.get('/google/start', async (c) => {
 	const state = createOAuthState();
 	const pkce = await createPkcePair();
-	const returnTo = parseReturnTo(c.req.query('returnTo'), c.env.ALLOWED_ORIGINS);
+	const returnTo = parseReturnTo(
+		c.req.query('returnTo'),
+		resolveAllowedOrigins(c.env.ALLOWED_ORIGINS, c.env.NODE_ENV)
+	);
 
 	await storeOAuthState(c.env.PUZZLE_METADATA, state, {
 		codeVerifier: pkce.verifier,
