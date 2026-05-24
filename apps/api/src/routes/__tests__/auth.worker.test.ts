@@ -60,6 +60,7 @@ const env = {
 	GOOGLE_CLIENT_ID: 'google-client-id',
 	GOOGLE_CLIENT_SECRET: 'google-client-secret',
 	AUTH_REDIRECT_BASE_URL: 'https://app.example.com',
+	ALLOWED_ORIGINS: 'https://app.example.com',
 	NODE_ENV: 'development'
 };
 
@@ -93,6 +94,17 @@ function expectProductionCookieAttributes(setCookie: string): void {
 	expect(setCookie).toContain('HttpOnly');
 	expect(setCookie).toContain('SameSite=Lax');
 	expect(setCookie).toContain('Path=/');
+}
+
+async function expectServerMisconfigured(path: string, testEnv: typeof env): Promise<void> {
+	const res = await auth.fetch(request(path), testEnv);
+
+	expect(res.status).toBe(500);
+	expect(res.headers.get('Cache-Control')).toBe('no-store');
+	expect(await res.json()).toEqual({
+		error: 'server_misconfigured',
+		message: 'Server configuration error'
+	});
 }
 
 describe('Worker player auth routes', () => {
@@ -164,6 +176,28 @@ describe('Worker player auth routes', () => {
 		expect(setCookie).toContain('perseus_oauth_state=oauth-state-token');
 		expectProductionCookieAttributes(setCookie);
 		expect(res.headers.get('Cache-Control')).toBe('no-store');
+	});
+
+	it('returns server_misconfigured when production OAuth env is missing', async () => {
+		await expectServerMisconfigured('/session', {
+			...productionEnv,
+			GOOGLE_CLIENT_ID: '',
+			GOOGLE_CLIENT_SECRET: '',
+			AUTH_REDIRECT_BASE_URL: ''
+		});
+	});
+
+	it('returns server_misconfigured for invalid production auth redirect bases', async () => {
+		await expectServerMisconfigured('/google/start', {
+			...productionEnv,
+			ALLOWED_ORIGINS: 'https://app.example.com',
+			AUTH_REDIRECT_BASE_URL: 'https://user:pass@app.example.com'
+		});
+		await expectServerMisconfigured('/google/start', {
+			...productionEnv,
+			ALLOWED_ORIGINS: 'https://other.example.com',
+			AUTH_REDIRECT_BASE_URL: 'https://app.example.com'
+		});
 	});
 
 	it('sanitizes unsafe start returnTo values to root', async () => {

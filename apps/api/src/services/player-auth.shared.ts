@@ -1,6 +1,7 @@
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_JWKS_URL = 'https://www.googleapis.com/oauth2/v3/certs';
+const GOOGLE_JWKS_MAX_CACHE_SECONDS = 24 * 60 * 60;
 
 export const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 export const PLAYER_SESSION_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
@@ -116,7 +117,15 @@ function decodeJwtJson(value: string): unknown {
 function readMaxAge(cacheControl: string | null): number {
 	if (!cacheControl) return 0;
 	const match = /(?:^|,)\s*max-age=(\d+)\s*(?:,|$)/i.exec(cacheControl);
-	return match ? Number.parseInt(match[1], 10) : 0;
+	return match ? Math.min(Number.parseInt(match[1], 10), GOOGLE_JWKS_MAX_CACHE_SECONDS) : 0;
+}
+
+function isGoogleSigningJwk(jwk: GoogleJwk): boolean {
+	return (
+		jwk.kty === 'RSA' &&
+		(jwk.use === undefined || jwk.use === 'sig') &&
+		(jwk.alg === undefined || jwk.alg === 'RS256')
+	);
 }
 
 async function fetchGoogleJwks(): Promise<GoogleJwk[]> {
@@ -279,10 +288,10 @@ export async function verifyGoogleIdToken(
 	}
 
 	let keys = await getGoogleJwks();
-	let jwk = keys.find((key) => key.kid === kid);
+	let jwk = keys.find((key) => key.kid === kid && isGoogleSigningJwk(key));
 	if (!jwk) {
 		keys = await getGoogleJwks(true);
-		jwk = keys.find((key) => key.kid === kid);
+		jwk = keys.find((key) => key.kid === kid && isGoogleSigningJwk(key));
 	}
 	if (!jwk) {
 		throw new Error('Google ID token signing key not found');

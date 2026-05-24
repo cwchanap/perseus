@@ -39,32 +39,6 @@ const app = new Hono<{ Bindings: Env }>();
 
 app.use('*', logger());
 
-function productionAllowedOriginSet(allowedOrigins: string[]): Set<string> {
-	const origins = new Set<string>();
-	for (const origin of allowedOrigins) {
-		try {
-			origins.add(new URL(origin).origin);
-		} catch {
-			// Invalid configured origins are ignored here and will fail redirect origin matching.
-		}
-	}
-	return origins;
-}
-
-function isValidProductionAuthRedirectBaseUrl(value: string, allowedOrigins: string[]): boolean {
-	try {
-		const url = new URL(value);
-		return (
-			url.protocol === 'https:' &&
-			url.username === '' &&
-			url.password === '' &&
-			productionAllowedOriginSet(allowedOrigins).has(url.origin)
-		);
-	} catch {
-		return false;
-	}
-}
-
 app.use('*', async (c, next) => {
 	const env = c.env;
 	const isDev = env.NODE_ENV === 'development';
@@ -94,15 +68,6 @@ app.use('*', async (c, next) => {
 		if (allowedOrigins.length === 0) missingEnv.push('ALLOWED_ORIGINS');
 		if (!env.JWT_SECRET) missingEnv.push('JWT_SECRET');
 		if (!env.ADMIN_PASSKEY) missingEnv.push('ADMIN_PASSKEY');
-		if (!env.GOOGLE_CLIENT_ID) missingEnv.push('GOOGLE_CLIENT_ID');
-		if (!env.GOOGLE_CLIENT_SECRET) missingEnv.push('GOOGLE_CLIENT_SECRET');
-		if (!env.AUTH_REDIRECT_BASE_URL) missingEnv.push('AUTH_REDIRECT_BASE_URL');
-		if (
-			env.AUTH_REDIRECT_BASE_URL &&
-			!isValidProductionAuthRedirectBaseUrl(env.AUTH_REDIRECT_BASE_URL, allowedOrigins)
-		) {
-			missingEnv.push('AUTH_REDIRECT_BASE_URL');
-		}
 
 		if (missingEnv.length > 0) {
 			console.error(`Missing required env vars in production: ${missingEnv.join(', ')}`);
