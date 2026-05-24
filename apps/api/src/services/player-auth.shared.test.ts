@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
 	buildGoogleAuthUrl,
 	createOAuthState,
@@ -8,6 +8,20 @@ import {
 	parseReturnTo,
 	validateGoogleClaims
 } from './player-auth.shared';
+
+const validGoogleClaims = {
+	iss: 'https://accounts.google.com',
+	aud: 'client-id',
+	exp: Math.floor(Date.now() / 1000) + 60,
+	sub: 'google-sub-123',
+	email: 'Player@Example.COM',
+	email_verified: true
+};
+
+afterEach(() => {
+	vi.unstubAllGlobals();
+	vi.useRealTimers();
+});
 
 describe('player auth shared helpers', () => {
 	it('normalizes emails by trimming and lowercasing', () => {
@@ -26,7 +40,21 @@ describe('player auth shared helpers', () => {
 		expect(parseReturnTo(null)).toBe('/');
 		expect(parseReturnTo('https://evil.example')).toBe('/');
 		expect(parseReturnTo('//evil.example')).toBe('/');
+		expect(parseReturnTo('/\\evil.example/path')).toBe('/');
 		expect(parseReturnTo('admin')).toBe('/');
+	});
+
+	it('falls back when return path parsing fails', () => {
+		vi.stubGlobal(
+			'URL',
+			class {
+				constructor() {
+					throw new Error('Invalid URL');
+				}
+			}
+		);
+
+		expect(parseReturnTo('/puzzle/abc')).toBe('/');
 	});
 
 	it('creates PKCE verifier and challenge strings', async () => {
@@ -69,12 +97,8 @@ describe('player auth shared helpers', () => {
 		vi.setSystemTime(1_716_500_000_000);
 		const claims = validateGoogleClaims(
 			{
-				iss: 'https://accounts.google.com',
-				aud: 'client-id',
+				...validGoogleClaims,
 				exp: Math.floor(Date.now() / 1000) + 60,
-				sub: 'google-sub-123',
-				email: 'Player@Example.COM',
-				email_verified: true,
 				name: 'Player One',
 				picture: 'https://example.com/avatar.png'
 			},
@@ -89,15 +113,44 @@ describe('player auth shared helpers', () => {
 		});
 	});
 
+	it('validates Google claims without optional profile fields', () => {
+		const claims = validateGoogleClaims(
+			{
+				...validGoogleClaims,
+				iss: 'accounts.google.com'
+			},
+			'client-id'
+		);
+
+		expect(claims).toEqual({
+			sub: 'google-sub-123',
+			email: 'player@example.com'
+		});
+	});
+
+	it.each([
+		['issuer', { iss: 'https://evil.example' }, 'Invalid Google token issuer'],
+		['audience', { aud: 'other-client-id' }, 'Invalid Google token audience'],
+		['expiry', { exp: Math.floor(Date.now() / 1000) - 60 }, 'Google token expired'],
+		['subject', { sub: '' }, 'Google token missing subject'],
+		['email', { email: '' }, 'Google token missing email']
+	])('rejects Google claims with invalid %s', (_field, override, message) => {
+		expect(() =>
+			validateGoogleClaims(
+				{
+					...validGoogleClaims,
+					...override
+				},
+				'client-id'
+			)
+		).toThrow(message);
+	});
+
 	it('rejects unverified Google emails', () => {
 		expect(() =>
 			validateGoogleClaims(
 				{
-					iss: 'https://accounts.google.com',
-					aud: 'client-id',
-					exp: Math.floor(Date.now() / 1000) + 60,
-					sub: 'google-sub-123',
-					email: 'player@example.com',
+					...validGoogleClaims,
 					email_verified: false
 				},
 				'client-id'
