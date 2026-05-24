@@ -402,21 +402,31 @@ export async function oauthRateLimit(c: Context<{ Bindings: Env }>, next: Next):
 	const kv = c.env.PUZZLE_METADATA;
 	const env = c.env.NODE_ENV;
 
-	// Pre-check and increment in one shot — every OAuth start/callback counts
-	const result = await checkAndIncrement(kv, key, Date.now(), env, true, OAUTH_MAX_ATTEMPTS);
-	if (result.shouldBlock) {
+	// Check current lockout status before handler runs (no increment)
+	const lockCheck = await checkAndIncrement(kv, key, Date.now(), env, false);
+	if (lockCheck.shouldBlock) {
 		return c.json(
 			{
 				error: 'too_many_requests',
 				message:
-					result.remainingSeconds !== undefined
-						? `Too many requests. Try again in ${result.remainingSeconds} seconds`
+					lockCheck.remainingSeconds !== undefined
+						? `Too many requests. Try again in ${lockCheck.remainingSeconds} seconds`
 						: 'Too many requests. Please try again later'
 			},
 			429
 		);
 	}
 
+	// Let request proceed
 	await next();
+
+	// Post-request increment — every OAuth start/callback counts
+	// Wrapped in try-catch so KV failures don't mask the original response
+	try {
+		await checkAndIncrement(kv, key, Date.now(), env, true, OAUTH_MAX_ATTEMPTS);
+	} catch (error) {
+		console.error('Rate limit post-request tracking failed:', error);
+	}
+
 	return c.res;
 }

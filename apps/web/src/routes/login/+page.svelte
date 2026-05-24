@@ -4,6 +4,7 @@
 	import { getGoogleLoginUrl } from '$lib/services/api';
 
 	const errorMessages: Record<string, string> = {
+		access_denied: 'Google sign in was cancelled or denied. Try again.',
 		google_error: 'Google sign in failed. Try again.',
 		session_expired: 'The sign in session expired. Start again.',
 		not_allowed: 'This Google account is not on the player access list.',

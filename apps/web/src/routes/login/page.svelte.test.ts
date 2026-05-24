@@ -73,6 +73,17 @@ describe('Player Login Page', () => {
 		expect(getGoogleLoginUrl).toHaveBeenCalledWith('/');
 	});
 
+	it('shows access_denied error when user cancels Google sign in', async () => {
+		setLoginUrl('?error=access_denied');
+
+		render(LoginPage);
+
+		await expect.element(page.getByRole('alert')).toBeVisible();
+		await expect
+			.element(page.getByText('Google sign in was cancelled or denied. Try again.'))
+			.toBeVisible();
+	});
+
 	it('does not show an alert when error is missing', async () => {
 		render(LoginPage);
 

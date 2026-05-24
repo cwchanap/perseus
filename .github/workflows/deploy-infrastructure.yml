@@ -96,11 +96,19 @@ jobs:
               value: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
             ALLOWED_ORIGINS:
               value: ${{ secrets.ALLOWED_ORIGINS }}
+            AUTH_REDIRECT_BASE_URL:
+              value: ${{ secrets.AUTH_REDIRECT_BASE_URL }}
             jwtSecret:
               value: ${{ secrets.JWT_SECRET }}
               secret: true
             adminPasskey:
               value: ${{ secrets.ADMIN_PASSKEY }}
+              secret: true
+            googleClientId:
+              value: ${{ secrets.GOOGLE_CLIENT_ID }}
+              secret: true
+            googleClientSecret:
+              value: ${{ secrets.GOOGLE_CLIENT_SECRET }}
               secret: true
         env:
           PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE }}
@@ -153,11 +161,19 @@ jobs:
               value: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
             ALLOWED_ORIGINS:
               value: ${{ secrets.ALLOWED_ORIGINS }}
+            AUTH_REDIRECT_BASE_URL:
+              value: ${{ secrets.AUTH_REDIRECT_BASE_URL }}
             jwtSecret:
               value: ${{ secrets.JWT_SECRET }}
               secret: true
             adminPasskey:
               value: ${{ secrets.ADMIN_PASSKEY }}
+              secret: true
+            googleClientId:
+              value: ${{ secrets.GOOGLE_CLIENT_ID }}
+              secret: true
+            googleClientSecret:
+              value: ${{ secrets.GOOGLE_CLIENT_SECRET }}
               secret: true
         env:
           PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE }}
