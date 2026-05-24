@@ -1,12 +1,19 @@
 <script lang="ts">
 	import './layout.css';
+	import { onMount } from 'svelte';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/stores';
 	import favicon from '$lib/assets/favicon.svg';
+	import { playerAuth } from '$lib/stores/playerAuth';
 
 	let { children } = $props();
 
 	const isOnPuzzleRoute = $derived($page.url.pathname.startsWith('/puzzle/'));
+	const playerDisplayName = $derived($playerAuth.user?.name ?? $playerAuth.user?.email ?? '');
+
+	onMount(() => {
+		void playerAuth.refresh();
+	});
 </script>
 
 <svelte:head>
@@ -14,14 +21,41 @@
 </svelte:head>
 
 {#if !isOnPuzzleRoute}
-	<a
-		href={resolve('/quick')}
-		class="fixed top-2 right-3 z-2000 text-[0.6rem] font-(--font-mono)
-			tracking-[0.2em] text-(--accent) opacity-70 hover:opacity-100 max-sm:text-[0.55rem]"
-		data-testid="quick-puzzle-link"
+	<nav
+		aria-label="Player navigation"
+		class="fixed top-2 right-3 z-2000 flex max-w-[calc(100vw-1.5rem)] items-center gap-3
+			overflow-hidden text-[0.58rem] font-(--font-mono) tracking-[0.16em]
+			max-sm:gap-2 max-sm:text-[0.52rem]"
 	>
-		→ QUICK PUZZLE
-	</a>
+		<a
+			href={resolve('/quick')}
+			class="shrink-0 text-(--accent) opacity-70 transition-opacity duration-150 hover:opacity-100"
+			data-testid="quick-puzzle-link"
+		>
+			→ QUICK PUZZLE
+		</a>
+
+		{#if $playerAuth.status === 'authenticated' && $playerAuth.user}
+			<span class="min-w-0 truncate text-(--text-2)" title={playerDisplayName}>
+				{playerDisplayName}
+			</span>
+			<button
+				type="button"
+				class="shrink-0 text-(--hot) opacity-70 transition-opacity duration-150 hover:opacity-100"
+				onclick={() => playerAuth.logout()}
+			>
+				SIGN OUT
+			</button>
+		{:else}
+			<a
+				href={resolve('/login')}
+				class="shrink-0 text-(--text-2) opacity-70 transition-colors duration-150
+					hover:text-(--accent) hover:opacity-100"
+			>
+				SIGN IN
+			</a>
+		{/if}
+	</nav>
 {/if}
 
 {@render children()}
