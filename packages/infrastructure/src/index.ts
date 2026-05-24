@@ -22,11 +22,14 @@ const commonBindings = {
 	],
 	envVars: {
 		NODE_ENV: 'production',
-		ALLOWED_ORIGINS: config.require('ALLOWED_ORIGINS')
+		ALLOWED_ORIGINS: config.require('ALLOWED_ORIGINS'),
+		AUTH_REDIRECT_BASE_URL: config.require('AUTH_REDIRECT_BASE_URL')
 	},
 	secretVars: {
 		JWT_SECRET: config.requireSecret('jwtSecret'),
-		ADMIN_PASSKEY: config.requireSecret('adminPasskey')
+		ADMIN_PASSKEY: config.requireSecret('adminPasskey'),
+		GOOGLE_CLIENT_ID: config.requireSecret('googleClientId'),
+		GOOGLE_CLIENT_SECRET: config.requireSecret('googleClientSecret')
 	}
 };
 
