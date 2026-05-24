@@ -72,6 +72,17 @@ async function createSignedGoogleIdToken(params: {
 	};
 }
 
+function createUncheckedGoogleIdToken(header: Record<string, unknown>): string {
+	return [
+		base64UrlJson(header),
+		base64UrlJson({
+			...validGoogleClaims,
+			exp: Math.floor(Date.now() / 1000) + 60
+		}),
+		'not-a-real-signature'
+	].join('.');
+}
+
 afterEach(() => {
 	vi.unstubAllGlobals();
 	vi.useRealTimers();
@@ -281,6 +292,35 @@ describe('player auth shared helpers', () => {
 		await expect(
 			verifyGoogleIdToken(`${header}.${payload}.${otherSignature}`, 'client-id')
 		).rejects.toThrow('Google ID token signature is invalid');
+	});
+
+	it('rejects Google ID tokens with unsupported algorithms before fetching JWKS', async () => {
+		const fetchMock = vi.fn();
+		vi.stubGlobal('fetch', fetchMock);
+
+		await expect(
+			verifyGoogleIdToken(
+				createUncheckedGoogleIdToken({ alg: 'HS256', kid: 'test-key', typ: 'JWT' }),
+				'client-id'
+			)
+		).rejects.toThrow('Google ID token uses unsupported algorithm');
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it('rejects Google ID tokens missing a string kid before fetching JWKS', async () => {
+		const fetchMock = vi.fn();
+		vi.stubGlobal('fetch', fetchMock);
+
+		await expect(
+			verifyGoogleIdToken(createUncheckedGoogleIdToken({ alg: 'RS256', typ: 'JWT' }), 'client-id')
+		).rejects.toThrow('Google ID token missing key id');
+		await expect(
+			verifyGoogleIdToken(
+				createUncheckedGoogleIdToken({ alg: 'RS256', kid: 123, typ: 'JWT' }),
+				'client-id'
+			)
+		).rejects.toThrow('Google ID token missing key id');
+		expect(fetchMock).not.toHaveBeenCalled();
 	});
 
 	it('caches Google JWKS before max-age expires', async () => {
