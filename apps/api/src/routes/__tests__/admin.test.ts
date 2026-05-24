@@ -329,6 +329,7 @@ describe('Player Allowlist Routes', () => {
 		);
 
 		expect(res.status).toBe(200);
+		expect(authMock.requireAuth).toHaveBeenCalled();
 		expect(playerAuthMock.addAllowlistEntry).toHaveBeenCalledWith(rawEmail, 'admin');
 		expect(await res.json()).toEqual({ entry });
 	});
@@ -348,6 +349,7 @@ describe('Player Allowlist Routes', () => {
 		);
 
 		expect(res.status).toBe(200);
+		expect(authMock.requireAuth).toHaveBeenCalled();
 		expect(playerAuthMock.revokePlayerSessionsForEmail).toHaveBeenCalledWith(email);
 		expect(playerAuthMock.deleteAllowlistEntry).toHaveBeenCalledWith(email);
 		expect(
