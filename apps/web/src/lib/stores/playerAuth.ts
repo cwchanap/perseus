@@ -58,11 +58,8 @@ export function createPlayerAuthStore() {
 		},
 		async logout(): Promise<void> {
 			operationId++;
-			try {
-				await logoutPlayer();
-			} finally {
-				set(anonymousState);
-			}
+			await logoutPlayer();
+			set(anonymousState);
 		}
 	};
 }

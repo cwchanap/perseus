@@ -433,6 +433,25 @@ describe('Bun player auth routes', () => {
 		expect(setCookie).toContain('Max-Age=0');
 	});
 
+	it('redirects not-allowlisted callback to web origin when returnTo is absolute', async () => {
+		vi.mocked(playerAuth.getAllowlistEntry).mockResolvedValue(null);
+		vi.mocked(playerAuth.consumeOAuthState).mockResolvedValue({
+			state: 'oauth-state-token',
+			codeVerifier: 'pkce-verifier',
+			returnTo: 'http://localhost:5173/puzzle/abc',
+			createdAt: 1_716_500_000_000
+		});
+
+		const res = await auth.fetch(
+			request('/google/callback?state=oauth-state-token&code=auth-code', {
+				headers: { Cookie: 'perseus_oauth_state=oauth-state-token' }
+			})
+		);
+
+		expect(res.status).toBe(302);
+		expect(res.headers.get('Location')).toBe('http://localhost:5173/login?error=not_allowed');
+	});
+
 	it('redirects Google callback errors to login', async () => {
 		vi.mocked(sharedAuth.exchangeGoogleCode).mockRejectedValue(new Error('token exchange failed'));
 
@@ -448,6 +467,25 @@ describe('Bun player auth routes', () => {
 		expect(res.headers.get('Cache-Control')).toBe('no-store');
 		expect(setCookie).toContain('perseus_oauth_state=');
 		expect(setCookie).toContain('Max-Age=0');
+	});
+
+	it('redirects Google callback errors to web origin when returnTo is absolute', async () => {
+		vi.mocked(sharedAuth.exchangeGoogleCode).mockRejectedValue(new Error('token exchange failed'));
+		vi.mocked(playerAuth.consumeOAuthState).mockResolvedValue({
+			state: 'oauth-state-token',
+			codeVerifier: 'pkce-verifier',
+			returnTo: 'http://localhost:5173/puzzle/abc',
+			createdAt: 1_716_500_000_000
+		});
+
+		const res = await auth.fetch(
+			request('/google/callback?state=oauth-state-token&code=auth-code', {
+				headers: { Cookie: 'perseus_oauth_state=oauth-state-token' }
+			})
+		);
+
+		expect(res.status).toBe(302);
+		expect(res.headers.get('Location')).toBe('http://localhost:5173/login?error=google_error');
 	});
 
 	it('sets production attributes on player session cookies', async () => {

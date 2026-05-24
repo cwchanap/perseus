@@ -354,6 +354,26 @@ describe('Worker player auth routes', () => {
 		expect(setCookie).toContain('Max-Age=0');
 	});
 
+	it('redirects not-allowlisted callback to web origin when returnTo is absolute', async () => {
+		vi.mocked(playerAuth.getAllowlistEntry).mockResolvedValue(null);
+		vi.mocked(playerAuth.consumeOAuthState).mockResolvedValue({
+			state: 'oauth-state-token',
+			codeVerifier: 'pkce-verifier',
+			returnTo: 'http://localhost:5173/puzzle/abc',
+			createdAt: 1_716_500_000_000
+		});
+
+		const res = await auth.fetch(
+			request('/google/callback?state=oauth-state-token&code=auth-code', {
+				headers: { Cookie: 'perseus_oauth_state=oauth-state-token' }
+			}),
+			env
+		);
+
+		expect(res.status).toBe(302);
+		expect(res.headers.get('Location')).toBe('http://localhost:5173/login?error=not_allowed');
+	});
+
 	it('creates a player session for allowlisted verified users', async () => {
 		const res = await auth.fetch(
 			request('/google/callback?state=oauth-state-token&code=auth-code', {
@@ -417,6 +437,26 @@ describe('Worker player auth routes', () => {
 		expect(setCookie).toContain('Max-Age=0');
 	});
 
+	it('redirects Google callback errors to web origin when returnTo is absolute', async () => {
+		vi.mocked(sharedAuth.exchangeGoogleCode).mockRejectedValue(new Error('token exchange failed'));
+		vi.mocked(playerAuth.consumeOAuthState).mockResolvedValue({
+			state: 'oauth-state-token',
+			codeVerifier: 'pkce-verifier',
+			returnTo: 'http://localhost:5173/puzzle/abc',
+			createdAt: 1_716_500_000_000
+		});
+
+		const res = await auth.fetch(
+			request('/google/callback?state=oauth-state-token&code=auth-code', {
+				headers: { Cookie: 'perseus_oauth_state=oauth-state-token' }
+			}),
+			env
+		);
+
+		expect(res.status).toBe(302);
+		expect(res.headers.get('Location')).toBe('http://localhost:5173/login?error=google_error');
+	});
+
 	it('returns unauthenticated when no player session cookie exists', async () => {
 		const res = await auth.fetch(request('/session'), env);
 
@@ -437,19 +477,18 @@ describe('Worker player auth routes', () => {
 		expect(playerAuth.getPlayerSession).toHaveBeenCalledWith(kv, 'player-session-token');
 	});
 
-	it('clears stale cookies for invalid sessions', async () => {
+	it('returns unauthenticated without clearing cookie on KV miss', async () => {
 		vi.mocked(playerAuth.getPlayerSession).mockResolvedValue(null);
 
 		const res = await auth.fetch(
 			request('/session', { headers: { Cookie: 'perseus_player_session=stale-token' } }),
 			env
 		);
-		const setCookie = res.headers.get('set-cookie') ?? '';
 
 		expect(res.headers.get('Cache-Control')).toBe('no-store');
 		expect(await res.json()).toEqual({ authenticated: false });
-		expect(setCookie).toContain('perseus_player_session=');
-		expect(setCookie).toContain('Max-Age=0');
+		// Cookie should not be cleared — KV eventual consistency may cause transient misses
+		expect(res.headers.get('set-cookie')).toBeNull();
 	});
 
 	it('revokes sessions on logout and clears the cookie', async () => {
