@@ -54,6 +54,7 @@
 				</div>
 			{/if}
 
+			<!-- eslint-disable svelte/no-navigation-without-resolve -->
 			<a
 				href={googleLoginUrl}
 				class="w-full border border-(--accent) px-4 py-3 text-center text-[0.65rem]
@@ -64,6 +65,7 @@
 			>
 				SIGN IN WITH GOOGLE
 			</a>
+			<!-- eslint-enable svelte/no-navigation-without-resolve -->
 		</div>
 
 		<div class="mt-6 text-center">
