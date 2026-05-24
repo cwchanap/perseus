@@ -3,8 +3,17 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
 import AdminPage from './+page.svelte';
-import type { PuzzleSummary } from '$lib/types/puzzle';
-import { fetchAdminPuzzles, logout, ApiError, createPuzzle, deletePuzzle } from '$lib/services/api';
+import type { PlayerAllowlistEntry, PuzzleSummary } from '$lib/types/puzzle';
+import {
+	fetchAdminPuzzles,
+	logout,
+	ApiError,
+	createPuzzle,
+	deletePuzzle,
+	fetchPlayerAllowlist,
+	addPlayerAllowlistEntry,
+	removePlayerAllowlistEntry
+} from '$lib/services/api';
 import { normalizePuzzleImageFile } from '$lib/services/puzzleImage';
 import { goto } from '$app/navigation';
 
@@ -24,6 +33,9 @@ vi.mock('$lib/services/api', () => {
 		createPuzzle: vi.fn(),
 		deletePuzzle: vi.fn(),
 		fetchAdminPuzzles: vi.fn().mockResolvedValue([]),
+		fetchPlayerAllowlist: vi.fn().mockResolvedValue([]),
+		addPlayerAllowlistEntry: vi.fn(),
+		removePlayerAllowlistEntry: vi.fn(),
 		getThumbnailUrl: vi.fn((id: string) => `/api/puzzles/${id}/thumbnail`),
 		ApiError: MockApiError
 	};
@@ -57,9 +69,31 @@ const mockPuzzles: PuzzleSummary[] = [
 	{ id: 'p3', name: 'Broken Puzzle', pieceCount: 225, status: 'failed' }
 ];
 
+const mockAllowlist: PlayerAllowlistEntry[] = [
+	{
+		email: 'linked@example.com',
+		createdAt: 1,
+		addedBy: 'admin',
+		player: {
+			id: 'player-1',
+			email: 'linked@example.com',
+			name: 'Linked Player',
+			picture: 'https://example.com/avatar.jpg',
+			createdAt: 1,
+			lastLoginAt: 2
+		}
+	},
+	{
+		email: 'pending@example.com',
+		createdAt: 2,
+		addedBy: 'admin'
+	}
+];
+
 describe('Admin Page', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		vi.mocked(fetchPlayerAllowlist).mockResolvedValue([]);
 	});
 
 	it('renders the admin control panel heading', async () => {
@@ -135,6 +169,87 @@ describe('Admin Page', () => {
 		render(AdminPage);
 
 		await expect.element(page.getByText('Service temporarily unavailable')).toBeVisible();
+	});
+
+	describe('player access allowlist', () => {
+		it('renders player access allowlist entries including linked player name', async () => {
+			vi.mocked(fetchAdminPuzzles).mockResolvedValue([]);
+			vi.mocked(fetchPlayerAllowlist).mockResolvedValue(mockAllowlist);
+			render(AdminPage);
+
+			await expect.element(page.getByText('PLAYER ACCESS')).toBeVisible();
+			await expect.element(page.getByText('2 ALLOWED')).toBeVisible();
+			await expect.element(page.getByText('linked@example.com')).toBeVisible();
+			await expect.element(page.getByText('Linked Player')).toBeVisible();
+			await expect.element(page.getByText('pending@example.com')).toBeVisible();
+			await expect.element(page.getByText('No account created')).toBeVisible();
+		});
+
+		it('adds a player allowlist email through the form', async () => {
+			vi.mocked(fetchAdminPuzzles).mockResolvedValue([]);
+			vi.mocked(fetchPlayerAllowlist)
+				.mockResolvedValueOnce([])
+				.mockResolvedValueOnce([
+					{
+						email: 'new@example.com',
+						createdAt: 3,
+						addedBy: 'admin'
+					}
+				]);
+			vi.mocked(addPlayerAllowlistEntry).mockResolvedValue({
+				email: 'new@example.com',
+				createdAt: 3,
+				addedBy: 'admin'
+			});
+			render(AdminPage);
+
+			await expect.element(page.getByText('No players allowlisted.')).toBeVisible();
+			await page.getByPlaceholder('player@example.com').fill('  new@example.com  ');
+			await page.getByRole('button', { name: 'ADD PLAYER' }).click();
+
+			await vi.waitFor(() => {
+				expect(addPlayerAllowlistEntry).toHaveBeenCalledWith('new@example.com');
+			});
+			await expect.element(page.getByText('new@example.com')).toBeVisible();
+			await expect.element(page.getByPlaceholder('player@example.com')).toHaveValue('');
+		});
+
+		it('removes a player allowlist email', async () => {
+			vi.mocked(fetchAdminPuzzles).mockResolvedValue([]);
+			vi.mocked(fetchPlayerAllowlist)
+				.mockResolvedValueOnce(mockAllowlist)
+				.mockResolvedValueOnce([mockAllowlist[1]]);
+			vi.mocked(removePlayerAllowlistEntry).mockResolvedValue(undefined);
+			render(AdminPage);
+
+			await expect.element(page.getByText('linked@example.com')).toBeVisible();
+			await page.getByRole('button', { name: 'REMOVE' }).first().click();
+
+			await vi.waitFor(() => {
+				expect(removePlayerAllowlistEntry).toHaveBeenCalledWith('linked@example.com');
+			});
+			await expect.element(page.getByText('linked@example.com')).not.toBeInTheDocument();
+			await expect.element(page.getByText('pending@example.com')).toBeVisible();
+		});
+
+		it('shows loading and empty states for the allowlist', async () => {
+			vi.mocked(fetchAdminPuzzles).mockResolvedValue([]);
+			vi.mocked(fetchPlayerAllowlist).mockResolvedValue([]);
+			render(AdminPage);
+
+			await expect.element(page.getByText('LOADING ACCESS LIST...')).toBeVisible();
+			await expect.element(page.getByText('No players allowlisted.')).toBeVisible();
+		});
+
+		it('shows ApiError message when loading the allowlist fails', async () => {
+			vi.mocked(fetchAdminPuzzles).mockResolvedValue([]);
+			vi.mocked(fetchPlayerAllowlist).mockRejectedValue(
+				new ApiError(500, 'internal_error', 'Allowlist unavailable')
+			);
+			render(AdminPage);
+
+			await expect.element(page.getByText('Allowlist unavailable')).toBeVisible();
+		});
 	});
 
 	it('disables the submit button when name and image are empty', async () => {
