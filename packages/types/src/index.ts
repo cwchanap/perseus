@@ -122,10 +122,9 @@ export interface PlayerUser {
 	lastLoginAt: number;
 }
 
-export interface PlayerSessionResponse {
-	authenticated: boolean;
-	user?: PlayerUser;
-}
+export type PlayerSessionResponse =
+	| { authenticated: true; user: PlayerUser }
+	| { authenticated: false; user?: undefined };
 
 export interface PlayerAllowlistEntry {
 	email: string;
