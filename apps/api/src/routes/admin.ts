@@ -11,6 +11,13 @@ import {
 	requireAuth
 } from '../middleware/auth';
 import { loginRateLimit, resetLoginAttempts } from '../middleware/rate-limit';
+import {
+	addAllowlistEntry,
+	deleteAllowlistEntry,
+	getPlayerByEmail,
+	listAllowlistEntries,
+	revokePlayerSessionsForEmail
+} from '../services/player-auth';
 import { generatePuzzle, isValidPieceCount } from '../services/puzzle-generator';
 import {
 	createPuzzle as storePuzzle,
@@ -249,6 +256,75 @@ admin.get('/session', async (c) => {
 	}
 
 	return c.json({ authenticated: true });
+});
+
+// GET /api/admin/player-allowlist - List player allowlist entries (protected)
+admin.get('/player-allowlist', requireAuth, async (c) => {
+	try {
+		const allowlistEntries = await listAllowlistEntries();
+		const entries = await Promise.all(
+			allowlistEntries.map(async (entry) => {
+				const player = await getPlayerByEmail(entry.email);
+				return player ? { ...entry, player } : entry;
+			})
+		);
+
+		return c.json({ entries });
+	} catch (error) {
+		console.error('Failed to list player allowlist entries', error);
+		return c.json({ error: 'internal_error', message: 'Failed to list player allowlist' }, 500);
+	}
+});
+
+// POST /api/admin/player-allowlist - Add a player allowlist entry (protected)
+admin.post('/player-allowlist', requireAuth, async (c) => {
+	let body: unknown;
+	try {
+		body = await c.req.json();
+	} catch {
+		return c.json({ error: 'bad_request', message: 'Invalid JSON body' }, 400);
+	}
+
+	const email = (body as { email?: unknown })?.email;
+	if (typeof email !== 'string') {
+		return c.json({ error: 'bad_request', message: 'Email is required' }, 400);
+	}
+
+	try {
+		const entry = await addAllowlistEntry(email, 'admin');
+		return c.json({ entry });
+	} catch (error) {
+		if (error instanceof Error && error.message === 'Invalid email') {
+			return c.json({ error: 'bad_request', message: 'Enter a valid email address' }, 400);
+		}
+
+		console.error('Failed to add player allowlist entry', error);
+		return c.json(
+			{ error: 'internal_error', message: 'Failed to add player allowlist entry' },
+			500
+		);
+	}
+});
+
+// DELETE /api/admin/player-allowlist/:email - Remove a player allowlist entry (protected)
+admin.delete('/player-allowlist/:email', requireAuth, async (c) => {
+	const email = decodeURIComponent(c.req.param('email'));
+
+	try {
+		await revokePlayerSessionsForEmail(email);
+		await deleteAllowlistEntry(email);
+		return c.json({ success: true });
+	} catch (error) {
+		if (error instanceof Error && error.message === 'Invalid email') {
+			return c.json({ error: 'bad_request', message: 'Enter a valid email address' }, 400);
+		}
+
+		console.error('Failed to delete player allowlist entry', error);
+		return c.json(
+			{ error: 'internal_error', message: 'Failed to delete player allowlist entry' },
+			500
+		);
+	}
 });
 
 // GET /api/admin/puzzles - List all puzzles for admin
