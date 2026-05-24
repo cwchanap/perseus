@@ -126,7 +126,7 @@ function callbackUrl(env: OAuthEnv): string {
 function cookieOptions(maxAge: number) {
 	return {
 		httpOnly: true,
-		secure: process.env.NODE_ENV === 'production',
+		secure: process.env.NODE_ENV !== 'development',
 		sameSite: 'Lax' as const,
 		path: '/',
 		maxAge
