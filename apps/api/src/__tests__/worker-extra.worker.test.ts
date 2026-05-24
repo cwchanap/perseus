@@ -122,7 +122,7 @@ describe('Worker - CORS middleware branches', () => {
 		expect(res.headers.get('access-control-allow-origin')).toBe('https://example.com');
 	});
 
-	it('should return 200 for production with valid ALLOWED_ORIGINS set', async () => {
+	it('should return 200 for production with AUTH_REDIRECT_BASE_URL origin in ALLOWED_ORIGINS', async () => {
 		const env = {
 			NODE_ENV: 'production',
 			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
@@ -141,6 +141,46 @@ describe('Worker - CORS middleware branches', () => {
 
 		// Should pass validation and return health check response
 		expect(res.status).toBe(200);
+	});
+
+	it('should return 500 when AUTH_REDIRECT_BASE_URL has userinfo in production', async () => {
+		const env = {
+			NODE_ENV: 'production',
+			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+			ADMIN_PASSKEY: 'test-passkey',
+			GOOGLE_CLIENT_ID: 'google-client-id',
+			GOOGLE_CLIENT_SECRET: 'google-client-secret',
+			AUTH_REDIRECT_BASE_URL: 'https://user:pass@myapp.example.com',
+			ALLOWED_ORIGINS: 'https://myapp.example.com',
+			ASSETS: { fetch: vi.fn() }
+		};
+
+		const req = new Request('http://localhost/api/health');
+		const res = await worker.fetch(req, env as any, createMockCtx());
+
+		expect(res.status).toBe(500);
+		const body = (await res.json()) as any;
+		expect(body.error).toBe('server_misconfigured');
+	});
+
+	it('should return 500 when AUTH_REDIRECT_BASE_URL origin is not allowed in production', async () => {
+		const env = {
+			NODE_ENV: 'production',
+			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+			ADMIN_PASSKEY: 'test-passkey',
+			GOOGLE_CLIENT_ID: 'google-client-id',
+			GOOGLE_CLIENT_SECRET: 'google-client-secret',
+			AUTH_REDIRECT_BASE_URL: 'https://myapp.example.com',
+			ALLOWED_ORIGINS: 'https://other.example.com',
+			ASSETS: { fetch: vi.fn() }
+		};
+
+		const req = new Request('http://localhost/api/health');
+		const res = await worker.fetch(req, env as any, createMockCtx());
+
+		expect(res.status).toBe(500);
+		const body = (await res.json()) as any;
+		expect(body.error).toBe('server_misconfigured');
 	});
 
 	it('should return 500 when only ALLOWED_ORIGINS is missing in production', async () => {

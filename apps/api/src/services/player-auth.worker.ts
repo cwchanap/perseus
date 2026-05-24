@@ -268,6 +268,9 @@ export async function storeOAuthState(
 	);
 }
 
+// OAuth state in KV is best-effort across Cloudflare colo consistency and is not a strict
+// atomic single-use primitive. Strict replay prevention requires a Durable Object or another
+// strongly consistent store.
 export async function consumeOAuthState(
 	kv: KVNamespace,
 	state: string
