@@ -167,7 +167,7 @@ auth.get('/google/start', async (c) => {
 	const env = c.get('oauthEnv') as OAuthEnv;
 	const state = createOAuthState();
 	const pkce = await createPkcePair();
-	const returnTo = parseReturnTo(c.req.query('returnTo'));
+	const returnTo = parseReturnTo(c.req.query('returnTo'), env.ALLOWED_ORIGINS);
 
 	await storeOAuthState(state, {
 		codeVerifier: pkce.verifier,

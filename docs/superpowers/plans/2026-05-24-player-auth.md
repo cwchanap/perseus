@@ -3277,6 +3277,7 @@ Create or update `apps/api/.dev.vars` locally with real values:
 GOOGLE_CLIENT_ID=your-local-client-id.apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=your-local-client-secret
 AUTH_REDIRECT_BASE_URL=http://localhost:4690
+NODE_ENV=development
 JWT_SECRET=local-jwt-secret-with-at-least-32-characters
 ADMIN_PASSKEY=local-admin-passkey
 ALLOWED_ORIGINS=http://localhost:4692

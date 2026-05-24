@@ -68,16 +68,48 @@ export function normalizeEmail(email: string): string {
 	return normalized;
 }
 
-export function parseReturnTo(value: string | null | undefined): string {
-	if (!value) return '/';
-	if (!value.startsWith('/') || value.startsWith('//')) return '/';
-	try {
-		const parsed = new URL(value, 'https://perseus.local');
-		if (parsed.origin !== 'https://perseus.local') return '/';
-		return `${parsed.pathname}${parsed.search}${parsed.hash}`;
-	} catch {
-		return '/';
+function allowedReturnOriginSet(allowedOrigins: string | undefined): Set<string> {
+	const origins = new Set<string>();
+	for (const origin of (allowedOrigins || '').split(',')) {
+		const trimmed = origin.trim();
+		if (!trimmed) continue;
+		try {
+			origins.add(new URL(trimmed).origin);
+		} catch {
+			// Invalid configured origins are ignored and will fail return URL matching.
+		}
 	}
+	return origins;
+}
+
+export function parseReturnTo(value: string | null | undefined, allowedOrigins?: string): string {
+	if (!value) return '/';
+	if (value.startsWith('/') && !value.startsWith('//')) {
+		try {
+			const parsed = new URL(value, 'https://perseus.local');
+			if (parsed.origin !== 'https://perseus.local') return '/';
+			return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+		} catch {
+			return '/';
+		}
+	}
+
+	try {
+		const parsed = new URL(value);
+		const allowedOriginsSet = allowedReturnOriginSet(allowedOrigins);
+		if (
+			(parsed.protocol === 'https:' || parsed.protocol === 'http:') &&
+			parsed.username === '' &&
+			parsed.password === '' &&
+			allowedOriginsSet.has(parsed.origin)
+		) {
+			return parsed.toString();
+		}
+	} catch {
+		// Fall through to the safe root fallback below.
+	}
+
+	return '/';
 }
 
 function randomBytes(byteLength: number): Uint8Array {

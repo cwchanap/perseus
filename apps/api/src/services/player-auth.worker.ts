@@ -150,7 +150,10 @@ export async function upsertPlayer(
 
 	await writeJson(kv, playerKey(player.id), player);
 	if (existing && existing.email !== email) {
-		await kv.delete(emailIndexKey(existing.email));
+		const indexedPlayerId = await kv.get(emailIndexKey(existing.email));
+		if (indexedPlayerId === player.id) {
+			await kv.delete(emailIndexKey(existing.email));
+		}
 	}
 	await kv.put(emailIndexKey(email), player.id);
 	return player;

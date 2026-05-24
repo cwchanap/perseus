@@ -100,13 +100,30 @@ describe('player auth shared helpers', () => {
 		}
 	);
 
-	it('accepts only same-origin return paths', () => {
+	it('accepts only safe relative return paths by default', () => {
 		expect(parseReturnTo('/puzzle/abc')).toBe('/puzzle/abc');
 		expect(parseReturnTo(null)).toBe('/');
 		expect(parseReturnTo('https://evil.example')).toBe('/');
 		expect(parseReturnTo('//evil.example')).toBe('/');
 		expect(parseReturnTo('/\\evil.example/path')).toBe('/');
 		expect(parseReturnTo('admin')).toBe('/');
+	});
+
+	it('accepts absolute return URLs only for configured origins', () => {
+		expect(
+			parseReturnTo(
+				'http://localhost:4692/puzzle/abc?piece=1#selected',
+				'https://app.example.com, http://localhost:4692'
+			)
+		).toBe('http://localhost:4692/puzzle/abc?piece=1#selected');
+		expect(parseReturnTo('https://app.example.com/gallery', 'https://app.example.com')).toBe(
+			'https://app.example.com/gallery'
+		);
+		expect(parseReturnTo('https://evil.example/puzzle/abc', 'https://app.example.com')).toBe('/');
+		expect(
+			parseReturnTo('https://user:pass@app.example.com/puzzle/abc', 'https://app.example.com')
+		).toBe('/');
+		expect(parseReturnTo('javascript:alert(1)', 'https://app.example.com')).toBe('/');
 	});
 
 	it('falls back when return path parsing fails', () => {
