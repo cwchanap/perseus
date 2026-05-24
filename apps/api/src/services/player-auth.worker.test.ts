@@ -1,15 +1,44 @@
-import { beforeAll, beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import type { PlayerUser } from '@perseus/types';
-import {
-	PLAYER_SESSION_DURATION_MS,
-	buildGoogleAuthUrl,
-	createOAuthState,
-	createPkcePair,
-	hashToken,
-	normalizeEmail,
-	parseReturnTo,
-	validateGoogleClaims
-} from './player-auth.shared';
+
+const sharedAuth = vi.hoisted(() => {
+	const PLAYER_SESSION_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
+
+	function bytesToBase64Url(bytes: Uint8Array): string {
+		const chunkSize = 0x8000;
+		let binary = '';
+		for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+			binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+		}
+		return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+	}
+
+	function normalizeEmail(email: string): string {
+		const normalized = email.trim().toLowerCase();
+		if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
+			throw new Error('Invalid email');
+		}
+		return normalized;
+	}
+
+	async function hashToken(token: string): Promise<string> {
+		const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
+		return Array.from(new Uint8Array(digest))
+			.map((byte) => byte.toString(16).padStart(2, '0'))
+			.join('');
+	}
+
+	return {
+		PLAYER_SESSION_DURATION_MS,
+		bytesToBase64Url,
+		normalizeEmail,
+		hashToken
+	};
+});
+
+vi.mock('./player-auth.shared', () => sharedAuth);
+
+import { PLAYER_SESSION_DURATION_MS, hashToken } from './player-auth.shared';
 
 import {
 	addAllowlistEntry,
@@ -86,59 +115,9 @@ function revokedAfterKey(email: string): string {
 	return `player_sessions:${email}:revoked_after`;
 }
 
-async function exerciseImportedSharedAuthForCoverage(): Promise<void> {
-	normalizeEmail(' Player@Example.COM ');
-	try {
-		normalizeEmail('invalid-email');
-	} catch {
-		// Expected invalid input path.
-	}
-	parseReturnTo('/puzzle/abc?piece=1#top');
-	parseReturnTo(null);
-	parseReturnTo('//evil.example');
-	createOAuthState();
-	const pkce = await createPkcePair();
-	buildGoogleAuthUrl({
-		clientId: 'client-id',
-		redirectUri: 'https://app.example.com/api/auth/google/callback',
-		state: 'state',
-		codeChallenge: pkce.challenge
-	});
-
-	const validClaims = {
-		iss: 'https://accounts.google.com',
-		aud: 'client-id',
-		exp: Math.floor(Date.now() / 1000) + 60,
-		sub: 'google-sub-123',
-		email: 'Player@Example.COM',
-		email_verified: true,
-		name: 'Player One',
-		picture: 'https://example.com/avatar.png'
-	};
-	validateGoogleClaims(validClaims, 'client-id');
-	for (const payload of [
-		{ ...validClaims, iss: 'https://evil.example' },
-		{ ...validClaims, aud: 'other-client-id' },
-		{ ...validClaims, exp: 1 },
-		{ ...validClaims, sub: '' },
-		{ ...validClaims, email: '' },
-		{ ...validClaims, email_verified: false }
-	]) {
-		try {
-			validateGoogleClaims(payload, 'client-id');
-		} catch {
-			// Expected invalid claim path.
-		}
-	}
-}
-
 describe('player auth Worker storage', () => {
 	let memoryKV: MemoryKV;
 	let kv: KVNamespace;
-
-	beforeAll(async () => {
-		await exerciseImportedSharedAuthForCoverage();
-	});
 
 	beforeEach(() => {
 		memoryKV = new MemoryKV();
