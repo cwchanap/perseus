@@ -43,11 +43,15 @@ function sessionKey(hash: string): string {
 }
 
 function sessionsIndexPrefix(email: string): string {
-	return `${PLAYER_SESSIONS_PREFIX}${normalizeEmail(email)}:`;
+	return `${PLAYER_SESSIONS_PREFIX}${normalizeEmail(email)}:session:`;
 }
 
 function sessionsIndexKey(email: string, hash: string): string {
 	return `${sessionsIndexPrefix(email)}${hash}`;
+}
+
+function revokedAfterKey(email: string): string {
+	return `${PLAYER_SESSIONS_PREFIX}${normalizeEmail(email)}:revoked_after`;
 }
 
 async function readJson<T>(kv: KVNamespace, key: string): Promise<T | null> {
@@ -206,6 +210,8 @@ export async function getPlayerSession(
 	const record = await readJson<PlayerSessionRecord>(kv, sessionKey(sessionHash));
 	if (!record || record.expiresAt <= Date.now()) return null;
 	if (!(await getAllowlistEntry(kv, record.user.email))) return null;
+	const revokedAfter = Number(await kv.get(revokedAfterKey(record.user.email)));
+	if (Number.isFinite(revokedAfter) && record.createdAt <= revokedAfter) return null;
 	return record;
 }
 
@@ -221,6 +227,9 @@ export async function revokePlayerSession(kv: KVNamespace, token: string): Promi
 export async function revokePlayerSessionsForEmail(kv: KVNamespace, email: string): Promise<void> {
 	const normalized = normalizeEmail(email);
 	const prefix = sessionsIndexPrefix(normalized);
+	await kv.put(revokedAfterKey(normalized), String(Date.now()), {
+		expirationTtl: PLAYER_SESSION_TTL_SECONDS
+	});
 	const keys = await listKeys(kv, prefix);
 
 	await Promise.all(

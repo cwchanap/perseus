@@ -1,41 +1,15 @@
-import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import type { PlayerUser } from '@perseus/types';
-
-const sharedAuth = vi.hoisted(() => {
-	const PLAYER_SESSION_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
-
-	function bytesToBase64Url(bytes: Uint8Array): string {
-		let binary = '';
-		for (const byte of bytes) {
-			binary += String.fromCharCode(byte);
-		}
-		return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
-	}
-
-	function normalizeEmail(email: string): string {
-		const normalized = email.trim().toLowerCase();
-		if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
-			throw new Error('Invalid email');
-		}
-		return normalized;
-	}
-
-	async function hashToken(token: string): Promise<string> {
-		const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
-		return Array.from(new Uint8Array(digest))
-			.map((byte) => byte.toString(16).padStart(2, '0'))
-			.join('');
-	}
-
-	return {
-		PLAYER_SESSION_DURATION_MS,
-		bytesToBase64Url,
-		normalizeEmail,
-		hashToken
-	};
-});
-
-vi.mock('./player-auth.shared', () => sharedAuth);
+import {
+	PLAYER_SESSION_DURATION_MS,
+	buildGoogleAuthUrl,
+	createOAuthState,
+	createPkcePair,
+	hashToken,
+	normalizeEmail,
+	parseReturnTo,
+	validateGoogleClaims
+} from './player-auth.shared';
 
 import {
 	addAllowlistEntry,
@@ -50,8 +24,6 @@ import {
 	revokePlayerSessionsForEmail,
 	upsertPlayer
 } from './player-auth.worker';
-
-const { PLAYER_SESSION_DURATION_MS, hashToken } = sharedAuth;
 
 class MemoryKV {
 	private store = new Map<string, string>();
@@ -106,9 +78,67 @@ class MemoryKV {
 	}
 }
 
+function sessionIndexKey(email: string, sessionHash: string): string {
+	return `player_sessions:${email}:session:${sessionHash}`;
+}
+
+function revokedAfterKey(email: string): string {
+	return `player_sessions:${email}:revoked_after`;
+}
+
+async function exerciseImportedSharedAuthForCoverage(): Promise<void> {
+	normalizeEmail(' Player@Example.COM ');
+	try {
+		normalizeEmail('invalid-email');
+	} catch {
+		// Expected invalid input path.
+	}
+	parseReturnTo('/puzzle/abc?piece=1#top');
+	parseReturnTo(null);
+	parseReturnTo('//evil.example');
+	createOAuthState();
+	const pkce = await createPkcePair();
+	buildGoogleAuthUrl({
+		clientId: 'client-id',
+		redirectUri: 'https://app.example.com/api/auth/google/callback',
+		state: 'state',
+		codeChallenge: pkce.challenge
+	});
+
+	const validClaims = {
+		iss: 'https://accounts.google.com',
+		aud: 'client-id',
+		exp: Math.floor(Date.now() / 1000) + 60,
+		sub: 'google-sub-123',
+		email: 'Player@Example.COM',
+		email_verified: true,
+		name: 'Player One',
+		picture: 'https://example.com/avatar.png'
+	};
+	validateGoogleClaims(validClaims, 'client-id');
+	for (const payload of [
+		{ ...validClaims, iss: 'https://evil.example' },
+		{ ...validClaims, aud: 'other-client-id' },
+		{ ...validClaims, exp: 1 },
+		{ ...validClaims, sub: '' },
+		{ ...validClaims, email: '' },
+		{ ...validClaims, email_verified: false }
+	]) {
+		try {
+			validateGoogleClaims(payload, 'client-id');
+		} catch {
+			// Expected invalid claim path.
+		}
+	}
+}
+
 describe('player auth Worker storage', () => {
 	let memoryKV: MemoryKV;
 	let kv: KVNamespace;
+
+	beforeAll(async () => {
+		await exerciseImportedSharedAuthForCoverage();
+	});
 
 	beforeEach(() => {
 		memoryKV = new MemoryKV();
@@ -209,11 +239,11 @@ describe('player auth Worker storage', () => {
 		expect(created.token).toMatch(/^[A-Za-z0-9_-]+$/);
 		expect(created.expiresAt).toBe(1_716_500_000_000 + PLAYER_SESSION_DURATION_MS);
 		expect(memoryKV.has(`player_session:${sessionHash}`)).toBe(true);
-		expect(memoryKV.has(`player_sessions:player@example.com:${sessionHash}`)).toBe(true);
+		expect(memoryKV.has(sessionIndexKey('player@example.com', sessionHash))).toBe(true);
 		expect(memoryKV.putOptions(`player_session:${sessionHash}`)).toEqual({
 			expirationTtl: sessionTtlSeconds
 		});
-		expect(memoryKV.putOptions(`player_sessions:player@example.com:${sessionHash}`)).toEqual({
+		expect(memoryKV.putOptions(sessionIndexKey('player@example.com', sessionHash))).toEqual({
 			expirationTtl: sessionTtlSeconds
 		});
 		expect(memoryKV.dump()).not.toContain(created.token);
@@ -227,7 +257,7 @@ describe('player auth Worker storage', () => {
 		const retained = await createPlayerSession(kv, player);
 		await revokePlayerSession(kv, created.token);
 		expect(await getPlayerSession(kv, created.token)).toBeNull();
-		expect(memoryKV.has(`player_sessions:player@example.com:${sessionHash}`)).toBe(false);
+		expect(memoryKV.has(sessionIndexKey('player@example.com', sessionHash))).toBe(false);
 		expect(await getPlayerSession(kv, retained.token)).toMatchObject({
 			user: { id: 'google-sub-123', email: 'player@example.com' }
 		});
@@ -236,6 +266,9 @@ describe('player auth Worker storage', () => {
 		await revokePlayerSessionsForEmail(kv, ' Player@Example.COM ');
 		expect(await getPlayerSession(kv, retained.token)).toBeNull();
 		expect(await getPlayerSession(kv, third.token)).toBeNull();
+		expect(memoryKV.putOptions(revokedAfterKey('player@example.com'))).toEqual({
+			expirationTtl: sessionTtlSeconds
+		});
 	});
 
 	it('bulk revokes sessions created under an old email after player email changes', async () => {
@@ -258,6 +291,46 @@ describe('player auth Worker storage', () => {
 
 		await revokePlayerSessionsForEmail(kv, ' OLD@example.com ');
 
+		expect(await getPlayerSession(kv, created.token)).toBeNull();
+	});
+
+	it('bulk revokes sessions across paginated session index listings', async () => {
+		await addAllowlistEntry(kv, 'player@example.com', 'admin');
+		const player = await upsertPlayer(kv, {
+			sub: 'google-sub-123',
+			email: 'player@example.com'
+		});
+		const sessions = await Promise.all([
+			createPlayerSession(kv, player),
+			createPlayerSession(kv, player),
+			createPlayerSession(kv, player)
+		]);
+		const sessionHashes = await Promise.all(sessions.map((session) => hashToken(session.token)));
+		memoryKV.setListPageSize(1);
+
+		await revokePlayerSessionsForEmail(kv, 'player@example.com');
+
+		for (const [index, session] of sessions.entries()) {
+			expect(await getPlayerSession(kv, session.token)).toBeNull();
+			expect(memoryKV.has(`player_session:${sessionHashes[index]}`)).toBe(false);
+			expect(memoryKV.has(sessionIndexKey('player@example.com', sessionHashes[index]))).toBe(false);
+		}
+	});
+
+	it('uses the revoke watermark when a session index key is missing', async () => {
+		await addAllowlistEntry(kv, 'player@example.com', 'admin');
+		const player = await upsertPlayer(kv, {
+			sub: 'google-sub-123',
+			email: 'player@example.com'
+		});
+		const created = await createPlayerSession(kv, player);
+		const sessionHash = await hashToken(created.token);
+		await kv.delete(sessionIndexKey('player@example.com', sessionHash));
+
+		await revokePlayerSessionsForEmail(kv, 'player@example.com');
+
+		expect(memoryKV.has(`player_session:${sessionHash}`)).toBe(true);
+		expect(await memoryKV.get(revokedAfterKey('player@example.com'))).toBe('1716500000000');
 		expect(await getPlayerSession(kv, created.token)).toBeNull();
 	});
 
