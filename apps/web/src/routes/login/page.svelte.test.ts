@@ -73,12 +73,17 @@ describe('Player Login Page', () => {
 		expect(getGoogleLoginUrl).toHaveBeenCalledWith('/');
 	});
 
-	it('does not show an alert for missing or unknown errors', async () => {
+	it('does not show an alert when error is missing', async () => {
 		render(LoginPage);
-		await expect.poll(() => page.getByRole('alert').query()).toBeNull();
 
+		await expect.poll(() => page.getByRole('alert').query()).toBeNull();
+	});
+
+	it('does not show an alert when error is unknown', async () => {
 		setLoginUrl('?error=unknown');
+
 		render(LoginPage);
+
 		await expect.poll(() => page.getByRole('alert').query()).toBeNull();
 	});
 });

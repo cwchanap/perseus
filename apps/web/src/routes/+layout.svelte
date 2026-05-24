@@ -14,6 +14,12 @@
 	onMount(() => {
 		void playerAuth.refresh();
 	});
+
+	function handlePlayerLogout() {
+		void playerAuth.logout().catch((error) => {
+			console.error('Failed to sign out player', error);
+		});
+	}
 </script>
 
 <svelte:head>
@@ -42,7 +48,7 @@
 			<button
 				type="button"
 				class="shrink-0 text-(--hot) opacity-70 transition-opacity duration-150 hover:opacity-100"
-				onclick={() => playerAuth.logout()}
+				onclick={handlePlayerLogout}
 			>
 				SIGN OUT
 			</button>
