@@ -273,6 +273,10 @@ export async function verifyGoogleIdToken(
 	if (typeof kid !== 'string' || kid.length === 0) {
 		throw new Error('Google ID token missing key id');
 	}
+	const payload = decodeJwtJson(encodedPayload);
+	if (typeof payload !== 'object' || payload === null) {
+		throw new Error('Google ID token is malformed');
+	}
 
 	let keys = await getGoogleJwks();
 	let jwk = keys.find((key) => key.kid === kid);
@@ -301,9 +305,5 @@ export async function verifyGoogleIdToken(
 		throw new Error('Google ID token signature is invalid');
 	}
 
-	const payload = decodeJwtJson(encodedPayload);
-	if (typeof payload !== 'object' || payload === null) {
-		throw new Error('Google ID token is malformed');
-	}
 	return validateGoogleClaims(payload as GoogleClaimsPayload, clientId);
 }

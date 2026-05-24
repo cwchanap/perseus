@@ -294,6 +294,45 @@ describe('player auth shared helpers', () => {
 		).rejects.toThrow('Google ID token signature is invalid');
 	});
 
+	it('rejects Google ID tokens with malformed token structure before fetching JWKS', async () => {
+		const fetchMock = vi.fn();
+		vi.stubGlobal('fetch', fetchMock);
+
+		await expect(verifyGoogleIdToken('not-a-jwt', 'client-id')).rejects.toThrow(
+			'Google ID token is malformed'
+		);
+		await expect(verifyGoogleIdToken('one.two.three.four', 'client-id')).rejects.toThrow(
+			'Google ID token is malformed'
+		);
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it('rejects Google ID tokens with malformed header JSON before fetching JWKS', async () => {
+		const fetchMock = vi.fn();
+		vi.stubGlobal('fetch', fetchMock);
+
+		await expect(
+			verifyGoogleIdToken(
+				['not-json', base64UrlJson(validGoogleClaims), 'not-a-real-signature'].join('.'),
+				'client-id'
+			)
+		).rejects.toThrow('Google ID token is malformed');
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it('rejects Google ID tokens with malformed payload JSON before fetching JWKS', async () => {
+		const fetchMock = vi.fn();
+		vi.stubGlobal('fetch', fetchMock);
+
+		await expect(
+			verifyGoogleIdToken(
+				[base64UrlJson({ alg: 'RS256', kid: 'test-key', typ: 'JWT' }), 'not-json', 'sig'].join('.'),
+				'client-id'
+			)
+		).rejects.toThrow('Google ID token is malformed');
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
 	it('rejects Google ID tokens with unsupported algorithms before fetching JWKS', async () => {
 		const fetchMock = vi.fn();
 		vi.stubGlobal('fetch', fetchMock);
