@@ -1,6 +1,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { loginRateLimit, resetLoginAttempts, __resetRateLimitStore } from './rate-limit.worker';
+import {
+	loginRateLimit,
+	resetLoginAttempts,
+	oauthRateLimit,
+	__resetRateLimitStore
+} from './rate-limit.worker';
 import type { Context, Next } from 'hono';
 
 // Mock KV namespace
@@ -339,6 +344,139 @@ describe('Rate Limit Middleware', () => {
 			const savedEntry = JSON.parse(putCall[1]);
 			expect(savedEntry.attempts).toBe(1);
 			expect(savedEntry.lockedUntil).toBeNull();
+		});
+	});
+
+	describe('oauthRateLimit', () => {
+		it('should allow request when no previous attempts', async () => {
+			const mockKV = createMockKV();
+			const mockContext = createMockContext('127.0.0.1', mockKV);
+			const next = vi.fn();
+
+			await oauthRateLimit(mockContext, next);
+
+			expect(next).toHaveBeenCalled();
+		});
+
+		it('should increment counter on each request', async () => {
+			const mockKV = createMockKV();
+			const key = 'ratelimit:oauth:127.0.0.1';
+			const mockContext = createMockContext('127.0.0.1', mockKV);
+			const next = vi.fn();
+
+			await oauthRateLimit(mockContext, next);
+
+			expect(next).toHaveBeenCalled();
+			const savedEntry = JSON.parse(mockKV._store.get(key) ?? '{}');
+			expect(savedEntry.attempts).toBe(1);
+		});
+
+		it('should allow requests under the OAuth limit (10)', async () => {
+			const mockKV = createMockKV();
+			const key = 'ratelimit:oauth:127.0.0.1';
+			mockKV._store.set(
+				key,
+				JSON.stringify({
+					attempts: 8,
+					lockedUntil: null,
+					lastAttemptAt: Date.now()
+				})
+			);
+
+			const mockContext = createMockContext('127.0.0.1', mockKV);
+			const next = vi.fn();
+
+			await oauthRateLimit(mockContext, next);
+
+			expect(next).toHaveBeenCalled();
+		});
+
+		it('should block request when OAuth attempts reach the limit', async () => {
+			const mockKV = createMockKV();
+			const key = 'ratelimit:oauth:127.0.0.1';
+			mockKV._store.set(
+				key,
+				JSON.stringify({
+					attempts: 10,
+					lockedUntil: Date.now() + 15 * 60 * 1000,
+					lastAttemptAt: Date.now()
+				})
+			);
+
+			const mockContext = createMockContext('127.0.0.1', mockKV);
+			const next = vi.fn();
+
+			const response = await oauthRateLimit(mockContext, next);
+
+			expect(next).not.toHaveBeenCalled();
+			expect(response.status).toBe(429);
+			expect((response.body as any).error).toBe('too_many_requests');
+		});
+
+		it('should use separate KV key from login rate limiter', async () => {
+			const mockKV = createMockKV();
+			const mockContext = createMockContext('192.168.1.1', mockKV);
+			const next = vi.fn();
+
+			await oauthRateLimit(mockContext, next);
+
+			expect(mockKV.put).toHaveBeenCalled();
+			const key = mockKV.put.mock.calls[0][0];
+			expect(key).toContain('oauth:');
+			expect(key).not.toContain('login:');
+		});
+
+		it('should allow request after lockout expires', async () => {
+			const mockKV = createMockKV();
+			const key = 'ratelimit:oauth:127.0.0.1';
+			mockKV._store.set(
+				key,
+				JSON.stringify({
+					attempts: 10,
+					lockedUntil: Date.now() - 1000,
+					lastAttemptAt: Date.now() - 2000
+				})
+			);
+
+			const mockContext = createMockContext('127.0.0.1', mockKV);
+			const next = vi.fn();
+
+			await oauthRateLimit(mockContext, next);
+
+			expect(next).toHaveBeenCalled();
+			const savedEntry = JSON.parse(mockKV._store.get(key) ?? '{}');
+			expect(savedEntry.attempts).toBe(1);
+		});
+
+		it('should use in-memory storage when KV is undefined', async () => {
+			const mockContext = createMockContext('127.0.0.1', undefined);
+			const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			const next = vi.fn();
+
+			await oauthRateLimit(mockContext, next);
+
+			expect(next).toHaveBeenCalled();
+			consoleWarnSpy.mockRestore();
+		});
+
+		it('should include remaining seconds in blocked response', async () => {
+			const mockKV = createMockKV();
+			const lockoutUntil = Date.now() + 10 * 60 * 1000;
+			mockKV._store.set(
+				'ratelimit:oauth:127.0.0.1',
+				JSON.stringify({
+					attempts: 10,
+					lockedUntil: lockoutUntil,
+					lastAttemptAt: Date.now()
+				})
+			);
+
+			const mockContext = createMockContext('127.0.0.1', mockKV);
+			const next = vi.fn();
+
+			const response = await oauthRateLimit(mockContext, next);
+
+			expect((response.body as any).message).toContain('Try again in');
 		});
 	});
 });

@@ -3,6 +3,7 @@ import { createMiddleware } from 'hono/factory';
 
 const ATTEMPT_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
 const MAX_ATTEMPTS = 5;
+const OAUTH_MAX_ATTEMPTS = 10;
 const BLOCK_DURATION_MS = 15 * 60 * 1000; // 15 minutes
 const RATE_LIMIT_CONTEXT_KEY = 'loginRateLimitKey';
 
@@ -92,6 +93,51 @@ export function resetLoginAttempts(c: Context): void {
 	loginAttempts.delete(key);
 }
 
+const oauthAttempts = new Map<string, AttemptRecord>();
+
+export const oauthRateLimit = createMiddleware(async (c, next) => {
+	const key = getClientKey(c);
+	const now = Date.now();
+
+	let entry = oauthAttempts.get(key);
+	if (!entry) {
+		entry = { attempts: 0, windowStart: now };
+		oauthAttempts.set(key, entry);
+	}
+
+	// Clear expired block
+	if (entry.blockedUntil && entry.blockedUntil <= now) {
+		entry.attempts = 0;
+		entry.blockedUntil = undefined;
+		entry.windowStart = now;
+	}
+
+	applyWindow(entry, now);
+
+	if (entry.blockedUntil && entry.blockedUntil > now) {
+		const retryAfterSec = Math.ceil((entry.blockedUntil - now) / 1000);
+		c.header('Retry-After', retryAfterSec.toString());
+		return c.json(
+			{ error: 'too_many_requests', message: 'Too many requests. Try again later.' },
+			429
+		);
+	}
+
+	entry.attempts += 1;
+
+	if (entry.attempts > OAUTH_MAX_ATTEMPTS) {
+		entry.blockedUntil = now + BLOCK_DURATION_MS;
+		const retryAfterSec = Math.ceil(calculateRetryAfterMs(entry, now) / 1000);
+		c.header('Retry-After', retryAfterSec.toString());
+		return c.json(
+			{ error: 'too_many_requests', message: 'Too many requests. Try again later.' },
+			429
+		);
+	}
+
+	await next();
+});
+
 // Clean up entries older than 1 hour
 function cleanupOldEntries(): void {
 	const now = Date.now();
@@ -100,6 +146,11 @@ function cleanupOldEntries(): void {
 	for (const [key, entry] of loginAttempts.entries()) {
 		if (now - entry.windowStart > maxAge && (!entry.blockedUntil || entry.blockedUntil < now)) {
 			loginAttempts.delete(key);
+		}
+	}
+	for (const [key, entry] of oauthAttempts.entries()) {
+		if (now - entry.windowStart > maxAge && (!entry.blockedUntil || entry.blockedUntil < now)) {
+			oauthAttempts.delete(key);
 		}
 	}
 }
