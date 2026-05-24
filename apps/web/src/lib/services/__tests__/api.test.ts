@@ -11,6 +11,12 @@ import {
 	getThumbnailUrl,
 	getPieceImageUrl,
 	getReferenceImageUrl,
+	getPlayerSession,
+	logoutPlayer,
+	getGoogleLoginUrl,
+	fetchPlayerAllowlist,
+	addPlayerAllowlistEntry,
+	removePlayerAllowlistEntry,
 	ApiError
 } from '../api';
 import type { PuzzleCategory } from '$lib/types/puzzle';
@@ -457,6 +463,114 @@ describe('API Service - logout', () => {
 		);
 
 		await expect(logout()).rejects.toBeInstanceOf(ApiError);
+	});
+});
+
+// ─── player auth ─────────────────────────────────────────────────────────────
+
+describe('API Service - player auth', () => {
+	it('gets player session with credentials and returns unauthenticated response', async () => {
+		const responseBody = { authenticated: false };
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue(
+				new Response(JSON.stringify(responseBody), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				})
+			)
+		);
+
+		const result = await getPlayerSession();
+
+		expect(result).toEqual(responseBody);
+		expect(fetch).toHaveBeenCalledWith(expect.stringMatching(/\/api\/auth\/session$/), {
+			credentials: 'include'
+		});
+	});
+
+	it('logs out player with POST and credentials', async () => {
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 204 })));
+
+		await expect(logoutPlayer()).resolves.toBeUndefined();
+
+		expect(fetch).toHaveBeenCalledWith(expect.stringMatching(/\/api\/auth\/logout$/), {
+			method: 'POST',
+			credentials: 'include'
+		});
+	});
+
+	it('builds Google login URL with encoded returnTo', () => {
+		const url = getGoogleLoginUrl('/puzzle/abc 123?tab=play&next=/');
+
+		expect(url).toMatch(
+			/\/api\/auth\/google\/start\?returnTo=%2Fpuzzle%2Fabc\+123%3Ftab%3Dplay%26next%3D%2F$/
+		);
+	});
+});
+
+// ─── player allowlist ────────────────────────────────────────────────────────
+
+describe('API Service - player allowlist', () => {
+	const entry = {
+		email: 'player@example.com',
+		createdAt: 1779530400000,
+		addedBy: 'admin'
+	};
+
+	it('fetches player allowlist entries with credentials', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue(
+				new Response(JSON.stringify({ entries: [entry] }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				})
+			)
+		);
+
+		const result = await fetchPlayerAllowlist();
+
+		expect(result).toEqual([entry]);
+		expect(fetch).toHaveBeenCalledWith(expect.stringMatching(/\/api\/admin\/player-allowlist$/), {
+			credentials: 'include'
+		});
+	});
+
+	it('adds a player allowlist entry with JSON body and credentials', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue(
+				new Response(JSON.stringify({ entry }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				})
+			)
+		);
+
+		const result = await addPlayerAllowlistEntry('player@example.com');
+
+		expect(result).toEqual(entry);
+		expect(fetch).toHaveBeenCalledWith(expect.stringMatching(/\/api\/admin\/player-allowlist$/), {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			credentials: 'include',
+			body: JSON.stringify({ email: 'player@example.com' })
+		});
+	});
+
+	it('removes a player allowlist entry with encoded email and credentials', async () => {
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 204 })));
+
+		await expect(removePlayerAllowlistEntry('player+test@example.com')).resolves.toBeUndefined();
+
+		expect(fetch).toHaveBeenCalledWith(
+			expect.stringMatching(/\/api\/admin\/player-allowlist\/player%2Btest%40example\.com$/),
+			{
+				method: 'DELETE',
+				credentials: 'include'
+			}
+		);
 	});
 });
 
