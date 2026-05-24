@@ -1,10 +1,12 @@
 import type { PlayerAllowlistEntry, PlayerUser } from '@perseus/types';
 import {
+	OAUTH_STATE_TTL_SECONDS,
 	PLAYER_SESSION_DURATION_MS,
 	bytesToBase64Url,
 	hashToken,
 	normalizeEmail,
-	type GoogleIdentityClaims
+	type GoogleIdentityClaims,
+	type StoredOAuthState
 } from './player-auth.shared';
 
 const ALLOWLIST_PREFIX = 'player_allowlist:';
@@ -12,6 +14,7 @@ const PLAYER_PREFIX = 'player:';
 const PLAYER_EMAIL_INDEX_PREFIX = 'player_email_index:';
 const PLAYER_SESSION_PREFIX = 'player_session:';
 const PLAYER_SESSIONS_PREFIX = 'player_sessions:';
+const OAUTH_STATE_PREFIX = 'oauth_state:';
 const PLAYER_SESSION_TTL_SECONDS = Math.ceil(PLAYER_SESSION_DURATION_MS / 1000);
 
 export interface CreatedPlayerSession {
@@ -52,6 +55,10 @@ function sessionsIndexKey(email: string, hash: string): string {
 
 function revokedAfterKey(email: string): string {
 	return `${PLAYER_SESSIONS_PREFIX}${normalizeEmail(email)}:revoked_after`;
+}
+
+function oauthStateKey(state: string): string {
+	return `${OAUTH_STATE_PREFIX}${state}`;
 }
 
 async function readJson<T>(kv: KVNamespace, key: string): Promise<T | null> {
@@ -242,4 +249,34 @@ export async function revokePlayerSessionsForEmail(kv: KVNamespace, email: strin
 			return [kv.delete(sessionKey(sessionHash)), kv.delete(key.name)];
 		})
 	);
+}
+
+export async function storeOAuthState(
+	kv: KVNamespace,
+	state: string,
+	value: Omit<StoredOAuthState, 'state' | 'createdAt'>
+): Promise<void> {
+	await writeJson(
+		kv,
+		oauthStateKey(state),
+		{
+			...value,
+			state,
+			createdAt: Date.now()
+		} satisfies StoredOAuthState,
+		OAUTH_STATE_TTL_SECONDS
+	);
+}
+
+export async function consumeOAuthState(
+	kv: KVNamespace,
+	state: string
+): Promise<StoredOAuthState | null> {
+	const key = oauthStateKey(state);
+	const stored = await readJson<StoredOAuthState>(kv, key);
+	await kv.delete(key);
+
+	if (!stored) return null;
+	if (stored.createdAt + OAUTH_STATE_TTL_SECONDS * 1000 <= Date.now()) return null;
+	return stored;
 }

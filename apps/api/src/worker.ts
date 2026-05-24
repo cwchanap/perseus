@@ -20,6 +20,9 @@ export interface Env {
 	PUZZLE_WORKFLOW: WorkflowBinding<WorkflowParams>;
 	JWT_SECRET: string;
 	ADMIN_PASSKEY: string;
+	GOOGLE_CLIENT_ID: string;
+	GOOGLE_CLIENT_SECRET: string;
+	AUTH_REDIRECT_BASE_URL: string;
 	ALLOWED_ORIGINS?: string;
 	NODE_ENV?: string;
 	TRUSTED_PROXY?: string;
@@ -65,6 +68,9 @@ app.use('*', async (c, next) => {
 		if (allowedOrigins.length === 0) missingEnv.push('ALLOWED_ORIGINS');
 		if (!env.JWT_SECRET) missingEnv.push('JWT_SECRET');
 		if (!env.ADMIN_PASSKEY) missingEnv.push('ADMIN_PASSKEY');
+		if (!env.GOOGLE_CLIENT_ID) missingEnv.push('GOOGLE_CLIENT_ID');
+		if (!env.GOOGLE_CLIENT_SECRET) missingEnv.push('GOOGLE_CLIENT_SECRET');
+		if (!env.AUTH_REDIRECT_BASE_URL) missingEnv.push('AUTH_REDIRECT_BASE_URL');
 
 		if (missingEnv.length > 0) {
 			console.error(`Missing required env vars in production: ${missingEnv.join(', ')}`);
@@ -105,9 +111,11 @@ app.get('/api', (c) => {
 
 import puzzles from './routes/puzzles.worker';
 import admin from './routes/admin.worker';
+import auth from './routes/auth.worker';
 
 app.route('/api/puzzles', puzzles);
 app.route('/api/admin', admin);
+app.route('/api/auth', auth);
 
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
