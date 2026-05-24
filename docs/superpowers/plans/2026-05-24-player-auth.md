@@ -684,11 +684,9 @@ Create `apps/api/src/services/player-auth.worker.ts` with these exported signatu
 import type { PlayerAllowlistEntry, PlayerUser } from '@perseus/types';
 import {
 	PLAYER_SESSION_DURATION_MS,
-	OAUTH_STATE_TTL_SECONDS,
 	hashToken,
 	normalizeEmail,
-	type GoogleIdentityClaims,
-	type StoredOAuthState
+	type GoogleIdentityClaims
 } from './player-auth.shared';
 
 const ALLOWLIST_PREFIX = 'player_allowlist:';
