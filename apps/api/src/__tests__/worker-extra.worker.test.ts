@@ -122,14 +122,14 @@ describe('Worker - CORS middleware branches', () => {
 		expect(res.headers.get('access-control-allow-origin')).toBe('https://example.com');
 	});
 
-	it('should return 200 for production with AUTH_REDIRECT_BASE_URL origin in ALLOWED_ORIGINS', async () => {
+	it('should return 200 for production without Google OAuth env on non-auth routes', async () => {
 		const env = {
 			NODE_ENV: 'production',
 			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
 			ADMIN_PASSKEY: 'test-passkey',
-			GOOGLE_CLIENT_ID: 'google-client-id',
-			GOOGLE_CLIENT_SECRET: 'google-client-secret',
-			AUTH_REDIRECT_BASE_URL: 'https://myapp.example.com',
+			GOOGLE_CLIENT_ID: '',
+			GOOGLE_CLIENT_SECRET: '',
+			AUTH_REDIRECT_BASE_URL: '',
 			ALLOWED_ORIGINS: 'https://myapp.example.com',
 			ASSETS: { fetch: vi.fn(() => new Response('asset', { status: 200 })) }
 		};
@@ -139,48 +139,7 @@ describe('Worker - CORS middleware branches', () => {
 		});
 		const res = await worker.fetch(req, env as any, createMockCtx());
 
-		// Should pass validation and return health check response
 		expect(res.status).toBe(200);
-	});
-
-	it('should return 500 when AUTH_REDIRECT_BASE_URL has userinfo in production', async () => {
-		const env = {
-			NODE_ENV: 'production',
-			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
-			ADMIN_PASSKEY: 'test-passkey',
-			GOOGLE_CLIENT_ID: 'google-client-id',
-			GOOGLE_CLIENT_SECRET: 'google-client-secret',
-			AUTH_REDIRECT_BASE_URL: 'https://user:pass@myapp.example.com',
-			ALLOWED_ORIGINS: 'https://myapp.example.com',
-			ASSETS: { fetch: vi.fn() }
-		};
-
-		const req = new Request('http://localhost/api/health');
-		const res = await worker.fetch(req, env as any, createMockCtx());
-
-		expect(res.status).toBe(500);
-		const body = (await res.json()) as any;
-		expect(body.error).toBe('server_misconfigured');
-	});
-
-	it('should return 500 when AUTH_REDIRECT_BASE_URL origin is not allowed in production', async () => {
-		const env = {
-			NODE_ENV: 'production',
-			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
-			ADMIN_PASSKEY: 'test-passkey',
-			GOOGLE_CLIENT_ID: 'google-client-id',
-			GOOGLE_CLIENT_SECRET: 'google-client-secret',
-			AUTH_REDIRECT_BASE_URL: 'https://myapp.example.com',
-			ALLOWED_ORIGINS: 'https://other.example.com',
-			ASSETS: { fetch: vi.fn() }
-		};
-
-		const req = new Request('http://localhost/api/health');
-		const res = await worker.fetch(req, env as any, createMockCtx());
-
-		expect(res.status).toBe(500);
-		const body = (await res.json()) as any;
-		expect(body.error).toBe('server_misconfigured');
 	});
 
 	it('should return 500 when only ALLOWED_ORIGINS is missing in production', async () => {
@@ -188,9 +147,9 @@ describe('Worker - CORS middleware branches', () => {
 			NODE_ENV: 'production',
 			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
 			ADMIN_PASSKEY: 'test-passkey',
-			GOOGLE_CLIENT_ID: 'google-client-id',
-			GOOGLE_CLIENT_SECRET: 'google-client-secret',
-			AUTH_REDIRECT_BASE_URL: 'https://myapp.example.com',
+			GOOGLE_CLIENT_ID: '',
+			GOOGLE_CLIENT_SECRET: '',
+			AUTH_REDIRECT_BASE_URL: '',
 			ALLOWED_ORIGINS: '',
 			ASSETS: { fetch: vi.fn() }
 		};
@@ -203,7 +162,7 @@ describe('Worker - CORS middleware branches', () => {
 		expect(body.error).toBe('server_misconfigured');
 	});
 
-	it('should return 500 when AUTH_REDIRECT_BASE_URL is not HTTPS in production', async () => {
+	it('should ignore invalid Google OAuth redirect base on non-auth routes', async () => {
 		const env = {
 			NODE_ENV: 'production',
 			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
@@ -212,15 +171,15 @@ describe('Worker - CORS middleware branches', () => {
 			GOOGLE_CLIENT_SECRET: 'google-client-secret',
 			AUTH_REDIRECT_BASE_URL: 'http://myapp.example.com',
 			ALLOWED_ORIGINS: 'https://myapp.example.com',
-			ASSETS: { fetch: vi.fn() }
+			ASSETS: { fetch: vi.fn(() => new Response('asset', { status: 200 })) }
 		};
 
-		const req = new Request('http://localhost/api/health');
+		const req = new Request('http://localhost/api/health', {
+			headers: { Origin: 'https://myapp.example.com' }
+		});
 		const res = await worker.fetch(req, env as any, createMockCtx());
 
-		expect(res.status).toBe(500);
-		const body = (await res.json()) as any;
-		expect(body.error).toBe('server_misconfigured');
+		expect(res.status).toBe(200);
 	});
 });
 

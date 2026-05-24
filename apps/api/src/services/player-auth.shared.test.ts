@@ -377,6 +377,52 @@ describe('player auth shared helpers', () => {
 		expect(fetchMock).toHaveBeenCalledTimes(1);
 	});
 
+	it('caps Google JWKS cache max-age to 24 hours', async () => {
+		const now = Date.now();
+		vi.setSystemTime(now);
+		const { token, publicJwk } = await createSignedGoogleIdToken({
+			kid: 'test-key-cache-cap',
+			payload: { exp: Math.floor((now + 3 * 24 * 60 * 60 * 1000) / 1000) }
+		});
+		const fetchMock = vi.fn().mockImplementation(() =>
+			Promise.resolve(
+				new Response(JSON.stringify({ keys: [publicJwk] }), {
+					headers: { 'Cache-Control': 'public, max-age=999999' }
+				})
+			)
+		);
+		vi.stubGlobal('fetch', fetchMock);
+
+		await verifyGoogleIdToken(token, 'client-id');
+		vi.setSystemTime(now + 24 * 60 * 60 * 1000 + 1);
+		await verifyGoogleIdToken(token, 'client-id');
+
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+	});
+
+	it('ignores matching Google JWK kids that are not RSA signing keys', async () => {
+		const { token, publicJwk } = await createSignedGoogleIdToken({
+			kid: 'test-key-wrong-jwk-type'
+		});
+		const fetchMock = vi.fn().mockResolvedValue(
+			new Response(
+				JSON.stringify({
+					keys: [
+						{ ...publicJwk, use: 'enc' },
+						{ ...publicJwk, alg: 'RS512' },
+						{ ...publicJwk, kty: 'EC' }
+					]
+				}),
+				{ headers: { 'Cache-Control': 'public, max-age=600' } }
+			)
+		);
+		vi.stubGlobal('fetch', fetchMock);
+
+		await expect(verifyGoogleIdToken(token, 'client-id')).rejects.toThrow(
+			'Google ID token signing key not found'
+		);
+	});
+
 	it('rejects Google ID tokens when JWKS fetch fails or key is missing', async () => {
 		const { token } = await createSignedGoogleIdToken({ kid: 'test-key-fetch-fails' });
 		vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('nope', { status: 503 })));

@@ -34,6 +34,66 @@ function withNoStore(response: Response): Response {
 	return response;
 }
 
+function serverMisconfigured(): Response {
+	return withNoStore(
+		new Response(
+			JSON.stringify({
+				error: 'server_misconfigured',
+				message: 'Server configuration error'
+			}),
+			{
+				status: 500,
+				headers: { 'Content-Type': 'application/json' }
+			}
+		)
+	);
+}
+
+function allowedOriginSet(allowedOrigins: string | undefined): Set<string> {
+	const origins = new Set<string>();
+	for (const origin of (allowedOrigins || '').split(',')) {
+		const trimmed = origin.trim();
+		if (!trimmed) continue;
+		try {
+			origins.add(new URL(trimmed).origin);
+		} catch {
+			// Invalid configured origins are ignored and will fail redirect origin matching.
+		}
+	}
+	return origins;
+}
+
+function isLocalHttpUrl(url: URL): boolean {
+	return (
+		url.protocol === 'http:' &&
+		(url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '[::1]')
+	);
+}
+
+function isValidAuthRedirectBaseUrl(env: Env): boolean {
+	if (!env.AUTH_REDIRECT_BASE_URL) return false;
+	try {
+		const url = new URL(env.AUTH_REDIRECT_BASE_URL);
+		if (env.NODE_ENV === 'development') {
+			return url.protocol === 'https:' || isLocalHttpUrl(url);
+		}
+		return (
+			url.protocol === 'https:' &&
+			url.username === '' &&
+			url.password === '' &&
+			allowedOriginSet(env.ALLOWED_ORIGINS).has(url.origin)
+		);
+	} catch {
+		return false;
+	}
+}
+
+function isValidOAuthEnv(env: Env): boolean {
+	return Boolean(
+		env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET && isValidAuthRedirectBaseUrl(env)
+	);
+}
+
 function callbackUrl(env: Env): string {
 	return new URL('/api/auth/google/callback', env.AUTH_REDIRECT_BASE_URL).toString();
 }
@@ -73,6 +133,13 @@ function redirectToLogin(c: AuthContext, error: string): Response {
 	clearOAuthStateCookie(c);
 	return withNoStore(c.redirect(`/login?error=${encodeURIComponent(error)}`));
 }
+
+auth.use('*', async (c, next) => {
+	if (!isValidOAuthEnv(c.env)) {
+		return serverMisconfigured();
+	}
+	await next();
+});
 
 auth.get('/google/start', async (c) => {
 	const state = createOAuthState();
