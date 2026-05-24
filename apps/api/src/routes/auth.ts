@@ -151,9 +151,20 @@ function clearOAuthStateCookie(c: AuthContext): void {
 	setCookie(c, OAUTH_STATE_COOKIE, '', cookieOptions(0));
 }
 
-function redirectToLogin(c: AuthContext, error: string): Response {
+function extractWebOrigin(returnTo: string): string | undefined {
+	try {
+		return new URL(returnTo).origin;
+	} catch {
+		return undefined;
+	}
+}
+
+function redirectToLogin(c: AuthContext, error: string, webOrigin?: string): Response {
 	clearOAuthStateCookie(c);
-	return withNoStore(c.redirect(`/login?error=${encodeURIComponent(error)}`));
+	const loginUrl = webOrigin
+		? `${webOrigin}/login?error=${encodeURIComponent(error)}`
+		: `/login?error=${encodeURIComponent(error)}`;
+	return withNoStore(c.redirect(loginUrl));
 }
 
 auth.use('*', async (c, next) => {
@@ -212,6 +223,8 @@ auth.get('/google/callback', async (c) => {
 		return redirectToLogin(c, 'session_expired');
 	}
 
+	const webOrigin = extractWebOrigin(storedState.returnTo);
+
 	try {
 		const tokenResponse = await exchangeGoogleCode({
 			code,
@@ -223,7 +236,7 @@ auth.get('/google/callback', async (c) => {
 		const claims = await verifyGoogleIdToken(tokenResponse.id_token, env.GOOGLE_CLIENT_ID);
 		const allowlistEntry = await getAllowlistEntry(claims.email);
 		if (!allowlistEntry) {
-			return redirectToLogin(c, 'not_allowed');
+			return redirectToLogin(c, 'not_allowed', webOrigin);
 		}
 
 		const player = await upsertPlayer(claims);
@@ -233,7 +246,7 @@ auth.get('/google/callback', async (c) => {
 		return withNoStore(c.redirect(storedState.returnTo));
 	} catch (error) {
 		console.error('Player Google auth callback failed:', error);
-		return redirectToLogin(c, 'google_error');
+		return redirectToLogin(c, 'google_error', webOrigin);
 	}
 });
 

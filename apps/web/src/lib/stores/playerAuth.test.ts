@@ -96,7 +96,7 @@ describe('createPlayerAuthStore', () => {
 		});
 	});
 
-	it('clears state when logout fails', async () => {
+	it('keeps authenticated state when logout fails', async () => {
 		vi.mocked(getPlayerSession).mockResolvedValue({ authenticated: true, user });
 		vi.mocked(logoutPlayer).mockRejectedValue(new Error('logout failed'));
 		const store = createPlayerAuthStore();
@@ -105,8 +105,8 @@ describe('createPlayerAuthStore', () => {
 		await expect(store.logout()).rejects.toThrow('logout failed');
 
 		expect(getState(store)).toEqual({
-			status: 'anonymous',
-			user: null,
+			status: 'authenticated',
+			user,
 			error: null
 		});
 	});

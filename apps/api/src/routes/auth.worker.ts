@@ -131,9 +131,20 @@ function clearOAuthStateCookie(c: AuthContext): void {
 	setCookie(c, OAUTH_STATE_COOKIE, '', cookieOptions(c.env, 0));
 }
 
-function redirectToLogin(c: AuthContext, error: string): Response {
+function extractWebOrigin(returnTo: string): string | undefined {
+	try {
+		return new URL(returnTo).origin;
+	} catch {
+		return undefined;
+	}
+}
+
+function redirectToLogin(c: AuthContext, error: string, webOrigin?: string): Response {
 	clearOAuthStateCookie(c);
-	return withNoStore(c.redirect(`/login?error=${encodeURIComponent(error)}`));
+	const loginUrl = webOrigin
+		? `${webOrigin}/login?error=${encodeURIComponent(error)}`
+		: `/login?error=${encodeURIComponent(error)}`;
+	return withNoStore(c.redirect(loginUrl));
 }
 
 auth.use('*', async (c, next) => {
@@ -188,6 +199,8 @@ auth.get('/google/callback', async (c) => {
 		return redirectToLogin(c, 'session_expired');
 	}
 
+	const webOrigin = extractWebOrigin(storedState.returnTo);
+
 	try {
 		const tokenResponse = await exchangeGoogleCode({
 			code,
@@ -199,7 +212,7 @@ auth.get('/google/callback', async (c) => {
 		const claims = await verifyGoogleIdToken(tokenResponse.id_token, c.env.GOOGLE_CLIENT_ID);
 		const allowlistEntry = await getAllowlistEntry(c.env.PUZZLE_METADATA, claims.email);
 		if (!allowlistEntry) {
-			return redirectToLogin(c, 'not_allowed');
+			return redirectToLogin(c, 'not_allowed', webOrigin);
 		}
 
 		const player = await upsertPlayer(c.env.PUZZLE_METADATA, claims);
@@ -209,7 +222,7 @@ auth.get('/google/callback', async (c) => {
 		return withNoStore(c.redirect(storedState.returnTo));
 	} catch (error) {
 		console.error('Player Google auth callback failed:', error);
-		return redirectToLogin(c, 'google_error');
+		return redirectToLogin(c, 'google_error', webOrigin);
 	}
 });
 
@@ -221,7 +234,9 @@ auth.get('/session', async (c) => {
 
 	const session = await getPlayerSession(c.env.PUZZLE_METADATA, token);
 	if (!session) {
-		clearPlayerSessionCookie(c);
+		// Don't clear the cookie on a KV miss — the session may have been just
+		// created and KV eventual consistency hasn't propagated yet. The cookie
+		// expires naturally via its maxAge, and /logout explicitly clears it.
 		return withNoStore(c.json({ authenticated: false }));
 	}
 
