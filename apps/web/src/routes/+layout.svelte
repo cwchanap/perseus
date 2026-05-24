@@ -41,7 +41,9 @@
 			→ QUICK PUZZLE
 		</a>
 
-		{#if $playerAuth.status === 'authenticated' && $playerAuth.user}
+		{#if $playerAuth.status === 'loading'}
+			<!-- auth status pending -->
+		{:else if $playerAuth.status === 'authenticated' && $playerAuth.user}
 			<span class="min-w-0 truncate text-(--text-2)" title={playerDisplayName}>
 				{playerDisplayName}
 			</span>

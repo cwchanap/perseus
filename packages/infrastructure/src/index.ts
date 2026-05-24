@@ -21,7 +21,13 @@ const commonBindings = {
 		}
 	],
 	envVars: {
-		NODE_ENV: 'production',
+		NODE_ENV: 'production'
+	}
+};
+
+const apiBindings = {
+	envVars: {
+		...commonBindings.envVars,
 		ALLOWED_ORIGINS: config.require('ALLOWED_ORIGINS'),
 		AUTH_REDIRECT_BASE_URL: config.require('AUTH_REDIRECT_BASE_URL')
 	},
@@ -51,7 +57,11 @@ const workflowsWorker = createWorkflowsWorker({
 });
 
 const apiWorker = createApiWorker(
-	commonBindings,
+	{
+		...commonBindings,
+		envVars: apiBindings.envVars,
+		secretVars: apiBindings.secretVars
+	},
 	{
 		directory: paths.webAssets
 	},
