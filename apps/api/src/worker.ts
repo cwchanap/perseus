@@ -39,9 +39,27 @@ const app = new Hono<{ Bindings: Env }>();
 
 app.use('*', logger());
 
-function isValidProductionAuthRedirectBaseUrl(value: string): boolean {
+function productionAllowedOriginSet(allowedOrigins: string[]): Set<string> {
+	const origins = new Set<string>();
+	for (const origin of allowedOrigins) {
+		try {
+			origins.add(new URL(origin).origin);
+		} catch {
+			// Invalid configured origins are ignored here and will fail redirect origin matching.
+		}
+	}
+	return origins;
+}
+
+function isValidProductionAuthRedirectBaseUrl(value: string, allowedOrigins: string[]): boolean {
 	try {
-		return new URL(value).protocol === 'https:';
+		const url = new URL(value);
+		return (
+			url.protocol === 'https:' &&
+			url.username === '' &&
+			url.password === '' &&
+			productionAllowedOriginSet(allowedOrigins).has(url.origin)
+		);
 	} catch {
 		return false;
 	}
@@ -81,7 +99,7 @@ app.use('*', async (c, next) => {
 		if (!env.AUTH_REDIRECT_BASE_URL) missingEnv.push('AUTH_REDIRECT_BASE_URL');
 		if (
 			env.AUTH_REDIRECT_BASE_URL &&
-			!isValidProductionAuthRedirectBaseUrl(env.AUTH_REDIRECT_BASE_URL)
+			!isValidProductionAuthRedirectBaseUrl(env.AUTH_REDIRECT_BASE_URL, allowedOrigins)
 		) {
 			missingEnv.push('AUTH_REDIRECT_BASE_URL');
 		}

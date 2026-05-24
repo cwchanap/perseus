@@ -29,6 +29,11 @@ const PLAYER_SESSION_COOKIE_MAX_AGE_SECONDS = Math.floor(PLAYER_SESSION_DURATION
 const auth = new Hono<{ Bindings: Env }>();
 type AuthContext = Context<{ Bindings: Env }>;
 
+function withNoStore(response: Response): Response {
+	response.headers.set('Cache-Control', 'no-store');
+	return response;
+}
+
 function callbackUrl(env: Env): string {
 	return new URL('/api/auth/google/callback', env.AUTH_REDIRECT_BASE_URL).toString();
 }
@@ -66,7 +71,7 @@ function clearOAuthStateCookie(c: AuthContext): void {
 
 function redirectToLogin(c: AuthContext, error: string): Response {
 	clearOAuthStateCookie(c);
-	return c.redirect(`/login?error=${encodeURIComponent(error)}`);
+	return withNoStore(c.redirect(`/login?error=${encodeURIComponent(error)}`));
 }
 
 auth.get('/google/start', async (c) => {
@@ -86,7 +91,7 @@ auth.get('/google/start', async (c) => {
 		state,
 		codeChallenge: pkce.challenge
 	});
-	return c.redirect(url.toString());
+	return withNoStore(c.redirect(url.toString()));
 });
 
 auth.get('/google/callback', async (c) => {
@@ -121,7 +126,7 @@ auth.get('/google/callback', async (c) => {
 		const session = await createPlayerSession(c.env.PUZZLE_METADATA, player);
 		setPlayerSessionCookie(c, session.token);
 		clearOAuthStateCookie(c);
-		return c.redirect(storedState.returnTo);
+		return withNoStore(c.redirect(storedState.returnTo));
 	} catch (error) {
 		console.error('Player Google auth callback failed:', error);
 		return redirectToLogin(c, 'google_error');
@@ -131,16 +136,16 @@ auth.get('/google/callback', async (c) => {
 auth.get('/session', async (c) => {
 	const token = getCookie(c, PLAYER_SESSION_COOKIE);
 	if (!token) {
-		return c.json({ authenticated: false });
+		return withNoStore(c.json({ authenticated: false }));
 	}
 
 	const session = await getPlayerSession(c.env.PUZZLE_METADATA, token);
 	if (!session) {
 		clearPlayerSessionCookie(c);
-		return c.json({ authenticated: false });
+		return withNoStore(c.json({ authenticated: false }));
 	}
 
-	return c.json({ authenticated: true, user: session.user });
+	return withNoStore(c.json({ authenticated: true, user: session.user }));
 });
 
 auth.post('/logout', async (c) => {
@@ -149,7 +154,7 @@ auth.post('/logout', async (c) => {
 		await revokePlayerSession(c.env.PUZZLE_METADATA, token);
 	}
 	clearPlayerSessionCookie(c);
-	return c.json({ success: true });
+	return withNoStore(c.json({ success: true }));
 });
 
 export default auth;

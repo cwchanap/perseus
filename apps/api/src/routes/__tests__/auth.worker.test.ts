@@ -63,6 +63,11 @@ const env = {
 	NODE_ENV: 'development'
 };
 
+const productionEnv = {
+	...env,
+	NODE_ENV: 'production'
+};
+
 const claims = {
 	sub: 'google-sub-123',
 	email: 'player@example.com',
@@ -81,6 +86,13 @@ const player: PlayerUser = {
 
 function request(path: string, init: RequestInit = {}): Request {
 	return new Request(`https://app.example.com${path}`, init);
+}
+
+function expectProductionCookieAttributes(setCookie: string): void {
+	expect(setCookie).toContain('Secure');
+	expect(setCookie).toContain('HttpOnly');
+	expect(setCookie).toContain('SameSite=Lax');
+	expect(setCookie).toContain('Path=/');
 }
 
 describe('Worker player auth routes', () => {
@@ -139,9 +151,19 @@ describe('Worker player auth routes', () => {
 			codeVerifier: 'pkce-verifier',
 			returnTo: '/puzzle/abc?piece=1'
 		});
+		expect(res.headers.get('Cache-Control')).toBe('no-store');
 		expect(setCookie).toContain('perseus_oauth_state=oauth-state-token');
 		expect(setCookie).toContain('HttpOnly');
 		expect(setCookie).toContain('Max-Age=600');
+	});
+
+	it('sets production attributes on the OAuth state cookie', async () => {
+		const res = await auth.fetch(request('/google/start'), productionEnv);
+		const setCookie = res.headers.get('set-cookie') ?? '';
+
+		expect(setCookie).toContain('perseus_oauth_state=oauth-state-token');
+		expectProductionCookieAttributes(setCookie);
+		expect(res.headers.get('Cache-Control')).toBe('no-store');
 	});
 
 	it('sanitizes unsafe start returnTo values to root', async () => {
@@ -171,6 +193,7 @@ describe('Worker player auth routes', () => {
 
 		expect(res.status).toBe(302);
 		expect(res.headers.get('Location')).toBe('/login?error=session_expired');
+		expect(res.headers.get('Cache-Control')).toBe('no-store');
 		expect(setCookie).toContain('perseus_oauth_state=');
 		expect(setCookie).toContain('Max-Age=0');
 		expect(playerAuth.consumeOAuthState).not.toHaveBeenCalled();
@@ -189,6 +212,7 @@ describe('Worker player auth routes', () => {
 
 		expect(res.status).toBe(302);
 		expect(res.headers.get('Location')).toBe('/login?error=session_expired');
+		expect(res.headers.get('Cache-Control')).toBe('no-store');
 		expect(setCookie).toContain('perseus_oauth_state=');
 		expect(setCookie).toContain('Max-Age=0');
 	});
@@ -207,6 +231,7 @@ describe('Worker player auth routes', () => {
 		expect(playerAuth.getAllowlistEntry).toHaveBeenCalledWith(kv, 'player@example.com');
 		expect(res.status).toBe(302);
 		expect(res.headers.get('Location')).toBe('/login?error=not_allowed');
+		expect(res.headers.get('Cache-Control')).toBe('no-store');
 		expect(setCookie).toContain('perseus_oauth_state=');
 		expect(setCookie).toContain('Max-Age=0');
 	});
@@ -235,10 +260,25 @@ describe('Worker player auth routes', () => {
 		expect(playerAuth.createPlayerSession).toHaveBeenCalledWith(kv, player);
 		expect(res.status).toBe(302);
 		expect(res.headers.get('Location')).toBe('/puzzle/abc');
+		expect(res.headers.get('Cache-Control')).toBe('no-store');
 		expect(setCookie).toContain('perseus_player_session=player-session-token');
 		expect(setCookie).toContain('Max-Age=2592000');
 		expect(setCookie).toContain('perseus_oauth_state=');
 		expect(setCookie).toContain('Max-Age=0');
+	});
+
+	it('sets production attributes on the player session cookie after callback success', async () => {
+		const res = await auth.fetch(
+			request('/google/callback?state=oauth-state-token&code=auth-code', {
+				headers: { Cookie: 'perseus_oauth_state=oauth-state-token' }
+			}),
+			productionEnv
+		);
+		const setCookie = res.headers.get('set-cookie') ?? '';
+
+		expect(setCookie).toContain('perseus_player_session=player-session-token');
+		expectProductionCookieAttributes(setCookie);
+		expect(res.headers.get('Cache-Control')).toBe('no-store');
 	});
 
 	it('redirects Google callback errors to login', async () => {
@@ -254,6 +294,7 @@ describe('Worker player auth routes', () => {
 
 		expect(res.status).toBe(302);
 		expect(res.headers.get('Location')).toBe('/login?error=google_error');
+		expect(res.headers.get('Cache-Control')).toBe('no-store');
 		expect(setCookie).toContain('perseus_oauth_state=');
 		expect(setCookie).toContain('Max-Age=0');
 	});
@@ -262,6 +303,7 @@ describe('Worker player auth routes', () => {
 		const res = await auth.fetch(request('/session'), env);
 
 		expect(res.status).toBe(200);
+		expect(res.headers.get('Cache-Control')).toBe('no-store');
 		expect(await res.json()).toEqual({ authenticated: false });
 		expect(playerAuth.getPlayerSession).not.toHaveBeenCalled();
 	});
@@ -272,6 +314,7 @@ describe('Worker player auth routes', () => {
 			env
 		);
 
+		expect(res.headers.get('Cache-Control')).toBe('no-store');
 		expect(await res.json()).toEqual({ authenticated: true, user: player });
 		expect(playerAuth.getPlayerSession).toHaveBeenCalledWith(kv, 'player-session-token');
 	});
@@ -285,6 +328,7 @@ describe('Worker player auth routes', () => {
 		);
 		const setCookie = res.headers.get('set-cookie') ?? '';
 
+		expect(res.headers.get('Cache-Control')).toBe('no-store');
 		expect(await res.json()).toEqual({ authenticated: false });
 		expect(setCookie).toContain('perseus_player_session=');
 		expect(setCookie).toContain('Max-Age=0');
@@ -300,6 +344,7 @@ describe('Worker player auth routes', () => {
 		);
 		const setCookie = res.headers.get('set-cookie') ?? '';
 
+		expect(res.headers.get('Cache-Control')).toBe('no-store');
 		expect(await res.json()).toEqual({ success: true });
 		expect(playerAuth.revokePlayerSession).toHaveBeenCalledWith(kv, 'player-session-token');
 		expect(setCookie).toContain('perseus_player_session=');
@@ -310,6 +355,7 @@ describe('Worker player auth routes', () => {
 		const res = await auth.fetch(request('/logout', { method: 'POST' }), env);
 		const setCookie = res.headers.get('set-cookie') ?? '';
 
+		expect(res.headers.get('Cache-Control')).toBe('no-store');
 		expect(await res.json()).toEqual({ success: true });
 		expect(playerAuth.revokePlayerSession).not.toHaveBeenCalled();
 		expect(setCookie).toContain('perseus_player_session=');
