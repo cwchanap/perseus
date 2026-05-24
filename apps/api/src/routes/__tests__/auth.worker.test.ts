@@ -156,6 +156,11 @@ describe('Worker player auth routes', () => {
 	it.each([
 		['missing state', '/google/callback?code=auth-code', 'perseus_oauth_state=oauth-state-token'],
 		[
+			'missing code',
+			'/google/callback?state=oauth-state-token',
+			'perseus_oauth_state=oauth-state-token'
+		],
+		[
 			'mismatched state cookie',
 			'/google/callback?state=oauth-state-token&code=auth-code',
 			'perseus_oauth_state=other-state'
