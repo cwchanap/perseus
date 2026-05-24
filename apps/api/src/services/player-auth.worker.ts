@@ -12,6 +12,7 @@ const PLAYER_PREFIX = 'player:';
 const PLAYER_EMAIL_INDEX_PREFIX = 'player_email_index:';
 const PLAYER_SESSION_PREFIX = 'player_session:';
 const PLAYER_SESSIONS_PREFIX = 'player_sessions:';
+const PLAYER_SESSION_TTL_SECONDS = Math.ceil(PLAYER_SESSION_DURATION_MS / 1000);
 
 export interface CreatedPlayerSession {
 	token: string;
@@ -41,8 +42,12 @@ function sessionKey(hash: string): string {
 	return `${PLAYER_SESSION_PREFIX}${hash}`;
 }
 
-function sessionsIndexKey(playerId: string): string {
-	return `${PLAYER_SESSIONS_PREFIX}${playerId}`;
+function sessionsIndexPrefix(email: string): string {
+	return `${PLAYER_SESSIONS_PREFIX}${normalizeEmail(email)}:`;
+}
+
+function sessionsIndexKey(email: string, hash: string): string {
+	return `${sessionsIndexPrefix(email)}${hash}`;
 }
 
 async function readJson<T>(kv: KVNamespace, key: string): Promise<T | null> {
@@ -94,9 +99,18 @@ export async function getAllowlistEntry(
 }
 
 export async function listAllowlistEntries(kv: KVNamespace): Promise<PlayerAllowlistEntry[]> {
-	const listed = await kv.list({ prefix: ALLOWLIST_PREFIX });
+	const keys: { name: string }[] = [];
+	let cursor: string | undefined;
+
+	while (true) {
+		const listed = await kv.list({ prefix: ALLOWLIST_PREFIX, cursor });
+		keys.push(...listed.keys);
+		if (listed.list_complete) break;
+		cursor = listed.cursor;
+	}
+
 	const entries = await Promise.all(
-		listed.keys.map((key) => readJson<PlayerAllowlistEntry>(kv, key.name))
+		keys.map((key) => readJson<PlayerAllowlistEntry>(kv, key.name))
 	);
 	return entries
 		.filter((entry): entry is PlayerAllowlistEntry => entry !== null)
@@ -140,16 +154,18 @@ export async function getPlayerByEmail(kv: KVNamespace, email: string): Promise<
 	return playerId ? await getPlayer(kv, playerId) : null;
 }
 
-async function readSessionHashes(kv: KVNamespace, playerId: string): Promise<string[]> {
-	return (await readJson<string[]>(kv, sessionsIndexKey(playerId))) ?? [];
-}
+async function listKeys(kv: KVNamespace, prefix: string): Promise<{ name: string }[]> {
+	const keys: { name: string }[] = [];
+	let cursor: string | undefined;
 
-async function writeSessionHashes(
-	kv: KVNamespace,
-	playerId: string,
-	hashes: string[]
-): Promise<void> {
-	await writeJson(kv, sessionsIndexKey(playerId), [...new Set(hashes)]);
+	while (true) {
+		const listed = await kv.list({ prefix, cursor });
+		keys.push(...listed.keys);
+		if (listed.list_complete) break;
+		cursor = listed.cursor;
+	}
+
+	return keys;
 }
 
 export async function createPlayerSession(
@@ -174,13 +190,10 @@ export async function createPlayerSession(
 		expiresAt
 	};
 
-	await writeJson(
-		kv,
-		sessionKey(sessionHash),
-		record,
-		Math.ceil(PLAYER_SESSION_DURATION_MS / 1000)
-	);
-	await writeSessionHashes(kv, user.id, [...(await readSessionHashes(kv, user.id)), sessionHash]);
+	await writeJson(kv, sessionKey(sessionHash), record, PLAYER_SESSION_TTL_SECONDS);
+	await kv.put(sessionsIndexKey(email, sessionHash), '1', {
+		expirationTtl: PLAYER_SESSION_TTL_SECONDS
+	});
 
 	return { token, expiresAt };
 }
@@ -202,20 +215,18 @@ export async function revokePlayerSession(kv: KVNamespace, token: string): Promi
 	await kv.delete(sessionKey(sessionHash));
 
 	if (!record) return;
-	const hashes = await readSessionHashes(kv, record.user.id);
-	const remaining = hashes.filter((hash) => hash !== sessionHash);
-	if (remaining.length > 0) {
-		await writeSessionHashes(kv, record.user.id, remaining);
-		return;
-	}
-	await kv.delete(sessionsIndexKey(record.user.id));
+	await kv.delete(sessionsIndexKey(record.user.email, sessionHash));
 }
 
 export async function revokePlayerSessionsForEmail(kv: KVNamespace, email: string): Promise<void> {
-	const player = await getPlayerByEmail(kv, email);
-	if (!player) return;
+	const normalized = normalizeEmail(email);
+	const prefix = sessionsIndexPrefix(normalized);
+	const keys = await listKeys(kv, prefix);
 
-	const hashes = await readSessionHashes(kv, player.id);
-	await Promise.all(hashes.map((hash) => kv.delete(sessionKey(hash))));
-	await kv.delete(sessionsIndexKey(player.id));
+	await Promise.all(
+		keys.flatMap((key) => {
+			const sessionHash = key.name.slice(prefix.length);
+			return [kv.delete(sessionKey(sessionHash)), kv.delete(key.name)];
+		})
+	);
 }
