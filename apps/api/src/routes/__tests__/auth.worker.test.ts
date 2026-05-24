@@ -72,6 +72,10 @@ vi.mock('../../services/player-auth.worker', () => ({
 	revokePlayerSession: vi.fn()
 }));
 
+vi.mock('../../middleware/rate-limit.worker', () => ({
+	oauthRateLimit: async (_c: unknown, next: () => Promise<void>) => next()
+}));
+
 import auth from '../auth.worker';
 import * as sharedAuth from '../../services/player-auth.shared';
 import * as playerAuth from '../../services/player-auth.worker';
@@ -290,6 +294,23 @@ describe('Worker player auth routes', () => {
 
 		expect(res.status).toBe(302);
 		expect(res.headers.get('Location')).toBe('/login?error=session_expired');
+		expect(res.headers.get('Cache-Control')).toBe('no-store');
+		expect(setCookie).toContain('perseus_oauth_state=');
+		expect(setCookie).toContain('Max-Age=0');
+		expect(playerAuth.consumeOAuthState).not.toHaveBeenCalled();
+	});
+
+	it('redirects to login with access_denied when Google returns an error', async () => {
+		const res = await auth.fetch(
+			request('/google/callback?state=oauth-state-token&error=access_denied', {
+				headers: { Cookie: 'perseus_oauth_state=oauth-state-token' }
+			}),
+			env
+		);
+		const setCookie = res.headers.get('set-cookie') ?? '';
+
+		expect(res.status).toBe(302);
+		expect(res.headers.get('Location')).toBe('/login?error=access_denied');
 		expect(res.headers.get('Cache-Control')).toBe('no-store');
 		expect(setCookie).toContain('perseus_oauth_state=');
 		expect(setCookie).toContain('Max-Age=0');

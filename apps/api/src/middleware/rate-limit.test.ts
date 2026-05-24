@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi } from 'vitest';
 import { Hono } from 'hono';
-import { loginRateLimit, resetLoginAttempts } from './rate-limit';
+import { loginRateLimit, resetLoginAttempts, oauthRateLimit } from './rate-limit';
 
 // Each test uses a unique IP to avoid cross-test state in the module-level Map.
 let ipCounter = 1;
@@ -258,5 +258,114 @@ describe('loginRateLimit – IP detection', () => {
 		// 6th request must be blocked — confirms "unknown|unknown" key accumulates state
 		const blocked = await app.fetch(makeAnonymousReq());
 		expect(blocked.status).toBe(429);
+	});
+});
+
+// ─── OAuth Rate Limit ──────────────────────────────────────────────────────────
+
+function makeOAuthApp() {
+	const app = new Hono();
+	app.use('/oauth/start', oauthRateLimit);
+	app.get('/oauth/start', (c) => c.json({ ok: true }));
+	return app;
+}
+
+function oauthReq(ip: string): Request {
+	return new Request('http://localhost/oauth/start', {
+		headers: {
+			'x-forwarded-for': ip,
+			'user-agent': 'test-agent'
+		}
+	});
+}
+
+describe('oauthRateLimit', () => {
+	it('allows the first request', async () => {
+		const ip = uniqueIp();
+		const app = makeOAuthApp();
+		const res = await app.fetch(oauthReq(ip));
+		expect(res.status).toBe(200);
+	});
+
+	it('allows up to OAUTH_MAX_ATTEMPTS (10) requests', async () => {
+		const ip = uniqueIp();
+		const app = makeOAuthApp();
+
+		for (let i = 0; i < 10; i++) {
+			const res = await app.fetch(oauthReq(ip));
+			expect(res.status).toBe(200);
+		}
+	});
+
+	it('blocks the 11th request with 429', async () => {
+		const ip = uniqueIp();
+		const app = makeOAuthApp();
+
+		for (let i = 0; i < 10; i++) {
+			await app.fetch(oauthReq(ip));
+		}
+
+		const res = await app.fetch(oauthReq(ip));
+		expect(res.status).toBe(429);
+		const body = (await res.json()) as { error: string };
+		expect(body.error).toBe('too_many_requests');
+	});
+
+	it('includes Retry-After header when blocked', async () => {
+		const ip = uniqueIp();
+		const app = makeOAuthApp();
+
+		for (let i = 0; i < 10; i++) {
+			await app.fetch(oauthReq(ip));
+		}
+
+		const res = await app.fetch(oauthReq(ip));
+		expect(res.status).toBe(429);
+		const retryAfter = res.headers.get('Retry-After');
+		expect(retryAfter).not.toBeNull();
+		expect(Number(retryAfter)).toBeGreaterThan(0);
+	});
+
+	it('uses a separate counter from login rate limiter', async () => {
+		const ip = uniqueIp();
+
+		// Exhaust OAuth attempts
+		const oauthApp = makeOAuthApp();
+		for (let i = 0; i < 10; i++) {
+			await oauthApp.fetch(oauthReq(ip));
+		}
+		const blockedRes = await oauthApp.fetch(oauthReq(ip));
+		expect(blockedRes.status).toBe(429);
+
+		// Login rate limiter should NOT be affected — same IP, different counter
+		const loginApp = makeApp(401);
+		const loginRes = await loginApp.fetch(req(ip));
+		expect(loginRes.status).toBe(401); // not blocked
+	});
+
+	it('allows requests again after block expires', async () => {
+		vi.useFakeTimers();
+		try {
+			const ip = uniqueIp();
+			const app = makeOAuthApp();
+
+			// Trigger a block
+			for (let i = 0; i < 11; i++) {
+				await app.fetch(oauthReq(ip));
+			}
+
+			// Still blocked
+			const blockedRes = await app.fetch(oauthReq(ip));
+			expect(blockedRes.status).toBe(429);
+
+			// Advance past the 15-minute block duration
+			vi.advanceTimersByTime(15 * 60 * 1000 + 1);
+
+			// Should be allowed again
+			const afterRes = await app.fetch(oauthReq(ip));
+			expect(afterRes.status).toBe(200);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });

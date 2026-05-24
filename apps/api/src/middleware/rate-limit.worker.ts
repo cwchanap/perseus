@@ -5,6 +5,7 @@ import type { Context, Next } from 'hono';
 import type { Env } from '../worker';
 
 const MAX_LOGIN_ATTEMPTS = 5;
+const OAUTH_MAX_ATTEMPTS = 10;
 const LOCKOUT_DURATION_MS = 15 * 60 * 1000; // 15 minutes
 // Rate limit keys share PUZZLE_METADATA namespace (puzzle keys use 'puzzle:' prefix)
 const RATE_LIMIT_KEY_PREFIX = 'ratelimit:';
@@ -308,7 +309,8 @@ async function checkAndIncrement(
 	key: string,
 	now: number,
 	env?: string,
-	increment = false
+	increment = false,
+	maxAttempts = MAX_LOGIN_ATTEMPTS
 ): Promise<{ shouldBlock: boolean; remainingSeconds?: number }> {
 	const entry = await getRateLimitEntry(kv, key, env);
 
@@ -334,7 +336,7 @@ async function checkAndIncrement(
 	}
 
 	// Check if should lock out
-	if (newEntry.attempts >= MAX_LOGIN_ATTEMPTS) {
+	if (newEntry.attempts >= maxAttempts) {
 		newEntry.lockedUntil = now + LOCKOUT_DURATION_MS;
 	}
 
@@ -393,4 +395,28 @@ export async function resetLoginAttempts(c: Context<{ Bindings: Env }>): Promise
 	const kv = c.env.PUZZLE_METADATA;
 	const env = c.env.NODE_ENV;
 	await deleteRateLimitEntry(kv, key, env);
+}
+
+export async function oauthRateLimit(c: Context<{ Bindings: Env }>, next: Next): Promise<Response> {
+	const key = `oauth:${getClientIP(c)}`;
+	const kv = c.env.PUZZLE_METADATA;
+	const env = c.env.NODE_ENV;
+
+	// Pre-check and increment in one shot — every OAuth start/callback counts
+	const result = await checkAndIncrement(kv, key, Date.now(), env, true, OAUTH_MAX_ATTEMPTS);
+	if (result.shouldBlock) {
+		return c.json(
+			{
+				error: 'too_many_requests',
+				message:
+					result.remainingSeconds !== undefined
+						? `Too many requests. Try again in ${result.remainingSeconds} seconds`
+						: 'Too many requests. Please try again later'
+			},
+			429
+		);
+	}
+
+	await next();
+	return c.res;
 }

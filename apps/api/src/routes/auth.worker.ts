@@ -21,6 +21,7 @@ import {
 	storeOAuthState,
 	upsertPlayer
 } from '../services/player-auth.worker';
+import { oauthRateLimit } from '../middleware/rate-limit.worker';
 
 const PLAYER_SESSION_COOKIE = 'perseus_player_session';
 const OAUTH_STATE_COOKIE = 'perseus_oauth_state';
@@ -142,6 +143,9 @@ auth.use('*', async (c, next) => {
 	await next();
 });
 
+auth.use('/google/start', oauthRateLimit);
+auth.use('/google/callback', oauthRateLimit);
+
 auth.get('/google/start', async (c) => {
 	const state = createOAuthState();
 	const pkce = await createPkcePair();
@@ -168,7 +172,12 @@ auth.get('/google/start', async (c) => {
 auth.get('/google/callback', async (c) => {
 	const state = c.req.query('state');
 	const code = c.req.query('code');
+	const error = c.req.query('error');
 	const cookieState = getCookie(c, OAUTH_STATE_COOKIE);
+
+	if (error) {
+		return redirectToLogin(c, 'access_denied');
+	}
 
 	if (!state || !code || cookieState !== state) {
 		return redirectToLogin(c, 'session_expired');
