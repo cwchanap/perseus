@@ -20,10 +20,12 @@ export function createPlayerAuthStore() {
 		user: null,
 		error: null
 	});
+	let operationId = 0;
 
 	return {
 		subscribe,
 		async refresh(): Promise<void> {
+			const currentOperationId = ++operationId;
 			set({
 				status: 'loading',
 				user: null,
@@ -32,6 +34,10 @@ export function createPlayerAuthStore() {
 
 			try {
 				const session = await getPlayerSession();
+				if (currentOperationId !== operationId) {
+					return;
+				}
+
 				if (session.authenticated) {
 					set({
 						status: 'authenticated',
@@ -44,9 +50,14 @@ export function createPlayerAuthStore() {
 				// Auth state is best-effort; callers should see anonymous on failures.
 			}
 
+			if (currentOperationId !== operationId) {
+				return;
+			}
+
 			set(anonymousState);
 		},
 		async logout(): Promise<void> {
+			operationId++;
 			try {
 				await logoutPlayer();
 			} finally {
