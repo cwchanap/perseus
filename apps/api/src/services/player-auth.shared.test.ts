@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+	bytesToBase64Url,
 	buildGoogleAuthUrl,
 	createOAuthState,
 	createPkcePair,
@@ -19,6 +20,57 @@ const validGoogleClaims = {
 	email: 'Player@Example.COM',
 	email_verified: true
 };
+
+interface TestGoogleJwk extends JsonWebKey {
+	kid?: string;
+	alg?: string;
+	use?: string;
+}
+
+function base64UrlJson(value: unknown): string {
+	return bytesToBase64Url(new TextEncoder().encode(JSON.stringify(value)));
+}
+
+async function createSignedGoogleIdToken(params: {
+	kid: string;
+	payload?: Record<string, unknown>;
+}): Promise<{
+	token: string;
+	publicJwk: TestGoogleJwk;
+}> {
+	const keyPair = (await crypto.subtle.generateKey(
+		{
+			name: 'RSASSA-PKCS1-v1_5',
+			modulusLength: 2048,
+			publicExponent: new Uint8Array([1, 0, 1]),
+			hash: 'SHA-256'
+		},
+		true,
+		['sign', 'verify']
+	)) as CryptoKeyPair;
+	const publicJwk = (await crypto.subtle.exportKey('jwk', keyPair.publicKey)) as TestGoogleJwk;
+	publicJwk.kid = params.kid;
+	publicJwk.alg = 'RS256';
+	publicJwk.use = 'sig';
+
+	const header = base64UrlJson({ alg: 'RS256', kid: params.kid, typ: 'JWT' });
+	const payload = base64UrlJson({
+		...validGoogleClaims,
+		exp: Math.floor(Date.now() / 1000) + 60,
+		...params.payload
+	});
+	const signingInput = `${header}.${payload}`;
+	const signature = await crypto.subtle.sign(
+		'RSASSA-PKCS1-v1_5',
+		keyPair.privateKey,
+		new TextEncoder().encode(signingInput)
+	);
+
+	return {
+		token: `${signingInput}.${bytesToBase64Url(new Uint8Array(signature))}`,
+		publicJwk
+	};
+}
 
 afterEach(() => {
 	vi.unstubAllGlobals();
@@ -195,33 +247,77 @@ describe('player auth shared helpers', () => {
 		});
 	});
 
-	it('verifies Google ID tokens through tokeninfo', async () => {
+	it('verifies Google ID tokens locally against Google JWKS', async () => {
+		const { token, publicJwk } = await createSignedGoogleIdToken({ kid: 'test-key-1' });
 		const fetchMock = vi.fn().mockResolvedValue(
-			new Response(
-				JSON.stringify({
-					...validGoogleClaims,
-					exp: Math.floor(Date.now() / 1000) + 60
-				})
-			)
+			new Response(JSON.stringify({ keys: [publicJwk] }), {
+				headers: { 'Cache-Control': 'public, max-age=600' }
+			})
 		);
 		vi.stubGlobal('fetch', fetchMock);
 
-		const claims = await verifyGoogleIdToken('id token with spaces', 'client-id');
+		const claims = await verifyGoogleIdToken(token, 'client-id');
 
 		expect(claims).toEqual({
 			sub: 'google-sub-123',
 			email: 'player@example.com'
 		});
-		expect(fetchMock).toHaveBeenCalledWith(
-			'https://oauth2.googleapis.com/tokeninfo?id_token=id%20token%20with%20spaces'
-		);
+		expect(fetchMock).toHaveBeenCalledWith('https://www.googleapis.com/oauth2/v3/certs');
 	});
 
-	it('rejects failed Google ID token verification responses', async () => {
-		vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('nope', { status: 401 })));
+	it('rejects Google ID tokens with invalid signatures', async () => {
+		const valid = await createSignedGoogleIdToken({ kid: 'test-key-invalid-signature' });
+		const other = await createSignedGoogleIdToken({ kid: 'other-key' });
+		const fetchMock = vi.fn().mockResolvedValue(
+			new Response(JSON.stringify({ keys: [valid.publicJwk] }), {
+				headers: { 'Cache-Control': 'public, max-age=600' }
+			})
+		);
+		vi.stubGlobal('fetch', fetchMock);
 
-		await expect(verifyGoogleIdToken('bad-token', 'client-id')).rejects.toThrow(
-			'Google ID token verification failed with 401'
+		const [header, payload] = valid.token.split('.');
+		const [, , otherSignature] = other.token.split('.');
+
+		await expect(
+			verifyGoogleIdToken(`${header}.${payload}.${otherSignature}`, 'client-id')
+		).rejects.toThrow('Google ID token signature is invalid');
+	});
+
+	it('caches Google JWKS before max-age expires', async () => {
+		const { token, publicJwk } = await createSignedGoogleIdToken({ kid: 'test-key-cache' });
+		const fetchMock = vi.fn().mockResolvedValue(
+			new Response(JSON.stringify({ keys: [publicJwk] }), {
+				headers: { 'Cache-Control': 'public, max-age=600' }
+			})
+		);
+		vi.stubGlobal('fetch', fetchMock);
+
+		await verifyGoogleIdToken(token, 'client-id');
+		await verifyGoogleIdToken(token, 'client-id');
+
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+	});
+
+	it('rejects Google ID tokens when JWKS fetch fails or key is missing', async () => {
+		const { token } = await createSignedGoogleIdToken({ kid: 'test-key-fetch-fails' });
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('nope', { status: 503 })));
+
+		await expect(verifyGoogleIdToken(token, 'client-id')).rejects.toThrow(
+			'Google JWKS fetch failed with 503'
+		);
+
+		const missingKeyToken = await createSignedGoogleIdToken({ kid: 'test-key-missing' });
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue(
+				new Response(JSON.stringify({ keys: [] }), {
+					headers: { 'Cache-Control': 'public, max-age=600' }
+				})
+			)
+		);
+
+		await expect(verifyGoogleIdToken(missingKeyToken.token, 'client-id')).rejects.toThrow(
+			'Google ID token signing key not found'
 		);
 	});
 
