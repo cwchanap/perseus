@@ -203,6 +203,18 @@ describe('Bun player auth routes', () => {
 		expect(setCookie).toContain('Max-Age=600');
 	});
 
+	it('sets Secure on OAuth state cookies when NODE_ENV is unset', async () => {
+		setEnv({ NODE_ENV: undefined });
+
+		const res = await auth.fetch(request('/google/start'));
+		const setCookie = res.headers.get('set-cookie') ?? '';
+
+		expect(res.status).toBe(302);
+		expect(setCookie).toContain('perseus_oauth_state=oauth-state-token');
+		expect(setCookie).toContain('Secure');
+		expect(res.headers.get('Cache-Control')).toBe('no-store');
+	});
+
 	it('sanitizes unsafe start returnTo values to root', async () => {
 		await auth.fetch(request('/google/start?returnTo=https://evil.example/puzzle/abc'));
 
@@ -376,6 +388,22 @@ describe('Bun player auth routes', () => {
 
 		expect(setCookie).toContain('perseus_player_session=player-session-token');
 		expectProductionCookieAttributes(setCookie);
+		expect(res.headers.get('Cache-Control')).toBe('no-store');
+	});
+
+	it('sets Secure on player session cookies when NODE_ENV is unset', async () => {
+		setEnv({ NODE_ENV: undefined });
+
+		const res = await auth.fetch(
+			request('/google/callback?state=oauth-state-token&code=auth-code', {
+				headers: { Cookie: 'perseus_oauth_state=oauth-state-token' }
+			})
+		);
+		const setCookie = res.headers.get('set-cookie') ?? '';
+
+		expect(res.status).toBe(302);
+		expect(setCookie).toContain('perseus_player_session=player-session-token');
+		expect(setCookie).toContain('Secure');
 		expect(res.headers.get('Cache-Control')).toBe('no-store');
 	});
 
