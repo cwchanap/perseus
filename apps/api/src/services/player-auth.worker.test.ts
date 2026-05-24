@@ -204,6 +204,21 @@ describe('player auth Worker storage', () => {
 		expect(await getPlayerByEmail(kv, 'updated@example.com')).toEqual(updated);
 	});
 
+	it('ignores stale player email index entries', async () => {
+		await upsertPlayer(kv, {
+			sub: 'google-sub-123',
+			email: 'old@example.com'
+		});
+		const updated = await upsertPlayer(kv, {
+			sub: 'google-sub-123',
+			email: 'new@example.com'
+		});
+		await memoryKV.put('player_email_index:old@example.com', 'google-sub-123');
+
+		expect(await getPlayerByEmail(kv, 'old@example.com')).toBeNull();
+		expect(await getPlayerByEmail(kv, 'new@example.com')).toEqual(updated);
+	});
+
 	it('creates, reads, revokes, and bulk revokes sessions by normalized email', async () => {
 		await addAllowlistEntry(kv, 'player@example.com', 'admin');
 		const player: PlayerUser = await upsertPlayer(kv, {

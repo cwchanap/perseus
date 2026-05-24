@@ -154,8 +154,12 @@ export async function getPlayer(kv: KVNamespace, id: string): Promise<PlayerUser
 }
 
 export async function getPlayerByEmail(kv: KVNamespace, email: string): Promise<PlayerUser | null> {
-	const playerId = await kv.get(emailIndexKey(email));
-	return playerId ? await getPlayer(kv, playerId) : null;
+	const normalized = normalizeEmail(email);
+	const playerId = await kv.get(emailIndexKey(normalized));
+	if (!playerId) return null;
+
+	const player = await getPlayer(kv, playerId);
+	return player?.email === normalized ? player : null;
 }
 
 async function listKeys(kv: KVNamespace, prefix: string): Promise<{ name: string }[]> {
