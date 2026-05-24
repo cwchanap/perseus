@@ -502,9 +502,13 @@ describe('API Service - player auth', () => {
 
 	it('builds Google login URL with encoded returnTo', () => {
 		const url = getGoogleLoginUrl('/puzzle/abc 123?tab=play&next=/');
+		const expectedReturnTo = new URL(
+			'/puzzle/abc 123?tab=play&next=/',
+			window.location.origin
+		).toString();
 
-		expect(url).toMatch(
-			/\/api\/auth\/google\/start\?returnTo=%2Fpuzzle%2Fabc\+123%3Ftab%3Dplay%26next%3D%2F$/
+		expect(url).toBe(
+			`http://localhost:3999/api/auth/google/start?returnTo=${encodeURIComponent(expectedReturnTo)}`
 		);
 	});
 });

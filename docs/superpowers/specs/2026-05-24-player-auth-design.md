@@ -178,7 +178,8 @@ New production secrets and variables:
 - `AUTH_REDIRECT_BASE_URL`
 
 `AUTH_REDIRECT_BASE_URL` is the public origin used to build the Google callback URL. Local Worker
-development uses the equivalent values in `.dev.vars` or Wrangler-supported local secret config.
+development uses the equivalent values in `.dev.vars` or Wrangler-supported local secret config
+with `NODE_ENV=development` for local HTTP callbacks.
 
 The existing `JWT_SECRET` can remain the signing secret source, but player auth code must use a
 separate cookie name, session prefix, and route module from admin auth so player and admin

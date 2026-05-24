@@ -144,7 +144,7 @@ auth.use('*', async (c, next) => {
 auth.get('/google/start', async (c) => {
 	const state = createOAuthState();
 	const pkce = await createPkcePair();
-	const returnTo = parseReturnTo(c.req.query('returnTo'));
+	const returnTo = parseReturnTo(c.req.query('returnTo'), c.env.ALLOWED_ORIGINS);
 
 	await storeOAuthState(c.env.PUZZLE_METADATA, state, {
 		codeVerifier: pkce.verifier,

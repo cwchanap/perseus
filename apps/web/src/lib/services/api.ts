@@ -213,8 +213,24 @@ export async function logoutPlayer(): Promise<void> {
 	await handleVoidResponse(response);
 }
 
+function buildAuthReturnTo(returnTo: string): string {
+	if (!API_BASE || !returnTo.startsWith('/') || returnTo.startsWith('//')) {
+		return returnTo;
+	}
+
+	if (typeof window === 'undefined') {
+		return returnTo;
+	}
+
+	try {
+		return new URL(returnTo, window.location.origin).toString();
+	} catch {
+		return returnTo;
+	}
+}
+
 export function getGoogleLoginUrl(returnTo = '/'): string {
-	const searchParams = new URLSearchParams({ returnTo });
+	const searchParams = new URLSearchParams({ returnTo: buildAuthReturnTo(returnTo) });
 	return `${API_BASE}/api/auth/google/start?${searchParams.toString()}`;
 }
 

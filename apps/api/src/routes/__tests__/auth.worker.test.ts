@@ -11,16 +11,28 @@ vi.mock('../../services/player-auth.shared', async () => {
 				challenge: 'pkce-challenge'
 			})
 		),
-		parseReturnTo: vi.fn((value: string | null | undefined) => {
+		parseReturnTo: vi.fn((value: string | null | undefined, allowedOrigins?: string) => {
 			if (!value) return '/';
-			if (!value.startsWith('/') || value.startsWith('//')) return '/';
-			try {
-				const parsed = new URL(value, 'https://perseus.local');
-				if (parsed.origin !== 'https://perseus.local') return '/';
-				return `${parsed.pathname}${parsed.search}${parsed.hash}`;
-			} catch {
-				return '/';
+			if (value.startsWith('/') && !value.startsWith('//')) {
+				try {
+					const parsed = new URL(value, 'https://perseus.local');
+					if (parsed.origin !== 'https://perseus.local') return '/';
+					return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+				} catch {
+					return '/';
+				}
 			}
+			const origins = new Set(
+				(allowedOrigins || '')
+					.split(',')
+					.map((origin) => origin.trim())
+					.filter(Boolean)
+					.map((origin) => new URL(origin).origin)
+			);
+			const parsed = new URL(value);
+			return origins.has(parsed.origin) && parsed.username === '' && parsed.password === ''
+				? parsed.toString()
+				: '/';
 		}),
 		buildGoogleAuthUrl: vi.fn(
 			(params: { clientId: string; redirectUri: string; state: string; codeChallenge: string }) => {
@@ -206,6 +218,27 @@ describe('Worker player auth routes', () => {
 		expect(playerAuth.storeOAuthState).toHaveBeenCalledWith(kv, 'oauth-state-token', {
 			codeVerifier: 'pkce-verifier',
 			returnTo: '/'
+		});
+	});
+
+	it('stores absolute start returnTo values for allowed origins', async () => {
+		const splitOriginEnv = {
+			...env,
+			ALLOWED_ORIGINS: 'https://app.example.com, http://localhost:4692'
+		};
+
+		await auth.fetch(
+			request('/google/start?returnTo=http%3A%2F%2Flocalhost%3A4692%2Fpuzzle%2Fabc%3Fpiece%3D1'),
+			splitOriginEnv
+		);
+
+		expect(sharedAuth.parseReturnTo).toHaveBeenCalledWith(
+			'http://localhost:4692/puzzle/abc?piece=1',
+			'https://app.example.com, http://localhost:4692'
+		);
+		expect(playerAuth.storeOAuthState).toHaveBeenCalledWith(kv, 'oauth-state-token', {
+			codeVerifier: 'pkce-verifier',
+			returnTo: 'http://localhost:4692/puzzle/abc?piece=1'
 		});
 	});
 
