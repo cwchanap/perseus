@@ -14,6 +14,12 @@ vi.mock('../routes/admin.worker', () => {
 	return { default: app };
 });
 
+vi.mock('../routes/auth.worker', () => {
+	const app = new Hono();
+	app.get('/session', (c: any) => c.json({ authenticated: false }));
+	return { default: app };
+});
+
 import worker from '../worker';
 
 function createMockCtx(): ExecutionContext {
@@ -35,6 +41,9 @@ describe('Worker Entry Point', () => {
 				NODE_ENV: undefined,
 				JWT_SECRET: '',
 				ADMIN_PASSKEY: '',
+				GOOGLE_CLIENT_ID: '',
+				GOOGLE_CLIENT_SECRET: '',
+				AUTH_REDIRECT_BASE_URL: '',
 				ALLOWED_ORIGINS: '',
 				ASSETS: { fetch: vi.fn() }
 			};
@@ -54,6 +63,9 @@ describe('Worker Entry Point', () => {
 				NODE_ENV: 'development',
 				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
 				ADMIN_PASSKEY: 'test-passkey',
+				GOOGLE_CLIENT_ID: 'google-client-id',
+				GOOGLE_CLIENT_SECRET: 'google-client-secret',
+				AUTH_REDIRECT_BASE_URL: 'http://localhost:5173',
 				ALLOWED_ORIGINS: '',
 				ASSETS: { fetch: vi.fn() }
 			};
@@ -73,6 +85,9 @@ describe('Worker Entry Point', () => {
 			NODE_ENV: string;
 			JWT_SECRET: string;
 			ADMIN_PASSKEY: string;
+			GOOGLE_CLIENT_ID: string;
+			GOOGLE_CLIENT_SECRET: string;
+			AUTH_REDIRECT_BASE_URL: string;
 			ALLOWED_ORIGINS: string;
 			ASSETS: { fetch: ReturnType<typeof vi.fn> };
 		};
@@ -82,6 +97,9 @@ describe('Worker Entry Point', () => {
 				NODE_ENV: 'development',
 				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
 				ADMIN_PASSKEY: 'test-passkey',
+				GOOGLE_CLIENT_ID: 'google-client-id',
+				GOOGLE_CLIENT_SECRET: 'google-client-secret',
+				AUTH_REDIRECT_BASE_URL: 'http://localhost:5173',
 				ALLOWED_ORIGINS: '',
 				ASSETS: { fetch: vi.fn(() => new Response('static asset')) }
 			};
@@ -120,6 +138,9 @@ describe('Worker Entry Point', () => {
 				NODE_ENV: 'development',
 				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
 				ADMIN_PASSKEY: 'test-passkey',
+				GOOGLE_CLIENT_ID: 'google-client-id',
+				GOOGLE_CLIENT_SECRET: 'google-client-secret',
+				AUTH_REDIRECT_BASE_URL: 'http://localhost:5173',
 				ALLOWED_ORIGINS: '',
 				ASSETS: {
 					fetch: vi.fn(() => {

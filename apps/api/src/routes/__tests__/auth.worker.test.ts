@@ -162,9 +162,12 @@ describe('Worker player auth routes', () => {
 		]
 	])('rejects callback with %s', async (_name, path, cookie) => {
 		const res = await auth.fetch(request(path, { headers: { Cookie: cookie } }), env);
+		const setCookie = res.headers.get('set-cookie') ?? '';
 
 		expect(res.status).toBe(302);
 		expect(res.headers.get('Location')).toBe('/login?error=session_expired');
+		expect(setCookie).toContain('perseus_oauth_state=');
+		expect(setCookie).toContain('Max-Age=0');
 		expect(playerAuth.consumeOAuthState).not.toHaveBeenCalled();
 	});
 
@@ -177,9 +180,12 @@ describe('Worker player auth routes', () => {
 			}),
 			env
 		);
+		const setCookie = res.headers.get('set-cookie') ?? '';
 
 		expect(res.status).toBe(302);
 		expect(res.headers.get('Location')).toBe('/login?error=session_expired');
+		expect(setCookie).toContain('perseus_oauth_state=');
+		expect(setCookie).toContain('Max-Age=0');
 	});
 
 	it('redirects not-allowlisted callback users to login', async () => {
@@ -191,10 +197,13 @@ describe('Worker player auth routes', () => {
 			}),
 			env
 		);
+		const setCookie = res.headers.get('set-cookie') ?? '';
 
 		expect(playerAuth.getAllowlistEntry).toHaveBeenCalledWith(kv, 'player@example.com');
 		expect(res.status).toBe(302);
 		expect(res.headers.get('Location')).toBe('/login?error=not_allowed');
+		expect(setCookie).toContain('perseus_oauth_state=');
+		expect(setCookie).toContain('Max-Age=0');
 	});
 
 	it('creates a player session for allowlisted verified users', async () => {
@@ -236,9 +245,12 @@ describe('Worker player auth routes', () => {
 			}),
 			env
 		);
+		const setCookie = res.headers.get('set-cookie') ?? '';
 
 		expect(res.status).toBe(302);
 		expect(res.headers.get('Location')).toBe('/login?error=google_error');
+		expect(setCookie).toContain('perseus_oauth_state=');
+		expect(setCookie).toContain('Max-Age=0');
 	});
 
 	it('returns unauthenticated when no player session cookie exists', async () => {

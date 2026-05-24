@@ -39,6 +39,14 @@ const app = new Hono<{ Bindings: Env }>();
 
 app.use('*', logger());
 
+function isValidProductionAuthRedirectBaseUrl(value: string): boolean {
+	try {
+		return new URL(value).protocol === 'https:';
+	} catch {
+		return false;
+	}
+}
+
 app.use('*', async (c, next) => {
 	const env = c.env;
 	const isDev = env.NODE_ENV === 'development';
@@ -71,6 +79,12 @@ app.use('*', async (c, next) => {
 		if (!env.GOOGLE_CLIENT_ID) missingEnv.push('GOOGLE_CLIENT_ID');
 		if (!env.GOOGLE_CLIENT_SECRET) missingEnv.push('GOOGLE_CLIENT_SECRET');
 		if (!env.AUTH_REDIRECT_BASE_URL) missingEnv.push('AUTH_REDIRECT_BASE_URL');
+		if (
+			env.AUTH_REDIRECT_BASE_URL &&
+			!isValidProductionAuthRedirectBaseUrl(env.AUTH_REDIRECT_BASE_URL)
+		) {
+			missingEnv.push('AUTH_REDIRECT_BASE_URL');
+		}
 
 		if (missingEnv.length > 0) {
 			console.error(`Missing required env vars in production: ${missingEnv.join(', ')}`);

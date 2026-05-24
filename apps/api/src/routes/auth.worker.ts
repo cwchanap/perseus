@@ -43,13 +43,6 @@ function cookieOptions(env: Env, maxAge: number) {
 	};
 }
 
-function redirectToLogin(error: string): Response {
-	return new Response(null, {
-		status: 302,
-		headers: { Location: `/login?error=${encodeURIComponent(error)}` }
-	});
-}
-
 function setPlayerSessionCookie(c: AuthContext, token: string): void {
 	setCookie(
 		c,
@@ -69,6 +62,11 @@ function setOAuthStateCookie(c: AuthContext, state: string): void {
 
 function clearOAuthStateCookie(c: AuthContext): void {
 	setCookie(c, OAUTH_STATE_COOKIE, '', cookieOptions(c.env, 0));
+}
+
+function redirectToLogin(c: AuthContext, error: string): Response {
+	clearOAuthStateCookie(c);
+	return c.redirect(`/login?error=${encodeURIComponent(error)}`);
 }
 
 auth.get('/google/start', async (c) => {
@@ -97,12 +95,12 @@ auth.get('/google/callback', async (c) => {
 	const cookieState = getCookie(c, OAUTH_STATE_COOKIE);
 
 	if (!state || !code || cookieState !== state) {
-		return redirectToLogin('session_expired');
+		return redirectToLogin(c, 'session_expired');
 	}
 
 	const storedState = await consumeOAuthState(c.env.PUZZLE_METADATA, state);
 	if (!storedState) {
-		return redirectToLogin('session_expired');
+		return redirectToLogin(c, 'session_expired');
 	}
 
 	try {
@@ -116,7 +114,7 @@ auth.get('/google/callback', async (c) => {
 		const claims = await verifyGoogleIdToken(tokenResponse.id_token, c.env.GOOGLE_CLIENT_ID);
 		const allowlistEntry = await getAllowlistEntry(c.env.PUZZLE_METADATA, claims.email);
 		if (!allowlistEntry) {
-			return redirectToLogin('not_allowed');
+			return redirectToLogin(c, 'not_allowed');
 		}
 
 		const player = await upsertPlayer(c.env.PUZZLE_METADATA, claims);
@@ -126,7 +124,7 @@ auth.get('/google/callback', async (c) => {
 		return c.redirect(storedState.returnTo);
 	} catch (error) {
 		console.error('Player Google auth callback failed:', error);
-		return redirectToLogin('google_error');
+		return redirectToLogin(c, 'google_error');
 	}
 });
 

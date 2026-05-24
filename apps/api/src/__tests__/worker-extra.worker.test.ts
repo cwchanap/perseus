@@ -18,6 +18,12 @@ vi.mock('../routes/admin.worker', () => {
 	return { default: app };
 });
 
+vi.mock('../routes/auth.worker', () => {
+	const app = new Hono();
+	app.get('/session', (c: any) => c.json({ authenticated: false }));
+	return { default: app };
+});
+
 import worker from '../worker';
 
 function createMockCtx(): ExecutionContext {
@@ -31,6 +37,9 @@ const validEnv = {
 	NODE_ENV: 'development',
 	JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
 	ADMIN_PASSKEY: 'test-passkey',
+	GOOGLE_CLIENT_ID: 'google-client-id',
+	GOOGLE_CLIENT_SECRET: 'google-client-secret',
+	AUTH_REDIRECT_BASE_URL: 'http://localhost:5173',
 	ALLOWED_ORIGINS: '',
 	ASSETS: {
 		fetch: vi.fn(() => new Response('static asset', { status: 200 }))
@@ -97,6 +106,9 @@ describe('Worker - CORS middleware branches', () => {
 			NODE_ENV: 'development',
 			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
 			ADMIN_PASSKEY: 'test-passkey',
+			GOOGLE_CLIENT_ID: 'google-client-id',
+			GOOGLE_CLIENT_SECRET: 'google-client-secret',
+			AUTH_REDIRECT_BASE_URL: 'http://localhost:5173',
 			ALLOWED_ORIGINS: 'https://example.com,https://test.example.com',
 			ASSETS: { fetch: vi.fn(() => new Response('asset', { status: 200 })) }
 		};
@@ -115,6 +127,9 @@ describe('Worker - CORS middleware branches', () => {
 			NODE_ENV: 'production',
 			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
 			ADMIN_PASSKEY: 'test-passkey',
+			GOOGLE_CLIENT_ID: 'google-client-id',
+			GOOGLE_CLIENT_SECRET: 'google-client-secret',
+			AUTH_REDIRECT_BASE_URL: 'https://myapp.example.com',
 			ALLOWED_ORIGINS: 'https://myapp.example.com',
 			ASSETS: { fetch: vi.fn(() => new Response('asset', { status: 200 })) }
 		};
@@ -133,7 +148,30 @@ describe('Worker - CORS middleware branches', () => {
 			NODE_ENV: 'production',
 			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
 			ADMIN_PASSKEY: 'test-passkey',
+			GOOGLE_CLIENT_ID: 'google-client-id',
+			GOOGLE_CLIENT_SECRET: 'google-client-secret',
+			AUTH_REDIRECT_BASE_URL: 'https://myapp.example.com',
 			ALLOWED_ORIGINS: '',
+			ASSETS: { fetch: vi.fn() }
+		};
+
+		const req = new Request('http://localhost/api/health');
+		const res = await worker.fetch(req, env as any, createMockCtx());
+
+		expect(res.status).toBe(500);
+		const body = (await res.json()) as any;
+		expect(body.error).toBe('server_misconfigured');
+	});
+
+	it('should return 500 when AUTH_REDIRECT_BASE_URL is not HTTPS in production', async () => {
+		const env = {
+			NODE_ENV: 'production',
+			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+			ADMIN_PASSKEY: 'test-passkey',
+			GOOGLE_CLIENT_ID: 'google-client-id',
+			GOOGLE_CLIENT_SECRET: 'google-client-secret',
+			AUTH_REDIRECT_BASE_URL: 'http://myapp.example.com',
+			ALLOWED_ORIGINS: 'https://myapp.example.com',
 			ASSETS: { fetch: vi.fn() }
 		};
 

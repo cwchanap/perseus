@@ -1,5 +1,6 @@
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
+const GOOGLE_JWKS_URL = 'https://www.googleapis.com/oauth2/v3/certs';
 
 export const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 export const PLAYER_SESSION_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
@@ -43,6 +44,21 @@ interface GoogleClaimsPayload {
 	picture?: unknown;
 }
 
+interface GoogleJwksResponse {
+	keys?: GoogleJwk[];
+}
+
+interface GoogleJwk extends JsonWebKey {
+	kid?: string;
+}
+
+interface JwksCache {
+	keys: GoogleJwk[];
+	expiresAt: number;
+}
+
+let jwksCache: JwksCache | null = null;
+
 export function normalizeEmail(email: string): string {
 	const normalized = email.trim().toLowerCase();
 	if (!EMAIL_PATTERN.test(normalized)) {
@@ -76,6 +92,54 @@ export function bytesToBase64Url(bytes: Uint8Array): string {
 		binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
 	}
 	return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function base64UrlToBytes(value: string): Uint8Array {
+	const base64 = value.replace(/-/g, '+').replace(/_/g, '/');
+	const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, '=');
+	const binary = atob(padded);
+	const bytes = new Uint8Array(binary.length);
+	for (let index = 0; index < binary.length; index += 1) {
+		bytes[index] = binary.charCodeAt(index);
+	}
+	return bytes;
+}
+
+function decodeJwtJson(value: string): unknown {
+	try {
+		return JSON.parse(new TextDecoder().decode(base64UrlToBytes(value)));
+	} catch {
+		throw new Error('Google ID token is malformed');
+	}
+}
+
+function readMaxAge(cacheControl: string | null): number {
+	if (!cacheControl) return 0;
+	const match = /(?:^|,)\s*max-age=(\d+)\s*(?:,|$)/i.exec(cacheControl);
+	return match ? Number.parseInt(match[1], 10) : 0;
+}
+
+async function fetchGoogleJwks(): Promise<GoogleJwk[]> {
+	const response = await fetch(GOOGLE_JWKS_URL);
+	if (!response.ok) {
+		throw new Error(`Google JWKS fetch failed with ${response.status}`);
+	}
+
+	const payload = (await response.json()) as GoogleJwksResponse;
+	const keys = Array.isArray(payload.keys) ? payload.keys : [];
+	const maxAgeSeconds = readMaxAge(response.headers.get('Cache-Control'));
+	jwksCache = {
+		keys,
+		expiresAt: Date.now() + maxAgeSeconds * 1000
+	};
+	return keys;
+}
+
+async function getGoogleJwks(forceRefresh = false): Promise<GoogleJwk[]> {
+	if (!forceRefresh && jwksCache && jwksCache.expiresAt > Date.now()) {
+		return jwksCache.keys;
+	}
+	return await fetchGoogleJwks();
 }
 
 export function createOAuthState(): string {
@@ -191,11 +255,55 @@ export async function verifyGoogleIdToken(
 	idToken: string,
 	clientId: string
 ): Promise<GoogleIdentityClaims> {
-	const response = await fetch(
-		`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(idToken)}`
-	);
-	if (!response.ok) {
-		throw new Error(`Google ID token verification failed with ${response.status}`);
+	const parts = idToken.split('.');
+	if (parts.length !== 3 || parts.some((part) => part.length === 0)) {
+		throw new Error('Google ID token is malformed');
 	}
-	return validateGoogleClaims((await response.json()) as GoogleClaimsPayload, clientId);
+
+	const [encodedHeader, encodedPayload, encodedSignature] = parts;
+	const header = decodeJwtJson(encodedHeader);
+	if (typeof header !== 'object' || header === null) {
+		throw new Error('Google ID token is malformed');
+	}
+	const alg = (header as { alg?: unknown }).alg;
+	const kid = (header as { kid?: unknown }).kid;
+	if (alg !== 'RS256') {
+		throw new Error('Google ID token uses unsupported algorithm');
+	}
+	if (typeof kid !== 'string' || kid.length === 0) {
+		throw new Error('Google ID token missing key id');
+	}
+
+	let keys = await getGoogleJwks();
+	let jwk = keys.find((key) => key.kid === kid);
+	if (!jwk) {
+		keys = await getGoogleJwks(true);
+		jwk = keys.find((key) => key.kid === kid);
+	}
+	if (!jwk) {
+		throw new Error('Google ID token signing key not found');
+	}
+
+	const publicKey = await crypto.subtle.importKey(
+		'jwk',
+		jwk,
+		{
+			name: 'RSASSA-PKCS1-v1_5',
+			hash: 'SHA-256'
+		},
+		false,
+		['verify']
+	);
+	const signingInput = new TextEncoder().encode(`${encodedHeader}.${encodedPayload}`);
+	const signature = base64UrlToBytes(encodedSignature);
+	const valid = await crypto.subtle.verify('RSASSA-PKCS1-v1_5', publicKey, signature, signingInput);
+	if (!valid) {
+		throw new Error('Google ID token signature is invalid');
+	}
+
+	const payload = decodeJwtJson(encodedPayload);
+	if (typeof payload !== 'object' || payload === null) {
+		throw new Error('Google ID token is malformed');
+	}
+	return validateGoogleClaims(payload as GoogleClaimsPayload, clientId);
 }
