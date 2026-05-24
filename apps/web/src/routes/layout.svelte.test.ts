@@ -126,6 +126,36 @@ describe('Root Layout', () => {
 		expect(playerAuth.logout).toHaveBeenCalledOnce();
 	});
 
+	it('catches rejected player sign out attempts', async () => {
+		const logoutError = new Error('logout failed');
+		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+		vi.mocked(playerAuth.logout).mockRejectedValue(logoutError);
+		mockPlayerAuth.set({
+			status: 'authenticated',
+			user: {
+				id: 'player-1',
+				email: 'player@example.com',
+				name: 'Player One',
+				createdAt: 1779530400000,
+				lastLoginAt: 1779530400000
+			},
+			error: null
+		});
+
+		try {
+			render(RootLayout, { children: makeChildren() });
+
+			await page.getByRole('button', { name: /SIGN OUT/i }).click();
+
+			expect(playerAuth.logout).toHaveBeenCalledOnce();
+			await vi.waitFor(() => {
+				expect(consoleError).toHaveBeenCalledWith('Failed to sign out player', logoutError);
+			});
+		} finally {
+			consoleError.mockRestore();
+		}
+	});
+
 	it('hides player navigation on puzzle routes', async () => {
 		setPathname('/puzzle/puzzle-1');
 
