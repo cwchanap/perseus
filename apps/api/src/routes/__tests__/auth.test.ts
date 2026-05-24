@@ -245,6 +245,13 @@ describe('Bun player auth routes', () => {
 		);
 	});
 
+	it('treats unset NODE_ENV as production for auth redirect base validation', async () => {
+		await expectServerMisconfigured('/session', {
+			NODE_ENV: undefined,
+			AUTH_REDIRECT_BASE_URL: 'http://localhost:5173'
+		});
+	});
+
 	it('returns server_misconfigured for malformed auth redirect bases', async () => {
 		await expectServerMisconfigured('/session', {
 			AUTH_REDIRECT_BASE_URL: 'not a valid url'
