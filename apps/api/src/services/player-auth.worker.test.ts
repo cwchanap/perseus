@@ -55,6 +55,8 @@ const { PLAYER_SESSION_DURATION_MS, hashToken } = sharedAuth;
 
 class MemoryKV {
 	private store = new Map<string, string>();
+	private putOptionStore = new Map<string, { expirationTtl?: number } | undefined>();
+	private listPageSize = Number.POSITIVE_INFINITY;
 
 	async get(key: string, type?: 'json') {
 		const value = this.store.get(key) ?? null;
@@ -62,28 +64,41 @@ class MemoryKV {
 		return type === 'json' ? JSON.parse(value) : value;
 	}
 
-	async put(key: string, value: string) {
+	async put(key: string, value: string, options?: { expirationTtl?: number }) {
 		this.store.set(key, value);
+		this.putOptionStore.set(key, options);
 	}
 
 	async delete(key: string) {
 		this.store.delete(key);
+		this.putOptionStore.delete(key);
 	}
 
-	async list(options?: { prefix?: string }) {
+	async list(options?: { prefix?: string; cursor?: string }) {
 		const prefix = options?.prefix ?? '';
+		const start = options?.cursor ? Number.parseInt(options.cursor, 10) : 0;
+		const keys = [...this.store.keys()]
+			.filter((name) => name.startsWith(prefix))
+			.sort()
+			.map((name) => ({ name }));
+		const end = Math.min(start + this.listPageSize, keys.length);
 		return {
-			keys: [...this.store.keys()]
-				.filter((name) => name.startsWith(prefix))
-				.sort()
-				.map((name) => ({ name })),
-			list_complete: true,
-			cursor: undefined
+			keys: keys.slice(start, end),
+			list_complete: end >= keys.length,
+			cursor: end >= keys.length ? undefined : String(end)
 		};
 	}
 
 	has(key: string): boolean {
 		return this.store.has(key);
+	}
+
+	putOptions(key: string): { expirationTtl?: number } | undefined {
+		return this.putOptionStore.get(key);
+	}
+
+	setListPageSize(pageSize: number): void {
+		this.listPageSize = pageSize;
 	}
 
 	dump(): string {
@@ -131,6 +146,20 @@ describe('player auth Worker storage', () => {
 		]);
 	});
 
+	it('lists allowlist entries across multiple KV pages', async () => {
+		memoryKV.setListPageSize(1);
+
+		await addAllowlistEntry(kv, 'first@example.com', 'admin');
+		await addAllowlistEntry(kv, 'second@example.com', 'admin');
+		await addAllowlistEntry(kv, 'third@example.com', 'admin');
+
+		expect((await listAllowlistEntries(kv)).map((listed) => listed.email)).toEqual([
+			'first@example.com',
+			'second@example.com',
+			'third@example.com'
+		]);
+	});
+
 	it('upserts players and links them by normalized email', async () => {
 		const player = await upsertPlayer(kv, {
 			sub: 'google-sub-123',
@@ -175,10 +204,18 @@ describe('player auth Worker storage', () => {
 
 		const created = await createPlayerSession(kv, player);
 		const sessionHash = await hashToken(created.token);
+		const sessionTtlSeconds = Math.ceil(PLAYER_SESSION_DURATION_MS / 1000);
 
 		expect(created.token).toMatch(/^[A-Za-z0-9_-]+$/);
 		expect(created.expiresAt).toBe(1_716_500_000_000 + PLAYER_SESSION_DURATION_MS);
 		expect(memoryKV.has(`player_session:${sessionHash}`)).toBe(true);
+		expect(memoryKV.has(`player_sessions:player@example.com:${sessionHash}`)).toBe(true);
+		expect(memoryKV.putOptions(`player_session:${sessionHash}`)).toEqual({
+			expirationTtl: sessionTtlSeconds
+		});
+		expect(memoryKV.putOptions(`player_sessions:player@example.com:${sessionHash}`)).toEqual({
+			expirationTtl: sessionTtlSeconds
+		});
 		expect(memoryKV.dump()).not.toContain(created.token);
 		expect(await getPlayerSession(kv, created.token)).toMatchObject({
 			sessionHash,
@@ -190,6 +227,7 @@ describe('player auth Worker storage', () => {
 		const retained = await createPlayerSession(kv, player);
 		await revokePlayerSession(kv, created.token);
 		expect(await getPlayerSession(kv, created.token)).toBeNull();
+		expect(memoryKV.has(`player_sessions:player@example.com:${sessionHash}`)).toBe(false);
 		expect(await getPlayerSession(kv, retained.token)).toMatchObject({
 			user: { id: 'google-sub-123', email: 'player@example.com' }
 		});
@@ -198,6 +236,29 @@ describe('player auth Worker storage', () => {
 		await revokePlayerSessionsForEmail(kv, ' Player@Example.COM ');
 		expect(await getPlayerSession(kv, retained.token)).toBeNull();
 		expect(await getPlayerSession(kv, third.token)).toBeNull();
+	});
+
+	it('bulk revokes sessions created under an old email after player email changes', async () => {
+		await addAllowlistEntry(kv, 'old@example.com', 'admin');
+		await addAllowlistEntry(kv, 'new@example.com', 'admin');
+		const player = await upsertPlayer(kv, {
+			sub: 'google-sub-123',
+			email: 'old@example.com'
+		});
+		const created = await createPlayerSession(kv, player);
+
+		await upsertPlayer(kv, {
+			sub: 'google-sub-123',
+			email: 'new@example.com'
+		});
+		expect(await getPlayerByEmail(kv, 'old@example.com')).toBeNull();
+		expect(await getPlayerSession(kv, created.token)).toMatchObject({
+			user: { email: 'old@example.com' }
+		});
+
+		await revokePlayerSessionsForEmail(kv, ' OLD@example.com ');
+
+		expect(await getPlayerSession(kv, created.token)).toBeNull();
 	});
 
 	it('requires an active allowlist entry to create and read sessions', async () => {
