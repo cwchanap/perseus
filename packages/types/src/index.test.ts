@@ -12,7 +12,11 @@ import {
 	MAX_PIECES,
 	DEFAULT_PIECE_COUNT,
 	THUMBNAIL_SIZE,
-	PUZZLE_CATEGORIES
+	PUZZLE_CATEGORIES,
+	isPlayerSessionResponse,
+	isPlayerAllowlistEntry,
+	type PlayerSessionResponse,
+	type PlayerAllowlistEntry
 } from './index';
 
 // Helper to create a valid piece
@@ -79,6 +83,54 @@ describe('constants', () => {
 		expect(PUZZLE_CATEGORIES).toContain('Abstract');
 		expect(PUZZLE_CATEGORIES).toContain('Food');
 		expect(PUZZLE_CATEGORIES).toContain('Travel');
+	});
+});
+
+describe('player auth contracts', () => {
+	it('validates an authenticated player session response', () => {
+		const response: PlayerSessionResponse = {
+			authenticated: true,
+			user: {
+				id: 'google-sub-123',
+				email: 'player@example.com',
+				name: 'Player One',
+				picture: 'https://example.com/avatar.png',
+				createdAt: 1716500000000,
+				lastLoginAt: 1716500100000
+			}
+		};
+
+		expect(isPlayerSessionResponse(response)).toBe(true);
+	});
+
+	it('rejects authenticated session responses without a user', () => {
+		expect(isPlayerSessionResponse({ authenticated: true })).toBe(false);
+	});
+
+	it('validates allowlist entries with linked player metadata', () => {
+		const entry: PlayerAllowlistEntry = {
+			email: 'player@example.com',
+			createdAt: 1716500000000,
+			addedBy: 'admin',
+			player: {
+				id: 'google-sub-123',
+				email: 'player@example.com',
+				createdAt: 1716500000000,
+				lastLoginAt: 1716500100000
+			}
+		};
+
+		expect(isPlayerAllowlistEntry(entry)).toBe(true);
+	});
+
+	it('rejects allowlist entries with invalid email shape', () => {
+		expect(
+			isPlayerAllowlistEntry({
+				email: 'not-an-email',
+				createdAt: 1716500000000,
+				addedBy: 'admin'
+			})
+		).toBe(false);
 	});
 });
 

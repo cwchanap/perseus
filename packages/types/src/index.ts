@@ -113,6 +113,35 @@ export interface SessionResponse {
 	authenticated: boolean;
 }
 
+export interface PlayerUser {
+	id: string;
+	email: string;
+	name?: string;
+	picture?: string;
+	createdAt: number;
+	lastLoginAt: number;
+}
+
+export interface PlayerSessionResponse {
+	authenticated: boolean;
+	user?: PlayerUser;
+}
+
+export interface PlayerAllowlistEntry {
+	email: string;
+	createdAt: number;
+	addedBy: string;
+	player?: PlayerUser;
+}
+
+export interface PlayerAllowlistResponse {
+	entries: PlayerAllowlistEntry[];
+}
+
+export interface PlayerAllowlistMutationResponse {
+	entry: PlayerAllowlistEntry;
+}
+
 export interface PuzzleListResponse {
 	puzzles: PuzzleSummary[];
 	total: number;
@@ -143,6 +172,46 @@ export const DEFAULT_PIECE_COUNT = 225; // 15x15
 export const THUMBNAIL_SIZE = 300;
 
 // Validation functions
+
+const SIMPLE_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function isNonEmptyString(value: unknown): value is string {
+	return typeof value === 'string' && value.trim().length > 0;
+}
+
+function isFiniteNumber(value: unknown): value is number {
+	return typeof value === 'number' && Number.isFinite(value);
+}
+
+export function isPlayerUser(value: unknown): value is PlayerUser {
+	if (typeof value !== 'object' || value === null) return false;
+	const user = value as Record<string, unknown>;
+	if (!isNonEmptyString(user.id)) return false;
+	if (!isNonEmptyString(user.email) || !SIMPLE_EMAIL_PATTERN.test(user.email)) return false;
+	if (!isFiniteNumber(user.createdAt)) return false;
+	if (!isFiniteNumber(user.lastLoginAt)) return false;
+	if (user.name !== undefined && !isNonEmptyString(user.name)) return false;
+	if (user.picture !== undefined && !isNonEmptyString(user.picture)) return false;
+	return true;
+}
+
+export function isPlayerSessionResponse(value: unknown): value is PlayerSessionResponse {
+	if (typeof value !== 'object' || value === null) return false;
+	const response = value as Record<string, unknown>;
+	if (typeof response.authenticated !== 'boolean') return false;
+	if (response.authenticated) return isPlayerUser(response.user);
+	return response.user === undefined;
+}
+
+export function isPlayerAllowlistEntry(value: unknown): value is PlayerAllowlistEntry {
+	if (typeof value !== 'object' || value === null) return false;
+	const entry = value as Record<string, unknown>;
+	if (!isNonEmptyString(entry.email) || !SIMPLE_EMAIL_PATTERN.test(entry.email)) return false;
+	if (!isFiniteNumber(entry.createdAt)) return false;
+	if (!isNonEmptyString(entry.addedBy)) return false;
+	if (entry.player !== undefined && !isPlayerUser(entry.player)) return false;
+	return true;
+}
 
 export function isPuzzlePiece(piece: unknown): piece is PuzzlePiece {
 	if (typeof piece !== 'object' || piece === null) return false;
