@@ -120,6 +120,7 @@ describe('Admin Routes - Player Allowlist', () => {
 		);
 
 		expect(res.status).toBe(200);
+		expect(auth.requireAuth).toHaveBeenCalled();
 		expect(playerAuth.addAllowlistEntry).toHaveBeenCalledWith(metadataKv, rawEmail, 'admin');
 		expect(await res.json()).toEqual({ entry });
 	});
@@ -140,6 +141,7 @@ describe('Admin Routes - Player Allowlist', () => {
 		);
 
 		expect(res.status).toBe(200);
+		expect(auth.requireAuth).toHaveBeenCalled();
 		expect(playerAuth.revokePlayerSessionsForEmail).toHaveBeenCalledWith(metadataKv, email);
 		expect(playerAuth.deleteAllowlistEntry).toHaveBeenCalledWith(metadataKv, email);
 		expect(
