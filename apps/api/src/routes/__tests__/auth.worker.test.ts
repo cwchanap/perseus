@@ -236,11 +236,9 @@ describe('Worker player auth routes', () => {
 			...env,
 			ALLOWED_ORIGINS: 'https://app.example.com, http://localhost:4692'
 		};
+		const returnToEncoded = encodeURIComponent('http://localhost:4692/puzzle/abc?piece=1');
 
-		await auth.fetch(
-			request('/google/start?returnTo=http%3A%2F%2Flocalhost%3A4692%2Fpuzzle%2Fabc%3Fpiece%3D1'),
-			splitOriginEnv
-		);
+		await auth.fetch(request(`/google/start?returnTo=${returnToEncoded}`), splitOriginEnv);
 
 		expect(sharedAuth.resolveAllowedOrigins).toHaveBeenCalledWith(
 			'https://app.example.com, http://localhost:4692',

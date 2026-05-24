@@ -106,6 +106,20 @@ describe('Root Layout', () => {
 		});
 	});
 
+	it('does not show SIGN IN while auth status is loading', async () => {
+		mockPlayerAuth.set({
+			status: 'loading',
+			user: null,
+			error: null
+		});
+
+		render(RootLayout, { children: makeChildren() });
+
+		await expect.element(page.getByLabelText('Player navigation')).toBeVisible();
+		await expect.element(page.getByRole('link', { name: /SIGN IN/i })).not.toBeInTheDocument();
+		await expect.element(page.getByRole('button', { name: /SIGN OUT/i })).not.toBeInTheDocument();
+	});
+
 	it('renders authenticated user navigation and signs out', async () => {
 		mockPlayerAuth.set({
 			status: 'authenticated',

@@ -506,10 +506,11 @@ describe('API Service - player auth', () => {
 			'/puzzle/abc 123?tab=play&next=/',
 			window.location.origin
 		).toString();
+		const expectedUrl =
+			`http://localhost:3999/api/auth/google/start?returnTo=` +
+			encodeURIComponent(expectedReturnTo);
 
-		expect(url).toBe(
-			`http://localhost:3999/api/auth/google/start?returnTo=${encodeURIComponent(expectedReturnTo)}`
-		);
+		expect(url).toBe(expectedUrl);
 	});
 });
 
