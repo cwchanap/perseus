@@ -107,6 +107,59 @@ describe('player auth contracts', () => {
 		expect(isPlayerSessionResponse({ authenticated: true })).toBe(false);
 	});
 
+	it('validates an unauthenticated player session response', () => {
+		const response: PlayerSessionResponse = {
+			authenticated: false
+		};
+
+		expect(isPlayerSessionResponse(response)).toBe(true);
+	});
+
+	it('rejects unauthenticated session responses with a user', () => {
+		const response = {
+			authenticated: false,
+			user: {
+				id: 'google-sub-123',
+				email: 'player@example.com',
+				createdAt: 1716500000000,
+				lastLoginAt: 1716500100000
+			}
+		} as const;
+
+		// @ts-expect-error unauthenticated responses must not include player metadata
+		const typedResponse: PlayerSessionResponse = response;
+
+		expect(isPlayerSessionResponse(response)).toBe(false);
+		expect(typedResponse.authenticated).toBe(false);
+	});
+
+	it('rejects session responses with invalid nested player fields', () => {
+		expect(
+			isPlayerSessionResponse({
+				authenticated: true,
+				user: {
+					id: 'google-sub-123',
+					email: 'player@example.com',
+					name: ' ',
+					createdAt: 1716500000000,
+					lastLoginAt: 1716500100000
+				}
+			})
+		).toBe(false);
+
+		expect(
+			isPlayerSessionResponse({
+				authenticated: true,
+				user: {
+					id: 'google-sub-123',
+					email: 'player@example.com',
+					createdAt: 1716500000000,
+					lastLoginAt: Number.NaN
+				}
+			})
+		).toBe(false);
+	});
+
 	it('validates allowlist entries with linked player metadata', () => {
 		const entry: PlayerAllowlistEntry = {
 			email: 'player@example.com',
@@ -121,6 +174,32 @@ describe('player auth contracts', () => {
 		};
 
 		expect(isPlayerAllowlistEntry(entry)).toBe(true);
+	});
+
+	it('validates allowlist entries without linked player metadata', () => {
+		const entry: PlayerAllowlistEntry = {
+			email: 'player@example.com',
+			createdAt: 1716500000000,
+			addedBy: 'admin'
+		};
+
+		expect(isPlayerAllowlistEntry(entry)).toBe(true);
+	});
+
+	it('rejects allowlist entries with invalid nested player fields', () => {
+		expect(
+			isPlayerAllowlistEntry({
+				email: 'player@example.com',
+				createdAt: 1716500000000,
+				addedBy: 'admin',
+				player: {
+					id: 'google-sub-123',
+					email: 'not-an-email',
+					createdAt: 1716500000000,
+					lastLoginAt: 1716500100000
+				}
+			})
+		).toBe(false);
 	});
 
 	it('rejects allowlist entries with invalid email shape', () => {
