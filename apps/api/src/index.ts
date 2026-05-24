@@ -2,8 +2,10 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 import { initializeStorage } from './services/storage';
+import { initializePlayerAuthStorage } from './services/player-auth';
 import puzzles from './routes/puzzles';
 import admin from './routes/admin';
+import auth from './routes/auth';
 
 function requireEnv(name: string): string {
 	const value = process.env[name];
@@ -23,6 +25,7 @@ const app = new Hono();
 // Initialize storage on startup
 try {
 	await initializeStorage();
+	await initializePlayerAuthStorage();
 } catch (error) {
 	console.error('Failed to initialize storage');
 	if (error instanceof Error) {
@@ -78,6 +81,7 @@ app.get('/health', (c) => {
 // Mount route groups
 app.route('/api/puzzles', puzzles);
 app.route('/api/admin', admin);
+app.route('/api/auth', auth);
 
 const port = process.env.PORT || 3000;
 
