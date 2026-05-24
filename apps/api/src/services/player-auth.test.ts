@@ -4,46 +4,6 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PlayerUser } from '@perseus/types';
-
-const sharedAuth = vi.hoisted(() => {
-	const PLAYER_SESSION_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
-	const OAUTH_STATE_TTL_SECONDS = 10 * 60;
-
-	function bytesToBase64Url(bytes: Uint8Array): string {
-		const chunkSize = 0x8000;
-		let binary = '';
-		for (let offset = 0; offset < bytes.length; offset += chunkSize) {
-			binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
-		}
-		return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
-	}
-
-	function normalizeEmail(email: string): string {
-		const normalized = email.trim().toLowerCase();
-		if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
-			throw new Error('Invalid email');
-		}
-		return normalized;
-	}
-
-	async function hashToken(token: string): Promise<string> {
-		const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
-		return Array.from(new Uint8Array(digest))
-			.map((byte) => byte.toString(16).padStart(2, '0'))
-			.join('');
-	}
-
-	return {
-		OAUTH_STATE_TTL_SECONDS,
-		PLAYER_SESSION_DURATION_MS,
-		bytesToBase64Url,
-		hashToken,
-		normalizeEmail
-	};
-});
-
-vi.mock('./player-auth.shared', () => sharedAuth);
-
 import {
 	OAUTH_STATE_TTL_SECONDS,
 	PLAYER_SESSION_DURATION_MS,
@@ -168,6 +128,30 @@ describe('player auth Bun filesystem storage', () => {
 		expect(await getPlayerByEmail('player@example.com')).toBeNull();
 	});
 
+	it('does not delete an old email index that now belongs to another player', async () => {
+		await upsertPlayer({
+			sub: 'first-player',
+			email: 'shared@example.com'
+		});
+		const secondPlayer = await upsertPlayer({
+			sub: 'second-player',
+			email: 'shared@example.com'
+		});
+
+		await upsertPlayer({
+			sub: 'first-player',
+			email: 'new@example.com'
+		});
+
+		expect(await getPlayerByEmail('shared@example.com')).toEqual(secondPlayer);
+		expect(
+			await readFile(
+				authPath(dataDir, 'email-index', `${encoded('shared@example.com')}.txt`),
+				'utf-8'
+			)
+		).toBe('second-player');
+	});
+
 	it('creates and reads sessions only for allowlisted players and stores only token hashes', async () => {
 		const player: PlayerUser = await upsertPlayer({
 			sub: 'google-sub-123',
@@ -289,6 +273,29 @@ describe('player auth Bun filesystem storage', () => {
 		expect(await getPlayerSession(created.token)).toBeNull();
 	});
 
+	it('skips malformed session-index filenames while bulk revoking valid indexed sessions', async () => {
+		await addAllowlistEntry('player@example.com', 'admin');
+		const player = await upsertPlayer({
+			sub: 'google-sub-123',
+			email: 'player@example.com'
+		});
+		const created = await createPlayerSession(player);
+		await writeFile(
+			authPath(dataDir, 'session-index', encoded('player@example.com'), 'session', 'bad%.txt'),
+			'bad',
+			'utf-8'
+		);
+
+		await expect(revokePlayerSessionsForEmail('player@example.com')).resolves.toBeUndefined();
+
+		expect(await getPlayerSession(created.token)).toBeNull();
+		expect(
+			existsSync(
+				authPath(dataDir, 'session-index', encoded('player@example.com'), 'session', 'bad%.txt')
+			)
+		).toBe(true);
+	});
+
 	it('returns null for expired and missing sessions', async () => {
 		expect(await getPlayerSession('missing-session-token')).toBeNull();
 
@@ -351,6 +358,30 @@ describe('player auth Bun filesystem storage', () => {
 		await expect(revokePlayerSessionsForEmail('player@example.com')).rejects.toMatchObject({
 			code: 'ENOTDIR'
 		});
+	});
+
+	it('atomically consumes OAuth state only once for concurrent consumers', async () => {
+		await storeOAuthState('state-concurrent', {
+			codeVerifier: 'verifier',
+			returnTo: '/'
+		});
+
+		const results = await Promise.all([
+			consumeOAuthState('state-concurrent'),
+			consumeOAuthState('state-concurrent')
+		]);
+		const consumed = results.filter(
+			(result): result is NonNullable<typeof result> => result !== null
+		);
+
+		expect(consumed).toHaveLength(1);
+		expect(consumed[0]).toEqual({
+			state: 'state-concurrent',
+			codeVerifier: 'verifier',
+			returnTo: '/',
+			createdAt: 1_716_500_000_000
+		});
+		expect(await consumeOAuthState('state-concurrent')).toBeNull();
 	});
 
 	it('stores and consumes OAuth state once and ignores expired state', async () => {

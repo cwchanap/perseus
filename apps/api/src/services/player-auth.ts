@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { PlayerAllowlistEntry, PlayerUser } from '@perseus/types';
 import {
@@ -9,6 +9,8 @@ import {
 	normalizeEmail,
 	type GoogleIdentityClaims
 } from './player-auth.shared';
+
+const SESSION_INDEX_FILE_PATTERN = /^[a-f0-9]{64}\.txt$/;
 
 export interface CreatedPlayerSession {
 	token: string;
@@ -71,6 +73,11 @@ function revokedAfterPath(email: string): string {
 
 function oauthStatePath(state: string): string {
 	return join(authDir(), 'oauth-state', `${pathPart(state)}.json`);
+}
+
+function oauthStateClaimPath(state: string): string {
+	const claimId = bytesToBase64Url(crypto.getRandomValues(new Uint8Array(16)));
+	return join(authDir(), 'oauth-state', `${pathPart(state)}.${claimId}.claimed.json`);
 }
 
 async function readJson<T>(path: string): Promise<T | null> {
@@ -175,7 +182,10 @@ export async function upsertPlayer(claims: GoogleIdentityClaims): Promise<Player
 
 	await writeJson(playerPath(player.id), player);
 	if (existing && existing.email !== email) {
-		await rm(emailIndexPath(existing.email), { force: true });
+		const indexedPlayerId = await readText(emailIndexPath(existing.email));
+		if (indexedPlayerId === player.id) {
+			await rm(emailIndexPath(existing.email), { force: true });
+		}
 	}
 	await writeText(emailIndexPath(email), player.id);
 	return player;
@@ -253,9 +263,9 @@ export async function revokePlayerSessionsForEmail(email: string): Promise<void>
 
 	await Promise.all(
 		fileNames
-			.filter((fileName) => fileName.endsWith('.txt'))
+			.filter((fileName) => SESSION_INDEX_FILE_PATTERN.test(fileName))
 			.map(async (fileName) => {
-				const sessionHash = decodeURIComponent(fileName.slice(0, -'.txt'.length));
+				const sessionHash = fileName.slice(0, -'.txt'.length);
 				await Promise.all([
 					rm(sessionPath(sessionHash), { force: true }),
 					rm(join(sessionDir, fileName), { force: true })
@@ -278,10 +288,22 @@ export async function storeOAuthState(
 
 export async function consumeOAuthState(state: string): Promise<StoredOAuthState | null> {
 	const path = oauthStatePath(state);
-	const stored = await readJson<StoredOAuthState>(path);
-	if (!stored) return null;
+	const claimedPath = oauthStateClaimPath(state);
 
-	await rm(path, { force: true });
+	try {
+		await rename(path, claimedPath);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+		throw error;
+	}
+
+	let stored: StoredOAuthState | null;
+	try {
+		stored = await readJson<StoredOAuthState>(claimedPath);
+	} finally {
+		await rm(claimedPath, { force: true });
+	}
+	if (!stored) return null;
 	if (stored.createdAt + OAUTH_STATE_TTL_SECONDS * 1000 <= Date.now()) return null;
 	return stored;
 }
