@@ -6,7 +6,11 @@ import type {
 	LoginResponse,
 	SessionResponse,
 	DeletePuzzleResponse,
-	PuzzleCategory
+	PuzzleCategory,
+	PlayerSessionResponse,
+	PlayerAllowlistEntry,
+	PlayerAllowlistResponse,
+	PlayerAllowlistMutationResponse
 } from '$lib/types/puzzle';
 import type { PuzzleAspectRatio } from '@perseus/types';
 // NOTE: This app is built with adapter-static, so public env vars are embedded at build time.
@@ -191,6 +195,58 @@ export async function checkSession(): Promise<boolean> {
 	} catch {
 		return false;
 	}
+}
+
+export async function getPlayerSession(): Promise<PlayerSessionResponse> {
+	const response = await fetch(`${API_BASE}/api/auth/session`, {
+		credentials: 'include'
+	});
+	return handleResponse<PlayerSessionResponse>(response);
+}
+
+export async function logoutPlayer(): Promise<void> {
+	const response = await fetch(`${API_BASE}/api/auth/logout`, {
+		method: 'POST',
+		credentials: 'include'
+	});
+
+	await handleVoidResponse(response);
+}
+
+export function getGoogleLoginUrl(returnTo = '/'): string {
+	const searchParams = new URLSearchParams({ returnTo });
+	return `${API_BASE}/api/auth/google/start?${searchParams.toString()}`;
+}
+
+export async function fetchPlayerAllowlist(): Promise<PlayerAllowlistEntry[]> {
+	const response = await fetch(`${API_BASE}/api/admin/player-allowlist`, {
+		credentials: 'include'
+	});
+	const data = await handleResponse<PlayerAllowlistResponse>(response);
+	return data.entries;
+}
+
+export async function addPlayerAllowlistEntry(email: string): Promise<PlayerAllowlistEntry> {
+	const response = await fetch(`${API_BASE}/api/admin/player-allowlist`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		credentials: 'include',
+		body: JSON.stringify({ email })
+	});
+	const data = await handleResponse<PlayerAllowlistMutationResponse>(response);
+	return data.entry;
+}
+
+export async function removePlayerAllowlistEntry(email: string): Promise<void> {
+	const response = await fetch(
+		`${API_BASE}/api/admin/player-allowlist/${encodeURIComponent(email)}`,
+		{
+			method: 'DELETE',
+			credentials: 'include'
+		}
+	);
+
+	await handleVoidResponse(response);
 }
 
 // Admin puzzle management
