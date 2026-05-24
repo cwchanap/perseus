@@ -3,10 +3,12 @@ import {
 	buildGoogleAuthUrl,
 	createOAuthState,
 	createPkcePair,
+	exchangeGoogleCode,
 	hashToken,
 	normalizeEmail,
 	parseReturnTo,
-	validateGoogleClaims
+	validateGoogleClaims,
+	verifyGoogleIdToken
 } from './player-auth.shared';
 
 const validGoogleClaims = {
@@ -93,6 +95,71 @@ describe('player auth shared helpers', () => {
 		expect(url.searchParams.get('code_challenge_method')).toBe('S256');
 	});
 
+	it('exchanges Google authorization codes for token responses', async () => {
+		const fetchMock = vi.fn().mockResolvedValue(
+			new Response(JSON.stringify({ id_token: 'google-id-token', access_token: 'access-token' }), {
+				status: 200
+			})
+		);
+		vi.stubGlobal('fetch', fetchMock);
+
+		const tokenResponse = await exchangeGoogleCode({
+			code: 'auth-code',
+			clientId: 'client-id',
+			clientSecret: 'client-secret',
+			redirectUri: 'https://app.example.com/api/auth/google/callback',
+			codeVerifier: 'pkce-verifier'
+		});
+
+		expect(tokenResponse).toEqual({
+			id_token: 'google-id-token',
+			access_token: 'access-token'
+		});
+		expect(fetchMock).toHaveBeenCalledWith(
+			'https://oauth2.googleapis.com/token',
+			expect.objectContaining({
+				method: 'POST',
+				headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+			})
+		);
+		const body = fetchMock.mock.calls[0][1].body as URLSearchParams;
+		expect(body.get('code')).toBe('auth-code');
+		expect(body.get('client_id')).toBe('client-id');
+		expect(body.get('client_secret')).toBe('client-secret');
+		expect(body.get('redirect_uri')).toBe('https://app.example.com/api/auth/google/callback');
+		expect(body.get('grant_type')).toBe('authorization_code');
+		expect(body.get('code_verifier')).toBe('pkce-verifier');
+	});
+
+	it('rejects failed or malformed Google token exchanges', async () => {
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('nope', { status: 400 })));
+
+		await expect(
+			exchangeGoogleCode({
+				code: 'auth-code',
+				clientId: 'client-id',
+				clientSecret: 'client-secret',
+				redirectUri: 'https://app.example.com/api/auth/google/callback',
+				codeVerifier: 'pkce-verifier'
+			})
+		).rejects.toThrow('Google token exchange failed with 400');
+
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue(new Response(JSON.stringify({ access_token: 'access-token' })))
+		);
+
+		await expect(
+			exchangeGoogleCode({
+				code: 'auth-code',
+				clientId: 'client-id',
+				clientSecret: 'client-secret',
+				redirectUri: 'https://app.example.com/api/auth/google/callback',
+				codeVerifier: 'pkce-verifier'
+			})
+		).rejects.toThrow('Google token response missing id_token');
+	});
+
 	it('validates Google claims for the configured audience', () => {
 		vi.setSystemTime(1_716_500_000_000);
 		const claims = validateGoogleClaims(
@@ -126,6 +193,36 @@ describe('player auth shared helpers', () => {
 			sub: 'google-sub-123',
 			email: 'player@example.com'
 		});
+	});
+
+	it('verifies Google ID tokens through tokeninfo', async () => {
+		const fetchMock = vi.fn().mockResolvedValue(
+			new Response(
+				JSON.stringify({
+					...validGoogleClaims,
+					exp: Math.floor(Date.now() / 1000) + 60
+				})
+			)
+		);
+		vi.stubGlobal('fetch', fetchMock);
+
+		const claims = await verifyGoogleIdToken('id token with spaces', 'client-id');
+
+		expect(claims).toEqual({
+			sub: 'google-sub-123',
+			email: 'player@example.com'
+		});
+		expect(fetchMock).toHaveBeenCalledWith(
+			'https://oauth2.googleapis.com/tokeninfo?id_token=id%20token%20with%20spaces'
+		);
+	});
+
+	it('rejects failed Google ID token verification responses', async () => {
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('nope', { status: 401 })));
+
+		await expect(verifyGoogleIdToken('bad-token', 'client-id')).rejects.toThrow(
+			'Google ID token verification failed with 401'
+		);
 	});
 
 	it.each([

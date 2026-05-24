@@ -17,6 +17,21 @@ export interface GoogleIdentityClaims {
 	picture?: string;
 }
 
+export interface GoogleTokenResponse {
+	id_token: string;
+	access_token?: string;
+	expires_in?: number;
+	token_type?: string;
+	scope?: string;
+}
+
+export interface StoredOAuthState {
+	state: string;
+	codeVerifier: string;
+	returnTo: string;
+	createdAt: number;
+}
+
 interface GoogleClaimsPayload {
 	iss?: unknown;
 	aud?: unknown;
@@ -100,6 +115,37 @@ export function buildGoogleAuthUrl(params: {
 	return url;
 }
 
+export async function exchangeGoogleCode(params: {
+	code: string;
+	clientId: string;
+	clientSecret: string;
+	redirectUri: string;
+	codeVerifier: string;
+}): Promise<GoogleTokenResponse> {
+	const body = new URLSearchParams();
+	body.set('code', params.code);
+	body.set('client_id', params.clientId);
+	body.set('client_secret', params.clientSecret);
+	body.set('redirect_uri', params.redirectUri);
+	body.set('grant_type', 'authorization_code');
+	body.set('code_verifier', params.codeVerifier);
+
+	const response = await fetch(GOOGLE_TOKEN_URL, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+		body
+	});
+	if (!response.ok) {
+		throw new Error(`Google token exchange failed with ${response.status}`);
+	}
+
+	const tokenResponse = (await response.json()) as Partial<GoogleTokenResponse>;
+	if (typeof tokenResponse.id_token !== 'string' || tokenResponse.id_token.length === 0) {
+		throw new Error('Google token response missing id_token');
+	}
+	return tokenResponse as GoogleTokenResponse;
+}
+
 function readString(value: unknown): string | undefined {
 	return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
 }
@@ -139,4 +185,17 @@ export function validateGoogleClaims(
 	if (name) claims.name = name;
 	if (picture) claims.picture = picture;
 	return claims;
+}
+
+export async function verifyGoogleIdToken(
+	idToken: string,
+	clientId: string
+): Promise<GoogleIdentityClaims> {
+	const response = await fetch(
+		`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(idToken)}`
+	);
+	if (!response.ok) {
+		throw new Error(`Google ID token verification failed with ${response.status}`);
+	}
+	return validateGoogleClaims((await response.json()) as GoogleClaimsPayload, clientId);
 }
