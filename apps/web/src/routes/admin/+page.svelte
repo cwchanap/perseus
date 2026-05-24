@@ -56,6 +56,7 @@
 	let allowlistError: string | null = $state(null);
 	let allowlistSaving = $state(false);
 	let removingAllowlistEmail: string | null = $state(null);
+	let allowlistLoadSequence = 0;
 
 	// Form state
 	let name = $state('');
@@ -83,7 +84,8 @@
 
 	onMount(async () => {
 		mounted = true;
-		await Promise.all([loadPuzzles(), loadAllowlist()]);
+		void loadAllowlist();
+		await loadPuzzles();
 		startPollingIfNeeded();
 	});
 
@@ -149,18 +151,26 @@
 	}
 
 	async function loadAllowlist(): Promise<PlayerAllowlistEntry[]> {
+		const loadSequence = ++allowlistLoadSequence;
 		loadingAllowlist = true;
 		allowlistError = null;
 		try {
-			allowlist = await fetchPlayerAllowlist();
-			return allowlist;
+			const latestAllowlist = await fetchPlayerAllowlist();
+			if (loadSequence !== allowlistLoadSequence) return allowlist;
+
+			allowlist = latestAllowlist;
+			return latestAllowlist;
 		} catch (e) {
 			console.error('Failed to load player access', e);
+			if (loadSequence !== allowlistLoadSequence) return allowlist;
+
 			allowlistError = e instanceof ApiError ? e.message : 'Failed to load player access';
 			allowlist = [];
 			return [];
 		} finally {
-			loadingAllowlist = false;
+			if (loadSequence === allowlistLoadSequence) {
+				loadingAllowlist = false;
+			}
 		}
 	}
 
@@ -825,6 +835,7 @@ hover:bg-(--hot-glow) disabled:cursor-not-allowed disabled:opacity-40"
 					<form onsubmit={handleAllowlistSubmit} class="flex flex-col gap-3 sm:flex-row">
 						<input
 							type="email"
+							aria-label="Player email"
 							bind:value={allowlistEmail}
 							class="min-w-0 flex-1 border border-(--border) bg-(--bg-0) px-3.5 py-2.5
 text-[0.8rem] font-(--font-mono) text-(--text-0)
@@ -836,7 +847,9 @@ focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
 						/>
 						<button
 							type="submit"
-							disabled={allowlistSaving || !allowlistEmail.trim()}
+							disabled={allowlistSaving ||
+								removingAllowlistEmail !== null ||
+								!allowlistEmail.trim()}
 							class="border border-(--accent) px-4 py-2.5 text-[0.6rem]
 font-(--font-display) font-bold tracking-[0.2em] text-(--accent)
 transition-all duration-200 hover:bg-(--accent-glow)
@@ -895,7 +908,7 @@ last:border-b-0 sm:flex-row sm:items-center sm:justify-between"
 									<button
 										type="button"
 										onclick={() => handleAllowlistRemove(entry.email)}
-										disabled={removingAllowlistEmail === entry.email}
+										disabled={allowlistSaving || removingAllowlistEmail !== null}
 										class="shrink-0 border border-(--hot-dim) px-2.5 py-[0.35rem]
 text-[0.55rem] font-(--font-display) font-semibold tracking-[0.15em]
 text-(--hot) transition-all duration-150 hover:border-(--hot)

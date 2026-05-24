@@ -36,7 +36,7 @@ vi.mock('$lib/services/api', () => {
 		fetchPlayerAllowlist: vi.fn().mockResolvedValue([]),
 		addPlayerAllowlistEntry: vi.fn(),
 		removePlayerAllowlistEntry: vi.fn(),
-		getThumbnailUrl: vi.fn((id: string) => `/api/puzzles/${id}/thumbnail`),
+		getThumbnailUrl: vi.fn(() => 'data:image/gif;base64,R0lGODlhAQABAAAAACw='),
 		ApiError: MockApiError
 	};
 });
@@ -89,6 +89,16 @@ const mockAllowlist: PlayerAllowlistEntry[] = [
 		addedBy: 'admin'
 	}
 ];
+
+function deferred<T>() {
+	let resolve!: (value: T | PromiseLike<T>) => void;
+	let reject!: (reason?: unknown) => void;
+	const promise = new Promise<T>((promiseResolve, promiseReject) => {
+		resolve = promiseResolve;
+		reject = promiseReject;
+	});
+	return { promise, resolve, reject };
+}
 
 describe('Admin Page', () => {
 	beforeEach(() => {
@@ -204,14 +214,54 @@ describe('Admin Page', () => {
 			render(AdminPage);
 
 			await expect.element(page.getByText('No players allowlisted.')).toBeVisible();
-			await page.getByPlaceholder('player@example.com').fill('  new@example.com  ');
+			await page.getByLabelText('Player email').fill('  new@example.com  ');
 			await page.getByRole('button', { name: 'ADD PLAYER' }).click();
 
 			await vi.waitFor(() => {
 				expect(addPlayerAllowlistEntry).toHaveBeenCalledWith('new@example.com');
 			});
 			await expect.element(page.getByText('new@example.com')).toBeVisible();
-			await expect.element(page.getByPlaceholder('player@example.com')).toHaveValue('');
+			await expect.element(page.getByLabelText('Player email')).toHaveValue('');
+		});
+
+		it('keeps newer allowlist state when an older load resolves later', async () => {
+			const staleLoad = deferred<PlayerAllowlistEntry[]>();
+			vi.mocked(fetchAdminPuzzles).mockResolvedValue([]);
+			vi.mocked(fetchPlayerAllowlist)
+				.mockReturnValueOnce(staleLoad.promise)
+				.mockResolvedValueOnce([
+					{
+						email: 'newer@example.com',
+						createdAt: 4,
+						addedBy: 'admin'
+					}
+				]);
+			vi.mocked(addPlayerAllowlistEntry).mockResolvedValue({
+				email: 'newer@example.com',
+				createdAt: 4,
+				addedBy: 'admin'
+			});
+			render(AdminPage);
+
+			await expect.element(page.getByText('LOADING ACCESS LIST...')).toBeVisible();
+			await page.getByLabelText('Player email').fill('newer@example.com');
+			await page.getByRole('button', { name: 'ADD PLAYER' }).click();
+
+			await expect.element(page.getByText('newer@example.com')).toBeVisible();
+
+			staleLoad.resolve([
+				{
+					email: 'stale@example.com',
+					createdAt: 1,
+					addedBy: 'admin'
+				}
+			]);
+
+			await vi.waitFor(() => {
+				expect(fetchPlayerAllowlist).toHaveBeenCalledTimes(2);
+			});
+			await expect.element(page.getByText('newer@example.com')).toBeVisible();
+			await expect.element(page.getByText('stale@example.com')).not.toBeInTheDocument();
 		});
 
 		it('removes a player allowlist email', async () => {
@@ -655,6 +705,47 @@ describe('Admin Page', () => {
 
 			expect(fetchAdminPuzzles).toHaveBeenCalledTimes(2);
 
+			vi.useRealTimers();
+		});
+
+		it('starts puzzle polling even when player allowlist loading is still pending', async () => {
+			const pendingAllowlist = deferred<PlayerAllowlistEntry[]>();
+			const processingPuzzles: PuzzleSummary[] = [
+				{
+					id: 'p1',
+					name: 'Processing One',
+					pieceCount: 100,
+					status: 'processing',
+					progress: { generatedPieces: 10, totalPieces: 100, updatedAt: 0 }
+				}
+			];
+			const readyPuzzles: PuzzleSummary[] = [
+				{
+					id: 'p1',
+					name: 'Ready One',
+					pieceCount: 100,
+					status: 'ready'
+				}
+			];
+			vi.mocked(fetchAdminPuzzles)
+				.mockResolvedValueOnce(processingPuzzles)
+				.mockResolvedValue(readyPuzzles);
+			vi.mocked(fetchPlayerAllowlist).mockReturnValue(pendingAllowlist.promise);
+
+			vi.useFakeTimers();
+			render(AdminPage);
+
+			await vi.waitFor(() => {
+				expect(fetchAdminPuzzles).toHaveBeenCalledTimes(1);
+			});
+
+			await vi.advanceTimersByTimeAsync(3000);
+
+			await vi.waitFor(() => {
+				expect(fetchAdminPuzzles).toHaveBeenCalledTimes(2);
+			});
+
+			pendingAllowlist.resolve([]);
 			vi.useRealTimers();
 		});
 	});
