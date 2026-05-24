@@ -478,5 +478,34 @@ describe('Rate Limit Middleware', () => {
 
 			expect((response.body as any).message).toContain('Try again in');
 		});
+
+		it('should allow exactly OAUTH_MAX_ATTEMPTS (10) requests and block the 11th', async () => {
+			const mockKV = createMockKV();
+			const key = 'ratelimit:oauth:127.0.0.1';
+
+			// First 10 requests should all be allowed
+			for (let i = 0; i < 10; i++) {
+				const mockContext = createMockContext('127.0.0.1', mockKV);
+				const next = vi.fn();
+
+				await oauthRateLimit(mockContext, next);
+
+				expect(next).toHaveBeenCalled();
+			}
+
+			// Verify counter reached 10 and is locked
+			const entry = JSON.parse(mockKV._store.get(key) ?? '{}');
+			expect(entry.attempts).toBe(10);
+			expect(entry.lockedUntil).not.toBeNull();
+
+			// 11th request should be blocked
+			const mockContext = createMockContext('127.0.0.1', mockKV);
+			const next = vi.fn();
+
+			const response = await oauthRateLimit(mockContext, next);
+
+			expect(next).not.toHaveBeenCalled();
+			expect(response.status).toBe(429);
+		});
 	});
 });
