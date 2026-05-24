@@ -50,6 +50,14 @@ vi.mock('../../services/storage', () => ({
 	getOriginalImagePath: vi.fn().mockReturnValue('/fake/data/puzzles/test-id/original.jpg')
 }));
 
+vi.mock('../../services/player-auth', () => ({
+	addAllowlistEntry: vi.fn(),
+	deleteAllowlistEntry: vi.fn(),
+	getPlayerByEmail: vi.fn(),
+	listAllowlistEntries: vi.fn(),
+	revokePlayerSessionsForEmail: vi.fn()
+}));
+
 afterAll(() => {
 	if (originalAdminPasskey === undefined) {
 		delete process.env.ADMIN_PASSKEY;
@@ -67,6 +75,7 @@ let app: any;
 let storageMock: any;
 let authMock: any;
 let generatorMock: any;
+let playerAuthMock: any;
 
 beforeAll(async () => {
 	const adminModule = await import('../admin');
@@ -74,6 +83,7 @@ beforeAll(async () => {
 	storageMock = await import('../../services/storage');
 	authMock = await import('../../middleware/auth');
 	generatorMock = await import('../../services/puzzle-generator');
+	playerAuthMock = await import('../../services/player-auth');
 });
 
 // ─── POST /login ──────────────────────────────────────────────────────────────
@@ -253,6 +263,171 @@ describe('GET /puzzles', () => {
 		expect(res.status).toBe(500);
 		const body = await res.json();
 		expect(body.error).toBe('internal_error');
+	});
+});
+
+// ─── Player Allowlist ────────────────────────────────────────────────────────
+
+describe('Player Allowlist Routes', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it('GET /player-allowlist returns entries with linked player metadata', async () => {
+		const entryWithPlayer = {
+			email: 'linked@example.com',
+			createdAt: 1000,
+			addedBy: 'admin'
+		};
+		const entryWithoutPlayer = {
+			email: 'unlinked@example.com',
+			createdAt: 2000,
+			addedBy: 'admin'
+		};
+		const player = {
+			id: 'player-1',
+			email: 'linked@example.com',
+			name: 'Linked Player',
+			createdAt: 500,
+			lastLoginAt: 1500
+		};
+		(playerAuthMock.listAllowlistEntries as ReturnType<typeof vi.fn>).mockResolvedValue([
+			entryWithPlayer,
+			entryWithoutPlayer
+		]);
+		(playerAuthMock.getPlayerByEmail as ReturnType<typeof vi.fn>)
+			.mockResolvedValueOnce(player)
+			.mockResolvedValueOnce(null);
+
+		const res = await app.fetch(new Request('http://localhost/player-allowlist'));
+
+		expect(res.status).toBe(200);
+		expect(playerAuthMock.listAllowlistEntries).toHaveBeenCalledWith();
+		expect(playerAuthMock.getPlayerByEmail).toHaveBeenNthCalledWith(1, 'linked@example.com');
+		expect(playerAuthMock.getPlayerByEmail).toHaveBeenNthCalledWith(2, 'unlinked@example.com');
+		expect(await res.json()).toEqual({
+			entries: [{ ...entryWithPlayer, player }, entryWithoutPlayer]
+		});
+	});
+
+	it('POST /player-allowlist passes the raw email string and returns the service entry', async () => {
+		const rawEmail = '  New.Player+Tag@Example.COM  ';
+		const entry = {
+			email: 'new.player+tag@example.com',
+			createdAt: 3000,
+			addedBy: 'admin'
+		};
+		(playerAuthMock.addAllowlistEntry as ReturnType<typeof vi.fn>).mockResolvedValue(entry);
+
+		const res = await app.fetch(
+			new Request('http://localhost/player-allowlist', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ email: rawEmail })
+			})
+		);
+
+		expect(res.status).toBe(200);
+		expect(playerAuthMock.addAllowlistEntry).toHaveBeenCalledWith(rawEmail, 'admin');
+		expect(await res.json()).toEqual({ entry });
+	});
+
+	it('DELETE /player-allowlist/:email revokes sessions before deleting decoded email', async () => {
+		const email = 'Raw.User+Tag@Example.COM';
+		const encodedEmail = encodeURIComponent(email);
+		(playerAuthMock.revokePlayerSessionsForEmail as ReturnType<typeof vi.fn>).mockResolvedValue(
+			undefined
+		);
+		(playerAuthMock.deleteAllowlistEntry as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+		const res = await app.fetch(
+			new Request(`http://localhost/player-allowlist/${encodedEmail}`, {
+				method: 'DELETE'
+			})
+		);
+
+		expect(res.status).toBe(200);
+		expect(playerAuthMock.revokePlayerSessionsForEmail).toHaveBeenCalledWith(email);
+		expect(playerAuthMock.deleteAllowlistEntry).toHaveBeenCalledWith(email);
+		expect(
+			(playerAuthMock.revokePlayerSessionsForEmail as ReturnType<typeof vi.fn>).mock
+				.invocationCallOrder[0]
+		).toBeLessThan(
+			(playerAuthMock.deleteAllowlistEntry as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]
+		);
+		expect(await res.json()).toEqual({ success: true });
+	});
+
+	it('POST /player-allowlist returns 400 for invalid JSON', async () => {
+		const res = await app.fetch(
+			new Request('http://localhost/player-allowlist', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: '{invalid-json'
+			})
+		);
+
+		expect(res.status).toBe(400);
+		expect(await res.json()).toEqual({
+			error: 'bad_request',
+			message: 'Invalid JSON body'
+		});
+	});
+
+	it('POST /player-allowlist returns 400 when email is missing or non-string', async () => {
+		for (const body of [{}, { email: 123 }]) {
+			const res = await app.fetch(
+				new Request('http://localhost/player-allowlist', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify(body)
+				})
+			);
+
+			expect(res.status).toBe(400);
+			expect(await res.json()).toEqual({
+				error: 'bad_request',
+				message: 'Email is required'
+			});
+		}
+	});
+
+	it('POST /player-allowlist maps invalid email service errors to 400', async () => {
+		(playerAuthMock.addAllowlistEntry as ReturnType<typeof vi.fn>).mockRejectedValue(
+			new Error('Invalid email')
+		);
+
+		const res = await app.fetch(
+			new Request('http://localhost/player-allowlist', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ email: 'bad-email' })
+			})
+		);
+
+		expect(res.status).toBe(400);
+		expect(await res.json()).toEqual({
+			error: 'bad_request',
+			message: 'Enter a valid email address'
+		});
+	});
+
+	it('DELETE /player-allowlist/:email maps invalid email service errors to 400', async () => {
+		(playerAuthMock.revokePlayerSessionsForEmail as ReturnType<typeof vi.fn>).mockRejectedValue(
+			new Error('Invalid email')
+		);
+
+		const res = await app.fetch(
+			new Request(`http://localhost/player-allowlist/${encodeURIComponent('bad-email')}`, {
+				method: 'DELETE'
+			})
+		);
+
+		expect(res.status).toBe(400);
+		expect(await res.json()).toEqual({
+			error: 'bad_request',
+			message: 'Enter a valid email address'
+		});
 	});
 });
 
