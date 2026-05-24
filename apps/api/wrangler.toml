@@ -40,6 +40,8 @@ script_name = "workflows"
 [vars]
 NODE_ENV = "production"
 # ALLOWED_ORIGINS = "https://example.com"
+# Player auth callback origin. For local dev, set this in .dev.vars or env.dev.vars.
+# AUTH_REDIRECT_BASE_URL = "http://localhost:4690"
 
 # Local development overrides
 [env.dev]

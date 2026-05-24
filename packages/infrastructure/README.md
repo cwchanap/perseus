@@ -51,6 +51,18 @@ Set your Cloudflare Account ID:
 ```bash
 cd packages/infrastructure
 pulumi config set cloudflareAccountId YOUR_ACCOUNT_ID
+pulumi config set ALLOWED_ORIGINS https://your-production-origin.example
+pulumi config set AUTH_REDIRECT_BASE_URL https://your-production-origin.example
+```
+
+Configure player Google OAuth callback URLs in Google Cloud Console:
+
+```text
+Production callback URL:
+https://your-production-origin.example/api/auth/google/callback
+
+Local callback URL:
+http://localhost:4690/api/auth/google/callback
 ```
 
 ### Deploy
@@ -140,6 +152,8 @@ For sensitive environment variables (secrets), use Pulumi config with secrets:
 ```bash
 pulumi config set --secret jwtSecret YOUR_JWT_SECRET
 pulumi config set --secret adminPasskey YOUR_ADMIN_PASSKEY
+pulumi config set --secret googleClientId YOUR_GOOGLE_CLIENT_ID
+pulumi config set --secret googleClientSecret YOUR_GOOGLE_CLIENT_SECRET
 ```
 
 Then access in code via:
