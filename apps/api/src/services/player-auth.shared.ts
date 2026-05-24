@@ -7,6 +7,16 @@ export const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 export const PLAYER_SESSION_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
 export const OAUTH_STATE_TTL_SECONDS = 10 * 60;
 
+/**
+ * Default allowed origins used in development when ALLOWED_ORIGINS is unset.
+ * Shared across CORS middleware and parseReturnTo to keep them consistent.
+ */
+export const DEFAULT_DEV_ORIGINS = [
+	'http://localhost:5173',
+	'http://localhost:4173',
+	'http://localhost:4692'
+];
+
 export interface PkcePair {
 	verifier: string;
 	challenge: string;
@@ -80,6 +90,23 @@ function allowedReturnOriginSet(allowedOrigins: string | undefined): Set<string>
 		}
 	}
 	return origins;
+}
+
+/**
+ * Resolves the effective allowed origins string for parseReturnTo.
+ * Falls back to DEFAULT_DEV_ORIGINS in development when ALLOWED_ORIGINS is unset.
+ */
+export function resolveAllowedOrigins(
+	allowedOrigins: string | undefined,
+	nodeEnv?: string
+): string | undefined {
+	const trimmed = (allowedOrigins || '')
+		.split(',')
+		.filter((o) => o.trim().length > 0)
+		.join(',');
+	if (trimmed.length > 0) return trimmed;
+	if (nodeEnv === 'development') return DEFAULT_DEV_ORIGINS.join(',');
+	return undefined;
 }
 
 export function parseReturnTo(value: string | null | undefined, allowedOrigins?: string): string {

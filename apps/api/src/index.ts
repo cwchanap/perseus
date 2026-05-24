@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
+import { DEFAULT_DEV_ORIGINS } from './services/player-auth.shared';
 import { initializeStorage } from './services/storage';
 import { initializePlayerAuthStorage } from './services/player-auth';
 import puzzles from './routes/puzzles';
@@ -37,11 +38,7 @@ try {
 }
 
 // Middleware
-const DEFAULT_ALLOWED_ORIGINS = [
-	'http://localhost:5173',
-	'http://localhost:4173',
-	'http://localhost:4692'
-];
+const DEFAULT_ALLOWED_ORIGINS = DEFAULT_DEV_ORIGINS;
 const envOrigins = (process.env.ALLOWED_ORIGINS || '')
 	.split(',')
 	.map((origin) => origin.trim())

@@ -8,6 +8,7 @@ import {
 	hashToken,
 	normalizeEmail,
 	parseReturnTo,
+	resolveAllowedOrigins,
 	validateGoogleClaims,
 	verifyGoogleIdToken
 } from './player-auth.shared';
@@ -137,6 +138,45 @@ describe('player auth shared helpers', () => {
 		);
 
 		expect(parseReturnTo('/puzzle/abc')).toBe('/');
+	});
+
+	describe('resolveAllowedOrigins', () => {
+		it('returns configured origins when set', () => {
+			expect(resolveAllowedOrigins('https://app.example.com, http://localhost:5173')).toBe(
+				'https://app.example.com, http://localhost:5173'
+			);
+		});
+
+		it('falls back to default dev origins in development when unset', () => {
+			expect(resolveAllowedOrigins(undefined, 'development')).toBe(
+				'http://localhost:5173,http://localhost:4173,http://localhost:4692'
+			);
+		});
+
+		it('falls back to default dev origins in development when empty', () => {
+			expect(resolveAllowedOrigins('', 'development')).toBe(
+				'http://localhost:5173,http://localhost:4173,http://localhost:4692'
+			);
+		});
+
+		it('returns undefined in production when unset', () => {
+			expect(resolveAllowedOrigins(undefined, 'production')).toBeUndefined();
+		});
+
+		it('returns undefined when both origins and nodeEnv are unset', () => {
+			expect(resolveAllowedOrigins(undefined, undefined)).toBeUndefined();
+		});
+	});
+
+	it('accepts absolute localhost URLs via resolveAllowedOrigins dev fallback', () => {
+		const origins = resolveAllowedOrigins(undefined, 'development');
+		expect(parseReturnTo('http://localhost:5173/puzzle/abc', origins)).toBe(
+			'http://localhost:5173/puzzle/abc'
+		);
+		expect(parseReturnTo('http://localhost:4173/gallery', origins)).toBe(
+			'http://localhost:4173/gallery'
+		);
+		expect(parseReturnTo('http://localhost:4692/', origins)).toBe('http://localhost:4692/');
 	});
 
 	it('creates PKCE verifier and challenge strings', async () => {

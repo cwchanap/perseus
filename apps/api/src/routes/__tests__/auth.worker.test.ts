@@ -11,6 +11,16 @@ vi.mock('../../services/player-auth.shared', async () => {
 				challenge: 'pkce-challenge'
 			})
 		),
+		resolveAllowedOrigins: vi.fn((allowedOrigins: string | undefined, nodeEnv?: string) => {
+			const trimmed = (allowedOrigins || '')
+				.split(',')
+				.filter((o: string) => o.trim().length > 0)
+				.join(',');
+			if (trimmed.length > 0) return trimmed;
+			if (nodeEnv === 'development')
+				return 'http://localhost:5173,http://localhost:4173,http://localhost:4692';
+			return undefined;
+		}),
 		parseReturnTo: vi.fn((value: string | null | undefined, allowedOrigins?: string) => {
 			if (!value) return '/';
 			if (value.startsWith('/') && !value.startsWith('//')) {
@@ -232,6 +242,10 @@ describe('Worker player auth routes', () => {
 			splitOriginEnv
 		);
 
+		expect(sharedAuth.resolveAllowedOrigins).toHaveBeenCalledWith(
+			'https://app.example.com, http://localhost:4692',
+			'development'
+		);
 		expect(sharedAuth.parseReturnTo).toHaveBeenCalledWith(
 			'http://localhost:4692/puzzle/abc?piece=1',
 			'https://app.example.com, http://localhost:4692'
@@ -240,6 +254,24 @@ describe('Worker player auth routes', () => {
 			codeVerifier: 'pkce-verifier',
 			returnTo: 'http://localhost:4692/puzzle/abc?piece=1'
 		});
+	});
+
+	it('falls back to dev origins for absolute returnTo when ALLOWED_ORIGINS is unset', async () => {
+		const devEnv = {
+			...env,
+			ALLOWED_ORIGINS: undefined as string | undefined
+		};
+
+		await auth.fetch(
+			request('/google/start?returnTo=http%3A%2F%2Flocalhost%3A5173%2Fgallery'),
+			devEnv
+		);
+
+		expect(sharedAuth.resolveAllowedOrigins).toHaveBeenCalledWith(undefined, 'development');
+		expect(sharedAuth.parseReturnTo).toHaveBeenCalledWith(
+			'http://localhost:5173/gallery',
+			'http://localhost:5173,http://localhost:4173,http://localhost:4692'
+		);
 	});
 
 	it.each([
