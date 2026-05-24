@@ -14,11 +14,11 @@ vi.mock('../../services/storage.worker', () => ({
 
 vi.mock('../../middleware/auth.worker', () => ({
 	verifySession: vi.fn(),
-	requireAuth: async (c: any, next: any) => {
+	requireAuth: vi.fn(async (c: any, next: any) => {
 		// Simulate successful authentication
 		c.set('session', { userId: 'admin', username: 'admin', role: 'admin' });
 		return next();
-	},
+	}),
 	createSession: vi.fn(),
 	setSessionCookie: vi.fn(),
 	clearSessionCookie: vi.fn(),
@@ -84,6 +84,7 @@ describe('Admin Routes - Player Allowlist', () => {
 		const res = await admin.fetch(new Request('http://localhost/player-allowlist'), mockEnv);
 
 		expect(res.status).toBe(200);
+		expect(auth.requireAuth).toHaveBeenCalled();
 		expect(playerAuth.listAllowlistEntries).toHaveBeenCalledWith(metadataKv);
 		expect(playerAuth.getPlayerByEmail).toHaveBeenNthCalledWith(
 			1,
@@ -147,6 +148,27 @@ describe('Admin Routes - Player Allowlist', () => {
 		).toBeLessThan(
 			(playerAuth.deleteAllowlistEntry as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]
 		);
+		expect(await res.json()).toEqual({ success: true });
+	});
+
+	it('DELETE /player-allowlist/:email does not double-decode percent characters', async () => {
+		const email = 'user%example@example.com';
+		const encodedEmail = 'user%25example%40example.com';
+		(playerAuth.revokePlayerSessionsForEmail as ReturnType<typeof vi.fn>).mockResolvedValue(
+			undefined
+		);
+		(playerAuth.deleteAllowlistEntry as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+		const res = await admin.fetch(
+			new Request(`http://localhost/player-allowlist/${encodedEmail}`, {
+				method: 'DELETE'
+			}),
+			mockEnv
+		);
+
+		expect(res.status).toBe(200);
+		expect(playerAuth.revokePlayerSessionsForEmail).toHaveBeenCalledWith(metadataKv, email);
+		expect(playerAuth.deleteAllowlistEntry).toHaveBeenCalledWith(metadataKv, email);
 		expect(await res.json()).toEqual({ success: true });
 	});
 

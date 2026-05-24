@@ -302,6 +302,7 @@ describe('Player Allowlist Routes', () => {
 		const res = await app.fetch(new Request('http://localhost/player-allowlist'));
 
 		expect(res.status).toBe(200);
+		expect(authMock.requireAuth).toHaveBeenCalled();
 		expect(playerAuthMock.listAllowlistEntries).toHaveBeenCalledWith();
 		expect(playerAuthMock.getPlayerByEmail).toHaveBeenNthCalledWith(1, 'linked@example.com');
 		expect(playerAuthMock.getPlayerByEmail).toHaveBeenNthCalledWith(2, 'unlinked@example.com');
@@ -355,6 +356,26 @@ describe('Player Allowlist Routes', () => {
 		).toBeLessThan(
 			(playerAuthMock.deleteAllowlistEntry as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]
 		);
+		expect(await res.json()).toEqual({ success: true });
+	});
+
+	it('DELETE /player-allowlist/:email does not double-decode percent characters', async () => {
+		const email = 'user%example@example.com';
+		const encodedEmail = 'user%25example%40example.com';
+		(playerAuthMock.revokePlayerSessionsForEmail as ReturnType<typeof vi.fn>).mockResolvedValue(
+			undefined
+		);
+		(playerAuthMock.deleteAllowlistEntry as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+		const res = await app.fetch(
+			new Request(`http://localhost/player-allowlist/${encodedEmail}`, {
+				method: 'DELETE'
+			})
+		);
+
+		expect(res.status).toBe(200);
+		expect(playerAuthMock.revokePlayerSessionsForEmail).toHaveBeenCalledWith(email);
+		expect(playerAuthMock.deleteAllowlistEntry).toHaveBeenCalledWith(email);
 		expect(await res.json()).toEqual({ success: true });
 	});
 

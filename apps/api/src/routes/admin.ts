@@ -308,7 +308,7 @@ admin.post('/player-allowlist', requireAuth, async (c) => {
 
 // DELETE /api/admin/player-allowlist/:email - Remove a player allowlist entry (protected)
 admin.delete('/player-allowlist/:email', requireAuth, async (c) => {
-	const email = decodeURIComponent(c.req.param('email'));
+	const email = c.req.param('email');
 
 	try {
 		await revokePlayerSessionsForEmail(email);
