@@ -92,7 +92,7 @@ function isLocalHttpUrl(url: URL): boolean {
 function isValidAuthRedirectBaseUrl(env: OAuthEnv): boolean {
 	try {
 		const url = new URL(env.AUTH_REDIRECT_BASE_URL);
-		if (env.NODE_ENV !== 'production') {
+		if (env.NODE_ENV === 'development') {
 			return url.protocol === 'https:' || isLocalHttpUrl(url);
 		}
 		return (
