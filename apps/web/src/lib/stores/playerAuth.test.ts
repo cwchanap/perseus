@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPlayerAuthStore } from './playerAuth';
 import { getPlayerSession, logoutPlayer } from '$lib/services/api';
-import type { PlayerUser } from '$lib/types/puzzle';
+import type { PlayerSessionResponse, PlayerUser } from '$lib/types/puzzle';
 
 vi.mock('$lib/services/api', () => ({
 	getPlayerSession: vi.fn(),
@@ -24,6 +24,15 @@ function getState(store: ReturnType<typeof createPlayerAuthStore>) {
 	});
 	unsubscribe();
 	return current;
+}
+
+function deferredSession() {
+	let resolve!: (value: PlayerSessionResponse) => void;
+	const promise = new Promise<PlayerSessionResponse>((promiseResolve) => {
+		resolve = promiseResolve;
+	});
+
+	return { promise, resolve };
 }
 
 beforeEach(() => {
@@ -94,6 +103,43 @@ describe('createPlayerAuthStore', () => {
 		await store.refresh();
 
 		await expect(store.logout()).rejects.toThrow('logout failed');
+
+		expect(getState(store)).toEqual({
+			status: 'anonymous',
+			user: null,
+			error: null
+		});
+	});
+
+	it('keeps anonymous state when a pending refresh resolves after logout', async () => {
+		const pendingRefresh = deferredSession();
+		vi.mocked(getPlayerSession).mockReturnValue(pendingRefresh.promise);
+		vi.mocked(logoutPlayer).mockResolvedValue(undefined);
+		const store = createPlayerAuthStore();
+
+		const refreshPromise = store.refresh();
+		await store.logout();
+		pendingRefresh.resolve({ authenticated: true, user });
+		await refreshPromise;
+
+		expect(getState(store)).toEqual({
+			status: 'anonymous',
+			user: null,
+			error: null
+		});
+	});
+
+	it('keeps newer refresh state when an older refresh resolves last', async () => {
+		const firstRefresh = deferredSession();
+		vi.mocked(getPlayerSession)
+			.mockReturnValueOnce(firstRefresh.promise)
+			.mockResolvedValueOnce({ authenticated: false });
+		const store = createPlayerAuthStore();
+
+		const firstRefreshPromise = store.refresh();
+		await store.refresh();
+		firstRefresh.resolve({ authenticated: true, user });
+		await firstRefreshPromise;
 
 		expect(getState(store)).toEqual({
 			status: 'anonymous',
