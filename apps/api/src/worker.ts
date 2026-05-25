@@ -38,7 +38,14 @@ export interface Env {
 
 const app = new Hono<{ Bindings: Env }>();
 
-app.use('*', logger());
+const logMiddleware = logger();
+
+app.use('*', async (c, next) => {
+	if (c.req.path === '/api/auth/google/callback') {
+		return next();
+	}
+	return logMiddleware(c, next);
+});
 
 app.use('*', async (c, next) => {
 	const env = c.env;
