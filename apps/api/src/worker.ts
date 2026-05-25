@@ -40,6 +40,8 @@ const app = new Hono<{ Bindings: Env }>();
 
 const logMiddleware = logger();
 
+// SECURITY: Skip request logging on the OAuth callback path to prevent
+// OAuth authorization codes and state tokens from being written to logs.
 app.use('*', async (c, next) => {
 	if (c.req.path === '/api/auth/google/callback') {
 		return next();
