@@ -187,14 +187,31 @@ auth.get('/google/callback', async (c) => {
 	const cookieState = getCookie(c, OAUTH_STATE_COOKIE);
 
 	if (error) {
-		return redirectToLogin(c, 'access_denied');
+		let webOrigin: string | undefined;
+		if (state && cookieState === state) {
+			try {
+				const stored = await consumeOAuthState(c.env.PUZZLE_METADATA, state);
+				if (stored) {
+					webOrigin = extractWebOrigin(stored.returnTo);
+				}
+			} catch {
+				// KV unavailable, fall through to basic redirect
+			}
+		}
+		return redirectToLogin(c, 'access_denied', webOrigin);
 	}
 
 	if (!state || !code || cookieState !== state) {
 		return redirectToLogin(c, 'session_expired');
 	}
 
-	const storedState = await consumeOAuthState(c.env.PUZZLE_METADATA, state);
+	let storedState;
+	try {
+		storedState = await consumeOAuthState(c.env.PUZZLE_METADATA, state);
+	} catch (e) {
+		console.error('Failed to consume OAuth state:', e);
+		return redirectToLogin(c, 'server_error');
+	}
 	if (!storedState) {
 		return redirectToLogin(c, 'session_expired');
 	}

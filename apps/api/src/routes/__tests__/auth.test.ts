@@ -352,7 +352,7 @@ describe('Bun player auth routes', () => {
 		expect(playerAuth.consumeOAuthState).not.toHaveBeenCalled();
 	});
 
-	it('redirects to login with access_denied when Google returns an error', async () => {
+	it('redirects to login with access_denied and consumes state for webOrigin', async () => {
 		const res = await auth.fetch(
 			request('/google/callback?state=oauth-state-token&error=access_denied', {
 				headers: { Cookie: 'perseus_oauth_state=oauth-state-token' }
@@ -365,6 +365,49 @@ describe('Bun player auth routes', () => {
 		expect(res.headers.get('Cache-Control')).toBe('no-store');
 		expect(setCookie).toContain('perseus_oauth_state=');
 		expect(setCookie).toContain('Max-Age=0');
+		expect(playerAuth.consumeOAuthState).toHaveBeenCalledWith('oauth-state-token');
+	});
+
+	it('preserves web origin on access_denied when returnTo is absolute', async () => {
+		vi.mocked(playerAuth.consumeOAuthState).mockResolvedValue({
+			state: 'oauth-state-token',
+			codeVerifier: 'pkce-verifier',
+			returnTo: 'http://localhost:5173/puzzle/abc',
+			createdAt: 1_716_500_000_000
+		});
+
+		const res = await auth.fetch(
+			request('/google/callback?state=oauth-state-token&error=access_denied', {
+				headers: { Cookie: 'perseus_oauth_state=oauth-state-token' }
+			})
+		);
+
+		expect(res.status).toBe(302);
+		expect(res.headers.get('Location')).toBe('http://localhost:5173/login?error=access_denied');
+	});
+
+	it('falls back to relative redirect on access_denied when state consumption fails', async () => {
+		vi.mocked(playerAuth.consumeOAuthState).mockRejectedValue(new Error('filesystem error'));
+
+		const res = await auth.fetch(
+			request('/google/callback?state=oauth-state-token&error=access_denied', {
+				headers: { Cookie: 'perseus_oauth_state=oauth-state-token' }
+			})
+		);
+
+		expect(res.status).toBe(302);
+		expect(res.headers.get('Location')).toBe('/login?error=access_denied');
+	});
+
+	it('redirects to login on access_denied without consuming state when cookie mismatches', async () => {
+		const res = await auth.fetch(
+			request('/google/callback?state=oauth-state-token&error=access_denied', {
+				headers: { Cookie: 'perseus_oauth_state=other-state' }
+			})
+		);
+
+		expect(res.status).toBe(302);
+		expect(res.headers.get('Location')).toBe('/login?error=access_denied');
 		expect(playerAuth.consumeOAuthState).not.toHaveBeenCalled();
 	});
 
@@ -410,6 +453,23 @@ describe('Bun player auth routes', () => {
 
 		expect(res.status).toBe(302);
 		expect(res.headers.get('Location')).toBe('/login?error=session_expired');
+		expect(res.headers.get('Cache-Control')).toBe('no-store');
+		expect(setCookie).toContain('perseus_oauth_state=');
+		expect(setCookie).toContain('Max-Age=0');
+	});
+
+	it('redirects to login with server_error when consumeOAuthState throws', async () => {
+		vi.mocked(playerAuth.consumeOAuthState).mockRejectedValue(new Error('filesystem unavailable'));
+
+		const res = await auth.fetch(
+			request('/google/callback?state=oauth-state-token&code=auth-code', {
+				headers: { Cookie: 'perseus_oauth_state=oauth-state-token' }
+			})
+		);
+		const setCookie = res.headers.get('set-cookie') ?? '';
+
+		expect(res.status).toBe(302);
+		expect(res.headers.get('Location')).toBe('/login?error=server_error');
 		expect(res.headers.get('Cache-Control')).toBe('no-store');
 		expect(setCookie).toContain('perseus_oauth_state=');
 		expect(setCookie).toContain('Max-Age=0');
