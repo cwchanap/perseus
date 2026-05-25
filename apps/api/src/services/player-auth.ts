@@ -2,7 +2,6 @@ import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promise
 import { dirname, join } from 'node:path';
 import type { PlayerAllowlistEntry, PlayerUser } from '@perseus/types';
 import {
-	OAUTH_STATE_TTL_SECONDS,
 	PLAYER_SESSION_DURATION_MS,
 	bytesToBase64Url,
 	hashToken,
@@ -22,13 +21,6 @@ export interface PlayerSessionRecord {
 	user: PlayerUser;
 	createdAt: number;
 	expiresAt: number;
-}
-
-export interface StoredOAuthState {
-	state: string;
-	codeVerifier: string;
-	returnTo: string;
-	createdAt: number;
 }
 
 function authDir(): string {
@@ -68,16 +60,7 @@ function sessionIndexPath(email: string, sessionHash: string): string {
 }
 
 function revokedAfterPath(email: string): string {
-	return join(sessionIndexDir(email), 'revoked_after.txt');
-}
-
-function oauthStatePath(state: string): string {
-	return join(authDir(), 'oauth-state', `${pathPart(state)}.json`);
-}
-
-function oauthStateClaimPath(state: string): string {
-	const claimId = bytesToBase64Url(crypto.getRandomValues(new Uint8Array(16)));
-	return join(authDir(), 'oauth-state', `${pathPart(state)}.${claimId}.claimed.json`);
+	return join(authDir(), 'session-index', pathPart(normalizeEmail(email)), 'revoked_after.txt');
 }
 
 async function readJson<T>(path: string): Promise<T | null> {
@@ -116,7 +99,7 @@ function createSessionToken(): string {
 
 export async function initializePlayerAuthStorage(): Promise<void> {
 	await Promise.all(
-		['allowlist', 'players', 'email-index', 'sessions', 'session-index', 'oauth-state'].map((dir) =>
+		['allowlist', 'players', 'email-index', 'sessions', 'session-index'].map((dir) =>
 			mkdir(join(authDir(), dir), { recursive: true })
 		)
 	);
@@ -272,38 +255,4 @@ export async function revokePlayerSessionsForEmail(email: string): Promise<void>
 				]);
 			})
 	);
-}
-
-export async function storeOAuthState(
-	state: string,
-	value: Omit<StoredOAuthState, 'state' | 'createdAt'>
-): Promise<void> {
-	await writeJson(oauthStatePath(state), {
-		state,
-		codeVerifier: value.codeVerifier,
-		returnTo: value.returnTo,
-		createdAt: Date.now()
-	} satisfies StoredOAuthState);
-}
-
-export async function consumeOAuthState(state: string): Promise<StoredOAuthState | null> {
-	const path = oauthStatePath(state);
-	const claimedPath = oauthStateClaimPath(state);
-
-	try {
-		await rename(path, claimedPath);
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
-		throw error;
-	}
-
-	let stored: StoredOAuthState | null;
-	try {
-		stored = await readJson<StoredOAuthState>(claimedPath);
-	} finally {
-		await rm(claimedPath, { force: true });
-	}
-	if (!stored) return null;
-	if (stored.createdAt + OAUTH_STATE_TTL_SECONDS * 1000 <= Date.now()) return null;
-	return stored;
 }

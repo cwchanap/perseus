@@ -44,14 +44,9 @@ const sharedAuth = vi.hoisted(() => {
 
 vi.mock('./player-auth.shared', () => sharedAuth);
 
-import {
-	OAUTH_STATE_TTL_SECONDS,
-	PLAYER_SESSION_DURATION_MS,
-	hashToken
-} from './player-auth.shared';
+import { PLAYER_SESSION_DURATION_MS, hashToken } from './player-auth.shared';
 import {
 	addAllowlistEntry,
-	consumeOAuthState,
 	createPlayerSession,
 	deleteAllowlistEntry,
 	getAllowlistEntry,
@@ -62,7 +57,6 @@ import {
 	listAllowlistEntries,
 	revokePlayerSession,
 	revokePlayerSessionsForEmail,
-	storeOAuthState,
 	upsertPlayer
 } from './player-auth';
 
@@ -398,55 +392,5 @@ describe('player auth Bun filesystem storage', () => {
 		await expect(revokePlayerSessionsForEmail('player@example.com')).rejects.toMatchObject({
 			code: 'ENOTDIR'
 		});
-	});
-
-	it('atomically consumes OAuth state only once for concurrent consumers', async () => {
-		await storeOAuthState('state-concurrent', {
-			codeVerifier: 'verifier',
-			returnTo: '/'
-		});
-
-		const results = await Promise.all([
-			consumeOAuthState('state-concurrent'),
-			consumeOAuthState('state-concurrent')
-		]);
-		const consumed = results.filter(
-			(result): result is NonNullable<typeof result> => result !== null
-		);
-
-		expect(consumed).toHaveLength(1);
-		expect(consumed[0]).toEqual({
-			state: 'state-concurrent',
-			codeVerifier: 'verifier',
-			returnTo: '/',
-			createdAt: 1_716_500_000_000
-		});
-		expect(await consumeOAuthState('state-concurrent')).toBeNull();
-	});
-
-	it('stores and consumes OAuth state once and ignores expired state', async () => {
-		await storeOAuthState('state-one', {
-			codeVerifier: 'verifier',
-			returnTo: '/puzzle/abc'
-		});
-
-		expect(await consumeOAuthState('state-one')).toEqual({
-			state: 'state-one',
-			codeVerifier: 'verifier',
-			returnTo: '/puzzle/abc',
-			createdAt: 1_716_500_000_000
-		});
-		expect(await consumeOAuthState('state-one')).toBeNull();
-
-		await storeOAuthState('state-two', {
-			codeVerifier: 'verifier-two',
-			returnTo: '/'
-		});
-		vi.setSystemTime(1_716_500_000_000 + OAUTH_STATE_TTL_SECONDS * 1000 + 1);
-
-		expect(await consumeOAuthState('state-two')).toBeNull();
-		expect(existsSync(authPath(dataDir, 'oauth-state', `${encoded('state-two')}.json`))).toBe(
-			false
-		);
 	});
 });
