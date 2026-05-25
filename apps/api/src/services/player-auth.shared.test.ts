@@ -4,6 +4,8 @@ import {
 	buildGoogleAuthUrl,
 	createOAuthState,
 	createPkcePair,
+	decryptOAuthState,
+	encryptOAuthState,
 	exchangeGoogleCode,
 	hashToken,
 	normalizeEmail,
@@ -531,5 +533,73 @@ describe('player auth shared helpers', () => {
 				'client-id'
 			)
 		).toThrow('Google email is not verified');
+	});
+
+	describe('encryptOAuthState / decryptOAuthState', () => {
+		it('round-trips OAuth state data through encrypt then decrypt', async () => {
+			const data = {
+				codeVerifier: 'test-verifier-abc123',
+				returnTo: '/puzzle/xyz?piece=42',
+				createdAt: Date.now()
+			};
+
+			const encrypted = await encryptOAuthState('my-secret-key', data);
+			expect(typeof encrypted).toBe('string');
+			expect(encrypted.length).toBeGreaterThan(0);
+
+			const decrypted = await decryptOAuthState('my-secret-key', encrypted);
+			expect(decrypted).toEqual(data);
+		});
+
+		it('returns null when decrypting with the wrong secret', async () => {
+			const data = {
+				codeVerifier: 'verifier',
+				returnTo: '/',
+				createdAt: Date.now()
+			};
+
+			const encrypted = await encryptOAuthState('correct-secret', data);
+			const result = await decryptOAuthState('wrong-secret', encrypted);
+			expect(result).toBeNull();
+		});
+
+		it('returns null for tampered ciphertext', async () => {
+			const data = {
+				codeVerifier: 'verifier',
+				returnTo: '/',
+				createdAt: Date.now()
+			};
+
+			const encrypted = await encryptOAuthState('secret', data);
+			// Flip a byte in the middle of the base64url string
+			const tampered =
+				encrypted.slice(0, 10) +
+				String.fromCharCode(encrypted.charCodeAt(10) ^ 0xff) +
+				encrypted.slice(11);
+			const result = await decryptOAuthState('secret', tampered);
+			expect(result).toBeNull();
+		});
+
+		it('returns null for malformed input', async () => {
+			expect(await decryptOAuthState('secret', '')).toBeNull();
+			expect(await decryptOAuthState('secret', 'not-valid-base64!!!')).toBeNull();
+			expect(await decryptOAuthState('secret', 'AAAAAAAAAAAAAAAA')).toBeNull();
+		});
+
+		it('produces unique ciphertexts for the same input (random IV)', async () => {
+			const data = {
+				codeVerifier: 'verifier',
+				returnTo: '/',
+				createdAt: Date.now()
+			};
+
+			const encrypted1 = await encryptOAuthState('secret', data);
+			const encrypted2 = await encryptOAuthState('secret', data);
+			expect(encrypted1).not.toBe(encrypted2);
+
+			// Both should decrypt to the same data
+			expect(await decryptOAuthState('secret', encrypted1)).toEqual(data);
+			expect(await decryptOAuthState('secret', encrypted2)).toEqual(data);
+		});
 	});
 });
