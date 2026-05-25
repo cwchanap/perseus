@@ -3,29 +3,31 @@ import { getCookie, setCookie } from 'hono/cookie';
 import type { Context } from 'hono';
 import type { Env } from '../worker';
 import {
+	OAUTH_STATE_TTL_SECONDS,
 	PLAYER_SESSION_DURATION_MS,
 	buildGoogleAuthUrl,
 	createOAuthState,
 	createPkcePair,
+	decryptOAuthState,
+	encryptOAuthState,
 	exchangeGoogleCode,
 	parseReturnTo,
 	resolveAllowedOrigins,
 	verifyGoogleIdToken
 } from '../services/player-auth.shared';
 import {
-	consumeOAuthState,
 	createPlayerSession,
 	getAllowlistEntry,
 	getPlayerSession,
 	revokePlayerSession,
-	storeOAuthState,
 	upsertPlayer
 } from '../services/player-auth.worker';
 import { oauthRateLimit } from '../middleware/rate-limit.worker';
 
 const PLAYER_SESSION_COOKIE = 'perseus_player_session';
 const OAUTH_STATE_COOKIE = 'perseus_oauth_state';
-const OAUTH_STATE_COOKIE_MAX_AGE_SECONDS = 10 * 60;
+const OAUTH_DATA_COOKIE = 'perseus_oauth_data';
+const OAUTH_STATE_COOKIE_MAX_AGE_SECONDS = OAUTH_STATE_TTL_SECONDS;
 const PLAYER_SESSION_COOKIE_MAX_AGE_SECONDS = Math.floor(PLAYER_SESSION_DURATION_MS / 1000);
 
 const auth = new Hono<{ Bindings: Env }>();
@@ -127,8 +129,18 @@ function setOAuthStateCookie(c: AuthContext, state: string): void {
 	setCookie(c, OAUTH_STATE_COOKIE, state, cookieOptions(c.env, OAUTH_STATE_COOKIE_MAX_AGE_SECONDS));
 }
 
-function clearOAuthStateCookie(c: AuthContext): void {
+function setOAuthDataCookie(c: AuthContext, encrypted: string): void {
+	setCookie(
+		c,
+		OAUTH_DATA_COOKIE,
+		encrypted,
+		cookieOptions(c.env, OAUTH_STATE_COOKIE_MAX_AGE_SECONDS)
+	);
+}
+
+function clearOAuthCookies(c: AuthContext): void {
 	setCookie(c, OAUTH_STATE_COOKIE, '', cookieOptions(c.env, 0));
+	setCookie(c, OAUTH_DATA_COOKIE, '', cookieOptions(c.env, 0));
 }
 
 function extractWebOrigin(returnTo: string): string | undefined {
@@ -140,7 +152,7 @@ function extractWebOrigin(returnTo: string): string | undefined {
 }
 
 function redirectToLogin(c: AuthContext, error: string, webOrigin?: string): Response {
-	clearOAuthStateCookie(c);
+	clearOAuthCookies(c);
 	const loginUrl = webOrigin
 		? `${webOrigin}/login?error=${encodeURIComponent(error)}`
 		: `/login?error=${encodeURIComponent(error)}`;
@@ -165,11 +177,14 @@ auth.get('/google/start', async (c) => {
 		resolveAllowedOrigins(c.env.ALLOWED_ORIGINS, c.env.NODE_ENV)
 	);
 
-	await storeOAuthState(c.env.PUZZLE_METADATA, state, {
+	const stateData = {
 		codeVerifier: pkce.verifier,
-		returnTo
-	});
+		returnTo,
+		createdAt: Date.now()
+	};
+	const encrypted = await encryptOAuthState(c.env.JWT_SECRET, stateData);
 	setOAuthStateCookie(c, state);
+	setOAuthDataCookie(c, encrypted);
 
 	const url = buildGoogleAuthUrl({
 		clientId: c.env.GOOGLE_CLIENT_ID,
@@ -189,13 +204,12 @@ auth.get('/google/callback', async (c) => {
 	if (error) {
 		let webOrigin: string | undefined;
 		if (state && cookieState === state) {
-			try {
-				const stored = await consumeOAuthState(c.env.PUZZLE_METADATA, state);
+			const encryptedData = getCookie(c, OAUTH_DATA_COOKIE);
+			if (encryptedData) {
+				const stored = await decryptOAuthState(c.env.JWT_SECRET, encryptedData);
 				if (stored) {
 					webOrigin = extractWebOrigin(stored.returnTo);
 				}
-			} catch {
-				// KV unavailable, fall through to basic redirect
 			}
 		}
 		return redirectToLogin(c, 'access_denied', webOrigin);
@@ -205,14 +219,13 @@ auth.get('/google/callback', async (c) => {
 		return redirectToLogin(c, 'session_expired');
 	}
 
-	let storedState;
-	try {
-		storedState = await consumeOAuthState(c.env.PUZZLE_METADATA, state);
-	} catch (e) {
-		console.error('Failed to consume OAuth state:', e);
-		return redirectToLogin(c, 'server_error');
+	const encryptedData = getCookie(c, OAUTH_DATA_COOKIE);
+	if (!encryptedData) {
+		return redirectToLogin(c, 'session_expired');
 	}
-	if (!storedState) {
+
+	const storedState = await decryptOAuthState(c.env.JWT_SECRET, encryptedData);
+	if (!storedState || storedState.createdAt + OAUTH_STATE_TTL_SECONDS * 1000 <= Date.now()) {
 		return redirectToLogin(c, 'session_expired');
 	}
 
@@ -235,7 +248,7 @@ auth.get('/google/callback', async (c) => {
 		const player = await upsertPlayer(c.env.PUZZLE_METADATA, claims);
 		const session = await createPlayerSession(c.env.PUZZLE_METADATA, player);
 		setPlayerSessionCookie(c, session.token);
-		clearOAuthStateCookie(c);
+		clearOAuthCookies(c);
 		return withNoStore(c.redirect(storedState.returnTo));
 	} catch (error) {
 		console.error('Player Google auth callback failed:', error);

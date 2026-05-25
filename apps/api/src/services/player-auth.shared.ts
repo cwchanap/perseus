@@ -37,11 +37,60 @@ export interface GoogleTokenResponse {
 	scope?: string;
 }
 
-export interface StoredOAuthState {
-	state: string;
+export interface OAuthStateData {
 	codeVerifier: string;
 	returnTo: string;
 	createdAt: number;
+}
+
+const OAUTH_KEY_INFO = new TextEncoder().encode('perseus-oauth-state-v1');
+
+async function deriveOAuthKey(
+	secret: string,
+	usage: ('encrypt' | 'decrypt')[]
+): Promise<CryptoKey> {
+	const keyMaterial = await crypto.subtle.importKey(
+		'raw',
+		new TextEncoder().encode(secret),
+		'HKDF',
+		false,
+		['deriveKey']
+	);
+	return crypto.subtle.deriveKey(
+		{ name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(0), info: OAUTH_KEY_INFO },
+		keyMaterial,
+		{ name: 'AES-GCM', length: 256 },
+		false,
+		usage
+	);
+}
+
+export async function encryptOAuthState(secret: string, data: OAuthStateData): Promise<string> {
+	const key = await deriveOAuthKey(secret, ['encrypt']);
+	const iv = crypto.getRandomValues(new Uint8Array(12));
+	const plaintext = new TextEncoder().encode(JSON.stringify(data));
+	const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plaintext);
+	const combined = new Uint8Array(iv.length + encrypted.byteLength);
+	combined.set(iv);
+	combined.set(new Uint8Array(encrypted), iv.length);
+	return bytesToBase64Url(combined);
+}
+
+export async function decryptOAuthState(
+	secret: string,
+	encrypted: string
+): Promise<OAuthStateData | null> {
+	try {
+		const combined = base64UrlToBytes(encrypted);
+		if (combined.length < 13) return null;
+		const iv = combined.slice(0, 12);
+		const ciphertext = combined.slice(12);
+		const key = await deriveOAuthKey(secret, ['decrypt']);
+		const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext);
+		return JSON.parse(new TextDecoder().decode(decrypted));
+	} catch {
+		return null;
+	}
 }
 
 interface GoogleClaimsPayload {

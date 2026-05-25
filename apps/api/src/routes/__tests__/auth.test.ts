@@ -3,6 +3,7 @@ import type { PlayerUser } from '@perseus/types';
 
 vi.mock('../../services/player-auth.shared', async () => {
 	return {
+		OAUTH_STATE_TTL_SECONDS: 10 * 60,
 		PLAYER_SESSION_DURATION_MS: 30 * 24 * 60 * 60 * 1000,
 		createOAuthState: vi.fn(() => 'oauth-state-token'),
 		createPkcePair: vi.fn(() =>
@@ -11,6 +12,19 @@ vi.mock('../../services/player-auth.shared', async () => {
 				challenge: 'pkce-challenge'
 			})
 		),
+		encryptOAuthState: vi.fn(async (_secret: string, data: unknown) => {
+			return `enc:${btoa(JSON.stringify(data)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')}`;
+		}),
+		decryptOAuthState: vi.fn(async (_secret: string, encrypted: string) => {
+			try {
+				if (!encrypted.startsWith('enc:')) return null;
+				const raw = encrypted.slice(4).replace(/-/g, '+').replace(/_/g, '/');
+				const padded = raw.padEnd(Math.ceil(raw.length / 4) * 4, '=');
+				return JSON.parse(atob(padded));
+			} catch {
+				return null;
+			}
+		}),
 		resolveAllowedOrigins: vi.fn((allowedOrigins: string | undefined, nodeEnv?: string) => {
 			const trimmed = (allowedOrigins || '')
 				.split(',')
@@ -63,8 +77,6 @@ vi.mock('../../services/player-auth.shared', async () => {
 });
 
 vi.mock('../../services/player-auth', () => ({
-	storeOAuthState: vi.fn(),
-	consumeOAuthState: vi.fn(),
 	getAllowlistEntry: vi.fn(),
 	upsertPlayer: vi.fn(),
 	createPlayerSession: vi.fn(),
@@ -85,7 +97,8 @@ const baseEnv = {
 	GOOGLE_CLIENT_SECRET: 'google-client-secret',
 	AUTH_REDIRECT_BASE_URL: 'https://app.example.com',
 	ALLOWED_ORIGINS: 'https://app.example.com',
-	NODE_ENV: 'development'
+	NODE_ENV: 'development',
+	JWT_SECRET: 'test-jwt-secret'
 };
 
 const claims = {
@@ -103,6 +116,18 @@ const player: PlayerUser = {
 	createdAt: 1_716_500_000_000,
 	lastLoginAt: 1_716_500_000_000
 };
+
+const defaultStateData = {
+	codeVerifier: 'pkce-verifier',
+	returnTo: '/puzzle/abc',
+	createdAt: 1_716_500_000_000
+};
+
+function toEnc(data: unknown): string {
+	return `enc:${btoa(JSON.stringify(data)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')}`;
+}
+
+const encryptedStateData = toEnc(defaultStateData);
 
 function request(path: string, init: RequestInit = {}): Request {
 	return new Request(`https://app.example.com${path}`, init);
@@ -151,12 +176,20 @@ describe('Bun player auth routes', () => {
 		setEnv();
 		vi.mocked(sharedAuth.exchangeGoogleCode).mockResolvedValue({ id_token: 'google-id-token' });
 		vi.mocked(sharedAuth.verifyGoogleIdToken).mockResolvedValue(claims);
-		vi.mocked(playerAuth.storeOAuthState).mockResolvedValue(undefined);
-		vi.mocked(playerAuth.consumeOAuthState).mockResolvedValue({
-			state: 'oauth-state-token',
-			codeVerifier: 'pkce-verifier',
-			returnTo: '/puzzle/abc',
-			createdAt: 1_716_500_000_000
+		vi.mocked(sharedAuth.encryptOAuthState).mockImplementation(
+			async (_s: string, data: unknown) => {
+				return `enc:${btoa(JSON.stringify(data)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')}`;
+			}
+		);
+		vi.mocked(sharedAuth.decryptOAuthState).mockImplementation(async (_s: string, enc: string) => {
+			try {
+				if (!enc.startsWith('enc:')) return null;
+				const raw = enc.slice(4).replace(/-/g, '+').replace(/_/g, '/');
+				const padded = raw.padEnd(Math.ceil(raw.length / 4) * 4, '=');
+				return JSON.parse(atob(padded));
+			} catch {
+				return null;
+			}
 		});
 		vi.mocked(playerAuth.getAllowlistEntry).mockResolvedValue({
 			email: 'player@example.com',
@@ -205,10 +238,10 @@ describe('Bun player auth routes', () => {
 		expect(playerAuth.getPlayerSession).toHaveBeenCalledWith('player-session-token');
 	});
 
-	it('redirects Google starts, stores sanitized returnTo, and sets the state cookie', async () => {
+	it('redirects Google starts, encrypts state data, and sets cookies', async () => {
 		const res = await auth.fetch(request('/google/start?returnTo=/puzzle/abc?piece=1'));
 		const location = new URL(res.headers.get('Location') ?? '');
-		const setCookie = res.headers.get('set-cookie') ?? '';
+		const setCookieHeader = res.headers.get('set-cookie') ?? '';
 
 		expect(res.status).toBe(302);
 		expect(location.origin).toBe('https://accounts.google.com');
@@ -219,17 +252,19 @@ describe('Bun player auth routes', () => {
 		);
 		expect(location.searchParams.get('state')).toBe('oauth-state-token');
 		expect(location.searchParams.get('code_challenge')).toBe('pkce-challenge');
-		expect(playerAuth.storeOAuthState).toHaveBeenCalledWith('oauth-state-token', {
+		expect(sharedAuth.encryptOAuthState).toHaveBeenCalledWith('test-jwt-secret', {
 			codeVerifier: 'pkce-verifier',
-			returnTo: '/puzzle/abc?piece=1'
+			returnTo: '/puzzle/abc?piece=1',
+			createdAt: 1_716_500_000_000
 		});
 		expect(res.headers.get('Cache-Control')).toBe('no-store');
-		expect(setCookie).toContain('perseus_oauth_state=oauth-state-token');
-		expect(setCookie).toContain('HttpOnly');
-		expect(setCookie).toContain('Max-Age=600');
+		expect(setCookieHeader).toContain('perseus_oauth_state=oauth-state-token');
+		expect(setCookieHeader).toContain('HttpOnly');
+		expect(setCookieHeader).toContain('Max-Age=600');
+		expect(setCookieHeader).toContain('perseus_oauth_data=');
 	});
 
-	it('sets Secure on OAuth state cookies when NODE_ENV is unset', async () => {
+	it('sets Secure on OAuth cookies when NODE_ENV is unset', async () => {
 		setEnv({ NODE_ENV: undefined });
 
 		const res = await auth.fetch(request('/google/start'));
@@ -244,9 +279,10 @@ describe('Bun player auth routes', () => {
 	it('sanitizes unsafe start returnTo values to root', async () => {
 		await auth.fetch(request('/google/start?returnTo=https://evil.example/puzzle/abc'));
 
-		expect(playerAuth.storeOAuthState).toHaveBeenCalledWith('oauth-state-token', {
+		expect(sharedAuth.encryptOAuthState).toHaveBeenCalledWith('test-jwt-secret', {
 			codeVerifier: 'pkce-verifier',
-			returnTo: '/'
+			returnTo: '/',
+			createdAt: 1_716_500_000_000
 		});
 	});
 
@@ -264,9 +300,10 @@ describe('Bun player auth routes', () => {
 			'http://localhost:4692/puzzle/abc?piece=1',
 			'https://app.example.com, http://localhost:4692'
 		);
-		expect(playerAuth.storeOAuthState).toHaveBeenCalledWith('oauth-state-token', {
+		expect(sharedAuth.encryptOAuthState).toHaveBeenCalledWith('test-jwt-secret', {
 			codeVerifier: 'pkce-verifier',
-			returnTo: 'http://localhost:4692/puzzle/abc?piece=1'
+			returnTo: 'http://localhost:4692/puzzle/abc?piece=1',
+			createdAt: 1_716_500_000_000
 		});
 	});
 
@@ -349,13 +386,17 @@ describe('Bun player auth routes', () => {
 		expect(res.headers.get('Cache-Control')).toBe('no-store');
 		expect(setCookie).toContain('perseus_oauth_state=');
 		expect(setCookie).toContain('Max-Age=0');
-		expect(playerAuth.consumeOAuthState).not.toHaveBeenCalled();
+		expect(setCookie).toContain('perseus_oauth_data=');
+		expect(setCookie).toContain('Max-Age=0');
+		expect(sharedAuth.decryptOAuthState).not.toHaveBeenCalled();
 	});
 
-	it('redirects to login with access_denied and consumes state for webOrigin', async () => {
+	it('redirects to login with access_denied and decrypts state for webOrigin', async () => {
 		const res = await auth.fetch(
 			request('/google/callback?state=oauth-state-token&error=access_denied', {
-				headers: { Cookie: 'perseus_oauth_state=oauth-state-token' }
+				headers: {
+					Cookie: `perseus_oauth_state=oauth-state-token; perseus_oauth_data=${encryptedStateData}`
+				}
 			})
 		);
 		const setCookie = res.headers.get('set-cookie') ?? '';
@@ -365,20 +406,27 @@ describe('Bun player auth routes', () => {
 		expect(res.headers.get('Cache-Control')).toBe('no-store');
 		expect(setCookie).toContain('perseus_oauth_state=');
 		expect(setCookie).toContain('Max-Age=0');
-		expect(playerAuth.consumeOAuthState).toHaveBeenCalledWith('oauth-state-token');
+		expect(setCookie).toContain('perseus_oauth_data=');
+		expect(setCookie).toContain('Max-Age=0');
+		expect(sharedAuth.decryptOAuthState).toHaveBeenCalledWith(
+			'test-jwt-secret',
+			encryptedStateData
+		);
 	});
 
 	it('preserves web origin on access_denied when returnTo is absolute', async () => {
-		vi.mocked(playerAuth.consumeOAuthState).mockResolvedValue({
-			state: 'oauth-state-token',
+		const absStateData = {
 			codeVerifier: 'pkce-verifier',
 			returnTo: 'http://localhost:5173/puzzle/abc',
 			createdAt: 1_716_500_000_000
-		});
+		};
+		const absEncrypted = toEnc(absStateData);
 
 		const res = await auth.fetch(
 			request('/google/callback?state=oauth-state-token&error=access_denied', {
-				headers: { Cookie: 'perseus_oauth_state=oauth-state-token' }
+				headers: {
+					Cookie: `perseus_oauth_state=oauth-state-token; perseus_oauth_data=${absEncrypted}`
+				}
 			})
 		);
 
@@ -386,12 +434,14 @@ describe('Bun player auth routes', () => {
 		expect(res.headers.get('Location')).toBe('http://localhost:5173/login?error=access_denied');
 	});
 
-	it('falls back to relative redirect on access_denied when state consumption fails', async () => {
-		vi.mocked(playerAuth.consumeOAuthState).mockRejectedValue(new Error('filesystem error'));
+	it('falls back to relative redirect on access_denied when state decryption fails', async () => {
+		vi.mocked(sharedAuth.decryptOAuthState).mockResolvedValue(null);
 
 		const res = await auth.fetch(
 			request('/google/callback?state=oauth-state-token&error=access_denied', {
-				headers: { Cookie: 'perseus_oauth_state=oauth-state-token' }
+				headers: {
+					Cookie: `perseus_oauth_state=oauth-state-token; perseus_oauth_data=bad-data`
+				}
 			})
 		);
 
@@ -399,7 +449,7 @@ describe('Bun player auth routes', () => {
 		expect(res.headers.get('Location')).toBe('/login?error=access_denied');
 	});
 
-	it('redirects to login on access_denied without consuming state when cookie mismatches', async () => {
+	it('redirects to login on access_denied without decrypting state when cookie mismatches', async () => {
 		const res = await auth.fetch(
 			request('/google/callback?state=oauth-state-token&error=access_denied', {
 				headers: { Cookie: 'perseus_oauth_state=other-state' }
@@ -408,13 +458,15 @@ describe('Bun player auth routes', () => {
 
 		expect(res.status).toBe(302);
 		expect(res.headers.get('Location')).toBe('/login?error=access_denied');
-		expect(playerAuth.consumeOAuthState).not.toHaveBeenCalled();
+		expect(sharedAuth.decryptOAuthState).not.toHaveBeenCalled();
 	});
 
 	it('creates a player session for allowlisted verified users', async () => {
 		const res = await auth.fetch(
 			request('/google/callback?state=oauth-state-token&code=auth-code', {
-				headers: { Cookie: 'perseus_oauth_state=oauth-state-token' }
+				headers: {
+					Cookie: `perseus_oauth_state=oauth-state-token; perseus_oauth_data=${encryptedStateData}`
+				}
 			})
 		);
 		const setCookie = res.headers.get('set-cookie') ?? '';
@@ -439,11 +491,11 @@ describe('Bun player auth routes', () => {
 		expect(setCookie).toContain('Max-Age=2592000');
 		expect(setCookie).toContain('perseus_oauth_state=');
 		expect(setCookie).toContain('Max-Age=0');
+		expect(setCookie).toContain('perseus_oauth_data=');
+		expect(setCookie).toContain('Max-Age=0');
 	});
 
-	it('rejects callback when consumed state is missing', async () => {
-		vi.mocked(playerAuth.consumeOAuthState).mockResolvedValue(null);
-
+	it('rejects callback when data cookie is missing', async () => {
 		const res = await auth.fetch(
 			request('/google/callback?state=oauth-state-token&code=auth-code', {
 				headers: { Cookie: 'perseus_oauth_state=oauth-state-token' }
@@ -458,18 +510,20 @@ describe('Bun player auth routes', () => {
 		expect(setCookie).toContain('Max-Age=0');
 	});
 
-	it('redirects to login with server_error when consumeOAuthState throws', async () => {
-		vi.mocked(playerAuth.consumeOAuthState).mockRejectedValue(new Error('filesystem unavailable'));
+	it('rejects callback when decrypted state is null', async () => {
+		vi.mocked(sharedAuth.decryptOAuthState).mockResolvedValue(null);
 
 		const res = await auth.fetch(
 			request('/google/callback?state=oauth-state-token&code=auth-code', {
-				headers: { Cookie: 'perseus_oauth_state=oauth-state-token' }
+				headers: {
+					Cookie: `perseus_oauth_state=oauth-state-token; perseus_oauth_data=bad-data`
+				}
 			})
 		);
 		const setCookie = res.headers.get('set-cookie') ?? '';
 
 		expect(res.status).toBe(302);
-		expect(res.headers.get('Location')).toBe('/login?error=server_error');
+		expect(res.headers.get('Location')).toBe('/login?error=session_expired');
 		expect(res.headers.get('Cache-Control')).toBe('no-store');
 		expect(setCookie).toContain('perseus_oauth_state=');
 		expect(setCookie).toContain('Max-Age=0');
@@ -480,7 +534,9 @@ describe('Bun player auth routes', () => {
 
 		const res = await auth.fetch(
 			request('/google/callback?state=oauth-state-token&code=auth-code', {
-				headers: { Cookie: 'perseus_oauth_state=oauth-state-token' }
+				headers: {
+					Cookie: `perseus_oauth_state=oauth-state-token; perseus_oauth_data=${encryptedStateData}`
+				}
 			})
 		);
 		const setCookie = res.headers.get('set-cookie') ?? '';
@@ -495,16 +551,18 @@ describe('Bun player auth routes', () => {
 
 	it('redirects not-allowlisted callback to web origin when returnTo is absolute', async () => {
 		vi.mocked(playerAuth.getAllowlistEntry).mockResolvedValue(null);
-		vi.mocked(playerAuth.consumeOAuthState).mockResolvedValue({
-			state: 'oauth-state-token',
+		const absStateData = {
 			codeVerifier: 'pkce-verifier',
 			returnTo: 'http://localhost:5173/puzzle/abc',
 			createdAt: 1_716_500_000_000
-		});
+		};
+		const absEncrypted = toEnc(absStateData);
 
 		const res = await auth.fetch(
 			request('/google/callback?state=oauth-state-token&code=auth-code', {
-				headers: { Cookie: 'perseus_oauth_state=oauth-state-token' }
+				headers: {
+					Cookie: `perseus_oauth_state=oauth-state-token; perseus_oauth_data=${absEncrypted}`
+				}
 			})
 		);
 
@@ -517,7 +575,9 @@ describe('Bun player auth routes', () => {
 
 		const res = await auth.fetch(
 			request('/google/callback?state=oauth-state-token&code=auth-code', {
-				headers: { Cookie: 'perseus_oauth_state=oauth-state-token' }
+				headers: {
+					Cookie: `perseus_oauth_state=oauth-state-token; perseus_oauth_data=${encryptedStateData}`
+				}
 			})
 		);
 		const setCookie = res.headers.get('set-cookie') ?? '';
@@ -531,16 +591,18 @@ describe('Bun player auth routes', () => {
 
 	it('redirects Google callback errors to web origin when returnTo is absolute', async () => {
 		vi.mocked(sharedAuth.exchangeGoogleCode).mockRejectedValue(new Error('token exchange failed'));
-		vi.mocked(playerAuth.consumeOAuthState).mockResolvedValue({
-			state: 'oauth-state-token',
+		const absStateData = {
 			codeVerifier: 'pkce-verifier',
 			returnTo: 'http://localhost:5173/puzzle/abc',
 			createdAt: 1_716_500_000_000
-		});
+		};
+		const absEncrypted = toEnc(absStateData);
 
 		const res = await auth.fetch(
 			request('/google/callback?state=oauth-state-token&code=auth-code', {
-				headers: { Cookie: 'perseus_oauth_state=oauth-state-token' }
+				headers: {
+					Cookie: `perseus_oauth_state=oauth-state-token; perseus_oauth_data=${absEncrypted}`
+				}
 			})
 		);
 
@@ -553,7 +615,9 @@ describe('Bun player auth routes', () => {
 
 		const res = await auth.fetch(
 			request('/google/callback?state=oauth-state-token&code=auth-code', {
-				headers: { Cookie: 'perseus_oauth_state=oauth-state-token' }
+				headers: {
+					Cookie: `perseus_oauth_state=oauth-state-token; perseus_oauth_data=${encryptedStateData}`
+				}
 			})
 		);
 		const setCookie = res.headers.get('set-cookie') ?? '';
@@ -568,7 +632,9 @@ describe('Bun player auth routes', () => {
 
 		const res = await auth.fetch(
 			request('/google/callback?state=oauth-state-token&code=auth-code', {
-				headers: { Cookie: 'perseus_oauth_state=oauth-state-token' }
+				headers: {
+					Cookie: `perseus_oauth_state=oauth-state-token; perseus_oauth_data=${encryptedStateData}`
+				}
 			})
 		);
 		const setCookie = res.headers.get('set-cookie') ?? '';

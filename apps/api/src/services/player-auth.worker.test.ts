@@ -39,11 +39,7 @@ const sharedAuth = vi.hoisted(() => {
 
 vi.mock('./player-auth.shared', () => sharedAuth);
 
-import {
-	OAUTH_STATE_TTL_SECONDS,
-	PLAYER_SESSION_DURATION_MS,
-	hashToken
-} from './player-auth.shared';
+import { PLAYER_SESSION_DURATION_MS, hashToken } from './player-auth.shared';
 
 import {
 	addAllowlistEntry,
@@ -56,8 +52,6 @@ import {
 	listAllowlistEntries,
 	revokePlayerSession,
 	revokePlayerSessionsForEmail,
-	storeOAuthState,
-	consumeOAuthState,
 	upsertPlayer
 } from './player-auth.worker';
 
@@ -386,35 +380,5 @@ describe('player auth Worker storage', () => {
 
 		expect(await getPlayerSession(kv, created.token)).toBeNull();
 		await expect(revokePlayerSessionsForEmail(kv, 'missing@example.com')).resolves.toBeUndefined();
-	});
-
-	it('stores and consumes OAuth state once with a TTL', async () => {
-		await storeOAuthState(kv, 'oauth-state-token', {
-			codeVerifier: 'pkce-verifier',
-			returnTo: '/puzzle/abc'
-		});
-
-		expect(memoryKV.putOptions('oauth_state:oauth-state-token')).toEqual({
-			expirationTtl: OAUTH_STATE_TTL_SECONDS
-		});
-		expect(await consumeOAuthState(kv, 'oauth-state-token')).toEqual({
-			state: 'oauth-state-token',
-			codeVerifier: 'pkce-verifier',
-			returnTo: '/puzzle/abc',
-			createdAt: 1_716_500_000_000
-		});
-		expect(await consumeOAuthState(kv, 'oauth-state-token')).toBeNull();
-	});
-
-	it('consumes expired OAuth state as null', async () => {
-		await storeOAuthState(kv, 'oauth-state-token', {
-			codeVerifier: 'pkce-verifier',
-			returnTo: '/puzzle/abc'
-		});
-
-		vi.setSystemTime(1_716_500_000_000 + OAUTH_STATE_TTL_SECONDS * 1000);
-
-		expect(await consumeOAuthState(kv, 'oauth-state-token')).toBeNull();
-		expect(memoryKV.has('oauth_state:oauth-state-token')).toBe(false);
 	});
 });
