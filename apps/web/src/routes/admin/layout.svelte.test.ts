@@ -114,4 +114,62 @@ describe('Admin Layout', () => {
 			await expect.element(page.getByText(/REDIRECTING/i)).toBeVisible();
 		});
 	});
+
+	it('re-checks session when navigating to a new admin route', async () => {
+		vi.mocked(checkSession).mockResolvedValue(true);
+
+		render(AdminLayout, { children: makeChildren() });
+
+		await expect.element(page.getByTestId('child-content')).toBeVisible();
+
+		vi.mocked(checkSession).mockResolvedValue(true);
+		mockPage.set({ url: { pathname: '/admin/puzzles' }, status: 200, error: null });
+
+		await vi.waitFor(() => {
+			expect(checkSession).toHaveBeenCalledTimes(2);
+		});
+	});
+
+	it('queues a session check when a route change occurs while one is in flight', async () => {
+		let resolveFirst!: (v: boolean) => void;
+		const firstCheck = new Promise<boolean>((r) => {
+			resolveFirst = r;
+		});
+		vi.mocked(checkSession).mockReturnValueOnce(firstCheck);
+		vi.mocked(checkSession).mockResolvedValueOnce(true);
+
+		render(AdminLayout, { children: makeChildren() });
+
+		await vi.waitFor(() => {
+			expect(checkSession).toHaveBeenCalledTimes(1);
+		});
+
+		mockPage.set({ url: { pathname: '/admin/settings' }, status: 200, error: null });
+
+		await vi.waitFor(() => {
+			expect(checkSession).toHaveBeenCalledTimes(1);
+		});
+
+		resolveFirst(true);
+
+		await vi.waitFor(() => {
+			expect(checkSession).toHaveBeenCalledTimes(2);
+		});
+
+		await expect.element(page.getByTestId('child-content')).toBeVisible();
+	});
+
+	it('does not re-check session on the login page', async () => {
+		mockPage.set({ url: { pathname: '/admin/login' }, status: 200, error: null });
+
+		render(AdminLayout, { children: makeChildren() });
+
+		await expect.element(page.getByTestId('child-content')).toBeVisible();
+
+		mockPage.set({ url: { pathname: '/admin/login' }, status: 200, error: null });
+
+		await vi.waitFor(() => {
+			expect(checkSession).not.toHaveBeenCalled();
+		});
+	});
 });

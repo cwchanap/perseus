@@ -115,6 +115,17 @@ describe('Stats Service', () => {
 		});
 	});
 
+	describe('saveCompletionTime - save failure', () => {
+		it('returns isNewBest on first completion when localStorage fails', () => {
+			vi.spyOn(localStorage, 'setItem').mockImplementationOnce(() => {
+				throw new Error('disk full');
+			});
+
+			const result = saveCompletionTime('fail-puzzle', 50);
+			expect(result).toBe(true);
+		});
+	});
+
 	describe('clearStats', () => {
 		it('removes stats from localStorage', () => {
 			saveCompletionTime(puzzleId, 100);
