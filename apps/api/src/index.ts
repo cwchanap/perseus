@@ -53,7 +53,15 @@ const isProd = process.env.NODE_ENV === 'production';
 const allowedOrigins =
 	envOrigins.length > 0 ? envOrigins : isProd ? envOrigins : DEFAULT_ALLOWED_ORIGINS;
 
-app.use('*', logger());
+// SECURITY: Skip request logging on the OAuth callback path to prevent
+// OAuth authorization codes and state tokens from being written to logs.
+const logMiddleware = logger();
+app.use('*', async (c, next) => {
+	if (c.req.path === '/api/auth/google/callback') {
+		return next();
+	}
+	return logMiddleware(c, next);
+});
 app.use(
 	'*',
 	cors({
