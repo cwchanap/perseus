@@ -265,8 +265,9 @@ auth.get('/session', async (c) => {
 	const session = await getPlayerSession(c.env.PUZZLE_METADATA, token);
 	if (!session) {
 		// Don't clear the cookie on a KV miss — the session may have been just
-		// created and KV eventual consistency hasn't propagated yet. The cookie
-		// expires naturally via its maxAge, and /logout explicitly clears it.
+		// created and KV eventual consistency hasn't propagated yet. A grace
+		// period in player-auth.worker covers same-isolate reads; for cross-
+		// isolate misses the cookie persists so a page reload retries naturally.
 		return withNoStore(c.json({ authenticated: false }));
 	}
 

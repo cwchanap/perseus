@@ -52,7 +52,8 @@ import {
 	listAllowlistEntries,
 	revokePlayerSession,
 	revokePlayerSessionsForEmail,
-	upsertPlayer
+	upsertPlayer,
+	__resetGracePeriod
 } from './player-auth.worker';
 
 class MemoryKV {
@@ -124,6 +125,7 @@ describe('player auth Worker storage', () => {
 		memoryKV = new MemoryKV();
 		kv = memoryKV as unknown as KVNamespace;
 		vi.setSystemTime(1_716_500_000_000);
+		__resetGracePeriod();
 	});
 
 	afterEach(() => {
@@ -380,5 +382,83 @@ describe('player auth Worker storage', () => {
 
 		expect(await getPlayerSession(kv, created.token)).toBeNull();
 		await expect(revokePlayerSessionsForEmail(kv, 'missing@example.com')).resolves.toBeUndefined();
+	});
+
+	it('returns session from grace period when KV has not propagated', async () => {
+		await addAllowlistEntry(kv, 'player@example.com', 'admin');
+		const player = await upsertPlayer(kv, {
+			sub: 'google-sub-123',
+			email: 'player@example.com'
+		});
+		const created = await createPlayerSession(kv, player);
+		const sessionHash = await hashToken(created.token);
+
+		// Simulate KV eventual consistency by deleting the session from KV
+		await memoryKV.delete(`player_session:${sessionHash}`);
+
+		// Grace period should still return the session
+		expect(await getPlayerSession(kv, created.token)).toMatchObject({
+			sessionHash,
+			user: { id: 'google-sub-123', email: 'player@example.com' },
+			createdAt: 1_716_500_000_000,
+			expiresAt: created.expiresAt
+		});
+	});
+
+	it('returns null after grace period expires even when KV has not propagated', async () => {
+		await addAllowlistEntry(kv, 'player@example.com', 'admin');
+		const player = await upsertPlayer(kv, {
+			sub: 'google-sub-123',
+			email: 'player@example.com'
+		});
+		const created = await createPlayerSession(kv, player);
+		const sessionHash = await hashToken(created.token);
+
+		// Simulate KV eventual consistency
+		await memoryKV.delete(`player_session:${sessionHash}`);
+
+		// Advance time past the grace period (10 seconds)
+		vi.setSystemTime(1_716_500_010_000);
+
+		expect(await getPlayerSession(kv, created.token)).toBeNull();
+	});
+
+	it('cleans up grace period when session is found in KV', async () => {
+		await addAllowlistEntry(kv, 'player@example.com', 'admin');
+		const player = await upsertPlayer(kv, {
+			sub: 'google-sub-123',
+			email: 'player@example.com'
+		});
+		const created = await createPlayerSession(kv, player);
+
+		// First read finds it in KV, should clean up grace period
+		expect(await getPlayerSession(kv, created.token)).toMatchObject({
+			user: { id: 'google-sub-123' }
+		});
+
+		// Now simulate KV miss after grace period was cleaned up
+		const sessionHash = await hashToken(created.token);
+		await memoryKV.delete(`player_session:${sessionHash}`);
+
+		// Grace period was cleaned up by the KV hit, so this should return null
+		expect(await getPlayerSession(kv, created.token)).toBeNull();
+	});
+
+	it('clears grace period entry when individual session is revoked', async () => {
+		await addAllowlistEntry(kv, 'player@example.com', 'admin');
+		const player = await upsertPlayer(kv, {
+			sub: 'google-sub-123',
+			email: 'player@example.com'
+		});
+		const created = await createPlayerSession(kv, player);
+		const sessionHash = await hashToken(created.token);
+
+		// Remove from KV to simulate propagation delay
+		await memoryKV.delete(`player_session:${sessionHash}`);
+
+		// Revoke should clear grace period too
+		await revokePlayerSession(kv, created.token);
+
+		expect(await getPlayerSession(kv, created.token)).toBeNull();
 	});
 });

@@ -14,6 +14,46 @@ const PLAYER_SESSION_PREFIX = 'player_session:';
 const PLAYER_SESSIONS_PREFIX = 'player_sessions:';
 const PLAYER_SESSION_TTL_SECONDS = Math.ceil(PLAYER_SESSION_DURATION_MS / 1000);
 
+// Grace period for newly created player sessions to handle KV eventual consistency.
+// When a session is created, its hash is tracked here so that a follow-up read
+// before KV propagation still returns the session data instead of null.
+//
+// IMPORTANT LIMITATION: This Map is isolate-local memory. In Cloudflare Workers,
+// requests may land on different isolates. The grace period only helps when
+// the callback and subsequent /session request hit the same isolate.
+const PLAYER_SESSION_GRACE_PERIOD_MS = 10_000; // 10 seconds
+const playerSessionGracePeriod = new Map<
+	string,
+	{ record: PlayerSessionRecord; expiresAt: number }
+>();
+
+function cleanExpiredGracePeriod(): void {
+	const now = Date.now();
+	for (const [key, entry] of playerSessionGracePeriod) {
+		if (entry.expiresAt <= now) {
+			playerSessionGracePeriod.delete(key);
+		}
+	}
+}
+
+function getGracePeriodRecord(sessionHash: string): PlayerSessionRecord | null {
+	cleanExpiredGracePeriod();
+	const entry = playerSessionGracePeriod.get(sessionHash);
+	if (!entry) return null;
+	return entry.record;
+}
+
+function addToGracePeriod(sessionHash: string, record: PlayerSessionRecord): void {
+	playerSessionGracePeriod.set(sessionHash, {
+		record,
+		expiresAt: Date.now() + PLAYER_SESSION_GRACE_PERIOD_MS
+	});
+}
+
+function removeFromGracePeriod(sessionHash: string): void {
+	playerSessionGracePeriod.delete(sessionHash);
+}
+
 export interface CreatedPlayerSession {
 	token: string;
 	expiresAt: number;
@@ -206,6 +246,9 @@ export async function createPlayerSession(
 		expirationTtl: PLAYER_SESSION_TTL_SECONDS
 	});
 
+	// Track in grace period so immediate reads before KV propagation still work
+	addToGracePeriod(sessionHash, record);
+
 	return { token, expiresAt };
 }
 
@@ -215,17 +258,32 @@ export async function getPlayerSession(
 ): Promise<PlayerSessionRecord | null> {
 	const sessionHash = await hashToken(token);
 	const record = await readJson<PlayerSessionRecord>(kv, sessionKey(sessionHash));
-	if (!record || record.expiresAt <= Date.now()) return null;
-	if (!(await getAllowlistEntry(kv, record.user.email))) return null;
-	const revokedAfter = Number(await kv.get(revokedAfterKey(record.user.email)));
-	if (Number.isFinite(revokedAfter) && record.createdAt <= revokedAfter) return null;
-	return record;
+	if (record && record.expiresAt > Date.now()) {
+		// Session found in KV — clean up grace period if present
+		removeFromGracePeriod(sessionHash);
+		if (!(await getAllowlistEntry(kv, record.user.email))) return null;
+		const revokedAfter = Number(await kv.get(revokedAfterKey(record.user.email)));
+		if (Number.isFinite(revokedAfter) && record.createdAt <= revokedAfter) return null;
+		return record;
+	}
+
+	// KV miss — check grace period for newly created sessions
+	const graceRecord = getGracePeriodRecord(sessionHash);
+	if (graceRecord && graceRecord.expiresAt > Date.now()) {
+		if (!(await getAllowlistEntry(kv, graceRecord.user.email))) return null;
+		const revokedAfter = Number(await kv.get(revokedAfterKey(graceRecord.user.email)));
+		if (Number.isFinite(revokedAfter) && graceRecord.createdAt <= revokedAfter) return null;
+		return graceRecord;
+	}
+
+	return null;
 }
 
 export async function revokePlayerSession(kv: KVNamespace, token: string): Promise<void> {
 	const sessionHash = await hashToken(token);
 	const record = await readJson<PlayerSessionRecord>(kv, sessionKey(sessionHash));
 	await kv.delete(sessionKey(sessionHash));
+	removeFromGracePeriod(sessionHash);
 
 	if (!record) return;
 	await kv.delete(sessionsIndexKey(record.user.email, sessionHash));
@@ -242,7 +300,13 @@ export async function revokePlayerSessionsForEmail(kv: KVNamespace, email: strin
 	await Promise.all(
 		keys.flatMap((key) => {
 			const sessionHash = key.name.slice(prefix.length);
+			removeFromGracePeriod(sessionHash);
 			return [kv.delete(sessionKey(sessionHash)), kv.delete(key.name)];
 		})
 	);
+}
+
+/** Test-only: reset all module-level grace period state between tests. */
+export function __resetGracePeriod(): void {
+	playerSessionGracePeriod.clear();
 }
