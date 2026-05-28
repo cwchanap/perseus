@@ -98,6 +98,12 @@ jobs:
               value: ${{ secrets.ALLOWED_ORIGINS }}
             AUTH_REDIRECT_BASE_URL:
               value: ${{ secrets.AUTH_REDIRECT_BASE_URL }}
+            adminAccessEmail:
+              value: ${{ secrets.ADMIN_ACCESS_EMAIL }}
+              secret: true
+            adminDeviceSerials:
+              value: ${{ secrets.ADMIN_DEVICE_SERIALS }}
+              secret: true
             jwtSecret:
               value: ${{ secrets.JWT_SECRET }}
               secret: true
@@ -163,6 +169,12 @@ jobs:
               value: ${{ secrets.ALLOWED_ORIGINS }}
             AUTH_REDIRECT_BASE_URL:
               value: ${{ secrets.AUTH_REDIRECT_BASE_URL }}
+            adminAccessEmail:
+              value: ${{ secrets.ADMIN_ACCESS_EMAIL }}
+              secret: true
+            adminDeviceSerials:
+              value: ${{ secrets.ADMIN_DEVICE_SERIALS }}
+              secret: true
             jwtSecret:
               value: ${{ secrets.JWT_SECRET }}
               secret: true
