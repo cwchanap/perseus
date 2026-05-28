@@ -6,6 +6,7 @@ export const DEFAULT_ADMIN_ACCESS_SESSION_DURATION = '12h';
 
 const ADMIN_ACCESS_APPLICATION_NAME = 'Perseus Admin';
 const ADMIN_ACCESS_POLICY_NAME = 'Allow configured admin on trusted device';
+const ADMIN_ACCESS_EMAIL_PATTERN = /^[^\s@,]+@[^\s@,]+\.[^\s@,]+$/;
 const URL_SCHEME_PATTERN = /^[a-z][a-z0-9+.-]*:\/\//i;
 
 type AdminAccessDestination = cloudflare.types.input.ZeroTrustAccessApplicationDestination;
@@ -121,15 +122,36 @@ export function buildAdminDeviceSerialItems(serials: string[]): AdminDeviceSeria
 	}));
 }
 
+export function normalizeAdminAccessEmail(rawValue: string): string {
+	const trimmed = rawValue.trim();
+	if (!trimmed) {
+		throw new Error('adminAccessEmail must not be empty');
+	}
+
+	if (!ADMIN_ACCESS_EMAIL_PATTERN.test(trimmed)) {
+		throw new Error('adminAccessEmail must be a single email address');
+	}
+
+	return trimmed;
+}
+
+function normalizeAdminAccessEmailInput(adminEmail: pulumi.Input<string>): pulumi.Input<string> {
+	return typeof adminEmail === 'string'
+		? normalizeAdminAccessEmail(adminEmail)
+		: pulumi.output(adminEmail).apply(normalizeAdminAccessEmail);
+}
+
 export function buildAdminAccessPolicy(
 	adminEmail: pulumi.Input<string>,
 	postureRuleId: pulumi.Input<string>
 ): AdminAccessApplicationPolicy {
+	const normalizedAdminEmail = normalizeAdminAccessEmailInput(adminEmail);
+
 	return {
 		name: ADMIN_ACCESS_POLICY_NAME,
 		decision: 'allow',
 		precedence: 1,
-		includes: [{ email: { email: adminEmail } }],
+		includes: [{ email: { email: normalizedAdminEmail } }],
 		requires: [{ devicePosture: { integrationUid: postureRuleId } }]
 	};
 }

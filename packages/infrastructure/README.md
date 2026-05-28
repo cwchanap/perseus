@@ -178,6 +178,7 @@ pulumi config set --secret adminDeviceSerials '["DEVICE_SERIAL_1","DEVICE_SERIAL
 
 `adminDeviceSerials` must be a JSON array string. To add or remove a trusted device,
 update the secret value and redeploy infrastructure.
+`adminAccessEmail` must be a single email address.
 
 Access session duration defaults to `12h`. Optionally override it with:
 
