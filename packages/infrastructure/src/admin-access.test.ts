@@ -6,6 +6,7 @@ import {
 	buildAdminAccessDestinations,
 	buildAdminAccessPolicy,
 	buildAdminDeviceSerialItems,
+	normalizeAdminAccessEmail,
 	normalizeAdminAccessHostname,
 	parseAdminDeviceSerials
 } from './admin-access.js';
@@ -118,6 +119,28 @@ describe('buildAdminDeviceSerialItems', () => {
 	});
 });
 
+describe('normalizeAdminAccessEmail', () => {
+	it('trims a configured email address', () => {
+		expect(normalizeAdminAccessEmail(' admin@example.com ')).toBe('admin@example.com');
+	});
+
+	it('rejects a blank email address', () => {
+		expect(() => normalizeAdminAccessEmail('   ')).toThrow(/adminAccessEmail must not be empty/);
+	});
+
+	it('rejects a malformed email address', () => {
+		expect(() => normalizeAdminAccessEmail('not-an-email')).toThrow(
+			/adminAccessEmail must be a single email address/
+		);
+	});
+
+	it('rejects multiple email addresses', () => {
+		expect(() => normalizeAdminAccessEmail('admin@example.com,other@example.com')).toThrow(
+			/adminAccessEmail must be a single email address/
+		);
+	});
+});
+
 describe('buildAdminAccessPolicy', () => {
 	it('allows only the configured email and requires the posture rule', () => {
 		expect(buildAdminAccessPolicy('admin@example.com', 'posture-rule-id')).toEqual({
@@ -127,6 +150,21 @@ describe('buildAdminAccessPolicy', () => {
 			includes: [{ email: { email: 'admin@example.com' } }],
 			requires: [{ devicePosture: { integrationUid: 'posture-rule-id' } }]
 		});
+	});
+
+	it('uses a normalized admin email in the Access policy', () => {
+		const args = buildAdminAccessApplicationArgs({
+			accountId: 'account-id',
+			hostname: 'https://perseus.cwchanap.dev',
+			adminEmail: ' admin@example.com ',
+			postureRuleId: 'posture-rule-id'
+		});
+
+		expect(args.policies).toEqual([
+			expect.objectContaining({
+				includes: [{ email: { email: 'admin@example.com' } }]
+			})
+		]);
 	});
 });
 
