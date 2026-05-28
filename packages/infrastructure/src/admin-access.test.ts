@@ -179,4 +179,21 @@ describe('buildAdminAccessApplicationArgs', () => {
 
 		expect(args.sessionDuration).toBe('4h');
 	});
+
+	it('derives path-scoped destinations from the production redirect origin', () => {
+		const args = buildAdminAccessApplicationArgs({
+			accountId: 'account-id',
+			hostname: 'https://perseus.cwchanap.dev',
+			adminEmail: 'admin@example.com',
+			postureRuleId: 'posture-rule-id'
+		});
+
+		expect(args.domain).toBe('perseus.cwchanap.dev/admin');
+		expect(args.destinations).toEqual([
+			{ type: 'public', uri: 'https://perseus.cwchanap.dev/admin' },
+			{ type: 'public', uri: 'https://perseus.cwchanap.dev/admin/*' },
+			{ type: 'public', uri: 'https://perseus.cwchanap.dev/api/admin' },
+			{ type: 'public', uri: 'https://perseus.cwchanap.dev/api/admin/*' }
+		]);
+	});
 });
