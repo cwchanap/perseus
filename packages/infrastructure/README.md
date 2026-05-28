@@ -156,6 +156,53 @@ pulumi config set --secret googleClientId YOUR_GOOGLE_CLIENT_ID
 pulumi config set --secret googleClientSecret YOUR_GOOGLE_CLIENT_SECRET
 ```
 
+### Zero Trust Admin Protection
+
+The production admin portal is protected by a Cloudflare Zero Trust Access
+application managed by Pulumi. The Access app covers only:
+
+- `https://perseus.cwchanap.dev/admin`
+- `https://perseus.cwchanap.dev/admin/*`
+- `https://perseus.cwchanap.dev/api/admin`
+- `https://perseus.cwchanap.dev/api/admin/*`
+
+Public puzzle routes and player auth routes remain outside this Access app.
+
+Configure the required admin Access values as Pulumi secrets:
+
+```bash
+cd packages/infrastructure
+pulumi config set --secret adminAccessEmail "you@example.com"
+pulumi config set --secret adminDeviceSerials '["DEVICE_SERIAL_1","DEVICE_SERIAL_2"]'
+```
+
+`adminDeviceSerials` must be a JSON array string. To add or remove a trusted device,
+update the secret value and redeploy infrastructure.
+
+Access session duration defaults to `12h`. Optionally override it with:
+
+```bash
+cd packages/infrastructure
+pulumi config set adminAccessSessionDuration 4h
+```
+
+GitHub Actions deploys require these repository secrets:
+
+- `ADMIN_ACCESS_EMAIL`
+- `ADMIN_DEVICE_SERIALS`
+
+`ADMIN_DEVICE_SERIALS` uses the same JSON array string format.
+
+Manual verification after deploy:
+
+- Allowed WARP-enrolled device and matching identity: `/admin` reaches the existing
+  Perseus passkey page.
+- Device without passing the serial-number posture check: `/admin` is denied by
+  Cloudflare Access before Perseus loads.
+- `/`, `/api/puzzles`, and `/api/auth/session` remain reachable without Cloudflare Access.
+- After Access allows the request, the existing Perseus admin passkey still rejects
+  invalid login attempts.
+
 Then access in code via:
 
 ```typescript
