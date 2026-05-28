@@ -180,6 +180,16 @@ pulumi config set --secret adminDeviceSerials '["DEVICE_SERIAL_1","DEVICE_SERIAL
 update the secret value and redeploy infrastructure.
 `adminAccessEmail` must be a single email address.
 
+On macOS, you can populate `adminDeviceSerials` for the current device without printing
+the serial number:
+
+```bash
+scripts/admin-device-serial.sh --set-pulumi-secret
+```
+
+Use `scripts/admin-device-serial.sh --print-json` when you need to collect serials from
+multiple devices before setting the JSON array secret.
+
 Access session duration defaults to `12h`. Optionally override it with:
 
 ```bash
