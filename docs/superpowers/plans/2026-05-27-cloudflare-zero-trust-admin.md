@@ -199,9 +199,9 @@ describe('normalizeAdminAccessHostname', () => {
 		);
 	});
 
-	it('preserves a configured port', () => {
-		expect(normalizeAdminAccessHostname('https://perseus.cwchanap.dev:8443')).toBe(
-			'perseus.cwchanap.dev:8443'
+	it('rejects a configured port', () => {
+		expect(() => normalizeAdminAccessHostname('https://perseus.cwchanap.dev:8443')).toThrow(
+			/adminAccessHostname must not include a port/
 		);
 	});
 
@@ -267,10 +267,10 @@ describe('buildAdminAccessApplicationArgs', () => {
 			],
 			sessionDuration: DEFAULT_ADMIN_ACCESS_SESSION_DURATION,
 			appLauncherVisible: false,
-			allowAuthenticateViaWarp: true,
+			allowAuthenticateViaWarp: false,
 			enableBindingCookie: true,
 			httpOnlyCookieAttribute: true,
-			pathCookieAttribute: true,
+			pathCookieAttribute: false,
 			policies: [
 				{
 					name: 'Allow configured admin on trusted device',
@@ -404,6 +404,10 @@ export function normalizeAdminAccessHostname(rawValue: string): string {
 		throw new Error('adminAccessHostname must include a hostname');
 	}
 
+	if (url.port) {
+		throw new Error('adminAccessHostname must not include a port');
+	}
+
 	return url.host;
 }
 
@@ -448,10 +452,10 @@ export function buildAdminAccessApplicationArgs(
 		destinations: buildAdminAccessDestinations(hostname),
 		sessionDuration: args.sessionDuration ?? DEFAULT_ADMIN_ACCESS_SESSION_DURATION,
 		appLauncherVisible: false,
-		allowAuthenticateViaWarp: true,
+		allowAuthenticateViaWarp: false,
 		enableBindingCookie: true,
 		httpOnlyCookieAttribute: true,
-		pathCookieAttribute: true,
+		pathCookieAttribute: false,
 		policies: [buildAdminAccessPolicy(args.adminEmail, args.postureRuleId)]
 	};
 }
@@ -496,10 +500,10 @@ export function createAdminAccessResources(
 			destinations: hostname.apply(buildAdminAccessDestinations),
 			sessionDuration: args.sessionDuration ?? DEFAULT_ADMIN_ACCESS_SESSION_DURATION,
 			appLauncherVisible: false,
-			allowAuthenticateViaWarp: true,
+			allowAuthenticateViaWarp: false,
 			enableBindingCookie: true,
 			httpOnlyCookieAttribute: true,
-			pathCookieAttribute: true,
+			pathCookieAttribute: false,
 			policies: [buildAdminAccessPolicy(args.adminEmail, devicePostureRule.id)]
 		},
 		{ dependsOn: devicePostureRule }
