@@ -6,6 +6,7 @@ export const DEFAULT_ADMIN_ACCESS_SESSION_DURATION = '12h';
 
 const ADMIN_ACCESS_APPLICATION_NAME = 'Perseus Admin';
 const ADMIN_ACCESS_POLICY_NAME = 'Allow configured admin on trusted device';
+const URL_SCHEME_PATTERN = /^[a-z][a-z0-9+.-]*:\/\//i;
 
 type AdminAccessDestination = cloudflare.types.input.ZeroTrustAccessApplicationDestination;
 type AdminAccessApplicationPolicy = cloudflare.types.input.ZeroTrustAccessApplicationPolicy;
@@ -74,7 +75,11 @@ export function normalizeAdminAccessHostname(rawValue: string): string {
 		throw new Error('adminAccessHostname must not be empty');
 	}
 
-	const valueWithScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+	const valueWithScheme = URL_SCHEME_PATTERN.test(trimmed) ? trimmed : `https://${trimmed}`;
+	if (hasExplicitAuthorityPort(valueWithScheme)) {
+		throw new Error('adminAccessHostname must not include a port');
+	}
+
 	const url = new URL(valueWithScheme);
 
 	if (!url.hostname) {
@@ -86,6 +91,19 @@ export function normalizeAdminAccessHostname(rawValue: string): string {
 	}
 
 	return url.host;
+}
+
+function hasExplicitAuthorityPort(valueWithScheme: string): boolean {
+	const authority = URL_SCHEME_PATTERN.exec(valueWithScheme)
+		? valueWithScheme.slice(valueWithScheme.indexOf('//') + 2).split(/[/?#]/, 1)[0]
+		: '';
+	const hostAuthority = authority.slice(authority.lastIndexOf('@') + 1);
+
+	if (hostAuthority.startsWith('[')) {
+		return /^\[[^\]]+\]:\d+$/.test(hostAuthority);
+	}
+
+	return /:\d+$/.test(hostAuthority);
 }
 
 export function buildAdminAccessDestinations(hostname: string): AdminAccessDestination[] {

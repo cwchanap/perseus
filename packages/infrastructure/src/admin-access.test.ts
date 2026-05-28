@@ -66,6 +66,30 @@ describe('normalizeAdminAccessHostname', () => {
 		);
 	});
 
+	it('rejects an explicit default HTTPS port', () => {
+		expect(() => normalizeAdminAccessHostname('https://perseus.cwchanap.dev:443')).toThrow(
+			/adminAccessHostname must not include a port/
+		);
+	});
+
+	it('rejects an explicit default HTTP port', () => {
+		expect(() => normalizeAdminAccessHostname('http://perseus.cwchanap.dev:80')).toThrow(
+			/adminAccessHostname must not include a port/
+		);
+	});
+
+	it('rejects an explicit port on a bare hostname', () => {
+		expect(() => normalizeAdminAccessHostname('perseus.cwchanap.dev:443')).toThrow(
+			/adminAccessHostname must not include a port/
+		);
+	});
+
+	it('does not treat path or query colons as ports', () => {
+		expect(normalizeAdminAccessHostname('https://perseus.cwchanap.dev/admin:443?next=:80')).toBe(
+			'perseus.cwchanap.dev'
+		);
+	});
+
 	it('rejects a blank hostname', () => {
 		expect(() => normalizeAdminAccessHostname('   ')).toThrow(
 			/adminAccessHostname must not be empty/
