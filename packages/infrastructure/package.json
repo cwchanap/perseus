@@ -10,7 +10,11 @@
 		"pulumi:preview": "pulumi preview",
 		"pulumi:up": "pulumi up --yes",
 		"pulumi:destroy": "pulumi destroy",
-		"pulumi:refresh": "pulumi refresh"
+		"pulumi:refresh": "pulumi refresh",
+		"check": "tsc --noEmit",
+		"test": "vitest run",
+		"test:unit": "vitest run",
+		"test:watch": "vitest"
 	},
 	"dependencies": {
 		"@pulumi/pulumi": "^3.144.0",
@@ -18,6 +22,7 @@
 	},
 	"devDependencies": {
 		"@types/node": "^22.10.0",
-		"typescript": "^5.9.0"
+		"typescript": "^5.9.0",
+		"vitest": "^4.0.18"
 	}
 }
