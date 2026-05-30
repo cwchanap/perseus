@@ -102,7 +102,7 @@ jobs:
               value: ${{ secrets.ADMIN_ACCESS_EMAIL }}
               secret: true
             adminDeviceSerials:
-              value: "${{ secrets.ADMIN_DEVICE_SERIALS }}"
+              value: '${{ secrets.ADMIN_DEVICE_SERIALS }}'
               secret: true
             jwtSecret:
               value: ${{ secrets.JWT_SECRET }}
@@ -173,7 +173,7 @@ jobs:
               value: ${{ secrets.ADMIN_ACCESS_EMAIL }}
               secret: true
             adminDeviceSerials:
-              value: "${{ secrets.ADMIN_DEVICE_SERIALS }}"
+              value: '${{ secrets.ADMIN_DEVICE_SERIALS }}'
               secret: true
             jwtSecret:
               value: ${{ secrets.JWT_SECRET }}
