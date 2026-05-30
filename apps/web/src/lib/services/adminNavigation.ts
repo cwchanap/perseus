@@ -34,7 +34,9 @@ export function isClientRoutedAdminPath(
 }
 
 export function buildAdminDocumentHref(url: AdminNavigationUrl): string {
-	return `${base}${url.pathname}${url.search ?? ''}${url.hash ?? ''}`;
+	const pathname =
+		base && url.pathname.startsWith(base + '/') ? url.pathname : `${base}${url.pathname}`;
+	return `${pathname}${url.search ?? ''}${url.hash ?? ''}`;
 }
 
 export function forceAdminDocumentNavigation(url: AdminNavigationUrl): void {
