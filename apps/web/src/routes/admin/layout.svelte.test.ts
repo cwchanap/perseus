@@ -5,6 +5,10 @@ import { createRawSnippet } from 'svelte';
 import AdminLayout from './+layout.svelte';
 import { checkSession } from '$lib/services/api';
 import { goto } from '$app/navigation';
+import {
+	forceAdminDocumentNavigation,
+	isClientRoutedAdminPath
+} from '$lib/services/adminNavigation';
 
 // Hoisted mutable page store so individual tests can set the URL
 const mockPage = vi.hoisted(() => {
@@ -40,12 +44,22 @@ vi.mock('$app/navigation', () => ({
 }));
 
 vi.mock('$app/paths', () => ({
+	base: '',
 	resolve: (p: string) => p
 }));
 
 vi.mock('$lib/services/api', () => ({
 	checkSession: vi.fn()
 }));
+
+vi.mock('$lib/services/adminNavigation', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('$lib/services/adminNavigation')>();
+	return {
+		...actual,
+		forceAdminDocumentNavigation: vi.fn(),
+		isClientRoutedAdminPath: vi.fn(() => false)
+	};
+});
 
 function makeChildren(text = 'child-content') {
 	return createRawSnippet(() => ({
@@ -57,6 +71,7 @@ function makeChildren(text = 'child-content') {
 describe('Admin Layout', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		vi.mocked(isClientRoutedAdminPath).mockReturnValue(false);
 		mockPage.set({ url: { pathname: '/admin' }, status: 200, error: null });
 	});
 
@@ -83,6 +98,20 @@ describe('Admin Layout', () => {
 		render(AdminLayout, { children: makeChildren() });
 
 		await expect.element(page.getByTestId('child-content')).toBeVisible();
+	});
+
+	it('forces a document navigation when the admin route was entered client-side', async () => {
+		vi.mocked(isClientRoutedAdminPath).mockReturnValue(true);
+		vi.mocked(checkSession).mockResolvedValue(true);
+
+		render(AdminLayout, { children: makeChildren() });
+
+		await vi.waitFor(() => {
+			expect(forceAdminDocumentNavigation).toHaveBeenCalledWith(
+				expect.objectContaining({ pathname: '/admin' })
+			);
+		});
+		expect(checkSession).not.toHaveBeenCalled();
 	});
 
 	it('redirects to /admin/login when session check returns false', async () => {
