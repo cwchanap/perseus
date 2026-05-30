@@ -55,8 +55,8 @@ describe('normalizeAdminAccessHostname', () => {
 		expect(normalizeAdminAccessHostname('perseus.cwchanap.dev')).toBe('perseus.cwchanap.dev');
 	});
 
-	it('extracts host from an HTTPS URL', () => {
-		expect(normalizeAdminAccessHostname('https://perseus.cwchanap.dev/login')).toBe(
+	it('extracts host from an HTTPS URL without path', () => {
+		expect(normalizeAdminAccessHostname('https://perseus.cwchanap.dev')).toBe(
 			'perseus.cwchanap.dev'
 		);
 	});
@@ -85,9 +85,27 @@ describe('normalizeAdminAccessHostname', () => {
 		);
 	});
 
-	it('does not treat path or query colons as ports', () => {
-		expect(normalizeAdminAccessHostname('https://perseus.cwchanap.dev/admin:443?next=:80')).toBe(
-			'perseus.cwchanap.dev'
+	it('rejects a URL with a path', () => {
+		expect(() => normalizeAdminAccessHostname('https://perseus.cwchanap.dev/login')).toThrow(
+			/adminAccessHostname must not include a path/
+		);
+	});
+
+	it('rejects a URL with a query string', () => {
+		expect(() => normalizeAdminAccessHostname('perseus.cwchanap.dev?foo=bar')).toThrow(
+			/adminAccessHostname must not include a query string/
+		);
+	});
+
+	it('rejects a URL with a fragment', () => {
+		expect(() => normalizeAdminAccessHostname('perseus.cwchanap.dev#section')).toThrow(
+			/adminAccessHostname must not include a fragment/
+		);
+	});
+
+	it('rejects a URL with userinfo', () => {
+		expect(() => normalizeAdminAccessHostname('https://user:pass@perseus.cwchanap.dev')).toThrow(
+			/adminAccessHostname must not include userinfo/
 		);
 	});
 

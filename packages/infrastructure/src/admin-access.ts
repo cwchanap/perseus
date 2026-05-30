@@ -91,7 +91,23 @@ export function normalizeAdminAccessHostname(rawValue: string): string {
 		throw new Error('adminAccessHostname must not include a port');
 	}
 
-	return url.host;
+	if (url.username || url.password) {
+		throw new Error('adminAccessHostname must not include userinfo');
+	}
+
+	if (url.pathname !== '/') {
+		throw new Error('adminAccessHostname must not include a path');
+	}
+
+	if (url.search) {
+		throw new Error('adminAccessHostname must not include a query string');
+	}
+
+	if (url.hash) {
+		throw new Error('adminAccessHostname must not include a fragment');
+	}
+
+	return url.hostname;
 }
 
 function hasExplicitAuthorityPort(valueWithScheme: string): boolean {
