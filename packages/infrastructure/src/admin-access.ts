@@ -111,7 +111,7 @@ export function buildAdminAccessDestinations(hostname: string): AdminAccessDesti
 	const normalizedHostname = normalizeAdminAccessHostname(hostname);
 	return ADMIN_ACCESS_PATHS.map((path) => ({
 		type: 'public',
-		uri: `https://${normalizedHostname}${path}`
+		uri: `${normalizedHostname}${path}`
 	}));
 }
 
