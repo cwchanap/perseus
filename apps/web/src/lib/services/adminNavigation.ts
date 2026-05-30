@@ -6,8 +6,16 @@ interface AdminNavigationUrl {
 	hash?: string;
 }
 
+export function stripBase(pathname: string): string {
+	if (base && pathname.startsWith(base)) {
+		return pathname.slice(base.length) || '/';
+	}
+	return pathname;
+}
+
 function isAdminPath(pathname: string): boolean {
-	return pathname === '/admin' || pathname.startsWith('/admin/');
+	const stripped = stripBase(pathname);
+	return stripped === '/admin' || stripped.startsWith('/admin/');
 }
 
 export function getInitialDocumentPathname(): string | null {

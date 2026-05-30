@@ -6,7 +6,8 @@
 	import { resolve } from '$app/paths';
 	import {
 		forceAdminDocumentNavigation,
-		isClientRoutedAdminPath
+		isClientRoutedAdminPath,
+		stripBase
 	} from '$lib/services/adminNavigation';
 
 	let { children } = $props();
@@ -19,7 +20,7 @@
 	let sessionCheckInFlight = false;
 	let sessionCheckQueued = false;
 
-	const isLoginPage = $derived($page.url.pathname === '/admin/login');
+	const isLoginPage = $derived(stripBase($page.url.pathname) === '/admin/login');
 
 	function redirectToLogin() {
 		if (redirecting) return;

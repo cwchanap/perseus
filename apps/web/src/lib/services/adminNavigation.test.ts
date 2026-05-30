@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import {
 	buildAdminDocumentHref,
 	getInitialDocumentPathname,
-	isClientRoutedAdminPath
+	isClientRoutedAdminPath,
+	stripBase
 } from './adminNavigation';
 
 describe('admin navigation guard', () => {
@@ -55,5 +56,13 @@ describe('admin navigation guard', () => {
 		expect(getInitialDocumentPathname()).toBeNull();
 
 		spy.mockRestore();
+	});
+
+	describe('stripBase (no base configured)', () => {
+		it('returns pathname unchanged when no base is configured', () => {
+			expect(stripBase('/admin')).toBe('/admin');
+			expect(stripBase('/admin/login')).toBe('/admin/login');
+			expect(stripBase('/')).toBe('/');
+		});
 	});
 });
