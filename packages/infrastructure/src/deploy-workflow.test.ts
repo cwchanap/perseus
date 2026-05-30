@@ -16,6 +16,6 @@ describe('deploy-infrastructure workflow', () => {
 		expect(countOccurrences(workflow, 'secret: true')).toBeGreaterThanOrEqual(10);
 
 		expect(countOccurrences(workflow, 'adminDeviceSerials:')).toBe(2);
-		expect(countOccurrences(workflow, 'value: ${{ secrets.ADMIN_DEVICE_SERIALS }}')).toBe(2);
+		expect(countOccurrences(workflow, 'value: "${{ secrets.ADMIN_DEVICE_SERIALS }}"')).toBe(2);
 	});
 });
