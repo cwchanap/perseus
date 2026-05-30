@@ -280,6 +280,7 @@ uppercase"
 				</p>
 				<a
 					href={resolve('/admin')}
+					data-sveltekit-reload
 					class="relative mt-2 overflow-hidden border border-(--accent) px-7 py-2.5
 text-[0.65rem] font-(--font-display) font-bold tracking-[0.2em]
 text-(--accent) uppercase transition-all duration-200

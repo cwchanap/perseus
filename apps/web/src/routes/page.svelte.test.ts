@@ -90,6 +90,14 @@ describe('Gallery Page', () => {
 		await expect.element(page.getByTestId('empty-state')).toBeVisible();
 	});
 
+	it('uses a document navigation for the admin portal link', async () => {
+		render(GalleryPage);
+
+		const adminLink = page.getByRole('link', { name: /admin portal/i });
+		await expect.element(adminLink).toHaveAttribute('href', '/admin');
+		await expect.element(adminLink).toHaveAttribute('data-sveltekit-reload');
+	});
+
 	it('shows no-results state when total is 0 and query is active', async () => {
 		mockedFetchPuzzles.mockResolvedValue({ puzzles: [], total: 0, offset: 0, limit: 20 });
 		render(GalleryPage);

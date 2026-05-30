@@ -4,6 +4,10 @@
 	import { goto } from '$app/navigation';
 	import { checkSession } from '$lib/services/api';
 	import { resolve } from '$app/paths';
+	import {
+		forceAdminDocumentNavigation,
+		isClientRoutedAdminPath
+	} from '$lib/services/adminNavigation';
 
 	let { children } = $props();
 
@@ -62,6 +66,12 @@
 
 	onMount(async () => {
 		currentPath = $page.url.pathname;
+
+		if (isClientRoutedAdminPath(currentPath)) {
+			redirecting = true;
+			forceAdminDocumentNavigation($page.url);
+			return;
+		}
 
 		// Skip auth check on login page
 		if (isLoginPage) {
