@@ -102,10 +102,10 @@ describe('buildAdminAccessDestinations', () => {
 	it('builds exactly the admin UI and admin API destinations', () => {
 		expect(ADMIN_ACCESS_PATHS).toEqual(['/admin', '/admin/*', '/api/admin', '/api/admin/*']);
 		expect(buildAdminAccessDestinations('perseus.cwchanap.dev')).toEqual([
-			{ type: 'public', uri: 'https://perseus.cwchanap.dev/admin' },
-			{ type: 'public', uri: 'https://perseus.cwchanap.dev/admin/*' },
-			{ type: 'public', uri: 'https://perseus.cwchanap.dev/api/admin' },
-			{ type: 'public', uri: 'https://perseus.cwchanap.dev/api/admin/*' }
+			{ type: 'public', uri: 'perseus.cwchanap.dev/admin' },
+			{ type: 'public', uri: 'perseus.cwchanap.dev/admin/*' },
+			{ type: 'public', uri: 'perseus.cwchanap.dev/api/admin' },
+			{ type: 'public', uri: 'perseus.cwchanap.dev/api/admin/*' }
 		]);
 	});
 });
@@ -183,10 +183,10 @@ describe('buildAdminAccessApplicationArgs', () => {
 			type: 'self_hosted',
 			domain: 'perseus.cwchanap.dev/admin',
 			destinations: [
-				{ type: 'public', uri: 'https://perseus.cwchanap.dev/admin' },
-				{ type: 'public', uri: 'https://perseus.cwchanap.dev/admin/*' },
-				{ type: 'public', uri: 'https://perseus.cwchanap.dev/api/admin' },
-				{ type: 'public', uri: 'https://perseus.cwchanap.dev/api/admin/*' }
+				{ type: 'public', uri: 'perseus.cwchanap.dev/admin' },
+				{ type: 'public', uri: 'perseus.cwchanap.dev/admin/*' },
+				{ type: 'public', uri: 'perseus.cwchanap.dev/api/admin' },
+				{ type: 'public', uri: 'perseus.cwchanap.dev/api/admin/*' }
 			],
 			sessionDuration: DEFAULT_ADMIN_ACCESS_SESSION_DURATION,
 			appLauncherVisible: false,
@@ -228,10 +228,10 @@ describe('buildAdminAccessApplicationArgs', () => {
 
 		expect(args.domain).toBe('perseus.cwchanap.dev/admin');
 		expect(args.destinations).toEqual([
-			{ type: 'public', uri: 'https://perseus.cwchanap.dev/admin' },
-			{ type: 'public', uri: 'https://perseus.cwchanap.dev/admin/*' },
-			{ type: 'public', uri: 'https://perseus.cwchanap.dev/api/admin' },
-			{ type: 'public', uri: 'https://perseus.cwchanap.dev/api/admin/*' }
+			{ type: 'public', uri: 'perseus.cwchanap.dev/admin' },
+			{ type: 'public', uri: 'perseus.cwchanap.dev/admin/*' },
+			{ type: 'public', uri: 'perseus.cwchanap.dev/api/admin' },
+			{ type: 'public', uri: 'perseus.cwchanap.dev/api/admin/*' }
 		]);
 	});
 });
