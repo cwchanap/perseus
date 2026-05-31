@@ -47,6 +47,9 @@ export function buildAdminDocumentHref(url: AdminNavigationUrl): string {
 	return `${pathname}${url.search ?? ''}${url.hash ?? ''}`;
 }
 
-export function forceAdminDocumentNavigation(url: AdminNavigationUrl): void {
-	window.location.assign(buildAdminDocumentHref(url));
+export function forceAdminDocumentNavigation(
+	url: AdminNavigationUrl,
+	assign: (href: string) => void = (href) => window.location.assign(href)
+): void {
+	assign(buildAdminDocumentHref(url));
 }

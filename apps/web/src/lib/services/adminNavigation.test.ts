@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
 	buildAdminDocumentHref,
+	forceAdminDocumentNavigation,
 	getInitialDocumentPathname,
 	isClientRoutedAdminPath,
 	stripBase
@@ -37,6 +38,10 @@ describe('admin navigation guard', () => {
 		).toBe('/admin?next=%2Fadmin%2Fsettings#panel');
 	});
 
+	it('builds a document navigation href without optional parts', () => {
+		expect(buildAdminDocumentHref({ pathname: '/admin' })).toBe('/admin');
+	});
+
 	it('reads the initial browser document pathname from the navigation entry', () => {
 		const navigationEntry = {
 			name: 'https://perseus.cwchanap.dev/gallery?filter=all'
@@ -55,6 +60,28 @@ describe('admin navigation guard', () => {
 
 		expect(getInitialDocumentPathname()).toBeNull();
 
+		spy.mockRestore();
+	});
+
+	it('forces a full document navigation for admin routes', () => {
+		const assignMock = vi.fn();
+		forceAdminDocumentNavigation(
+			{ pathname: '/admin', search: '?next=1', hash: '#tab' },
+			assignMock
+		);
+		expect(assignMock).toHaveBeenCalledWith('/admin?next=1#tab');
+	});
+
+	it('returns null when performance entries are unavailable', () => {
+		const spy = vi.spyOn(window.performance, 'getEntriesByType').mockReturnValue([]);
+		expect(getInitialDocumentPathname()).toBeNull();
+		spy.mockRestore();
+	});
+
+	it('returns null when performance API is absent', () => {
+		// @ts-expect-error testing undefined return from getEntriesByType
+		const spy = vi.spyOn(window.performance, 'getEntriesByType').mockReturnValue(undefined);
+		expect(getInitialDocumentPathname()).toBeNull();
 		spy.mockRestore();
 	});
 
