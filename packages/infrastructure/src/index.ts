@@ -2,10 +2,7 @@ import * as pulumi from '@pulumi/pulumi';
 import { createR2Bucket, createKVNamespace } from './resources.js';
 import { createWorkflowsWorker, createApiWorker } from './workers.js';
 import { accountId, naming, paths } from './config.js';
-import {
-	DEFAULT_ADMIN_ACCESS_SESSION_DURATION,
-	createAdminAccessResources
-} from './admin-access.js';
+import { createAdminAccessResources } from './admin-access.js';
 
 const config = new pulumi.Config();
 const r2Bucket = createR2Bucket();
@@ -74,10 +71,12 @@ const apiWorker = createApiWorker(
 
 const adminAccess = createAdminAccessResources({
 	accountId,
+	// AUTH_REDIRECT_BASE_URL is used both as the OAuth redirect origin (apiBindings above)
+	// and as the Access application hostname. Must be a bare origin (no path/port/query).
 	hostname: config.require('AUTH_REDIRECT_BASE_URL'),
 	adminEmail: config.requireSecret('adminAccessEmail'),
 	deviceSerialsJson: config.requireSecret('adminDeviceSerials'),
-	sessionDuration: config.get('adminAccessSessionDuration') ?? DEFAULT_ADMIN_ACCESS_SESSION_DURATION
+	sessionDuration: config.get('adminAccessSessionDuration')
 });
 
 export const r2BucketName = r2Bucket.name;

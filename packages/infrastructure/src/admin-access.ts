@@ -8,6 +8,13 @@ const ADMIN_ACCESS_APPLICATION_NAME = 'Perseus Admin';
 const ADMIN_ACCESS_POLICY_NAME = 'Allow configured admin on trusted device';
 const ADMIN_ACCESS_EMAIL_PATTERN = /^[^\s@,]+@[^\s@,]+\.[^\s@,]+$/;
 const URL_SCHEME_PATTERN = /^[a-z][a-z0-9+.-]*:\/\//i;
+const ADMIN_ACCESS_APP_FLAGS = {
+	appLauncherVisible: false,
+	allowAuthenticateViaWarp: false,
+	enableBindingCookie: true,
+	httpOnlyCookieAttribute: true,
+	pathCookieAttribute: false
+} as const;
 
 type AdminAccessDestination = cloudflare.types.input.ZeroTrustAccessApplicationDestination;
 type AdminAccessApplicationPolicy = cloudflare.types.input.ZeroTrustAccessApplicationPolicy;
@@ -60,7 +67,7 @@ export function parseAdminDeviceSerials(rawValue: string): string[] {
 		if (!trimmed) {
 			throw new Error('adminDeviceSerials entries must be non-empty strings');
 		}
-		return trimmed;
+		return trimmed.toUpperCase();
 	});
 
 	if (new Set(serials).size !== serials.length) {
@@ -111,9 +118,8 @@ export function normalizeAdminAccessHostname(rawValue: string): string {
 }
 
 function hasExplicitAuthorityPort(valueWithScheme: string): boolean {
-	const authority = URL_SCHEME_PATTERN.exec(valueWithScheme)
-		? valueWithScheme.slice(valueWithScheme.indexOf('//') + 2).split(/[/?#]/, 1)[0]
-		: '';
+	// Caller guarantees valueWithScheme always has a scheme (line 79 adds https:// if missing)
+	const authority = valueWithScheme.slice(valueWithScheme.indexOf('//') + 2).split(/[/?#]/, 1)[0];
 	const hostAuthority = authority.slice(authority.lastIndexOf('@') + 1);
 
 	if (hostAuthority.startsWith('[')) {
@@ -184,11 +190,7 @@ export function buildAdminAccessApplicationArgs(
 		domain: `${hostname}/admin`,
 		destinations: buildAdminAccessDestinations(hostname),
 		sessionDuration: args.sessionDuration ?? DEFAULT_ADMIN_ACCESS_SESSION_DURATION,
-		appLauncherVisible: false,
-		allowAuthenticateViaWarp: false,
-		enableBindingCookie: true,
-		httpOnlyCookieAttribute: true,
-		pathCookieAttribute: false,
+		...ADMIN_ACCESS_APP_FLAGS,
 		policies: [buildAdminAccessPolicy(args.adminEmail, args.postureRuleId)]
 	};
 }
@@ -229,14 +231,10 @@ export function createAdminAccessResources(
 			accountId: args.accountId,
 			name: ADMIN_ACCESS_APPLICATION_NAME,
 			type: 'self_hosted',
-			domain: hostname.apply((value) => `${value}/admin`),
+			domain: hostname.apply((h) => `${h}/admin`),
 			destinations: hostname.apply(buildAdminAccessDestinations),
 			sessionDuration: args.sessionDuration ?? DEFAULT_ADMIN_ACCESS_SESSION_DURATION,
-			appLauncherVisible: false,
-			allowAuthenticateViaWarp: false,
-			enableBindingCookie: true,
-			httpOnlyCookieAttribute: true,
-			pathCookieAttribute: false,
+			...ADMIN_ACCESS_APP_FLAGS,
 			policies: [buildAdminAccessPolicy(args.adminEmail, devicePostureRule.id)]
 		},
 		{ dependsOn: devicePostureRule }

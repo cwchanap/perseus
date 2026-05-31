@@ -32,6 +32,12 @@ export function getInitialDocumentPathname(): string | null {
 	}
 }
 
+// Best-effort UX guard to trigger Cloudflare Access edge challenge on SPA navigations
+// into /admin. This is NOT the security boundary — the Access policy on /admin* and
+// /api/admin* edge requests (plus app-level auth in auth.worker.ts) enforce access.
+// If performance.getEntriesByType('navigation') is unavailable, this returns false and
+// the SPA navigation proceeds without a reload; the edge will still challenge any
+// subsequent API or document request.
 export function isClientRoutedAdminPath(
 	currentPathname: string,
 	initialDocumentPathname = getInitialDocumentPathname()
@@ -43,7 +49,9 @@ export function isClientRoutedAdminPath(
 
 export function buildAdminDocumentHref(url: AdminNavigationUrl): string {
 	const pathname =
-		base && url.pathname.startsWith(base + '/') ? url.pathname : `${base}${url.pathname}`;
+		base && (url.pathname.startsWith(base + '/') || url.pathname === base)
+			? url.pathname
+			: `${base}${url.pathname}`;
 	return `${pathname}${url.search ?? ''}${url.hash ?? ''}`;
 }
 

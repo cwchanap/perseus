@@ -1,8 +1,10 @@
 import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-const workflowPath = resolve(process.cwd(), '../../.github/workflows/deploy-infrastructure.yml');
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const workflowPath = resolve(__dirname, '../../../.github/workflows/deploy-infrastructure.yml');
 const workflow = readFileSync(workflowPath, 'utf8');
 
 function countOccurrences(haystack: string, needle: string): number {
