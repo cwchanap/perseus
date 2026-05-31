@@ -64,5 +64,9 @@ describe('admin navigation with non-empty base path', () => {
 				})
 			).toBe('/myapp/admin?next=%2Fadmin%2Fsettings#panel');
 		});
+
+		it('does not double-prefix when pathname equals base exactly', () => {
+			expect(buildAdminDocumentHref({ pathname: '/myapp' })).toBe('/myapp');
+		});
 	});
 });

@@ -48,6 +48,10 @@ describe('parseAdminDeviceSerials', () => {
 			/adminDeviceSerials must not contain duplicate serial numbers/
 		);
 	});
+
+	it('normalizes serials to uppercase for consistent matching with WARP', () => {
+		expect(parseAdminDeviceSerials('["c02abc123456"]')).toEqual(['C02ABC123456']);
+	});
 });
 
 describe('normalizeAdminAccessHostname', () => {
@@ -112,6 +116,18 @@ describe('normalizeAdminAccessHostname', () => {
 	it('rejects a blank hostname', () => {
 		expect(() => normalizeAdminAccessHostname('   ')).toThrow(
 			/adminAccessHostname must not be empty/
+		);
+	});
+
+	it('rejects an IPv6 address with an explicit port', () => {
+		expect(() => normalizeAdminAccessHostname('https://[::1]:8443')).toThrow(
+			/adminAccessHostname must not include a port/
+		);
+	});
+
+	it('rejects an IPv6 address with explicit default port', () => {
+		expect(() => normalizeAdminAccessHostname('https://[::1]:443')).toThrow(
+			/adminAccessHostname must not include a port/
 		);
 	});
 });
