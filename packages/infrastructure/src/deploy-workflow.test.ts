@@ -20,10 +20,10 @@ describe('deploy-infrastructure workflow', () => {
 		expect(adminEmailSecretMatches).toHaveLength(2);
 
 		expect(countOccurrences(workflow, 'adminDeviceSerials:')).toBe(2);
-		expect(countOccurrences(workflow, 'value: "${{ secrets.ADMIN_DEVICE_SERIALS }}"')).toBe(2);
+		expect(countOccurrences(workflow, "value: '${{ secrets.ADMIN_DEVICE_SERIALS }}'")).toBe(2);
 		const deviceSerialSecretMatches =
 			workflow.match(
-				/adminDeviceSerials:\s*\n\s*value:\s*"\$\{\{\s*secrets\.ADMIN_DEVICE_SERIALS\s*\}\}"\s*\n\s*secret:\s*true/g
+				/adminDeviceSerials:\s*\n\s*value:\s*'\$\{\{\s*secrets\.ADMIN_DEVICE_SERIALS\s*\}\}'\s*\n\s*secret:\s*true/g
 			) ?? [];
 		expect(deviceSerialSecretMatches).toHaveLength(2);
 	});
