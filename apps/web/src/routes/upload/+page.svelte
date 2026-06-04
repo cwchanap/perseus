@@ -84,6 +84,7 @@
 				formError = 'Failed to load image preview';
 			};
 			reader.onabort = () => {
+				console.warn('Image preview read was aborted', reader.error);
 				clearSelectedImage();
 				formError = 'Image preview was aborted';
 			};
@@ -158,8 +159,7 @@
 				category || undefined,
 				aspectRatio
 			);
-			successMessage =
-				'Puzzle upload started! It will appear in the gallery once processing begins.';
+			successMessage = 'Puzzle uploaded. It will appear in the gallery shortly.';
 			clearForm();
 
 			if (successTimeout !== null) clearTimeout(successTimeout);
@@ -301,17 +301,20 @@ focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
 
 					<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
 						<div class="flex flex-col gap-1.5">
-							<span
-								class="text-[0.55rem] font-(--font-display) font-semibold tracking-[0.2em] text-(--text-2)"
+							<label
+								for="aspect-ratio"
+								class="text-[0.55rem] font-(--font-display) font-semibold tracking-[0.2em]
+								text-(--text-2)"
 							>
 								ASPECT RATIO
-							</span>
+							</label>
 							<select
+								id="aspect-ratio"
 								value={aspectRatio}
 								onchange={handleAspectChange}
 								disabled={uploading}
 								class="w-full appearance-none border border-(--border) bg-(--bg-0) px-3.5 py-2.5
-text-[0.8rem] font-(--font-mono) text-(--text-0)"
+								text-[0.8rem] font-(--font-mono) text-(--text-0)"
 							>
 								{#each Object.entries(ASPECT_LABELS) as [value, label] (value)}
 									<option {value}>{label}</option>
@@ -320,17 +323,20 @@ text-[0.8rem] font-(--font-mono) text-(--text-0)"
 						</div>
 
 						<div class="flex flex-col gap-1.5">
-							<span
-								class="text-[0.55rem] font-(--font-display) font-semibold tracking-[0.2em] text-(--text-2)"
+							<label
+								for="piece-count"
+								class="text-[0.55rem] font-(--font-display) font-semibold tracking-[0.2em]
+								text-(--text-2)"
 							>
 								PIECE COUNT
-							</span>
+							</label>
 							<select
+								id="piece-count"
 								value={pieceCount}
 								onchange={handlePieceCountChange}
 								disabled={uploading}
 								class="w-full appearance-none border border-(--border) bg-(--bg-0) px-3.5 py-2.5
-text-[0.8rem] font-(--font-mono) text-(--text-0)"
+								text-[0.8rem] font-(--font-mono) text-(--text-0)"
 							>
 								{#each allowedPieceCounts as count (count)}
 									<option value={count}>{count} pieces</option>

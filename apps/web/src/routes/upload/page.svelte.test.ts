@@ -153,7 +153,7 @@ describe('Upload Page', () => {
 
 		render(UploadPage);
 
-		const [aspectSelect] = Array.from(document.querySelectorAll('select')) as HTMLSelectElement[];
+		const aspectSelect = page.getByLabelText(/aspect ratio/i).element() as HTMLSelectElement;
 		aspectSelect.value = 'bad-aspect';
 		aspectSelect.dispatchEvent(new Event('change', { bubbles: true }));
 
@@ -176,7 +176,7 @@ describe('Upload Page', () => {
 		setAuthenticatedPlayer();
 		render(UploadPage);
 
-		const [, pieceSelect] = Array.from(document.querySelectorAll('select')) as HTMLSelectElement[];
+		const pieceSelect = page.getByLabelText(/piece count/i).element() as HTMLSelectElement;
 		pieceSelect.value = '0';
 		pieceSelect.dispatchEvent(new Event('change', { bubbles: true }));
 
@@ -209,7 +209,7 @@ describe('Upload Page', () => {
 				'1:1'
 			);
 		});
-		await expect.element(page.getByText(/Puzzle upload started/)).toBeVisible();
+		await expect.element(page.getByText(/Puzzle uploaded/)).toBeVisible();
 	});
 
 	it('submits selected aspect ratio, piece count, and category', async () => {
@@ -220,9 +220,8 @@ describe('Upload Page', () => {
 
 		render(UploadPage);
 
-		const [aspectSelect, , categorySelect] = Array.from(
-			document.querySelectorAll('select')
-		) as HTMLSelectElement[];
+		const aspectSelect = page.getByLabelText(/aspect ratio/i).element() as HTMLSelectElement;
+		const categorySelect = page.getByLabelText(/category/i).element() as HTMLSelectElement;
 		aspectSelect.value = '3:4';
 		aspectSelect.dispatchEvent(new Event('change', { bubbles: true }));
 		categorySelect.value = 'Art';
@@ -359,7 +358,7 @@ describe('Upload Page', () => {
 				'1:1'
 			);
 		});
-		await expect.element(page.getByText(/Puzzle upload started/)).toBeVisible();
+		await expect.element(page.getByText(/Puzzle uploaded/)).toBeVisible();
 
 		// Trigger a second upload while the success message is still visible
 		vi.mocked(createPlayerPuzzle).mockClear();
@@ -394,11 +393,11 @@ describe('Upload Page', () => {
 		await vi.waitFor(() => {
 			expect(createPlayerPuzzle).toHaveBeenCalled();
 		});
-		await expect.element(page.getByText(/Puzzle upload started/)).toBeVisible();
+		await expect.element(page.getByText(/Puzzle uploaded/)).toBeVisible();
 
 		await vi.advanceTimersByTimeAsync(3000);
 
-		await expect.poll(() => page.getByText(/Puzzle upload started/).query()).toBeNull();
+		await expect.poll(() => page.getByText(/Puzzle uploaded/).query()).toBeNull();
 		vi.useRealTimers();
 	});
 });

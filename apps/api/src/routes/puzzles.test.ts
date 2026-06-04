@@ -198,6 +198,240 @@ describe('POST / - Upload puzzle for player', () => {
 	});
 });
 
+// ─── POST / - Validation rejections ─────────────────────────────────────────
+
+describe('POST / - Validation rejections', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		vi.mocked(playerAuth.getPlayerSession).mockResolvedValue({
+			sessionHash: 'session-hash',
+			user: {
+				id: 'player-1',
+				email: 'player@example.com',
+				createdAt: 1000,
+				lastLoginAt: 2000
+			},
+			createdAt: 2000,
+			expiresAt: Date.now() + 1000
+		});
+		(puzzleGenerator.isValidPieceCount as ReturnType<typeof vi.fn>).mockReturnValue(true);
+	});
+
+	function buildForm(overrides: Record<string, any> = {}): FormData {
+		const fd = new FormData();
+		fd.append('name', overrides.name ?? 'Player Puzzle');
+		fd.append('pieceCount', String(overrides.pieceCount ?? 48));
+		fd.append('aspectRatio', overrides.aspectRatio ?? '3:4');
+		if (overrides.category !== undefined) fd.append('category', overrides.category);
+		fd.append(
+			'image',
+			overrides.image ?? new Blob([PNG_HEADER], { type: 'image/png' }),
+			'test.png'
+		);
+		return fd;
+	}
+
+	async function post(fd: FormData): Promise<Response> {
+		return puzzles.fetch(
+			new Request('http://localhost/', {
+				method: 'POST',
+				headers: { Cookie: 'perseus_player_session=player-token' },
+				body: fd
+			})
+		);
+	}
+
+	it('rejects when name is missing', async () => {
+		const res = await post(buildForm({ name: '' }));
+		expect(res.status).toBe(400);
+		expect(((await res.json()) as any).message).toContain('Name is required');
+	});
+
+	it('rejects when name exceeds 255 characters', async () => {
+		const res = await post(buildForm({ name: 'x'.repeat(256) }));
+		expect(res.status).toBe(400);
+		expect(((await res.json()) as any).message).toContain('255 characters');
+	});
+
+	it('rejects when pieceCount is missing', async () => {
+		const fd = new FormData();
+		fd.append('name', 'No Pieces');
+		fd.append('aspectRatio', '3:4');
+		fd.append('image', new Blob([PNG_HEADER], { type: 'image/png' }), 'test.png');
+		const res = await post(fd);
+		expect(res.status).toBe(400);
+		expect(((await res.json()) as any).message).toContain('Piece count is required');
+	});
+
+	it('rejects when aspectRatio is invalid', async () => {
+		const res = await post(buildForm({ aspectRatio: '5:6' }));
+		expect(res.status).toBe(400);
+		expect(((await res.json()) as any).message).toContain('Invalid aspect ratio');
+	});
+
+	it('rejects when pieceCount is invalid for aspect ratio', async () => {
+		(puzzleGenerator.isValidPieceCount as ReturnType<typeof vi.fn>).mockReturnValue(false);
+		const res = await post(buildForm({ pieceCount: 50, aspectRatio: '1:1' }));
+		expect(res.status).toBe(400);
+		expect(((await res.json()) as any).message).toContain('Invalid piece count for 1:1');
+	});
+
+	it('rejects when image is missing', async () => {
+		const fd = new FormData();
+		fd.append('name', 'No Image');
+		fd.append('pieceCount', '48');
+		fd.append('aspectRatio', '3:4');
+		const res = await post(fd);
+		expect(res.status).toBe(400);
+		expect(((await res.json()) as any).message).toContain('Image file is required');
+	});
+
+	it('rejects when category is invalid', async () => {
+		const res = await post(buildForm({ category: 'Bogus' }));
+		expect(res.status).toBe(400);
+		expect(((await res.json()) as any).message).toContain('Invalid category');
+	});
+
+	it('rejects when file size exceeds 10MB', async () => {
+		const oversized = new Blob([new Uint8Array(10 * 1024 * 1024 + 1)], { type: 'image/png' });
+		const res = await post(buildForm({ image: oversized }));
+		expect(res.status).toBe(400);
+		expect(((await res.json()) as any).message).toContain('10MB');
+	});
+
+	it('rejects when magic bytes do not match any allowed type', async () => {
+		const textBlob = new Blob([new TextEncoder().encode('not an image')], {
+			type: 'image/png'
+		});
+		const res = await post(buildForm({ image: textBlob }));
+		expect(res.status).toBe(400);
+		expect(((await res.json()) as any).message).toContain('Invalid file type');
+	});
+
+	it('rejects when image aspect ratio does not match requested ratio', async () => {
+		// 4x4 PNG (1:1) requested as 3:4 — should reject
+		const squarePng = new Uint8Array([
+			0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
+			0x52, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x04, 0x08, 0x02, 0x00, 0x00, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0x00
+		]);
+		const res = await post(buildForm({ image: new Blob([squarePng], { type: 'image/png' }) }));
+		expect(res.status).toBe(400);
+		expect(((await res.json()) as any).message).toContain('aspect ratio');
+	});
+
+	it('returns 400 when form data cannot be parsed', async () => {
+		const res = await puzzles.fetch(
+			new Request('http://localhost/', {
+				method: 'POST',
+				headers: {
+					Cookie: 'perseus_player_session=player-token',
+					'Content-Type': 'application/json'
+				},
+				body: '{"name":"oops"}'
+			})
+		);
+		expect(res.status).toBe(400);
+		expect(((await res.json()) as any).message).toBe('Invalid form data');
+	});
+});
+
+// ─── POST / - Resource rollback ─────────────────────────────────────────────
+
+describe('POST / - Resource rollback', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		vi.mocked(playerAuth.getPlayerSession).mockResolvedValue({
+			sessionHash: 'session-hash',
+			user: {
+				id: 'player-1',
+				email: 'player@example.com',
+				createdAt: 1000,
+				lastLoginAt: 2000
+			},
+			createdAt: 2000,
+			expiresAt: Date.now() + 1000
+		});
+		(puzzleGenerator.isValidPieceCount as ReturnType<typeof vi.fn>).mockReturnValue(true);
+		vi.mocked(storage.createPuzzle).mockResolvedValue(true);
+		vi.mocked(storage.deletePuzzle).mockResolvedValue(true);
+	});
+
+	function buildForm(): FormData {
+		const fd = new FormData();
+		fd.append('name', 'Rollback Puzzle');
+		fd.append('pieceCount', '48');
+		fd.append('aspectRatio', '3:4');
+		fd.append('image', new Blob([PNG_HEADER], { type: 'image/png' }), 'test.png');
+		return fd;
+	}
+
+	async function post(fd: FormData): Promise<Response> {
+		return puzzles.fetch(
+			new Request('http://localhost/', {
+				method: 'POST',
+				headers: { Cookie: 'perseus_player_session=player-token' },
+				body: fd
+			})
+		);
+	}
+
+	it('returns 500 and cleans up when generatePuzzle throws', async () => {
+		vi.mocked(puzzleGenerator.generatePuzzle).mockRejectedValue(new Error('generator down'));
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const res = await post(buildForm());
+
+		expect(res.status).toBe(500);
+		expect(((await res.json()) as any).error).toBe('internal_error');
+		expect(storage.deletePuzzle).toHaveBeenCalled();
+		consoleSpy.mockRestore();
+	});
+
+	it('returns 500 and cleans up when storePuzzle returns false', async () => {
+		const generatedPuzzle = makePuzzle({ name: 'Rollback Puzzle' });
+		vi.mocked(puzzleGenerator.generatePuzzle).mockResolvedValue({
+			puzzle: generatedPuzzle,
+			pieces: generatedPuzzle.pieces
+		} as any);
+		vi.mocked(storage.createPuzzle).mockResolvedValue(false);
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const res = await post(buildForm());
+
+		expect(res.status).toBe(500);
+		expect(((await res.json()) as any).message).toBe('Failed to save puzzle metadata');
+		expect(storage.deletePuzzle).toHaveBeenCalled();
+		consoleSpy.mockRestore();
+	});
+
+	it('returns 500 and logs cleanup failure when deletePuzzle throws', async () => {
+		vi.mocked(puzzleGenerator.generatePuzzle).mockRejectedValue(new Error('generator down'));
+		vi.mocked(storage.deletePuzzle).mockRejectedValue(new Error('cleanup also failed'));
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const res = await post(buildForm());
+
+		expect(res.status).toBe(500);
+		expect(consoleSpy).toHaveBeenCalledWith(
+			'Failed to clean up puzzle directory after error:',
+			expect.any(Error)
+		);
+		consoleSpy.mockRestore();
+	});
+
+	it('returns 500 when writeFile fails on image persistence', async () => {
+		vi.mocked(fsPromises.writeFile).mockRejectedValue(new Error('disk full'));
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const res = await post(buildForm());
+
+		expect(res.status).toBe(500);
+		expect(((await res.json()) as any).error).toBe('internal_error');
+		consoleSpy.mockRestore();
+	});
+});
+
 // ─── GET / ────────────────────────────────────────────────────────────────────
 
 describe('GET / - List puzzles', () => {

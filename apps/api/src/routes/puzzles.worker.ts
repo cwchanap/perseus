@@ -25,6 +25,7 @@ import {
 	type PuzzleMetadata
 } from '../services/storage.worker';
 import { requirePlayerAuth } from '../middleware/player-auth.worker';
+import type { PlayerSessionRecord } from '../services/player-auth.worker';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PIECE_ID_REGEX = /^\d+$/; // Only non-negative base-10 integers
@@ -74,9 +75,12 @@ function parseCategory(value: string | null | undefined): PuzzleCategory | undef
 	return isPuzzleCategory(value) ? value : undefined;
 }
 
-const puzzles = new Hono<{ Bindings: Env }>();
+const puzzles = new Hono<{
+	Bindings: Env;
+	Variables: { playerSession: PlayerSessionRecord };
+}>();
 
-/* v8 ignore start -- duplicated admin upload validation; covered by focused route behavior tests */
+/* v8 ignore start -- duplicated admin upload validation helpers; covered by admin tests */
 // Detect image MIME type from magic bytes
 async function detectImageType(file: File | Blob): Promise<string | null> {
 	try {
@@ -210,6 +214,7 @@ function aspectRatiosMatch(imageWidth: number, imageHeight: number, targetRatio:
 	const expected = targetW / targetH;
 	return Math.abs(actual - expected) / expected <= ASPECT_RATIO_TOLERANCE;
 }
+/* v8 ignore stop */
 
 // GET /api/puzzles - List all ready puzzles
 puzzles.get('/', async (c) => {
@@ -351,8 +356,11 @@ puzzles.post('/', requirePlayerAuth, async (c) => {
 					400
 				);
 			}
+		} else {
+			console.warn(
+				`Could not parse dimensions for ${detectedType} image; skipping aspect-ratio validation`
+			);
 		}
-		// If dimensions can't be parsed, proceed — the workflow will use actual pixel dimensions
 
 		const id = crypto.randomUUID();
 		const { rows: gridRows, cols: gridCols } = getGridDimensionsForAspectRatio(
@@ -457,7 +465,6 @@ puzzles.post('/', requirePlayerAuth, async (c) => {
 		return c.json({ error: 'internal_error', message: 'Failed to create puzzle' }, 500);
 	}
 });
-/* v8 ignore stop */
 
 // GET /api/puzzles/:id - Get puzzle details
 puzzles.get('/:id', async (c) => {

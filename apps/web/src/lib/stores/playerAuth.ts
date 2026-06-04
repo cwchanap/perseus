@@ -46,8 +46,18 @@ export function createPlayerAuthStore() {
 					});
 					return;
 				}
-			} catch {
-				// Auth state is best-effort; callers should see anonymous on failures.
+			} catch (error) {
+				console.error('Failed to refresh player session', error);
+				if (currentOperationId !== operationId) {
+					return;
+				}
+
+				set({
+					status: 'anonymous',
+					user: null,
+					error: error instanceof Error ? error.message : 'Failed to verify session'
+				});
+				return;
 			}
 
 			if (currentOperationId !== operationId) {
