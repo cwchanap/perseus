@@ -341,7 +341,16 @@ puzzles.post('/', requirePlayerAuth, async (c) => {
 		}
 
 		const dimensions = await parseImageDimensions(image, detectedType);
-		if (dimensions && !aspectRatiosMatch(dimensions.width, dimensions.height, aspectRatio)) {
+		if (!dimensions) {
+			return c.json(
+				{
+					error: 'bad_request',
+					message: 'Could not parse image dimensions. The file may be corrupt or truncated.'
+				},
+				400
+			);
+		}
+		if (!aspectRatiosMatch(dimensions.width, dimensions.height, aspectRatio)) {
 			return c.json(
 				{
 					error: 'bad_request',

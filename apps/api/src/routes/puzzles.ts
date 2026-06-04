@@ -236,7 +236,13 @@ puzzles.post('/', requirePlayerAuth, async (c) => {
 	let id = '';
 
 	try {
-		const formData = await c.req.formData();
+		let formData: FormData;
+		try {
+			formData = await c.req.formData();
+		} catch (error) {
+			console.error('Failed to parse puzzle form data', error);
+			return c.json({ error: 'bad_request', message: 'Invalid form data' }, 400);
+		}
 		const name = formData.get('name');
 		const pieceCountStr = formData.get('pieceCount');
 		const aspectRatioStr = formData.get('aspectRatio');
@@ -316,7 +322,16 @@ puzzles.post('/', requirePlayerAuth, async (c) => {
 		}
 
 		const dimensions = await parseImageDimensions(image, detectedType);
-		if (dimensions && !aspectRatiosMatch(dimensions.width, dimensions.height, aspectRatio)) {
+		if (!dimensions) {
+			return c.json(
+				{
+					error: 'bad_request',
+					message: 'Could not parse image dimensions. The file may be corrupt or truncated.'
+				},
+				400
+			);
+		}
+		if (!aspectRatiosMatch(dimensions.width, dimensions.height, aspectRatio)) {
 			return c.json(
 				{
 					error: 'bad_request',
