@@ -341,24 +341,18 @@ puzzles.post('/', requirePlayerAuth, async (c) => {
 		}
 
 		const dimensions = await parseImageDimensions(image, detectedType);
-		if (!dimensions) {
-			return c.json(
-				{
-					error: 'bad_request',
-					message: 'Could not parse image dimensions. The file may be corrupt or truncated.'
-				},
-				400
-			);
+		if (dimensions) {
+			if (!aspectRatiosMatch(dimensions.width, dimensions.height, aspectRatio)) {
+				return c.json(
+					{
+						error: 'bad_request',
+						message: `Image aspect ratio (${dimensions.width}x${dimensions.height}) does not match requested ratio ${aspectRatio}. Please pre-crop the image to match.`
+					},
+					400
+				);
+			}
 		}
-		if (!aspectRatiosMatch(dimensions.width, dimensions.height, aspectRatio)) {
-			return c.json(
-				{
-					error: 'bad_request',
-					message: `Image aspect ratio (${dimensions.width}x${dimensions.height}) does not match requested ratio ${aspectRatio}. Please pre-crop the image to match.`
-				},
-				400
-			);
-		}
+		// If dimensions can't be parsed, proceed — the workflow will use actual pixel dimensions
 
 		const id = crypto.randomUUID();
 		const { rows: gridRows, cols: gridCols } = getGridDimensionsForAspectRatio(
