@@ -555,6 +555,39 @@ describe('API Service - player auth', () => {
 
 		expect(url).toBe(expectedUrl);
 	});
+
+	it('returns unmodified returnTo when it does not start with /', () => {
+		const url = getGoogleLoginUrl('https://other.com/path');
+		expect(url).toBe(
+			'http://localhost:3999/api/auth/google/start?returnTo=https%3A%2F%2Fother.com%2Fpath'
+		);
+	});
+
+	it('returns unmodified returnTo when it starts with //', () => {
+		const url = getGoogleLoginUrl('//evil.com');
+		expect(url).toBe('http://localhost:3999/api/auth/google/start?returnTo=%2F%2Fevil.com');
+	});
+
+	it('falls back to returnTo when URL construction throws', () => {
+		const originalURL = globalThis.URL;
+		vi.stubGlobal(
+			'URL',
+			class extends URL {
+				constructor(href: string, base?: string | URL) {
+					super(href, base);
+					if (href === '/will-throw') {
+						throw new Error('Invalid URL');
+					}
+				}
+			}
+		);
+		try {
+			const url = getGoogleLoginUrl('/will-throw');
+			expect(url).toBe('http://localhost:3999/api/auth/google/start?returnTo=%2Fwill-throw');
+		} finally {
+			vi.stubGlobal('URL', originalURL);
+		}
+	});
 });
 
 // ─── player allowlist ────────────────────────────────────────────────────────

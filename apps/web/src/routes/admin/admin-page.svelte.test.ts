@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
@@ -193,6 +192,41 @@ describe('Admin Page', () => {
 			.toBeVisible();
 	});
 
+	it('replaces an existing success message when a new one arrives', async () => {
+		vi.useFakeTimers({ shouldAdvanceTime: true });
+		vi.mocked(fetchAdminPuzzles)
+			.mockResolvedValueOnce(mockPuzzles)
+			.mockResolvedValueOnce(mockPuzzles)
+			.mockResolvedValueOnce([]);
+		vi.spyOn(window, 'confirm').mockReturnValue(true);
+		vi.mocked(deletePuzzle)
+			.mockResolvedValueOnce({
+				success: false,
+				partialSuccess: true,
+				warning: 'First warning',
+				failedAssets: ['pieces/1.png']
+			})
+			.mockResolvedValueOnce({
+				success: false,
+				partialSuccess: true,
+				warning: 'Second warning',
+				failedAssets: ['pieces/2.png']
+			});
+
+		render(AdminPage);
+
+		await expect.element(page.getByText('Forest Scene')).toBeVisible();
+		await page.getByRole('button', { name: 'DELETE' }).first().click();
+		await expect.element(page.getByText('First warning')).toBeVisible();
+
+		await page.getByRole('button', { name: 'DELETE' }).nth(1).click();
+		await expect.element(page.getByText('Second warning')).toBeVisible();
+
+		await vi.advanceTimersByTimeAsync(5000);
+		await expect.poll(() => page.getByText('Second warning').query()).toBeNull();
+		vi.useRealTimers();
+	});
+
 	it('lists player allowlist entries with linked player metadata', async () => {
 		vi.mocked(fetchPlayerAllowlist).mockResolvedValue(mockAllowlist);
 
@@ -295,5 +329,68 @@ describe('Admin Page', () => {
 
 		await expect.element(page.getByText('Failed to logout')).toBeVisible();
 		expect(goto).not.toHaveBeenCalled();
+	});
+
+	it('polls for puzzle status updates when puzzles are processing', async () => {
+		vi.useFakeTimers({ shouldAdvanceTime: true });
+		const readyPuzzles: PuzzleSummary[] = [
+			{ id: 'p2', name: 'City Lights', pieceCount: 225, status: 'ready' }
+		];
+		vi.mocked(fetchAdminPuzzles)
+			.mockResolvedValueOnce(mockPuzzles)
+			.mockResolvedValueOnce(readyPuzzles);
+
+		render(AdminPage);
+
+		await expect.element(page.getByText('City Lights')).toBeVisible();
+		await expect.element(page.getByText('PROCESSING')).toBeVisible();
+
+		await vi.advanceTimersByTimeAsync(3000);
+
+		await vi.waitFor(() => {
+			expect(fetchAdminPuzzles).toHaveBeenCalledTimes(2);
+		});
+		vi.useRealTimers();
+	});
+
+	it('ignores stale allowlist responses after a newer request is made', async () => {
+		let resolveFirst: (value: PlayerAllowlistEntry[]) => void;
+		const firstPromise = new Promise<PlayerAllowlistEntry[]>((resolve) => {
+			resolveFirst = resolve;
+		});
+		const secondResponse: PlayerAllowlistEntry[] = [
+			{ email: 'fresh@example.com', createdAt: 3, addedBy: 'admin' }
+		];
+
+		vi.mocked(fetchPlayerAllowlist)
+			.mockImplementationOnce(() => firstPromise)
+			.mockResolvedValueOnce(secondResponse);
+
+		render(AdminPage);
+
+		// Wait for the first loadAllowlist to start
+		await vi.waitFor(() => {
+			expect(fetchPlayerAllowlist).toHaveBeenCalledTimes(1);
+		});
+
+		// Trigger a second loadAllowlist via form submission before first resolves
+		vi.mocked(addPlayerAllowlistEntry).mockResolvedValue({
+			email: 'triggered@example.com',
+			createdAt: 4,
+			addedBy: 'admin'
+		});
+		await page.getByLabelText('Player email').fill('triggered@example.com');
+		await page.getByRole('button', { name: /add player/i }).click();
+
+		await vi.waitFor(() => {
+			expect(fetchPlayerAllowlist).toHaveBeenCalledTimes(2);
+		});
+
+		// Now resolve the first (stale) response
+		resolveFirst!([{ email: 'stale@example.com', createdAt: 1, addedBy: 'admin' }]);
+
+		// The UI should show the second response, not the stale one
+		await expect.element(page.getByText('fresh@example.com')).toBeVisible();
+		await expect.poll(() => page.getByText('stale@example.com').query()).toBeNull();
 	});
 });
