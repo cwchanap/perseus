@@ -410,6 +410,55 @@ describe('API Service - createPlayerPuzzle', () => {
 		expect(body.get('category')).toBe('Art');
 		expect(body.get('image')).toBe(image);
 	});
+
+	it('omits aspectRatio and category fields when not provided', async () => {
+		let capturedOptions: RequestInit | undefined;
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockImplementation((_: string, options: RequestInit) => {
+				capturedOptions = options;
+				return Promise.resolve(
+					new Response(JSON.stringify({ id: 'p2', status: 'processing' }), {
+						status: 201,
+						headers: { 'Content-Type': 'application/json' }
+					})
+				);
+			})
+		);
+
+		const image = new File(['data'], 'test.png', { type: 'image/png' });
+		await createPlayerPuzzle('Minimal Puzzle', 16, image);
+
+		const body = capturedOptions!.body as FormData;
+		expect(body.get('name')).toBe('Minimal Puzzle');
+		expect(body.get('pieceCount')).toBe('16');
+		expect(body.has('aspectRatio')).toBe(false);
+		expect(body.has('category')).toBe(false);
+		expect(body.get('image')).toBe(image);
+	});
+
+	it('includes aspectRatio but omits category when only aspectRatio is provided', async () => {
+		let capturedOptions: RequestInit | undefined;
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockImplementation((_: string, options: RequestInit) => {
+				capturedOptions = options;
+				return Promise.resolve(
+					new Response(JSON.stringify({ id: 'p3', status: 'processing' }), {
+						status: 201,
+						headers: { 'Content-Type': 'application/json' }
+					})
+				);
+			})
+		);
+
+		const image = new File(['data'], 'test.png', { type: 'image/png' });
+		await createPlayerPuzzle('Aspect Only', 100, image, undefined, '4:3');
+
+		const body = capturedOptions!.body as FormData;
+		expect(body.get('aspectRatio')).toBe('4:3');
+		expect(body.has('category')).toBe(false);
+	});
 });
 
 // ─── URL helpers ─────────────────────────────────────────────────────────────

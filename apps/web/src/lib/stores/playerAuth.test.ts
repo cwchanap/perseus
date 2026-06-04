@@ -67,8 +67,9 @@ describe('createPlayerAuthStore', () => {
 		});
 	});
 
-	it('sets anonymous state when refresh fails', async () => {
+	it('sets anonymous state with error message when refresh fails', async () => {
 		vi.mocked(getPlayerSession).mockRejectedValue(new Error('network failed'));
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 		const store = createPlayerAuthStore();
 
 		await store.refresh();
@@ -76,8 +77,25 @@ describe('createPlayerAuthStore', () => {
 		expect(getState(store)).toEqual({
 			status: 'anonymous',
 			user: null,
-			error: null
+			error: 'network failed'
 		});
+		expect(consoleSpy).toHaveBeenCalledWith('Failed to refresh player session', expect.any(Error));
+		consoleSpy.mockRestore();
+	});
+
+	it('sets anonymous state with generic message when refresh throws a non-Error', async () => {
+		vi.mocked(getPlayerSession).mockRejectedValue('string error');
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const store = createPlayerAuthStore();
+
+		await store.refresh();
+
+		expect(getState(store)).toEqual({
+			status: 'anonymous',
+			user: null,
+			error: 'Failed to verify session'
+		});
+		consoleSpy.mockRestore();
 	});
 
 	it('logs out and clears state', async () => {

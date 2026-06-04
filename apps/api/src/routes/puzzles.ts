@@ -19,13 +19,16 @@ import { extname } from 'node:path';
 import { DEFAULT_PUZZLE_ASPECT_RATIO, isPuzzleAspectRatio } from '@perseus/types';
 import { generatePuzzle, isValidPieceCount } from '../services/puzzle-generator';
 import { requirePlayerAuth } from '../middleware/player-auth';
+import type { PlayerSessionRecord } from '../services/player-auth';
 
-const puzzles = new Hono();
+const puzzles = new Hono<{
+	Variables: { playerSession: PlayerSessionRecord };
+}>();
 const DATA_DIR = process.env.DATA_DIR || './data';
 
 const VALID_CATEGORIES = new Set(PUZZLE_CATEGORIES as readonly PuzzleCategory[]);
 
-/* v8 ignore start -- duplicated admin upload validation; covered by focused route behavior tests */
+/* v8 ignore start -- duplicated admin upload validation helpers; covered by admin tests */
 // Detect image MIME type from magic bytes
 async function detectImageType(file: File | Blob): Promise<string | null> {
 	try {
@@ -159,6 +162,7 @@ function aspectRatiosMatch(imageWidth: number, imageHeight: number, targetRatio:
 	const expected = targetW / targetH;
 	return Math.abs(actual - expected) / expected <= ASPECT_RATIO_TOLERANCE;
 }
+/* v8 ignore stop */
 
 function getImageContentType(filePath: string): string {
 	const ext = extname(filePath).toLowerCase();
@@ -332,8 +336,11 @@ puzzles.post('/', requirePlayerAuth, async (c) => {
 					400
 				);
 			}
+		} else {
+			console.warn(
+				`Could not parse dimensions for ${detectedType} image; skipping aspect-ratio validation`
+			);
 		}
-		// If dimensions can't be parsed, proceed — the generator will use actual pixel dimensions
 
 		id = crypto.randomUUID();
 		const imageBuffer = Buffer.from(await image.arrayBuffer());
@@ -374,7 +381,6 @@ puzzles.post('/', requirePlayerAuth, async (c) => {
 		return c.json({ error: 'internal_error', message: 'Failed to create puzzle' }, 500);
 	}
 });
-/* v8 ignore stop */
 
 // GET /api/puzzles/:id - Get puzzle details
 puzzles.get('/:id', async (c) => {
