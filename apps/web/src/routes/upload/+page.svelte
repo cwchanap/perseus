@@ -233,6 +233,7 @@ motion-reduce:animate-none"
 				<p class="mb-6 text-[0.8rem] font-(--font-mono) tracking-[0.06em] text-(--text-2)">
 					Sign in to upload puzzles to the server.
 				</p>
+				<!-- eslint-disable svelte/no-navigation-without-resolve -->
 				<a
 					href={googleLoginUrl}
 					class="inline-flex border border-(--accent) px-4 py-3 text-[0.65rem]
@@ -241,6 +242,7 @@ transition-all duration-200 hover:bg-(--accent-glow)"
 				>
 					SIGN IN WITH GOOGLE
 				</a>
+				<!-- eslint-enable svelte/no-navigation-without-resolve -->
 			</section>
 		{:else}
 			<section class="border border-(--border) bg-(--bg-1)">

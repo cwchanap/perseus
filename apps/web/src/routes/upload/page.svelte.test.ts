@@ -4,7 +4,6 @@ import { page } from 'vitest/browser';
 import UploadPage from './+page.svelte';
 import { ApiError, createPlayerPuzzle, getGoogleLoginUrl } from '$lib/services/api';
 import { normalizePuzzleImageFile } from '$lib/services/puzzleImage';
-import { playerAuth } from '$lib/stores/playerAuth';
 
 const mockPlayerAuth = vi.hoisted(() => {
 	const subscribers = new Set<(value: unknown) => void>();
@@ -64,6 +63,13 @@ class FailingFileReader {
 	onerror: (() => void) | null = null;
 	readAsDataURL() {
 		this.onerror?.();
+	}
+}
+
+class AbortingFileReader {
+	onabort: (() => void) | null = null;
+	readAsDataURL() {
+		this.onabort?.();
 	}
 }
 
@@ -314,5 +320,85 @@ describe('Upload Page', () => {
 		await page.getByRole('button', { name: /upload puzzle/i }).click();
 
 		await expect.element(page.getByText('Failed to upload puzzle')).toBeVisible();
+	});
+
+	it('shows an error when image preview reading is aborted', async () => {
+		setAuthenticatedPlayer();
+		vi.stubGlobal('FileReader', AbortingFileReader);
+
+		render(UploadPage);
+
+		const input = page.getByLabelText('CLICK TO UPLOAD').element() as HTMLInputElement;
+		Object.defineProperty(input, 'files', {
+			value: [new File(['data'], 'test.jpg', { type: 'image/jpeg' })],
+			configurable: true
+		});
+		input.dispatchEvent(new Event('change', { bubbles: true }));
+
+		await expect.element(page.getByText('Image preview was aborted')).toBeVisible();
+	});
+
+	it('clears the previous success timeout before starting a new upload', async () => {
+		setAuthenticatedPlayer();
+		const normalized = new File(['normalized'], 'norm.jpg', { type: 'image/jpeg' });
+		vi.mocked(normalizePuzzleImageFile).mockResolvedValue(normalized);
+		vi.mocked(createPlayerPuzzle).mockResolvedValue({} as never);
+
+		render(UploadPage);
+
+		await page.getByPlaceholder('Enter puzzle name').fill('First Upload');
+		await uploadTestImage();
+		await page.getByRole('button', { name: /upload puzzle/i }).click();
+
+		await vi.waitFor(() => {
+			expect(createPlayerPuzzle).toHaveBeenCalledWith(
+				'First Upload',
+				225,
+				normalized,
+				undefined,
+				'1:1'
+			);
+		});
+		await expect.element(page.getByText(/Puzzle upload started/)).toBeVisible();
+
+		// Trigger a second upload while the success message is still visible
+		vi.mocked(createPlayerPuzzle).mockClear();
+		await page.getByPlaceholder('Enter puzzle name').fill('Second Upload');
+		await uploadTestImage();
+		await page.getByRole('button', { name: /upload puzzle/i }).click();
+
+		await vi.waitFor(() => {
+			expect(createPlayerPuzzle).toHaveBeenCalledWith(
+				'Second Upload',
+				225,
+				normalized,
+				undefined,
+				'1:1'
+			);
+		});
+	});
+
+	it('auto-dismisses the success message after the timeout', async () => {
+		vi.useFakeTimers({ shouldAdvanceTime: true });
+		setAuthenticatedPlayer();
+		const normalized = new File(['normalized'], 'norm.jpg', { type: 'image/jpeg' });
+		vi.mocked(normalizePuzzleImageFile).mockResolvedValue(normalized);
+		vi.mocked(createPlayerPuzzle).mockResolvedValue({} as never);
+
+		render(UploadPage);
+
+		await page.getByPlaceholder('Enter puzzle name').fill('Timed Upload');
+		await uploadTestImage();
+		await page.getByRole('button', { name: /upload puzzle/i }).click();
+
+		await vi.waitFor(() => {
+			expect(createPlayerPuzzle).toHaveBeenCalled();
+		});
+		await expect.element(page.getByText(/Puzzle upload started/)).toBeVisible();
+
+		await vi.advanceTimersByTimeAsync(3000);
+
+		await expect.poll(() => page.getByText(/Puzzle upload started/).query()).toBeNull();
+		vi.useRealTimers();
 	});
 });
