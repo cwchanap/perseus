@@ -45,7 +45,43 @@ import * as playerAuth from '../services/player-auth';
 import * as puzzleGenerator from '../services/puzzle-generator';
 
 const PUZZLE_ID = 'test-puzzle-abc';
-const PNG_HEADER = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0, 0]);
+// Minimal valid PNG: 8-byte signature + 13-byte IHDR chunk (width=3, height=4, 3:4 ratio)
+// PNG layout: [signature 8B][length 4B][IHDR 4B][width 4B][height 4B][depth+color+compress+filter+interlace 5B][CRC 4B]
+const PNG_HEADER = new Uint8Array([
+	0x89,
+	0x50,
+	0x4e,
+	0x47,
+	0x0d,
+	0x0a,
+	0x1a,
+	0x0a, // PNG signature
+	0x00,
+	0x00,
+	0x00,
+	0x0d, // IHDR chunk length = 13
+	0x49,
+	0x48,
+	0x44,
+	0x52, // "IHDR"
+	0x00,
+	0x00,
+	0x00,
+	0x03, // width = 3
+	0x00,
+	0x00,
+	0x00,
+	0x04, // height = 4
+	0x08,
+	0x02,
+	0x00,
+	0x00,
+	0x00, // bit depth=8, color type=2 (RGB), compression=0, filter=0, interlace=0
+	0x45,
+	0x48,
+	0xcc,
+	0x42 // CRC
+]);
 
 /** Creates an Error with no stack trace (empty string), forcing `error.stack || error.message` to use message. */
 function errorWithoutStack(message: string): Error {
