@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * Extra coverage tests for auth.worker.ts.
  * Covers:

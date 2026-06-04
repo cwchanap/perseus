@@ -14,5 +14,8 @@ Thumbs.db
 # Build
 *.log
 
+# Coverage
+coverage/
+
 # Puzzle data storage
 data/

@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * Additional coverage tests for auth.worker.ts
  * Covers setSessionCookie/clearSessionCookie secure flag and DOMException path.

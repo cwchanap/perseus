@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * Additional coverage tests for storage.worker.ts
  * Covers null KV entries in listPuzzles and R2 batch deletion failures.
