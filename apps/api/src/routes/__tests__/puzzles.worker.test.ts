@@ -133,6 +133,112 @@ describe('Puzzle Routes - UUID Validation', () => {
 				params: { puzzleId: body.id }
 			});
 		});
+
+		it('proceeds when dimensions cannot be parsed (graceful fallback)', async () => {
+			vi.mocked(playerAuth.getPlayerSession).mockResolvedValue({
+				sessionHash: 'session-hash',
+				user: {
+					id: 'player-1',
+					email: 'player@example.com',
+					createdAt: 1000,
+					lastLoginAt: 2000
+				},
+				createdAt: 2000,
+				expiresAt: Date.now() + 1000
+			});
+			vi.mocked(storage.uploadOriginalImage).mockResolvedValue(undefined);
+			vi.mocked(storage.createPuzzleMetadata).mockResolvedValue(undefined);
+
+			// PNG with valid magic bytes but truncated (no IHDR data at offset 16)
+			const truncatedPng = new Uint8Array([
+				0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0, 0
+			]);
+			const formData = new FormData();
+			formData.append('name', 'Truncated Puzzle');
+			formData.append('pieceCount', '48');
+			formData.append('aspectRatio', '3:4');
+			formData.append('image', new Blob([truncatedPng], { type: 'image/png' }), 'test.png');
+
+			const res = await puzzles.fetch(
+				new Request('http://localhost/', {
+					method: 'POST',
+					headers: { Cookie: 'perseus_player_session=player-token' },
+					body: formData
+				}),
+				mockEnv as any
+			);
+
+			expect(res.status).toBe(201);
+		});
+
+		it('rejects image with mismatched aspect ratio when dimensions are parseable', async () => {
+			vi.mocked(playerAuth.getPlayerSession).mockResolvedValue({
+				sessionHash: 'session-hash',
+				user: {
+					id: 'player-1',
+					email: 'player@example.com',
+					createdAt: 1000,
+					lastLoginAt: 2000
+				},
+				createdAt: 2000,
+				expiresAt: Date.now() + 1000
+			});
+
+			// Build a 4x4 PNG (1:1 ratio) but request 3:4 — should reject on aspect ratio mismatch
+			const squarePng = new Uint8Array([
+				0x89,
+				0x50,
+				0x4e,
+				0x47,
+				0x0d,
+				0x0a,
+				0x1a,
+				0x0a, // PNG signature
+				0x00,
+				0x00,
+				0x00,
+				0x0d, // IHDR chunk length = 13
+				0x49,
+				0x48,
+				0x44,
+				0x52, // "IHDR"
+				0x00,
+				0x00,
+				0x00,
+				0x04, // width = 4
+				0x00,
+				0x00,
+				0x00,
+				0x04, // height = 4
+				0x08,
+				0x02,
+				0x00,
+				0x00,
+				0x00, // bit depth=8, color type=2 (RGB), compression=0, filter=0, interlace=0
+				0x00,
+				0x00,
+				0x00,
+				0x00 // placeholder CRC
+			]);
+			const formData = new FormData();
+			formData.append('name', 'Mismatched Puzzle');
+			formData.append('pieceCount', '48');
+			formData.append('aspectRatio', '3:4');
+			formData.append('image', new Blob([squarePng], { type: 'image/png' }), 'test.png');
+
+			const res = await puzzles.fetch(
+				new Request('http://localhost/', {
+					method: 'POST',
+					headers: { Cookie: 'perseus_player_session=player-token' },
+					body: formData
+				}),
+				mockEnv as any
+			);
+
+			expect(res.status).toBe(400);
+			const body = (await res.json()) as any;
+			expect(body.message).toContain('aspect ratio');
+		});
 	});
 
 	describe('GET / - List puzzles', () => {
