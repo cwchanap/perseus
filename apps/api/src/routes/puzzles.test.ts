@@ -3,7 +3,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // vi.mock is hoisted — must appear before any imports that use the mocked modules.
 vi.mock('node:fs/promises', () => ({
-	readFile: vi.fn()
+	readFile: vi.fn(),
+	mkdir: vi.fn().mockResolvedValue(undefined),
+	writeFile: vi.fn().mockResolvedValue(undefined)
 }));
 
 vi.mock('../services/storage', () => {
@@ -19,16 +21,31 @@ vi.mock('../services/storage', () => {
 		getThumbnailPath: vi.fn().mockReturnValue('/fake/thumbnail.jpg'),
 		getPieceImagePath: vi.fn().mockReturnValue('/fake/pieces/0.png'),
 		getOriginalImagePath: vi.fn().mockReturnValue('/fake/original.jpg'),
+		getPuzzleDir: vi.fn().mockReturnValue('/fake/data/puzzles/test-id'),
 		findOriginalImagePath: vi.fn().mockReturnValue('/fake/original.jpg'),
+		createPuzzle: vi.fn().mockResolvedValue(true),
+		deletePuzzle: vi.fn().mockResolvedValue(true),
 		InvalidPuzzleIdError
 	};
 });
 
+vi.mock('../services/player-auth', () => ({
+	getPlayerSession: vi.fn()
+}));
+
+vi.mock('../services/puzzle-generator', () => ({
+	generatePuzzle: vi.fn(),
+	isValidPieceCount: vi.fn().mockReturnValue(true)
+}));
+
 import puzzles from './puzzles';
 import * as storage from '../services/storage';
 import * as fsPromises from 'node:fs/promises';
+import * as playerAuth from '../services/player-auth';
+import * as puzzleGenerator from '../services/puzzle-generator';
 
 const PUZZLE_ID = 'test-puzzle-abc';
+const PNG_HEADER = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0, 0]);
 
 /** Creates an Error with no stack trace (empty string), forcing `error.stack || error.message` to use message. */
 function errorWithoutStack(message: string): Error {
@@ -52,6 +69,98 @@ function makePuzzle(overrides: Record<string, any> = {}): any {
 		...overrides
 	};
 }
+
+// ─── POST / ───────────────────────────────────────────────────────────────────
+
+describe('POST / - Upload puzzle for player', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it('returns 401 when the player session cookie is missing', async () => {
+		const formData = new FormData();
+		formData.append('name', 'Player Puzzle');
+		formData.append('pieceCount', '48');
+		formData.append('aspectRatio', '3:4');
+		formData.append('image', new Blob([PNG_HEADER], { type: 'image/png' }), 'test.png');
+
+		const res = await puzzles.fetch(
+			new Request('http://localhost/', {
+				method: 'POST',
+				body: formData
+			})
+		);
+
+		expect(res.status).toBe(401);
+		const body = (await res.json()) as any;
+		expect(body).toEqual({
+			error: 'unauthorized',
+			message: 'Player authentication required'
+		});
+		expect(storage.createPuzzle).not.toHaveBeenCalled();
+	});
+
+	it('creates a puzzle when the player session is valid', async () => {
+		vi.mocked(playerAuth.getPlayerSession).mockResolvedValue({
+			sessionHash: 'session-hash',
+			user: {
+				id: 'player-1',
+				email: 'player@example.com',
+				createdAt: 1000,
+				lastLoginAt: 2000
+			},
+			createdAt: 2000,
+			expiresAt: Date.now() + 1000
+		});
+		const generatedPuzzle = makePuzzle({
+			id: 'generated-id',
+			name: 'Player Puzzle',
+			pieceCount: 48,
+			aspectRatio: '3:4',
+			status: undefined
+		});
+		vi.mocked(puzzleGenerator.generatePuzzle).mockResolvedValue({
+			puzzle: generatedPuzzle,
+			pieces: generatedPuzzle.pieces
+		} as any);
+		vi.mocked(storage.createPuzzle).mockResolvedValue(true);
+
+		const formData = new FormData();
+		formData.append('name', 'Player Puzzle');
+		formData.append('pieceCount', '48');
+		formData.append('aspectRatio', '3:4');
+		formData.append('category', 'Art');
+		formData.append('image', new Blob([PNG_HEADER], { type: 'image/png' }), 'test.png');
+
+		const res = await puzzles.fetch(
+			new Request('http://localhost/', {
+				method: 'POST',
+				headers: { Cookie: 'perseus_player_session=player-token' },
+				body: formData
+			})
+		);
+
+		expect(res.status).toBe(201);
+		const body = (await res.json()) as any;
+		expect(playerAuth.getPlayerSession).toHaveBeenCalledWith('player-token');
+		expect(puzzleGenerator.generatePuzzle).toHaveBeenCalledWith(
+			expect.objectContaining({
+				name: 'Player Puzzle',
+				pieceCount: 48,
+				aspectRatio: '3:4'
+			})
+		);
+		expect(storage.createPuzzle).toHaveBeenCalledWith(
+			expect.objectContaining({
+				name: 'Player Puzzle',
+				pieceCount: 48,
+				aspectRatio: '3:4',
+				category: 'Art'
+			})
+		);
+		expect(body).toEqual(expect.objectContaining({ name: 'Player Puzzle', category: 'Art' }));
+	});
+});
 
 // ─── GET / ────────────────────────────────────────────────────────────────────
 

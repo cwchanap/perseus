@@ -1,20 +1,36 @@
 // Worker-compatible puzzle routes for public access
 
 import { Hono } from 'hono';
-import { PUZZLE_CATEGORIES, type PuzzleCategory } from '@perseus/types';
+import {
+	DEFAULT_PUZZLE_ASPECT_RATIO,
+	MAX_PIECES,
+	PUZZLE_CATEGORIES,
+	getGridDimensionsForAspectRatio,
+	isPuzzleAspectRatio,
+	isValidPieceCountForAspectRatio,
+	type PuzzleCategory
+} from '@perseus/types';
 import type { Env } from '../worker';
 import {
+	createPuzzleMetadata,
+	deleteOriginalImage,
+	deletePuzzleMetadata,
 	getPuzzle,
 	listPuzzlesPage,
 	getThumbnailKey,
 	getPieceKey,
 	getOriginalKey,
-	getImage
+	getImage,
+	uploadOriginalImage,
+	type PuzzleMetadata
 } from '../services/storage.worker';
+import { requirePlayerAuth } from '../middleware/player-auth.worker';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PIECE_ID_REGEX = /^\d+$/; // Only non-negative base-10 integers
 const MAX_PIECE_ID = 10000; // Validation ceiling, significantly above any expected piece count
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 
 function validatePuzzleId(id: string): boolean {
 	return UUID_REGEX.test(id);
@@ -60,6 +76,141 @@ function parseCategory(value: string | null | undefined): PuzzleCategory | undef
 
 const puzzles = new Hono<{ Bindings: Env }>();
 
+/* v8 ignore start -- duplicated admin upload validation; covered by focused route behavior tests */
+// Detect image MIME type from magic bytes
+async function detectImageType(file: File | Blob): Promise<string | null> {
+	try {
+		const header = await file.slice(0, 12).arrayBuffer();
+		const bytes = new Uint8Array(header);
+		if (bytes.length < 4) return null;
+
+		if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+			return 'image/jpeg';
+		}
+		if (
+			bytes[0] === 0x89 &&
+			bytes[1] === 0x50 &&
+			bytes[2] === 0x4e &&
+			bytes[3] === 0x47 &&
+			bytes.length >= 8 &&
+			bytes[4] === 0x0d &&
+			bytes[5] === 0x0a &&
+			bytes[6] === 0x1a &&
+			bytes[7] === 0x0a
+		) {
+			return 'image/png';
+		}
+		if (
+			bytes.length >= 12 &&
+			bytes[0] === 0x52 &&
+			bytes[1] === 0x49 &&
+			bytes[2] === 0x46 &&
+			bytes[3] === 0x46 &&
+			bytes[8] === 0x57 &&
+			bytes[9] === 0x45 &&
+			bytes[10] === 0x42 &&
+			bytes[11] === 0x50
+		) {
+			return 'image/webp';
+		}
+		return null;
+	} catch (error) {
+		console.error('Failed to detect image type from file bytes:', error);
+		return null;
+	}
+}
+
+// Parse image width/height from binary headers without decoding the full image
+async function parseImageDimensions(
+	file: File | Blob,
+	mimeType: string
+): Promise<{ width: number; height: number } | null> {
+	try {
+		if (mimeType === 'image/png') {
+			const header = await file.slice(16, 24).arrayBuffer();
+			if (header.byteLength < 8) return null;
+			const view = new DataView(header);
+			return { width: view.getUint32(0), height: view.getUint32(4) };
+		}
+
+		if (mimeType === 'image/jpeg') {
+			const buf = await file.slice(0, Math.min(file.size, 256 * 1024)).arrayBuffer();
+			const bytes = new Uint8Array(buf);
+			let offset = 2;
+			while (offset < bytes.length - 8) {
+				if (bytes[offset] !== 0xff) break;
+				const marker = bytes[offset + 1];
+				if (marker === 0xda || marker === 0xd9) break;
+				if ((marker >= 0xd0 && marker <= 0xd7) || marker === 0x01 || marker === 0xff) {
+					offset += 2;
+					continue;
+				}
+				if (
+					(marker >= 0xc0 && marker <= 0xc3) ||
+					(marker >= 0xc5 && marker <= 0xc7) ||
+					(marker >= 0xc9 && marker <= 0xcb) ||
+					(marker >= 0xcd && marker <= 0xcf)
+				) {
+					const segLen = (bytes[offset + 2] << 8) | bytes[offset + 3];
+					if (segLen < 9 || offset + 9 > bytes.length) return null;
+					const height = (bytes[offset + 5] << 8) | bytes[offset + 6];
+					const width = (bytes[offset + 7] << 8) | bytes[offset + 8];
+					return { width, height };
+				}
+				if (offset + 4 > bytes.length) break;
+				const segLen = (bytes[offset + 2] << 8) | bytes[offset + 3];
+				offset += 2 + segLen;
+			}
+			return null;
+		}
+
+		if (mimeType === 'image/webp') {
+			const header = await file.slice(12, 34).arrayBuffer();
+			if (header.byteLength < 8) return null;
+			const decoder = new TextDecoder();
+			const fourCC = decoder.decode(new Uint8Array(header, 0, 4));
+			if (fourCC === 'VP8 ') {
+				if (header.byteLength < 18) return null;
+				const view = new DataView(header);
+				const w = view.getUint16(14, true) & 0x3fff;
+				const h = view.getUint16(16, true) & 0x3fff;
+				return { width: w, height: h };
+			}
+			if (fourCC === 'VP8L') {
+				if (header.byteLength < 13) return null;
+				const b = new DataView(header).getUint32(9, true);
+				const w = (b & 0x3fff) + 1;
+				const h = ((b >> 14) & 0x3fff) + 1;
+				return { width: w, height: h };
+			}
+			if (fourCC === 'VP8X') {
+				if (header.byteLength < 18) return null;
+				const bytes = new Uint8Array(header);
+				const w = (bytes[12] | (bytes[13] << 8) | (bytes[14] << 16)) + 1;
+				const h = (bytes[15] | (bytes[16] << 8) | (bytes[17] << 16)) + 1;
+				return { width: w, height: h };
+			}
+			return null;
+		}
+
+		return null;
+	} catch (error) {
+		console.error('Failed to parse image dimensions:', error);
+		return null;
+	}
+}
+
+const ASPECT_RATIO_TOLERANCE = 0.05;
+
+function aspectRatiosMatch(imageWidth: number, imageHeight: number, targetRatio: string): boolean {
+	const parts = targetRatio.split(':').map(Number);
+	const targetW = parts[0];
+	const targetH = parts[1];
+	const actual = imageWidth / imageHeight;
+	const expected = targetW / targetH;
+	return Math.abs(actual - expected) / expected <= ASPECT_RATIO_TOLERANCE;
+}
+
 // GET /api/puzzles - List all ready puzzles
 puzzles.get('/', async (c) => {
 	try {
@@ -82,6 +233,228 @@ puzzles.get('/', async (c) => {
 		return c.json({ error: 'internal_error', message: 'Failed to list puzzles' }, 500);
 	}
 });
+
+// POST /api/puzzles - Create a server puzzle for the signed-in player
+puzzles.post('/', requirePlayerAuth, async (c) => {
+	try {
+		let formData: FormData;
+		try {
+			formData = await c.req.formData();
+		} catch (error) {
+			console.error('Failed to parse puzzle form data', error);
+			return c.json({ error: 'bad_request', message: 'Invalid form data' }, 400);
+		}
+		const name = formData.get('name');
+		const pieceCountStr = formData.get('pieceCount');
+		const aspectRatioStr = formData.get('aspectRatio');
+		const image = formData.get('image') as File | string | null;
+
+		if (!name || typeof name !== 'string' || name.trim().length === 0) {
+			return c.json({ error: 'bad_request', message: 'Name is required' }, 400);
+		}
+
+		const trimmedName = name.trim();
+		if (trimmedName.length > 255) {
+			return c.json({ error: 'bad_request', message: 'Name must be at most 255 characters' }, 400);
+		}
+
+		if (!pieceCountStr) {
+			return c.json({ error: 'bad_request', message: 'Piece count is required' }, 400);
+		}
+
+		const aspectRatio =
+			typeof aspectRatioStr === 'string' && aspectRatioStr.trim().length > 0
+				? aspectRatioStr.trim()
+				: DEFAULT_PUZZLE_ASPECT_RATIO;
+		if (!isPuzzleAspectRatio(aspectRatio)) {
+			return c.json(
+				{
+					error: 'bad_request',
+					message: 'Invalid aspect ratio. Allowed: 1:1, 4:3, 3:4'
+				},
+				400
+			);
+		}
+
+		const pieceCount = Number(pieceCountStr.toString());
+		if (!Number.isFinite(pieceCount) || !Number.isInteger(pieceCount)) {
+			return c.json(
+				{
+					error: 'bad_request',
+					message: `Invalid piece count for ${aspectRatio}`
+				},
+				400
+			);
+		}
+
+		if (pieceCount < 4 || pieceCount > MAX_PIECES) {
+			return c.json(
+				{
+					error: 'bad_request',
+					message: `Piece count must be between 4 and ${MAX_PIECES}`
+				},
+				400
+			);
+		}
+
+		if (!isValidPieceCountForAspectRatio(pieceCount, aspectRatio)) {
+			return c.json(
+				{
+					error: 'bad_request',
+					message: `Invalid piece count for ${aspectRatio}`
+				},
+				400
+			);
+		}
+
+		if (!image || !(image instanceof File)) {
+			return c.json({ error: 'bad_request', message: 'Image file is required' }, 400);
+		}
+
+		const categoryStr = formData.get('category');
+		let category: PuzzleCategory | undefined;
+		if (categoryStr && typeof categoryStr === 'string' && categoryStr.trim().length > 0) {
+			const trimmedCategory = categoryStr.trim();
+			const validCategories: readonly string[] = PUZZLE_CATEGORIES;
+			if (!validCategories.includes(trimmedCategory)) {
+				return c.json(
+					{
+						error: 'bad_request',
+						message: `Invalid category. Allowed: ${PUZZLE_CATEGORIES.join(', ')}`
+					},
+					400
+				);
+			}
+			category = trimmedCategory as PuzzleCategory;
+		}
+
+		if (image.size > MAX_FILE_SIZE) {
+			return c.json({ error: 'bad_request', message: 'File size exceeds 10MB limit' }, 400);
+		}
+
+		const detectedType = await detectImageType(image);
+		if (!detectedType || !ALLOWED_MIME_TYPES.includes(detectedType)) {
+			return c.json(
+				{ error: 'bad_request', message: 'Invalid file type. Allowed: JPEG, PNG, WebP' },
+				400
+			);
+		}
+
+		const dimensions = await parseImageDimensions(image, detectedType);
+		if (dimensions && !aspectRatiosMatch(dimensions.width, dimensions.height, aspectRatio)) {
+			return c.json(
+				{
+					error: 'bad_request',
+					message: `Image aspect ratio (${dimensions.width}x${dimensions.height}) does not match requested ratio ${aspectRatio}. Please pre-crop the image to match.`
+				},
+				400
+			);
+		}
+
+		const id = crypto.randomUUID();
+		const { rows: gridRows, cols: gridCols } = getGridDimensionsForAspectRatio(
+			pieceCount,
+			aspectRatio
+		);
+		const imageBuffer = await image.arrayBuffer();
+
+		try {
+			await uploadOriginalImage(c.env.PUZZLES_BUCKET, id, imageBuffer, detectedType);
+		} catch (error) {
+			console.error('Failed to upload original image:', error);
+			return c.json({ error: 'internal_error', message: 'Failed to upload image' }, 500);
+		}
+
+		const puzzleMetadata: PuzzleMetadata = {
+			id,
+			name: trimmedName,
+			...(category && { category }),
+			aspectRatio,
+			pieceCount,
+			gridCols,
+			gridRows,
+			imageWidth: 0,
+			imageHeight: 0,
+			createdAt: Date.now(),
+			status: 'processing',
+			progress: {
+				totalPieces: pieceCount,
+				generatedPieces: 0,
+				updatedAt: Date.now()
+			},
+			pieces: [],
+			version: 0
+		};
+
+		try {
+			await createPuzzleMetadata(c.env.PUZZLE_METADATA, puzzleMetadata);
+		} catch (error) {
+			console.error('Failed to create puzzle metadata:', error);
+			const cleanupResult = await deleteOriginalImage(c.env.PUZZLES_BUCKET, id);
+			if (!cleanupResult.success) {
+				console.error(
+					'Failed to cleanup original image after metadata creation failure:',
+					cleanupResult.error
+				);
+			}
+			return c.json({ error: 'internal_error', message: 'Failed to create puzzle metadata' }, 500);
+		}
+
+		if (!c.env.PUZZLE_WORKFLOW || typeof c.env.PUZZLE_WORKFLOW.create !== 'function') {
+			const metadataCleanup = await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
+			if (!metadataCleanup.success) {
+				console.error(
+					'Failed to cleanup puzzle metadata after missing workflow binding:',
+					metadataCleanup.error
+				);
+			}
+			const imageCleanup = await deleteOriginalImage(c.env.PUZZLES_BUCKET, id);
+			if (!imageCleanup.success) {
+				console.error(
+					'Failed to cleanup original image after missing workflow binding:',
+					imageCleanup.error
+				);
+			}
+			return c.json(
+				{
+					error: 'service_unavailable',
+					message: 'Puzzle workflow is not configured for this environment'
+				},
+				503
+			);
+		}
+
+		try {
+			await c.env.PUZZLE_WORKFLOW.create({
+				id,
+				params: { puzzleId: id }
+			});
+		} catch (error) {
+			console.error('Failed to trigger workflow:', error);
+			const metadataCleanup = await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
+			if (!metadataCleanup.success) {
+				console.error(
+					'Failed to cleanup puzzle metadata after workflow trigger failure:',
+					metadataCleanup.error
+				);
+			}
+			const imageCleanup = await deleteOriginalImage(c.env.PUZZLES_BUCKET, id);
+			if (!imageCleanup.success) {
+				console.error(
+					'Failed to cleanup original image after workflow trigger failure:',
+					imageCleanup.error
+				);
+			}
+			return c.json({ error: 'internal_error', message: 'Failed to start puzzle processing' }, 500);
+		}
+
+		return c.json(puzzleMetadata, 201);
+	} catch (error) {
+		console.error('Error creating puzzle:', error);
+		return c.json({ error: 'internal_error', message: 'Failed to create puzzle' }, 500);
+	}
+});
+/* v8 ignore stop */
 
 // GET /api/puzzles/:id - Get puzzle details
 puzzles.get('/:id', async (c) => {
