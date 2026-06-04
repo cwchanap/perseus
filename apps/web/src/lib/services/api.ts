@@ -300,6 +300,32 @@ export async function createPuzzle(
 	return handleResponse<PuzzleMetadata>(response);
 }
 
+export async function createPlayerPuzzle(
+	name: string,
+	pieceCount: number,
+	image: File,
+	category?: PuzzleCategory,
+	aspectRatio?: PuzzleAspectRatio
+): Promise<PuzzleMetadata> {
+	const formData = new FormData();
+	formData.append('name', name);
+	formData.append('pieceCount', pieceCount.toString());
+	if (aspectRatio) {
+		formData.append('aspectRatio', aspectRatio);
+	}
+	formData.append('image', image);
+	if (category) {
+		formData.append('category', category);
+	}
+
+	const response = await fetch(`${API_BASE}/api/puzzles`, {
+		method: 'POST',
+		credentials: 'include',
+		body: formData
+	});
+	return handleResponse<PuzzleMetadata>(response);
+}
+
 export async function deletePuzzle(
 	id: string,
 	options?: { force?: boolean }

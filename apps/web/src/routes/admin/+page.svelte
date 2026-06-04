@@ -1,48 +1,19 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
 	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import {
-		logout,
-		createPuzzle,
+		ApiError,
+		addPlayerAllowlistEntry,
 		deletePuzzle,
 		fetchAdminPuzzles,
 		fetchPlayerAllowlist,
-		addPlayerAllowlistEntry,
-		removePlayerAllowlistEntry,
 		getThumbnailUrl,
-		ApiError
+		logout,
+		removePlayerAllowlistEntry
 	} from '$lib/services/api';
 	import { clearProgress } from '$lib/services/progress';
-	import { PUZZLE_CATEGORIES, type PuzzleCategory } from '$lib/constants/categories';
-	import { normalizePuzzleImageFile } from '$lib/services/puzzleImage';
-	import type { PuzzleSummary } from '$lib/types/puzzle';
-	import { resolve } from '$app/paths';
-	import {
-		DEFAULT_PUZZLE_ASPECT_RATIO,
-		MAX_IMAGE_DIMENSION,
-		getAllowedPieceCountsForAspectRatio,
-		isPuzzleAspectRatio,
-		type PuzzleAspectRatio
-	} from '@perseus/types';
-	import type { PlayerAllowlistEntry } from '$lib/types/puzzle';
-
-	const MIN_ADMIN_PIECES = 4;
-	const MAX_ADMIN_PIECES = 250;
-	const ADMIN_DEFAULT_PIECES_BY_ASPECT: Record<PuzzleAspectRatio, number> = {
-		'1:1': 225,
-		'4:3': 192,
-		'3:4': 192
-	};
-	const ADMIN_ASPECT_LABELS: Record<PuzzleAspectRatio, string> = {
-		'1:1': '1:1 Square',
-		'4:3': '4:3 Landscape',
-		'3:4': '3:4 Portrait'
-	};
-	const ADMIN_ASPECT_STYLE: Record<PuzzleAspectRatio, string> = {
-		'1:1': 'aspect-ratio: 1 / 1;',
-		'4:3': 'aspect-ratio: 4 / 3;',
-		'3:4': 'aspect-ratio: 3 / 4;'
-	};
+	import type { PlayerAllowlistEntry, PuzzleSummary } from '$lib/types/puzzle';
 
 	let loggingOut = $state(false);
 	let logoutError: string | null = $state(null);
@@ -57,30 +28,11 @@
 	let allowlistSaving = $state(false);
 	let removingAllowlistEmail: string | null = $state(null);
 	let allowlistLoadSequence = 0;
-
-	// Form state
-	let name = $state('');
-	let category: PuzzleCategory | '' = $state('');
-	let aspectRatio = $state<PuzzleAspectRatio>(DEFAULT_PUZZLE_ASPECT_RATIO);
-	let pieceCount = $state(ADMIN_DEFAULT_PIECES_BY_ASPECT[DEFAULT_PUZZLE_ASPECT_RATIO]);
-	let imageFile: File | null = $state(null);
-	let imagePreview: string | null = $state(null);
-	let imageInput: HTMLInputElement | null = $state(null);
-	let creating = $state(false);
-	let formError: string | null = $state(null);
 	let successMessage: string | null = $state(null);
 	let successTimeout: ReturnType<typeof setTimeout> | null = null;
-
-	// Delete state
 	let deletingId: string | null = $state(null);
-
-	// Polling interval for processing puzzles
 	let pollInterval: ReturnType<typeof setInterval> | null = null;
 	let mounted = false;
-	const allowedPieceCounts = $derived(
-		getAllowedPieceCountsForAspectRatio(aspectRatio, MIN_ADMIN_PIECES, MAX_ADMIN_PIECES)
-	);
-	const previewAspectStyle = $derived(ADMIN_ASPECT_STYLE[aspectRatio]);
 
 	onMount(async () => {
 		mounted = true;
@@ -101,18 +53,24 @@
 		}
 	});
 
+	function showSuccess(message: string, timeoutMs = 5000) {
+		successMessage = message;
+		if (successTimeout !== null) clearTimeout(successTimeout);
+		successTimeout = setTimeout(() => {
+			successMessage = null;
+			successTimeout = null;
+		}, timeoutMs);
+	}
+
 	function startPollingIfNeeded() {
-		// Check if any puzzles are processing
 		const hasProcessing = puzzles.some((p) => p.status === 'processing');
 		if (hasProcessing && pollInterval === null) {
 			pollInterval = setInterval(async () => {
-				if (!mounted) return;
-				if (puzzlesFetchInFlight) return;
+				if (!mounted || puzzlesFetchInFlight) return;
 				puzzlesFetchInFlight = true;
 				try {
 					const latestPuzzles = await loadPuzzles(true);
 					if (!mounted) return;
-					// Stop polling if no more processing puzzles
 					const stillProcessing = latestPuzzles.some((p) => p.status === 'processing');
 					if (!stillProcessing && pollInterval !== null) {
 						clearInterval(pollInterval);
@@ -123,7 +81,7 @@
 						puzzlesFetchInFlight = false;
 					}
 				}
-			}, 3000); // Poll every 3 seconds
+			}, 3000);
 		}
 	}
 
@@ -140,7 +98,6 @@
 			if (!silent) {
 				puzzlesError = e instanceof ApiError ? e.message : 'Failed to load puzzles';
 				puzzles = [];
-				return [];
 			}
 			return puzzles;
 		} finally {
@@ -157,13 +114,11 @@
 		try {
 			const latestAllowlist = await fetchPlayerAllowlist();
 			if (loadSequence !== allowlistLoadSequence) return allowlist;
-
 			allowlist = latestAllowlist;
 			return latestAllowlist;
 		} catch (e) {
 			console.error('Failed to load player access', e);
 			if (loadSequence !== allowlistLoadSequence) return allowlist;
-
 			allowlistError = e instanceof ApiError ? e.message : 'Failed to load player access';
 			allowlist = [];
 			return [];
@@ -210,7 +165,6 @@
 	async function handleLogout() {
 		loggingOut = true;
 		logoutError = null;
-
 		try {
 			await logout();
 			goto(resolve('/admin/login'));
@@ -222,127 +176,6 @@
 		}
 	}
 
-	function clearSelectedImage() {
-		imageFile = null;
-		imagePreview = null;
-		if (imageInput) {
-			imageInput.value = '';
-		}
-	}
-
-	function handleImageSelect(event: Event) {
-		const input = event.target as HTMLInputElement;
-		const file = input.files?.[0];
-
-		if (file) {
-			imageFile = file;
-			const reader = new FileReader();
-			reader.onload = (e) => {
-				imagePreview = e.target?.result as string;
-			};
-			reader.onerror = () => {
-				console.error('Failed to read image for preview', reader.error);
-				clearSelectedImage();
-				formError = 'Failed to load image preview';
-			};
-			reader.onabort = () => {
-				clearSelectedImage();
-				formError = 'Image preview was aborted';
-			};
-			reader.readAsDataURL(file);
-		}
-	}
-
-	function handleAspectChange(event: Event) {
-		const input = event.target as HTMLSelectElement;
-		if (!isPuzzleAspectRatio(input.value)) return;
-
-		aspectRatio = input.value;
-		const nextAllowed = getAllowedPieceCountsForAspectRatio(
-			aspectRatio,
-			MIN_ADMIN_PIECES,
-			MAX_ADMIN_PIECES
-		);
-		if (!nextAllowed.includes(pieceCount)) {
-			pieceCount = ADMIN_DEFAULT_PIECES_BY_ASPECT[aspectRatio] ?? nextAllowed[0] ?? 0;
-		}
-	}
-
-	function handlePieceCountChange(event: Event) {
-		const input = event.target as HTMLSelectElement;
-		const parsed = Number.parseInt(input.value, 10);
-		pieceCount = Number.isFinite(parsed) ? parsed : 0;
-	}
-
-	function clearForm() {
-		name = '';
-		category = '';
-		aspectRatio = DEFAULT_PUZZLE_ASPECT_RATIO;
-		pieceCount = ADMIN_DEFAULT_PIECES_BY_ASPECT[DEFAULT_PUZZLE_ASPECT_RATIO];
-		clearSelectedImage();
-		formError = null;
-	}
-
-	async function handleSubmit(event: Event) {
-		event.preventDefault();
-		formError = null;
-		successMessage = null;
-
-		if (!name.trim()) {
-			formError = 'Please enter a puzzle name';
-			return;
-		}
-
-		if (!imageFile) {
-			formError = 'Please select an image';
-			return;
-		}
-
-		if (!allowedPieceCounts.includes(pieceCount)) {
-			formError = `Choose a valid ${aspectRatio} piece count`;
-			return;
-		}
-
-		creating = true;
-
-		try {
-			const normalizedImage = await normalizePuzzleImageFile(imageFile, {
-				aspectRatio,
-				pieceCount,
-				maxDimension: MAX_IMAGE_DIMENSION,
-				type: 'image/jpeg',
-				quality: 0.88
-			});
-			await createPuzzle(
-				name.trim(),
-				pieceCount,
-				normalizedImage,
-				category || undefined,
-				aspectRatio
-			);
-			successMessage = 'Puzzle creation started! It will appear below once processing begins.';
-			clearForm();
-			await loadPuzzles();
-			startPollingIfNeeded();
-
-			if (successTimeout !== null) clearTimeout(successTimeout);
-			successTimeout = setTimeout(() => {
-				successMessage = null;
-				successTimeout = null;
-			}, 3000);
-		} catch (e) {
-			if (e instanceof ApiError) {
-				formError = e.message;
-			} else if (e instanceof Error) {
-				formError = e.message;
-			} else {
-				formError = 'Failed to create puzzle';
-			}
-		} finally {
-			creating = false;
-		}
-	}
-
 	async function handleDelete(puzzleId: string, isProcessing: boolean = false) {
 		const confirmMessage = isProcessing
 			? 'This puzzle is still processing. Force delete may leave orphaned assets. Continue?'
@@ -350,17 +183,11 @@
 		if (!confirm(confirmMessage)) return;
 
 		deletingId = puzzleId;
-
 		try {
 			const deleteResult = await deletePuzzle(puzzleId, { force: isProcessing });
 			clearProgress(puzzleId);
 			if (deleteResult && 'partialSuccess' in deleteResult && deleteResult.partialSuccess) {
-				successMessage = deleteResult.warning;
-				if (successTimeout !== null) clearTimeout(successTimeout);
-				successTimeout = setTimeout(() => {
-					successMessage = null;
-					successTimeout = null;
-				}, 5000);
+				showSuccess(deleteResult.warning);
 			}
 			await loadPuzzles();
 		} catch (e) {
@@ -397,6 +224,13 @@
 			</div>
 			<div class="flex items-center gap-3">
 				<a
+					href={resolve('/upload')}
+					class="text-[0.58rem] font-(--font-display) font-semibold tracking-[0.2em] text-(--accent)
+transition-colors duration-150 hover:text-(--text-0)"
+				>
+					UPLOAD
+				</a>
+				<a
 					href={resolve('/')}
 					class="text-[0.58rem] font-(--font-display) font-semibold tracking-[0.2em] text-(--text-2)
 transition-colors duration-150 hover:text-(--accent)"
@@ -430,235 +264,17 @@ text-[0.72rem] font-(--font-mono) tracking-[0.05em] text-(--hot)"
 			</div>
 		{/if}
 
-		<div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
-			<div class="border border-(--border) bg-(--bg-1)">
-				<div
-					class="flex items-center justify-between border-b border-(--border) bg-(--bg-2) px-4 py-3"
-				>
-					<span
-						class="text-[0.6rem] font-(--font-display) font-semibold tracking-[0.2em] text-(--text-2)"
-					>
-						CREATE MISSION
-					</span>
-				</div>
-
-				{#if successMessage}
-					<div
-						class="m-4 mb-0 border border-[rgba(0,255,136,0.4)] bg-[rgba(0,255,136,0.06)] px-4 py-3
+		{#if successMessage}
+			<div
+				class="mb-4 border border-[rgba(0,255,136,0.4)] bg-[rgba(0,255,136,0.06)] px-4 py-3
 text-[0.72rem] font-(--font-mono) tracking-[0.05em] text-(--green)"
-						role="status"
-					>
-						{successMessage}
-					</div>
-				{/if}
-
-				{#if formError}
-					<div
-						class="m-4 mb-0 border border-(--hot-dim) bg-[rgba(255,0,102,0.06)] px-4 py-3
-text-[0.72rem] font-(--font-mono) tracking-[0.05em] text-(--hot)"
-						role="alert"
-					>
-						{formError}
-					</div>
-				{/if}
-
-				<form onsubmit={handleSubmit} class="flex flex-col gap-5 p-5">
-					<div class="flex flex-col gap-1.5">
-						<label
-							for="name"
-							class="text-[0.55rem] font-(--font-display) font-semibold tracking-[0.2em]
-text-(--text-2)"
-						>
-							PUZZLE NAME
-						</label>
-						<input
-							id="name"
-							type="text"
-							bind:value={name}
-							class="w-full border border-(--border) bg-(--bg-0) px-3.5 py-2.5
-text-[0.8rem] font-(--font-mono) text-(--text-0)
-transition-[border-color,box-shadow] duration-150 placeholder:text-(--text-2)
-focus:border-(--accent) focus:[box-shadow:0_0_12px_var(--accent-glow)]
-focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
-							placeholder="Enter puzzle name"
-							disabled={creating}
-						/>
-					</div>
-
-					<div class="flex flex-col gap-1.5">
-						<span
-							class="text-[0.55rem] font-(--font-display) font-semibold tracking-[0.2em] text-(--text-2)"
-						>
-							ASPECT RATIO
-						</span>
-						<select
-							value={aspectRatio}
-							onchange={handleAspectChange}
-							disabled={creating}
-							class="w-full appearance-none border border-(--border) bg-(--bg-0) px-3.5 py-2.5
-text-[0.8rem] font-(--font-mono) text-(--text-0)
-transition-[border-color,box-shadow] duration-150 focus:border-(--accent)
-focus:[box-shadow:0_0_12px_var(--accent-glow)] focus:outline-none
-disabled:cursor-not-allowed disabled:opacity-50"
-						>
-							{#each Object.entries(ADMIN_ASPECT_LABELS) as [value, label] (value)}
-								<option {value}>{label}</option>
-							{/each}
-						</select>
-					</div>
-
-					<div class="flex flex-col gap-1.5">
-						<span
-							class="text-[0.55rem] font-(--font-display) font-semibold tracking-[0.2em] text-(--text-2)"
-						>
-							PIECE COUNT
-						</span>
-						<select
-							value={pieceCount}
-							onchange={handlePieceCountChange}
-							disabled={creating}
-							class="w-full appearance-none border border-(--border) bg-(--bg-0) px-3.5 py-2.5
-text-[0.8rem] font-(--font-mono) text-(--text-0)
-transition-[border-color,box-shadow] duration-150 focus:border-(--accent)
-focus:[box-shadow:0_0_12px_var(--accent-glow)] focus:outline-none
-disabled:cursor-not-allowed disabled:opacity-50"
-						>
-							{#each allowedPieceCounts as count (count)}
-								<option value={count}>{count} pieces</option>
-							{/each}
-						</select>
-					</div>
-
-					<div class="flex flex-col gap-1.5">
-						<label
-							for="category"
-							class="text-[0.55rem] font-(--font-display) font-semibold tracking-[0.2em]
-text-(--text-2)"
-						>
-							CATEGORY
-							<span class="font-normal opacity-60">(OPTIONAL)</span>
-						</label>
-						<select
-							id="category"
-							bind:value={category}
-							disabled={creating}
-							class="w-full appearance-none border border-(--border) bg-(--bg-0) px-3.5 py-2.5
-text-[0.8rem] font-(--font-mono) text-(--text-0)
-transition-[border-color,box-shadow] duration-150 focus:border-(--accent)
-focus:[box-shadow:0_0_12px_var(--accent-glow)] focus:outline-none
-disabled:cursor-not-allowed disabled:opacity-50"
-						>
-							<option value="">No category</option>
-							{#each PUZZLE_CATEGORIES as cat (cat)}
-								<option value={cat}>{cat}</option>
-							{/each}
-						</select>
-					</div>
-
-					<div class="flex flex-col gap-1.5">
-						<span
-							id="image-label"
-							class="text-[0.55rem] font-(--font-display) font-semibold tracking-[0.2em] text-(--text-2)"
-						>
-							IMAGE
-						</span>
-						<div
-							class="border border-dashed border-(--border-bright) bg-(--bg-0) p-6 transition-colors duration-150 hover:border-(--accent-dim)"
-						>
-							{#if imagePreview}
-								<div class="relative mx-auto w-full max-w-80" style={previewAspectStyle}>
-									<img src={imagePreview} alt="Preview" class="h-full w-full object-cover" />
-									<button
-										type="button"
-										onclick={clearSelectedImage}
-										class="absolute top-0 right-0 flex items-center justify-center bg-(--hot) p-1
-transition-opacity duration-150 hover:opacity-80"
-										aria-label="Remove image"
-									>
-										<svg
-											class="h-4 w-4 text-white"
-											fill="none"
-											viewBox="0 0 24 24"
-											stroke="currentColor"
-										>
-											<path
-												stroke-linecap="round"
-												stroke-linejoin="round"
-												stroke-width="2"
-												d="M6 18L18 6M6 6l12 12"
-											/>
-										</svg>
-									</button>
-								</div>
-							{:else}
-								<label
-									for="image-upload"
-									class="flex cursor-pointer flex-col items-center gap-2
-focus-within:[outline:2px_solid_var(--accent)]
-focus-within:[outline-offset:4px]"
-								>
-									<svg
-										class="h-10 w-10 text-(--text-2)"
-										fill="none"
-										viewBox="0 0 24 24"
-										stroke="currentColor"
-										aria-hidden="true"
-									>
-										<path
-											stroke-linecap="round"
-											stroke-linejoin="round"
-											stroke-width="1.5"
-											d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
-										/>
-									</svg>
-									<span
-										class="text-[0.6rem] font-(--font-display) font-semibold tracking-[0.2em] text-(--accent)"
-									>
-										CLICK TO UPLOAD
-									</span>
-									<span class="text-[0.62rem] font-(--font-mono) tracking-[0.05em] text-(--text-2)">
-										JPEG, PNG, WebP — max 10MB
-									</span>
-									<input
-										id="image-upload"
-										bind:this={imageInput}
-										type="file"
-										accept="image/jpeg,image/png,image/webp"
-										class="sr-only"
-										onchange={handleImageSelect}
-										disabled={creating}
-									/>
-								</label>
-							{/if}
-						</div>
-					</div>
-
-					<button
-						type="submit"
-						disabled={creating || !name.trim() || !imageFile}
-						class="w-full border border-(--accent) px-4 py-3 text-[0.65rem]
-font-(--font-display) font-bold tracking-[0.2em] text-(--accent)
-transition-all duration-200 hover:bg-(--accent-glow)
-hover:[box-shadow:0_0_25px_var(--accent-glow-strong)]
-hover:[text-shadow:0_0_10px_var(--accent)] disabled:cursor-not-allowed
-disabled:opacity-40"
-					>
-						{#if creating}
-							<span class="flex items-center justify-center gap-2">
-								<span
-									class="h-3.5 w-3.5 rounded-full border-2 border-(--accent-dim)
-border-t-(--accent) motion-safe:animate-[spin-cw_0.75s_linear_infinite]
-motion-reduce:animate-none"
-								></span>
-								INITIALIZING...
-							</span>
-						{:else}
-							CREATE MISSION
-						{/if}
-					</button>
-				</form>
+				role="status"
+			>
+				{successMessage}
 			</div>
+		{/if}
 
+		<div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
 			<div class="border border-(--border) bg-(--bg-1)">
 				<div
 					class="flex items-center justify-between border-b border-(--border) bg-(--bg-2) px-4 py-3"
@@ -693,7 +309,7 @@ text-[0.72rem] font-(--font-mono) tracking-[0.05em] text-(--hot)"
 					<div
 						class="px-4 py-10 text-center text-[0.72rem] font-(--font-mono) tracking-[0.08em] text-(--text-2)"
 					>
-						<p>No missions found. Create your first mission.</p>
+						<p>No missions found.</p>
 					</div>
 				{:else}
 					<div class="flex flex-col">
@@ -723,20 +339,7 @@ bg-(--bg-2)"
 											aria-label="Puzzle failed"
 											role="img"
 										>
-											<svg
-												class="h-5 w-5 text-(--hot)"
-												fill="none"
-												viewBox="0 0 24 24"
-												stroke="currentColor"
-												aria-hidden="true"
-											>
-												<path
-													stroke-linecap="round"
-													stroke-linejoin="round"
-													stroke-width="2"
-													d="M6 18L18 6M6 6l12 12"
-												/>
-											</svg>
+											<span class="text-(--hot)">x</span>
 										</div>
 									{:else}
 										<img
@@ -817,7 +420,7 @@ hover:bg-(--hot-glow) disabled:cursor-not-allowed disabled:opacity-40"
 				{/if}
 			</div>
 
-			<div class="border border-(--border) bg-(--bg-1) lg:col-span-2">
+			<div class="border border-(--border) bg-(--bg-1)">
 				<div
 					class="flex items-center justify-between border-b border-(--border) bg-(--bg-2) px-4 py-3"
 				>
@@ -853,9 +456,7 @@ focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
 							class="border border-(--accent) px-4 py-2.5 text-[0.6rem]
 font-(--font-display) font-bold tracking-[0.2em] text-(--accent)
 transition-all duration-200 hover:bg-(--accent-glow)
-hover:[box-shadow:0_0_20px_var(--accent-glow-strong)]
-hover:[text-shadow:0_0_10px_var(--accent)] disabled:cursor-not-allowed
-disabled:opacity-40"
+disabled:cursor-not-allowed disabled:opacity-40"
 						>
 							{allowlistSaving ? 'ADDING...' : 'ADD PLAYER'}
 						</button>

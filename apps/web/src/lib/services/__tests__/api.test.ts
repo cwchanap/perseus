@@ -1,6 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import {
 	createPuzzle,
+	createPlayerPuzzle,
 	deletePuzzle,
 	fetchPuzzles,
 	fetchPuzzle,
@@ -366,6 +367,48 @@ describe('API Service - createPuzzle', () => {
 
 		expect(capturedBody).toBeInstanceOf(FormData);
 		expect(capturedBody!.get('aspectRatio')).toBe('3:4');
+	});
+});
+
+describe('API Service - createPlayerPuzzle', () => {
+	const mockPuzzleMetadata = {
+		id: 'p1',
+		name: 'Player Puzzle',
+		pieceCount: 48,
+		status: 'processing',
+		createdAt: 0
+	};
+
+	it('posts player uploads to /api/puzzles with credentials', async () => {
+		let capturedUrl = '';
+		let capturedOptions: RequestInit | undefined;
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockImplementation((url: string, options: RequestInit) => {
+				capturedUrl = url;
+				capturedOptions = options;
+				return Promise.resolve(
+					new Response(JSON.stringify(mockPuzzleMetadata), {
+						status: 201,
+						headers: { 'Content-Type': 'application/json' }
+					})
+				);
+			})
+		);
+
+		const image = new File(['data'], 'test.png', { type: 'image/png' });
+		await createPlayerPuzzle('Player Puzzle', 48, image, 'Art', '3:4');
+
+		expect(capturedUrl).toMatch(/\/api\/puzzles$/);
+		expect(capturedOptions?.method).toBe('POST');
+		expect(capturedOptions?.credentials).toBe('include');
+		expect(capturedOptions?.body).toBeInstanceOf(FormData);
+		const body = capturedOptions!.body as FormData;
+		expect(body.get('name')).toBe('Player Puzzle');
+		expect(body.get('pieceCount')).toBe('48');
+		expect(body.get('aspectRatio')).toBe('3:4');
+		expect(body.get('category')).toBe('Art');
+		expect(body.get('image')).toBe(image);
 	});
 });
 

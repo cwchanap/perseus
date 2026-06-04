@@ -2,14 +2,102 @@
 import { describe, it, expect, vi } from 'vitest';
 import puzzles from '../puzzles.worker';
 import * as storage from '../../services/storage.worker';
+import * as playerAuth from '../../services/player-auth.worker';
 
 vi.mock('../../services/storage.worker');
+vi.mock('../../services/player-auth.worker', () => ({
+	getPlayerSession: vi.fn()
+}));
+
+const PNG_HEADER = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0, 0]);
 
 describe('Puzzle Routes - UUID Validation', () => {
 	const mockEnv = {
 		PUZZLE_METADATA: {} as KVNamespace,
-		PUZZLES_BUCKET: {} as R2Bucket
+		PUZZLES_BUCKET: {} as R2Bucket,
+		PUZZLE_WORKFLOW: {
+			create: vi.fn().mockResolvedValue({ id: 'workflow-id' })
+		}
 	};
+
+	describe('POST / - Upload puzzle for player', () => {
+		it('returns 401 when the player session cookie is missing', async () => {
+			const formData = new FormData();
+			formData.append('name', 'Player Puzzle');
+			formData.append('pieceCount', '48');
+			formData.append('aspectRatio', '3:4');
+			formData.append('image', new Blob([PNG_HEADER], { type: 'image/png' }), 'test.png');
+
+			const res = await puzzles.fetch(
+				new Request('http://localhost/', {
+					method: 'POST',
+					body: formData
+				}),
+				mockEnv as any
+			);
+
+			expect(res.status).toBe(401);
+			const body = (await res.json()) as any;
+			expect(body).toEqual({
+				error: 'unauthorized',
+				message: 'Player authentication required'
+			});
+			expect(storage.createPuzzleMetadata).not.toHaveBeenCalled();
+		});
+
+		it('creates a processing puzzle when the player session is valid', async () => {
+			vi.mocked(playerAuth.getPlayerSession).mockResolvedValue({
+				sessionHash: 'session-hash',
+				user: {
+					id: 'player-1',
+					email: 'player@example.com',
+					createdAt: 1000,
+					lastLoginAt: 2000
+				},
+				createdAt: 2000,
+				expiresAt: Date.now() + 1000
+			});
+			vi.mocked(storage.uploadOriginalImage).mockResolvedValue(undefined);
+			vi.mocked(storage.createPuzzleMetadata).mockResolvedValue(undefined);
+
+			const formData = new FormData();
+			formData.append('name', 'Player Puzzle');
+			formData.append('pieceCount', '48');
+			formData.append('aspectRatio', '3:4');
+			formData.append('category', 'Art');
+			formData.append('image', new Blob([PNG_HEADER], { type: 'image/png' }), 'test.png');
+
+			const res = await puzzles.fetch(
+				new Request('http://localhost/', {
+					method: 'POST',
+					headers: { Cookie: 'perseus_player_session=player-token' },
+					body: formData
+				}),
+				mockEnv as any
+			);
+
+			expect(res.status).toBe(201);
+			const body = (await res.json()) as any;
+			expect(playerAuth.getPlayerSession).toHaveBeenCalledWith(
+				mockEnv.PUZZLE_METADATA,
+				'player-token'
+			);
+			expect(storage.createPuzzleMetadata).toHaveBeenCalledWith(
+				mockEnv.PUZZLE_METADATA,
+				expect.objectContaining({
+					name: 'Player Puzzle',
+					pieceCount: 48,
+					aspectRatio: '3:4',
+					category: 'Art',
+					status: 'processing'
+				})
+			);
+			expect(mockEnv.PUZZLE_WORKFLOW.create).toHaveBeenCalledWith({
+				id: body.id,
+				params: { puzzleId: body.id }
+			});
+		});
+	});
 
 	describe('GET / - List puzzles', () => {
 		it('should return a paginated response with search and category filters', async () => {

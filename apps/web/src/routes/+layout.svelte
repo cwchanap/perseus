@@ -40,6 +40,13 @@
 		>
 			→ QUICK PUZZLE
 		</a>
+		<a
+			href={resolve('/upload')}
+			class="shrink-0 text-(--accent) opacity-70 transition-opacity duration-150 hover:opacity-100"
+			data-testid="upload-puzzle-link"
+		>
+			UPLOAD
+		</a>
 
 		{#if $playerAuth.status === 'loading'}
 			<!-- auth status pending -->
