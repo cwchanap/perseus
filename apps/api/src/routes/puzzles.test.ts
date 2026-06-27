@@ -2,6 +2,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // vi.mock is hoisted — must appear before any imports that use the mocked modules.
+vi.mock('../db', () => ({
+	getDb: vi.fn(() => ({}))
+}));
+
 vi.mock('node:fs/promises', () => ({
 	readFile: vi.fn(),
 	mkdir: vi.fn().mockResolvedValue(undefined),

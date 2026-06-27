@@ -633,4 +633,7 @@ puzzles.get('/:id/pieces/:pieceId/image', async (c) => {
 	}
 });
 
+import complete from './puzzles.complete.worker';
+puzzles.route('/', complete);
+
 export default puzzles;
