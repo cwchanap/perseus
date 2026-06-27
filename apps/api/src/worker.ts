@@ -19,6 +19,7 @@ export interface Env {
 	PUZZLE_METADATA: KVNamespace;
 	PUZZLE_METADATA_DO: DurableObjectNamespace;
 	PUZZLE_WORKFLOW: WorkflowBinding<WorkflowParams>;
+	DB: D1Database;
 	JWT_SECRET: string;
 	ADMIN_PASSKEY: string;
 	GOOGLE_CLIENT_ID: string;
