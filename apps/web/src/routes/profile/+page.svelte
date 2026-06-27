@@ -1,0 +1,186 @@
+<script lang="ts">
+	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
+	import { playerAuth } from '$lib/stores/playerAuth';
+	import {
+		getPlayerProfile,
+		getPlayerPuzzles,
+		getPlayerStats,
+		updatePlayerProfile,
+		uploadPlayerAvatar,
+		getAvatarUrl
+	} from '$lib/services/api';
+	import type {
+		PlayerProfile,
+		PlayerPuzzleSummary,
+		PuzzleSummary,
+		PlayerStatRow
+	} from '$lib/types/puzzle';
+	import PuzzleCard from '$lib/components/PuzzleCard.svelte';
+	import { formatTime } from '$lib/stores/timer';
+
+	let profile = $state<PlayerProfile | null>(null);
+	let puzzles = $state<PlayerPuzzleSummary[]>([]);
+	let stats = $state<PlayerStatRow[]>([]);
+	let loading = $state(true);
+	let editing = $state(false);
+	let displayName = $state('');
+	let saving = $state(false);
+	let avatarInput = $state<HTMLInputElement | null>(null);
+
+	const initials = $derived(
+		(profile?.name ?? '?')
+			.split(' ')
+			.map((p) => p[0])
+			.slice(0, 2)
+			.join('')
+			.toUpperCase()
+	);
+
+	function toCard(p: PlayerPuzzleSummary): PuzzleSummary {
+		return {
+			id: p.id,
+			name: p.name,
+			pieceCount: p.pieceCount,
+			status: p.status as PuzzleSummary['status'],
+			...(p.category ? { category: p.category as PuzzleSummary['category'] } : {})
+		};
+	}
+
+	onMount(async () => {
+		await playerAuth.refresh();
+		if ($playerAuth.status !== 'authenticated') {
+			goto(resolve('/login'));
+			return;
+		}
+		await loadAll();
+	});
+
+	async function loadAll() {
+		loading = true;
+		try {
+			[profile, puzzles, stats] = await Promise.all([
+				getPlayerProfile(),
+				getPlayerPuzzles().then((r) => r.puzzles),
+				getPlayerStats().then((r) => r.stats)
+			]);
+			displayName = profile?.name ?? '';
+		} finally {
+			loading = false;
+		}
+	}
+
+	async function saveName() {
+		saving = true;
+		try {
+			await updatePlayerProfile({ displayName });
+			editing = false;
+			await loadAll();
+		} finally {
+			saving = false;
+		}
+	}
+
+	async function onAvatarChosen(e: Event) {
+		const input = e.target as HTMLInputElement;
+		const file = input.files?.[0];
+		if (!file) return;
+		await uploadPlayerAvatar(file);
+		await loadAll();
+	}
+</script>
+
+{#if loading}
+	<p data-testid="profile-loading">Loading…</p>
+{:else if profile}
+	<section class="mx-auto max-w-4xl px-4 py-8">
+		<div class="flex items-center gap-4 border border-(--border) bg-(--bg-1) p-5">
+			{#if profile.picture}
+				<img src={profile.picture} alt={profile.name} class="h-16 w-16 rounded-full object-cover" />
+			{:else}
+				<div
+					class="flex h-16 w-16 items-center justify-center rounded-full bg-(--bg-2) text-(--accent)"
+				>
+					{initials}
+				</div>
+			{/if}
+			<div class="min-w-0">
+				{#if editing}
+					<input
+						bind:value={displayName}
+						class="border border-(--border) bg-(--bg-2) px-2 py-1 text-(--text-0)"
+					/>
+					<button type="button" onclick={saveName} disabled={saving}>Save</button>
+					<button type="button" onclick={() => (editing = false)}>Cancel</button>
+				{:else}
+					<h1 class="font-(--font-display) text-(--text-0)" data-testid="profile-name">
+						{profile.name}
+					</h1>
+					<p class="text-sm text-(--text-2)">{profile.email}</p>
+				{/if}
+				<input
+					bind:this={avatarInput}
+					type="file"
+					accept="image/*"
+					onchange={onAvatarChosen}
+					class="mt-2 text-xs text-(--text-2)"
+				/>
+			</div>
+		</div>
+
+		<div class="mt-6 grid grid-cols-3 gap-3 text-center">
+			<div class="border border-(--border) bg-(--bg-1) p-4">
+				<div class="text-xl font-bold text-(--accent)">
+					{profile.summary.puzzlesUploaded}
+				</div>
+				<div class="text-xs tracking-wider text-(--text-2) uppercase">Uploaded</div>
+			</div>
+			<div class="border border-(--border) bg-(--bg-1) p-4">
+				<div class="text-xl font-bold text-(--accent)">
+					{profile.summary.puzzlesSolved}
+				</div>
+				<div class="text-xs tracking-wider text-(--text-2) uppercase">Solved</div>
+			</div>
+			<div class="border border-(--border) bg-(--bg-1) p-4">
+				<div class="text-xl font-bold text-(--accent)">
+					{profile.summary.totalCompletions}
+				</div>
+				<div class="text-xs tracking-wider text-(--text-2) uppercase">Completions</div>
+			</div>
+		</div>
+
+		<button type="button" class="mt-4 text-sm text-(--accent)" onclick={() => (editing = !editing)}>
+			{editing ? 'Cancel' : 'Edit profile'}
+		</button>
+
+		<h2 class="mt-8 font-(--font-display) text-(--text-0)">My Puzzles</h2>
+		{#if puzzles.length === 0}
+			<p class="text-sm text-(--text-2)">You haven't uploaded any puzzles yet.</p>
+		{:else}
+			<div class="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-3">
+				{#each puzzles as p (p.id)}
+					<PuzzleCard puzzle={toCard(p)} />
+				{/each}
+			</div>
+		{/if}
+
+		<h2 class="mt-8 font-(--font-display) text-(--text-0)">Best Times</h2>
+		{#if stats.length === 0}
+			<p class="text-sm text-(--text-2)">No solves recorded yet.</p>
+		{:else}
+			<ul class="mt-3 divide-y divide-(--border)">
+				{#each stats as s (s.puzzleId)}
+					<li class="flex justify-between py-2 text-sm">
+						<a href={resolve(`/puzzle/${s.puzzleId}`)} class="text-(--text-1)">
+							{s.puzzleId}
+						</a>
+						<span class="font-(--font-mono) text-(--gold)">
+							{formatTime(s.bestTimeSeconds)}
+						</span>
+					</li>
+				{/each}
+			</ul>
+		{/if}
+	</section>
+{/if}
