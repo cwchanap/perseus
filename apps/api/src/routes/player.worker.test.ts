@@ -169,3 +169,152 @@ describe('player profile routes (Worker)', () => {
 		expect(body.error).toBe('bad_request');
 	});
 });
+
+// Minimal in-memory R2 bucket double: put() stores bytes + contentType,
+// get() returns a body stream + writeHttpMetadata like the real binding.
+function createMockBucket() {
+	const store = new Map<string, { body: ArrayBuffer; contentType: string }>();
+	const bucket = {
+		put: vi.fn(
+			async (
+				key: string,
+				body: ReadableStream<Uint8Array>,
+				opts?: { httpMetadata?: { contentType?: string } }
+			) => {
+				const buf = await new Response(body).arrayBuffer();
+				store.set(key, {
+					body: buf,
+					contentType: opts?.httpMetadata?.contentType ?? ''
+				});
+			}
+		),
+		get: vi.fn(async (key: string) => {
+			const entry = store.get(key);
+			if (!entry) return null;
+			return {
+				body: new Response(entry.body).body,
+				writeHttpMetadata: (h: Headers) => {
+					if (entry.contentType) h.set('Content-Type', entry.contentType);
+				}
+			};
+		})
+	};
+	return { bucket, store };
+}
+
+const PNG_BYTES = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01, 0x02, 0x03, 0x04];
+
+describe('player avatar route (Worker)', () => {
+	it('POST avatar stores to R2 and returns avatarUrl', async () => {
+		const { bucket } = createMockBucket();
+		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
+
+		const blob = new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' });
+		const form = new FormData();
+		form.append('avatar', blob, 'a.png');
+
+		const res = await buildApp().request(
+			'/api/player/avatar',
+			{ method: 'POST', headers: AUTH_COOKIE, body: form },
+			env
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as any;
+		expect(body.avatarUrl).toBe('/api/player/p1/avatar');
+		expect(bucket.put).toHaveBeenCalledWith('avatars/p1', expect.any(ReadableStream), {
+			httpMetadata: { contentType: 'image/png' }
+		});
+	});
+
+	it('GET avatar serves the stored image from R2', async () => {
+		const { bucket } = createMockBucket();
+		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
+
+		const blob = new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' });
+		const form = new FormData();
+		form.append('avatar', blob, 'a.png');
+		await buildApp().request(
+			'/api/player/avatar',
+			{ method: 'POST', headers: AUTH_COOKIE, body: form },
+			env
+		);
+
+		const res = await buildApp().request('/api/player/p1/avatar', {}, env);
+		expect(res.status).toBe(200);
+		expect(res.headers.get('Content-Type')).toBe('image/png');
+		const buf = new Uint8Array(await res.arrayBuffer());
+		expect(buf[0]).toBe(0x89);
+	});
+
+	it('GET unknown avatar returns 404', async () => {
+		const { bucket } = createMockBucket();
+		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
+		const res = await buildApp().request('/api/player/nobody/avatar', {}, env);
+		expect(res.status).toBe(404);
+	});
+
+	it('POST avatar rejects missing file with 400', async () => {
+		const { bucket } = createMockBucket();
+		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
+		const res = await buildApp().request(
+			'/api/player/avatar',
+			{ method: 'POST', headers: AUTH_COOKIE, body: new FormData() },
+			env
+		);
+		expect(res.status).toBe(400);
+		expect(bucket.put).not.toHaveBeenCalled();
+	});
+
+	it('POST avatar rejects unsupported type with 400', async () => {
+		const { bucket } = createMockBucket();
+		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
+		const blob = new Blob([new Uint8Array([1, 2, 3])], { type: 'image/gif' });
+		const form = new FormData();
+		form.append('avatar', blob, 'a.gif');
+		const res = await buildApp().request(
+			'/api/player/avatar',
+			{ method: 'POST', headers: AUTH_COOKIE, body: form },
+			env
+		);
+		expect(res.status).toBe(400);
+		expect(bucket.put).not.toHaveBeenCalled();
+	});
+
+	it('POST avatar rejects oversized file with 400', async () => {
+		const { bucket } = createMockBucket();
+		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
+		const blob = new Blob([new Uint8Array(6 * 1024 * 1024)], { type: 'image/png' });
+		const form = new FormData();
+		form.append('avatar', blob, 'a.png');
+		const res = await buildApp().request(
+			'/api/player/avatar',
+			{ method: 'POST', headers: AUTH_COOKIE, body: form },
+			env
+		);
+		expect(res.status).toBe(400);
+		expect(bucket.put).not.toHaveBeenCalled();
+	});
+
+	it('POST avatar preserves an existing displayName', async () => {
+		const { bucket } = createMockBucket();
+		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
+		const { upsertProfileOverride, getProfileOverride } = await import('@perseus/shared');
+		await (upsertProfileOverride as any)({}, 'p1', {
+			displayName: 'KeepMe',
+			avatarUrl: null
+		});
+
+		const blob = new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' });
+		const form = new FormData();
+		form.append('avatar', blob, 'a.png');
+		await buildApp().request(
+			'/api/player/avatar',
+			{ method: 'POST', headers: AUTH_COOKIE, body: form },
+			env
+		);
+
+		const row = await (getProfileOverride as any)({}, 'p1');
+		expect(row.displayName).toBe('KeepMe');
+		expect(row.avatarUrl).toBe('/api/player/p1/avatar');
+	});
+});

@@ -1,6 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Hono } from 'hono';
+import { rmSync } from 'node:fs';
+import { join } from 'node:path';
 
 // The Bun player route resolves its DB via the `../db` singleton, which loads
 // `bun:sqlite`. The api test runner (vitest under Node) cannot load that
@@ -138,5 +140,113 @@ describe('player profile routes (Bun)', () => {
 		expect(res.status).toBe(400);
 		const body = await res.json();
 		expect(body.error).toBe('bad_request');
+	});
+});
+
+const PNG_BYTES = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01, 0x02, 0x03, 0x04];
+
+describe('player avatar route (Bun)', () => {
+	const dataDir = process.env.DATA_DIR || './data';
+	const avatarPath = join(dataDir, 'avatars', 'p1');
+
+	afterEach(() => {
+		rmSync(avatarPath, { force: true });
+	});
+
+	it('POST avatar stores the file and returns avatarUrl', async () => {
+		const blob = new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' });
+		const form = new FormData();
+		form.append('avatar', blob, 'a.png');
+
+		const res = await buildApp().request('/api/player/avatar', {
+			method: 'POST',
+			headers: AUTH_COOKIE,
+			body: form
+		});
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.avatarUrl).toBe('/api/player/p1/avatar');
+	});
+
+	it('GET avatar serves the stored image with sniffed content-type', async () => {
+		const blob = new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' });
+		const form = new FormData();
+		form.append('avatar', blob, 'a.png');
+		await buildApp().request('/api/player/avatar', {
+			method: 'POST',
+			headers: AUTH_COOKIE,
+			body: form
+		});
+
+		const res = await buildApp().request('/api/player/p1/avatar');
+		expect(res.status).toBe(200);
+		expect(res.headers.get('Content-Type')).toBe('image/png');
+		const buf = new Uint8Array(await res.arrayBuffer());
+		expect(buf[0]).toBe(0x89);
+	});
+
+	it('GET unknown avatar returns 404', async () => {
+		const res = await buildApp().request('/api/player/nobody/avatar');
+		expect(res.status).toBe(404);
+	});
+
+	it('GET avatar rejects path-traversal player ids with 400', async () => {
+		const res = await buildApp().request('/api/player/..%2f..%2fetc/avatar');
+		expect(res.status).toBe(400);
+	});
+
+	it('POST avatar rejects missing file with 400', async () => {
+		const res = await buildApp().request('/api/player/avatar', {
+			method: 'POST',
+			headers: AUTH_COOKIE,
+			body: new FormData()
+		});
+		expect(res.status).toBe(400);
+	});
+
+	it('POST avatar rejects unsupported type with 400', async () => {
+		const blob = new Blob([new Uint8Array([1, 2, 3])], { type: 'image/gif' });
+		const form = new FormData();
+		form.append('avatar', blob, 'a.gif');
+		const res = await buildApp().request('/api/player/avatar', {
+			method: 'POST',
+			headers: AUTH_COOKIE,
+			body: form
+		});
+		expect(res.status).toBe(400);
+	});
+
+	it('POST avatar rejects oversized file with 400', async () => {
+		const blob = new Blob([new Uint8Array(6 * 1024 * 1024)], { type: 'image/png' });
+		const form = new FormData();
+		form.append('avatar', blob, 'a.png');
+		const res = await buildApp().request('/api/player/avatar', {
+			method: 'POST',
+			headers: AUTH_COOKIE,
+			body: form
+		});
+		expect(res.status).toBe(400);
+	});
+
+	it('POST avatar preserves an existing displayName', async () => {
+		const { upsertProfileOverride } = await import('@perseus/shared');
+		await (upsertProfileOverride as any)({}, 'p1', {
+			displayName: 'KeepMe',
+			avatarUrl: null
+		});
+
+		const blob = new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' });
+		const form = new FormData();
+		form.append('avatar', blob, 'a.png');
+		await buildApp().request('/api/player/avatar', {
+			method: 'POST',
+			headers: AUTH_COOKIE,
+			body: form
+		});
+
+		const { getProfileOverride } = await import('@perseus/shared');
+		const row = await (getProfileOverride as any)({}, 'p1');
+		expect(row.displayName).toBe('KeepMe');
+		expect(row.avatarUrl).toBe('/api/player/p1/avatar');
 	});
 });
