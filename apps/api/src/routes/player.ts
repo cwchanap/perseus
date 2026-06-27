@@ -2,7 +2,13 @@ import { Hono } from 'hono';
 import { mkdir, writeFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { getDb } from '../db';
-import { getProfileOverride, upsertProfileOverride, getPlayerSummary } from '@perseus/shared';
+import {
+	getProfileOverride,
+	upsertProfileOverride,
+	getPlayerSummary,
+	listPlayerPuzzles,
+	listPlayerStats
+} from '@perseus/shared';
 import type { PlayerProfile } from '@perseus/types';
 import { requirePlayerAuth } from '../middleware/player-auth';
 import type { PlayerSessionRecord } from '../services/player-auth';
@@ -141,6 +147,29 @@ player.get('/:playerId/avatar', async (c) => {
 	}
 	const mime = sniffImageType(new Uint8Array(buf)) ?? 'application/octet-stream';
 	return new Response(buf, { headers: { 'Content-Type': mime } });
+});
+
+player.get('/puzzles', requirePlayerAuth, async (c) => {
+	const db = getDb();
+	const session = c.get('playerSession');
+	const limit = Number(c.req.query('limit') ?? '20');
+	const cursorRaw = c.req.query('cursor');
+	const cursor = cursorRaw ? Number(cursorRaw) : undefined;
+	const { rows, nextCursor } = await listPlayerPuzzles(db, session.user.id, {
+		limit: Number.isFinite(limit) ? limit : 20,
+		cursor: Number.isFinite(cursor) ? cursor : undefined
+	});
+	return c.json({ puzzles: rows, nextCursor });
+});
+
+player.get('/stats', requirePlayerAuth, async (c) => {
+	const db = getDb();
+	const session = c.get('playerSession');
+	const limit = Number(c.req.query('limit') ?? '20');
+	const { rows } = await listPlayerStats(db, session.user.id, {
+		limit: Number.isFinite(limit) ? limit : 20
+	});
+	return c.json({ stats: rows });
 });
 
 export default player;
