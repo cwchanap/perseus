@@ -24,6 +24,12 @@ binding = "PUZZLE_METADATA"
 id = "local-dev-kv"
 preview_id = "local-dev-kv-preview"
 
+# D1 database for player profile, stats, and puzzle ownership
+[[d1_databases]]
+binding = "DB"
+database_name = "perseus-player-data"
+database_id = "local-dev-d1"
+
 [durable_objects]
 bindings = [
 	{ name = "PUZZLE_METADATA_DO", class_name = "PuzzleMetadataDO", script_name = "workflows" }
@@ -60,6 +66,12 @@ bucket_name = "perseus-local"
 binding = "PUZZLE_METADATA"
 id = "local-dev-kv"
 preview_id = "local-dev-kv-preview"
+
+# Development D1 database override
+[[env.dev.d1_databases]]
+binding = "DB"
+database_name = "perseus-player-data"
+database_id = "local-dev-d1"
 
 # Development durable_objects binding to workflows-dev worker
 [env.dev.durable_objects]
