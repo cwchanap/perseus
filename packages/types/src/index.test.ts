@@ -15,8 +15,14 @@ import {
 	PUZZLE_CATEGORIES,
 	isPlayerSessionResponse,
 	isPlayerAllowlistEntry,
+	isPlayerProfile,
+	isPlayerPuzzleSummary,
+	isPlayerStatRow,
 	type PlayerSessionResponse,
-	type PlayerAllowlistEntry
+	type PlayerAllowlistEntry,
+	type PlayerProfile,
+	type PlayerPuzzleSummary,
+	type PlayerStatRow
 } from './index';
 
 // Helper to create a valid piece
@@ -889,5 +895,141 @@ describe('validatePuzzleMetadataLight', () => {
 			progress: { totalPieces: 1, generatedPieces: 1, updatedAt: Date.now() }
 		}) as Record<string, unknown>;
 		expect(validatePuzzleMetadataLight(meta)).toBe(false);
+	});
+});
+
+describe('player profile validators', () => {
+	const profile: PlayerProfile = {
+		id: 'p1',
+		email: 'p@example.com',
+		name: 'Player',
+		picture: null,
+		createdAt: 1,
+		lastLoginAt: 2,
+		summary: { puzzlesUploaded: 1, puzzlesSolved: 2, totalCompletions: 3 }
+	};
+
+	it('validates a well-formed profile', () => {
+		expect(isPlayerProfile(profile)).toBe(true);
+	});
+
+	it('rejects profile with bad summary', () => {
+		expect(isPlayerProfile({ ...profile, summary: { puzzlesUploaded: 'x' } })).toBe(false);
+	});
+
+	it('rejects null', () => {
+		expect(isPlayerProfile(null)).toBe(false);
+	});
+
+	const stat: PlayerStatRow = {
+		puzzleId: 'pz1',
+		bestTimeSeconds: 90,
+		totalCompletions: 2,
+		firstCompletedAt: 10,
+		lastCompletedAt: 20
+	};
+
+	it('validates a stat row', () => {
+		expect(isPlayerStatRow(stat)).toBe(true);
+		expect(isPlayerStatRow({ ...stat, bestTimeSeconds: 'x' })).toBe(false);
+	});
+
+	const puzzle: PlayerPuzzleSummary = {
+		id: 'pz1',
+		name: 'Cat',
+		pieceCount: 100,
+		status: 'ready',
+		createdAt: 5
+	};
+
+	it('validates a player puzzle summary', () => {
+		expect(isPlayerPuzzleSummary(puzzle)).toBe(true);
+		expect(isPlayerPuzzleSummary({ ...puzzle, status: 5 })).toBe(false);
+	});
+
+	it('rejects non-object profiles', () => {
+		expect(isPlayerProfile('nope')).toBe(false);
+		expect(isPlayerProfile(42)).toBe(false);
+	});
+
+	it('rejects profile with blank id', () => {
+		expect(isPlayerProfile({ ...profile, id: ' ' })).toBe(false);
+	});
+
+	it('rejects profile with blank email', () => {
+		expect(isPlayerProfile({ ...profile, email: ' ' })).toBe(false);
+	});
+
+	it('rejects profile with blank name', () => {
+		expect(isPlayerProfile({ ...profile, name: '' })).toBe(false);
+	});
+
+	it('rejects profile with invalid picture', () => {
+		expect(isPlayerProfile({ ...profile, picture: 5 })).toBe(false);
+		expect(isPlayerProfile({ ...profile, picture: '' })).toBe(false);
+	});
+
+	it('rejects profile with non-finite createdAt', () => {
+		expect(isPlayerProfile({ ...profile, createdAt: NaN })).toBe(false);
+	});
+
+	it('rejects profile with non-finite lastLoginAt', () => {
+		expect(isPlayerProfile({ ...profile, lastLoginAt: Infinity })).toBe(false);
+	});
+
+	it('rejects profile with null summary', () => {
+		expect(isPlayerProfile({ ...profile, summary: null })).toBe(false);
+	});
+
+	it('rejects profile with incomplete summary', () => {
+		expect(isPlayerProfile({ ...profile, summary: { puzzlesUploaded: 1 } })).toBe(false);
+	});
+
+	it('rejects null stat row', () => {
+		expect(isPlayerStatRow(null)).toBe(false);
+	});
+
+	it('rejects stat row with blank puzzleId', () => {
+		expect(isPlayerStatRow({ ...stat, puzzleId: '' })).toBe(false);
+	});
+
+	it('rejects stat row with non-finite totalCompletions', () => {
+		expect(isPlayerStatRow({ ...stat, totalCompletions: NaN })).toBe(false);
+	});
+
+	it('rejects stat row with non-finite firstCompletedAt', () => {
+		expect(isPlayerStatRow({ ...stat, firstCompletedAt: Infinity })).toBe(false);
+	});
+
+	it('rejects stat row with non-finite lastCompletedAt', () => {
+		expect(isPlayerStatRow({ ...stat, lastCompletedAt: 'nope' as unknown as number })).toBe(false);
+	});
+
+	it('rejects null player puzzle summary', () => {
+		expect(isPlayerPuzzleSummary(null)).toBe(false);
+	});
+
+	it('rejects player puzzle summary with blank id', () => {
+		expect(isPlayerPuzzleSummary({ ...puzzle, id: ' ' })).toBe(false);
+	});
+
+	it('rejects player puzzle summary with blank name', () => {
+		expect(isPlayerPuzzleSummary({ ...puzzle, name: '' })).toBe(false);
+	});
+
+	it('rejects player puzzle summary with non-finite pieceCount', () => {
+		expect(isPlayerPuzzleSummary({ ...puzzle, pieceCount: Infinity })).toBe(false);
+	});
+
+	it('rejects player puzzle summary with non-finite createdAt', () => {
+		expect(isPlayerPuzzleSummary({ ...puzzle, createdAt: NaN })).toBe(false);
+	});
+
+	it('rejects player puzzle summary with non-string category', () => {
+		expect(isPlayerPuzzleSummary({ ...puzzle, category: 5 })).toBe(false);
+	});
+
+	it('accepts player puzzle summary with valid category', () => {
+		expect(isPlayerPuzzleSummary({ ...puzzle, category: 'Animals' })).toBe(true);
 	});
 });
