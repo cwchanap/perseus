@@ -529,4 +529,7 @@ puzzles.get('/:id/pieces/:pieceId/image', async (c) => {
 	}
 });
 
+import complete from './puzzles.complete';
+puzzles.route('/', complete);
+
 export default puzzles;
