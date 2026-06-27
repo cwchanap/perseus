@@ -7,6 +7,7 @@ import { initializePlayerAuthStorage } from './services/player-auth';
 import puzzles from './routes/puzzles';
 import admin from './routes/admin';
 import auth from './routes/auth';
+import player from './routes/player';
 
 function requireEnv(name: string): string {
 	const value = process.env[name];
@@ -87,6 +88,7 @@ app.get('/health', (c) => {
 app.route('/api/puzzles', puzzles);
 app.route('/api/admin', admin);
 app.route('/api/auth', auth);
+app.route('/api/player', player);
 
 const port = process.env.PORT || 3000;
 
