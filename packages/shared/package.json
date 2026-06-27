@@ -21,7 +21,7 @@
 	},
 	"scripts": {
 		"check": "tsc --noEmit",
-		"test:unit": "vitest run"
+		"test:unit": "bun --bun vitest run"
 	},
 	"dependencies": {
 		"drizzle-orm": "^0.36.0"
