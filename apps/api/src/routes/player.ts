@@ -2,11 +2,12 @@ import { Hono } from 'hono';
 import { getDb } from '../db';
 import { getProfileOverride, upsertProfileOverride, getPlayerSummary } from '@perseus/shared';
 import type { PlayerProfile } from '@perseus/types';
+import { requirePlayerAuth } from '../middleware/player-auth';
 import type { PlayerSessionRecord } from '../services/player-auth';
 
 const player = new Hono<{ Variables: { playerSession: PlayerSessionRecord } }>();
 
-player.get('/profile', async (c) => {
+player.get('/profile', requirePlayerAuth, async (c) => {
 	const db = getDb();
 	const session = c.get('playerSession');
 	const playerId = session.user.id;
@@ -25,7 +26,7 @@ player.get('/profile', async (c) => {
 	return c.json(profile);
 });
 
-player.patch('/profile', async (c) => {
+player.patch('/profile', requirePlayerAuth, async (c) => {
 	const db = getDb();
 	const session = c.get('playerSession');
 	const playerId = session.user.id;

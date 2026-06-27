@@ -35,7 +35,15 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	};
 });
 
+// The route guards itself with `requirePlayerAuth`, which reads the
+// `perseus_player_session` cookie and resolves the session via getPlayerSession.
+// We mock the session resolver so the real middleware runs end-to-end.
+vi.mock('../services/player-auth', () => ({
+	getPlayerSession: vi.fn()
+}));
+
 import player from '../routes/player';
+import * as playerAuth from '../services/player-auth';
 import type { PlayerSessionRecord } from '../services/player-auth';
 
 const TEST_PLAYER: PlayerSessionRecord = {
@@ -52,12 +60,10 @@ const TEST_PLAYER: PlayerSessionRecord = {
 	expiresAt: 9999999999999
 };
 
+const AUTH_COOKIE = { Cookie: 'perseus_player_session=player-token' };
+
 function buildApp() {
 	const app = new Hono();
-	app.use('*', async (c, next) => {
-		c.set('playerSession', TEST_PLAYER as never);
-		await next();
-	});
 	app.route('/api/player', player);
 	return app;
 }
@@ -67,10 +73,11 @@ describe('player profile routes (Bun)', () => {
 		const shared = await import('@perseus/shared');
 		const store = (shared as any).__store as Map<string, unknown> | undefined;
 		store?.clear();
+		vi.mocked(playerAuth.getPlayerSession).mockResolvedValue(TEST_PLAYER);
 	});
 
 	it('GET profile returns Google defaults when no override', async () => {
-		const res = await buildApp().request('/api/player/profile');
+		const res = await buildApp().request('/api/player/profile', { headers: AUTH_COOKIE });
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.name).toBe('Google Name');
@@ -85,12 +92,12 @@ describe('player profile routes (Bun)', () => {
 	it('PATCH then GET reflects override', async () => {
 		const patch = await buildApp().request('/api/player/profile', {
 			method: 'PATCH',
-			headers: { 'Content-Type': 'application/json' },
+			headers: { 'Content-Type': 'application/json', ...AUTH_COOKIE },
 			body: JSON.stringify({ displayName: 'Custom' })
 		});
 		expect(patch.status).toBe(200);
 
-		const res = await buildApp().request('/api/player/profile');
+		const res = await buildApp().request('/api/player/profile', { headers: AUTH_COOKIE });
 		const body = await res.json();
 		expect(body.name).toBe('Custom');
 	});
@@ -101,18 +108,20 @@ describe('player profile routes (Bun)', () => {
 
 		await buildApp().request('/api/player/profile', {
 			method: 'PATCH',
-			headers: { 'Content-Type': 'application/json' },
+			headers: { 'Content-Type': 'application/json', ...AUTH_COOKIE },
 			body: JSON.stringify({ displayName: null })
 		});
 
-		const body = await (await buildApp().request('/api/player/profile')).json();
+		const body = await (
+			await buildApp().request('/api/player/profile', { headers: AUTH_COOKIE })
+		).json();
 		expect(body.name).toBe('Google Name');
 	});
 
 	it('PATCH rejects non-string displayName with 400', async () => {
 		const res = await buildApp().request('/api/player/profile', {
 			method: 'PATCH',
-			headers: { 'Content-Type': 'application/json' },
+			headers: { 'Content-Type': 'application/json', ...AUTH_COOKIE },
 			body: JSON.stringify({ displayName: 42 })
 		});
 		expect(res.status).toBe(400);
@@ -123,7 +132,7 @@ describe('player profile routes (Bun)', () => {
 	it('PATCH rejects invalid JSON body with 400', async () => {
 		const res = await buildApp().request('/api/player/profile', {
 			method: 'PATCH',
-			headers: { 'Content-Type': 'application/json' },
+			headers: { 'Content-Type': 'application/json', ...AUTH_COOKIE },
 			body: 'not-json'
 		});
 		expect(res.status).toBe(400);
