@@ -1,7 +1,13 @@
 import { Hono } from 'hono';
 import type { Env } from '../worker';
 import { getWorkerDb } from '../db.worker';
-import { getProfileOverride, upsertProfileOverride, getPlayerSummary } from '@perseus/shared';
+import {
+	getProfileOverride,
+	upsertProfileOverride,
+	getPlayerSummary,
+	listPlayerPuzzles,
+	listPlayerStats
+} from '@perseus/shared';
 import type { PlayerProfile } from '@perseus/types';
 import { requirePlayerAuth } from '../middleware/player-auth.worker';
 import type { PlayerSessionRecord } from '../services/player-auth.worker';
@@ -101,6 +107,29 @@ player.get('/:playerId/avatar', async (c) => {
 	const headers = new Headers();
 	obj.writeHttpMetadata(headers);
 	return new Response(obj.body, { headers });
+});
+
+player.get('/puzzles', requirePlayerAuth, async (c) => {
+	const db = getWorkerDb(c.env);
+	const session = c.get('playerSession');
+	const limit = Number(c.req.query('limit') ?? '20');
+	const cursorRaw = c.req.query('cursor');
+	const cursor = cursorRaw ? Number(cursorRaw) : undefined;
+	const { rows, nextCursor } = await listPlayerPuzzles(db, session.user.id, {
+		limit: Number.isFinite(limit) ? limit : 20,
+		cursor: Number.isFinite(cursor) ? cursor : undefined
+	});
+	return c.json({ puzzles: rows, nextCursor });
+});
+
+player.get('/stats', requirePlayerAuth, async (c) => {
+	const db = getWorkerDb(c.env);
+	const session = c.get('playerSession');
+	const limit = Number(c.req.query('limit') ?? '20');
+	const { rows } = await listPlayerStats(db, session.user.id, {
+		limit: Number.isFinite(limit) ? limit : 20
+	});
+	return c.json({ stats: rows });
 });
 
 export default player;

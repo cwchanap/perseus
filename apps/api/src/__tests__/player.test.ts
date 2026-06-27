@@ -15,10 +15,16 @@ vi.mock('../db', () => ({
 vi.mock('@perseus/shared', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('@perseus/shared')>();
 	const store = new Map<string, { displayName: string | null; avatarUrl: string | null }>();
+	// In-memory stores backing the mocked list repositories so the list
+	// routes can be exercised end-to-end without a real database.
+	const puzzlesStore = new Map<string, unknown[]>();
+	const statsStore = new Map<string, unknown[]>();
 	return {
 		...actual,
 		// Exposed for test-only reset between cases.
 		__store: store,
+		__puzzlesStore: puzzlesStore,
+		__statsStore: statsStore,
 		getProfileOverride: vi.fn((db: unknown, playerId: string) => store.get(playerId) ?? null),
 		upsertProfileOverride: vi.fn(
 			(
@@ -33,7 +39,18 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 			puzzlesUploaded: 0,
 			puzzlesSolved: 0,
 			totalCompletions: 0
-		}))
+		})),
+		listPlayerPuzzles: vi.fn(
+			async (db: unknown, playerId: string): Promise<{ rows: unknown[]; nextCursor?: number }> => ({
+				rows: puzzlesStore.get(playerId) ?? [],
+				nextCursor: undefined
+			})
+		),
+		listPlayerStats: vi.fn(
+			async (db: unknown, playerId: string): Promise<{ rows: unknown[] }> => ({
+				rows: statsStore.get(playerId) ?? []
+			})
+		)
 	};
 });
 
@@ -248,5 +265,69 @@ describe('player avatar route (Bun)', () => {
 		const row = await (getProfileOverride as any)({}, 'p1');
 		expect(row.displayName).toBe('KeepMe');
 		expect(row.avatarUrl).toBe('/api/player/p1/avatar');
+	});
+});
+
+describe('player lists (Bun)', () => {
+	beforeEach(async () => {
+		const shared = await import('@perseus/shared');
+		(shared as any).__puzzlesStore.clear();
+		(shared as any).__statsStore.clear();
+		vi.mocked(playerAuth.getPlayerSession).mockResolvedValue(TEST_PLAYER);
+	});
+
+	it('GET puzzles returns owned puzzles', async () => {
+		const shared = await import('@perseus/shared');
+		(shared as any).__puzzlesStore.set('p1', [
+			{ id: 'pz1', name: 'Cat', pieceCount: 4, status: 'ready', createdAt: 1 }
+		]);
+		const res = await buildApp().request('/api/player/puzzles', { headers: AUTH_COOKIE });
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.puzzles).toHaveLength(1);
+		expect(body.puzzles[0].name).toBe('Cat');
+	});
+
+	it('GET puzzles forwards limit and cursor query params', async () => {
+		const { listPlayerPuzzles } = await import('@perseus/shared');
+		await buildApp().request('/api/player/puzzles?limit=5&cursor=100', { headers: AUTH_COOKIE });
+		expect(listPlayerPuzzles).toHaveBeenCalledWith(expect.anything(), 'p1', {
+			limit: 5,
+			cursor: 100
+		});
+	});
+
+	it('GET puzzles requires authentication', async () => {
+		const res = await buildApp().request('/api/player/puzzles');
+		expect(res.status).toBe(401);
+	});
+
+	it('GET stats returns recorded stats', async () => {
+		const shared = await import('@perseus/shared');
+		(shared as any).__statsStore.set('p1', [
+			{
+				puzzleId: 'pz1',
+				bestTimeSeconds: 90,
+				totalCompletions: 1,
+				firstCompletedAt: 1,
+				lastCompletedAt: 1
+			}
+		]);
+		const res = await buildApp().request('/api/player/stats', { headers: AUTH_COOKIE });
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.stats).toHaveLength(1);
+		expect(body.stats[0].bestTimeSeconds).toBe(90);
+	});
+
+	it('GET stats forwards limit query param', async () => {
+		const { listPlayerStats } = await import('@perseus/shared');
+		await buildApp().request('/api/player/stats?limit=10', { headers: AUTH_COOKIE });
+		expect(listPlayerStats).toHaveBeenCalledWith(expect.anything(), 'p1', { limit: 10 });
+	});
+
+	it('GET stats requires authentication', async () => {
+		const res = await buildApp().request('/api/player/stats');
+		expect(res.status).toBe(401);
 	});
 });
