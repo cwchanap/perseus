@@ -10,7 +10,11 @@ import type {
 	PlayerSessionResponse,
 	PlayerAllowlistEntry,
 	PlayerAllowlistResponse,
-	PlayerAllowlistMutationResponse
+	PlayerAllowlistMutationResponse,
+	PlayerProfile,
+	PlayerProfileUpdate,
+	PlayerPuzzleSummary,
+	PlayerStatRow
 } from '$lib/types/puzzle';
 import type { PuzzleAspectRatio } from '@perseus/types';
 // NOTE: This app is built with adapter-static, so public env vars are embedded at build time.
@@ -350,3 +354,68 @@ export async function deletePuzzle(
 }
 
 export { ApiError };
+
+// Player profile endpoints
+export async function getPlayerProfile(): Promise<PlayerProfile> {
+	const response = await fetch(`${API_BASE}/api/player/profile`, { credentials: 'include' });
+	return handleResponse<PlayerProfile>(response);
+}
+
+export async function updatePlayerProfile(update: PlayerProfileUpdate): Promise<void> {
+	const response = await fetch(`${API_BASE}/api/player/profile`, {
+		method: 'PATCH',
+		headers: { 'Content-Type': 'application/json' },
+		credentials: 'include',
+		body: JSON.stringify(update)
+	});
+	await handleVoidResponse(response);
+}
+
+export async function uploadPlayerAvatar(file: File): Promise<{ avatarUrl: string }> {
+	const formData = new FormData();
+	formData.append('avatar', file);
+	const response = await fetch(`${API_BASE}/api/player/avatar`, {
+		method: 'POST',
+		credentials: 'include',
+		body: formData
+	});
+	return handleResponse<{ avatarUrl: string }>(response);
+}
+
+export function getAvatarUrl(playerId: string): string {
+	return `${API_BASE}/api/player/${playerId}/avatar`;
+}
+
+export async function getPlayerPuzzles(params?: {
+	limit?: number;
+	cursor?: number;
+}): Promise<{ puzzles: PlayerPuzzleSummary[]; nextCursor?: number }> {
+	const searchParams = new URLSearchParams();
+	if (params?.limit) searchParams.set('limit', String(params.limit));
+	if (params?.cursor !== undefined) searchParams.set('cursor', String(params.cursor));
+	const query = searchParams.toString();
+	const url = query ? `${API_BASE}/api/player/puzzles?${query}` : `${API_BASE}/api/player/puzzles`;
+	const response = await fetch(url, { credentials: 'include' });
+	return handleResponse<{ puzzles: PlayerPuzzleSummary[]; nextCursor?: number }>(response);
+}
+
+export async function getPlayerStats(params?: {
+	limit?: number;
+}): Promise<{ stats: PlayerStatRow[] }> {
+	const searchParams = new URLSearchParams();
+	if (params?.limit) searchParams.set('limit', String(params.limit));
+	const query = searchParams.toString();
+	const url = query ? `${API_BASE}/api/player/stats?${query}` : `${API_BASE}/api/player/stats`;
+	const response = await fetch(url, { credentials: 'include' });
+	return handleResponse<{ stats: PlayerStatRow[] }>(response);
+}
+
+export async function recordCompletion(puzzleId: string, timeSeconds: number): Promise<void> {
+	const response = await fetch(`${API_BASE}/api/puzzles/${puzzleId}/complete`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		credentials: 'include',
+		body: JSON.stringify({ timeSeconds })
+	});
+	await handleVoidResponse(response);
+}
