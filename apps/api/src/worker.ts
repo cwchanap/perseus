@@ -116,10 +116,12 @@ app.get('/api', (c) => {
 import puzzles from './routes/puzzles.worker';
 import admin from './routes/admin.worker';
 import auth from './routes/auth.worker';
+import player from './routes/player.worker';
 
 app.route('/api/puzzles', puzzles);
 app.route('/api/admin', admin);
 app.route('/api/auth', auth);
+app.route('/api/player', player);
 
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
