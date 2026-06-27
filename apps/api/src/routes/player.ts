@@ -1,4 +1,6 @@
 import { Hono } from 'hono';
+import { mkdir, writeFile, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { getDb } from '../db';
 import { getProfileOverride, upsertProfileOverride, getPlayerSummary } from '@perseus/shared';
 import type { PlayerProfile } from '@perseus/types';
@@ -6,6 +8,39 @@ import { requirePlayerAuth } from '../middleware/player-auth';
 import type { PlayerSessionRecord } from '../services/player-auth';
 
 const player = new Hono<{ Variables: { playerSession: PlayerSessionRecord } }>();
+
+const AVATAR_MAX_BYTES = 5 * 1024 * 1024;
+const AVATAR_MIME = new Set(['image/jpeg', 'image/png', 'image/webp']);
+
+// Sniff image MIME from magic bytes so the served Content-Type is correct
+// regardless of the (extension-less) avatar path. Mirrors R2 httpMetadata.
+function sniffImageType(bytes: Uint8Array): string | null {
+	if (bytes.length < 12) return null;
+	if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
+	if (
+		bytes[0] === 0x89 &&
+		bytes[1] === 0x50 &&
+		bytes[2] === 0x4e &&
+		bytes[3] === 0x47 &&
+		bytes[4] === 0x0d &&
+		bytes[5] === 0x0a &&
+		bytes[6] === 0x1a &&
+		bytes[7] === 0x0a
+	)
+		return 'image/png';
+	if (
+		bytes[0] === 0x52 &&
+		bytes[1] === 0x49 &&
+		bytes[2] === 0x46 &&
+		bytes[3] === 0x46 &&
+		bytes[8] === 0x57 &&
+		bytes[9] === 0x45 &&
+		bytes[10] === 0x42 &&
+		bytes[11] === 0x50
+	)
+		return 'image/webp';
+	return null;
+}
 
 player.get('/profile', requirePlayerAuth, async (c) => {
 	const db = getDb();
@@ -50,6 +85,62 @@ player.patch('/profile', requirePlayerAuth, async (c) => {
 		avatarUrl: existing?.avatarUrl ?? null
 	});
 	return c.json({ ok: true });
+});
+
+// Upload the authenticated player's avatar to the filesystem and record its
+// serving path in the profile override (existing displayName is preserved).
+player.post('/avatar', requirePlayerAuth, async (c) => {
+	const session = c.get('playerSession');
+	const playerId = session.user.id;
+	let formData: FormData;
+	try {
+		formData = await c.req.formData();
+	} catch {
+		return c.json({ error: 'bad_request', message: 'Invalid form data' }, 400);
+	}
+	const file = formData.get('avatar');
+	if (!(file instanceof File)) {
+		return c.json({ error: 'bad_request', message: 'avatar file is required' }, 400);
+	}
+	if (!AVATAR_MIME.has(file.type)) {
+		return c.json({ error: 'bad_request', message: 'Unsupported image type' }, 400);
+	}
+	if (file.size > AVATAR_MAX_BYTES) {
+		return c.json({ error: 'bad_request', message: 'Avatar must be 5MB or less' }, 400);
+	}
+	const dataDir = process.env.DATA_DIR || './data';
+	const dir = join(dataDir, 'avatars');
+	await mkdir(dir, { recursive: true });
+	await writeFile(join(dir, playerId), Buffer.from(await file.arrayBuffer()));
+
+	const db = getDb();
+	const existing = await getProfileOverride(db, playerId);
+	await upsertProfileOverride(db, playerId, {
+		displayName: existing?.displayName ?? null,
+		avatarUrl: `/api/player/${playerId}/avatar`
+	});
+	return c.json({ avatarUrl: `/api/player/${playerId}/avatar` });
+});
+
+// Serve a player's avatar. Public (no auth) so avatars render anywhere.
+player.get('/:playerId/avatar', async (c) => {
+	const playerId = c.req.param('playerId');
+	const dataDir = process.env.DATA_DIR || './data';
+	const dir = join(dataDir, 'avatars');
+	const filePath = join(dir, playerId);
+	// Guard against path traversal: the resolved path must stay inside the
+	// avatars directory (playerId comes from an untrusted URL segment).
+	if (!filePath.startsWith(dir + '/') && filePath !== dir) {
+		return c.json({ error: 'bad_request', message: 'Invalid player id' }, 400);
+	}
+	let buf: Buffer;
+	try {
+		buf = await readFile(filePath);
+	} catch {
+		return c.json({ error: 'not_found', message: 'Avatar not found' }, 404);
+	}
+	const mime = sniffImageType(new Uint8Array(buf)) ?? 'application/octet-stream';
+	return new Response(buf, { headers: { 'Content-Type': mime } });
 });
 
 export default player;
