@@ -26,6 +26,8 @@ import {
 	getBottomEdge,
 	getLeftEdge
 } from '@perseus/types';
+import { createD1Db } from '@perseus/shared/d1';
+import { setPuzzleStatus } from '@perseus/shared';
 import {
 	MAX_IMAGE_BYTES,
 	getMetadata,
@@ -39,6 +41,7 @@ export interface Env {
 	PUZZLE_METADATA: KVNamespace;
 	PUZZLE_METADATA_DO: DurableObjectNamespace;
 	PUZZLE_WORKFLOW: Workflow;
+	DB: D1Database;
 }
 
 export class PuzzleMetadataDO extends DurableObject<Env> {
@@ -470,6 +473,9 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 			await step.do('finalize', async () => {
 				await updateMetadata(this.env.PUZZLE_METADATA_DO, puzzleId, {
 					status: 'ready'
+				});
+				await setPuzzleStatus(createD1Db(this.env), puzzleId, 'ready').catch((error) => {
+					console.error('Failed to update puzzle status in D1:', error);
 				});
 			});
 		} catch (error) {

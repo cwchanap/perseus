@@ -24,6 +24,12 @@ bucket_name = "perseus"
 binding = "PUZZLE_METADATA"
 id = "ae95a94b22e3414ab022c335390c67aa"
 
+# D1 database for puzzle ownership and player stats
+[[d1_databases]]
+binding = "DB"
+database_name = "perseus-player-data"
+database_id = "REPLACE_WITH_PROD_D1_ID"
+
 [durable_objects]
 bindings = [
 	{ name = "PUZZLE_METADATA_DO", class_name = "PuzzleMetadataDO" }
