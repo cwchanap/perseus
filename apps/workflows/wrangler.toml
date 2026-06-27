@@ -26,6 +26,12 @@ binding = "PUZZLE_METADATA"
 id = "local-workflows-kv"
 preview_id = "local-workflows-kv-preview"
 
+# D1 database for puzzle ownership and player stats
+[[d1_databases]]
+binding = "DB"
+database_name = "perseus-player-data"
+database_id = "local-dev-d1"
+
 [durable_objects]
 bindings = [
 	{ name = "PUZZLE_METADATA_DO", class_name = "PuzzleMetadataDO" }
