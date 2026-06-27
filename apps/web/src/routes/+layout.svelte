@@ -51,9 +51,14 @@
 		{#if $playerAuth.status === 'loading'}
 			<!-- auth status pending -->
 		{:else if $playerAuth.status === 'authenticated' && $playerAuth.user}
-			<span class="min-w-0 truncate text-(--text-2)" title={playerDisplayName}>
+			<a
+				href={resolve('/profile')}
+				class="min-w-0 truncate text-(--text-2) transition-colors hover:text-(--accent)"
+				title={playerDisplayName}
+				data-testid="profile-link"
+			>
 				{playerDisplayName}
-			</span>
+			</a>
 			<button
 				type="button"
 				class="shrink-0 text-(--hot) opacity-70 transition-opacity duration-150 hover:opacity-100"
