@@ -18,6 +18,13 @@ import {
 	fetchPlayerAllowlist,
 	addPlayerAllowlistEntry,
 	removePlayerAllowlistEntry,
+	getPlayerProfile,
+	updatePlayerProfile,
+	uploadPlayerAvatar,
+	getPlayerPuzzles,
+	getPlayerStats,
+	recordCompletion,
+	getAvatarUrl,
 	ApiError
 } from '../api';
 import type { PuzzleCategory } from '$lib/types/puzzle';
@@ -891,5 +898,94 @@ describe('API Service - handleVoidResponse edge cases (via logout)', () => {
 		);
 
 		await expect(logout()).resolves.toBeUndefined();
+	});
+});
+
+describe('player profile service functions', () => {
+	it('getPlayerProfile GETs /api/player/profile', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue(
+				new Response(
+					JSON.stringify({
+						id: 'p1',
+						email: 'e',
+						name: 'N',
+						picture: null,
+						createdAt: 1,
+						lastLoginAt: 2,
+						summary: { puzzlesUploaded: 0, puzzlesSolved: 0, totalCompletions: 0 }
+					}),
+					{ status: 200 }
+				)
+			)
+		);
+		const profile = await getPlayerProfile();
+		expect(profile.name).toBe('N');
+		expect(vi.mocked(fetch)).toHaveBeenCalledWith(
+			expect.stringMatching(/\/api\/player\/profile$/),
+			{ credentials: 'include' }
+		);
+	});
+
+	it('updatePlayerProfile PATCHes with credentials', async () => {
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}', { status: 200 })));
+		await updatePlayerProfile({ displayName: 'X' });
+		expect(fetch).toHaveBeenCalledWith(
+			expect.stringMatching(/\/api\/player\/profile$/),
+			expect.objectContaining({ method: 'PATCH', credentials: 'include' })
+		);
+	});
+
+	it('uploadPlayerAvatar POSTs FormData', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue(
+				new Response(JSON.stringify({ avatarUrl: '/api/player/p1/avatar' }), {
+					status: 200
+				})
+			)
+		);
+		const file = new File(['x'], 'a.png', { type: 'image/png' });
+		const result = await uploadPlayerAvatar(file);
+		expect(result.avatarUrl).toContain('p1');
+		const calls = vi.mocked(fetch).mock.calls;
+		const init = calls[0]?.[1] as RequestInit;
+		expect(init.body).toBeInstanceOf(FormData);
+	});
+
+	it('getPlayerPuzzles appends cursor/limit', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue(
+				new Response(JSON.stringify({ puzzles: [], nextCursor: undefined }), {
+					status: 200
+				})
+			)
+		);
+		await getPlayerPuzzles({ limit: 5, cursor: 10 });
+		expect(vi.mocked(fetch).mock.calls[0]?.[0]).toMatch(/limit=5/);
+		expect(vi.mocked(fetch).mock.calls[0]?.[0]).toMatch(/cursor=10/);
+	});
+
+	it('getPlayerStats GETs /api/player/stats', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue(new Response(JSON.stringify({ stats: [] }), { status: 200 }))
+		);
+		const { stats } = await getPlayerStats();
+		expect(stats).toEqual([]);
+	});
+
+	it('recordCompletion POSTs timeSeconds', async () => {
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}', { status: 200 })));
+		await recordCompletion('pz1', 90);
+		const calls = vi.mocked(fetch).mock.calls;
+		const init = calls[0]?.[1] as RequestInit;
+		expect(init.body).toBe(JSON.stringify({ timeSeconds: 90 }));
+	});
+
+	it('getAvatarUrl builds the path', () => {
+		expect(getAvatarUrl('p1')).toMatch(/\/api\/player\/p1\/avatar$/);
 	});
 });
