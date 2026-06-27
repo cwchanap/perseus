@@ -23,6 +23,7 @@ export const naming = {
 	workerWorkflows: 'perseus-workflows',
 	r2Bucket: 'perseus',
 	kvNamespace: 'perseus-kv-production',
+	d1Database: 'perseus-player-data',
 	workflow: 'perseus'
 };
 

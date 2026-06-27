@@ -14,3 +14,10 @@ export function createKVNamespace() {
 		title: naming.kvNamespace
 	});
 }
+
+export function createD1Database() {
+	return new cloudflare.D1Database('player-data', {
+		accountId: accountId,
+		name: naming.d1Database
+	});
+}

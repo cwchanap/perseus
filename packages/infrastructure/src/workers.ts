@@ -13,6 +13,10 @@ export interface WorkerBindings {
 		binding: string;
 		bucketName: pulumi.Input<string>;
 	}>;
+	d1Databases?: Array<{
+		binding: string;
+		databaseId: pulumi.Input<string>;
+	}>;
 	durableObjects?: Array<{
 		binding: string;
 		className: string;
@@ -99,6 +103,14 @@ function buildVersionBindings(
 			name: r2.binding,
 			type: 'r2_bucket',
 			bucketName: r2.bucketName
+		});
+	}
+
+	for (const d1 of bindings.d1Databases || []) {
+		result.push({
+			name: d1.binding,
+			type: 'd1_database',
+			id: d1.databaseId
 		});
 	}
 
