@@ -91,6 +91,7 @@ vi.mock('$lib/services/api', () => {
 		fetchPuzzle: vi.fn(),
 		getPieceImageUrl: vi.fn(() => imageSrc),
 		getReferenceImageUrl: vi.fn(() => imageSrc),
+		recordCompletion: vi.fn(() => Promise.resolve()),
 		ApiError: MockApiError
 	};
 });
@@ -176,7 +177,7 @@ vi.mock('$lib/stores/timer', () => ({
 	})
 }));
 
-import { fetchPuzzle, ApiError } from '$lib/services/api';
+import { fetchPuzzle, ApiError, recordCompletion } from '$lib/services/api';
 import { saveProgress, clearProgress } from '$lib/services/progress';
 import { saveCompletionTime, getBestTime } from '$lib/services/stats';
 import { get } from 'svelte/store';
@@ -835,6 +836,7 @@ describe('Puzzle route gameplay integration', () => {
 
 		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
 		expect(saveCompletionTime).toHaveBeenCalledTimes(1);
+		expect(recordCompletion).toHaveBeenCalledTimes(1);
 
 		// Close the celebration modal via Escape on the modal element
 		const modal = await page.getByTestId('celebration-modal').element();

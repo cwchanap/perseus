@@ -6,6 +6,7 @@
 	import { loadPuzzleSource, type LoadedPuzzleSource } from '$lib/services/puzzleSource';
 	import { getProgress, saveProgress, clearProgress } from '$lib/services/progress';
 	import { getBestTime, saveCompletionTime } from '$lib/services/stats';
+	import { recordCompletion } from '$lib/services/api';
 	import { createTimerStore, formatTime } from '$lib/stores/timer';
 	import type { TimerState } from '$lib/stores/timer';
 	import { SvelteMap } from 'svelte/reactivity';
@@ -463,6 +464,9 @@
 			timer.pause();
 			if (!completionRecorded) {
 				isNewBest = saveCompletionTime(puzzle.id, timerState.elapsed);
+				recordCompletion(puzzle.id, timerState.elapsed).catch((error) => {
+					console.error('Failed to record completion on server', error);
+				});
 				bestTime = getBestTime(puzzle.id);
 				completionRecorded = true;
 			}
