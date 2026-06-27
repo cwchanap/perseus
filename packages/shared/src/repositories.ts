@@ -1,4 +1,4 @@
-import { eq, lt, desc, count, sql, and } from 'drizzle-orm';
+import { eq, lt, desc, asc, count, sql, and } from 'drizzle-orm';
 import type { AppDb, NewPuzzleRow, PlayerProfileRow } from './types';
 import { puzzles, playerProfiles, puzzleStats } from './schema';
 
@@ -123,7 +123,7 @@ export async function listPlayerStats(
 		.select()
 		.from(puzzleStats)
 		.where(eq(puzzleStats.playerId, playerId))
-		.orderBy(desc(puzzleStats.bestTimeSeconds))
+		.orderBy(asc(puzzleStats.bestTimeSeconds))
 		.limit(limit)
 		.all();
 	return { rows };
