@@ -3,6 +3,7 @@ import type { Env } from '../worker';
 import { getWorkerDb } from '../db.worker';
 import { getProfileOverride, upsertProfileOverride, getPlayerSummary } from '@perseus/shared';
 import type { PlayerProfile } from '@perseus/types';
+import { requirePlayerAuth } from '../middleware/player-auth.worker';
 import type { PlayerSessionRecord } from '../services/player-auth.worker';
 
 const player = new Hono<{
@@ -10,7 +11,7 @@ const player = new Hono<{
 	Variables: { playerSession: PlayerSessionRecord };
 }>();
 
-player.get('/profile', async (c) => {
+player.get('/profile', requirePlayerAuth, async (c) => {
 	const db = getWorkerDb(c.env);
 	const session = c.get('playerSession');
 	const playerId = session.user.id;
@@ -29,7 +30,7 @@ player.get('/profile', async (c) => {
 	return c.json(profile);
 });
 
-player.patch('/profile', async (c) => {
+player.patch('/profile', requirePlayerAuth, async (c) => {
 	const db = getWorkerDb(c.env);
 	const session = c.get('playerSession');
 	const playerId = session.user.id;
