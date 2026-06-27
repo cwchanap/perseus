@@ -1,5 +1,5 @@
 import * as pulumi from '@pulumi/pulumi';
-import { createR2Bucket, createKVNamespace } from './resources.js';
+import { createR2Bucket, createKVNamespace, createD1Database } from './resources.js';
 import { createWorkflowsWorker, createApiWorker } from './workers.js';
 import { accountId, naming, paths } from './config.js';
 import { createAdminAccessResources } from './admin-access.js';
@@ -7,6 +7,7 @@ import { createAdminAccessResources } from './admin-access.js';
 const config = new pulumi.Config();
 const r2Bucket = createR2Bucket();
 const kvNamespace = createKVNamespace();
+const d1Database = createD1Database();
 
 const commonBindings = {
 	kvNamespaces: [
@@ -19,6 +20,12 @@ const commonBindings = {
 		{
 			binding: 'PUZZLES_BUCKET',
 			bucketName: r2Bucket.name
+		}
+	],
+	d1Databases: [
+		{
+			binding: 'DB',
+			databaseId: d1Database.id
 		}
 	],
 	envVars: {
@@ -81,6 +88,7 @@ const adminAccess = createAdminAccessResources({
 
 export const r2BucketName = r2Bucket.name;
 export const kvNamespaceId = kvNamespace.id;
+export const d1DatabaseId = d1Database.id;
 export const workflowsWorkerName = workflowsWorker.workerName;
 export const apiWorkerName = apiWorker.workerName;
 export const adminAccessApplicationId = adminAccess.application.id;
