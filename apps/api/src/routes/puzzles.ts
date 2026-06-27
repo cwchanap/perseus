@@ -20,6 +20,8 @@ import { DEFAULT_PUZZLE_ASPECT_RATIO, isPuzzleAspectRatio } from '@perseus/types
 import { generatePuzzle, isValidPieceCount } from '../services/puzzle-generator';
 import { requirePlayerAuth } from '../middleware/player-auth';
 import type { PlayerSessionRecord } from '../services/player-auth';
+import { getDb } from '../db';
+import { insertPuzzleOwnership } from '@perseus/shared';
 
 const puzzles = new Hono<{
 	Variables: { playerSession: PlayerSessionRecord };
@@ -367,6 +369,18 @@ puzzles.post('/', requirePlayerAuth, async (c) => {
 			}
 			return c.json({ error: 'internal_error', message: 'Failed to save puzzle metadata' }, 500);
 		}
+
+		await insertPuzzleOwnership(getDb(), {
+			id,
+			ownerId: c.get('playerSession').user.id,
+			name: trimmedName,
+			pieceCount,
+			...(category ? { category } : {}),
+			status: 'ready',
+			createdAt: Date.now()
+		}).catch((error) => {
+			console.error('Failed to record puzzle ownership:', error);
+		});
 
 		return c.json(puzzleToStore, 201);
 	} catch (error) {
