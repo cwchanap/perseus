@@ -141,6 +141,43 @@ export interface PlayerAllowlistMutationResponse {
 	entry: PlayerAllowlistEntry;
 }
 
+export interface PlayerProfileSummary {
+	puzzlesUploaded: number;
+	puzzlesSolved: number;
+	totalCompletions: number;
+}
+
+export interface PlayerProfile {
+	id: string;
+	email: string;
+	name: string;
+	picture: string | null;
+	createdAt: number;
+	lastLoginAt: number;
+	summary: PlayerProfileSummary;
+}
+
+export interface PlayerProfileUpdate {
+	displayName: string | null;
+}
+
+export interface PlayerPuzzleSummary {
+	id: string;
+	name: string;
+	pieceCount: number;
+	category?: string;
+	status: string;
+	createdAt: number;
+}
+
+export interface PlayerStatRow {
+	puzzleId: string;
+	bestTimeSeconds: number;
+	totalCompletions: number;
+	firstCompletedAt: number;
+	lastCompletedAt: number;
+}
+
 export interface PuzzleListResponse {
 	puzzles: PuzzleSummary[];
 	total: number;
@@ -210,6 +247,49 @@ export function isPlayerAllowlistEntry(value: unknown): value is PlayerAllowlist
 	if (!isNonEmptyString(entry.addedBy)) return false;
 	if (entry.player !== undefined && !isPlayerUser(entry.player)) return false;
 	return true;
+}
+
+export function isPlayerProfile(value: unknown): value is PlayerProfile {
+	if (typeof value !== 'object' || value === null) return false;
+	const v = value as Record<string, unknown>;
+	if (!isNonEmptyString(v.id)) return false;
+	if (!isNonEmptyString(v.email)) return false;
+	if (!isNonEmptyString(v.name)) return false;
+	if (v.picture !== null && !isNonEmptyString(v.picture)) return false;
+	if (!isFiniteNumber(v.createdAt)) return false;
+	if (!isFiniteNumber(v.lastLoginAt)) return false;
+	if (typeof v.summary !== 'object' || v.summary === null) return false;
+	const s = v.summary as Record<string, unknown>;
+	return (
+		isFiniteNumber(s.puzzlesUploaded) &&
+		isFiniteNumber(s.puzzlesSolved) &&
+		isFiniteNumber(s.totalCompletions)
+	);
+}
+
+export function isPlayerPuzzleSummary(value: unknown): value is PlayerPuzzleSummary {
+	if (typeof value !== 'object' || value === null) return false;
+	const v = value as Record<string, unknown>;
+	return (
+		isNonEmptyString(v.id) &&
+		isNonEmptyString(v.name) &&
+		isFiniteNumber(v.pieceCount) &&
+		isFiniteNumber(v.createdAt) &&
+		isNonEmptyString(v.status) &&
+		(v.category === undefined || isNonEmptyString(v.category))
+	);
+}
+
+export function isPlayerStatRow(value: unknown): value is PlayerStatRow {
+	if (typeof value !== 'object' || value === null) return false;
+	const v = value as Record<string, unknown>;
+	return (
+		isNonEmptyString(v.puzzleId) &&
+		isFiniteNumber(v.bestTimeSeconds) &&
+		isFiniteNumber(v.totalCompletions) &&
+		isFiniteNumber(v.firstCompletedAt) &&
+		isFiniteNumber(v.lastCompletedAt)
+	);
 }
 
 export function isPuzzlePiece(piece: unknown): piece is PuzzlePiece {
