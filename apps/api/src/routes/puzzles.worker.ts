@@ -27,7 +27,7 @@ import {
 import { requirePlayerAuth } from '../middleware/player-auth.worker';
 import type { PlayerSessionRecord } from '../services/player-auth.worker';
 import { getWorkerDb } from '../db.worker';
-import { insertPuzzleOwnership } from '@perseus/shared';
+import { insertPuzzleOwnership, deletePuzzleOwnership } from '@perseus/shared';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PIECE_ID_REGEX = /^\d+$/; // Only non-negative base-10 integers
@@ -413,7 +413,42 @@ puzzles.post('/', requirePlayerAuth, async (c) => {
 			return c.json({ error: 'internal_error', message: 'Failed to create puzzle metadata' }, 500);
 		}
 
+		// Record ownership before kicking off the workflow so the puzzle is
+		// always visible to its owner. A committed puzzle without an ownership
+		// row would process silently and never appear in the player's list.
+		try {
+			await insertPuzzleOwnership(getWorkerDb(c.env), {
+				id,
+				ownerId: c.get('playerSession').user.id,
+				name: trimmedName,
+				pieceCount,
+				...(category ? { category } : {}),
+				status: 'processing',
+				createdAt: puzzleMetadata.createdAt
+			});
+		} catch (error) {
+			console.error('Failed to record puzzle ownership:', error);
+			const metadataCleanup = await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
+			if (!metadataCleanup.success) {
+				console.error(
+					'Failed to cleanup puzzle metadata after ownership insert failure:',
+					metadataCleanup.error
+				);
+			}
+			const imageCleanup = await deleteOriginalImage(c.env.PUZZLES_BUCKET, id);
+			if (!imageCleanup.success) {
+				console.error(
+					'Failed to cleanup original image after ownership insert failure:',
+					imageCleanup.error
+				);
+			}
+			return c.json({ error: 'internal_error', message: 'Failed to record puzzle ownership' }, 500);
+		}
+
 		if (!c.env.PUZZLE_WORKFLOW || typeof c.env.PUZZLE_WORKFLOW.create !== 'function') {
+			await deletePuzzleOwnership(getWorkerDb(c.env), id).catch((err) =>
+				console.error('Failed to cleanup ownership after missing workflow binding:', err)
+			);
 			const metadataCleanup = await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
 			if (!metadataCleanup.success) {
 				console.error(
@@ -444,6 +479,9 @@ puzzles.post('/', requirePlayerAuth, async (c) => {
 			});
 		} catch (error) {
 			console.error('Failed to trigger workflow:', error);
+			await deletePuzzleOwnership(getWorkerDb(c.env), id).catch((err) =>
+				console.error('Failed to cleanup ownership after workflow trigger failure:', err)
+			);
 			const metadataCleanup = await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
 			if (!metadataCleanup.success) {
 				console.error(
@@ -460,18 +498,6 @@ puzzles.post('/', requirePlayerAuth, async (c) => {
 			}
 			return c.json({ error: 'internal_error', message: 'Failed to start puzzle processing' }, 500);
 		}
-
-		await insertPuzzleOwnership(getWorkerDb(c.env), {
-			id,
-			ownerId: c.get('playerSession').user.id,
-			name: trimmedName,
-			pieceCount,
-			...(category ? { category } : {}),
-			status: 'processing',
-			createdAt: puzzleMetadata.createdAt
-		}).catch((error) => {
-			console.error('Failed to record puzzle ownership:', error);
-		});
 
 		return c.json(puzzleMetadata, 201);
 	} catch (error) {
