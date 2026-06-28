@@ -175,6 +175,21 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 		expect(res.status).toBe(400);
 	});
 
+	it('rejects zero timeSeconds (would record a 0:00 best time)', async () => {
+		const { recordCompletion } = await import('@perseus/shared');
+		const res = await buildApp().request(
+			`/api/puzzles/${PUZZLE_ID}/complete`,
+			{
+				method: 'POST',
+				headers: jsonHeaders(),
+				body: JSON.stringify({ timeSeconds: 0 })
+			},
+			DUMMY_ENV
+		);
+		expect(res.status).toBe(400);
+		expect(recordCompletion).not.toHaveBeenCalled();
+	});
+
 	it('rejects timeSeconds above the 24h sanity ceiling', async () => {
 		const res = await buildApp().request(
 			`/api/puzzles/${PUZZLE_ID}/complete`,

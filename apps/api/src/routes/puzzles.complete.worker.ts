@@ -36,9 +36,9 @@ router.post('/:id/complete', requirePlayerAuth, async (c) => {
 		body && typeof body === 'object' && 'timeSeconds' in body
 			? (body as { timeSeconds: unknown }).timeSeconds
 			: undefined;
-	if (typeof timeSeconds !== 'number' || !Number.isFinite(timeSeconds) || timeSeconds < 0) {
+	if (typeof timeSeconds !== 'number' || !Number.isFinite(timeSeconds) || timeSeconds < 1) {
 		return c.json(
-			{ error: 'bad_request', message: 'timeSeconds must be a non-negative number' },
+			{ error: 'bad_request', message: 'timeSeconds must be a number of at least 1 second' },
 			400
 		);
 	}

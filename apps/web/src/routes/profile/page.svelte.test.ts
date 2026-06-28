@@ -44,7 +44,7 @@ vi.mock('$app/navigation', () => ({
 }));
 
 import { getPlayerProfile, getPlayerPuzzles, getPlayerStats } from '$lib/services/api';
-import { uploadPlayerAvatar } from '$lib/services/api';
+import { uploadPlayerAvatar, updatePlayerProfile } from '$lib/services/api';
 
 // Mock IntersectionObserver so the infinite-scroll $effect can be exercised.
 // The captured callback is invoked manually in tests to simulate the sentinel
@@ -320,5 +320,56 @@ describe('profile page', () => {
 		// Click retry → second page loads.
 		await page.getByRole('button', { name: 'Retry' }).click();
 		await expect.element(page.getByText('Beta Puzzle')).toBeVisible();
+	});
+
+	it('shows an error when saving the display name fails', async () => {
+		vi.mocked(getPlayerProfile).mockResolvedValue({
+			id: 'p1',
+			email: 'e',
+			name: 'Player One',
+			picture: null,
+			createdAt: 1,
+			lastLoginAt: 2,
+			summary: { puzzlesUploaded: 0, puzzlesSolved: 0, totalCompletions: 0 }
+		});
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({ puzzles, nextCursor: undefined });
+		vi.mocked(getPlayerStats).mockResolvedValue({ stats });
+		vi.mocked(updatePlayerProfile).mockRejectedValueOnce(new Error('Network error'));
+
+		render(ProfilePage);
+		await expect.element(page.getByText('Player One')).toBeVisible();
+
+		await page.getByText('Edit profile').click();
+		await page.getByTestId('display-name-input').fill('New Name');
+		await page.getByText('Save').click();
+
+		await expect.element(page.getByTestId('save-name-error')).toBeVisible();
+	});
+
+	it('shows an error when avatar upload fails', async () => {
+		vi.mocked(getPlayerProfile).mockResolvedValue({
+			id: 'p1',
+			email: 'e',
+			name: 'Player One',
+			picture: null,
+			createdAt: 1,
+			lastLoginAt: 2,
+			summary: { puzzlesUploaded: 0, puzzlesSolved: 0, totalCompletions: 0 }
+		});
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({ puzzles, nextCursor: undefined });
+		vi.mocked(getPlayerStats).mockResolvedValue({ stats });
+		vi.mocked(uploadPlayerAvatar).mockRejectedValueOnce(new Error('Upload failed'));
+
+		render(ProfilePage);
+		await expect.element(page.getByText('Player One')).toBeVisible();
+
+		const fileInput = (await page.getByTestId('avatar-input').element()) as HTMLInputElement;
+		const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'avatar.png', {
+			type: 'image/png'
+		});
+		Object.defineProperty(fileInput, 'files', { value: [file], configurable: true });
+		fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+
+		await expect.element(page.getByTestId('avatar-upload-error')).toBeVisible();
 	});
 });

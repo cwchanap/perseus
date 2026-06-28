@@ -25,6 +25,8 @@
 	let editing = $state(false);
 	let displayName = $state('');
 	let saving = $state(false);
+	let saveError = $state(false);
+	let avatarError = $state(false);
 	let avatarInput = $state<HTMLInputElement | null>(null);
 	// Infinite-scroll state for "My Puzzles". Mirrors the gallery's pattern:
 	// a sentinel div observed by IntersectionObserver triggers loadNextPuzzles
@@ -134,10 +136,14 @@
 
 	async function saveName() {
 		saving = true;
+		saveError = false;
 		try {
 			await updatePlayerProfile({ displayName });
 			editing = false;
 			await loadAll();
+		} catch (e) {
+			console.error('Failed to save display name:', e);
+			saveError = true;
 		} finally {
 			saving = false;
 		}
@@ -154,9 +160,13 @@
 		const input = e.target as HTMLInputElement;
 		const file = input.files?.[0];
 		if (!file) return;
+		avatarError = false;
 		try {
 			await uploadPlayerAvatar(file);
 			await loadAll();
+		} catch (e) {
+			console.error('Failed to upload avatar:', e);
+			avatarError = true;
 		} finally {
 			// Reset the input so selecting the same file again still fires a
 			// change event (needed to retry a failed upload).
@@ -193,6 +203,11 @@
 					/>
 					<button type="button" onclick={saveName} disabled={saving}>Save</button>
 					<button type="button" data-testid="cancel-edit" onclick={cancelEditing}>Cancel</button>
+					{#if saveError}
+						<p data-testid="save-name-error" class="mt-1 text-xs text-(--hot)">
+							Failed to save name. Try again.
+						</p>
+					{/if}
 				{:else}
 					<h1 class="font-(--font-display) text-(--text-0)" data-testid="profile-name">
 						{profile.name}
@@ -207,6 +222,11 @@
 					onchange={onAvatarChosen}
 					class="mt-2 text-xs text-(--text-2)"
 				/>
+				{#if avatarError}
+					<p data-testid="avatar-upload-error" class="mt-1 text-xs text-(--hot)">
+						Failed to upload avatar. Try again.
+					</p>
+				{/if}
 			</div>
 		</div>
 
