@@ -176,7 +176,7 @@ function redirectToLogin(c: AuthContext, error: string, webOrigin?: string): Res
 	return withNoStore(c.redirect(loginUrl));
 }
 
-auth.use('*', async (c, next) => {
+auth.use('/google/*', async (c, next) => {
 	const env = readOAuthEnv();
 	if (!env) {
 		return serverMisconfigured();

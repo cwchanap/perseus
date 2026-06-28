@@ -159,7 +159,7 @@ function redirectToLogin(c: AuthContext, error: string, webOrigin?: string): Res
 	return withNoStore(c.redirect(loginUrl));
 }
 
-auth.use('*', async (c, next) => {
+auth.use('/google/*', async (c, next) => {
 	if (!isValidOAuthEnv(c.env)) {
 		return serverMisconfigured();
 	}

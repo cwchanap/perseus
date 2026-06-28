@@ -240,8 +240,21 @@ describe('Worker player auth routes', () => {
 		expect(res.headers.get('Cache-Control')).toBe('no-store');
 	});
 
-	it('returns server_misconfigured when production OAuth env is missing', async () => {
-		await expectServerMisconfigured('/session', {
+	it('returns unauthenticated for /session when OAuth env is missing', async () => {
+		const res = await auth.fetch(request('/session'), {
+			...productionEnv,
+			GOOGLE_CLIENT_ID: '',
+			GOOGLE_CLIENT_SECRET: '',
+			AUTH_REDIRECT_BASE_URL: ''
+		});
+
+		expect(res.status).toBe(200);
+		expect(res.headers.get('Cache-Control')).toBe('no-store');
+		expect(await res.json()).toEqual({ authenticated: false });
+	});
+
+	it('still returns server_misconfigured for /google/start when OAuth env is missing', async () => {
+		await expectServerMisconfigured('/google/start', {
 			...productionEnv,
 			GOOGLE_CLIENT_ID: '',
 			GOOGLE_CLIENT_SECRET: '',
