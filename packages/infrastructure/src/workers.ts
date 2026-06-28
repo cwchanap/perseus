@@ -109,7 +109,7 @@ function buildVersionBindings(
 	for (const d1 of bindings.d1Databases || []) {
 		result.push({
 			name: d1.binding,
-			type: 'd1_database',
+			type: 'd1',
 			id: d1.databaseId
 		});
 	}

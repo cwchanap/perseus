@@ -9,7 +9,7 @@ import {
 	listPlayerPuzzles,
 	listPlayerStats
 } from '@perseus/shared';
-import type { PlayerProfile } from '@perseus/types';
+import type { PlayerProfile, PlayerPuzzleSummary, PlayerStatRow } from '@perseus/types';
 import { requirePlayerAuth } from '../middleware/player-auth.worker';
 import { avatarRateLimit } from '../middleware/rate-limit.worker';
 import type { PlayerSessionRecord } from '../services/player-auth.worker';
@@ -153,6 +153,7 @@ player.get('/:playerId/avatar', async (c) => {
 	if (!obj) return c.json({ error: 'not_found', message: 'Avatar not found' }, 404);
 	const headers = new Headers();
 	obj.writeHttpMetadata(headers);
+	headers.set('Cache-Control', 'public, max-age=300');
 	return new Response(obj.body, { headers });
 });
 
@@ -165,7 +166,17 @@ player.get('/puzzles', requirePlayerAuth, async (c) => {
 		limit: Number.isFinite(limit) ? limit : 20,
 		cursor
 	});
-	return c.json({ puzzles: rows, nextCursor });
+	// Project DB rows to the public PlayerPuzzleSummary contract, stripping
+	// internal columns (e.g. ownerId) that the client doesn't need.
+	const puzzles: PlayerPuzzleSummary[] = rows.map((r) => ({
+		id: r.id,
+		name: r.name,
+		pieceCount: r.pieceCount,
+		status: r.status,
+		createdAt: r.createdAt,
+		...(r.category ? { category: r.category } : {})
+	}));
+	return c.json({ puzzles, nextCursor });
 });
 
 player.get('/stats', requirePlayerAuth, async (c) => {
@@ -175,7 +186,17 @@ player.get('/stats', requirePlayerAuth, async (c) => {
 	const { rows } = await listPlayerStats(db, session.user.id, {
 		limit: Number.isFinite(limit) ? limit : 20
 	});
-	return c.json({ stats: rows });
+	// Project DB rows to the public PlayerStatRow contract, stripping playerId
+	// (the client already knows its own ID from the auth session).
+	const stats: PlayerStatRow[] = rows.map((r) => ({
+		puzzleId: r.puzzleId,
+		puzzleName: r.puzzleName,
+		bestTimeSeconds: r.bestTimeSeconds,
+		totalCompletions: r.totalCompletions,
+		firstCompletedAt: r.firstCompletedAt,
+		lastCompletedAt: r.lastCompletedAt
+	}));
+	return c.json({ stats });
 });
 
 export default player;
