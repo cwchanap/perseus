@@ -1,4 +1,10 @@
 <script lang="ts">
+	// Auth guard lives in the component (onMount), not in +layout.ts, because
+	// this app uses adapter-static (SSG): server load hooks don't run at request
+	// time for prerendered pages, so a +layout.ts guard would never execute.
+	// This mirrors the admin/+layout.svelte guard pattern. The guard is
+	// client-side by necessity; E2E and unit tests verify it redirects
+	// unauthenticated users to /login before the profile renders.
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';

@@ -569,6 +569,37 @@ describe('Workflow Execution - Resource Loading', () => {
 
 		expect(setPuzzleStatus).toHaveBeenCalledWith(expect.anything(), puzzleId, 'failed');
 	});
+
+	it('mirrors the ready status into D1 on successful completion (keeps stores in sync)', async () => {
+		const { setPuzzleStatus } = await import('@perseus/shared');
+		vi.mocked(setPuzzleStatus).mockClear();
+		const puzzleId = sampleMetadata.id;
+		const { namespace } = createMockDurableObjectNamespace(() => {
+			return new Response(JSON.stringify({ success: true }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' }
+			});
+		});
+		const env = {
+			PUZZLES_BUCKET: createMockBucket(new ArrayBuffer(8)),
+			PUZZLE_METADATA: createMockKv(sampleMetadata),
+			PUZZLE_METADATA_DO: namespace as unknown as DurableObjectNamespace,
+			PUZZLE_WORKFLOW: {} as Workflow
+		} as unknown as Env;
+
+		const workflow = new TestWorkflow();
+		workflow.setEnv(env);
+
+		const event: WorkflowEvent<WorkflowParams> = {
+			payload: { puzzleId },
+			timestamp: new Date(),
+			instanceId: 'test-instance'
+		};
+
+		await expect(workflow.run(event, createMockStep())).resolves.toBeUndefined();
+
+		expect(setPuzzleStatus).toHaveBeenCalledWith(expect.anything(), puzzleId, 'ready');
+	});
 });
 
 describe('Default export fetch handler', () => {
