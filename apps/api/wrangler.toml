@@ -25,10 +25,13 @@ id = "local-dev-kv"
 preview_id = "local-dev-kv-preview"
 
 # D1 database for player profile, stats, and puzzle ownership
+# migrations_dir points at the shared drizzle output so `wrangler d1 migrations
+# apply` finds the schema regardless of which app's config is invoked.
 [[d1_databases]]
 binding = "DB"
 database_name = "perseus-player-data"
 database_id = "local-dev-d1"
+migrations_dir = "../../packages/shared/drizzle"
 
 [durable_objects]
 bindings = [
@@ -72,6 +75,7 @@ preview_id = "local-dev-kv-preview"
 binding = "DB"
 database_name = "perseus-player-data"
 database_id = "local-dev-d1"
+migrations_dir = "../../packages/shared/drizzle"
 
 # Development durable_objects binding to workflows-dev worker
 [env.dev.durable_objects]

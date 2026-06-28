@@ -6,6 +6,7 @@ import type { Env } from '../worker';
 
 const MAX_LOGIN_ATTEMPTS = 5;
 const OAUTH_MAX_ATTEMPTS = 10;
+const AVATAR_MAX_ATTEMPTS = 20;
 const LOCKOUT_DURATION_MS = 15 * 60 * 1000; // 15 minutes
 // Rate limit keys share PUZZLE_METADATA namespace (puzzle keys use 'puzzle:' prefix)
 const RATE_LIMIT_KEY_PREFIX = 'ratelimit:';
@@ -429,4 +430,61 @@ export async function oauthRateLimit(c: Context<{ Bindings: Env }>, next: Next):
 	}
 
 	return c.res;
+}
+
+// Avatar upload rate limit. Keyed by player id (the route is authenticated, so
+// we have a stable identity — better than IP which is shared behind NATs and
+// rotates on mobile). Limit is generous: a user legitimately re-uploads while
+// picking a good photo, but this prevents runaway abuse of the R2 write path.
+// Must be mounted AFTER requirePlayerAuth so the session is set.
+export async function avatarRateLimit(
+	c: Context<{ Bindings: Env; Variables: { playerSession?: { user: { id: string } } } }>,
+	next: Next
+): Promise<Response> {
+	const session = c.get('playerSession');
+	// If no session (misconfigured middleware order), fail open —
+	// requirePlayerAuth already returned 401 in that case.
+	if (!session) {
+		await next();
+		return c.res;
+	}
+	const key = `avatar:${session.user.id}`;
+	const kv = c.env.PUZZLE_METADATA;
+	const env = c.env.NODE_ENV;
+
+	const lockCheck = await checkAndIncrement(kv, key, Date.now(), env, false, AVATAR_MAX_ATTEMPTS);
+	if (lockCheck.shouldBlock) {
+		return c.json(
+			{
+				error: 'too_many_requests',
+				message:
+					lockCheck.remainingSeconds !== undefined
+						? `Too many avatar uploads. Try again in ${lockCheck.remainingSeconds} seconds`
+						: 'Too many avatar uploads. Please try again later'
+			},
+			429
+		);
+	}
+
+	await next();
+
+	// Count every upload attempt (success or failure) toward the limit.
+	try {
+		await checkAndIncrement(kv, key, Date.now(), env, true, AVATAR_MAX_ATTEMPTS);
+	} catch (error) {
+		console.error('Rate limit post-request tracking failed:', error);
+	}
+
+	return c.res;
+}
+
+export async function resetAvatarAttempts(
+	c: Context<{ Bindings: Env; Variables: { playerSession?: { user: { id: string } } } }>
+): Promise<void> {
+	const session = c.get('playerSession');
+	if (!session) return;
+	const key = `avatar:${session.user.id}`;
+	const kv = c.env.PUZZLE_METADATA;
+	const env = c.env.NODE_ENV;
+	await deleteRateLimitEntry(kv, key, env);
 }

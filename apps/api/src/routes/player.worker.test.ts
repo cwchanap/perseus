@@ -48,7 +48,7 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 			totalCompletions: 0
 		})),
 		listPlayerPuzzles: vi.fn(
-			async (db: unknown, playerId: string): Promise<{ rows: unknown[]; nextCursor?: number }> => ({
+			async (db: unknown, playerId: string): Promise<{ rows: unknown[]; nextCursor?: string }> => ({
 				rows: puzzlesStore.get(playerId) ?? [],
 				nextCursor: undefined
 			})
@@ -291,7 +291,7 @@ describe('player avatar route (Worker)', () => {
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as any;
 		expect(body.avatarUrl).toBe('/api/player/p1/avatar');
-		expect(bucket.put).toHaveBeenCalledWith('avatars/p1', expect.any(ReadableStream), {
+		expect(bucket.put).toHaveBeenCalledWith('avatars/p1', expect.any(Uint8Array), {
 			httpMetadata: { contentType: 'image/png' }
 		});
 	});
@@ -387,6 +387,60 @@ describe('player avatar route (Worker)', () => {
 		expect(row.displayName).toBe('KeepMe');
 		expect(row.avatarUrl).toBe('/api/player/p1/avatar');
 	});
+
+	it('concurrent PATCH /profile + POST /avatar do not clobber each other', async () => {
+		const { bucket } = createMockBucket();
+		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
+		const { getProfileOverride } = await import('@perseus/shared');
+
+		const blob = new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' });
+		const form = new FormData();
+		form.append('avatar', blob, 'a.png');
+
+		const patchReq = buildApp().request(
+			'/api/player/profile',
+			{
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json', ...AUTH_COOKIE },
+				body: JSON.stringify({ displayName: 'ConcurrentName' })
+			},
+			env
+		);
+		const avatarReq = buildApp().request(
+			'/api/player/avatar',
+			{ method: 'POST', headers: AUTH_COOKIE, body: form },
+			env
+		);
+		const [patchRes, avatarRes] = await Promise.all([patchReq, avatarReq]);
+		expect(patchRes.status).toBe(200);
+		expect(avatarRes.status).toBe(200);
+
+		const row = await (getProfileOverride as any)({}, 'p1');
+		expect(row.displayName).toBe('ConcurrentName');
+		expect(row.avatarUrl).toBe('/api/player/p1/avatar');
+	});
+
+	it('POST avatar rejects valid image MIME with non-image magic bytes', async () => {
+		const { bucket } = createMockBucket();
+		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
+		const blob = new Blob(
+			[
+				new Uint8Array([
+					0x3c, 0x68, 0x74, 0x6d, 0x6c, 0x3e, 0x0a, 0x3c, 0x73, 0x63, 0x72, 0x69, 0x70, 0x74
+				])
+			],
+			{ type: 'image/png' }
+		);
+		const form = new FormData();
+		form.append('avatar', blob, 'evil.png');
+		const res = await buildApp().request(
+			'/api/player/avatar',
+			{ method: 'POST', headers: AUTH_COOKIE, body: form },
+			env
+		);
+		expect(res.status).toBe(400);
+		expect(bucket.put).not.toHaveBeenCalled();
+	});
 });
 
 describe('player lists (Worker)', () => {
@@ -422,7 +476,7 @@ describe('player lists (Worker)', () => {
 		);
 		expect(listPlayerPuzzles).toHaveBeenCalledWith(expect.anything(), 'p1', {
 			limit: 5,
-			cursor: 100
+			cursor: '100'
 		});
 	});
 

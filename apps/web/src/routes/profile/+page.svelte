@@ -1,8 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { playerAuth } from '$lib/stores/playerAuth';
 	import {
 		getPlayerProfile,
 		getPlayerPuzzles,
@@ -28,6 +26,15 @@
 	let displayName = $state('');
 	let saving = $state(false);
 	let avatarInput = $state<HTMLInputElement | null>(null);
+	// Infinite-scroll state for "My Puzzles". Mirrors the gallery's pattern:
+	// a sentinel div observed by IntersectionObserver triggers loadNextPuzzles
+	// when the user scrolls near the bottom and a nextCursor is present.
+	let nextCursor = $state<string | undefined>(undefined);
+	let loadingMore = $state(false);
+	let loadMoreError = $state(false);
+	let scrollSentinel = $state<HTMLDivElement | null>(null);
+	let loadMoreController: AbortController | null = null;
+	let hasMore = $derived(nextCursor !== undefined);
 
 	const initials = $derived(
 		(profile?.name ?? '?')
@@ -49,32 +56,29 @@
 	}
 
 	onMount(() => {
-		// The root layout already calls playerAuth.refresh() on mount.
-		// Subscribe and wait for the store to settle (leave 'loading') before
-		// deciding whether to redirect to login. Calling refresh() here would
-		// race with the layout's call via the store's operationId guard.
-		let settled = false;
-		const unsubscribe = playerAuth.subscribe((state) => {
-			if (settled || state.status === 'loading') return;
-			settled = true;
-			if (state.status !== 'authenticated') {
-				goto(resolve('/login'));
-				return;
-			}
-			void loadAll();
-		});
-		return unsubscribe;
+		// The /profile/+layout.svelte guard ensures the user is authenticated
+		// before this page mounts, so we can load data immediately without
+		// re-checking playerAuth here.
+		void loadAll();
 	});
 
 	async function loadAll() {
 		loading = true;
 		loadError = false;
 		try {
-			[profile, puzzles, stats] = await Promise.all([
+			// Reset pagination state on a fresh load (e.g. after avatar upload
+			// triggers reloadAll). The puzzles list is replaced, not appended.
+			nextCursor = undefined;
+			loadMoreError = false;
+			const [profileRes, puzzlesRes, statsRes] = await Promise.all([
 				getPlayerProfile(),
-				getPlayerPuzzles().then((r) => r.puzzles),
-				getPlayerStats().then((r) => r.stats)
+				getPlayerPuzzles(),
+				getPlayerStats()
 			]);
+			profile = profileRes;
+			puzzles = puzzlesRes.puzzles;
+			nextCursor = puzzlesRes.nextCursor;
+			stats = statsRes.stats;
 			displayName = profile?.name ?? '';
 		} catch (e) {
 			// Without this, a rejected request leaves profile null while loading
@@ -85,6 +89,48 @@
 			loading = false;
 		}
 	}
+
+	async function loadNextPuzzles() {
+		if (loadingMore || !hasMore) return;
+		const controller = new AbortController();
+		loadMoreController = controller;
+		loadingMore = true;
+		loadMoreError = false;
+		try {
+			const result = await getPlayerPuzzles({ cursor: nextCursor });
+			if (controller.signal.aborted) return;
+			puzzles = [...puzzles, ...result.puzzles];
+			nextCursor = result.nextCursor;
+		} catch (e) {
+			const isAbort = e instanceof DOMException && e.name === 'AbortError';
+			if (!isAbort) console.error('Failed to load more puzzles:', e);
+			if (controller.signal.aborted) return;
+			loadMoreError = true;
+		} finally {
+			if (loadMoreController === controller) {
+				loadMoreController = null;
+				loadingMore = false;
+			}
+		}
+	}
+
+	// Observe the scroll sentinel and trigger the next page load when it
+	// scrolls into view. Re-creates the observer whenever the sentinel
+	// element binding changes (e.g. when the puzzles section appears).
+	$effect(() => {
+		const sentinel = scrollSentinel;
+		if (!sentinel) return;
+		const observer = new IntersectionObserver(
+			(entries) => {
+				if (entries[0].isIntersecting && !loadMoreError && !loadingMore && hasMore) {
+					void loadNextPuzzles();
+				}
+			},
+			{ rootMargin: '200px' }
+		);
+		observer.observe(sentinel);
+		return () => observer.disconnect();
+	});
 
 	async function saveName() {
 		saving = true;
@@ -202,6 +248,33 @@
 					<PuzzleCard puzzle={toCard(p)} />
 				{/each}
 			</div>
+
+			{#if loadingMore}
+				<div class="mt-4 flex justify-center py-4" data-testid="profile-load-more-spinner">
+					<div
+						class="h-6 w-6 rounded-full border-2 border-(--border) border-t-(--accent)
+motion-safe:animate-[spin-cw_0.75s_linear_infinite] motion-reduce:animate-none"
+					></div>
+				</div>
+			{:else if loadMoreError}
+				<div class="mt-4 flex justify-center" data-testid="profile-load-more-error">
+					<button
+						type="button"
+						onclick={() => void loadNextPuzzles()}
+						class="border border-(--hot) px-4 py-1.5 text-xs text-(--hot) uppercase
+hover:bg-[rgba(255,0,102,0.08)]"
+					>
+						Retry
+					</button>
+				</div>
+			{/if}
+
+			<div
+				bind:this={scrollSentinel}
+				data-testid="profile-scroll-sentinel"
+				class="h-px"
+				aria-hidden="true"
+			></div>
 		{/if}
 
 		<h2 class="mt-8 font-(--font-display) text-(--text-0)">Best Times</h2>
@@ -210,11 +283,14 @@
 		{:else}
 			<ul class="mt-3 divide-y divide-(--border)">
 				{#each stats as s (s.puzzleId)}
-					<li class="flex justify-between py-2 text-sm">
-						<a href={resolve(`/puzzle/${s.puzzleId}`)} class="text-(--text-1)">
-							{s.puzzleId}
+					<li class="flex items-center justify-between gap-3 py-2 text-sm">
+						<a href={resolve(`/puzzle/${s.puzzleId}`)} class="min-w-0 truncate text-(--text-1)">
+							{s.puzzleName ?? s.puzzleId}
 						</a>
-						<span class="font-(--font-mono) text-(--gold)">
+						<span class="shrink-0 text-xs text-(--text-2)">
+							{s.totalCompletions}×
+						</span>
+						<span class="shrink-0 font-(--font-mono) text-(--gold)">
 							{formatTime(s.bestTimeSeconds)}
 						</span>
 					</li>

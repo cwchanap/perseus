@@ -19,3 +19,4 @@ coverage/
 
 # Puzzle data storage
 data/
+.wrangler

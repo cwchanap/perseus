@@ -4,8 +4,10 @@ import { createMiddleware } from 'hono/factory';
 const ATTEMPT_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
 const MAX_ATTEMPTS = 5;
 const OAUTH_MAX_ATTEMPTS = 10;
+const AVATAR_MAX_ATTEMPTS = 20;
 const BLOCK_DURATION_MS = 15 * 60 * 1000; // 15 minutes
 const RATE_LIMIT_CONTEXT_KEY = 'loginRateLimitKey';
+const AVATAR_RATE_LIMIT_CONTEXT_KEY = 'avatarRateLimitKey';
 
 type AttemptRecord = {
 	attempts: number;
@@ -14,6 +16,8 @@ type AttemptRecord = {
 };
 
 const loginAttempts = new Map<string, AttemptRecord>();
+// Avatar upload rate limit store. See avatarRateLimit below.
+const avatarAttempts = new Map<string, AttemptRecord>();
 
 function getClientKey(c: Context): string {
 	const forwardedFor = c.req.header('x-forwarded-for');
@@ -153,7 +157,74 @@ function cleanupOldEntries(): void {
 			oauthAttempts.delete(key);
 		}
 	}
+	for (const [key, entry] of avatarAttempts.entries()) {
+		if (now - entry.windowStart > maxAge && (!entry.blockedUntil || entry.blockedUntil < now)) {
+			avatarAttempts.delete(key);
+		}
+	}
 }
 
 // Run cleanup every 30 minutes
 setInterval(cleanupOldEntries, 30 * 60 * 1000);
+
+// Avatar upload rate limit. Keyed by player id (the route is authenticated, so
+// we have a stable identity — better than IP which is shared behind NATs and
+// rotates on mobile). Limit is generous: a user legitimately re-uploads while
+// picking a good photo, but this prevents runaway abuse of the R2/filesystem
+// write path. Must be mounted AFTER requirePlayerAuth so the session is set.
+export const avatarRateLimit = createMiddleware(async (c, next) => {
+	const session = c.get('playerSession') as { user: { id: string } } | undefined;
+	// If no session (misconfigured middleware order), fail open rather than
+	// 500 — requirePlayerAuth already returned 401 in that case.
+	if (!session) {
+		await next();
+		return;
+	}
+	const key = session.user.id;
+	const now = Date.now();
+
+	let entry = avatarAttempts.get(key);
+	if (!entry) {
+		entry = { attempts: 0, windowStart: now };
+		avatarAttempts.set(key, entry);
+	}
+
+	if (entry.blockedUntil && entry.blockedUntil <= now) {
+		entry.attempts = 0;
+		entry.blockedUntil = undefined;
+		entry.windowStart = now;
+	}
+
+	applyWindow(entry, now);
+
+	if (entry.blockedUntil && entry.blockedUntil > now) {
+		const retryAfterSec = Math.ceil((entry.blockedUntil - now) / 1000);
+		c.header('Retry-After', retryAfterSec.toString());
+		return c.json(
+			{ error: 'too_many_requests', message: 'Too many avatar uploads. Try again later.' },
+			429
+		);
+	}
+
+	entry.attempts += 1;
+
+	if (entry.attempts > AVATAR_MAX_ATTEMPTS) {
+		entry.blockedUntil = now + BLOCK_DURATION_MS;
+		const retryAfterSec = Math.ceil(calculateRetryAfterMs(entry, now) / 1000);
+		c.header('Retry-After', retryAfterSec.toString());
+		return c.json(
+			{ error: 'too_many_requests', message: 'Too many avatar uploads. Try again later.' },
+			429
+		);
+	}
+
+	c.set(AVATAR_RATE_LIMIT_CONTEXT_KEY, key);
+
+	await next();
+});
+
+export function resetAvatarAttempts(c: Context): void {
+	const key = c.get(AVATAR_RATE_LIMIT_CONTEXT_KEY) as string | undefined;
+	if (!key) return;
+	avatarAttempts.delete(key);
+}
