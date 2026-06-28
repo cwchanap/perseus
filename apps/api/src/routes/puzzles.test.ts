@@ -42,11 +42,21 @@ vi.mock('../services/puzzle-generator', () => ({
 	isValidPieceCount: vi.fn().mockReturnValue(true)
 }));
 
+vi.mock('@perseus/shared', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('@perseus/shared')>();
+	return {
+		...actual,
+		insertPuzzleOwnership: vi.fn().mockResolvedValue(undefined),
+		deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined)
+	};
+});
+
 import puzzles from './puzzles';
 import * as storage from '../services/storage';
 import * as fsPromises from 'node:fs/promises';
 import * as playerAuth from '../services/player-auth';
 import * as puzzleGenerator from '../services/puzzle-generator';
+import { insertPuzzleOwnership } from '@perseus/shared';
 
 const PUZZLE_ID = 'test-puzzle-abc';
 // Minimal valid PNG: 8-byte signature + 13-byte IHDR chunk (width=3, height=4, 3:4 ratio)
@@ -198,7 +208,60 @@ describe('POST / - Upload puzzle for player', () => {
 				category: 'Art'
 			})
 		);
+		expect(insertPuzzleOwnership).toHaveBeenCalledTimes(1);
+		expect(insertPuzzleOwnership).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.objectContaining({
+				ownerId: 'player-1',
+				name: 'Player Puzzle',
+				pieceCount: 48,
+				category: 'Art',
+				status: 'ready'
+			})
+		);
 		expect(body).toEqual(expect.objectContaining({ name: 'Player Puzzle', category: 'Art' }));
+	});
+
+	it('returns 500 and cleans up when ownership insert fails', async () => {
+		vi.mocked(playerAuth.getPlayerSession).mockResolvedValue({
+			sessionHash: 'session-hash',
+			user: {
+				id: 'player-1',
+				email: 'player@example.com',
+				createdAt: 1000,
+				lastLoginAt: 2000
+			},
+			createdAt: 2000,
+			expiresAt: Date.now() + 1000
+		});
+		const generatedPuzzle = makePuzzle({ name: 'Player Puzzle' });
+		vi.mocked(puzzleGenerator.generatePuzzle).mockResolvedValue({
+			puzzle: generatedPuzzle,
+			pieces: generatedPuzzle.pieces
+		} as any);
+		vi.mocked(storage.createPuzzle).mockResolvedValue(true);
+		vi.mocked(insertPuzzleOwnership).mockRejectedValue(new Error('DB down'));
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const formData = new FormData();
+		formData.append('name', 'Player Puzzle');
+		formData.append('pieceCount', '48');
+		formData.append('aspectRatio', '3:4');
+		formData.append('image', new Blob([PNG_HEADER], { type: 'image/png' }), 'test.png');
+
+		const res = await puzzles.fetch(
+			new Request('http://localhost/', {
+				method: 'POST',
+				headers: { Cookie: 'perseus_player_session=player-token' },
+				body: formData
+			})
+		);
+
+		expect(res.status).toBe(500);
+		expect(((await res.json()) as any).message).toBe('Failed to record puzzle ownership');
+		expect(storage.deletePuzzle).toHaveBeenCalled();
+		consoleSpy.mockRestore();
+		vi.mocked(insertPuzzleOwnership).mockResolvedValue(undefined);
 	});
 });
 

@@ -3,6 +3,20 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import puzzles from '../puzzles.worker';
 import * as storage from '../../services/storage.worker';
 import * as playerAuth from '../../services/player-auth.worker';
+import { insertPuzzleOwnership } from '@perseus/shared';
+
+vi.mock('../../db.worker', () => ({
+	getWorkerDb: vi.fn(() => ({}))
+}));
+
+vi.mock('@perseus/shared', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('@perseus/shared')>();
+	return {
+		...actual,
+		insertPuzzleOwnership: vi.fn().mockResolvedValue(undefined),
+		deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined)
+	};
+});
 
 vi.mock('../../services/storage.worker');
 vi.mock('../../services/player-auth.worker', () => ({
@@ -132,6 +146,16 @@ describe('Puzzle Routes - UUID Validation', () => {
 				id: body.id,
 				params: { puzzleId: body.id }
 			});
+			// Ownership must be recorded, and before the workflow is kicked off so
+			// the puzzle is visible to its owner even before processing completes.
+			expect(insertPuzzleOwnership).toHaveBeenCalledWith(
+				expect.anything(),
+				expect.objectContaining({
+					ownerId: 'player-1',
+					status: 'processing'
+				})
+			);
+			expect(insertPuzzleOwnership).toHaveBeenCalledBefore(mockEnv.PUZZLE_WORKFLOW.create as any);
 		});
 
 		it('proceeds when dimensions cannot be parsed (graceful fallback)', async () => {
@@ -454,6 +478,26 @@ describe('Puzzle Routes - UUID Validation', () => {
 				expect.any(String)
 			);
 			expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
+			expect(mockEnv.PUZZLE_WORKFLOW.create).not.toHaveBeenCalled();
+			consoleSpy.mockRestore();
+		});
+
+		it('returns 500 and rolls back when ownership insert fails (before workflow)', async () => {
+			vi.mocked(insertPuzzleOwnership).mockRejectedValueOnce(new Error('D1 down'));
+			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+			const res = await post(buildForm());
+
+			expect(res.status).toBe(500);
+			expect(((await res.json()) as any).message).toBe('Failed to record puzzle ownership');
+			expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(
+				mockEnv.PUZZLE_METADATA,
+				expect.any(String)
+			);
+			expect(storage.deleteOriginalImage).toHaveBeenCalledWith(
+				mockEnv.PUZZLES_BUCKET,
+				expect.any(String)
+			);
 			expect(mockEnv.PUZZLE_WORKFLOW.create).not.toHaveBeenCalled();
 			consoleSpy.mockRestore();
 		});

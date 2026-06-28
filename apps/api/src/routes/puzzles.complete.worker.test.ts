@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Hono } from 'hono';
 
@@ -28,6 +27,7 @@ vi.mock('../services/player-auth.worker', () => ({
 
 import complete from '../routes/puzzles.complete.worker';
 import * as playerAuth from '../services/player-auth.worker';
+import { recordCompletion } from '@perseus/shared';
 import type { PlayerSessionRecord } from '../services/player-auth.worker';
 
 const TEST_PLAYER: PlayerSessionRecord = {
@@ -56,6 +56,9 @@ function buildApp() {
 describe('POST /api/puzzles/:id/complete (Worker)', () => {
 	beforeEach(() => {
 		vi.mocked(playerAuth.getPlayerSession).mockResolvedValue(TEST_PLAYER);
+		// Reset call history so each test (especially the fractional-flooring
+		// assertion) only reflects its own recordCompletion invocation.
+		vi.mocked(recordCompletion).mockClear();
 	});
 
 	it('records a completion', async () => {

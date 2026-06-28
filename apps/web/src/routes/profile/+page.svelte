@@ -8,8 +8,7 @@
 		getPlayerPuzzles,
 		getPlayerStats,
 		updatePlayerProfile,
-		uploadPlayerAvatar,
-		getAvatarUrl
+		uploadPlayerAvatar
 	} from '$lib/services/api';
 	import type {
 		PlayerProfile,
@@ -24,6 +23,7 @@
 	let puzzles = $state<PlayerPuzzleSummary[]>([]);
 	let stats = $state<PlayerStatRow[]>([]);
 	let loading = $state(true);
+	let loadError = $state(false);
 	let editing = $state(false);
 	let displayName = $state('');
 	let saving = $state(false);
@@ -68,6 +68,7 @@
 
 	async function loadAll() {
 		loading = true;
+		loadError = false;
 		try {
 			[profile, puzzles, stats] = await Promise.all([
 				getPlayerProfile(),
@@ -75,6 +76,11 @@
 				getPlayerStats().then((r) => r.stats)
 			]);
 			displayName = profile?.name ?? '';
+		} catch (e) {
+			// Without this, a rejected request leaves profile null while loading
+			// is false, rendering a blank page. Surface an error + retry instead.
+			console.error('Failed to load profile:', e);
+			loadError = true;
 		} finally {
 			loading = false;
 		}
@@ -91,17 +97,35 @@
 		}
 	}
 
+	function cancelEditing() {
+		// Drop any in-progress draft so re-entering edit mode starts from the
+		// currently saved name rather than a stale typed value.
+		displayName = profile?.name ?? '';
+		editing = false;
+	}
+
 	async function onAvatarChosen(e: Event) {
 		const input = e.target as HTMLInputElement;
 		const file = input.files?.[0];
 		if (!file) return;
-		await uploadPlayerAvatar(file);
-		await loadAll();
+		try {
+			await uploadPlayerAvatar(file);
+			await loadAll();
+		} finally {
+			// Reset the input so selecting the same file again still fires a
+			// change event (needed to retry a failed upload).
+			input.value = '';
+		}
 	}
 </script>
 
 {#if loading}
 	<p data-testid="profile-loading">Loading…</p>
+{:else if loadError}
+	<section class="mx-auto max-w-4xl px-4 py-8">
+		<p data-testid="profile-error" class="text-(--text-1)">Failed to load your profile.</p>
+		<button type="button" class="mt-3 text-sm text-(--accent)" onclick={loadAll}>Try again</button>
+	</section>
 {:else if profile}
 	<section class="mx-auto max-w-4xl px-4 py-8">
 		<div class="flex items-center gap-4 border border-(--border) bg-(--bg-1) p-5">
@@ -117,11 +141,12 @@
 			<div class="min-w-0">
 				{#if editing}
 					<input
+						data-testid="display-name-input"
 						bind:value={displayName}
 						class="border border-(--border) bg-(--bg-2) px-2 py-1 text-(--text-0)"
 					/>
 					<button type="button" onclick={saveName} disabled={saving}>Save</button>
-					<button type="button" onclick={() => (editing = false)}>Cancel</button>
+					<button type="button" data-testid="cancel-edit" onclick={cancelEditing}>Cancel</button>
 				{:else}
 					<h1 class="font-(--font-display) text-(--text-0)" data-testid="profile-name">
 						{profile.name}
@@ -130,6 +155,7 @@
 				{/if}
 				<input
 					bind:this={avatarInput}
+					data-testid="avatar-input"
 					type="file"
 					accept="image/*"
 					onchange={onAvatarChosen}
@@ -159,7 +185,11 @@
 			</div>
 		</div>
 
-		<button type="button" class="mt-4 text-sm text-(--accent)" onclick={() => (editing = !editing)}>
+		<button
+			type="button"
+			class="mt-4 text-sm text-(--accent)"
+			onclick={() => (editing ? cancelEditing() : (editing = true))}
+		>
 			{editing ? 'Cancel' : 'Edit profile'}
 		</button>
 

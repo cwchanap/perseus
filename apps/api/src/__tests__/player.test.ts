@@ -1,8 +1,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Hono } from 'hono';
-import { rmSync } from 'node:fs';
+import { rmSync, mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 
 // The Bun player route resolves its DB via the `../db` singleton, which loads
 // `bun:sqlite`. The api test runner (vitest under Node) cannot load that
@@ -35,6 +36,16 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 				store.set(playerId, values);
 			}
 		),
+		// Field-specific upserts mirror the real ON CONFLICT behavior: each
+		// writes only its column, preserving the other.
+		updateProfileDisplayName: vi.fn((db: unknown, playerId: string, displayName: string | null) => {
+			const existing = store.get(playerId) ?? { displayName: null, avatarUrl: null };
+			store.set(playerId, { ...existing, displayName });
+		}),
+		updateProfileAvatarUrl: vi.fn((db: unknown, playerId: string, avatarUrl: string) => {
+			const existing = store.get(playerId) ?? { displayName: null, avatarUrl: null };
+			store.set(playerId, { ...existing, avatarUrl });
+		}),
 		getPlayerSummary: vi.fn(() => ({
 			puzzlesUploaded: 0,
 			puzzlesSolved: 0,
@@ -148,6 +159,17 @@ describe('player profile routes (Bun)', () => {
 		expect(body.error).toBe('bad_request');
 	});
 
+	it('PATCH rejects a body without displayName with 400 (no silent reset)', async () => {
+		const res = await buildApp().request('/api/player/profile', {
+			method: 'PATCH',
+			headers: { 'Content-Type': 'application/json', ...AUTH_COOKIE },
+			body: JSON.stringify({})
+		});
+		expect(res.status).toBe(400);
+		const body = await res.json();
+		expect(body.error).toBe('bad_request');
+	});
+
 	it('PATCH rejects invalid JSON body with 400', async () => {
 		const res = await buildApp().request('/api/player/profile', {
 			method: 'PATCH',
@@ -163,11 +185,24 @@ describe('player profile routes (Bun)', () => {
 const PNG_BYTES = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01, 0x02, 0x03, 0x04];
 
 describe('player avatar route (Bun)', () => {
-	const dataDir = process.env.DATA_DIR || './data';
-	const avatarPath = join(dataDir, 'avatars', 'p1');
+	// Isolate avatar writes to a per-test temp directory instead of the shared
+	// default ./data, which could collide with real data or parallel runs.
+	let dataDir: string;
+	let originalDataDir: string | undefined;
+
+	beforeEach(() => {
+		originalDataDir = process.env.DATA_DIR;
+		dataDir = mkdtempSync(join(tmpdir(), 'perseus-player-test-'));
+		process.env.DATA_DIR = dataDir;
+	});
 
 	afterEach(() => {
-		rmSync(avatarPath, { force: true });
+		rmSync(dataDir, { recursive: true, force: true });
+		if (originalDataDir === undefined) {
+			delete process.env.DATA_DIR;
+		} else {
+			process.env.DATA_DIR = originalDataDir;
+		}
 	});
 
 	it('POST avatar stores the file and returns avatarUrl', async () => {
