@@ -968,6 +968,28 @@ describe('player profile service functions', () => {
 		expect(vi.mocked(fetch).mock.calls[0]?.[0]).toMatch(/cursor=10/);
 	});
 
+	it('getPlayerPuzzles forwards an explicit limit of 0 (not dropped by a truthy check)', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue(
+				new Response(JSON.stringify({ puzzles: [], nextCursor: undefined }), {
+					status: 200
+				})
+			)
+		);
+		await getPlayerPuzzles({ limit: 0 });
+		expect(vi.mocked(fetch).mock.calls[0]?.[0]).toMatch(/limit=0/);
+	});
+
+	it('getPlayerStats forwards an explicit limit of 0', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue(new Response(JSON.stringify({ stats: [] }), { status: 200 }))
+		);
+		await getPlayerStats({ limit: 0 });
+		expect(vi.mocked(fetch).mock.calls[0]?.[0]).toMatch(/limit=0/);
+	});
+
 	it('getPlayerStats GETs /api/player/stats', async () => {
 		vi.stubGlobal(
 			'fetch',

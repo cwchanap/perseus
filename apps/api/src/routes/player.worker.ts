@@ -3,7 +3,8 @@ import type { Env } from '../worker';
 import { getWorkerDb } from '../db.worker';
 import {
 	getProfileOverride,
-	upsertProfileOverride,
+	updateProfileDisplayName,
+	updateProfileAvatarUrl,
 	getPlayerSummary,
 	listPlayerPuzzles,
 	listPlayerStats
@@ -53,20 +54,23 @@ player.patch('/profile', requirePlayerAuth, async (c) => {
 		body && typeof body === 'object' && 'displayName' in body
 			? (body as { displayName: unknown }).displayName
 			: undefined;
-	if (displayName !== null && displayName !== undefined && typeof displayName !== 'string') {
+	// displayName is required: a missing field is a client error, not a silent
+	// reset to null. null explicitly clears the override back to the Google name.
+	if (displayName === undefined) {
+		return c.json({ error: 'bad_request', message: 'displayName is required' }, 400);
+	}
+	if (displayName !== null && typeof displayName !== 'string') {
 		return c.json({ error: 'bad_request', message: 'displayName must be a string or null' }, 400);
 	}
-	// Preserve existing avatarUrl on a name-only PATCH.
-	const existing = await getProfileOverride(db, playerId);
-	await upsertProfileOverride(db, playerId, {
-		displayName: (displayName as string | null) ?? null,
-		avatarUrl: existing?.avatarUrl ?? null
-	});
+	// Field-specific update writes only displayName and preserves avatarUrl,
+	// avoiding a read-modify-write race with concurrent POST /avatar requests.
+	await updateProfileDisplayName(db, playerId, displayName);
 	return c.json({ ok: true });
 });
 
 // Upload the authenticated player's avatar to R2 and record its serving path
-// in the profile override (existing displayName is preserved).
+// in the profile override (writes only avatarUrl; displayName is preserved by
+// the field-specific repository update).
 player.post('/avatar', requirePlayerAuth, async (c) => {
 	const session = c.get('playerSession');
 	let formData: FormData;
@@ -91,11 +95,9 @@ player.post('/avatar', requirePlayerAuth, async (c) => {
 	});
 
 	const db = getWorkerDb(c.env);
-	const existing = await getProfileOverride(db, session.user.id);
-	await upsertProfileOverride(db, session.user.id, {
-		displayName: existing?.displayName ?? null,
-		avatarUrl: `/api/player/${session.user.id}/avatar`
-	});
+	// Field-specific update writes only avatarUrl and preserves displayName,
+	// avoiding a read-modify-write race with concurrent PATCH /profile requests.
+	await updateProfileAvatarUrl(db, session.user.id, `/api/player/${session.user.id}/avatar`);
 	return c.json({ avatarUrl: `/api/player/${session.user.id}/avatar` });
 });
 

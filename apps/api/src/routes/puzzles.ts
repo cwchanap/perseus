@@ -370,17 +370,27 @@ puzzles.post('/', requirePlayerAuth, async (c) => {
 			return c.json({ error: 'internal_error', message: 'Failed to save puzzle metadata' }, 500);
 		}
 
-		await insertPuzzleOwnership(getDb(), {
-			id,
-			ownerId: c.get('playerSession').user.id,
-			name: trimmedName,
-			pieceCount,
-			...(category ? { category } : {}),
-			status: 'ready',
-			createdAt: Date.now()
-		}).catch((error) => {
+		// Ownership is a hard requirement: a committed puzzle without an owner
+		// row is invisible to the player. On failure, roll back the saved puzzle
+		// and fail the request instead of returning success.
+		try {
+			await insertPuzzleOwnership(getDb(), {
+				id,
+				ownerId: c.get('playerSession').user.id,
+				name: trimmedName,
+				pieceCount,
+				...(category ? { category } : {}),
+				status: 'ready',
+				createdAt: Date.now()
+			});
+		} catch (error) {
 			console.error('Failed to record puzzle ownership:', error);
-		});
+			const cleaned = await deleteStoredPuzzle(id);
+			if (!cleaned) {
+				console.error(`Failed to clean up puzzle directory ${id} after ownership insert failure`);
+			}
+			return c.json({ error: 'internal_error', message: 'Failed to record puzzle ownership' }, 500);
+		}
 
 		return c.json(puzzleToStore, 201);
 	} catch (error) {

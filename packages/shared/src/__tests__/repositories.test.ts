@@ -6,7 +6,10 @@ import * as schema from '../schema';
 import {
 	getProfileOverride,
 	upsertProfileOverride,
+	updateProfileDisplayName,
+	updateProfileAvatarUrl,
 	insertPuzzleOwnership,
+	deletePuzzleOwnership,
 	listPlayerPuzzles,
 	countPlayerPuzzles,
 	recordCompletion,
@@ -43,6 +46,30 @@ describe('repositories', () => {
 		expect(row?.avatarUrl).toBe('u');
 	});
 
+	it('updateProfileDisplayName preserves an existing avatarUrl', async () => {
+		await updateProfileAvatarUrl(helper.db, 'p1', 'avatar-url');
+		await updateProfileDisplayName(helper.db, 'p1', 'Name');
+		const row = await getProfileOverride(helper.db, 'p1');
+		expect(row?.displayName).toBe('Name');
+		expect(row?.avatarUrl).toBe('avatar-url');
+	});
+
+	it('updateProfileAvatarUrl preserves an existing displayName', async () => {
+		await updateProfileDisplayName(helper.db, 'p1', 'Name');
+		await updateProfileAvatarUrl(helper.db, 'p1', 'avatar-url');
+		const row = await getProfileOverride(helper.db, 'p1');
+		expect(row?.displayName).toBe('Name');
+		expect(row?.avatarUrl).toBe('avatar-url');
+	});
+
+	it('updateProfileDisplayName resets to null when passed null', async () => {
+		await upsertProfileOverride(helper.db, 'p1', { displayName: 'A', avatarUrl: 'u' });
+		await updateProfileDisplayName(helper.db, 'p1', null);
+		const row = await getProfileOverride(helper.db, 'p1');
+		expect(row?.displayName).toBeNull();
+		expect(row?.avatarUrl).toBe('u');
+	});
+
 	it('insertPuzzleOwnership + list/count', async () => {
 		await insertPuzzleOwnership(helper.db, {
 			id: 'pz1',
@@ -65,6 +92,30 @@ describe('repositories', () => {
 		expect(list.rows).toHaveLength(2);
 		expect(list.rows[0].id).toBe('pz2'); // newest first
 		expect(await countPlayerPuzzles(helper.db, 'p1')).toBe(2);
+	});
+
+	it('deletePuzzleOwnership removes only the targeted row', async () => {
+		await insertPuzzleOwnership(helper.db, {
+			id: 'pz1',
+			ownerId: 'p1',
+			name: 'Cat',
+			pieceCount: 4,
+			status: 'ready',
+			createdAt: 10
+		});
+		await insertPuzzleOwnership(helper.db, {
+			id: 'pz2',
+			ownerId: 'p1',
+			name: 'Dog',
+			pieceCount: 9,
+			status: 'ready',
+			createdAt: 20
+		});
+		await deletePuzzleOwnership(helper.db, 'pz1');
+		const list = await listPlayerPuzzles(helper.db, 'p1', { limit: 10 });
+		expect(list.rows).toHaveLength(1);
+		expect(list.rows[0].id).toBe('pz2');
+		expect(await countPlayerPuzzles(helper.db, 'p1')).toBe(1);
 	});
 
 	it('listPlayerPuzzles cursor pagination', async () => {

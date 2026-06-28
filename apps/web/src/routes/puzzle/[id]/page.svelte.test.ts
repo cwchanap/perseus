@@ -852,6 +852,8 @@ describe('Puzzle route gameplay integration', () => {
 		await page.getByLabelText('Redo').click();
 		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
 		expect(saveCompletionTime).toHaveBeenCalledTimes(1);
+		// Remote sync should also remain at a single call across undo/redo.
+		expect(recordCompletion).toHaveBeenCalledTimes(1);
 	});
 
 	it('clears tray selection when redo re-places the selected piece', async () => {

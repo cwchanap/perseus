@@ -44,6 +44,7 @@ vi.mock('$app/navigation', () => ({
 }));
 
 import { getPlayerProfile, getPlayerPuzzles, getPlayerStats } from '$lib/services/api';
+import { uploadPlayerAvatar } from '$lib/services/api';
 
 const puzzles: PlayerPuzzleSummary[] = [
 	{
@@ -87,7 +88,7 @@ describe('profile page', () => {
 		vi.mocked(getPlayerStats).mockResolvedValue({ stats });
 
 		render(ProfilePage);
-		await expect.element(page.getByText('Player One')).toBeVisible({ timeout: 10000 });
+		await expect.element(page.getByText('Player One')).toBeVisible();
 	});
 
 	it('shows summary counts', async () => {
@@ -106,5 +107,83 @@ describe('profile page', () => {
 		render(ProfilePage);
 		await expect.element(page.getByText('5')).toBeVisible();
 		await expect.element(page.getByText('7')).toBeVisible();
+	});
+
+	it('shows an error with retry when loading the profile fails', async () => {
+		vi.mocked(getPlayerProfile).mockRejectedValueOnce(new Error('Network error'));
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({ puzzles, nextCursor: undefined });
+		vi.mocked(getPlayerStats).mockResolvedValue({ stats });
+
+		render(ProfilePage);
+		await expect.element(page.getByTestId('profile-error')).toBeVisible();
+
+		// Retry succeeds on the second call.
+		vi.mocked(getPlayerProfile).mockResolvedValue({
+			id: 'p1',
+			email: 'e',
+			name: 'Back Online',
+			picture: null,
+			createdAt: 1,
+			lastLoginAt: 2,
+			summary: { puzzlesUploaded: 0, puzzlesSolved: 0, totalCompletions: 0 }
+		});
+
+		await page.getByText('Try again').click();
+		await expect.element(page.getByText('Back Online')).toBeVisible();
+	});
+
+	it('discards the display name draft when editing is cancelled', async () => {
+		vi.mocked(getPlayerProfile).mockResolvedValue({
+			id: 'p1',
+			email: 'e',
+			name: 'Player One',
+			picture: null,
+			createdAt: 1,
+			lastLoginAt: 2,
+			summary: { puzzlesUploaded: 0, puzzlesSolved: 0, totalCompletions: 0 }
+		});
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({ puzzles, nextCursor: undefined });
+		vi.mocked(getPlayerStats).mockResolvedValue({ stats });
+
+		render(ProfilePage);
+		await expect.element(page.getByText('Player One')).toBeVisible();
+
+		await page.getByText('Edit profile').click();
+		const input = page.getByTestId('display-name-input');
+		await input.fill('Draft Name');
+		await page.getByTestId('cancel-edit').click();
+
+		// Re-enter edit mode: the draft must be gone, reverting to the saved name.
+		await page.getByText('Edit profile').click();
+		await expect.element(page.getByTestId('display-name-input')).toHaveValue('Player One');
+	});
+
+	it('clears the avatar file input after an upload so the same file can retry', async () => {
+		vi.mocked(getPlayerProfile).mockResolvedValue({
+			id: 'p1',
+			email: 'e',
+			name: 'Player One',
+			picture: null,
+			createdAt: 1,
+			lastLoginAt: 2,
+			summary: { puzzlesUploaded: 0, puzzlesSolved: 0, totalCompletions: 0 }
+		});
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({ puzzles, nextCursor: undefined });
+		vi.mocked(getPlayerStats).mockResolvedValue({ stats });
+		vi.mocked(uploadPlayerAvatar).mockResolvedValue({ avatarUrl: '/api/player/p1/avatar' });
+
+		render(ProfilePage);
+		await expect.element(page.getByText('Player One')).toBeVisible();
+
+		const fileInput = (await page.getByTestId('avatar-input').element()) as HTMLInputElement;
+		const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'avatar.png', {
+			type: 'image/png'
+		});
+		Object.defineProperty(fileInput, 'files', { value: [file], configurable: true });
+		fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+
+		// The finally block resets the input value so re-selecting the same file
+		// fires another change event (needed to retry uploads).
+		await expect.poll(() => fileInput.value).toBe('');
 	});
 });

@@ -121,6 +121,16 @@ vi.mock('@cf-wasm/resvg', () => ({
 	}
 }));
 
+vi.mock('@perseus/shared', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('@perseus/shared')>();
+	return {
+		...actual,
+		// Spy on the D1 status write so tests can assert the workflow keeps D1
+		// in sync without needing a full D1Database mock. Resolves by default.
+		setPuzzleStatus: vi.fn().mockResolvedValue(undefined)
+	};
+});
+
 function createMockDurableObjectNamespace(
 	handler: (body: { puzzleId?: string; updates?: Partial<PuzzleMetadata> }) => Response
 ) {
@@ -521,6 +531,43 @@ describe('Workflow Execution - Resource Loading', () => {
 		expect(stub.fetch).toHaveBeenCalledTimes(1);
 		const body = JSON.parse((stub.fetch.mock.calls[0]?.[1]?.body as string | undefined) ?? '{}');
 		expect(body.updates.status).toBe('failed');
+	});
+
+	it('mirrors the failed status into D1 on mark-failed (keeps stores in sync)', async () => {
+		const { setPuzzleStatus } = await import('@perseus/shared');
+		vi.mocked(setPuzzleStatus).mockClear();
+		const puzzleId = sampleMetadata.id;
+		const { namespace } = createMockDurableObjectNamespace(() => {
+			return new Response(JSON.stringify({ success: true }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' }
+			});
+		});
+		const nullBucket = {
+			get: vi.fn(async () => null), // image not in R2 -> failure path
+			put: vi.fn(async () => undefined)
+		};
+		const env = {
+			PUZZLES_BUCKET: nullBucket,
+			PUZZLE_METADATA: createMockKv(sampleMetadata),
+			PUZZLE_METADATA_DO: namespace as unknown as DurableObjectNamespace,
+			PUZZLE_WORKFLOW: {} as Workflow
+		} as unknown as Env;
+
+		const workflow = new TestWorkflow();
+		workflow.setEnv(env);
+
+		const event: WorkflowEvent<WorkflowParams> = {
+			payload: { puzzleId },
+			timestamp: new Date(),
+			instanceId: 'test-instance'
+		};
+
+		await expect(workflow.run(event, createMockStep())).rejects.toThrow(
+			`Original image not found for puzzle ${puzzleId}`
+		);
+
+		expect(setPuzzleStatus).toHaveBeenCalledWith(expect.anything(), puzzleId, 'failed');
 	});
 });
 

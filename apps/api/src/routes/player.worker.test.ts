@@ -32,6 +32,16 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 				store.set(playerId, values);
 			}
 		),
+		// Field-specific upserts mirror the real ON CONFLICT behavior: each
+		// writes only its column, preserving the other.
+		updateProfileDisplayName: vi.fn((db: unknown, playerId: string, displayName: string | null) => {
+			const existing = store.get(playerId) ?? { displayName: null, avatarUrl: null };
+			store.set(playerId, { ...existing, displayName });
+		}),
+		updateProfileAvatarUrl: vi.fn((db: unknown, playerId: string, avatarUrl: string) => {
+			const existing = store.get(playerId) ?? { displayName: null, avatarUrl: null };
+			store.set(playerId, { ...existing, avatarUrl });
+		}),
 		getPlayerSummary: vi.fn(() => ({
 			puzzlesUploaded: 0,
 			puzzlesSolved: 0,
@@ -163,6 +173,21 @@ describe('player profile routes (Worker)', () => {
 				method: 'PATCH',
 				headers: { 'Content-Type': 'application/json', ...AUTH_COOKIE },
 				body: JSON.stringify({ displayName: 42 })
+			},
+			DUMMY_ENV
+		);
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as any;
+		expect(body.error).toBe('bad_request');
+	});
+
+	it('PATCH rejects a body without displayName with 400 (no silent reset)', async () => {
+		const res = await buildApp().request(
+			'/api/player/profile',
+			{
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json', ...AUTH_COOKIE },
+				body: JSON.stringify({})
 			},
 			DUMMY_ENV
 		);

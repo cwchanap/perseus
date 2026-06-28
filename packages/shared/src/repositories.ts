@@ -40,8 +40,50 @@ export async function upsertProfileOverride(
 		.run();
 }
 
+// Field-specific upserts: each writes only its own column via ON CONFLICT,
+// leaving the other column untouched. This removes the read-modify-write race
+// between concurrent PATCH /profile and POST /avatar requests, where a naive
+// getProfileOverride -> upsertProfileOverride could clobber the other field
+// with a stale value. On first contact (no existing row) the missing column
+// defaults to NULL, matching the historical upsert behavior.
+export async function updateProfileDisplayName(
+	db: AppDb,
+	playerId: string,
+	displayName: string | null
+): Promise<void> {
+	const now = Date.now();
+	await db
+		.insert(playerProfiles)
+		.values({ playerId, displayName, updatedAt: now })
+		.onConflictDoUpdate({
+			target: playerProfiles.playerId,
+			set: { displayName, updatedAt: now }
+		})
+		.run();
+}
+
+export async function updateProfileAvatarUrl(
+	db: AppDb,
+	playerId: string,
+	avatarUrl: string
+): Promise<void> {
+	const now = Date.now();
+	await db
+		.insert(playerProfiles)
+		.values({ playerId, avatarUrl, updatedAt: now })
+		.onConflictDoUpdate({
+			target: playerProfiles.playerId,
+			set: { avatarUrl, updatedAt: now }
+		})
+		.run();
+}
+
 export async function insertPuzzleOwnership(db: AppDb, row: NewPuzzleRow): Promise<void> {
 	await db.insert(puzzles).values(row).run();
+}
+
+export async function deletePuzzleOwnership(db: AppDb, id: string): Promise<void> {
+	await db.delete(puzzles).where(eq(puzzles.id, id)).run();
 }
 
 export async function setPuzzleStatus(db: AppDb, id: string, status: string): Promise<void> {

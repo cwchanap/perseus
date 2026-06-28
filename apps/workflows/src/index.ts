@@ -484,6 +484,7 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 			await step.do('mark-failed', async () => {
 				const maxRetries = 3;
 				let lastError: unknown;
+				let doSucceeded = false;
 
 				for (let attempt = 0; attempt < maxRetries; attempt++) {
 					try {
@@ -493,7 +494,8 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 							status: 'failed',
 							error: { message }
 						});
-						return; // Success
+						doSucceeded = true;
+						break;
 					} catch (markErr) {
 						lastError = markErr;
 						console.error(
@@ -507,6 +509,19 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 							await new Promise((resolve) => setTimeout(resolve, delay));
 						}
 					}
+				}
+
+				if (doSucceeded) {
+					// Mirror the finalize step: keep D1 in sync with the public
+					// status so the puzzle doesn't stay stuck at 'processing' in
+					// the ownership/stats store. Best-effort and independent of the
+					// DO retry loop — a D1/DB failure must not re-run the DO update.
+					try {
+						await setPuzzleStatus(createD1Db(this.env), puzzleId, 'failed');
+					} catch (d1Error) {
+						console.error('Failed to update puzzle status in D1:', d1Error);
+					}
+					return;
 				}
 
 				// All retries failed - log extensively

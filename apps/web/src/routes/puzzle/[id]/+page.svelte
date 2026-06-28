@@ -464,11 +464,17 @@
 			timer.pause();
 			if (!completionRecorded) {
 				isNewBest = saveCompletionTime(puzzle.id, timerState.elapsed);
-				recordCompletion(puzzle.id, timerState.elapsed).catch((error) => {
-					console.error('Failed to record completion on server', error);
-				});
 				bestTime = getBestTime(puzzle.id);
-				completionRecorded = true;
+				// Only mark completion as recorded once the server confirms it.
+				// Setting the flag synchronously would suppress retries when the
+				// POST fails, leaving the solve permanently un-synced.
+				recordCompletion(puzzle.id, timerState.elapsed)
+					.then(() => {
+						completionRecorded = true;
+					})
+					.catch((error) => {
+						console.error('Failed to record completion on server', error);
+					});
 			}
 			showCelebration = true;
 			return;

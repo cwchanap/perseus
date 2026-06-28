@@ -391,7 +391,7 @@ export async function getPlayerPuzzles(params?: {
 	cursor?: number;
 }): Promise<{ puzzles: PlayerPuzzleSummary[]; nextCursor?: number }> {
 	const searchParams = new URLSearchParams();
-	if (params?.limit) searchParams.set('limit', String(params.limit));
+	if (params?.limit !== undefined) searchParams.set('limit', String(params.limit));
 	if (params?.cursor !== undefined) searchParams.set('cursor', String(params.cursor));
 	const query = searchParams.toString();
 	const url = query ? `${API_BASE}/api/player/puzzles?${query}` : `${API_BASE}/api/player/puzzles`;
@@ -403,7 +403,7 @@ export async function getPlayerStats(params?: {
 	limit?: number;
 }): Promise<{ stats: PlayerStatRow[] }> {
 	const searchParams = new URLSearchParams();
-	if (params?.limit) searchParams.set('limit', String(params.limit));
+	if (params?.limit !== undefined) searchParams.set('limit', String(params.limit));
 	const query = searchParams.toString();
 	const url = query ? `${API_BASE}/api/player/stats?${query}` : `${API_BASE}/api/player/stats`;
 	const response = await fetch(url, { credentials: 'include' });
