@@ -29,7 +29,7 @@ id = "ae95a94b22e3414ab022c335390c67aa"
 [[d1_databases]]
 binding = "DB"
 database_name = "perseus-player-data"
-database_id = "REPLACE_WITH_PROD_D1_ID"
+database_id = "b32ed4d0-c29f-413d-9370-de7bec2c80a7"
 
 [durable_objects]
 bindings = [
@@ -46,5 +46,5 @@ script_name = "workflows"
 # Environment variables (secrets set via wrangler secret)
 [vars]
 NODE_ENV = "production"
-# Set via Pulumi in production:
-# AUTH_REDIRECT_BASE_URL = "https://your-production-origin.example"
+ALLOWED_ORIGINS = "https://perseus.cwchanap.dev"
+AUTH_REDIRECT_BASE_URL = "https://perseus.cwchanap.dev"
