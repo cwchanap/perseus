@@ -34,6 +34,17 @@ vi.mock('../../services/player-auth.worker', () => ({
 	revokePlayerSessionsForEmail: vi.fn()
 }));
 
+// admin.worker.ts cleans up the D1 ownership row on puzzle delete. Mock the db
+// handle and repository so the test doesn't bind a real D1 session and so the
+// cleanup is assertable.
+vi.mock('../../db.worker', () => ({
+	getWorkerDb: vi.fn(() => ({}))
+}));
+
+vi.mock('@perseus/shared', () => ({
+	deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined)
+}));
+
 import admin from '../admin.worker';
 import * as storage from '../../services/storage.worker';
 import * as auth from '../../middleware/auth.worker';
@@ -370,6 +381,14 @@ describe('Admin Routes - Puzzle Deletion', () => {
 				'puzzles/test-puzzle/pieces/0.png',
 				'puzzles/test-puzzle/pieces/1.png'
 			]);
+
+			// Ownership row is cleaned up best-effort even when asset deletion partially
+			// fails, so deleted puzzles don't linger in the uploader's "My Puzzles" list.
+			const { deletePuzzleOwnership } = await import('@perseus/shared');
+			expect(deletePuzzleOwnership).toHaveBeenCalledWith(
+				{},
+				'550e8400-e29b-41d4-a716-446655440000'
+			);
 		});
 	});
 });

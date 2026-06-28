@@ -58,6 +58,17 @@ vi.mock('../../services/player-auth', () => ({
 	revokePlayerSessionsForEmail: vi.fn()
 }));
 
+// admin.ts records/cleans up puzzle ownership in D1 via @perseus/shared.
+// Mock the db handle and the repository so tests don't pull in `bun:sqlite`
+// (unavailable in the vitest/node runner) and so ownership cleanup is assertable.
+vi.mock('../../db', () => ({
+	getDb: vi.fn(() => ({}))
+}));
+
+vi.mock('@perseus/shared', () => ({
+	deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined)
+}));
+
 afterAll(() => {
 	if (originalAdminPasskey === undefined) {
 		delete process.env.ADMIN_PASSKEY;
@@ -674,6 +685,22 @@ describe('DELETE /puzzles/:id', () => {
 	it('returns 204 when puzzle is successfully deleted', async () => {
 		(storageMock.puzzleExists as ReturnType<typeof vi.fn>).mockResolvedValue(true);
 		(storageMock.deletePuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+
+		const req = new Request('http://localhost/puzzles/existing-puzzle-id', { method: 'DELETE' });
+		const res = await app.fetch(req);
+		expect(res.status).toBe(204);
+
+		// Ownership row is cleaned up best-effort so deleted puzzles don't linger
+		// in the uploader's "My Puzzles" list or inflate puzzlesUploaded.
+		const { deletePuzzleOwnership } = await import('@perseus/shared');
+		expect(deletePuzzleOwnership).toHaveBeenCalledWith({}, 'existing-puzzle-id');
+	});
+
+	it('still returns 204 when ownership cleanup throws (best-effort)', async () => {
+		(storageMock.puzzleExists as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+		(storageMock.deletePuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+		const { deletePuzzleOwnership } = await import('@perseus/shared');
+		(deletePuzzleOwnership as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('D1 down'));
 
 		const req = new Request('http://localhost/puzzles/existing-puzzle-id', { method: 'DELETE' });
 		const res = await app.fetch(req);

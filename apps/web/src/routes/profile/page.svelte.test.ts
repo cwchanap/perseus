@@ -49,7 +49,6 @@ import { uploadPlayerAvatar } from '$lib/services/api';
 const puzzles: PlayerPuzzleSummary[] = [
 	{
 		id: 'pz-1',
-		ownerId: 'p1',
 		name: 'Test Puzzle',
 		pieceCount: 100,
 		status: 'ready',
@@ -60,7 +59,6 @@ const puzzles: PlayerPuzzleSummary[] = [
 
 const stats: PlayerStatRow[] = [
 	{
-		playerId: 'p1',
 		puzzleId: 'pz-1',
 		bestTimeSeconds: 42,
 		totalCompletions: 1,

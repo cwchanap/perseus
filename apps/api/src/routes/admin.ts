@@ -30,6 +30,8 @@ import {
 import { MAX_FILE_SIZE, ALLOWED_MIME_TYPES, PUZZLE_CATEGORIES } from '../types';
 import type { PuzzleCategory } from '../types';
 import { DEFAULT_PUZZLE_ASPECT_RATIO, isPuzzleAspectRatio } from '@perseus/types';
+import { getDb } from '../db';
+import { deletePuzzleOwnership } from '@perseus/shared';
 
 const admin = new Hono();
 
@@ -504,6 +506,13 @@ admin.delete('/puzzles/:id', requireAuth, async (c) => {
 	if (!deleted) {
 		return c.json({ error: 'internal_error', message: 'Failed to delete puzzle' }, 500);
 	}
+
+	// Best-effort cleanup of the D1 ownership row (see admin.worker.ts for the
+	// full rationale). Logged, not fatal — filesystem deletion above is the
+	// source of truth for puzzle existence in the Bun runtime.
+	await deletePuzzleOwnership(getDb(), id).catch((err) =>
+		console.error(`Failed to delete ownership row for puzzle ${id}:`, err)
+	);
 
 	return c.body(null, 204);
 });
