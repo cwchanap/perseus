@@ -319,8 +319,22 @@ describe('Bun player auth routes', () => {
 		);
 	});
 
-	it('returns server_misconfigured when auth env is missing only on auth routes', async () => {
-		await expectServerMisconfigured('/session', {
+	it('returns unauthenticated for /session when OAuth env is missing', async () => {
+		setEnv({
+			GOOGLE_CLIENT_ID: '',
+			GOOGLE_CLIENT_SECRET: '',
+			AUTH_REDIRECT_BASE_URL: ''
+		});
+
+		const res = await auth.fetch(request('/session'));
+
+		expect(res.status).toBe(200);
+		expect(res.headers.get('Cache-Control')).toBe('no-store');
+		expect(await res.json()).toEqual({ authenticated: false });
+	});
+
+	it('still returns server_misconfigured for /google/start when OAuth env is missing', async () => {
+		await expectServerMisconfigured('/google/start', {
 			GOOGLE_CLIENT_ID: '',
 			GOOGLE_CLIENT_SECRET: '',
 			AUTH_REDIRECT_BASE_URL: ''
@@ -353,14 +367,14 @@ describe('Bun player auth routes', () => {
 	});
 
 	it('treats unset NODE_ENV as production for auth redirect base validation', async () => {
-		await expectServerMisconfigured('/session', {
+		await expectServerMisconfigured('/google/start', {
 			NODE_ENV: undefined,
 			AUTH_REDIRECT_BASE_URL: 'http://localhost:5173'
 		});
 	});
 
 	it('returns server_misconfigured for malformed auth redirect bases', async () => {
-		await expectServerMisconfigured('/session', {
+		await expectServerMisconfigured('/google/start', {
 			AUTH_REDIRECT_BASE_URL: 'not a valid url'
 		});
 	});

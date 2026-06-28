@@ -10,13 +10,13 @@ This is a Turborepo monorepo using Bun as the package manager.
 # Install dependencies
 bun install
 
-# Development (runs all apps concurrently)
+# Development (runs web + API concurrently; API embeds the workflows worker)
 bun run dev
 
 # Run specific app
 bun run dev --filter=@perseus/web
-bun run dev --filter=@perseus/api        # Uses wrangler dev (Cloudflare Worker mode)
-bun run dev --filter=@perseus/workflows
+bun run dev --filter=@perseus/api        # Multi-worker wrangler dev: API + workflows worker
+bun run dev:standalone --filter=@perseus/workflows  # Standalone workflows worker (rarely needed)
 
 # Build all apps
 bun run build
