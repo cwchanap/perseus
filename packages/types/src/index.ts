@@ -326,11 +326,19 @@ function isValidOptionalAspectRatio(
 	return isPuzzleAspectRatio(aspectRatio);
 }
 
+// Puzzle IDs are UUIDv4 (crypto.randomUUID()). Centralized so route handlers
+// across both runtimes validate the :id path param consistently, and so
+// validateWorkflowParams doesn't keep its own copy of the regex.
+const PUZZLE_ID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function isPuzzleId(value: unknown): value is string {
+	return typeof value === 'string' && PUZZLE_ID_REGEX.test(value);
+}
+
 export function validateWorkflowParams(params: unknown): params is WorkflowParams {
 	if (typeof params !== 'object' || params === null) return false;
 	const p = params as Record<string, unknown>;
-	const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-	return typeof p.puzzleId === 'string' && uuidRegex.test(p.puzzleId);
+	return isPuzzleId(p.puzzleId);
 }
 
 export function createPuzzleProgress(totalPieces: number, generatedPieces: number): PuzzleProgress {

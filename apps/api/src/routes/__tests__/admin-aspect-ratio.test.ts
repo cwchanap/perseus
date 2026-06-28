@@ -48,6 +48,16 @@ vi.mock('../../services/storage', () => ({
 	getOriginalImagePath: vi.fn().mockReturnValue('/fake/data/puzzles/test-id/original.png')
 }));
 
+// admin.ts imports @perseus/shared for ownership cleanup on delete; mock it
+// (and the db handle) so the test doesn't pull in `bun:sqlite`.
+vi.mock('../../db', () => ({
+	getDb: vi.fn(() => ({}))
+}));
+
+vi.mock('@perseus/shared', () => ({
+	deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined)
+}));
+
 afterAll(() => {
 	if (originalAdminPasskey === undefined) {
 		delete process.env.ADMIN_PASSKEY;

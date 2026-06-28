@@ -181,6 +181,34 @@ describe('player profile routes (Worker)', () => {
 		expect(body.error).toBe('bad_request');
 	});
 
+	it('PATCH rejects a displayName longer than 255 characters with 400', async () => {
+		const res = await buildApp().request(
+			'/api/player/profile',
+			{
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json', ...AUTH_COOKIE },
+				body: JSON.stringify({ displayName: 'x'.repeat(256) })
+			},
+			DUMMY_ENV
+		);
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as any;
+		expect(body.error).toBe('bad_request');
+	});
+
+	it('PATCH accepts a 255-character displayName', async () => {
+		const res = await buildApp().request(
+			'/api/player/profile',
+			{
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json', ...AUTH_COOKIE },
+				body: JSON.stringify({ displayName: 'x'.repeat(255) })
+			},
+			DUMMY_ENV
+		);
+		expect(res.status).toBe(200);
+	});
+
 	it('PATCH rejects a body without displayName with 400 (no silent reset)', async () => {
 		const res = await buildApp().request(
 			'/api/player/profile',

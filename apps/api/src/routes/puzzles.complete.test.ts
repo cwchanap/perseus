@@ -21,12 +21,17 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	};
 });
 
+vi.mock('../services/storage', () => ({
+	puzzleExists: vi.fn().mockResolvedValue(true)
+}));
+
 vi.mock('../services/player-auth', () => ({
 	getPlayerSession: vi.fn()
 }));
 
 import complete from '../routes/puzzles.complete';
 import * as playerAuth from '../services/player-auth';
+import * as storage from '../services/storage';
 import { recordCompletion } from '@perseus/shared';
 import type { PlayerSessionRecord } from '../services/player-auth';
 
@@ -45,6 +50,9 @@ const TEST_PLAYER: PlayerSessionRecord = {
 };
 
 const AUTH_COOKIE = { Cookie: 'perseus_player_session=player-token' };
+// A valid UUIDv4 (puzzle IDs are crypto.randomUUID()); 'pz1' is rejected by the
+// format check, so tests that exercise the happy path use this instead.
+const PUZZLE_ID = '123e4567-e89b-42d3-a456-426614174000';
 
 function buildApp() {
 	const app = new Hono();
@@ -52,56 +60,106 @@ function buildApp() {
 	return app;
 }
 
+function jsonHeaders() {
+	return { 'Content-Type': 'application/json', ...AUTH_COOKIE };
+}
+
 describe('POST /api/puzzles/:id/complete (Bun)', () => {
 	beforeEach(() => {
 		vi.mocked(playerAuth.getPlayerSession).mockResolvedValue(TEST_PLAYER);
-		// Reset call history so each test (especially the fractional-flooring
-		// assertion) only reflects its own recordCompletion invocation.
+		vi.mocked(storage.puzzleExists).mockResolvedValue(true);
+		// Reset call history on every asserted mock so each test only reflects
+		// its own requests (the not.toHaveBeenCalled() assertions depend on this).
+		vi.mocked(storage.puzzleExists).mockClear();
 		vi.mocked(recordCompletion).mockClear();
 	});
 
 	it('records a completion', async () => {
 		const { recordCompletion } = await import('@perseus/shared');
-		const res = await buildApp().request('/api/puzzles/pz1/complete', {
+		const res = await buildApp().request(`/api/puzzles/${PUZZLE_ID}/complete`, {
 			method: 'POST',
-			headers: { 'Content-Type': 'application/json', ...AUTH_COOKIE },
+			headers: jsonHeaders(),
 			body: JSON.stringify({ timeSeconds: 90 })
 		});
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as { ok: boolean };
 		expect(body.ok).toBe(true);
-		expect(recordCompletion).toHaveBeenCalledWith(expect.anything(), 'p1', 'pz1', 90);
+		expect(recordCompletion).toHaveBeenCalledWith(expect.anything(), 'p1', PUZZLE_ID, 90);
+	});
+
+	it('rejects a malformed puzzle id with 400', async () => {
+		const res = await buildApp().request('/api/puzzles/not-a-uuid/complete', {
+			method: 'POST',
+			headers: jsonHeaders(),
+			body: JSON.stringify({ timeSeconds: 90 })
+		});
+		expect(res.status).toBe(400);
+		expect(storage.puzzleExists).not.toHaveBeenCalled();
+	});
+
+	it('rejects a non-v4 UUID with 400', async () => {
+		// UUIDv1 (version digit is 1, not 4)
+		const res = await buildApp().request(
+			'/api/puzzles/123e4567-e89b-12d3-a456-426614174000/complete',
+			{
+				method: 'POST',
+				headers: jsonHeaders(),
+				body: JSON.stringify({ timeSeconds: 90 })
+			}
+		);
+		expect(res.status).toBe(400);
+	});
+
+	it('returns 404 when the puzzle does not exist', async () => {
+		vi.mocked(storage.puzzleExists).mockResolvedValueOnce(false);
+		const res = await buildApp().request(`/api/puzzles/${PUZZLE_ID}/complete`, {
+			method: 'POST',
+			headers: jsonHeaders(),
+			body: JSON.stringify({ timeSeconds: 90 })
+		});
+		expect(res.status).toBe(404);
+		expect(recordCompletion).not.toHaveBeenCalled();
 	});
 
 	it('rejects non-numeric timeSeconds', async () => {
-		const res = await buildApp().request('/api/puzzles/pz1/complete', {
+		const res = await buildApp().request(`/api/puzzles/${PUZZLE_ID}/complete`, {
 			method: 'POST',
-			headers: { 'Content-Type': 'application/json', ...AUTH_COOKIE },
+			headers: jsonHeaders(),
 			body: JSON.stringify({ timeSeconds: 'fast' })
 		});
 		expect(res.status).toBe(400);
 	});
 
 	it('rejects missing timeSeconds', async () => {
-		const res = await buildApp().request('/api/puzzles/pz1/complete', {
+		const res = await buildApp().request(`/api/puzzles/${PUZZLE_ID}/complete`, {
 			method: 'POST',
-			headers: { 'Content-Type': 'application/json', ...AUTH_COOKIE },
+			headers: jsonHeaders(),
 			body: JSON.stringify({})
 		});
 		expect(res.status).toBe(400);
 	});
 
 	it('rejects negative timeSeconds', async () => {
-		const res = await buildApp().request('/api/puzzles/pz1/complete', {
+		const res = await buildApp().request(`/api/puzzles/${PUZZLE_ID}/complete`, {
 			method: 'POST',
-			headers: { 'Content-Type': 'application/json', ...AUTH_COOKIE },
+			headers: jsonHeaders(),
 			body: JSON.stringify({ timeSeconds: -5 })
 		});
 		expect(res.status).toBe(400);
 	});
 
+	it('rejects timeSeconds above the 24h sanity ceiling', async () => {
+		const res = await buildApp().request(`/api/puzzles/${PUZZLE_ID}/complete`, {
+			method: 'POST',
+			headers: jsonHeaders(),
+			body: JSON.stringify({ timeSeconds: 24 * 60 * 60 + 1 })
+		});
+		expect(res.status).toBe(400);
+		expect(storage.puzzleExists).not.toHaveBeenCalled();
+	});
+
 	it('requires authentication', async () => {
-		const res = await buildApp().request('/api/puzzles/pz1/complete', {
+		const res = await buildApp().request(`/api/puzzles/${PUZZLE_ID}/complete`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ timeSeconds: 90 })
@@ -111,11 +169,11 @@ describe('POST /api/puzzles/:id/complete (Bun)', () => {
 
 	it('floors fractional timeSeconds', async () => {
 		const { recordCompletion } = await import('@perseus/shared');
-		await buildApp().request('/api/puzzles/pz1/complete', {
+		await buildApp().request(`/api/puzzles/${PUZZLE_ID}/complete`, {
 			method: 'POST',
-			headers: { 'Content-Type': 'application/json', ...AUTH_COOKIE },
+			headers: jsonHeaders(),
 			body: JSON.stringify({ timeSeconds: 90.7 })
 		});
-		expect(recordCompletion).toHaveBeenCalledWith(expect.anything(), 'p1', 'pz1', 90);
+		expect(recordCompletion).toHaveBeenCalledWith(expect.anything(), 'p1', PUZZLE_ID, 90);
 	});
 });

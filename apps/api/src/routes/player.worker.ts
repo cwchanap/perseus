@@ -20,6 +20,9 @@ const player = new Hono<{
 
 const AVATAR_MAX_BYTES = 5 * 1024 * 1024;
 const AVATAR_MIME = new Set(['image/jpeg', 'image/png', 'image/webp']);
+// Matches the puzzle-name cap (admin routes). Bounds storage and prevents
+// trivially large payloads from reaching D1.
+const MAX_DISPLAY_NAME_LENGTH = 255;
 
 player.get('/profile', requirePlayerAuth, async (c) => {
 	const db = getWorkerDb(c.env);
@@ -61,6 +64,12 @@ player.patch('/profile', requirePlayerAuth, async (c) => {
 	}
 	if (displayName !== null && typeof displayName !== 'string') {
 		return c.json({ error: 'bad_request', message: 'displayName must be a string or null' }, 400);
+	}
+	if (typeof displayName === 'string' && displayName.length > MAX_DISPLAY_NAME_LENGTH) {
+		return c.json(
+			{ error: 'bad_request', message: 'displayName must be 255 characters or fewer' },
+			400
+		);
 	}
 	// Field-specific update writes only displayName and preserves avatarUrl,
 	// avoiding a read-modify-write race with concurrent POST /avatar requests.

@@ -18,6 +18,7 @@ import {
 	isPlayerProfile,
 	isPlayerPuzzleSummary,
 	isPlayerStatRow,
+	isPuzzleId,
 	type PlayerSessionResponse,
 	type PlayerAllowlistEntry,
 	type PlayerProfile,
@@ -353,6 +354,32 @@ describe('validateWorkflowParams', () => {
 
 	it('returns false for empty string puzzleId', () => {
 		expect(validateWorkflowParams({ puzzleId: '' })).toBe(false);
+	});
+});
+
+describe('isPuzzleId', () => {
+	it('returns true for a valid lowercase UUIDv4', () => {
+		expect(isPuzzleId('123e4567-e89b-42d3-a456-426614174000')).toBe(true);
+	});
+
+	it('returns true for an uppercase UUIDv4', () => {
+		expect(isPuzzleId('123E4567-E89B-42D3-A456-426614174000')).toBe(true);
+	});
+
+	it('returns false for a non-UUID string', () => {
+		expect(isPuzzleId('pz1')).toBe(false);
+		expect(isPuzzleId('not-a-uuid')).toBe(false);
+	});
+
+	it('returns false for a UUIDv1 (wrong version digit)', () => {
+		expect(isPuzzleId('123e4567-e89b-12d3-a456-426614174000')).toBe(false);
+	});
+
+	it('returns false for non-strings', () => {
+		expect(isPuzzleId(null)).toBe(false);
+		expect(isPuzzleId(123)).toBe(false);
+		expect(isPuzzleId(undefined)).toBe(false);
+		expect(isPuzzleId('')).toBe(false);
 	});
 });
 

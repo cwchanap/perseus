@@ -7,6 +7,7 @@ import {
 	PUZZLE_CATEGORIES,
 	getGridDimensionsForAspectRatio,
 	isPuzzleAspectRatio,
+	isPuzzleId,
 	isValidPieceCountForAspectRatio
 } from '@perseus/types';
 import type { PuzzleCategory } from '@perseus/types';
@@ -38,6 +39,8 @@ import {
 	listAllowlistEntries,
 	revokePlayerSessionsForEmail
 } from '../services/player-auth.worker';
+import { getWorkerDb } from '../db.worker';
+import { deletePuzzleOwnership } from '@perseus/shared';
 
 const admin = new Hono<{ Bindings: Env }>();
 
@@ -640,9 +643,8 @@ admin.delete('/puzzles/:id', requireAuth, async (c) => {
 	const id = c.req.param('id');
 	const force = c.req.query('force') === 'true';
 
-	// Validate UUID format
-	const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-	if (!uuidRegex.test(id)) {
+	// Validate UUID format (shared with the completion route via @perseus/types)
+	if (!isPuzzleId(id)) {
 		return c.json({ error: 'bad_request', message: 'Invalid puzzle ID format' }, 400);
 	}
 
@@ -678,6 +680,16 @@ admin.delete('/puzzles/:id', requireAuth, async (c) => {
 			console.error('Failed to delete puzzle metadata:', metadataResult.error);
 			return c.json({ error: 'internal_error', message: 'Failed to delete puzzle' }, 500);
 		}
+
+		// Best-effort cleanup of the D1 ownership row so a deleted puzzle doesn't
+		// keep appearing in the uploader's "My Puzzles" list (404 on click) or
+		// inflate their puzzlesUploaded count. KV/R2 deletion above is the source
+		// of truth for puzzle existence, so a failed ownership delete is logged,
+		// not fatal. (Admin-created puzzles have no ownership row; this is a no-op
+		// for them.)
+		await deletePuzzleOwnership(getWorkerDb(c.env), id).catch((err) =>
+			console.error(`Failed to delete ownership row for puzzle ${id}:`, err)
+		);
 
 		// Delete assets from R2
 		const deleteResult = await deletePuzzleAssets(c.env.PUZZLES_BUCKET, id, puzzle.pieceCount);
