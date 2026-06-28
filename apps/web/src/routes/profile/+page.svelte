@@ -48,13 +48,22 @@
 		};
 	}
 
-	onMount(async () => {
-		await playerAuth.refresh();
-		if ($playerAuth.status !== 'authenticated') {
-			goto(resolve('/login'));
-			return;
-		}
-		await loadAll();
+	onMount(() => {
+		// The root layout already calls playerAuth.refresh() on mount.
+		// Subscribe and wait for the store to settle (leave 'loading') before
+		// deciding whether to redirect to login. Calling refresh() here would
+		// race with the layout's call via the store's operationId guard.
+		let settled = false;
+		const unsubscribe = playerAuth.subscribe((state) => {
+			if (settled || state.status === 'loading') return;
+			settled = true;
+			if (state.status !== 'authenticated') {
+				goto(resolve('/login'));
+				return;
+			}
+			void loadAll();
+		});
+		return unsubscribe;
 	});
 
 	async function loadAll() {
