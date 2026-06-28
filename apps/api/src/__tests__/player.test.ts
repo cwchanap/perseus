@@ -52,7 +52,7 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 			totalCompletions: 0
 		})),
 		listPlayerPuzzles: vi.fn(
-			async (db: unknown, playerId: string): Promise<{ rows: unknown[]; nextCursor?: number }> => ({
+			async (db: unknown, playerId: string): Promise<{ rows: unknown[]; nextCursor?: string }> => ({
 				rows: puzzlesStore.get(playerId) ?? [],
 				nextCursor: undefined
 			})
@@ -200,6 +200,28 @@ describe('player profile routes (Bun)', () => {
 		const body = await res.json();
 		expect(body.error).toBe('bad_request');
 	});
+
+	it('PATCH accepts an empty-string displayName (clears to empty, not reset to Google)', async () => {
+		// An empty string is a deliberate user choice to have no display name,
+		// distinct from null which resets to the Google default. The route must
+		// accept '' and store it, not reject it and not coerce to null.
+		const res = await buildApp().request('/api/player/profile', {
+			method: 'PATCH',
+			headers: { 'Content-Type': 'application/json', ...AUTH_COOKIE },
+			body: JSON.stringify({ displayName: '' })
+		});
+		expect(res.status).toBe(200);
+		const { updateProfileDisplayName } = await import('@perseus/shared');
+		expect(updateProfileDisplayName).toHaveBeenCalledWith(expect.anything(), 'p1', '');
+		// GET reflects the empty override (name falls back to email since '' is falsy
+		// in the `?? session.user.name ?? session.user.email` chain).
+		const body = await (
+			await buildApp().request('/api/player/profile', { headers: AUTH_COOKIE })
+		).json();
+		// The effective name uses `override?.displayName ?? ...`; '' is not nullish,
+		// so it short-circuits to ''.
+		expect(body.name).toBe('');
+	});
 });
 
 const PNG_BYTES = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01, 0x02, 0x03, 0x04];
@@ -321,6 +343,63 @@ describe('player avatar route (Bun)', () => {
 		expect(row.displayName).toBe('KeepMe');
 		expect(row.avatarUrl).toBe('/api/player/p1/avatar');
 	});
+
+	it('concurrent PATCH /profile + POST /avatar do not clobber each other', async () => {
+		// This is the exact race the field-specific upserts prevent: a naive
+		// read-modify-write in either handler could overwrite the other field
+		// with a stale value. Fire both requests concurrently and assert both
+		// fields land in the final store.
+		const blob = new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' });
+		const form = new FormData();
+		form.append('avatar', blob, 'a.png');
+
+		const patchReq = buildApp().request('/api/player/profile', {
+			method: 'PATCH',
+			headers: { 'Content-Type': 'application/json', ...AUTH_COOKIE },
+			body: JSON.stringify({ displayName: 'ConcurrentName' })
+		});
+		const avatarReq = buildApp().request('/api/player/avatar', {
+			method: 'POST',
+			headers: AUTH_COOKIE,
+			body: form
+		});
+		const [patchRes, avatarRes] = await Promise.all([patchReq, avatarReq]);
+		expect(patchRes.status).toBe(200);
+		expect(avatarRes.status).toBe(200);
+
+		const { getProfileOverride } = await import('@perseus/shared');
+		const row = await (getProfileOverride as any)({}, 'p1');
+		// Both fields must be present — neither handler overwrote the other.
+		expect(row.displayName).toBe('ConcurrentName');
+		expect(row.avatarUrl).toBe('/api/player/p1/avatar');
+	});
+
+	it('POST avatar rejects a file with valid image MIME type but non-image magic bytes', async () => {
+		// A client could claim image/png while sending arbitrary bytes (e.g. an
+		// HTML/JS payload). The magic-byte sniff must reject it regardless of
+		// the client-supplied Content-Type.
+		const blob = new Blob(
+			[
+				new Uint8Array([
+					0x3c, 0x68, 0x74, 0x6d, 0x6c, 0x3e, 0x0a, 0x3c, 0x73, 0x63, 0x72, 0x69, 0x70, 0x74
+				])
+			],
+			{
+				type: 'image/png'
+			}
+		);
+		const form = new FormData();
+		form.append('avatar', blob, 'evil.png');
+		const res = await buildApp().request('/api/player/avatar', {
+			method: 'POST',
+			headers: AUTH_COOKIE,
+			body: form
+		});
+		expect(res.status).toBe(400);
+		const body = await res.json();
+		expect(body.error).toBe('bad_request');
+		expect(body.message).toBe('Unsupported image type');
+	});
 });
 
 describe('player lists (Bun)', () => {
@@ -348,7 +427,7 @@ describe('player lists (Bun)', () => {
 		await buildApp().request('/api/player/puzzles?limit=5&cursor=100', { headers: AUTH_COOKIE });
 		expect(listPlayerPuzzles).toHaveBeenCalledWith(expect.anything(), 'p1', {
 			limit: 5,
-			cursor: 100
+			cursor: '100'
 		});
 	});
 

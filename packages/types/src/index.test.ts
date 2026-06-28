@@ -950,6 +950,7 @@ describe('player profile validators', () => {
 
 	const stat: PlayerStatRow = {
 		puzzleId: 'pz1',
+		puzzleName: 'Cat',
 		bestTimeSeconds: 90,
 		totalCompletions: 2,
 		firstCompletedAt: 10,
@@ -959,6 +960,9 @@ describe('player profile validators', () => {
 	it('validates a stat row', () => {
 		expect(isPlayerStatRow(stat)).toBe(true);
 		expect(isPlayerStatRow({ ...stat, bestTimeSeconds: 'x' })).toBe(false);
+		// puzzleName may be null (deleted puzzle) or a non-empty string.
+		expect(isPlayerStatRow({ ...stat, puzzleName: null })).toBe(true);
+		expect(isPlayerStatRow({ ...stat, puzzleName: '' })).toBe(false);
 	});
 
 	const puzzle: PlayerPuzzleSummary = {

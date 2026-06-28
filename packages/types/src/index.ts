@@ -172,6 +172,9 @@ export interface PlayerPuzzleSummary {
 
 export interface PlayerStatRow {
 	puzzleId: string;
+	// Joined from the puzzles table; null when the puzzle has been deleted
+	// but the stat row remains (no FK enforcement in D1/SQLite here).
+	puzzleName: string | null;
 	bestTimeSeconds: number;
 	totalCompletions: number;
 	firstCompletedAt: number;
@@ -285,6 +288,7 @@ export function isPlayerStatRow(value: unknown): value is PlayerStatRow {
 	const v = value as Record<string, unknown>;
 	return (
 		isNonEmptyString(v.puzzleId) &&
+		(v.puzzleName === null || isNonEmptyString(v.puzzleName)) &&
 		isFiniteNumber(v.bestTimeSeconds) &&
 		isFiniteNumber(v.totalCompletions) &&
 		isFiniteNumber(v.firstCompletedAt) &&

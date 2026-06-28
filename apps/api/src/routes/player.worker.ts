@@ -11,6 +11,7 @@ import {
 } from '@perseus/shared';
 import type { PlayerProfile } from '@perseus/types';
 import { requirePlayerAuth } from '../middleware/player-auth.worker';
+import { avatarRateLimit } from '../middleware/rate-limit.worker';
 import type { PlayerSessionRecord } from '../services/player-auth.worker';
 
 const player = new Hono<{
@@ -23,6 +24,36 @@ const AVATAR_MIME = new Set(['image/jpeg', 'image/png', 'image/webp']);
 // Matches the puzzle-name cap (admin routes). Bounds storage and prevents
 // trivially large payloads from reaching D1.
 const MAX_DISPLAY_NAME_LENGTH = 255;
+
+// Sniff image MIME from magic bytes. Mirrors the Bun player route and the
+// puzzle upload path: never trust the client-supplied Content-Type.
+function sniffImageType(bytes: Uint8Array): string | null {
+	if (bytes.length < 12) return null;
+	if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
+	if (
+		bytes[0] === 0x89 &&
+		bytes[1] === 0x50 &&
+		bytes[2] === 0x4e &&
+		bytes[3] === 0x47 &&
+		bytes[4] === 0x0d &&
+		bytes[5] === 0x0a &&
+		bytes[6] === 0x1a &&
+		bytes[7] === 0x0a
+	)
+		return 'image/png';
+	if (
+		bytes[0] === 0x52 &&
+		bytes[1] === 0x49 &&
+		bytes[2] === 0x46 &&
+		bytes[3] === 0x46 &&
+		bytes[8] === 0x57 &&
+		bytes[9] === 0x45 &&
+		bytes[10] === 0x42 &&
+		bytes[11] === 0x50
+	)
+		return 'image/webp';
+	return null;
+}
 
 player.get('/profile', requirePlayerAuth, async (c) => {
 	const db = getWorkerDb(c.env);
@@ -80,7 +111,7 @@ player.patch('/profile', requirePlayerAuth, async (c) => {
 // Upload the authenticated player's avatar to R2 and record its serving path
 // in the profile override (writes only avatarUrl; displayName is preserved by
 // the field-specific repository update).
-player.post('/avatar', requirePlayerAuth, async (c) => {
+player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 	const session = c.get('playerSession');
 	let formData: FormData;
 	try {
@@ -92,15 +123,20 @@ player.post('/avatar', requirePlayerAuth, async (c) => {
 	if (!(file instanceof File)) {
 		return c.json({ error: 'bad_request', message: 'avatar file is required' }, 400);
 	}
-	if (!AVATAR_MIME.has(file.type)) {
-		return c.json({ error: 'bad_request', message: 'Unsupported image type' }, 400);
-	}
 	if (file.size > AVATAR_MAX_BYTES) {
 		return c.json({ error: 'bad_request', message: 'Avatar must be 5MB or less' }, 400);
 	}
+	// Validate via magic bytes instead of trusting file.type, matching the
+	// puzzle upload path and the Bun player route. The sniffed type is stored
+	// as R2 httpMetadata so the serve route returns the correct Content-Type.
+	const bytes = new Uint8Array(await file.arrayBuffer());
+	const detected = sniffImageType(bytes);
+	if (!detected || !AVATAR_MIME.has(detected)) {
+		return c.json({ error: 'bad_request', message: 'Unsupported image type' }, 400);
+	}
 	const key = `avatars/${session.user.id}`;
-	await c.env.PUZZLES_BUCKET.put(key, file.stream(), {
-		httpMetadata: { contentType: file.type }
+	await c.env.PUZZLES_BUCKET.put(key, bytes, {
+		httpMetadata: { contentType: detected }
 	});
 
 	const db = getWorkerDb(c.env);
@@ -124,11 +160,10 @@ player.get('/puzzles', requirePlayerAuth, async (c) => {
 	const db = getWorkerDb(c.env);
 	const session = c.get('playerSession');
 	const limit = Number(c.req.query('limit') ?? '20');
-	const cursorRaw = c.req.query('cursor');
-	const cursor = cursorRaw ? Number(cursorRaw) : undefined;
+	const cursor = c.req.query('cursor') || undefined;
 	const { rows, nextCursor } = await listPlayerPuzzles(db, session.user.id, {
 		limit: Number.isFinite(limit) ? limit : 20,
-		cursor: Number.isFinite(cursor) ? cursor : undefined
+		cursor
 	});
 	return c.json({ puzzles: rows, nextCursor });
 });

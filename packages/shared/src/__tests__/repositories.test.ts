@@ -170,6 +170,49 @@ describe('repositories', () => {
 		expect(page2.rows.every((r) => r.ownerId === 'alice')).toBe(true);
 	});
 
+	it('listPlayerPuzzles composite cursor does not skip rows on createdAt collision', async () => {
+		// Three puzzles share the same createdAt. A createdAt-only cursor would
+		// skip the rows after the first page because lt(createdAt, X) excludes
+		// all rows with the same timestamp. The (createdAt, id) composite cursor
+		// must keep them.
+		const ts = 5000;
+		await insertPuzzleOwnership(helper.db, {
+			id: 'pz-a',
+			ownerId: 'p1',
+			name: 'A',
+			pieceCount: 4,
+			status: 'ready',
+			createdAt: ts
+		});
+		await insertPuzzleOwnership(helper.db, {
+			id: 'pz-b',
+			ownerId: 'p1',
+			name: 'B',
+			pieceCount: 4,
+			status: 'ready',
+			createdAt: ts
+		});
+		await insertPuzzleOwnership(helper.db, {
+			id: 'pz-c',
+			ownerId: 'p1',
+			name: 'C',
+			pieceCount: 4,
+			status: 'ready',
+			createdAt: ts
+		});
+		const page1 = await listPlayerPuzzles(helper.db, 'p1', { limit: 2 });
+		expect(page1.rows).toHaveLength(2);
+		expect(page1.nextCursor).toBeDefined();
+		const page2 = await listPlayerPuzzles(helper.db, 'p1', {
+			limit: 2,
+			cursor: page1.nextCursor!
+		});
+		expect(page2.rows).toHaveLength(1);
+		// All three rows surfaced across the two pages, none skipped.
+		const seen = new Set([...page1.rows, ...page2.rows].map((r) => r.id));
+		expect(seen.size).toBe(3);
+	});
+
 	it('recordCompletion upserts best time and increments count', async () => {
 		await recordCompletion(helper.db, 'p1', 'pz1', 100);
 		await recordCompletion(helper.db, 'p1', 'pz1', 80);
@@ -178,6 +221,26 @@ describe('repositories', () => {
 		expect(stats.rows).toHaveLength(1);
 		expect(stats.rows[0].bestTimeSeconds).toBe(80);
 		expect(stats.rows[0].totalCompletions).toBe(3);
+	});
+
+	it('listPlayerStats joins puzzle name and surfaces null for deleted puzzles', async () => {
+		await insertPuzzleOwnership(helper.db, {
+			id: 'pz-named',
+			ownerId: 'p1',
+			name: 'Cat',
+			pieceCount: 4,
+			status: 'ready',
+			createdAt: 1
+		});
+		await recordCompletion(helper.db, 'p1', 'pz-named', 50);
+		// A stat row whose puzzle was never inserted (e.g. deleted) — name must be null.
+		await recordCompletion(helper.db, 'p1', 'pz-gone', 70);
+		const stats = await listPlayerStats(helper.db, 'p1', { limit: 10 });
+		expect(stats.rows).toHaveLength(2);
+		const named = stats.rows.find((r) => r.puzzleId === 'pz-named');
+		const gone = stats.rows.find((r) => r.puzzleId === 'pz-gone');
+		expect(named?.puzzleName).toBe('Cat');
+		expect(gone?.puzzleName).toBeNull();
 	});
 
 	it('getPlayerSummary aggregates counts', async () => {

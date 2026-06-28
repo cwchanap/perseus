@@ -13,3 +13,4 @@ coverage
 
 # Dependencies
 node_modules
+.wrangler

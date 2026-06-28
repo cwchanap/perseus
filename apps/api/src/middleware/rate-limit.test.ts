@@ -1,7 +1,13 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi } from 'vitest';
 import { Hono } from 'hono';
-import { loginRateLimit, resetLoginAttempts, oauthRateLimit } from './rate-limit';
+import {
+	loginRateLimit,
+	resetLoginAttempts,
+	oauthRateLimit,
+	avatarRateLimit,
+	resetAvatarAttempts
+} from './rate-limit';
 
 // Each test uses a unique IP to avoid cross-test state in the module-level Map.
 let ipCounter = 1;
@@ -367,5 +373,64 @@ describe('oauthRateLimit', () => {
 		} finally {
 			vi.useRealTimers();
 		}
+	});
+});
+
+// ─── avatarRateLimit (Bun) ────────────────────────────────────────────────────
+
+function makeAvatarApp(handlerStatus: number = 200, playerId: string = 'player-test-1') {
+	const app = new Hono();
+	app.use('/avatar', (c, next) => {
+		// Simulate requirePlayerAuth setting the session. The default Context
+		// type doesn't include 'playerSession' in its Variables map, so cast.
+		(c as any).set('playerSession', { user: { id: playerId } });
+		return avatarRateLimit(c, next);
+	});
+	app.post('/avatar', (c) => {
+		if (handlerStatus === 200) {
+			resetAvatarAttempts(c);
+		}
+		return c.json({ status: handlerStatus }, handlerStatus as any);
+	});
+	return app;
+}
+
+describe('avatarRateLimit (Bun)', () => {
+	it('allows the first upload and resets on success', async () => {
+		const app = makeAvatarApp(200, 'player-allow-1');
+		const res = await app.fetch(new Request('http://localhost/avatar', { method: 'POST' }));
+		expect(res.status).toBe(200);
+	});
+
+	it('blocks after exceeding the max attempt threshold', async () => {
+		// AVATAR_MAX_ATTEMPTS is 20; the 21st attempt triggers the block.
+		// Use a failing handler so attempts accumulate without reset.
+		const app = makeAvatarApp(500, 'player-block-1');
+		let lastStatus = 200;
+		for (let i = 0; i < 22; i++) {
+			const res = await app.fetch(new Request('http://localhost/avatar', { method: 'POST' }));
+			lastStatus = res.status;
+		}
+		expect(lastStatus).toBe(429);
+	});
+
+	it('sets Retry-After header when blocked', async () => {
+		const app = makeAvatarApp(500, 'player-retry-1');
+		for (let i = 0; i < 22; i++) {
+			await app.fetch(new Request('http://localhost/avatar', { method: 'POST' }));
+		}
+		const res = await app.fetch(new Request('http://localhost/avatar', { method: 'POST' }));
+		expect(res.status).toBe(429);
+		expect(res.headers.get('Retry-After')).toBeTruthy();
+	});
+
+	it('resetAvatarAttempts is a no-op when no key is set', () => {
+		const app = new Hono();
+		app.post('/test', (c) => {
+			resetAvatarAttempts(c); // no avatarRateLimit ran → no key
+			return c.json({ ok: true });
+		});
+		// Should not throw.
+		expect(() => app.fetch(new Request('http://localhost/test', { method: 'POST' }))).not.toThrow();
 	});
 });

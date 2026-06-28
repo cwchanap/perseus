@@ -388,15 +388,15 @@ export function getAvatarUrl(playerId: string): string {
 
 export async function getPlayerPuzzles(params?: {
 	limit?: number;
-	cursor?: number;
-}): Promise<{ puzzles: PlayerPuzzleSummary[]; nextCursor?: number }> {
+	cursor?: string;
+}): Promise<{ puzzles: PlayerPuzzleSummary[]; nextCursor?: string }> {
 	const searchParams = new URLSearchParams();
 	if (params?.limit !== undefined) searchParams.set('limit', String(params.limit));
-	if (params?.cursor !== undefined) searchParams.set('cursor', String(params.cursor));
+	if (params?.cursor !== undefined) searchParams.set('cursor', params.cursor);
 	const query = searchParams.toString();
 	const url = query ? `${API_BASE}/api/player/puzzles?${query}` : `${API_BASE}/api/player/puzzles`;
 	const response = await fetch(url, { credentials: 'include' });
-	return handleResponse<{ puzzles: PlayerPuzzleSummary[]; nextCursor?: number }>(response);
+	return handleResponse<{ puzzles: PlayerPuzzleSummary[]; nextCursor?: string }>(response);
 }
 
 export async function getPlayerStats(params?: {

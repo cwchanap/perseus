@@ -963,9 +963,9 @@ describe('player profile service functions', () => {
 				})
 			)
 		);
-		await getPlayerPuzzles({ limit: 5, cursor: 10 });
+		await getPlayerPuzzles({ limit: 5, cursor: '1000|abc' });
 		expect(vi.mocked(fetch).mock.calls[0]?.[0]).toMatch(/limit=5/);
-		expect(vi.mocked(fetch).mock.calls[0]?.[0]).toMatch(/cursor=10/);
+		expect(vi.mocked(fetch).mock.calls[0]?.[0]).toMatch(/cursor=1000%7Cabc/);
 	});
 
 	it('getPlayerPuzzles forwards an explicit limit of 0 (not dropped by a truthy check)', async () => {
