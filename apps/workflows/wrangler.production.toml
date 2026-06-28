@@ -28,7 +28,7 @@ id = "ae95a94b22e3414ab022c335390c67aa"
 [[d1_databases]]
 binding = "DB"
 database_name = "perseus-player-data"
-database_id = "REPLACE_WITH_PROD_D1_ID"
+database_id = "b32ed4d0-c29f-413d-9370-de7bec2c80a7"
 
 [durable_objects]
 bindings = [
