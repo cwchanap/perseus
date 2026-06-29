@@ -119,6 +119,19 @@ describe('player profile routes (Bun)', () => {
 		});
 	});
 
+	it('GET profile falls back to email when user.name is null and no override', async () => {
+		vi.mocked(playerAuth.getPlayerSession).mockResolvedValue({
+			...TEST_PLAYER,
+			user: { ...TEST_PLAYER.user, name: null, picture: null }
+		});
+		const res = await buildApp().request('/api/player/profile', { headers: AUTH_COOKIE });
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		// name falls back to email; picture falls back to null
+		expect(body.name).toBe('p@example.com');
+		expect(body.picture).toBeNull();
+	});
+
 	it('PATCH then GET reflects override', async () => {
 		const patch = await buildApp().request('/api/player/profile', {
 			method: 'PATCH',
@@ -400,6 +413,57 @@ describe('player avatar route (Bun)', () => {
 		expect(body.error).toBe('bad_request');
 		expect(body.message).toBe('Unsupported image type');
 	});
+
+	it('POST avatar accepts a JPEG file (sniffs image/jpeg magic bytes)', async () => {
+		// JPEG SOI: FF D8 FF followed by enough bytes to pass the 12-byte minimum
+		const jpegBytes = [0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01];
+		const blob = new Blob([new Uint8Array(jpegBytes)], { type: 'image/jpeg' });
+		const form = new FormData();
+		form.append('avatar', blob, 'a.jpg');
+		const res = await buildApp().request('/api/player/avatar', {
+			method: 'POST',
+			headers: AUTH_COOKIE,
+			body: form
+		});
+		expect(res.status).toBe(200);
+
+		// GET serves it with sniffed image/jpeg content-type
+		const getRes = await buildApp().request('/api/player/p1/avatar');
+		expect(getRes.status).toBe(200);
+		expect(getRes.headers.get('Content-Type')).toBe('image/jpeg');
+	});
+
+	it('POST avatar accepts a WebP file (sniffs image/webp magic bytes)', async () => {
+		// WebP: RIFF....WEBP
+		const webpBytes = [0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50];
+		const blob = new Blob([new Uint8Array(webpBytes)], { type: 'image/webp' });
+		const form = new FormData();
+		form.append('avatar', blob, 'a.webp');
+		const res = await buildApp().request('/api/player/avatar', {
+			method: 'POST',
+			headers: AUTH_COOKIE,
+			body: form
+		});
+		expect(res.status).toBe(200);
+
+		const getRes = await buildApp().request('/api/player/p1/avatar');
+		expect(getRes.status).toBe(200);
+		expect(getRes.headers.get('Content-Type')).toBe('image/webp');
+	});
+
+	it('GET avatar falls back to application/octet-stream for unrecognised bytes', async () => {
+		// Write non-image bytes directly to the avatar path to exercise the
+		// sniffImageType null fallback in the serve route.
+		const { writeFile, mkdir } = await import('node:fs/promises');
+		const { join } = await import('node:path');
+		const dir = join(dataDir, 'avatars');
+		await mkdir(dir, { recursive: true });
+		await writeFile(join(dir, 'p1'), Buffer.from([0x00, 0x01, 0x02, 0x03]));
+
+		const res = await buildApp().request('/api/player/p1/avatar');
+		expect(res.status).toBe(200);
+		expect(res.headers.get('Content-Type')).toBe('application/octet-stream');
+	});
 });
 
 describe('player lists (Bun)', () => {
@@ -439,6 +503,15 @@ describe('player lists (Bun)', () => {
 		expect(listPlayerPuzzles).toHaveBeenCalledWith(expect.anything(), 'p1', {
 			limit: 5,
 			cursor: '100'
+		});
+	});
+
+	it('GET puzzles falls back to limit 20 when limit is non-numeric', async () => {
+		const { listPlayerPuzzles } = await import('@perseus/shared');
+		await buildApp().request('/api/player/puzzles?limit=abc', { headers: AUTH_COOKIE });
+		expect(listPlayerPuzzles).toHaveBeenCalledWith(expect.anything(), 'p1', {
+			limit: 20,
+			cursor: undefined
 		});
 	});
 

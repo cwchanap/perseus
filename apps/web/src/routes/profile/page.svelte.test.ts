@@ -372,4 +372,95 @@ describe('profile page', () => {
 
 		await expect.element(page.getByTestId('avatar-upload-error')).toBeVisible();
 	});
+
+	it('renders the avatar image when profile has a picture URL', async () => {
+		vi.mocked(getPlayerProfile).mockResolvedValue({
+			id: 'p1',
+			email: 'e',
+			name: 'Player One',
+			picture: 'https://example.com/avatar.jpg',
+			createdAt: 1,
+			lastLoginAt: 2,
+			summary: { puzzlesUploaded: 0, puzzlesSolved: 0, totalCompletions: 0 }
+		});
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({ puzzles: [], nextCursor: undefined });
+		vi.mocked(getPlayerStats).mockResolvedValue({ stats: [] });
+
+		render(ProfilePage);
+		await expect.element(page.getByText('Player One')).toBeVisible();
+		// The img element with the picture URL should be rendered (not the initials fallback)
+		const img = page.getByRole('img');
+		await expect.element(img).toHaveAttribute('src', 'https://example.com/avatar.jpg');
+	});
+
+	it('renders empty-state messages when no puzzles or stats exist', async () => {
+		vi.mocked(getPlayerProfile).mockResolvedValue({
+			id: 'p1',
+			email: 'e',
+			name: 'Player One',
+			picture: null,
+			createdAt: 1,
+			lastLoginAt: 2,
+			summary: { puzzlesUploaded: 0, puzzlesSolved: 0, totalCompletions: 0 }
+		});
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({ puzzles: [], nextCursor: undefined });
+		vi.mocked(getPlayerStats).mockResolvedValue({ stats: [] });
+
+		render(ProfilePage);
+		await expect.element(page.getByText("You haven't uploaded any puzzles yet.")).toBeVisible();
+		await expect.element(page.getByText('No solves recorded yet.')).toBeVisible();
+	});
+
+	it('shows the loading-more spinner while fetching the next page', async () => {
+		// Delay the second page response so the spinner is visible during fetch
+		let resolveSecond: (v: {
+			puzzles: PlayerPuzzleSummary[];
+			nextCursor?: string;
+		}) => void = () => {};
+		vi.mocked(getPlayerProfile).mockResolvedValue({
+			id: 'p1',
+			email: 'e',
+			name: 'Player One',
+			picture: null,
+			createdAt: 1,
+			lastLoginAt: 2,
+			summary: { puzzlesUploaded: 2, puzzlesSolved: 0, totalCompletions: 0 }
+		});
+		vi.mocked(getPlayerPuzzles)
+			.mockResolvedValueOnce({
+				puzzles: [
+					{ id: 'pz-a', name: 'Alpha Puzzle', pieceCount: 4, status: 'ready', createdAt: 1 }
+				],
+				nextCursor: '1|pz-a'
+			})
+			.mockReturnValueOnce(
+				new Promise((resolve) => {
+					resolveSecond = resolve;
+				})
+			);
+		vi.mocked(getPlayerStats).mockResolvedValue({ stats });
+
+		render(ProfilePage);
+		await expect.element(page.getByText('Alpha Puzzle')).toBeVisible();
+
+		// Trigger the sentinel intersection to load the next page
+		intersectionCallback!(
+			[{ isIntersecting: true } as IntersectionObserverEntry],
+			{} as IntersectionObserver
+		);
+
+		// The spinner should be visible while the second page is pending
+		await vi.waitFor(() => {
+			const el = document.querySelector('[data-testid="profile-load-more-spinner"]');
+			expect(el).not.toBeNull();
+		});
+
+		// Resolve the second page
+		resolveSecond({
+			puzzles: [{ id: 'pz-b', name: 'Beta Puzzle', pieceCount: 4, status: 'ready', createdAt: 0 }],
+			nextCursor: undefined
+		});
+
+		await expect.element(page.getByText('Beta Puzzle')).toBeVisible();
+	});
 });

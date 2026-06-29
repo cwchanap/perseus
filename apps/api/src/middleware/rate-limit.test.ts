@@ -433,4 +433,39 @@ describe('avatarRateLimit (Bun)', () => {
 		// Should not throw.
 		expect(() => app.fetch(new Request('http://localhost/test', { method: 'POST' }))).not.toThrow();
 	});
+
+	it('fails open (calls next) when no playerSession is set on the context', async () => {
+		// Simulate misconfigured middleware order: avatarRateLimit runs without
+		// requirePlayerAuth having set the session. Must not 500.
+		const app = new Hono();
+		app.use('/avatar', avatarRateLimit);
+		app.post('/avatar', (c) => c.json({ ok: true }));
+		const res = await app.fetch(new Request('http://localhost/avatar', { method: 'POST' }));
+		expect(res.status).toBe(200);
+	});
+
+	it('allows uploads again after the avatar block expires', async () => {
+		vi.useFakeTimers();
+		try {
+			const app = makeAvatarApp(500, 'player-expire-1');
+			// Exhaust attempts to trigger a block
+			for (let i = 0; i < 22; i++) {
+				await app.fetch(new Request('http://localhost/avatar', { method: 'POST' }));
+			}
+			// Confirm blocked
+			const blockedRes = await app.fetch(
+				new Request('http://localhost/avatar', { method: 'POST' })
+			);
+			expect(blockedRes.status).toBe(429);
+
+			// Advance past the 15-minute block duration
+			vi.advanceTimersByTime(15 * 60 * 1000 + 1);
+
+			// Should be allowed again (block-expiry reset path)
+			const afterRes = await app.fetch(new Request('http://localhost/avatar', { method: 'POST' }));
+			expect(afterRes.status).toBe(500); // handler received it (500, not 429)
+		} finally {
+			vi.useRealTimers();
+		}
+	});
 });
