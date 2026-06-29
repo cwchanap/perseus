@@ -474,9 +474,10 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 				await updateMetadata(this.env.PUZZLE_METADATA_DO, puzzleId, {
 					status: 'ready'
 				});
-				await setPuzzleStatus(createD1Db(this.env), puzzleId, 'ready').catch((error) => {
-					console.error('Failed to update puzzle status in D1:', error);
-				});
+				// Let D1 mirror-write failures propagate so the workflow step
+				// retries instead of completing with D1 stuck at 'processing'.
+				// updateMetadata is idempotent, so re-running on retry is safe.
+				await setPuzzleStatus(createD1Db(this.env), puzzleId, 'ready');
 			});
 		} catch (error) {
 			// Mark puzzle as failed with retry logic

@@ -1,4 +1,4 @@
-import { eq, lt, desc, asc, count, sql, and } from 'drizzle-orm';
+import { eq, lt, gt, desc, asc, count, sql, and } from 'drizzle-orm';
 import type { AppDb, NewPuzzleRow, PlayerProfileRow } from './types';
 import { puzzles, playerProfiles, puzzleStats } from './schema';
 
@@ -93,27 +93,58 @@ export async function setPuzzleStatus(db: AppDb, id: string, status: string): Pr
 export async function listPlayerPuzzles(
 	db: AppDb,
 	playerId: string,
-	opts: { limit: number; cursor?: number }
-): Promise<{ rows: (typeof puzzles.$inferSelect)[]; nextCursor?: number }> {
+	opts: { limit: number; cursor?: string }
+): Promise<{ rows: (typeof puzzles.$inferSelect)[]; nextCursor?: string }> {
 	const limit = Math.min(Math.max(opts.limit, 1), 100);
-	// Combine the player filter and the cursor into a single WHERE clause.
+	// Composite cursor (createdAt, id) avoids skipping a row when two puzzles
+	// share the same createdAt timestamp: rows are ordered by createdAt DESC
+	// then id DESC, and the cursor excludes anything strictly "after" the last
+	// row of the previous page on that lexicographic ordering.
 	// drizzle's `.where()` replaces (not merges) the previous condition, so
 	// chaining a second `.where()` for the cursor would silently drop the
 	// ownerId filter and leak other players' puzzles across pages.
 	const cond =
 		opts.cursor !== undefined
-			? and(eq(puzzles.ownerId, playerId), lt(puzzles.createdAt, opts.cursor))
+			? and(eq(puzzles.ownerId, playerId), parsePlayerPuzzleCursor(opts.cursor))
 			: eq(puzzles.ownerId, playerId);
 	const all = await db
 		.select()
 		.from(puzzles)
 		.where(cond)
-		.orderBy(desc(puzzles.createdAt))
+		.orderBy(desc(puzzles.createdAt), desc(puzzles.id))
 		.limit(limit + 1)
 		.all();
 	const rows = all.slice(0, limit);
-	const nextCursor = all.length > limit ? rows[rows.length - 1].createdAt : undefined;
+	const nextCursor =
+		all.length > limit ? encodePlayerPuzzleCursor(rows[rows.length - 1]) : undefined;
 	return { rows, nextCursor };
+}
+
+// Composite cursor format: "<createdAt>|<id>". createdAt is the millisecond
+// timestamp; id is the puzzle's text primary key. Both are URL-safe enough for
+// a query parameter when encoded via encodeURIComponent at the API boundary.
+function encodePlayerPuzzleCursor(row: { createdAt: number; id: string }): string {
+	return `${row.createdAt}|${row.id}`;
+}
+
+function parsePlayerPuzzleCursor(cursor: string) {
+	// (createdAt, id) ordering: a row is "after" the cursor if its createdAt is
+	// strictly less than the cursor's, OR its createdAt equals the cursor's and
+	// its id is strictly less (lexicographically) than the cursor's id. We want
+	// to exclude rows at or "before" the cursor (already served), so the
+	// condition keeps rows strictly "after".
+	const sep = cursor.lastIndexOf('|');
+	if (sep <= 0) {
+		// Malformed cursor: fall back to treating the whole string as a
+		// createdAt timestamp for backward compatibility with older clients.
+		const ts = Number(cursor);
+		return Number.isFinite(ts) ? lt(puzzles.createdAt, ts) : sql`false`;
+	}
+	const createdAtStr = cursor.slice(0, sep);
+	const idStr = cursor.slice(sep + 1);
+	const createdAt = Number(createdAtStr);
+	if (!Number.isFinite(createdAt)) return sql`false`;
+	return sql`(${puzzles.createdAt} < ${createdAt} OR (${puzzles.createdAt} = ${createdAt} AND ${puzzles.id} < ${idStr}))`;
 }
 
 export async function countPlayerPuzzles(db: AppDb, playerId: string): Promise<number> {
@@ -158,17 +189,84 @@ export async function recordCompletion(
 export async function listPlayerStats(
 	db: AppDb,
 	playerId: string,
-	opts: { limit: number }
-): Promise<{ rows: (typeof puzzleStats.$inferSelect)[] }> {
+	opts: { limit: number; cursor?: string }
+): Promise<{
+	rows: {
+		playerId: string;
+		puzzleId: string;
+		puzzleName: string | null;
+		bestTimeSeconds: number;
+		totalCompletions: number;
+		firstCompletedAt: number;
+		lastCompletedAt: number;
+	}[];
+	nextCursor?: string;
+}> {
 	const limit = Math.min(Math.max(opts.limit, 1), 100);
-	const rows = await db
-		.select()
+	// Composite cursor (bestTimeSeconds, puzzleId) avoids skipping a row when
+	// two puzzles share the same best time: rows are ordered by bestTimeSeconds
+	// ASC then puzzleId ASC, and the cursor excludes anything at or "before"
+	// the last row of the previous page on that lexicographic ordering.
+	// drizzle's `.where()` replaces (not merges) the previous condition, so
+	// chaining a second `.where()` for the cursor would silently drop the
+	// ownerId filter and leak other players' stats across pages.
+	const cond =
+		opts.cursor !== undefined
+			? and(eq(puzzleStats.playerId, playerId), parsePlayerStatsCursor(opts.cursor))
+			: eq(puzzleStats.playerId, playerId);
+	// Left join on puzzles so a deleted puzzle's stat row still surfaces
+	// (puzzleName null). Ordered by best time ascending (fastest first), with
+	// puzzleId as a deterministic tiebreaker for equal best times.
+	const all = await db
+		.select({
+			playerId: puzzleStats.playerId,
+			puzzleId: puzzleStats.puzzleId,
+			puzzleName: puzzles.name,
+			bestTimeSeconds: puzzleStats.bestTimeSeconds,
+			totalCompletions: puzzleStats.totalCompletions,
+			firstCompletedAt: puzzleStats.firstCompletedAt,
+			lastCompletedAt: puzzleStats.lastCompletedAt
+		})
 		.from(puzzleStats)
-		.where(eq(puzzleStats.playerId, playerId))
-		.orderBy(asc(puzzleStats.bestTimeSeconds))
-		.limit(limit)
+		.leftJoin(puzzles, eq(puzzleStats.puzzleId, puzzles.id))
+		.where(cond)
+		.orderBy(asc(puzzleStats.bestTimeSeconds), asc(puzzleStats.puzzleId))
+		.limit(limit + 1)
 		.all();
-	return { rows };
+	const rows = all.slice(0, limit);
+	const nextCursor =
+		all.length > limit ? encodePlayerStatsCursor(rows[rows.length - 1]) : undefined;
+	return { rows, nextCursor };
+}
+
+// Composite cursor format: "<bestTimeSeconds>|<puzzleId>". bestTimeSeconds is
+// an integer second count; puzzleId is the stat row's text primary key. Both
+// are URL-safe enough for a query parameter when encoded via
+// encodeURIComponent at the API boundary.
+function encodePlayerStatsCursor(row: { bestTimeSeconds: number; puzzleId: string }): string {
+	return `${row.bestTimeSeconds}|${row.puzzleId}`;
+}
+
+function parsePlayerStatsCursor(cursor: string) {
+	// (bestTimeSeconds, puzzleId) ordering: a row is "after" the cursor if its
+	// bestTimeSeconds is strictly greater than the cursor's, OR its
+	// bestTimeSeconds equals the cursor's and its puzzleId is strictly greater
+	// (lexicographically) than the cursor's puzzleId. We want to exclude rows
+	// at or "before" the cursor (already served), so the condition keeps rows
+	// strictly "after".
+	const sep = cursor.lastIndexOf('|');
+	if (sep <= 0) {
+		// Malformed cursor: fall back to treating the whole string as a
+		// bestTimeSeconds value for backward compatibility with older clients.
+		// Stats are ordered ASC, so "after" means strictly greater.
+		const ts = Number(cursor);
+		return Number.isFinite(ts) ? gt(puzzleStats.bestTimeSeconds, ts) : sql`false`;
+	}
+	const bestStr = cursor.slice(0, sep);
+	const idStr = cursor.slice(sep + 1);
+	const best = Number(bestStr);
+	if (!Number.isFinite(best)) return sql`false`;
+	return sql`(${puzzleStats.bestTimeSeconds} > ${best} OR (${puzzleStats.bestTimeSeconds} = ${best} AND ${puzzleStats.puzzleId} > ${idStr}))`;
 }
 
 export async function getPlayerSummary(

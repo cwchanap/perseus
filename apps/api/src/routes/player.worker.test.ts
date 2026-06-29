@@ -337,7 +337,7 @@ describe('player avatar route (Worker)', () => {
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as any;
 		expect(body.avatarUrl).toBe('/api/player/p1/avatar');
-		expect(bucket.put).toHaveBeenCalledWith('avatars/p1', expect.any(ReadableStream), {
+		expect(bucket.put).toHaveBeenCalledWith('avatars/p1', expect.any(Uint8Array), {
 			httpMetadata: { contentType: 'image/png' }
 		});
 	});
@@ -468,7 +468,7 @@ describe('player lists (Worker)', () => {
 		);
 		expect(listPlayerPuzzles).toHaveBeenCalledWith(expect.anything(), 'p1', {
 			limit: 5,
-			cursor: 100
+			cursor: '100'
 		});
 	});
 

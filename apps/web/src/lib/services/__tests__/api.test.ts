@@ -964,7 +964,7 @@ describe('player profile service functions', () => {
 				})
 			)
 		);
-		await getPlayerPuzzles({ limit: 5, cursor: 10 });
+		await getPlayerPuzzles({ limit: 5, cursor: '10' });
 		expect(vi.mocked(fetch).mock.calls[0]?.[0]).toMatch(/limit=5/);
 		expect(vi.mocked(fetch).mock.calls[0]?.[0]).toMatch(/cursor=10/);
 	});

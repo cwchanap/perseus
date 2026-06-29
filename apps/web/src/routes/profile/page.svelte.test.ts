@@ -60,6 +60,7 @@ const puzzles: PlayerPuzzleSummary[] = [
 const stats: PlayerStatRow[] = [
 	{
 		puzzleId: 'pz-1',
+		puzzleName: 'Test Puzzle',
 		bestTimeSeconds: 42,
 		totalCompletions: 1,
 		firstCompletedAt: 1,
