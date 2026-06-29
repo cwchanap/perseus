@@ -476,13 +476,11 @@ export async function avatarRateLimit(
 	return c.res;
 }
 
-export async function resetAvatarAttempts(
-	c: Context<{ Bindings: Env; Variables: { playerSession?: { user: { id: string } } } }>
-): Promise<void> {
-	const session = c.get('playerSession');
+export async function resetAvatarAttempts(c: Context): Promise<void> {
+	const session = c.get('playerSession') as { user: { id: string } } | undefined;
 	if (!session) return;
 	const key = `avatar:${session.user.id}`;
-	const kv = c.env.PUZZLE_METADATA;
-	const env = c.env.NODE_ENV;
-	await deleteRateLimitEntry(kv, key, env);
+	const env = c.env as Env;
+	const kv = env.PUZZLE_METADATA;
+	await deleteRateLimitEntry(kv, key, env.NODE_ENV);
 }
