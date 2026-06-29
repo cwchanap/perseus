@@ -11,6 +11,7 @@ import {
 	listPlayerStats
 } from '@perseus/shared';
 import type { PlayerProfile, PlayerPuzzleSummary, PlayerStatRow } from '@perseus/types';
+import { coercePuzzleStatus } from '@perseus/types';
 import { requirePlayerAuth } from '../middleware/player-auth';
 import { avatarRateLimit } from '../middleware/rate-limit';
 import type { PlayerSessionRecord } from '../services/player-auth';
@@ -184,7 +185,7 @@ player.get('/puzzles', requirePlayerAuth, async (c) => {
 		id: r.id,
 		name: r.name,
 		pieceCount: r.pieceCount,
-		status: r.status,
+		status: coercePuzzleStatus(r.status),
 		createdAt: r.createdAt,
 		...(r.category ? { category: r.category } : {})
 	}));

@@ -39,6 +39,18 @@ export interface PuzzlePiece {
 
 export type PuzzleStatus = 'processing' | 'ready' | 'failed';
 
+const VALID_PUZZLE_STATUSES: readonly PuzzleStatus[] = ['processing', 'ready', 'failed'];
+
+/**
+ * Coerce a raw DB/string value to a PuzzleStatus, defaulting to 'failed' for
+ * unexpected values. The puzzles.status column is free-text (no CHECK
+ * constraint), so this guard prevents an invalid status from leaking to the
+ * client as a string outside the PuzzleStatus union.
+ */
+export function coercePuzzleStatus(value: string): PuzzleStatus {
+	return VALID_PUZZLE_STATUSES.includes(value as PuzzleStatus) ? (value as PuzzleStatus) : 'failed';
+}
+
 // Puzzle categories
 export const PUZZLE_CATEGORIES = [
 	'Animals',
@@ -166,7 +178,7 @@ export interface PlayerPuzzleSummary {
 	name: string;
 	pieceCount: number;
 	category?: string;
-	status: string;
+	status: PuzzleStatus;
 	createdAt: number;
 }
 
@@ -278,7 +290,8 @@ export function isPlayerPuzzleSummary(value: unknown): value is PlayerPuzzleSumm
 		isNonEmptyString(v.name) &&
 		isFiniteNumber(v.pieceCount) &&
 		isFiniteNumber(v.createdAt) &&
-		isNonEmptyString(v.status) &&
+		typeof v.status === 'string' &&
+		VALID_PUZZLE_STATUSES.includes(v.status as PuzzleStatus) &&
 		(v.category === undefined || isNonEmptyString(v.category))
 	);
 }

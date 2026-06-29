@@ -19,6 +19,7 @@ import {
 	isPlayerPuzzleSummary,
 	isPlayerStatRow,
 	isPuzzleId,
+	coercePuzzleStatus,
 	type PlayerSessionResponse,
 	type PlayerAllowlistEntry,
 	type PlayerProfile,
@@ -978,6 +979,10 @@ describe('player profile validators', () => {
 		expect(isPlayerPuzzleSummary({ ...puzzle, status: 5 })).toBe(false);
 	});
 
+	it('rejects player puzzle summary with status outside the PuzzleStatus union', () => {
+		expect(isPlayerPuzzleSummary({ ...puzzle, status: 'unknown' })).toBe(false);
+	});
+
 	it('rejects non-object profiles', () => {
 		expect(isPlayerProfile('nope')).toBe(false);
 		expect(isPlayerProfile(42)).toBe(false);
@@ -1062,5 +1067,19 @@ describe('player profile validators', () => {
 
 	it('accepts player puzzle summary with valid category', () => {
 		expect(isPlayerPuzzleSummary({ ...puzzle, category: 'Animals' })).toBe(true);
+	});
+});
+
+describe('coercePuzzleStatus', () => {
+	it('passes through valid statuses unchanged', () => {
+		expect(coercePuzzleStatus('processing')).toBe('processing');
+		expect(coercePuzzleStatus('ready')).toBe('ready');
+		expect(coercePuzzleStatus('failed')).toBe('failed');
+	});
+
+	it('coerces unexpected string values to failed', () => {
+		expect(coercePuzzleStatus('unknown')).toBe('failed');
+		expect(coercePuzzleStatus('')).toBe('failed');
+		expect(coercePuzzleStatus('READY')).toBe('failed');
 	});
 });
