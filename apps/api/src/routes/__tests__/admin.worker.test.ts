@@ -390,6 +390,59 @@ describe('Admin Routes - Puzzle Deletion', () => {
 				'550e8400-e29b-41d4-a716-446655440000'
 			);
 		});
+
+		it('logs but still succeeds when ownership cleanup rejects', async () => {
+			(storage.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
+				id: '550e8400-e29b-41d4-a716-446655440000',
+				name: 'Test Puzzle',
+				pieceCount: 4,
+				gridCols: 2,
+				gridRows: 2,
+				imageWidth: 100,
+				imageHeight: 100,
+				createdAt: Date.now(),
+				status: 'ready',
+				pieces: [],
+				version: 0
+			});
+			(storage.deletePuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue({
+				success: true
+			});
+			(storage.deletePuzzleAssets as ReturnType<typeof vi.fn>).mockResolvedValue({
+				success: true
+			});
+			(auth.verifySession as ReturnType<typeof vi.fn>).mockResolvedValue({
+				userId: 'admin',
+				username: 'admin',
+				role: 'admin'
+			});
+
+			const { deletePuzzleOwnership } = await import('@perseus/shared');
+			vi.mocked(deletePuzzleOwnership).mockRejectedValueOnce(new Error('D1 down'));
+			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+			const mockEnv = {
+				ADMIN_PASSKEY: 'test-passkey',
+				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+				PUZZLE_METADATA: {} as KVNamespace,
+				PUZZLES_BUCKET: {} as R2Bucket
+			};
+
+			const req = new Request('http://localhost/puzzles/550e8400-e29b-41d4-a716-446655440000', {
+				method: 'DELETE',
+				headers: { cookie: 'session=valid.token' }
+			});
+
+			const res = await admin.fetch(req, mockEnv);
+
+			// Ownership delete failure is non-fatal; puzzle is still deleted (204)
+			expect(res.status).toBe(204);
+			expect(consoleSpy).toHaveBeenCalledWith(
+				expect.stringContaining('Failed to delete ownership row for puzzle'),
+				new Error('D1 down')
+			);
+			consoleSpy.mockRestore();
+		});
 	});
 });
 

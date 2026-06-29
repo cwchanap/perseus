@@ -575,6 +575,69 @@ describe('Puzzle Routes - UUID Validation', () => {
 			);
 			consoleSpy.mockRestore();
 		});
+
+		it('logs metadata+image cleanup failures when ownership insert fails', async () => {
+			vi.mocked(insertPuzzleOwnership).mockRejectedValueOnce(new Error('D1 down'));
+			vi.mocked(storage.deletePuzzleMetadata).mockResolvedValueOnce({
+				success: false,
+				error: new Error('KV delete failed')
+			});
+			vi.mocked(storage.deleteOriginalImage).mockResolvedValueOnce({
+				success: false,
+				error: new Error('R2 delete failed')
+			});
+			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+			const res = await post(buildForm());
+
+			expect(res.status).toBe(500);
+			expect(((await res.json()) as any).message).toBe('Failed to record puzzle ownership');
+			expect(consoleSpy).toHaveBeenCalledWith(
+				'Failed to cleanup puzzle metadata after ownership insert failure:',
+				new Error('KV delete failed')
+			);
+			expect(consoleSpy).toHaveBeenCalledWith(
+				'Failed to cleanup original image after ownership insert failure:',
+				new Error('R2 delete failed')
+			);
+			consoleSpy.mockRestore();
+		});
+
+		it('logs when deletePuzzleOwnership rejects after missing workflow binding', async () => {
+			const envWithoutWorkflow = {
+				PUZZLE_METADATA: mockEnv.PUZZLE_METADATA,
+				PUZZLES_BUCKET: mockEnv.PUZZLES_BUCKET
+			};
+			const { deletePuzzleOwnership } = await import('@perseus/shared');
+			vi.mocked(deletePuzzleOwnership).mockRejectedValueOnce(new Error('D1 delete down'));
+			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+			const res = await post(buildForm(), envWithoutWorkflow);
+
+			expect(res.status).toBe(503);
+			expect(consoleSpy).toHaveBeenCalledWith(
+				'Failed to cleanup ownership after missing workflow binding:',
+				new Error('D1 delete down')
+			);
+			consoleSpy.mockRestore();
+		});
+
+		it('logs when deletePuzzleOwnership rejects after workflow trigger failure', async () => {
+			mockEnv.PUZZLE_WORKFLOW.create = vi.fn().mockRejectedValue(new Error('workflow down'));
+			const { deletePuzzleOwnership } = await import('@perseus/shared');
+			vi.mocked(deletePuzzleOwnership).mockRejectedValueOnce(new Error('D1 delete down'));
+			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+			const res = await post(buildForm());
+
+			expect(res.status).toBe(500);
+			expect(((await res.json()) as any).message).toBe('Failed to start puzzle processing');
+			expect(consoleSpy).toHaveBeenCalledWith(
+				'Failed to cleanup ownership after workflow trigger failure:',
+				new Error('D1 delete down')
+			);
+			consoleSpy.mockRestore();
+		});
 	});
 
 	describe('GET / - List puzzles', () => {
