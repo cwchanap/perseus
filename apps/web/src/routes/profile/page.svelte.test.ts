@@ -46,18 +46,40 @@ vi.mock('$app/navigation', () => ({
 import { getPlayerProfile, getPlayerPuzzles, getPlayerStats } from '$lib/services/api';
 import { uploadPlayerAvatar, updatePlayerProfile } from '$lib/services/api';
 
-// Mock IntersectionObserver so the infinite-scroll $effect can be exercised.
-// The captured callback is invoked manually in tests to simulate the sentinel
-// scrolling into view.
-let intersectionCallback: IntersectionObserverCallback | null = null;
+// Mock IntersectionObserver so the infinite-scroll $effects can be exercised.
+// The page now has two independent sentinels (puzzles + stats), each with its
+// own observer. We track all observer instances and their observed targets so
+// tests can trigger a specific sentinel by its data-testid.
+let observerInstances: MockIntersectionObserver[] = [];
 class MockIntersectionObserver {
+	callback: IntersectionObserverCallback;
+	targets: Element[] = [];
 	constructor(callback: IntersectionObserverCallback) {
-		intersectionCallback = callback;
+		this.callback = callback;
+		observerInstances.push(this);
 	}
-	observe = vi.fn();
+	observe = vi.fn((target: Element) => {
+		this.targets.push(target);
+	});
 	disconnect = vi.fn();
 	unobserve = vi.fn();
 	takeRecords = vi.fn();
+}
+
+// Trigger the IntersectionObserver callback for the sentinel with the given
+// data-testid, simulating it scrolling into (or out of) view.
+function triggerIntersectionByTestid(testid: string, isIntersecting = true) {
+	for (const obs of observerInstances) {
+		for (const target of obs.targets) {
+			if (target.getAttribute('data-testid') === testid) {
+				obs.callback(
+					[{ isIntersecting: isIntersecting } as IntersectionObserverEntry],
+					{} as IntersectionObserver
+				);
+				return;
+			}
+		}
+	}
 }
 
 const puzzles: PlayerPuzzleSummary[] = [
@@ -85,7 +107,7 @@ const stats: PlayerStatRow[] = [
 describe('profile page', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
-		intersectionCallback = null;
+		observerInstances = [];
 		vi.stubGlobal('IntersectionObserver', MockIntersectionObserver as never);
 	});
 
@@ -274,12 +296,8 @@ describe('profile page', () => {
 		// Sentinel is present.
 		await expect.element(page.getByTestId('profile-scroll-sentinel')).toBeInTheDocument();
 
-		// Simulate the sentinel scrolling into view.
-		expect(intersectionCallback).not.toBeNull();
-		intersectionCallback!(
-			[{ isIntersecting: true } as IntersectionObserverEntry],
-			{} as IntersectionObserver
-		);
+		// Simulate the puzzles sentinel scrolling into view.
+		triggerIntersectionByTestid('profile-scroll-sentinel');
 
 		// Second page appends; both cards now visible.
 		await expect.element(page.getByText('Beta Puzzle')).toBeVisible();
@@ -311,10 +329,7 @@ describe('profile page', () => {
 		render(ProfilePage);
 		await expect.element(page.getByText('Alpha Puzzle')).toBeVisible();
 
-		intersectionCallback!(
-			[{ isIntersecting: true } as IntersectionObserverEntry],
-			{} as IntersectionObserver
-		);
+		triggerIntersectionByTestid('profile-scroll-sentinel');
 		await expect.element(page.getByTestId('profile-load-more-error')).toBeVisible();
 
 		// Click retry → second page loads.
@@ -443,11 +458,8 @@ describe('profile page', () => {
 		render(ProfilePage);
 		await expect.element(page.getByText('Alpha Puzzle')).toBeVisible();
 
-		// Trigger the sentinel intersection to load the next page
-		intersectionCallback!(
-			[{ isIntersecting: true } as IntersectionObserverEntry],
-			{} as IntersectionObserver
-		);
+		// Trigger the puzzles sentinel intersection to load the next page
+		triggerIntersectionByTestid('profile-scroll-sentinel');
 
 		// The spinner should be visible while the second page is pending
 		await vi.waitFor(() => {
@@ -462,5 +474,131 @@ describe('profile page', () => {
 		});
 
 		await expect.element(page.getByText('Beta Puzzle')).toBeVisible();
+	});
+
+	it('appends a second page of stats when the stats sentinel intersects', async () => {
+		const statsPage1: PlayerStatRow[] = [
+			{
+				puzzleId: 'pz-a',
+				puzzleName: 'Alpha',
+				bestTimeSeconds: 30,
+				totalCompletions: 1,
+				firstCompletedAt: 1,
+				lastCompletedAt: 1
+			}
+		];
+		const statsPage2: PlayerStatRow[] = [
+			{
+				puzzleId: 'pz-b',
+				puzzleName: 'Beta',
+				bestTimeSeconds: 60,
+				totalCompletions: 2,
+				firstCompletedAt: 2,
+				lastCompletedAt: 3
+			}
+		];
+		vi.mocked(getPlayerProfile).mockResolvedValue({
+			id: 'p1',
+			email: 'e',
+			name: 'Player One',
+			picture: null,
+			createdAt: 1,
+			lastLoginAt: 2,
+			summary: { puzzlesUploaded: 0, puzzlesSolved: 2, totalCompletions: 3 }
+		});
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({ puzzles: [], nextCursor: undefined });
+		vi.mocked(getPlayerStats)
+			.mockResolvedValueOnce({ stats: statsPage1, nextCursor: '30|pz-a' })
+			.mockResolvedValueOnce({ stats: statsPage2, nextCursor: undefined });
+
+		render(ProfilePage);
+		await expect.element(page.getByText('Alpha')).toBeVisible();
+
+		// Trigger the stats sentinel.
+		triggerIntersectionByTestid('profile-stats-scroll-sentinel');
+
+		await expect.element(page.getByText('Beta')).toBeVisible();
+		expect(vi.mocked(getPlayerStats)).toHaveBeenCalledTimes(2);
+	});
+
+	it('shows a retry button when the stats next-page fetch fails', async () => {
+		const statsPage1: PlayerStatRow[] = [
+			{
+				puzzleId: 'pz-a',
+				puzzleName: 'Alpha',
+				bestTimeSeconds: 30,
+				totalCompletions: 1,
+				firstCompletedAt: 1,
+				lastCompletedAt: 1
+			}
+		];
+		vi.mocked(getPlayerProfile).mockResolvedValue({
+			id: 'p1',
+			email: 'e',
+			name: 'Player One',
+			picture: null,
+			createdAt: 1,
+			lastLoginAt: 2,
+			summary: { puzzlesUploaded: 0, puzzlesSolved: 1, totalCompletions: 1 }
+		});
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({ puzzles: [], nextCursor: undefined });
+		vi.mocked(getPlayerStats)
+			.mockResolvedValueOnce({ stats: statsPage1, nextCursor: '30|pz-a' })
+			.mockRejectedValueOnce(new Error('Network error'));
+
+		render(ProfilePage);
+		await expect.element(page.getByText('Alpha')).toBeVisible();
+
+		triggerIntersectionByTestid('profile-stats-scroll-sentinel');
+		await expect.element(page.getByTestId('profile-stats-load-more-error')).toBeVisible();
+	});
+
+	it('shows reset-to-Google-name button only when a display name override is active', async () => {
+		vi.mocked(getPlayerProfile).mockResolvedValue({
+			id: 'p1',
+			email: 'e',
+			name: 'Custom Name',
+			picture: null,
+			createdAt: 1,
+			lastLoginAt: 2,
+			summary: { puzzlesUploaded: 0, puzzlesSolved: 0, totalCompletions: 0 },
+			googleName: 'Google Name',
+			hasDisplayNameOverride: true
+		});
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({ puzzles: [], nextCursor: undefined });
+		vi.mocked(getPlayerStats).mockResolvedValue({ stats });
+
+		render(ProfilePage);
+		await expect.element(page.getByText('Custom Name')).toBeVisible();
+
+		// Enter edit mode — reset button should appear.
+		await page.getByText('Edit profile').click();
+		await expect.element(page.getByTestId('reset-name-button')).toBeVisible();
+
+		// Click reset — sends displayName: null and reloads.
+		await page.getByTestId('reset-name-button').click();
+		expect(vi.mocked(updatePlayerProfile)).toHaveBeenCalledWith({ displayName: null });
+	});
+
+	it('does not show reset-to-Google-name button when no override is active', async () => {
+		vi.mocked(getPlayerProfile).mockResolvedValue({
+			id: 'p1',
+			email: 'e',
+			name: 'Google Name',
+			picture: null,
+			createdAt: 1,
+			lastLoginAt: 2,
+			summary: { puzzlesUploaded: 0, puzzlesSolved: 0, totalCompletions: 0 },
+			googleName: 'Google Name',
+			hasDisplayNameOverride: false
+		});
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({ puzzles: [], nextCursor: undefined });
+		vi.mocked(getPlayerStats).mockResolvedValue({ stats });
+
+		render(ProfilePage);
+		await expect.element(page.getByText('Google Name')).toBeVisible();
+
+		await page.getByText('Edit profile').click();
+		expect(document.querySelector('[data-testid="reset-name-button"]')).toBeNull();
 	});
 });

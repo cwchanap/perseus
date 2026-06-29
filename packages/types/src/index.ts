@@ -167,6 +167,14 @@ export interface PlayerProfile {
 	createdAt: number;
 	lastLoginAt: number;
 	summary: PlayerProfileSummary;
+	// The Google-provided default name (null when Google supplied none). The
+	// effective `name` above is this value unless a display_name override is
+	// set. Exposed so the profile UI can offer a "reset to Google name" action
+	// and label it with the actual default.
+	googleName?: string | null;
+	// True when a display_name override is active (i.e. `name` differs from
+	// `googleName`). The UI uses this to show/hide the reset affordance.
+	hasDisplayNameOverride?: boolean;
 }
 
 export interface PlayerProfileUpdate {

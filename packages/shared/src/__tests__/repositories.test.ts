@@ -243,6 +243,65 @@ describe('repositories', () => {
 		expect(gone?.puzzleName).toBeNull();
 	});
 
+	it('listPlayerStats paginates via composite cursor', async () => {
+		for (let i = 0; i < 3; i++) {
+			await recordCompletion(helper.db, 'p1', `pz${i}`, 100 - i * 10);
+		}
+		const page1 = await listPlayerStats(helper.db, 'p1', { limit: 2 });
+		expect(page1.rows).toHaveLength(2);
+		expect(page1.nextCursor).toBeDefined();
+		const page2 = await listPlayerStats(helper.db, 'p1', {
+			limit: 2,
+			cursor: page1.nextCursor!
+		});
+		expect(page2.rows).toHaveLength(1);
+		expect(page2.nextCursor).toBeUndefined();
+		// All three surfaced, ordered fastest first.
+		const seen = [...page1.rows, ...page2.rows].map((r) => r.puzzleId);
+		expect(seen).toEqual(['pz2', 'pz1', 'pz0']);
+	});
+
+	it('listPlayerStats composite cursor does not skip rows on bestTime collision', async () => {
+		// Three stats share the same best time. A bestTime-only cursor would
+		// skip the rows after the first page because gt(bestTime, X) excludes
+		// all rows with the same time. The (bestTime, puzzleId) composite
+		// cursor must keep them.
+		const best = 60;
+		await recordCompletion(helper.db, 'p1', 'pz-a', best);
+		await recordCompletion(helper.db, 'p1', 'pz-b', best);
+		await recordCompletion(helper.db, 'p1', 'pz-c', best);
+		const page1 = await listPlayerStats(helper.db, 'p1', { limit: 2 });
+		expect(page1.rows).toHaveLength(2);
+		expect(page1.nextCursor).toBeDefined();
+		const page2 = await listPlayerStats(helper.db, 'p1', {
+			limit: 2,
+			cursor: page1.nextCursor!
+		});
+		expect(page2.rows).toHaveLength(1);
+		// All three rows surfaced across the two pages, none skipped.
+		const seen = new Set([...page1.rows, ...page2.rows].map((r) => r.puzzleId));
+		expect(seen.size).toBe(3);
+	});
+
+	it('listPlayerStats isolates players on pagination (no cross-player leak)', async () => {
+		// Two players with interleaved best times. Pagination by cursor must
+		// NOT drop the playerId filter (regression guard).
+		for (let i = 0; i < 3; i++) {
+			await recordCompletion(helper.db, 'alice', `a${i}`, 50 + i * 10);
+			await recordCompletion(helper.db, 'bob', `b${i}`, 51 + i * 10);
+		}
+		const page1 = await listPlayerStats(helper.db, 'alice', { limit: 2 });
+		expect(page1.rows).toHaveLength(2);
+		expect(page1.rows.every((r) => r.playerId === 'alice')).toBe(true);
+		expect(page1.nextCursor).toBeDefined();
+		const page2 = await listPlayerStats(helper.db, 'alice', {
+			limit: 2,
+			cursor: page1.nextCursor!
+		});
+		expect(page2.rows).toHaveLength(1);
+		expect(page2.rows.every((r) => r.playerId === 'alice')).toBe(true);
+	});
+
 	it('getPlayerSummary aggregates counts', async () => {
 		await insertPuzzleOwnership(helper.db, {
 			id: 'pz1',
