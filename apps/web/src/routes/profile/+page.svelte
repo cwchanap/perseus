@@ -52,7 +52,7 @@
 			id: p.id,
 			name: p.name,
 			pieceCount: p.pieceCount,
-			status: p.status as PuzzleSummary['status'],
+			status: p.status,
 			...(p.category ? { category: p.category as PuzzleSummary['category'] } : {})
 		};
 	}

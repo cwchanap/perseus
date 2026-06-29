@@ -467,6 +467,21 @@ describe('player lists (Worker)', () => {
 		expect(body.puzzles[0].name).toBe('Cat');
 	});
 
+	it('GET puzzles coerces an unexpected DB status to failed', async () => {
+		const shared = await import('@perseus/shared');
+		(shared as any).__puzzlesStore.set('p1', [
+			{ id: 'pz2', name: 'Glitch', pieceCount: 4, status: 'corrupted', createdAt: 2 }
+		]);
+		const res = await buildApp().request(
+			'/api/player/puzzles',
+			{ headers: AUTH_COOKIE },
+			DUMMY_ENV
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as any;
+		expect(body.puzzles[0].status).toBe('failed');
+	});
+
 	it('GET puzzles forwards limit and cursor query params', async () => {
 		const { listPlayerPuzzles } = await import('@perseus/shared');
 		await buildApp().request(

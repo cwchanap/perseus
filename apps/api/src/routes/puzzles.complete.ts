@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { getDb } from '../db';
 import { recordCompletion } from '@perseus/shared';
 import { isPuzzleId } from '@perseus/types';
-import { puzzleExists } from '../services/storage';
+import { getPuzzle } from '../services/storage';
 import { requirePlayerAuth } from '../middleware/player-auth';
 import type { PlayerSessionRecord } from '../services/player-auth';
 
@@ -46,8 +46,12 @@ router.post('/:id/complete', requirePlayerAuth, async (c) => {
 	}
 
 	// Confirm the puzzle exists before recording, so puzzle_stats can't
-	// accumulate rows for non-existent puzzles.
-	if (!(await puzzleExists(puzzleId))) {
+	// accumulate rows for non-existent puzzles. Mirrors the Worker route's
+	// getPuzzle null-check; the Bun Puzzle type has no status field because
+	// generation is synchronous here (a metadata file implies ready), so
+	// only the existence check is needed.
+	const puzzle = await getPuzzle(puzzleId);
+	if (!puzzle) {
 		return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
 	}
 
