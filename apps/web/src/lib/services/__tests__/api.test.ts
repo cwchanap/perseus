@@ -1012,6 +1012,20 @@ describe('player profile service functions', () => {
 		expect(stats).toEqual([]);
 	});
 
+	it('getPlayerStats forwards cursor and returns nextCursor', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi
+				.fn()
+				.mockResolvedValue(
+					new Response(JSON.stringify({ stats: [], nextCursor: '90|pz1' }), { status: 200 })
+				)
+		);
+		const result = await getPlayerStats({ cursor: '50|pz0' });
+		expect(vi.mocked(fetch).mock.calls[0]?.[0]).toMatch(/cursor=50%7Cpz0/);
+		expect(result.nextCursor).toBe('90|pz1');
+	});
+
 	it('recordCompletion POSTs timeSeconds', async () => {
 		vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}', { status: 200 })));
 		await recordCompletion('pz1', 90);

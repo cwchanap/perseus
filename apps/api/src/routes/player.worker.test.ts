@@ -54,8 +54,9 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 			})
 		),
 		listPlayerStats: vi.fn(
-			async (db: unknown, playerId: string): Promise<{ rows: unknown[] }> => ({
-				rows: statsStore.get(playerId) ?? []
+			async (db: unknown, playerId: string): Promise<{ rows: unknown[]; nextCursor?: string }> => ({
+				rows: statsStore.get(playerId) ?? [],
+				nextCursor: undefined
 			})
 		)
 	};
@@ -127,7 +128,7 @@ describe('player profile routes (Worker)', () => {
 	it('GET profile falls back to email when user.name is null and no override', async () => {
 		vi.mocked(playerAuth.getPlayerSession).mockResolvedValue({
 			...TEST_PLAYER,
-			user: { ...TEST_PLAYER.user, name: null, picture: null }
+			user: { ...TEST_PLAYER.user, name: undefined, picture: undefined }
 		});
 		const res = await buildApp().request(
 			'/api/player/profile',
@@ -159,6 +160,34 @@ describe('player profile routes (Worker)', () => {
 		);
 		const body = (await res.json()) as any;
 		expect(body.name).toBe('Custom');
+	});
+
+	it('GET profile exposes googleName and hasDisplayNameOverride', async () => {
+		// No override: hasDisplayNameOverride is false, googleName is the Google name.
+		const res1 = await buildApp().request(
+			'/api/player/profile',
+			{ headers: AUTH_COOKIE },
+			DUMMY_ENV
+		);
+		const body1 = (await res1.json()) as any;
+		expect(body1.googleName).toBe('Google Name');
+		expect(body1.hasDisplayNameOverride).toBe(false);
+
+		// After setting an override: hasDisplayNameOverride is true.
+		await buildApp().request(
+			'/api/player/profile',
+			{
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json', ...AUTH_COOKIE },
+				body: JSON.stringify({ displayName: 'Custom' })
+			},
+			DUMMY_ENV
+		);
+		const body2 = (await (
+			await buildApp().request('/api/player/profile', { headers: AUTH_COOKIE }, DUMMY_ENV)
+		).json()) as any;
+		expect(body2.googleName).toBe('Google Name');
+		expect(body2.hasDisplayNameOverride).toBe(true);
 	});
 
 	it('PATCH with null resets to Google name', async () => {
@@ -600,6 +629,39 @@ describe('player lists (Worker)', () => {
 		const { listPlayerStats } = await import('@perseus/shared');
 		await buildApp().request('/api/player/stats?limit=10', { headers: AUTH_COOKIE }, DUMMY_ENV);
 		expect(listPlayerStats).toHaveBeenCalledWith(expect.anything(), 'p1', { limit: 10 });
+	});
+
+	it('GET stats forwards cursor query param', async () => {
+		const { listPlayerStats } = await import('@perseus/shared');
+		await buildApp().request(
+			'/api/player/stats?cursor=50%7Cpz1',
+			{ headers: AUTH_COOKIE },
+			DUMMY_ENV
+		);
+		expect(listPlayerStats).toHaveBeenCalledWith(expect.anything(), 'p1', {
+			limit: 20,
+			cursor: '50|pz1'
+		});
+	});
+
+	it('GET stats returns nextCursor in response', async () => {
+		const shared = await import('@perseus/shared');
+		(shared as any).__statsStore.set('p1', [
+			{
+				puzzleId: 'pz1',
+				bestTimeSeconds: 90,
+				totalCompletions: 1,
+				firstCompletedAt: 1,
+				lastCompletedAt: 1
+			}
+		]);
+		vi.mocked(shared.listPlayerStats).mockResolvedValueOnce({
+			rows: (shared as any).__statsStore.get('p1'),
+			nextCursor: '90|pz1'
+		});
+		const res = await buildApp().request('/api/player/stats', { headers: AUTH_COOKIE }, DUMMY_ENV);
+		const body = (await res.json()) as any;
+		expect(body.nextCursor).toBe('90|pz1');
 	});
 
 	it('GET stats requires authentication', async () => {

@@ -70,7 +70,9 @@ player.get('/profile', requirePlayerAuth, async (c) => {
 		picture: override?.avatarUrl ?? session.user.picture ?? null,
 		createdAt: session.user.createdAt,
 		lastLoginAt: session.user.lastLoginAt,
-		summary
+		summary,
+		googleName: session.user.name ?? null,
+		hasDisplayNameOverride: override?.displayName !== undefined && override?.displayName !== null
 	};
 	return c.json(profile);
 });
@@ -184,8 +186,10 @@ player.get('/stats', requirePlayerAuth, async (c) => {
 	const db = getWorkerDb(c.env);
 	const session = c.get('playerSession');
 	const limit = Number(c.req.query('limit') ?? '20');
-	const { rows } = await listPlayerStats(db, session.user.id, {
-		limit: Number.isFinite(limit) ? limit : 20
+	const cursor = c.req.query('cursor');
+	const { rows, nextCursor } = await listPlayerStats(db, session.user.id, {
+		limit: Number.isFinite(limit) ? limit : 20,
+		...(cursor !== undefined ? { cursor } : {})
 	});
 	// Project DB rows to the public PlayerStatRow contract, stripping playerId
 	// (the client already knows its own ID from the auth session).
@@ -197,7 +201,7 @@ player.get('/stats', requirePlayerAuth, async (c) => {
 		firstCompletedAt: r.firstCompletedAt,
 		lastCompletedAt: r.lastCompletedAt
 	}));
-	return c.json({ stats });
+	return c.json({ stats, nextCursor });
 });
 
 export default player;

@@ -37,6 +37,14 @@
 	let scrollSentinel = $state<HTMLDivElement | null>(null);
 	let loadMoreController: AbortController | null = null;
 	let hasMore = $derived(nextCursor !== undefined);
+	// Infinite-scroll state for "Best Times". Same pattern as puzzles above,
+	// kept independent so the two lists page without interfering.
+	let statsNextCursor = $state<string | undefined>(undefined);
+	let loadingMoreStats = $state(false);
+	let loadMoreStatsError = $state(false);
+	let statsScrollSentinel = $state<HTMLDivElement | null>(null);
+	let statsLoadMoreController: AbortController | null = null;
+	let hasMoreStats = $derived(statsNextCursor !== undefined);
 
 	const initials = $derived(
 		(profile?.name ?? '?')
@@ -74,12 +82,20 @@
 			loadMoreController.abort();
 			loadMoreController = null;
 		}
+		if (statsLoadMoreController) {
+			statsLoadMoreController.abort();
+			statsLoadMoreController = null;
+		}
 		loadingMore = false;
+		loadingMoreStats = false;
 		try {
 			// Reset pagination state on a fresh load (e.g. after avatar upload
-			// triggers reloadAll). The puzzles list is replaced, not appended.
+			// triggers reloadAll). The puzzles and stats lists are replaced,
+			// not appended.
 			nextCursor = undefined;
 			loadMoreError = false;
+			statsNextCursor = undefined;
+			loadMoreStatsError = false;
 			const [profileRes, puzzlesRes, statsRes] = await Promise.all([
 				getPlayerProfile(),
 				getPlayerPuzzles(),
@@ -89,6 +105,7 @@
 			puzzles = puzzlesRes.puzzles;
 			nextCursor = puzzlesRes.nextCursor;
 			stats = statsRes.stats;
+			statsNextCursor = statsRes.nextCursor;
 			displayName = profile?.name ?? '';
 		} catch (e) {
 			// Without this, a rejected request leaves profile null while loading
@@ -142,6 +159,47 @@
 		return () => observer.disconnect();
 	});
 
+	async function loadNextStats() {
+		if (loadingMoreStats || !hasMoreStats) return;
+		const controller = new AbortController();
+		statsLoadMoreController = controller;
+		loadingMoreStats = true;
+		loadMoreStatsError = false;
+		try {
+			const result = await getPlayerStats({ cursor: statsNextCursor });
+			if (controller.signal.aborted) return;
+			stats = [...stats, ...result.stats];
+			statsNextCursor = result.nextCursor;
+		} catch (e) {
+			const isAbort = e instanceof DOMException && e.name === 'AbortError';
+			if (!isAbort) console.error('Failed to load more stats:', e);
+			if (controller.signal.aborted) return;
+			loadMoreStatsError = true;
+		} finally {
+			if (statsLoadMoreController === controller) {
+				statsLoadMoreController = null;
+				loadingMoreStats = false;
+			}
+		}
+	}
+
+	// Second IntersectionObserver for the Best Times sentinel, independent of
+	// the puzzles observer so the two lists page without interfering.
+	$effect(() => {
+		const sentinel = statsScrollSentinel;
+		if (!sentinel) return;
+		const observer = new IntersectionObserver(
+			(entries) => {
+				if (entries[0].isIntersecting && !loadMoreStatsError && !loadingMoreStats && hasMoreStats) {
+					void loadNextStats();
+				}
+			},
+			{ rootMargin: '200px' }
+		);
+		observer.observe(sentinel);
+		return () => observer.disconnect();
+	});
+
 	async function saveName() {
 		saving = true;
 		saveError = false;
@@ -151,6 +209,23 @@
 			await loadAll();
 		} catch (e) {
 			console.error('Failed to save display name:', e);
+			saveError = true;
+		} finally {
+			saving = false;
+		}
+	}
+
+	async function resetNameToGoogleDefault() {
+		saving = true;
+		saveError = false;
+		try {
+			// Send null to clear the display_name override, reverting to the
+			// Google-provided name (or email fallback).
+			await updatePlayerProfile({ displayName: null });
+			editing = false;
+			await loadAll();
+		} catch (e) {
+			console.error('Failed to reset display name:', e);
 			saveError = true;
 		} finally {
 			saving = false;
@@ -211,6 +286,18 @@
 					/>
 					<button type="button" onclick={saveName} disabled={saving}>Save</button>
 					<button type="button" data-testid="cancel-edit" onclick={cancelEditing}>Cancel</button>
+					{#if profile.hasDisplayNameOverride}
+						<button
+							type="button"
+							data-testid="reset-name-button"
+							onclick={resetNameToGoogleDefault}
+							disabled={saving}
+							class="ml-1 text-xs text-(--text-2) underline"
+						>
+							Reset to Google name{#if profile.googleName}
+								({profile.googleName}){/if}
+						</button>
+					{/if}
 					{#if saveError}
 						<p data-testid="save-name-error" class="mt-1 text-xs text-(--hot)">
 							Failed to save name. Try again.
@@ -309,7 +396,7 @@ hover:bg-[rgba(255,0,102,0.08)]"
 		{#if stats.length === 0}
 			<p class="text-sm text-(--text-2)">No solves recorded yet.</p>
 		{:else}
-			<ul class="mt-3 divide-y divide-(--border)">
+			<ul class="mt-3 divide-y divide-(--border)" data-testid="best-times-list">
 				{#each stats as s (s.puzzleId)}
 					<li class="flex items-center justify-between gap-3 py-2 text-sm">
 						{#if s.puzzleName}
@@ -330,6 +417,33 @@ hover:bg-[rgba(255,0,102,0.08)]"
 					</li>
 				{/each}
 			</ul>
+
+			{#if loadingMoreStats}
+				<div class="mt-4 flex justify-center py-4" data-testid="profile-stats-load-more-spinner">
+					<div
+						class="h-6 w-6 rounded-full border-2 border-(--border) border-t-(--accent)
+motion-safe:animate-[spin-cw_0.75s_linear_infinite] motion-reduce:animate-none"
+					></div>
+				</div>
+			{:else if loadMoreStatsError}
+				<div class="mt-4 flex justify-center" data-testid="profile-stats-load-more-error">
+					<button
+						type="button"
+						onclick={() => void loadNextStats()}
+						class="border border-(--hot) px-4 py-1.5 text-xs text-(--hot) uppercase
+hover:bg-[rgba(255,0,102,0.08)]"
+					>
+						Retry
+					</button>
+				</div>
+			{/if}
+
+			<div
+				bind:this={statsScrollSentinel}
+				data-testid="profile-stats-scroll-sentinel"
+				class="h-px"
+				aria-hidden="true"
+			></div>
 		{/if}
 	</section>
 {/if}

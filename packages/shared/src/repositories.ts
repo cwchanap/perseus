@@ -1,4 +1,4 @@
-import { eq, lt, desc, asc, count, sql, and } from 'drizzle-orm';
+import { eq, lt, gt, desc, asc, count, sql, and } from 'drizzle-orm';
 import type { AppDb, NewPuzzleRow, PlayerProfileRow } from './types';
 import { puzzles, playerProfiles, puzzleStats } from './schema';
 
@@ -189,7 +189,7 @@ export async function recordCompletion(
 export async function listPlayerStats(
 	db: AppDb,
 	playerId: string,
-	opts: { limit: number }
+	opts: { limit: number; cursor?: string }
 ): Promise<{
 	rows: {
 		playerId: string;
@@ -200,11 +200,24 @@ export async function listPlayerStats(
 		firstCompletedAt: number;
 		lastCompletedAt: number;
 	}[];
+	nextCursor?: string;
 }> {
 	const limit = Math.min(Math.max(opts.limit, 1), 100);
+	// Composite cursor (bestTimeSeconds, puzzleId) avoids skipping a row when
+	// two puzzles share the same best time: rows are ordered by bestTimeSeconds
+	// ASC then puzzleId ASC, and the cursor excludes anything at or "before"
+	// the last row of the previous page on that lexicographic ordering.
+	// drizzle's `.where()` replaces (not merges) the previous condition, so
+	// chaining a second `.where()` for the cursor would silently drop the
+	// ownerId filter and leak other players' stats across pages.
+	const cond =
+		opts.cursor !== undefined
+			? and(eq(puzzleStats.playerId, playerId), parsePlayerStatsCursor(opts.cursor))
+			: eq(puzzleStats.playerId, playerId);
 	// Left join on puzzles so a deleted puzzle's stat row still surfaces
-	// (puzzleName null). Ordered by best time ascending (fastest first).
-	const rows = await db
+	// (puzzleName null). Ordered by best time ascending (fastest first), with
+	// puzzleId as a deterministic tiebreaker for equal best times.
+	const all = await db
 		.select({
 			playerId: puzzleStats.playerId,
 			puzzleId: puzzleStats.puzzleId,
@@ -216,11 +229,44 @@ export async function listPlayerStats(
 		})
 		.from(puzzleStats)
 		.leftJoin(puzzles, eq(puzzleStats.puzzleId, puzzles.id))
-		.where(eq(puzzleStats.playerId, playerId))
-		.orderBy(asc(puzzleStats.bestTimeSeconds))
-		.limit(limit)
+		.where(cond)
+		.orderBy(asc(puzzleStats.bestTimeSeconds), asc(puzzleStats.puzzleId))
+		.limit(limit + 1)
 		.all();
-	return { rows };
+	const rows = all.slice(0, limit);
+	const nextCursor =
+		all.length > limit ? encodePlayerStatsCursor(rows[rows.length - 1]) : undefined;
+	return { rows, nextCursor };
+}
+
+// Composite cursor format: "<bestTimeSeconds>|<puzzleId>". bestTimeSeconds is
+// an integer second count; puzzleId is the stat row's text primary key. Both
+// are URL-safe enough for a query parameter when encoded via
+// encodeURIComponent at the API boundary.
+function encodePlayerStatsCursor(row: { bestTimeSeconds: number; puzzleId: string }): string {
+	return `${row.bestTimeSeconds}|${row.puzzleId}`;
+}
+
+function parsePlayerStatsCursor(cursor: string) {
+	// (bestTimeSeconds, puzzleId) ordering: a row is "after" the cursor if its
+	// bestTimeSeconds is strictly greater than the cursor's, OR its
+	// bestTimeSeconds equals the cursor's and its puzzleId is strictly greater
+	// (lexicographically) than the cursor's puzzleId. We want to exclude rows
+	// at or "before" the cursor (already served), so the condition keeps rows
+	// strictly "after".
+	const sep = cursor.lastIndexOf('|');
+	if (sep <= 0) {
+		// Malformed cursor: fall back to treating the whole string as a
+		// bestTimeSeconds value for backward compatibility with older clients.
+		// Stats are ordered ASC, so "after" means strictly greater.
+		const ts = Number(cursor);
+		return Number.isFinite(ts) ? gt(puzzleStats.bestTimeSeconds, ts) : sql`false`;
+	}
+	const bestStr = cursor.slice(0, sep);
+	const idStr = cursor.slice(sep + 1);
+	const best = Number(bestStr);
+	if (!Number.isFinite(best)) return sql`false`;
+	return sql`(${puzzleStats.bestTimeSeconds} > ${best} OR (${puzzleStats.bestTimeSeconds} = ${best} AND ${puzzleStats.puzzleId} > ${idStr}))`;
 }
 
 export async function getPlayerSummary(
