@@ -69,9 +69,20 @@ vi.mock('../services/player-auth.worker', () => ({
 	getPlayerSession: vi.fn()
 }));
 
+// Spy on resetAvatarAttempts while letting the real rate-limit middleware run,
+// so we can assert the avatar handler resets the counter on success.
+vi.mock('../middleware/rate-limit.worker', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../middleware/rate-limit.worker')>();
+	return {
+		...actual,
+		resetAvatarAttempts: vi.fn(actual.resetAvatarAttempts)
+	};
+});
+
 import player from './player.worker';
 import type { Env } from '../worker';
 import * as playerAuth from '../services/player-auth.worker';
+import { resetAvatarAttempts } from '../middleware/rate-limit.worker';
 import type { PlayerSessionRecord } from '../services/player-auth.worker';
 
 const TEST_PLAYER: PlayerSessionRecord = {
@@ -329,6 +340,7 @@ describe('player avatar route (Worker)', () => {
 		const store = (shared as any).__store as Map<string, unknown> | undefined;
 		store?.clear();
 		vi.mocked(playerAuth.getPlayerSession).mockResolvedValue(TEST_PLAYER);
+		vi.mocked(resetAvatarAttempts).mockClear();
 	});
 
 	afterEach(async () => {
@@ -356,6 +368,23 @@ describe('player avatar route (Worker)', () => {
 		expect(bucket.put).toHaveBeenCalledWith('avatars/p1', expect.any(Uint8Array), {
 			httpMetadata: { contentType: 'image/png' }
 		});
+	});
+
+	it('POST avatar resets the rate-limit counter on success', async () => {
+		const { bucket } = createMockBucket();
+		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
+
+		const blob = new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' });
+		const form = new FormData();
+		form.append('avatar', blob, 'a.png');
+
+		const res = await buildApp().request(
+			'/api/player/avatar',
+			{ method: 'POST', headers: AUTH_COOKIE, body: form },
+			env
+		);
+		expect(res.status).toBe(200);
+		expect(resetAvatarAttempts).toHaveBeenCalledTimes(1);
 	});
 
 	it('GET avatar serves the stored image from R2', async () => {

@@ -13,7 +13,7 @@ import {
 import type { PlayerProfile, PlayerPuzzleSummary, PlayerStatRow } from '@perseus/types';
 import { coercePuzzleStatus } from '@perseus/types';
 import { requirePlayerAuth } from '../middleware/player-auth';
-import { avatarRateLimit } from '../middleware/rate-limit';
+import { avatarRateLimit, resetAvatarAttempts } from '../middleware/rate-limit';
 import type { PlayerSessionRecord } from '../services/player-auth';
 
 const player = new Hono<{ Variables: { playerSession: PlayerSessionRecord } }>();
@@ -146,6 +146,10 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 	// Field-specific update writes only avatarUrl and preserves displayName,
 	// avoiding a read-modify-write race with concurrent PATCH /profile requests.
 	await updateProfileAvatarUrl(db, playerId, `/api/player/${playerId}/avatar`);
+	// Reset the rate-limit counter on success so repeated successful uploads
+	// don't accumulate toward an unnecessary lockout. The middleware increments
+	// before the handler runs; this deletes that increment.
+	resetAvatarAttempts(c);
 	return c.json({ avatarUrl: `/api/player/${playerId}/avatar` });
 });
 

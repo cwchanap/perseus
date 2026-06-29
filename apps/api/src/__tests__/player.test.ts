@@ -73,8 +73,19 @@ vi.mock('../services/player-auth', () => ({
 	getPlayerSession: vi.fn()
 }));
 
+// Spy on resetAvatarAttempts while letting the real rate-limit middleware run,
+// so we can assert the avatar handler resets the counter on success.
+vi.mock('../middleware/rate-limit', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../middleware/rate-limit')>();
+	return {
+		...actual,
+		resetAvatarAttempts: vi.fn(actual.resetAvatarAttempts)
+	};
+});
+
 import player from '../routes/player';
 import * as playerAuth from '../services/player-auth';
+import { resetAvatarAttempts } from '../middleware/rate-limit';
 import type { PlayerSessionRecord } from '../services/player-auth';
 
 const TEST_PLAYER: PlayerSessionRecord = {
@@ -270,6 +281,7 @@ describe('player avatar route (Bun)', () => {
 		originalDataDir = process.env.DATA_DIR;
 		dataDir = mkdtempSync(join(tmpdir(), 'perseus-player-test-'));
 		process.env.DATA_DIR = dataDir;
+		vi.mocked(resetAvatarAttempts).mockClear();
 	});
 
 	afterEach(() => {
@@ -294,6 +306,20 @@ describe('player avatar route (Bun)', () => {
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.avatarUrl).toBe('/api/player/p1/avatar');
+	});
+
+	it('POST avatar resets the rate-limit counter on success', async () => {
+		const blob = new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' });
+		const form = new FormData();
+		form.append('avatar', blob, 'a.png');
+
+		const res = await buildApp().request('/api/player/avatar', {
+			method: 'POST',
+			headers: AUTH_COOKIE,
+			body: form
+		});
+		expect(res.status).toBe(200);
+		expect(resetAvatarAttempts).toHaveBeenCalledTimes(1);
 	});
 
 	it('GET avatar serves the stored image with sniffed content-type', async () => {
