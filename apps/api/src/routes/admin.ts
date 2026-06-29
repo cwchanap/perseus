@@ -509,17 +509,10 @@ admin.delete('/puzzles/:id', requireAuth, async (c) => {
 
 	// Best-effort cleanup of the D1 ownership row (see admin.worker.ts for the
 	// full rationale). Logged, not fatal — filesystem deletion above is the
-	// source of truth for puzzle existence in the Bun runtime. getDb() is a
-	// lazy init that can throw on first call; wrap it in the same best-effort
-	// handling so a DB init failure doesn't bubble a 500 after a successful
-	// puzzle deletion.
-	try {
-		await deletePuzzleOwnership(getDb(), id).catch((err) =>
-			console.error(`Failed to delete ownership row for puzzle ${id}:`, err)
-		);
-	} catch (err) {
-		console.error(`Failed to init DB for ownership cleanup of puzzle ${id}:`, err);
-	}
+	// source of truth for puzzle existence in the Bun runtime.
+	await deletePuzzleOwnership(getDb(), id).catch((err) =>
+		console.error(`Failed to delete ownership row for puzzle ${id}:`, err)
+	);
 
 	return c.body(null, 204);
 });

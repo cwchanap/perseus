@@ -39,18 +39,6 @@ export interface PuzzlePiece {
 
 export type PuzzleStatus = 'processing' | 'ready' | 'failed';
 
-const VALID_PUZZLE_STATUSES: readonly PuzzleStatus[] = ['processing', 'ready', 'failed'];
-
-/**
- * Coerce a raw DB/string value to a PuzzleStatus, defaulting to 'failed' for
- * unexpected values. The puzzles.status column is free-text (no CHECK
- * constraint), so this guard prevents an invalid status from leaking to the
- * client as a string outside the PuzzleStatus union.
- */
-export function coercePuzzleStatus(value: string): PuzzleStatus {
-	return VALID_PUZZLE_STATUSES.includes(value as PuzzleStatus) ? (value as PuzzleStatus) : 'failed';
-}
-
 // Puzzle categories
 export const PUZZLE_CATEGORIES = [
 	'Animals',
@@ -167,14 +155,6 @@ export interface PlayerProfile {
 	createdAt: number;
 	lastLoginAt: number;
 	summary: PlayerProfileSummary;
-	// The Google-provided default name (null when Google supplied none). The
-	// effective `name` above is this value unless a display_name override is
-	// set. Exposed so the profile UI can offer a "reset to Google name" action
-	// and label it with the actual default.
-	googleName?: string | null;
-	// True when a display_name override is active (i.e. `name` differs from
-	// `googleName`). The UI uses this to show/hide the reset affordance.
-	hasDisplayNameOverride?: boolean;
 }
 
 export interface PlayerProfileUpdate {
@@ -186,15 +166,12 @@ export interface PlayerPuzzleSummary {
 	name: string;
 	pieceCount: number;
 	category?: string;
-	status: PuzzleStatus;
+	status: string;
 	createdAt: number;
 }
 
 export interface PlayerStatRow {
 	puzzleId: string;
-	// Joined from the puzzles table; null when the puzzle has been deleted
-	// but the stat row remains (no FK enforcement in D1/SQLite here).
-	puzzleName: string | null;
 	bestTimeSeconds: number;
 	totalCompletions: number;
 	firstCompletedAt: number;
@@ -298,8 +275,7 @@ export function isPlayerPuzzleSummary(value: unknown): value is PlayerPuzzleSumm
 		isNonEmptyString(v.name) &&
 		isFiniteNumber(v.pieceCount) &&
 		isFiniteNumber(v.createdAt) &&
-		typeof v.status === 'string' &&
-		VALID_PUZZLE_STATUSES.includes(v.status as PuzzleStatus) &&
+		isNonEmptyString(v.status) &&
 		(v.category === undefined || isNonEmptyString(v.category))
 	);
 }
@@ -309,7 +285,6 @@ export function isPlayerStatRow(value: unknown): value is PlayerStatRow {
 	const v = value as Record<string, unknown>;
 	return (
 		isNonEmptyString(v.puzzleId) &&
-		(v.puzzleName === null || isNonEmptyString(v.puzzleName)) &&
 		isFiniteNumber(v.bestTimeSeconds) &&
 		isFiniteNumber(v.totalCompletions) &&
 		isFiniteNumber(v.firstCompletedAt) &&

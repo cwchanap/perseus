@@ -358,7 +358,12 @@ export { ApiError };
 // Player profile endpoints
 export async function getPlayerProfile(): Promise<PlayerProfile> {
 	const response = await fetch(`${API_BASE}/api/player/profile`, { credentials: 'include' });
-	return handleResponse<PlayerProfile>(response);
+	const profile = await handleResponse<PlayerProfile>(response);
+	// Uploaded avatars are served as origin-relative paths ("/api/player/.../avatar").
+	// In local dev the web and API origins differ, so prefix API_BASE so the
+	// <img src> points at the API. Absolute URLs (e.g. OAuth pictures) and null
+	// pass through unchanged.
+	return { ...profile, picture: resolveAssetUrl(profile.picture) };
 }
 
 export async function updatePlayerProfile(update: PlayerProfileUpdate): Promise<void> {
@@ -386,30 +391,38 @@ export function getAvatarUrl(playerId: string): string {
 	return `${API_BASE}/api/player/${playerId}/avatar`;
 }
 
+// Resolve an asset URL returned by the API into a renderable src. Origin-
+// relative paths ("/api/...") are prefixed with API_BASE (needed in local dev
+// where web and API origins differ); absolute URLs and null pass through.
+export function resolveAssetUrl(url: string | null | undefined): string | null {
+	if (!url) return null;
+	if (/^https?:\/\//i.test(url)) return url;
+	if (url.startsWith('/')) return `${API_BASE}${url}`;
+	return url;
+}
+
 export async function getPlayerPuzzles(params?: {
 	limit?: number;
-	cursor?: string;
-}): Promise<{ puzzles: PlayerPuzzleSummary[]; nextCursor?: string }> {
+	cursor?: number;
+}): Promise<{ puzzles: PlayerPuzzleSummary[]; nextCursor?: number }> {
 	const searchParams = new URLSearchParams();
 	if (params?.limit !== undefined) searchParams.set('limit', String(params.limit));
-	if (params?.cursor !== undefined) searchParams.set('cursor', params.cursor);
+	if (params?.cursor !== undefined) searchParams.set('cursor', String(params.cursor));
 	const query = searchParams.toString();
 	const url = query ? `${API_BASE}/api/player/puzzles?${query}` : `${API_BASE}/api/player/puzzles`;
 	const response = await fetch(url, { credentials: 'include' });
-	return handleResponse<{ puzzles: PlayerPuzzleSummary[]; nextCursor?: string }>(response);
+	return handleResponse<{ puzzles: PlayerPuzzleSummary[]; nextCursor?: number }>(response);
 }
 
 export async function getPlayerStats(params?: {
 	limit?: number;
-	cursor?: string;
-}): Promise<{ stats: PlayerStatRow[]; nextCursor?: string }> {
+}): Promise<{ stats: PlayerStatRow[] }> {
 	const searchParams = new URLSearchParams();
 	if (params?.limit !== undefined) searchParams.set('limit', String(params.limit));
-	if (params?.cursor !== undefined) searchParams.set('cursor', params.cursor);
 	const query = searchParams.toString();
 	const url = query ? `${API_BASE}/api/player/stats?${query}` : `${API_BASE}/api/player/stats`;
 	const response = await fetch(url, { credentials: 'include' });
-	return handleResponse<{ stats: PlayerStatRow[]; nextCursor?: string }>(response);
+	return handleResponse<{ stats: PlayerStatRow[] }>(response);
 }
 
 export async function recordCompletion(puzzleId: string, timeSeconds: number): Promise<void> {

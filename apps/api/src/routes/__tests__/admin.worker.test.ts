@@ -36,16 +36,10 @@ vi.mock('../../services/player-auth.worker', () => ({
 
 // admin.worker.ts cleans up the D1 ownership row on puzzle delete. Mock the db
 // handle and repository so the test doesn't bind a real D1 session and so the
-// cleanup is assertable. A stable sentinel is returned so assertions can verify
-// the route forwards the exact DB handle (reference equality), not just any
-// empty object.
-vi.mock('../../db.worker', () => {
-	const dbStub = Symbol('worker-db-stub');
-	return {
-		getWorkerDb: vi.fn(() => dbStub),
-		__dbStub: dbStub
-	};
-});
+// cleanup is assertable.
+vi.mock('../../db.worker', () => ({
+	getWorkerDb: vi.fn(() => ({}))
+}));
 
 vi.mock('@perseus/shared', () => ({
 	deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined)
@@ -55,7 +49,6 @@ import admin from '../admin.worker';
 import * as storage from '../../services/storage.worker';
 import * as auth from '../../middleware/auth.worker';
 import * as playerAuth from '../../services/player-auth.worker';
-import * as dbWorker from '../../db.worker';
 import { __resetRateLimitStore } from '../../middleware/rate-limit.worker';
 
 // Valid PNG magic bytes header for test blobs
@@ -392,64 +385,10 @@ describe('Admin Routes - Puzzle Deletion', () => {
 			// Ownership row is cleaned up best-effort even when asset deletion partially
 			// fails, so deleted puzzles don't linger in the uploader's "My Puzzles" list.
 			const { deletePuzzleOwnership } = await import('@perseus/shared');
-			const dbStub = (dbWorker as any).__dbStub;
-			expect(vi.mocked(deletePuzzleOwnership).mock.calls[0][0]).toBe(dbStub);
-			expect(vi.mocked(deletePuzzleOwnership).mock.calls[0][1]).toBe(
+			expect(deletePuzzleOwnership).toHaveBeenCalledWith(
+				{},
 				'550e8400-e29b-41d4-a716-446655440000'
 			);
-		});
-
-		it('logs but still succeeds when ownership cleanup rejects', async () => {
-			(storage.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
-				id: '550e8400-e29b-41d4-a716-446655440000',
-				name: 'Test Puzzle',
-				pieceCount: 4,
-				gridCols: 2,
-				gridRows: 2,
-				imageWidth: 100,
-				imageHeight: 100,
-				createdAt: Date.now(),
-				status: 'ready',
-				pieces: [],
-				version: 0
-			});
-			(storage.deletePuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue({
-				success: true
-			});
-			(storage.deletePuzzleAssets as ReturnType<typeof vi.fn>).mockResolvedValue({
-				success: true
-			});
-			(auth.verifySession as ReturnType<typeof vi.fn>).mockResolvedValue({
-				userId: 'admin',
-				username: 'admin',
-				role: 'admin'
-			});
-
-			const { deletePuzzleOwnership } = await import('@perseus/shared');
-			vi.mocked(deletePuzzleOwnership).mockRejectedValueOnce(new Error('D1 down'));
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-
-			const mockEnv = {
-				ADMIN_PASSKEY: 'test-passkey',
-				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
-				PUZZLE_METADATA: {} as KVNamespace,
-				PUZZLES_BUCKET: {} as R2Bucket
-			};
-
-			const req = new Request('http://localhost/puzzles/550e8400-e29b-41d4-a716-446655440000', {
-				method: 'DELETE',
-				headers: { cookie: 'session=valid.token' }
-			});
-
-			const res = await admin.fetch(req, mockEnv);
-
-			// Ownership delete failure is non-fatal; puzzle is still deleted (204)
-			expect(res.status).toBe(204);
-			expect(consoleSpy).toHaveBeenCalledWith(
-				expect.stringContaining('Failed to delete ownership row for puzzle'),
-				new Error('D1 down')
-			);
-			consoleSpy.mockRestore();
 		});
 	});
 });

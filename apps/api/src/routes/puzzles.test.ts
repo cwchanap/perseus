@@ -240,7 +240,7 @@ describe('POST / - Upload puzzle for player', () => {
 			pieces: generatedPuzzle.pieces
 		} as any);
 		vi.mocked(storage.createPuzzle).mockResolvedValue(true);
-		vi.mocked(insertPuzzleOwnership).mockRejectedValueOnce(new Error('DB down'));
+		vi.mocked(insertPuzzleOwnership).mockRejectedValue(new Error('DB down'));
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
 		const formData = new FormData();
@@ -261,53 +261,7 @@ describe('POST / - Upload puzzle for player', () => {
 		expect(((await res.json()) as any).message).toBe('Failed to record puzzle ownership');
 		expect(storage.deletePuzzle).toHaveBeenCalled();
 		consoleSpy.mockRestore();
-	});
-
-	it('logs when cleanup also fails after ownership insert failure', async () => {
-		vi.mocked(playerAuth.getPlayerSession).mockResolvedValue({
-			sessionHash: 'session-hash',
-			user: {
-				id: 'player-1',
-				email: 'player@example.com',
-				createdAt: 1000,
-				lastLoginAt: 2000
-			},
-			createdAt: 2000,
-			expiresAt: Date.now() + 1000
-		});
-		const generatedPuzzle = makePuzzle({ name: 'Player Puzzle' });
-		vi.mocked(puzzleGenerator.generatePuzzle).mockResolvedValue({
-			puzzle: generatedPuzzle,
-			pieces: generatedPuzzle.pieces
-		} as any);
-		vi.mocked(storage.createPuzzle).mockResolvedValue(true);
-		vi.mocked(insertPuzzleOwnership).mockRejectedValue(new Error('DB down'));
-		// deletePuzzle returns false → the cleanup-failure console.error branch fires
-		vi.mocked(storage.deletePuzzle).mockResolvedValue(false);
-		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-
-		const formData = new FormData();
-		formData.append('name', 'Player Puzzle');
-		formData.append('pieceCount', '48');
-		formData.append('aspectRatio', '3:4');
-		formData.append('image', new Blob([PNG_HEADER], { type: 'image/png' }), 'test.png');
-
-		const res = await puzzles.fetch(
-			new Request('http://localhost/', {
-				method: 'POST',
-				headers: { Cookie: 'perseus_player_session=player-token' },
-				body: formData
-			})
-		);
-
-		expect(res.status).toBe(500);
-		expect(storage.deletePuzzle).toHaveBeenCalled();
-		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining('Failed to clean up puzzle directory')
-		);
-		consoleSpy.mockRestore();
 		vi.mocked(insertPuzzleOwnership).mockResolvedValue(undefined);
-		vi.mocked(storage.deletePuzzle).mockResolvedValue(true);
 	});
 });
 

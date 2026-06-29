@@ -10,10 +10,8 @@ import {
 	listPlayerPuzzles,
 	listPlayerStats
 } from '@perseus/shared';
-import type { PlayerProfile, PlayerPuzzleSummary, PlayerStatRow } from '@perseus/types';
-import { coercePuzzleStatus } from '@perseus/types';
+import type { PlayerProfile } from '@perseus/types';
 import { requirePlayerAuth } from '../middleware/player-auth';
-import { avatarRateLimit, resetAvatarAttempts } from '../middleware/rate-limit';
 import type { PlayerSessionRecord } from '../services/player-auth';
 
 const player = new Hono<{ Variables: { playerSession: PlayerSessionRecord } }>();
@@ -68,9 +66,7 @@ player.get('/profile', requirePlayerAuth, async (c) => {
 		picture: override?.avatarUrl ?? session.user.picture ?? null,
 		createdAt: session.user.createdAt,
 		lastLoginAt: session.user.lastLoginAt,
-		summary,
-		googleName: session.user.name ?? null,
-		hasDisplayNameOverride: override?.displayName !== undefined && override?.displayName !== null
+		summary
 	};
 	return c.json(profile);
 });
@@ -85,23 +81,33 @@ player.patch('/profile', requirePlayerAuth, async (c) => {
 	} catch {
 		return c.json({ error: 'bad_request', message: 'Invalid JSON body' }, 400);
 	}
-	const displayName =
+	const raw =
 		body && typeof body === 'object' && 'displayName' in body
 			? (body as { displayName: unknown }).displayName
 			: undefined;
 	// displayName is required: a missing field is a client error, not a silent
 	// reset to null. null explicitly clears the override back to the Google name.
-	if (displayName === undefined) {
+	if (raw === undefined) {
 		return c.json({ error: 'bad_request', message: 'displayName is required' }, 400);
 	}
-	if (displayName !== null && typeof displayName !== 'string') {
+	if (raw !== null && typeof raw !== 'string') {
 		return c.json({ error: 'bad_request', message: 'displayName must be a string or null' }, 400);
 	}
-	if (typeof displayName === 'string' && displayName.length > MAX_DISPLAY_NAME_LENGTH) {
-		return c.json(
-			{ error: 'bad_request', message: 'displayName must be 255 characters or fewer' },
-			400
-		);
+	// Trim surrounding whitespace and reject empty/blank values so a profile
+	// name can never be set to nothing (mirrors puzzle-name handling). null is
+	// unaffected and still clears the override back to the Google name.
+	let displayName = raw;
+	if (typeof displayName === 'string') {
+		displayName = displayName.trim();
+		if (displayName === '') {
+			return c.json({ error: 'bad_request', message: 'displayName must not be empty' }, 400);
+		}
+		if (displayName.length > MAX_DISPLAY_NAME_LENGTH) {
+			return c.json(
+				{ error: 'bad_request', message: 'displayName must be 255 characters or fewer' },
+				400
+			);
+		}
 	}
 	// Field-specific update writes only displayName and preserves avatarUrl,
 	// avoiding a read-modify-write race with concurrent POST /avatar requests.
@@ -112,7 +118,7 @@ player.patch('/profile', requirePlayerAuth, async (c) => {
 // Upload the authenticated player's avatar to the filesystem and record its
 // serving path in the profile override (writes only avatarUrl; displayName is
 // preserved by the field-specific repository update).
-player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
+player.post('/avatar', requirePlayerAuth, async (c) => {
 	const session = c.get('playerSession');
 	const playerId = session.user.id;
 	let formData: FormData;
@@ -125,31 +131,21 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 	if (!(file instanceof File)) {
 		return c.json({ error: 'bad_request', message: 'avatar file is required' }, 400);
 	}
+	if (!AVATAR_MIME.has(file.type)) {
+		return c.json({ error: 'bad_request', message: 'Unsupported image type' }, 400);
+	}
 	if (file.size > AVATAR_MAX_BYTES) {
 		return c.json({ error: 'bad_request', message: 'Avatar must be 5MB or less' }, 400);
-	}
-	// Validate via magic bytes instead of trusting file.type, matching the
-	// puzzle upload path. The sniffed type is also what we store so the
-	// extension-less serve route returns the correct Content-Type without
-	// re-sniffing (though it still sniffs defensively).
-	const bytes = new Uint8Array(await file.arrayBuffer());
-	const detected = sniffImageType(bytes);
-	if (!detected || !AVATAR_MIME.has(detected)) {
-		return c.json({ error: 'bad_request', message: 'Unsupported image type' }, 400);
 	}
 	const dataDir = process.env.DATA_DIR || './data';
 	const dir = join(dataDir, 'avatars');
 	await mkdir(dir, { recursive: true });
-	await writeFile(join(dir, playerId), Buffer.from(bytes));
+	await writeFile(join(dir, playerId), Buffer.from(await file.arrayBuffer()));
 
 	const db = getDb();
 	// Field-specific update writes only avatarUrl and preserves displayName,
 	// avoiding a read-modify-write race with concurrent PATCH /profile requests.
 	await updateProfileAvatarUrl(db, playerId, `/api/player/${playerId}/avatar`);
-	// Reset the rate-limit counter on success so repeated successful uploads
-	// don't accumulate toward an unnecessary lockout. The middleware increments
-	// before the handler runs; this deletes that increment.
-	resetAvatarAttempts(c);
 	return c.json({ avatarUrl: `/api/player/${playerId}/avatar` });
 });
 
@@ -171,53 +167,30 @@ player.get('/:playerId/avatar', async (c) => {
 		return c.json({ error: 'not_found', message: 'Avatar not found' }, 404);
 	}
 	const mime = sniffImageType(new Uint8Array(buf)) ?? 'application/octet-stream';
-	return new Response(buf, {
-		headers: { 'Content-Type': mime, 'Cache-Control': 'public, max-age=300' }
-	});
+	return new Response(buf, { headers: { 'Content-Type': mime } });
 });
 
 player.get('/puzzles', requirePlayerAuth, async (c) => {
 	const db = getDb();
 	const session = c.get('playerSession');
 	const limit = Number(c.req.query('limit') ?? '20');
-	const cursor = c.req.query('cursor') || undefined;
+	const cursorRaw = c.req.query('cursor');
+	const cursor = cursorRaw ? Number(cursorRaw) : undefined;
 	const { rows, nextCursor } = await listPlayerPuzzles(db, session.user.id, {
 		limit: Number.isFinite(limit) ? limit : 20,
-		cursor
+		cursor: Number.isFinite(cursor) ? cursor : undefined
 	});
-	// Project DB rows to the public PlayerPuzzleSummary contract, stripping
-	// internal columns (e.g. ownerId) that the client doesn't need.
-	const puzzles: PlayerPuzzleSummary[] = rows.map((r) => ({
-		id: r.id,
-		name: r.name,
-		pieceCount: r.pieceCount,
-		status: coercePuzzleStatus(r.status),
-		createdAt: r.createdAt,
-		...(r.category ? { category: r.category } : {})
-	}));
-	return c.json({ puzzles, nextCursor });
+	return c.json({ puzzles: rows, nextCursor });
 });
 
 player.get('/stats', requirePlayerAuth, async (c) => {
 	const db = getDb();
 	const session = c.get('playerSession');
 	const limit = Number(c.req.query('limit') ?? '20');
-	const cursor = c.req.query('cursor');
-	const { rows, nextCursor } = await listPlayerStats(db, session.user.id, {
-		limit: Number.isFinite(limit) ? limit : 20,
-		...(cursor !== undefined ? { cursor } : {})
+	const { rows } = await listPlayerStats(db, session.user.id, {
+		limit: Number.isFinite(limit) ? limit : 20
 	});
-	// Project DB rows to the public PlayerStatRow contract, stripping playerId
-	// (the client already knows its own ID from the auth session).
-	const stats: PlayerStatRow[] = rows.map((r) => ({
-		puzzleId: r.puzzleId,
-		puzzleName: r.puzzleName,
-		bestTimeSeconds: r.bestTimeSeconds,
-		totalCompletions: r.totalCompletions,
-		firstCompletedAt: r.firstCompletedAt,
-		lastCompletedAt: r.lastCompletedAt
-	}));
-	return c.json({ stats, nextCursor });
+	return c.json({ stats: rows });
 });
 
 export default player;

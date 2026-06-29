@@ -26,13 +26,10 @@ id = "ae95a94b22e3414ab022c335390c67aa"
 
 # D1 database for player profile, stats, and puzzle ownership
 # IMPORTANT: Replace the database_id below with the actual production D1 database ID.
-# migrations_dir points at the shared drizzle output so `wrangler d1 migrations
-# apply` finds the schema regardless of which app's config is invoked.
 [[d1_databases]]
 binding = "DB"
 database_name = "perseus-player-data"
 database_id = "b32ed4d0-c29f-413d-9370-de7bec2c80a7"
-migrations_dir = "../../packages/shared/drizzle"
 
 [durable_objects]
 bindings = [

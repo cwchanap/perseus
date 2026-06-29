@@ -19,7 +19,6 @@ import {
 	isPlayerPuzzleSummary,
 	isPlayerStatRow,
 	isPuzzleId,
-	coercePuzzleStatus,
 	type PlayerSessionResponse,
 	type PlayerAllowlistEntry,
 	type PlayerProfile,
@@ -951,7 +950,6 @@ describe('player profile validators', () => {
 
 	const stat: PlayerStatRow = {
 		puzzleId: 'pz1',
-		puzzleName: 'Cat',
 		bestTimeSeconds: 90,
 		totalCompletions: 2,
 		firstCompletedAt: 10,
@@ -961,9 +959,6 @@ describe('player profile validators', () => {
 	it('validates a stat row', () => {
 		expect(isPlayerStatRow(stat)).toBe(true);
 		expect(isPlayerStatRow({ ...stat, bestTimeSeconds: 'x' })).toBe(false);
-		// puzzleName may be null (deleted puzzle) or a non-empty string.
-		expect(isPlayerStatRow({ ...stat, puzzleName: null })).toBe(true);
-		expect(isPlayerStatRow({ ...stat, puzzleName: '' })).toBe(false);
 	});
 
 	const puzzle: PlayerPuzzleSummary = {
@@ -977,10 +972,6 @@ describe('player profile validators', () => {
 	it('validates a player puzzle summary', () => {
 		expect(isPlayerPuzzleSummary(puzzle)).toBe(true);
 		expect(isPlayerPuzzleSummary({ ...puzzle, status: 5 })).toBe(false);
-	});
-
-	it('rejects player puzzle summary with status outside the PuzzleStatus union', () => {
-		expect(isPlayerPuzzleSummary({ ...puzzle, status: 'unknown' })).toBe(false);
 	});
 
 	it('rejects non-object profiles', () => {
@@ -1067,19 +1058,5 @@ describe('player profile validators', () => {
 
 	it('accepts player puzzle summary with valid category', () => {
 		expect(isPlayerPuzzleSummary({ ...puzzle, category: 'Animals' })).toBe(true);
-	});
-});
-
-describe('coercePuzzleStatus', () => {
-	it('passes through valid statuses unchanged', () => {
-		expect(coercePuzzleStatus('processing')).toBe('processing');
-		expect(coercePuzzleStatus('ready')).toBe('ready');
-		expect(coercePuzzleStatus('failed')).toBe('failed');
-	});
-
-	it('coerces unexpected string values to failed', () => {
-		expect(coercePuzzleStatus('unknown')).toBe('failed');
-		expect(coercePuzzleStatus('')).toBe('failed');
-		expect(coercePuzzleStatus('READY')).toBe('failed');
 	});
 });

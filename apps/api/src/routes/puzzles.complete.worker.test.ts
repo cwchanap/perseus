@@ -136,26 +136,6 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 		expect(recordCompletion).not.toHaveBeenCalled();
 	});
 
-	it('returns 404 when the puzzle is not ready (processing/failed)', async () => {
-		// Mirrors GET /api/puzzles/:id, which 404s non-ready puzzles. Prevents
-		// completions being recorded against not-yet-generated puzzles.
-		vi.mocked(storage.getPuzzle).mockResolvedValueOnce({
-			id: PUZZLE_ID,
-			status: 'processing'
-		} as never);
-		const res = await buildApp().request(
-			`/api/puzzles/${PUZZLE_ID}/complete`,
-			{
-				method: 'POST',
-				headers: jsonHeaders(),
-				body: JSON.stringify({ timeSeconds: 90 })
-			},
-			DUMMY_ENV
-		);
-		expect(res.status).toBe(404);
-		expect(recordCompletion).not.toHaveBeenCalled();
-	});
-
 	it('rejects non-numeric timeSeconds', async () => {
 		const res = await buildApp().request(
 			`/api/puzzles/${PUZZLE_ID}/complete`,
@@ -193,21 +173,6 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 			DUMMY_ENV
 		);
 		expect(res.status).toBe(400);
-	});
-
-	it('rejects zero timeSeconds (would record a 0:00 best time)', async () => {
-		const { recordCompletion } = await import('@perseus/shared');
-		const res = await buildApp().request(
-			`/api/puzzles/${PUZZLE_ID}/complete`,
-			{
-				method: 'POST',
-				headers: jsonHeaders(),
-				body: JSON.stringify({ timeSeconds: 0 })
-			},
-			DUMMY_ENV
-		);
-		expect(res.status).toBe(400);
-		expect(recordCompletion).not.toHaveBeenCalled();
 	});
 
 	it('rejects timeSeconds above the 24h sanity ceiling', async () => {

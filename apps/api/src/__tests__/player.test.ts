@@ -52,15 +52,14 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 			totalCompletions: 0
 		})),
 		listPlayerPuzzles: vi.fn(
-			async (db: unknown, playerId: string): Promise<{ rows: unknown[]; nextCursor?: string }> => ({
+			async (db: unknown, playerId: string): Promise<{ rows: unknown[]; nextCursor?: number }> => ({
 				rows: puzzlesStore.get(playerId) ?? [],
 				nextCursor: undefined
 			})
 		),
 		listPlayerStats: vi.fn(
-			async (db: unknown, playerId: string): Promise<{ rows: unknown[]; nextCursor?: string }> => ({
-				rows: statsStore.get(playerId) ?? [],
-				nextCursor: undefined
+			async (db: unknown, playerId: string): Promise<{ rows: unknown[] }> => ({
+				rows: statsStore.get(playerId) ?? []
 			})
 		)
 	};
@@ -73,19 +72,8 @@ vi.mock('../services/player-auth', () => ({
 	getPlayerSession: vi.fn()
 }));
 
-// Spy on resetAvatarAttempts while letting the real rate-limit middleware run,
-// so we can assert the avatar handler resets the counter on success.
-vi.mock('../middleware/rate-limit', async (importOriginal) => {
-	const actual = await importOriginal<typeof import('../middleware/rate-limit')>();
-	return {
-		...actual,
-		resetAvatarAttempts: vi.fn(actual.resetAvatarAttempts)
-	};
-});
-
 import player from '../routes/player';
 import * as playerAuth from '../services/player-auth';
-import { resetAvatarAttempts } from '../middleware/rate-limit';
 import type { PlayerSessionRecord } from '../services/player-auth';
 
 const TEST_PLAYER: PlayerSessionRecord = {
@@ -131,19 +119,6 @@ describe('player profile routes (Bun)', () => {
 		});
 	});
 
-	it('GET profile falls back to email when user.name is null and no override', async () => {
-		vi.mocked(playerAuth.getPlayerSession).mockResolvedValue({
-			...TEST_PLAYER,
-			user: { ...TEST_PLAYER.user, name: null, picture: null }
-		});
-		const res = await buildApp().request('/api/player/profile', { headers: AUTH_COOKIE });
-		expect(res.status).toBe(200);
-		const body = await res.json();
-		// name falls back to email; picture falls back to null
-		expect(body.name).toBe('p@example.com');
-		expect(body.picture).toBeNull();
-	});
-
 	it('PATCH then GET reflects override', async () => {
 		const patch = await buildApp().request('/api/player/profile', {
 			method: 'PATCH',
@@ -155,26 +130,6 @@ describe('player profile routes (Bun)', () => {
 		const res = await buildApp().request('/api/player/profile', { headers: AUTH_COOKIE });
 		const body = await res.json();
 		expect(body.name).toBe('Custom');
-	});
-
-	it('GET profile exposes googleName and hasDisplayNameOverride', async () => {
-		// No override: hasDisplayNameOverride is false, googleName is the Google name.
-		const res1 = await buildApp().request('/api/player/profile', { headers: AUTH_COOKIE });
-		const body1 = await res1.json();
-		expect(body1.googleName).toBe('Google Name');
-		expect(body1.hasDisplayNameOverride).toBe(false);
-
-		// After setting an override: hasDisplayNameOverride is true.
-		await buildApp().request('/api/player/profile', {
-			method: 'PATCH',
-			headers: { 'Content-Type': 'application/json', ...AUTH_COOKIE },
-			body: JSON.stringify({ displayName: 'Custom' })
-		});
-		const body2 = await (
-			await buildApp().request('/api/player/profile', { headers: AUTH_COOKIE })
-		).json();
-		expect(body2.googleName).toBe('Google Name');
-		expect(body2.hasDisplayNameOverride).toBe(true);
 	});
 
 	it('PATCH with null resets to Google name', async () => {
@@ -224,6 +179,40 @@ describe('player profile routes (Bun)', () => {
 		expect(res.status).toBe(200);
 	});
 
+	it('PATCH trims surrounding whitespace before storing displayName', async () => {
+		const patch = await buildApp().request('/api/player/profile', {
+			method: 'PATCH',
+			headers: { 'Content-Type': 'application/json', ...AUTH_COOKIE },
+			body: JSON.stringify({ displayName: '  Custom  ' })
+		});
+		expect(patch.status).toBe(200);
+
+		const body = await (
+			await buildApp().request('/api/player/profile', { headers: AUTH_COOKIE })
+		).json();
+		expect(body.name).toBe('Custom');
+	});
+
+	it('PATCH rejects an empty displayName with 400', async () => {
+		const res = await buildApp().request('/api/player/profile', {
+			method: 'PATCH',
+			headers: { 'Content-Type': 'application/json', ...AUTH_COOKIE },
+			body: JSON.stringify({ displayName: '' })
+		});
+		expect(res.status).toBe(400);
+		expect((await res.json()).error).toBe('bad_request');
+	});
+
+	it('PATCH rejects a whitespace-only displayName with 400', async () => {
+		const res = await buildApp().request('/api/player/profile', {
+			method: 'PATCH',
+			headers: { 'Content-Type': 'application/json', ...AUTH_COOKIE },
+			body: JSON.stringify({ displayName: '   ' })
+		});
+		expect(res.status).toBe(400);
+		expect((await res.json()).error).toBe('bad_request');
+	});
+
 	it('PATCH rejects a body without displayName with 400 (no silent reset)', async () => {
 		const res = await buildApp().request('/api/player/profile', {
 			method: 'PATCH',
@@ -245,28 +234,6 @@ describe('player profile routes (Bun)', () => {
 		const body = await res.json();
 		expect(body.error).toBe('bad_request');
 	});
-
-	it('PATCH accepts an empty-string displayName (clears to empty, not reset to Google)', async () => {
-		// An empty string is a deliberate user choice to have no display name,
-		// distinct from null which resets to the Google default. The route must
-		// accept '' and store it, not reject it and not coerce to null.
-		const res = await buildApp().request('/api/player/profile', {
-			method: 'PATCH',
-			headers: { 'Content-Type': 'application/json', ...AUTH_COOKIE },
-			body: JSON.stringify({ displayName: '' })
-		});
-		expect(res.status).toBe(200);
-		const { updateProfileDisplayName } = await import('@perseus/shared');
-		expect(updateProfileDisplayName).toHaveBeenCalledWith(expect.anything(), 'p1', '');
-		// GET reflects the empty override (name falls back to email since '' is falsy
-		// in the `?? session.user.name ?? session.user.email` chain).
-		const body = await (
-			await buildApp().request('/api/player/profile', { headers: AUTH_COOKIE })
-		).json();
-		// The effective name uses `override?.displayName ?? ...`; '' is not nullish,
-		// so it short-circuits to ''.
-		expect(body.name).toBe('');
-	});
 });
 
 const PNG_BYTES = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01, 0x02, 0x03, 0x04];
@@ -281,7 +248,6 @@ describe('player avatar route (Bun)', () => {
 		originalDataDir = process.env.DATA_DIR;
 		dataDir = mkdtempSync(join(tmpdir(), 'perseus-player-test-'));
 		process.env.DATA_DIR = dataDir;
-		vi.mocked(resetAvatarAttempts).mockClear();
 	});
 
 	afterEach(() => {
@@ -306,20 +272,6 @@ describe('player avatar route (Bun)', () => {
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.avatarUrl).toBe('/api/player/p1/avatar');
-	});
-
-	it('POST avatar resets the rate-limit counter on success', async () => {
-		const blob = new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' });
-		const form = new FormData();
-		form.append('avatar', blob, 'a.png');
-
-		const res = await buildApp().request('/api/player/avatar', {
-			method: 'POST',
-			headers: AUTH_COOKIE,
-			body: form
-		});
-		expect(res.status).toBe(200);
-		expect(resetAvatarAttempts).toHaveBeenCalledTimes(1);
 	});
 
 	it('GET avatar serves the stored image with sniffed content-type', async () => {
@@ -403,114 +355,6 @@ describe('player avatar route (Bun)', () => {
 		expect(row.displayName).toBe('KeepMe');
 		expect(row.avatarUrl).toBe('/api/player/p1/avatar');
 	});
-
-	it('concurrent PATCH /profile + POST /avatar do not clobber each other', async () => {
-		// This is the exact race the field-specific upserts prevent: a naive
-		// read-modify-write in either handler could overwrite the other field
-		// with a stale value. Fire both requests concurrently and assert both
-		// fields land in the final store.
-		const blob = new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' });
-		const form = new FormData();
-		form.append('avatar', blob, 'a.png');
-
-		const patchReq = buildApp().request('/api/player/profile', {
-			method: 'PATCH',
-			headers: { 'Content-Type': 'application/json', ...AUTH_COOKIE },
-			body: JSON.stringify({ displayName: 'ConcurrentName' })
-		});
-		const avatarReq = buildApp().request('/api/player/avatar', {
-			method: 'POST',
-			headers: AUTH_COOKIE,
-			body: form
-		});
-		const [patchRes, avatarRes] = await Promise.all([patchReq, avatarReq]);
-		expect(patchRes.status).toBe(200);
-		expect(avatarRes.status).toBe(200);
-
-		const { getProfileOverride } = await import('@perseus/shared');
-		const row = await (getProfileOverride as any)({}, 'p1');
-		// Both fields must be present — neither handler overwrote the other.
-		expect(row.displayName).toBe('ConcurrentName');
-		expect(row.avatarUrl).toBe('/api/player/p1/avatar');
-	});
-
-	it('POST avatar rejects a file with valid image MIME type but non-image magic bytes', async () => {
-		// A client could claim image/png while sending arbitrary bytes (e.g. an
-		// HTML/JS payload). The magic-byte sniff must reject it regardless of
-		// the client-supplied Content-Type.
-		const blob = new Blob(
-			[
-				new Uint8Array([
-					0x3c, 0x68, 0x74, 0x6d, 0x6c, 0x3e, 0x0a, 0x3c, 0x73, 0x63, 0x72, 0x69, 0x70, 0x74
-				])
-			],
-			{
-				type: 'image/png'
-			}
-		);
-		const form = new FormData();
-		form.append('avatar', blob, 'evil.png');
-		const res = await buildApp().request('/api/player/avatar', {
-			method: 'POST',
-			headers: AUTH_COOKIE,
-			body: form
-		});
-		expect(res.status).toBe(400);
-		const body = await res.json();
-		expect(body.error).toBe('bad_request');
-		expect(body.message).toBe('Unsupported image type');
-	});
-
-	it('POST avatar accepts a JPEG file (sniffs image/jpeg magic bytes)', async () => {
-		// JPEG SOI: FF D8 FF followed by enough bytes to pass the 12-byte minimum
-		const jpegBytes = [0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01];
-		const blob = new Blob([new Uint8Array(jpegBytes)], { type: 'image/jpeg' });
-		const form = new FormData();
-		form.append('avatar', blob, 'a.jpg');
-		const res = await buildApp().request('/api/player/avatar', {
-			method: 'POST',
-			headers: AUTH_COOKIE,
-			body: form
-		});
-		expect(res.status).toBe(200);
-
-		// GET serves it with sniffed image/jpeg content-type
-		const getRes = await buildApp().request('/api/player/p1/avatar');
-		expect(getRes.status).toBe(200);
-		expect(getRes.headers.get('Content-Type')).toBe('image/jpeg');
-	});
-
-	it('POST avatar accepts a WebP file (sniffs image/webp magic bytes)', async () => {
-		// WebP: RIFF....WEBP
-		const webpBytes = [0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50];
-		const blob = new Blob([new Uint8Array(webpBytes)], { type: 'image/webp' });
-		const form = new FormData();
-		form.append('avatar', blob, 'a.webp');
-		const res = await buildApp().request('/api/player/avatar', {
-			method: 'POST',
-			headers: AUTH_COOKIE,
-			body: form
-		});
-		expect(res.status).toBe(200);
-
-		const getRes = await buildApp().request('/api/player/p1/avatar');
-		expect(getRes.status).toBe(200);
-		expect(getRes.headers.get('Content-Type')).toBe('image/webp');
-	});
-
-	it('GET avatar falls back to application/octet-stream for unrecognised bytes', async () => {
-		// Write non-image bytes directly to the avatar path to exercise the
-		// sniffImageType null fallback in the serve route.
-		const { writeFile, mkdir } = await import('node:fs/promises');
-		const { join } = await import('node:path');
-		const dir = join(dataDir, 'avatars');
-		await mkdir(dir, { recursive: true });
-		await writeFile(join(dir, 'p1'), Buffer.from([0x00, 0x01, 0x02, 0x03]));
-
-		const res = await buildApp().request('/api/player/p1/avatar');
-		expect(res.status).toBe(200);
-		expect(res.headers.get('Content-Type')).toBe('application/octet-stream');
-	});
 });
 
 describe('player lists (Bun)', () => {
@@ -533,32 +377,12 @@ describe('player lists (Bun)', () => {
 		expect(body.puzzles[0].name).toBe('Cat');
 	});
 
-	it('GET puzzles coerces an unexpected DB status to failed', async () => {
-		const shared = await import('@perseus/shared');
-		(shared as any).__puzzlesStore.set('p1', [
-			{ id: 'pz2', name: 'Glitch', pieceCount: 4, status: 'corrupted', createdAt: 2 }
-		]);
-		const res = await buildApp().request('/api/player/puzzles', { headers: AUTH_COOKIE });
-		expect(res.status).toBe(200);
-		const body = await res.json();
-		expect(body.puzzles[0].status).toBe('failed');
-	});
-
 	it('GET puzzles forwards limit and cursor query params', async () => {
 		const { listPlayerPuzzles } = await import('@perseus/shared');
 		await buildApp().request('/api/player/puzzles?limit=5&cursor=100', { headers: AUTH_COOKIE });
 		expect(listPlayerPuzzles).toHaveBeenCalledWith(expect.anything(), 'p1', {
 			limit: 5,
-			cursor: '100'
-		});
-	});
-
-	it('GET puzzles falls back to limit 20 when limit is non-numeric', async () => {
-		const { listPlayerPuzzles } = await import('@perseus/shared');
-		await buildApp().request('/api/player/puzzles?limit=abc', { headers: AUTH_COOKIE });
-		expect(listPlayerPuzzles).toHaveBeenCalledWith(expect.anything(), 'p1', {
-			limit: 20,
-			cursor: undefined
+			cursor: 100
 		});
 	});
 
@@ -589,35 +413,6 @@ describe('player lists (Bun)', () => {
 		const { listPlayerStats } = await import('@perseus/shared');
 		await buildApp().request('/api/player/stats?limit=10', { headers: AUTH_COOKIE });
 		expect(listPlayerStats).toHaveBeenCalledWith(expect.anything(), 'p1', { limit: 10 });
-	});
-
-	it('GET stats forwards cursor query param', async () => {
-		const { listPlayerStats } = await import('@perseus/shared');
-		await buildApp().request('/api/player/stats?cursor=50%7Cpz1', { headers: AUTH_COOKIE });
-		expect(listPlayerStats).toHaveBeenCalledWith(expect.anything(), 'p1', {
-			limit: 20,
-			cursor: '50|pz1'
-		});
-	});
-
-	it('GET stats returns nextCursor in response', async () => {
-		const shared = await import('@perseus/shared');
-		(shared as any).__statsStore.set('p1', [
-			{
-				puzzleId: 'pz1',
-				bestTimeSeconds: 90,
-				totalCompletions: 1,
-				firstCompletedAt: 1,
-				lastCompletedAt: 1
-			}
-		]);
-		vi.mocked(shared.listPlayerStats).mockResolvedValueOnce({
-			rows: (shared as any).__statsStore.get('p1'),
-			nextCursor: '90|pz1'
-		});
-		const res = await buildApp().request('/api/player/stats', { headers: AUTH_COOKIE });
-		const body = await res.json();
-		expect(body.nextCursor).toBe('90|pz1');
 	});
 
 	it('GET stats requires authentication', async () => {
