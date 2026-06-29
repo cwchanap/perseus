@@ -452,7 +452,12 @@ export async function avatarRateLimit(
 	const kv = c.env.PUZZLE_METADATA;
 	const env = c.env.NODE_ENV;
 
-	const lockCheck = await checkAndIncrement(kv, key, Date.now(), env, false, AVATAR_MAX_ATTEMPTS);
+	// Count every upload attempt (success or failure) toward the limit BEFORE
+	// the handler runs — mirroring the Bun middleware. This ensures that when
+	// the handler calls resetAvatarAttempts (on a successful upload) the
+	// already-incremented counter is deleted, and no post-request write
+	// recreates it. Incrementing after `next()` would undo the reset.
+	const lockCheck = await checkAndIncrement(kv, key, Date.now(), env, true, AVATAR_MAX_ATTEMPTS);
 	if (lockCheck.shouldBlock) {
 		return c.json(
 			{
@@ -467,13 +472,6 @@ export async function avatarRateLimit(
 	}
 
 	await next();
-
-	// Count every upload attempt (success or failure) toward the limit.
-	try {
-		await checkAndIncrement(kv, key, Date.now(), env, true, AVATAR_MAX_ATTEMPTS);
-	} catch (error) {
-		console.error('Rate limit post-request tracking failed:', error);
-	}
 
 	return c.res;
 }

@@ -36,10 +36,16 @@ vi.mock('../../services/player-auth.worker', () => ({
 
 // admin.worker.ts cleans up the D1 ownership row on puzzle delete. Mock the db
 // handle and repository so the test doesn't bind a real D1 session and so the
-// cleanup is assertable.
-vi.mock('../../db.worker', () => ({
-	getWorkerDb: vi.fn(() => ({}))
-}));
+// cleanup is assertable. A stable sentinel is returned so assertions can verify
+// the route forwards the exact DB handle (reference equality), not just any
+// empty object.
+vi.mock('../../db.worker', () => {
+	const dbStub = Symbol('worker-db-stub');
+	return {
+		getWorkerDb: vi.fn(() => dbStub),
+		__dbStub: dbStub
+	};
+});
 
 vi.mock('@perseus/shared', () => ({
 	deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined)
@@ -49,6 +55,7 @@ import admin from '../admin.worker';
 import * as storage from '../../services/storage.worker';
 import * as auth from '../../middleware/auth.worker';
 import * as playerAuth from '../../services/player-auth.worker';
+import * as dbWorker from '../../db.worker';
 import { __resetRateLimitStore } from '../../middleware/rate-limit.worker';
 
 // Valid PNG magic bytes header for test blobs
@@ -385,8 +392,9 @@ describe('Admin Routes - Puzzle Deletion', () => {
 			// Ownership row is cleaned up best-effort even when asset deletion partially
 			// fails, so deleted puzzles don't linger in the uploader's "My Puzzles" list.
 			const { deletePuzzleOwnership } = await import('@perseus/shared');
-			expect(deletePuzzleOwnership).toHaveBeenCalledWith(
-				{},
+			const dbStub = (dbWorker as any).__dbStub;
+			expect(vi.mocked(deletePuzzleOwnership).mock.calls[0][0]).toBe(dbStub);
+			expect(vi.mocked(deletePuzzleOwnership).mock.calls[0][1]).toBe(
 				'550e8400-e29b-41d4-a716-446655440000'
 			);
 		});

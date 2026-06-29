@@ -67,6 +67,14 @@
 	async function loadAll() {
 		loading = true;
 		loadError = false;
+		// Cancel any in-flight pagination request before replacing the list,
+		// otherwise a pending loadNextPuzzles result could append stale items
+		// after the fresh reload completes.
+		if (loadMoreController) {
+			loadMoreController.abort();
+			loadMoreController = null;
+		}
+		loadingMore = false;
 		try {
 			// Reset pagination state on a fresh load (e.g. after avatar upload
 			// triggers reloadAll). The puzzles list is replaced, not appended.
@@ -304,9 +312,15 @@ hover:bg-[rgba(255,0,102,0.08)]"
 			<ul class="mt-3 divide-y divide-(--border)">
 				{#each stats as s (s.puzzleId)}
 					<li class="flex items-center justify-between gap-3 py-2 text-sm">
-						<a href={resolve(`/puzzle/${s.puzzleId}`)} class="min-w-0 truncate text-(--text-1)">
-							{s.puzzleName ?? s.puzzleId}
-						</a>
+						{#if s.puzzleName}
+							<a href={resolve(`/puzzle/${s.puzzleId}`)} class="min-w-0 truncate text-(--text-1)">
+								{s.puzzleName}
+							</a>
+						{:else}
+							<span class="min-w-0 truncate text-(--text-2)">
+								{s.puzzleId}
+							</span>
+						{/if}
 						<span class="shrink-0 text-xs text-(--text-2)">
 							{s.totalCompletions}×
 						</span>

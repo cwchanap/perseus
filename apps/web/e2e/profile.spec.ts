@@ -114,13 +114,14 @@ test('profile edit flow updates display name', async ({ page }) => {
 	await expect(page.getByText('New Display Name')).toBeVisible();
 });
 
-test('upload → ownership → profile display: a newly owned puzzle appears in My Puzzles', async ({
+test('reload after avatar upload picks up a newly owned puzzle from the puzzles endpoint', async ({
 	page
 }) => {
-	// Simulate the end-to-end ownership flow at the API boundary: the profile
-	// page's "My Puzzles" list reflects a puzzle that was just uploaded. We
-	// mock the player puzzles endpoint to return the new puzzle on the second
-	// call (after the edit flow triggers a reload).
+	// This test verifies that loadAll (triggered by avatar upload) re-fetches
+	// /api/player/puzzles and reflects a newly owned puzzle in the "My
+	// Puzzles" list. The ownership/upload flow itself is mocked at the API
+	// boundary — the puzzles endpoint returns the new puzzle on the second
+	// call (after the avatar upload triggers loadAll).
 	const initialPuzzles = {
 		puzzles: [{ id: 'pz-1', name: 'First Puzzle', pieceCount: 4, status: 'ready', createdAt: 2 }],
 		nextCursor: undefined
