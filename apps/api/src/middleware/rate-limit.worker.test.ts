@@ -4,8 +4,6 @@ import {
 	loginRateLimit,
 	resetLoginAttempts,
 	oauthRateLimit,
-	avatarRateLimit,
-	resetAvatarAttempts,
 	__resetRateLimitStore
 } from './rate-limit.worker';
 import type { Context, Next } from 'hono';
@@ -508,96 +506,6 @@ describe('Rate Limit Middleware', () => {
 
 			expect(next).not.toHaveBeenCalled();
 			expect(response.status).toBe(429);
-		});
-	});
-
-	describe('avatarRateLimit', () => {
-		function createAvatarContext(playerId: string = 'player-1', kv?: any): Context<any> {
-			return {
-				env: {
-					PUZZLE_METADATA: kv ?? createMockKV(),
-					NODE_ENV: 'test'
-				},
-				req: {
-					header: vi.fn(() => null)
-				},
-				get: vi.fn((key: string) => {
-					if (key === 'playerSession') return { user: { id: playerId } };
-					return undefined;
-				}),
-				json: vi.fn((body, status) => ({ body, status })),
-				res: { status: 200 } as any
-			} as any;
-		}
-
-		it('allows first upload and tracks the attempt', async () => {
-			const mockKV = createMockKV();
-			const ctx = createAvatarContext('player-a', mockKV);
-			const next = vi.fn();
-			await avatarRateLimit(ctx, next);
-			expect(next).toHaveBeenCalled();
-		});
-
-		it('blocks after exceeding max attempts', async () => {
-			const mockKV = createMockKV();
-			// Pre-seed the KV with a locked entry. The key in KV is prefixed
-			// with 'ratelimit:' by getKVKey, and the entry shape must match
-			// RateLimitEntry { attempts, lockedUntil, lastAttemptAt }.
-			await mockKV.put(
-				'ratelimit:avatar:player-b',
-				JSON.stringify({
-					attempts: 25,
-					lockedUntil: Date.now() + 60000,
-					lastAttemptAt: Date.now()
-				})
-			);
-			const ctx = createAvatarContext('player-b', mockKV);
-			const next = vi.fn();
-			const response = await avatarRateLimit(ctx, next);
-			expect(next).not.toHaveBeenCalled();
-			expect(response.status).toBe(429);
-		});
-
-		it('fails open when session is missing', async () => {
-			const mockKV = createMockKV();
-			const ctx = {
-				env: {
-					PUZZLE_METADATA: mockKV,
-					NODE_ENV: 'test'
-				},
-				req: { header: vi.fn(() => null) },
-				get: vi.fn(() => undefined),
-				json: vi.fn((body, status) => ({ body, status })),
-				res: { status: 200 } as any
-			} as any;
-			const next = vi.fn();
-			await avatarRateLimit(ctx, next);
-			expect(next).toHaveBeenCalled();
-		});
-
-		it('resetAvatarAttempts deletes the KV entry', async () => {
-			const mockKV = createMockKV();
-			// The KV key is prefixed with 'ratelimit:' by getKVKey.
-			await mockKV.put(
-				'ratelimit:avatar:player-c',
-				JSON.stringify({ attempts: 5, lockedUntil: null, lastAttemptAt: Date.now() })
-			);
-			const ctx = createAvatarContext('player-c', mockKV);
-			await resetAvatarAttempts(ctx);
-			expect(mockKV.delete).toHaveBeenCalledWith('ratelimit:avatar:player-c');
-		});
-
-		it('resetAvatarAttempts is a no-op when session is missing', async () => {
-			const mockKV = createMockKV();
-			const ctx = {
-				env: {
-					PUZZLE_METADATA: mockKV,
-					NODE_ENV: 'test'
-				},
-				get: vi.fn(() => undefined)
-			} as any;
-			await resetAvatarAttempts(ctx);
-			expect(mockKV.delete).not.toHaveBeenCalled();
 		});
 	});
 });

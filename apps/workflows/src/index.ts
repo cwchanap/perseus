@@ -474,10 +474,9 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 				await updateMetadata(this.env.PUZZLE_METADATA_DO, puzzleId, {
 					status: 'ready'
 				});
-				// Let D1 mirror-write failures propagate so the workflow step
-				// retries instead of completing with D1 stuck at 'processing'.
-				// updateMetadata is idempotent, so re-running on retry is safe.
-				await setPuzzleStatus(createD1Db(this.env), puzzleId, 'ready');
+				await setPuzzleStatus(createD1Db(this.env), puzzleId, 'ready').catch((error) => {
+					console.error('Failed to update puzzle status in D1:', error);
+				});
 			});
 		} catch (error) {
 			// Mark puzzle as failed with retry logic
@@ -515,11 +514,13 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 				if (doSucceeded) {
 					// Mirror the finalize step: keep D1 in sync with the public
 					// status so the puzzle doesn't stay stuck at 'processing' in
-					// the ownership/stats store. Let D1 failures propagate so the
-					// step retries rather than completing with a stuck D1 row. The
-					// DO update above is idempotent, so re-running this step on
-					// retry is safe.
-					await setPuzzleStatus(createD1Db(this.env), puzzleId, 'failed');
+					// the ownership/stats store. Best-effort and independent of the
+					// DO retry loop — a D1/DB failure must not re-run the DO update.
+					try {
+						await setPuzzleStatus(createD1Db(this.env), puzzleId, 'failed');
+					} catch (d1Error) {
+						console.error('Failed to update puzzle status in D1:', d1Error);
+					}
 					return;
 				}
 

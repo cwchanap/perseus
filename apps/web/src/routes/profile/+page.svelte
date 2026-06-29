@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
+	import { playerAuth } from '$lib/stores/playerAuth';
 	import {
 		getPlayerProfile,
 		getPlayerPuzzles,
@@ -25,34 +27,15 @@
 	let editing = $state(false);
 	let displayName = $state('');
 	let saving = $state(false);
-	let saveError = $state(false);
-	let avatarError = $state(false);
-	let avatarInput = $state<HTMLInputElement | null>(null);
-	// Infinite-scroll state for "My Puzzles". Mirrors the gallery's pattern:
-	// a sentinel div observed by IntersectionObserver triggers loadNextPuzzles
-	// when the user scrolls near the bottom and a nextCursor is present.
-	let nextCursor = $state<string | undefined>(undefined);
-	let loadingMore = $state(false);
-	let loadMoreError = $state(false);
-	let scrollSentinel = $state<HTMLDivElement | null>(null);
-	let loadMoreController: AbortController | null = null;
-	let hasMore = $derived(nextCursor !== undefined);
-	// Infinite-scroll state for "Best Times". Same pattern as puzzles above,
-	// kept independent so the two lists page without interfering.
-	let statsNextCursor = $state<string | undefined>(undefined);
-	let loadingMoreStats = $state(false);
-	let loadMoreStatsError = $state(false);
-	let statsScrollSentinel = $state<HTMLDivElement | null>(null);
-	let statsLoadMoreController: AbortController | null = null;
-	let hasMoreStats = $derived(statsNextCursor !== undefined);
 
 	const initials = $derived(
 		(profile?.name ?? '?')
 			.split(' ')
+			.filter((p) => p.length > 0)
 			.map((p) => p[0])
 			.slice(0, 2)
 			.join('')
-			.toUpperCase()
+			.toUpperCase() || '?'
 	);
 
 	function toCard(p: PlayerPuzzleSummary): PuzzleSummary {
@@ -60,173 +43,64 @@
 			id: p.id,
 			name: p.name,
 			pieceCount: p.pieceCount,
-			status: p.status,
+			status: p.status as PuzzleSummary['status'],
 			...(p.category ? { category: p.category as PuzzleSummary['category'] } : {})
 		};
 	}
 
 	onMount(() => {
-		// The /profile/+layout.svelte guard ensures the user is authenticated
-		// before this page mounts, so we can load data immediately without
-		// re-checking playerAuth here.
-		void loadAll();
+		// The root layout already calls playerAuth.refresh() on mount.
+		// Subscribe and wait for the store to settle (leave 'loading') before
+		// deciding whether to redirect to login. Calling refresh() here would
+		// race with the layout's call via the store's operationId guard.
+		let settled = false;
+		const unsubscribe = playerAuth.subscribe((state) => {
+			if (settled || state.status === 'loading') return;
+			settled = true;
+			if (state.status !== 'authenticated') {
+				goto(resolve('/login'));
+				return;
+			}
+			void loadAll();
+		});
+		return unsubscribe;
 	});
 
 	async function loadAll() {
 		loading = true;
 		loadError = false;
-		// Cancel any in-flight pagination request before replacing the list,
-		// otherwise a pending loadNextPuzzles result could append stale items
-		// after the fresh reload completes.
-		if (loadMoreController) {
-			loadMoreController.abort();
-			loadMoreController = null;
-		}
-		if (statsLoadMoreController) {
-			statsLoadMoreController.abort();
-			statsLoadMoreController = null;
-		}
-		loadingMore = false;
-		loadingMoreStats = false;
-		try {
-			// Reset pagination state on a fresh load (e.g. after avatar upload
-			// triggers reloadAll). The puzzles and stats lists are replaced,
-			// not appended.
-			nextCursor = undefined;
-			loadMoreError = false;
-			statsNextCursor = undefined;
-			loadMoreStatsError = false;
-			const [profileRes, puzzlesRes, statsRes] = await Promise.all([
-				getPlayerProfile(),
-				getPlayerPuzzles(),
-				getPlayerStats()
-			]);
-			profile = profileRes;
-			puzzles = puzzlesRes.puzzles;
-			nextCursor = puzzlesRes.nextCursor;
-			stats = statsRes.stats;
-			statsNextCursor = statsRes.nextCursor;
+		// Use allSettled so a failure in puzzles/stats doesn't hide a successfully
+		// loaded profile: the profile is essential (its failure surfaces the error
+		// screen), while puzzle/stat failures degrade gracefully to empty lists.
+		const [profileRes, puzzlesRes, statsRes] = await Promise.allSettled([
+			getPlayerProfile(),
+			getPlayerPuzzles().then((r) => r.puzzles),
+			getPlayerStats().then((r) => r.stats)
+		]);
+		if (profileRes.status === 'fulfilled') {
+			profile = profileRes.value;
 			displayName = profile?.name ?? '';
-		} catch (e) {
-			// Without this, a rejected request leaves profile null while loading
-			// is false, rendering a blank page. Surface an error + retry instead.
-			console.error('Failed to load profile:', e);
+		} else {
+			// Without this, a rejected profile request leaves profile null while
+			// loading is false, rendering a blank page. Surface an error + retry.
+			console.error('Failed to load profile:', profileRes.reason);
 			loadError = true;
-		} finally {
-			loading = false;
 		}
+		puzzles = puzzlesRes.status === 'fulfilled' ? puzzlesRes.value : [];
+		stats = statsRes.status === 'fulfilled' ? statsRes.value : [];
+		// Degrade non-essential failures noisily but without blocking the UI.
+		if (puzzlesRes.status === 'rejected')
+			console.error('Failed to load puzzles:', puzzlesRes.reason);
+		if (statsRes.status === 'rejected') console.error('Failed to load stats:', statsRes.reason);
+		loading = false;
 	}
-
-	async function loadNextPuzzles() {
-		if (loadingMore || !hasMore) return;
-		const controller = new AbortController();
-		loadMoreController = controller;
-		loadingMore = true;
-		loadMoreError = false;
-		try {
-			const result = await getPlayerPuzzles({ cursor: nextCursor });
-			if (controller.signal.aborted) return;
-			puzzles = [...puzzles, ...result.puzzles];
-			nextCursor = result.nextCursor;
-		} catch (e) {
-			const isAbort = e instanceof DOMException && e.name === 'AbortError';
-			if (!isAbort) console.error('Failed to load more puzzles:', e);
-			if (controller.signal.aborted) return;
-			loadMoreError = true;
-		} finally {
-			if (loadMoreController === controller) {
-				loadMoreController = null;
-				loadingMore = false;
-			}
-		}
-	}
-
-	// Observe the scroll sentinel and trigger the next page load when it
-	// scrolls into view. Re-creates the observer whenever the sentinel
-	// element binding changes (e.g. when the puzzles section appears).
-	$effect(() => {
-		const sentinel = scrollSentinel;
-		if (!sentinel) return;
-		const observer = new IntersectionObserver(
-			(entries) => {
-				if (entries[0].isIntersecting && !loadMoreError && !loadingMore && hasMore) {
-					void loadNextPuzzles();
-				}
-			},
-			{ rootMargin: '200px' }
-		);
-		observer.observe(sentinel);
-		return () => observer.disconnect();
-	});
-
-	async function loadNextStats() {
-		if (loadingMoreStats || !hasMoreStats) return;
-		const controller = new AbortController();
-		statsLoadMoreController = controller;
-		loadingMoreStats = true;
-		loadMoreStatsError = false;
-		try {
-			const result = await getPlayerStats({ cursor: statsNextCursor });
-			if (controller.signal.aborted) return;
-			stats = [...stats, ...result.stats];
-			statsNextCursor = result.nextCursor;
-		} catch (e) {
-			const isAbort = e instanceof DOMException && e.name === 'AbortError';
-			if (!isAbort) console.error('Failed to load more stats:', e);
-			if (controller.signal.aborted) return;
-			loadMoreStatsError = true;
-		} finally {
-			if (statsLoadMoreController === controller) {
-				statsLoadMoreController = null;
-				loadingMoreStats = false;
-			}
-		}
-	}
-
-	// Second IntersectionObserver for the Best Times sentinel, independent of
-	// the puzzles observer so the two lists page without interfering.
-	$effect(() => {
-		const sentinel = statsScrollSentinel;
-		if (!sentinel) return;
-		const observer = new IntersectionObserver(
-			(entries) => {
-				if (entries[0].isIntersecting && !loadMoreStatsError && !loadingMoreStats && hasMoreStats) {
-					void loadNextStats();
-				}
-			},
-			{ rootMargin: '200px' }
-		);
-		observer.observe(sentinel);
-		return () => observer.disconnect();
-	});
 
 	async function saveName() {
 		saving = true;
-		saveError = false;
 		try {
 			await updatePlayerProfile({ displayName });
 			editing = false;
 			await loadAll();
-		} catch (e) {
-			console.error('Failed to save display name:', e);
-			saveError = true;
-		} finally {
-			saving = false;
-		}
-	}
-
-	async function resetNameToGoogleDefault() {
-		saving = true;
-		saveError = false;
-		try {
-			// Send null to clear the display_name override, reverting to the
-			// Google-provided name (or email fallback).
-			await updatePlayerProfile({ displayName: null });
-			editing = false;
-			await loadAll();
-		} catch (e) {
-			console.error('Failed to reset display name:', e);
-			saveError = true;
 		} finally {
 			saving = false;
 		}
@@ -243,13 +117,9 @@
 		const input = e.target as HTMLInputElement;
 		const file = input.files?.[0];
 		if (!file) return;
-		avatarError = false;
 		try {
 			await uploadPlayerAvatar(file);
 			await loadAll();
-		} catch (e) {
-			console.error('Failed to upload avatar:', e);
-			avatarError = true;
 		} finally {
 			// Reset the input so selecting the same file again still fires a
 			// change event (needed to retry a failed upload).
@@ -286,23 +156,6 @@
 					/>
 					<button type="button" onclick={saveName} disabled={saving}>Save</button>
 					<button type="button" data-testid="cancel-edit" onclick={cancelEditing}>Cancel</button>
-					{#if profile.hasDisplayNameOverride}
-						<button
-							type="button"
-							data-testid="reset-name-button"
-							onclick={resetNameToGoogleDefault}
-							disabled={saving}
-							class="ml-1 text-xs text-(--text-2) underline"
-						>
-							Reset to Google name{#if profile.googleName}
-								({profile.googleName}){/if}
-						</button>
-					{/if}
-					{#if saveError}
-						<p data-testid="save-name-error" class="mt-1 text-xs text-(--hot)">
-							Failed to save name. Try again.
-						</p>
-					{/if}
 				{:else}
 					<h1 class="font-(--font-display) text-(--text-0)" data-testid="profile-name">
 						{profile.name}
@@ -310,18 +163,12 @@
 					<p class="text-sm text-(--text-2)">{profile.email}</p>
 				{/if}
 				<input
-					bind:this={avatarInput}
 					data-testid="avatar-input"
 					type="file"
 					accept="image/*"
 					onchange={onAvatarChosen}
 					class="mt-2 text-xs text-(--text-2)"
 				/>
-				{#if avatarError}
-					<p data-testid="avatar-upload-error" class="mt-1 text-xs text-(--hot)">
-						Failed to upload avatar. Try again.
-					</p>
-				{/if}
 			</div>
 		</div>
 
@@ -363,87 +210,24 @@
 					<PuzzleCard puzzle={toCard(p)} />
 				{/each}
 			</div>
-
-			{#if loadingMore}
-				<div class="mt-4 flex justify-center py-4" data-testid="profile-load-more-spinner">
-					<div
-						class="h-6 w-6 rounded-full border-2 border-(--border) border-t-(--accent)
-motion-safe:animate-[spin-cw_0.75s_linear_infinite] motion-reduce:animate-none"
-					></div>
-				</div>
-			{:else if loadMoreError}
-				<div class="mt-4 flex justify-center" data-testid="profile-load-more-error">
-					<button
-						type="button"
-						onclick={() => void loadNextPuzzles()}
-						class="border border-(--hot) px-4 py-1.5 text-xs text-(--hot) uppercase
-hover:bg-[rgba(255,0,102,0.08)]"
-					>
-						Retry
-					</button>
-				</div>
-			{/if}
-
-			<div
-				bind:this={scrollSentinel}
-				data-testid="profile-scroll-sentinel"
-				class="h-px"
-				aria-hidden="true"
-			></div>
 		{/if}
 
 		<h2 class="mt-8 font-(--font-display) text-(--text-0)">Best Times</h2>
 		{#if stats.length === 0}
 			<p class="text-sm text-(--text-2)">No solves recorded yet.</p>
 		{:else}
-			<ul class="mt-3 divide-y divide-(--border)" data-testid="best-times-list">
+			<ul class="mt-3 divide-y divide-(--border)">
 				{#each stats as s (s.puzzleId)}
-					<li class="flex items-center justify-between gap-3 py-2 text-sm">
-						{#if s.puzzleName}
-							<a href={resolve(`/puzzle/${s.puzzleId}`)} class="min-w-0 truncate text-(--text-1)">
-								{s.puzzleName}
-							</a>
-						{:else}
-							<span class="min-w-0 truncate text-(--text-2)">
-								{s.puzzleId}
-							</span>
-						{/if}
-						<span class="shrink-0 text-xs text-(--text-2)">
-							{s.totalCompletions}×
-						</span>
-						<span class="shrink-0 font-(--font-mono) text-(--gold)">
+					<li class="flex justify-between py-2 text-sm">
+						<a href={resolve(`/puzzle/${s.puzzleId}`)} class="text-(--text-1)">
+							{s.puzzleId}
+						</a>
+						<span class="font-(--font-mono) text-(--gold)">
 							{formatTime(s.bestTimeSeconds)}
 						</span>
 					</li>
 				{/each}
 			</ul>
-
-			{#if loadingMoreStats}
-				<div class="mt-4 flex justify-center py-4" data-testid="profile-stats-load-more-spinner">
-					<div
-						class="h-6 w-6 rounded-full border-2 border-(--border) border-t-(--accent)
-motion-safe:animate-[spin-cw_0.75s_linear_infinite] motion-reduce:animate-none"
-					></div>
-				</div>
-			{:else if loadMoreStatsError}
-				<div class="mt-4 flex justify-center" data-testid="profile-stats-load-more-error">
-					<button
-						type="button"
-						onclick={() => void loadNextStats()}
-						class="border border-(--hot) px-4 py-1.5 text-xs text-(--hot) uppercase
-hover:bg-[rgba(255,0,102,0.08)]"
-					>
-						Retry
-					</button>
-				</div>
-			{/if}
-
-			<div
-				bind:this={statsScrollSentinel}
-				data-testid="profile-stats-scroll-sentinel"
-				class="h-px"
-				aria-hidden="true"
-			></div>
 		{/if}
 	</section>
 {/if}

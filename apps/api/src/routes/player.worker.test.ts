@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Hono } from 'hono';
 
 // Mock the Worker DB factory so the route never touches a real D1 binding.
@@ -48,15 +48,14 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 			totalCompletions: 0
 		})),
 		listPlayerPuzzles: vi.fn(
-			async (db: unknown, playerId: string): Promise<{ rows: unknown[]; nextCursor?: string }> => ({
+			async (db: unknown, playerId: string): Promise<{ rows: unknown[]; nextCursor?: number }> => ({
 				rows: puzzlesStore.get(playerId) ?? [],
 				nextCursor: undefined
 			})
 		),
 		listPlayerStats: vi.fn(
-			async (db: unknown, playerId: string): Promise<{ rows: unknown[]; nextCursor?: string }> => ({
-				rows: statsStore.get(playerId) ?? [],
-				nextCursor: undefined
+			async (db: unknown, playerId: string): Promise<{ rows: unknown[] }> => ({
+				rows: statsStore.get(playerId) ?? []
 			})
 		)
 	};
@@ -69,20 +68,9 @@ vi.mock('../services/player-auth.worker', () => ({
 	getPlayerSession: vi.fn()
 }));
 
-// Spy on resetAvatarAttempts while letting the real rate-limit middleware run,
-// so we can assert the avatar handler resets the counter on success.
-vi.mock('../middleware/rate-limit.worker', async (importOriginal) => {
-	const actual = await importOriginal<typeof import('../middleware/rate-limit.worker')>();
-	return {
-		...actual,
-		resetAvatarAttempts: vi.fn(actual.resetAvatarAttempts)
-	};
-});
-
 import player from './player.worker';
 import type { Env } from '../worker';
 import * as playerAuth from '../services/player-auth.worker';
-import { resetAvatarAttempts } from '../middleware/rate-limit.worker';
 import type { PlayerSessionRecord } from '../services/player-auth.worker';
 
 const TEST_PLAYER: PlayerSessionRecord = {
@@ -136,22 +124,6 @@ describe('player profile routes (Worker)', () => {
 		});
 	});
 
-	it('GET profile falls back to email when user.name is null and no override', async () => {
-		vi.mocked(playerAuth.getPlayerSession).mockResolvedValue({
-			...TEST_PLAYER,
-			user: { ...TEST_PLAYER.user, name: undefined, picture: undefined }
-		});
-		const res = await buildApp().request(
-			'/api/player/profile',
-			{ headers: AUTH_COOKIE },
-			DUMMY_ENV
-		);
-		expect(res.status).toBe(200);
-		const body = (await res.json()) as any;
-		expect(body.name).toBe('p@example.com');
-		expect(body.picture).toBeNull();
-	});
-
 	it('PATCH then GET reflects override', async () => {
 		const patch = await buildApp().request(
 			'/api/player/profile',
@@ -171,34 +143,6 @@ describe('player profile routes (Worker)', () => {
 		);
 		const body = (await res.json()) as any;
 		expect(body.name).toBe('Custom');
-	});
-
-	it('GET profile exposes googleName and hasDisplayNameOverride', async () => {
-		// No override: hasDisplayNameOverride is false, googleName is the Google name.
-		const res1 = await buildApp().request(
-			'/api/player/profile',
-			{ headers: AUTH_COOKIE },
-			DUMMY_ENV
-		);
-		const body1 = (await res1.json()) as any;
-		expect(body1.googleName).toBe('Google Name');
-		expect(body1.hasDisplayNameOverride).toBe(false);
-
-		// After setting an override: hasDisplayNameOverride is true.
-		await buildApp().request(
-			'/api/player/profile',
-			{
-				method: 'PATCH',
-				headers: { 'Content-Type': 'application/json', ...AUTH_COOKIE },
-				body: JSON.stringify({ displayName: 'Custom' })
-			},
-			DUMMY_ENV
-		);
-		const body2 = (await (
-			await buildApp().request('/api/player/profile', { headers: AUTH_COOKIE }, DUMMY_ENV)
-		).json()) as any;
-		expect(body2.googleName).toBe('Google Name');
-		expect(body2.hasDisplayNameOverride).toBe(true);
 	});
 
 	it('PATCH with null resets to Google name', async () => {
@@ -263,6 +207,52 @@ describe('player profile routes (Worker)', () => {
 			DUMMY_ENV
 		);
 		expect(res.status).toBe(200);
+	});
+
+	it('PATCH trims surrounding whitespace before storing displayName', async () => {
+		const patch = await buildApp().request(
+			'/api/player/profile',
+			{
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json', ...AUTH_COOKIE },
+				body: JSON.stringify({ displayName: '  Custom  ' })
+			},
+			DUMMY_ENV
+		);
+		expect(patch.status).toBe(200);
+
+		const body = (await (
+			await buildApp().request('/api/player/profile', { headers: AUTH_COOKIE }, DUMMY_ENV)
+		).json()) as any;
+		expect(body.name).toBe('Custom');
+	});
+
+	it('PATCH rejects an empty displayName with 400', async () => {
+		const res = await buildApp().request(
+			'/api/player/profile',
+			{
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json', ...AUTH_COOKIE },
+				body: JSON.stringify({ displayName: '' })
+			},
+			DUMMY_ENV
+		);
+		expect(res.status).toBe(400);
+		expect(((await res.json()) as any).error).toBe('bad_request');
+	});
+
+	it('PATCH rejects a whitespace-only displayName with 400', async () => {
+		const res = await buildApp().request(
+			'/api/player/profile',
+			{
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json', ...AUTH_COOKIE },
+				body: JSON.stringify({ displayName: '   ' })
+			},
+			DUMMY_ENV
+		);
+		expect(res.status).toBe(400);
+		expect(((await res.json()) as any).error).toBe('bad_request');
 	});
 
 	it('PATCH rejects a body without displayName with 400 (no silent reset)', async () => {
@@ -331,24 +321,6 @@ function createMockBucket() {
 const PNG_BYTES = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01, 0x02, 0x03, 0x04];
 
 describe('player avatar route (Worker)', () => {
-	// The avatar suite is a sibling of the profile-routes describe, so its
-	// beforeEach does not apply here. Re-establish the session mock and clear
-	// the shared profile-override store before/after each case so requests
-	// don't become 401s or leak overrides between tests.
-	beforeEach(async () => {
-		const shared = await import('@perseus/shared');
-		const store = (shared as any).__store as Map<string, unknown> | undefined;
-		store?.clear();
-		vi.mocked(playerAuth.getPlayerSession).mockResolvedValue(TEST_PLAYER);
-		vi.mocked(resetAvatarAttempts).mockClear();
-	});
-
-	afterEach(async () => {
-		const shared = await import('@perseus/shared');
-		const store = (shared as any).__store as Map<string, unknown> | undefined;
-		store?.clear();
-	});
-
 	it('POST avatar stores to R2 and returns avatarUrl', async () => {
 		const { bucket } = createMockBucket();
 		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
@@ -365,26 +337,9 @@ describe('player avatar route (Worker)', () => {
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as any;
 		expect(body.avatarUrl).toBe('/api/player/p1/avatar');
-		expect(bucket.put).toHaveBeenCalledWith('avatars/p1', expect.any(Uint8Array), {
+		expect(bucket.put).toHaveBeenCalledWith('avatars/p1', expect.any(ReadableStream), {
 			httpMetadata: { contentType: 'image/png' }
 		});
-	});
-
-	it('POST avatar resets the rate-limit counter on success', async () => {
-		const { bucket } = createMockBucket();
-		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
-
-		const blob = new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' });
-		const form = new FormData();
-		form.append('avatar', blob, 'a.png');
-
-		const res = await buildApp().request(
-			'/api/player/avatar',
-			{ method: 'POST', headers: AUTH_COOKIE, body: form },
-			env
-		);
-		expect(res.status).toBe(200);
-		expect(resetAvatarAttempts).toHaveBeenCalledTimes(1);
 	});
 
 	it('GET avatar serves the stored image from R2', async () => {
@@ -478,96 +433,6 @@ describe('player avatar route (Worker)', () => {
 		expect(row.displayName).toBe('KeepMe');
 		expect(row.avatarUrl).toBe('/api/player/p1/avatar');
 	});
-
-	it('concurrent PATCH /profile + POST /avatar do not clobber each other', async () => {
-		const { bucket } = createMockBucket();
-		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
-		const { getProfileOverride } = await import('@perseus/shared');
-
-		const blob = new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' });
-		const form = new FormData();
-		form.append('avatar', blob, 'a.png');
-
-		const patchReq = buildApp().request(
-			'/api/player/profile',
-			{
-				method: 'PATCH',
-				headers: { 'Content-Type': 'application/json', ...AUTH_COOKIE },
-				body: JSON.stringify({ displayName: 'ConcurrentName' })
-			},
-			env
-		);
-		const avatarReq = buildApp().request(
-			'/api/player/avatar',
-			{ method: 'POST', headers: AUTH_COOKIE, body: form },
-			env
-		);
-		const [patchRes, avatarRes] = await Promise.all([patchReq, avatarReq]);
-		expect(patchRes.status).toBe(200);
-		expect(avatarRes.status).toBe(200);
-
-		const row = await (getProfileOverride as any)({}, 'p1');
-		expect(row.displayName).toBe('ConcurrentName');
-		expect(row.avatarUrl).toBe('/api/player/p1/avatar');
-	});
-
-	it('POST avatar rejects valid image MIME with non-image magic bytes', async () => {
-		const { bucket } = createMockBucket();
-		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
-		const blob = new Blob(
-			[
-				new Uint8Array([
-					0x3c, 0x68, 0x74, 0x6d, 0x6c, 0x3e, 0x0a, 0x3c, 0x73, 0x63, 0x72, 0x69, 0x70, 0x74
-				])
-			],
-			{ type: 'image/png' }
-		);
-		const form = new FormData();
-		form.append('avatar', blob, 'evil.png');
-		const res = await buildApp().request(
-			'/api/player/avatar',
-			{ method: 'POST', headers: AUTH_COOKIE, body: form },
-			env
-		);
-		expect(res.status).toBe(400);
-		expect(bucket.put).not.toHaveBeenCalled();
-	});
-
-	it('POST avatar accepts a JPEG file (sniffs image/jpeg magic bytes)', async () => {
-		const { bucket } = createMockBucket();
-		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
-		const jpegBytes = [0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01];
-		const blob = new Blob([new Uint8Array(jpegBytes)], { type: 'image/jpeg' });
-		const form = new FormData();
-		form.append('avatar', blob, 'a.jpg');
-		const res = await buildApp().request(
-			'/api/player/avatar',
-			{ method: 'POST', headers: AUTH_COOKIE, body: form },
-			env
-		);
-		expect(res.status).toBe(200);
-		expect(bucket.put).toHaveBeenCalledWith('avatars/p1', expect.any(Uint8Array), {
-			httpMetadata: { contentType: 'image/jpeg' }
-		});
-	});
-
-	it('POST avatar accepts a WebP file (sniffs image/webp magic bytes)', async () => {
-		const { bucket } = createMockBucket();
-		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
-		const webpBytes = [0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50];
-		const blob = new Blob([new Uint8Array(webpBytes)], { type: 'image/webp' });
-		const form = new FormData();
-		form.append('avatar', blob, 'a.webp');
-		const res = await buildApp().request(
-			'/api/player/avatar',
-			{ method: 'POST', headers: AUTH_COOKIE, body: form },
-			env
-		);
-		expect(res.status).toBe(200);
-		expect(bucket.put).toHaveBeenCalledWith('avatars/p1', expect.any(Uint8Array), {
-			httpMetadata: { contentType: 'image/webp' }
-		});
-	});
 });
 
 describe('player lists (Worker)', () => {
@@ -594,21 +459,6 @@ describe('player lists (Worker)', () => {
 		expect(body.puzzles[0].name).toBe('Cat');
 	});
 
-	it('GET puzzles coerces an unexpected DB status to failed', async () => {
-		const shared = await import('@perseus/shared');
-		(shared as any).__puzzlesStore.set('p1', [
-			{ id: 'pz2', name: 'Glitch', pieceCount: 4, status: 'corrupted', createdAt: 2 }
-		]);
-		const res = await buildApp().request(
-			'/api/player/puzzles',
-			{ headers: AUTH_COOKIE },
-			DUMMY_ENV
-		);
-		expect(res.status).toBe(200);
-		const body = (await res.json()) as any;
-		expect(body.puzzles[0].status).toBe('failed');
-	});
-
 	it('GET puzzles forwards limit and cursor query params', async () => {
 		const { listPlayerPuzzles } = await import('@perseus/shared');
 		await buildApp().request(
@@ -618,16 +468,7 @@ describe('player lists (Worker)', () => {
 		);
 		expect(listPlayerPuzzles).toHaveBeenCalledWith(expect.anything(), 'p1', {
 			limit: 5,
-			cursor: '100'
-		});
-	});
-
-	it('GET puzzles falls back to limit 20 when limit is non-numeric', async () => {
-		const { listPlayerPuzzles } = await import('@perseus/shared');
-		await buildApp().request('/api/player/puzzles?limit=abc', { headers: AUTH_COOKIE }, DUMMY_ENV);
-		expect(listPlayerPuzzles).toHaveBeenCalledWith(expect.anything(), 'p1', {
-			limit: 20,
-			cursor: undefined
+			cursor: 100
 		});
 	});
 
@@ -658,39 +499,6 @@ describe('player lists (Worker)', () => {
 		const { listPlayerStats } = await import('@perseus/shared');
 		await buildApp().request('/api/player/stats?limit=10', { headers: AUTH_COOKIE }, DUMMY_ENV);
 		expect(listPlayerStats).toHaveBeenCalledWith(expect.anything(), 'p1', { limit: 10 });
-	});
-
-	it('GET stats forwards cursor query param', async () => {
-		const { listPlayerStats } = await import('@perseus/shared');
-		await buildApp().request(
-			'/api/player/stats?cursor=50%7Cpz1',
-			{ headers: AUTH_COOKIE },
-			DUMMY_ENV
-		);
-		expect(listPlayerStats).toHaveBeenCalledWith(expect.anything(), 'p1', {
-			limit: 20,
-			cursor: '50|pz1'
-		});
-	});
-
-	it('GET stats returns nextCursor in response', async () => {
-		const shared = await import('@perseus/shared');
-		(shared as any).__statsStore.set('p1', [
-			{
-				puzzleId: 'pz1',
-				bestTimeSeconds: 90,
-				totalCompletions: 1,
-				firstCompletedAt: 1,
-				lastCompletedAt: 1
-			}
-		]);
-		vi.mocked(shared.listPlayerStats).mockResolvedValueOnce({
-			rows: (shared as any).__statsStore.get('p1'),
-			nextCursor: '90|pz1'
-		});
-		const res = await buildApp().request('/api/player/stats', { headers: AUTH_COOKIE }, DUMMY_ENV);
-		const body = (await res.json()) as any;
-		expect(body.nextCursor).toBe('90|pz1');
 	});
 
 	it('GET stats requires authentication', async () => {

@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { getDb } from '../db';
 import { recordCompletion } from '@perseus/shared';
 import { isPuzzleId } from '@perseus/types';
-import { getPuzzle } from '../services/storage';
+import { puzzleExists } from '../services/storage';
 import { requirePlayerAuth } from '../middleware/player-auth';
 import type { PlayerSessionRecord } from '../services/player-auth';
 
@@ -32,9 +32,9 @@ router.post('/:id/complete', requirePlayerAuth, async (c) => {
 		body && typeof body === 'object' && 'timeSeconds' in body
 			? (body as { timeSeconds: unknown }).timeSeconds
 			: undefined;
-	if (typeof timeSeconds !== 'number' || !Number.isFinite(timeSeconds) || timeSeconds < 1) {
+	if (typeof timeSeconds !== 'number' || !Number.isFinite(timeSeconds) || timeSeconds < 0) {
 		return c.json(
-			{ error: 'bad_request', message: 'timeSeconds must be a number of at least 1 second' },
+			{ error: 'bad_request', message: 'timeSeconds must be a non-negative number' },
 			400
 		);
 	}
@@ -46,12 +46,8 @@ router.post('/:id/complete', requirePlayerAuth, async (c) => {
 	}
 
 	// Confirm the puzzle exists before recording, so puzzle_stats can't
-	// accumulate rows for non-existent puzzles. Mirrors the Worker route's
-	// getPuzzle null-check; the Bun Puzzle type has no status field because
-	// generation is synchronous here (a metadata file implies ready), so
-	// only the existence check is needed.
-	const puzzle = await getPuzzle(puzzleId);
-	if (!puzzle) {
+	// accumulate rows for non-existent puzzles.
+	if (!(await puzzleExists(puzzleId))) {
 		return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
 	}
 

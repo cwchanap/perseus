@@ -6,7 +6,6 @@ import type { Env } from '../worker';
 
 const MAX_LOGIN_ATTEMPTS = 5;
 const OAUTH_MAX_ATTEMPTS = 10;
-const AVATAR_MAX_ATTEMPTS = 20;
 const LOCKOUT_DURATION_MS = 15 * 60 * 1000; // 15 minutes
 // Rate limit keys share PUZZLE_METADATA namespace (puzzle keys use 'puzzle:' prefix)
 const RATE_LIMIT_KEY_PREFIX = 'ratelimit:';
@@ -430,57 +429,4 @@ export async function oauthRateLimit(c: Context<{ Bindings: Env }>, next: Next):
 	}
 
 	return c.res;
-}
-
-// Avatar upload rate limit. Keyed by player id (the route is authenticated, so
-// we have a stable identity — better than IP which is shared behind NATs and
-// rotates on mobile). Limit is generous: a user legitimately re-uploads while
-// picking a good photo, but this prevents runaway abuse of the R2 write path.
-// Must be mounted AFTER requirePlayerAuth so the session is set.
-export async function avatarRateLimit(
-	c: Context<{ Bindings: Env; Variables: { playerSession?: { user: { id: string } } } }>,
-	next: Next
-): Promise<Response> {
-	const session = c.get('playerSession');
-	// If no session (misconfigured middleware order), fail open —
-	// requirePlayerAuth already returned 401 in that case.
-	if (!session) {
-		await next();
-		return c.res;
-	}
-	const key = `avatar:${session.user.id}`;
-	const kv = c.env.PUZZLE_METADATA;
-	const env = c.env.NODE_ENV;
-
-	// Count every upload attempt (success or failure) toward the limit BEFORE
-	// the handler runs — mirroring the Bun middleware. This ensures that when
-	// the handler calls resetAvatarAttempts (on a successful upload) the
-	// already-incremented counter is deleted, and no post-request write
-	// recreates it. Incrementing after `next()` would undo the reset.
-	const lockCheck = await checkAndIncrement(kv, key, Date.now(), env, true, AVATAR_MAX_ATTEMPTS);
-	if (lockCheck.shouldBlock) {
-		return c.json(
-			{
-				error: 'too_many_requests',
-				message:
-					lockCheck.remainingSeconds !== undefined
-						? `Too many avatar uploads. Try again in ${lockCheck.remainingSeconds} seconds`
-						: 'Too many avatar uploads. Please try again later'
-			},
-			429
-		);
-	}
-
-	await next();
-
-	return c.res;
-}
-
-export async function resetAvatarAttempts(c: Context): Promise<void> {
-	const session = c.get('playerSession') as { user: { id: string } } | undefined;
-	if (!session) return;
-	const key = `avatar:${session.user.id}`;
-	const env = c.env as Env;
-	const kv = env.PUZZLE_METADATA;
-	await deleteRateLimitEntry(kv, key, env.NODE_ENV);
 }

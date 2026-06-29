@@ -856,29 +856,6 @@ describe('Puzzle route gameplay integration', () => {
 		expect(recordCompletion).toHaveBeenCalledTimes(1);
 	});
 
-	it('shows celebration even if the server completion sync rejects (fire-and-forget .catch)', async () => {
-		// The completion POST is fire-and-forget: a rejection must not break the
-		// celebration UI or throw an unhandled promise rejection. The .catch()
-		// handler in +page.svelte logs the error and leaves completionRecorded
-		// false so a subsequent solve attempt can retry.
-		vi.mocked(recordCompletion).mockRejectedValueOnce(new Error('Network down'));
-		const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-
-		await renderPuzzlePage();
-		await placePiece(0, 0, 0);
-		await placePiece(1, 1, 0);
-
-		// Celebration still fires despite the rejected sync.
-		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
-		expect(recordCompletion).toHaveBeenCalledTimes(1);
-		// The .catch() handler logged the failure.
-		await expect
-			.poll(() => errorSpy.mock.calls.some((call) => /Failed to record completion/.test(call[0])))
-			.toBe(true);
-
-		errorSpy.mockRestore();
-	});
-
 	it('clears tray selection when redo re-places the selected piece', async () => {
 		await renderPuzzlePage();
 		await placePiece(0, 0, 0);

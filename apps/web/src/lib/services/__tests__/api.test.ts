@@ -25,6 +25,7 @@ import {
 	getPlayerStats,
 	recordCompletion,
 	getAvatarUrl,
+	resolveAssetUrl,
 	ApiError
 } from '../api';
 import type { PuzzleCategory } from '$lib/types/puzzle';
@@ -963,22 +964,9 @@ describe('player profile service functions', () => {
 				})
 			)
 		);
-		await getPlayerPuzzles({ limit: 5, cursor: '1000|abc' });
+		await getPlayerPuzzles({ limit: 5, cursor: 10 });
 		expect(vi.mocked(fetch).mock.calls[0]?.[0]).toMatch(/limit=5/);
-		expect(vi.mocked(fetch).mock.calls[0]?.[0]).toMatch(/cursor=1000%7Cabc/);
-	});
-
-	it('getPlayerPuzzles with no params requests /api/player/puzzles without query string', async () => {
-		vi.stubGlobal(
-			'fetch',
-			vi.fn().mockResolvedValue(
-				new Response(JSON.stringify({ puzzles: [], nextCursor: undefined }), {
-					status: 200
-				})
-			)
-		);
-		await getPlayerPuzzles();
-		expect(vi.mocked(fetch).mock.calls[0]?.[0]).toMatch(/\/api\/player\/puzzles$/);
+		expect(vi.mocked(fetch).mock.calls[0]?.[0]).toMatch(/cursor=10/);
 	});
 
 	it('getPlayerPuzzles forwards an explicit limit of 0 (not dropped by a truthy check)', async () => {
@@ -1012,20 +1000,6 @@ describe('player profile service functions', () => {
 		expect(stats).toEqual([]);
 	});
 
-	it('getPlayerStats forwards cursor and returns nextCursor', async () => {
-		vi.stubGlobal(
-			'fetch',
-			vi
-				.fn()
-				.mockResolvedValue(
-					new Response(JSON.stringify({ stats: [], nextCursor: '90|pz1' }), { status: 200 })
-				)
-		);
-		const result = await getPlayerStats({ cursor: '50|pz0' });
-		expect(vi.mocked(fetch).mock.calls[0]?.[0]).toMatch(/cursor=50%7Cpz0/);
-		expect(result.nextCursor).toBe('90|pz1');
-	});
-
 	it('recordCompletion POSTs timeSeconds', async () => {
 		vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}', { status: 200 })));
 		await recordCompletion('pz1', 90);
@@ -1036,5 +1010,67 @@ describe('player profile service functions', () => {
 
 	it('getAvatarUrl builds the path', () => {
 		expect(getAvatarUrl('p1')).toMatch(/\/api\/player\/p1\/avatar$/);
+	});
+
+	it('resolveAssetUrl passes through absolute URLs and null', () => {
+		expect(resolveAssetUrl(null)).toBeNull();
+		expect(resolveAssetUrl(undefined)).toBeNull();
+		expect(resolveAssetUrl('')).toBeNull();
+		expect(resolveAssetUrl('https://lh3.googleusercontent.com/x.png')).toBe(
+			'https://lh3.googleusercontent.com/x.png'
+		);
+		expect(resolveAssetUrl('http://example.com/a.png')).toBe('http://example.com/a.png');
+	});
+
+	it('resolveAssetUrl prefixes API_BASE onto origin-relative paths', () => {
+		// Same-origin (production) leaves "/api/..." intact when API_BASE is empty;
+		// in dev API_BASE is the API origin. Either way the path stays relative to
+		// the API, which is what rendering requires.
+		expect(resolveAssetUrl('/api/player/p1/avatar')).toMatch(/\/api\/player\/p1\/avatar$/);
+	});
+
+	it('getPlayerProfile resolves a relative avatar picture against the API', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue(
+				new Response(
+					JSON.stringify({
+						id: 'p1',
+						email: 'e',
+						name: 'N',
+						picture: '/api/player/p1/avatar',
+						createdAt: 1,
+						lastLoginAt: 2,
+						summary: { puzzlesUploaded: 0, puzzlesSolved: 0, totalCompletions: 0 }
+					}),
+					{ status: 200 }
+				)
+			)
+		);
+		const profile = await getPlayerProfile();
+		expect(profile.picture).toMatch(/\/api\/player\/p1\/avatar$/);
+	});
+
+	it('getPlayerProfile leaves an OAuth (absolute) picture untouched', async () => {
+		const abs = 'https://lh3.googleusercontent.com/photo.jpg';
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue(
+				new Response(
+					JSON.stringify({
+						id: 'p1',
+						email: 'e',
+						name: 'N',
+						picture: abs,
+						createdAt: 1,
+						lastLoginAt: 2,
+						summary: { puzzlesUploaded: 0, puzzlesSolved: 0, totalCompletions: 0 }
+					}),
+					{ status: 200 }
+				)
+			)
+		);
+		const profile = await getPlayerProfile();
+		expect(profile.picture).toBe(abs);
 	});
 });

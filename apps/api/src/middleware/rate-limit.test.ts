@@ -1,13 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi } from 'vitest';
 import { Hono } from 'hono';
-import {
-	loginRateLimit,
-	resetLoginAttempts,
-	oauthRateLimit,
-	avatarRateLimit,
-	resetAvatarAttempts
-} from './rate-limit';
+import { loginRateLimit, resetLoginAttempts, oauthRateLimit } from './rate-limit';
 
 // Each test uses a unique IP to avoid cross-test state in the module-level Map.
 let ipCounter = 1;
@@ -370,104 +364,6 @@ describe('oauthRateLimit', () => {
 			// Should be allowed again
 			const afterRes = await app.fetch(oauthReq(ip));
 			expect(afterRes.status).toBe(200);
-		} finally {
-			vi.useRealTimers();
-		}
-	});
-});
-
-// ─── avatarRateLimit (Bun) ────────────────────────────────────────────────────
-
-function makeAvatarApp(handlerStatus: number = 200, playerId: string = 'player-test-1') {
-	const app = new Hono();
-	app.use('/avatar', (c, next) => {
-		// Simulate requirePlayerAuth setting the session. The default Context
-		// type doesn't include 'playerSession' in its Variables map, so cast.
-		(c as any).set('playerSession', { user: { id: playerId } });
-		return avatarRateLimit(c, next);
-	});
-	app.post('/avatar', (c) => {
-		if (handlerStatus === 200) {
-			resetAvatarAttempts(c);
-		}
-		return c.json({ status: handlerStatus }, handlerStatus as any);
-	});
-	return app;
-}
-
-describe('avatarRateLimit (Bun)', () => {
-	it('allows the first upload and resets on success', async () => {
-		const app = makeAvatarApp(200, 'player-allow-1');
-		const res = await app.fetch(new Request('http://localhost/avatar', { method: 'POST' }));
-		expect(res.status).toBe(200);
-	});
-
-	it('blocks after exceeding the max attempt threshold', async () => {
-		// AVATAR_MAX_ATTEMPTS is 20; the 21st attempt triggers the block.
-		// Use a failing handler so attempts accumulate without reset.
-		const app = makeAvatarApp(500, 'player-block-1');
-		let lastStatus = 200;
-		for (let i = 0; i < 22; i++) {
-			const res = await app.fetch(new Request('http://localhost/avatar', { method: 'POST' }));
-			lastStatus = res.status;
-		}
-		expect(lastStatus).toBe(429);
-	});
-
-	it('sets Retry-After header when blocked', async () => {
-		const app = makeAvatarApp(500, 'player-retry-1');
-		for (let i = 0; i < 22; i++) {
-			await app.fetch(new Request('http://localhost/avatar', { method: 'POST' }));
-		}
-		const res = await app.fetch(new Request('http://localhost/avatar', { method: 'POST' }));
-		expect(res.status).toBe(429);
-		expect(res.headers.get('Retry-After')).toBeTruthy();
-	});
-
-	it('resetAvatarAttempts is a no-op when no key is set', async () => {
-		const app = new Hono();
-		app.post('/test', (c) => {
-			resetAvatarAttempts(c); // no avatarRateLimit ran → no key
-			return c.json({ ok: true });
-		});
-		// app.fetch is async — await it so a handler rejection surfaces
-		// instead of becoming an unhandled promise rejection.
-		const res = await app.fetch(new Request('http://localhost/test', { method: 'POST' }));
-		expect(res.status).toBe(200);
-		const body = (await res.json()) as { ok: boolean };
-		expect(body.ok).toBe(true);
-	});
-
-	it('fails open (calls next) when no playerSession is set on the context', async () => {
-		// Simulate misconfigured middleware order: avatarRateLimit runs without
-		// requirePlayerAuth having set the session. Must not 500.
-		const app = new Hono();
-		app.use('/avatar', avatarRateLimit);
-		app.post('/avatar', (c) => c.json({ ok: true }));
-		const res = await app.fetch(new Request('http://localhost/avatar', { method: 'POST' }));
-		expect(res.status).toBe(200);
-	});
-
-	it('allows uploads again after the avatar block expires', async () => {
-		vi.useFakeTimers();
-		try {
-			const app = makeAvatarApp(500, 'player-expire-1');
-			// Exhaust attempts to trigger a block
-			for (let i = 0; i < 22; i++) {
-				await app.fetch(new Request('http://localhost/avatar', { method: 'POST' }));
-			}
-			// Confirm blocked
-			const blockedRes = await app.fetch(
-				new Request('http://localhost/avatar', { method: 'POST' })
-			);
-			expect(blockedRes.status).toBe(429);
-
-			// Advance past the 15-minute block duration
-			vi.advanceTimersByTime(15 * 60 * 1000 + 1);
-
-			// Should be allowed again (block-expiry reset path)
-			const afterRes = await app.fetch(new Request('http://localhost/avatar', { method: 'POST' }));
-			expect(afterRes.status).toBe(500); // handler received it (500, not 429)
 		} finally {
 			vi.useRealTimers();
 		}

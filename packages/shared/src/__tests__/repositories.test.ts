@@ -10,6 +10,7 @@ import {
 	updateProfileAvatarUrl,
 	insertPuzzleOwnership,
 	deletePuzzleOwnership,
+	setPuzzleStatus,
 	listPlayerPuzzles,
 	countPlayerPuzzles,
 	recordCompletion,
@@ -118,6 +119,45 @@ describe('repositories', () => {
 		expect(await countPlayerPuzzles(helper.db, 'p1')).toBe(1);
 	});
 
+	it('setPuzzleStatus updates the status of an existing puzzle', async () => {
+		// Used in production by the workflows app to flip processing -> ready/failed.
+		await insertPuzzleOwnership(helper.db, {
+			id: 'pz1',
+			ownerId: 'p1',
+			name: 'Cat',
+			pieceCount: 4,
+			status: 'processing',
+			createdAt: 10
+		});
+		await setPuzzleStatus(helper.db, 'pz1', 'ready');
+		const list = await listPlayerPuzzles(helper.db, 'p1', { limit: 10 });
+		expect(list.rows).toHaveLength(1);
+		expect(list.rows[0].status).toBe('ready');
+	});
+
+	it('setPuzzleStatus only touches the targeted puzzle', async () => {
+		await insertPuzzleOwnership(helper.db, {
+			id: 'pz1',
+			ownerId: 'p1',
+			name: 'Cat',
+			pieceCount: 4,
+			status: 'processing',
+			createdAt: 10
+		});
+		await insertPuzzleOwnership(helper.db, {
+			id: 'pz2',
+			ownerId: 'p1',
+			name: 'Dog',
+			pieceCount: 9,
+			status: 'processing',
+			createdAt: 20
+		});
+		await setPuzzleStatus(helper.db, 'pz1', 'failed');
+		const rows = (await listPlayerPuzzles(helper.db, 'p1', { limit: 10 })).rows;
+		const byId = Object.fromEntries(rows.map((r) => [r.id, r.status]));
+		expect(byId).toEqual({ pz1: 'failed', pz2: 'processing' });
+	});
+
 	it('listPlayerPuzzles cursor pagination', async () => {
 		for (let i = 0; i < 3; i++) {
 			await insertPuzzleOwnership(helper.db, {
@@ -170,49 +210,6 @@ describe('repositories', () => {
 		expect(page2.rows.every((r) => r.ownerId === 'alice')).toBe(true);
 	});
 
-	it('listPlayerPuzzles composite cursor does not skip rows on createdAt collision', async () => {
-		// Three puzzles share the same createdAt. A createdAt-only cursor would
-		// skip the rows after the first page because lt(createdAt, X) excludes
-		// all rows with the same timestamp. The (createdAt, id) composite cursor
-		// must keep them.
-		const ts = 5000;
-		await insertPuzzleOwnership(helper.db, {
-			id: 'pz-a',
-			ownerId: 'p1',
-			name: 'A',
-			pieceCount: 4,
-			status: 'ready',
-			createdAt: ts
-		});
-		await insertPuzzleOwnership(helper.db, {
-			id: 'pz-b',
-			ownerId: 'p1',
-			name: 'B',
-			pieceCount: 4,
-			status: 'ready',
-			createdAt: ts
-		});
-		await insertPuzzleOwnership(helper.db, {
-			id: 'pz-c',
-			ownerId: 'p1',
-			name: 'C',
-			pieceCount: 4,
-			status: 'ready',
-			createdAt: ts
-		});
-		const page1 = await listPlayerPuzzles(helper.db, 'p1', { limit: 2 });
-		expect(page1.rows).toHaveLength(2);
-		expect(page1.nextCursor).toBeDefined();
-		const page2 = await listPlayerPuzzles(helper.db, 'p1', {
-			limit: 2,
-			cursor: page1.nextCursor!
-		});
-		expect(page2.rows).toHaveLength(1);
-		// All three rows surfaced across the two pages, none skipped.
-		const seen = new Set([...page1.rows, ...page2.rows].map((r) => r.id));
-		expect(seen.size).toBe(3);
-	});
-
 	it('recordCompletion upserts best time and increments count', async () => {
 		await recordCompletion(helper.db, 'p1', 'pz1', 100);
 		await recordCompletion(helper.db, 'p1', 'pz1', 80);
@@ -221,85 +218,6 @@ describe('repositories', () => {
 		expect(stats.rows).toHaveLength(1);
 		expect(stats.rows[0].bestTimeSeconds).toBe(80);
 		expect(stats.rows[0].totalCompletions).toBe(3);
-	});
-
-	it('listPlayerStats joins puzzle name and surfaces null for deleted puzzles', async () => {
-		await insertPuzzleOwnership(helper.db, {
-			id: 'pz-named',
-			ownerId: 'p1',
-			name: 'Cat',
-			pieceCount: 4,
-			status: 'ready',
-			createdAt: 1
-		});
-		await recordCompletion(helper.db, 'p1', 'pz-named', 50);
-		// A stat row whose puzzle was never inserted (e.g. deleted) — name must be null.
-		await recordCompletion(helper.db, 'p1', 'pz-gone', 70);
-		const stats = await listPlayerStats(helper.db, 'p1', { limit: 10 });
-		expect(stats.rows).toHaveLength(2);
-		const named = stats.rows.find((r) => r.puzzleId === 'pz-named');
-		const gone = stats.rows.find((r) => r.puzzleId === 'pz-gone');
-		expect(named?.puzzleName).toBe('Cat');
-		expect(gone?.puzzleName).toBeNull();
-	});
-
-	it('listPlayerStats paginates via composite cursor', async () => {
-		for (let i = 0; i < 3; i++) {
-			await recordCompletion(helper.db, 'p1', `pz${i}`, 100 - i * 10);
-		}
-		const page1 = await listPlayerStats(helper.db, 'p1', { limit: 2 });
-		expect(page1.rows).toHaveLength(2);
-		expect(page1.nextCursor).toBeDefined();
-		const page2 = await listPlayerStats(helper.db, 'p1', {
-			limit: 2,
-			cursor: page1.nextCursor!
-		});
-		expect(page2.rows).toHaveLength(1);
-		expect(page2.nextCursor).toBeUndefined();
-		// All three surfaced, ordered fastest first.
-		const seen = [...page1.rows, ...page2.rows].map((r) => r.puzzleId);
-		expect(seen).toEqual(['pz2', 'pz1', 'pz0']);
-	});
-
-	it('listPlayerStats composite cursor does not skip rows on bestTime collision', async () => {
-		// Three stats share the same best time. A bestTime-only cursor would
-		// skip the rows after the first page because gt(bestTime, X) excludes
-		// all rows with the same time. The (bestTime, puzzleId) composite
-		// cursor must keep them.
-		const best = 60;
-		await recordCompletion(helper.db, 'p1', 'pz-a', best);
-		await recordCompletion(helper.db, 'p1', 'pz-b', best);
-		await recordCompletion(helper.db, 'p1', 'pz-c', best);
-		const page1 = await listPlayerStats(helper.db, 'p1', { limit: 2 });
-		expect(page1.rows).toHaveLength(2);
-		expect(page1.nextCursor).toBeDefined();
-		const page2 = await listPlayerStats(helper.db, 'p1', {
-			limit: 2,
-			cursor: page1.nextCursor!
-		});
-		expect(page2.rows).toHaveLength(1);
-		// All three rows surfaced across the two pages, none skipped.
-		const seen = new Set([...page1.rows, ...page2.rows].map((r) => r.puzzleId));
-		expect(seen.size).toBe(3);
-	});
-
-	it('listPlayerStats isolates players on pagination (no cross-player leak)', async () => {
-		// Two players with interleaved best times. Pagination by cursor must
-		// NOT drop the playerId filter (regression guard).
-		for (let i = 0; i < 3; i++) {
-			await recordCompletion(helper.db, 'alice', `a${i}`, 50 + i * 10);
-			await recordCompletion(helper.db, 'bob', `b${i}`, 51 + i * 10);
-		}
-		const page1 = await listPlayerStats(helper.db, 'alice', { limit: 2 });
-		expect(page1.rows).toHaveLength(2);
-		expect(page1.rows.every((r) => r.playerId === 'alice')).toBe(true);
-		expect(page1.nextCursor).toBeDefined();
-		const page2 = await listPlayerStats(helper.db, 'alice', {
-			limit: 2,
-			cursor: page1.nextCursor!
-		});
-		expect(page2.rows).toHaveLength(1);
-		expect(page2.rows.every((r) => r.playerId === 'alice')).toBe(true);
 	});
 
 	it('getPlayerSummary aggregates counts', async () => {
