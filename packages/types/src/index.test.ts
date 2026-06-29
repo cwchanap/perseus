@@ -950,6 +950,7 @@ describe('player profile validators', () => {
 
 	const stat: PlayerStatRow = {
 		puzzleId: 'pz1',
+		puzzleName: 'Cat',
 		bestTimeSeconds: 90,
 		totalCompletions: 2,
 		firstCompletedAt: 10,

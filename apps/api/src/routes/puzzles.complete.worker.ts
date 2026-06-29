@@ -36,9 +36,9 @@ router.post('/:id/complete', requirePlayerAuth, async (c) => {
 		body && typeof body === 'object' && 'timeSeconds' in body
 			? (body as { timeSeconds: unknown }).timeSeconds
 			: undefined;
-	if (typeof timeSeconds !== 'number' || !Number.isFinite(timeSeconds) || timeSeconds < 0) {
+	if (typeof timeSeconds !== 'number' || !Number.isFinite(timeSeconds) || timeSeconds < 1) {
 		return c.json(
-			{ error: 'bad_request', message: 'timeSeconds must be a non-negative number' },
+			{ error: 'bad_request', message: 'timeSeconds must be a number of at least 1 second' },
 			400
 		);
 	}
@@ -49,9 +49,11 @@ router.post('/:id/complete', requirePlayerAuth, async (c) => {
 		);
 	}
 
-	// Confirm the puzzle exists before recording, so puzzle_stats can't
-	// accumulate rows for non-existent puzzles.
-	if (!(await getPuzzle(c.env.PUZZLE_METADATA, puzzleId))) {
+	// Confirm the puzzle exists and is ready before recording, so puzzle_stats
+	// can't accumulate rows for non-existent or not-yet-generated puzzles.
+	// Mirrors GET /api/puzzles/:id, which 404s non-ready puzzles.
+	const puzzle = await getPuzzle(c.env.PUZZLE_METADATA, puzzleId);
+	if (!puzzle || puzzle.status !== 'ready') {
 		return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
 	}
 

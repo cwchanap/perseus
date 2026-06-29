@@ -382,7 +382,7 @@ describe('player lists (Bun)', () => {
 		await buildApp().request('/api/player/puzzles?limit=5&cursor=100', { headers: AUTH_COOKIE });
 		expect(listPlayerPuzzles).toHaveBeenCalledWith(expect.anything(), 'p1', {
 			limit: 5,
-			cursor: 100
+			cursor: '100'
 		});
 	});
 

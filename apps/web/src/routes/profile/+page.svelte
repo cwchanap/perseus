@@ -43,7 +43,7 @@
 			id: p.id,
 			name: p.name,
 			pieceCount: p.pieceCount,
-			status: p.status as PuzzleSummary['status'],
+			status: p.status,
 			...(p.category ? { category: p.category as PuzzleSummary['category'] } : {})
 		};
 	}
@@ -216,13 +216,22 @@
 		{#if stats.length === 0}
 			<p class="text-sm text-(--text-2)">No solves recorded yet.</p>
 		{:else}
-			<ul class="mt-3 divide-y divide-(--border)">
+			<ul class="mt-3 divide-y divide-(--border)" data-testid="best-times-list">
 				{#each stats as s (s.puzzleId)}
-					<li class="flex justify-between py-2 text-sm">
-						<a href={resolve(`/puzzle/${s.puzzleId}`)} class="text-(--text-1)">
-							{s.puzzleId}
-						</a>
-						<span class="font-(--font-mono) text-(--gold)">
+					<li class="flex items-center justify-between gap-3 py-2 text-sm">
+						{#if s.puzzleName}
+							<a href={resolve(`/puzzle/${s.puzzleId}`)} class="min-w-0 truncate text-(--text-1)">
+								{s.puzzleName}
+							</a>
+						{:else}
+							<span class="min-w-0 truncate text-(--text-2)">
+								{s.puzzleId}
+							</span>
+						{/if}
+						<span class="shrink-0 text-xs text-(--text-2)">
+							{s.totalCompletions}×
+						</span>
+						<span class="shrink-0 font-(--font-mono) text-(--gold)">
 							{formatTime(s.bestTimeSeconds)}
 						</span>
 					</li>

@@ -10,8 +10,10 @@ import {
 	listPlayerPuzzles,
 	listPlayerStats
 } from '@perseus/shared';
-import type { PlayerProfile } from '@perseus/types';
+import type { PlayerProfile, PlayerPuzzleSummary, PlayerStatRow } from '@perseus/types';
+import { coercePuzzleStatus } from '@perseus/types';
 import { requirePlayerAuth } from '../middleware/player-auth';
+import { avatarRateLimit, resetAvatarAttempts } from '../middleware/rate-limit';
 import type { PlayerSessionRecord } from '../services/player-auth';
 
 const player = new Hono<{ Variables: { playerSession: PlayerSessionRecord } }>();
@@ -118,7 +120,7 @@ player.patch('/profile', requirePlayerAuth, async (c) => {
 // Upload the authenticated player's avatar to the filesystem and record its
 // serving path in the profile override (writes only avatarUrl; displayName is
 // preserved by the field-specific repository update).
-player.post('/avatar', requirePlayerAuth, async (c) => {
+player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 	const session = c.get('playerSession');
 	const playerId = session.user.id;
 	let formData: FormData;
@@ -131,21 +133,31 @@ player.post('/avatar', requirePlayerAuth, async (c) => {
 	if (!(file instanceof File)) {
 		return c.json({ error: 'bad_request', message: 'avatar file is required' }, 400);
 	}
-	if (!AVATAR_MIME.has(file.type)) {
-		return c.json({ error: 'bad_request', message: 'Unsupported image type' }, 400);
-	}
 	if (file.size > AVATAR_MAX_BYTES) {
 		return c.json({ error: 'bad_request', message: 'Avatar must be 5MB or less' }, 400);
+	}
+	// Validate via magic bytes instead of trusting file.type, matching the
+	// puzzle upload path. The sniffed type is also what we store so the
+	// extension-less serve route returns the correct Content-Type without
+	// re-sniffing (though it still sniffs defensively).
+	const bytes = new Uint8Array(await file.arrayBuffer());
+	const detected = sniffImageType(bytes);
+	if (!detected || !AVATAR_MIME.has(detected)) {
+		return c.json({ error: 'bad_request', message: 'Unsupported image type' }, 400);
 	}
 	const dataDir = process.env.DATA_DIR || './data';
 	const dir = join(dataDir, 'avatars');
 	await mkdir(dir, { recursive: true });
-	await writeFile(join(dir, playerId), Buffer.from(await file.arrayBuffer()));
+	await writeFile(join(dir, playerId), Buffer.from(bytes));
 
 	const db = getDb();
 	// Field-specific update writes only avatarUrl and preserves displayName,
 	// avoiding a read-modify-write race with concurrent PATCH /profile requests.
 	await updateProfileAvatarUrl(db, playerId, `/api/player/${playerId}/avatar`);
+	// Reset the rate-limit counter on success so repeated successful uploads
+	// don't accumulate toward an unnecessary lockout. The middleware increments
+	// before the handler runs; this deletes that increment.
+	resetAvatarAttempts(c);
 	return c.json({ avatarUrl: `/api/player/${playerId}/avatar` });
 });
 
@@ -174,23 +186,44 @@ player.get('/puzzles', requirePlayerAuth, async (c) => {
 	const db = getDb();
 	const session = c.get('playerSession');
 	const limit = Number(c.req.query('limit') ?? '20');
-	const cursorRaw = c.req.query('cursor');
-	const cursor = cursorRaw ? Number(cursorRaw) : undefined;
+	const cursor = c.req.query('cursor') || undefined;
 	const { rows, nextCursor } = await listPlayerPuzzles(db, session.user.id, {
 		limit: Number.isFinite(limit) ? limit : 20,
-		cursor: Number.isFinite(cursor) ? cursor : undefined
+		cursor
 	});
-	return c.json({ puzzles: rows, nextCursor });
+	// Project DB rows to the public PlayerPuzzleSummary contract, stripping
+	// internal columns (e.g. ownerId) that the client doesn't need.
+	const puzzles: PlayerPuzzleSummary[] = rows.map((r) => ({
+		id: r.id,
+		name: r.name,
+		pieceCount: r.pieceCount,
+		status: coercePuzzleStatus(r.status),
+		createdAt: r.createdAt,
+		...(r.category ? { category: r.category } : {})
+	}));
+	return c.json({ puzzles, nextCursor });
 });
 
 player.get('/stats', requirePlayerAuth, async (c) => {
 	const db = getDb();
 	const session = c.get('playerSession');
 	const limit = Number(c.req.query('limit') ?? '20');
-	const { rows } = await listPlayerStats(db, session.user.id, {
-		limit: Number.isFinite(limit) ? limit : 20
+	const cursor = c.req.query('cursor');
+	const { rows, nextCursor } = await listPlayerStats(db, session.user.id, {
+		limit: Number.isFinite(limit) ? limit : 20,
+		...(cursor !== undefined ? { cursor } : {})
 	});
-	return c.json({ stats: rows });
+	// Project DB rows to the public PlayerStatRow contract, stripping playerId
+	// (the client already knows its own ID from the auth session).
+	const stats: PlayerStatRow[] = rows.map((r) => ({
+		puzzleId: r.puzzleId,
+		puzzleName: r.puzzleName,
+		bestTimeSeconds: r.bestTimeSeconds,
+		totalCompletions: r.totalCompletions,
+		firstCompletedAt: r.firstCompletedAt,
+		lastCompletedAt: r.lastCompletedAt
+	}));
+	return c.json({ stats, nextCursor });
 });
 
 export default player;
