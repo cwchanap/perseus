@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Hono } from 'hono';
 
 // Mock the Worker DB factory so the route never touches a real D1 binding.
@@ -291,6 +291,23 @@ function createMockBucket() {
 const PNG_BYTES = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01, 0x02, 0x03, 0x04];
 
 describe('player avatar route (Worker)', () => {
+	// The avatar suite is a sibling of the profile-routes describe, so its
+	// beforeEach does not apply here. Re-establish the session mock and clear
+	// the shared profile-override store before/after each case so requests
+	// don't become 401s or leak overrides between tests.
+	beforeEach(async () => {
+		const shared = await import('@perseus/shared');
+		const store = (shared as any).__store as Map<string, unknown> | undefined;
+		store?.clear();
+		vi.mocked(playerAuth.getPlayerSession).mockResolvedValue(TEST_PLAYER);
+	});
+
+	afterEach(async () => {
+		const shared = await import('@perseus/shared');
+		const store = (shared as any).__store as Map<string, unknown> | undefined;
+		store?.clear();
+	});
+
 	it('POST avatar stores to R2 and returns avatarUrl', async () => {
 		const { bucket } = createMockBucket();
 		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;

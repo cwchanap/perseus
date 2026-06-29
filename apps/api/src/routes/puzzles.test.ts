@@ -240,7 +240,7 @@ describe('POST / - Upload puzzle for player', () => {
 			pieces: generatedPuzzle.pieces
 		} as any);
 		vi.mocked(storage.createPuzzle).mockResolvedValue(true);
-		vi.mocked(insertPuzzleOwnership).mockRejectedValue(new Error('DB down'));
+		vi.mocked(insertPuzzleOwnership).mockRejectedValueOnce(new Error('DB down'));
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
 		const formData = new FormData();
@@ -261,7 +261,6 @@ describe('POST / - Upload puzzle for player', () => {
 		expect(((await res.json()) as any).message).toBe('Failed to record puzzle ownership');
 		expect(storage.deletePuzzle).toHaveBeenCalled();
 		consoleSpy.mockRestore();
-		vi.mocked(insertPuzzleOwnership).mockResolvedValue(undefined);
 	});
 
 	it('logs when cleanup also fails after ownership insert failure', async () => {

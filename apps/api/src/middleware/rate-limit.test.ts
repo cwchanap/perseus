@@ -424,14 +424,18 @@ describe('avatarRateLimit (Bun)', () => {
 		expect(res.headers.get('Retry-After')).toBeTruthy();
 	});
 
-	it('resetAvatarAttempts is a no-op when no key is set', () => {
+	it('resetAvatarAttempts is a no-op when no key is set', async () => {
 		const app = new Hono();
 		app.post('/test', (c) => {
 			resetAvatarAttempts(c); // no avatarRateLimit ran → no key
 			return c.json({ ok: true });
 		});
-		// Should not throw.
-		expect(() => app.fetch(new Request('http://localhost/test', { method: 'POST' }))).not.toThrow();
+		// app.fetch is async — await it so a handler rejection surfaces
+		// instead of becoming an unhandled promise rejection.
+		const res = await app.fetch(new Request('http://localhost/test', { method: 'POST' }));
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { ok: boolean };
+		expect(body.ok).toBe(true);
 	});
 
 	it('fails open (calls next) when no playerSession is set on the context', async () => {

@@ -24,13 +24,12 @@
 
 	onMount(() => {
 		// The root layout already calls playerAuth.refresh() on mount.
-		// Subscribe and wait for the store to settle (leave 'loading') before
-		// deciding whether to redirect to login. Calling refresh() here would
-		// race with the layout's call via the store's operationId guard.
-		let settled = false;
+		// Subscribe and react to every non-loading state change so later
+		// sign-out / session-expiry events still redirect to login. Calling
+		// refresh() here would race with the layout's call via the store's
+		// operationId guard.
 		const unsubscribe = playerAuth.subscribe((state) => {
-			if (settled || state.status === 'loading') return;
-			settled = true;
+			if (state.status === 'loading') return;
 			authenticated = state.status === 'authenticated';
 			checking = false;
 			if (!authenticated) {

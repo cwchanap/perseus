@@ -446,9 +446,6 @@ puzzles.post('/', requirePlayerAuth, async (c) => {
 		}
 
 		if (!c.env.PUZZLE_WORKFLOW || typeof c.env.PUZZLE_WORKFLOW.create !== 'function') {
-			await deletePuzzleOwnership(getWorkerDb(c.env), id).catch((err) =>
-				console.error('Failed to cleanup ownership after missing workflow binding:', err)
-			);
 			const metadataCleanup = await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
 			if (!metadataCleanup.success) {
 				console.error(
@@ -463,6 +460,12 @@ puzzles.post('/', requirePlayerAuth, async (c) => {
 					imageCleanup.error
 				);
 			}
+			// Cross-store ownership cleanup is last so a metadata rollback
+			// failure doesn't leave the D1 row already removed while the
+			// puzzle still partially exists in KV/R2.
+			await deletePuzzleOwnership(getWorkerDb(c.env), id).catch((err) =>
+				console.error('Failed to cleanup ownership after missing workflow binding:', err)
+			);
 			return c.json(
 				{
 					error: 'service_unavailable',
@@ -479,9 +482,6 @@ puzzles.post('/', requirePlayerAuth, async (c) => {
 			});
 		} catch (error) {
 			console.error('Failed to trigger workflow:', error);
-			await deletePuzzleOwnership(getWorkerDb(c.env), id).catch((err) =>
-				console.error('Failed to cleanup ownership after workflow trigger failure:', err)
-			);
 			const metadataCleanup = await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
 			if (!metadataCleanup.success) {
 				console.error(
@@ -496,6 +496,12 @@ puzzles.post('/', requirePlayerAuth, async (c) => {
 					imageCleanup.error
 				);
 			}
+			// Cross-store ownership cleanup is last so a metadata rollback
+			// failure doesn't leave the D1 row already removed while the
+			// puzzle still partially exists in KV/R2.
+			await deletePuzzleOwnership(getWorkerDb(c.env), id).catch((err) =>
+				console.error('Failed to cleanup ownership after workflow trigger failure:', err)
+			);
 			return c.json({ error: 'internal_error', message: 'Failed to start puzzle processing' }, 500);
 		}
 
