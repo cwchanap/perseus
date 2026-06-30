@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { getDb } from '../db';
 import {
@@ -159,13 +159,38 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 	}
 	const dataDir = process.env.DATA_DIR || './data';
 	const dir = join(dataDir, 'avatars');
+	const avatarPath = join(dir, playerId);
 	await mkdir(dir, { recursive: true });
-	await writeFile(join(dir, playerId), Buffer.from(bytes));
+	// Capture the prior avatar (if any) so we can restore it if the DB
+	// override write below fails. Without this, a DB failure would leave the
+	// new bytes on disk while the profile points at the same URL — orphaning
+	// the overwrite and destroying the previously-working avatar.
+	let priorBytes: Buffer | null = null;
+	try {
+		priorBytes = await readFile(avatarPath);
+	} catch (err) {
+		// ENOENT means no prior avatar existed; any other read error is safe to
+		// ignore here since we're only capturing for rollback, not serving.
+		if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+			priorBytes = null;
+		}
+	}
+	await writeFile(avatarPath, Buffer.from(bytes));
 
 	const db = getDb();
 	// Field-specific update writes only avatarUrl and preserves displayName,
 	// avoiding a read-modify-write race with concurrent PATCH /profile requests.
-	await updateProfileAvatarUrl(db, playerId, `/api/player/${playerId}/avatar`);
+	try {
+		await updateProfileAvatarUrl(db, playerId, `/api/player/${playerId}/avatar`);
+	} catch (err) {
+		console.error('Avatar DB write failed; rolling back avatar file:', err);
+		if (priorBytes) {
+			await writeFile(avatarPath, priorBytes);
+		} else {
+			await rm(avatarPath, { force: true });
+		}
+		return c.json({ error: 'internal_error', message: 'Failed to update avatar' }, 500);
+	}
 	// Reset the rate-limit counter on success so repeated successful uploads
 	// don't accumulate toward an unnecessary lockout. The middleware increments
 	// before the handler runs; this deletes that increment.

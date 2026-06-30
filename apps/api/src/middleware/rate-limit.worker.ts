@@ -360,6 +360,9 @@ export async function loginRateLimit(c: Context<{ Bindings: Env }>, next: Next):
 	// Check current lockout status before auth handler runs.
 	const result = await checkAndIncrement(kv, key, Date.now(), env, false);
 	if (result.shouldBlock) {
+		if (result.remainingSeconds !== undefined) {
+			c.header('Retry-After', result.remainingSeconds.toString());
+		}
 		return c.json(
 			{
 				error: 'too_many_requests',
@@ -406,6 +409,9 @@ export async function oauthRateLimit(c: Context<{ Bindings: Env }>, next: Next):
 	// Check current lockout status before handler runs (no increment)
 	const lockCheck = await checkAndIncrement(kv, key, Date.now(), env, false);
 	if (lockCheck.shouldBlock) {
+		if (lockCheck.remainingSeconds !== undefined) {
+			c.header('Retry-After', lockCheck.remainingSeconds.toString());
+		}
 		return c.json(
 			{
 				error: 'too_many_requests',
@@ -471,6 +477,9 @@ export async function avatarRateLimit(
 		AVATAR_MAX_ATTEMPTS + 1
 	);
 	if (lockCheck.shouldBlock) {
+		if (lockCheck.remainingSeconds !== undefined) {
+			c.header('Retry-After', lockCheck.remainingSeconds.toString());
+		}
 		return c.json(
 			{
 				error: 'too_many_requests',

@@ -571,6 +571,77 @@ describe('Workflow Execution - Resource Loading', () => {
 	});
 });
 
+describe('Workflow Execution - D1 ready mirror is best-effort', () => {
+	afterEach(() => {
+		mockWidth = 100;
+		mockHeight = 100;
+		photonInstances = [];
+		vi.restoreAllMocks();
+	});
+
+	it('keeps DO status ready and does NOT mark-failed when the D1 ready mirror throws', async () => {
+		const fourPieceMetadata: PuzzleMetadata = {
+			...sampleMetadata,
+			pieceCount: 4,
+			gridCols: 2,
+			gridRows: 2
+		};
+		const puzzleId = fourPieceMetadata.id;
+
+		const { namespace, stub } = createMockDurableObjectNamespace(() => {
+			return new Response(JSON.stringify({ success: true }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' }
+			});
+		});
+		const env = {
+			PUZZLES_BUCKET: createMockBucket(new ArrayBuffer(8)),
+			PUZZLE_METADATA: createMockKv(fourPieceMetadata),
+			PUZZLE_METADATA_DO: namespace as unknown as DurableObjectNamespace,
+			PUZZLE_WORKFLOW: {} as Workflow
+		} as unknown as Env;
+
+		const workflow = new TestWorkflow();
+		workflow.setEnv(env);
+
+		const event: WorkflowEvent<WorkflowParams> = {
+			payload: { puzzleId },
+			timestamp: new Date(),
+			instanceId: 'test-instance'
+		};
+
+		// Force the D1 ready mirror to fail. The old code ran the mirror inside
+		// the finalize step.do, so this throw would land in the catch and run
+		// mark-failed, overwriting 'ready' with 'failed'. The split must keep the
+		// DO 'ready' and merely log the D1 failure.
+		const { setPuzzleStatus } = await import('@perseus/shared');
+		vi.mocked(setPuzzleStatus).mockReset();
+		vi.mocked(setPuzzleStatus).mockRejectedValueOnce(new Error('D1 down'));
+
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		// Workflow must complete despite the D1 mirror failure.
+		await expect(workflow.run(event, createMockStep())).resolves.toBeUndefined();
+
+		// The D1 ready mirror was attempted (and failed, best-effort).
+		expect(setPuzzleStatus).toHaveBeenCalledWith(expect.anything(), puzzleId, 'ready');
+		// mark-failed must NOT have run — no 'failed' status written anywhere.
+		expect(setPuzzleStatus).not.toHaveBeenCalledWith(expect.anything(), puzzleId, 'failed');
+
+		// The last DO updateMetadata must be 'ready', not 'failed'.
+		const calls = stub.fetch.mock.calls;
+		const lastBody = JSON.parse((calls[calls.length - 1]?.[1]?.body as string | undefined) ?? '{}');
+		expect(lastBody.updates.status).toBe('ready');
+
+		// The D1 mirror failure was logged.
+		expect(consoleSpy).toHaveBeenCalledWith(
+			'Failed to mirror ready status to D1:',
+			expect.any(Error)
+		);
+		consoleSpy.mockRestore();
+	});
+});
+
 describe('Default export fetch handler', () => {
 	it('returns 404 Not Found for all HTTP requests', async () => {
 		const response = await workflowWorker.fetch(

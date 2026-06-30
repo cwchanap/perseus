@@ -39,7 +39,7 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 			totalCompletions: 0
 		})),
 		listPlayerPuzzles: vi.fn(
-			async (db: unknown, playerId: string): Promise<{ rows: unknown[]; nextCursor?: number }> => ({
+			async (db: unknown, playerId: string): Promise<{ rows: unknown[]; nextCursor?: string }> => ({
 				rows: puzzlesStore.get(playerId) ?? [],
 				nextCursor: undefined
 			})
@@ -300,10 +300,15 @@ function createMockBucket() {
 			if (!entry) return null;
 			return {
 				body: new Response(entry.body).body,
+				arrayBuffer: async () => entry.body,
+				httpMetadata: { contentType: entry.contentType },
 				writeHttpMetadata: (h: Headers) => {
 					if (entry.contentType) h.set('Content-Type', entry.contentType);
 				}
 			};
+		}),
+		delete: vi.fn(async (key: string) => {
+			store.delete(key);
 		})
 	};
 	return { bucket, store };
@@ -312,6 +317,14 @@ function createMockBucket() {
 const PNG_BYTES = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01, 0x02, 0x03, 0x04];
 
 describe('player avatar route (Worker)', () => {
+	// Self-contained auth setup: this block must not depend on a leaked
+	// getPlayerSession mock from the profile suite above. Without this,
+	// running the avatar tests in isolation resolves the session to
+	// undefined and every case fails with 401.
+	beforeEach(() => {
+		vi.mocked(playerAuth.getPlayerSession).mockResolvedValue(TEST_PLAYER);
+	});
+
 	it('POST avatar stores to R2 and returns avatarUrl', async () => {
 		const { bucket } = createMockBucket();
 		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
@@ -420,6 +433,72 @@ describe('player avatar route (Worker)', () => {
 		const row = await (getProfileOverride as any)({}, 'p1');
 		expect(row.displayName).toBe('KeepMe');
 		expect(row.avatarUrl).toBe('/api/player/p1/avatar');
+	});
+
+	it('rolls back R2 and returns 500 when the DB override write throws (prior avatar exists)', async () => {
+		const { bucket, store } = createMockBucket();
+		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
+
+		// Seed a pre-existing avatar so the rollback path restores it.
+		const priorPng = [0x89, 0x50, 0x4e, 0x47, 0xaa, 0xbb];
+		await bucket.put(
+			'avatars/p1',
+			new Uint8Array(priorPng) as unknown as ReadableStream<Uint8Array>,
+			{
+				httpMetadata: { contentType: 'image/png' }
+			}
+		);
+
+		// Force the DB override write to fail.
+		const { updateProfileAvatarUrl } = await import('@perseus/shared');
+		vi.mocked(updateProfileAvatarUrl).mockRejectedValueOnce(new Error('D1 down'));
+
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const blob = new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' });
+		const form = new FormData();
+		form.append('avatar', blob, 'a.png');
+		const res = await buildApp().request(
+			'/api/player/avatar',
+			{ method: 'POST', headers: AUTH_COOKIE, body: form },
+			env
+		);
+
+		expect(res.status).toBe(500);
+		// R2 must have been restored to the prior bytes, not left with the new upload.
+		const restored = store.get('avatars/p1');
+		expect(restored).toBeDefined();
+		expect(Array.from(new Uint8Array(restored!.body))).toEqual(priorPng);
+		expect(consoleSpy).toHaveBeenCalledWith(
+			'Avatar DB write failed; rolling back R2 object:',
+			expect.any(Error)
+		);
+		consoleSpy.mockRestore();
+	});
+
+	it('deletes the new R2 object on DB write failure when no prior avatar existed', async () => {
+		const { bucket, store } = createMockBucket();
+		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
+
+		// No prior avatar seeded -> rollback should delete the freshly-written object.
+		const { updateProfileAvatarUrl } = await import('@perseus/shared');
+		vi.mocked(updateProfileAvatarUrl).mockRejectedValueOnce(new Error('D1 down'));
+
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const blob = new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' });
+		const form = new FormData();
+		form.append('avatar', blob, 'a.png');
+		const res = await buildApp().request(
+			'/api/player/avatar',
+			{ method: 'POST', headers: AUTH_COOKIE, body: form },
+			env
+		);
+
+		expect(res.status).toBe(500);
+		expect(store.has('avatars/p1')).toBe(false);
+		expect(bucket.delete).toHaveBeenCalledWith('avatars/p1');
+		consoleSpy.mockRestore();
 	});
 });
 

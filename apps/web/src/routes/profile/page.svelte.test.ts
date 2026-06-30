@@ -235,6 +235,52 @@ describe('profile page', () => {
 		});
 	});
 
+	it('redirects to login when the session becomes anonymous after loading (e.g. logout)', async () => {
+		// Capture the subscriber callback so we can emit a second state change
+		// (logout) after the initial authenticated load has already run. The old
+		// `settled` guard ignored this second emission; the page must keep
+		// redirecting on any non-authenticated, non-loading state.
+		let emitLogout: () => void = () => {};
+		vi.mocked(playerAuth.subscribe).mockImplementationOnce((run) => {
+			emitLogout = () => run({ status: 'anonymous', user: null, error: null });
+			run({
+				status: 'authenticated',
+				user: {
+					id: 'p1',
+					email: 'e',
+					name: 'Logout Me',
+					picture: null,
+					createdAt: 1,
+					lastLoginAt: 2
+				},
+				error: null
+			});
+			return () => {};
+		});
+		vi.mocked(getPlayerProfile).mockResolvedValue({
+			id: 'p1',
+			email: 'e',
+			name: 'Logout Me',
+			picture: null,
+			createdAt: 1,
+			lastLoginAt: 2,
+			summary: { puzzlesUploaded: 0, puzzlesSolved: 0, totalCompletions: 0 }
+		});
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({ puzzles: [], nextCursor: undefined });
+		vi.mocked(getPlayerStats).mockResolvedValue({ stats: [], nextCursor: undefined });
+
+		render(ProfilePage);
+		// Initial authenticated load renders the profile.
+		await expect.element(page.getByText('Logout Me')).toBeVisible();
+
+		// Simulate logout: the store emits anonymous after the profile loaded.
+		emitLogout();
+
+		await vi.waitFor(() => {
+			expect(goto).toHaveBeenCalledWith('/login');
+		});
+	});
+
 	it('renders the first puzzle page and shows Load more when nextCursor is present', async () => {
 		vi.mocked(getPlayerProfile).mockResolvedValue({
 			id: 'p1',

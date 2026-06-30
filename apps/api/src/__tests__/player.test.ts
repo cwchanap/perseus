@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Hono } from 'hono';
-import { rmSync, mkdtempSync } from 'node:fs';
+import { rmSync, mkdtempSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -43,7 +43,7 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 			totalCompletions: 0
 		})),
 		listPlayerPuzzles: vi.fn(
-			async (db: unknown, playerId: string): Promise<{ rows: unknown[]; nextCursor?: number }> => ({
+			async (db: unknown, playerId: string): Promise<{ rows: unknown[]; nextCursor?: string }> => ({
 				rows: puzzlesStore.get(playerId) ?? [],
 				nextCursor: undefined
 			})
@@ -342,6 +342,62 @@ describe('player avatar route (Bun)', () => {
 		const row = await (getProfileOverride as any)({}, 'p1');
 		expect(row.displayName).toBe('KeepMe');
 		expect(row.avatarUrl).toBe('/api/player/p1/avatar');
+	});
+
+	it('rolls back the avatar file and returns 500 when the DB override write throws (prior avatar exists)', async () => {
+		// Seed a pre-existing avatar so the rollback path restores it.
+		const { mkdirSync } = await import('node:fs');
+		const avatarPath = join(dataDir, 'avatars', 'p1');
+		mkdirSync(join(dataDir, 'avatars'), { recursive: true });
+		writeFileSync(avatarPath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0xaa, 0xbb]));
+
+		const { updateProfileAvatarUrl } = await import('@perseus/shared');
+		vi.mocked(updateProfileAvatarUrl).mockRejectedValueOnce(new Error('DB down'));
+
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const blob = new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' });
+		const form = new FormData();
+		form.append('avatar', blob, 'a.png');
+		const res = await buildApp().request('/api/player/avatar', {
+			method: 'POST',
+			headers: AUTH_COOKIE,
+			body: form
+		});
+
+		expect(res.status).toBe(500);
+		// File must be restored to the prior bytes, not left with the new upload.
+		const restored = readFileSync(avatarPath);
+		expect(Array.from(restored)).toEqual([0x89, 0x50, 0x4e, 0x47, 0xaa, 0xbb]);
+		expect(consoleSpy).toHaveBeenCalledWith(
+			'Avatar DB write failed; rolling back avatar file:',
+			expect.any(Error)
+		);
+		consoleSpy.mockRestore();
+	});
+
+	it('deletes the new avatar file on DB write failure when no prior avatar existed', async () => {
+		const { updateProfileAvatarUrl } = await import('@perseus/shared');
+		vi.mocked(updateProfileAvatarUrl).mockRejectedValueOnce(new Error('DB down'));
+
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const blob = new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' });
+		const form = new FormData();
+		form.append('avatar', blob, 'a.png');
+		const res = await buildApp().request('/api/player/avatar', {
+			method: 'POST',
+			headers: AUTH_COOKIE,
+			body: form
+		});
+
+		expect(res.status).toBe(500);
+		expect(existsSync(join(dataDir, 'avatars', 'p1'))).toBe(false);
+		expect(consoleSpy).toHaveBeenCalledWith(
+			'Avatar DB write failed; rolling back avatar file:',
+			expect.any(Error)
+		);
+		consoleSpy.mockRestore();
 	});
 });
 

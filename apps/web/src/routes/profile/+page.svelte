@@ -57,18 +57,25 @@
 
 	onMount(() => {
 		// The root layout already calls playerAuth.refresh() on mount.
-		// Subscribe and wait for the store to settle (leave 'loading') before
-		// deciding whether to redirect to login. Calling refresh() here would
-		// race with the layout's call via the store's operationId guard.
-		let settled = false;
+		// Subscribe and wait for the store to leave 'loading' before deciding
+		// whether to redirect to login. Calling refresh() here would race with
+		// the layout's call via the store's operationId guard.
+		// Keep reacting to every non-loading emission: only skip while loading,
+		// but continue redirecting to /login whenever the session is no longer
+		// authenticated (e.g. a later logout) — not just on the first settle.
+		// `loaded` gates the initial profile fetch so a re-authenticated
+		// emission (e.g. a re-refresh) doesn't reload the whole page.
+		let loaded = false;
 		const unsubscribe = playerAuth.subscribe((state) => {
-			if (settled || state.status === 'loading') return;
-			settled = true;
+			if (state.status === 'loading') return;
 			if (state.status !== 'authenticated') {
 				goto(resolve('/login'));
 				return;
 			}
-			void loadAll();
+			if (!loaded) {
+				loaded = true;
+				void loadAll();
+			}
 		});
 		return unsubscribe;
 	});

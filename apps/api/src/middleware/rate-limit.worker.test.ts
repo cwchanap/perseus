@@ -41,6 +41,7 @@ function createMockContext(ip: string = '127.0.0.1', kv?: any): Context<any> {
 			})
 		},
 		json: vi.fn((body, status) => ({ body, status })),
+		header: vi.fn(),
 		res: { status: 200 } as any
 	} as any;
 }

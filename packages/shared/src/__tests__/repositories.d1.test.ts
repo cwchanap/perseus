@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { Miniflare } from 'miniflare';
 import { drizzle } from 'drizzle-orm/d1';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import * as schema from '../schema';
@@ -14,10 +14,16 @@ import {
 } from '../repositories';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const migrationSql = readFileSync(
-	join(__dirname, '../../drizzle/0000_true_fantastic_four.sql'),
-	'utf-8'
-);
+const migrationsDir = join(__dirname, '../../drizzle');
+// Load the full Drizzle migration set in numeric order so the test schema
+// stays aligned with production. Hardcoding a single migration file would
+// silently drift as new numbered migrations are added (the meta/ dir holds
+// journal/snapshot files, not .sql, so it's excluded by the filter).
+const migrationSql = readdirSync(migrationsDir)
+	.filter((f) => /^\d{4}_.*\.sql$/u.test(f))
+	.sort()
+	.map((f) => readFileSync(join(migrationsDir, f), 'utf-8'))
+	.join('\n');
 
 let mf: Miniflare;
 let db: AppDb;
