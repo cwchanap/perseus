@@ -23,15 +23,6 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 		__puzzlesStore: puzzlesStore,
 		__statsStore: statsStore,
 		getProfileOverride: vi.fn((db: unknown, playerId: string) => store.get(playerId) ?? null),
-		upsertProfileOverride: vi.fn(
-			(
-				db: unknown,
-				playerId: string,
-				values: { displayName: string | null; avatarUrl: string | null }
-			) => {
-				store.set(playerId, values);
-			}
-		),
 		// Field-specific upserts mirror the real ON CONFLICT behavior: each
 		// writes only its column, preserving the other.
 		updateProfileDisplayName: vi.fn((db: unknown, playerId: string, displayName: string | null) => {
@@ -147,8 +138,8 @@ describe('player profile routes (Worker)', () => {
 
 	it('PATCH with null resets to Google name', async () => {
 		// Seed an override first.
-		const { upsertProfileOverride } = await import('@perseus/shared');
-		await (upsertProfileOverride as any)({}, 'p1', { displayName: 'Custom', avatarUrl: null });
+		const { updateProfileDisplayName } = await import('@perseus/shared');
+		await (updateProfileDisplayName as any)({}, 'p1', 'Custom');
 
 		await buildApp().request(
 			'/api/player/profile',
@@ -414,11 +405,8 @@ describe('player avatar route (Worker)', () => {
 	it('POST avatar preserves an existing displayName', async () => {
 		const { bucket } = createMockBucket();
 		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
-		const { upsertProfileOverride, getProfileOverride } = await import('@perseus/shared');
-		await (upsertProfileOverride as any)({}, 'p1', {
-			displayName: 'KeepMe',
-			avatarUrl: null
-		});
+		const { updateProfileDisplayName, getProfileOverride } = await import('@perseus/shared');
+		await (updateProfileDisplayName as any)({}, 'p1', 'KeepMe');
 
 		const blob = new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' });
 		const form = new FormData();

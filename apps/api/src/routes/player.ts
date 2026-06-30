@@ -226,7 +226,7 @@ player.get('/stats', requirePlayerAuth, async (c) => {
 	const db = getDb();
 	const session = c.get('playerSession');
 	const limit = Number(c.req.query('limit') ?? '20');
-	const cursor = c.req.query('cursor');
+	const cursor = c.req.query('cursor') || undefined;
 	const { rows, nextCursor } = await listPlayerStats(db, session.user.id, {
 		limit: Number.isFinite(limit) ? limit : 20,
 		...(cursor !== undefined ? { cursor } : {})

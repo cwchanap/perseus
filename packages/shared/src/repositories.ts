@@ -15,37 +15,12 @@ export async function getProfileOverride(
 	return rows[0] ?? null;
 }
 
-export async function upsertProfileOverride(
-	db: AppDb,
-	playerId: string,
-	values: { displayName: string | null; avatarUrl: string | null }
-): Promise<void> {
-	const now = Date.now();
-	await db
-		.insert(playerProfiles)
-		.values({
-			playerId,
-			displayName: values.displayName,
-			avatarUrl: values.avatarUrl,
-			updatedAt: now
-		})
-		.onConflictDoUpdate({
-			target: playerProfiles.playerId,
-			set: {
-				displayName: values.displayName,
-				avatarUrl: values.avatarUrl,
-				updatedAt: now
-			}
-		})
-		.run();
-}
-
 // Field-specific upserts: each writes only its own column via ON CONFLICT,
 // leaving the other column untouched. This removes the read-modify-write race
-// between concurrent PATCH /profile and POST /avatar requests, where a naive
-// getProfileOverride -> upsertProfileOverride could clobber the other field
-// with a stale value. On first contact (no existing row) the missing column
-// defaults to NULL, matching the historical upsert behavior.
+// between concurrent PATCH /profile and POST /avatar requests, where a single
+// upsert writing both columns could clobber the other field with a stale
+// value. On first contact (no existing row) the missing column defaults to
+// NULL.
 export async function updateProfileDisplayName(
 	db: AppDb,
 	playerId: string,
@@ -135,8 +110,10 @@ function parsePlayerPuzzleCursor(cursor: string) {
 	// condition keeps rows strictly "after".
 	const sep = cursor.lastIndexOf('|');
 	if (sep <= 0) {
-		// Malformed cursor: fall back to treating the whole string as a
-		// createdAt timestamp for backward compatibility with older clients.
+		// Malformed cursor (missing or leading separator): fall back to
+		// treating the whole string as a bare createdAt timestamp. This is
+		// a defensive measure, not backward compatibility — the composite
+		// cursor format is new and has no prior version.
 		const ts = Number(cursor);
 		return Number.isFinite(ts) ? lt(puzzles.createdAt, ts) : sql`false`;
 	}
@@ -273,9 +250,11 @@ function parsePlayerStatsCursor(cursor: string) {
 	// strictly "after".
 	const sep = cursor.lastIndexOf('|');
 	if (sep <= 0) {
-		// Malformed cursor: fall back to treating the whole string as a
-		// bestTimeSeconds value for backward compatibility with older clients.
-		// Stats are ordered ASC, so "after" means strictly greater.
+		// Malformed cursor (missing or leading separator): fall back to
+		// treating the whole string as a bare bestTimeSeconds value. This is
+		// a defensive measure, not backward compatibility — the composite
+		// cursor format is new and has no prior version. Stats are ordered
+		// ASC, so "after" means strictly greater.
 		const ts = Number(cursor);
 		return Number.isFinite(ts) ? gt(puzzleStats.bestTimeSeconds, ts) : sql`false`;
 	}

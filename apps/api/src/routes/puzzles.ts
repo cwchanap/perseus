@@ -362,7 +362,7 @@ puzzles.post('/', requirePlayerAuth, async (c) => {
 				pieceCount,
 				...(category ? { category } : {}),
 				status: 'ready',
-				createdAt: Date.now()
+				createdAt: puzzleToStore.createdAt
 			});
 		} catch (error) {
 			console.error('Failed to record puzzle ownership:', error);

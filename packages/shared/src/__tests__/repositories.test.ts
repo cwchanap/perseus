@@ -5,7 +5,6 @@ import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
 import * as schema from '../schema';
 import {
 	getProfileOverride,
-	upsertProfileOverride,
 	updateProfileDisplayName,
 	updateProfileAvatarUrl,
 	insertPuzzleOwnership,
@@ -36,17 +35,6 @@ describe('repositories', () => {
 		expect(await getProfileOverride(helper.db, 'p1')).toBeNull();
 	});
 
-	it('upsertProfileOverride inserts then updates', async () => {
-		await upsertProfileOverride(helper.db, 'p1', { displayName: 'A', avatarUrl: null });
-		let row = await getProfileOverride(helper.db, 'p1');
-		expect(row?.displayName).toBe('A');
-
-		await upsertProfileOverride(helper.db, 'p1', { displayName: 'B', avatarUrl: 'u' });
-		row = await getProfileOverride(helper.db, 'p1');
-		expect(row?.displayName).toBe('B');
-		expect(row?.avatarUrl).toBe('u');
-	});
-
 	it('updateProfileDisplayName preserves an existing avatarUrl', async () => {
 		await updateProfileAvatarUrl(helper.db, 'p1', 'avatar-url');
 		await updateProfileDisplayName(helper.db, 'p1', 'Name');
@@ -64,7 +52,8 @@ describe('repositories', () => {
 	});
 
 	it('updateProfileDisplayName resets to null when passed null', async () => {
-		await upsertProfileOverride(helper.db, 'p1', { displayName: 'A', avatarUrl: 'u' });
+		await updateProfileDisplayName(helper.db, 'p1', 'A');
+		await updateProfileAvatarUrl(helper.db, 'p1', 'u');
 		await updateProfileDisplayName(helper.db, 'p1', null);
 		const row = await getProfileOverride(helper.db, 'p1');
 		expect(row?.displayName).toBeNull();
