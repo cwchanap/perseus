@@ -1029,6 +1029,13 @@ describe('player profile service functions', () => {
 		expect(resolveAssetUrl('/api/player/p1/avatar')).toMatch(/\/api\/player\/p1\/avatar$/);
 	});
 
+	it('resolveAssetUrl passes through non-absolute, non-relative URLs unchanged (line 401)', () => {
+		// A url that doesn't start with http(s):// or / falls through to the
+		// final return statement (line 401). e.g. data: URLs, blob: URLs.
+		expect(resolveAssetUrl('data:image/png;base64,abc')).toBe('data:image/png;base64,abc');
+		expect(resolveAssetUrl('blob:https://example.com/uuid')).toBe('blob:https://example.com/uuid');
+	});
+
 	it('getPlayerProfile resolves a relative avatar picture against the API', async () => {
 		vi.stubGlobal(
 			'fetch',
