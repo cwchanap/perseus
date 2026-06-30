@@ -4,6 +4,7 @@ import { getWorkerDb } from '../db.worker';
 import { recordCompletion } from '@perseus/shared';
 import { isPuzzleId } from '@perseus/types';
 import { getPuzzle } from '../services/storage.worker';
+import { isPuzzleReady } from '../utils/puzzleReady';
 import { requirePlayerAuth } from '../middleware/player-auth.worker';
 import type { PlayerSessionRecord } from '../services/player-auth.worker';
 
@@ -53,7 +54,7 @@ router.post('/:id/complete', requirePlayerAuth, async (c) => {
 	// can't accumulate rows for non-existent or not-yet-generated puzzles.
 	// Mirrors GET /api/puzzles/:id, which 404s non-ready puzzles.
 	const puzzle = await getPuzzle(c.env.PUZZLE_METADATA, puzzleId);
-	if (!puzzle || puzzle.status !== 'ready') {
+	if (!puzzle || !isPuzzleReady(puzzle)) {
 		return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
 	}
 
