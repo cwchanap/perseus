@@ -9,6 +9,8 @@
 		"build": "wrangler deploy --dry-run --outdir dist --config wrangler.production.toml",
 		"build:bun": "bun build src/index.ts --outdir dist --target bun",
 		"deploy": "wrangler deploy --config wrangler.production.toml",
+		"db:migrate": "wrangler d1 migrations apply perseus-player-data --remote --config wrangler.production.toml",
+		"db:migrate:local": "wrangler d1 migrations apply perseus-player-data --local --config wrangler.toml",
 		"start": "wrangler dev --local",
 		"start:bun": "bun run dist/index.js",
 		"test": "vitest run --coverage",

@@ -27,6 +27,13 @@
 	let editing = $state(false);
 	let displayName = $state('');
 	let saving = $state(false);
+	// Pagination cursors returned by the API. Undefined means "no more pages",
+	// in which case the "Load more" button isn't rendered. Shared loadingMore
+	// flag prevents concurrent append fetches (double-click/retry) from
+	// duplicating a page.
+	let puzzlesCursor = $state<string | undefined>(undefined);
+	let statsCursor = $state<string | undefined>(undefined);
+	let loadingMore = $state(false);
 
 	const initials = $derived(
 		(profile?.name ?? '?')
@@ -74,8 +81,8 @@
 		// screen), while puzzle/stat failures degrade gracefully to empty lists.
 		const [profileRes, puzzlesRes, statsRes] = await Promise.allSettled([
 			getPlayerProfile(),
-			getPlayerPuzzles().then((r) => r.puzzles),
-			getPlayerStats().then((r) => r.stats)
+			getPlayerPuzzles(),
+			getPlayerStats()
 		]);
 		if (profileRes.status === 'fulfilled') {
 			profile = profileRes.value;
@@ -86,13 +93,57 @@
 			console.error('Failed to load profile:', profileRes.reason);
 			loadError = true;
 		}
-		puzzles = puzzlesRes.status === 'fulfilled' ? puzzlesRes.value : [];
-		stats = statsRes.status === 'fulfilled' ? statsRes.value : [];
-		// Degrade non-essential failures noisily but without blocking the UI.
-		if (puzzlesRes.status === 'rejected')
+		if (puzzlesRes.status === 'fulfilled') {
+			puzzles = puzzlesRes.value.puzzles;
+			puzzlesCursor = puzzlesRes.value.nextCursor;
+		} else {
+			puzzles = [];
+			puzzlesCursor = undefined;
+			// Degrade non-essential failures noisily but without blocking the UI.
 			console.error('Failed to load puzzles:', puzzlesRes.reason);
-		if (statsRes.status === 'rejected') console.error('Failed to load stats:', statsRes.reason);
+		}
+		if (statsRes.status === 'fulfilled') {
+			stats = statsRes.value.stats;
+			statsCursor = statsRes.value.nextCursor;
+		} else {
+			stats = [];
+			statsCursor = undefined;
+			console.error('Failed to load stats:', statsRes.reason);
+		}
 		loading = false;
+	}
+
+	// Append the next page of puzzles. The API omits nextCursor when no more rows
+	// exist; when undefined, the "Load more" button isn't rendered. loadingMore
+	// guards against a double-click appending the same page twice.
+	async function loadMorePuzzles() {
+		if (loadingMore || puzzlesCursor === undefined) return;
+		const cursor = puzzlesCursor;
+		loadingMore = true;
+		try {
+			const r = await getPlayerPuzzles({ cursor });
+			puzzles = [...puzzles, ...r.puzzles];
+			puzzlesCursor = r.nextCursor;
+		} catch (error) {
+			console.error('Failed to load more puzzles:', error);
+		} finally {
+			loadingMore = false;
+		}
+	}
+
+	async function loadMoreStats() {
+		if (loadingMore || statsCursor === undefined) return;
+		const cursor = statsCursor;
+		loadingMore = true;
+		try {
+			const r = await getPlayerStats({ cursor });
+			stats = [...stats, ...r.stats];
+			statsCursor = r.nextCursor;
+		} catch (error) {
+			console.error('Failed to load more stats:', error);
+		} finally {
+			loadingMore = false;
+		}
 	}
 
 	async function saveName() {
@@ -210,6 +261,17 @@
 					<PuzzleCard puzzle={toCard(p)} />
 				{/each}
 			</div>
+			{#if puzzlesCursor !== undefined}
+				<button
+					type="button"
+					data-testid="load-more-puzzles"
+					class="mt-4 text-sm text-(--accent) disabled:opacity-50"
+					onclick={loadMorePuzzles}
+					disabled={loadingMore}
+				>
+					{loadingMore ? 'Loading…' : 'Load more'}
+				</button>
+			{/if}
 		{/if}
 
 		<h2 class="mt-8 font-(--font-display) text-(--text-0)">Best Times</h2>
@@ -237,6 +299,17 @@
 					</li>
 				{/each}
 			</ul>
+			{#if statsCursor !== undefined}
+				<button
+					type="button"
+					data-testid="load-more-stats"
+					class="mt-4 text-sm text-(--accent) disabled:opacity-50"
+					onclick={loadMoreStats}
+					disabled={loadingMore}
+				>
+					{loadingMore ? 'Loading…' : 'Load more'}
+				</button>
+			{/if}
 		{/if}
 	</section>
 {/if}

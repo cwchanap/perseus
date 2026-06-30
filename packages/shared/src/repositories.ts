@@ -156,6 +156,18 @@ export async function countPlayerPuzzles(db: AppDb, playerId: string): Promise<n
 	return rows[0]?.n ?? 0;
 }
 
+// Server-side dedupe window for completion submissions. Two completions of
+// the same (player, puzzle) closer together than this are treated as a retried
+// or duplicated submission (e.g. a re-POST after a lost response, or a
+// double-tap) and do NOT increment totalCompletions. Genuine re-solves take
+// longer than this even for small puzzles (navigation + re-solving), so they
+// still count. This is a heuristic — the server cannot distinguish a rapid
+// legitimate replay from a retry without a client-provided idempotency key —
+// but it closes the realistic double-count vector without a schema change.
+// bestTimeSeconds still takes the MIN regardless, so a better time is always
+// recorded even for a deduped retry.
+const COMPLETION_DEDUPE_WINDOW_MS = 30_000;
+
 export async function recordCompletion(
 	db: AppDb,
 	playerId: string,
@@ -176,11 +188,16 @@ export async function recordCompletion(
 		.onConflictDoUpdate({
 			target: [puzzleStats.playerId, puzzleStats.puzzleId],
 			set: {
-				// MIN of stored vs incoming (excluded) best time; `excluded` is SQLite's
-				// name for the conflicting incoming row.
+				// best time always tracks the minimum observed (`excluded` is
+				// SQLite's name for the conflicting incoming row). Safe even for a
+				// deduped retry, which carries the same time anyway.
 				bestTimeSeconds: sql`MIN(${puzzleStats.bestTimeSeconds}, excluded.best_time_seconds)`,
-				totalCompletions: sql`${puzzleStats.totalCompletions} + 1`,
-				lastCompletedAt: now
+				// Only count the solve and advance lastCompletedAt when it falls
+				// outside the dedupe window of the last RECORDED completion. A rapid
+				// retry within the window leaves both untouched, preventing inflated
+				// counts. `excluded.last_completed_at` is the incoming now.
+				totalCompletions: sql`CASE WHEN excluded.last_completed_at - ${puzzleStats.lastCompletedAt} >= ${COMPLETION_DEDUPE_WINDOW_MS} THEN ${puzzleStats.totalCompletions} + 1 ELSE ${puzzleStats.totalCompletions} END`,
+				lastCompletedAt: sql`CASE WHEN excluded.last_completed_at - ${puzzleStats.lastCompletedAt} >= ${COMPLETION_DEDUPE_WINDOW_MS} THEN excluded.last_completed_at ELSE ${puzzleStats.lastCompletedAt} END`
 			}
 		})
 		.run();

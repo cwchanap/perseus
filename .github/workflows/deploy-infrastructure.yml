@@ -190,3 +190,18 @@ jobs:
         env:
           PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+      - name: Apply D1 migrations
+        # Run AFTER Pulumi Up: Pulumi provisions the D1 database resource, then
+        # we apply the shared drizzle schema (packages/shared/drizzle). wrangler
+        # tracks applied migrations in a d1_migrations table, so re-runs are a
+        # no-op — safe to execute on every deploy. migrations_dir is resolved
+        # relative to the config file (apps/api), pointing at the checked-out
+        # packages/shared/drizzle (build artifacts only cover apps/).
+        # First-ever deploy has a brief window where the Worker is live before
+        # tables exist; acceptable since profile traffic only starts when users
+        # visit the page, by which point this step has completed.
+        run: bunx wrangler d1 migrations apply perseus-player-data --remote --config apps/api/wrangler.production.toml
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
