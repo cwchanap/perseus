@@ -1,6 +1,12 @@
 import { test, expect, type Page } from '@playwright/test';
 
 // Mock player session/profile/puzzles/stats payloads for the profile page.
+// NOTE: the session endpoint lives under /api/auth/session (the OAuth router),
+// NOT /api/player/session — the playerAuth store calls getPlayerSession() which
+// fetches /api/auth/session (see src/lib/services/api.ts). Mocking the wrong
+// path here leaves the real request un-intercepted, so the store settles as
+// anonymous and the page silently redirects to /login — passing the
+// "redirects anonymous" test for the wrong reason and breaking authed tests.
 // The e2e harness runs against the real Bun API, but player auth requires a
 // Google OAuth round-trip we can't perform in CI. Intercepting the API calls
 // at the Playwright layer lets us exercise the full profile UI (identity card,
@@ -50,7 +56,7 @@ const mockStats = {
 };
 
 async function mockPlayerApi(page: Page) {
-	await page.route('**/api/player/session', (route) => route.fulfill({ json: mockSession }));
+	await page.route('**/api/auth/session', (route) => route.fulfill({ json: mockSession }));
 	await page.route('**/api/player/profile', (route) => route.fulfill({ json: mockProfile }));
 	await page.route('**/api/player/puzzles**', (route) => route.fulfill({ json: mockPuzzles }));
 	await page.route('**/api/player/stats**', (route) => route.fulfill({ json: mockStats }));
@@ -59,7 +65,7 @@ async function mockPlayerApi(page: Page) {
 test('profile page redirects anonymous users to login', async ({ page }) => {
 	// No session mock → the playerAuth store settles as anonymous → the layout
 	// guard redirects to /login.
-	await page.route('**/api/player/session', (route) =>
+	await page.route('**/api/auth/session', (route) =>
 		route.fulfill({ json: { authenticated: false, user: null } })
 	);
 	await page.goto('/profile');
@@ -135,7 +141,7 @@ test('reload after avatar upload picks up a newly owned puzzle from the puzzles 
 	};
 
 	let puzzlesCallCount = 0;
-	await page.route('**/api/player/session', (route) => route.fulfill({ json: mockSession }));
+	await page.route('**/api/auth/session', (route) => route.fulfill({ json: mockSession }));
 	await page.route('**/api/player/profile', (route) => route.fulfill({ json: mockProfile }));
 	await page.route('**/api/player/puzzles**', async (route) => {
 		puzzlesCallCount++;

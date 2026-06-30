@@ -7,6 +7,9 @@ interface D1Env {
 }
 
 export function createD1Db(env: D1Env): AppDb {
-	// D1 migrations are applied out-of-band via `wrangler d1 migrations apply`.
+	// Migrations live in packages/shared/drizzle and are applied by:
+	//   - CI:  the "Apply D1 migrations" step in deploy-infrastructure.yml
+	//          (runs `bun run db:migrate` after Pulumi provisions the DB), or
+	//   - manually: `bun run db:migrate` (remote) / `db:migrate:local` (dev).
 	return drizzle(env.DB, { schema }) as unknown as AppDb;
 }

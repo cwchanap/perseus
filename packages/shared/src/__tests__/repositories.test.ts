@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Database } from 'bun:sqlite';
 import { drizzle } from 'drizzle-orm/bun-sqlite';
 import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
@@ -210,14 +210,42 @@ describe('repositories', () => {
 		expect(page2.rows.every((r) => r.ownerId === 'alice')).toBe(true);
 	});
 
-	it('recordCompletion upserts best time and increments count', async () => {
-		await recordCompletion(helper.db, 'p1', 'pz1', 100);
-		await recordCompletion(helper.db, 'p1', 'pz1', 80);
-		await recordCompletion(helper.db, 'p1', 'pz1', 120);
-		const stats = await listPlayerStats(helper.db, 'p1', { limit: 10 });
-		expect(stats.rows).toHaveLength(1);
-		expect(stats.rows[0].bestTimeSeconds).toBe(80);
-		expect(stats.rows[0].totalCompletions).toBe(3);
+	it('recordCompletion upserts best time and increments count for spaced solves', async () => {
+		// Spaced beyond the dedupe window, each submission is a distinct solve:
+		// the count increments and best time tracks the MIN across all of them.
+		vi.useFakeTimers();
+		try {
+			await recordCompletion(helper.db, 'p1', 'pz1', 100);
+			vi.advanceTimersByTime(31_000);
+			await recordCompletion(helper.db, 'p1', 'pz1', 80);
+			vi.advanceTimersByTime(31_000);
+			await recordCompletion(helper.db, 'p1', 'pz1', 120);
+			const stats = await listPlayerStats(helper.db, 'p1', { limit: 10 });
+			expect(stats.rows).toHaveLength(1);
+			expect(stats.rows[0].bestTimeSeconds).toBe(80); // MIN of 100, 80, 120
+			expect(stats.rows[0].totalCompletions).toBe(3);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('recordCompletion dedupes rapid retries within the window', async () => {
+		// A rapid re-POST (e.g. after a lost response or a double-tap) within the
+		// dedupe window must NOT inflate the count, but its time is still
+		// considered for the best-time MIN.
+		vi.useFakeTimers();
+		try {
+			await recordCompletion(helper.db, 'p1', 'pz1', 100);
+			// No time advanced — these are immediate retries.
+			await recordCompletion(helper.db, 'p1', 'pz1', 80);
+			await recordCompletion(helper.db, 'p1', 'pz1', 120);
+			const stats = await listPlayerStats(helper.db, 'p1', { limit: 10 });
+			expect(stats.rows).toHaveLength(1);
+			expect(stats.rows[0].bestTimeSeconds).toBe(80); // MIN still applied
+			expect(stats.rows[0].totalCompletions).toBe(1); // deduped, not 3
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it('getPlayerSummary aggregates counts', async () => {
