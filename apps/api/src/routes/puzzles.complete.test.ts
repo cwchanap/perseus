@@ -22,7 +22,7 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 });
 
 vi.mock('../services/storage', () => ({
-	getPuzzle: vi.fn().mockResolvedValue({ id: 'pz', status: 'ready' })
+	puzzleExists: vi.fn().mockResolvedValue(true)
 }));
 
 vi.mock('../services/player-auth', () => ({
@@ -67,10 +67,10 @@ function jsonHeaders() {
 describe('POST /api/puzzles/:id/complete (Bun)', () => {
 	beforeEach(() => {
 		vi.mocked(playerAuth.getPlayerSession).mockResolvedValue(TEST_PLAYER);
-		vi.mocked(storage.getPuzzle).mockResolvedValue({ id: PUZZLE_ID, status: 'ready' } as never);
+		vi.mocked(storage.puzzleExists).mockResolvedValue(true);
 		// Reset call history on every asserted mock so each test only reflects
 		// its own requests (the not.toHaveBeenCalled() assertions depend on this).
-		vi.mocked(storage.getPuzzle).mockClear();
+		vi.mocked(storage.puzzleExists).mockClear();
 		vi.mocked(recordCompletion).mockClear();
 	});
 
@@ -94,7 +94,7 @@ describe('POST /api/puzzles/:id/complete (Bun)', () => {
 			body: JSON.stringify({ timeSeconds: 90 })
 		});
 		expect(res.status).toBe(400);
-		expect(storage.getPuzzle).not.toHaveBeenCalled();
+		expect(storage.puzzleExists).not.toHaveBeenCalled();
 	});
 
 	it('rejects a non-v4 UUID with 400', async () => {
@@ -111,21 +111,7 @@ describe('POST /api/puzzles/:id/complete (Bun)', () => {
 	});
 
 	it('returns 404 when the puzzle does not exist', async () => {
-		vi.mocked(storage.getPuzzle).mockResolvedValueOnce(null);
-		const res = await buildApp().request(`/api/puzzles/${PUZZLE_ID}/complete`, {
-			method: 'POST',
-			headers: jsonHeaders(),
-			body: JSON.stringify({ timeSeconds: 90 })
-		});
-		expect(res.status).toBe(404);
-		expect(recordCompletion).not.toHaveBeenCalled();
-	});
-
-	it('returns 404 when the puzzle exists but is not ready', async () => {
-		vi.mocked(storage.getPuzzle).mockResolvedValueOnce({
-			id: PUZZLE_ID,
-			status: 'processing'
-		} as never);
+		vi.mocked(storage.puzzleExists).mockResolvedValueOnce(false);
 		const res = await buildApp().request(`/api/puzzles/${PUZZLE_ID}/complete`, {
 			method: 'POST',
 			headers: jsonHeaders(),
@@ -169,7 +155,7 @@ describe('POST /api/puzzles/:id/complete (Bun)', () => {
 			body: JSON.stringify({ timeSeconds: 24 * 60 * 60 + 1 })
 		});
 		expect(res.status).toBe(400);
-		expect(storage.getPuzzle).not.toHaveBeenCalled();
+		expect(storage.puzzleExists).not.toHaveBeenCalled();
 	});
 
 	it('requires authentication', async () => {

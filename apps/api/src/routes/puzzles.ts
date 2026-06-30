@@ -18,7 +18,6 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { extname } from 'node:path';
 import { DEFAULT_PUZZLE_ASPECT_RATIO, isPuzzleAspectRatio } from '@perseus/types';
 import { generatePuzzle, isValidPieceCount } from '../services/puzzle-generator';
-import { isPuzzleReady } from '../utils/puzzleReady';
 import { requirePlayerAuth } from '../middleware/player-auth';
 import type { PlayerSessionRecord } from '../services/player-auth';
 import { getDb } from '../db';
@@ -173,6 +172,26 @@ function getImageContentType(filePath: string): string {
 	if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
 	if (ext === '.webp') return 'image/webp';
 	return 'application/octet-stream';
+}
+
+function isPuzzleReady(puzzle: unknown): boolean {
+	if (typeof puzzle !== 'object' || puzzle === null) {
+		return false;
+	}
+
+	const candidate = puzzle as { ready?: boolean; status?: string };
+
+	if (typeof candidate.ready === 'boolean') {
+		return candidate.ready;
+	}
+
+	if (typeof candidate.status === 'string') {
+		return candidate.status === 'ready';
+	}
+
+	// Bun dev server returns legacy Puzzle shape (no ready/status fields).
+	// If a puzzle exists on the filesystem, it's inherently ready — there's no async workflow.
+	return true;
 }
 
 function puzzleHasReference(puzzleId: string): boolean {
@@ -362,7 +381,7 @@ puzzles.post('/', requirePlayerAuth, async (c) => {
 				pieceCount,
 				...(category ? { category } : {}),
 				status: 'ready',
-				createdAt: puzzleToStore.createdAt
+				createdAt: Date.now()
 			});
 		} catch (error) {
 			console.error('Failed to record puzzle ownership:', error);

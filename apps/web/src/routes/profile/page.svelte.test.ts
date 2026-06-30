@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
 import ProfilePage from './+page.svelte';
@@ -43,35 +43,6 @@ vi.mock('$app/navigation', () => ({
 	goto: vi.fn()
 }));
 
-// IntersectionObserver mock that tracks callbacks per observed element so the
-// profile page's two independent sentinels (puzzles + stats) can be triggered
-// separately in tests.
-const observerCallbacks = new Map<Element, IntersectionObserverCallback>();
-class MockIntersectionObserver {
-	constructor(callback: IntersectionObserverCallback) {
-		this.callback = callback;
-	}
-	callback: IntersectionObserverCallback;
-	observe = vi.fn((el: Element) => {
-		observerCallbacks.set(el, this.callback);
-	});
-	disconnect = vi.fn(() => {
-		for (const [el, cb] of observerCallbacks) {
-			if (cb === this.callback) observerCallbacks.delete(el);
-		}
-	});
-	unobserve = vi.fn((el: Element) => observerCallbacks.delete(el));
-	takeRecords = vi.fn();
-}
-
-function triggerIntersection(testId: string, isIntersecting: boolean) {
-	const el = document.querySelector(`[data-testid="${testId}"]`);
-	if (!el) throw new Error(`Sentinel ${testId} not found in DOM`);
-	const cb = observerCallbacks.get(el);
-	if (!cb) throw new Error(`No observer callback for ${testId}`);
-	cb([{ isIntersecting, target: el } as IntersectionObserverEntry], {} as IntersectionObserver);
-}
-
 import { getPlayerProfile, getPlayerPuzzles, getPlayerStats } from '$lib/services/api';
 import { uploadPlayerAvatar } from '$lib/services/api';
 import { playerAuth } from '$lib/stores/playerAuth';
@@ -102,12 +73,6 @@ const stats: PlayerStatRow[] = [
 describe('profile page', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
-		observerCallbacks.clear();
-		vi.stubGlobal('IntersectionObserver', MockIntersectionObserver as never);
-	});
-
-	afterEach(() => {
-		vi.unstubAllGlobals();
 	});
 
 	it('renders identity card with effective name', async () => {
@@ -270,7 +235,7 @@ describe('profile page', () => {
 		});
 	});
 
-	it('renders the first puzzle page and shows the scroll sentinel when nextCursor is present', async () => {
+	it('renders the first puzzle page and shows Load more when nextCursor is present', async () => {
 		vi.mocked(getPlayerProfile).mockResolvedValue({
 			id: 'p1',
 			email: 'e',
@@ -287,7 +252,7 @@ describe('profile page', () => {
 			],
 			nextCursor: 'puz-cursor'
 		});
-		// Stats return no cursor → no stats sentinel.
+		// Stats return no cursor → no stats Load more control.
 		vi.mocked(getPlayerStats).mockResolvedValue({ stats, nextCursor: undefined });
 
 		render(ProfilePage);
@@ -297,11 +262,11 @@ describe('profile page', () => {
 		await expect
 			.element(page.getByRole('heading', { name: 'Ocean Puzzle' }))
 			.not.toBeInTheDocument();
-		await expect.element(page.getByTestId('puzzles-scroll-sentinel')).toBeInTheDocument();
-		await expect.element(page.getByTestId('stats-scroll-sentinel')).not.toBeInTheDocument();
+		await expect.element(page.getByTestId('load-more-puzzles')).toBeVisible();
+		await expect.element(page.getByTestId('load-more-stats')).not.toBeInTheDocument();
 	});
 
-	it('appends the next puzzle page when the sentinel intersects and hides it when exhausted', async () => {
+	it('appends the next puzzle page on Load more and hides the button when exhausted', async () => {
 		vi.mocked(getPlayerProfile).mockResolvedValue({
 			id: 'p1',
 			email: 'e',
@@ -332,11 +297,11 @@ describe('profile page', () => {
 		render(ProfilePage);
 		await expect.element(page.getByRole('heading', { name: 'Forest Puzzle' })).toBeVisible();
 
-		triggerIntersection('puzzles-scroll-sentinel', true);
+		await page.getByTestId('load-more-puzzles').click();
 
 		await expect.element(page.getByRole('heading', { name: 'Ocean Puzzle' })).toBeVisible();
 		expect(getPlayerPuzzles).toHaveBeenCalledWith({ cursor: 'puz-cursor' });
-		await expect.element(page.getByTestId('puzzles-scroll-sentinel')).not.toBeInTheDocument();
+		await expect.element(page.getByTestId('load-more-puzzles')).not.toBeInTheDocument();
 	});
 
 	it('paginates the Best Times list independently of My Puzzles', async () => {
@@ -377,12 +342,12 @@ describe('profile page', () => {
 		await expect.element(page.getByText('Player One')).toBeVisible();
 		await expect.element(page.getByText('Alpha Stat')).toBeVisible();
 		await expect.element(page.getByText('Beta Stat')).not.toBeInTheDocument();
-		await expect.element(page.getByTestId('stats-scroll-sentinel')).toBeInTheDocument();
+		await expect.element(page.getByTestId('load-more-stats')).toBeVisible();
 
-		triggerIntersection('stats-scroll-sentinel', true);
+		await page.getByTestId('load-more-stats').click();
 
 		await expect.element(page.getByText('Beta Stat')).toBeVisible();
 		expect(getPlayerStats).toHaveBeenCalledWith({ cursor: 'stat-cursor' });
-		await expect.element(page.getByTestId('stats-scroll-sentinel')).not.toBeInTheDocument();
+		await expect.element(page.getByTestId('load-more-stats')).not.toBeInTheDocument();
 	});
 });
