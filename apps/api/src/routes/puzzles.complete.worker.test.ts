@@ -189,6 +189,20 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 		expect(storage.getPuzzle).not.toHaveBeenCalled();
 	});
 
+	it('rejects invalid JSON body with 400', async () => {
+		const res = await buildApp().request(
+			`/api/puzzles/${PUZZLE_ID}/complete`,
+			{
+				method: 'POST',
+				headers: jsonHeaders(),
+				body: 'not-json'
+			},
+			DUMMY_ENV
+		);
+		expect(res.status).toBe(400);
+		expect((await res.json()) as any).toMatchObject({ error: 'bad_request' });
+	});
+
 	it('requires authentication', async () => {
 		const res = await buildApp().request(
 			`/api/puzzles/${PUZZLE_ID}/complete`,
