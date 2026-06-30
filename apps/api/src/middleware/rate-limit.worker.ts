@@ -457,7 +457,19 @@ export async function avatarRateLimit(
 	// the handler calls resetAvatarAttempts (on a successful upload) the
 	// already-incremented counter is deleted, and no post-request write
 	// recreates it. Incrementing after `next()` would undo the reset.
-	const lockCheck = await checkAndIncrement(kv, key, Date.now(), env, true, AVATAR_MAX_ATTEMPTS);
+	// Pass AVATAR_MAX_ATTEMPTS + 1 because checkAndIncrement uses >= (correct
+	// for the post-increment login/oauth pattern but off-by-one for this
+	// pre-increment pattern). +1 makes >= equivalent to >, matching the Bun
+	// middleware which allows exactly AVATAR_MAX_ATTEMPTS requests before
+	// blocking the (N+1)th.
+	const lockCheck = await checkAndIncrement(
+		kv,
+		key,
+		Date.now(),
+		env,
+		true,
+		AVATAR_MAX_ATTEMPTS + 1
+	);
 	if (lockCheck.shouldBlock) {
 		return c.json(
 			{
