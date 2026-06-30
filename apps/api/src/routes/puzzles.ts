@@ -179,7 +179,12 @@ function isPuzzleReady(puzzle: unknown): boolean {
 		return false;
 	}
 
-	const candidate = puzzle as { ready?: boolean; status?: string };
+	const candidate = puzzle as {
+		ready?: boolean;
+		status?: string;
+		id?: unknown;
+		pieces?: unknown;
+	};
 
 	if (typeof candidate.ready === 'boolean') {
 		return candidate.ready;
@@ -189,9 +194,15 @@ function isPuzzleReady(puzzle: unknown): boolean {
 		return candidate.status === 'ready';
 	}
 
-	// Bun dev server returns legacy Puzzle shape (no ready/status fields).
-	// If a puzzle exists on the filesystem, it's inherently ready — there's no async workflow.
-	return true;
+	// Bun dev server returns the legacy Puzzle shape (no ready/status fields).
+	// Only treat it as playable when it actually looks like a Puzzle — a real
+	// legacy puzzle carries a string `id` and a `pieces` array. Malformed
+	// objects (e.g. {} or { status: 123 }) fall through to "not ready" instead
+	// of being optimistically served as ready.
+	if (typeof candidate.id === 'string' && Array.isArray(candidate.pieces)) {
+		return true;
+	}
+	return false;
 }
 
 function puzzleHasReference(puzzleId: string): boolean {

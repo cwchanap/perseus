@@ -469,15 +469,15 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 				});
 			}
 
-			// Step 5: Mark puzzle as ready (progress field is removed when status changes to ready)
+			// Step 5: Mark puzzle as ready in the authoritative DO store. Only the
+			// DO write lives in this step so a failure here (genuine processing
+			// failure) correctly triggers mark-failed below. The D1 mirror is a
+			// separate best-effort step after the try/catch — a D1 outage must not
+			// overwrite a successful 'ready' DO write with 'failed'.
 			await step.do('finalize', async () => {
 				await updateMetadata(this.env.PUZZLE_METADATA_DO, puzzleId, {
 					status: 'ready'
 				});
-				// Let D1 mirror-write failures propagate so the workflow step
-				// retries instead of completing with D1 stuck at 'processing'.
-				// updateMetadata is idempotent, so re-running on retry is safe.
-				await setPuzzleStatus(createD1Db(this.env), puzzleId, 'ready');
 			});
 		} catch (error) {
 			// Mark puzzle as failed with retry logic
@@ -535,6 +535,20 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 			});
 			throw originalError;
 		}
+
+		// Best-effort D1 mirror of the ready status. Placed after the try/catch
+		// so a D1 failure can never trigger mark-failed (the DO already says
+		// 'ready'). The D1 mirror is idempotent; on failure we log and move on —
+		// the gallery reads from KV/DO, and a later successful mirror or direct
+		// D1 read will reconcile. This only runs on the success path because the
+		// catch block re-throws on failure.
+		await step.do('mirror-ready-status-to-d1', async () => {
+			try {
+				await setPuzzleStatus(createD1Db(this.env), puzzleId, 'ready');
+			} catch (d1Error) {
+				console.error('Failed to mirror ready status to D1:', d1Error);
+			}
+		});
 	}
 }
 

@@ -60,6 +60,7 @@ function createAvatarMockContext(
 		set: vi.fn((key: string, value: any) => {
 			variables[key] = value;
 		}),
+		header: vi.fn(),
 		json: vi.fn((body, status) => ({ body, status }))
 	} as any;
 }
@@ -78,6 +79,7 @@ function createNoSessionMockContext(kv?: any): Context<any> {
 		res,
 		get: vi.fn(() => undefined),
 		set: vi.fn(),
+		header: vi.fn(),
 		json: vi.fn((body, status) => ({ body, status }))
 	} as any;
 }
@@ -123,6 +125,9 @@ describe('avatarRateLimit (Worker)', () => {
 			expect(next).not.toHaveBeenCalled();
 			expect(response.status).toBe(429);
 			expect((response.body as any).error).toBe('too_many_requests');
+			// Worker lockout must mirror the Bun avatar path and advertise the
+			// cooldown via Retry-After so clients back off correctly.
+			expect(ctx.header).toHaveBeenCalledWith('Retry-After', expect.any(String));
 		});
 
 		it('includes remaining seconds in blocked response message', async () => {

@@ -39,6 +39,7 @@ function createContext(ip: string, kv: any, nodeEnv?: string): any {
 			})
 		},
 		json: vi.fn((body: any, status: number) => ({ body, status })),
+		header: vi.fn(),
 		res: { status: 200 } as any
 	};
 }
@@ -509,6 +510,7 @@ describe('mergeRateLimitEntries - both locked (line 173)', () => {
 			env: { PUZZLE_METADATA: kv, NODE_ENV: 'development' },
 			req: { header: vi.fn((name: string) => (name === 'cf-connecting-ip' ? '7.7.7.7' : null)) },
 			json: vi.fn((body: unknown, status: number) => ({ body, status })),
+			header: vi.fn(),
 			res: { status: 200 }
 		} as unknown as Parameters<typeof loginRateLimit>[0];
 		const next = vi.fn();

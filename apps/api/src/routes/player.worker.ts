@@ -158,6 +158,17 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 		return c.json({ error: 'bad_request', message: 'Unsupported image type' }, 400);
 	}
 	const key = `avatars/${session.user.id}`;
+	// Capture the prior avatar (if any) so we can restore it if the DB
+	// override write below fails. Without this, a DB failure would leave the
+	// new bytes in R2 while the profile points at the same URL — orphaning the
+	// overwrite and destroying the previously-working avatar.
+	const prior = await c.env.PUZZLES_BUCKET.get(key);
+	let priorBytes: ArrayBuffer | null = null;
+	let priorContentType: string | null = null;
+	if (prior) {
+		priorBytes = await prior.arrayBuffer();
+		priorContentType = prior.httpMetadata?.contentType ?? null;
+	}
 	await c.env.PUZZLES_BUCKET.put(key, bytes, {
 		httpMetadata: { contentType: detected }
 	});
@@ -165,7 +176,21 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 	const db = getWorkerDb(c.env);
 	// Field-specific update writes only avatarUrl and preserves displayName,
 	// avoiding a read-modify-write race with concurrent PATCH /profile requests.
-	await updateProfileAvatarUrl(db, session.user.id, `/api/player/${session.user.id}/avatar`);
+	try {
+		await updateProfileAvatarUrl(db, session.user.id, `/api/player/${session.user.id}/avatar`);
+	} catch (err) {
+		console.error('Avatar DB write failed; rolling back R2 object:', err);
+		if (priorBytes) {
+			await c.env.PUZZLES_BUCKET.put(key, priorBytes, {
+				httpMetadata: {
+					contentType: priorContentType ?? detected
+				}
+			});
+		} else {
+			await c.env.PUZZLES_BUCKET.delete(key);
+		}
+		return c.json({ error: 'internal_error', message: 'Failed to update avatar' }, 500);
+	}
 	// Reset the rate-limit counter on success so repeated successful uploads
 	// don't accumulate toward an unnecessary lockout. The middleware increments
 	// before the handler runs; this deletes that increment.
