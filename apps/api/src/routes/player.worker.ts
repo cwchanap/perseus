@@ -10,7 +10,12 @@ import {
 	listPlayerStats
 } from '@perseus/shared';
 import type { PlayerProfile, PlayerPuzzleSummary, PlayerStatRow } from '@perseus/types';
-import { coercePuzzleStatus } from '@perseus/types';
+import {
+	coercePuzzleStatus,
+	isPlayerProfile,
+	isPlayerPuzzleSummary,
+	isPlayerStatRow
+} from '@perseus/types';
 import { requirePlayerAuth } from '../middleware/player-auth.worker';
 import { avatarRateLimit, resetAvatarAttempts } from '../middleware/rate-limit.worker';
 import type { PlayerSessionRecord } from '../services/player-auth.worker';
@@ -72,6 +77,13 @@ player.get('/profile', requirePlayerAuth, async (c) => {
 		lastLoginAt: session.user.lastLoginAt,
 		summary
 	};
+	// Defense-in-depth: the profile is assembled from typed sources (session +
+	// repository), but validate the final shape so a schema/contract drift
+	// surfaces as a 500 rather than silently serving malformed data.
+	if (!isPlayerProfile(profile)) {
+		console.error(`Profile response failed validation for player ${playerId}`);
+		return c.json({ error: 'internal_error', message: 'Failed to build profile' }, 500);
+	}
 	return c.json(profile);
 });
 
@@ -190,6 +202,12 @@ player.get('/puzzles', requirePlayerAuth, async (c) => {
 		createdAt: r.createdAt,
 		...(r.category ? { category: r.category } : {})
 	}));
+	// Validate each projected row so a schema/contract drift surfaces as a 500
+	// rather than silently serving malformed data to the client.
+	if (!puzzles.every(isPlayerPuzzleSummary)) {
+		console.error(`Player puzzles response failed validation for player ${session.user.id}`);
+		return c.json({ error: 'internal_error', message: 'Failed to list puzzles' }, 500);
+	}
 	return c.json({ puzzles, nextCursor });
 });
 
@@ -212,6 +230,12 @@ player.get('/stats', requirePlayerAuth, async (c) => {
 		firstCompletedAt: r.firstCompletedAt,
 		lastCompletedAt: r.lastCompletedAt
 	}));
+	// Validate each projected row so a schema/contract drift surfaces as a 500
+	// rather than silently serving malformed data to the client.
+	if (!stats.every(isPlayerStatRow)) {
+		console.error(`Player stats response failed validation for player ${session.user.id}`);
+		return c.json({ error: 'internal_error', message: 'Failed to list stats' }, 500);
+	}
 	return c.json({ stats, nextCursor });
 });
 

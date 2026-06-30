@@ -2,7 +2,8 @@ import { Hono } from 'hono';
 import { getDb } from '../db';
 import { recordCompletion } from '@perseus/shared';
 import { isPuzzleId } from '@perseus/types';
-import { puzzleExists } from '../services/storage';
+import { getPuzzle } from '../services/storage';
+import { isPuzzleReady } from '../utils/puzzleReady';
 import { requirePlayerAuth } from '../middleware/player-auth';
 import type { PlayerSessionRecord } from '../services/player-auth';
 
@@ -45,9 +46,11 @@ router.post('/:id/complete', requirePlayerAuth, async (c) => {
 		);
 	}
 
-	// Confirm the puzzle exists before recording, so puzzle_stats can't
-	// accumulate rows for non-existent puzzles.
-	if (!(await puzzleExists(puzzleId))) {
+	// Confirm the puzzle exists and is ready before recording, so puzzle_stats
+	// can't accumulate rows for non-existent or not-yet-generated puzzles.
+	// Mirrors GET /api/puzzles/:id, which 404s non-ready puzzles.
+	const puzzle = await getPuzzle(puzzleId);
+	if (!puzzle || !isPuzzleReady(puzzle)) {
 		return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
 	}
 

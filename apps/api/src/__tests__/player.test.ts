@@ -396,6 +396,7 @@ describe('player lists (Bun)', () => {
 		(shared as any).__statsStore.set('p1', [
 			{
 				puzzleId: 'pz1',
+				puzzleName: 'Cat',
 				bestTimeSeconds: 90,
 				totalCompletions: 1,
 				firstCompletedAt: 1,
@@ -418,5 +419,57 @@ describe('player lists (Bun)', () => {
 	it('GET stats requires authentication', async () => {
 		const res = await buildApp().request('/api/player/stats');
 		expect(res.status).toBe(401);
+	});
+});
+
+describe('player response validation (Bun)', () => {
+	beforeEach(async () => {
+		const shared = await import('@perseus/shared');
+		(shared as any).__store?.clear();
+		(shared as any).__puzzlesStore?.clear();
+		(shared as any).__statsStore?.clear();
+		vi.mocked(playerAuth.getPlayerSession).mockResolvedValue(TEST_PLAYER);
+	});
+
+	it('GET profile returns 500 when the assembled profile fails validation', async () => {
+		// getPlayerSummary returns a shape that isPlayerProfile rejects (NaN is
+		// not a finite number), simulating a schema/contract drift.
+		const { getPlayerSummary } = await import('@perseus/shared');
+		vi.mocked(getPlayerSummary).mockResolvedValueOnce({
+			puzzlesUploaded: NaN,
+			puzzlesSolved: 0,
+			totalCompletions: 0
+		});
+		const res = await buildApp().request('/api/player/profile', { headers: AUTH_COOKIE });
+		expect(res.status).toBe(500);
+		expect((await res.json()).error).toBe('internal_error');
+	});
+
+	it('GET puzzles returns 500 when a projected row fails validation', async () => {
+		const shared = await import('@perseus/shared');
+		// Missing required field `name` → isPlayerPuzzleSummary rejects.
+		(shared as any).__puzzlesStore.set('p1', [
+			{ id: 'pz1', pieceCount: 4, status: 'ready', createdAt: 1 }
+		]);
+		const res = await buildApp().request('/api/player/puzzles', { headers: AUTH_COOKIE });
+		expect(res.status).toBe(500);
+		expect((await res.json()).error).toBe('internal_error');
+	});
+
+	it('GET stats returns 500 when a projected row fails validation', async () => {
+		const shared = await import('@perseus/shared');
+		// Missing required field `puzzleName` → isPlayerStatRow rejects.
+		(shared as any).__statsStore.set('p1', [
+			{
+				puzzleId: 'pz1',
+				bestTimeSeconds: 90,
+				totalCompletions: 1,
+				firstCompletedAt: 1,
+				lastCompletedAt: 1
+			}
+		]);
+		const res = await buildApp().request('/api/player/stats', { headers: AUTH_COOKIE });
+		expect(res.status).toBe(500);
+		expect((await res.json()).error).toBe('internal_error');
 	});
 });

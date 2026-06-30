@@ -28,12 +28,15 @@
 	let displayName = $state('');
 	let saving = $state(false);
 	// Pagination cursors returned by the API. Undefined means "no more pages",
-	// in which case the "Load more" button isn't rendered. Shared loadingMore
-	// flag prevents concurrent append fetches (double-click/retry) from
-	// duplicating a page.
+	// in which case the scroll sentinel isn't rendered (no observer target).
 	let puzzlesCursor = $state<string | undefined>(undefined);
 	let statsCursor = $state<string | undefined>(undefined);
-	let loadingMore = $state(false);
+	// Independent loading flags so both lists can fetch concurrently when both
+	// sentinels scroll into view at the same time.
+	let loadingMorePuzzles = $state(false);
+	let loadingMoreStats = $state(false);
+	let puzzlesSentinel = $state<HTMLDivElement | null>(null);
+	let statsSentinel = $state<HTMLDivElement | null>(null);
 
 	const initials = $derived(
 		(profile?.name ?? '?')
@@ -113,13 +116,14 @@
 		loading = false;
 	}
 
-	// Append the next page of puzzles. The API omits nextCursor when no more rows
-	// exist; when undefined, the "Load more" button isn't rendered. loadingMore
-	// guards against a double-click appending the same page twice.
+	// Append the next page of puzzles. The API omits nextCursor when no more
+	// rows exist; when undefined, the scroll sentinel isn't rendered.
+	// loadingMorePuzzles guards against the IntersectionObserver firing again
+	// while a fetch is in-flight (the observer persists across re-renders).
 	async function loadMorePuzzles() {
-		if (loadingMore || puzzlesCursor === undefined) return;
+		if (loadingMorePuzzles || puzzlesCursor === undefined) return;
 		const cursor = puzzlesCursor;
-		loadingMore = true;
+		loadingMorePuzzles = true;
 		try {
 			const r = await getPlayerPuzzles({ cursor });
 			puzzles = [...puzzles, ...r.puzzles];
@@ -127,14 +131,14 @@
 		} catch (error) {
 			console.error('Failed to load more puzzles:', error);
 		} finally {
-			loadingMore = false;
+			loadingMorePuzzles = false;
 		}
 	}
 
 	async function loadMoreStats() {
-		if (loadingMore || statsCursor === undefined) return;
+		if (loadingMoreStats || statsCursor === undefined) return;
 		const cursor = statsCursor;
-		loadingMore = true;
+		loadingMoreStats = true;
 		try {
 			const r = await getPlayerStats({ cursor });
 			stats = [...stats, ...r.stats];
@@ -142,9 +146,39 @@
 		} catch (error) {
 			console.error('Failed to load more stats:', error);
 		} finally {
-			loadingMore = false;
+			loadingMoreStats = false;
 		}
 	}
+
+	// Infinite-scroll observers for the two independent paginated lists.
+	// Each observer watches its own sentinel and triggers the corresponding
+	// load function when the sentinel enters the viewport (200px rootMargin
+	// for pre-fetching, matching the gallery pattern).
+	$effect(() => {
+		const sentinel = puzzlesSentinel;
+		if (!sentinel) return;
+		const observer = new IntersectionObserver(
+			(entries) => {
+				if (entries[0].isIntersecting && !loadingMorePuzzles) loadMorePuzzles();
+			},
+			{ rootMargin: '200px' }
+		);
+		observer.observe(sentinel);
+		return () => observer.disconnect();
+	});
+
+	$effect(() => {
+		const sentinel = statsSentinel;
+		if (!sentinel) return;
+		const observer = new IntersectionObserver(
+			(entries) => {
+				if (entries[0].isIntersecting && !loadingMoreStats) loadMoreStats();
+			},
+			{ rootMargin: '200px' }
+		);
+		observer.observe(sentinel);
+		return () => observer.disconnect();
+	});
 
 	async function saveName() {
 		saving = true;
@@ -262,15 +296,20 @@
 				{/each}
 			</div>
 			{#if puzzlesCursor !== undefined}
-				<button
-					type="button"
-					data-testid="load-more-puzzles"
-					class="mt-4 text-sm text-(--accent) disabled:opacity-50"
-					onclick={loadMorePuzzles}
-					disabled={loadingMore}
-				>
-					{loadingMore ? 'Loading…' : 'Load more'}
-				</button>
+				{#if loadingMorePuzzles}
+					<div class="flex justify-center py-4" data-testid="loading-more-puzzles">
+						<div
+							class="h-6 w-6 rounded-full border-2 border-(--border) border-t-(--accent)
+motion-safe:animate-[spin-cw_0.75s_linear_infinite] motion-reduce:animate-none"
+						></div>
+					</div>
+				{/if}
+				<div
+					bind:this={puzzlesSentinel}
+					data-testid="puzzles-scroll-sentinel"
+					class="h-px"
+					aria-hidden="true"
+				></div>
 			{/if}
 		{/if}
 
@@ -300,15 +339,20 @@
 				{/each}
 			</ul>
 			{#if statsCursor !== undefined}
-				<button
-					type="button"
-					data-testid="load-more-stats"
-					class="mt-4 text-sm text-(--accent) disabled:opacity-50"
-					onclick={loadMoreStats}
-					disabled={loadingMore}
-				>
-					{loadingMore ? 'Loading…' : 'Load more'}
-				</button>
+				{#if loadingMoreStats}
+					<div class="flex justify-center py-4" data-testid="loading-more-stats">
+						<div
+							class="h-6 w-6 rounded-full border-2 border-(--border) border-t-(--accent)
+motion-safe:animate-[spin-cw_0.75s_linear_infinite] motion-reduce:animate-none"
+						></div>
+					</div>
+				{/if}
+				<div
+					bind:this={statsSentinel}
+					data-testid="stats-scroll-sentinel"
+					class="h-px"
+					aria-hidden="true"
+				></div>
 			{/if}
 		{/if}
 	</section>
