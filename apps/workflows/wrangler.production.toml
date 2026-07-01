@@ -25,6 +25,10 @@ binding = "PUZZLE_METADATA"
 id = "ae95a94b22e3414ab022c335390c67aa"
 
 # D1 database for puzzle ownership and player stats
+# IMPORTANT: The database_id below must match the Pulumi-managed D1 database
+# (provisioned in packages/infrastructure; its ID is exported as
+# d1DatabaseId from the stack). If the Pulumi stack is destroyed and
+# recreated, this ID must be updated to the new database's ID.
 # migrations_dir points at the shared drizzle output so `wrangler d1 migrations
 # apply` finds the schema regardless of which app's config is invoked.
 [[d1_databases]]

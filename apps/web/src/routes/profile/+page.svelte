@@ -15,6 +15,7 @@
 		PlayerStatRow
 	} from '$lib/types/puzzle';
 	import PuzzleCard from '$lib/components/PuzzleCard.svelte';
+	import { PUZZLE_CATEGORIES } from '$lib/constants/categories';
 	import { formatTime } from '$lib/stores/timer';
 
 	let profile = $state<PlayerProfile | null>(null);
@@ -38,6 +39,10 @@
 	// message rather than flipping loadError (which shows the full error
 	// screen). Cleared on the next successful action.
 	let saveError = $state<string | null>(null);
+	// AbortController for in-flight reads. Aborted on unmount so a navigation
+	// away from the profile page cancels pending profile/puzzles/stats fetches
+	// rather than letting them resolve and write state to an unmounted component.
+	let abortController: AbortController | null = null;
 
 	const initials = $derived(
 		(profile?.name ?? '?')
@@ -50,12 +55,20 @@
 	);
 
 	function toCard(p: PlayerPuzzleSummary): PuzzleSummary {
+		// p.category is a free-text D1 string (no CHECK constraint on the
+		// column, and isPlayerPuzzleSummary only checks it's non-empty).
+		// Drop it unless it's a known PuzzleCategory so bogus values don't
+		// reach CategoryBadge as an out-of-union string.
+		const category =
+			p.category && PUZZLE_CATEGORIES.includes(p.category as never)
+				? (p.category as PuzzleSummary['category'])
+				: undefined;
 		return {
 			id: p.id,
 			name: p.name,
 			pieceCount: p.pieceCount,
 			status: p.status,
-			...(p.category ? { category: p.category as PuzzleSummary['category'] } : {})
+			...(category ? { category } : {})
 		};
 	}
 
@@ -64,20 +77,26 @@
 		// when playerAuth is authenticated, and redirects to /login on
 		// anonymous/logout. So by the time this onMount runs the session is
 		// valid — just load the data. The layout handles all redirect logic.
+		abortController = new AbortController();
 		void loadAll();
+		return () => abortController?.abort();
 	});
 
 	async function loadAll() {
+		const signal = abortController?.signal;
 		loading = true;
 		loadError = false;
 		// Use allSettled so a failure in puzzles/stats doesn't hide a successfully
 		// loaded profile: the profile is essential (its failure surfaces the error
 		// screen), while puzzle/stat failures degrade gracefully to empty lists.
 		const [profileRes, puzzlesRes, statsRes] = await Promise.allSettled([
-			getPlayerProfile(),
-			getPlayerPuzzles(),
-			getPlayerStats()
+			getPlayerProfile(signal),
+			getPlayerPuzzles({ signal }),
+			getPlayerStats({ signal })
 		]);
+		// If the component unmounted while fetches were in flight, bail before
+		// writing state to a dead component.
+		if (signal?.aborted) return;
 		if (profileRes.status === 'fulfilled') {
 			profile = profileRes.value;
 			displayName = profile?.name ?? '';
@@ -113,12 +132,15 @@
 	async function loadMorePuzzles() {
 		if (loadingMorePuzzles || puzzlesCursor === undefined) return;
 		const cursor = puzzlesCursor;
+		const signal = abortController?.signal;
 		loadingMorePuzzles = true;
 		try {
-			const r = await getPlayerPuzzles({ cursor });
+			const r = await getPlayerPuzzles({ cursor, signal });
+			if (signal?.aborted) return;
 			puzzles = [...puzzles, ...r.puzzles];
 			puzzlesCursor = r.nextCursor;
 		} catch (error) {
+			if (signal?.aborted) return;
 			console.error('Failed to load more puzzles:', error);
 		} finally {
 			loadingMorePuzzles = false;
@@ -128,12 +150,15 @@
 	async function loadMoreStats() {
 		if (loadingMoreStats || statsCursor === undefined) return;
 		const cursor = statsCursor;
+		const signal = abortController?.signal;
 		loadingMoreStats = true;
 		try {
-			const r = await getPlayerStats({ cursor });
+			const r = await getPlayerStats({ cursor, signal });
+			if (signal?.aborted) return;
 			stats = [...stats, ...r.stats];
 			statsCursor = r.nextCursor;
 		} catch (error) {
+			if (signal?.aborted) return;
 			console.error('Failed to load more stats:', error);
 		} finally {
 			loadingMoreStats = false;
@@ -144,10 +169,14 @@
 	// are unaffected by those edits, so a full loadAll() would waste two extra
 	// requests and briefly flicker the lists.
 	async function loadProfile() {
+		const signal = abortController?.signal;
 		try {
-			profile = await getPlayerProfile();
-			displayName = profile?.name ?? '';
+			const p = await getPlayerProfile(signal);
+			if (signal?.aborted) return;
+			profile = p;
+			displayName = p?.name ?? '';
 		} catch (error) {
+			if (signal?.aborted) return;
 			console.error('Failed to reload profile:', error);
 		}
 	}
@@ -233,11 +262,11 @@
 				{#if editing}
 					<input
 						data-testid="display-name-input"
+						aria-label="Display name"
 						bind:value={displayName}
 						class="border border-(--border) bg-(--bg-2) px-2 py-1 text-(--text-0)"
 					/>
 					<button type="button" onclick={saveName} disabled={saving}>Save</button>
-					<button type="button" data-testid="cancel-edit" onclick={cancelEditing}>Cancel</button>
 					<button
 						type="button"
 						data-testid="reset-name"
@@ -247,6 +276,14 @@
 					>
 						Reset to Google default
 					</button>
+					<input
+						data-testid="avatar-input"
+						aria-label="Upload avatar image"
+						type="file"
+						accept="image/*"
+						onchange={onAvatarChosen}
+						class="mt-2 text-xs text-(--text-2)"
+					/>
 				{:else}
 					<h1 class="font-(--font-display) text-(--text-0)" data-testid="profile-name">
 						{profile.name}
@@ -259,13 +296,6 @@
 						Last login {new Date(profile.lastLoginAt).toLocaleString()}
 					</p>
 				{/if}
-				<input
-					data-testid="avatar-input"
-					type="file"
-					accept="image/*"
-					onchange={onAvatarChosen}
-					class="mt-2 text-xs text-(--text-2)"
-				/>
 			</div>
 		</div>
 

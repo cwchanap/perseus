@@ -289,6 +289,14 @@ export async function getPlayerSummary(
 	db: AppDb,
 	playerId: string
 ): Promise<{ puzzlesUploaded: number; puzzlesSolved: number; totalCompletions: number }> {
+	// Intentionally non-transactional: the two counts (uploaded puzzles,
+	// solved puzzles + total completions) are independent reads from
+	// separate tables. Wrapping them in a transaction would add a round-trip
+	// for no correctness benefit — a concurrent insert/delete between the two
+	// reads could make the counts momentarily inconsistent regardless, and
+	// the profile UI treats these as approximate summary tiles, not as an
+	// atomic snapshot. D1/SQLite also doesn't support read-only transactions
+	// any differently from plain reads here.
 	const uploadedRows = await db
 		.select({ n: count() })
 		.from(puzzles)

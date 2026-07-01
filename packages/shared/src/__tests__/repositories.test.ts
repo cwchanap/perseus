@@ -9,6 +9,7 @@ import {
 	updateProfileAvatarUrl,
 	insertPuzzleOwnership,
 	deletePuzzleOwnership,
+	deletePuzzleStats,
 	setPuzzleStatus,
 	listPlayerPuzzles,
 	countPlayerPuzzles,
@@ -250,5 +251,87 @@ describe('repositories', () => {
 		await recordCompletion(helper.db, 'p1', 'pzX', 50); // a puzzle not owned by p1
 		const summary = await getPlayerSummary(helper.db, 'p1');
 		expect(summary).toEqual({ puzzlesUploaded: 1, puzzlesSolved: 2, totalCompletions: 2 });
+	});
+
+	it('deletePuzzleStats removes all players stat rows for a puzzle', async () => {
+		await insertPuzzleOwnership(helper.db, {
+			id: 'pz1',
+			ownerId: 'p1',
+			name: 'Cat',
+			pieceCount: 4,
+			status: 'ready',
+			createdAt: 1
+		});
+		await insertPuzzleOwnership(helper.db, {
+			id: 'pz2',
+			ownerId: 'p1',
+			name: 'Dog',
+			pieceCount: 9,
+			status: 'ready',
+			createdAt: 2
+		});
+		await recordCompletion(helper.db, 'p1', 'pz1', 50);
+		await recordCompletion(helper.db, 'p2', 'pz1', 30);
+		await recordCompletion(helper.db, 'p1', 'pz2', 40);
+
+		await deletePuzzleStats(helper.db, 'pz1');
+
+		const p1Stats = await listPlayerStats(helper.db, 'p1', { limit: 10 });
+		const p2Stats = await listPlayerStats(helper.db, 'p2', { limit: 10 });
+		// Only pz2's stat row remains for p1; p2's stats are fully cleared.
+		expect(p1Stats.rows).toHaveLength(1);
+		expect(p1Stats.rows[0].puzzleId).toBe('pz2');
+		expect(p2Stats.rows).toHaveLength(0);
+	});
+
+	it('listPlayerPuzzles malformed cursor falls back to timestamp-only filter', async () => {
+		for (let i = 0; i < 3; i++) {
+			await insertPuzzleOwnership(helper.db, {
+				id: `pz${i}`,
+				ownerId: 'p1',
+				name: `N${i}`,
+				pieceCount: 4,
+				status: 'ready',
+				createdAt: i * 10
+			});
+		}
+		// Malformed cursor with no '|' separator: falls back to treating the
+		// whole string as a createdAt timestamp. "10" → rows with createdAt < 10.
+		const result = await listPlayerPuzzles(helper.db, 'p1', { limit: 10, cursor: '10' });
+		expect(result.rows).toHaveLength(1);
+		expect(result.rows[0].id).toBe('pz0');
+	});
+
+	it('listPlayerPuzzles garbage cursor returns no rows', async () => {
+		await insertPuzzleOwnership(helper.db, {
+			id: 'pz1',
+			ownerId: 'p1',
+			name: 'Cat',
+			pieceCount: 4,
+			status: 'ready',
+			createdAt: 10
+		});
+		// Non-numeric, no separator → sql`false` → no rows match.
+		const result = await listPlayerPuzzles(helper.db, 'p1', { limit: 10, cursor: 'garbage' });
+		expect(result.rows).toHaveLength(0);
+	});
+
+	it('listPlayerStats malformed cursor falls back to bestTime-only filter', async () => {
+		await recordCompletion(helper.db, 'p1', 'pz1', 10);
+		await recordCompletion(helper.db, 'p1', 'pz2', 20);
+		await recordCompletion(helper.db, 'p1', 'pz3', 30);
+		// Malformed cursor with no '|' separator: falls back to treating the
+		// whole string as a bestTimeSeconds value. Stats are ordered ASC, so
+		// "after" means strictly greater. "20" → rows with bestTime > 20.
+		const result = await listPlayerStats(helper.db, 'p1', { limit: 10, cursor: '20' });
+		expect(result.rows).toHaveLength(1);
+		expect(result.rows[0].puzzleId).toBe('pz3');
+	});
+
+	it('listPlayerStats garbage cursor returns no rows', async () => {
+		await recordCompletion(helper.db, 'p1', 'pz1', 10);
+		// Non-numeric, no separator → sql`false` → no rows match.
+		const result = await listPlayerStats(helper.db, 'p1', { limit: 10, cursor: 'garbage' });
+		expect(result.rows).toHaveLength(0);
 	});
 });

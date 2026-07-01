@@ -201,6 +201,14 @@ jobs:
         # First-ever deploy has a brief window where the Worker is live before
         # tables exist; acceptable since profile traffic only starts when users
         # visit the page, by which point this step has completed.
+        #
+        # MIGRATION SAFETY: This deploy ordering (workers first, migrations
+        # second) is safe for ADDITIVE migrations only (new tables, new
+        # columns, new indexes). Before shipping a non-additive migration
+        # (column rename, type change, column drop, table drop), adopt an
+        # expand/contract flow: ship the expand migration + backward-compatible
+        # Worker code first, then ship the contract migration after the old
+        # Worker version is no longer live.
         run: bunx wrangler d1 migrations apply perseus-player-data --remote --config apps/api/wrangler.production.toml
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

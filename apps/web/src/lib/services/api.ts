@@ -356,8 +356,11 @@ export async function deletePuzzle(
 export { ApiError };
 
 // Player profile endpoints
-export async function getPlayerProfile(): Promise<PlayerProfile> {
-	const response = await fetch(`${API_BASE}/api/player/profile`, { credentials: 'include' });
+export async function getPlayerProfile(signal?: AbortSignal): Promise<PlayerProfile> {
+	const response = await fetch(`${API_BASE}/api/player/profile`, {
+		credentials: 'include',
+		signal
+	});
 	const profile = await handleResponse<PlayerProfile>(response);
 	// Uploaded avatars are served as origin-relative paths ("/api/player/.../avatar").
 	// In local dev the web and API origins differ, so prefix API_BASE so the
@@ -404,26 +407,28 @@ export function resolveAssetUrl(url: string | null | undefined): string | null {
 export async function getPlayerPuzzles(params?: {
 	limit?: number;
 	cursor?: string;
+	signal?: AbortSignal;
 }): Promise<{ puzzles: PlayerPuzzleSummary[]; nextCursor?: string }> {
 	const searchParams = new URLSearchParams();
 	if (params?.limit !== undefined) searchParams.set('limit', String(params.limit));
 	if (params?.cursor !== undefined) searchParams.set('cursor', params.cursor);
 	const query = searchParams.toString();
 	const url = query ? `${API_BASE}/api/player/puzzles?${query}` : `${API_BASE}/api/player/puzzles`;
-	const response = await fetch(url, { credentials: 'include' });
+	const response = await fetch(url, { credentials: 'include', signal: params?.signal });
 	return handleResponse<{ puzzles: PlayerPuzzleSummary[]; nextCursor?: string }>(response);
 }
 
 export async function getPlayerStats(params?: {
 	limit?: number;
 	cursor?: string;
+	signal?: AbortSignal;
 }): Promise<{ stats: PlayerStatRow[]; nextCursor?: string }> {
 	const searchParams = new URLSearchParams();
 	if (params?.limit !== undefined) searchParams.set('limit', String(params.limit));
 	if (params?.cursor !== undefined) searchParams.set('cursor', params.cursor);
 	const query = searchParams.toString();
 	const url = query ? `${API_BASE}/api/player/stats?${query}` : `${API_BASE}/api/player/stats`;
-	const response = await fetch(url, { credentials: 'include' });
+	const response = await fetch(url, { credentials: 'include', signal: params?.signal });
 	return handleResponse<{ stats: PlayerStatRow[]; nextCursor?: string }>(response);
 }
 

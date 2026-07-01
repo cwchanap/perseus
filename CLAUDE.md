@@ -103,6 +103,10 @@ Pieces are generated on a grid (square root for square counts, largest factor â‰
 
 Pulumi TypeScript program for Cloudflare deployment. `packages/infrastructure/src/workers.ts` exports `createApiWorker` and `createWorkflowsWorker` which handle Worker versioning, Durable Object migrations, Workflow registration, and R2/KV/DO binding wiring. Must build apps before deploying.
 
+**D1 migration safety:** The deploy workflow (`.github/workflows/deploy-infrastructure.yml`) deploys Workers before applying D1 migrations. This is safe for additive migrations only (new tables, new columns, new indexes). Before shipping a non-additive migration (column rename, type change, column drop, table drop), adopt an expand/contract flow: ship the expand migration + backward-compatible Worker code first, then ship the contract migration after the old Worker version is no longer live.
+
+**D1 database ID:** The `database_id` in `apps/api/wrangler.production.toml` and `apps/workflows/wrangler.production.toml` must match the Pulumi-managed D1 database (exported as `d1DatabaseId` from the infrastructure stack). If the Pulumi stack is destroyed and recreated, update both wrangler configs with the new database ID.
+
 ## Code Style
 
 - Tabs for indentation

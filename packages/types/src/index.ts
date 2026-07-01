@@ -43,9 +43,12 @@ const VALID_PUZZLE_STATUSES: readonly PuzzleStatus[] = ['processing', 'ready', '
 
 /**
  * Coerce a raw DB/string value to a PuzzleStatus, defaulting to 'failed' for
- * unexpected values. The puzzles.status column is free-text (no CHECK
- * constraint), so this guard prevents an invalid status from leaking to the
- * client as a string outside the PuzzleStatus union.
+ * unexpected values. The puzzles.status column has a CHECK constraint
+ * (migration 0001) restricting it to 'processing' | 'ready' | 'failed', but
+ * this guard remains as defense-in-depth for reads that bypass the constraint
+ * (e.g. KV cache, manual edits, or runtimes where the migration hasn't been
+ * applied) so an invalid status never leaks to the client as a string
+ * outside the PuzzleStatus union.
  */
 export function coercePuzzleStatus(value: string): PuzzleStatus {
 	return VALID_PUZZLE_STATUSES.includes(value as PuzzleStatus) ? (value as PuzzleStatus) : 'failed';
