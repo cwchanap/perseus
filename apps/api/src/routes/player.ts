@@ -34,8 +34,12 @@ player.get('/profile', requirePlayerAuth, async (c) => {
 	const db = getDb();
 	const session = c.get('playerSession');
 	const playerId = session.user.id;
-	const override = await getProfileOverride(db, playerId);
-	const summary = await getPlayerSummary(db, playerId);
+	// Independent reads — run concurrently to cut profile latency. Both hit
+	// the DB; awaiting sequentially would serialize two round-trips.
+	const [override, summary] = await Promise.all([
+		getProfileOverride(db, playerId),
+		getPlayerSummary(db, playerId)
+	]);
 
 	const profile: PlayerProfile = {
 		id: session.user.id,
