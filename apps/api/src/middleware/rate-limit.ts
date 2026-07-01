@@ -172,6 +172,15 @@ setInterval(cleanupOldEntries, 30 * 60 * 1000);
 // rotates on mobile). Limit is generous: a user legitimately re-uploads while
 // picking a good photo, but this prevents runaway abuse of the R2/filesystem
 // write path. Must be mounted AFTER requirePlayerAuth so the session is set.
+//
+// Design note: the counter is reset on a SUCCESSFUL upload (see
+// resetAvatarAttempts in the route handler), so only failed attempts
+// accumulate toward the cap. This is deliberate: a successful upload
+// overwrites the same key (no storage growth), is authenticated, and a user
+// legitimately re-uploading while picking a photo should not be locked out.
+// The cap bounds the failure path (e.g. repeated bad payloads, DB write
+// failures) rather than total throughput. If bounding total upload load
+// becomes a requirement, remove the reset and raise the cap.
 export const avatarRateLimit = createMiddleware(async (c, next) => {
 	const session = c.get('playerSession') as { user: { id: string } } | undefined;
 	// If no session (misconfigured middleware order), fail open rather than

@@ -8,7 +8,8 @@ import {
 	updateProfileAvatarUrl,
 	getPlayerSummary,
 	listPlayerPuzzles,
-	listPlayerStats
+	listPlayerStats,
+	sniffImageType
 } from '@perseus/shared';
 import type { PlayerProfile, PlayerPuzzleSummary, PlayerStatRow } from '@perseus/types';
 import {
@@ -28,36 +29,6 @@ const AVATAR_MIME = new Set(['image/jpeg', 'image/png', 'image/webp']);
 // Matches the puzzle-name cap (admin routes). Bounds storage and prevents
 // trivially large payloads from reaching D1.
 const MAX_DISPLAY_NAME_LENGTH = 255;
-
-// Sniff image MIME from magic bytes so the served Content-Type is correct
-// regardless of the (extension-less) avatar path. Mirrors R2 httpMetadata.
-function sniffImageType(bytes: Uint8Array): string | null {
-	if (bytes.length < 12) return null;
-	if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
-	if (
-		bytes[0] === 0x89 &&
-		bytes[1] === 0x50 &&
-		bytes[2] === 0x4e &&
-		bytes[3] === 0x47 &&
-		bytes[4] === 0x0d &&
-		bytes[5] === 0x0a &&
-		bytes[6] === 0x1a &&
-		bytes[7] === 0x0a
-	)
-		return 'image/png';
-	if (
-		bytes[0] === 0x52 &&
-		bytes[1] === 0x49 &&
-		bytes[2] === 0x46 &&
-		bytes[3] === 0x46 &&
-		bytes[8] === 0x57 &&
-		bytes[9] === 0x45 &&
-		bytes[10] === 0x42 &&
-		bytes[11] === 0x50
-	)
-		return 'image/webp';
-	return null;
-}
 
 player.get('/profile', requirePlayerAuth, async (c) => {
 	const db = getDb();
@@ -182,7 +153,26 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 	} catch (err) {
 		console.error('Avatar DB write failed; rolling back avatar file:', err);
 		if (priorBytes) {
-			await writeFile(avatarPath, priorBytes);
+			// Conditional restore mirroring the Worker's etag-guarded rollback:
+			// only overwrite if the file still holds the bytes we just wrote.
+			// If a concurrent upload has since overwritten the file, this
+			// precondition fails and we leave the newer upload intact rather
+			// than clobbering it. The filesystem has no etags, so we compare
+			// the current bytes to the ones we just put.
+			try {
+				const currentBytes = await readFile(avatarPath);
+				if (Buffer.from(currentBytes).equals(Buffer.from(bytes))) {
+					await writeFile(avatarPath, priorBytes);
+				} else {
+					console.error(
+						'Avatar file changed after our write; skipping rollback to avoid clobbering a concurrent upload'
+					);
+				}
+			} catch (readErr) {
+				// File vanished or unreadable between our write and the
+				// rollback check — nothing safe to restore over. Log and leave it.
+				console.error('Avatar file unreadable during rollback; skipping restore:', readErr);
+			}
 		}
 		// If no prior avatar existed, leave the new file in place rather than
 		// deleting it. The DB write failed so the profile doesn't point at this
@@ -218,7 +208,15 @@ player.get('/:playerId/avatar', async (c) => {
 		return c.json({ error: 'not_found', message: 'Avatar not found' }, 404);
 	}
 	const mime = sniffImageType(new Uint8Array(buf)) ?? 'application/octet-stream';
-	return new Response(buf, { headers: { 'Content-Type': mime } });
+	return new Response(buf, {
+		headers: {
+			'Content-Type': mime,
+			// Defense-in-depth: the bytes are sniffed and typed, but nosniff
+			// prevents a browser from second-guessing and executing a disguised
+			// payload as a different content type.
+			'X-Content-Type-Options': 'nosniff'
+		}
+	});
 });
 
 player.get('/puzzles', requirePlayerAuth, async (c) => {

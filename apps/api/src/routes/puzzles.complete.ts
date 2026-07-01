@@ -3,7 +3,7 @@ import { getDb } from '../db';
 import { recordCompletion } from '@perseus/shared';
 import { isPuzzleId } from '@perseus/types';
 import { getPuzzle } from '../services/storage';
-import { isPuzzleReady } from './puzzles';
+import { isPuzzleReady } from './puzzle-ready';
 import { requirePlayerAuth } from '../middleware/player-auth';
 import type { PlayerSessionRecord } from '../services/player-auth';
 
