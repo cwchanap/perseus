@@ -6,10 +6,16 @@ import { sql } from 'drizzle-orm';
 // truth for puzzle status; D1 holds immutable fields (id, ownerId, name,
 // pieceCount, category, createdAt) plus a mirrored status column used only
 // for the player profile lists/counts. Mirror writes (workflow finalize /
-// mark-failed) are best-effort with logged failures — a silent D1 write
-// failure leaves D1 stale until the next status change re-mirrors. There is
-// no reconciliation job; drift is self-healing on the next mutation and
-// rare enough that a periodic reconcile is YAGNI for this app's scale.
+// mark-failed) are best-effort with logged failures. For non-terminal
+// states (processing → ready/failed), a missed mirror is self-healing: the
+// next status change re-mirrors. For TERMINAL states (ready/failed), the
+// workflow's last D1 mirror is the final write — if it fails (D1 outage at
+// that instant), the row stays 'processing' indefinitely because there is
+// no subsequent mutation to re-mirror. There is no reconciliation job;
+// this drift is accepted as a rare-edge-case trade-off for this app's scale
+// (the gallery reads from KV/DO, so only the profile ownership/stats list
+// shows a stale 'processing' status until the puzzle is re-uploaded or
+// manually fixed).
 //
 // No backfill of pre-existing puzzles is required: player puzzle upload
 // (added in f7db5dd on main) wrote only to KV/R2 with no D1 ownership row,

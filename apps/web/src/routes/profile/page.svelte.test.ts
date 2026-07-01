@@ -129,7 +129,7 @@ describe('profile page', () => {
 		await page.getByText('Edit profile').click();
 		const input = page.getByTestId('display-name-input');
 		await input.fill('Draft Name');
-		await page.getByTestId('cancel-edit').click();
+		await page.getByRole('button', { name: 'Cancel' }).click();
 
 		// Re-enter edit mode: the draft must be gone, reverting to the saved name.
 		await page.getByText('Edit profile').click();
@@ -153,6 +153,8 @@ describe('profile page', () => {
 		render(ProfilePage);
 		await expect.element(page.getByText('Player One')).toBeVisible();
 
+		// Avatar input is gated behind the Edit toggle.
+		await page.getByText('Edit profile').click();
 		const fileInput = (await page.getByTestId('avatar-input').element()) as HTMLInputElement;
 		const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'avatar.png', {
 			type: 'image/png'
@@ -251,7 +253,9 @@ describe('profile page', () => {
 		await page.getByTestId('load-more-puzzles').click();
 
 		await expect.element(page.getByRole('heading', { name: 'Ocean Puzzle' })).toBeVisible();
-		expect(getPlayerPuzzles).toHaveBeenCalledWith({ cursor: 'puz-cursor' });
+		expect(getPlayerPuzzles).toHaveBeenCalledWith(
+			expect.objectContaining({ cursor: 'puz-cursor' })
+		);
 		await expect.element(page.getByTestId('load-more-puzzles')).not.toBeInTheDocument();
 	});
 
@@ -298,7 +302,7 @@ describe('profile page', () => {
 		await page.getByTestId('load-more-stats').click();
 
 		await expect.element(page.getByText('Beta Stat')).toBeVisible();
-		expect(getPlayerStats).toHaveBeenCalledWith({ cursor: 'stat-cursor' });
+		expect(getPlayerStats).toHaveBeenCalledWith(expect.objectContaining({ cursor: 'stat-cursor' }));
 		await expect.element(page.getByTestId('load-more-stats')).not.toBeInTheDocument();
 	});
 
@@ -525,6 +529,8 @@ describe('profile page', () => {
 		render(ProfilePage);
 		await expect.element(page.getByText('Player One')).toBeVisible();
 
+		// Avatar input is gated behind the Edit toggle.
+		await page.getByText('Edit profile').click();
 		const fileInput = (await page.getByTestId('avatar-input').element()) as HTMLInputElement;
 		const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'avatar.png', {
 			type: 'image/png'

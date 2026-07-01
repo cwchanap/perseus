@@ -120,56 +120,60 @@ test('profile edit flow updates display name', async ({ page }) => {
 	await expect(page.getByText('New Display Name')).toBeVisible();
 });
 
-test('reload after avatar upload picks up a newly owned puzzle from the puzzles endpoint', async ({
+test('avatar upload refetches the profile only — puzzles list is not re-requested', async ({
 	page
 }) => {
-	// This test verifies that loadAll (triggered by avatar upload) re-fetches
-	// /api/player/puzzles and reflects a newly owned puzzle in the "My
-	// Puzzles" list. The ownership/upload flow itself is mocked at the API
-	// boundary — the puzzles endpoint returns the new puzzle on the second
-	// call (after the avatar upload triggers loadAll).
+	// onAvatarChosen calls uploadPlayerAvatar() then loadProfile() — it does
+	// NOT call loadAll(), because avatar/name mutations don't affect the
+	// puzzles or stats lists (a full reload would waste two requests and
+	// flicker the lists). This test pins that contract: after an avatar
+	// upload the profile refetches (the avatar image renders from the
+	// updated profile.picture) while the puzzles endpoint is hit exactly
+	// once (the initial load) and the stats list is unchanged.
+	const avatarUrl = '/api/player/p1/avatar';
 	const initialPuzzles = {
 		puzzles: [{ id: 'pz-1', name: 'First Puzzle', pieceCount: 4, status: 'ready', createdAt: 2 }],
 		nextCursor: undefined
 	};
-	const afterUploadPuzzles = {
-		puzzles: [
-			{ id: 'pz-1', name: 'First Puzzle', pieceCount: 4, status: 'ready', createdAt: 2 },
-			{ id: 'pz-new', name: 'Just Uploaded', pieceCount: 16, status: 'processing', createdAt: 3 }
-		],
-		nextCursor: undefined
-	};
 
+	let profileCallCount = 0;
 	let puzzlesCallCount = 0;
 	await page.route('**/api/auth/session', (route) => route.fulfill({ json: mockSession }));
-	await page.route('**/api/player/profile', (route) => route.fulfill({ json: mockProfile }));
-	await page.route('**/api/player/puzzles**', async (route) => {
-		puzzlesCallCount++;
-		// First load returns initial; subsequent loads (after avatar upload
-		// triggers loadAll) include the newly owned puzzle.
+	await page.route('**/api/player/profile', async (route) => {
+		profileCallCount++;
+		// First load: no avatar (initials render). After the upload-triggered
+		// loadProfile refetch, the server reports the new avatar URL.
 		await route.fulfill({
-			json: puzzlesCallCount === 1 ? initialPuzzles : afterUploadPuzzles
+			json: { ...mockProfile, picture: profileCallCount === 1 ? null : avatarUrl }
 		});
 	});
+	await page.route('**/api/player/puzzles**', async (route) => {
+		puzzlesCallCount++;
+		await route.fulfill({ json: initialPuzzles });
+	});
 	await page.route('**/api/player/stats**', (route) => route.fulfill({ json: mockStats }));
-	// Mock avatar upload success.
-	await page.route('**/api/player/avatar', (route) =>
-		route.fulfill({ json: { avatarUrl: '/api/player/p1/avatar' } })
-	);
+	await page.route('**/api/player/avatar', (route) => route.fulfill({ json: { avatarUrl } }));
 
 	await page.goto('/profile');
+	// Initially no avatar image — the initials fallback renders instead.
 	await expect(page.getByText('First Puzzle')).toBeVisible();
-	// The new puzzle is not yet visible.
-	await expect(page.getByText('Just Uploaded')).toHaveCount(0);
+	await expect(page.locator('img[alt="Test Player"]')).toHaveCount(0);
 
-	// Trigger a reload by uploading an avatar (which calls loadAll).
+	// Upload the avatar. onAvatarChosen → uploadPlayerAvatar → loadProfile.
+	// The avatar input is gated behind the Edit toggle.
+	await page.getByRole('button', { name: 'Edit profile' }).click();
 	const fileInput = page.getByTestId('avatar-input');
 	await fileInput.setInputFiles({
 		name: 'avatar.png',
 		mimeType: 'image/png',
-		buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01, 0x02, 0x03, 0x04])
+		buffer: Buffer.from([0x89, 0x50, 0x4e, 0x0d, 0x0a, 0x1a, 0x0a, 0x01, 0x02, 0x03, 0x04])
 	});
 
-	// After the reload, the newly owned puzzle (status: processing) appears.
-	await expect(page.getByText('Just Uploaded')).toBeVisible();
+	// The profile refetch updates profile.picture → the avatar image renders.
+	await expect(page.locator('img[alt="Test Player"]')).toHaveAttribute('src', avatarUrl);
+	// The puzzles endpoint was hit exactly once (initial load). The avatar
+	// upload must not trigger a puzzles refetch.
+	expect(puzzlesCallCount).toBe(1);
+	// The puzzles list is unchanged.
+	await expect(page.getByText('First Puzzle')).toBeVisible();
 });
