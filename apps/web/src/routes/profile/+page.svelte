@@ -26,12 +26,13 @@
 	let displayName = $state('');
 	let saving = $state(false);
 	// Pagination cursors returned by the API. Undefined means "no more pages",
-	// in which case the "Load more" button isn't rendered. Shared loadingMore
-	// flag prevents concurrent append fetches (double-click/retry) from
-	// duplicating a page.
+	// in which case the "Load more" button isn't rendered. Separate
+	// loadingMore flags per list: the puzzles and stats lists are independent,
+	// so loading one page shouldn't block the other.
 	let puzzlesCursor = $state<string | undefined>(undefined);
 	let statsCursor = $state<string | undefined>(undefined);
-	let loadingMore = $state(false);
+	let loadingMorePuzzles = $state(false);
+	let loadingMoreStats = $state(false);
 	// Transient error message from save-name / avatar-upload failures. These
 	// are non-fatal (the page stays loaded), so we surface a short inline
 	// message rather than flipping loadError (which shows the full error
@@ -107,12 +108,12 @@
 	}
 
 	// Append the next page of puzzles. The API omits nextCursor when no more rows
-	// exist; when undefined, the "Load more" button isn't rendered. loadingMore
+	// exist; when undefined, the "Load more" button isn't rendered. loadingMorePuzzles
 	// guards against a double-click appending the same page twice.
 	async function loadMorePuzzles() {
-		if (loadingMore || puzzlesCursor === undefined) return;
+		if (loadingMorePuzzles || puzzlesCursor === undefined) return;
 		const cursor = puzzlesCursor;
-		loadingMore = true;
+		loadingMorePuzzles = true;
 		try {
 			const r = await getPlayerPuzzles({ cursor });
 			puzzles = [...puzzles, ...r.puzzles];
@@ -120,14 +121,14 @@
 		} catch (error) {
 			console.error('Failed to load more puzzles:', error);
 		} finally {
-			loadingMore = false;
+			loadingMorePuzzles = false;
 		}
 	}
 
 	async function loadMoreStats() {
-		if (loadingMore || statsCursor === undefined) return;
+		if (loadingMoreStats || statsCursor === undefined) return;
 		const cursor = statsCursor;
-		loadingMore = true;
+		loadingMoreStats = true;
 		try {
 			const r = await getPlayerStats({ cursor });
 			stats = [...stats, ...r.stats];
@@ -135,7 +136,7 @@
 		} catch (error) {
 			console.error('Failed to load more stats:', error);
 		} finally {
-			loadingMore = false;
+			loadingMoreStats = false;
 		}
 	}
 
@@ -316,9 +317,9 @@
 					data-testid="load-more-puzzles"
 					class="mt-4 text-sm text-(--accent) disabled:opacity-50"
 					onclick={loadMorePuzzles}
-					disabled={loadingMore}
+					disabled={loadingMorePuzzles}
 				>
-					{loadingMore ? 'Loading…' : 'Load more'}
+					{loadingMorePuzzles ? 'Loading…' : 'Load more'}
 				</button>
 			{/if}
 		{/if}
@@ -354,9 +355,9 @@
 					data-testid="load-more-stats"
 					class="mt-4 text-sm text-(--accent) disabled:opacity-50"
 					onclick={loadMoreStats}
-					disabled={loadingMore}
+					disabled={loadingMoreStats}
 				>
-					{loadingMore ? 'Loading…' : 'Load more'}
+					{loadingMoreStats ? 'Loading…' : 'Load more'}
 				</button>
 			{/if}
 		{/if}
