@@ -49,8 +49,16 @@ router.post('/:id/complete', requirePlayerAuth, async (c) => {
 	// Confirm the puzzle exists and is ready before recording, so puzzle_stats
 	// can't accumulate rows for non-existent or not-yet-generated puzzles.
 	// Mirrors the Worker route and GET /api/puzzles/:id, which 404 non-ready
-	// puzzles.
-	const puzzle = await getPuzzle(puzzleId);
+	// puzzles. getPuzzle re-throws non-ENOENT errors (corrupt metadata,
+	// permission denied); catch those and return a deliberate 500 instead of
+	// letting Hono emit a generic unstructured 500 (no app.onError is defined).
+	let puzzle: Awaited<ReturnType<typeof getPuzzle>>;
+	try {
+		puzzle = await getPuzzle(puzzleId);
+	} catch (error) {
+		console.error(`Failed to retrieve puzzle ${puzzleId}:`, error);
+		return c.json({ error: 'internal_error', message: 'Failed to retrieve puzzle' }, 500);
+	}
 	if (!puzzle || !isPuzzleReady(puzzle)) {
 		return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
 	}
