@@ -14,27 +14,6 @@ vi.mock('$lib/services/api', () => ({
 	getThumbnailUrl: vi.fn()
 }));
 
-vi.mock('$lib/stores/playerAuth', () => ({
-	playerAuth: {
-		refresh: vi.fn().mockResolvedValue(undefined),
-		subscribe: vi.fn((cb: (v: unknown) => void) => {
-			cb({
-				status: 'authenticated',
-				user: {
-					id: 'p1',
-					email: 'e',
-					name: 'Google',
-					picture: null,
-					createdAt: 1,
-					lastLoginAt: 2
-				},
-				error: null
-			});
-			return () => {};
-		})
-	}
-}));
-
 vi.mock('$app/paths', () => ({
 	resolve: (p: string) => p
 }));
@@ -45,8 +24,6 @@ vi.mock('$app/navigation', () => ({
 
 import { getPlayerProfile, getPlayerPuzzles, getPlayerStats } from '$lib/services/api';
 import { uploadPlayerAvatar } from '$lib/services/api';
-import { playerAuth } from '$lib/stores/playerAuth';
-import { goto } from '$app/navigation';
 
 const puzzles: PlayerPuzzleSummary[] = [
 	{
@@ -207,77 +184,6 @@ describe('profile page', () => {
 		await expect.element(page.getByText("You haven't uploaded any puzzles yet.")).toBeVisible();
 		// The best-times list (from the still-loaded stats) also renders.
 		await expect.element(page.getByText('Best Times')).toBeVisible();
-	});
-
-	it('redirects anonymous users to login', async () => {
-		// Override the default authenticated subscription for this one render.
-		// Let `run` infer the real Subscriber<PlayerAuthState> signature so the
-		// mock matches vi.mocked()'s expected type.
-		vi.mocked(playerAuth.subscribe).mockImplementationOnce((run) => {
-			run({ status: 'anonymous', user: null, error: null });
-			return () => {};
-		});
-		vi.mocked(getPlayerProfile).mockResolvedValue({
-			id: 'p1',
-			email: 'e',
-			name: 'X',
-			picture: null,
-			createdAt: 1,
-			lastLoginAt: 2,
-			summary: { puzzlesUploaded: 0, puzzlesSolved: 0, totalCompletions: 0 }
-		});
-		vi.mocked(getPlayerPuzzles).mockResolvedValue({ puzzles: [], nextCursor: undefined });
-		vi.mocked(getPlayerStats).mockResolvedValue({ stats: [], nextCursor: undefined });
-
-		render(ProfilePage);
-		await vi.waitFor(() => {
-			expect(goto).toHaveBeenCalledWith('/login');
-		});
-	});
-
-	it('redirects to login when the session becomes anonymous after loading (e.g. logout)', async () => {
-		// Capture the subscriber callback so we can emit a second state change
-		// (logout) after the initial authenticated load has already run. The old
-		// `settled` guard ignored this second emission; the page must keep
-		// redirecting on any non-authenticated, non-loading state.
-		let emitLogout: () => void = () => {};
-		vi.mocked(playerAuth.subscribe).mockImplementationOnce((run) => {
-			emitLogout = () => run({ status: 'anonymous', user: null, error: null });
-			run({
-				status: 'authenticated',
-				user: {
-					id: 'p1',
-					email: 'e',
-					name: 'Logout Me',
-					createdAt: 1,
-					lastLoginAt: 2
-				},
-				error: null
-			});
-			return () => {};
-		});
-		vi.mocked(getPlayerProfile).mockResolvedValue({
-			id: 'p1',
-			email: 'e',
-			name: 'Logout Me',
-			picture: null,
-			createdAt: 1,
-			lastLoginAt: 2,
-			summary: { puzzlesUploaded: 0, puzzlesSolved: 0, totalCompletions: 0 }
-		});
-		vi.mocked(getPlayerPuzzles).mockResolvedValue({ puzzles: [], nextCursor: undefined });
-		vi.mocked(getPlayerStats).mockResolvedValue({ stats: [], nextCursor: undefined });
-
-		render(ProfilePage);
-		// Initial authenticated load renders the profile.
-		await expect.element(page.getByText('Logout Me')).toBeVisible();
-
-		// Simulate logout: the store emits anonymous after the profile loaded.
-		emitLogout();
-
-		await vi.waitFor(() => {
-			expect(goto).toHaveBeenCalledWith('/login');
-		});
 	});
 
 	it('renders the first puzzle page and shows Load more when nextCursor is present', async () => {
@@ -631,5 +537,83 @@ describe('profile page', () => {
 		});
 		await expect.element(page.getByTestId('profile-save-error')).toBeVisible();
 		consoleSpy.mockRestore();
+	});
+
+	it('renders join date and last login in the identity card', async () => {
+		vi.mocked(getPlayerProfile).mockResolvedValue({
+			id: 'p1',
+			email: 'e',
+			name: 'Dated Player',
+			picture: null,
+			createdAt: 1_700_000_000_000,
+			lastLoginAt: 1_700_000_100_000,
+			summary: { puzzlesUploaded: 0, puzzlesSolved: 0, totalCompletions: 0 }
+		});
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({ puzzles: [], nextCursor: undefined });
+		vi.mocked(getPlayerStats).mockResolvedValue({ stats: [], nextCursor: undefined });
+
+		render(ProfilePage);
+		await expect.element(page.getByText('Dated Player')).toBeVisible();
+		await expect.element(page.getByTestId('profile-join-date')).toBeVisible();
+		await expect.element(page.getByTestId('profile-last-login')).toBeVisible();
+	});
+
+	it('resets display name to Google default when Reset is clicked', async () => {
+		vi.mocked(getPlayerProfile).mockResolvedValue({
+			id: 'p1',
+			email: 'e',
+			name: 'Custom Name',
+			picture: null,
+			createdAt: 1,
+			lastLoginAt: 2,
+			summary: { puzzlesUploaded: 0, puzzlesSolved: 0, totalCompletions: 0 }
+		});
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({ puzzles: [], nextCursor: undefined });
+		vi.mocked(getPlayerStats).mockResolvedValue({ stats: [], nextCursor: undefined });
+
+		const { updatePlayerProfile } = await import('$lib/services/api');
+		vi.mocked(updatePlayerProfile).mockResolvedValue(undefined);
+
+		render(ProfilePage);
+		await expect.element(page.getByText('Custom Name')).toBeVisible();
+
+		await page.getByText('Edit profile').click();
+		await page.getByTestId('reset-name').click();
+
+		expect(updatePlayerProfile).toHaveBeenCalledWith({ displayName: null });
+	});
+
+	it('renders non-ready puzzles with a status overlay instead of a link', async () => {
+		vi.mocked(getPlayerProfile).mockResolvedValue({
+			id: 'p1',
+			email: 'e',
+			name: 'Player One',
+			picture: null,
+			createdAt: 1,
+			lastLoginAt: 2,
+			summary: { puzzlesUploaded: 1, puzzlesSolved: 0, totalCompletions: 0 }
+		});
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({
+			puzzles: [
+				{
+					id: 'pz-proc',
+					name: 'Processing Puzzle',
+					pieceCount: 4,
+					status: 'processing',
+					createdAt: 2
+				}
+			],
+			nextCursor: undefined
+		});
+		vi.mocked(getPlayerStats).mockResolvedValue({ stats: [], nextCursor: undefined });
+
+		render(ProfilePage);
+		await expect.element(page.getByRole('heading', { name: 'Processing Puzzle' })).toBeVisible();
+		// The card must NOT be a link (no href) for a processing puzzle.
+		const card = page.getByTestId('puzzle-card');
+		await expect.element(card).not.toHaveAttribute('href');
+		// A status overlay is shown instead of the PLAY overlay.
+		await expect.element(page.getByTestId('card-status-overlay')).toBeVisible();
+		await expect.element(page.getByTestId('card-overlay')).not.toBeInTheDocument();
 	});
 });

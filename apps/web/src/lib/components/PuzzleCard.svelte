@@ -14,48 +14,67 @@
 	let { puzzle }: Props = $props();
 
 	let bestTime: number | null = $state(null);
+	let thumbnailError = $state(false);
 
 	onMount(() => {
 		bestTime = getBestTime(puzzle.id);
 	});
+
+	// Non-ready puzzles (processing/failed) are not playable — the API 404s
+	// them. Render a non-clickable card with a status badge so the player can
+	// still see their upload's state without hitting a dead link.
+	const isReady = $derived(puzzle.status === 'ready');
+	const statusLabel = $derived(puzzle.status === 'processing' ? 'PROCESSING…' : 'FAILED');
 </script>
 
-<a
-	href={resolve(`/puzzle/${puzzle.id}`)}
-	class="group block overflow-hidden border border-(--border) bg-(--bg-1)
-transition-[transform,border-color,box-shadow] duration-200 ease-in-out hover:-translate-y-1
-hover:border-(--accent)
-hover:[box-shadow:0_0_30px_var(--accent-glow),0_8px_24px_rgba(0,0,0,0.6)]
-focus-visible:-translate-y-1 focus-visible:border-(--accent)
-focus-visible:[box-shadow:0_0_30px_var(--accent-glow),0_8px_24px_rgba(0,0,0,0.6)]
-focus-visible:outline-none"
-	data-testid="puzzle-card"
->
+{#snippet cardInner()}
 	<div class="relative aspect-square overflow-hidden bg-(--bg-2)">
-		<img
-			src={getThumbnailUrl(puzzle.id)}
-			alt={puzzle.name}
-			class="block h-full w-full object-cover transition-[transform,filter] duration-[350ms] ease-in-out
+		{#if !thumbnailError}
+			<img
+				src={getThumbnailUrl(puzzle.id)}
+				alt={puzzle.name}
+				class="block h-full w-full object-cover transition-[transform,filter] duration-[350ms] ease-in-out
 group-hover:scale-[1.06] group-hover:brightness-[0.6] group-hover:saturate-[0.8]
 group-focus-visible:scale-[1.06] group-focus-visible:brightness-[0.6]
 group-focus-visible:saturate-[0.8]"
-			loading="lazy"
-		/>
-		<div
-			class="pointer-events-none absolute inset-0 flex items-center justify-center opacity-0
+				loading="lazy"
+				onerror={() => (thumbnailError = true)}
+			/>
+		{:else}
+			<div class="flex h-full w-full items-center justify-center text-(--text-2)">
+				<span class="text-xs font-(--font-mono) tracking-wider uppercase">No preview</span>
+			</div>
+		{/if}
+
+		{#if isReady}
+			<div
+				class="pointer-events-none absolute inset-0 flex items-center justify-center opacity-0
 transition-opacity duration-200 group-hover:opacity-100 group-focus-visible:opacity-100"
-			aria-hidden="true"
-			data-testid="card-overlay"
-		>
-			<span
-				class="border border-(--accent) bg-[rgba(0,240,255,0.08)] px-6 py-2 text-[0.85rem]
+				aria-hidden="true"
+				data-testid="card-overlay"
+			>
+				<span
+					class="border border-(--accent) bg-[rgba(0,240,255,0.08)] px-6 py-2 text-[0.85rem]
 font-(--font-display) font-bold tracking-[0.3em] text-(--accent)
 [box-shadow:0_0_30px_var(--accent-glow)] backdrop-blur-[6px]
 [text-shadow:0_0_20px_var(--accent)]"
+				>
+					▶ PLAY
+				</span>
+			</div>
+		{:else}
+			<div
+				class="pointer-events-none absolute inset-0 flex items-center justify-center bg-[rgba(0,0,0,0.6)]"
+				data-testid="card-status-overlay"
 			>
-				▶ PLAY
-			</span>
-		</div>
+				<span
+					class="px-4 py-2 text-[0.7rem] font-(--font-display) font-bold tracking-[0.25em] uppercase
+{puzzle.status === 'failed' ? 'text-red-400' : 'text-(--text-1)'}"
+				>
+					{statusLabel}
+				</span>
+			</div>
+		{/if}
 
 		<div
 			class="pointer-events-none absolute top-[7px] left-[7px] h-[14px] w-[14px] border-t-2 border-l-2
@@ -111,4 +130,27 @@ group-hover:opacity-100 group-focus-visible:opacity-100"
 			{/if}
 		</div>
 	</div>
-</a>
+{/snippet}
+
+{#if isReady}
+	<a
+		href={resolve(`/puzzle/${puzzle.id}`)}
+		class="group block overflow-hidden border border-(--border) bg-(--bg-1)
+transition-[transform,border-color,box-shadow] duration-200 ease-in-out hover:-translate-y-1
+hover:border-(--accent)
+hover:[box-shadow:0_0_30px_var(--accent-glow),0_8px_24px_rgba(0,0,0,0.6)]
+focus-visible:-translate-y-1 focus-visible:border-(--accent)
+focus-visible:[box-shadow:0_0_30px_var(--accent-glow),0_8px_24px_rgba(0,0,0,0.6)]
+focus-visible:outline-none"
+		data-testid="puzzle-card"
+	>
+		{@render cardInner()}
+	</a>
+{:else}
+	<div
+		class="block overflow-hidden border border-(--border) bg-(--bg-1) opacity-80"
+		data-testid="puzzle-card"
+	>
+		{@render cardInner()}
+	</div>
+{/if}

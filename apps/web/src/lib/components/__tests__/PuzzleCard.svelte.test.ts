@@ -93,4 +93,30 @@ describe('PuzzleCard', () => {
 		const badge = page.getByTestId('category-badge');
 		await expect.element(badge).not.toBeInTheDocument();
 	});
+
+	it('should render a non-clickable card with status overlay for processing puzzles', async () => {
+		const processingPuzzle: PuzzleSummary = {
+			...mockPuzzle,
+			status: 'processing'
+		};
+		render(PuzzleCard, { puzzle: processingPuzzle });
+
+		const card = page.getByTestId('puzzle-card');
+		await expect.element(card).not.toHaveAttribute('href');
+		await expect.element(page.getByTestId('card-status-overlay')).toBeVisible();
+		await expect.element(page.getByTestId('card-overlay')).not.toBeInTheDocument();
+	});
+
+	it('should render a non-clickable card with FAILED label for failed puzzles', async () => {
+		const failedPuzzle: PuzzleSummary = {
+			...mockPuzzle,
+			status: 'failed'
+		};
+		render(PuzzleCard, { puzzle: failedPuzzle });
+
+		const card = page.getByTestId('puzzle-card');
+		await expect.element(card).not.toHaveAttribute('href');
+		await expect.element(page.getByTestId('card-status-overlay')).toBeVisible();
+		await expect.element(page.getByText('FAILED')).toBeVisible();
+	});
 });
