@@ -31,7 +31,7 @@ import { MAX_FILE_SIZE, ALLOWED_MIME_TYPES, PUZZLE_CATEGORIES } from '../types';
 import type { PuzzleCategory } from '../types';
 import { DEFAULT_PUZZLE_ASPECT_RATIO, isPuzzleAspectRatio } from '@perseus/types';
 import { getDb } from '../db';
-import { deletePuzzleOwnership } from '@perseus/shared';
+import { deletePuzzleOwnership, deletePuzzleStats } from '@perseus/shared';
 
 const admin = new Hono();
 
@@ -516,6 +516,10 @@ admin.delete('/puzzles/:id', requireAuth, async (c) => {
 	try {
 		await deletePuzzleOwnership(getDb(), id).catch((err) =>
 			console.error(`Failed to delete ownership row for puzzle ${id}:`, err)
+		);
+		// Best-effort cleanup of puzzle_stats rows (see admin.worker.ts).
+		await deletePuzzleStats(getDb(), id).catch((err) =>
+			console.error(`Failed to delete stats rows for puzzle ${id}:`, err)
 		);
 	} catch (err) {
 		console.error(`Failed to init DB for ownership cleanup of puzzle ${id}:`, err);

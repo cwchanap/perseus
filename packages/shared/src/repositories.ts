@@ -61,6 +61,16 @@ export async function deletePuzzleOwnership(db: AppDb, id: string): Promise<void
 	await db.delete(puzzles).where(eq(puzzles.id, id)).run();
 }
 
+// Remove every player's stat row for a deleted puzzle. Without this, a
+// deleted puzzle leaves orphaned puzzle_stats rows; listPlayerStats left-
+// joins on puzzles so they surface with puzzleName null (cosmetic), but
+// deleting them keeps the stats list clean and avoids counting solves of
+// puzzles that no longer exist. Called best-effort from the admin delete
+// path alongside deletePuzzleOwnership.
+export async function deletePuzzleStats(db: AppDb, puzzleId: string): Promise<void> {
+	await db.delete(puzzleStats).where(eq(puzzleStats.puzzleId, puzzleId)).run();
+}
+
 export async function setPuzzleStatus(db: AppDb, id: string, status: string): Promise<void> {
 	await db.update(puzzles).set({ status }).where(eq(puzzles.id, id)).run();
 }

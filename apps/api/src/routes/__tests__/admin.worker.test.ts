@@ -42,7 +42,8 @@ vi.mock('../../db.worker', () => ({
 }));
 
 vi.mock('@perseus/shared', () => ({
-	deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined)
+	deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined),
+	deletePuzzleStats: vi.fn().mockResolvedValue(undefined)
 }));
 
 import admin from '../admin.worker';
