@@ -249,7 +249,6 @@ describe('profile page', () => {
 					id: 'p1',
 					email: 'e',
 					name: 'Logout Me',
-					picture: null,
 					createdAt: 1,
 					lastLoginAt: 2
 				},
@@ -449,15 +448,7 @@ describe('profile page', () => {
 		vi.mocked(getPlayerStats).mockResolvedValue({ stats: [], nextCursor: undefined });
 
 		const { updatePlayerProfile } = await import('$lib/services/api');
-		vi.mocked(updatePlayerProfile).mockResolvedValue({
-			id: 'p1',
-			email: 'e',
-			name: 'New Name',
-			picture: null,
-			createdAt: 1,
-			lastLoginAt: 2,
-			summary: { puzzlesUploaded: 0, puzzlesSolved: 0, totalCompletions: 0 }
-		});
+		vi.mocked(updatePlayerProfile).mockResolvedValue(undefined);
 
 		render(ProfilePage);
 		await expect.element(page.getByText('Original Name')).toBeVisible();
