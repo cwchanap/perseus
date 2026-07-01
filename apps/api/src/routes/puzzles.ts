@@ -22,6 +22,7 @@ import { requirePlayerAuth } from '../middleware/player-auth';
 import type { PlayerSessionRecord } from '../services/player-auth';
 import { getDb } from '../db';
 import { insertPuzzleOwnership } from '@perseus/shared';
+import { isPuzzleReady } from './puzzle-ready';
 
 const puzzles = new Hono<{
 	Variables: { playerSession: PlayerSessionRecord };
@@ -174,36 +175,10 @@ function getImageContentType(filePath: string): string {
 	return 'application/octet-stream';
 }
 
-export function isPuzzleReady(puzzle: unknown): boolean {
-	if (typeof puzzle !== 'object' || puzzle === null) {
-		return false;
-	}
-
-	const candidate = puzzle as {
-		ready?: boolean;
-		status?: string;
-		id?: unknown;
-		pieces?: unknown;
-	};
-
-	if (typeof candidate.ready === 'boolean') {
-		return candidate.ready;
-	}
-
-	if (typeof candidate.status === 'string') {
-		return candidate.status === 'ready';
-	}
-
-	// Bun dev server returns the legacy Puzzle shape (no ready/status fields).
-	// Only treat it as playable when it actually looks like a Puzzle — a real
-	// legacy puzzle carries a string `id` and a `pieces` array. Malformed
-	// objects (e.g. {} or { status: 123 }) fall through to "not ready" instead
-	// of being optimistically served as ready.
-	if (typeof candidate.id === 'string' && Array.isArray(candidate.pieces)) {
-		return true;
-	}
-	return false;
-}
+// Re-export so existing imports (`from './puzzles'`) keep working. The
+// definition lives in ./puzzle-ready to avoid a circular import with
+// puzzles.complete.ts (which needs isPuzzleReady but is mounted by this file).
+export { isPuzzleReady } from './puzzle-ready';
 
 function puzzleHasReference(puzzleId: string): boolean {
 	try {

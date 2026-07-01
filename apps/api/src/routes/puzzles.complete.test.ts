@@ -25,7 +25,7 @@ vi.mock('../services/storage', () => ({
 	getPuzzle: vi.fn().mockResolvedValue({ id: 'pz', status: 'ready' } as never)
 }));
 
-vi.mock('./puzzles', () => ({
+vi.mock('./puzzle-ready', () => ({
 	isPuzzleReady: vi.fn().mockReturnValue(true)
 }));
 
@@ -36,7 +36,7 @@ vi.mock('../services/player-auth', () => ({
 import complete from '../routes/puzzles.complete';
 import * as playerAuth from '../services/player-auth';
 import * as storage from '../services/storage';
-import * as puzzlesRoute from './puzzles';
+import * as puzzleReady from './puzzle-ready';
 import { recordCompletion } from '@perseus/shared';
 import type { PlayerSessionRecord } from '../services/player-auth';
 
@@ -73,11 +73,11 @@ describe('POST /api/puzzles/:id/complete (Bun)', () => {
 	beforeEach(() => {
 		vi.mocked(playerAuth.getPlayerSession).mockResolvedValue(TEST_PLAYER);
 		vi.mocked(storage.getPuzzle).mockResolvedValue({ id: PUZZLE_ID, status: 'ready' } as never);
-		vi.mocked(puzzlesRoute.isPuzzleReady).mockReturnValue(true);
+		vi.mocked(puzzleReady.isPuzzleReady).mockReturnValue(true);
 		// Reset call history on every asserted mock so each test only reflects
 		// its own requests (the not.toHaveBeenCalled() assertions depend on this).
 		vi.mocked(storage.getPuzzle).mockClear();
-		vi.mocked(puzzlesRoute.isPuzzleReady).mockClear();
+		vi.mocked(puzzleReady.isPuzzleReady).mockClear();
 		vi.mocked(recordCompletion).mockClear();
 	});
 
@@ -145,7 +145,7 @@ describe('POST /api/puzzles/:id/complete (Bun)', () => {
 	});
 
 	it('returns 404 when the puzzle is not ready', async () => {
-		vi.mocked(puzzlesRoute.isPuzzleReady).mockReturnValueOnce(false);
+		vi.mocked(puzzleReady.isPuzzleReady).mockReturnValueOnce(false);
 		const res = await buildApp().request(`/api/puzzles/${PUZZLE_ID}/complete`, {
 			method: 'POST',
 			headers: jsonHeaders(),
