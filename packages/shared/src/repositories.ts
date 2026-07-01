@@ -149,6 +149,13 @@ export async function recordCompletion(
 	puzzleId: string,
 	timeSeconds: number
 ): Promise<void> {
+	// Accepted risk: the server cannot verify that the client actually solved
+	// the puzzle. Any authenticated player can POST an arbitrary timeSeconds
+	// for any ready puzzle. The impact is self-scoped (only the caller's own
+	// stats are affected) and there is no leaderboard or competitive ranking
+	// at stake, so server-side verification is not worth the complexity. The
+	// MAX_COMPLETION_TIME_SECONDS ceiling in the route layer rejects obvious
+	// garbage values.
 	const now = Date.now();
 	await db
 		.insert(puzzleStats)
@@ -202,6 +209,13 @@ export async function listPlayerStats(
 	// drizzle's `.where()` replaces (not merges) the previous condition, so
 	// chaining a second `.where()` for the cursor would silently drop the
 	// ownerId filter and leak other players' stats across pages.
+	//
+	// Known limitation: bestTimeSeconds is mutable. If a player improves their
+	// best time on a puzzle between page fetches, that row moves earlier in
+	// the ASC ordering and may be skipped (it falls "before" the cursor). This
+	// is acceptable for a personal best-times list — the row will reappear on
+	// the next full reload, and the impact is limited to a transient missing
+	// entry in an append-only scroll, not a data-integrity issue.
 	const cond =
 		opts.cursor !== undefined
 			? and(eq(puzzleStats.playerId, playerId), parsePlayerStatsCursor(opts.cursor))

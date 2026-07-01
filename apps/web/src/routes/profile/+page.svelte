@@ -34,6 +34,11 @@
 	let puzzlesCursor = $state<string | undefined>(undefined);
 	let statsCursor = $state<string | undefined>(undefined);
 	let loadingMore = $state(false);
+	// Transient error message from save-name / avatar-upload failures. These
+	// are non-fatal (the page stays loaded), so we surface a short inline
+	// message rather than flipping loadError (which shows the full error
+	// screen). Cleared on the next successful action.
+	let saveError = $state<string | null>(null);
 
 	const initials = $derived(
 		(profile?.name ?? '?')
@@ -158,7 +163,11 @@
 		try {
 			await updatePlayerProfile({ displayName });
 			editing = false;
+			saveError = null;
 			await loadAll();
+		} catch (error) {
+			console.error('Failed to save name:', error);
+			saveError = 'Failed to save name. Please try again.';
 		} finally {
 			saving = false;
 		}
@@ -177,7 +186,11 @@
 		if (!file) return;
 		try {
 			await uploadPlayerAvatar(file);
+			saveError = null;
 			await loadAll();
+		} catch (error) {
+			console.error('Failed to upload avatar:', error);
+			saveError = 'Failed to upload avatar. Please try again.';
 		} finally {
 			// Reset the input so selecting the same file again still fires a
 			// change event (needed to retry a failed upload).
@@ -229,6 +242,10 @@
 				/>
 			</div>
 		</div>
+
+		{#if saveError}
+			<p data-testid="profile-save-error" class="mt-2 text-sm text-red-500">{saveError}</p>
+		{/if}
 
 		<div class="mt-6 grid grid-cols-3 gap-3 text-center">
 			<div class="border border-(--border) bg-(--bg-1) p-4">

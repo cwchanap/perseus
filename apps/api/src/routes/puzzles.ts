@@ -174,7 +174,7 @@ function getImageContentType(filePath: string): string {
 	return 'application/octet-stream';
 }
 
-function isPuzzleReady(puzzle: unknown): boolean {
+export function isPuzzleReady(puzzle: unknown): boolean {
 	if (typeof puzzle !== 'object' || puzzle === null) {
 		return false;
 	}
