@@ -576,4 +576,69 @@ describe('profile page', () => {
 		});
 		consoleSpy.mockRestore();
 	});
+
+	it('shows an error and logs when saving the display name fails', async () => {
+		vi.mocked(getPlayerProfile).mockResolvedValue({
+			id: 'p1',
+			email: 'e',
+			name: 'Original Name',
+			picture: null,
+			createdAt: 1,
+			lastLoginAt: 2,
+			summary: { puzzlesUploaded: 0, puzzlesSolved: 0, totalCompletions: 0 }
+		});
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({ puzzles: [], nextCursor: undefined });
+		vi.mocked(getPlayerStats).mockResolvedValue({ stats: [], nextCursor: undefined });
+
+		const { updatePlayerProfile } = await import('$lib/services/api');
+		vi.mocked(updatePlayerProfile).mockRejectedValueOnce(new Error('save failed'));
+
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		render(ProfilePage);
+		await expect.element(page.getByText('Original Name')).toBeVisible();
+
+		await page.getByText('Edit profile').click();
+		await page.getByTestId('display-name-input').fill('New Name');
+		await page.getByText('Save').click();
+
+		await vi.waitFor(() => {
+			expect(consoleSpy).toHaveBeenCalledWith('Failed to save name:', expect.any(Error));
+		});
+		await expect.element(page.getByTestId('profile-save-error')).toBeVisible();
+		consoleSpy.mockRestore();
+	});
+
+	it('shows an error and logs when avatar upload fails', async () => {
+		vi.mocked(getPlayerProfile).mockResolvedValue({
+			id: 'p1',
+			email: 'e',
+			name: 'Player One',
+			picture: null,
+			createdAt: 1,
+			lastLoginAt: 2,
+			summary: { puzzlesUploaded: 0, puzzlesSolved: 0, totalCompletions: 0 }
+		});
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({ puzzles, nextCursor: undefined });
+		vi.mocked(getPlayerStats).mockResolvedValue({ stats });
+		vi.mocked(uploadPlayerAvatar).mockRejectedValueOnce(new Error('upload failed'));
+
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		render(ProfilePage);
+		await expect.element(page.getByText('Player One')).toBeVisible();
+
+		const fileInput = (await page.getByTestId('avatar-input').element()) as HTMLInputElement;
+		const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'avatar.png', {
+			type: 'image/png'
+		});
+		Object.defineProperty(fileInput, 'files', { value: [file], configurable: true });
+		fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+
+		await vi.waitFor(() => {
+			expect(consoleSpy).toHaveBeenCalledWith('Failed to upload avatar:', expect.any(Error));
+		});
+		await expect.element(page.getByTestId('profile-save-error')).toBeVisible();
+		consoleSpy.mockRestore();
+	});
 });
