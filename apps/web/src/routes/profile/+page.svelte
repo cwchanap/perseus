@@ -1,8 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { playerAuth } from '$lib/stores/playerAuth';
 	import {
 		getPlayerProfile,
 		getPlayerPuzzles,
@@ -61,28 +59,11 @@
 	}
 
 	onMount(() => {
-		// The root layout already calls playerAuth.refresh() on mount.
-		// Subscribe and wait for the store to leave 'loading' before deciding
-		// whether to redirect to login. Calling refresh() here would race with
-		// the layout's call via the store's operationId guard.
-		// Keep reacting to every non-loading emission: only skip while loading,
-		// but continue redirecting to /login whenever the session is no longer
-		// authenticated (e.g. a later logout) — not just on the first settle.
-		// `loaded` gates the initial profile fetch so a re-authenticated
-		// emission (e.g. a re-refresh) doesn't reload the whole page.
-		let loaded = false;
-		const unsubscribe = playerAuth.subscribe((state) => {
-			if (state.status === 'loading') return;
-			if (state.status !== 'authenticated') {
-				goto(resolve('/login'));
-				return;
-			}
-			if (!loaded) {
-				loaded = true;
-				void loadAll();
-			}
-		});
-		return unsubscribe;
+		// The profile +layout.svelte guards auth: it only renders this page
+		// when playerAuth is authenticated, and redirects to /login on
+		// anonymous/logout. So by the time this onMount runs the session is
+		// valid — just load the data. The layout handles all redirect logic.
+		void loadAll();
 	});
 
 	async function loadAll() {
@@ -158,16 +139,45 @@
 		}
 	}
 
+	// Refetch only the profile after a name/avatar mutation. Puzzles and stats
+	// are unaffected by those edits, so a full loadAll() would waste two extra
+	// requests and briefly flicker the lists.
+	async function loadProfile() {
+		try {
+			profile = await getPlayerProfile();
+			displayName = profile?.name ?? '';
+		} catch (error) {
+			console.error('Failed to reload profile:', error);
+		}
+	}
+
 	async function saveName() {
 		saving = true;
 		try {
 			await updatePlayerProfile({ displayName });
 			editing = false;
 			saveError = null;
-			await loadAll();
+			await loadProfile();
 		} catch (error) {
 			console.error('Failed to save name:', error);
 			saveError = 'Failed to save name. Please try again.';
+		} finally {
+			saving = false;
+		}
+	}
+
+	// Clear the display-name override, reverting to the Google-sourced name.
+	// The API treats displayName: null as "remove the override".
+	async function resetName() {
+		saving = true;
+		try {
+			await updatePlayerProfile({ displayName: null });
+			editing = false;
+			saveError = null;
+			await loadProfile();
+		} catch (error) {
+			console.error('Failed to reset name:', error);
+			saveError = 'Failed to reset name. Please try again.';
 		} finally {
 			saving = false;
 		}
@@ -187,7 +197,7 @@
 		try {
 			await uploadPlayerAvatar(file);
 			saveError = null;
-			await loadAll();
+			await loadProfile();
 		} catch (error) {
 			console.error('Failed to upload avatar:', error);
 			saveError = 'Failed to upload avatar. Please try again.';
@@ -227,11 +237,26 @@
 					/>
 					<button type="button" onclick={saveName} disabled={saving}>Save</button>
 					<button type="button" data-testid="cancel-edit" onclick={cancelEditing}>Cancel</button>
+					<button
+						type="button"
+						data-testid="reset-name"
+						onclick={resetName}
+						disabled={saving}
+						class="text-sm text-(--text-2)"
+					>
+						Reset to Google default
+					</button>
 				{:else}
 					<h1 class="font-(--font-display) text-(--text-0)" data-testid="profile-name">
 						{profile.name}
 					</h1>
 					<p class="text-sm text-(--text-2)">{profile.email}</p>
+					<p class="text-xs text-(--text-2)" data-testid="profile-join-date">
+						Joined {new Date(profile.createdAt).toLocaleDateString()}
+					</p>
+					<p class="text-xs text-(--text-2)" data-testid="profile-last-login">
+						Last login {new Date(profile.lastLoginAt).toLocaleString()}
+					</p>
 				{/if}
 				<input
 					data-testid="avatar-input"
