@@ -28,6 +28,7 @@ import {
 } from '@perseus/types';
 import { createD1Db } from '@perseus/shared/d1';
 import { setPuzzleStatus } from '@perseus/shared';
+import type { AppDb } from '@perseus/shared';
 import {
 	MAX_IMAGE_BYTES,
 	getMetadata,
@@ -35,6 +36,21 @@ import {
 	padPixelsToTarget,
 	applyMaskAlpha
 } from './helpers';
+
+// Cache the drizzle instance per-env, mirroring apps/api/src/db.worker.ts.
+// createD1Db only captures the env.DB binding reference, which is stable for
+// the lifetime of the worker isolate, so reusing one instance avoids
+// per-step allocation overhead across the workflow's multiple step.do calls.
+const dbCache = new WeakMap<Env, AppDb>();
+
+function getDb(env: Env): AppDb {
+	let db = dbCache.get(env);
+	if (!db) {
+		db = createD1Db(env);
+		dbCache.set(env, db);
+	}
+	return db;
+}
 
 export interface Env {
 	PUZZLES_BUCKET: R2Bucket;
@@ -518,7 +534,7 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 					// the ownership/stats store. Best-effort and independent of the
 					// DO retry loop — a D1/DB failure must not re-run the DO update.
 					try {
-						await setPuzzleStatus(createD1Db(this.env), puzzleId, 'failed');
+						await setPuzzleStatus(getDb(this.env), puzzleId, 'failed');
 					} catch (d1Error) {
 						console.error('Failed to update puzzle status in D1:', d1Error);
 					}
@@ -544,7 +560,7 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 		// catch block re-throws on failure.
 		await step.do('mirror-ready-status-to-d1', async () => {
 			try {
-				await setPuzzleStatus(createD1Db(this.env), puzzleId, 'ready');
+				await setPuzzleStatus(getDb(this.env), puzzleId, 'ready');
 			} catch (d1Error) {
 				console.error('Failed to mirror ready status to D1:', d1Error);
 			}
