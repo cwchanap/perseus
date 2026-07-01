@@ -136,6 +136,26 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 		expect(recordCompletion).not.toHaveBeenCalled();
 	});
 
+	it('returns 500 with a structured error when getPuzzle throws (corrupt metadata)', async () => {
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		vi.mocked(storage.getPuzzle).mockRejectedValueOnce(new Error('Corrupt metadata'));
+		const res = await buildApp().request(
+			`/api/puzzles/${PUZZLE_ID}/complete`,
+			{
+				method: 'POST',
+				headers: jsonHeaders(),
+				body: JSON.stringify({ timeSeconds: 90 })
+			},
+			DUMMY_ENV
+		);
+		expect(res.status).toBe(500);
+		const body = (await res.json()) as { error: string; message: string };
+		expect(body.error).toBe('internal_error');
+		expect(body.message).toBe('Failed to retrieve puzzle');
+		expect(recordCompletion).not.toHaveBeenCalled();
+		consoleSpy.mockRestore();
+	});
+
 	it('rejects non-numeric timeSeconds', async () => {
 		const res = await buildApp().request(
 			`/api/puzzles/${PUZZLE_ID}/complete`,

@@ -169,7 +169,11 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 		priorBytes = await prior.arrayBuffer();
 		priorContentType = prior.httpMetadata?.contentType ?? null;
 	}
-	await c.env.PUZZLES_BUCKET.put(key, bytes, {
+	// Capture the etag of our new put so the rollback can use a conditional
+	// restore. If another concurrent upload overwrites this key before our
+	// DB write fails, the conditional restore will not clobber the newer
+	// upload's object.
+	const putResult = await c.env.PUZZLES_BUCKET.put(key, bytes, {
 		httpMetadata: { contentType: detected }
 	});
 
@@ -181,14 +185,24 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 	} catch (err) {
 		console.error('Avatar DB write failed; rolling back R2 object:', err);
 		if (priorBytes) {
+			// Conditional restore: only overwrite if R2 still holds the bytes
+			// we just put. If another upload has since overwritten the key,
+			// this precondition fails (put returns null) and we leave the
+			// newer upload intact rather than clobbering it.
 			await c.env.PUZZLES_BUCKET.put(key, priorBytes, {
 				httpMetadata: {
 					contentType: priorContentType ?? detected
-				}
+				},
+				onlyIf: { etagMatches: putResult.etag }
 			});
-		} else {
-			await c.env.PUZZLES_BUCKET.delete(key);
 		}
+		// If no prior avatar existed, leave the orphaned bytes in place rather
+		// than deleting — the DB write failed so the profile doesn't point at
+		// this key, and a blind delete could remove another concurrent
+		// upload's object (TOCTOU: this upload read "no prior", put its bytes,
+		// then a second upload put+committed its own bytes before this
+		// rollback runs). The orphan is harmless and will be overwritten on
+		// the next successful upload.
 		return c.json({ error: 'internal_error', message: 'Failed to update avatar' }, 500);
 	}
 	// Reset the rate-limit counter on success so repeated successful uploads

@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { mkdir, writeFile, readFile, rm } from 'node:fs/promises';
+import { mkdir, writeFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { getDb } from '../db';
 import {
@@ -168,12 +168,9 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 	let priorBytes: Buffer | null = null;
 	try {
 		priorBytes = await readFile(avatarPath);
-	} catch (err) {
-		// ENOENT means no prior avatar existed; any other read error is safe to
-		// ignore here since we're only capturing for rollback, not serving.
-		if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-			priorBytes = null;
-		}
+	} catch {
+		// ENOENT (no prior avatar) or an unreadable file — either way we have
+		// nothing to restore, so priorBytes stays null.
 	}
 	await writeFile(avatarPath, Buffer.from(bytes));
 
@@ -186,9 +183,14 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 		console.error('Avatar DB write failed; rolling back avatar file:', err);
 		if (priorBytes) {
 			await writeFile(avatarPath, priorBytes);
-		} else {
-			await rm(avatarPath, { force: true });
 		}
+		// If no prior avatar existed, leave the new file in place rather than
+		// deleting it. The DB write failed so the profile doesn't point at this
+		// path, and a blind rm could remove another concurrent upload's file
+		// (TOCTOU: this upload read "no prior", put its bytes, then a second
+		// upload put+committed its own bytes before this rollback runs). The
+		// orphan is harmless and will be overwritten on the next successful
+		// upload.
 		return c.json({ error: 'internal_error', message: 'Failed to update avatar' }, 500);
 	}
 	// Reset the rate-limit counter on success so repeated successful uploads

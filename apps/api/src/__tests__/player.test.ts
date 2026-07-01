@@ -376,7 +376,7 @@ describe('player avatar route (Bun)', () => {
 		consoleSpy.mockRestore();
 	});
 
-	it('deletes the new avatar file on DB write failure when no prior avatar existed', async () => {
+	it('leaves the new avatar file orphaned on DB write failure when no prior avatar existed', async () => {
 		const { updateProfileAvatarUrl } = await import('@perseus/shared');
 		vi.mocked(updateProfileAvatarUrl).mockRejectedValueOnce(new Error('DB down'));
 
@@ -392,7 +392,11 @@ describe('player avatar route (Bun)', () => {
 		});
 
 		expect(res.status).toBe(500);
-		expect(existsSync(join(dataDir, 'avatars', 'p1'))).toBe(false);
+		// The new file is left in place (orphaned) rather than deleted, to
+		// avoid a TOCTOU race where a blind rm could remove another concurrent
+		// upload's file. The profile DB write failed, so the profile doesn't
+		// point at this path — the orphan is harmless.
+		expect(existsSync(join(dataDir, 'avatars', 'p1'))).toBe(true);
 		expect(consoleSpy).toHaveBeenCalledWith(
 			'Avatar DB write failed; rolling back avatar file:',
 			expect.any(Error)

@@ -279,20 +279,37 @@ describe('player profile routes (Worker)', () => {
 
 // Minimal in-memory R2 bucket double: put() stores bytes + contentType,
 // get() returns a body stream + writeHttpMetadata like the real binding.
+// put() returns an R2Object-like { etag } so the rollback's conditional
+// restore (onlyIf: { etagMatches }) can be exercised. When onlyIf is
+// provided, put() only writes if the current stored etag matches.
 function createMockBucket() {
-	const store = new Map<string, { body: ArrayBuffer; contentType: string }>();
+	const store = new Map<string, { body: ArrayBuffer; contentType: string; etag: string }>();
+	let etagCounter = 0;
 	const bucket = {
 		put: vi.fn(
 			async (
 				key: string,
 				body: ReadableStream<Uint8Array>,
-				opts?: { httpMetadata?: { contentType?: string } }
+				opts?: {
+					httpMetadata?: { contentType?: string };
+					onlyIf?: { etagMatches?: string };
+				}
 			) => {
+				// Conditional put: only write if the current etag matches.
+				if (opts?.onlyIf?.etagMatches) {
+					const current = store.get(key);
+					if (!current || current.etag !== opts.onlyIf.etagMatches) {
+						return null; // precondition failed — mirrors R2 behavior
+					}
+				}
 				const buf = await new Response(body).arrayBuffer();
+				const etag = `etag-${++etagCounter}`;
 				store.set(key, {
 					body: buf,
-					contentType: opts?.httpMetadata?.contentType ?? ''
+					contentType: opts?.httpMetadata?.contentType ?? '',
+					etag
 				});
+				return { etag };
 			}
 		),
 		get: vi.fn(async (key: string) => {
@@ -476,11 +493,13 @@ describe('player avatar route (Worker)', () => {
 		consoleSpy.mockRestore();
 	});
 
-	it('deletes the new R2 object on DB write failure when no prior avatar existed', async () => {
+	it('leaves the new R2 object orphaned on DB write failure when no prior avatar existed', async () => {
 		const { bucket, store } = createMockBucket();
 		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
 
-		// No prior avatar seeded -> rollback should delete the freshly-written object.
+		// No prior avatar seeded -> rollback leaves the freshly-written object
+		// in place (orphaned) rather than deleting it, to avoid a TOCTOU race
+		// where a blind delete could remove another concurrent upload's object.
 		const { updateProfileAvatarUrl } = await import('@perseus/shared');
 		vi.mocked(updateProfileAvatarUrl).mockRejectedValueOnce(new Error('D1 down'));
 
@@ -496,8 +515,67 @@ describe('player avatar route (Worker)', () => {
 		);
 
 		expect(res.status).toBe(500);
-		expect(store.has('avatars/p1')).toBe(false);
-		expect(bucket.delete).toHaveBeenCalledWith('avatars/p1');
+		// The orphaned object remains; delete is never called.
+		expect(store.has('avatars/p1')).toBe(true);
+		expect(bucket.delete).not.toHaveBeenCalled();
+		consoleSpy.mockRestore();
+	});
+
+	it('does not clobber a newer upload on conditional restore (etag mismatch)', async () => {
+		const { bucket, store } = createMockBucket();
+		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
+
+		// Seed a prior avatar so the rollback path attempts a conditional restore.
+		const priorPng = [0x89, 0x50, 0x4e, 0x47, 0xaa, 0xbb];
+		await bucket.put(
+			'avatars/p1',
+			new Uint8Array(priorPng) as unknown as ReadableStream<Uint8Array>,
+			{ httpMetadata: { contentType: 'image/png' } }
+		);
+
+		// First upload: put new bytes, then DB write fails. We intercept the
+		// put to simulate a second upload overwriting the key between the
+		// first upload's put and its rollback restore.
+		const { updateProfileAvatarUrl } = await import('@perseus/shared');
+		vi.mocked(updateProfileAvatarUrl).mockRejectedValueOnce(new Error('D1 down'));
+
+		// After the first upload's initial put, simulate a concurrent second
+		// upload that overwrites the same key with different bytes and a new
+		// etag. The first upload's conditional restore (onlyIf: etagMatches
+		// its own put etag) must fail and leave the second upload intact.
+		const secondUploadBytes = [0xff, 0xd8, 0xff, 0xe0, 0x99, 0x88];
+		const originalPut = vi.mocked(bucket.put);
+		bucket.put = vi.fn(async (key: string, body: ReadableStream<Uint8Array>, opts?: any) => {
+			const result = await originalPut(key, body, opts);
+			// Only inject the concurrent overwrite after the first upload's
+			// initial put (not the conditional restore, which has onlyIf).
+			if (!opts?.onlyIf && key === 'avatars/p1') {
+				await originalPut(
+					key,
+					new Uint8Array(secondUploadBytes) as unknown as ReadableStream<Uint8Array>,
+					{ httpMetadata: { contentType: 'image/jpeg' } }
+				);
+			}
+			return result;
+		}) as any;
+
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const blob = new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' });
+		const form = new FormData();
+		form.append('avatar', blob, 'a.png');
+		const res = await buildApp().request(
+			'/api/player/avatar',
+			{ method: 'POST', headers: AUTH_COOKIE, body: form },
+			env
+		);
+
+		expect(res.status).toBe(500);
+		// The second upload's bytes must remain — the conditional restore did
+		// not clobber them because the etag no longer matched.
+		const current = store.get('avatars/p1');
+		expect(current).toBeDefined();
+		expect(Array.from(new Uint8Array(current!.body))).toEqual(secondUploadBytes);
 		consoleSpy.mockRestore();
 	});
 });
