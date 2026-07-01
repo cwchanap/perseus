@@ -40,7 +40,7 @@ import {
 	revokePlayerSessionsForEmail
 } from '../services/player-auth.worker';
 import { getWorkerDb } from '../db.worker';
-import { deletePuzzleOwnership } from '@perseus/shared';
+import { deletePuzzleOwnership, deletePuzzleStats } from '@perseus/shared';
 
 const admin = new Hono<{ Bindings: Env }>();
 
@@ -689,6 +689,12 @@ admin.delete('/puzzles/:id', requireAuth, async (c) => {
 		// for them.)
 		await deletePuzzleOwnership(getWorkerDb(c.env), id).catch((err) =>
 			console.error(`Failed to delete ownership row for puzzle ${id}:`, err)
+		);
+		// Best-effort cleanup of any puzzle_stats rows referencing this puzzle
+		// so deleted puzzles don't linger in players' best-times lists with a
+		// null name. Logged, not fatal — same rationale as ownership cleanup.
+		await deletePuzzleStats(getWorkerDb(c.env), id).catch((err) =>
+			console.error(`Failed to delete stats rows for puzzle ${id}:`, err)
 		);
 
 		// Delete assets from R2
