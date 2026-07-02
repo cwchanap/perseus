@@ -106,7 +106,12 @@ export async function listPlayerPuzzles(
 	playerId: string,
 	opts: { limit: number; cursor?: string }
 ): Promise<{ rows: (typeof puzzles.$inferSelect)[]; nextCursor?: string }> {
-	const limit = Math.min(Math.max(opts.limit, 1), 100);
+	// Floor to an integer before clamping: the route layer passes through any
+	// finite Number(...) value, so a fractional query like ?limit=1.5 would
+	// otherwise survive the clamp and bind a non-integer (2.5) to SQL LIMIT,
+	// which SQLite/D1 rejects with a datatype error. Flooring treats 1.5 as 1
+	// (the nearest valid integer at or below the requested value).
+	const limit = Math.floor(Math.min(Math.max(opts.limit, 1), 100));
 	// Composite cursor (createdAt, id) avoids skipping a row when two puzzles
 	// share the same createdAt timestamp: rows are ordered by createdAt DESC
 	// then id DESC, and the cursor excludes anything strictly "after" the last
@@ -237,7 +242,10 @@ export async function listPlayerStats(
 	}[];
 	nextCursor?: string;
 }> {
-	const limit = Math.min(Math.max(opts.limit, 1), 100);
+	// Floor to an integer before clamping — see listPlayerPuzzles for the
+	// rationale. A fractional ?limit would otherwise bind a non-integer to
+	// SQL LIMIT and D1/SQLite would reject it with a datatype error.
+	const limit = Math.floor(Math.min(Math.max(opts.limit, 1), 100));
 	// Composite cursor (bestTimeSeconds, puzzleId) avoids skipping a row when
 	// two puzzles share the same best time: rows are ordered by bestTimeSeconds
 	// ASC then puzzleId ASC, and the cursor excludes anything at or "before"

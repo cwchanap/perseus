@@ -374,6 +374,35 @@ describe('player avatar route (Worker)', () => {
 		expect(stagingKeys).toHaveLength(0);
 	});
 
+	it('POST avatar returns 200 when staging cleanup delete fails (best-effort)', async () => {
+		// The live R2 put and DB override write have already succeeded, so a
+		// transient failure deleting the staging object must NOT turn a
+		// successful upload into a 500. The staging key is unreachable by the
+		// serve route and will be swept later.
+		const { bucket, store } = createMockBucket();
+		// Override delete to reject — simulates a transient R2 error. The
+		// route must catch this and still return the success response.
+		bucket.delete = vi.fn(async () => {
+			throw new Error('R2 transient delete failure');
+		});
+		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
+
+		const blob = new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' });
+		const form = new FormData();
+		form.append('avatar', blob, 'a.png');
+
+		const res = await buildApp().request(
+			'/api/player/avatar',
+			{ method: 'POST', headers: AUTH_COOKIE, body: form },
+			env
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as any;
+		expect(body.avatarUrl).toBe('/api/player/p1/avatar');
+		// The live object is in place and usable despite the cleanup failure.
+		expect(store.get('avatars/p1')).toBeDefined();
+	});
+
 	it('GET avatar serves the stored image from R2', async () => {
 		const { bucket } = createMockBucket();
 		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;

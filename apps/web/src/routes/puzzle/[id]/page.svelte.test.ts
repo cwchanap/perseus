@@ -908,6 +908,42 @@ describe('Puzzle route gameplay integration', () => {
 		expect(clearProgress).toHaveBeenCalledWith('test-puzzle');
 	});
 
+	it('records completion again after Play Again even if the prior POST resolves late', async () => {
+		// Regression: a stale recordCompletion().then() from the first solve
+		// would set completionRecorded back to true after Play Again reset it
+		// to false, causing the second solve to skip both the local best-time
+		// save and the server completion POST. The per-solve token guards the
+		// callback so only the active solve can mark itself recorded.
+		const firstPost = createDeferred<void>();
+		vi.mocked(recordCompletion).mockImplementationOnce(() => firstPost.promise);
+		await renderPuzzlePage();
+
+		// First solve triggers the (deferred) server POST.
+		await placePiece(0, 0, 0);
+		await placePiece(1, 1, 0);
+		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+		expect(saveCompletionTime).toHaveBeenCalledTimes(1);
+		expect(recordCompletion).toHaveBeenCalledTimes(1);
+
+		// Play Again before the first POST resolves — resets
+		// completionRecorded to false and invalidates the in-flight callback.
+		await page.getByRole('button', { name: 'PLAY AGAIN' }).click();
+		await expect.poll(() => page.getByTestId('celebration-modal').query()).toBeNull();
+
+		// The stale first POST now resolves. Without the token guard this
+		// would flip completionRecorded back to true.
+		firstPost.resolve();
+		await Promise.resolve();
+		await Promise.resolve();
+
+		// Second solve must still record locally and POST to the server.
+		await placePiece(0, 0, 0);
+		await placePiece(1, 1, 0);
+		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+		expect(saveCompletionTime).toHaveBeenCalledTimes(2);
+		expect(recordCompletion).toHaveBeenCalledTimes(2);
+	});
+
 	it('navigates to home when clicking BACK TO ARCADE in celebration modal', async () => {
 		await renderPuzzlePage();
 

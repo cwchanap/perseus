@@ -375,4 +375,32 @@ describe('repositories', () => {
 		const result = await listPlayerStats(helper.db, 'p1', { limit: 10, cursor: 'garbage' });
 		expect(result.rows).toHaveLength(0);
 	});
+
+	it('listPlayerPuzzles floors fractional limits to an integer', async () => {
+		// A fractional limit (e.g. from ?limit=1.5) must be floored before
+		// binding to SQL LIMIT, otherwise SQLite/D1 rejects the non-integer
+		// with a datatype error. 1.5 floors to 1, so only one row is returned.
+		for (let i = 0; i < 3; i++) {
+			await insertPuzzleOwnership(helper.db, {
+				id: `pz${i}`,
+				ownerId: 'p1',
+				name: `N${i}`,
+				pieceCount: 4,
+				status: 'ready',
+				createdAt: i
+			});
+		}
+		const result = await listPlayerPuzzles(helper.db, 'p1', { limit: 1.5 });
+		expect(result.rows).toHaveLength(1);
+		expect(result.nextCursor).toBeDefined();
+	});
+
+	it('listPlayerStats floors fractional limits to an integer', async () => {
+		await recordCompletion(helper.db, 'p1', 'pz1', 10);
+		await recordCompletion(helper.db, 'p1', 'pz2', 20);
+		await recordCompletion(helper.db, 'p1', 'pz3', 30);
+		const result = await listPlayerStats(helper.db, 'p1', { limit: 1.5 });
+		expect(result.rows).toHaveLength(1);
+		expect(result.nextCursor).toBeDefined();
+	});
 });
