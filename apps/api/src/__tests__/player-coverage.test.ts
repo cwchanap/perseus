@@ -3,7 +3,7 @@
  * - sniffImageType WebP branch (lines 48-59)
  * - POST /avatar invalid form data catch (line 142)
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { rmSync, mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';

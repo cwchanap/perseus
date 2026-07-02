@@ -47,7 +47,7 @@ import complete from '../routes/puzzles.complete';
 import * as playerAuth from '../services/player-auth';
 import * as storage from '../services/storage';
 import * as puzzleReady from './puzzle-ready';
-import { recordCompletion, ensurePuzzleOwnership } from '@perseus/shared';
+import { recordCompletion, ensurePuzzleOwnership, SYSTEM_OWNER_ID } from '@perseus/shared';
 import type { PlayerSessionRecord } from '../services/player-auth';
 
 const TEST_PLAYER: PlayerSessionRecord = {
@@ -109,6 +109,43 @@ describe('POST /api/puzzles/:id/complete (Bun)', () => {
 		const body = (await res.json()) as { ok: boolean };
 		expect(body.ok).toBe(true);
 		expect(recordCompletion).toHaveBeenCalledWith(expect.anything(), 'p1', PUZZLE_ID, 90);
+	});
+
+	it('backfills a system-owned puzzle row before recording the completion', async () => {
+		const res = await buildApp().request(`/api/puzzles/${PUZZLE_ID}/complete`, {
+			method: 'POST',
+			headers: jsonHeaders(),
+			body: JSON.stringify({ timeSeconds: 90 })
+		});
+		expect(res.status).toBe(200);
+		// The backfill is invoked with a system-owned row built from the loaded
+		// puzzle metadata, so listPlayerStats can later resolve the name.
+		expect(ensurePuzzleOwnership).toHaveBeenCalledWith(expect.anything(), {
+			id: PUZZLE_ID,
+			ownerId: SYSTEM_OWNER_ID,
+			name: 'Test Puzzle',
+			pieceCount: 4,
+			status: 'ready',
+			createdAt: 100
+		});
+		// Backfill must happen before the stat write so a missing row never
+		// coexists with a recorded completion.
+		const backfillOrder = vi.mocked(ensurePuzzleOwnership).mock.invocationCallOrder[0];
+		const recordOrder = vi.mocked(recordCompletion).mock.invocationCallOrder[0];
+		expect(backfillOrder).toBeLessThan(recordOrder);
+	});
+
+	it('still records the completion when the ownership backfill fails (best-effort)', async () => {
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		vi.mocked(ensurePuzzleOwnership).mockRejectedValueOnce(new Error('D1 down'));
+		const res = await buildApp().request(`/api/puzzles/${PUZZLE_ID}/complete`, {
+			method: 'POST',
+			headers: jsonHeaders(),
+			body: JSON.stringify({ timeSeconds: 90 })
+		});
+		expect(res.status).toBe(200);
+		expect(recordCompletion).toHaveBeenCalled();
+		consoleSpy.mockRestore();
 	});
 
 	it('rejects a malformed puzzle id with 400', async () => {
