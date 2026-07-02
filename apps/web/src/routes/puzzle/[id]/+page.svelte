@@ -463,12 +463,18 @@
 		if (isComplete && !wasComplete) {
 			timer.pause();
 			if (!completionRecorded) {
-				isNewBest = saveCompletionTime(puzzle.id, timerState.elapsed);
+				// The timer ticks in whole seconds starting from 0, so a very
+				// fast solve (e.g. a 4-piece puzzle) can complete with elapsed
+				// still at 0. The completion API rejects timeSeconds < 1, which
+				// would leave the server stat un-synced while the local best is
+				// saved as a nonsensical 0s. Clamp to at least 1 second.
+				const timeSeconds = Math.max(1, timerState.elapsed);
+				isNewBest = saveCompletionTime(puzzle.id, timeSeconds);
 				bestTime = getBestTime(puzzle.id);
 				// Only mark completion as recorded once the server confirms it.
 				// Setting the flag synchronously would suppress retries when the
 				// POST fails, leaving the solve permanently un-synced.
-				recordCompletion(puzzle.id, timerState.elapsed)
+				recordCompletion(puzzle.id, timeSeconds)
 					.then(() => {
 						completionRecorded = true;
 					})

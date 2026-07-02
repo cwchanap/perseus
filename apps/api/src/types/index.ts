@@ -3,8 +3,8 @@
 // Do not add new types here — use @perseus/types instead.
 
 import { PUZZLE_CATEGORIES } from '@perseus/types';
-import type { PuzzleCategory, PuzzleAspectRatio } from '@perseus/types';
-export type { PuzzleCategory, PuzzleAspectRatio };
+import type { PuzzleCategory, PuzzleAspectRatio, PuzzleStatus } from '@perseus/types';
+export type { PuzzleCategory, PuzzleAspectRatio, PuzzleStatus };
 export { PUZZLE_CATEGORIES };
 
 export type EdgeType = 'flat' | 'tab' | 'blank';
@@ -43,6 +43,7 @@ export interface PuzzleSummary {
 	id: string;
 	name: string;
 	pieceCount: number;
+	status: PuzzleStatus;
 	category?: PuzzleCategory;
 	aspectRatio?: PuzzleAspectRatio;
 }
