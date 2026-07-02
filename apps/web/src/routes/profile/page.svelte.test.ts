@@ -88,8 +88,9 @@ describe('profile page', () => {
 		vi.mocked(getPlayerStats).mockResolvedValue({ stats });
 
 		render(ProfilePage);
-		await expect.element(page.getByText('5')).toBeVisible();
-		await expect.element(page.getByText('7')).toBeVisible();
+		await expect.element(page.getByTestId('profile-summary-uploaded')).toBeVisible();
+		await expect.element(page.getByTestId('profile-summary-solved')).toHaveTextContent('3');
+		await expect.element(page.getByTestId('profile-summary-completions')).toHaveTextContent('7');
 	});
 
 	it('shows an error with retry when loading the profile fails', async () => {
