@@ -590,8 +590,14 @@ admin.post('/puzzles', requireAuth, async (c) => {
 		// owner so listPlayerStats can resolve its name when a signed-in player
 		// solves it. Without this row, the Best Times UI falls back to showing
 		// the puzzle UUID. Player profile lists/counts filter by a real player's
-		// ownerId, so this system-owned row never leaks there. Best-effort
-		// cleanup on failure mirrors the player upload path.
+		// ownerId, so this system-owned row never leaks there.
+		//
+		// Best-effort: KV metadata above is the source of truth for admin puzzle
+		// existence, so a failed ownership insert is logged, not fatal — matching
+		// the Bun admin path. This keeps admin puzzle creation available during a
+		// D1 outage or when the DB binding is absent. The player-owned upload
+		// path (puzzles.worker.ts) keeps a hard D1 requirement because the
+		// ownership row IS the source of truth for a player's puzzle list.
 		try {
 			await insertPuzzleOwnership(getWorkerDb(c.env), {
 				id,
@@ -601,24 +607,9 @@ admin.post('/puzzles', requireAuth, async (c) => {
 				...(category ? { category } : {}),
 				status: 'processing',
 				createdAt: puzzleMetadata.createdAt
-			});
-		} catch (error) {
-			console.error('Failed to record admin puzzle ownership:', error);
-			const metadataCleanup = await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
-			if (!metadataCleanup.success) {
-				console.error(
-					'Failed to cleanup puzzle metadata after ownership insert failure:',
-					metadataCleanup.error
-				);
-			}
-			const imageCleanup = await deleteOriginalImage(c.env.PUZZLES_BUCKET, id);
-			if (!imageCleanup.success) {
-				console.error(
-					'Failed to cleanup original image after ownership insert failure:',
-					imageCleanup.error
-				);
-			}
-			return c.json({ error: 'internal_error', message: 'Failed to record puzzle ownership' }, 500);
+			}).catch((err) => console.error(`Failed to record admin puzzle ownership for ${id}:`, err));
+		} catch (err) {
+			console.error(`Failed to init DB for ownership insert of puzzle ${id}:`, err);
 		}
 
 		// Step 3: Trigger workflow for puzzle generation

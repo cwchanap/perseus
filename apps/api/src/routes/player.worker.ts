@@ -5,6 +5,7 @@ import {
 	getProfileOverride,
 	updateProfileDisplayName,
 	updateProfileAvatarUrl,
+	clearProfileAvatarUrl,
 	getPlayerSummary,
 	listPlayerPuzzles,
 	listPlayerStats,
@@ -162,9 +163,26 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 	// DB succeeded — promote the staged bytes to the live key. We hold the
 	// bytes in memory, so re-put to the canonical key. A concurrent upload
 	// may also put to this key; last write wins (both are valid avatars).
-	await c.env.PUZZLES_BUCKET.put(liveKey, bytes, {
-		httpMetadata: { contentType: detected }
-	});
+	//
+	// If the live put fails (transient R2/quota error), the DB now points at
+	// a serve route that 404s for first-time avatars. Roll back the avatarUrl
+	// flag so the profile doesn't reference a missing object, and clean up
+	// the staged object. For a re-upload of an existing avatar, the old live
+	// object still serves (no 404); clearing the flag is a cosmetic
+	// regression only on this rare transient-failure path, and avoids a
+	// read-modify-write race that reading the previous value would introduce.
+	try {
+		await c.env.PUZZLES_BUCKET.put(liveKey, bytes, {
+			httpMetadata: { contentType: detected }
+		});
+	} catch (err) {
+		console.error('Avatar live R2 put failed; rolling back DB avatarUrl:', err);
+		await clearProfileAvatarUrl(db, session.user.id).catch((rollbackErr) =>
+			console.error('Failed to roll back avatarUrl after live put failure:', rollbackErr)
+		);
+		await c.env.PUZZLES_BUCKET.delete(stagingKey).catch(() => {});
+		return c.json({ error: 'internal_error', message: 'Failed to store avatar' }, 500);
+	}
 	// Best-effort cleanup of the staging object. If this delete fails the
 	// staging key will linger until the next upload or a periodic sweep; it
 	// is not reachable by the serve route (which reads only the live key).
