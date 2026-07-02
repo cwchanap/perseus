@@ -167,6 +167,45 @@ describe('profile page', () => {
 		await expect.poll(() => fileInput.value).toBe('');
 	});
 
+	it('busts the avatar img src with a version param after a re-upload', async () => {
+		// The profile already shows an avatar served from the fixed avatar path.
+		// A re-upload overwrites the same R2 key and the API returns the same
+		// path, so without a cache-buster the <img src> is unchanged and the
+		// browser keeps showing the old cached image.
+		const avatarPath = '/api/player/p1/avatar';
+		vi.mocked(getPlayerProfile).mockResolvedValue({
+			id: 'p1',
+			email: 'e',
+			name: 'Player One',
+			picture: avatarPath,
+			createdAt: 1,
+			lastLoginAt: 2,
+			summary: { puzzlesUploaded: 0, puzzlesSolved: 0, totalCompletions: 0 }
+		});
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({ puzzles: [], nextCursor: undefined });
+		vi.mocked(getPlayerStats).mockResolvedValue({ stats: [], nextCursor: undefined });
+		vi.mocked(uploadPlayerAvatar).mockResolvedValue({ avatarUrl: avatarPath });
+
+		render(ProfilePage);
+		await expect.element(page.getByText('Player One')).toBeVisible();
+		// Initially the img src is the bare path (no cache-buster).
+		await expect.element(page.getByRole('img')).toHaveAttribute('src', avatarPath);
+
+		await page.getByText('Edit profile').click();
+		const fileInput = (await page.getByTestId('avatar-input').element()) as HTMLInputElement;
+		const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'avatar.png', {
+			type: 'image/png'
+		});
+		Object.defineProperty(fileInput, 'files', { value: [file], configurable: true });
+		fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+
+		// After the upload, the src must change to the path plus a ?v=<ts>
+		// cache-buster so the browser re-fetches the new bytes.
+		await expect
+			.element(page.getByRole('img'))
+			.toHaveAttribute('src', expect.stringMatching(/^\/api\/player\/p1\/avatar\?v=\d+$/));
+	});
+
 	it('renders the profile even when puzzles fail to load (allSettled)', async () => {
 		vi.mocked(getPlayerProfile).mockResolvedValue({
 			id: 'p1',

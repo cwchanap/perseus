@@ -17,14 +17,24 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 				arr.push(time);
 				completions.set(playerId, arr);
 			}
-		)
+		),
+		// Stub the backfill so it doesn't hit the mock DB ({}). The route calls
+		// this best-effort before recordCompletion; tests assert on call order.
+		ensurePuzzleOwnership: vi.fn(async () => {}),
+		SYSTEM_OWNER_ID: actual.SYSTEM_OWNER_ID
 	};
 });
 
 // The route only checks truthiness of the getPuzzle result; a minimal stand-in
 // (cast to satisfy the PuzzleMetadata | null return type) is sufficient.
 vi.mock('../services/storage.worker', () => ({
-	getPuzzle: vi.fn().mockResolvedValue({ id: 'pz', status: 'ready' } as never)
+	getPuzzle: vi.fn().mockResolvedValue({
+		id: 'pz',
+		name: 'Test Puzzle',
+		pieceCount: 4,
+		createdAt: 100,
+		status: 'ready'
+	} as never)
 }));
 
 vi.mock('../services/player-auth.worker', () => ({
@@ -34,7 +44,7 @@ vi.mock('../services/player-auth.worker', () => ({
 import complete from '../routes/puzzles.complete.worker';
 import * as playerAuth from '../services/player-auth.worker';
 import * as storage from '../services/storage.worker';
-import { recordCompletion } from '@perseus/shared';
+import { recordCompletion, ensurePuzzleOwnership, SYSTEM_OWNER_ID } from '@perseus/shared';
 import type { PlayerSessionRecord } from '../services/player-auth.worker';
 
 const TEST_PLAYER: PlayerSessionRecord = {
@@ -70,11 +80,18 @@ function jsonHeaders() {
 describe('POST /api/puzzles/:id/complete (Worker)', () => {
 	beforeEach(() => {
 		vi.mocked(playerAuth.getPlayerSession).mockResolvedValue(TEST_PLAYER);
-		vi.mocked(storage.getPuzzle).mockResolvedValue({ id: PUZZLE_ID, status: 'ready' } as never);
+		vi.mocked(storage.getPuzzle).mockResolvedValue({
+			id: PUZZLE_ID,
+			name: 'Test Puzzle',
+			pieceCount: 4,
+			createdAt: 100,
+			status: 'ready'
+		} as never);
 		// Reset call history on every asserted mock so each test only reflects
 		// its own requests (the not.toHaveBeenCalled() assertions depend on this).
 		vi.mocked(storage.getPuzzle).mockClear();
 		vi.mocked(recordCompletion).mockClear();
+		vi.mocked(ensurePuzzleOwnership).mockClear();
 	});
 
 	it('records a completion', async () => {
@@ -92,6 +109,51 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 		const body = (await res.json()) as { ok: boolean };
 		expect(body.ok).toBe(true);
 		expect(recordCompletion).toHaveBeenCalledWith(expect.anything(), 'p1', PUZZLE_ID, 90);
+	});
+
+	it('backfills a system-owned puzzle row before recording the completion', async () => {
+		const res = await buildApp().request(
+			`/api/puzzles/${PUZZLE_ID}/complete`,
+			{
+				method: 'POST',
+				headers: jsonHeaders(),
+				body: JSON.stringify({ timeSeconds: 90 })
+			},
+			DUMMY_ENV
+		);
+		expect(res.status).toBe(200);
+		// The backfill is invoked with a system-owned row built from the loaded
+		// puzzle metadata, so listPlayerStats can later resolve the name.
+		expect(ensurePuzzleOwnership).toHaveBeenCalledWith(expect.anything(), {
+			id: PUZZLE_ID,
+			ownerId: SYSTEM_OWNER_ID,
+			name: 'Test Puzzle',
+			pieceCount: 4,
+			status: 'ready',
+			createdAt: 100
+		});
+		// Backfill must happen before the stat write so a missing row never
+		// coexists with a recorded completion.
+		const backfillOrder = vi.mocked(ensurePuzzleOwnership).mock.invocationCallOrder[0];
+		const recordOrder = vi.mocked(recordCompletion).mock.invocationCallOrder[0];
+		expect(backfillOrder).toBeLessThan(recordOrder);
+	});
+
+	it('still records the completion when the ownership backfill fails (best-effort)', async () => {
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		vi.mocked(ensurePuzzleOwnership).mockRejectedValueOnce(new Error('D1 down'));
+		const res = await buildApp().request(
+			`/api/puzzles/${PUZZLE_ID}/complete`,
+			{
+				method: 'POST',
+				headers: jsonHeaders(),
+				body: JSON.stringify({ timeSeconds: 90 })
+			},
+			DUMMY_ENV
+		);
+		expect(res.status).toBe(200);
+		expect(recordCompletion).toHaveBeenCalled();
+		consoleSpy.mockRestore();
 	});
 
 	it('rejects a malformed puzzle id with 400', async () => {
