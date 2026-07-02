@@ -43,6 +43,14 @@ const progressState = vi.hoisted(() => ({
 	value: null as GameProgress | null
 }));
 
+// Configurable puzzleSource mock so individual tests can simulate a
+// local-only quick-puzzle source (`source: 'local'`) without leaking the
+// device-local `q-...` id to the API-backed `fetchPuzzle` path.
+const puzzleSourceState = vi.hoisted(() => ({
+	// null = fall back to the default api-source factory (calls fetchPuzzle).
+	override: null as null | (() => Promise<LoadedPuzzleSource>)
+}));
+
 vi.mock('$app/stores', () => ({
 	page: mockPageStore
 }));
@@ -57,6 +65,28 @@ vi.mock('$app/paths', () => ({
 
 vi.mock('$lib/utils/shuffle', () => ({
 	shuffleArray: vi.fn((values: number[]) => [...values])
+}));
+
+vi.mock('$lib/services/puzzleSource', () => ({
+	loadPuzzleSource: vi.fn((id: string) => {
+		const override = puzzleSourceState.override;
+		if (override) {
+			return override();
+		}
+		// Default: delegate to the real api-source path by calling the mocked
+		// fetchPuzzle. The bindings below are initialized by the time this
+		// factory is actually invoked during render.
+		return fetchPuzzle(id).then((fetched) => ({
+			puzzle: fetched,
+			resolvePieceImage: (piece: { id: number }) => getPieceImageUrl(fetched.id, piece.id),
+			resolveReferenceImage: () =>
+				fetched.hasReference === true ? getReferenceImageUrl(fetched.id) : null,
+			source: 'api' as const,
+			cleanup: () => {
+				/* no-op for API */
+			}
+		}));
+	})
 }));
 
 vi.mock('$lib/services/gameplay/rotation', async () => {
@@ -177,7 +207,14 @@ vi.mock('$lib/stores/timer', () => ({
 	})
 }));
 
-import { fetchPuzzle, ApiError, recordCompletion } from '$lib/services/api';
+import {
+	fetchPuzzle,
+	ApiError,
+	recordCompletion,
+	getPieceImageUrl,
+	getReferenceImageUrl
+} from '$lib/services/api';
+import type { LoadedPuzzleSource } from '$lib/services/puzzleSource';
 import { saveProgress, clearProgress } from '$lib/services/progress';
 import { saveCompletionTime, getBestTime } from '$lib/services/stats';
 import { get } from 'svelte/store';
@@ -275,6 +312,7 @@ describe('Puzzle route gameplay integration', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		progressState.value = null;
+		puzzleSourceState.override = null;
 		mockPageStore.set({
 			url: { pathname: '/puzzle/test-puzzle' },
 			params: { id: 'test-puzzle' },
@@ -942,6 +980,44 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
 		expect(saveCompletionTime).toHaveBeenCalledTimes(2);
 		expect(recordCompletion).toHaveBeenCalledTimes(2);
+	});
+
+	it('does not POST completion to the API for local-source quick puzzles', async () => {
+		// Regression: quick puzzles use device-local `q-...` ids that
+		// loadPuzzleSource deliberately keeps off the API. An unconditional
+		// recordCompletion(puzzle.id, ...) would leak the `q-...` id to
+		// /api/puzzles/:id/complete on every quick solve and get rejected.
+		// The completion call must be gated to api-source puzzles.
+		const quickPuzzle = createMockPuzzle();
+		quickPuzzle.id = 'q-local-only';
+		puzzleSourceState.override = () =>
+			Promise.resolve({
+				puzzle: quickPuzzle,
+				resolvePieceImage: () => 'data:image/gif;base64,R0lGODlhAQABAAAAACw=',
+				resolveReferenceImage: () => null,
+				source: 'local',
+				cleanup: () => {}
+			} satisfies LoadedPuzzleSource);
+		mockPageStore.set({
+			url: { pathname: '/puzzle/q-local-only' },
+			params: { id: 'q-local-only' },
+			route: { id: '/puzzle/[id]' },
+			status: 200,
+			error: null
+		});
+
+		render(PuzzlePage);
+		await expect.element(page.getByTestId('puzzle-board')).toBeVisible();
+
+		await placePiece(0, 0, 0);
+		await placePiece(1, 1, 0);
+		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+
+		// Local best time is still recorded for quick puzzles.
+		expect(saveCompletionTime).toHaveBeenCalledTimes(1);
+		expect(saveCompletionTime).toHaveBeenCalledWith('q-local-only', expect.any(Number));
+		// But the server completion endpoint is never hit — no id leak.
+		expect(recordCompletion).not.toHaveBeenCalled();
 	});
 
 	it('navigates to home when clicking BACK TO ARCADE in celebration modal', async () => {

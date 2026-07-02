@@ -491,15 +491,24 @@
 				// false) cannot flip it back to true and suppress the next
 				// solve's recording.
 				const completionToken = activeCompletionId;
-				recordCompletion(puzzle.id, timeSeconds)
-					.then(() => {
-						if (completionToken === activeCompletionId) {
-							completionRecorded = true;
-						}
-					})
-					.catch((error) => {
-						console.error('Failed to record completion on server', error);
-					});
+				// Quick puzzles (source === 'local') use device-local `q-...` ids
+				// that must never be sent to the API — loadPuzzleSource already
+				// guards fetches that way. Skip the server POST for them and mark
+				// completion recorded synchronously; the local best time above is
+				// the only persistent record for quick puzzles.
+				if (puzzleSource?.source === 'api') {
+					recordCompletion(puzzle.id, timeSeconds)
+						.then(() => {
+							if (completionToken === activeCompletionId) {
+								completionRecorded = true;
+							}
+						})
+						.catch((error) => {
+							console.error('Failed to record completion on server', error);
+						});
+				} else {
+					completionRecorded = true;
+				}
 			}
 			showCelebration = true;
 			return;
