@@ -97,6 +97,13 @@
 	let panOriginX = 0;
 	let panOriginY = 0;
 	let activeLoadRequestId = 0;
+	// Per-solve token guarding the completion POST callback. Incremented on
+	// every reset (play again, new puzzle load, destroy) so a stale
+	// recordCompletion().then() from a prior solve cannot flip
+	// completionRecorded back to true after handlePlayAgain reset it — which
+	// would otherwise make the next solve skip both the local best-time save
+	// and the server completion POST.
+	let activeCompletionId = 0;
 
 	timerUnsubscribe = timer.subscribe((state) => {
 		timerState = state;
@@ -146,6 +153,7 @@
 		}
 
 		activeLoadRequestId += 1;
+		activeCompletionId += 1;
 		if (puzzleSource) {
 			puzzleSource.cleanup();
 			puzzleSource = null;
@@ -427,6 +435,10 @@
 			timerStarted = false;
 			isNewBest = false;
 			completionRecorded = false;
+			// A new puzzle load starts a fresh solve session: invalidate any
+			// in-flight completion callback from a prior puzzle so it cannot
+			// mark this new (still-unsolved) session as recorded.
+			activeCompletionId += 1;
 			resetPlacementHistory(restoredPlacedPieces, restoredPieceRotations, restoredRotationEnabled);
 			pendingViewportReset = true;
 		} catch (e) {
@@ -473,10 +485,17 @@
 				bestTime = getBestTime(puzzle.id);
 				// Only mark completion as recorded once the server confirms it.
 				// Setting the flag synchronously would suppress retries when the
-				// POST fails, leaving the solve permanently un-synced.
+				// POST fails, leaving the solve permanently un-synced. Capture
+				// the current solve token so a stale callback from a prior
+				// solve (e.g. after Play Again reset completionRecorded to
+				// false) cannot flip it back to true and suppress the next
+				// solve's recording.
+				const completionToken = activeCompletionId;
 				recordCompletion(puzzle.id, timeSeconds)
 					.then(() => {
-						completionRecorded = true;
+						if (completionToken === activeCompletionId) {
+							completionRecorded = true;
+						}
 					})
 					.catch((error) => {
 						console.error('Failed to record completion on server', error);
@@ -774,6 +793,12 @@
 		timerStarted = false;
 		isNewBest = false;
 		completionRecorded = false;
+		// Invalidate any in-flight completion callback from the just-finished
+		// solve. Without this, a slow recordCompletion().then() that resolves
+		// after Play Again would set completionRecorded back to true, causing
+		// the next solve to skip both the local best-time save and the server
+		// completion POST.
+		activeCompletionId += 1;
 		clearSelectedPiece();
 		shuffledPieceIds = shuffleArray(puzzle.pieces.map((piece) => piece.id));
 		resetPlacementHistory([], {}, false);

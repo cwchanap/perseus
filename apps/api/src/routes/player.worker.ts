@@ -186,7 +186,12 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 	// Best-effort cleanup of the staging object. If this delete fails the
 	// staging key will linger until the next upload or a periodic sweep; it
 	// is not reachable by the serve route (which reads only the live key).
-	await c.env.PUZZLES_BUCKET.delete(stagingKey);
+	// Swallow transient failures so a cleanup error does not turn an already-
+	// successful upload (live R2 object + DB override in place) into a 500
+	// before the success response and rate-limit reset reach the client.
+	await c.env.PUZZLES_BUCKET.delete(stagingKey).catch((err) => {
+		console.error('Failed to clean up staging avatar object:', err);
+	});
 	// Reset the rate-limit counter on success so repeated successful uploads
 	// don't accumulate toward an unnecessary lockout. The middleware increments
 	// before the handler runs; this deletes that increment.
