@@ -237,6 +237,7 @@ async function listPuzzlesWithDate(): Promise<
 							id: puzzle.id,
 							name: puzzle.name,
 							pieceCount: puzzle.pieceCount,
+							status: 'ready',
 							aspectRatio: puzzle.aspectRatio,
 							category: puzzle.category
 						},

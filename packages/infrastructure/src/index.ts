@@ -25,7 +25,7 @@ const commonBindings = {
 	d1Databases: [
 		{
 			binding: 'DB',
-			databaseId: d1Database.id
+			databaseId: d1Database.uuid
 		}
 	],
 	envVars: {
@@ -88,7 +88,7 @@ const adminAccess = createAdminAccessResources({
 
 export const r2BucketName = r2Bucket.name;
 export const kvNamespaceId = kvNamespace.id;
-export const d1DatabaseId = d1Database.id;
+export const d1DatabaseId = d1Database.uuid;
 export const workflowsWorkerName = workflowsWorker.workerName;
 export const apiWorkerName = apiWorker.workerName;
 export const adminAccessApplicationId = adminAccess.application.id;
