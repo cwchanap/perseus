@@ -83,6 +83,22 @@ export async function insertPuzzleOwnership(db: AppDb, row: NewPuzzleRow): Promi
 	await db.insert(puzzles).values(row).run();
 }
 
+// Lazily backfill a D1 ownership row for a puzzle that has none yet — e.g. an
+// admin puzzle whose best-effort ownership insert failed at creation time, or
+// a puzzle that predates the D1 mirror. Uses the system sentinel owner so the
+// row never leaks into a real player's "My Puzzles" list/counts (those filter
+// by ownerId = playerId), but it DOES participate in listPlayerStats' left
+// join so the Best Times UI shows the puzzle's name instead of its UUID.
+//
+// ON CONFLICT (id) DO NOTHING: if a row already exists (player-owned, or a
+// previously backfilled system row), it is left untouched. The KV/DO metadata
+// is the source of truth for puzzle existence/status; this is a best-effort
+// mirror write, so the caller logs failures rather than aborting the
+// completion (mirroring the admin ownership-insert pattern).
+export async function ensurePuzzleOwnership(db: AppDb, row: NewPuzzleRow): Promise<void> {
+	await db.insert(puzzles).values(row).onConflictDoNothing({ target: puzzles.id }).run();
+}
+
 export async function deletePuzzleOwnership(db: AppDb, id: string): Promise<void> {
 	await db.delete(puzzles).where(eq(puzzles.id, id)).run();
 }

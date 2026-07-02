@@ -10,7 +10,9 @@ import {
 	recordCompletion,
 	listPlayerStats,
 	insertPuzzleOwnership,
-	listPlayerPuzzles
+	ensurePuzzleOwnership,
+	listPlayerPuzzles,
+	SYSTEM_OWNER_ID
 } from '../repositories';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -164,6 +166,82 @@ describe('listPlayerStats composite cursor against real D1', () => {
 		} finally {
 			vi.useRealTimers();
 		}
+	});
+});
+
+describe('ensurePuzzleOwnership backfill against real D1', () => {
+	it('inserts a system-owned row when none exists, resolving the name in listPlayerStats', async () => {
+		// Simulate a completion of a puzzle that has no D1 ownership row (e.g.
+		// an admin puzzle whose best-effort ownership insert failed). Without
+		// the backfill, listPlayerStats left-joins a missing row and surfaces
+		// puzzleName null (the Best Times UI then shows the UUID).
+		await ensurePuzzleOwnership(db, {
+			id: 'pz-legacy',
+			ownerId: SYSTEM_OWNER_ID,
+			name: 'Legacy Puzzle',
+			pieceCount: 4,
+			status: 'ready',
+			createdAt: 50
+		});
+		await recordCompletion(db, 'p1', 'pz-legacy', 120);
+		const stats = await listPlayerStats(db, 'p1', { limit: 10 });
+		expect(stats.rows).toHaveLength(1);
+		expect(stats.rows[0].puzzleName).toBe('Legacy Puzzle');
+	});
+
+	it('leaves an existing ownership row untouched (ON CONFLICT DO NOTHING)', async () => {
+		// A player-owned row already exists for this puzzle.
+		await insertPuzzleOwnership(db, {
+			id: 'pz-owned',
+			ownerId: 'p1',
+			name: 'Real Owner Name',
+			pieceCount: 9,
+			status: 'ready',
+			createdAt: 10
+		});
+		// A completion backfills with a system-owned row, which must NOT
+		// clobber the existing player-owned row (or it would vanish from the
+		// player's "My Puzzles" list).
+		await ensurePuzzleOwnership(db, {
+			id: 'pz-owned',
+			ownerId: SYSTEM_OWNER_ID,
+			name: 'Backfill Name',
+			pieceCount: 4,
+			status: 'ready',
+			createdAt: 999
+		});
+		const owned = await listPlayerPuzzles(db, 'p1', { limit: 10 });
+		expect(owned.rows).toHaveLength(1);
+		expect(owned.rows[0].name).toBe('Real Owner Name');
+		expect(owned.rows[0].ownerId).toBe('p1');
+		expect(owned.rows[0].pieceCount).toBe(9);
+	});
+
+	it('is idempotent: a second backfill for the same system row is a no-op', async () => {
+		await ensurePuzzleOwnership(db, {
+			id: 'pz-sys',
+			ownerId: SYSTEM_OWNER_ID,
+			name: 'System Puzzle',
+			pieceCount: 4,
+			status: 'ready',
+			createdAt: 1
+		});
+		// Second call must not throw (conflict on PK) and must not duplicate.
+		await ensurePuzzleOwnership(db, {
+			id: 'pz-sys',
+			ownerId: SYSTEM_OWNER_ID,
+			name: 'System Puzzle',
+			pieceCount: 4,
+			status: 'ready',
+			createdAt: 1
+		});
+		const stats = await listPlayerStats(db, 'p1', { limit: 10 });
+		expect(stats.rows).toHaveLength(0); // no completions recorded
+		// The single system row resolves the name once a completion lands.
+		await recordCompletion(db, 'p1', 'pz-sys', 60);
+		const after = await listPlayerStats(db, 'p1', { limit: 10 });
+		expect(after.rows).toHaveLength(1);
+		expect(after.rows[0].puzzleName).toBe('System Puzzle');
 	});
 });
 

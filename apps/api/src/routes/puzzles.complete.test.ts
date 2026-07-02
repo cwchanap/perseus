@@ -17,12 +17,22 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 				arr.push(time);
 				completions.set(playerId, arr);
 			}
-		)
+		),
+		// Stub the backfill so it doesn't hit the mock DB ({}). The route calls
+		// this best-effort before recordCompletion.
+		ensurePuzzleOwnership: vi.fn(async () => {}),
+		SYSTEM_OWNER_ID: actual.SYSTEM_OWNER_ID
 	};
 });
 
 vi.mock('../services/storage', () => ({
-	getPuzzle: vi.fn().mockResolvedValue({ id: 'pz', status: 'ready' } as never)
+	getPuzzle: vi.fn().mockResolvedValue({
+		id: 'pz',
+		name: 'Test Puzzle',
+		pieceCount: 4,
+		createdAt: 100,
+		status: 'ready'
+	} as never)
 }));
 
 vi.mock('./puzzle-ready', () => ({
@@ -37,7 +47,7 @@ import complete from '../routes/puzzles.complete';
 import * as playerAuth from '../services/player-auth';
 import * as storage from '../services/storage';
 import * as puzzleReady from './puzzle-ready';
-import { recordCompletion } from '@perseus/shared';
+import { recordCompletion, ensurePuzzleOwnership } from '@perseus/shared';
 import type { PlayerSessionRecord } from '../services/player-auth';
 
 const TEST_PLAYER: PlayerSessionRecord = {
@@ -72,13 +82,20 @@ function jsonHeaders() {
 describe('POST /api/puzzles/:id/complete (Bun)', () => {
 	beforeEach(() => {
 		vi.mocked(playerAuth.getPlayerSession).mockResolvedValue(TEST_PLAYER);
-		vi.mocked(storage.getPuzzle).mockResolvedValue({ id: PUZZLE_ID, status: 'ready' } as never);
+		vi.mocked(storage.getPuzzle).mockResolvedValue({
+			id: PUZZLE_ID,
+			name: 'Test Puzzle',
+			pieceCount: 4,
+			createdAt: 100,
+			status: 'ready'
+		} as never);
 		vi.mocked(puzzleReady.isPuzzleReady).mockReturnValue(true);
 		// Reset call history on every asserted mock so each test only reflects
 		// its own requests (the not.toHaveBeenCalled() assertions depend on this).
 		vi.mocked(storage.getPuzzle).mockClear();
 		vi.mocked(puzzleReady.isPuzzleReady).mockClear();
 		vi.mocked(recordCompletion).mockClear();
+		vi.mocked(ensurePuzzleOwnership).mockClear();
 	});
 
 	it('records a completion', async () => {

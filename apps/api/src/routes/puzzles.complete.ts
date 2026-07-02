@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { getDb } from '../db';
-import { recordCompletion } from '@perseus/shared';
+import { recordCompletion, ensurePuzzleOwnership, SYSTEM_OWNER_ID } from '@perseus/shared';
 import { isPuzzleId } from '@perseus/types';
 import { getPuzzle } from '../services/storage';
 import { isPuzzleReady } from './puzzle-ready';
@@ -64,7 +64,23 @@ router.post('/:id/complete', requirePlayerAuth, async (c) => {
 	}
 
 	const session = c.get('playerSession');
-	await recordCompletion(getDb(), session.user.id, puzzleId, Math.floor(timeSeconds));
+	const db = getDb();
+	// Lazily backfill a system-owned D1 row for puzzles that predate the D1
+	// mirror or whose best-effort ownership insert failed at creation time.
+	// Without this row, listPlayerStats left-joins a missing puzzles row and
+	// the Best Times UI shows the puzzle UUID instead of its name. Best-effort:
+	// a failure is logged, not fatal — recordCompletion below is the
+	// authoritative write and would surface a real DB outage anyway.
+	await ensurePuzzleOwnership(db, {
+		id: puzzleId,
+		ownerId: SYSTEM_OWNER_ID,
+		name: puzzle.name,
+		pieceCount: puzzle.pieceCount,
+		...(puzzle.category ? { category: puzzle.category } : {}),
+		status: 'ready',
+		createdAt: puzzle.createdAt
+	}).catch((err) => console.error(`Failed to backfill puzzle ownership for ${puzzleId}:`, err));
+	await recordCompletion(db, session.user.id, puzzleId, Math.floor(timeSeconds));
 	return c.json({ ok: true });
 });
 

@@ -225,9 +225,17 @@
 		const file = input.files?.[0];
 		if (!file) return;
 		try {
-			await uploadPlayerAvatar(file);
+			const result = await uploadPlayerAvatar(file);
 			saveError = null;
 			await loadProfile();
+			// Re-uploads overwrite the same R2 key and the API returns the same
+			// avatarUrl path, so loadProfile() yields an identical profile.picture
+			// string. Svelte then sees no <img src> change and the browser keeps
+			// serving the cached image. Append a cache-buster derived from the
+			// upload result so the <img> re-fetches the new bytes immediately.
+			if (profile) {
+				profile.picture = appendAvatarCacheBuster(result.avatarUrl);
+			}
 		} catch (error) {
 			console.error('Failed to upload avatar:', error);
 			saveError = 'Failed to upload avatar. Please try again.';
@@ -236,6 +244,14 @@
 			// change event (needed to retry a failed upload).
 			input.value = '';
 		}
+	}
+
+	// Append a version query param to an avatar URL so the browser treats a
+	// re-upload (same path, new bytes) as a distinct resource and bypasses its
+	// cache. Handles URLs that already carry a query string.
+	function appendAvatarCacheBuster(url: string): string {
+		const sep = url.includes('?') ? '&' : '?';
+		return `${url}${sep}v=${Date.now()}`;
 	}
 </script>
 
