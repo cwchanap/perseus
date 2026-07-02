@@ -343,7 +343,7 @@ describe('player avatar route (Worker)', () => {
 	});
 
 	it('POST avatar stores to R2 and returns avatarUrl', async () => {
-		const { bucket } = createMockBucket();
+		const { bucket, store } = createMockBucket();
 		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
 
 		const blob = new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' });
@@ -358,9 +358,16 @@ describe('player avatar route (Worker)', () => {
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as any;
 		expect(body.avatarUrl).toBe('/api/player/p1/avatar');
+		// The live key must hold the uploaded bytes.
 		expect(bucket.put).toHaveBeenCalledWith('avatars/p1', expect.any(Uint8Array), {
 			httpMetadata: { contentType: 'image/png' }
 		});
+		const live = store.get('avatars/p1');
+		expect(live).toBeDefined();
+		expect(live!.contentType).toBe('image/png');
+		// No staging objects should remain after a successful upload.
+		const stagingKeys = [...store.keys()].filter((k) => k.startsWith('avatars/staging/'));
+		expect(stagingKeys).toHaveLength(0);
 	});
 
 	it('GET avatar serves the stored image from R2', async () => {
@@ -452,11 +459,13 @@ describe('player avatar route (Worker)', () => {
 		expect(row.avatarUrl).toBe('/api/player/p1/avatar');
 	});
 
-	it('rolls back R2 and returns 500 when the DB override write throws (prior avatar exists)', async () => {
+	it('cleans up staging and returns 500 when the DB override write throws (prior avatar preserved)', async () => {
 		const { bucket, store } = createMockBucket();
 		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
 
-		// Seed a pre-existing avatar so the rollback path restores it.
+		// Seed a pre-existing avatar at the live key. The staging approach
+		// never touches the live key until the DB write succeeds, so the
+		// prior avatar must remain intact on DB failure.
 		const priorPng = [0x89, 0x50, 0x4e, 0x47, 0xaa, 0xbb];
 		await bucket.put(
 			'avatars/p1',
@@ -482,24 +491,29 @@ describe('player avatar route (Worker)', () => {
 		);
 
 		expect(res.status).toBe(500);
-		// R2 must have been restored to the prior bytes, not left with the new upload.
-		const restored = store.get('avatars/p1');
-		expect(restored).toBeDefined();
-		expect(Array.from(new Uint8Array(restored!.body))).toEqual(priorPng);
+		// The live key must still hold the prior bytes — the failed upload
+		// never wrote to it.
+		const live = store.get('avatars/p1');
+		expect(live).toBeDefined();
+		expect(Array.from(new Uint8Array(live!.body))).toEqual(priorPng);
+		// No staging objects should remain — the staged upload was cleaned up.
+		const stagingKeys = [...store.keys()].filter((k) => k.startsWith('avatars/staging/'));
+		expect(stagingKeys).toHaveLength(0);
 		expect(consoleSpy).toHaveBeenCalledWith(
-			'Avatar DB write failed; rolling back R2 object:',
+			'Avatar DB write failed; cleaning up staged R2 object:',
 			expect.any(Error)
 		);
 		consoleSpy.mockRestore();
 	});
 
-	it('leaves the new R2 object orphaned on DB write failure when no prior avatar existed', async () => {
+	it('leaves no orphaned object on DB write failure when no prior avatar existed', async () => {
 		const { bucket, store } = createMockBucket();
 		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
 
-		// No prior avatar seeded -> rollback leaves the freshly-written object
-		// in place (orphaned) rather than deleting it, to avoid a TOCTOU race
-		// where a blind delete could remove another concurrent upload's object.
+		// No prior avatar seeded. The staging approach writes to a unique
+		// staging key, then deletes it on DB failure. The live key is never
+		// written, so no orphaned bytes are reachable via the public serve
+		// route.
 		const { updateProfileAvatarUrl } = await import('@perseus/shared');
 		vi.mocked(updateProfileAvatarUrl).mockRejectedValueOnce(new Error('D1 down'));
 
@@ -515,49 +529,25 @@ describe('player avatar route (Worker)', () => {
 		);
 
 		expect(res.status).toBe(500);
-		// The orphaned object remains; delete is never called.
-		expect(store.has('avatars/p1')).toBe(true);
-		expect(bucket.delete).not.toHaveBeenCalled();
+		// The live key must not exist — no orphaned bytes.
+		expect(store.has('avatars/p1')).toBe(false);
+		// No staging objects should remain.
+		const stagingKeys = [...store.keys()].filter((k) => k.startsWith('avatars/staging/'));
+		expect(stagingKeys).toHaveLength(0);
+		// The staging object was deleted.
+		expect(bucket.delete).toHaveBeenCalled();
 		consoleSpy.mockRestore();
 	});
 
-	it('does not clobber a newer upload on conditional restore (etag mismatch)', async () => {
-		const { bucket, store } = createMockBucket();
+	it('uses a unique staging key per upload so concurrent failures do not interfere', async () => {
+		const { bucket } = createMockBucket();
 		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
 
-		// Seed a prior avatar so the rollback path attempts a conditional restore.
-		const priorPng = [0x89, 0x50, 0x4e, 0x47, 0xaa, 0xbb];
-		await bucket.put(
-			'avatars/p1',
-			new Uint8Array(priorPng) as unknown as ReadableStream<Uint8Array>,
-			{ httpMetadata: { contentType: 'image/png' } }
-		);
-
-		// First upload: put new bytes, then DB write fails. We intercept the
-		// put to simulate a second upload overwriting the key between the
-		// first upload's put and its rollback restore.
+		// Each upload writes to its own staging key
+		// (avatars/staging/<playerId>/<uuid>), so a DB failure in one upload
+		// only deletes that upload's staging object — never another upload's.
 		const { updateProfileAvatarUrl } = await import('@perseus/shared');
 		vi.mocked(updateProfileAvatarUrl).mockRejectedValueOnce(new Error('D1 down'));
-
-		// After the first upload's initial put, simulate a concurrent second
-		// upload that overwrites the same key with different bytes and a new
-		// etag. The first upload's conditional restore (onlyIf: etagMatches
-		// its own put etag) must fail and leave the second upload intact.
-		const secondUploadBytes = [0xff, 0xd8, 0xff, 0xe0, 0x99, 0x88];
-		const originalPut = vi.mocked(bucket.put);
-		bucket.put = vi.fn(async (key: string, body: ReadableStream<Uint8Array>, opts?: any) => {
-			const result = await originalPut(key, body, opts);
-			// Only inject the concurrent overwrite after the first upload's
-			// initial put (not the conditional restore, which has onlyIf).
-			if (!opts?.onlyIf && key === 'avatars/p1') {
-				await originalPut(
-					key,
-					new Uint8Array(secondUploadBytes) as unknown as ReadableStream<Uint8Array>,
-					{ httpMetadata: { contentType: 'image/jpeg' } }
-				);
-			}
-			return result;
-		}) as any;
 
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
@@ -571,11 +561,15 @@ describe('player avatar route (Worker)', () => {
 		);
 
 		expect(res.status).toBe(500);
-		// The second upload's bytes must remain — the conditional restore did
-		// not clobber them because the etag no longer matched.
-		const current = store.get('avatars/p1');
-		expect(current).toBeDefined();
-		expect(Array.from(new Uint8Array(current!.body))).toEqual(secondUploadBytes);
+		// Verify that a staging key was used (not the live key directly).
+		const putCalls = vi.mocked(bucket.put).mock.calls;
+		const stagingPuts = putCalls.filter(([k]) => k.startsWith('avatars/staging/'));
+		expect(stagingPuts).toHaveLength(1);
+		// The live key was never written (DB failed before promotion).
+		const livePuts = putCalls.filter(([k]) => k === 'avatars/p1');
+		expect(livePuts).toHaveLength(0);
+		// The staging object was cleaned up.
+		expect(bucket.delete).toHaveBeenCalledWith(stagingPuts[0][0]);
 		consoleSpy.mockRestore();
 	});
 });

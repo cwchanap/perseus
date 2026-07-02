@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, rename, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { getDb } from '../db';
 import {
@@ -136,18 +136,18 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 	const dir = join(dataDir, 'avatars');
 	const avatarPath = join(dir, playerId);
 	await mkdir(dir, { recursive: true });
-	// Capture the prior avatar (if any) so we can restore it if the DB
-	// override write below fails. Without this, a DB failure would leave the
-	// new bytes on disk while the profile points at the same URL — orphaning
-	// the overwrite and destroying the previously-working avatar.
-	let priorBytes: Buffer | null = null;
-	try {
-		priorBytes = await readFile(avatarPath);
-	} catch {
-		// ENOENT (no prior avatar) or an unreadable file — either way we have
-		// nothing to restore, so priorBytes stays null.
-	}
-	await writeFile(avatarPath, Buffer.from(bytes));
+	// Write to a unique staging file first, then promote to the live path
+	// via atomic rename only after the DB override write succeeds. This
+	// avoids two problems:
+	//  1. Orphaned bytes: writing directly to the live path before the DB
+	//     write would leave a publicly-reachable file at a predictable URL
+	//     even when the request returns 500 (the serve route is public and
+	//     reads the path without checking the DB).
+	//  2. TOCTOU on rollback: a blind rm of the live file after a DB failure
+	//     could remove a concurrent upload's file. The staging file is unique
+	//     to this upload, so deleting it on failure is always safe.
+	const stagingPath = join(dir, `.staging-${playerId}-${crypto.randomUUID()}`);
+	await writeFile(stagingPath, Buffer.from(bytes));
 
 	const db = getDb();
 	// Field-specific update writes only avatarUrl and preserves displayName,
@@ -155,38 +155,17 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 	try {
 		await updateProfileAvatarUrl(db, playerId, `/api/player/${playerId}/avatar`);
 	} catch (err) {
-		console.error('Avatar DB write failed; rolling back avatar file:', err);
-		if (priorBytes) {
-			// Conditional restore mirroring the Worker's etag-guarded rollback:
-			// only overwrite if the file still holds the bytes we just wrote.
-			// If a concurrent upload has since overwritten the file, this
-			// precondition fails and we leave the newer upload intact rather
-			// than clobbering it. The filesystem has no etags, so we compare
-			// the current bytes to the ones we just put.
-			try {
-				const currentBytes = await readFile(avatarPath);
-				if (Buffer.from(currentBytes).equals(Buffer.from(bytes))) {
-					await writeFile(avatarPath, priorBytes);
-				} else {
-					console.error(
-						'Avatar file changed after our write; skipping rollback to avoid clobbering a concurrent upload'
-					);
-				}
-			} catch (readErr) {
-				// File vanished or unreadable between our write and the
-				// rollback check — nothing safe to restore over. Log and leave it.
-				console.error('Avatar file unreadable during rollback; skipping restore:', readErr);
-			}
-		}
-		// If no prior avatar existed, leave the new file in place rather than
-		// deleting it. The DB write failed so the profile doesn't point at this
-		// path, and a blind rm could remove another concurrent upload's file
-		// (TOCTOU: this upload read "no prior", put its bytes, then a second
-		// upload put+committed its own bytes before this rollback runs). The
-		// orphan is harmless and will be overwritten on the next successful
-		// upload.
+		console.error('Avatar DB write failed; cleaning up staged avatar file:', err);
+		// Safe to delete unconditionally: stagingPath is unique to this upload.
+		// No concurrent upload can write to or claim this file.
+		await unlink(stagingPath).catch(() => {});
 		return c.json({ error: 'internal_error', message: 'Failed to update avatar' }, 500);
 	}
+	// DB succeeded — promote the staged file to the live path. rename is
+	// atomic on the same filesystem (staging file is in the same directory).
+	// A concurrent upload may also rename its staging file here; last rename
+	// wins (both are valid avatars).
+	await rename(stagingPath, avatarPath);
 	// Reset the rate-limit counter on success so repeated successful uploads
 	// don't accumulate toward an unnecessary lockout. The middleware increments
 	// before the handler runs; this deletes that increment.

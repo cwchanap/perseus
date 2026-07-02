@@ -132,23 +132,18 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 	if (!detected || !AVATAR_MIME.has(detected)) {
 		return c.json({ error: 'bad_request', message: 'Unsupported image type' }, 400);
 	}
-	const key = `avatars/${session.user.id}`;
-	// Capture the prior avatar (if any) so we can restore it if the DB
-	// override write below fails. Without this, a DB failure would leave the
-	// new bytes in R2 while the profile points at the same URL — orphaning the
-	// overwrite and destroying the previously-working avatar.
-	const prior = await c.env.PUZZLES_BUCKET.get(key);
-	let priorBytes: ArrayBuffer | null = null;
-	let priorContentType: string | null = null;
-	if (prior) {
-		priorBytes = await prior.arrayBuffer();
-		priorContentType = prior.httpMetadata?.contentType ?? null;
-	}
-	// Capture the etag of our new put so the rollback can use a conditional
-	// restore. If another concurrent upload overwrites this key before our
-	// DB write fails, the conditional restore will not clobber the newer
-	// upload's object.
-	const putResult = await c.env.PUZZLES_BUCKET.put(key, bytes, {
+	const liveKey = `avatars/${session.user.id}`;
+	// Write to a unique staging key first, then promote to the live key only
+	// after the DB override write succeeds. This avoids two problems:
+	//  1. Orphaned bytes: writing directly to the live key before the DB
+	//     write would leave a publicly-reachable object at a predictable URL
+	//     even when the request returns 500 (the serve route is public and
+	//     reads the key without checking D1).
+	//  2. TOCTOU on rollback: a blind delete of the live key after a DB
+	//     failure could remove a concurrent upload's object. The staging key
+	//     is unique to this upload, so deleting it on failure is always safe.
+	const stagingKey = `avatars/staging/${session.user.id}/${crypto.randomUUID()}`;
+	await c.env.PUZZLES_BUCKET.put(stagingKey, bytes, {
 		httpMetadata: { contentType: detected }
 	});
 
@@ -158,28 +153,22 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 	try {
 		await updateProfileAvatarUrl(db, session.user.id, `/api/player/${session.user.id}/avatar`);
 	} catch (err) {
-		console.error('Avatar DB write failed; rolling back R2 object:', err);
-		if (priorBytes) {
-			// Conditional restore: only overwrite if R2 still holds the bytes
-			// we just put. If another upload has since overwritten the key,
-			// this precondition fails (put returns null) and we leave the
-			// newer upload intact rather than clobbering it.
-			await c.env.PUZZLES_BUCKET.put(key, priorBytes, {
-				httpMetadata: {
-					contentType: priorContentType ?? detected
-				},
-				onlyIf: { etagMatches: putResult.etag }
-			});
-		}
-		// If no prior avatar existed, leave the orphaned bytes in place rather
-		// than deleting — the DB write failed so the profile doesn't point at
-		// this key, and a blind delete could remove another concurrent
-		// upload's object (TOCTOU: this upload read "no prior", put its bytes,
-		// then a second upload put+committed its own bytes before this
-		// rollback runs). The orphan is harmless and will be overwritten on
-		// the next successful upload.
+		console.error('Avatar DB write failed; cleaning up staged R2 object:', err);
+		// Safe to delete unconditionally: stagingKey is unique to this upload.
+		// No concurrent upload can write to or claim this key.
+		await c.env.PUZZLES_BUCKET.delete(stagingKey);
 		return c.json({ error: 'internal_error', message: 'Failed to update avatar' }, 500);
 	}
+	// DB succeeded — promote the staged bytes to the live key. We hold the
+	// bytes in memory, so re-put to the canonical key. A concurrent upload
+	// may also put to this key; last write wins (both are valid avatars).
+	await c.env.PUZZLES_BUCKET.put(liveKey, bytes, {
+		httpMetadata: { contentType: detected }
+	});
+	// Best-effort cleanup of the staging object. If this delete fails the
+	// staging key will linger until the next upload or a periodic sweep; it
+	// is not reachable by the serve route (which reads only the live key).
+	await c.env.PUZZLES_BUCKET.delete(stagingKey);
 	// Reset the rate-limit counter on success so repeated successful uploads
 	// don't accumulate toward an unnecessary lockout. The middleware increments
 	// before the handler runs; this deletes that increment.

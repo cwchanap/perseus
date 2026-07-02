@@ -220,7 +220,7 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 			DUMMY_ENV
 		);
 		expect(res.status).toBe(400);
-		expect((await res.json()) as any).toMatchObject({ error: 'bad_request' });
+		expect(await res.json()).toMatchObject({ error: 'bad_request' });
 	});
 
 	it('requires authentication', async () => {

@@ -6,6 +6,7 @@ on:
     paths:
       - 'packages/infrastructure/**'
       - 'packages/types/**'
+      - 'packages/shared/**'
       - 'apps/api/**'
       - 'apps/workflows/**'
       - 'apps/web/**'

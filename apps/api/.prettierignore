@@ -13,3 +13,6 @@ coverage
 
 # Dependencies
 node_modules
+
+# Wrangler generated files
+.wrangler

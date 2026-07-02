@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Hono } from 'hono';
-import { rmSync, mkdtempSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { rmSync, mkdtempSync, writeFileSync, readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -263,6 +263,10 @@ describe('player avatar route (Bun)', () => {
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.avatarUrl).toBe('/api/player/p1/avatar');
+		// The live file must exist and no staging files should remain.
+		expect(existsSync(join(dataDir, 'avatars', 'p1'))).toBe(true);
+		const files = readdirSync(join(dataDir, 'avatars'));
+		expect(files.filter((f) => f.startsWith('.staging-'))).toHaveLength(0);
 	});
 
 	it('GET avatar serves the stored image with sniffed content-type', async () => {
@@ -344,12 +348,16 @@ describe('player avatar route (Bun)', () => {
 		expect(row.avatarUrl).toBe('/api/player/p1/avatar');
 	});
 
-	it('rolls back the avatar file and returns 500 when the DB override write throws (prior avatar exists)', async () => {
-		// Seed a pre-existing avatar so the rollback path restores it.
+	it('cleans up staging file and returns 500 when the DB override write throws (prior avatar preserved)', async () => {
+		// Seed a pre-existing avatar at the live path. The staging approach
+		// never touches the live path until the DB write succeeds, so the
+		// prior avatar must remain intact on DB failure.
 		const { mkdirSync } = await import('node:fs');
 		const avatarPath = join(dataDir, 'avatars', 'p1');
-		mkdirSync(join(dataDir, 'avatars'), { recursive: true });
-		writeFileSync(avatarPath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0xaa, 0xbb]));
+		const avatarsDir = join(dataDir, 'avatars');
+		mkdirSync(avatarsDir, { recursive: true });
+		const priorPng = [0x89, 0x50, 0x4e, 0x47, 0xaa, 0xbb];
+		writeFileSync(avatarPath, Buffer.from(priorPng));
 
 		const { updateProfileAvatarUrl } = await import('@perseus/shared');
 		vi.mocked(updateProfileAvatarUrl).mockRejectedValueOnce(new Error('DB down'));
@@ -366,17 +374,21 @@ describe('player avatar route (Bun)', () => {
 		});
 
 		expect(res.status).toBe(500);
-		// File must be restored to the prior bytes, not left with the new upload.
+		// The live file must still hold the prior bytes — the failed upload
+		// never wrote to it.
 		const restored = readFileSync(avatarPath);
-		expect(Array.from(restored)).toEqual([0x89, 0x50, 0x4e, 0x47, 0xaa, 0xbb]);
+		expect(Array.from(restored)).toEqual(priorPng);
+		// No staging files should remain — the staged upload was cleaned up.
+		const files = readdirSync(avatarsDir);
+		expect(files.filter((f) => f.startsWith('.staging-'))).toHaveLength(0);
 		expect(consoleSpy).toHaveBeenCalledWith(
-			'Avatar DB write failed; rolling back avatar file:',
+			'Avatar DB write failed; cleaning up staged avatar file:',
 			expect.any(Error)
 		);
 		consoleSpy.mockRestore();
 	});
 
-	it('leaves the new avatar file orphaned on DB write failure when no prior avatar existed', async () => {
+	it('leaves no orphaned file on DB write failure when no prior avatar existed', async () => {
 		const { updateProfileAvatarUrl } = await import('@perseus/shared');
 		vi.mocked(updateProfileAvatarUrl).mockRejectedValueOnce(new Error('DB down'));
 
@@ -392,13 +404,17 @@ describe('player avatar route (Bun)', () => {
 		});
 
 		expect(res.status).toBe(500);
-		// The new file is left in place (orphaned) rather than deleted, to
-		// avoid a TOCTOU race where a blind rm could remove another concurrent
-		// upload's file. The profile DB write failed, so the profile doesn't
-		// point at this path — the orphan is harmless.
-		expect(existsSync(join(dataDir, 'avatars', 'p1'))).toBe(true);
+		// The live file must not exist — no orphaned bytes reachable via
+		// the public serve route.
+		expect(existsSync(join(dataDir, 'avatars', 'p1'))).toBe(false);
+		// No staging files should remain — the staged upload was cleaned up.
+		const avatarsDir = join(dataDir, 'avatars');
+		if (existsSync(avatarsDir)) {
+			const files = readdirSync(avatarsDir);
+			expect(files.filter((f) => f.startsWith('.staging-'))).toHaveLength(0);
+		}
 		expect(consoleSpy).toHaveBeenCalledWith(
-			'Avatar DB write failed; rolling back avatar file:',
+			'Avatar DB write failed; cleaning up staged avatar file:',
 			expect.any(Error)
 		);
 		consoleSpy.mockRestore();

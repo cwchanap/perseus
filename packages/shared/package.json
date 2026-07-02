@@ -21,6 +21,7 @@
 	},
 	"scripts": {
 		"check": "tsc --noEmit",
+		"test": "bun --bun vitest run",
 		"test:unit": "bun --bun vitest run"
 	},
 	"dependencies": {
