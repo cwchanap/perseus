@@ -1,7 +1,7 @@
 {
 	"version": "6",
 	"dialect": "sqlite",
-	"id": "5ff06dd5-ef38-4925-91cd-3c026f15a7ea",
+	"id": "fe9cfd07-f098-44d0-8141-93baa546631b",
 	"prevId": "00000000-0000-0000-0000-000000000000",
 	"tables": {
 		"player_profiles": {
@@ -170,7 +170,12 @@
 			"foreignKeys": {},
 			"compositePrimaryKeys": {},
 			"uniqueConstraints": {},
-			"checkConstraints": {}
+			"checkConstraints": {
+				"puzzles_status_check": {
+					"name": "puzzles_status_check",
+					"value": "\"puzzles\".\"status\" IN ('processing', 'ready', 'failed')"
+				}
+			}
 		}
 	},
 	"views": {},

@@ -11,7 +11,8 @@ vi.mock('$lib/services/api', () => ({
 	updatePlayerProfile: vi.fn(),
 	uploadPlayerAvatar: vi.fn(),
 	getAvatarUrl: vi.fn((id: string) => `/api/player/${id}/avatar`),
-	getThumbnailUrl: vi.fn()
+	getThumbnailUrl: vi.fn(),
+	resolveAssetUrl: vi.fn((url: string | null | undefined) => url ?? null)
 }));
 
 vi.mock('$app/paths', () => ({
@@ -23,7 +24,7 @@ vi.mock('$app/navigation', () => ({
 }));
 
 import { getPlayerProfile, getPlayerPuzzles, getPlayerStats } from '$lib/services/api';
-import { uploadPlayerAvatar } from '$lib/services/api';
+import { uploadPlayerAvatar, resolveAssetUrl } from '$lib/services/api';
 
 const puzzles: PlayerPuzzleSummary[] = [
 	{
@@ -50,6 +51,10 @@ const stats: PlayerStatRow[] = [
 describe('profile page', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		// clearAllMocks clears call/instance state but not implementations
+		// set via mockImplementation; restore the identity default so a
+		// per-test override (e.g. the cross-origin avatar test) doesn't leak.
+		vi.mocked(resolveAssetUrl).mockImplementation((url) => url ?? null);
 	});
 
 	it('renders identity card with effective name', async () => {
@@ -204,6 +209,54 @@ describe('profile page', () => {
 		await expect
 			.element(page.getByRole('img'))
 			.toHaveAttribute('src', expect.stringMatching(/^\/api\/player\/p1\/avatar\?v=\d+$/));
+	});
+
+	it('preserves the API origin on the avatar src after a re-upload', async () => {
+		// When the API is on a separate origin (e.g. local dev with
+		// PUBLIC_API_BASE set), resolveAssetUrl prefixes the origin-relative
+		// avatar path with API_BASE. The cache-busting code path must run the
+		// upload result through resolveAssetUrl so the <img src> keeps pointing
+		// at the API origin instead of reverting to the bare path (which would
+		// hit the web origin and 404).
+		const apiOrigin = 'http://localhost:4690';
+		const avatarPath = '/api/player/p1/avatar';
+		vi.mocked(resolveAssetUrl).mockImplementation((url) =>
+			url && url.startsWith('/') ? `${apiOrigin}${url}` : (url ?? null)
+		);
+		vi.mocked(getPlayerProfile).mockResolvedValue({
+			id: 'p1',
+			email: 'e',
+			name: 'Player One',
+			picture: `${apiOrigin}${avatarPath}`,
+			createdAt: 1,
+			lastLoginAt: 2,
+			summary: { puzzlesUploaded: 0, puzzlesSolved: 0, totalCompletions: 0 }
+		});
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({ puzzles: [], nextCursor: undefined });
+		vi.mocked(getPlayerStats).mockResolvedValue({ stats: [], nextCursor: undefined });
+		vi.mocked(uploadPlayerAvatar).mockResolvedValue({ avatarUrl: avatarPath });
+
+		render(ProfilePage);
+		await expect.element(page.getByText('Player One')).toBeVisible();
+		await expect.element(page.getByRole('img')).toHaveAttribute('src', `${apiOrigin}${avatarPath}`);
+
+		await page.getByText('Edit profile').click();
+		const fileInput = (await page.getByTestId('avatar-input').element()) as HTMLInputElement;
+		const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'avatar.png', {
+			type: 'image/png'
+		});
+		Object.defineProperty(fileInput, 'files', { value: [file], configurable: true });
+		fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+
+		// The src must keep the API origin prefix AND gain the cache-buster.
+		await expect
+			.element(page.getByRole('img'))
+			.toHaveAttribute(
+				'src',
+				expect.stringMatching(
+					new RegExp(`^${apiOrigin.replace('/', '\\/')}${avatarPath}\\?v=\\d+$`)
+				)
+			);
 	});
 
 	it('renders the profile even when puzzles fail to load (allSettled)', async () => {

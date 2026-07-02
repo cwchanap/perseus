@@ -6,7 +6,8 @@
 		getPlayerPuzzles,
 		getPlayerStats,
 		updatePlayerProfile,
-		uploadPlayerAvatar
+		uploadPlayerAvatar,
+		resolveAssetUrl
 	} from '$lib/services/api';
 	import type {
 		PlayerProfile,
@@ -233,8 +234,12 @@
 			// string. Svelte then sees no <img src> change and the browser keeps
 			// serving the cached image. Append a cache-buster derived from the
 			// upload result so the <img> re-fetches the new bytes immediately.
+			// resolveAssetUrl prefixes the origin-relative path with API_BASE
+			// (needed when the API is on a separate origin, e.g. local dev);
+			// without it the <img> would fetch from the web origin and 404.
 			if (profile) {
-				profile.picture = appendAvatarCacheBuster(result.avatarUrl);
+				const resolved = resolveAssetUrl(result.avatarUrl);
+				if (resolved) profile.picture = appendAvatarCacheBuster(resolved);
 			}
 		} catch (error) {
 			console.error('Failed to upload avatar:', error);
