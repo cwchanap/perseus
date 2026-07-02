@@ -326,19 +326,19 @@
 
 		<div class="mt-6 grid grid-cols-3 gap-3 text-center">
 			<div class="border border-(--border) bg-(--bg-1) p-4">
-				<div class="text-xl font-bold text-(--accent)">
+				<div class="text-xl font-bold text-(--accent)" data-testid="profile-summary-uploaded">
 					{profile.summary.puzzlesUploaded}
 				</div>
 				<div class="text-xs tracking-wider text-(--text-2) uppercase">Uploaded</div>
 			</div>
 			<div class="border border-(--border) bg-(--bg-1) p-4">
-				<div class="text-xl font-bold text-(--accent)">
+				<div class="text-xl font-bold text-(--accent)" data-testid="profile-summary-solved">
 					{profile.summary.puzzlesSolved}
 				</div>
 				<div class="text-xs tracking-wider text-(--text-2) uppercase">Solved</div>
 			</div>
 			<div class="border border-(--border) bg-(--bg-1) p-4">
-				<div class="text-xl font-bold text-(--accent)">
+				<div class="text-xl font-bold text-(--accent)" data-testid="profile-summary-completions">
 					{profile.summary.totalCompletions}
 				</div>
 				<div class="text-xs tracking-wider text-(--text-2) uppercase">Completions</div>
