@@ -61,6 +61,24 @@ export async function updateProfileAvatarUrl(
 		.run();
 }
 
+// Clear the avatarUrl flag on a profile override. Used to roll back the DB
+// write when the live R2 object promotion fails after updateProfileAvatarUrl
+// succeeded, so the profile doesn't keep pointing at a serve route that 404s.
+// Writes only avatarUrl (preserving displayName) via the same field-specific
+// upsert pattern. Setting avatarUrl to NULL (rather than '') keeps the
+// "no avatar" sentinel consistent with the default for a fresh profile row.
+export async function clearProfileAvatarUrl(db: AppDb, playerId: string): Promise<void> {
+	const now = Date.now();
+	await db
+		.insert(playerProfiles)
+		.values({ playerId, avatarUrl: null, updatedAt: now })
+		.onConflictDoUpdate({
+			target: playerProfiles.playerId,
+			set: { avatarUrl: null, updatedAt: now }
+		})
+		.run();
+}
+
 export async function insertPuzzleOwnership(db: AppDb, row: NewPuzzleRow): Promise<void> {
 	await db.insert(puzzles).values(row).run();
 }

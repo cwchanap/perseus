@@ -33,6 +33,10 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 			const existing = store.get(playerId) ?? { displayName: null, avatarUrl: null };
 			store.set(playerId, { ...existing, avatarUrl });
 		}),
+		clearProfileAvatarUrl: vi.fn(async (db: unknown, playerId: string) => {
+			const existing = store.get(playerId) ?? { displayName: null, avatarUrl: null };
+			store.set(playerId, { ...existing, avatarUrl: null });
+		}),
 		getPlayerSummary: vi.fn(() => ({
 			puzzlesUploaded: 0,
 			puzzlesSolved: 0,
@@ -536,6 +540,56 @@ describe('player avatar route (Worker)', () => {
 		expect(stagingKeys).toHaveLength(0);
 		// The staging object was deleted.
 		expect(bucket.delete).toHaveBeenCalled();
+		consoleSpy.mockRestore();
+	});
+
+	it('rolls back DB avatarUrl and cleans staging when the live R2 put fails', async () => {
+		const { bucket, store } = createMockBucket();
+		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
+
+		// No prior avatar: a failed live put would leave the DB pointing at a
+		// serve route that 404s. The route must roll the avatarUrl flag back
+		// to null and delete the staged object. The staging put (first call)
+		// must still succeed; only the live-key put fails.
+		const originalPut = vi.mocked(bucket.put);
+		bucket.put = vi.fn(async (key: string, body: any, opts?: any) => {
+			if (key === 'avatars/p1') throw new Error('R2 quota exceeded');
+			return originalPut(key, body, opts);
+		}) as any;
+
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const blob = new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' });
+		const form = new FormData();
+		form.append('avatar', blob, 'a.png');
+		const res = await buildApp().request(
+			'/api/player/avatar',
+			{ method: 'POST', headers: AUTH_COOKIE, body: form },
+			env
+		);
+
+		expect(res.status).toBe(500);
+		// The live key must not exist — the failed put wrote nothing.
+		expect(store.has('avatars/p1')).toBe(false);
+		// No staging objects should remain — the staged upload was cleaned up.
+		const stagingKeys = [...store.keys()].filter((k) => k.startsWith('avatars/staging/'));
+		expect(stagingKeys).toHaveLength(0);
+
+		// The DB avatarUrl flag was rolled back to null so the profile does
+		// not reference a serve route that 404s.
+		const { clearProfileAvatarUrl } = await import('@perseus/shared');
+		expect(clearProfileAvatarUrl).toHaveBeenCalledWith(expect.anything(), 'p1');
+		const shared = await import('@perseus/shared');
+		const profileStore = (shared as any).__store as Map<
+			string,
+			{ displayName: string | null; avatarUrl: string | null }
+		>;
+		expect(profileStore.get('p1')?.avatarUrl).toBeNull();
+
+		expect(consoleSpy).toHaveBeenCalledWith(
+			'Avatar live R2 put failed; rolling back DB avatarUrl:',
+			expect.any(Error)
+		);
 		consoleSpy.mockRestore();
 	});
 

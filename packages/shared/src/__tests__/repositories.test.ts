@@ -7,6 +7,7 @@ import {
 	getProfileOverride,
 	updateProfileDisplayName,
 	updateProfileAvatarUrl,
+	clearProfileAvatarUrl,
 	insertPuzzleOwnership,
 	deletePuzzleOwnership,
 	deletePuzzleStats,
@@ -60,6 +61,22 @@ describe('repositories', () => {
 		const row = await getProfileOverride(helper.db, 'p1');
 		expect(row?.displayName).toBeNull();
 		expect(row?.avatarUrl).toBe('u');
+	});
+
+	it('clearProfileAvatarUrl nulls avatarUrl while preserving displayName', async () => {
+		await updateProfileDisplayName(helper.db, 'p1', 'Name');
+		await updateProfileAvatarUrl(helper.db, 'p1', 'avatar-url');
+		await clearProfileAvatarUrl(helper.db, 'p1');
+		const row = await getProfileOverride(helper.db, 'p1');
+		expect(row?.avatarUrl).toBeNull();
+		expect(row?.displayName).toBe('Name');
+	});
+
+	it('clearProfileAvatarUrl on a fresh profile inserts a null-avatar row', async () => {
+		await clearProfileAvatarUrl(helper.db, 'p1');
+		const row = await getProfileOverride(helper.db, 'p1');
+		expect(row).toBeDefined();
+		expect(row?.avatarUrl).toBeNull();
 	});
 
 	it('insertPuzzleOwnership + list/count', async () => {
