@@ -66,8 +66,10 @@ vi.mock('../../db', () => ({
 }));
 
 vi.mock('@perseus/shared', () => ({
+	insertPuzzleOwnership: vi.fn().mockResolvedValue(undefined),
 	deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined),
-	deletePuzzleStats: vi.fn().mockResolvedValue(undefined)
+	deletePuzzleStats: vi.fn().mockResolvedValue(undefined),
+	SYSTEM_OWNER_ID: 'system'
 }));
 
 afterAll(() => {

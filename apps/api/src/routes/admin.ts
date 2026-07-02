@@ -31,7 +31,12 @@ import { MAX_FILE_SIZE, ALLOWED_MIME_TYPES, PUZZLE_CATEGORIES } from '../types';
 import type { PuzzleCategory } from '../types';
 import { DEFAULT_PUZZLE_ASPECT_RATIO, isPuzzleAspectRatio } from '@perseus/types';
 import { getDb } from '../db';
-import { deletePuzzleOwnership, deletePuzzleStats } from '@perseus/shared';
+import {
+	deletePuzzleOwnership,
+	deletePuzzleStats,
+	insertPuzzleOwnership,
+	SYSTEM_OWNER_ID
+} from '@perseus/shared';
 
 const admin = new Hono();
 
@@ -474,6 +479,27 @@ admin.post('/puzzles', requireAuth, async (c) => {
 				console.error(`Failed to clean up puzzle directory ${id} after metadata save failure`);
 			}
 			return c.json({ error: 'internal_error', message: 'Failed to save puzzle metadata' }, 500);
+		}
+
+		// Mirror the puzzle into the D1 ownership table with a system sentinel
+		// owner so listPlayerStats can resolve its name when a signed-in player
+		// solves it. Best-effort: filesystem metadata above is the source of
+		// truth for puzzle existence in the Bun runtime, so a failed ownership
+		// insert is logged, not fatal. getDb() is a lazy init that can throw on
+		// first call; wrap it so a DB init failure doesn't bubble a 500 after a
+		// successful puzzle creation.
+		try {
+			await insertPuzzleOwnership(getDb(), {
+				id,
+				ownerId: SYSTEM_OWNER_ID,
+				name: trimmedName,
+				pieceCount,
+				...(category ? { category } : {}),
+				status: 'ready',
+				createdAt: puzzleToStore.createdAt
+			}).catch((err) => console.error(`Failed to record admin puzzle ownership for ${id}:`, err));
+		} catch (err) {
+			console.error(`Failed to init DB for ownership insert of puzzle ${id}:`, err);
 		}
 
 		return c.json(puzzleToStore, 201);
