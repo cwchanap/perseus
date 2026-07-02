@@ -7,7 +7,12 @@ const pagedResponse = (puzzles: Array<{ id: string; name: string; pieceCount: nu
 	limit: 20
 });
 
-const samplePuzzleSummary = { id: 'puzzle-1', name: 'Test Puzzle', pieceCount: 1 };
+const samplePuzzleSummary = {
+	id: 'puzzle-1',
+	name: 'Test Puzzle',
+	pieceCount: 1,
+	status: 'ready'
+};
 
 const samplePuzzle = {
 	id: 'puzzle-1',

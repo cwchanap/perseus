@@ -77,15 +77,19 @@ test('authenticated profile shows identity, stats, puzzles, and best times', asy
 	await page.goto('/profile');
 
 	// Identity card.
-	await expect(page.getByText('Test Player')).toBeVisible();
+	await expect(page.getByTestId('profile-name')).toHaveText('Test Player');
 	await expect(page.getByText('player@example.com')).toBeVisible();
 
 	// Summary tiles.
 	await expect(page.getByText('2').first()).toBeVisible();
 
 	// My Puzzles grid shows puzzle names.
-	await expect(page.getByText('Forest Puzzle')).toBeVisible();
-	await expect(page.getByText('Ocean Puzzle')).toBeVisible();
+	await expect(
+		page.locator('[data-testid="puzzle-card"]').filter({ hasText: 'Forest Puzzle' })
+	).toBeVisible();
+	await expect(
+		page.locator('[data-testid="puzzle-card"]').filter({ hasText: 'Ocean Puzzle' })
+	).toBeVisible();
 
 	// Best Times shows the puzzle name (not id) and completions count.
 	await expect(page.getByText('3×')).toBeVisible();
@@ -110,7 +114,7 @@ test('profile edit flow updates display name', async ({ page }) => {
 	});
 
 	await page.goto('/profile');
-	await expect(page.getByText('Test Player')).toBeVisible();
+	await expect(page.getByTestId('profile-name')).toHaveText('Test Player');
 
 	await page.getByRole('button', { name: 'Edit profile' }).click();
 	await page.getByTestId('display-name-input').fill('New Display Name');
@@ -170,7 +174,10 @@ test('avatar upload refetches the profile only — puzzles list is not re-reques
 	});
 
 	// The profile refetch updates profile.picture → the avatar image renders.
-	await expect(page.locator('img[alt="Test Player"]')).toHaveAttribute('src', avatarUrl);
+	await expect(page.locator('img[alt="Test Player"]')).toHaveAttribute(
+		'src',
+		/http:\/\/localhost:3999\/api\/player\/p1\/avatar\?v=\d+$/
+	);
 	// The puzzles endpoint was hit exactly once (initial load). The avatar
 	// upload must not trigger a puzzles refetch.
 	expect(puzzlesCallCount).toBe(1);
