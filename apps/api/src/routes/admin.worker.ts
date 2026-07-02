@@ -40,7 +40,12 @@ import {
 	revokePlayerSessionsForEmail
 } from '../services/player-auth.worker';
 import { getWorkerDb } from '../db.worker';
-import { deletePuzzleOwnership, deletePuzzleStats } from '@perseus/shared';
+import {
+	deletePuzzleOwnership,
+	deletePuzzleStats,
+	insertPuzzleOwnership,
+	SYSTEM_OWNER_ID
+} from '@perseus/shared';
 
 const admin = new Hono<{ Bindings: Env }>();
 
@@ -581,6 +586,41 @@ admin.post('/puzzles', requireAuth, async (c) => {
 			return c.json({ error: 'internal_error', message: 'Failed to create puzzle metadata' }, 500);
 		}
 
+		// Mirror the puzzle into the D1 ownership table with a system sentinel
+		// owner so listPlayerStats can resolve its name when a signed-in player
+		// solves it. Without this row, the Best Times UI falls back to showing
+		// the puzzle UUID. Player profile lists/counts filter by a real player's
+		// ownerId, so this system-owned row never leaks there. Best-effort
+		// cleanup on failure mirrors the player upload path.
+		try {
+			await insertPuzzleOwnership(getWorkerDb(c.env), {
+				id,
+				ownerId: SYSTEM_OWNER_ID,
+				name: trimmedName,
+				pieceCount,
+				...(category ? { category } : {}),
+				status: 'processing',
+				createdAt: puzzleMetadata.createdAt
+			});
+		} catch (error) {
+			console.error('Failed to record admin puzzle ownership:', error);
+			const metadataCleanup = await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
+			if (!metadataCleanup.success) {
+				console.error(
+					'Failed to cleanup puzzle metadata after ownership insert failure:',
+					metadataCleanup.error
+				);
+			}
+			const imageCleanup = await deleteOriginalImage(c.env.PUZZLES_BUCKET, id);
+			if (!imageCleanup.success) {
+				console.error(
+					'Failed to cleanup original image after ownership insert failure:',
+					imageCleanup.error
+				);
+			}
+			return c.json({ error: 'internal_error', message: 'Failed to record puzzle ownership' }, 500);
+		}
+
 		// Step 3: Trigger workflow for puzzle generation
 		if (!c.env.PUZZLE_WORKFLOW || typeof c.env.PUZZLE_WORKFLOW.create !== 'function') {
 			const metadataCleanup = await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
@@ -597,6 +637,9 @@ admin.post('/puzzles', requireAuth, async (c) => {
 					imageCleanup.error
 				);
 			}
+			await deletePuzzleOwnership(getWorkerDb(c.env), id).catch((err) =>
+				console.error('Failed to cleanup ownership after missing workflow binding:', err)
+			);
 			return c.json(
 				{
 					error: 'service_unavailable',
@@ -628,6 +671,9 @@ admin.post('/puzzles', requireAuth, async (c) => {
 					imageCleanup.error
 				);
 			}
+			await deletePuzzleOwnership(getWorkerDb(c.env), id).catch((err) =>
+				console.error('Failed to cleanup ownership after workflow trigger failure:', err)
+			);
 			return c.json({ error: 'internal_error', message: 'Failed to start puzzle processing' }, 500);
 		}
 
@@ -685,8 +731,8 @@ admin.delete('/puzzles/:id', requireAuth, async (c) => {
 		// keep appearing in the uploader's "My Puzzles" list (404 on click) or
 		// inflate their puzzlesUploaded count. KV/R2 deletion above is the source
 		// of truth for puzzle existence, so a failed ownership delete is logged,
-		// not fatal. (Admin-created puzzles have no ownership row; this is a no-op
-		// for them.)
+		// not fatal. (Admin-created puzzles are mirrored with a system sentinel
+		// owner; this removes that row too.)
 		await deletePuzzleOwnership(getWorkerDb(c.env), id).catch((err) =>
 			console.error(`Failed to delete ownership row for puzzle ${id}:`, err)
 		);

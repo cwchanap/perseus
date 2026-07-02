@@ -42,8 +42,10 @@ vi.mock('../../db.worker', () => ({
 }));
 
 vi.mock('@perseus/shared', () => ({
+	insertPuzzleOwnership: vi.fn().mockResolvedValue(undefined),
 	deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined),
-	deletePuzzleStats: vi.fn().mockResolvedValue(undefined)
+	deletePuzzleStats: vi.fn().mockResolvedValue(undefined),
+	SYSTEM_OWNER_ID: 'system'
 }));
 
 import admin from '../admin.worker';
@@ -51,6 +53,7 @@ import * as storage from '../../services/storage.worker';
 import * as auth from '../../middleware/auth.worker';
 import * as playerAuth from '../../services/player-auth.worker';
 import { __resetRateLimitStore } from '../../middleware/rate-limit.worker';
+import { insertPuzzleOwnership, deletePuzzleOwnership, SYSTEM_OWNER_ID } from '@perseus/shared';
 
 // Valid PNG magic bytes header for test blobs
 const PNG_HEADER = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0, 0]);
@@ -641,6 +644,17 @@ describe('Admin Routes - Workflow Trigger Cleanup', () => {
 					gridRows: 8
 				})
 			);
+			// Admin-created puzzles are mirrored into D1 with a system sentinel
+			// owner so listPlayerStats can resolve their names.
+			expect(insertPuzzleOwnership).toHaveBeenCalledWith(
+				expect.anything(),
+				expect.objectContaining({
+					ownerId: SYSTEM_OWNER_ID,
+					name: 'Portrait Puzzle',
+					pieceCount: 48,
+					status: 'processing'
+				})
+			);
 		});
 
 		it('should cleanup both metadata and image when workflow.create() fails', async () => {
@@ -703,6 +717,11 @@ describe('Admin Routes - Workflow Trigger Cleanup', () => {
 				mockEnv.PUZZLES_BUCKET,
 				createdPuzzleMetadata.id
 			);
+			// Ownership row inserted before the workflow trigger must also be cleaned up.
+			expect(deletePuzzleOwnership).toHaveBeenCalledWith(
+				expect.anything(),
+				createdPuzzleMetadata.id
+			);
 		});
 
 		it('should return 503 and cleanup when workflow binding is missing', async () => {
@@ -751,6 +770,11 @@ describe('Admin Routes - Workflow Trigger Cleanup', () => {
 			);
 			expect(storage.deleteOriginalImage).toHaveBeenCalledWith(
 				mockEnv.PUZZLES_BUCKET,
+				createdPuzzleMetadata.id
+			);
+			// Ownership row inserted before the workflow binding check must also be cleaned up.
+			expect(deletePuzzleOwnership).toHaveBeenCalledWith(
+				expect.anything(),
 				createdPuzzleMetadata.id
 			);
 		});

@@ -18,6 +18,17 @@ vi.mock('../../services/storage.worker', () => ({
 	listPuzzles: vi.fn()
 }));
 
+vi.mock('../../db.worker', () => ({
+	getWorkerDb: vi.fn(() => ({}))
+}));
+
+vi.mock('@perseus/shared', () => ({
+	insertPuzzleOwnership: vi.fn().mockResolvedValue(undefined),
+	deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined),
+	deletePuzzleStats: vi.fn().mockResolvedValue(undefined),
+	SYSTEM_OWNER_ID: 'system'
+}));
+
 vi.mock('../../middleware/auth.worker', () => ({
 	verifySession: vi.fn(),
 	requireAuth: async (c: any, next: any) => {

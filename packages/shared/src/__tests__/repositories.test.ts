@@ -15,7 +15,8 @@ import {
 	countPlayerPuzzles,
 	recordCompletion,
 	listPlayerStats,
-	getPlayerSummary
+	getPlayerSummary,
+	SYSTEM_OWNER_ID
 } from '../repositories';
 
 function makeDb() {
@@ -282,6 +283,29 @@ describe('repositories', () => {
 		expect(p1Stats.rows).toHaveLength(1);
 		expect(p1Stats.rows[0].puzzleId).toBe('pz2');
 		expect(p2Stats.rows).toHaveLength(0);
+	});
+
+	it('listPlayerStats resolves names for system-owned (admin) puzzles', async () => {
+		// Admin-created puzzles are mirrored into D1 with a system sentinel
+		// owner so the Best Times join can resolve their name. A player who
+		// solves such a puzzle should see the name, not a null fallback.
+		await insertPuzzleOwnership(helper.db, {
+			id: 'adminPz',
+			ownerId: SYSTEM_OWNER_ID,
+			name: 'Admin Gallery Puzzle',
+			pieceCount: 16,
+			status: 'ready',
+			createdAt: 1
+		});
+		await recordCompletion(helper.db, 'p1', 'adminPz', 42);
+
+		const { rows } = await listPlayerStats(helper.db, 'p1', { limit: 10 });
+		expect(rows).toHaveLength(1);
+		expect(rows[0].puzzleName).toBe('Admin Gallery Puzzle');
+		// System-owned row must not leak into the player's own puzzle list/count.
+		expect(await countPlayerPuzzles(helper.db, 'p1')).toBe(0);
+		const own = await listPlayerPuzzles(helper.db, 'p1', { limit: 10 });
+		expect(own.rows).toHaveLength(0);
 	});
 
 	it('listPlayerPuzzles malformed cursor falls back to timestamp-only filter', async () => {

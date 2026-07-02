@@ -2,6 +2,14 @@ import { eq, lt, gt, desc, asc, count, sql, and } from 'drizzle-orm';
 import type { AppDb, NewPuzzleRow, PlayerProfileRow } from './types';
 import { puzzles, playerProfiles, puzzleStats } from './schema';
 
+// Sentinel ownerId for admin-created puzzles, which have no player owner.
+// Player profile lists/counts filter by a real player's ownerId, so a
+// system-owned row never leaks into a player's "My Puzzles" list or count.
+// It DOES participate in the listPlayerStats left join, so a signed-in
+// player who solves an admin-created puzzle sees the puzzle's name (not a
+// UUID) in their Best Times list.
+export const SYSTEM_OWNER_ID = 'system';
+
 export async function getProfileOverride(
 	db: AppDb,
 	playerId: string
