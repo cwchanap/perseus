@@ -6,6 +6,7 @@ import {
 	getProfileOverride,
 	updateProfileDisplayName,
 	updateProfileAvatarUrl,
+	clearProfileAvatarUrl,
 	getPlayerSummary,
 	listPlayerPuzzles,
 	listPlayerStats,
@@ -164,8 +165,19 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 	// DB succeeded — promote the staged file to the live path. rename is
 	// atomic on the same filesystem (staging file is in the same directory).
 	// A concurrent upload may also rename its staging file here; last rename
-	// wins (both are valid avatars).
-	await rename(stagingPath, avatarPath);
+	// wins (both are valid avatars). If the rename itself fails (e.g. cross-
+	// filesystem, disk error), roll back the DB write so the profile doesn't
+	// point at a missing file, and delete the orphaned staging file.
+	try {
+		await rename(stagingPath, avatarPath);
+	} catch (err) {
+		console.error('Avatar promotion rename failed; rolling back DB and staging file:', err);
+		await unlink(stagingPath).catch(() => {});
+		await clearProfileAvatarUrl(db, playerId).catch((rollbackErr) =>
+			console.error('Failed to clear avatar URL after rename failure:', rollbackErr)
+		);
+		return c.json({ error: 'internal_error', message: 'Failed to store avatar' }, 500);
+	}
 	// Reset the rate-limit counter on success so repeated successful uploads
 	// don't accumulate toward an unnecessary lockout. The middleware increments
 	// before the handler runs; this deletes that increment.

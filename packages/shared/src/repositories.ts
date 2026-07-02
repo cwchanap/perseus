@@ -346,20 +346,20 @@ export async function getPlayerSummary(
 	// reads could make the counts momentarily inconsistent regardless, and
 	// the profile UI treats these as approximate summary tiles, not as an
 	// atomic snapshot. D1/SQLite also doesn't support read-only transactions
-	// any differently from plain reads here.
-	const uploadedRows = await db
-		.select({ n: count() })
-		.from(puzzles)
-		.where(eq(puzzles.ownerId, playerId))
-		.all();
-	const solvedRows = await db
-		.select({
-			solved: count(),
-			completions: sql<number>`COALESCE(SUM(${puzzleStats.totalCompletions}), 0)`
-		})
-		.from(puzzleStats)
-		.where(eq(puzzleStats.playerId, playerId))
-		.all();
+	// any differently from plain reads here. The two reads are independent,
+	// so run them concurrently to cut profile latency (mirrors the player
+	// route's own Promise.all over the same pair).
+	const [uploadedRows, solvedRows] = await Promise.all([
+		db.select({ n: count() }).from(puzzles).where(eq(puzzles.ownerId, playerId)).all(),
+		db
+			.select({
+				solved: count(),
+				completions: sql<number>`COALESCE(SUM(${puzzleStats.totalCompletions}), 0)`
+			})
+			.from(puzzleStats)
+			.where(eq(puzzleStats.playerId, playerId))
+			.all()
+	]);
 	return {
 		puzzlesUploaded: uploadedRows[0]?.n ?? 0,
 		puzzlesSolved: solvedRows[0]?.solved ?? 0,
