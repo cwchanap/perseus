@@ -59,7 +59,6 @@ const TEST_PLAYER: PlayerSessionRecord = {
 	expiresAt: 9999999999999
 };
 
-const DUMMY_ENV = {} as unknown as Env;
 const AUTH_COOKIE = { Cookie: 'perseus_player_session=player-token' };
 
 function buildApp() {
@@ -97,6 +96,9 @@ function createMockBucket() {
 					if (entry.contentType) h.set('Content-Type', entry.contentType);
 				}
 			};
+		}),
+		delete: vi.fn(async (key: string) => {
+			store.delete(key);
 		})
 	};
 	return { bucket, store };

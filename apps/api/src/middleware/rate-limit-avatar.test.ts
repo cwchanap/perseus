@@ -5,7 +5,7 @@
  * The middleware is keyed by player id (set via playerSession context) and
  * must be mounted after requirePlayerAuth.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { Hono } from 'hono';
 import { avatarRateLimit, resetAvatarAttempts } from './rate-limit';
 import type { PlayerSessionRecord } from '../services/player-auth';
@@ -130,7 +130,6 @@ describe('avatarRateLimit (Bun) – reset on success', () => {
 
 	it('reset allows another full window of uploads after near-exhaustion', async () => {
 		const playerId = uniquePlayerId();
-		const app = makeApp({ resetOnSuccess: true, handlerStatus: 200 });
 
 		// 19 uploads (counter at 19, not yet reset because reset happens at 200 response)
 		// Actually reset happens on every 200, so counter resets each time.

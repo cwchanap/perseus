@@ -17,5 +17,8 @@ Thumbs.db
 # Coverage
 coverage/
 
+# Wrangler generated files
+.wrangler/
+
 # Puzzle data storage
 data/

@@ -61,7 +61,6 @@ import * as storage from '../services/storage';
 import * as playerAuth from '../services/player-auth';
 import * as puzzleGenerator from '../services/puzzle-generator';
 import { insertPuzzleOwnership } from '@perseus/shared';
-import { InvalidPuzzleIdError } from '../services/storage';
 
 // Minimal valid PNG: 8-byte signature + 13-byte IHDR (width=3, height=4, 3:4 ratio)
 const PNG_HEADER = new Uint8Array([

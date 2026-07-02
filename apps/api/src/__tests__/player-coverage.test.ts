@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * Coverage tests for player.ts (Bun runtime):
  * - sniffImageType WebP branch (lines 48-59)
