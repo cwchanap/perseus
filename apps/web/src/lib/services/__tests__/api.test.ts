@@ -982,6 +982,52 @@ describe('player profile service functions', () => {
 		expect(vi.mocked(fetch).mock.calls[0]?.[0]).toMatch(/limit=0/);
 	});
 
+	it('getPlayerPuzzles with no params hits the no-query branch', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue(
+				new Response(JSON.stringify({ puzzles: [], nextCursor: undefined }), {
+					status: 200
+				})
+			)
+		);
+		await getPlayerPuzzles();
+		// No query string appended — the URL ends at /api/player/puzzles
+		expect(vi.mocked(fetch).mock.calls[0]?.[0]).toMatch(/\/api\/player\/puzzles$/);
+		expect(vi.mocked(fetch).mock.calls[0]?.[0]).not.toMatch(/\?/);
+	});
+
+	it('getPlayerPuzzles forwards a cursor without a limit', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue(
+				new Response(JSON.stringify({ puzzles: [], nextCursor: undefined }), {
+					status: 200
+				})
+			)
+		);
+		await getPlayerPuzzles({ cursor: '20' });
+		expect(vi.mocked(fetch).mock.calls[0]?.[0]).toMatch(/cursor=20/);
+		expect(vi.mocked(fetch).mock.calls[0]?.[0]).not.toMatch(/limit=/);
+	});
+
+	it('getPlayerPuzzles forwards an abort signal to fetch', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue(
+				new Response(JSON.stringify({ puzzles: [], nextCursor: undefined }), {
+					status: 200
+				})
+			)
+		);
+		const controller = new AbortController();
+		await getPlayerPuzzles({ signal: controller.signal });
+		expect(vi.mocked(fetch).mock.calls[0]?.[1]).toMatchObject({
+			credentials: 'include',
+			signal: controller.signal
+		});
+	});
+
 	it('getPlayerStats forwards an explicit limit of 0', async () => {
 		vi.stubGlobal(
 			'fetch',
