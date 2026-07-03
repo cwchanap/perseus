@@ -29,6 +29,10 @@ id = "ae95a94b22e3414ab022c335390c67aa"
 # (provisioned in packages/infrastructure; its ID is exported as
 # d1DatabaseId from the stack). If the Pulumi stack is destroyed and
 # recreated, this ID must be updated to the new database's ID.
+# The deploy workflow (deploy-infrastructure.yml) overrides this value at
+# runtime with the Pulumi stack output before applying migrations, so CI
+# always targets the bound database. This static value is only used by
+# manual `bun run db:migrate` operator runs and must be kept in sync by hand.
 # migrations_dir points at the shared drizzle output so `wrangler d1 migrations
 # apply` finds the schema regardless of which app's config is invoked.
 [[d1_databases]]

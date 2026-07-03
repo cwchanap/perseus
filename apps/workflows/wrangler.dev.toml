@@ -16,9 +16,12 @@ binding = "PUZZLES_BUCKET"
 bucket_name = "perseus-local"
 
 # KV namespace for puzzle metadata - development namespace
+# Must match the API's env.dev KV id/preview_id (apps/api/wrangler.toml) so the
+# workflow worker reads metadata the API worker writes during local dev.
 [[kv_namespaces]]
 binding = "PUZZLE_METADATA"
-id = "5d87620636f741c09502f3d39f077ef1"
+id = "local-dev-kv"
+preview_id = "local-dev-kv-preview"
 
 # D1 database for puzzle ownership and player stats
 # migrations_dir points at the shared drizzle output so `wrangler d1 migrations

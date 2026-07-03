@@ -7,7 +7,7 @@
 		"dev": "wrangler dev --port 4690 --env dev --inspector-port 9231 -c wrangler.toml -c ../workflows/wrangler.dev.toml",
 		"dev:bun": "bun run --watch src/index.ts",
 		"build": "wrangler deploy --dry-run --outdir dist --config wrangler.production.toml",
-		"build:bun": "bun build src/index.ts --outdir dist --target bun && cp -R ../../packages/shared/drizzle dist/drizzle",
+		"build:bun": "bun build src/index.ts --outdir dist --target bun && rm -rf dist/drizzle && cp -R ../../packages/shared/drizzle dist/drizzle",
 		"deploy": "wrangler deploy --config wrangler.production.toml",
 		"db:migrate": "wrangler d1 migrations apply perseus-player-data --remote --config wrangler.production.toml",
 		"db:migrate:local": "wrangler d1 migrations apply perseus-player-data --local --config wrangler.toml",
