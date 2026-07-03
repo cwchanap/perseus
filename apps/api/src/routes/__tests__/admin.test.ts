@@ -644,6 +644,58 @@ describe('POST /puzzles', () => {
 		);
 	});
 
+	it('still returns 201 when the D1 ownership mirror insert fails (best-effort)', async () => {
+		// The .catch handler on insertPuzzleOwnership swallows the rejection so
+		// a transient D1 issue doesn't take admin puzzle creation down.
+		const { insertPuzzleOwnership } = await import('@perseus/shared');
+		(insertPuzzleOwnership as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+			new Error('D1 unavailable')
+		);
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const fd = buildFormData({
+			name: 'Mirror Puzzle',
+			pieceCount: '25',
+			image: new Blob([PNG_HEADER], { type: 'image/png' })
+		});
+		const req = new Request('http://localhost/puzzles', { method: 'POST', body: fd });
+		const res = await app.fetch(req);
+
+		expect(res.status).toBe(201);
+		expect(insertPuzzleOwnership).toHaveBeenCalledTimes(1);
+		expect(consoleSpy).toHaveBeenCalledWith(
+			expect.stringContaining('Failed to record admin puzzle ownership'),
+			expect.any(Error)
+		);
+		consoleSpy.mockRestore();
+	});
+
+	it('still returns 201 when getDb throws on the ownership insert (best-effort)', async () => {
+		// getDb is a lazy init that can throw on first call; the outer catch
+		// logs the failure so a DB init error doesn't bubble a 500 after a
+		// successful puzzle creation.
+		const { getDb } = await import('../../db');
+		(getDb as ReturnType<typeof vi.fn>).mockImplementationOnce(() => {
+			throw new Error('DB init failed');
+		});
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const fd = buildFormData({
+			name: 'Db Init Puzzle',
+			pieceCount: '25',
+			image: new Blob([PNG_HEADER], { type: 'image/png' })
+		});
+		const req = new Request('http://localhost/puzzles', { method: 'POST', body: fd });
+		const res = await app.fetch(req);
+
+		expect(res.status).toBe(201);
+		expect(consoleSpy).toHaveBeenCalledWith(
+			expect.stringContaining('Failed to init DB for ownership insert'),
+			expect.any(Error)
+		);
+		consoleSpy.mockRestore();
+	});
+
 	it('cleans up puzzle directory when generatePuzzle throws', async () => {
 		(generatorMock.generatePuzzle as ReturnType<typeof vi.fn>).mockRejectedValue(
 			new Error('Generation failed')
@@ -708,6 +760,49 @@ describe('DELETE /puzzles/:id', () => {
 		const req = new Request('http://localhost/puzzles/existing-puzzle-id', { method: 'DELETE' });
 		const res = await app.fetch(req);
 		expect(res.status).toBe(204);
+	});
+
+	it('still returns 204 when deletePuzzleStats throws (best-effort)', async () => {
+		// The .catch handler on deletePuzzleStats swallows the rejection so a
+		// failed stats cleanup doesn't turn a successful deletion into a 500.
+		(storageMock.puzzleExists as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+		(storageMock.deletePuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+		const { deletePuzzleStats } = await import('@perseus/shared');
+		(deletePuzzleStats as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+			new Error('D1 stats down')
+		);
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const req = new Request('http://localhost/puzzles/existing-puzzle-id', { method: 'DELETE' });
+		const res = await app.fetch(req);
+		expect(res.status).toBe(204);
+		expect(consoleSpy).toHaveBeenCalledWith(
+			expect.stringContaining('Failed to delete stats rows'),
+			expect.any(Error)
+		);
+		consoleSpy.mockRestore();
+	});
+
+	it('still returns 204 when getDb throws on ownership cleanup (best-effort)', async () => {
+		// getDb is a lazy init that can throw on first call; the outer catch
+		// logs the failure so a DB init error doesn't bubble a 500 after a
+		// successful puzzle deletion.
+		(storageMock.puzzleExists as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+		(storageMock.deletePuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+		const { getDb } = await import('../../db');
+		(getDb as ReturnType<typeof vi.fn>).mockImplementationOnce(() => {
+			throw new Error('DB init failed');
+		});
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const req = new Request('http://localhost/puzzles/existing-puzzle-id', { method: 'DELETE' });
+		const res = await app.fetch(req);
+		expect(res.status).toBe(204);
+		expect(consoleSpy).toHaveBeenCalledWith(
+			expect.stringContaining('Failed to init DB for ownership cleanup'),
+			expect.any(Error)
+		);
+		consoleSpy.mockRestore();
 	});
 
 	it('returns 500 when deletion fails', async () => {

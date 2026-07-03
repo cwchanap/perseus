@@ -622,6 +622,49 @@ describe('player avatar route (Worker)', () => {
 		consoleSpy.mockRestore();
 	});
 
+	it('logs but still returns 500 when the avatarUrl rollback itself fails after a live put failure', async () => {
+		// Covers the .catch handler on clearProfileAvatarUrl (line 181): when
+		// the live R2 put fails AND the DB rollback rejects, the route must
+		// swallow the rollback error (log it) and still return a clean 500
+		// rather than surfacing an unhandled rejection.
+		const { bucket, store } = createMockBucket();
+		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
+
+		const originalPut = vi.mocked(bucket.put);
+		bucket.put = vi.fn(async (key: string, body: any, opts?: any) => {
+			if (key === 'avatars/p1') throw new Error('R2 quota exceeded');
+			return originalPut(key, body, opts);
+		}) as any;
+
+		const { clearProfileAvatarUrl } = await import('@perseus/shared');
+		vi.mocked(clearProfileAvatarUrl).mockRejectedValueOnce(new Error('D1 rollback down'));
+
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const blob = new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' });
+		const form = new FormData();
+		form.append('avatar', blob, 'a.png');
+		const res = await buildApp().request(
+			'/api/player/avatar',
+			{ method: 'POST', headers: AUTH_COOKIE, body: form },
+			env
+		);
+
+		expect(res.status).toBe(500);
+		// The live key must not exist — the failed put wrote nothing.
+		expect(store.has('avatars/p1')).toBe(false);
+		// Both the live put failure and the rollback failure were logged.
+		expect(consoleSpy).toHaveBeenCalledWith(
+			'Avatar live R2 put failed; rolling back DB avatarUrl:',
+			expect.any(Error)
+		);
+		expect(consoleSpy).toHaveBeenCalledWith(
+			'Failed to roll back avatarUrl after live put failure:',
+			expect.any(Error)
+		);
+		consoleSpy.mockRestore();
+	});
+
 	it('uses a unique staging key per upload so concurrent failures do not interfere', async () => {
 		const { bucket } = createMockBucket();
 		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;

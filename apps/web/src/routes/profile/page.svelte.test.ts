@@ -715,4 +715,111 @@ describe('profile page', () => {
 		await expect.element(page.getByTestId('card-status-overlay')).toBeVisible();
 		await expect.element(page.getByTestId('card-overlay')).not.toBeInTheDocument();
 	});
+
+	it('logs when reloading the profile after a save fails (loadProfile catch)', async () => {
+		// Covers the loadProfile catch block: a successful updatePlayerProfile
+		// followed by a failing getPlayerProfile reload must log without
+		// surfacing a full error screen (the page stays loaded).
+		vi.mocked(getPlayerProfile)
+			.mockResolvedValueOnce({
+				id: 'p1',
+				email: 'e',
+				name: 'Original Name',
+				picture: null,
+				createdAt: 1,
+				lastLoginAt: 2,
+				summary: { puzzlesUploaded: 0, puzzlesSolved: 0, totalCompletions: 0 }
+			})
+			.mockRejectedValueOnce(new Error('reload down'));
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({ puzzles: [], nextCursor: undefined });
+		vi.mocked(getPlayerStats).mockResolvedValue({ stats: [], nextCursor: undefined });
+
+		const { updatePlayerProfile } = await import('$lib/services/api');
+		vi.mocked(updatePlayerProfile).mockResolvedValue(undefined);
+
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		render(ProfilePage);
+		await expect.element(page.getByText('Original Name')).toBeVisible();
+
+		await page.getByText('Edit profile').click();
+		await page.getByTestId('display-name-input').fill('New Name');
+		await page.getByText('Save').click();
+
+		await vi.waitFor(() => {
+			expect(consoleSpy).toHaveBeenCalledWith('Failed to reload profile:', expect.any(Error));
+		});
+		// The page is still rendered (no error screen) — the original name stays.
+		await expect.element(page.getByText('Original Name')).toBeVisible();
+		consoleSpy.mockRestore();
+	});
+
+	it('shows an error and logs when resetting the display name fails', async () => {
+		// Covers the resetName catch block: a failing updatePlayerProfile on the
+		// reset path must surface the inline save error and log.
+		vi.mocked(getPlayerProfile).mockResolvedValue({
+			id: 'p1',
+			email: 'e',
+			name: 'Custom Name',
+			picture: null,
+			createdAt: 1,
+			lastLoginAt: 2,
+			summary: { puzzlesUploaded: 0, puzzlesSolved: 0, totalCompletions: 0 }
+		});
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({ puzzles: [], nextCursor: undefined });
+		vi.mocked(getPlayerStats).mockResolvedValue({ stats: [], nextCursor: undefined });
+
+		const { updatePlayerProfile } = await import('$lib/services/api');
+		vi.mocked(updatePlayerProfile).mockRejectedValueOnce(new Error('reset failed'));
+
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		render(ProfilePage);
+		await expect.element(page.getByText('Custom Name')).toBeVisible();
+
+		await page.getByText('Edit profile').click();
+		await page.getByTestId('reset-name').click();
+
+		await vi.waitFor(() => {
+			expect(consoleSpy).toHaveBeenCalledWith('Failed to reset name:', expect.any(Error));
+		});
+		await expect.element(page.getByTestId('profile-save-error')).toBeVisible();
+		consoleSpy.mockRestore();
+	});
+
+	it('drops a bogus puzzle category that is not in the known category list', async () => {
+		// Covers the toCard category-guard false branch: a free-text D1
+		// category that isn't a known PuzzleCategory must be dropped so it
+		// never reaches CategoryBadge as an out-of-union string.
+		vi.mocked(getPlayerProfile).mockResolvedValue({
+			id: 'p1',
+			email: 'e',
+			name: 'Player One',
+			picture: null,
+			createdAt: 1,
+			lastLoginAt: 2,
+			summary: { puzzlesUploaded: 1, puzzlesSolved: 0, totalCompletions: 0 }
+		});
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({
+			puzzles: [
+				{
+					id: 'pz-bogus',
+					name: 'Bogus Category Puzzle',
+					pieceCount: 4,
+					status: 'ready',
+					category: 'not-a-real-category',
+					createdAt: 2
+				}
+			],
+			nextCursor: undefined
+		});
+		vi.mocked(getPlayerStats).mockResolvedValue({ stats: [], nextCursor: undefined });
+
+		render(ProfilePage);
+		await expect
+			.element(page.getByRole('heading', { name: 'Bogus Category Puzzle' }))
+			.toBeVisible();
+		// No category badge text for the bogus value should render.
+		await expect.element(page.getByText('not-a-real-category')).not.toBeInTheDocument();
+	});
 });

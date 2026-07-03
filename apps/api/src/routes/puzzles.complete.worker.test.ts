@@ -156,6 +156,39 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 		consoleSpy.mockRestore();
 	});
 
+	it('includes the puzzle category in the ownership backfill when present', async () => {
+		// Covers the `puzzle.category ? { category } : {}` true branch: a
+		// puzzle with a category must propagate it into the backfilled row so
+		// listPlayerStats can surface it.
+		vi.mocked(storage.getPuzzle).mockResolvedValue({
+			id: PUZZLE_ID,
+			name: 'Categorized Puzzle',
+			pieceCount: 4,
+			createdAt: 100,
+			status: 'ready',
+			category: 'nature'
+		} as never);
+		const res = await buildApp().request(
+			`/api/puzzles/${PUZZLE_ID}/complete`,
+			{
+				method: 'POST',
+				headers: jsonHeaders(),
+				body: JSON.stringify({ timeSeconds: 90 })
+			},
+			DUMMY_ENV
+		);
+		expect(res.status).toBe(200);
+		expect(ensurePuzzleOwnership).toHaveBeenCalledWith(expect.anything(), {
+			id: PUZZLE_ID,
+			ownerId: SYSTEM_OWNER_ID,
+			name: 'Categorized Puzzle',
+			pieceCount: 4,
+			category: 'nature',
+			status: 'ready',
+			createdAt: 100
+		});
+	});
+
 	it('rejects a malformed puzzle id with 400', async () => {
 		const res = await buildApp().request(
 			'/api/puzzles/not-a-uuid/complete',
