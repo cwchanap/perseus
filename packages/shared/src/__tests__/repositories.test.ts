@@ -13,7 +13,6 @@ import {
 	deletePuzzleStats,
 	setPuzzleStatus,
 	listPlayerPuzzles,
-	countPlayerPuzzles,
 	recordCompletion,
 	listPlayerStats,
 	getPlayerSummary,
@@ -86,7 +85,7 @@ describe('repositories', () => {
 			name: 'Cat',
 			pieceCount: 4,
 			category: 'Animals',
-			status: 'processing',
+			status: 'ready',
 			createdAt: 10
 		});
 		await insertPuzzleOwnership(helper.db, {
@@ -100,7 +99,45 @@ describe('repositories', () => {
 		const list = await listPlayerPuzzles(helper.db, 'p1', { limit: 10 });
 		expect(list.rows).toHaveLength(2);
 		expect(list.rows[0].id).toBe('pz2'); // newest first
-		expect(await countPlayerPuzzles(helper.db, 'p1')).toBe(2);
+		expect((await getPlayerSummary(helper.db, 'p1')).puzzlesUploaded).toBe(2);
+	});
+
+	it('list/count exclude processing, include ready and failed', async () => {
+		// 'processing' puzzles are still being generated and would render as
+		// broken cards, so they are excluded from the player's list and count
+		// until they reach a terminal state. 'ready' and 'failed' both appear.
+		await insertPuzzleOwnership(helper.db, {
+			id: 'pzProcessing',
+			ownerId: 'p1',
+			name: 'Generating',
+			pieceCount: 4,
+			status: 'processing',
+			createdAt: 10
+		});
+		await insertPuzzleOwnership(helper.db, {
+			id: 'pzReady',
+			ownerId: 'p1',
+			name: 'Ready',
+			pieceCount: 9,
+			status: 'ready',
+			createdAt: 20
+		});
+		await insertPuzzleOwnership(helper.db, {
+			id: 'pzFailed',
+			ownerId: 'p1',
+			name: 'Failed',
+			pieceCount: 16,
+			status: 'failed',
+			createdAt: 30
+		});
+		const list = await listPlayerPuzzles(helper.db, 'p1', { limit: 10 });
+		expect(list.rows.map((r) => r.id)).toEqual(['pzFailed', 'pzReady']);
+		expect((await getPlayerSummary(helper.db, 'p1')).puzzlesUploaded).toBe(2);
+		// Flipping the processing puzzle to ready surfaces it in both views.
+		await setPuzzleStatus(helper.db, 'pzProcessing', 'ready');
+		const list2 = await listPlayerPuzzles(helper.db, 'p1', { limit: 10 });
+		expect(list2.rows.map((r) => r.id)).toEqual(['pzFailed', 'pzReady', 'pzProcessing']);
+		expect((await getPlayerSummary(helper.db, 'p1')).puzzlesUploaded).toBe(3);
 	});
 
 	it('deletePuzzleOwnership removes only the targeted row', async () => {
@@ -124,7 +161,7 @@ describe('repositories', () => {
 		const list = await listPlayerPuzzles(helper.db, 'p1', { limit: 10 });
 		expect(list.rows).toHaveLength(1);
 		expect(list.rows[0].id).toBe('pz2');
-		expect(await countPlayerPuzzles(helper.db, 'p1')).toBe(1);
+		expect((await getPlayerSummary(helper.db, 'p1')).puzzlesUploaded).toBe(1);
 	});
 
 	it('setPuzzleStatus updates the status of an existing puzzle', async () => {
@@ -157,13 +194,15 @@ describe('repositories', () => {
 			ownerId: 'p1',
 			name: 'Dog',
 			pieceCount: 9,
-			status: 'processing',
+			status: 'ready',
 			createdAt: 20
 		});
 		await setPuzzleStatus(helper.db, 'pz1', 'failed');
 		const rows = (await listPlayerPuzzles(helper.db, 'p1', { limit: 10 })).rows;
 		const byId = Object.fromEntries(rows.map((r) => [r.id, r.status]));
-		expect(byId).toEqual({ pz1: 'failed', pz2: 'processing' });
+		// pz1 flipped to failed; pz2 untouched at ready. (listPlayerPuzzles
+		// filters out 'processing', so both terminal-status rows appear.)
+		expect(byId).toEqual({ pz1: 'failed', pz2: 'ready' });
 	});
 
 	it('listPlayerPuzzles cursor pagination', async () => {
@@ -320,7 +359,7 @@ describe('repositories', () => {
 		expect(rows).toHaveLength(1);
 		expect(rows[0].puzzleName).toBe('Admin Gallery Puzzle');
 		// System-owned row must not leak into the player's own puzzle list/count.
-		expect(await countPlayerPuzzles(helper.db, 'p1')).toBe(0);
+		expect((await getPlayerSummary(helper.db, 'p1')).puzzlesUploaded).toBe(0);
 		const own = await listPlayerPuzzles(helper.db, 'p1', { limit: 10 });
 		expect(own.rows).toHaveLength(0);
 	});
