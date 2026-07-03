@@ -156,6 +156,7 @@ jobs:
           scope: user:cwchanap
 
       - name: Pulumi Up
+        id: pulumi-up
         uses: pulumi/actions@v6
         with:
           command: up
@@ -203,6 +204,12 @@ jobs:
         # tables exist; acceptable since profile traffic only starts when users
         # visit the page, by which point this step has completed.
         #
+        # The database_id is derived from the Pulumi stack output (d1DatabaseId)
+        # rather than the static value checked into wrangler.production.toml, so
+        # migrations always target the database the Workers are actually bound
+        # to — even after a stack destroy/recreate. The static id in the config
+        # remains as a fallback for manual `bun run db:migrate` operator runs.
+        #
         # MIGRATION SAFETY: This deploy ordering (workers first, migrations
         # second) is safe for ADDITIVE migrations only (new tables, new
         # columns, new indexes). Before shipping a non-additive migration
@@ -210,7 +217,14 @@ jobs:
         # expand/contract flow: ship the expand migration + backward-compatible
         # Worker code first, then ship the contract migration after the old
         # Worker version is no longer live.
-        run: bunx wrangler d1 migrations apply perseus-player-data --remote --config apps/api/wrangler.production.toml
+        run: |
+          DB_ID="${{ steps.pulumi-up.outputs.d1DatabaseId }}"
+          if [ -z "$DB_ID" ]; then
+            echo "Pulumi stack output d1DatabaseId is missing; cannot apply migrations safely."
+            exit 1
+          fi
+          sed -i "s/^database_id = .*/database_id = \"$DB_ID\"/" apps/api/wrangler.production.toml
+          bunx wrangler d1 migrations apply perseus-player-data --remote --config apps/api/wrangler.production.toml
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
