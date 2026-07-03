@@ -3,11 +3,14 @@ import type { AppDb, NewPuzzleRow, PlayerProfileRow } from './types';
 import { puzzles, playerProfiles, puzzleStats } from './schema';
 
 // Statuses that appear in a player's "My Puzzles" list and "Uploaded" count.
-// 'processing' is excluded so a puzzle doesn't show as a broken/unplayable
-// card while the workflow is still generating pieces; it appears once it
-// reaches a terminal state ('ready' or 'failed'). The list and the count
-// share this filter so the tile always matches the visible cards.
-const VISIBLE_PLAYER_PUZZLE_STATUSES = ['ready', 'failed'] as const;
+// 'processing' is included so an in-flight upload is visible to its owner
+// immediately after the ownership row is written (puzzles.worker.ts inserts
+// it with status 'processing' before kicking off the workflow). The card UI
+// (PuzzleCard.svelte) renders non-ready statuses as a non-clickable card
+// with a PROCESSING…/FAILED overlay, so a processing puzzle is not a broken
+// link. The list and the count share this filter so the tile always matches
+// the visible cards.
+const VISIBLE_PLAYER_PUZZLE_STATUSES = ['ready', 'failed', 'processing'] as const;
 
 // Sentinel ownerId for admin-created puzzles, which have no player owner.
 // Player profile lists/counts filter by a real player's ownerId, so a

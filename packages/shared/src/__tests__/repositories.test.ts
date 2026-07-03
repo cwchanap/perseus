@@ -102,10 +102,13 @@ describe('repositories', () => {
 		expect((await getPlayerSummary(helper.db, 'p1')).puzzlesUploaded).toBe(2);
 	});
 
-	it('list/count exclude processing, include ready and failed', async () => {
-		// 'processing' puzzles are still being generated and would render as
-		// broken cards, so they are excluded from the player's list and count
-		// until they reach a terminal state. 'ready' and 'failed' both appear.
+	it('list/count include processing, ready, and failed', async () => {
+		// All three statuses appear in the player's list and count. A
+		// 'processing' puzzle is an in-flight upload: puzzles.worker.ts writes
+		// the ownership row with status 'processing' before starting the
+		// workflow, and PuzzleCard.svelte renders it as a non-clickable card
+		// with a PROCESSING… overlay, so it must stay visible to its owner
+		// until it reaches a terminal state.
 		await insertPuzzleOwnership(helper.db, {
 			id: 'pzProcessing',
 			ownerId: 'p1',
@@ -131,9 +134,9 @@ describe('repositories', () => {
 			createdAt: 30
 		});
 		const list = await listPlayerPuzzles(helper.db, 'p1', { limit: 10 });
-		expect(list.rows.map((r) => r.id)).toEqual(['pzFailed', 'pzReady']);
-		expect((await getPlayerSummary(helper.db, 'p1')).puzzlesUploaded).toBe(2);
-		// Flipping the processing puzzle to ready surfaces it in both views.
+		expect(list.rows.map((r) => r.id)).toEqual(['pzFailed', 'pzReady', 'pzProcessing']);
+		expect((await getPlayerSummary(helper.db, 'p1')).puzzlesUploaded).toBe(3);
+		// Flipping the processing puzzle to ready keeps it visible in both views.
 		await setPuzzleStatus(helper.db, 'pzProcessing', 'ready');
 		const list2 = await listPlayerPuzzles(helper.db, 'p1', { limit: 10 });
 		expect(list2.rows.map((r) => r.id)).toEqual(['pzFailed', 'pzReady', 'pzProcessing']);
@@ -200,8 +203,7 @@ describe('repositories', () => {
 		await setPuzzleStatus(helper.db, 'pz1', 'failed');
 		const rows = (await listPlayerPuzzles(helper.db, 'p1', { limit: 10 })).rows;
 		const byId = Object.fromEntries(rows.map((r) => [r.id, r.status]));
-		// pz1 flipped to failed; pz2 untouched at ready. (listPlayerPuzzles
-		// filters out 'processing', so both terminal-status rows appear.)
+		// pz1 flipped to failed; pz2 untouched at ready. Both appear.
 		expect(byId).toEqual({ pz1: 'failed', pz2: 'ready' });
 	});
 
