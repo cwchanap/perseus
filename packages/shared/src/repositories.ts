@@ -1,6 +1,13 @@
-import { eq, lt, gt, desc, asc, count, sql, and } from 'drizzle-orm';
+import { eq, lt, gt, desc, asc, count, sql, and, inArray } from 'drizzle-orm';
 import type { AppDb, NewPuzzleRow, PlayerProfileRow } from './types';
 import { puzzles, playerProfiles, puzzleStats } from './schema';
+
+// Statuses that appear in a player's "My Puzzles" list and "Uploaded" count.
+// 'processing' is excluded so a puzzle doesn't show as a broken/unplayable
+// card while the workflow is still generating pieces; it appears once it
+// reaches a terminal state ('ready' or 'failed'). The list and the count
+// share this filter so the tile always matches the visible cards.
+const VISIBLE_PLAYER_PUZZLE_STATUSES = ['ready', 'failed'] as const;
 
 // Sentinel ownerId for admin-created puzzles, which have no player owner.
 // Player profile lists/counts filter by a real player's ownerId, so a
@@ -135,10 +142,12 @@ export async function listPlayerPuzzles(
 	// drizzle's `.where()` replaces (not merges) the previous condition, so
 	// chaining a second `.where()` for the cursor would silently drop the
 	// ownerId filter and leak other players' puzzles across pages.
+	const ownerCond = and(
+		eq(puzzles.ownerId, playerId),
+		inArray(puzzles.status, [...VISIBLE_PLAYER_PUZZLE_STATUSES])
+	);
 	const cond =
-		opts.cursor !== undefined
-			? and(eq(puzzles.ownerId, playerId), parsePlayerPuzzleCursor(opts.cursor))
-			: eq(puzzles.ownerId, playerId);
+		opts.cursor !== undefined ? and(ownerCond, parsePlayerPuzzleCursor(opts.cursor)) : ownerCond;
 	const all = await db
 		.select()
 		.from(puzzles)
@@ -177,15 +186,6 @@ function parsePlayerPuzzleCursor(cursor: string) {
 	const createdAt = Number(createdAtStr);
 	if (!Number.isFinite(createdAt)) return sql`false`;
 	return sql`(${puzzles.createdAt} < ${createdAt} OR (${puzzles.createdAt} = ${createdAt} AND ${puzzles.id} < ${idStr}))`;
-}
-
-export async function countPlayerPuzzles(db: AppDb, playerId: string): Promise<number> {
-	const rows = await db
-		.select({ n: count() })
-		.from(puzzles)
-		.where(eq(puzzles.ownerId, playerId))
-		.all();
-	return rows[0]?.n ?? 0;
 }
 
 // Server-side dedupe window for completion submissions. Two completions of
@@ -350,7 +350,16 @@ export async function getPlayerSummary(
 	// so run them concurrently to cut profile latency (mirrors the player
 	// route's own Promise.all over the same pair).
 	const [uploadedRows, solvedRows] = await Promise.all([
-		db.select({ n: count() }).from(puzzles).where(eq(puzzles.ownerId, playerId)).all(),
+		db
+			.select({ n: count() })
+			.from(puzzles)
+			.where(
+				and(
+					eq(puzzles.ownerId, playerId),
+					inArray(puzzles.status, [...VISIBLE_PLAYER_PUZZLE_STATUSES])
+				)
+			)
+			.all(),
 		db
 			.select({
 				solved: count(),
