@@ -12,21 +12,21 @@ function countOccurrences(haystack: string, needle: string): number {
 }
 
 describe('deploy-infrastructure workflow', () => {
-	it('passes Zero Trust admin secrets to both Pulumi preview and deploy', () => {
+	it('passes Zero Trust admin config to both Pulumi preview and deploy', () => {
 		expect(countOccurrences(workflow, 'adminAccessEmail:')).toBe(2);
-		expect(countOccurrences(workflow, 'value: ${{ secrets.ADMIN_ACCESS_EMAIL }}')).toBe(2);
-		const adminEmailSecretMatches =
+		expect(countOccurrences(workflow, 'value: ${{ vars.ADMIN_ACCESS_EMAIL }}')).toBe(2);
+		const adminEmailMatches =
 			workflow.match(
-				/adminAccessEmail:\s*\n\s*value:\s*\$\{\{\s*secrets\.ADMIN_ACCESS_EMAIL\s*\}\}\s*\n\s*secret:\s*true/g
+				/adminAccessEmail:\s*\n\s*value:\s*\$\{\{\s*vars\.ADMIN_ACCESS_EMAIL\s*\}\}\s*\n\s*secret:\s*true/g
 			) ?? [];
-		expect(adminEmailSecretMatches).toHaveLength(2);
+		expect(adminEmailMatches).toHaveLength(2);
 
 		expect(countOccurrences(workflow, 'adminDeviceSerials:')).toBe(2);
-		expect(countOccurrences(workflow, "value: '${{ secrets.ADMIN_DEVICE_SERIALS }}'")).toBe(2);
-		const deviceSerialSecretMatches =
+		expect(countOccurrences(workflow, "value: '${{ vars.ADMIN_DEVICE_SERIALS }}'")).toBe(2);
+		const deviceSerialMatches =
 			workflow.match(
-				/adminDeviceSerials:\s*\n\s*value:\s*'\$\{\{\s*secrets\.ADMIN_DEVICE_SERIALS\s*\}\}'\s*\n\s*secret:\s*true/g
+				/adminDeviceSerials:\s*\n\s*value:\s*'\$\{\{\s*vars\.ADMIN_DEVICE_SERIALS\s*\}\}'\s*\n\s*secret:\s*true/g
 			) ?? [];
-		expect(deviceSerialSecretMatches).toHaveLength(2);
+		expect(deviceSerialMatches).toHaveLength(2);
 	});
 });
