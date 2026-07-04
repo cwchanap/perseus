@@ -16,8 +16,14 @@ export function createKVNamespace() {
 }
 
 export function createD1Database() {
-	return new cloudflare.D1Database('player-data', {
-		accountId: accountId,
-		name: naming.d1Database
-	});
+	return new cloudflare.D1Database(
+		'player-data',
+		{
+			accountId: accountId,
+			name: naming.d1Database
+		},
+		{
+			import: `${accountId}/b32ed4d0-c29f-413d-9370-de7bec2c80a7`
+		}
+	);
 }
