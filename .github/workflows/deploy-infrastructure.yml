@@ -94,7 +94,29 @@ jobs:
           work-dir: packages/infrastructure
           config-map: |
             cloudflareAccountId:
-              value: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+              value: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+            ALLOWED_ORIGINS:
+              value: ${{ vars.ALLOWED_ORIGINS }}
+            AUTH_REDIRECT_BASE_URL:
+              value: ${{ vars.AUTH_REDIRECT_BASE_URL }}
+            adminAccessEmail:
+              value: ${{ vars.ADMIN_ACCESS_EMAIL }}
+              secret: true
+            adminDeviceSerials:
+              value: '${{ vars.ADMIN_DEVICE_SERIALS }}'
+              secret: true
+            googleClientId:
+              value: ${{ vars.GOOGLE_CLIENT_ID }}
+              secret: true
+            jwtSecret:
+              value: ${{ secrets.JWT_SECRET }}
+              secret: true
+            adminPasskey:
+              value: ${{ secrets.ADMIN_PASSKEY }}
+              secret: true
+            googleClientSecret:
+              value: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+              secret: true
         env:
           PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -143,7 +165,29 @@ jobs:
           upsert: true
           config-map: |
             cloudflareAccountId:
-              value: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+              value: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+            ALLOWED_ORIGINS:
+              value: ${{ vars.ALLOWED_ORIGINS }}
+            AUTH_REDIRECT_BASE_URL:
+              value: ${{ vars.AUTH_REDIRECT_BASE_URL }}
+            adminAccessEmail:
+              value: ${{ vars.ADMIN_ACCESS_EMAIL }}
+              secret: true
+            adminDeviceSerials:
+              value: '${{ vars.ADMIN_DEVICE_SERIALS }}'
+              secret: true
+            googleClientId:
+              value: ${{ vars.GOOGLE_CLIENT_ID }}
+              secret: true
+            jwtSecret:
+              value: ${{ secrets.JWT_SECRET }}
+              secret: true
+            adminPasskey:
+              value: ${{ secrets.ADMIN_PASSKEY }}
+              secret: true
+            googleClientSecret:
+              value: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+              secret: true
         env:
           PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
