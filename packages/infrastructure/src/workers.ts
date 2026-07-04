@@ -67,10 +67,9 @@ function getModules(
 				}
 
 				const relativePath = path.relative(distDir, fullPath);
-				const content = fs.readFileSync(fullPath);
 				modules.push({
 					name: relativePath,
-					contentBase64: content.toString('base64'),
+					contentFile: fullPath,
 					contentType
 				});
 			}
