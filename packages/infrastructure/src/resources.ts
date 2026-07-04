@@ -23,7 +23,8 @@ export function createD1Database() {
 			name: naming.d1Database
 		},
 		{
-			import: `${accountId}/b32ed4d0-c29f-413d-9370-de7bec2c80a7`
+			import: `${accountId}/b32ed4d0-c29f-413d-9370-de7bec2c80a7`,
+			ignoreChanges: ['readReplication']
 		}
 	);
 }
