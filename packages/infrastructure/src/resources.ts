@@ -24,6 +24,10 @@ export function createD1Database() {
 		},
 		{
 			import: `${accountId}/b32ed4d0-c29f-413d-9370-de7bec2c80a7`,
+			// readReplication is a read-only field returned by the Cloudflare API
+			// on imported D1 databases. Its value doesn't match Pulumi's schema,
+			// causing a perpetual diff. Ignoring it prevents unnecessary updates
+			// while still allowing all other D1 properties to be managed normally.
 			ignoreChanges: ['readReplication']
 		}
 	);
