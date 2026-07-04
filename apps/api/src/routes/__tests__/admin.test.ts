@@ -65,12 +65,16 @@ vi.mock('../../db', () => ({
 	getDb: vi.fn(() => ({}))
 }));
 
-vi.mock('@perseus/shared', () => ({
-	insertPuzzleOwnership: vi.fn().mockResolvedValue(undefined),
-	deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined),
-	deletePuzzleStats: vi.fn().mockResolvedValue(undefined),
-	SYSTEM_OWNER_ID: 'system'
-}));
+vi.mock('@perseus/shared', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('@perseus/shared')>();
+	return {
+		...actual,
+		insertPuzzleOwnership: vi.fn().mockResolvedValue(undefined),
+		deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined),
+		deletePuzzleStats: vi.fn().mockResolvedValue(undefined),
+		SYSTEM_OWNER_ID: 'system'
+	};
+});
 
 afterAll(() => {
 	if (originalAdminPasskey === undefined) {

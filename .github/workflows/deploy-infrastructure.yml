@@ -235,7 +235,6 @@ jobs:
         # Worker code first, then ship the contract migration after the old
         # Worker version is no longer live.
         run: |
-          DB_ID="${{ steps.pulumi-up.outputs.d1DatabaseId }}"
           if [ -z "$DB_ID" ]; then
             echo "Pulumi stack output d1DatabaseId is missing; cannot apply migrations safely."
             exit 1
@@ -243,5 +242,6 @@ jobs:
           sed -i "s/^database_id = .*/database_id = \"$DB_ID\"/" apps/api/wrangler.production.toml
           bunx wrangler d1 migrations apply perseus-player-data --remote --config apps/api/wrangler.production.toml
         env:
+          DB_ID: ${{ steps.pulumi-up.outputs.d1DatabaseId }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
