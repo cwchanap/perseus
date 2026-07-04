@@ -239,6 +239,11 @@ jobs:
             exit 1
           fi
           sed -i "s/^database_id = .*/database_id = \"$DB_ID\"/" apps/api/wrangler.production.toml
+          # Mark already-applied migrations in wrangler's tracking table.
+          # The initial migration was applied manually before this workflow
+          # existed, so wrangler doesn't have a record of it. This is a one-time
+          # bootstrap — future migrations will be tracked normally.
+          bunx wrangler d1 execute perseus-player-data --remote --config apps/api/wrangler.production.toml --command "CREATE TABLE IF NOT EXISTS d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, applied_at TEXT NOT NULL DEFAULT (datetime('now'))); INSERT OR IGNORE INTO d1_migrations (name) VALUES ('0000_true_fantastic_four.sql');"
           bunx wrangler d1 migrations apply perseus-player-data --remote --config apps/api/wrangler.production.toml
         env:
           DB_ID: ${{ steps.pulumi-up.outputs.d1DatabaseId }}
