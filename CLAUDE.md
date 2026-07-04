@@ -105,6 +105,8 @@ Pulumi TypeScript program for Cloudflare deployment. `packages/infrastructure/sr
 
 **D1 migration safety:** The deploy workflow (`.github/workflows/deploy-infrastructure.yml`) deploys Workers before applying D1 migrations. This is safe for additive migrations only (new tables, new columns, new indexes). Before shipping a non-additive migration (column rename, type change, column drop, table drop), adopt an expand/contract flow: ship the expand migration + backward-compatible Worker code first, then ship the contract migration after the old Worker version is no longer live.
 
+**First-deploy D1 gap:** On the first-ever production deploy, Pulumi creates the D1 database and publishes the Worker in the same `pulumi up`, so the Worker is live before `wrangler d1 migrations apply` runs. D1-dependent paths (`/api/puzzles/:id/complete`, `/api/player/*`, `/api/admin/*`, workflow status mirrors) can hit missing tables and 500 until migrations complete. For a zero-downtime first deploy, run migrations manually against the Pulumi-provisioned DB before triggering the workflow (see the comment in `deploy-infrastructure.yml`). Subsequent deploys are unaffected.
+
 **D1 database ID:** The `database_id` in `apps/api/wrangler.production.toml` and `apps/workflows/wrangler.production.toml` must match the Pulumi-managed D1 database (exported as `d1DatabaseId` from the infrastructure stack). If the Pulumi stack is destroyed and recreated, update both wrangler configs with the new database ID.
 
 ## Code Style
