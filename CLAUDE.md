@@ -10,6 +10,12 @@ This is a Turborepo monorepo using Bun as the package manager.
 # Install dependencies
 bun install
 
+# Apply local D1 migrations (required once after install, and after any
+# migration in packages/shared/drizzle, before `bun run dev` will serve
+# DB-backed paths: /api/player/*, /api/puzzles/:id/complete, authenticated
+# upload ownership). Wrangler does not auto-apply D1 migrations on `wrangler dev`.
+cd apps/api && bun run db:migrate:local
+
 # Development (runs web + API concurrently; API embeds the workflows worker)
 bun run dev
 
