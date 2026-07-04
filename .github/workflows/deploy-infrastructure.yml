@@ -162,7 +162,6 @@ jobs:
           command: up
           stack-name: ${{ vars.PULUMI_ORG }}/perseus-infrastructure/production
           work-dir: packages/infrastructure
-          refresh: true
           upsert: true
           config-map: |
             cloudflareAccountId:
