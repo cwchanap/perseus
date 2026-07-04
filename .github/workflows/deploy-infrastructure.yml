@@ -200,9 +200,26 @@ jobs:
         # no-op — safe to execute on every deploy. migrations_dir is resolved
         # relative to the config file (apps/api), pointing at the checked-out
         # packages/shared/drizzle (build artifacts only cover apps/).
-        # First-ever deploy has a brief window where the Worker is live before
-        # tables exist; acceptable since profile traffic only starts when users
-        # visit the page, by which point this step has completed.
+        # FIRST-DEPLOY GAP: Pulumi creates the D1 database AND publishes the
+        # Worker in the same `pulumi up`, so the Worker is live before this
+        # migrations step runs. On the first-ever deploy, D1-dependent paths
+        # can hit missing tables and fail until this step completes:
+        #   - POST /api/puzzles/:id/complete → recordCompletion throws → 500
+        #   - GET /api/player/* → profile reads/writes → 500
+        #   - Workflows setPuzzleStatus (ready/failed) → best-effort, logs and
+        #     continues; puzzle stays in KV/DO state, reconciled on next run
+        #   - /api/admin/* D1 operations → 500
+        # Subsequent deploys are unaffected (tables already exist; additive
+        # migrations are no-ops on the live schema).
+        #
+        # ZERO-DOWNTIME FIRST DEPLOY (optional): before the first production
+        # deploy, run migrations manually against the Pulumi-provisioned DB:
+        #   pulumi stack output d1DatabaseId --cwd packages/infrastructure
+        #   sed -i "s/^database_id = .*/database_id = \"<ID>\"/" apps/api/wrangler.production.toml
+        #   bunx wrangler d1 migrations apply perseus-player-data --remote \
+        #     --config apps/api/wrangler.production.toml
+        # Then trigger this workflow. Alternatively, accept the brief window
+        # (low traffic on a brand-new deployment).
         #
         # The database_id is derived from the Pulumi stack output (d1DatabaseId)
         # rather than the static value checked into wrangler.production.toml, so
