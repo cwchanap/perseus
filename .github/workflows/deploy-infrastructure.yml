@@ -95,28 +95,6 @@ jobs:
           config-map: |
             cloudflareAccountId:
               value: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-            ALLOWED_ORIGINS:
-              value: ${{ secrets.ALLOWED_ORIGINS }}
-            AUTH_REDIRECT_BASE_URL:
-              value: ${{ secrets.AUTH_REDIRECT_BASE_URL }}
-            adminAccessEmail:
-              value: ${{ secrets.ADMIN_ACCESS_EMAIL }}
-              secret: true
-            adminDeviceSerials:
-              value: '${{ secrets.ADMIN_DEVICE_SERIALS }}'
-              secret: true
-            jwtSecret:
-              value: ${{ secrets.JWT_SECRET }}
-              secret: true
-            adminPasskey:
-              value: ${{ secrets.ADMIN_PASSKEY }}
-              secret: true
-            googleClientId:
-              value: ${{ secrets.GOOGLE_CLIENT_ID }}
-              secret: true
-            googleClientSecret:
-              value: ${{ secrets.GOOGLE_CLIENT_SECRET }}
-              secret: true
         env:
           PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -166,28 +144,6 @@ jobs:
           config-map: |
             cloudflareAccountId:
               value: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-            ALLOWED_ORIGINS:
-              value: ${{ secrets.ALLOWED_ORIGINS }}
-            AUTH_REDIRECT_BASE_URL:
-              value: ${{ secrets.AUTH_REDIRECT_BASE_URL }}
-            adminAccessEmail:
-              value: ${{ secrets.ADMIN_ACCESS_EMAIL }}
-              secret: true
-            adminDeviceSerials:
-              value: '${{ secrets.ADMIN_DEVICE_SERIALS }}'
-              secret: true
-            jwtSecret:
-              value: ${{ secrets.JWT_SECRET }}
-              secret: true
-            adminPasskey:
-              value: ${{ secrets.ADMIN_PASSKEY }}
-              secret: true
-            googleClientId:
-              value: ${{ secrets.GOOGLE_CLIENT_ID }}
-              secret: true
-            googleClientSecret:
-              value: ${{ secrets.GOOGLE_CLIENT_SECRET }}
-              secret: true
         env:
           PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
