@@ -1,4 +1,5 @@
 import * as cloudflare from '@pulumi/cloudflare';
+import * as pulumi from '@pulumi/pulumi';
 import { naming, accountId } from './config.js';
 
 export function createR2Bucket() {
@@ -16,6 +17,15 @@ export function createKVNamespace() {
 }
 
 export function createD1Database() {
+	const config = new pulumi.Config();
+	// D1 database UUID to import into Pulumi management. This is a one-time
+	// bootstrap value for adopting the existing D1 database. The same UUID
+	// also appears in:
+	//   - apps/api/wrangler.production.toml (database_id)
+	//   - apps/workflows/wrangler.production.toml (database_id)
+	// Keep all three in sync. If the Pulumi stack is destroyed and recreated,
+	// update d1DatabaseImportId here and both wrangler.production.toml files.
+	const importId = config.require('d1DatabaseImportId');
 	return new cloudflare.D1Database(
 		'player-data',
 		{
@@ -23,11 +33,12 @@ export function createD1Database() {
 			name: naming.d1Database
 		},
 		{
-			import: `${accountId}/b32ed4d0-c29f-413d-9370-de7bec2c80a7`,
-			// readReplication is a read-only field returned by the Cloudflare API
-			// on imported D1 databases. Its value doesn't match Pulumi's schema,
-			// causing a perpetual diff. Ignoring it prevents unnecessary updates
-			// while still allowing all other D1 properties to be managed normally.
+			import: `${accountId}/${importId}`,
+			// readReplication is a settable D1 input, but on imported databases
+			// the Cloudflare API returns a value that doesn't match Pulumi's
+			// schema shape, causing a perpetual diff. Ignoring it prevents
+			// unnecessary updates while still allowing all other D1 properties
+			// to be managed normally.
 			ignoreChanges: ['readReplication']
 		}
 	);

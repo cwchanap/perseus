@@ -56,7 +56,7 @@ jobs:
   preview:
     name: Preview
     runs-on: ubuntu-latest
-    needs: [build, deploy]
+    needs: [build]
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout repository
@@ -99,6 +99,8 @@ jobs:
               value: ${{ vars.ALLOWED_ORIGINS }}
             AUTH_REDIRECT_BASE_URL:
               value: ${{ vars.AUTH_REDIRECT_BASE_URL }}
+            d1DatabaseImportId:
+              value: ${{ vars.D1_DATABASE_IMPORT_ID }}
             adminAccessEmail:
               value: ${{ secrets.ADMIN_ACCESS_EMAIL }}
               secret: true
@@ -107,7 +109,6 @@ jobs:
               secret: true
             googleClientId:
               value: ${{ vars.GOOGLE_CLIENT_ID }}
-              secret: true
             jwtSecret:
               value: ${{ secrets.JWT_SECRET }}
               secret: true
@@ -124,7 +125,7 @@ jobs:
   deploy:
     name: Deploy to Production
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build, preview]
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     environment: production
     steps:
@@ -170,6 +171,8 @@ jobs:
               value: ${{ vars.ALLOWED_ORIGINS }}
             AUTH_REDIRECT_BASE_URL:
               value: ${{ vars.AUTH_REDIRECT_BASE_URL }}
+            d1DatabaseImportId:
+              value: ${{ vars.D1_DATABASE_IMPORT_ID }}
             adminAccessEmail:
               value: ${{ secrets.ADMIN_ACCESS_EMAIL }}
               secret: true
@@ -178,7 +181,6 @@ jobs:
               secret: true
             googleClientId:
               value: ${{ vars.GOOGLE_CLIENT_ID }}
-              secret: true
             jwtSecret:
               value: ${{ secrets.JWT_SECRET }}
               secret: true
