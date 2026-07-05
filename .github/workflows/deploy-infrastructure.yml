@@ -99,8 +99,6 @@ jobs:
               value: ${{ vars.ALLOWED_ORIGINS }}
             AUTH_REDIRECT_BASE_URL:
               value: ${{ vars.AUTH_REDIRECT_BASE_URL }}
-            d1DatabaseImportId:
-              value: ${{ vars.D1_DATABASE_IMPORT_ID }}
             adminAccessEmail:
               value: ${{ secrets.ADMIN_ACCESS_EMAIL }}
               secret: true
@@ -171,8 +169,6 @@ jobs:
               value: ${{ vars.ALLOWED_ORIGINS }}
             AUTH_REDIRECT_BASE_URL:
               value: ${{ vars.AUTH_REDIRECT_BASE_URL }}
-            d1DatabaseImportId:
-              value: ${{ vars.D1_DATABASE_IMPORT_ID }}
             adminAccessEmail:
               value: ${{ secrets.ADMIN_ACCESS_EMAIL }}
               secret: true
@@ -245,7 +241,10 @@ jobs:
           # The initial migration was applied manually before this workflow
           # existed, so wrangler doesn't have a record of it. This is a one-time
           # bootstrap — future migrations will be tracked normally.
-          bunx wrangler d1 execute perseus-player-data --remote --config apps/api/wrangler.production.toml --command "CREATE TABLE IF NOT EXISTS d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, applied_at TEXT NOT NULL DEFAULT (datetime('now'))); INSERT OR IGNORE INTO d1_migrations (name) VALUES ('0000_true_fantastic_four.sql');"
+          # The DDL matches wrangler's canonical d1_migrations schema exactly
+          # (see packages/wrangler/src/d1/migrations/helpers.ts initMigrationsTable)
+          # to avoid schema drift that could confuse future wrangler versions.
+          bunx wrangler d1 execute perseus-player-data --remote --config apps/api/wrangler.production.toml --command "CREATE TABLE IF NOT EXISTS d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL); INSERT OR IGNORE INTO d1_migrations (name) VALUES ('0000_true_fantastic_four.sql');"
           bunx wrangler d1 migrations apply perseus-player-data --remote --config apps/api/wrangler.production.toml
         env:
           DB_ID: ${{ steps.pulumi-up.outputs.d1DatabaseId }}

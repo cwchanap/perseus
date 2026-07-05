@@ -1,5 +1,4 @@
 import * as cloudflare from '@pulumi/cloudflare';
-import * as pulumi from '@pulumi/pulumi';
 import { naming, accountId } from './config.js';
 
 export function createR2Bucket() {
@@ -17,15 +16,17 @@ export function createKVNamespace() {
 }
 
 export function createD1Database() {
-	const config = new pulumi.Config();
-	// D1 database UUID to import into Pulumi management. This is a one-time
-	// bootstrap value for adopting the existing D1 database. The same UUID
-	// also appears in:
+	// D1 database UUID. The same UUID also appears in:
 	//   - apps/api/wrangler.production.toml (database_id)
 	//   - apps/workflows/wrangler.production.toml (database_id)
-	// Keep all three in sync. If the Pulumi stack is destroyed and recreated,
-	// update d1DatabaseImportId here and both wrangler.production.toml files.
-	const importId = config.require('d1DatabaseImportId');
+	// Keep all three in sync. The database was adopted into Pulumi management
+	// via a one-time `import:` on the first deploy; that line has been removed
+	// now that the resource is in Pulumi state. Pulumi now fully owns the
+	// resource — `pulumi destroy` will delete the database, and a subsequent
+	// `pulumi up` will create a fresh one (with a new UUID). After a
+	// destroy/recreate, update both wrangler.production.toml files with the
+	// new UUID (the deploy workflow derives database_id from the Pulumi stack
+	// output d1DatabaseId, so the sed replacement handles itself).
 	return new cloudflare.D1Database(
 		'player-data',
 		{
@@ -33,7 +34,6 @@ export function createD1Database() {
 			name: naming.d1Database
 		},
 		{
-			import: `${accountId}/${importId}`,
 			// readReplication is a settable D1 input, but on imported databases
 			// the Cloudflare API returns a value that doesn't match Pulumi's
 			// schema shape, causing a perpetual diff. Ignoring it prevents
