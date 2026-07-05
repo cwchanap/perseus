@@ -115,6 +115,8 @@ Pulumi TypeScript program for Cloudflare deployment. `packages/infrastructure/sr
 
 **D1 database ID:** The `database_id` in `apps/api/wrangler.production.toml` and `apps/workflows/wrangler.production.toml` must match the Pulumi-managed D1 database (exported as `d1DatabaseId` from the infrastructure stack). If the Pulumi stack is destroyed and recreated, update both wrangler configs with the new database ID.
 
+**D1 state-loss recovery (re-adoption):** If Pulumi state is lost/corrupted but the D1 database still exists in Cloudflare, do NOT let `pulumi up` create a fresh database (it would get a new UUID and lose all data). Instead, re-adopt the existing database: temporarily restore the `import:` line in `createD1Database` (`packages/infrastructure/src/resources.ts`) using `import: \`${accountId}/${existingUuid}\``, set a Pulumi config value with the existing UUID, run `pulumi up`to adopt the resource back into state, then remove the`import:`line and config so Pulumi fully owns the resource going forward. The original adoption procedure was introduced in`fd43f33`and removed in`e3229c9`after adoption completed — consult those commits if the lines above are stale. Find the existing UUID via`wrangler d1 list` or the Cloudflare dashboard.
+
 ## Code Style
 
 - Tabs for indentation

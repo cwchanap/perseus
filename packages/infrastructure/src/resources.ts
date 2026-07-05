@@ -19,7 +19,7 @@ export function createD1Database() {
 	// D1 database UUID. The same UUID also appears in:
 	//   - apps/api/wrangler.production.toml (database_id)
 	//   - apps/workflows/wrangler.production.toml (database_id)
-	// Keep all three in sync. The database was adopted into Pulumi management
+	// Keep both in sync. The database was adopted into Pulumi management
 	// via a one-time `import:` on the first deploy; that line has been removed
 	// now that the resource is in Pulumi state. Pulumi now fully owns the
 	// resource — `pulumi destroy` will delete the database, and a subsequent

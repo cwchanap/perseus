@@ -31,8 +31,7 @@ id = "ae95a94b22e3414ab022c335390c67aa"
 # recreated, this ID must be updated to the new database's ID.
 # This UUID is also referenced in:
 #   - apps/workflows/wrangler.production.toml (database_id)
-#   - packages/infrastructure Pulumi config (d1DatabaseImportId)
-# Keep all three in sync.
+# Keep both in sync.
 # The deploy workflow (deploy-infrastructure.yml) overrides this value at
 # runtime with the Pulumi stack output before applying migrations, so CI
 # always targets the bound database. This static value is only used by
