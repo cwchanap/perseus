@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { parse } from 'yaml';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const workflowPath = resolve(__dirname, '../../../.github/workflows/deploy-infrastructure.yml');
@@ -11,36 +12,71 @@ function countOccurrences(haystack: string, needle: string): number {
 	return haystack.split(needle).length - 1;
 }
 
-// Asserts a Pulumi config-map secret block appears exactly twice (preview + deploy):
-//   <key>:
-//     value: ${{ secrets.<NAME> }}
-//     secret: true
-// Handles both quoted ('${{ ... }}') and unquoted value forms.
-function expectSecretBlock(key: string, secretName: string): void {
-	const unquoted = new RegExp(
-		`${key}:\\s*\\n\\s*value:\\s*\\$\\{\\{\\s*secrets\\.${secretName}\\s*\\}\\}\\s*\\n\\s*secret:\\s*true`,
-		'g'
-	);
-	const quoted = new RegExp(
-		`${key}:\\s*\\n\\s*value:\\s*'\\$\\{\\{\\s*secrets\\.${secretName}\\s*\\}\\}'\\s*\\n\\s*secret:\\s*true`,
-		'g'
-	);
-	const matches = [...(workflow.match(unquoted) ?? []), ...(workflow.match(quoted) ?? [])];
-	expect(matches).toHaveLength(2);
+interface ConfigEntry {
+	value: string;
+	secret?: boolean;
+}
+type ConfigMap = Record<string, ConfigEntry>;
+
+interface WorkflowStep {
+	name?: string;
+	uses?: string;
+	with?: Record<string, string>;
+}
+interface WorkflowJob {
+	name?: string;
+	steps: WorkflowStep[];
+}
+interface WorkflowDoc {
+	jobs: Record<string, WorkflowJob>;
 }
 
-// Asserts a Pulumi config-map non-secret var block appears exactly twice:
-//   <key>:
-//     value: ${{ vars.<NAME> }}
-// The negative lookahead confirms no `secret: true` follows — catching the
-// 8a7e3e0-class regression where a value is swapped between vars/secrets.
+// Parse the workflow YAML once. The config-map is a block scalar containing
+// nested YAML, so each job's config-map is parsed a second time to inspect
+// its structure. This is robust against indentation/quote-style changes that
+// would break regex-based assertions.
+const workflowDoc = parse(workflow) as WorkflowDoc;
+
+function getConfigMap(jobName: string): ConfigMap {
+	const job = workflowDoc.jobs[jobName];
+	if (!job) throw new Error(`job '${jobName}' not found in workflow`);
+	const step = job.steps.find((s) => s.uses?.startsWith('pulumi/actions'));
+	if (!step) throw new Error(`pulumi/actions step not found in job '${jobName}'`);
+	const raw = step.with?.['config-map'];
+	if (!raw) throw new Error(`config-map not found in pulumi/actions step of job '${jobName}'`);
+	return parse(raw) as ConfigMap;
+}
+
+const previewConfig = getConfigMap('preview');
+const deployConfig = getConfigMap('deploy');
+const bothConfigs: Array<[string, ConfigMap]> = [
+	['preview', previewConfig],
+	['deploy', deployConfig]
+];
+
+// Asserts a key is present in both preview and deploy config-maps with a
+// value referencing the given secret and `secret: true` set.
+function expectSecretBlock(key: string, secretName: string): void {
+	const valueRe = new RegExp(`\\$\\{\\{\\s*secrets\\.${secretName}\\s*\\}\\}`);
+	for (const [jobName, cfg] of bothConfigs) {
+		const entry = cfg[key];
+		expect(entry, `${jobName}: config key '${key}' missing`).toBeDefined();
+		expect(entry.value, `${jobName}: '${key}' value`).toMatch(valueRe);
+		expect(entry.secret, `${jobName}: '${key}' must set secret: true`).toBe(true);
+	}
+}
+
+// Asserts a key is present in both config-maps with a value referencing the
+// given var and NO `secret: true` flag — catching the 8a7e3e0-class
+// regression where a value is swapped between vars/secrets.
 function expectVarBlock(key: string, varName: string): void {
-	const pattern = new RegExp(
-		`${key}:\\s*\\n\\s*value:\\s*\\$\\{\\{\\s*vars\\.${varName}\\s*\\}\\}\\s*\\n(?!\\s*secret:)`,
-		'g'
-	);
-	const matches = workflow.match(pattern) ?? [];
-	expect(matches).toHaveLength(2);
+	const valueRe = new RegExp(`\\$\\{\\{\\s*vars\\.${varName}\\s*\\}\\}`);
+	for (const [jobName, cfg] of bothConfigs) {
+		const entry = cfg[key];
+		expect(entry, `${jobName}: config key '${key}' missing`).toBeDefined();
+		expect(entry.value, `${jobName}: '${key}' value`).toMatch(valueRe);
+		expect(entry.secret, `${jobName}: '${key}' must NOT set secret: true`).toBeUndefined();
+	}
 }
 
 describe('deploy-infrastructure workflow', () => {
@@ -85,18 +121,25 @@ describe('deploy-infrastructure workflow', () => {
 	});
 
 	it('does not reference any secrets.* without a corresponding secret: true', () => {
-		// Every secrets.* reference must be part of a block with secret: true.
-		// Find all secrets.* references and confirm each is followed by secret: true
-		// within the same config block.
-		const secretRefPattern =
-			/value:\s*'?\$\{\{\s*secrets\.(\w+)\s*\}\}'?\s*\n\s*(secret:\s*true)?/g;
-		let match: RegExpExecArray | null;
-		while ((match = secretRefPattern.exec(workflow)) !== null) {
-			expect(match[2], `secrets.${match[1]} block missing secret: true`).toBeDefined();
+		// Every config-map entry whose value references secrets.* must have
+		// secret: true set.
+		const secretRefRe = /\$\{\{\s*secrets\.(\w+)\s*\}\}/;
+		for (const [jobName, cfg] of bothConfigs) {
+			for (const [key, entry] of Object.entries(cfg)) {
+				const match = entry.value.match(secretRefRe);
+				if (match) {
+					expect(
+						entry.secret,
+						`${jobName}: '${key}' references secrets.${match[1]} but missing secret: true`
+					).toBe(true);
+				}
+			}
 		}
 	});
 
 	it('does not reference d1DatabaseImportId (removed after import completed)', () => {
+		// Raw-text scan: the import ID could appear in comments or any field,
+		// not just the YAML structure, so check the original file text.
 		expect(countOccurrences(workflow, 'd1DatabaseImportId')).toBe(0);
 	});
 });
