@@ -37,12 +37,12 @@ const apiBindings = {
 	envVars: {
 		...commonBindings.envVars,
 		ALLOWED_ORIGINS: config.require('ALLOWED_ORIGINS'),
-		AUTH_REDIRECT_BASE_URL: config.require('AUTH_REDIRECT_BASE_URL')
+		AUTH_REDIRECT_BASE_URL: config.require('AUTH_REDIRECT_BASE_URL'),
+		GOOGLE_CLIENT_ID: config.require('googleClientId')
 	},
 	secretVars: {
 		JWT_SECRET: config.requireSecret('jwtSecret'),
 		ADMIN_PASSKEY: config.requireSecret('adminPasskey'),
-		GOOGLE_CLIENT_ID: config.requireSecret('googleClientId'),
 		GOOGLE_CLIENT_SECRET: config.requireSecret('googleClientSecret')
 	}
 };
