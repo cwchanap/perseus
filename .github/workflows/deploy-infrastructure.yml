@@ -237,6 +237,7 @@ jobs:
             exit 1
           fi
           sed -i "s/^database_id = .*/database_id = \"$DB_ID\"/" apps/api/wrangler.production.toml
+          sed -i "s/^database_id = .*/database_id = \"$DB_ID\"/" apps/workflows/wrangler.production.toml
           # Mark the foundational migration as applied in wrangler's tracking
           # table ONLY when its schema already exists. The initial migration
           # was applied manually before this workflow existed, so wrangler has
@@ -255,7 +256,8 @@ jobs:
           # The DDL matches wrangler's canonical d1_migrations schema exactly
           # (see wrangler's d1/migrations helpers initMigrationsTable) to avoid
           # schema drift that could confuse future wrangler versions.
-          bunx wrangler d1 execute perseus-player-data --remote --config apps/api/wrangler.production.toml --command "CREATE TABLE IF NOT EXISTS d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL); INSERT OR IGNORE INTO d1_migrations (name) SELECT '0000_true_fantastic_four.sql' WHERE EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='player_profiles');"
+          bunx wrangler d1 execute perseus-player-data --remote --config apps/api/wrangler.production.toml --command "CREATE TABLE IF NOT EXISTS d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)"
+          bunx wrangler d1 execute perseus-player-data --remote --config apps/api/wrangler.production.toml --command "INSERT OR IGNORE INTO d1_migrations (name) SELECT '0000_true_fantastic_four.sql' WHERE EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='player_profiles')"
           bunx wrangler d1 migrations apply perseus-player-data --remote --config apps/api/wrangler.production.toml
         env:
           DB_ID: ${{ steps.pulumi-up.outputs.d1DatabaseId }}
