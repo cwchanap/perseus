@@ -34,9 +34,9 @@ export function createD1Database() {
 			name: naming.d1Database
 		},
 		{
-			// readReplication is a settable D1 input, but on imported databases
-			// the Cloudflare API returns a value that doesn't match Pulumi's
-			// schema shape, causing a perpetual diff. Ignoring it prevents
+			// readReplication is a settable D1 input, but the Cloudflare API
+			// returns a value whose shape doesn't match Pulumi's schema for
+			// this field, causing a perpetual diff. Ignoring it prevents
 			// unnecessary updates while still allowing all other D1 properties
 			// to be managed normally.
 			ignoreChanges: ['readReplication']
