@@ -161,6 +161,11 @@ jobs:
           command: up
           stack-name: ${{ vars.PULUMI_ORG }}/perseus-infrastructure/production
           work-dir: packages/infrastructure
+          # No `refresh: true` here intentionally. WorkerVersion assets are
+          # path-based with no base64 alternative, so refresh fails on a
+          # different runner than the one that deployed. Refresh was also the
+          # root cause of the May 31 state corruption (a 403 during refresh
+          # wrote a checkpoint with an empty magic field). See fbd8749.
           upsert: true
           config-map: |
             cloudflareAccountId:

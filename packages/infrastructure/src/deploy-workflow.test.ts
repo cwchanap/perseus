@@ -67,8 +67,9 @@ function expectSecretBlock(key: string, secretName: string): void {
 }
 
 // Asserts a key is present in both config-maps with a value referencing the
-// given var and NO `secret: true` flag — catching the 8a7e3e0-class
-// regression where a value is swapped between vars/secrets.
+// given var and NO `secret: true` flag — catching the class of regression
+// where a value is swapped between vars/secrets (a var accidentally wired
+// as a secret or vice versa).
 function expectVarBlock(key: string, varName: string): void {
 	const valueRe = new RegExp(`\\$\\{\\{\\s*vars\\.${varName}\\s*\\}\\}`);
 	for (const [jobName, cfg] of bothConfigs) {
