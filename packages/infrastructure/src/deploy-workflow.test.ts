@@ -142,4 +142,10 @@ describe('deploy-infrastructure workflow', () => {
 		// not just the YAML structure, so check the original file text.
 		expect(countOccurrences(workflow, 'd1DatabaseImportId')).toBe(0);
 	});
+
+	it('preview and deploy config-maps have identical key sets', () => {
+		// Catches drift where a config key is added to one job but not the
+		// other (e.g. a new secret wired into deploy but forgotten in preview).
+		expect(Object.keys(previewConfig).sort()).toEqual(Object.keys(deployConfig).sort());
+	});
 });

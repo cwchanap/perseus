@@ -123,7 +123,7 @@ jobs:
   deploy:
     name: Deploy to Production
     runs-on: ubuntu-latest
-    needs: [build, preview] # build: reuse compiled workers/artifacts; preview: gate deploy on a clean Pulumi diff
+    needs: [build, preview] # build: reuse compiled workers/artifacts; preview: deploy only if preview job succeeds (pulumi/actions preview exits 0 on any successful run, regardless of diff)
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     environment: production
     steps:
@@ -237,14 +237,25 @@ jobs:
             exit 1
           fi
           sed -i "s/^database_id = .*/database_id = \"$DB_ID\"/" apps/api/wrangler.production.toml
-          # Mark already-applied migrations in wrangler's tracking table.
-          # The initial migration was applied manually before this workflow
-          # existed, so wrangler doesn't have a record of it. This is a one-time
-          # bootstrap — future migrations will be tracked normally.
+          # Mark the foundational migration as applied in wrangler's tracking
+          # table ONLY when its schema already exists. The initial migration
+          # was applied manually before this workflow existed, so wrangler has
+          # no record of it on the current prod DB. Without this bootstrap,
+          # `wrangler d1 migrations apply` would re-run 0000 and fail (the
+          # migration uses bare CREATE TABLE, not IF NOT EXISTS).
+          #
+          # The guard is critical for the destroy/recreate path documented in
+          # packages/infrastructure/src/resources.ts: on a fresh DB the schema
+          # tables do NOT exist, so the guard is false, 0000 is NOT marked as
+          # applied, and wrangler runs it normally. An unconditional INSERT
+          # here would mark 0000 as applied on a fresh DB, causing wrangler to
+          # skip it and leaving the schema empty forever (every D1 query 500s
+          # while migrations report success).
+          #
           # The DDL matches wrangler's canonical d1_migrations schema exactly
-          # (see packages/wrangler/src/d1/migrations/helpers.ts initMigrationsTable)
-          # to avoid schema drift that could confuse future wrangler versions.
-          bunx wrangler d1 execute perseus-player-data --remote --config apps/api/wrangler.production.toml --command "CREATE TABLE IF NOT EXISTS d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL); INSERT OR IGNORE INTO d1_migrations (name) VALUES ('0000_true_fantastic_four.sql');"
+          # (see wrangler's d1/migrations helpers initMigrationsTable) to avoid
+          # schema drift that could confuse future wrangler versions.
+          bunx wrangler d1 execute perseus-player-data --remote --config apps/api/wrangler.production.toml --command "CREATE TABLE IF NOT EXISTS d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL); INSERT OR IGNORE INTO d1_migrations (name) SELECT '0000_true_fantastic_four.sql' WHERE EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='player_profiles');"
           bunx wrangler d1 migrations apply perseus-player-data --remote --config apps/api/wrangler.production.toml
         env:
           DB_ID: ${{ steps.pulumi-up.outputs.d1DatabaseId }}
