@@ -1,0 +1,402 @@
+[
+	{
+		"id": "01",
+		"name": "Alpine Lake Mirror",
+		"category": "Nature",
+		"aspectRatio": "1:1",
+		"pieceCount": 100,
+		"prompt": "A crystal-clear alpine lake perfectly mirroring snow-capped peaks at golden hour, wildflowers in the foreground, crisp landscape photography, rich blues and warm amber light, highly detailed scenery ideal for a jigsaw puzzle."
+	},
+	{
+		"id": "02",
+		"name": "Misty Redwood Path",
+		"category": "Nature",
+		"aspectRatio": "3:4",
+		"pieceCount": 108,
+		"prompt": "A foggy path through towering redwood trees, sunbeams cutting through mist, lush ferns and mossy trunks, vertical forest composition, cinematic nature photography with layered depth and green tones."
+	},
+	{
+		"id": "03",
+		"name": "Coral Reef Kaleidoscope",
+		"category": "Nature",
+		"aspectRatio": "4:3",
+		"pieceCount": 108,
+		"prompt": "A vibrant tropical coral reef underwater scene with colorful corals, tropical fish schools, clear turquoise water, and sun rays from above, dense colorful detail perfect for a jigsaw puzzle."
+	},
+	{
+		"id": "04",
+		"name": "Autumn Maple Canopy",
+		"category": "Nature",
+		"aspectRatio": "1:1",
+		"pieceCount": 121,
+		"prompt": "Looking up through a dense canopy of Japanese maples in peak autumn color, red orange and gold leaves against blue sky, intricate leaf patterns and dappled light, square composition."
+	},
+	{
+		"id": "05",
+		"name": "Icelandic Waterfall",
+		"category": "Nature",
+		"aspectRatio": "3:4",
+		"pieceCount": 48,
+		"prompt": "A powerful waterfall cascading over black basalt cliffs in Iceland, rainbow in the mist, mossy rocks and dramatic cloudy sky, epic landscape photography, portrait orientation."
+	},
+	{
+		"id": "06",
+		"name": "Lavender Fields Provence",
+		"category": "Nature",
+		"aspectRatio": "4:3",
+		"pieceCount": 192,
+		"prompt": "Endless rows of purple lavender fields in Provence under a soft sunset sky, stone farmhouse in the distance, warm golden light, pastoral landscape photography with strong leading lines."
+	},
+	{
+		"id": "07",
+		"name": "Northern Lights Tundra",
+		"category": "Nature",
+		"aspectRatio": "1:1",
+		"pieceCount": 144,
+		"prompt": "Aurora borealis dancing over a snowy tundra with silhouetted pine trees and a frozen lake, vivid green and violet ribbons in a starry night sky, magical winter landscape."
+	},
+	{
+		"id": "08",
+		"name": "Desert Slot Canyon",
+		"category": "Nature",
+		"aspectRatio": "3:4",
+		"pieceCount": 108,
+		"prompt": "Looking up through a narrow sandstone slot canyon with swirling orange and red rock walls, a thin ribbon of blue sky above, dramatic light shafts, rich warm textures."
+	},
+	{
+		"id": "09",
+		"name": "Cherry Blossom Park",
+		"category": "Nature",
+		"aspectRatio": "1:1",
+		"pieceCount": 81,
+		"prompt": "A serene park path lined with blooming pink cherry blossom trees, petals drifting in soft spring light, a small wooden bridge over a pond, dreamy pastel nature scene."
+	},
+	{
+		"id": "10",
+		"name": "Mountain Goat Ridge",
+		"category": "Animals",
+		"aspectRatio": "1:1",
+		"pieceCount": 100,
+		"prompt": "A sure-footed mountain goat standing on a rocky alpine ridge with dramatic peaks behind, sharp wildlife photography, textured fur and rugged rock detail, bright mountain air."
+	},
+	{
+		"id": "11",
+		"name": "Fox in Snow",
+		"category": "Animals",
+		"aspectRatio": "1:1",
+		"pieceCount": 64,
+		"prompt": "A red fox sitting in fresh snow looking toward the camera, soft winter forest background with bokeh, detailed fur and vivid orange coat against white snow, intimate wildlife portrait."
+	},
+	{
+		"id": "12",
+		"name": "Hummingbird Garden",
+		"category": "Animals",
+		"aspectRatio": "3:4",
+		"pieceCount": 108,
+		"prompt": "A hummingbird hovering near bright tropical flowers, iridescent green and ruby feathers frozen mid-flight, lush garden background, macro wildlife photography with vibrant colors."
+	},
+	{
+		"id": "13",
+		"name": "Elephant Herd Savanna",
+		"category": "Animals",
+		"aspectRatio": "4:3",
+		"pieceCount": 108,
+		"prompt": "A family of African elephants walking across golden savanna grasslands at sunset, acacia trees silhouetted, warm dusty light, epic wildlife documentary photography."
+	},
+	{
+		"id": "14",
+		"name": "Owl in Moonlight",
+		"category": "Animals",
+		"aspectRatio": "1:1",
+		"pieceCount": 121,
+		"prompt": "A great horned owl perched on a gnarled oak branch under a full moon, soft nocturnal lighting, detailed feathers and intense eyes, mystical wildlife illustration style with realism."
+	},
+	{
+		"id": "15",
+		"name": "Koi Pond Harmony",
+		"category": "Animals",
+		"aspectRatio": "1:1",
+		"pieceCount": 144,
+		"prompt": "Colorful koi fish swimming in a clear Japanese garden pond with lily pads and reflected maple leaves, top-down watery patterns of orange white black and gold, serene and detailed."
+	},
+	{
+		"id": "16",
+		"name": "Panda Bamboo Grove",
+		"category": "Animals",
+		"aspectRatio": "3:4",
+		"pieceCount": 48,
+		"prompt": "A giant panda sitting among green bamboo stalks peacefully eating bamboo shoots, soft diffused forest light, cute but realistic wildlife photography, portrait orientation."
+	},
+	{
+		"id": "17",
+		"name": "Macaw Jungle Canopy",
+		"category": "Animals",
+		"aspectRatio": "4:3",
+		"pieceCount": 192,
+		"prompt": "Two scarlet macaws perched on a tropical jungle branch with dense green foliage, brilliant red blue and yellow plumage, rich rainforest detail and dappled sunlight."
+	},
+	{
+		"id": "18",
+		"name": "Starry Night Harbor",
+		"category": "Art",
+		"aspectRatio": "1:1",
+		"pieceCount": 100,
+		"prompt": "An original impressionist-style painting of a small harbor at night with swirling starry sky, warm lit boats and reflections on dark water, bold brushstrokes and vivid blues and yellows inspired by classic post-impressionism."
+	},
+	{
+		"id": "19",
+		"name": "Glass Garden Still Life",
+		"category": "Art",
+		"aspectRatio": "1:1",
+		"pieceCount": 81,
+		"prompt": "A classical still-life oil painting of colorful glass bottles and fresh flowers on a wooden table by a window, rich light refraction, detailed textures, museum-quality realism."
+	},
+	{
+		"id": "20",
+		"name": "Art Nouveau Peacock",
+		"category": "Art",
+		"aspectRatio": "3:4",
+		"pieceCount": 108,
+		"prompt": "An elegant Art Nouveau illustration of a peacock with ornate flowing feathers and decorative botanical motifs, gold and emerald palette, intricate line work and stained-glass influences."
+	},
+	{
+		"id": "21",
+		"name": "Ukiyo-e Wave Market",
+		"category": "Art",
+		"aspectRatio": "4:3",
+		"pieceCount": 108,
+		"prompt": "A Japanese ukiyo-e woodblock style scene of a bustling riverside market with Mount Fuji in the distance, bold outlines flat colors and classic Edo period composition, highly decorative detail."
+	},
+	{
+		"id": "22",
+		"name": "Surreal Floating Islands",
+		"category": "Art",
+		"aspectRatio": "1:1",
+		"pieceCount": 169,
+		"prompt": "A surreal fantasy painting of floating islands with waterfalls spilling into the sky, whimsical trees and tiny bridges, soft pastel clouds, dreamlike high-detail fantasy art."
+	},
+	{
+		"id": "23",
+		"name": "Stained Glass Cathedral",
+		"category": "Art",
+		"aspectRatio": "3:4",
+		"pieceCount": 192,
+		"prompt": "A radiant stained glass window composition with geometric saints floral motifs and jewel-tone panes of sapphire ruby emerald and gold, light streaming through, intricate mosaic detail."
+	},
+	{
+		"id": "24",
+		"name": "Cubist City Morning",
+		"category": "Art",
+		"aspectRatio": "1:1",
+		"pieceCount": 121,
+		"prompt": "A colorful cubist painting of a morning city street with fractured geometric buildings cars and cafe umbrellas, bold primary colors and angular planes, energetic modern art composition."
+	},
+	{
+		"id": "25",
+		"name": "Watercolor Market Street",
+		"category": "Art",
+		"aspectRatio": "4:3",
+		"pieceCount": 48,
+		"prompt": "A loose watercolor painting of a charming European market street with flower stalls and striped awnings, soft wet-on-wet edges, cheerful pastel palette and lively brushwork."
+	},
+	{
+		"id": "26",
+		"name": "Santorini Blue Domes",
+		"category": "Architecture",
+		"aspectRatio": "1:1",
+		"pieceCount": 100,
+		"prompt": "Iconic whitewashed buildings and blue-domed churches of Santorini cascading down a cliff toward the Aegean sea, bright midday Mediterranean light, crisp travel photography detail."
+	},
+	{
+		"id": "27",
+		"name": "Gothic Cathedral Spire",
+		"category": "Architecture",
+		"aspectRatio": "3:4",
+		"pieceCount": 108,
+		"prompt": "Looking up at an ornate Gothic cathedral facade with flying buttresses spires and rose windows, dramatic cloudy sky, intricate stone carving detail, monumental architecture photography."
+	},
+	{
+		"id": "28",
+		"name": "Tokyo Neon Crossing",
+		"category": "Architecture",
+		"aspectRatio": "4:3",
+		"pieceCount": 192,
+		"prompt": "A rainy night scene of a busy Tokyo intersection with neon signs reflections on wet pavement and towering glass buildings, cyberpunk-tinged urban photography full of colorful lights."
+	},
+	{
+		"id": "29",
+		"name": "Moroccan Courtyard",
+		"category": "Architecture",
+		"aspectRatio": "1:1",
+		"pieceCount": 144,
+		"prompt": "A sunlit Moroccan riad courtyard with intricate zellige tilework, orange trees, a central fountain, and carved archways, rich blues greens and terracotta, architectural travel photography."
+	},
+	{
+		"id": "30",
+		"name": "Venetian Canal Dawn",
+		"category": "Architecture",
+		"aspectRatio": "4:3",
+		"pieceCount": 108,
+		"prompt": "A quiet Venetian canal at dawn with pastel palazzi, a wooden bridge, gondolas, and soft pink sky reflections on the water, romantic European cityscape photography."
+	},
+	{
+		"id": "31",
+		"name": "Art Deco Lobby",
+		"category": "Architecture",
+		"aspectRatio": "1:1",
+		"pieceCount": 121,
+		"prompt": "A grand Art Deco hotel lobby with geometric marble floors, gold elevators, tall windows, and ornate ceiling lights, warm glamorous interior architecture photography."
+	},
+	{
+		"id": "32",
+		"name": "Pagoda Mountain Mist",
+		"category": "Architecture",
+		"aspectRatio": "3:4",
+		"pieceCount": 48,
+		"prompt": "A multi-tiered East Asian pagoda on a forested mountain ridge emerging from morning mist, soft atmospheric layers, traditional architecture in a dramatic landscape."
+	},
+	{
+		"id": "33",
+		"name": "Glass Skyline Sunset",
+		"category": "Architecture",
+		"aspectRatio": "1:1",
+		"pieceCount": 169,
+		"prompt": "A modern glass skyscraper skyline at sunset with fiery orange and purple reflections, geometric facade patterns, high-rise urban landscape photography with strong color contrast."
+	},
+	{
+		"id": "34",
+		"name": "Geometric Nebula",
+		"category": "Abstract",
+		"aspectRatio": "1:1",
+		"pieceCount": 100,
+		"prompt": "An abstract cosmic composition of overlapping translucent geometric shapes and swirling nebula colors in deep purple teal and gold, luminous digital art with layered depth and intricate patterns."
+	},
+	{
+		"id": "35",
+		"name": "Liquid Marble Flow",
+		"category": "Abstract",
+		"aspectRatio": "1:1",
+		"pieceCount": 144,
+		"prompt": "Abstract liquid marble fluid art with swirling veins of turquoise coral and gold on cream, high-resolution pour painting texture, elegant continuous patterns filling the frame."
+	},
+	{
+		"id": "36",
+		"name": "Kaleidoscope Crystals",
+		"category": "Abstract",
+		"aspectRatio": "1:1",
+		"pieceCount": 225,
+		"prompt": "A kaleidoscopic arrangement of faceted crystal shards in rainbow hues catching light, radial symmetry, sparkling prismatic reflections, dense abstract detail ideal for a hard puzzle."
+	},
+	{
+		"id": "37",
+		"name": "Ink Bloom on Paper",
+		"category": "Abstract",
+		"aspectRatio": "3:4",
+		"pieceCount": 108,
+		"prompt": "Abstract alcohol ink blooms in indigo magenta and amber spreading across white paper, organic cellular patterns and translucent layers, elegant contemporary abstract art."
+	},
+	{
+		"id": "38",
+		"name": "Neon Grid Horizon",
+		"category": "Abstract",
+		"aspectRatio": "4:3",
+		"pieceCount": 108,
+		"prompt": "A retro-futuristic neon grid stretching toward a glowing horizon under a digital sunset sky of magenta and cyan, synthwave abstract landscape with clean geometric lines."
+	},
+	{
+		"id": "39",
+		"name": "Paper Cut Forest",
+		"category": "Abstract",
+		"aspectRatio": "1:1",
+		"pieceCount": 81,
+		"prompt": "Layered paper-cut art of a forest silhouette with multiple depth layers in soft greens blues and cream, craft-style abstract landscape with clean edges and shadow gaps."
+	},
+	{
+		"id": "40",
+		"name": "Origami Crane Swarm",
+		"category": "Abstract",
+		"aspectRatio": "1:1",
+		"pieceCount": 121,
+		"prompt": "A swirling flock of colorful origami paper cranes in flight against a soft gradient sky, geometric folded paper textures, playful abstract composition with many distinct shapes."
+	},
+	{
+		"id": "41",
+		"name": "Parisian Pastry Counter",
+		"category": "Food",
+		"aspectRatio": "1:1",
+		"pieceCount": 100,
+		"prompt": "An overhead view of a Parisian pastry counter filled with colorful macarons eclairs tarts and croissants, warm bakery light, appetizing food photography with rich texture and variety."
+	},
+	{
+		"id": "42",
+		"name": "Sushi Chef Board",
+		"category": "Food",
+		"aspectRatio": "4:3",
+		"pieceCount": 108,
+		"prompt": "A beautifully arranged sushi platter on dark slate with nigiri rolls edamame and pickled ginger, restaurant food photography, fresh colors and precise culinary detail."
+	},
+	{
+		"id": "43",
+		"name": "Farmers Market Abundance",
+		"category": "Food",
+		"aspectRatio": "1:1",
+		"pieceCount": 144,
+		"prompt": "A crowded farmers market table overflowing with colorful produce, heirloom tomatoes citrus berries and leafy greens, vibrant natural light food photography with dense visual variety."
+	},
+	{
+		"id": "44",
+		"name": "Italian Pasta Table",
+		"category": "Food",
+		"aspectRatio": "3:4",
+		"pieceCount": 48,
+		"prompt": "A rustic Italian table scene with bowls of pasta, fresh basil, olive oil, wine glasses and a checkered napkin, warm candlelit ambiance, inviting food lifestyle photography."
+	},
+	{
+		"id": "45",
+		"name": "Ice Cream Parlor Dreams",
+		"category": "Food",
+		"aspectRatio": "1:1",
+		"pieceCount": 81,
+		"prompt": "A cheerful ice cream parlor counter with scoops of many colorful flavors in metal tubs, sprinkles waffle cones and neon menu signs, bright playful food photography."
+	},
+	{
+		"id": "46",
+		"name": "Spice Market Souk",
+		"category": "Food",
+		"aspectRatio": "4:3",
+		"pieceCount": 192,
+		"prompt": "A Middle Eastern spice market with mountains of colorful powdered spices in sacks and bowls, saffron turmeric paprika and dried chilies, rich textured travel food photography."
+	},
+	{
+		"id": "47",
+		"name": "Hot Air Balloons Cappadocia",
+		"category": "Travel",
+		"aspectRatio": "1:1",
+		"pieceCount": 100,
+		"prompt": "Dozens of colorful hot air balloons rising over the fairy chimneys of Cappadocia at sunrise, soft golden light and pastel sky, iconic travel photography with many distinct balloon patterns."
+	},
+	{
+		"id": "48",
+		"name": "Machu Picchu Morning",
+		"category": "Travel",
+		"aspectRatio": "4:3",
+		"pieceCount": 108,
+		"prompt": "Machu Picchu ancient stone ruins emerging from morning mist with steep green Andes peaks behind, dramatic travel landscape photography, historic architecture in nature."
+	},
+	{
+		"id": "49",
+		"name": "Amalfi Coast Drive",
+		"category": "Travel",
+		"aspectRatio": "3:4",
+		"pieceCount": 108,
+		"prompt": "A winding coastal road along the Amalfi Coast with pastel cliffside villages, sparkling Mediterranean sea, lemon trees and dramatic cliffs, sun-drenched Italian travel photography."
+	},
+	{
+		"id": "50",
+		"name": "Kyoto Night Lanterns",
+		"category": "Travel",
+		"aspectRatio": "1:1",
+		"pieceCount": 121,
+		"prompt": "A narrow Kyoto alley at night lined with glowing paper lanterns, traditional wooden facades, wet stone path reflections, atmospheric Japanese travel photography with warm light."
+	}
+]

@@ -3,9 +3,12 @@ import * as pulumi from '@pulumi/pulumi';
 
 export const ADMIN_ACCESS_PATHS = ['/admin', '/admin/*', '/api/admin', '/api/admin/*'] as const;
 export const DEFAULT_ADMIN_ACCESS_SESSION_DURATION = '12h';
+/** Default lifetime for the non-interactive CLI service token (1 year). */
+export const DEFAULT_ADMIN_CLI_SERVICE_TOKEN_DURATION = '8760h';
 
 const ADMIN_ACCESS_APPLICATION_NAME = 'Perseus Admin';
 const ADMIN_ACCESS_POLICY_NAME = 'Allow configured admin on trusted device';
+const ADMIN_ACCESS_SERVICE_AUTH_POLICY_NAME = 'Service token for admin CLI uploads';
 const ADMIN_ACCESS_EMAIL_PATTERN = /^[^\s@,]+@[^\s@,]+\.[^\s@,]+$/;
 const URL_SCHEME_PATTERN = /^[a-z][a-z0-9+.-]*:\/\//i;
 const ADMIN_ACCESS_APP_FLAGS = {
@@ -26,6 +29,8 @@ export interface BuildAdminAccessApplicationArgs {
 	hostname: string;
 	adminEmail: pulumi.Input<string>;
 	postureRuleId: pulumi.Input<string>;
+	/** When set, adds a nonIdentity (Service Auth) policy for this token id. */
+	cliServiceTokenId?: pulumi.Input<string>;
 	sessionDuration?: pulumi.Input<string>;
 }
 
@@ -35,12 +40,15 @@ export interface CreateAdminAccessResourcesArgs {
 	adminEmail: pulumi.Input<string>;
 	deviceSerialsJson: pulumi.Input<string>;
 	sessionDuration?: pulumi.Input<string>;
+	cliServiceTokenDuration?: pulumi.Input<string>;
 }
 
 export interface AdminAccessResources {
 	deviceSerialList: cloudflare.ZeroTrustList;
 	devicePostureRule: cloudflare.ZeroTrustDevicePostureRule;
 	application: cloudflare.ZeroTrustAccessApplication;
+	/** Non-interactive service token for CLI/admin automation (client_id + client_secret). */
+	cliServiceToken: cloudflare.ZeroTrustAccessServiceToken;
 }
 
 export function parseAdminDeviceSerials(rawValue: string): string[] {
@@ -178,10 +186,33 @@ export function buildAdminAccessPolicy(
 	};
 }
 
+/**
+ * Service Auth policy for non-browser clients (scripts, CI).
+ * Must use decision `nonIdentity` — embedding a service token in an `allow`
+ * policy does not work (Cloudflare requires a separate Service Auth policy).
+ * @see https://developers.cloudflare.com/cloudflare-one/access-controls/service-credentials/service-tokens/
+ */
+export function buildAdminCliServiceAuthPolicy(
+	serviceTokenId: pulumi.Input<string>
+): AdminAccessApplicationPolicy {
+	return {
+		name: ADMIN_ACCESS_SERVICE_AUTH_POLICY_NAME,
+		decision: 'nonIdentity',
+		precedence: 2,
+		includes: [{ serviceToken: { tokenId: serviceTokenId } }]
+	};
+}
+
 export function buildAdminAccessApplicationArgs(
 	args: BuildAdminAccessApplicationArgs
 ): AdminAccessApplicationArgs {
 	const hostname = normalizeAdminAccessHostname(args.hostname);
+	const policies: AdminAccessApplicationPolicy[] = [
+		buildAdminAccessPolicy(args.adminEmail, args.postureRuleId)
+	];
+	if (args.cliServiceTokenId !== undefined) {
+		policies.push(buildAdminCliServiceAuthPolicy(args.cliServiceTokenId));
+	}
 
 	return {
 		accountId: args.accountId,
@@ -191,7 +222,7 @@ export function buildAdminAccessApplicationArgs(
 		destinations: buildAdminAccessDestinations(hostname),
 		sessionDuration: args.sessionDuration ?? DEFAULT_ADMIN_ACCESS_SESSION_DURATION,
 		...ADMIN_ACCESS_APP_FLAGS,
-		policies: [buildAdminAccessPolicy(args.adminEmail, args.postureRuleId)]
+		policies
 	};
 }
 
@@ -225,6 +256,17 @@ export function createAdminAccessResources(
 		{ dependsOn: deviceSerialList }
 	);
 
+	// Non-interactive Access credentials for admin CLI / scripts (service token).
+	// Browser admin still uses email + device posture; this token is Service Auth only.
+	const cliServiceToken = new cloudflare.ZeroTrustAccessServiceToken(
+		'admin-access-cli-service-token',
+		{
+			accountId: args.accountId,
+			name: 'Perseus Admin CLI',
+			duration: args.cliServiceTokenDuration ?? DEFAULT_ADMIN_CLI_SERVICE_TOKEN_DURATION
+		}
+	);
+
 	const application = new cloudflare.ZeroTrustAccessApplication(
 		'admin-access-application',
 		{
@@ -235,14 +277,18 @@ export function createAdminAccessResources(
 			destinations: hostname.apply(buildAdminAccessDestinations),
 			sessionDuration: args.sessionDuration ?? DEFAULT_ADMIN_ACCESS_SESSION_DURATION,
 			...ADMIN_ACCESS_APP_FLAGS,
-			policies: [buildAdminAccessPolicy(args.adminEmail, devicePostureRule.id)]
+			policies: [
+				buildAdminAccessPolicy(args.adminEmail, devicePostureRule.id),
+				buildAdminCliServiceAuthPolicy(cliServiceToken.id)
+			]
 		},
-		{ dependsOn: devicePostureRule }
+		{ dependsOn: [devicePostureRule, cliServiceToken] }
 	);
 
 	return {
 		deviceSerialList,
 		devicePostureRule,
-		application
+		application,
+		cliServiceToken
 	};
 }

@@ -21,6 +21,10 @@
 		"test:unit": "turbo test:unit",
 		"test:e2e": "turbo test:e2e",
 		"admin:upload": "bun scripts/admin-upload-puzzle.ts",
+		"admin:startup:login": "bun scripts/admin-bulk-upload-startup.ts login",
+		"admin:startup:set-token": "bun scripts/admin-bulk-upload-startup.ts set-token",
+		"admin:startup:status": "bun scripts/admin-bulk-upload-startup.ts status",
+		"admin:startup:upload": "bun scripts/admin-bulk-upload-startup.ts upload",
 		"deploy": "PUBLIC_API_BASE= turbo build && turbo pulumi:up --filter=@perseus/infrastructure",
 		"prepare": "husky"
 	},
