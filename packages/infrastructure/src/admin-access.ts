@@ -188,7 +188,7 @@ export function buildAdminAccessPolicy(
 
 /**
  * Service Auth policy for non-browser clients (scripts, CI).
- * Must use decision `nonIdentity` — embedding a service token in an `allow`
+ * Must use decision `non_identity` — embedding a service token in an `allow`
  * policy does not work (Cloudflare requires a separate Service Auth policy).
  * @see https://developers.cloudflare.com/cloudflare-one/access-controls/service-credentials/service-tokens/
  */
@@ -197,7 +197,7 @@ export function buildAdminCliServiceAuthPolicy(
 ): AdminAccessApplicationPolicy {
 	return {
 		name: ADMIN_ACCESS_SERVICE_AUTH_POLICY_NAME,
-		decision: 'nonIdentity',
+		decision: 'non_identity',
 		precedence: 2,
 		includes: [{ serviceToken: { tokenId: serviceTokenId } }]
 	};

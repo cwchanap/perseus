@@ -204,10 +204,10 @@ describe('buildAdminAccessPolicy', () => {
 });
 
 describe('buildAdminCliServiceAuthPolicy', () => {
-	it('uses nonIdentity decision for service token auth', () => {
+	it('uses non_identity decision for service token auth', () => {
 		expect(buildAdminCliServiceAuthPolicy('service-token-id')).toEqual({
 			name: 'Service token for admin CLI uploads',
-			decision: 'nonIdentity',
+			decision: 'non_identity',
 			precedence: 2,
 			includes: [{ serviceToken: { tokenId: 'service-token-id' } }]
 		});
@@ -264,7 +264,7 @@ describe('buildAdminAccessApplicationArgs', () => {
 		expect(args.policies).toHaveLength(2);
 		expect(args.policies?.[1]).toEqual({
 			name: 'Service token for admin CLI uploads',
-			decision: 'nonIdentity',
+			decision: 'non_identity',
 			precedence: 2,
 			includes: [{ serviceToken: { tokenId: 'cli-token-id' } }]
 		});
