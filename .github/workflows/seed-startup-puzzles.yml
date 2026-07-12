@@ -3,6 +3,10 @@ name: Seed Startup Puzzles
 # Uploads curated startup puzzles to production via the admin API.
 # Requires the Access CLI service token from the infrastructure stack
 # (adminCliAccessClientId / adminCliAccessClientSecret) after that stack is deployed.
+#
+# Seed images are not stored in git (scripts/startup-seed/images is ignored).
+# This workflow only works if images are present in the checkout by some other
+# means; prefer local: bun run admin:startup:upload
 on:
   workflow_dispatch:
     inputs:

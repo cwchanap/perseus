@@ -85,10 +85,13 @@ Image pixel aspect must match `--aspect` (the API validates dimensions).
 
 ### Bulk / startup catalog
 
-Catalog + images under `scripts/startup-seed/` (or `data/startup-puzzles/` for local generation work).
+- Catalog (tracked): `scripts/startup-seed/catalog.json`
+- Images (**not** committed): put rasters next to the catalog under `scripts/startup-seed/images/`, or use a local dir such as `data/startup-puzzles/images/` (`data/` is gitignored)
+
+Each catalog entry needs a matching file named `{id}-*.jpg` (e.g. `01-alpine-lake-mirror.jpg`).
 
 ```bash
-# Dry-run first 5
+# Dry-run first 5 (defaults: scripts/startup-seed catalog + images)
 bun run admin:startup:upload -- --dry-run --limit 5
 
 # Production: first 5
@@ -97,11 +100,11 @@ bun run admin:startup:upload -- --limit 5
 # Range
 bun run admin:startup:upload -- --from 6 --to 10
 
-# Custom paths
+# Local-generated assets under data/
 bun run admin:startup:upload -- \
   --server https://perseus.cwchanap.dev \
-  --catalog scripts/startup-seed/catalog.json \
-  --images scripts/startup-seed/images \
+  --catalog data/startup-puzzles/catalog.json \
+  --images data/startup-puzzles/images \
   --limit 5
 ```
 
@@ -112,18 +115,12 @@ bun run admin:startup:upload -- \
 
 Useful options: `--from`, `--to`, `--limit`, `--delay-ms`, `--dry-run`, `--skip-access` (local only).
 
-Catalog entries need matching image files named `{id}-*.jpg` (e.g. `01-alpine-lake-mirror.jpg`).
-
 ### CI seed workflow
 
-Without local Pulumi credentials, seed from GitHub Actions (uses stack outputs + secrets in the `production` environment):
-
-```bash
-gh workflow run seed-startup-puzzles.yml -f limit=5
-```
+`gh workflow run seed-startup-puzzles.yml` uses stack outputs + secrets, but expects images already present under `scripts/startup-seed/images/` in the checkout. Prefer local CLI upload for operator-held assets so binaries stay out of git.
 
 ### Notes
 
 - Prefer **Access service tokens** for automation. Do not rely on copying `CF_Authorization` cookies or `cloudflared access login` for scripts (device posture / edge token transfer is unreliable for headless use).
 - Uploaded puzzles start as `processing` until the workflow finishes; they appear in the gallery when `status` is `ready`.
-- Keep service token secrets out of git. `apps/api/.env` is gitignored.
+- Keep service token secrets and seed images out of git. `apps/api/.env` and `data/` are gitignored; `scripts/startup-seed/images/*` ignores raster files.
