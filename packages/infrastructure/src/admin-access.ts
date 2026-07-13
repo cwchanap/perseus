@@ -23,6 +23,7 @@ type AdminAccessDestination = cloudflare.types.input.ZeroTrustAccessApplicationD
 type AdminAccessApplicationPolicy = cloudflare.types.input.ZeroTrustAccessApplicationPolicy;
 type AdminAccessApplicationArgs = cloudflare.ZeroTrustAccessApplicationArgs;
 type AdminDeviceSerialItem = cloudflare.types.input.ZeroTrustListItem;
+type CliServiceTokenArgs = cloudflare.ZeroTrustAccessServiceTokenArgs;
 
 export interface BuildAdminAccessApplicationArgs {
 	accountId: pulumi.Input<string>;
@@ -126,7 +127,8 @@ export function normalizeAdminAccessHostname(rawValue: string): string {
 }
 
 function hasExplicitAuthorityPort(valueWithScheme: string): boolean {
-	// Caller guarantees valueWithScheme always has a scheme (line 79 adds https:// if missing)
+	// Caller guarantees valueWithScheme always has a scheme (normalizeAdminAccessHostname
+	// prepends https:// if missing).
 	const authority = valueWithScheme.slice(valueWithScheme.indexOf('//') + 2).split(/[/?#]/, 1)[0];
 	const hostAuthority = authority.slice(authority.lastIndexOf('@') + 1);
 
@@ -226,6 +228,17 @@ export function buildAdminAccessApplicationArgs(
 	};
 }
 
+export function buildCliServiceTokenArgs(args: {
+	accountId: pulumi.Input<string>;
+	cliServiceTokenDuration?: pulumi.Input<string>;
+}): CliServiceTokenArgs {
+	return {
+		accountId: args.accountId,
+		name: 'Perseus Admin CLI',
+		duration: args.cliServiceTokenDuration ?? DEFAULT_ADMIN_CLI_SERVICE_TOKEN_DURATION
+	};
+}
+
 export function createAdminAccessResources(
 	args: CreateAdminAccessResourcesArgs
 ): AdminAccessResources {
@@ -260,11 +273,10 @@ export function createAdminAccessResources(
 	// Browser admin still uses email + device posture; this token is Service Auth only.
 	const cliServiceToken = new cloudflare.ZeroTrustAccessServiceToken(
 		'admin-access-cli-service-token',
-		{
+		buildCliServiceTokenArgs({
 			accountId: args.accountId,
-			name: 'Perseus Admin CLI',
-			duration: args.cliServiceTokenDuration ?? DEFAULT_ADMIN_CLI_SERVICE_TOKEN_DURATION
-		}
+			cliServiceTokenDuration: args.cliServiceTokenDuration
+		})
 	);
 
 	const application = new cloudflare.ZeroTrustAccessApplication(

@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest';
 import {
 	ADMIN_ACCESS_PATHS,
 	DEFAULT_ADMIN_ACCESS_SESSION_DURATION,
+	DEFAULT_ADMIN_CLI_SERVICE_TOKEN_DURATION,
 	buildAdminAccessApplicationArgs,
 	buildAdminAccessDestinations,
 	buildAdminAccessPolicy,
 	buildAdminCliServiceAuthPolicy,
 	buildAdminDeviceSerialItems,
+	buildCliServiceTokenArgs,
 	normalizeAdminAccessEmail,
 	normalizeAdminAccessHostname,
 	parseAdminDeviceSerials
@@ -210,6 +212,42 @@ describe('buildAdminCliServiceAuthPolicy', () => {
 			decision: 'non_identity',
 			precedence: 2,
 			includes: [{ serviceToken: { tokenId: 'service-token-id' } }]
+		});
+	});
+});
+
+describe('buildCliServiceTokenArgs', () => {
+	it('uses the default duration when cliServiceTokenDuration is not provided', () => {
+		expect(buildCliServiceTokenArgs({ accountId: 'account-id' })).toEqual({
+			accountId: 'account-id',
+			name: 'Perseus Admin CLI',
+			duration: DEFAULT_ADMIN_CLI_SERVICE_TOKEN_DURATION
+		});
+	});
+
+	it('passes a configured cliServiceTokenDuration through to the token resource', () => {
+		expect(
+			buildCliServiceTokenArgs({
+				accountId: 'account-id',
+				cliServiceTokenDuration: '720h'
+			})
+		).toEqual({
+			accountId: 'account-id',
+			name: 'Perseus Admin CLI',
+			duration: '720h'
+		});
+	});
+
+	it('uses the default duration when cliServiceTokenDuration is undefined', () => {
+		expect(
+			buildCliServiceTokenArgs({
+				accountId: 'account-id',
+				cliServiceTokenDuration: undefined
+			})
+		).toEqual({
+			accountId: 'account-id',
+			name: 'Perseus Admin CLI',
+			duration: DEFAULT_ADMIN_CLI_SERVICE_TOKEN_DURATION
 		});
 	});
 });

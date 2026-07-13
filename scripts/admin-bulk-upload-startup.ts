@@ -285,7 +285,8 @@ async function probeAccessToken(
 				'cf-access-token': token,
 				Cookie: `CF_Authorization=${token}`
 			},
-			redirect: 'manual'
+			redirect: 'manual',
+			signal: AbortSignal.timeout(PROBE_TIMEOUT_MS)
 		});
 		if (res.status === 302 || res.status === 403) return 'blocked';
 		// 401 = reached the app (no admin session), 200 = reached the app
@@ -435,35 +436,33 @@ function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const FETCH_TIMEOUT_MS = 30_000;
+const UPLOAD_TIMEOUT_MS = 120_000;
+const PROBE_TIMEOUT_MS = 15_000;
+
 export async function fetchExistingNames(
 	server: string,
 	baseHeaders: Record<string, string>,
 	cookie: string
 ): Promise<Set<string>> {
-	try {
-		const res = await fetch(`${server}/api/admin/puzzles`, {
-			method: 'GET',
-			headers: { ...baseHeaders, Cookie: cookie },
-			redirect: 'manual'
-		});
-		if (!res.ok) {
-			console.error(
-				`Warning: could not fetch existing puzzles (${res.status}). Idempotency check skipped.`
-			);
-			return new Set();
-		}
-		const payload = (await res.json()) as { puzzles?: Array<{ name?: string }> };
-		const names = new Set<string>();
-		for (const p of payload.puzzles ?? []) {
-			if (typeof p.name === 'string' && p.name.trim()) names.add(p.name.trim());
-		}
-		return names;
-	} catch (error) {
-		console.error(
-			`Warning: failed to fetch existing puzzles (${error instanceof Error ? error.message : error}). Idempotency check skipped.`
+	const res = await fetch(`${server}/api/admin/puzzles`, {
+		method: 'GET',
+		headers: { ...baseHeaders, Cookie: cookie },
+		redirect: 'manual',
+		signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
+	});
+	if (!res.ok) {
+		throw new Error(
+			`Could not fetch existing puzzles (${res.status} ${res.statusText}). ` +
+				'Aborting to avoid duplicate uploads — re-run after verifying the API is reachable.'
 		);
-		return new Set();
 	}
+	const payload = (await res.json()) as { puzzles?: Array<{ name?: string }> };
+	const names = new Set<string>();
+	for (const p of payload.puzzles ?? []) {
+		if (typeof p.name === 'string' && p.name.trim()) names.add(p.name.trim());
+	}
+	return names;
 }
 
 export function selectEntries(catalog: CatalogEntry[], options: Options): CatalogEntry[] {
@@ -473,6 +472,58 @@ export function selectEntries(catalog: CatalogEntry[], options: Options): Catalo
 	});
 	if (options.limit !== undefined) return filtered.slice(0, options.limit);
 	return filtered;
+}
+
+const CATALOG_ENTRY_KEYS: Record<keyof CatalogEntry, 'string' | 'number'> = {
+	id: 'string',
+	name: 'string',
+	category: 'string',
+	aspectRatio: 'string',
+	pieceCount: 'number',
+	prompt: 'string'
+};
+
+export function validateCatalog(raw: unknown, source: string): CatalogEntry[] {
+	if (!Array.isArray(raw)) {
+		throw new Error(`Catalog at ${source} must be a JSON array`);
+	}
+	if (raw.length === 0) {
+		throw new Error(`Catalog at ${source} is empty`);
+	}
+	const seenIds = new Set<string>();
+	for (let i = 0; i < raw.length; i++) {
+		const entry = raw[i];
+		if (typeof entry !== 'object' || entry === null) {
+			throw new Error(`Catalog entry ${i} at ${source} must be an object`);
+		}
+		for (const [key, expectedType] of Object.entries(CATALOG_ENTRY_KEYS)) {
+			const value = (entry as Record<string, unknown>)[key];
+			if (value === undefined || value === null) {
+				throw new Error(`Catalog entry ${i} at ${source} is missing required field: ${key}`);
+			}
+			if (expectedType === 'string' && typeof value !== 'string') {
+				throw new Error(`Catalog entry ${i} at ${source} field "${key}" must be a string`);
+			}
+			if (expectedType === 'number' && typeof value !== 'number') {
+				throw new Error(`Catalog entry ${i} at ${source} field "${key}" must be a number`);
+			}
+			if (expectedType === 'string' && typeof value === 'string' && !value.trim()) {
+				throw new Error(`Catalog entry ${i} at ${source} field "${key}" must not be blank`);
+			}
+			if (key === 'pieceCount' && typeof value === 'number' && !Number.isInteger(value)) {
+				throw new Error(`Catalog entry ${i} at ${source} field "pieceCount" must be an integer`);
+			}
+			if (key === 'pieceCount' && typeof value === 'number' && value <= 0) {
+				throw new Error(`Catalog entry ${i} at ${source} field "pieceCount" must be positive`);
+			}
+		}
+		const id = (entry as CatalogEntry).id;
+		if (seenIds.has(id)) {
+			throw new Error(`Catalog at ${source} has duplicate id: ${id}`);
+		}
+		seenIds.add(id);
+	}
+	return raw as CatalogEntry[];
 }
 
 function runCloudflaredLogin(): Promise<number> {
@@ -589,44 +640,66 @@ const MAX_RETRY_ATTEMPTS = 3;
 const RETRY_BASE_DELAY_MS = 1000;
 
 /**
+ * Retry parameters exported as a mutable object so tests can override the sleep
+ * function without waiting real time. Mutate `retryConfig.sleepFn` in test setup
+ * and restore it in teardown.
+ */
+export const retryConfig = {
+	maxAttempts: MAX_RETRY_ATTEMPTS,
+	baseDelayMs: RETRY_BASE_DELAY_MS,
+	sleepFn: sleep
+};
+
+/**
  * POST the puzzle form with bounded retry for transient failures (5xx responses
  * and network errors). 4xx responses are not retried — they are deterministic
  * validation/authorization failures.
+ *
+ * To prevent duplicate puzzles when the server creates the puzzle but the
+ * response is lost (network error or post-creation 5xx), the entry name is
+ * re-checked against existing puzzles before each retry. If the name already
+ * exists, a synthetic OK response is returned instead of re-POSTing.
  */
 export async function uploadWithRetry(
 	server: string,
 	baseHeaders: Record<string, string>,
 	cookie: string,
-	formData: FormData
+	formData: FormData,
+	entryName: string
 ): Promise<Response> {
 	let lastError: Error | undefined;
-	for (let attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
+	const maxAttempts = retryConfig.maxAttempts;
+	for (let attempt = 1; attempt <= maxAttempts; attempt++) {
 		try {
 			const response = await fetch(`${server}/api/admin/puzzles`, {
 				method: 'POST',
 				headers: { ...baseHeaders, Cookie: cookie },
 				body: formData,
-				redirect: 'manual'
+				redirect: 'manual',
+				signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS)
 			});
 			if (response.ok || response.status < 500) return response;
 			// 5xx — transient, retry
 			lastError = new Error(`HTTP ${response.status} ${response.statusText}`);
-			if (attempt < MAX_RETRY_ATTEMPTS) {
-				const backoff = RETRY_BASE_DELAY_MS * 2 ** (attempt - 1);
-				console.error(
-					`  retry ${attempt}/${MAX_RETRY_ATTEMPTS} after ${backoff}ms (${lastError.message})`
-				);
-				await sleep(backoff);
-			}
 		} catch (error) {
 			lastError = error instanceof Error ? error : new Error(String(error));
-			if (attempt < MAX_RETRY_ATTEMPTS) {
-				const backoff = RETRY_BASE_DELAY_MS * 2 ** (attempt - 1);
-				console.error(
-					`  retry ${attempt}/${MAX_RETRY_ATTEMPTS} after ${backoff}ms (${lastError.message})`
+		}
+		if (attempt < maxAttempts) {
+			// Before retrying: check if the failed attempt actually succeeded
+			// server-side (response lost / post-creation 5xx). If so, return a
+			// synthetic OK instead of re-POSTing — re-POSTing would create a
+			// duplicate puzzle since the API generates a fresh UUID per upload.
+			const existing = await fetchExistingNames(server, baseHeaders, cookie).catch(() => null);
+			if (existing?.has(entryName.trim())) {
+				console.log(`  verified: ${entryName} already on server — skipping retry`);
+				return new Response(
+					JSON.stringify({ id: 'verified', status: 'response lost — verified via re-fetch' }),
+					{ status: 200, headers: { 'Content-Type': 'application/json' } }
 				);
-				await sleep(backoff);
 			}
+			const backoff = retryConfig.baseDelayMs * 2 ** (attempt - 1);
+			console.error(`  retry ${attempt}/${maxAttempts} after ${backoff}ms (${lastError.message})`);
+			await retryConfig.sleepFn(backoff);
 		}
 	}
 	throw lastError ?? new Error('Upload failed after retries');
@@ -673,7 +746,8 @@ Or add those two keys to apps/api/.env, then:
 		}
 	}
 
-	const catalog = (await Bun.file(options.catalogPath).json()) as CatalogEntry[];
+	const catalogRaw = await Bun.file(options.catalogPath).json();
+	const catalog = validateCatalog(catalogRaw, options.catalogPath);
 	const selected = selectEntries(catalog, options);
 	if (selected.length === 0) {
 		console.error('No catalog entries match the selected range.');
@@ -703,7 +777,8 @@ Or add those two keys to apps/api/.env, then:
 		method: 'POST',
 		headers: { ...baseHeaders, 'Content-Type': 'application/json' },
 		body: JSON.stringify({ passkey: options.passkey }),
-		redirect: 'manual'
+		redirect: 'manual',
+		signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
 	});
 	if (!loginResponse.ok) {
 		throw new Error(`Admin login failed: ${await readError(loginResponse)}`);
@@ -752,7 +827,13 @@ Or add those two keys to apps/api/.env, then:
 		formData.append('image', image, basename(imagePath));
 
 		try {
-			const uploadResponse = await uploadWithRetry(options.server, baseHeaders, cookie, formData);
+			const uploadResponse = await uploadWithRetry(
+				options.server,
+				baseHeaders,
+				cookie,
+				formData,
+				entry.name
+			);
 			if (!uploadResponse.ok) {
 				const detail = await readError(uploadResponse);
 				results.push({ id: entry.id, name: entry.name, ok: false, detail });
@@ -770,8 +851,29 @@ Or add those two keys to apps/api/.env, then:
 			}
 		} catch (error) {
 			const detail = error instanceof Error ? error.message : String(error);
-			results.push({ id: entry.id, name: entry.name, ok: false, detail });
-			console.error(`FAIL ${entry.id} ${entry.name}: ${detail}`);
+			// All retries exhausted. The final attempt may have succeeded
+			// server-side but lost its response. Re-fetch to verify before
+			// declaring failure — prevents false negatives on flaky connections.
+			let verified = false;
+			try {
+				const refreshed = await fetchExistingNames(options.server, baseHeaders, cookie);
+				verified = refreshed.has(entry.name.trim());
+			} catch {
+				// re-fetch itself failed; cannot verify — record original failure
+			}
+			if (verified) {
+				results.push({
+					id: entry.id,
+					name: entry.name,
+					ok: true,
+					detail: 'verified — response lost on final attempt'
+				});
+				existingNames.add(entry.name.trim());
+				console.log(`OK   ${entry.id} ${entry.name} -> verified (response lost on final attempt)`);
+			} else {
+				results.push({ id: entry.id, name: entry.name, ok: false, detail });
+				console.error(`FAIL ${entry.id} ${entry.name}: ${detail}`);
+			}
 		}
 
 		if (options.delayMs > 0) await sleep(options.delayMs);
