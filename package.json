@@ -25,6 +25,7 @@
 		"admin:startup:set-token": "bun scripts/admin-bulk-upload-startup.ts set-token",
 		"admin:startup:status": "bun scripts/admin-bulk-upload-startup.ts status",
 		"admin:startup:upload": "bun scripts/admin-bulk-upload-startup.ts upload",
+		"test:scripts": "bun test scripts/",
 		"deploy": "PUBLIC_API_BASE= turbo build && turbo pulumi:up --filter=@perseus/infrastructure",
 		"prepare": "husky"
 	},

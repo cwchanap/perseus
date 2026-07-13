@@ -88,7 +88,7 @@ Image pixel aspect must match `--aspect` (the API validates dimensions).
 - Catalog (tracked): `scripts/startup-seed/catalog.json`
 - Images (**not** committed): put rasters next to the catalog under `scripts/startup-seed/images/`, or use a local dir such as `data/startup-puzzles/images/` (`data/` is gitignored)
 
-Each catalog entry needs a matching file named `{id}-*.jpg` (e.g. `01-alpine-lake-mirror.jpg`).
+Each catalog entry needs a matching file named `{id}-*.{jpg,jpeg,png,webp}` (e.g. `01-alpine-lake-mirror.jpg`).
 
 ```bash
 # Dry-run first 5 (defaults: scripts/startup-seed catalog + images)

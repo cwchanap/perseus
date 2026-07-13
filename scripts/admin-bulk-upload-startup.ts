@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Bulk-upload startup puzzle images from data/startup-puzzles/.
+ * Bulk-upload startup puzzle images from scripts/startup-seed/.
  *
  * Production admin API is behind Cloudflare Access. For non-interactive CLI use,
  * Cloudflare's supported approach is Access **service tokens** (not browser cookies
@@ -31,7 +31,7 @@ const ADMIN_UI = 'https://perseus.cwchanap.dev/admin';
 const ACCESS_AUD = '7fd50c02b28c32fe3abb938cebba2dc9dcec6c88f42969c28700e9a0a8a28e5f';
 const TOKEN_BASENAME = `perseus.cwchanap.dev-${ACCESS_AUD}-token`;
 
-interface CatalogEntry {
+export interface CatalogEntry {
 	id: string;
 	name: string;
 	category: string;
@@ -40,7 +40,7 @@ interface CatalogEntry {
 	prompt: string;
 }
 
-interface Options {
+export interface Options {
 	command: 'login' | 'set-token' | 'upload' | 'status';
 	server: string;
 	passkey: string;
@@ -73,7 +73,7 @@ Options:
   --passkey <value>        Admin passkey (or ADMIN_PASSKEY / apps/api/.env)
   --cf-access-token <jwt>  Access JWT (or CF_ACCESS_TOKEN / cached set-token)
   --from <n>               Start catalog id (default: 1)
-  --to <n>                 End catalog id (default: 70)
+  --to <n>                 End catalog id (default: all)
   --limit <n>              Upload at most N entries from --from
   --delay-ms <n>           Delay between uploads (default: 1500)
   --skip-access            Local API only (no Access headers)
@@ -307,7 +307,7 @@ async function parseOptions(): Promise<Options> {
 	const command = allowed.has(commandRaw ?? '') ? (commandRaw as Options['command']) : 'upload';
 
 	const from = parseIntArg(readArg(args, '--from'), '--from', 1);
-	const to = parseIntArg(readArg(args, '--to'), '--to', 70);
+	const to = parseIntArg(readArg(args, '--to'), '--to', Number.MAX_SAFE_INTEGER);
 	const limitRaw = readArg(args, '--limit');
 	const limit = limitRaw === undefined ? undefined : parseIntArg(limitRaw, '--limit', 0);
 
@@ -339,8 +339,8 @@ async function parseOptions(): Promise<Options> {
 		command,
 		server,
 		passkey,
-		catalogPath: readArg(args, '--catalog') ?? join(root, 'data/startup-puzzles/catalog.json'),
-		imagesDir: readArg(args, '--images') ?? join(root, 'data/startup-puzzles/images'),
+		catalogPath: readArg(args, '--catalog') ?? join(root, 'scripts/startup-seed/catalog.json'),
+		imagesDir: readArg(args, '--images') ?? join(root, 'scripts/startup-seed/images'),
 		tokenCachePath,
 		cfAccessToken,
 		cfClientId,
@@ -412,17 +412,29 @@ async function readError(response: Response): Promise<string> {
 	return `${response.status} ${response.statusText}`;
 }
 
-function imagePathFor(entry: CatalogEntry, imagesDir: string): string | null {
-	const glob = new Bun.Glob(`${entry.id}-*.jpg`);
+export function imagePathFor(entry: CatalogEntry, imagesDir: string): string | null {
+	const glob = new Bun.Glob(`${entry.id}-*.{jpg,jpeg,png,webp}`);
 	const matches = [...glob.scanSync({ cwd: imagesDir, absolute: true })].sort();
 	return matches[0] ?? null;
+}
+
+const MIME_BY_EXT: Record<string, string> = {
+	'.jpg': 'image/jpeg',
+	'.jpeg': 'image/jpeg',
+	'.png': 'image/png',
+	'.webp': 'image/webp'
+};
+
+export function mimeForPath(path: string): string {
+	const ext = path.toLowerCase().match(/\.[^.]+$/)?.[0] ?? '';
+	return MIME_BY_EXT[ext] ?? 'application/octet-stream';
 }
 
 function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function fetchExistingNames(
+export async function fetchExistingNames(
 	server: string,
 	baseHeaders: Record<string, string>,
 	cookie: string
@@ -453,7 +465,7 @@ async function fetchExistingNames(
 	}
 }
 
-function selectEntries(catalog: CatalogEntry[], options: Options): CatalogEntry[] {
+export function selectEntries(catalog: CatalogEntry[], options: Options): CatalogEntry[] {
 	const filtered = catalog.filter((e) => {
 		const n = Number.parseInt(e.id, 10);
 		return n >= options.from && n <= options.to;
@@ -580,7 +592,7 @@ const RETRY_BASE_DELAY_MS = 1000;
  * and network errors). 4xx responses are not retried — they are deterministic
  * validation/authorization failures.
  */
-async function uploadWithRetry(
+export async function uploadWithRetry(
 	server: string,
 	baseHeaders: Record<string, string>,
 	cookie: string,
@@ -670,8 +682,9 @@ Or add those two keys to apps/api/.env, then:
 	console.log(
 		`${options.dryRun ? 'Dry-run' : 'Uploading'} ${selected.length} puzzle(s) to ${options.server}`
 	);
+	const toLabel = options.to === Number.MAX_SAFE_INTEGER ? 'end' : options.to;
 	console.log(
-		`Range: ids ${options.from}–${options.to}${options.limit ? ` (limit ${options.limit})` : ''}`
+		`Range: ids ${options.from}–${toLabel}${options.limit ? ` (limit ${options.limit})` : ''}`
 	);
 
 	if (options.dryRun) {
@@ -729,7 +742,7 @@ Or add those two keys to apps/api/.env, then:
 			continue;
 		}
 
-		const image = Bun.file(imagePath, { type: 'image/jpeg' });
+		const image = Bun.file(imagePath, { type: mimeForPath(imagePath) });
 		const formData = new FormData();
 		formData.append('name', entry.name);
 		formData.append('pieceCount', String(entry.pieceCount));
@@ -786,7 +799,9 @@ async function main() {
 	await cmdUpload(options);
 }
 
-main().catch((error) => {
-	console.error(error instanceof Error ? error.message : error);
-	process.exit(1);
-});
+if (import.meta.main) {
+	main().catch((error) => {
+		console.error(error instanceof Error ? error.message : error);
+		process.exit(1);
+	});
+}
