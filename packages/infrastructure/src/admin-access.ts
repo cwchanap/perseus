@@ -36,7 +36,7 @@ export interface BuildAdminAccessApplicationArgs {
 
 export interface CreateAdminAccessResourcesArgs {
 	accountId: pulumi.Input<string>;
-	hostname: pulumi.Input<string>;
+	hostname: string;
 	adminEmail: pulumi.Input<string>;
 	deviceSerialsJson: pulumi.Input<string>;
 	sessionDuration?: pulumi.Input<string>;
@@ -230,7 +230,7 @@ export function createAdminAccessResources(
 	args: CreateAdminAccessResourcesArgs
 ): AdminAccessResources {
 	const serials = pulumi.output(args.deviceSerialsJson).apply(parseAdminDeviceSerials);
-	const hostname = pulumi.output(args.hostname).apply(normalizeAdminAccessHostname);
+	const hostname = normalizeAdminAccessHostname(args.hostname);
 
 	const deviceSerialList = new cloudflare.ZeroTrustList('admin-access-device-serials', {
 		accountId: args.accountId,
@@ -269,19 +269,14 @@ export function createAdminAccessResources(
 
 	const application = new cloudflare.ZeroTrustAccessApplication(
 		'admin-access-application',
-		{
+		buildAdminAccessApplicationArgs({
 			accountId: args.accountId,
-			name: ADMIN_ACCESS_APPLICATION_NAME,
-			type: 'self_hosted',
-			domain: hostname.apply((h) => `${h}/admin`),
-			destinations: hostname.apply(buildAdminAccessDestinations),
-			sessionDuration: args.sessionDuration ?? DEFAULT_ADMIN_ACCESS_SESSION_DURATION,
-			...ADMIN_ACCESS_APP_FLAGS,
-			policies: [
-				buildAdminAccessPolicy(args.adminEmail, devicePostureRule.id),
-				buildAdminCliServiceAuthPolicy(cliServiceToken.id)
-			]
-		},
+			hostname,
+			adminEmail: args.adminEmail,
+			postureRuleId: devicePostureRule.id,
+			cliServiceTokenId: cliServiceToken.id,
+			sessionDuration: args.sessionDuration
+		}),
 		{ dependsOn: [devicePostureRule, cliServiceToken] }
 	);
 

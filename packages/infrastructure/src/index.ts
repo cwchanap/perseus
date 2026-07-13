@@ -83,7 +83,8 @@ const adminAccess = createAdminAccessResources({
 	hostname: config.require('AUTH_REDIRECT_BASE_URL'),
 	adminEmail: config.requireSecret('adminAccessEmail'),
 	deviceSerialsJson: config.requireSecret('adminDeviceSerials'),
-	sessionDuration: config.get('adminAccessSessionDuration')
+	sessionDuration: config.get('adminAccessSessionDuration'),
+	cliServiceTokenDuration: config.get('adminCliServiceTokenDuration')
 });
 
 export const r2BucketName = r2Bucket.name;

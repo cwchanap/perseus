@@ -268,27 +268,28 @@ async function promptTokenInteractive(): Promise<string> {
 	return token;
 }
 
-/** Probe whether Access accepts this JWT (302/403 = bad/missing Access; 401/200 = passed Access). */
+/**
+ * Probe whether Access accepts this JWT by hitting an admin endpoint that does
+ * NOT require a passkey (GET /api/admin/puzzles). Avoids POSTing to /login,
+ * which would trip the loginRateLimit middleware and block the real upload.
+ * 302/403 = Access blocked; 401/200 = passed Access (app-level auth required).
+ */
 async function probeAccessToken(
 	server: string,
 	token: string
 ): Promise<'ok' | 'blocked' | 'error'> {
 	try {
-		const res = await fetch(`${server}/api/admin/login`, {
-			method: 'POST',
+		const res = await fetch(`${server}/api/admin/puzzles`, {
+			method: 'GET',
 			headers: {
-				'Content-Type': 'application/json',
 				'cf-access-token': token,
 				Cookie: `CF_Authorization=${token}`
 			},
-			body: JSON.stringify({ passkey: '__probe__' }),
 			redirect: 'manual'
 		});
 		if (res.status === 302 || res.status === 403) return 'blocked';
-		// 401 invalid passkey, 400, 200, 429 etc. all mean we got past Access
-		if (res.status === 200 || res.status === 401 || res.status === 400 || res.status === 429) {
-			return 'ok';
-		}
+		// 401 = reached the app (no admin session), 200 = reached the app
+		if (res.status === 200 || res.status === 401) return 'ok';
 		// 5xx still means we reached the worker
 		if (res.status >= 500) return 'ok';
 		return 'error';

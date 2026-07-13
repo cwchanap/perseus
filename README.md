@@ -117,7 +117,18 @@ Useful options: `--from`, `--to`, `--limit`, `--delay-ms`, `--dry-run`, `--skip-
 
 ### CI seed workflow
 
-`gh workflow run seed-startup-puzzles.yml` uses stack outputs + secrets, but expects images already present under `scripts/startup-seed/images/` in the checkout. Prefer local CLI upload for operator-held assets so binaries stay out of git.
+`gh workflow run seed-startup-puzzles.yml` uses Pulumi stack outputs + secrets to upload directly to production. The workflow is triggered manually (`workflow_dispatch`), not on release. Seed images are not committed to git — provide them via a GitHub release tarball:
+
+```bash
+# Create a release with the seed tarball (catalog.json + images/ at the root)
+tar -czf perseus-seed.tgz -C scripts/startup-seed catalog.json images
+gh release create seed-v1 perseus-seed.tgz
+
+# Run the workflow, pointing it at the release
+gh workflow run seed-startup-puzzles.yml -f asset_release=seed-v1 -f from=1 -f to=70
+```
+
+Alternatively, place files under `scripts/startup-seed/` in the checkout (e.g., via a private mirror). Prefer local CLI upload for operator-held assets so binaries stay out of git.
 
 ### Service token blast radius
 
@@ -127,16 +138,20 @@ To narrow the blast radius, create a separate Access application covering only `
 
 ### Token rotation
 
-The service token expires after 1 year (`DEFAULT_ADMIN_CLI_SERVICE_TOKEN_DURATION = '8760h'`). To rotate:
+The service token expires after 1 year (`DEFAULT_ADMIN_CLI_SERVICE_TOKEN_DURATION = '8760h'`). To adjust the expiration:
 
-1. `cd packages/infrastructure && pulumi config set adminCliServiceTokenDuration 8760h` (or leave default)
-2. `pulumi up` — Pulumi creates a new token and invalidates the old one
-3. Update `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET` in CI secrets and `apps/api/.env`:
+1. `cd packages/infrastructure && pulumi config set adminCliServiceTokenDuration 4380h` (6 months, or leave unset for the 1-year default)
+2. `pulumi up` — Pulumi updates the token's expiration in-place (client_id/secret stay the same)
+
+To rotate credentials (new client_id + client_secret):
+
+1. `cd packages/infrastructure && pulumi up --target-replace "urn:pulumi:production::perseus-infrastructure::cloudflare:index/zeroTrustAccessServiceToken:ZeroTrustAccessServiceToken::admin-access-cli-service-token"`
+2. Update `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET` in CI secrets and `apps/api/.env`:
    ```
    CF_ACCESS_CLIENT_ID=$(pulumi stack output adminCliAccessClientId)
    CF_ACCESS_CLIENT_SECRET=$(pulumi stack output --show-secrets adminCliAccessClientSecret)
    ```
-4. Verify: `bun run admin:startup:status`
+3. Verify: `bun run admin:startup:status`
 
 ### Idempotency
 

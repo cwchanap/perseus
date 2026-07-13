@@ -98,6 +98,9 @@ jobs:
           requested-token-type: urn:pulumi:token-type:access_token:personal
           scope: user:cwchanap
 
+      - name: Install Pulumi CLI
+        uses: pulumi/action-setup@v5
+
       - name: Upload puzzles
         working-directory: ${{ github.workspace }}
         env:
