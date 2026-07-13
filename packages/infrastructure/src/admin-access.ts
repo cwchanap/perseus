@@ -2,11 +2,19 @@ import * as cloudflare from '@pulumi/cloudflare';
 import * as pulumi from '@pulumi/pulumi';
 
 export const ADMIN_ACCESS_PATHS = ['/admin', '/admin/*', '/api/admin', '/api/admin/*'] as const;
+/**
+ * Narrow paths the CLI service token is scoped to. The broad admin app covers
+ * all admin paths with email+posture only; this narrow app adds the Service Auth
+ * policy so the service token can only reach CLI-needed endpoints (login + puzzle
+ * list/create), not player-allowlist or other admin operations.
+ */
+export const CLI_ACCESS_PATHS = ['/api/admin/login', '/api/admin/puzzles'] as const;
 export const DEFAULT_ADMIN_ACCESS_SESSION_DURATION = '12h';
 /** Default lifetime for the non-interactive CLI service token (1 year). */
 export const DEFAULT_ADMIN_CLI_SERVICE_TOKEN_DURATION = '8760h';
 
 const ADMIN_ACCESS_APPLICATION_NAME = 'Perseus Admin';
+const CLI_ACCESS_APPLICATION_NAME = 'Perseus Admin CLI';
 const ADMIN_ACCESS_POLICY_NAME = 'Allow configured admin on trusted device';
 const ADMIN_ACCESS_SERVICE_AUTH_POLICY_NAME = 'Service token for admin CLI uploads';
 const ADMIN_ACCESS_EMAIL_PATTERN = /^[^\s@,]+@[^\s@,]+\.[^\s@,]+$/;
@@ -30,8 +38,6 @@ export interface BuildAdminAccessApplicationArgs {
 	hostname: string;
 	adminEmail: pulumi.Input<string>;
 	postureRuleId: pulumi.Input<string>;
-	/** When set, adds a nonIdentity (Service Auth) policy for this token id. */
-	cliServiceTokenId?: pulumi.Input<string>;
 	sessionDuration?: pulumi.Input<string>;
 }
 
@@ -48,6 +54,8 @@ export interface AdminAccessResources {
 	deviceSerialList: cloudflare.ZeroTrustList;
 	devicePostureRule: cloudflare.ZeroTrustDevicePostureRule;
 	application: cloudflare.ZeroTrustAccessApplication;
+	/** Narrow Access app for CLI paths (login + puzzle list/create) with Service Auth. */
+	cliApplication: cloudflare.ZeroTrustAccessApplication;
 	/** Non-interactive service token for CLI/admin automation (client_id + client_secret). */
 	cliServiceToken: cloudflare.ZeroTrustAccessServiceToken;
 }
@@ -147,6 +155,14 @@ export function buildAdminAccessDestinations(hostname: string): AdminAccessDesti
 	}));
 }
 
+export function buildCliAccessDestinations(hostname: string): AdminAccessDestination[] {
+	const normalizedHostname = normalizeAdminAccessHostname(hostname);
+	return CLI_ACCESS_PATHS.map((path) => ({
+		type: 'public',
+		uri: `${normalizedHostname}${path}`
+	}));
+}
+
 export function buildAdminDeviceSerialItems(serials: string[]): AdminDeviceSerialItem[] {
 	return serials.map((serial, index) => ({
 		value: serial,
@@ -212,9 +228,6 @@ export function buildAdminAccessApplicationArgs(
 	const policies: AdminAccessApplicationPolicy[] = [
 		buildAdminAccessPolicy(args.adminEmail, args.postureRuleId)
 	];
-	if (args.cliServiceTokenId !== undefined) {
-		policies.push(buildAdminCliServiceAuthPolicy(args.cliServiceTokenId));
-	}
 
 	return {
 		accountId: args.accountId,
@@ -222,6 +235,41 @@ export function buildAdminAccessApplicationArgs(
 		type: 'self_hosted',
 		domain: `${hostname}/admin`,
 		destinations: buildAdminAccessDestinations(hostname),
+		sessionDuration: args.sessionDuration ?? DEFAULT_ADMIN_ACCESS_SESSION_DURATION,
+		...ADMIN_ACCESS_APP_FLAGS,
+		policies
+	};
+}
+
+/**
+ * Args for the narrow CLI Access application. Includes both the email+posture
+ * policy (so browser admin still works on these paths) and the Service Auth
+ * policy (for the CLI service token).
+ */
+export interface BuildCliAccessApplicationArgs {
+	accountId: pulumi.Input<string>;
+	hostname: string;
+	adminEmail: pulumi.Input<string>;
+	postureRuleId: pulumi.Input<string>;
+	cliServiceTokenId: pulumi.Input<string>;
+	sessionDuration?: pulumi.Input<string>;
+}
+
+export function buildCliAccessApplicationArgs(
+	args: BuildCliAccessApplicationArgs
+): AdminAccessApplicationArgs {
+	const hostname = normalizeAdminAccessHostname(args.hostname);
+	const policies: AdminAccessApplicationPolicy[] = [
+		buildAdminAccessPolicy(args.adminEmail, args.postureRuleId),
+		buildAdminCliServiceAuthPolicy(args.cliServiceTokenId)
+	];
+
+	return {
+		accountId: args.accountId,
+		name: CLI_ACCESS_APPLICATION_NAME,
+		type: 'self_hosted',
+		domain: `${hostname}/api/admin/puzzles`,
+		destinations: buildCliAccessDestinations(hostname),
 		sessionDuration: args.sessionDuration ?? DEFAULT_ADMIN_ACCESS_SESSION_DURATION,
 		...ADMIN_ACCESS_APP_FLAGS,
 		policies
@@ -279,9 +327,26 @@ export function createAdminAccessResources(
 		})
 	);
 
+	// Broad app: covers all admin paths with email+posture only (browser admin).
 	const application = new cloudflare.ZeroTrustAccessApplication(
 		'admin-access-application',
 		buildAdminAccessApplicationArgs({
+			accountId: args.accountId,
+			hostname,
+			adminEmail: args.adminEmail,
+			postureRuleId: devicePostureRule.id,
+			sessionDuration: args.sessionDuration
+		}),
+		{ dependsOn: [devicePostureRule, cliServiceToken] }
+	);
+
+	// Narrow app: CLI-only paths (login + puzzle list/create) with both
+	// email+posture (browser admin still works) and Service Auth (CLI token).
+	// More specific paths take precedence in Cloudflare Access, so the service
+	// token can only reach these endpoints — not player-allowlist or others.
+	const cliApplication = new cloudflare.ZeroTrustAccessApplication(
+		'admin-access-cli-application',
+		buildCliAccessApplicationArgs({
 			accountId: args.accountId,
 			hostname,
 			adminEmail: args.adminEmail,
@@ -296,6 +361,7 @@ export function createAdminAccessResources(
 		deviceSerialList,
 		devicePostureRule,
 		application,
+		cliApplication,
 		cliServiceToken
 	};
 }

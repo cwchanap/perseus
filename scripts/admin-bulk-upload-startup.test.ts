@@ -11,6 +11,11 @@ import {
 	validateCatalog,
 	cmdUpload,
 	retryConfig,
+	parseImageDimensions,
+	aspectRatiosMatch,
+	accessAppFor,
+	adminUiFor,
+	tokenBasenameFor,
 	type CatalogEntry,
 	type Options
 } from './admin-bulk-upload-startup';
@@ -161,6 +166,125 @@ describe('mimeForPath', () => {
 	});
 });
 
+// Build a minimal PNG file header with the given dimensions.
+// PNG: 8-byte signature + IHDR chunk (4-byte length + "IHDR" + 4-byte width + 4-byte height + ...)
+function minimalPng(width: number, height: number): Buffer {
+	const buf = Buffer.alloc(24);
+	// PNG signature
+	buf[0] = 0x89;
+	buf.write('PNG', 1, 'ascii');
+	buf[4] = 0x0d;
+	buf[5] = 0x0a;
+	buf[6] = 0x1a;
+	buf[7] = 0x0a;
+	// IHDR chunk length = 13
+	buf.writeUInt32BE(13, 8);
+	// "IHDR"
+	buf.write('IHDR', 12, 'ascii');
+	// width (4 bytes big-endian at offset 16)
+	buf.writeUInt32BE(width, 16);
+	// height (4 bytes big-endian at offset 20)
+	buf.writeUInt32BE(height, 20);
+	return buf;
+}
+
+describe('parseImageDimensions', () => {
+	it('parses PNG dimensions from header bytes', async () => {
+		const tmp = join(tmpdir(), `perseus-png-${Date.now()}.png`);
+		writeFileSync(tmp, minimalPng(400, 300));
+		try {
+			const file = Bun.file(tmp);
+			const dims = await parseImageDimensions(file, 'image/png');
+			expect(dims).toEqual({ width: 400, height: 300 });
+		} finally {
+			rmSync(tmp, { force: true });
+		}
+	});
+
+	it('returns null for a truncated PNG header', async () => {
+		const tmp = join(tmpdir(), `perseus-png-trunc-${Date.now()}.png`);
+		writeFileSync(tmp, Buffer.alloc(10)); // too short
+		try {
+			const file = Bun.file(tmp);
+			const dims = await parseImageDimensions(file, 'image/png');
+			expect(dims).toBeNull();
+		} finally {
+			rmSync(tmp, { force: true });
+		}
+	});
+
+	it('returns null for unsupported MIME types', async () => {
+		const tmp = join(tmpdir(), `perseus-gif-${Date.now()}.gif`);
+		writeFileSync(tmp, Buffer.alloc(100));
+		try {
+			const file = Bun.file(tmp);
+			const dims = await parseImageDimensions(file, 'image/gif');
+			expect(dims).toBeNull();
+		} finally {
+			rmSync(tmp, { force: true });
+		}
+	});
+});
+
+describe('aspectRatiosMatch', () => {
+	it('matches exact 1:1 ratio', () => {
+		expect(aspectRatiosMatch(400, 400, '1:1')).toBe(true);
+	});
+
+	it('matches exact 4:3 ratio', () => {
+		expect(aspectRatiosMatch(400, 300, '4:3')).toBe(true);
+	});
+
+	it('matches 3:4 ratio', () => {
+		expect(aspectRatiosMatch(300, 400, '3:4')).toBe(true);
+	});
+
+	it('allows 5% tolerance for rounding', () => {
+		// 3:4 at 300px wide → 400px tall expected, 398 is within 5%
+		expect(aspectRatiosMatch(300, 398, '3:4')).toBe(true);
+	});
+
+	it('rejects a clearly wrong ratio', () => {
+		expect(aspectRatiosMatch(400, 300, '1:1')).toBe(false);
+	});
+
+	it('rejects 16:9 image for 4:3 target', () => {
+		expect(aspectRatiosMatch(1920, 1080, '4:3')).toBe(false);
+	});
+});
+
+describe('accessAppFor', () => {
+	it('derives Access app URL from server', () => {
+		expect(accessAppFor('https://example.com')).toBe('https://example.com/api/admin');
+	});
+
+	it('strips trailing slashes', () => {
+		expect(accessAppFor('https://example.com/')).toBe('https://example.com/api/admin');
+	});
+});
+
+describe('adminUiFor', () => {
+	it('derives admin UI URL from server', () => {
+		expect(adminUiFor('https://example.com')).toBe('https://example.com/admin');
+	});
+
+	it('strips trailing slashes', () => {
+		expect(adminUiFor('https://example.com/')).toBe('https://example.com/admin');
+	});
+});
+
+describe('tokenBasenameFor', () => {
+	it('derives token basename from hostname and AUD', () => {
+		expect(tokenBasenameFor('https://perseus.cwchanap.dev', 'abc123')).toBe(
+			'perseus.cwchanap.dev-abc123-token'
+		);
+	});
+
+	it('handles server with path', () => {
+		expect(tokenBasenameFor('https://example.com/some/path', 'aud')).toBe('example.com-aud-token');
+	});
+});
+
 describe('fetchExistingNames', () => {
 	const originalFetch = globalThis.fetch;
 
@@ -177,7 +301,7 @@ describe('fetchExistingNames', () => {
 					}),
 					{ status: 200 }
 				)
-		) as typeof fetch;
+		) as unknown as typeof fetch;
 
 		const names = await fetchExistingNames('http://localhost', {}, 'session=1');
 		expect(names.has('Alpha')).toBe(true);
@@ -187,7 +311,9 @@ describe('fetchExistingNames', () => {
 	});
 
 	it('throws on non-OK response instead of silently degrading', async () => {
-		globalThis.fetch = mock(async () => new Response('nope', { status: 401 })) as typeof fetch;
+		globalThis.fetch = mock(
+			async () => new Response('nope', { status: 401 })
+		) as unknown as typeof fetch;
 
 		await expect(fetchExistingNames('http://localhost', {}, 'session=1')).rejects.toThrow(
 			/Could not fetch existing puzzles/
@@ -197,7 +323,7 @@ describe('fetchExistingNames', () => {
 	it('throws on network error instead of silently degrading', async () => {
 		globalThis.fetch = mock(async () => {
 			throw new Error('connection refused');
-		}) as typeof fetch;
+		}) as unknown as typeof fetch;
 
 		await expect(fetchExistingNames('http://localhost', {}, 'session=1')).rejects.toThrow(
 			/connection refused/
@@ -213,7 +339,7 @@ describe('fetchExistingNames', () => {
 					}),
 					{ status: 200 }
 				)
-		) as typeof fetch;
+		) as unknown as typeof fetch;
 
 		const names = await fetchExistingNames('http://localhost', {}, 'session=1');
 		expect(names.size).toBe(1);
@@ -252,18 +378,18 @@ describe('uploadWithRetry', () => {
 			}
 			postCalls++;
 			return postHandler(postCalls);
-		}) as typeof fetch;
+		}) as unknown as typeof fetch;
 		return { mock: fn, getPostCalls: () => postCalls };
 	}
 
-	it('returns response immediately on success (200)', async () => {
+	it('returns response immediately on success (201)', async () => {
 		const { mock: fn, getPostCalls } = mockFetchPostOnly(
-			async () => new Response('ok', { status: 200 })
+			async () => new Response('ok', { status: 201 })
 		);
 		globalThis.fetch = fn;
 
 		const res = await uploadWithRetry('http://localhost', {}, 's=1', new FormData(), 'Test');
-		expect(res.status).toBe(200);
+		expect(res.status).toBe(201);
 		expect(getPostCalls()).toBe(1);
 	});
 
@@ -281,12 +407,12 @@ describe('uploadWithRetry', () => {
 	it('retries on 5xx then succeeds', async () => {
 		const { mock: fn, getPostCalls } = mockFetchPostOnly(async (n) => {
 			if (n < 3) return new Response('err', { status: 500 });
-			return new Response('ok', { status: 200 });
+			return new Response('ok', { status: 201 });
 		});
 		globalThis.fetch = fn;
 
 		const res = await uploadWithRetry('http://localhost', {}, 's=1', new FormData(), 'Test');
-		expect(res.status).toBe(200);
+		expect(res.status).toBe(201);
 		expect(getPostCalls()).toBe(3);
 	});
 
@@ -305,12 +431,12 @@ describe('uploadWithRetry', () => {
 	it('retries on network error then succeeds', async () => {
 		const { mock: fn, getPostCalls } = mockFetchPostOnly(async (n) => {
 			if (n < 2) throw new Error('ECONNRESET');
-			return new Response('ok', { status: 200 });
+			return new Response('ok', { status: 201 });
 		});
 		globalThis.fetch = fn;
 
 		const res = await uploadWithRetry('http://localhost', {}, 's=1', new FormData(), 'Test');
-		expect(res.status).toBe(200);
+		expect(res.status).toBe(201);
 		expect(getPostCalls()).toBe(2);
 	});
 
@@ -328,7 +454,7 @@ describe('uploadWithRetry', () => {
 			}
 			postCalls++;
 			throw new Error('ECONNRESET');
-		}) as typeof fetch;
+		}) as unknown as typeof fetch;
 
 		const res = await uploadWithRetry('http://localhost', {}, 's=1', new FormData(), 'DuplicateMe');
 		expect(res.status).toBe(200);
@@ -396,6 +522,14 @@ describe('validateCatalog', () => {
 	it('rejects duplicate ids', () => {
 		const catalog = [validEntry('01'), validEntry('01')];
 		expect(() => validateCatalog(catalog, 'catalog.json')).toThrow(/duplicate id: 01/);
+	});
+
+	it('rejects duplicate names (case-insensitive after trim)', () => {
+		const catalog = [
+			{ ...validEntry('01'), name: 'Sunset' },
+			{ ...validEntry('02'), name: '  Sunset  ' }
+		];
+		expect(() => validateCatalog(catalog, 'catalog.json')).toThrow(/duplicate name: "Sunset"/);
 	});
 
 	it('rejects a non-numeric id', () => {
@@ -482,7 +616,7 @@ describe('cmdUpload', () => {
 				throw new Error('ECONNRESET');
 			}
 			return new Response('not found', { status: 404 });
-		}) as typeof fetch;
+		}) as unknown as typeof fetch;
 
 		const options = makeOptions({
 			catalogPath,
@@ -525,7 +659,7 @@ describe('cmdUpload', () => {
 				throw new Error('ECONNRESET');
 			}
 			return new Response('not found', { status: 404 });
-		}) as typeof fetch;
+		}) as unknown as typeof fetch;
 
 		const options = makeOptions({
 			catalogPath,
@@ -552,6 +686,64 @@ describe('cmdUpload', () => {
 		} finally {
 			process.exit = originalExit;
 		}
+		expect(exitCode).toBe(1);
+	});
+
+	it('rejects mis-cropped image locally before uploading', async () => {
+		// Create a 400x300 (4:3) PNG but request 1:1 aspect ratio — should fail
+		// pre-validation without hitting the network.
+		const entry = { ...makeEntry('01', 'BadCrop'), aspectRatio: '1:1' };
+		const catalogPath = join(tmpDir, 'catalog.json');
+		writeFileSync(catalogPath, JSON.stringify([entry]));
+		writeFileSync(join(tmpDir, '01-test.png'), minimalPng(400, 300));
+
+		let postCalled = false;
+		globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
+			const url = String(input);
+			if (url.endsWith('/api/admin/login')) {
+				return new Response('{"ok":true}', {
+					status: 200,
+					headers: { 'set-cookie': 'session=abc; Path=/' }
+				});
+			}
+			if (init?.method === 'GET' && url.endsWith('/api/admin/puzzles')) {
+				return new Response(JSON.stringify({ puzzles: [] }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				});
+			}
+			if (init?.method === 'POST' && url.endsWith('/api/admin/puzzles')) {
+				postCalled = true;
+				return new Response('ok', { status: 201 });
+			}
+			return new Response('not found', { status: 404 });
+		}) as unknown as typeof fetch;
+
+		const options = makeOptions({
+			catalogPath,
+			imagesDir: tmpDir,
+			from: 1,
+			to: 1,
+			skipAccess: true,
+			delayMs: 0
+		});
+
+		const originalExit = process.exit;
+		let exitCode: number | undefined;
+		process.exit = ((code?: number) => {
+			exitCode = code;
+			throw new Error(`__exit_${code}__`);
+		}) as typeof process.exit;
+		try {
+			await cmdUpload(options);
+		} catch (e) {
+			expect(String(e)).toMatch(/__exit_/);
+		} finally {
+			process.exit = originalExit;
+		}
+
+		// Pre-validation should have caught the mismatch — no POST should fire
+		expect(postCalled).toBe(false);
 		expect(exitCode).toBe(1);
 	});
 });

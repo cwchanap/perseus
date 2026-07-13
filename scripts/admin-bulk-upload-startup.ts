@@ -31,11 +31,34 @@ import {
 	type PuzzleCategory
 } from '@perseus/types';
 
-const DEFAULT_SERVER = 'https://perseus.cwchanap.dev';
-const ACCESS_APP = 'https://perseus.cwchanap.dev/api/admin';
-const ADMIN_UI = 'https://perseus.cwchanap.dev/admin';
-const ACCESS_AUD = '7fd50c02b28c32fe3abb938cebba2dc9dcec6c88f42969c28700e9a0a8a28e5f';
-const TOKEN_BASENAME = `perseus.cwchanap.dev-${ACCESS_AUD}-token`;
+// Deployment-specific defaults. Override via env vars for non-default deployments:
+//   PERSEUS_SERVER  — API base URL (default: https://perseus.cwchanap.dev)
+//   CF_ACCESS_AUD   — Cloudflare Access application AUD (deployment-specific)
+const DEFAULT_SERVER = process.env.PERSEUS_SERVER ?? 'https://perseus.cwchanap.dev';
+const ACCESS_AUD =
+	process.env.CF_ACCESS_AUD ?? '7fd50c02b28c32fe3abb938cebba2dc9dcec6c88f42969c28700e9a0a8a28e5f';
+
+/** Derive the Cloudflare Access app URL from the server (used by cloudflared token flow). */
+export function accessAppFor(server: string): string {
+	return `${server.replace(/\/+$/, '')}/api/admin`;
+}
+
+/** Derive the admin UI URL from the server (used by the interactive set-token prompt). */
+export function adminUiFor(server: string): string {
+	return `${server.replace(/\/+$/, '')}/admin`;
+}
+
+/** Derive the cloudflared token cache basename from hostname + AUD. */
+export function tokenBasenameFor(server: string, aud: string): string {
+	const hostname = (() => {
+		try {
+			return new URL(server).hostname;
+		} catch {
+			return server.replace(/^https?:\/\//, '').split('/')[0] ?? server;
+		}
+	})();
+	return `${hostname}-${aud}-token`;
+}
 
 export interface CatalogEntry {
 	id: string;
@@ -87,7 +110,7 @@ Options:
   -h, --help
 
 Recommended flow:
-  # Browser: open ${ADMIN_UI} with WARP connected, complete Access
+  # Browser: open ${adminUiFor(DEFAULT_SERVER)} with WARP connected, complete Access
   # DevTools → Application → Cookies → CF_Authorization → copy value
   bun run admin:startup:set-token
   bun run admin:startup:status
@@ -118,12 +141,12 @@ function homeCloudflaredDir(): string {
 	return join(process.env.HOME ?? '', '.cloudflared');
 }
 
-function cloudflaredTokenPath(): string {
-	return join(homeCloudflaredDir(), TOKEN_BASENAME);
+function cloudflaredTokenPath(server: string): string {
+	return join(homeCloudflaredDir(), tokenBasenameFor(server, ACCESS_AUD));
 }
 
-function cloudflaredLockPath(): string {
-	return `${cloudflaredTokenPath()}.lock`;
+function cloudflaredLockPath(server: string): string {
+	return `${cloudflaredTokenPath(server)}.lock`;
 }
 
 function isJwtLike(token: string): boolean {
@@ -178,8 +201,8 @@ function readTokenFile(path: string): string | undefined {
 	}
 }
 
-function clearStaleAccessLock(): void {
-	const lockPath = cloudflaredLockPath();
+function clearStaleAccessLock(server: string): void {
+	const lockPath = cloudflaredLockPath(server);
 	if (!existsSync(lockPath)) return;
 	try {
 		const raw = readFileSync(lockPath, 'utf8').trim();
@@ -201,11 +224,12 @@ function clearStaleAccessLock(): void {
 	}
 }
 
-async function resolveCloudflaredToken(): Promise<string | undefined> {
-	const fromFile = readTokenFile(cloudflaredTokenPath());
+async function resolveCloudflaredToken(server: string): Promise<string | undefined> {
+	const fromFile = readTokenFile(cloudflaredTokenPath(server));
 	if (fromFile) return fromFile;
 	try {
-		const result = await $`cloudflared access token -app ${ACCESS_APP}`.quiet().nothrow();
+		const accessApp = accessAppFor(server);
+		const result = await $`cloudflared access token -app ${accessApp}`.quiet().nothrow();
 		const out = result.stdout.toString().trim();
 		const err = result.stderr.toString();
 		if (
@@ -224,6 +248,7 @@ async function resolveAccessToken(options: {
 	explicit?: string;
 	tokenCachePath: string;
 	skipAccess: boolean;
+	server: string;
 }): Promise<string | undefined> {
 	if (options.skipAccess) return undefined;
 	if (options.explicit && isJwtLike(options.explicit)) return normalizeToken(options.explicit);
@@ -231,7 +256,7 @@ async function resolveAccessToken(options: {
 	if (fromEnv && isJwtLike(fromEnv)) return normalizeToken(fromEnv);
 	const fromCache = readTokenFile(options.tokenCachePath);
 	if (fromCache) return fromCache;
-	return resolveCloudflaredToken();
+	return resolveCloudflaredToken(options.server);
 }
 
 function cacheToken(tokenCachePath: string, token: string): void {
@@ -250,21 +275,23 @@ async function promptLine(question: string): Promise<string> {
 	}
 }
 
-async function promptTokenInteractive(): Promise<string> {
+async function promptTokenInteractive(server: string): Promise<string> {
+	const adminUi = adminUiFor(server);
 	console.log(`
 ────────────────────────────────────────────────────────────
   Set Cloudflare Access token (recommended path)
 ────────────────────────────────────────────────────────────
 1. Ensure Cloudflare WARP is Connected
-2. Open: ${ADMIN_UI}
+2. Open: ${adminUi}
 3. Complete Access login if prompted
-4. Open DevTools → Application → Cookies → ${DEFAULT_SERVER.replace('https://', '')}
+4. Open DevTools → Application → Cookies → ${server.replace('https://', '')}
 5. Copy the value of cookie: CF_Authorization
 6. Paste it below (input is visible — paste carefully)
 ────────────────────────────────────────────────────────────
 `);
-	// Try opening browser
-	await $`open ${ADMIN_UI}`.quiet().nothrow();
+	// Try opening browser (platform-specific)
+	const opener = process.platform === 'darwin' ? 'open' : 'xdg-open';
+	await $`${opener} ${adminUi}`.quiet().nothrow();
 
 	const raw = await promptLine('Paste CF_Authorization JWT: ');
 	const token = normalizeToken(raw);
@@ -331,7 +358,8 @@ async function parseOptions(): Promise<Options> {
 	const cfAccessToken = await resolveAccessToken({
 		explicit: explicitToken,
 		tokenCachePath,
-		skipAccess
+		skipAccess,
+		server
 	});
 
 	const cfClientId =
@@ -438,6 +466,107 @@ export function mimeForPath(path: string): string {
 	return MIME_BY_EXT[ext] ?? 'application/octet-stream';
 }
 
+// Tolerance for aspect ratio mismatch between image dimensions and requested ratio.
+// Mirrors the server-side check in admin.worker.ts — must stay in sync.
+const ASPECT_RATIO_TOLERANCE = 0.05; // 5%
+
+export function aspectRatiosMatch(
+	imageWidth: number,
+	imageHeight: number,
+	targetRatio: string
+): boolean {
+	const parts = targetRatio.split(':').map(Number);
+	const targetW = parts[0];
+	const targetH = parts[1];
+	const actual = imageWidth / imageHeight;
+	const expected = targetW / targetH;
+	return Math.abs(actual - expected) / expected <= ASPECT_RATIO_TOLERANCE;
+}
+
+/**
+ * Parse image width/height from binary headers without decoding the full image.
+ * Ported from admin.worker.ts parseImageDimensions — kept in sync so the CLI
+ * can reject mis-cropped images before wasting a network round-trip.
+ */
+export async function parseImageDimensions(
+	file: Bun.BunFile,
+	mimeType: string
+): Promise<{ width: number; height: number } | null> {
+	try {
+		if (mimeType === 'image/png') {
+			const header = await file.slice(16, 24).arrayBuffer();
+			if (header.byteLength < 8) return null;
+			const view = new DataView(header);
+			return { width: view.getUint32(0), height: view.getUint32(4) };
+		}
+
+		if (mimeType === 'image/jpeg') {
+			const buf = await file.slice(0, Math.min(file.size, 256 * 1024)).arrayBuffer();
+			const bytes = new Uint8Array(buf);
+			let offset = 2; // skip FF D8 SOI
+			while (offset < bytes.length - 8) {
+				if (bytes[offset] !== 0xff) break;
+				const marker = bytes[offset + 1];
+				if (marker === 0xda || marker === 0xd9) break;
+				if ((marker >= 0xd0 && marker <= 0xd7) || marker === 0x01 || marker === 0xff) {
+					offset += 2;
+					continue;
+				}
+				if (
+					(marker >= 0xc0 && marker <= 0xc3) ||
+					(marker >= 0xc5 && marker <= 0xc7) ||
+					(marker >= 0xc9 && marker <= 0xcb) ||
+					(marker >= 0xcd && marker <= 0xcf)
+				) {
+					const segLen = (bytes[offset + 2] << 8) | bytes[offset + 3];
+					if (segLen < 9 || offset + 9 > bytes.length) return null;
+					const height = (bytes[offset + 5] << 8) | bytes[offset + 6];
+					const width = (bytes[offset + 7] << 8) | bytes[offset + 8];
+					return { width, height };
+				}
+				if (offset + 4 > bytes.length) break;
+				const segLen = (bytes[offset + 2] << 8) | bytes[offset + 3];
+				offset += 2 + segLen;
+			}
+			return null;
+		}
+
+		if (mimeType === 'image/webp') {
+			const header = await file.slice(12, 34).arrayBuffer();
+			if (header.byteLength < 8) return null;
+			const decoder = new TextDecoder();
+			const fourCC = decoder.decode(new Uint8Array(header, 0, 4));
+			if (fourCC === 'VP8 ') {
+				if (header.byteLength < 18) return null;
+				const view = new DataView(header);
+				const w = view.getUint16(14, true) & 0x3fff;
+				const h = view.getUint16(16, true) & 0x3fff;
+				return { width: w, height: h };
+			}
+			if (fourCC === 'VP8L') {
+				if (header.byteLength < 13) return null;
+				const b = new DataView(header).getUint32(9, true);
+				const w = (b & 0x3fff) + 1;
+				const h = ((b >> 14) & 0x3fff) + 1;
+				return { width: w, height: h };
+			}
+			if (fourCC === 'VP8X') {
+				if (header.byteLength < 18) return null;
+				const bytes = new Uint8Array(header);
+				const w = (bytes[12] | (bytes[13] << 8) | (bytes[14] << 16)) + 1;
+				const h = (bytes[15] | (bytes[16] << 8) | (bytes[17] << 16)) + 1;
+				return { width: w, height: h };
+			}
+			return null;
+		}
+
+		return null;
+	} catch (error) {
+		console.error('Failed to parse image dimensions:', error);
+		return null;
+	}
+}
+
 function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -497,6 +626,7 @@ export function validateCatalog(raw: unknown, source: string): CatalogEntry[] {
 		throw new Error(`Catalog at ${source} is empty`);
 	}
 	const seenIds = new Set<string>();
+	const seenNames = new Set<string>();
 	for (let i = 0; i < raw.length; i++) {
 		const entry = raw[i];
 		if (typeof entry !== 'object' || entry === null) {
@@ -528,6 +658,12 @@ export function validateCatalog(raw: unknown, source: string): CatalogEntry[] {
 			throw new Error(`Catalog at ${source} has duplicate id: ${id}`);
 		}
 		seenIds.add(id);
+
+		const trimmedName = (entry as CatalogEntry).name.trim();
+		if (seenNames.has(trimmedName)) {
+			throw new Error(`Catalog at ${source} has duplicate name: "${trimmedName}"`);
+		}
+		seenNames.add(trimmedName);
 
 		// Numeric id check: selectEntries parses ids as base-10 integers to
 		// filter by --from/--to. A non-numeric id (e.g. "anime-01") parses to
@@ -563,9 +699,9 @@ export function validateCatalog(raw: unknown, source: string): CatalogEntry[] {
 	return raw as CatalogEntry[];
 }
 
-function runCloudflaredLogin(): Promise<number> {
+function runCloudflaredLogin(server: string): Promise<number> {
 	return new Promise((resolve) => {
-		const child = spawn('cloudflared', ['access', 'login', ACCESS_APP], {
+		const child = spawn('cloudflared', ['access', 'login', accessAppFor(server)], {
 			stdio: 'inherit'
 		});
 		child.on('error', () => resolve(127));
@@ -574,7 +710,7 @@ function runCloudflaredLogin(): Promise<number> {
 }
 
 async function cmdSetToken(options: Options): Promise<void> {
-	const token = await promptTokenInteractive();
+	const token = await promptTokenInteractive(options.server);
 	const probe = await probeAccessToken(options.server, token);
 	if (probe === 'blocked') {
 		console.error(
@@ -595,11 +731,12 @@ async function cmdSetToken(options: Options): Promise<void> {
 }
 
 async function cmdLogin(options: Options): Promise<void> {
-	clearStaleAccessLock();
+	clearStaleAccessLock(options.server);
 
 	const existing = await resolveAccessToken({
 		tokenCachePath: options.tokenCachePath,
-		skipAccess: false
+		skipAccess: false,
+		server: options.server
 	});
 	if (existing) {
 		const probe = await probeAccessToken(options.server, existing);
@@ -615,10 +752,10 @@ async function cmdLogin(options: Options): Promise<void> {
 	console.log(
 		'Trying cloudflared access login (often fails to write the app token on this setup)…\n'
 	);
-	const code = await runCloudflaredLogin();
+	const code = await runCloudflaredLogin(options.server);
 	if (code === 0) {
 		for (let i = 0; i < 10; i += 1) {
-			const token = await resolveCloudflaredToken();
+			const token = await resolveCloudflaredToken(options.server);
 			if (token) {
 				const probe = await probeAccessToken(options.server, token);
 				if (probe === 'ok') {
@@ -640,7 +777,8 @@ async function cmdStatus(options: Options): Promise<void> {
 	const token = await resolveAccessToken({
 		explicit: options.cfAccessToken,
 		tokenCachePath: options.tokenCachePath,
-		skipAccess: options.skipAccess
+		skipAccess: options.skipAccess,
+		server: options.server
 	});
 
 	console.log(`Server:            ${options.server}`);
@@ -649,8 +787,12 @@ async function cmdStatus(options: Options): Promise<void> {
 	console.log(
 		`  cache file:       ${existsSync(options.tokenCachePath) ? 'present' : 'missing'} (${options.tokenCachePath})`
 	);
-	console.log(`  cloudflared file: ${existsSync(cloudflaredTokenPath()) ? 'present' : 'missing'}`);
-	console.log(`  lock file:        ${existsSync(cloudflaredLockPath()) ? 'present' : 'absent'}`);
+	console.log(
+		`  cloudflared file: ${existsSync(cloudflaredTokenPath(options.server)) ? 'present' : 'missing'}`
+	);
+	console.log(
+		`  lock file:        ${existsSync(cloudflaredLockPath(options.server)) ? 'present' : 'absent'}`
+	);
 	console.log(`Service token:     ${options.cfClientId && options.cfClientSecret ? 'yes' : 'no'}`);
 	console.log(
 		`Admin passkey:     ${options.passkey ? `yes (${options.passkey.length} chars)` : 'no'}`
@@ -752,7 +894,8 @@ export async function cmdUpload(options: Options): Promise<void> {
 		options.cfAccessToken = await resolveAccessToken({
 			explicit: options.cfAccessToken,
 			tokenCachePath: options.tokenCachePath,
-			skipAccess: false
+			skipAccess: false,
+			server: options.server
 		});
 	}
 
@@ -856,6 +999,20 @@ Or add those two keys to apps/api/.env, then:
 		}
 
 		const image = Bun.file(imagePath, { type: mimeForPath(imagePath) });
+
+		// Pre-validate image dimensions against the requested aspect ratio.
+		// Catches mis-cropped images locally before wasting a network round-trip
+		// (the server performs the same check and returns 400 on mismatch).
+		const detectedMime = mimeForPath(imagePath);
+		const dimensions = await parseImageDimensions(image, detectedMime);
+		if (dimensions) {
+			if (!aspectRatiosMatch(dimensions.width, dimensions.height, entry.aspectRatio)) {
+				const detail = `image ${dimensions.width}x${dimensions.height} does not match ${entry.aspectRatio}`;
+				results.push({ id: entry.id, name: entry.name, ok: false, detail });
+				console.error(`FAIL ${entry.id} ${entry.name}: ${detail}`);
+				continue;
+			}
+		}
 		const formData = new FormData();
 		formData.append('name', entry.name);
 		formData.append('pieceCount', String(entry.pieceCount));

@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
 	ADMIN_ACCESS_PATHS,
+	CLI_ACCESS_PATHS,
 	DEFAULT_ADMIN_ACCESS_SESSION_DURATION,
 	DEFAULT_ADMIN_CLI_SERVICE_TOKEN_DURATION,
 	buildAdminAccessApplicationArgs,
 	buildAdminAccessDestinations,
 	buildAdminAccessPolicy,
 	buildAdminCliServiceAuthPolicy,
+	buildCliAccessApplicationArgs,
+	buildCliAccessDestinations,
 	buildAdminDeviceSerialItems,
 	buildCliServiceTokenArgs,
 	normalizeAdminAccessEmail,
@@ -143,6 +146,16 @@ describe('buildAdminAccessDestinations', () => {
 			{ type: 'public', uri: 'perseus.cwchanap.dev/admin/*' },
 			{ type: 'public', uri: 'perseus.cwchanap.dev/api/admin' },
 			{ type: 'public', uri: 'perseus.cwchanap.dev/api/admin/*' }
+		]);
+	});
+});
+
+describe('buildCliAccessDestinations', () => {
+	it('builds only the CLI-needed paths (login + puzzle list/create)', () => {
+		expect(CLI_ACCESS_PATHS).toEqual(['/api/admin/login', '/api/admin/puzzles']);
+		expect(buildCliAccessDestinations('perseus.cwchanap.dev')).toEqual([
+			{ type: 'public', uri: 'perseus.cwchanap.dev/api/admin/login' },
+			{ type: 'public', uri: 'perseus.cwchanap.dev/api/admin/puzzles' }
 		]);
 	});
 });
@@ -290,22 +303,16 @@ describe('buildAdminAccessApplicationArgs', () => {
 		});
 	});
 
-	it('adds a Service Auth policy when cliServiceTokenId is provided', () => {
+	it('does not include a Service Auth policy (CLI token is scoped to the narrow app)', () => {
 		const args = buildAdminAccessApplicationArgs({
 			accountId: 'account-id',
 			hostname: 'perseus.cwchanap.dev',
 			adminEmail: 'admin@example.com',
-			postureRuleId: 'posture-rule-id',
-			cliServiceTokenId: 'cli-token-id'
+			postureRuleId: 'posture-rule-id'
 		});
 
-		expect(args.policies).toHaveLength(2);
-		expect(args.policies?.[1]).toEqual({
-			name: 'Service token for admin CLI uploads',
-			decision: 'non_identity',
-			precedence: 2,
-			includes: [{ serviceToken: { tokenId: 'cli-token-id' } }]
-		});
+		expect(args.policies).toHaveLength(1);
+		expect(args.policies?.[0]?.decision).toBe('allow');
 	});
 
 	it('uses a configured session duration when provided', () => {
@@ -335,5 +342,52 @@ describe('buildAdminAccessApplicationArgs', () => {
 			{ type: 'public', uri: 'perseus.cwchanap.dev/api/admin' },
 			{ type: 'public', uri: 'perseus.cwchanap.dev/api/admin/*' }
 		]);
+	});
+});
+
+describe('buildCliAccessApplicationArgs', () => {
+	it('builds a narrow app scoped to CLI paths with both policies', () => {
+		const args = buildCliAccessApplicationArgs({
+			accountId: 'account-id',
+			hostname: 'https://perseus.cwchanap.dev',
+			adminEmail: 'admin@example.com',
+			postureRuleId: 'posture-rule-id',
+			cliServiceTokenId: 'cli-token-id'
+		});
+
+		expect(args.name).toBe('Perseus Admin CLI');
+		expect(args.domain).toBe('perseus.cwchanap.dev/api/admin/puzzles');
+		expect(args.destinations).toEqual([
+			{ type: 'public', uri: 'perseus.cwchanap.dev/api/admin/login' },
+			{ type: 'public', uri: 'perseus.cwchanap.dev/api/admin/puzzles' }
+		]);
+		expect(args.policies).toHaveLength(2);
+		// Policy 1: email + posture (browser admin still works on these paths)
+		expect(args.policies?.[0]).toEqual(
+			expect.objectContaining({
+				decision: 'allow',
+				includes: [{ email: { email: 'admin@example.com' } }]
+			})
+		);
+		// Policy 2: Service Auth (CLI service token)
+		expect(args.policies?.[1]).toEqual({
+			name: 'Service token for admin CLI uploads',
+			decision: 'non_identity',
+			precedence: 2,
+			includes: [{ serviceToken: { tokenId: 'cli-token-id' } }]
+		});
+	});
+
+	it('uses a configured session duration when provided', () => {
+		const args = buildCliAccessApplicationArgs({
+			accountId: 'account-id',
+			hostname: 'perseus.cwchanap.dev',
+			adminEmail: 'admin@example.com',
+			postureRuleId: 'posture-rule-id',
+			cliServiceTokenId: 'cli-token-id',
+			sessionDuration: '4h'
+		});
+
+		expect(args.sessionDuration).toBe('4h');
 	});
 });

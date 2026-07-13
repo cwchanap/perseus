@@ -26,6 +26,8 @@
 		"admin:startup:status": "bun scripts/admin-bulk-upload-startup.ts status",
 		"admin:startup:upload": "bun scripts/admin-bulk-upload-startup.ts upload",
 		"test:scripts": "bun test scripts/",
+		"check:scripts": "bunx tsc --project scripts/tsconfig.json",
+		"lint:scripts": "prettier --check scripts/",
 		"deploy": "PUBLIC_API_BASE= turbo build && turbo pulumi:up --filter=@perseus/infrastructure",
 		"prepare": "husky"
 	},
