@@ -20,7 +20,7 @@ on:
       to:
         description: 'End catalog id'
         required: true
-        default: '55'
+        default: '70'
       asset_release:
         description: 'Optional GitHub release tag with seed tarball (catalog.json + images/)'
         required: false
@@ -70,6 +70,21 @@ jobs:
           echo "Seed images: $(find scripts/startup-seed/images -type f | wc -l)"
           test -f scripts/startup-seed/catalog.json
           test -d scripts/startup-seed/images
+
+      - name: Pre-flight check — verify seed images present
+        run: |
+          set -euo pipefail
+          IMAGE_COUNT=$(find scripts/startup-seed/images -type f -name '*.jpg' 2>/dev/null | wc -l)
+          echo "Seed images found: ${IMAGE_COUNT}"
+          if [ "${IMAGE_COUNT}" -eq 0 ]; then
+            echo "::error::No seed images under scripts/startup-seed/images/."
+            echo "::error::Either provide asset_release (GitHub release with tarball) or commit images locally."
+            exit 1
+          fi
+          if [ ! -f scripts/startup-seed/catalog.json ]; then
+            echo "::error::scripts/startup-seed/catalog.json not found."
+            exit 1
+          fi
 
       - name: Authenticate with Pulumi
         uses: pulumi/auth-actions@v1

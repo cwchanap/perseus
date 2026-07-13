@@ -73,7 +73,7 @@ Options:
   --passkey <value>        Admin passkey (or ADMIN_PASSKEY / apps/api/.env)
   --cf-access-token <jwt>  Access JWT (or CF_ACCESS_TOKEN / cached set-token)
   --from <n>               Start catalog id (default: 1)
-  --to <n>                 End catalog id (default: 50)
+  --to <n>                 End catalog id (default: 70)
   --limit <n>              Upload at most N entries from --from
   --delay-ms <n>           Delay between uploads (default: 1500)
   --skip-access            Local API only (no Access headers)
@@ -307,7 +307,7 @@ async function parseOptions(): Promise<Options> {
 	const command = allowed.has(commandRaw ?? '') ? (commandRaw as Options['command']) : 'upload';
 
 	const from = parseIntArg(readArg(args, '--from'), '--from', 1);
-	const to = parseIntArg(readArg(args, '--to'), '--to', 50);
+	const to = parseIntArg(readArg(args, '--to'), '--to', 70);
 	const limitRaw = readArg(args, '--limit');
 	const limit = limitRaw === undefined ? undefined : parseIntArg(limitRaw, '--limit', 0);
 
@@ -414,12 +414,43 @@ async function readError(response: Response): Promise<string> {
 
 function imagePathFor(entry: CatalogEntry, imagesDir: string): string | null {
 	const glob = new Bun.Glob(`${entry.id}-*.jpg`);
-	const matches = [...glob.scanSync({ cwd: imagesDir, absolute: true })];
+	const matches = [...glob.scanSync({ cwd: imagesDir, absolute: true })].sort();
 	return matches[0] ?? null;
 }
 
 function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchExistingNames(
+	server: string,
+	baseHeaders: Record<string, string>,
+	cookie: string
+): Promise<Set<string>> {
+	try {
+		const res = await fetch(`${server}/api/admin/puzzles`, {
+			method: 'GET',
+			headers: { ...baseHeaders, Cookie: cookie },
+			redirect: 'manual'
+		});
+		if (!res.ok) {
+			console.error(
+				`Warning: could not fetch existing puzzles (${res.status}). Idempotency check skipped.`
+			);
+			return new Set();
+		}
+		const payload = (await res.json()) as { puzzles?: Array<{ name?: string }> };
+		const names = new Set<string>();
+		for (const p of payload.puzzles ?? []) {
+			if (typeof p.name === 'string' && p.name.trim()) names.add(p.name.trim());
+		}
+		return names;
+	} catch (error) {
+		console.error(
+			`Warning: failed to fetch existing puzzles (${error instanceof Error ? error.message : error}). Idempotency check skipped.`
+		);
+		return new Set();
+	}
 }
 
 function selectEntries(catalog: CatalogEntry[], options: Options): CatalogEntry[] {
@@ -541,6 +572,53 @@ async function cmdStatus(options: Options): Promise<void> {
 	}
 }
 
+const MAX_RETRY_ATTEMPTS = 3;
+const RETRY_BASE_DELAY_MS = 1000;
+
+/**
+ * POST the puzzle form with bounded retry for transient failures (5xx responses
+ * and network errors). 4xx responses are not retried — they are deterministic
+ * validation/authorization failures.
+ */
+async function uploadWithRetry(
+	server: string,
+	baseHeaders: Record<string, string>,
+	cookie: string,
+	formData: FormData
+): Promise<Response> {
+	let lastError: Error | undefined;
+	for (let attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
+		try {
+			const response = await fetch(`${server}/api/admin/puzzles`, {
+				method: 'POST',
+				headers: { ...baseHeaders, Cookie: cookie },
+				body: formData,
+				redirect: 'manual'
+			});
+			if (response.ok || response.status < 500) return response;
+			// 5xx — transient, retry
+			lastError = new Error(`HTTP ${response.status} ${response.statusText}`);
+			if (attempt < MAX_RETRY_ATTEMPTS) {
+				const backoff = RETRY_BASE_DELAY_MS * 2 ** (attempt - 1);
+				console.error(
+					`  retry ${attempt}/${MAX_RETRY_ATTEMPTS} after ${backoff}ms (${lastError.message})`
+				);
+				await sleep(backoff);
+			}
+		} catch (error) {
+			lastError = error instanceof Error ? error : new Error(String(error));
+			if (attempt < MAX_RETRY_ATTEMPTS) {
+				const backoff = RETRY_BASE_DELAY_MS * 2 ** (attempt - 1);
+				console.error(
+					`  retry ${attempt}/${MAX_RETRY_ATTEMPTS} after ${backoff}ms (${lastError.message})`
+				);
+				await sleep(backoff);
+			}
+		}
+	}
+	throw lastError ?? new Error('Upload failed after retries');
+}
+
 async function cmdUpload(options: Options): Promise<void> {
 	if (!options.dryRun && !options.passkey) {
 		console.error('Missing admin passkey. Set ADMIN_PASSKEY or use --passkey.');
@@ -619,9 +697,31 @@ Or add those two keys to apps/api/.env, then:
 	const cookie = sessionCookieFrom(loginResponse, baseHeaders.Cookie);
 	console.log('Admin session OK\n');
 
+	// Idempotency: fetch existing puzzle names so reruns skip already-uploaded entries
+	// instead of creating duplicates (the API generates a fresh UUID per upload).
+	const existingNames = await fetchExistingNames(options.server, baseHeaders, cookie);
+	if (existingNames.size > 0) {
+		console.log(
+			`Idempotency: ${existingNames.size} existing puzzle(s) on server — duplicates will be skipped.\n`
+		);
+	}
+
 	const results: Array<{ id: string; name: string; ok: boolean; detail: string }> = [];
+	let skipped = 0;
 
 	for (const entry of selected) {
+		if (existingNames.has(entry.name.trim())) {
+			skipped++;
+			results.push({
+				id: entry.id,
+				name: entry.name,
+				ok: true,
+				detail: 'already exists — skipped'
+			});
+			console.log(`SKIP ${entry.id} ${entry.name}: already exists on server`);
+			continue;
+		}
+
 		const imagePath = imagePathFor(entry, options.imagesDir);
 		if (!imagePath) {
 			results.push({ id: entry.id, name: entry.name, ok: false, detail: 'image missing' });
@@ -638,15 +738,7 @@ Or add those two keys to apps/api/.env, then:
 		formData.append('image', image, basename(imagePath));
 
 		try {
-			const uploadResponse = await fetch(`${options.server}/api/admin/puzzles`, {
-				method: 'POST',
-				headers: {
-					...baseHeaders,
-					Cookie: cookie
-				},
-				body: formData,
-				redirect: 'manual'
-			});
+			const uploadResponse = await uploadWithRetry(options.server, baseHeaders, cookie, formData);
 			if (!uploadResponse.ok) {
 				const detail = await readError(uploadResponse);
 				results.push({ id: entry.id, name: entry.name, ok: false, detail });
@@ -660,6 +752,7 @@ Or add those two keys to apps/api/.env, then:
 					detail: `${puzzle.id ?? '?'} ${puzzle.status ?? ''}`
 				});
 				console.log(`OK   ${entry.id} ${entry.name} -> ${puzzle.id} (${puzzle.status})`);
+				existingNames.add(entry.name.trim());
 			}
 		} catch (error) {
 			const detail = error instanceof Error ? error.message : String(error);
@@ -670,9 +763,9 @@ Or add those two keys to apps/api/.env, then:
 		if (options.delayMs > 0) await sleep(options.delayMs);
 	}
 
-	const ok = results.filter((r) => r.ok).length;
+	const ok = results.filter((r) => r.ok && r.detail !== 'already exists — skipped').length;
 	const fail = results.filter((r) => !r.ok).length;
-	console.log(`\nDone: ${ok} uploaded, ${fail} failed`);
+	console.log(`\nDone: ${ok} uploaded, ${skipped} skipped, ${fail} failed`);
 	if (fail > 0) process.exit(1);
 }
 

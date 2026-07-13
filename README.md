@@ -119,6 +119,29 @@ Useful options: `--from`, `--to`, `--limit`, `--delay-ms`, `--dry-run`, `--skip-
 
 `gh workflow run seed-startup-puzzles.yml` uses stack outputs + secrets, but expects images already present under `scripts/startup-seed/images/` in the checkout. Prefer local CLI upload for operator-held assets so binaries stay out of git.
 
+### Service token blast radius
+
+The admin CLI service token (provisioned by Pulumi, 1-year lifetime) is scoped to the same Cloudflare Access application that protects **all** admin routes (`/admin/*`, `/api/admin/*`). This means the token can reach any admin endpoint — not just puzzle upload, but also list, delete, and login. The token is `non_identity` Service Auth, so it bypasses the email + device posture check but still requires the `ADMIN_PASSKEY` for the admin session.
+
+To narrow the blast radius, create a separate Access application covering only `POST /api/admin/puzzles` with the service token, and exclude that path from the main admin application. This is not currently implemented — the single-operator tradeoff was documented instead.
+
+### Token rotation
+
+The service token expires after 1 year (`DEFAULT_ADMIN_CLI_SERVICE_TOKEN_DURATION = '8760h'`). To rotate:
+
+1. `cd packages/infrastructure && pulumi config set adminCliServiceTokenDuration 8760h` (or leave default)
+2. `pulumi up` — Pulumi creates a new token and invalidates the old one
+3. Update `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET` in CI secrets and `apps/api/.env`:
+   ```
+   CF_ACCESS_CLIENT_ID=$(pulumi stack output adminCliAccessClientId)
+   CF_ACCESS_CLIENT_SECRET=$(pulumi stack output --show-secrets adminCliAccessClientSecret)
+   ```
+4. Verify: `bun run admin:startup:status`
+
+### Idempotency
+
+The upload script fetches existing puzzle names from `GET /api/admin/puzzles` before uploading and skips entries whose name already exists on the server. This prevents duplicate puzzles on rerun. If the fetch fails, the script proceeds without the dedup check (with a warning).
+
 ### Notes
 
 - Prefer **Access service tokens** for automation. Do not rely on copying `CF_Authorization` cookies or `cloudflared access login` for scripts (device posture / edge token transfer is unreliable for headless use).
