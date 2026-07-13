@@ -24,6 +24,12 @@ import { existsSync, readFileSync, unlinkSync, writeFileSync, mkdirSync } from '
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { $ } from 'bun';
+import {
+	isPuzzleAspectRatio,
+	isValidPieceCountForAspectRatio,
+	PUZZLE_CATEGORIES,
+	type PuzzleCategory
+} from '@perseus/types';
 
 const DEFAULT_SERVER = 'https://perseus.cwchanap.dev';
 const ACCESS_APP = 'https://perseus.cwchanap.dev/api/admin';
@@ -522,6 +528,37 @@ export function validateCatalog(raw: unknown, source: string): CatalogEntry[] {
 			throw new Error(`Catalog at ${source} has duplicate id: ${id}`);
 		}
 		seenIds.add(id);
+
+		// Numeric id check: selectEntries parses ids as base-10 integers to
+		// filter by --from/--to. A non-numeric id (e.g. "anime-01") parses to
+		// NaN and is silently filtered out of every range. Reject upfront so
+		// the operator sees the bad entry instead of a confusing "no entries
+		// match" result. Zero-padded ids ("01") are fine — parseInt handles them.
+		if (!/^\d+$/.test(id)) {
+			throw new Error(
+				`Catalog entry ${i} at ${source} has non-numeric id "${id}" — ids must be digits (e.g. "01", "70") so --from/--to range filtering works`
+			);
+		}
+
+		// Semantic validation: catch invalid aspect ratios, piece counts, and
+		// categories before uploading so the API doesn't reject each entry
+		// one-by-one over the network.
+		const { aspectRatio, pieceCount, category } = entry as CatalogEntry;
+		if (!isPuzzleAspectRatio(aspectRatio)) {
+			throw new Error(
+				`Catalog entry ${i} at ${source} has invalid aspectRatio "${aspectRatio}" — must be one of 1:1, 4:3, 3:4`
+			);
+		}
+		if (!isValidPieceCountForAspectRatio(pieceCount, aspectRatio)) {
+			throw new Error(
+				`Catalog entry ${i} at ${source} has pieceCount ${pieceCount} which is not valid for aspectRatio ${aspectRatio}`
+			);
+		}
+		if (!PUZZLE_CATEGORIES.includes(category as PuzzleCategory)) {
+			throw new Error(
+				`Catalog entry ${i} at ${source} has category "${category}" — must be one of: ${PUZZLE_CATEGORIES.join(', ')}`
+			);
+		}
 	}
 	return raw as CatalogEntry[];
 }
@@ -705,7 +742,7 @@ export async function uploadWithRetry(
 	throw lastError ?? new Error('Upload failed after retries');
 }
 
-async function cmdUpload(options: Options): Promise<void> {
+export async function cmdUpload(options: Options): Promise<void> {
 	if (!options.dryRun && !options.passkey) {
 		console.error('Missing admin passkey. Set ADMIN_PASSKEY or use --passkey.');
 		process.exit(1);

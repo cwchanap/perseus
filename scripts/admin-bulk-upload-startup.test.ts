@@ -9,6 +9,7 @@ import {
 	fetchExistingNames,
 	uploadWithRetry,
 	validateCatalog,
+	cmdUpload,
 	retryConfig,
 	type CatalogEntry,
 	type Options
@@ -35,7 +36,7 @@ function makeEntry(id: string, name: string): CatalogEntry {
 	return {
 		id,
 		name,
-		category: 'nature',
+		category: 'Nature',
 		aspectRatio: '1:1',
 		pieceCount: 100,
 		prompt: 'test'
@@ -341,7 +342,7 @@ describe('validateCatalog', () => {
 	const validEntry = (id: string): CatalogEntry => ({
 		id,
 		name: `Puzzle ${id}`,
-		category: 'nature',
+		category: 'Nature',
 		aspectRatio: '1:1',
 		pieceCount: 100,
 		prompt: 'test prompt'
@@ -395,5 +396,162 @@ describe('validateCatalog', () => {
 	it('rejects duplicate ids', () => {
 		const catalog = [validEntry('01'), validEntry('01')];
 		expect(() => validateCatalog(catalog, 'catalog.json')).toThrow(/duplicate id: 01/);
+	});
+
+	it('rejects a non-numeric id', () => {
+		const entry = { ...validEntry('01'), id: 'anime-01' };
+		expect(() => validateCatalog([entry], 'catalog.json')).toThrow(/non-numeric id "anime-01"/);
+	});
+
+	it('accepts zero-padded numeric ids', () => {
+		const catalog = [validEntry('01'), validEntry('70')];
+		expect(validateCatalog(catalog, 'catalog.json')).toEqual(catalog);
+	});
+
+	it('rejects an invalid aspectRatio', () => {
+		const entry = { ...validEntry('01'), aspectRatio: '16:9' };
+		expect(() => validateCatalog([entry], 'catalog.json')).toThrow(/invalid aspectRatio "16:9"/);
+	});
+
+	it('rejects a pieceCount invalid for the aspectRatio', () => {
+		const entry = { ...validEntry('01'), pieceCount: 7 };
+		expect(() => validateCatalog([entry], 'catalog.json')).toThrow(
+			/pieceCount 7 which is not valid for aspectRatio 1:1/
+		);
+	});
+
+	it('rejects an invalid category', () => {
+		const entry = { ...validEntry('01'), category: 'Space' };
+		expect(() => validateCatalog([entry], 'catalog.json')).toThrow(/category "Space"/);
+	});
+});
+
+describe('cmdUpload', () => {
+	const originalFetch = globalThis.fetch;
+	const originalSleepFn = retryConfig.sleepFn;
+	let tmpDir: string;
+
+	beforeEach(() => {
+		retryConfig.sleepFn = async () => {};
+		tmpDir = mkdtempSync(join(tmpdir(), 'perseus-cmdupload-'));
+	});
+
+	afterEach(() => {
+		globalThis.fetch = originalFetch;
+		retryConfig.sleepFn = originalSleepFn;
+		rmSync(tmpDir, { recursive: true, force: true });
+	});
+
+	it('verifies via re-fetch when uploadWithRetry exhausts retries and the puzzle was actually created', async () => {
+		// Setup: write a catalog + image file so cmdUpload can read them.
+		const entry = makeEntry('01', 'VerifiedPuzzle');
+		const catalogPath = join(tmpDir, 'catalog.json');
+		writeFileSync(catalogPath, JSON.stringify([entry]));
+		writeFileSync(join(tmpDir, '01-test.jpg'), 'fake-image');
+
+		// Track GET calls to /api/admin/puzzles. The initial fetchExistingNames
+		// and the uploadWithRetry between-retry re-fetches should return empty.
+		// The final catch-block re-fetch should find the name (puzzle was
+		// created server-side but the response was lost on every attempt).
+		let getCalls = 0;
+		globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
+			const url = String(input);
+			if (url.endsWith('/api/admin/login')) {
+				return new Response('{"ok":true}', {
+					status: 200,
+					headers: { 'set-cookie': 'session=abc; Path=/' }
+				});
+			}
+			if (init?.method === 'GET' && url.endsWith('/api/admin/puzzles')) {
+				getCalls++;
+				// The 4th GET is the catch-block verify — return the name.
+				// GETs 1-3: initial fetch + 2 between-retry re-fetches (empty).
+				if (getCalls === 4) {
+					return new Response(JSON.stringify({ puzzles: [{ name: 'VerifiedPuzzle' }] }), {
+						status: 200,
+						headers: { 'Content-Type': 'application/json' }
+					});
+				}
+				return new Response(JSON.stringify({ puzzles: [] }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				});
+			}
+			if (init?.method === 'POST' && url.endsWith('/api/admin/puzzles')) {
+				// Every POST attempt fails — simulates response lost on all 3 tries.
+				throw new Error('ECONNRESET');
+			}
+			return new Response('not found', { status: 404 });
+		}) as typeof fetch;
+
+		const options = makeOptions({
+			catalogPath,
+			imagesDir: tmpDir,
+			from: 1,
+			to: 1,
+			skipAccess: true,
+			delayMs: 0
+		});
+
+		// Should NOT throw — the catch block verifies and marks as OK.
+		await cmdUpload(options);
+		// 4 GETs: initial + 2 retry re-fetches + 1 catch-block verify
+		expect(getCalls).toBe(4);
+	});
+
+	it('records failure when catch-block re-fetch does not find the puzzle', async () => {
+		const entry = makeEntry('01', 'LostPuzzle');
+		const catalogPath = join(tmpDir, 'catalog.json');
+		writeFileSync(catalogPath, JSON.stringify([entry]));
+		writeFileSync(join(tmpDir, '01-test.jpg'), 'fake-image');
+
+		// All GETs return empty — puzzle was never created, so the catch block
+		// cannot verify and must record a failure (process.exit(1)).
+		globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
+			const url = String(input);
+			if (url.endsWith('/api/admin/login')) {
+				return new Response('{"ok":true}', {
+					status: 200,
+					headers: { 'set-cookie': 'session=abc; Path=/' }
+				});
+			}
+			if (init?.method === 'GET' && url.endsWith('/api/admin/puzzles')) {
+				return new Response(JSON.stringify({ puzzles: [] }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				});
+			}
+			if (init?.method === 'POST' && url.endsWith('/api/admin/puzzles')) {
+				throw new Error('ECONNRESET');
+			}
+			return new Response('not found', { status: 404 });
+		}) as typeof fetch;
+
+		const options = makeOptions({
+			catalogPath,
+			imagesDir: tmpDir,
+			from: 1,
+			to: 1,
+			skipAccess: true,
+			delayMs: 0
+		});
+
+		// cmdUpload calls process.exit(1) when fail > 0. Mock process.exit to
+		// capture the call without actually exiting.
+		const originalExit = process.exit;
+		let exitCode: number | undefined;
+		process.exit = ((code?: number) => {
+			exitCode = code;
+			throw new Error(`__exit_${code}__`);
+		}) as typeof process.exit;
+		try {
+			await cmdUpload(options);
+		} catch (e) {
+			// process.exit mock throws — expected
+			expect(String(e)).toMatch(/__exit_/);
+		} finally {
+			process.exit = originalExit;
+		}
+		expect(exitCode).toBe(1);
 	});
 });

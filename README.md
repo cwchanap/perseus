@@ -155,7 +155,7 @@ To rotate credentials (new client_id + client_secret):
 
 ### Idempotency
 
-The upload script fetches existing puzzle names from `GET /api/admin/puzzles` before uploading and skips entries whose name already exists on the server. This prevents duplicate puzzles on rerun. If the fetch fails, the script proceeds without the dedup check (with a warning).
+The upload script fetches existing puzzle names from `GET /api/admin/puzzles` before uploading and skips entries whose name already exists on the server. This prevents duplicate puzzles on rerun. If the fetch fails (non-OK response or network error), the script aborts rather than risk creating duplicates — re-run after verifying the API is reachable.
 
 ### Notes
 
