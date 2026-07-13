@@ -478,5 +478,85 @@
 		"aspectRatio": "1:1",
 		"pieceCount": 100,
 		"prompt": "Modern anime friends at a bright turquoise beach caf\u00e9."
+	},
+	{
+		"id": "61",
+		"name": "Chibi Summer Festival",
+		"category": "Art",
+		"aspectRatio": "1:1",
+		"pieceCount": 81,
+		"prompt": "Chibi yukata kids with cotton candy at a summer night festival."
+	},
+	{
+		"id": "62",
+		"name": "Chibi School Picnic",
+		"category": "Art",
+		"aspectRatio": "1:1",
+		"pieceCount": 64,
+		"prompt": "Chibi cat-girl and dog-boy students sharing a bento under sakura."
+	},
+	{
+		"id": "63",
+		"name": "Chibi Adventure Train",
+		"category": "Travel",
+		"aspectRatio": "1:1",
+		"pieceCount": 81,
+		"prompt": "Chibi backpackers on a colorful steam train through green hills."
+	},
+	{
+		"id": "64",
+		"name": "Chibi Beach Castle",
+		"category": "Art",
+		"aspectRatio": "1:1",
+		"pieceCount": 64,
+		"prompt": "Chibi friends building a sandcastle with giant ice cream."
+	},
+	{
+		"id": "65",
+		"name": "Chibi Cozy Cocoa Caf\u00e9",
+		"category": "Art",
+		"aspectRatio": "1:1",
+		"pieceCount": 81,
+		"prompt": "Chibi winter caf\u00e9 with cocoa, cakes, and snow outside."
+	},
+	{
+		"id": "66",
+		"name": "Shojo Moonlit Rose Garden",
+		"category": "Art",
+		"aspectRatio": "1:1",
+		"pieceCount": 100,
+		"prompt": "Elegant shojo girl in lace dress under moon and roses."
+	},
+	{
+		"id": "67",
+		"name": "Shojo Wisteria Letter",
+		"category": "Art",
+		"aspectRatio": "1:1",
+		"pieceCount": 100,
+		"prompt": "Elegant shojo schoolgirls sharing a secret letter under wisteria."
+	},
+	{
+		"id": "68",
+		"name": "Shojo Balcony Twilight",
+		"category": "Art",
+		"aspectRatio": "1:1",
+		"pieceCount": 121,
+		"prompt": "Elegant shojo girl on a rose balcony overlooking a twilight town."
+	},
+	{
+		"id": "69",
+		"name": "Shojo Crystal Waltz",
+		"category": "Art",
+		"aspectRatio": "1:1",
+		"pieceCount": 100,
+		"prompt": "Elegant shojo couple waltzing in a crystal ballroom."
+	},
+	{
+		"id": "70",
+		"name": "Shojo Conservatory Reader",
+		"category": "Art",
+		"aspectRatio": "1:1",
+		"pieceCount": 100,
+		"prompt": "Elegant shojo girl reading by a stained-glass flower window."
 	}
 ]
