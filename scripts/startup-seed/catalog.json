@@ -398,5 +398,45 @@
 		"aspectRatio": "1:1",
 		"pieceCount": 121,
 		"prompt": "A narrow Kyoto alley at night lined with glowing paper lanterns, traditional wooden facades, wet stone path reflections, atmospheric Japanese travel photography with warm light."
+	},
+	{
+		"id": "51",
+		"name": "Anime Summer Festival",
+		"category": "Art",
+		"aspectRatio": "1:1",
+		"pieceCount": 100,
+		"prompt": "Anime style beach summer festival with fireworks, yukata, and food stalls."
+	},
+	{
+		"id": "52",
+		"name": "Anime Mountain Journey",
+		"category": "Travel",
+		"aspectRatio": "1:1",
+		"pieceCount": 121,
+		"prompt": "Anime style traveler overlooking a mountain train valley and castle town."
+	},
+	{
+		"id": "53",
+		"name": "Anime School Sakura",
+		"category": "Art",
+		"aspectRatio": "1:1",
+		"pieceCount": 100,
+		"prompt": "Anime style high school courtyard under cherry blossoms with students in uniforms."
+	},
+	{
+		"id": "54",
+		"name": "Anime Caf\u00e9 Study Date",
+		"category": "Art",
+		"aspectRatio": "1:1",
+		"pieceCount": 81,
+		"prompt": "Anime style rainy caf\u00e9 study date with school uniforms, books, and drinks."
+	},
+	{
+		"id": "55",
+		"name": "Anime Coastal Road Trip",
+		"category": "Travel",
+		"aspectRatio": "1:1",
+		"pieceCount": 100,
+		"prompt": "Anime style friends in a red convertible on a sunny coastal highway."
 	}
 ]
