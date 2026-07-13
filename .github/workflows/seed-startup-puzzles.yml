@@ -46,6 +46,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -59,14 +61,17 @@ jobs:
         if: ${{ inputs.asset_release != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
+          ASSET_RELEASE: ${{ inputs.asset_release }}
+          ASSET_NAME: ${{ inputs.asset_name }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
           mkdir -p scripts/startup-seed
-          gh release download "${{ inputs.asset_release }}" \
-            --repo "${{ github.repository }}" \
-            --pattern "${{ inputs.asset_name }}" \
+          gh release download "$ASSET_RELEASE" \
+            --repo "$REPOSITORY" \
+            --pattern "$ASSET_NAME" \
             --dir /tmp
-          tar -xzf "/tmp/${{ inputs.asset_name }}" -C scripts/startup-seed
+          tar -xzf "/tmp/$ASSET_NAME" -C scripts/startup-seed
           echo "Seed images: $(find scripts/startup-seed/images -type f | wc -l)"
           test -f scripts/startup-seed/catalog.json
           test -d scripts/startup-seed/images
@@ -74,7 +79,7 @@ jobs:
       - name: Pre-flight check — verify seed images present
         run: |
           set -euo pipefail
-          IMAGE_COUNT=$(find scripts/startup-seed/images -type f -name '*.jpg' 2>/dev/null | wc -l)
+          IMAGE_COUNT=$(find scripts/startup-seed/images -type f \( -name '*.jpg' -o -name '*.jpeg' -o -name '*.png' -o -name '*.webp' \) 2>/dev/null | wc -l)
           echo "Seed images found: ${IMAGE_COUNT}"
           if [ "${IMAGE_COUNT}" -eq 0 ]; then
             echo "::error::No seed images under scripts/startup-seed/images/."
@@ -99,6 +104,9 @@ jobs:
           PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           ADMIN_PASSKEY: ${{ secrets.ADMIN_PASSKEY }}
+          LIMIT: ${{ inputs.limit }}
+          FROM: ${{ inputs.from }}
+          TO: ${{ inputs.to }}
         run: |
           set -euo pipefail
           STACK="${{ vars.PULUMI_ORG }}/perseus-infrastructure/production"
@@ -106,19 +114,20 @@ jobs:
           export CF_ACCESS_CLIENT_SECRET
           CF_ACCESS_CLIENT_ID=$(pulumi stack output adminCliAccessClientId -s "$STACK" -C packages/infrastructure)
           CF_ACCESS_CLIENT_SECRET=$(pulumi stack output --show-secrets adminCliAccessClientSecret -s "$STACK" -C packages/infrastructure)
+          echo "::add-mask::$CF_ACCESS_CLIENT_SECRET"
           if [ -z "$CF_ACCESS_CLIENT_ID" ] || [ -z "$CF_ACCESS_CLIENT_SECRET" ]; then
             echo "Missing adminCliAccessClientId/Secret stack outputs. Deploy infrastructure first."
             exit 1
           fi
           LIMIT_ARGS=()
-          if [ "${{ inputs.limit }}" != "0" ]; then
-            LIMIT_ARGS=(--limit "${{ inputs.limit }}")
+          if [ "$LIMIT" != "0" ]; then
+            LIMIT_ARGS=(--limit "$LIMIT")
           fi
           bun scripts/admin-bulk-upload-startup.ts upload \
             --server https://perseus.cwchanap.dev \
             --catalog scripts/startup-seed/catalog.json \
             --images scripts/startup-seed/images \
-            --from "${{ inputs.from }}" \
-            --to "${{ inputs.to }}" \
+            --from "$FROM" \
+            --to "$TO" \
             "${LIMIT_ARGS[@]}" \
             --delay-ms 2000
