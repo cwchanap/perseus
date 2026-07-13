@@ -438,5 +438,45 @@
 		"aspectRatio": "1:1",
 		"pieceCount": 100,
 		"prompt": "Anime style friends in a red convertible on a sunny coastal highway."
+	},
+	{
+		"id": "56",
+		"name": "Anime Neon City Night",
+		"category": "Art",
+		"aspectRatio": "1:1",
+		"pieceCount": 100,
+		"prompt": "Modern anime neon Tokyo street fashion night scene."
+	},
+	{
+		"id": "57",
+		"name": "Anime Rooftop Hangout",
+		"category": "Art",
+		"aspectRatio": "1:1",
+		"pieceCount": 100,
+		"prompt": "Modern anime friends in streetwear on a sunny city rooftop."
+	},
+	{
+		"id": "58",
+		"name": "Anime Modern Classroom",
+		"category": "Art",
+		"aspectRatio": "1:1",
+		"pieceCount": 100,
+		"prompt": "Modern anime high school classroom with laptops and golden hour light."
+	},
+	{
+		"id": "59",
+		"name": "Anime Shinkansen Hub",
+		"category": "Travel",
+		"aspectRatio": "1:1",
+		"pieceCount": 100,
+		"prompt": "Modern anime traveler photographing a futuristic bullet train station."
+	},
+	{
+		"id": "60",
+		"name": "Anime Beach Day Squad",
+		"category": "Art",
+		"aspectRatio": "1:1",
+		"pieceCount": 100,
+		"prompt": "Modern anime friends at a bright turquoise beach caf\u00e9."
 	}
 ]
