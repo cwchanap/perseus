@@ -83,20 +83,52 @@ export async function parseImageDimensions(
 
 		if (mimeType === 'image/jpeg') {
 			// JPEG: scan SOF markers (FF C0..FF C3, FF C5..FF C7, FF C9..FF CB, FF CD..FF CF)
-			// Height/width are at offset+5/offset+7 within each marker segment
-			const buf = await file.slice(0, Math.min(file.size, 256 * 1024)).arrayBuffer();
-			const bytes = new Uint8Array(buf);
-			let offset = 2; // skip FF D8 SOI
-			while (offset < bytes.length - 8) {
-				if (bytes[offset] !== 0xff) break;
-				const marker = bytes[offset + 1];
+			// Height/width are at offset+5/offset+7 within each marker segment.
+			// Read in chunks to handle JPEGs with large APP segments (EXIF, ICC
+			// profiles) that push the SOF marker beyond any fixed read limit.
+			// Fill bytes (0xFF 0xFF…) are consumed individually per the JPEG spec:
+			// multiple 0xFF bytes can precede a marker, each is a fill byte, not
+			// a marker pair.
+			const CHUNK_SIZE = 64 * 1024;
+			let pos = 2; // absolute file offset, skip FF D8 SOI
+			let bufStart = 0;
+			let buf = new Uint8Array(await file.slice(0, Math.min(file.size, CHUNK_SIZE)).arrayBuffer());
+
+			// Refill buf so that pos is within the buffer; returns false at EOF.
+			async function refill(): Promise<boolean> {
+				if (bufStart + buf.length >= file.size) return false;
+				bufStart = pos;
+				const end = Math.min(file.size, pos + CHUNK_SIZE);
+				buf = new Uint8Array(await file.slice(pos, end).arrayBuffer());
+				return buf.length > 0;
+			}
+
+			// Ensure `need` bytes are available from pos in buf; refill if needed.
+			async function ensure(need: number): Promise<boolean> {
+				if (pos - bufStart + need <= buf.length) return true;
+				if (!(await refill())) return false;
+				return pos - bufStart + need <= buf.length;
+			}
+
+			while (true) {
+				// Expect 0xFF marker prefix
+				if (!(await ensure(1))) break;
+				if (buf[pos - bufStart] !== 0xff) break;
+				pos += 1;
+
+				// Consume 0xFF fill bytes individually
+				while ((await ensure(1)) && buf[pos - bufStart] === 0xff) {
+					pos += 1;
+				}
+				if (!(await ensure(1))) break;
+				const marker = buf[pos - bufStart];
+				pos += 1;
+
 				// SOS (FF DA) or EOI (FF D9) — stop scanning
 				if (marker === 0xda || marker === 0xd9) break;
-				// Standalone markers (no payload)
-				if ((marker >= 0xd0 && marker <= 0xd7) || marker === 0x01 || marker === 0xff) {
-					offset += 2;
-					continue;
-				}
+				// Standalone markers (no payload): RST0-RST7, TEM
+				if ((marker >= 0xd0 && marker <= 0xd7) || marker === 0x01) continue;
+
 				// SOF markers carry dimensions
 				if (
 					(marker >= 0xc0 && marker <= 0xc3) ||
@@ -104,16 +136,21 @@ export async function parseImageDimensions(
 					(marker >= 0xc9 && marker <= 0xcb) ||
 					(marker >= 0xcd && marker <= 0xcf)
 				) {
-					const segLen = (bytes[offset + 2] << 8) | bytes[offset + 3];
-					if (segLen < 9 || offset + 9 > bytes.length) return null;
-					const height = (bytes[offset + 5] << 8) | bytes[offset + 6];
-					const width = (bytes[offset + 7] << 8) | bytes[offset + 8];
+					// Need 7 bytes: segLen(2) + precision(1) + height(2) + width(2)
+					if (!(await ensure(7))) return null;
+					const i = pos - bufStart;
+					const segLen = (buf[i] << 8) | buf[i + 1];
+					if (segLen < 9) return null;
+					const height = (buf[i + 3] << 8) | buf[i + 4];
+					const width = (buf[i + 5] << 8) | buf[i + 6];
 					return { width, height };
 				}
-				// Skip this marker segment
-				if (offset + 4 > bytes.length) break;
-				const segLen = (bytes[offset + 2] << 8) | bytes[offset + 3];
-				offset += 2 + segLen;
+
+				// Skip this marker segment: read 2-byte segLen, advance by segLen
+				if (!(await ensure(2))) break;
+				const i = pos - bufStart;
+				const segLen = (buf[i] << 8) | buf[i + 1];
+				pos += segLen;
 			}
 			return null;
 		}

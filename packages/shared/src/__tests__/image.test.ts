@@ -364,6 +364,179 @@ describe('parseImageDimensions', () => {
 		expect(await parseImageDimensions(blob, 'image/jpeg')).toBeNull();
 	});
 
+	// ─── JPEG fill-byte + incremental-read regression tests ───────────
+	// The scanner must consume 0xFF fill bytes individually (not treat
+	// 0xFF 0xFF as a marker pair) and read past the old 256 KiB limit for
+	// JPEGs with large APP segments (EXIF, ICC profiles).
+
+	it('parses JPEG dimensions after 0xFF fill bytes before SOF0', async () => {
+		// SOI + FF FF (fill bytes) + SOF0. The old code treated FF FF as a
+		// marker pair (marker=0xFF, offset+=2), then broke because the next
+		// byte (C0) is not 0xFF — missing the SOF marker entirely.
+		const sof0 = [
+			0xff,
+			0xc0,
+			0x00,
+			0x11,
+			0x08,
+			0x02,
+			0x58, // height = 600
+			0x04,
+			0xb0, // width = 1200
+			0x03,
+			0x01,
+			0x22,
+			0x00,
+			0x02,
+			0x11,
+			0x01,
+			0x03,
+			0x11,
+			0x01
+		];
+		const blob = makeBlob(new Uint8Array([0xff, 0xd8, 0xff, 0xff, ...sof0]));
+		expect(await parseImageDimensions(blob, 'image/jpeg')).toEqual({ width: 1200, height: 600 });
+	});
+
+	it('parses JPEG dimensions after multiple consecutive 0xFF fill bytes', async () => {
+		// SOI + 5 fill bytes + SOF0 — exercises the fill-byte consumption loop.
+		const sof0 = [
+			0xff,
+			0xc0,
+			0x00,
+			0x11,
+			0x08,
+			0x01,
+			0x2c, // height = 300
+			0x04,
+			0xb0, // width = 1200
+			0x03,
+			0x01,
+			0x22,
+			0x00,
+			0x02,
+			0x11,
+			0x01,
+			0x03,
+			0x11,
+			0x01
+		];
+		const blob = makeBlob(new Uint8Array([0xff, 0xd8, 0xff, 0xff, 0xff, 0xff, 0xff, ...sof0]));
+		expect(await parseImageDimensions(blob, 'image/jpeg')).toEqual({ width: 1200, height: 300 });
+	});
+
+	it('parses JPEG dimensions with fill bytes between APP0 and SOF0', async () => {
+		// SOI + APP0 + FF FF (fill bytes between segments) + SOF0
+		const app0 = [
+			0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00,
+			0x01, 0x00, 0x00
+		];
+		const sof0 = [
+			0xff,
+			0xc0,
+			0x00,
+			0x11,
+			0x08,
+			0x02,
+			0x58, // height = 600
+			0x04,
+			0xb0, // width = 1200
+			0x03,
+			0x01,
+			0x22,
+			0x00,
+			0x02,
+			0x11,
+			0x01,
+			0x03,
+			0x11,
+			0x01
+		];
+		const blob = makeBlob(new Uint8Array([0xff, 0xd8, ...app0, 0xff, 0xff, ...sof0]));
+		expect(await parseImageDimensions(blob, 'image/jpeg')).toEqual({ width: 1200, height: 600 });
+	});
+
+	it('parses JPEG dimensions when SOF0 is beyond 256 KiB (many APP segments)', async () => {
+		// SOI + 5 × APP segments (each ~64 KiB, near the 16-bit segLen max of
+		// 65535) + SOF0. Total APP data ~320 KiB, pushing SOF0 beyond the old
+		// 256 KiB read limit. JPEG segLen is a 16-bit field, so a single
+		// segment can't exceed 65535 bytes — large metadata (ICC profiles,
+		// EXIF thumbnails) is split across multiple APP segments.
+		const segLen = 65500;
+		const numSegments = 5;
+		const sof0 = [
+			0xff,
+			0xc0,
+			0x00,
+			0x11,
+			0x08,
+			0x01,
+			0x2c, // height = 300
+			0x04,
+			0xb0, // width = 1200
+			0x03,
+			0x01,
+			0x22,
+			0x00,
+			0x02,
+			0x11,
+			0x01,
+			0x03,
+			0x11,
+			0x01
+		];
+		const segmentSize = 2 + segLen; // marker (FF Ex) + segLen bytes
+		const totalSize = 2 + numSegments * segmentSize + sof0.length;
+		const bytes = new Uint8Array(totalSize);
+		let off = 0;
+		bytes.set([0xff, 0xd8], off);
+		off += 2;
+		for (let i = 0; i < numSegments; i++) {
+			bytes[off] = 0xff;
+			bytes[off + 1] = 0xe0 + i; // APP0..APP4
+			bytes[off + 2] = (segLen >> 8) & 0xff;
+			bytes[off + 3] = segLen & 0xff;
+			// payload is zeros (already initialized)
+			off += segmentSize;
+		}
+		bytes.set(sof0, off);
+		const blob = makeBlob(bytes);
+		expect(await parseImageDimensions(blob, 'image/jpeg')).toEqual({ width: 1200, height: 300 });
+	});
+
+	it('parses JPEG dimensions after multiple APP segments with fill bytes', async () => {
+		// SOI + APP0 + APP1 + fill bytes + SOF0 — combines incremental reading
+		// (two APP segments) with fill-byte consumption in a single scan.
+		const app0 = [
+			0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00,
+			0x01, 0x00, 0x00
+		];
+		const app1 = [0xff, 0xe1, 0x00, 0x08, 0x45, 0x78, 0x69, 0x66, 0x00, 0x00];
+		const sof0 = [
+			0xff,
+			0xc0,
+			0x00,
+			0x11,
+			0x08,
+			0x02,
+			0x58, // height = 600
+			0x04,
+			0xb0, // width = 1200
+			0x03,
+			0x01,
+			0x22,
+			0x00,
+			0x02,
+			0x11,
+			0x01,
+			0x03,
+			0x11,
+			0x01
+		];
+		const blob = makeBlob(new Uint8Array([0xff, 0xd8, ...app0, ...app1, 0xff, 0xff, ...sof0]));
+		expect(await parseImageDimensions(blob, 'image/jpeg')).toEqual({ width: 1200, height: 600 });
+	});
+
 	it('parses WebP VP8 (lossy) dimensions', async () => {
 		const blob = makeBlob(webpVp8Bytes(600, 400));
 		expect(await parseImageDimensions(blob, 'image/webp')).toEqual({ width: 600, height: 400 });

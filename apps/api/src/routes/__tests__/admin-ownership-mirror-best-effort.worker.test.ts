@@ -7,6 +7,7 @@
  * succeed so a transient D1 issue doesn't take admin puzzle creation down.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { sharedMockOverrides } from './helpers/shared-mock';
 
 vi.mock('../../services/storage.worker', () => ({
 	getPuzzle: vi.fn(),
@@ -24,13 +25,7 @@ vi.mock('../../db.worker', () => ({
 
 vi.mock('@perseus/shared', async (importOriginal) => {
 	const original = await importOriginal<typeof import('@perseus/shared')>();
-	return {
-		...original,
-		insertPuzzleOwnership: vi.fn().mockResolvedValue(undefined),
-		deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined),
-		deletePuzzleStats: vi.fn().mockResolvedValue(undefined),
-		SYSTEM_OWNER_ID: 'system'
-	};
+	return { ...original, ...sharedMockOverrides };
 });
 
 vi.mock('../../middleware/auth.worker', () => ({

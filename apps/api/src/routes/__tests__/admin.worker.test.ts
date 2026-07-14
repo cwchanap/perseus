@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { sharedMockOverrides } from './helpers/shared-mock';
 
 // Mock the storage and auth modules before importing admin
 vi.mock('../../services/storage.worker', () => ({
@@ -43,13 +44,7 @@ vi.mock('../../db.worker', () => ({
 
 vi.mock('@perseus/shared', async (importOriginal) => {
 	const original = await importOriginal<typeof import('@perseus/shared')>();
-	return {
-		...original,
-		insertPuzzleOwnership: vi.fn().mockResolvedValue(undefined),
-		deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined),
-		deletePuzzleStats: vi.fn().mockResolvedValue(undefined),
-		SYSTEM_OWNER_ID: 'system'
-	};
+	return { ...original, ...sharedMockOverrides };
 });
 
 import admin from '../admin.worker';

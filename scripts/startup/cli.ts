@@ -16,7 +16,8 @@ import {
 	accessAppFor,
 	adminUiFor,
 	sleep,
-	warnHardcodedDefaults
+	warnHardcodedDefaults,
+	FatalError
 } from './types';
 import {
 	cacheToken,
@@ -88,9 +89,12 @@ async function parseOptions(): Promise<Options> {
 	if (args.includes('--help') || args.includes('-h')) usage(0);
 
 	const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-	const commandRaw = args.find((a) => !a.startsWith('--'));
+	const commandRaw = args[0];
 	const allowed = new Set(['login', 'set-token', 'upload', 'status']);
-	const command = allowed.has(commandRaw ?? '') ? (commandRaw as Options['command']) : 'upload';
+	if (!commandRaw || commandRaw.startsWith('--') || !allowed.has(commandRaw)) {
+		usage();
+	}
+	const command = commandRaw as Options['command'];
 
 	const from = parseIntArg(readArg(args, '--from'), '--from', 1);
 	const to = parseIntArg(readArg(args, '--to'), '--to', Number.MAX_SAFE_INTEGER);
@@ -165,8 +169,7 @@ async function cmdSetToken(options: Options): Promise<void> {
 	if (probe === 'ok') {
 		console.log('\nNext: bun run admin:startup:upload -- --limit 5');
 	} else {
-		console.log('\nRe-copy the cookie after a fresh browser login and run set-token again.');
-		process.exit(1);
+		throw new FatalError('Re-copy the cookie after a fresh browser login and run set-token again.');
 	}
 }
 

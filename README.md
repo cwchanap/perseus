@@ -149,7 +149,7 @@ To rotate credentials (new client_id + client_secret):
 
 1. `cd packages/infrastructure && pulumi up --target-replace "urn:pulumi:production::perseus-infrastructure::cloudflare:index/zeroTrustAccessServiceToken:ZeroTrustAccessServiceToken::admin-access-cli-service-token"`
 2. Update `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET` in CI secrets and `apps/api/.env`:
-   ```
+   ```bash
    CF_ACCESS_CLIENT_ID=$(pulumi stack output adminCliAccessClientId)
    CF_ACCESS_CLIENT_SECRET=$(pulumi stack output --show-secrets adminCliAccessClientSecret)
    ```
