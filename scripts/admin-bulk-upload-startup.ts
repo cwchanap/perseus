@@ -25,11 +25,15 @@ import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { $ } from 'bun';
 import {
+	aspectRatiosMatch,
 	isPuzzleAspectRatio,
 	isValidPieceCountForAspectRatio,
 	PUZZLE_CATEGORIES,
 	type PuzzleCategory
 } from '@perseus/types';
+
+// Re-export so tests can import aspectRatiosMatch from this module.
+export { aspectRatiosMatch };
 
 // Deployment-specific defaults. Override via env vars for non-default deployments:
 //   PERSEUS_SERVER  — API base URL (default: https://perseus.cwchanap.dev)
@@ -37,6 +41,21 @@ import {
 const DEFAULT_SERVER = process.env.PERSEUS_SERVER ?? 'https://perseus.cwchanap.dev';
 const ACCESS_AUD =
 	process.env.CF_ACCESS_AUD ?? '7fd50c02b28c32fe3abb938cebba2dc9dcec6c88f42969c28700e9a0a8a28e5f';
+
+function warnHardcodedDefaults(): void {
+	if (!process.env.PERSEUS_SERVER) {
+		console.warn(
+			`[warn] PERSEUS_SERVER not set — using hardcoded default ${DEFAULT_SERVER}. ` +
+				'Set PERSEUS_SERVER to override for non-default deployments.'
+		);
+	}
+	if (!process.env.CF_ACCESS_AUD) {
+		console.warn(
+			'[warn] CF_ACCESS_AUD not set — using hardcoded default AUD. ' +
+				'Set CF_ACCESS_AUD to override for non-default deployments.'
+		);
+	}
+}
 
 /**
  * Thrown by command functions instead of calling process.exit() directly, so
@@ -443,7 +462,7 @@ function sessionCookieFrom(response: Response, priorCookie?: string): string {
 	return session;
 }
 
-async function readError(response: Response): Promise<string> {
+async function readError(response: Response, usingServiceToken = false): Promise<string> {
 	const payload = await response
 		.clone()
 		.json()
@@ -457,13 +476,17 @@ async function readError(response: Response): Promise<string> {
 		.text()
 		.catch(() => '');
 	if (text.includes('Cloudflare Access') || response.status === 302 || response.status === 403) {
-		return `${response.status} Cloudflare Access blocked — run: bun run admin:startup:set-token`;
+		const hint = usingServiceToken
+			? 'Check CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET are valid and not expired.'
+			: 'Run: bun run admin:startup:set-token';
+		return `${response.status} Cloudflare Access blocked — ${hint}`;
 	}
 	return `${response.status} ${response.statusText}`;
 }
 
 export function imagePathFor(entry: CatalogEntry, imagesDir: string): string | null {
-	const glob = new Bun.Glob(`${entry.id}-*.{jpg,jpeg,png,webp}`);
+	// Match either `{id}-*.{ext}` (e.g. 01-alpine-lake.jpg) or `{id}.{ext}` (e.g. 01.jpg).
+	const glob = new Bun.Glob(`${entry.id}{,-*}.{jpg,jpeg,png,webp}`);
 	const matches = [...glob.scanSync({ cwd: imagesDir, absolute: true })].sort();
 	return matches[0] ?? null;
 }
@@ -480,22 +503,8 @@ export function mimeForPath(path: string): string {
 	return MIME_BY_EXT[ext] ?? 'application/octet-stream';
 }
 
-// Tolerance for aspect ratio mismatch between image dimensions and requested ratio.
-// Mirrors the server-side check in admin.worker.ts — must stay in sync.
-const ASPECT_RATIO_TOLERANCE = 0.05; // 5%
-
-export function aspectRatiosMatch(
-	imageWidth: number,
-	imageHeight: number,
-	targetRatio: string
-): boolean {
-	const parts = targetRatio.split(':').map(Number);
-	const targetW = parts[0];
-	const targetH = parts[1];
-	const actual = imageWidth / imageHeight;
-	const expected = targetW / targetH;
-	return Math.abs(actual - expected) / expected <= ASPECT_RATIO_TOLERANCE;
-}
+// aspectRatiosMatch + ASPECT_RATIO_TOLERANCE are imported from @perseus/types
+// so the CLI and server enforce the same tolerance without duplication.
 
 /**
  * Parse image width/height from binary headers without decoding the full image.
@@ -971,7 +980,9 @@ Or add those two keys to apps/api/.env, then:
 		signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
 	});
 	if (!loginResponse.ok) {
-		throw new Error(`Admin login failed: ${await readError(loginResponse)}`);
+		throw new Error(
+			`Admin login failed: ${await readError(loginResponse, !!(options.cfClientId && options.cfClientSecret))}`
+		);
 	}
 	const cookie = sessionCookieFrom(loginResponse, baseHeaders.Cookie);
 	console.log('Admin session OK\n');
@@ -1039,7 +1050,10 @@ Or add those two keys to apps/api/.env, then:
 				entry.name
 			);
 			if (!uploadResponse.ok) {
-				const detail = await readError(uploadResponse);
+				const detail = await readError(
+					uploadResponse,
+					!!(options.cfClientId && options.cfClientSecret)
+				);
 				results.push({ id: entry.id, name: entry.name, ok: false, detail });
 				console.error(`FAIL ${entry.id} ${entry.name}: ${detail}`);
 			} else {
@@ -1090,6 +1104,7 @@ Or add those two keys to apps/api/.env, then:
 }
 
 async function main() {
+	warnHardcodedDefaults();
 	const options = await parseOptions();
 	if (options.command === 'set-token') {
 		await cmdSetToken(options);

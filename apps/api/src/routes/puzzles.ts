@@ -16,7 +16,11 @@ import { ALLOWED_MIME_TYPES, MAX_FILE_SIZE, PUZZLE_CATEGORIES } from '../types/i
 import type { PuzzleCategory } from '../types/index';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { extname } from 'node:path';
-import { DEFAULT_PUZZLE_ASPECT_RATIO, isPuzzleAspectRatio } from '@perseus/types';
+import {
+	DEFAULT_PUZZLE_ASPECT_RATIO,
+	aspectRatiosMatch,
+	isPuzzleAspectRatio
+} from '@perseus/types';
 import { generatePuzzle, isValidPieceCount } from '../services/puzzle-generator';
 import { requirePlayerAuth } from '../middleware/player-auth';
 import type { PlayerSessionRecord } from '../services/player-auth';
@@ -153,17 +157,6 @@ async function parseImageDimensions(
 		console.error('Failed to parse image dimensions:', error);
 		return null;
 	}
-}
-
-const ASPECT_RATIO_TOLERANCE = 0.05;
-
-function aspectRatiosMatch(imageWidth: number, imageHeight: number, targetRatio: string): boolean {
-	const parts = targetRatio.split(':').map(Number);
-	const targetW = parts[0];
-	const targetH = parts[1];
-	const actual = imageWidth / imageHeight;
-	const expected = targetW / targetH;
-	return Math.abs(actual - expected) / expected <= ASPECT_RATIO_TOLERANCE;
 }
 /* v8 ignore stop */
 

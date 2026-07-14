@@ -29,7 +29,11 @@ import {
 } from '../services/storage';
 import { MAX_FILE_SIZE, ALLOWED_MIME_TYPES, PUZZLE_CATEGORIES } from '../types';
 import type { PuzzleCategory } from '../types';
-import { DEFAULT_PUZZLE_ASPECT_RATIO, isPuzzleAspectRatio } from '@perseus/types';
+import {
+	DEFAULT_PUZZLE_ASPECT_RATIO,
+	aspectRatiosMatch,
+	isPuzzleAspectRatio
+} from '@perseus/types';
 import { getDb } from '../db';
 import {
 	deletePuzzleOwnership,
@@ -139,18 +143,6 @@ async function parseImageDimensions(
 		console.error('Failed to parse image dimensions:', error);
 		return null;
 	}
-}
-
-// Tolerance for aspect ratio mismatch between image dimensions and requested ratio.
-const ASPECT_RATIO_TOLERANCE = 0.05; // 5%
-
-function aspectRatiosMatch(imageWidth: number, imageHeight: number, targetRatio: string): boolean {
-	const parts = targetRatio.split(':').map(Number);
-	const targetW = parts[0];
-	const targetH = parts[1];
-	const actual = imageWidth / imageHeight;
-	const expected = targetW / targetH;
-	return Math.abs(actual - expected) / expected <= ASPECT_RATIO_TOLERANCE;
 }
 
 // Detect image MIME type from magic bytes

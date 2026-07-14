@@ -1,5 +1,5 @@
 import { describe, it, expect, mock, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -100,6 +100,13 @@ describe('imagePathFor', () => {
 		const result = imagePathFor(makeEntry('01', 'Alpha'), dir);
 		expect(result).not.toBeNull();
 		expect(result).toContain('01-alpine.jpg');
+	});
+
+	it('finds a file without a hyphen suffix (e.g. 01.jpg)', () => {
+		writeFileSync(join(dir, '01.jpg'), 'x');
+		const result = imagePathFor(makeEntry('01', 'Alpha'), dir);
+		expect(result).not.toBeNull();
+		expect(result).toContain('01.jpg');
 	});
 
 	it('finds .png files, not just .jpg', () => {

@@ -5,6 +5,7 @@ import {
 	DEFAULT_PUZZLE_ASPECT_RATIO,
 	MAX_PIECES,
 	PUZZLE_CATEGORIES,
+	aspectRatiosMatch,
 	getGridDimensionsForAspectRatio,
 	isPuzzleAspectRatio,
 	isPuzzleId,
@@ -193,19 +194,6 @@ async function parseImageDimensions(
 		console.error('Failed to parse image dimensions:', error);
 		return null;
 	}
-}
-
-// Tolerance for aspect ratio mismatch between image dimensions and requested ratio.
-// Accounts for rounding in normalized images (e.g., 3:4 at 300px wide → 400px tall, not 399.99).
-const ASPECT_RATIO_TOLERANCE = 0.05; // 5%
-
-function aspectRatiosMatch(imageWidth: number, imageHeight: number, targetRatio: string): boolean {
-	const parts = targetRatio.split(':').map(Number);
-	const targetW = parts[0];
-	const targetH = parts[1];
-	const actual = imageWidth / imageHeight;
-	const expected = targetW / targetH;
-	return Math.abs(actual - expected) / expected <= ASPECT_RATIO_TOLERANCE;
 }
 
 // POST /api/admin/login - Admin login

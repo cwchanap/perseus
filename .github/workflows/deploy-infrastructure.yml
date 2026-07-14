@@ -108,6 +108,8 @@ jobs:
             adminDeviceSerials:
               value: '${{ secrets.ADMIN_DEVICE_SERIALS }}'
               secret: true
+            adminCliServiceTokenDuration:
+              value: ${{ vars.ADMIN_CLI_SERVICE_TOKEN_DURATION }}
             googleClientId:
               value: ${{ vars.GOOGLE_CLIENT_ID }}
             jwtSecret:
@@ -183,6 +185,8 @@ jobs:
             adminDeviceSerials:
               value: '${{ secrets.ADMIN_DEVICE_SERIALS }}'
               secret: true
+            adminCliServiceTokenDuration:
+              value: ${{ vars.ADMIN_CLI_SERVICE_TOKEN_DURATION }}
             googleClientId:
               value: ${{ vars.GOOGLE_CLIENT_ID }}
             jwtSecret:

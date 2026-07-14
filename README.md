@@ -88,7 +88,7 @@ Image pixel aspect must match `--aspect` (the API validates dimensions).
 - Catalog (tracked): `scripts/startup-seed/catalog.json`
 - Images (**not** committed): put rasters next to the catalog under `scripts/startup-seed/images/`, or use a local dir such as `data/startup-puzzles/images/` (`data/` is gitignored)
 
-Each catalog entry needs a matching file named `{id}-*.{jpg,jpeg,png,webp}` (e.g. `01-alpine-lake-mirror.jpg`).
+Each catalog entry needs a matching file named `{id}-*.{jpg,jpeg,png,webp}` (e.g. `01-alpine-lake-mirror.jpg`) or `{id}.{jpg,jpeg,png,webp}` (e.g. `01.jpg`).
 
 ```bash
 # Dry-run first 5 (defaults: scripts/startup-seed catalog + images)
@@ -132,7 +132,9 @@ Alternatively, place files under `scripts/startup-seed/` in the checkout (e.g., 
 
 ### Service token blast radius
 
-The admin CLI service token (provisioned by Pulumi, 1-year lifetime) is scoped to a **narrow** Cloudflare Access application that covers only the CLI-needed paths: `GET/POST /api/admin/puzzles` and `POST /api/admin/login` (see `CLI_ACCESS_PATHS` in `packages/infrastructure/src/admin-access.ts`). A separate broad application (`Perseus Admin`) protects all other admin routes (`/admin/*`, `/api/admin/*`) with email + device posture only — no Service Auth policy. Because Cloudflare Access matches more specific path applications first, the service token cannot reach player-allowlist, delete, or other admin endpoints.
+The admin CLI service token (provisioned by Pulumi, 1-year lifetime) is scoped to a **narrow** Cloudflare Access application that covers only the CLI-needed paths: `GET/POST /api/admin/puzzles` and `POST /api/admin/login` (see `CLI_ACCESS_PATHS` in `packages/infrastructure/src/admin-access.ts`). A separate broad application (`Perseus Admin`) protects all other admin routes (`/admin/*`, `/api/admin/*`) with email + device posture only — no Service Auth policy. Because Cloudflare Access matches more specific path applications first, the service token cannot reach player-allowlist, logout, session, or other admin endpoints outside `/api/admin/login` and `/api/admin/puzzles`.
+
+**Caveat — path inheritance:** Cloudflare Access [inherits policies to sub-paths](https://developers.cloudflare.com/cloudflare-one/policies/access/app-paths/) when no more specific application exists. The CLI app destination `/api/admin/puzzles` therefore also covers `DELETE /api/admin/puzzles/:id`. The service token can reach the DELETE endpoint at the Access layer, but the app-level `requireAuth` middleware still gates it — a valid admin JWT (obtained via `POST /api/admin/login` with `ADMIN_PASSKEY`) is required. The token alone cannot delete puzzles; it only bypasses the Access email + device posture check, not the application auth. If this blast radius is too wide, add a shadow Access app at `/api/admin/puzzles/*` with only the email+posture policy to block the service token from sub-paths.
 
 The token uses `non_identity` Service Auth, so it bypasses the email + device posture check but still requires the `ADMIN_PASSKEY` for the admin session. Browser admin still works on the CLI paths because the narrow application includes both the email+posture policy and the Service Auth policy.
 

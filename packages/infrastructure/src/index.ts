@@ -84,7 +84,7 @@ const adminAccess = createAdminAccessResources({
 	adminEmail: config.requireSecret('adminAccessEmail'),
 	deviceSerialsJson: config.requireSecret('adminDeviceSerials'),
 	sessionDuration: config.get('adminAccessSessionDuration'),
-	cliServiceTokenDuration: config.get('adminCliServiceTokenDuration')
+	cliServiceTokenDuration: config.get('adminCliServiceTokenDuration') || undefined
 });
 
 export const r2BucketName = r2Bucket.name;

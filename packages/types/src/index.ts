@@ -15,6 +15,8 @@ export type { PuzzleAspectRatio } from './grid';
 export {
 	PUZZLE_ASPECT_RATIOS,
 	DEFAULT_PUZZLE_ASPECT_RATIO,
+	ASPECT_RATIO_TOLERANCE,
+	aspectRatiosMatch,
 	getGridDimensionsForAspectRatio,
 	isValidPieceCountForAspectRatio,
 	getAllowedPieceCountsForAspectRatio
