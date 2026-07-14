@@ -25,7 +25,7 @@ import { generatePuzzle, isValidPieceCount } from '../services/puzzle-generator'
 import { requirePlayerAuth } from '../middleware/player-auth';
 import type { PlayerSessionRecord } from '../services/player-auth';
 import { getDb } from '../db';
-import { insertPuzzleOwnership } from '@perseus/shared';
+import { detectImageType, insertPuzzleOwnership, parseImageDimensions } from '@perseus/shared';
 import { isPuzzleReady } from './puzzle-ready';
 
 const puzzles = new Hono<{
@@ -34,131 +34,6 @@ const puzzles = new Hono<{
 const DATA_DIR = process.env.DATA_DIR || './data';
 
 const VALID_CATEGORIES = new Set(PUZZLE_CATEGORIES as readonly PuzzleCategory[]);
-
-/* v8 ignore start -- duplicated admin upload validation helpers; covered by admin tests */
-// Detect image MIME type from magic bytes
-async function detectImageType(file: File | Blob): Promise<string | null> {
-	try {
-		const header = await file.slice(0, 12).arrayBuffer();
-		const bytes = new Uint8Array(header);
-		if (bytes.length < 4) return null;
-
-		if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
-			return 'image/jpeg';
-		}
-		if (
-			bytes[0] === 0x89 &&
-			bytes[1] === 0x50 &&
-			bytes[2] === 0x4e &&
-			bytes[3] === 0x47 &&
-			bytes.length >= 8 &&
-			bytes[4] === 0x0d &&
-			bytes[5] === 0x0a &&
-			bytes[6] === 0x1a &&
-			bytes[7] === 0x0a
-		) {
-			return 'image/png';
-		}
-		if (
-			bytes.length >= 12 &&
-			bytes[0] === 0x52 &&
-			bytes[1] === 0x49 &&
-			bytes[2] === 0x46 &&
-			bytes[3] === 0x46 &&
-			bytes[8] === 0x57 &&
-			bytes[9] === 0x45 &&
-			bytes[10] === 0x42 &&
-			bytes[11] === 0x50
-		) {
-			return 'image/webp';
-		}
-		return null;
-	} catch (error) {
-		console.error('Failed to detect image type from file bytes:', error);
-		return null;
-	}
-}
-
-// Parse image width/height from binary headers without decoding the full image
-async function parseImageDimensions(
-	file: File | Blob,
-	mimeType: string
-): Promise<{ width: number; height: number } | null> {
-	try {
-		if (mimeType === 'image/png') {
-			const header = await file.slice(16, 24).arrayBuffer();
-			if (header.byteLength < 8) return null;
-			const view = new DataView(header);
-			return { width: view.getUint32(0), height: view.getUint32(4) };
-		}
-
-		if (mimeType === 'image/jpeg') {
-			const buf = await file.slice(0, Math.min(file.size, 256 * 1024)).arrayBuffer();
-			const bytes = new Uint8Array(buf);
-			let offset = 2;
-			while (offset < bytes.length - 8) {
-				if (bytes[offset] !== 0xff) break;
-				const marker = bytes[offset + 1];
-				if (marker === 0xda || marker === 0xd9) break;
-				if ((marker >= 0xd0 && marker <= 0xd7) || marker === 0x01 || marker === 0xff) {
-					offset += 2;
-					continue;
-				}
-				if (
-					(marker >= 0xc0 && marker <= 0xc3) ||
-					(marker >= 0xc5 && marker <= 0xc7) ||
-					(marker >= 0xc9 && marker <= 0xcb) ||
-					(marker >= 0xcd && marker <= 0xcf)
-				) {
-					const segLen = (bytes[offset + 2] << 8) | bytes[offset + 3];
-					if (segLen < 9 || offset + 9 > bytes.length) return null;
-					const height = (bytes[offset + 5] << 8) | bytes[offset + 6];
-					const width = (bytes[offset + 7] << 8) | bytes[offset + 8];
-					return { width, height };
-				}
-				if (offset + 4 > bytes.length) break;
-				const segLen = (bytes[offset + 2] << 8) | bytes[offset + 3];
-				offset += 2 + segLen;
-			}
-			return null;
-		}
-
-		if (mimeType === 'image/webp') {
-			const header = await file.slice(12, 34).arrayBuffer();
-			if (header.byteLength < 8) return null;
-			const decoder = new TextDecoder();
-			const fourCC = decoder.decode(new Uint8Array(header, 0, 4));
-			if (fourCC === 'VP8 ') {
-				if (header.byteLength < 18) return null;
-				const view = new DataView(header);
-				const w = view.getUint16(14, true) & 0x3fff;
-				const h = view.getUint16(16, true) & 0x3fff;
-				return { width: w, height: h };
-			}
-			if (fourCC === 'VP8L') {
-				if (header.byteLength < 13) return null;
-				const b = new DataView(header).getUint32(9, true);
-				const w = (b & 0x3fff) + 1;
-				const h = ((b >> 14) & 0x3fff) + 1;
-				return { width: w, height: h };
-			}
-			if (fourCC === 'VP8X') {
-				if (header.byteLength < 18) return null;
-				const bytes = new Uint8Array(header);
-				const w = (bytes[12] | (bytes[13] << 8) | (bytes[14] << 16)) + 1;
-				const h = (bytes[15] | (bytes[16] << 8) | (bytes[17] << 16)) + 1;
-				return { width: w, height: h };
-			}
-			return null;
-		}
-
-		return null;
-	} catch (error) {
-		console.error('Failed to parse image dimensions:', error);
-		return null;
-	}
-}
-/* v8 ignore stop */
 
 function getImageContentType(filePath: string): string {
 	const ext = extname(filePath).toLowerCase();

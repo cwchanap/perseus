@@ -13,6 +13,6 @@
 		"strict": true,
 		"noEmit": true
 	},
-	"include": ["./*.ts"],
+	"include": ["./*.ts", "./startup/*.ts"],
 	"exclude": ["node_modules"]
 }

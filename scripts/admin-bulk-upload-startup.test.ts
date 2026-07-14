@@ -44,8 +44,7 @@ function makeEntry(id: string, name: string): CatalogEntry {
 		name,
 		category: 'Nature',
 		aspectRatio: '1:1',
-		pieceCount: 100,
-		prompt: 'test'
+		pieceCount: 100
 	};
 }
 
@@ -478,8 +477,7 @@ describe('validateCatalog', () => {
 		name: `Puzzle ${id}`,
 		category: 'Nature',
 		aspectRatio: '1:1',
-		pieceCount: 100,
-		prompt: 'test prompt'
+		pieceCount: 100
 	});
 
 	it('accepts a well-formed catalog', () => {
@@ -525,6 +523,18 @@ describe('validateCatalog', () => {
 	it('rejects a non-positive pieceCount', () => {
 		const entry = { ...validEntry('01'), pieceCount: 0 };
 		expect(() => validateCatalog([entry], 'catalog.json')).toThrow(/must be positive/);
+	});
+
+	it('rejects a pieceCount below the server minimum (1-3)', () => {
+		for (const pieceCount of [1, 2, 3]) {
+			const entry = { ...validEntry('01'), pieceCount };
+			expect(() => validateCatalog([entry], 'catalog.json')).toThrow(/must be at least 4/);
+		}
+	});
+
+	it('accepts pieceCount exactly 4 (server minimum)', () => {
+		const entry = { ...validEntry('01'), pieceCount: 4 };
+		expect(validateCatalog([entry], 'catalog.json')).toEqual([entry]);
 	});
 
 	it('rejects duplicate ids', () => {

@@ -29,6 +29,10 @@ on:
         description: 'Asset filename on the release (default perseus-seed.tgz)'
         required: false
         default: 'perseus-seed.tgz'
+      asset_sha256:
+        description: 'Expected SHA-256 hash of the tarball. When provided, the download is verified before extraction. Generate with: shasum -a 256 perseus-seed.tgz'
+        required: false
+        default: ''
 
 concurrency:
   group: seed-startup-puzzles
@@ -63,6 +67,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           ASSET_RELEASE: ${{ inputs.asset_release }}
           ASSET_NAME: ${{ inputs.asset_name }}
+          ASSET_SHA256: ${{ inputs.asset_sha256 }}
           REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
@@ -71,6 +76,21 @@ jobs:
             --repo "$REPOSITORY" \
             --pattern "$ASSET_NAME" \
             --dir /tmp
+          # Verify tarball integrity before extraction when a hash is provided.
+          # Supply-chain protection: ensures the release asset wasn't tampered
+          # with between upload and download. Skip only when no hash is given
+          # (backward-compatible with existing workflow_dispatch invocations).
+          ACTUAL_SHA256=$(shasum -a 256 "/tmp/$ASSET_NAME" | awk '{print $1}')
+          echo "Tarball SHA-256: ${ACTUAL_SHA256}"
+          if [ -n "$ASSET_SHA256" ]; then
+            if [ "$ACTUAL_SHA256" != "$ASSET_SHA256" ]; then
+              echo "::error::Checksum mismatch: expected $ASSET_SHA256, got $ACTUAL_SHA256"
+              exit 1
+            fi
+            echo "Checksum verified ✓"
+          else
+            echo "::warning::No asset_sha256 provided — tarball integrity not verified."
+          fi
           tar -xzf "/tmp/$ASSET_NAME" -C scripts/startup-seed
           echo "Seed images: $(find scripts/startup-seed/images -type f | wc -l)"
           test -f scripts/startup-seed/catalog.json
