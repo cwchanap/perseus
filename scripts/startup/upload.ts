@@ -14,7 +14,14 @@
 import { basename } from 'node:path';
 import { aspectRatiosMatch } from '@perseus/types';
 import { parseImageDimensions } from '@perseus/shared';
-import { FETCH_TIMEOUT_MS, UPLOAD_TIMEOUT_MS, type Options, FatalError, sleep } from './types';
+import {
+	FETCH_TIMEOUT_MS,
+	UPLOAD_TIMEOUT_MS,
+	MAX_FILE_SIZE,
+	type Options,
+	FatalError,
+	sleep
+} from './types';
 import { validateCatalog, selectEntries, imagePathFor, mimeForPath } from './catalog';
 import { resolveAccessToken, probeAccessToken } from './token';
 
@@ -286,6 +293,15 @@ Or add those two keys to apps/api/.env, then:
 		}
 
 		const image = Bun.file(imagePath, { type: mimeForPath(imagePath) });
+
+		// Pre-validate file size locally to avoid uploading images the server
+		// will reject (MAX_FILE_SIZE = 10MB). Saves bandwidth on slow links.
+		if (image.size > MAX_FILE_SIZE) {
+			const detail = `image is ${(image.size / 1024 / 1024).toFixed(1)}MB — exceeds ${MAX_FILE_SIZE / 1024 / 1024}MB limit`;
+			results.push({ id: entry.id, name: entry.name, ok: false, detail });
+			console.error(`FAIL ${entry.id} ${entry.name}: ${detail}`);
+			continue;
+		}
 
 		// Pre-validate image dimensions against the requested aspect ratio.
 		// Catches mis-cropped images locally before wasting a network round-trip

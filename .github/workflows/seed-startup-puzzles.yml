@@ -123,6 +123,7 @@ jobs:
 
       - name: Upload puzzles
         working-directory: ${{ github.workspace }}
+        timeout-minutes: 30
         env:
           PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

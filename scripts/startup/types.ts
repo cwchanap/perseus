@@ -17,6 +17,11 @@ export const FETCH_TIMEOUT_MS = 30_000;
 export const UPLOAD_TIMEOUT_MS = 120_000;
 export const PROBE_TIMEOUT_MS = 15_000;
 
+// Must match the server's MAX_FILE_SIZE (apps/api/src/routes/admin.ts and
+// admin.worker.ts). Checked client-side so oversized images are rejected
+// before wasting bandwidth on a doomed upload.
+export const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+
 export function warnHardcodedDefaults(): void {
 	if (!process.env.PERSEUS_SERVER) {
 		console.warn(

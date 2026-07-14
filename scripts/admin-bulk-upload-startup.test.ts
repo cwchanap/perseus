@@ -737,6 +737,59 @@ describe('cmdUpload', () => {
 		expect(postCalled).toBe(false);
 	});
 
+	it('rejects oversized image locally before uploading (file size preflight)', async () => {
+		// Create an 11MB file — exceeds the 10MB server limit. Should fail
+		// pre-validation without hitting the network (no POST, no login).
+		const entry = makeEntry('01', 'BigImage');
+		const catalogPath = join(tmpDir, 'catalog.json');
+		writeFileSync(catalogPath, JSON.stringify([entry]));
+		// Write 11MB of zeros with a JPEG magic header so mimeForPath + size
+		// checks are realistic.
+		const bigBuf = Buffer.alloc(11 * 1024 * 1024);
+		bigBuf[0] = 0xff;
+		bigBuf[1] = 0xd8;
+		bigBuf[2] = 0xff;
+		writeFileSync(join(tmpDir, '01-big.jpg'), bigBuf);
+
+		let postCalled = false;
+		globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
+			const url = String(input);
+			if (url.endsWith('/api/admin/login')) {
+				return new Response('{"ok":true}', {
+					status: 200,
+					headers: { 'set-cookie': 'session=abc; Path=/' }
+				});
+			}
+			if (init?.method === 'GET' && url.endsWith('/api/admin/puzzles')) {
+				return new Response(JSON.stringify({ puzzles: [] }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				});
+			}
+			if (init?.method === 'POST' && url.endsWith('/api/admin/puzzles')) {
+				postCalled = true;
+				return new Response('ok', { status: 201 });
+			}
+			return new Response('not found', { status: 404 });
+		}) as unknown as typeof fetch;
+
+		const options = makeOptions({
+			catalogPath,
+			imagesDir: tmpDir,
+			from: 1,
+			to: 1,
+			skipAccess: true,
+			delayMs: 0
+		});
+
+		// cmdUpload throws FatalError when fail > 0.
+		await expect(cmdUpload(options)).rejects.toBeInstanceOf(FatalError);
+
+		// Login still happens (it runs before per-entry processing), but the
+		// oversized image must NOT be POSTed — preflight caught it.
+		expect(postCalled).toBe(false);
+	});
+
 	it('skips entries whose name already exists on the server (idempotency)', async () => {
 		// Entry "Alpha" already exists on the server — should be skipped, not re-uploaded.
 		// Entry "Beta" does not exist — should be uploaded.
