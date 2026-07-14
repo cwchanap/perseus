@@ -38,6 +38,20 @@ const DEFAULT_SERVER = process.env.PERSEUS_SERVER ?? 'https://perseus.cwchanap.d
 const ACCESS_AUD =
 	process.env.CF_ACCESS_AUD ?? '7fd50c02b28c32fe3abb938cebba2dc9dcec6c88f42969c28700e9a0a8a28e5f';
 
+/**
+ * Thrown by command functions instead of calling process.exit() directly, so
+ * tests can assert on the failure via expect().rejects without monkey-patching
+ * process.exit. main() catches FatalError and translates it to process.exit.
+ */
+export class FatalError extends Error {
+	readonly exitCode: number;
+	constructor(message: string, exitCode = 1) {
+		super(message);
+		this.name = 'FatalError';
+		this.exitCode = exitCode;
+	}
+}
+
 /** Derive the Cloudflare Access app URL from the server (used by cloudflared token flow). */
 export function accessAppFor(server: string): string {
 	return `${server.replace(/\/+$/, '')}/api/admin`;
@@ -886,8 +900,7 @@ export async function uploadWithRetry(
 
 export async function cmdUpload(options: Options): Promise<void> {
 	if (!options.dryRun && !options.passkey) {
-		console.error('Missing admin passkey. Set ADMIN_PASSKEY or use --passkey.');
-		process.exit(1);
+		throw new FatalError('Missing admin passkey. Set ADMIN_PASSKEY or use --passkey.');
 	}
 
 	if (!options.dryRun && !options.skipAccess) {
@@ -900,7 +913,7 @@ export async function cmdUpload(options: Options): Promise<void> {
 	}
 
 	if (!options.dryRun && !hasAccessCredentials(options)) {
-		console.error(`Cloudflare Access credentials missing.
+		throw new FatalError(`Cloudflare Access credentials missing.
 
 For automation, Cloudflare recommends Access service tokens (not browser cookies):
   https://developers.cloudflare.com/cloudflare-one/access-controls/service-credentials/service-tokens/
@@ -912,17 +925,15 @@ After deploying the admin CLI service token (Pulumi exports):
 Or add those two keys to apps/api/.env, then:
   bun run admin:startup:upload -- --limit 5
 `);
-		process.exit(1);
 	}
 
 	if (!options.dryRun && options.cfAccessToken && !options.skipAccess) {
 		const probe = await probeAccessToken(options.server, options.cfAccessToken);
 		if (probe === 'blocked') {
-			console.error(
+			throw new FatalError(
 				'Access JWT is present but rejected by Cloudflare Access (302/403).\n' +
 					'Run: bun run admin:startup:set-token'
 			);
-			process.exit(1);
 		}
 	}
 
@@ -930,8 +941,7 @@ Or add those two keys to apps/api/.env, then:
 	const catalog = validateCatalog(catalogRaw, options.catalogPath);
 	const selected = selectEntries(catalog, options);
 	if (selected.length === 0) {
-		console.error('No catalog entries match the selected range.');
-		process.exit(1);
+		throw new FatalError('No catalog entries match the selected range.');
 	}
 
 	console.log(
@@ -1076,7 +1086,7 @@ Or add those two keys to apps/api/.env, then:
 	const ok = results.filter((r) => r.ok && r.detail !== 'already exists — skipped').length;
 	const fail = results.filter((r) => !r.ok).length;
 	console.log(`\nDone: ${ok} uploaded, ${skipped} skipped, ${fail} failed`);
-	if (fail > 0) process.exit(1);
+	if (fail > 0) throw new FatalError(`${fail} puzzle(s) failed to upload`);
 }
 
 async function main() {
@@ -1098,6 +1108,10 @@ async function main() {
 
 if (import.meta.main) {
 	main().catch((error) => {
+		if (error instanceof FatalError) {
+			console.error(error.message);
+			process.exit(error.exitCode);
+		}
 		console.error(error instanceof Error ? error.message : error);
 		process.exit(1);
 	});

@@ -132,9 +132,9 @@ Alternatively, place files under `scripts/startup-seed/` in the checkout (e.g., 
 
 ### Service token blast radius
 
-The admin CLI service token (provisioned by Pulumi, 1-year lifetime) is scoped to the same Cloudflare Access application that protects **all** admin routes (`/admin/*`, `/api/admin/*`). This means the token can reach any admin endpoint — not just puzzle upload, but also list, delete, and login. The token is `non_identity` Service Auth, so it bypasses the email + device posture check but still requires the `ADMIN_PASSKEY` for the admin session.
+The admin CLI service token (provisioned by Pulumi, 1-year lifetime) is scoped to a **narrow** Cloudflare Access application that covers only the CLI-needed paths: `GET/POST /api/admin/puzzles` and `POST /api/admin/login` (see `CLI_ACCESS_PATHS` in `packages/infrastructure/src/admin-access.ts`). A separate broad application (`Perseus Admin`) protects all other admin routes (`/admin/*`, `/api/admin/*`) with email + device posture only — no Service Auth policy. Because Cloudflare Access matches more specific path applications first, the service token cannot reach player-allowlist, delete, or other admin endpoints.
 
-To narrow the blast radius, create a separate Access application covering only `POST /api/admin/puzzles` with the service token, and exclude that path from the main admin application. This is not currently implemented — the single-operator tradeoff was documented instead.
+The token uses `non_identity` Service Auth, so it bypasses the email + device posture check but still requires the `ADMIN_PASSKEY` for the admin session. Browser admin still works on the CLI paths because the narrow application includes both the email+posture policy and the Service Auth policy.
 
 ### Token rotation
 

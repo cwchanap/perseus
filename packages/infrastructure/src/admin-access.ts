@@ -337,7 +337,7 @@ export function createAdminAccessResources(
 			postureRuleId: devicePostureRule.id,
 			sessionDuration: args.sessionDuration
 		}),
-		{ dependsOn: [devicePostureRule, cliServiceToken] }
+		{ dependsOn: [devicePostureRule] }
 	);
 
 	// Narrow app: CLI-only paths (login + puzzle list/create) with both

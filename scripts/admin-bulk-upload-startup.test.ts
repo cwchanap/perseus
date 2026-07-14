@@ -16,6 +16,7 @@ import {
 	accessAppFor,
 	adminUiFor,
 	tokenBasenameFor,
+	FatalError,
 	type CatalogEntry,
 	type Options
 } from './admin-bulk-upload-startup';
@@ -640,7 +641,7 @@ describe('cmdUpload', () => {
 		writeFileSync(join(tmpDir, '01-test.jpg'), 'fake-image');
 
 		// All GETs return empty — puzzle was never created, so the catch block
-		// cannot verify and must record a failure (process.exit(1)).
+		// cannot verify and must record a failure (FatalError).
 		globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
 			const url = String(input);
 			if (url.endsWith('/api/admin/login')) {
@@ -670,23 +671,8 @@ describe('cmdUpload', () => {
 			delayMs: 0
 		});
 
-		// cmdUpload calls process.exit(1) when fail > 0. Mock process.exit to
-		// capture the call without actually exiting.
-		const originalExit = process.exit;
-		let exitCode: number | undefined;
-		process.exit = ((code?: number) => {
-			exitCode = code;
-			throw new Error(`__exit_${code}__`);
-		}) as typeof process.exit;
-		try {
-			await cmdUpload(options);
-		} catch (e) {
-			// process.exit mock throws — expected
-			expect(String(e)).toMatch(/__exit_/);
-		} finally {
-			process.exit = originalExit;
-		}
-		expect(exitCode).toBe(1);
+		// cmdUpload throws FatalError when fail > 0.
+		await expect(cmdUpload(options)).rejects.toBeInstanceOf(FatalError);
 	});
 
 	it('rejects mis-cropped image locally before uploading', async () => {
@@ -728,22 +714,125 @@ describe('cmdUpload', () => {
 			delayMs: 0
 		});
 
-		const originalExit = process.exit;
-		let exitCode: number | undefined;
-		process.exit = ((code?: number) => {
-			exitCode = code;
-			throw new Error(`__exit_${code}__`);
-		}) as typeof process.exit;
-		try {
-			await cmdUpload(options);
-		} catch (e) {
-			expect(String(e)).toMatch(/__exit_/);
-		} finally {
-			process.exit = originalExit;
-		}
+		await expect(cmdUpload(options)).rejects.toBeInstanceOf(FatalError);
 
 		// Pre-validation should have caught the mismatch — no POST should fire
 		expect(postCalled).toBe(false);
-		expect(exitCode).toBe(1);
+	});
+
+	it('skips entries whose name already exists on the server (idempotency)', async () => {
+		// Entry "Alpha" already exists on the server — should be skipped, not re-uploaded.
+		// Entry "Beta" does not exist — should be uploaded.
+		const catalog = [makeEntry('01', 'Alpha'), makeEntry('02', 'Beta')];
+		const catalogPath = join(tmpDir, 'catalog.json');
+		writeFileSync(catalogPath, JSON.stringify(catalog));
+		writeFileSync(join(tmpDir, '01-alpha.jpg'), 'fake-image');
+		writeFileSync(join(tmpDir, '02-beta.jpg'), 'fake-image');
+
+		let postCalled = false;
+		let postBody: FormData | undefined;
+		globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
+			const url = String(input);
+			if (url.endsWith('/api/admin/login')) {
+				return new Response('{"ok":true}', {
+					status: 200,
+					headers: { 'set-cookie': 'session=abc; Path=/' }
+				});
+			}
+			if (init?.method === 'GET' && url.endsWith('/api/admin/puzzles')) {
+				// Initial fetch returns Alpha as existing; Beta is not yet there.
+				return new Response(JSON.stringify({ puzzles: [{ name: 'Alpha' }] }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				});
+			}
+			if (init?.method === 'POST' && url.endsWith('/api/admin/puzzles')) {
+				postCalled = true;
+				postBody = init?.body as FormData;
+				return new Response(JSON.stringify({ id: 'new-id', status: 'created' }), {
+					status: 201,
+					headers: { 'Content-Type': 'application/json' }
+				});
+			}
+			return new Response('not found', { status: 404 });
+		}) as unknown as typeof fetch;
+
+		const options = makeOptions({
+			catalogPath,
+			imagesDir: tmpDir,
+			from: 1,
+			to: 2,
+			skipAccess: true,
+			delayMs: 0
+		});
+
+		await cmdUpload(options);
+
+		// Only Beta should have been POSTed — Alpha was skipped.
+		expect(postCalled).toBe(true);
+		expect(postBody).toBeDefined();
+		const postedName = postBody!.get('name');
+		expect(postedName).toBe('Beta');
+	});
+
+	it('dry-run lists entries without logging in or uploading', async () => {
+		const catalog = [makeEntry('01', 'Alpha'), makeEntry('02', 'Beta')];
+		const catalogPath = join(tmpDir, 'catalog.json');
+		writeFileSync(catalogPath, JSON.stringify(catalog));
+		writeFileSync(join(tmpDir, '01-alpha.jpg'), 'fake-image');
+		// Entry 02 has no image — dry-run should report MISSING.
+
+		let fetchCalled = false;
+		globalThis.fetch = mock(async () => {
+			fetchCalled = true;
+			return new Response('should not be called', { status: 500 });
+		}) as unknown as typeof fetch;
+
+		const options = makeOptions({
+			catalogPath,
+			imagesDir: tmpDir,
+			from: 1,
+			to: 2,
+			skipAccess: true,
+			delayMs: 0,
+			dryRun: true
+		});
+
+		// Should NOT throw — dry-run does not upload, so no failures.
+		await cmdUpload(options);
+
+		// Dry-run must not make any network requests (no login, no fetch, no upload).
+		expect(fetchCalled).toBe(false);
+	});
+
+	it('throws FatalError when admin login fails', async () => {
+		const entry = makeEntry('01', 'Alpha');
+		const catalogPath = join(tmpDir, 'catalog.json');
+		writeFileSync(catalogPath, JSON.stringify([entry]));
+		writeFileSync(join(tmpDir, '01-alpha.jpg'), 'fake-image');
+
+		globalThis.fetch = mock(async (input: string | URL | Request) => {
+			const url = String(input);
+			if (url.endsWith('/api/admin/login')) {
+				return new Response(JSON.stringify({ message: 'Invalid passkey' }), {
+					status: 401,
+					headers: { 'Content-Type': 'application/json' }
+				});
+			}
+			return new Response('not found', { status: 404 });
+		}) as unknown as typeof fetch;
+
+		const options = makeOptions({
+			catalogPath,
+			imagesDir: tmpDir,
+			from: 1,
+			to: 1,
+			skipAccess: true,
+			delayMs: 0
+		});
+
+		// Login failure throws a plain Error (not FatalError) — cmdUpload does
+		// not wrap it. The caller (main) catches and exits 1.
+		await expect(cmdUpload(options)).rejects.toThrow(/Admin login failed/);
 	});
 });
