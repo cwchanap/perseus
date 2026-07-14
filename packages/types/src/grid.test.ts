@@ -8,7 +8,9 @@ import {
 	getGridDimensionsForAspectRatio,
 	getAllowedPieceCountsForAspectRatio,
 	isValidPieceCountForAspectRatio,
-	isPuzzleAspectRatio
+	isPuzzleAspectRatio,
+	aspectRatiosMatch,
+	ASPECT_RATIO_TOLERANCE
 } from './grid';
 
 describe('getGridDimensions', () => {
@@ -112,5 +114,55 @@ describe('edge helpers', () => {
 				else expect(topOfNext).toBe('flat');
 			}
 		}
+	});
+});
+
+describe('aspectRatiosMatch', () => {
+	it('matches exact 1:1 dimensions', () => {
+		expect(aspectRatiosMatch(100, 100, '1:1')).toBe(true);
+		expect(aspectRatiosMatch(1024, 1024, '1:1')).toBe(true);
+	});
+
+	it('matches exact 4:3 dimensions', () => {
+		expect(aspectRatiosMatch(400, 300, '4:3')).toBe(true);
+		expect(aspectRatiosMatch(800, 600, '4:3')).toBe(true);
+	});
+
+	it('matches exact 3:4 dimensions', () => {
+		expect(aspectRatiosMatch(300, 400, '3:4')).toBe(true);
+		expect(aspectRatiosMatch(600, 800, '3:4')).toBe(true);
+	});
+
+	it('matches within the 5% tolerance (normalized rounding)', () => {
+		// 4:3 at 300px wide → 400px tall is exact; 399px is within 5% tolerance
+		expect(aspectRatiosMatch(300, 399, '3:4')).toBe(true);
+		// 1:1 with slight rounding: 100x102 → actual 0.980, expected 1.0, diff 2% < 5%
+		expect(aspectRatiosMatch(100, 102, '1:1')).toBe(true);
+	});
+
+	it('rejects ratios outside the tolerance', () => {
+		// 16:9 image (1.778) vs 4:3 target (1.333): diff ~33% > 5%
+		expect(aspectRatiosMatch(1920, 1080, '4:3')).toBe(false);
+		// 1:1 target with a clearly non-square image
+		expect(aspectRatiosMatch(200, 100, '1:1')).toBe(false);
+		// 4:3 target given a 3:4 image (inverted)
+		expect(aspectRatiosMatch(300, 400, '4:3')).toBe(false);
+	});
+
+	it('rejects at exactly the tolerance boundary on the wrong side', () => {
+		// Build a width/height whose ratio diverges just over ASPECT_RATIO_TOLERANCE.
+		// For 1:1 (expected=1), a 6% height shortfall exceeds the 5% tolerance.
+		const expected = 1;
+		const actual = 100 / 106; // ~0.9434, |1 - 0.9434|/1 = 0.0566 > 0.05
+		expect(Math.abs(actual - expected) / expected).toBeGreaterThan(ASPECT_RATIO_TOLERANCE);
+		expect(aspectRatiosMatch(100, 106, '1:1')).toBe(false);
+	});
+
+	it('handles portrait vs landscape correctly for 4:3 vs 3:4', () => {
+		// Same pixel counts, different orientation — must not cross-match
+		expect(aspectRatiosMatch(400, 300, '4:3')).toBe(true);
+		expect(aspectRatiosMatch(400, 300, '3:4')).toBe(false);
+		expect(aspectRatiosMatch(300, 400, '3:4')).toBe(true);
+		expect(aspectRatiosMatch(300, 400, '4:3')).toBe(false);
 	});
 });

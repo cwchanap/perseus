@@ -59,6 +59,11 @@ jobs:
     needs: [build]
     # Same environment as deploy so environment-scoped secrets
     # (ADMIN_ACCESS_EMAIL, ADMIN_DEVICE_SERIALS, etc.) resolve correctly.
+    # TRADEOFF: this inherits all production protection rules (required
+    # reviewers, wait timers), so a stuck/pending preview blocks deploys.
+    # A separate `pulumi-preview` env mirroring the secrets but with no
+    # gates would decouple preview from deploy gating — deferred as a
+    # team decision (requires configuring a new GitHub environment).
     environment: production
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     steps:

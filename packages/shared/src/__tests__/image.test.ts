@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { sniffImageType, detectImageType } from '../image';
+import { sniffImageType, detectImageType, parseImageDimensions, type BlobLike } from '../image';
+
+// bun-types' `Blob` interface (under lib: ES2022, no DOM) omits `slice`, so a
+// real Blob isn't structurally assignable to BlobLike even though it has slice
+// at runtime. Wrap construction so tests typecheck against the exported type.
+function makeBlob(bytes: Uint8Array): BlobLike {
+	return new Blob([bytes]) as unknown as BlobLike;
+}
 
 // ─── sniffImageType boundary tests ──────────────────────────────────
 // The minimum-length threshold changed from 12 to 3 bytes (commit 744c961).
@@ -170,13 +177,13 @@ describe('sniffImageType – format recognition', () => {
 describe('detectImageType', () => {
 	it('detects JPEG from a Blob', async () => {
 		const bytes = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]);
-		const blob = new Blob([bytes]);
+		const blob = makeBlob(bytes);
 		expect(await detectImageType(blob)).toBe('image/jpeg');
 	});
 
 	it('detects PNG from a Blob', async () => {
 		const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-		const blob = new Blob([bytes]);
+		const blob = makeBlob(bytes);
 		expect(await detectImageType(blob)).toBe('image/png');
 	});
 
@@ -184,12 +191,12 @@ describe('detectImageType', () => {
 		const bytes = new Uint8Array([
 			0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50
 		]);
-		const blob = new Blob([bytes]);
+		const blob = makeBlob(bytes);
 		expect(await detectImageType(blob)).toBe('image/webp');
 	});
 
 	it('returns null for an unrecognized Blob', async () => {
-		const blob = new Blob([new Uint8Array([0x00, 0x01, 0x02, 0x03])]);
+		const blob = makeBlob(new Uint8Array([0x00, 0x01, 0x02, 0x03]));
 		expect(await detectImageType(blob)).toBeNull();
 	});
 
@@ -199,7 +206,204 @@ describe('detectImageType', () => {
 		bytes[0] = 0xff;
 		bytes[1] = 0xd8;
 		bytes[2] = 0xff;
-		const blob = new Blob([bytes]);
+		const blob = makeBlob(bytes);
 		expect(await detectImageType(blob)).toBe('image/jpeg');
+	});
+});
+
+// ─── parseImageDimensions (binary header parsing) ──────────────────
+// Constructs minimal valid headers for each format and verifies the parser
+// extracts width/height without decoding the full image. These are the
+// trickiest code paths (JPEG SOF marker scan, three WebP VP8 variants).
+
+function pngHeaderBytes(width: number, height: number): Uint8Array {
+	const b = new Uint8Array(32);
+	// PNG signature
+	b.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+	// IHDR chunk length = 13
+	b.set([0x00, 0x00, 0x00, 0x0d], 8);
+	// "IHDR"
+	b.set([0x49, 0x48, 0x44, 0x52], 12);
+	// width/height are 4-byte big-endian at offset 16–23
+	const dv = new DataView(b.buffer);
+	dv.setUint32(16, width);
+	dv.setUint32(20, height);
+	return b;
+}
+
+function jpegHeaderBytes(width: number, height: number): Uint8Array {
+	// SOI + APP0/JFIF (18 bytes incl. marker) + SOF0 segment carrying dims.
+	const app0 = [
+		0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01,
+		0x00, 0x00
+	];
+	// SOF0: FF C0, length 0x0011 (17, covers length+precision+dims+3 components),
+	// precision 08, height(2 BE), width(2 BE), 03 components, 9 component bytes.
+	const sof0 = [
+		0xff,
+		0xc0,
+		0x00,
+		0x11,
+		0x08,
+		(height >> 8) & 0xff,
+		height & 0xff,
+		(width >> 8) & 0xff,
+		width & 0xff,
+		0x03,
+		0x01,
+		0x22,
+		0x00,
+		0x02,
+		0x11,
+		0x01,
+		0x03,
+		0x11,
+		0x01
+	];
+	return new Uint8Array([0xff, 0xd8, ...app0, ...sof0]);
+}
+
+function webpVp8Bytes(width: number, height: number): Uint8Array {
+	// RIFF....WEBP + "VP8 " (lossy) chunk. Width/height are 14-bit LE at
+	// slice offsets 14/16 (file offsets 26/28), masked with 0x3fff.
+	const b = new Uint8Array(34);
+	b.set([0x52, 0x49, 0x46, 0x46], 0); // RIFF
+	b.set([0x57, 0x45, 0x42, 0x50], 8); // WEBP
+	b.set([0x56, 0x50, 0x38, 0x20], 12); // "VP8 "
+	const dv = new DataView(b.buffer);
+	dv.setUint16(26, width & 0x3fff, true);
+	dv.setUint16(28, height & 0x3fff, true);
+	return b;
+}
+
+function webpVp8LBytes(width: number, height: number): Uint8Array {
+	// "VP8L" (lossless): 1-byte signature (0x2f) + 4-byte packed image size.
+	// width-1 in low 14 bits, height-1 in next 14 bits (little-endian uint32).
+	const b = new Uint8Array(34);
+	b.set([0x52, 0x49, 0x46, 0x46], 0);
+	b.set([0x57, 0x45, 0x42, 0x50], 8);
+	b.set([0x56, 0x50, 0x38, 0x4c], 12); // "VP8L"
+	b[20] = 0x2f; // signature
+	const packed = ((width - 1) | ((height - 1) << 14)) >>> 0;
+	new DataView(b.buffer).setUint32(21, packed, true);
+	return b;
+}
+
+function webpVp8XBytes(width: number, height: number): Uint8Array {
+	// "VP8X" (extended): flags + 3 reserved + canvas-width-1 (3-byte LE) +
+	// canvas-height-1 (3-byte LE). Stored +1 on read.
+	const b = new Uint8Array(34);
+	b.set([0x52, 0x49, 0x46, 0x46], 0);
+	b.set([0x57, 0x45, 0x42, 0x50], 8);
+	b.set([0x56, 0x50, 0x38, 0x58], 12); // "VP8X"
+	b[20] = 0x00; // flags (don't care)
+	b[24] = (width - 1) & 0xff;
+	b[25] = ((width - 1) >> 8) & 0xff;
+	b[26] = ((width - 1) >> 16) & 0xff;
+	b[27] = (height - 1) & 0xff;
+	b[28] = ((height - 1) >> 8) & 0xff;
+	b[29] = ((height - 1) >> 16) & 0xff;
+	return b;
+}
+
+describe('parseImageDimensions', () => {
+	it('parses PNG width/height from IHDR', async () => {
+		const blob = makeBlob(pngHeaderBytes(600, 400));
+		expect(await parseImageDimensions(blob, 'image/png')).toEqual({ width: 600, height: 400 });
+	});
+
+	it('parses a square PNG', async () => {
+		const blob = makeBlob(pngHeaderBytes(1024, 1024));
+		expect(await parseImageDimensions(blob, 'image/png')).toEqual({ width: 1024, height: 1024 });
+	});
+
+	it('parses JPEG width/height from SOF0 marker', async () => {
+		const blob = makeBlob(jpegHeaderBytes(600, 400));
+		expect(await parseImageDimensions(blob, 'image/jpeg')).toEqual({ width: 600, height: 400 });
+	});
+
+	it('parses JPEG dimensions after multiple leading marker segments', async () => {
+		// SOI + an APP1 (EXIF) segment before SOF0, to exercise the skip loop.
+		// APP1: FF E1 + 2-byte length (8) + 6 bytes payload.
+		const app1 = [0xff, 0xe1, 0x00, 0x08, 0x45, 0x78, 0x69, 0x66, 0x00, 0x00];
+		const sof0 = [
+			0xff,
+			0xc0,
+			0x00,
+			0x11,
+			0x08,
+			0x01,
+			0x2c, // height = 300
+			0x04,
+			0xb0, // width = 1200
+			0x03,
+			0x01,
+			0x22,
+			0x00,
+			0x02,
+			0x11,
+			0x01,
+			0x03,
+			0x11,
+			0x01
+		];
+		const blob = makeBlob(new Uint8Array([0xff, 0xd8, ...app1, ...sof0]));
+		expect(await parseImageDimensions(blob, 'image/jpeg')).toEqual({ width: 1200, height: 300 });
+	});
+
+	it('stops scanning at SOS marker and returns null (no SOF seen)', async () => {
+		// SOI + APP0 + SOS (FF DA) before any SOF → scan stops, returns null.
+		const app0 = [
+			0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00,
+			0x01, 0x00, 0x00
+		];
+		const sos = [
+			0xff, 0xda, 0x00, 0x0c, 0x03, 0x01, 0x00, 0x02, 0x11, 0x03, 0x11, 0x00, 0x3f, 0x00
+		];
+		const blob = makeBlob(new Uint8Array([0xff, 0xd8, ...app0, ...sos]));
+		expect(await parseImageDimensions(blob, 'image/jpeg')).toBeNull();
+	});
+
+	it('parses WebP VP8 (lossy) dimensions', async () => {
+		const blob = makeBlob(webpVp8Bytes(600, 400));
+		expect(await parseImageDimensions(blob, 'image/webp')).toEqual({ width: 600, height: 400 });
+	});
+
+	it('parses WebP VP8L (lossless) dimensions', async () => {
+		const blob = makeBlob(webpVp8LBytes(600, 400));
+		expect(await parseImageDimensions(blob, 'image/webp')).toEqual({ width: 600, height: 400 });
+	});
+
+	it('parses WebP VP8X (extended) dimensions', async () => {
+		const blob = makeBlob(webpVp8XBytes(600, 400));
+		expect(await parseImageDimensions(blob, 'image/webp')).toEqual({ width: 600, height: 400 });
+	});
+
+	it('returns null for an unknown WebP chunk fourCC', async () => {
+		const b = new Uint8Array(34);
+		b.set([0x52, 0x49, 0x46, 0x46], 0);
+		b.set([0x57, 0x45, 0x42, 0x50], 8);
+		b.set([0x56, 0x50, 0x38, 0x5a], 12); // "VP8Z" — not a real variant
+		const blob = makeBlob(b);
+		expect(await parseImageDimensions(blob, 'image/webp')).toBeNull();
+	});
+
+	it('returns null for an unsupported mime type', async () => {
+		const blob = makeBlob(new Uint8Array([0x47, 0x49, 0x46, 0x38])); // GIF
+		expect(await parseImageDimensions(blob, 'image/gif')).toBeNull();
+	});
+
+	it('returns null for a truncated PNG header (< 24 bytes)', async () => {
+		const truncated = pngHeaderBytes(600, 400).slice(0, 20);
+		const blob = makeBlob(truncated);
+		expect(await parseImageDimensions(blob, 'image/png')).toBeNull();
+	});
+
+	it('round-trips with detectImageType for a real PNG header', async () => {
+		const bytes = pngHeaderBytes(800, 600);
+		const blob = makeBlob(bytes);
+		const mime = await detectImageType(blob);
+		expect(mime).toBe('image/png');
+		expect(await parseImageDimensions(blob, mime!)).toEqual({ width: 800, height: 600 });
 	});
 });

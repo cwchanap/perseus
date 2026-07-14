@@ -45,6 +45,8 @@ Options:
   --server <url>           API base (default: ${DEFAULT_SERVER})
   --passkey <value>        Admin passkey (or ADMIN_PASSKEY / apps/api/.env)
   --cf-access-token <jwt>  Access JWT (or CF_ACCESS_TOKEN / cached set-token)
+  --catalog <path>         Catalog JSON (default: scripts/startup-seed/catalog.json)
+  --images <dir>           Image directory (default: scripts/startup-seed/images)
   --from <n>               Start catalog id (default: 1)
   --to <n>                 End catalog id (default: all)
   --limit <n>              Upload at most N entries from --from
@@ -102,14 +104,12 @@ async function parseOptions(): Promise<Options> {
 	const server = (readArg(args, '--server') ?? DEFAULT_SERVER).replace(/\/+$/, '');
 	const skipAccess = args.includes('--skip-access') || /localhost|127\.0\.0\.1/.test(server);
 	const tokenCachePath = join(root, 'data/startup-puzzles/.cf-access-token');
-	const explicitToken = readArg(args, '--cf-access-token') ?? process.env.CF_ACCESS_TOKEN;
-
-	const cfAccessToken = await resolveAccessToken({
-		explicit: explicitToken,
-		tokenCachePath,
-		skipAccess,
-		server
-	});
+	// Store only the raw explicit token here. Each command resolves the full
+	// token (cache → cloudflared) itself via resolveAccessToken — resolving here
+	// would spawn cloudflared (subprocess + network) even for --dry-run, and
+	// cmdUpload/cmdStatus re-resolve anyway, so it was both redundant and a
+	// dry-run latency hit. See token.ts resolveAccessToken.
+	const cfAccessToken = readArg(args, '--cf-access-token') ?? process.env.CF_ACCESS_TOKEN;
 
 	const cfClientId =
 		process.env.CF_Access_Client_Id ??

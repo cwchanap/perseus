@@ -8,13 +8,17 @@
 // Minimal structural type for blob-like objects (File, Blob, Bun.BunFile).
 // Avoids relying on the DOM/Worker `Blob` global, which is unavailable under
 // tsconfigs with lib: ["ES2022"] (e.g. the scripts tsconfig).
-interface BlobLike {
+export interface BlobLike {
 	readonly size: number;
 	slice(start?: number, end?: number): { arrayBuffer(): Promise<ArrayBuffer> };
 	arrayBuffer(): Promise<ArrayBuffer>;
 }
 
 export function sniffImageType(bytes: Uint8Array): string | null {
+	// Minimum 3 bytes — enough for the JPEG signature (FF D8 FF). PNG and WebP
+	// have their own inline `bytes.length >= 8` / `>= 12` guards below, so the
+	// old blanket `< 12` check was unnecessarily strict for JPEG. Lowered from
+	// 12 to 3 in commit 744c961; boundary behavior is pinned in image.test.ts.
 	if (bytes.length < 3) return null;
 	// JPEG: FF D8 FF (3 magic bytes)
 	if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';

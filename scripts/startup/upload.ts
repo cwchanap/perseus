@@ -253,7 +253,7 @@ Or add those two keys to apps/api/.env, then:
 		signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
 	});
 	if (!loginResponse.ok) {
-		throw new Error(
+		throw new FatalError(
 			`Admin login failed: ${await readError(loginResponse, !!(options.cfClientId && options.cfClientSecret))}`
 		);
 	}

@@ -901,8 +901,10 @@ describe('cmdUpload', () => {
 			delayMs: 0
 		});
 
-		// Login failure throws a plain Error (not FatalError) — cmdUpload does
-		// not wrap it. The caller (main) catches and exits 1.
-		await expect(cmdUpload(options)).rejects.toThrow(/Admin login failed/);
+		// Login failure throws FatalError so main() maps it to the right exit
+		// code consistently with the other cmdUpload failure paths.
+		const result = cmdUpload(options);
+		await expect(result).rejects.toThrow(/Admin login failed/);
+		await expect(result).rejects.toBeInstanceOf(FatalError);
 	});
 });
