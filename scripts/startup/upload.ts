@@ -13,7 +13,7 @@
 
 import { basename } from 'node:path';
 import { aspectRatiosMatch } from '@perseus/types';
-import { parseImageDimensions } from '@perseus/shared';
+import { parseImageDimensions, detectImageType } from '@perseus/shared';
 import {
 	FETCH_TIMEOUT_MS,
 	UPLOAD_TIMEOUT_MS,
@@ -357,8 +357,12 @@ Or add those two keys to apps/api/.env, then:
 		// Pre-validate image dimensions against the requested aspect ratio.
 		// Catches mis-cropped images locally before wasting a network round-trip
 		// (the server performs the same check and returns 400 on mismatch).
-		const detectedMime = mimeForPath(imagePath);
-		const dimensions = await parseImageDimensions(image, detectedMime);
+		// Use detectImageType (magic bytes) instead of mimeForPath (extension)
+		// so a mislabeled file (e.g. a .png containing JPEG data) is parsed
+		// with the correct format decoder instead of silently skipping the
+		// aspect-ratio check.
+		const detectedMime = await detectImageType(image);
+		const dimensions = detectedMime ? await parseImageDimensions(image, detectedMime) : null;
 		if (dimensions) {
 			if (!aspectRatiosMatch(dimensions.width, dimensions.height, entry.aspectRatio)) {
 				const detail = `image ${dimensions.width}x${dimensions.height} does not match ${entry.aspectRatio}`;

@@ -117,6 +117,12 @@ export function selectEntries(catalog: CatalogEntry[], options: Options): Catalo
 		const n = Number.parseInt(e.id, 10);
 		return n >= options.from && n <= options.to;
 	});
+	// Sort by numeric id so --limit takes the lowest ids in the range, not
+	// the first M entries in catalog order. Without this, a catalog that is
+	// not in ascending id order would break the --from N --limit M batched
+	// run pattern (e.g. --from 1 --limit 5 might skip id 1 and include id 70
+	// if id 70 appears before id 1 in the JSON array).
+	filtered.sort((a, b) => Number.parseInt(a.id, 10) - Number.parseInt(b.id, 10));
 	if (options.limit !== undefined) return filtered.slice(0, options.limit);
 	return filtered;
 }

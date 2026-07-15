@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'bun:test';
 import { accessHeaders, hasAccessCredentials, readError } from './upload';
+import { detectImageType, parseImageDimensions, type BlobLike } from '@perseus/shared';
+import { aspectRatiosMatch } from '@perseus/types';
 import type { Options } from './types';
 
 function makeOptions(overrides: Partial<Options> = {}): Options {
@@ -199,5 +201,91 @@ describe('readError', () => {
 			statusText: 'Internal Server Error'
 		});
 		expect(await readError(res)).toBe('500 Internal Server Error');
+	});
+});
+
+// ─── JPEG integration: detectImageType → parseImageDimensions → aspectRatiosMatch ──
+// End-to-end test threading a crafted JPEG through the same chain cmdUpload uses
+// (upload.ts:364-367). The shared-lib JPEG tests (packages/shared/src/__tests__)
+// test parseImageDimensions in isolation; this test verifies the CLI's
+// detectImageType → parse → aspect-ratio pipeline works together with a real
+// JPEG buffer, including the mislabeled-extension case (JPEG content with a
+// .png path) that motivated switching from mimeForPath to detectImageType.
+
+// Build a minimal JPEG buffer with SOI + APP0/JFIF + SOF0 carrying the given
+// width/height. Mirrors jpegHeaderBytes in packages/shared/src/__tests__/image.test.ts.
+function jpegHeaderBytes(width: number, height: number): Uint8Array {
+	const app0 = [
+		0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01,
+		0x00, 0x00
+	];
+	const sof0 = [
+		0xff,
+		0xc0,
+		0x00,
+		0x11,
+		0x08,
+		(height >> 8) & 0xff,
+		height & 0xff,
+		(width >> 8) & 0xff,
+		width & 0xff,
+		0x03,
+		0x01,
+		0x22,
+		0x00,
+		0x02,
+		0x11,
+		0x01,
+		0x03,
+		0x11,
+		0x01
+	];
+	return new Uint8Array([0xff, 0xd8, ...app0, ...sof0]);
+}
+
+function makeBlob(bytes: Uint8Array): BlobLike {
+	return new Blob([bytes]) as unknown as BlobLike;
+}
+
+describe('JPEG integration: detect → parse → aspect-ratio (cmdUpload pipeline)', () => {
+	it('detects JPEG, parses 400x400 dimensions, and matches 1:1 aspect ratio', async () => {
+		const blob = makeBlob(jpegHeaderBytes(400, 400));
+		const mime = await detectImageType(blob);
+		expect(mime).toBe('image/jpeg');
+		const dims = await parseImageDimensions(blob, mime!);
+		expect(dims).toEqual({ width: 400, height: 400 });
+		expect(aspectRatiosMatch(dims!.width, dims!.height, '1:1')).toBe(true);
+	});
+
+	it('detects JPEG, parses 800x600 dimensions, and matches 4:3 aspect ratio', async () => {
+		const blob = makeBlob(jpegHeaderBytes(800, 600));
+		const mime = await detectImageType(blob);
+		expect(mime).toBe('image/jpeg');
+		const dims = await parseImageDimensions(blob, mime!);
+		expect(dims).toEqual({ width: 800, height: 600 });
+		expect(aspectRatiosMatch(dims!.width, dims!.height, '4:3')).toBe(true);
+	});
+
+	it('rejects 800x600 JPEG as not matching 1:1 aspect ratio', async () => {
+		const blob = makeBlob(jpegHeaderBytes(800, 600));
+		const mime = await detectImageType(blob);
+		const dims = await parseImageDimensions(blob, mime!);
+		expect(aspectRatiosMatch(dims!.width, dims!.height, '1:1')).toBe(false);
+	});
+
+	// Critical regression test: a file with JPEG magic bytes but a .png
+	// extension must be detected as JPEG by detectImageType (magic bytes),
+	// not as PNG by mimeForPath (extension). Before the fix, the CLI used
+	// mimeForPath which would return 'image/png', causing parseImageDimensions
+	// to try PNG parsing on JPEG bytes → garbage/null → aspect-ratio check
+	// silently skipped. Now detectImageType ensures the correct decoder runs.
+	it('detects JPEG from magic bytes even if extension says .png (mislabeled file)', async () => {
+		const blob = makeBlob(jpegHeaderBytes(400, 400));
+		const mime = await detectImageType(blob);
+		expect(mime).toBe('image/jpeg');
+		expect(mime).not.toBe('image/png');
+		const dims = await parseImageDimensions(blob, mime!);
+		expect(dims).toEqual({ width: 400, height: 400 });
+		expect(aspectRatiosMatch(dims!.width, dims!.height, '1:1')).toBe(true);
 	});
 });

@@ -76,8 +76,14 @@ function readArg(args: string[], name: string): string | undefined {
 
 function parseIntArg(raw: string | undefined, label: string, fallback: number): number {
 	if (raw === undefined) return fallback;
+	// Allow zero-padded digits (e.g. "01") since catalog ids are zero-padded.
+	// Reject non-numeric strings or floats (e.g. "1.5", "abc").
+	if (!/^\d+$/.test(raw)) {
+		console.error(`${label} must be a base-10 integer`);
+		process.exit(1);
+	}
 	const n = Number.parseInt(raw, 10);
-	if (!Number.isInteger(n) || String(n) !== raw) {
+	if (!Number.isInteger(n)) {
 		console.error(`${label} must be a base-10 integer`);
 		process.exit(1);
 	}

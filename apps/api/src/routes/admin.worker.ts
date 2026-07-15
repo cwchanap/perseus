@@ -377,7 +377,15 @@ admin.post('/puzzles', requireAuth, async (c) => {
 		}
 		// If dimensions can't be parsed, proceed — the workflow will use actual pixel dimensions
 
-		// Generate puzzle ID
+		// Generate puzzle ID.
+		// NOTE: No server-side idempotency — every POST mints a fresh UUID.
+		// Dedup is client-side only: the seed script (scripts/startup/upload.ts)
+		// fetches existing puzzle keys (name + pieceCount + aspectRatio) via
+		// GET /api/admin/puzzles and skips entries that already exist before
+		// POSTing. This is sufficient for the single-operator admin seed flow.
+		// If two clients POST the same puzzle concurrently, duplicates will be
+		// created. To add server-side protection, accept an Idempotency-Key
+		// header here and check existing puzzles by key before creating.
 		const id = crypto.randomUUID();
 
 		// Calculate grid dimensions (must match workflow calculation)
