@@ -9,7 +9,12 @@ import {
 	probeServiceToken,
 	loadDotEnvMap
 } from './startup/token';
-import { FatalError, applyDotenvOverrides, type AccessCredentials } from './startup/types';
+import {
+	FatalError,
+	applyDotenvOverrides,
+	DEFAULT_SERVER,
+	type AccessCredentials
+} from './startup/types';
 
 interface Options extends AccessCredentials {
 	server: string;
@@ -74,7 +79,10 @@ async function parseOptions(): Promise<Options> {
 	applyDotenvOverrides(dotenv);
 
 	const passkey = readArg(args, '--passkey') ?? process.env.ADMIN_PASSKEY ?? dotenv.ADMIN_PASSKEY;
-	const server = readArg(args, '--server') ?? 'http://127.0.0.1:3000';
+	const server = (readArg(args, '--server') ?? dotenv.PERSEUS_SERVER ?? DEFAULT_SERVER).replace(
+		/\/+$/,
+		''
+	);
 	const aspectRatio = readArg(args, '--aspect');
 	const category = readArg(args, '--category');
 	const cfAccessToken = readArg(args, '--cf-access-token') ?? process.env.CF_ACCESS_TOKEN;
@@ -91,7 +99,7 @@ async function parseOptions(): Promise<Options> {
 	}
 
 	return {
-		server: server.replace(/\/+$/, ''),
+		server,
 		passkey,
 		imagePath,
 		name,

@@ -1,5 +1,11 @@
-import { describe, it, expect } from 'bun:test';
-import { accessHeaders, hasAccessCredentials, readError } from './upload';
+import { describe, it, expect, mock, beforeEach, afterEach } from 'bun:test';
+import {
+	accessHeaders,
+	hasAccessCredentials,
+	readError,
+	uploadWithRetry,
+	retryConfig
+} from './upload';
 import { detectImageType, parseImageDimensions, type BlobLike } from '@perseus/shared';
 import { aspectRatiosMatch } from '@perseus/types';
 import type { Options } from './types';
@@ -204,6 +210,84 @@ describe('readError', () => {
 			statusText: 'Internal Server Error'
 		});
 		expect(await readError(res)).toBe('500 Internal Server Error');
+	});
+});
+
+// ─── uploadWithRetry ────────────────────────────────────────────────
+// The API mints a fresh UUID per POST with no server-side idempotency, so
+// re-POSTing after an unverifiable failure can create a duplicate puzzle.
+// These tests verify that a verification GET failure aborts the retry loop
+// instead of silently re-POSTing.
+
+const originalFetch = globalThis.fetch;
+const originalSleep = retryConfig.sleepFn;
+
+describe('uploadWithRetry', () => {
+	beforeEach(() => {
+		retryConfig.sleepFn = async () => {};
+	});
+	afterEach(() => {
+		globalThis.fetch = originalFetch;
+		retryConfig.sleepFn = originalSleep;
+	});
+
+	it('aborts retries when verification GET fails (does not re-POST)', async () => {
+		const callLog: string[] = [];
+		globalThis.fetch = mock(async (url: string | URL | Request, init?: RequestInit) => {
+			const method = init?.method ?? 'GET';
+			callLog.push(`${method} ${String(url)}`);
+			if (method === 'POST') {
+				return new Response('Internal Server Error', { status: 500 });
+			}
+			// GET verification — simulate server unavailable
+			return new Response('Service Unavailable', { status: 503 });
+		}) as typeof fetch;
+
+		await expect(
+			uploadWithRetry(
+				'http://localhost:3000',
+				{},
+				'session=abc',
+				new FormData(),
+				'test-puzzle',
+				'test-puzzle\u000048\u00001:1'
+			)
+		).rejects.toThrow('Could not fetch existing puzzles');
+
+		// Only one POST should have been sent — no retry after GET failure
+		const posts = callLog.filter((c) => c.startsWith('POST'));
+		expect(posts.length).toBe(1);
+	});
+
+	it('returns synthetic OK when verification GET finds the dedup key', async () => {
+		const callLog: string[] = [];
+		globalThis.fetch = mock(async (url: string | URL | Request, init?: RequestInit) => {
+			const method = init?.method ?? 'GET';
+			callLog.push(`${method} ${String(url)}`);
+			if (method === 'POST') {
+				return new Response('Internal Server Error', { status: 500 });
+			}
+			// GET verification — puzzle already exists server-side
+			return new Response(
+				JSON.stringify({
+					puzzles: [{ name: 'test-puzzle', pieceCount: 48, aspectRatio: '1:1', status: 'ready' }]
+				}),
+				{ status: 200, headers: { 'Content-Type': 'application/json' } }
+			);
+		}) as typeof fetch;
+
+		const res = await uploadWithRetry(
+			'http://localhost:3000',
+			{},
+			'session=abc',
+			new FormData(),
+			'test-puzzle',
+			'test-puzzle\u000048\u00001:1'
+		);
+		expect(res.ok).toBe(true);
+		// Only one POST — the retry was skipped because verification found it
+		const posts = callLog.filter((c) => c.startsWith('POST'));
+		expect(posts.length).toBe(1);
 	});
 });
 

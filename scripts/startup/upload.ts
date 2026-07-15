@@ -201,8 +201,14 @@ export async function uploadWithRetry(
 			// server-side (response lost / post-creation 5xx). If so, return a
 			// synthetic OK instead of re-POSTing — re-POSTing would create a
 			// duplicate puzzle since the API generates a fresh UUID per upload.
-			const existing = await fetchExistingKeys(server, baseHeaders, cookie).catch(() => null);
-			if (existing?.has(dedupKey)) {
+			//
+			// If the verification GET itself fails, abort the retry loop rather
+			// than re-POSTing blind — the API has no server-side idempotency
+			// (every POST mints a fresh UUID), so a re-POST after an
+			// unverifiable failure could create a duplicate. fetchExistingKeys
+			// throws a descriptive error that propagates to the caller.
+			const existing = await fetchExistingKeys(server, baseHeaders, cookie);
+			if (existing.has(dedupKey)) {
 				console.log(`  verified: ${entryName} already on server — skipping retry`);
 				return new Response(
 					JSON.stringify({ id: 'verified', status: 'response lost — verified via re-fetch' }),
@@ -363,9 +369,15 @@ async function validateEntryImage(
 	// Use detectImageType (magic bytes) instead of mimeForPath (extension)
 	// so a mislabeled file (e.g. a .png containing JPEG data) is parsed
 	// with the correct format decoder instead of silently skipping the
-	// aspect-ratio check.
+	// aspect-ratio check. If the type cannot be detected, the bytes are
+	// not a supported image format (or are corrupted) — the API will
+	// deterministically reject the upload with 400, so fail early here
+	// rather than reporting a false-positive validation in dry runs.
 	const detectedMime = await detectImageType(image);
-	const dimensions = detectedMime ? await parseImageDimensions(image, detectedMime) : null;
+	if (!detectedMime) {
+		return { ok: false, detail: 'image type unrecognized (not JPEG, PNG, or WebP)' };
+	}
+	const dimensions = await parseImageDimensions(image, detectedMime);
 	if (dimensions) {
 		if (!aspectRatiosMatch(dimensions.width, dimensions.height, entry.aspectRatio)) {
 			return {

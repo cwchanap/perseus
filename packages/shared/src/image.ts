@@ -23,7 +23,18 @@ export function sniffImageType(bytes: Uint8Array): string | null {
 	// JPEG: FF D8 FF + marker code (minimum 4 bytes — the 3-byte SOI prefix
 	// alone is truncated and dimension parsing would return null, leaving
 	// callers to proceed with malformed bytes instead of rejecting them).
-	if (bytes.length >= 4 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff)
+	// The fourth byte must not be 0x00 (byte-stuffing, only valid inside
+	// entropy-coded segments — never at the marker level after SOI). 0xFF is
+	// a valid fill byte (consumed individually before the real marker); any
+	// other non-zero value is a marker code. Rejecting 0x00 prevents
+	// malformed uploads like FF D8 FF 00 from being labeled JPEG and stored.
+	if (
+		bytes.length >= 4 &&
+		bytes[0] === 0xff &&
+		bytes[1] === 0xd8 &&
+		bytes[2] === 0xff &&
+		bytes[3] !== 0x00
+	)
 		return 'image/jpeg';
 	// PNG: 89 50 4E 47 0D 0A 1A 0A (8 magic bytes)
 	if (

@@ -54,6 +54,20 @@ describe('sniffImageType – boundary conditions', () => {
 		expect(sniffImageType(bytes)).toBe('image/jpeg');
 	});
 
+	it('returns null for FF D8 FF 00 (0x00 is byte-stuffing, not a marker)', () => {
+		// After SOI (FF D8), FF must be followed by a marker code, not 0x00.
+		// 0x00 is byte-stuffing — only valid inside entropy-coded segments,
+		// never at the marker level. Accepting it would label malformed bytes
+		// as JPEG and let them through to storage.
+		expect(sniffImageType(new Uint8Array([0xff, 0xd8, 0xff, 0x00]))).toBeNull();
+	});
+
+	it('returns jpeg for FF D8 FF FF (0xFF is a valid fill byte before marker)', () => {
+		// Fill bytes (0xFF) are spec-valid before a marker — the dimension
+		// parser consumes them individually. The sniffer must accept this.
+		expect(sniffImageType(new Uint8Array([0xff, 0xd8, 0xff, 0xff]))).toBe('image/jpeg');
+	});
+
 	// --- PNG boundary (8 magic bytes: 89 50 4E 47 0D 0A 1A 0A) ---
 
 	it('returns null for 7 bytes matching PNG prefix but too short', () => {
@@ -202,11 +216,12 @@ describe('detectImageType', () => {
 	});
 
 	it('reads only the first 12 bytes (slice 0..12)', async () => {
-		// A blob with JPEG magic in first 3 bytes but garbage after — still JPEG
+		// A blob with JPEG magic in first 4 bytes but garbage after — still JPEG
 		const bytes = new Uint8Array(100);
 		bytes[0] = 0xff;
 		bytes[1] = 0xd8;
 		bytes[2] = 0xff;
+		bytes[3] = 0xe0; // APP0 marker code (bytes[3] must be a valid marker, not 0x00)
 		const blob = makeBlob(bytes);
 		expect(await detectImageType(blob)).toBe('image/jpeg');
 	});
