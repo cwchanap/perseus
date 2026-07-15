@@ -3,7 +3,7 @@
  *
  * accessHeaders / hasAccessCredentials / sessionCookieFrom / readError are the
  * shared HTTP utilities used by both the upload command and the token probe
- * flow. fetchExistingNames is used for idempotency (skip already-uploaded
+ * flow. fetchExistingKeys is used for idempotency (skip already-uploaded
  * puzzles) and for retry verification (detect silent successes).
  *
  * uploadWithRetry wraps the POST with bounded retry for transient failures
@@ -23,7 +23,7 @@ import {
 	sleep
 } from './types';
 import { validateCatalog, selectEntries, imagePathFor, mimeForPath } from './catalog';
-import { resolveAccessToken, probeAccessToken } from './token';
+import { resolveAccessToken, probeAccessToken, probeServiceToken } from './token';
 
 export function accessHeaders(options: Options): Record<string, string> {
 	if (options.skipAccess) return {};
@@ -86,7 +86,19 @@ export async function readError(response: Response, usingServiceToken = false): 
 	return `${response.status} ${response.statusText}`;
 }
 
-export async function fetchExistingNames(
+/**
+ * Composite idempotency key: name + pieceCount + aspectRatio. Matching on name
+ * alone is fragile because the API does not enforce unique names — a manually
+ * uploaded puzzle sharing a seed entry's name (but with a different piece count
+ * or aspect ratio) would wrongly cause the seed entry to be skipped. Including
+ * pieceCount and aspectRatio makes the dedup key specific to the puzzle
+ * configuration the catalog entry describes.
+ */
+export function idempotencyKey(name: string, pieceCount?: number, aspectRatio?: string): string {
+	return `${name.trim()}\u0000${pieceCount ?? ''}\u0000${aspectRatio ?? ''}`;
+}
+
+export async function fetchExistingKeys(
 	server: string,
 	baseHeaders: Record<string, string>,
 	cookie: string
@@ -103,12 +115,16 @@ export async function fetchExistingNames(
 				'Aborting to avoid duplicate uploads — re-run after verifying the API is reachable.'
 		);
 	}
-	const payload = (await res.json()) as { puzzles?: Array<{ name?: string }> };
-	const names = new Set<string>();
+	const payload = (await res.json()) as {
+		puzzles?: Array<{ name?: string; pieceCount?: number; aspectRatio?: string }>;
+	};
+	const keys = new Set<string>();
 	for (const p of payload.puzzles ?? []) {
-		if (typeof p.name === 'string' && p.name.trim()) names.add(p.name.trim());
+		if (typeof p.name === 'string' && p.name.trim()) {
+			keys.add(idempotencyKey(p.name, p.pieceCount, p.aspectRatio));
+		}
 	}
-	return names;
+	return keys;
 }
 
 const MAX_RETRY_ATTEMPTS = 3;
@@ -140,7 +156,8 @@ export async function uploadWithRetry(
 	baseHeaders: Record<string, string>,
 	cookie: string,
 	formData: FormData,
-	entryName: string
+	entryName: string,
+	dedupKey: string
 ): Promise<Response> {
 	let lastError: Error | undefined;
 	const maxAttempts = retryConfig.maxAttempts;
@@ -164,8 +181,8 @@ export async function uploadWithRetry(
 			// server-side (response lost / post-creation 5xx). If so, return a
 			// synthetic OK instead of re-POSTing — re-POSTing would create a
 			// duplicate puzzle since the API generates a fresh UUID per upload.
-			const existing = await fetchExistingNames(server, baseHeaders, cookie).catch(() => null);
-			if (existing?.has(entryName.trim())) {
+			const existing = await fetchExistingKeys(server, baseHeaders, cookie).catch(() => null);
+			if (existing?.has(dedupKey)) {
 				console.log(`  verified: ${entryName} already on server — skipping retry`);
 				return new Response(
 					JSON.stringify({ id: 'verified', status: 'response lost — verified via re-fetch' }),
@@ -223,6 +240,33 @@ Or add those two keys to apps/api/.env, then:
 		}
 	}
 
+	// Live smoke check for the service-token path (the primary CI method).
+	// Mirrors the JWT probe above: hit GET /api/admin/puzzles with the service
+	// token headers and fail fast if Access rejects them (302/403). Without
+	// this, an expired/invalid CF-Access-Client-Id/Secret pair only surfaces as
+	// an opaque login failure after the upload has already started. Only probe
+	// when no JWT is present — if both are set, the JWT probe already ran.
+	if (
+		!options.dryRun &&
+		!options.skipAccess &&
+		!options.cfAccessToken &&
+		options.cfClientId &&
+		options.cfClientSecret
+	) {
+		const probe = await probeServiceToken(
+			options.server,
+			options.cfClientId,
+			options.cfClientSecret
+		);
+		if (probe === 'blocked') {
+			throw new FatalError(
+				'Cloudflare Access service token rejected (302/403).\n' +
+					'Check CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET are valid and not expired.\n' +
+					'To rotate: see "CLI Service Token Rotation" in packages/infrastructure/README.md.'
+			);
+		}
+	}
+
 	const catalogRaw = await Bun.file(options.catalogPath).json();
 	const catalog = validateCatalog(catalogRaw, options.catalogPath);
 	const selected = selectEntries(catalog, options);
@@ -264,12 +308,14 @@ Or add those two keys to apps/api/.env, then:
 	const cookie = sessionCookieFrom(loginResponse, baseHeaders.Cookie);
 	console.log('Admin session OK\n');
 
-	// Idempotency: fetch existing puzzle names so reruns skip already-uploaded entries
-	// instead of creating duplicates (the API generates a fresh UUID per upload).
-	const existingNames = await fetchExistingNames(options.server, baseHeaders, cookie);
-	if (existingNames.size > 0) {
+	// Idempotency: fetch existing puzzle keys so reruns skip already-uploaded
+	// entries instead of creating duplicates (the API generates a fresh UUID
+	// per upload). The key is name + pieceCount + aspectRatio so a same-named
+	// but differently-configured puzzle does not cause a wrongful skip.
+	const existingKeys = await fetchExistingKeys(options.server, baseHeaders, cookie);
+	if (existingKeys.size > 0) {
 		console.log(
-			`Idempotency: ${existingNames.size} existing puzzle(s) on server — duplicates will be skipped.\n`
+			`Idempotency: ${existingKeys.size} existing puzzle(s) on server — duplicates will be skipped.\n`
 		);
 	}
 
@@ -277,7 +323,8 @@ Or add those two keys to apps/api/.env, then:
 	let skipped = 0;
 
 	for (const entry of selected) {
-		if (existingNames.has(entry.name.trim())) {
+		const dedupKey = idempotencyKey(entry.name, entry.pieceCount, entry.aspectRatio);
+		if (existingKeys.has(dedupKey)) {
 			skipped++;
 			results.push({
 				id: entry.id,
@@ -333,7 +380,8 @@ Or add those two keys to apps/api/.env, then:
 				baseHeaders,
 				cookie,
 				formData,
-				entry.name
+				entry.name,
+				dedupKey
 			);
 			if (!uploadResponse.ok) {
 				const detail = await readError(
@@ -351,7 +399,7 @@ Or add those two keys to apps/api/.env, then:
 					detail: `${puzzle.id ?? '?'} ${puzzle.status ?? ''}`
 				});
 				console.log(`OK   ${entry.id} ${entry.name} -> ${puzzle.id} (${puzzle.status})`);
-				existingNames.add(entry.name.trim());
+				existingKeys.add(dedupKey);
 			}
 		} catch (error) {
 			const detail = error instanceof Error ? error.message : String(error);
@@ -360,8 +408,8 @@ Or add those two keys to apps/api/.env, then:
 			// declaring failure — prevents false negatives on flaky connections.
 			let verified = false;
 			try {
-				const refreshed = await fetchExistingNames(options.server, baseHeaders, cookie);
-				verified = refreshed.has(entry.name.trim());
+				const refreshed = await fetchExistingKeys(options.server, baseHeaders, cookie);
+				verified = refreshed.has(dedupKey);
 			} catch {
 				// re-fetch itself failed; cannot verify — record original failure
 			}
@@ -372,7 +420,7 @@ Or add those two keys to apps/api/.env, then:
 					ok: true,
 					detail: 'verified — response lost on final attempt'
 				});
-				existingNames.add(entry.name.trim());
+				existingKeys.add(dedupKey);
 				console.log(`OK   ${entry.id} ${entry.name} -> verified (response lost on final attempt)`);
 			} else {
 				results.push({ id: entry.id, name: entry.name, ok: false, detail });

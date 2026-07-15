@@ -38,7 +38,13 @@ export {
 	type Options
 } from './startup/types';
 export { validateCatalog, selectEntries, imagePathFor, mimeForPath } from './startup/catalog';
-export { fetchExistingNames, retryConfig, uploadWithRetry, cmdUpload } from './startup/upload';
+export {
+	fetchExistingKeys,
+	idempotencyKey,
+	retryConfig,
+	uploadWithRetry,
+	cmdUpload
+} from './startup/upload';
 export { aspectRatiosMatch } from '@perseus/types';
 export { parseImageDimensions } from '@perseus/shared';
 

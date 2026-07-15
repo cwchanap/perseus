@@ -30,9 +30,8 @@ on:
         required: false
         default: 'perseus-seed.tgz'
       asset_sha256:
-        description: 'Expected SHA-256 hash of the tarball. When provided, the download is verified before extraction. Generate with: shasum -a 256 perseus-seed.tgz'
-        required: false
-        default: ''
+        description: 'Expected SHA-256 hash of the tarball. Required — the download is verified before extraction. Generate with: shasum -a 256 perseus-seed.tgz'
+        required: true
 
 concurrency:
   group: seed-startup-puzzles
@@ -71,27 +70,40 @@ jobs:
           REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
+          if [ -z "$ASSET_SHA256" ]; then
+            echo "::error::asset_sha256 is required when asset_release is set."
+            exit 1
+          fi
           mkdir -p scripts/startup-seed
           gh release download "$ASSET_RELEASE" \
             --repo "$REPOSITORY" \
             --pattern "$ASSET_NAME" \
             --dir /tmp
-          # Verify tarball integrity before extraction when a hash is provided.
-          # Supply-chain protection: ensures the release asset wasn't tampered
-          # with between upload and download. Skip only when no hash is given
-          # (backward-compatible with existing workflow_dispatch invocations).
+          # Supply-chain protection: verify the release asset wasn't tampered
+          # with between upload and download. The hash is required, so a
+          # mismatch always fails the workflow.
           ACTUAL_SHA256=$(shasum -a 256 "/tmp/$ASSET_NAME" | awk '{print $1}')
           echo "Tarball SHA-256: ${ACTUAL_SHA256}"
-          if [ -n "$ASSET_SHA256" ]; then
-            if [ "$ACTUAL_SHA256" != "$ASSET_SHA256" ]; then
-              echo "::error::Checksum mismatch: expected $ASSET_SHA256, got $ACTUAL_SHA256"
-              exit 1
-            fi
-            echo "Checksum verified ✓"
-          else
-            echo "::warning::No asset_sha256 provided — tarball integrity not verified."
+          if [ "$ACTUAL_SHA256" != "$ASSET_SHA256" ]; then
+            echo "::error::Checksum mismatch: expected $ASSET_SHA256, got $ACTUAL_SHA256"
+            exit 1
           fi
-          tar -xzf "/tmp/$ASSET_NAME" -C scripts/startup-seed
+          echo "Checksum verified ✓"
+          # Guard against tar path traversal before extracting. Reject any
+          # entry that is absolute or climbs out of the target directory — a
+          # tampered/crafted tarball could otherwise overwrite files outside
+          # scripts/startup-seed even after the checksum check (defense in
+          # depth, since the checksum pins the expected content).
+          BAD=$(tar -tzf "/tmp/$ASSET_NAME" | awk -F/ '
+            $0 ~ /^\//        { print; next }
+            { for (i=1;i<=NF;i++) if ($i == "..") { print; break } }
+          ' || true)
+          if [ -n "$BAD" ]; then
+            echo "::error::Tarball contains unsafe path(s) (absolute or parent traversal):"
+            printf '  %s\n' $BAD
+            exit 1
+          fi
+          tar -xzf "/tmp/$ASSET_NAME" --no-same-owner -C scripts/startup-seed
           echo "Seed images: $(find scripts/startup-seed/images -type f | wc -l)"
           test -f scripts/startup-seed/catalog.json
           test -d scripts/startup-seed/images

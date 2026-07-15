@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
 	probeAccessToken,
+	probeServiceToken,
 	resolveAccessToken,
 	cacheToken,
 	cloudflaredTokenPath,
@@ -110,6 +111,91 @@ describe('probeAccessToken', () => {
 		}) as unknown as typeof fetch;
 
 		await probeAccessToken('https://example.com', 'jwt');
+		expect(capturedInit?.redirect).toBe('manual');
+	});
+});
+
+// ─── probeServiceToken ─────────────────────────────────────────────
+// Mirrors probeAccessToken coverage for the service-token (CF-Access-Client-Id
+// / CF-Access-Client-Secret) auth path.
+
+describe('probeServiceToken', () => {
+	const originalFetch = globalThis.fetch;
+
+	afterEach(() => {
+		globalThis.fetch = originalFetch;
+	});
+
+	it('returns "blocked" on 302 (Access redirect)', async () => {
+		globalThis.fetch = mock(
+			async () => new Response('', { status: 302 })
+		) as unknown as typeof fetch;
+		expect(await probeServiceToken('https://example.com', 'cid', 'csec')).toBe('blocked');
+	});
+
+	it('returns "blocked" on 403 (Access denied)', async () => {
+		globalThis.fetch = mock(
+			async () => new Response('', { status: 403 })
+		) as unknown as typeof fetch;
+		expect(await probeServiceToken('https://example.com', 'cid', 'csec')).toBe('blocked');
+	});
+
+	it('returns "ok" on 200 (reached the app)', async () => {
+		globalThis.fetch = mock(
+			async () => new Response('[]', { status: 200 })
+		) as unknown as typeof fetch;
+		expect(await probeServiceToken('https://example.com', 'cid', 'csec')).toBe('ok');
+	});
+
+	it('returns "ok" on 401 (reached the app, no admin session)', async () => {
+		globalThis.fetch = mock(
+			async () => new Response('', { status: 401 })
+		) as unknown as typeof fetch;
+		expect(await probeServiceToken('https://example.com', 'cid', 'csec')).toBe('ok');
+	});
+
+	it('returns "ok" on 500 (reached the worker — Access passed it through)', async () => {
+		globalThis.fetch = mock(
+			async () => new Response('', { status: 500 })
+		) as unknown as typeof fetch;
+		expect(await probeServiceToken('https://example.com', 'cid', 'csec')).toBe('ok');
+	});
+
+	it('returns "error" on unexpected status (e.g. 404)', async () => {
+		globalThis.fetch = mock(
+			async () => new Response('', { status: 404 })
+		) as unknown as typeof fetch;
+		expect(await probeServiceToken('https://example.com', 'cid', 'csec')).toBe('error');
+	});
+
+	it('returns "error" on network failure (fetch throws)', async () => {
+		globalThis.fetch = mock(async () => {
+			throw new Error('ECONNREFUSED');
+		}) as unknown as typeof fetch;
+		expect(await probeServiceToken('https://example.com', 'cid', 'csec')).toBe('error');
+	});
+
+	it('sends CF-Access-Client-Id/Secret headers', async () => {
+		let capturedInit: RequestInit | undefined;
+		globalThis.fetch = mock(async (_input: string | URL | Request, init?: RequestInit) => {
+			capturedInit = init;
+			return new Response('', { status: 200 });
+		}) as unknown as typeof fetch;
+
+		await probeServiceToken('https://example.com', 'the-id', 'the-secret');
+		const headers = capturedInit?.headers as Record<string, string>;
+		expect(headers['CF-Access-Client-Id']).toBe('the-id');
+		expect(headers['CF-Access-Client-Secret']).toBe('the-secret');
+	});
+
+	it('uses manual redirect (does not follow 302)', async () => {
+		let capturedInit: RequestInit | undefined;
+		globalThis.fetch = mock(async (_input: string | URL | Request, init?: RequestInit) => {
+			capturedInit = init;
+			return new Response('', { status: 302 });
+		}) as unknown as typeof fetch;
+
+		await probeServiceToken('https://example.com', 'cid', 'csec');
 		expect(capturedInit?.redirect).toBe('manual');
 	});
 });

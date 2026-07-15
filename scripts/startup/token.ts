@@ -213,3 +213,39 @@ export async function probeAccessToken(
 		return 'error';
 	}
 }
+
+/**
+ * Probe whether Cloudflare Access accepts a service token (CF-Access-Client-Id
+ * / CF-Access-Client-Secret) by hitting an admin endpoint that does NOT require
+ * a passkey (GET /api/admin/puzzles). Mirrors probeAccessToken so the
+ * service-token path gets the same live smoke check as the JWT path — without
+ * it, an expired/invalid service token only surfaces as an opaque login
+ * failure after the upload has already begun.
+ *
+ * 302/403 = Access blocked; 401/200/5xx = reached the worker (Access passed
+ * the request through). Avoids POSTing to /login, which would trip the
+ * loginRateLimit middleware.
+ */
+export async function probeServiceToken(
+	server: string,
+	cfClientId: string,
+	cfClientSecret: string
+): Promise<'ok' | 'blocked' | 'error'> {
+	try {
+		const res = await fetch(`${server}/api/admin/puzzles`, {
+			method: 'GET',
+			headers: {
+				'CF-Access-Client-Id': cfClientId,
+				'CF-Access-Client-Secret': cfClientSecret
+			},
+			redirect: 'manual',
+			signal: AbortSignal.timeout(PROBE_TIMEOUT_MS)
+		});
+		if (res.status === 302 || res.status === 403) return 'blocked';
+		if (res.status === 200 || res.status === 401) return 'ok';
+		if (res.status >= 500) return 'ok';
+		return 'error';
+	} catch {
+		return 'error';
+	}
+}

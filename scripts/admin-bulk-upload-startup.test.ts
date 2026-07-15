@@ -6,7 +6,8 @@ import {
 	selectEntries,
 	imagePathFor,
 	mimeForPath,
-	fetchExistingNames,
+	fetchExistingKeys,
+	idempotencyKey,
 	uploadWithRetry,
 	validateCatalog,
 	cmdUpload,
@@ -292,29 +293,33 @@ describe('tokenBasenameFor', () => {
 	});
 });
 
-describe('fetchExistingNames', () => {
+describe('fetchExistingKeys', () => {
 	const originalFetch = globalThis.fetch;
 
 	afterEach(() => {
 		globalThis.fetch = originalFetch;
 	});
 
-	it('collects puzzle names from the response', async () => {
+	it('collects composite idempotency keys from the response', async () => {
 		globalThis.fetch = mock(
 			async () =>
 				new Response(
 					JSON.stringify({
-						puzzles: [{ name: 'Alpha' }, { name: 'Beta' }, { name: '  Gamma  ' }]
+						puzzles: [
+							{ name: 'Alpha', pieceCount: 100, aspectRatio: '1:1' },
+							{ name: 'Beta', pieceCount: 108, aspectRatio: '3:4' },
+							{ name: '  Gamma  ', pieceCount: 121, aspectRatio: '1:1' }
+						]
 					}),
 					{ status: 200 }
 				)
 		) as unknown as typeof fetch;
 
-		const names = await fetchExistingNames('http://localhost', {}, 'session=1');
-		expect(names.has('Alpha')).toBe(true);
-		expect(names.has('Beta')).toBe(true);
-		expect(names.has('Gamma')).toBe(true);
-		expect(names.size).toBe(3);
+		const keys = await fetchExistingKeys('http://localhost', {}, 'session=1');
+		expect(keys.has(idempotencyKey('Alpha', 100, '1:1'))).toBe(true);
+		expect(keys.has(idempotencyKey('Beta', 108, '3:4'))).toBe(true);
+		expect(keys.has(idempotencyKey('Gamma', 121, '1:1'))).toBe(true);
+		expect(keys.size).toBe(3);
 	});
 
 	it('throws on non-OK response instead of silently degrading', async () => {
@@ -322,7 +327,7 @@ describe('fetchExistingNames', () => {
 			async () => new Response('nope', { status: 401 })
 		) as unknown as typeof fetch;
 
-		await expect(fetchExistingNames('http://localhost', {}, 'session=1')).rejects.toThrow(
+		await expect(fetchExistingKeys('http://localhost', {}, 'session=1')).rejects.toThrow(
 			/Could not fetch existing puzzles/
 		);
 	});
@@ -332,7 +337,7 @@ describe('fetchExistingNames', () => {
 			throw new Error('connection refused');
 		}) as unknown as typeof fetch;
 
-		await expect(fetchExistingNames('http://localhost', {}, 'session=1')).rejects.toThrow(
+		await expect(fetchExistingKeys('http://localhost', {}, 'session=1')).rejects.toThrow(
 			/connection refused/
 		);
 	});
@@ -342,15 +347,20 @@ describe('fetchExistingNames', () => {
 			async () =>
 				new Response(
 					JSON.stringify({
-						puzzles: [{ name: 'Alpha' }, { name: 123 }, { name: '   ' }, { other: 'x' }]
+						puzzles: [
+							{ name: 'Alpha', pieceCount: 100 },
+							{ name: 123 },
+							{ name: '   ' },
+							{ other: 'x' }
+						]
 					}),
 					{ status: 200 }
 				)
 		) as unknown as typeof fetch;
 
-		const names = await fetchExistingNames('http://localhost', {}, 'session=1');
-		expect(names.size).toBe(1);
-		expect(names.has('Alpha')).toBe(true);
+		const keys = await fetchExistingKeys('http://localhost', {}, 'session=1');
+		expect(keys.size).toBe(1);
+		expect(keys.has(idempotencyKey('Alpha', 100))).toBe(true);
 	});
 });
 
@@ -395,7 +405,14 @@ describe('uploadWithRetry', () => {
 		);
 		globalThis.fetch = fn;
 
-		const res = await uploadWithRetry('http://localhost', {}, 's=1', new FormData(), 'Test');
+		const res = await uploadWithRetry(
+			'http://localhost',
+			{},
+			's=1',
+			new FormData(),
+			'Test',
+			idempotencyKey('Test')
+		);
 		expect(res.status).toBe(201);
 		expect(getPostCalls()).toBe(1);
 	});
@@ -406,7 +423,14 @@ describe('uploadWithRetry', () => {
 		);
 		globalThis.fetch = fn;
 
-		const res = await uploadWithRetry('http://localhost', {}, 's=1', new FormData(), 'Test');
+		const res = await uploadWithRetry(
+			'http://localhost',
+			{},
+			's=1',
+			new FormData(),
+			'Test',
+			idempotencyKey('Test')
+		);
 		expect(res.status).toBe(400);
 		expect(getPostCalls()).toBe(1);
 	});
@@ -418,7 +442,14 @@ describe('uploadWithRetry', () => {
 		});
 		globalThis.fetch = fn;
 
-		const res = await uploadWithRetry('http://localhost', {}, 's=1', new FormData(), 'Test');
+		const res = await uploadWithRetry(
+			'http://localhost',
+			{},
+			's=1',
+			new FormData(),
+			'Test',
+			idempotencyKey('Test')
+		);
 		expect(res.status).toBe(201);
 		expect(getPostCalls()).toBe(3);
 	});
@@ -430,7 +461,7 @@ describe('uploadWithRetry', () => {
 		globalThis.fetch = fn;
 
 		await expect(
-			uploadWithRetry('http://localhost', {}, 's=1', new FormData(), 'Test')
+			uploadWithRetry('http://localhost', {}, 's=1', new FormData(), 'Test', idempotencyKey('Test'))
 		).rejects.toThrow();
 		expect(getPostCalls()).toBe(3);
 	});
@@ -442,7 +473,14 @@ describe('uploadWithRetry', () => {
 		});
 		globalThis.fetch = fn;
 
-		const res = await uploadWithRetry('http://localhost', {}, 's=1', new FormData(), 'Test');
+		const res = await uploadWithRetry(
+			'http://localhost',
+			{},
+			's=1',
+			new FormData(),
+			'Test',
+			idempotencyKey('Test')
+		);
 		expect(res.status).toBe(201);
 		expect(getPostCalls()).toBe(2);
 	});
@@ -463,7 +501,14 @@ describe('uploadWithRetry', () => {
 			throw new Error('ECONNRESET');
 		}) as unknown as typeof fetch;
 
-		const res = await uploadWithRetry('http://localhost', {}, 's=1', new FormData(), 'DuplicateMe');
+		const res = await uploadWithRetry(
+			'http://localhost',
+			{},
+			's=1',
+			new FormData(),
+			'DuplicateMe',
+			idempotencyKey('DuplicateMe')
+		);
 		expect(res.status).toBe(200);
 		expect(postCalls).toBe(1); // only one POST — no retry
 		const body = (await res.json()) as { id?: string; status?: string };
@@ -601,7 +646,7 @@ describe('cmdUpload', () => {
 		writeFileSync(catalogPath, JSON.stringify([entry]));
 		writeFileSync(join(tmpDir, '01-test.jpg'), 'fake-image');
 
-		// Track GET calls to /api/admin/puzzles. The initial fetchExistingNames
+		// Track GET calls to /api/admin/puzzles. The initial fetchExistingKeys
 		// and the uploadWithRetry between-retry re-fetches should return empty.
 		// The final catch-block re-fetch should find the name (puzzle was
 		// created server-side but the response was lost on every attempt).
@@ -619,10 +664,15 @@ describe('cmdUpload', () => {
 				// The 4th GET is the catch-block verify — return the name.
 				// GETs 1-3: initial fetch + 2 between-retry re-fetches (empty).
 				if (getCalls === 4) {
-					return new Response(JSON.stringify({ puzzles: [{ name: 'VerifiedPuzzle' }] }), {
-						status: 200,
-						headers: { 'Content-Type': 'application/json' }
-					});
+					return new Response(
+						JSON.stringify({
+							puzzles: [{ name: 'VerifiedPuzzle', pieceCount: 100, aspectRatio: '1:1' }]
+						}),
+						{
+							status: 200,
+							headers: { 'Content-Type': 'application/json' }
+						}
+					);
 				}
 				return new Response(JSON.stringify({ puzzles: [] }), {
 					status: 200,
@@ -811,10 +861,15 @@ describe('cmdUpload', () => {
 			}
 			if (init?.method === 'GET' && url.endsWith('/api/admin/puzzles')) {
 				// Initial fetch returns Alpha as existing; Beta is not yet there.
-				return new Response(JSON.stringify({ puzzles: [{ name: 'Alpha' }] }), {
-					status: 200,
-					headers: { 'Content-Type': 'application/json' }
-				});
+				// Include pieceCount/aspectRatio so the composite idempotency key
+				// matches the catalog entry (makeEntry defaults: 100 / 1:1).
+				return new Response(
+					JSON.stringify({ puzzles: [{ name: 'Alpha', pieceCount: 100, aspectRatio: '1:1' }] }),
+					{
+						status: 200,
+						headers: { 'Content-Type': 'application/json' }
+					}
+				);
 			}
 			if (init?.method === 'POST' && url.endsWith('/api/admin/puzzles')) {
 				postCalled = true;
