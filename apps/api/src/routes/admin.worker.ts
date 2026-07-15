@@ -3,8 +3,10 @@
 import { Hono } from 'hono';
 import {
 	DEFAULT_PUZZLE_ASPECT_RATIO,
+	MAX_FILE_SIZE,
 	MAX_PIECES,
 	PUZZLE_CATEGORIES,
+	ALLOWED_MIME_TYPES,
 	aspectRatiosMatch,
 	getGridDimensionsForAspectRatio,
 	isPuzzleAspectRatio,
@@ -51,10 +53,6 @@ import {
 } from '@perseus/shared';
 
 const admin = new Hono<{ Bindings: Env }>();
-
-// Constraints
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
-const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 
 // POST /api/admin/login - Admin login
 admin.post('/login', loginRateLimit, async (c) => {
@@ -354,7 +352,10 @@ admin.post('/puzzles', requireAuth, async (c) => {
 
 		// Verify actual file type via magic bytes instead of trusting image.type
 		const detectedType = await detectImageType(image);
-		if (!detectedType || !ALLOWED_MIME_TYPES.includes(detectedType)) {
+		if (
+			!detectedType ||
+			!ALLOWED_MIME_TYPES.includes(detectedType as (typeof ALLOWED_MIME_TYPES)[number])
+		) {
 			return c.json(
 				{ error: 'bad_request', message: 'Invalid file type. Allowed: JPEG, PNG, WebP' },
 				400

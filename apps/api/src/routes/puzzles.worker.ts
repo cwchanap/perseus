@@ -3,8 +3,10 @@
 import { Hono } from 'hono';
 import {
 	DEFAULT_PUZZLE_ASPECT_RATIO,
+	MAX_FILE_SIZE,
 	MAX_PIECES,
 	PUZZLE_CATEGORIES,
+	ALLOWED_MIME_TYPES,
 	aspectRatiosMatch,
 	getGridDimensionsForAspectRatio,
 	isPuzzleAspectRatio,
@@ -38,8 +40,6 @@ import {
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PIECE_ID_REGEX = /^\d+$/; // Only non-negative base-10 integers
 const MAX_PIECE_ID = 10000; // Validation ceiling, significantly above any expected piece count
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
-const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 
 function validatePuzzleId(id: string): boolean {
 	return UUID_REGEX.test(id);
@@ -210,7 +210,10 @@ puzzles.post('/', requirePlayerAuth, async (c) => {
 		}
 
 		const detectedType = await detectImageType(image);
-		if (!detectedType || !ALLOWED_MIME_TYPES.includes(detectedType)) {
+		if (
+			!detectedType ||
+			!ALLOWED_MIME_TYPES.includes(detectedType as (typeof ALLOWED_MIME_TYPES)[number])
+		) {
 			return c.json(
 				{ error: 'bad_request', message: 'Invalid file type. Allowed: JPEG, PNG, WebP' },
 				400

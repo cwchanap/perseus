@@ -227,6 +227,11 @@ export const DEFAULT_PIECE_COUNT = 225; // 15x15
 // Thumbnail settings
 export const THUMBNAIL_SIZE = 300;
 
+// File upload constraints — shared by the API (both Bun and Worker runtimes)
+// and the startup seed upload CLI to avoid drift.
+export const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+export const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const;
+
 // Validation functions
 
 const SIMPLE_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;

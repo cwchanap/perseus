@@ -81,6 +81,10 @@ function parseIntArg(raw: string | undefined, label: string, fallback: number): 
 		console.error(`${label} must be a base-10 integer`);
 		process.exit(1);
 	}
+	if (n < 0) {
+		console.error(`${label} must not be negative`);
+		process.exit(1);
+	}
 	return n;
 }
 

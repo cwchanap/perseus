@@ -214,6 +214,40 @@ Manual verification after deploy:
 - After Access allows the request, the existing Perseus admin passkey still rejects
   invalid login attempts.
 
+### CLI Service Token Rotation
+
+The non-interactive CLI service token (`Perseus Admin CLI`) has a default lifetime
+of **1 year** (`8760h`). Override it at deploy time:
+
+```bash
+cd packages/infrastructure
+pulumi config set adminCliServiceTokenDuration 720h   # e.g. 30 days
+```
+
+Cloudflare Access expires the token automatically once the duration elapses —
+requests using the stale `CF-Access-Client-Id` / `CF-Access-Client-Secret` pair
+will start receiving 403. Rotate **before** expiry to avoid an outage:
+
+```bash
+cd packages/infrastructure
+
+# 1. Taint the token resource so Pulumi recreates it with a fresh client_id + secret
+pulumi taint "$(pulumi stack export --json | jq -r \
+  '.deployment.resources[] | select(.type=="cloudflare:index:zeroTrustAccessServiceToken") | .urn')"
+
+# 2. Recreate the token
+pulumi up
+
+# 3. Read the new credentials (client_secret is masked unless --show-secrets is passed)
+pulumi stack output --show-secrets adminCliAccessClientId
+pulumi stack output --show-secrets adminCliAccessClientSecret
+```
+
+Update downstream consumers with the new values:
+
+- **GitHub Actions secrets**: `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET`
+- **Local CLI env** (`apps/api/.env` or shell): `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET`
+
 Then access in code via:
 
 ```typescript
