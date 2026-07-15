@@ -18,9 +18,9 @@ on:
         required: true
         default: '1'
       to:
-        description: 'End catalog id'
+        description: 'End catalog id (0 = no upper bound, upload all from --from onward)'
         required: true
-        default: '70'
+        default: '0'
       asset_release:
         description: 'Optional GitHub release tag with seed tarball (catalog.json + images/)'
         required: false
@@ -94,15 +94,7 @@ jobs:
           # tampered/crafted tarball could otherwise overwrite files outside
           # scripts/startup-seed even after the checksum check (defense in
           # depth, since the checksum pins the expected content).
-          BAD=$(tar -tzf "/tmp/$ASSET_NAME" | awk -F/ '
-            $0 ~ /^\//        { print; next }
-            { for (i=1;i<=NF;i++) if ($i == "..") { print; break } }
-          ' || true)
-          if [ -n "$BAD" ]; then
-            echo "::error::Tarball contains unsafe path(s) (absolute or parent traversal):"
-            printf '  %s\n' $BAD
-            exit 1
-          fi
+          scripts/verify-tarball-paths.sh "/tmp/$ASSET_NAME"
           tar -xzf "/tmp/$ASSET_NAME" --no-same-owner -C scripts/startup-seed
           echo "Seed images: $(find scripts/startup-seed/images -type f | wc -l)"
           test -f scripts/startup-seed/catalog.json
@@ -162,10 +154,14 @@ jobs:
           if [ "$LIMIT" != "0" ]; then
             LIMIT_ARGS=(--limit "$LIMIT")
           fi
+          TO_ARGS=()
+          if [ "$TO" != "0" ]; then
+            TO_ARGS=(--to "$TO")
+          fi
           bun scripts/admin-bulk-upload-startup.ts upload \
             --catalog scripts/startup-seed/catalog.json \
             --images scripts/startup-seed/images \
             --from "$FROM" \
-            --to "$TO" \
+            "${TO_ARGS[@]}" \
             "${LIMIT_ARGS[@]}" \
             --delay-ms 2000

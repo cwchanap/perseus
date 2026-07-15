@@ -19,6 +19,7 @@ import {
 	UPLOAD_TIMEOUT_MS,
 	MAX_FILE_SIZE,
 	type Options,
+	type CatalogEntry,
 	FatalError,
 	sleep
 } from './types';
@@ -197,16 +198,22 @@ export async function uploadWithRetry(
 	throw lastError ?? new Error('Upload failed after retries');
 }
 
-export async function cmdUpload(options: Options): Promise<void> {
-	if (!options.dryRun && !options.passkey) {
-		throw new FatalError('Missing admin passkey. Set ADMIN_PASSKEY or use --passkey.');
-	}
+/**
+ * Resolve and probe Cloudflare Access credentials. Mutates options.cfAccessToken
+ * if a JWT is resolved from cache/cloudflared. Throws FatalError on any auth
+ * failure so the upload aborts before wasting network round-trips.
+ *
+ * Skipped entirely for --dry-run (no network needed) and --skip-access (local
+ * API without Access).
+ */
+async function resolveAndProbeAccess(options: Options): Promise<void> {
+	if (options.dryRun || options.skipAccess) return;
 
 	// Skip JWT token resolution when service tokens are already available —
 	// service tokens (CF-Access-Client-Id/Secret) authenticate Access without
 	// needing a JWT, and resolveAccessToken would fall through to spawning
 	// cloudflared (not installed in CI, wasteful everywhere else).
-	if (!options.dryRun && !options.skipAccess && (!options.cfClientId || !options.cfClientSecret)) {
+	if (!options.cfClientId || !options.cfClientSecret) {
 		options.cfAccessToken = await resolveAccessToken({
 			explicit: options.cfAccessToken,
 			tokenCachePath: options.tokenCachePath,
@@ -215,7 +222,7 @@ export async function cmdUpload(options: Options): Promise<void> {
 		});
 	}
 
-	if (!options.dryRun && !hasAccessCredentials(options)) {
+	if (!hasAccessCredentials(options)) {
 		throw new FatalError(`Cloudflare Access credentials missing.
 
 For automation, Cloudflare recommends Access service tokens (not browser cookies):
@@ -230,7 +237,7 @@ Or add those two keys to apps/api/.env, then:
 `);
 	}
 
-	if (!options.dryRun && options.cfAccessToken && !options.skipAccess) {
+	if (options.cfAccessToken) {
 		const probe = await probeAccessToken(options.server, options.cfAccessToken);
 		if (probe === 'blocked') {
 			throw new FatalError(
@@ -246,13 +253,7 @@ Or add those two keys to apps/api/.env, then:
 	// this, an expired/invalid CF-Access-Client-Id/Secret pair only surfaces as
 	// an opaque login failure after the upload has already started. Only probe
 	// when no JWT is present — if both are set, the JWT probe already ran.
-	if (
-		!options.dryRun &&
-		!options.skipAccess &&
-		!options.cfAccessToken &&
-		options.cfClientId &&
-		options.cfClientSecret
-	) {
+	if (!options.cfAccessToken && options.cfClientId && options.cfClientSecret) {
 		const probe = await probeServiceToken(
 			options.server,
 			options.cfClientId,
@@ -266,6 +267,171 @@ Or add those two keys to apps/api/.env, then:
 			);
 		}
 	}
+}
+
+/**
+ * Log in to the admin API and return the session cookie. Throws FatalError on
+ * login failure so the upload aborts before processing any entries.
+ */
+async function adminLogin(options: Options, baseHeaders: Record<string, string>): Promise<string> {
+	const loginResponse = await fetch(`${options.server}/api/admin/login`, {
+		method: 'POST',
+		headers: { ...baseHeaders, 'Content-Type': 'application/json' },
+		body: JSON.stringify({ passkey: options.passkey }),
+		redirect: 'manual',
+		signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
+	});
+	if (!loginResponse.ok) {
+		throw new FatalError(
+			`Admin login failed: ${await readError(loginResponse, !!(options.cfClientId && options.cfClientSecret))}`
+		);
+	}
+	const cookie = sessionCookieFrom(loginResponse, baseHeaders.Cookie);
+	console.log('Admin session OK\n');
+	return cookie;
+}
+
+type ImageValidation =
+	| { ok: true; image: Bun.BunFile; imagePath: string }
+	| { ok: false; detail: string };
+
+/**
+ * Validate a catalog entry's image file locally before uploading. Checks:
+ *   1. Image file exists on disk
+ *   2. File size ≤ MAX_FILE_SIZE (saves bandwidth on doomed uploads)
+ *   3. Image dimensions match the entry's aspect ratio (magic-byte type
+ *      detection so mislabeled extensions don't skip the check)
+ *
+ * Returns { ok: true, image, imagePath } on success, or { ok: false, detail }
+ * with a human-readable failure reason.
+ */
+async function validateEntryImage(
+	entry: CatalogEntry,
+	imagesDir: string
+): Promise<ImageValidation> {
+	const imagePath = imagePathFor(entry, imagesDir);
+	if (!imagePath) return { ok: false, detail: 'image missing' };
+
+	const image = Bun.file(imagePath, { type: mimeForPath(imagePath) });
+
+	if (image.size > MAX_FILE_SIZE) {
+		return {
+			ok: false,
+			detail: `image is ${(image.size / 1024 / 1024).toFixed(1)}MB — exceeds ${MAX_FILE_SIZE / 1024 / 1024}MB limit`
+		};
+	}
+
+	// Use detectImageType (magic bytes) instead of mimeForPath (extension)
+	// so a mislabeled file (e.g. a .png containing JPEG data) is parsed
+	// with the correct format decoder instead of silently skipping the
+	// aspect-ratio check.
+	const detectedMime = await detectImageType(image);
+	const dimensions = detectedMime ? await parseImageDimensions(image, detectedMime) : null;
+	if (dimensions) {
+		if (!aspectRatiosMatch(dimensions.width, dimensions.height, entry.aspectRatio)) {
+			return {
+				ok: false,
+				detail: `image ${dimensions.width}x${dimensions.height} does not match ${entry.aspectRatio}`
+			};
+		}
+	}
+
+	return { ok: true, image, imagePath };
+}
+
+type UploadResult = { id: string; name: string; ok: boolean; detail: string };
+
+/**
+ * Process a single catalog entry: check idempotency, validate image, upload
+ * with retry, and record the result. Mutates existingKeys (adds successful
+ * dedup keys so later entries in the same run are skipped on retry).
+ */
+async function processEntry(
+	entry: CatalogEntry,
+	options: Options,
+	baseHeaders: Record<string, string>,
+	cookie: string,
+	existingKeys: Set<string>
+): Promise<UploadResult> {
+	const dedupKey = idempotencyKey(entry.name, entry.pieceCount, entry.aspectRatio);
+	if (existingKeys.has(dedupKey)) {
+		console.log(`SKIP ${entry.id} ${entry.name}: already exists on server`);
+		return { id: entry.id, name: entry.name, ok: true, detail: 'already exists — skipped' };
+	}
+
+	const validation = await validateEntryImage(entry, options.imagesDir);
+	if (!validation.ok) {
+		console.error(`FAIL ${entry.id} ${entry.name}: ${validation.detail}`);
+		return { id: entry.id, name: entry.name, ok: false, detail: validation.detail };
+	}
+
+	const { image, imagePath } = validation;
+	const formData = new FormData();
+	formData.append('name', entry.name);
+	formData.append('pieceCount', String(entry.pieceCount));
+	formData.append('aspectRatio', entry.aspectRatio);
+	formData.append('category', entry.category);
+	formData.append('image', image, basename(imagePath));
+
+	try {
+		const uploadResponse = await uploadWithRetry(
+			options.server,
+			baseHeaders,
+			cookie,
+			formData,
+			entry.name,
+			dedupKey
+		);
+		if (!uploadResponse.ok) {
+			const detail = await readError(
+				uploadResponse,
+				!!(options.cfClientId && options.cfClientSecret)
+			);
+			console.error(`FAIL ${entry.id} ${entry.name}: ${detail}`);
+			return { id: entry.id, name: entry.name, ok: false, detail };
+		}
+		const puzzle = (await uploadResponse.json()) as { id?: string; status?: string };
+		console.log(`OK   ${entry.id} ${entry.name} -> ${puzzle.id} (${puzzle.status})`);
+		existingKeys.add(dedupKey);
+		return {
+			id: entry.id,
+			name: entry.name,
+			ok: true,
+			detail: `${puzzle.id ?? '?'} ${puzzle.status ?? ''}`
+		};
+	} catch (error) {
+		const detail = error instanceof Error ? error.message : String(error);
+		// All retries exhausted. The final attempt may have succeeded
+		// server-side but lost its response. Re-fetch to verify before
+		// declaring failure — prevents false negatives on flaky connections.
+		let verified = false;
+		try {
+			const refreshed = await fetchExistingKeys(options.server, baseHeaders, cookie);
+			verified = refreshed.has(dedupKey);
+		} catch {
+			// re-fetch itself failed; cannot verify — record original failure
+		}
+		if (verified) {
+			existingKeys.add(dedupKey);
+			console.log(`OK   ${entry.id} ${entry.name} -> verified (response lost on final attempt)`);
+			return {
+				id: entry.id,
+				name: entry.name,
+				ok: true,
+				detail: 'verified — response lost on final attempt'
+			};
+		}
+		console.error(`FAIL ${entry.id} ${entry.name}: ${detail}`);
+		return { id: entry.id, name: entry.name, ok: false, detail };
+	}
+}
+
+export async function cmdUpload(options: Options): Promise<void> {
+	if (!options.dryRun && !options.passkey) {
+		throw new FatalError('Missing admin passkey. Set ADMIN_PASSKEY or use --passkey.');
+	}
+
+	await resolveAndProbeAccess(options);
 
 	const catalogRaw = await Bun.file(options.catalogPath).json();
 	const catalog = validateCatalog(catalogRaw, options.catalogPath);
@@ -277,7 +443,7 @@ Or add those two keys to apps/api/.env, then:
 	console.log(
 		`${options.dryRun ? 'Dry-run' : 'Uploading'} ${selected.length} puzzle(s) to ${options.server}`
 	);
-	const toLabel = options.to === Number.MAX_SAFE_INTEGER ? 'end' : options.to;
+	const toLabel = options.to === 0 || options.to === Number.MAX_SAFE_INTEGER ? 'end' : options.to;
 	console.log(
 		`Range: ids ${options.from}–${toLabel}${options.limit ? ` (limit ${options.limit})` : ''}`
 	);
@@ -293,20 +459,7 @@ Or add those two keys to apps/api/.env, then:
 	}
 
 	const baseHeaders = accessHeaders(options);
-	const loginResponse = await fetch(`${options.server}/api/admin/login`, {
-		method: 'POST',
-		headers: { ...baseHeaders, 'Content-Type': 'application/json' },
-		body: JSON.stringify({ passkey: options.passkey }),
-		redirect: 'manual',
-		signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
-	});
-	if (!loginResponse.ok) {
-		throw new FatalError(
-			`Admin login failed: ${await readError(loginResponse, !!(options.cfClientId && options.cfClientSecret))}`
-		);
-	}
-	const cookie = sessionCookieFrom(loginResponse, baseHeaders.Cookie);
-	console.log('Admin session OK\n');
+	const cookie = await adminLogin(options, baseHeaders);
 
 	// Idempotency: fetch existing puzzle keys so reruns skip already-uploaded
 	// entries instead of creating duplicates (the API generates a fresh UUID
@@ -319,119 +472,13 @@ Or add those two keys to apps/api/.env, then:
 		);
 	}
 
-	const results: Array<{ id: string; name: string; ok: boolean; detail: string }> = [];
+	const results: UploadResult[] = [];
 	let skipped = 0;
 
 	for (const entry of selected) {
-		const dedupKey = idempotencyKey(entry.name, entry.pieceCount, entry.aspectRatio);
-		if (existingKeys.has(dedupKey)) {
-			skipped++;
-			results.push({
-				id: entry.id,
-				name: entry.name,
-				ok: true,
-				detail: 'already exists — skipped'
-			});
-			console.log(`SKIP ${entry.id} ${entry.name}: already exists on server`);
-			continue;
-		}
-
-		const imagePath = imagePathFor(entry, options.imagesDir);
-		if (!imagePath) {
-			results.push({ id: entry.id, name: entry.name, ok: false, detail: 'image missing' });
-			console.error(`FAIL ${entry.id} ${entry.name}: image missing`);
-			continue;
-		}
-
-		const image = Bun.file(imagePath, { type: mimeForPath(imagePath) });
-
-		// Pre-validate file size locally to avoid uploading images the server
-		// will reject (MAX_FILE_SIZE = 10MB). Saves bandwidth on slow links.
-		if (image.size > MAX_FILE_SIZE) {
-			const detail = `image is ${(image.size / 1024 / 1024).toFixed(1)}MB — exceeds ${MAX_FILE_SIZE / 1024 / 1024}MB limit`;
-			results.push({ id: entry.id, name: entry.name, ok: false, detail });
-			console.error(`FAIL ${entry.id} ${entry.name}: ${detail}`);
-			continue;
-		}
-
-		// Pre-validate image dimensions against the requested aspect ratio.
-		// Catches mis-cropped images locally before wasting a network round-trip
-		// (the server performs the same check and returns 400 on mismatch).
-		// Use detectImageType (magic bytes) instead of mimeForPath (extension)
-		// so a mislabeled file (e.g. a .png containing JPEG data) is parsed
-		// with the correct format decoder instead of silently skipping the
-		// aspect-ratio check.
-		const detectedMime = await detectImageType(image);
-		const dimensions = detectedMime ? await parseImageDimensions(image, detectedMime) : null;
-		if (dimensions) {
-			if (!aspectRatiosMatch(dimensions.width, dimensions.height, entry.aspectRatio)) {
-				const detail = `image ${dimensions.width}x${dimensions.height} does not match ${entry.aspectRatio}`;
-				results.push({ id: entry.id, name: entry.name, ok: false, detail });
-				console.error(`FAIL ${entry.id} ${entry.name}: ${detail}`);
-				continue;
-			}
-		}
-		const formData = new FormData();
-		formData.append('name', entry.name);
-		formData.append('pieceCount', String(entry.pieceCount));
-		formData.append('aspectRatio', entry.aspectRatio);
-		formData.append('category', entry.category);
-		formData.append('image', image, basename(imagePath));
-
-		try {
-			const uploadResponse = await uploadWithRetry(
-				options.server,
-				baseHeaders,
-				cookie,
-				formData,
-				entry.name,
-				dedupKey
-			);
-			if (!uploadResponse.ok) {
-				const detail = await readError(
-					uploadResponse,
-					!!(options.cfClientId && options.cfClientSecret)
-				);
-				results.push({ id: entry.id, name: entry.name, ok: false, detail });
-				console.error(`FAIL ${entry.id} ${entry.name}: ${detail}`);
-			} else {
-				const puzzle = (await uploadResponse.json()) as { id?: string; status?: string };
-				results.push({
-					id: entry.id,
-					name: entry.name,
-					ok: true,
-					detail: `${puzzle.id ?? '?'} ${puzzle.status ?? ''}`
-				});
-				console.log(`OK   ${entry.id} ${entry.name} -> ${puzzle.id} (${puzzle.status})`);
-				existingKeys.add(dedupKey);
-			}
-		} catch (error) {
-			const detail = error instanceof Error ? error.message : String(error);
-			// All retries exhausted. The final attempt may have succeeded
-			// server-side but lost its response. Re-fetch to verify before
-			// declaring failure — prevents false negatives on flaky connections.
-			let verified = false;
-			try {
-				const refreshed = await fetchExistingKeys(options.server, baseHeaders, cookie);
-				verified = refreshed.has(dedupKey);
-			} catch {
-				// re-fetch itself failed; cannot verify — record original failure
-			}
-			if (verified) {
-				results.push({
-					id: entry.id,
-					name: entry.name,
-					ok: true,
-					detail: 'verified — response lost on final attempt'
-				});
-				existingKeys.add(dedupKey);
-				console.log(`OK   ${entry.id} ${entry.name} -> verified (response lost on final attempt)`);
-			} else {
-				results.push({ id: entry.id, name: entry.name, ok: false, detail });
-				console.error(`FAIL ${entry.id} ${entry.name}: ${detail}`);
-			}
-		}
-
+		const result = await processEntry(entry, options, baseHeaders, cookie, existingKeys);
+		results.push(result);
+		if (result.detail === 'already exists — skipped') skipped++;
 		if (options.delayMs > 0) await sleep(options.delayMs);
 	}
 

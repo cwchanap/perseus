@@ -48,8 +48,8 @@ Options:
   --cf-access-token <jwt>  Access JWT (or CF_ACCESS_TOKEN / cached set-token)
   --catalog <path>         Catalog JSON (default: scripts/startup-seed/catalog.json)
   --images <dir>           Image directory (default: scripts/startup-seed/images)
-  --from <n>               Start catalog id (default: 1)
-  --to <n>                 End catalog id (default: all)
+  --from <n>               Start catalog id (default: 1, 0 = from the very beginning)
+  --to <n>                 End catalog id (default: all, 0 = no upper bound)
   --limit <n>              Upload at most N entries from --from
   --delay-ms <n>           Delay between uploads (default: 1500)
   --skip-access            Local API only (no Access headers)

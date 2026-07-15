@@ -113,9 +113,15 @@ export function validateCatalog(raw: unknown, source: string): CatalogEntry[] {
 }
 
 export function selectEntries(catalog: CatalogEntry[], options: Options): CatalogEntry[] {
+	// from=0 means "from the very beginning" (no lower bound) — matches the
+	// 0-means-no-limit convention used by --to and --limit. In practice this
+	// includes all entries since catalog ids are positive, but it's explicit
+	// rather than relying on that coincidence.
+	const from = options.from === 0 ? -Infinity : options.from;
+	const to = options.to === 0 ? Infinity : options.to;
 	const filtered = catalog.filter((e) => {
 		const n = Number.parseInt(e.id, 10);
-		return n >= options.from && n <= options.to;
+		return n >= from && n <= to;
 	});
 	// Sort by numeric id so --limit takes the lowest ids in the range, not
 	// the first M entries in catalog order. Without this, a catalog that is

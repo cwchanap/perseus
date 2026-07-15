@@ -248,13 +248,6 @@ Update downstream consumers with the new values:
 - **GitHub Actions secrets**: `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET`
 - **Local CLI env** (`apps/api/.env` or shell): `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET`
 
-Then access in code via:
-
-```typescript
-const config = new pulumi.Config();
-const jwtSecret = config.requireSecret('jwtSecret');
-```
-
 ## Complete Wrangler Replacement
 
 To eliminate wrangler.toml files:

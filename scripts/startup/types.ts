@@ -31,7 +31,11 @@ export function warnHardcodedDefaults(): void {
 				'Set PERSEUS_SERVER to override for non-default deployments.'
 		);
 	}
-	if (!process.env.CF_ACCESS_AUD) {
+	// The AUD is only needed for the JWT/cloudflared token path. CI uses
+	// service tokens (CF-Access-Client-Id/Secret), which don't need the AUD,
+	// so the warning is noise in CI logs. Suppress when CI=true is set
+	// (GitHub Actions and most other CI systems set this).
+	if (!process.env.CF_ACCESS_AUD && !process.env.CI) {
 		console.warn(
 			'[warn] CF_ACCESS_AUD not set — using hardcoded default AUD. ' +
 				'Set CF_ACCESS_AUD to override for non-default deployments.'

@@ -82,6 +82,34 @@ describe('selectEntries', () => {
 		const selected = selectEntries(CATALOG, makeOptions({ from: 1, to: 3, limit: 10 }));
 		expect(selected).toHaveLength(3);
 	});
+
+	it('from=0 means no lower bound (from the very beginning)', () => {
+		const selected = selectEntries(CATALOG, makeOptions({ from: 0, to: 5 }));
+		expect(selected).toHaveLength(5);
+		expect(selected.map((e) => e.id)).toEqual(['01', '02', '03', '04', '05']);
+	});
+
+	it('to=0 means no upper bound', () => {
+		const selected = selectEntries(CATALOG, makeOptions({ from: 1, to: 0 }));
+		expect(selected).toHaveLength(5);
+	});
+
+	it('from=0 to=0 includes everything', () => {
+		const selected = selectEntries(CATALOG, makeOptions({ from: 0, to: 0 }));
+		expect(selected).toHaveLength(5);
+	});
+
+	it('from=0 includes id 0 if present in catalog', () => {
+		const catalogWithZero = [makeEntry('00', 'Zero'), ...CATALOG];
+		const selected = selectEntries(catalogWithZero, makeOptions({ from: 0, to: 5 }));
+		expect(selected.map((e) => e.id)).toEqual(['00', '01', '02', '03', '04', '05']);
+	});
+
+	it('from=1 excludes id 0 if present in catalog', () => {
+		const catalogWithZero = [makeEntry('00', 'Zero'), ...CATALOG];
+		const selected = selectEntries(catalogWithZero, makeOptions({ from: 1, to: 5 }));
+		expect(selected.map((e) => e.id)).toEqual(['01', '02', '03', '04', '05']);
+	});
 });
 
 describe('imagePathFor', () => {

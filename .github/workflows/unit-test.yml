@@ -32,6 +32,9 @@ jobs:
       - name: Run script tests
         run: bun run test:scripts
 
+      - name: Run shell script tests
+        run: bun run test:shell
+
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
