@@ -14,6 +14,8 @@ import {
 	retryConfig,
 	parseImageDimensions,
 	aspectRatiosMatch,
+	DEFAULT_PUZZLE_ASPECT_RATIO,
+	MAX_PIECES,
 	accessAppFor,
 	adminUiFor,
 	tokenBasenameFor,
@@ -388,7 +390,32 @@ describe('fetchExistingKeys', () => {
 
 		const keys = await fetchExistingKeys('http://localhost', {}, 'session=1');
 		expect(keys.size).toBe(1);
-		expect(keys.has(idempotencyKey('Alpha', 100))).toBe(true);
+		// Missing aspectRatio is normalized to the server default (1:1).
+		expect(keys.has(idempotencyKey('Alpha', 100, DEFAULT_PUZZLE_ASPECT_RATIO))).toBe(true);
+	});
+
+	it('excludes failed puzzles so they are retried on the next seed run', async () => {
+		globalThis.fetch = mock(
+			async () =>
+				new Response(
+					JSON.stringify({
+						puzzles: [
+							{ name: 'Ready', pieceCount: 100, aspectRatio: '1:1', status: 'ready' },
+							{ name: 'Processing', pieceCount: 100, aspectRatio: '1:1', status: 'processing' },
+							{ name: 'Failed', pieceCount: 100, aspectRatio: '1:1', status: 'failed' }
+						]
+					}),
+					{ status: 200 }
+				)
+		) as unknown as typeof fetch;
+
+		const keys = await fetchExistingKeys('http://localhost', {}, 'session=1');
+		// ready and processing are retained for dedup; failed is excluded so it
+		// gets retried on the next seed run instead of being permanently skipped.
+		expect(keys.has(idempotencyKey('Ready', 100, '1:1'))).toBe(true);
+		expect(keys.has(idempotencyKey('Processing', 100, '1:1'))).toBe(true);
+		expect(keys.has(idempotencyKey('Failed', 100, '1:1'))).toBe(false);
+		expect(keys.size).toBe(2);
 	});
 });
 
@@ -535,7 +562,7 @@ describe('uploadWithRetry', () => {
 			's=1',
 			new FormData(),
 			'DuplicateMe',
-			idempotencyKey('DuplicateMe')
+			idempotencyKey('DuplicateMe', undefined, DEFAULT_PUZZLE_ASPECT_RATIO)
 		);
 		expect(res.status).toBe(200);
 		expect(postCalls).toBe(1); // only one POST — no retry
@@ -608,6 +635,16 @@ describe('validateCatalog', () => {
 	it('accepts pieceCount exactly 4 (server minimum)', () => {
 		const entry = { ...validEntry('01'), pieceCount: 4 };
 		expect(validateCatalog([entry], 'catalog.json')).toEqual([entry]);
+	});
+
+	it('rejects a pieceCount above the server maximum even when the grid is valid', () => {
+		// 256 is a valid 1:1 grid (16×16) but exceeds MAX_PIECES (250).
+		// isValidPieceCountForAspectRatio passes, so without the ceiling check
+		// the CLI would upload it and the API would reject it at 400.
+		const entry = { ...validEntry('01'), pieceCount: 256 };
+		expect(() => validateCatalog([entry], 'catalog.json')).toThrow(
+			new RegExp(`exceeds the server maximum of ${MAX_PIECES}`)
+		);
 	});
 
 	it('rejects duplicate ids', () => {

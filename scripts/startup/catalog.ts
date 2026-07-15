@@ -10,6 +10,7 @@
 import {
 	isPuzzleAspectRatio,
 	isValidPieceCountForAspectRatio,
+	MAX_PIECES,
 	PUZZLE_CATEGORIES,
 	type PuzzleCategory
 } from '@perseus/types';
@@ -101,6 +102,17 @@ export function validateCatalog(raw: unknown, source: string): CatalogEntry[] {
 		if (!isValidPieceCountForAspectRatio(pieceCount, aspectRatio)) {
 			throw new Error(
 				`Catalog entry ${i} at ${source} has pieceCount ${pieceCount} which is not valid for aspectRatio ${aspectRatio}`
+			);
+		}
+		// Match the server-side ceiling: both API runtimes reject pieceCount
+		// > MAX_PIECES (admin.worker.ts: pieceCount > MAX_PIECES; admin.ts:
+		// isValidPieceCount → count <= MAX_PIECES). isValidPieceCountForAspectRatio
+		// only checks grid divisibility, not the upper bound — so a valid grid
+		// like 256 (16×16 for 1:1) would pass above but be rejected by the API
+		// at upload time. Reject upfront to avoid a guaranteed 400.
+		if (pieceCount > MAX_PIECES) {
+			throw new Error(
+				`Catalog entry ${i} at ${source} has pieceCount ${pieceCount} which exceeds the server maximum of ${MAX_PIECES}`
 			);
 		}
 		if (!PUZZLE_CATEGORIES.includes(category as PuzzleCategory)) {

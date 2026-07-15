@@ -11,9 +11,28 @@ import { MAX_FILE_SIZE } from '@perseus/types';
 // Deployment-specific defaults. Override via env vars for non-default deployments:
 //   PERSEUS_SERVER  — API base URL (default: https://perseus.cwchanap.dev)
 //   CF_ACCESS_AUD   — Cloudflare Access application AUD (deployment-specific)
-export const DEFAULT_SERVER = process.env.PERSEUS_SERVER ?? 'https://perseus.cwchanap.dev';
-export const ACCESS_AUD =
+//
+// These are `let` (not `const`) so applyDotenvOverrides can update them from
+// apps/api/.env after the CLI loads the dotenv map. Module-level `const`
+// initialization reads process.env at import time — before cli.ts loads the
+// dotenv file — so a non-default deployment putting PERSEUS_SERVER or
+// CF_ACCESS_AUD in apps/api/.env (but not in the shell environment) would
+// silently use the hardcoded defaults and target the wrong environment.
+export let DEFAULT_SERVER = process.env.PERSEUS_SERVER ?? 'https://perseus.cwchanap.dev';
+export let ACCESS_AUD =
 	process.env.CF_ACCESS_AUD ?? '7fd50c02b28c32fe3abb938cebba2dc9dcec6c88f42969c28700e9a0a8a28e5f';
+
+/**
+ * Apply dotenv deployment overrides after the CLI loads apps/api/.env.
+ * Values in the dotenv map take priority over the process.env-derived
+ * defaults (which were captured at module import time, before the dotenv
+ * file was read). Call this once after loadDotEnvMap, before any code that
+ * reads DEFAULT_SERVER or ACCESS_AUD (e.g. cloudflaredTokenPath).
+ */
+export function applyDotenvOverrides(dotenv: Record<string, string>): void {
+	if (dotenv.PERSEUS_SERVER) DEFAULT_SERVER = dotenv.PERSEUS_SERVER;
+	if (dotenv.CF_ACCESS_AUD) ACCESS_AUD = dotenv.CF_ACCESS_AUD;
+}
 
 export const FETCH_TIMEOUT_MS = 30_000;
 export const UPLOAD_TIMEOUT_MS = 120_000;

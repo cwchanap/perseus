@@ -9,10 +9,10 @@ function makeBlob(bytes: Uint8Array): BlobLike {
 }
 
 // ─── sniffImageType boundary tests ──────────────────────────────────
-// The minimum-length threshold changed from 12 to 3 bytes (commit 744c961).
 // These tests pin the boundary behavior so future changes are caught:
 //   - < 3 bytes  → null (too short for any format)
-//   - 3+ bytes   → JPEG detectable (FF D8 FF)
+//   - 3 bytes    → null for JPEG (FF D8 FF alone is truncated — needs 4+)
+//   - 4+ bytes   → JPEG detectable (FF D8 FF + marker code)
 //   - 8+ bytes   → PNG detectable (89 50 4E 47 0D 0A 1A 0A)
 //   - 12+ bytes  → WebP detectable (RIFF....WEBP)
 
@@ -31,24 +31,25 @@ describe('sniffImageType – boundary conditions', () => {
 		expect(sniffImageType(new Uint8Array([0xff, 0xd8]))).toBeNull();
 	});
 
-	// --- JPEG boundary (3 magic bytes: FF D8 FF) ---
+	// --- JPEG boundary (SOI FF D8 + FF + marker code = minimum 4 bytes) ---
 
-	it('returns jpeg for exactly 3 bytes matching JPEG header', () => {
-		expect(sniffImageType(new Uint8Array([0xff, 0xd8, 0xff]))).toBe('image/jpeg');
+	it('returns null for exactly 3 bytes matching JPEG SOI prefix (truncated)', () => {
+		// FF D8 FF alone is a truncated header — no marker code byte follows,
+		// so this is not a valid JPEG image. Rejecting it prevents callers from
+		// proceeding with malformed bytes when dimension parsing returns null.
+		expect(sniffImageType(new Uint8Array([0xff, 0xd8, 0xff]))).toBeNull();
 	});
 
 	it('returns null for 3 bytes that do not match any format', () => {
 		expect(sniffImageType(new Uint8Array([0x00, 0x00, 0x00]))).toBeNull();
 	});
 
-	it('returns jpeg for 3 bytes matching JPEG even though PNG/WebP need more', () => {
-		// This is the key behavior change: previously < 12 bytes returned null
-		// for everything. Now 3-byte JPEG is detectable.
-		const bytes = new Uint8Array([0xff, 0xd8, 0xff]);
-		expect(sniffImageType(bytes)).toBe('image/jpeg');
+	it('returns jpeg for 4 bytes matching JPEG SOI + marker code', () => {
+		// FF D8 FF E0 — SOI + APP0 marker prefix (minimum valid JPEG header).
+		expect(sniffImageType(new Uint8Array([0xff, 0xd8, 0xff, 0xe0]))).toBe('image/jpeg');
 	});
 
-	it('returns jpeg for a full JPEG header (3 bytes + padding)', () => {
+	it('returns jpeg for a full JPEG header (4+ bytes with padding)', () => {
 		const bytes = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]);
 		expect(sniffImageType(bytes)).toBe('image/jpeg');
 	});

@@ -12,7 +12,7 @@
  */
 
 import { basename } from 'node:path';
-import { aspectRatiosMatch } from '@perseus/types';
+import { aspectRatiosMatch, DEFAULT_PUZZLE_ASPECT_RATIO } from '@perseus/types';
 import { parseImageDimensions, detectImageType } from '@perseus/shared';
 import {
 	FETCH_TIMEOUT_MS,
@@ -122,12 +122,26 @@ export async function fetchExistingKeys(
 		);
 	}
 	const payload = (await res.json()) as {
-		puzzles?: Array<{ name?: string; pieceCount?: number; aspectRatio?: string }>;
+		puzzles?: Array<{
+			name?: string;
+			pieceCount?: number;
+			aspectRatio?: string;
+			status?: string;
+		}>;
 	};
 	const keys = new Set<string>();
 	for (const p of payload.puzzles ?? []) {
+		// Exclude failed puzzles so a subsequent seed run retries them instead
+		// of skipping permanently. processing and ready puzzles are retained
+		// for deduplication — they represent successful (or in-flight) uploads.
+		if (p.status === 'failed') continue;
 		if (typeof p.name === 'string' && p.name.trim()) {
-			keys.add(idempotencyKey(p.name, p.pieceCount, p.aspectRatio));
+			// Normalize missing aspectRatio to the server default (1:1). Legacy
+			// puzzles may omit aspectRatio in their summary; the API treats a
+			// missing value as 1:1, but the dedup key would encode it as an
+			// empty field while catalog entries use '1:1' — causing a duplicate
+			// upload on the next seed run.
+			keys.add(idempotencyKey(p.name, p.pieceCount, p.aspectRatio ?? DEFAULT_PUZZLE_ASPECT_RATIO));
 		}
 	}
 	return keys;

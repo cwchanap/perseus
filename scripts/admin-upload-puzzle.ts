@@ -1,9 +1,15 @@
 #!/usr/bin/env bun
 
-import { basename, extname } from 'node:path';
+import { basename, extname, join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { accessHeaders, hasAccessCredentials, sessionCookieFrom } from './startup/upload';
-import { resolveAccessToken, probeAccessToken, probeServiceToken } from './startup/token';
-import { FatalError, type AccessCredentials } from './startup/types';
+import {
+	resolveAccessToken,
+	probeAccessToken,
+	probeServiceToken,
+	loadDotEnvMap
+} from './startup/token';
+import { FatalError, applyDotenvOverrides, type AccessCredentials } from './startup/types';
 
 interface Options extends AccessCredentials {
 	server: string;
@@ -53,20 +59,27 @@ function contentTypeForPath(path: string): string {
 	return 'application/octet-stream';
 }
 
-function parseOptions(): Options {
+async function parseOptions(): Promise<Options> {
 	const args = Bun.argv.slice(2);
 	if (args.includes('--help') || args.includes('-h')) usage(0);
 
 	const imagePath = readArg(args, '--image');
 	const name = readArg(args, '--name');
 	const pieceCountRaw = readArg(args, '--pieces');
-	const passkey = readArg(args, '--passkey') ?? process.env.ADMIN_PASSKEY;
+
+	// Load the same dotenv map (apps/api/.env) used by the bulk uploader so
+	// credentials kept there are available without exporting them to the shell.
+	const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+	const dotenv = await loadDotEnvMap(root);
+	applyDotenvOverrides(dotenv);
+
+	const passkey = readArg(args, '--passkey') ?? process.env.ADMIN_PASSKEY ?? dotenv.ADMIN_PASSKEY;
 	const server = readArg(args, '--server') ?? 'http://127.0.0.1:3000';
 	const aspectRatio = readArg(args, '--aspect');
 	const category = readArg(args, '--category');
 	const cfAccessToken = readArg(args, '--cf-access-token') ?? process.env.CF_ACCESS_TOKEN;
-	const cfClientId = process.env.CF_ACCESS_CLIENT_ID;
-	const cfClientSecret = process.env.CF_ACCESS_CLIENT_SECRET;
+	const cfClientId = process.env.CF_ACCESS_CLIENT_ID ?? dotenv.CF_ACCESS_CLIENT_ID;
+	const cfClientSecret = process.env.CF_ACCESS_CLIENT_SECRET ?? dotenv.CF_ACCESS_CLIENT_SECRET;
 	const skipAccess = args.includes('--skip-access') || /localhost|127\.0\.0\.1/.test(server);
 
 	if (!imagePath || !name || !pieceCountRaw || !passkey) usage();
@@ -167,7 +180,7 @@ For local API, use --skip-access or a localhost --server URL.`);
 }
 
 async function main() {
-	const options = parseOptions();
+	const options = await parseOptions();
 	const image = Bun.file(options.imagePath, { type: contentTypeForPath(options.imagePath) });
 	if (!(await image.exists())) {
 		throw new Error(`Image file not found: ${options.imagePath}`);

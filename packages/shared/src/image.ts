@@ -15,13 +15,16 @@ export interface BlobLike {
 }
 
 export function sniffImageType(bytes: Uint8Array): string | null {
-	// Minimum 3 bytes — enough for the JPEG signature (FF D8 FF). PNG and WebP
-	// have their own inline `bytes.length >= 8` / `>= 12` guards below, so the
-	// old blanket `< 12` check was unnecessarily strict for JPEG. Lowered from
-	// 12 to 3 in commit 744c961; boundary behavior is pinned in image.test.ts.
+	// Minimum 3 bytes for the initial length check. Each format has its own
+	// inline guard below. JPEG requires 4 bytes (SOI FF D8 + FF + at least one
+	// marker code byte) — the 3-byte signature FF D8 FF alone is a truncated
+	// header, not a valid image. PNG needs 8 bytes, WebP needs 12.
 	if (bytes.length < 3) return null;
-	// JPEG: FF D8 FF (3 magic bytes)
-	if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
+	// JPEG: FF D8 FF + marker code (minimum 4 bytes — the 3-byte SOI prefix
+	// alone is truncated and dimension parsing would return null, leaving
+	// callers to proceed with malformed bytes instead of rejecting them).
+	if (bytes.length >= 4 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff)
+		return 'image/jpeg';
 	// PNG: 89 50 4E 47 0D 0A 1A 0A (8 magic bytes)
 	if (
 		bytes.length >= 8 &&

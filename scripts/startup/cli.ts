@@ -15,6 +15,7 @@ import {
 	type Options,
 	accessAppFor,
 	adminUiFor,
+	applyDotenvOverrides,
 	sleep,
 	warnHardcodedDefaults,
 	FatalError
@@ -113,10 +114,16 @@ async function parseOptions(): Promise<Options> {
 	const limit = limitRaw === undefined ? undefined : parseIntArg(limitRaw, '--limit', 0);
 
 	const dotenv = await loadDotEnvMap(root);
+	// Apply dotenv overrides for deployment-specific constants before any code
+	// reads DEFAULT_SERVER or ACCESS_AUD (e.g. cloudflaredTokenPath below).
+	applyDotenvOverrides(dotenv);
 	const passkey =
 		readArg(args, '--passkey') ?? process.env.ADMIN_PASSKEY ?? dotenv.ADMIN_PASSKEY ?? '';
 
-	const server = (readArg(args, '--server') ?? DEFAULT_SERVER).replace(/\/+$/, '');
+	const server = (readArg(args, '--server') ?? dotenv.PERSEUS_SERVER ?? DEFAULT_SERVER).replace(
+		/\/+$/,
+		''
+	);
 	const skipAccess = args.includes('--skip-access') || /localhost|127\.0\.0\.1/.test(server);
 	const tokenCachePath = join(root, 'data/startup-puzzles/.cf-access-token');
 	// Store only the raw explicit token here. Each command resolves the full

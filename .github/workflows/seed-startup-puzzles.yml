@@ -30,8 +30,8 @@ on:
         required: false
         default: 'perseus-seed.tgz'
       asset_sha256:
-        description: 'Expected SHA-256 hash of the tarball. Required — the download is verified before extraction. Generate with: shasum -a 256 perseus-seed.tgz'
-        required: true
+        description: 'Expected SHA-256 hash of the tarball. Required when asset_release is set — the download is verified before extraction. Generate with: shasum -a 256 perseus-seed.tgz'
+        required: false
 
 concurrency:
   group: seed-startup-puzzles

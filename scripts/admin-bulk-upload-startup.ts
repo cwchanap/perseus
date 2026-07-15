@@ -45,7 +45,7 @@ export {
 	uploadWithRetry,
 	cmdUpload
 } from './startup/upload';
-export { aspectRatiosMatch } from '@perseus/types';
+export { aspectRatiosMatch, DEFAULT_PUZZLE_ASPECT_RATIO, MAX_PIECES } from '@perseus/types';
 export { parseImageDimensions } from '@perseus/shared';
 
 import { main } from './startup/cli';
