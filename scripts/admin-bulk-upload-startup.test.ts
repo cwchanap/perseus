@@ -907,4 +907,65 @@ describe('cmdUpload', () => {
 		await expect(result).rejects.toThrow(/Admin login failed/);
 		await expect(result).rejects.toBeInstanceOf(FatalError);
 	});
+
+	it('sends CF-Access-Client-Id/Secret headers on all requests when using service tokens', async () => {
+		// Exercises the service-token auth path (the primary CI method):
+		// skipAccess is false, cfClientId/cfClientSecret are set, and no
+		// cfAccessToken JWT is provided. resolveAccessToken should be skipped
+		// (guarded by the cfClientId/cfClientSecret check), so no cloudflared
+		// subprocess is spawned. All HTTP calls must carry the service token
+		// headers.
+		const entry = makeEntry('01', 'ServiceTokenPuzzle');
+		const catalogPath = join(tmpDir, 'catalog.json');
+		writeFileSync(catalogPath, JSON.stringify([entry]));
+		writeFileSync(join(tmpDir, '01-test.jpg'), 'fake-image');
+
+		const capturedHeaders: Record<string, string>[] = [];
+		globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
+			const url = String(input);
+			const headers = init?.headers as Record<string, string>;
+			if (headers) capturedHeaders.push({ ...headers });
+
+			if (url.endsWith('/api/admin/login')) {
+				return new Response('{"ok":true}', {
+					status: 200,
+					headers: { 'set-cookie': 'session=abc; Path=/' }
+				});
+			}
+			if (init?.method === 'GET' && url.endsWith('/api/admin/puzzles')) {
+				return new Response(JSON.stringify({ puzzles: [] }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				});
+			}
+			if (init?.method === 'POST' && url.endsWith('/api/admin/puzzles')) {
+				return new Response(JSON.stringify({ id: 'new-id', status: 'created' }), {
+					status: 201,
+					headers: { 'Content-Type': 'application/json' }
+				});
+			}
+			return new Response('not found', { status: 404 });
+		}) as unknown as typeof fetch;
+
+		const options = makeOptions({
+			catalogPath,
+			imagesDir: tmpDir,
+			from: 1,
+			to: 1,
+			skipAccess: false,
+			cfClientId: 'test-client-id',
+			cfClientSecret: 'test-client-secret',
+			delayMs: 0
+		});
+
+		await cmdUpload(options);
+
+		// Every request (login POST, GET puzzles, upload POST) must carry
+		// the service token headers.
+		expect(capturedHeaders.length).toBeGreaterThanOrEqual(2);
+		for (const h of capturedHeaders) {
+			expect(h['CF-Access-Client-Id']).toBe('test-client-id');
+			expect(h['CF-Access-Client-Secret']).toBe('test-client-secret');
+		}
+	});
 });

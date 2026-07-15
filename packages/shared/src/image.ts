@@ -178,7 +178,7 @@ export async function parseImageDimensions(
 				if (header.byteLength < 13) return null;
 				const b = new DataView(header).getUint32(9, true);
 				const w = (b & 0x3fff) + 1;
-				const h = ((b >> 14) & 0x3fff) + 1;
+				const h = ((b >>> 14) & 0x3fff) + 1;
 				return { width: w, height: h };
 			}
 			if (fourCC === 'VP8X') {

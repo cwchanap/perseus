@@ -185,7 +185,11 @@ export async function cmdUpload(options: Options): Promise<void> {
 		throw new FatalError('Missing admin passkey. Set ADMIN_PASSKEY or use --passkey.');
 	}
 
-	if (!options.dryRun && !options.skipAccess) {
+	// Skip JWT token resolution when service tokens are already available —
+	// service tokens (CF-Access-Client-Id/Secret) authenticate Access without
+	// needing a JWT, and resolveAccessToken would fall through to spawning
+	// cloudflared (not installed in CI, wasteful everywhere else).
+	if (!options.dryRun && !options.skipAccess && (!options.cfClientId || !options.cfClientSecret)) {
 		options.cfAccessToken = await resolveAccessToken({
 			explicit: options.cfAccessToken,
 			tokenCachePath: options.tokenCachePath,

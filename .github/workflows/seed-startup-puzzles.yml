@@ -140,6 +140,7 @@ jobs:
           export CF_ACCESS_CLIENT_SECRET
           CF_ACCESS_CLIENT_ID=$(pulumi stack output adminCliAccessClientId -s "$STACK" -C packages/infrastructure)
           CF_ACCESS_CLIENT_SECRET=$(pulumi stack output --show-secrets adminCliAccessClientSecret -s "$STACK" -C packages/infrastructure)
+          echo "::add-mask::$CF_ACCESS_CLIENT_ID"
           echo "::add-mask::$CF_ACCESS_CLIENT_SECRET"
           if [ -z "$CF_ACCESS_CLIENT_ID" ] || [ -z "$CF_ACCESS_CLIENT_SECRET" ]; then
             echo "Missing adminCliAccessClientId/Secret stack outputs. Deploy infrastructure first."
