@@ -87,22 +87,30 @@ export interface CatalogEntry {
 	pieceCount: number;
 }
 
-export interface Options {
+/**
+ * The subset of Options that accessHeaders / hasAccessCredentials need.
+ * Extracted so the single-puzzle uploader (admin-upload-puzzle.ts) can share
+ * the Access helpers without constructing a full startup Options object.
+ */
+export interface AccessCredentials {
+	skipAccess: boolean;
+	cfAccessToken?: string;
+	cfClientId?: string;
+	cfClientSecret?: string;
+}
+
+export interface Options extends AccessCredentials {
 	command: 'login' | 'set-token' | 'upload' | 'status';
 	server: string;
 	passkey: string;
 	catalogPath: string;
 	imagesDir: string;
 	tokenCachePath: string;
-	cfAccessToken?: string;
-	cfClientId?: string;
-	cfClientSecret?: string;
 	dryRun: boolean;
 	from: number;
 	to: number;
 	limit?: number;
 	delayMs: number;
-	skipAccess: boolean;
 }
 
 export function sleep(ms: number): Promise<void> {

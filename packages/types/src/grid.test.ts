@@ -165,4 +165,12 @@ describe('aspectRatiosMatch', () => {
 		expect(aspectRatiosMatch(300, 400, '3:4')).toBe(true);
 		expect(aspectRatiosMatch(300, 400, '4:3')).toBe(false);
 	});
+
+	it('rejects zero or negative dimensions', () => {
+		expect(aspectRatiosMatch(0, 100, '1:1')).toBe(false);
+		expect(aspectRatiosMatch(100, 0, '1:1')).toBe(false);
+		expect(aspectRatiosMatch(0, 0, '1:1')).toBe(false);
+		expect(aspectRatiosMatch(-100, 100, '1:1')).toBe(false);
+		expect(aspectRatiosMatch(100, -100, '1:1')).toBe(false);
+	});
 });

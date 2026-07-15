@@ -56,7 +56,7 @@ bun run admin:upload -- \
   --aspect 1:1 \
   --category Nature
 
-# Production
+# Production (requires CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET env vars)
 bun run admin:upload -- \
   --server https://perseus.cwchanap.dev \
   --image ./my-puzzle.jpg \
@@ -66,15 +66,19 @@ bun run admin:upload -- \
   --category Nature
 ```
 
-| Flag         | Description                                                          |
-| ------------ | -------------------------------------------------------------------- |
-| `--server`   | API base URL (default `http://127.0.0.1:3000`)                       |
-| `--passkey`  | Admin passkey (or `ADMIN_PASSKEY`)                                   |
-| `--image`    | Path to JPEG/PNG/WebP                                                |
-| `--name`     | Puzzle display name                                                  |
-| `--pieces`   | Piece count (must be valid for the aspect ratio)                     |
-| `--aspect`   | `1:1`, `4:3`, or `3:4`                                               |
-| `--category` | Optional: Animals, Nature, Art, Architecture, Abstract, Food, Travel |
+| Flag                | Description                                                          |
+| ------------------- | -------------------------------------------------------------------- |
+| `--server`          | API base URL (default `http://127.0.0.1:3000`)                       |
+| `--passkey`         | Admin passkey (or `ADMIN_PASSKEY`)                                   |
+| `--image`           | Path to JPEG/PNG/WebP                                                |
+| `--name`            | Puzzle display name                                                  |
+| `--pieces`          | Piece count (must be valid for the aspect ratio)                     |
+| `--aspect`          | `1:1`, `4:3`, or `3:4`                                               |
+| `--category`        | Optional: Animals, Nature, Art, Architecture, Abstract, Food, Travel |
+| `--cf-access-token` | Access JWT (or `CF_ACCESS_TOKEN`) — service tokens preferred         |
+| `--skip-access`     | Local API only (no Access headers)                                   |
+
+**Production Access:** set `CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET` env vars (same as the bulk uploader). The script probes the service token before uploading and aborts on rejection. See "Credentials" above.
 
 **Valid piece counts (examples):**
 
@@ -148,16 +152,16 @@ The service token expires after 1 year (`DEFAULT_ADMIN_CLI_SERVICE_TOKEN_DURATIO
 To rotate credentials (new client_id + client_secret):
 
 1. `cd packages/infrastructure && pulumi up --target-replace "urn:pulumi:production::perseus-infrastructure::cloudflare:index/zeroTrustAccessServiceToken:ZeroTrustAccessServiceToken::admin-access-cli-service-token"`
-2. Update `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET` in CI secrets and `apps/api/.env`:
+2. The CI seed workflow (`seed-startup-puzzles.yml`) reads the new outputs automatically at runtime — no GitHub secret update needed. For local CLI use, update `apps/api/.env` (or your shell env):
    ```bash
-   CF_ACCESS_CLIENT_ID=$(pulumi stack output adminCliAccessClientId)
-   CF_ACCESS_CLIENT_SECRET=$(pulumi stack output --show-secrets adminCliAccessClientSecret)
+   CF_ACCESS_CLIENT_ID=$(cd packages/infrastructure && pulumi stack output adminCliAccessClientId)
+   CF_ACCESS_CLIENT_SECRET=$(cd packages/infrastructure && pulumi stack output --show-secrets adminCliAccessClientSecret)
    ```
 3. Verify: `bun run admin:startup:status`
 
 ### Idempotency
 
-The upload script fetches existing puzzle names from `GET /api/admin/puzzles` before uploading and skips entries whose name already exists on the server. This prevents duplicate puzzles on rerun. If the fetch fails (non-OK response or network error), the script aborts rather than risk creating duplicates — re-run after verifying the API is reachable.
+The upload script fetches existing puzzles from `GET /api/admin/puzzles` before uploading and skips entries whose **name + piece count + aspect ratio** all match an existing puzzle. Matching on name alone is fragile because the API does not enforce unique names — a manually uploaded puzzle sharing a seed entry's name but with a different piece count or aspect ratio would wrongly cause the seed entry to be skipped. If the fetch fails (non-OK response or network error), the script aborts rather than risk creating duplicates — re-run after verifying the API is reachable.
 
 ### Notes
 

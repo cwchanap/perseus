@@ -26,6 +26,7 @@ import {
 	cloudflaredTokenPath,
 	loadDotEnvMap,
 	probeAccessToken,
+	probeServiceToken,
 	promptTokenInteractive,
 	resolveAccessToken,
 	resolveCloudflaredToken
@@ -245,7 +246,18 @@ async function cmdStatus(options: Options): Promise<void> {
 		`Admin passkey:     ${options.passkey ? `yes (${options.passkey.length} chars)` : 'no'}`
 	);
 
-	if (token && !options.skipAccess) {
+	const hasServiceToken = !!(options.cfClientId && options.cfClientSecret);
+
+	// Prefer service token probe when service tokens are available (same
+	// logic as the upload path). Only probe JWT when service tokens are absent.
+	if (hasServiceToken && !options.skipAccess) {
+		const probe = await probeServiceToken(
+			options.server,
+			options.cfClientId!,
+			options.cfClientSecret!
+		);
+		console.log(`Access probe:      ${probe === 'ok' ? 'ok (service token accepted)' : probe}`);
+	} else if (token && !options.skipAccess) {
 		const probe = await probeAccessToken(options.server, token);
 		console.log(`Access probe:      ${probe === 'ok' ? 'ok (JWT accepted)' : probe}`);
 	}

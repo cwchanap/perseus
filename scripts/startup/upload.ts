@@ -19,6 +19,7 @@ import {
 	UPLOAD_TIMEOUT_MS,
 	MAX_FILE_SIZE,
 	type Options,
+	type AccessCredentials,
 	type CatalogEntry,
 	FatalError,
 	sleep
@@ -26,21 +27,25 @@ import {
 import { validateCatalog, selectEntries, imagePathFor, mimeForPath } from './catalog';
 import { resolveAccessToken, probeAccessToken, probeServiceToken } from './token';
 
-export function accessHeaders(options: Options): Record<string, string> {
+export function accessHeaders(options: AccessCredentials): Record<string, string> {
 	if (options.skipAccess) return {};
 	const headers: Record<string, string> = {};
-	if (options.cfAccessToken) {
+	// When service tokens are available, prefer them over a JWT — a stale
+	// JWT alongside valid service tokens could cause Access to reject the
+	// request. Only send JWT headers when service tokens are absent.
+	const hasServiceToken = !!(options.cfClientId && options.cfClientSecret);
+	if (options.cfAccessToken && !hasServiceToken) {
 		headers['cf-access-token'] = options.cfAccessToken;
 		headers['Cookie'] = `CF_Authorization=${options.cfAccessToken}`;
 	}
-	if (options.cfClientId && options.cfClientSecret) {
-		headers['CF-Access-Client-Id'] = options.cfClientId;
-		headers['CF-Access-Client-Secret'] = options.cfClientSecret;
+	if (hasServiceToken) {
+		headers['CF-Access-Client-Id'] = options.cfClientId!;
+		headers['CF-Access-Client-Secret'] = options.cfClientSecret!;
 	}
 	return headers;
 }
 
-export function hasAccessCredentials(options: Options): boolean {
+export function hasAccessCredentials(options: AccessCredentials): boolean {
 	if (options.skipAccess) return true;
 	if (options.cfAccessToken) return true;
 	if (options.cfClientId && options.cfClientSecret) return true;
@@ -237,12 +242,26 @@ Or add those two keys to apps/api/.env, then:
 `);
 	}
 
-	if (options.cfAccessToken) {
+	// When service tokens (CF-Access-Client-Id/Secret) are available, prefer
+	// them over a JWT. A stale JWT from env/cache alongside valid service
+	// tokens would cause the JWT probe to fail and abort, even though the
+	// service tokens would work. Only probe the JWT when service tokens are
+	// absent — service tokens are the recommended automation path.
+	const hasServiceToken = !!(options.cfClientId && options.cfClientSecret);
+
+	if (options.cfAccessToken && !hasServiceToken) {
 		const probe = await probeAccessToken(options.server, options.cfAccessToken);
 		if (probe === 'blocked') {
 			throw new FatalError(
 				'Access JWT is present but rejected by Cloudflare Access (302/403).\n' +
 					'Run: bun run admin:startup:set-token'
+			);
+		}
+		if (probe === 'error') {
+			throw new FatalError(
+				'Access JWT probe failed (network error or unexpected response).\n' +
+					'Cannot verify Access credentials — aborting to avoid a doomed upload.\n' +
+					'Check network connectivity and retry, or run: bun run admin:startup:set-token'
 			);
 		}
 	}
@@ -251,19 +270,25 @@ Or add those two keys to apps/api/.env, then:
 	// Mirrors the JWT probe above: hit GET /api/admin/puzzles with the service
 	// token headers and fail fast if Access rejects them (302/403). Without
 	// this, an expired/invalid CF-Access-Client-Id/Secret pair only surfaces as
-	// an opaque login failure after the upload has already started. Only probe
-	// when no JWT is present — if both are set, the JWT probe already ran.
-	if (!options.cfAccessToken && options.cfClientId && options.cfClientSecret) {
+	// an opaque login failure after the upload has already started.
+	if (hasServiceToken) {
 		const probe = await probeServiceToken(
 			options.server,
-			options.cfClientId,
-			options.cfClientSecret
+			options.cfClientId!,
+			options.cfClientSecret!
 		);
 		if (probe === 'blocked') {
 			throw new FatalError(
 				'Cloudflare Access service token rejected (302/403).\n' +
 					'Check CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET are valid and not expired.\n' +
 					'To rotate: see "CLI Service Token Rotation" in packages/infrastructure/README.md.'
+			);
+		}
+		if (probe === 'error') {
+			throw new FatalError(
+				'Access service token probe failed (network error or unexpected response).\n' +
+					'Cannot verify Access credentials — aborting to avoid a doomed upload.\n' +
+					'Check network connectivity and retry.'
 			);
 		}
 	}
@@ -449,11 +474,17 @@ export async function cmdUpload(options: Options): Promise<void> {
 	);
 
 	if (options.dryRun) {
+		let validationFailures = 0;
 		for (const entry of selected) {
-			const imagePath = imagePathFor(entry, options.imagesDir);
+			const validation = await validateEntryImage(entry, options.imagesDir);
+			const status = validation.ok ? 'OK' : `FAIL: ${validation.detail}`;
 			console.log(
-				`[dry-run] ${entry.id} ${entry.name} ${entry.pieceCount}pcs ${entry.aspectRatio} ${entry.category} -> ${imagePath ?? 'MISSING'}`
+				`[dry-run] ${entry.id} ${entry.name} ${entry.pieceCount}pcs ${entry.aspectRatio} ${entry.category} -> ${status}`
 			);
+			if (!validation.ok) validationFailures++;
+		}
+		if (validationFailures > 0) {
+			console.log(`\n${validationFailures} entry(s) would fail validation.`);
 		}
 		return;
 	}

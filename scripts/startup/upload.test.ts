@@ -67,7 +67,7 @@ describe('accessHeaders', () => {
 		expect(headers['Cookie']).toBe(`CF_Authorization=${jwt}`);
 	});
 
-	it('includes both JWT and service token headers when all are set', () => {
+	it('prefers service token headers over JWT when both are set', () => {
 		const jwt = 'aaaa.bbbb.cccc';
 		const headers = accessHeaders(
 			makeOptions({
@@ -77,10 +77,13 @@ describe('accessHeaders', () => {
 				cfClientSecret: 'csec'
 			})
 		);
-		expect(headers['cf-access-token']).toBe(jwt);
-		expect(headers['Cookie']).toBe(`CF_Authorization=${jwt}`);
+		// Service token headers should be present; JWT headers should NOT —
+		// a stale JWT alongside valid service tokens could cause Access to
+		// reject the request, so service tokens are preferred.
 		expect(headers['CF-Access-Client-Id']).toBe('cid');
 		expect(headers['CF-Access-Client-Secret']).toBe('csec');
+		expect(headers['cf-access-token']).toBeUndefined();
+		expect(headers['Cookie']).toBeUndefined();
 	});
 
 	it('returns empty object when skipAccess is false but no credentials are set', () => {
