@@ -125,14 +125,8 @@ async function parseOptions(): Promise<Options> {
 	// dry-run latency hit. See token.ts resolveAccessToken.
 	const cfAccessToken = readArg(args, '--cf-access-token') ?? process.env.CF_ACCESS_TOKEN;
 
-	const cfClientId =
-		process.env.CF_Access_Client_Id ??
-		process.env.CF_ACCESS_CLIENT_ID ??
-		dotenv.CF_ACCESS_CLIENT_ID;
-	const cfClientSecret =
-		process.env.CF_Access_Client_Secret ??
-		process.env.CF_ACCESS_CLIENT_SECRET ??
-		dotenv.CF_ACCESS_CLIENT_SECRET;
+	const cfClientId = process.env.CF_ACCESS_CLIENT_ID ?? dotenv.CF_ACCESS_CLIENT_ID;
+	const cfClientSecret = process.env.CF_ACCESS_CLIENT_SECRET ?? dotenv.CF_ACCESS_CLIENT_SECRET;
 
 	return {
 		command,

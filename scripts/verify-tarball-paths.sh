@@ -51,7 +51,11 @@ BAD=$(tar -tzf "$tarball" | awk -F/ '
 
 if [[ -n "$BAD" ]]; then
 	echo "::error::Tarball contains unsafe path(s) (absolute or parent traversal):" >&2
-	printf '  %s\n' $BAD >&2
+	# Quote $BAD so malicious entries with glob chars (e.g. "*") don't expand
+	# against the cwd in the error output. Read line-by-line to preserve paths.
+	while IFS= read -r line; do
+		printf '  %s\n' "$line" >&2
+	done <<< "$BAD"
 	exit 1
 fi
 
