@@ -78,12 +78,26 @@ fi
 # " link to target".
 LINK_BAD=$(tar -tvf "$tarball" 2>/dev/null | awk '
 	$1 ~ /^[lh]/ {
-		if (match($0, / -> /)) {
-			target = substr($0, RSTART + 4)
-		} else if (match($0, / link to /)) {
-			target = substr($0, RSTART + 9)
-		} else {
-			target = ""
+		# Parse the link target independently of the entry name. A symlink
+		# whose NAME contains " -> " (e.g. "safe -> name") would produce
+		# verbose output like "... safe -> name -> /etc/passwd"; match()
+		# finds the FIRST delimiter, so the old code grabbed "name ->
+		# /etc/passwd" as the target — which passes all safety checks and
+		# lets an escaping link through. Iterate to consume every
+		# delimiter so target holds everything after the LAST one (the
+		# actual link target).
+		target = ""
+		rest = $0
+		if (match(rest, / -> /)) {
+			while (match(rest, / -> /)) {
+				target = substr(rest, RSTART + 4)
+				rest = target
+			}
+		} else if (match(rest, / link to /)) {
+			while (match(rest, / link to /)) {
+				target = substr(rest, RSTART + 9)
+				rest = target
+			}
 		}
 		# Reject absolute targets, any ".." path component (including a
 		# bare ".." or trailing "foo/.."), and empty targets. The old

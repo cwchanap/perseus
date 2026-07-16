@@ -74,10 +74,15 @@ export function validateCatalog(raw: unknown, source: string): CatalogEntry[] {
 		seenIds.add(id);
 
 		const trimmedName = (entry as CatalogEntry).name.trim();
-		if (seenNames.has(trimmedName)) {
+		// Duplicate detection is case-insensitive after trimming: "Sunset"
+		// and "sunset" would create indistinguishable catalog entries. The
+		// comparison key is lowercased so mixed-case duplicates are caught,
+		// while the error message preserves the original trimmed name.
+		const nameKey = trimmedName.toLowerCase();
+		if (seenNames.has(nameKey)) {
 			throw new Error(`Catalog at ${source} has duplicate name: "${trimmedName}"`);
 		}
-		seenNames.add(trimmedName);
+		seenNames.add(nameKey);
 
 		// Numeric id check: selectEntries parses ids as base-10 integers to
 		// filter by --from/--to. A non-numeric id (e.g. "anime-01") parses to

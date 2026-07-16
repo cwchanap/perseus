@@ -738,9 +738,9 @@ describe('validateCatalog', () => {
 	it('rejects duplicate names (case-insensitive after trim)', () => {
 		const catalog = [
 			{ ...validEntry('01'), name: 'Sunset' },
-			{ ...validEntry('02'), name: '  Sunset  ' }
+			{ ...validEntry('02'), name: '  sunset  ' }
 		];
-		expect(() => validateCatalog(catalog, 'catalog.json')).toThrow(/duplicate name: "Sunset"/);
+		expect(() => validateCatalog(catalog, 'catalog.json')).toThrow(/duplicate name: "sunset"/);
 	});
 
 	it('rejects a non-numeric id', () => {

@@ -11,7 +11,7 @@
  */
 
 import { join, dirname } from 'node:path';
-import { existsSync, readFileSync, unlinkSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync, unlinkSync, writeFileSync, mkdirSync, chmodSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { $ } from 'bun';
 import { ACCESS_AUD, PROBE_TIMEOUT_MS, accessAppFor, tokenBasenameFor } from './types';
@@ -151,6 +151,11 @@ export async function resolveAccessToken(options: {
 export function cacheToken(tokenCachePath: string, token: string): void {
 	mkdirSync(dirname(tokenCachePath), { recursive: true });
 	writeFileSync(tokenCachePath, `${normalizeToken(token)}\n`, { mode: 0o600 });
+	// writeFileSync applies `mode` only when creating the file. If the cache
+	// already exists with permissive permissions, rewriting it leaves the new
+	// JWT readable by other local users. Explicitly chmod on every write so
+	// the token is always 0600 regardless of prior file state.
+	chmodSync(tokenCachePath, 0o600);
 }
 
 async function promptLine(question: string): Promise<string> {

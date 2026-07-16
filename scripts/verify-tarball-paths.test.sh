@@ -164,6 +164,20 @@ make_tarball_with_links "$TMPDIR/hardlink-traversal.tgz" \
 	"evil.link|hardlink|../../etc/passwd"
 assert_rejects "hardlink with parent traversal target" "$TMPDIR/hardlink-traversal.tgz"
 
+# Symlink whose NAME contains " -> " with an absolute target — the entry
+# name "safe -> name" makes tar verbose output "... safe -> name ->
+# /etc/passwd". The old parser matched the FIRST " -> " and grabbed "name
+# -> /etc/passwd" as the target, which passes safety checks. The fix
+# matches the LAST " -> " so the real target "/etc/passwd" is checked.
+make_tarball_with_links "$TMPDIR/symlink-name-has-arrow.tgz" \
+	"safe -> name|symlink|/etc/passwd"
+assert_rejects "symlink whose name contains -> with absolute target" "$TMPDIR/symlink-name-has-arrow.tgz"
+
+# Same attack with parent traversal as the real target.
+make_tarball_with_links "$TMPDIR/symlink-name-has-arrow-traversal.tgz" \
+	"safe -> name|symlink|../../etc/passwd"
+assert_rejects "symlink whose name contains -> with traversal target" "$TMPDIR/symlink-name-has-arrow-traversal.tgz"
+
 # Safe symlink (relative, no traversal) should be accepted.
 make_tarball_with_links "$TMPDIR/symlink-safe.tgz" \
 	"link.txt|symlink|target.txt"

@@ -225,6 +225,7 @@ async function cmdLogin(options: Options): Promise<void> {
 	clearStaleAccessLock(options.server);
 
 	const existing = await resolveAccessToken({
+		explicit: options.cfAccessToken,
 		tokenCachePath: options.tokenCachePath,
 		skipAccess: false,
 		server: options.server
