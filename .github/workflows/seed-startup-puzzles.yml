@@ -103,7 +103,7 @@ jobs:
       - name: Pre-flight check — verify seed images present
         run: |
           set -euo pipefail
-          IMAGE_COUNT=$(find scripts/startup-seed/images -type f \( -name '*.jpg' -o -name '*.jpeg' -o -name '*.png' -o -name '*.webp' \) 2>/dev/null | wc -l)
+          IMAGE_COUNT=$(find scripts/startup-seed/images -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.webp' \) 2>/dev/null | wc -l)
           echo "Seed images found: ${IMAGE_COUNT}"
           if [ "${IMAGE_COUNT}" -eq 0 ]; then
             echo "::error::No seed images under scripts/startup-seed/images/."

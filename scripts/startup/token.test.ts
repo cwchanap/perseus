@@ -20,9 +20,10 @@ function fakeJwt(): string {
 }
 
 // ─── probeAccessToken ───────────────────────────────────────────────
-// Covers all 5 code paths:
+// Covers all code paths:
 //   302/403 → 'blocked'
-//   200/401 → 'ok'
+//   200     → 'ok'
+//   401     → 'ok' if body is worker requireAuth JSON, else 'blocked'
 //   5xx     → 'ok' (reached the worker — Access accepted the token)
 //   other   → 'error'
 //   catch   → 'error' (network failure / timeout)
@@ -55,11 +56,28 @@ describe('probeAccessToken', () => {
 		expect(await probeAccessToken('https://example.com', 'jwt-token')).toBe('ok');
 	});
 
-	it('returns "ok" on 401 (reached the app, no admin session)', async () => {
+	it('returns "ok" on 401 with worker requireAuth body (reached the app, no session)', async () => {
+		globalThis.fetch = mock(
+			async () =>
+				new Response('{"error":"unauthorized","message":"Authentication required"}', {
+					status: 401
+				})
+		) as unknown as typeof fetch;
+		expect(await probeAccessToken('https://example.com', 'jwt-token')).toBe('ok');
+	});
+
+	it('returns "blocked" on 401 with non-worker body (Access rejected with 401 toggle)', async () => {
+		globalThis.fetch = mock(
+			async () => new Response('<html>Cloudflare Access</html>', { status: 401 })
+		) as unknown as typeof fetch;
+		expect(await probeAccessToken('https://example.com', 'jwt-token')).toBe('blocked');
+	});
+
+	it('returns "blocked" on 401 with empty body', async () => {
 		globalThis.fetch = mock(
 			async () => new Response('', { status: 401 })
 		) as unknown as typeof fetch;
-		expect(await probeAccessToken('https://example.com', 'jwt-token')).toBe('ok');
+		expect(await probeAccessToken('https://example.com', 'jwt-token')).toBe('blocked');
 	});
 
 	it('returns "ok" on 500 (reached the worker — Access passed it through)', async () => {
@@ -147,11 +165,28 @@ describe('probeServiceToken', () => {
 		expect(await probeServiceToken('https://example.com', 'cid', 'csec')).toBe('ok');
 	});
 
-	it('returns "ok" on 401 (reached the app, no admin session)', async () => {
+	it('returns "ok" on 401 with worker requireAuth body (reached the app, no session)', async () => {
+		globalThis.fetch = mock(
+			async () =>
+				new Response('{"error":"unauthorized","message":"Authentication required"}', {
+					status: 401
+				})
+		) as unknown as typeof fetch;
+		expect(await probeServiceToken('https://example.com', 'cid', 'csec')).toBe('ok');
+	});
+
+	it('returns "blocked" on 401 with non-worker body (Access rejected with 401 toggle)', async () => {
+		globalThis.fetch = mock(
+			async () => new Response('<html>Cloudflare Access</html>', { status: 401 })
+		) as unknown as typeof fetch;
+		expect(await probeServiceToken('https://example.com', 'cid', 'csec')).toBe('blocked');
+	});
+
+	it('returns "blocked" on 401 with empty body', async () => {
 		globalThis.fetch = mock(
 			async () => new Response('', { status: 401 })
 		) as unknown as typeof fetch;
-		expect(await probeServiceToken('https://example.com', 'cid', 'csec')).toBe('ok');
+		expect(await probeServiceToken('https://example.com', 'cid', 'csec')).toBe('blocked');
 	});
 
 	it('returns "ok" on 500 (reached the worker — Access passed it through)', async () => {

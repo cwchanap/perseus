@@ -183,10 +183,33 @@ export async function promptTokenInteractive(server: string): Promise<string> {
 }
 
 /**
+ * Check whether a 401 response originated from the worker's requireAuth
+ * middleware (JSON body `{"error":"unauthorized",...}`) rather than from
+ * Cloudflare Access. Access can return 401 for rejected tokens when the
+ * policy's "respond with 401" toggle is enabled — without this check, an
+ * invalid/expired token would be indistinguishable from a valid one that
+ * reached the worker without a Perseus session.
+ */
+async function isWorkerAuth401(res: Response): Promise<boolean> {
+	try {
+		const body = await res.text();
+		const parsed = JSON.parse(body) as { error?: unknown };
+		return parsed?.error === 'unauthorized';
+	} catch {
+		return false;
+	}
+}
+
+/**
  * Probe whether Access accepts this JWT by hitting an admin endpoint that does
  * NOT require a passkey (GET /api/admin/puzzles). Avoids POSTing to /login,
  * which would trip the loginRateLimit middleware and block the real upload.
- * 302/403 = Access blocked; 401/200 = passed Access (app-level auth required).
+ * 302/403 = Access blocked; 200 = passed Access; 401 = ambiguous (see below).
+ *
+ * 401 is disambiguated by inspecting the body: the worker's requireAuth
+ * middleware returns JSON `{"error":"unauthorized",...}`, while Access
+ * returns its own error page. A 401 with a non-worker body is treated as
+ * 'blocked' (Access rejected the token).
  *
  * 5xx is treated as 'ok' because it means the request reached the worker —
  * Access passed it through. The probe tests Access acceptance, not app health.
@@ -206,8 +229,12 @@ export async function probeAccessToken(
 			signal: AbortSignal.timeout(PROBE_TIMEOUT_MS)
 		});
 		if (res.status === 302 || res.status === 403) return 'blocked';
-		// 401 = reached the app (no admin session), 200 = reached the app
-		if (res.status === 200 || res.status === 401) return 'ok';
+		if (res.status === 200) return 'ok';
+		if (res.status === 401) {
+			// Distinguish worker 401 (Access accepted, no session) from
+			// Access 401 (token rejected with 401 toggle enabled).
+			return (await isWorkerAuth401(res)) ? 'ok' : 'blocked';
+		}
 		// 5xx still means we reached the worker — Access accepted the token
 		if (res.status >= 500) return 'ok';
 		return 'error';
@@ -224,9 +251,13 @@ export async function probeAccessToken(
  * it, an expired/invalid service token only surfaces as an opaque login
  * failure after the upload has already begun.
  *
- * 302/403 = Access blocked; 401/200/5xx = reached the worker (Access passed
- * the request through). Avoids POSTing to /login, which would trip the
- * loginRateLimit middleware.
+ * 302/403 = Access blocked; 200 = reached the worker; 401 = ambiguous (see
+ * below). 401 is disambiguated by inspecting the body: the worker's
+ * requireAuth returns JSON `{"error":"unauthorized",...}`, while Access
+ * returns its own error page. A 401 with a non-worker body is treated as
+ * 'blocked' (Access rejected the service token, e.g. with the 401 toggle).
+ *
+ * Avoids POSTing to /login, which would trip the loginRateLimit middleware.
  */
 export async function probeServiceToken(
 	server: string,
@@ -244,7 +275,10 @@ export async function probeServiceToken(
 			signal: AbortSignal.timeout(PROBE_TIMEOUT_MS)
 		});
 		if (res.status === 302 || res.status === 403) return 'blocked';
-		if (res.status === 200 || res.status === 401) return 'ok';
+		if (res.status === 200) return 'ok';
+		if (res.status === 401) {
+			return (await isWorkerAuth401(res)) ? 'ok' : 'blocked';
+		}
 		if (res.status >= 500) return 'ok';
 		return 'error';
 	} catch {
