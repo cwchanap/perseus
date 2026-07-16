@@ -709,7 +709,7 @@ describe('cmdUpload', () => {
 		const entry = makeEntry('01', 'VerifiedPuzzle');
 		const catalogPath = join(tmpDir, 'catalog.json');
 		writeFileSync(catalogPath, JSON.stringify([entry]));
-		writeFileSync(join(tmpDir, '01-test.jpg'), 'fake-image');
+		writeFileSync(join(tmpDir, '01-test.jpg'), minimalPng(400, 400));
 
 		// Track GET calls to /api/admin/puzzles. The initial fetchExistingKeys
 		// and the uploadWithRetry between-retry re-fetches should return empty.
@@ -770,7 +770,7 @@ describe('cmdUpload', () => {
 		const entry = makeEntry('01', 'LostPuzzle');
 		const catalogPath = join(tmpDir, 'catalog.json');
 		writeFileSync(catalogPath, JSON.stringify([entry]));
-		writeFileSync(join(tmpDir, '01-test.jpg'), 'fake-image');
+		writeFileSync(join(tmpDir, '01-test.jpg'), minimalPng(400, 400));
 
 		// All GETs return empty — puzzle was never created, so the catch block
 		// cannot verify and must record a failure (FatalError).
@@ -911,8 +911,8 @@ describe('cmdUpload', () => {
 		const catalog = [makeEntry('01', 'Alpha'), makeEntry('02', 'Beta')];
 		const catalogPath = join(tmpDir, 'catalog.json');
 		writeFileSync(catalogPath, JSON.stringify(catalog));
-		writeFileSync(join(tmpDir, '01-alpha.jpg'), 'fake-image');
-		writeFileSync(join(tmpDir, '02-beta.jpg'), 'fake-image');
+		writeFileSync(join(tmpDir, '01-alpha.jpg'), minimalPng(400, 400));
+		writeFileSync(join(tmpDir, '02-beta.jpg'), minimalPng(400, 400));
 
 		let postCalled = false;
 		let postBody: FormData | undefined;
@@ -969,7 +969,7 @@ describe('cmdUpload', () => {
 		const catalog = [makeEntry('01', 'Alpha'), makeEntry('02', 'Beta')];
 		const catalogPath = join(tmpDir, 'catalog.json');
 		writeFileSync(catalogPath, JSON.stringify(catalog));
-		writeFileSync(join(tmpDir, '01-alpha.jpg'), 'fake-image');
+		writeFileSync(join(tmpDir, '01-alpha.jpg'), minimalPng(400, 400));
 		// Entry 02 has no image — dry-run should report MISSING.
 
 		let fetchCalled = false;
@@ -999,7 +999,7 @@ describe('cmdUpload', () => {
 		const entry = makeEntry('01', 'Alpha');
 		const catalogPath = join(tmpDir, 'catalog.json');
 		writeFileSync(catalogPath, JSON.stringify([entry]));
-		writeFileSync(join(tmpDir, '01-alpha.jpg'), 'fake-image');
+		writeFileSync(join(tmpDir, '01-alpha.jpg'), minimalPng(400, 400));
 
 		globalThis.fetch = mock(async (input: string | URL | Request) => {
 			const url = String(input);
@@ -1038,7 +1038,7 @@ describe('cmdUpload', () => {
 		const entry = makeEntry('01', 'ServiceTokenPuzzle');
 		const catalogPath = join(tmpDir, 'catalog.json');
 		writeFileSync(catalogPath, JSON.stringify([entry]));
-		writeFileSync(join(tmpDir, '01-test.jpg'), 'fake-image');
+		writeFileSync(join(tmpDir, '01-test.jpg'), minimalPng(400, 400));
 
 		const capturedHeaders: Record<string, string>[] = [];
 		globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {

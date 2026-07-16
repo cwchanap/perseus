@@ -255,6 +255,13 @@ async function cmdStatus(options: Options): Promise<void> {
 
 	const hasServiceToken = !!(options.cfClientId && options.cfClientSecret);
 
+	// Track probe outcome so the readiness check below does not print "Ready"
+	// when Access credentials are present but rejected/expired. Without this,
+	// an expired service token or JWT would show "blocked"/"error" on the probe
+	// line but still report Ready (and exit 0), misleading callers into
+	// attempting an upload that will fail.
+	let probeFailed = false;
+
 	// Prefer service token probe when service tokens are available (same
 	// logic as the upload path). Only probe JWT when service tokens are absent.
 	if (hasServiceToken && !options.skipAccess) {
@@ -264,9 +271,11 @@ async function cmdStatus(options: Options): Promise<void> {
 			options.cfClientSecret!
 		);
 		console.log(`Access probe:      ${probe === 'ok' ? 'ok (service token accepted)' : probe}`);
+		if (probe !== 'ok') probeFailed = true;
 	} else if (token && !options.skipAccess) {
 		const probe = await probeAccessToken(options.server, token);
 		console.log(`Access probe:      ${probe === 'ok' ? 'ok (JWT accepted)' : probe}`);
+		if (probe !== 'ok') probeFailed = true;
 	}
 
 	if (!options.skipAccess && !token && !(options.cfClientId && options.cfClientSecret)) {
@@ -276,6 +285,11 @@ async function cmdStatus(options: Options): Promise<void> {
 		console.log('  3. bun run admin:startup:upload -- --limit 5');
 	} else if (!options.passkey) {
 		console.log('\nSet ADMIN_PASSKEY (or apps/api/.env).');
+	} else if (probeFailed) {
+		throw new FatalError(
+			'Access probe failed — credentials are rejected or unreachable. ' +
+				'Fix the issue above before uploading.'
+		);
 	} else {
 		console.log('\nReady: bun run admin:startup:upload -- --limit 5');
 	}

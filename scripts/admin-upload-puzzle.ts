@@ -9,12 +9,13 @@ import {
 	probeServiceToken,
 	loadDotEnvMap
 } from './startup/token';
-import {
-	FatalError,
-	applyDotenvOverrides,
-	DEFAULT_SERVER,
-	type AccessCredentials
-} from './startup/types';
+import { FatalError, applyDotenvOverrides, type AccessCredentials } from './startup/types';
+
+// This CLI targets local dev by default (ad-hoc single uploads). The bulk
+// uploader (admin:startup:*) defaults to production via DEFAULT_SERVER, but
+// here a localhost default matches the usage text and README "Local" example.
+// PERSEUS_SERVER (arg or dotenv) still overrides.
+const LOCAL_SERVER = 'http://127.0.0.1:3000';
 
 interface Options extends AccessCredentials {
 	server: string;
@@ -79,7 +80,7 @@ async function parseOptions(): Promise<Options> {
 	applyDotenvOverrides(dotenv);
 
 	const passkey = readArg(args, '--passkey') ?? process.env.ADMIN_PASSKEY ?? dotenv.ADMIN_PASSKEY;
-	const server = (readArg(args, '--server') ?? dotenv.PERSEUS_SERVER ?? DEFAULT_SERVER).replace(
+	const server = (readArg(args, '--server') ?? dotenv.PERSEUS_SERVER ?? LOCAL_SERVER).replace(
 		/\/+$/,
 		''
 	);

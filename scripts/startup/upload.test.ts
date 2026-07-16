@@ -241,7 +241,7 @@ describe('uploadWithRetry', () => {
 			}
 			// GET verification — simulate server unavailable
 			return new Response('Service Unavailable', { status: 503 });
-		}) as typeof fetch;
+		}) as unknown as typeof fetch;
 
 		await expect(
 			uploadWithRetry(
@@ -274,7 +274,7 @@ describe('uploadWithRetry', () => {
 				}),
 				{ status: 200, headers: { 'Content-Type': 'application/json' } }
 			);
-		}) as typeof fetch;
+		}) as unknown as typeof fetch;
 
 		const res = await uploadWithRetry(
 			'http://localhost:3000',
