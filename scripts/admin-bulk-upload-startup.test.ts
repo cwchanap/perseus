@@ -191,6 +191,20 @@ describe('imagePathFor', () => {
 		expect(result).not.toBeNull();
 		expect(result).toContain('06-sky.PNG');
 	});
+
+	it('matches mixed-case extensions (e.g. .JpG, .PnG)', () => {
+		writeFileSync(join(dir, '07-river.JpG'), 'x');
+		const result = imagePathFor(makeEntry('07', 'River'), dir);
+		expect(result).not.toBeNull();
+		expect(result).toContain('07-river.JpG');
+	});
+
+	it('matches mixed-case .PnG extension', () => {
+		writeFileSync(join(dir, '08-meadow.PnG'), 'x');
+		const result = imagePathFor(makeEntry('08', 'Meadow'), dir);
+		expect(result).not.toBeNull();
+		expect(result).toContain('08-meadow.PnG');
+	});
 });
 
 describe('mimeForPath', () => {

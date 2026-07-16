@@ -145,12 +145,18 @@ export function selectEntries(catalog: CatalogEntry[], options: Options): Catalo
 	return filtered;
 }
 
+const IMAGE_EXT_RE = /\.(jpg|jpeg|png|webp)$/i;
+
 export function imagePathFor(entry: CatalogEntry, imagesDir: string): string | null {
 	// Match either `{id}-*.{ext}` (e.g. 01-alpine-lake.jpg) or `{id}.{ext}` (e.g. 01.jpg).
-	// Include uppercase variants so case-sensitive filesystems (Linux CI) match
-	// assets named 01.JPG or 01.PNG — consistent with the case-insensitive mimeForPath.
-	const glob = new Bun.Glob(`${entry.id}{,-*}.{jpg,jpeg,png,webp,JPG,JPEG,PNG,WEBP}`);
-	const matches = [...glob.scanSync({ cwd: imagesDir, absolute: true })].sort();
+	// Scan with a permissive `.*` extension then filter case-insensitively so that
+	// mixed-case assets (e.g. 02.JpG, 04.PnG) — which pass the workflow's
+	// `find -iname` preflight — are matched here too. A brace pattern enumerating
+	// only lowercase + all-uppercase variants would miss mixed-case extensions.
+	const glob = new Bun.Glob(`${entry.id}{,-*}.*`);
+	const matches = [...glob.scanSync({ cwd: imagesDir, absolute: true })]
+		.filter((p) => IMAGE_EXT_RE.test(p))
+		.sort();
 	return matches[0] ?? null;
 }
 

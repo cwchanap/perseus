@@ -10,7 +10,15 @@ import { MAX_FILE_SIZE } from '@perseus/types';
 
 // Deployment-specific defaults. Override via env vars for non-default deployments:
 //   PERSEUS_SERVER  — API base URL (default: https://perseus.cwchanap.dev)
-//   CF_ACCESS_AUD   — Cloudflare Access application AUD (deployment-specific)
+//   CF_ACCESS_AUD   — Cloudflare Access CLI application AUD (deployment-specific)
+//
+// CF_ACCESS_AUD must be the AUD of the narrow CLI Access app
+// (`admin-access-cli-application`, protecting /api/admin/puzzles), NOT the
+// broad admin app. Retrieve it from the Pulumi stack output:
+//   pulumi stack output adminCliAccessAud -C packages/infrastructure
+// Without it, cloudflaredTokenPath/cloudflaredLockPath cannot resolve the
+// correct cloudflared cache files, so the cloudflared token fallback and
+// stale-lock cleanup are disabled. CI uses service tokens and does not need it.
 //
 // These are `let` (not `const`) so applyDotenvOverrides can update them from
 // apps/api/.env after the CLI loads the dotenv map. Module-level `const`
@@ -19,8 +27,7 @@ import { MAX_FILE_SIZE } from '@perseus/types';
 // CF_ACCESS_AUD in apps/api/.env (but not in the shell environment) would
 // silently use the hardcoded defaults and target the wrong environment.
 export let DEFAULT_SERVER = process.env.PERSEUS_SERVER ?? 'https://perseus.cwchanap.dev';
-export let ACCESS_AUD =
-	process.env.CF_ACCESS_AUD ?? '7fd50c02b28c32fe3abb938cebba2dc9dcec6c88f42969c28700e9a0a8a28e5f';
+export let ACCESS_AUD: string | undefined = process.env.CF_ACCESS_AUD;
 
 /**
  * Apply dotenv deployment overrides after the CLI loads apps/api/.env.
@@ -56,8 +63,10 @@ export function warnHardcodedDefaults(dotenv: Record<string, string> = {}): void
 	// (GitHub Actions and most other CI systems set this).
 	if (!process.env.CF_ACCESS_AUD && !dotenv.CF_ACCESS_AUD && !process.env.CI) {
 		console.warn(
-			'[warn] CF_ACCESS_AUD not set — using hardcoded default AUD. ' +
-				'Set CF_ACCESS_AUD to override for non-default deployments.'
+			'[warn] CF_ACCESS_AUD not set — cloudflared token cache path will be wrong ' +
+				'(cannot find/clean the CLI app cached token). Set CF_ACCESS_AUD to the ' +
+				'narrow CLI Access app AUD from: pulumi stack output adminCliAccessAud ' +
+				'-C packages/infrastructure'
 		);
 	}
 }

@@ -288,11 +288,13 @@ async function cmdStatus(options: Options): Promise<void> {
 	console.log(
 		`  cache file:       ${existsSync(options.tokenCachePath) ? 'present' : 'missing'} (${options.tokenCachePath})`
 	);
+	const cfTokenPath = cloudflaredTokenPath(options.server);
+	const cfLockPath = cloudflaredLockPath(options.server);
 	console.log(
-		`  cloudflared file: ${existsSync(cloudflaredTokenPath(options.server)) ? 'present' : 'missing'}`
+		`  cloudflared file: ${cfTokenPath ? (existsSync(cfTokenPath) ? 'present' : 'missing') : 'n/a (CF_ACCESS_AUD not set)'}`
 	);
 	console.log(
-		`  lock file:        ${existsSync(cloudflaredLockPath(options.server)) ? 'present' : 'absent'}`
+		`  lock file:        ${cfLockPath ? (existsSync(cfLockPath) ? 'present' : 'absent') : 'n/a (CF_ACCESS_AUD not set)'}`
 	);
 	console.log(`Service token:     ${options.cfClientId && options.cfClientSecret ? 'yes' : 'no'}`);
 	console.log(

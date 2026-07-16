@@ -94,6 +94,9 @@ export const workflowsWorkerName = workflowsWorker.workerName;
 export const apiWorkerName = apiWorker.workerName;
 export const adminAccessApplicationId = adminAccess.application.id;
 export const adminCliAccessApplicationId = adminAccess.cliApplication.id;
+/** AUD for the narrow CLI Access app. Set as CF_ACCESS_AUD in the startup CLI
+ * so cloudflaredTokenPath/cloudflaredLockPath resolve the correct cache files. */
+export const adminCliAccessAud = adminAccess.cliApplication.aud;
 export const adminAccessDevicePostureRuleId = adminAccess.devicePostureRule.id;
 export const adminAccessDeviceSerialListId = adminAccess.deviceSerialList.id;
 /** Client ID for CF-Access-Client-Id (safe to store in local shell env for CLI uploads). */

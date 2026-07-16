@@ -1,4 +1,4 @@
-import { describe, it, expect, mock, beforeEach, afterEach } from 'bun:test';
+import { describe, it, expect, mock, beforeEach, afterEach, beforeAll } from 'bun:test';
 import { mkdtempSync, writeFileSync, rmSync, existsSync, readFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -12,6 +12,12 @@ import {
 	clearStaleAccessLock,
 	loadDotEnvMap
 } from './token';
+import { applyDotenvOverrides } from './types';
+
+// cloudflaredTokenPath/cloudflaredLockPath require ACCESS_AUD to be set (the
+// hardcoded broad-app default was removed because it no longer matches the
+// narrow CLI Access app). Set a test AUD for all tests in this file.
+beforeAll(() => applyDotenvOverrides({ CF_ACCESS_AUD: 'test-aud-12345' }));
 
 // Build a fake JWT that passes isJwtLike: 3+ dot-separated parts, > 40 chars,
 // no whitespace, no "Unable to find".
@@ -396,14 +402,17 @@ describe('cacheToken', () => {
 describe('cloudflaredTokenPath', () => {
 	it('returns path under .cloudflared with hostname-aud-token basename', () => {
 		const path = cloudflaredTokenPath('https://example.com');
-		expect(path).toContain('.cloudflared');
-		expect(path).toContain('example.com');
-		expect(path.endsWith('-token')).toBe(true);
+		expect(path).toBeDefined();
+		expect(path!).toContain('.cloudflared');
+		expect(path!).toContain('example.com');
+		expect(path!).toContain('test-aud-12345');
+		expect(path!.endsWith('-token')).toBe(true);
 	});
 
 	it('cloudflaredLockPath appends .lock', () => {
 		const lockPath = cloudflaredLockPath('https://example.com');
-		expect(lockPath.endsWith('.lock')).toBe(true);
+		expect(lockPath).toBeDefined();
+		expect(lockPath!.endsWith('.lock')).toBe(true);
 	});
 });
 
@@ -437,13 +446,14 @@ describe('clearStaleAccessLock', () => {
 		// doesn't exist (999999).
 		const server = 'https://dead-pid-test-example.com';
 		const lockPath = cloudflaredLockPath(server);
-		mkdirSync(dirname(lockPath), { recursive: true });
-		writeFileSync(lockPath, JSON.stringify({ pid: 999999 }));
-		expect(existsSync(lockPath)).toBe(true);
+		expect(lockPath).toBeDefined();
+		mkdirSync(dirname(lockPath!), { recursive: true });
+		writeFileSync(lockPath!, JSON.stringify({ pid: 999999 }));
+		expect(existsSync(lockPath!)).toBe(true);
 
 		clearStaleAccessLock(server);
 
-		expect(existsSync(lockPath)).toBe(false);
+		expect(existsSync(lockPath!)).toBe(false);
 	});
 });
 

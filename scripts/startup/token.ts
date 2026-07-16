@@ -20,12 +20,14 @@ function homeCloudflaredDir(): string {
 	return join(process.env.HOME ?? '', '.cloudflared');
 }
 
-export function cloudflaredTokenPath(server: string): string {
+export function cloudflaredTokenPath(server: string): string | undefined {
+	if (!ACCESS_AUD) return undefined;
 	return join(homeCloudflaredDir(), tokenBasenameFor(server, ACCESS_AUD));
 }
 
-export function cloudflaredLockPath(server: string): string {
-	return `${cloudflaredTokenPath(server)}.lock`;
+export function cloudflaredLockPath(server: string): string | undefined {
+	const tokenPath = cloudflaredTokenPath(server);
+	return tokenPath ? `${tokenPath}.lock` : undefined;
 }
 
 function isJwtLike(token: string): boolean {
@@ -82,7 +84,7 @@ function readTokenFile(path: string): string | undefined {
 
 export function clearStaleAccessLock(server: string): void {
 	const lockPath = cloudflaredLockPath(server);
-	if (!existsSync(lockPath)) return;
+	if (!lockPath || !existsSync(lockPath)) return;
 	try {
 		const raw = readFileSync(lockPath, 'utf8').trim();
 		const parsed = JSON.parse(raw) as { pid?: number };
@@ -104,8 +106,16 @@ export function clearStaleAccessLock(server: string): void {
 }
 
 export async function resolveCloudflaredToken(server: string): Promise<string | undefined> {
-	const fromFile = readTokenFile(cloudflaredTokenPath(server));
+	const tokenPath = cloudflaredTokenPath(server);
+	const fromFile = tokenPath ? readTokenFile(tokenPath) : undefined;
 	if (fromFile) return fromFile;
+	if (!ACCESS_AUD) {
+		// Without the CLI app's AUD we can't run `cloudflared access token` —
+		// cloudflared would cache the token under a filename derived from the
+		// app's actual AUD, which wouldn't match our path. Skip the subprocess
+		// rather than spawning a login flow that produces an unfindable cache.
+		return undefined;
+	}
 	try {
 		const accessApp = accessAppFor(server);
 		const result = await $`cloudflared access token -app ${accessApp}`.quiet().nothrow();
