@@ -2,11 +2,12 @@ import { vi } from 'vitest';
 
 /**
  * Shared mock overrides for @perseus/shared used by admin worker test files.
- * Each test file imports this and spreads it into its inline vi.mock factory:
+ * Each test file dynamically imports this inside its vi.mock factory so the
+ * helper is not accessed before mock initialization:
  *
- *   import { sharedMockOverrides } from './helpers/shared-mock';
  *   vi.mock('@perseus/shared', async (importOriginal) => {
  *       const original = await importOriginal<typeof import('@perseus/shared')>();
+ *       const { sharedMockOverrides } = await import('./helpers/shared-mock');
  *       return { ...original, ...sharedMockOverrides };
  *   });
  *

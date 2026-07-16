@@ -1,6 +1,6 @@
 import { describe, it, expect, mock, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdtempSync, writeFileSync, rmSync, existsSync, readFileSync, mkdirSync } from 'node:fs';
+import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
 	probeAccessToken,
@@ -204,15 +204,25 @@ describe('probeServiceToken', () => {
 
 describe('resolveAccessToken', () => {
 	let tmpDir: string;
+	let originalHome: string | undefined;
 	const originalEnv = { ...process.env };
 
 	beforeEach(() => {
 		tmpDir = mkdtempSync(join(tmpdir(), 'perseus-token-'));
 		delete process.env.CF_ACCESS_TOKEN;
+		// Redirect HOME to a temp dir so resolveCloudflaredToken cannot find
+		// real cached credentials in ~/.cloudflared/ or invoke cloudflared
+		// with real auth state. The temp dir has no .cloudflared/ so the
+		// token file read fails, keeping the cloudflared fallback
+		// deterministic (returns undefined) without spawning a real binary
+		// or touching real credentials.
+		originalHome = process.env.HOME;
+		process.env.HOME = tmpDir;
 	});
 
 	afterEach(() => {
 		rmSync(tmpDir, { recursive: true, force: true });
+		process.env.HOME = originalHome;
 		// Restore env
 		for (const key of Object.keys(process.env)) {
 			if (!(key in originalEnv)) delete process.env[key];
@@ -366,13 +376,19 @@ describe('cloudflaredTokenPath', () => {
 
 describe('clearStaleAccessLock', () => {
 	let tmpDir: string;
+	let originalHome: string | undefined;
 
 	beforeEach(() => {
 		tmpDir = mkdtempSync(join(tmpdir(), 'perseus-lock-'));
+		// Redirect HOME so cloudflaredLockPath resolves under the temp dir
+		// and clearStaleAccessLock operates on a path we control.
+		originalHome = process.env.HOME;
+		process.env.HOME = tmpDir;
 	});
 
 	afterEach(() => {
 		rmSync(tmpDir, { recursive: true, force: true });
+		process.env.HOME = originalHome;
 	});
 
 	it('does nothing when lock file does not exist', () => {
@@ -381,15 +397,18 @@ describe('clearStaleAccessLock', () => {
 	});
 
 	it('removes lock file when pid is dead', () => {
-		// Use a PID that definitely doesn't exist (999999)
-		const lockPath = join(tmpDir, 'test.lock');
+		// Place the lock file at the function's actual cloudflared lock path
+		// (resolved via HOME override above). Use a PID that definitely
+		// doesn't exist (999999).
+		const server = 'https://dead-pid-test-example.com';
+		const lockPath = cloudflaredLockPath(server);
+		mkdirSync(dirname(lockPath), { recursive: true });
 		writeFileSync(lockPath, JSON.stringify({ pid: 999999 }));
-		// clearStaleAccessLock uses cloudflaredLockPath which is under HOME.
-		// We can't easily override HOME in this test, so we test the logic
-		// indirectly: the function reads the lock file, checks the pid, and
-		// removes it if the pid is dead. Since we can't control the path,
-		// we just verify it doesn't throw.
-		expect(() => clearStaleAccessLock('https://nonexistent-host-example.com')).not.toThrow();
+		expect(existsSync(lockPath)).toBe(true);
+
+		clearStaleAccessLock(server);
+
+		expect(existsSync(lockPath)).toBe(false);
 	});
 });
 

@@ -232,7 +232,7 @@ will start receiving 403. Rotate **before** expiry to avoid an outage:
 cd packages/infrastructure
 
 # 1. Taint the token resource so Pulumi recreates it with a fresh client_id + secret
-pulumi taint "$(pulumi stack export --json | jq -r \
+pulumi state taint "$(pulumi stack export --json | jq -r \
   '.deployment.resources[] | select(.type=="cloudflare:index:zeroTrustAccessServiceToken") | .urn')"
 
 # 2. Recreate the token

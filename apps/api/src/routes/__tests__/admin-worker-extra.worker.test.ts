@@ -7,7 +7,6 @@
  * - metadata cleanup failure when metadata creation itself fails
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { sharedMockOverrides } from './helpers/shared-mock';
 
 vi.mock('../../services/storage.worker', () => ({
 	getPuzzle: vi.fn(),
@@ -25,6 +24,7 @@ vi.mock('../../db.worker', () => ({
 
 vi.mock('@perseus/shared', async (importOriginal) => {
 	const original = await importOriginal<typeof import('@perseus/shared')>();
+	const { sharedMockOverrides } = await import('./helpers/shared-mock');
 	return { ...original, ...sharedMockOverrides };
 });
 

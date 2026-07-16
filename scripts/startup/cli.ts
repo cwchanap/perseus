@@ -117,6 +117,9 @@ async function parseOptions(): Promise<Options> {
 	// Apply dotenv overrides for deployment-specific constants before any code
 	// reads DEFAULT_SERVER or ACCESS_AUD (e.g. cloudflaredTokenPath below).
 	applyDotenvOverrides(dotenv);
+	// Warn about hardcoded defaults using the resolved dotenv map so values
+	// provided in apps/api/.env are recognized and don't trigger false warnings.
+	warnHardcodedDefaults(dotenv);
 	const passkey =
 		readArg(args, '--passkey') ?? process.env.ADMIN_PASSKEY ?? dotenv.ADMIN_PASSKEY ?? '';
 
@@ -136,6 +139,8 @@ async function parseOptions(): Promise<Options> {
 	const cfClientId = process.env.CF_ACCESS_CLIENT_ID ?? dotenv.CF_ACCESS_CLIENT_ID;
 	const cfClientSecret = process.env.CF_ACCESS_CLIENT_SECRET ?? dotenv.CF_ACCESS_CLIENT_SECRET;
 
+	validateNoLeftoverArgs(args);
+
 	return {
 		command,
 		server,
@@ -153,6 +158,36 @@ async function parseOptions(): Promise<Options> {
 		delayMs: parseIntArg(readArg(args, '--delay-ms'), '--delay-ms', 1500),
 		skipAccess
 	};
+}
+
+const VALUE_FLAGS = new Set([
+	'--server',
+	'--passkey',
+	'--cf-access-token',
+	'--catalog',
+	'--images',
+	'--from',
+	'--to',
+	'--limit',
+	'--delay-ms'
+]);
+const BOOLEAN_FLAGS = new Set(['--skip-access', '--dry-run', '--help', '-h']);
+
+function validateNoLeftoverArgs(args: string[]): void {
+	for (let i = 1; i < args.length; i++) {
+		const arg = args[i];
+		if (BOOLEAN_FLAGS.has(arg)) continue;
+		if (VALUE_FLAGS.has(arg)) {
+			i++;
+			continue;
+		}
+		if (arg.startsWith('--')) {
+			console.error(`Unknown option: ${arg}`);
+			usage();
+		}
+		console.error(`Unexpected argument: ${arg}`);
+		usage();
+	}
 }
 
 function runCloudflaredLogin(server: string): Promise<number> {
@@ -296,7 +331,6 @@ async function cmdStatus(options: Options): Promise<void> {
 }
 
 export async function main(): Promise<void> {
-	warnHardcodedDefaults();
 	const options = await parseOptions();
 	if (options.command === 'set-token') {
 		await cmdSetToken(options);

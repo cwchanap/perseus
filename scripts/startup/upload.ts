@@ -378,13 +378,17 @@ async function validateEntryImage(
 		return { ok: false, detail: 'image type unrecognized (not JPEG, PNG, or WebP)' };
 	}
 	const dimensions = await parseImageDimensions(image, detectedMime);
-	if (dimensions) {
-		if (!aspectRatiosMatch(dimensions.width, dimensions.height, entry.aspectRatio)) {
-			return {
-				ok: false,
-				detail: `image ${dimensions.width}x${dimensions.height} does not match ${entry.aspectRatio}`
-			};
-		}
+	if (!dimensions) {
+		return {
+			ok: false,
+			detail: 'image dimensions could not be parsed (corrupted or truncated header)'
+		};
+	}
+	if (!aspectRatiosMatch(dimensions.width, dimensions.height, entry.aspectRatio)) {
+		return {
+			ok: false,
+			detail: `image ${dimensions.width}x${dimensions.height} does not match ${entry.aspectRatio}`
+		};
 	}
 
 	return { ok: true, image, imagePath };

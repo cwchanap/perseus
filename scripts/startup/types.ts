@@ -43,8 +43,8 @@ export const PROBE_TIMEOUT_MS = 15_000;
 // wasting bandwidth on a doomed upload.
 export { MAX_FILE_SIZE };
 
-export function warnHardcodedDefaults(): void {
-	if (!process.env.PERSEUS_SERVER) {
+export function warnHardcodedDefaults(dotenv: Record<string, string> = {}): void {
+	if (!process.env.PERSEUS_SERVER && !dotenv.PERSEUS_SERVER) {
 		console.warn(
 			`[warn] PERSEUS_SERVER not set — using hardcoded default ${DEFAULT_SERVER}. ` +
 				'Set PERSEUS_SERVER to override for non-default deployments.'
@@ -54,7 +54,7 @@ export function warnHardcodedDefaults(): void {
 	// service tokens (CF-Access-Client-Id/Secret), which don't need the AUD,
 	// so the warning is noise in CI logs. Suppress when CI=true is set
 	// (GitHub Actions and most other CI systems set this).
-	if (!process.env.CF_ACCESS_AUD && !process.env.CI) {
+	if (!process.env.CF_ACCESS_AUD && !dotenv.CF_ACCESS_AUD && !process.env.CI) {
 		console.warn(
 			'[warn] CF_ACCESS_AUD not set — using hardcoded default AUD. ' +
 				'Set CF_ACCESS_AUD to override for non-default deployments.'
