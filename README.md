@@ -129,7 +129,10 @@ tar -czf perseus-seed.tgz -C scripts/startup-seed catalog.json images
 gh release create seed-v1 perseus-seed.tgz
 
 # Run the workflow, pointing it at the release
-gh workflow run seed-startup-puzzles.yml -f asset_release=seed-v1 -f from=1 -f to=70
+# asset_sha256 is required when asset_release is set — the workflow verifies
+# the tarball checksum before extraction. Generate it with: shasum -a 256 perseus-seed.tgz
+SHA256=$(shasum -a 256 perseus-seed.tgz | awk '{print $1}')
+gh workflow run seed-startup-puzzles.yml -f asset_release=seed-v1 -f asset_sha256="$SHA256" -f from=1 -f to=70
 ```
 
 Alternatively, place files under `scripts/startup-seed/` in the checkout (e.g., via a private mirror). Prefer local CLI upload for operator-held assets so binaries stay out of git.

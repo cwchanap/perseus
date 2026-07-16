@@ -9,7 +9,8 @@ import {
 	getPlayerSummary,
 	listPlayerPuzzles,
 	listPlayerStats,
-	sniffImageType
+	sniffImageType,
+	parseImageDimensions
 } from '@perseus/shared';
 import type { PlayerProfile, PlayerPuzzleSummary, PlayerStatRow } from '@perseus/types';
 import {
@@ -132,6 +133,15 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 	const detected = sniffImageType(bytes);
 	if (!detected || !AVATAR_MIME.has(detected)) {
 		return c.json({ error: 'bad_request', message: 'Unsupported image type' }, 400);
+	}
+	// Validate the image is not truncated/corrupted by parsing its dimensions.
+	// sniffImageType only checks magic bytes (4 for JPEG, 8 for PNG, 12 for
+	// WebP), so a file with just a valid header prefix but no image data would
+	// pass the type check. parseImageDimensions returns null for truncated or
+	// malformed headers, rejecting incomplete uploads before they reach R2.
+	const dimensions = await parseImageDimensions(file, detected);
+	if (!dimensions) {
+		return c.json({ error: 'bad_request', message: 'Image is corrupted or truncated' }, 400);
 	}
 	const liveKey = `avatars/${session.user.id}`;
 	// Write to a unique staging key first, then promote to the live key only

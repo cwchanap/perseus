@@ -264,12 +264,22 @@ async function cmdLogin(options: Options): Promise<void> {
 }
 
 async function cmdStatus(options: Options): Promise<void> {
-	const token = await resolveAccessToken({
-		explicit: options.cfAccessToken,
-		tokenCachePath: options.tokenCachePath,
-		skipAccess: options.skipAccess,
-		server: options.server
-	});
+	// Skip JWT token resolution when service tokens are already available —
+	// service tokens authenticate Access without needing a JWT, and
+	// resolveAccessToken would fall through to spawning `cloudflared access
+	// token` (unbounded subprocess) if no JWT is cached. On a headless machine
+	// with cloudflared installed, that subprocess can delay or hang the
+	// readiness check even though service-token probing is sufficient.
+	// Mirrors the same skip in cmdUpload's resolveAndProbeAccess.
+	const hasServiceToken = !!(options.cfClientId && options.cfClientSecret);
+	const token = hasServiceToken
+		? options.cfAccessToken
+		: await resolveAccessToken({
+				explicit: options.cfAccessToken,
+				tokenCachePath: options.tokenCachePath,
+				skipAccess: options.skipAccess,
+				server: options.server
+			});
 
 	console.log(`Server:            ${options.server}`);
 	console.log(`Skip Access:       ${options.skipAccess}`);
@@ -287,8 +297,6 @@ async function cmdStatus(options: Options): Promise<void> {
 	console.log(
 		`Admin passkey:     ${options.passkey ? `yes (${options.passkey.length} chars)` : 'no'}`
 	);
-
-	const hasServiceToken = !!(options.cfClientId && options.cfClientSecret);
 
 	// Track probe outcome so the readiness check below does not print "Ready"
 	// when Access credentials are present but rejected/expired. Without this,

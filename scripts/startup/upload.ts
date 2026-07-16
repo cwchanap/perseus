@@ -197,16 +197,23 @@ export async function uploadWithRetry(
 			lastError = error instanceof Error ? error : new Error(String(error));
 		}
 		if (attempt < maxAttempts) {
-			// Before retrying: check if the failed attempt actually succeeded
+			const backoff = retryConfig.baseDelayMs * 2 ** (attempt - 1);
+			// Sleep before verifying: the production GET /api/admin/puzzles is
+			// backed by eventually consistent KV. Immediately after a POST
+			// succeeds server-side (but the response is lost), KV may not yet
+			// reflect the new puzzle. Waiting the backoff period before the
+			// verification GET gives KV time to propagate, reducing the chance
+			// of a false negative that would cause a duplicate re-POST (every
+			// POST mints a fresh UUID — the API has no server-side idempotency).
+			await retryConfig.sleepFn(backoff);
+			// After the delay: check if the failed attempt actually succeeded
 			// server-side (response lost / post-creation 5xx). If so, return a
 			// synthetic OK instead of re-POSTing — re-POSTing would create a
-			// duplicate puzzle since the API generates a fresh UUID per upload.
+			// duplicate puzzle.
 			//
 			// If the verification GET itself fails, abort the retry loop rather
-			// than re-POSTing blind — the API has no server-side idempotency
-			// (every POST mints a fresh UUID), so a re-POST after an
-			// unverifiable failure could create a duplicate. fetchExistingKeys
-			// throws a descriptive error that propagates to the caller.
+			// than re-POSTing blind. fetchExistingKeys throws a descriptive
+			// error that propagates to the caller.
 			const existing = await fetchExistingKeys(server, baseHeaders, cookie);
 			if (existing.has(dedupKey)) {
 				console.log(`  verified: ${entryName} already on server — skipping retry`);
@@ -215,9 +222,7 @@ export async function uploadWithRetry(
 					{ status: 200, headers: { 'Content-Type': 'application/json' } }
 				);
 			}
-			const backoff = retryConfig.baseDelayMs * 2 ** (attempt - 1);
-			console.error(`  retry ${attempt}/${maxAttempts} after ${backoff}ms (${lastError.message})`);
-			await retryConfig.sleepFn(backoff);
+			console.error(`  retry ${attempt}/${maxAttempts} (${lastError.message})`);
 		}
 	}
 	throw lastError ?? new Error('Upload failed after retries');

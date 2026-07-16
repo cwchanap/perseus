@@ -335,7 +335,35 @@ function createMockBucket() {
 	return { bucket, store };
 }
 
-const PNG_BYTES = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01, 0x02, 0x03, 0x04];
+// Minimal PNG with a valid IHDR chunk so parseImageDimensions can extract
+// width/height. PNG signature (8) + IHDR length (4) + "IHDR" (4) + width (4)
+// + height (4) = 24 bytes. parseImageDimensions reads bytes 16–24 for dims.
+const PNG_BYTES = [
+	0x89,
+	0x50,
+	0x4e,
+	0x47,
+	0x0d,
+	0x0a,
+	0x1a,
+	0x0a, // PNG signature
+	0x00,
+	0x00,
+	0x00,
+	0x0d, // IHDR chunk length = 13
+	0x49,
+	0x48,
+	0x44,
+	0x52, // "IHDR"
+	0x00,
+	0x00,
+	0x00,
+	0x01, // width = 1
+	0x00,
+	0x00,
+	0x00,
+	0x01 // height = 1
+];
 
 describe('player avatar route (Worker)', () => {
 	// Self-contained auth setup: this block must not depend on a leaked
