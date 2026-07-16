@@ -55,11 +55,21 @@ export function hasAccessCredentials(options: AccessCredentials): boolean {
 export function sessionCookieFrom(response: Response, priorCookie?: string): string {
 	const multi =
 		typeof response.headers.getSetCookie === 'function' ? response.headers.getSetCookie() : [];
-	const setCookie = multi[0] ?? response.headers.get('set-cookie');
-	if (!setCookie) {
+	// Select the API session cookie by name — Cloudflare Access can add a
+	// CF_Authorization cookie alongside perseus_session in the response, so
+	// taking multi[0] may return the Access cookie instead.
+	const sessionCookie =
+		multi.find((c) => c.startsWith('perseus_session=')) ?? response.headers.get('set-cookie');
+	if (!sessionCookie) {
 		throw new Error('Admin login did not return a session cookie');
 	}
-	const session = setCookie.split(';', 1)[0];
+	const session = sessionCookie.split(';', 1)[0];
+	// Preserve a CF_Authorization cookie (from the response or the prior
+	// request cookie) so subsequent requests carry both cookies.
+	const accessFromResponse = multi.find((c) => c.startsWith('CF_Authorization='));
+	if (accessFromResponse) {
+		return `${session}; ${accessFromResponse.split(';', 1)[0]}`;
+	}
 	if (priorCookie?.includes('CF_Authorization=')) {
 		const accessPart = priorCookie
 			.split(';')
@@ -402,6 +412,12 @@ async function validateEntryImage(
 		return {
 			ok: false,
 			detail: 'image dimensions could not be parsed (corrupted or truncated header)'
+		};
+	}
+	if (dimensions.width <= 0 || dimensions.height <= 0) {
+		return {
+			ok: false,
+			detail: `image has invalid dimensions ${dimensions.width}x${dimensions.height}`
 		};
 	}
 	if (!aspectRatiosMatch(dimensions.width, dimensions.height, entry.aspectRatio)) {

@@ -177,6 +177,20 @@ describe('imagePathFor', () => {
 		const result = imagePathFor(makeEntry('01', 'Alpha'), dir);
 		expect(result).toBeNull();
 	});
+
+	it('matches uppercase extensions (case-insensitive)', () => {
+		writeFileSync(join(dir, '05-lake.JPG'), 'x');
+		const result = imagePathFor(makeEntry('05', 'Lake'), dir);
+		expect(result).not.toBeNull();
+		expect(result).toContain('05-lake.JPG');
+	});
+
+	it('matches uppercase .PNG extension', () => {
+		writeFileSync(join(dir, '06-sky.PNG'), 'x');
+		const result = imagePathFor(makeEntry('06', 'Sky'), dir);
+		expect(result).not.toBeNull();
+		expect(result).toContain('06-sky.PNG');
+	});
 });
 
 describe('mimeForPath', () => {
@@ -776,7 +790,7 @@ describe('cmdUpload', () => {
 			if (url.endsWith('/api/admin/login')) {
 				return new Response('{"ok":true}', {
 					status: 200,
-					headers: { 'set-cookie': 'session=abc; Path=/' }
+					headers: { 'set-cookie': 'perseus_session=abc; Path=/' }
 				});
 			}
 			if (init?.method === 'GET' && url.endsWith('/api/admin/puzzles')) {
@@ -834,7 +848,7 @@ describe('cmdUpload', () => {
 			if (url.endsWith('/api/admin/login')) {
 				return new Response('{"ok":true}', {
 					status: 200,
-					headers: { 'set-cookie': 'session=abc; Path=/' }
+					headers: { 'set-cookie': 'perseus_session=abc; Path=/' }
 				});
 			}
 			if (init?.method === 'GET' && url.endsWith('/api/admin/puzzles')) {
@@ -876,7 +890,7 @@ describe('cmdUpload', () => {
 			if (url.endsWith('/api/admin/login')) {
 				return new Response('{"ok":true}', {
 					status: 200,
-					headers: { 'set-cookie': 'session=abc; Path=/' }
+					headers: { 'set-cookie': 'perseus_session=abc; Path=/' }
 				});
 			}
 			if (init?.method === 'GET' && url.endsWith('/api/admin/puzzles')) {
@@ -927,7 +941,7 @@ describe('cmdUpload', () => {
 			if (url.endsWith('/api/admin/login')) {
 				return new Response('{"ok":true}', {
 					status: 200,
-					headers: { 'set-cookie': 'session=abc; Path=/' }
+					headers: { 'set-cookie': 'perseus_session=abc; Path=/' }
 				});
 			}
 			if (init?.method === 'GET' && url.endsWith('/api/admin/puzzles')) {
@@ -976,7 +990,7 @@ describe('cmdUpload', () => {
 			if (url.endsWith('/api/admin/login')) {
 				return new Response('{"ok":true}', {
 					status: 200,
-					headers: { 'set-cookie': 'session=abc; Path=/' }
+					headers: { 'set-cookie': 'perseus_session=abc; Path=/' }
 				});
 			}
 			if (init?.method === 'GET' && url.endsWith('/api/admin/puzzles')) {
@@ -1104,7 +1118,7 @@ describe('cmdUpload', () => {
 			if (url.endsWith('/api/admin/login')) {
 				return new Response('{"ok":true}', {
 					status: 200,
-					headers: { 'set-cookie': 'session=abc; Path=/' }
+					headers: { 'set-cookie': 'perseus_session=abc; Path=/' }
 				});
 			}
 			if (init?.method === 'GET' && url.endsWith('/api/admin/puzzles')) {

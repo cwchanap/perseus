@@ -337,8 +337,10 @@ async function cmdStatus(options: Options): Promise<void> {
 		console.log('  1. Deploy infra (creates CLI service token + Service Auth policy)');
 		console.log('  2. export CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET from Pulumi outputs');
 		console.log('  3. bun run admin:startup:upload -- --limit 5');
+		throw new FatalError('Access credentials missing — not ready for upload.');
 	} else if (!options.passkey) {
 		console.log('\nSet ADMIN_PASSKEY (or apps/api/.env).');
+		throw new FatalError('Admin passkey missing — not ready for upload.');
 	} else {
 		console.log('\nReady: bun run admin:startup:upload -- --limit 5');
 	}

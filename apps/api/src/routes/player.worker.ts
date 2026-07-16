@@ -140,7 +140,7 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 	// pass the type check. parseImageDimensions returns null for truncated or
 	// malformed headers, rejecting incomplete uploads before they reach R2.
 	const dimensions = await parseImageDimensions(file, detected);
-	if (!dimensions) {
+	if (!dimensions || dimensions.width <= 0 || dimensions.height <= 0) {
 		return c.json({ error: 'bad_request', message: 'Image is corrupted or truncated' }, 400);
 	}
 	const liveKey = `avatars/${session.user.id}`;

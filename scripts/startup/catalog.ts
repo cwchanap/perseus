@@ -147,7 +147,9 @@ export function selectEntries(catalog: CatalogEntry[], options: Options): Catalo
 
 export function imagePathFor(entry: CatalogEntry, imagesDir: string): string | null {
 	// Match either `{id}-*.{ext}` (e.g. 01-alpine-lake.jpg) or `{id}.{ext}` (e.g. 01.jpg).
-	const glob = new Bun.Glob(`${entry.id}{,-*}.{jpg,jpeg,png,webp}`);
+	// Include uppercase variants so case-sensitive filesystems (Linux CI) match
+	// assets named 01.JPG or 01.PNG — consistent with the case-insensitive mimeForPath.
+	const glob = new Bun.Glob(`${entry.id}{,-*}.{jpg,jpeg,png,webp,JPG,JPEG,PNG,WEBP}`);
 	const matches = [...glob.scanSync({ cwd: imagesDir, absolute: true })].sort();
 	return matches[0] ?? null;
 }

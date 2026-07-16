@@ -588,20 +588,41 @@ describe('parseImageDimensions', () => {
 		expect(await parseImageDimensions(blob, 'image/png')).toBeNull();
 	});
 
-	it('returns null for PNG with zero width or height', async () => {
-		expect(await parseImageDimensions(makeBlob(pngHeaderBytes(0, 400)), 'image/png')).toBeNull();
-		expect(await parseImageDimensions(makeBlob(pngHeaderBytes(600, 0)), 'image/png')).toBeNull();
-		expect(await parseImageDimensions(makeBlob(pngHeaderBytes(0, 0)), 'image/png')).toBeNull();
+	it('returns zero dimensions for PNG with zero width or height (not null)', async () => {
+		expect(await parseImageDimensions(makeBlob(pngHeaderBytes(0, 400)), 'image/png')).toEqual({
+			width: 0,
+			height: 400
+		});
+		expect(await parseImageDimensions(makeBlob(pngHeaderBytes(600, 0)), 'image/png')).toEqual({
+			width: 600,
+			height: 0
+		});
+		expect(await parseImageDimensions(makeBlob(pngHeaderBytes(0, 0)), 'image/png')).toEqual({
+			width: 0,
+			height: 0
+		});
 	});
 
-	it('returns null for JPEG with zero width or height', async () => {
-		expect(await parseImageDimensions(makeBlob(jpegHeaderBytes(0, 400)), 'image/jpeg')).toBeNull();
-		expect(await parseImageDimensions(makeBlob(jpegHeaderBytes(600, 0)), 'image/jpeg')).toBeNull();
+	it('returns zero dimensions for JPEG with zero width or height (not null)', async () => {
+		expect(await parseImageDimensions(makeBlob(jpegHeaderBytes(0, 400)), 'image/jpeg')).toEqual({
+			width: 0,
+			height: 400
+		});
+		expect(await parseImageDimensions(makeBlob(jpegHeaderBytes(600, 0)), 'image/jpeg')).toEqual({
+			width: 600,
+			height: 0
+		});
 	});
 
-	it('returns null for WebP VP8 with zero width or height', async () => {
-		expect(await parseImageDimensions(makeBlob(webpVp8Bytes(0, 400)), 'image/webp')).toBeNull();
-		expect(await parseImageDimensions(makeBlob(webpVp8Bytes(600, 0)), 'image/webp')).toBeNull();
+	it('returns zero dimensions for WebP VP8 with zero width or height (not null)', async () => {
+		expect(await parseImageDimensions(makeBlob(webpVp8Bytes(0, 400)), 'image/webp')).toEqual({
+			width: 0,
+			height: 400
+		});
+		expect(await parseImageDimensions(makeBlob(webpVp8Bytes(600, 0)), 'image/webp')).toEqual({
+			width: 600,
+			height: 0
+		});
 	});
 
 	it('returns null when JPEG SOF declares a segment longer than remaining file', async () => {
