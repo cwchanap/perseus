@@ -18,6 +18,7 @@ import {
 	MAX_PIECES,
 	accessAppFor,
 	adminUiFor,
+	isLocalServer,
 	tokenBasenameFor,
 	FatalError,
 	type CatalogEntry,
@@ -292,12 +293,14 @@ describe('aspectRatiosMatch', () => {
 });
 
 describe('accessAppFor', () => {
-	it('derives Access app URL from server', () => {
-		expect(accessAppFor('https://example.com')).toBe('https://example.com/api/admin');
+	it('derives CLI Access app URL from server', () => {
+		// Must target /api/admin/puzzles (Perseus Admin CLI), not /api/admin
+		// (broad Perseus Admin app) — different Access audiences.
+		expect(accessAppFor('https://example.com')).toBe('https://example.com/api/admin/puzzles');
 	});
 
 	it('strips trailing slashes', () => {
-		expect(accessAppFor('https://example.com/')).toBe('https://example.com/api/admin');
+		expect(accessAppFor('https://example.com/')).toBe('https://example.com/api/admin/puzzles');
 	});
 });
 
@@ -308,6 +311,24 @@ describe('adminUiFor', () => {
 
 	it('strips trailing slashes', () => {
 		expect(adminUiFor('https://example.com/')).toBe('https://example.com/admin');
+	});
+});
+
+describe('isLocalServer', () => {
+	it('matches exact loopback hostnames', () => {
+		expect(isLocalServer('http://localhost:3000')).toBe(true);
+		expect(isLocalServer('http://127.0.0.1:3000')).toBe(true);
+		expect(isLocalServer('http://[::1]:3000')).toBe(true);
+	});
+
+	it('does not match substring hosts or path segments', () => {
+		expect(isLocalServer('https://localhost.example')).toBe(false);
+		expect(isLocalServer('https://example.com/path/127.0.0.1')).toBe(false);
+		expect(isLocalServer('https://perseus.cwchanap.dev')).toBe(false);
+	});
+
+	it('returns false for unparseable server strings', () => {
+		expect(isLocalServer('not a url')).toBe(false);
 	});
 });
 
@@ -567,6 +588,40 @@ describe('uploadWithRetry', () => {
 		expect(res.status).toBe(200);
 		expect(postCalls).toBe(1); // only one POST — no retry
 		const body = (await res.json()) as { id?: string; status?: string };
+		expect(body.id).toBe('verified');
+	});
+
+	it('polls until the puzzle appears after KV lag (does not re-POST)', async () => {
+		// First GET polls miss the puzzle (KV lag); a later poll finds it.
+		// Without multi-poll, the one-shot check would miss and re-POST a duplicate.
+		let postCalls = 0;
+		let getCalls = 0;
+		const key = idempotencyKey('Lagged', 100, DEFAULT_PUZZLE_ASPECT_RATIO);
+		globalThis.fetch = mock(async (_input: string | URL | Request, init?: RequestInit) => {
+			if (init?.method === 'GET') {
+				getCalls++;
+				if (getCalls < 3) {
+					return new Response(JSON.stringify({ puzzles: [] }), {
+						status: 200,
+						headers: { 'Content-Type': 'application/json' }
+					});
+				}
+				return new Response(
+					JSON.stringify({
+						puzzles: [{ name: 'Lagged', pieceCount: 100, aspectRatio: DEFAULT_PUZZLE_ASPECT_RATIO }]
+					}),
+					{ status: 200, headers: { 'Content-Type': 'application/json' } }
+				);
+			}
+			postCalls++;
+			throw new Error('ECONNRESET');
+		}) as unknown as typeof fetch;
+
+		const res = await uploadWithRetry('http://localhost', {}, 's=1', new FormData(), 'Lagged', key);
+		expect(res.status).toBe(200);
+		expect(postCalls).toBe(1);
+		expect(getCalls).toBeGreaterThanOrEqual(3);
+		const body = (await res.json()) as { id?: string };
 		expect(body.id).toBe('verified');
 	});
 });

@@ -14,7 +14,7 @@ import { join, dirname } from 'node:path';
 import { existsSync, readFileSync, unlinkSync, writeFileSync, mkdirSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { $ } from 'bun';
-import { ACCESS_AUD, PROBE_TIMEOUT_MS, accessAppFor, adminUiFor, tokenBasenameFor } from './types';
+import { ACCESS_AUD, PROBE_TIMEOUT_MS, accessAppFor, tokenBasenameFor } from './types';
 
 function homeCloudflaredDir(): string {
 	return join(process.env.HOME ?? '', '.cloudflared');
@@ -155,13 +155,15 @@ async function promptLine(question: string): Promise<string> {
 }
 
 export async function promptTokenInteractive(server: string): Promise<string> {
-	const adminUi = adminUiFor(server);
+	// Open the CLI Access app path (not /admin): JWT audience must match
+	// `Perseus Admin CLI`, which protects /api/admin/puzzles and /api/admin/login.
+	const accessApp = accessAppFor(server);
 	console.log(`
 ────────────────────────────────────────────────────────────
   Set Cloudflare Access token (recommended path)
 ────────────────────────────────────────────────────────────
 1. Ensure Cloudflare WARP is Connected
-2. Open: ${adminUi}
+2. Open: ${accessApp}
 3. Complete Access login if prompted
 4. Open DevTools → Application → Cookies → ${server.replace('https://', '')}
 5. Copy the value of cookie: CF_Authorization
@@ -170,7 +172,7 @@ export async function promptTokenInteractive(server: string): Promise<string> {
 `);
 	// Try opening browser (platform-specific)
 	const opener = process.platform === 'darwin' ? 'open' : 'xdg-open';
-	await $`${opener} ${adminUi}`.quiet().nothrow();
+	await $`${opener} ${accessApp}`.quiet().nothrow();
 
 	const raw = await promptLine('Paste CF_Authorization JWT: ');
 	const token = normalizeToken(raw);

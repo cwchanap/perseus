@@ -158,8 +158,37 @@ const RETRY_BASE_DELAY_MS = 1000;
 export const retryConfig = {
 	maxAttempts: MAX_RETRY_ATTEMPTS,
 	baseDelayMs: RETRY_BASE_DELAY_MS,
+	// Poll count / base delay for post-failure existence checks. Production
+	// GET /api/admin/puzzles reads eventually consistent KV; a single GET can
+	// omit a just-created puzzle and cause a duplicate re-POST.
+	verifyPollAttempts: 4,
+	verifyPollBaseDelayMs: 250,
 	sleepFn: sleep
 };
+
+/**
+ * Poll GET /api/admin/puzzles until `dedupKey` appears or the attempt budget
+ * is exhausted. Used after a transient POST failure (and after final-attempt
+ * failure) so KV lag does not cause a duplicate re-POST or a false FAIL.
+ *
+ * If a poll GET itself fails, the error propagates — callers must not re-POST
+ * blind when verification is broken.
+ */
+export async function pollForExistingKey(
+	server: string,
+	baseHeaders: Record<string, string>,
+	cookie: string,
+	dedupKey: string
+): Promise<boolean> {
+	const attempts = retryConfig.verifyPollAttempts;
+	const baseDelayMs = retryConfig.verifyPollBaseDelayMs;
+	for (let i = 0; i < attempts; i++) {
+		await retryConfig.sleepFn(baseDelayMs * 2 ** i);
+		const existing = await fetchExistingKeys(server, baseHeaders, cookie);
+		if (existing.has(dedupKey)) return true;
+	}
+	return false;
+}
 
 /**
  * POST the puzzle form with bounded retry for transient failures (5xx responses
@@ -167,9 +196,10 @@ export const retryConfig = {
  * validation/authorization failures.
  *
  * To prevent duplicate puzzles when the server creates the puzzle but the
- * response is lost (network error or post-creation 5xx), the entry name is
- * re-checked against existing puzzles before each retry. If the name already
- * exists, a synthetic OK response is returned instead of re-POSTing.
+ * response is lost (network error or post-creation 5xx), the entry is
+ * re-checked against existing puzzles (with bounded KV-lag polling) before
+ * each retry. If the key already exists, a synthetic OK response is returned
+ * instead of re-POSTing.
  */
 export async function uploadWithRetry(
 	server: string,
@@ -197,25 +227,10 @@ export async function uploadWithRetry(
 			lastError = error instanceof Error ? error : new Error(String(error));
 		}
 		if (attempt < maxAttempts) {
-			const backoff = retryConfig.baseDelayMs * 2 ** (attempt - 1);
-			// Sleep before verifying: the production GET /api/admin/puzzles is
-			// backed by eventually consistent KV. Immediately after a POST
-			// succeeds server-side (but the response is lost), KV may not yet
-			// reflect the new puzzle. Waiting the backoff period before the
-			// verification GET gives KV time to propagate, reducing the chance
-			// of a false negative that would cause a duplicate re-POST (every
-			// POST mints a fresh UUID — the API has no server-side idempotency).
-			await retryConfig.sleepFn(backoff);
-			// After the delay: check if the failed attempt actually succeeded
-			// server-side (response lost / post-creation 5xx). If so, return a
-			// synthetic OK instead of re-POSTing — re-POSTing would create a
-			// duplicate puzzle.
-			//
-			// If the verification GET itself fails, abort the retry loop rather
-			// than re-POSTing blind. fetchExistingKeys throws a descriptive
-			// error that propagates to the caller.
-			const existing = await fetchExistingKeys(server, baseHeaders, cookie);
-			if (existing.has(dedupKey)) {
+			// After a transient failure: poll for the puzzle before re-POSTing.
+			// Every POST mints a fresh UUID — the API has no server-side
+			// idempotency — so a false-negative existence check creates duplicates.
+			if (await pollForExistingKey(server, baseHeaders, cookie, dedupKey)) {
 				console.log(`  verified: ${entryName} already on server — skipping retry`);
 				return new Response(
 					JSON.stringify({ id: 'verified', status: 'response lost — verified via re-fetch' }),
@@ -462,12 +477,12 @@ async function processEntry(
 	} catch (error) {
 		const detail = error instanceof Error ? error.message : String(error);
 		// All retries exhausted. The final attempt may have succeeded
-		// server-side but lost its response. Re-fetch to verify before
-		// declaring failure — prevents false negatives on flaky connections.
+		// server-side but lost its response. Poll with bounded backoff before
+		// declaring failure — a single GET can miss KV lag and report FAIL
+		// for a puzzle that was actually created.
 		let verified = false;
 		try {
-			const refreshed = await fetchExistingKeys(options.server, baseHeaders, cookie);
-			verified = refreshed.has(dedupKey);
+			verified = await pollForExistingKey(options.server, baseHeaders, cookie, dedupKey);
 		} catch {
 			// re-fetch itself failed; cannot verify — record original failure
 		}

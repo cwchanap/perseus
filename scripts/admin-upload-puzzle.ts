@@ -9,7 +9,12 @@ import {
 	probeServiceToken,
 	loadDotEnvMap
 } from './startup/token';
-import { FatalError, applyDotenvOverrides, type AccessCredentials } from './startup/types';
+import {
+	FatalError,
+	applyDotenvOverrides,
+	isLocalServer,
+	type AccessCredentials
+} from './startup/types';
 
 // This CLI targets local dev by default (ad-hoc single uploads). The bulk
 // uploader (admin:startup:*) defaults to production via DEFAULT_SERVER, but
@@ -89,7 +94,7 @@ async function parseOptions(): Promise<Options> {
 	const cfAccessToken = readArg(args, '--cf-access-token') ?? process.env.CF_ACCESS_TOKEN;
 	const cfClientId = process.env.CF_ACCESS_CLIENT_ID ?? dotenv.CF_ACCESS_CLIENT_ID;
 	const cfClientSecret = process.env.CF_ACCESS_CLIENT_SECRET ?? dotenv.CF_ACCESS_CLIENT_SECRET;
-	const skipAccess = args.includes('--skip-access') || /localhost|127\.0\.0\.1/.test(server);
+	const skipAccess = args.includes('--skip-access') || isLocalServer(server);
 
 	if (!imagePath || !name || !pieceCountRaw || !passkey) usage();
 

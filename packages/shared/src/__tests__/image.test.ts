@@ -588,6 +588,43 @@ describe('parseImageDimensions', () => {
 		expect(await parseImageDimensions(blob, 'image/png')).toBeNull();
 	});
 
+	it('returns null for PNG with zero width or height', async () => {
+		expect(await parseImageDimensions(makeBlob(pngHeaderBytes(0, 400)), 'image/png')).toBeNull();
+		expect(await parseImageDimensions(makeBlob(pngHeaderBytes(600, 0)), 'image/png')).toBeNull();
+		expect(await parseImageDimensions(makeBlob(pngHeaderBytes(0, 0)), 'image/png')).toBeNull();
+	});
+
+	it('returns null for JPEG with zero width or height', async () => {
+		expect(await parseImageDimensions(makeBlob(jpegHeaderBytes(0, 400)), 'image/jpeg')).toBeNull();
+		expect(await parseImageDimensions(makeBlob(jpegHeaderBytes(600, 0)), 'image/jpeg')).toBeNull();
+	});
+
+	it('returns null for WebP VP8 with zero width or height', async () => {
+		expect(await parseImageDimensions(makeBlob(webpVp8Bytes(0, 400)), 'image/webp')).toBeNull();
+		expect(await parseImageDimensions(makeBlob(webpVp8Bytes(600, 0)), 'image/webp')).toBeNull();
+	});
+
+	it('returns null when JPEG SOF declares a segment longer than remaining file', async () => {
+		// SOI + SOF0 with segLen=0x0011 (17) but only enough bytes for the
+		// dimension fields (7 of the segment payload). ensure(7) succeeds and
+		// would return dims without a full-segment check.
+		const truncatedSof = new Uint8Array([
+			0xff,
+			0xd8, // SOI
+			0xff,
+			0xc0, // SOF0
+			0x00,
+			0x11, // segLen = 17
+			0x08, // precision
+			0x01,
+			0x90, // height = 400
+			0x02,
+			0x58 // width = 600 — EOF here; remaining SOF component bytes missing
+		]);
+		const blob = makeBlob(truncatedSof);
+		expect(await parseImageDimensions(blob, 'image/jpeg')).toBeNull();
+	});
+
 	it('round-trips with detectImageType for a real PNG header', async () => {
 		const bytes = pngHeaderBytes(800, 600);
 		const blob = makeBlob(bytes);

@@ -33,6 +33,7 @@ export {
 	FatalError,
 	accessAppFor,
 	adminUiFor,
+	isLocalServer,
 	tokenBasenameFor,
 	type CatalogEntry,
 	type Options
@@ -41,6 +42,7 @@ export { validateCatalog, selectEntries, imagePathFor, mimeForPath } from './sta
 export {
 	fetchExistingKeys,
 	idempotencyKey,
+	pollForExistingKey,
 	retryConfig,
 	uploadWithRetry,
 	cmdUpload

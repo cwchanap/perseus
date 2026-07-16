@@ -78,10 +78,21 @@ export async function detectImageType(file: BlobLike): Promise<string | null> {
 	}
 }
 
+// Reject zero/negative dimensions. Callers that only check for null (e.g. avatar
+// routes) would otherwise accept a truthy `{width:0,height:0}` object and store
+// a broken image. Other callers (aspect-ratio checks) already reject non-positive
+// values separately — returning null keeps the shared contract consistent.
+function positiveDims(width: number, height: number): { width: number; height: number } | null {
+	if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+		return null;
+	}
+	return { width, height };
+}
+
 // Parse image width/height from binary headers without decoding the full image.
 // Supports JPEG (SOF marker scan), PNG (IHDR at offset 16), and WebP
-// (VP8/VP8L/VP8X chunk headers). Returns null if the format is unrecognized
-// or the header is truncated — callers should proceed with fallback dimensions.
+// (VP8/VP8L/VP8X chunk headers). Returns null if the format is unrecognized,
+// the header is truncated, or dimensions are non-positive.
 export async function parseImageDimensions(
 	file: BlobLike,
 	mimeType: string
@@ -92,7 +103,7 @@ export async function parseImageDimensions(
 			const header = await file.slice(16, 24).arrayBuffer();
 			if (header.byteLength < 8) return null;
 			const view = new DataView(header);
-			return { width: view.getUint32(0), height: view.getUint32(4) };
+			return positiveDims(view.getUint32(0), view.getUint32(4));
 		}
 
 		if (mimeType === 'image/jpeg') {
@@ -155,9 +166,13 @@ export async function parseImageDimensions(
 					const i = pos - bufStart;
 					const segLen = (buf[i] << 8) | buf[i + 1];
 					if (segLen < 9) return null;
+					// Reject truncated SOF: the full declared segment must be present
+					// in the file. `ensure(7)` only guarantees the dimension fields;
+					// a larger segLen with EOF mid-segment would still return dims.
+					if (pos + segLen > file.size) return null;
 					const height = (buf[i + 3] << 8) | buf[i + 4];
 					const width = (buf[i + 5] << 8) | buf[i + 6];
-					return { width, height };
+					return positiveDims(width, height);
 				}
 
 				// Skip this marker segment: read 2-byte segLen, advance by segLen
@@ -184,25 +199,27 @@ export async function parseImageDimensions(
 				const view = new DataView(header);
 				const w = view.getUint16(14, true) & 0x3fff;
 				const h = view.getUint16(16, true) & 0x3fff;
-				return { width: w, height: h };
+				return positiveDims(w, h);
 			}
 			if (fourCC === 'VP8L') {
 				// Lossless: 1-byte signature + 4-byte image-size packed as 28 bits
 				// Relative to header: 4 + 4 + 1 = offset 9
+				// Encoded as (width-1)/(height-1), so decoded values are always ≥ 1.
 				if (header.byteLength < 13) return null;
 				const b = new DataView(header).getUint32(9, true);
 				const w = (b & 0x3fff) + 1;
 				const h = ((b >>> 14) & 0x3fff) + 1;
-				return { width: w, height: h };
+				return positiveDims(w, h);
 			}
 			if (fourCC === 'VP8X') {
 				// Extended: 1-byte flags + 3-byte reserved + 3-byte canvas-width-1 + 3-byte canvas-height-1
 				// Relative to header: 4(fourCC) + 4(chunkSize) + 1(flags) + 3(reserved) = offset 12 for width, offset 15 for height
+				// Encoded as (width-1)/(height-1), so decoded values are always ≥ 1.
 				if (header.byteLength < 18) return null;
 				const bytes = new Uint8Array(header);
 				const w = (bytes[12] | (bytes[13] << 8) | (bytes[14] << 16)) + 1;
 				const h = (bytes[15] | (bytes[16] << 8) | (bytes[17] << 16)) + 1;
-				return { width: w, height: h };
+				return positiveDims(w, h);
 			}
 			return null;
 		}

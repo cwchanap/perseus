@@ -76,14 +76,37 @@ export class FatalError extends Error {
 	}
 }
 
-/** Derive the Cloudflare Access app URL from the server (used by cloudflared token flow). */
+/**
+ * Derive the Cloudflare Access app URL for the CLI Access application.
+ *
+ * Must target a path matched by `Perseus Admin CLI` (`/api/admin/puzzles` or
+ * `/api/admin/login`), not the broad `Perseus Admin` app root (`/api/admin`).
+ * Those apps have different audiences; a JWT issued for the broad app is
+ * rejected by the CLI paths the uploader actually hits (probe + upload).
+ */
 export function accessAppFor(server: string): string {
-	return `${server.replace(/\/+$/, '')}/api/admin`;
+	return `${server.replace(/\/+$/, '')}/api/admin/puzzles`;
 }
 
-/** Derive the admin UI URL from the server (used by the interactive set-token prompt). */
+/** Derive the admin UI URL from the server (browser admin UI, broad Access app). */
 export function adminUiFor(server: string): string {
 	return `${server.replace(/\/+$/, '')}/admin`;
+}
+
+/**
+ * True when the server URL's hostname is loopback.
+ *
+ * Parses the URL and compares hostname exactly — substring matches would
+ * treat hosts like `localhost.example` or path segments containing
+ * `127.0.0.1` as local and skip Access headers on a non-loopback host.
+ */
+export function isLocalServer(server: string): boolean {
+	try {
+		const hostname = new URL(server).hostname.toLowerCase();
+		return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
+	} catch {
+		return false;
+	}
 }
 
 /** Derive the cloudflared token cache basename from hostname + AUD. */

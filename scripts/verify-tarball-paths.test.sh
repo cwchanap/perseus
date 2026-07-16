@@ -148,6 +148,14 @@ make_tarball_with_links "$TMPDIR/symlink-traversal.tgz" \
 	"evil.link|symlink|../../etc/passwd"
 assert_rejects "symlink with parent traversal target" "$TMPDIR/symlink-traversal.tgz"
 
+make_tarball_with_links "$TMPDIR/symlink-bare-dotdot.tgz" \
+	"images|symlink|.."
+assert_rejects "symlink with bare .. target" "$TMPDIR/symlink-bare-dotdot.tgz"
+
+make_tarball_with_links "$TMPDIR/symlink-trailing-dotdot.tgz" \
+	"evil.link|symlink|foo/.."
+assert_rejects "symlink with trailing .. component" "$TMPDIR/symlink-trailing-dotdot.tgz"
+
 make_tarball_with_links "$TMPDIR/hardlink-abs.tgz" \
 	"evil.link|hardlink|/etc/passwd"
 assert_rejects "hardlink with absolute target" "$TMPDIR/hardlink-abs.tgz"
@@ -160,6 +168,12 @@ assert_rejects "hardlink with parent traversal target" "$TMPDIR/hardlink-travers
 make_tarball_with_links "$TMPDIR/symlink-safe.tgz" \
 	"link.txt|symlink|target.txt"
 assert_accepts "symlink with safe relative target" "$TMPDIR/symlink-safe.tgz"
+
+# Relative target with a same-dir ".." prefix inside a component name is not
+# parent traversal (e.g. "foo..bar"); only path components equal to ".." reject.
+make_tarball_with_links "$TMPDIR/symlink-dotdot-in-name.tgz" \
+	"link.txt|symlink|foo..bar"
+assert_accepts "symlink with .. inside a component name" "$TMPDIR/symlink-dotdot-in-name.tgz"
 
 # --- Edge cases ---
 

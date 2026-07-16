@@ -14,8 +14,8 @@ import {
 	DEFAULT_SERVER,
 	type Options,
 	accessAppFor,
-	adminUiFor,
 	applyDotenvOverrides,
+	isLocalServer,
 	sleep,
 	warnHardcodedDefaults,
 	FatalError
@@ -59,8 +59,9 @@ Options:
   -h, --help
 
 Recommended flow:
-  # Browser: open ${adminUiFor(DEFAULT_SERVER)} with WARP connected, complete Access
+  # Browser: open ${accessAppFor(DEFAULT_SERVER)} with WARP connected, complete Access
   # DevTools → Application → Cookies → CF_Authorization → copy value
+  # (Must be the CLI Access app JWT — broad /admin audience is rejected on upload)
   bun run admin:startup:set-token
   bun run admin:startup:status
   bun run admin:startup:upload -- --limit 5
@@ -127,7 +128,7 @@ async function parseOptions(): Promise<Options> {
 		/\/+$/,
 		''
 	);
-	const skipAccess = args.includes('--skip-access') || /localhost|127\.0\.0\.1/.test(server);
+	const skipAccess = args.includes('--skip-access') || isLocalServer(server);
 	const tokenCachePath = join(root, 'data/startup-puzzles/.cf-access-token');
 	// Store only the raw explicit token here. Each command resolves the full
 	// token (cache → cloudflared) itself via resolveAccessToken — resolving here
@@ -321,6 +322,16 @@ async function cmdStatus(options: Options): Promise<void> {
 		if (probe !== 'ok') probeFailed = true;
 	}
 
+	// Check Access probe failures before the passkey hint. Otherwise a blocked
+	// service token / JWT with ADMIN_PASSKEY unset prints only the passkey
+	// message and exits 0, so readiness callers treat rejected credentials as valid.
+	if (probeFailed) {
+		throw new FatalError(
+			'Access probe failed — credentials are rejected or unreachable. ' +
+				'Fix the issue above before uploading.'
+		);
+	}
+
 	if (!options.skipAccess && !token && !(options.cfClientId && options.cfClientSecret)) {
 		console.log('\nNot ready for prod. Prefer Access service tokens (no cookie paste):');
 		console.log('  1. Deploy infra (creates CLI service token + Service Auth policy)');
@@ -328,11 +339,6 @@ async function cmdStatus(options: Options): Promise<void> {
 		console.log('  3. bun run admin:startup:upload -- --limit 5');
 	} else if (!options.passkey) {
 		console.log('\nSet ADMIN_PASSKEY (or apps/api/.env).');
-	} else if (probeFailed) {
-		throw new FatalError(
-			'Access probe failed — credentials are rejected or unreachable. ' +
-				'Fix the issue above before uploading.'
-		);
 	} else {
 		console.log('\nReady: bun run admin:startup:upload -- --limit 5');
 	}

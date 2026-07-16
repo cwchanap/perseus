@@ -85,7 +85,10 @@ LINK_BAD=$(tar -tvf "$tarball" 2>/dev/null | awk '
 		} else {
 			target = ""
 		}
-		if (target == "" || target ~ /^\// || target ~ /(^|\/)\.\.\//) {
+		# Reject absolute targets, any ".." path component (including a
+		# bare ".." or trailing "foo/.."), and empty targets. The old
+		# pattern required a slash after ".." so "images -> .." passed.
+		if (target == "" || target ~ /^\// || target ~ /(^|\/)\.\.(\/|$)/) {
 			print
 		}
 	}
