@@ -179,6 +179,43 @@ export async function updatePuzzleMetadata(
 	}
 }
 
+/**
+ * Reserve an idempotency key via a strongly-consistent Durable Object. The DO
+ * instance is keyed by idFromName(idempotencyKey) — separate from the metadata
+ * DO instance keyed by idFromName(puzzleId). Returns the existing puzzleId if
+ * a prior request already reserved this key, or the proposed puzzleId if this
+ * is the first caller.
+ *
+ * This closes the duplicate-puzzle window that client-side KV polling cannot:
+ * KV is eventually consistent, so a retried POST after a lost response could
+ * re-mint a UUID before KV propagated the first create. DO storage is strongly
+ * consistent within a single instance, making the reserve atomic.
+ */
+export async function reserveIdempotencyKey(
+	metadataDO: DurableObjectNamespace,
+	idempotencyKey: string,
+	proposedPuzzleId: string
+): Promise<{ existing: boolean; puzzleId: string }> {
+	const id = metadataDO.idFromName(idempotencyKey);
+	const stub = metadataDO.get(id);
+	const response = await stub.fetch('https://puzzle-metadata/reserve', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ idempotencyKey, puzzleId: proposedPuzzleId })
+	});
+	if (!response.ok) {
+		const payload = (await response.json().catch(() => null)) as { message?: string } | null;
+		throw new Error(
+			payload?.message ?? `Failed to reserve idempotency key (HTTP ${response.status})`
+		);
+	}
+	const result = (await response.json()) as { existing?: boolean; puzzleId?: string };
+	if (typeof result.puzzleId !== 'string') {
+		throw new Error('Reserve response missing puzzleId');
+	}
+	return { existing: !!result.existing, puzzleId: result.puzzleId };
+}
+
 // Delete puzzle metadata from KV and invalidate gallery index cache
 export async function deletePuzzleMetadata(
 	kv: KVNamespace,

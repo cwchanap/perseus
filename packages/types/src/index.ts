@@ -88,6 +88,12 @@ interface PuzzleMetadataBase {
 	createdAt: number;
 	pieces: PuzzlePiece[];
 	version: number;
+	// Optional server-side idempotency key. When a POST /api/admin/puzzles
+	// request carries an Idempotency-Key header, the server reserves the key
+	// in PuzzleMetadataDO (strongly consistent) before minting a UUID, so a
+	// retried POST after a lost response returns the original puzzle instead
+	// of creating a duplicate. Absent on puzzles created without the header.
+	idempotencyKey?: string;
 }
 
 export interface ProcessingPuzzle extends PuzzleMetadataBase {

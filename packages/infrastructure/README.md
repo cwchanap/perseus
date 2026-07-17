@@ -245,8 +245,13 @@ pulumi stack output --show-secrets adminCliAccessClientSecret
 
 Update downstream consumers with the new values:
 
-- **GitHub Actions secrets**: `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET`
-- **Local CLI env** (`apps/api/.env` or shell): `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET`
+- **GitHub Actions**: no manual secret update needed — the seed workflow
+  (`seed-startup-puzzles.yml`) self-serves from the Pulumi stack output
+  (`pulumi stack output adminCliAccessClientId` / `--show-secrets
+adminCliAccessClientSecret`) on every run. A fresh `pulumi up` is all
+  that's required.
+- **Local CLI env** (`apps/api/.env` or shell): `CF_ACCESS_CLIENT_ID`,
+  `CF_ACCESS_CLIENT_SECRET`
 
 ## Complete Wrangler Replacement
 

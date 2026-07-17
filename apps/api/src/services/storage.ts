@@ -221,6 +221,27 @@ export async function deletePuzzle(puzzleId: string): Promise<boolean> {
 	}
 }
 
+/**
+ * Find an existing puzzle by its idempotency key. The Bun runtime stores
+ * metadata on the filesystem (strongly consistent), so a linear scan is
+ * race-free — unlike the Worker runtime which needs a Durable Object for
+ * the same guarantee. Returns the full Puzzle or null if no match.
+ */
+export async function findPuzzleByIdempotencyKey(key: string): Promise<Puzzle | null> {
+	if (!key) return null;
+	const entries = await readdir(PUZZLES_DIR, { withFileTypes: true });
+	for (const entry of entries) {
+		if (!entry.isDirectory()) continue;
+		try {
+			const puzzle = await getPuzzle(entry.name);
+			if (puzzle && puzzle.idempotencyKey === key) return puzzle;
+		} catch (err) {
+			console.error(`Skipping corrupt puzzle entry '${entry.name}' during idempotency scan:`, err);
+		}
+	}
+	return null;
+}
+
 async function listPuzzlesWithDate(): Promise<
 	Array<{ summary: PuzzleSummary; createdAt: number }>
 > {

@@ -46,12 +46,14 @@ const baseMetadata: PuzzleMetadata = {
 interface StorageInit {
 	puzzleId?: string;
 	metadata?: PuzzleMetadata;
+	reservedPuzzleId?: string;
 }
 
 function createStorage(initial: StorageInit = {}) {
 	const store: Record<string, unknown> = {};
 	if (initial.puzzleId !== undefined) store['puzzleId'] = initial.puzzleId;
 	if (initial.metadata !== undefined) store['metadata'] = initial.metadata;
+	if (initial.reservedPuzzleId !== undefined) store['reservedPuzzleId'] = initial.reservedPuzzleId;
 
 	return {
 		_store: store,
@@ -107,12 +109,12 @@ async function postRequest(durableObj: PuzzleMetadataDO, body: unknown, path = '
 }
 
 describe('PuzzleMetadataDO.fetch - routing', () => {
-	it('returns 404 for GET requests', async () => {
+	it('returns 405 for GET requests', async () => {
 		const { durableObj } = makeDO();
 		const response = await durableObj.fetch(
 			new Request('https://puzzle-metadata/update', { method: 'GET' })
 		);
-		expect(response.status).toBe(404);
+		expect(response.status).toBe(405);
 	});
 
 	it('returns 404 for wrong path', async () => {
@@ -121,12 +123,12 @@ describe('PuzzleMetadataDO.fetch - routing', () => {
 		expect(response.status).toBe(404);
 	});
 
-	it('returns 404 for DELETE requests', async () => {
+	it('returns 405 for DELETE requests', async () => {
 		const { durableObj } = makeDO();
 		const response = await durableObj.fetch(
 			new Request('https://puzzle-metadata/update', { method: 'DELETE' })
 		);
-		expect(response.status).toBe(404);
+		expect(response.status).toBe(405);
 	});
 });
 
@@ -431,5 +433,76 @@ describe('PuzzleMetadataDO.fetch - gallery index cache invalidation', () => {
 			updates: { progress: { totalPieces: 4, generatedPieces: 2, updatedAt: Date.now() } }
 		});
 		expect(kv.delete).not.toHaveBeenCalledWith('gallery:sorted-index');
+	});
+});
+
+describe('PuzzleMetadataDO.fetch - /reserve (idempotency)', () => {
+	it('stores puzzleId on first reserve and returns existing: false', async () => {
+		const { durableObj, storage } = makeDO();
+		const response = await postRequest(
+			durableObj,
+			{
+				idempotencyKey: 'abc123',
+				puzzleId: 'puzzle-uuid-1'
+			},
+			'/reserve'
+		);
+		expect(response.status).toBe(200);
+		const body = (await response.json()) as { existing: boolean; puzzleId: string };
+		expect(body.existing).toBe(false);
+		expect(body.puzzleId).toBe('puzzle-uuid-1');
+		expect(storage.put).toHaveBeenCalledWith('reservedPuzzleId', 'puzzle-uuid-1');
+	});
+
+	it('returns existing: true with original puzzleId on second reserve', async () => {
+		const { durableObj } = makeDO({ reservedPuzzleId: 'original-uuid' });
+		const response = await postRequest(
+			durableObj,
+			{
+				idempotencyKey: 'abc123',
+				puzzleId: 'different-uuid'
+			},
+			'/reserve'
+		);
+		expect(response.status).toBe(200);
+		const body = (await response.json()) as { existing: boolean; puzzleId: string };
+		expect(body.existing).toBe(true);
+		expect(body.puzzleId).toBe('original-uuid');
+	});
+
+	it('returns 400 when idempotencyKey is missing', async () => {
+		const { durableObj } = makeDO();
+		const response = await postRequest(durableObj, { puzzleId: 'puzzle-1' }, '/reserve');
+		expect(response.status).toBe(400);
+	});
+
+	it('returns 400 when puzzleId is missing', async () => {
+		const { durableObj } = makeDO();
+		const response = await postRequest(durableObj, { idempotencyKey: 'abc123' }, '/reserve');
+		expect(response.status).toBe(400);
+	});
+
+	it('returns 400 when idempotencyKey is empty', async () => {
+		const { durableObj } = makeDO();
+		const response = await postRequest(
+			durableObj,
+			{
+				idempotencyKey: '  ',
+				puzzleId: 'puzzle-1'
+			},
+			'/reserve'
+		);
+		expect(response.status).toBe(400);
+	});
+
+	it('returns 400 for invalid JSON body', async () => {
+		const { durableObj } = makeDO();
+		const response = await durableObj.fetch(
+			new Request('https://puzzle-metadata/reserve', {
+				method: 'POST',
+				body: 'not valid json'
+			})
+		);
+		expect(response.status).toBe(400);
 	});
 });

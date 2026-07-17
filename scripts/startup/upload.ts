@@ -12,6 +12,7 @@
  */
 
 import { basename } from 'node:path';
+import { createHash } from 'node:crypto';
 import { aspectRatiosMatch, DEFAULT_PUZZLE_ASPECT_RATIO } from '@perseus/types';
 import { parseImageDimensions, detectImageType } from '@perseus/shared';
 import {
@@ -114,6 +115,17 @@ export function idempotencyKey(name: string, pieceCount?: number, aspectRatio?: 
 	return `${name.trim()}\u0000${pieceCount ?? ''}\u0000${aspectRatio ?? ''}`;
 }
 
+/**
+ * HTTP-safe Idempotency-Key header value. The raw dedup key contains NUL
+ * separators (invalid in HTTP headers), so SHA-256 hash it to a hex string.
+ * The server uses this only as an opaque unique identifier — it never
+ * decodes it — so a hash preserves the collision-resistance properties of
+ * the composite key while being valid header content.
+ */
+export function idempotencyKeyHeader(dedupKey: string): string {
+	return createHash('sha256').update(dedupKey).digest('hex');
+}
+
 export async function fetchExistingKeys(
 	server: string,
 	baseHeaders: Record<string, string>,
@@ -205,11 +217,16 @@ export async function pollForExistingKey(
  * and network errors). 4xx responses are not retried — they are deterministic
  * validation/authorization failures.
  *
- * To prevent duplicate puzzles when the server creates the puzzle but the
- * response is lost (network error or post-creation 5xx), the entry is
- * re-checked against existing puzzles (with bounded KV-lag polling) before
- * each retry. If the key already exists, a synthetic OK response is returned
- * instead of re-POSTing.
+ * Duplicate prevention has two layers:
+ *   1. Idempotency-Key header (primary): the server reserves the key in
+ *      PuzzleMetadataDO (strongly consistent) before minting a UUID. A retried
+ *      POST that reaches the server returns the original puzzle (200) instead
+ *      of creating a duplicate — no KV propagation race.
+ *   2. KV-lag polling (secondary): before each retry, GET /api/admin/puzzles
+ *      checks if the puzzle already exists. If found, a synthetic OK response
+ *      is returned without re-POSTing. This catches the case where the first
+ *      POST succeeded but the response was lost, without needing a second
+ *      round-trip to the server.
  */
 export async function uploadWithRetry(
 	server: string,
@@ -221,11 +238,19 @@ export async function uploadWithRetry(
 ): Promise<Response> {
 	let lastError: Error | undefined;
 	const maxAttempts = retryConfig.maxAttempts;
+	// Send the Idempotency-Key header so the server can dedup a retried POST
+	// after a lost response via PuzzleMetadataDO (strongly consistent) instead
+	// of relying solely on the eventually-consistent KV poll below.
+	const idempotencyHeader = idempotencyKeyHeader(dedupKey);
 	for (let attempt = 1; attempt <= maxAttempts; attempt++) {
 		try {
 			const response = await fetch(`${server}/api/admin/puzzles`, {
 				method: 'POST',
-				headers: { ...baseHeaders, Cookie: cookie },
+				headers: {
+					...baseHeaders,
+					Cookie: cookie,
+					'Idempotency-Key': idempotencyHeader
+				},
 				body: formData,
 				redirect: 'manual',
 				signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS)
@@ -238,8 +263,13 @@ export async function uploadWithRetry(
 		}
 		if (attempt < maxAttempts) {
 			// After a transient failure: poll for the puzzle before re-POSTing.
-			// Every POST mints a fresh UUID — the API has no server-side
-			// idempotency — so a false-negative existence check creates duplicates.
+			// The Idempotency-Key header above is the primary dedup mechanism
+			// (server-side, strongly consistent via DO). This KV poll is a
+			// secondary check — it catches the case where the first POST
+			// succeeded but the response was lost, without needing the server
+			// to support idempotency. With the header in place, a re-POST that
+			// reaches the server will return the original puzzle (200) instead
+			// of creating a duplicate, even if this poll misses due to KV lag.
 			if (await pollForExistingKey(server, baseHeaders, cookie, dedupKey)) {
 				console.log(`  verified: ${entryName} already on server — skipping retry`);
 				return new Response(

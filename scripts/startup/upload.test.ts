@@ -4,7 +4,9 @@ import {
 	hasAccessCredentials,
 	readError,
 	uploadWithRetry,
-	retryConfig
+	retryConfig,
+	idempotencyKey,
+	idempotencyKeyHeader
 } from './upload';
 import { detectImageType, parseImageDimensions, type BlobLike } from '@perseus/shared';
 import { aspectRatiosMatch } from '@perseus/types';
@@ -288,6 +290,78 @@ describe('uploadWithRetry', () => {
 		// Only one POST — the retry was skipped because verification found it
 		const posts = callLog.filter((c) => c.startsWith('POST'));
 		expect(posts.length).toBe(1);
+	});
+
+	it('sends Idempotency-Key header on POST', async () => {
+		let capturedHeaders: Record<string, string> = {};
+		globalThis.fetch = mock(async (url: string | URL | Request, init?: RequestInit) => {
+			const method = init?.method ?? 'GET';
+			if (method === 'POST') {
+				capturedHeaders = init?.headers as Record<string, string>;
+				return new Response(JSON.stringify({ id: 'abc', status: 'processing' }), {
+					status: 201,
+					headers: { 'Content-Type': 'application/json' }
+				});
+			}
+			return new Response(JSON.stringify({ puzzles: [] }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' }
+			});
+		}) as unknown as typeof fetch;
+
+		const dedupKey = 'test-puzzle\u000048\u00001:1';
+		await uploadWithRetry(
+			'http://localhost:3000',
+			{},
+			'session=abc',
+			new FormData(),
+			'test-puzzle',
+			dedupKey
+		);
+
+		expect(capturedHeaders['Idempotency-Key']).toBeDefined();
+		// Header should be a hex SHA-256 hash (64 chars), not the raw key
+		expect(capturedHeaders['Idempotency-Key']).toMatch(/^[0-9a-f]{64}$/);
+		// Must NOT contain the NUL separator from the raw key
+		expect(capturedHeaders['Idempotency-Key']).not.toContain('\u0000');
+	});
+});
+
+// ─── idempotencyKey / idempotencyKeyHeader ──────────────────────────
+
+describe('idempotencyKey', () => {
+	it('builds a composite key from name, pieceCount, and aspectRatio', () => {
+		const key = idempotencyKey('Sunset', 48, '1:1');
+		expect(key).toBe('Sunset\u000048\u00001:1');
+	});
+
+	it('trims the name', () => {
+		const key = idempotencyKey('  Sunset  ', 48, '1:1');
+		expect(key).toBe('Sunset\u000048\u00001:1');
+	});
+
+	it('handles missing pieceCount and aspectRatio', () => {
+		const key = idempotencyKey('Sunset');
+		expect(key).toBe('Sunset\u0000\u0000');
+	});
+});
+
+describe('idempotencyKeyHeader', () => {
+	it('produces a stable hex hash for the same dedup key', () => {
+		const key = 'Sunset\u000048\u00001:1';
+		expect(idempotencyKeyHeader(key)).toBe(idempotencyKeyHeader(key));
+	});
+
+	it('produces different hashes for different dedup keys', () => {
+		const a = idempotencyKeyHeader('Sunset\u000048\u00001:1');
+		const b = idempotencyKeyHeader('Sunset\u000048\u00004:3');
+		expect(a).not.toBe(b);
+	});
+
+	it('produces valid HTTP header content (hex, no NUL)', () => {
+		const header = idempotencyKeyHeader('test\u000012\u00001:1');
+		expect(header).toMatch(/^[0-9a-f]{64}$/);
+		expect(header).not.toContain('\u0000');
 	});
 });
 

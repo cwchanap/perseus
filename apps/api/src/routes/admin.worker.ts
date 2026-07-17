@@ -23,6 +23,7 @@ import {
 	deleteOriginalImage,
 	getPuzzle,
 	listPuzzles,
+	reserveIdempotencyKey,
 	type PuzzleMetadata
 } from '../services/storage.worker';
 import {
@@ -377,16 +378,55 @@ admin.post('/puzzles', requireAuth, async (c) => {
 		}
 		// If dimensions can't be parsed, proceed — the workflow will use actual pixel dimensions
 
-		// Generate puzzle ID.
-		// NOTE: No server-side idempotency — every POST mints a fresh UUID.
-		// Dedup is client-side only: the seed script (scripts/startup/upload.ts)
-		// fetches existing puzzle keys (name + pieceCount + aspectRatio) via
-		// GET /api/admin/puzzles and skips entries that already exist before
-		// POSTing. This is sufficient for the single-operator admin seed flow.
-		// If two clients POST the same puzzle concurrently, duplicates will be
-		// created. To add server-side protection, accept an Idempotency-Key
-		// header here and check existing puzzles by key before creating.
-		const id = crypto.randomUUID();
+		// Server-side idempotency: if the client sends an Idempotency-Key
+		// header, reserve it in PuzzleMetadataDO (strongly consistent) before
+		// minting a UUID. A retried POST after a lost response hits the same
+		// DO instance and gets the original puzzleId back instead of creating
+		// a duplicate. Without the header, behavior is unchanged (fresh UUID
+		// per POST). The reserve happens after all input validation so bad
+		// requests don't consume an idempotency slot.
+		const idempotencyKeyHeader = c.req.header('Idempotency-Key');
+		let idempotencyKey: string | undefined;
+		if (idempotencyKeyHeader) {
+			const trimmed = idempotencyKeyHeader.trim();
+			if (trimmed.length === 0 || trimmed.length > 128 || !/^[A-Za-z0-9_-]+$/.test(trimmed)) {
+				return c.json(
+					{
+						error: 'bad_request',
+						message: 'Idempotency-Key must be 1-128 alphanumeric/[-_] chars'
+					},
+					400
+				);
+			}
+			idempotencyKey = trimmed;
+		}
+
+		let id: string = crypto.randomUUID();
+		if (idempotencyKey) {
+			try {
+				const reserved = await reserveIdempotencyKey(c.env.PUZZLE_METADATA_DO, idempotencyKey, id);
+				if (reserved.existing) {
+					// A prior request already created this puzzle. Return it
+					// instead of creating a duplicate. Fetch from KV; if KV
+					// hasn't propagated yet (unlikely — the original create
+					// wrote to KV before returning), fall back to a minimal
+					// response so the client still gets the correct id.
+					const existing = await getPuzzle(c.env.PUZZLE_METADATA, reserved.puzzleId);
+					if (existing) {
+						return c.json(existing, 200);
+					}
+					return c.json({ id: reserved.puzzleId, status: 'processing', name: trimmedName }, 200);
+				}
+				// First caller — use our minted UUID.
+				id = reserved.puzzleId;
+			} catch (error) {
+				console.error('Idempotency reserve failed:', error);
+				return c.json(
+					{ error: 'internal_error', message: 'Failed to reserve idempotency key' },
+					500
+				);
+			}
+		}
 
 		// Calculate grid dimensions (must match workflow calculation)
 		const { rows: gridRows, cols: gridCols } = getGridDimensionsForAspectRatio(
@@ -424,7 +464,8 @@ admin.post('/puzzles', requireAuth, async (c) => {
 				updatedAt: Date.now()
 			},
 			pieces: [],
-			version: 0 // Initial version for optimistic concurrency
+			version: 0, // Initial version for optimistic concurrency
+			...(idempotencyKey && { idempotencyKey })
 		};
 
 		try {

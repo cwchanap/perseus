@@ -63,7 +63,15 @@ export interface Env {
 export class PuzzleMetadataDO extends DurableObject<Env> {
 	async fetch(request: Request): Promise<Response> {
 		const url = new URL(request.url);
-		if (request.method !== 'POST' || url.pathname !== '/update') {
+		if (request.method !== 'POST') {
+			return new Response('Method not allowed', { status: 405 });
+		}
+
+		if (url.pathname === '/reserve') {
+			return this.handleReserve(request);
+		}
+
+		if (url.pathname !== '/update') {
 			return new Response('Not found', { status: 404 });
 		}
 
@@ -199,6 +207,48 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 		}
 
 		return Response.json({ success: true, version: updated.version });
+	}
+
+	/**
+	 * Reserve an idempotency key → puzzleId mapping. This DO instance is keyed
+	 * by idFromName(idempotencyKey), so each idempotency key gets its own
+	 * strongly-consistent DO instance. The first caller wins: its puzzleId is
+	 * stored and returned to all subsequent callers as `existing: true`.
+	 *
+	 * This closes the duplicate-puzzle window that client-side KV polling
+	 * cannot: KV is eventually consistent, so a retried POST after a lost
+	 * response could re-mint a UUID before KV propagated the first create.
+	 * DO storage is strongly consistent within a single instance, so the
+	 * reserve check is atomic.
+	 *
+	 * This instance is separate from the metadata DO instance (keyed by
+	 * idFromName(puzzleId)) — they never share storage.
+	 */
+	async handleReserve(request: Request): Promise<Response> {
+		const body = (await request.json().catch(() => null)) as {
+			idempotencyKey?: string;
+			puzzleId?: string;
+		} | null;
+		if (
+			!body ||
+			typeof body.idempotencyKey !== 'string' ||
+			typeof body.puzzleId !== 'string' ||
+			!body.idempotencyKey.trim() ||
+			!body.puzzleId.trim()
+		) {
+			return Response.json({ message: 'Invalid reserve payload' }, { status: 400 });
+		}
+
+		const { puzzleId } = body;
+		// idempotencyKey is not used directly — this DO instance is already
+		// keyed by it via idFromName(idempotencyKey) in the caller. We only
+		// need the puzzleId to store/return the reservation.
+		const existing = await this.ctx.storage.get<string>('reservedPuzzleId');
+		if (existing) {
+			return Response.json({ existing: true, puzzleId: existing });
+		}
+		await this.ctx.storage.put('reservedPuzzleId', puzzleId);
+		return Response.json({ existing: false, puzzleId });
 	}
 }
 

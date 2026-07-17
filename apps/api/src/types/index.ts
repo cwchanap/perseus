@@ -37,6 +37,7 @@ export interface Puzzle {
 	createdAt: number;
 	pieces: PuzzlePiece[];
 	category?: PuzzleCategory;
+	idempotencyKey?: string;
 }
 
 export interface PuzzleSummary {

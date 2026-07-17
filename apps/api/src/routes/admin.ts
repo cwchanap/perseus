@@ -22,6 +22,7 @@ import { generatePuzzle, isValidPieceCount } from '../services/puzzle-generator'
 import {
 	createPuzzle as storePuzzle,
 	deletePuzzle as deleteStoredPuzzle,
+	findPuzzleByIdempotencyKey,
 	listPuzzles,
 	puzzleExists,
 	getOriginalImagePath,
@@ -307,6 +308,31 @@ admin.post('/puzzles', requireAuth, async (c) => {
 		}
 		// If dimensions can't be parsed, proceed — the generator will use actual pixel dimensions
 
+		// Server-side idempotency: if the client sends an Idempotency-Key
+		// header, check the filesystem (strongly consistent in the Bun
+		// runtime) for an existing puzzle with that key. A retried POST
+		// after a lost response gets the original puzzle back instead of
+		// creating a duplicate. Without the header, behavior is unchanged.
+		const idempotencyKeyHeader = c.req.header('Idempotency-Key');
+		let idempotencyKey: string | undefined;
+		if (idempotencyKeyHeader) {
+			const trimmed = idempotencyKeyHeader.trim();
+			if (trimmed.length === 0 || trimmed.length > 128 || !/^[A-Za-z0-9_-]+$/.test(trimmed)) {
+				return c.json(
+					{
+						error: 'bad_request',
+						message: 'Idempotency-Key must be 1-128 alphanumeric/[-_] chars'
+					},
+					400
+				);
+			}
+			idempotencyKey = trimmed;
+			const existing = await findPuzzleByIdempotencyKey(idempotencyKey);
+			if (existing) {
+				return c.json(existing, 200);
+			}
+		}
+
 		// Generate puzzle ID
 		id = crypto.randomUUID();
 
@@ -329,7 +355,10 @@ admin.post('/puzzles', requireAuth, async (c) => {
 		});
 
 		// Save puzzle metadata
-		const puzzleToStore = category ? { ...result.puzzle, category } : result.puzzle;
+		const puzzleToStore = {
+			...(category ? { ...result.puzzle, category } : result.puzzle),
+			...(idempotencyKey && { idempotencyKey })
+		};
 		const saved = await storePuzzle(puzzleToStore);
 		if (!saved) {
 			const cleaned = await deleteStoredPuzzle(id);
