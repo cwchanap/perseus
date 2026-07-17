@@ -631,3 +631,83 @@ describe('PuzzleMetadataDO.fetch - /reserve (idempotency)', () => {
 		expect(loser.puzzleId).toBe(winnerId);
 	});
 });
+
+describe('PuzzleMetadataDO.fetch - /commit /fail /release transition edge cases', () => {
+	it('returns 400 for invalid commit payload (missing puzzleId)', async () => {
+		const { durableObj } = makeDO({
+			reservation: { puzzleId: 'puzzle-uuid-1', status: 'pending' }
+		});
+		const response = await postRequest(durableObj, {}, '/commit');
+		expect(response.status).toBe(400);
+	});
+
+	it('returns 400 for commit payload with empty puzzleId', async () => {
+		const { durableObj } = makeDO({
+			reservation: { puzzleId: 'puzzle-uuid-1', status: 'pending' }
+		});
+		const response = await postRequest(durableObj, { puzzleId: '  ' }, '/commit');
+		expect(response.status).toBe(400);
+	});
+
+	it('returns 400 for invalid JSON body on commit', async () => {
+		const { durableObj } = makeDO({
+			reservation: { puzzleId: 'puzzle-uuid-1', status: 'pending' }
+		});
+		const response = await durableObj.fetch(
+			new Request('https://puzzle-metadata/commit', {
+				method: 'POST',
+				body: 'not valid json'
+			})
+		);
+		expect(response.status).toBe(400);
+	});
+
+	it('returns 404 when committing against a DO with no reservation', async () => {
+		const { durableObj } = makeDO();
+		const response = await postRequest(durableObj, { puzzleId: 'puzzle-uuid-1' }, '/commit');
+		expect(response.status).toBe(404);
+		const body = (await response.json()) as { message: string };
+		expect(body.message).toMatch(/no reservation/i);
+	});
+
+	it('returns 409 when transitioning a reservation already in a terminal status', async () => {
+		// A committed reservation cannot be committed again via the wrong-status
+		// branch — but the idempotent same-status branch (status === action)
+		// short-circuits first. Use /fail on an already-committed reservation to
+		// exercise the status-mismatch 409 path.
+		const { durableObj } = makeDO({
+			reservation: { puzzleId: 'puzzle-uuid-1', status: 'committed' }
+		});
+		const response = await postRequest(durableObj, { puzzleId: 'puzzle-uuid-1' }, '/fail');
+		expect(response.status).toBe(409);
+		const body = (await response.json()) as { message: string };
+		expect(body.message).toMatch(/cannot fail/i);
+	});
+
+	it('idempotent commit returns success without rewriting when already committed', async () => {
+		const { durableObj, storage } = makeDO({
+			reservation: { puzzleId: 'puzzle-uuid-1', status: 'committed' }
+		});
+		const response = await postRequest(durableObj, { puzzleId: 'puzzle-uuid-1' }, '/commit');
+		expect(response.status).toBe(200);
+		const body = (await response.json()) as { success: boolean; status: string };
+		expect(body.success).toBe(true);
+		expect(body.status).toBe('committed');
+		// No new write — the idempotent branch returns before storage.put.
+		expect(storage.put).not.toHaveBeenCalledWith('reservation', expect.anything());
+	});
+
+	it('reads legacy reservedPuzzleId (plain string) when no reservation object exists', async () => {
+		// Pre-rollout DO instances stored only a plain puzzleId string under
+		// 'reservedPuzzleId'. readReservation must treat that as a committed
+		// reservation so a post-rollout commit/fail/release still resolves it.
+		const { durableObj } = makeDO({ reservedPuzzleId: 'legacy-puzzle-uuid' });
+		const response = await postRequest(durableObj, { puzzleId: 'legacy-puzzle-uuid' }, '/commit');
+		expect(response.status).toBe(200);
+		const body = (await response.json()) as { success: boolean; status: string };
+		// Legacy reservations are read back as 'committed', so a commit hits the
+		// idempotent same-status branch.
+		expect(body.success).toBe(true);
+		expect(body.status).toBe('committed');
+	});
+});

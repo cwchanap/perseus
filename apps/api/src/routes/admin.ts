@@ -342,6 +342,16 @@ admin.post('/puzzles', requireAuth, async (c) => {
 					}
 					// Reservation exists but metadata is missing (in-flight or
 					// orphaned). Do not invent a response body.
+					//
+					// NOTE: this Bun path always returns 409, while the Worker path
+					// (admin.worker.ts) distinguishes 409 (pending) from 404
+					// (committed-but-missing). The filesystem reservation
+					// (reserveIdempotencyKey in storage.ts) stores only a flat
+					// puzzleId string with no lifecycle status, so the Bun runtime
+					// cannot tell pending from committed. Adding status tracking to
+					// the dev-only filesystem reservation is not worth the
+					// complexity; the Worker (production) path is the authoritative
+					// behavior. This divergence is dev-only and low-impact.
 					return c.json(
 						{
 							error: 'conflict',

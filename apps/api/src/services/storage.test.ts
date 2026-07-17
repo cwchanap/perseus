@@ -501,4 +501,23 @@ describe('idempotency reservation', () => {
 		expect(result).toEqual({ existing: false, puzzleId: 'puzzle-1' });
 		expect(await readFile(reservationPath, 'utf-8')).toBe('puzzle-1');
 	});
+
+	it('concurrent reserves for the same key award exactly one winner (wx flag)', async () => {
+		// Two reserves race for the same key. The exclusive 'wx' (O_EXCL) create
+		// must guarantee only one caller wins the claim; the loser reads the
+		// winner's puzzleId back. This mirrors the DO concurrency test and
+		// guards against a regression that drops the wx flag (a plain writeFile
+		// would let both callers "win" and clobber each other).
+		const [r1, r2] = await Promise.all([
+			storageModule.reserveIdempotencyKey('key-race', 'puzzle-a'),
+			storageModule.reserveIdempotencyKey('key-race', 'puzzle-b')
+		]);
+		const winners = [r1, r2].filter((r) => r.existing === false);
+		expect(winners.length).toBe(1);
+		const winnerId = winners[0].puzzleId;
+		expect(['puzzle-a', 'puzzle-b']).toContain(winnerId);
+
+		const loser = [r1, r2].find((r) => r.existing === true)!;
+		expect(loser.puzzleId).toBe(winnerId);
+	});
 });

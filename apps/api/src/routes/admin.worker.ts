@@ -55,8 +55,31 @@ import {
 	parseImageDimensions,
 	SYSTEM_OWNER_ID
 } from '@perseus/shared';
+import type { AppDb } from '@perseus/shared';
 
 const admin = new Hono<{ Bindings: Env }>();
+
+/**
+ * Run a best-effort D1 operation that must never bubble a 500 after a
+ * successful KV/R2 mutation. getWorkerDb is a lazy init that can throw on
+ * first call; the outer catch handles that (logging initLabel), while the
+ * inner .catch handles the operation itself failing (logging operationLabel).
+ * Both are logged, not fatal — KV/R2 are the source of truth for admin
+ * puzzle existence (see the per-call-site comments for the full rationale).
+ * Mirrors the same best-effort pattern in admin.ts.
+ */
+async function withDbBestEffort(
+	env: Env,
+	operationLabel: string,
+	initLabel: string,
+	fn: (db: AppDb) => Promise<unknown>
+): Promise<void> {
+	try {
+		await fn(getWorkerDb(env)).catch((err) => console.error(operationLabel, err));
+	} catch (err) {
+		console.error(initLabel, err);
+	}
+}
 
 // POST /api/admin/login - Admin login
 admin.post('/login', loginRateLimit, async (c) => {
@@ -528,19 +551,21 @@ admin.post('/puzzles', requireAuth, async (c) => {
 		// D1 outage or when the DB binding is absent. The player-owned upload
 		// path (puzzles.worker.ts) keeps a hard D1 requirement because the
 		// ownership row IS the source of truth for a player's puzzle list.
-		try {
-			await insertPuzzleOwnership(getWorkerDb(c.env), {
-				id,
-				ownerId: SYSTEM_OWNER_ID,
-				name: trimmedName,
-				pieceCount,
-				...(category ? { category } : {}),
-				status: 'processing',
-				createdAt: puzzleMetadata.createdAt
-			}).catch((err) => console.error(`Failed to record admin puzzle ownership for ${id}:`, err));
-		} catch (err) {
-			console.error(`Failed to init DB for ownership insert of puzzle ${id}:`, err);
-		}
+		await withDbBestEffort(
+			c.env,
+			`Failed to record admin puzzle ownership for ${id}:`,
+			`Failed to init DB for ownership insert of puzzle ${id}:`,
+			(db) =>
+				insertPuzzleOwnership(db, {
+					id,
+					ownerId: SYSTEM_OWNER_ID,
+					name: trimmedName,
+					pieceCount,
+					...(category ? { category } : {}),
+					status: 'processing',
+					createdAt: puzzleMetadata.createdAt
+				})
+		);
 
 		// Step 3: Trigger workflow for puzzle generation
 		if (!c.env.PUZZLE_WORKFLOW || typeof c.env.PUZZLE_WORKFLOW.create !== 'function') {
@@ -558,13 +583,12 @@ admin.post('/puzzles', requireAuth, async (c) => {
 					imageCleanup.error
 				);
 			}
-			try {
-				await deletePuzzleOwnership(getWorkerDb(c.env), id).catch((err) =>
-					console.error('Failed to cleanup ownership after missing workflow binding:', err)
-				);
-			} catch (err) {
-				console.error(`Failed to init DB for ownership cleanup of puzzle ${id}:`, err);
-			}
+			await withDbBestEffort(
+				c.env,
+				'Failed to cleanup ownership after missing workflow binding:',
+				`Failed to init DB for ownership cleanup of puzzle ${id}:`,
+				(db) => deletePuzzleOwnership(db, id)
+			);
 			await releaseReservation();
 			return c.json(
 				{
@@ -597,13 +621,12 @@ admin.post('/puzzles', requireAuth, async (c) => {
 					imageCleanup.error
 				);
 			}
-			try {
-				await deletePuzzleOwnership(getWorkerDb(c.env), id).catch((err) =>
-					console.error('Failed to cleanup ownership after workflow trigger failure:', err)
-				);
-			} catch (err) {
-				console.error(`Failed to init DB for ownership cleanup of puzzle ${id}:`, err);
-			}
+			await withDbBestEffort(
+				c.env,
+				'Failed to cleanup ownership after workflow trigger failure:',
+				`Failed to init DB for ownership cleanup of puzzle ${id}:`,
+				(db) => deletePuzzleOwnership(db, id)
+			);
 			await releaseReservation();
 			return c.json({ error: 'internal_error', message: 'Failed to start puzzle processing' }, 500);
 		}
@@ -678,19 +701,21 @@ admin.delete('/puzzles/:id', requireAuth, async (c) => {
 		// owner; this removes that row too.) getWorkerDb is a lazy init that can
 		// throw on first call; wrap both cleanup calls so a DB init failure
 		// doesn't bubble a 500 after a successful KV delete (mirrors admin.ts).
-		try {
-			await deletePuzzleOwnership(getWorkerDb(c.env), id).catch((err) =>
-				console.error(`Failed to delete ownership row for puzzle ${id}:`, err)
-			);
-			// Best-effort cleanup of any puzzle_stats rows referencing this puzzle
-			// so deleted puzzles don't linger in players' best-times lists with a
-			// null name. Logged, not fatal — same rationale as ownership cleanup.
-			await deletePuzzleStats(getWorkerDb(c.env), id).catch((err) =>
-				console.error(`Failed to delete stats rows for puzzle ${id}:`, err)
-			);
-		} catch (err) {
-			console.error(`Failed to init DB for ownership cleanup of puzzle ${id}:`, err);
-		}
+		await withDbBestEffort(
+			c.env,
+			`Failed to delete ownership row for puzzle ${id}:`,
+			`Failed to init DB for ownership cleanup of puzzle ${id}:`,
+			(db) => deletePuzzleOwnership(db, id)
+		);
+		// Best-effort cleanup of any puzzle_stats rows referencing this puzzle
+		// so deleted puzzles don't linger in players' best-times lists with a
+		// null name. Logged, not fatal — same rationale as ownership cleanup.
+		await withDbBestEffort(
+			c.env,
+			`Failed to delete stats rows for puzzle ${id}:`,
+			`Failed to init DB for ownership cleanup of puzzle ${id}:`,
+			(db) => deletePuzzleStats(db, id)
+		);
 
 		// Delete assets from R2
 		const deleteResult = await deletePuzzleAssets(c.env.PUZZLES_BUCKET, id, puzzle.pieceCount);
