@@ -10,7 +10,10 @@ vi.mock('../../services/storage.worker', () => ({
 	uploadOriginalImage: vi.fn(),
 	deleteOriginalImage: vi.fn(),
 	listPuzzles: vi.fn(),
-	reserveIdempotencyKey: vi.fn()
+	reserveIdempotencyKey: vi.fn(),
+	commitIdempotencyKey: vi.fn(),
+	failIdempotencyKey: vi.fn(),
+	releaseIdempotencyKey: vi.fn()
 }));
 
 vi.mock('../../middleware/auth.worker', () => ({
@@ -948,10 +951,12 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 		it('should create puzzle with idempotencyKey when first reserve', async () => {
 			(storage.reserveIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue({
 				existing: false,
-				puzzleId: 'new-uuid'
+				puzzleId: 'new-uuid',
+				status: 'pending'
 			});
 			(storage.uploadOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 			(storage.createPuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.commitIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
 			const mockEnv = {
 				ADMIN_PASSKEY: 'test-passkey',
@@ -981,12 +986,55 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 
 			expect(res.status).toBe(201);
 			expect(storage.reserveIdempotencyKey).toHaveBeenCalled();
+			expect(storage.commitIdempotencyKey).toHaveBeenCalledWith(
+				mockEnv.PUZZLE_METADATA_DO,
+				'abc123def456',
+				'new-uuid'
+			);
 			expect(storage.createPuzzleMetadata).toHaveBeenCalledWith(
 				mockEnv.PUZZLE_METADATA,
 				expect.objectContaining({
 					idempotencyKey: 'abc123def456'
 				})
 			);
+		});
+
+		it('should return 409 when key is reserved but metadata is missing', async () => {
+			(storage.reserveIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue({
+				existing: true,
+				puzzleId: 'original-uuid',
+				status: 'pending'
+			});
+			(storage.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+			const mockEnv = {
+				ADMIN_PASSKEY: 'test-passkey',
+				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+				PUZZLE_METADATA: {} as KVNamespace,
+				PUZZLES_BUCKET: {} as R2Bucket,
+				PUZZLE_WORKFLOW: { create: vi.fn() },
+				PUZZLE_METADATA_DO: {} as DurableObjectNamespace
+			};
+
+			const formData = new FormData();
+			formData.append('name', 'Test Puzzle');
+			formData.append('pieceCount', '225');
+			const blob = new Blob([PNG_HEADER], { type: 'image/png' });
+			formData.append('image', blob, 'test.png');
+
+			const req = new Request('http://localhost/puzzles', {
+				method: 'POST',
+				headers: {
+					cookie: 'session=valid.token',
+					'Idempotency-Key': 'abc123def456'
+				},
+				body: formData
+			});
+
+			const res = await admin.fetch(req, mockEnv as any);
+
+			expect(res.status).toBe(409);
+			expect(storage.createPuzzleMetadata).not.toHaveBeenCalled();
 		});
 	});
 });

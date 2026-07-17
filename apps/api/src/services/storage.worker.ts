@@ -179,6 +179,8 @@ export async function updatePuzzleMetadata(
 	}
 }
 
+export type IdempotencyReservationStatus = 'pending' | 'committed' | 'failed' | 'released';
+
 /**
  * Reserve an idempotency key via a strongly-consistent Durable Object. The DO
  * instance is keyed by idFromName(idempotencyKey) — separate from the metadata
@@ -186,16 +188,14 @@ export async function updatePuzzleMetadata(
  * a prior request already reserved this key, or the proposed puzzleId if this
  * is the first caller.
  *
- * This closes the duplicate-puzzle window that client-side KV polling cannot:
- * KV is eventually consistent, so a retried POST after a lost response could
- * re-mint a UUID before KV propagated the first create. DO storage is strongly
- * consistent within a single instance, making the reserve atomic.
+ * Pair with commitIdempotencyKey on success and failIdempotencyKey /
+ * releaseIdempotencyKey on failure so the reservation lifecycle is recoverable.
  */
 export async function reserveIdempotencyKey(
 	metadataDO: DurableObjectNamespace,
 	idempotencyKey: string,
 	proposedPuzzleId: string
-): Promise<{ existing: boolean; puzzleId: string }> {
+): Promise<{ existing: boolean; puzzleId: string; status?: IdempotencyReservationStatus }> {
 	const id = metadataDO.idFromName(idempotencyKey);
 	const stub = metadataDO.get(id);
 	const response = await stub.fetch('https://puzzle-metadata/reserve', {
@@ -209,11 +209,66 @@ export async function reserveIdempotencyKey(
 			payload?.message ?? `Failed to reserve idempotency key (HTTP ${response.status})`
 		);
 	}
-	const result = (await response.json()) as { existing?: boolean; puzzleId?: string };
+	const result = (await response.json()) as {
+		existing?: boolean;
+		puzzleId?: string;
+		status?: IdempotencyReservationStatus;
+	};
 	if (typeof result.puzzleId !== 'string') {
 		throw new Error('Reserve response missing puzzleId');
 	}
-	return { existing: !!result.existing, puzzleId: result.puzzleId };
+	return {
+		existing: !!result.existing,
+		puzzleId: result.puzzleId,
+		...(result.status ? { status: result.status } : {})
+	};
+}
+
+async function transitionIdempotencyKey(
+	metadataDO: DurableObjectNamespace,
+	idempotencyKey: string,
+	puzzleId: string,
+	action: 'commit' | 'fail' | 'release'
+): Promise<void> {
+	const id = metadataDO.idFromName(idempotencyKey);
+	const stub = metadataDO.get(id);
+	const response = await stub.fetch(`https://puzzle-metadata/${action}`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ puzzleId })
+	});
+	if (!response.ok && response.status !== 404) {
+		const payload = (await response.json().catch(() => null)) as { message?: string } | null;
+		const fallback = `Failed to ${action} idempotency key (HTTP ${response.status})`;
+		throw new Error(payload?.message ?? fallback);
+	}
+}
+
+/** Mark a pending reservation as committed after successful create. */
+export async function commitIdempotencyKey(
+	metadataDO: DurableObjectNamespace,
+	idempotencyKey: string,
+	puzzleId: string
+): Promise<void> {
+	await transitionIdempotencyKey(metadataDO, idempotencyKey, puzzleId, 'commit');
+}
+
+/** Mark a pending reservation as failed so a later reserve can reclaim the key. */
+export async function failIdempotencyKey(
+	metadataDO: DurableObjectNamespace,
+	idempotencyKey: string,
+	puzzleId: string
+): Promise<void> {
+	await transitionIdempotencyKey(metadataDO, idempotencyKey, puzzleId, 'fail');
+}
+
+/** Delete a pending reservation (owner-checked) so the key is free immediately. */
+export async function releaseIdempotencyKey(
+	metadataDO: DurableObjectNamespace,
+	idempotencyKey: string,
+	puzzleId: string
+): Promise<void> {
+	await transitionIdempotencyKey(metadataDO, idempotencyKey, puzzleId, 'release');
 }
 
 // Delete puzzle metadata from KV and invalidate gallery index cache

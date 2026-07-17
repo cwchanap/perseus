@@ -22,11 +22,13 @@ import { generatePuzzle, isValidPieceCount } from '../services/puzzle-generator'
 import {
 	createPuzzle as storePuzzle,
 	deletePuzzle as deleteStoredPuzzle,
-	findPuzzleByIdempotencyKey,
+	getPuzzle,
 	listPuzzles,
 	puzzleExists,
 	getOriginalImagePath,
-	getPuzzleDir
+	getPuzzleDir,
+	releaseIdempotencyKey,
+	reserveIdempotencyKey
 } from '../services/storage';
 import { MAX_FILE_SIZE, ALLOWED_MIME_TYPES, PUZZLE_CATEGORIES } from '../types';
 import type { PuzzleCategory } from '../types';
@@ -208,6 +210,7 @@ admin.get('/puzzles', requireAuth, async (c) => {
 admin.post('/puzzles', requireAuth, async (c) => {
 	let puzzleDirCreated = false;
 	let id = '';
+	let reservedIdempotencyKey: string | undefined;
 
 	try {
 		const formData = await c.req.formData();
@@ -308,11 +311,10 @@ admin.post('/puzzles', requireAuth, async (c) => {
 		}
 		// If dimensions can't be parsed, proceed — the generator will use actual pixel dimensions
 
-		// Server-side idempotency: if the client sends an Idempotency-Key
-		// header, check the filesystem (strongly consistent in the Bun
-		// runtime) for an existing puzzle with that key. A retried POST
-		// after a lost response gets the original puzzle back instead of
-		// creating a duplicate. Without the header, behavior is unchanged.
+		// Server-side idempotency: reserve the key atomically before minting a
+		// UUID or creating assets. Exclusive file create closes the concurrent-
+		// POST race that a post-create filesystem scan cannot. Without the
+		// header, behavior is unchanged (fresh UUID per POST).
 		const idempotencyKeyHeader = c.req.header('Idempotency-Key');
 		let idempotencyKey: string | undefined;
 		if (idempotencyKeyHeader) {
@@ -327,14 +329,37 @@ admin.post('/puzzles', requireAuth, async (c) => {
 				);
 			}
 			idempotencyKey = trimmed;
-			const existing = await findPuzzleByIdempotencyKey(idempotencyKey);
-			if (existing) {
-				return c.json(existing, 200);
-			}
 		}
 
-		// Generate puzzle ID
 		id = crypto.randomUUID();
+		if (idempotencyKey) {
+			try {
+				const reserved = await reserveIdempotencyKey(idempotencyKey, id);
+				if (reserved.existing) {
+					const existing = await getPuzzle(reserved.puzzleId);
+					if (existing) {
+						return c.json(existing, 200);
+					}
+					// Reservation exists but metadata is missing (in-flight or
+					// orphaned). Do not invent a response body.
+					return c.json(
+						{
+							error: 'conflict',
+							message: 'A request with this Idempotency-Key is already in progress'
+						},
+						409
+					);
+				}
+				id = reserved.puzzleId;
+				reservedIdempotencyKey = idempotencyKey;
+			} catch (error) {
+				console.error('Idempotency reserve failed:', error);
+				return c.json(
+					{ error: 'internal_error', message: 'Failed to reserve idempotency key' },
+					500
+				);
+			}
+		}
 
 		// Read image buffer
 		const imageBuffer = Buffer.from(await image.arrayBuffer());
@@ -365,6 +390,10 @@ admin.post('/puzzles', requireAuth, async (c) => {
 			if (!cleaned) {
 				console.error(`Failed to clean up puzzle directory ${id} after metadata save failure`);
 			}
+			if (reservedIdempotencyKey) {
+				await releaseIdempotencyKey(reservedIdempotencyKey, id);
+				reservedIdempotencyKey = undefined;
+			}
 			return c.json({ error: 'internal_error', message: 'Failed to save puzzle metadata' }, 500);
 		}
 
@@ -389,6 +418,8 @@ admin.post('/puzzles', requireAuth, async (c) => {
 			console.error(`Failed to init DB for ownership insert of puzzle ${id}:`, err);
 		}
 
+		// Keep the reservation file as the durable key → puzzleId mapping.
+		reservedIdempotencyKey = undefined;
 		return c.json(puzzleToStore, 201);
 	} catch (error) {
 		console.error('Error creating puzzle:', error);
@@ -399,6 +430,9 @@ admin.post('/puzzles', requireAuth, async (c) => {
 			} catch (cleanupError) {
 				console.error('Failed to clean up puzzle directory after error:', cleanupError);
 			}
+		}
+		if (reservedIdempotencyKey && id) {
+			await releaseIdempotencyKey(reservedIdempotencyKey, id);
 		}
 		return c.json({ error: 'internal_error', message: 'Failed to create puzzle' }, 500);
 	}

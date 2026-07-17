@@ -69,44 +69,43 @@ if [[ -n "$BAD" ]]; then
 fi
 
 # Check 2: Link-based — reject symlink/hardlink entries whose targets are
-# absolute or contain parent traversal. A crafted link with a safe path but
-# a dangerous target (e.g. -> /etc/passwd) can still escape the extraction
-# directory after extraction.
-#
-# Verbose listing format: permissions are the first field. Symlinks start
-# with 'l' and contain " -> target"; hardlinks start with 'h' and contain
-# " link to target".
-LINK_BAD=$(tar -tvf "$tarball" 2>/dev/null | awk '
-	$1 ~ /^[lh]/ {
-		# Parse the link target independently of the entry name. A symlink
-		# whose NAME contains " -> " (e.g. "safe -> name") would produce
-		# verbose output like "... safe -> name -> /etc/passwd"; match()
-		# finds the FIRST delimiter, so the old code grabbed "name ->
-		# /etc/passwd" as the target — which passes all safety checks and
-		# lets an escaping link through. Iterate to consume every
-		# delimiter so target holds everything after the LAST one (the
-		# actual link target).
-		target = ""
-		rest = $0
-		if (match(rest, / -> /)) {
-			while (match(rest, / -> /)) {
-				target = substr(rest, RSTART + 4)
-				rest = target
-			}
-		} else if (match(rest, / link to /)) {
-			while (match(rest, / link to /)) {
-				target = substr(rest, RSTART + 9)
-				rest = target
-			}
-		}
-		# Reject absolute targets, any ".." path component (including a
-		# bare ".." or trailing "foo/.."), and empty targets. The old
-		# pattern required a slash after ".." so "images -> .." passed.
-		if (target == "" || target ~ /^\// || target ~ /(^|\/)\.\.(\/|$)/) {
-			print
-		}
-	}
-') || true
+# empty, absolute, or contain parent traversal. Parse with Python's tarfile
+# so we use each member's raw type and linkname — never tar -tvf text, whose
+# delimiters are ambiguous when names or targets contain " -> " / " link to ".
+LINK_BAD=$(python3 - "$tarball" <<'PY'
+import sys
+import tarfile
+
+tarball = sys.argv[1]
+unsafe = []
+
+def is_unsafe_target(target: str) -> bool:
+	if not target:
+		return True
+	if target.startswith("/"):
+		return True
+	parts = target.split("/")
+	return any(part == ".." for part in parts)
+
+try:
+	with tarfile.open(tarball, "r:*") as tf:
+		for member in tf.getmembers():
+			if member.issym() or member.islnk():
+				target = member.linkname or ""
+				if is_unsafe_target(target):
+					kind = "symlink" if member.issym() else "hardlink"
+					unsafe.append(f"{member.name} -> {target} ({kind})")
+except tarfile.TarError as exc:
+	print(f"Failed to inspect tarball links: {exc}", file=sys.stderr)
+	sys.exit(2)
+
+if unsafe:
+	print("\n".join(unsafe))
+PY
+) || {
+	# python exited non-zero (corrupt archive during link inspection)
+	exit 2
+}
 
 if [[ -n "$LINK_BAD" ]]; then
 	echo "::error::Tarball contains symlink/hardlink entries with unsafe targets:" >&2

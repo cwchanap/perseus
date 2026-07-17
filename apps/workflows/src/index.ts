@@ -70,6 +70,15 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 		if (url.pathname === '/reserve') {
 			return this.handleReserve(request);
 		}
+		if (url.pathname === '/commit') {
+			return this.handleReservationTransition(request, 'committed');
+		}
+		if (url.pathname === '/fail') {
+			return this.handleReservationTransition(request, 'failed');
+		}
+		if (url.pathname === '/release') {
+			return this.handleReservationTransition(request, 'released');
+		}
 
 		if (url.pathname !== '/update') {
 			return new Response('Not found', { status: 404 });
@@ -210,16 +219,18 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 	}
 
 	/**
-	 * Reserve an idempotency key → puzzleId mapping. This DO instance is keyed
-	 * by idFromName(idempotencyKey), so each idempotency key gets its own
-	 * strongly-consistent DO instance. The first caller wins: its puzzleId is
-	 * stored and returned to all subsequent callers as `existing: true`.
+	 * Reserve an idempotency key → puzzleId mapping with recoverable lifecycle.
+	 * This DO instance is keyed by idFromName(idempotencyKey), so each key gets
+	 * its own strongly-consistent DO instance.
 	 *
-	 * This closes the duplicate-puzzle window that client-side KV polling
-	 * cannot: KV is eventually consistent, so a retried POST after a lost
-	 * response could re-mint a UUID before KV propagated the first create.
-	 * DO storage is strongly consistent within a single instance, so the
-	 * reserve check is atomic.
+	 * State machine:
+	 *   (none|failed) --reserve--> pending --commit--> committed
+	 *                           \--fail--> failed
+	 *                           \--release--> (none)
+	 *
+	 * Owner-checked transitions prevent a concurrent loser from releasing or
+	 * committing a winner's reservation. A failed reservation may be reclaimed
+	 * by a later reserve so retries after create failure can proceed.
 	 *
 	 * This instance is separate from the metadata DO instance (keyed by
 	 * idFromName(puzzleId)) — they never share storage.
@@ -241,14 +252,92 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 
 		const { puzzleId } = body;
 		// idempotencyKey is not used directly — this DO instance is already
-		// keyed by it via idFromName(idempotencyKey) in the caller. We only
-		// need the puzzleId to store/return the reservation.
-		const existing = await this.ctx.storage.get<string>('reservedPuzzleId');
-		if (existing) {
-			return Response.json({ existing: true, puzzleId: existing });
+		// keyed by it via idFromName(idempotencyKey) in the caller.
+		const reservation = await this.readReservation();
+		if (reservation && reservation.status !== 'failed') {
+			return Response.json({
+				existing: true,
+				puzzleId: reservation.puzzleId,
+				status: reservation.status
+			});
 		}
+
+		const next = { puzzleId, status: 'pending' as const };
+		await this.ctx.storage.put('reservation', next);
+		// Keep legacy key in sync for older readers during rollout.
 		await this.ctx.storage.put('reservedPuzzleId', puzzleId);
-		return Response.json({ existing: false, puzzleId });
+		return Response.json({ existing: false, puzzleId, status: 'pending' });
+	}
+
+	/**
+	 * Owner-checked reservation transition. commit/fail/release only succeed
+	 * when the stored puzzleId matches the caller and status is pending.
+	 */
+	async handleReservationTransition(
+		request: Request,
+		action: 'committed' | 'failed' | 'released'
+	): Promise<Response> {
+		const body = (await request.json().catch(() => null)) as {
+			puzzleId?: string;
+		} | null;
+		if (!body || typeof body.puzzleId !== 'string' || !body.puzzleId.trim()) {
+			return Response.json({ message: 'Invalid reservation transition payload' }, { status: 400 });
+		}
+
+		const { puzzleId } = body;
+		const reservation = await this.readReservation();
+		if (!reservation) {
+			return Response.json({ message: 'No reservation found' }, { status: 404 });
+		}
+		if (reservation.puzzleId !== puzzleId) {
+			return Response.json({ message: 'Reservation owned by another puzzle' }, { status: 409 });
+		}
+		if (reservation.status !== 'pending' && reservation.status !== action) {
+			return Response.json(
+				{ message: `Cannot ${action} reservation in status ${reservation.status}` },
+				{ status: 409 }
+			);
+		}
+
+		if (action === 'released') {
+			await this.ctx.storage.delete('reservation');
+			await this.ctx.storage.delete('reservedPuzzleId');
+			return Response.json({ success: true, status: 'released' });
+		}
+
+		// Idempotent commit/fail when already in the target status.
+		if (reservation.status === action) {
+			return Response.json({ success: true, status: action });
+		}
+
+		const next = { puzzleId, status: action };
+		await this.ctx.storage.put('reservation', next);
+		await this.ctx.storage.put('reservedPuzzleId', puzzleId);
+		return Response.json({ success: true, status: action });
+	}
+
+	private async readReservation(): Promise<{
+		puzzleId: string;
+		status: 'pending' | 'committed' | 'failed';
+	} | null> {
+		const stored = await this.ctx.storage.get<{
+			puzzleId?: string;
+			status?: string;
+		}>('reservation');
+		if (
+			stored &&
+			typeof stored.puzzleId === 'string' &&
+			(stored.status === 'pending' || stored.status === 'committed' || stored.status === 'failed')
+		) {
+			return { puzzleId: stored.puzzleId, status: stored.status };
+		}
+
+		// Legacy: plain puzzleId string from the previous reserve implementation.
+		const legacy = await this.ctx.storage.get<string>('reservedPuzzleId');
+		if (typeof legacy === 'string' && legacy.trim()) {
+			return { puzzleId: legacy, status: 'committed' };
+		}
+		return null;
 	}
 }
 

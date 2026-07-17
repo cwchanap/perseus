@@ -704,6 +704,20 @@ describe('validatePuzzleMetadata', () => {
 			)
 		).toBe(false);
 	});
+
+	it('returns true when idempotencyKey is a string', () => {
+		expect(validatePuzzleMetadata(makeMeta({ idempotencyKey: 'abc123' }))).toBe(true);
+	});
+
+	it('returns true when idempotencyKey is absent', () => {
+		const meta = makeMeta();
+		delete (meta as { idempotencyKey?: string }).idempotencyKey;
+		expect(validatePuzzleMetadata(meta)).toBe(true);
+	});
+
+	it('returns false when idempotencyKey is a non-string', () => {
+		expect(validatePuzzleMetadata(makeMeta({ idempotencyKey: 42 }))).toBe(false);
+	});
 });
 
 describe('validatePuzzleMetadataLight', () => {
@@ -871,6 +885,14 @@ describe('validatePuzzleMetadataLight', () => {
 
 	it('returns false when createdAt is missing', () => {
 		expect(validatePuzzleMetadataLight(makeMeta({ createdAt: undefined }))).toBe(false);
+	});
+
+	it('returns true when idempotencyKey is a string', () => {
+		expect(validatePuzzleMetadataLight(makeMeta({ idempotencyKey: 'abc123' }))).toBe(true);
+	});
+
+	it('returns false when idempotencyKey is a non-string', () => {
+		expect(validatePuzzleMetadataLight(makeMeta({ idempotencyKey: 42 }))).toBe(false);
 	});
 
 	it('returns false for processing puzzle with error field set', () => {

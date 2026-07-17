@@ -128,7 +128,9 @@ async function parseOptions(): Promise<Options> {
 		/\/+$/,
 		''
 	);
-	const skipAccess = args.includes('--skip-access') || isLocalServer(server);
+	// Local servers always skip Access (existing behavior). --skip-access is
+	// ignored on remote targets so a mis-set flag cannot bypass production Access.
+	const skipAccess = isLocalServer(server);
 	const tokenCachePath = join(root, 'data/startup-puzzles/.cf-access-token');
 	// Store only the raw explicit token here. Each command resolves the full
 	// token (cache → cloudflared) itself via resolveAccessToken — resolving here
@@ -175,10 +177,16 @@ const VALUE_FLAGS = new Set([
 const BOOLEAN_FLAGS = new Set(['--skip-access', '--dry-run', '--help', '-h']);
 
 function validateNoLeftoverArgs(args: string[]): void {
+	const seenValueFlags = new Set<string>();
 	for (let i = 1; i < args.length; i++) {
 		const arg = args[i];
 		if (BOOLEAN_FLAGS.has(arg)) continue;
 		if (VALUE_FLAGS.has(arg)) {
+			if (seenValueFlags.has(arg)) {
+				console.error(`Repeated option: ${arg}`);
+				usage();
+			}
+			seenValueFlags.add(arg);
 			i++;
 			continue;
 		}
@@ -286,17 +294,22 @@ async function cmdStatus(options: Options): Promise<void> {
 	console.log(`Server:            ${options.server}`);
 	console.log(`Skip Access:       ${options.skipAccess}`);
 	console.log(`Access token:      ${token ? `yes (${token.length} chars)` : 'no'}`);
-	console.log(
-		`  cache file:       ${existsSync(options.tokenCachePath) ? 'present' : 'missing'} (${options.tokenCachePath})`
-	);
+	const cacheStatus = existsSync(options.tokenCachePath) ? 'present' : 'missing';
+	console.log(`  cache file:       ${cacheStatus} (${options.tokenCachePath})`);
 	const cfTokenPath = cloudflaredTokenPath(options.server);
 	const cfLockPath = cloudflaredLockPath(options.server);
-	console.log(
-		`  cloudflared file: ${cfTokenPath ? (existsSync(cfTokenPath) ? 'present' : 'missing') : 'n/a (CF_ACCESS_AUD not set)'}`
-	);
-	console.log(
-		`  lock file:        ${cfLockPath ? (existsSync(cfLockPath) ? 'present' : 'absent') : 'n/a (CF_ACCESS_AUD not set)'}`
-	);
+	const cfTokenStatus = cfTokenPath
+		? existsSync(cfTokenPath)
+			? 'present'
+			: 'missing'
+		: 'n/a (CF_ACCESS_AUD not set)';
+	console.log(`  cloudflared file: ${cfTokenStatus}`);
+	const cfLockStatus = cfLockPath
+		? existsSync(cfLockPath)
+			? 'present'
+			: 'absent'
+		: 'n/a (CF_ACCESS_AUD not set)';
+	console.log(`  lock file:        ${cfLockStatus}`);
 	console.log(`Service token:     ${options.cfClientId && options.cfClientSecret ? 'yes' : 'no'}`);
 	console.log(
 		`Admin passkey:     ${options.passkey ? `yes (${options.passkey.length} chars)` : 'no'}`

@@ -16,13 +16,16 @@ import {
 import type { PuzzleCategory } from '@perseus/types';
 import type { Env } from '../worker';
 import {
+	commitIdempotencyKey,
 	createPuzzleMetadata,
 	deletePuzzleMetadata,
 	deletePuzzleAssets,
+	failIdempotencyKey,
 	uploadOriginalImage,
 	deleteOriginalImage,
 	getPuzzle,
 	listPuzzles,
+	releaseIdempotencyKey,
 	reserveIdempotencyKey,
 	type PuzzleMetadata
 } from '../services/storage.worker';
@@ -251,6 +254,25 @@ admin.get('/puzzles', requireAuth, async (c) => {
 
 // POST /api/admin/puzzles - Create new puzzle (protected)
 admin.post('/puzzles', requireAuth, async (c) => {
+	let id = '';
+	let reservedIdempotencyKey: string | undefined;
+	const releaseReservation = async () => {
+		if (!reservedIdempotencyKey || !id) return;
+		const key = reservedIdempotencyKey;
+		const puzzleId = id;
+		reservedIdempotencyKey = undefined;
+		try {
+			await releaseIdempotencyKey(c.env.PUZZLE_METADATA_DO, key, puzzleId);
+		} catch (err) {
+			console.error('Failed to release idempotency reservation:', err);
+			try {
+				await failIdempotencyKey(c.env.PUZZLE_METADATA_DO, key, puzzleId);
+			} catch (failErr) {
+				console.error('Failed to mark idempotency reservation failed:', failErr);
+			}
+		}
+	};
+
 	try {
 		let formData: FormData;
 		try {
@@ -401,24 +423,32 @@ admin.post('/puzzles', requireAuth, async (c) => {
 			idempotencyKey = trimmed;
 		}
 
-		let id: string = crypto.randomUUID();
+		id = crypto.randomUUID();
 		if (idempotencyKey) {
 			try {
 				const reserved = await reserveIdempotencyKey(c.env.PUZZLE_METADATA_DO, idempotencyKey, id);
 				if (reserved.existing) {
-					// A prior request already created this puzzle. Return it
-					// instead of creating a duplicate. Fetch from KV; if KV
-					// hasn't propagated yet (unlikely — the original create
-					// wrote to KV before returning), fall back to a minimal
-					// response so the client still gets the correct id.
+					// Prior request owns this key. Return the puzzle when
+					// metadata is available; otherwise non-200 so the client
+					// can retry instead of accepting a fabricated body.
 					const existing = await getPuzzle(c.env.PUZZLE_METADATA, reserved.puzzleId);
 					if (existing) {
 						return c.json(existing, 200);
 					}
-					return c.json({ id: reserved.puzzleId, status: 'processing', name: trimmedName }, 200);
+					const inProgress = reserved.status === 'pending' || reserved.status === undefined;
+					return c.json(
+						{
+							error: inProgress ? 'conflict' : 'not_found',
+							message: inProgress
+								? 'A request with this Idempotency-Key is already in progress'
+								: 'Idempotency reservation exists but puzzle metadata is missing'
+						},
+						inProgress ? 409 : 404
+					);
 				}
 				// First caller — use our minted UUID.
 				id = reserved.puzzleId;
+				reservedIdempotencyKey = idempotencyKey;
 			} catch (error) {
 				console.error('Idempotency reserve failed:', error);
 				return c.json(
@@ -442,6 +472,7 @@ admin.post('/puzzles', requireAuth, async (c) => {
 			await uploadOriginalImage(c.env.PUZZLES_BUCKET, id, imageBuffer, detectedType);
 		} catch (error) {
 			console.error('Failed to upload original image:', error);
+			await releaseReservation();
 			return c.json({ error: 'internal_error', message: 'Failed to upload image' }, 500);
 		}
 
@@ -481,6 +512,7 @@ admin.post('/puzzles', requireAuth, async (c) => {
 					cleanupResult.error
 				);
 			}
+			await releaseReservation();
 			return c.json({ error: 'internal_error', message: 'Failed to create puzzle metadata' }, 500);
 		}
 
@@ -533,6 +565,7 @@ admin.post('/puzzles', requireAuth, async (c) => {
 			} catch (err) {
 				console.error(`Failed to init DB for ownership cleanup of puzzle ${id}:`, err);
 			}
+			await releaseReservation();
 			return c.json(
 				{
 					error: 'service_unavailable',
@@ -571,12 +604,25 @@ admin.post('/puzzles', requireAuth, async (c) => {
 			} catch (err) {
 				console.error(`Failed to init DB for ownership cleanup of puzzle ${id}:`, err);
 			}
+			await releaseReservation();
 			return c.json({ error: 'internal_error', message: 'Failed to start puzzle processing' }, 500);
+		}
+
+		if (reservedIdempotencyKey) {
+			try {
+				await commitIdempotencyKey(c.env.PUZZLE_METADATA_DO, reservedIdempotencyKey, id);
+			} catch (err) {
+				// Create already succeeded; log and continue. Reservation stays
+				// pending but still maps to this puzzleId for retries.
+				console.error('Failed to commit idempotency reservation:', err);
+			}
+			reservedIdempotencyKey = undefined;
 		}
 
 		return c.json(puzzleMetadata, 201);
 	} catch (error) {
 		console.error('Error creating puzzle:', error);
+		await releaseReservation();
 		return c.json({ error: 'internal_error', message: 'Failed to create puzzle' }, 500);
 	}
 });

@@ -457,3 +457,33 @@ describe('listPuzzlesPage', () => {
 		expect(result.puzzles[0].id).toBe('good-puzzle');
 	});
 });
+
+describe('idempotency reservation', () => {
+	beforeEach(async () => {
+		const { readdir, rm } = await import('node:fs/promises');
+		const entries = await readdir(tempDir, { withFileTypes: true });
+		for (const entry of entries) {
+			await rm(join(tempDir, entry.name), { recursive: true, force: true });
+		}
+		await storageModule.initializeStorage();
+	});
+
+	it('reserves a key for the first caller and returns existing for the second', async () => {
+		const first = await storageModule.reserveIdempotencyKey('key-a', 'puzzle-1');
+		expect(first).toEqual({ existing: false, puzzleId: 'puzzle-1' });
+
+		const second = await storageModule.reserveIdempotencyKey('key-a', 'puzzle-2');
+		expect(second).toEqual({ existing: true, puzzleId: 'puzzle-1' });
+	});
+
+	it('releases only when the owner matches', async () => {
+		await storageModule.reserveIdempotencyKey('key-b', 'puzzle-1');
+		await storageModule.releaseIdempotencyKey('key-b', 'wrong-owner');
+		const stillHeld = await storageModule.reserveIdempotencyKey('key-b', 'puzzle-2');
+		expect(stillHeld).toEqual({ existing: true, puzzleId: 'puzzle-1' });
+
+		await storageModule.releaseIdempotencyKey('key-b', 'puzzle-1');
+		const reclaimed = await storageModule.reserveIdempotencyKey('key-b', 'puzzle-3');
+		expect(reclaimed).toEqual({ existing: false, puzzleId: 'puzzle-3' });
+	});
+});

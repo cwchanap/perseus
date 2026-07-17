@@ -47,6 +47,7 @@ interface StorageInit {
 	puzzleId?: string;
 	metadata?: PuzzleMetadata;
 	reservedPuzzleId?: string;
+	reservation?: { puzzleId: string; status: 'pending' | 'committed' | 'failed' };
 }
 
 function createStorage(initial: StorageInit = {}) {
@@ -54,12 +55,16 @@ function createStorage(initial: StorageInit = {}) {
 	if (initial.puzzleId !== undefined) store['puzzleId'] = initial.puzzleId;
 	if (initial.metadata !== undefined) store['metadata'] = initial.metadata;
 	if (initial.reservedPuzzleId !== undefined) store['reservedPuzzleId'] = initial.reservedPuzzleId;
+	if (initial.reservation !== undefined) store['reservation'] = initial.reservation;
 
 	return {
 		_store: store,
 		get: vi.fn(async (key: string) => store[key] ?? null),
 		put: vi.fn(async (key: string, value: unknown) => {
 			store[key] = value;
+		}),
+		delete: vi.fn(async (key: string) => {
+			delete store[key];
 		}),
 		transaction: vi.fn(async (fn: () => Promise<void>) => fn())
 	};
@@ -437,7 +442,7 @@ describe('PuzzleMetadataDO.fetch - gallery index cache invalidation', () => {
 });
 
 describe('PuzzleMetadataDO.fetch - /reserve (idempotency)', () => {
-	it('stores puzzleId on first reserve and returns existing: false', async () => {
+	it('stores pending reservation on first reserve and returns existing: false', async () => {
 		const { durableObj, storage } = makeDO();
 		const response = await postRequest(
 			durableObj,
@@ -448,14 +453,25 @@ describe('PuzzleMetadataDO.fetch - /reserve (idempotency)', () => {
 			'/reserve'
 		);
 		expect(response.status).toBe(200);
-		const body = (await response.json()) as { existing: boolean; puzzleId: string };
+		const body = (await response.json()) as {
+			existing: boolean;
+			puzzleId: string;
+			status: string;
+		};
 		expect(body.existing).toBe(false);
 		expect(body.puzzleId).toBe('puzzle-uuid-1');
+		expect(body.status).toBe('pending');
+		expect(storage.put).toHaveBeenCalledWith('reservation', {
+			puzzleId: 'puzzle-uuid-1',
+			status: 'pending'
+		});
 		expect(storage.put).toHaveBeenCalledWith('reservedPuzzleId', 'puzzle-uuid-1');
 	});
 
 	it('returns existing: true with original puzzleId on second reserve', async () => {
-		const { durableObj } = makeDO({ reservedPuzzleId: 'original-uuid' });
+		const { durableObj } = makeDO({
+			reservation: { puzzleId: 'original-uuid', status: 'pending' }
+		});
 		const response = await postRequest(
 			durableObj,
 			{
@@ -465,9 +481,79 @@ describe('PuzzleMetadataDO.fetch - /reserve (idempotency)', () => {
 			'/reserve'
 		);
 		expect(response.status).toBe(200);
-		const body = (await response.json()) as { existing: boolean; puzzleId: string };
+		const body = (await response.json()) as {
+			existing: boolean;
+			puzzleId: string;
+			status: string;
+		};
 		expect(body.existing).toBe(true);
 		expect(body.puzzleId).toBe('original-uuid');
+		expect(body.status).toBe('pending');
+	});
+
+	it('allows re-reserve after failed reservation', async () => {
+		const { durableObj, storage } = makeDO({
+			reservation: { puzzleId: 'failed-uuid', status: 'failed' }
+		});
+		const response = await postRequest(
+			durableObj,
+			{
+				idempotencyKey: 'abc123',
+				puzzleId: 'retry-uuid'
+			},
+			'/reserve'
+		);
+		expect(response.status).toBe(200);
+		const body = (await response.json()) as { existing: boolean; puzzleId: string };
+		expect(body.existing).toBe(false);
+		expect(body.puzzleId).toBe('retry-uuid');
+		expect(storage.put).toHaveBeenCalledWith('reservation', {
+			puzzleId: 'retry-uuid',
+			status: 'pending'
+		});
+	});
+
+	it('owner-checked commit transitions pending to committed', async () => {
+		const { durableObj, storage } = makeDO({
+			reservation: { puzzleId: 'puzzle-uuid-1', status: 'pending' }
+		});
+		const response = await postRequest(durableObj, { puzzleId: 'puzzle-uuid-1' }, '/commit');
+		expect(response.status).toBe(200);
+		expect(storage.put).toHaveBeenCalledWith('reservation', {
+			puzzleId: 'puzzle-uuid-1',
+			status: 'committed'
+		});
+	});
+
+	it('rejects commit from non-owner', async () => {
+		const { durableObj } = makeDO({
+			reservation: { puzzleId: 'puzzle-uuid-1', status: 'pending' }
+		});
+		const response = await postRequest(durableObj, { puzzleId: 'other-uuid' }, '/commit');
+		expect(response.status).toBe(409);
+	});
+
+	it('owner-checked release deletes reservation', async () => {
+		const { durableObj, storage } = makeDO({
+			reservation: { puzzleId: 'puzzle-uuid-1', status: 'pending' },
+			reservedPuzzleId: 'puzzle-uuid-1'
+		});
+		const response = await postRequest(durableObj, { puzzleId: 'puzzle-uuid-1' }, '/release');
+		expect(response.status).toBe(200);
+		expect(storage.delete).toHaveBeenCalledWith('reservation');
+		expect(storage.delete).toHaveBeenCalledWith('reservedPuzzleId');
+	});
+
+	it('owner-checked fail marks reservation failed', async () => {
+		const { durableObj, storage } = makeDO({
+			reservation: { puzzleId: 'puzzle-uuid-1', status: 'pending' }
+		});
+		const response = await postRequest(durableObj, { puzzleId: 'puzzle-uuid-1' }, '/fail');
+		expect(response.status).toBe(200);
+		expect(storage.put).toHaveBeenCalledWith('reservation', {
+			puzzleId: 'puzzle-uuid-1',
+			status: 'failed'
+		});
 	});
 
 	it('returns 400 when idempotencyKey is missing', async () => {

@@ -164,19 +164,30 @@ make_tarball_with_links "$TMPDIR/hardlink-traversal.tgz" \
 	"evil.link|hardlink|../../etc/passwd"
 assert_rejects "hardlink with parent traversal target" "$TMPDIR/hardlink-traversal.tgz"
 
-# Symlink whose NAME contains " -> " with an absolute target — the entry
-# name "safe -> name" makes tar verbose output "... safe -> name ->
-# /etc/passwd". The old parser matched the FIRST " -> " and grabbed "name
-# -> /etc/passwd" as the target, which passes safety checks. The fix
-# matches the LAST " -> " so the real target "/etc/passwd" is checked.
+# Symlink/hardlink whose NAME contains " -> " or " link to " with unsafe
+# targets. tar -tvf text parsing is ambiguous for these; Python tarfile
+# uses raw member.linkname so both must still be rejected.
 make_tarball_with_links "$TMPDIR/symlink-name-has-arrow.tgz" \
 	"safe -> name|symlink|/etc/passwd"
 assert_rejects "symlink whose name contains -> with absolute target" "$TMPDIR/symlink-name-has-arrow.tgz"
 
-# Same attack with parent traversal as the real target.
 make_tarball_with_links "$TMPDIR/symlink-name-has-arrow-traversal.tgz" \
 	"safe -> name|symlink|../../etc/passwd"
 assert_rejects "symlink whose name contains -> with traversal target" "$TMPDIR/symlink-name-has-arrow-traversal.tgz"
+
+# Unsafe targets that themselves contain tar-verbose delimiters — text
+# parsers can mis-split these; raw linkname inspection must still reject.
+make_tarball_with_links "$TMPDIR/symlink-target-has-arrow.tgz" \
+	"evil.link|symlink|/etc/passwd -> decoy"
+assert_rejects "symlink whose absolute target contains -> delimiter" "$TMPDIR/symlink-target-has-arrow.tgz"
+
+make_tarball_with_links "$TMPDIR/hardlink-name-has-link-to.tgz" \
+	"safe link to name|hardlink|/etc/passwd"
+assert_rejects "hardlink whose name contains 'link to' with absolute target" "$TMPDIR/hardlink-name-has-link-to.tgz"
+
+make_tarball_with_links "$TMPDIR/hardlink-target-has-link-to.tgz" \
+	"evil.link|hardlink|../../etc/passwd link to decoy"
+assert_rejects "hardlink whose traversal target contains 'link to' delimiter" "$TMPDIR/hardlink-target-has-link-to.tgz"
 
 # Safe symlink (relative, no traversal) should be accepted.
 make_tarball_with_links "$TMPDIR/symlink-safe.tgz" \

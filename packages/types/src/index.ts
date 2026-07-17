@@ -450,6 +450,10 @@ export function validatePuzzleMetadata(meta: unknown): meta is PuzzleMetadata {
 		if (expected.rows !== m.gridRows || expected.cols !== m.gridCols) return false;
 	}
 
+	// Optional idempotencyKey: absent is fine; if present must be a string.
+	const idempotencyKeyValue = (m as Record<string, unknown>).idempotencyKey;
+	if (idempotencyKeyValue !== undefined && typeof idempotencyKeyValue !== 'string') return false;
+
 	return true;
 }
 
@@ -521,6 +525,10 @@ export function validatePuzzleMetadataLight(meta: unknown): meta is PuzzleMetada
 		const expected = getGridDimensionsForAspectRatio(m.pieceCount, aspectRatioValue);
 		if (expected.rows !== m.gridRows || expected.cols !== m.gridCols) return false;
 	}
+
+	// Optional idempotencyKey: absent is fine; if present must be a string.
+	const idempotencyKeyValue = (m as Record<string, unknown>).idempotencyKey;
+	if (idempotencyKeyValue !== undefined && typeof idempotencyKeyValue !== 'string') return false;
 
 	return true;
 }
