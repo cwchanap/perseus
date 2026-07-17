@@ -253,20 +253,30 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 		const { puzzleId } = body;
 		// idempotencyKey is not used directly — this DO instance is already
 		// keyed by it via idFromName(idempotencyKey) in the caller.
-		const reservation = await this.readReservation();
-		if (reservation && reservation.status !== 'failed') {
-			return Response.json({
-				existing: true,
-				puzzleId: reservation.puzzleId,
-				status: reservation.status
-			});
-		}
-
-		const next = { puzzleId, status: 'pending' as const };
-		await this.ctx.storage.put('reservation', next);
-		// Keep legacy key in sync for older readers during rollout.
-		await this.ctx.storage.put('reservedPuzzleId', puzzleId);
-		return Response.json({ existing: false, puzzleId, status: 'pending' });
+		//
+		// Atomically read-and-claim the reservation inside a storage transaction
+		// so concurrent /reserve calls for the same key serialize: the
+		// transaction provides snapshot isolation + atomic commit, guaranteeing
+		// exactly one caller wins the claim. Consistent with handleUpdate,
+		// which also persists via storage.transaction. On a real Durable Object
+		// the input gate already serializes input delivery, but the transaction
+		// is the documented atomicity primitive and removes any ordering doubt.
+		const result = await this.ctx.storage.transaction(async () => {
+			const reservation = await this.readReservation();
+			if (reservation && reservation.status !== 'failed') {
+				return {
+					existing: true as const,
+					puzzleId: reservation.puzzleId,
+					status: reservation.status
+				};
+			}
+			const next = { puzzleId, status: 'pending' as const };
+			await this.ctx.storage.put('reservation', next);
+			// Keep legacy key in sync for older readers during rollout.
+			await this.ctx.storage.put('reservedPuzzleId', puzzleId);
+			return { existing: false as const, puzzleId, status: 'pending' as const };
+		});
+		return Response.json(result);
 	}
 
 	/**

@@ -3,10 +3,14 @@ import * as pulumi from '@pulumi/pulumi';
 
 export const ADMIN_ACCESS_PATHS = ['/admin', '/admin/*', '/api/admin', '/api/admin/*'] as const;
 /**
- * Narrow paths the CLI service token is scoped to. The broad admin app covers
- * all admin paths with email+posture only; this narrow app adds the Service Auth
- * policy so the service token can only reach CLI-needed endpoints (login + puzzle
- * list/create), not player-allowlist or other admin operations.
+ * Path prefixes the narrow CLI Access application protects. This is a
+ * defense-in-depth FIRST layer: it limits which paths a service-token holder
+ * can reach at the Cloudflare Access (network) gate. It is NOT the
+ * authorization boundary — the Worker's app-layer authz enforces what a
+ * service-token (non_identity) caller may actually do (login + puzzle
+ * list/create). Do not rely on Access path matching alone to scope the token;
+ * Cloudflare Access path semantics (prefix vs exact) should be confirmed
+ * before treating this list as authoritative.
  */
 export const CLI_ACCESS_PATHS = ['/api/admin/login', '/api/admin/puzzles'] as const;
 export const DEFAULT_ADMIN_ACCESS_SESSION_DURATION = '12h';
@@ -340,10 +344,13 @@ export function createAdminAccessResources(
 		{ dependsOn: [devicePostureRule] }
 	);
 
-	// Narrow app: CLI-only paths (login + puzzle list/create) with both
-	// email+posture (browser admin still works) and Service Auth (CLI token).
-	// More specific paths take precedence in Cloudflare Access, so the service
-	// token can only reach these endpoints — not player-allowlist or others.
+	// Narrow app: protects CLI path prefixes (login + puzzle list/create) with
+	// both email+posture (browser admin still works) and Service Auth (CLI
+	// token). This is a defense-in-depth network gate only — the authoritative
+	// authorization is enforced in the Worker (app-layer authz), which gates
+	// what a service-token caller may actually perform. More specific Access
+	// paths take precedence over the broad admin app, but the Access path list
+	// is not the security boundary.
 	const cliApplication = new cloudflare.ZeroTrustAccessApplication(
 		'admin-access-cli-application',
 		buildCliAccessApplicationArgs({

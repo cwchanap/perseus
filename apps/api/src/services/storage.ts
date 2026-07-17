@@ -315,19 +315,29 @@ export async function reserveIdempotencyKey(
 	}
 
 	// Atomic claim: exclusive create fails if another request won the race.
-	try {
-		await writeFile(path, proposedPuzzleId, { flag: 'wx' });
-		return { existing: false, puzzleId: proposedPuzzleId };
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
-			const existingId = (await readFile(path, 'utf-8')).trim();
-			if (!existingId) {
-				throw new Error('Idempotency reservation file is empty');
+	// An empty file is a corrupt leftover from a mid-write crash, not a valid
+	// reservation — reclaim it and retry instead of permanently bricking the
+	// key (a zero-byte file otherwise 500s forever, and release() cannot clear
+	// an ownerless reservation because its puzzleId never matches).
+	for (let claimAttempt = 0; claimAttempt < 2; claimAttempt++) {
+		try {
+			await writeFile(path, proposedPuzzleId, { flag: 'wx' });
+			return { existing: false, puzzleId: proposedPuzzleId };
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
+				throw error;
 			}
-			return { existing: true, puzzleId: existingId };
+			const existingId = (await readFile(path, 'utf-8')).trim();
+			if (existingId) {
+				return { existing: true, puzzleId: existingId };
+			}
+			// Empty/corrupt reservation file — remove and retry the claim once.
+			await rm(path, { force: true });
 		}
-		throw error;
 	}
+	// Two empties in a row means a concurrent writer keeps failing its write;
+	// surface it rather than looping indefinitely.
+	throw new Error('Idempotency reservation file is empty after reclaim');
 }
 
 /**

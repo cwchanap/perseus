@@ -57,6 +57,12 @@ function createStorage(initial: StorageInit = {}) {
 	if (initial.reservedPuzzleId !== undefined) store['reservedPuzzleId'] = initial.reservedPuzzleId;
 	if (initial.reservation !== undefined) store['reservation'] = initial.reservation;
 
+	// Serialize transactions so concurrent callers do not interleave their
+	// reads/writes — mirroring a real Durable Object transaction's atomicity.
+	// Also propagates the callback's return value (handleReserve returns its
+	// reserve result from inside the transaction).
+	let txnChain: Promise<unknown> = Promise.resolve();
+
 	return {
 		_store: store,
 		get: vi.fn(async (key: string) => store[key] ?? null),
@@ -66,7 +72,16 @@ function createStorage(initial: StorageInit = {}) {
 		delete: vi.fn(async (key: string) => {
 			delete store[key];
 		}),
-		transaction: vi.fn(async (fn: () => Promise<void>) => fn())
+		transaction: vi.fn(async (fn: () => Promise<unknown>) => {
+			const run = txnChain.then(() => fn());
+			// Advance the chain regardless of success so one failing txn does
+			// not permanently block subsequent ones.
+			txnChain = run.then(
+				() => undefined,
+				() => undefined
+			);
+			return run;
+		})
 	};
 }
 
@@ -590,5 +605,29 @@ describe('PuzzleMetadataDO.fetch - /reserve (idempotency)', () => {
 			})
 		);
 		expect(response.status).toBe(400);
+	});
+
+	it('serializes concurrent reserves so exactly one caller wins the claim', async () => {
+		// Two /reserve calls for the same key race. Because handleReserve
+		// performs its read-decide-write inside storage.transaction (and the
+		// mock serializes transactions), exactly one caller must win and the
+		// other must observe the winner's reservation — no duplicate claim.
+		// Without the transaction wrapper, both would read null and both would
+		// return existing:false, so this test guards that regression.
+		const { durableObj } = makeDO();
+		const [r1, r2] = await Promise.all([
+			postRequest(durableObj, { idempotencyKey: 'k', puzzleId: 'puzzle-a' }, '/reserve'),
+			postRequest(durableObj, { idempotencyKey: 'k', puzzleId: 'puzzle-b' }, '/reserve')
+		]);
+		const b1 = (await r1.json()) as { existing: boolean; puzzleId: string };
+		const b2 = (await r2.json()) as { existing: boolean; puzzleId: string };
+
+		const winners = [b1, b2].filter((b) => b.existing === false);
+		expect(winners.length).toBe(1);
+		const winnerId = winners[0].puzzleId;
+		expect(['puzzle-a', 'puzzle-b']).toContain(winnerId);
+
+		const loser = [b1, b2].find((b) => b.existing === true)!;
+		expect(loser.puzzleId).toBe(winnerId);
 	});
 });

@@ -273,6 +273,42 @@ async function cmdLogin(options: Options): Promise<void> {
 	await cmdSetToken(options);
 }
 
+export type ReadinessOutcome =
+	| { ready: true }
+	| { ready: false; reason: 'access-probe-failed' }
+	| { ready: false; reason: 'access-missing' }
+	| { ready: false; reason: 'passkey-missing' };
+
+/**
+ * Pure readiness decision for `bun run admin:startup:status`. Extracted from
+ * cmdStatus so the gate logic — specifically "do not report Ready when Access
+ * credentials are present but rejected/expired" — is unit-testable without
+ * network or probe mocks.
+ *
+ * `probeResult` is the Access probe outcome, or undefined when no probe ran
+ * (skipAccess, or no credentials to probe with). Any non-'ok' probe result is
+ * a failure.
+ */
+export function evaluateReadiness(args: {
+	skipAccess: boolean;
+	hasToken: boolean;
+	hasServiceToken: boolean;
+	probeResult: string | undefined;
+	passkey: string;
+}): ReadinessOutcome {
+	if (args.probeResult !== undefined && args.probeResult !== 'ok') {
+		return { ready: false, reason: 'access-probe-failed' };
+	}
+	const hasAnyAccess = args.skipAccess || args.hasToken || args.hasServiceToken;
+	if (!hasAnyAccess) {
+		return { ready: false, reason: 'access-missing' };
+	}
+	if (!args.passkey) {
+		return { ready: false, reason: 'passkey-missing' };
+	}
+	return { ready: true };
+}
+
 async function cmdStatus(options: Options): Promise<void> {
 	// Skip JWT token resolution when service tokens are already available —
 	// service tokens authenticate Access without needing a JWT, and
@@ -319,47 +355,57 @@ async function cmdStatus(options: Options): Promise<void> {
 	// when Access credentials are present but rejected/expired. Without this,
 	// an expired service token or JWT would show "blocked"/"error" on the probe
 	// line but still report Ready (and exit 0), misleading callers into
-	// attempting an upload that will fail.
-	let probeFailed = false;
+	// attempting an upload that will fail. The decision itself lives in the
+	// pure evaluateReadiness() helper (unit-tested in cli.test.ts).
+	let probeResult: string | undefined;
 
 	// Prefer service token probe when service tokens are available (same
 	// logic as the upload path). Only probe JWT when service tokens are absent.
 	if (hasServiceToken && !options.skipAccess) {
-		const probe = await probeServiceToken(
+		probeResult = await probeServiceToken(
 			options.server,
 			options.cfClientId!,
 			options.cfClientSecret!
 		);
-		console.log(`Access probe:      ${probe === 'ok' ? 'ok (service token accepted)' : probe}`);
-		if (probe !== 'ok') probeFailed = true;
+		console.log(
+			`Access probe:      ${probeResult === 'ok' ? 'ok (service token accepted)' : probeResult}`
+		);
 	} else if (token && !options.skipAccess) {
-		const probe = await probeAccessToken(options.server, token);
-		console.log(`Access probe:      ${probe === 'ok' ? 'ok (JWT accepted)' : probe}`);
-		if (probe !== 'ok') probeFailed = true;
+		probeResult = await probeAccessToken(options.server, token);
+		console.log(`Access probe:      ${probeResult === 'ok' ? 'ok (JWT accepted)' : probeResult}`);
 	}
+
+	const outcome = evaluateReadiness({
+		skipAccess: options.skipAccess,
+		hasToken: !!token,
+		hasServiceToken,
+		probeResult,
+		passkey: options.passkey
+	});
 
 	// Check Access probe failures before the passkey hint. Otherwise a blocked
 	// service token / JWT with ADMIN_PASSKEY unset prints only the passkey
 	// message and exits 0, so readiness callers treat rejected credentials as valid.
-	if (probeFailed) {
+	if (outcome.ready) {
+		console.log('\nReady: bun run admin:startup:upload -- --limit 5');
+		return;
+	}
+	if (outcome.reason === 'access-probe-failed') {
 		throw new FatalError(
 			'Access probe failed — credentials are rejected or unreachable. ' +
 				'Fix the issue above before uploading.'
 		);
 	}
-
-	if (!options.skipAccess && !token && !(options.cfClientId && options.cfClientSecret)) {
+	if (outcome.reason === 'access-missing') {
 		console.log('\nNot ready for prod. Prefer Access service tokens (no cookie paste):');
 		console.log('  1. Deploy infra (creates CLI service token + Service Auth policy)');
 		console.log('  2. export CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET from Pulumi outputs');
 		console.log('  3. bun run admin:startup:upload -- --limit 5');
 		throw new FatalError('Access credentials missing — not ready for upload.');
-	} else if (!options.passkey) {
-		console.log('\nSet ADMIN_PASSKEY (or apps/api/.env).');
-		throw new FatalError('Admin passkey missing — not ready for upload.');
-	} else {
-		console.log('\nReady: bun run admin:startup:upload -- --limit 5');
 	}
+	// outcome.reason === 'passkey-missing'
+	console.log('\nSet ADMIN_PASSKEY (or apps/api/.env).');
+	throw new FatalError('Admin passkey missing — not ready for upload.');
 }
 
 export async function main(): Promise<void> {

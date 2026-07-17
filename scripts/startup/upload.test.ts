@@ -292,6 +292,42 @@ describe('uploadWithRetry', () => {
 		expect(posts.length).toBe(1);
 	});
 
+	it('treats HTTP 409 idempotency conflict as retriable and verifies (no hard FAIL)', async () => {
+		const callLog: string[] = [];
+		globalThis.fetch = mock(async (url: string | URL | Request, init?: RequestInit) => {
+			const method = init?.method ?? 'GET';
+			callLog.push(`${method} ${String(url)}`);
+			if (method === 'POST') {
+				// Server reports another request with the same Idempotency-Key is in flight.
+				return new Response(JSON.stringify({ error: 'conflict' }), {
+					status: 409,
+					headers: { 'Content-Type': 'application/json' }
+				});
+			}
+			// Verification GET — the winner has since committed the puzzle.
+			return new Response(
+				JSON.stringify({
+					puzzles: [{ name: 'test-puzzle', pieceCount: 48, aspectRatio: '1:1', status: 'ready' }]
+				}),
+				{ status: 200, headers: { 'Content-Type': 'application/json' } }
+			);
+		}) as unknown as typeof fetch;
+
+		const res = await uploadWithRetry(
+			'http://localhost:3000',
+			{},
+			'session=abc',
+			new FormData(),
+			'test-puzzle',
+			'test-puzzle\u000048\u00001:1'
+		);
+		// A 409 must NOT be a terminal failure: the retry loop polls and, finding
+		// the winner's puzzle, returns a synthetic OK instead of surfacing the 409.
+		expect(res.ok).toBe(true);
+		const posts = callLog.filter((c) => c.startsWith('POST'));
+		expect(posts.length).toBe(1);
+	});
+
 	it('sends Idempotency-Key header on POST', async () => {
 		let capturedHeaders: Record<string, string> = {};
 		globalThis.fetch = mock(async (url: string | URL | Request, init?: RequestInit) => {

@@ -213,9 +213,9 @@ export async function pollForExistingKey(
 }
 
 /**
- * POST the puzzle form with bounded retry for transient failures (5xx responses
- * and network errors). 4xx responses are not retried — they are deterministic
- * validation/authorization failures.
+ * POST the puzzle form with bounded retry for transient failures (5xx responses,
+ * network errors, and HTTP 409 idempotency conflicts). Other 4xx responses are
+ * not retried — they are deterministic validation/authorization failures.
  *
  * Duplicate prevention has two layers:
  *   1. Idempotency-Key header (primary): the server reserves the key in
@@ -255,9 +255,24 @@ export async function uploadWithRetry(
 				redirect: 'manual',
 				signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS)
 			});
-			if (response.ok || response.status < 500) return response;
-			// 5xx — transient, retry
-			lastError = new Error(`HTTP ${response.status} ${response.statusText}`);
+			if (response.ok) return response;
+			if (response.status === 409) {
+				// Idempotency conflict: another request with the same
+				// Idempotency-Key is already in flight. The winner will commit
+				// and a re-POST returns its puzzle (200) once metadata lands, so
+				// treat 409 as transient and retry (polling first, as below)
+				// instead of reporting a hard FAIL. No duplicate is created —
+				// the DO reservation blocks the loser's POST until the winner
+				// finishes, at which point the reserve returns the existing
+				// puzzle (200) rather than a 409.
+				lastError = new Error('HTTP 409 idempotency conflict — winner in flight');
+			} else if (response.status < 500) {
+				// Other 4xx are deterministic validation/authorization failures.
+				return response;
+			} else {
+				// 5xx — transient, retry
+				lastError = new Error(`HTTP ${response.status} ${response.statusText}`);
+			}
 		} catch (error) {
 			lastError = error instanceof Error ? error : new Error(String(error));
 		}

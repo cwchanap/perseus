@@ -486,4 +486,19 @@ describe('idempotency reservation', () => {
 		const reclaimed = await storageModule.reserveIdempotencyKey('key-b', 'puzzle-3');
 		expect(reclaimed).toEqual({ existing: false, puzzleId: 'puzzle-3' });
 	});
+
+	it('reclaims a corrupt empty reservation file instead of bricking the key', async () => {
+		const { mkdir } = await import('node:fs/promises');
+		// A mid-write crash can leave a zero-byte reservation file. Without
+		// recovery this permanently 500s the key (and release() cannot clear an
+		// ownerless file). reserve() should detect the empty file and reclaim it.
+		const reservationPath = join(tempDir, 'idempotency', 'key-empty');
+		await mkdir(join(tempDir, 'idempotency'), { recursive: true });
+		await writeFile(reservationPath, '', { flag: 'wx' });
+		expect(await readFile(reservationPath, 'utf-8')).toBe('');
+
+		const result = await storageModule.reserveIdempotencyKey('key-empty', 'puzzle-1');
+		expect(result).toEqual({ existing: false, puzzleId: 'puzzle-1' });
+		expect(await readFile(reservationPath, 'utf-8')).toBe('puzzle-1');
+	});
 });

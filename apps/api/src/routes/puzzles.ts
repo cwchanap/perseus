@@ -91,6 +91,16 @@ puzzles.get('/', async (c) => {
 });
 
 // POST /api/puzzles - Create a server puzzle for the signed-in player
+//
+// Intentionally NO server-side idempotency (unlike the admin upload path in
+// routes/admin.ts, which reserves an Idempotency-Key in PuzzleMetadataDO /
+// the filesystem before minting a UUID). Player uploads are interactive and
+// low-volume: a retried request after a lost response will create a distinct
+// puzzle (fresh crypto.randomUUID() below). The player simply sees the new
+// puzzle in their gallery. Wiring the full reserve/commit lifecycle here is
+// deferred until duplicate player uploads become a real problem — it adds the
+// DO reservation, transition endpoints, and ownership-rollback coupling that
+// the admin path carries, for little gain at this volume.
 puzzles.post('/', requirePlayerAuth, async (c) => {
 	let puzzleDirCreated = false;
 	let id = '';

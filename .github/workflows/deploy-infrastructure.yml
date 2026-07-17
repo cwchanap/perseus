@@ -14,8 +14,18 @@ on:
   workflow_dispatch:
 
 concurrency:
+  # One in-flight deploy per branch. cancel-in-progress is intentionally FALSE:
+  # this is an infrastructure deploy that should complete atomically once it
+  # starts. With cancel-in-progress: true, frequent pushes to main kept
+  # cancelling a deploy mid-flight (often before it cleared the production-env
+  # gate on the preview job), so under burst merges a deploy could never
+  # finish. Queueing is the safer tradeoff for deploys: each push lands a full,
+  # completed `pulumi up`. Note this also means the preview job (below) still
+  # inherits the `production` environment's gates — decoupling preview onto a
+  # dedicated `pulumi-preview` env (mirroring secrets, no required reviewers)
+  # remains the larger deferred mitigation and is an operator task.
   group: pulumi-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   id-token: write
