@@ -237,7 +237,12 @@ async function transitionIdempotencyKey(
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ puzzleId })
 	});
-	if (!response.ok && response.status !== 404) {
+	// release and fail are cleanup operations — a missing reservation (404) is
+	// already in the desired state, so 404 is not an error. commit is not: a 404
+	// means the durable key → puzzleId mapping is gone, so the handler would
+	// return 201 without idempotency protection. Surface it so the client retries.
+	const ignoreMissing = action !== 'commit';
+	if (!response.ok && !(ignoreMissing && response.status === 404)) {
 		const payload = (await response.json().catch(() => null)) as { message?: string } | null;
 		const fallback = `Failed to ${action} idempotency key (HTTP ${response.status})`;
 		throw new Error(payload?.message ?? fallback);

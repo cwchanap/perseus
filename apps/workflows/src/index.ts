@@ -262,12 +262,17 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 	 *   (none|failed|stale-pending) --reserve--> pending --commit--> committed
 	 *                                    \--fail--> failed
 	 *                                    \--release--> (none)
+	 *   committed --fail--> failed      (reclaim after workflow marked puzzle failed)
+	 *   committed --release--> (none)   (cleanup after puzzle deletion)
 	 *
 	 * Owner-checked transitions prevent a concurrent loser from releasing or
 	 * committing a winner's reservation. A failed reservation may be reclaimed
 	 * by a later reserve so retries after create failure can proceed. Pending
 	 * reservations older than RESERVATION_PENDING_TTL_MS are also reclaimable
 	 * so a crashed isolate between reserve and commit cannot brick the key.
+	 * A committed reservation may be demoted to failed (so a retry can reclaim
+	 * the key after the workflow marked the puzzle failed) or released (so the
+	 * key is freed after an admin deletes the puzzle). Both are owner-checked.
 	 *
 	 * This instance is separate from the metadata DO instance (keyed by
 	 * idFromName(puzzleId)) — they never share storage.
@@ -352,7 +357,16 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 			if (reservation.puzzleId !== puzzleId) {
 				return { ok: false as const, status: 409, message: 'Reservation owned by another puzzle' };
 			}
-			if (reservation.status !== 'pending' && reservation.status !== action) {
+			// Allowed transitions:
+			//   pending → {committed, failed, released}  — normal lifecycle
+			//   committed → failed                       — reclaim after workflow failure
+			//   committed → released                     — cleanup after puzzle deletion
+			//   X → X (idempotent re-transition)         — retry safety
+			const transitionAllowed =
+				reservation.status === 'pending' ||
+				reservation.status === action ||
+				(reservation.status === 'committed' && (action === 'failed' || action === 'released'));
+			if (!transitionAllowed) {
 				return {
 					ok: false as const,
 					status: 409,

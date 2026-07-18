@@ -502,12 +502,12 @@ describe('idempotency reservation', () => {
 		expect(await readFile(reservationPath, 'utf-8')).toBe('puzzle-1');
 	});
 
-	it('concurrent reserves for the same key award exactly one winner (wx flag)', async () => {
-		// Two reserves race for the same key. The exclusive 'wx' (O_EXCL) create
-		// must guarantee only one caller wins the claim; the loser reads the
-		// winner's puzzleId back. This mirrors the DO concurrency test and
-		// guards against a regression that drops the wx flag (a plain writeFile
-		// would let both callers "win" and clobber each other).
+	it('concurrent reserves for the same key award exactly one winner (link atomicity)', async () => {
+		// Two reserves race for the same key. The atomic temp-file + link()
+		// publish must guarantee only one caller wins the claim; the loser
+		// reads the winner's puzzleId back. This mirrors the DO concurrency
+		// test and guards against a regression that drops the link() step (a
+		// plain writeFile would let both callers "win" and clobber each other).
 		const [r1, r2] = await Promise.all([
 			storageModule.reserveIdempotencyKey('key-race', 'puzzle-a'),
 			storageModule.reserveIdempotencyKey('key-race', 'puzzle-b')

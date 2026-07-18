@@ -24,7 +24,6 @@ import {
 	deletePuzzle as deleteStoredPuzzle,
 	getPuzzle,
 	listPuzzles,
-	puzzleExists,
 	getOriginalImagePath,
 	getPuzzleDir,
 	releaseIdempotencyKey,
@@ -452,9 +451,13 @@ admin.post('/puzzles', requireAuth, async (c) => {
 admin.delete('/puzzles/:id', requireAuth, async (c) => {
 	const id = c.req.param('id');
 
-	const exists = await puzzleExists(id);
+	// Read metadata before deletion so we can release the idempotency
+	// reservation (keyed by idempotencyKey, not puzzleId). Without this,
+	// a deleted seeded puzzle permanently maps its key to the deleted ID,
+	// and the next upload with the same key gets a permanent 409.
+	const puzzle = await getPuzzle(id);
 
-	if (!exists) {
+	if (!puzzle) {
 		return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
 	}
 
@@ -462,6 +465,18 @@ admin.delete('/puzzles/:id', requireAuth, async (c) => {
 
 	if (!deleted) {
 		return c.json({ error: 'internal_error', message: 'Failed to delete puzzle' }, 500);
+	}
+
+	// Best-effort release of the idempotency reservation so the key can be
+	// reused after deletion. Owner-checked: only deletes if the file content
+	// matches this puzzleId. Logged, not fatal — filesystem deletion above
+	// is the source of truth for puzzle existence.
+	if (puzzle.idempotencyKey) {
+		try {
+			await releaseIdempotencyKey(puzzle.idempotencyKey, id);
+		} catch (err) {
+			console.error(`Failed to release idempotency reservation for puzzle ${id}:`, err);
+		}
 	}
 
 	// Best-effort cleanup of the D1 ownership row (see admin.worker.ts for the

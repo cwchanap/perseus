@@ -791,18 +791,46 @@ describe('PuzzleMetadataDO.fetch - /commit /fail /release transition edge cases'
 		expect(body.message).toMatch(/no reservation/i);
 	});
 
-	it('returns 409 when transitioning a reservation already in a terminal status', async () => {
-		// A committed reservation cannot be committed again via the wrong-status
-		// branch — but the idempotent same-status branch (status === action)
-		// short-circuits first. Use /fail on an already-committed reservation to
-		// exercise the status-mismatch 409 path.
-		const { durableObj } = makeDO({
+	it('allows committed → failed reclaim after workflow marked puzzle failed', async () => {
+		// A committed reservation whose workflow later marked the puzzle
+		// failed must be demotable to failed so a retry can reclaim the key
+		// and create a replacement. The admin retry path calls /fail on the
+		// committed reservation before re-reserving with a new puzzleId.
+		const { durableObj, storage } = makeDO({
 			reservation: { puzzleId: 'puzzle-uuid-1', status: 'committed' }
 		});
 		const response = await postRequest(durableObj, { puzzleId: 'puzzle-uuid-1' }, '/fail');
+		expect(response.status).toBe(200);
+		expect(storage.put).toHaveBeenCalledWith('reservation', {
+			puzzleId: 'puzzle-uuid-1',
+			status: 'failed'
+		});
+	});
+
+	it('allows committed → released cleanup after puzzle deletion', async () => {
+		// A committed reservation must be releasable after an admin deletes
+		// the puzzle so the key can be reused. Without this, a deleted seeded
+		// puzzle permanently maps its key to the deleted ID.
+		const { durableObj, storage } = makeDO({
+			reservation: { puzzleId: 'puzzle-uuid-1', status: 'committed' },
+			reservedPuzzleId: 'puzzle-uuid-1'
+		});
+		const response = await postRequest(durableObj, { puzzleId: 'puzzle-uuid-1' }, '/release');
+		expect(response.status).toBe(200);
+		expect(storage.delete).toHaveBeenCalledWith('reservation');
+		expect(storage.delete).toHaveBeenCalledWith('reservedPuzzleId');
+	});
+
+	it('rejects committed → committed-via-fail with 409 for non-owner', async () => {
+		// Owner check still applies: a non-owner cannot fail a committed
+		// reservation even though committed → failed is now allowed.
+		const { durableObj } = makeDO({
+			reservation: { puzzleId: 'puzzle-uuid-1', status: 'committed' }
+		});
+		const response = await postRequest(durableObj, { puzzleId: 'other-uuid' }, '/fail');
 		expect(response.status).toBe(409);
 		const body = (await response.json()) as { message: string };
-		expect(body.message).toMatch(/cannot fail/i);
+		expect(body.message).toMatch(/owned by another/i);
 	});
 
 	it('idempotent commit returns success without rewriting when already committed', async () => {

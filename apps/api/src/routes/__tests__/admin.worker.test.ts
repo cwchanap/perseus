@@ -999,7 +999,13 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 			);
 		});
 
-		it('does not release reservation when metadata cleanup fails after workflow trigger', async () => {
+		it('releases reservation when metadata cleanup fails after workflow trigger', async () => {
+			// When the workflow trigger fails AND metadata cleanup also fails, the
+			// reservation must be released so a retry can reclaim the key and create
+			// a replacement. Without this, a retry returns 200 for the stuck
+			// processing puzzle (no workflow running) and the key is permanently
+			// bricked. The orphaned processing metadata remains in KV until an
+			// operator force-deletes it.
 			(storage.reserveIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue({
 				existing: false,
 				puzzleId: 'reserved-uuid',
@@ -1014,6 +1020,7 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 			(storage.deleteOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue({
 				success: true
 			});
+			(storage.releaseIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
 			const mockEnv = {
 				ADMIN_PASSKEY: 'test-passkey',
@@ -1047,9 +1054,12 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 			const body = (await res.json()) as any;
 			expect(body.error).toBe('internal_error');
 			expect(body.message).toMatch(/stuck|metadata cleanup failed/i);
-			// Releasing would let a retry mint a new UUID and orphan the original.
-			expect(storage.releaseIdempotencyKey).not.toHaveBeenCalled();
-			expect(storage.failIdempotencyKey).not.toHaveBeenCalled();
+			// Reservation released so a retry can reclaim the key.
+			expect(storage.releaseIdempotencyKey).toHaveBeenCalledWith(
+				mockEnv.PUZZLE_METADATA_DO,
+				'abc123def456',
+				'reserved-uuid'
+			);
 		});
 
 		it('should return 409 when key is reserved but metadata is missing', async () => {

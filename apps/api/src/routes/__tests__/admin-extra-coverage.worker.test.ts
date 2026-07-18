@@ -15,7 +15,8 @@ vi.mock('../../services/storage.worker', () => ({
 	createPuzzleMetadata: vi.fn(),
 	uploadOriginalImage: vi.fn(),
 	deleteOriginalImage: vi.fn(),
-	listPuzzles: vi.fn()
+	listPuzzles: vi.fn(),
+	releaseIdempotencyKey: vi.fn()
 }));
 
 vi.mock('../../db.worker', () => ({

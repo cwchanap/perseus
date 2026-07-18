@@ -661,13 +661,16 @@ admin.post('/puzzles', requireAuth, async (c) => {
 		if (!c.env.PUZZLE_WORKFLOW || typeof c.env.PUZZLE_WORKFLOW.create !== 'function') {
 			const metadataCleanup = await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
 			if (!metadataCleanup.success) {
-				// Keep the idempotency reservation so a retry maps to this
-				// puzzleId instead of minting a duplicate. The processing
-				// metadata remains until an operator force-deletes it.
+				// Release the reservation so a retry can reclaim the key and
+				// create a replacement. The orphaned processing metadata remains
+				// in KV until an operator force-deletes it, but the key is
+				// unblocked instead of permanently returning 200 for a stuck
+				// puzzle on retry.
 				console.error(
 					'Failed to cleanup puzzle metadata after missing workflow binding:',
 					metadataCleanup.error
 				);
+				await releaseReservation();
 				return c.json(
 					{
 						error: 'internal_error',
@@ -710,12 +713,16 @@ admin.post('/puzzles', requireAuth, async (c) => {
 			// Clean up both metadata and image
 			const metadataCleanup = await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
 			if (!metadataCleanup.success) {
-				// Do not release the reservation: releasing would let a retry
-				// mint a fresh UUID and orphan this processing puzzle forever.
+				// Release the reservation so a retry can reclaim the key and
+				// create a replacement. The orphaned processing metadata remains
+				// in KV until an operator force-deletes it, but the key is
+				// unblocked instead of permanently returning 200 for a stuck
+				// puzzle on retry.
 				console.error(
 					'Failed to cleanup puzzle metadata after workflow trigger failure:',
 					metadataCleanup.error
 				);
+				await releaseReservation();
 				return c.json(
 					{
 						error: 'internal_error',
@@ -833,6 +840,20 @@ admin.delete('/puzzles/:id', requireAuth, async (c) => {
 		if (!metadataResult.success) {
 			console.error('Failed to delete puzzle metadata:', metadataResult.error);
 			return c.json({ error: 'internal_error', message: 'Failed to delete puzzle' }, 500);
+		}
+
+		// Best-effort release of the idempotency reservation so the key can be
+		// reused after deletion. Without this, a deleted seeded puzzle
+		// permanently maps its key to the deleted ID, and the next upload with
+		// the same key gets a permanent 409. Owner-checked and 404-tolerant
+		// (release is a cleanup operation). Logged, not fatal — KV deletion
+		// above is the source of truth for puzzle existence.
+		if (puzzle.idempotencyKey) {
+			try {
+				await releaseIdempotencyKey(c.env.PUZZLE_METADATA_DO, puzzle.idempotencyKey, id);
+			} catch (err) {
+				console.error(`Failed to release idempotency reservation for puzzle ${id}:`, err);
+			}
 		}
 
 		// Best-effort cleanup of the D1 ownership row so a deleted puzzle doesn't
