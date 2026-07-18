@@ -587,4 +587,29 @@ describe('idempotency reservation', () => {
 		const followUp = await storageModule.reserveIdempotencyKey('key-double-release', 'puzzle-b');
 		expect(followUp).toEqual({ existing: false, puzzleId: 'puzzle-b' });
 	});
+
+	it('re-throws non-ENOENT errors from release so callers can surface them', async () => {
+		// releaseIdempotencyKey must re-throw non-ENOENT errors (e.g. EISDIR,
+		// EACCES, EIO) instead of silently swallowing them, so callers can
+		// log, retry, or return an error to the client. ENOENT is still
+		// swallowed (the file is already gone — not an error).
+		//
+		// To simulate a non-ENOENT error without mocking the frozen
+		// node:fs/promises module, replace the reservation file with a
+		// directory — readFile on a directory throws EISDIR.
+		const { mkdir, rm, rmdir } = await import('node:fs/promises');
+		const reservationPath = join(tempDir, 'idempotency', 'key-release-throw');
+		await mkdir(join(tempDir, 'idempotency'), { recursive: true });
+		await writeFile(reservationPath, 'puzzle-a', { flag: 'wx' });
+		// Replace the file with a directory of the same name.
+		await rm(reservationPath, { force: true });
+		await mkdir(reservationPath, { recursive: true });
+
+		await expect(
+			storageModule.releaseIdempotencyKey('key-release-throw', 'puzzle-a')
+		).rejects.toThrow();
+
+		// Cleanup: remove the directory so it doesn't interfere with other tests.
+		await rmdir(reservationPath, { recursive: true }).catch(() => {});
+	});
 });

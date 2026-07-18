@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { sniffImageType, detectImageType, parseImageDimensions, type BlobLike } from '../image';
+import {
+	sniffImageType,
+	detectImageType,
+	parseImageDimensions,
+	validateImageEndMarker,
+	type BlobLike
+} from '../image';
 
 // bun-types' `Blob` interface (under lib: ES2022, no DOM) omits `slice`, so a
 // real Blob isn't structurally assignable to BlobLike even though it has slice
@@ -666,5 +672,101 @@ describe('parseImageDimensions', () => {
 		const mime = await detectImageType(blob);
 		expect(mime).toBe('image/png');
 		expect(await parseImageDimensions(blob, mime!)).toEqual({ width: 800, height: 600 });
+	});
+});
+
+// ─── validateImageEndMarker ─────────────────────────────────────────
+
+describe('validateImageEndMarker', () => {
+	it('validates a PNG with IEND chunk at the end', async () => {
+		const header = pngHeaderBytes(600, 400);
+		// Append IEND chunk: 4-byte zero length + "IEND" + CRC AE 42 60 82
+		const iend = new Uint8Array([
+			0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82
+		]);
+		const full = new Uint8Array(header.length + iend.length);
+		full.set(header, 0);
+		full.set(iend, header.length);
+		expect(await validateImageEndMarker(makeBlob(full), 'image/png')).toBe(true);
+	});
+
+	it('rejects a PNG without IEND (truncated after header)', async () => {
+		// Just the header, no IEND — this is the vulnerability: a truncated
+		// PNG that passes parseImageDimensions but has no image data.
+		const header = pngHeaderBytes(600, 400);
+		expect(await validateImageEndMarker(makeBlob(header), 'image/png')).toBe(false);
+	});
+
+	it('rejects a PNG with wrong end bytes (not IEND)', async () => {
+		const header = pngHeaderBytes(600, 400);
+		// Append some random bytes instead of IEND
+		const tail = new Uint8Array([
+			0x00, 0x00, 0x00, 0x00, 0x49, 0x44, 0x41, 0x54, 0x00, 0x00, 0x00, 0x00
+		]);
+		const full = new Uint8Array(header.length + tail.length);
+		full.set(header, 0);
+		full.set(tail, header.length);
+		expect(await validateImageEndMarker(makeBlob(full), 'image/png')).toBe(false);
+	});
+
+	it('validates a JPEG with EOI marker at the end', async () => {
+		const header = jpegHeaderBytes(600, 400);
+		// Append EOI marker (FF D9)
+		const full = new Uint8Array(header.length + 2);
+		full.set(header, 0);
+		full[header.length] = 0xff;
+		full[header.length + 1] = 0xd9;
+		expect(await validateImageEndMarker(makeBlob(full), 'image/jpeg')).toBe(true);
+	});
+
+	it('validates a JPEG with trailing fill bytes after EOI', async () => {
+		const header = jpegHeaderBytes(600, 400);
+		// Append EOI + some trailing padding (some encoders do this)
+		const full = new Uint8Array(header.length + 5);
+		full.set(header, 0);
+		full[header.length] = 0xff;
+		full[header.length + 1] = 0xd9;
+		full[header.length + 2] = 0x00;
+		full[header.length + 3] = 0x00;
+		full[header.length + 4] = 0x00;
+		expect(await validateImageEndMarker(makeBlob(full), 'image/jpeg')).toBe(true);
+	});
+
+	it('rejects a JPEG without EOI (truncated)', async () => {
+		const header = jpegHeaderBytes(600, 400);
+		// No EOI — just the header
+		expect(await validateImageEndMarker(makeBlob(header), 'image/jpeg')).toBe(false);
+	});
+
+	it('validates a WebP where file size >= declared RIFF size', async () => {
+		const header = webpVp8Bytes(600, 400);
+		// RIFF size at offset 4 is currently 0 (34 - 8 = 26). Set it to
+		// the actual payload size so the check passes.
+		const dv = new DataView(header.buffer);
+		dv.setUint32(4, header.length - 8, true);
+		expect(await validateImageEndMarker(makeBlob(header), 'image/webp')).toBe(true);
+	});
+
+	it('rejects a truncated WebP (file smaller than declared RIFF size)', async () => {
+		const header = webpVp8Bytes(600, 400);
+		// Declare a larger RIFF size than the actual file
+		const dv = new DataView(header.buffer);
+		dv.setUint32(4, 1000, true); // claims 1008 bytes, file is only 34
+		expect(await validateImageEndMarker(makeBlob(header), 'image/webp')).toBe(false);
+	});
+
+	it('rejects unknown image format', async () => {
+		const blob = makeBlob(new Uint8Array([0x00, 0x01, 0x02, 0x03]));
+		expect(await validateImageEndMarker(blob, 'image/gif')).toBe(false);
+	});
+
+	it('rejects PNG smaller than 12 bytes', async () => {
+		const blob = makeBlob(new Uint8Array(8));
+		expect(await validateImageEndMarker(blob, 'image/png')).toBe(false);
+	});
+
+	it('rejects JPEG smaller than 4 bytes', async () => {
+		const blob = makeBlob(new Uint8Array(2));
+		expect(await validateImageEndMarker(blob, 'image/jpeg')).toBe(false);
 	});
 });

@@ -113,13 +113,47 @@ function createKV(metadata: PuzzleMetadata | null = baseMetadata) {
 	};
 }
 
-function makeDO(storageInit: StorageInit = {}, kvMetadata: PuzzleMetadata | null = baseMetadata) {
+interface WorkflowMock {
+	status?: InstanceStatus['status'];
+	throwOnGet?: boolean;
+	throwOnStatus?: boolean;
+}
+
+function createWorkflow(mock: WorkflowMock = { status: 'running' }) {
+	const statusFn = vi.fn(async () => ({
+		status: mock.status ?? 'running',
+		...(mock.status === 'errored' ? { error: { name: 'Error', message: 'workflow failed' } } : {})
+	}));
+	const instance = { status: statusFn };
+	const getFn = vi.fn(async () => {
+		if (mock.throwOnGet) throw new Error('workflow get failed');
+		if (mock.throwOnStatus) {
+			return {
+				status: vi.fn(async () => {
+					throw new Error('workflow status failed');
+				})
+			};
+		}
+		return instance;
+	});
+	return { get: getFn, _statusFn: statusFn, _instance: instance };
+}
+
+function makeDO(
+	storageInit: StorageInit = {},
+	kvMetadata: PuzzleMetadata | null = baseMetadata,
+	workflowMock: WorkflowMock = { status: 'running' }
+) {
 	const storage = createStorage(storageInit);
 	const kv = createKV(kvMetadata);
+	const workflow = createWorkflow(workflowMock);
 	const ctx = { storage } as unknown as DurableObjectState;
-	const env = { PUZZLE_METADATA: kv } as unknown as Env;
+	const env = {
+		PUZZLE_METADATA: kv,
+		PUZZLE_WORKFLOW: workflow
+	} as unknown as Env;
 	const durableObj = new PuzzleMetadataDO(ctx, env as unknown as Env);
-	return { durableObj, storage, kv };
+	return { durableObj, storage, kv, workflow };
 }
 
 async function postRequest(durableObj: PuzzleMetadataDO, body: unknown, path = '/update') {
@@ -667,6 +701,156 @@ describe('PuzzleMetadataDO.fetch - /reserve (idempotency)', () => {
 				puzzleId: 'live-stale-uuid',
 				status: 'committed'
 			})
+		);
+	});
+
+	it('returns 409 (not reclaim) when KV metadata lookup throws for stale pending', async () => {
+		// A transient KV error during the stale-pending metadata lookup must
+		// NOT fall through to reclaim — that would mint a duplicate of a live
+		// puzzle whose metadata was momentarily unreadable. Fail closed: 409.
+		const staleAt = Date.now() - 10 * 60 * 1000;
+		const liveMeta: PuzzleMetadata = {
+			...baseMetadata,
+			id: 'kv-error-uuid',
+			status: 'processing'
+		};
+		const { durableObj, kv, storage } = makeDO(
+			{
+				reservation: {
+					puzzleId: 'kv-error-uuid',
+					status: 'pending',
+					reservedAt: staleAt
+				}
+			},
+			liveMeta
+		);
+		// Force kv.get to throw a transient KV error.
+		(kv.get as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('KV internal error'));
+		const response = await postRequest(
+			durableObj,
+			{ idempotencyKey: 'abc123', puzzleId: 'fresh-uuid' },
+			'/reserve'
+		);
+		expect(response.status).toBe(409);
+		// Must NOT reclaim — reservation should not be overwritten with a new pending.
+		expect(storage.put).not.toHaveBeenCalledWith(
+			'reservation',
+			expect.objectContaining({ puzzleId: 'fresh-uuid', status: 'pending' })
+		);
+	});
+
+	it('fails stale-pending reservation when workflow status is errored', async () => {
+		// Metadata exists (processing) but the workflow errored — the puzzle
+		// is stuck. Promoting would return it as 200 forever. Per policy,
+		// mark the reservation failed so a retry reclaims and creates fresh.
+		const staleAt = Date.now() - 10 * 60 * 1000;
+		const liveMeta: PuzzleMetadata = {
+			...baseMetadata,
+			id: 'stuck-errored-uuid',
+			status: 'processing'
+		};
+		const { durableObj, storage } = makeDO(
+			{
+				reservation: {
+					puzzleId: 'stuck-errored-uuid',
+					status: 'pending',
+					reservedAt: staleAt
+				}
+			},
+			liveMeta,
+			{ status: 'errored' }
+		);
+		const response = await postRequest(
+			durableObj,
+			{ idempotencyKey: 'abc123', puzzleId: 'would-be-duplicate' },
+			'/reserve'
+		);
+		expect(response.status).toBe(409);
+		// Reservation marked failed so a retry can reclaim.
+		expect(storage.put).toHaveBeenCalledWith(
+			'reservation',
+			expect.objectContaining({
+				puzzleId: 'stuck-errored-uuid',
+				status: 'failed'
+			})
+		);
+		// Must NOT mint a duplicate.
+		expect(storage.put).not.toHaveBeenCalledWith(
+			'reservation',
+			expect.objectContaining({ puzzleId: 'would-be-duplicate', status: 'pending' })
+		);
+	});
+
+	it('fails stale-pending reservation when workflow was never created (unknown)', async () => {
+		// The scenario from the review: createPuzzleMetadata succeeded but
+		// PUZZLE_WORKFLOW.create never ran (process died). Workflow instance
+		// status is unknown. Must not promote the stuck processing puzzle.
+		const staleAt = Date.now() - 10 * 60 * 1000;
+		const liveMeta: PuzzleMetadata = {
+			...baseMetadata,
+			id: 'no-workflow-uuid',
+			status: 'processing'
+		};
+		const { durableObj, storage } = makeDO(
+			{
+				reservation: {
+					puzzleId: 'no-workflow-uuid',
+					status: 'pending',
+					reservedAt: staleAt
+				}
+			},
+			liveMeta,
+			{ status: 'unknown' }
+		);
+		const response = await postRequest(
+			durableObj,
+			{ idempotencyKey: 'abc123', puzzleId: 'would-be-duplicate' },
+			'/reserve'
+		);
+		expect(response.status).toBe(409);
+		expect(storage.put).toHaveBeenCalledWith(
+			'reservation',
+			expect.objectContaining({
+				puzzleId: 'no-workflow-uuid',
+				status: 'failed'
+			})
+		);
+	});
+
+	it('returns 409 when workflow status check throws', async () => {
+		// If PUZZLE_WORKFLOW.get() or .status() throws, fail closed: 409.
+		// Don't promote (might be stuck) and don't reclaim (might be live).
+		const staleAt = Date.now() - 10 * 60 * 1000;
+		const liveMeta: PuzzleMetadata = {
+			...baseMetadata,
+			id: 'wf-throw-uuid',
+			status: 'processing'
+		};
+		const { durableObj, storage } = makeDO(
+			{
+				reservation: {
+					puzzleId: 'wf-throw-uuid',
+					status: 'pending',
+					reservedAt: staleAt
+				}
+			},
+			liveMeta,
+			{ throwOnGet: true }
+		);
+		const response = await postRequest(
+			durableObj,
+			{ idempotencyKey: 'abc123', puzzleId: 'would-be-duplicate' },
+			'/reserve'
+		);
+		expect(response.status).toBe(409);
+		// Must NOT modify the reservation when unsure.
+		expect(storage.put).not.toHaveBeenCalledWith(
+			'reservation',
+			expect.objectContaining({ status: 'committed' })
+		);
+		expect(storage.put).not.toHaveBeenCalledWith(
+			'reservation',
+			expect.objectContaining({ puzzleId: 'would-be-duplicate' })
 		);
 	});
 

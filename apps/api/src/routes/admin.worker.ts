@@ -26,6 +26,7 @@ import {
 	originalImageExists,
 	getPuzzle,
 	listPuzzles,
+	puzzleExists,
 	releaseIdempotencyKey,
 	reserveIdempotencyKey,
 	type PuzzleMetadata
@@ -319,6 +320,24 @@ admin.post('/puzzles', requireAuth, async (c) => {
 			}
 		}
 	};
+	// Mark the reservation failed (not released) when metadata cleanup fails
+	// and the puzzle's KV metadata + image may remain as orphans. Releasing
+	// would let a same-key retry mint a replacement puzzle alongside the
+	// orphaned one; failing keeps the reservation in a recoverable state so
+	// a retry reclaims through the DO's serialized path, and the orphan is
+	// explicit for operator force-delete instead of being silently left
+	// behind a released key.
+	const failReservation = async () => {
+		if (!reservedIdempotencyKey || !id) return;
+		const key = reservedIdempotencyKey;
+		const puzzleId = id;
+		reservedIdempotencyKey = undefined;
+		try {
+			await failIdempotencyKey(c.env.PUZZLE_METADATA_DO, key, puzzleId);
+		} catch (err) {
+			console.error('Failed to mark idempotency reservation failed:', err);
+		}
+	};
 
 	try {
 		let formData: FormData;
@@ -545,8 +564,33 @@ admin.post('/puzzles', requireAuth, async (c) => {
 										// has no metadata. If R2 still has the
 										// original, treat as KV lag (409), not a
 										// deleted puzzle — releasing would mint a
-										// duplicate of a live puzzle.
-										if (await originalImageExists(c.env.PUZZLES_BUCKET, reclaimed.puzzleId)) {
+										// duplicate of a live puzzle. R2 probe
+										// errors are also treated as 409
+										// (transient) — fail closed rather than
+										// guessing "object gone" and minting a
+										// duplicate of a live puzzle on a
+										// transient `head` failure.
+										let originalStillThere: boolean;
+										try {
+											originalStillThere = await originalImageExists(
+												c.env.PUZZLES_BUCKET,
+												reclaimed.puzzleId
+											);
+										} catch (probeErr) {
+											console.error(
+												`R2 probe failed for puzzle ${reclaimed.puzzleId} during reclaim:`,
+												probeErr
+											);
+											return c.json(
+												{
+													error: 'conflict',
+													message:
+														'Idempotency-Key may map to an existing puzzle; R2 probe failed, retry'
+												},
+												409
+											);
+										}
+										if (originalStillThere) {
 											return c.json(
 												{
 													error: 'conflict',
@@ -668,10 +712,29 @@ admin.post('/puzzles', requireAuth, async (c) => {
 						// means an in-flight create or KV propagation lag —
 						// signal transient (409) for the client to retry.
 						if (reserved.status === 'committed') {
-							const originalStillThere = await originalImageExists(
-								c.env.PUZZLES_BUCKET,
-								reserved.puzzleId
-							);
+							// R2 probe errors are treated as 409 (transient)
+							// — fail closed rather than guessing "object gone"
+							// and minting a duplicate of a live puzzle on a
+							// transient `head` failure.
+							let originalStillThere: boolean;
+							try {
+								originalStillThere = await originalImageExists(
+									c.env.PUZZLES_BUCKET,
+									reserved.puzzleId
+								);
+							} catch (probeErr) {
+								console.error(
+									`R2 probe failed for puzzle ${reserved.puzzleId} during stale reservation release:`,
+									probeErr
+								);
+								return c.json(
+									{
+										error: 'conflict',
+										message: 'Idempotency-Key may map to an existing puzzle; R2 probe failed, retry'
+									},
+									409
+								);
+							}
 							if (originalStillThere) {
 								return c.json(
 									{
@@ -800,15 +863,22 @@ admin.post('/puzzles', requireAuth, async (c) => {
 			await createPuzzleMetadata(c.env.PUZZLE_METADATA, puzzleMetadata);
 		} catch (error) {
 			console.error('Failed to create puzzle metadata:', error);
-			// Clean up the uploaded image
+			// Clean up the uploaded image. If cleanup SUCCEEDS, release the
+			// reservation so a retry can create a fresh puzzle (no orphan).
+			// If cleanup FAILS, fail the reservation instead of releasing —
+			// the orphaned R2 original remains, and releasing would let a
+			// retry mint a replacement alongside the orphan. Failing keeps
+			// the key in a recoverable state for operator force-delete.
 			const cleanupResult = await deleteOriginalImage(c.env.PUZZLES_BUCKET, id);
 			if (!cleanupResult.success) {
 				console.error(
 					'Failed to cleanup original image after metadata creation failure:',
 					cleanupResult.error
 				);
+				await failReservation();
+			} else {
+				await releaseReservation();
 			}
-			await releaseReservation();
 			return c.json({ error: 'internal_error', message: 'Failed to create puzzle metadata' }, 500);
 		}
 
@@ -844,16 +914,17 @@ admin.post('/puzzles', requireAuth, async (c) => {
 		if (!c.env.PUZZLE_WORKFLOW || typeof c.env.PUZZLE_WORKFLOW.create !== 'function') {
 			const metadataCleanup = await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
 			if (!metadataCleanup.success) {
-				// Release the reservation so a retry can reclaim the key and
-				// create a replacement. The orphaned processing metadata remains
-				// in KV until an operator force-deletes it, but the key is
-				// unblocked instead of permanently returning 200 for a stuck
-				// puzzle on retry.
+				// Metadata cleanup failed — the processing metadata remains in
+				// KV as an orphan. Fail (not release) the reservation so a
+				// retry reclaims through the DO's serialized path instead of
+				// releasing the key and minting a replacement alongside the
+				// orphaned puzzle. The orphan is explicit for operator
+				// force-delete.
 				console.error(
 					'Failed to cleanup puzzle metadata after missing workflow binding:',
 					metadataCleanup.error
 				);
-				await releaseReservation();
+				await failReservation();
 				return c.json(
 					{
 						error: 'internal_error',
@@ -896,16 +967,17 @@ admin.post('/puzzles', requireAuth, async (c) => {
 			// Clean up both metadata and image
 			const metadataCleanup = await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
 			if (!metadataCleanup.success) {
-				// Release the reservation so a retry can reclaim the key and
-				// create a replacement. The orphaned processing metadata remains
-				// in KV until an operator force-deletes it, but the key is
-				// unblocked instead of permanently returning 200 for a stuck
-				// puzzle on retry.
+				// Metadata cleanup failed — the processing metadata remains in
+				// KV as an orphan. Fail (not release) the reservation so a
+				// retry reclaims through the DO's serialized path instead of
+				// releasing the key and minting a replacement alongside the
+				// orphaned puzzle. The orphan is explicit for operator
+				// force-delete.
 				console.error(
 					'Failed to cleanup puzzle metadata after workflow trigger failure:',
 					metadataCleanup.error
 				);
-				await releaseReservation();
+				await failReservation();
 				return c.json(
 					{
 						error: 'internal_error',
@@ -998,15 +1070,42 @@ admin.delete('/puzzles/:id', requireAuth, async (c) => {
 		// where the puzzle status could change. This endpoint accepts that risk for simplicity.
 		// The status check prevents deletion of processing puzzles, but a race could still occur
 		// if processing completes between the check and the delete.
-		const puzzle = await getPuzzle(c.env.PUZZLE_METADATA, id);
+		//
+		// Best-effort read: if metadata is corrupt/unreadable (getPuzzle
+		// throws on validation failure), fall back to puzzleExists so an
+		// existing puzzle can still be deleted instead of 500-ing. The
+		// processing-status check and idempotency release are skipped (no
+		// status/key available); piece cleanup uses pieceCount=0 so only the
+		// original + thumbnail are deleted (pieces may be orphaned — rare
+		// corrupt-metadata case, operator can clean up via R2 console).
+		let puzzle: Awaited<ReturnType<typeof getPuzzle>> = null;
+		let pieceCount = 0;
+		try {
+			puzzle = await getPuzzle(c.env.PUZZLE_METADATA, id);
+			if (puzzle) pieceCount = puzzle.pieceCount;
+		} catch (err) {
+			console.error(
+				`Failed to read metadata for puzzle ${id}, attempting best-effort cleanup:`,
+				err
+			);
+		}
 
-		if (!puzzle) {
-			return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
+		if (puzzle === null) {
+			// Either getPuzzle returned null (truly missing) or threw (corrupt).
+			// Fall back to puzzleExists so a corrupt-but-present puzzle can
+			// still be deleted instead of 500-ing.
+			const exists = await puzzleExists(c.env.PUZZLE_METADATA, id);
+			if (!exists) {
+				return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
+			}
+			// puzzle stays null — proceed with deletion; processing-status
+			// check and idempotency release are skipped. pieceCount stays 0.
 		}
 
 		// Block deletion if puzzle is still processing unless force=true
 		// Force delete allows cleanup of stuck puzzles where workflow failed to mark them as failed
-		if (puzzle.status === 'processing' && !force) {
+		// Skipped when metadata was corrupt (status unknown — allow deletion).
+		if (puzzle?.status === 'processing' && !force) {
 			return c.json(
 				{
 					error: 'conflict',
@@ -1030,8 +1129,9 @@ admin.delete('/puzzles/:id', requireAuth, async (c) => {
 		// permanently maps its key to the deleted ID, and the next upload with
 		// the same key gets a permanent 409. Owner-checked and 404-tolerant
 		// (release is a cleanup operation). Logged, not fatal — KV deletion
-		// above is the source of truth for puzzle existence.
-		if (puzzle.idempotencyKey) {
+		// above is the source of truth for puzzle existence. Skipped when
+		// metadata was corrupt (no idempotency key available).
+		if (puzzle?.idempotencyKey) {
 			try {
 				await releaseIdempotencyKey(c.env.PUZZLE_METADATA_DO, puzzle.idempotencyKey, id);
 			} catch (err) {
@@ -1063,8 +1163,9 @@ admin.delete('/puzzles/:id', requireAuth, async (c) => {
 			(db) => deletePuzzleStats(db, id)
 		);
 
-		// Delete assets from R2
-		const deleteResult = await deletePuzzleAssets(c.env.PUZZLES_BUCKET, id, puzzle.pieceCount);
+		// Delete assets from R2. pieceCount is 0 when metadata was corrupt
+		// (only original + thumbnail are deleted; pieces may be orphaned).
+		const deleteResult = await deletePuzzleAssets(c.env.PUZZLES_BUCKET, id, pieceCount);
 
 		// If some assets failed to delete, return 207 Multi-Status
 		if (!deleteResult.success) {

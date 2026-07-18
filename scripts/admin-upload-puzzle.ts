@@ -172,6 +172,12 @@ For local API, use --skip-access or a localhost --server URL.`);
 					'Run: bun run admin:startup:set-token'
 			);
 		}
+		if (probe === 'unhealthy') {
+			throw new FatalError(
+				'Access accepted the JWT, but the backend returned 5xx.\n' +
+					'The API is unhealthy — uploads will fail. Investigate the backend before retrying.'
+			);
+		}
 		if (probe === 'error') {
 			throw new FatalError(
 				'Access JWT probe failed (network error or unexpected response).\n' +
@@ -190,6 +196,12 @@ For local API, use --skip-access or a localhost --server URL.`);
 			throw new FatalError(
 				'Cloudflare Access service token rejected (302/403).\n' +
 					'Check CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET are valid and not expired.'
+			);
+		}
+		if (probe === 'unhealthy') {
+			throw new FatalError(
+				'Access accepted the service token, but the backend returned 5xx.\n' +
+					'The API is unhealthy — uploads will fail. Investigate the backend before retrying.'
 			);
 		}
 		if (probe === 'error') {

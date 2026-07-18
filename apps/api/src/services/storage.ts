@@ -403,7 +403,10 @@ export async function releaseIdempotencyKey(key: string, puzzleId: string): Prom
 			await rm(path, { force: true });
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+			// Re-throw non-ENOENT errors so callers can surface them (log,
+			// retry, or return to client) instead of silently swallowing.
 			console.error(`Failed to release idempotency key '${key}':`, error);
+			throw error;
 		}
 	});
 }

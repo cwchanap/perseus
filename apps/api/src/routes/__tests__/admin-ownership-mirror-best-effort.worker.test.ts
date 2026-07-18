@@ -16,6 +16,7 @@ vi.mock('../../services/storage.worker', () => ({
 	uploadOriginalImage: vi.fn().mockResolvedValue(undefined),
 	deleteOriginalImage: vi.fn(),
 	originalImageExists: vi.fn().mockResolvedValue(false).mockResolvedValue({ success: true }),
+	puzzleExists: vi.fn().mockResolvedValue(false),
 	listPuzzles: vi.fn()
 }));
 

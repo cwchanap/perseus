@@ -736,12 +736,51 @@ describe('DELETE /puzzles/:id', () => {
 
 	it('returns 404 when puzzle does not exist', async () => {
 		(storageMock.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+		(storageMock.puzzleExists as ReturnType<typeof vi.fn>).mockResolvedValue(false);
 
 		const req = new Request('http://localhost/puzzles/nonexistent-id', { method: 'DELETE' });
 		const res = await app.fetch(req);
 		expect(res.status).toBe(404);
 		const body = await res.json();
 		expect(body.error).toBe('not_found');
+	});
+
+	it('deletes puzzle with corrupt metadata via puzzleExists fallback', async () => {
+		// When getPuzzle throws (corrupt metadata that fails validation),
+		// the DELETE route must fall back to puzzleExists and still delete
+		// the puzzle instead of 500-ing. The idempotency reservation release
+		// is skipped (no key available).
+		(storageMock.getPuzzle as ReturnType<typeof vi.fn>).mockRejectedValue(
+			new Error('Corrupt puzzle metadata: data exists but fails validation')
+		);
+		(storageMock.puzzleExists as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+		(storageMock.deletePuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const req = new Request('http://localhost/puzzles/corrupt-id', { method: 'DELETE' });
+		const res = await app.fetch(req);
+		expect(res.status).toBe(204);
+		// puzzleExists was consulted as the fallback.
+		expect(storageMock.puzzleExists).toHaveBeenCalledWith('corrupt-id');
+		// deletePuzzle ran (filesystem cleanup).
+		expect(storageMock.deletePuzzle).toHaveBeenCalledWith('corrupt-id');
+		consoleSpy.mockRestore();
+	});
+
+	it('returns 404 when getPuzzle throws and puzzleExists is false', async () => {
+		// getPuzzle throws AND puzzleExists returns false → genuinely gone.
+		(storageMock.getPuzzle as ReturnType<typeof vi.fn>).mockRejectedValue(
+			new Error('Corrupt puzzle metadata')
+		);
+		(storageMock.puzzleExists as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const req = new Request('http://localhost/puzzles/corrupt-id', { method: 'DELETE' });
+		const res = await app.fetch(req);
+		expect(res.status).toBe(404);
+		const body = await res.json();
+		expect(body.error).toBe('not_found');
+		consoleSpy.mockRestore();
 	});
 
 	it('returns 204 when puzzle is successfully deleted', async () => {

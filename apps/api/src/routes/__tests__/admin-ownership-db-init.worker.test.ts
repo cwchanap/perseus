@@ -20,8 +20,9 @@ vi.mock('../../services/storage.worker', () => ({
 	deletePuzzleMetadata: vi.fn().mockResolvedValue({ success: true }),
 	createPuzzleMetadata: vi.fn().mockResolvedValue(undefined),
 	uploadOriginalImage: vi.fn().mockResolvedValue(undefined),
-	deleteOriginalImage: vi.fn(),
+	deleteOriginalImage: vi.fn().mockResolvedValue({ success: true }),
 	originalImageExists: vi.fn().mockResolvedValue(false).mockResolvedValue({ success: true }),
+	puzzleExists: vi.fn().mockResolvedValue(false),
 	listPuzzles: vi.fn()
 }));
 

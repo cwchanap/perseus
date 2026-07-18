@@ -10,7 +10,8 @@ import {
 	listPlayerPuzzles,
 	listPlayerStats,
 	sniffImageType,
-	parseImageDimensions
+	parseImageDimensions,
+	validateImageEndMarker
 } from '@perseus/shared';
 import type { PlayerProfile, PlayerPuzzleSummary, PlayerStatRow } from '@perseus/types';
 import {
@@ -141,6 +142,15 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 	// malformed headers, rejecting incomplete uploads before they reach R2.
 	const dimensions = await parseImageDimensions(file, detected);
 	if (!dimensions || dimensions.width <= 0 || dimensions.height <= 0) {
+		return c.json({ error: 'bad_request', message: 'Image is corrupted or truncated' }, 400);
+	}
+	// Validate the image is structurally complete by checking for the format's
+	// end marker (IEND for PNG, EOI for JPEG, RIFF size for WebP).
+	// parseImageDimensions only validates the header; without this check a
+	// file with a valid header but missing body/trailer would pass and be
+	// stored as a corrupt avatar that renders broken for the player.
+	const hasEndMarker = await validateImageEndMarker(file, detected);
+	if (!hasEndMarker) {
 		return c.json({ error: 'bad_request', message: 'Image is corrupted or truncated' }, 400);
 	}
 	const liveKey = `avatars/${session.user.id}`;

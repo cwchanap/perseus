@@ -87,8 +87,8 @@ function buildApp() {
 }
 
 // Minimal PNG with a valid IHDR chunk so parseImageDimensions can extract
-// width/height. PNG signature (8) + IHDR length (4) + "IHDR" (4) + width (4)
-// + height (4) = 24 bytes. parseImageDimensions reads bytes 16–24 for dims.
+// width/height, plus an IEND chunk so validateImageEndMarker confirms
+// structural completeness.
 const PNG_BYTES = [
 	0x89,
 	0x50,
@@ -113,7 +113,20 @@ const PNG_BYTES = [
 	0x00,
 	0x00,
 	0x00,
-	0x01 // height = 1
+	0x01, // height = 1
+	// IEND chunk: 4-byte zero length + "IEND" + CRC AE 42 60 82
+	0x00,
+	0x00,
+	0x00,
+	0x00,
+	0x49,
+	0x45,
+	0x4e,
+	0x44,
+	0xae,
+	0x42,
+	0x60,
+	0x82
 ];
 
 describe('player avatar – rename promotion failure rollback (Bun, lines 174-179)', () => {

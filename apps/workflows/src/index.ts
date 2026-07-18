@@ -311,10 +311,90 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 		// inside DO storage transactions).
 		const preReserve = await this.readReservation();
 		if (preReserve && isStalePending(preReserve)) {
-			const live = await getMetadata(this.env.PUZZLE_METADATA, preReserve.puzzleId).catch(
-				() => null
-			);
+			// KV errors and corrupt metadata must NOT be collapsed to null —
+			// that would fall through to the reclaim path and mint a duplicate
+			// of a live puzzle whose metadata was momentarily unreadable. Let
+			// getMetadata throw (it returns null only for truly missing keys)
+			// and fail closed with 409 so the client retries. This covers both
+			// transient KV failures and validatePuzzleMetadata rejections (the
+			// helper throws on corrupt data); for corrupt data the 409 persists
+			// until an operator force-deletes the puzzle, which is safer than
+			// silently minting a replacement.
+			let live: Awaited<ReturnType<typeof getMetadata>>;
+			try {
+				live = await getMetadata(this.env.PUZZLE_METADATA, preReserve.puzzleId);
+			} catch (err) {
+				console.error(
+					`Stale-pending metadata lookup failed for puzzle ${preReserve.puzzleId}:`,
+					err
+				);
+				return Response.json(
+					{ message: 'Idempotency reservation lookup failed; retry' },
+					{ status: 409 }
+				);
+			}
 			if (live && live.status !== 'failed') {
+				// Verify the workflow is actually live before promoting. Metadata
+				// can exist (status=processing) without a running workflow if the
+				// original create died between createPuzzleMetadata and
+				// PUZZLE_WORKFLOW.create — promoting would return the stuck
+				// processing puzzle as 200 on every retry without ever resuming
+				// work. Per the fail-the-reservation policy, mark the reservation
+				// failed so a retry reclaims the key and creates a fresh puzzle;
+				// the stuck puzzle's metadata and image remain for operator
+				// cleanup via force-delete. Statuses that mean "not going to
+				// process": errored, terminated, unknown (incl. never created).
+				let workflowStatus: InstanceStatus['status'];
+				try {
+					const instance = await this.env.PUZZLE_WORKFLOW.get(preReserve.puzzleId);
+					workflowStatus = (await instance.status()).status;
+				} catch (wfErr) {
+					console.error(`Workflow liveness check failed for puzzle ${preReserve.puzzleId}:`, wfErr);
+					return Response.json(
+						{ message: 'Workflow liveness check failed; retry' },
+						{ status: 409 }
+					);
+				}
+				if (
+					workflowStatus === 'errored' ||
+					workflowStatus === 'terminated' ||
+					workflowStatus === 'unknown'
+				) {
+					try {
+						await this.ctx.storage.transaction(async () => {
+							const reservation = await this.readReservation();
+							if (
+								!reservation ||
+								reservation.puzzleId !== preReserve.puzzleId ||
+								!isStalePending(reservation)
+							) {
+								return;
+							}
+							const next: ReservationRecord = {
+								puzzleId: reservation.puzzleId,
+								status: 'failed'
+							};
+							await this.ctx.storage.put('reservation', next);
+							await this.ctx.storage.put('reservedPuzzleId', reservation.puzzleId);
+						});
+					} catch (failErr) {
+						console.error(
+							`Failed to mark stale-pending reservation failed for puzzle ${preReserve.puzzleId}:`,
+							failErr
+						);
+						return Response.json(
+							{ message: 'Failed to reconcile stale reservation; retry' },
+							{ status: 500 }
+						);
+					}
+					return Response.json(
+						{
+							message:
+								'Stale-pending reservation had no running workflow; marked failed, retry to reclaim'
+						},
+						{ status: 409 }
+					);
+				}
 				const promoted = await this.ctx.storage.transaction(async () => {
 					const reservation = await this.readReservation();
 					// Re-check under the transaction — another caller may have

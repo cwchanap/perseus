@@ -26,6 +26,7 @@ import {
 	listPuzzles,
 	getOriginalImagePath,
 	getPuzzleDir,
+	puzzleExists,
 	releaseIdempotencyKey,
 	reserveIdempotencyKey
 } from '../services/storage';
@@ -403,7 +404,11 @@ admin.post('/puzzles', requireAuth, async (c) => {
 				console.error(`Failed to clean up puzzle directory ${id} after metadata save failure`);
 			}
 			if (reservedIdempotencyKey) {
-				await releaseIdempotencyKey(reservedIdempotencyKey, id);
+				try {
+					await releaseIdempotencyKey(reservedIdempotencyKey, id);
+				} catch (releaseErr) {
+					console.error(`Failed to release idempotency reservation for puzzle ${id}:`, releaseErr);
+				}
 				reservedIdempotencyKey = undefined;
 			}
 			return c.json({ error: 'internal_error', message: 'Failed to save puzzle metadata' }, 500);
@@ -444,7 +449,11 @@ admin.post('/puzzles', requireAuth, async (c) => {
 			}
 		}
 		if (reservedIdempotencyKey && id) {
-			await releaseIdempotencyKey(reservedIdempotencyKey, id);
+			try {
+				await releaseIdempotencyKey(reservedIdempotencyKey, id);
+			} catch (releaseErr) {
+				console.error(`Failed to release idempotency reservation for puzzle ${id}:`, releaseErr);
+			}
 		}
 		return c.json({ error: 'internal_error', message: 'Failed to create puzzle' }, 500);
 	}
@@ -458,10 +467,28 @@ admin.delete('/puzzles/:id', requireAuth, async (c) => {
 	// reservation (keyed by idempotencyKey, not puzzleId). Without this,
 	// a deleted seeded puzzle permanently maps its key to the deleted ID,
 	// and the next upload with the same key gets a permanent 409.
-	const puzzle = await getPuzzle(id);
+	//
+	// Best-effort read: if metadata is corrupt/unreadable, fall back to
+	// puzzleExists so an existing puzzle directory can still be deleted
+	// instead of 500-ing. The idempotency reservation release is skipped
+	// (no key available) — same as a puzzle never reserved with a key.
+	let puzzle: Awaited<ReturnType<typeof getPuzzle>> = null;
+	try {
+		puzzle = await getPuzzle(id);
+	} catch (err) {
+		console.error(`Failed to read metadata for puzzle ${id}, attempting best-effort cleanup:`, err);
+	}
 
-	if (!puzzle) {
-		return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
+	if (puzzle === null) {
+		// Either getPuzzle returned null (truly missing) or threw (corrupt).
+		// Fall back to puzzleExists so a corrupt-but-present puzzle can still
+		// be deleted instead of 500-ing.
+		const exists = await puzzleExists(id);
+		if (!exists) {
+			return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
+		}
+		// puzzle stays null — proceed with deletion; idempotency reservation
+		// release is skipped (no key available).
 	}
 
 	const deleted = await deleteStoredPuzzle(id);
@@ -473,8 +500,9 @@ admin.delete('/puzzles/:id', requireAuth, async (c) => {
 	// Best-effort release of the idempotency reservation so the key can be
 	// reused after deletion. Owner-checked: only deletes if the file content
 	// matches this puzzleId. Logged, not fatal — filesystem deletion above
-	// is the source of truth for puzzle existence.
-	if (puzzle.idempotencyKey) {
+	// is the source of truth for puzzle existence. Skipped when metadata was
+	// corrupt (no idempotency key available).
+	if (puzzle?.idempotencyKey) {
 		try {
 			await releaseIdempotencyKey(puzzle.idempotencyKey, id);
 		} catch (err) {

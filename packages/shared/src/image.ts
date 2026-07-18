@@ -229,3 +229,66 @@ export async function parseImageDimensions(
 		return null;
 	}
 }
+
+// Validate that the image file is structurally complete by checking for the
+// format's end marker. parseImageDimensions only validates the header bytes;
+// without this check a file with a valid header prefix but missing body/trailer
+// (e.g. a PNG with an IHDR but no IDAT or IEND) would pass validation and be
+// stored as a corrupt avatar that renders broken for the player.
+//
+// Format-specific checks:
+// - PNG: must end with an IEND chunk (12 bytes: 4-byte zero length + "IEND" + CRC AE 42 60 82)
+// - JPEG: must contain an EOI marker (FF D9) near the end (allow trailing fill bytes)
+// - WebP: RIFF file size at offset 4-7 must not exceed the actual file size
+export async function validateImageEndMarker(file: BlobLike, mimeType: string): Promise<boolean> {
+	try {
+		const size = file.size;
+
+		if (mimeType === 'image/png') {
+			// PNG must end with an IEND chunk: 00 00 00 00 49 45 4E 44 AE 42 60 82
+			if (size < 12) return false;
+			const tail = new Uint8Array(await file.slice(size - 12, size).arrayBuffer());
+			return (
+				tail[4] === 0x49 && // I
+				tail[5] === 0x45 && // E
+				tail[6] === 0x4e && // N
+				tail[7] === 0x44 && // D
+				tail[8] === 0xae &&
+				tail[9] === 0x42 &&
+				tail[10] === 0x60 &&
+				tail[11] === 0x82
+			);
+		}
+
+		if (mimeType === 'image/jpeg') {
+			// JPEG must end with EOI marker (FF D9). Some encoders append
+			// trailing fill/padding bytes after EOI, so search the last 1KB
+			// backwards for the marker instead of requiring it at the exact
+			// last 2 bytes.
+			if (size < 4) return false;
+			const tailLen = Math.min(size, 1024);
+			const tail = new Uint8Array(await file.slice(size - tailLen, size).arrayBuffer());
+			for (let i = tail.length - 2; i >= 0; i--) {
+				if (tail[i] === 0xff && tail[i + 1] === 0xd9) return true;
+			}
+			return false;
+		}
+
+		if (mimeType === 'image/webp') {
+			// RIFF file: bytes 4-7 (little-endian uint32) = file size minus 8.
+			// The actual file must be at least that large; a truncated file
+			// would have fewer bytes than declared.
+			if (size < 12) return false;
+			const header = new Uint8Array(await file.slice(0, 8).arrayBuffer());
+			const riffSize = (header[4] | (header[5] << 8) | (header[6] << 16) | (header[7] << 24)) + 8;
+			return size >= riffSize;
+		}
+
+		// Unknown format — fail safe (reject) rather than allow potentially
+		// corrupt data through.
+		return false;
+	} catch (error) {
+		console.error('Failed to validate image end marker:', error);
+		return false;
+	}
+}

@@ -336,8 +336,11 @@ function createMockBucket() {
 }
 
 // Minimal PNG with a valid IHDR chunk so parseImageDimensions can extract
-// width/height. PNG signature (8) + IHDR length (4) + "IHDR" (4) + width (4)
-// + height (4) = 24 bytes. parseImageDimensions reads bytes 16–24 for dims.
+// width/height, plus an IEND chunk so validateImageEndMarker confirms the
+// image is structurally complete. PNG signature (8) + IHDR length (4) + "IHDR"
+// (4) + width (4) + height (4) + IEND chunk (12) = 36 bytes.
+// parseImageDimensions reads bytes 16–24 for dims; validateImageEndMarker
+// checks the last 12 bytes for the IEND chunk.
 const PNG_BYTES = [
 	0x89,
 	0x50,
@@ -362,7 +365,20 @@ const PNG_BYTES = [
 	0x00,
 	0x00,
 	0x00,
-	0x01 // height = 1
+	0x01, // height = 1
+	// IEND chunk: 4-byte zero length + "IEND" + CRC AE 42 60 82
+	0x00,
+	0x00,
+	0x00,
+	0x00,
+	0x49,
+	0x45,
+	0x4e,
+	0x44,
+	0xae,
+	0x42,
+	0x60,
+	0x82
 ];
 
 describe('player avatar route (Worker)', () => {
@@ -497,6 +513,29 @@ describe('player avatar route (Worker)', () => {
 			env
 		);
 		expect(res.status).toBe(400);
+		expect(bucket.put).not.toHaveBeenCalled();
+	});
+
+	it('POST avatar rejects truncated PNG (valid header but no IEND) with 400', async () => {
+		// A PNG with a valid IHDR header but no IEND chunk passes
+		// parseImageDimensions but should be rejected by
+		// validateImageEndMarker — a truncated image would render broken
+		// for the player.
+		const { bucket } = createMockBucket();
+		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
+		// PNG_BYTES without the last 12 bytes (IEND chunk)
+		const truncatedPng = PNG_BYTES.slice(0, PNG_BYTES.length - 12);
+		const blob = new Blob([new Uint8Array(truncatedPng)], { type: 'image/png' });
+		const form = new FormData();
+		form.append('avatar', blob, 'a.png');
+		const res = await buildApp().request(
+			'/api/player/avatar',
+			{ method: 'POST', headers: AUTH_COOKIE, body: form },
+			env
+		);
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as any;
+		expect(body.message).toBe('Image is corrupted or truncated');
 		expect(bucket.put).not.toHaveBeenCalled();
 	});
 

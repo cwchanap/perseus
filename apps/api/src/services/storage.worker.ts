@@ -606,14 +606,18 @@ export async function uploadOriginalImage(
 	});
 }
 
-/** True when an original image object exists in R2 for this puzzle. */
+/**
+ * True when an original image object exists in R2 for this puzzle.
+ *
+ * Propagates R2 errors instead of swallowing them: callers use the result to
+ * decide whether to release an idempotency reservation, and a transient
+ * `head` failure must NOT be interpreted as "object gone" — that would mint a
+ * duplicate of a live puzzle. Callers wrap in try/catch and return 409
+ * (transient) on error so the client retries.
+ */
 export async function originalImageExists(bucket: R2Bucket, puzzleId: string): Promise<boolean> {
-	try {
-		const obj = await bucket.head(getOriginalKey(puzzleId));
-		return obj !== null;
-	} catch {
-		return false;
-	}
+	const obj = await bucket.head(getOriginalKey(puzzleId));
+	return obj !== null;
 }
 
 // Delete original image from R2
