@@ -140,6 +140,24 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 			);
 		}
 
+		// A 'ready' puzzle is terminal-good: all pieces are generated and in
+		// R2, so no remaining processing can legitimately fail. Refusing
+		// ready → failed prevents the workflow's mark-failed step from
+		// clobbering a good 'ready' state when its updateMetadata call races
+		// with a successful finalize — e.g. finalize committed the DO write
+		// but the step's retry budget then exhausted, dropping control into
+		// the catch block. The only writer of 'failed' here is mark-failed;
+		// no admin path ever transitions ready → failed (verified across
+		// admin.worker.ts). Idempotent re-writes of the same status (ready →
+		// ready, failed → failed) and the forward transition processing →
+		// failed remain allowed.
+		if (updates.status === 'failed' && existing.status === 'ready') {
+			return Response.json(
+				{ message: `Puzzle ${puzzleId} is already ready; refusing transition to failed` },
+				{ status: 409 }
+			);
+		}
+
 		const currentVersion = existing.version ?? 0;
 
 		// Merge pieces arrays to avoid overwriting with stale data
@@ -305,6 +323,14 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 	/**
 	 * Owner-checked reservation transition. commit/fail/release only succeed
 	 * when the stored puzzleId matches the caller and status is pending.
+	 *
+	 * The read-decide-write runs inside storage.transaction, mirroring
+	 * handleReserve. The DO input gate already serializes input delivery, so
+	 * this is safe today even without the transaction — but wrapping it
+	 * removes any ordering doubt and protects against a future edit that
+	 * inserts an `await` on an external call (which would release the input
+	 * gate) between the read and the write. Symmetric with handleReserve,
+	 * which is the documented atomicity primitive here.
 	 */
 	async handleReservationTransition(
 		request: Request,
@@ -318,35 +344,43 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 		}
 
 		const { puzzleId } = body;
-		const reservation = await this.readReservation();
-		if (!reservation) {
-			return Response.json({ message: 'No reservation found' }, { status: 404 });
-		}
-		if (reservation.puzzleId !== puzzleId) {
-			return Response.json({ message: 'Reservation owned by another puzzle' }, { status: 409 });
-		}
-		if (reservation.status !== 'pending' && reservation.status !== action) {
-			return Response.json(
-				{ message: `Cannot ${action} reservation in status ${reservation.status}` },
-				{ status: 409 }
-			);
-		}
+		const result = await this.ctx.storage.transaction(async () => {
+			const reservation = await this.readReservation();
+			if (!reservation) {
+				return { ok: false as const, status: 404, message: 'No reservation found' };
+			}
+			if (reservation.puzzleId !== puzzleId) {
+				return { ok: false as const, status: 409, message: 'Reservation owned by another puzzle' };
+			}
+			if (reservation.status !== 'pending' && reservation.status !== action) {
+				return {
+					ok: false as const,
+					status: 409,
+					message: `Cannot ${action} reservation in status ${reservation.status}`
+				};
+			}
 
-		if (action === 'released') {
-			await this.ctx.storage.delete('reservation');
-			await this.ctx.storage.delete('reservedPuzzleId');
-			return Response.json({ success: true, status: 'released' });
-		}
+			if (action === 'released') {
+				await this.ctx.storage.delete('reservation');
+				await this.ctx.storage.delete('reservedPuzzleId');
+				return { ok: true as const, status: 'released' as const };
+			}
 
-		// Idempotent commit/fail when already in the target status.
-		if (reservation.status === action) {
-			return Response.json({ success: true, status: action });
-		}
+			// Idempotent commit/fail when already in the target status.
+			if (reservation.status === action) {
+				return { ok: true as const, status: action };
+			}
 
-		const next: ReservationRecord = { puzzleId, status: action };
-		await this.ctx.storage.put('reservation', next);
-		await this.ctx.storage.put('reservedPuzzleId', puzzleId);
-		return Response.json({ success: true, status: action });
+			const next: ReservationRecord = { puzzleId, status: action };
+			await this.ctx.storage.put('reservation', next);
+			await this.ctx.storage.put('reservedPuzzleId', puzzleId);
+			return { ok: true as const, status: action };
+		});
+
+		if (!result.ok) {
+			return Response.json({ message: result.message }, { status: result.status });
+		}
+		return Response.json({ success: true, status: result.status });
 	}
 
 	private async readReservation(): Promise<ReservationRecord | null> {
@@ -676,6 +710,11 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 				const maxRetries = 3;
 				let lastError: unknown;
 				let doSucceeded = false;
+				// Set when the DO refuses ready → failed (see PuzzleMetadataDO
+				// /update): finalize already committed 'ready', so the puzzle is
+				// in the desired terminal state and must NOT be overwritten with
+				// 'failed'. We reconcile D1 to 'ready' and skip the CRITICAL log.
+				let alreadyReady = false;
 
 				for (let attempt = 0; attempt < maxRetries; attempt++) {
 					try {
@@ -688,6 +727,21 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 						doSucceeded = true;
 						break;
 					} catch (markErr) {
+						// A 409 from the metadata DO means the puzzle is already
+						// 'ready' — finalize committed before this catch ran
+						// (e.g. its step retry budget exhausted after a
+						// successful DO write). That is the desired terminal
+						// state; do not retry, do not log CRITICAL, and do not
+						// mirror 'failed' to D1. Reconcile D1 to 'ready' so the
+						// owner's list doesn't stay stuck at 'processing'.
+						if (markErr instanceof Error && (markErr as { status?: number }).status === 409) {
+							console.warn(
+								`Puzzle ${puzzleId} is already ready; skipping mark-failed ` +
+									'(finalize committed before the error path).'
+							);
+							alreadyReady = true;
+							break;
+						}
 						lastError = markErr;
 						console.error(
 							`Failed to mark puzzle ${puzzleId} as failed (attempt ${attempt + 1}/${maxRetries}):`,
@@ -700,6 +754,18 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 							await new Promise((resolve) => setTimeout(resolve, delay));
 						}
 					}
+				}
+
+				if (alreadyReady) {
+					// Best-effort D1 reconciliation to 'ready' (matches the
+					// success-path mirror-ready-status-to-d1 step, which won't
+					// run because the catch block re-throws originalError).
+					try {
+						await setPuzzleStatus(getDb(this.env), puzzleId, 'ready');
+					} catch (d1Error) {
+						console.error('Failed to reconcile already-ready status in D1:', d1Error);
+					}
+					return;
 				}
 
 				if (doSucceeded) {

@@ -2,6 +2,7 @@
 
 import type { Context, Next } from 'hono';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
+import { WORKER_AUTH_ERROR_CODE } from '@perseus/types';
 import type { Env } from '../worker';
 
 const SESSION_COOKIE_NAME = 'perseus_session';
@@ -416,7 +417,7 @@ export async function requireAuth(
 	const token = getSessionToken(c);
 
 	if (!token) {
-		return c.json({ error: 'unauthorized', message: 'Authentication required' }, 401);
+		return c.json({ error: WORKER_AUTH_ERROR_CODE, message: 'Authentication required' }, 401);
 	}
 
 	try {
@@ -425,7 +426,7 @@ export async function requireAuth(
 		if (!session) {
 			// Invalid or expired session
 			clearSessionCookie(c);
-			return c.json({ error: 'unauthorized', message: 'Invalid or expired session' }, 401);
+			return c.json({ error: WORKER_AUTH_ERROR_CODE, message: 'Invalid or expired session' }, 401);
 		}
 
 		// Store session on context for downstream handlers

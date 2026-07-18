@@ -72,8 +72,14 @@ export async function updateMetadata(
 
 	if (!response.ok) {
 		const payload = (await response.json().catch(() => null)) as { message?: string } | null;
-		throw new Error(
-			payload?.message ?? `Failed to update puzzle ${puzzleId} (HTTP ${response.status})`
+		// Attach the HTTP status so callers can branch on it (e.g. mark-failed
+		// treats a 409 "already ready" refusal distinctly from a transient 5xx).
+		// Existing callers that only inspect the message are unaffected.
+		throw Object.assign(
+			new Error(
+				payload?.message ?? `Failed to update puzzle ${puzzleId} (HTTP ${response.status})`
+			),
+			{ status: response.status }
 		);
 	}
 }

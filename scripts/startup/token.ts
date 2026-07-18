@@ -14,6 +14,7 @@ import { join, dirname } from 'node:path';
 import { existsSync, readFileSync, unlinkSync, writeFileSync, mkdirSync, chmodSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { $ } from 'bun';
+import { WORKER_AUTH_ERROR_CODE } from '@perseus/types';
 import { ACCESS_AUD, PROBE_TIMEOUT_MS, accessAppFor, tokenBasenameFor } from './types';
 
 function homeCloudflaredDir(): string {
@@ -77,7 +78,19 @@ function readTokenFile(path: string): string | undefined {
 		if (!existsSync(path)) return undefined;
 		const token = normalizeToken(readFileSync(path, 'utf8'));
 		return isJwtLike(token) ? token : undefined;
-	} catch {
+	} catch (err) {
+		// A missing file is the normal "no cached token" case — return
+		// undefined so the caller falls through to the next source. Other
+		// errors (EACCES on a misconfigured 0600 owned by another user, a
+		// transient read failure) would otherwise be silently masked as "no
+		// cached token" and send the operator down the wrong debugging path.
+		// Surface those as a warning but still return undefined so the CLI
+		// can degrade gracefully to the interactive prompt instead of
+		// aborting mid-flow.
+		if (err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'ENOENT') {
+			return undefined;
+		}
+		console.warn(`Failed to read token cache at ${path}:`, err);
 		return undefined;
 	}
 }
@@ -209,7 +222,7 @@ async function isWorkerAuth401(res: Response): Promise<boolean> {
 	try {
 		const body = await res.text();
 		const parsed = JSON.parse(body) as { error?: unknown };
-		return parsed?.error === 'unauthorized';
+		return parsed?.error === WORKER_AUTH_ERROR_CODE;
 	} catch {
 		return false;
 	}
@@ -250,8 +263,18 @@ export async function probeAccessToken(
 			// Access 401 (token rejected with 401 toggle enabled).
 			return (await isWorkerAuth401(res)) ? 'ok' : 'blocked';
 		}
-		// 5xx still means we reached the worker — Access accepted the token
-		if (res.status >= 500) return 'ok';
+		// 5xx still means we reached the worker — Access accepted the token.
+		// Warn so a broken backend isn't silently masked: the probe's job is
+		// to test Access acceptance, but a 5xx signals the app itself is
+		// unhealthy and the operator should investigate before relying on it.
+		if (res.status >= 500) {
+			console.warn(
+				`probeAccessToken: ${server}/api/admin/puzzles returned ${res.status} — ` +
+					`Access accepted the token, but the backend is unhealthy. ` +
+					`Upload may still fail for reasons unrelated to Access.`
+			);
+			return 'ok';
+		}
 		return 'error';
 	} catch {
 		return 'error';
@@ -294,7 +317,17 @@ export async function probeServiceToken(
 		if (res.status === 401) {
 			return (await isWorkerAuth401(res)) ? 'ok' : 'blocked';
 		}
-		if (res.status >= 500) return 'ok';
+		// See probeAccessToken for the rationale on treating 5xx as 'ok' with
+		// a warning: Access accepted the service token, but the backend is
+		// unhealthy and the operator should investigate.
+		if (res.status >= 500) {
+			console.warn(
+				`probeServiceToken: ${server}/api/admin/puzzles returned ${res.status} — ` +
+					`Access accepted the service token, but the backend is unhealthy. ` +
+					`Upload may still fail for reasons unrelated to Access.`
+			);
+			return 'ok';
+		}
 		return 'error';
 	} catch {
 		return 'error';

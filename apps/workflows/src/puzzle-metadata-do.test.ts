@@ -276,6 +276,52 @@ describe('PuzzleMetadataDO.fetch - status transitions', () => {
 		expect((stored as unknown as Record<string, unknown>).progress).toBeUndefined();
 	});
 
+	it('refuses ready → failed transition with 409 and leaves metadata intact', async () => {
+		// Guards the finalize/mark-failed race: if finalize committed 'ready'
+		// but the workflow's error path then runs mark-failed, the DO must
+		// refuse to clobber the good 'ready' state. A 'ready' puzzle is
+		// terminal — no remaining processing can legitimately fail.
+		const readyMetadata: PuzzleMetadata = {
+			...baseMetadata,
+			status: 'ready',
+			progress: undefined,
+			error: undefined
+		} as PuzzleMetadata;
+		const { durableObj, storage } = makeDO({ metadata: readyMetadata });
+		const response = await postRequest(durableObj, {
+			puzzleId: 'test-puzzle',
+			updates: { status: 'failed', error: { message: 'belated failure' } }
+		});
+		expect(response.status).toBe(409);
+		const body = (await response.json()) as { message: string };
+		expect(body.message).toMatch(/already ready/i);
+		// The stored metadata must be untouched — no downgrade, no version bump.
+		const stored = storage._store['metadata'] as PuzzleMetadata;
+		expect(stored.status).toBe('ready');
+		expect(stored.version).toBe(readyMetadata.version);
+		expect(storage.put).not.toHaveBeenCalledWith('metadata', expect.anything());
+	});
+
+	it('still allows idempotent ready → ready re-writes', async () => {
+		// The ready → failed guard must not block a benign ready → ready
+		// re-write (e.g. finalize retried after a transient response loss).
+		const readyMetadata: PuzzleMetadata = {
+			...baseMetadata,
+			status: 'ready',
+			progress: undefined,
+			error: undefined
+		} as PuzzleMetadata;
+		const { durableObj, storage } = makeDO({ metadata: readyMetadata });
+		const response = await postRequest(durableObj, {
+			puzzleId: 'test-puzzle',
+			updates: { status: 'ready' }
+		});
+		expect(response.status).toBe(200);
+		const stored = storage._store['metadata'] as PuzzleMetadata;
+		expect(stored.status).toBe('ready');
+		expect(stored.version).toBe(readyMetadata.version + 1);
+	});
+
 	it('updates processing status without changing status field', async () => {
 		const { durableObj, storage } = makeDO({ metadata: baseMetadata });
 		const newProgress = { totalPieces: 4, generatedPieces: 2, updatedAt: Date.now() };

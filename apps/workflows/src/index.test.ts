@@ -729,6 +729,74 @@ describe('Workflow Execution - mark-failed retry exhaustion', () => {
 	});
 });
 
+describe('Workflow Execution - mark-failed already-ready reconciliation', () => {
+	afterEach(() => {
+		mockWidth = 100;
+		mockHeight = 100;
+		photonInstances = [];
+		vi.restoreAllMocks();
+	});
+
+	it('reconciles D1 to ready and skips CRITICAL when the DO refuses ready → failed (409)', async () => {
+		const puzzleId = sampleMetadata.id;
+		const { setPuzzleStatus } = await import('@perseus/shared');
+		vi.mocked(setPuzzleStatus).mockClear();
+
+		// DO returns 409 for a failed-status update (simulating the DO's
+		// ready → failed refusal after finalize already committed 'ready'),
+		// and 200 for every other update (dimensions, progress, ready).
+		const { namespace } = createMockDurableObjectNamespace((body) => {
+			if (body.updates?.status === 'failed') {
+				return new Response(
+					JSON.stringify({
+						message: `Puzzle ${puzzleId} is already ready; refusing transition to failed`
+					}),
+					{ status: 409 }
+				);
+			}
+			return new Response(JSON.stringify({ success: true }), { status: 200 });
+		});
+
+		// null bucket → "image not found" in decode-validate → catch → mark-failed
+		const env = {
+			PUZZLES_BUCKET: { get: vi.fn(async () => null), put: vi.fn(async () => {}) },
+			PUZZLE_METADATA: createMockKv(sampleMetadata),
+			PUZZLE_METADATA_DO: namespace as unknown as DurableObjectNamespace,
+			PUZZLE_WORKFLOW: {} as Workflow
+		} as unknown as Env;
+
+		const workflow = new TestWorkflow();
+		workflow.setEnv(env);
+
+		const event: WorkflowEvent<WorkflowParams> = {
+			payload: { puzzleId },
+			timestamp: new Date(),
+			instanceId: 'test-already-ready'
+		};
+
+		const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+		await expect(workflow.run(event, createMockStep())).rejects.toThrow(
+			`Original image not found for puzzle ${puzzleId}`
+		);
+
+		// mark-failed hit the 409 already-ready path: it must reconcile D1 to
+		// 'ready' (the puzzle's true terminal state), never 'failed'.
+		expect(setPuzzleStatus).toHaveBeenCalledWith(expect.anything(), puzzleId, 'ready');
+		expect(setPuzzleStatus).not.toHaveBeenCalledWith(expect.anything(), puzzleId, 'failed');
+
+		// No CRITICAL log — the puzzle is in the desired terminal state, so
+		// the retry-exhaustion alarm must not fire.
+		expect(errorSpy).not.toHaveBeenCalledWith(expect.stringContaining('CRITICAL'));
+		// A warn surfaces the already-ready skip so the race is observable.
+		expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('already ready'));
+
+		errorSpy.mockRestore();
+		warnSpy.mockRestore();
+	});
+});
+
 describe('Workflow Execution - Multi-piece Grid', () => {
 	afterEach(() => {
 		mockWidth = 100;

@@ -613,6 +613,16 @@ export async function cmdUpload(options: Options): Promise<void> {
 	// Complements server-side Idempotency-Key (which handles in-flight
 	// retries). Key is name + pieceCount + aspectRatio so a same-named
 	// but differently-configured puzzle does not cause a wrongful skip.
+	//
+	// OPERATOR NOTE: `existingKeys` is a point-in-time snapshot taken once
+	// before the upload loop. It is correct for the serialized CI seed run
+	// (one uploader at a time). If two operators seed concurrently against
+	// the same server — or a second uploader derives existence keys
+	// differently — the snapshot can diverge from the server mid-loop and a
+	// duplicate may slip through. The server-side Idempotency-Key is the
+	// authoritative guard for in-flight retries; this preflight is a
+	// latency-saving hint, not a concurrency guarantee. Do not run
+	// concurrent seed uploads against one server.
 	const existingKeys = await fetchExistingKeys(options.server, baseHeaders, cookie);
 	if (existingKeys.size > 0) {
 		console.log(

@@ -35,6 +35,10 @@ on:
 
 concurrency:
   group: seed-startup-puzzles
+  # Intentionally FALSE: a seed upload in flight must not be cancelled by a
+  # later dispatch — mid-upload cancellation could leave the server with
+  # partially-seeded state. New runs queue behind the in-flight one instead.
+  # Mirrors deploy-infrastructure.yml's rationale.
   cancel-in-progress: false
 
 permissions:

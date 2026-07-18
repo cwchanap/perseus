@@ -238,6 +238,14 @@ export const THUMBNAIL_SIZE = 300;
 export const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 export const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const;
 
+// Error code the Worker's requireAuth middleware emits in the JSON body
+// (`{ error: WORKER_AUTH_ERROR_CODE, ... }`) on a 401. The startup CLI's
+// Access-token probe (scripts/startup/token.ts) sniffs this code to tell a
+// Worker-origin 401 (Access accepted the token, no Perseus session) from a
+// Cloudflare-Access-origin 401 (token rejected). Sharing the constant keeps
+// the Worker↔CLI contract from drifting silently.
+export const WORKER_AUTH_ERROR_CODE = 'unauthorized';
+
 // Validation functions
 
 const SIMPLE_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
