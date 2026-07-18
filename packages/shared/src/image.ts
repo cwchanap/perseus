@@ -167,10 +167,15 @@ export async function parseImageDimensions(
 					return { width, height };
 				}
 
-				// Skip this marker segment: read 2-byte segLen, advance by segLen
+				// Skip this marker segment: read 2-byte segLen, advance by segLen.
+				// Per the JPEG spec, segLen includes the 2-byte length field itself,
+				// so the minimum valid value is 2. Reject anything smaller — a
+				// segLen of 0 or 1 is malformed and would advance pos by less than
+				// the length field width, leaving the parser misaligned.
 				if (!(await ensure(2))) break;
 				const i = pos - bufStart;
 				const segLen = (buf[i] << 8) | buf[i + 1];
+				if (segLen < 2) return null;
 				pos += segLen;
 			}
 			return null;

@@ -380,6 +380,20 @@ describe('parseImageDimensions', () => {
 		expect(await parseImageDimensions(blob, 'image/jpeg')).toBeNull();
 	});
 
+	it('returns null for malformed JPEG with segLen < 2 in skip-path marker', async () => {
+		// JPEG spec requires segLen >= 2 (the length field includes its own 2
+		// bytes). A segLen of 0 or 1 is malformed — without an explicit guard,
+		// the skip loop advances by less than 2 and can misinterpret segment
+		// data as markers. The parser must reject these explicitly.
+		// SOI + APP0 with segLen=0 (FF E0 00 00) + filler.
+		const malformedSegLen0 = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x00, 0xff, 0xc0]);
+		expect(await parseImageDimensions(makeBlob(malformedSegLen0), 'image/jpeg')).toBeNull();
+
+		// SOI + APP0 with segLen=1 (FF E0 00 01) + filler.
+		const malformedSegLen1 = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x01, 0xff, 0xc0]);
+		expect(await parseImageDimensions(makeBlob(malformedSegLen1), 'image/jpeg')).toBeNull();
+	});
+
 	// ─── JPEG fill-byte + incremental-read regression tests ───────────
 	// The scanner must consume 0xFF fill bytes individually (not treat
 	// 0xFF 0xFF as a marker pair) and read past the old 256 KiB limit for
