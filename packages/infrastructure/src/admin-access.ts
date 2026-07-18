@@ -5,21 +5,20 @@ export const ADMIN_ACCESS_PATHS = ['/admin', '/admin/*', '/api/admin', '/api/adm
 /**
  * Path prefixes the narrow CLI Access application protects. This is a
  * defense-in-depth FIRST layer: it limits which paths a service-token holder
- * can reach at the Cloudflare Access (network) gate. It is NOT the
- * authorization boundary — the Worker's app-layer authz enforces what a
- * service-token (non_identity) caller may actually do (login + puzzle
- * list/create). Do not rely on Access path matching alone to scope the token;
+ * can reach at the Cloudflare Access (network) gate. Because the Worker's
+ * requireAuth middleware only validates the generic perseus_session cookie
+ * (issued by /api/admin/login after the ADMIN_PASSKEY check) and does NOT
+ * read CF-Access-Client-Id/Secret headers, it cannot distinguish a
+ * service-token (non_identity) caller from a browser admin once both have a
+ * session cookie. The Access path list below is therefore the ONLY layer that
+ * scopes what a service-token holder can reach after authenticating — keep it
+ * restricted to the exact CLI endpoints (login + puzzle list/create). Do NOT
+ * add a /api/admin/puzzles/* wildcard: the only per-id admin route is
+ * DELETE /api/admin/puzzles/:id, which the service token must not reach.
  * Cloudflare Access path semantics (prefix vs exact) should be confirmed
  * before treating this list as authoritative.
  */
-export const CLI_ACCESS_PATHS = [
-	'/api/admin/login',
-	'/api/admin/puzzles',
-	// Wildcard covers /api/admin/puzzles/:id (and trailing-slash variants).
-	// Without it, exact-match destinations leave per-id routes to the broad
-	// admin app, which blocks the service token at the Access gate.
-	'/api/admin/puzzles/*'
-] as const;
+export const CLI_ACCESS_PATHS = ['/api/admin/login', '/api/admin/puzzles'] as const;
 export const DEFAULT_ADMIN_ACCESS_SESSION_DURATION = '12h';
 /** Default lifetime for the non-interactive CLI service token (90 days). */
 export const DEFAULT_ADMIN_CLI_SERVICE_TOKEN_DURATION = '2160h';
@@ -351,13 +350,14 @@ export function createAdminAccessResources(
 		{ dependsOn: [devicePostureRule] }
 	);
 
-	// Narrow app: protects CLI path prefixes (login + puzzle list/create) with
-	// both email+posture (browser admin still works) and Service Auth (CLI
-	// token). This is a defense-in-depth network gate only — the authoritative
-	// authorization is enforced in the Worker (app-layer authz), which gates
-	// what a service-token caller may actually perform. More specific Access
-	// paths take precedence over the broad admin app, but the Access path list
-	// is not the security boundary.
+	// Narrow app: protects the exact CLI path prefixes (login + puzzle
+	// list/create) with both email+posture (browser admin still works) and
+	// Service Auth (CLI token). Because the Worker's requireAuth only checks
+	// the generic perseus_session cookie and cannot distinguish a
+	// service-token caller from a browser admin, this Access path list IS the
+	// scoping boundary for what a service-token holder can reach after
+	// authenticating — keep it restricted to the two exact endpoints above.
+	// More specific Access paths take precedence over the broad admin app.
 	const cliApplication = new cloudflare.ZeroTrustAccessApplication(
 		'admin-access-cli-application',
 		buildCliAccessApplicationArgs({

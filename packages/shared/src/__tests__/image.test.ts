@@ -755,6 +755,30 @@ describe('validateImageEndMarker', () => {
 		expect(await validateImageEndMarker(makeBlob(header), 'image/webp')).toBe(false);
 	});
 
+	it('rejects a WebP whose RIFF length has the high bit set (unsigned overflow)', async () => {
+		// Assembling the RIFF length with signed JS bitwise operators
+		// (header[7] << 24) yields a negative number when the high bit is
+		// set, and `size >= negative` is always true — so a truncated WebP
+		// with a high-bit length byte would bypass the check. The fix reads
+		// the length as unsigned; the declared size (0xFF... + 8) far
+		// exceeds the actual file, so this must be rejected.
+		const header = webpVp8Bytes(600, 400);
+		const dv = new DataView(header.buffer);
+		dv.setUint32(4, 0xffffffff, true); // declares ~4 GiB, file is 34 bytes
+		expect(await validateImageEndMarker(makeBlob(header), 'image/webp')).toBe(false);
+	});
+
+	it('rejects a WebP with a zero declared RIFF length', async () => {
+		// A zero declared length means riffSize = 8 (just "RIFF" + size),
+		// with no "WEBP" or any chunk — not a valid WebP. The old check
+		// passed because `size >= 8` was always true for any file ≥ 12
+		// bytes. Require riffSize ≥ 12 (RIFF + size + WEBP) to reject.
+		const header = webpVp8Bytes(600, 400);
+		const dv = new DataView(header.buffer);
+		dv.setUint32(4, 0, true); // declares 8 bytes total, file is 34
+		expect(await validateImageEndMarker(makeBlob(header), 'image/webp')).toBe(false);
+	});
+
 	it('rejects unknown image format', async () => {
 		const blob = makeBlob(new Uint8Array([0x00, 0x01, 0x02, 0x03]));
 		expect(await validateImageEndMarker(blob, 'image/gif')).toBe(false);

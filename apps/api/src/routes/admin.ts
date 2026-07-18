@@ -401,7 +401,23 @@ admin.post('/puzzles', requireAuth, async (c) => {
 		if (!saved) {
 			const cleaned = await deleteStoredPuzzle(id);
 			if (!cleaned) {
+				// Puzzle directory cleanup failed — the on-disk puzzle data
+				// remains as an orphan. Keep the reservation file in place
+				// (do NOT release) so a same-key retry sees existing:true and
+				// returns the orphaned puzzleId instead of minting a
+				// replacement alongside the orphan. The dev can manually
+				// clean up the filesystem and reservation file. This mirrors
+				// the Worker's failReservation() pattern — the Bun filesystem
+				// reservation has no "failed" state, so we settle for leaving
+				// the key reserved.
 				console.error(`Failed to clean up puzzle directory ${id} after metadata save failure`);
+				return c.json(
+					{
+						error: 'internal_error',
+						message: 'Puzzle may be stuck on disk; cleanup failed after metadata save failure'
+					},
+					500
+				);
 			}
 			if (reservedIdempotencyKey) {
 				try {
@@ -440,13 +456,31 @@ admin.post('/puzzles', requireAuth, async (c) => {
 		return c.json(puzzleToStore, 201);
 	} catch (error) {
 		console.error('Error creating puzzle:', error);
-		// Clean up the puzzle directory if it was created before the failure
+		// Clean up the puzzle directory if it was created before the failure.
+		// If cleanup fails, keep the reservation file in place (do NOT release)
+		// so a same-key retry sees existing:true and returns the orphaned
+		// puzzleId instead of minting a replacement alongside the orphan.
+		// Mirrors the Worker's failReservation() pattern; the Bun filesystem
+		// reservation has no "failed" state, so we settle for leaving the key
+		// reserved for manual cleanup.
+		let cleanupFailed = false;
 		if (puzzleDirCreated) {
 			try {
 				await deleteStoredPuzzle(id);
 			} catch (cleanupError) {
 				console.error('Failed to clean up puzzle directory after error:', cleanupError);
+				cleanupFailed = true;
 			}
+		}
+		if (cleanupFailed) {
+			return c.json(
+				{
+					error: 'internal_error',
+					message:
+						'Puzzle may be stuck on disk; cleanup failed after create error. Manually remove the puzzle directory and idempotency reservation before retrying.'
+				},
+				500
+			);
 		}
 		if (reservedIdempotencyKey && id) {
 			try {

@@ -375,7 +375,8 @@ describe('Admin Worker - POST /puzzles cleanup failure branches', () => {
 		expect(res.status).toBe(500);
 		const body = (await res.json()) as any;
 		expect(body.error).toBe('internal_error');
-		expect(body.message).toBe('Failed to start puzzle processing');
+		// Image cleanup failure keeps the reservation and surfaces a stuck-puzzle message.
+		expect(body.message).toMatch(/stuck|image cleanup failed/i);
 		// The image cleanup failure should have been logged
 		expect(storage.deleteOriginalImage).toHaveBeenCalledTimes(1);
 	});
@@ -434,7 +435,11 @@ describe('Admin Worker - POST /puzzles cleanup failure branches', () => {
 
 		const res = await admin.fetch(req, mockEnv as any);
 
-		expect(res.status).toBe(503);
+		// Image cleanup failure prevents a clean 503 — reservation stays held.
+		expect(res.status).toBe(500);
+		const body = (await res.json()) as any;
+		expect(body.error).toBe('internal_error');
+		expect(body.message).toMatch(/stuck|image cleanup failed/i);
 		expect(storage.deleteOriginalImage).toHaveBeenCalledTimes(1);
 	});
 

@@ -1065,6 +1065,133 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 			expect(storage.releaseIdempotencyKey).not.toHaveBeenCalled();
 		});
 
+		it('fails reservation (not release) when R2 image cleanup fails after workflow trigger failure', async () => {
+			// When the workflow trigger fails, metadata cleanup succeeds, BUT R2
+			// image cleanup fails, the orphaned original remains in R2. Releasing
+			// the reservation would let a retry mint a replacement alongside the
+			// orphan. Fail the reservation instead so the key is retained in a
+			// recoverable state and a retry reclaims through the DO's serialized
+			// path.
+			(storage.reserveIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue({
+				existing: false,
+				puzzleId: 'reserved-uuid',
+				status: 'pending'
+			});
+			(storage.uploadOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.createPuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.deletePuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue({
+				success: true
+			});
+			(storage.deleteOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue({
+				success: false,
+				error: new Error('R2 delete failed')
+			});
+			(storage.failIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.releaseIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+			const mockEnv = {
+				ADMIN_PASSKEY: 'test-passkey',
+				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+				PUZZLE_METADATA: {} as KVNamespace,
+				PUZZLES_BUCKET: {} as R2Bucket,
+				PUZZLE_WORKFLOW: {
+					create: vi.fn().mockRejectedValue(new Error('Workflow unavailable'))
+				},
+				PUZZLE_METADATA_DO: {} as DurableObjectNamespace
+			};
+
+			const formData = new FormData();
+			formData.append('name', 'Test Puzzle');
+			formData.append('pieceCount', '225');
+			const blob = new Blob([PNG_HEADER], { type: 'image/png' });
+			formData.append('image', blob, 'test.png');
+
+			const req = new Request('http://localhost/puzzles', {
+				method: 'POST',
+				headers: {
+					cookie: 'session=valid.token',
+					'Idempotency-Key': 'abc123def456'
+				},
+				body: formData
+			});
+
+			const res = await admin.fetch(req, mockEnv as any);
+
+			expect(res.status).toBe(500);
+			const body = (await res.json()) as any;
+			expect(body.error).toBe('internal_error');
+			expect(body.message).toMatch(/stuck|image cleanup failed/i);
+			// R2 cleanup attempted.
+			expect(storage.deleteOriginalImage).toHaveBeenCalledTimes(1);
+			// Reservation FAILED (not released) because R2 cleanup failed.
+			expect(storage.failIdempotencyKey).toHaveBeenCalledWith(
+				mockEnv.PUZZLE_METADATA_DO,
+				'abc123def456',
+				'reserved-uuid'
+			);
+			expect(storage.releaseIdempotencyKey).not.toHaveBeenCalled();
+		});
+
+		it('fails reservation (not release) when R2 image cleanup fails after missing workflow binding', async () => {
+			// When the workflow binding is missing, metadata cleanup succeeds,
+			// BUT R2 image cleanup fails, the orphaned original remains in R2.
+			// Releasing the reservation would let a retry mint a replacement
+			// alongside the orphan. Fail the reservation instead.
+			(storage.reserveIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue({
+				existing: false,
+				puzzleId: 'reserved-uuid',
+				status: 'pending'
+			});
+			(storage.uploadOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.createPuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.deletePuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue({
+				success: true
+			});
+			(storage.deleteOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue({
+				success: false,
+				error: new Error('R2 delete failed')
+			});
+			(storage.failIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.releaseIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+			const mockEnv = {
+				ADMIN_PASSKEY: 'test-passkey',
+				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+				PUZZLE_METADATA: {} as KVNamespace,
+				PUZZLES_BUCKET: {} as R2Bucket,
+				PUZZLE_METADATA_DO: {} as DurableObjectNamespace
+			};
+
+			const formData = new FormData();
+			formData.append('name', 'Test Puzzle');
+			formData.append('pieceCount', '225');
+			const blob = new Blob([PNG_HEADER], { type: 'image/png' });
+			formData.append('image', blob, 'test.png');
+
+			const req = new Request('http://localhost/puzzles', {
+				method: 'POST',
+				headers: {
+					cookie: 'session=valid.token',
+					'Idempotency-Key': 'abc123def456'
+				},
+				body: formData
+			});
+
+			const res = await admin.fetch(req, mockEnv as any);
+
+			expect(res.status).toBe(500);
+			const body = (await res.json()) as any;
+			expect(body.error).toBe('internal_error');
+			expect(body.message).toMatch(/stuck|image cleanup failed/i);
+			expect(storage.deleteOriginalImage).toHaveBeenCalledTimes(1);
+			expect(storage.failIdempotencyKey).toHaveBeenCalledWith(
+				mockEnv.PUZZLE_METADATA_DO,
+				'abc123def456',
+				'reserved-uuid'
+			);
+			expect(storage.releaseIdempotencyKey).not.toHaveBeenCalled();
+		});
+
 		it('should return 409 when key is reserved but metadata is missing', async () => {
 			(storage.reserveIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue({
 				existing: true,

@@ -936,9 +936,22 @@ admin.post('/puzzles', requireAuth, async (c) => {
 			}
 			const imageCleanup = await deleteOriginalImage(c.env.PUZZLES_BUCKET, id);
 			if (!imageCleanup.success) {
+				// Image cleanup failed — the original R2 object remains as an
+				// orphan. Fail (not release) the reservation so a retry reclaims
+				// through the DO's serialized path instead of releasing the key
+				// and minting a replacement alongside the orphaned image.
 				console.error(
 					'Failed to cleanup original image after missing workflow binding:',
 					imageCleanup.error
+				);
+				await failReservation();
+				return c.json(
+					{
+						error: 'internal_error',
+						message:
+							'Puzzle may be stuck in processing; image cleanup failed after workflow misconfiguration'
+					},
+					500
 				);
 			}
 			await withDbBestEffort(
@@ -989,9 +1002,22 @@ admin.post('/puzzles', requireAuth, async (c) => {
 			}
 			const imageCleanup = await deleteOriginalImage(c.env.PUZZLES_BUCKET, id);
 			if (!imageCleanup.success) {
+				// Image cleanup failed — the original R2 object remains as an
+				// orphan. Fail (not release) the reservation so a retry reclaims
+				// through the DO's serialized path instead of releasing the key
+				// and minting a replacement alongside the orphaned image.
 				console.error(
 					'Failed to cleanup original image after workflow trigger failure:',
 					imageCleanup.error
+				);
+				await failReservation();
+				return c.json(
+					{
+						error: 'internal_error',
+						message:
+							'Puzzle may be stuck in processing; image cleanup failed after workflow trigger failure'
+					},
+					500
 				);
 			}
 			await withDbBestEffort(

@@ -277,11 +277,19 @@ export async function validateImageEndMarker(file: BlobLike, mimeType: string): 
 		if (mimeType === 'image/webp') {
 			// RIFF file: bytes 4-7 (little-endian uint32) = file size minus 8.
 			// The actual file must be at least that large; a truncated file
-			// would have fewer bytes than declared.
+			// would have fewer bytes than declared. Read the length via
+			// DataView.getUint32 (unsigned) — assembling it with signed JS
+			// bitwise operators (header[7] << 24) yields a negative number
+			// when the high bit is set, and `size >= negative` is always
+			// true, so a truncated WebP with a high-bit length byte would
+			// bypass the check. Also reject a zero/nonsense declared length:
+			// a valid WebP needs at least "RIFF" + size + "WEBP" (12 bytes),
+			// so riffSize must be ≥ 12.
 			if (size < 12) return false;
 			const header = new Uint8Array(await file.slice(0, 8).arrayBuffer());
-			const riffSize = (header[4] | (header[5] << 8) | (header[6] << 16) | (header[7] << 24)) + 8;
-			return size >= riffSize;
+			const dv = new DataView(header.buffer, header.byteOffset, header.byteLength);
+			const riffSize = dv.getUint32(4, true) + 8;
+			return riffSize >= 12 && size >= riffSize;
 		}
 
 		// Unknown format — fail safe (reject) rather than allow potentially
