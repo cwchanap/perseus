@@ -23,6 +23,7 @@ import {
 	failIdempotencyKey,
 	uploadOriginalImage,
 	deleteOriginalImage,
+	originalImageExists,
 	getPuzzle,
 	listPuzzles,
 	releaseIdempotencyKey,
@@ -293,6 +294,10 @@ const IDEMPOTENCY_COMMIT_BASE_DELAY_MS = 100;
 // lag, not a missing puzzle. Only after the retry do we conclude the puzzle
 // was deleted with a failed reservation release and reclaim the key.
 const IDEMPOTENCY_KV_RETRY_MS = 500;
+// Extra KV probes with exponential backoff before treating committed+missing
+// as deleted. Global KV lag can exceed a single 500ms retry.
+const IDEMPOTENCY_KV_EXTRA_RETRIES = 3;
+const IDEMPOTENCY_KV_EXTRA_BASE_DELAY_MS = 250;
 
 // POST /api/admin/puzzles - Create new puzzle (protected)
 admin.post('/puzzles', requireAuth, async (c) => {
@@ -490,11 +495,17 @@ admin.post('/puzzles', requireAuth, async (c) => {
 					let existing = await getPuzzle(c.env.PUZZLE_METADATA, reserved.puzzleId);
 					// A committed reservation should have metadata (commit
 					// runs after the KV write). A missing first read is usually
-					// KV propagation lag — retry once before concluding the
-					// puzzle was deleted with a failed release.
+					// KV propagation lag — retry with backoff before concluding
+					// the puzzle was deleted with a failed release.
 					if (!existing && reserved.status === 'committed') {
 						await new Promise((resolve) => setTimeout(resolve, IDEMPOTENCY_KV_RETRY_MS));
 						existing = await getPuzzle(c.env.PUZZLE_METADATA, reserved.puzzleId);
+						for (let attempt = 0; !existing && attempt < IDEMPOTENCY_KV_EXTRA_RETRIES; attempt++) {
+							await new Promise((resolve) =>
+								setTimeout(resolve, IDEMPOTENCY_KV_EXTRA_BASE_DELAY_MS * 2 ** attempt)
+							);
+							existing = await getPuzzle(c.env.PUZZLE_METADATA, reserved.puzzleId);
+						}
 					}
 					if (existing) {
 						if (existing.status === 'failed') {
@@ -531,10 +542,20 @@ admin.post('/puzzles', requireAuth, async (c) => {
 									}
 									if (raceExisting === null && reclaimed.status === 'committed') {
 										// Concurrent winner's committed reservation
-										// has no metadata — puzzle was deleted with
-										// a failed release. Release the stale
-										// reservation and re-reserve instead of
-										// bricking the key with a 409.
+										// has no metadata. If R2 still has the
+										// original, treat as KV lag (409), not a
+										// deleted puzzle — releasing would mint a
+										// duplicate of a live puzzle.
+										if (await originalImageExists(c.env.PUZZLES_BUCKET, reclaimed.puzzleId)) {
+											return c.json(
+												{
+													error: 'conflict',
+													message:
+														'Idempotency-Key maps to an existing puzzle whose metadata is still propagating; retry'
+												},
+												409
+											);
+										}
 										try {
 											await releaseIdempotencyKey(
 												c.env.PUZZLE_METADATA_DO,
@@ -638,15 +659,29 @@ admin.post('/puzzles', requireAuth, async (c) => {
 					} else {
 						// Metadata is missing. A committed reservation should
 						// have metadata (commit happens after the KV write) —
-						// its absence means the puzzle was deleted but the
-						// reservation release failed (e.g. DO outage during
-						// admin delete). Release the stale reservation and
-						// re-reserve so the key isn't permanently bricked
-						// mapping to a deleted puzzle (which would 409 every
-						// future upload with that key). A pending reservation
+						// its absence usually means the puzzle was deleted but
+						// the reservation release failed. Before releasing,
+						// confirm via R2: if the original image still exists,
+						// this is still KV lag (can be seconds–minutes globally)
+						// — return 409 so the client retries instead of minting
+						// a duplicate of a live puzzle. A pending reservation
 						// means an in-flight create or KV propagation lag —
 						// signal transient (409) for the client to retry.
 						if (reserved.status === 'committed') {
+							const originalStillThere = await originalImageExists(
+								c.env.PUZZLES_BUCKET,
+								reserved.puzzleId
+							);
+							if (originalStillThere) {
+								return c.json(
+									{
+										error: 'conflict',
+										message:
+											'Idempotency-Key maps to an existing puzzle whose metadata is still propagating; retry'
+									},
+									409
+								);
+							}
 							try {
 								await releaseIdempotencyKey(
 									c.env.PUZZLE_METADATA_DO,

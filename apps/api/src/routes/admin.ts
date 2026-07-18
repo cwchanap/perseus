@@ -337,13 +337,16 @@ admin.post('/puzzles', requireAuth, async (c) => {
 				if (reserved.existing) {
 					const existing = await getPuzzle(reserved.puzzleId);
 					if (existing) {
+						// Bun path is synchronous generation — puzzles have no
+						// processing/failed lifecycle (see Puzzle in types/index.ts).
+						// Failed-reclaim lives only on the Worker path.
 						return c.json(existing, 200);
 					}
 					// Reservation exists but metadata is missing (in-flight or
 					// orphaned). Do not invent a response body.
 					//
 					// NOTE: this Bun path always returns 409, while the Worker path
-					// (admin.worker.ts) distinguishes 409 (pending) from 404
+					// (admin.worker.ts) distinguishes 409 (pending) from reclaim
 					// (committed-but-missing). The filesystem reservation
 					// (reserveIdempotencyKey in storage.ts) stores only a flat
 					// puzzleId string with no lifecycle status, so the Bun runtime

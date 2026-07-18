@@ -21,8 +21,8 @@ export const CLI_ACCESS_PATHS = [
 	'/api/admin/puzzles/*'
 ] as const;
 export const DEFAULT_ADMIN_ACCESS_SESSION_DURATION = '12h';
-/** Default lifetime for the non-interactive CLI service token (1 year). */
-export const DEFAULT_ADMIN_CLI_SERVICE_TOKEN_DURATION = '8760h';
+/** Default lifetime for the non-interactive CLI service token (90 days). */
+export const DEFAULT_ADMIN_CLI_SERVICE_TOKEN_DURATION = '2160h';
 
 const ADMIN_ACCESS_APPLICATION_NAME = 'Perseus Admin';
 const CLI_ACCESS_APPLICATION_NAME = 'Perseus Admin CLI';

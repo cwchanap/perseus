@@ -157,7 +157,9 @@ export async function parseImageDimensions(
 					if (!(await ensure(7))) return null;
 					const i = pos - bufStart;
 					const segLen = (buf[i] << 8) | buf[i + 1];
-					if (segLen < 9) return null;
+					// SOF minimum: Lf(2) + P(1) + Y(2) + X(2) + Nf(1) + 3*Nf
+					// with Nf >= 1 → Lf >= 11. Reject anything shorter.
+					if (segLen < 11) return null;
 					// Reject truncated SOF: the full declared segment must be present
 					// in the file. `ensure(7)` only guarantees the dimension fields;
 					// a larger segLen with EOF mid-segment would still return dims.

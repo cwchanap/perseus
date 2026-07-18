@@ -303,6 +303,54 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 		// which also persists via storage.transaction. On a real Durable Object
 		// the input gate already serializes input delivery, but the transaction
 		// is the documented atomicity primitive and removes any ordering doubt.
+		// Stale-pending reclaim guard: if the prior create wrote metadata but
+		// failed to commit, the reservation sits pending until TTL. Blindly
+		// reclaiming would mint a second live puzzle. Promote to committed
+		// when the reserved puzzle still exists and is not failed. KV read
+		// is outside the storage transaction (external I/O is not allowed
+		// inside DO storage transactions).
+		const preReserve = await this.readReservation();
+		if (preReserve && isStalePending(preReserve)) {
+			const live = await getMetadata(this.env.PUZZLE_METADATA, preReserve.puzzleId).catch(
+				() => null
+			);
+			if (live && live.status !== 'failed') {
+				const promoted = await this.ctx.storage.transaction(async () => {
+					const reservation = await this.readReservation();
+					// Re-check under the transaction — another caller may have
+					// already promoted or reclaimed.
+					if (
+						!reservation ||
+						reservation.puzzleId !== preReserve.puzzleId ||
+						!isStalePending(reservation)
+					) {
+						return reservation && reservation.status !== 'failed'
+							? {
+									existing: true as const,
+									puzzleId: reservation.puzzleId,
+									status: reservation.status
+								}
+							: null;
+					}
+					const next: ReservationRecord = {
+						puzzleId: reservation.puzzleId,
+						status: 'committed',
+						...(reservation.reservedAt !== undefined ? { reservedAt: reservation.reservedAt } : {})
+					};
+					await this.ctx.storage.put('reservation', next);
+					await this.ctx.storage.put('reservedPuzzleId', reservation.puzzleId);
+					return {
+						existing: true as const,
+						puzzleId: reservation.puzzleId,
+						status: 'committed' as const
+					};
+				});
+				if (promoted) {
+					return Response.json(promoted);
+				}
+			}
+		}
+
 		const result = await this.ctx.storage.transaction(async () => {
 			const reservation = await this.readReservation();
 			if (reservation && reservation.status !== 'failed' && !isStalePending(reservation)) {
@@ -741,14 +789,18 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 						doSucceeded = true;
 						break;
 					} catch (markErr) {
-						// A 409 from the metadata DO means the puzzle is already
-						// 'ready' — finalize committed before this catch ran
-						// (e.g. its step retry budget exhausted after a
+						// A 409 from the metadata DO with an "already ready"
+						// message means finalize committed before this catch
+						// ran (e.g. its step retry budget exhausted after a
 						// successful DO write). That is the desired terminal
 						// state; do not retry, do not log CRITICAL, and do not
 						// mirror 'failed' to D1. Reconcile D1 to 'ready' so the
 						// owner's list doesn't stay stuck at 'processing'.
-						if (markErr instanceof Error && (markErr as { status?: number }).status === 409) {
+						// Match on the message (not status alone) so a future
+						// unrelated 409 cannot be misread as already-ready.
+						const markStatus = (markErr as { status?: number })?.status;
+						const markMessage = markErr instanceof Error ? markErr.message : String(markErr ?? '');
+						if (markStatus === 409 && /already ready/i.test(markMessage)) {
 							console.warn(
 								`Puzzle ${puzzleId} is already ready; skipping mark-failed ` +
 									'(finalize committed before the error path).'

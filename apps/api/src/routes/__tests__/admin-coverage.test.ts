@@ -446,7 +446,8 @@ describe('parseImageDimensions - JPEG branches', () => {
 		expect(res.status).toBe(201);
 	});
 
-	it('returns null dimensions for JPEG with SOF segLen less than 9', async () => {
+	it('returns null dimensions for JPEG with SOF segLen less than 11', async () => {
+		// SOF minimum Lf is 11 (Lf + P + Y + X + Nf + 3*Nf with Nf>=1).
 		const jpeg = new Uint8Array([
 			0xff, 0xd8, 0xff, 0xc0, 0x00, 0x08, 0x08, 0x01, 0xf4, 0x01, 0xf4, 0x01
 		]);

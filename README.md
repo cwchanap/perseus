@@ -147,7 +147,7 @@ The token uses `non_identity` Service Auth, so it bypasses the email + device po
 
 ### Token rotation
 
-The service token expires after 1 year (`DEFAULT_ADMIN_CLI_SERVICE_TOKEN_DURATION = '8760h'`). To adjust the expiration:
+The service token expires after 90 days (`DEFAULT_ADMIN_CLI_SERVICE_TOKEN_DURATION = '2160h'`). To adjust the expiration:
 
 1. `cd packages/infrastructure && pulumi config set adminCliServiceTokenDuration 4380h` (6 months, or leave unset for the 1-year default)
 2. `pulumi up` — Pulumi updates the token's expiration in-place (client_id/secret stay the same)

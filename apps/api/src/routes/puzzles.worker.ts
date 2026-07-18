@@ -409,7 +409,11 @@ puzzles.get('/:id', async (c) => {
 			console.error(`Failed to check R2 reference for puzzle ${id}:`, r2Error);
 		}
 
-		return c.json({ ...puzzle, hasReference });
+		// idempotencyKey is an admin/server-side dedup secret — never expose
+		// it on public puzzle reads (clients could replay create with it).
+		const { idempotencyKey: _, ...publicPuzzle } = puzzle;
+		void _;
+		return c.json({ ...publicPuzzle, hasReference });
 	} catch (error) {
 		console.error(`Failed to retrieve puzzle ${id}:`, error);
 		return c.json({ error: 'internal_error', message: 'Failed to retrieve puzzle' }, 500);

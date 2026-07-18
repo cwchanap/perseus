@@ -606,6 +606,16 @@ export async function uploadOriginalImage(
 	});
 }
 
+/** True when an original image object exists in R2 for this puzzle. */
+export async function originalImageExists(bucket: R2Bucket, puzzleId: string): Promise<boolean> {
+	try {
+		const obj = await bucket.head(getOriginalKey(puzzleId));
+		return obj !== null;
+	} catch {
+		return false;
+	}
+}
+
 // Delete original image from R2
 export async function deleteOriginalImage(
 	bucket: R2Bucket,

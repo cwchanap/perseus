@@ -31,18 +31,20 @@ export function cloudflaredLockPath(server: string): string | undefined {
 	return tokenPath ? `${tokenPath}.lock` : undefined;
 }
 
-function isJwtLike(token: string): boolean {
-	const t = token.trim().replace(/^CF_Authorization=/i, '');
-	return (
-		t.split('.').length >= 3 && t.length > 40 && !/\s/.test(t) && !t.includes('Unable to find')
-	);
-}
-
 function normalizeToken(raw: string): string {
 	return raw
 		.trim()
 		.replace(/^CF_Authorization=/i, '')
 		.replace(/^Bearer\s+/i, '');
+}
+
+function isJwtLike(token: string): boolean {
+	// Normalize first so "Bearer <jwt>" and "CF_Authorization=<jwt>" paste
+	// forms are accepted on the explicit/env paths (not only file reads).
+	const t = normalizeToken(token);
+	return (
+		t.split('.').length >= 3 && t.length > 40 && !/\s/.test(t) && !t.includes('Unable to find')
+	);
 }
 
 function unquoteEnvValue(value: string): string {
@@ -118,6 +120,9 @@ export function clearStaleAccessLock(server: string): void {
 	}
 }
 
+/** Max wall time for `cloudflared access token` before treating it as unavailable. */
+export const CLOUDFLARED_TOKEN_TIMEOUT_MS = 15_000;
+
 export async function resolveCloudflaredToken(server: string): Promise<string | undefined> {
 	const tokenPath = cloudflaredTokenPath(server);
 	const fromFile = tokenPath ? readTokenFile(tokenPath) : undefined;
@@ -131,7 +136,17 @@ export async function resolveCloudflaredToken(server: string): Promise<string | 
 	}
 	try {
 		const accessApp = accessAppFor(server);
-		const result = await $`cloudflared access token -app ${accessApp}`.quiet().nothrow();
+		// Bound wall time: cloudflared can hang indefinitely waiting for an
+		// interactive browser login when no cached token exists.
+		const result = await Promise.race([
+			$`cloudflared access token -app ${accessApp}`.quiet().nothrow(),
+			new Promise<never>((_, reject) =>
+				setTimeout(
+					() => reject(new Error('cloudflared access token timed out')),
+					CLOUDFLARED_TOKEN_TIMEOUT_MS
+				)
+			)
+		]);
 		const out = result.stdout.toString().trim();
 		const err = result.stderr.toString();
 		if (

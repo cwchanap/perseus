@@ -9,6 +9,7 @@ vi.mock('../../services/storage.worker', () => ({
 	createPuzzleMetadata: vi.fn(),
 	uploadOriginalImage: vi.fn(),
 	deleteOriginalImage: vi.fn(),
+	originalImageExists: vi.fn().mockResolvedValue(false),
 	listPuzzles: vi.fn(),
 	reserveIdempotencyKey: vi.fn(),
 	commitIdempotencyKey: vi.fn(),

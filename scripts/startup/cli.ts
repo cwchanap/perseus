@@ -128,9 +128,18 @@ async function parseOptions(): Promise<Options> {
 		/\/+$/,
 		''
 	);
-	// Local servers always skip Access (existing behavior). --skip-access is
-	// ignored on remote targets so a mis-set flag cannot bypass production Access.
-	const skipAccess = isLocalServer(server);
+	// Local servers always skip Access. --skip-access on a remote target is a
+	// hard error (not a silent ignore) so a mis-set flag cannot look like it
+	// bypassed production Access while still sending headers — or worse, skip
+	// them when the operator thought the flag was local-only documentation.
+	const wantSkipAccess = args.includes('--skip-access');
+	if (wantSkipAccess && !isLocalServer(server)) {
+		throw new FatalError(
+			'--skip-access is only valid with a local --server (localhost/127.0.0.1). ' +
+				'Remote targets always require Cloudflare Access credentials.'
+		);
+	}
+	const skipAccess = wantSkipAccess || isLocalServer(server);
 	const tokenCachePath = join(root, 'data/startup-puzzles/.cf-access-token');
 	// Store only the raw explicit token here. Each command resolves the full
 	// token (cache → cloudflared) itself via resolveAccessToken — resolving here
@@ -212,21 +221,21 @@ function runCloudflaredLogin(server: string): Promise<number> {
 async function cmdSetToken(options: Options): Promise<void> {
 	const token = await promptTokenInteractive(options.server);
 	const probe = await probeAccessToken(options.server, token);
-	if (probe === 'blocked') {
+	if (probe !== 'ok') {
+		// Do not cache rejected/unhealthy tokens — the next run would re-read
+		// a known-bad JWT and fail the same way (or worse, skip re-prompting).
 		console.error(
-			'Token was saved format-wise, but Access still blocks requests (302/403).\n' +
-				'Make sure you copied CF_Authorization for perseus.cwchanap.dev after a successful Access login with WARP connected.'
+			probe === 'blocked'
+				? 'Access still blocks requests (302/403). Token was NOT cached.\n' +
+						'Make sure you copied CF_Authorization after a successful Access login with WARP connected.'
+				: `Access probe failed (${probe}). Token was NOT cached.`
 		);
-		// still cache so user can inspect
+		throw new FatalError('Re-copy the cookie after a fresh browser login and run set-token again.');
 	}
 	cacheToken(options.tokenCachePath, token);
 	console.log(`\nSaved Access token → ${options.tokenCachePath}`);
-	console.log(`Probe: ${probe === 'ok' ? 'Access accepts token ✓' : probe}`);
-	if (probe === 'ok') {
-		console.log('\nNext: bun run admin:startup:upload -- --limit 5');
-	} else {
-		throw new FatalError('Re-copy the cookie after a fresh browser login and run set-token again.');
-	}
+	console.log('Probe: Access accepts token ✓');
+	console.log('\nNext: bun run admin:startup:upload -- --limit 5');
 }
 
 async function cmdLogin(options: Options): Promise<void> {

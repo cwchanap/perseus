@@ -590,15 +590,19 @@ describe('PuzzleMetadataDO.fetch - /reserve (idempotency)', () => {
 		);
 	});
 
-	it('reclaims stale pending reservation older than TTL', async () => {
+	it('reclaims stale pending reservation older than TTL when no live puzzle', async () => {
 		const staleAt = Date.now() - 10 * 60 * 1000; // 10 minutes ago
-		const { durableObj, storage } = makeDO({
-			reservation: {
-				puzzleId: 'stale-uuid',
-				status: 'pending',
-				reservedAt: staleAt
-			}
-		});
+		// kvMetadata null → getMetadata returns null → safe to reclaim
+		const { durableObj, storage } = makeDO(
+			{
+				reservation: {
+					puzzleId: 'stale-uuid',
+					status: 'pending',
+					reservedAt: staleAt
+				}
+			},
+			null
+		);
 		const response = await postRequest(
 			durableObj,
 			{
@@ -617,6 +621,51 @@ describe('PuzzleMetadataDO.fetch - /reserve (idempotency)', () => {
 				puzzleId: 'fresh-uuid',
 				status: 'pending',
 				reservedAt: expect.any(Number)
+			})
+		);
+	});
+
+	it('promotes stale pending to committed when live puzzle still exists', async () => {
+		// Commit-failure path: metadata was written but reservation stayed
+		// pending until TTL. Reclaiming would mint a duplicate — promote instead.
+		const staleAt = Date.now() - 10 * 60 * 1000;
+		const liveMeta: PuzzleMetadata = {
+			...baseMetadata,
+			id: 'live-stale-uuid',
+			status: 'processing'
+		};
+		const { durableObj, storage } = makeDO(
+			{
+				reservation: {
+					puzzleId: 'live-stale-uuid',
+					status: 'pending',
+					reservedAt: staleAt
+				}
+			},
+			liveMeta
+		);
+		const response = await postRequest(
+			durableObj,
+			{
+				idempotencyKey: 'abc123',
+				puzzleId: 'would-be-duplicate'
+			},
+			'/reserve'
+		);
+		expect(response.status).toBe(200);
+		const body = (await response.json()) as {
+			existing: boolean;
+			puzzleId: string;
+			status: string;
+		};
+		expect(body.existing).toBe(true);
+		expect(body.puzzleId).toBe('live-stale-uuid');
+		expect(body.status).toBe('committed');
+		expect(storage.put).toHaveBeenCalledWith(
+			'reservation',
+			expect.objectContaining({
+				puzzleId: 'live-stale-uuid',
+				status: 'committed'
 			})
 		);
 	});

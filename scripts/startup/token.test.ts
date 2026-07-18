@@ -302,10 +302,7 @@ describe('resolveAccessToken', () => {
 		expect(result).toBe(jwt);
 	});
 
-	it('rejects Bearer-prefixed explicit token (isJwtLike runs before normalize)', async () => {
-		// isJwtLike rejects whitespace, so "Bearer <jwt>" fails the check and
-		// falls through to env/cache/cloudflared. Bearer normalization in
-		// normalizeToken is only for file-read tokens, not the explicit path.
+	it('accepts Bearer-prefixed explicit token (normalize before isJwtLike)', async () => {
 		const jwt = fakeJwt();
 		const result = await resolveAccessToken({
 			explicit: `Bearer ${jwt}`,
@@ -313,7 +310,7 @@ describe('resolveAccessToken', () => {
 			skipAccess: false,
 			server: 'https://example.com'
 		});
-		expect(result).toBeUndefined();
+		expect(result).toBe(jwt);
 	});
 
 	it('falls through when explicit token is not JWT-like', async () => {

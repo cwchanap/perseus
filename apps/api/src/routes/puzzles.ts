@@ -295,7 +295,11 @@ puzzles.get('/:id', async (c) => {
 		return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
 	}
 
-	return c.json({ ...puzzle, hasReference: puzzleHasReference(id) });
+	// idempotencyKey is an admin/server-side dedup secret — never expose it
+	// on public puzzle reads (clients could replay create with it).
+	const { idempotencyKey: _, ...publicPuzzle } = puzzle;
+	void _;
+	return c.json({ ...publicPuzzle, hasReference: puzzleHasReference(id) });
 });
 
 // GET /api/puzzles/:id/thumbnail - Get puzzle thumbnail image

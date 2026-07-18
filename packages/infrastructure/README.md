@@ -217,7 +217,7 @@ Manual verification after deploy:
 ### CLI Service Token Rotation
 
 The non-interactive CLI service token (`Perseus Admin CLI`) has a default lifetime
-of **1 year** (`8760h`). Override it at deploy time:
+of **90 days** (`2160h`). Override it at deploy time:
 
 ```bash
 cd packages/infrastructure

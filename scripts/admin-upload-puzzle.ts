@@ -94,7 +94,15 @@ async function parseOptions(): Promise<Options> {
 	const cfAccessToken = readArg(args, '--cf-access-token') ?? process.env.CF_ACCESS_TOKEN;
 	const cfClientId = process.env.CF_ACCESS_CLIENT_ID ?? dotenv.CF_ACCESS_CLIENT_ID;
 	const cfClientSecret = process.env.CF_ACCESS_CLIENT_SECRET ?? dotenv.CF_ACCESS_CLIENT_SECRET;
-	const skipAccess = args.includes('--skip-access') || isLocalServer(server);
+	const wantSkipAccess = args.includes('--skip-access');
+	if (wantSkipAccess && !isLocalServer(server)) {
+		console.error(
+			'--skip-access is only valid with a local --server (localhost/127.0.0.1). ' +
+				'Remote targets always require Cloudflare Access credentials.'
+		);
+		process.exit(1);
+	}
+	const skipAccess = wantSkipAccess || isLocalServer(server);
 
 	if (!imagePath || !name || !pieceCountRaw || !passkey) usage();
 
