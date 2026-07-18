@@ -101,4 +101,26 @@ describe('evaluateReadiness (cmdStatus gate)', () => {
 			})
 		).toEqual({ ready: false, reason: 'passkey-missing' });
 	});
+
+	// ── 5xx backend: Access accepted, but the app is broken. ──
+	it('fails on an unhealthy backend (5xx) — does NOT report ready', () => {
+		// Access accepted the credentials (the probe reached the worker), but
+		// the backend returned 5xx. Uploads will fail, so the gate must reject
+		// with a distinct backend-unhealthy reason — not access-probe-failed
+		// (credentials are valid) and not ready (the app is broken).
+		expect(evaluateReadiness({ ...base, probeResult: 'unhealthy' })).toEqual({
+			ready: false,
+			reason: 'backend-unhealthy'
+		});
+	});
+
+	it('prioritizes unhealthy backend over a missing passkey', () => {
+		// A 5xx backend with ADMIN_PASSKEY unset must surface the unhealthy
+		// reason, not the passkey hint — otherwise the operator might set the
+		// passkey and attempt an upload that fails for an unrelated reason.
+		expect(evaluateReadiness({ ...base, probeResult: 'unhealthy', passkey: '' })).toEqual({
+			ready: false,
+			reason: 'backend-unhealthy'
+		});
+	});
 });

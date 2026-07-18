@@ -520,4 +520,71 @@ describe('idempotency reservation', () => {
 		const loser = [r1, r2].find((r) => r.existing === true)!;
 		expect(loser.puzzleId).toBe(winnerId);
 	});
+
+	it('concurrent release and replacement reserve serialize via per-key lock', async () => {
+		// Reserve a key, then concurrently release it (owner-checked) and
+		// reserve a replacement puzzleId. Without the per-key lock, the
+		// release's read-verify-delete window can interleave with the reserve's
+		// read: reserve sees the old puzzleId (returns existing), then release
+		// deletes the file — leaving the key unowned even though the reserve
+		// caller thinks it's still held. With the lock, the operations
+		// serialize: either release completes first (file gone, reserve creates
+		// fresh) or reserve completes first (returns existing, then release
+		// deletes). Either way, a follow-up reserve sees a consistent state.
+		await storageModule.reserveIdempotencyKey('key-rel-race', 'puzzle-a');
+
+		await Promise.all([
+			storageModule.releaseIdempotencyKey('key-rel-race', 'puzzle-a'),
+			storageModule.reserveIdempotencyKey('key-rel-race', 'puzzle-b')
+		]);
+
+		// Follow-up reserve must see a consistent state: either puzzle-b won
+		// the race (file exists with puzzle-b) or the release deleted the file
+		// and the follow-up creates puzzle-c fresh. No stale/corrupt state.
+		const followUp = await storageModule.reserveIdempotencyKey('key-rel-race', 'puzzle-c');
+		if (followUp.existing) {
+			// puzzle-b won — file should contain puzzle-b.
+			expect(followUp.puzzleId).toBe('puzzle-b');
+		} else {
+			// Release won — file was deleted, follow-up created puzzle-c.
+			expect(followUp.puzzleId).toBe('puzzle-c');
+		}
+	});
+
+	it('concurrent release by wrong owner does not clear a winner reservation', async () => {
+		// A wrong-owner release must not delete the file even when it
+		// interleaves with a concurrent reserve. The per-key lock serializes
+		// the operations, and the owner check prevents the wrong-owner release
+		// from clearing a reservation it doesn't own.
+		await storageModule.reserveIdempotencyKey('key-wrong-owner', 'puzzle-a');
+
+		await Promise.all([
+			storageModule.releaseIdempotencyKey('key-wrong-owner', 'wrong-owner'),
+			storageModule.reserveIdempotencyKey('key-wrong-owner', 'puzzle-b')
+		]);
+
+		// The wrong-owner release is a no-op. The reserve either sees
+		// puzzle-a (existing) or creates puzzle-b if the file was somehow
+		// gone. The key invariant: the wrong-owner release did NOT delete
+		// the file, so the reservation still maps to puzzle-a.
+		const followUp = await storageModule.reserveIdempotencyKey('key-wrong-owner', 'puzzle-c');
+		expect(followUp.existing).toBe(true);
+		expect(followUp.puzzleId).toBe('puzzle-a');
+	});
+
+	it('concurrent releases for the same key serialize and do not corrupt the file', async () => {
+		// Two concurrent releases for the same key and owner. The per-key
+		// lock serializes them: the first deletes the file, the second finds
+		// it gone (ENOENT) and returns. No error, no corruption.
+		await storageModule.reserveIdempotencyKey('key-double-release', 'puzzle-a');
+
+		await Promise.all([
+			storageModule.releaseIdempotencyKey('key-double-release', 'puzzle-a'),
+			storageModule.releaseIdempotencyKey('key-double-release', 'puzzle-a')
+		]);
+
+		// File should be gone — a follow-up reserve creates fresh.
+		const followUp = await storageModule.reserveIdempotencyKey('key-double-release', 'puzzle-b');
+		expect(followUp).toEqual({ existing: false, puzzleId: 'puzzle-b' });
+	});
 });

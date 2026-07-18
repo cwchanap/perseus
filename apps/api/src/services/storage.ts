@@ -21,6 +21,34 @@ const PUZZLES_DIR_RESOLVED = resolve(PUZZLES_DIR);
 const IDEMPOTENCY_DIR = join(DATA_DIR, 'idempotency');
 const IDEMPOTENCY_DIR_RESOLVED = resolve(IDEMPOTENCY_DIR);
 
+// Per-key async mutex for idempotency reservation mutations. The atomic
+// link() publish protects the write step, but the read-decide-write windows
+// in reserveIdempotencyKey's claim loop (read → rm → retry publish) and
+// releaseIdempotencyKey (read → verify owner → rm) can interleave under
+// concurrent async calls in the same process. Serializing all mutations on
+// the same key eliminates the race without relying on filesystem-level
+// locking (unreliable across platforms). The DO version uses
+// storage.transaction for the same guarantee.
+const idempotencyKeyLocks = new Map<string, Promise<void>>();
+
+async function withIdempotencyKeyLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+	const previous = idempotencyKeyLocks.get(key) ?? Promise.resolve();
+	let release!: () => void;
+	const next = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	idempotencyKeyLocks.set(key, next);
+	try {
+		await previous;
+		return await fn();
+	} finally {
+		release();
+		if (idempotencyKeyLocks.get(key) === next) {
+			idempotencyKeyLocks.delete(key);
+		}
+	}
+}
+
 function isValidPuzzleId(puzzleId: string): boolean {
 	if (puzzleId.length === 0 || puzzleId.length > 128) {
 		return false;
@@ -298,6 +326,10 @@ async function atomicPublishReservation(
  *
  * On create failure the caller must releaseIdempotencyKey so retries can reuse
  * the key. Success leaves the reservation file in place as the durable mapping.
+ *
+ * All reservation mutations on the same key are serialized via a per-key async
+ * mutex so the read-decide-write windows in the claim loop and release cannot
+ * interleave under concurrent async calls in the same process.
  */
 export async function reserveIdempotencyKey(
 	key: string,
@@ -310,63 +342,70 @@ export async function reserveIdempotencyKey(
 		throw new Error('proposedPuzzleId is required');
 	}
 
-	await mkdir(IDEMPOTENCY_DIR, { recursive: true });
-	const path = resolveIdempotencyPath(key);
+	return withIdempotencyKeyLock(key, async () => {
+		await mkdir(IDEMPOTENCY_DIR, { recursive: true });
+		const path = resolveIdempotencyPath(key);
 
-	// Fast path: reservation file already exists.
-	try {
-		const existingId = (await readFile(path, 'utf-8')).trim();
-		if (existingId) {
-			return { existing: true, puzzleId: existingId };
+		// Fast path: reservation file already exists.
+		try {
+			const existingId = (await readFile(path, 'utf-8')).trim();
+			if (existingId) {
+				return { existing: true, puzzleId: existingId };
+			}
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+				throw error;
+			}
 		}
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-			throw error;
-		}
-	}
 
-	// Legacy: puzzle metadata may carry the key without a reservation file.
-	const legacy = await findPuzzleByIdempotencyKey(key);
-	if (legacy) {
-		const result = await atomicPublishReservation(path, legacy.id);
-		return { existing: true, puzzleId: result.existingId ?? legacy.id };
-	}
+		// Legacy: puzzle metadata may carry the key without a reservation file.
+		const legacy = await findPuzzleByIdempotencyKey(key);
+		if (legacy) {
+			const result = await atomicPublishReservation(path, legacy.id);
+			return { existing: true, puzzleId: result.existingId ?? legacy.id };
+		}
 
-	// Atomic claim: publish the proposed puzzleId via temp-file + link() so
-	// the final path only appears with full content. An empty file can only
-	// be a legacy crash leftover (the old wx approach had an open→write
-	// window) — reclaim it and retry instead of permanently bricking the key.
-	for (let claimAttempt = 0; claimAttempt < 2; claimAttempt++) {
-		const result = await atomicPublishReservation(path, proposedPuzzleId);
-		if (result.published) {
-			return { existing: false, puzzleId: proposedPuzzleId };
+		// Atomic claim: publish the proposed puzzleId via temp-file + link() so
+		// the final path only appears with full content. An empty file can only
+		// be a legacy crash leftover (the old wx approach had an open→write
+		// window) — reclaim it and retry instead of permanently bricking the key.
+		for (let claimAttempt = 0; claimAttempt < 2; claimAttempt++) {
+			const result = await atomicPublishReservation(path, proposedPuzzleId);
+			if (result.published) {
+				return { existing: false, puzzleId: proposedPuzzleId };
+			}
+			if (result.existingId) {
+				return { existing: true, puzzleId: result.existingId };
+			}
+			// Empty/corrupt reservation file — remove and retry the claim once.
+			await rm(path, { force: true });
 		}
-		if (result.existingId) {
-			return { existing: true, puzzleId: result.existingId };
-		}
-		// Empty/corrupt reservation file — remove and retry the claim once.
-		await rm(path, { force: true });
-	}
-	// Two empties in a row means a concurrent writer keeps failing its write;
-	// surface it rather than looping indefinitely.
-	throw new Error('Idempotency reservation file is empty after reclaim');
+		// Two empties in a row means a concurrent writer keeps failing its write;
+		// surface it rather than looping indefinitely.
+		throw new Error('Idempotency reservation file is empty after reclaim');
+	});
 }
 
 /**
  * Owner-checked release of an idempotency reservation. Only deletes the file
  * when its content matches puzzleId, so a concurrent winner is never cleared.
+ * Serialized via the same per-key mutex as reserveIdempotencyKey so the
+ * read-verify-delete window cannot interleave with a concurrent reserve or
+ * release on the same key.
  */
 export async function releaseIdempotencyKey(key: string, puzzleId: string): Promise<void> {
 	if (!isValidIdempotencyKey(key) || !puzzleId) return;
-	const path = resolveIdempotencyPath(key);
-	try {
-		const existingId = (await readFile(path, 'utf-8')).trim();
-		if (existingId !== puzzleId) return;
-		await rm(path, { force: true });
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
-		console.error(`Failed to release idempotency key '${key}':`, error);
-	}
+	return withIdempotencyKeyLock(key, async () => {
+		const path = resolveIdempotencyPath(key);
+		try {
+			const existingId = (await readFile(path, 'utf-8')).trim();
+			if (existingId !== puzzleId) return;
+			await rm(path, { force: true });
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+			console.error(`Failed to release idempotency key '${key}':`, error);
+		}
+	});
 }
 
 async function listPuzzlesWithDate(): Promise<

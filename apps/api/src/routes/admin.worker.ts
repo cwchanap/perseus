@@ -286,6 +286,14 @@ admin.get('/puzzles', requireAuth, async (c) => {
 const IDEMPOTENCY_COMMIT_MAX_ATTEMPTS = 3;
 const IDEMPOTENCY_COMMIT_BASE_DELAY_MS = 100;
 
+// When a committed reservation has no metadata on the first KV read, retry
+// once after this delay before treating the puzzle as deleted. KV is
+// eventually consistent — a committed reservation means the create succeeded
+// (commit runs after the KV write), so a missing read is usually propagation
+// lag, not a missing puzzle. Only after the retry do we conclude the puzzle
+// was deleted with a failed reservation release and reclaim the key.
+const IDEMPOTENCY_KV_RETRY_MS = 500;
+
 // POST /api/admin/puzzles - Create new puzzle (protected)
 admin.post('/puzzles', requireAuth, async (c) => {
 	let id = '';
@@ -468,12 +476,26 @@ admin.post('/puzzles', requireAuth, async (c) => {
 					// this request can create a replacement instead of
 					// returning the failed metadata as 200 (which would make
 					// the seed uploader skip the failed puzzle permanently).
-					// When metadata is missing, the reservation is committed
-					// or pending — the missing read is KV propagation lag or
-					// an in-flight create, not a missing puzzle — so signal
-					// transient (409) for the client to retry instead of a
-					// terminal 404.
-					const existing = await getPuzzle(c.env.PUZZLE_METADATA, reserved.puzzleId);
+					// When metadata is missing, the reservation status
+					// distinguishes the two cases: a pending reservation means
+					// an in-flight create (metadata not yet written) or KV
+					// propagation lag — signal transient (409) for retry. A
+					// committed reservation with no metadata means the puzzle
+					// was deleted but the reservation release failed (e.g. DO
+					// outage during admin delete) — after a KV propagation
+					// retry, release the stale reservation and re-reserve so
+					// the key isn't permanently bricked mapping to a deleted
+					// puzzle (which would 409 every future upload with that
+					// key).
+					let existing = await getPuzzle(c.env.PUZZLE_METADATA, reserved.puzzleId);
+					// A committed reservation should have metadata (commit
+					// runs after the KV write). A missing first read is usually
+					// KV propagation lag — retry once before concluding the
+					// puzzle was deleted with a failed release.
+					if (!existing && reserved.status === 'committed') {
+						await new Promise((resolve) => setTimeout(resolve, IDEMPOTENCY_KV_RETRY_MS));
+						existing = await getPuzzle(c.env.PUZZLE_METADATA, reserved.puzzleId);
+					}
 					if (existing) {
 						if (existing.status === 'failed') {
 							try {
@@ -507,13 +529,78 @@ admin.post('/puzzles', requireAuth, async (c) => {
 									if (raceExisting && raceExisting.status !== 'failed') {
 										return c.json(raceExisting, 200);
 									}
-									return c.json(
-										{
-											error: 'conflict',
-											message: 'Idempotency key reclaimed by another request'
-										},
-										409
-									);
+									if (raceExisting === null && reclaimed.status === 'committed') {
+										// Concurrent winner's committed reservation
+										// has no metadata — puzzle was deleted with
+										// a failed release. Release the stale
+										// reservation and re-reserve instead of
+										// bricking the key with a 409.
+										try {
+											await releaseIdempotencyKey(
+												c.env.PUZZLE_METADATA_DO,
+												idempotencyKey,
+												reclaimed.puzzleId
+											);
+										} catch (releaseErr) {
+											console.error(
+												'Failed to release stale committed reservation on reclaim:',
+												releaseErr
+											);
+											return c.json(
+												{
+													error: 'internal_error',
+													message: 'Failed to release stale reservation'
+												},
+												500
+											);
+										}
+										try {
+											const rereserved = await reserveIdempotencyKey(
+												c.env.PUZZLE_METADATA_DO,
+												idempotencyKey,
+												id
+											);
+											if (rereserved.existing) {
+												const reRaceExisting = await getPuzzle(
+													c.env.PUZZLE_METADATA,
+													rereserved.puzzleId
+												);
+												if (reRaceExisting && reRaceExisting.status !== 'failed') {
+													return c.json(reRaceExisting, 200);
+												}
+												return c.json(
+													{
+														error: 'conflict',
+														message: 'Idempotency key reclaimed by another request'
+													},
+													409
+												);
+											}
+											id = rereserved.puzzleId;
+											reservedIdempotencyKey = idempotencyKey;
+											// Fall through to normal create flow.
+										} catch (rereserveErr) {
+											console.error(
+												'Failed to re-reserve after stale release on reclaim:',
+												rereserveErr
+											);
+											return c.json(
+												{
+													error: 'internal_error',
+													message: 'Failed to re-reserve idempotency key'
+												},
+												500
+											);
+										}
+									} else {
+										return c.json(
+											{
+												error: 'conflict',
+												message: 'Idempotency key reclaimed by another request'
+											},
+											409
+										);
+									}
 								}
 								id = reclaimed.puzzleId;
 								reservedIdempotencyKey = idempotencyKey;
@@ -549,13 +636,74 @@ admin.post('/puzzles', requireAuth, async (c) => {
 							return c.json(existing, 200);
 						}
 					} else {
-						return c.json(
-							{
-								error: 'conflict',
-								message: 'A request with this Idempotency-Key is already in progress'
-							},
-							409
-						);
+						// Metadata is missing. A committed reservation should
+						// have metadata (commit happens after the KV write) —
+						// its absence means the puzzle was deleted but the
+						// reservation release failed (e.g. DO outage during
+						// admin delete). Release the stale reservation and
+						// re-reserve so the key isn't permanently bricked
+						// mapping to a deleted puzzle (which would 409 every
+						// future upload with that key). A pending reservation
+						// means an in-flight create or KV propagation lag —
+						// signal transient (409) for the client to retry.
+						if (reserved.status === 'committed') {
+							try {
+								await releaseIdempotencyKey(
+									c.env.PUZZLE_METADATA_DO,
+									idempotencyKey,
+									reserved.puzzleId
+								);
+							} catch (releaseErr) {
+								console.error('Failed to release stale committed reservation:', releaseErr);
+								return c.json(
+									{
+										error: 'internal_error',
+										message: 'Failed to release stale reservation'
+									},
+									500
+								);
+							}
+							try {
+								const reclaimed = await reserveIdempotencyKey(
+									c.env.PUZZLE_METADATA_DO,
+									idempotencyKey,
+									id
+								);
+								if (reclaimed.existing) {
+									const raceExisting = await getPuzzle(c.env.PUZZLE_METADATA, reclaimed.puzzleId);
+									if (raceExisting && raceExisting.status !== 'failed') {
+										return c.json(raceExisting, 200);
+									}
+									return c.json(
+										{
+											error: 'conflict',
+											message: 'Idempotency key reclaimed by another request'
+										},
+										409
+									);
+								}
+								id = reclaimed.puzzleId;
+								reservedIdempotencyKey = idempotencyKey;
+								// Fall through to normal create flow.
+							} catch (rereserveErr) {
+								console.error('Failed to re-reserve after stale release:', rereserveErr);
+								return c.json(
+									{
+										error: 'internal_error',
+										message: 'Failed to re-reserve idempotency key'
+									},
+									500
+								);
+							}
+						} else {
+							return c.json(
+								{
+									error: 'conflict',
+									message: 'A request with this Idempotency-Key is already in progress'
+								},
+								409
+							);
+						}
 					}
 				} else {
 					// First caller — use our minted UUID.

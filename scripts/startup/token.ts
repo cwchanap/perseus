@@ -237,15 +237,19 @@ async function isWorkerAuth401(res: Response): Promise<boolean> {
  * 401 is disambiguated by inspecting the body: the worker's requireAuth
  * middleware returns JSON `{"error":"unauthorized",...}`, while Access
  * returns its own error page. A 401 with a non-worker body is treated as
- * 'blocked' (Access rejected the token).
+ * 'blocked' (Access rejected the token), or 'unhealthy' (Access accepted
+ * the token but the backend returned 5xx — the probe reached the worker,
+ * meaning Access works, but the app itself is broken and uploads will fail).
  *
- * 5xx is treated as 'ok' because it means the request reached the worker —
- * Access passed it through. The probe tests Access acceptance, not app health.
+ * 5xx is treated as 'unhealthy' (not 'ok') because while it confirms Access
+ * accepted the token, the readiness gate's purpose is to determine whether
+ * an upload can succeed — a 5xx backend means it cannot. The probe still
+ * distinguishes Access acceptance (reached the worker) from rejection.
  */
 export async function probeAccessToken(
 	server: string,
 	token: string
-): Promise<'ok' | 'blocked' | 'error'> {
+): Promise<'ok' | 'blocked' | 'unhealthy' | 'error'> {
 	try {
 		const res = await fetch(`${server}/api/admin/puzzles`, {
 			method: 'GET',
@@ -263,17 +267,17 @@ export async function probeAccessToken(
 			// Access 401 (token rejected with 401 toggle enabled).
 			return (await isWorkerAuth401(res)) ? 'ok' : 'blocked';
 		}
-		// 5xx still means we reached the worker — Access accepted the token.
-		// Warn so a broken backend isn't silently masked: the probe's job is
-		// to test Access acceptance, but a 5xx signals the app itself is
-		// unhealthy and the operator should investigate before relying on it.
+		// 5xx means we reached the worker — Access accepted the token — but
+		// the backend is unhealthy. The readiness gate must reject this so
+		// the operator investigates before attempting an upload that will
+		// fail for reasons unrelated to Access.
 		if (res.status >= 500) {
 			console.warn(
 				`probeAccessToken: ${server}/api/admin/puzzles returned ${res.status} — ` +
 					`Access accepted the token, but the backend is unhealthy. ` +
-					`Upload may still fail for reasons unrelated to Access.`
+					`Upload will fail until the backend recovers.`
 			);
-			return 'ok';
+			return 'unhealthy';
 		}
 		return 'error';
 	} catch {
@@ -294,6 +298,7 @@ export async function probeAccessToken(
  * requireAuth returns JSON `{"error":"unauthorized",...}`, while Access
  * returns its own error page. A 401 with a non-worker body is treated as
  * 'blocked' (Access rejected the service token, e.g. with the 401 toggle).
+ * 5xx = Access accepted the service token but the backend is unhealthy.
  *
  * Avoids POSTing to /login, which would trip the loginRateLimit middleware.
  */
@@ -301,7 +306,7 @@ export async function probeServiceToken(
 	server: string,
 	cfClientId: string,
 	cfClientSecret: string
-): Promise<'ok' | 'blocked' | 'error'> {
+): Promise<'ok' | 'blocked' | 'unhealthy' | 'error'> {
 	try {
 		const res = await fetch(`${server}/api/admin/puzzles`, {
 			method: 'GET',
@@ -317,16 +322,16 @@ export async function probeServiceToken(
 		if (res.status === 401) {
 			return (await isWorkerAuth401(res)) ? 'ok' : 'blocked';
 		}
-		// See probeAccessToken for the rationale on treating 5xx as 'ok' with
-		// a warning: Access accepted the service token, but the backend is
-		// unhealthy and the operator should investigate.
+		// See probeAccessToken for the rationale on treating 5xx as
+		// 'unhealthy': Access accepted the service token, but the backend
+		// is broken and uploads will fail until it recovers.
 		if (res.status >= 500) {
 			console.warn(
 				`probeServiceToken: ${server}/api/admin/puzzles returned ${res.status} — ` +
 					`Access accepted the service token, but the backend is unhealthy. ` +
-					`Upload may still fail for reasons unrelated to Access.`
+					`Upload will fail until the backend recovers.`
 			);
-			return 'ok';
+			return 'unhealthy';
 		}
 		return 'error';
 	} catch {

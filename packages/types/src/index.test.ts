@@ -710,8 +710,10 @@ describe('validatePuzzleMetadata', () => {
 	});
 
 	it('returns true when idempotencyKey is absent', () => {
+		// makeMeta() does not include idempotencyKey by default, so this
+		// genuinely exercises the absent-property case (not a string, not
+		// a non-string — the key is simply not present on the object).
 		const meta = makeMeta();
-		delete (meta as { idempotencyKey?: string }).idempotencyKey;
 		expect(validatePuzzleMetadata(meta)).toBe(true);
 	});
 
@@ -889,6 +891,13 @@ describe('validatePuzzleMetadataLight', () => {
 
 	it('returns true when idempotencyKey is a string', () => {
 		expect(validatePuzzleMetadataLight(makeMeta({ idempotencyKey: 'abc123' }))).toBe(true);
+	});
+
+	it('returns true when idempotencyKey is absent', () => {
+		// Parallel to the validatePuzzleMetadata absent-key case: makeMeta()
+		// does not include idempotencyKey by default, so this genuinely
+		// exercises the absent-property case.
+		expect(validatePuzzleMetadataLight(makeMeta())).toBe(true);
 	});
 
 	it('returns false when idempotencyKey is a non-string', () => {

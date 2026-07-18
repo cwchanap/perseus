@@ -86,18 +86,18 @@ describe('probeAccessToken', () => {
 		expect(await probeAccessToken('https://example.com', 'jwt-token')).toBe('blocked');
 	});
 
-	it('returns "ok" on 500 (reached the worker — Access passed it through)', async () => {
+	it('returns "unhealthy" on 500 (Access accepted, backend broken)', async () => {
 		globalThis.fetch = mock(
 			async () => new Response('', { status: 500 })
 		) as unknown as typeof fetch;
-		expect(await probeAccessToken('https://example.com', 'jwt-token')).toBe('ok');
+		expect(await probeAccessToken('https://example.com', 'jwt-token')).toBe('unhealthy');
 	});
 
-	it('returns "ok" on 503 (transient worker error — Access still passed)', async () => {
+	it('returns "unhealthy" on 503 (Access accepted, backend broken)', async () => {
 		globalThis.fetch = mock(
 			async () => new Response('', { status: 503 })
 		) as unknown as typeof fetch;
-		expect(await probeAccessToken('https://example.com', 'jwt-token')).toBe('ok');
+		expect(await probeAccessToken('https://example.com', 'jwt-token')).toBe('unhealthy');
 	});
 
 	it('returns "error" on unexpected status (e.g. 404)', async () => {
@@ -195,11 +195,11 @@ describe('probeServiceToken', () => {
 		expect(await probeServiceToken('https://example.com', 'cid', 'csec')).toBe('blocked');
 	});
 
-	it('returns "ok" on 500 (reached the worker — Access passed it through)', async () => {
+	it('returns "unhealthy" on 500 (Access accepted, backend broken)', async () => {
 		globalThis.fetch = mock(
 			async () => new Response('', { status: 500 })
 		) as unknown as typeof fetch;
-		expect(await probeServiceToken('https://example.com', 'cid', 'csec')).toBe('ok');
+		expect(await probeServiceToken('https://example.com', 'cid', 'csec')).toBe('unhealthy');
 	});
 
 	it('returns "error" on unexpected status (e.g. 404)', async () => {

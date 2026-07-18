@@ -276,18 +276,21 @@ async function cmdLogin(options: Options): Promise<void> {
 export type ReadinessOutcome =
 	| { ready: true }
 	| { ready: false; reason: 'access-probe-failed' }
+	| { ready: false; reason: 'backend-unhealthy' }
 	| { ready: false; reason: 'access-missing' }
 	| { ready: false; reason: 'passkey-missing' };
 
 /**
  * Pure readiness decision for `bun run admin:startup:status`. Extracted from
  * cmdStatus so the gate logic — specifically "do not report Ready when Access
- * credentials are present but rejected/expired" — is unit-testable without
- * network or probe mocks.
+ * credentials are present but rejected/expired, or when the backend is
+ * unhealthy" — is unit-testable without network or probe mocks.
  *
  * `probeResult` is the Access probe outcome, or undefined when no probe ran
- * (skipAccess, or no credentials to probe with). Any non-'ok' probe result is
- * a failure.
+ * (skipAccess, or no credentials to probe with). 'ok' means Access accepted
+ * the credentials and the backend is healthy. 'unhealthy' means Access
+ * accepted but the backend returned 5xx — uploads will fail, so the gate
+ * rejects. Any other non-'ok' probe result is an Access failure.
  */
 export function evaluateReadiness(args: {
 	skipAccess: boolean;
@@ -296,6 +299,9 @@ export function evaluateReadiness(args: {
 	probeResult: string | undefined;
 	passkey: string;
 }): ReadinessOutcome {
+	if (args.probeResult === 'unhealthy') {
+		return { ready: false, reason: 'backend-unhealthy' };
+	}
 	if (args.probeResult !== undefined && args.probeResult !== 'ok') {
 		return { ready: false, reason: 'access-probe-failed' };
 	}
@@ -394,6 +400,12 @@ async function cmdStatus(options: Options): Promise<void> {
 		throw new FatalError(
 			'Access probe failed — credentials are rejected or unreachable. ' +
 				'Fix the issue above before uploading.'
+		);
+	}
+	if (outcome.reason === 'backend-unhealthy') {
+		throw new FatalError(
+			'Backend is unhealthy (5xx) — Access accepted the credentials, ' +
+				'but the API is not responding. Investigate the backend before uploading.'
 		);
 	}
 	if (outcome.reason === 'access-missing') {

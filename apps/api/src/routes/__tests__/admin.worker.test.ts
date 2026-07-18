@@ -1100,17 +1100,35 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 			expect(storage.createPuzzleMetadata).not.toHaveBeenCalled();
 		});
 
-		it('should return 409 (not 404) when committed reservation has stale KV read', async () => {
-			// A committed reservation means the create succeeded; a missing
-			// getPuzzle is KV propagation lag, not a missing puzzle. The API
-			// must signal transient (409) so the client retries instead of a
-			// terminal 404 that the uploader treats as a hard FAIL.
+		it('should return 200 when committed reservation has stale KV read that resolves on retry', async () => {
+			// A committed reservation means the create succeeded; a missing first
+			// getPuzzle is KV propagation lag. The API retries once after a brief
+			// delay; if the retry finds the metadata, it returns the existing
+			// puzzle (200) instead of bricking the key or creating a duplicate.
 			(storage.reserveIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue({
 				existing: true,
 				puzzleId: 'original-uuid',
 				status: 'committed'
 			});
-			(storage.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+			const existingPuzzle = {
+				id: 'original-uuid',
+				name: 'Test Puzzle',
+				pieceCount: 225,
+				status: 'processing',
+				aspectRatio: '1:1',
+				gridCols: 15,
+				gridRows: 15,
+				imageWidth: 0,
+				imageHeight: 0,
+				createdAt: 1700000000000,
+				pieces: [],
+				version: 0,
+				progress: { totalPieces: 225, generatedPieces: 0, updatedAt: 1700000000000 }
+			};
+			// First read: null (KV lag). Retry: finds the puzzle.
+			(storage.getPuzzle as ReturnType<typeof vi.fn>)
+				.mockResolvedValueOnce(null)
+				.mockResolvedValue(existingPuzzle);
 
 			const mockEnv = {
 				ADMIN_PASSKEY: 'test-passkey',
@@ -1138,10 +1156,76 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 
 			const res = await admin.fetch(req, mockEnv as any);
 
-			expect(res.status).toBe(409);
+			expect(res.status).toBe(200);
 			const body = (await res.json()) as any;
-			expect(body.error).toBe('conflict');
+			expect(body.id).toBe('original-uuid');
 			expect(storage.createPuzzleMetadata).not.toHaveBeenCalled();
+			expect(storage.releaseIdempotencyKey).not.toHaveBeenCalled();
+		});
+
+		it('should release stale committed reservation and re-reserve when puzzle was deleted', async () => {
+			// A committed reservation with no metadata even after the KV retry
+			// means the puzzle was deleted but the reservation release failed
+			// (e.g. DO outage during admin delete). The API must release the
+			// stale reservation and re-reserve so the key isn't permanently
+			// bricked mapping to a deleted puzzle (which would 409 every future
+			// upload with that key).
+			(storage.reserveIdempotencyKey as ReturnType<typeof vi.fn>)
+				.mockResolvedValueOnce({
+					existing: true,
+					puzzleId: 'deleted-uuid',
+					status: 'committed'
+				})
+				.mockResolvedValueOnce({
+					existing: false,
+					puzzleId: 'replacement-uuid',
+					status: 'pending'
+				});
+			// Both reads (initial + retry) return null — puzzle is gone.
+			(storage.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+			(storage.releaseIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.uploadOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.createPuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.commitIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+			const mockEnv = {
+				ADMIN_PASSKEY: 'test-passkey',
+				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+				PUZZLE_METADATA: {} as KVNamespace,
+				PUZZLES_BUCKET: {} as R2Bucket,
+				PUZZLE_WORKFLOW: { create: vi.fn().mockResolvedValue(undefined) },
+				PUZZLE_METADATA_DO: {} as DurableObjectNamespace
+			};
+
+			const formData = new FormData();
+			formData.append('name', 'Test Puzzle');
+			formData.append('pieceCount', '225');
+			const blob = new Blob([PNG_HEADER], { type: 'image/png' });
+			formData.append('image', blob, 'test.png');
+
+			const req = new Request('http://localhost/puzzles', {
+				method: 'POST',
+				headers: {
+					cookie: 'session=valid.token',
+					'Idempotency-Key': 'abc123def456'
+				},
+				body: formData
+			});
+
+			const res = await admin.fetch(req, mockEnv as any);
+
+			expect(res.status).toBe(201);
+			// Released the stale committed reservation before re-reserving.
+			expect(storage.releaseIdempotencyKey).toHaveBeenCalledWith(
+				mockEnv.PUZZLE_METADATA_DO,
+				'abc123def456',
+				'deleted-uuid'
+			);
+			// Created a replacement puzzle under the re-reserved id.
+			expect(storage.createPuzzleMetadata).toHaveBeenCalledWith(
+				mockEnv.PUZZLE_METADATA,
+				expect.objectContaining({ id: 'replacement-uuid', idempotencyKey: 'abc123def456' })
+			);
 		});
 
 		it('should reclaim a failed reservation and create a replacement puzzle', async () => {

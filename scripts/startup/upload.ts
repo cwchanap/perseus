@@ -352,6 +352,12 @@ Or add those two keys to apps/api/.env, then:
 					'Run: bun run admin:startup:set-token'
 			);
 		}
+		if (probe === 'unhealthy') {
+			throw new FatalError(
+				'Access accepted the JWT, but the backend returned 5xx.\n' +
+					'The API is unhealthy — uploads will fail. Investigate the backend before retrying.'
+			);
+		}
 		if (probe === 'error') {
 			throw new FatalError(
 				'Access JWT probe failed (network error or unexpected response).\n' +
@@ -377,6 +383,12 @@ Or add those two keys to apps/api/.env, then:
 				'Cloudflare Access service token rejected (302/403).\n' +
 					'Check CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET are valid and not expired.\n' +
 					'To rotate: see "CLI Service Token Rotation" in packages/infrastructure/README.md.'
+			);
+		}
+		if (probe === 'unhealthy') {
+			throw new FatalError(
+				'Access accepted the service token, but the backend returned 5xx.\n' +
+					'The API is unhealthy — uploads will fail. Investigate the backend before retrying.'
 			);
 		}
 		if (probe === 'error') {
