@@ -1089,6 +1089,247 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 			expect(res.status).toBe(409);
 			expect(storage.createPuzzleMetadata).not.toHaveBeenCalled();
 		});
+
+		it('should return 409 (not 404) when committed reservation has stale KV read', async () => {
+			// A committed reservation means the create succeeded; a missing
+			// getPuzzle is KV propagation lag, not a missing puzzle. The API
+			// must signal transient (409) so the client retries instead of a
+			// terminal 404 that the uploader treats as a hard FAIL.
+			(storage.reserveIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue({
+				existing: true,
+				puzzleId: 'original-uuid',
+				status: 'committed'
+			});
+			(storage.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+			const mockEnv = {
+				ADMIN_PASSKEY: 'test-passkey',
+				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+				PUZZLE_METADATA: {} as KVNamespace,
+				PUZZLES_BUCKET: {} as R2Bucket,
+				PUZZLE_WORKFLOW: { create: vi.fn() },
+				PUZZLE_METADATA_DO: {} as DurableObjectNamespace
+			};
+
+			const formData = new FormData();
+			formData.append('name', 'Test Puzzle');
+			formData.append('pieceCount', '225');
+			const blob = new Blob([PNG_HEADER], { type: 'image/png' });
+			formData.append('image', blob, 'test.png');
+
+			const req = new Request('http://localhost/puzzles', {
+				method: 'POST',
+				headers: {
+					cookie: 'session=valid.token',
+					'Idempotency-Key': 'abc123def456'
+				},
+				body: formData
+			});
+
+			const res = await admin.fetch(req, mockEnv as any);
+
+			expect(res.status).toBe(409);
+			const body = (await res.json()) as any;
+			expect(body.error).toBe('conflict');
+			expect(storage.createPuzzleMetadata).not.toHaveBeenCalled();
+		});
+
+		it('should reclaim a failed reservation and create a replacement puzzle', async () => {
+			// A committed reservation whose workflow later marked the puzzle
+			// failed must be reclaimed (failIdempotencyKey) and re-reserved so
+			// this request builds a replacement instead of returning the failed
+			// metadata as 200 (which would make the seed uploader skip it).
+			(storage.reserveIdempotencyKey as ReturnType<typeof vi.fn>)
+				.mockResolvedValueOnce({
+					existing: true,
+					puzzleId: 'failed-uuid',
+					status: 'committed'
+				})
+				.mockResolvedValueOnce({
+					existing: false,
+					puzzleId: 'replacement-uuid',
+					status: 'pending'
+				});
+			(storage.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
+				id: 'failed-uuid',
+				name: 'Test Puzzle',
+				pieceCount: 225,
+				status: 'failed',
+				aspectRatio: '1:1',
+				gridCols: 15,
+				gridRows: 15,
+				imageWidth: 0,
+				imageHeight: 0,
+				createdAt: 1700000000000,
+				pieces: [],
+				version: 0,
+				progress: { totalPieces: 225, generatedPieces: 0, updatedAt: 1700000000000 }
+			});
+			(storage.failIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.uploadOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.createPuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.commitIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+			const mockEnv = {
+				ADMIN_PASSKEY: 'test-passkey',
+				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+				PUZZLE_METADATA: {} as KVNamespace,
+				PUZZLES_BUCKET: {} as R2Bucket,
+				PUZZLE_WORKFLOW: { create: vi.fn().mockResolvedValue(undefined) },
+				PUZZLE_METADATA_DO: {} as DurableObjectNamespace
+			};
+
+			const formData = new FormData();
+			formData.append('name', 'Test Puzzle');
+			formData.append('pieceCount', '225');
+			const blob = new Blob([PNG_HEADER], { type: 'image/png' });
+			formData.append('image', blob, 'test.png');
+
+			const req = new Request('http://localhost/puzzles', {
+				method: 'POST',
+				headers: {
+					cookie: 'session=valid.token',
+					'Idempotency-Key': 'abc123def456'
+				},
+				body: formData
+			});
+
+			const res = await admin.fetch(req, mockEnv as any);
+
+			expect(res.status).toBe(201);
+			// Reclaimed the failed reservation before re-reserving.
+			expect(storage.failIdempotencyKey).toHaveBeenCalledWith(
+				mockEnv.PUZZLE_METADATA_DO,
+				'abc123def456',
+				'failed-uuid'
+			);
+			// Created a replacement puzzle under the re-reserved id.
+			expect(storage.createPuzzleMetadata).toHaveBeenCalledWith(
+				mockEnv.PUZZLE_METADATA,
+				expect.objectContaining({ id: 'replacement-uuid', idempotencyKey: 'abc123def456' })
+			);
+			expect(mockEnv.PUZZLE_WORKFLOW.create).toHaveBeenCalledWith({
+				id: 'replacement-uuid',
+				params: { puzzleId: 'replacement-uuid' }
+			});
+			// Committed the new reservation.
+			expect(storage.commitIdempotencyKey).toHaveBeenCalledWith(
+				mockEnv.PUZZLE_METADATA_DO,
+				'abc123def456',
+				'replacement-uuid'
+			);
+		});
+
+		it('should best-effort commit a still-pending reservation when returning existing puzzle', async () => {
+			// If the original create's commit failed, a retry that finds the
+			// existing puzzle must commit the pending reservation so the key
+			// doesn't expire into a reclaimable state that spawns a duplicate.
+			(storage.reserveIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue({
+				existing: true,
+				puzzleId: 'original-uuid',
+				status: 'pending'
+			});
+			(storage.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
+				id: 'original-uuid',
+				name: 'Test Puzzle',
+				pieceCount: 225,
+				status: 'ready',
+				aspectRatio: '1:1',
+				gridCols: 15,
+				gridRows: 15,
+				imageWidth: 3840,
+				imageHeight: 3840,
+				createdAt: 1700000000000,
+				pieces: [],
+				version: 1,
+				progress: { totalPieces: 225, generatedPieces: 225, updatedAt: 1700000001000 }
+			});
+			(storage.commitIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+			const mockEnv = {
+				ADMIN_PASSKEY: 'test-passkey',
+				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+				PUZZLE_METADATA: {} as KVNamespace,
+				PUZZLES_BUCKET: {} as R2Bucket,
+				PUZZLE_WORKFLOW: { create: vi.fn() },
+				PUZZLE_METADATA_DO: {} as DurableObjectNamespace
+			};
+
+			const formData = new FormData();
+			formData.append('name', 'Test Puzzle');
+			formData.append('pieceCount', '225');
+			const blob = new Blob([PNG_HEADER], { type: 'image/png' });
+			formData.append('image', blob, 'test.png');
+
+			const req = new Request('http://localhost/puzzles', {
+				method: 'POST',
+				headers: {
+					cookie: 'session=valid.token',
+					'Idempotency-Key': 'abc123def456'
+				},
+				body: formData
+			});
+
+			const res = await admin.fetch(req, mockEnv as any);
+
+			expect(res.status).toBe(200);
+			const body = (await res.json()) as any;
+			expect(body.id).toBe('original-uuid');
+			expect(storage.commitIdempotencyKey).toHaveBeenCalledWith(
+				mockEnv.PUZZLE_METADATA_DO,
+				'abc123def456',
+				'original-uuid'
+			);
+			expect(storage.createPuzzleMetadata).not.toHaveBeenCalled();
+		});
+
+		it('should return 500 when idempotency commit fails after all retries', async () => {
+			// The puzzle and workflow already exist, but the reservation is
+			// still pending. Returning 201 would let the pending TTL expire
+			// into a reclaimable state; return 500 so the client retries.
+			(storage.reserveIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue({
+				existing: false,
+				puzzleId: 'new-uuid',
+				status: 'pending'
+			});
+			(storage.uploadOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.createPuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.commitIdempotencyKey as ReturnType<typeof vi.fn>).mockRejectedValue(
+				new Error('DO unavailable')
+			);
+
+			const mockEnv = {
+				ADMIN_PASSKEY: 'test-passkey',
+				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+				PUZZLE_METADATA: {} as KVNamespace,
+				PUZZLES_BUCKET: {} as R2Bucket,
+				PUZZLE_WORKFLOW: { create: vi.fn().mockResolvedValue(undefined) },
+				PUZZLE_METADATA_DO: {} as DurableObjectNamespace
+			};
+
+			const formData = new FormData();
+			formData.append('name', 'Test Puzzle');
+			formData.append('pieceCount', '225');
+			const blob = new Blob([PNG_HEADER], { type: 'image/png' });
+			formData.append('image', blob, 'test.png');
+
+			const req = new Request('http://localhost/puzzles', {
+				method: 'POST',
+				headers: {
+					cookie: 'session=valid.token',
+					'Idempotency-Key': 'abc123def456'
+				},
+				body: formData
+			});
+
+			const res = await admin.fetch(req, mockEnv as any);
+
+			expect(res.status).toBe(500);
+			const body = (await res.json()) as any;
+			expect(body.error).toBe('internal_error');
+			// Retried the commit up to IDEMPOTENCY_COMMIT_MAX_ATTEMPTS (3).
+			expect(storage.commitIdempotencyKey).toHaveBeenCalledTimes(3);
+		});
 	});
 });
 

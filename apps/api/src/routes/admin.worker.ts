@@ -275,6 +275,17 @@ admin.get('/puzzles', requireAuth, async (c) => {
 	}
 });
 
+// Bounded retry/backoff for the idempotency commit transition. The commit is a
+// strongly-consistent DO call that should rarely fail; these retries absorb
+// transient DO errors. If all attempts fail, the handler returns 500 (not 201)
+// so the client retries the POST — which hits the existing-puzzle branch and
+// returns the original puzzle (200) once KV propagates, while best-effort
+// committing the still-pending reservation. Returning 201 with a pending
+// reservation would let the pending TTL expire into a reclaimable state,
+// allowing a duplicate workflow on a later retry.
+const IDEMPOTENCY_COMMIT_MAX_ATTEMPTS = 3;
+const IDEMPOTENCY_COMMIT_BASE_DELAY_MS = 100;
+
 // POST /api/admin/puzzles - Create new puzzle (protected)
 admin.post('/puzzles', requireAuth, async (c) => {
 	let id = '';
@@ -452,26 +463,105 @@ admin.post('/puzzles', requireAuth, async (c) => {
 				const reserved = await reserveIdempotencyKey(c.env.PUZZLE_METADATA_DO, idempotencyKey, id);
 				if (reserved.existing) {
 					// Prior request owns this key. Return the puzzle when
-					// metadata is available; otherwise non-200 so the client
-					// can retry instead of accepting a fabricated body.
+					// metadata is available and not failed. A committed
+					// reservation whose workflow later failed is reclaimed so
+					// this request can create a replacement instead of
+					// returning the failed metadata as 200 (which would make
+					// the seed uploader skip the failed puzzle permanently).
+					// When metadata is missing, the reservation is committed
+					// or pending — the missing read is KV propagation lag or
+					// an in-flight create, not a missing puzzle — so signal
+					// transient (409) for the client to retry instead of a
+					// terminal 404.
 					const existing = await getPuzzle(c.env.PUZZLE_METADATA, reserved.puzzleId);
 					if (existing) {
-						return c.json(existing, 200);
+						if (existing.status === 'failed') {
+							try {
+								await failIdempotencyKey(
+									c.env.PUZZLE_METADATA_DO,
+									idempotencyKey,
+									reserved.puzzleId
+								);
+							} catch (err) {
+								console.error('Failed to reclaim failed idempotency reservation:', err);
+								return c.json(
+									{
+										error: 'internal_error',
+										message: 'Failed to reclaim failed idempotency reservation'
+									},
+									500
+								);
+							}
+							// Re-reserve with our minted UUID. The failed
+							// reservation is now reclaimable, so this should
+							// win as first caller. A concurrent retry could
+							// reclaim first — in that case defer to its puzzle.
+							try {
+								const reclaimed = await reserveIdempotencyKey(
+									c.env.PUZZLE_METADATA_DO,
+									idempotencyKey,
+									id
+								);
+								if (reclaimed.existing) {
+									const raceExisting = await getPuzzle(c.env.PUZZLE_METADATA, reclaimed.puzzleId);
+									if (raceExisting && raceExisting.status !== 'failed') {
+										return c.json(raceExisting, 200);
+									}
+									return c.json(
+										{
+											error: 'conflict',
+											message: 'Idempotency key reclaimed by another request'
+										},
+										409
+									);
+								}
+								id = reclaimed.puzzleId;
+								reservedIdempotencyKey = idempotencyKey;
+								// Fall through to normal create flow with the
+								// reclaimed key to build a replacement puzzle.
+							} catch (err) {
+								console.error('Failed to re-reserve reclaimed idempotency key:', err);
+								return c.json(
+									{
+										error: 'internal_error',
+										message: 'Failed to re-reserve reclaimed idempotency key'
+									},
+									500
+								);
+							}
+						} else {
+							// If the original create's commit failed, the
+							// reservation may still be pending. Best-effort
+							// commit it now so the key doesn't expire into a
+							// reclaimable state that could spawn a duplicate
+							// workflow while the original is still alive.
+							if (reserved.status === 'pending') {
+								try {
+									await commitIdempotencyKey(
+										c.env.PUZZLE_METADATA_DO,
+										idempotencyKey,
+										reserved.puzzleId
+									);
+								} catch (err) {
+									console.error('Failed to commit pending reservation on retry:', err);
+								}
+							}
+							return c.json(existing, 200);
+						}
+					} else {
+						return c.json(
+							{
+								error: 'conflict',
+								message: 'A request with this Idempotency-Key is already in progress'
+							},
+							409
+						);
 					}
-					const inProgress = reserved.status === 'pending' || reserved.status === undefined;
-					return c.json(
-						{
-							error: inProgress ? 'conflict' : 'not_found',
-							message: inProgress
-								? 'A request with this Idempotency-Key is already in progress'
-								: 'Idempotency reservation exists but puzzle metadata is missing'
-						},
-						inProgress ? 409 : 404
-					);
+				} else {
+					// First caller — use our minted UUID.
+					id = reserved.puzzleId;
+					reservedIdempotencyKey = idempotencyKey;
 				}
-				// First caller — use our minted UUID.
-				id = reserved.puzzleId;
-				reservedIdempotencyKey = idempotencyKey;
 			} catch (error) {
 				console.error('Idempotency reserve failed:', error);
 				return c.json(
@@ -653,12 +743,43 @@ admin.post('/puzzles', requireAuth, async (c) => {
 		}
 
 		if (reservedIdempotencyKey) {
-			try {
-				await commitIdempotencyKey(c.env.PUZZLE_METADATA_DO, reservedIdempotencyKey, id);
-			} catch (err) {
-				// Create already succeeded; log and continue. Reservation stays
-				// pending but still maps to this puzzleId for retries.
-				console.error('Failed to commit idempotency reservation:', err);
+			const commitKey = reservedIdempotencyKey;
+			const commitPuzzleId = id;
+			let committed = false;
+			for (let attempt = 0; attempt < IDEMPOTENCY_COMMIT_MAX_ATTEMPTS; attempt++) {
+				try {
+					await commitIdempotencyKey(c.env.PUZZLE_METADATA_DO, commitKey, commitPuzzleId);
+					committed = true;
+					break;
+				} catch (err) {
+					console.error(
+						`Failed to commit idempotency reservation (attempt ${attempt + 1}/${IDEMPOTENCY_COMMIT_MAX_ATTEMPTS}):`,
+						err
+					);
+					if (attempt < IDEMPOTENCY_COMMIT_MAX_ATTEMPTS - 1) {
+						await new Promise((resolve) =>
+							setTimeout(resolve, IDEMPOTENCY_COMMIT_BASE_DELAY_MS * 2 ** attempt)
+						);
+					}
+				}
+			}
+			if (!committed) {
+				// The puzzle and workflow already exist, but the reservation is
+				// still pending. Returning 201 would let the pending TTL expire
+				// into a reclaimable state, allowing a duplicate workflow.
+				// Return 500 instead so the client retries the POST — the retry
+				// hits the existing-puzzle branch and returns the original
+				// puzzle (200) once KV propagates, and best-effort commits the
+				// reservation.
+				console.error('CRITICAL: idempotency commit failed after all retries — returning 500');
+				reservedIdempotencyKey = undefined;
+				return c.json(
+					{
+						error: 'internal_error',
+						message: 'Puzzle created but idempotency commit failed; retry to verify'
+					},
+					500
+				);
 			}
 			reservedIdempotencyKey = undefined;
 		}
