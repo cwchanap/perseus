@@ -25,7 +25,7 @@ import {
 	FatalError,
 	sleep
 } from './types';
-import { validateCatalog, selectEntries, imagePathFor, mimeForPath } from './catalog';
+import { validateCatalog, selectEntries, imagePathFor } from './catalog';
 import { resolveAccessToken, probeAccessToken, probeServiceToken } from './token';
 
 export function accessHeaders(options: AccessCredentials): Record<string, string> {
@@ -412,7 +412,7 @@ async function adminLogin(options: Options, baseHeaders: Record<string, string>)
 }
 
 type ImageValidation =
-	| { ok: true; image: Bun.BunFile; imagePath: string }
+	| { ok: true; image: Bun.BunFile; imagePath: string; detectedMime: string }
 	| { ok: false; detail: string };
 
 /**
@@ -422,8 +422,8 @@ type ImageValidation =
  *   3. Image dimensions match the entry's aspect ratio (magic-byte type
  *      detection so mislabeled extensions don't skip the check)
  *
- * Returns { ok: true, image, imagePath } on success, or { ok: false, detail }
- * with a human-readable failure reason.
+ * Returns { ok: true, image, imagePath, detectedMime } on success, or
+ * { ok: false, detail } with a human-readable failure reason.
  */
 async function validateEntryImage(
 	entry: CatalogEntry,
@@ -432,12 +432,14 @@ async function validateEntryImage(
 	const imagePath = imagePathFor(entry, imagesDir);
 	if (!imagePath) return { ok: false, detail: 'image missing' };
 
-	const image = Bun.file(imagePath, { type: mimeForPath(imagePath) });
+	// Open without trusting the extension; type is set from magic bytes below
+	// so FormData ships the correct Content-Type for mislabeled files.
+	const probe = Bun.file(imagePath);
 
-	if (image.size > MAX_FILE_SIZE) {
+	if (probe.size > MAX_FILE_SIZE) {
 		return {
 			ok: false,
-			detail: `image is ${(image.size / 1024 / 1024).toFixed(1)}MB — exceeds ${MAX_FILE_SIZE / 1024 / 1024}MB limit`
+			detail: `image is ${(probe.size / 1024 / 1024).toFixed(1)}MB — exceeds ${MAX_FILE_SIZE / 1024 / 1024}MB limit`
 		};
 	}
 
@@ -448,11 +450,11 @@ async function validateEntryImage(
 	// not a supported image format (or are corrupted) — the API will
 	// deterministically reject the upload with 400, so fail early here
 	// rather than reporting a false-positive validation in dry runs.
-	const detectedMime = await detectImageType(image);
+	const detectedMime = await detectImageType(probe);
 	if (!detectedMime) {
 		return { ok: false, detail: 'image type unrecognized (not JPEG, PNG, or WebP)' };
 	}
-	const dimensions = await parseImageDimensions(image, detectedMime);
+	const dimensions = await parseImageDimensions(probe, detectedMime);
 	if (!dimensions) {
 		return {
 			ok: false,
@@ -472,7 +474,8 @@ async function validateEntryImage(
 		};
 	}
 
-	return { ok: true, image, imagePath };
+	const image = Bun.file(imagePath, { type: detectedMime });
+	return { ok: true, image, imagePath, detectedMime };
 }
 
 type UploadResult = { id: string; name: string; ok: boolean; detail: string };
@@ -501,13 +504,16 @@ async function processEntry(
 		return { id: entry.id, name: entry.name, ok: false, detail: validation.detail };
 	}
 
-	const { image, imagePath } = validation;
+	const { image, imagePath, detectedMime } = validation;
 	const formData = new FormData();
 	formData.append('name', entry.name);
 	formData.append('pieceCount', String(entry.pieceCount));
 	formData.append('aspectRatio', entry.aspectRatio);
 	formData.append('category', entry.category);
-	formData.append('image', image, basename(imagePath));
+	// Use magic-byte MIME (not extension) so a JPEG with a .png name still
+	// ships as image/jpeg. Bun.file type is set in validateEntryImage; the
+	// File wrapper reasserts it for multipart Content-Type.
+	formData.append('image', new File([image], basename(imagePath), { type: detectedMime }));
 
 	try {
 		const uploadResponse = await uploadWithRetry(
@@ -603,9 +609,9 @@ export async function cmdUpload(options: Options): Promise<void> {
 	const baseHeaders = accessHeaders(options);
 	const cookie = await adminLogin(options, baseHeaders);
 
-	// Idempotency: fetch existing puzzle keys so reruns skip already-uploaded
-	// entries instead of creating duplicates (the API generates a fresh UUID
-	// per upload). The key is name + pieceCount + aspectRatio so a same-named
+	// Idempotency preflight: skip catalog entries already on the server.
+	// Complements server-side Idempotency-Key (which handles in-flight
+	// retries). Key is name + pieceCount + aspectRatio so a same-named
 	// but differently-configured puzzle does not cause a wrongful skip.
 	const existingKeys = await fetchExistingKeys(options.server, baseHeaders, cookie);
 	if (existingKeys.size > 0) {

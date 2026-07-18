@@ -47,7 +47,11 @@ interface StorageInit {
 	puzzleId?: string;
 	metadata?: PuzzleMetadata;
 	reservedPuzzleId?: string;
-	reservation?: { puzzleId: string; status: 'pending' | 'committed' | 'failed' };
+	reservation?: {
+		puzzleId: string;
+		status: 'pending' | 'committed' | 'failed';
+		reservedAt?: number;
+	};
 }
 
 function createStorage(initial: StorageInit = {}) {
@@ -476,16 +480,24 @@ describe('PuzzleMetadataDO.fetch - /reserve (idempotency)', () => {
 		expect(body.existing).toBe(false);
 		expect(body.puzzleId).toBe('puzzle-uuid-1');
 		expect(body.status).toBe('pending');
-		expect(storage.put).toHaveBeenCalledWith('reservation', {
-			puzzleId: 'puzzle-uuid-1',
-			status: 'pending'
-		});
+		expect(storage.put).toHaveBeenCalledWith(
+			'reservation',
+			expect.objectContaining({
+				puzzleId: 'puzzle-uuid-1',
+				status: 'pending',
+				reservedAt: expect.any(Number)
+			})
+		);
 		expect(storage.put).toHaveBeenCalledWith('reservedPuzzleId', 'puzzle-uuid-1');
 	});
 
 	it('returns existing: true with original puzzleId on second reserve', async () => {
 		const { durableObj } = makeDO({
-			reservation: { puzzleId: 'original-uuid', status: 'pending' }
+			reservation: {
+				puzzleId: 'original-uuid',
+				status: 'pending',
+				reservedAt: Date.now()
+			}
 		});
 		const response = await postRequest(
 			durableObj,
@@ -522,10 +534,73 @@ describe('PuzzleMetadataDO.fetch - /reserve (idempotency)', () => {
 		const body = (await response.json()) as { existing: boolean; puzzleId: string };
 		expect(body.existing).toBe(false);
 		expect(body.puzzleId).toBe('retry-uuid');
-		expect(storage.put).toHaveBeenCalledWith('reservation', {
-			puzzleId: 'retry-uuid',
-			status: 'pending'
+		expect(storage.put).toHaveBeenCalledWith(
+			'reservation',
+			expect.objectContaining({
+				puzzleId: 'retry-uuid',
+				status: 'pending',
+				reservedAt: expect.any(Number)
+			})
+		);
+	});
+
+	it('reclaims stale pending reservation older than TTL', async () => {
+		const staleAt = Date.now() - 10 * 60 * 1000; // 10 minutes ago
+		const { durableObj, storage } = makeDO({
+			reservation: {
+				puzzleId: 'stale-uuid',
+				status: 'pending',
+				reservedAt: staleAt
+			}
 		});
+		const response = await postRequest(
+			durableObj,
+			{
+				idempotencyKey: 'abc123',
+				puzzleId: 'fresh-uuid'
+			},
+			'/reserve'
+		);
+		expect(response.status).toBe(200);
+		const body = (await response.json()) as { existing: boolean; puzzleId: string };
+		expect(body.existing).toBe(false);
+		expect(body.puzzleId).toBe('fresh-uuid');
+		expect(storage.put).toHaveBeenCalledWith(
+			'reservation',
+			expect.objectContaining({
+				puzzleId: 'fresh-uuid',
+				status: 'pending',
+				reservedAt: expect.any(Number)
+			})
+		);
+	});
+
+	it('does not reclaim fresh pending reservation within TTL', async () => {
+		const recentAt = Date.now() - 30_000; // 30 seconds ago
+		const { durableObj } = makeDO({
+			reservation: {
+				puzzleId: 'fresh-pending-uuid',
+				status: 'pending',
+				reservedAt: recentAt
+			}
+		});
+		const response = await postRequest(
+			durableObj,
+			{
+				idempotencyKey: 'abc123',
+				puzzleId: 'other-uuid'
+			},
+			'/reserve'
+		);
+		expect(response.status).toBe(200);
+		const body = (await response.json()) as {
+			existing: boolean;
+			puzzleId: string;
+			status: string;
+		};
+		expect(body.existing).toBe(true);
+		expect(body.puzzleId).toBe('fresh-pending-uuid');
+		expect(body.status).toBe('pending');
 	});
 
 	it('owner-checked commit transitions pending to committed', async () => {

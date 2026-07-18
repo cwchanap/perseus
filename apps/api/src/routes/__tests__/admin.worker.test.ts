@@ -999,6 +999,59 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 			);
 		});
 
+		it('does not release reservation when metadata cleanup fails after workflow trigger', async () => {
+			(storage.reserveIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue({
+				existing: false,
+				puzzleId: 'reserved-uuid',
+				status: 'pending'
+			});
+			(storage.uploadOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.createPuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.deletePuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue({
+				success: false,
+				error: new Error('KV delete failed')
+			});
+			(storage.deleteOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue({
+				success: true
+			});
+
+			const mockEnv = {
+				ADMIN_PASSKEY: 'test-passkey',
+				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+				PUZZLE_METADATA: {} as KVNamespace,
+				PUZZLES_BUCKET: {} as R2Bucket,
+				PUZZLE_WORKFLOW: {
+					create: vi.fn().mockRejectedValue(new Error('Workflow unavailable'))
+				},
+				PUZZLE_METADATA_DO: {} as DurableObjectNamespace
+			};
+
+			const formData = new FormData();
+			formData.append('name', 'Test Puzzle');
+			formData.append('pieceCount', '225');
+			const blob = new Blob([PNG_HEADER], { type: 'image/png' });
+			formData.append('image', blob, 'test.png');
+
+			const req = new Request('http://localhost/puzzles', {
+				method: 'POST',
+				headers: {
+					cookie: 'session=valid.token',
+					'Idempotency-Key': 'abc123def456'
+				},
+				body: formData
+			});
+
+			const res = await admin.fetch(req, mockEnv as any);
+
+			expect(res.status).toBe(500);
+			const body = (await res.json()) as any;
+			expect(body.error).toBe('internal_error');
+			expect(body.message).toMatch(/stuck|metadata cleanup failed/i);
+			// Releasing would let a retry mint a new UUID and orphan the original.
+			expect(storage.releaseIdempotencyKey).not.toHaveBeenCalled();
+			expect(storage.failIdempotencyKey).not.toHaveBeenCalled();
+		});
+
 		it('should return 409 when key is reserved but metadata is missing', async () => {
 			(storage.reserveIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue({
 				existing: true,

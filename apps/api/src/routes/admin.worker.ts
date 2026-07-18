@@ -571,9 +571,20 @@ admin.post('/puzzles', requireAuth, async (c) => {
 		if (!c.env.PUZZLE_WORKFLOW || typeof c.env.PUZZLE_WORKFLOW.create !== 'function') {
 			const metadataCleanup = await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
 			if (!metadataCleanup.success) {
+				// Keep the idempotency reservation so a retry maps to this
+				// puzzleId instead of minting a duplicate. The processing
+				// metadata remains until an operator force-deletes it.
 				console.error(
 					'Failed to cleanup puzzle metadata after missing workflow binding:',
 					metadataCleanup.error
+				);
+				return c.json(
+					{
+						error: 'internal_error',
+						message:
+							'Puzzle may be stuck in processing; metadata cleanup failed after workflow misconfiguration'
+					},
+					500
 				);
 			}
 			const imageCleanup = await deleteOriginalImage(c.env.PUZZLES_BUCKET, id);
@@ -609,9 +620,19 @@ admin.post('/puzzles', requireAuth, async (c) => {
 			// Clean up both metadata and image
 			const metadataCleanup = await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
 			if (!metadataCleanup.success) {
+				// Do not release the reservation: releasing would let a retry
+				// mint a fresh UUID and orphan this processing puzzle forever.
 				console.error(
 					'Failed to cleanup puzzle metadata after workflow trigger failure:',
 					metadataCleanup.error
+				);
+				return c.json(
+					{
+						error: 'internal_error',
+						message:
+							'Puzzle may be stuck in processing; metadata cleanup failed after workflow trigger failure'
+					},
+					500
 				);
 			}
 			const imageCleanup = await deleteOriginalImage(c.env.PUZZLES_BUCKET, id);

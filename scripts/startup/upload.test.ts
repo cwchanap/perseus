@@ -216,10 +216,10 @@ describe('readError', () => {
 });
 
 // ─── uploadWithRetry ────────────────────────────────────────────────
-// The API mints a fresh UUID per POST with no server-side idempotency, so
-// re-POSTing after an unverifiable failure can create a duplicate puzzle.
-// These tests verify that a verification GET failure aborts the retry loop
-// instead of silently re-POSTing.
+// Server-side Idempotency-Key + 409-in-flight handling prevent most
+// duplicates, but a lost response can still leave success unverifiable.
+// These tests verify that a verification GET failure aborts the retry
+// loop instead of blindly re-POSTing.
 
 const originalFetch = globalThis.fetch;
 const originalSleep = retryConfig.sleepFn;

@@ -340,7 +340,8 @@ describe('Admin Worker - POST /puzzles cleanup failure branches', () => {
 		expect(res.status).toBe(500);
 		const body = (await res.json()) as any;
 		expect(body.error).toBe('internal_error');
-		expect(body.message).toBe('Failed to start puzzle processing');
+		// Metadata cleanup failure keeps the reservation and surfaces a stuck-puzzle message.
+		expect(body.message).toMatch(/stuck|metadata cleanup failed/i);
 		expect(storage.deletePuzzleMetadata).toHaveBeenCalledTimes(1);
 	});
 
@@ -400,9 +401,11 @@ describe('Admin Worker - POST /puzzles cleanup failure branches', () => {
 
 		const res = await admin.fetch(req, mockEnv as any);
 
-		expect(res.status).toBe(503);
+		// Metadata cleanup failure prevents a clean 503 — reservation stays held.
+		expect(res.status).toBe(500);
 		const body = (await res.json()) as any;
-		expect(body.error).toBe('service_unavailable');
+		expect(body.error).toBe('internal_error');
+		expect(body.message).toMatch(/stuck|metadata cleanup failed/i);
 		expect(storage.deletePuzzleMetadata).toHaveBeenCalledTimes(1);
 	});
 

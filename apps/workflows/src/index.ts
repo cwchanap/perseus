@@ -60,6 +60,23 @@ export interface Env {
 	DB: D1Database;
 }
 
+/** Max age for a pending idempotency reservation before a later /reserve may reclaim it. */
+export const RESERVATION_PENDING_TTL_MS = 5 * 60 * 1000;
+
+type ReservationRecord = {
+	puzzleId: string;
+	status: 'pending' | 'committed' | 'failed';
+	/** Epoch ms when the pending claim was created. Absent on legacy records. */
+	reservedAt?: number;
+};
+
+function isStalePending(reservation: ReservationRecord, now = Date.now()): boolean {
+	if (reservation.status !== 'pending') return false;
+	// Missing reservedAt is treated as epoch 0 so pre-TTL stuck pendings can be reclaimed.
+	const reservedAt = reservation.reservedAt ?? 0;
+	return now - reservedAt >= RESERVATION_PENDING_TTL_MS;
+}
+
 export class PuzzleMetadataDO extends DurableObject<Env> {
 	async fetch(request: Request): Promise<Response> {
 		const url = new URL(request.url);
@@ -224,13 +241,15 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 	 * its own strongly-consistent DO instance.
 	 *
 	 * State machine:
-	 *   (none|failed) --reserve--> pending --commit--> committed
-	 *                           \--fail--> failed
-	 *                           \--release--> (none)
+	 *   (none|failed|stale-pending) --reserve--> pending --commit--> committed
+	 *                                    \--fail--> failed
+	 *                                    \--release--> (none)
 	 *
 	 * Owner-checked transitions prevent a concurrent loser from releasing or
 	 * committing a winner's reservation. A failed reservation may be reclaimed
-	 * by a later reserve so retries after create failure can proceed.
+	 * by a later reserve so retries after create failure can proceed. Pending
+	 * reservations older than RESERVATION_PENDING_TTL_MS are also reclaimable
+	 * so a crashed isolate between reserve and commit cannot brick the key.
 	 *
 	 * This instance is separate from the metadata DO instance (keyed by
 	 * idFromName(puzzleId)) — they never share storage.
@@ -263,14 +282,18 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 		// is the documented atomicity primitive and removes any ordering doubt.
 		const result = await this.ctx.storage.transaction(async () => {
 			const reservation = await this.readReservation();
-			if (reservation && reservation.status !== 'failed') {
+			if (reservation && reservation.status !== 'failed' && !isStalePending(reservation)) {
 				return {
 					existing: true as const,
 					puzzleId: reservation.puzzleId,
 					status: reservation.status
 				};
 			}
-			const next = { puzzleId, status: 'pending' as const };
+			const next: ReservationRecord = {
+				puzzleId,
+				status: 'pending',
+				reservedAt: Date.now()
+			};
 			await this.ctx.storage.put('reservation', next);
 			// Keep legacy key in sync for older readers during rollout.
 			await this.ctx.storage.put('reservedPuzzleId', puzzleId);
@@ -320,26 +343,28 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 			return Response.json({ success: true, status: action });
 		}
 
-		const next = { puzzleId, status: action };
+		const next: ReservationRecord = { puzzleId, status: action };
 		await this.ctx.storage.put('reservation', next);
 		await this.ctx.storage.put('reservedPuzzleId', puzzleId);
 		return Response.json({ success: true, status: action });
 	}
 
-	private async readReservation(): Promise<{
-		puzzleId: string;
-		status: 'pending' | 'committed' | 'failed';
-	} | null> {
+	private async readReservation(): Promise<ReservationRecord | null> {
 		const stored = await this.ctx.storage.get<{
 			puzzleId?: string;
 			status?: string;
+			reservedAt?: number;
 		}>('reservation');
 		if (
 			stored &&
 			typeof stored.puzzleId === 'string' &&
 			(stored.status === 'pending' || stored.status === 'committed' || stored.status === 'failed')
 		) {
-			return { puzzleId: stored.puzzleId, status: stored.status };
+			return {
+				puzzleId: stored.puzzleId,
+				status: stored.status,
+				...(typeof stored.reservedAt === 'number' ? { reservedAt: stored.reservedAt } : {})
+			};
 		}
 
 		// Legacy: plain puzzleId string from the previous reserve implementation.

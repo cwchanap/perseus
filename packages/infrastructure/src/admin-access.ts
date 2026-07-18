@@ -12,7 +12,14 @@ export const ADMIN_ACCESS_PATHS = ['/admin', '/admin/*', '/api/admin', '/api/adm
  * Cloudflare Access path semantics (prefix vs exact) should be confirmed
  * before treating this list as authoritative.
  */
-export const CLI_ACCESS_PATHS = ['/api/admin/login', '/api/admin/puzzles'] as const;
+export const CLI_ACCESS_PATHS = [
+	'/api/admin/login',
+	'/api/admin/puzzles',
+	// Wildcard covers /api/admin/puzzles/:id (and trailing-slash variants).
+	// Without it, exact-match destinations leave per-id routes to the broad
+	// admin app, which blocks the service token at the Access gate.
+	'/api/admin/puzzles/*'
+] as const;
 export const DEFAULT_ADMIN_ACCESS_SESSION_DURATION = '12h';
 /** Default lifetime for the non-interactive CLI service token (1 year). */
 export const DEFAULT_ADMIN_CLI_SERVICE_TOKEN_DURATION = '8760h';
