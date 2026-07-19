@@ -46,7 +46,7 @@ function makeEnv() {
 describe('reaper D1 cleanup coverage', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
-		vi.mocked(listPuzzles).mockResolvedValue({
+		(listPuzzles as any).mockResolvedValue({
 			puzzles: [
 				{
 					id: 'stuck-puzzle',
@@ -58,18 +58,18 @@ describe('reaper D1 cleanup coverage', () => {
 			],
 			invalidCount: 0
 		} as any);
-		vi.mocked(getPuzzle).mockResolvedValue({
+		(getPuzzle as any).mockResolvedValue({
 			id: 'stuck-puzzle',
 			name: 'Stuck Puzzle',
 			status: 'processing',
 			pieceCount: undefined
 		} as any);
-		vi.mocked(deletePuzzleAssets).mockResolvedValue({ success: true, failedKeys: [] });
-		vi.mocked(deletePuzzleMetadata).mockResolvedValue({ success: true } as any);
+		(deletePuzzleAssets as any).mockResolvedValue({ success: true, failedKeys: [] });
+		(deletePuzzleMetadata as any).mockResolvedValue({ success: true } as any);
 	});
 
 	it('still reaps when the best-effort D1 ownership deletion rejects', async () => {
-		vi.mocked(deletePuzzleOwnership).mockRejectedValue(new Error('D1 delete failed'));
+		(deletePuzzleOwnership as any).mockRejectedValue(new Error('D1 delete failed'));
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 		const env = makeEnv();
 
