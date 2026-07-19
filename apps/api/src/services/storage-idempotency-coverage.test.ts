@@ -65,6 +65,19 @@ describe('filesystem idempotency coverage', () => {
 		expect(fastPath).toEqual({ existing: true, puzzleId: 'legacy-puzzle' });
 	});
 
+	it('serializes concurrent claims for the same idempotency key', async () => {
+		const results = await Promise.all([
+			storageModule.reserveIdempotencyKey('concurrent-key', 'puzzle-a'),
+			storageModule.reserveIdempotencyKey('concurrent-key', 'puzzle-b')
+		]);
+
+		const winner = results.find((result) => !result.existing);
+		const follower = results.find((result) => result.existing);
+		expect(winner).toBeDefined();
+		expect(follower).toBeDefined();
+		expect(follower?.puzzleId).toBe(winner?.puzzleId);
+	});
+
 	it('skips corrupt and non-directory entries during the legacy scan', async () => {
 		await writeFile(join(tempDir, 'puzzles', 'not-a-directory'), 'ignored');
 		const corruptDir = join(tempDir, 'puzzles', 'corrupt-puzzle');
