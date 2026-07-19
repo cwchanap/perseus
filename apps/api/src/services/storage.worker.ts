@@ -32,81 +32,9 @@ export type {
 
 export { PUZZLE_CATEGORIES };
 
-export type LockResult =
-	| { status: 'acquired'; token: string; ttlMs: number }
-	| { status: 'held' }
-	| { status: 'error'; error: Error };
-
 // KV key helpers
 function puzzleKey(id: string): string {
 	return `puzzle:${id}`;
-}
-
-// Distributed lock helpers for KV
-export async function acquireLock(
-	kv: KVNamespace,
-	key: string,
-	timeoutMs: number
-): Promise<LockResult> {
-	const lockValue = crypto.randomUUID();
-	try {
-		// Note: This lock is best-effort and non-atomic (TOCTOU race between get and put).
-		// For strict mutual exclusion, consider using Durable Objects or another atomic lock mechanism.
-		const existing = await kv.get(key);
-		if (existing) {
-			// Lock already held
-			return { status: 'held' };
-		}
-		// KV enforces a minimum TTL of 60s; compute the actual TTL so callers know the real expiry
-		const ttlSeconds = Math.max(Math.ceil(timeoutMs / 1000), 60);
-		const ttlMs = ttlSeconds * 1000;
-		await kv.put(key, lockValue, { expirationTtl: ttlSeconds });
-
-		// Note: We intentionally skip verify-after-write here because KV is eventually
-		// consistent — a read immediately after write may return stale data, causing
-		// false negatives that make the lock permanently fail. The initial check-then-put
-		// already has a TOCTOU window; an unreliable verify step only makes it worse.
-		// For strict mutual exclusion, use Durable Objects.
-
-		return { status: 'acquired', token: lockValue, ttlMs };
-	} catch (error) {
-		console.error('Failed to acquire lock:', error);
-		return { status: 'error', error: error instanceof Error ? error : new Error(String(error)) };
-	}
-}
-
-// Best-effort lock release. Returns true if the lock was deleted while our token was current,
-// false otherwise. Note: KV does not support atomic compare-and-delete, so there is an
-// inherent TOCTOU window between get and delete. For strict mutual exclusion, use Durable Objects.
-export async function releaseLock(
-	kv: KVNamespace,
-	key: string,
-	expectedToken: string
-): Promise<boolean> {
-	try {
-		const currentToken = await kv.get(key);
-
-		if (!currentToken) {
-			console.warn(
-				`Attempted to release lock ${key} but it doesn't exist (may have already expired)`
-			);
-			return false;
-		}
-
-		if (currentToken !== expectedToken) {
-			console.warn(
-				`Attempted to release lock ${key} but token doesn't match. Lock may have been taken over.`
-			);
-			return false;
-		}
-
-		await kv.delete(key);
-		return true;
-	} catch (error) {
-		console.error('Failed to release lock:', error);
-		// Re-throw to inform caller of lock release failure
-		throw error;
-	}
 }
 
 export async function getPuzzle(kv: KVNamespace, puzzleId: string): Promise<PuzzleMetadata | null> {
@@ -122,9 +50,10 @@ export async function getPuzzle(kv: KVNamespace, puzzleId: string): Promise<Puzz
 // NOTE: This function has a TOCTOU (Time-of-Check-Time-of-Use) race condition between the
 // existence check (kv.get) and the write (kv.put). For concurrent callers, the same puzzle ID
 // may pass the existence check simultaneously, resulting in only one write succeeding (the
-// second kv.put will overwrite). To prevent this, callers MUST acquire a distributed lock
-// (via acquireLock) using the puzzle ID as the lock key before calling this function, or
-// ensure puzzle IDs are unique (e.g., UUIDs generated via crypto.randomUUID()).
+// second kv.put will overwrite). To prevent this, callers MUST ensure puzzle IDs are unique
+// (e.g., UUIDs generated via crypto.randomUUID()) and pair creation with an idempotency-key
+// reservation in PuzzleMetadataDO (see reserveIdempotencyKey) so concurrent retries for the
+// same logical upload are serialized.
 export async function createPuzzleMetadata(kv: KVNamespace, puzzle: PuzzleMetadata): Promise<void> {
 	// Validate required fields
 	if (!puzzle.id || typeof puzzle.id !== 'string' || puzzle.id.trim() === '') {

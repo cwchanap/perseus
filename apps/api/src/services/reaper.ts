@@ -36,16 +36,6 @@ export const REAP_AFTER_MS = 2 * 60 * 60 * 1000; // 2 hours
 /** Limit the number of puzzles reaped per scheduled run. */
 export const REAP_BATCH_LIMIT = 50;
 
-/** Workflow instance with a status() method (Cloudflare Workflows API). */
-interface WorkflowInstance {
-	status(): Promise<{ status: string }>;
-}
-
-/** Workflow binding with the instance methods the reaper needs. */
-interface WorkflowBindingForReap {
-	get(id: string): Promise<WorkflowInstance>;
-}
-
 export interface ReapResult {
 	scanned: number;
 	candidates: number;
@@ -99,9 +89,7 @@ export async function reapStuckPuzzles(env: Env, now = Date.now()): Promise<Reap
 				// Check if the workflow is dead.
 				let workflowStatus: string;
 				try {
-					const instance = await (env.PUZZLE_WORKFLOW as unknown as WorkflowBindingForReap).get(
-						puzzle.id
-					);
+					const instance = await env.PUZZLE_WORKFLOW.get(puzzle.id);
 					workflowStatus = (await instance.status()).status;
 				} catch (wfErr) {
 					// If we can't reach the workflow API, skip — don't reap

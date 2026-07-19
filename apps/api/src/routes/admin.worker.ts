@@ -14,7 +14,7 @@ import {
 	isValidPieceCountForAspectRatio
 } from '@perseus/types';
 import type { PuzzleCategory } from '@perseus/types';
-import type { Env } from '../worker';
+import type { Env, WorkflowBinding } from '../worker';
 import {
 	commitIdempotencyKey,
 	createPuzzleMetadata,
@@ -211,17 +211,6 @@ async function probeReleaseAndRereclaimOrFail(
 	return reclaimReservationOrFail(bucket, doNs, kv, idempotencyKey, newPuzzleId, context, false);
 }
 
-// Workflow instance shape used by the liveness probe. The Env's
-// PUZZLE_WORKFLOW binding is typed with a simplified status property in
-// worker.ts, but the real Cloudflare Workflows API exposes status() as an
-// async method returning { status: string } — same cast the reaper uses.
-interface WorkflowInstanceForLiveness {
-	status(): Promise<{ status: string }>;
-}
-interface WorkflowBindingForLiveness {
-	get(id: string): Promise<WorkflowInstanceForLiveness>;
-}
-
 /**
  * Probe whether the original create's workflow is still alive. Used by the
  * pending-reservation retry branch to decide between committing the
@@ -237,7 +226,7 @@ interface WorkflowBindingForLiveness {
  * puzzle, reclaiming on unknown could mint a duplicate of a live one.
  */
 async function probeWorkflowLiveness(
-	workflow: WorkflowBindingForLiveness,
+	workflow: WorkflowBinding,
 	puzzleId: string
 ): Promise<'alive' | 'dead' | 'unknown'> {
 	try {
@@ -473,6 +462,10 @@ const IDEMPOTENCY_KV_EXTRA_BASE_DELAY_MS = 250;
 admin.post('/puzzles', requireAuth, async (c) => {
 	let id = '';
 	let reservedIdempotencyKey: string | undefined;
+	// Set to true after PUZZLE_WORKFLOW.create() succeeds. The outer catch
+	// uses this to decide between failReservation() (workflow running — must
+	// not free the key) and releaseReservation() (workflow not yet started).
+	let workflowStarted = false;
 	const releaseReservation = async () => {
 		if (!reservedIdempotencyKey || !id) return;
 		const key = reservedIdempotencyKey;
@@ -745,7 +738,7 @@ admin.post('/puzzles', requireAuth, async (c) => {
 							let fallThroughToCreate = false;
 							if (reserved.status === 'pending') {
 								const liveness = await probeWorkflowLiveness(
-									c.env.PUZZLE_WORKFLOW as unknown as WorkflowBindingForLiveness,
+									c.env.PUZZLE_WORKFLOW,
 									reserved.puzzleId
 								);
 								if (liveness === 'dead') {
@@ -1027,6 +1020,7 @@ admin.post('/puzzles', requireAuth, async (c) => {
 				id,
 				params: { puzzleId: id }
 			});
+			workflowStarted = true;
 		} catch (error) {
 			console.error('Failed to trigger workflow:', error);
 			// Clean up both metadata and image
@@ -1127,7 +1121,18 @@ admin.post('/puzzles', requireAuth, async (c) => {
 		return c.json(puzzleMetadata, 201);
 	} catch (error) {
 		console.error('Error creating puzzle:', error);
-		await releaseReservation();
+		// If the workflow already started, FAIL (not release) the reservation.
+		// Releasing would free the key for a concurrent retry to mint a second
+		// workflow alongside the already-running one. Failing keeps the key in
+		// a recoverable state so a retry reclaims through the DO's serialized
+		// path. Today no code between create() and the 201 return can throw,
+		// but this guard prevents a future refactor from silently introducing
+		// the duplicate-workflow hazard.
+		if (workflowStarted) {
+			await failReservation();
+		} else {
+			await releaseReservation();
+		}
 		return c.json({ error: 'internal_error', message: 'Failed to create puzzle' }, 500);
 	}
 });

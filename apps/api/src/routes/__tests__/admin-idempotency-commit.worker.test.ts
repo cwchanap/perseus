@@ -178,4 +178,39 @@ describe('Admin Worker idempotency commit handling', () => {
 			params: { puzzleId: 'new-puzzle' }
 		});
 	});
+
+	it('fails (not releases) the reservation when an error reaches the outer catch after workflow.create() succeeds', async () => {
+		// Defensive guard: if a future refactor lets an error escape between
+		// PUZZLE_WORKFLOW.create() and the 201 return, the outer catch must
+		// FAIL the reservation (not release it) so a concurrent retry reclaims
+		// through the DO's serialized path instead of minting a duplicate
+		// workflow alongside the already-started one.
+		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
+			existing: false,
+			puzzleId: 'guard-puzzle',
+			status: 'pending'
+		});
+		vi.mocked(storage.commitIdempotencyKey).mockRejectedValue(new Error('commit unavailable'));
+		vi.mocked(storage.releaseIdempotencyKey).mockResolvedValue(undefined);
+		vi.mocked(storage.failIdempotencyKey).mockResolvedValue(undefined);
+		// Make the first console.error (inside the commit retry catch) throw,
+		// escaping the inline catch to the outer catch — simulates an
+		// unexpected error after workflow.create() succeeded.
+		vi.spyOn(console, 'error')
+			.mockImplementationOnce(() => {
+				throw new Error('console.error escaped');
+			})
+			.mockImplementation(() => {});
+		const workflow = createWorkflow();
+
+		const response = await admin.fetch(createRequest('guard-key'), createEnv(workflow) as any);
+
+		expect(response.status).toBe(500);
+		expect(storage.failIdempotencyKey).toHaveBeenCalledWith(
+			expect.anything(),
+			'guard-key',
+			'guard-puzzle'
+		);
+		expect(storage.releaseIdempotencyKey).not.toHaveBeenCalled();
+	});
 });

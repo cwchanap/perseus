@@ -8,9 +8,16 @@ import { DEFAULT_DEV_ORIGINS } from './services/player-auth.shared';
 import type { WorkflowParams } from './types/workflow';
 
 // Workflow binding type (Cloudflare Workers)
-interface WorkflowBinding<T = unknown> {
+// Matches the real Cloudflare Workflows API: get() returns an instance whose
+// status() is an async method, not a string property. Keeping this honest at
+// the source eliminates `as unknown as` casts at every call site.
+export interface WorkflowInstance {
+	id: string;
+	status(): Promise<{ status: string }>;
+}
+export interface WorkflowBinding<T = unknown> {
 	create(options: { id: string; params: T }): Promise<{ id: string }>;
-	get(id: string): Promise<{ id: string; status: string }>;
+	get(id: string): Promise<WorkflowInstance>;
 }
 
 // Worker environment bindings
