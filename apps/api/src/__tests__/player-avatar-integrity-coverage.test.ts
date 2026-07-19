@@ -39,7 +39,7 @@ const TEST_PLAYER: PlayerSessionRecord = {
 		id: 'p1',
 		email: 'p@example.com',
 		name: 'Player',
-		picture: null,
+		picture: 'g.jpg',
 		createdAt: 1,
 		lastLoginAt: 2
 	},
