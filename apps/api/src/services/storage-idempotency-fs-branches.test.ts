@@ -49,7 +49,9 @@ describe('filesystem idempotency atomic publish branches', () => {
 
 	it('surfaces a non-EEXIST atomic publish failure', async () => {
 		fsMocks.readFile.mockRejectedValue(Object.assign(new Error('missing'), { code: 'ENOENT' }));
-		fsMocks.link.mockRejectedValue(Object.assign(new Error('permission denied'), { code: 'EACCES' }));
+		fsMocks.link.mockRejectedValue(
+			Object.assign(new Error('permission denied'), { code: 'EACCES' })
+		);
 
 		await expect(reserveIdempotencyKey('publish-key', 'puzzle-1')).rejects.toThrow(
 			'permission denied'
