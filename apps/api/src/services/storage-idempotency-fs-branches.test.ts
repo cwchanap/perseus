@@ -36,9 +36,7 @@ describe('filesystem idempotency atomic publish branches', () => {
 
 	it('fails after reclaiming two consecutive empty reservation files', async () => {
 		fsMocks.readFile.mockResolvedValue('');
-		fsMocks.link.mockRejectedValue(
-			Object.assign(new Error('already exists'), { code: 'EEXIST' })
-		);
+		fsMocks.link.mockRejectedValue(Object.assign(new Error('already exists'), { code: 'EEXIST' }));
 
 		await expect(reserveIdempotencyKey('empty-key', 'puzzle-1')).rejects.toThrow(
 			'Idempotency reservation file is empty after reclaim'
