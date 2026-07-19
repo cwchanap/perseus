@@ -3,31 +3,28 @@
  * PuzzleMetadataDO /reserve response shape must agree. Handler tests mock the
  * client return type; DO tests prove the DO — nothing else enforces they match.
  *
- * This file re-implements the client's parse against fixtures that mirror the
- * DO's Response.json payloads (see apps/workflows PuzzleMetadataDO.handleReserve).
+ * This file drives the REAL reserveIdempotencyKey client against fixtures that
+ * mirror the DO's Response.json payloads (see apps/workflows
+ * PuzzleMetadataDO.handleReserve), using the same mocked-DO-namespace pattern
+ * as storage-idempotency.worker.test.ts. If the client's parser drifts from the
+ * DO's response shape, these tests fail instead of a hand-copied parser
+ * silently passing.
  */
-import { describe, it, expect } from 'vitest';
-import type { IdempotencyReservationStatus } from './storage.worker';
+import { describe, it, expect, vi } from 'vitest';
+import { reserveIdempotencyKey } from './storage.worker';
 
-/** Mirrors storage.worker.ts reserveIdempotencyKey response parsing. */
-function parseReserveResponse(payload: unknown): {
-	existing: boolean;
-	puzzleId: string;
-	status?: IdempotencyReservationStatus;
-} {
-	const result = payload as {
-		existing?: boolean;
-		puzzleId?: string;
-		status?: IdempotencyReservationStatus;
+function createMockDurableObjectNamespace(
+	handler: (url: string, init?: RequestInit) => Response | Promise<Response>
+) {
+	const stub = {
+		fetch: vi.fn(handler)
 	};
-	if (typeof result.puzzleId !== 'string') {
-		throw new Error('Reserve response missing puzzleId');
-	}
-	return {
-		existing: !!result.existing,
-		puzzleId: result.puzzleId,
-		...(result.status ? { status: result.status } : {})
+	const namespace = {
+		idFromName: vi.fn((name: string) => name),
+		get: vi.fn(() => stub)
 	};
+
+	return { namespace, stub };
 }
 
 /** Fixtures matching PuzzleMetadataDO.handleReserve Response.json(...) shapes. */
@@ -52,29 +49,101 @@ const DO_RESERVE_FIXTURES = [
 
 describe('reserveIdempotencyKey client ↔ DO contract', () => {
 	for (const fixture of DO_RESERVE_FIXTURES) {
-		it(`parses DO ${fixture.name} response`, () => {
-			const parsed = parseReserveResponse(fixture.body);
-			expect(parsed.puzzleId).toBe(fixture.body.puzzleId);
-			expect(parsed.existing).toBe(fixture.body.existing);
-			expect(parsed.status).toBe(fixture.body.status);
+		it(`parses DO ${fixture.name} response`, async () => {
+			const { namespace, stub } = createMockDurableObjectNamespace(
+				() =>
+					new Response(JSON.stringify(fixture.body), {
+						status: 200,
+						headers: { 'Content-Type': 'application/json' }
+					})
+			);
+
+			const result = await reserveIdempotencyKey(
+				namespace as unknown as DurableObjectNamespace,
+				'request-1',
+				fixture.body.puzzleId
+			);
+
+			expect(namespace.idFromName).toHaveBeenCalledWith('request-1');
+			expect(stub.fetch).toHaveBeenCalledWith('https://puzzle-metadata/reserve', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					idempotencyKey: 'request-1',
+					puzzleId: fixture.body.puzzleId
+				})
+			});
+			expect(result).toEqual({
+				existing: fixture.body.existing,
+				puzzleId: fixture.body.puzzleId,
+				status: fixture.body.status
+			});
 		});
 	}
 
-	it('rejects a response missing puzzleId (client throw path)', () => {
-		expect(() => parseReserveResponse({ existing: true, status: 'pending' })).toThrow(
-			/missing puzzleId/
+	it('rejects a response missing puzzleId (client throw path)', async () => {
+		const { namespace } = createMockDurableObjectNamespace(
+			() =>
+				new Response(JSON.stringify({ existing: true, status: 'pending' }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				})
 		);
+
+		await expect(
+			reserveIdempotencyKey(namespace as unknown as DurableObjectNamespace, 'request-1', 'p1')
+		).rejects.toThrow(/missing puzzleId/);
 	});
 
-	it('treats missing existing as false (first-claim without the field)', () => {
-		const parsed = parseReserveResponse({ puzzleId: 'p1', status: 'pending' });
-		expect(parsed.existing).toBe(false);
-		expect(parsed.puzzleId).toBe('p1');
+	it('treats missing existing as false (first-claim without the field)', async () => {
+		const { namespace } = createMockDurableObjectNamespace(
+			() =>
+				new Response(JSON.stringify({ puzzleId: 'p1', status: 'pending' }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				})
+		);
+
+		const result = await reserveIdempotencyKey(
+			namespace as unknown as DurableObjectNamespace,
+			'request-1',
+			'p1'
+		);
+
+		expect(result.existing).toBe(false);
+		expect(result.puzzleId).toBe('p1');
 	});
 
-	it('omits status when DO does not send one (legacy)', () => {
-		const parsed = parseReserveResponse({ existing: true, puzzleId: 'legacy' });
-		expect(parsed.status).toBeUndefined();
-		expect(parsed.existing).toBe(true);
+	it('omits status when DO does not send one (legacy)', async () => {
+		const { namespace } = createMockDurableObjectNamespace(
+			() =>
+				new Response(JSON.stringify({ existing: true, puzzleId: 'legacy' }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				})
+		);
+
+		const result = await reserveIdempotencyKey(
+			namespace as unknown as DurableObjectNamespace,
+			'request-1',
+			'legacy'
+		);
+
+		expect(result.status).toBeUndefined();
+		expect(result.existing).toBe(true);
+	});
+
+	it('surfaces a DO error response (non-ok status)', async () => {
+		const { namespace } = createMockDurableObjectNamespace(
+			() =>
+				new Response(JSON.stringify({ message: 'reservation conflict' }), {
+					status: 409,
+					headers: { 'Content-Type': 'application/json' }
+				})
+		);
+
+		await expect(
+			reserveIdempotencyKey(namespace as unknown as DurableObjectNamespace, 'request-1', 'p1')
+		).rejects.toThrow('reservation conflict');
 	});
 });

@@ -137,25 +137,49 @@ export async function resolveCloudflaredToken(server: string): Promise<string | 
 	try {
 		const accessApp = accessAppFor(server);
 		// Bound wall time: cloudflared can hang indefinitely waiting for an
-		// interactive browser login when no cached token exists.
-		const result = await Promise.race([
-			$`cloudflared access token -app ${accessApp}`.quiet().nothrow(),
-			new Promise<never>((_, reject) =>
-				setTimeout(
-					() => reject(new Error('cloudflared access token timed out')),
-					CLOUDFLARED_TOKEN_TIMEOUT_MS
-				)
-			)
-		]);
-		const out = result.stdout.toString().trim();
-		const err = result.stderr.toString();
-		if (
-			`${out}\n${err}`.includes('Unable to find') ||
-			`${out}\n${err}`.includes('failed to find')
-		) {
+		// interactive browser login when no cached token exists. Use Bun.spawn
+		// (not the $ shell) so we retain a Subprocess handle we can kill on
+		// timeout — otherwise the orphaned cloudflared process keeps waiting
+		// for a browser login that never comes.
+		const proc = Bun.spawn(['cloudflared', 'access', 'token', '-app', accessApp], {
+			stdout: 'pipe',
+			stderr: 'pipe'
+		});
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		try {
+			const out = await Promise.race([
+				proc.stdout.text(),
+				new Promise<never>((_, reject) => {
+					timer = setTimeout(
+						() => reject(new Error('cloudflared access token timed out')),
+						CLOUDFLARED_TOKEN_TIMEOUT_MS
+					);
+				})
+			]);
+			if (timer) clearTimeout(timer);
+			const err = await proc.stderr.text();
+			const trimmed = out.trim();
+			if (
+				`${trimmed}\n${err}`.includes('Unable to find') ||
+				`${trimmed}\n${err}`.includes('failed to find')
+			) {
+				return undefined;
+			}
+			return isJwtLike(trimmed) ? normalizeToken(trimmed) : undefined;
+		} catch {
+			// Timeout or stdout read failure: clear the timer and terminate
+			// the orphaned cloudflared subprocess so it can't hang waiting
+			// for an interactive browser login.
+			if (timer) clearTimeout(timer);
+			if (!proc.killed) {
+				try {
+					proc.kill();
+				} catch {
+					// Process may have exited between the check and kill.
+				}
+			}
 			return undefined;
 		}
-		return isJwtLike(out) ? normalizeToken(out) : undefined;
 	} catch {
 		return undefined;
 	}
