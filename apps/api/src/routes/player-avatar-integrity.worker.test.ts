@@ -32,10 +32,9 @@ vi.mock('../services/player-auth.worker', () => ({
 import player from '../routes/player.worker';
 import type { Env } from '../worker';
 import * as playerAuth from '../services/player-auth.worker';
-import type { PlayerSessionRecord } from '../services/player-auth.worker';
 import { parseImageDimensions, validateImageEndMarker } from '@perseus/shared';
 
-const TEST_PLAYER: PlayerSessionRecord = {
+const TEST_PLAYER = {
 	user: {
 		id: 'p1',
 		email: 'p@example.com',
@@ -47,7 +46,7 @@ const TEST_PLAYER: PlayerSessionRecord = {
 	sessionHash: 'hash',
 	createdAt: 1,
 	expiresAt: 9999999999999
-};
+} as any;
 
 const AUTH_COOKIE = { Cookie: 'perseus_player_session=player-token' };
 const PNG_PREFIX = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -55,13 +54,13 @@ const PNG_PREFIX = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0
 function buildApp() {
 	const app = new Hono<{
 		Bindings: Env;
-		Variables: { playerSession: PlayerSessionRecord };
+		Variables: { playerSession: any };
 	}>();
 	app.route('/api/player', player);
 	return app;
 }
 
-function avatarRequest(): Promise<Response> {
+function avatarRequest() {
 	const form = new FormData();
 	form.append('avatar', new Blob([PNG_PREFIX], { type: 'image/png' }), 'avatar.png');
 	const env = {
@@ -85,7 +84,7 @@ describe('player avatar integrity validation (Worker)', () => {
 	});
 
 	it('rejects an image whose parsed dimensions are invalid', async () => {
-		vi.mocked(parseImageDimensions).mockResolvedValue(null);
+		(parseImageDimensions as any).mockResolvedValue(null);
 
 		const response = await avatarRequest();
 
@@ -98,8 +97,8 @@ describe('player avatar integrity validation (Worker)', () => {
 	});
 
 	it('rejects an image whose end marker is missing', async () => {
-		vi.mocked(parseImageDimensions).mockResolvedValue({ width: 48, height: 48 });
-		vi.mocked(validateImageEndMarker).mockResolvedValue(false);
+		(parseImageDimensions as any).mockResolvedValue({ width: 48, height: 48 });
+		(validateImageEndMarker as any).mockResolvedValue(false);
 
 		const response = await avatarRequest();
 
