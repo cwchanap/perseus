@@ -466,7 +466,19 @@ admin.post('/puzzles', requireAuth, async (c) => {
 		let cleanupFailed = false;
 		if (puzzleDirCreated) {
 			try {
-				await deleteStoredPuzzle(id);
+				// deleteStoredPuzzle returns false on failure (it catches
+				// internally and never throws), so we must check the return
+				// value — the catch below only fires on an unexpected throw
+				// from a non-defensive caller. A false result means the
+				// on-disk puzzle directory remains as an orphan; preserve
+				// the reservation (do NOT release) so a same-key retry sees
+				// existing:true and returns the orphaned puzzleId instead
+				// of minting a replacement alongside the orphan. Mirrors
+				// the failReservation() pattern in admin.worker.ts.
+				const cleaned = await deleteStoredPuzzle(id);
+				if (!cleaned) {
+					cleanupFailed = true;
+				}
 			} catch (cleanupError) {
 				console.error('Failed to clean up puzzle directory after error:', cleanupError);
 				cleanupFailed = true;

@@ -211,6 +211,47 @@ async function probeReleaseAndRereclaimOrFail(
 	return reclaimReservationOrFail(bucket, doNs, kv, idempotencyKey, newPuzzleId, context, false);
 }
 
+// Workflow instance shape used by the liveness probe. The Env's
+// PUZZLE_WORKFLOW binding is typed with a simplified status property in
+// worker.ts, but the real Cloudflare Workflows API exposes status() as an
+// async method returning { status: string } — same cast the reaper uses.
+interface WorkflowInstanceForLiveness {
+	status(): Promise<{ status: string }>;
+}
+interface WorkflowBindingForLiveness {
+	get(id: string): Promise<WorkflowInstanceForLiveness>;
+}
+
+/**
+ * Probe whether the original create's workflow is still alive. Used by the
+ * pending-reservation retry branch to decide between committing the
+ * reservation (original alive — prevent a duplicate workflow on a later
+ * retry) and reclaiming it (original died before/during the workflow —
+ * committing would lock the key to a stuck puzzle).
+ *
+ * Returns 'alive' when the workflow is running or complete (complete means
+ * finalize succeeded, so the DO has 'ready' — the puzzle is done, not
+ * stuck), 'dead' when it errored/terminated/never-existed, or 'unknown'
+ * when the workflow API could not be reached. Callers must treat 'unknown'
+ * as transient (return 409) — committing on unknown could lock a stuck
+ * puzzle, reclaiming on unknown could mint a duplicate of a live one.
+ */
+async function probeWorkflowLiveness(
+	workflow: WorkflowBindingForLiveness,
+	puzzleId: string
+): Promise<'alive' | 'dead' | 'unknown'> {
+	try {
+		const instance = await workflow.get(puzzleId);
+		const status = (await instance.status()).status;
+		if (status === 'running' || status === 'complete') return 'alive';
+		// 'errored' | 'terminated' | 'unknown' | any other = original died.
+		return 'dead';
+	} catch (err) {
+		console.error(`Workflow liveness probe failed for ${puzzleId}:`, err);
+		return 'unknown';
+	}
+}
+
 // POST /api/admin/login - Admin login
 admin.post('/login', loginRateLimit, async (c) => {
 	try {
@@ -690,23 +731,94 @@ admin.post('/puzzles', requireAuth, async (c) => {
 							// Fall through to normal create flow to build a
 							// replacement puzzle under the won puzzleId.
 						} else {
-							// If the original create's commit failed, the
-							// reservation may still be pending. Best-effort
-							// commit it now so the key doesn't expire into a
-							// reclaimable state that could spawn a duplicate
-							// workflow while the original is still alive.
+							// Existing metadata is processing (not failed).
+							// If the reservation is still pending, the
+							// original create's commit failed — but before
+							// committing it on this retry, verify the
+							// original's workflow is actually alive. If the
+							// original died between writing processing
+							// metadata and PUZZLE_WORKFLOW.create, committing
+							// would lock the key to a puzzle with no
+							// workflow — permanently stuck until the reaper
+							// cleans it up (2h). Instead, fail the reservation
+							// and reclaim so this retry builds a replacement.
+							let fallThroughToCreate = false;
 							if (reserved.status === 'pending') {
-								try {
-									await commitIdempotencyKey(
+								const liveness = await probeWorkflowLiveness(
+									c.env.PUZZLE_WORKFLOW as unknown as WorkflowBindingForLiveness,
+									reserved.puzzleId
+								);
+								if (liveness === 'dead') {
+									// Original died before/during the workflow.
+									// Fail the pending reservation so we can
+									// reclaim the key, then re-reserve with our
+									// minted UUID and build a replacement.
+									try {
+										await failIdempotencyKey(
+											c.env.PUZZLE_METADATA_DO,
+											idempotencyKey,
+											reserved.puzzleId
+										);
+									} catch (err) {
+										console.error('Failed to fail dead pending reservation on retry:', err);
+										return c.json(
+											{
+												error: 'internal_error',
+												message: 'Failed to reclaim dead pending reservation'
+											},
+											500
+										);
+									}
+									const reclaim = await reclaimReservationOrFail(
+										c.env.PUZZLES_BUCKET,
 										c.env.PUZZLE_METADATA_DO,
+										c.env.PUZZLE_METADATA,
 										idempotencyKey,
-										reserved.puzzleId
+										id,
+										'on dead-pending reclaim'
 									);
-								} catch (err) {
-									console.error('Failed to commit pending reservation on retry:', err);
+									if (reclaim.kind === 'return') return reclaim.response;
+									id = reclaim.puzzleId;
+									reservedIdempotencyKey = idempotencyKey;
+									// Fall through to normal create flow to
+									// build a replacement puzzle. The stale
+									// processing metadata for the original
+									// puzzleId will be cleaned by the reaper.
+									fallThroughToCreate = true;
+								} else if (liveness === 'unknown') {
+									// Workflow API unreachable — can't safely
+									// commit (might lock a stuck puzzle) or
+									// reclaim (might duplicate a live one).
+									// Signal transient so the client retries.
+									return c.json(
+										{
+											error: 'conflict',
+											message:
+												'Idempotency-Key in flight; workflow liveness could not be verified, retry'
+										},
+										409
+									);
+								} else {
+									// liveness === 'alive': original is running
+									// or complete. Commit the pending reservation
+									// so the key doesn't expire into a reclaimable
+									// state that could spawn a duplicate workflow
+									// while the original is still alive.
+									try {
+										await commitIdempotencyKey(
+											c.env.PUZZLE_METADATA_DO,
+											idempotencyKey,
+											reserved.puzzleId
+										);
+									} catch (err) {
+										console.error('Failed to commit pending reservation on retry:', err);
+									}
 								}
 							}
-							return c.json(existing, 200);
+							if (!fallThroughToCreate) {
+								return c.json(existing, 200);
+							}
+							// Fall through to normal create flow.
 						}
 					} else {
 						// Metadata is missing. A committed reservation should

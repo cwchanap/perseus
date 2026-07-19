@@ -1614,6 +1614,9 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 			// If the original create's commit failed, a retry that finds the
 			// existing puzzle must commit the pending reservation so the key
 			// doesn't expire into a reclaimable state that spawns a duplicate.
+			// The liveness probe must report the original's workflow as alive
+			// (running or complete) before committing — a dead workflow means
+			// the puzzle is stuck and the key should be reclaimed instead.
 			(storage.reserveIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue({
 				existing: true,
 				puzzleId: 'original-uuid',
@@ -1641,7 +1644,12 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
 				PUZZLE_METADATA: {} as KVNamespace,
 				PUZZLES_BUCKET: {} as R2Bucket,
-				PUZZLE_WORKFLOW: { create: vi.fn() },
+				PUZZLE_WORKFLOW: {
+					create: vi.fn(),
+					get: vi.fn(() => ({
+						status: vi.fn(async () => ({ status: 'complete' }))
+					}))
+				},
 				PUZZLE_METADATA_DO: {} as DurableObjectNamespace
 			};
 

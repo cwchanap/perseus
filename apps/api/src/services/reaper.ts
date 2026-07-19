@@ -8,19 +8,26 @@
 // metadata and image remain for operator cleanup. This reaper automates
 // that cleanup: it scans KV for long-stuck "processing" puzzles, checks
 // the workflow status, and if the workflow is dead, deletes the KV
-// metadata and R2 original image.
+// metadata, R2 assets (original + thumbnail + generated pieces), and the
+// D1 ownership row.
 //
 // Threshold: puzzles that have been in "processing" status for longer
 // than REAP_AFTER_MS are candidates. The threshold is intentionally
 // generous (2 hours) to avoid reaping puzzles whose workflows are still
 // legitimately running on large piece counts.
+//
+// 'complete' workflow status is NOT treated as dead: Cloudflare Workflows
+// only mark a workflow 'complete' after every step succeeds, which means
+// the finalize step ran and the authoritative PuzzleMetadataDO has
+// status 'ready'. A KV read that still shows 'processing' is eventual-
+// consistency lag (the DO's KV sync retries can exhaust), not an orphan.
+// Reaping would destroy a valid completed puzzle, so we skip and let KV
+// catch up. If KV never catches up, operator force-delete is the escape
+// hatch (see docs/OPERATOR_RUNBOOK.md).
 
-import {
-	deleteOriginalImage,
-	deletePuzzleMetadata,
-	getPuzzle,
-	listPuzzles
-} from './storage.worker';
+import { deletePuzzleAssets, deletePuzzleMetadata, getPuzzle, listPuzzles } from './storage.worker';
+import { getWorkerDb } from '../db.worker';
+import { deletePuzzleOwnership } from '@perseus/shared';
 import type { Env } from '../worker';
 
 /** Reap puzzles stuck in processing for longer than this. */
@@ -114,17 +121,28 @@ export async function reapStuckPuzzles(env: Env, now = Date.now()): Promise<Reap
 					return;
 				}
 
-				// Workflow is dead (errored, terminated, unknown, or
-				// complete—but if complete, the workflow should have set
-				// status to 'ready' or 'failed'; a 'processing' puzzle with
-				// a completed workflow is itself an orphan). Reap it.
+				// 'complete' means every workflow step succeeded, including
+				// finalize (which writes status 'ready' to the authoritative
+				// PuzzleMetadataDO). A KV read that still shows 'processing'
+				// is eventual-consistency lag, not an orphan — reaping would
+				// destroy a valid completed puzzle. Skip and let KV catch up.
+				if (workflowStatus === 'complete') {
+					console.warn(
+						`Reaper: workflow for ${puzzle.id} is complete but KV still shows processing (lag); skipping`
+					);
+					result.details.push({
+						puzzleId: puzzle.id,
+						action: 'skip-complete-kv-lag'
+					});
+					return;
+				}
+
+				// Workflow is dead (errored, terminated, or unknown/never-
+				// created). Reap it.
 				const isDead =
 					workflowStatus === 'errored' ||
 					workflowStatus === 'terminated' ||
-					workflowStatus === 'unknown' ||
-					// 'complete' with status still 'processing' means the
-					// workflow finished but didn't update metadata — orphan.
-					workflowStatus === 'complete';
+					workflowStatus === 'unknown';
 
 				if (!isDead) {
 					// Unknown status string — skip to be safe.
@@ -134,12 +152,27 @@ export async function reapStuckPuzzles(env: Env, now = Date.now()): Promise<Reap
 					return;
 				}
 
-				// Delete R2 original image (best-effort).
+				// Delete all R2 assets (original + thumbnail + generated
+				// pieces). Uses pieceCount from metadata; R2 deletes on non-
+				// existent keys are no-ops, so partial generation is covered.
+				// Best-effort: log failures but continue to KV/D1 cleanup.
 				try {
-					await deleteOriginalImage(env.PUZZLES_BUCKET, puzzle.id);
+					const pieceCount = typeof meta.pieceCount === 'number' ? meta.pieceCount : 0;
+					const r2Result = await deletePuzzleAssets(env.PUZZLES_BUCKET, puzzle.id, pieceCount);
+					if (!r2Result.success) {
+						console.error(
+							`Reaper: failed to delete some R2 assets for ${puzzle.id}:`,
+							r2Result.failedKeys
+						);
+						result.details.push({
+							puzzleId: puzzle.id,
+							action: 'r2-delete-partial',
+							error: `failed keys: ${r2Result.failedKeys.join(', ')}`
+						});
+					}
 				} catch (r2Err) {
-					// Log but continue — we still want to delete KV metadata.
-					console.error(`Reaper: failed to delete R2 image for ${puzzle.id}:`, r2Err);
+					// Log but continue — we still want to delete KV/D1 metadata.
+					console.error(`Reaper: failed to delete R2 assets for ${puzzle.id}:`, r2Err);
 					result.details.push({
 						puzzleId: puzzle.id,
 						action: 'r2-delete-failed',
@@ -163,6 +196,22 @@ export async function reapStuckPuzzles(env: Env, now = Date.now()): Promise<Reap
 						action: 'kv-delete-failed',
 						error: String(kvErr)
 					});
+				}
+
+				// Best-effort D1 ownership row cleanup. Player uploads insert
+				// a D1 ownership row with status 'processing', which is visible
+				// in the uploader's "My Puzzles" list (VISIBLE_PLAYER_PUZZLE_
+				// STATUSES includes 'processing'). Without this, a reaped
+				// player puzzle keeps surfacing as a card that 404s on click.
+				// Best-effort: a D1 failure is logged, not fatal — KV deletion
+				// above is the source of truth for puzzle visibility. Mirrors
+				// the withDbBestEffort pattern in admin.worker.ts.
+				try {
+					await deletePuzzleOwnership(getWorkerDb(env), puzzle.id).catch((err) =>
+						console.error(`Reaper: failed to delete D1 ownership for ${puzzle.id}:`, err)
+					);
+				} catch (dbErr) {
+					console.error(`Reaper: failed to init DB for ownership cleanup of ${puzzle.id}:`, dbErr);
 				}
 			} catch (err) {
 				console.error(`Reaper: unexpected error for ${puzzle.id}:`, err);

@@ -4,21 +4,34 @@ import { reapStuckPuzzles, REAP_AFTER_MS } from '../reaper';
 
 // Mock storage.worker functions
 vi.mock('../storage.worker', () => ({
-	deleteOriginalImage: vi.fn(),
+	deletePuzzleAssets: vi.fn(),
 	deletePuzzleMetadata: vi.fn(),
 	getPuzzle: vi.fn(),
 	listPuzzles: vi.fn()
 }));
 
+// Mock db.worker so the reaper's D1 ownership cleanup doesn't touch a real DB.
+vi.mock('../../db.worker', () => ({
+	getWorkerDb: vi.fn(() => ({}))
+}));
+
+// Mock @perseus/shared's deletePuzzleOwnership so it stays a no-op spy.
+vi.mock('@perseus/shared', async (importOriginal) => {
+	const actual = (await importOriginal()) as Record<string, unknown>;
+	return { ...actual, deletePuzzleOwnership: vi.fn(async () => undefined) };
+});
+
 // Import after mock so the reaper uses the mocked versions
 import {
-	deleteOriginalImage,
+	deletePuzzleAssets,
 	deletePuzzleMetadata,
 	getPuzzle,
 	listPuzzles
 } from '../storage.worker';
+import { getWorkerDb } from '../../db.worker';
+import { deletePuzzleOwnership } from '@perseus/shared';
 
-const storage = { deleteOriginalImage, deletePuzzleMetadata, getPuzzle, listPuzzles } as any;
+const storage = { deletePuzzleAssets, deletePuzzleMetadata, getPuzzle, listPuzzles } as any;
 
 function makeEnv(workflowStatuses: Record<string, string> = {}) {
 	return {
@@ -59,8 +72,10 @@ function puzzleSummary(id: string, status: string, createdAt: number) {
 describe('reapStuckPuzzles', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
-		(storage.deleteOriginalImage as any).mockResolvedValue(undefined);
+		(storage.deletePuzzleAssets as any).mockResolvedValue({ success: true, failedKeys: [] });
 		(storage.deletePuzzleMetadata as any).mockResolvedValue(undefined);
+		(deletePuzzleOwnership as any).mockResolvedValue(undefined);
+		(getWorkerDb as any).mockReturnValue({});
 	});
 
 	it('returns empty result when no puzzles exist', async () => {
@@ -112,7 +127,7 @@ describe('reapStuckPuzzles', () => {
 		expect(result.candidates).toBe(1);
 		expect(result.reaped).toBe(0);
 		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
-		expect(storage.deleteOriginalImage).not.toHaveBeenCalled();
+		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
 	});
 
 	it('reaps stuck processing puzzles whose workflow errored', async () => {
@@ -130,8 +145,9 @@ describe('reapStuckPuzzles', () => {
 		const result = await reapStuckPuzzles(env, NOW);
 		expect(result.candidates).toBe(1);
 		expect(result.reaped).toBe(1);
-		expect(storage.deleteOriginalImage).toHaveBeenCalledWith(env.PUZZLES_BUCKET, 'stuck-1');
+		expect(storage.deletePuzzleAssets).toHaveBeenCalledWith(env.PUZZLES_BUCKET, 'stuck-1', 100);
 		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'stuck-1');
+		expect(deletePuzzleOwnership).toHaveBeenCalledWith({}, 'stuck-1');
 	});
 
 	it('reaps stuck processing puzzles whose workflow terminated', async () => {
@@ -167,7 +183,7 @@ describe('reapStuckPuzzles', () => {
 		expect(result.reaped).toBe(1);
 	});
 
-	it('reaps stuck processing puzzles whose workflow completed but metadata not updated', async () => {
+	it('skips stuck processing puzzles whose workflow completed (KV lag, not orphan)', async () => {
 		(storage.listPuzzles as any).mockResolvedValue({
 			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
 			invalidCount: 0
@@ -180,7 +196,12 @@ describe('reapStuckPuzzles', () => {
 		});
 		const env = makeEnv({ 'stuck-1': 'complete' });
 		const result = await reapStuckPuzzles(env, NOW);
-		expect(result.reaped).toBe(1);
+		expect(result.candidates).toBe(1);
+		expect(result.reaped).toBe(0);
+		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
+		expect(deletePuzzleOwnership).not.toHaveBeenCalled();
+		expect(result.details.some((d) => d.action === 'skip-complete-kv-lag')).toBe(true);
 	});
 
 	it('skips puzzles whose status changed between list and re-read', async () => {
@@ -224,7 +245,7 @@ describe('reapStuckPuzzles', () => {
 		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
 	});
 
-	it('still deletes KV metadata when R2 image deletion fails', async () => {
+	it('still deletes KV metadata when R2 asset deletion fails', async () => {
 		(storage.listPuzzles as any).mockResolvedValue({
 			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
 			invalidCount: 0
@@ -235,7 +256,7 @@ describe('reapStuckPuzzles', () => {
 			name: 'Puzzle stuck-1',
 			pieceCount: 100
 		});
-		(storage.deleteOriginalImage as any).mockRejectedValue(new Error('R2 error'));
+		(storage.deletePuzzleAssets as any).mockRejectedValue(new Error('R2 error'));
 		const env = makeEnv({ 'stuck-1': 'errored' });
 		const result = await reapStuckPuzzles(env, NOW);
 		expect(result.reaped).toBe(1);
@@ -316,5 +337,50 @@ describe('reapStuckPuzzles', () => {
 		expect(result.reaped).toBe(0);
 		expect(result.errors).toBe(1);
 		expect(result.details.some((d) => d.action === 'error')).toBe(true);
+	});
+
+	it('records a partial-failure detail when some R2 assets fail to delete', async () => {
+		(storage.listPuzzles as any).mockResolvedValue({
+			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
+			invalidCount: 0
+		});
+		(storage.getPuzzle as any).mockResolvedValue({
+			id: 'stuck-1',
+			status: 'processing',
+			name: 'Puzzle stuck-1',
+			pieceCount: 100
+		});
+		(storage.deletePuzzleAssets as any).mockResolvedValue({
+			success: false,
+			failedKeys: ['puzzles/stuck-1/pieces/0.png', 'puzzles/stuck-1/pieces/1.png']
+		});
+		const env = makeEnv({ 'stuck-1': 'errored' });
+		const result = await reapStuckPuzzles(env, NOW);
+		// KV + D1 cleanup still proceeds — R2 partial failure is best-effort.
+		expect(result.reaped).toBe(1);
+		expect(result.details.some((d) => d.action === 'r2-delete-partial')).toBe(true);
+		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'stuck-1');
+	});
+
+	it('still reaps when D1 ownership init throws (best-effort)', async () => {
+		(storage.listPuzzles as any).mockResolvedValue({
+			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
+			invalidCount: 0
+		});
+		(storage.getPuzzle as any).mockResolvedValue({
+			id: 'stuck-1',
+			status: 'processing',
+			name: 'Puzzle stuck-1',
+			pieceCount: 100
+		});
+		// getWorkerDb throws on lazy init — the outer try/catch logs and
+		// continues (KV/R2 cleanup is the source of truth for visibility).
+		(getWorkerDb as any).mockImplementation(() => {
+			throw new Error('DB init failed');
+		});
+		const env = makeEnv({ 'stuck-1': 'errored' });
+		const result = await reapStuckPuzzles(env, NOW);
+		expect(result.reaped).toBe(1);
+		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'stuck-1');
 	});
 });
