@@ -189,10 +189,7 @@ describe('Admin Worker idempotency reclaim races', () => {
 
 		expect(response.status).toBe(201);
 		expect(await response.json()).toMatchObject({ id: 'replacement-puzzle' });
-		expect(storage.originalImageExists).toHaveBeenCalledWith(
-			expect.anything(),
-			'deleted-winner'
-		);
+		expect(storage.originalImageExists).toHaveBeenCalledWith(expect.anything(), 'deleted-winner');
 		expect(storage.releaseIdempotencyKey).toHaveBeenCalledWith(
 			expect.anything(),
 			'nested-key',
