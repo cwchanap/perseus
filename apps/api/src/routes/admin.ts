@@ -35,7 +35,8 @@ import type { PuzzleCategory } from '../types';
 import {
 	DEFAULT_PUZZLE_ASPECT_RATIO,
 	aspectRatiosMatch,
-	isPuzzleAspectRatio
+	isPuzzleAspectRatio,
+	stripIdempotencyKey
 } from '@perseus/types';
 import { getDb } from '../db';
 import {
@@ -453,7 +454,7 @@ admin.post('/puzzles', requireAuth, async (c) => {
 
 		// Keep the reservation file as the durable key → puzzleId mapping.
 		reservedIdempotencyKey = undefined;
-		return c.json(puzzleToStore, 201);
+		return c.json(stripIdempotencyKey(puzzleToStore), 201);
 	} catch (error) {
 		console.error('Error creating puzzle:', error);
 		// Clean up the puzzle directory if it was created before the failure.

@@ -12,13 +12,17 @@
 
 import { join, dirname } from 'node:path';
 import { existsSync, readFileSync, unlinkSync, writeFileSync, mkdirSync, chmodSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { createInterface } from 'node:readline';
 import { $ } from 'bun';
 import { WORKER_AUTH_ERROR_CODE } from '@perseus/types';
 import { ACCESS_AUD, PROBE_TIMEOUT_MS, accessAppFor, tokenBasenameFor } from './types';
 
 function homeCloudflaredDir(): string {
-	return join(process.env.HOME ?? '', '.cloudflared');
+	// os.homedir() is cross-platform: it returns USERPROFILE on Windows and
+	// HOME on POSIX. The previous `process.env.HOME ?? ''` fallback was unset
+	// on Windows, resolving `.cloudflared` to the filesystem root.
+	return join(homedir(), '.cloudflared');
 }
 
 export function cloudflaredTokenPath(server: string): string | undefined {

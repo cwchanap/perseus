@@ -246,7 +246,16 @@ during rollout. The `reservation` object is the source of truth.
 - Stale-pending reservations (> 5 min old) are reclaimable by later
   `/reserve` calls. The reclaim path checks workflow liveness and R2
   presence to avoid minting duplicates of live puzzles.
+- **Client/server asymmetry:** the server treats `Idempotency-Key` as an
+  opaque unique token (regex `^[A-Za-z0-9_-]{1,128}$`) and never decodes it.
+  The seed-upload CLI (`scripts/startup/upload.ts`) builds a composite dedup
+  key from `name + pieceCount + aspectRatio` joined by NUL bytes (invalid in
+  HTTP headers) and SHA-256 hashes it to a hex string before sending. The
+  hash is a client-side convenience; dedup correctness comes from the DO
+  reservation state machine, not the token's encoding. Any client may supply
+  any opaque token that matches the server regex.
 
 **Source:** `apps/api/src/routes/admin.worker.ts` (POST /puzzles handler),
 `apps/workflows/src/index.ts` (PuzzleMetadataDO),
-`packages/types/src/index.ts` (`stripIdempotencyKey`).
+`packages/types/src/index.ts` (`stripIdempotencyKey`),
+`scripts/startup/upload.ts` (`idempotencyKey`/`idempotencyKeyHeader`).

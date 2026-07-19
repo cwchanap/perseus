@@ -27,7 +27,7 @@ import {
 	getLeftEdge
 } from '@perseus/types';
 import { createD1Db } from '@perseus/shared/d1';
-import { setPuzzleStatus } from '@perseus/shared';
+import { setPuzzleStatus, sniffImageType, parseImageDimensions } from '@perseus/shared';
 import type { AppDb } from '@perseus/shared';
 import {
 	MAX_IMAGE_BYTES,
@@ -42,6 +42,20 @@ import {
 // the lifetime of the worker isolate, so reusing one instance avoids
 // per-step allocation overhead across the workflow's multiple step.do calls.
 const dbCache = new WeakMap<Env, AppDb>();
+
+/**
+ * Stable substring of the 409 response returned by updateMetadata when a
+ * ready puzzle is asked to transition to failed. Pinned as a constant so the
+ * producer (updateMetadata's ready→failed guard) and the consumer (the
+ * mark-failed retry loop that detects "finalize already committed") cannot
+ * silently drift apart if the prose is edited. Match on this substring
+ * (case-sensitive) rather than regex-matching freeform prose.
+ */
+const ALREADY_READY_CONFLICT_SUBSTRING = 'already ready; refusing transition to failed';
+
+function alreadyReadyConflictMessage(puzzleId: string): string {
+	return `Puzzle ${puzzleId} is ${ALREADY_READY_CONFLICT_SUBSTRING}`;
+}
 
 function getDb(env: Env): AppDb {
 	let db = dbCache.get(env);
@@ -68,7 +82,17 @@ type ReservationRecord = {
 	status: 'pending' | 'committed' | 'failed';
 	/** Epoch ms when the pending claim was created. Absent on legacy records. */
 	reservedAt?: number;
+	/**
+	 * Reservation schema version. New writes are CURRENT_RESERVATION_SCHEMA;
+	 * records written before this field existed default to 0 on read. A future
+	 * migration can branch on this value to transform old records in place
+	 * instead of guessing their shape.
+	 */
+	schemaVersion?: number;
 };
+
+/** Current reservation record schema version. Bump on breaking shape changes. */
+export const CURRENT_RESERVATION_SCHEMA = 1;
 
 function isStalePending(reservation: ReservationRecord, now = Date.now()): boolean {
 	if (reservation.status !== 'pending') return false;
@@ -152,10 +176,7 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 		// ready, failed → failed) and the forward transition processing →
 		// failed remain allowed.
 		if (updates.status === 'failed' && existing.status === 'ready') {
-			return Response.json(
-				{ message: `Puzzle ${puzzleId} is already ready; refusing transition to failed` },
-				{ status: 409 }
-			);
+			return Response.json({ message: alreadyReadyConflictMessage(puzzleId) }, { status: 409 });
 		}
 
 		const currentVersion = existing.version ?? 0;
@@ -393,10 +414,10 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 							}
 							const next: ReservationRecord = {
 								puzzleId: reservation.puzzleId,
-								status: 'failed'
+								status: 'failed',
+								schemaVersion: CURRENT_RESERVATION_SCHEMA
 							};
 							await this.ctx.storage.put('reservation', next);
-							await this.ctx.storage.put('reservedPuzzleId', reservation.puzzleId);
 						});
 					} catch (failErr) {
 						console.error(
@@ -436,10 +457,10 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 					const next: ReservationRecord = {
 						puzzleId: reservation.puzzleId,
 						status: 'committed',
-						...(reservation.reservedAt !== undefined ? { reservedAt: reservation.reservedAt } : {})
+						...(reservation.reservedAt !== undefined ? { reservedAt: reservation.reservedAt } : {}),
+						schemaVersion: CURRENT_RESERVATION_SCHEMA
 					};
 					await this.ctx.storage.put('reservation', next);
-					await this.ctx.storage.put('reservedPuzzleId', reservation.puzzleId);
 					return {
 						existing: true as const,
 						puzzleId: reservation.puzzleId,
@@ -464,22 +485,10 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 			const next: ReservationRecord = {
 				puzzleId,
 				status: 'pending',
-				reservedAt: Date.now()
+				reservedAt: Date.now(),
+				schemaVersion: CURRENT_RESERVATION_SCHEMA
 			};
 			await this.ctx.storage.put('reservation', next);
-			// LEGACY: keep reservedPuzzleId (plain string) in sync for older
-			// readers during rollout. TODO(legacy-cleanup): once all DO
-			// instances have been restarted on code that reads the
-			// 'reservation' object (readReservation at bottom of this file
-			// falls back to reservedPuzzleId only when 'reservation' is
-			// absent), remove every reservedPuzzleId put/delete below and
-			// delete the legacy read fallback in readReservation. The
-			// 'reservation' object is the source of truth; the plain-string
-			// key exists solely so a DO instance running old code can still
-			// resolve a reservation written by new code. Safe to drop after
-			// one full DO restart cycle with no rollbacks to pre-reservation
-			// code.
-			await this.ctx.storage.put('reservedPuzzleId', puzzleId);
 			return { existing: false as const, puzzleId, status: 'pending' as const };
 		});
 		return Response.json(result);
@@ -536,7 +545,6 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 
 			if (action === 'released') {
 				await this.ctx.storage.delete('reservation');
-				await this.ctx.storage.delete('reservedPuzzleId');
 				return { ok: true as const, status: 'released' as const };
 			}
 
@@ -545,9 +553,12 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 				return { ok: true as const, status: action };
 			}
 
-			const next: ReservationRecord = { puzzleId, status: action };
+			const next: ReservationRecord = {
+				puzzleId,
+				status: action,
+				schemaVersion: CURRENT_RESERVATION_SCHEMA
+			};
 			await this.ctx.storage.put('reservation', next);
-			await this.ctx.storage.put('reservedPuzzleId', puzzleId);
 			return { ok: true as const, status: action };
 		});
 
@@ -562,6 +573,7 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 			puzzleId?: string;
 			status?: string;
 			reservedAt?: number;
+			schemaVersion?: number;
 		}>('reservation');
 		if (
 			stored &&
@@ -571,18 +583,11 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 			return {
 				puzzleId: stored.puzzleId,
 				status: stored.status,
-				...(typeof stored.reservedAt === 'number' ? { reservedAt: stored.reservedAt } : {})
+				...(typeof stored.reservedAt === 'number' ? { reservedAt: stored.reservedAt } : {}),
+				// Default missing schemaVersion to 0 (pre-schema records). A
+				// future migration can branch on this to transform old records.
+				schemaVersion: typeof stored.schemaVersion === 'number' ? stored.schemaVersion : 0
 			};
-		}
-
-		// LEGACY fallback: plain puzzleId string from the previous reserve
-		// implementation. TODO(legacy-cleanup): remove this fallback (and
-		// all reservedPuzzleId writes above) once no DO instance can be
-		// running pre-reservation code — see the TODO at the first
-		// reservedPuzzleId put above for the full removal plan.
-		const legacy = await this.ctx.storage.get<string>('reservedPuzzleId');
-		if (typeof legacy === 'string' && legacy.trim()) {
-			return { puzzleId: legacy, status: 'committed' };
 		}
 		return null;
 	}
@@ -631,8 +636,39 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 
 			// Step 2: Decode image and validate dimensions using Photon
 			const { width, height } = await step.do('decode-validate', async () => {
-				const { PhotonImage } = await import('@cf-wasm/photon');
 				const bytes = await loadOriginalImageBytes(this.env, puzzleId);
+
+				// Best-effort pre-check: parse dimensions from the image header
+				// BEFORE decoding the full bitmap with Photon.
+				// PhotonImage.new_from_byteslice allocates the entire decoded
+				// pixel buffer in WASM memory — a pathologically large image
+				// (e.g. one that bypassed upload validation and landed in R2)
+				// would OOM the worker before the post-decode dimension check
+				// below could reject it. parseImageDimensions reads only header
+				// bytes, so this guard is cheap. When the header is parseable
+				// and reports oversized dimensions, reject without decoding.
+				// When the header is unparseable (corrupt bytes, or a format
+				// sniffImageType doesn't recognize), skip the pre-check and let
+				// Photon's own decode + the post-decode guard below handle it —
+				// matching the pre-guard behavior. This catches the realistic
+				// threat (a valid-header image that exceeds the cap) without
+				// regressing on bytes that lack a parseable header.
+				const detected = sniffImageType(bytes);
+				if (detected) {
+					const headerDims = await parseImageDimensions(new Blob([bytes]), detected);
+					if (
+						headerDims &&
+						headerDims.width > 0 &&
+						headerDims.height > 0 &&
+						(headerDims.width > MAX_IMAGE_DIMENSION || headerDims.height > MAX_IMAGE_DIMENSION)
+					) {
+						throw new Error(
+							`Image dimensions ${headerDims.width}x${headerDims.height} exceed maximum ${MAX_IMAGE_DIMENSION}px`
+						);
+					}
+				}
+
+				const { PhotonImage } = await import('@cf-wasm/photon');
 				const image = PhotonImage.new_from_byteslice(bytes);
 
 				const w = image.get_width();
@@ -916,7 +952,7 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 						// unrelated 409 cannot be misread as already-ready.
 						const markStatus = (markErr as { status?: number })?.status;
 						const markMessage = markErr instanceof Error ? markErr.message : String(markErr ?? '');
-						if (markStatus === 409 && /already ready/i.test(markMessage)) {
+						if (markStatus === 409 && markMessage.includes(ALREADY_READY_CONFLICT_SUBSTRING)) {
 							console.warn(
 								`Puzzle ${puzzleId} is already ready; skipping mark-failed ` +
 									'(finalize committed before the error path).'

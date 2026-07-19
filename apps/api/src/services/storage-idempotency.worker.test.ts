@@ -159,4 +159,23 @@ describe('originalImageExists', () => {
 		).resolves.toBe(false);
 		expect(bucket.head).toHaveBeenCalledWith('puzzles/missing-puzzle/original');
 	});
+
+	it('propagates R2 head errors instead of swallowing them as "absent"', async () => {
+		// Contract: a transient R2 `head` failure must NOT be interpreted as
+		// "object gone" — callers use the result to decide whether to release
+		// an idempotency reservation, and treating a transient failure as
+		// absent would mint a duplicate of a live puzzle. The error must
+		// propagate so callers can return 409 (transient) for a client retry.
+		const r2Error = new Error('R2 internal error');
+		const bucket = {
+			head: vi.fn(async () => {
+				throw r2Error;
+			})
+		};
+
+		await expect(originalImageExists(bucket as unknown as R2Bucket, 'puzzle-1')).rejects.toThrow(
+			r2Error
+		);
+		expect(bucket.head).toHaveBeenCalledWith('puzzles/puzzle-1/original');
+	});
 });

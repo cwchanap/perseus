@@ -11,7 +11,8 @@ import {
 	getGridDimensionsForAspectRatio,
 	isPuzzleAspectRatio,
 	isPuzzleId,
-	isValidPieceCountForAspectRatio
+	isValidPieceCountForAspectRatio,
+	stripIdempotencyKey
 } from '@perseus/types';
 import type { PuzzleCategory } from '@perseus/types';
 import type { Env, WorkflowBinding } from '../worker';
@@ -638,6 +639,18 @@ admin.post('/puzzles', requireAuth, async (c) => {
 		const idempotencyKeyHeader = c.req.header('Idempotency-Key');
 		let idempotencyKey: string | undefined;
 		if (idempotencyKeyHeader) {
+			// The server treats Idempotency-Key as an opaque unique token: it
+			// never decodes or interprets the value, only reserves/commits it
+			// as a dedup identifier. This is intentionally asymmetric with the
+			// seed-upload CLI (scripts/startup/upload.ts), which builds a
+			// composite dedup key from name+pieceCount+aspectRatio joined by
+			// NUL bytes (invalid in HTTP headers) and SHA-256 hashes it to a
+			// hex string before sending. The hash is a client-side convenience
+			// for generating a collision-resistant, header-safe token from
+			// structured inputs; the server's regex only ensures the token is
+			// a bounded, header-safe identifier. Any client may supply any
+			// opaque token — the dedup correctness comes from the reservation
+			// state machine, not from the token's encoding.
 			const trimmed = idempotencyKeyHeader.trim();
 			if (trimmed.length === 0 || trimmed.length > 128 || !/^[A-Za-z0-9_-]+$/.test(trimmed)) {
 				return c.json(
@@ -1118,7 +1131,7 @@ admin.post('/puzzles', requireAuth, async (c) => {
 			reservedIdempotencyKey = undefined;
 		}
 
-		return c.json(puzzleMetadata, 201);
+		return c.json(stripIdempotencyKey(puzzleMetadata), 201);
 	} catch (error) {
 		console.error('Error creating puzzle:', error);
 		// If the workflow already started, FAIL (not release) the reservation.

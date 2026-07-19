@@ -29,6 +29,11 @@ const player = new Hono<{ Variables: { playerSession: PlayerSessionRecord } }>()
 
 const AVATAR_MAX_BYTES = 5 * 1024 * 1024;
 const AVATAR_MIME = new Set(['image/jpeg', 'image/png', 'image/webp']);
+// Cap avatar dimensions well above the 64x64 display size (retina-safe at 8x)
+// but reject pathologically large images that would burn client render budget
+// and disk storage. The puzzle path enforces MAX_IMAGE_DIMENSION (4096) in the
+// workflow; avatars have no server-side processing step, so the cap lives here.
+const MAX_AVATAR_DIMENSION = 512;
 // Matches the puzzle-name cap (admin routes). Bounds storage and prevents
 // trivially large payloads from reaching D1.
 const MAX_DISPLAY_NAME_LENGTH = 255;
@@ -143,6 +148,15 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 	const dimensions = await parseImageDimensions(file, detected);
 	if (!dimensions || dimensions.width <= 0 || dimensions.height <= 0) {
 		return c.json({ error: 'bad_request', message: 'Image is corrupted or truncated' }, 400);
+	}
+	if (dimensions.width > MAX_AVATAR_DIMENSION || dimensions.height > MAX_AVATAR_DIMENSION) {
+		return c.json(
+			{
+				error: 'bad_request',
+				message: `Avatar dimensions must be ${MAX_AVATAR_DIMENSION}px or less in each axis`
+			},
+			400
+		);
 	}
 	// Validate the image is structurally complete by checking for the format's
 	// end marker (IEND for PNG, EOI for JPEG, RIFF size for WebP).

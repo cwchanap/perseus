@@ -58,6 +58,15 @@ export async function reapStuckPuzzles(env: Env, now = Date.now()): Promise<Reap
 		details: []
 	};
 
+	// TODO(scale): listPuzzles scans the entire KV catalog on every run. This
+	// is fine while puzzle counts are small, but becomes the dominant cost as
+	// the catalog grows. When this scan shows up in tail-CPU profiles, add a
+	// `processing:<puzzleId>` KV index written at create time and deleted on
+	// finalize/fail, so the reaper can list only in-flight puzzles via a KV
+	// prefix scan instead of the full catalog. The index is advisory (KV is
+	// eventually consistent) — the workflow-status check below remains the
+	// authoritative liveness signal, so a stale/missing index entry only
+	// causes a skipped reap, never a wrong reap.
 	const { puzzles } = await listPuzzles(env.PUZZLE_METADATA);
 	result.scanned = puzzles.length;
 

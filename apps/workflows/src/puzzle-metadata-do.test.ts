@@ -46,11 +46,11 @@ const baseMetadata: PuzzleMetadata = {
 interface StorageInit {
 	puzzleId?: string;
 	metadata?: PuzzleMetadata;
-	reservedPuzzleId?: string;
 	reservation?: {
 		puzzleId: string;
 		status: 'pending' | 'committed' | 'failed';
 		reservedAt?: number;
+		schemaVersion?: number;
 	};
 }
 
@@ -58,7 +58,6 @@ function createStorage(initial: StorageInit = {}) {
 	const store: Record<string, unknown> = {};
 	if (initial.puzzleId !== undefined) store['puzzleId'] = initial.puzzleId;
 	if (initial.metadata !== undefined) store['metadata'] = initial.metadata;
-	if (initial.reservedPuzzleId !== undefined) store['reservedPuzzleId'] = initial.reservedPuzzleId;
 	if (initial.reservation !== undefined) store['reservation'] = initial.reservation;
 
 	// Serialize transactions so concurrent callers do not interleave their
@@ -565,10 +564,10 @@ describe('PuzzleMetadataDO.fetch - /reserve (idempotency)', () => {
 			expect.objectContaining({
 				puzzleId: 'puzzle-uuid-1',
 				status: 'pending',
-				reservedAt: expect.any(Number)
+				reservedAt: expect.any(Number),
+				schemaVersion: expect.any(Number)
 			})
 		);
-		expect(storage.put).toHaveBeenCalledWith('reservedPuzzleId', 'puzzle-uuid-1');
 	});
 
 	it('returns existing: true with original puzzleId on second reserve', async () => {
@@ -933,7 +932,8 @@ describe('PuzzleMetadataDO.fetch - /reserve (idempotency)', () => {
 		expect(response.status).toBe(200);
 		expect(storage.put).toHaveBeenCalledWith('reservation', {
 			puzzleId: 'puzzle-uuid-1',
-			status: 'committed'
+			status: 'committed',
+			schemaVersion: expect.any(Number)
 		});
 	});
 
@@ -947,13 +947,11 @@ describe('PuzzleMetadataDO.fetch - /reserve (idempotency)', () => {
 
 	it('owner-checked release deletes reservation', async () => {
 		const { durableObj, storage } = makeDO({
-			reservation: { puzzleId: 'puzzle-uuid-1', status: 'pending' },
-			reservedPuzzleId: 'puzzle-uuid-1'
+			reservation: { puzzleId: 'puzzle-uuid-1', status: 'pending' }
 		});
 		const response = await postRequest(durableObj, { puzzleId: 'puzzle-uuid-1' }, '/release');
 		expect(response.status).toBe(200);
 		expect(storage.delete).toHaveBeenCalledWith('reservation');
-		expect(storage.delete).toHaveBeenCalledWith('reservedPuzzleId');
 	});
 
 	it('owner-checked fail marks reservation failed', async () => {
@@ -964,7 +962,8 @@ describe('PuzzleMetadataDO.fetch - /reserve (idempotency)', () => {
 		expect(response.status).toBe(200);
 		expect(storage.put).toHaveBeenCalledWith('reservation', {
 			puzzleId: 'puzzle-uuid-1',
-			status: 'failed'
+			status: 'failed',
+			schemaVersion: expect.any(Number)
 		});
 	});
 
@@ -1079,7 +1078,8 @@ describe('PuzzleMetadataDO.fetch - /commit /fail /release transition edge cases'
 		expect(response.status).toBe(200);
 		expect(storage.put).toHaveBeenCalledWith('reservation', {
 			puzzleId: 'puzzle-uuid-1',
-			status: 'failed'
+			status: 'failed',
+			schemaVersion: expect.any(Number)
 		});
 	});
 
@@ -1088,13 +1088,11 @@ describe('PuzzleMetadataDO.fetch - /commit /fail /release transition edge cases'
 		// the puzzle so the key can be reused. Without this, a deleted seeded
 		// puzzle permanently maps its key to the deleted ID.
 		const { durableObj, storage } = makeDO({
-			reservation: { puzzleId: 'puzzle-uuid-1', status: 'committed' },
-			reservedPuzzleId: 'puzzle-uuid-1'
+			reservation: { puzzleId: 'puzzle-uuid-1', status: 'committed' }
 		});
 		const response = await postRequest(durableObj, { puzzleId: 'puzzle-uuid-1' }, '/release');
 		expect(response.status).toBe(200);
 		expect(storage.delete).toHaveBeenCalledWith('reservation');
-		expect(storage.delete).toHaveBeenCalledWith('reservedPuzzleId');
 	});
 
 	it('rejects committed → committed-via-fail with 409 for non-owner', async () => {
@@ -1120,19 +1118,5 @@ describe('PuzzleMetadataDO.fetch - /commit /fail /release transition edge cases'
 		expect(body.status).toBe('committed');
 		// No new write — the idempotent branch returns before storage.put.
 		expect(storage.put).not.toHaveBeenCalledWith('reservation', expect.anything());
-	});
-
-	it('reads legacy reservedPuzzleId (plain string) when no reservation object exists', async () => {
-		// Pre-rollout DO instances stored only a plain puzzleId string under
-		// 'reservedPuzzleId'. readReservation must treat that as a committed
-		// reservation so a post-rollout commit/fail/release still resolves it.
-		const { durableObj } = makeDO({ reservedPuzzleId: 'legacy-puzzle-uuid' });
-		const response = await postRequest(durableObj, { puzzleId: 'legacy-puzzle-uuid' }, '/commit');
-		expect(response.status).toBe(200);
-		const body = (await response.json()) as { success: boolean; status: string };
-		// Legacy reservations are read back as 'committed', so a commit hits the
-		// idempotent same-status branch.
-		expect(body.success).toBe(true);
-		expect(body.status).toBe('committed');
 	});
 });
