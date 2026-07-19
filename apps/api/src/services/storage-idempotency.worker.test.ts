@@ -23,14 +23,19 @@ function createMockDurableObjectNamespace(
 
 describe('worker idempotency storage operations', () => {
 	it('reserves an idempotency key through the keyed Durable Object', async () => {
-		const { namespace, stub } = createMockDurableObjectNamespace(() =>
-			new Response(
-				JSON.stringify({ existing: false, puzzleId: 'puzzle-1', status: 'pending' }),
-				{
-					status: 200,
-					headers: { 'Content-Type': 'application/json' }
-				}
-			)
+		const { namespace, stub } = createMockDurableObjectNamespace(
+			() =>
+				new Response(
+					JSON.stringify({
+						existing: false,
+						puzzleId: 'puzzle-1',
+						status: 'pending'
+					}),
+					{
+						status: 200,
+						headers: { 'Content-Type': 'application/json' }
+					}
+				)
 		);
 
 		const result = await reserveIdempotencyKey(
@@ -40,51 +45,52 @@ describe('worker idempotency storage operations', () => {
 		);
 
 		expect(namespace.idFromName).toHaveBeenCalledWith('request-1');
-		expect(result).toEqual({ existing: false, puzzleId: 'puzzle-1', status: 'pending' });
+		expect(result).toEqual({
+			existing: false,
+			puzzleId: 'puzzle-1',
+			status: 'pending'
+		});
 		expect(stub.fetch).toHaveBeenCalledWith('https://puzzle-metadata/reserve', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ idempotencyKey: 'request-1', puzzleId: 'puzzle-1' })
+			body: JSON.stringify({
+				idempotencyKey: 'request-1',
+				puzzleId: 'puzzle-1'
+			})
 		});
 	});
 
 	it('rejects a successful reserve response without a puzzle id', async () => {
-		const { namespace } = createMockDurableObjectNamespace(() =>
-			new Response(JSON.stringify({ existing: true, status: 'pending' }), {
-				status: 200,
-				headers: { 'Content-Type': 'application/json' }
-			})
+		const { namespace } = createMockDurableObjectNamespace(
+			() =>
+				new Response(JSON.stringify({ existing: true, status: 'pending' }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				})
 		);
 
 		await expect(
-			reserveIdempotencyKey(
-				namespace as unknown as DurableObjectNamespace,
-				'request-1',
-				'puzzle-1'
-			)
+			reserveIdempotencyKey(namespace as unknown as DurableObjectNamespace, 'request-1', 'puzzle-1')
 		).rejects.toThrow('Reserve response missing puzzleId');
 	});
 
 	it('surfaces the Durable Object reserve error message', async () => {
-		const { namespace } = createMockDurableObjectNamespace(() =>
-			new Response(JSON.stringify({ message: 'reservation conflict' }), {
-				status: 409,
-				headers: { 'Content-Type': 'application/json' }
-			})
+		const { namespace } = createMockDurableObjectNamespace(
+			() =>
+				new Response(JSON.stringify({ message: 'reservation conflict' }), {
+					status: 409,
+					headers: { 'Content-Type': 'application/json' }
+				})
 		);
 
 		await expect(
-			reserveIdempotencyKey(
-				namespace as unknown as DurableObjectNamespace,
-				'request-1',
-				'puzzle-1'
-			)
+			reserveIdempotencyKey(namespace as unknown as DurableObjectNamespace, 'request-1', 'puzzle-1')
 		).rejects.toThrow('reservation conflict');
 	});
 
 	it('sends commit, fail, and release lifecycle transitions', async () => {
-		const { namespace, stub } = createMockDurableObjectNamespace(() =>
-			new Response(null, { status: 204 })
+		const { namespace, stub } = createMockDurableObjectNamespace(
+			() => new Response(null, { status: 204 })
 		);
 		const durableNamespace = namespace as unknown as DurableObjectNamespace;
 
@@ -107,8 +113,8 @@ describe('worker idempotency storage operations', () => {
 	});
 
 	it('treats missing fail and release reservations as successful cleanup', async () => {
-		const { namespace } = createMockDurableObjectNamespace(() =>
-			new Response(null, { status: 404 })
+		const { namespace } = createMockDurableObjectNamespace(
+			() => new Response(null, { status: 404 })
 		);
 		const durableNamespace = namespace as unknown as DurableObjectNamespace;
 
@@ -121,16 +127,12 @@ describe('worker idempotency storage operations', () => {
 	});
 
 	it('does not ignore a missing reservation when committing', async () => {
-		const { namespace } = createMockDurableObjectNamespace(() =>
-			new Response(null, { status: 404 })
+		const { namespace } = createMockDurableObjectNamespace(
+			() => new Response(null, { status: 404 })
 		);
 
 		await expect(
-			commitIdempotencyKey(
-				namespace as unknown as DurableObjectNamespace,
-				'request-1',
-				'puzzle-1'
-			)
+			commitIdempotencyKey(namespace as unknown as DurableObjectNamespace, 'request-1', 'puzzle-1')
 		).rejects.toThrow('Failed to commit idempotency key (HTTP 404)');
 	});
 });
@@ -141,9 +143,9 @@ describe('originalImageExists', () => {
 			head: vi.fn(async () => ({ key: 'puzzles/puzzle-1/original' }))
 		};
 
-		await expect(
-			originalImageExists(bucket as unknown as R2Bucket, 'puzzle-1')
-		).resolves.toBe(true);
+		await expect(originalImageExists(bucket as unknown as R2Bucket, 'puzzle-1')).resolves.toBe(
+			true
+		);
 		expect(bucket.head).toHaveBeenCalledWith('puzzles/puzzle-1/original');
 	});
 
