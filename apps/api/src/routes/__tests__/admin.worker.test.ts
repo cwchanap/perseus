@@ -1492,6 +1492,124 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 			);
 		});
 
+		it('should not overwrite the re-reserved id when reclaiming a failed reservation whose key was concurrently re-committed to a deleted puzzle', async () => {
+			// Narrow race regression: the original reservation was committed to
+			// 'failed-uuid' (puzzle later failed). We fail it and try to reclaim.
+			// Between our fail and our reclaim, a concurrent retry reclaimed the
+			// key, committed it to 'deleted-uuid', created that puzzle, then it
+			// was admin-deleted but the reservation release failed (DO outage).
+			// So our reclaim sees an existing committed reservation for
+			// 'deleted-uuid' with no metadata and no R2 image. We release that
+			// stale reservation and re-reserve with our fresh UUID — which wins.
+			// The handler MUST create the replacement under our fresh UUID (the
+			// rereserved id), NOT 'deleted-uuid' (the old committed id).
+			// Overwriting id with reclaimed.puzzleId would create the puzzle under
+			// 'deleted-uuid' while the DO maps the key to our fresh UUID → commit
+			// 409 (owner mismatch) → silent release 404 → reservation stays
+			// pending → TTL expiry → retry mints yet another UUID → duplicate
+			// puzzles.
+			(storage.reserveIdempotencyKey as ReturnType<typeof vi.fn>)
+				.mockResolvedValueOnce({
+					existing: true,
+					puzzleId: 'failed-uuid',
+					status: 'committed'
+				})
+				.mockResolvedValueOnce({
+					existing: true,
+					puzzleId: 'deleted-uuid',
+					status: 'committed'
+				})
+				.mockResolvedValueOnce({
+					existing: false,
+					puzzleId: 'fresh-uuid',
+					status: 'pending'
+				});
+			// First getPuzzle ('failed-uuid') returns failed metadata; second
+			// ('deleted-uuid') returns null (puzzle was deleted).
+			(storage.getPuzzle as ReturnType<typeof vi.fn>)
+				.mockResolvedValueOnce({
+					id: 'failed-uuid',
+					name: 'Test Puzzle',
+					pieceCount: 225,
+					status: 'failed',
+					aspectRatio: '1:1',
+					gridCols: 15,
+					gridRows: 15,
+					imageWidth: 0,
+					imageHeight: 0,
+					createdAt: 1700000000000,
+					pieces: [],
+					version: 0,
+					progress: { totalPieces: 225, generatedPieces: 0, updatedAt: 1700000000000 }
+				})
+				.mockResolvedValue(null);
+			(storage.failIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.releaseIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.uploadOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.createPuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.commitIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+			const mockEnv = {
+				ADMIN_PASSKEY: 'test-passkey',
+				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+				PUZZLE_METADATA: {} as KVNamespace,
+				PUZZLES_BUCKET: {} as R2Bucket,
+				PUZZLE_WORKFLOW: { create: vi.fn().mockResolvedValue(undefined) },
+				PUZZLE_METADATA_DO: {} as DurableObjectNamespace
+			};
+
+			const formData = new FormData();
+			formData.append('name', 'Test Puzzle');
+			formData.append('pieceCount', '225');
+			const blob = new Blob([PNG_HEADER], { type: 'image/png' });
+			formData.append('image', blob, 'test.png');
+
+			const req = new Request('http://localhost/puzzles', {
+				method: 'POST',
+				headers: {
+					cookie: 'session=valid.token',
+					'Idempotency-Key': 'abc123def456'
+				},
+				body: formData
+			});
+
+			const res = await admin.fetch(req, mockEnv as any);
+
+			expect(res.status).toBe(201);
+			// Created the replacement under the rereserved id ('fresh-uuid'),
+			// NOT the stale committed id ('deleted-uuid'). Overwriting id with
+			// reclaimed.puzzleId was the bug.
+			expect(storage.createPuzzleMetadata).toHaveBeenCalledWith(
+				mockEnv.PUZZLE_METADATA,
+				expect.objectContaining({ id: 'fresh-uuid', idempotencyKey: 'abc123def456' })
+			);
+			expect(mockEnv.PUZZLE_WORKFLOW.create).toHaveBeenCalledWith({
+				id: 'fresh-uuid',
+				params: { puzzleId: 'fresh-uuid' }
+			});
+			expect(storage.commitIdempotencyKey).toHaveBeenCalledWith(
+				mockEnv.PUZZLE_METADATA_DO,
+				'abc123def456',
+				'fresh-uuid'
+			);
+			// Released the stale committed reservation for 'deleted-uuid' before re-reserving.
+			expect(storage.releaseIdempotencyKey).toHaveBeenCalledWith(
+				mockEnv.PUZZLE_METADATA_DO,
+				'abc123def456',
+				'deleted-uuid'
+			);
+			// failIdempotencyKey was called once to fail the ORIGINAL
+			// reservation ('failed-uuid') so it became reclaimable. It must
+			// NOT have been called again for the rereserved reservation — we
+			// won the rereserve, so we own it and commit (not fail) it.
+			expect(storage.failIdempotencyKey).toHaveBeenCalledTimes(1);
+			expect(storage.failIdempotencyKey).toHaveBeenCalledWith(
+				mockEnv.PUZZLE_METADATA_DO,
+				'abc123def456',
+				'failed-uuid'
+			);
+		});
+
 		it('should best-effort commit a still-pending reservation when returning existing puzzle', async () => {
 			// If the original create's commit failed, a retry that finds the
 			// existing puzzle must commit the pending reservation so the key

@@ -348,7 +348,8 @@ export async function listPuzzles(
 			aspectRatio: p.aspectRatio,
 			status: p.status,
 			progress: p.progress,
-			category: p.category
+			category: p.category,
+			createdAt: p.createdAt
 		})),
 		invalidCount
 	};

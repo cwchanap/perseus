@@ -61,3 +61,9 @@ script_name = "workflows"
 NODE_ENV = "production"
 ALLOWED_ORIGINS = "https://perseus.cwchanap.dev"
 AUTH_REDIRECT_BASE_URL = "https://perseus.cwchanap.dev"
+
+# Cron trigger for the orphan reaper (scheduled handler in worker.ts).
+# Runs hourly to clean up stuck "processing" puzzles whose workflows are
+# dead (errored/terminated/never-created). See src/services/reaper.ts.
+[triggers]
+crons = ["0 * * * *"]

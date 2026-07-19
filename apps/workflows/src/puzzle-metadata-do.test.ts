@@ -781,6 +781,49 @@ describe('PuzzleMetadataDO.fetch - /reserve (idempotency)', () => {
 		);
 	});
 
+	it('fails stale-pending reservation when workflow status is terminated', async () => {
+		// A terminated workflow (e.g. explicitly cancelled by an operator or
+		// the platform) will never produce pieces. Promoting would return the
+		// stuck processing puzzle as 200 forever. Per policy, mark the
+		// reservation failed so a retry reclaims and creates fresh.
+		const staleAt = Date.now() - 10 * 60 * 1000;
+		const liveMeta: PuzzleMetadata = {
+			...baseMetadata,
+			id: 'stuck-terminated-uuid',
+			status: 'processing'
+		};
+		const { durableObj, storage } = makeDO(
+			{
+				reservation: {
+					puzzleId: 'stuck-terminated-uuid',
+					status: 'pending',
+					reservedAt: staleAt
+				}
+			},
+			liveMeta,
+			{ status: 'terminated' }
+		);
+		const response = await postRequest(
+			durableObj,
+			{ idempotencyKey: 'abc123', puzzleId: 'would-be-duplicate' },
+			'/reserve'
+		);
+		expect(response.status).toBe(409);
+		// Reservation marked failed so a retry can reclaim.
+		expect(storage.put).toHaveBeenCalledWith(
+			'reservation',
+			expect.objectContaining({
+				puzzleId: 'stuck-terminated-uuid',
+				status: 'failed'
+			})
+		);
+		// Must NOT mint a duplicate.
+		expect(storage.put).not.toHaveBeenCalledWith(
+			'reservation',
+			expect.objectContaining({ puzzleId: 'would-be-duplicate', status: 'pending' })
+		);
+	});
+
 	it('fails stale-pending reservation when workflow was never created (unknown)', async () => {
 		// The scenario from the review: createPuzzleMetadata succeeded but
 		// PUZZLE_WORKFLOW.create never ran (process died). Workflow instance

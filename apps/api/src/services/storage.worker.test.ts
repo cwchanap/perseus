@@ -406,7 +406,8 @@ describe('KV Metadata Operations', () => {
 				name: samplePuzzle.name,
 				pieceCount: samplePuzzle.pieceCount,
 				status: samplePuzzle.status,
-				progress: samplePuzzle.progress
+				progress: samplePuzzle.progress,
+				createdAt: samplePuzzle.createdAt
 			});
 		});
 

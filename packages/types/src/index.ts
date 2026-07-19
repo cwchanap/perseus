@@ -124,6 +124,7 @@ export interface PuzzleSummary {
 	progress?: PuzzleProgress;
 	category?: PuzzleCategory;
 	aspectRatio?: PuzzleAspectRatio;
+	createdAt?: number;
 }
 
 // API response types shared between API and web
@@ -393,6 +394,22 @@ export function createPuzzleProgress(totalPieces: number, generatedPieces: numbe
 	if (generatedPieces < 0) throw new Error('generatedPieces cannot be negative');
 	if (generatedPieces > totalPieces) throw new Error('generatedPieces exceeds totalPieces');
 	return { totalPieces, generatedPieces, updatedAt: Date.now() };
+}
+
+/**
+ * Strip the idempotencyKey from puzzle metadata before returning it to
+ * clients. idempotencyKey is an admin/server-side dedup secret — exposing
+ * it would let clients replay create with it. Use on every public puzzle
+ * read that returns full metadata. Generic over any object with an
+ * optional idempotencyKey so it works for both PuzzleMetadata (Worker) and
+ * the local Bun Puzzle type.
+ */
+export function stripIdempotencyKey<T extends { idempotencyKey?: string }>(
+	puzzle: T
+): Omit<T, 'idempotencyKey'> {
+	const { idempotencyKey: _, ...rest } = puzzle;
+	void _;
+	return rest;
 }
 
 export function validatePuzzleMetadata(meta: unknown): meta is PuzzleMetadata {

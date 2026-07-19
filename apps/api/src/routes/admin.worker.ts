@@ -83,6 +83,134 @@ async function withDbBestEffort(
 	}
 }
 
+// --- Idempotency reclaim helpers ---
+// Extracted from the POST /puzzles handler to flatten the deeply nested
+// reclaim logic (was 8+ indentation levels). These helpers encapsulate the
+// two duplicated patterns: (1) R2 probe + release stale + rereserve, and
+// (2) rereserve + race-winner check. They return a discriminated union so
+// the caller can either return the Response directly or continue with the
+// won puzzleId.
+
+type ReclaimOutcome = { kind: 'won'; puzzleId: string } | { kind: 'return'; response: Response };
+
+function conflictResponse(message: string, status = 409): Response {
+	return Response.json({ error: 'conflict', message }, { status });
+}
+
+function internalErrorResponse(message: string): Response {
+	return Response.json({ error: 'internal_error', message }, { status: 500 });
+}
+
+/**
+ * Rereserve an idempotency key with our minted UUID. If we win, return
+ * `{ kind: 'won', puzzleId }`. If someone else already won the reclaim:
+ * - If their puzzle is live (not failed), return it as 200.
+ * - If their committed reservation has no metadata (deleted puzzle + failed
+ *   release), probe R2 and if the original image is gone, release their
+ *   stale reservation and rereserve one more time (allowNestedReclaim).
+ * - Otherwise, 409 (another request is in progress).
+ */
+async function reclaimReservationOrFail(
+	bucket: R2Bucket,
+	doNs: DurableObjectNamespace,
+	kv: KVNamespace,
+	idempotencyKey: string,
+	newPuzzleId: string,
+	context: string,
+	allowNestedReclaim = true
+): Promise<ReclaimOutcome> {
+	let reclaimed;
+	try {
+		reclaimed = await reserveIdempotencyKey(doNs, idempotencyKey, newPuzzleId);
+	} catch (err) {
+		console.error(`Failed to re-reserve reclaimed idempotency key ${context}:`, err);
+		return {
+			kind: 'return',
+			response: internalErrorResponse('Failed to re-reserve reclaimed idempotency key')
+		};
+	}
+
+	if (!reclaimed.existing) {
+		return { kind: 'won', puzzleId: reclaimed.puzzleId };
+	}
+
+	// Someone else won the reclaim — check if their puzzle is live.
+	const raceExisting = await getPuzzle(kv, reclaimed.puzzleId);
+	if (raceExisting && raceExisting.status !== 'failed') {
+		return { kind: 'return', response: Response.json(raceExisting, { status: 200 }) };
+	}
+
+	if (allowNestedReclaim && raceExisting === null && reclaimed.status === 'committed') {
+		// Concurrent winner's committed reservation has no metadata. Could
+		// be a deleted puzzle (release failed) or KV lag. R2 probe to
+		// decide — fail closed (409) on probe error to avoid minting a
+		// duplicate of a live puzzle on a transient head failure.
+		return probeReleaseAndRereclaimOrFail(
+			bucket,
+			doNs,
+			kv,
+			idempotencyKey,
+			reclaimed.puzzleId,
+			newPuzzleId,
+			context
+		);
+	}
+
+	return {
+		kind: 'return',
+		response: conflictResponse('Idempotency key reclaimed by another request')
+	};
+}
+
+/**
+ * R2-probe a stale committed reservation. If the original image is gone,
+ * release the stale reservation and rereserve one more time (no nested
+ * reclaim — the second rereserve gives up with 409 if someone else won
+ * again). If the image still exists, 409 (KV lag, client should retry).
+ */
+async function probeReleaseAndRereclaimOrFail(
+	bucket: R2Bucket,
+	doNs: DurableObjectNamespace,
+	kv: KVNamespace,
+	idempotencyKey: string,
+	stalePuzzleId: string,
+	newPuzzleId: string,
+	context: string
+): Promise<ReclaimOutcome> {
+	let originalStillThere: boolean;
+	try {
+		originalStillThere = await originalImageExists(bucket, stalePuzzleId);
+	} catch (probeErr) {
+		console.error(`R2 probe failed for puzzle ${stalePuzzleId} ${context}:`, probeErr);
+		return {
+			kind: 'return',
+			response: conflictResponse(
+				'Idempotency-Key may map to an existing puzzle; R2 probe failed, retry'
+			)
+		};
+	}
+	if (originalStillThere) {
+		return {
+			kind: 'return',
+			response: conflictResponse(
+				'Idempotency-Key maps to an existing puzzle whose metadata is still propagating; retry'
+			)
+		};
+	}
+	// Original image is gone — the puzzle was deleted but the reservation
+	// release failed. Release it now, then rereserve.
+	try {
+		await releaseIdempotencyKey(doNs, idempotencyKey, stalePuzzleId);
+	} catch (releaseErr) {
+		console.error(`Failed to release stale committed reservation ${context}:`, releaseErr);
+		return {
+			kind: 'return',
+			response: internalErrorResponse('Failed to release stale reservation')
+		};
+	}
+	return reclaimReservationOrFail(bucket, doNs, kv, idempotencyKey, newPuzzleId, context, false);
+}
+
 // POST /api/admin/login - Admin login
 admin.post('/login', loginRateLimit, async (c) => {
 	try {
@@ -548,139 +676,19 @@ admin.post('/puzzles', requireAuth, async (c) => {
 							// reservation is now reclaimable, so this should
 							// win as first caller. A concurrent retry could
 							// reclaim first — in that case defer to its puzzle.
-							try {
-								const reclaimed = await reserveIdempotencyKey(
-									c.env.PUZZLE_METADATA_DO,
-									idempotencyKey,
-									id
-								);
-								if (reclaimed.existing) {
-									const raceExisting = await getPuzzle(c.env.PUZZLE_METADATA, reclaimed.puzzleId);
-									if (raceExisting && raceExisting.status !== 'failed') {
-										return c.json(raceExisting, 200);
-									}
-									if (raceExisting === null && reclaimed.status === 'committed') {
-										// Concurrent winner's committed reservation
-										// has no metadata. If R2 still has the
-										// original, treat as KV lag (409), not a
-										// deleted puzzle — releasing would mint a
-										// duplicate of a live puzzle. R2 probe
-										// errors are also treated as 409
-										// (transient) — fail closed rather than
-										// guessing "object gone" and minting a
-										// duplicate of a live puzzle on a
-										// transient `head` failure.
-										let originalStillThere: boolean;
-										try {
-											originalStillThere = await originalImageExists(
-												c.env.PUZZLES_BUCKET,
-												reclaimed.puzzleId
-											);
-										} catch (probeErr) {
-											console.error(
-												`R2 probe failed for puzzle ${reclaimed.puzzleId} during reclaim:`,
-												probeErr
-											);
-											return c.json(
-												{
-													error: 'conflict',
-													message:
-														'Idempotency-Key may map to an existing puzzle; R2 probe failed, retry'
-												},
-												409
-											);
-										}
-										if (originalStillThere) {
-											return c.json(
-												{
-													error: 'conflict',
-													message:
-														'Idempotency-Key maps to an existing puzzle whose metadata is still propagating; retry'
-												},
-												409
-											);
-										}
-										try {
-											await releaseIdempotencyKey(
-												c.env.PUZZLE_METADATA_DO,
-												idempotencyKey,
-												reclaimed.puzzleId
-											);
-										} catch (releaseErr) {
-											console.error(
-												'Failed to release stale committed reservation on reclaim:',
-												releaseErr
-											);
-											return c.json(
-												{
-													error: 'internal_error',
-													message: 'Failed to release stale reservation'
-												},
-												500
-											);
-										}
-										try {
-											const rereserved = await reserveIdempotencyKey(
-												c.env.PUZZLE_METADATA_DO,
-												idempotencyKey,
-												id
-											);
-											if (rereserved.existing) {
-												const reRaceExisting = await getPuzzle(
-													c.env.PUZZLE_METADATA,
-													rereserved.puzzleId
-												);
-												if (reRaceExisting && reRaceExisting.status !== 'failed') {
-													return c.json(reRaceExisting, 200);
-												}
-												return c.json(
-													{
-														error: 'conflict',
-														message: 'Idempotency key reclaimed by another request'
-													},
-													409
-												);
-											}
-											id = rereserved.puzzleId;
-											reservedIdempotencyKey = idempotencyKey;
-											// Fall through to normal create flow.
-										} catch (rereserveErr) {
-											console.error(
-												'Failed to re-reserve after stale release on reclaim:',
-												rereserveErr
-											);
-											return c.json(
-												{
-													error: 'internal_error',
-													message: 'Failed to re-reserve idempotency key'
-												},
-												500
-											);
-										}
-									} else {
-										return c.json(
-											{
-												error: 'conflict',
-												message: 'Idempotency key reclaimed by another request'
-											},
-											409
-										);
-									}
-								}
-								id = reclaimed.puzzleId;
-								reservedIdempotencyKey = idempotencyKey;
-								// Fall through to normal create flow with the
-								// reclaimed key to build a replacement puzzle.
-							} catch (err) {
-								console.error('Failed to re-reserve reclaimed idempotency key:', err);
-								return c.json(
-									{
-										error: 'internal_error',
-										message: 'Failed to re-reserve reclaimed idempotency key'
-									},
-									500
-								);
-							}
+							const reclaim = await reclaimReservationOrFail(
+								c.env.PUZZLES_BUCKET,
+								c.env.PUZZLE_METADATA_DO,
+								c.env.PUZZLE_METADATA,
+								idempotencyKey,
+								id,
+								'on reclaim'
+							);
+							if (reclaim.kind === 'return') return reclaim.response;
+							id = reclaim.puzzleId;
+							reservedIdempotencyKey = idempotencyKey;
+							// Fall through to normal create flow to build a
+							// replacement puzzle under the won puzzleId.
 						} else {
 							// If the original create's commit failed, the
 							// reservation may still be pending. Best-effort
@@ -712,87 +720,19 @@ admin.post('/puzzles', requireAuth, async (c) => {
 						// means an in-flight create or KV propagation lag —
 						// signal transient (409) for the client to retry.
 						if (reserved.status === 'committed') {
-							// R2 probe errors are treated as 409 (transient)
-							// — fail closed rather than guessing "object gone"
-							// and minting a duplicate of a live puzzle on a
-							// transient `head` failure.
-							let originalStillThere: boolean;
-							try {
-								originalStillThere = await originalImageExists(
-									c.env.PUZZLES_BUCKET,
-									reserved.puzzleId
-								);
-							} catch (probeErr) {
-								console.error(
-									`R2 probe failed for puzzle ${reserved.puzzleId} during stale reservation release:`,
-									probeErr
-								);
-								return c.json(
-									{
-										error: 'conflict',
-										message: 'Idempotency-Key may map to an existing puzzle; R2 probe failed, retry'
-									},
-									409
-								);
-							}
-							if (originalStillThere) {
-								return c.json(
-									{
-										error: 'conflict',
-										message:
-											'Idempotency-Key maps to an existing puzzle whose metadata is still propagating; retry'
-									},
-									409
-								);
-							}
-							try {
-								await releaseIdempotencyKey(
-									c.env.PUZZLE_METADATA_DO,
-									idempotencyKey,
-									reserved.puzzleId
-								);
-							} catch (releaseErr) {
-								console.error('Failed to release stale committed reservation:', releaseErr);
-								return c.json(
-									{
-										error: 'internal_error',
-										message: 'Failed to release stale reservation'
-									},
-									500
-								);
-							}
-							try {
-								const reclaimed = await reserveIdempotencyKey(
-									c.env.PUZZLE_METADATA_DO,
-									idempotencyKey,
-									id
-								);
-								if (reclaimed.existing) {
-									const raceExisting = await getPuzzle(c.env.PUZZLE_METADATA, reclaimed.puzzleId);
-									if (raceExisting && raceExisting.status !== 'failed') {
-										return c.json(raceExisting, 200);
-									}
-									return c.json(
-										{
-											error: 'conflict',
-											message: 'Idempotency key reclaimed by another request'
-										},
-										409
-									);
-								}
-								id = reclaimed.puzzleId;
-								reservedIdempotencyKey = idempotencyKey;
-								// Fall through to normal create flow.
-							} catch (rereserveErr) {
-								console.error('Failed to re-reserve after stale release:', rereserveErr);
-								return c.json(
-									{
-										error: 'internal_error',
-										message: 'Failed to re-reserve idempotency key'
-									},
-									500
-								);
-							}
+							const reclaim = await probeReleaseAndRereclaimOrFail(
+								c.env.PUZZLES_BUCKET,
+								c.env.PUZZLE_METADATA_DO,
+								c.env.PUZZLE_METADATA,
+								idempotencyKey,
+								reserved.puzzleId,
+								id,
+								'during stale reservation release'
+							);
+							if (reclaim.kind === 'return') return reclaim.response;
+							id = reclaim.puzzleId;
+							reservedIdempotencyKey = idempotencyKey;
+							// Fall through to normal create flow.
 						} else {
 							return c.json(
 								{

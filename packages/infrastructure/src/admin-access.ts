@@ -11,12 +11,38 @@ export const ADMIN_ACCESS_PATHS = ['/admin', '/admin/*', '/api/admin', '/api/adm
  * read CF-Access-Client-Id/Secret headers, it cannot distinguish a
  * service-token (non_identity) caller from a browser admin once both have a
  * session cookie. The Access path list below is therefore the ONLY layer that
- * scopes what a service-token holder can reach after authenticating — keep it
- * restricted to the exact CLI endpoints (login + puzzle list/create). Do NOT
- * add a /api/admin/puzzles/* wildcard: the only per-id admin route is
- * DELETE /api/admin/puzzles/:id, which the service token must not reach.
- * Cloudflare Access path semantics (prefix vs exact) should be confirmed
- * before treating this list as authoritative.
+ * scopes what a service-token holder can reach after authenticating.
+ *
+ * CLOUDFLARE ACCESS PATH SEMANTICS (verified against official docs:
+ * https://developers.cloudflare.com/cloudflare-one/access-controls/policies/app-paths/):
+ * - An exact path (e.g. example.com/alpha) covers that exact path. Sub-paths
+ *   (e.g. example.com/alpha/one) INHERIT the policy from the nearest parent
+ *   that has a rule, unless a more specific rule exists for the sub-path.
+ * - A wildcard path (e.g. example.com/alpha/*) covers sub-paths but NOT the
+ *   exact parent path (example.com/alpha).
+ * - More specific rules take precedence: if rules exist for both
+ *   example.com/eng and example.com/eng/exec, the more specific rule for
+ *   /eng/exec wins, and NO rule is inherited from /eng.
+ *
+ * KNOWN LIMITATION: CLI_ACCESS_PATHS includes the exact path
+ * '/api/admin/puzzles' (for POST = create + GET = list). Per the inheritance
+ * rule above, this also covers DELETE /api/admin/puzzles/:id — there is no
+ * more specific rule for that sub-path, so it inherits the CLI app's policies
+ * (including the service-token non_identity policy). A service-token holder
+ * who obtains a session cookie via /api/admin/login can therefore reach the
+ * per-id DELETE endpoint at the Access gate. Cloudflare Access is
+ * path-based, not method-based, so there is no way to scope to POST only.
+ * Current mitigations:
+ *   1. The CLI script (admin-bulk-upload-startup.ts) only calls POST; it
+ *      never calls DELETE. A compromised token holder could, but would need
+ *      to know puzzle IDs.
+ *   2. The service token expires after
+ *      DEFAULT_ADMIN_CLI_SERVICE_TOKEN_DURATION (90 days).
+ *   3. The session cookie has a limited duration
+ *      (DEFAULT_ADMIN_ACCESS_SESSION_DURATION = 12h).
+ * Proper fix (deferred): move DELETE off the /api/admin/puzzles sub-path
+ * (e.g. to POST /api/admin/puzzle-delete/:id) so the CLI Access app's
+ * /api/admin/puzzles exact path no longer inherits to the delete route.
  */
 export const CLI_ACCESS_PATHS = ['/api/admin/login', '/api/admin/puzzles'] as const;
 export const DEFAULT_ADMIN_ACCESS_SESSION_DURATION = '12h';

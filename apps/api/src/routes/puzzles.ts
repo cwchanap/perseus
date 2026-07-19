@@ -19,7 +19,8 @@ import { extname } from 'node:path';
 import {
 	DEFAULT_PUZZLE_ASPECT_RATIO,
 	aspectRatiosMatch,
-	isPuzzleAspectRatio
+	isPuzzleAspectRatio,
+	stripIdempotencyKey
 } from '@perseus/types';
 import { generatePuzzle, isValidPieceCount } from '../services/puzzle-generator';
 import { requirePlayerAuth } from '../middleware/player-auth';
@@ -297,9 +298,7 @@ puzzles.get('/:id', async (c) => {
 
 	// idempotencyKey is an admin/server-side dedup secret — never expose it
 	// on public puzzle reads (clients could replay create with it).
-	const { idempotencyKey: _, ...publicPuzzle } = puzzle;
-	void _;
-	return c.json({ ...publicPuzzle, hasReference: puzzleHasReference(id) });
+	return c.json({ ...stripIdempotencyKey(puzzle), hasReference: puzzleHasReference(id) });
 });
 
 // GET /api/puzzles/:id/thumbnail - Get puzzle thumbnail image

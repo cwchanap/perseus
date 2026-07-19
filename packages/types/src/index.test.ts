@@ -4,6 +4,7 @@ import {
 	isPuzzlePiece,
 	validateWorkflowParams,
 	createPuzzleProgress,
+	stripIdempotencyKey,
 	validatePuzzleMetadata,
 	validatePuzzleMetadataLight,
 	TAB_RATIO,
@@ -436,6 +437,47 @@ describe('createPuzzleProgress', () => {
 
 	it('throws when generatedPieces exceeds totalPieces', () => {
 		expect(() => createPuzzleProgress(10, 11)).toThrow('generatedPieces exceeds totalPieces');
+	});
+});
+
+describe('stripIdempotencyKey', () => {
+	it('removes idempotencyKey when present', () => {
+		const puzzle = { id: 'p1', name: 'Test', idempotencyKey: 'secret-key' };
+		const stripped = stripIdempotencyKey(puzzle);
+		expect(stripped).toEqual({ id: 'p1', name: 'Test' });
+		expect('idempotencyKey' in stripped).toBe(false);
+	});
+
+	it('preserves all other fields', () => {
+		const puzzle = {
+			id: 'p1',
+			name: 'Test',
+			pieceCount: 100,
+			idempotencyKey: 'secret-key',
+			extra: 'kept'
+		};
+		const stripped = stripIdempotencyKey(puzzle);
+		expect(stripped.id).toBe('p1');
+		expect(stripped.name).toBe('Test');
+		expect(stripped.pieceCount).toBe(100);
+		expect(stripped.extra).toBe('kept');
+		expect('idempotencyKey' in stripped).toBe(false);
+	});
+
+	it('works when idempotencyKey is absent', () => {
+		const puzzle: { id: string; name: string; idempotencyKey?: string } = {
+			id: 'p1',
+			name: 'Test'
+		};
+		const stripped = stripIdempotencyKey(puzzle);
+		expect(stripped).toEqual({ id: 'p1', name: 'Test' });
+		expect('idempotencyKey' in stripped).toBe(false);
+	});
+
+	it('does not mutate the input', () => {
+		const puzzle = { id: 'p1', name: 'Test', idempotencyKey: 'secret-key' };
+		stripIdempotencyKey(puzzle);
+		expect(puzzle.idempotencyKey).toBe('secret-key');
 	});
 });
 

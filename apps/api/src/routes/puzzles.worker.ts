@@ -11,6 +11,7 @@ import {
 	getGridDimensionsForAspectRatio,
 	isPuzzleAspectRatio,
 	isValidPieceCountForAspectRatio,
+	stripIdempotencyKey,
 	type PuzzleCategory
 } from '@perseus/types';
 import type { Env } from '../worker';
@@ -411,9 +412,7 @@ puzzles.get('/:id', async (c) => {
 
 		// idempotencyKey is an admin/server-side dedup secret — never expose
 		// it on public puzzle reads (clients could replay create with it).
-		const { idempotencyKey: _, ...publicPuzzle } = puzzle;
-		void _;
-		return c.json({ ...publicPuzzle, hasReference });
+		return c.json({ ...stripIdempotencyKey(puzzle), hasReference });
 	} catch (error) {
 		console.error(`Failed to retrieve puzzle ${id}:`, error);
 		return c.json({ error: 'internal_error', message: 'Failed to retrieve puzzle' }, 500);

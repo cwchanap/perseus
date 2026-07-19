@@ -344,6 +344,27 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 				// the stuck puzzle's metadata and image remain for operator
 				// cleanup via force-delete. Statuses that mean "not going to
 				// process": errored, terminated, unknown (incl. never created).
+				//
+				// DESIGN NOTE: This liveness check is intentionally OUTSIDE the
+				// promotion transaction below. DO storage.transactions must stay
+				// fast and local (SQLite-only) — an external `await` on
+				// PUZZLE_WORKFLOW.get().status() inside the transaction would
+				// hold the DO's storage lock for the duration of a network call,
+				// blocking all other input to this DO (including concurrent
+				// reserve/commit/fail/release) and risking indefinite hangs on
+				// transient Workflow API failures. Instead, we check liveness
+				// first, then re-validate the reservation state INSIDE both the
+				// fail-transaction (line 365: re-check puzzleId + staleness) and
+				// the promote-transaction (line 402: re-check puzzleId +
+				// staleness). If the reservation changed between the liveness
+				// check and the transaction (e.g. another caller committed or
+				// reclaimed), the inner re-check sees the new state and the
+				// transaction is a no-op. The only residual race — workflow
+				// alive at check time, dies immediately after promotion — is
+				// acceptable: the puzzle metadata exists, a future retry finds
+				// the committed reservation and returns 200, and if the workflow
+				// truly died without completing, the puzzle stays in
+				// "processing" for operator force-delete cleanup.
 				let workflowStatus: InstanceStatus['status'];
 				try {
 					const instance = await this.env.PUZZLE_WORKFLOW.get(preReserve.puzzleId);
@@ -446,7 +467,18 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 				reservedAt: Date.now()
 			};
 			await this.ctx.storage.put('reservation', next);
-			// Keep legacy key in sync for older readers during rollout.
+			// LEGACY: keep reservedPuzzleId (plain string) in sync for older
+			// readers during rollout. TODO(legacy-cleanup): once all DO
+			// instances have been restarted on code that reads the
+			// 'reservation' object (readReservation at bottom of this file
+			// falls back to reservedPuzzleId only when 'reservation' is
+			// absent), remove every reservedPuzzleId put/delete below and
+			// delete the legacy read fallback in readReservation. The
+			// 'reservation' object is the source of truth; the plain-string
+			// key exists solely so a DO instance running old code can still
+			// resolve a reservation written by new code. Safe to drop after
+			// one full DO restart cycle with no rollbacks to pre-reservation
+			// code.
 			await this.ctx.storage.put('reservedPuzzleId', puzzleId);
 			return { existing: false as const, puzzleId, status: 'pending' as const };
 		});
@@ -543,7 +575,11 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 			};
 		}
 
-		// Legacy: plain puzzleId string from the previous reserve implementation.
+		// LEGACY fallback: plain puzzleId string from the previous reserve
+		// implementation. TODO(legacy-cleanup): remove this fallback (and
+		// all reservedPuzzleId writes above) once no DO instance can be
+		// running pre-reservation code — see the TODO at the first
+		// reservedPuzzleId put above for the full removal plan.
 		const legacy = await this.ctx.storage.get<string>('reservedPuzzleId');
 		if (typeof legacy === 'string' && legacy.trim()) {
 			return { puzzleId: legacy, status: 'committed' };
