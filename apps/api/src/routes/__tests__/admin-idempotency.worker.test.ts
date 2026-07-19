@@ -279,4 +279,50 @@ describe('Admin Worker idempotency recovery', () => {
 		expect(storage.releaseIdempotencyKey).not.toHaveBeenCalled();
 		expect(storage.createPuzzleMetadata).not.toHaveBeenCalled();
 	});
+
+	it('returns 500 when a failed reservation cannot be marked reclaimable', async () => {
+		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
+			existing: true,
+			puzzleId: 'failed-puzzle',
+			status: 'committed'
+		});
+		vi.mocked(storage.getPuzzle).mockResolvedValue({
+			id: 'failed-puzzle',
+			status: 'failed'
+		} as any);
+		vi.mocked(storage.failIdempotencyKey).mockRejectedValue(
+			new Error('Durable Object unavailable')
+		);
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const response = await admin.fetch(createRequest('failed-key'), createEnv() as any);
+
+		expect(response.status).toBe(500);
+		const body = (await response.json()) as any;
+		expect(body.message).toBe('Failed to reclaim failed idempotency reservation');
+		expect(storage.reserveIdempotencyKey).toHaveBeenCalledTimes(1);
+		expect(storage.createPuzzleMetadata).not.toHaveBeenCalled();
+	});
+
+	it('returns a conflict when the stale reservation R2 probe fails', async () => {
+		vi.useFakeTimers();
+		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
+			existing: true,
+			puzzleId: 'uncertain-deleted-puzzle',
+			status: 'committed'
+		});
+		vi.mocked(storage.getPuzzle).mockResolvedValue(null);
+		vi.mocked(storage.originalImageExists).mockRejectedValue(new Error('R2 unavailable'));
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const responsePromise = admin.fetch(createRequest('probe-key'), createEnv() as any);
+		await vi.runAllTimersAsync();
+		const response = await responsePromise;
+
+		expect(response.status).toBe(409);
+		const body = (await response.json()) as any;
+		expect(body.message).toContain('R2 probe failed');
+		expect(storage.releaseIdempotencyKey).not.toHaveBeenCalled();
+		expect(storage.createPuzzleMetadata).not.toHaveBeenCalled();
+	});
 });
