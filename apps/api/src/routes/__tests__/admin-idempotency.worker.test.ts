@@ -61,19 +61,7 @@ import admin from '../admin.worker';
 import * as storage from '../../services/storage.worker';
 
 const PNG_HEADER = new Uint8Array([
-	0x89,
-	0x50,
-	0x4e,
-	0x47,
-	0x0d,
-	0x0a,
-	0x1a,
-	0x0a,
-	0x00,
-	0x00,
-	0x00,
-	0x00,
-	0x00
+	0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x00, 0x00
 ]);
 
 function createWorkflow(status: string | Error = 'running') {
@@ -259,10 +247,7 @@ describe('Admin Worker idempotency recovery', () => {
 
 		expect(response.status).toBe(201);
 		expect(storage.getPuzzle).toHaveBeenCalledTimes(5);
-		expect(storage.originalImageExists).toHaveBeenCalledWith(
-			expect.anything(),
-			'deleted-puzzle'
-		);
+		expect(storage.originalImageExists).toHaveBeenCalledWith(expect.anything(), 'deleted-puzzle');
 		expect(storage.releaseIdempotencyKey).toHaveBeenCalledWith(
 			expect.anything(),
 			'stale-key',
