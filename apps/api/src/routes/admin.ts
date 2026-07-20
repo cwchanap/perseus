@@ -342,7 +342,7 @@ admin.post('/puzzles', requireAuth, async (c) => {
 						// Bun path is synchronous generation — puzzles have no
 						// processing/failed lifecycle (see Puzzle in types/index.ts).
 						// Failed-reclaim lives only on the Worker path.
-						return c.json(existing, 200);
+						return c.json(stripIdempotencyKey(existing), 200);
 					}
 					// Reservation exists but metadata is missing (in-flight or
 					// orphaned). Do not invent a response body.
