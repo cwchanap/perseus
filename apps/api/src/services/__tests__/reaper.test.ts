@@ -73,7 +73,7 @@ describe('reapStuckPuzzles', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		(storage.deletePuzzleAssets as any).mockResolvedValue({ success: true, failedKeys: [] });
-		(storage.deletePuzzleMetadata as any).mockResolvedValue(undefined);
+		(storage.deletePuzzleMetadata as any).mockResolvedValue({ success: true });
 		(deletePuzzleOwnership as any).mockResolvedValue(undefined);
 		(getWorkerDb as any).mockReturnValue({});
 	});
@@ -316,7 +316,15 @@ describe('reapStuckPuzzles', () => {
 			name: 'Puzzle stuck-1',
 			pieceCount: 100
 		});
-		(storage.deletePuzzleMetadata as any).mockRejectedValue(new Error('KV delete failed'));
+		// deletePuzzleMetadata never throws — it returns { success: false, error }.
+		// Mocking mockRejectedValue would test an impossible code path (the old
+		// test passed only because it mocked a throw that the production code
+		// can never produce). Mock the real failure shape so the .success
+		// branch is exercised.
+		(storage.deletePuzzleMetadata as any).mockResolvedValue({
+			success: false,
+			error: new Error('KV delete failed')
+		});
 		const env = makeEnv({ 'stuck-1': 'errored' });
 		const result = await reapStuckPuzzles(env, NOW);
 		expect(result.reaped).toBe(0);

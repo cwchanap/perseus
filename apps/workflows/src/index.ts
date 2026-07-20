@@ -155,84 +155,133 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 			);
 		}
 
-		const stored = await this.ctx.storage.get<PuzzleMetadata>('metadata');
-		const existing = stored ?? (await getMetadata(this.env.PUZZLE_METADATA, puzzleId));
-		if (!existing) {
+		// Read-modify-write inside storage.transaction for atomicity, mirroring
+		// the handleReserve pattern (and the handleReservationTransition
+		// comment at line ~500). The DO input gate already serializes input
+		// delivery, but wrapping the read+merge+put in a transaction removes
+		// any ordering doubt and protects against a future `await` inserted
+		// between the read and the put — that await would release the input
+		// gate and let a concurrent /update (or /commit, /fail, /release on
+		// this same DO instance) interleave, silently causing a lost update.
+		//
+		// The previous code read `stored` outside the transaction and wrapped
+		// only the single put inside it — the transaction provided no
+		// atomicity (a single put is already atomic) and the read was
+		// unguarded.
+		//
+		// KV fallback: when the DO storage has no metadata yet (first write
+		// after migration / adoption), fall back to reading KV. KV reads are
+		// external I/O and CANNOT be awaited inside a storage.transaction
+		// (the transaction must stay fast and local — SQLite-only — or it
+		// holds the DO's storage lock for the duration of a network call,
+		// blocking all other input to this DO). So: probe storage outside
+		// the transaction; if null, read KV outside; then enter the
+		// transaction and re-read storage under the txn for the
+		// authoritative current value. Mirrors the handleReserve liveness-
+		// check-then-revalidate pattern at lines ~369-469.
+		const storedProbe = await this.ctx.storage.get<PuzzleMetadata>('metadata');
+		let kvFallback: Awaited<ReturnType<typeof getMetadata>> = null;
+		if (!storedProbe) {
+			kvFallback = await getMetadata(this.env.PUZZLE_METADATA, puzzleId);
+		}
+		if (!storedProbe && !kvFallback) {
 			return Response.json(
 				{ message: `Puzzle ${puzzleId} not found in PUZZLE_METADATA` },
 				{ status: 404 }
 			);
 		}
 
-		// A 'ready' puzzle is terminal-good: all pieces are generated and in
-		// R2, so no remaining processing can legitimately fail. Refusing
-		// ready → failed prevents the workflow's mark-failed step from
-		// clobbering a good 'ready' state when its updateMetadata call races
-		// with a successful finalize — e.g. finalize committed the DO write
-		// but the step's retry budget then exhausted, dropping control into
-		// the catch block. The only writer of 'failed' here is mark-failed;
-		// no admin path ever transitions ready → failed (verified across
-		// admin.worker.ts). Idempotent re-writes of the same status (ready →
-		// ready, failed → failed) and the forward transition processing →
-		// failed remain allowed.
-		if (updates.status === 'failed' && existing.status === 'ready') {
-			return Response.json({ message: alreadyReadyConflictMessage(puzzleId) }, { status: 409 });
-		}
-
-		const currentVersion = existing.version ?? 0;
-
-		// Merge pieces arrays to avoid overwriting with stale data
-		// This handles the case where workflow sends only new row pieces
-		let mergedPieces = existing.pieces || [];
-		if (updates.pieces && Array.isArray(updates.pieces) && updates.pieces.length > 0) {
-			const existingIds = new Set(mergedPieces.map((p: PuzzlePiece) => p.id));
-			const newPieces = updates.pieces.filter((p: PuzzlePiece) => !existingIds.has(p.id));
-			if (newPieces.length > 0) {
-				mergedPieces = [...mergedPieces, ...newPieces];
-			}
-		}
-
-		// Apply updates while maintaining discriminated union invariants
 		let updated: PuzzleMetadata;
-		if (updates.status === 'ready') {
-			// ReadyPuzzle has progress?: never, error?: never
-			updated = {
-				...existing,
-				...updates,
-				id: existing.id,
-				status: 'ready',
-				version: currentVersion + 1,
-				pieces: mergedPieces,
-				progress: undefined,
-				error: undefined
-			} as ReadyPuzzle;
-		} else if (updates.status === 'failed') {
-			// FailedPuzzle has progress?: never
-			updated = {
-				...existing,
-				...updates,
-				id: existing.id,
-				status: 'failed',
-				version: currentVersion + 1,
-				pieces: mergedPieces,
-				progress: undefined
-			} as FailedPuzzle;
-		} else {
-			// ProcessingPuzzle or no status change - merge pieces
-			updated = {
-				...existing,
-				...updates,
-				id: existing.id,
-				version: currentVersion + 1,
-				pieces: mergedPieces
-			} as PuzzleMetadata;
-		}
-
-		// DO is the source of truth — its failure is fatal
 		try {
-			await this.ctx.storage.transaction(async () => {
-				await this.ctx.storage.put('metadata', updated);
+			const result = await this.ctx.storage.transaction(async () => {
+				const stored = await this.ctx.storage.get<PuzzleMetadata>('metadata');
+				const existing = stored ?? kvFallback;
+				if (!existing) {
+					// KV had metadata at probe time but storage is still empty and
+					// KV has since been deleted (e.g. reaper ran between the probe
+					// and the transaction). Fail closed with 404.
+					return {
+						ok: false as const,
+						status: 404,
+						message: `Puzzle ${puzzleId} not found in PUZZLE_METADATA`
+					};
+				}
+
+				// A 'ready' puzzle is terminal-good: all pieces are generated and in
+				// R2, so no remaining processing can legitimately fail. Refusing
+				// ready → failed prevents the workflow's mark-failed step from
+				// clobbering a good 'ready' state when its updateMetadata call races
+				// with a successful finalize — e.g. finalize committed the DO write
+				// but the step's retry budget then exhausted, dropping control into
+				// the catch block. The only writer of 'failed' here is mark-failed;
+				// no admin path ever transitions ready → failed (verified across
+				// admin.worker.ts). Idempotent re-writes of the same status (ready →
+				// ready, failed → failed) and the forward transition processing →
+				// failed remain allowed.
+				if (updates.status === 'failed' && existing.status === 'ready') {
+					return {
+						ok: false as const,
+						status: 409,
+						message: alreadyReadyConflictMessage(puzzleId)
+					};
+				}
+
+				const currentVersion = existing.version ?? 0;
+
+				// Merge pieces arrays to avoid overwriting with stale data
+				// This handles the case where workflow sends only new row pieces
+				let mergedPieces = existing.pieces || [];
+				if (updates.pieces && Array.isArray(updates.pieces) && updates.pieces.length > 0) {
+					const existingIds = new Set(mergedPieces.map((p: PuzzlePiece) => p.id));
+					const newPieces = updates.pieces.filter((p: PuzzlePiece) => !existingIds.has(p.id));
+					if (newPieces.length > 0) {
+						mergedPieces = [...mergedPieces, ...newPieces];
+					}
+				}
+
+				// Apply updates while maintaining discriminated union invariants
+				let next: PuzzleMetadata;
+				if (updates.status === 'ready') {
+					// ReadyPuzzle has progress?: never, error?: never
+					next = {
+						...existing,
+						...updates,
+						id: existing.id,
+						status: 'ready',
+						version: currentVersion + 1,
+						pieces: mergedPieces,
+						progress: undefined,
+						error: undefined
+					} as ReadyPuzzle;
+				} else if (updates.status === 'failed') {
+					// FailedPuzzle has progress?: never
+					next = {
+						...existing,
+						...updates,
+						id: existing.id,
+						status: 'failed',
+						version: currentVersion + 1,
+						pieces: mergedPieces,
+						progress: undefined
+					} as FailedPuzzle;
+				} else {
+					// ProcessingPuzzle or no status change - merge pieces
+					next = {
+						...existing,
+						...updates,
+						id: existing.id,
+						version: currentVersion + 1,
+						pieces: mergedPieces
+					} as PuzzleMetadata;
+				}
+
+				await this.ctx.storage.put('metadata', next);
+				return { ok: true as const, updated: next };
 			});
+			if (!result.ok) {
+				return Response.json({ message: result.message }, { status: result.status });
+			}
+			updated = result.updated;
 		} catch (error) {
 			console.error(`Failed to persist metadata in DO for puzzle ${puzzleId}:`, error);
 			return Response.json(

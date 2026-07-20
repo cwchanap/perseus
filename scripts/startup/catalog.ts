@@ -52,6 +52,19 @@ export function validateCatalog(raw: unknown, source: string): CatalogEntry[] {
 			if (expectedType === 'string' && typeof value === 'string' && !value.trim()) {
 				throw new Error(`Catalog entry ${i} at ${source} field "${key}" must not be blank`);
 			}
+			// Reject Unicode control characters (\p{Cc}: U+0000-U+001F, U+007F-
+			// U+009F) in string fields. NUL (U+0000) collides in the idempotency
+			// dedup key (upload.ts:idempotencyKey uses \u0000 as a field
+			// separator, so a name containing NUL would alias another entry's
+			// pieceCount/aspectRatio slot and silently skip dedup). \n/\r
+			// corrupt log lines and id-based glob/path output. Applying to all
+			// string fields (id, name, category, aspectRatio) is defensive and
+			// consistent — no legitimate catalog value contains control chars.
+			if (expectedType === 'string' && typeof value === 'string' && /\p{Cc}/u.test(value)) {
+				throw new Error(
+					`Catalog entry ${i} at ${source} field "${key}" contains a control character (\\p{Cc}); remove it before uploading`
+				);
+			}
 			if (key === 'pieceCount' && typeof value === 'number' && !Number.isInteger(value)) {
 				throw new Error(`Catalog entry ${i} at ${source} field "pieceCount" must be an integer`);
 			}

@@ -13,7 +13,11 @@
 
 import { basename } from 'node:path';
 import { createHash } from 'node:crypto';
-import { aspectRatiosMatch, DEFAULT_PUZZLE_ASPECT_RATIO } from '@perseus/types';
+import {
+	aspectRatiosMatch,
+	DEFAULT_PUZZLE_ASPECT_RATIO,
+	MAX_IMAGE_DIMENSION
+} from '@perseus/types';
 import { parseImageDimensions, detectImageType } from '@perseus/shared';
 import {
 	FETCH_TIMEOUT_MS,
@@ -483,6 +487,17 @@ async function validateEntryImage(
 		return {
 			ok: false,
 			detail: `image ${dimensions.width}x${dimensions.height} does not match ${entry.aspectRatio}`
+		};
+	}
+	// Match the server-side dimension cap: both API runtimes reject images
+	// exceeding MAX_IMAGE_DIMENSION (4096px) on either axis. Without this
+	// preflight check, a 50000x50000 IHDR passes local validation and is only
+	// rejected by the API after the full upload — wasting up to MAX_FILE_SIZE
+	// (10 MB) of bandwidth per doomed entry.
+	if (dimensions.width > MAX_IMAGE_DIMENSION || dimensions.height > MAX_IMAGE_DIMENSION) {
+		return {
+			ok: false,
+			detail: `image ${dimensions.width}x${dimensions.height} exceeds the ${MAX_IMAGE_DIMENSION}px per-axis cap`
 		};
 	}
 

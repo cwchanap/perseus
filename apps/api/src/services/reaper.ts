@@ -177,21 +177,26 @@ export async function reapStuckPuzzles(env: Env, now = Date.now()): Promise<Reap
 					});
 				}
 
-				// Delete KV metadata.
-				try {
-					await deletePuzzleMetadata(env.PUZZLE_METADATA, puzzle.id);
+				// Delete KV metadata. deletePuzzleMetadata never throws — it
+				// returns { success, error } so a KV failure is observable here
+				// without a try/catch around a non-throwing call. Branching on
+				// .success keeps reaped++ honest (only increments when the KV
+				// delete actually succeeded) and emits a kv-delete-failed detail
+				// on failure so operators see the failure in the run summary.
+				const kvResult = await deletePuzzleMetadata(env.PUZZLE_METADATA, puzzle.id);
+				if (kvResult.success) {
 					result.reaped++;
 					result.details.push({
 						puzzleId: puzzle.id,
 						action: 'reaped'
 					});
-				} catch (kvErr) {
-					console.error(`Reaper: failed to delete KV metadata for ${puzzle.id}:`, kvErr);
+				} else {
+					console.error(`Reaper: failed to delete KV metadata for ${puzzle.id}:`, kvResult.error);
 					result.errors++;
 					result.details.push({
 						puzzleId: puzzle.id,
 						action: 'kv-delete-failed',
-						error: String(kvErr)
+						error: String(kvResult.error)
 					});
 				}
 

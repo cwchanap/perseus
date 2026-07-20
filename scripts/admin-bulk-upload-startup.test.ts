@@ -769,6 +769,29 @@ describe('validateCatalog', () => {
 		const entry = { ...validEntry('01'), category: 'Space' };
 		expect(() => validateCatalog([entry], 'catalog.json')).toThrow(/category "Space"/);
 	});
+
+	it('rejects a NUL (U+0000) in the name — collides with the dedup-key separator', () => {
+		// idempotencyKey in upload.ts joins name + pieceCount + aspectRatio
+		// with \u0000. A name containing NUL would alias another entry's
+		// fields and silently skip dedup, causing duplicate uploads.
+		const entry = { ...validEntry('01'), name: 'evil\u0000100' };
+		expect(() => validateCatalog([entry], 'catalog.json')).toThrow(/control character/);
+	});
+
+	it('rejects a newline in the name — corrupts log lines', () => {
+		const entry = { ...validEntry('01'), name: 'evil\ninjection' };
+		expect(() => validateCatalog([entry], 'catalog.json')).toThrow(/control character/);
+	});
+
+	it('rejects a carriage return in the id', () => {
+		const entry = { ...validEntry('01'), id: '01\r' };
+		expect(() => validateCatalog([entry], 'catalog.json')).toThrow(/control character/);
+	});
+
+	it('rejects a DEL (U+007F) in the name', () => {
+		const entry = { ...validEntry('01'), name: 'evil\u007F' };
+		expect(() => validateCatalog([entry], 'catalog.json')).toThrow(/control character/);
+	});
 });
 
 describe('cmdUpload', () => {

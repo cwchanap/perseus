@@ -106,6 +106,18 @@ export async function parseImageDimensions(
 			// Fill bytes (0xFF 0xFF…) are consumed individually per the JPEG spec:
 			// multiple 0xFF bytes can precede a marker, each is a fill byte, not
 			// a marker pair.
+			//
+			// Cap the scan at SOF_SCAN_LIMIT to bound CPU on untrusted inputs
+			// (avatar/player puzzle uploads up to MAX_FILE_SIZE/AVATAR_MAX_BYTES).
+			// A crafted JPEG of millions of tiny marker segments (RST0-RST7,
+			// TEM, fill bytes) could otherwise exhaust the Workers CPU budget
+			// before reaching SOF/EOI/EOF. 2 MiB is generous — the largest
+			// legitimate APP segments (ICC profiles, full EXIF) are well under
+			// 64 KiB each, and JPEG segLen is a 16-bit field (max 65535), so
+			// reaching 2 MiB requires ~30 max-length APP segments before SOF,
+			// which no real encoder produces. Bail to null (callers reject)
+			// rather than throwing so the untrusted route returns 400, not 500.
+			const SOF_SCAN_LIMIT = 2 * 1024 * 1024;
 			const CHUNK_SIZE = 64 * 1024;
 			let pos = 2; // absolute file offset, skip FF D8 SOI
 			let bufStart = 0;
@@ -128,6 +140,8 @@ export async function parseImageDimensions(
 			}
 
 			while (true) {
+				// Bail beyond the scan cap — see SOF_SCAN_LIMIT rationale above.
+				if (pos > SOF_SCAN_LIMIT) return null;
 				// Expect 0xFF marker prefix
 				if (!(await ensure(1))) break;
 				if (buf[pos - bufStart] !== 0xff) break;
