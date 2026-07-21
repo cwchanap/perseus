@@ -2,10 +2,21 @@ import * as cloudflare from '@pulumi/cloudflare';
 import { naming, accountId } from './config.js';
 
 export function createR2Bucket() {
-	return new cloudflare.R2Bucket('puzzles-bucket', {
-		accountId: accountId,
-		name: naming.r2Bucket
-	});
+	return new cloudflare.R2Bucket(
+		'puzzles-bucket',
+		{
+			accountId: accountId,
+			name: naming.r2Bucket
+		},
+		{
+			// Protect against accidental destruction. R2 holds original images,
+			// generated pieces, and avatars — all unrecoverable if deleted.
+			// `pulumi destroy` / a destructive replacement will refuse without
+			// `pulumi state unprotect` first, guarding against a typo nuking
+			// prod data. Normal `pulumi up` updates are unaffected.
+			protect: true
+		}
+	);
 }
 
 export function createKVNamespace() {
@@ -39,7 +50,11 @@ export function createD1Database() {
 			// this field, causing a perpetual diff. Ignoring it prevents
 			// unnecessary updates while still allowing all other D1 properties
 			// to be managed normally.
-			ignoreChanges: ['readReplication']
+			ignoreChanges: ['readReplication'],
+			// Protect against accidental destruction. D1 holds player
+			// ownership rows, allowlist, and session data — unrecoverable if
+			// deleted. See createR2Bucket for the protect/recover contract.
+			protect: true
 		}
 	);
 }

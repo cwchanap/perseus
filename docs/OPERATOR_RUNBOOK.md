@@ -103,6 +103,12 @@ new UUID and lose all data). Instead, re-adopt the existing database:
 5. Remove the `import:` line and config so Pulumi fully owns the resource
    going forward.
 
+**D1 and R2 are `protect: true`** — `pulumi destroy` or a destructive
+replacement will refuse without first running
+`pulumi state unprotect <resource-urn>` (URNs via `pulumi stack export`).
+This is intentional: it prevents a typo or wrong-cwd `pulumi destroy` from
+nuking prod data. Re-protect after any legitimate destructive operation.
+
 **History:** The original adoption procedure was introduced in `fd43f33`
 and removed in `e3229c9` after adoption completed. Consult those commits if
 the lines above are stale.
