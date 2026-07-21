@@ -58,15 +58,15 @@ export async function updateProfileDisplayName(
 export async function updateProfileAvatarUrl(
 	db: AppDb,
 	playerId: string,
-	avatarUrl: string
+	avatarUrl: string,
+	updatedAt: number = Date.now()
 ): Promise<void> {
-	const now = Date.now();
 	await db
 		.insert(playerProfiles)
-		.values({ playerId, avatarUrl, updatedAt: now })
+		.values({ playerId, avatarUrl, updatedAt })
 		.onConflictDoUpdate({
 			target: playerProfiles.playerId,
-			set: { avatarUrl, updatedAt: now }
+			set: { avatarUrl, updatedAt }
 		})
 		.run();
 }
@@ -86,6 +86,33 @@ export async function clearProfileAvatarUrl(db: AppDb, playerId: string): Promis
 			target: playerProfiles.playerId,
 			set: { avatarUrl: null, updatedAt: now }
 		})
+		.run();
+}
+
+// Owner-checked avatar rollback: only nulls avatarUrl when the row's
+// updatedAt matches ownerUpdatedAt (the timestamp the caller wrote via
+// updateProfileAvatarUrl). This prevents a concurrent upload's successful
+// avatar from being clobbered when this upload's live R2 put fails after
+// the DB write. Two uploads A and B for the same player share the canonical
+// avatar URL; if B's live put fails after A's succeeded, an unconditional
+// clear would remove A's avatar. The conditional UPDATE WHERE updatedAt =
+// ownerUpdatedAt is a no-op when a concurrent upload has since overwritten
+// the row (its updatedAt differs). Uses a plain UPDATE (not upsert) so a
+// missing row is a no-op rather than inserting a null-avatar stub — there
+// is nothing to roll back if the row was never written. Residual same-
+// millisecond race (two uploads writing the same updatedAt) is accepted for
+// this P2; avatar uploads are user-initiated and the collision window is
+// negligible.
+export async function clearProfileAvatarUrlIfOwned(
+	db: AppDb,
+	playerId: string,
+	ownerUpdatedAt: number
+): Promise<void> {
+	const now = Date.now();
+	await db
+		.update(playerProfiles)
+		.set({ avatarUrl: null, updatedAt: now })
+		.where(and(eq(playerProfiles.playerId, playerId), eq(playerProfiles.updatedAt, ownerUpdatedAt)))
 		.run();
 }
 

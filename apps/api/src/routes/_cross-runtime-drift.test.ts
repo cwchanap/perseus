@@ -36,6 +36,7 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 		updateProfileDisplayName: vi.fn(() => undefined),
 		updateProfileAvatarUrl: vi.fn(() => undefined),
 		clearProfileAvatarUrl: vi.fn(async () => undefined),
+		clearProfileAvatarUrlIfOwned: vi.fn(async () => undefined),
 		getPlayerSummary: vi.fn(() => ({
 			puzzlesUploaded: 0,
 			puzzlesSolved: 0,

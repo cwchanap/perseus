@@ -28,7 +28,10 @@ vi.mock('../db', () => ({
 
 vi.mock('@perseus/shared', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('@perseus/shared')>();
-	const store = new Map<string, { displayName: string | null; avatarUrl: string | null }>();
+	const store = new Map<
+		string,
+		{ displayName: string | null; avatarUrl: string | null; updatedAt?: number }
+	>();
 	return {
 		...actual,
 		__store: store,
@@ -37,14 +40,24 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 			const existing = store.get(playerId) ?? { displayName: null, avatarUrl: null };
 			store.set(playerId, { ...existing, displayName });
 		}),
-		updateProfileAvatarUrl: vi.fn((db: unknown, playerId: string, avatarUrl: string) => {
-			const existing = store.get(playerId) ?? { displayName: null, avatarUrl: null };
-			store.set(playerId, { ...existing, avatarUrl });
-		}),
+		updateProfileAvatarUrl: vi.fn(
+			(db: unknown, playerId: string, avatarUrl: string, updatedAt?: number) => {
+				const existing = store.get(playerId) ?? { displayName: null, avatarUrl: null };
+				store.set(playerId, { ...existing, avatarUrl, updatedAt });
+			}
+		),
 		clearProfileAvatarUrl: vi.fn(async (db: unknown, playerId: string) => {
 			const existing = store.get(playerId) ?? { displayName: null, avatarUrl: null };
 			store.set(playerId, { ...existing, avatarUrl: null });
 		}),
+		clearProfileAvatarUrlIfOwned: vi.fn(
+			async (db: unknown, playerId: string, ownerUpdatedAt: number) => {
+				const existing = store.get(playerId);
+				if (existing && (existing as any).updatedAt === ownerUpdatedAt) {
+					store.set(playerId, { ...existing, avatarUrl: null });
+				}
+			}
+		),
 		getPlayerSummary: vi.fn(() => ({
 			puzzlesUploaded: 0,
 			puzzlesSolved: 0,
@@ -165,9 +178,14 @@ describe('player avatar – rename promotion failure rollback (Bun, lines 174-17
 		expect((await res.json()).error).toBe('internal_error');
 
 		// The DB avatarUrl was rolled back to null so the profile does not
-		// reference a serve route that 404s.
-		const { clearProfileAvatarUrl } = await import('@perseus/shared');
-		expect(clearProfileAvatarUrl).toHaveBeenCalledWith(expect.anything(), 'p1');
+		// reference a serve route that 404s. The rollback is owner-checked on
+		// the updatedAt timestamp written by updateProfileAvatarUrl.
+		const { clearProfileAvatarUrlIfOwned } = await import('@perseus/shared');
+		expect(clearProfileAvatarUrlIfOwned).toHaveBeenCalledWith(
+			expect.anything(),
+			'p1',
+			expect.any(Number)
+		);
 
 		// No staging files should remain — the orphaned staging file was deleted.
 		const avatarsDir = join(dataDir, 'avatars');
@@ -185,10 +203,11 @@ describe('player avatar – rename promotion failure rollback (Bun, lines 174-17
 	});
 
 	it('logs (but does not throw) when the avatarUrl rollback itself fails after rename failure', async () => {
-		// clearProfileAvatarUrl rejecting must not turn the 500 into an unhandled
-		// rejection — the route swallows the rollback error and still returns 500.
-		const { clearProfileAvatarUrl } = await import('@perseus/shared');
-		vi.mocked(clearProfileAvatarUrl).mockRejectedValueOnce(new Error('D1 rollback down'));
+		// clearProfileAvatarUrlIfOwned rejecting must not turn the 500 into an
+		// unhandled rejection — the route swallows the rollback error and still
+		// returns 500.
+		const { clearProfileAvatarUrlIfOwned } = await import('@perseus/shared');
+		vi.mocked(clearProfileAvatarUrlIfOwned).mockRejectedValueOnce(new Error('D1 rollback down'));
 
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 

@@ -5,7 +5,7 @@ import {
 	getProfileOverride,
 	updateProfileDisplayName,
 	updateProfileAvatarUrl,
-	clearProfileAvatarUrl,
+	clearProfileAvatarUrlIfOwned,
 	getPlayerSummary,
 	listPlayerPuzzles,
 	listPlayerStats,
@@ -185,8 +185,18 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 	const db = getWorkerDb(c.env);
 	// Field-specific update writes only avatarUrl and preserves displayName,
 	// avoiding a read-modify-write race with concurrent PATCH /profile requests.
+	// Capture the updatedAt timestamp so the live-put-failure rollback can be
+	// owner-checked: only null avatarUrl if no concurrent upload has since
+	// overwritten the row (detected via updatedAt mismatch). An unconditional
+	// clear would clobber a concurrent winner's avatar.
+	const avatarUpdatedAt = Date.now();
 	try {
-		await updateProfileAvatarUrl(db, session.user.id, `/api/player/${session.user.id}/avatar`);
+		await updateProfileAvatarUrl(
+			db,
+			session.user.id,
+			`/api/player/${session.user.id}/avatar`,
+			avatarUpdatedAt
+		);
 	} catch (err) {
 		console.error('Avatar DB write failed; cleaning up staged R2 object:', err);
 		// Safe to delete unconditionally: stagingKey is unique to this upload.
@@ -203,15 +213,17 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 	// flag so the profile doesn't reference a missing object, and clean up
 	// the staged object. For a re-upload of an existing avatar, the old live
 	// object still serves (no 404); clearing the flag is a cosmetic
-	// regression only on this rare transient-failure path, and avoids a
-	// read-modify-write race that reading the previous value would introduce.
+	// regression only on this rare transient-failure path. The rollback is
+	// owner-checked on avatarUpdatedAt: if a concurrent upload's DB write
+	// has since overwritten this row (its updatedAt differs), the clear is
+	// a no-op and that upload's avatar is preserved.
 	try {
 		await c.env.PUZZLES_BUCKET.put(liveKey, bytes, {
 			httpMetadata: { contentType: detected }
 		});
 	} catch (err) {
 		console.error('Avatar live R2 put failed; rolling back DB avatarUrl:', err);
-		await clearProfileAvatarUrl(db, session.user.id).catch((rollbackErr) =>
+		await clearProfileAvatarUrlIfOwned(db, session.user.id, avatarUpdatedAt).catch((rollbackErr) =>
 			console.error('Failed to roll back avatarUrl after live put failure:', rollbackErr)
 		);
 		await c.env.PUZZLES_BUCKET.delete(stagingKey).catch(() => {});

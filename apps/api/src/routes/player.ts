@@ -6,7 +6,7 @@ import {
 	getProfileOverride,
 	updateProfileDisplayName,
 	updateProfileAvatarUrl,
-	clearProfileAvatarUrl,
+	clearProfileAvatarUrlIfOwned,
 	getPlayerSummary,
 	listPlayerPuzzles,
 	listPlayerStats,
@@ -187,8 +187,13 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 	const db = getDb();
 	// Field-specific update writes only avatarUrl and preserves displayName,
 	// avoiding a read-modify-write race with concurrent PATCH /profile requests.
+	// Capture the updatedAt timestamp so the rename-failure rollback can be
+	// owner-checked: only null avatarUrl if no concurrent upload has since
+	// overwritten the row (detected via updatedAt mismatch). An unconditional
+	// clear would clobber a concurrent winner's avatar.
+	const avatarUpdatedAt = Date.now();
 	try {
-		await updateProfileAvatarUrl(db, playerId, `/api/player/${playerId}/avatar`);
+		await updateProfileAvatarUrl(db, playerId, `/api/player/${playerId}/avatar`, avatarUpdatedAt);
 	} catch (err) {
 		console.error('Avatar DB write failed; cleaning up staged avatar file:', err);
 		// Safe to delete unconditionally: stagingPath is unique to this upload.
@@ -201,13 +206,16 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 	// A concurrent upload may also rename its staging file here; last rename
 	// wins (both are valid avatars). If the rename itself fails (e.g. cross-
 	// filesystem, disk error), roll back the DB write so the profile doesn't
-	// point at a missing file, and delete the orphaned staging file.
+	// point at a missing file, and delete the orphaned staging file. The
+	// rollback is owner-checked on avatarUpdatedAt: if a concurrent upload's
+	// DB write has since overwritten this row, the clear is a no-op and that
+	// upload's avatar is preserved.
 	try {
 		await rename(stagingPath, avatarPath);
 	} catch (err) {
 		console.error('Avatar promotion rename failed; rolling back DB and staging file:', err);
 		await unlink(stagingPath).catch(() => {});
-		await clearProfileAvatarUrl(db, playerId).catch((rollbackErr) =>
+		await clearProfileAvatarUrlIfOwned(db, playerId, avatarUpdatedAt).catch((rollbackErr) =>
 			console.error('Failed to clear avatar URL after rename failure:', rollbackErr)
 		);
 		return c.json({ error: 'internal_error', message: 'Failed to store avatar' }, 500);

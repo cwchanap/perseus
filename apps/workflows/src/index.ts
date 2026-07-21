@@ -466,40 +466,54 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 					workflowStatus === 'terminated' ||
 					workflowStatus === 'unknown'
 				) {
-					try {
-						await this.ctx.storage.transaction(async () => {
-							const reservation = await this.readReservation();
-							if (
-								!reservation ||
-								reservation.puzzleId !== preReserve.puzzleId ||
-								!isStalePending(reservation)
-							) {
-								return;
-							}
-							const next: ReservationRecord = {
-								puzzleId: reservation.puzzleId,
-								status: 'failed',
-								schemaVersion: CURRENT_RESERVATION_SCHEMA
-							};
-							await this.ctx.storage.put('reservation', next);
-						});
-					} catch (failErr) {
-						console.error(
-							`Failed to mark stale-pending reservation failed for puzzle ${preReserve.puzzleId}:`,
-							failErr
-						);
+					if (live.status === 'ready') {
+						// Finalize committed 'ready' to the authoritative DO before
+						// the workflow later reported errored (e.g. the mark-failed
+						// step's retry budget exhausted after a successful finalize,
+						// or a post-finalize step threw). The puzzle is already in
+						// the desired terminal-good state — marking the reservation
+						// failed would let a retry reclaim the key and mint a
+						// replacement even though the original is ready. Promote to
+						// committed instead, so retries return the existing ready
+						// puzzle. Falls through to the shared promote transaction
+						// below (line ~504), which re-validates puzzleId + staleness
+						// under the storage lock.
+					} else {
+						try {
+							await this.ctx.storage.transaction(async () => {
+								const reservation = await this.readReservation();
+								if (
+									!reservation ||
+									reservation.puzzleId !== preReserve.puzzleId ||
+									!isStalePending(reservation)
+								) {
+									return;
+								}
+								const next: ReservationRecord = {
+									puzzleId: reservation.puzzleId,
+									status: 'failed',
+									schemaVersion: CURRENT_RESERVATION_SCHEMA
+								};
+								await this.ctx.storage.put('reservation', next);
+							});
+						} catch (failErr) {
+							console.error(
+								`Failed to mark stale-pending reservation failed for puzzle ${preReserve.puzzleId}:`,
+								failErr
+							);
+							return Response.json(
+								{ message: 'Failed to reconcile stale reservation; retry' },
+								{ status: 500 }
+							);
+						}
 						return Response.json(
-							{ message: 'Failed to reconcile stale reservation; retry' },
-							{ status: 500 }
+							{
+								message:
+									'Stale-pending reservation had no running workflow; marked failed, retry to reclaim'
+							},
+							{ status: 409 }
 						);
 					}
-					return Response.json(
-						{
-							message:
-								'Stale-pending reservation had no running workflow; marked failed, retry to reclaim'
-						},
-						{ status: 409 }
-					);
 				}
 				const promoted = await this.ctx.storage.transaction(async () => {
 					const reservation = await this.readReservation();
@@ -534,6 +548,25 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 				if (promoted) {
 					return Response.json(promoted);
 				}
+			} else if (live === null) {
+				// KV miss on a stale-pending reservation is indeterminate: the
+				// puzzle's metadata may exist in the authoritative DO but not
+				// yet have propagated to this KV replica (the DO's KV sync can
+				// exhaust its retry budget, or eventual-consistency lag can
+				// outlast the 5-minute stale-pending TTL). Reclaiming here
+				// would overwrite the reservation with a fresh puzzleId while
+				// the original create or workflow continues under the old ID,
+				// minting a duplicate under one Idempotency-Key. Fail closed
+				// with 409 so the client retries. A truly orphaned reservation
+				// (puzzle was never created, no DO metadata either) will brick
+				// the key until an operator force-releases it — the reaper
+				// only scans KV for 'processing' puzzles and cannot find a
+				// never-created one. This tradeoff is accepted: bricking a key
+				// is recoverable (operator runbook), minting duplicates is not.
+				return Response.json(
+					{ message: 'Stale-pending reservation lookup returned no metadata; retry' },
+					{ status: 409 }
+				);
 			}
 		}
 

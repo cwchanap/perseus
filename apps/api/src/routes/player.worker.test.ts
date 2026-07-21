@@ -11,7 +11,10 @@ vi.mock('../db.worker', () => ({
 // override-preservation logic (PATCH keeps existing avatarUrl) is exercised.
 vi.mock('@perseus/shared', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('@perseus/shared')>();
-	const store = new Map<string, { displayName: string | null; avatarUrl: string | null }>();
+	const store = new Map<
+		string,
+		{ displayName: string | null; avatarUrl: string | null; updatedAt?: number }
+	>();
 	// In-memory stores backing the mocked list repositories so the list
 	// routes can be exercised end-to-end without a real D1 binding.
 	const puzzlesStore = new Map<string, unknown[]>();
@@ -29,14 +32,26 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 			const existing = store.get(playerId) ?? { displayName: null, avatarUrl: null };
 			store.set(playerId, { ...existing, displayName });
 		}),
-		updateProfileAvatarUrl: vi.fn((db: unknown, playerId: string, avatarUrl: string) => {
-			const existing = store.get(playerId) ?? { displayName: null, avatarUrl: null };
-			store.set(playerId, { ...existing, avatarUrl });
-		}),
+		updateProfileAvatarUrl: vi.fn(
+			(db: unknown, playerId: string, avatarUrl: string, updatedAt?: number) => {
+				const existing = store.get(playerId) ?? { displayName: null, avatarUrl: null };
+				store.set(playerId, { ...existing, avatarUrl, updatedAt });
+			}
+		),
 		clearProfileAvatarUrl: vi.fn(async (db: unknown, playerId: string) => {
 			const existing = store.get(playerId) ?? { displayName: null, avatarUrl: null };
 			store.set(playerId, { ...existing, avatarUrl: null });
 		}),
+		clearProfileAvatarUrlIfOwned: vi.fn(
+			async (db: unknown, playerId: string, ownerUpdatedAt: number) => {
+				const existing = store.get(playerId);
+				// Owner-checked: only clear when the row's updatedAt matches.
+				// A missing row or a mismatched updatedAt is a no-op.
+				if (existing && (existing as any).updatedAt === ownerUpdatedAt) {
+					store.set(playerId, { ...existing, avatarUrl: null });
+				}
+			}
+		),
 		getPlayerSummary: vi.fn(() => ({
 			puzzlesUploaded: 0,
 			puzzlesSolved: 0,
@@ -672,9 +687,14 @@ describe('player avatar route (Worker)', () => {
 		expect(stagingKeys).toHaveLength(0);
 
 		// The DB avatarUrl flag was rolled back to null so the profile does
-		// not reference a serve route that 404s.
-		const { clearProfileAvatarUrl } = await import('@perseus/shared');
-		expect(clearProfileAvatarUrl).toHaveBeenCalledWith(expect.anything(), 'p1');
+		// not reference a serve route that 404s. The rollback is owner-checked
+		// on the updatedAt timestamp written by updateProfileAvatarUrl.
+		const { clearProfileAvatarUrlIfOwned } = await import('@perseus/shared');
+		expect(clearProfileAvatarUrlIfOwned).toHaveBeenCalledWith(
+			expect.anything(),
+			'p1',
+			expect.any(Number)
+		);
 		const shared = await import('@perseus/shared');
 		const profileStore = (shared as any).__store as Map<
 			string,
@@ -690,7 +710,7 @@ describe('player avatar route (Worker)', () => {
 	});
 
 	it('logs but still returns 500 when the avatarUrl rollback itself fails after a live put failure', async () => {
-		// Covers the .catch handler on clearProfileAvatarUrl (line 181): when
+		// Covers the .catch handler on clearProfileAvatarUrlIfOwned: when
 		// the live R2 put fails AND the DB rollback rejects, the route must
 		// swallow the rollback error (log it) and still return a clean 500
 		// rather than surfacing an unhandled rejection.
@@ -703,8 +723,8 @@ describe('player avatar route (Worker)', () => {
 			return originalPut(key, body, opts);
 		}) as any;
 
-		const { clearProfileAvatarUrl } = await import('@perseus/shared');
-		vi.mocked(clearProfileAvatarUrl).mockRejectedValueOnce(new Error('D1 rollback down'));
+		const { clearProfileAvatarUrlIfOwned } = await import('@perseus/shared');
+		vi.mocked(clearProfileAvatarUrlIfOwned).mockRejectedValueOnce(new Error('D1 rollback down'));
 
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
@@ -763,6 +783,81 @@ describe('player avatar route (Worker)', () => {
 		expect(livePuts).toHaveLength(0);
 		// The staging object was cleaned up.
 		expect(bucket.delete).toHaveBeenCalledWith(stagingPuts[0][0]);
+		consoleSpy.mockRestore();
+	});
+
+	it('does not clobber a concurrent upload avatar on live-put-failure rollback', async () => {
+		// Item 4 fix: two uploads A and B for the same player overlap. A's
+		// live put succeeds; B's live put fails. B's rollback must NOT clear
+		// A's avatarUrl — the owner-checked clearProfileAvatarUrlIfOwned
+		// sees that B's updatedAt no longer matches the row (a concurrent
+		// upload has since overwritten it) and is a no-op.
+		const { bucket } = createMockBucket();
+		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
+
+		const shared = await import('@perseus/shared');
+		const profileStore = (shared as any).__store as Map<
+			string,
+			{ displayName: string | null; avatarUrl: string | null; updatedAt?: number }
+		>;
+
+		const { updateProfileAvatarUrl, clearProfileAvatarUrlIfOwned } =
+			await import('@perseus/shared');
+
+		// Capture the updatedAt this upload's DB write used, so we can
+		// verify the rollback is owner-checked on that same value.
+		let capturedUpdatedAt: number | undefined;
+		vi.mocked(updateProfileAvatarUrl).mockImplementationOnce(
+			async (db: unknown, playerId: string, avatarUrl: string, updatedAt?: number) => {
+				capturedUpdatedAt = updatedAt;
+				profileStore.set(playerId, {
+					displayName: null,
+					avatarUrl,
+					updatedAt: updatedAt ?? Date.now()
+				});
+			}
+		);
+
+		// Simulate a concurrent upload C overwriting the row (with a
+		// different updatedAt) between B's DB write and B's live put
+		// failure. The owner-checked rollback should see the mismatch and
+		// be a no-op.
+		const originalPut = vi.mocked(bucket.put);
+		bucket.put = vi.fn(async (key: string, body: any, opts?: any) => {
+			if (key === 'avatars/p1') {
+				profileStore.set('p1', {
+					displayName: null,
+					avatarUrl: '/api/player/p1/avatar',
+					updatedAt: 99999
+				});
+				throw new Error('R2 transient error (B fails)');
+			}
+			return originalPut(key, body, opts);
+		}) as any;
+
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const blob = new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' });
+		const form = new FormData();
+		form.append('avatar', blob, 'a.png');
+		const res = await buildApp().request(
+			'/api/player/avatar',
+			{ method: 'POST', headers: AUTH_COOKIE, body: form },
+			env
+		);
+
+		expect(res.status).toBe(500);
+		// B's rollback was owner-checked on capturedUpdatedAt, but the
+		// row's updatedAt is now 99999 (C overwrote it). The mock
+		// clearProfileAvatarUrlIfOwned only clears when updatedAt matches,
+		// so C's avatarUrl is preserved.
+		expect(clearProfileAvatarUrlIfOwned).toHaveBeenCalledWith(
+			expect.anything(),
+			'p1',
+			capturedUpdatedAt
+		);
+		expect(profileStore.get('p1')?.avatarUrl).toBe('/api/player/p1/avatar');
+		expect(profileStore.get('p1')?.updatedAt).toBe(99999);
 		consoleSpy.mockRestore();
 	});
 });

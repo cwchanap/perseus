@@ -629,9 +629,15 @@ describe('PuzzleMetadataDO.fetch - /reserve (idempotency)', () => {
 		);
 	});
 
-	it('reclaims stale pending reservation older than TTL when no live puzzle', async () => {
+	it('returns 409 (not reclaim) when KV metadata is null for stale pending', async () => {
+		// KV miss on a stale-pending reservation is indeterminate: the
+		// puzzle's metadata may exist in the authoritative DO but not yet
+		// have propagated to this KV replica. Reclaiming would overwrite the
+		// reservation with a fresh puzzleId while the original create or
+		// workflow continues under the old ID, minting a duplicate. Fail
+		// closed: 409. A truly orphaned reservation (puzzle never created)
+		// bricks the key until operator force-release — accepted tradeoff.
 		const staleAt = Date.now() - 10 * 60 * 1000; // 10 minutes ago
-		// kvMetadata null → getMetadata returns null → safe to reclaim
 		const { durableObj, storage } = makeDO(
 			{
 				reservation: {
@@ -650,17 +656,11 @@ describe('PuzzleMetadataDO.fetch - /reserve (idempotency)', () => {
 			},
 			'/reserve'
 		);
-		expect(response.status).toBe(200);
-		const body = (await response.json()) as { existing: boolean; puzzleId: string };
-		expect(body.existing).toBe(false);
-		expect(body.puzzleId).toBe('fresh-uuid');
-		expect(storage.put).toHaveBeenCalledWith(
+		expect(response.status).toBe(409);
+		// Must NOT reclaim — reservation should not be overwritten with a new pending.
+		expect(storage.put).not.toHaveBeenCalledWith(
 			'reservation',
-			expect.objectContaining({
-				puzzleId: 'fresh-uuid',
-				status: 'pending',
-				reservedAt: expect.any(Number)
-			})
+			expect.objectContaining({ puzzleId: 'fresh-uuid', status: 'pending' })
 		);
 	});
 
@@ -783,6 +783,97 @@ describe('PuzzleMetadataDO.fetch - /reserve (idempotency)', () => {
 		expect(storage.put).not.toHaveBeenCalledWith(
 			'reservation',
 			expect.objectContaining({ puzzleId: 'would-be-duplicate', status: 'pending' })
+		);
+	});
+
+	it('promotes stale-pending to committed when workflow errored but puzzle is already ready', async () => {
+		// Finalize committed 'ready' to the DO, then the workflow later
+		// reported errored (e.g. mark-failed retry exhaustion after a
+		// successful finalize). The puzzle is in the desired terminal-good
+		// state — marking the reservation failed would let a retry reclaim
+		// and mint a duplicate. Promote to committed so retries return the
+		// existing ready puzzle.
+		const staleAt = Date.now() - 10 * 60 * 1000;
+		const liveMeta: PuzzleMetadata = {
+			...baseMetadata,
+			id: 'ready-errored-uuid',
+			status: 'ready',
+			pieces: [
+				{
+					id: 0,
+					puzzleId: 'ready-errored-uuid',
+					correctX: 0,
+					correctY: 0,
+					edges: { top: 'flat', right: 'tab', bottom: 'tab', left: 'flat' },
+					imagePath: 'pieces/0.png'
+				},
+				{
+					id: 1,
+					puzzleId: 'ready-errored-uuid',
+					correctX: 1,
+					correctY: 0,
+					edges: { top: 'flat', right: 'flat', bottom: 'blank', left: 'blank' },
+					imagePath: 'pieces/1.png'
+				},
+				{
+					id: 2,
+					puzzleId: 'ready-errored-uuid',
+					correctX: 0,
+					correctY: 1,
+					edges: { top: 'blank', right: 'blank', bottom: 'flat', left: 'flat' },
+					imagePath: 'pieces/2.png'
+				},
+				{
+					id: 3,
+					puzzleId: 'ready-errored-uuid',
+					correctX: 1,
+					correctY: 1,
+					edges: { top: 'tab', right: 'flat', bottom: 'flat', left: 'tab' },
+					imagePath: 'pieces/3.png'
+				}
+			],
+			progress: undefined
+		};
+		const { durableObj, storage } = makeDO(
+			{
+				reservation: {
+					puzzleId: 'ready-errored-uuid',
+					status: 'pending',
+					reservedAt: staleAt
+				}
+			},
+			liveMeta,
+			{ status: 'errored' }
+		);
+		const response = await postRequest(
+			durableObj,
+			{ idempotencyKey: 'abc123', puzzleId: 'would-be-duplicate' },
+			'/reserve'
+		);
+		expect(response.status).toBe(200);
+		const body = (await response.json()) as {
+			existing: boolean;
+			puzzleId: string;
+			status: string;
+		};
+		expect(body.existing).toBe(true);
+		expect(body.puzzleId).toBe('ready-errored-uuid');
+		expect(body.status).toBe('committed');
+		expect(storage.put).toHaveBeenCalledWith(
+			'reservation',
+			expect.objectContaining({
+				puzzleId: 'ready-errored-uuid',
+				status: 'committed'
+			})
+		);
+		// Must NOT mark failed or mint a duplicate.
+		expect(storage.put).not.toHaveBeenCalledWith(
+			'reservation',
+			expect.objectContaining({ status: 'failed' })
+		);
+		expect(storage.put).not.toHaveBeenCalledWith(
+			'reservation',
+			expect.objectContaining({ puzzleId: 'would-be-duplicate' })
 		);
 	});
 

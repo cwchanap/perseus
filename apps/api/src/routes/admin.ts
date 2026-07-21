@@ -344,53 +344,31 @@ admin.post('/puzzles', requireAuth, async (c) => {
 						// Failed-reclaim lives only on the Worker path.
 						return c.json(stripIdempotencyKey(existing), 200);
 					}
-					// Reservation maps to a missing puzzle. The prior create
-					// cleaned up its assets (deleteStoredPuzzle succeeded) but
-					// the reservation release failed (filesystem error), or the
-					// create is still in flight. The Bun filesystem reservation
-					// has no lifecycle status or TTL, so we can't distinguish
-					// "in-flight" from "orphaned" — but we can safely attempt
-					// reclaim: releaseIdempotencyKey is owner-checked (only
-					// deletes if the file still maps to this puzzleId), so a
-					// concurrent in-flight create is never clobbered. If the
-					// release succeeds, re-reserve with our UUID and build a
-					// replacement. If it fails (persistent filesystem error),
-					// signal transient so the client retries; the dev can
-					// manually remove the reservation file.
-					try {
-						await releaseIdempotencyKey(idempotencyKey, reserved.puzzleId);
-					} catch (releaseErr) {
-						console.error(
-							`Failed to release stale reservation for missing puzzle ${reserved.puzzleId}:`,
-							releaseErr
-						);
-						return c.json(
-							{
-								error: 'conflict',
-								message: 'A request with this Idempotency-Key is already in progress'
-							},
-							409
-						);
-					}
-					// Re-reserve. A concurrent retry may have already claimed
-					// the key; if so, defer to its puzzle.
-					const reclaimed = await reserveIdempotencyKey(idempotencyKey, id);
-					if (reclaimed.existing) {
-						const winner = await getPuzzle(reclaimed.puzzleId);
-						if (winner) {
-							return c.json(stripIdempotencyKey(winner), 200);
-						}
-						// Another caller also reclaimed and is still in flight.
-						return c.json(
-							{
-								error: 'conflict',
-								message: 'A request with this Idempotency-Key is already in progress'
-							},
-							409
-						);
-					}
-					id = reclaimed.puzzleId;
-					reservedIdempotencyKey = idempotencyKey;
+					// Reservation maps to a missing puzzle. Two causes: the prior
+					// create cleaned up its assets (deleteStoredPuzzle succeeded)
+					// but the reservation release failed (filesystem error), OR
+					// the create is still in flight and hasn't written metadata
+					// yet. The Bun filesystem reservation has no lifecycle status
+					// or TTL, so we CANNOT distinguish "in-flight" from
+					// "orphaned". Reclaiming is unsafe: a concurrent request B
+					// that overlaps with an in-flight request A would see A's
+					// puzzle as missing, release A's reservation (the owner-check
+					// on releaseIdempotencyKey passes because the file maps to A's
+					// UUID, which B received from reserveIdempotencyKey), re-
+					// reserve with B's UUID, and both requests would proceed to
+					// create separate puzzles under one Idempotency-Key. Return
+					// 409 so the client retries; a truly orphaned reservation
+					// (create died after cleanup) is left for the dev to manually
+					// remove from the idempotency directory — there is no Bun-
+					// side reaper, and bricking a key in dev is recoverable while
+					// minting duplicates is not.
+					return c.json(
+						{
+							error: 'conflict',
+							message: 'A request with this Idempotency-Key is already in progress'
+						},
+						409
+					);
 				} else {
 					id = reserved.puzzleId;
 					reservedIdempotencyKey = idempotencyKey;
