@@ -27,6 +27,24 @@ export const ACTIVE_WORKFLOW_STATUSES = new Set([
 /** Statuses that mean the workflow has permanently failed. */
 export const DEAD_WORKFLOW_STATUSES = new Set(['errored', 'terminated', 'unknown']);
 
+/** Pending reservations older than this are considered stale and reclaimable. */
+export const RESERVATION_PENDING_TTL_MS = 5 * 60 * 1000;
+
+/**
+ * Check if a pending reservation is stale enough to reclaim. A reservation
+ * is stale if it has been pending for longer than RESERVATION_PENDING_TTL_MS.
+ * Missing reservedAt is treated as epoch 0 so pre-TTL stuck pendings can be
+ * reclaimed.
+ */
+export function isStalePendingReservation(
+	status: string,
+	reservedAt: number | undefined,
+	now = Date.now()
+): boolean {
+	if (status !== 'pending') return false;
+	return now - (reservedAt ?? 0) >= RESERVATION_PENDING_TTL_MS;
+}
+
 export function isAliveWorkflowStatus(status: string): boolean {
 	return ACTIVE_WORKFLOW_STATUSES.has(status);
 }

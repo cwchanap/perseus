@@ -300,6 +300,78 @@ describe('Admin Worker idempotency recovery', () => {
 		expect(workflow.create).not.toHaveBeenCalled();
 	});
 
+	it('does not probe liveness or reclaim a FRESH pending reservation (original still in flight)', async () => {
+		// P1 fix: when the reservation is pending but FRESH (within
+		// RESERVATION_PENDING_TTL_MS), the original create is likely still
+		// in flight — metadata written but PUZZLE_WORKFLOW.create not yet
+		// reached. A liveness probe would report instance.not_found (the
+		// workflow hasn't been created yet), and reclaiming would start a
+		// duplicate workflow while the original continues. Return 409 so
+		// the client retries after the original has had time to commit.
+		const freshAt = Date.now() - 10_000; // 10 seconds ago — well within 5 min TTL
+		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
+			existing: true,
+			puzzleId: 'in-flight-puzzle',
+			status: 'pending',
+			reservedAt: freshAt
+		});
+		vi.mocked(storage.getPuzzle).mockResolvedValue({
+			id: 'in-flight-puzzle',
+			status: 'processing'
+		} as any);
+		const workflow = createWorkflow('errored'); // would be "dead" if probed
+
+		const response = await admin.fetch(createRequest('fresh-key'), createEnv(workflow) as any);
+
+		expect(response.status).toBe(409);
+		const body = (await response.json()) as any;
+		expect(body.message).toBe('A request with this Idempotency-Key is already in progress');
+		// Must NOT probe liveness — the workflow instance doesn't exist yet
+		// because the original hasn't called PUZZLE_WORKFLOW.create.
+		expect(workflow.get).not.toHaveBeenCalled();
+		// Must NOT fail or reclaim the reservation.
+		expect(storage.failIdempotencyKey).not.toHaveBeenCalled();
+		expect(storage.commitIdempotencyKey).not.toHaveBeenCalled();
+		expect(workflow.create).not.toHaveBeenCalled();
+	});
+
+	it('probes and reclaims a STALE pending reservation (older than TTL)', async () => {
+		// Stale pending (reservedAt older than 5 min TTL) — the original
+		// create's commit failed. Probe liveness and reclaim if dead.
+		const staleAt = Date.now() - 10 * 60 * 1000; // 10 minutes ago
+		vi.mocked(storage.reserveIdempotencyKey)
+			.mockResolvedValueOnce({
+				existing: true,
+				puzzleId: 'stale-dead-puzzle',
+				status: 'pending',
+				reservedAt: staleAt
+			})
+			.mockResolvedValueOnce({
+				existing: false,
+				puzzleId: 'replacement-puzzle',
+				status: 'pending'
+			});
+		vi.mocked(storage.getPuzzle).mockResolvedValue({
+			id: 'stale-dead-puzzle',
+			status: 'processing'
+		} as any);
+		const workflow = createWorkflow('errored');
+
+		const response = await admin.fetch(createRequest('stale-key'), createEnv(workflow) as any);
+
+		expect(response.status).toBe(201);
+		expect(workflow.get).toHaveBeenCalledWith('stale-dead-puzzle');
+		expect(storage.failIdempotencyKey).toHaveBeenCalledWith(
+			expect.anything(),
+			'stale-key',
+			'stale-dead-puzzle'
+		);
+		expect(workflow.create).toHaveBeenCalledWith({
+			id: 'replacement-puzzle',
+			params: { puzzleId: 'replacement-puzzle' }
+		});
+	});
+
 	it('releases a stale committed reservation after KV and R2 confirm deletion', async () => {
 		vi.useFakeTimers();
 		vi.mocked(storage.reserveIdempotencyKey)

@@ -198,6 +198,45 @@ describe('POST /puzzles - Idempotency-Key reservation existing branch', () => {
 		expect(body.error).toBe('conflict');
 		expect(storageMock.createPuzzle).not.toHaveBeenCalled();
 	});
+
+	it('reclaims and creates a replacement when reservation maps to a missing puzzle', async () => {
+		// P2(Bun) fix: if the reservation maps to a deleted puzzle (cleanup
+		// succeeded but release failed), release the stale reservation and
+		// re-reserve so the key isn't permanently bricked.
+		(storageMock.reserveIdempotencyKey as ReturnType<typeof vi.fn>)
+			.mockResolvedValueOnce({ existing: true, puzzleId: 'deleted-id' })
+			.mockResolvedValueOnce({ existing: false, puzzleId: 'new-id' });
+		(storageMock.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+		(storageMock.releaseIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+		const res = await app.fetch(postPuzzlesRequest({ 'Idempotency-Key': 'key-reclaim' }));
+		expect(res.status).toBe(201);
+		expect(storageMock.releaseIdempotencyKey).toHaveBeenCalledWith('key-reclaim', 'deleted-id');
+		expect(storageMock.createPuzzle).toHaveBeenCalled();
+	});
+
+	it('returns 409 when release of stale reservation fails (filesystem error)', async () => {
+		// P2(Bun) fix: if the release fails (persistent filesystem error),
+		// signal transient so the client retries; the dev can manually
+		// remove the reservation file.
+		(storageMock.reserveIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue({
+			existing: true,
+			puzzleId: 'stuck-id'
+		});
+		(storageMock.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+		(storageMock.releaseIdempotencyKey as ReturnType<typeof vi.fn>).mockRejectedValue(
+			new Error('filesystem error')
+		);
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const res = await app.fetch(postPuzzlesRequest({ 'Idempotency-Key': 'key-stuck' }));
+		expect(res.status).toBe(409);
+		const body = await res.json();
+		expect(body.error).toBe('conflict');
+		expect(storageMock.releaseIdempotencyKey).toHaveBeenCalledWith('key-stuck', 'stuck-id');
+		expect(storageMock.createPuzzle).not.toHaveBeenCalled();
+		consoleSpy.mockRestore();
+	});
 });
 
 describe('POST /puzzles - Idempotency-Key reserve failure', () => {

@@ -33,12 +33,12 @@ import {
 	releaseIdempotencyKey
 } from './storage.worker';
 import { getWorkerDb } from '../db.worker';
-import { deletePuzzleOwnership } from '@perseus/shared';
 import {
+	deletePuzzleOwnership,
 	isAliveWorkflowStatus,
 	isDeadWorkflowStatus,
 	isWorkflowNotFoundError
-} from './workflow-status';
+} from '@perseus/shared';
 import type { Env } from '../worker';
 
 /** Reap puzzles stuck in processing for longer than this. */

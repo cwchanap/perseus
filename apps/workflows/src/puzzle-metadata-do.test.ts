@@ -115,6 +115,7 @@ function createKV(metadata: PuzzleMetadata | null = baseMetadata) {
 interface WorkflowMock {
 	status?: InstanceStatus['status'];
 	throwOnGet?: boolean;
+	throwOnGetNotFound?: boolean;
 	throwOnStatus?: boolean;
 }
 
@@ -126,6 +127,11 @@ function createWorkflow(mock: WorkflowMock = { status: 'running' }) {
 	const instance = { status: statusFn };
 	const getFn = vi.fn(async () => {
 		if (mock.throwOnGet) throw new Error('workflow get failed');
+		if (mock.throwOnGetNotFound) {
+			const err = new Error('instance.not_found');
+			(err as { code?: string }).code = 'instance.not_found';
+			throw err;
+		}
 		if (mock.throwOnStatus) {
 			return {
 				status: vi.fn(async () => {
@@ -922,6 +928,51 @@ describe('PuzzleMetadataDO.fetch - /reserve (idempotency)', () => {
 		expect(body.existing).toBe(true);
 		expect(body.puzzleId).toBe('fresh-pending-uuid');
 		expect(body.status).toBe('pending');
+	});
+
+	it('fails stale-pending reservation when workflow instance was never created (not_found)', async () => {
+		// The scenario from P2: createPuzzleMetadata succeeded but
+		// PUZZLE_WORKFLOW.create never ran (process died). Cloudflare's
+		// WorkflowBinding.get() throws instance.not_found. Must treat this
+		// as dead (fail the reservation) so a retry can reclaim — not as a
+		// transient error that leaves the reservation pending until the 2h
+		// reaper runs.
+		const staleAt = Date.now() - 10 * 60 * 1000;
+		const liveMeta: PuzzleMetadata = {
+			...baseMetadata,
+			id: 'no-workflow-not-found-uuid',
+			status: 'processing'
+		};
+		const { durableObj, storage } = makeDO(
+			{
+				reservation: {
+					puzzleId: 'no-workflow-not-found-uuid',
+					status: 'pending',
+					reservedAt: staleAt
+				}
+			},
+			liveMeta,
+			{ throwOnGetNotFound: true }
+		);
+		const response = await postRequest(
+			durableObj,
+			{ idempotencyKey: 'abc123', puzzleId: 'would-be-duplicate' },
+			'/reserve'
+		);
+		expect(response.status).toBe(409);
+		// Reservation marked failed so a retry can reclaim.
+		expect(storage.put).toHaveBeenCalledWith(
+			'reservation',
+			expect.objectContaining({
+				puzzleId: 'no-workflow-not-found-uuid',
+				status: 'failed'
+			})
+		);
+		// Must NOT mint a duplicate.
+		expect(storage.put).not.toHaveBeenCalledWith(
+			'reservation',
+			expect.objectContaining({ puzzleId: 'would-be-duplicate', status: 'pending' })
+		);
 	});
 
 	it('owner-checked commit transitions pending to committed', async () => {

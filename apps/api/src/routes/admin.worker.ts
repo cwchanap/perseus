@@ -17,7 +17,6 @@ import {
 } from '@perseus/types';
 import type { PuzzleCategory } from '@perseus/types';
 import type { Env, WorkflowBinding } from '../worker';
-import { isAliveWorkflowStatus, isWorkflowNotFoundError } from '../services/workflow-status';
 import {
 	commitIdempotencyKey,
 	createPuzzleMetadata,
@@ -57,6 +56,9 @@ import {
 	deletePuzzleStats,
 	detectImageType,
 	insertPuzzleOwnership,
+	isAliveWorkflowStatus,
+	isStalePendingReservation,
+	isWorkflowNotFoundError,
 	parseImageDimensions,
 	SYSTEM_OWNER_ID
 } from '@perseus/shared';
@@ -788,18 +790,42 @@ admin.post('/puzzles', requireAuth, async (c) => {
 							// replacement puzzle under the won puzzleId.
 						} else {
 							// Existing metadata is processing (not failed).
-							// If the reservation is still pending, the
-							// original create's commit failed — but before
-							// committing it on this retry, verify the
-							// original's workflow is actually alive. If the
-							// original died between writing processing
-							// metadata and PUZZLE_WORKFLOW.create, committing
-							// would lock the key to a puzzle with no
-							// workflow — permanently stuck until the reaper
-							// cleans it up (2h). Instead, fail the reservation
-							// and reclaim so this retry builds a replacement.
+							// A pending reservation here means the original
+							// create has not committed yet. If it is FRESH
+							// (within RESERVATION_PENDING_TTL_MS), the original
+							// is likely still in flight — metadata written but
+							// PUZZLE_WORKFLOW.create or commit not yet reached.
+							// Reclaiming would duplicate a live in-flight create:
+							// the original hasn't called PUZZLE_WORKFLOW.create
+							// yet, so a liveness probe would report not_found
+							// even though the original is still running. Signal
+							// transient so the client retries.
+							//
+							// If it is STALE (older than the TTL), the original
+							// create's commit failed — but before reclaiming,
+							// verify the original's workflow is actually alive.
+							// If the original died between writing processing
+							// metadata and PUZZLE_WORKFLOW.create, reclaiming
+							// builds a replacement; the stale metadata is left
+							// for the reaper. The DO's handleReserve also runs
+							// this stale-pending liveness check (and treats
+							// instance.not_found as dead) — this worker-side
+							// check is defense-in-depth for the case where the
+							// DO promoted to committed but the workflow died
+							// immediately after.
 							let fallThroughToCreate = false;
 							if (reserved.status === 'pending') {
+								if (!isStalePendingReservation(reserved.status, reserved.reservedAt)) {
+									// Fresh pending — original still in flight.
+									return c.json(
+										{
+											error: 'conflict',
+											message: 'A request with this Idempotency-Key is already in progress'
+										},
+										409
+									);
+								}
+								// Stale pending — probe liveness before reclaiming.
 								const liveness = await probeWorkflowLiveness(
 									c.env.PUZZLE_WORKFLOW,
 									reserved.puzzleId

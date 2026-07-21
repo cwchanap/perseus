@@ -124,7 +124,12 @@ export async function reserveIdempotencyKey(
 	metadataDO: DurableObjectNamespace,
 	idempotencyKey: string,
 	proposedPuzzleId: string
-): Promise<{ existing: boolean; puzzleId: string; status?: IdempotencyReservationStatus }> {
+): Promise<{
+	existing: boolean;
+	puzzleId: string;
+	status?: IdempotencyReservationStatus;
+	reservedAt?: number;
+}> {
 	const id = metadataDO.idFromName(idempotencyKey);
 	const stub = metadataDO.get(id);
 	const response = await stub.fetch('https://puzzle-metadata/reserve', {
@@ -142,6 +147,7 @@ export async function reserveIdempotencyKey(
 		existing?: boolean;
 		puzzleId?: string;
 		status?: IdempotencyReservationStatus;
+		reservedAt?: number;
 	};
 	if (typeof result.puzzleId !== 'string') {
 		throw new Error('Reserve response missing puzzleId');
@@ -149,7 +155,8 @@ export async function reserveIdempotencyKey(
 	return {
 		existing: !!result.existing,
 		puzzleId: result.puzzleId,
-		...(result.status ? { status: result.status } : {})
+		...(result.status ? { status: result.status } : {}),
+		...(typeof result.reservedAt === 'number' ? { reservedAt: result.reservedAt } : {})
 	};
 }
 

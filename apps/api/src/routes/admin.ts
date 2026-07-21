@@ -344,28 +344,57 @@ admin.post('/puzzles', requireAuth, async (c) => {
 						// Failed-reclaim lives only on the Worker path.
 						return c.json(stripIdempotencyKey(existing), 200);
 					}
-					// Reservation exists but metadata is missing (in-flight or
-					// orphaned). Do not invent a response body.
-					//
-					// NOTE: this Bun path always returns 409, while the Worker path
-					// (admin.worker.ts) distinguishes 409 (pending) from reclaim
-					// (committed-but-missing). The filesystem reservation
-					// (reserveIdempotencyKey in storage.ts) stores only a flat
-					// puzzleId string with no lifecycle status, so the Bun runtime
-					// cannot tell pending from committed. Adding status tracking to
-					// the dev-only filesystem reservation is not worth the
-					// complexity; the Worker (production) path is the authoritative
-					// behavior. This divergence is dev-only and low-impact.
-					return c.json(
-						{
-							error: 'conflict',
-							message: 'A request with this Idempotency-Key is already in progress'
-						},
-						409
-					);
+					// Reservation maps to a missing puzzle. The prior create
+					// cleaned up its assets (deleteStoredPuzzle succeeded) but
+					// the reservation release failed (filesystem error), or the
+					// create is still in flight. The Bun filesystem reservation
+					// has no lifecycle status or TTL, so we can't distinguish
+					// "in-flight" from "orphaned" — but we can safely attempt
+					// reclaim: releaseIdempotencyKey is owner-checked (only
+					// deletes if the file still maps to this puzzleId), so a
+					// concurrent in-flight create is never clobbered. If the
+					// release succeeds, re-reserve with our UUID and build a
+					// replacement. If it fails (persistent filesystem error),
+					// signal transient so the client retries; the dev can
+					// manually remove the reservation file.
+					try {
+						await releaseIdempotencyKey(idempotencyKey, reserved.puzzleId);
+					} catch (releaseErr) {
+						console.error(
+							`Failed to release stale reservation for missing puzzle ${reserved.puzzleId}:`,
+							releaseErr
+						);
+						return c.json(
+							{
+								error: 'conflict',
+								message: 'A request with this Idempotency-Key is already in progress'
+							},
+							409
+						);
+					}
+					// Re-reserve. A concurrent retry may have already claimed
+					// the key; if so, defer to its puzzle.
+					const reclaimed = await reserveIdempotencyKey(idempotencyKey, id);
+					if (reclaimed.existing) {
+						const winner = await getPuzzle(reclaimed.puzzleId);
+						if (winner) {
+							return c.json(stripIdempotencyKey(winner), 200);
+						}
+						// Another caller also reclaimed and is still in flight.
+						return c.json(
+							{
+								error: 'conflict',
+								message: 'A request with this Idempotency-Key is already in progress'
+							},
+							409
+						);
+					}
+					id = reclaimed.puzzleId;
+					reservedIdempotencyKey = idempotencyKey;
+				} else {
+					id = reserved.puzzleId;
+					reservedIdempotencyKey = idempotencyKey;
 				}
-				id = reserved.puzzleId;
-				reservedIdempotencyKey = idempotencyKey;
 			} catch (error) {
 				console.error('Idempotency reserve failed:', error);
 				return c.json(

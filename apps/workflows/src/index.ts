@@ -27,7 +27,13 @@ import {
 	getLeftEdge
 } from '@perseus/types';
 import { createD1Db } from '@perseus/shared/d1';
-import { setPuzzleStatus, sniffImageType, parseImageDimensions } from '@perseus/shared';
+import {
+	setPuzzleStatus,
+	sniffImageType,
+	parseImageDimensions,
+	isWorkflowNotFoundError,
+	RESERVATION_PENDING_TTL_MS
+} from '@perseus/shared';
 import type { AppDb } from '@perseus/shared';
 import {
 	MAX_IMAGE_BYTES,
@@ -73,9 +79,6 @@ export interface Env {
 	PUZZLE_WORKFLOW: Workflow;
 	DB: D1Database;
 }
-
-/** Max age for a pending idempotency reservation before a later /reserve may reclaim it. */
-export const RESERVATION_PENDING_TTL_MS = 5 * 60 * 1000;
 
 type ReservationRecord = {
 	puzzleId: string;
@@ -440,11 +443,23 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 					const instance = await this.env.PUZZLE_WORKFLOW.get(preReserve.puzzleId);
 					workflowStatus = (await instance.status()).status;
 				} catch (wfErr) {
-					console.error(`Workflow liveness check failed for puzzle ${preReserve.puzzleId}:`, wfErr);
-					return Response.json(
-						{ message: 'Workflow liveness check failed; retry' },
-						{ status: 409 }
-					);
+					if (isWorkflowNotFoundError(wfErr)) {
+						// Instance never created — original died before/during
+						// PUZZLE_WORKFLOW.create. Treat as dead so the
+						// fail-the-reservation path below fires and a retry can
+						// reclaim the key. Without this, the reservation stays
+						// pending and every retry 409s until the 2h reaper runs.
+						workflowStatus = 'errored';
+					} else {
+						console.error(
+							`Workflow liveness check failed for puzzle ${preReserve.puzzleId}:`,
+							wfErr
+						);
+						return Response.json(
+							{ message: 'Workflow liveness check failed; retry' },
+							{ status: 409 }
+						);
+					}
 				}
 				if (
 					workflowStatus === 'errored' ||
@@ -528,7 +543,8 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 				return {
 					existing: true as const,
 					puzzleId: reservation.puzzleId,
-					status: reservation.status
+					status: reservation.status,
+					...(reservation.reservedAt !== undefined ? { reservedAt: reservation.reservedAt } : {})
 				};
 			}
 			const next: ReservationRecord = {
