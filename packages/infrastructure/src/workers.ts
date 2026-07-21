@@ -258,7 +258,12 @@ export function createApiWorker(
 	bindings: WorkerBindings,
 	assets: AssetsConfig | undefined,
 	workflowsWorker: { workerName: string; version: cloudflare.WorkerVersion }
-): { worker: cloudflare.Worker; version: cloudflare.WorkerVersion; workerName: string } {
+): {
+	worker: cloudflare.Worker;
+	version: cloudflare.WorkerVersion;
+	workerName: string;
+	cronTrigger: cloudflare.WorkersCronTrigger;
+} {
 	const distDir = path.dirname(paths.apiWorker);
 	const mainModule = path.basename(paths.apiWorker);
 	const scriptBindings = buildVersionBindings(bindings);
@@ -340,7 +345,24 @@ export function createApiWorker(
 		{ dependsOn: version }
 	);
 
-	return { worker, version, workerName: naming.workerApi };
+	// Cron trigger for the stuck-puzzle reaper (scheduled handler in
+	// worker.ts). Pulumi is the source of truth for production Worker
+	// config — the [triggers] block in wrangler.production.toml is only
+	// read by `wrangler dev`/manual operator commands, not by the Pulumi
+	// deploy, so without this resource the production Worker has no
+	// scheduled trigger and the reaper never runs. Keep the cron
+	// expression in sync with wrangler.production.toml's [triggers].crons.
+	const cronTrigger = new cloudflare.WorkersCronTrigger(
+		'api-worker-cron-trigger',
+		{
+			accountId: accountId,
+			scriptName: naming.workerApi,
+			schedules: [{ cron: '0 * * * *' }]
+		},
+		{ dependsOn: deployment }
+	);
+
+	return { worker, version, workerName: naming.workerApi, cronTrigger };
 }
 
 export function createWorkerRoute(

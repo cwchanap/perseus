@@ -5,7 +5,8 @@ vi.mock('../storage.worker', () => ({
 	deletePuzzleAssets: vi.fn(),
 	deletePuzzleMetadata: vi.fn(),
 	getPuzzle: vi.fn(),
-	listPuzzles: vi.fn()
+	listPuzzles: vi.fn(),
+	releaseIdempotencyKey: vi.fn()
 }));
 
 vi.mock('../../db.worker', () => ({
@@ -25,9 +26,12 @@ import {
 	deletePuzzleAssets,
 	deletePuzzleMetadata,
 	getPuzzle,
-	listPuzzles
+	listPuzzles,
+	releaseIdempotencyKey
 } from '../storage.worker';
 import { deletePuzzleOwnership } from '@perseus/shared';
+
+void releaseIdempotencyKey;
 
 const NOW = 1700000000000;
 

@@ -303,6 +303,28 @@ export async function uploadWithRetry(
 }
 
 /**
+ * Run an Access credential probe and throw FatalError on any non-ok outcome.
+ * Centralizes the blocked/unhealthy/error branching that was previously
+ * copy-pasted between this file's `resolveAndProbeAccess` and the single-
+ * puzzle CLI's copy (scripts/admin-upload-puzzle.ts). Callers keep their own
+ * error-message text (help instructions differ between the two CLIs); this
+ * helper owns the decision structure so the two paths can't drift in
+ * behavior — only one place decides which outcomes are fatal.
+ */
+export async function throwOnProbeFailure(
+	probe: Promise<AccessProbeOutcome> | AccessProbeOutcome,
+	messages: { blocked: string; unhealthy: string; error: string }
+): Promise<void> {
+	const outcome = await probe;
+	if (outcome === 'blocked' || outcome === 'unhealthy' || outcome === 'error') {
+		throw new FatalError(messages[outcome]);
+	}
+}
+
+/** Outcome of an Access credential probe. Mirrors probeAccessToken/probeServiceToken. */
+export type AccessProbeOutcome = 'ok' | 'blocked' | 'unhealthy' | 'error';
+
+/**
  * Resolve and probe Cloudflare Access credentials. Mutates options.cfAccessToken
  * if a JWT is resolved from cache/cloudflared. Throws FatalError on any auth
  * failure so the upload aborts before wasting network round-trips.
@@ -349,26 +371,18 @@ Or add those two keys to apps/api/.env, then:
 	const hasServiceToken = !!(options.cfClientId && options.cfClientSecret);
 
 	if (options.cfAccessToken && !hasServiceToken) {
-		const probe = await probeAccessToken(options.server, options.cfAccessToken);
-		if (probe === 'blocked') {
-			throw new FatalError(
+		await throwOnProbeFailure(probeAccessToken(options.server, options.cfAccessToken), {
+			blocked:
 				'Access JWT is present but rejected by Cloudflare Access (302/403).\n' +
-					'Run: bun run admin:startup:set-token'
-			);
-		}
-		if (probe === 'unhealthy') {
-			throw new FatalError(
+				'Run: bun run admin:startup:set-token',
+			unhealthy:
 				'Access accepted the JWT, but the backend returned 5xx.\n' +
-					'The API is unhealthy — uploads will fail. Investigate the backend before retrying.'
-			);
-		}
-		if (probe === 'error') {
-			throw new FatalError(
+				'The API is unhealthy — uploads will fail. Investigate the backend before retrying.',
+			error:
 				'Access JWT probe failed (network error or unexpected response).\n' +
-					'Cannot verify Access credentials — aborting to avoid a doomed upload.\n' +
-					'Check network connectivity and retry, or run: bun run admin:startup:set-token'
-			);
-		}
+				'Cannot verify Access credentials — aborting to avoid a doomed upload.\n' +
+				'Check network connectivity and retry, or run: bun run admin:startup:set-token'
+		});
 	}
 
 	// Live smoke check for the service-token path (the primary CI method).
@@ -377,31 +391,22 @@ Or add those two keys to apps/api/.env, then:
 	// this, an expired/invalid CF-Access-Client-Id/Secret pair only surfaces as
 	// an opaque login failure after the upload has already started.
 	if (hasServiceToken) {
-		const probe = await probeServiceToken(
-			options.server,
-			options.cfClientId!,
-			options.cfClientSecret!
-		);
-		if (probe === 'blocked') {
-			throw new FatalError(
-				'Cloudflare Access service token rejected (302/403).\n' +
+		await throwOnProbeFailure(
+			probeServiceToken(options.server, options.cfClientId!, options.cfClientSecret!),
+			{
+				blocked:
+					'Cloudflare Access service token rejected (302/403).\n' +
 					'Check CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET are valid and not expired.\n' +
-					'To rotate: see "CLI Service Token Rotation" in packages/infrastructure/README.md.'
-			);
-		}
-		if (probe === 'unhealthy') {
-			throw new FatalError(
-				'Access accepted the service token, but the backend returned 5xx.\n' +
-					'The API is unhealthy — uploads will fail. Investigate the backend before retrying.'
-			);
-		}
-		if (probe === 'error') {
-			throw new FatalError(
-				'Access service token probe failed (network error or unexpected response).\n' +
+					'To rotate: see "CLI Service Token Rotation" in packages/infrastructure/README.md.',
+				unhealthy:
+					'Access accepted the service token, but the backend returned 5xx.\n' +
+					'The API is unhealthy — uploads will fail. Investigate the backend before retrying.',
+				error:
+					'Access service token probe failed (network error or unexpected response).\n' +
 					'Cannot verify Access credentials — aborting to avoid a doomed upload.\n' +
 					'Check network connectivity and retry.'
-			);
-		}
+			}
+		);
 	}
 }
 

@@ -2,7 +2,12 @@
 
 import { basename, extname, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { accessHeaders, hasAccessCredentials, sessionCookieFrom } from './startup/upload';
+import {
+	accessHeaders,
+	hasAccessCredentials,
+	sessionCookieFrom,
+	throwOnProbeFailure
+} from './startup/upload';
 import {
 	resolveAccessToken,
 	probeAccessToken,
@@ -165,51 +170,34 @@ For local API, use --skip-access or a localhost --server URL.`);
 	}
 
 	if (options.cfAccessToken && !hasServiceToken) {
-		const probe = await probeAccessToken(options.server, options.cfAccessToken);
-		if (probe === 'blocked') {
-			throw new FatalError(
+		await throwOnProbeFailure(probeAccessToken(options.server, options.cfAccessToken), {
+			blocked:
 				'Access JWT is present but rejected by Cloudflare Access (302/403).\n' +
-					'Run: bun run admin:startup:set-token'
-			);
-		}
-		if (probe === 'unhealthy') {
-			throw new FatalError(
+				'Run: bun run admin:startup:set-token',
+			unhealthy:
 				'Access accepted the JWT, but the backend returned 5xx.\n' +
-					'The API is unhealthy — uploads will fail. Investigate the backend before retrying.'
-			);
-		}
-		if (probe === 'error') {
-			throw new FatalError(
+				'The API is unhealthy — uploads will fail. Investigate the backend before retrying.',
+			error:
 				'Access JWT probe failed (network error or unexpected response).\n' +
-					'Cannot verify Access credentials — aborting.'
-			);
-		}
+				'Cannot verify Access credentials — aborting.'
+		});
 	}
 
 	if (hasServiceToken) {
-		const probe = await probeServiceToken(
-			options.server,
-			options.cfClientId!,
-			options.cfClientSecret!
-		);
-		if (probe === 'blocked') {
-			throw new FatalError(
-				'Cloudflare Access service token rejected (302/403).\n' +
-					'Check CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET are valid and not expired.'
-			);
-		}
-		if (probe === 'unhealthy') {
-			throw new FatalError(
-				'Access accepted the service token, but the backend returned 5xx.\n' +
-					'The API is unhealthy — uploads will fail. Investigate the backend before retrying.'
-			);
-		}
-		if (probe === 'error') {
-			throw new FatalError(
-				'Access service token probe failed (network error or unexpected response).\n' +
+		await throwOnProbeFailure(
+			probeServiceToken(options.server, options.cfClientId!, options.cfClientSecret!),
+			{
+				blocked:
+					'Cloudflare Access service token rejected (302/403).\n' +
+					'Check CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET are valid and not expired.',
+				unhealthy:
+					'Access accepted the service token, but the backend returned 5xx.\n' +
+					'The API is unhealthy — uploads will fail. Investigate the backend before retrying.',
+				error:
+					'Access service token probe failed (network error or unexpected response).\n' +
 					'Cannot verify Access credentials — aborting.'
-			);
-		}
+			}
+		);
 	}
 }
 

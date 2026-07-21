@@ -218,11 +218,14 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 		return c.json({ error: 'internal_error', message: 'Failed to store avatar' }, 500);
 	}
 	// Best-effort cleanup of the staging object. If this delete fails the
-	// staging key will linger until the next upload or a periodic sweep; it
-	// is not reachable by the serve route (which reads only the live key).
-	// Swallow transient failures so a cleanup error does not turn an already-
-	// successful upload (live R2 object + DB override in place) into a 500
-	// before the success response and rate-limit reset reach the client.
+	// staging key lingers (it is not reachable by the serve route, which
+	// reads only the live key, so this is a storage-cost concern, not a
+	// correctness one). There is no automated sweep — see
+	// docs/OPERATOR_RUNBOOK.md §6 "Out of scope: avatar staging orphans" for
+	// manual cleanup. Swallow transient failures so a cleanup error does not
+	// turn an already-successful upload (live R2 object + DB override in
+	// place) into a 500 before the success response and rate-limit reset
+	// reach the client.
 	await c.env.PUZZLES_BUCKET.delete(stagingKey).catch((err) => {
 		console.error('Failed to clean up staging avatar object:', err);
 	});

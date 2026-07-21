@@ -6,7 +6,7 @@
  * circular dependency on the 1000-line entry file.
  */
 
-import { MAX_FILE_SIZE } from '@perseus/types';
+import { MAX_FILE_SIZE, type PuzzleAspectRatio } from '@perseus/types';
 
 // Deployment-specific defaults. Override via env vars for non-default deployments:
 //   PERSEUS_SERVER  — API base URL (default: https://perseus.cwchanap.dev)
@@ -134,7 +134,8 @@ export interface CatalogEntry {
 	id: string;
 	name: string;
 	category: string;
-	aspectRatio: string;
+	/** Validated to one of PUZZLE_ASPECT_RATIOS by validateCatalog. */
+	aspectRatio: PuzzleAspectRatio;
 	pieceCount: number;
 }
 

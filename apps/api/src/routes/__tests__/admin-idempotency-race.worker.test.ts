@@ -129,12 +129,21 @@ describe('Admin Worker idempotency reclaim races', () => {
 			});
 		vi.mocked(storage.getPuzzle)
 			.mockResolvedValueOnce({ id: 'failed-puzzle', status: 'failed' } as any)
-			.mockResolvedValueOnce({ id: 'winner-puzzle', status: 'processing' } as any);
+			.mockResolvedValueOnce({
+				id: 'winner-puzzle',
+				status: 'processing',
+				idempotencyKey: 'race-key'
+			} as any);
 
 		const response = await admin.fetch(createRequest('race-key'), createEnv() as any);
 
 		expect(response.status).toBe(200);
-		expect(await response.json()).toMatchObject({ id: 'winner-puzzle', status: 'processing' });
+		const body = await response.json();
+		expect(body).toMatchObject({ id: 'winner-puzzle', status: 'processing' });
+		// Regression: idempotencyKey is a server-side dedup secret and must
+		// never leak in the 200 reclaim-winner response (the 201 path already
+		// stripped it; this branch was missed).
+		expect(body).not.toHaveProperty('idempotencyKey');
 		expect(storage.uploadOriginalImage).not.toHaveBeenCalled();
 	});
 

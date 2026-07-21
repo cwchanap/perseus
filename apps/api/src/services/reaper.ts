@@ -25,9 +25,20 @@
 // catch up. If KV never catches up, operator force-delete is the escape
 // hatch (see docs/OPERATOR_RUNBOOK.md).
 
-import { deletePuzzleAssets, deletePuzzleMetadata, getPuzzle, listPuzzles } from './storage.worker';
+import {
+	deletePuzzleAssets,
+	deletePuzzleMetadata,
+	getPuzzle,
+	listPuzzles,
+	releaseIdempotencyKey
+} from './storage.worker';
 import { getWorkerDb } from '../db.worker';
 import { deletePuzzleOwnership } from '@perseus/shared';
+import {
+	isAliveWorkflowStatus,
+	isDeadWorkflowStatus,
+	isWorkflowNotFoundError
+} from './workflow-status';
 import type { Env } from '../worker';
 
 /** Reap puzzles stuck in processing for longer than this. */
@@ -101,21 +112,25 @@ export async function reapStuckPuzzles(env: Env, now = Date.now()): Promise<Reap
 					const instance = await env.PUZZLE_WORKFLOW.get(puzzle.id);
 					workflowStatus = (await instance.status()).status;
 				} catch (wfErr) {
-					// If we can't reach the workflow API, skip — don't reap
-					// a puzzle whose workflow might still be running.
-					console.error(`Reaper: workflow status check failed for ${puzzle.id}, skipping:`, wfErr);
-					result.errors++;
-					result.details.push({
-						puzzleId: puzzle.id,
-						action: 'skip',
-						error: 'workflow status check failed'
-					});
-					return;
-				}
-
-				if (workflowStatus === 'running') {
-					// Workflow is still alive — don't reap.
-					return;
+					// A not-found error means the instance was never created (or
+					// was deleted) — the puzzle is orphaned, so reap it. Other
+					// errors are transient (workflow API unreachable); skip to
+					// avoid reaping a puzzle whose workflow might still be live.
+					if (isWorkflowNotFoundError(wfErr)) {
+						workflowStatus = 'unknown';
+					} else {
+						console.error(
+							`Reaper: workflow status check failed for ${puzzle.id}, skipping:`,
+							wfErr
+						);
+						result.errors++;
+						result.details.push({
+							puzzleId: puzzle.id,
+							action: 'skip',
+							error: 'workflow status check failed'
+						});
+						return;
+					}
 				}
 
 				// 'complete' means every workflow step succeeded, including
@@ -134,15 +149,18 @@ export async function reapStuckPuzzles(env: Env, now = Date.now()): Promise<Reap
 					return;
 				}
 
+				// Any other non-terminal active status (queued, running,
+				// paused, waiting, waitingForPause, rollingBack) means the
+				// workflow may still make progress — don't reap.
+				if (isAliveWorkflowStatus(workflowStatus)) {
+					// Workflow is still alive — don't reap.
+					return;
+				}
+
 				// Workflow is dead (errored, terminated, or unknown/never-
 				// created). Reap it.
-				const isDead =
-					workflowStatus === 'errored' ||
-					workflowStatus === 'terminated' ||
-					workflowStatus === 'unknown';
-
-				if (!isDead) {
-					// Unknown status string — skip to be safe.
+				if (!isDeadWorkflowStatus(workflowStatus)) {
+					// Unrecognized status string — skip to be safe.
 					console.warn(
 						`Reaper: unrecognized workflow status '${workflowStatus}' for ${puzzle.id}, skipping`
 					);
@@ -190,6 +208,30 @@ export async function reapStuckPuzzles(env: Env, now = Date.now()): Promise<Reap
 						puzzleId: puzzle.id,
 						action: 'reaped'
 					});
+
+					// Best-effort DO idempotency reservation release. Without
+					// this, a reaped puzzle leaves its reservation pointing at
+					// the dead puzzleId indefinitely — a same-key re-upload
+					// would reclaim into a 404 and require a second reap pass.
+					// Only puzzles created with an Idempotency-Key header
+					// carry meta.idempotencyKey. Best-effort: a DO failure is
+					// logged, not fatal — the reservation TTL (if any) and
+					// operator force-release are the backstops.
+					if (meta.idempotencyKey) {
+						try {
+							await releaseIdempotencyKey(env.PUZZLE_METADATA_DO, meta.idempotencyKey, puzzle.id);
+						} catch (releaseErr) {
+							console.error(
+								`Reaper: failed to release DO reservation for ${puzzle.id}:`,
+								releaseErr
+							);
+							result.details.push({
+								puzzleId: puzzle.id,
+								action: 'do-release-failed',
+								error: String(releaseErr)
+							});
+						}
+					}
 				} else {
 					console.error(`Reaper: failed to delete KV metadata for ${puzzle.id}:`, kvResult.error);
 					result.errors++;

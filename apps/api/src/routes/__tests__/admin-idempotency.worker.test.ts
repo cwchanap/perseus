@@ -202,6 +202,82 @@ describe('Admin Worker idempotency recovery', () => {
 		});
 	});
 
+	it.each(['queued', 'paused', 'waiting', 'waitingForPause', 'rollingBack'])(
+		'treats a %s workflow as alive and commits the pending reservation instead of reclaiming',
+		async (status) => {
+			vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
+				existing: true,
+				puzzleId: 'live-puzzle',
+				status: 'pending'
+			});
+			vi.mocked(storage.getPuzzle).mockResolvedValue({
+				id: 'live-puzzle',
+				name: 'Live Puzzle',
+				pieceCount: 225,
+				status: 'processing',
+				aspectRatio: '1:1',
+				gridCols: 15,
+				gridRows: 15,
+				imageWidth: 3840,
+				imageHeight: 3840,
+				createdAt: 1700000000000,
+				pieces: [],
+				version: 1,
+				progress: { totalPieces: 225, generatedPieces: 0, updatedAt: 1700000000000 }
+			} as any);
+			const workflow = createWorkflow(status);
+
+			const response = await admin.fetch(createRequest('live-key'), createEnv(workflow) as any);
+
+			expect(response.status).toBe(200);
+			expect(workflow.get).toHaveBeenCalledWith('live-puzzle');
+			expect(storage.commitIdempotencyKey).toHaveBeenCalledWith(
+				expect.anything(),
+				'live-key',
+				'live-puzzle'
+			);
+			expect(storage.failIdempotencyKey).not.toHaveBeenCalled();
+			expect(workflow.create).not.toHaveBeenCalled();
+		}
+	);
+
+	it('reclaims a pending reservation when the workflow instance does not exist (not_found)', async () => {
+		vi.mocked(storage.reserveIdempotencyKey)
+			.mockResolvedValueOnce({
+				existing: true,
+				puzzleId: 'orphaned-puzzle',
+				status: 'pending'
+			})
+			.mockResolvedValueOnce({
+				existing: false,
+				puzzleId: 'replacement-puzzle',
+				status: 'pending'
+			});
+		vi.mocked(storage.getPuzzle).mockResolvedValue({
+			id: 'orphaned-puzzle',
+			status: 'processing'
+		} as any);
+		// Cloudflare's WorkflowBinding.get() throws an error whose code is
+		// `instance.not_found` when the instance was never created.
+		const notFoundError = new Error('instance.not_found');
+		(notFoundError as any).code = 'instance.not_found';
+		const workflow = createWorkflow(notFoundError);
+
+		const response = await admin.fetch(createRequest('orphan-key'), createEnv(workflow) as any);
+
+		expect(response.status).toBe(201);
+		expect(workflow.get).toHaveBeenCalledWith('orphaned-puzzle');
+		expect(storage.failIdempotencyKey).toHaveBeenCalledWith(
+			expect.anything(),
+			'orphan-key',
+			'orphaned-puzzle'
+		);
+		expect(workflow.create).toHaveBeenCalledWith({
+			id: 'replacement-puzzle',
+			params: { puzzleId: 'replacement-puzzle' }
+		});
+	});
+
 	it('returns a transient conflict when workflow liveness cannot be checked', async () => {
 		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
 			existing: true,

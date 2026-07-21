@@ -566,6 +566,31 @@ describe('parseImageDimensions', () => {
 		expect(await parseImageDimensions(blob, 'image/jpeg')).toBeNull();
 	});
 
+	it('returns null when JPEG SOF scan exceeds the iteration cap (DoS guard)', async () => {
+		// The byte cap alone does not bound CPU: a stream of 2-byte standalone
+		// markers (FF D0 RST0) under the 2 MiB cap would still spin ~1M loop
+		// iterations. The iteration cap (SOF_ITERATION_LIMIT = 10_000) bails
+		// early. Build a JPEG of 10_001 RST0 markers (well under the byte cap)
+		// followed by a valid SOF0 — the scanner must bail before reaching
+		// SOF0 on iteration count alone.
+		const sof0 = [
+			0xff, 0xc0, 0x00, 0x11, 0x08, 0x01, 0x2c, 0x04, 0xb0, 0x03, 0x01, 0x22, 0x00, 0x02, 0x11,
+			0x01, 0x03, 0x11, 0x01
+		];
+		const rstPairs = 10_001; // one past the cap; total bytes = 2 + 20002 = ~20 KiB (well under byte cap)
+		const totalSize = 2 + rstPairs * 2 + sof0.length;
+		const bytes = new Uint8Array(totalSize);
+		bytes[0] = 0xff;
+		bytes[1] = 0xd8; // SOI
+		for (let i = 0; i < rstPairs; i++) {
+			bytes[2 + i * 2] = 0xff;
+			bytes[2 + i * 2 + 1] = 0xd0; // RST0 (standalone, no payload)
+		}
+		bytes.set(sof0, 2 + rstPairs * 2);
+		const blob = makeBlob(bytes);
+		expect(await parseImageDimensions(blob, 'image/jpeg')).toBeNull();
+	});
+
 	it('parses JPEG dimensions after multiple APP segments with fill bytes', async () => {
 		// SOI + APP0 + APP1 + fill bytes + SOF0 — combines incremental reading
 		// (two APP segments) with fill-byte consumption in a single scan.

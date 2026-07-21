@@ -149,8 +149,13 @@ a puzzle create dies mid-flight or a workflow errors/terminates.
 
 **Threshold:** Puzzles stuck in `processing` status for > 2 hours are
 candidates. The reaper checks the workflow status; if the workflow is
-dead (`errored`, `terminated`, `unknown`, or `complete` with metadata still
-`processing`), it deletes the KV metadata and R2 original image.
+dead (`errored`, `terminated`, or `unknown`/never-created), it deletes the
+KV metadata, R2 assets, D1 ownership row, and (best-effort) the DO
+idempotency reservation. A workflow in `complete` status is explicitly
+**skipped** — `complete` means every step succeeded including finalize, so
+a KV read that still shows `processing` is eventual-consistency lag, not an
+orphan. Reaping would destroy a valid completed puzzle. If KV never catches
+up, operator force-delete (§7) is the escape hatch.
 
 **Safety:**
 
@@ -165,6 +170,24 @@ logs `scanned`, `candidates`, `reaped`, and `errors` counts.
 
 **Source:** `apps/api/src/services/reaper.ts`,
 `apps/api/src/worker.ts` (scheduled handler).
+
+### Out of scope: avatar staging orphans
+
+The reaper does **not** sweep avatar staging objects (`avatars/staging/<uid>/<uuid>`).
+Each player-avatar upload writes to a staging key, then on success best-effort
+deletes it (`player.worker.ts`). If that delete fails transiently the staging
+object lingers — it is not reachable by the avatar serve route (which reads
+only the live key), so this is a storage-cost concern, not a correctness or
+security concern. There is **no automated sweep**; staging orphans accumulate
+until the next successful upload by the same user (which overwrites nothing —
+each staging key is per-upload-unique) or manual cleanup:
+
+```sh
+wrangler r2 object list PUZZLES_BUCKET --prefix 'avatars/staging/' | \
+  awk '{print $4}' | xargs -I{} wrangler r2 object delete PUZZLES_BUCKET/{}
+```
+
+Run this only if R2 listing shows staging orphans have become material.
 
 ---
 
@@ -215,27 +238,7 @@ full analysis in `packages/infrastructure/src/admin-access.ts` (the
 
 ---
 
-## 9. Legacy `reservedPuzzleId` Key Removal
-
-The `PuzzleMetadataDO` keeps a legacy `reservedPuzzleId` (plain string) in
-sync alongside the new `reservation` object for backward compatibility
-during rollout. The `reservation` object is the source of truth.
-
-**Removal plan (TODO: legacy-cleanup):**
-
-1. Confirm all DO instances have been restarted on code that reads the
-   `reservation` object.
-2. Remove every `reservedPuzzleId` put/delete in `apps/workflows/src/index.ts`.
-3. Delete the legacy read fallback in `readReservation`.
-4. Safe to drop after one full DO restart cycle with no rollbacks to
-   pre-reservation code.
-
-**Source:** `apps/workflows/src/index.ts` (TODO comments at the first
-`reservedPuzzleId` put and the `readReservation` fallback).
-
----
-
-## 10. Idempotency Key Handling
+## 9. Idempotency Key Handling
 
 - The `Idempotency-Key` header is a server-side dedup secret. It is never
   exposed on public puzzle reads (`stripIdempotencyKey` in

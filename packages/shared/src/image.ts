@@ -118,9 +118,20 @@ export async function parseImageDimensions(
 			// which no real encoder produces. Bail to null (callers reject)
 			// rather than throwing so the untrusted route returns 400, not 500.
 			const SOF_SCAN_LIMIT = 2 * 1024 * 1024;
+			// Secondary cap on iteration count. The byte cap bounds data scanned
+			// but not loop iterations: a crafted stream of 2-byte standalone
+			// markers (FF D0 RST0 … FF D7 RST7, FF 01 TEM) advances only 2 bytes
+			// per loop turn, so 2 MiB permits ~1M iterations of mostly-sync
+			// work — enough to exhaust a Workers CPU budget even though the data
+			// fits the byte cap. Legitimate JPEGs reach SOF in well under 500
+			// iterations even with large ICC/EXIF segments (~30 max-length APP
+			// segments is the extreme), so 10_000 is ~20x headroom and still
+			// only a few ms of CPU.
+			const SOF_ITERATION_LIMIT = 10_000;
 			const CHUNK_SIZE = 64 * 1024;
 			let pos = 2; // absolute file offset, skip FF D8 SOI
 			let bufStart = 0;
+			let iterations = 0;
 			let buf = new Uint8Array(await file.slice(0, Math.min(file.size, CHUNK_SIZE)).arrayBuffer());
 
 			// Refill buf so that pos is within the buffer; returns false at EOF.
@@ -142,6 +153,10 @@ export async function parseImageDimensions(
 			while (true) {
 				// Bail beyond the scan cap — see SOF_SCAN_LIMIT rationale above.
 				if (pos > SOF_SCAN_LIMIT) return null;
+				// Secondary defense: cap iterations so a tiny-marker flood
+				// can't spin ~1M times within the byte cap. See
+				// SOF_ITERATION_LIMIT rationale above.
+				if (++iterations > SOF_ITERATION_LIMIT) return null;
 				// Expect 0xFF marker prefix
 				if (!(await ensure(1))) break;
 				if (buf[pos - bufStart] !== 0xff) break;

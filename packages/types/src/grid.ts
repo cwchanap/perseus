@@ -21,7 +21,7 @@ export const ASPECT_RATIO_TOLERANCE = 0.05; // 5%
 export function aspectRatiosMatch(
 	imageWidth: number,
 	imageHeight: number,
-	targetRatio: string | PuzzleAspectRatio
+	targetRatio: PuzzleAspectRatio
 ): boolean {
 	const parts = targetRatio.split(':').map(Number);
 	const targetW = parts[0];

@@ -7,7 +7,8 @@ vi.mock('../storage.worker', () => ({
 	deletePuzzleAssets: vi.fn(),
 	deletePuzzleMetadata: vi.fn(),
 	getPuzzle: vi.fn(),
-	listPuzzles: vi.fn()
+	listPuzzles: vi.fn(),
+	releaseIdempotencyKey: vi.fn()
 }));
 
 // Mock db.worker so the reaper's D1 ownership cleanup doesn't touch a real DB.
@@ -26,12 +27,19 @@ import {
 	deletePuzzleAssets,
 	deletePuzzleMetadata,
 	getPuzzle,
-	listPuzzles
+	listPuzzles,
+	releaseIdempotencyKey
 } from '../storage.worker';
 import { getWorkerDb } from '../../db.worker';
 import { deletePuzzleOwnership } from '@perseus/shared';
 
-const storage = { deletePuzzleAssets, deletePuzzleMetadata, getPuzzle, listPuzzles } as any;
+const storage = {
+	deletePuzzleAssets,
+	deletePuzzleMetadata,
+	getPuzzle,
+	listPuzzles,
+	releaseIdempotencyKey
+} as any;
 
 function makeEnv(workflowStatuses: Record<string, string> = {}) {
 	return {
@@ -148,6 +156,57 @@ describe('reapStuckPuzzles', () => {
 		expect(storage.deletePuzzleAssets).toHaveBeenCalledWith(env.PUZZLES_BUCKET, 'stuck-1', 100);
 		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'stuck-1');
 		expect(deletePuzzleOwnership).toHaveBeenCalledWith({}, 'stuck-1');
+		// Puzzles without an idempotencyKey must not trigger a DO release.
+		expect(storage.releaseIdempotencyKey).not.toHaveBeenCalled();
+	});
+
+	it('releases the DO reservation for a reaped puzzle that carries an idempotencyKey', async () => {
+		(storage.listPuzzles as any).mockResolvedValue({
+			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
+			invalidCount: 0
+		});
+		(storage.getPuzzle as any).mockResolvedValue({
+			id: 'stuck-1',
+			status: 'processing',
+			name: 'Puzzle stuck-1',
+			pieceCount: 100,
+			idempotencyKey: 'reap-key'
+		});
+		(storage.releaseIdempotencyKey as any).mockResolvedValue(undefined);
+		const env = makeEnv({ 'stuck-1': 'errored' });
+		const result = await reapStuckPuzzles(env, NOW);
+		expect(result.reaped).toBe(1);
+		// Regression: best-effort release after KV delete so the reservation
+		// doesn't dangle on the dead puzzleId forever.
+		expect(storage.releaseIdempotencyKey).toHaveBeenCalledWith(
+			env.PUZZLE_METADATA_DO,
+			'reap-key',
+			'stuck-1'
+		);
+	});
+
+	it('continues reaping when the DO reservation release throws (best-effort)', async () => {
+		(storage.listPuzzles as any).mockResolvedValue({
+			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
+			invalidCount: 0
+		});
+		(storage.getPuzzle as any).mockResolvedValue({
+			id: 'stuck-1',
+			status: 'processing',
+			name: 'Puzzle stuck-1',
+			pieceCount: 100,
+			idempotencyKey: 'reap-key'
+		});
+		(storage.releaseIdempotencyKey as any).mockRejectedValue(new Error('DO unavailable'));
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		const env = makeEnv({ 'stuck-1': 'errored' });
+		const result = await reapStuckPuzzles(env, NOW);
+		// KV delete still counts as reaped; DO release failure is logged,
+		// not fatal — operator force-release is the backstop.
+		expect(result.reaped).toBe(1);
+		expect(result.details).toContainEqual(
+			expect.objectContaining({ puzzleId: 'stuck-1', action: 'do-release-failed' })
+		);
 	});
 
 	it('reaps stuck processing puzzles whose workflow terminated', async () => {
@@ -298,11 +357,55 @@ describe('reapStuckPuzzles', () => {
 			name: 'Puzzle stuck-1',
 			pieceCount: 100
 		});
-		const env = makeEnv({ 'stuck-1': 'paused' });
+		const env = makeEnv({ 'stuck-1': 'flummoxed' });
 		const result = await reapStuckPuzzles(env, NOW);
 		expect(result.candidates).toBe(1);
 		expect(result.reaped).toBe(0);
 		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
+	});
+
+	it.each(['queued', 'paused', 'waiting', 'waitingForPause', 'rollingBack'])(
+		'skips puzzles whose workflow is in active status %s',
+		async (status) => {
+			(storage.listPuzzles as any).mockResolvedValue({
+				puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
+				invalidCount: 0
+			});
+			(storage.getPuzzle as any).mockResolvedValue({
+				id: 'stuck-1',
+				status: 'processing',
+				name: 'Puzzle stuck-1',
+				pieceCount: 100
+			});
+			const env = makeEnv({ 'stuck-1': status });
+			const result = await reapStuckPuzzles(env, NOW);
+			expect(result.candidates).toBe(1);
+			expect(result.reaped).toBe(0);
+			expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
+		}
+	);
+
+	it('reaps puzzles whose workflow instance was never created (not_found)', async () => {
+		(storage.listPuzzles as any).mockResolvedValue({
+			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
+			invalidCount: 0
+		});
+		(storage.getPuzzle as any).mockResolvedValue({
+			id: 'stuck-1',
+			status: 'processing',
+			name: 'Puzzle stuck-1',
+			pieceCount: 100
+		});
+		const env = makeEnv();
+		const notFoundError = new Error('instance.not_found');
+		(notFoundError as any).code = 'instance.not_found';
+		env.PUZZLE_WORKFLOW.get = vi.fn(() => {
+			throw notFoundError;
+		});
+		const result = await reapStuckPuzzles(env, NOW);
+		expect(result.candidates).toBe(1);
+		expect(result.reaped).toBe(1);
+		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'stuck-1');
 	});
 
 	it('counts errors when KV metadata deletion fails', async () => {

@@ -7,6 +7,7 @@ import {
 	MAX_PIECES,
 	PUZZLE_CATEGORIES,
 	ALLOWED_MIME_TYPES,
+	ErrorCode,
 	aspectRatiosMatch,
 	getGridDimensionsForAspectRatio,
 	isPuzzleAspectRatio,
@@ -16,6 +17,7 @@ import {
 } from '@perseus/types';
 import type { PuzzleCategory } from '@perseus/types';
 import type { Env, WorkflowBinding } from '../worker';
+import { isAliveWorkflowStatus, isWorkflowNotFoundError } from '../services/workflow-status';
 import {
 	commitIdempotencyKey,
 	createPuzzleMetadata,
@@ -94,12 +96,17 @@ async function withDbBestEffort(
 
 type ReclaimOutcome = { kind: 'won'; puzzleId: string } | { kind: 'return'; response: Response };
 
+// Canonical error-response helpers. Reference ErrorCode from @perseus/types
+// so the wire-format strings stay centralized — new codes go in the enum,
+// not invented at the call site. Remaining `{ error: '...' }` literals in
+// this file and across the API are migrated incrementally; the enum is the
+// source of truth going forward.
 function conflictResponse(message: string, status = 409): Response {
-	return Response.json({ error: 'conflict', message }, { status });
+	return Response.json({ error: ErrorCode.Conflict, message }, { status });
 }
 
 function internalErrorResponse(message: string): Response {
-	return Response.json({ error: 'internal_error', message }, { status: 500 });
+	return Response.json({ error: ErrorCode.InternalError, message }, { status: 500 });
 }
 
 /**
@@ -138,7 +145,12 @@ async function reclaimReservationOrFail(
 	// Someone else won the reclaim — check if their puzzle is live.
 	const raceExisting = await getPuzzle(kv, reclaimed.puzzleId);
 	if (raceExisting && raceExisting.status !== 'failed') {
-		return { kind: 'return', response: Response.json(raceExisting, { status: 200 }) };
+		// stripIdempotencyKey: idempotencyKey is a server-side dedup secret
+		// and must never leak in a response body (mirrors the 201 path below).
+		return {
+			kind: 'return',
+			response: Response.json(stripIdempotencyKey(raceExisting), { status: 200 })
+		};
 	}
 
 	if (allowNestedReclaim && raceExisting === null && reclaimed.status === 'committed') {
@@ -219,12 +231,17 @@ async function probeReleaseAndRereclaimOrFail(
  * retry) and reclaiming it (original died before/during the workflow —
  * committing would lock the key to a stuck puzzle).
  *
- * Returns 'alive' when the workflow is running or complete (complete means
- * finalize succeeded, so the DO has 'ready' — the puzzle is done, not
- * stuck), 'dead' when it errored/terminated/never-existed, or 'unknown'
- * when the workflow API could not be reached. Callers must treat 'unknown'
- * as transient (return 409) — committing on unknown could lock a stuck
- * puzzle, reclaiming on unknown could mint a duplicate of a live one.
+ * Returns 'alive' when the workflow is in any non-terminal active status
+ * (queued, running, paused, waiting, waitingForPause, rollingBack) or
+ * complete (finalize succeeded, so the DO has 'ready' — the puzzle is
+ * done, not stuck). Returns 'dead' when it errored/terminated, when the
+ * status string is the 'unknown' fallback, or when the instance was never
+ * created (Cloudflare throws `instance.not_found` — the original create
+ * died before PUZZLE_WORKFLOW.create, so the puzzle is orphaned, not
+ * transient). Returns 'unknown' only when the workflow API could not be
+ * reached. Callers must treat 'unknown' as transient (return 409) —
+ * committing on unknown could lock a stuck puzzle, reclaiming on unknown
+ * could mint a duplicate of a live one.
  */
 async function probeWorkflowLiveness(
 	workflow: WorkflowBinding,
@@ -233,10 +250,16 @@ async function probeWorkflowLiveness(
 	try {
 		const instance = await workflow.get(puzzleId);
 		const status = (await instance.status()).status;
-		if (status === 'running' || status === 'complete') return 'alive';
+		if (isAliveWorkflowStatus(status)) return 'alive';
 		// 'errored' | 'terminated' | 'unknown' | any other = original died.
 		return 'dead';
 	} catch (err) {
+		if (isWorkflowNotFoundError(err)) {
+			// Instance never created — original died before/during workflow
+			// creation. Reclaim so a retry builds a replacement instead of
+			// 409ing forever.
+			return 'dead';
+		}
 		console.error(`Workflow liveness probe failed for ${puzzleId}:`, err);
 		return 'unknown';
 	}
@@ -458,6 +481,20 @@ const IDEMPOTENCY_KV_RETRY_MS = 500;
 // as deleted. Global KV lag can exceed a single 500ms retry.
 const IDEMPOTENCY_KV_EXTRA_RETRIES = 3;
 const IDEMPOTENCY_KV_EXTRA_BASE_DELAY_MS = 250;
+// Cumulative wall-clock budget for all KV retries in this branch. Caps the
+// worst-case per-request stall at ~3s even if the constants above are bumped
+// in the future. Without this, bumping IDEMPOTENCY_KV_EXTRA_RETRIES would
+// multiply the stall exponentially (10 retries ≈ 258s).
+const IDEMPOTENCY_KV_RETRY_BUDGET_MS = 3000;
+
+/**
+ * Jittered delay: ±20% of baseMs. Prevents thundering-herd synchronized
+ * retries when many concurrent requests observe the same KV propagation lag
+ * and would otherwise retry on the exact same schedule.
+ */
+function jitteredDelay(baseMs: number): number {
+	return baseMs * (0.8 + Math.random() * 0.4);
+}
 
 // POST /api/admin/puzzles - Create new puzzle (protected)
 admin.post('/puzzles', requireAuth, async (c) => {
@@ -692,11 +729,24 @@ admin.post('/puzzles', requireAuth, async (c) => {
 					// KV propagation lag — retry with backoff before concluding
 					// the puzzle was deleted with a failed release.
 					if (!existing && reserved.status === 'committed') {
-						await new Promise((resolve) => setTimeout(resolve, IDEMPOTENCY_KV_RETRY_MS));
+						const retryStart = Date.now();
+						await new Promise((resolve) =>
+							setTimeout(resolve, jitteredDelay(IDEMPOTENCY_KV_RETRY_MS))
+						);
 						existing = await getPuzzle(c.env.PUZZLE_METADATA, reserved.puzzleId);
 						for (let attempt = 0; !existing && attempt < IDEMPOTENCY_KV_EXTRA_RETRIES; attempt++) {
+							// Cumulative budget cap — stop probing once we've spent
+							// the configured wall-clock budget, even if attempts
+							// remain. Without this, future bumps to the retry count
+							// could stall a request for tens of seconds.
+							if (Date.now() - retryStart >= IDEMPOTENCY_KV_RETRY_BUDGET_MS) {
+								break;
+							}
 							await new Promise((resolve) =>
-								setTimeout(resolve, IDEMPOTENCY_KV_EXTRA_BASE_DELAY_MS * 2 ** attempt)
+								setTimeout(
+									resolve,
+									jitteredDelay(IDEMPOTENCY_KV_EXTRA_BASE_DELAY_MS * 2 ** attempt)
+								)
 							);
 							existing = await getPuzzle(c.env.PUZZLE_METADATA, reserved.puzzleId);
 						}
@@ -822,7 +872,11 @@ admin.post('/puzzles', requireAuth, async (c) => {
 								}
 							}
 							if (!fallThroughToCreate) {
-								return c.json(existing, 200);
+								// stripIdempotencyKey: liveness=alive branch returns
+								// the live puzzle; the key is a server-side dedup
+								// secret and must not leak (matches 201 path and
+								// the reclaim race branch above).
+								return c.json(stripIdempotencyKey(existing), 200);
 							}
 							// Fall through to normal create flow.
 						}

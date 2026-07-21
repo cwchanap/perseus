@@ -134,7 +134,8 @@ describe('Admin Worker idempotency commit handling', () => {
 		});
 		vi.mocked(storage.getPuzzle).mockResolvedValue({
 			id: 'existing-puzzle',
-			status: 'processing'
+			status: 'processing',
+			idempotencyKey: 'alive-key'
 		} as any);
 		vi.mocked(storage.commitIdempotencyKey).mockRejectedValue(new Error('commit unavailable'));
 		vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -145,6 +146,10 @@ describe('Admin Worker idempotency commit handling', () => {
 		expect(response.status).toBe(200);
 		const body = (await response.json()) as any;
 		expect(body.id).toBe('existing-puzzle');
+		// Regression: idempotencyKey is a server-side dedup secret and must
+		// not leak in the liveness=alive 200 response (this branch was
+		// previously returning raw metadata).
+		expect(body.idempotencyKey).toBeUndefined();
 		expect(workflow.get).toHaveBeenCalledWith('existing-puzzle');
 		expect(storage.commitIdempotencyKey).toHaveBeenCalledWith(
 			expect.anything(),

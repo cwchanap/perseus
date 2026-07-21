@@ -23,6 +23,9 @@ export {
 } from './grid';
 export { isPuzzleAspectRatio };
 
+export { ErrorCode, ERROR_HTTP_STATUS } from './errors';
+export type { ApiErrorResponse } from './errors';
+
 export interface EdgeConfig {
 	top: EdgeType;
 	right: EdgeType;
