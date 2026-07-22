@@ -146,6 +146,31 @@ export async function getAuthoritativeStatus(
 	return result.status;
 }
 
+/**
+ * Tombstone the metadata DO for a puzzle. Called by the reaper after
+ * deleting KV and R2 assets to prevent in-flight workflow updates from
+ * resurrecting the puzzle in KV via the DO's KV sync. After this call,
+ * the DO's /update endpoint returns 404 (tombstoned).
+ */
+export async function deleteMetadataDO(
+	metadataDO: DurableObjectNamespace,
+	puzzleId: string
+): Promise<void> {
+	const id = metadataDO.idFromName(puzzleId);
+	const stub = metadataDO.get(id);
+	const response = await stub.fetch('https://puzzle-metadata/delete', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ puzzleId })
+	});
+	if (!response.ok) {
+		const payload = (await response.json().catch(() => null)) as { message?: string } | null;
+		throw new Error(
+			payload?.message ?? `Failed to delete metadata DO for ${puzzleId} (HTTP ${response.status})`
+		);
+	}
+}
+
 export type IdempotencyReservationStatus = 'pending' | 'committed' | 'failed' | 'released';
 
 /**

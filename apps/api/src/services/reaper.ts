@@ -27,6 +27,7 @@
 
 import {
 	deletePuzzleAssets,
+	deleteMetadataDO,
 	deletePuzzleMetadata,
 	getAuthoritativeStatus,
 	getPuzzle,
@@ -273,6 +274,26 @@ export async function reapStuckPuzzles(env: Env, now = Date.now()): Promise<Reap
 								error: String(releaseErr)
 							});
 						}
+					}
+
+					// Best-effort DO tombstone. Without this, an in-flight workflow
+					// update can read the DO-stored metadata (which the reaper did not
+					// clear) and write it back to KV via the DO's KV sync, resurrecting
+					// a puzzle whose R2 assets were already deleted. The tombstone makes
+					// the DO's /update return 404 so the workflow's updateMetadata calls
+					// fail fast. Best-effort: a DO failure is logged, not fatal — the
+					// workflow's update will still fail because R2 assets are gone, but
+					// a KV resurrection is possible if the DO is unreachable. The next
+					// reaper run will retry the tombstone.
+					try {
+						await deleteMetadataDO(env.PUZZLE_METADATA_DO, puzzle.id);
+					} catch (doErr) {
+						console.error(`Reaper: failed to tombstone metadata DO for ${puzzle.id}:`, doErr);
+						result.details.push({
+							puzzleId: puzzle.id,
+							action: 'do-tombstone-failed',
+							error: String(doErr)
+						});
 					}
 				} else {
 					console.error(`Reaper: failed to delete KV metadata for ${puzzle.id}:`, kvResult.error);

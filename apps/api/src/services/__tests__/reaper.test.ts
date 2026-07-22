@@ -5,6 +5,7 @@ import { reapStuckPuzzles, REAP_AFTER_MS } from '../reaper';
 // Mock storage.worker functions
 vi.mock('../storage.worker', () => ({
 	deletePuzzleAssets: vi.fn(),
+	deleteMetadataDO: vi.fn(),
 	deletePuzzleMetadata: vi.fn(),
 	getAuthoritativeStatus: vi.fn(),
 	getPuzzle: vi.fn(),
@@ -26,6 +27,7 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 // Import after mock so the reaper uses the mocked versions
 import {
 	deletePuzzleAssets,
+	deleteMetadataDO,
 	deletePuzzleMetadata,
 	getAuthoritativeStatus,
 	getPuzzle,
@@ -37,6 +39,7 @@ import { deletePuzzleOwnership } from '@perseus/shared';
 
 const storage = {
 	deletePuzzleAssets,
+	deleteMetadataDO,
 	deletePuzzleMetadata,
 	getAuthoritativeStatus,
 	getPuzzle,
@@ -573,5 +576,44 @@ describe('reapStuckPuzzles', () => {
 		expect(result.reaped).toBe(0);
 		expect(result.errors).toBe(1);
 		expect(result.details.some((d) => d.action === 'do-status-check-failed')).toBe(true);
+	});
+
+	it('calls deleteMetadataDO after reaping to tombstone the DO', async () => {
+		(storage.listPuzzles as any).mockResolvedValue({
+			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
+			invalidCount: 0
+		});
+		(storage.getPuzzle as any).mockResolvedValue({
+			id: 'stuck-1',
+			status: 'processing',
+			name: 'Puzzle stuck-1',
+			pieceCount: 100
+		});
+		(storage.getAuthoritativeStatus as any).mockResolvedValue('processing');
+		(storage.deleteMetadataDO as any).mockResolvedValue(undefined);
+		const env = makeEnv({ 'stuck-1': 'errored' });
+		const result = await reapStuckPuzzles(env, NOW);
+		expect(result.reaped).toBe(1);
+		expect(storage.deleteMetadataDO).toHaveBeenCalledWith(env.PUZZLE_METADATA_DO, 'stuck-1');
+	});
+
+	it('still counts as reaped when DO tombstone fails (best-effort)', async () => {
+		(storage.listPuzzles as any).mockResolvedValue({
+			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
+			invalidCount: 0
+		});
+		(storage.getPuzzle as any).mockResolvedValue({
+			id: 'stuck-1',
+			status: 'processing',
+			name: 'Puzzle stuck-1',
+			pieceCount: 100
+		});
+		(storage.getAuthoritativeStatus as any).mockResolvedValue('processing');
+		(storage.deleteMetadataDO as any).mockRejectedValue(new Error('DO unavailable'));
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		const env = makeEnv({ 'stuck-1': 'errored' });
+		const result = await reapStuckPuzzles(env, NOW);
+		expect(result.reaped).toBe(1);
+		expect(result.details.some((d) => d.action === 'do-tombstone-failed')).toBe(true);
 	});
 });

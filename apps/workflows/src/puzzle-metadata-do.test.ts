@@ -1311,3 +1311,63 @@ describe('PuzzleMetadataDO.fetch - /commit /fail /release transition edge cases'
 		expect(storage.put).not.toHaveBeenCalledWith('reservation', expect.anything());
 	});
 });
+
+describe('PuzzleMetadataDO.fetch - /delete (tombstone)', () => {
+	it('sets a tombstone via /delete and rejects subsequent /update calls', async () => {
+		const { durableObj, storage } = makeDO({
+			metadata: { ...baseMetadata, status: 'processing' }
+		});
+
+		// Delete the puzzle's metadata in the DO
+		const deleteRes = await durableObj.fetch(
+			new Request('https://puzzle-metadata/delete', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ puzzleId: 'test-puzzle' })
+			})
+		);
+		expect(deleteRes.status).toBe(200);
+
+		// Subsequent update should be rejected (tombstoned)
+		const updateRes = await durableObj.fetch(
+			new Request('https://puzzle-metadata/update', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					puzzleId: 'test-puzzle',
+					updates: { status: 'ready' }
+				})
+			})
+		);
+		expect(updateRes.status).toBe(404);
+		const updateBody = await updateRes.json();
+		expect(updateBody.message).toContain('deleted');
+	});
+
+	it('rejects /delete when puzzleId does not match DO identity', async () => {
+		const { durableObj } = makeDO({
+			puzzleId: 'test-puzzle',
+			metadata: baseMetadata
+		});
+		const res = await durableObj.fetch(
+			new Request('https://puzzle-metadata/delete', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ puzzleId: 'wrong-puzzle' })
+			})
+		);
+		expect(res.status).toBe(403);
+	});
+
+	it('allows /delete when DO has no metadata (idempotent tombstone)', async () => {
+		const { durableObj } = makeDO({});
+		const res = await durableObj.fetch(
+			new Request('https://puzzle-metadata/delete', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ puzzleId: 'test-puzzle' })
+			})
+		);
+		expect(res.status).toBe(200);
+	});
+});

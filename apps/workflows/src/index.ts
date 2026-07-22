@@ -126,6 +126,9 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 		if (url.pathname === '/status') {
 			return this.handleStatus(request);
 		}
+		if (url.pathname === '/delete') {
+			return this.handleDelete(request);
+		}
 
 		if (url.pathname !== '/update') {
 			return new Response('Not found', { status: 404 });
@@ -158,6 +161,19 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 			return Response.json(
 				{ message: 'Puzzle ID mismatch: request puzzleId does not match DO identity' },
 				{ status: 403 }
+			);
+		}
+
+		// Reject updates to a tombstoned (reaped) puzzle. The reaper calls
+		// /delete after cleaning up KV and R2 assets; without this check, an
+		// in-flight workflow update would read the DO-stored metadata (or KV
+		// fallback), merge the update, write back to DO storage, and sync to
+		// KV — resurrecting a puzzle whose R2 assets were already deleted.
+		const isDeleted = await this.ctx.storage.get<boolean>('deleted');
+		if (isDeleted) {
+			return Response.json(
+				{ message: `Puzzle ${puzzleId} has been deleted (tombstoned); refusing update` },
+				{ status: 404 }
 			);
 		}
 
@@ -708,6 +724,49 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 			);
 		}
 		return Response.json({ status: stored.status });
+	}
+
+	/**
+	 * Tombstone the DO's metadata and clear storage. Called by the reaper
+	 * after deleting KV and R2 assets to prevent in-flight workflow updates
+	 * from resurrecting the puzzle in KV via the DO's KV sync. After this,
+	 * /update returns 404 (tombstoned) so the workflow's updateMetadata
+	 * calls fail fast instead of writing stale data back to KV.
+	 *
+	 * The tombstone is a separate storage key ('deleted') that persists
+	 * even after the metadata key is cleared. This is idempotent — calling
+	 * /delete on an already-deleted DO is a no-op (200).
+	 */
+	async handleDelete(request: Request): Promise<Response> {
+		const body = (await request.json().catch(() => null)) as {
+			puzzleId?: string;
+		} | null;
+		if (!body || typeof body.puzzleId !== 'string' || !body.puzzleId.trim()) {
+			return Response.json({ message: 'Invalid delete payload' }, { status: 400 });
+		}
+
+		const { puzzleId } = body;
+
+		let doPuzzleId = await this.ctx.storage.get<string>('puzzleId');
+		if (!doPuzzleId) {
+			doPuzzleId = puzzleId;
+			await this.ctx.storage.put('puzzleId', doPuzzleId);
+		} else if (doPuzzleId !== puzzleId) {
+			return Response.json(
+				{ message: 'Puzzle ID mismatch: request puzzleId does not match DO identity' },
+				{ status: 403 }
+			);
+		}
+
+		// Atomically set the tombstone and clear the metadata inside a
+		// transaction so a concurrent /update that reads metadata between
+		// the tombstone set and the metadata clear cannot resurrect it.
+		await this.ctx.storage.transaction(async () => {
+			await this.ctx.storage.put('deleted', true);
+			await this.ctx.storage.delete('metadata');
+		});
+
+		return Response.json({ success: true });
 	}
 
 	private async readReservation(): Promise<ReservationRecord | null> {
