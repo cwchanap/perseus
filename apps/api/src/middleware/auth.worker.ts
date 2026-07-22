@@ -2,6 +2,7 @@
 
 import type { Context, Next } from 'hono';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
+import { WORKER_AUTH_ERROR_CODE } from '@perseus/types';
 import type { Env } from '../worker';
 
 const SESSION_COOKIE_NAME = 'perseus_session';
@@ -398,7 +399,17 @@ export function clearSessionCookie<T extends { Bindings: Env }>(c: Context<T>): 
 	});
 }
 
-// Authentication middleware
+// Authentication middleware.
+//
+// SERVICE-TOKEN AUTH IS EDGE-ONLY: Cloudflare Access service tokens
+// (CF-Access-Client-Id / CF-Access-Client-Secret) are validated by the
+// Access proxy at the edge, NOT by this Worker. The Worker never reads
+// those headers — requireAuth only checks the perseus_session cookie
+// issued by /api/admin/login. This is defense in depth: even if the
+// Worker were reached directly (e.g. via a workers.dev route), forged
+// service-token headers would not bypass this middleware because it
+// ignores them entirely. The workers.dev subdomain is disabled in
+// Pulumi (createApiWorker) to prevent direct access in the first place.
 export async function requireAuth(
 	c: Context<{ Bindings: Env; Variables: AuthVariables }>,
 	next: Next
@@ -406,7 +417,7 @@ export async function requireAuth(
 	const token = getSessionToken(c);
 
 	if (!token) {
-		return c.json({ error: 'unauthorized', message: 'Authentication required' }, 401);
+		return c.json({ error: WORKER_AUTH_ERROR_CODE, message: 'Authentication required' }, 401);
 	}
 
 	try {
@@ -415,7 +426,7 @@ export async function requireAuth(
 		if (!session) {
 			// Invalid or expired session
 			clearSessionCookie(c);
-			return c.json({ error: 'unauthorized', message: 'Invalid or expired session' }, 401);
+			return c.json({ error: WORKER_AUTH_ERROR_CODE, message: 'Invalid or expired session' }, 401);
 		}
 
 		// Store session on context for downstream handlers

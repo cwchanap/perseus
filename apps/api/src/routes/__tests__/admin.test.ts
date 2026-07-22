@@ -46,8 +46,11 @@ vi.mock('../../services/storage', () => ({
 	deletePuzzle: vi.fn().mockResolvedValue(true),
 	listPuzzles: vi.fn().mockResolvedValue([]),
 	puzzleExists: vi.fn().mockResolvedValue(false),
+	getPuzzle: vi.fn().mockResolvedValue(null),
 	getPuzzleDir: vi.fn().mockReturnValue('/fake/data/puzzles/test-id'),
-	getOriginalImagePath: vi.fn().mockReturnValue('/fake/data/puzzles/test-id/original.jpg')
+	getOriginalImagePath: vi.fn().mockReturnValue('/fake/data/puzzles/test-id/original.jpg'),
+	reserveIdempotencyKey: vi.fn(),
+	releaseIdempotencyKey: vi.fn().mockResolvedValue(undefined)
 }));
 
 vi.mock('../../services/player-auth', () => ({
@@ -732,6 +735,7 @@ describe('DELETE /puzzles/:id', () => {
 	});
 
 	it('returns 404 when puzzle does not exist', async () => {
+		(storageMock.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(null);
 		(storageMock.puzzleExists as ReturnType<typeof vi.fn>).mockResolvedValue(false);
 
 		const req = new Request('http://localhost/puzzles/nonexistent-id', { method: 'DELETE' });
@@ -741,8 +745,51 @@ describe('DELETE /puzzles/:id', () => {
 		expect(body.error).toBe('not_found');
 	});
 
-	it('returns 204 when puzzle is successfully deleted', async () => {
+	it('deletes puzzle with corrupt metadata via puzzleExists fallback', async () => {
+		// When getPuzzle throws (corrupt metadata that fails validation),
+		// the DELETE route must fall back to puzzleExists and still delete
+		// the puzzle instead of 500-ing. The idempotency reservation release
+		// is skipped (no key available).
+		(storageMock.getPuzzle as ReturnType<typeof vi.fn>).mockRejectedValue(
+			new Error('Corrupt puzzle metadata: data exists but fails validation')
+		);
 		(storageMock.puzzleExists as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+		(storageMock.deletePuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const req = new Request('http://localhost/puzzles/corrupt-id', { method: 'DELETE' });
+		const res = await app.fetch(req);
+		expect(res.status).toBe(204);
+		// puzzleExists was consulted as the fallback.
+		expect(storageMock.puzzleExists).toHaveBeenCalledWith('corrupt-id');
+		// deletePuzzle ran (filesystem cleanup).
+		expect(storageMock.deletePuzzle).toHaveBeenCalledWith('corrupt-id');
+		consoleSpy.mockRestore();
+	});
+
+	it('returns 404 when getPuzzle throws and puzzleExists is false', async () => {
+		// getPuzzle throws AND puzzleExists returns false → genuinely gone.
+		(storageMock.getPuzzle as ReturnType<typeof vi.fn>).mockRejectedValue(
+			new Error('Corrupt puzzle metadata')
+		);
+		(storageMock.puzzleExists as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const req = new Request('http://localhost/puzzles/corrupt-id', { method: 'DELETE' });
+		const res = await app.fetch(req);
+		expect(res.status).toBe(404);
+		const body = await res.json();
+		expect(body.error).toBe('not_found');
+		consoleSpy.mockRestore();
+	});
+
+	it('returns 204 when puzzle is successfully deleted', async () => {
+		(storageMock.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
+			id: 'existing-puzzle-id',
+			name: 'Test',
+			pieceCount: 4,
+			createdAt: 1700000000000
+		});
 		(storageMock.deletePuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(true);
 
 		const req = new Request('http://localhost/puzzles/existing-puzzle-id', { method: 'DELETE' });
@@ -756,7 +803,12 @@ describe('DELETE /puzzles/:id', () => {
 	});
 
 	it('still returns 204 when ownership cleanup throws (best-effort)', async () => {
-		(storageMock.puzzleExists as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+		(storageMock.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
+			id: 'existing-puzzle-id',
+			name: 'Test',
+			pieceCount: 4,
+			createdAt: 1700000000000
+		});
 		(storageMock.deletePuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(true);
 		const { deletePuzzleOwnership } = await import('@perseus/shared');
 		(deletePuzzleOwnership as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('D1 down'));
@@ -769,7 +821,12 @@ describe('DELETE /puzzles/:id', () => {
 	it('still returns 204 when deletePuzzleStats throws (best-effort)', async () => {
 		// The .catch handler on deletePuzzleStats swallows the rejection so a
 		// failed stats cleanup doesn't turn a successful deletion into a 500.
-		(storageMock.puzzleExists as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+		(storageMock.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
+			id: 'existing-puzzle-id',
+			name: 'Test',
+			pieceCount: 4,
+			createdAt: 1700000000000
+		});
 		(storageMock.deletePuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(true);
 		const { deletePuzzleStats } = await import('@perseus/shared');
 		(deletePuzzleStats as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
@@ -791,7 +848,12 @@ describe('DELETE /puzzles/:id', () => {
 		// getDb is a lazy init that can throw on first call; the outer catch
 		// logs the failure so a DB init error doesn't bubble a 500 after a
 		// successful puzzle deletion.
-		(storageMock.puzzleExists as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+		(storageMock.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
+			id: 'existing-puzzle-id',
+			name: 'Test',
+			pieceCount: 4,
+			createdAt: 1700000000000
+		});
 		(storageMock.deletePuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(true);
 		const { getDb } = await import('../../db');
 		(getDb as ReturnType<typeof vi.fn>).mockImplementationOnce(() => {
@@ -810,7 +872,12 @@ describe('DELETE /puzzles/:id', () => {
 	});
 
 	it('returns 500 when deletion fails', async () => {
-		(storageMock.puzzleExists as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+		(storageMock.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
+			id: 'puzzle-id',
+			name: 'Test',
+			pieceCount: 4,
+			createdAt: 1700000000000
+		});
 		(storageMock.deletePuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(false);
 
 		const req = new Request('http://localhost/puzzles/puzzle-id', { method: 'DELETE' });

@@ -5,10 +5,11 @@
  * - createPuzzleMetadata: version is provided but not a number (line 138)
  * - deletePuzzleMetadata: catch with non-Error thrown (lines 189-191)
  * - listPuzzles: multi-page KV result (list_complete=false path, line 208)
+ * - deleteOriginalImage: catch with non-Error thrown
+ * - updatePuzzleMetadata: non-ok response with payload / unparseable body
  */
 import { describe, it, expect, vi } from 'vitest';
 import {
-	acquireLock,
 	createPuzzleMetadata,
 	deletePuzzleMetadata,
 	deleteOriginalImage,
@@ -199,43 +200,6 @@ describe('updatePuzzleMetadata - non-ok response (line 175)', () => {
 		await expect(
 			updatePuzzleMetadata(metadataDO, 'test-puzzle-id', { status: 'ready' })
 		).rejects.toThrow('Failed to update puzzle test-puzzle-id (HTTP 503)');
-	});
-});
-
-describe('acquireLock - catch block (line 72)', () => {
-	it('wraps non-Error thrown in catch as an Error', async () => {
-		const kv = {
-			get: vi.fn().mockRejectedValue('lock error string'),
-			put: vi.fn(),
-			delete: vi.fn()
-		} as unknown as KVNamespace;
-
-		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-		const result = await acquireLock(kv, 'lock-key', 60000);
-		consoleSpy.mockRestore();
-
-		expect(result.status).toBe('error');
-		if (result.status === 'error') {
-			expect(result.error).toBeInstanceOf(Error);
-			expect(result.error.message).toBe('lock error string');
-		}
-	});
-
-	it('preserves Error instance in catch (true branch of instanceof)', async () => {
-		const kv = {
-			get: vi.fn().mockRejectedValue(new Error('kv lock error')),
-			put: vi.fn(),
-			delete: vi.fn()
-		} as unknown as KVNamespace;
-
-		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-		const result = await acquireLock(kv, 'lock-key', 60000);
-		consoleSpy.mockRestore();
-
-		expect(result.status).toBe('error');
-		if (result.status === 'error') {
-			expect(result.error.message).toBe('kv lock error');
-		}
 	});
 });
 

@@ -16,7 +16,10 @@ vi.mock('../../services/storage.worker', () => ({
 	createPuzzleMetadata: vi.fn(),
 	uploadOriginalImage: vi.fn(),
 	deleteOriginalImage: vi.fn(),
-	listPuzzles: vi.fn()
+	listPuzzles: vi.fn(),
+	originalImageExists: vi.fn().mockResolvedValue(false),
+	puzzleExists: vi.fn().mockResolvedValue(false),
+	releaseIdempotencyKey: vi.fn()
 }));
 
 vi.mock('../../middleware/auth.worker', () => ({

@@ -18,9 +18,9 @@ on:
         required: true
         default: '1'
       to:
-        description: 'End catalog id'
+        description: 'End catalog id (0 = no upper bound, upload all from --from onward)'
         required: true
-        default: '70'
+        default: '0'
       asset_release:
         description: 'Optional GitHub release tag with seed tarball (catalog.json + images/)'
         required: false
@@ -29,9 +29,16 @@ on:
         description: 'Asset filename on the release (default perseus-seed.tgz)'
         required: false
         default: 'perseus-seed.tgz'
+      asset_sha256:
+        description: 'Expected SHA-256 hash of the tarball. Required when asset_release is set — the download is verified before extraction. Generate with: shasum -a 256 perseus-seed.tgz'
+        required: false
 
 concurrency:
   group: seed-startup-puzzles
+  # Intentionally FALSE: a seed upload in flight must not be cancelled by a
+  # later dispatch — mid-upload cancellation could leave the server with
+  # partially-seeded state. New runs queue behind the in-flight one instead.
+  # Mirrors deploy-infrastructure.yml's rationale.
   cancel-in-progress: false
 
 permissions:
@@ -43,12 +50,18 @@ jobs:
     name: Upload startup puzzles
     runs-on: ubuntu-latest
     environment: production
+    # Job-level cap so a hung pre-upload step (Pulumi auth, asset download)
+    # cannot block the concurrency group until GitHub's 6h default. The upload
+    # step keeps its own tighter 30m budget below.
+    timeout-minutes: 60
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2.0.2
         with:
           bun-version: '1.3.1'
 
@@ -59,14 +72,38 @@ jobs:
         if: ${{ inputs.asset_release != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
+          ASSET_RELEASE: ${{ inputs.asset_release }}
+          ASSET_NAME: ${{ inputs.asset_name }}
+          ASSET_SHA256: ${{ inputs.asset_sha256 }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
+          if [ -z "$ASSET_SHA256" ]; then
+            echo "::error::asset_sha256 is required when asset_release is set."
+            exit 1
+          fi
           mkdir -p scripts/startup-seed
-          gh release download "${{ inputs.asset_release }}" \
-            --repo "${{ github.repository }}" \
-            --pattern "${{ inputs.asset_name }}" \
+          gh release download "$ASSET_RELEASE" \
+            --repo "$REPOSITORY" \
+            --pattern "$ASSET_NAME" \
             --dir /tmp
-          tar -xzf "/tmp/${{ inputs.asset_name }}" -C scripts/startup-seed
+          # Supply-chain protection: verify the release asset wasn't tampered
+          # with between upload and download. The hash is required, so a
+          # mismatch always fails the workflow.
+          ACTUAL_SHA256=$(shasum -a 256 "/tmp/$ASSET_NAME" | awk '{print $1}')
+          echo "Tarball SHA-256: ${ACTUAL_SHA256}"
+          if [ "$ACTUAL_SHA256" != "$ASSET_SHA256" ]; then
+            echo "::error::Checksum mismatch: expected $ASSET_SHA256, got $ACTUAL_SHA256"
+            exit 1
+          fi
+          echo "Checksum verified ✓"
+          # Guard against tar path traversal before extracting. Reject any
+          # entry that is absolute or climbs out of the target directory — a
+          # tampered/crafted tarball could otherwise overwrite files outside
+          # scripts/startup-seed even after the checksum check (defense in
+          # depth, since the checksum pins the expected content).
+          scripts/verify-tarball-paths.sh "/tmp/$ASSET_NAME"
+          tar -xzf "/tmp/$ASSET_NAME" --no-same-owner -C scripts/startup-seed
           echo "Seed images: $(find scripts/startup-seed/images -type f | wc -l)"
           test -f scripts/startup-seed/catalog.json
           test -d scripts/startup-seed/images
@@ -74,7 +111,7 @@ jobs:
       - name: Pre-flight check — verify seed images present
         run: |
           set -euo pipefail
-          IMAGE_COUNT=$(find scripts/startup-seed/images -type f -name '*.jpg' 2>/dev/null | wc -l)
+          IMAGE_COUNT=$(find scripts/startup-seed/images -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.webp' \) 2>/dev/null | wc -l)
           echo "Seed images found: ${IMAGE_COUNT}"
           if [ "${IMAGE_COUNT}" -eq 0 ]; then
             echo "::error::No seed images under scripts/startup-seed/images/."
@@ -87,38 +124,52 @@ jobs:
           fi
 
       - name: Authenticate with Pulumi
-        uses: pulumi/auth-actions@v1
+        uses: pulumi/auth-actions@1c89817aab0c66407723cdef72b05266e7376640 # v1.0.1
         with:
           organization: ${{ vars.PULUMI_ORG }}
           requested-token-type: urn:pulumi:token-type:access_token:personal
           scope: user:cwchanap
 
+      - name: Install Pulumi CLI
+        uses: pulumi/setup-pulumi@b374ceb6168550de27c6eba92e01c1a774040e11 # v2.0.0
+
       - name: Upload puzzles
         working-directory: ${{ github.workspace }}
+        timeout-minutes: 30
         env:
           PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           ADMIN_PASSKEY: ${{ secrets.ADMIN_PASSKEY }}
+          PULUMI_ORG: ${{ vars.PULUMI_ORG }}
+          PERSEUS_SERVER: ${{ vars.PERSEUS_SERVER || 'https://perseus.cwchanap.dev' }}
+          LIMIT: ${{ inputs.limit }}
+          FROM: ${{ inputs.from }}
+          TO: ${{ inputs.to }}
         run: |
           set -euo pipefail
-          STACK="${{ vars.PULUMI_ORG }}/perseus-infrastructure/production"
+          STACK="$PULUMI_ORG/perseus-infrastructure/production"
           export CF_ACCESS_CLIENT_ID
           export CF_ACCESS_CLIENT_SECRET
           CF_ACCESS_CLIENT_ID=$(pulumi stack output adminCliAccessClientId -s "$STACK" -C packages/infrastructure)
           CF_ACCESS_CLIENT_SECRET=$(pulumi stack output --show-secrets adminCliAccessClientSecret -s "$STACK" -C packages/infrastructure)
+          echo "::add-mask::$CF_ACCESS_CLIENT_ID"
+          echo "::add-mask::$CF_ACCESS_CLIENT_SECRET"
           if [ -z "$CF_ACCESS_CLIENT_ID" ] || [ -z "$CF_ACCESS_CLIENT_SECRET" ]; then
             echo "Missing adminCliAccessClientId/Secret stack outputs. Deploy infrastructure first."
             exit 1
           fi
           LIMIT_ARGS=()
-          if [ "${{ inputs.limit }}" != "0" ]; then
-            LIMIT_ARGS=(--limit "${{ inputs.limit }}")
+          if [ "$LIMIT" != "0" ]; then
+            LIMIT_ARGS=(--limit "$LIMIT")
+          fi
+          TO_ARGS=()
+          if [ "$TO" != "0" ]; then
+            TO_ARGS=(--to "$TO")
           fi
           bun scripts/admin-bulk-upload-startup.ts upload \
-            --server https://perseus.cwchanap.dev \
             --catalog scripts/startup-seed/catalog.json \
             --images scripts/startup-seed/images \
-            --from "${{ inputs.from }}" \
-            --to "${{ inputs.to }}" \
+            --from "$FROM" \
+            "${TO_ARGS[@]}" \
             "${LIMIT_ARGS[@]}" \
             --delay-ms 2000

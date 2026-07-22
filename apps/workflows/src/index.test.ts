@@ -416,6 +416,92 @@ describe('Workflow Execution - Image Validation', () => {
 			}
 		});
 	});
+
+	it('rejects oversized valid-header images via the header pre-check BEFORE Photon decode', async () => {
+		// Defense-in-depth: the decode-validate step parses dimensions from
+		// the image header before calling PhotonImage.new_from_byteslice,
+		// which would allocate the full decoded bitmap in WASM memory. A
+		// pathologically large image that bypassed upload validation and
+		// landed in R2 must be rejected without the expensive decode.
+		//
+		// mockWidth/mockHeight stay at 100 so the Photon post-decode check
+		// would NOT reject — if this test throws with the header dimensions
+		// (5000x5000), the pre-check caught it. PhotonImage.new_from_byteslice
+		// must not have been called.
+		const puzzleId = sampleMetadata.id;
+		// PNG with width=5000 (0x1388), height=5000 — exceeds MAX_IMAGE_DIMENSION (4096).
+		// Signature (8) + IHDR length (4) + "IHDR" (4) + width (4) + height (4) = 24 bytes.
+		const oversizedPngHeader = new Uint8Array([
+			0x89,
+			0x50,
+			0x4e,
+			0x47,
+			0x0d,
+			0x0a,
+			0x1a,
+			0x0a, // PNG signature
+			0x00,
+			0x00,
+			0x00,
+			0x0d, // IHDR chunk length = 13
+			0x49,
+			0x48,
+			0x44,
+			0x52, // "IHDR"
+			0x00,
+			0x00,
+			0x13,
+			0x88, // width = 5000
+			0x00,
+			0x00,
+			0x13,
+			0x88 // height = 5000
+		]);
+		const { namespace, stub } = createMockDurableObjectNamespace(() => {
+			return new Response(JSON.stringify({ success: true }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' }
+			});
+		});
+		const env = {
+			PUZZLES_BUCKET: createMockBucket(oversizedPngHeader.buffer),
+			PUZZLE_METADATA: createMockKv(sampleMetadata),
+			PUZZLE_METADATA_DO: namespace as unknown as DurableObjectNamespace,
+			PUZZLE_WORKFLOW: {} as Workflow
+		} as unknown as Env;
+		const step = createMockStep();
+		const workflow = new TestWorkflow();
+		workflow.setEnv(env);
+
+		const message = `Image dimensions 5000x5000 exceed maximum ${MAX_IMAGE_DIMENSION}px`;
+		const event: WorkflowEvent<WorkflowParams> = {
+			payload: { puzzleId },
+			timestamp: new Date(),
+			instanceId: 'test-instance'
+		};
+
+		// Clear the Photon mock call history (vi.restoreAllMocks in afterEach
+		// does not clear vi.fn history from module-level vi.mock factories, so
+		// counts accumulate across tests in this suite).
+		const { PhotonImage } = await import('@cf-wasm/photon');
+		vi.mocked(PhotonImage.new_from_byteslice).mockClear();
+
+		await expect(workflow.run(event, step)).rejects.toThrow(message);
+
+		// The pre-check rejected before Photon decoded the bitmap.
+		expect(vi.mocked(PhotonImage.new_from_byteslice)).not.toHaveBeenCalled();
+
+		// The failure was mirrored to the DO as a failed status update.
+		expect(stub.fetch).toHaveBeenCalledTimes(1);
+		const body = JSON.parse((stub.fetch.mock.calls[0]?.[1]?.body as string | undefined) ?? '{}');
+		expect(body).toEqual({
+			puzzleId,
+			updates: {
+				status: 'failed',
+				error: { message }
+			}
+		});
+	});
 });
 
 describe('Workflow Execution - Parameter Validation', () => {
@@ -726,6 +812,74 @@ describe('Workflow Execution - mark-failed retry exhaustion', () => {
 		} finally {
 			vi.useRealTimers();
 		}
+	});
+});
+
+describe('Workflow Execution - mark-failed already-ready reconciliation', () => {
+	afterEach(() => {
+		mockWidth = 100;
+		mockHeight = 100;
+		photonInstances = [];
+		vi.restoreAllMocks();
+	});
+
+	it('reconciles D1 to ready and skips CRITICAL when the DO refuses ready → failed (409)', async () => {
+		const puzzleId = sampleMetadata.id;
+		const { setPuzzleStatus } = await import('@perseus/shared');
+		vi.mocked(setPuzzleStatus).mockClear();
+
+		// DO returns 409 for a failed-status update (simulating the DO's
+		// ready → failed refusal after finalize already committed 'ready'),
+		// and 200 for every other update (dimensions, progress, ready).
+		const { namespace } = createMockDurableObjectNamespace((body) => {
+			if (body.updates?.status === 'failed') {
+				return new Response(
+					JSON.stringify({
+						message: `Puzzle ${puzzleId} is already ready; refusing transition to failed`
+					}),
+					{ status: 409 }
+				);
+			}
+			return new Response(JSON.stringify({ success: true }), { status: 200 });
+		});
+
+		// null bucket → "image not found" in decode-validate → catch → mark-failed
+		const env = {
+			PUZZLES_BUCKET: { get: vi.fn(async () => null), put: vi.fn(async () => {}) },
+			PUZZLE_METADATA: createMockKv(sampleMetadata),
+			PUZZLE_METADATA_DO: namespace as unknown as DurableObjectNamespace,
+			PUZZLE_WORKFLOW: {} as Workflow
+		} as unknown as Env;
+
+		const workflow = new TestWorkflow();
+		workflow.setEnv(env);
+
+		const event: WorkflowEvent<WorkflowParams> = {
+			payload: { puzzleId },
+			timestamp: new Date(),
+			instanceId: 'test-already-ready'
+		};
+
+		const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+		await expect(workflow.run(event, createMockStep())).rejects.toThrow(
+			`Original image not found for puzzle ${puzzleId}`
+		);
+
+		// mark-failed hit the 409 already-ready path: it must reconcile D1 to
+		// 'ready' (the puzzle's true terminal state), never 'failed'.
+		expect(setPuzzleStatus).toHaveBeenCalledWith(expect.anything(), puzzleId, 'ready');
+		expect(setPuzzleStatus).not.toHaveBeenCalledWith(expect.anything(), puzzleId, 'failed');
+
+		// No CRITICAL log — the puzzle is in the desired terminal state, so
+		// the retry-exhaustion alarm must not fire.
+		expect(errorSpy).not.toHaveBeenCalledWith(expect.stringContaining('CRITICAL'));
+		// A warn surfaces the already-ready skip so the race is observable.
+		expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('already ready'));
+
+		errorSpy.mockRestore();
+		warnSpy.mockRestore();
 	});
 });
 

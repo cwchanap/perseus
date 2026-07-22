@@ -22,19 +22,29 @@ import { generatePuzzle, isValidPieceCount } from '../services/puzzle-generator'
 import {
 	createPuzzle as storePuzzle,
 	deletePuzzle as deleteStoredPuzzle,
+	getPuzzle,
 	listPuzzles,
-	puzzleExists,
 	getOriginalImagePath,
-	getPuzzleDir
+	getPuzzleDir,
+	puzzleExists,
+	releaseIdempotencyKey,
+	reserveIdempotencyKey
 } from '../services/storage';
 import { MAX_FILE_SIZE, ALLOWED_MIME_TYPES, PUZZLE_CATEGORIES } from '../types';
 import type { PuzzleCategory } from '../types';
-import { DEFAULT_PUZZLE_ASPECT_RATIO, isPuzzleAspectRatio } from '@perseus/types';
+import {
+	DEFAULT_PUZZLE_ASPECT_RATIO,
+	aspectRatiosMatch,
+	isPuzzleAspectRatio,
+	stripIdempotencyKey
+} from '@perseus/types';
 import { getDb } from '../db';
 import {
 	deletePuzzleOwnership,
 	deletePuzzleStats,
+	detectImageType,
 	insertPuzzleOwnership,
+	parseImageDimensions,
 	SYSTEM_OWNER_ID
 } from '@perseus/shared';
 
@@ -50,154 +60,6 @@ const ADMIN_PASSKEY = (() => {
 
 const ADMIN_PASSKEY_DIGEST = createHash('sha256').update(ADMIN_PASSKEY).digest();
 const DATA_DIR = process.env.DATA_DIR || './data';
-
-// Parse image width/height from binary headers without decoding the full image
-async function parseImageDimensions(
-	file: File | Blob,
-	mimeType: string
-): Promise<{ width: number; height: number } | null> {
-	try {
-		if (mimeType === 'image/png') {
-			// PNG: width/height are 4-byte big-endian at offset 16–23
-			const header = await file.slice(16, 24).arrayBuffer();
-			if (header.byteLength < 8) return null;
-			const view = new DataView(header);
-			return { width: view.getUint32(0), height: view.getUint32(4) };
-		}
-
-		if (mimeType === 'image/jpeg') {
-			// JPEG: scan SOF markers (FF C0..FF C3, FF C5..FF C7, FF C9..FF CB, FF CD..FF CF)
-			const buf = await file.slice(0, Math.min(file.size, 256 * 1024)).arrayBuffer();
-			const bytes = new Uint8Array(buf);
-			let offset = 2; // skip FF D8 SOI
-			while (offset < bytes.length - 8) {
-				if (bytes[offset] !== 0xff) break;
-				const marker = bytes[offset + 1];
-				// SOS (FF DA) or EOI (FF D9) — stop scanning
-				if (marker === 0xda || marker === 0xd9) break;
-				// Standalone markers (no payload)
-				if ((marker >= 0xd0 && marker <= 0xd7) || marker === 0x01 || marker === 0xff) {
-					offset += 2;
-					continue;
-				}
-				// SOF markers carry dimensions
-				if (
-					(marker >= 0xc0 && marker <= 0xc3) ||
-					(marker >= 0xc5 && marker <= 0xc7) ||
-					(marker >= 0xc9 && marker <= 0xcb) ||
-					(marker >= 0xcd && marker <= 0xcf)
-				) {
-					const segLen = (bytes[offset + 2] << 8) | bytes[offset + 3];
-					if (segLen < 9 || offset + 9 > bytes.length) return null;
-					const height = (bytes[offset + 5] << 8) | bytes[offset + 6];
-					const width = (bytes[offset + 7] << 8) | bytes[offset + 8];
-					return { width, height };
-				}
-				// Skip this marker segment
-				if (offset + 4 > bytes.length) break;
-				const segLen = (bytes[offset + 2] << 8) | bytes[offset + 3];
-				offset += 2 + segLen;
-			}
-			return null;
-		}
-
-		if (mimeType === 'image/webp') {
-			// WebP: check for VP8/VP8L/VP8X chunk
-			const header = await file.slice(12, 34).arrayBuffer();
-			if (header.byteLength < 8) return null;
-			const decoder = new TextDecoder();
-			const fourCC = decoder.decode(new Uint8Array(header, 0, 4));
-			if (fourCC === 'VP8 ') {
-				// Lossy: frame_tag(3) + sync(3) + width(2) + height(2) = 10 bytes
-				if (header.byteLength < 18) return null;
-				const view = new DataView(header);
-				const w = view.getUint16(14, true) & 0x3fff;
-				const h = view.getUint16(16, true) & 0x3fff;
-				return { width: w, height: h };
-			}
-			if (fourCC === 'VP8L') {
-				// Lossless: 1-byte signature + 4-byte image-size packed as 28 bits
-				if (header.byteLength < 13) return null;
-				const b = new DataView(header).getUint32(9, true);
-				const w = (b & 0x3fff) + 1;
-				const h = ((b >> 14) & 0x3fff) + 1;
-				return { width: w, height: h };
-			}
-			if (fourCC === 'VP8X') {
-				// Extended: 1-byte flags + 3-byte reserved + 3-byte canvas-width-1 + 3-byte canvas-height-1
-				if (header.byteLength < 18) return null;
-				const bytes = new Uint8Array(header);
-				const w = (bytes[12] | (bytes[13] << 8) | (bytes[14] << 16)) + 1;
-				const h = (bytes[15] | (bytes[16] << 8) | (bytes[17] << 16)) + 1;
-				return { width: w, height: h };
-			}
-			return null;
-		}
-
-		return null;
-	} catch (error) {
-		console.error('Failed to parse image dimensions:', error);
-		return null;
-	}
-}
-
-// Tolerance for aspect ratio mismatch between image dimensions and requested ratio.
-const ASPECT_RATIO_TOLERANCE = 0.05; // 5%
-
-function aspectRatiosMatch(imageWidth: number, imageHeight: number, targetRatio: string): boolean {
-	const parts = targetRatio.split(':').map(Number);
-	const targetW = parts[0];
-	const targetH = parts[1];
-	const actual = imageWidth / imageHeight;
-	const expected = targetW / targetH;
-	return Math.abs(actual - expected) / expected <= ASPECT_RATIO_TOLERANCE;
-}
-
-// Detect image MIME type from magic bytes
-async function detectImageType(file: File | Blob): Promise<string | null> {
-	try {
-		const header = await file.slice(0, 12).arrayBuffer();
-		const bytes = new Uint8Array(header);
-		if (bytes.length < 4) return null;
-
-		// JPEG: starts with FF D8 FF
-		if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
-			return 'image/jpeg';
-		}
-		// PNG: starts with 89 50 4E 47 0D 0A 1A 0A
-		if (
-			bytes[0] === 0x89 &&
-			bytes[1] === 0x50 &&
-			bytes[2] === 0x4e &&
-			bytes[3] === 0x47 &&
-			bytes.length >= 8 &&
-			bytes[4] === 0x0d &&
-			bytes[5] === 0x0a &&
-			bytes[6] === 0x1a &&
-			bytes[7] === 0x0a
-		) {
-			return 'image/png';
-		}
-		// WebP: starts with RIFF....WEBP
-		if (
-			bytes.length >= 12 &&
-			bytes[0] === 0x52 &&
-			bytes[1] === 0x49 &&
-			bytes[2] === 0x46 &&
-			bytes[3] === 0x46 &&
-			bytes[8] === 0x57 &&
-			bytes[9] === 0x45 &&
-			bytes[10] === 0x42 &&
-			bytes[11] === 0x50
-		) {
-			return 'image/webp';
-		}
-		return null;
-	} catch (error) {
-		console.error('Failed to detect image type from file bytes:', error);
-		return null;
-	}
-}
 
 // POST /api/admin/login - Admin login
 admin.post('/login', loginRateLimit, async (c) => {
@@ -349,6 +211,7 @@ admin.get('/puzzles', requireAuth, async (c) => {
 admin.post('/puzzles', requireAuth, async (c) => {
 	let puzzleDirCreated = false;
 	let id = '';
+	let reservedIdempotencyKey: string | undefined;
 
 	try {
 		const formData = await c.req.formData();
@@ -449,8 +312,75 @@ admin.post('/puzzles', requireAuth, async (c) => {
 		}
 		// If dimensions can't be parsed, proceed — the generator will use actual pixel dimensions
 
-		// Generate puzzle ID
+		// Server-side idempotency: reserve the key atomically before minting a
+		// UUID or creating assets. Exclusive file create closes the concurrent-
+		// POST race that a post-create filesystem scan cannot. Without the
+		// header, behavior is unchanged (fresh UUID per POST).
+		const idempotencyKeyHeader = c.req.header('Idempotency-Key');
+		let idempotencyKey: string | undefined;
+		if (idempotencyKeyHeader) {
+			const trimmed = idempotencyKeyHeader.trim();
+			if (trimmed.length === 0 || trimmed.length > 128 || !/^[A-Za-z0-9_-]+$/.test(trimmed)) {
+				return c.json(
+					{
+						error: 'bad_request',
+						message: 'Idempotency-Key must be 1-128 alphanumeric/[-_] chars'
+					},
+					400
+				);
+			}
+			idempotencyKey = trimmed;
+		}
+
 		id = crypto.randomUUID();
+		if (idempotencyKey) {
+			try {
+				const reserved = await reserveIdempotencyKey(idempotencyKey, id);
+				if (reserved.existing) {
+					const existing = await getPuzzle(reserved.puzzleId);
+					if (existing) {
+						// Bun path is synchronous generation — puzzles have no
+						// processing/failed lifecycle (see Puzzle in types/index.ts).
+						// Failed-reclaim lives only on the Worker path.
+						return c.json(stripIdempotencyKey(existing), 200);
+					}
+					// Reservation maps to a missing puzzle. Two causes: the prior
+					// create cleaned up its assets (deleteStoredPuzzle succeeded)
+					// but the reservation release failed (filesystem error), OR
+					// the create is still in flight and hasn't written metadata
+					// yet. The Bun filesystem reservation has no lifecycle status
+					// or TTL, so we CANNOT distinguish "in-flight" from
+					// "orphaned". Reclaiming is unsafe: a concurrent request B
+					// that overlaps with an in-flight request A would see A's
+					// puzzle as missing, release A's reservation (the owner-check
+					// on releaseIdempotencyKey passes because the file maps to A's
+					// UUID, which B received from reserveIdempotencyKey), re-
+					// reserve with B's UUID, and both requests would proceed to
+					// create separate puzzles under one Idempotency-Key. Return
+					// 409 so the client retries; a truly orphaned reservation
+					// (create died after cleanup) is left for the dev to manually
+					// remove from the idempotency directory — there is no Bun-
+					// side reaper, and bricking a key in dev is recoverable while
+					// minting duplicates is not.
+					return c.json(
+						{
+							error: 'conflict',
+							message: 'A request with this Idempotency-Key is already in progress'
+						},
+						409
+					);
+				} else {
+					id = reserved.puzzleId;
+					reservedIdempotencyKey = idempotencyKey;
+				}
+			} catch (error) {
+				console.error('Idempotency reserve failed:', error);
+				return c.json(
+					{ error: 'internal_error', message: 'Failed to reserve idempotency key' },
+					500
+				);
+			}
+		}
 
 		// Read image buffer
 		const imageBuffer = Buffer.from(await image.arrayBuffer());
@@ -471,12 +401,39 @@ admin.post('/puzzles', requireAuth, async (c) => {
 		});
 
 		// Save puzzle metadata
-		const puzzleToStore = category ? { ...result.puzzle, category } : result.puzzle;
+		const puzzleToStore = {
+			...(category ? { ...result.puzzle, category } : result.puzzle),
+			...(idempotencyKey && { idempotencyKey })
+		};
 		const saved = await storePuzzle(puzzleToStore);
 		if (!saved) {
 			const cleaned = await deleteStoredPuzzle(id);
 			if (!cleaned) {
+				// Puzzle directory cleanup failed — the on-disk puzzle data
+				// remains as an orphan. Keep the reservation file in place
+				// (do NOT release) so a same-key retry sees existing:true and
+				// returns the orphaned puzzleId instead of minting a
+				// replacement alongside the orphan. The dev can manually
+				// clean up the filesystem and reservation file. This mirrors
+				// the Worker's failReservation() pattern — the Bun filesystem
+				// reservation has no "failed" state, so we settle for leaving
+				// the key reserved.
 				console.error(`Failed to clean up puzzle directory ${id} after metadata save failure`);
+				return c.json(
+					{
+						error: 'internal_error',
+						message: 'Puzzle may be stuck on disk; cleanup failed after metadata save failure'
+					},
+					500
+				);
+			}
+			if (reservedIdempotencyKey) {
+				try {
+					await releaseIdempotencyKey(reservedIdempotencyKey, id);
+				} catch (releaseErr) {
+					console.error(`Failed to release idempotency reservation for puzzle ${id}:`, releaseErr);
+				}
+				reservedIdempotencyKey = undefined;
 			}
 			return c.json({ error: 'internal_error', message: 'Failed to save puzzle metadata' }, 500);
 		}
@@ -502,15 +459,54 @@ admin.post('/puzzles', requireAuth, async (c) => {
 			console.error(`Failed to init DB for ownership insert of puzzle ${id}:`, err);
 		}
 
-		return c.json(puzzleToStore, 201);
+		// Keep the reservation file as the durable key → puzzleId mapping.
+		reservedIdempotencyKey = undefined;
+		return c.json(stripIdempotencyKey(puzzleToStore), 201);
 	} catch (error) {
 		console.error('Error creating puzzle:', error);
-		// Clean up the puzzle directory if it was created before the failure
+		// Clean up the puzzle directory if it was created before the failure.
+		// If cleanup fails, keep the reservation file in place (do NOT release)
+		// so a same-key retry sees existing:true and returns the orphaned
+		// puzzleId instead of minting a replacement alongside the orphan.
+		// Mirrors the Worker's failReservation() pattern; the Bun filesystem
+		// reservation has no "failed" state, so we settle for leaving the key
+		// reserved for manual cleanup.
+		let cleanupFailed = false;
 		if (puzzleDirCreated) {
 			try {
-				await deleteStoredPuzzle(id);
+				// deleteStoredPuzzle returns false on failure (it catches
+				// internally and never throws), so we must check the return
+				// value — the catch below only fires on an unexpected throw
+				// from a non-defensive caller. A false result means the
+				// on-disk puzzle directory remains as an orphan; preserve
+				// the reservation (do NOT release) so a same-key retry sees
+				// existing:true and returns the orphaned puzzleId instead
+				// of minting a replacement alongside the orphan. Mirrors
+				// the failReservation() pattern in admin.worker.ts.
+				const cleaned = await deleteStoredPuzzle(id);
+				if (!cleaned) {
+					cleanupFailed = true;
+				}
 			} catch (cleanupError) {
 				console.error('Failed to clean up puzzle directory after error:', cleanupError);
+				cleanupFailed = true;
+			}
+		}
+		if (cleanupFailed) {
+			return c.json(
+				{
+					error: 'internal_error',
+					message:
+						'Puzzle may be stuck on disk; cleanup failed after create error. Manually remove the puzzle directory and idempotency reservation before retrying.'
+				},
+				500
+			);
+		}
+		if (reservedIdempotencyKey && id) {
+			try {
+				await releaseIdempotencyKey(reservedIdempotencyKey, id);
+			} catch (releaseErr) {
+				console.error(`Failed to release idempotency reservation for puzzle ${id}:`, releaseErr);
 			}
 		}
 		return c.json({ error: 'internal_error', message: 'Failed to create puzzle' }, 500);
@@ -521,16 +517,51 @@ admin.post('/puzzles', requireAuth, async (c) => {
 admin.delete('/puzzles/:id', requireAuth, async (c) => {
 	const id = c.req.param('id');
 
-	const exists = await puzzleExists(id);
+	// Read metadata before deletion so we can release the idempotency
+	// reservation (keyed by idempotencyKey, not puzzleId). Without this,
+	// a deleted seeded puzzle permanently maps its key to the deleted ID,
+	// and the next upload with the same key gets a permanent 409.
+	//
+	// Best-effort read: if metadata is corrupt/unreadable, fall back to
+	// puzzleExists so an existing puzzle directory can still be deleted
+	// instead of 500-ing. The idempotency reservation release is skipped
+	// (no key available) — same as a puzzle never reserved with a key.
+	let puzzle: Awaited<ReturnType<typeof getPuzzle>> = null;
+	try {
+		puzzle = await getPuzzle(id);
+	} catch (err) {
+		console.error(`Failed to read metadata for puzzle ${id}, attempting best-effort cleanup:`, err);
+	}
 
-	if (!exists) {
-		return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
+	if (puzzle === null) {
+		// Either getPuzzle returned null (truly missing) or threw (corrupt).
+		// Fall back to puzzleExists so a corrupt-but-present puzzle can still
+		// be deleted instead of 500-ing.
+		const exists = await puzzleExists(id);
+		if (!exists) {
+			return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
+		}
+		// puzzle stays null — proceed with deletion; idempotency reservation
+		// release is skipped (no key available).
 	}
 
 	const deleted = await deleteStoredPuzzle(id);
 
 	if (!deleted) {
 		return c.json({ error: 'internal_error', message: 'Failed to delete puzzle' }, 500);
+	}
+
+	// Best-effort release of the idempotency reservation so the key can be
+	// reused after deletion. Owner-checked: only deletes if the file content
+	// matches this puzzleId. Logged, not fatal — filesystem deletion above
+	// is the source of truth for puzzle existence. Skipped when metadata was
+	// corrupt (no idempotency key available).
+	if (puzzle?.idempotencyKey) {
+		try {
+			await releaseIdempotencyKey(puzzle.idempotencyKey, id);
+		} catch (err) {
+			console.error(`Failed to release idempotency reservation for puzzle ${id}:`, err);
+		}
 	}
 
 	// Best-effort cleanup of the D1 ownership row (see admin.worker.ts for the

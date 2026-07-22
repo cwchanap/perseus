@@ -15,11 +15,16 @@ export type { PuzzleAspectRatio } from './grid';
 export {
 	PUZZLE_ASPECT_RATIOS,
 	DEFAULT_PUZZLE_ASPECT_RATIO,
+	ASPECT_RATIO_TOLERANCE,
+	aspectRatiosMatch,
 	getGridDimensionsForAspectRatio,
 	isValidPieceCountForAspectRatio,
 	getAllowedPieceCountsForAspectRatio
 } from './grid';
 export { isPuzzleAspectRatio };
+
+export { ErrorCode, ERROR_HTTP_STATUS } from './errors';
+export type { ApiErrorResponse } from './errors';
 
 export interface EdgeConfig {
 	top: EdgeType;
@@ -86,6 +91,12 @@ interface PuzzleMetadataBase {
 	createdAt: number;
 	pieces: PuzzlePiece[];
 	version: number;
+	// Optional server-side idempotency key. When a POST /api/admin/puzzles
+	// request carries an Idempotency-Key header, the server reserves the key
+	// in PuzzleMetadataDO (strongly consistent) before minting a UUID, so a
+	// retried POST after a lost response returns the original puzzle instead
+	// of creating a duplicate. Absent on puzzles created without the header.
+	idempotencyKey?: string;
 }
 
 export interface ProcessingPuzzle extends PuzzleMetadataBase {
@@ -116,6 +127,7 @@ export interface PuzzleSummary {
 	progress?: PuzzleProgress;
 	category?: PuzzleCategory;
 	aspectRatio?: PuzzleAspectRatio;
+	createdAt?: number;
 }
 
 // API response types shared between API and web
@@ -224,6 +236,19 @@ export const DEFAULT_PIECE_COUNT = 225; // 15x15
 
 // Thumbnail settings
 export const THUMBNAIL_SIZE = 300;
+
+// File upload constraints — shared by the API (both Bun and Worker runtimes)
+// and the startup seed upload CLI to avoid drift.
+export const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+export const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const;
+
+// Error code the Worker's requireAuth middleware emits in the JSON body
+// (`{ error: WORKER_AUTH_ERROR_CODE, ... }`) on a 401. The startup CLI's
+// Access-token probe (scripts/startup/token.ts) sniffs this code to tell a
+// Worker-origin 401 (Access accepted the token, no Perseus session) from a
+// Cloudflare-Access-origin 401 (token rejected). Sharing the constant keeps
+// the Worker↔CLI contract from drifting silently.
+export const WORKER_AUTH_ERROR_CODE = 'unauthorized';
 
 // Validation functions
 
@@ -374,6 +399,22 @@ export function createPuzzleProgress(totalPieces: number, generatedPieces: numbe
 	return { totalPieces, generatedPieces, updatedAt: Date.now() };
 }
 
+/**
+ * Strip the idempotencyKey from puzzle metadata before returning it to
+ * clients. idempotencyKey is an admin/server-side dedup secret — exposing
+ * it would let clients replay create with it. Use on every public puzzle
+ * read that returns full metadata. Generic over any object with an
+ * optional idempotencyKey so it works for both PuzzleMetadata (Worker) and
+ * the local Bun Puzzle type.
+ */
+export function stripIdempotencyKey<T extends { idempotencyKey?: string }>(
+	puzzle: T
+): Omit<T, 'idempotencyKey'> {
+	const { idempotencyKey: _, ...rest } = puzzle;
+	void _;
+	return rest;
+}
+
 export function validatePuzzleMetadata(meta: unknown): meta is PuzzleMetadata {
 	if (typeof meta !== 'object' || meta === null) return false;
 	const m = meta as Partial<PuzzleMetadata>;
@@ -436,6 +477,10 @@ export function validatePuzzleMetadata(meta: unknown): meta is PuzzleMetadata {
 		const expected = getGridDimensionsForAspectRatio(m.pieceCount, aspectRatioValue);
 		if (expected.rows !== m.gridRows || expected.cols !== m.gridCols) return false;
 	}
+
+	// Optional idempotencyKey: absent is fine; if present must be a string.
+	const idempotencyKeyValue = (m as Record<string, unknown>).idempotencyKey;
+	if (idempotencyKeyValue !== undefined && typeof idempotencyKeyValue !== 'string') return false;
 
 	return true;
 }
@@ -508,6 +553,10 @@ export function validatePuzzleMetadataLight(meta: unknown): meta is PuzzleMetada
 		const expected = getGridDimensionsForAspectRatio(m.pieceCount, aspectRatioValue);
 		if (expected.rows !== m.gridRows || expected.cols !== m.gridCols) return false;
 	}
+
+	// Optional idempotencyKey: absent is fine; if present must be a string.
+	const idempotencyKeyValue = (m as Record<string, unknown>).idempotencyKey;
+	if (idempotencyKeyValue !== undefined && typeof idempotencyKeyValue !== 'string') return false;
 
 	return true;
 }

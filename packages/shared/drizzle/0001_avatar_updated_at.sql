@@ -1,0 +1,1 @@
+ALTER TABLE `player_profiles` ADD `avatar_updated_at` integer;

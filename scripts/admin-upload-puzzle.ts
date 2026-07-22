@@ -1,8 +1,33 @@
 #!/usr/bin/env bun
 
-import { basename, extname } from 'node:path';
+import { basename, extname, join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import {
+	accessHeaders,
+	hasAccessCredentials,
+	sessionCookieFrom,
+	throwOnProbeFailure
+} from './startup/upload';
+import {
+	resolveAccessToken,
+	probeAccessToken,
+	probeServiceToken,
+	loadDotEnvMap
+} from './startup/token';
+import {
+	FatalError,
+	applyDotenvOverrides,
+	isLocalServer,
+	type AccessCredentials
+} from './startup/types';
 
-interface Options {
+// This CLI targets local dev by default (ad-hoc single uploads). The bulk
+// uploader (admin:startup:*) defaults to production via DEFAULT_SERVER, but
+// here a localhost default matches the usage text and README "Local" example.
+// PERSEUS_SERVER (arg or dotenv) still overrides.
+const LOCAL_SERVER = 'http://127.0.0.1:3000';
+
+interface Options extends AccessCredentials {
 	server: string;
 	passkey: string;
 	imagePath: string;
@@ -17,13 +42,19 @@ function usage(exitCode = 1): never {
   bun run admin:upload -- --image ./puzzle.jpg --name "Puzzle Name" --pieces 48 --aspect 3:4
 
 Options:
-  --server <url>       API server base URL (default: http://127.0.0.1:3000)
-  --passkey <value>    Admin passkey (or set ADMIN_PASSKEY)
-  --image <path>       Image file to upload
-  --name <value>       Puzzle name
-  --pieces <count>     Piece count
-  --aspect <ratio>     Optional aspect ratio: 1:1, 4:3, or 3:4
-  --category <name>    Optional category
+  --server <url>              API server base URL (default: http://127.0.0.1:3000)
+  --passkey <value>           Admin passkey (or set ADMIN_PASSKEY)
+  --image <path>              Image file to upload
+  --name <value>              Puzzle name
+  --pieces <count>            Piece count
+  --aspect <ratio>            Optional aspect ratio: 1:1, 4:3, or 3:4
+  --category <name>           Optional category
+  --cf-access-token <jwt>     Access JWT (or set CF_ACCESS_TOKEN)
+  --skip-access               Local API only (no Access headers)
+
+Production Access (automated):
+  Set CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET env vars (from Pulumi
+  stack outputs) — same as the bulk uploader. See README "Admin CLI" section.
 `);
 	process.exit(exitCode);
 }
@@ -44,17 +75,39 @@ function contentTypeForPath(path: string): string {
 	return 'application/octet-stream';
 }
 
-function parseOptions(): Options {
+async function parseOptions(): Promise<Options> {
 	const args = Bun.argv.slice(2);
 	if (args.includes('--help') || args.includes('-h')) usage(0);
 
 	const imagePath = readArg(args, '--image');
 	const name = readArg(args, '--name');
 	const pieceCountRaw = readArg(args, '--pieces');
-	const passkey = readArg(args, '--passkey') ?? process.env.ADMIN_PASSKEY;
-	const server = readArg(args, '--server') ?? 'http://127.0.0.1:3000';
+
+	// Load the same dotenv map (apps/api/.env) used by the bulk uploader so
+	// credentials kept there are available without exporting them to the shell.
+	const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+	const dotenv = await loadDotEnvMap(root);
+	applyDotenvOverrides(dotenv);
+
+	const passkey = readArg(args, '--passkey') ?? process.env.ADMIN_PASSKEY ?? dotenv.ADMIN_PASSKEY;
+	const server = (readArg(args, '--server') ?? dotenv.PERSEUS_SERVER ?? LOCAL_SERVER).replace(
+		/\/+$/,
+		''
+	);
 	const aspectRatio = readArg(args, '--aspect');
 	const category = readArg(args, '--category');
+	const cfAccessToken = readArg(args, '--cf-access-token') ?? process.env.CF_ACCESS_TOKEN;
+	const cfClientId = process.env.CF_ACCESS_CLIENT_ID ?? dotenv.CF_ACCESS_CLIENT_ID;
+	const cfClientSecret = process.env.CF_ACCESS_CLIENT_SECRET ?? dotenv.CF_ACCESS_CLIENT_SECRET;
+	const wantSkipAccess = args.includes('--skip-access');
+	if (wantSkipAccess && !isLocalServer(server)) {
+		console.error(
+			'--skip-access is only valid with a local --server (localhost/127.0.0.1). ' +
+				'Remote targets always require Cloudflare Access credentials.'
+		);
+		process.exit(1);
+	}
+	const skipAccess = wantSkipAccess || isLocalServer(server);
 
 	if (!imagePath || !name || !pieceCountRaw || !passkey) usage();
 
@@ -65,22 +118,18 @@ function parseOptions(): Options {
 	}
 
 	return {
-		server: server.replace(/\/+$/, ''),
+		server,
 		passkey,
 		imagePath,
 		name,
 		pieceCount,
 		aspectRatio,
-		category
+		category,
+		cfAccessToken,
+		cfClientId,
+		cfClientSecret,
+		skipAccess
 	};
-}
-
-function sessionCookieFrom(response: Response): string {
-	const setCookie = response.headers.get('set-cookie');
-	if (!setCookie) {
-		throw new Error('Admin login did not return a session cookie');
-	}
-	return setCookie.split(';', 1)[0];
 }
 
 async function readError(response: Response): Promise<string> {
@@ -95,22 +144,84 @@ async function readError(response: Response): Promise<string> {
 	return `${response.status} ${response.statusText}`;
 }
 
+async function resolveAndProbeAccess(options: Options): Promise<void> {
+	if (options.skipAccess) return;
+
+	const hasServiceToken = !!(options.cfClientId && options.cfClientSecret);
+
+	// Skip JWT resolution when service tokens are available (same logic as
+	// the bulk uploader — service tokens are the recommended automation path).
+	if (!hasServiceToken) {
+		options.cfAccessToken = await resolveAccessToken({
+			explicit: options.cfAccessToken,
+			tokenCachePath: '',
+			skipAccess: false,
+			server: options.server
+		});
+	}
+
+	if (!hasAccessCredentials(options)) {
+		throw new FatalError(`Cloudflare Access credentials missing.
+
+For production, set CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET (from Pulumi
+stack outputs), or use --cf-access-token with a CF_Authorization JWT.
+
+For local API, use --skip-access or a localhost --server URL.`);
+	}
+
+	if (options.cfAccessToken && !hasServiceToken) {
+		await throwOnProbeFailure(probeAccessToken(options.server, options.cfAccessToken), {
+			blocked:
+				'Access JWT is present but rejected by Cloudflare Access (302/403).\n' +
+				'Run: bun run admin:startup:set-token',
+			unhealthy:
+				'Access accepted the JWT, but the backend returned 5xx.\n' +
+				'The API is unhealthy — uploads will fail. Investigate the backend before retrying.',
+			error:
+				'Access JWT probe failed (network error or unexpected response).\n' +
+				'Cannot verify Access credentials — aborting.'
+		});
+	}
+
+	if (hasServiceToken) {
+		await throwOnProbeFailure(
+			probeServiceToken(options.server, options.cfClientId!, options.cfClientSecret!),
+			{
+				blocked:
+					'Cloudflare Access service token rejected (302/403).\n' +
+					'Check CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET are valid and not expired.',
+				unhealthy:
+					'Access accepted the service token, but the backend returned 5xx.\n' +
+					'The API is unhealthy — uploads will fail. Investigate the backend before retrying.',
+				error:
+					'Access service token probe failed (network error or unexpected response).\n' +
+					'Cannot verify Access credentials — aborting.'
+			}
+		);
+	}
+}
+
 async function main() {
-	const options = parseOptions();
+	const options = await parseOptions();
 	const image = Bun.file(options.imagePath, { type: contentTypeForPath(options.imagePath) });
 	if (!(await image.exists())) {
 		throw new Error(`Image file not found: ${options.imagePath}`);
 	}
 
+	await resolveAndProbeAccess(options);
+
+	const baseHeaders = accessHeaders(options);
+
 	const loginResponse = await fetch(`${options.server}/api/admin/login`, {
 		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ passkey: options.passkey })
+		headers: { ...baseHeaders, 'Content-Type': 'application/json' },
+		body: JSON.stringify({ passkey: options.passkey }),
+		redirect: 'manual'
 	});
 	if (!loginResponse.ok) {
 		throw new Error(`Admin login failed: ${await readError(loginResponse)}`);
 	}
-	const cookie = sessionCookieFrom(loginResponse);
+	const cookie = sessionCookieFrom(loginResponse, baseHeaders.Cookie);
 
 	const formData = new FormData();
 	formData.append('name', options.name);
@@ -121,8 +232,9 @@ async function main() {
 
 	const uploadResponse = await fetch(`${options.server}/api/admin/puzzles`, {
 		method: 'POST',
-		headers: { Cookie: cookie },
-		body: formData
+		headers: { ...baseHeaders, Cookie: cookie },
+		body: formData,
+		redirect: 'manual'
 	});
 	if (!uploadResponse.ok) {
 		throw new Error(`Puzzle upload failed: ${await readError(uploadResponse)}`);
@@ -133,6 +245,10 @@ async function main() {
 }
 
 main().catch((error) => {
+	if (error instanceof FatalError) {
+		console.error(error.message);
+		process.exit(error.exitCode);
+	}
 	console.error(error instanceof Error ? error.message : error);
 	process.exit(1);
 });
