@@ -1340,7 +1340,7 @@ describe('PuzzleMetadataDO.fetch - /delete (tombstone)', () => {
 			})
 		);
 		expect(updateRes.status).toBe(404);
-		const updateBody = await updateRes.json();
+		const updateBody = (await updateRes.json()) as { message?: string };
 		expect(updateBody.message).toContain('deleted');
 	});
 
