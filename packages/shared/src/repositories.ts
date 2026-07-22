@@ -58,15 +58,16 @@ export async function updateProfileDisplayName(
 export async function updateProfileAvatarUrl(
 	db: AppDb,
 	playerId: string,
-	avatarUrl: string
+	avatarUrl: string,
+	avatarUpdatedAt: number = Date.now()
 ): Promise<void> {
 	const now = Date.now();
 	await db
 		.insert(playerProfiles)
-		.values({ playerId, avatarUrl, updatedAt: now })
+		.values({ playerId, avatarUrl, avatarUpdatedAt, updatedAt: now })
 		.onConflictDoUpdate({
 			target: playerProfiles.playerId,
-			set: { avatarUrl, updatedAt: now }
+			set: { avatarUrl, avatarUpdatedAt, updatedAt: now }
 		})
 		.run();
 }
@@ -81,11 +82,37 @@ export async function clearProfileAvatarUrl(db: AppDb, playerId: string): Promis
 	const now = Date.now();
 	await db
 		.insert(playerProfiles)
-		.values({ playerId, avatarUrl: null, updatedAt: now })
+		.values({ playerId, avatarUrl: null, avatarUpdatedAt: null, updatedAt: now })
 		.onConflictDoUpdate({
 			target: playerProfiles.playerId,
-			set: { avatarUrl: null, updatedAt: now }
+			set: { avatarUrl: null, avatarUpdatedAt: null, updatedAt: now }
 		})
+		.run();
+}
+
+// Owner-checked avatar rollback: only nulls avatarUrl when the row's
+// avatarUpdatedAt matches ownerAvatarUpdatedAt (the timestamp the caller
+// wrote via updateProfileAvatarUrl). This prevents a concurrent upload's
+// successful avatar from being clobbered when this upload's live R2 put
+// fails after the DB write. Display-name writes update updatedAt but not
+// avatarUpdatedAt, so a name change after the avatar DB write cannot
+// cause rollback to no-op while avatarUrl still points at a missing file.
+// Uses a plain UPDATE (not upsert) so a missing row is a no-op.
+export async function clearProfileAvatarUrlIfOwned(
+	db: AppDb,
+	playerId: string,
+	ownerAvatarUpdatedAt: number
+): Promise<void> {
+	const now = Date.now();
+	await db
+		.update(playerProfiles)
+		.set({ avatarUrl: null, avatarUpdatedAt: null, updatedAt: now })
+		.where(
+			and(
+				eq(playerProfiles.playerId, playerId),
+				eq(playerProfiles.avatarUpdatedAt, ownerAvatarUpdatedAt)
+			)
+		)
 		.run();
 }
 

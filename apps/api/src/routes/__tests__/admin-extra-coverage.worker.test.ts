@@ -15,19 +15,26 @@ vi.mock('../../services/storage.worker', () => ({
 	createPuzzleMetadata: vi.fn(),
 	uploadOriginalImage: vi.fn(),
 	deleteOriginalImage: vi.fn(),
-	listPuzzles: vi.fn()
+	listPuzzles: vi.fn(),
+	originalImageExists: vi.fn().mockResolvedValue(false),
+	puzzleExists: vi.fn().mockResolvedValue(false),
+	releaseIdempotencyKey: vi.fn()
 }));
 
 vi.mock('../../db.worker', () => ({
 	getWorkerDb: vi.fn(() => ({}))
 }));
 
-vi.mock('@perseus/shared', () => ({
-	insertPuzzleOwnership: vi.fn().mockResolvedValue(undefined),
-	deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined),
-	deletePuzzleStats: vi.fn().mockResolvedValue(undefined),
-	SYSTEM_OWNER_ID: 'system'
-}));
+vi.mock('@perseus/shared', async (importOriginal) => {
+	const original = await importOriginal<typeof import('@perseus/shared')>();
+	return {
+		...original,
+		insertPuzzleOwnership: vi.fn().mockResolvedValue(undefined),
+		deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined),
+		deletePuzzleStats: vi.fn().mockResolvedValue(undefined),
+		SYSTEM_OWNER_ID: 'system'
+	};
+});
 
 vi.mock('../../middleware/auth.worker', () => ({
 	verifySession: vi.fn(),

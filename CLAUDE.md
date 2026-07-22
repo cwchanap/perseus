@@ -147,3 +147,10 @@ Pulumi TypeScript program for Cloudflare deployment. `packages/infrastructure/sr
 - API tests: files matching `src/**/*.test.ts` excluding `src/__tests__/puzzles.test.ts`; worker tests use `.worker.test.ts` naming convention
 - Web unit tests run in browser mode via Playwright/Chromium (headless); all tests require assertions (`requireAssertions: true`)
 - Web E2E tests: `apps/web/e2e/` directory with Playwright (`gallery.spec.ts`, `puzzle-solving.spec.ts`)
+
+## Operator Runbook
+
+Production operations procedures (deploy, D1 migrations, state-loss recovery,
+seed uploads, orphan reaper, force-delete, Access gate, legacy key removal)
+are consolidated in [`docs/OPERATOR_RUNBOOK.md`](docs/OPERATOR_RUNBOOK.md).
+The sections below are brief pointers; consult the runbook for full detail.

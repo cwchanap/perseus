@@ -32,81 +32,9 @@ export type {
 
 export { PUZZLE_CATEGORIES };
 
-export type LockResult =
-	| { status: 'acquired'; token: string; ttlMs: number }
-	| { status: 'held' }
-	| { status: 'error'; error: Error };
-
 // KV key helpers
 function puzzleKey(id: string): string {
 	return `puzzle:${id}`;
-}
-
-// Distributed lock helpers for KV
-export async function acquireLock(
-	kv: KVNamespace,
-	key: string,
-	timeoutMs: number
-): Promise<LockResult> {
-	const lockValue = crypto.randomUUID();
-	try {
-		// Note: This lock is best-effort and non-atomic (TOCTOU race between get and put).
-		// For strict mutual exclusion, consider using Durable Objects or another atomic lock mechanism.
-		const existing = await kv.get(key);
-		if (existing) {
-			// Lock already held
-			return { status: 'held' };
-		}
-		// KV enforces a minimum TTL of 60s; compute the actual TTL so callers know the real expiry
-		const ttlSeconds = Math.max(Math.ceil(timeoutMs / 1000), 60);
-		const ttlMs = ttlSeconds * 1000;
-		await kv.put(key, lockValue, { expirationTtl: ttlSeconds });
-
-		// Note: We intentionally skip verify-after-write here because KV is eventually
-		// consistent — a read immediately after write may return stale data, causing
-		// false negatives that make the lock permanently fail. The initial check-then-put
-		// already has a TOCTOU window; an unreliable verify step only makes it worse.
-		// For strict mutual exclusion, use Durable Objects.
-
-		return { status: 'acquired', token: lockValue, ttlMs };
-	} catch (error) {
-		console.error('Failed to acquire lock:', error);
-		return { status: 'error', error: error instanceof Error ? error : new Error(String(error)) };
-	}
-}
-
-// Best-effort lock release. Returns true if the lock was deleted while our token was current,
-// false otherwise. Note: KV does not support atomic compare-and-delete, so there is an
-// inherent TOCTOU window between get and delete. For strict mutual exclusion, use Durable Objects.
-export async function releaseLock(
-	kv: KVNamespace,
-	key: string,
-	expectedToken: string
-): Promise<boolean> {
-	try {
-		const currentToken = await kv.get(key);
-
-		if (!currentToken) {
-			console.warn(
-				`Attempted to release lock ${key} but it doesn't exist (may have already expired)`
-			);
-			return false;
-		}
-
-		if (currentToken !== expectedToken) {
-			console.warn(
-				`Attempted to release lock ${key} but token doesn't match. Lock may have been taken over.`
-			);
-			return false;
-		}
-
-		await kv.delete(key);
-		return true;
-	} catch (error) {
-		console.error('Failed to release lock:', error);
-		// Re-throw to inform caller of lock release failure
-		throw error;
-	}
 }
 
 export async function getPuzzle(kv: KVNamespace, puzzleId: string): Promise<PuzzleMetadata | null> {
@@ -122,9 +50,10 @@ export async function getPuzzle(kv: KVNamespace, puzzleId: string): Promise<Puzz
 // NOTE: This function has a TOCTOU (Time-of-Check-Time-of-Use) race condition between the
 // existence check (kv.get) and the write (kv.put). For concurrent callers, the same puzzle ID
 // may pass the existence check simultaneously, resulting in only one write succeeding (the
-// second kv.put will overwrite). To prevent this, callers MUST acquire a distributed lock
-// (via acquireLock) using the puzzle ID as the lock key before calling this function, or
-// ensure puzzle IDs are unique (e.g., UUIDs generated via crypto.randomUUID()).
+// second kv.put will overwrite). To prevent this, callers MUST ensure puzzle IDs are unique
+// (e.g., UUIDs generated via crypto.randomUUID()) and pair creation with an idempotency-key
+// reservation in PuzzleMetadataDO (see reserveIdempotencyKey) so concurrent retries for the
+// same logical upload are serialized.
 export async function createPuzzleMetadata(kv: KVNamespace, puzzle: PuzzleMetadata): Promise<void> {
 	// Validate required fields
 	if (!puzzle.id || typeof puzzle.id !== 'string' || puzzle.id.trim() === '') {
@@ -177,6 +106,173 @@ export async function updatePuzzleMetadata(
 			payload?.message ?? `Failed to update puzzle ${puzzleId} (HTTP ${response.status})`
 		);
 	}
+}
+
+/**
+ * Read the authoritative puzzle status from the metadata DO's storage.
+ * Used by the reaper to verify the DO's status before reaping — a stale KV
+ * read showing 'processing' can mask a DO that already committed 'ready'
+ * (finalize succeeded but the workflow later errored). Returns the status
+ * string on success, null when the DO has no metadata (404 — truly
+ * orphaned, safe to reap). Throws on DO errors (500, network) so the
+ * caller can distinguish "no metadata" from "DO unreachable" and fail
+ * closed (skip reaping) on the latter.
+ */
+export async function getAuthoritativeStatus(
+	metadataDO: DurableObjectNamespace,
+	puzzleId: string
+): Promise<string | null> {
+	const id = metadataDO.idFromName(puzzleId);
+	const stub = metadataDO.get(id);
+	const response = await stub.fetch('https://puzzle-metadata/status', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ puzzleId })
+	});
+	if (response.status === 404) {
+		return null;
+	}
+	if (!response.ok) {
+		const payload = (await response.json().catch(() => null)) as { message?: string } | null;
+		throw new Error(
+			payload?.message ??
+				`Failed to read authoritative status for ${puzzleId} (HTTP ${response.status})`
+		);
+	}
+	const result = (await response.json()) as { status?: string };
+	if (typeof result.status !== 'string') {
+		throw new Error(`Authoritative status response missing status field for ${puzzleId}`);
+	}
+	return result.status;
+}
+
+/**
+ * Tombstone the metadata DO for a puzzle. Called by the reaper after
+ * deleting KV and R2 assets to prevent in-flight workflow updates from
+ * resurrecting the puzzle in KV via the DO's KV sync. After this call,
+ * the DO's /update endpoint returns 404 (tombstoned).
+ */
+export async function deleteMetadataDO(
+	metadataDO: DurableObjectNamespace,
+	puzzleId: string
+): Promise<void> {
+	const id = metadataDO.idFromName(puzzleId);
+	const stub = metadataDO.get(id);
+	const response = await stub.fetch('https://puzzle-metadata/delete', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ puzzleId })
+	});
+	if (!response.ok) {
+		const payload = (await response.json().catch(() => null)) as { message?: string } | null;
+		throw new Error(
+			payload?.message ?? `Failed to delete metadata DO for ${puzzleId} (HTTP ${response.status})`
+		);
+	}
+}
+
+export type IdempotencyReservationStatus = 'pending' | 'committed' | 'failed' | 'released';
+
+/**
+ * Reserve an idempotency key via a strongly-consistent Durable Object. The DO
+ * instance is keyed by idFromName(idempotencyKey) — separate from the metadata
+ * DO instance keyed by idFromName(puzzleId). Returns the existing puzzleId if
+ * a prior request already reserved this key, or the proposed puzzleId if this
+ * is the first caller.
+ *
+ * Pair with commitIdempotencyKey on success and failIdempotencyKey /
+ * releaseIdempotencyKey on failure so the reservation lifecycle is recoverable.
+ */
+export async function reserveIdempotencyKey(
+	metadataDO: DurableObjectNamespace,
+	idempotencyKey: string,
+	proposedPuzzleId: string
+): Promise<{
+	existing: boolean;
+	puzzleId: string;
+	status?: IdempotencyReservationStatus;
+	reservedAt?: number;
+}> {
+	const id = metadataDO.idFromName(idempotencyKey);
+	const stub = metadataDO.get(id);
+	const response = await stub.fetch('https://puzzle-metadata/reserve', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ idempotencyKey, puzzleId: proposedPuzzleId })
+	});
+	if (!response.ok) {
+		const payload = (await response.json().catch(() => null)) as { message?: string } | null;
+		throw new Error(
+			payload?.message ?? `Failed to reserve idempotency key (HTTP ${response.status})`
+		);
+	}
+	const result = (await response.json()) as {
+		existing?: boolean;
+		puzzleId?: string;
+		status?: IdempotencyReservationStatus;
+		reservedAt?: number;
+	};
+	if (typeof result.puzzleId !== 'string') {
+		throw new Error('Reserve response missing puzzleId');
+	}
+	return {
+		existing: !!result.existing,
+		puzzleId: result.puzzleId,
+		...(result.status ? { status: result.status } : {}),
+		...(typeof result.reservedAt === 'number' ? { reservedAt: result.reservedAt } : {})
+	};
+}
+
+async function transitionIdempotencyKey(
+	metadataDO: DurableObjectNamespace,
+	idempotencyKey: string,
+	puzzleId: string,
+	action: 'commit' | 'fail' | 'release'
+): Promise<void> {
+	const id = metadataDO.idFromName(idempotencyKey);
+	const stub = metadataDO.get(id);
+	const response = await stub.fetch(`https://puzzle-metadata/${action}`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ puzzleId })
+	});
+	// release and fail are cleanup operations — a missing reservation (404) is
+	// already in the desired state, so 404 is not an error. commit is not: a 404
+	// means the durable key → puzzleId mapping is gone, so the handler would
+	// return 201 without idempotency protection. Surface it so the client retries.
+	const ignoreMissing = action !== 'commit';
+	if (!response.ok && !(ignoreMissing && response.status === 404)) {
+		const payload = (await response.json().catch(() => null)) as { message?: string } | null;
+		const fallback = `Failed to ${action} idempotency key (HTTP ${response.status})`;
+		throw new Error(payload?.message ?? fallback);
+	}
+}
+
+/** Mark a pending reservation as committed after successful create. */
+export async function commitIdempotencyKey(
+	metadataDO: DurableObjectNamespace,
+	idempotencyKey: string,
+	puzzleId: string
+): Promise<void> {
+	await transitionIdempotencyKey(metadataDO, idempotencyKey, puzzleId, 'commit');
+}
+
+/** Mark a pending reservation as failed so a later reserve can reclaim the key. */
+export async function failIdempotencyKey(
+	metadataDO: DurableObjectNamespace,
+	idempotencyKey: string,
+	puzzleId: string
+): Promise<void> {
+	await transitionIdempotencyKey(metadataDO, idempotencyKey, puzzleId, 'fail');
+}
+
+/** Delete a pending reservation (owner-checked) so the key is free immediately. */
+export async function releaseIdempotencyKey(
+	metadataDO: DurableObjectNamespace,
+	idempotencyKey: string,
+	puzzleId: string
+): Promise<void> {
+	await transitionIdempotencyKey(metadataDO, idempotencyKey, puzzleId, 'release');
 }
 
 // Delete puzzle metadata from KV and invalidate gallery index cache
@@ -251,7 +347,8 @@ export async function listPuzzles(
 			aspectRatio: p.aspectRatio,
 			status: p.status,
 			progress: p.progress,
-			category: p.category
+			category: p.category,
+			createdAt: p.createdAt
 		})),
 		invalidCount
 	};
@@ -507,6 +604,20 @@ export async function uploadOriginalImage(
 	await bucket.put(getOriginalKey(puzzleId), data, {
 		httpMetadata: { contentType }
 	});
+}
+
+/**
+ * True when an original image object exists in R2 for this puzzle.
+ *
+ * Propagates R2 errors instead of swallowing them: callers use the result to
+ * decide whether to release an idempotency reservation, and a transient
+ * `head` failure must NOT be interpreted as "object gone" — that would mint a
+ * duplicate of a live puzzle. Callers wrap in try/catch and return 409
+ * (transient) on error so the client retries.
+ */
+export async function originalImageExists(bucket: R2Bucket, puzzleId: string): Promise<boolean> {
+	const obj = await bucket.head(getOriginalKey(puzzleId));
+	return obj !== null;
 }
 
 // Delete original image from R2

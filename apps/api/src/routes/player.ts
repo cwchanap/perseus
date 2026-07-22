@@ -6,11 +6,13 @@ import {
 	getProfileOverride,
 	updateProfileDisplayName,
 	updateProfileAvatarUrl,
-	clearProfileAvatarUrl,
+	clearProfileAvatarUrlIfOwned,
 	getPlayerSummary,
 	listPlayerPuzzles,
 	listPlayerStats,
-	sniffImageType
+	sniffImageType,
+	parseImageDimensions,
+	validateImageEndMarker
 } from '@perseus/shared';
 import type { PlayerProfile, PlayerPuzzleSummary, PlayerStatRow } from '@perseus/types';
 import {
@@ -27,6 +29,11 @@ const player = new Hono<{ Variables: { playerSession: PlayerSessionRecord } }>()
 
 const AVATAR_MAX_BYTES = 5 * 1024 * 1024;
 const AVATAR_MIME = new Set(['image/jpeg', 'image/png', 'image/webp']);
+// Cap avatar dimensions well above the 64x64 display size (retina-safe at 8x)
+// but reject pathologically large images that would burn client render budget
+// and disk storage. The puzzle path enforces MAX_IMAGE_DIMENSION (4096) in the
+// workflow; avatars have no server-side processing step, so the cap lives here.
+const MAX_AVATAR_DIMENSION = 512;
 // Matches the puzzle-name cap (admin routes). Bounds storage and prevents
 // trivially large payloads from reaching D1.
 const MAX_DISPLAY_NAME_LENGTH = 255;
@@ -133,6 +140,33 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 	if (!detected || !AVATAR_MIME.has(detected)) {
 		return c.json({ error: 'bad_request', message: 'Unsupported image type' }, 400);
 	}
+	// Validate the image is not truncated/corrupted by parsing its dimensions.
+	// sniffImageType only checks magic bytes (4 for JPEG, 8 for PNG, 12 for
+	// WebP), so a file with just a valid header prefix but no image data would
+	// pass the type check. parseImageDimensions returns null for truncated or
+	// malformed headers, rejecting incomplete uploads before they reach disk.
+	const dimensions = await parseImageDimensions(file, detected);
+	if (!dimensions || dimensions.width <= 0 || dimensions.height <= 0) {
+		return c.json({ error: 'bad_request', message: 'Image is corrupted or truncated' }, 400);
+	}
+	if (dimensions.width > MAX_AVATAR_DIMENSION || dimensions.height > MAX_AVATAR_DIMENSION) {
+		return c.json(
+			{
+				error: 'bad_request',
+				message: `Avatar dimensions must be ${MAX_AVATAR_DIMENSION}px or less in each axis`
+			},
+			400
+		);
+	}
+	// Validate the image is structurally complete by checking for the format's
+	// end marker (IEND for PNG, EOI for JPEG, RIFF size for WebP).
+	// parseImageDimensions only validates the header; without this check a
+	// file with a valid header but missing body/trailer would pass and be
+	// stored as a corrupt avatar that renders broken for the player.
+	const hasEndMarker = await validateImageEndMarker(file, detected);
+	if (!hasEndMarker) {
+		return c.json({ error: 'bad_request', message: 'Image is corrupted or truncated' }, 400);
+	}
 	const dataDir = process.env.DATA_DIR || './data';
 	const dir = join(dataDir, 'avatars');
 	const avatarPath = join(dir, playerId);
@@ -153,8 +187,13 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 	const db = getDb();
 	// Field-specific update writes only avatarUrl and preserves displayName,
 	// avoiding a read-modify-write race with concurrent PATCH /profile requests.
+	// Capture the updatedAt timestamp so the rename-failure rollback can be
+	// owner-checked: only null avatarUrl if no concurrent upload has since
+	// overwritten the row (detected via updatedAt mismatch). An unconditional
+	// clear would clobber a concurrent winner's avatar.
+	const avatarUpdatedAt = Date.now();
 	try {
-		await updateProfileAvatarUrl(db, playerId, `/api/player/${playerId}/avatar`);
+		await updateProfileAvatarUrl(db, playerId, `/api/player/${playerId}/avatar`, avatarUpdatedAt);
 	} catch (err) {
 		console.error('Avatar DB write failed; cleaning up staged avatar file:', err);
 		// Safe to delete unconditionally: stagingPath is unique to this upload.
@@ -167,13 +206,16 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 	// A concurrent upload may also rename its staging file here; last rename
 	// wins (both are valid avatars). If the rename itself fails (e.g. cross-
 	// filesystem, disk error), roll back the DB write so the profile doesn't
-	// point at a missing file, and delete the orphaned staging file.
+	// point at a missing file, and delete the orphaned staging file. The
+	// rollback is owner-checked on avatarUpdatedAt: if a concurrent upload's
+	// DB write has since overwritten this row, the clear is a no-op and that
+	// upload's avatar is preserved.
 	try {
 		await rename(stagingPath, avatarPath);
 	} catch (err) {
 		console.error('Avatar promotion rename failed; rolling back DB and staging file:', err);
 		await unlink(stagingPath).catch(() => {});
-		await clearProfileAvatarUrl(db, playerId).catch((rollbackErr) =>
+		await clearProfileAvatarUrlIfOwned(db, playerId, avatarUpdatedAt).catch((rollbackErr) =>
 			console.error('Failed to clear avatar URL after rename failure:', rollbackErr)
 		);
 		return c.json({ error: 'internal_error', message: 'Failed to store avatar' }, 500);

@@ -2,10 +2,10 @@
 // Worker code imports from @perseus/types via storage.worker.ts re-exports.
 // Do not add new types here — use @perseus/types instead.
 
-import { PUZZLE_CATEGORIES } from '@perseus/types';
+import { PUZZLE_CATEGORIES, MAX_FILE_SIZE, ALLOWED_MIME_TYPES } from '@perseus/types';
 import type { PuzzleCategory, PuzzleAspectRatio, PuzzleStatus } from '@perseus/types';
 export type { PuzzleCategory, PuzzleAspectRatio, PuzzleStatus };
-export { PUZZLE_CATEGORIES };
+export { PUZZLE_CATEGORIES, MAX_FILE_SIZE, ALLOWED_MIME_TYPES };
 
 export type EdgeType = 'flat' | 'tab' | 'blank';
 
@@ -37,6 +37,7 @@ export interface Puzzle {
 	createdAt: number;
 	pieces: PuzzlePiece[];
 	category?: PuzzleCategory;
+	idempotencyKey?: string;
 }
 
 export interface PuzzleSummary {
@@ -89,7 +90,6 @@ export const ALLOWED_PIECE_COUNTS = [
 ] as const;
 export type AllowedPieceCount = number;
 
-// File upload constraints
-export const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
-export const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const;
+// File upload constraints — re-exported from @perseus/types (see above).
+// ALLOWED_EXTENSIONS is Bun-dev-only and not shared with the Worker runtime.
 export const ALLOWED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp'] as const;

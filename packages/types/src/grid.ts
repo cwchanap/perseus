@@ -10,6 +10,28 @@ export type PuzzleAspectRatio = (typeof PUZZLE_ASPECT_RATIOS)[number];
 
 export const DEFAULT_PUZZLE_ASPECT_RATIO: PuzzleAspectRatio = '1:1';
 
+/**
+ * Tolerance for aspect ratio mismatch between image dimensions and requested ratio.
+ * Accounts for rounding in normalized images (e.g., 3:4 at 300px wide → 400px tall, not 399.99).
+ * Shared by the API (admin/puzzle upload validation) and the CLI upload script so both
+ * enforce the same tolerance without duplication.
+ */
+export const ASPECT_RATIO_TOLERANCE = 0.05; // 5%
+
+export function aspectRatiosMatch(
+	imageWidth: number,
+	imageHeight: number,
+	targetRatio: PuzzleAspectRatio
+): boolean {
+	const parts = targetRatio.split(':').map(Number);
+	const targetW = parts[0];
+	const targetH = parts[1];
+	if (imageHeight <= 0 || imageWidth <= 0 || targetH <= 0 || targetW <= 0) return false;
+	const actual = imageWidth / imageHeight;
+	const expected = targetW / targetH;
+	return Math.abs(actual - expected) / expected <= ASPECT_RATIO_TOLERANCE;
+}
+
 interface BaseGrid {
 	rows: number;
 	cols: number;

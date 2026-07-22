@@ -7,3 +7,9 @@ reviews:
     - '!**/drizzle/migrations/**'
     - '!CLAUDE.md'
     - '!docs/superpowers/**'
+  pre_merge_checks:
+    docstrings:
+      # Establish an achievable baseline for this existing TypeScript codebase.
+      # Raise this threshold incrementally as touched functions gain JSDoc.
+      mode: warning
+      threshold: 30

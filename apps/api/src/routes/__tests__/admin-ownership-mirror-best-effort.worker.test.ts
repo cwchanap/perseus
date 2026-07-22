@@ -14,7 +14,9 @@ vi.mock('../../services/storage.worker', () => ({
 	deletePuzzleMetadata: vi.fn(),
 	createPuzzleMetadata: vi.fn().mockResolvedValue(undefined),
 	uploadOriginalImage: vi.fn().mockResolvedValue(undefined),
-	deleteOriginalImage: vi.fn().mockResolvedValue({ success: true }),
+	deleteOriginalImage: vi.fn(),
+	originalImageExists: vi.fn().mockResolvedValue(false).mockResolvedValue({ success: true }),
+	puzzleExists: vi.fn().mockResolvedValue(false),
 	listPuzzles: vi.fn()
 }));
 
@@ -22,12 +24,11 @@ vi.mock('../../db.worker', () => ({
 	getWorkerDb: vi.fn(() => ({}))
 }));
 
-vi.mock('@perseus/shared', () => ({
-	insertPuzzleOwnership: vi.fn().mockResolvedValue(undefined),
-	deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined),
-	deletePuzzleStats: vi.fn().mockResolvedValue(undefined),
-	SYSTEM_OWNER_ID: 'system'
-}));
+vi.mock('@perseus/shared', async (importOriginal) => {
+	const original = await importOriginal<typeof import('@perseus/shared')>();
+	const { sharedMockOverrides } = await import('./helpers/shared-mock');
+	return { ...original, ...sharedMockOverrides };
+});
 
 vi.mock('../../middleware/auth.worker', () => ({
 	verifySession: vi.fn(),

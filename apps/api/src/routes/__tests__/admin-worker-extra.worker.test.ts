@@ -15,6 +15,8 @@ vi.mock('../../services/storage.worker', () => ({
 	createPuzzleMetadata: vi.fn(),
 	uploadOriginalImage: vi.fn(),
 	deleteOriginalImage: vi.fn(),
+	originalImageExists: vi.fn().mockResolvedValue(false),
+	puzzleExists: vi.fn().mockResolvedValue(false),
 	listPuzzles: vi.fn()
 }));
 
@@ -22,12 +24,11 @@ vi.mock('../../db.worker', () => ({
 	getWorkerDb: vi.fn(() => ({}))
 }));
 
-vi.mock('@perseus/shared', () => ({
-	insertPuzzleOwnership: vi.fn().mockResolvedValue(undefined),
-	deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined),
-	deletePuzzleStats: vi.fn().mockResolvedValue(undefined),
-	SYSTEM_OWNER_ID: 'system'
-}));
+vi.mock('@perseus/shared', async (importOriginal) => {
+	const original = await importOriginal<typeof import('@perseus/shared')>();
+	const { sharedMockOverrides } = await import('./helpers/shared-mock');
+	return { ...original, ...sharedMockOverrides };
+});
 
 vi.mock('../../middleware/auth.worker', () => ({
 	verifySession: vi.fn(),
@@ -326,7 +327,12 @@ describe('Admin Worker - POST /puzzles cleanup failure branches', () => {
 		const mockEnv = {
 			...baseEnv,
 			PUZZLE_WORKFLOW: {
-				create: vi.fn().mockRejectedValue(new Error('Workflow unavailable'))
+				create: vi.fn().mockRejectedValue(new Error('Workflow unavailable')),
+				get: vi.fn().mockRejectedValue(
+					Object.assign(new Error('instance.not_found'), {
+						code: 'instance.not_found'
+					})
+				)
 			}
 		};
 
@@ -341,7 +347,8 @@ describe('Admin Worker - POST /puzzles cleanup failure branches', () => {
 		expect(res.status).toBe(500);
 		const body = (await res.json()) as any;
 		expect(body.error).toBe('internal_error');
-		expect(body.message).toBe('Failed to start puzzle processing');
+		// Metadata cleanup failure keeps the reservation and surfaces a stuck-puzzle message.
+		expect(body.message).toMatch(/stuck|metadata cleanup failed/i);
 		expect(storage.deletePuzzleMetadata).toHaveBeenCalledTimes(1);
 	});
 
@@ -358,7 +365,12 @@ describe('Admin Worker - POST /puzzles cleanup failure branches', () => {
 		const mockEnv = {
 			...baseEnv,
 			PUZZLE_WORKFLOW: {
-				create: vi.fn().mockRejectedValue(new Error('Workflow unavailable'))
+				create: vi.fn().mockRejectedValue(new Error('Workflow unavailable')),
+				get: vi.fn().mockRejectedValue(
+					Object.assign(new Error('instance.not_found'), {
+						code: 'instance.not_found'
+					})
+				)
 			}
 		};
 
@@ -373,7 +385,8 @@ describe('Admin Worker - POST /puzzles cleanup failure branches', () => {
 		expect(res.status).toBe(500);
 		const body = (await res.json()) as any;
 		expect(body.error).toBe('internal_error');
-		expect(body.message).toBe('Failed to start puzzle processing');
+		// Image cleanup failure keeps the reservation and surfaces a stuck-puzzle message.
+		expect(body.message).toMatch(/stuck|image cleanup failed/i);
 		// The image cleanup failure should have been logged
 		expect(storage.deleteOriginalImage).toHaveBeenCalledTimes(1);
 	});
@@ -401,9 +414,11 @@ describe('Admin Worker - POST /puzzles cleanup failure branches', () => {
 
 		const res = await admin.fetch(req, mockEnv as any);
 
-		expect(res.status).toBe(503);
+		// Metadata cleanup failure prevents a clean 503 — reservation stays held.
+		expect(res.status).toBe(500);
 		const body = (await res.json()) as any;
-		expect(body.error).toBe('service_unavailable');
+		expect(body.error).toBe('internal_error');
+		expect(body.message).toMatch(/stuck|metadata cleanup failed/i);
 		expect(storage.deletePuzzleMetadata).toHaveBeenCalledTimes(1);
 	});
 
@@ -430,7 +445,11 @@ describe('Admin Worker - POST /puzzles cleanup failure branches', () => {
 
 		const res = await admin.fetch(req, mockEnv as any);
 
-		expect(res.status).toBe(503);
+		// Image cleanup failure prevents a clean 503 — reservation stays held.
+		expect(res.status).toBe(500);
+		const body = (await res.json()) as any;
+		expect(body.error).toBe('internal_error');
+		expect(body.message).toMatch(/stuck|image cleanup failed/i);
 		expect(storage.deleteOriginalImage).toHaveBeenCalledTimes(1);
 	});
 

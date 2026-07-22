@@ -5,11 +5,13 @@ import {
 	getProfileOverride,
 	updateProfileDisplayName,
 	updateProfileAvatarUrl,
-	clearProfileAvatarUrl,
+	clearProfileAvatarUrlIfOwned,
 	getPlayerSummary,
 	listPlayerPuzzles,
 	listPlayerStats,
-	sniffImageType
+	sniffImageType,
+	parseImageDimensions,
+	validateImageEndMarker
 } from '@perseus/shared';
 import type { PlayerProfile, PlayerPuzzleSummary, PlayerStatRow } from '@perseus/types';
 import {
@@ -29,6 +31,11 @@ const player = new Hono<{
 
 const AVATAR_MAX_BYTES = 5 * 1024 * 1024;
 const AVATAR_MIME = new Set(['image/jpeg', 'image/png', 'image/webp']);
+// Cap avatar dimensions well above the 64x64 display size (retina-safe at 8x)
+// but reject pathologically large images that would burn client render budget
+// and R2 storage. The puzzle path enforces MAX_IMAGE_DIMENSION (4096) in the
+// workflow; avatars have no server-side processing step, so the cap lives here.
+const MAX_AVATAR_DIMENSION = 512;
 // Matches the puzzle-name cap (admin routes). Bounds storage and prevents
 // trivially large payloads from reaching D1.
 const MAX_DISPLAY_NAME_LENGTH = 255;
@@ -133,6 +140,33 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 	if (!detected || !AVATAR_MIME.has(detected)) {
 		return c.json({ error: 'bad_request', message: 'Unsupported image type' }, 400);
 	}
+	// Validate the image is not truncated/corrupted by parsing its dimensions.
+	// sniffImageType only checks magic bytes (4 for JPEG, 8 for PNG, 12 for
+	// WebP), so a file with just a valid header prefix but no image data would
+	// pass the type check. parseImageDimensions returns null for truncated or
+	// malformed headers, rejecting incomplete uploads before they reach R2.
+	const dimensions = await parseImageDimensions(file, detected);
+	if (!dimensions || dimensions.width <= 0 || dimensions.height <= 0) {
+		return c.json({ error: 'bad_request', message: 'Image is corrupted or truncated' }, 400);
+	}
+	if (dimensions.width > MAX_AVATAR_DIMENSION || dimensions.height > MAX_AVATAR_DIMENSION) {
+		return c.json(
+			{
+				error: 'bad_request',
+				message: `Avatar dimensions must be ${MAX_AVATAR_DIMENSION}px or less in each axis`
+			},
+			400
+		);
+	}
+	// Validate the image is structurally complete by checking for the format's
+	// end marker (IEND for PNG, EOI for JPEG, RIFF size for WebP).
+	// parseImageDimensions only validates the header; without this check a
+	// file with a valid header but missing body/trailer would pass and be
+	// stored as a corrupt avatar that renders broken for the player.
+	const hasEndMarker = await validateImageEndMarker(file, detected);
+	if (!hasEndMarker) {
+		return c.json({ error: 'bad_request', message: 'Image is corrupted or truncated' }, 400);
+	}
 	const liveKey = `avatars/${session.user.id}`;
 	// Write to a unique staging key first, then promote to the live key only
 	// after the DB override write succeeds. This avoids two problems:
@@ -151,8 +185,18 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 	const db = getWorkerDb(c.env);
 	// Field-specific update writes only avatarUrl and preserves displayName,
 	// avoiding a read-modify-write race with concurrent PATCH /profile requests.
+	// Capture the updatedAt timestamp so the live-put-failure rollback can be
+	// owner-checked: only null avatarUrl if no concurrent upload has since
+	// overwritten the row (detected via updatedAt mismatch). An unconditional
+	// clear would clobber a concurrent winner's avatar.
+	const avatarUpdatedAt = Date.now();
 	try {
-		await updateProfileAvatarUrl(db, session.user.id, `/api/player/${session.user.id}/avatar`);
+		await updateProfileAvatarUrl(
+			db,
+			session.user.id,
+			`/api/player/${session.user.id}/avatar`,
+			avatarUpdatedAt
+		);
 	} catch (err) {
 		console.error('Avatar DB write failed; cleaning up staged R2 object:', err);
 		// Safe to delete unconditionally: stagingKey is unique to this upload.
@@ -169,26 +213,31 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 	// flag so the profile doesn't reference a missing object, and clean up
 	// the staged object. For a re-upload of an existing avatar, the old live
 	// object still serves (no 404); clearing the flag is a cosmetic
-	// regression only on this rare transient-failure path, and avoids a
-	// read-modify-write race that reading the previous value would introduce.
+	// regression only on this rare transient-failure path. The rollback is
+	// owner-checked on avatarUpdatedAt: if a concurrent upload's DB write
+	// has since overwritten this row (its updatedAt differs), the clear is
+	// a no-op and that upload's avatar is preserved.
 	try {
 		await c.env.PUZZLES_BUCKET.put(liveKey, bytes, {
 			httpMetadata: { contentType: detected }
 		});
 	} catch (err) {
 		console.error('Avatar live R2 put failed; rolling back DB avatarUrl:', err);
-		await clearProfileAvatarUrl(db, session.user.id).catch((rollbackErr) =>
+		await clearProfileAvatarUrlIfOwned(db, session.user.id, avatarUpdatedAt).catch((rollbackErr) =>
 			console.error('Failed to roll back avatarUrl after live put failure:', rollbackErr)
 		);
 		await c.env.PUZZLES_BUCKET.delete(stagingKey).catch(() => {});
 		return c.json({ error: 'internal_error', message: 'Failed to store avatar' }, 500);
 	}
 	// Best-effort cleanup of the staging object. If this delete fails the
-	// staging key will linger until the next upload or a periodic sweep; it
-	// is not reachable by the serve route (which reads only the live key).
-	// Swallow transient failures so a cleanup error does not turn an already-
-	// successful upload (live R2 object + DB override in place) into a 500
-	// before the success response and rate-limit reset reach the client.
+	// staging key lingers (it is not reachable by the serve route, which
+	// reads only the live key, so this is a storage-cost concern, not a
+	// correctness one). There is no automated sweep — see
+	// docs/OPERATOR_RUNBOOK.md §6 "Out of scope: avatar staging orphans" for
+	// manual cleanup. Swallow transient failures so a cleanup error does not
+	// turn an already-successful upload (live R2 object + DB override in
+	// place) into a 500 before the success response and rate-limit reset
+	// reach the client.
 	await c.env.PUZZLES_BUCKET.delete(stagingKey).catch((err) => {
 		console.error('Failed to clean up staging avatar object:', err);
 	});

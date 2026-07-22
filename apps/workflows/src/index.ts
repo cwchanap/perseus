@@ -27,7 +27,13 @@ import {
 	getLeftEdge
 } from '@perseus/types';
 import { createD1Db } from '@perseus/shared/d1';
-import { setPuzzleStatus } from '@perseus/shared';
+import {
+	setPuzzleStatus,
+	sniffImageType,
+	parseImageDimensions,
+	isWorkflowNotFoundError,
+	RESERVATION_PENDING_TTL_MS
+} from '@perseus/shared';
 import type { AppDb } from '@perseus/shared';
 import {
 	MAX_IMAGE_BYTES,
@@ -42,6 +48,20 @@ import {
 // the lifetime of the worker isolate, so reusing one instance avoids
 // per-step allocation overhead across the workflow's multiple step.do calls.
 const dbCache = new WeakMap<Env, AppDb>();
+
+/**
+ * Stable substring of the 409 response returned by updateMetadata when a
+ * ready puzzle is asked to transition to failed. Pinned as a constant so the
+ * producer (updateMetadata's ready→failed guard) and the consumer (the
+ * mark-failed retry loop that detects "finalize already committed") cannot
+ * silently drift apart if the prose is edited. Match on this substring
+ * (case-sensitive) rather than regex-matching freeform prose.
+ */
+const ALREADY_READY_CONFLICT_SUBSTRING = 'already ready; refusing transition to failed';
+
+function alreadyReadyConflictMessage(puzzleId: string): string {
+	return `Puzzle ${puzzleId} is ${ALREADY_READY_CONFLICT_SUBSTRING}`;
+}
 
 function getDb(env: Env): AppDb {
 	let db = dbCache.get(env);
@@ -60,10 +80,57 @@ export interface Env {
 	DB: D1Database;
 }
 
+type ReservationRecord = {
+	puzzleId: string;
+	status: 'pending' | 'committed' | 'failed';
+	/** Epoch ms when the pending claim was created. Absent on legacy records. */
+	reservedAt?: number;
+	/**
+	 * Reservation schema version. New writes are CURRENT_RESERVATION_SCHEMA;
+	 * records written before this field existed default to 0 on read. A future
+	 * migration can branch on this value to transform old records in place
+	 * instead of guessing their shape.
+	 */
+	schemaVersion?: number;
+};
+
+/** Current reservation record schema version. Bump on breaking shape changes. */
+export const CURRENT_RESERVATION_SCHEMA = 1;
+
+function isStalePending(reservation: ReservationRecord, now = Date.now()): boolean {
+	if (reservation.status !== 'pending') return false;
+	// Missing reservedAt is treated as epoch 0 so pre-TTL stuck pendings can be reclaimed.
+	const reservedAt = reservation.reservedAt ?? 0;
+	return now - reservedAt >= RESERVATION_PENDING_TTL_MS;
+}
+
 export class PuzzleMetadataDO extends DurableObject<Env> {
 	async fetch(request: Request): Promise<Response> {
 		const url = new URL(request.url);
-		if (request.method !== 'POST' || url.pathname !== '/update') {
+		if (request.method !== 'POST') {
+			return new Response('Method not allowed', { status: 405 });
+		}
+
+		if (url.pathname === '/reserve') {
+			return this.handleReserve(request);
+		}
+		if (url.pathname === '/commit') {
+			return this.handleReservationTransition(request, 'committed');
+		}
+		if (url.pathname === '/fail') {
+			return this.handleReservationTransition(request, 'failed');
+		}
+		if (url.pathname === '/release') {
+			return this.handleReservationTransition(request, 'released');
+		}
+		if (url.pathname === '/status') {
+			return this.handleStatus(request);
+		}
+		if (url.pathname === '/delete') {
+			return this.handleDelete(request);
+		}
+
+		if (url.pathname !== '/update') {
 			return new Response('Not found', { status: 404 });
 		}
 
@@ -97,69 +164,163 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 			);
 		}
 
-		const stored = await this.ctx.storage.get<PuzzleMetadata>('metadata');
-		const existing = stored ?? (await getMetadata(this.env.PUZZLE_METADATA, puzzleId));
-		if (!existing) {
+		// Reject updates to a tombstoned (reaped) puzzle. The reaper calls
+		// /delete after cleaning up KV and R2 assets; without this check, an
+		// in-flight workflow update would read the DO-stored metadata (or KV
+		// fallback), merge the update, write back to DO storage, and sync to
+		// KV — resurrecting a puzzle whose R2 assets were already deleted.
+		const isDeleted = await this.ctx.storage.get<boolean>('deleted');
+		if (isDeleted) {
+			return Response.json(
+				{ message: `Puzzle ${puzzleId} has been deleted (tombstoned); refusing update` },
+				{ status: 404 }
+			);
+		}
+
+		// Read-modify-write inside storage.transaction for atomicity, mirroring
+		// the handleReserve pattern (and the handleReservationTransition
+		// comment at line ~500). The DO input gate already serializes input
+		// delivery, but wrapping the read+merge+put in a transaction removes
+		// any ordering doubt and protects against a future `await` inserted
+		// between the read and the put — that await would release the input
+		// gate and let a concurrent /update (or /commit, /fail, /release on
+		// this same DO instance) interleave, silently causing a lost update.
+		//
+		// The previous code read `stored` outside the transaction and wrapped
+		// only the single put inside it — the transaction provided no
+		// atomicity (a single put is already atomic) and the read was
+		// unguarded.
+		//
+		// KV fallback: when the DO storage has no metadata yet (first write
+		// after migration / adoption), fall back to reading KV. KV reads are
+		// external I/O and CANNOT be awaited inside a storage.transaction
+		// (the transaction must stay fast and local — SQLite-only — or it
+		// holds the DO's storage lock for the duration of a network call,
+		// blocking all other input to this DO). So: probe storage outside
+		// the transaction; if null, read KV outside; then enter the
+		// transaction and re-read storage under the txn for the
+		// authoritative current value. Mirrors the handleReserve liveness-
+		// check-then-revalidate pattern at lines ~369-469.
+		const storedProbe = await this.ctx.storage.get<PuzzleMetadata>('metadata');
+		let kvFallback: Awaited<ReturnType<typeof getMetadata>> = null;
+		if (!storedProbe) {
+			kvFallback = await getMetadata(this.env.PUZZLE_METADATA, puzzleId);
+		}
+		if (!storedProbe && !kvFallback) {
 			return Response.json(
 				{ message: `Puzzle ${puzzleId} not found in PUZZLE_METADATA` },
 				{ status: 404 }
 			);
 		}
 
-		const currentVersion = existing.version ?? 0;
-
-		// Merge pieces arrays to avoid overwriting with stale data
-		// This handles the case where workflow sends only new row pieces
-		let mergedPieces = existing.pieces || [];
-		if (updates.pieces && Array.isArray(updates.pieces) && updates.pieces.length > 0) {
-			const existingIds = new Set(mergedPieces.map((p: PuzzlePiece) => p.id));
-			const newPieces = updates.pieces.filter((p: PuzzlePiece) => !existingIds.has(p.id));
-			if (newPieces.length > 0) {
-				mergedPieces = [...mergedPieces, ...newPieces];
-			}
-		}
-
-		// Apply updates while maintaining discriminated union invariants
 		let updated: PuzzleMetadata;
-		if (updates.status === 'ready') {
-			// ReadyPuzzle has progress?: never, error?: never
-			updated = {
-				...existing,
-				...updates,
-				id: existing.id,
-				status: 'ready',
-				version: currentVersion + 1,
-				pieces: mergedPieces,
-				progress: undefined,
-				error: undefined
-			} as ReadyPuzzle;
-		} else if (updates.status === 'failed') {
-			// FailedPuzzle has progress?: never
-			updated = {
-				...existing,
-				...updates,
-				id: existing.id,
-				status: 'failed',
-				version: currentVersion + 1,
-				pieces: mergedPieces,
-				progress: undefined
-			} as FailedPuzzle;
-		} else {
-			// ProcessingPuzzle or no status change - merge pieces
-			updated = {
-				...existing,
-				...updates,
-				id: existing.id,
-				version: currentVersion + 1,
-				pieces: mergedPieces
-			} as PuzzleMetadata;
-		}
-
-		// DO is the source of truth — its failure is fatal
+		let deletionEpochAtCommit: number;
 		try {
-			await this.ctx.storage.transaction(async () => {
-				await this.ctx.storage.put('metadata', updated);
+			const result = await this.ctx.storage.transaction(async () => {
+				const stored = await this.ctx.storage.get<PuzzleMetadata>('metadata');
+				// Re-check the tombstone inside the transaction. The outer check
+				// (before storedProbe) is a fast-path early return, but a /delete
+				// can run between that check and this transaction. Without this
+				// re-check, a kvFallback value (read when storedProbe was null —
+				// the DO-storage-empty migration case) would be written back into
+				// DO storage, resurrecting metadata the reaper just tombstoned.
+				const tombstoned = await this.ctx.storage.get<boolean>('deleted');
+				if (tombstoned) {
+					return {
+						ok: false as const,
+						status: 404,
+						message: `Puzzle ${puzzleId} has been deleted (tombstoned); refusing update`
+					};
+				}
+				const existing = stored ?? kvFallback;
+				if (!existing) {
+					// KV had metadata at probe time but storage is still empty and
+					// KV has since been deleted (e.g. reaper ran between the probe
+					// and the transaction). Fail closed with 404.
+					return {
+						ok: false as const,
+						status: 404,
+						message: `Puzzle ${puzzleId} not found in PUZZLE_METADATA`
+					};
+				}
+
+				// A 'ready' puzzle is terminal-good: all pieces are generated and in
+				// R2, so no remaining processing can legitimately fail. Refusing
+				// ready → failed prevents the workflow's mark-failed step from
+				// clobbering a good 'ready' state when its updateMetadata call races
+				// with a successful finalize — e.g. finalize committed the DO write
+				// but the step's retry budget then exhausted, dropping control into
+				// the catch block. The only writer of 'failed' here is mark-failed;
+				// no admin path ever transitions ready → failed (verified across
+				// admin.worker.ts). Idempotent re-writes of the same status (ready →
+				// ready, failed → failed) and the forward transition processing →
+				// failed remain allowed.
+				if (updates.status === 'failed' && existing.status === 'ready') {
+					return {
+						ok: false as const,
+						status: 409,
+						message: alreadyReadyConflictMessage(puzzleId)
+					};
+				}
+
+				const currentVersion = existing.version ?? 0;
+
+				// Merge pieces arrays to avoid overwriting with stale data
+				// This handles the case where workflow sends only new row pieces
+				let mergedPieces = existing.pieces || [];
+				if (updates.pieces && Array.isArray(updates.pieces) && updates.pieces.length > 0) {
+					const existingIds = new Set(mergedPieces.map((p: PuzzlePiece) => p.id));
+					const newPieces = updates.pieces.filter((p: PuzzlePiece) => !existingIds.has(p.id));
+					if (newPieces.length > 0) {
+						mergedPieces = [...mergedPieces, ...newPieces];
+					}
+				}
+
+				// Apply updates while maintaining discriminated union invariants
+				let next: PuzzleMetadata;
+				if (updates.status === 'ready') {
+					// ReadyPuzzle has progress?: never, error?: never
+					next = {
+						...existing,
+						...updates,
+						id: existing.id,
+						status: 'ready',
+						version: currentVersion + 1,
+						pieces: mergedPieces,
+						progress: undefined,
+						error: undefined
+					} as ReadyPuzzle;
+				} else if (updates.status === 'failed') {
+					// FailedPuzzle has progress?: never
+					next = {
+						...existing,
+						...updates,
+						id: existing.id,
+						status: 'failed',
+						version: currentVersion + 1,
+						pieces: mergedPieces,
+						progress: undefined
+					} as FailedPuzzle;
+				} else {
+					// ProcessingPuzzle or no status change - merge pieces
+					next = {
+						...existing,
+						...updates,
+						id: existing.id,
+						version: currentVersion + 1,
+						pieces: mergedPieces
+					} as PuzzleMetadata;
+				}
+
+				const deletionEpochAtCommit = (await this.ctx.storage.get<number>('deletionEpoch')) ?? 0;
+				await this.ctx.storage.put('metadata', next);
+				return { ok: true as const, updated: next, deletionEpoch: deletionEpochAtCommit };
 			});
+			if (!result.ok) {
+				return Response.json({ message: result.message }, { status: result.status });
+			}
+			updated = result.updated;
+			deletionEpochAtCommit = result.deletionEpoch;
 		} catch (error) {
 			console.error(`Failed to persist metadata in DO for puzzle ${puzzleId}:`, error);
 			return Response.json(
@@ -168,21 +329,37 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 			);
 		}
 
-		// KV is eventually consistent — retry with backoff, but don't fail the request
-		const kvMaxRetries = 3;
-		for (let attempt = 0; attempt < kvMaxRetries; attempt++) {
-			try {
-				await this.env.PUZZLE_METADATA.put(`puzzle:${puzzleId}`, JSON.stringify(updated));
-				break; // Success
-			} catch (kvError) {
-				if (attempt < kvMaxRetries - 1) {
-					const delay = 100 * Math.pow(2, attempt);
-					await new Promise((resolve) => setTimeout(resolve, delay));
-				} else {
-					console.error(
-						`KV write failed for puzzle ${puzzleId} after ${kvMaxRetries} attempts, DO is authoritative:`,
-						kvError
-					);
+		// KV is eventually consistent — retry with backoff, but don't fail the request.
+		// Fence the sync with deletionEpoch: a concurrent /delete (reaper tombstone)
+		// bumps the epoch between the transaction commit and this write. Without the
+		// fence, stale metadata would be written back to KV after R2 assets were
+		// deleted. If the epoch changes during the put, undo the write.
+		const epochBeforeSync = deletionEpochAtCommit;
+		const epochNow = (await this.ctx.storage.get<number>('deletionEpoch')) ?? 0;
+		if (epochNow === epochBeforeSync) {
+			const kvMaxRetries = 3;
+			for (let attempt = 0; attempt < kvMaxRetries; attempt++) {
+				try {
+					await this.env.PUZZLE_METADATA.put(`puzzle:${puzzleId}`, JSON.stringify(updated));
+					const epochAfterPut = (await this.ctx.storage.get<number>('deletionEpoch')) ?? 0;
+					if (epochAfterPut !== epochBeforeSync) {
+						try {
+							await this.env.PUZZLE_METADATA.delete(`puzzle:${puzzleId}`);
+						} catch (undoErr) {
+							console.error(`Failed to undo KV write for tombstoned puzzle ${puzzleId}:`, undoErr);
+						}
+					}
+					break; // Success (or undone after concurrent tombstone)
+				} catch (kvError) {
+					if (attempt < kvMaxRetries - 1) {
+						const delay = 100 * Math.pow(2, attempt);
+						await new Promise((resolve) => setTimeout(resolve, delay));
+					} else {
+						console.error(
+							`KV write failed for puzzle ${puzzleId} after ${kvMaxRetries} attempts, DO is authoritative:`,
+							kvError
+						);
+					}
 				}
 			}
 		}
@@ -199,6 +376,456 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 		}
 
 		return Response.json({ success: true, version: updated.version });
+	}
+
+	/**
+	 * Reserve an idempotency key → puzzleId mapping with recoverable lifecycle.
+	 * This DO instance is keyed by idFromName(idempotencyKey), so each key gets
+	 * its own strongly-consistent DO instance.
+	 *
+	 * State machine:
+	 *   (none|failed|stale-pending) --reserve--> pending --commit--> committed
+	 *                                    \--fail--> failed
+	 *                                    \--release--> (none)
+	 *   committed --fail--> failed      (reclaim after workflow marked puzzle failed)
+	 *   committed --release--> (none)   (cleanup after puzzle deletion)
+	 *
+	 * Owner-checked transitions prevent a concurrent loser from releasing or
+	 * committing a winner's reservation. A failed reservation may be reclaimed
+	 * by a later reserve so retries after create failure can proceed. Pending
+	 * reservations older than RESERVATION_PENDING_TTL_MS are also reclaimable
+	 * so a crashed isolate between reserve and commit cannot brick the key.
+	 * A committed reservation may be demoted to failed (so a retry can reclaim
+	 * the key after the workflow marked the puzzle failed) or released (so the
+	 * key is freed after an admin deletes the puzzle). Both are owner-checked.
+	 *
+	 * This instance is separate from the metadata DO instance (keyed by
+	 * idFromName(puzzleId)) — they never share storage.
+	 */
+	async handleReserve(request: Request): Promise<Response> {
+		const body = (await request.json().catch(() => null)) as {
+			idempotencyKey?: string;
+			puzzleId?: string;
+		} | null;
+		if (
+			!body ||
+			typeof body.idempotencyKey !== 'string' ||
+			typeof body.puzzleId !== 'string' ||
+			!body.idempotencyKey.trim() ||
+			!body.puzzleId.trim()
+		) {
+			return Response.json({ message: 'Invalid reserve payload' }, { status: 400 });
+		}
+
+		const { puzzleId } = body;
+		// idempotencyKey is not used directly — this DO instance is already
+		// keyed by it via idFromName(idempotencyKey) in the caller.
+		//
+		// Atomically read-and-claim the reservation inside a storage transaction
+		// so concurrent /reserve calls for the same key serialize: the
+		// transaction provides snapshot isolation + atomic commit, guaranteeing
+		// exactly one caller wins the claim. Consistent with handleUpdate,
+		// which also persists via storage.transaction. On a real Durable Object
+		// the input gate already serializes input delivery, but the transaction
+		// is the documented atomicity primitive and removes any ordering doubt.
+		// Stale-pending reclaim guard: if the prior create wrote metadata but
+		// failed to commit, the reservation sits pending until TTL. Blindly
+		// reclaiming would mint a second live puzzle. Promote to committed
+		// when the reserved puzzle still exists and is not failed. KV read
+		// is outside the storage transaction (external I/O is not allowed
+		// inside DO storage transactions).
+		const preReserve = await this.readReservation();
+		if (preReserve && isStalePending(preReserve)) {
+			// KV errors and corrupt metadata must NOT be collapsed to null —
+			// that would fall through to the reclaim path and mint a duplicate
+			// of a live puzzle whose metadata was momentarily unreadable. Let
+			// getMetadata throw (it returns null only for truly missing keys)
+			// and fail closed with 409 so the client retries. This covers both
+			// transient KV failures and validatePuzzleMetadata rejections (the
+			// helper throws on corrupt data); for corrupt data the 409 persists
+			// until an operator force-deletes the puzzle, which is safer than
+			// silently minting a replacement.
+			let live: Awaited<ReturnType<typeof getMetadata>>;
+			try {
+				live = await getMetadata(this.env.PUZZLE_METADATA, preReserve.puzzleId);
+			} catch (err) {
+				console.error(
+					`Stale-pending metadata lookup failed for puzzle ${preReserve.puzzleId}:`,
+					err
+				);
+				return Response.json(
+					{ message: 'Idempotency reservation lookup failed; retry' },
+					{ status: 409 }
+				);
+			}
+			if (live && live.status !== 'failed') {
+				// Verify the workflow is actually live before promoting. Metadata
+				// can exist (status=processing) without a running workflow if the
+				// original create died between createPuzzleMetadata and
+				// PUZZLE_WORKFLOW.create — promoting would return the stuck
+				// processing puzzle as 200 on every retry without ever resuming
+				// work. Per the fail-the-reservation policy, mark the reservation
+				// failed so a retry reclaims the key and creates a fresh puzzle;
+				// the stuck puzzle's metadata and image remain for operator
+				// cleanup via force-delete. Statuses that mean "not going to
+				// process": errored, terminated, unknown (incl. never created).
+				//
+				// DESIGN NOTE: This liveness check is intentionally OUTSIDE the
+				// promotion transaction below. DO storage.transactions must stay
+				// fast and local (SQLite-only) — an external `await` on
+				// PUZZLE_WORKFLOW.get().status() inside the transaction would
+				// hold the DO's storage lock for the duration of a network call,
+				// blocking all other input to this DO (including concurrent
+				// reserve/commit/fail/release) and risking indefinite hangs on
+				// transient Workflow API failures. Instead, we check liveness
+				// first, then re-validate the reservation state INSIDE both the
+				// fail-transaction (line 365: re-check puzzleId + staleness) and
+				// the promote-transaction (line 402: re-check puzzleId +
+				// staleness). If the reservation changed between the liveness
+				// check and the transaction (e.g. another caller committed or
+				// reclaimed), the inner re-check sees the new state and the
+				// transaction is a no-op. The only residual race — workflow
+				// alive at check time, dies immediately after promotion — is
+				// acceptable: the puzzle metadata exists, a future retry finds
+				// the committed reservation and returns 200, and if the workflow
+				// truly died without completing, the puzzle stays in
+				// "processing" for operator force-delete cleanup.
+				let workflowStatus: InstanceStatus['status'];
+				try {
+					const instance = await this.env.PUZZLE_WORKFLOW.get(preReserve.puzzleId);
+					workflowStatus = (await instance.status()).status;
+				} catch (wfErr) {
+					if (isWorkflowNotFoundError(wfErr)) {
+						// Instance never created — original died before/during
+						// PUZZLE_WORKFLOW.create. Treat as dead so the
+						// fail-the-reservation path below fires and a retry can
+						// reclaim the key. Without this, the reservation stays
+						// pending and every retry 409s until the 2h reaper runs.
+						workflowStatus = 'errored';
+					} else {
+						console.error(
+							`Workflow liveness check failed for puzzle ${preReserve.puzzleId}:`,
+							wfErr
+						);
+						return Response.json(
+							{ message: 'Workflow liveness check failed; retry' },
+							{ status: 409 }
+						);
+					}
+				}
+				if (
+					workflowStatus === 'errored' ||
+					workflowStatus === 'terminated' ||
+					workflowStatus === 'unknown'
+				) {
+					if (live.status === 'ready') {
+						// Finalize committed 'ready' to the authoritative DO before
+						// the workflow later reported errored (e.g. the mark-failed
+						// step's retry budget exhausted after a successful finalize,
+						// or a post-finalize step threw). The puzzle is already in
+						// the desired terminal-good state — marking the reservation
+						// failed would let a retry reclaim the key and mint a
+						// replacement even though the original is ready. Promote to
+						// committed instead, so retries return the existing ready
+						// puzzle. Falls through to the shared promote transaction
+						// below (line ~504), which re-validates puzzleId + staleness
+						// under the storage lock.
+					} else {
+						try {
+							await this.ctx.storage.transaction(async () => {
+								const reservation = await this.readReservation();
+								if (
+									!reservation ||
+									reservation.puzzleId !== preReserve.puzzleId ||
+									!isStalePending(reservation)
+								) {
+									return;
+								}
+								const next: ReservationRecord = {
+									puzzleId: reservation.puzzleId,
+									status: 'failed',
+									schemaVersion: CURRENT_RESERVATION_SCHEMA
+								};
+								await this.ctx.storage.put('reservation', next);
+							});
+						} catch (failErr) {
+							console.error(
+								`Failed to mark stale-pending reservation failed for puzzle ${preReserve.puzzleId}:`,
+								failErr
+							);
+							return Response.json(
+								{ message: 'Failed to reconcile stale reservation; retry' },
+								{ status: 500 }
+							);
+						}
+						return Response.json(
+							{
+								message:
+									'Stale-pending reservation had no running workflow; marked failed, retry to reclaim'
+							},
+							{ status: 409 }
+						);
+					}
+				}
+				const promoted = await this.ctx.storage.transaction(async () => {
+					const reservation = await this.readReservation();
+					// Re-check under the transaction — another caller may have
+					// already promoted or reclaimed.
+					if (
+						!reservation ||
+						reservation.puzzleId !== preReserve.puzzleId ||
+						!isStalePending(reservation)
+					) {
+						return reservation && reservation.status !== 'failed'
+							? {
+									existing: true as const,
+									puzzleId: reservation.puzzleId,
+									status: reservation.status
+								}
+							: null;
+					}
+					const next: ReservationRecord = {
+						puzzleId: reservation.puzzleId,
+						status: 'committed',
+						...(reservation.reservedAt !== undefined ? { reservedAt: reservation.reservedAt } : {}),
+						schemaVersion: CURRENT_RESERVATION_SCHEMA
+					};
+					await this.ctx.storage.put('reservation', next);
+					return {
+						existing: true as const,
+						puzzleId: reservation.puzzleId,
+						status: 'committed' as const
+					};
+				});
+				if (promoted) {
+					return Response.json(promoted);
+				}
+			} else if (live === null) {
+				// KV miss on a stale-pending reservation is indeterminate: the
+				// puzzle's metadata may exist in the authoritative DO but not
+				// yet have propagated to this KV replica (the DO's KV sync can
+				// exhaust its retry budget, or eventual-consistency lag can
+				// outlast the 5-minute stale-pending TTL). Reclaiming here
+				// would overwrite the reservation with a fresh puzzleId while
+				// the original create or workflow continues under the old ID,
+				// minting a duplicate under one Idempotency-Key. Fail closed
+				// with 409 so the client retries. A truly orphaned reservation
+				// (puzzle was never created, no DO metadata either) will brick
+				// the key until an operator force-releases it — the reaper
+				// only scans KV for 'processing' puzzles and cannot find a
+				// never-created one. This tradeoff is accepted: bricking a key
+				// is recoverable (operator runbook), minting duplicates is not.
+				return Response.json(
+					{ message: 'Stale-pending reservation lookup returned no metadata; retry' },
+					{ status: 409 }
+				);
+			}
+		}
+
+		const result = await this.ctx.storage.transaction(async () => {
+			const reservation = await this.readReservation();
+			if (reservation && reservation.status !== 'failed' && !isStalePending(reservation)) {
+				return {
+					existing: true as const,
+					puzzleId: reservation.puzzleId,
+					status: reservation.status,
+					...(reservation.reservedAt !== undefined ? { reservedAt: reservation.reservedAt } : {})
+				};
+			}
+			const next: ReservationRecord = {
+				puzzleId,
+				status: 'pending',
+				reservedAt: Date.now(),
+				schemaVersion: CURRENT_RESERVATION_SCHEMA
+			};
+			await this.ctx.storage.put('reservation', next);
+			return { existing: false as const, puzzleId, status: 'pending' as const };
+		});
+		return Response.json(result);
+	}
+
+	/**
+	 * Owner-checked reservation transition. commit/fail/release only succeed
+	 * when the stored puzzleId matches the caller and status is pending.
+	 *
+	 * The read-decide-write runs inside storage.transaction, mirroring
+	 * handleReserve. The DO input gate already serializes input delivery, so
+	 * this is safe today even without the transaction — but wrapping it
+	 * removes any ordering doubt and protects against a future edit that
+	 * inserts an `await` on an external call (which would release the input
+	 * gate) between the read and the write. Symmetric with handleReserve,
+	 * which is the documented atomicity primitive here.
+	 */
+	async handleReservationTransition(
+		request: Request,
+		action: 'committed' | 'failed' | 'released'
+	): Promise<Response> {
+		const body = (await request.json().catch(() => null)) as {
+			puzzleId?: string;
+		} | null;
+		if (!body || typeof body.puzzleId !== 'string' || !body.puzzleId.trim()) {
+			return Response.json({ message: 'Invalid reservation transition payload' }, { status: 400 });
+		}
+
+		const { puzzleId } = body;
+		const result = await this.ctx.storage.transaction(async () => {
+			const reservation = await this.readReservation();
+			if (!reservation) {
+				return { ok: false as const, status: 404, message: 'No reservation found' };
+			}
+			if (reservation.puzzleId !== puzzleId) {
+				return { ok: false as const, status: 409, message: 'Reservation owned by another puzzle' };
+			}
+			// Allowed transitions:
+			//   pending → {committed, failed, released}  — normal lifecycle
+			//   committed → failed                       — reclaim after workflow failure
+			//   committed → released                     — cleanup after puzzle deletion
+			//   X → X (idempotent re-transition)         — retry safety
+			const transitionAllowed =
+				reservation.status === 'pending' ||
+				reservation.status === action ||
+				(reservation.status === 'committed' && (action === 'failed' || action === 'released'));
+			if (!transitionAllowed) {
+				return {
+					ok: false as const,
+					status: 409,
+					message: `Cannot ${action} reservation in status ${reservation.status}`
+				};
+			}
+
+			if (action === 'released') {
+				await this.ctx.storage.delete('reservation');
+				return { ok: true as const, status: 'released' as const };
+			}
+
+			// Idempotent commit/fail when already in the target status.
+			if (reservation.status === action) {
+				return { ok: true as const, status: action };
+			}
+
+			const next: ReservationRecord = {
+				puzzleId,
+				status: action,
+				schemaVersion: CURRENT_RESERVATION_SCHEMA
+			};
+			await this.ctx.storage.put('reservation', next);
+			return { ok: true as const, status: action };
+		});
+
+		if (!result.ok) {
+			return Response.json({ message: result.message }, { status: result.status });
+		}
+		return Response.json({ success: true, status: result.status });
+	}
+
+	/**
+	 * Read-only endpoint that returns the authoritative metadata status from
+	 * DO storage. Used by the reaper to verify the DO's status before reaping
+	 * a puzzle whose workflow reports 'errored' but whose DO may have already
+	 * committed 'ready' (e.g. finalize succeeded but the step retry budget
+	 * exhausted, dropping into the mark-failed catch which gets a 409).
+	 *
+	 * Returns 200 with { status } when metadata exists, 404 when the DO has
+	 * no metadata (truly orphaned — safe to reap), 403 on puzzleId mismatch.
+	 */
+	async handleStatus(request: Request): Promise<Response> {
+		const body = (await request.json().catch(() => null)) as {
+			puzzleId?: string;
+		} | null;
+		if (!body || typeof body.puzzleId !== 'string' || !body.puzzleId.trim()) {
+			return Response.json({ message: 'Invalid status payload' }, { status: 400 });
+		}
+
+		const { puzzleId } = body;
+
+		let doPuzzleId = await this.ctx.storage.get<string>('puzzleId');
+		if (!doPuzzleId) {
+			doPuzzleId = puzzleId;
+			await this.ctx.storage.put('puzzleId', doPuzzleId);
+		} else if (doPuzzleId !== puzzleId) {
+			return Response.json(
+				{ message: 'Puzzle ID mismatch: request puzzleId does not match DO identity' },
+				{ status: 403 }
+			);
+		}
+
+		const stored = await this.ctx.storage.get<PuzzleMetadata>('metadata');
+		if (!stored) {
+			return Response.json(
+				{ message: `Puzzle ${puzzleId} not found in DO storage` },
+				{ status: 404 }
+			);
+		}
+		return Response.json({ status: stored.status });
+	}
+
+	/**
+	 * Tombstone the DO's metadata and clear storage. Called by the reaper
+	 * after deleting KV and R2 assets to prevent in-flight workflow updates
+	 * from resurrecting the puzzle in KV via the DO's KV sync. After this,
+	 * /update returns 404 (tombstoned) so the workflow's updateMetadata
+	 * calls fail fast instead of writing stale data back to KV.
+	 *
+	 * The tombstone is a separate storage key ('deleted') that persists
+	 * even after the metadata key is cleared. This is idempotent — calling
+	 * /delete on an already-deleted DO is a no-op (200).
+	 */
+	async handleDelete(request: Request): Promise<Response> {
+		const body = (await request.json().catch(() => null)) as {
+			puzzleId?: string;
+		} | null;
+		if (!body || typeof body.puzzleId !== 'string' || !body.puzzleId.trim()) {
+			return Response.json({ message: 'Invalid delete payload' }, { status: 400 });
+		}
+
+		const { puzzleId } = body;
+
+		let doPuzzleId = await this.ctx.storage.get<string>('puzzleId');
+		if (!doPuzzleId) {
+			doPuzzleId = puzzleId;
+			await this.ctx.storage.put('puzzleId', doPuzzleId);
+		} else if (doPuzzleId !== puzzleId) {
+			return Response.json(
+				{ message: 'Puzzle ID mismatch: request puzzleId does not match DO identity' },
+				{ status: 403 }
+			);
+		}
+
+		// Atomically set the tombstone, bump deletionEpoch, and clear metadata
+		// inside a transaction so a concurrent /update cannot resurrect it and
+		// the post-transaction KV sync can fence on the epoch.
+		await this.ctx.storage.transaction(async () => {
+			const epoch = (await this.ctx.storage.get<number>('deletionEpoch')) ?? 0;
+			await this.ctx.storage.put('deletionEpoch', epoch + 1);
+			await this.ctx.storage.put('deleted', true);
+			await this.ctx.storage.delete('metadata');
+		});
+
+		return Response.json({ success: true });
+	}
+
+	private async readReservation(): Promise<ReservationRecord | null> {
+		const stored = await this.ctx.storage.get<{
+			puzzleId?: string;
+			status?: string;
+			reservedAt?: number;
+			schemaVersion?: number;
+		}>('reservation');
+		if (
+			stored &&
+			typeof stored.puzzleId === 'string' &&
+			(stored.status === 'pending' || stored.status === 'committed' || stored.status === 'failed')
+		) {
+			return {
+				puzzleId: stored.puzzleId,
+				status: stored.status,
+				...(typeof stored.reservedAt === 'number' ? { reservedAt: stored.reservedAt } : {}),
+				// Default missing schemaVersion to 0 (pre-schema records). A
+				// future migration can branch on this to transform old records.
+				schemaVersion: typeof stored.schemaVersion === 'number' ? stored.schemaVersion : 0
+			};
+		}
+		return null;
 	}
 }
 
@@ -245,8 +872,39 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 
 			// Step 2: Decode image and validate dimensions using Photon
 			const { width, height } = await step.do('decode-validate', async () => {
-				const { PhotonImage } = await import('@cf-wasm/photon');
 				const bytes = await loadOriginalImageBytes(this.env, puzzleId);
+
+				// Best-effort pre-check: parse dimensions from the image header
+				// BEFORE decoding the full bitmap with Photon.
+				// PhotonImage.new_from_byteslice allocates the entire decoded
+				// pixel buffer in WASM memory — a pathologically large image
+				// (e.g. one that bypassed upload validation and landed in R2)
+				// would OOM the worker before the post-decode dimension check
+				// below could reject it. parseImageDimensions reads only header
+				// bytes, so this guard is cheap. When the header is parseable
+				// and reports oversized dimensions, reject without decoding.
+				// When the header is unparseable (corrupt bytes, or a format
+				// sniffImageType doesn't recognize), skip the pre-check and let
+				// Photon's own decode + the post-decode guard below handle it —
+				// matching the pre-guard behavior. This catches the realistic
+				// threat (a valid-header image that exceeds the cap) without
+				// regressing on bytes that lack a parseable header.
+				const detected = sniffImageType(bytes);
+				if (detected) {
+					const headerDims = await parseImageDimensions(new Blob([bytes]), detected);
+					if (
+						headerDims &&
+						headerDims.width > 0 &&
+						headerDims.height > 0 &&
+						(headerDims.width > MAX_IMAGE_DIMENSION || headerDims.height > MAX_IMAGE_DIMENSION)
+					) {
+						throw new Error(
+							`Image dimensions ${headerDims.width}x${headerDims.height} exceed maximum ${MAX_IMAGE_DIMENSION}px`
+						);
+					}
+				}
+
+				const { PhotonImage } = await import('@cf-wasm/photon');
 				const image = PhotonImage.new_from_byteslice(bytes);
 
 				const w = image.get_width();
@@ -502,6 +1160,11 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 				const maxRetries = 3;
 				let lastError: unknown;
 				let doSucceeded = false;
+				// Set when the DO refuses ready → failed (see PuzzleMetadataDO
+				// /update): finalize already committed 'ready', so the puzzle is
+				// in the desired terminal state and must NOT be overwritten with
+				// 'failed'. We reconcile D1 to 'ready' and skip the CRITICAL log.
+				let alreadyReady = false;
 
 				for (let attempt = 0; attempt < maxRetries; attempt++) {
 					try {
@@ -514,6 +1177,25 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 						doSucceeded = true;
 						break;
 					} catch (markErr) {
+						// A 409 from the metadata DO with an "already ready"
+						// message means finalize committed before this catch
+						// ran (e.g. its step retry budget exhausted after a
+						// successful DO write). That is the desired terminal
+						// state; do not retry, do not log CRITICAL, and do not
+						// mirror 'failed' to D1. Reconcile D1 to 'ready' so the
+						// owner's list doesn't stay stuck at 'processing'.
+						// Match on the message (not status alone) so a future
+						// unrelated 409 cannot be misread as already-ready.
+						const markStatus = (markErr as { status?: number })?.status;
+						const markMessage = markErr instanceof Error ? markErr.message : String(markErr ?? '');
+						if (markStatus === 409 && markMessage.includes(ALREADY_READY_CONFLICT_SUBSTRING)) {
+							console.warn(
+								`Puzzle ${puzzleId} is already ready; skipping mark-failed ` +
+									'(finalize committed before the error path).'
+							);
+							alreadyReady = true;
+							break;
+						}
 						lastError = markErr;
 						console.error(
 							`Failed to mark puzzle ${puzzleId} as failed (attempt ${attempt + 1}/${maxRetries}):`,
@@ -526,6 +1208,18 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 							await new Promise((resolve) => setTimeout(resolve, delay));
 						}
 					}
+				}
+
+				if (alreadyReady) {
+					// Best-effort D1 reconciliation to 'ready' (matches the
+					// success-path mirror-ready-status-to-d1 step, which won't
+					// run because the catch block re-throws originalError).
+					try {
+						await setPuzzleStatus(getDb(this.env), puzzleId, 'ready');
+					} catch (d1Error) {
+						console.error('Failed to reconcile already-ready status in D1:', d1Error);
+					}
+					return;
 				}
 
 				if (doSucceeded) {

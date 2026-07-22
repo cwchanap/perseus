@@ -20,7 +20,12 @@ vi.mock('../routes/auth.worker', () => {
 	return { default: app };
 });
 
+vi.mock('../services/reaper', () => ({
+	reapStuckPuzzles: vi.fn()
+}));
+
 import worker from '../worker';
+import { reapStuckPuzzles } from '../services/reaper';
 
 function createMockCtx(): ExecutionContext {
 	return {
@@ -155,6 +160,64 @@ describe('Worker Entry Point', () => {
 			expect(res.status).toBe(500);
 			const body = (await res.json()) as any;
 			expect(body.error).toBe('internal_error');
+		});
+	});
+
+	describe('scheduled handler (reaper)', () => {
+		it('should call reapStuckPuzzles and log results', async () => {
+			(reapStuckPuzzles as any).mockResolvedValue({
+				scanned: 10,
+				candidates: 2,
+				reaped: 1,
+				errors: 0,
+				details: [{ puzzleId: 'p1', action: 'reaped' }]
+			});
+			const ctx = createMockCtx();
+			const env = { PUZZLE_METADATA: {} } as any;
+
+			await worker.scheduled!(undefined as any, env, ctx);
+
+			// waitUntil is called with a promise — await it to complete
+			const waitUntilCall = (ctx.waitUntil as any).mock.calls[0][0];
+			await waitUntilCall;
+
+			expect(reapStuckPuzzles).toHaveBeenCalledWith(env);
+		});
+
+		it('should not throw when reapStuckPuzzles rejects', async () => {
+			(reapStuckPuzzles as any).mockRejectedValue(new Error('reaper failed'));
+			const ctx = createMockCtx();
+			const env = { PUZZLE_METADATA: {} } as any;
+
+			await worker.scheduled!(undefined as any, env, ctx);
+
+			// waitUntil is called with a promise — await it to complete
+			const waitUntilCall = (ctx.waitUntil as any).mock.calls[0][0];
+			await waitUntilCall;
+
+			expect(reapStuckPuzzles).toHaveBeenCalledWith(env);
+		});
+
+		it('should log details when reaped > 0', async () => {
+			const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+			(reapStuckPuzzles as any).mockResolvedValue({
+				scanned: 5,
+				candidates: 1,
+				reaped: 1,
+				errors: 0,
+				details: [{ puzzleId: 'p1', action: 'reaped' }]
+			});
+			const ctx = createMockCtx();
+			const env = { PUZZLE_METADATA: {} } as any;
+
+			await worker.scheduled!(undefined as any, env, ctx);
+			const waitUntilCall = (ctx.waitUntil as any).mock.calls[0][0];
+			await waitUntilCall;
+
+			// Should have logged start, summary, and details
+			expect(logSpy).toHaveBeenCalledWith('Reaper: starting scheduled run');
+			expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('scanned=5'));
+			expect(logSpy).toHaveBeenCalledWith('Reaper details:', expect.stringContaining('p1'));
 		});
 	});
 });

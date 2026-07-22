@@ -457,3 +457,159 @@ describe('listPuzzlesPage', () => {
 		expect(result.puzzles[0].id).toBe('good-puzzle');
 	});
 });
+
+describe('idempotency reservation', () => {
+	beforeEach(async () => {
+		const { readdir, rm } = await import('node:fs/promises');
+		const entries = await readdir(tempDir, { withFileTypes: true });
+		for (const entry of entries) {
+			await rm(join(tempDir, entry.name), { recursive: true, force: true });
+		}
+		await storageModule.initializeStorage();
+	});
+
+	it('reserves a key for the first caller and returns existing for the second', async () => {
+		const first = await storageModule.reserveIdempotencyKey('key-a', 'puzzle-1');
+		expect(first).toEqual({ existing: false, puzzleId: 'puzzle-1' });
+
+		const second = await storageModule.reserveIdempotencyKey('key-a', 'puzzle-2');
+		expect(second).toEqual({ existing: true, puzzleId: 'puzzle-1' });
+	});
+
+	it('releases only when the owner matches', async () => {
+		await storageModule.reserveIdempotencyKey('key-b', 'puzzle-1');
+		await storageModule.releaseIdempotencyKey('key-b', 'wrong-owner');
+		const stillHeld = await storageModule.reserveIdempotencyKey('key-b', 'puzzle-2');
+		expect(stillHeld).toEqual({ existing: true, puzzleId: 'puzzle-1' });
+
+		await storageModule.releaseIdempotencyKey('key-b', 'puzzle-1');
+		const reclaimed = await storageModule.reserveIdempotencyKey('key-b', 'puzzle-3');
+		expect(reclaimed).toEqual({ existing: false, puzzleId: 'puzzle-3' });
+	});
+
+	it('reclaims a corrupt empty reservation file instead of bricking the key', async () => {
+		const { mkdir } = await import('node:fs/promises');
+		// A mid-write crash can leave a zero-byte reservation file. Without
+		// recovery this permanently 500s the key (and release() cannot clear an
+		// ownerless file). reserve() should detect the empty file and reclaim it.
+		const reservationPath = join(tempDir, 'idempotency', 'key-empty');
+		await mkdir(join(tempDir, 'idempotency'), { recursive: true });
+		await writeFile(reservationPath, '', { flag: 'wx' });
+		expect(await readFile(reservationPath, 'utf-8')).toBe('');
+
+		const result = await storageModule.reserveIdempotencyKey('key-empty', 'puzzle-1');
+		expect(result).toEqual({ existing: false, puzzleId: 'puzzle-1' });
+		expect(await readFile(reservationPath, 'utf-8')).toBe('puzzle-1');
+	});
+
+	it('concurrent reserves for the same key award exactly one winner (link atomicity)', async () => {
+		// Two reserves race for the same key. The atomic temp-file + link()
+		// publish must guarantee only one caller wins the claim; the loser
+		// reads the winner's puzzleId back. This mirrors the DO concurrency
+		// test and guards against a regression that drops the link() step (a
+		// plain writeFile would let both callers "win" and clobber each other).
+		const [r1, r2] = await Promise.all([
+			storageModule.reserveIdempotencyKey('key-race', 'puzzle-a'),
+			storageModule.reserveIdempotencyKey('key-race', 'puzzle-b')
+		]);
+		const winners = [r1, r2].filter((r) => r.existing === false);
+		expect(winners.length).toBe(1);
+		const winnerId = winners[0].puzzleId;
+		expect(['puzzle-a', 'puzzle-b']).toContain(winnerId);
+
+		const loser = [r1, r2].find((r) => r.existing === true)!;
+		expect(loser.puzzleId).toBe(winnerId);
+	});
+
+	it('concurrent release and replacement reserve serialize via per-key lock', async () => {
+		// Reserve a key, then concurrently release it (owner-checked) and
+		// reserve a replacement puzzleId. Without the per-key lock, the
+		// release's read-verify-delete window can interleave with the reserve's
+		// read: reserve sees the old puzzleId (returns existing), then release
+		// deletes the file — leaving the key unowned even though the reserve
+		// caller thinks it's still held. With the lock, the operations
+		// serialize: either release completes first (file gone, reserve creates
+		// fresh) or reserve completes first (returns existing, then release
+		// deletes). Either way, a follow-up reserve sees a consistent state.
+		await storageModule.reserveIdempotencyKey('key-rel-race', 'puzzle-a');
+
+		await Promise.all([
+			storageModule.releaseIdempotencyKey('key-rel-race', 'puzzle-a'),
+			storageModule.reserveIdempotencyKey('key-rel-race', 'puzzle-b')
+		]);
+
+		// Follow-up reserve must see a consistent state: either puzzle-b won
+		// the race (file exists with puzzle-b) or the release deleted the file
+		// and the follow-up creates puzzle-c fresh. No stale/corrupt state.
+		const followUp = await storageModule.reserveIdempotencyKey('key-rel-race', 'puzzle-c');
+		if (followUp.existing) {
+			// puzzle-b won — file should contain puzzle-b.
+			expect(followUp.puzzleId).toBe('puzzle-b');
+		} else {
+			// Release won — file was deleted, follow-up created puzzle-c.
+			expect(followUp.puzzleId).toBe('puzzle-c');
+		}
+	});
+
+	it('concurrent release by wrong owner does not clear a winner reservation', async () => {
+		// A wrong-owner release must not delete the file even when it
+		// interleaves with a concurrent reserve. The per-key lock serializes
+		// the operations, and the owner check prevents the wrong-owner release
+		// from clearing a reservation it doesn't own.
+		await storageModule.reserveIdempotencyKey('key-wrong-owner', 'puzzle-a');
+
+		await Promise.all([
+			storageModule.releaseIdempotencyKey('key-wrong-owner', 'wrong-owner'),
+			storageModule.reserveIdempotencyKey('key-wrong-owner', 'puzzle-b')
+		]);
+
+		// The wrong-owner release is a no-op. The reserve either sees
+		// puzzle-a (existing) or creates puzzle-b if the file was somehow
+		// gone. The key invariant: the wrong-owner release did NOT delete
+		// the file, so the reservation still maps to puzzle-a.
+		const followUp = await storageModule.reserveIdempotencyKey('key-wrong-owner', 'puzzle-c');
+		expect(followUp.existing).toBe(true);
+		expect(followUp.puzzleId).toBe('puzzle-a');
+	});
+
+	it('concurrent releases for the same key serialize and do not corrupt the file', async () => {
+		// Two concurrent releases for the same key and owner. The per-key
+		// lock serializes them: the first deletes the file, the second finds
+		// it gone (ENOENT) and returns. No error, no corruption.
+		await storageModule.reserveIdempotencyKey('key-double-release', 'puzzle-a');
+
+		await Promise.all([
+			storageModule.releaseIdempotencyKey('key-double-release', 'puzzle-a'),
+			storageModule.releaseIdempotencyKey('key-double-release', 'puzzle-a')
+		]);
+
+		// File should be gone — a follow-up reserve creates fresh.
+		const followUp = await storageModule.reserveIdempotencyKey('key-double-release', 'puzzle-b');
+		expect(followUp).toEqual({ existing: false, puzzleId: 'puzzle-b' });
+	});
+
+	it('re-throws non-ENOENT errors from release so callers can surface them', async () => {
+		// releaseIdempotencyKey must re-throw non-ENOENT errors (e.g. EISDIR,
+		// EACCES, EIO) instead of silently swallowing them, so callers can
+		// log, retry, or return an error to the client. ENOENT is still
+		// swallowed (the file is already gone — not an error).
+		//
+		// To simulate a non-ENOENT error without mocking the frozen
+		// node:fs/promises module, replace the reservation file with a
+		// directory — readFile on a directory throws EISDIR.
+		const { mkdir, rm, rmdir } = await import('node:fs/promises');
+		const reservationPath = join(tempDir, 'idempotency', 'key-release-throw');
+		await mkdir(join(tempDir, 'idempotency'), { recursive: true });
+		await writeFile(reservationPath, 'puzzle-a', { flag: 'wx' });
+		// Replace the file with a directory of the same name.
+		await rm(reservationPath, { force: true });
+		await mkdir(reservationPath, { recursive: true });
+
+		await expect(
+			storageModule.releaseIdempotencyKey('key-release-throw', 'puzzle-a')
+		).rejects.toThrow();
+
+		// Cleanup: remove the directory so it doesn't interfere with other tests.
+		await rmdir(reservationPath, { recursive: true }).catch(() => {});
+	});
+});

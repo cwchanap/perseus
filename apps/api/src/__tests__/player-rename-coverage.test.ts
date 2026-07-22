@@ -28,7 +28,10 @@ vi.mock('../db', () => ({
 
 vi.mock('@perseus/shared', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('@perseus/shared')>();
-	const store = new Map<string, { displayName: string | null; avatarUrl: string | null }>();
+	const store = new Map<
+		string,
+		{ displayName: string | null; avatarUrl: string | null; updatedAt?: number }
+	>();
 	return {
 		...actual,
 		__store: store,
@@ -37,14 +40,24 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 			const existing = store.get(playerId) ?? { displayName: null, avatarUrl: null };
 			store.set(playerId, { ...existing, displayName });
 		}),
-		updateProfileAvatarUrl: vi.fn((db: unknown, playerId: string, avatarUrl: string) => {
-			const existing = store.get(playerId) ?? { displayName: null, avatarUrl: null };
-			store.set(playerId, { ...existing, avatarUrl });
-		}),
+		updateProfileAvatarUrl: vi.fn(
+			(db: unknown, playerId: string, avatarUrl: string, updatedAt?: number) => {
+				const existing = store.get(playerId) ?? { displayName: null, avatarUrl: null };
+				store.set(playerId, { ...existing, avatarUrl, updatedAt });
+			}
+		),
 		clearProfileAvatarUrl: vi.fn(async (db: unknown, playerId: string) => {
 			const existing = store.get(playerId) ?? { displayName: null, avatarUrl: null };
 			store.set(playerId, { ...existing, avatarUrl: null });
 		}),
+		clearProfileAvatarUrlIfOwned: vi.fn(
+			async (db: unknown, playerId: string, ownerUpdatedAt: number) => {
+				const existing = store.get(playerId);
+				if (existing && (existing as any).updatedAt === ownerUpdatedAt) {
+					store.set(playerId, { ...existing, avatarUrl: null });
+				}
+			}
+		),
 		getPlayerSummary: vi.fn(() => ({
 			puzzlesUploaded: 0,
 			puzzlesSolved: 0,
@@ -86,7 +99,48 @@ function buildApp() {
 	return app;
 }
 
-const PNG_BYTES = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01, 0x02, 0x03, 0x04];
+// Minimal PNG with a valid IHDR chunk so parseImageDimensions can extract
+// width/height, plus an IEND chunk so validateImageEndMarker confirms
+// structural completeness.
+const PNG_BYTES = [
+	0x89,
+	0x50,
+	0x4e,
+	0x47,
+	0x0d,
+	0x0a,
+	0x1a,
+	0x0a, // PNG signature
+	0x00,
+	0x00,
+	0x00,
+	0x0d, // IHDR chunk length = 13
+	0x49,
+	0x48,
+	0x44,
+	0x52, // "IHDR"
+	0x00,
+	0x00,
+	0x00,
+	0x01, // width = 1
+	0x00,
+	0x00,
+	0x00,
+	0x01, // height = 1
+	// IEND chunk: 4-byte zero length + "IEND" + CRC AE 42 60 82
+	0x00,
+	0x00,
+	0x00,
+	0x00,
+	0x49,
+	0x45,
+	0x4e,
+	0x44,
+	0xae,
+	0x42,
+	0x60,
+	0x82
+];
 
 describe('player avatar – rename promotion failure rollback (Bun, lines 174-179)', () => {
 	let dataDir: string;
@@ -124,9 +178,14 @@ describe('player avatar – rename promotion failure rollback (Bun, lines 174-17
 		expect((await res.json()).error).toBe('internal_error');
 
 		// The DB avatarUrl was rolled back to null so the profile does not
-		// reference a serve route that 404s.
-		const { clearProfileAvatarUrl } = await import('@perseus/shared');
-		expect(clearProfileAvatarUrl).toHaveBeenCalledWith(expect.anything(), 'p1');
+		// reference a serve route that 404s. The rollback is owner-checked on
+		// the updatedAt timestamp written by updateProfileAvatarUrl.
+		const { clearProfileAvatarUrlIfOwned } = await import('@perseus/shared');
+		expect(clearProfileAvatarUrlIfOwned).toHaveBeenCalledWith(
+			expect.anything(),
+			'p1',
+			expect.any(Number)
+		);
 
 		// No staging files should remain — the orphaned staging file was deleted.
 		const avatarsDir = join(dataDir, 'avatars');
@@ -144,10 +203,11 @@ describe('player avatar – rename promotion failure rollback (Bun, lines 174-17
 	});
 
 	it('logs (but does not throw) when the avatarUrl rollback itself fails after rename failure', async () => {
-		// clearProfileAvatarUrl rejecting must not turn the 500 into an unhandled
-		// rejection — the route swallows the rollback error and still returns 500.
-		const { clearProfileAvatarUrl } = await import('@perseus/shared');
-		vi.mocked(clearProfileAvatarUrl).mockRejectedValueOnce(new Error('D1 rollback down'));
+		// clearProfileAvatarUrlIfOwned rejecting must not turn the 500 into an
+		// unhandled rejection — the route swallows the rollback error and still
+		// returns 500.
+		const { clearProfileAvatarUrlIfOwned } = await import('@perseus/shared');
+		vi.mocked(clearProfileAvatarUrlIfOwned).mockRejectedValueOnce(new Error('D1 rollback down'));
 
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 

@@ -21,6 +21,8 @@ vi.mock('../../services/storage.worker', () => ({
 	createPuzzleMetadata: vi.fn().mockResolvedValue(undefined),
 	uploadOriginalImage: vi.fn().mockResolvedValue(undefined),
 	deleteOriginalImage: vi.fn().mockResolvedValue({ success: true }),
+	originalImageExists: vi.fn().mockResolvedValue(false).mockResolvedValue({ success: true }),
+	puzzleExists: vi.fn().mockResolvedValue(false),
 	listPuzzles: vi.fn()
 }));
 
@@ -28,12 +30,11 @@ vi.mock('../../db.worker', () => ({
 	getWorkerDb: vi.fn(() => ({}))
 }));
 
-vi.mock('@perseus/shared', () => ({
-	insertPuzzleOwnership: vi.fn().mockResolvedValue(undefined),
-	deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined),
-	deletePuzzleStats: vi.fn().mockResolvedValue(undefined),
-	SYSTEM_OWNER_ID: 'system'
-}));
+vi.mock('@perseus/shared', async (importOriginal) => {
+	const original = await importOriginal<typeof import('@perseus/shared')>();
+	const { sharedMockOverrides } = await import('./helpers/shared-mock');
+	return { ...original, ...sharedMockOverrides };
+});
 
 vi.mock('../../middleware/auth.worker', () => ({
 	verifySession: vi.fn(),
@@ -155,7 +156,12 @@ describe('Admin Worker - D1 ownership best-effort catch blocks', () => {
 		const mockEnv = {
 			...baseEnv,
 			PUZZLE_WORKFLOW: {
-				create: vi.fn().mockRejectedValue(new Error('Workflow unavailable'))
+				create: vi.fn().mockRejectedValue(new Error('Workflow unavailable')),
+				get: vi.fn().mockRejectedValue(
+					Object.assign(new Error('instance.not_found'), {
+						code: 'instance.not_found'
+					})
+				)
 			}
 		};
 		const req = new Request('http://localhost/puzzles', {
@@ -181,7 +187,12 @@ describe('Admin Worker - D1 ownership best-effort catch blocks', () => {
 		const mockEnv = {
 			...baseEnv,
 			PUZZLE_WORKFLOW: {
-				create: vi.fn().mockRejectedValue(new Error('Workflow unavailable'))
+				create: vi.fn().mockRejectedValue(new Error('Workflow unavailable')),
+				get: vi.fn().mockRejectedValue(
+					Object.assign(new Error('instance.not_found'), {
+						code: 'instance.not_found'
+					})
+				)
 			}
 		};
 		const req = new Request('http://localhost/puzzles', {

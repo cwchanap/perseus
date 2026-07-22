@@ -214,12 +214,44 @@ Manual verification after deploy:
 - After Access allows the request, the existing Perseus admin passkey still rejects
   invalid login attempts.
 
-Then access in code via:
+### CLI Service Token Rotation
 
-```typescript
-const config = new pulumi.Config();
-const jwtSecret = config.requireSecret('jwtSecret');
+The non-interactive CLI service token (`Perseus Admin CLI`) has a default lifetime
+of **90 days** (`2160h`). Override it at deploy time:
+
+```bash
+cd packages/infrastructure
+pulumi config set adminCliServiceTokenDuration 720h   # e.g. 30 days
 ```
+
+Cloudflare Access expires the token automatically once the duration elapses —
+requests using the stale `CF-Access-Client-Id` / `CF-Access-Client-Secret` pair
+will start receiving 403. Rotate **before** expiry to avoid an outage:
+
+```bash
+cd packages/infrastructure
+
+# 1. Taint the token resource so Pulumi recreates it with a fresh client_id + secret
+pulumi state taint "$(pulumi stack export --json | jq -r \
+  '.deployment.resources[] | select(.type=="cloudflare:index:zeroTrustAccessServiceToken") | .urn')"
+
+# 2. Recreate the token
+pulumi up
+
+# 3. Read the new credentials (client_secret is masked unless --show-secrets is passed)
+pulumi stack output --show-secrets adminCliAccessClientId
+pulumi stack output --show-secrets adminCliAccessClientSecret
+```
+
+Update downstream consumers with the new values:
+
+- **GitHub Actions**: no manual secret update needed — the seed workflow
+  (`seed-startup-puzzles.yml`) self-serves from the Pulumi stack output
+  (`pulumi stack output adminCliAccessClientId` / `--show-secrets
+adminCliAccessClientSecret`) on every run. A fresh `pulumi up` is all
+  that's required.
+- **Local CLI env** (`apps/api/.env` or shell): `CF_ACCESS_CLIENT_ID`,
+  `CF_ACCESS_CLIENT_SECRET`
 
 ## Complete Wrangler Replacement
 

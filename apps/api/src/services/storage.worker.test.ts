@@ -14,8 +14,6 @@ import {
 	deleteOriginalImage,
 	getImage,
 	deletePuzzleAssets,
-	acquireLock,
-	releaseLock,
 	invalidateGalleryIndex,
 	type PuzzleMetadata
 } from './storage.worker';
@@ -406,7 +404,8 @@ describe('KV Metadata Operations', () => {
 				name: samplePuzzle.name,
 				pieceCount: samplePuzzle.pieceCount,
 				status: samplePuzzle.status,
-				progress: samplePuzzle.progress
+				progress: samplePuzzle.progress,
+				createdAt: samplePuzzle.createdAt
 			});
 		});
 
@@ -427,139 +426,6 @@ describe('KV Metadata Operations', () => {
 			expect(result.puzzles[0].id).toBe('puzzle-alpha');
 			expect(result.puzzles[1].id).toBe('puzzle-beta');
 			expect(result.puzzles[2].id).toBe('puzzle-gamma');
-		});
-	});
-});
-
-describe('Lock Operations', () => {
-	describe('acquireLock', () => {
-		it('should return error status when KV fails', async () => {
-			const mockKV = {
-				get: vi.fn(() => {
-					throw new Error('KV connection failed');
-				})
-			} as unknown as KVNamespace;
-
-			const result = await acquireLock(mockKV, 'lock:test-lock', 5000);
-
-			expect(result.status).toBe('error');
-			if (result.status === 'error') {
-				expect(result.error.message).toBe('KV connection failed');
-			}
-		});
-
-		it('should return held status when lock is already held', async () => {
-			const mockKV = createMockKV();
-			mockKV._store.set('lock:test-lock', 'existing-token');
-
-			const result = await acquireLock(mockKV as unknown as KVNamespace, 'lock:test-lock', 5000);
-
-			expect(result.status).toBe('held');
-		});
-
-		it('should return acquired status with token on success', async () => {
-			const mockKV = createMockKV();
-
-			const result = await acquireLock(mockKV as unknown as KVNamespace, 'lock:test-lock', 5000);
-
-			expect(result.status).toBe('acquired');
-			if (result.status === 'acquired') {
-				expect(result.token).toBeTruthy();
-				expect(typeof result.token).toBe('string');
-			}
-		});
-
-		it('should set expiration TTL on lock', async () => {
-			const mockKV = createMockKV();
-			await acquireLock(mockKV as unknown as KVNamespace, 'lock:test-lock', 5000);
-
-			// Verify put was called with expirationTtl
-			expect(mockKV.put).toHaveBeenCalledWith(
-				'lock:test-lock',
-				expect.any(String),
-				expect.objectContaining({
-					expirationTtl: expect.any(Number)
-				})
-			);
-		});
-	});
-
-	describe('releaseLock', () => {
-		it('should delete lock when token matches and return true', async () => {
-			const mockKV = createMockKV();
-			mockKV._store.set('lock:test-lock', 'token-123');
-
-			const result = await releaseLock(
-				mockKV as unknown as KVNamespace,
-				'lock:test-lock',
-				'token-123'
-			);
-
-			expect(result).toBe(true);
-			expect(mockKV._store.has('lock:test-lock')).toBe(false);
-			expect(mockKV.delete).toHaveBeenCalledWith('lock:test-lock');
-		});
-
-		it('should not delete lock when token does not match and return false', async () => {
-			const mockKV = createMockKV();
-			mockKV._store.set('lock:test-lock', 'token-123');
-			const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-
-			const result = await releaseLock(
-				mockKV as unknown as KVNamespace,
-				'lock:test-lock',
-				'token-456'
-			);
-
-			expect(result).toBe(false);
-			// Lock should still exist
-			expect(mockKV._store.get('lock:test-lock')).toBe('token-123');
-			// Delete should not have been called
-			expect(mockKV.delete).not.toHaveBeenCalled();
-			// Warning should have been logged
-			expect(consoleWarnSpy).toHaveBeenCalled();
-
-			consoleWarnSpy.mockRestore();
-		});
-
-		it('should not delete lock when lock does not exist and return false', async () => {
-			const mockKV = createMockKV();
-			const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-
-			const result = await releaseLock(
-				mockKV as unknown as KVNamespace,
-				'lock:test-lock',
-				'token-123'
-			);
-
-			expect(result).toBe(false);
-			expect(mockKV.delete).not.toHaveBeenCalled();
-			expect(consoleWarnSpy).toHaveBeenCalled();
-
-			consoleWarnSpy.mockRestore();
-		});
-
-		it('should throw when KV get fails', async () => {
-			const mockKV = {
-				get: vi.fn(() => {
-					throw new Error('KV error');
-				})
-			} as unknown as KVNamespace;
-
-			await expect(releaseLock(mockKV, 'lock:test-lock', 'token-123')).rejects.toThrow('KV error');
-		});
-
-		it('should throw when lock release fails', async () => {
-			const mockKV = {
-				get: vi.fn(() => Promise.resolve('token-123')),
-				delete: vi.fn(() => {
-					throw new Error('KV delete failed');
-				})
-			} as unknown as KVNamespace;
-
-			await expect(releaseLock(mockKV, 'lock:test-lock', 'token-123')).rejects.toThrow(
-				'KV delete failed'
-			);
 		});
 	});
 });

@@ -119,6 +119,10 @@ describe('deploy-infrastructure workflow', () => {
 		it('passes googleClientId as a var to both preview and deploy', () => {
 			expectVarBlock('googleClientId', 'GOOGLE_CLIENT_ID');
 		});
+
+		it('passes adminCliServiceTokenDuration as a var to both preview and deploy', () => {
+			expectVarBlock('adminCliServiceTokenDuration', 'ADMIN_CLI_SERVICE_TOKEN_DURATION');
+		});
 	});
 
 	it('does not reference any secrets.* without a corresponding secret: true', () => {

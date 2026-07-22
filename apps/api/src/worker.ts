@@ -8,9 +8,17 @@ import { DEFAULT_DEV_ORIGINS } from './services/player-auth.shared';
 import type { WorkflowParams } from './types/workflow';
 
 // Workflow binding type (Cloudflare Workers)
-interface WorkflowBinding<T = unknown> {
+// Matches the real Cloudflare Workflows API: get() returns an instance whose
+// status() is an async method, not a string property. Keeping this honest at
+// the source eliminates `as unknown as` casts at every call site.
+export interface WorkflowInstance {
+	id: string;
+	status(): Promise<{ status: string }>;
+	terminate(options?: { rollback?: boolean }): Promise<void>;
+}
+export interface WorkflowBinding<T = unknown> {
 	create(options: { id: string; params: T }): Promise<{ id: string }>;
-	get(id: string): Promise<{ id: string; status: string }>;
+	get(id: string): Promise<WorkflowInstance>;
 }
 
 // Worker environment bindings
@@ -123,6 +131,8 @@ app.route('/api/admin', admin);
 app.route('/api/auth', auth);
 app.route('/api/player', player);
 
+import { reapStuckPuzzles } from './services/reaper';
+
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
 		try {
@@ -177,5 +187,34 @@ export default {
 				}
 			);
 		}
+	},
+
+	// Cron-triggered reaper: cleans up orphaned puzzle metadata + R2 images
+	// left behind when a puzzle create dies mid-flight or a workflow
+	// errors/terminates. Runs hourly; see wrangler.production.toml [triggers].
+	// The reaper is safe to run concurrently with normal traffic — deletions
+	// are idempotent and only target puzzles whose workflows are confirmed dead.
+	async scheduled(
+		_controller: ScheduledController,
+		env: Env,
+		ctx: ExecutionContext
+	): Promise<void> {
+		ctx.waitUntil(
+			(async () => {
+				console.log('Reaper: starting scheduled run');
+				try {
+					const result = await reapStuckPuzzles(env);
+					console.log(
+						`Reaper: scanned=${result.scanned} candidates=${result.candidates} ` +
+							`reaped=${result.reaped} errors=${result.errors}`
+					);
+					if (result.details.length > 0) {
+						console.log('Reaper details:', JSON.stringify(result.details));
+					}
+				} catch (err) {
+					console.error('Reaper: scheduled run failed:', err);
+				}
+			})()
+		);
 	}
 };
