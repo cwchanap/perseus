@@ -122,10 +122,10 @@ const WEBP_BYTES = new Uint8Array([
 	0x50,
 	0x38,
 	0x58, // "VP8X"
+	0x0a,
 	0x00,
 	0x00,
-	0x00,
-	0x00, // chunk size (placeholder)
+	0x00, // chunk size = 10 (flags + reserved + width-1 + height-1)
 	0x00, // flags
 	0x00,
 	0x00,
