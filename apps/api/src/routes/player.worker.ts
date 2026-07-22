@@ -190,12 +190,14 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 	// overwritten the row (detected via updatedAt mismatch). An unconditional
 	// clear would clobber a concurrent winner's avatar.
 	const avatarUpdatedAt = Date.now();
+	const avatarUpdateToken = crypto.randomUUID();
 	try {
 		await updateProfileAvatarUrl(
 			db,
 			session.user.id,
 			`/api/player/${session.user.id}/avatar`,
-			avatarUpdatedAt
+			avatarUpdatedAt,
+			avatarUpdateToken
 		);
 	} catch (err) {
 		console.error('Avatar DB write failed; cleaning up staged R2 object:', err);
@@ -214,17 +216,18 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 	// the staged object. For a re-upload of an existing avatar, the old live
 	// object still serves (no 404); clearing the flag is a cosmetic
 	// regression only on this rare transient-failure path. The rollback is
-	// owner-checked on avatarUpdatedAt: if a concurrent upload's DB write
-	// has since overwritten this row (its updatedAt differs), the clear is
-	// a no-op and that upload's avatar is preserved.
+	// owner-checked on avatarUpdateToken (a collision-resistant UUID): if a
+	// concurrent upload's DB write has since overwritten this row (its token
+	// differs), the clear is a no-op and that upload's avatar is preserved.
 	try {
 		await c.env.PUZZLES_BUCKET.put(liveKey, bytes, {
 			httpMetadata: { contentType: detected }
 		});
 	} catch (err) {
 		console.error('Avatar live R2 put failed; rolling back DB avatarUrl:', err);
-		await clearProfileAvatarUrlIfOwned(db, session.user.id, avatarUpdatedAt).catch((rollbackErr) =>
-			console.error('Failed to roll back avatarUrl after live put failure:', rollbackErr)
+		await clearProfileAvatarUrlIfOwned(db, session.user.id, avatarUpdateToken).catch(
+			(rollbackErr) =>
+				console.error('Failed to roll back avatarUrl after live put failure:', rollbackErr)
 		);
 		await c.env.PUZZLES_BUCKET.delete(stagingKey).catch(() => {});
 		return c.json({ error: 'internal_error', message: 'Failed to store avatar' }, 500);

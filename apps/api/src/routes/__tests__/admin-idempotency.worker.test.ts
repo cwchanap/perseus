@@ -6,6 +6,7 @@ vi.mock('../../services/storage.worker', () => ({
 	createPuzzleMetadata: vi.fn(),
 	deletePuzzleAssets: vi.fn(),
 	deletePuzzleMetadata: vi.fn(),
+	deleteMetadataDO: vi.fn(),
 	failIdempotencyKey: vi.fn(),
 	getPuzzle: vi.fn(),
 	listPuzzles: vi.fn(),
@@ -487,10 +488,16 @@ describe('Admin Worker idempotency recovery', () => {
 		(storage.createPuzzleMetadata as any).mockResolvedValue(undefined);
 
 		const terminateFn = vi.fn().mockResolvedValue(undefined);
+		// Status transitions: 'running' on liveness probe, then 'terminated'
+		// after terminate() is called (polled by terminateAndAwaitStopped).
+		const statusFn = vi
+			.fn()
+			.mockResolvedValueOnce({ status: 'running' })
+			.mockResolvedValue({ status: 'terminated' });
 		const workflow = {
 			create: vi.fn().mockResolvedValue(undefined),
 			get: vi.fn(async () => ({
-				status: vi.fn().mockResolvedValue({ status: 'running' }),
+				status: statusFn,
 				terminate: terminateFn
 			}))
 		};
@@ -502,6 +509,7 @@ describe('Admin Worker idempotency recovery', () => {
 		);
 		(storage.deletePuzzleMetadata as any).mockResolvedValue({ success: true });
 		(storage.deletePuzzleAssets as any).mockResolvedValue({ success: true, failedKeys: [] });
+		(storage.deleteMetadataDO as any).mockResolvedValue(undefined);
 
 		const response = await admin.fetch(createRequest('fence-key-1'), env as any);
 
@@ -514,6 +522,50 @@ describe('Admin Worker idempotency recovery', () => {
 		// have already produced a thumbnail or partial pieces.
 		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'puzzle-1');
 		expect(storage.deletePuzzleAssets).toHaveBeenCalledWith(env.PUZZLES_BUCKET, 'puzzle-1', 225);
+	});
+
+	it('does NOT delete R2 assets when terminate() fails — defers to reaper instead', async () => {
+		// Regression: if terminate() rejects, a live workflow can still write
+		// thumbnails/pieces to R2 after the cleanup sweep. The fix: do NOT
+		// delete R2/KV assets when termination is unconfirmed. Tombstone the
+		// DO (prevents metadata resurrection) and leave KV/R2 for the reaper.
+		(storage.reserveIdempotencyKey as any).mockResolvedValue({
+			existing: false,
+			puzzleId: 'puzzle-1'
+		});
+		(storage.uploadOriginalImage as any).mockResolvedValue(undefined);
+		(storage.createPuzzleMetadata as any).mockResolvedValue(undefined);
+
+		const terminateFn = vi.fn().mockRejectedValue(new Error('terminate failed'));
+		const workflow = {
+			create: vi.fn().mockResolvedValue(undefined),
+			get: vi.fn(async () => ({
+				status: vi.fn().mockResolvedValue({ status: 'running' }),
+				terminate: terminateFn
+			}))
+		};
+		const env = createEnv(workflow as any);
+
+		(storage.commitIdempotencyKey as any).mockRejectedValue(
+			new Error('Cannot committed reservation in status failed')
+		);
+		(storage.deletePuzzleMetadata as any).mockResolvedValue({ success: true });
+		(storage.deletePuzzleAssets as any).mockResolvedValue({ success: true, failedKeys: [] });
+		(storage.deleteMetadataDO as any).mockResolvedValue(undefined);
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const response = await admin.fetch(createRequest('fence-key-term-fail'), env as any);
+
+		expect(response.status).toBe(500);
+		const body = (await response.json()) as any;
+		expect(body.message).toContain('workflow termination pending');
+		// R2 assets must NOT be deleted — the workflow is still live
+		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		// KV metadata must NOT be deleted — the reaper needs it to find the puzzle
+		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
+		// DO must be tombstoned — prevents the live workflow from resurrecting
+		// metadata in KV via the DO's KV sync
+		expect(storage.deleteMetadataDO).toHaveBeenCalledWith(env.PUZZLE_METADATA_DO, 'puzzle-1');
 	});
 
 	it('retains metadata and reservation when workflow create fails but workflow is alive (ambiguous failure)', async () => {

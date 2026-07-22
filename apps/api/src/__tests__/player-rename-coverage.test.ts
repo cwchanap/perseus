@@ -30,7 +30,12 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('@perseus/shared')>();
 	const store = new Map<
 		string,
-		{ displayName: string | null; avatarUrl: string | null; updatedAt?: number }
+		{
+			displayName: string | null;
+			avatarUrl: string | null;
+			updatedAt?: number;
+			avatarUpdateToken?: string;
+		}
 	>();
 	return {
 		...actual,
@@ -41,9 +46,15 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 			store.set(playerId, { ...existing, displayName });
 		}),
 		updateProfileAvatarUrl: vi.fn(
-			(db: unknown, playerId: string, avatarUrl: string, updatedAt?: number) => {
+			(
+				db: unknown,
+				playerId: string,
+				avatarUrl: string,
+				updatedAt?: number,
+				avatarUpdateToken?: string
+			) => {
 				const existing = store.get(playerId) ?? { displayName: null, avatarUrl: null };
-				store.set(playerId, { ...existing, avatarUrl, updatedAt });
+				store.set(playerId, { ...existing, avatarUrl, updatedAt, avatarUpdateToken });
 			}
 		),
 		clearProfileAvatarUrl: vi.fn(async (db: unknown, playerId: string) => {
@@ -51,9 +62,9 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 			store.set(playerId, { ...existing, avatarUrl: null });
 		}),
 		clearProfileAvatarUrlIfOwned: vi.fn(
-			async (db: unknown, playerId: string, ownerUpdatedAt: number) => {
+			async (db: unknown, playerId: string, ownerToken: string) => {
 				const existing = store.get(playerId);
-				if (existing && (existing as any).updatedAt === ownerUpdatedAt) {
+				if (existing && (existing as any).avatarUpdateToken === ownerToken) {
 					store.set(playerId, { ...existing, avatarUrl: null });
 				}
 			}
@@ -179,12 +190,12 @@ describe('player avatar – rename promotion failure rollback (Bun, lines 174-17
 
 		// The DB avatarUrl was rolled back to null so the profile does not
 		// reference a serve route that 404s. The rollback is owner-checked on
-		// the updatedAt timestamp written by updateProfileAvatarUrl.
+		// the avatarUpdateToken (UUID) written by updateProfileAvatarUrl.
 		const { clearProfileAvatarUrlIfOwned } = await import('@perseus/shared');
 		expect(clearProfileAvatarUrlIfOwned).toHaveBeenCalledWith(
 			expect.anything(),
 			'p1',
-			expect.any(Number)
+			expect.any(String)
 		);
 
 		// No staging files should remain — the orphaned staging file was deleted.

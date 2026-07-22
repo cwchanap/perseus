@@ -59,15 +59,17 @@ export async function updateProfileAvatarUrl(
 	db: AppDb,
 	playerId: string,
 	avatarUrl: string,
-	avatarUpdatedAt: number = Date.now()
+	avatarUpdatedAt: number = Date.now(),
+	avatarUpdateToken?: string
 ): Promise<void> {
 	const now = Date.now();
+	const token = avatarUpdateToken ?? null;
 	await db
 		.insert(playerProfiles)
-		.values({ playerId, avatarUrl, avatarUpdatedAt, updatedAt: now })
+		.values({ playerId, avatarUrl, avatarUpdatedAt, avatarUpdateToken: token, updatedAt: now })
 		.onConflictDoUpdate({
 			target: playerProfiles.playerId,
-			set: { avatarUrl, avatarUpdatedAt, updatedAt: now }
+			set: { avatarUrl, avatarUpdatedAt, avatarUpdateToken: token, updatedAt: now }
 		})
 		.run();
 }
@@ -82,36 +84,41 @@ export async function clearProfileAvatarUrl(db: AppDb, playerId: string): Promis
 	const now = Date.now();
 	await db
 		.insert(playerProfiles)
-		.values({ playerId, avatarUrl: null, avatarUpdatedAt: null, updatedAt: now })
+		.values({
+			playerId,
+			avatarUrl: null,
+			avatarUpdatedAt: null,
+			avatarUpdateToken: null,
+			updatedAt: now
+		})
 		.onConflictDoUpdate({
 			target: playerProfiles.playerId,
-			set: { avatarUrl: null, avatarUpdatedAt: null, updatedAt: now }
+			set: { avatarUrl: null, avatarUpdatedAt: null, avatarUpdateToken: null, updatedAt: now }
 		})
 		.run();
 }
 
 // Owner-checked avatar rollback: only nulls avatarUrl when the row's
-// avatarUpdatedAt matches ownerAvatarUpdatedAt (the timestamp the caller
-// wrote via updateProfileAvatarUrl). This prevents a concurrent upload's
-// successful avatar from being clobbered when this upload's live R2 put
-// fails after the DB write. Display-name writes update updatedAt but not
-// avatarUpdatedAt, so a name change after the avatar DB write cannot
-// cause rollback to no-op while avatarUrl still points at a missing file.
-// Uses a plain UPDATE (not upsert) so a missing row is a no-op.
+// avatarUpdateToken matches ownerToken (the collision-resistant UUID the
+// caller wrote via updateProfileAvatarUrl). This prevents a concurrent
+// upload's successful avatar from being clobbered when this upload's live
+// R2 put fails after the DB write. Two concurrent uploads can receive the
+// same Date.now() millisecond, so the token is a UUID rather than a
+// timestamp to guarantee uniqueness. Display-name writes update updatedAt
+// but not avatarUpdateToken, so a name change after the avatar DB write
+// cannot cause rollback to no-op while avatarUrl still points at a missing
+// file. Uses a plain UPDATE (not upsert) so a missing row is a no-op.
 export async function clearProfileAvatarUrlIfOwned(
 	db: AppDb,
 	playerId: string,
-	ownerAvatarUpdatedAt: number
+	ownerToken: string
 ): Promise<void> {
 	const now = Date.now();
 	await db
 		.update(playerProfiles)
-		.set({ avatarUrl: null, avatarUpdatedAt: null, updatedAt: now })
+		.set({ avatarUrl: null, avatarUpdatedAt: null, avatarUpdateToken: null, updatedAt: now })
 		.where(
-			and(
-				eq(playerProfiles.playerId, playerId),
-				eq(playerProfiles.avatarUpdatedAt, ownerAvatarUpdatedAt)
-			)
+			and(eq(playerProfiles.playerId, playerId), eq(playerProfiles.avatarUpdateToken, ownerToken))
 		)
 		.run();
 }
