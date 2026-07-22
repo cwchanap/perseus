@@ -6,6 +6,7 @@ import { reapStuckPuzzles, REAP_AFTER_MS } from '../reaper';
 vi.mock('../storage.worker', () => ({
 	deletePuzzleAssets: vi.fn(),
 	deletePuzzleMetadata: vi.fn(),
+	getAuthoritativeStatus: vi.fn(),
 	getPuzzle: vi.fn(),
 	listPuzzles: vi.fn(),
 	releaseIdempotencyKey: vi.fn()
@@ -26,6 +27,7 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 import {
 	deletePuzzleAssets,
 	deletePuzzleMetadata,
+	getAuthoritativeStatus,
 	getPuzzle,
 	listPuzzles,
 	releaseIdempotencyKey
@@ -36,6 +38,7 @@ import { deletePuzzleOwnership } from '@perseus/shared';
 const storage = {
 	deletePuzzleAssets,
 	deletePuzzleMetadata,
+	getAuthoritativeStatus,
 	getPuzzle,
 	listPuzzles,
 	releaseIdempotencyKey
@@ -493,5 +496,82 @@ describe('reapStuckPuzzles', () => {
 		const result = await reapStuckPuzzles(env, NOW);
 		expect(result.reaped).toBe(1);
 		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'stuck-1');
+	});
+
+	it('skips reaping when DO authoritative status is ready (workflow errored but finalize committed)', async () => {
+		(storage.listPuzzles as any).mockResolvedValue({
+			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
+			invalidCount: 0
+		});
+		(storage.getPuzzle as any).mockResolvedValue({
+			id: 'stuck-1',
+			status: 'processing',
+			name: 'Puzzle stuck-1',
+			pieceCount: 100
+		});
+		// DO says 'ready' — finalize committed before the workflow errored
+		(storage.getAuthoritativeStatus as any).mockResolvedValue('ready');
+		const env = makeEnv({ 'stuck-1': 'errored' });
+		const result = await reapStuckPuzzles(env, NOW);
+		expect(result.candidates).toBe(1);
+		expect(result.reaped).toBe(0);
+		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
+		expect(result.details.some((d) => d.action === 'skip-do-ready')).toBe(true);
+	});
+
+	it('still reaps when DO authoritative status is processing (genuinely stuck)', async () => {
+		(storage.listPuzzles as any).mockResolvedValue({
+			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
+			invalidCount: 0
+		});
+		(storage.getPuzzle as any).mockResolvedValue({
+			id: 'stuck-1',
+			status: 'processing',
+			name: 'Puzzle stuck-1',
+			pieceCount: 100
+		});
+		(storage.getAuthoritativeStatus as any).mockResolvedValue('processing');
+		const env = makeEnv({ 'stuck-1': 'errored' });
+		const result = await reapStuckPuzzles(env, NOW);
+		expect(result.reaped).toBe(1);
+		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'stuck-1');
+	});
+
+	it('still reaps when DO has no metadata (404 — truly orphaned)', async () => {
+		(storage.listPuzzles as any).mockResolvedValue({
+			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
+			invalidCount: 0
+		});
+		(storage.getPuzzle as any).mockResolvedValue({
+			id: 'stuck-1',
+			status: 'processing',
+			name: 'Puzzle stuck-1',
+			pieceCount: 100
+		});
+		(storage.getAuthoritativeStatus as any).mockResolvedValue(null);
+		const env = makeEnv({ 'stuck-1': 'errored' });
+		const result = await reapStuckPuzzles(env, NOW);
+		expect(result.reaped).toBe(1);
+	});
+
+	it('skips reaping when DO status check throws (fail closed)', async () => {
+		(storage.listPuzzles as any).mockResolvedValue({
+			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
+			invalidCount: 0
+		});
+		(storage.getPuzzle as any).mockResolvedValue({
+			id: 'stuck-1',
+			status: 'processing',
+			name: 'Puzzle stuck-1',
+			pieceCount: 100
+		});
+		(storage.getAuthoritativeStatus as any).mockRejectedValue(new Error('DO down'));
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		const env = makeEnv({ 'stuck-1': 'errored' });
+		const result = await reapStuckPuzzles(env, NOW);
+		expect(result.reaped).toBe(0);
+		expect(result.errors).toBe(1);
+		expect(result.details.some((d) => d.action === 'do-status-check-failed')).toBe(true);
 	});
 });

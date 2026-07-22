@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('../storage.worker', () => ({
 	deletePuzzleAssets: vi.fn(),
 	deletePuzzleMetadata: vi.fn(),
+	getAuthoritativeStatus: vi.fn(),
 	getPuzzle: vi.fn(),
 	listPuzzles: vi.fn(),
 	releaseIdempotencyKey: vi.fn()

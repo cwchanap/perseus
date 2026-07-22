@@ -108,6 +108,44 @@ export async function updatePuzzleMetadata(
 	}
 }
 
+/**
+ * Read the authoritative puzzle status from the metadata DO's storage.
+ * Used by the reaper to verify the DO's status before reaping — a stale KV
+ * read showing 'processing' can mask a DO that already committed 'ready'
+ * (finalize succeeded but the workflow later errored). Returns the status
+ * string on success, null when the DO has no metadata (404 — truly
+ * orphaned, safe to reap). Throws on DO errors (500, network) so the
+ * caller can distinguish "no metadata" from "DO unreachable" and fail
+ * closed (skip reaping) on the latter.
+ */
+export async function getAuthoritativeStatus(
+	metadataDO: DurableObjectNamespace,
+	puzzleId: string
+): Promise<string | null> {
+	const id = metadataDO.idFromName(puzzleId);
+	const stub = metadataDO.get(id);
+	const response = await stub.fetch('https://puzzle-metadata/status', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ puzzleId })
+	});
+	if (response.status === 404) {
+		return null;
+	}
+	if (!response.ok) {
+		const payload = (await response.json().catch(() => null)) as { message?: string } | null;
+		throw new Error(
+			payload?.message ??
+				`Failed to read authoritative status for ${puzzleId} (HTTP ${response.status})`
+		);
+	}
+	const result = (await response.json()) as { status?: string };
+	if (typeof result.status !== 'string') {
+		throw new Error(`Authoritative status response missing status field for ${puzzleId}`);
+	}
+	return result.status;
+}
+
 export type IdempotencyReservationStatus = 'pending' | 'committed' | 'failed' | 'released';
 
 /**

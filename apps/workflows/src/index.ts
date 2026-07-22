@@ -123,6 +123,9 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 		if (url.pathname === '/release') {
 			return this.handleReservationTransition(request, 'released');
 		}
+		if (url.pathname === '/status') {
+			return this.handleStatus(request);
+		}
 
 		if (url.pathname !== '/update') {
 			return new Response('Not found', { status: 404 });
@@ -664,6 +667,47 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 			return Response.json({ message: result.message }, { status: result.status });
 		}
 		return Response.json({ success: true, status: result.status });
+	}
+
+	/**
+	 * Read-only endpoint that returns the authoritative metadata status from
+	 * DO storage. Used by the reaper to verify the DO's status before reaping
+	 * a puzzle whose workflow reports 'errored' but whose DO may have already
+	 * committed 'ready' (e.g. finalize succeeded but the step retry budget
+	 * exhausted, dropping into the mark-failed catch which gets a 409).
+	 *
+	 * Returns 200 with { status } when metadata exists, 404 when the DO has
+	 * no metadata (truly orphaned — safe to reap), 403 on puzzleId mismatch.
+	 */
+	async handleStatus(request: Request): Promise<Response> {
+		const body = (await request.json().catch(() => null)) as {
+			puzzleId?: string;
+		} | null;
+		if (!body || typeof body.puzzleId !== 'string' || !body.puzzleId.trim()) {
+			return Response.json({ message: 'Invalid status payload' }, { status: 400 });
+		}
+
+		const { puzzleId } = body;
+
+		let doPuzzleId = await this.ctx.storage.get<string>('puzzleId');
+		if (!doPuzzleId) {
+			doPuzzleId = puzzleId;
+			await this.ctx.storage.put('puzzleId', doPuzzleId);
+		} else if (doPuzzleId !== puzzleId) {
+			return Response.json(
+				{ message: 'Puzzle ID mismatch: request puzzleId does not match DO identity' },
+				{ status: 403 }
+			);
+		}
+
+		const stored = await this.ctx.storage.get<PuzzleMetadata>('metadata');
+		if (!stored) {
+			return Response.json(
+				{ message: `Puzzle ${puzzleId} not found in DO storage` },
+				{ status: 404 }
+			);
+		}
+		return Response.json({ status: stored.status });
 	}
 
 	private async readReservation(): Promise<ReservationRecord | null> {

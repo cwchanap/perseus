@@ -28,6 +28,7 @@
 import {
 	deletePuzzleAssets,
 	deletePuzzleMetadata,
+	getAuthoritativeStatus,
 	getPuzzle,
 	listPuzzles,
 	releaseIdempotencyKey
@@ -164,6 +165,47 @@ export async function reapStuckPuzzles(env: Env, now = Date.now()): Promise<Reap
 					console.warn(
 						`Reaper: unrecognized workflow status '${workflowStatus}' for ${puzzle.id}, skipping`
 					);
+					return;
+				}
+
+				// Before reaping, verify the authoritative DO status. A workflow can
+				// report 'errored' after finalize already committed 'ready' to the DO
+				// (e.g. the mark-failed step's retry budget exhausted after a successful
+				// finalize DO write, or a post-finalize step threw). The DO is the source
+				// of truth — if it says 'ready', the puzzle is valid and must NOT be
+				// reaped. A stale KV read showing 'processing' is eventual-consistency
+				// lag, not an orphan.
+				try {
+					const authoritativeStatus = await getAuthoritativeStatus(
+						env.PUZZLE_METADATA_DO,
+						puzzle.id
+					);
+					if (authoritativeStatus === 'ready') {
+						console.warn(
+							`Reaper: DO authoritative status is 'ready' for ${puzzle.id} but workflow is dead and KV shows processing; skipping (finalize committed before workflow errored)`
+						);
+						result.details.push({
+							puzzleId: puzzle.id,
+							action: 'skip-do-ready'
+						});
+						return;
+					}
+					// null = DO has no metadata (truly orphaned) → proceed with reaping.
+					// Any other status (processing, failed) → proceed with reaping.
+				} catch (doErr) {
+					// DO unreachable — fail closed. Reaping a valid puzzle is
+					// irreversible (deletes R2 assets); skipping a dead one is
+					// recoverable (next reaper run, or operator force-delete).
+					console.error(
+						`Reaper: DO status check failed for ${puzzle.id}, skipping (fail closed):`,
+						doErr
+					);
+					result.errors++;
+					result.details.push({
+						puzzleId: puzzle.id,
+						action: 'do-status-check-failed',
+						error: String(doErr)
+					});
 					return;
 				}
 

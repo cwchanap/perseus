@@ -1170,6 +1170,55 @@ describe('PuzzleMetadataDO.fetch - /reserve (idempotency)', () => {
 	});
 });
 
+describe('PuzzleMetadataDO.fetch - /status', () => {
+	it('returns the authoritative status from DO storage via /status', async () => {
+		const readyMetadata: PuzzleMetadata = {
+			...baseMetadata,
+			status: 'ready',
+			progress: undefined,
+			error: undefined
+		} as PuzzleMetadata;
+		const { durableObj } = makeDO({ metadata: readyMetadata });
+		const res = await durableObj.fetch(
+			new Request('https://puzzle-metadata/status', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ puzzleId: 'test-puzzle' })
+			})
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { status: string };
+		expect(body.status).toBe('ready');
+	});
+
+	it('returns 404 from /status when DO storage has no metadata', async () => {
+		const { durableObj } = makeDO({});
+		const res = await durableObj.fetch(
+			new Request('https://puzzle-metadata/status', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ puzzleId: 'test-puzzle' })
+			})
+		);
+		expect(res.status).toBe(404);
+	});
+
+	it('returns 403 from /status when puzzleId does not match DO identity', async () => {
+		const { durableObj } = makeDO({
+			puzzleId: 'test-puzzle',
+			metadata: baseMetadata
+		});
+		const res = await durableObj.fetch(
+			new Request('https://puzzle-metadata/status', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ puzzleId: 'wrong-puzzle' })
+			})
+		);
+		expect(res.status).toBe(403);
+	});
+});
+
 describe('PuzzleMetadataDO.fetch - /commit /fail /release transition edge cases', () => {
 	it('returns 400 for invalid commit payload (missing puzzleId)', async () => {
 		const { durableObj } = makeDO({
