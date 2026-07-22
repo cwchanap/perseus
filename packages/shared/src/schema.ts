@@ -27,6 +27,7 @@ export const playerProfiles = sqliteTable('player_profiles', {
 	displayName: text('display_name'),
 	avatarUrl: text('avatar_url'),
 	avatarUpdatedAt: integer('avatar_updated_at'),
+	avatarUpdateToken: text('avatar_update_token'),
 	updatedAt: integer('updated_at').notNull()
 });
 

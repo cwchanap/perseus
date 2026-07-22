@@ -133,31 +133,40 @@ jobs:
       - name: Install Pulumi CLI
         uses: pulumi/setup-pulumi@b374ceb6168550de27c6eba92e01c1a774040e11 # v2.0.0
 
+      - name: Retrieve Access credentials from Pulumi stack
+        id: stack-outputs
+        working-directory: ${{ github.workspace }}
+        env:
+          PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          PULUMI_ORG: ${{ vars.PULUMI_ORG }}
+        run: |
+          set -euo pipefail
+          STACK="$PULUMI_ORG/perseus-infrastructure/production"
+          CF_ACCESS_CLIENT_ID=$(pulumi stack output adminCliAccessClientId -s "$STACK" -C packages/infrastructure)
+          CF_ACCESS_CLIENT_SECRET=$(pulumi stack output --show-secrets adminCliAccessClientSecret -s "$STACK" -C packages/infrastructure)
+          if [ -z "$CF_ACCESS_CLIENT_ID" ] || [ -z "$CF_ACCESS_CLIENT_SECRET" ]; then
+            echo "::error::Missing adminCliAccessClientId/Secret stack outputs. Deploy infrastructure first."
+            exit 1
+          fi
+          echo "::add-mask::$CF_ACCESS_CLIENT_ID"
+          echo "::add-mask::$CF_ACCESS_CLIENT_SECRET"
+          echo "cf-access-client-id=$CF_ACCESS_CLIENT_ID" >> "$GITHUB_OUTPUT"
+          echo "cf-access-client-secret=$CF_ACCESS_CLIENT_SECRET" >> "$GITHUB_OUTPUT"
+
       - name: Upload puzzles
         working-directory: ${{ github.workspace }}
         timeout-minutes: 30
         env:
-          PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           ADMIN_PASSKEY: ${{ secrets.ADMIN_PASSKEY }}
-          PULUMI_ORG: ${{ vars.PULUMI_ORG }}
+          CF_ACCESS_CLIENT_ID: ${{ steps.stack-outputs.outputs.cf-access-client-id }}
+          CF_ACCESS_CLIENT_SECRET: ${{ steps.stack-outputs.outputs.cf-access-client-secret }}
           PERSEUS_SERVER: ${{ vars.PERSEUS_SERVER || 'https://perseus.cwchanap.dev' }}
           LIMIT: ${{ inputs.limit }}
           FROM: ${{ inputs.from }}
           TO: ${{ inputs.to }}
         run: |
           set -euo pipefail
-          STACK="$PULUMI_ORG/perseus-infrastructure/production"
-          export CF_ACCESS_CLIENT_ID
-          export CF_ACCESS_CLIENT_SECRET
-          CF_ACCESS_CLIENT_ID=$(pulumi stack output adminCliAccessClientId -s "$STACK" -C packages/infrastructure)
-          CF_ACCESS_CLIENT_SECRET=$(pulumi stack output --show-secrets adminCliAccessClientSecret -s "$STACK" -C packages/infrastructure)
-          echo "::add-mask::$CF_ACCESS_CLIENT_ID"
-          echo "::add-mask::$CF_ACCESS_CLIENT_SECRET"
-          if [ -z "$CF_ACCESS_CLIENT_ID" ] || [ -z "$CF_ACCESS_CLIENT_SECRET" ]; then
-            echo "Missing adminCliAccessClientId/Secret stack outputs. Deploy infrastructure first."
-            exit 1
-          fi
           LIMIT_ARGS=()
           if [ "$LIMIT" != "0" ]; then
             LIMIT_ARGS=(--limit "$LIMIT")

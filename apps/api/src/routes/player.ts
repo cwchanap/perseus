@@ -192,8 +192,15 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 	// overwritten the row (detected via updatedAt mismatch). An unconditional
 	// clear would clobber a concurrent winner's avatar.
 	const avatarUpdatedAt = Date.now();
+	const avatarUpdateToken = crypto.randomUUID();
 	try {
-		await updateProfileAvatarUrl(db, playerId, `/api/player/${playerId}/avatar`, avatarUpdatedAt);
+		await updateProfileAvatarUrl(
+			db,
+			playerId,
+			`/api/player/${playerId}/avatar`,
+			avatarUpdatedAt,
+			avatarUpdateToken
+		);
 	} catch (err) {
 		console.error('Avatar DB write failed; cleaning up staged avatar file:', err);
 		// Safe to delete unconditionally: stagingPath is unique to this upload.
@@ -207,15 +214,15 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 	// wins (both are valid avatars). If the rename itself fails (e.g. cross-
 	// filesystem, disk error), roll back the DB write so the profile doesn't
 	// point at a missing file, and delete the orphaned staging file. The
-	// rollback is owner-checked on avatarUpdatedAt: if a concurrent upload's
-	// DB write has since overwritten this row, the clear is a no-op and that
-	// upload's avatar is preserved.
+	// rollback is owner-checked on avatarUpdateToken (a collision-resistant
+	// UUID): if a concurrent upload's DB write has since overwritten this row,
+	// the clear is a no-op and that upload's avatar is preserved.
 	try {
 		await rename(stagingPath, avatarPath);
 	} catch (err) {
 		console.error('Avatar promotion rename failed; rolling back DB and staging file:', err);
 		await unlink(stagingPath).catch(() => {});
-		await clearProfileAvatarUrlIfOwned(db, playerId, avatarUpdatedAt).catch((rollbackErr) =>
+		await clearProfileAvatarUrlIfOwned(db, playerId, avatarUpdateToken).catch((rollbackErr) =>
 			console.error('Failed to clear avatar URL after rename failure:', rollbackErr)
 		);
 		return c.json({ error: 'internal_error', message: 'Failed to store avatar' }, 500);

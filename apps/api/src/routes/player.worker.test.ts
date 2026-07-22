@@ -13,7 +13,12 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('@perseus/shared')>();
 	const store = new Map<
 		string,
-		{ displayName: string | null; avatarUrl: string | null; updatedAt?: number }
+		{
+			displayName: string | null;
+			avatarUrl: string | null;
+			updatedAt?: number;
+			avatarUpdateToken?: string;
+		}
 	>();
 	// In-memory stores backing the mocked list repositories so the list
 	// routes can be exercised end-to-end without a real D1 binding.
@@ -33,9 +38,15 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 			store.set(playerId, { ...existing, displayName });
 		}),
 		updateProfileAvatarUrl: vi.fn(
-			(db: unknown, playerId: string, avatarUrl: string, updatedAt?: number) => {
+			(
+				db: unknown,
+				playerId: string,
+				avatarUrl: string,
+				updatedAt?: number,
+				avatarUpdateToken?: string
+			) => {
 				const existing = store.get(playerId) ?? { displayName: null, avatarUrl: null };
-				store.set(playerId, { ...existing, avatarUrl, updatedAt });
+				store.set(playerId, { ...existing, avatarUrl, updatedAt, avatarUpdateToken });
 			}
 		),
 		clearProfileAvatarUrl: vi.fn(async (db: unknown, playerId: string) => {
@@ -43,11 +54,11 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 			store.set(playerId, { ...existing, avatarUrl: null });
 		}),
 		clearProfileAvatarUrlIfOwned: vi.fn(
-			async (db: unknown, playerId: string, ownerUpdatedAt: number) => {
+			async (db: unknown, playerId: string, ownerToken: string) => {
 				const existing = store.get(playerId);
-				// Owner-checked: only clear when the row's updatedAt matches.
-				// A missing row or a mismatched updatedAt is a no-op.
-				if (existing && (existing as any).updatedAt === ownerUpdatedAt) {
+				// Owner-checked: only clear when the row's avatarUpdateToken matches.
+				// A missing row or a mismatched token is a no-op.
+				if (existing && (existing as any).avatarUpdateToken === ownerToken) {
 					store.set(playerId, { ...existing, avatarUrl: null });
 				}
 			}
@@ -688,12 +699,12 @@ describe('player avatar route (Worker)', () => {
 
 		// The DB avatarUrl flag was rolled back to null so the profile does
 		// not reference a serve route that 404s. The rollback is owner-checked
-		// on the updatedAt timestamp written by updateProfileAvatarUrl.
+		// on the avatarUpdateToken (UUID) written by updateProfileAvatarUrl.
 		const { clearProfileAvatarUrlIfOwned } = await import('@perseus/shared');
 		expect(clearProfileAvatarUrlIfOwned).toHaveBeenCalledWith(
 			expect.anything(),
 			'p1',
-			expect.any(Number)
+			expect.any(String)
 		);
 		const shared = await import('@perseus/shared');
 		const profileStore = (shared as any).__store as Map<
@@ -790,36 +801,48 @@ describe('player avatar route (Worker)', () => {
 		// Item 4 fix: two uploads A and B for the same player overlap. A's
 		// live put succeeds; B's live put fails. B's rollback must NOT clear
 		// A's avatarUrl — the owner-checked clearProfileAvatarUrlIfOwned
-		// sees that B's updatedAt no longer matches the row (a concurrent
-		// upload has since overwritten it) and is a no-op.
+		// sees that B's avatarUpdateToken no longer matches the row (a
+		// concurrent upload has since overwritten it) and is a no-op.
 		const { bucket } = createMockBucket();
 		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
 
 		const shared = await import('@perseus/shared');
 		const profileStore = (shared as any).__store as Map<
 			string,
-			{ displayName: string | null; avatarUrl: string | null; updatedAt?: number }
+			{
+				displayName: string | null;
+				avatarUrl: string | null;
+				updatedAt?: number;
+				avatarUpdateToken?: string;
+			}
 		>;
 
 		const { updateProfileAvatarUrl, clearProfileAvatarUrlIfOwned } =
 			await import('@perseus/shared');
 
-		// Capture the updatedAt this upload's DB write used, so we can
-		// verify the rollback is owner-checked on that same value.
-		let capturedUpdatedAt: number | undefined;
+		// Capture the avatarUpdateToken this upload's DB write used, so we
+		// can verify the rollback is owner-checked on that same token.
+		let capturedToken: string | undefined;
 		vi.mocked(updateProfileAvatarUrl).mockImplementationOnce(
-			async (db: unknown, playerId: string, avatarUrl: string, updatedAt?: number) => {
-				capturedUpdatedAt = updatedAt;
+			async (
+				db: unknown,
+				playerId: string,
+				avatarUrl: string,
+				updatedAt?: number,
+				avatarUpdateToken?: string
+			) => {
+				capturedToken = avatarUpdateToken;
 				profileStore.set(playerId, {
 					displayName: null,
 					avatarUrl,
-					updatedAt: updatedAt ?? Date.now()
+					updatedAt: updatedAt ?? Date.now(),
+					avatarUpdateToken
 				});
 			}
 		);
 
 		// Simulate a concurrent upload C overwriting the row (with a
-		// different updatedAt) between B's DB write and B's live put
+		// different token) between B's DB write and B's live put
 		// failure. The owner-checked rollback should see the mismatch and
 		// be a no-op.
 		const originalPut = vi.mocked(bucket.put);
@@ -828,7 +851,8 @@ describe('player avatar route (Worker)', () => {
 				profileStore.set('p1', {
 					displayName: null,
 					avatarUrl: '/api/player/p1/avatar',
-					updatedAt: 99999
+					updatedAt: 99999,
+					avatarUpdateToken: 'concurrent-C-token'
 				});
 				throw new Error('R2 transient error (B fails)');
 			}
@@ -847,14 +871,14 @@ describe('player avatar route (Worker)', () => {
 		);
 
 		expect(res.status).toBe(500);
-		// B's rollback was owner-checked on capturedUpdatedAt, but the
-		// row's updatedAt is now 99999 (C overwrote it). The mock
-		// clearProfileAvatarUrlIfOwned only clears when updatedAt matches,
+		// B's rollback was owner-checked on capturedToken, but the
+		// row's token is now 'concurrent-C-token' (C overwrote it). The mock
+		// clearProfileAvatarUrlIfOwned only clears when the token matches,
 		// so C's avatarUrl is preserved.
 		expect(clearProfileAvatarUrlIfOwned).toHaveBeenCalledWith(
 			expect.anything(),
 			'p1',
-			capturedUpdatedAt
+			capturedToken
 		);
 		expect(profileStore.get('p1')?.avatarUrl).toBe('/api/player/p1/avatar');
 		expect(profileStore.get('p1')?.updatedAt).toBe(99999);

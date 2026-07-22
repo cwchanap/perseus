@@ -79,28 +79,39 @@ describe('repositories', () => {
 		expect(row?.avatarUrl).toBeNull();
 	});
 
-	it('clearProfileAvatarUrlIfOwned nulls avatarUrl when avatarUpdatedAt matches', async () => {
-		await updateProfileAvatarUrl(helper.db, 'p1', 'avatar-url', 1000);
-		await clearProfileAvatarUrlIfOwned(helper.db, 'p1', 1000);
+	it('clearProfileAvatarUrlIfOwned nulls avatarUrl when avatarUpdateToken matches', async () => {
+		await updateProfileAvatarUrl(helper.db, 'p1', 'avatar-url', 1000, 'token-A');
+		await clearProfileAvatarUrlIfOwned(helper.db, 'p1', 'token-A');
 		const row = await getProfileOverride(helper.db, 'p1');
 		expect(row?.avatarUrl).toBeNull();
 	});
 
-	it('clearProfileAvatarUrlIfOwned is a no-op when avatarUpdatedAt differs (concurrent overwrite)', async () => {
-		// Upload B wrote avatarUpdatedAt=1000, then a concurrent upload C
-		// overwrote with avatarUpdatedAt=2000. B's rollback with owner=1000
-		// must NOT clear C's avatar.
-		await updateProfileAvatarUrl(helper.db, 'p1', 'avatar-B', 1000);
-		await updateProfileAvatarUrl(helper.db, 'p1', 'avatar-C', 2000);
-		await clearProfileAvatarUrlIfOwned(helper.db, 'p1', 1000);
+	it('clearProfileAvatarUrlIfOwned is a no-op when avatarUpdateToken differs (concurrent overwrite)', async () => {
+		// Upload B wrote token-B, then a concurrent upload C overwrote with
+		// token-C. B's rollback with owner=token-B must NOT clear C's avatar.
+		await updateProfileAvatarUrl(helper.db, 'p1', 'avatar-B', 1000, 'token-B');
+		await updateProfileAvatarUrl(helper.db, 'p1', 'avatar-C', 2000, 'token-C');
+		await clearProfileAvatarUrlIfOwned(helper.db, 'p1', 'token-B');
 		const row = await getProfileOverride(helper.db, 'p1');
 		expect(row?.avatarUrl).toBe('avatar-C');
 	});
 
+	it('clearProfileAvatarUrlIfOwned is a no-op when two uploads share the same millisecond but different tokens', async () => {
+		// Regression: Date.now() collision. Two concurrent uploads receive
+		// the same timestamp (1000) but different UUID tokens. Upload A's
+		// live R2 put fails; its rollback must NOT clear upload B's avatar,
+		// even though both wrote the same avatarUpdatedAt.
+		await updateProfileAvatarUrl(helper.db, 'p1', 'avatar-A', 1000, 'token-A');
+		await updateProfileAvatarUrl(helper.db, 'p1', 'avatar-B', 1000, 'token-B');
+		await clearProfileAvatarUrlIfOwned(helper.db, 'p1', 'token-A');
+		const row = await getProfileOverride(helper.db, 'p1');
+		expect(row?.avatarUrl).toBe('avatar-B');
+	});
+
 	it('clearProfileAvatarUrlIfOwned clears avatar after displayName update changed updatedAt', async () => {
-		await updateProfileAvatarUrl(helper.db, 'p1', 'avatar-url', 1000);
+		await updateProfileAvatarUrl(helper.db, 'p1', 'avatar-url', 1000, 'token-X');
 		await updateProfileDisplayName(helper.db, 'p1', 'New Name');
-		await clearProfileAvatarUrlIfOwned(helper.db, 'p1', 1000);
+		await clearProfileAvatarUrlIfOwned(helper.db, 'p1', 'token-X');
 		const row = await getProfileOverride(helper.db, 'p1');
 		expect(row?.avatarUrl).toBeNull();
 		expect(row?.displayName).toBe('New Name');
@@ -109,7 +120,7 @@ describe('repositories', () => {
 	it('clearProfileAvatarUrlIfOwned is a no-op when no row exists', async () => {
 		// A missing row means there is nothing to roll back; the conditional
 		// UPDATE matches zero rows and does not insert a null-avatar stub.
-		await clearProfileAvatarUrlIfOwned(helper.db, 'p1', 1000);
+		await clearProfileAvatarUrlIfOwned(helper.db, 'p1', 'token-none');
 		const row = await getProfileOverride(helper.db, 'p1');
 		expect(row).toBeNull();
 	});

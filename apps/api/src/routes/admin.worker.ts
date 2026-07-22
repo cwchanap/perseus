@@ -60,6 +60,7 @@ import {
 	detectImageType,
 	insertPuzzleOwnership,
 	isAliveWorkflowStatus,
+	isDeadWorkflowStatus,
 	isStalePendingReservation,
 	isWorkflowNotFoundError,
 	parseImageDimensions,
@@ -267,6 +268,83 @@ async function probeWorkflowLiveness(
 		}
 		console.error(`Workflow liveness probe failed for ${puzzleId}:`, err);
 		return 'unknown';
+	}
+}
+
+/**
+ * Poll interval and timeout for awaiting workflow termination after calling
+ * terminate(). The workflow's in-flight step.do calls may complete (and write
+ * R2 assets) before the instance transitions to 'terminated'; only once
+ * status() reports a terminal state is it safe to delete R2 assets. The
+ * timeout bounds the request so a stuck terminate() doesn't hold the client
+ * indefinitely — on timeout, the caller leaves KV/R2 intact for the reaper.
+ */
+const TERMINATE_POLL_INTERVAL_MS = 500;
+const TERMINATE_POLL_TIMEOUT_MS = 10_000;
+
+/**
+ * Terminate a workflow instance and wait for it to reach a state where no
+ * further step.do calls can write R2 assets (errored, terminated, unknown,
+ * or complete — all mean the workflow has stopped making progress). Returns
+ * true when the workflow is confirmed stopped — safe to proceed with R2
+ * asset deletion because no subsequent step can write new objects.
+ *
+ * Returns false when termination could not be confirmed (terminate() threw,
+ * status polling failed, or the bounded timeout elapsed). Callers must NOT
+ * delete R2 assets in this case — a live workflow can still write thumbnails
+ * or pieces after the sweep, leaving orphaned R2 objects invisible to the
+ * reaper (KV metadata already deleted). Instead, tombstone the DO (prevents
+ * metadata resurrection via KV sync) and leave KV metadata intact so the
+ * reaper can clean up R2 assets on its next run after the workflow finally
+ * terminates.
+ */
+async function terminateAndAwaitStopped(
+	workflow: WorkflowBinding,
+	puzzleId: string,
+	options: { pollIntervalMs?: number; pollTimeoutMs?: number; now?: () => number } = {}
+): Promise<boolean> {
+	const pollInterval = options.pollIntervalMs ?? TERMINATE_POLL_INTERVAL_MS;
+	const pollTimeout = options.pollTimeoutMs ?? TERMINATE_POLL_TIMEOUT_MS;
+	const now = options.now ?? Date.now;
+	try {
+		const instance = await workflow.get(puzzleId);
+		try {
+			await instance.terminate();
+		} catch (termErr) {
+			console.error(`Failed to terminate orphaned workflow ${puzzleId}:`, termErr);
+			return false;
+		}
+		const deadline = now() + pollTimeout;
+		for (;;) {
+			let status: string;
+			try {
+				status = (await instance.status()).status;
+			} catch (statusErr) {
+				console.error(`Failed to poll workflow status for ${puzzleId}:`, statusErr);
+				return false;
+			}
+			// 'complete' means every step succeeded (including finalize) —
+			// no more R2 writes will occur. 'errored'/'terminated'/'unknown'
+			// mean the workflow was stopped. All three are safe for R2
+			// deletion. Active statuses (queued, running, paused, etc.) mean
+			// in-flight steps may still write R2 — keep polling.
+			if (isDeadWorkflowStatus(status) || status === 'complete') return true;
+			if (now() >= deadline) {
+				console.error(
+					`Workflow ${puzzleId} did not reach a stopped state within ${pollTimeout}ms after terminate()`
+				);
+				return false;
+			}
+			await new Promise((resolve) => setTimeout(resolve, pollInterval));
+		}
+	} catch (getErr) {
+		if (isWorkflowNotFoundError(getErr)) {
+			// Instance never created — nothing to terminate, and no live
+			// workflow can write R2 assets. Safe to proceed with cleanup.
+			return true;
+		}
+		console.error(`Failed to get workflow instance ${puzzleId} for termination:`, getErr);
+		return false;
 	}
 }
 
@@ -1254,13 +1332,37 @@ admin.post('/puzzles', requireAuth, async (c) => {
 							console.error(
 								`Commit conflict after ambiguous workflow create (alive) for ${id} — reservation reclaimed by a retry. Terminating orphaned workflow.`
 							);
-							try {
-								const instance = await c.env.PUZZLE_WORKFLOW.get(id);
-								await instance.terminate();
-							} catch (termErr) {
+							// Terminate and WAIT for the workflow to stop before
+							// deleting R2 assets. A live workflow writes thumbnails
+							// and pieces directly to R2 (not through the DO), so
+							// deleting assets before the workflow is stopped leaves
+							// orphaned R2 objects that the reaper cannot find (KV
+							// metadata already deleted). If termination cannot be
+							// confirmed within the bounded timeout, tombstone the DO
+							// (prevents metadata resurrection via KV sync) and leave
+							// KV/R2 intact for the reaper to clean up after the
+							// workflow finally terminates.
+							const stopped = await terminateAndAwaitStopped(c.env.PUZZLE_WORKFLOW, id);
+							if (!stopped) {
 								console.error(
-									`Failed to terminate orphaned workflow ${id} after commit conflict:`,
-									termErr
+									`Workflow ${id} not stopped after terminate(); tombstoning DO and deferring R2/KV cleanup to reaper`
+								);
+								try {
+									await deleteMetadataDO(c.env.PUZZLE_METADATA_DO, id);
+								} catch (doErr) {
+									console.error(
+										`Failed to tombstone metadata DO after alive-commit conflict for ${id}:`,
+										doErr
+									);
+								}
+								reservedIdempotencyKey = undefined;
+								return c.json(
+									{
+										error: 'internal_error',
+										message:
+											'Idempotency reservation was reclaimed by a retry; workflow termination pending, reaper will clean up'
+									},
+									500
 								);
 							}
 							const metaCleanup = await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
@@ -1427,11 +1529,34 @@ admin.post('/puzzles', requireAuth, async (c) => {
 				console.error(
 					`Commit failed for puzzle ${id} — reservation was reclaimed by a retry. Terminating orphaned workflow.`
 				);
-				try {
-					const instance = await c.env.PUZZLE_WORKFLOW.get(id);
-					await instance.terminate();
-				} catch (termErr) {
-					console.error(`Failed to terminate orphaned workflow ${id}:`, termErr);
+				// Terminate and WAIT for the workflow to stop before deleting
+				// R2 assets. A live workflow writes thumbnails and pieces
+				// directly to R2 (not through the DO), so deleting assets
+				// before the workflow is stopped leaves orphaned R2 objects
+				// that the reaper cannot find (KV metadata already deleted).
+				// If termination cannot be confirmed within the bounded
+				// timeout, tombstone the DO (prevents metadata resurrection
+				// via KV sync) and leave KV/R2 intact for the reaper to clean
+				// up after the workflow finally terminates.
+				const stopped = await terminateAndAwaitStopped(c.env.PUZZLE_WORKFLOW, id);
+				if (!stopped) {
+					console.error(
+						`Workflow ${id} not stopped after terminate(); tombstoning DO and deferring R2/KV cleanup to reaper`
+					);
+					try {
+						await deleteMetadataDO(c.env.PUZZLE_METADATA_DO, id);
+					} catch (doErr) {
+						console.error(`Failed to tombstone orphaned metadata DO for ${id}:`, doErr);
+					}
+					reservedIdempotencyKey = undefined;
+					return c.json(
+						{
+							error: 'internal_error',
+							message:
+								'Idempotency reservation was reclaimed by a retry; workflow termination pending, reaper will clean up'
+						},
+						500
+					);
 				}
 				// Clean up the orphaned puzzle's metadata and R2 assets.
 				const metadataCleanup = await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
