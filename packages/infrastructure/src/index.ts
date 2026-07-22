@@ -94,3 +94,7 @@ export const apiWorkerName = apiWorker.workerName;
 export const adminAccessApplicationId = adminAccess.application.id;
 export const adminAccessDevicePostureRuleId = adminAccess.devicePostureRule.id;
 export const adminAccessDeviceSerialListId = adminAccess.deviceSerialList.id;
+/** Client ID for CF-Access-Client-Id (safe to store in local shell env for CLI uploads). */
+export const adminCliAccessClientId = adminAccess.cliServiceToken.clientId;
+/** Client Secret for CF-Access-Client-Secret — treat as a secret. */
+export const adminCliAccessClientSecret = pulumi.secret(adminAccess.cliServiceToken.clientSecret);
