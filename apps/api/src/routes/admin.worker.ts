@@ -22,6 +22,7 @@ import {
 	createPuzzleMetadata,
 	deletePuzzleMetadata,
 	deletePuzzleAssets,
+	deleteMetadataDO,
 	failIdempotencyKey,
 	uploadOriginalImage,
 	deleteOriginalImage,
@@ -1270,6 +1271,15 @@ admin.post('/puzzles', requireAuth, async (c) => {
 						'Failed to cleanup orphaned puzzle image after commit failure:',
 						imageCleanup.error
 					);
+				}
+				// Best-effort DO tombstone. The orphaned workflow was terminated,
+				// but its DO metadata persists. Without tombstoning, a
+				// post-termination workflow step could resurrect metadata in KV
+				// via the DO's KV sync. Mirrors the reaper's tombstone pattern.
+				try {
+					await deleteMetadataDO(c.env.PUZZLE_METADATA_DO, id);
+				} catch (doErr) {
+					console.error(`Failed to tombstone orphaned metadata DO for ${id}:`, doErr);
 				}
 				await withDbBestEffort(
 					c.env,

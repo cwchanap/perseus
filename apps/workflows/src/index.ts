@@ -217,6 +217,20 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 		try {
 			const result = await this.ctx.storage.transaction(async () => {
 				const stored = await this.ctx.storage.get<PuzzleMetadata>('metadata');
+				// Re-check the tombstone inside the transaction. The outer check
+				// (before storedProbe) is a fast-path early return, but a /delete
+				// can run between that check and this transaction. Without this
+				// re-check, a kvFallback value (read when storedProbe was null —
+				// the DO-storage-empty migration case) would be written back into
+				// DO storage, resurrecting metadata the reaper just tombstoned.
+				const tombstoned = await this.ctx.storage.get<boolean>('deleted');
+				if (tombstoned) {
+					return {
+						ok: false as const,
+						status: 404,
+						message: `Puzzle ${puzzleId} has been deleted (tombstoned); refusing update`
+					};
+				}
 				const existing = stored ?? kvFallback;
 				if (!existing) {
 					// KV had metadata at probe time but storage is still empty and

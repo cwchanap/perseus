@@ -1314,7 +1314,7 @@ describe('PuzzleMetadataDO.fetch - /commit /fail /release transition edge cases'
 
 describe('PuzzleMetadataDO.fetch - /delete (tombstone)', () => {
 	it('sets a tombstone via /delete and rejects subsequent /update calls', async () => {
-		const { durableObj, storage } = makeDO({
+		const { durableObj } = makeDO({
 			metadata: { ...baseMetadata, status: 'processing' }
 		});
 
@@ -1369,5 +1369,38 @@ describe('PuzzleMetadataDO.fetch - /delete (tombstone)', () => {
 			})
 		);
 		expect(res.status).toBe(200);
+	});
+
+	it('rejects /update with 404 when tombstone is set between outer check and transaction (TOCTOU)', async () => {
+		// Simulate: /update reads deleted→false (outer check), then
+		// reaper's /delete sets deleted→true + clears metadata, then
+		// /update's transaction runs and must re-check deleted.
+		const { durableObj, storage } = makeDO({
+			metadata: { ...baseMetadata, status: 'processing' }
+		});
+
+		// Wrap the transaction so it sets the tombstone before running
+		// the callback's body — simulating an interleaved /delete.
+		const originalTransaction = storage.transaction;
+		storage.transaction = vi.fn(async (fn: () => Promise<unknown>) => {
+			// Simulate /delete running right before the transaction body
+			storage._store['deleted'] = true;
+			delete storage._store['metadata'];
+			return originalTransaction(fn);
+		});
+
+		const updateRes = await durableObj.fetch(
+			new Request('https://puzzle-metadata/update', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					puzzleId: 'test-puzzle',
+					updates: { status: 'ready' }
+				})
+			})
+		);
+		expect(updateRes.status).toBe(404);
+		const body = (await updateRes.json()) as { message?: string };
+		expect(body.message).toContain('deleted');
 	});
 });
