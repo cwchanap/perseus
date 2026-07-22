@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../storage.worker', () => ({
 	deletePuzzleAssets: vi.fn(),
+	deleteMetadataDO: vi.fn(),
 	deletePuzzleMetadata: vi.fn(),
 	getAuthoritativeStatus: vi.fn(),
 	getPuzzle: vi.fn(),
@@ -25,7 +26,9 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 import { reapStuckPuzzles, REAP_AFTER_MS } from '../reaper';
 import {
 	deletePuzzleAssets,
+	deleteMetadataDO,
 	deletePuzzleMetadata,
+	getAuthoritativeStatus,
 	getPuzzle,
 	listPuzzles,
 	releaseIdempotencyKey
@@ -39,6 +42,7 @@ const NOW = 1700000000000;
 function makeEnv() {
 	return {
 		PUZZLE_METADATA: {} as KVNamespace,
+		PUZZLE_METADATA_DO: {} as DurableObjectNamespace,
 		PUZZLES_BUCKET: {} as R2Bucket,
 		PUZZLE_WORKFLOW: {
 			get: vi.fn(async () => ({
@@ -69,7 +73,9 @@ describe('reaper D1 cleanup coverage', () => {
 			status: 'processing',
 			pieceCount: undefined
 		} as any);
+		(getAuthoritativeStatus as any).mockResolvedValue('processing');
 		(deletePuzzleAssets as any).mockResolvedValue({ success: true, failedKeys: [] });
+		(deleteMetadataDO as any).mockResolvedValue(undefined);
 		(deletePuzzleMetadata as any).mockResolvedValue({ success: true } as any);
 	});
 
