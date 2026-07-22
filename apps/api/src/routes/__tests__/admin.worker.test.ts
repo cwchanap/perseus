@@ -684,7 +684,12 @@ describe('Admin Routes - Workflow Trigger Cleanup', () => {
 				PUZZLE_METADATA: {} as KVNamespace,
 				PUZZLES_BUCKET: {} as R2Bucket,
 				PUZZLE_WORKFLOW: {
-					create: vi.fn().mockRejectedValue(new Error('Workflow service unavailable'))
+					create: vi.fn().mockRejectedValue(new Error('Workflow service unavailable')),
+					get: vi.fn().mockRejectedValue(
+						Object.assign(new Error('instance.not_found'), {
+							code: 'instance.not_found'
+						})
+					)
 				}
 			};
 
@@ -1029,7 +1034,12 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 				PUZZLE_METADATA: {} as KVNamespace,
 				PUZZLES_BUCKET: {} as R2Bucket,
 				PUZZLE_WORKFLOW: {
-					create: vi.fn().mockRejectedValue(new Error('Workflow unavailable'))
+					create: vi.fn().mockRejectedValue(new Error('Workflow unavailable')),
+					get: vi.fn().mockRejectedValue(
+						Object.assign(new Error('instance.not_found'), {
+							code: 'instance.not_found'
+						})
+					)
 				},
 				PUZZLE_METADATA_DO: {} as DurableObjectNamespace
 			};
@@ -1095,7 +1105,12 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 				PUZZLE_METADATA: {} as KVNamespace,
 				PUZZLES_BUCKET: {} as R2Bucket,
 				PUZZLE_WORKFLOW: {
-					create: vi.fn().mockRejectedValue(new Error('Workflow unavailable'))
+					create: vi.fn().mockRejectedValue(new Error('Workflow unavailable')),
+					get: vi.fn().mockRejectedValue(
+						Object.assign(new Error('instance.not_found'), {
+							code: 'instance.not_found'
+						})
+					)
 				},
 				PUZZLE_METADATA_DO: {} as DurableObjectNamespace
 			};

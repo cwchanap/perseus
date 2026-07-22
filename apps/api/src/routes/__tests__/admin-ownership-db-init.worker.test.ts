@@ -156,7 +156,12 @@ describe('Admin Worker - D1 ownership best-effort catch blocks', () => {
 		const mockEnv = {
 			...baseEnv,
 			PUZZLE_WORKFLOW: {
-				create: vi.fn().mockRejectedValue(new Error('Workflow unavailable'))
+				create: vi.fn().mockRejectedValue(new Error('Workflow unavailable')),
+				get: vi.fn().mockRejectedValue(
+					Object.assign(new Error('instance.not_found'), {
+						code: 'instance.not_found'
+					})
+				)
 			}
 		};
 		const req = new Request('http://localhost/puzzles', {
@@ -182,7 +187,12 @@ describe('Admin Worker - D1 ownership best-effort catch blocks', () => {
 		const mockEnv = {
 			...baseEnv,
 			PUZZLE_WORKFLOW: {
-				create: vi.fn().mockRejectedValue(new Error('Workflow unavailable'))
+				create: vi.fn().mockRejectedValue(new Error('Workflow unavailable')),
+				get: vi.fn().mockRejectedValue(
+					Object.assign(new Error('instance.not_found'), {
+						code: 'instance.not_found'
+					})
+				)
 			}
 		};
 		const req = new Request('http://localhost/puzzles', {

@@ -327,7 +327,12 @@ describe('Admin Worker - POST /puzzles cleanup failure branches', () => {
 		const mockEnv = {
 			...baseEnv,
 			PUZZLE_WORKFLOW: {
-				create: vi.fn().mockRejectedValue(new Error('Workflow unavailable'))
+				create: vi.fn().mockRejectedValue(new Error('Workflow unavailable')),
+				get: vi.fn().mockRejectedValue(
+					Object.assign(new Error('instance.not_found'), {
+						code: 'instance.not_found'
+					})
+				)
 			}
 		};
 
@@ -360,7 +365,12 @@ describe('Admin Worker - POST /puzzles cleanup failure branches', () => {
 		const mockEnv = {
 			...baseEnv,
 			PUZZLE_WORKFLOW: {
-				create: vi.fn().mockRejectedValue(new Error('Workflow unavailable'))
+				create: vi.fn().mockRejectedValue(new Error('Workflow unavailable')),
+				get: vi.fn().mockRejectedValue(
+					Object.assign(new Error('instance.not_found'), {
+						code: 'instance.not_found'
+					})
+				)
 			}
 		};
 

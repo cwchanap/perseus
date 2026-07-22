@@ -513,4 +513,100 @@ describe('Admin Worker idempotency recovery', () => {
 		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'puzzle-1');
 		expect(storage.deleteOriginalImage).toHaveBeenCalledWith(env.PUZZLES_BUCKET, 'puzzle-1');
 	});
+
+	it('retains metadata and reservation when workflow create fails but workflow is alive (ambiguous failure)', async () => {
+		(storage.reserveIdempotencyKey as any).mockResolvedValue({
+			existing: false,
+			puzzleId: 'puzzle-1'
+		});
+		(storage.uploadOriginalImage as any).mockResolvedValue(undefined);
+		(storage.createPuzzleMetadata as any).mockResolvedValue(undefined);
+
+		// create() throws (timeout), but the workflow was actually created
+		// — get().status() returns 'running'
+		const workflow = {
+			create: vi.fn().mockRejectedValue(new Error('RPC timeout')),
+			get: vi.fn(async () => ({
+				status: vi.fn().mockResolvedValue({ status: 'running' }),
+				terminate: vi.fn()
+			}))
+		};
+		const env = createEnv(workflow as any);
+
+		// Commit should be called (workflow is alive, so we retain + commit)
+		(storage.commitIdempotencyKey as any).mockResolvedValue(undefined);
+
+		const response = await admin.fetch(createRequest('ambiguous-key-1'), env as any);
+
+		// Should return 500 (client retries, hits existing-puzzle branch)
+		expect(response.status).toBe(500);
+		// Must NOT delete metadata or image — workflow is alive
+		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
+		expect(storage.deleteOriginalImage).not.toHaveBeenCalled();
+		// Must NOT release the reservation — commit it instead
+		expect(storage.releaseIdempotencyKey).not.toHaveBeenCalled();
+		expect(storage.commitIdempotencyKey).toHaveBeenCalledWith(
+			env.PUZZLE_METADATA_DO,
+			'ambiguous-key-1',
+			'puzzle-1'
+		);
+	});
+
+	it('cleans up and releases when workflow create fails and workflow is dead', async () => {
+		(storage.reserveIdempotencyKey as any).mockResolvedValue({
+			existing: false,
+			puzzleId: 'puzzle-1'
+		});
+		(storage.uploadOriginalImage as any).mockResolvedValue(undefined);
+		(storage.createPuzzleMetadata as any).mockResolvedValue(undefined);
+
+		// create() throws, and the workflow was NOT created — get() throws not_found
+		const notFoundError = new Error('instance.not_found');
+		(notFoundError as any).code = 'instance.not_found';
+		const workflow = {
+			create: vi.fn().mockRejectedValue(new Error('create failed')),
+			get: vi.fn(async () => {
+				throw notFoundError;
+			})
+		};
+		const env = createEnv(workflow as any);
+
+		(storage.deletePuzzleMetadata as any).mockResolvedValue({ success: true });
+		(storage.deleteOriginalImage as any).mockResolvedValue({ success: true });
+		(storage.releaseIdempotencyKey as any).mockResolvedValue(undefined);
+
+		const response = await admin.fetch(createRequest('dead-key-1'), env as any);
+
+		expect(response.status).toBe(500);
+		// Should clean up (workflow was not created)
+		expect(storage.deletePuzzleMetadata).toHaveBeenCalled();
+		expect(storage.deleteOriginalImage).toHaveBeenCalled();
+		expect(storage.releaseIdempotencyKey).toHaveBeenCalled();
+	});
+
+	it('retains metadata and returns 500 when workflow create fails and liveness is unknown', async () => {
+		(storage.reserveIdempotencyKey as any).mockResolvedValue({
+			existing: false,
+			puzzleId: 'puzzle-1'
+		});
+		(storage.uploadOriginalImage as any).mockResolvedValue(undefined);
+		(storage.createPuzzleMetadata as any).mockResolvedValue(undefined);
+
+		// create() throws, and the workflow API is unreachable (not not_found)
+		const workflow = {
+			create: vi.fn().mockRejectedValue(new Error('RPC timeout')),
+			get: vi.fn(async () => {
+				throw new Error('workflow API down');
+			})
+		};
+		const env = createEnv(workflow as any);
+
+		const response = await admin.fetch(createRequest('unknown-key-1'), env as any);
+
+		expect(response.status).toBe(500);
+		// Must NOT clean up — liveness unknown, fail closed
+		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
+		expect(storage.deleteOriginalImage).not.toHaveBeenCalled();
+		expect(storage.releaseIdempotencyKey).not.toHaveBeenCalled();
+	});
 });

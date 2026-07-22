@@ -1116,15 +1116,67 @@ admin.post('/puzzles', requireAuth, async (c) => {
 			workflowStarted = true;
 		} catch (error) {
 			console.error('Failed to trigger workflow:', error);
-			// Clean up both metadata and image
+
+			// PUZZLE_WORKFLOW.create failure is ambiguous: the RPC may have
+			// committed the instance on Cloudflare's side even though the
+			// response was lost (timeout, network error). Cleaning up
+			// unconditionally would delete the metadata/image the workflow
+			// needs, and releasing the reservation would let a retry mint a
+			// second puzzle. Probe the workflow liveness first:
+			//   - alive: the workflow was created — retain metadata, commit
+			//     the reservation, return 500 so the client retries and hits
+			//     the existing-puzzle branch.
+			//   - dead: the workflow was not created — clean up and release
+			//     as before.
+			//   - unknown: workflow API unreachable — fail closed (retain
+			//     everything, return 500) to avoid minting a duplicate or
+			//     destroying a live workflow's input.
+			const liveness = await probeWorkflowLiveness(c.env.PUZZLE_WORKFLOW, id);
+
+			if (liveness === 'alive') {
+				// Workflow was created despite the create() error. Commit the
+				// reservation so a retry hits the existing-puzzle branch.
+				if (reservedIdempotencyKey) {
+					try {
+						await commitIdempotencyKey(c.env.PUZZLE_METADATA_DO, reservedIdempotencyKey, id);
+						reservedIdempotencyKey = undefined;
+					} catch (commitErr) {
+						console.error(
+							'Failed to commit reservation after ambiguous workflow create (alive):',
+							commitErr
+						);
+						// Don't clean up — the workflow is running. Return 500
+						// so the client retries and the existing-puzzle branch
+						// handles it.
+					}
+				}
+				return c.json(
+					{
+						error: 'internal_error',
+						message: 'Workflow creation was ambiguous (workflow is alive); retry to retrieve puzzle'
+					},
+					500
+				);
+			}
+
+			if (liveness === 'unknown') {
+				// Workflow API unreachable — fail closed. Don't clean up or
+				// release. The client retries; if the workflow was created,
+				// the retry hits the existing-puzzle branch. If not, the
+				// pending reservation TTL eventually makes it reclaimable.
+				return c.json(
+					{
+						error: 'internal_error',
+						message: 'Workflow creation failed and liveness could not be verified; retry'
+					},
+					500
+				);
+			}
+
+			// liveness === 'dead' — workflow was not created. Clean up and
+			// release as before.
 			const metadataCleanup = await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
 			if (!metadataCleanup.success) {
-				// Metadata cleanup failed — the processing metadata remains in
-				// KV as an orphan. Fail (not release) the reservation so a
-				// retry reclaims through the DO's serialized path instead of
-				// releasing the key and minting a replacement alongside the
-				// orphaned puzzle. The orphan is explicit for operator
-				// force-delete.
 				console.error(
 					'Failed to cleanup puzzle metadata after workflow trigger failure:',
 					metadataCleanup.error
@@ -1141,10 +1193,6 @@ admin.post('/puzzles', requireAuth, async (c) => {
 			}
 			const imageCleanup = await deleteOriginalImage(c.env.PUZZLES_BUCKET, id);
 			if (!imageCleanup.success) {
-				// Image cleanup failed — the original R2 object remains as an
-				// orphan. Fail (not release) the reservation so a retry reclaims
-				// through the DO's serialized path instead of releasing the key
-				// and minting a replacement alongside the orphaned image.
 				console.error(
 					'Failed to cleanup original image after workflow trigger failure:',
 					imageCleanup.error
