@@ -68,7 +68,8 @@ function createWorkflow(status = 'running') {
 	return {
 		create: vi.fn().mockResolvedValue(undefined),
 		get: vi.fn().mockResolvedValue({
-			status: vi.fn().mockResolvedValue({ status })
+			status: vi.fn().mockResolvedValue({ status }),
+			terminate: vi.fn().mockResolvedValue(undefined)
 		})
 	};
 }
@@ -167,6 +168,8 @@ describe('Admin Worker idempotency commit handling', () => {
 			status: 'pending'
 		});
 		vi.mocked(storage.commitIdempotencyKey).mockRejectedValue(new Error('commit unavailable'));
+		vi.mocked(storage.deletePuzzleMetadata).mockResolvedValue({ success: true });
+		vi.mocked(storage.deleteOriginalImage).mockResolvedValue({ success: true });
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 		const workflow = createWorkflow();
 
@@ -176,12 +179,18 @@ describe('Admin Worker idempotency commit handling', () => {
 
 		expect(response.status).toBe(500);
 		const body = (await response.json()) as any;
-		expect(body.message).toBe('Puzzle created but idempotency commit failed; retry to verify');
+		expect(body.message).toBe(
+			'Idempotency reservation was reclaimed by a retry; puzzle cleaned up'
+		);
 		expect(storage.commitIdempotencyKey).toHaveBeenCalledTimes(3);
 		expect(workflow.create).toHaveBeenCalledWith({
 			id: 'new-puzzle',
 			params: { puzzleId: 'new-puzzle' }
 		});
+		// The orphaned workflow must be terminated and its assets cleaned up
+		expect(workflow.get).toHaveBeenCalledWith('new-puzzle');
+		expect(storage.deletePuzzleMetadata).toHaveBeenCalled();
+		expect(storage.deleteOriginalImage).toHaveBeenCalled();
 	});
 
 	it('fails (not releases) the reservation when an error reaches the outer catch after workflow.create() succeeds', async () => {

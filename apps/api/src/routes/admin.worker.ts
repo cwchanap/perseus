@@ -1191,19 +1191,49 @@ admin.post('/puzzles', requireAuth, async (c) => {
 				}
 			}
 			if (!committed) {
-				// The puzzle and workflow already exist, but the reservation is
-				// still pending. Returning 201 would let the pending TTL expire
-				// into a reclaimable state, allowing a duplicate workflow.
-				// Return 500 instead so the client retries the POST — the retry
-				// hits the existing-puzzle branch and returns the original
-				// puzzle (200) once KV propagates, and best-effort commits the
-				// reservation.
-				console.error('CRITICAL: idempotency commit failed after all retries — returning 500');
+				// The commit failed, which means the reservation was reclaimed
+				// by a retry (stale-pending reclaim marked it failed, then a
+				// retry minted a new puzzleId). The workflow we just created is
+				// orphaned — it's running against puzzleId A while the retry is
+				// building puzzleId B under the same Idempotency-Key. Terminate
+				// the orphaned workflow and clean up its metadata/image so only
+				// the retry's puzzle survives. Return 500 so the client retries
+				// and gets the retry's puzzle.
+				console.error(
+					`Commit failed for puzzle ${id} — reservation was reclaimed by a retry. Terminating orphaned workflow.`
+				);
+				try {
+					const instance = await c.env.PUZZLE_WORKFLOW.get(id);
+					await instance.terminate();
+				} catch (termErr) {
+					console.error(`Failed to terminate orphaned workflow ${id}:`, termErr);
+				}
+				// Clean up the orphaned puzzle's metadata and image
+				const metadataCleanup = await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
+				if (!metadataCleanup.success) {
+					console.error(
+						'Failed to cleanup orphaned puzzle metadata after commit failure:',
+						metadataCleanup.error
+					);
+				}
+				const imageCleanup = await deleteOriginalImage(c.env.PUZZLES_BUCKET, id);
+				if (!imageCleanup.success) {
+					console.error(
+						'Failed to cleanup orphaned puzzle image after commit failure:',
+						imageCleanup.error
+					);
+				}
+				await withDbBestEffort(
+					c.env,
+					'Failed to cleanup ownership after commit failure:',
+					`Failed to init DB for ownership cleanup of puzzle ${id}:`,
+					(db) => deletePuzzleOwnership(db, id)
+				);
 				reservedIdempotencyKey = undefined;
 				return c.json(
 					{
 						error: 'internal_error',
-						message: 'Puzzle created but idempotency commit failed; retry to verify'
+						message: 'Idempotency reservation was reclaimed by a retry; puzzle cleaned up'
 					},
 					500
 				);

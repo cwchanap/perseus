@@ -14,6 +14,7 @@ import type { WorkflowParams } from './types/workflow';
 export interface WorkflowInstance {
 	id: string;
 	status(): Promise<{ status: string }>;
+	terminate(options?: { rollback?: boolean }): Promise<void>;
 }
 export interface WorkflowBinding<T = unknown> {
 	create(options: { id: string; params: T }): Promise<{ id: string }>;

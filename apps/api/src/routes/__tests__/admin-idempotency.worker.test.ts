@@ -473,4 +473,44 @@ describe('Admin Worker idempotency recovery', () => {
 		expect(storage.releaseIdempotencyKey).not.toHaveBeenCalled();
 		expect(storage.createPuzzleMetadata).not.toHaveBeenCalled();
 	});
+
+	it('terminates the orphaned workflow and cleans up when commit fails because the reservation was reclaimed', async () => {
+		// Simulate: original create succeeds, but a retry reclaimed the
+		// reservation while the original was creating the workflow. The
+		// commit fails with 409 ("Cannot commit reservation in status
+		// failed" or "Reservation owned by another puzzle").
+		(storage.reserveIdempotencyKey as any).mockResolvedValue({
+			existing: false,
+			puzzleId: 'puzzle-1'
+		});
+		(storage.uploadOriginalImage as any).mockResolvedValue(undefined);
+		(storage.createPuzzleMetadata as any).mockResolvedValue(undefined);
+
+		const terminateFn = vi.fn().mockResolvedValue(undefined);
+		const workflow = {
+			create: vi.fn().mockResolvedValue(undefined),
+			get: vi.fn(async () => ({
+				status: vi.fn().mockResolvedValue({ status: 'running' }),
+				terminate: terminateFn
+			}))
+		};
+		const env = createEnv(workflow as any);
+
+		// Commit fails on all 3 attempts with 409
+		(storage.commitIdempotencyKey as any).mockRejectedValue(
+			new Error('Cannot commit reservation in status failed')
+		);
+		(storage.deletePuzzleMetadata as any).mockResolvedValue({ success: true });
+		(storage.deleteOriginalImage as any).mockResolvedValue({ success: true });
+
+		const response = await admin.fetch(createRequest('fence-key-1'), env as any);
+
+		// Should return 500 (client retries, gets the retry's puzzle)
+		expect(response.status).toBe(500);
+		// Workflow must be terminated
+		expect(terminateFn).toHaveBeenCalled();
+		// Metadata and image must be cleaned up
+		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'puzzle-1');
+		expect(storage.deleteOriginalImage).toHaveBeenCalledWith(env.PUZZLES_BUCKET, 'puzzle-1');
+	});
 });
