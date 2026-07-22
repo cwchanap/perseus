@@ -1696,10 +1696,10 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 			expect(storage.createPuzzleMetadata).not.toHaveBeenCalled();
 		});
 
-		it('should return 500 when idempotency commit fails after all retries', async () => {
+		it('should return 500 when idempotency commit fails after all retries (transient)', async () => {
 			// The puzzle and workflow already exist, but the reservation is
-			// still pending. Returning 201 would let the pending TTL expire
-			// into a reclaimable state; return 500 so the client retries.
+			// still pending. A transient DO failure must retain the workflow
+			// and metadata so a client retry can commit.
 			(storage.reserveIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue({
 				existing: false,
 				puzzleId: 'new-uuid',
@@ -1711,12 +1711,19 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 				new Error('DO unavailable')
 			);
 
+			const terminateFn = vi.fn().mockResolvedValue(undefined);
 			const mockEnv = {
 				ADMIN_PASSKEY: 'test-passkey',
 				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
 				PUZZLE_METADATA: {} as KVNamespace,
 				PUZZLES_BUCKET: {} as R2Bucket,
-				PUZZLE_WORKFLOW: { create: vi.fn().mockResolvedValue(undefined) },
+				PUZZLE_WORKFLOW: {
+					create: vi.fn().mockResolvedValue(undefined),
+					get: vi.fn(async () => ({
+						status: vi.fn().mockResolvedValue({ status: 'running' }),
+						terminate: terminateFn
+					}))
+				},
 				PUZZLE_METADATA_DO: {} as DurableObjectNamespace
 			};
 
@@ -1740,8 +1747,11 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 			expect(res.status).toBe(500);
 			const body = (await res.json()) as any;
 			expect(body.error).toBe('internal_error');
-			// Retried the commit up to IDEMPOTENCY_COMMIT_MAX_ATTEMPTS (3).
+			expect(body.message).toBe('Failed to commit idempotency reservation; retry');
 			expect(storage.commitIdempotencyKey).toHaveBeenCalledTimes(3);
+			expect(terminateFn).not.toHaveBeenCalled();
+			expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
+			expect(storage.deleteOriginalImage).not.toHaveBeenCalled();
 		});
 	});
 });

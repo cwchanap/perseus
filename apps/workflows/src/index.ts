@@ -214,6 +214,7 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 		}
 
 		let updated: PuzzleMetadata;
+		let deletionEpochAtCommit: number;
 		try {
 			const result = await this.ctx.storage.transaction(async () => {
 				const stored = await this.ctx.storage.get<PuzzleMetadata>('metadata');
@@ -311,13 +312,15 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 					} as PuzzleMetadata;
 				}
 
+				const deletionEpochAtCommit = (await this.ctx.storage.get<number>('deletionEpoch')) ?? 0;
 				await this.ctx.storage.put('metadata', next);
-				return { ok: true as const, updated: next };
+				return { ok: true as const, updated: next, deletionEpoch: deletionEpochAtCommit };
 			});
 			if (!result.ok) {
 				return Response.json({ message: result.message }, { status: result.status });
 			}
 			updated = result.updated;
+			deletionEpochAtCommit = result.deletionEpoch;
 		} catch (error) {
 			console.error(`Failed to persist metadata in DO for puzzle ${puzzleId}:`, error);
 			return Response.json(
@@ -326,21 +329,37 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 			);
 		}
 
-		// KV is eventually consistent — retry with backoff, but don't fail the request
-		const kvMaxRetries = 3;
-		for (let attempt = 0; attempt < kvMaxRetries; attempt++) {
-			try {
-				await this.env.PUZZLE_METADATA.put(`puzzle:${puzzleId}`, JSON.stringify(updated));
-				break; // Success
-			} catch (kvError) {
-				if (attempt < kvMaxRetries - 1) {
-					const delay = 100 * Math.pow(2, attempt);
-					await new Promise((resolve) => setTimeout(resolve, delay));
-				} else {
-					console.error(
-						`KV write failed for puzzle ${puzzleId} after ${kvMaxRetries} attempts, DO is authoritative:`,
-						kvError
-					);
+		// KV is eventually consistent — retry with backoff, but don't fail the request.
+		// Fence the sync with deletionEpoch: a concurrent /delete (reaper tombstone)
+		// bumps the epoch between the transaction commit and this write. Without the
+		// fence, stale metadata would be written back to KV after R2 assets were
+		// deleted. If the epoch changes during the put, undo the write.
+		const epochBeforeSync = deletionEpochAtCommit;
+		const epochNow = (await this.ctx.storage.get<number>('deletionEpoch')) ?? 0;
+		if (epochNow === epochBeforeSync) {
+			const kvMaxRetries = 3;
+			for (let attempt = 0; attempt < kvMaxRetries; attempt++) {
+				try {
+					await this.env.PUZZLE_METADATA.put(`puzzle:${puzzleId}`, JSON.stringify(updated));
+					const epochAfterPut = (await this.ctx.storage.get<number>('deletionEpoch')) ?? 0;
+					if (epochAfterPut !== epochBeforeSync) {
+						try {
+							await this.env.PUZZLE_METADATA.delete(`puzzle:${puzzleId}`);
+						} catch (undoErr) {
+							console.error(`Failed to undo KV write for tombstoned puzzle ${puzzleId}:`, undoErr);
+						}
+					}
+					break; // Success (or undone after concurrent tombstone)
+				} catch (kvError) {
+					if (attempt < kvMaxRetries - 1) {
+						const delay = 100 * Math.pow(2, attempt);
+						await new Promise((resolve) => setTimeout(resolve, delay));
+					} else {
+						console.error(
+							`KV write failed for puzzle ${puzzleId} after ${kvMaxRetries} attempts, DO is authoritative:`,
+							kvError
+						);
+					}
 				}
 			}
 		}
@@ -772,10 +791,12 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 			);
 		}
 
-		// Atomically set the tombstone and clear the metadata inside a
-		// transaction so a concurrent /update that reads metadata between
-		// the tombstone set and the metadata clear cannot resurrect it.
+		// Atomically set the tombstone, bump deletionEpoch, and clear metadata
+		// inside a transaction so a concurrent /update cannot resurrect it and
+		// the post-transaction KV sync can fence on the epoch.
 		await this.ctx.storage.transaction(async () => {
+			const epoch = (await this.ctx.storage.get<number>('deletionEpoch')) ?? 0;
+			await this.ctx.storage.put('deletionEpoch', epoch + 1);
 			await this.ctx.storage.put('deleted', true);
 			await this.ctx.storage.delete('metadata');
 		});

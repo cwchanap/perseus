@@ -34,6 +34,7 @@ import {
 	reserveIdempotencyKey,
 	type PuzzleMetadata
 } from '../services/storage.worker';
+import { isIdempotencyCommitConflict } from '../services/idempotency-conflict';
 import {
 	createSession,
 	setSessionCookie,
@@ -1222,12 +1223,14 @@ admin.post('/puzzles', requireAuth, async (c) => {
 			const commitKey = reservedIdempotencyKey;
 			const commitPuzzleId = id;
 			let committed = false;
+			let lastCommitError: unknown;
 			for (let attempt = 0; attempt < IDEMPOTENCY_COMMIT_MAX_ATTEMPTS; attempt++) {
 				try {
 					await commitIdempotencyKey(c.env.PUZZLE_METADATA_DO, commitKey, commitPuzzleId);
 					committed = true;
 					break;
 				} catch (err) {
+					lastCommitError = err;
 					console.error(
 						`Failed to commit idempotency reservation (attempt ${attempt + 1}/${IDEMPOTENCY_COMMIT_MAX_ATTEMPTS}):`,
 						err
@@ -1240,14 +1243,29 @@ admin.post('/puzzles', requireAuth, async (c) => {
 				}
 			}
 			if (!committed) {
-				// The commit failed, which means the reservation was reclaimed
-				// by a retry (stale-pending reclaim marked it failed, then a
-				// retry minted a new puzzleId). The workflow we just created is
-				// orphaned — it's running against puzzleId A while the retry is
-				// building puzzleId B under the same Idempotency-Key. Terminate
-				// the orphaned workflow and clean up its metadata/image so only
-				// the retry's puzzle survives. Return 500 so the client retries
-				// and gets the retry's puzzle.
+				if (!isIdempotencyCommitConflict(lastCommitError)) {
+					// Transient failure (DO unreachable, 5xx). The reservation may
+					// still be pending and the workflow is live — retain assets so
+					// a client retry can commit or return the existing puzzle.
+					console.error(
+						`Commit failed for puzzle ${id} with ambiguous error; retaining workflow and metadata for retry`
+					);
+					return c.json(
+						{
+							error: 'internal_error',
+							message: 'Failed to commit idempotency reservation; retry'
+						},
+						500
+					);
+				}
+				// The commit failed with an owner/status conflict, which means the
+				// reservation was reclaimed by a retry (stale-pending reclaim marked
+				// it failed, then a retry minted a new puzzleId). The workflow we
+				// just created is orphaned — it's running against puzzleId A while
+				// the retry is building puzzleId B under the same Idempotency-Key.
+				// Terminate the orphaned workflow and clean up its metadata/image
+				// so only the retry's puzzle survives. Return 500 so the client
+				// retries and gets the retry's puzzle.
 				console.error(
 					`Commit failed for puzzle ${id} — reservation was reclaimed by a retry. Terminating orphaned workflow.`
 				);

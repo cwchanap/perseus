@@ -160,7 +160,7 @@ describe('Admin Worker idempotency commit handling', () => {
 		expect(storage.uploadOriginalImage).not.toHaveBeenCalled();
 	});
 
-	it('returns 500 after all post-create idempotency commit retries fail', async () => {
+	it('returns 500 after all post-create idempotency commit retries fail transiently', async () => {
 		vi.useFakeTimers();
 		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
 			existing: false,
@@ -168,8 +168,6 @@ describe('Admin Worker idempotency commit handling', () => {
 			status: 'pending'
 		});
 		vi.mocked(storage.commitIdempotencyKey).mockRejectedValue(new Error('commit unavailable'));
-		vi.mocked(storage.deletePuzzleMetadata).mockResolvedValue({ success: true });
-		vi.mocked(storage.deleteOriginalImage).mockResolvedValue({ success: true });
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 		const workflow = createWorkflow();
 
@@ -179,18 +177,16 @@ describe('Admin Worker idempotency commit handling', () => {
 
 		expect(response.status).toBe(500);
 		const body = (await response.json()) as any;
-		expect(body.message).toBe(
-			'Idempotency reservation was reclaimed by a retry; puzzle cleaned up'
-		);
+		expect(body.message).toBe('Failed to commit idempotency reservation; retry');
 		expect(storage.commitIdempotencyKey).toHaveBeenCalledTimes(3);
 		expect(workflow.create).toHaveBeenCalledWith({
 			id: 'new-puzzle',
 			params: { puzzleId: 'new-puzzle' }
 		});
-		// The orphaned workflow must be terminated and its assets cleaned up
-		expect(workflow.get).toHaveBeenCalledWith('new-puzzle');
-		expect(storage.deletePuzzleMetadata).toHaveBeenCalled();
-		expect(storage.deleteOriginalImage).toHaveBeenCalled();
+		// Transient failure: retain workflow and assets for client retry
+		expect(workflow.get).not.toHaveBeenCalled();
+		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
+		expect(storage.deleteOriginalImage).not.toHaveBeenCalled();
 	});
 
 	it('fails (not releases) the reservation when an error reaches the outer catch after workflow.create() succeeds', async () => {

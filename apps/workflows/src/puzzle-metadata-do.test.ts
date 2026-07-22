@@ -1371,6 +1371,69 @@ describe('PuzzleMetadataDO.fetch - /delete (tombstone)', () => {
 		expect(res.status).toBe(200);
 	});
 
+	it('increments deletionEpoch on each /delete', async () => {
+		const { durableObj, storage } = makeDO({ metadata: { ...baseMetadata, status: 'processing' } });
+		const deleteReq = () =>
+			durableObj.fetch(
+				new Request('https://puzzle-metadata/delete', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ puzzleId: 'test-puzzle' })
+				})
+			);
+		await deleteReq();
+		expect(storage._store['deletionEpoch']).toBe(1);
+		await deleteReq();
+		expect(storage._store['deletionEpoch']).toBe(2);
+	});
+
+	it('skips KV sync when deletionEpoch changes before the put', async () => {
+		const { durableObj, storage, kv } = makeDO({
+			metadata: { ...baseMetadata, status: 'processing' }
+		});
+		storage._store['deletionEpoch'] = 0;
+		let epochReads = 0;
+		const baseGet = storage.get.getMockImplementation()!;
+		storage.get.mockImplementation(async (key: string) => {
+			if (key === 'deletionEpoch') {
+				epochReads++;
+				return epochReads === 1 ? 0 : 1;
+			}
+			return baseGet(key);
+		});
+
+		const updateRes = await postRequest(durableObj, {
+			puzzleId: 'test-puzzle',
+			updates: { status: 'ready' }
+		});
+		expect(updateRes.status).toBe(200);
+		expect(kv.put).not.toHaveBeenCalled();
+	});
+
+	it('undoes KV write when deletionEpoch changes during sync', async () => {
+		const { durableObj, storage, kv } = makeDO({
+			metadata: { ...baseMetadata, status: 'processing' }
+		});
+		storage._store['deletionEpoch'] = 0;
+		let epochReads = 0;
+		const baseGet = storage.get.getMockImplementation()!;
+		storage.get.mockImplementation(async (key: string) => {
+			if (key === 'deletionEpoch') {
+				epochReads++;
+				return epochReads <= 2 ? 0 : 1;
+			}
+			return baseGet(key);
+		});
+
+		const updateRes = await postRequest(durableObj, {
+			puzzleId: 'test-puzzle',
+			updates: { status: 'ready' }
+		});
+		expect(updateRes.status).toBe(200);
+		expect(kv.put).toHaveBeenCalled();
+		expect(kv.delete).toHaveBeenCalledWith('puzzle:test-puzzle');
+	});
+
 	it('rejects /update with 404 when tombstone is set between outer check and transaction (TOCTOU)', async () => {
 		// Simulate: /update reads deleted→false (outer check), then
 		// reaper's /delete sets deleted→true + clears metadata, then

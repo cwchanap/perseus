@@ -88,6 +88,7 @@ describe('reapStuckPuzzles', () => {
 		vi.clearAllMocks();
 		(storage.deletePuzzleAssets as any).mockResolvedValue({ success: true, failedKeys: [] });
 		(storage.deletePuzzleMetadata as any).mockResolvedValue({ success: true });
+		(storage.deleteMetadataDO as any).mockResolvedValue(undefined);
 		(deletePuzzleOwnership as any).mockResolvedValue(undefined);
 		(getWorkerDb as any).mockReturnValue({});
 	});
@@ -578,7 +579,7 @@ describe('reapStuckPuzzles', () => {
 		expect(result.details.some((d) => d.action === 'do-status-check-failed')).toBe(true);
 	});
 
-	it('calls deleteMetadataDO after reaping to tombstone the DO', async () => {
+	it('tombstones the DO before deleting KV metadata', async () => {
 		(storage.listPuzzles as any).mockResolvedValue({
 			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
 			invalidCount: 0
@@ -595,9 +596,12 @@ describe('reapStuckPuzzles', () => {
 		const result = await reapStuckPuzzles(env, NOW);
 		expect(result.reaped).toBe(1);
 		expect(storage.deleteMetadataDO).toHaveBeenCalledWith(env.PUZZLE_METADATA_DO, 'stuck-1');
+		const doOrder = (storage.deleteMetadataDO as any).mock.invocationCallOrder[0];
+		const kvOrder = (storage.deletePuzzleMetadata as any).mock.invocationCallOrder[0];
+		expect(doOrder).toBeLessThan(kvOrder);
 	});
 
-	it('still counts as reaped when DO tombstone fails (best-effort)', async () => {
+	it('does not delete KV when DO tombstone fails (retry on next scan)', async () => {
 		(storage.listPuzzles as any).mockResolvedValue({
 			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
 			invalidCount: 0
@@ -613,7 +617,36 @@ describe('reapStuckPuzzles', () => {
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 		const env = makeEnv({ 'stuck-1': 'errored' });
 		const result = await reapStuckPuzzles(env, NOW);
-		expect(result.reaped).toBe(1);
+		expect(result.reaped).toBe(0);
+		expect(result.errors).toBe(1);
+		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
+		expect(deletePuzzleOwnership).not.toHaveBeenCalled();
 		expect(result.details.some((d) => d.action === 'do-tombstone-failed')).toBe(true);
+	});
+
+	it('does not delete D1 ownership when KV metadata deletion fails', async () => {
+		(storage.listPuzzles as any).mockResolvedValue({
+			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
+			invalidCount: 0
+		});
+		(storage.getPuzzle as any).mockResolvedValue({
+			id: 'stuck-1',
+			status: 'processing',
+			name: 'Puzzle stuck-1',
+			pieceCount: 100
+		});
+		(storage.getAuthoritativeStatus as any).mockResolvedValue('processing');
+		(storage.deleteMetadataDO as any).mockResolvedValue(undefined);
+		(storage.deletePuzzleMetadata as any).mockResolvedValue({
+			success: false,
+			error: new Error('KV delete failed')
+		});
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		const env = makeEnv({ 'stuck-1': 'errored' });
+		const result = await reapStuckPuzzles(env, NOW);
+		expect(result.reaped).toBe(0);
+		expect(result.errors).toBe(1);
+		expect(deletePuzzleOwnership).not.toHaveBeenCalled();
+		expect(result.details.some((d) => d.action === 'kv-delete-failed')).toBe(true);
 	});
 });

@@ -79,22 +79,31 @@ describe('repositories', () => {
 		expect(row?.avatarUrl).toBeNull();
 	});
 
-	it('clearProfileAvatarUrlIfOwned nulls avatarUrl when updatedAt matches', async () => {
+	it('clearProfileAvatarUrlIfOwned nulls avatarUrl when avatarUpdatedAt matches', async () => {
 		await updateProfileAvatarUrl(helper.db, 'p1', 'avatar-url', 1000);
 		await clearProfileAvatarUrlIfOwned(helper.db, 'p1', 1000);
 		const row = await getProfileOverride(helper.db, 'p1');
 		expect(row?.avatarUrl).toBeNull();
 	});
 
-	it('clearProfileAvatarUrlIfOwned is a no-op when updatedAt differs (concurrent overwrite)', async () => {
-		// Upload B wrote updatedAt=1000, then a concurrent upload C
-		// overwrote with updatedAt=2000. B's rollback with ownerUpdatedAt=1000
+	it('clearProfileAvatarUrlIfOwned is a no-op when avatarUpdatedAt differs (concurrent overwrite)', async () => {
+		// Upload B wrote avatarUpdatedAt=1000, then a concurrent upload C
+		// overwrote with avatarUpdatedAt=2000. B's rollback with owner=1000
 		// must NOT clear C's avatar.
 		await updateProfileAvatarUrl(helper.db, 'p1', 'avatar-B', 1000);
 		await updateProfileAvatarUrl(helper.db, 'p1', 'avatar-C', 2000);
 		await clearProfileAvatarUrlIfOwned(helper.db, 'p1', 1000);
 		const row = await getProfileOverride(helper.db, 'p1');
 		expect(row?.avatarUrl).toBe('avatar-C');
+	});
+
+	it('clearProfileAvatarUrlIfOwned clears avatar after displayName update changed updatedAt', async () => {
+		await updateProfileAvatarUrl(helper.db, 'p1', 'avatar-url', 1000);
+		await updateProfileDisplayName(helper.db, 'p1', 'New Name');
+		await clearProfileAvatarUrlIfOwned(helper.db, 'p1', 1000);
+		const row = await getProfileOverride(helper.db, 'p1');
+		expect(row?.avatarUrl).toBeNull();
+		expect(row?.displayName).toBe('New Name');
 	});
 
 	it('clearProfileAvatarUrlIfOwned is a no-op when no row exists', async () => {

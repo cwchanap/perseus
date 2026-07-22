@@ -498,7 +498,7 @@ describe('Admin Worker idempotency recovery', () => {
 
 		// Commit fails on all 3 attempts with 409
 		(storage.commitIdempotencyKey as any).mockRejectedValue(
-			new Error('Cannot commit reservation in status failed')
+			new Error('Cannot committed reservation in status failed')
 		);
 		(storage.deletePuzzleMetadata as any).mockResolvedValue({ success: true });
 		(storage.deleteOriginalImage as any).mockResolvedValue({ success: true });

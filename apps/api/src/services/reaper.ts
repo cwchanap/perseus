@@ -238,6 +238,24 @@ export async function reapStuckPuzzles(env: Env, now = Date.now()): Promise<Reap
 					});
 				}
 
+				// Tombstone the DO before deleting KV so a failed tombstone leaves
+				// the puzzle discoverable on the next scan (reaper lists from KV).
+				// Without this ordering, a KV delete with a failed tombstone bricks
+				// the retry path: the DO stays live and a later workflow update can
+				// repopulate stale metadata.
+				try {
+					await deleteMetadataDO(env.PUZZLE_METADATA_DO, puzzle.id);
+				} catch (doErr) {
+					console.error(`Reaper: failed to tombstone metadata DO for ${puzzle.id}:`, doErr);
+					result.errors++;
+					result.details.push({
+						puzzleId: puzzle.id,
+						action: 'do-tombstone-failed',
+						error: String(doErr)
+					});
+					return;
+				}
+
 				// Delete KV metadata. deletePuzzleMetadata never throws — it
 				// returns { success, error } so a KV failure is observable here
 				// without a try/catch around a non-throwing call. Branching on
@@ -276,24 +294,23 @@ export async function reapStuckPuzzles(env: Env, now = Date.now()): Promise<Reap
 						}
 					}
 
-					// Best-effort DO tombstone. Without this, an in-flight workflow
-					// update can read the DO-stored metadata (which the reaper did not
-					// clear) and write it back to KV via the DO's KV sync, resurrecting
-					// a puzzle whose R2 assets were already deleted. The tombstone makes
-					// the DO's /update return 404 so the workflow's updateMetadata calls
-					// fail fast. Best-effort: a DO failure is logged, not fatal — the
-					// workflow's update will still fail because R2 assets are gone, but
-					// a KV resurrection is possible if the DO is unreachable. The next
-					// reaper run will retry the tombstone.
+					// Best-effort D1 ownership row cleanup. Player uploads insert
+					// a D1 ownership row with status 'processing', which is visible
+					// in the uploader's "My Puzzles" list (VISIBLE_PLAYER_PUZZLE_
+					// STATUSES includes 'processing'). Without this, a reaped
+					// player puzzle keeps surfacing as a card that 404s on click.
+					// Gate on KV success: if KV deletion failed, the puzzle still
+					// exists in the player list mirror and the next reaper pass can
+					// retry KV cleanup.
 					try {
-						await deleteMetadataDO(env.PUZZLE_METADATA_DO, puzzle.id);
-					} catch (doErr) {
-						console.error(`Reaper: failed to tombstone metadata DO for ${puzzle.id}:`, doErr);
-						result.details.push({
-							puzzleId: puzzle.id,
-							action: 'do-tombstone-failed',
-							error: String(doErr)
-						});
+						await deletePuzzleOwnership(getWorkerDb(env), puzzle.id).catch((err) =>
+							console.error(`Reaper: failed to delete D1 ownership for ${puzzle.id}:`, err)
+						);
+					} catch (dbErr) {
+						console.error(
+							`Reaper: failed to init DB for ownership cleanup of ${puzzle.id}:`,
+							dbErr
+						);
 					}
 				} else {
 					console.error(`Reaper: failed to delete KV metadata for ${puzzle.id}:`, kvResult.error);
@@ -303,22 +320,6 @@ export async function reapStuckPuzzles(env: Env, now = Date.now()): Promise<Reap
 						action: 'kv-delete-failed',
 						error: String(kvResult.error)
 					});
-				}
-
-				// Best-effort D1 ownership row cleanup. Player uploads insert
-				// a D1 ownership row with status 'processing', which is visible
-				// in the uploader's "My Puzzles" list (VISIBLE_PLAYER_PUZZLE_
-				// STATUSES includes 'processing'). Without this, a reaped
-				// player puzzle keeps surfacing as a card that 404s on click.
-				// Best-effort: a D1 failure is logged, not fatal — KV deletion
-				// above is the source of truth for puzzle visibility. Mirrors
-				// the withDbBestEffort pattern in admin.worker.ts.
-				try {
-					await deletePuzzleOwnership(getWorkerDb(env), puzzle.id).catch((err) =>
-						console.error(`Reaper: failed to delete D1 ownership for ${puzzle.id}:`, err)
-					);
-				} catch (dbErr) {
-					console.error(`Reaper: failed to init DB for ownership cleanup of ${puzzle.id}:`, dbErr);
 				}
 			} catch (err) {
 				console.error(`Reaper: unexpected error for ${puzzle.id}:`, err);
