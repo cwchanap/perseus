@@ -501,7 +501,7 @@ describe('Admin Worker idempotency recovery', () => {
 			new Error('Cannot committed reservation in status failed')
 		);
 		(storage.deletePuzzleMetadata as any).mockResolvedValue({ success: true });
-		(storage.deleteOriginalImage as any).mockResolvedValue({ success: true });
+		(storage.deletePuzzleAssets as any).mockResolvedValue({ success: true, failedKeys: [] });
 
 		const response = await admin.fetch(createRequest('fence-key-1'), env as any);
 
@@ -509,9 +509,11 @@ describe('Admin Worker idempotency recovery', () => {
 		expect(response.status).toBe(500);
 		// Workflow must be terminated
 		expect(terminateFn).toHaveBeenCalled();
-		// Metadata and image must be cleaned up
+		// Metadata and all R2 assets (original + thumbnail + pieces) must
+		// be cleaned up — not just the original, since the workflow may
+		// have already produced a thumbnail or partial pieces.
 		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'puzzle-1');
-		expect(storage.deleteOriginalImage).toHaveBeenCalledWith(env.PUZZLES_BUCKET, 'puzzle-1');
+		expect(storage.deletePuzzleAssets).toHaveBeenCalledWith(env.PUZZLES_BUCKET, 'puzzle-1', 225);
 	});
 
 	it('retains metadata and reservation when workflow create fails but workflow is alive (ambiguous failure)', async () => {

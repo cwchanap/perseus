@@ -1280,7 +1280,15 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
 				PUZZLE_METADATA: {} as KVNamespace,
 				PUZZLES_BUCKET: {} as R2Bucket,
-				PUZZLE_WORKFLOW: { create: vi.fn() },
+				// Committed + processing now probes workflow liveness before
+				// acknowledging 200 (P2 #3/#4). The puzzle is genuinely live,
+				// so the workflow reports 'running'.
+				PUZZLE_WORKFLOW: {
+					create: vi.fn(),
+					get: vi.fn(async () => ({
+						status: vi.fn().mockResolvedValue({ status: 'running' })
+					}))
+				},
 				PUZZLE_METADATA_DO: {} as DurableObjectNamespace
 			};
 
@@ -2085,7 +2093,15 @@ describe('Admin Routes - Metadata Creation Failure Cleanup', () => {
 			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
 			PUZZLE_METADATA: {} as KVNamespace,
 			PUZZLES_BUCKET: {} as R2Bucket,
-			PUZZLE_WORKFLOW: { create: vi.fn() },
+			// Committed + processing now probes workflow liveness before
+			// acknowledging 200 (P2 #3/#4). The puzzle is genuinely live,
+			// so the workflow reports 'running'.
+			PUZZLE_WORKFLOW: {
+				create: vi.fn(),
+				get: vi.fn(async () => ({
+					status: vi.fn().mockResolvedValue({ status: 'running' })
+				}))
+			},
 			PUZZLE_METADATA_DO: {} as DurableObjectNamespace
 		};
 
