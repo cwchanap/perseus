@@ -23,6 +23,7 @@ import {
 	deletePuzzleMetadata,
 	deletePuzzleAssets,
 	deleteMetadataDO,
+	getAuthoritativeStatus,
 	failIdempotencyKey,
 	uploadOriginalImage,
 	deleteOriginalImage,
@@ -898,6 +899,75 @@ admin.post('/puzzles', requireAuth, async (c) => {
 										console.error('Failed to commit pending reservation on retry:', err);
 									}
 								}
+							} else if (reserved.status === 'committed') {
+								// Committed reservation with processing metadata. The original
+								// create finished and committed, but the workflow may have
+								// terminated after committing the reservation and before
+								// persisting a terminal status, leaving stale 'processing'
+								// metadata in KV. Returning 200 here would let a startup
+								// uploader treat a dead puzzle as success and stop retrying
+								// the seed. Probe liveness (and the authoritative DO status on
+								// dead) before acknowledging. This also fences the reaper race:
+								// a retry that arrives while the reaper is cleaning up a dead
+								// workflow sees dead + a tombstoned (null) DO and gets 409
+								// instead of 200 for a puzzle that is about to disappear.
+								const committedLiveness = await probeWorkflowLiveness(
+									c.env.PUZZLE_WORKFLOW,
+									reserved.puzzleId
+								);
+								if (committedLiveness === 'dead') {
+									// Workflow is dead. The DO is the source of truth: if it
+									// says 'ready', KV is just lagging and the puzzle is valid
+									// — return 200. Otherwise (processing/failed/null) the
+									// puzzle is stuck or being reaped; signal transient (409)
+									// so the client does not treat a disappearing puzzle as
+									// success and the reaper completes cleanup.
+									let authoritative: string | null = null;
+									try {
+										authoritative = await getAuthoritativeStatus(
+											c.env.PUZZLE_METADATA_DO,
+											reserved.puzzleId
+										);
+									} catch (doErr) {
+										console.error(
+											`DO status check failed for committed processing reservation ${reserved.puzzleId}:`,
+											doErr
+										);
+										return c.json(
+											{
+												error: 'conflict',
+												message:
+													'Idempotency-Key maps to a puzzle whose workflow is dead; status could not be verified, retry'
+											},
+											409
+										);
+									}
+									if (authoritative === 'ready') {
+										return c.json(stripIdempotencyKey(existing), 200);
+									}
+									return c.json(
+										{
+											error: 'conflict',
+											message: 'Idempotency-Key maps to a puzzle whose workflow is dead; retry'
+										},
+										409
+									);
+								}
+								if (committedLiveness === 'unknown') {
+									// Workflow API unreachable — fail closed. Don't acknowledge
+									// a puzzle we can't verify is alive.
+									return c.json(
+										{
+											error: 'conflict',
+											message:
+												'Idempotency-Key maps to a processing puzzle; workflow liveness could not be verified, retry'
+										},
+										409
+									);
+								}
+								// liveness === 'alive': workflow is running. Return the live
+								// puzzle (KV lag or in-progress generation) via the shared
+								// fallThroughToCreate=false return below.
 							}
 							if (!fallThroughToCreate) {
 								// stripIdempotencyKey: liveness=alive branch returns
@@ -971,7 +1041,35 @@ admin.post('/puzzles', requireAuth, async (c) => {
 			await uploadOriginalImage(c.env.PUZZLES_BUCKET, id, imageBuffer, detectedType);
 		} catch (error) {
 			console.error('Failed to upload original image:', error);
-			await releaseReservation();
+			// R2 put is ambiguous on a lost/thrown response: the object may
+			// have committed even though this call threw. Releasing the
+			// reservation unconditionally would let a same-key retry mint a
+			// second puzzle while the first original remains at this puzzleId
+			// with no metadata — invisible to the reaper (which lists from KV).
+			// Probe R2: if the object is absent (or probe+delete succeed), it's
+			// safe to release. If the object exists and cannot be deleted, fail
+			// the reservation so a retry reclaims through the DO's serialized
+			// path instead of minting a duplicate alongside the orphan.
+			let originalCommitted = false;
+			try {
+				originalCommitted = await originalImageExists(c.env.PUZZLES_BUCKET, id);
+			} catch (probeErr) {
+				console.error(`R2 probe failed after upload error for ${id}:`, probeErr);
+			}
+			if (originalCommitted) {
+				const cleanup = await deleteOriginalImage(c.env.PUZZLES_BUCKET, id);
+				if (!cleanup.success) {
+					console.error(
+						`Failed to delete committed original after ambiguous upload for ${id}:`,
+						cleanup.error
+					);
+					await failReservation();
+				} else {
+					await releaseReservation();
+				}
+			} else {
+				await releaseReservation();
+			}
 			return c.json({ error: 'internal_error', message: 'Failed to upload image' }, 500);
 		}
 
@@ -1143,13 +1241,73 @@ admin.post('/puzzles', requireAuth, async (c) => {
 						await commitIdempotencyKey(c.env.PUZZLE_METADATA_DO, reservedIdempotencyKey, id);
 						reservedIdempotencyKey = undefined;
 					} catch (commitErr) {
+						if (isIdempotencyCommitConflict(commitErr)) {
+							// The commit failed with an owner/status conflict: a
+							// concurrent retry reclaimed the pending reservation
+							// and minted a new puzzleId while this workflow is
+							// alive against this puzzleId. If left running it
+							// finishes as an unreferenced duplicate ready puzzle
+							// the reaper will not reap (alive, then ready).
+							// Terminate the orphaned workflow and clean up its
+							// full asset set so only the retry's puzzle survives.
+							// Mirrors the commit-conflict branch below.
+							console.error(
+								`Commit conflict after ambiguous workflow create (alive) for ${id} — reservation reclaimed by a retry. Terminating orphaned workflow.`
+							);
+							try {
+								const instance = await c.env.PUZZLE_WORKFLOW.get(id);
+								await instance.terminate();
+							} catch (termErr) {
+								console.error(
+									`Failed to terminate orphaned workflow ${id} after commit conflict:`,
+									termErr
+								);
+							}
+							const metaCleanup = await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
+							if (!metaCleanup.success) {
+								console.error(
+									`Failed to cleanup metadata after alive-commit conflict for ${id}:`,
+									metaCleanup.error
+								);
+							}
+							const assetsCleanup = await deletePuzzleAssets(c.env.PUZZLES_BUCKET, id, pieceCount);
+							if (!assetsCleanup.success) {
+								console.error(
+									`Failed to cleanup assets after alive-commit conflict for ${id}:`,
+									assetsCleanup.failedKeys
+								);
+							}
+							try {
+								await deleteMetadataDO(c.env.PUZZLE_METADATA_DO, id);
+							} catch (doErr) {
+								console.error(
+									`Failed to tombstone metadata DO after alive-commit conflict for ${id}:`,
+									doErr
+								);
+							}
+							await withDbBestEffort(
+								c.env,
+								'Failed to cleanup ownership after alive-commit conflict:',
+								`Failed to init DB for ownership cleanup of puzzle ${id}:`,
+								(db) => deletePuzzleOwnership(db, id)
+							);
+							reservedIdempotencyKey = undefined;
+							return c.json(
+								{
+									error: 'internal_error',
+									message: 'Idempotency reservation was reclaimed by a retry; puzzle cleaned up'
+								},
+								500
+							);
+						}
+						// Transient commit failure (DO unreachable, 5xx). The
+						// reservation may still be pending and the workflow is
+						// running — retain everything so a client retry can
+						// commit or hit the existing-puzzle branch.
 						console.error(
 							'Failed to commit reservation after ambiguous workflow create (alive):',
 							commitErr
 						);
-						// Don't clean up — the workflow is running. Return 500
-						// so the client retries and the existing-puzzle branch
-						// handles it.
 					}
 				}
 				return c.json(
@@ -1275,7 +1433,7 @@ admin.post('/puzzles', requireAuth, async (c) => {
 				} catch (termErr) {
 					console.error(`Failed to terminate orphaned workflow ${id}:`, termErr);
 				}
-				// Clean up the orphaned puzzle's metadata and image
+				// Clean up the orphaned puzzle's metadata and R2 assets.
 				const metadataCleanup = await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
 				if (!metadataCleanup.success) {
 					console.error(
@@ -1283,11 +1441,18 @@ admin.post('/puzzles', requireAuth, async (c) => {
 						metadataCleanup.error
 					);
 				}
-				const imageCleanup = await deleteOriginalImage(c.env.PUZZLES_BUCKET, id);
-				if (!imageCleanup.success) {
+				// Delete ALL R2 assets (original + thumbnail + any pieces the
+				// workflow already generated), not just the original. The
+				// workflow may have produced a thumbnail or partial pieces
+				// before the commit conflict was detected; deleting only the
+				// original would leave those behind with no metadata and a
+				// tombstoned DO, making them invisible to the reaper. R2 deletes
+				// on non-existent keys are no-ops, mirroring the reaper.
+				const assetsCleanup = await deletePuzzleAssets(c.env.PUZZLES_BUCKET, id, pieceCount);
+				if (!assetsCleanup.success) {
 					console.error(
-						'Failed to cleanup orphaned puzzle image after commit failure:',
-						imageCleanup.error
+						`Failed to cleanup some orphaned puzzle assets after commit failure for ${id}:`,
+						assetsCleanup.failedKeys
 					);
 				}
 				// Best-effort DO tombstone. The orphaned workflow was terminated,
