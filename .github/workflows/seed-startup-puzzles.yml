@@ -1,0 +1,124 @@
+name: Seed Startup Puzzles
+
+# Uploads curated startup puzzles to production via the admin API.
+# Requires Access CLI service token stack outputs after infrastructure deploy.
+#
+# Seed images are not stored in git. Pass `asset_release` (GitHub release tag)
+# containing a tarball with catalog.json + images/, or place files under
+# scripts/startup-seed/ in the checkout.
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: 'Max catalog entries to upload (0 = no limit beyond from/to)'
+        required: true
+        default: '0'
+      from:
+        description: 'Start catalog id'
+        required: true
+        default: '1'
+      to:
+        description: 'End catalog id'
+        required: true
+        default: '70'
+      asset_release:
+        description: 'Optional GitHub release tag with seed tarball (catalog.json + images/)'
+        required: false
+        default: ''
+      asset_name:
+        description: 'Asset filename on the release (default perseus-seed.tgz)'
+        required: false
+        default: 'perseus-seed.tgz'
+
+concurrency:
+  group: seed-startup-puzzles
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  seed:
+    name: Upload startup puzzles
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.1'
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Download seed assets from release
+        if: ${{ inputs.asset_release != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p scripts/startup-seed
+          gh release download "${{ inputs.asset_release }}" \
+            --repo "${{ github.repository }}" \
+            --pattern "${{ inputs.asset_name }}" \
+            --dir /tmp
+          tar -xzf "/tmp/${{ inputs.asset_name }}" -C scripts/startup-seed
+          echo "Seed images: $(find scripts/startup-seed/images -type f | wc -l)"
+          test -f scripts/startup-seed/catalog.json
+          test -d scripts/startup-seed/images
+
+      - name: Pre-flight check — verify seed images present
+        run: |
+          set -euo pipefail
+          IMAGE_COUNT=$(find scripts/startup-seed/images -type f -name '*.jpg' 2>/dev/null | wc -l)
+          echo "Seed images found: ${IMAGE_COUNT}"
+          if [ "${IMAGE_COUNT}" -eq 0 ]; then
+            echo "::error::No seed images under scripts/startup-seed/images/."
+            echo "::error::Either provide asset_release (GitHub release with tarball) or commit images locally."
+            exit 1
+          fi
+          if [ ! -f scripts/startup-seed/catalog.json ]; then
+            echo "::error::scripts/startup-seed/catalog.json not found."
+            exit 1
+          fi
+
+      - name: Authenticate with Pulumi
+        uses: pulumi/auth-actions@v1
+        with:
+          organization: ${{ vars.PULUMI_ORG }}
+          requested-token-type: urn:pulumi:token-type:access_token:personal
+          scope: user:cwchanap
+
+      - name: Upload puzzles
+        working-directory: ${{ github.workspace }}
+        env:
+          PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ADMIN_PASSKEY: ${{ secrets.ADMIN_PASSKEY }}
+        run: |
+          set -euo pipefail
+          STACK="${{ vars.PULUMI_ORG }}/perseus-infrastructure/production"
+          export CF_ACCESS_CLIENT_ID
+          export CF_ACCESS_CLIENT_SECRET
+          CF_ACCESS_CLIENT_ID=$(pulumi stack output adminCliAccessClientId -s "$STACK" -C packages/infrastructure)
+          CF_ACCESS_CLIENT_SECRET=$(pulumi stack output --show-secrets adminCliAccessClientSecret -s "$STACK" -C packages/infrastructure)
+          if [ -z "$CF_ACCESS_CLIENT_ID" ] || [ -z "$CF_ACCESS_CLIENT_SECRET" ]; then
+            echo "Missing adminCliAccessClientId/Secret stack outputs. Deploy infrastructure first."
+            exit 1
+          fi
+          LIMIT_ARGS=()
+          if [ "${{ inputs.limit }}" != "0" ]; then
+            LIMIT_ARGS=(--limit "${{ inputs.limit }}")
+          fi
+          bun scripts/admin-bulk-upload-startup.ts upload \
+            --server https://perseus.cwchanap.dev \
+            --catalog scripts/startup-seed/catalog.json \
+            --images scripts/startup-seed/images \
+            --from "${{ inputs.from }}" \
+            --to "${{ inputs.to }}" \
+            "${LIMIT_ARGS[@]}" \
+            --delay-ms 2000

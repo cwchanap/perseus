@@ -5,6 +5,7 @@ import {
 	buildAdminAccessApplicationArgs,
 	buildAdminAccessDestinations,
 	buildAdminAccessPolicy,
+	buildAdminCliServiceAuthPolicy,
 	buildAdminDeviceSerialItems,
 	normalizeAdminAccessEmail,
 	normalizeAdminAccessHostname,
@@ -202,6 +203,17 @@ describe('buildAdminAccessPolicy', () => {
 	});
 });
 
+describe('buildAdminCliServiceAuthPolicy', () => {
+	it('uses non_identity decision for service token auth', () => {
+		expect(buildAdminCliServiceAuthPolicy('service-token-id')).toEqual({
+			name: 'Service token for admin CLI uploads',
+			decision: 'non_identity',
+			precedence: 2,
+			includes: [{ serviceToken: { tokenId: 'service-token-id' } }]
+		});
+	});
+});
+
 describe('buildAdminAccessApplicationArgs', () => {
 	it('builds a path-scoped self-hosted Access app', () => {
 		expect(
@@ -237,6 +249,24 @@ describe('buildAdminAccessApplicationArgs', () => {
 					requires: [{ devicePosture: { integrationUid: 'posture-rule-id' } }]
 				}
 			]
+		});
+	});
+
+	it('adds a Service Auth policy when cliServiceTokenId is provided', () => {
+		const args = buildAdminAccessApplicationArgs({
+			accountId: 'account-id',
+			hostname: 'perseus.cwchanap.dev',
+			adminEmail: 'admin@example.com',
+			postureRuleId: 'posture-rule-id',
+			cliServiceTokenId: 'cli-token-id'
+		});
+
+		expect(args.policies).toHaveLength(2);
+		expect(args.policies?.[1]).toEqual({
+			name: 'Service token for admin CLI uploads',
+			decision: 'non_identity',
+			precedence: 2,
+			includes: [{ serviceToken: { tokenId: 'cli-token-id' } }]
 		});
 	});
 
