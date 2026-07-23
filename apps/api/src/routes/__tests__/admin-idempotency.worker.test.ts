@@ -15,7 +15,9 @@ vi.mock('../../services/storage.worker', () => ({
 	releaseIdempotencyKey: vi.fn(),
 	reserveIdempotencyKey: vi.fn(),
 	uploadOriginalImage: vi.fn(),
-	deleteOriginalImage: vi.fn()
+	deleteOriginalImage: vi.fn(),
+	writeCleanupRecord: vi.fn().mockResolvedValue(undefined),
+	deleteCleanupRecord: vi.fn().mockResolvedValue(undefined)
 }));
 
 vi.mock('../../middleware/auth.worker', () => ({

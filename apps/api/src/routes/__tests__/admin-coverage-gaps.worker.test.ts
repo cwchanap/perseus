@@ -28,7 +28,8 @@ vi.mock('../../services/storage.worker', () => ({
 	reserveIdempotencyKey: vi.fn(),
 	uploadOriginalImage: vi.fn(),
 	deleteOriginalImage: vi.fn(),
-	writeCleanupRecord: vi.fn().mockResolvedValue(undefined)
+	writeCleanupRecord: vi.fn().mockResolvedValue(undefined),
+	deleteCleanupRecord: vi.fn().mockResolvedValue(undefined)
 }));
 
 vi.mock('../../middleware/auth.worker', () => ({
@@ -678,7 +679,7 @@ describe('Admin Worker — dead-commit conflict cleanup error paths', () => {
 		);
 	});
 
-	it('logs when metadata cleanup fails after R2 cleanup succeeds', async () => {
+	it('returns 500 and preserves cleanup record when KV metadata cleanup fails', async () => {
 		const terminateFn = vi.fn().mockResolvedValue(undefined);
 		const statusFn = vi
 			.fn()
@@ -695,8 +696,84 @@ describe('Admin Worker — dead-commit conflict cleanup error paths', () => {
 
 		expect(res.status).toBe(500);
 		const body = (await res.json()) as any;
-		expect(body.message).toContain('puzzle cleaned up');
+		expect(body.message).toContain('KV metadata cleanup failed');
 		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'dead-puzzle');
+		// The cleanup record must NOT be deleted on KV failure — the reaper
+		// needs it to retry KV (and R2/DO) cleanup on its next run.
+		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
+		// D1 ownership cleanup must not run either — the reaper handles it
+		// after KV succeeds.
+		expect(storage.deletePuzzleAssets).toHaveBeenCalled();
+	});
+
+	it('deletes cleanup record and reports cleaned up on full success', async () => {
+		const terminateFn = vi.fn().mockResolvedValue(undefined);
+		const statusFn = vi
+			.fn()
+			.mockResolvedValueOnce({ status: 'running' })
+			.mockResolvedValue({ status: 'terminated' });
+
+		const env = setupDeadCommitConflict(terminateFn, statusFn);
+		// All cleanup operations succeed (default mocks from mockSuccessfulCreate).
+
+		const res = await admin.fetch(createRequest('dead-conflict-full-success'), env);
+
+		expect(res.status).toBe(500);
+		const body = (await res.json()) as any;
+		expect(body.message).toContain('puzzle cleaned up');
+		expect(storage.deleteMetadataDO).toHaveBeenCalledWith(env.PUZZLE_METADATA_DO, 'dead-puzzle');
+		expect(storage.deletePuzzleAssets).toHaveBeenCalledWith(env.PUZZLES_BUCKET, 'dead-puzzle', 225);
+		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'dead-puzzle');
+		// Cleanup record written up-front, then deleted after full success.
+		expect(storage.writeCleanupRecord).toHaveBeenCalledWith(
+			env.PUZZLE_METADATA,
+			expect.objectContaining({ puzzleId: 'dead-puzzle' })
+		);
+		expect(storage.deleteCleanupRecord).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'dead-puzzle');
+	});
+
+	it('aborts cleanup and returns 500 when up-front cleanup record write fails', async () => {
+		const terminateFn = vi.fn().mockResolvedValue(undefined);
+		const statusFn = vi.fn().mockResolvedValue({ status: 'terminated' });
+
+		const env = setupDeadCommitConflict(terminateFn, statusFn);
+		vi.mocked(storage.writeCleanupRecord).mockRejectedValueOnce(new Error('KV transient'));
+
+		const res = await admin.fetch(createRequest('dead-conflict-record-write-fail'), env);
+
+		expect(res.status).toBe(500);
+		const body = (await res.json()) as any;
+		expect(body.message).toContain('failed to record durable cleanup state');
+		// No termination, tombstone, or asset cleanup attempted — without a
+		// durable record, proceeding risks stranding orphans the reaper
+		// cannot recover.
+		expect(terminateFn).not.toHaveBeenCalled();
+		expect(storage.deleteMetadataDO).not.toHaveBeenCalled();
+		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
+	});
+
+	it('preserves cleanup record when R2 cleanup fails partially', async () => {
+		const terminateFn = vi.fn().mockResolvedValue(undefined);
+		const statusFn = vi
+			.fn()
+			.mockResolvedValueOnce({ status: 'running' })
+			.mockResolvedValue({ status: 'terminated' });
+
+		const env = setupDeadCommitConflict(terminateFn, statusFn);
+		vi.mocked(storage.deletePuzzleAssets).mockResolvedValue({
+			success: false,
+			failedKeys: ['puzzles/dead-puzzle/pieces/0.png']
+		});
+
+		const res = await admin.fetch(createRequest('dead-conflict-r2-fail'), env);
+
+		expect(res.status).toBe(500);
+		const body = (await res.json()) as any;
+		expect(body.message).toContain('R2 cleanup partial');
+		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
+		// Record written up-front must remain (not deleted) for reaper retry.
+		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
 	});
 });
 

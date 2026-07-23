@@ -1,7 +1,15 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Hono } from 'hono';
-import { rmSync, mkdtempSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
+import {
+	rmSync,
+	mkdtempSync,
+	writeFileSync,
+	existsSync,
+	readdirSync,
+	readFileSync,
+	statSync
+} from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -405,16 +413,16 @@ describe('player avatar route (Bun)', () => {
 		expect(row.avatarUrl).toBe('/api/player/p1/avatar');
 	});
 
-	it('cleans up versioned file and returns 500 when the DB override write throws (prior avatar preserved)', async () => {
-		// Seed a pre-existing avatar at the legacy live path. The versioned
-		// approach removes the legacy file to create a versioned directory
-		// (avatars/p1/{token}), then writes the new upload there. If the DB
-		// write fails, the versioned file is cleaned up. The legacy file is
-		// gone (replaced by the directory), but D1 was never updated — the
-		// serve route reads D1 (no token for this player) and falls back to
-		// the legacy path, which 404s. The client can retry. This is a
-		// local-dev-only trade-off: production uses R2 where object and
-		// directory keys don't conflict.
+	it('restores legacy avatar and returns 500 when the DB override write throws', async () => {
+		// Seed a pre-existing avatar at the legacy live path (a FILE at
+		// avatars/p1). The transactional migration renames it to a backup
+		// before creating the versioned directory and writing the new
+		// upload. If the DB write fails, the rollback removes the versioned
+		// file/directory and restores the legacy backup to its original
+		// path — so D1 (still pointing at the legacy path with no token)
+		// and the serve route's legacy fallback both resolve to the prior
+		// avatar. No 404 window. This is a local-dev-only path; production
+		// uses R2 where object and directory keys don't conflict.
 		const { mkdirSync } = await import('node:fs');
 		const legacyPath = join(dataDir, 'avatars', 'p1');
 		const avatarsDir = join(dataDir, 'avatars');
@@ -437,15 +445,20 @@ describe('player avatar route (Bun)', () => {
 		});
 
 		expect(res.status).toBe(500);
-		// The versioned directory exists (mkdir ran before the DB write),
-		// but it must be empty — the versioned file was cleaned up on DB
-		// failure.
+		// The legacy file must be restored at its original path (a FILE,
+		// not a directory) so the serve route's legacy fallback resolves.
 		const playerDir = join(dataDir, 'avatars', 'p1');
+		const { statSync } = await import('node:fs');
 		expect(existsSync(playerDir)).toBe(true);
-		const files = readdirSync(playerDir);
-		expect(files).toHaveLength(0);
+		const stat = statSync(playerDir);
+		expect(stat.isFile()).toBe(true);
+		// The restored bytes match the prior avatar.
+		const restored = readFileSync(playerDir);
+		expect(Array.from(restored)).toEqual(priorPng);
+		// No versioned directory or backup file left behind.
+		expect(existsSync(join(dataDir, 'avatars', 'p1.legacy-backup'))).toBe(false);
 		expect(consoleSpy).toHaveBeenCalledWith(
-			'Avatar DB write failed; cleaning up versioned avatar file:',
+			'Avatar DB write failed; rolling back avatar file:',
 			expect.any(Error)
 		);
 		consoleSpy.mockRestore();
@@ -467,19 +480,20 @@ describe('player avatar route (Bun)', () => {
 		});
 
 		expect(res.status).toBe(500);
-		// The versioned player directory may exist (mkdir ran before the
-		// DB write), but it must be empty — the versioned file was cleaned
-		// up on DB failure. No orphaned bytes reachable via the public
-		// serve route (the serve route reads D1, which has no token for
-		// this player, so it falls back to the legacy path which doesn't
-		// exist either).
+		// No legacy file existed, so rollback only removes the versioned
+		// file. The player directory may remain (empty) — no orphaned
+		// bytes are reachable via the serve route (D1 has no token, legacy
+		// path doesn't exist).
 		const playerDir = join(dataDir, 'avatars', 'p1');
 		if (existsSync(playerDir)) {
-			const files = readdirSync(playerDir);
-			expect(files).toHaveLength(0);
+			const stat = statSync(playerDir);
+			if (stat.isDirectory()) {
+				const files = readdirSync(playerDir);
+				expect(files).toHaveLength(0);
+			}
 		}
 		expect(consoleSpy).toHaveBeenCalledWith(
-			'Avatar DB write failed; cleaning up versioned avatar file:',
+			'Avatar DB write failed; rolling back avatar file:',
 			expect.any(Error)
 		);
 		consoleSpy.mockRestore();
