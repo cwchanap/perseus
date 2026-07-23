@@ -815,4 +815,112 @@ describe('reapCleanupRecords', () => {
 		expect(result.errors).toBe(1);
 		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
 	});
+
+	it('skips when workflow status check fails with non-not_found error', async () => {
+		(storage.listCleanupRecords as any).mockResolvedValue([
+			{ puzzleId: 'dup-1', pieceCount: 50, createdAt: NOW - 60000 }
+		]);
+		const env = makeEnv();
+		env.PUZZLE_WORKFLOW.get = vi.fn(async () => {
+			throw new Error('workflow API down');
+		});
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		const result = await reapCleanupRecords(env);
+		expect(result.scanned).toBe(1);
+		expect(result.reaped).toBe(0);
+		expect(result.errors).toBe(1);
+		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
+	});
+
+	it('preserves KV when R2 deletion throws', async () => {
+		(storage.listCleanupRecords as any).mockResolvedValue([
+			{ puzzleId: 'dup-1', pieceCount: 50, createdAt: NOW - 60000 }
+		]);
+		(storage.deletePuzzleAssets as any).mockRejectedValue(new Error('R2 connection failed'));
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		const env = makeEnv({ 'dup-1': 'complete' });
+		const result = await reapCleanupRecords(env);
+		expect(result.reaped).toBe(0);
+		expect(result.errors).toBe(1);
+		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
+		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
+	});
+
+	it('logs but still reaps when idempotency key release fails', async () => {
+		(storage.listCleanupRecords as any).mockResolvedValue([
+			{
+				puzzleId: 'dup-1',
+				pieceCount: 50,
+				idempotencyKey: 'idem-1',
+				createdAt: NOW - 60000
+			}
+		]);
+		(storage.releaseIdempotencyKey as any).mockRejectedValue(new Error('DO unavailable'));
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		const env = makeEnv({ 'dup-1': 'complete' });
+		const result = await reapCleanupRecords(env);
+		expect(result.reaped).toBe(1);
+		expect(storage.releaseIdempotencyKey).toHaveBeenCalledWith(
+			env.PUZZLE_METADATA_DO,
+			'idem-1',
+			'dup-1'
+		);
+	});
+
+	it('logs but still reaps when D1 ownership delete fails', async () => {
+		(storage.listCleanupRecords as any).mockResolvedValue([
+			{ puzzleId: 'dup-1', pieceCount: 50, createdAt: NOW - 60000 }
+		]);
+		(deletePuzzleOwnership as any).mockRejectedValue(new Error('D1 delete failed'));
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		const env = makeEnv({ 'dup-1': 'complete' });
+		const result = await reapCleanupRecords(env);
+		expect(result.reaped).toBe(1);
+		expect(deletePuzzleOwnership).toHaveBeenCalledWith(expect.anything(), 'dup-1');
+	});
+
+	it('logs but still reaps when D1 init (getWorkerDb) throws', async () => {
+		(storage.listCleanupRecords as any).mockResolvedValue([
+			{ puzzleId: 'dup-1', pieceCount: 50, createdAt: NOW - 60000 }
+		]);
+		(getWorkerDb as any).mockImplementation(() => {
+			throw new Error('D1 init failed');
+		});
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		const env = makeEnv({ 'dup-1': 'complete' });
+		const result = await reapCleanupRecords(env);
+		expect(result.reaped).toBe(1);
+		(getWorkerDb as any).mockReturnValue({});
+	});
+
+	it('logs but still reaps when cleanup record delete fails', async () => {
+		(storage.listCleanupRecords as any).mockResolvedValue([
+			{ puzzleId: 'dup-1', pieceCount: 50, createdAt: NOW - 60000 }
+		]);
+		(storage.deleteCleanupRecord as any).mockRejectedValue(new Error('KV delete failed'));
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		const env = makeEnv({ 'dup-1': 'complete' });
+		const result = await reapCleanupRecords(env);
+		expect(result.reaped).toBe(1);
+		expect(storage.deleteCleanupRecord).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'dup-1');
+	});
+
+	it('catches unexpected errors and records them as cleanup-error', async () => {
+		(storage.listCleanupRecords as any).mockResolvedValue([
+			{ puzzleId: 'dup-1', pieceCount: 50, createdAt: NOW - 60000 }
+		]);
+		// Make deletePuzzleAssets throw a non-R2 error to trigger the outer catch
+		(storage.deletePuzzleMetadata as any).mockImplementation(() => {
+			throw new Error('unexpected catastrophic failure');
+		});
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		const env = makeEnv({ 'dup-1': 'complete' });
+		const result = await reapCleanupRecords(env);
+		expect(result.reaped).toBe(0);
+		expect(result.errors).toBe(1);
+		const detail = result.details.find((d) => d.action === 'cleanup-error');
+		expect(detail).toBeDefined();
+		expect(detail?.error).toContain('unexpected catastrophic failure');
+	});
 });

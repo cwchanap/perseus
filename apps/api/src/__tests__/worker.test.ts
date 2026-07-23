@@ -21,11 +21,12 @@ vi.mock('../routes/auth.worker', () => {
 });
 
 vi.mock('../services/reaper', () => ({
-	reapStuckPuzzles: vi.fn()
+	reapStuckPuzzles: vi.fn(),
+	reapCleanupRecords: vi.fn()
 }));
 
 import worker from '../worker';
-import { reapStuckPuzzles } from '../services/reaper';
+import { reapStuckPuzzles, reapCleanupRecords } from '../services/reaper';
 
 function createMockCtx(): ExecutionContext {
 	return {
@@ -172,6 +173,12 @@ describe('Worker Entry Point', () => {
 				errors: 0,
 				details: [{ puzzleId: 'p1', action: 'reaped' }]
 			});
+			(reapCleanupRecords as any).mockResolvedValue({
+				scanned: 0,
+				reaped: 0,
+				errors: 0,
+				details: []
+			});
 			const ctx = createMockCtx();
 			const env = { PUZZLE_METADATA: {} } as any;
 
@@ -186,6 +193,12 @@ describe('Worker Entry Point', () => {
 
 		it('should not throw when reapStuckPuzzles rejects', async () => {
 			(reapStuckPuzzles as any).mockRejectedValue(new Error('reaper failed'));
+			(reapCleanupRecords as any).mockResolvedValue({
+				scanned: 0,
+				reaped: 0,
+				errors: 0,
+				details: []
+			});
 			const ctx = createMockCtx();
 			const env = { PUZZLE_METADATA: {} } as any;
 
@@ -207,6 +220,12 @@ describe('Worker Entry Point', () => {
 				errors: 0,
 				details: [{ puzzleId: 'p1', action: 'reaped' }]
 			});
+			(reapCleanupRecords as any).mockResolvedValue({
+				scanned: 0,
+				reaped: 0,
+				errors: 0,
+				details: []
+			});
 			const ctx = createMockCtx();
 			const env = { PUZZLE_METADATA: {} } as any;
 
@@ -218,6 +237,55 @@ describe('Worker Entry Point', () => {
 			expect(logSpy).toHaveBeenCalledWith('Reaper: starting scheduled run');
 			expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('scanned=5'));
 			expect(logSpy).toHaveBeenCalledWith('Reaper details:', expect.stringContaining('p1'));
+		});
+
+		it('should log reapCleanupRecords summary when scanned > 0', async () => {
+			const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+			(reapStuckPuzzles as any).mockResolvedValue({
+				scanned: 0,
+				candidates: 0,
+				reaped: 0,
+				errors: 0,
+				details: []
+			});
+			(reapCleanupRecords as any).mockResolvedValue({
+				scanned: 3,
+				reaped: 2,
+				errors: 1,
+				details: [{ puzzleId: 'dup-1', action: 'cleanup-reaped' }]
+			});
+			const ctx = createMockCtx();
+			const env = { PUZZLE_METADATA: {} } as any;
+
+			await worker.scheduled!(undefined as any, env, ctx);
+			const waitUntilCall = (ctx.waitUntil as any).mock.calls[0][0];
+			await waitUntilCall;
+
+			expect(reapCleanupRecords).toHaveBeenCalledWith(env);
+			expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Reaper cleanup: scanned=3'));
+			expect(logSpy).toHaveBeenCalledWith(
+				'Reaper cleanup details:',
+				expect.stringContaining('dup-1')
+			);
+		});
+
+		it('should not throw when reapCleanupRecords rejects', async () => {
+			(reapStuckPuzzles as any).mockResolvedValue({
+				scanned: 0,
+				candidates: 0,
+				reaped: 0,
+				errors: 0,
+				details: []
+			});
+			(reapCleanupRecords as any).mockRejectedValue(new Error('cleanup reaper failed'));
+			const ctx = createMockCtx();
+			const env = { PUZZLE_METADATA: {} } as any;
+
+			await worker.scheduled!(undefined as any, env, ctx);
+			const waitUntilCall = (ctx.waitUntil as any).mock.calls[0][0];
+			await waitUntilCall;
+
+			expect(reapCleanupRecords).toHaveBeenCalledWith(env);
 		});
 	});
 });

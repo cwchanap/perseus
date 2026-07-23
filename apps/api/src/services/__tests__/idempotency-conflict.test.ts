@@ -20,4 +20,17 @@ describe('isIdempotencyCommitConflict', () => {
 			isIdempotencyCommitConflict(new Error('Failed to commit idempotency key (HTTP 503)'))
 		).toBe(false);
 	});
+
+	it('handles non-Error inputs via String() coercion', () => {
+		expect(isIdempotencyCommitConflict('Reservation owned by another puzzle')).toBe(true);
+		expect(isIdempotencyCommitConflict('Cannot committed reservation in status failed')).toBe(true);
+		expect(isIdempotencyCommitConflict('DO unavailable')).toBe(false);
+		expect(isIdempotencyCommitConflict(null)).toBe(false);
+		expect(isIdempotencyCommitConflict(undefined)).toBe(false);
+		expect(isIdempotencyCommitConflict(42)).toBe(false);
+	});
+
+	it('returns false for non-Error objects (String coercion yields [object Object])', () => {
+		expect(isIdempotencyCommitConflict({ message: 'owned by another puzzle' })).toBe(false);
+	});
 });

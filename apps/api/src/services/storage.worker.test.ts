@@ -15,6 +15,9 @@ import {
 	getImage,
 	deletePuzzleAssets,
 	invalidateGalleryIndex,
+	writeCleanupRecord,
+	listCleanupRecords,
+	deleteCleanupRecord,
 	type PuzzleMetadata
 } from './storage.worker';
 
@@ -1103,6 +1106,180 @@ describe('invalidateGalleryIndex', () => {
 		await expect(invalidateGalleryIndex(kv)).resolves.toBeUndefined();
 		expect(consoleSpy).toHaveBeenCalled();
 
+		consoleSpy.mockRestore();
+	});
+});
+
+describe('cleanup records', () => {
+	it('writeCleanupRecord writes JSON to the cleanup: prefix key', async () => {
+		const kv = createMockKV();
+		const record = { puzzleId: 'p-1', pieceCount: 50, createdAt: 1700000000000 };
+		await writeCleanupRecord(kv as unknown as KVNamespace, record);
+		expect(kv.put).toHaveBeenCalledWith('cleanup:p-1', JSON.stringify(record));
+	});
+
+	it('writeCleanupRecord writes with idempotencyKey when provided', async () => {
+		const kv = createMockKV();
+		const record = {
+			puzzleId: 'p-2',
+			pieceCount: 100,
+			idempotencyKey: 'key-1',
+			createdAt: 1700000000000
+		};
+		await writeCleanupRecord(kv as unknown as KVNamespace, record);
+		expect(kv.put).toHaveBeenCalledWith('cleanup:p-2', JSON.stringify(record));
+	});
+
+	it('listCleanupRecords returns all cleanup records', async () => {
+		const kv = createMockKV();
+		const record1 = { puzzleId: 'p-1', pieceCount: 50, createdAt: 1700000000000 };
+		const record2 = {
+			puzzleId: 'p-2',
+			pieceCount: 100,
+			idempotencyKey: 'key-1',
+			createdAt: 1700000000001
+		};
+		kv._store.set('cleanup:p-1', JSON.stringify(record1));
+		kv._store.set('cleanup:p-2', JSON.stringify(record2));
+
+		const records = await listCleanupRecords(kv as unknown as KVNamespace);
+		expect(records).toHaveLength(2);
+		expect(records).toContainEqual(record1);
+		expect(records).toContainEqual(record2);
+	});
+
+	it('listCleanupRecords skips entries without puzzleId', async () => {
+		const kv = createMockKV();
+		kv._store.set('cleanup:p-1', JSON.stringify({ puzzleId: 'p-1', pieceCount: 50, createdAt: 0 }));
+		kv._store.set('cleanup:bad', JSON.stringify({ foo: 'bar' }));
+
+		const records = await listCleanupRecords(kv as unknown as KVNamespace);
+		expect(records).toHaveLength(1);
+		expect(records[0].puzzleId).toBe('p-1');
+	});
+
+	it('listCleanupRecords handles paginated KV list results', async () => {
+		const store = new Map<string, string>();
+		store.set('cleanup:p-1', JSON.stringify({ puzzleId: 'p-1', pieceCount: 50, createdAt: 0 }));
+		store.set('cleanup:p-2', JSON.stringify({ puzzleId: 'p-2', pieceCount: 60, createdAt: 1 }));
+
+		let listCall = 0;
+		const kv = {
+			get: vi.fn(async (key: string, type?: string) => {
+				const value = store.get(key);
+				if (!value) return null;
+				return type === 'json' ? JSON.parse(value) : value;
+			}),
+			list: vi.fn(
+				async (): Promise<{
+					keys: { name: string }[];
+					list_complete: boolean;
+					cursor?: string;
+				}> => {
+					listCall++;
+					if (listCall === 1) {
+						return {
+							keys: [{ name: 'cleanup:p-1' }],
+							list_complete: false,
+							cursor: 'next-page'
+						};
+					}
+					return { keys: [{ name: 'cleanup:p-2' }], list_complete: true };
+				}
+			)
+		} as unknown as KVNamespace;
+
+		const records = await listCleanupRecords(kv);
+		expect(records).toHaveLength(2);
+		expect(kv.list).toHaveBeenCalledTimes(2);
+	});
+
+	it('deleteCleanupRecord deletes the cleanup: prefix key', async () => {
+		const kv = createMockKV();
+		kv._store.set('cleanup:p-1', JSON.stringify({ puzzleId: 'p-1', pieceCount: 50, createdAt: 0 }));
+
+		await deleteCleanupRecord(kv as unknown as KVNamespace, 'p-1');
+		expect(kv.delete).toHaveBeenCalledWith('cleanup:p-1');
+		expect(kv._store.has('cleanup:p-1')).toBe(false);
+	});
+});
+
+describe('listPuzzlesPage — cursor fallback', () => {
+	function makeReadyPuzzle(overrides: Partial<PuzzleMetadata> = {}): PuzzleMetadata {
+		const puzzle = {
+			id: 'p-default',
+			name: 'Test Puzzle',
+			pieceCount: 4,
+			gridCols: 2,
+			gridRows: 2,
+			imageWidth: 1000,
+			imageHeight: 800,
+			createdAt: 1000,
+			status: 'ready',
+			version: 0,
+			pieces: new Array(4).fill({})
+		} as PuzzleMetadata;
+		return { ...puzzle, ...overrides } as PuzzleMetadata;
+	}
+
+	it('falls back to isAfterCursor when cursor item is not in the filtered set', async () => {
+		// Cursor points to a puzzle that was deleted or changed status, so
+		// findIndex returns -1. The code falls back to filtering with
+		// isAfterCursor (line 545).
+		const kv = createMockKV();
+		// Three ready puzzles; cursor points to a deleted one between p1 and p2.
+		kv._store.set('puzzle:p1', JSON.stringify(makeReadyPuzzle({ id: 'p1', createdAt: 3000 })));
+		kv._store.set('puzzle:p2', JSON.stringify(makeReadyPuzzle({ id: 'p2', createdAt: 2000 })));
+		kv._store.set('puzzle:p3', JSON.stringify(makeReadyPuzzle({ id: 'p3', createdAt: 1000 })));
+
+		// Cursor for a deleted puzzle at createdAt=2500, id='deleted-mid'
+		// (between p1 and p2). The cursor item is not in the filtered set,
+		// so findIndex returns -1 and the fallback filters with isAfterCursor.
+		// isAfterCursor returns true for items strictly after the cursor:
+		// p2 (createdAt=2000 < 2500 → true) and p3 (createdAt=1000 < 2500 → true).
+		// p1 (createdAt=3000 > 2500 → false, comes before cursor).
+		const cursor = btoa(JSON.stringify({ createdAt: 2500, id: 'deleted-mid' }));
+		const result = await listPuzzlesPage(kv as unknown as KVNamespace, {
+			offset: 0,
+			limit: 20,
+			cursor
+		});
+
+		const ids = result.puzzles.map((p) => p.id);
+		expect(ids).toContain('p2');
+		expect(ids).toContain('p3');
+		expect(ids).not.toContain('p1');
+	});
+});
+
+describe('listPuzzles — invalid metadata in gallery index', () => {
+	it('logs invalid metadata entries during buildGalleryIndex', async () => {
+		const kv = createMockKV();
+		// One valid puzzle (pieces array must match pieceCount for 'ready' status)
+		kv._store.set(
+			'puzzle:valid',
+			JSON.stringify({
+				id: 'valid',
+				name: 'Valid',
+				pieceCount: 4,
+				gridCols: 2,
+				gridRows: 2,
+				imageWidth: 100,
+				imageHeight: 100,
+				createdAt: 1000,
+				status: 'ready',
+				version: 0,
+				pieces: new Array(4).fill({})
+			})
+		);
+		// One invalid puzzle (missing required fields)
+		kv._store.set('puzzle:invalid', JSON.stringify({ id: 'invalid', foo: 'bar' }));
+
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const result = await listPuzzles(kv as unknown as KVNamespace);
+		expect(result.puzzles).toHaveLength(1);
+		expect(result.puzzles[0].id).toBe('valid');
+		expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('invalid entries'));
 		consoleSpy.mockRestore();
 	});
 });
