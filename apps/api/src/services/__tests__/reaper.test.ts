@@ -311,7 +311,11 @@ describe('reapStuckPuzzles', () => {
 		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
 	});
 
-	it('still deletes KV metadata when R2 asset deletion fails', async () => {
+	it('preserves KV metadata when R2 asset deletion throws (retry on next scan)', async () => {
+		// Regression: if R2 deletion fails, the failed keys would become
+		// invisible orphans if KV metadata were deleted. Preserve KV so the
+		// next reaper run retries R2 cleanup. The DO is already tombstoned,
+		// so the next run's getAuthoritativeStatus returns null (proceed).
 		(storage.listPuzzles as any).mockResolvedValue({
 			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
 			invalidCount: 0
@@ -323,10 +327,14 @@ describe('reapStuckPuzzles', () => {
 			pieceCount: 100
 		});
 		(storage.deletePuzzleAssets as any).mockRejectedValue(new Error('R2 error'));
+		vi.spyOn(console, 'error').mockImplementation(() => {});
 		const env = makeEnv({ 'stuck-1': 'errored' });
 		const result = await reapStuckPuzzles(env, NOW);
-		expect(result.reaped).toBe(1);
-		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'stuck-1');
+		expect(result.reaped).toBe(0);
+		expect(result.errors).toBe(1);
+		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
+		expect(deletePuzzleOwnership).not.toHaveBeenCalled();
+		expect(result.details.some((d) => d.action === 'r2-delete-failed')).toBe(true);
 	});
 
 	it('processes multiple stuck puzzles in one run', async () => {
@@ -457,7 +465,10 @@ describe('reapStuckPuzzles', () => {
 		expect(result.details.some((d) => d.action === 'error')).toBe(true);
 	});
 
-	it('records a partial-failure detail when some R2 assets fail to delete', async () => {
+	it('preserves KV metadata when some R2 assets fail to delete (retry on next scan)', async () => {
+		// Regression: partial R2 failure must NOT delete KV/D1 — the failed
+		// keys would become invisible orphans. Preserve KV so the next reaper
+		// run retries R2 cleanup.
 		(storage.listPuzzles as any).mockResolvedValue({
 			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
 			invalidCount: 0
@@ -472,12 +483,14 @@ describe('reapStuckPuzzles', () => {
 			success: false,
 			failedKeys: ['puzzles/stuck-1/pieces/0.png', 'puzzles/stuck-1/pieces/1.png']
 		});
+		vi.spyOn(console, 'error').mockImplementation(() => {});
 		const env = makeEnv({ 'stuck-1': 'errored' });
 		const result = await reapStuckPuzzles(env, NOW);
-		// KV + D1 cleanup still proceeds — R2 partial failure is best-effort.
-		expect(result.reaped).toBe(1);
+		expect(result.reaped).toBe(0);
+		expect(result.errors).toBe(1);
 		expect(result.details.some((d) => d.action === 'r2-delete-partial')).toBe(true);
-		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'stuck-1');
+		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
+		expect(deletePuzzleOwnership).not.toHaveBeenCalled();
 	});
 
 	it('still reaps when D1 ownership init throws (best-effort)', async () => {
