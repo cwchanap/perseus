@@ -33,6 +33,7 @@ import {
 	puzzleExists,
 	releaseIdempotencyKey,
 	reserveIdempotencyKey,
+	writeCleanupRecord,
 	type PuzzleMetadata
 } from '../services/storage.worker';
 import { isIdempotencyCommitConflict } from '../services/idempotency-conflict';
@@ -257,7 +258,14 @@ async function probeWorkflowLiveness(
 		const instance = await workflow.get(puzzleId);
 		const status = (await instance.status()).status;
 		if (isAliveWorkflowStatus(status)) return 'alive';
-		// 'errored' | 'terminated' | 'unknown' | any other = original died.
+		// 'errored' | 'terminated' = confirmed dead. 'unknown' means
+		// liveness cannot be established — the workflow may still be
+		// running, so signal 'unknown' (retry later) rather than 'dead'
+		// (which would trigger cleanup/deletion of potentially-live assets).
+		if (status === 'unknown') return 'unknown';
+		// Any other unrecognized status string — treat as dead (the
+		// workflow is in a state we don't know about, but it's not one of
+		// the documented active statuses).
 		return 'dead';
 	} catch (err) {
 		if (isWorkflowNotFoundError(err)) {
@@ -284,8 +292,8 @@ const TERMINATE_POLL_TIMEOUT_MS = 10_000;
 
 /**
  * Terminate a workflow instance and wait for it to reach a state where no
- * further step.do calls can write R2 assets (errored, terminated, unknown,
- * or complete — all mean the workflow has stopped making progress). Returns
+ * further step.do calls can write R2 assets (errored, terminated, or
+ * complete — all mean the workflow has stopped making progress). Returns
  * true when the workflow is confirmed stopped — safe to proceed with R2
  * asset deletion because no subsequent step can write new objects.
  *
@@ -369,10 +377,11 @@ async function terminateAndAwaitStopped(
 				return false;
 			}
 			// 'complete' means every step succeeded (including finalize) —
-			// no more R2 writes will occur. 'errored'/'terminated'/'unknown'
-			// mean the workflow was stopped. All three are safe for R2
-			// deletion. Active statuses (queued, running, paused, etc.) mean
-			// in-flight steps may still write R2 — keep polling.
+			// no more R2 writes will occur. 'errored'/'terminated' mean the
+			// workflow was stopped. Both are safe for R2 deletion. Active
+			// statuses (queued, running, paused, etc.) mean in-flight steps
+			// may still write R2 — keep polling. 'unknown' means liveness
+			// cannot be established — keep polling (don't assume stopped).
 			if (isDeadWorkflowStatus(status) || status === 'complete') return true;
 			if (now() >= deadline) {
 				console.error(
@@ -1400,6 +1409,23 @@ admin.post('/puzzles', requireAuth, async (c) => {
 										doErr
 									);
 								}
+								// Write a cleanup record so the reaper can
+								// clean up this puzzle even if the workflow
+								// completes after the deferral (finalize wrote
+								// 'ready' to the DO, then the D1 mirror step
+								// finishes and the workflow becomes 'complete').
+								// Without this record, the reaper would never
+								// select this puzzle (it only scans 'processing'
+								// entries and skips 'complete' workflows).
+								try {
+									await writeCleanupRecord(c.env.PUZZLE_METADATA, {
+										puzzleId: id,
+										pieceCount,
+										createdAt: Date.now()
+									});
+								} catch (cleanupErr) {
+									console.error(`Failed to write cleanup record for ${id}:`, cleanupErr);
+								}
 								reservedIdempotencyKey = undefined;
 								return c.json(
 									{
@@ -1619,6 +1645,19 @@ admin.post('/puzzles', requireAuth, async (c) => {
 						await deleteMetadataDO(c.env.PUZZLE_METADATA_DO, id);
 					} catch (doErr) {
 						console.error(`Failed to tombstone orphaned metadata DO for ${id}:`, doErr);
+					}
+					// Write a cleanup record so the reaper can clean up
+					// this puzzle even if the workflow completes after
+					// the deferral. See the alive-commit conflict branch
+					// above for the full rationale.
+					try {
+						await writeCleanupRecord(c.env.PUZZLE_METADATA, {
+							puzzleId: id,
+							pieceCount,
+							createdAt: Date.now()
+						});
+					} catch (cleanupErr) {
+						console.error(`Failed to write cleanup record for ${id}:`, cleanupErr);
 					}
 					reservedIdempotencyKey = undefined;
 					return c.json(

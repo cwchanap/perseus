@@ -683,3 +683,54 @@ export async function deletePuzzleAssets(
 
 	return { success: failedKeys.length === 0, failedKeys };
 }
+
+// --- Cleanup records for deferred reaper processing ---
+//
+// When the admin route cannot confirm workflow termination within the bounded
+// timeout (terminateAndAwaitStopped returns false), it tombstones the DO and
+// defers R2/KV cleanup to the reaper. Without an explicit cleanup record, a
+// workflow that completes after the deferral (finalize wrote 'ready' to the
+// DO, then the D1 mirror step finishes and the workflow becomes 'complete')
+// is never reaped: the reaper only selects 'processing' KV entries and
+// explicitly skips 'complete' workflows. The cleanup record is an independent
+// KV key that the reaper scans regardless of puzzle status, ensuring the
+// deferred puzzle is eventually cleaned up even after it transitions to
+// 'ready'/'complete'.
+
+export interface CleanupRecord {
+	puzzleId: string;
+	pieceCount: number;
+	idempotencyKey?: string;
+	createdAt: number;
+}
+
+function cleanupKey(puzzleId: string): string {
+	return `cleanup:${puzzleId}`;
+}
+
+export async function writeCleanupRecord(kv: KVNamespace, record: CleanupRecord): Promise<void> {
+	await kv.put(cleanupKey(record.puzzleId), JSON.stringify(record));
+}
+
+export async function listCleanupRecords(kv: KVNamespace): Promise<CleanupRecord[]> {
+	const keys: { name: string }[] = [];
+	let cursor: string | undefined;
+	while (true) {
+		const list = await kv.list({ prefix: 'cleanup:', cursor });
+		keys.push(...list.keys);
+		if (list.list_complete) break;
+		cursor = list.cursor;
+	}
+	const records: CleanupRecord[] = [];
+	for (const { name } of keys) {
+		const data = await kv.get(name, 'json');
+		if (data && typeof data === 'object' && 'puzzleId' in data) {
+			records.push(data as CleanupRecord);
+		}
+	}
+	return records;
+}
+
+export async function deleteCleanupRecord(kv: KVNamespace, puzzleId: string): Promise<void> {
+	await kv.delete(cleanupKey(puzzleId));
+}
