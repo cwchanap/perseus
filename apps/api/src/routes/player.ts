@@ -1,12 +1,11 @@
 import { Hono } from 'hono';
-import { mkdir, writeFile, readFile, rename, unlink } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, unlink, lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { getDb } from '../db';
 import {
 	getProfileOverride,
 	updateProfileDisplayName,
 	updateProfileAvatarUrl,
-	clearProfileAvatarUrlIfOwned,
 	getPlayerSummary,
 	listPlayerPuzzles,
 	listPlayerStats,
@@ -168,31 +167,45 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 		return c.json({ error: 'bad_request', message: 'Image is corrupted or truncated' }, 400);
 	}
 	const dataDir = process.env.DATA_DIR || './data';
-	const dir = join(dataDir, 'avatars');
-	const avatarPath = join(dir, playerId);
-	await mkdir(dir, { recursive: true });
-	// Write to a unique staging file first, then promote to the live path
-	// via atomic rename only after the DB override write succeeds. This
-	// avoids two problems:
-	//  1. Orphaned bytes: writing directly to the live path before the DB
-	//     write would leave a publicly-reachable file at a predictable URL
-	//     even when the request returns 500 (the serve route is public and
-	//     reads the path without checking the DB).
-	//  2. TOCTOU on rollback: a blind rm of the live file after a DB failure
-	//     could remove a concurrent upload's file. The staging file is unique
-	//     to this upload, so deleting it on failure is always safe.
-	const stagingPath = join(dir, `.staging-${playerId}-${crypto.randomUUID()}`);
-	await writeFile(stagingPath, Buffer.from(bytes));
+	const playerDir = join(dataDir, 'avatars', playerId);
+	// If a legacy avatar exists as a FILE at avatars/{playerId} (pre-versioned
+	// layout), remove it before creating the versioned directory. After this
+	// upload succeeds, D1 will hold a token and the serve route reads from
+	// the versioned path, so the legacy file is no longer needed. If this
+	// upload fails, the serve route falls back to the legacy path — but the
+	// file is already gone. That's acceptable: the DB write hasn't happened
+	// yet (this runs before the DB write), so D1 still points at the legacy
+	// path, and the serve route will 404. The client can retry. This
+	// migration only affects local dev (Bun runtime); production uses R2
+	// where object and directory keys don't conflict.
+	try {
+		const stat = await lstat(playerDir);
+		if (stat.isFile()) await unlink(playerDir);
+	} catch {
+		// Path doesn't exist — mkdir will create it. Any other error will
+		// surface on the mkdir call below.
+	}
+	await mkdir(playerDir, { recursive: true });
+	// Write to a versioned file path (avatars/{playerId}/{token}) instead of
+	// a fixed path (avatars/{playerId}). This eliminates the concurrent-upload
+	// race where two uploads both rename to the same fixed path and the last
+	// rename wins regardless of which D1 row is authoritative. With versioned
+	// paths, each upload writes to a unique file, and D1's avatarUpdateToken
+	// selects which version the serve route reads. Mirrors the Worker route's
+	// versioned R2 key design (player.worker.ts). Superseded files
+	// (avatars/{playerId}/{oldToken}) linger as storage waste but are not
+	// reachable by the serve route — they can be cleaned asynchronously.
+	const avatarUpdateToken = crypto.randomUUID();
+	const versionedPath = join(playerDir, avatarUpdateToken);
+	await writeFile(versionedPath, Buffer.from(bytes));
 
 	const db = getDb();
 	// Field-specific update writes only avatarUrl and preserves displayName,
 	// avoiding a read-modify-write race with concurrent PATCH /profile requests.
-	// Capture the updatedAt timestamp so the rename-failure rollback can be
-	// owner-checked: only null avatarUrl if no concurrent upload has since
-	// overwritten the row (detected via updatedAt mismatch). An unconditional
-	// clear would clobber a concurrent winner's avatar.
+	// The avatarUpdateToken stored here is what the serve route reads to
+	// determine which versioned file to serve — D1 is the source of truth
+	// for which upload's avatar is currently live.
 	const avatarUpdatedAt = Date.now();
-	const avatarUpdateToken = crypto.randomUUID();
 	try {
 		await updateProfileAvatarUrl(
 			db,
@@ -202,30 +215,12 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 			avatarUpdateToken
 		);
 	} catch (err) {
-		console.error('Avatar DB write failed; cleaning up staged avatar file:', err);
-		// Safe to delete unconditionally: stagingPath is unique to this upload.
-		// No concurrent upload can write to or claim this file.
-		await unlink(stagingPath).catch(() => {});
+		console.error('Avatar DB write failed; cleaning up versioned avatar file:', err);
+		// Safe to delete unconditionally: versionedPath is unique to this
+		// upload (token is a UUID). No concurrent upload can write to or
+		// claim this file.
+		await unlink(versionedPath).catch(() => {});
 		return c.json({ error: 'internal_error', message: 'Failed to update avatar' }, 500);
-	}
-	// DB succeeded — promote the staged file to the live path. rename is
-	// atomic on the same filesystem (staging file is in the same directory).
-	// A concurrent upload may also rename its staging file here; last rename
-	// wins (both are valid avatars). If the rename itself fails (e.g. cross-
-	// filesystem, disk error), roll back the DB write so the profile doesn't
-	// point at a missing file, and delete the orphaned staging file. The
-	// rollback is owner-checked on avatarUpdateToken (a collision-resistant
-	// UUID): if a concurrent upload's DB write has since overwritten this row,
-	// the clear is a no-op and that upload's avatar is preserved.
-	try {
-		await rename(stagingPath, avatarPath);
-	} catch (err) {
-		console.error('Avatar promotion rename failed; rolling back DB and staging file:', err);
-		await unlink(stagingPath).catch(() => {});
-		await clearProfileAvatarUrlIfOwned(db, playerId, avatarUpdateToken).catch((rollbackErr) =>
-			console.error('Failed to clear avatar URL after rename failure:', rollbackErr)
-		);
-		return c.json({ error: 'internal_error', message: 'Failed to store avatar' }, 500);
 	}
 	// Reset the rate-limit counter on success so repeated successful uploads
 	// don't accumulate toward an unnecessary lockout. The middleware increments
@@ -234,15 +229,28 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 	return c.json({ avatarUrl: `/api/player/${playerId}/avatar` });
 });
 
-// Serve a player's avatar. Public (no auth) so avatars render anywhere.
+// Serve a player's avatar from the filesystem. Public (no auth) so avatars
+// render anywhere. Reads D1 to determine which versioned file to serve
+// (avatars/{playerId}/{token}), so the D1-selected upload's avatar is always
+// served regardless of concurrent upload ordering. Falls back to the legacy
+// unversioned path (avatars/{playerId}) for avatars uploaded before the
+// versioned-path migration. Mirrors the Worker serve route.
 player.get('/:playerId/avatar', async (c) => {
 	const playerId = c.req.param('playerId');
 	const dataDir = process.env.DATA_DIR || './data';
-	const dir = join(dataDir, 'avatars');
-	const filePath = join(dir, playerId);
+	const avatarsDir = join(dataDir, 'avatars');
+	const db = getDb();
+	const override = await getProfileOverride(db, playerId);
+	// If the override has an avatarUpdateToken, serve from the versioned path.
+	// If not (null — pre-migration avatar or no avatar), fall back to the
+	// legacy unversioned path for backward compatibility.
+	const filePath = override?.avatarUpdateToken
+		? join(avatarsDir, playerId, override.avatarUpdateToken)
+		: join(avatarsDir, playerId);
 	// Guard against path traversal: the resolved path must stay inside the
-	// avatars directory (playerId comes from an untrusted URL segment).
-	if (!filePath.startsWith(dir + '/') && filePath !== dir) {
+	// avatars directory (playerId and token come from untrusted sources —
+	// playerId from the URL, token from D1 which was written by this route).
+	if (!filePath.startsWith(avatarsDir + '/') && filePath !== avatarsDir) {
 		return c.json({ error: 'bad_request', message: 'Invalid player id' }, 400);
 	}
 	let buf: Buffer;

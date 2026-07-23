@@ -195,13 +195,43 @@ jobs:
         # doesn't exist until `pulumi up` creates it). In that case
         # EXISTING_DB_ID is empty, and migrations are applied AFTER `pulumi up`
         # (see the "Apply D1 migrations (first deploy)" step below).
+        #
+        # STACK IS NAMED EXPLICITLY: `pulumi stack output` defaults to the
+        # "current" stack, which is selected by `pulumi stack select`. On a
+        # fresh GitHub runner no stack is selected, so the command would fail
+        # and the `|| echo ""` below would silently treat that failure as
+        # "first deploy" — skipping pre-publish migrations on EVERY deploy
+        # and restoring the missing-column window this step exists to close.
+        # Passing --stack makes the lookup independent of runner state.
+        #
+        # ERROR DISCRIMINATION: a missing output on a real stack exits
+        # non-zero with a "no stack output named 'd1DatabaseId'" message —
+        # that is the legitimate first-deploy signal. Authentication, backend,
+        # or malformed-state errors also exit non-zero but are NOT first-
+        # deploy signals; swallowing them would hide real failures. We
+        # capture stderr, classify the failure, and only emit an empty
+        # db_id for the missing-output case. Everything else fails the job.
         id: read-db-id
         run: |
           set -euo pipefail
           cd packages/infrastructure
-          EXISTING_DB_ID=$(pulumi stack output d1DatabaseId 2>/dev/null || echo "")
-          echo "Existing D1 database ID: '${EXISTING_DB_ID}'"
-          echo "db_id=${EXISTING_DB_ID}" >> "$GITHUB_OUTPUT"
+          STACK="${{ vars.PULUMI_ORG }}/perseus-infrastructure/production"
+          set +e
+          OUTPUT=$(pulumi stack output d1DatabaseId --stack "$STACK" --non-interactive 2>&1)
+          STATUS=$?
+          set -e
+          if [ "$STATUS" -eq 0 ]; then
+            EXISTING_DB_ID="$(printf '%s' "$OUTPUT" | tr -d '[:space:]')"
+            echo "Existing D1 database ID: '${EXISTING_DB_ID}'"
+            echo "db_id=${EXISTING_DB_ID}" >> "$GITHUB_OUTPUT"
+          elif printf '%s' "$OUTPUT" | grep -qi "no stack output named"; then
+            echo "Stack has no d1DatabaseId output yet — treating as first deploy."
+            echo "db_id=" >> "$GITHUB_OUTPUT"
+          else
+            echo "pulumi stack output failed unexpectedly (exit ${STATUS}):"
+            printf '%s\n' "$OUTPUT"
+            exit 1
+          fi
         env:
           PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
