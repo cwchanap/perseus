@@ -39,13 +39,21 @@ const MAX_DISPLAY_NAME_LENGTH = 255;
 
 /**
  * Roll back a partially-applied legacy-avatar migration. Removes the
- * versioned file (and the now-empty versioned directory when this upload
- * created it via the legacy migration), then restores the legacy backup
- * file to its original path so the serve route's legacy fallback resolves
- * again. All filesystem operations are best-effort — this is a recovery
- * path, and a partial rollback still leaves D1 pointing at the legacy
- * path (the DB write did not succeed), which is correct as long as the
- * legacy file is restored.
+ * versioned file, then restores the legacy backup file to its original
+ * path if the versioned directory is now empty. All filesystem operations
+ * are best-effort — this is a recovery path, and a partial rollback still
+ * leaves D1 pointing at the legacy path (the DB write did not succeed),
+ * which is correct as long as the legacy file is restored.
+ *
+ * The migratedLegacy flag indicates whether THIS upload created the
+ * backup by renaming the legacy file. However, a concurrent upload may
+ * have created the backup instead — so every rollback attempts rmdir +
+ * rename when the directory becomes empty, regardless of the flag. This
+ * closes the window where two concurrent first-time uploads both fail:
+ * the first rollback (migratedLegacy=true) cannot rmdir because the
+ * second upload's file remains, and the second rollback (migratedLegacy=
+ * false) would previously skip the restore entirely, stranding the backup
+ * and leaving D1 pointing at a path whose file is gone (404 on serve).
  */
 async function rollbackLegacyMigration(
 	playerDir: string,
@@ -55,10 +63,26 @@ async function rollbackLegacyMigration(
 ): Promise<void> {
 	await unlink(versionedPath).catch(() => {});
 	if (migratedLegacy) {
-		// The versioned directory was created by this upload (the legacy
-		// file previously occupied the path). Remove it so the backup can
-		// be renamed back to the original path.
+		// This upload moved the legacy file to the backup path. Try to
+		// restore it; if the directory isn't empty (concurrent uploads'
+		// files remain), rmdir fails and the backup stays for the last
+		// rollback to restore.
 		await rmdir(playerDir).catch(() => {});
+		await rename(legacyBackupPath, playerDir).catch((err) => {
+			console.error('Failed to restore legacy avatar backup:', err);
+		});
+	} else {
+		// This upload did not create the backup, but a concurrent one
+		// may have. If the versioned directory is now empty (all
+		// concurrent uploads rolled back), rmdir succeeds and we
+		// restore the backup so the serve route's legacy fallback
+		// resolves. If other files remain, rmdir fails and we leave
+		// the backup for the last rollback to handle.
+		try {
+			await rmdir(playerDir);
+		} catch {
+			return;
+		}
 		await rename(legacyBackupPath, playerDir).catch((err) => {
 			console.error('Failed to restore legacy avatar backup:', err);
 		});

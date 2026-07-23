@@ -502,9 +502,20 @@ describe('Admin Worker — alive-commit conflict cleanup', () => {
 			225
 		);
 		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'alive-puzzle');
+		// Cleanup record written up-front (before terminate), then deleted
+		// after every cleanup step succeeds.
+		expect(storage.writeCleanupRecord).toHaveBeenCalledWith(
+			env.PUZZLE_METADATA,
+			expect.objectContaining({ puzzleId: 'alive-puzzle' })
+		);
+		expect(storage.deleteCleanupRecord).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'alive-puzzle');
+		// Record is written BEFORE any terminate/tombstone/R2/KV work.
+		expect(vi.mocked(storage.writeCleanupRecord).mock.invocationCallOrder[0]).toBeLessThan(
+			vi.mocked(terminateFn).mock.invocationCallOrder[0]
+		);
 	});
 
-	it('tombstones DO and writes cleanup record when terminate fails', async () => {
+	it('writes cleanup record BEFORE terminate, and preserves it when terminate fails', async () => {
 		const terminateFn = vi.fn().mockRejectedValue(new Error('terminate failed'));
 		const statusFn = vi
 			.fn()
@@ -522,6 +533,12 @@ describe('Admin Worker — alive-commit conflict cleanup', () => {
 			env.PUZZLE_METADATA,
 			expect.objectContaining({ puzzleId: 'alive-puzzle' })
 		);
+		// Record written before terminate was called.
+		expect(vi.mocked(storage.writeCleanupRecord).mock.invocationCallOrder[0]).toBeLessThan(
+			vi.mocked(terminateFn).mock.invocationCallOrder[0]
+		);
+		// Record must NOT be deleted — the reaper needs it to retry.
+		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
 		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
 	});
 
@@ -542,17 +559,17 @@ describe('Admin Worker — alive-commit conflict cleanup', () => {
 		const body = (await res.json()) as any;
 		expect(body.message).toContain('DO tombstone failed');
 		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
-		// A cleanup record must be written so the reaper can retry the DO
-		// tombstone and clean up R2/KV on its next run. Without this, a
-		// 'complete' workflow duplicate would never be cleaned up (neither
-		// reaper selects it).
+		// A cleanup record must be written up-front so the reaper can retry
+		// the DO tombstone and clean up R2/KV on its next run.
 		expect(storage.writeCleanupRecord).toHaveBeenCalledWith(
 			env.PUZZLE_METADATA,
 			expect.objectContaining({ puzzleId: 'alive-puzzle' })
 		);
+		// Record must NOT be deleted — the reaper needs it.
+		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
 	});
 
-	it('preserves KV when R2 cleanup fails partially', async () => {
+	it('preserves KV and cleanup record when R2 cleanup fails partially', async () => {
 		const terminateFn = vi.fn().mockResolvedValue(undefined);
 		const statusFn = vi
 			.fn()
@@ -572,9 +589,15 @@ describe('Admin Worker — alive-commit conflict cleanup', () => {
 		const body = (await res.json()) as any;
 		expect(body.message).toContain('R2 cleanup partial');
 		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
+		// Cleanup record was written up-front and must remain for reaper retry.
+		expect(storage.writeCleanupRecord).toHaveBeenCalledWith(
+			env.PUZZLE_METADATA,
+			expect.objectContaining({ puzzleId: 'alive-puzzle' })
+		);
+		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
 	});
 
-	it('logs but continues when metadata cleanup fails after R2 cleanup succeeds', async () => {
+	it('preserves cleanup record and reports KV failure when metadata cleanup fails', async () => {
 		const terminateFn = vi.fn().mockResolvedValue(undefined);
 		const statusFn = vi
 			.fn()
@@ -592,7 +615,38 @@ describe('Admin Worker — alive-commit conflict cleanup', () => {
 
 		expect(res.status).toBe(500);
 		const body = (await res.json()) as any;
-		expect(body.message).toContain('puzzle cleaned up');
+		// Must NOT claim "puzzle cleaned up" — KV deletion failed and the
+		// reaper needs to retry. The old behavior logged and continued,
+		// claiming success while KV metadata lingered.
+		expect(body.message).toContain('KV metadata cleanup failed');
+		expect(body.message).not.toContain('puzzle cleaned up');
+		// Cleanup record must NOT be deleted — the reaper needs it.
+		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
+	});
+
+	it('aborts cleanup and returns 500 when up-front cleanup record write fails', async () => {
+		const terminateFn = vi.fn().mockResolvedValue(undefined);
+		// First call: probeWorkflowLiveness → 'running' (alive), so the
+		// code enters the alive-commit conflict branch. The helper aborts
+		// at writeCleanupRecord before reaching terminate, so no further
+		// status calls are needed.
+		const statusFn = vi.fn().mockResolvedValueOnce({ status: 'running' });
+
+		const env = setupAliveCommitConflict(terminateFn, statusFn);
+		vi.mocked(storage.writeCleanupRecord).mockRejectedValueOnce(new Error('KV transient'));
+
+		const res = await admin.fetch(createRequest('alive-conflict-record-write-fail'), env);
+
+		expect(res.status).toBe(500);
+		const body = (await res.json()) as any;
+		expect(body.message).toContain('failed to record durable cleanup state');
+		// No termination, tombstone, or asset cleanup attempted — without
+		// a durable record, proceeding risks stranding orphans the reaper
+		// cannot recover.
+		expect(terminateFn).not.toHaveBeenCalled();
+		expect(storage.deleteMetadataDO).not.toHaveBeenCalled();
+		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
 	});
 });
 
