@@ -131,7 +131,7 @@ app.route('/api/admin', admin);
 app.route('/api/auth', auth);
 app.route('/api/player', player);
 
-import { reapStuckPuzzles } from './services/reaper';
+import { reapStuckPuzzles, reapCleanupRecords } from './services/reaper';
 
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -213,6 +213,24 @@ export default {
 					}
 				} catch (err) {
 					console.error('Reaper: scheduled run failed:', err);
+				}
+				// Process explicit cleanup records left by the admin route
+				// when it deferred R2/KV cleanup after unconfirmed workflow
+				// termination. These records ensure completed duplicate
+				// puzzles are eventually cleaned up.
+				try {
+					const cleanupResult = await reapCleanupRecords(env);
+					if (cleanupResult.scanned > 0) {
+						console.log(
+							`Reaper cleanup: scanned=${cleanupResult.scanned} ` +
+								`reaped=${cleanupResult.reaped} errors=${cleanupResult.errors}`
+						);
+						if (cleanupResult.details.length > 0) {
+							console.log('Reaper cleanup details:', JSON.stringify(cleanupResult.details));
+						}
+					}
+				} catch (err) {
+					console.error('Reaper cleanup: scheduled run failed:', err);
 				}
 			})()
 		);

@@ -29,9 +29,11 @@ import {
 	deletePuzzleAssets,
 	deleteMetadataDO,
 	deletePuzzleMetadata,
+	deleteCleanupRecord,
 	getAuthoritativeStatus,
 	getPuzzle,
 	listPuzzles,
+	listCleanupRecords,
 	releaseIdempotencyKey
 } from './storage.worker';
 import { getWorkerDb } from '../db.worker';
@@ -59,8 +61,9 @@ export interface ReapResult {
 
 /**
  * Scan KV for stuck "processing" puzzles and clean up those whose workflows
- * are dead (errored, terminated, or unknown/never-created). Returns a summary
- * of what was done. Safe to run concurrently — deletions are idempotent.
+ * are dead (errored, terminated, or never-created/not-found). Returns a
+ * summary of what was done. Safe to run concurrently — deletions are
+ * idempotent.
  */
 export async function reapStuckPuzzles(env: Env, now = Date.now()): Promise<ReapResult> {
 	const result: ReapResult = {
@@ -115,11 +118,15 @@ export async function reapStuckPuzzles(env: Env, now = Date.now()): Promise<Reap
 					workflowStatus = (await instance.status()).status;
 				} catch (wfErr) {
 					// A not-found error means the instance was never created (or
-					// was deleted) — the puzzle is orphaned, so reap it. Other
-					// errors are transient (workflow API unreachable); skip to
-					// avoid reaping a puzzle whose workflow might still be live.
+					// was deleted) — the puzzle is orphaned, so reap it. Map to
+					// 'errored' (a confirmed-dead status) rather than 'unknown'
+					// (which is NOT dead — it means liveness cannot be
+					// established, and the workflow may still be running).
+					// Other errors are transient (workflow API unreachable);
+					// skip to avoid reaping a puzzle whose workflow might
+					// still be live.
 					if (isWorkflowNotFoundError(wfErr)) {
-						workflowStatus = 'unknown';
+						workflowStatus = 'errored';
 					} else {
 						console.error(
 							`Reaper: workflow status check failed for ${puzzle.id}, skipping:`,
@@ -159,12 +166,14 @@ export async function reapStuckPuzzles(env: Env, now = Date.now()): Promise<Reap
 					return;
 				}
 
-				// Workflow is dead (errored, terminated, or unknown/never-
-				// created). Reap it.
+				// Workflow is dead (errored, terminated, or never-created/
+				// not-found — mapped to 'errored' above). Reap it.
 				if (!isDeadWorkflowStatus(workflowStatus)) {
-					// Unrecognized status string — skip to be safe.
+					// Unrecognized or unverifiable status (e.g. 'unknown' —
+					// liveness cannot be established). Skip to be safe; the
+					// workflow may still be running.
 					console.warn(
-						`Reaper: unrecognized workflow status '${workflowStatus}' for ${puzzle.id}, skipping`
+						`Reaper: unrecognized or unverifiable workflow status '${workflowStatus}' for ${puzzle.id}, skipping`
 					);
 					return;
 				}
@@ -344,6 +353,207 @@ export async function reapStuckPuzzles(env: Env, now = Date.now()): Promise<Reap
 				result.details.push({
 					puzzleId: puzzle.id,
 					action: 'error',
+					error: String(err)
+				});
+			}
+		})
+	);
+
+	return result;
+}
+
+/**
+ * Process explicit cleanup records left by the admin route when it could not
+ * confirm workflow termination within the bounded timeout. These records
+ * ensure that puzzles deferred to the reaper are eventually cleaned up even
+ * if the workflow completes after the deferral (finalize wrote 'ready' to
+ * the DO, then the D1 mirror step finishes and the workflow becomes
+ * 'complete'). Without this, the reaper's stuck-processing scan would never
+ * select such puzzles (they're no longer 'processing' in KV) and would skip
+ * 'complete' workflows.
+ *
+ * The DO is already tombstoned when the cleanup record is written, so this
+ * function does NOT re-check the DO status — it only checks whether the
+ * workflow has stopped (dead or complete) before deleting R2/KV/D1 assets.
+ * The cleanup record itself is deleted after successful cleanup.
+ */
+export async function reapCleanupRecords(env: Env): Promise<ReapResult> {
+	const result: ReapResult = {
+		scanned: 0,
+		candidates: 0,
+		reaped: 0,
+		errors: 0,
+		details: []
+	};
+
+	const records = await listCleanupRecords(env.PUZZLE_METADATA);
+	result.scanned = records.length;
+	result.candidates = records.length;
+
+	if (records.length === 0) {
+		return result;
+	}
+
+	const batch = records.slice(0, REAP_BATCH_LIMIT);
+
+	await Promise.all(
+		batch.map(async (record) => {
+			try {
+				// Check if the workflow has stopped. Unlike the stuck-
+				// processing reaper, we DO clean up 'complete' workflows
+				// here — the cleanup record proves the puzzle lost its
+				// idempotency reservation (reclaimed by a retry), so the
+				// completed puzzle is a duplicate that must be removed.
+				let workflowStatus: string;
+				try {
+					const instance = await env.PUZZLE_WORKFLOW.get(record.puzzleId);
+					workflowStatus = (await instance.status()).status;
+				} catch (wfErr) {
+					if (isWorkflowNotFoundError(wfErr)) {
+						// Instance never created or already deleted — safe
+						// to clean up.
+						workflowStatus = 'errored';
+					} else {
+						console.error(
+							`Reaper cleanup: workflow status check failed for ${record.puzzleId}, skipping:`,
+							wfErr
+						);
+						result.errors++;
+						result.details.push({
+							puzzleId: record.puzzleId,
+							action: 'cleanup-skip',
+							error: 'workflow status check failed'
+						});
+						return;
+					}
+				}
+
+				// Only clean up if the workflow has stopped (dead or
+				// complete). Unlike the stuck-processing reaper, we DO
+				// clean up 'complete' workflows here — the cleanup record
+				// proves the puzzle lost its idempotency reservation
+				// (reclaimed by a retry), so the completed puzzle is a
+				// duplicate that must be removed. Note: 'complete' is in
+				// ACTIVE_WORKFLOW_STATUSES (it means success), so we check
+				// it BEFORE the alive check.
+				if (workflowStatus === 'complete' || isDeadWorkflowStatus(workflowStatus)) {
+					// Workflow has stopped — proceed with cleanup below.
+				} else if (isAliveWorkflowStatus(workflowStatus)) {
+					// Workflow is still running — skip and retry next run.
+					return;
+				} else {
+					// 'unknown' or unrecognized — skip to be safe.
+					console.warn(
+						`Reaper cleanup: workflow status '${workflowStatus}' for ${record.puzzleId} is not confirmed stopped, skipping`
+					);
+					return;
+				}
+
+				// Workflow has stopped — delete R2 assets. The DO is
+				// already tombstoned (done by the admin route before
+				// writing the cleanup record), so we skip the DO status
+				// check and DO tombstone that the stuck-processing reaper
+				// performs.
+				try {
+					const r2Result = await deletePuzzleAssets(
+						env.PUZZLES_BUCKET,
+						record.puzzleId,
+						record.pieceCount
+					);
+					if (!r2Result.success) {
+						console.error(
+							`Reaper cleanup: failed to delete some R2 assets for ${record.puzzleId}, preserving KV for retry:`,
+							r2Result.failedKeys
+						);
+						result.errors++;
+						result.details.push({
+							puzzleId: record.puzzleId,
+							action: 'cleanup-r2-delete-partial',
+							error: `failed keys: ${r2Result.failedKeys.join(', ')}`
+						});
+						return;
+					}
+				} catch (r2Err) {
+					console.error(
+						`Reaper cleanup: failed to delete R2 assets for ${record.puzzleId}, preserving KV for retry:`,
+						r2Err
+					);
+					result.errors++;
+					result.details.push({
+						puzzleId: record.puzzleId,
+						action: 'cleanup-r2-delete-failed',
+						error: String(r2Err)
+					});
+					return;
+				}
+
+				// R2 deletion succeeded — delete KV metadata and D1.
+				const kvResult = await deletePuzzleMetadata(env.PUZZLE_METADATA, record.puzzleId);
+				if (kvResult.success) {
+					result.reaped++;
+					result.details.push({
+						puzzleId: record.puzzleId,
+						action: 'cleanup-reaped'
+					});
+
+					// Best-effort idempotency reservation release.
+					if (record.idempotencyKey) {
+						try {
+							await releaseIdempotencyKey(
+								env.PUZZLE_METADATA_DO,
+								record.idempotencyKey,
+								record.puzzleId
+							);
+						} catch (releaseErr) {
+							console.error(
+								`Reaper cleanup: failed to release DO reservation for ${record.puzzleId}:`,
+								releaseErr
+							);
+						}
+					}
+
+					// Best-effort D1 ownership cleanup.
+					try {
+						await deletePuzzleOwnership(getWorkerDb(env), record.puzzleId).catch((err) =>
+							console.error(
+								`Reaper cleanup: failed to delete D1 ownership for ${record.puzzleId}:`,
+								err
+							)
+						);
+					} catch (dbErr) {
+						console.error(
+							`Reaper cleanup: failed to init DB for ownership cleanup of ${record.puzzleId}:`,
+							dbErr
+						);
+					}
+
+					// Delete the cleanup record itself.
+					try {
+						await deleteCleanupRecord(env.PUZZLE_METADATA, record.puzzleId);
+					} catch (cleanupErr) {
+						console.error(
+							`Reaper cleanup: failed to delete cleanup record for ${record.puzzleId}:`,
+							cleanupErr
+						);
+					}
+				} else {
+					console.error(
+						`Reaper cleanup: failed to delete KV metadata for ${record.puzzleId}:`,
+						kvResult.error
+					);
+					result.errors++;
+					result.details.push({
+						puzzleId: record.puzzleId,
+						action: 'cleanup-kv-delete-failed',
+						error: String(kvResult.error)
+					});
+				}
+			} catch (err) {
+				console.error(`Reaper cleanup: unexpected error for ${record.puzzleId}:`, err);
+				result.errors++;
+				result.details.push({
+					puzzleId: record.puzzleId,
+					action: 'cleanup-error',
 					error: String(err)
 				});
 			}

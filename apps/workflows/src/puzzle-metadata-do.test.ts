@@ -920,10 +920,13 @@ describe('PuzzleMetadataDO.fetch - /reserve (idempotency)', () => {
 		);
 	});
 
-	it('fails stale-pending reservation when workflow was never created (unknown)', async () => {
-		// The scenario from the review: createPuzzleMetadata succeeded but
-		// PUZZLE_WORKFLOW.create never ran (process died). Workflow instance
-		// status is unknown. Must not promote the stuck processing puzzle.
+	it('returns transient 409 for stale-pending reservation when workflow status is unknown (liveness unverifiable)', async () => {
+		// 'unknown' is a distinct Cloudflare status that means liveness
+		// cannot be established — the workflow may still be running. Must
+		// NOT fail the reservation (might duplicate a live workflow) or
+		// promote (would lock a stuck puzzle). Signal transient so the
+		// client retries. The not_found case (workflow never created) is
+		// tested separately below and IS treated as dead.
 		const staleAt = Date.now() - 10 * 60 * 1000;
 		const liveMeta: PuzzleMetadata = {
 			...baseMetadata,
@@ -947,10 +950,11 @@ describe('PuzzleMetadataDO.fetch - /reserve (idempotency)', () => {
 			'/reserve'
 		);
 		expect(response.status).toBe(409);
-		expect(storage.put).toHaveBeenCalledWith(
+		// Reservation must NOT be marked failed — the workflow may still
+		// be live, and failing would let a retry mint a duplicate.
+		expect(storage.put).not.toHaveBeenCalledWith(
 			'reservation',
 			expect.objectContaining({
-				puzzleId: 'no-workflow-uuid',
 				status: 'failed'
 			})
 		);

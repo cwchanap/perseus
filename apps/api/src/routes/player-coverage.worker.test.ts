@@ -13,7 +13,15 @@ vi.mock('../db.worker', () => ({
 
 vi.mock('@perseus/shared', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('@perseus/shared')>();
-	const store = new Map<string, { displayName: string | null; avatarUrl: string | null }>();
+	const store = new Map<
+		string,
+		{
+			displayName: string | null;
+			avatarUrl: string | null;
+			updatedAt?: number;
+			avatarUpdateToken?: string;
+		}
+	>();
 	return {
 		...actual,
 		__store: store,
@@ -22,10 +30,18 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 			const existing = store.get(playerId) ?? { displayName: null, avatarUrl: null };
 			store.set(playerId, { ...existing, displayName });
 		}),
-		updateProfileAvatarUrl: vi.fn((db: unknown, playerId: string, avatarUrl: string) => {
-			const existing = store.get(playerId) ?? { displayName: null, avatarUrl: null };
-			store.set(playerId, { ...existing, avatarUrl });
-		}),
+		updateProfileAvatarUrl: vi.fn(
+			(
+				db: unknown,
+				playerId: string,
+				avatarUrl: string,
+				updatedAt?: number,
+				avatarUpdateToken?: string
+			) => {
+				const existing = store.get(playerId) ?? { displayName: null, avatarUrl: null };
+				store.set(playerId, { ...existing, avatarUrl, updatedAt, avatarUpdateToken });
+			}
+		),
 		getPlayerSummary: vi.fn(() => ({
 			puzzlesUploaded: 0,
 			puzzlesSolved: 0,
@@ -159,7 +175,13 @@ describe('player avatar – WebP sniffing (Worker)', () => {
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as any;
 		expect(body.avatarUrl).toBe('/api/player/p1/avatar');
-		expect(bucket.put).toHaveBeenCalledWith('avatars/p1', expect.any(Uint8Array), {
+		// Versioned key: avatars/p1/{token}. The token is a UUID generated
+		// by the route — verify via the mock profile store.
+		const shared = await import('@perseus/shared');
+		const profileStore = (shared as any).__store as Map<string, any>;
+		const token = profileStore.get('p1')?.avatarUpdateToken;
+		expect(token).toBeTruthy();
+		expect(bucket.put).toHaveBeenCalledWith(`avatars/p1/${token}`, expect.any(Uint8Array), {
 			httpMetadata: { contentType: 'image/webp' }
 		});
 	});

@@ -5,7 +5,6 @@ import {
 	getProfileOverride,
 	updateProfileDisplayName,
 	updateProfileAvatarUrl,
-	clearProfileAvatarUrlIfOwned,
 	getPlayerSummary,
 	listPlayerPuzzles,
 	listPlayerStats,
@@ -167,94 +166,72 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 	if (!hasEndMarker) {
 		return c.json({ error: 'bad_request', message: 'Image is corrupted or truncated' }, 400);
 	}
-	const liveKey = `avatars/${session.user.id}`;
-	// Write to a unique staging key first, then promote to the live key only
-	// after the DB override write succeeds. This avoids two problems:
-	//  1. Orphaned bytes: writing directly to the live key before the DB
-	//     write would leave a publicly-reachable object at a predictable URL
-	//     even when the request returns 500 (the serve route is public and
-	//     reads the key without checking D1).
-	//  2. TOCTOU on rollback: a blind delete of the live key after a DB
-	//     failure could remove a concurrent upload's object. The staging key
-	//     is unique to this upload, so deleting it on failure is always safe.
-	const stagingKey = `avatars/staging/${session.user.id}/${crypto.randomUUID()}`;
-	await c.env.PUZZLES_BUCKET.put(stagingKey, bytes, {
-		httpMetadata: { contentType: detected }
-	});
+	const playerId = session.user.id;
+	const avatarUpdateToken = crypto.randomUUID();
+	// Write to a versioned R2 key (avatars/{playerId}/{token}) instead of a
+	// fixed key (avatars/{playerId}). This eliminates the concurrent-upload
+	// race where two uploads both write to the same key and the last R2
+	// write wins regardless of which D1 row is authoritative. With versioned
+	// keys, each upload writes to a unique key, and D1's avatarUpdateToken
+	// selects which version the serve route reads. Superseded objects
+	// (avatars/{playerId}/{oldToken}) linger as storage waste but are not
+	// reachable by the serve route — they can be cleaned asynchronously.
+	const versionedKey = `avatars/${playerId}/${avatarUpdateToken}`;
+	try {
+		await c.env.PUZZLES_BUCKET.put(versionedKey, bytes, {
+			httpMetadata: { contentType: detected }
+		});
+	} catch (err) {
+		console.error('Avatar R2 put failed:', err);
+		return c.json({ error: 'internal_error', message: 'Failed to store avatar' }, 500);
+	}
 
 	const db = getWorkerDb(c.env);
 	// Field-specific update writes only avatarUrl and preserves displayName,
 	// avoiding a read-modify-write race with concurrent PATCH /profile requests.
-	// Capture the updatedAt timestamp so the live-put-failure rollback can be
-	// owner-checked: only null avatarUrl if no concurrent upload has since
-	// overwritten the row (detected via updatedAt mismatch). An unconditional
-	// clear would clobber a concurrent winner's avatar.
+	// The avatarUpdateToken stored here is what the serve route reads to
+	// determine which versioned R2 key to serve — D1 is the source of truth
+	// for which upload's avatar is currently live.
 	const avatarUpdatedAt = Date.now();
-	const avatarUpdateToken = crypto.randomUUID();
 	try {
 		await updateProfileAvatarUrl(
 			db,
-			session.user.id,
-			`/api/player/${session.user.id}/avatar`,
+			playerId,
+			`/api/player/${playerId}/avatar`,
 			avatarUpdatedAt,
 			avatarUpdateToken
 		);
 	} catch (err) {
-		console.error('Avatar DB write failed; cleaning up staged R2 object:', err);
-		// Safe to delete unconditionally: stagingKey is unique to this upload.
-		// No concurrent upload can write to or claim this key.
-		await c.env.PUZZLES_BUCKET.delete(stagingKey);
+		console.error('Avatar DB write failed; cleaning up versioned R2 object:', err);
+		// Safe to delete unconditionally: versionedKey is unique to this
+		// upload (token is a UUID). No concurrent upload can write to or
+		// claim this key.
+		await c.env.PUZZLES_BUCKET.delete(versionedKey).catch(() => {});
 		return c.json({ error: 'internal_error', message: 'Failed to update avatar' }, 500);
 	}
-	// DB succeeded — promote the staged bytes to the live key. We hold the
-	// bytes in memory, so re-put to the canonical key. A concurrent upload
-	// may also put to this key; last write wins (both are valid avatars).
-	//
-	// If the live put fails (transient R2/quota error), the DB now points at
-	// a serve route that 404s for first-time avatars. Roll back the avatarUrl
-	// flag so the profile doesn't reference a missing object, and clean up
-	// the staged object. For a re-upload of an existing avatar, the old live
-	// object still serves (no 404); clearing the flag is a cosmetic
-	// regression only on this rare transient-failure path. The rollback is
-	// owner-checked on avatarUpdateToken (a collision-resistant UUID): if a
-	// concurrent upload's DB write has since overwritten this row (its token
-	// differs), the clear is a no-op and that upload's avatar is preserved.
-	try {
-		await c.env.PUZZLES_BUCKET.put(liveKey, bytes, {
-			httpMetadata: { contentType: detected }
-		});
-	} catch (err) {
-		console.error('Avatar live R2 put failed; rolling back DB avatarUrl:', err);
-		await clearProfileAvatarUrlIfOwned(db, session.user.id, avatarUpdateToken).catch(
-			(rollbackErr) =>
-				console.error('Failed to roll back avatarUrl after live put failure:', rollbackErr)
-		);
-		await c.env.PUZZLES_BUCKET.delete(stagingKey).catch(() => {});
-		return c.json({ error: 'internal_error', message: 'Failed to store avatar' }, 500);
-	}
-	// Best-effort cleanup of the staging object. If this delete fails the
-	// staging key lingers (it is not reachable by the serve route, which
-	// reads only the live key, so this is a storage-cost concern, not a
-	// correctness one). There is no automated sweep — see
-	// docs/OPERATOR_RUNBOOK.md §6 "Out of scope: avatar staging orphans" for
-	// manual cleanup. Swallow transient failures so a cleanup error does not
-	// turn an already-successful upload (live R2 object + DB override in
-	// place) into a 500 before the success response and rate-limit reset
-	// reach the client.
-	await c.env.PUZZLES_BUCKET.delete(stagingKey).catch((err) => {
-		console.error('Failed to clean up staging avatar object:', err);
-	});
 	// Reset the rate-limit counter on success so repeated successful uploads
 	// don't accumulate toward an unnecessary lockout. The middleware increments
 	// before the handler runs; this deletes that increment.
 	await resetAvatarAttempts(c);
-	return c.json({ avatarUrl: `/api/player/${session.user.id}/avatar` });
+	return c.json({ avatarUrl: `/api/player/${playerId}/avatar` });
 });
 
 // Serve a player's avatar from R2. Public (no auth) so avatars render anywhere.
+// Reads D1 to determine which versioned R2 key to serve (avatars/{playerId}/{token}),
+// so the D1-selected upload's avatar is always served regardless of concurrent
+// upload ordering. Falls back to the legacy unversioned key (avatars/{playerId})
+// for avatars uploaded before the versioned-key migration.
 player.get('/:playerId/avatar', async (c) => {
 	const playerId = c.req.param('playerId');
-	const obj = await c.env.PUZZLES_BUCKET.get(`avatars/${playerId}`);
+	const db = getWorkerDb(c.env);
+	const override = await getProfileOverride(db, playerId);
+	// If the override has an avatarUpdateToken, serve from the versioned key.
+	// If not (null — pre-migration avatar or no avatar), fall back to the
+	// legacy unversioned key for backward compatibility.
+	const r2Key = override?.avatarUpdateToken
+		? `avatars/${playerId}/${override.avatarUpdateToken}`
+		: `avatars/${playerId}`;
+	const obj = await c.env.PUZZLES_BUCKET.get(r2Key);
 	if (!obj) return c.json({ error: 'not_found', message: 'Avatar not found' }, 404);
 	const headers = new Headers();
 	obj.writeHttpMetadata(headers);

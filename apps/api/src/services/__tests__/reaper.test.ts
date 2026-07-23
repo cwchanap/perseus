@@ -1,15 +1,17 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { reapStuckPuzzles, REAP_AFTER_MS } from '../reaper';
+import { reapStuckPuzzles, reapCleanupRecords, REAP_AFTER_MS } from '../reaper';
 
 // Mock storage.worker functions
 vi.mock('../storage.worker', () => ({
 	deletePuzzleAssets: vi.fn(),
 	deleteMetadataDO: vi.fn(),
 	deletePuzzleMetadata: vi.fn(),
+	deleteCleanupRecord: vi.fn(async () => undefined),
 	getAuthoritativeStatus: vi.fn(),
 	getPuzzle: vi.fn(),
 	listPuzzles: vi.fn(),
+	listCleanupRecords: vi.fn(async () => []),
 	releaseIdempotencyKey: vi.fn()
 }));
 
@@ -29,9 +31,11 @@ import {
 	deletePuzzleAssets,
 	deleteMetadataDO,
 	deletePuzzleMetadata,
+	deleteCleanupRecord,
 	getAuthoritativeStatus,
 	getPuzzle,
 	listPuzzles,
+	listCleanupRecords,
 	releaseIdempotencyKey
 } from '../storage.worker';
 import { getWorkerDb } from '../../db.worker';
@@ -41,9 +45,11 @@ const storage = {
 	deletePuzzleAssets,
 	deleteMetadataDO,
 	deletePuzzleMetadata,
+	deleteCleanupRecord,
 	getAuthoritativeStatus,
 	getPuzzle,
 	listPuzzles,
+	listCleanupRecords,
 	releaseIdempotencyKey
 } as any;
 
@@ -233,7 +239,7 @@ describe('reapStuckPuzzles', () => {
 		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'stuck-1');
 	});
 
-	it('reaps stuck processing puzzles whose workflow is unknown (never created)', async () => {
+	it('skips stuck processing puzzles whose workflow status is unknown (liveness unverifiable)', async () => {
 		(storage.listPuzzles as any).mockResolvedValue({
 			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
 			invalidCount: 0
@@ -246,7 +252,11 @@ describe('reapStuckPuzzles', () => {
 		});
 		const env = makeEnv({ 'stuck-1': 'unknown' });
 		const result = await reapStuckPuzzles(env, NOW);
-		expect(result.reaped).toBe(1);
+		expect(result.candidates).toBe(1);
+		expect(result.reaped).toBe(0);
+		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
+		expect(deletePuzzleOwnership).not.toHaveBeenCalled();
 	});
 
 	it('skips stuck processing puzzles whose workflow completed (KV lag, not orphan)', async () => {
@@ -661,5 +671,148 @@ describe('reapStuckPuzzles', () => {
 		expect(result.errors).toBe(1);
 		expect(deletePuzzleOwnership).not.toHaveBeenCalled();
 		expect(result.details.some((d) => d.action === 'kv-delete-failed')).toBe(true);
+	});
+});
+
+describe('reapCleanupRecords', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		(storage.deletePuzzleAssets as any).mockResolvedValue({ success: true, failedKeys: [] });
+		(storage.deletePuzzleMetadata as any).mockResolvedValue({ success: true });
+		(storage.deleteCleanupRecord as any).mockResolvedValue(undefined);
+		(storage.releaseIdempotencyKey as any).mockResolvedValue(undefined);
+		(deletePuzzleOwnership as any).mockResolvedValue(undefined);
+		(getWorkerDb as any).mockReturnValue({});
+		(storage.listCleanupRecords as any).mockResolvedValue([]);
+	});
+
+	it('returns empty result when no cleanup records exist', async () => {
+		const env = makeEnv();
+		const result = await reapCleanupRecords(env);
+		expect(result.scanned).toBe(0);
+		expect(result.reaped).toBe(0);
+	});
+
+	it('cleans up completed duplicate puzzles from cleanup records', async () => {
+		(storage.listCleanupRecords as any).mockResolvedValue([
+			{ puzzleId: 'dup-1', pieceCount: 50, createdAt: NOW - 60000 }
+		]);
+		const env = makeEnv({ 'dup-1': 'complete' });
+		const result = await reapCleanupRecords(env);
+		expect(result.scanned).toBe(1);
+		expect(result.reaped).toBe(1);
+		expect(storage.deletePuzzleAssets).toHaveBeenCalledWith(env.PUZZLES_BUCKET, 'dup-1', 50);
+		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'dup-1');
+		expect(storage.deleteCleanupRecord).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'dup-1');
+		expect(deletePuzzleOwnership).toHaveBeenCalledWith(expect.anything(), 'dup-1');
+	});
+
+	it('cleans up errored workflows from cleanup records', async () => {
+		(storage.listCleanupRecords as any).mockResolvedValue([
+			{ puzzleId: 'dup-1', pieceCount: 50, createdAt: NOW - 60000 }
+		]);
+		const env = makeEnv({ 'dup-1': 'errored' });
+		const result = await reapCleanupRecords(env);
+		expect(result.reaped).toBe(1);
+		expect(storage.deleteCleanupRecord).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'dup-1');
+	});
+
+	it('cleans up terminated workflows from cleanup records', async () => {
+		(storage.listCleanupRecords as any).mockResolvedValue([
+			{ puzzleId: 'dup-1', pieceCount: 50, createdAt: NOW - 60000 }
+		]);
+		const env = makeEnv({ 'dup-1': 'terminated' });
+		const result = await reapCleanupRecords(env);
+		expect(result.reaped).toBe(1);
+	});
+
+	it('cleans up not_found workflows from cleanup records', async () => {
+		(storage.listCleanupRecords as any).mockResolvedValue([
+			{ puzzleId: 'dup-1', pieceCount: 50, createdAt: NOW - 60000 }
+		]);
+		const env = makeEnv();
+		const notFoundError = new Error('instance.not_found');
+		(notFoundError as any).code = 'instance.not_found';
+		env.PUZZLE_WORKFLOW.get = vi.fn(() => {
+			throw notFoundError;
+		});
+		const result = await reapCleanupRecords(env);
+		expect(result.reaped).toBe(1);
+		expect(storage.deleteCleanupRecord).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'dup-1');
+	});
+
+	it('skips running workflows from cleanup records', async () => {
+		(storage.listCleanupRecords as any).mockResolvedValue([
+			{ puzzleId: 'dup-1', pieceCount: 50, createdAt: NOW - 60000 }
+		]);
+		const env = makeEnv({ 'dup-1': 'running' });
+		const result = await reapCleanupRecords(env);
+		expect(result.scanned).toBe(1);
+		expect(result.reaped).toBe(0);
+		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
+		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
+	});
+
+	it('skips unknown-status workflows from cleanup records', async () => {
+		(storage.listCleanupRecords as any).mockResolvedValue([
+			{ puzzleId: 'dup-1', pieceCount: 50, createdAt: NOW - 60000 }
+		]);
+		const env = makeEnv({ 'dup-1': 'unknown' });
+		const result = await reapCleanupRecords(env);
+		expect(result.reaped).toBe(0);
+		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
+	});
+
+	it('releases idempotency key when cleanup record has one', async () => {
+		(storage.listCleanupRecords as any).mockResolvedValue([
+			{
+				puzzleId: 'dup-1',
+				pieceCount: 50,
+				idempotencyKey: 'idem-key-1',
+				createdAt: NOW - 60000
+			}
+		]);
+		const env = makeEnv({ 'dup-1': 'complete' });
+		const result = await reapCleanupRecords(env);
+		expect(result.reaped).toBe(1);
+		expect(storage.releaseIdempotencyKey).toHaveBeenCalledWith(
+			env.PUZZLE_METADATA_DO,
+			'idem-key-1',
+			'dup-1'
+		);
+	});
+
+	it('preserves KV and cleanup record when R2 deletion fails partially', async () => {
+		(storage.listCleanupRecords as any).mockResolvedValue([
+			{ puzzleId: 'dup-1', pieceCount: 50, createdAt: NOW - 60000 }
+		]);
+		(storage.deletePuzzleAssets as any).mockResolvedValue({
+			success: false,
+			failedKeys: ['puzzles/dup-1/original']
+		});
+		const env = makeEnv({ 'dup-1': 'complete' });
+		const result = await reapCleanupRecords(env);
+		expect(result.reaped).toBe(0);
+		expect(result.errors).toBe(1);
+		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
+		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
+	});
+
+	it('preserves cleanup record when KV deletion fails', async () => {
+		(storage.listCleanupRecords as any).mockResolvedValue([
+			{ puzzleId: 'dup-1', pieceCount: 50, createdAt: NOW - 60000 }
+		]);
+		(storage.deletePuzzleMetadata as any).mockResolvedValue({
+			success: false,
+			error: new Error('KV delete failed')
+		});
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		const env = makeEnv({ 'dup-1': 'complete' });
+		const result = await reapCleanupRecords(env);
+		expect(result.reaped).toBe(0);
+		expect(result.errors).toBe(1);
+		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
 	});
 });

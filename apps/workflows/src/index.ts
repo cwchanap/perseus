@@ -468,7 +468,10 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 				// failed so a retry reclaims the key and creates a fresh puzzle;
 				// the stuck puzzle's metadata and image remain for operator
 				// cleanup via force-delete. Statuses that mean "not going to
-				// process": errored, terminated, unknown (incl. never created).
+				// process": errored, terminated (and not_found, mapped to
+				// 'errored' above). 'unknown' means liveness cannot be
+				// established — handled separately below as a transient
+				// failure (409, retry), not as dead.
 				//
 				// DESIGN NOTE: This liveness check is intentionally OUTSIDE the
 				// promotion transaction below. DO storage.transactions must stay
@@ -513,11 +516,7 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 						);
 					}
 				}
-				if (
-					workflowStatus === 'errored' ||
-					workflowStatus === 'terminated' ||
-					workflowStatus === 'unknown'
-				) {
+				if (workflowStatus === 'errored' || workflowStatus === 'terminated') {
 					if (live.status === 'ready') {
 						// Finalize committed 'ready' to the authoritative DO before
 						// the workflow later reported errored (e.g. the mark-failed
@@ -566,6 +565,16 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 							{ status: 409 }
 						);
 					}
+				}
+				// 'unknown' status means liveness cannot be established — the
+				// workflow may still be running. Do NOT promote (would lock a
+				// stuck puzzle) or fail (might duplicate a live one). Signal
+				// transient so the client retries.
+				if (workflowStatus === 'unknown') {
+					return Response.json(
+						{ message: 'Workflow liveness could not be verified; retry' },
+						{ status: 409 }
+					);
 				}
 				const promoted = await this.ctx.storage.transaction(async () => {
 					const reservation = await this.readReservation();

@@ -8,10 +8,19 @@
 // Active (non-terminal) statuses indicate the workflow may still make
 // progress — treating them as dead would mint duplicate workflows on retry
 // or reap puzzles whose generation is still legitimately in flight. Only
-// `errored`, `terminated`, and the `unknown` fallback string are terminal.
+// `errored` and `terminated` are confirmed-terminal: the workflow has
+// stopped and no further step.do calls can execute.
 // `complete` is terminal-success: every step succeeded, so the authoritative
 // PuzzleMetadataDO has status 'ready' — callers treat it as alive/not-stuck
 // (a KV read still showing 'processing' is eventual-consistency lag).
+//
+// `unknown` is NOT treated as dead. Cloudflare documents it as a distinct
+// status value (not a synonym for "terminated"): it means liveness cannot
+// be established. A transient `unknown` result does not prove the workflow
+// has stopped — treating it as dead could delete R2 assets while the
+// workflow is still able to write pieces. Callers that catch
+// `instance.not_found` (the workflow was never created or was deleted)
+// must handle that case separately rather than mapping it to `unknown`.
 
 /** Statuses that mean the workflow may still make progress. */
 export const ACTIVE_WORKFLOW_STATUSES = new Set([
@@ -24,8 +33,8 @@ export const ACTIVE_WORKFLOW_STATUSES = new Set([
 	'complete'
 ]);
 
-/** Statuses that mean the workflow has permanently failed. */
-export const DEAD_WORKFLOW_STATUSES = new Set(['errored', 'terminated', 'unknown']);
+/** Statuses that mean the workflow has permanently stopped (confirmed dead). */
+export const DEAD_WORKFLOW_STATUSES = new Set(['errored', 'terminated']);
 
 /** Pending reservations older than this are considered stale and reclaimable. */
 export const RESERVATION_PENDING_TTL_MS = 5 * 60 * 1000;
