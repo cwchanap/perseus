@@ -289,14 +289,22 @@ const TERMINATE_POLL_TIMEOUT_MS = 10_000;
  * true when the workflow is confirmed stopped — safe to proceed with R2
  * asset deletion because no subsequent step can write new objects.
  *
- * Returns false when termination could not be confirmed (terminate() threw,
- * status polling failed, or the bounded timeout elapsed). Callers must NOT
- * delete R2 assets in this case — a live workflow can still write thumbnails
- * or pieces after the sweep, leaving orphaned R2 objects invisible to the
- * reaper (KV metadata already deleted). Instead, tombstone the DO (prevents
- * metadata resurrection via KV sync) and leave KV metadata intact so the
- * reaper can clean up R2 assets on its next run after the workflow finally
- * terminates.
+ * Returns false when termination could not be confirmed (status read
+ * failed, terminate() threw on a non-terminal instance, status polling
+ * failed, or the bounded timeout elapsed). Callers must NOT delete R2
+ * assets in this case — a live workflow can still write thumbnails or
+ * pieces after the sweep, leaving orphaned R2 objects invisible to the
+ * reaper (KV metadata already deleted). Instead, tombstone the DO
+ * (prevents metadata resurrection via KV sync) and leave KV metadata
+ * intact so the reaper can clean up R2 assets on its next run after the
+ * workflow finally terminates.
+ *
+ * Status is read BEFORE calling terminate() because Cloudflare's
+ * terminate() throws on already-terminal instances (errored, terminated,
+ * complete). Without the pre-check, a workflow that completed between
+ * the create() error and this cleanup would throw, return false, and
+ * defer to the reaper — but the reaper skips 'complete' workflows,
+ * leaving a duplicate completed puzzle permanently orphaned.
  */
 async function terminateAndAwaitStopped(
 	workflow: WorkflowBinding,
@@ -308,12 +316,49 @@ async function terminateAndAwaitStopped(
 	const now = options.now ?? Date.now;
 	try {
 		const instance = await workflow.get(puzzleId);
+
+		// Read status BEFORE calling terminate(). Cloudflare's terminate()
+		// throws when an instance is already errored, terminated, or
+		// complete. Without this pre-check, a workflow that completed
+		// between the create() error and this cleanup would throw, return
+		// false, and defer to the reaper — but the reaper skips 'complete'
+		// workflows, leaving a duplicate completed puzzle permanently
+		// orphaned. If the workflow is already terminal, no more R2 writes
+		// can occur — return true immediately.
+		let preStatus: string;
+		try {
+			preStatus = (await instance.status()).status;
+		} catch (statusErr) {
+			console.error(`Failed to read workflow status for ${puzzleId}:`, statusErr);
+			return false;
+		}
+		if (isDeadWorkflowStatus(preStatus) || preStatus === 'complete') return true;
+
 		try {
 			await instance.terminate();
 		} catch (termErr) {
-			console.error(`Failed to terminate orphaned workflow ${puzzleId}:`, termErr);
+			// terminate() throws on already-terminal instances. Re-read
+			// status: if it's now terminal, the workflow is stopped and
+			// safe for R2 cleanup. This handles the race where the workflow
+			// transitioned to terminal between the pre-check and terminate().
+			let postStatus: string;
+			try {
+				postStatus = (await instance.status()).status;
+			} catch (reStatusErr) {
+				console.error(
+					`Failed to re-read workflow status for ${puzzleId} after terminate threw:`,
+					reStatusErr
+				);
+				return false;
+			}
+			if (isDeadWorkflowStatus(postStatus) || postStatus === 'complete') return true;
+			console.error(
+				`Failed to terminate workflow ${puzzleId} and status is non-terminal:`,
+				termErr
+			);
 			return false;
 		}
+
 		const deadline = now() + pollTimeout;
 		for (;;) {
 			let status: string;
@@ -1365,26 +1410,53 @@ admin.post('/puzzles', requireAuth, async (c) => {
 									500
 								);
 							}
-							const metaCleanup = await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
-							if (!metaCleanup.success) {
-								console.error(
-									`Failed to cleanup metadata after alive-commit conflict for ${id}:`,
-									metaCleanup.error
-								);
-							}
-							const assetsCleanup = await deletePuzzleAssets(c.env.PUZZLES_BUCKET, id, pieceCount);
-							if (!assetsCleanup.success) {
-								console.error(
-									`Failed to cleanup assets after alive-commit conflict for ${id}:`,
-									assetsCleanup.failedKeys
-								);
-							}
+							// Tombstone the DO first — prevents the dead workflow's
+							// post-termination step from resurrecting stale metadata in
+							// KV via the DO's KV sync. If tombstone fails, preserve KV
+							// and defer all cleanup to the reaper.
 							try {
 								await deleteMetadataDO(c.env.PUZZLE_METADATA_DO, id);
 							} catch (doErr) {
 								console.error(
 									`Failed to tombstone metadata DO after alive-commit conflict for ${id}:`,
 									doErr
+								);
+								reservedIdempotencyKey = undefined;
+								return c.json(
+									{
+										error: 'internal_error',
+										message:
+											'Idempotency reservation was reclaimed by a retry; DO tombstone failed, reaper will clean up'
+									},
+									500
+								);
+							}
+							// Delete ALL R2 assets. If R2 deletion fails (partially or
+							// totally), preserve KV so the reaper can retry R2 cleanup
+							// on its next run. Deleting KV first would make failed R2
+							// keys invisible orphans with no metadata to discover them.
+							const assetsCleanup = await deletePuzzleAssets(c.env.PUZZLES_BUCKET, id, pieceCount);
+							if (!assetsCleanup.success) {
+								console.error(
+									`Failed to cleanup some R2 assets after alive-commit conflict for ${id}, preserving KV for reaper:`,
+									assetsCleanup.failedKeys
+								);
+								reservedIdempotencyKey = undefined;
+								return c.json(
+									{
+										error: 'internal_error',
+										message:
+											'Idempotency reservation was reclaimed by a retry; R2 cleanup partial, reaper will retry'
+									},
+									500
+								);
+							}
+							// R2 fully deleted — safe to delete KV and D1 metadata.
+							const metaCleanup = await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
+							if (!metaCleanup.success) {
+								console.error(
+									`Failed to cleanup metadata after alive-commit conflict for ${id}:`,
+									metaCleanup.error
 								);
 							}
 							await withDbBestEffort(
@@ -1558,12 +1630,22 @@ admin.post('/puzzles', requireAuth, async (c) => {
 						500
 					);
 				}
-				// Clean up the orphaned puzzle's metadata and R2 assets.
-				const metadataCleanup = await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
-				if (!metadataCleanup.success) {
-					console.error(
-						'Failed to cleanup orphaned puzzle metadata after commit failure:',
-						metadataCleanup.error
+				// Tombstone the DO first — prevents the dead workflow's
+				// post-termination step from resurrecting stale metadata in KV
+				// via the DO's KV sync. If tombstone fails, preserve KV and
+				// defer all cleanup to the reaper.
+				try {
+					await deleteMetadataDO(c.env.PUZZLE_METADATA_DO, id);
+				} catch (doErr) {
+					console.error(`Failed to tombstone orphaned metadata DO for ${id}:`, doErr);
+					reservedIdempotencyKey = undefined;
+					return c.json(
+						{
+							error: 'internal_error',
+							message:
+								'Idempotency reservation was reclaimed by a retry; DO tombstone failed, reaper will clean up'
+						},
+						500
 					);
 				}
 				// Delete ALL R2 assets (original + thumbnail + any pieces the
@@ -1573,21 +1655,33 @@ admin.post('/puzzles', requireAuth, async (c) => {
 				// original would leave those behind with no metadata and a
 				// tombstoned DO, making them invisible to the reaper. R2 deletes
 				// on non-existent keys are no-ops, mirroring the reaper.
+				// CRITICAL: if R2 deletion fails (partially or totally), do NOT
+				// delete KV or D1 metadata — the failed R2 keys would become
+				// invisible orphans. Preserve KV so the reaper can retry R2
+				// cleanup on its next run.
 				const assetsCleanup = await deletePuzzleAssets(c.env.PUZZLES_BUCKET, id, pieceCount);
 				if (!assetsCleanup.success) {
 					console.error(
-						`Failed to cleanup some orphaned puzzle assets after commit failure for ${id}:`,
+						`Failed to cleanup some orphaned puzzle assets after commit failure for ${id}, preserving KV for reaper:`,
 						assetsCleanup.failedKeys
 					);
+					reservedIdempotencyKey = undefined;
+					return c.json(
+						{
+							error: 'internal_error',
+							message:
+								'Idempotency reservation was reclaimed by a retry; R2 cleanup partial, reaper will retry'
+						},
+						500
+					);
 				}
-				// Best-effort DO tombstone. The orphaned workflow was terminated,
-				// but its DO metadata persists. Without tombstoning, a
-				// post-termination workflow step could resurrect metadata in KV
-				// via the DO's KV sync. Mirrors the reaper's tombstone pattern.
-				try {
-					await deleteMetadataDO(c.env.PUZZLE_METADATA_DO, id);
-				} catch (doErr) {
-					console.error(`Failed to tombstone orphaned metadata DO for ${id}:`, doErr);
+				// R2 fully deleted — safe to delete KV and D1 metadata.
+				const metadataCleanup = await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
+				if (!metadataCleanup.success) {
+					console.error(
+						'Failed to cleanup orphaned puzzle metadata after commit failure:',
+						metadataCleanup.error
+					);
 				}
 				await withDbBestEffort(
 					c.env,

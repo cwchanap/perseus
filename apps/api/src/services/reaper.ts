@@ -210,39 +210,15 @@ export async function reapStuckPuzzles(env: Env, now = Date.now()): Promise<Reap
 					return;
 				}
 
-				// Delete all R2 assets (original + thumbnail + generated
-				// pieces). Uses pieceCount from metadata; R2 deletes on non-
-				// existent keys are no-ops, so partial generation is covered.
-				// Best-effort: log failures but continue to KV/D1 cleanup.
-				try {
-					const pieceCount = typeof meta.pieceCount === 'number' ? meta.pieceCount : 0;
-					const r2Result = await deletePuzzleAssets(env.PUZZLES_BUCKET, puzzle.id, pieceCount);
-					if (!r2Result.success) {
-						console.error(
-							`Reaper: failed to delete some R2 assets for ${puzzle.id}:`,
-							r2Result.failedKeys
-						);
-						result.details.push({
-							puzzleId: puzzle.id,
-							action: 'r2-delete-partial',
-							error: `failed keys: ${r2Result.failedKeys.join(', ')}`
-						});
-					}
-				} catch (r2Err) {
-					// Log but continue — we still want to delete KV/D1 metadata.
-					console.error(`Reaper: failed to delete R2 assets for ${puzzle.id}:`, r2Err);
-					result.details.push({
-						puzzleId: puzzle.id,
-						action: 'r2-delete-failed',
-						error: String(r2Err)
-					});
-				}
-
-				// Tombstone the DO before deleting KV so a failed tombstone leaves
-				// the puzzle discoverable on the next scan (reaper lists from KV).
-				// Without this ordering, a KV delete with a failed tombstone bricks
-				// the retry path: the DO stays live and a later workflow update can
-				// repopulate stale metadata.
+				// Tombstone the DO BEFORE deleting R2 assets and KV metadata.
+				// The DO tombstone prevents a (dead) workflow's post-termination
+				// step from resurrecting stale metadata in KV via the DO's KV
+				// sync. Doing this first means a tombstone failure leaves the
+				// puzzle fully discoverable for the next reaper run (KV intact,
+				// DO live — the reaper re-checks both). Without this ordering, a
+				// KV delete with a failed tombstone bricks the retry path: the DO
+				// stays live and a later workflow update can repopulate stale
+				// metadata.
 				try {
 					await deleteMetadataDO(env.PUZZLE_METADATA_DO, puzzle.id);
 				} catch (doErr) {
@@ -256,8 +232,49 @@ export async function reapStuckPuzzles(env: Env, now = Date.now()): Promise<Reap
 					return;
 				}
 
-				// Delete KV metadata. deletePuzzleMetadata never throws — it
-				// returns { success, error } so a KV failure is observable here
+				// Delete all R2 assets (original + thumbnail + generated
+				// pieces). Uses pieceCount from metadata; R2 deletes on non-
+				// existent keys are no-ops, so partial generation is covered.
+				// CRITICAL: if R2 deletion fails (partially or totally), do NOT
+				// delete KV or D1 metadata — the failed R2 keys would become
+				// invisible orphans with no metadata to discover them. Preserve
+				// KV so the next reaper run retries R2 cleanup. The DO is
+				// already tombstoned, so getAuthoritativeStatus returns null on
+				// the next run, which means "truly orphaned → proceed."
+				try {
+					const pieceCount = typeof meta.pieceCount === 'number' ? meta.pieceCount : 0;
+					const r2Result = await deletePuzzleAssets(env.PUZZLES_BUCKET, puzzle.id, pieceCount);
+					if (!r2Result.success) {
+						console.error(
+							`Reaper: failed to delete some R2 assets for ${puzzle.id}, preserving KV for retry:`,
+							r2Result.failedKeys
+						);
+						result.errors++;
+						result.details.push({
+							puzzleId: puzzle.id,
+							action: 'r2-delete-partial',
+							error: `failed keys: ${r2Result.failedKeys.join(', ')}`
+						});
+						return;
+					}
+				} catch (r2Err) {
+					// R2 deletion threw — preserve KV for the next reaper run.
+					console.error(
+						`Reaper: failed to delete R2 assets for ${puzzle.id}, preserving KV for retry:`,
+						r2Err
+					);
+					result.errors++;
+					result.details.push({
+						puzzleId: puzzle.id,
+						action: 'r2-delete-failed',
+						error: String(r2Err)
+					});
+					return;
+				}
+
+				// R2 deletion fully succeeded — safe to delete KV and D1
+				// metadata. deletePuzzleMetadata never throws — it returns
+				// { success, error } so a KV failure is observable here
 				// without a try/catch around a non-throwing call. Branching on
 				// .success keeps reaped++ honest (only increments when the KV
 				// delete actually succeeded) and emits a kv-delete-failed detail
