@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { mkdir, writeFile, readFile, unlink, lstat } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, unlink, lstat, rename, rmdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { getDb } from '../db';
 import {
@@ -36,6 +36,34 @@ const MAX_AVATAR_DIMENSION = 512;
 // Matches the puzzle-name cap (admin routes). Bounds storage and prevents
 // trivially large payloads from reaching D1.
 const MAX_DISPLAY_NAME_LENGTH = 255;
+
+/**
+ * Roll back a partially-applied legacy-avatar migration. Removes the
+ * versioned file (and the now-empty versioned directory when this upload
+ * created it via the legacy migration), then restores the legacy backup
+ * file to its original path so the serve route's legacy fallback resolves
+ * again. All filesystem operations are best-effort — this is a recovery
+ * path, and a partial rollback still leaves D1 pointing at the legacy
+ * path (the DB write did not succeed), which is correct as long as the
+ * legacy file is restored.
+ */
+async function rollbackLegacyMigration(
+	playerDir: string,
+	versionedPath: string,
+	legacyBackupPath: string,
+	migratedLegacy: boolean
+): Promise<void> {
+	await unlink(versionedPath).catch(() => {});
+	if (migratedLegacy) {
+		// The versioned directory was created by this upload (the legacy
+		// file previously occupied the path). Remove it so the backup can
+		// be renamed back to the original path.
+		await rmdir(playerDir).catch(() => {});
+		await rename(legacyBackupPath, playerDir).catch((err) => {
+			console.error('Failed to restore legacy avatar backup:', err);
+		});
+	}
+}
 
 player.get('/profile', requirePlayerAuth, async (c) => {
 	const db = getDb();
@@ -168,24 +196,30 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 	}
 	const dataDir = process.env.DATA_DIR || './data';
 	const playerDir = join(dataDir, 'avatars', playerId);
-	// If a legacy avatar exists as a FILE at avatars/{playerId} (pre-versioned
-	// layout), remove it before creating the versioned directory. After this
-	// upload succeeds, D1 will hold a token and the serve route reads from
-	// the versioned path, so the legacy file is no longer needed. If this
-	// upload fails, the serve route falls back to the legacy path — but the
-	// file is already gone. That's acceptable: the DB write hasn't happened
-	// yet (this runs before the DB write), so D1 still points at the legacy
-	// path, and the serve route will 404. The client can retry. This
-	// migration only affects local dev (Bun runtime); production uses R2
-	// where object and directory keys don't conflict.
+	// Migrate the legacy unversioned avatar (a FILE at avatars/{playerId})
+	// to the versioned directory layout transactionally. Renaming the legacy
+	// file to a backup path BEFORE creating the versioned directory and
+	// committing the token to D1 means a failure anywhere in the migration
+	// (mkdir, writeFile, or the D1 update) can roll back to the previous
+	// serving state: D1 still points at the legacy path, and the restored
+	// legacy file makes the serve route's legacy fallback resolve again.
+	// Deleting the legacy file up-front (the previous approach) left a
+	// window where D1 pointed at a path whose file was gone, producing a
+	// 404 until a successful retry. This only affects local dev (Bun
+	// runtime); production uses R2 where object and directory keys don't
+	// conflict.
+	const legacyBackupPath = join(dataDir, 'avatars', `${playerId}.legacy-backup`);
+	let migratedLegacy = false;
 	try {
 		const stat = await lstat(playerDir);
-		if (stat.isFile()) await unlink(playerDir);
+		if (stat.isFile()) {
+			await rename(playerDir, legacyBackupPath);
+			migratedLegacy = true;
+		}
 	} catch {
-		// Path doesn't exist — mkdir will create it. Any other error will
-		// surface on the mkdir call below.
+		// Path doesn't exist — no legacy file to back up. Any other error
+		// surfaces on the mkdir call below.
 	}
-	await mkdir(playerDir, { recursive: true });
 	// Write to a versioned file path (avatars/{playerId}/{token}) instead of
 	// a fixed path (avatars/{playerId}). This eliminates the concurrent-upload
 	// race where two uploads both rename to the same fixed path and the last
@@ -197,7 +231,14 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 	// reachable by the serve route — they can be cleaned asynchronously.
 	const avatarUpdateToken = crypto.randomUUID();
 	const versionedPath = join(playerDir, avatarUpdateToken);
-	await writeFile(versionedPath, Buffer.from(bytes));
+	try {
+		await mkdir(playerDir, { recursive: true });
+		await writeFile(versionedPath, Buffer.from(bytes));
+	} catch (writeErr) {
+		console.error('Avatar file write failed; rolling back legacy migration:', writeErr);
+		await rollbackLegacyMigration(playerDir, versionedPath, legacyBackupPath, migratedLegacy);
+		return c.json({ error: 'internal_error', message: 'Failed to store avatar' }, 500);
+	}
 
 	const db = getDb();
 	// Field-specific update writes only avatarUrl and preserves displayName,
@@ -215,12 +256,15 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 			avatarUpdateToken
 		);
 	} catch (err) {
-		console.error('Avatar DB write failed; cleaning up versioned avatar file:', err);
-		// Safe to delete unconditionally: versionedPath is unique to this
-		// upload (token is a UUID). No concurrent upload can write to or
-		// claim this file.
-		await unlink(versionedPath).catch(() => {});
+		console.error('Avatar DB write failed; rolling back avatar file:', err);
+		await rollbackLegacyMigration(playerDir, versionedPath, legacyBackupPath, migratedLegacy);
 		return c.json({ error: 'internal_error', message: 'Failed to update avatar' }, 500);
+	}
+	// D1 committed — the versioned file is now authoritative. Remove the
+	// legacy backup (best-effort; a lingering backup is storage waste, not
+	// a correctness issue — D1 points at the versioned path).
+	if (migratedLegacy) {
+		await unlink(legacyBackupPath).catch(() => {});
 	}
 	// Reset the rate-limit counter on success so repeated successful uploads
 	// don't accumulate toward an unnecessary lockout. The middleware increments

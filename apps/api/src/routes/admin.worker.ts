@@ -34,6 +34,7 @@ import {
 	releaseIdempotencyKey,
 	reserveIdempotencyKey,
 	writeCleanupRecord,
+	deleteCleanupRecord,
 	type PuzzleMetadata
 } from '../services/storage.worker';
 import { isIdempotencyCommitConflict } from '../services/idempotency-conflict';
@@ -1641,6 +1642,38 @@ admin.post('/puzzles', requireAuth, async (c) => {
 				console.error(
 					`Commit failed for puzzle ${id} — reservation was reclaimed by a retry. Terminating orphaned workflow.`
 				);
+				// Write the cleanup record BEFORE any termination, tombstone, R2,
+				// or KV work. This record is the ONLY durable retry path for
+				// partial failures in this branch: the stuck-processing reaper
+				// skips 'complete' workflows, so once the orphaned workflow
+				// finishes, only the cleanup-record reaper can recover a
+				// stranded puzzle (partial R2 deletion, KV deletion failure, or
+				// a DO tombstone that succeeds but a subsequent step fails).
+				// The record is deleted only after every required cleanup
+				// operation (termination confirmed + DO tombstone + R2 + KV)
+				// succeeds; any partial failure leaves the record in place for
+				// the reaper to retry. writeCleanupRecord is a single attempt —
+				// if it fails, do NOT proceed and do NOT claim the reaper will
+				// clean up, because no durable record would exist. The client
+				// retries the whole request, which re-enters this branch.
+				try {
+					await writeCleanupRecord(c.env.PUZZLE_METADATA, {
+						puzzleId: id,
+						pieceCount,
+						createdAt: Date.now()
+					});
+				} catch (cleanupErr) {
+					console.error(`Failed to write cleanup record for ${id}; aborting cleanup:`, cleanupErr);
+					reservedIdempotencyKey = undefined;
+					return c.json(
+						{
+							error: 'internal_error',
+							message:
+								'Idempotency reservation was reclaimed by a retry; failed to record durable cleanup state, retry'
+						},
+						500
+					);
+				}
 				// Terminate and WAIT for the workflow to stop before deleting
 				// R2 assets. A live workflow writes thumbnails and pieces
 				// directly to R2 (not through the DO), so deleting assets
@@ -1649,7 +1682,9 @@ admin.post('/puzzles', requireAuth, async (c) => {
 				// If termination cannot be confirmed within the bounded
 				// timeout, tombstone the DO (prevents metadata resurrection
 				// via KV sync) and leave KV/R2 intact for the reaper to clean
-				// up after the workflow finally terminates.
+				// up after the workflow finally terminates. The cleanup record
+				// written above ensures the reaper picks this puzzle up even
+				// after the workflow later transitions to 'complete'.
 				const stopped = await terminateAndAwaitStopped(c.env.PUZZLE_WORKFLOW, id);
 				if (!stopped) {
 					console.error(
@@ -1659,19 +1694,6 @@ admin.post('/puzzles', requireAuth, async (c) => {
 						await deleteMetadataDO(c.env.PUZZLE_METADATA_DO, id);
 					} catch (doErr) {
 						console.error(`Failed to tombstone orphaned metadata DO for ${id}:`, doErr);
-					}
-					// Write a cleanup record so the reaper can clean up
-					// this puzzle even if the workflow completes after
-					// the deferral. See the alive-commit conflict branch
-					// above for the full rationale.
-					try {
-						await writeCleanupRecord(c.env.PUZZLE_METADATA, {
-							puzzleId: id,
-							pieceCount,
-							createdAt: Date.now()
-						});
-					} catch (cleanupErr) {
-						console.error(`Failed to write cleanup record for ${id}:`, cleanupErr);
 					}
 					reservedIdempotencyKey = undefined;
 					return c.json(
@@ -1686,25 +1708,13 @@ admin.post('/puzzles', requireAuth, async (c) => {
 				// Tombstone the DO first — prevents the dead workflow's
 				// post-termination step from resurrecting stale metadata in KV
 				// via the DO's KV sync. If tombstone fails, preserve KV and
-				// defer all cleanup to the reaper.
+				// defer all cleanup to the reaper. The cleanup record written
+				// above is the reaper's signal; the reaper re-tombstones the DO
+				// (idempotent) before deleting R2/KV.
 				try {
 					await deleteMetadataDO(c.env.PUZZLE_METADATA_DO, id);
 				} catch (doErr) {
 					console.error(`Failed to tombstone orphaned metadata DO for ${id}:`, doErr);
-					// Write a cleanup record so the reaper can tombstone the
-					// DO and clean up R2/KV on its next run. Without this
-					// record, neither reaper selects this puzzle: the
-					// stuck-processing reaper skips 'complete' workflows,
-					// and the cleanup-record reaper has no record to process.
-					try {
-						await writeCleanupRecord(c.env.PUZZLE_METADATA, {
-							puzzleId: id,
-							pieceCount,
-							createdAt: Date.now()
-						});
-					} catch (cleanupErr) {
-						console.error(`Failed to write cleanup record for ${id}:`, cleanupErr);
-					}
 					reservedIdempotencyKey = undefined;
 					return c.json(
 						{
@@ -1724,8 +1734,8 @@ admin.post('/puzzles', requireAuth, async (c) => {
 				// on non-existent keys are no-ops, mirroring the reaper.
 				// CRITICAL: if R2 deletion fails (partially or totally), do NOT
 				// delete KV or D1 metadata — the failed R2 keys would become
-				// invisible orphans. Preserve KV so the reaper can retry R2
-				// cleanup on its next run.
+				// invisible orphans. Preserve KV and the cleanup record so the
+				// reaper can retry R2 cleanup on its next run.
 				const assetsCleanup = await deletePuzzleAssets(c.env.PUZZLES_BUCKET, id, pieceCount);
 				if (!assetsCleanup.success) {
 					console.error(
@@ -1742,13 +1752,37 @@ admin.post('/puzzles', requireAuth, async (c) => {
 						500
 					);
 				}
-				// R2 fully deleted — safe to delete KV and D1 metadata.
+				// R2 fully deleted — safe to delete KV metadata. If KV deletion
+				// fails, do NOT delete the cleanup record or D1 ownership: the
+				// reaper needs the record to retry KV cleanup, and deleting D1
+				// would leave the cleanup record pointing at a puzzle whose
+				// player-facing mirror is gone but whose KV entry still exists.
+				// The reaper's cleanup path re-deletes KV (idempotent) and only
+				// deletes the cleanup record after KV succeeds.
 				const metadataCleanup = await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
 				if (!metadataCleanup.success) {
 					console.error(
 						'Failed to cleanup orphaned puzzle metadata after commit failure:',
 						metadataCleanup.error
 					);
+					reservedIdempotencyKey = undefined;
+					return c.json(
+						{
+							error: 'internal_error',
+							message:
+								'Idempotency reservation was reclaimed by a retry; KV metadata cleanup failed, reaper will retry'
+						},
+						500
+					);
+				}
+				// Every required cleanup operation (termination + DO tombstone +
+				// R2 + KV) succeeded — delete the cleanup record so the reaper
+				// does not re-process this puzzle. Best-effort: a failed delete
+				// only causes a redundant reaper pass (idempotent cleanup).
+				try {
+					await deleteCleanupRecord(c.env.PUZZLE_METADATA, id);
+				} catch (recordErr) {
+					console.error(`Failed to delete cleanup record for ${id}:`, recordErr);
 				}
 				await withDbBestEffort(
 					c.env,
