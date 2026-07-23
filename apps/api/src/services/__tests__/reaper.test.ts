@@ -681,6 +681,7 @@ describe('reapCleanupRecords', () => {
 		(storage.deletePuzzleMetadata as any).mockResolvedValue({ success: true });
 		(storage.deleteCleanupRecord as any).mockResolvedValue(undefined);
 		(storage.releaseIdempotencyKey as any).mockResolvedValue(undefined);
+		(storage.deleteMetadataDO as any).mockResolvedValue(undefined);
 		(deletePuzzleOwnership as any).mockResolvedValue(undefined);
 		(getWorkerDb as any).mockReturnValue({});
 		(storage.listCleanupRecords as any).mockResolvedValue([]);
@@ -922,5 +923,37 @@ describe('reapCleanupRecords', () => {
 		const detail = result.details.find((d) => d.action === 'cleanup-error');
 		expect(detail).toBeDefined();
 		expect(detail?.error).toContain('unexpected catastrophic failure');
+	});
+
+	it('tombstones the DO before deleting R2/KV (idempotent re-tombstone)', async () => {
+		(storage.listCleanupRecords as any).mockResolvedValue([
+			{ puzzleId: 'dup-1', pieceCount: 50, createdAt: NOW - 60000 }
+		]);
+		const env = makeEnv({ 'dup-1': 'complete' });
+		const result = await reapCleanupRecords(env);
+		expect(result.reaped).toBe(1);
+		// deleteMetadataDO must be called before deletePuzzleAssets.
+		expect(storage.deleteMetadataDO).toHaveBeenCalledWith(env.PUZZLE_METADATA_DO, 'dup-1');
+		expect(storage.deletePuzzleAssets).toHaveBeenCalled();
+	});
+
+	it('preserves R2/KV and cleanup record when DO tombstone fails', async () => {
+		(storage.listCleanupRecords as any).mockResolvedValue([
+			{ puzzleId: 'dup-1', pieceCount: 50, createdAt: NOW - 60000 }
+		]);
+		(storage.deleteMetadataDO as any).mockRejectedValue(new Error('DO unreachable'));
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		const env = makeEnv({ 'dup-1': 'complete' });
+		const result = await reapCleanupRecords(env);
+		expect(result.reaped).toBe(0);
+		expect(result.errors).toBe(1);
+		// R2 and KV must NOT be deleted — a live DO can resurrect metadata.
+		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
+		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
+		// The failure must be recorded with the tombstone-failed action.
+		const detail = result.details.find((d) => d.action === 'cleanup-do-tombstone-failed');
+		expect(detail).toBeDefined();
+		expect(detail?.error).toContain('DO unreachable');
 	});
 });

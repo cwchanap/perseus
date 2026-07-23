@@ -372,10 +372,16 @@ export async function reapStuckPuzzles(env: Env, now = Date.now()): Promise<Reap
  * select such puzzles (they're no longer 'processing' in KV) and would skip
  * 'complete' workflows.
  *
- * The DO is already tombstoned when the cleanup record is written, so this
- * function does NOT re-check the DO status — it only checks whether the
- * workflow has stopped (dead or complete) before deleting R2/KV/D1 assets.
- * The cleanup record itself is deleted after successful cleanup.
+ * The DO tombstone is confirmed (or performed) here before deleting R2/KV
+ * assets. The admin route attempts to tombstone the DO before writing the
+ * cleanup record, but that tombstone can fail (DO unreachable, transient
+ * error). If this function skipped the tombstone — assuming it was already
+ * done — a failed initial tombstone would leave the DO alive after the
+ * reaper deletes R2 and KV, creating a metadata-resurrection path if
+ * anything later updates that DO. deleteMetadataDO is idempotent (calling
+ * /delete on an already-tombstoned DO is a 200 no-op), so re-tombstoning
+ * is always safe. The cleanup record itself is deleted only after
+ * tombstone, R2, and KV cleanup all succeed.
  */
 export async function reapCleanupRecords(env: Env): Promise<ReapResult> {
 	const result: ReapResult = {
@@ -449,11 +455,32 @@ export async function reapCleanupRecords(env: Env): Promise<ReapResult> {
 					return;
 				}
 
-				// Workflow has stopped — delete R2 assets. The DO is
-				// already tombstoned (done by the admin route before
-				// writing the cleanup record), so we skip the DO status
-				// check and DO tombstone that the stuck-processing reaper
-				// performs.
+				// Tombstone the DO BEFORE deleting R2 assets and KV metadata.
+				// The admin route attempts this before writing the cleanup
+				// record, but that attempt can fail. deleteMetadataDO is
+				// idempotent (a no-op on an already-tombstoned DO), so calling
+				// it here is always safe — it either confirms the prior
+				// tombstone or performs it for the first time. If it fails, do
+				// NOT delete R2/KV — a live DO can resurrect stale metadata via
+				// KV sync after R2/KV cleanup. Preserve the cleanup record for
+				// the next reaper run.
+				try {
+					await deleteMetadataDO(env.PUZZLE_METADATA_DO, record.puzzleId);
+				} catch (doErr) {
+					console.error(
+						`Reaper cleanup: failed to tombstone metadata DO for ${record.puzzleId}:`,
+						doErr
+					);
+					result.errors++;
+					result.details.push({
+						puzzleId: record.puzzleId,
+						action: 'cleanup-do-tombstone-failed',
+						error: String(doErr)
+					});
+					return;
+				}
+
+				// DO tombstoned — safe to delete R2 assets.
 				try {
 					const r2Result = await deletePuzzleAssets(
 						env.PUZZLES_BUCKET,

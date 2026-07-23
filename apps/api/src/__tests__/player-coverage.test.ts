@@ -14,19 +14,32 @@ vi.mock('../db', () => ({
 
 vi.mock('@perseus/shared', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('@perseus/shared')>();
-	const store = new Map<string, { displayName: string | null; avatarUrl: string | null }>();
+	const store = new Map<
+		string,
+		{ displayName: string | null; avatarUrl: string | null; avatarUpdateToken: string | null }
+	>();
 	return {
 		...actual,
 		__store: store,
 		getProfileOverride: vi.fn((db: unknown, playerId: string) => store.get(playerId) ?? null),
 		updateProfileDisplayName: vi.fn((db: unknown, playerId: string, displayName: string | null) => {
-			const existing = store.get(playerId) ?? { displayName: null, avatarUrl: null };
+			const existing = store.get(playerId) ?? {
+				displayName: null,
+				avatarUrl: null,
+				avatarUpdateToken: null
+			};
 			store.set(playerId, { ...existing, displayName });
 		}),
-		updateProfileAvatarUrl: vi.fn((db: unknown, playerId: string, avatarUrl: string) => {
-			const existing = store.get(playerId) ?? { displayName: null, avatarUrl: null };
-			store.set(playerId, { ...existing, avatarUrl });
-		}),
+		updateProfileAvatarUrl: vi.fn(
+			(db: unknown, playerId: string, avatarUrl: string, _ts: number, token?: string) => {
+				const existing = store.get(playerId) ?? {
+					displayName: null,
+					avatarUrl: null,
+					avatarUpdateToken: null
+				};
+				store.set(playerId, { ...existing, avatarUrl, avatarUpdateToken: token ?? null });
+			}
+		),
 		getPlayerSummary: vi.fn(() => ({
 			puzzlesUploaded: 0,
 			puzzlesSolved: 0,

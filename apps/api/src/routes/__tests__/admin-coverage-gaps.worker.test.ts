@@ -541,6 +541,14 @@ describe('Admin Worker — alive-commit conflict cleanup', () => {
 		const body = (await res.json()) as any;
 		expect(body.message).toContain('DO tombstone failed');
 		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		// A cleanup record must be written so the reaper can retry the DO
+		// tombstone and clean up R2/KV on its next run. Without this, a
+		// 'complete' workflow duplicate would never be cleaned up (neither
+		// reaper selects it).
+		expect(storage.writeCleanupRecord).toHaveBeenCalledWith(
+			env.PUZZLE_METADATA,
+			expect.objectContaining({ puzzleId: 'alive-puzzle' })
+		);
 	});
 
 	it('preserves KV when R2 cleanup fails partially', async () => {
@@ -662,6 +670,12 @@ describe('Admin Worker — dead-commit conflict cleanup error paths', () => {
 		const body = (await res.json()) as any;
 		expect(body.message).toContain('DO tombstone failed');
 		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		// A cleanup record must be written so the reaper can retry the DO
+		// tombstone and clean up R2/KV on its next run.
+		expect(storage.writeCleanupRecord).toHaveBeenCalledWith(
+			env.PUZZLE_METADATA,
+			expect.objectContaining({ puzzleId: 'dead-puzzle' })
+		);
 	});
 
 	it('logs when metadata cleanup fails after R2 cleanup succeeds', async () => {

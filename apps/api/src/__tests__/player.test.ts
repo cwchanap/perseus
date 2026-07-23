@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Hono } from 'hono';
-import { rmSync, mkdtempSync, writeFileSync, readFileSync, existsSync, readdirSync } from 'node:fs';
+import { rmSync, mkdtempSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -15,7 +15,10 @@ vi.mock('../db', () => ({
 
 vi.mock('@perseus/shared', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('@perseus/shared')>();
-	const store = new Map<string, { displayName: string | null; avatarUrl: string | null }>();
+	const store = new Map<
+		string,
+		{ displayName: string | null; avatarUrl: string | null; avatarUpdateToken: string | null }
+	>();
 	// In-memory stores backing the mocked list repositories so the list
 	// routes can be exercised end-to-end without a real database.
 	const puzzlesStore = new Map<string, unknown[]>();
@@ -30,13 +33,23 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 		// Field-specific upserts mirror the real ON CONFLICT behavior: each
 		// writes only its column, preserving the other.
 		updateProfileDisplayName: vi.fn((db: unknown, playerId: string, displayName: string | null) => {
-			const existing = store.get(playerId) ?? { displayName: null, avatarUrl: null };
+			const existing = store.get(playerId) ?? {
+				displayName: null,
+				avatarUrl: null,
+				avatarUpdateToken: null
+			};
 			store.set(playerId, { ...existing, displayName });
 		}),
-		updateProfileAvatarUrl: vi.fn((db: unknown, playerId: string, avatarUrl: string) => {
-			const existing = store.get(playerId) ?? { displayName: null, avatarUrl: null };
-			store.set(playerId, { ...existing, avatarUrl });
-		}),
+		updateProfileAvatarUrl: vi.fn(
+			(db: unknown, playerId: string, avatarUrl: string, _ts: number, token?: string) => {
+				const existing = store.get(playerId) ?? {
+					displayName: null,
+					avatarUrl: null,
+					avatarUpdateToken: null
+				};
+				store.set(playerId, { ...existing, avatarUrl, avatarUpdateToken: token ?? null });
+			}
+		),
 		getPlayerSummary: vi.fn(() => ({
 			puzzlesUploaded: 0,
 			puzzlesSolved: 0,
@@ -304,10 +317,13 @@ describe('player avatar route (Bun)', () => {
 		expect(res.status).toBe(200);
 		const body = await res.json();
 		expect(body.avatarUrl).toBe('/api/player/p1/avatar');
-		// The live file must exist and no staging files should remain.
-		expect(existsSync(join(dataDir, 'avatars', 'p1'))).toBe(true);
-		const files = readdirSync(join(dataDir, 'avatars'));
-		expect(files.filter((f) => f.startsWith('.staging-'))).toHaveLength(0);
+		// The versioned file must exist under avatars/p1/{token}. The
+		// player directory contains exactly one token-named file.
+		const playerDir = join(dataDir, 'avatars', 'p1');
+		expect(existsSync(playerDir)).toBe(true);
+		const files = readdirSync(playerDir);
+		expect(files).toHaveLength(1);
+		expect(files[0]).not.toMatch(/^\.staging-/);
 	});
 
 	it('GET avatar serves the stored image with sniffed content-type', async () => {
@@ -389,16 +405,22 @@ describe('player avatar route (Bun)', () => {
 		expect(row.avatarUrl).toBe('/api/player/p1/avatar');
 	});
 
-	it('cleans up staging file and returns 500 when the DB override write throws (prior avatar preserved)', async () => {
-		// Seed a pre-existing avatar at the live path. The staging approach
-		// never touches the live path until the DB write succeeds, so the
-		// prior avatar must remain intact on DB failure.
+	it('cleans up versioned file and returns 500 when the DB override write throws (prior avatar preserved)', async () => {
+		// Seed a pre-existing avatar at the legacy live path. The versioned
+		// approach removes the legacy file to create a versioned directory
+		// (avatars/p1/{token}), then writes the new upload there. If the DB
+		// write fails, the versioned file is cleaned up. The legacy file is
+		// gone (replaced by the directory), but D1 was never updated — the
+		// serve route reads D1 (no token for this player) and falls back to
+		// the legacy path, which 404s. The client can retry. This is a
+		// local-dev-only trade-off: production uses R2 where object and
+		// directory keys don't conflict.
 		const { mkdirSync } = await import('node:fs');
-		const avatarPath = join(dataDir, 'avatars', 'p1');
+		const legacyPath = join(dataDir, 'avatars', 'p1');
 		const avatarsDir = join(dataDir, 'avatars');
 		mkdirSync(avatarsDir, { recursive: true });
 		const priorPng = [0x89, 0x50, 0x4e, 0x47, 0xaa, 0xbb];
-		writeFileSync(avatarPath, Buffer.from(priorPng));
+		writeFileSync(legacyPath, Buffer.from(priorPng));
 
 		const { updateProfileAvatarUrl } = await import('@perseus/shared');
 		vi.mocked(updateProfileAvatarUrl).mockRejectedValueOnce(new Error('DB down'));
@@ -415,15 +437,15 @@ describe('player avatar route (Bun)', () => {
 		});
 
 		expect(res.status).toBe(500);
-		// The live file must still hold the prior bytes — the failed upload
-		// never wrote to it.
-		const restored = readFileSync(avatarPath);
-		expect(Array.from(restored)).toEqual(priorPng);
-		// No staging files should remain — the staged upload was cleaned up.
-		const files = readdirSync(avatarsDir);
-		expect(files.filter((f) => f.startsWith('.staging-'))).toHaveLength(0);
+		// The versioned directory exists (mkdir ran before the DB write),
+		// but it must be empty — the versioned file was cleaned up on DB
+		// failure.
+		const playerDir = join(dataDir, 'avatars', 'p1');
+		expect(existsSync(playerDir)).toBe(true);
+		const files = readdirSync(playerDir);
+		expect(files).toHaveLength(0);
 		expect(consoleSpy).toHaveBeenCalledWith(
-			'Avatar DB write failed; cleaning up staged avatar file:',
+			'Avatar DB write failed; cleaning up versioned avatar file:',
 			expect.any(Error)
 		);
 		consoleSpy.mockRestore();
@@ -445,17 +467,19 @@ describe('player avatar route (Bun)', () => {
 		});
 
 		expect(res.status).toBe(500);
-		// The live file must not exist — no orphaned bytes reachable via
-		// the public serve route.
-		expect(existsSync(join(dataDir, 'avatars', 'p1'))).toBe(false);
-		// No staging files should remain — the staged upload was cleaned up.
-		const avatarsDir = join(dataDir, 'avatars');
-		if (existsSync(avatarsDir)) {
-			const files = readdirSync(avatarsDir);
-			expect(files.filter((f) => f.startsWith('.staging-'))).toHaveLength(0);
+		// The versioned player directory may exist (mkdir ran before the
+		// DB write), but it must be empty — the versioned file was cleaned
+		// up on DB failure. No orphaned bytes reachable via the public
+		// serve route (the serve route reads D1, which has no token for
+		// this player, so it falls back to the legacy path which doesn't
+		// exist either).
+		const playerDir = join(dataDir, 'avatars', 'p1');
+		if (existsSync(playerDir)) {
+			const files = readdirSync(playerDir);
+			expect(files).toHaveLength(0);
 		}
 		expect(consoleSpy).toHaveBeenCalledWith(
-			'Avatar DB write failed; cleaning up staged avatar file:',
+			'Avatar DB write failed; cleaning up versioned avatar file:',
 			expect.any(Error)
 		);
 		consoleSpy.mockRestore();

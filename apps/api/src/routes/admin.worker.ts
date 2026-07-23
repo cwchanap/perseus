@@ -1447,6 +1447,20 @@ admin.post('/puzzles', requireAuth, async (c) => {
 									`Failed to tombstone metadata DO after alive-commit conflict for ${id}:`,
 									doErr
 								);
+								// Write a cleanup record so the reaper can tombstone the
+								// DO and clean up R2/KV on its next run. Without this
+								// record, neither reaper selects this puzzle: the
+								// stuck-processing reaper skips 'complete' workflows,
+								// and the cleanup-record reaper has no record to process.
+								try {
+									await writeCleanupRecord(c.env.PUZZLE_METADATA, {
+										puzzleId: id,
+										pieceCount,
+										createdAt: Date.now()
+									});
+								} catch (cleanupErr) {
+									console.error(`Failed to write cleanup record for ${id}:`, cleanupErr);
+								}
 								reservedIdempotencyKey = undefined;
 								return c.json(
 									{
@@ -1677,6 +1691,20 @@ admin.post('/puzzles', requireAuth, async (c) => {
 					await deleteMetadataDO(c.env.PUZZLE_METADATA_DO, id);
 				} catch (doErr) {
 					console.error(`Failed to tombstone orphaned metadata DO for ${id}:`, doErr);
+					// Write a cleanup record so the reaper can tombstone the
+					// DO and clean up R2/KV on its next run. Without this
+					// record, neither reaper selects this puzzle: the
+					// stuck-processing reaper skips 'complete' workflows,
+					// and the cleanup-record reaper has no record to process.
+					try {
+						await writeCleanupRecord(c.env.PUZZLE_METADATA, {
+							puzzleId: id,
+							pieceCount,
+							createdAt: Date.now()
+						});
+					} catch (cleanupErr) {
+						console.error(`Failed to write cleanup record for ${id}:`, cleanupErr);
+					}
 					reservedIdempotencyKey = undefined;
 					return c.json(
 						{
