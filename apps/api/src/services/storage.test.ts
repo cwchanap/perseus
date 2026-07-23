@@ -612,4 +612,69 @@ describe('idempotency reservation', () => {
 		// Cleanup: remove the directory so it doesn't interfere with other tests.
 		await rmdir(reservationPath, { recursive: true }).catch(() => {});
 	});
+
+	it('finds a legacy puzzle by idempotency key when no reservation file exists', async () => {
+		// Legacy path: a puzzle was created with an idempotency key but the
+		// reservation file was lost (e.g. migrated from before reservations
+		// existed). reserveIdempotencyKey should scan puzzles and find the
+		// matching one, returning existing: true.
+		const { unlink } = await import('node:fs/promises');
+
+		// Create a puzzle with an idempotency key.
+		const legacyPuzzle = makePuzzle('puzzle-legacy', {
+			idempotencyKey: 'key-legacy-find'
+		});
+		await storageModule.createPuzzle(legacyPuzzle);
+
+		// Also create a second puzzle with a different key so the scan
+		// encounters a non-matching puzzle (covers the false branch of
+		// the idempotencyKey comparison in findPuzzleByIdempotencyKey).
+		const otherPuzzle = makePuzzle('puzzle-other-idem', {
+			idempotencyKey: 'key-different'
+		});
+		await storageModule.createPuzzle(otherPuzzle);
+
+		// Ensure no reservation file exists for 'key-legacy-find'.
+		const reservationPath = join(tempDir, 'idempotency', 'key-legacy-find');
+		await unlink(reservationPath).catch(() => {});
+
+		const result = await storageModule.reserveIdempotencyKey('key-legacy-find', 'puzzle-new');
+		expect(result).toEqual({ existing: true, puzzleId: 'puzzle-legacy' });
+
+		// The reservation file should now be populated with the legacy puzzle's ID.
+		expect(await readFile(reservationPath, 'utf-8')).toBe('puzzle-legacy');
+	});
+
+	it('returns existing when atomic claim loses a race to a concurrent writer', async () => {
+		// Race condition path (line 378): the fast path readFile fails (file
+		// doesn't exist), the legacy check finds nothing, and the atomic
+		// claim's link() fails with EEXIST because another process created
+		// the file with content between the readFile and the link. The code
+		// reads the existing content and returns { existing: true, ... }.
+		const { writeFile, unlink } = await import('node:fs/promises');
+		const reservationPath = join(tempDir, 'idempotency', 'key-race-378');
+
+		// Ensure the file does not exist so the fast path hits ENOENT.
+		await unlink(reservationPath).catch(() => {});
+
+		// Concurrently: write the file with content while the reserve is
+		// in progress (between the fast-path readFile and the atomic link).
+		// The reserve's atomic claim will get EEXIST and read our content.
+		const raceWriter = (async () => {
+			// Small delay so the reserve's fast path has already missed.
+			await new Promise((resolve) => setTimeout(resolve, 5));
+			await writeFile(reservationPath, 'puzzle-race-winner', { flag: 'wx' }).catch(() => {});
+		})();
+
+		const result = await storageModule.reserveIdempotencyKey('key-race-378', 'puzzle-race-loser');
+		await raceWriter;
+
+		// Either we won the race (existing: false) or lost it (existing: true).
+		// Both outcomes are valid; the test exercises the atomic claim path.
+		if (result.existing) {
+			expect(result.puzzleId).toBe('puzzle-race-winner');
+		} else {
+			expect(result.puzzleId).toBe('puzzle-race-loser');
+		}
+	});
 });

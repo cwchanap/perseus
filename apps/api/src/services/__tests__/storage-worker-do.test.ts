@@ -38,6 +38,32 @@ describe('getAuthoritativeStatus', () => {
 		} as any;
 		await expect(getAuthoritativeStatus(doNs, 'puzzle-1')).rejects.toThrow();
 	});
+
+	it('throws when DO response is missing the status field', async () => {
+		const stub = {
+			fetch: vi.fn(async () => new Response(JSON.stringify({ foo: 'bar' }), { status: 200 }))
+		};
+		const doNs = {
+			idFromName: vi.fn(() => 'id-1'),
+			get: vi.fn(() => stub)
+		} as any;
+		await expect(getAuthoritativeStatus(doNs, 'puzzle-1')).rejects.toThrow(
+			'Authoritative status response missing status field'
+		);
+	});
+
+	it('throws when DO response status is not a string', async () => {
+		const stub = {
+			fetch: vi.fn(async () => new Response(JSON.stringify({ status: 42 }), { status: 200 }))
+		};
+		const doNs = {
+			idFromName: vi.fn(() => 'id-1'),
+			get: vi.fn(() => stub)
+		} as any;
+		await expect(getAuthoritativeStatus(doNs, 'puzzle-1')).rejects.toThrow(
+			'Authoritative status response missing status field'
+		);
+	});
 });
 
 describe('deleteMetadataDO', () => {
