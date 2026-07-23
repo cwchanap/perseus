@@ -498,6 +498,99 @@ describe('player avatar route (Bun)', () => {
 		);
 		consoleSpy.mockRestore();
 	});
+
+	it('restores legacy backup when two concurrent first-time uploads both fail', async () => {
+		// Regression: two concurrent uploads both encounter a legacy avatar
+		// file at avatars/p1. Upload A renames it to p1.legacy-backup and
+		// creates the versioned directory. Upload B sees the directory (no
+		// migration, migratedLegacy=false) and writes its own versioned
+		// file. When both DB writes fail, A's rollback cannot rmdir the
+		// directory (B's file remains), so the backup is stranded. B's
+		// rollback (migratedLegacy=false) must still restore the backup
+		// once the directory becomes empty — otherwise D1 points at the
+		// legacy path whose file is gone, producing a 404.
+		const { mkdirSync } = await import('node:fs');
+		const legacyPath = join(dataDir, 'avatars', 'p1');
+		const avatarsDir = join(dataDir, 'avatars');
+		mkdirSync(avatarsDir, { recursive: true });
+		const priorPng = [0x89, 0x50, 0x4e, 0x47, 0xaa, 0xbb];
+		writeFileSync(legacyPath, Buffer.from(priorPng));
+
+		const { updateProfileAvatarUrl } = await import('@perseus/shared');
+
+		// Gate each upload's DB write so we can control the interleaving.
+		let releaseA!: () => void;
+		const gateA = new Promise<void>((resolve) => {
+			releaseA = resolve;
+		});
+		let releaseB!: () => void;
+		const gateB = new Promise<void>((resolve) => {
+			releaseB = resolve;
+		});
+
+		// A's DB write blocks on gateA, then fails.
+		vi.mocked(updateProfileAvatarUrl).mockImplementationOnce(async () => {
+			await gateA;
+			throw new Error('DB down A');
+		});
+		// B's DB write blocks on gateB, then fails.
+		vi.mocked(updateProfileAvatarUrl).mockImplementationOnce(async () => {
+			await gateB;
+			throw new Error('DB down B');
+		});
+
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const makeForm = () => {
+			const blob = new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' });
+			const form = new FormData();
+			form.append('avatar', blob, 'a.png');
+			return form;
+		};
+
+		// Start A — renames legacy to backup, creates dir, writes tokenA,
+		// then blocks on the DB write.
+		const promiseA = buildApp().request('/api/player/avatar', {
+			method: 'POST',
+			headers: AUTH_COOKIE,
+			body: makeForm()
+		});
+
+		// Wait for A to reach the DB write (rename + mkdir + writeFile).
+		await new Promise((resolve) => setTimeout(resolve, 50));
+
+		// Start B — sees the directory (no migration), writes tokenB,
+		// then blocks on the DB write.
+		const promiseB = buildApp().request('/api/player/avatar', {
+			method: 'POST',
+			headers: AUTH_COOKIE,
+			body: makeForm()
+		});
+
+		// Wait for B to reach the DB write.
+		await new Promise((resolve) => setTimeout(resolve, 50));
+
+		// Release A — DB fails, A rolls back. rmdir fails (B's file
+		// remains), so the backup is NOT restored yet.
+		releaseA();
+		await promiseA;
+
+		// Release B — DB fails, B rolls back. rmdir succeeds (directory
+		// now empty), so the backup IS restored.
+		releaseB();
+		await promiseB;
+
+		// The legacy file must be restored at its original path (a FILE,
+		// not a directory) so the serve route's legacy fallback resolves.
+		const { statSync } = await import('node:fs');
+		expect(existsSync(legacyPath)).toBe(true);
+		const stat = statSync(legacyPath);
+		expect(stat.isFile()).toBe(true);
+		const restored = readFileSync(legacyPath);
+		expect(Array.from(restored)).toEqual(priorPng);
+		// No backup file or versioned directory left behind.
+		expect(existsSync(join(dataDir, 'avatars', 'p1.legacy-backup'))).toBe(false);
+	});
 });
 
 describe('player lists (Bun)', () => {
