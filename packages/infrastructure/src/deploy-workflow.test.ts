@@ -40,8 +40,10 @@ const workflowDoc = parse(workflow) as WorkflowDoc;
 function getConfigMap(jobName: string): ConfigMap {
 	const job = workflowDoc.jobs[jobName];
 	if (!job) throw new Error(`job '${jobName}' not found in workflow`);
-	const step = job.steps.find((s) => s.uses?.startsWith('pulumi/actions'));
-	if (!step) throw new Error(`pulumi/actions step not found in job '${jobName}'`);
+	const step = job.steps.find(
+		(s) => s.uses?.startsWith('pulumi/actions') && Boolean(s.with?.['config-map'])
+	);
+	if (!step) throw new Error(`pulumi/actions config-map step not found in job '${jobName}'`);
 	const raw = step.with?.['config-map'];
 	if (!raw) throw new Error(`config-map not found in pulumi/actions step of job '${jobName}'`);
 	return parse(raw) as ConfigMap;
