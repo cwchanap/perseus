@@ -9,6 +9,7 @@ import {
 	updateProfileAvatarUrl,
 	clearProfileAvatarUrl,
 	clearProfileAvatarUrlIfOwned,
+	getAvatarTokensByPlayerIds,
 	insertPuzzleOwnership,
 	deletePuzzleOwnership,
 	deletePuzzleStats,
@@ -123,6 +124,28 @@ describe('repositories', () => {
 		await clearProfileAvatarUrlIfOwned(helper.db, 'p1', 'token-none');
 		const row = await getProfileOverride(helper.db, 'p1');
 		expect(row).toBeNull();
+	});
+
+	it('getAvatarTokensByPlayerIds returns empty Map for empty input', async () => {
+		const result = await getAvatarTokensByPlayerIds(helper.db, []);
+		expect(result.size).toBe(0);
+	});
+
+	it('getAvatarTokensByPlayerIds returns tokens for players with profiles', async () => {
+		await updateProfileAvatarUrl(helper.db, 'p1', 'url-1', 1000, 'token-A');
+		await updateProfileAvatarUrl(helper.db, 'p2', 'url-2', 2000, 'token-B');
+		const result = await getAvatarTokensByPlayerIds(helper.db, ['p1', 'p2', 'p3']);
+		expect(result.get('p1')).toBe('token-A');
+		expect(result.get('p2')).toBe('token-B');
+		// p3 has no profile row — not in the Map
+		expect(result.has('p3')).toBe(false);
+	});
+
+	it('getAvatarTokensByPlayerIds returns null for players with null token', async () => {
+		// A profile with displayName but no avatar has a null token
+		await updateProfileDisplayName(helper.db, 'p1', 'Name');
+		const result = await getAvatarTokensByPlayerIds(helper.db, ['p1']);
+		expect(result.get('p1')).toBeNull();
 	});
 
 	it('insertPuzzleOwnership + list/count', async () => {

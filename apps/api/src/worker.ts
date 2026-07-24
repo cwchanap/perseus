@@ -131,7 +131,12 @@ app.route('/api/admin', admin);
 app.route('/api/auth', auth);
 app.route('/api/player', player);
 
-import { reapStuckPuzzles, reapCleanupRecords, reapOrphanedReservations } from './services/reaper';
+import {
+	reapStuckPuzzles,
+	reapCleanupRecords,
+	reapOrphanedReservations,
+	reapOrphanedAvatars
+} from './services/reaper';
 
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -251,6 +256,25 @@ export default {
 					}
 				} catch (err) {
 					console.error('Reaper orphan: scheduled run failed:', err);
+				}
+				// Garbage-collect orphaned versioned avatar R2 objects left by
+				// concurrent upload races the read-after-write cleanup cannot
+				// fully cover. Delayed GC: only deletes objects older than
+				// AVATAR_GC_AGE_MS whose token is no longer authoritative.
+				try {
+					const avatarResult = await reapOrphanedAvatars(env);
+					if (avatarResult.candidates > 0) {
+						console.log(
+							`Reaper avatar GC: scanned=${avatarResult.scanned} ` +
+								`candidates=${avatarResult.candidates} ` +
+								`reaped=${avatarResult.reaped} errors=${avatarResult.errors}`
+						);
+						if (avatarResult.details.length > 0) {
+							console.log('Reaper avatar GC details:', JSON.stringify(avatarResult.details));
+						}
+					}
+				} catch (err) {
+					console.error('Reaper avatar GC: scheduled run failed:', err);
 				}
 			})()
 		);

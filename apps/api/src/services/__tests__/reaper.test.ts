@@ -4,8 +4,11 @@ import {
 	reapStuckPuzzles,
 	reapCleanupRecords,
 	reapOrphanedReservations,
+	reapOrphanedAvatars,
 	REAP_AFTER_MS,
-	REAP_BATCH_LIMIT
+	REAP_BATCH_LIMIT,
+	AVATAR_GC_AGE_MS,
+	AVATAR_GC_BATCH_LIMIT
 } from '../reaper';
 
 // Mock storage.worker functions
@@ -27,10 +30,16 @@ vi.mock('../../db.worker', () => ({
 	getWorkerDb: vi.fn(() => ({}))
 }));
 
-// Mock @perseus/shared's deletePuzzleOwnership so it stays a no-op spy.
+// Mock @perseus/shared's deletePuzzleOwnership and getAvatarTokensByPlayerIds
+// so they stay no-op spies. getAvatarTokensByPlayerIds is overridden per-test
+// via the shared mock object.
 vi.mock('@perseus/shared', async (importOriginal) => {
 	const actual = (await importOriginal()) as Record<string, unknown>;
-	return { ...actual, deletePuzzleOwnership: vi.fn(async () => undefined) };
+	return {
+		...actual,
+		deletePuzzleOwnership: vi.fn(async () => undefined),
+		getAvatarTokensByPlayerIds: vi.fn(async () => new Map())
+	};
 });
 
 // Import after mock so the reaper uses the mocked versions
@@ -47,7 +56,7 @@ import {
 	getIdempotencyReservation
 } from '../storage.worker';
 import { getWorkerDb } from '../../db.worker';
-import { deletePuzzleOwnership } from '@perseus/shared';
+import { deletePuzzleOwnership, getAvatarTokensByPlayerIds } from '@perseus/shared';
 
 const storage = {
 	deletePuzzleAssets,
@@ -1521,5 +1530,215 @@ describe('reapOrphanedReservations', () => {
 		expect(result.reaped).toBe(0);
 		expect(result.errors).toBe(1);
 		expect(result.details.some((d) => d.action === 'orphan-error')).toBe(true);
+	});
+});
+
+describe('reapOrphanedAvatars', () => {
+	const NOW = 1700000000000;
+	const OLD = NOW - AVATAR_GC_AGE_MS - 1;
+	const RECENT = NOW - 1000;
+
+	function r2Object(key: string, uploadedMs: number) {
+		return { key, uploaded: new Date(uploadedMs), size: 1024, etag: 'etag-' + key };
+	}
+
+	function makeAvatarEnv(objects: Array<{ key: string; uploaded: number }>) {
+		const deleteFn = vi.fn(async () => undefined);
+		return {
+			...makeEnv(),
+			PUZZLES_BUCKET: {
+				list: vi.fn(async () => ({
+					objects: objects.map((o) => r2Object(o.key, o.uploaded)),
+					truncated: false,
+					cursor: undefined
+				})),
+				delete: deleteFn
+			} as any
+		} as any;
+	}
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		(getWorkerDb as any).mockReturnValue({});
+	});
+
+	it('returns empty result when no avatar objects exist', async () => {
+		const env = makeAvatarEnv([]);
+		const result = await reapOrphanedAvatars(env, NOW);
+		expect(result.scanned).toBe(0);
+		expect(result.candidates).toBe(0);
+		expect(result.reaped).toBe(0);
+	});
+
+	it('skips legacy unversioned keys (avatars/{playerId})', async () => {
+		const env = makeAvatarEnv([{ key: 'avatars/player-1', uploaded: OLD }]);
+		(getAvatarTokensByPlayerIds as any).mockResolvedValue(new Map());
+		const result = await reapOrphanedAvatars(env, NOW);
+		expect(result.scanned).toBe(1);
+		expect(result.candidates).toBe(0);
+		expect(result.reaped).toBe(0);
+		expect(env.PUZZLES_BUCKET.delete).not.toHaveBeenCalled();
+	});
+
+	it('deletes versioned object whose token is not authoritative and is old enough', async () => {
+		const env = makeAvatarEnv([
+			{ key: 'avatars/p1/token-A', uploaded: OLD },
+			{ key: 'avatars/p1/token-B', uploaded: OLD }
+		]);
+		(getAvatarTokensByPlayerIds as any).mockResolvedValue(new Map([['p1', 'token-A']]));
+		const result = await reapOrphanedAvatars(env, NOW);
+		expect(result.scanned).toBe(2);
+		expect(result.candidates).toBe(1);
+		expect(result.reaped).toBe(1);
+		expect(env.PUZZLES_BUCKET.delete).toHaveBeenCalledWith('avatars/p1/token-B');
+		expect(env.PUZZLES_BUCKET.delete).not.toHaveBeenCalledWith('avatars/p1/token-A');
+	});
+
+	it('preserves the authoritative token object', async () => {
+		const env = makeAvatarEnv([{ key: 'avatars/p1/token-A', uploaded: OLD }]);
+		(getAvatarTokensByPlayerIds as any).mockResolvedValue(new Map([['p1', 'token-A']]));
+		const result = await reapOrphanedAvatars(env, NOW);
+		expect(result.candidates).toBe(0);
+		expect(result.reaped).toBe(0);
+		expect(env.PUZZLES_BUCKET.delete).not.toHaveBeenCalled();
+	});
+
+	it('skips recent objects below the age threshold', async () => {
+		const env = makeAvatarEnv([{ key: 'avatars/p1/token-orphan', uploaded: RECENT }]);
+		(getAvatarTokensByPlayerIds as any).mockResolvedValue(new Map([['p1', 'token-A']]));
+		const result = await reapOrphanedAvatars(env, NOW);
+		expect(result.candidates).toBe(0);
+		expect(result.reaped).toBe(0);
+		expect(env.PUZZLES_BUCKET.delete).not.toHaveBeenCalled();
+	});
+
+	it('deletes all versioned objects for a player with no D1 profile row', async () => {
+		// Player has no profile override in D1 — all versioned objects are
+		// orphans. This covers the case where the profile was deleted or the
+		// D1 row was never created.
+		const env = makeAvatarEnv([
+			{ key: 'avatars/p1/token-A', uploaded: OLD },
+			{ key: 'avatars/p1/token-B', uploaded: OLD }
+		]);
+		// D1 returns an empty Map (no row for p1)
+		(getAvatarTokensByPlayerIds as any).mockResolvedValue(new Map());
+		const result = await reapOrphanedAvatars(env, NOW);
+		expect(result.candidates).toBe(2);
+		expect(result.reaped).toBe(2);
+		expect(env.PUZZLES_BUCKET.delete).toHaveBeenCalledTimes(2);
+	});
+
+	it('fails closed when D1 is unavailable (no deletes)', async () => {
+		const env = makeAvatarEnv([{ key: 'avatars/p1/token-A', uploaded: OLD }]);
+		(getAvatarTokensByPlayerIds as any).mockRejectedValue(new Error('D1 down'));
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		const result = await reapOrphanedAvatars(env, NOW);
+		expect(result.reaped).toBe(0);
+		expect(result.errors).toBe(1);
+		expect(result.details.some((d) => d.action === 'avatar-gc-d1-unavailable')).toBe(true);
+		expect(env.PUZZLES_BUCKET.delete).not.toHaveBeenCalled();
+	});
+
+	it('handles multiple players with mixed authoritative/orphan tokens', async () => {
+		const env = makeAvatarEnv([
+			{ key: 'avatars/p1/token-A', uploaded: OLD },
+			{ key: 'avatars/p1/token-B', uploaded: OLD },
+			{ key: 'avatars/p2/token-C', uploaded: OLD },
+			{ key: 'avatars/p2/token-D', uploaded: OLD }
+		]);
+		(getAvatarTokensByPlayerIds as any).mockResolvedValue(
+			new Map([
+				['p1', 'token-A'],
+				['p2', 'token-D']
+			])
+		);
+		const result = await reapOrphanedAvatars(env, NOW);
+		expect(result.candidates).toBe(2);
+		expect(result.reaped).toBe(2);
+		expect(env.PUZZLES_BUCKET.delete).toHaveBeenCalledWith('avatars/p1/token-B');
+		expect(env.PUZZLES_BUCKET.delete).toHaveBeenCalledWith('avatars/p2/token-C');
+		expect(env.PUZZLES_BUCKET.delete).not.toHaveBeenCalledWith('avatars/p1/token-A');
+		expect(env.PUZZLES_BUCKET.delete).not.toHaveBeenCalledWith('avatars/p2/token-D');
+	});
+
+	it('respects AVATAR_GC_BATCH_LIMIT', async () => {
+		const objects = Array.from({ length: AVATAR_GC_BATCH_LIMIT + 5 }, (_, i) => ({
+			key: `avatars/p1/token-${i}`,
+			uploaded: OLD
+		}));
+		const env = makeAvatarEnv(objects);
+		// No authoritative token — all are orphans
+		(getAvatarTokensByPlayerIds as any).mockResolvedValue(new Map());
+		const result = await reapOrphanedAvatars(env, NOW);
+		expect(result.candidates).toBe(objects.length);
+		expect(result.reaped).toBe(AVATAR_GC_BATCH_LIMIT);
+		expect(env.PUZZLES_BUCKET.delete).toHaveBeenCalledTimes(AVATAR_GC_BATCH_LIMIT);
+	});
+
+	it('handles R2 delete failure gracefully (records error, continues)', async () => {
+		const env = makeAvatarEnv([
+			{ key: 'avatars/p1/token-A', uploaded: OLD },
+			{ key: 'avatars/p1/token-B', uploaded: OLD }
+		]);
+		(getAvatarTokensByPlayerIds as any).mockResolvedValue(new Map());
+		env.PUZZLES_BUCKET.delete = vi.fn(async (key: string) => {
+			if (key === 'avatars/p1/token-A') throw new Error('R2 delete failed');
+		});
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		const result = await reapOrphanedAvatars(env, NOW);
+		expect(result.reaped).toBe(1);
+		expect(result.errors).toBe(1);
+		expect(result.details.some((d) => d.action === 'avatar-gc-delete-failed')).toBe(true);
+	});
+
+	it('handles R2 list pagination (truncated=true)', async () => {
+		const page1 = [
+			{ key: 'avatars/p1/token-A', uploaded: OLD },
+			{ key: 'avatars/p1/token-B', uploaded: OLD }
+		];
+		const page2 = [{ key: 'avatars/p2/token-C', uploaded: OLD }];
+		let callCount = 0;
+		const env = {
+			...makeEnv(),
+			PUZZLES_BUCKET: {
+				list: vi.fn(async () => {
+					callCount++;
+					if (callCount === 1) {
+						return {
+							objects: page1.map((o) => r2Object(o.key, o.uploaded)),
+							truncated: true,
+							cursor: 'next-page'
+						};
+					}
+					return {
+						objects: page2.map((o) => r2Object(o.key, o.uploaded)),
+						truncated: false,
+						cursor: undefined
+					};
+				}),
+				delete: vi.fn(async () => undefined)
+			} as any
+		} as any;
+		(getAvatarTokensByPlayerIds as any).mockResolvedValue(new Map());
+		const result = await reapOrphanedAvatars(env, NOW);
+		expect(result.scanned).toBe(3);
+		expect(result.candidates).toBe(3);
+		expect(result.reaped).toBe(3);
+		expect(env.PUZZLES_BUCKET.list).toHaveBeenCalledTimes(2);
+	});
+
+	it('skips malformed keys (not avatars/{playerId}/{token})', async () => {
+		const env = makeAvatarEnv([
+			{ key: 'avatars/p1/token-A', uploaded: OLD },
+			{ key: 'avatars/', uploaded: OLD },
+			{ key: 'avatars/p1/', uploaded: OLD },
+			{ key: 'avatars/p1/token/A/extra', uploaded: OLD }
+		]);
+		(getAvatarTokensByPlayerIds as any).mockResolvedValue(new Map());
+		const result = await reapOrphanedAvatars(env, NOW);
+		// Only avatars/p1/token-A is a valid versioned key
+		expect(result.scanned).toBe(4);
+		expect(result.candidates).toBe(1);
+		expect(result.reaped).toBe(1);
 	});
 });
