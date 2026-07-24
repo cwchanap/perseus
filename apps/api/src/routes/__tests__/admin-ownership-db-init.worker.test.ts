@@ -225,8 +225,8 @@ describe('Admin Worker - D1 ownership best-effort catch blocks', () => {
 		} as any);
 
 		const mockEnv = { ...baseEnv, PUZZLE_WORKFLOW: { create: vi.fn() } };
-		const req = new Request(`http://localhost/puzzles/${VALID_UUID}`, {
-			method: 'DELETE',
+		const req = new Request(`http://localhost/puzzle-delete/${VALID_UUID}`, {
+			method: 'POST',
 			headers: { cookie: 'session=valid.token' }
 		});
 		const res = await admin.fetch(req, mockEnv as any);
@@ -254,8 +254,8 @@ describe('Admin Worker - D1 ownership best-effort catch blocks', () => {
 		vi.mocked(deletePuzzleStats).mockRejectedValueOnce(new Error('D1 stats down') as any);
 
 		const mockEnv = { ...baseEnv, PUZZLE_WORKFLOW: { create: vi.fn() } };
-		const req = new Request(`http://localhost/puzzles/${VALID_UUID}`, {
-			method: 'DELETE',
+		const req = new Request(`http://localhost/puzzle-delete/${VALID_UUID}`, {
+			method: 'POST',
 			headers: { cookie: 'session=valid.token' }
 		});
 		const res = await admin.fetch(req, mockEnv as any);

@@ -204,12 +204,15 @@ If a puzzle is stuck in `processing` and the reaper hasn't cleaned it up
 force-delete it via the admin API:
 
 ```
-DELETE /api/admin/puzzles/:id?force=true
+POST /api/admin/puzzle-delete/:id?force=true
 ```
 
 The `force=true` query parameter bypasses the `processing`-status guard
 that normally prevents deletion of in-flight puzzles. This deletes the KV
-metadata, R2 original image, and all R2 piece images.
+metadata, R2 original image, and all R2 piece images. The delete route uses
+`POST /api/admin/puzzle-delete/:id` (not `DELETE /api/admin/puzzles/:id`) so
+it is NOT a sub-path of the narrow CLI Access app's `/api/admin/puzzles`
+exact path — a service-token holder cannot reach it at the Access gate.
 
 **When to use:**
 
@@ -218,7 +221,7 @@ metadata, R2 original image, and all R2 piece images.
   (operator judgment required).
 - After a D1 outage that left puzzle ownership/stats records orphaned.
 
-**Source:** `apps/api/src/routes/admin.worker.ts` (DELETE /puzzles/:id
+**Source:** `apps/api/src/routes/admin.worker.ts` (POST /puzzle-delete/:id
 handler).
 
 ---
@@ -233,10 +236,12 @@ Two Access applications protect admin routes:
    `/api/admin/puzzles`. Policies: email + device posture (browser admin
    still works) AND Service Auth (CLI service token).
 
-**Known limitation:** Cloudflare Access is path-based, not method-based.
-The exact path `/api/admin/puzzles` also covers `DELETE
-/api/admin/puzzles/:id` via inheritance. A service-token holder who
-obtains a session cookie can reach the per-id DELETE endpoint. See the
+**Path scoping (resolved):** Cloudflare Access is path-based, not
+method-based. The delete route lives at `POST /api/admin/puzzle-delete/:id`,
+which is a sibling of (not a sub-path of) the narrow CLI app's exact path
+`/api/admin/puzzles`. It therefore inherits only the broad admin app's
+email+posture policy — a service-token holder cannot reach the delete
+endpoint at the Access gate even after obtaining a session cookie. See the
 full analysis in `packages/infrastructure/src/admin-access.ts` (the
 `CLI_ACCESS_PATHS` comment).
 

@@ -31,6 +31,7 @@ import {
 	deletePuzzleMetadata,
 	deleteCleanupRecord,
 	getAuthoritativeStatus,
+	getIdempotencyReservation,
 	getPuzzle,
 	listPuzzles,
 	listCleanupRecords,
@@ -581,6 +582,275 @@ export async function reapCleanupRecords(env: Env): Promise<ReapResult> {
 				result.details.push({
 					puzzleId: record.puzzleId,
 					action: 'cleanup-error',
+					error: String(err)
+				});
+			}
+		})
+	);
+
+	return result;
+}
+
+/**
+ * Reap puzzles whose idempotency key was reclaimed by a retry — the durable
+ * orphan signal that closes the gap left by a failed `writeCleanupRecord`.
+ *
+ * The gap: when the admin route's commit conflicts (a retry reclaimed the
+ * reservation and minted a replacement puzzleId), it calls
+ * `cleanupOrphanedWorkflow`, which writes a cleanup record BEFORE any
+ * destructive work. If that KV write fails, the helper aborts without
+ * terminating the workflow, tombstoning the DO, or cleaning assets, and
+ * returns a 500 telling the client to retry. That retry follows the
+ * replacement's reservation (not the orphan), so the orphan is never
+ * rediscovered by a client. If the orphaned workflow then completes:
+ *   - Its metadata becomes 'ready', so the stuck-processing reaper never
+ *     selects it (it scans only 'processing' puzzles and explicitly skips
+ *     'complete' workflows and DO-ready puzzles).
+ *   - The cleanup-record reaper cannot see it (the record write failed).
+ * The result is a permanently accessible duplicate ready puzzle + R2 assets.
+ *
+ * This scan closes that gap with a read-only ownership check. For every
+ * puzzle whose KV metadata carries an `idempotencyKey`, it asks the
+ * reservation DO (keyed by idFromName(idempotencyKey)) which puzzleId the
+ * key currently maps to. If the current owner differs from this puzzle's
+ * id, the puzzle lost its reservation to a retry and is a durable orphan
+ * — regardless of whether a cleanup record exists or the workflow
+ * completed. The check is sound because `releaseIdempotencyKey` is
+ * owner-checked and the only release path for a committed reservation is
+ * the reaper itself (after reaping, which deletes KV); so a puzzle whose
+ * KV still exists was not reaped, and a DO pointing elsewhere proves
+ * reclamation by another request.
+ *
+ * Puzzles created without an `Idempotency-Key` header have no
+ * `meta.idempotencyKey` and are skipped (no key to check). A null
+ * reservation (key released/never reserved) is conservatively skipped —
+ * the stuck-processing and cleanup-record reapers handle those cases.
+ */
+export async function reapOrphanedReservations(env: Env): Promise<ReapResult> {
+	const result: ReapResult = {
+		scanned: 0,
+		candidates: 0,
+		reaped: 0,
+		errors: 0,
+		details: []
+	};
+
+	const { puzzles } = await listPuzzles(env.PUZZLE_METADATA);
+	result.scanned = puzzles.length;
+
+	// listPuzzles returns summaries without idempotencyKey; re-read full
+	// metadata to obtain it. Only puzzles created with an Idempotency-Key
+	// header carry meta.idempotencyKey — the rest are skipped (no key to
+	// reconcile). Reuse the same full-catalog scan the stuck-processing
+	// reaper performs; the scale TODO at reapStuckPuzzles applies here too.
+	const candidates: Array<{ id: string; pieceCount: number; idempotencyKey: string }> = [];
+	for (const puzzle of puzzles) {
+		try {
+			const meta = await getPuzzle(env.PUZZLE_METADATA, puzzle.id);
+			if (meta && typeof meta.idempotencyKey === 'string' && meta.idempotencyKey) {
+				candidates.push({
+					id: puzzle.id,
+					pieceCount: typeof meta.pieceCount === 'number' ? meta.pieceCount : 0,
+					idempotencyKey: meta.idempotencyKey
+				});
+			}
+		} catch (err) {
+			console.error(`Reaper orphan: failed to read metadata for ${puzzle.id}, skipping:`, err);
+			result.errors++;
+			result.details.push({
+				puzzleId: puzzle.id,
+				action: 'orphan-meta-read-failed',
+				error: String(err)
+			});
+		}
+	}
+	result.candidates = candidates.length;
+
+	if (candidates.length === 0) {
+		return result;
+	}
+
+	const batch = candidates.slice(0, REAP_BATCH_LIMIT);
+
+	await Promise.all(
+		batch.map(async (candidate) => {
+			try {
+				const reservation = await getIdempotencyReservation(
+					env.PUZZLE_METADATA_DO,
+					candidate.idempotencyKey
+				);
+				if (reservation === null) {
+					// No reservation record — cannot prove orphan via ownership.
+					// The stuck-processing and cleanup-record reapers handle the
+					// no-record cases. Skip (conservative).
+					return;
+				}
+				if (reservation.puzzleId === candidate.id) {
+					// This puzzle IS the current reservation owner — not an orphan.
+					return;
+				}
+
+				// Ownership mismatch: the idempotency key now belongs to a
+				// different puzzleId. This puzzle lost its reservation (reclaimed
+				// by a retry that minted a replacement) and is a durable orphan.
+				// This catches the gap where writeCleanupRecord failed AND the
+				// workflow later completed — neither the stuck-processing reaper
+				// (skips 'complete'/'ready') nor the cleanup-record reaper (no
+				// record) would otherwise reach it.
+
+				// Check the workflow has stopped before deleting R2 assets. A
+				// live workflow writes thumbnails and pieces directly to R2, so
+				// deleting assets before it stops leaves orphaned R2 objects the
+				// reaper cannot find (KV metadata already deleted). Mirrors the
+				// cleanup-record reaper's gating.
+				let workflowStatus: string;
+				try {
+					const instance = await env.PUZZLE_WORKFLOW.get(candidate.id);
+					workflowStatus = (await instance.status()).status;
+				} catch (wfErr) {
+					if (isWorkflowNotFoundError(wfErr)) {
+						workflowStatus = 'errored';
+					} else {
+						console.error(
+							`Reaper orphan: workflow status check failed for ${candidate.id}, skipping:`,
+							wfErr
+						);
+						result.errors++;
+						result.details.push({
+							puzzleId: candidate.id,
+							action: 'orphan-skip',
+							error: 'workflow status check failed'
+						});
+						return;
+					}
+				}
+
+				if (workflowStatus === 'complete' || isDeadWorkflowStatus(workflowStatus)) {
+					// Workflow has stopped — proceed with cleanup below.
+				} else if (isAliveWorkflowStatus(workflowStatus)) {
+					// Workflow is still running — skip and retry next run.
+					return;
+				} else {
+					console.warn(
+						`Reaper orphan: workflow status '${workflowStatus}' for ${candidate.id} is not confirmed stopped, skipping`
+					);
+					return;
+				}
+
+				// Tombstone the DO BEFORE deleting R2/KV — prevents a (dead)
+				// workflow's post-termination step from resurrecting stale
+				// metadata in KV via the DO's KV sync. Idempotent (no-op on an
+				// already-tombstoned DO). On failure, preserve KV and defer to
+				// the next run.
+				try {
+					await deleteMetadataDO(env.PUZZLE_METADATA_DO, candidate.id);
+				} catch (doErr) {
+					console.error(
+						`Reaper orphan: failed to tombstone metadata DO for ${candidate.id}:`,
+						doErr
+					);
+					result.errors++;
+					result.details.push({
+						puzzleId: candidate.id,
+						action: 'orphan-do-tombstone-failed',
+						error: String(doErr)
+					});
+					return;
+				}
+
+				// Delete R2 assets. On partial/total failure, preserve KV so the
+				// next reaper run retries R2 cleanup (failed R2 keys with no KV
+				// are invisible orphans).
+				try {
+					const r2Result = await deletePuzzleAssets(
+						env.PUZZLES_BUCKET,
+						candidate.id,
+						candidate.pieceCount
+					);
+					if (!r2Result.success) {
+						console.error(
+							`Reaper orphan: failed to delete some R2 assets for ${candidate.id}, preserving KV for retry:`,
+							r2Result.failedKeys
+						);
+						result.errors++;
+						result.details.push({
+							puzzleId: candidate.id,
+							action: 'orphan-r2-delete-partial',
+							error: `failed keys: ${r2Result.failedKeys.join(', ')}`
+						});
+						return;
+					}
+				} catch (r2Err) {
+					console.error(
+						`Reaper orphan: failed to delete R2 assets for ${candidate.id}, preserving KV for retry:`,
+						r2Err
+					);
+					result.errors++;
+					result.details.push({
+						puzzleId: candidate.id,
+						action: 'orphan-r2-delete-failed',
+						error: String(r2Err)
+					});
+					return;
+				}
+
+				// R2 deletion succeeded — delete KV metadata.
+				const kvResult = await deletePuzzleMetadata(env.PUZZLE_METADATA, candidate.id);
+				if (!kvResult.success) {
+					console.error(
+						`Reaper orphan: failed to delete KV metadata for ${candidate.id}:`,
+						kvResult.error
+					);
+					result.errors++;
+					result.details.push({
+						puzzleId: candidate.id,
+						action: 'orphan-kv-delete-failed',
+						error: String(kvResult.error)
+					});
+					return;
+				}
+
+				result.reaped++;
+				result.details.push({
+					puzzleId: candidate.id,
+					action: 'orphan-reaped'
+				});
+
+				// Best-effort idempotency reservation release. The mismatch
+				// already proves the key belongs to a different puzzleId, so
+				// this release targets (key, orphanId) — a 404 (owner mismatch)
+				// is expected and harmless. Logged, not fatal.
+				try {
+					await releaseIdempotencyKey(
+						env.PUZZLE_METADATA_DO,
+						candidate.idempotencyKey,
+						candidate.id
+					);
+				} catch (releaseErr) {
+					console.error(
+						`Reaper orphan: failed to release DO reservation for ${candidate.id}:`,
+						releaseErr
+					);
+				}
+
+				// Best-effort D1 ownership cleanup so a reaped orphan doesn't
+				// keep surfacing in the uploader's "My Puzzles" list as a 404.
+				try {
+					await deletePuzzleOwnership(getWorkerDb(env), candidate.id).catch((err) =>
+						console.error(`Reaper orphan: failed to delete D1 ownership for ${candidate.id}:`, err)
+					);
+				} catch (dbErr) {
+					console.error(
+						`Reaper orphan: failed to init DB for ownership cleanup of ${candidate.id}:`,
+						dbErr
+					);
+				}
+			} catch (err) {
+				console.error(`Reaper orphan: unexpected error for ${candidate.id}:`, err);
+				result.errors++;
+				result.details.push({
+					puzzleId: candidate.id,
+					action: 'orphan-error',
 					error: String(err)
 				});
 			}

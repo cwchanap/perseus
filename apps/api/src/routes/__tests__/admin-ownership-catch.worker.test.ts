@@ -83,8 +83,8 @@ describe('Admin Worker - DELETE /puzzles/:id ownership delete catch (line 691)',
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
 		const mockEnv = { ...baseEnv, PUZZLE_WORKFLOW: { create: vi.fn() } };
-		const req = new Request(`http://localhost/puzzles/${VALID_UUID}`, {
-			method: 'DELETE',
+		const req = new Request(`http://localhost/puzzle-delete/${VALID_UUID}`, {
+			method: 'POST',
 			headers: { cookie: 'session=valid.token' }
 		});
 

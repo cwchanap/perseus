@@ -334,14 +334,18 @@ export async function deletePuzzle(
 	id: string,
 	options?: { force?: boolean }
 ): Promise<DeletePuzzleResponse | null> {
-	// Build URL as string to avoid new URL() throwing when API_BASE is empty
-	let urlString = `${API_BASE}/api/admin/puzzles/${id}`;
+	// Build URL as string to avoid new URL() throwing when API_BASE is empty.
+	// Uses POST /api/admin/puzzle-delete/:id (not DELETE /api/admin/puzzles/:id)
+	// so the delete route is NOT a sub-path of the narrow CLI Access app's
+	// '/api/admin/puzzles' exact path — a service-token holder cannot reach it
+	// at the Access gate even after obtaining a session cookie.
+	let urlString = `${API_BASE}/api/admin/puzzle-delete/${id}`;
 	if (options?.force) {
 		urlString += '?force=true';
 	}
 
 	const response = await fetch(urlString, {
-		method: 'DELETE',
+		method: 'POST',
 		credentials: 'include'
 	});
 

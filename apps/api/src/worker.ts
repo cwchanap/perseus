@@ -131,7 +131,7 @@ app.route('/api/admin', admin);
 app.route('/api/auth', auth);
 app.route('/api/player', player);
 
-import { reapStuckPuzzles, reapCleanupRecords } from './services/reaper';
+import { reapStuckPuzzles, reapCleanupRecords, reapOrphanedReservations } from './services/reaper';
 
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -231,6 +231,26 @@ export default {
 					}
 				} catch (err) {
 					console.error('Reaper cleanup: scheduled run failed:', err);
+				}
+				// Reap puzzles whose idempotency key was reclaimed by a retry
+				// (ownership-mismatch reconciliation). Closes the gap where a
+				// failed writeCleanupRecord leaves a completed orphan that neither
+				// the stuck-processing reaper nor the cleanup-record reaper can
+				// reach. See reapOrphanedReservations for the full rationale.
+				try {
+					const orphanResult = await reapOrphanedReservations(env);
+					if (orphanResult.candidates > 0) {
+						console.log(
+							`Reaper orphan: scanned=${orphanResult.scanned} ` +
+								`candidates=${orphanResult.candidates} ` +
+								`reaped=${orphanResult.reaped} errors=${orphanResult.errors}`
+						);
+						if (orphanResult.details.length > 0) {
+							console.log('Reaper orphan details:', JSON.stringify(orphanResult.details));
+						}
+					}
+				} catch (err) {
+					console.error('Reaper orphan: scheduled run failed:', err);
 				}
 			})()
 		);

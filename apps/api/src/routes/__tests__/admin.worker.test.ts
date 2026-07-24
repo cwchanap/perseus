@@ -370,12 +370,15 @@ describe('Admin Routes - Puzzle Deletion', () => {
 				PUZZLES_BUCKET: {} as R2Bucket
 			};
 
-			const req = new Request('http://localhost/puzzles/550e8400-e29b-41d4-a716-446655440000', {
-				method: 'DELETE',
-				headers: {
-					cookie: 'session=valid.token'
+			const req = new Request(
+				'http://localhost/puzzle-delete/550e8400-e29b-41d4-a716-446655440000',
+				{
+					method: 'POST',
+					headers: {
+						cookie: 'session=valid.token'
+					}
 				}
-			});
+			);
 
 			const res = await admin.fetch(req, mockEnv);
 
@@ -1830,8 +1833,8 @@ describe('Admin Routes - Delete Puzzle Cases', () => {
 	};
 
 	it('should return 400 for invalid UUID', async () => {
-		const req = new Request('http://localhost/puzzles/not-a-uuid', {
-			method: 'DELETE',
+		const req = new Request('http://localhost/puzzle-delete/not-a-uuid', {
+			method: 'POST',
 			headers: { cookie: 'session=valid.token' }
 		});
 
@@ -1846,8 +1849,8 @@ describe('Admin Routes - Delete Puzzle Cases', () => {
 		(storage.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(null);
 		(storage.puzzleExists as ReturnType<typeof vi.fn>).mockResolvedValue(false);
 
-		const req = new Request('http://localhost/puzzles/550e8400-e29b-41d4-a716-446655440000', {
-			method: 'DELETE',
+		const req = new Request('http://localhost/puzzle-delete/550e8400-e29b-41d4-a716-446655440000', {
+			method: 'POST',
 			headers: { cookie: 'session=valid.token' }
 		});
 
@@ -1875,8 +1878,8 @@ describe('Admin Routes - Delete Puzzle Cases', () => {
 			failedKeys: []
 		});
 
-		const req = new Request('http://localhost/puzzles/550e8400-e29b-41d4-a716-446655440000', {
-			method: 'DELETE',
+		const req = new Request('http://localhost/puzzle-delete/550e8400-e29b-41d4-a716-446655440000', {
+			method: 'POST',
 			headers: { cookie: 'session=valid.token' }
 		});
 
@@ -1903,8 +1906,8 @@ describe('Admin Routes - Delete Puzzle Cases', () => {
 		);
 		(storage.puzzleExists as ReturnType<typeof vi.fn>).mockResolvedValue(false);
 
-		const req = new Request('http://localhost/puzzles/550e8400-e29b-41d4-a716-446655440000', {
-			method: 'DELETE',
+		const req = new Request('http://localhost/puzzle-delete/550e8400-e29b-41d4-a716-446655440000', {
+			method: 'POST',
 			headers: { cookie: 'session=valid.token' }
 		});
 
@@ -1925,8 +1928,8 @@ describe('Admin Routes - Delete Puzzle Cases', () => {
 			version: 0
 		});
 
-		const req = new Request('http://localhost/puzzles/550e8400-e29b-41d4-a716-446655440000', {
-			method: 'DELETE',
+		const req = new Request('http://localhost/puzzle-delete/550e8400-e29b-41d4-a716-446655440000', {
+			method: 'POST',
 			headers: { cookie: 'session=valid.token' }
 		});
 
@@ -1954,8 +1957,8 @@ describe('Admin Routes - Delete Puzzle Cases', () => {
 			failedKeys: []
 		});
 
-		const req = new Request('http://localhost/puzzles/550e8400-e29b-41d4-a716-446655440000', {
-			method: 'DELETE',
+		const req = new Request('http://localhost/puzzle-delete/550e8400-e29b-41d4-a716-446655440000', {
+			method: 'POST',
 			headers: { cookie: 'session=valid.token' }
 		});
 
@@ -2266,9 +2269,9 @@ describe('Admin Routes - Force Delete', () => {
 		});
 
 		const req = new Request(
-			'http://localhost/puzzles/550e8400-e29b-41d4-a716-446655440000?force=true',
+			'http://localhost/puzzle-delete/550e8400-e29b-41d4-a716-446655440000?force=true',
 			{
-				method: 'DELETE',
+				method: 'POST',
 				headers: { cookie: 'session=valid.token' }
 			}
 		);

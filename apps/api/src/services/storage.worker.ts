@@ -275,6 +275,51 @@ export async function releaseIdempotencyKey(
 	await transitionIdempotencyKey(metadataDO, idempotencyKey, puzzleId, 'release');
 }
 
+/**
+ * Read-only lookup of the current reservation owner for an idempotency key.
+ * The DO is addressed by idFromName(idempotencyKey), so this returns whatever
+ * puzzleId the key currently maps to (pending/committed/failed), or null when
+ * no reservation record exists (key was released or never reserved).
+ *
+ * Used by the reaper's ownership-mismatch reconciliation: a puzzle whose KV
+ * metadata carries idempotencyKey K, but whose DO reservation for K now points
+ * at a different puzzleId, is a durable orphan — the key was reclaimed by a
+ * retry that minted a replacement. This is the signal that survives even when
+ * writeCleanupRecord failed and the workflow later completed (the gap neither
+ * the stuck-processing reaper nor the cleanup-record reaper can close alone).
+ */
+export async function getIdempotencyReservation(
+	metadataDO: DurableObjectNamespace,
+	idempotencyKey: string
+): Promise<{ puzzleId: string; status: string; reservedAt?: number } | null> {
+	const id = metadataDO.idFromName(idempotencyKey);
+	const stub = metadataDO.get(id);
+	const response = await stub.fetch('https://puzzle-metadata/reservation', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({})
+	});
+	if (!response.ok) {
+		const payload = (await response.json().catch(() => null)) as { message?: string } | null;
+		throw new Error(
+			payload?.message ?? `Failed to read idempotency reservation (HTTP ${response.status})`
+		);
+	}
+	const result = (await response.json().catch(() => null)) as {
+		reservation?: { puzzleId?: string; status?: string; reservedAt?: number };
+	} | null;
+	if (!result?.reservation || typeof result.reservation.puzzleId !== 'string') {
+		return null;
+	}
+	return {
+		puzzleId: result.reservation.puzzleId,
+		status: typeof result.reservation.status === 'string' ? result.reservation.status : 'unknown',
+		...(typeof result.reservation.reservedAt === 'number'
+			? { reservedAt: result.reservation.reservedAt }
+			: {})
+	};
+}
+
 // Delete puzzle metadata from KV and invalidate gallery index cache
 export async function deletePuzzleMetadata(
 	kv: KVNamespace,

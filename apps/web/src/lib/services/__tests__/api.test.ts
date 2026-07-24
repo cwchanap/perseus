@@ -66,8 +66,8 @@ describe('API Service - deletePuzzle', () => {
 			warning: 'Puzzle metadata deleted but some assets failed to delete',
 			failedAssets: ['puzzles/abc/pieces/0.png']
 		});
-		expect(fetch).toHaveBeenCalledWith(expect.stringMatching(/\/api\/admin\/puzzles\/abc$/), {
-			method: 'DELETE',
+		expect(fetch).toHaveBeenCalledWith(expect.stringMatching(/\/api\/admin\/puzzle-delete\/abc$/), {
+			method: 'POST',
 			credentials: 'include'
 		});
 	});
@@ -85,8 +85,8 @@ describe('API Service - deletePuzzle', () => {
 		const result = await deletePuzzle('abc');
 
 		expect(result).toBeNull();
-		expect(fetch).toHaveBeenCalledWith(expect.stringMatching(/\/api\/admin\/puzzles\/abc$/), {
-			method: 'DELETE',
+		expect(fetch).toHaveBeenCalledWith(expect.stringMatching(/\/api\/admin\/puzzle-delete\/abc$/), {
+			method: 'POST',
 			credentials: 'include'
 		});
 	});
@@ -759,7 +759,7 @@ describe('API Service - deletePuzzle with force option', () => {
 		);
 
 		await deletePuzzle('abc', { force: true });
-		expect(capturedUrl).toMatch(/\/api\/admin\/puzzles\/abc\?force=true$/);
+		expect(capturedUrl).toMatch(/\/api\/admin\/puzzle-delete\/abc\?force=true$/);
 	});
 
 	it('does not append ?force=true when force option is false', async () => {
