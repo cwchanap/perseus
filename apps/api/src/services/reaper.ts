@@ -67,6 +67,70 @@ export const AVATAR_GC_AGE_MS = 1 * 60 * 60 * 1000; // 1 hour
 /** Limit the number of avatar objects deleted per scheduled run. */
 export const AVATAR_GC_BATCH_LIMIT = 200;
 
+// --- Reaper cursor persistence ---
+//
+// Each reaper selects a bounded batch from a deterministically-ordered
+// candidate list. Without a persisted cursor, `slice(0, LIMIT)` always
+// selects the same first N candidates. If those N persistently fail
+// (workflow API unreachable, DO tombstone failing, R2 delete erroring),
+// they occupy the batch every run and later candidates are NEVER visited
+// — permanently starved behind the same noisy prefix.
+//
+// The fix: persist a numeric cursor in KV per reaper. Each run reads the
+// cursor, selects a rotating page starting at the cursor (wrapping to the
+// beginning), processes it, and advances the cursor by the page size
+// REGARDLESS of whether individual candidates succeeded. This guarantees
+// every candidate is eventually visited even if some persistently fail.
+//
+// The cursor is a numeric offset into the candidate list. The list changes
+// between runs (items reaped drop out, new items added), so the offset is
+// not a stable position — some items may be revisited or briefly skipped
+// when the list shifts. This is acceptable for a GC reaper: deletions are
+// idempotent, and the key property is that no candidate is permanently
+// starved. A cursor read/parse failure falls back to 0 (the old behavior);
+// a cursor write failure is logged, not fatal (the next run reuses the
+// stale cursor — no worse than the old prefix behavior).
+
+const REAPER_CURSOR_PREFIX = 'reaper:cursor:';
+
+/** Read the persisted cursor for a reaper. Returns 0 if missing/unparseable. */
+async function readReaperCursor(kv: KVNamespace, name: string): Promise<number> {
+	try {
+		const raw = await kv.get(REAPER_CURSOR_PREFIX + name);
+		if (raw === null) return 0;
+		const n = Number(raw);
+		return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
+	} catch {
+		return 0;
+	}
+}
+
+/** Persist the cursor for a reaper. Best-effort — logged, not fatal. */
+async function writeReaperCursor(kv: KVNamespace, name: string, cursor: number): Promise<void> {
+	try {
+		await kv.put(REAPER_CURSOR_PREFIX + name, String(cursor));
+	} catch (err) {
+		console.error(`Reaper: failed to persist cursor for ${name}:`, err);
+	}
+}
+
+/**
+ * Select up to `limit` items from `arr` starting at `cursor`, wrapping to
+ * the beginning if the end is reached. Returns items in processing order
+ * (cursor, cursor+1, ..., wrap, ...). Returns an empty array if `arr` is
+ * empty. If `cursor >= arr.length`, it is clamped via modulo first.
+ */
+function rotateSlice<T>(arr: T[], cursor: number, limit: number): T[] {
+	if (arr.length === 0) return [];
+	const start = cursor % arr.length;
+	const count = Math.min(limit, arr.length);
+	const result: T[] = [];
+	for (let i = 0; i < count; i++) {
+		result.push(arr[(start + i) % arr.length]);
+	}
+	return result;
+}
+
 export interface ReapResult {
 	scanned: number;
 	candidates: number;
@@ -114,8 +178,12 @@ export async function reapStuckPuzzles(env: Env, now = Date.now()): Promise<Reap
 		return result;
 	}
 
-	// Process in batches to avoid exceeding CPU time limits.
-	const batch = stuck.slice(0, REAP_BATCH_LIMIT);
+	// Process a rotating page starting at the persisted cursor. The cursor
+	// advances by the page size regardless of individual success, so
+	// persistently-failing candidates don't starve later ones. See the
+	// cursor persistence comment above for the full rationale.
+	const cursor = await readReaperCursor(env.PUZZLE_METADATA, 'stuck-puzzles');
+	const batch = rotateSlice(stuck, cursor, REAP_BATCH_LIMIT);
 
 	await Promise.all(
 		batch.map(async (puzzle) => {
@@ -383,6 +451,13 @@ export async function reapStuckPuzzles(env: Env, now = Date.now()): Promise<Reap
 		})
 	);
 
+	// Advance the cursor by the page size regardless of individual success.
+	await writeReaperCursor(
+		env.PUZZLE_METADATA,
+		'stuck-puzzles',
+		(cursor + batch.length) % stuck.length
+	);
+
 	return result;
 }
 
@@ -424,7 +499,8 @@ export async function reapCleanupRecords(env: Env): Promise<ReapResult> {
 		return result;
 	}
 
-	const batch = records.slice(0, REAP_BATCH_LIMIT);
+	const cursor = await readReaperCursor(env.PUZZLE_METADATA, 'cleanup-records');
+	const batch = rotateSlice(records, cursor, REAP_BATCH_LIMIT);
 
 	await Promise.all(
 		batch.map(async (record) => {
@@ -619,6 +695,12 @@ export async function reapCleanupRecords(env: Env): Promise<ReapResult> {
 		})
 	);
 
+	await writeReaperCursor(
+		env.PUZZLE_METADATA,
+		'cleanup-records',
+		(cursor + batch.length) % records.length
+	);
+
 	return result;
 }
 
@@ -779,7 +861,17 @@ export async function reapOrphanedReservations(env: Env): Promise<ReapResult> {
 		)
 	).filter((c): c is { id: string; pieceCount: number; idempotencyKey: string } => c !== null);
 
-	const batch = mismatches.slice(0, REAP_BATCH_LIMIT);
+	if (mismatches.length === 0) {
+		return result;
+	}
+
+	// Process a rotating page starting at the persisted cursor. The
+	// deterministic input-order collection above ensures the candidate list
+	// is stable across runs (modulo reaped items dropping out), and the
+	// advancing cursor ensures persistently-failing mismatches don't starve
+	// later ones — the gap left by the old `slice(0, REAP_BATCH_LIMIT)`.
+	const cursor = await readReaperCursor(env.PUZZLE_METADATA, 'orphaned-reservations');
+	const batch = rotateSlice(mismatches, cursor, REAP_BATCH_LIMIT);
 
 	await Promise.all(
 		batch.map(async (candidate) => {
@@ -948,6 +1040,12 @@ export async function reapOrphanedReservations(env: Env): Promise<ReapResult> {
 		})
 	);
 
+	await writeReaperCursor(
+		env.PUZZLE_METADATA,
+		'orphaned-reservations',
+		(cursor + batch.length) % mismatches.length
+	);
+
 	return result;
 }
 
@@ -986,14 +1084,14 @@ export async function reapOrphanedAvatars(env: Env, now = Date.now()): Promise<R
 
 	// List all objects under the avatars/ prefix (paginated).
 	const allObjects: Array<{ key: string; uploaded: Date }> = [];
-	let cursor: string | undefined;
+	let listCursor: string | undefined;
 	while (true) {
-		const page = await env.PUZZLES_BUCKET.list({ prefix: 'avatars/', cursor });
+		const page = await env.PUZZLES_BUCKET.list({ prefix: 'avatars/', cursor: listCursor });
 		for (const obj of page.objects) {
 			allObjects.push({ key: obj.key, uploaded: obj.uploaded });
 		}
 		if (!page.truncated) break;
-		cursor = page.cursor;
+		listCursor = page.cursor;
 	}
 	result.scanned = allObjects.length;
 
@@ -1061,8 +1159,12 @@ export async function reapOrphanedAvatars(env: Env, now = Date.now()): Promise<R
 		return result;
 	}
 
-	// Bound the number of deletes per run to avoid CPU time limits.
-	const batch = orphans.slice(0, AVATAR_GC_BATCH_LIMIT);
+	// Process a rotating page starting at the persisted cursor. The cursor
+	// advances by the page size regardless of individual R2 delete success,
+	// so persistently-failing objects (e.g. a corrupted key that always
+	// errors) don't starve later orphans behind the same prefix.
+	const cursor = await readReaperCursor(env.PUZZLE_METADATA, 'orphaned-avatars');
+	const batch = rotateSlice(orphans, cursor, AVATAR_GC_BATCH_LIMIT);
 
 	await Promise.all(
 		batch.map(async (obj) => {
@@ -1083,6 +1185,12 @@ export async function reapOrphanedAvatars(env: Env, now = Date.now()): Promise<R
 				});
 			}
 		})
+	);
+
+	await writeReaperCursor(
+		env.PUZZLE_METADATA,
+		'orphaned-avatars',
+		(cursor + batch.length) % orphans.length
 	);
 
 	return result;
