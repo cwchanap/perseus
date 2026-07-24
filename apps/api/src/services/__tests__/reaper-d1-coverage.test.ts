@@ -19,7 +19,8 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	const actual = (await importOriginal()) as Record<string, unknown>;
 	return {
 		...actual,
-		deletePuzzleOwnership: vi.fn()
+		deletePuzzleOwnership: vi.fn(),
+		deletePuzzleStats: vi.fn()
 	};
 });
 
@@ -33,9 +34,10 @@ import {
 	listPuzzles,
 	releaseIdempotencyKey
 } from '../storage.worker';
-import { deletePuzzleOwnership } from '@perseus/shared';
+import { deletePuzzleOwnership, deletePuzzleStats } from '@perseus/shared';
 
 void releaseIdempotencyKey;
+void deletePuzzleStats;
 
 const NOW = 1700000000000;
 
