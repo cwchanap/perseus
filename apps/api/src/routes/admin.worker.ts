@@ -1798,36 +1798,34 @@ admin.post('/puzzle-delete/:id', requireAuth, async (c) => {
 		}
 
 		// Safe deletion lifecycle, mirroring cleanupOrphanedWorkflow and the
-		// reaper's safety policy. The previous ordering (KV → reservation →
-		// D1 → R2 last) had two defects:
-		//   1. A force-deleted processing puzzle was not tombstoned and its
-		//      workflow was not terminated, so a still-running workflow could
-		//      finish another step, update the non-tombstoned DO, and sync the
-		//      puzzle back into KV (potentially as 'ready' with an incomplete
-		//      asset set) — resurrecting the deleted puzzle.
-		//   2. A partial R2 failure returned 207, but KV/reservation/D1 were
-		//      already gone and no cleanup record was written. A retry 404s and
-		//      no reaper can discover the failed R2 keys, leaving permanent
-		//      invisible storage orphans.
-		// The new ordering is: terminate workflow (if processing) → tombstone
-		// DO → delete R2 → delete KV → release reservation → delete D1 →
-		// delete cleanup record. Any failure before full success writes a
-		// cleanup record and preserves KV so the reaper can retry.
-		let cleanupRecordWritten = false;
-		const ensureCleanupRecord = async (): Promise<void> => {
-			if (cleanupRecordWritten) return;
-			try {
-				await writeCleanupRecord(c.env.PUZZLE_METADATA, {
-					puzzleId: id,
-					pieceCount,
-					...(puzzle?.idempotencyKey ? { idempotencyKey: puzzle.idempotencyKey } : {}),
-					createdAt: Date.now()
-				});
-				cleanupRecordWritten = true;
-			} catch (recordErr) {
-				console.error(`Failed to write cleanup record for puzzle ${id}:`, recordErr);
-			}
-		};
+		// reaper's safety policy. The cleanup record is written FIRST, before
+		// any destructive work (terminate, tombstone, R2 delete, KV delete).
+		// If the record cannot be persisted — e.g. during a KV outage that
+		// would also cause the later KV metadata delete to fail — the route
+		// aborts with 500 and no destructive work is performed. This closes
+		// the gap where a correlated KV failure left the puzzle with all R2
+		// assets deleted, KV metadata still present, and no cleanup record:
+		// unreachable by the stuck-processing reaper (status not processing),
+		// the cleanup-record reaper (no record), and the orphan reconciler
+		// (reservation still points at this puzzle, so it looks like the
+		// current owner). The record is deleted only after full success.
+		try {
+			await writeCleanupRecord(c.env.PUZZLE_METADATA, {
+				puzzleId: id,
+				pieceCount,
+				...(puzzle?.idempotencyKey ? { idempotencyKey: puzzle.idempotencyKey } : {}),
+				createdAt: Date.now()
+			});
+		} catch (recordErr) {
+			console.error(`Failed to write cleanup record for puzzle ${id}, aborting:`, recordErr);
+			return c.json(
+				{
+					error: 'internal_error',
+					message: 'Failed to persist durable cleanup record; no destructive work performed. Retry.'
+				},
+				500
+			);
+		}
 
 		// Step 1: For a processing puzzle (force=true), terminate the workflow
 		// and wait for a confirmed stopped state before touching R2. A live
@@ -1848,7 +1846,6 @@ admin.post('/puzzle-delete/:id', requireAuth, async (c) => {
 				} catch (doErr) {
 					console.error(`Force-delete: failed to tombstone metadata DO for ${id}:`, doErr);
 				}
-				await ensureCleanupRecord();
 				return c.json(
 					{
 						error: 'internal_error',
@@ -1869,7 +1866,6 @@ admin.post('/puzzle-delete/:id', requireAuth, async (c) => {
 			await deleteMetadataDO(c.env.PUZZLE_METADATA_DO, id);
 		} catch (doErr) {
 			console.error(`Failed to tombstone metadata DO for puzzle ${id}:`, doErr);
-			await ensureCleanupRecord();
 			return c.json(
 				{
 					error: 'internal_error',
@@ -1888,7 +1884,6 @@ admin.post('/puzzle-delete/:id', requireAuth, async (c) => {
 		const deleteResult = await deletePuzzleAssets(c.env.PUZZLES_BUCKET, id, pieceCount);
 		if (!deleteResult.success) {
 			console.error(`Failed to delete some assets for puzzle ${id}:`, deleteResult.failedKeys);
-			await ensureCleanupRecord();
 			return c.json(
 				{
 					success: false,
@@ -1904,7 +1899,6 @@ admin.post('/puzzle-delete/:id', requireAuth, async (c) => {
 		const metadataResult = await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
 		if (!metadataResult.success) {
 			console.error('Failed to delete puzzle metadata:', metadataResult.error);
-			await ensureCleanupRecord();
 			return c.json(
 				{ error: 'internal_error', message: 'Failed to delete KV metadata; deferred to reaper' },
 				500
@@ -1951,15 +1945,12 @@ admin.post('/puzzle-delete/:id', requireAuth, async (c) => {
 		);
 
 		// Step 7: Every required cleanup operation succeeded — delete the
-		// cleanup record (if one was written) so the reaper does not
-		// re-process this puzzle. Best-effort: a failed delete only causes a
-		// redundant reaper pass.
-		if (cleanupRecordWritten) {
-			try {
-				await deleteCleanupRecord(c.env.PUZZLE_METADATA, id);
-			} catch (recordErr) {
-				console.error(`Failed to delete cleanup record for puzzle ${id}:`, recordErr);
-			}
+		// cleanup record so the reaper does not re-process this puzzle.
+		// Best-effort: a failed delete only causes a redundant reaper pass.
+		try {
+			await deleteCleanupRecord(c.env.PUZZLE_METADATA, id);
+		} catch (recordErr) {
+			console.error(`Failed to delete cleanup record for puzzle ${id}:`, recordErr);
 		}
 
 		return c.body(null, 204);

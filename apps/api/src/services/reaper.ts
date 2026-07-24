@@ -41,6 +41,7 @@ import { getWorkerDb } from '../db.worker';
 import {
 	deletePuzzleOwnership,
 	deletePuzzleStats,
+	getAvatarTokensByPlayerIds,
 	isAliveWorkflowStatus,
 	isDeadWorkflowStatus,
 	isWorkflowNotFoundError
@@ -52,6 +53,19 @@ export const REAP_AFTER_MS = 2 * 60 * 60 * 1000; // 2 hours
 
 /** Limit the number of puzzles reaped per scheduled run. */
 export const REAP_BATCH_LIMIT = 50;
+
+/**
+ * Minimum age for a versioned avatar R2 object before the GC reaper will
+ * delete it. The upload route's read-after-write cleanup covers the common
+ * case, but concurrent overlapping uploads can still orphan a loser's object
+ * (see player.worker.ts POST /avatar). This threshold gives in-flight uploads
+ * time to complete their D1 write and authority check before the reaper
+ * treats an unreferenced object as garbage.
+ */
+export const AVATAR_GC_AGE_MS = 1 * 60 * 60 * 1000; // 1 hour
+
+/** Limit the number of avatar objects deleted per scheduled run. */
+export const AVATAR_GC_BATCH_LIMIT = 200;
 
 export interface ReapResult {
 	scanned: number;
@@ -929,6 +943,143 @@ export async function reapOrphanedReservations(env: Env): Promise<ReapResult> {
 					puzzleId: candidate.id,
 					action: 'orphan-error',
 					error: String(err)
+				});
+			}
+		})
+	);
+
+	return result;
+}
+
+/**
+ * Garbage-collect orphaned versioned avatar R2 objects.
+ *
+ * The avatar upload route (player.worker.ts POST /avatar) writes each upload
+ * to a unique versioned key `avatars/{playerId}/{token}` and uses D1's
+ * avatarUpdateToken to select which version is served. A read-after-write
+ * cleanup deletes the superseded object, but concurrent overlapping uploads
+ * can still orphan a loser's object — the authority check is a TOCTOU window
+ * that a future overlapping write can invalidate, and first-time concurrent
+ * uploads (both read null) skip cleanup entirely.
+ *
+ * This reaper closes that gap with delayed GC: it lists all versioned avatar
+ * objects in R2, batch-queries D1 for each player's authoritative token, and
+ * deletes any versioned object whose token is not authoritative AND whose
+ * age exceeds AVATAR_GC_AGE_MS. The age threshold ensures in-flight uploads
+ * have completed before their objects are considered garbage.
+ *
+ * The legacy unversioned key `avatars/{playerId}` (pre-migration fallback) is
+ * never deleted — it serves as the D1-unavailable fallback in the serve route.
+ *
+ * If D1 is unavailable, the reaper skips all players (fail closed) rather than
+ * deleting objects it cannot verify. R2 deletes are idempotent, so concurrent
+ * runs or runs overlapping with an upload are safe.
+ */
+export async function reapOrphanedAvatars(env: Env, now = Date.now()): Promise<ReapResult> {
+	const result: ReapResult = {
+		scanned: 0,
+		candidates: 0,
+		reaped: 0,
+		errors: 0,
+		details: []
+	};
+
+	// List all objects under the avatars/ prefix (paginated).
+	const allObjects: Array<{ key: string; uploaded: Date }> = [];
+	let cursor: string | undefined;
+	while (true) {
+		const page = await env.PUZZLES_BUCKET.list({ prefix: 'avatars/', cursor });
+		for (const obj of page.objects) {
+			allObjects.push({ key: obj.key, uploaded: obj.uploaded });
+		}
+		if (!page.truncated) break;
+		cursor = page.cursor;
+	}
+	result.scanned = allObjects.length;
+
+	// Parse keys into versioned (avatars/{playerId}/{token}) and legacy
+	// (avatars/{playerId}). Only versioned objects with a token are GC
+	// candidates; legacy keys are never deleted (D1-unavailable fallback).
+	interface VersionedAvatar {
+		key: string;
+		playerId: string;
+		token: string;
+		uploaded: Date;
+	}
+	const versioned: VersionedAvatar[] = [];
+	for (const obj of allObjects) {
+		const parts = obj.key.split('/');
+		// Expected: ['avatars', playerId, token]
+		if (parts.length !== 3 || !parts[1] || !parts[2]) continue;
+		versioned.push({
+			key: obj.key,
+			playerId: parts[1],
+			token: parts[2],
+			uploaded: obj.uploaded
+		});
+	}
+
+	if (versioned.length === 0) {
+		return result;
+	}
+
+	// Batch-query D1 for the authoritative avatarUpdateToken of every player
+	// that has versioned objects. Fail closed: if D1 is unavailable, skip all
+	// deletion — we cannot determine which objects are orphaned without the
+	// authoritative token. The age threshold means a future run will catch
+	// them once D1 recovers.
+	const playerIds = [...new Set(versioned.map((v) => v.playerId))];
+	let tokensByPlayer: Map<string, string | null>;
+	try {
+		const db = getWorkerDb(env);
+		tokensByPlayer = await getAvatarTokensByPlayerIds(db, playerIds);
+	} catch (dbErr) {
+		console.error('Reaper avatar GC: D1 unavailable, skipping all deletion:', dbErr);
+		result.errors++;
+		result.details.push({
+			puzzleId: '*',
+			action: 'avatar-gc-d1-unavailable',
+			error: String(dbErr)
+		});
+		return result;
+	}
+
+	// Select orphaned objects: token != authoritative AND age > threshold.
+	// A player with no D1 row (tokensByPlayer has no entry) has no
+	// authoritative token — all their versioned objects are orphans (the
+	// profile override was deleted or never created). Safe to delete after
+	// the age threshold.
+	const orphans = versioned.filter((v) => {
+		const authoritative = tokensByPlayer.get(v.playerId) ?? null;
+		if (v.token === authoritative) return false; // still the served version
+		const ageMs = now - v.uploaded.getTime();
+		return ageMs > AVATAR_GC_AGE_MS;
+	});
+	result.candidates = orphans.length;
+
+	if (orphans.length === 0) {
+		return result;
+	}
+
+	// Bound the number of deletes per run to avoid CPU time limits.
+	const batch = orphans.slice(0, AVATAR_GC_BATCH_LIMIT);
+
+	await Promise.all(
+		batch.map(async (obj) => {
+			try {
+				await env.PUZZLES_BUCKET.delete(obj.key);
+				result.reaped++;
+				result.details.push({
+					puzzleId: obj.playerId,
+					action: 'avatar-gc-reaped'
+				});
+			} catch (r2Err) {
+				console.error(`Reaper avatar GC: failed to delete ${obj.key}:`, r2Err);
+				result.errors++;
+				result.details.push({
+					puzzleId: obj.playerId,
+					action: 'avatar-gc-delete-failed',
+					error: String(r2Err)
 				});
 			}
 		})

@@ -123,6 +123,33 @@ export async function clearProfileAvatarUrlIfOwned(
 		.run();
 }
 
+// Batch-fetch the authoritative avatarUpdateToken for a set of players.
+// Used by the avatar GC reaper to determine which versioned R2 objects are
+// no longer reachable. Returns a Map<playerId, token | null>. Players with
+// no profile row map to null (no authoritative token — all their versioned
+// objects are orphans, but the legacy unversioned key is preserved by the
+// caller as the D1-unavailable fallback). An empty input returns an empty
+// Map without hitting D1.
+export async function getAvatarTokensByPlayerIds(
+	db: AppDb,
+	playerIds: string[]
+): Promise<Map<string, string | null>> {
+	const result = new Map<string, string | null>();
+	if (playerIds.length === 0) return result;
+	const rows = await db
+		.select({
+			playerId: playerProfiles.playerId,
+			avatarUpdateToken: playerProfiles.avatarUpdateToken
+		})
+		.from(playerProfiles)
+		.where(inArray(playerProfiles.playerId, playerIds))
+		.all();
+	for (const row of rows) {
+		result.set(row.playerId, row.avatarUpdateToken ?? null);
+	}
+	return result;
+}
+
 export async function insertPuzzleOwnership(db: AppDb, row: NewPuzzleRow): Promise<void> {
 	await db.insert(puzzles).values(row).run();
 }
