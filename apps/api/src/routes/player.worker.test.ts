@@ -762,6 +762,176 @@ describe('player avatar route (Worker)', () => {
 		const serveRes = await buildApp().request('/api/player/p1/avatar', {}, env);
 		expect(serveRes.status).toBe(200);
 	});
+
+	it('logs and continues when D1 read for previous-token cleanup fails', async () => {
+		// Line 193: getProfileOverride throws during the pre-upload read
+		// for previousToken. The upload proceeds (no cleanup) and succeeds.
+		const { bucket, store } = createMockBucket();
+		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
+
+		const { getProfileOverride } = await import('@perseus/shared');
+		vi.mocked(getProfileOverride).mockRejectedValueOnce(new Error('D1 read down'));
+
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const blob = new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' });
+		const form = new FormData();
+		form.append('avatar', blob, 'a.png');
+		const res = await buildApp().request(
+			'/api/player/avatar',
+			{ method: 'POST', headers: AUTH_COOKIE, body: form },
+			env
+		);
+
+		expect(res.status).toBe(200);
+		expect(consoleSpy).toHaveBeenCalledWith(
+			'Avatar upload: failed to read previous override for cleanup:',
+			expect.any(Error)
+		);
+		// The upload still wrote a versioned object.
+		const avatarKeys = [...store.keys()].filter((k) => k.startsWith('avatars/p1/'));
+		expect(avatarKeys).toHaveLength(1);
+		consoleSpy.mockRestore();
+	});
+
+	it('logs when R2 delete of superseded object fails (best-effort cleanup)', async () => {
+		// Line 251: the .catch on bucket.delete logs but does not fail the
+		// request when the superseded R2 object cannot be deleted.
+		const { bucket } = createMockBucket();
+		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
+
+		// Seed a prior avatar with a known token.
+		const priorToken = 'prior-token';
+		const priorKey = `avatars/p1/${priorToken}`;
+		const priorPng = [0x89, 0x50, 0x4e, 0x47, 0xaa, 0xbb];
+		await bucket.put(priorKey, new Uint8Array(priorPng) as unknown as ReadableStream<Uint8Array>, {
+			httpMetadata: { contentType: 'image/png' }
+		});
+
+		// Pre-populate the D1 store with the prior token so the upload
+		// captures previousToken and attempts cleanup.
+		const shared = await import('@perseus/shared');
+		const profileStore = (shared as any).__store as Map<string, any>;
+		profileStore.set('p1', {
+			displayName: null,
+			avatarUrl: '/api/player/p1/avatar',
+			avatarUpdateToken: priorToken
+		});
+
+		// Make bucket.delete reject.
+		bucket.delete = vi.fn(async () => {
+			throw new Error('R2 delete failed');
+		}) as any;
+
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const blob = new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' });
+		const form = new FormData();
+		form.append('avatar', blob, 'a.png');
+		const res = await buildApp().request(
+			'/api/player/avatar',
+			{ method: 'POST', headers: AUTH_COOKIE, body: form },
+			env
+		);
+
+		expect(res.status).toBe(200);
+		expect(consoleSpy).toHaveBeenCalledWith(
+			'Avatar upload: failed to delete superseded R2 object:',
+			expect.any(Error)
+		);
+		consoleSpy.mockRestore();
+	});
+
+	it('logs when D1 re-read for cleanup fails after successful upload', async () => {
+		// Line 255: the second getProfileOverride (to verify our token is
+		// still authoritative before deleting the superseded object) throws.
+		// The request still succeeds; the superseded object lingers.
+		const { bucket, store } = createMockBucket();
+		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
+
+		// Seed a prior avatar.
+		const priorToken = 'prior-token';
+		const priorKey = `avatars/p1/${priorToken}`;
+		const priorPng = [0x89, 0x50, 0x4e, 0x47, 0xaa, 0xbb];
+		await bucket.put(priorKey, new Uint8Array(priorPng) as unknown as ReadableStream<Uint8Array>, {
+			httpMetadata: { contentType: 'image/png' }
+		});
+
+		const shared = await import('@perseus/shared');
+		const profileStore = (shared as any).__store as Map<string, any>;
+		profileStore.set('p1', {
+			displayName: null,
+			avatarUrl: '/api/player/p1/avatar',
+			avatarUpdateToken: priorToken
+		});
+
+		// The first getProfileOverride (pre-upload read) succeeds and
+		// returns the prior token. The second (post-upload re-read for
+		// cleanup) throws.
+		const { getProfileOverride } = await import('@perseus/shared');
+		vi.mocked(getProfileOverride)
+			.mockResolvedValueOnce({
+				displayName: null,
+				avatarUrl: '/api/player/p1/avatar',
+				avatarUpdateToken: priorToken
+			} as any)
+			.mockRejectedValueOnce(new Error('D1 re-read down'));
+
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const blob = new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' });
+		const form = new FormData();
+		form.append('avatar', blob, 'a.png');
+		const res = await buildApp().request(
+			'/api/player/avatar',
+			{ method: 'POST', headers: AUTH_COOKIE, body: form },
+			env
+		);
+
+		expect(res.status).toBe(200);
+		expect(consoleSpy).toHaveBeenCalledWith(
+			'Avatar upload: failed to re-read override for cleanup:',
+			expect.any(Error)
+		);
+		// The superseded object was NOT deleted (re-read failed before the
+		// delete could run).
+		expect(store.get(priorKey)).toBeDefined();
+		consoleSpy.mockRestore();
+	});
+
+	it('serves legacy unversioned avatar when D1 lookup fails', async () => {
+		// Lines 283-288: the serve route's D1 lookup throws, so it falls
+		// back to the legacy unversioned key (avatars/{playerId}).
+		const { bucket } = createMockBucket();
+		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
+
+		// Seed a legacy avatar at the unversioned key.
+		const legacyKey = 'avatars/p1';
+		const legacyPng = [0x89, 0x50, 0x4e, 0x47, 0xaa, 0xbb];
+		await bucket.put(
+			legacyKey,
+			new Uint8Array(legacyPng) as unknown as ReadableStream<Uint8Array>,
+			{ httpMetadata: { contentType: 'image/png' } }
+		);
+
+		// Force the D1 lookup to throw.
+		const { getProfileOverride } = await import('@perseus/shared');
+		vi.mocked(getProfileOverride).mockRejectedValueOnce(new Error('D1 serve down'));
+
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const res = await buildApp().request('/api/player/p1/avatar', {}, env);
+
+		expect(res.status).toBe(200);
+		expect(res.headers.get('Content-Type')).toBe('image/png');
+		const buf = new Uint8Array(await res.arrayBuffer());
+		expect(Array.from(buf)).toEqual(legacyPng);
+		expect(consoleSpy).toHaveBeenCalledWith(
+			'Avatar serve: D1 override lookup failed for p1, falling back to legacy key:',
+			expect.any(Error)
+		);
+		consoleSpy.mockRestore();
+	});
 });
 
 describe('player lists (Worker)', () => {

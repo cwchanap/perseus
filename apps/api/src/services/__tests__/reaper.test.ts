@@ -1275,4 +1275,197 @@ describe('reapOrphanedReservations', () => {
 		// The healthy owners must NOT be reaped.
 		expect(storage.deletePuzzleMetadata).toHaveBeenCalledTimes(1);
 	});
+
+	it('records orphan-meta-read-failed when getPuzzle throws during candidate scan', async () => {
+		(storage.listPuzzles as any).mockResolvedValue({
+			puzzles: [puzzleSummary('a', 'ready', OLD_READY)],
+			invalidCount: 0
+		});
+		(storage.getPuzzle as any).mockRejectedValue(new Error('KV read blew up'));
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		const env = makeEnv({ a: 'complete' });
+		const result = await reapOrphanedReservations(env);
+		expect(result.candidates).toBe(0);
+		expect(result.errors).toBe(1);
+		expect(result.details.some((d) => d.action === 'orphan-meta-read-failed')).toBe(true);
+	});
+
+	it('skips orphan when workflow status check throws with non-not_found error', async () => {
+		(storage.listPuzzles as any).mockResolvedValue({
+			puzzles: [puzzleSummary('a', 'ready', OLD_READY)],
+			invalidCount: 0
+		});
+		(storage.getPuzzle as any).mockResolvedValue(
+			puzzleMeta('a', { idempotencyKey: 'key-K', pieceCount: 50 })
+		);
+		(storage.getIdempotencyReservation as any).mockResolvedValue({
+			puzzleId: 'b',
+			status: 'committed'
+		});
+		const statusError = new Error('workflow RPC unavailable');
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		const env = makeEnv();
+		env.PUZZLE_WORKFLOW.get = vi.fn(() => {
+			throw statusError;
+		});
+		const result = await reapOrphanedReservations(env);
+		expect(result.reaped).toBe(0);
+		expect(result.errors).toBe(1);
+		expect(result.details.some((d) => d.action === 'orphan-skip')).toBe(true);
+		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+	});
+
+	it('skips orphan with unrecognized workflow status string', async () => {
+		(storage.listPuzzles as any).mockResolvedValue({
+			puzzles: [puzzleSummary('a', 'ready', OLD_READY)],
+			invalidCount: 0
+		});
+		(storage.getPuzzle as any).mockResolvedValue(
+			puzzleMeta('a', { idempotencyKey: 'key-K', pieceCount: 50 })
+		);
+		(storage.getIdempotencyReservation as any).mockResolvedValue({
+			puzzleId: 'b',
+			status: 'committed'
+		});
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
+		// 'glitched' is not in ACTIVE_WORKFLOW_STATUSES, DEAD_WORKFLOW_STATUSES,
+		// or equal to 'complete' — hits the else branch (lines 796-799).
+		const env = makeEnv({ a: 'glitched' });
+		const result = await reapOrphanedReservations(env);
+		expect(result.reaped).toBe(0);
+		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
+	});
+
+	it('preserves KV when R2 deletion throws on an orphan', async () => {
+		(storage.listPuzzles as any).mockResolvedValue({
+			puzzles: [puzzleSummary('a', 'ready', OLD_READY)],
+			invalidCount: 0
+		});
+		(storage.getPuzzle as any).mockResolvedValue(
+			puzzleMeta('a', { idempotencyKey: 'key-K', pieceCount: 50 })
+		);
+		(storage.getIdempotencyReservation as any).mockResolvedValue({
+			puzzleId: 'b',
+			status: 'committed'
+		});
+		(storage.deletePuzzleAssets as any).mockRejectedValue(new Error('R2 connection lost'));
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		const env = makeEnv({ a: 'complete' });
+		const result = await reapOrphanedReservations(env);
+		expect(result.reaped).toBe(0);
+		expect(result.errors).toBe(1);
+		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
+		expect(result.details.some((d) => d.action === 'orphan-r2-delete-failed')).toBe(true);
+	});
+
+	it('records orphan-kv-delete-failed when KV metadata deletion fails', async () => {
+		(storage.listPuzzles as any).mockResolvedValue({
+			puzzles: [puzzleSummary('a', 'ready', OLD_READY)],
+			invalidCount: 0
+		});
+		(storage.getPuzzle as any).mockResolvedValue(
+			puzzleMeta('a', { idempotencyKey: 'key-K', pieceCount: 50 })
+		);
+		(storage.getIdempotencyReservation as any).mockResolvedValue({
+			puzzleId: 'b',
+			status: 'committed'
+		});
+		(storage.deletePuzzleMetadata as any).mockResolvedValue({
+			success: false,
+			error: 'KV write timeout'
+		});
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		const env = makeEnv({ a: 'complete' });
+		const result = await reapOrphanedReservations(env);
+		expect(result.reaped).toBe(0);
+		expect(result.errors).toBe(1);
+		expect(result.details.some((d) => d.action === 'orphan-kv-delete-failed')).toBe(true);
+	});
+
+	it('still reaps when idempotency key release fails (best-effort)', async () => {
+		(storage.listPuzzles as any).mockResolvedValue({
+			puzzles: [puzzleSummary('a', 'ready', OLD_READY)],
+			invalidCount: 0
+		});
+		(storage.getPuzzle as any).mockResolvedValue(
+			puzzleMeta('a', { idempotencyKey: 'key-K', pieceCount: 50 })
+		);
+		(storage.getIdempotencyReservation as any).mockResolvedValue({
+			puzzleId: 'b',
+			status: 'committed'
+		});
+		(storage.releaseIdempotencyKey as any).mockRejectedValue(new Error('DO release failed'));
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		const env = makeEnv({ a: 'complete' });
+		const result = await reapOrphanedReservations(env);
+		expect(result.reaped).toBe(1);
+		expect(result.details.some((d) => d.action === 'orphan-reaped')).toBe(true);
+	});
+
+	it('still reaps when D1 ownership delete fails (best-effort)', async () => {
+		(storage.listPuzzles as any).mockResolvedValue({
+			puzzles: [puzzleSummary('a', 'ready', OLD_READY)],
+			invalidCount: 0
+		});
+		(storage.getPuzzle as any).mockResolvedValue(
+			puzzleMeta('a', { idempotencyKey: 'key-K', pieceCount: 50 })
+		);
+		(storage.getIdempotencyReservation as any).mockResolvedValue({
+			puzzleId: 'b',
+			status: 'committed'
+		});
+		(deletePuzzleOwnership as any).mockRejectedValue(new Error('D1 delete failed'));
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		const env = makeEnv({ a: 'complete' });
+		const result = await reapOrphanedReservations(env);
+		expect(result.reaped).toBe(1);
+	});
+
+	it('still reaps when D1 init (getWorkerDb) throws for ownership cleanup', async () => {
+		(storage.listPuzzles as any).mockResolvedValue({
+			puzzles: [puzzleSummary('a', 'ready', OLD_READY)],
+			invalidCount: 0
+		});
+		(storage.getPuzzle as any).mockResolvedValue(
+			puzzleMeta('a', { idempotencyKey: 'key-K', pieceCount: 50 })
+		);
+		(storage.getIdempotencyReservation as any).mockResolvedValue({
+			puzzleId: 'b',
+			status: 'committed'
+		});
+		(getWorkerDb as any).mockImplementationOnce(() => {
+			throw new Error('DB init failed');
+		});
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		const env = makeEnv({ a: 'complete' });
+		const result = await reapOrphanedReservations(env);
+		expect(result.reaped).toBe(1);
+	});
+
+	it('records orphan-error on unexpected per-candidate exception', async () => {
+		(storage.listPuzzles as any).mockResolvedValue({
+			puzzles: [puzzleSummary('a', 'ready', OLD_READY)],
+			invalidCount: 0
+		});
+		(storage.getPuzzle as any).mockResolvedValue(
+			puzzleMeta('a', { idempotencyKey: 'key-K', pieceCount: 50 })
+		);
+		(storage.getIdempotencyReservation as any).mockResolvedValue({
+			puzzleId: 'b',
+			status: 'committed'
+		});
+		// The KV delete call (line 860) is NOT inside an inner try/catch —
+		// a synchronous throw from deletePuzzleMetadata escapes to the
+		// outer catch at the batch callback level.
+		(storage.deletePuzzleMetadata as any).mockImplementation(() => {
+			throw new Error('Synchronous KV explosion');
+		});
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		const env = makeEnv({ a: 'complete' });
+		const result = await reapOrphanedReservations(env);
+		expect(result.reaped).toBe(0);
+		expect(result.errors).toBe(1);
+		expect(result.details.some((d) => d.action === 'orphan-error')).toBe(true);
+	});
 });

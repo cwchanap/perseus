@@ -591,6 +591,163 @@ describe('player avatar route (Bun)', () => {
 		// No backup file or versioned directory left behind.
 		expect(existsSync(join(dataDir, 'avatars', 'p1.legacy-backup'))).toBe(false);
 	});
+
+	it('cleans up legacy backup after successful upload with prior legacy avatar', async () => {
+		// Line 291: when a legacy avatar was migrated and the upload
+		// succeeds (DB write commits), the legacy backup file is unlinked
+		// (best-effort). Without this, every successful upload from a
+		// legacy avatar leaves a stranded backup file.
+		const { mkdirSync } = await import('node:fs');
+		const legacyPath = join(dataDir, 'avatars', 'p1');
+		const avatarsDir = join(dataDir, 'avatars');
+		mkdirSync(avatarsDir, { recursive: true });
+		const priorPng = [0x89, 0x50, 0x4e, 0x47, 0xaa, 0xbb];
+		writeFileSync(legacyPath, Buffer.from(priorPng));
+
+		const blob = new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' });
+		const form = new FormData();
+		form.append('avatar', blob, 'a.png');
+		const res = await buildApp().request('/api/player/avatar', {
+			method: 'POST',
+			headers: AUTH_COOKIE,
+			body: form
+		});
+
+		expect(res.status).toBe(200);
+		// The legacy backup must be cleaned up — no stranded file.
+		expect(existsSync(join(dataDir, 'avatars', 'p1.legacy-backup'))).toBe(false);
+		// The versioned file exists under the player directory.
+		const playerDir = join(dataDir, 'avatars', 'p1');
+		expect(existsSync(playerDir)).toBe(true);
+		const stat = statSync(playerDir);
+		expect(stat.isDirectory()).toBe(true);
+		const files = readdirSync(playerDir);
+		expect(files).toHaveLength(1);
+	});
+
+	it('returns 500 and rolls back when avatar file write fails', async () => {
+		// Lines 262-264: mkdir or writeFile throws during the versioned
+		// file write. The rollback restores the legacy backup (if any)
+		// and returns 500.
+		const { mkdirSync, chmodSync } = await import('node:fs');
+		const avatarsDir = join(dataDir, 'avatars');
+		mkdirSync(avatarsDir, { recursive: true });
+		// Make the avatars directory read-only so mkdir(playerDir) fails.
+		chmodSync(avatarsDir, 0o555);
+
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const blob = new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' });
+		const form = new FormData();
+		form.append('avatar', blob, 'a.png');
+		const res = await buildApp().request('/api/player/avatar', {
+			method: 'POST',
+			headers: AUTH_COOKIE,
+			body: form
+		});
+
+		expect(res.status).toBe(500);
+		const body = await res.json();
+		expect(body.message).toBe('Failed to store avatar');
+		expect(consoleSpy).toHaveBeenCalledWith(
+			'Avatar file write failed; rolling back legacy migration:',
+			expect.any(Error)
+		);
+		consoleSpy.mockRestore();
+
+		// Restore permissions for cleanup.
+		chmodSync(avatarsDir, 0o755);
+	});
+
+	it('returns early from rollback when rmdir fails (migratedLegacy=false, directory not empty)', async () => {
+		// Line 84: rollbackLegacyMigration with migratedLegacy=false tries
+		// to rmdir the player directory. If another upload's file remains,
+		// rmdir fails and the function returns early (the backup stays for
+		// the last rollback to handle). We simulate this by having two
+		// concurrent uploads where B (migratedLegacy=false) rolls back
+		// BEFORE A (migratedLegacy=true) removes its file.
+		const { mkdirSync, writeFileSync } = await import('node:fs');
+		const legacyPath = join(dataDir, 'avatars', 'p1');
+		const avatarsDir = join(dataDir, 'avatars');
+		mkdirSync(avatarsDir, { recursive: true });
+		const priorPng = [0x89, 0x50, 0x4e, 0x47, 0xaa, 0xbb];
+		writeFileSync(legacyPath, Buffer.from(priorPng));
+
+		const { updateProfileAvatarUrl } = await import('@perseus/shared');
+
+		// Gate each upload's DB write so we can control the interleaving.
+		let releaseA!: () => void;
+		const gateA = new Promise<void>((resolve) => {
+			releaseA = resolve;
+		});
+		let releaseB!: () => void;
+		const gateB = new Promise<void>((resolve) => {
+			releaseB = resolve;
+		});
+
+		// A's DB write blocks on gateA, then fails.
+		vi.mocked(updateProfileAvatarUrl).mockImplementationOnce(async () => {
+			await gateA;
+			throw new Error('DB down A');
+		});
+		// B's DB write blocks on gateB, then fails.
+		vi.mocked(updateProfileAvatarUrl).mockImplementationOnce(async () => {
+			await gateB;
+			throw new Error('DB down B');
+		});
+
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const makeForm = () => {
+			const blob = new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' });
+			const form = new FormData();
+			form.append('avatar', blob, 'a.png');
+			return form;
+		};
+
+		// Start A — renames legacy to backup, creates dir, writes tokenA,
+		// then blocks on the DB write.
+		const promiseA = buildApp().request('/api/player/avatar', {
+			method: 'POST',
+			headers: AUTH_COOKIE,
+			body: makeForm()
+		});
+
+		// Wait for A to reach the DB write (rename + mkdir + writeFile).
+		await new Promise((resolve) => setTimeout(resolve, 50));
+
+		// Start B — sees the directory (no migration), writes tokenB,
+		// then blocks on the DB write.
+		const promiseB = buildApp().request('/api/player/avatar', {
+			method: 'POST',
+			headers: AUTH_COOKIE,
+			body: makeForm()
+		});
+
+		// Wait for B to reach the DB write.
+		await new Promise((resolve) => setTimeout(resolve, 50));
+
+		// Release B FIRST — DB fails, B rolls back (migratedLegacy=false).
+		// B's rmdir fails (A's tokenA file remains) → line 84 early return.
+		// The backup is NOT restored yet.
+		releaseB();
+		await promiseB;
+
+		// Release A — DB fails, A rolls back (migratedLegacy=true).
+		// A's rmdir succeeds (B already removed its file), backup restored.
+		releaseA();
+		await promiseA;
+
+		// The legacy file must be restored at its original path.
+		const { statSync } = await import('node:fs');
+		expect(existsSync(legacyPath)).toBe(true);
+		const stat = statSync(legacyPath);
+		expect(stat.isFile()).toBe(true);
+		const restored = readFileSync(legacyPath);
+		expect(Array.from(restored)).toEqual(priorPng);
+		// No backup file left behind.
+		expect(existsSync(join(dataDir, 'avatars', 'p1.legacy-backup'))).toBe(false);
+	});
 });
 
 describe('player lists (Bun)', () => {
