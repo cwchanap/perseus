@@ -20,7 +20,7 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	return {
 		...actual,
 		deletePuzzleOwnership: vi.fn(),
-		deletePuzzleStats: vi.fn()
+		deletePuzzleStats: vi.fn(async () => undefined)
 	};
 });
 
