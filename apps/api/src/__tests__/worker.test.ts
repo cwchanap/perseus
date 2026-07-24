@@ -22,11 +22,12 @@ vi.mock('../routes/auth.worker', () => {
 
 vi.mock('../services/reaper', () => ({
 	reapStuckPuzzles: vi.fn(),
-	reapCleanupRecords: vi.fn()
+	reapCleanupRecords: vi.fn(),
+	reapOrphanedReservations: vi.fn()
 }));
 
 import worker from '../worker';
-import { reapStuckPuzzles, reapCleanupRecords } from '../services/reaper';
+import { reapStuckPuzzles, reapCleanupRecords, reapOrphanedReservations } from '../services/reaper';
 
 function createMockCtx(): ExecutionContext {
 	return {
@@ -165,6 +166,16 @@ describe('Worker Entry Point', () => {
 	});
 
 	describe('scheduled handler (reaper)', () => {
+		beforeEach(() => {
+			(reapOrphanedReservations as any).mockResolvedValue({
+				scanned: 0,
+				candidates: 0,
+				reaped: 0,
+				errors: 0,
+				details: []
+			});
+		});
+
 		it('should call reapStuckPuzzles and log results', async () => {
 			(reapStuckPuzzles as any).mockResolvedValue({
 				scanned: 10,
@@ -286,6 +297,68 @@ describe('Worker Entry Point', () => {
 			await waitUntilCall;
 
 			expect(reapCleanupRecords).toHaveBeenCalledWith(env);
+		});
+
+		it('should call reapOrphanedReservations and log when candidates > 0', async () => {
+			const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+			(reapStuckPuzzles as any).mockResolvedValue({
+				scanned: 0,
+				candidates: 0,
+				reaped: 0,
+				errors: 0,
+				details: []
+			});
+			(reapCleanupRecords as any).mockResolvedValue({
+				scanned: 0,
+				reaped: 0,
+				errors: 0,
+				details: []
+			});
+			(reapOrphanedReservations as any).mockResolvedValue({
+				scanned: 20,
+				candidates: 3,
+				reaped: 2,
+				errors: 1,
+				details: [{ puzzleId: 'orphan-1', action: 'orphan-reaped' }]
+			});
+			const ctx = createMockCtx();
+			const env = { PUZZLE_METADATA: {} } as any;
+
+			await worker.scheduled!(undefined as any, env, ctx);
+			const waitUntilCall = (ctx.waitUntil as any).mock.calls[0][0];
+			await waitUntilCall;
+
+			expect(reapOrphanedReservations).toHaveBeenCalledWith(env);
+			expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Reaper orphan: scanned=20'));
+			expect(logSpy).toHaveBeenCalledWith(
+				'Reaper orphan details:',
+				expect.stringContaining('orphan-1')
+			);
+		});
+
+		it('should not throw when reapOrphanedReservations rejects', async () => {
+			(reapStuckPuzzles as any).mockResolvedValue({
+				scanned: 0,
+				candidates: 0,
+				reaped: 0,
+				errors: 0,
+				details: []
+			});
+			(reapCleanupRecords as any).mockResolvedValue({
+				scanned: 0,
+				reaped: 0,
+				errors: 0,
+				details: []
+			});
+			(reapOrphanedReservations as any).mockRejectedValue(new Error('orphan reaper failed'));
+			const ctx = createMockCtx();
+			const env = { PUZZLE_METADATA: {} } as any;
+
+			await worker.scheduled!(undefined as any, env, ctx);
+			const waitUntilCall = (ctx.waitUntil as any).mock.calls[0][0];
+			await waitUntilCall;
+
+			expect(reapOrphanedReservations).toHaveBeenCalledWith(env);
 		});
 	});
 });

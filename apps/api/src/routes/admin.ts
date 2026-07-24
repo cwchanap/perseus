@@ -513,8 +513,11 @@ admin.post('/puzzles', requireAuth, async (c) => {
 	}
 });
 
-// DELETE /api/admin/puzzles/:id - Delete puzzle (protected)
-admin.delete('/puzzles/:id', requireAuth, async (c) => {
+// POST /api/admin/puzzle-delete/:id - Delete puzzle (protected)
+// Moved off the /api/admin/puzzles sub-path so the CLI Access app's exact
+// path '/api/admin/puzzles' no longer inherits to the delete route (see
+// admin.worker.ts for the full rationale).
+admin.post('/puzzle-delete/:id', requireAuth, async (c) => {
 	const id = c.req.param('id');
 
 	// Read metadata before deletion so we can release the idempotency

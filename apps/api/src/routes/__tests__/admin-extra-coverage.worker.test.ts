@@ -420,8 +420,8 @@ describe('Admin Worker - DELETE metadata deletion failure', () => {
 			error: new Error('KV delete failed')
 		} as any);
 
-		const req = new Request('http://localhost/puzzles/a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d', {
-			method: 'DELETE',
+		const req = new Request('http://localhost/puzzle-delete/a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d', {
+			method: 'POST',
 			headers: { cookie: 'session=valid.token' }
 		});
 

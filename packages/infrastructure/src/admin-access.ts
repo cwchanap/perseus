@@ -24,25 +24,24 @@ export const ADMIN_ACCESS_PATHS = ['/admin', '/admin/*', '/api/admin', '/api/adm
  *   example.com/eng and example.com/eng/exec, the more specific rule for
  *   /eng/exec wins, and NO rule is inherited from /eng.
  *
- * KNOWN LIMITATION: CLI_ACCESS_PATHS includes the exact path
- * '/api/admin/puzzles' (for POST = create + GET = list). Per the inheritance
- * rule above, this also covers DELETE /api/admin/puzzles/:id — there is no
- * more specific rule for that sub-path, so it inherits the CLI app's policies
- * (including the service-token non_identity policy). A service-token holder
- * who obtains a session cookie via /api/admin/login can therefore reach the
- * per-id DELETE endpoint at the Access gate. Cloudflare Access is
- * path-based, not method-based, so there is no way to scope to POST only.
- * Current mitigations:
- *   1. The CLI script (admin-bulk-upload-startup.ts) only calls POST; it
- *      never calls DELETE. A compromised token holder could, but would need
- *      to know puzzle IDs.
+ * PATH SCOPING (resolved): CLI_ACCESS_PATHS includes the exact path
+ * '/api/admin/puzzles' (for POST = create + GET = list). The per-id delete
+ * route lives at POST /api/admin/puzzle-delete/:id — a SIBLING of (not a
+ * sub-path of) '/api/admin/puzzles' — so it does NOT inherit the CLI app's
+ * policies. It inherits only the broad admin app's email+posture policy,
+ * which has no Service Auth policy, so a service-token holder cannot reach
+ * the delete endpoint at the Access gate even after obtaining a session
+ * cookie via /api/admin/login. Cloudflare Access is path-based, not
+ * method-based, which is why the delete route was moved off the inherited
+ * sub-path rather than scoped by HTTP method.
+ * Defense-in-depth backstops that remain in place:
+ *   1. The CLI script (admin-bulk-upload-startup.ts) only calls POST
+ *      /api/admin/puzzles (create) and POST /api/admin/login; it never
+ *      calls /api/admin/puzzle-delete/:id.
  *   2. The service token expires after
  *      DEFAULT_ADMIN_CLI_SERVICE_TOKEN_DURATION (90 days).
  *   3. The session cookie has a limited duration
  *      (DEFAULT_ADMIN_ACCESS_SESSION_DURATION = 12h).
- * Proper fix (deferred): move DELETE off the /api/admin/puzzles sub-path
- * (e.g. to POST /api/admin/puzzle-delete/:id) so the CLI Access app's
- * /api/admin/puzzles exact path no longer inherits to the delete route.
  */
 export const CLI_ACCESS_PATHS = ['/api/admin/login', '/api/admin/puzzles'] as const;
 export const DEFAULT_ADMIN_ACCESS_SESSION_DURATION = '12h';

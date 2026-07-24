@@ -379,7 +379,7 @@ describe('DELETE /puzzles/:id - idempotency reservation release', () => {
 			idempotencyKey: 'del-key'
 		});
 
-		const req = new Request('http://localhost/puzzles/del-id', { method: 'DELETE' });
+		const req = new Request('http://localhost/puzzle-delete/del-id', { method: 'POST' });
 		const res = await app.fetch(req);
 		expect(res.status).toBe(204);
 		expect(storageMock.deletePuzzle).toHaveBeenCalledWith('del-id');
@@ -398,7 +398,7 @@ describe('DELETE /puzzles/:id - idempotency reservation release', () => {
 		);
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 		try {
-			const req = new Request('http://localhost/puzzles/del-id', { method: 'DELETE' });
+			const req = new Request('http://localhost/puzzle-delete/del-id', { method: 'POST' });
 			const res = await app.fetch(req);
 			expect(res.status).toBe(204);
 			expect(storageMock.releaseIdempotencyKey).toHaveBeenCalledWith('del-key', 'del-id');
@@ -414,7 +414,7 @@ describe('DELETE /puzzles/:id - idempotency reservation release', () => {
 		(storageMock.puzzleExists as ReturnType<typeof vi.fn>).mockResolvedValue(true);
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 		try {
-			const req = new Request('http://localhost/puzzles/corrupt-id', { method: 'DELETE' });
+			const req = new Request('http://localhost/puzzle-delete/corrupt-id', { method: 'POST' });
 			const res = await app.fetch(req);
 			expect(res.status).toBe(204);
 			expect(storageMock.deletePuzzle).toHaveBeenCalledWith('corrupt-id');
@@ -432,7 +432,7 @@ describe('DELETE /puzzles/:id - idempotency reservation release', () => {
 		(storageMock.puzzleExists as ReturnType<typeof vi.fn>).mockResolvedValue(false);
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 		try {
-			const req = new Request('http://localhost/puzzles/missing-id', { method: 'DELETE' });
+			const req = new Request('http://localhost/puzzle-delete/missing-id', { method: 'POST' });
 			const res = await app.fetch(req);
 			expect(res.status).toBe(404);
 			expect(storageMock.deletePuzzle).not.toHaveBeenCalled();
@@ -447,7 +447,7 @@ describe('DELETE /puzzles/:id - idempotency reservation release', () => {
 			name: 'Plain',
 			pieceCount: 25
 		});
-		const req = new Request('http://localhost/puzzles/plain-id', { method: 'DELETE' });
+		const req = new Request('http://localhost/puzzle-delete/plain-id', { method: 'POST' });
 		const res = await app.fetch(req);
 		expect(res.status).toBe(204);
 		expect(storageMock.releaseIdempotencyKey).not.toHaveBeenCalled();

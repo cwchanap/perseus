@@ -1728,8 +1728,15 @@ admin.post('/puzzles', requireAuth, async (c) => {
 	}
 });
 
-// DELETE /api/admin/puzzles/:id - Delete puzzle (protected)
-admin.delete('/puzzles/:id', requireAuth, async (c) => {
+// POST /api/admin/puzzle-delete/:id - Delete puzzle (protected)
+// Moved off the /api/admin/puzzles sub-path so the narrow CLI Access app's
+// exact path '/api/admin/puzzles' no longer inherits to the delete route.
+// The CLI Access app covers only '/api/admin/login' and '/api/admin/puzzles'
+// (POST create + GET list); '/api/admin/puzzle-delete/:id' is a sibling path
+// that inherits the broad admin app's email+posture policy only (no service
+// token), so a service-token holder cannot reach the delete endpoint at the
+// Access gate even after obtaining a session cookie.
+admin.post('/puzzle-delete/:id', requireAuth, async (c) => {
 	const id = c.req.param('id');
 	const force = c.req.query('force') === 'true';
 

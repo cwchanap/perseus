@@ -1223,6 +1223,78 @@ describe('PuzzleMetadataDO.fetch - /status', () => {
 	});
 });
 
+describe('PuzzleMetadataDO.fetch - /reservation (read-only lookup)', () => {
+	it('returns the current reservation record without requiring a puzzleId body', async () => {
+		const { durableObj } = makeDO({
+			reservation: { puzzleId: 'owner-puzzle', status: 'committed', reservedAt: 1234 }
+		});
+		const res = await durableObj.fetch(
+			new Request('https://puzzle-metadata/reservation', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({})
+			})
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			reservation: { puzzleId: string; status: string; reservedAt?: number } | null;
+		};
+		expect(body.reservation).not.toBeNull();
+		expect(body.reservation!.puzzleId).toBe('owner-puzzle');
+		expect(body.reservation!.status).toBe('committed');
+		expect(body.reservation!.reservedAt).toBe(1234);
+	});
+
+	it('returns { reservation: null } when no reservation record exists', async () => {
+		const { durableObj } = makeDO({});
+		const res = await durableObj.fetch(
+			new Request('https://puzzle-metadata/reservation', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({})
+			})
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { reservation: unknown };
+		expect(body.reservation).toBeNull();
+	});
+
+	it('returns a failed reservation so the reaper can detect ownership mismatch', async () => {
+		const { durableObj } = makeDO({
+			reservation: { puzzleId: 'reclaimed-by-retry', status: 'failed' }
+		});
+		const res = await durableObj.fetch(
+			new Request('https://puzzle-metadata/reservation', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({})
+			})
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			reservation: { puzzleId: string; status: string } | null;
+		};
+		expect(body.reservation!.puzzleId).toBe('reclaimed-by-retry');
+		expect(body.reservation!.status).toBe('failed');
+	});
+
+	it('does not initialize doPuzzleId (pure read, no identity side effect)', async () => {
+		const { durableObj, storage } = makeDO({
+			reservation: { puzzleId: 'owner-puzzle', status: 'committed' }
+		});
+		await durableObj.fetch(
+			new Request('https://puzzle-metadata/reservation', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({})
+			})
+		);
+		// /reservation must NOT write a puzzleId to storage (unlike /update,
+		// /status, /delete which initialize doPuzzleId on first call).
+		expect(storage.get('puzzleId')).resolves.toBeNull();
+	});
+});
+
 describe('PuzzleMetadataDO.fetch - /commit /fail /release transition edge cases', () => {
 	it('returns 400 for invalid commit payload (missing puzzleId)', async () => {
 		const { durableObj } = makeDO({

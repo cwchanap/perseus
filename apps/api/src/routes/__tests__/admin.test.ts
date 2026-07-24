@@ -738,7 +738,7 @@ describe('DELETE /puzzles/:id', () => {
 		(storageMock.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(null);
 		(storageMock.puzzleExists as ReturnType<typeof vi.fn>).mockResolvedValue(false);
 
-		const req = new Request('http://localhost/puzzles/nonexistent-id', { method: 'DELETE' });
+		const req = new Request('http://localhost/puzzle-delete/nonexistent-id', { method: 'POST' });
 		const res = await app.fetch(req);
 		expect(res.status).toBe(404);
 		const body = await res.json();
@@ -757,7 +757,7 @@ describe('DELETE /puzzles/:id', () => {
 		(storageMock.deletePuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(true);
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-		const req = new Request('http://localhost/puzzles/corrupt-id', { method: 'DELETE' });
+		const req = new Request('http://localhost/puzzle-delete/corrupt-id', { method: 'POST' });
 		const res = await app.fetch(req);
 		expect(res.status).toBe(204);
 		// puzzleExists was consulted as the fallback.
@@ -775,7 +775,7 @@ describe('DELETE /puzzles/:id', () => {
 		(storageMock.puzzleExists as ReturnType<typeof vi.fn>).mockResolvedValue(false);
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-		const req = new Request('http://localhost/puzzles/corrupt-id', { method: 'DELETE' });
+		const req = new Request('http://localhost/puzzle-delete/corrupt-id', { method: 'POST' });
 		const res = await app.fetch(req);
 		expect(res.status).toBe(404);
 		const body = await res.json();
@@ -792,7 +792,9 @@ describe('DELETE /puzzles/:id', () => {
 		});
 		(storageMock.deletePuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(true);
 
-		const req = new Request('http://localhost/puzzles/existing-puzzle-id', { method: 'DELETE' });
+		const req = new Request('http://localhost/puzzle-delete/existing-puzzle-id', {
+			method: 'POST'
+		});
 		const res = await app.fetch(req);
 		expect(res.status).toBe(204);
 
@@ -813,7 +815,9 @@ describe('DELETE /puzzles/:id', () => {
 		const { deletePuzzleOwnership } = await import('@perseus/shared');
 		(deletePuzzleOwnership as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('D1 down'));
 
-		const req = new Request('http://localhost/puzzles/existing-puzzle-id', { method: 'DELETE' });
+		const req = new Request('http://localhost/puzzle-delete/existing-puzzle-id', {
+			method: 'POST'
+		});
 		const res = await app.fetch(req);
 		expect(res.status).toBe(204);
 	});
@@ -834,7 +838,9 @@ describe('DELETE /puzzles/:id', () => {
 		);
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-		const req = new Request('http://localhost/puzzles/existing-puzzle-id', { method: 'DELETE' });
+		const req = new Request('http://localhost/puzzle-delete/existing-puzzle-id', {
+			method: 'POST'
+		});
 		const res = await app.fetch(req);
 		expect(res.status).toBe(204);
 		expect(consoleSpy).toHaveBeenCalledWith(
@@ -861,7 +867,9 @@ describe('DELETE /puzzles/:id', () => {
 		});
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-		const req = new Request('http://localhost/puzzles/existing-puzzle-id', { method: 'DELETE' });
+		const req = new Request('http://localhost/puzzle-delete/existing-puzzle-id', {
+			method: 'POST'
+		});
 		const res = await app.fetch(req);
 		expect(res.status).toBe(204);
 		expect(consoleSpy).toHaveBeenCalledWith(
@@ -880,7 +888,7 @@ describe('DELETE /puzzles/:id', () => {
 		});
 		(storageMock.deletePuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(false);
 
-		const req = new Request('http://localhost/puzzles/puzzle-id', { method: 'DELETE' });
+		const req = new Request('http://localhost/puzzle-delete/puzzle-id', { method: 'POST' });
 		const res = await app.fetch(req);
 		expect(res.status).toBe(500);
 		const body = await res.json();

@@ -1,6 +1,12 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { reapStuckPuzzles, reapCleanupRecords, REAP_AFTER_MS } from '../reaper';
+import {
+	reapStuckPuzzles,
+	reapCleanupRecords,
+	reapOrphanedReservations,
+	REAP_AFTER_MS,
+	REAP_BATCH_LIMIT
+} from '../reaper';
 
 // Mock storage.worker functions
 vi.mock('../storage.worker', () => ({
@@ -12,7 +18,8 @@ vi.mock('../storage.worker', () => ({
 	getPuzzle: vi.fn(),
 	listPuzzles: vi.fn(),
 	listCleanupRecords: vi.fn(async () => []),
-	releaseIdempotencyKey: vi.fn()
+	releaseIdempotencyKey: vi.fn(),
+	getIdempotencyReservation: vi.fn()
 }));
 
 // Mock db.worker so the reaper's D1 ownership cleanup doesn't touch a real DB.
@@ -36,7 +43,8 @@ import {
 	getPuzzle,
 	listPuzzles,
 	listCleanupRecords,
-	releaseIdempotencyKey
+	releaseIdempotencyKey,
+	getIdempotencyReservation
 } from '../storage.worker';
 import { getWorkerDb } from '../../db.worker';
 import { deletePuzzleOwnership } from '@perseus/shared';
@@ -50,7 +58,8 @@ const storage = {
 	getPuzzle,
 	listPuzzles,
 	listCleanupRecords,
-	releaseIdempotencyKey
+	releaseIdempotencyKey,
+	getIdempotencyReservation
 } as any;
 
 function makeEnv(workflowStatuses: Record<string, string> = {}) {
@@ -955,5 +964,262 @@ describe('reapCleanupRecords', () => {
 		const detail = result.details.find((d) => d.action === 'cleanup-do-tombstone-failed');
 		expect(detail).toBeDefined();
 		expect(detail?.error).toContain('DO unreachable');
+	});
+});
+
+describe('reapOrphanedReservations', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		(storage.deletePuzzleAssets as any).mockResolvedValue({ success: true, failedKeys: [] });
+		(storage.deletePuzzleMetadata as any).mockResolvedValue({ success: true });
+		(storage.deleteMetadataDO as any).mockResolvedValue(undefined);
+		(storage.releaseIdempotencyKey as any).mockResolvedValue(undefined);
+		(storage.getIdempotencyReservation as any).mockResolvedValue(null);
+		(deletePuzzleOwnership as any).mockResolvedValue(undefined);
+		(getWorkerDb as any).mockReturnValue({});
+	});
+
+	function puzzleMeta(id: string, overrides: Partial<Record<string, unknown>> = {}) {
+		return {
+			id,
+			name: `Puzzle ${id}`,
+			pieceCount: 100,
+			status: 'ready',
+			createdAt: OLD_READY,
+			progress: { totalPieces: 100, generatedPieces: 100, updatedAt: OLD_READY },
+			...overrides
+		};
+	}
+
+	it('returns empty result when no puzzles carry an idempotencyKey', async () => {
+		(storage.listPuzzles as any).mockResolvedValue({
+			puzzles: [puzzleSummary('a', 'ready', OLD_READY)],
+			invalidCount: 0
+		});
+		(storage.getPuzzle as any).mockResolvedValue(puzzleMeta('a'));
+		const env = makeEnv();
+		const result = await reapOrphanedReservations(env);
+		expect(result.scanned).toBe(1);
+		expect(result.candidates).toBe(0);
+		expect(result.reaped).toBe(0);
+		expect(storage.getIdempotencyReservation).not.toHaveBeenCalled();
+	});
+
+	it('skips puzzles that are the current reservation owner (not orphans)', async () => {
+		(storage.listPuzzles as any).mockResolvedValue({
+			puzzles: [puzzleSummary('a', 'ready', OLD_READY)],
+			invalidCount: 0
+		});
+		(storage.getPuzzle as any).mockResolvedValue(puzzleMeta('a', { idempotencyKey: 'key-K' }));
+		(storage.getIdempotencyReservation as any).mockResolvedValue({
+			puzzleId: 'a',
+			status: 'committed'
+		});
+		const env = makeEnv({ a: 'complete' });
+		const result = await reapOrphanedReservations(env);
+		expect(result.candidates).toBe(1);
+		expect(result.reaped).toBe(0);
+		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
+	});
+
+	it('skips puzzles with no reservation record (conservative)', async () => {
+		(storage.listPuzzles as any).mockResolvedValue({
+			puzzles: [puzzleSummary('a', 'ready', OLD_READY)],
+			invalidCount: 0
+		});
+		(storage.getPuzzle as any).mockResolvedValue(puzzleMeta('a', { idempotencyKey: 'key-K' }));
+		(storage.getIdempotencyReservation as any).mockResolvedValue(null);
+		const env = makeEnv({ a: 'complete' });
+		const result = await reapOrphanedReservations(env);
+		expect(result.reaped).toBe(0);
+		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+	});
+
+	it('skips orphaned puzzles whose workflow is still alive', async () => {
+		(storage.listPuzzles as any).mockResolvedValue({
+			puzzles: [puzzleSummary('a', 'processing', OLD_PROCESSING)],
+			invalidCount: 0
+		});
+		(storage.getPuzzle as any).mockResolvedValue(
+			puzzleMeta('a', { status: 'processing', idempotencyKey: 'key-K' })
+		);
+		(storage.getIdempotencyReservation as any).mockResolvedValue({
+			puzzleId: 'b',
+			status: 'committed'
+		});
+		const env = makeEnv({ a: 'running' });
+		const result = await reapOrphanedReservations(env);
+		expect(result.reaped).toBe(0);
+		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
+	});
+
+	// Regression for the durability gap: a failed writeCleanupRecord must
+	// NOT permanently strand a completed orphan. Steps mirror the reviewer's
+	// scenario:
+	//   1. Request A starts workflow A under idempotency key K.
+	//   2. Request B reclaims K for puzzle B (reservation DO now maps K -> b).
+	//   3. A's cleanup-record write fails (no cleanup record in KV).
+	//   4. Workflow A reaches 'complete' (KV shows ready).
+	//   5. A later scheduled reconciliation (this reaper) removes puzzle A.
+	it('reaps a completed orphan whose idempotency key was reclaimed by a retry', async () => {
+		// Step 1 + 4: puzzle A exists in KV as ready, workflow complete.
+		(storage.listPuzzles as any).mockResolvedValue({
+			puzzles: [puzzleSummary('a', 'ready', OLD_READY)],
+			invalidCount: 0
+		});
+		(storage.getPuzzle as any).mockResolvedValue(
+			puzzleMeta('a', { idempotencyKey: 'key-K', pieceCount: 50 })
+		);
+		// Step 2: the reservation DO for key-K now points at puzzle b (the
+		// retry's replacement), proving A lost its reservation.
+		(storage.getIdempotencyReservation as any).mockResolvedValue({
+			puzzleId: 'b',
+			status: 'committed'
+		});
+		// Step 3 is implicit: no cleanup record exists (listCleanupRecords
+		// defaults to []), so the cleanup-record reaper cannot reach A.
+		const env = makeEnv({ a: 'complete' });
+		const result = await reapOrphanedReservations(env);
+
+		// Step 5: A is fully reaped.
+		expect(result.candidates).toBe(1);
+		expect(result.reaped).toBe(1);
+		expect(storage.deleteMetadataDO).toHaveBeenCalledWith(env.PUZZLE_METADATA_DO, 'a');
+		expect(storage.deletePuzzleAssets).toHaveBeenCalledWith(env.PUZZLES_BUCKET, 'a', 50);
+		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'a');
+		expect(storage.releaseIdempotencyKey).toHaveBeenCalledWith(
+			env.PUZZLE_METADATA_DO,
+			'key-K',
+			'a'
+		);
+		expect(deletePuzzleOwnership).toHaveBeenCalledWith(expect.anything(), 'a');
+		expect(result.details.some((d) => d.action === 'orphan-reaped')).toBe(true);
+	});
+
+	it('reaps an orphan whose workflow is dead (errored)', async () => {
+		(storage.listPuzzles as any).mockResolvedValue({
+			puzzles: [puzzleSummary('a', 'processing', OLD_PROCESSING)],
+			invalidCount: 0
+		});
+		(storage.getPuzzle as any).mockResolvedValue(
+			puzzleMeta('a', { status: 'processing', idempotencyKey: 'key-K', pieceCount: 30 })
+		);
+		(storage.getIdempotencyReservation as any).mockResolvedValue({
+			puzzleId: 'b',
+			status: 'committed'
+		});
+		const env = makeEnv({ a: 'errored' });
+		const result = await reapOrphanedReservations(env);
+		expect(result.reaped).toBe(1);
+		expect(storage.deletePuzzleAssets).toHaveBeenCalledWith(env.PUZZLES_BUCKET, 'a', 30);
+	});
+
+	it('reaps an orphan whose workflow instance was never created (not_found)', async () => {
+		(storage.listPuzzles as any).mockResolvedValue({
+			puzzles: [puzzleSummary('a', 'processing', OLD_PROCESSING)],
+			invalidCount: 0
+		});
+		(storage.getPuzzle as any).mockResolvedValue(
+			puzzleMeta('a', { status: 'processing', idempotencyKey: 'key-K' })
+		);
+		(storage.getIdempotencyReservation as any).mockResolvedValue({
+			puzzleId: 'b',
+			status: 'pending'
+		});
+		const env = makeEnv();
+		const notFoundError = new Error('instance.not_found');
+		(notFoundError as any).code = 'instance.not_found';
+		env.PUZZLE_WORKFLOW.get = vi.fn(() => {
+			throw notFoundError;
+		});
+		const result = await reapOrphanedReservations(env);
+		expect(result.reaped).toBe(1);
+	});
+
+	it('preserves KV when R2 deletion fails partially on an orphan', async () => {
+		(storage.listPuzzles as any).mockResolvedValue({
+			puzzles: [puzzleSummary('a', 'ready', OLD_READY)],
+			invalidCount: 0
+		});
+		(storage.getPuzzle as any).mockResolvedValue(
+			puzzleMeta('a', { idempotencyKey: 'key-K', pieceCount: 50 })
+		);
+		(storage.getIdempotencyReservation as any).mockResolvedValue({
+			puzzleId: 'b',
+			status: 'committed'
+		});
+		(storage.deletePuzzleAssets as any).mockResolvedValue({
+			success: false,
+			failedKeys: ['puzzles/a/original']
+		});
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		const env = makeEnv({ a: 'complete' });
+		const result = await reapOrphanedReservations(env);
+		expect(result.reaped).toBe(0);
+		expect(result.errors).toBe(1);
+		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
+		expect(result.details.some((d) => d.action === 'orphan-r2-delete-partial')).toBe(true);
+	});
+
+	it('preserves R2/KV when DO tombstone fails on an orphan', async () => {
+		(storage.listPuzzles as any).mockResolvedValue({
+			puzzles: [puzzleSummary('a', 'ready', OLD_READY)],
+			invalidCount: 0
+		});
+		(storage.getPuzzle as any).mockResolvedValue(puzzleMeta('a', { idempotencyKey: 'key-K' }));
+		(storage.getIdempotencyReservation as any).mockResolvedValue({
+			puzzleId: 'b',
+			status: 'committed'
+		});
+		(storage.deleteMetadataDO as any).mockRejectedValue(new Error('DO unreachable'));
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		const env = makeEnv({ a: 'complete' });
+		const result = await reapOrphanedReservations(env);
+		expect(result.reaped).toBe(0);
+		expect(result.errors).toBe(1);
+		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
+		expect(result.details.some((d) => d.action === 'orphan-do-tombstone-failed')).toBe(true);
+	});
+
+	it('records orphan-error on unexpected failure', async () => {
+		(storage.listPuzzles as any).mockResolvedValue({
+			puzzles: [puzzleSummary('a', 'ready', OLD_READY)],
+			invalidCount: 0
+		});
+		(storage.getPuzzle as any).mockResolvedValue(puzzleMeta('a', { idempotencyKey: 'key-K' }));
+		(storage.getIdempotencyReservation as any).mockImplementation(() => {
+			throw new Error('DO RPC blew up');
+		});
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		const env = makeEnv({ a: 'complete' });
+		const result = await reapOrphanedReservations(env);
+		expect(result.reaped).toBe(0);
+		expect(result.errors).toBe(1);
+		expect(result.details.some((d) => d.action === 'orphan-error')).toBe(true);
+	});
+
+	it('respects REAP_BATCH_LIMIT on orphan candidates', async () => {
+		const summaries = Array.from({ length: REAP_BATCH_LIMIT + 5 }, (_, i) =>
+			puzzleSummary(`p${i}`, 'ready', OLD_READY)
+		);
+		(storage.listPuzzles as any).mockResolvedValue({ puzzles: summaries, invalidCount: 0 });
+		(storage.getPuzzle as any).mockImplementation((_: KVNamespace, id: string) =>
+			Promise.resolve(puzzleMeta(id, { idempotencyKey: `key-${id}` }))
+		);
+		(storage.getIdempotencyReservation as any).mockImplementation(
+			(_: DurableObjectNamespace, key: string) =>
+				Promise.resolve({ puzzleId: key.replace('key-', 'other-'), status: 'committed' })
+		);
+		const env = makeEnv();
+		// All workflows complete so all candidates are reaped.
+		env.PUZZLE_WORKFLOW.get = vi.fn(() => ({
+			status: vi.fn(async () => ({ status: 'complete' }))
+		}));
+		const result = await reapOrphanedReservations(env);
+		expect(result.candidates).toBe(summaries.length);
+		expect(result.reaped).toBe(REAP_BATCH_LIMIT);
 	});
 });

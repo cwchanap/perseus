@@ -73,8 +73,8 @@ describe('Admin Routes - Puzzle deletion error paths', () => {
 
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-		const req = new Request(`http://localhost/puzzles/${VALID_UUID}`, {
-			method: 'DELETE',
+		const req = new Request(`http://localhost/puzzle-delete/${VALID_UUID}`, {
+			method: 'POST',
 			headers: { cookie: 'session=valid.token' }
 		});
 
@@ -111,8 +111,8 @@ describe('Admin Routes - Puzzle deletion error paths', () => {
 
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-		const req = new Request(`http://localhost/puzzles/${VALID_UUID}`, {
-			method: 'DELETE',
+		const req = new Request(`http://localhost/puzzle-delete/${VALID_UUID}`, {
+			method: 'POST',
 			headers: { cookie: 'session=valid.token' }
 		});
 

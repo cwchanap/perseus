@@ -126,6 +126,9 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 		if (url.pathname === '/status') {
 			return this.handleStatus(request);
 		}
+		if (url.pathname === '/reservation') {
+			return this.handleReservationLookup(request);
+		}
 		if (url.pathname === '/delete') {
 			return this.handleDelete(request);
 		}
@@ -811,6 +814,35 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 		});
 
 		return Response.json({ success: true });
+	}
+
+	/**
+	 * Read-only reservation lookup. This DO instance is keyed by
+	 * idFromName(idempotencyKey), so readReservation() returns the current
+	 * reservation record for that key without requiring a puzzleId in the
+	 * request body. Used by the reaper's ownership-mismatch reconciliation
+	 * to detect puzzles whose idempotency key was reclaimed by a retry (the
+	 * reservation now points at a different puzzleId) — the durable signal
+	 * that the original puzzle is an orphan, even when no cleanup record was
+	 * written (writeCleanupRecord failed) and the workflow later completed.
+	 *
+	 * Unlike /reserve, /commit, /fail, /release, this endpoint performs NO
+	 * state transition and does NOT initialize doPuzzleId — it is a pure read
+	 * of the reservation record. Returns { reservation: null } when no
+	 * reservation exists for this key (key was released or never reserved).
+	 */
+	async handleReservationLookup(_request: Request): Promise<Response> {
+		const record = await this.readReservation();
+		if (!record) {
+			return Response.json({ reservation: null });
+		}
+		return Response.json({
+			reservation: {
+				puzzleId: record.puzzleId,
+				status: record.status,
+				...(record.reservedAt !== undefined ? { reservedAt: record.reservedAt } : {})
+			}
+		});
 	}
 
 	private async readReservation(): Promise<ReservationRecord | null> {

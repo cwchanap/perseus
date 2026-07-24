@@ -857,8 +857,8 @@ describe('Admin Worker — DELETE /puzzles/:id idempotency release failure', () 
 		vi.mocked(storage.deletePuzzleAssets).mockResolvedValue({ success: true, failedKeys: [] });
 		vi.mocked(storage.releaseIdempotencyKey).mockRejectedValue(new Error('DO unavailable'));
 
-		const req = new Request(`http://localhost/puzzles/${puzzleId}`, {
-			method: 'DELETE',
+		const req = new Request(`http://localhost/puzzle-delete/${puzzleId}`, {
+			method: 'POST',
 			headers: { cookie: 'session=valid.token' }
 		});
 		const res = await admin.fetch(req, { ...baseEnv } as any);
