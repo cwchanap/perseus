@@ -40,6 +40,7 @@ import {
 import { getWorkerDb } from '../db.worker';
 import {
 	deletePuzzleOwnership,
+	deletePuzzleStats,
 	isAliveWorkflowStatus,
 	isDeadWorkflowStatus,
 	isWorkflowNotFoundError
@@ -333,6 +334,14 @@ export async function reapStuckPuzzles(env: Env, now = Date.now()): Promise<Reap
 						await deletePuzzleOwnership(getWorkerDb(env), puzzle.id).catch((err) =>
 							console.error(`Reaper: failed to delete D1 ownership for ${puzzle.id}:`, err)
 						);
+						// Best-effort cleanup of puzzle_stats rows so a reaped
+						// puzzle doesn't linger in players' best-times lists with a
+						// null name after the left join. Mirrors the admin delete
+						// path, which calls deletePuzzleStats alongside
+						// deletePuzzleOwnership. Logged, not fatal.
+						await deletePuzzleStats(getWorkerDb(env), puzzle.id).catch((err) =>
+							console.error(`Reaper: failed to delete D1 stats for ${puzzle.id}:`, err)
+						);
 					} catch (dbErr) {
 						console.error(
 							`Reaper: failed to init DB for ownership cleanup of ${puzzle.id}:`,
@@ -545,6 +554,14 @@ export async function reapCleanupRecords(env: Env): Promise<ReapResult> {
 						await deletePuzzleOwnership(getWorkerDb(env), record.puzzleId).catch((err) =>
 							console.error(
 								`Reaper cleanup: failed to delete D1 ownership for ${record.puzzleId}:`,
+								err
+							)
+						);
+						// Best-effort cleanup of puzzle_stats rows (see reapStuck-
+						// Puzzles for rationale). Mirrors the admin delete path.
+						await deletePuzzleStats(getWorkerDb(env), record.puzzleId).catch((err) =>
+							console.error(
+								`Reaper cleanup: failed to delete D1 stats for ${record.puzzleId}:`,
 								err
 							)
 						);
@@ -883,6 +900,11 @@ export async function reapOrphanedReservations(env: Env): Promise<ReapResult> {
 				try {
 					await deletePuzzleOwnership(getWorkerDb(env), candidate.id).catch((err) =>
 						console.error(`Reaper orphan: failed to delete D1 ownership for ${candidate.id}:`, err)
+					);
+					// Best-effort cleanup of puzzle_stats rows (see reapStuck-
+					// Puzzles for rationale). Mirrors the admin delete path.
+					await deletePuzzleStats(getWorkerDb(env), candidate.id).catch((err) =>
+						console.error(`Reaper orphan: failed to delete D1 stats for ${candidate.id}:`, err)
 					);
 				} catch (dbErr) {
 					console.error(

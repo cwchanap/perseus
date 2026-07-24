@@ -168,14 +168,36 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 	}
 	const playerId = session.user.id;
 	const avatarUpdateToken = crypto.randomUUID();
+	// Capture the previous avatarUpdateToken BEFORE uploading, so we can
+	// delete the superseded versioned R2 object after the new upload's D1
+	// write succeeds. Without this, repeated successful uploads accumulate
+	// up to 5 MB each indefinitely (every upload writes a unique versioned
+	// key; the serve route only reads the D1-selected one, so superseded
+	// objects are unreachable storage waste).
+	//
+	// The legacy unversioned key (avatars/{playerId}, used before the
+	// versioned-key migration) is intentionally NOT captured here — it
+	// serves as a fallback when D1 is unavailable (see the serve route), so
+	// deleting it would remove that safety net. Only previous versioned
+	// keys (with a token) are reclaimed.
+	const db = getWorkerDb(c.env);
+	let previousToken: string | null = null;
+	try {
+		const existingOverride = await getProfileOverride(db, playerId);
+		previousToken = existingOverride?.avatarUpdateToken ?? null;
+	} catch (err) {
+		// D1 read failed — we can't know the previous token, so we skip
+		// cleanup. The old versioned object (if any) lingers, but the
+		// upload still succeeds. This is no worse than the previous
+		// behavior (which never cleaned up).
+		console.error('Avatar upload: failed to read previous override for cleanup:', err);
+	}
 	// Write to a versioned R2 key (avatars/{playerId}/{token}) instead of a
 	// fixed key (avatars/{playerId}). This eliminates the concurrent-upload
 	// race where two uploads both write to the same key and the last R2
 	// write wins regardless of which D1 row is authoritative. With versioned
 	// keys, each upload writes to a unique key, and D1's avatarUpdateToken
-	// selects which version the serve route reads. Superseded objects
-	// (avatars/{playerId}/{oldToken}) linger as storage waste but are not
-	// reachable by the serve route — they can be cleaned asynchronously.
+	// selects which version the serve route reads.
 	const versionedKey = `avatars/${playerId}/${avatarUpdateToken}`;
 	try {
 		await c.env.PUZZLES_BUCKET.put(versionedKey, bytes, {
@@ -186,7 +208,6 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 		return c.json({ error: 'internal_error', message: 'Failed to store avatar' }, 500);
 	}
 
-	const db = getWorkerDb(c.env);
 	// Field-specific update writes only avatarUrl and preserves displayName,
 	// avoiding a read-modify-write race with concurrent PATCH /profile requests.
 	// The avatarUpdateToken stored here is what the serve route reads to
@@ -209,6 +230,31 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 		await c.env.PUZZLES_BUCKET.delete(versionedKey).catch(() => {});
 		return c.json({ error: 'internal_error', message: 'Failed to update avatar' }, 500);
 	}
+	// Reclaim the superseded versioned R2 object. Re-read D1 to confirm our
+	// token is still authoritative before deleting the previous one — a
+	// concurrent upload may have overwritten our token, in which case the
+	// concurrent upload is now authoritative and will clean up its own
+	// previous token (which may be ours). Deleting only when we're still
+	// authoritative avoids races where two concurrent uploads each delete
+	// the other's just-written key.
+	//
+	// previousToken is the token that was authoritative when we started. If
+	// our D1 write is still the latest, previousToken is definitely no
+	// longer authoritative (our write replaced it), so deleting its R2
+	// object is safe. R2 delete is idempotent, so a concurrent upload that
+	// captured the same previousToken and also deletes it is harmless.
+	if (previousToken && previousToken !== avatarUpdateToken) {
+		try {
+			const currentOverride = await getProfileOverride(db, playerId);
+			if (currentOverride?.avatarUpdateToken === avatarUpdateToken) {
+				await c.env.PUZZLES_BUCKET.delete(`avatars/${playerId}/${previousToken}`).catch((err) =>
+					console.error('Avatar upload: failed to delete superseded R2 object:', err)
+				);
+			}
+		} catch (err) {
+			console.error('Avatar upload: failed to re-read override for cleanup:', err);
+		}
+	}
 	// Reset the rate-limit counter on success so repeated successful uploads
 	// don't accumulate toward an unnecessary lockout. The middleware increments
 	// before the handler runs; this deletes that increment.
@@ -223,11 +269,26 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 // for avatars uploaded before the versioned-key migration.
 player.get('/:playerId/avatar', async (c) => {
 	const playerId = c.req.param('playerId');
-	const db = getWorkerDb(c.env);
-	const override = await getProfileOverride(db, playerId);
+	// D1 lookup is best-effort: if D1 is unavailable (outage, migrations not
+	// yet applied, query error), fall back to the legacy unversioned R2 key
+	// rather than 500-ing. Avatars uploaded before the versioned-key
+	// migration live at the legacy key, so this fallback preserves
+	// availability during D1 degradation. Every request still incurs a D1
+	// query when D1 is healthy (the token selects which versioned key to
+	// serve), but a failure must not block serving a legacy avatar.
+	let override: Awaited<ReturnType<typeof getProfileOverride>> = null;
+	try {
+		const db = getWorkerDb(c.env);
+		override = await getProfileOverride(db, playerId);
+	} catch (err) {
+		console.error(
+			`Avatar serve: D1 override lookup failed for ${playerId}, falling back to legacy key:`,
+			err
+		);
+	}
 	// If the override has an avatarUpdateToken, serve from the versioned key.
-	// If not (null — pre-migration avatar or no avatar), fall back to the
-	// legacy unversioned key for backward compatibility.
+	// If not (null — pre-migration avatar, no avatar, or D1 lookup failed),
+	// fall back to the legacy unversioned key for backward compatibility.
 	const r2Key = override?.avatarUpdateToken
 		? `avatars/${playerId}/${override.avatarUpdateToken}`
 		: `avatars/${playerId}`;

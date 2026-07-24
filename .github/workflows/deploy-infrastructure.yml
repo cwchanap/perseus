@@ -183,6 +183,17 @@ jobs:
           requested-token-type: urn:pulumi:token-type:access_token:personal
           scope: user:cwchanap
 
+      - name: Install Pulumi CLI
+        # pulumi/auth-actions only exchanges the OIDC token for a Pulumi
+        # access token; it does NOT install the CLI. The "Read existing D1
+        # database ID" step below invokes `pulumi stack output` directly in a
+        # shell, so the CLI must be on PATH before that step runs. Without
+        # this, every deploy fails at the lookup with "pulumi: command not
+        # found" before migrations or Pulumi Up ever run. Using pulumi/actions
+        # in installation-only mode (no `command`) matches the version pinned
+        # for the Pulumi Up step below.
+        uses: pulumi/actions@8582a9e8cc630786854029b4e09281acd6794b58 # v6.6.1
+
       - name: Read existing D1 database ID from stack
         # Before running `pulumi up`, check if the D1 database already exists
         # in the Pulumi stack. On subsequent deploys (not the first), the
