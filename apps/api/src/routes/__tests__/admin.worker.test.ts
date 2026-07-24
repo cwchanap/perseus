@@ -15,7 +15,10 @@ vi.mock('../../services/storage.worker', () => ({
 	reserveIdempotencyKey: vi.fn(),
 	commitIdempotencyKey: vi.fn(),
 	failIdempotencyKey: vi.fn(),
-	releaseIdempotencyKey: vi.fn()
+	releaseIdempotencyKey: vi.fn(),
+	deleteMetadataDO: vi.fn().mockResolvedValue(undefined),
+	writeCleanupRecord: vi.fn().mockResolvedValue(undefined),
+	deleteCleanupRecord: vi.fn().mockResolvedValue(undefined)
 }));
 
 vi.mock('../../middleware/auth.worker', () => ({
@@ -388,19 +391,29 @@ describe('Admin Routes - Puzzle Deletion', () => {
 			const body = (await res.json()) as any;
 			expect(body.success).toBe(false);
 			expect(body.partialSuccess).toBe(true);
-			expect(body.warning).toBe('Puzzle metadata deleted but some assets failed to delete');
+			expect(body.warning).toBe('R2 asset deletion partial; KV preserved for reaper retry');
 			expect(body.failedAssets).toEqual([
 				'puzzles/test-puzzle/pieces/0.png',
 				'puzzles/test-puzzle/pieces/1.png'
 			]);
 
-			// Ownership row is cleaned up best-effort even when asset deletion partially
-			// fails, so deleted puzzles don't linger in the uploader's "My Puzzles" list.
-			const { deletePuzzleOwnership } = await import('@perseus/shared');
-			expect(deletePuzzleOwnership).toHaveBeenCalledWith(
-				{},
-				'550e8400-e29b-41d4-a716-446655440000'
+			// Safe ordering: KV metadata is NOT deleted when R2 deletion fails
+			// partially — the failed R2 keys would become invisible orphans
+			// with no metadata to discover them. KV is preserved so the reaper
+			// can retry R2 cleanup on its next run.
+			expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
+
+			// A cleanup record is written so the reaper picks this puzzle up
+			// even if the operator never retries.
+			expect(storage.writeCleanupRecord).toHaveBeenCalledWith(
+				mockEnv.PUZZLE_METADATA,
+				expect.objectContaining({ puzzleId: '550e8400-e29b-41d4-a716-446655440000' })
 			);
+
+			// D1 ownership cleanup is NOT reached on R2 partial failure — the
+			// reaper handles D1 cleanup after R2/KV succeed on retry.
+			const { deletePuzzleOwnership } = await import('@perseus/shared');
+			expect(deletePuzzleOwnership).not.toHaveBeenCalled();
 		});
 	});
 });
@@ -2248,7 +2261,17 @@ describe('Admin Routes - Force Delete', () => {
 		ADMIN_PASSKEY: 'test-passkey',
 		JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
 		PUZZLE_METADATA: {} as KVNamespace,
-		PUZZLES_BUCKET: {} as R2Bucket
+		PUZZLE_METADATA_DO: {} as DurableObjectNamespace,
+		PUZZLES_BUCKET: {} as R2Bucket,
+		// Workflow already in a terminal state — terminateAndAwaitStopped
+		// reads status first and returns true immediately without calling
+		// terminate(), so the safe lifecycle proceeds to tombstone + R2 + KV.
+		PUZZLE_WORKFLOW: {
+			get: vi.fn().mockResolvedValue({
+				status: vi.fn().mockResolvedValue({ status: 'errored' }),
+				terminate: vi.fn()
+			})
+		}
 	};
 
 	it('should allow force deletion of processing puzzle with force=true', async () => {
@@ -2279,6 +2302,70 @@ describe('Admin Routes - Force Delete', () => {
 		const res = await admin.fetch(req, mockEnv as any);
 
 		expect(res.status).toBe(204);
+		// Safe lifecycle: workflow terminated (confirmed stopped), DO
+		// tombstoned, R2 deleted, then KV deleted — not the old KV-first
+		// ordering that could resurrect a deleted processing puzzle.
+		expect(storage.deleteMetadataDO).toHaveBeenCalledWith(
+			mockEnv.PUZZLE_METADATA_DO,
+			'550e8400-e29b-41d4-a716-446655440000'
+		);
+		expect(storage.deletePuzzleAssets).toHaveBeenCalledWith(
+			mockEnv.PUZZLES_BUCKET,
+			'550e8400-e29b-41d4-a716-446655440000',
+			4
+		);
+		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(
+			mockEnv.PUZZLE_METADATA,
+			'550e8400-e29b-41d4-a716-446655440000'
+		);
+	});
+
+	it('should defer to reaper when force-delete cannot confirm workflow stopped', async () => {
+		// Workflow status read fails — terminateAndAwaitStopped returns false,
+		// so the route tombstones the DO best-effort, writes a cleanup record,
+		// and defers R2/KV cleanup to the reaper instead of deleting assets
+		// while the workflow may still be writing to R2.
+		(storage.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
+			id: '550e8400-e29b-41d4-a716-446655440000',
+			name: 'Stuck Puzzle',
+			pieceCount: 4,
+			status: 'processing',
+			pieces: [],
+			version: 0
+		});
+		const failingEnv = {
+			...mockEnv,
+			PUZZLE_WORKFLOW: {
+				get: vi.fn().mockResolvedValue({
+					status: vi.fn().mockRejectedValue(new Error('workflow API unavailable')),
+					terminate: vi.fn()
+				})
+			}
+		};
+
+		const req = new Request(
+			'http://localhost/puzzle-delete/550e8400-e29b-41d4-a716-446655440000?force=true',
+			{
+				method: 'POST',
+				headers: { cookie: 'session=valid.token' }
+			}
+		);
+
+		const res = await admin.fetch(req, failingEnv as any);
+
+		expect(res.status).toBe(500);
+		// Best-effort DO tombstone attempted before deferring.
+		expect(storage.deleteMetadataDO).toHaveBeenCalled();
+		// Cleanup record written so the reaper retries after the workflow
+		// finally terminates.
+		expect(storage.writeCleanupRecord).toHaveBeenCalledWith(
+			mockEnv.PUZZLE_METADATA,
+			expect.objectContaining({ puzzleId: '550e8400-e29b-41d4-a716-446655440000' })
+		);
+		// R2 and KV are NOT touched — the workflow may still write R2
+		// objects, and KV must remain so the reaper can discover the puzzle.
+		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
 	});
 });
 

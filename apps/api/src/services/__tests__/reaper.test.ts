@@ -1234,6 +1234,60 @@ describe('reapOrphanedReservations', () => {
 		expect(result.reaped).toBe(REAP_BATCH_LIMIT);
 	});
 
+	// Regression: mismatches must be collected in deterministic input
+	// (catalog) order, NOT asynchronous completion order. Under the old
+	// shared-array-push approach, a fast subset of mismatches that
+	// resolved first would occupy the first REAP_BATCH_LIMIT slots on
+	// every run, starving slower mismatches that appeared earlier in the
+	// catalog. This test makes later-catalog DO lookups resolve BEFORE
+	// earlier-catalog ones and asserts the batch still covers the
+	// earliest catalog mismatches (p0..p49), not the fastest-resolving
+	// ones (p50..p54).
+	it('collects mismatches in input order, not async completion order', async () => {
+		const summaries = Array.from({ length: REAP_BATCH_LIMIT + 5 }, (_, i) =>
+			puzzleSummary(`p${i}`, 'ready', OLD_READY)
+		);
+		(storage.listPuzzles as any).mockResolvedValue({ puzzles: summaries, invalidCount: 0 });
+		(storage.getPuzzle as any).mockImplementation((_: KVNamespace, id: string) =>
+			Promise.resolve(puzzleMeta(id, { idempotencyKey: `key-${id}` }))
+		);
+		// Delay earlier-catalog lookups so later-catalog ones resolve
+		// first. If mismatches were collected in async completion order,
+		// the batch would cover p50..p54 plus the fastest of p0..p49.
+		// Input-order collection covers p0..p49 regardless of resolution
+		// timing.
+		(storage.getIdempotencyReservation as any).mockImplementation(
+			(_: DurableObjectNamespace, key: string) => {
+				const idx = Number(key.replace('key-p', ''));
+				const delay = (REAP_BATCH_LIMIT + 5 - idx) * 5;
+				return new Promise((resolve) =>
+					setTimeout(() => resolve({ puzzleId: `other-${idx}`, status: 'committed' }), delay)
+				);
+			}
+		);
+		const env = makeEnv();
+		env.PUZZLE_WORKFLOW.get = vi.fn(() => ({
+			status: vi.fn(async () => ({ status: 'complete' }))
+		}));
+		const result = await reapOrphanedReservations(env);
+		expect(result.reaped).toBe(REAP_BATCH_LIMIT);
+		// The reaped batch is the first REAP_BATCH_LIMIT catalog entries
+		// (p0..p49), proving input-order collection — NOT the
+		// fastest-resolving ones (p50..p54). Asserting the set (sorted)
+		// rather than call order, since the destructive phase also
+		// dispatches via Promise.all and invocation order within the
+		// batch is not guaranteed.
+		const reapedIds = (
+			vi.mocked(storage.deletePuzzleMetadata).mock.calls as Array<[unknown, string]>
+		)
+			.map((c) => c[1] as string)
+			.sort();
+		const expected = Array.from({ length: REAP_BATCH_LIMIT }, (_, i) => `p${i}`).sort();
+		expect(reapedIds).toEqual(expected);
+		// p50..p54 were NOT reaped (deferred to the next run).
+		expect(reapedIds).not.toContain(`p${REAP_BATCH_LIMIT}`);
+	});
+
 	// Regression: the source catalog is sorted newest-first (listPuzzles).
 	// With the old batch-first approach, the same newest REAP_BATCH_LIMIT
 	// healthy puzzles would be selected every run, all confirmed as valid

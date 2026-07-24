@@ -230,25 +230,39 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 		await c.env.PUZZLES_BUCKET.delete(versionedKey).catch(() => {});
 		return c.json({ error: 'internal_error', message: 'Failed to update avatar' }, 500);
 	}
-	// Reclaim the superseded versioned R2 object. Re-read D1 to confirm our
-	// token is still authoritative before deleting the previous one — a
-	// concurrent upload may have overwritten our token, in which case the
-	// concurrent upload is now authoritative and will clean up its own
-	// previous token (which may be ours). Deleting only when we're still
-	// authoritative avoids races where two concurrent uploads each delete
-	// the other's just-written key.
-	//
-	// previousToken is the token that was authoritative when we started. If
-	// our D1 write is still the latest, previousToken is definitely no
-	// longer authoritative (our write replaced it), so deleting its R2
-	// object is safe. R2 delete is idempotent, so a concurrent upload that
-	// captured the same previousToken and also deletes it is harmless.
+	// Reclaim the superseded versioned R2 object. Re-read D1 to determine
+	// which token is now authoritative, then delete whichever object is
+	// definitively no longer reachable:
+	//   - If our token is still authoritative, delete the previous token's
+	//     object (our write replaced it).
+	//   - If another upload's token overwrote ours, delete OUR versionedKey
+	//     — it is unreachable storage waste (the serve route reads the
+	//     winning token's key). Without this branch, two overlapping uploads
+	//     that both read the same previousToken O would leave the losing
+	//     upload's object orphaned: A reads O, B reads O, A writes token A,
+	//     B writes token B (overwriting A), A re-reads and sees B (does
+	//     nothing under the old logic), B deletes O — token A's object
+	//     lingers forever.
+	// R2 delete is idempotent, so a concurrent upload that captured the
+	// same previousToken and also deletes it is harmless (a no-op on a
+	// missing key). Each upload only ever deletes a key it can prove is
+	// not the currently-served one, so two concurrent uploads cannot delete
+	// each other's just-written authoritative key.
 	if (previousToken && previousToken !== avatarUpdateToken) {
 		try {
 			const currentOverride = await getProfileOverride(db, playerId);
 			if (currentOverride?.avatarUpdateToken === avatarUpdateToken) {
 				await c.env.PUZZLES_BUCKET.delete(`avatars/${playerId}/${previousToken}`).catch((err) =>
 					console.error('Avatar upload: failed to delete superseded R2 object:', err)
+				);
+			} else {
+				// Another upload overwrote our token — our versionedKey is
+				// definitively no longer authoritative. Delete it to avoid
+				// an unreachable orphan. The winning upload cleans up its
+				// own previousToken (which may be ours — the idempotent R2
+				// delete makes the double-delete harmless).
+				await c.env.PUZZLES_BUCKET.delete(versionedKey).catch((err) =>
+					console.error('Avatar upload: failed to delete losing R2 object:', err)
 				);
 			}
 		} catch (err) {

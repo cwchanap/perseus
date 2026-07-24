@@ -18,7 +18,10 @@ vi.mock('../../services/storage.worker', () => ({
 	listPuzzles: vi.fn(),
 	originalImageExists: vi.fn().mockResolvedValue(false),
 	puzzleExists: vi.fn().mockResolvedValue(false),
-	releaseIdempotencyKey: vi.fn()
+	releaseIdempotencyKey: vi.fn(),
+	deleteMetadataDO: vi.fn().mockResolvedValue(undefined),
+	writeCleanupRecord: vi.fn().mockResolvedValue(undefined),
+	deleteCleanupRecord: vi.fn().mockResolvedValue(undefined)
 }));
 
 vi.mock('../../db.worker', () => ({
@@ -87,6 +90,7 @@ const baseEnv = {
 	ADMIN_PASSKEY: 'test-passkey',
 	JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
 	PUZZLE_METADATA: {} as KVNamespace,
+	PUZZLE_METADATA_DO: {} as DurableObjectNamespace,
 	PUZZLES_BUCKET: {} as R2Bucket
 };
 
@@ -415,6 +419,13 @@ describe('Admin Worker - DELETE metadata deletion failure', () => {
 			pieces: [],
 			version: 0
 		} as any);
+		// Safe lifecycle: DO tombstone and R2 deletion succeed, then KV
+		// deletion fails. The route writes a cleanup record and defers to
+		// the reaper.
+		vi.mocked(storage.deletePuzzleAssets).mockResolvedValue({
+			success: true,
+			failedKeys: []
+		} as any);
 		vi.mocked(storage.deletePuzzleMetadata).mockResolvedValue({
 			success: false,
 			error: new Error('KV delete failed')
@@ -430,7 +441,11 @@ describe('Admin Worker - DELETE metadata deletion failure', () => {
 		expect(res.status).toBe(500);
 		const body = (await res.json()) as any;
 		expect(body.error).toBe('internal_error');
-		expect(body.message).toBe('Failed to delete puzzle');
+		expect(body.message).toBe('Failed to delete KV metadata; deferred to reaper');
+		expect(storage.writeCleanupRecord).toHaveBeenCalledWith(
+			baseEnv.PUZZLE_METADATA,
+			expect.objectContaining({ puzzleId: 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d' })
+		);
 		vi.restoreAllMocks();
 	});
 });
