@@ -148,6 +148,32 @@ describe('repositories', () => {
 		expect(result.get('p1')).toBeNull();
 	});
 
+	it('getAvatarTokensByPlayerIds chunks >100 players to stay under D1 bound param limit', async () => {
+		// Regression: D1 imposes a 100 bound parameter limit per query.
+		// Without chunking, a reaper run with >100 distinct players would
+		// throw, fail closed, and skip all deletion. This test creates 120
+		// players (exceeding the limit) and verifies the merged map contains
+		// every player's token. bun:sqlite's default limit is higher than
+		// D1's, so this test validates the chunking logic produces a correct
+		// merged result rather than triggering the platform limit.
+		const playerIds: string[] = [];
+		for (let i = 0; i < 120; i++) {
+			const id = `player-${i}`;
+			playerIds.push(id);
+			await updateProfileAvatarUrl(helper.db, id, `url-${i}`, i * 1000, `token-${i}`);
+		}
+		// Add a few players with no profile row — they should be absent from
+		// the map (not mapped to null), matching the single-query behavior.
+		playerIds.push('no-profile-1', 'no-profile-2');
+		const result = await getAvatarTokensByPlayerIds(helper.db, playerIds);
+		expect(result.size).toBe(120);
+		for (let i = 0; i < 120; i++) {
+			expect(result.get(`player-${i}`)).toBe(`token-${i}`);
+		}
+		expect(result.has('no-profile-1')).toBe(false);
+		expect(result.has('no-profile-2')).toBe(false);
+	});
+
 	it('insertPuzzleOwnership + list/count', async () => {
 		await insertPuzzleOwnership(helper.db, {
 			id: 'pz1',

@@ -71,9 +71,25 @@ const storage = {
 	getIdempotencyReservation
 } as any;
 
+// Map-backed KV mock so the reaper's cursor persistence (readReaperCursor /
+// writeReaperCursor) works in tests without a real KVNamespace. Each
+// makeKvMock() call gets a fresh Map, so tests are isolated. For multi-run
+// tests that need the cursor to persist between calls, reuse the same env.
+function makeKvMock(): KVNamespace {
+	const store = new Map<string, string>();
+	return {
+		get: vi.fn(async (key: string) => store.get(key) ?? null),
+		put: vi.fn(async (key: string, value: string) => {
+			store.set(key, value);
+		}),
+		// Expose the store for tests that need to pre-seed or inspect cursors.
+		_store: store
+	} as any;
+}
+
 function makeEnv(workflowStatuses: Record<string, string> = {}) {
 	return {
-		PUZZLE_METADATA: {} as KVNamespace,
+		PUZZLE_METADATA: makeKvMock(),
 		PUZZLES_BUCKET: {} as R2Bucket,
 		PUZZLE_WORKFLOW: {
 			get: vi.fn((id: string) => ({
@@ -1531,6 +1547,78 @@ describe('reapOrphanedReservations', () => {
 		expect(result.errors).toBe(1);
 		expect(result.details.some((d) => d.action === 'orphan-error')).toBe(true);
 	});
+
+	// Regression: without a persisted cursor, mismatches.slice(0,
+	// REAP_BATCH_LIMIT) always selects the same first N candidates. If those
+	// N persistently fail (DO tombstone error, R2 delete failure, etc.),
+	// they occupy the batch every run and later candidates are NEVER visited
+	// — permanently starved behind the same noisy prefix. The persisted
+	// cursor advances by the page size regardless of individual success, so
+	// later candidates are eventually reached.
+	//
+	// This test creates REAP_BATCH_LIMIT + 5 mismatches. The first
+	// REAP_BATCH_LIMIT (p0..p49) always fail at the DO tombstone step. The
+	// remaining 5 (p50..p54) succeed. Two runs share the same env (so the
+	// cursor persists in the KV mock):
+	//   Run 1: cursor=0 → batch=p0..p49 → all fail → cursor advances to 50
+	//   Run 2: cursor=50 → batch wraps (p50..p54, p0..p44) → p50..p54
+	//          succeed, p0..p44 fail → p50..p54 are reaped
+	// Under the old slice(0, LIMIT) code, run 2 would select p0..p49 again
+	// and p50..p54 would never be visited.
+	it('advances cursor past persistently-failing candidates (no starvation)', async () => {
+		const summaries = Array.from({ length: REAP_BATCH_LIMIT + 5 }, (_, i) =>
+			puzzleSummary(`p${i}`, 'ready', OLD_READY)
+		);
+		(storage.listPuzzles as any).mockResolvedValue({ puzzles: summaries, invalidCount: 0 });
+		(storage.getPuzzle as any).mockImplementation((_: KVNamespace, id: string) =>
+			Promise.resolve(puzzleMeta(id, { idempotencyKey: `key-${id}` }))
+		);
+		// All candidates are mismatches (key belongs to a different puzzleId).
+		(storage.getIdempotencyReservation as any).mockImplementation(
+			(_: DurableObjectNamespace, key: string) =>
+				Promise.resolve({ puzzleId: `other-${key}`, status: 'committed' })
+		);
+		// All workflows are complete so candidates pass the workflow check.
+		const env = makeEnv();
+		env.PUZZLE_WORKFLOW.get = vi.fn(() => ({
+			status: vi.fn(async () => ({ status: 'complete' }))
+		}));
+		// DO tombstone fails for p0..p49 (persistently undeletable) but
+		// succeeds for p50..p54.
+		(storage.deleteMetadataDO as any).mockImplementation(
+			(_: DurableObjectNamespace, id: string) => {
+				const idx = Number(id.replace('p', ''));
+				if (idx < REAP_BATCH_LIMIT) {
+					return Promise.reject(new Error('DO tombstone always fails'));
+				}
+				return Promise.resolve();
+			}
+		);
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		// Run 1: cursor=0, batch=p0..p49, all fail at DO tombstone.
+		const result1 = await reapOrphanedReservations(env);
+		expect(result1.reaped).toBe(0);
+		expect(result1.errors).toBe(REAP_BATCH_LIMIT);
+		// Cursor should have advanced to 50.
+		const kvStore = (env.PUZZLE_METADATA as any)._store as Map<string, string>;
+		expect(kvStore.get('reaper:cursor:orphaned-reservations')).toBe('50');
+
+		// Clear mock call history so run 2 assertions are isolated.
+		vi.mocked(storage.deletePuzzleMetadata).mockClear();
+
+		// Run 2: cursor=50, batch wraps to include p50..p54 first.
+		const result2 = await reapOrphanedReservations(env);
+		// p50..p54 should be reaped (5 candidates beyond the first batch).
+		expect(result2.reaped).toBe(5);
+		const reapedIds = (
+			vi.mocked(storage.deletePuzzleMetadata).mock.calls as Array<[unknown, string]>
+		)
+			.map((c) => c[1])
+			.sort();
+		const expected = Array.from({ length: 5 }, (_, i) => `p${REAP_BATCH_LIMIT + i}`).sort();
+		expect(reapedIds).toEqual(expected);
+	});
 });
 
 describe('reapOrphanedAvatars', () => {
@@ -1740,5 +1828,37 @@ describe('reapOrphanedAvatars', () => {
 		expect(result.scanned).toBe(4);
 		expect(result.candidates).toBe(1);
 		expect(result.reaped).toBe(1);
+	});
+
+	// Regression: D1 imposes a 100 bound parameter limit per query. Without
+	// chunking in getAvatarTokensByPlayerIds, a reaper run with >100 distinct
+	// players would throw, fail closed (catch block returns early), and skip
+	// all deletion — so orphaned avatar objects would accumulate indefinitely.
+	// The chunking fix is unit-tested in repositories.test.ts; this test
+	// verifies the reaper correctly handles >100 players end-to-end: orphaned
+	// objects are collected and authoritative objects are preserved.
+	it('handles >100 distinct players (orphans collected, authoritative preserved)', async () => {
+		const objects: Array<{ key: string; uploaded: number }> = [];
+		const authoritativeMap = new Map<string, string | null>();
+		for (let i = 0; i < 120; i++) {
+			const playerId = `p${i}`;
+			objects.push({ key: `avatars/${playerId}/token-auth`, uploaded: OLD });
+			objects.push({ key: `avatars/${playerId}/token-orphan`, uploaded: OLD });
+			authoritativeMap.set(playerId, 'token-auth');
+		}
+		const env = makeAvatarEnv(objects);
+		(getAvatarTokensByPlayerIds as any).mockResolvedValue(authoritativeMap);
+		const result = await reapOrphanedAvatars(env, NOW);
+		// Every player has one orphan object (token-orphan) — 120 total.
+		expect(result.candidates).toBe(120);
+		expect(result.reaped).toBe(120);
+		// Authoritative objects must NOT be deleted.
+		for (let i = 0; i < 120; i++) {
+			expect(env.PUZZLES_BUCKET.delete).not.toHaveBeenCalledWith(`avatars/p${i}/token-auth`);
+		}
+		// Orphan objects must be deleted.
+		for (let i = 0; i < 120; i++) {
+			expect(env.PUZZLES_BUCKET.delete).toHaveBeenCalledWith(`avatars/p${i}/token-orphan`);
+		}
 	});
 });

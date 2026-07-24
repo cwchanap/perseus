@@ -123,6 +123,13 @@ export async function clearProfileAvatarUrlIfOwned(
 		.run();
 }
 
+// D1 imposes a limit of 100 bound parameters per query. An inArray() with
+// more than 100 IDs exceeds this limit and the query throws — which in the
+// avatar GC reaper means fail-closed (no deletion). Chunk to stay safely
+// below the limit and merge the resulting maps. 90 gives headroom for any
+// additional bound parameters the query builder might introduce.
+const D1_IN_ARRAY_CHUNK_SIZE = 90;
+
 // Batch-fetch the authoritative avatarUpdateToken for a set of players.
 // Used by the avatar GC reaper to determine which versioned R2 objects are
 // no longer reachable. Returns a Map<playerId, token | null>. Players with
@@ -130,22 +137,30 @@ export async function clearProfileAvatarUrlIfOwned(
 // objects are orphans, but the legacy unversioned key is preserved by the
 // caller as the D1-unavailable fallback). An empty input returns an empty
 // Map without hitting D1.
+//
+// Chunks playerIds into groups of D1_IN_ARRAY_CHUNK_SIZE to stay under D1's
+// 100 bound parameter limit. Without chunking, a reaper run with >100
+// distinct players would throw, fail closed, and skip all deletion — so
+// orphaned avatar objects would accumulate indefinitely.
 export async function getAvatarTokensByPlayerIds(
 	db: AppDb,
 	playerIds: string[]
 ): Promise<Map<string, string | null>> {
 	const result = new Map<string, string | null>();
 	if (playerIds.length === 0) return result;
-	const rows = await db
-		.select({
-			playerId: playerProfiles.playerId,
-			avatarUpdateToken: playerProfiles.avatarUpdateToken
-		})
-		.from(playerProfiles)
-		.where(inArray(playerProfiles.playerId, playerIds))
-		.all();
-	for (const row of rows) {
-		result.set(row.playerId, row.avatarUpdateToken ?? null);
+	for (let i = 0; i < playerIds.length; i += D1_IN_ARRAY_CHUNK_SIZE) {
+		const chunk = playerIds.slice(i, i + D1_IN_ARRAY_CHUNK_SIZE);
+		const rows = await db
+			.select({
+				playerId: playerProfiles.playerId,
+				avatarUpdateToken: playerProfiles.avatarUpdateToken
+			})
+			.from(playerProfiles)
+			.where(inArray(playerProfiles.playerId, chunk))
+			.all();
+		for (const row of rows) {
+			result.set(row.playerId, row.avatarUpdateToken ?? null);
+		}
 	}
 	return result;
 }
