@@ -615,16 +615,25 @@ export async function reapCleanupRecords(env: Env): Promise<ReapResult> {
  * key currently maps to. If the current owner differs from this puzzle's
  * id, the puzzle lost its reservation to a retry and is a durable orphan
  * — regardless of whether a cleanup record exists or the workflow
- * completed. The check is sound because `releaseIdempotencyKey` is
- * owner-checked and the only release path for a committed reservation is
- * the reaper itself (after reaping, which deletes KV); so a puzzle whose
- * KV still exists was not reaped, and a DO pointing elsewhere proves
- * reclamation by another request.
+ * completed. A null reservation (no record) is also treated as an orphan:
+ * in every release path in this codebase, the puzzle's KV metadata is
+ * deleted BEFORE its reservation is released (admin delete, reaper
+ * cleanup, and create-flow failure cleanup all follow this order, and
+ * cleanup failures use failReservation — which preserves the record —
+ * rather than release). So a puzzle that still exists in KV with an
+ * idempotencyKey but has no reservation record was superseded and had
+ * its replacement's reservation erased (e.g. an admin deleted the
+ * replacement, releasing the key). Without treating null as reapable,
+ * such an orphan becomes unreachable by every cleanup mechanism.
+ *
+ * Ownership mismatches are determined BEFORE applying REAP_BATCH_LIMIT.
+ * The source catalog is sorted newest-first (listPuzzles), so batching
+ * before the mismatch check would select the same newest N candidates
+ * every run and permanently starve older orphans behind newer healthy
+ * owners.
  *
  * Puzzles created without an `Idempotency-Key` header have no
- * `meta.idempotencyKey` and are skipped (no key to check). A null
- * reservation (key released/never reserved) is conservatively skipped —
- * the stuck-processing and cleanup-record reapers handle those cases.
+ * `meta.idempotencyKey` and are skipped (no key to check).
  */
 export async function reapOrphanedReservations(env: Env): Promise<ReapResult> {
 	const result: ReapResult = {
@@ -670,19 +679,35 @@ export async function reapOrphanedReservations(env: Env): Promise<ReapResult> {
 		return result;
 	}
 
-	const batch = candidates.slice(0, REAP_BATCH_LIMIT);
-
+	// Determine ownership mismatches BEFORE applying REAP_BATCH_LIMIT. The
+	// source catalog is sorted newest-first (listPuzzles), so batching before
+	// the mismatch check would select the same newest N candidates every run
+	// and permanently starve older orphans behind newer healthy owners.
+	// Querying every candidate's reservation DO is the dominant cost as the
+	// catalog grows, but the full-catalog scan TODO at reapStuckPuzzles
+	// applies here too; a persisted cursor or rotating page is the scale fix.
+	const mismatches: Array<{ id: string; pieceCount: number; idempotencyKey: string }> = [];
 	await Promise.all(
-		batch.map(async (candidate) => {
+		candidates.map(async (candidate) => {
 			try {
 				const reservation = await getIdempotencyReservation(
 					env.PUZZLE_METADATA_DO,
 					candidate.idempotencyKey
 				);
 				if (reservation === null) {
-					// No reservation record — cannot prove orphan via ownership.
-					// The stuck-processing and cleanup-record reapers handle the
-					// no-record cases. Skip (conservative).
+					// No reservation record. Under the codebase's deletion
+					// ordering invariant (KV is always deleted before a
+					// reservation is released — in every release path, the
+					// puzzle's KV metadata is removed first, and cleanup
+					// failures use failReservation instead of release), a
+					// puzzle that still exists in KV with an idempotencyKey
+					// but no reservation record is an orphan. The gap this
+					// closes: a retry reclaims key K for replacement puzzle B,
+					// the orphan's cleanup-record write fails, then an admin
+					// deletes B — releasing K and erasing the mismatch signal.
+					// Without treating null as reapable, the orphan becomes
+					// unreachable by every cleanup mechanism.
+					mismatches.push(candidate);
 					return;
 				}
 				if (reservation.puzzleId === candidate.id) {
@@ -697,7 +722,27 @@ export async function reapOrphanedReservations(env: Env): Promise<ReapResult> {
 				// workflow later completed — neither the stuck-processing reaper
 				// (skips 'complete'/'ready') nor the cleanup-record reaper (no
 				// record) would otherwise reach it.
+				mismatches.push(candidate);
+			} catch (err) {
+				console.error(
+					`Reaper orphan: reservation check failed for ${candidate.id}, skipping:`,
+					err
+				);
+				result.errors++;
+				result.details.push({
+					puzzleId: candidate.id,
+					action: 'orphan-reservation-check-failed',
+					error: String(err)
+				});
+			}
+		})
+	);
 
+	const batch = mismatches.slice(0, REAP_BATCH_LIMIT);
+
+	await Promise.all(
+		batch.map(async (candidate) => {
+			try {
 				// Check the workflow has stopped before deleting R2 assets. A
 				// live workflow writes thumbnails and pieces directly to R2, so
 				// deleting assets before it stops leaves orphaned R2 objects the
