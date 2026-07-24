@@ -870,3 +870,290 @@ describe('Admin Worker — DELETE /puzzles/:id idempotency release failure', () 
 		);
 	});
 });
+
+// ─── terminateWorkflow catch: workflow.get() throws ──────────────────────────
+
+describe('Admin Worker — terminateAndAwaitStopped workflow.get() throws', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		__resetRateLimitStore();
+		mockSuccessfulCreate();
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.restoreAllMocks();
+	});
+
+	function setupDeadCommitConflictWithGetThrow(getErr: Error) {
+		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
+			existing: false,
+			puzzleId: 'get-throw-puzzle'
+		} as any);
+		const workflow = {
+			create: vi.fn().mockResolvedValue(undefined),
+			get: vi.fn(async () => {
+				throw getErr;
+			})
+		};
+		vi.mocked(storage.commitIdempotencyKey).mockRejectedValue(
+			new Error('Cannot committed reservation in status failed')
+		);
+		return {
+			...baseEnv,
+			PUZZLE_WORKFLOW: workflow
+		} as any;
+	}
+
+	it('proceeds with cleanup when workflow.get() throws not_found (instance never created)', async () => {
+		const notFoundErr = Object.assign(new Error('instance.not_found'), {
+			code: 'instance.not_found'
+		});
+		const env = setupDeadCommitConflictWithGetThrow(notFoundErr);
+
+		const res = await admin.fetch(createRequest('get-not-found'), env);
+
+		expect(res.status).toBe(500);
+		const body = (await res.json()) as any;
+		// Cleanup proceeds (terminate returns true for not_found) — all
+		// assets are cleaned up and the record is deleted.
+		expect(body.message).toContain('puzzle cleaned up');
+		expect(storage.deletePuzzleAssets).toHaveBeenCalledWith(
+			env.PUZZLES_BUCKET,
+			'get-throw-puzzle',
+			225
+		);
+		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(
+			env.PUZZLE_METADATA,
+			'get-throw-puzzle'
+		);
+		expect(storage.deleteCleanupRecord).toHaveBeenCalledWith(
+			env.PUZZLE_METADATA,
+			'get-throw-puzzle'
+		);
+	});
+
+	it('defers to reaper when workflow.get() throws non-not_found error', async () => {
+		const env = setupDeadCommitConflictWithGetThrow(new Error('workflow API down'));
+
+		const res = await admin.fetch(createRequest('get-other-err'), env);
+
+		expect(res.status).toBe(500);
+		const body = (await res.json()) as any;
+		// Terminate returns false — cleanup defers to reaper (tombstone + record).
+		expect(body.message).toContain('workflow termination pending');
+		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
+		expect(storage.writeCleanupRecord).toHaveBeenCalledWith(
+			env.PUZZLE_METADATA,
+			expect.objectContaining({ puzzleId: 'get-throw-puzzle' })
+		);
+	});
+});
+
+// ─── cleanupOrphanedWorkflow: cleanup record delete fails (best-effort) ──────
+
+describe('Admin Worker — cleanup record delete failure is best-effort', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		__resetRateLimitStore();
+		mockSuccessfulCreate();
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.restoreAllMocks();
+	});
+
+	it('still reports puzzle cleaned up when deleteCleanupRecord throws', async () => {
+		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
+			existing: false,
+			puzzleId: 'record-del-puzzle'
+		} as any);
+		const workflow = {
+			create: vi.fn().mockResolvedValue(undefined),
+			get: vi.fn(async () => ({
+				status: vi.fn().mockResolvedValue({ status: 'errored' }),
+				terminate: vi.fn().mockResolvedValue(undefined)
+			}))
+		};
+		vi.mocked(storage.commitIdempotencyKey).mockRejectedValue(
+			new Error('Cannot committed reservation in status failed')
+		);
+		// All cleanup steps succeed, but the final record delete throws.
+		vi.mocked(storage.deleteCleanupRecord).mockRejectedValue(new Error('KV transient'));
+
+		const env = {
+			...baseEnv,
+			PUZZLE_WORKFLOW: workflow
+		} as any;
+
+		const res = await admin.fetch(createRequest('record-del-fail'), env);
+
+		expect(res.status).toBe(500);
+		const body = (await res.json()) as any;
+		// Best-effort: the puzzle IS cleaned up (all assets deleted), the
+		// record delete failure only causes a redundant reaper pass.
+		expect(body.message).toContain('puzzle cleaned up');
+		expect(storage.deletePuzzleAssets).toHaveBeenCalled();
+		expect(storage.deletePuzzleMetadata).toHaveBeenCalled();
+	});
+});
+
+// ─── R2 probe after upload error: releaseReservation when cleanup succeeds ──
+
+describe('Admin Worker — R2 probe releaseReservation after cleanup success', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		__resetRateLimitStore();
+		mockSuccessfulCreate();
+		vi.mocked(storage.uploadOriginalImage).mockRejectedValue(new Error('R2 upload failed'));
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+	});
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	it('releases reservation when originalImageExists is true and deleteOriginalImage succeeds', async () => {
+		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
+			existing: false,
+			puzzleId: 'probe-release-puzzle'
+		} as any);
+		vi.mocked(storage.originalImageExists).mockResolvedValue(true);
+		vi.mocked(storage.deleteOriginalImage).mockResolvedValue({ success: true });
+
+		const env = { ...baseEnv, PUZZLE_WORKFLOW: { create: vi.fn() } } as any;
+		const res = await admin.fetch(createRequest('probe-release-key'), env);
+		expect(res.status).toBe(500);
+		const body = (await res.json()) as any;
+		expect(body.message).toBe('Failed to upload image');
+		// releaseReservation was called (not failReservation) because the
+		// committed original was successfully deleted.
+		expect(storage.releaseIdempotencyKey).toHaveBeenCalledWith(
+			env.PUZZLE_METADATA_DO,
+			'probe-release-key',
+			expect.any(String)
+		);
+		expect(storage.failIdempotencyKey).not.toHaveBeenCalled();
+	});
+});
+
+// ─── ambiguous alive create: transient commit failure (non-conflict) ─────────
+
+describe('Admin Worker — ambiguous alive create transient commit failure', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		__resetRateLimitStore();
+		mockSuccessfulCreate();
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.restoreAllMocks();
+	});
+
+	it('logs and returns 500 when commit fails with non-conflict error after ambiguous alive create', async () => {
+		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
+			existing: false,
+			puzzleId: 'alive-transient-puzzle'
+		} as any);
+		const workflow = {
+			create: vi.fn().mockRejectedValue(new Error('RPC timeout')),
+			get: vi.fn(async () => ({
+				status: vi.fn().mockResolvedValue({ status: 'running' }),
+				terminate: vi.fn()
+			}))
+		};
+		// commit fails with a transient (non-conflict) error
+		vi.mocked(storage.commitIdempotencyKey).mockRejectedValue(new Error('DO unreachable'));
+
+		const env = {
+			...baseEnv,
+			PUZZLE_WORKFLOW: workflow
+		} as any;
+
+		const res = await admin.fetch(createRequest('alive-transient'), env);
+
+		expect(res.status).toBe(500);
+		const body = (await res.json()) as any;
+		expect(body.message).toContain('Workflow creation was ambiguous');
+		// Reservation is retained (not released or failed) — the client
+		// should retry to commit or hit the existing-puzzle branch.
+		expect(storage.releaseIdempotencyKey).not.toHaveBeenCalled();
+		expect(storage.failIdempotencyKey).not.toHaveBeenCalled();
+		// No cleanup attempted — workflow may still be alive.
+		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+	});
+});
+
+// ─── idempotency KV retry budget exceeded ─────────────────────────────────────
+
+describe('Admin Worker — idempotency KV retry budget exceeded', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		__resetRateLimitStore();
+		mockSuccessfulCreate();
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.restoreAllMocks();
+	});
+
+	it('breaks out of KV retry loop when budget is exceeded', async () => {
+		vi.useFakeTimers();
+		// A committed reservation whose puzzle metadata is missing (deleted
+		// with a failed release). getPuzzle always returns null.
+		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
+			existing: true,
+			puzzleId: 'deleted-puzzle',
+			status: 'committed'
+		} as any);
+		// getPuzzle returns null AND jumps the system clock forward by
+		// 5000ms on each call, so the budget check (3000ms) triggers on
+		// the first iteration of the retry loop.
+		vi.mocked(storage.getPuzzle).mockImplementation(async () => {
+			vi.setSystemTime(Date.now() + 5000);
+			return null;
+		});
+		// R2 probe: original image is gone → release and re-reserve.
+		vi.mocked(storage.originalImageExists).mockResolvedValue(false);
+		// The re-reserve (probeReleaseAndRereclaimOrFail) wins.
+		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValueOnce({
+			existing: true,
+			puzzleId: 'deleted-puzzle',
+			status: 'committed'
+		} as any);
+		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValueOnce({
+			existing: false,
+			puzzleId: 'budget-puzzle'
+		} as any);
+		vi.mocked(storage.uploadOriginalImage).mockResolvedValue(undefined);
+		vi.mocked(storage.createPuzzleMetadata).mockResolvedValue(undefined);
+		vi.mocked(storage.commitIdempotencyKey).mockResolvedValue(undefined);
+		const workflow = {
+			create: vi.fn().mockResolvedValue(undefined)
+		};
+		const env = {
+			...baseEnv,
+			PUZZLE_WORKFLOW: workflow
+		} as any;
+
+		const fetchPromise = admin.fetch(createRequest('budget-key'), env);
+		// Advance through the initial 500ms setTimeout. The getPuzzle
+		// mock then jumps the clock forward by 5000ms, so the budget
+		// check (Date.now() - retryStart >= 3000) triggers immediately
+		// on the first for-loop iteration, breaking out.
+		await vi.advanceTimersByTimeAsync(500);
+		const res = await fetchPromise;
+
+		// The request should eventually succeed (201) after the budget
+		// break releases the stale reservation and re-reserves.
+		expect(res.status).toBe(201);
+	});
+});

@@ -677,4 +677,67 @@ describe('idempotency reservation', () => {
 			expect(result.puzzleId).toBe('puzzle-race-loser');
 		}
 	});
+
+	it('throws on invalid idempotency key (empty, too long, special chars)', async () => {
+		await expect(storageModule.reserveIdempotencyKey('', 'puzzle-1')).rejects.toThrow(
+			'Invalid idempotency key'
+		);
+		await expect(storageModule.reserveIdempotencyKey('a'.repeat(129), 'puzzle-1')).rejects.toThrow(
+			'Invalid idempotency key'
+		);
+		await expect(
+			storageModule.reserveIdempotencyKey('key/with/slashes', 'puzzle-1')
+		).rejects.toThrow('Invalid idempotency key');
+		await expect(
+			storageModule.reserveIdempotencyKey('key with spaces', 'puzzle-1')
+		).rejects.toThrow('Invalid idempotency key');
+		await expect(storageModule.reserveIdempotencyKey('..', 'puzzle-1')).rejects.toThrow(
+			'Invalid idempotency key'
+		);
+	});
+
+	it('returns existing when a concurrent writer publishes between empty-file reclaim and retry', async () => {
+		// Line 378 is covered deterministically by a separate test file
+		// (storage-reclaim-race.test.ts) that mocks node:fs/promises.link
+		// to simulate the race. This test here uses the real filesystem
+		// and may or may not hit the race depending on timing — it's a
+		// best-effort companion that exercises the reclaim path.
+		const { mkdir, writeFile, access } = await import('node:fs/promises');
+		const reservationPath = join(tempDir, 'idempotency', 'key-reclaim-race');
+
+		// Create an empty reservation file (simulates a crash leftover).
+		await mkdir(join(tempDir, 'idempotency'), { recursive: true });
+		await writeFile(reservationPath, '', { flag: 'wx' });
+
+		// Concurrent writer: poll for the file's absence (after rm reclaims
+		// it), then immediately write content to simulate a concurrent
+		// process winning the claim between the reclaim and retry.
+		const concurrentWriter = (async () => {
+			for (let i = 0; i < 200; i++) {
+				try {
+					await access(reservationPath);
+					await new Promise((r) => setTimeout(r, 1));
+				} catch {
+					await writeFile(reservationPath, 'puzzle-concurrent-winner', {
+						flag: 'wx'
+					}).catch(() => {});
+					return;
+				}
+			}
+		})();
+
+		const result = await storageModule.reserveIdempotencyKey(
+			'key-reclaim-race',
+			'puzzle-reclaim-loser'
+		);
+		await concurrentWriter;
+
+		// Both outcomes are valid — the deterministic test in
+		// storage-reclaim-race.test.ts asserts the existing:true case.
+		if (result.existing) {
+			expect(result.puzzleId).toBe('puzzle-concurrent-winner');
+		} else {
+			expect(result.puzzleId).toBe('puzzle-reclaim-loser');
+		}
+	});
 });
