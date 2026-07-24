@@ -1023,17 +1023,28 @@ describe('reapOrphanedReservations', () => {
 		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
 	});
 
-	it('skips puzzles with no reservation record (conservative)', async () => {
+	it('reaps puzzles with no reservation record (orphan after replacement deletion)', async () => {
+		// Scenario: puzzle A lost key K to replacement B, A's cleanup-record
+		// write failed, then an admin deleted B — releasing K and erasing the
+		// reservation record. A's lookup returns null, but A is still an
+		// orphan: in every release path, KV is deleted before the reservation
+		// is released, so a puzzle still in KV with an idempotencyKey but no
+		// reservation was superseded.
 		(storage.listPuzzles as any).mockResolvedValue({
 			puzzles: [puzzleSummary('a', 'ready', OLD_READY)],
 			invalidCount: 0
 		});
-		(storage.getPuzzle as any).mockResolvedValue(puzzleMeta('a', { idempotencyKey: 'key-K' }));
+		(storage.getPuzzle as any).mockResolvedValue(
+			puzzleMeta('a', { idempotencyKey: 'key-K', pieceCount: 50 })
+		);
 		(storage.getIdempotencyReservation as any).mockResolvedValue(null);
 		const env = makeEnv({ a: 'complete' });
 		const result = await reapOrphanedReservations(env);
-		expect(result.reaped).toBe(0);
-		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expect(result.reaped).toBe(1);
+		expect(storage.deleteMetadataDO).toHaveBeenCalledWith(env.PUZZLE_METADATA_DO, 'a');
+		expect(storage.deletePuzzleAssets).toHaveBeenCalledWith(env.PUZZLES_BUCKET, 'a', 50);
+		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'a');
+		expect(result.details.some((d) => d.action === 'orphan-reaped')).toBe(true);
 	});
 
 	it('skips orphaned puzzles whose workflow is still alive', async () => {
@@ -1184,7 +1195,7 @@ describe('reapOrphanedReservations', () => {
 		expect(result.details.some((d) => d.action === 'orphan-do-tombstone-failed')).toBe(true);
 	});
 
-	it('records orphan-error on unexpected failure', async () => {
+	it('records orphan-reservation-check-failed when reservation lookup throws', async () => {
 		(storage.listPuzzles as any).mockResolvedValue({
 			puzzles: [puzzleSummary('a', 'ready', OLD_READY)],
 			invalidCount: 0
@@ -1198,7 +1209,7 @@ describe('reapOrphanedReservations', () => {
 		const result = await reapOrphanedReservations(env);
 		expect(result.reaped).toBe(0);
 		expect(result.errors).toBe(1);
-		expect(result.details.some((d) => d.action === 'orphan-error')).toBe(true);
+		expect(result.details.some((d) => d.action === 'orphan-reservation-check-failed')).toBe(true);
 	});
 
 	it('respects REAP_BATCH_LIMIT on orphan candidates', async () => {
@@ -1221,5 +1232,47 @@ describe('reapOrphanedReservations', () => {
 		const result = await reapOrphanedReservations(env);
 		expect(result.candidates).toBe(summaries.length);
 		expect(result.reaped).toBe(REAP_BATCH_LIMIT);
+	});
+
+	// Regression: the source catalog is sorted newest-first (listPuzzles).
+	// With the old batch-first approach, the same newest REAP_BATCH_LIMIT
+	// healthy puzzles would be selected every run, all confirmed as valid
+	// owners, and an older orphan at position 51+ would never be examined.
+	// The fix determines mismatches BEFORE applying the batch limit.
+	it('does not starve older orphans behind newer healthy owners', async () => {
+		const summaries = Array.from({ length: REAP_BATCH_LIMIT + 1 }, (_, i) =>
+			puzzleSummary(`p${i}`, 'ready', OLD_READY - i)
+		);
+		(storage.listPuzzles as any).mockResolvedValue({ puzzles: summaries, invalidCount: 0 });
+		(storage.getPuzzle as any).mockImplementation((_: KVNamespace, id: string) =>
+			Promise.resolve(puzzleMeta(id, { idempotencyKey: `key-${id}` }))
+		);
+		// The first REAP_BATCH_LIMIT puzzles are healthy current owners.
+		// The last puzzle (p50) is an orphan — its key was reclaimed by a
+		// retry that minted a replacement.
+		(storage.getIdempotencyReservation as any).mockImplementation(
+			(_: DurableObjectNamespace, key: string) => {
+				const id = key.replace('key-', '');
+				if (id === `p${REAP_BATCH_LIMIT}`) {
+					return Promise.resolve({ puzzleId: 'other-replacement', status: 'committed' });
+				}
+				return Promise.resolve({ puzzleId: id, status: 'committed' });
+			}
+		);
+		const env = makeEnv();
+		env.PUZZLE_WORKFLOW.get = vi.fn(() => ({
+			status: vi.fn(async () => ({ status: 'complete' }))
+		}));
+		const result = await reapOrphanedReservations(env);
+		// Only the orphan (p50) is a mismatch — it must be reaped despite
+		// being at position 51 in the newest-first catalog. Under the old
+		// batch-first code, result.reaped would be 0 (starved indefinitely).
+		expect(result.reaped).toBe(1);
+		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(
+			env.PUZZLE_METADATA,
+			`p${REAP_BATCH_LIMIT}`
+		);
+		// The healthy owners must NOT be reaped.
+		expect(storage.deletePuzzleMetadata).toHaveBeenCalledTimes(1);
 	});
 });
