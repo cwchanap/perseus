@@ -19,7 +19,10 @@ vi.mock('../../services/storage.worker', () => ({
 	listPuzzles: vi.fn(),
 	originalImageExists: vi.fn().mockResolvedValue(false),
 	puzzleExists: vi.fn().mockResolvedValue(false),
-	releaseIdempotencyKey: vi.fn()
+	releaseIdempotencyKey: vi.fn(),
+	deleteMetadataDO: vi.fn().mockResolvedValue(undefined),
+	writeCleanupRecord: vi.fn().mockResolvedValue(undefined),
+	deleteCleanupRecord: vi.fn().mockResolvedValue(undefined)
 }));
 
 vi.mock('../../middleware/auth.worker', () => ({
@@ -52,6 +55,7 @@ const baseEnv = {
 	ADMIN_PASSKEY: 'test-passkey',
 	JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
 	PUZZLE_METADATA: {} as KVNamespace,
+	PUZZLE_METADATA_DO: {} as DurableObjectNamespace,
 	PUZZLES_BUCKET: {} as R2Bucket
 };
 
@@ -90,14 +94,18 @@ describe('Admin Worker - DELETE /puzzles/:id ownership delete catch (line 691)',
 
 		const res = await admin.fetch(req, mockEnv as any);
 
-		// Ownership delete failure is non-fatal: deletion still succeeds (204)
+		// Ownership delete failure is non-fatal: deletion still succeeds (204).
+		// In the safe lifecycle, R2 deletion runs BEFORE D1 ownership
+		// cleanup, so the ownership catch is reached only after R2/KV
+		// succeeded — the 204 reflects a fully deleted puzzle whose D1
+		// row cleanup merely logged a best-effort failure.
 		expect(res.status).toBe(204);
 		expect(deletePuzzleOwnership).toHaveBeenCalledTimes(1);
 		expect(consoleSpy).toHaveBeenCalledWith(
 			`Failed to delete ownership row for puzzle ${VALID_UUID}:`,
 			expect.any(Error)
 		);
-		// R2 asset deletion still ran after the ownership catch
+		// R2 asset deletion ran (before the D1 ownership catch).
 		expect(storage.deletePuzzleAssets).toHaveBeenCalledTimes(1);
 		consoleSpy.mockRestore();
 	});

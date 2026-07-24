@@ -711,14 +711,13 @@ describe('player avatar route (Worker)', () => {
 	});
 
 	it('concurrent uploads write to distinct versioned keys (no race)', async () => {
-		// Item 4 fix: two uploads A and B for the same player overlap.
-		// Each writes to its own versioned key (avatars/p1/{token}).
-		// D1's avatarUpdateToken selects which one the serve route reads.
-		// The last D1 write wins (both are valid avatars), and the
-		// corresponding R2 object is the one served. No rollback or
-		// owner-checked clear is needed — the losing upload's R2 object
-		// simply lingers as storage waste (not reachable by the serve route).
-		const { bucket } = createMockBucket();
+		// Two sequential uploads A then B for the same player. Each writes
+		// to its own versioned key (avatars/p1/{token}). D1's
+		// avatarUpdateToken selects which one the serve route reads. The
+		// second upload captures the first's token as previousToken and,
+		// after confirming its own token is authoritative, deletes the
+		// first's R2 object — so only the D1-selected version remains.
+		const { bucket, store } = createMockBucket();
 		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
 
 		// First upload succeeds fully.
@@ -761,6 +760,114 @@ describe('player avatar route (Worker)', () => {
 		// The serve route reads from the D1-selected versioned key.
 		const serveRes = await buildApp().request('/api/player/p1/avatar', {}, env);
 		expect(serveRes.status).toBe(200);
+		// The first upload's versioned object was reclaimed by the second
+		// (the second captured it as previousToken and deleted it after
+		// confirming its own token is authoritative).
+		const firstKey = versionedPuts[0][0] as string;
+		expect(store.has(firstKey)).toBe(false);
+		// Only the winning version remains in R2.
+		const remaining = [...store.keys()].filter(
+			(k) => k.startsWith('avatars/p1/') && !k.startsWith('avatars/staging/')
+		);
+		expect(remaining).toEqual([`avatars/p1/${token}`]);
+	});
+
+	it('overlapping concurrent uploads leave only the D1-selected version in R2', async () => {
+		// The leak this closes: two uploads A and B both read the same
+		// previousToken O BEFORE either D1 write lands. A writes token A,
+		// B writes token B (overwriting A in D1). Under the old logic, A
+		// re-read D1, saw B, and did nothing — A's R2 object was orphaned.
+		// The fix: when the post-write re-read shows another token, delete
+		// this upload's own versionedKey (it is definitively no longer
+		// authoritative). After both uploads finish, only the D1-selected
+		// version's R2 object remains.
+		const { bucket, store } = createMockBucket();
+		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
+		const shared = await import('@perseus/shared');
+		const profileStore = (shared as any).__store as Map<string, any>;
+
+		// Seed an initial avatar with token O so both uploads read the same
+		// previousToken. Without a prior token the cleanup branch is skipped
+		// and the leak cannot manifest.
+		profileStore.set('p1', {
+			displayName: null,
+			avatarUrl: '/api/player/p1/avatar',
+			avatarUpdateToken: 'O'
+		});
+		store.set('avatars/p1/O', {
+			body: new Uint8Array(PNG_BYTES).buffer,
+			contentType: 'image/png',
+			etag: 'etag-O'
+		});
+
+		// Gate the two previousToken reads: both uploads must call
+		// getProfileOverride for the pre-upload previousToken read BEFORE
+		// either is allowed to proceed past it. This forces the
+		// interleaving where both read O before either D1 write. After the
+		// gate releases, getProfileOverride reflects the live store so the
+		// post-write re-reads see the actual D1 winner.
+		let preReads = 0;
+		let releasePreReads!: () => void;
+		const preReadGate = new Promise<void>((resolve) => {
+			releasePreReads = resolve;
+		});
+		vi.mocked(shared.getProfileOverride).mockImplementation(async (_db, playerId) => {
+			preReads++;
+			if (preReads === 2) releasePreReads();
+			// The first two calls are the pre-upload previousToken reads —
+			// gate them so both observe O. Later calls (post-write re-reads)
+			// return the live store value immediately.
+			if (preReads <= 2) {
+				await preReadGate;
+				return profileStore.get(playerId) ?? null;
+			}
+			return profileStore.get(playerId) ?? null;
+		});
+
+		const makeForm = () => {
+			const blob = new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' });
+			const form = new FormData();
+			form.append('avatar', blob, 'a.png');
+			return form;
+		};
+
+		// Fire both uploads concurrently so their previousToken reads
+		// overlap at the gate.
+		const [resA, resB] = await Promise.all([
+			buildApp().request(
+				'/api/player/avatar',
+				{ method: 'POST', headers: AUTH_COOKIE, body: makeForm() },
+				env
+			),
+			buildApp().request(
+				'/api/player/avatar',
+				{ method: 'POST', headers: AUTH_COOKIE, body: makeForm() },
+				env
+			)
+		]);
+		expect(resA.status).toBe(200);
+		expect(resB.status).toBe(200);
+
+		// Restore the original factory mock so later tests are unaffected.
+		// Re-assigning to the captured mock fn would recurse, so restore
+		// the factory-style implementation that reads the live store.
+		vi.mocked(shared.getProfileOverride).mockImplementation(async (_db, playerId) => {
+			const s = (shared as any).__store as Map<string, any>;
+			return s.get(playerId) ?? null;
+		});
+
+		// Exactly one versioned object remains — the D1-selected one. The
+		// losing upload's object was deleted by its own post-write re-read
+		// branch, and the prior O object was deleted by the winner.
+		const winnerToken = profileStore.get('p1')?.avatarUpdateToken;
+		expect(winnerToken).toBeTruthy();
+		expect(winnerToken).not.toBe('O');
+		const remaining = [...store.keys()].filter(
+			(k) => k.startsWith('avatars/p1/') && !k.startsWith('avatars/staging/')
+		);
+		expect(remaining).toEqual([`avatars/p1/${winnerToken}`]);
+		// The prior O object was reclaimed by the winning upload.
+		expect(store.has('avatars/p1/O')).toBe(false);
 	});
 
 	it('logs and continues when D1 read for previous-token cleanup fails', async () => {

@@ -23,7 +23,10 @@ vi.mock('../../services/storage.worker', () => ({
 	deleteOriginalImage: vi.fn().mockResolvedValue({ success: true }),
 	originalImageExists: vi.fn().mockResolvedValue(false).mockResolvedValue({ success: true }),
 	puzzleExists: vi.fn().mockResolvedValue(false),
-	listPuzzles: vi.fn()
+	listPuzzles: vi.fn(),
+	deleteMetadataDO: vi.fn().mockResolvedValue(undefined),
+	writeCleanupRecord: vi.fn().mockResolvedValue(undefined),
+	deleteCleanupRecord: vi.fn().mockResolvedValue(undefined)
 }));
 
 vi.mock('../../db.worker', () => ({
@@ -61,6 +64,7 @@ const baseEnv = {
 	ADMIN_PASSKEY: 'test-passkey',
 	JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
 	PUZZLE_METADATA: {} as KVNamespace,
+	PUZZLE_METADATA_DO: {} as DurableObjectNamespace,
 	PUZZLES_BUCKET: {} as R2Bucket
 };
 
@@ -235,7 +239,8 @@ describe('Admin Worker - D1 ownership best-effort catch blocks', () => {
 			expect.stringContaining('Failed to init DB for ownership cleanup'),
 			expect.any(Error)
 		);
-		// R2 asset deletion still ran after the ownership catch.
+		// R2 asset deletion ran before the D1 ownership catch in the safe
+		// lifecycle (tombstone → R2 → KV → reservation → D1).
 		expect(storage.deletePuzzleAssets).toHaveBeenCalledTimes(1);
 	});
 

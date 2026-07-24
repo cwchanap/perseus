@@ -20,16 +20,22 @@ Also available via `workflow_dispatch`.
 
 - `concurrency: cancel-in-progress: false` — deploys queue, never cancel
   mid-flight. See the workflow's inline comment for the rationale.
-- **Deploy order:** Pulumi Up (creates/provisions resources + publishes
-  Workers) → Apply D1 migrations. Workers are live BEFORE migrations run.
+- **Deploy order (subsequent deploys):** Apply D1 migrations to the
+  existing database BEFORE `pulumi up` publishes the new Worker code.
+  Migrations run first, workers second. This ensures new columns/tables
+  are present by the time the new Worker version is live.
+- **Deploy order (first deploy):** `pulumi up` creates the D1 database AND
+  publishes the Worker in the same step, so the Worker is live before
+  `wrangler d1 migrations apply` runs (see the first-deploy gap below).
 - **Preview job** inherits the `production` environment's protection rules.
   TODO: create a `pulumi-preview` GitHub Environment to avoid deadlocks.
 
 **First-deploy D1 gap (zero-downtime):**
-On the first-ever production deploy, Pulumi creates the D1 database AND
-publishes the Worker in the same `pulumi up`, so the Worker is live before
-`wrangler d1 migrations apply` runs. D1-dependent paths can 500 until
-migrations complete:
+On the first-ever production deploy, the D1 database does not exist yet, so
+the pre-publish migration step is skipped and `pulumi up` creates the
+database and publishes the Worker in the same step. The Worker is live
+before `wrangler d1 migrations apply` runs. D1-dependent paths can 500
+until migrations complete:
 
 - `POST /api/puzzles/:id/complete` → 500
 - `GET /api/player/*` → 500
@@ -54,8 +60,9 @@ Then trigger the workflow. Subsequent deploys are unaffected.
 
 ## 2. D1 Migration Safety
 
-The deploy ordering (workers first, migrations second) is safe for
-**additive** migrations only (new tables, new columns, new indexes).
+The deploy ordering (migrations first, workers second on subsequent
+deploys) is safe for **additive** migrations only (new tables, new columns,
+new indexes).
 
 **Non-additive migrations (column rename, type change, column drop, table
 drop):** adopt an expand/contract flow:
@@ -168,8 +175,16 @@ up, operator force-delete (§7) is the escape hatch.
 - Deletions are idempotent — safe to run concurrently with normal traffic.
 - If the workflow status check fails (transient API error), the puzzle is
   skipped (fail closed).
-- R2 deletion failure is logged but does not block KV metadata deletion.
-- Batch limit of 50 puzzles per run to avoid exceeding CPU time limits.
+- R2 deletion failure (partial or total) PRESERVES KV metadata — the
+  failed R2 keys would become invisible orphans with no metadata to
+  discover them. KV is retained so the next reaper run retries R2 cleanup.
+  The DO is tombstoned before R2 deletion so a dead workflow cannot
+  resurrect stale metadata via KV sync.
+- Batch limit of 50 puzzles per run bounds destructive cleanup. The
+  candidate catalog scan and reservation-DO lookups run over the full
+  catalog (a persisted-cursor scale fix is tracked as a TODO in
+  `reaper.ts`); mismatches are collected in deterministic input order so
+  a fast-failing subset cannot starve older orphans.
 
 **Monitoring:** Check Worker logs for `Reaper:` prefixed messages. Each run
 logs `scanned`, `candidates`, `reaped`, and `errors` counts.
@@ -177,23 +192,31 @@ logs `scanned`, `candidates`, `reaped`, and `errors` counts.
 **Source:** `apps/api/src/services/reaper.ts`,
 `apps/api/src/worker.ts` (scheduled handler).
 
-### Out of scope: avatar staging orphans
+### Out of scope: avatar versioned-key orphans
 
-The reaper does **not** sweep avatar staging objects (`avatars/staging/<uid>/<uuid>`).
-Each player-avatar upload writes to a staging key, then on success best-effort
-deletes it (`player.worker.ts`). If that delete fails transiently the staging
-object lingers — it is not reachable by the avatar serve route (which reads
-only the live key), so this is a storage-cost concern, not a correctness or
-security concern. There is **no automated sweep**; staging orphans accumulate
-until the next successful upload by the same user (which overwrites nothing —
-each staging key is per-upload-unique) or manual cleanup:
+The reaper does **not** sweep avatar objects. Each player-avatar upload
+writes to a versioned key (`avatars/{playerId}/{token}`); D1's
+`avatarUpdateToken` selects which version the serve route reads. After a
+successful upload, the route re-reads D1 and deletes whichever versioned
+object is definitively no longer authoritative — the previous token's
+object if this upload is still authoritative, or this upload's own object
+if a concurrent upload overwrote it. If that best-effort delete fails
+transiently (R2 unavailable), the superseded object lingers — it is not
+reachable by the serve route (which reads only the D1-selected token's
+key), so this is a storage-cost concern, not a correctness or security
+concern. There is **no automated sweep**; lingering versioned objects
+accumulate until manual cleanup:
 
 ```sh
-wrangler r2 object list PUZZLES_BUCKET --prefix 'avatars/staging/' | \
+wrangler r2 object list PUZZLES_BUCKET --prefix 'avatars/' | \
   awk '{print $4}' | xargs -I{} wrangler r2 object delete PUZZLES_BUCKET/{}
 ```
 
-Run this only if R2 listing shows staging orphans have become material.
+Run this only if R2 listing shows accumulated versioned orphans have
+become material. The legacy unversioned key (`avatars/{playerId}`) is
+kept as a fallback for avatars uploaded before the versioned-key
+migration — do not delete it unless every player has re-uploaded since
+the migration.
 
 ---
 
@@ -208,11 +231,32 @@ POST /api/admin/puzzle-delete/:id?force=true
 ```
 
 The `force=true` query parameter bypasses the `processing`-status guard
-that normally prevents deletion of in-flight puzzles. This deletes the KV
-metadata, R2 original image, and all R2 piece images. The delete route uses
-`POST /api/admin/puzzle-delete/:id` (not `DELETE /api/admin/puzzles/:id`) so
-it is NOT a sub-path of the narrow CLI Access app's `/api/admin/puzzles`
-exact path — a service-token holder cannot reach it at the Access gate.
+that normally prevents deletion of in-flight puzzles. The delete route
+follows the same safe lifecycle as the reaper and the commit-conflict
+cleanup path:
+
+1. **Terminate and await the workflow stopped** (processing puzzles only).
+   If termination cannot be confirmed, the DO is tombstoned best-effort,
+   a cleanup record is written, and R2/KV cleanup is deferred to the
+   reaper — a live workflow can still write R2 objects, so deleting
+   assets prematurely would leave orphans the reaper cannot discover.
+2. **Tombstone the metadata DO** before any R2/KV deletion, so a dead
+   workflow's post-termination step cannot resurrect stale metadata in
+   KV via the DO's KV sync.
+3. **Delete R2 assets** (original + thumbnail + generated pieces). On
+   partial failure, KV is preserved and a cleanup record is written so
+   the reaper retries R2 cleanup (returns 207 Multi-Status).
+4. **Delete KV metadata** only after R2 fully succeeds. On failure, the
+   cleanup record is preserved for a reaper retry.
+5. **Release the idempotency reservation** and **delete D1 ownership +
+   stats** rows (best-effort).
+6. **Delete the cleanup record** (best-effort) only after every required
+   step succeeds.
+
+The delete route uses `POST /api/admin/puzzle-delete/:id` (not
+`DELETE /api/admin/puzzles/:id`) so it is NOT a sub-path of the narrow CLI
+Access app's `/api/admin/puzzles` exact path — a service-token holder
+cannot reach it at the Access gate.
 
 **When to use:**
 

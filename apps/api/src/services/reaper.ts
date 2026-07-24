@@ -703,57 +703,67 @@ export async function reapOrphanedReservations(env: Env): Promise<ReapResult> {
 	// Querying every candidate's reservation DO is the dominant cost as the
 	// catalog grows, but the full-catalog scan TODO at reapStuckPuzzles
 	// applies here too; a persisted cursor or rotating page is the scale fix.
-	const mismatches: Array<{ id: string; pieceCount: number; idempotencyKey: string }> = [];
-	await Promise.all(
-		candidates.map(async (candidate) => {
-			try {
-				const reservation = await getIdempotencyReservation(
-					env.PUZZLE_METADATA_DO,
-					candidate.idempotencyKey
-				);
-				if (reservation === null) {
-					// No reservation record. Under the codebase's deletion
-					// ordering invariant (KV is always deleted before a
-					// reservation is released — in every release path, the
-					// puzzle's KV metadata is removed first, and cleanup
-					// failures use failReservation instead of release), a
-					// puzzle that still exists in KV with an idempotencyKey
-					// but no reservation record is an orphan. The gap this
-					// closes: a retry reclaims key K for replacement puzzle B,
-					// the orphan's cleanup-record write fails, then an admin
-					// deletes B — releasing K and erasing the mismatch signal.
-					// Without treating null as reapable, the orphan becomes
-					// unreachable by every cleanup mechanism.
-					mismatches.push(candidate);
-					return;
-				}
-				if (reservation.puzzleId === candidate.id) {
-					// This puzzle IS the current reservation owner — not an orphan.
-					return;
-				}
+	//
+	// Mismatches are collected in deterministic input (catalog) order via
+	// Promise.all's positional result array, NOT in asynchronous completion
+	// order. Async-order collection (pushing into a shared array as each DO
+	// call resolves) lets a fast subset that repeatedly fails cleanup occupy
+	// the first REAP_BATCH_LIMIT slots on every run while slower mismatches
+	// remain unprocessed — starving them behind the same noisy candidates.
+	// Input-order collection rotates which mismatches land in the batch as
+	// earlier ones are reaped and drop out of the catalog.
+	const mismatches = (
+		await Promise.all(
+			candidates.map(async (candidate) => {
+				try {
+					const reservation = await getIdempotencyReservation(
+						env.PUZZLE_METADATA_DO,
+						candidate.idempotencyKey
+					);
+					if (reservation === null) {
+						// No reservation record. Under the codebase's deletion
+						// ordering invariant (KV is always deleted before a
+						// reservation is released — in every release path, the
+						// puzzle's KV metadata is removed first, and cleanup
+						// failures use failReservation instead of release), a
+						// puzzle that still exists in KV with an idempotencyKey
+						// but no reservation record is an orphan. The gap this
+						// closes: a retry reclaims key K for replacement puzzle B,
+						// the orphan's cleanup-record write fails, then an admin
+						// deletes B — releasing K and erasing the mismatch signal.
+						// Without treating null as reapable, the orphan becomes
+						// unreachable by every cleanup mechanism.
+						return candidate;
+					}
+					if (reservation.puzzleId === candidate.id) {
+						// This puzzle IS the current reservation owner — not an orphan.
+						return null;
+					}
 
-				// Ownership mismatch: the idempotency key now belongs to a
-				// different puzzleId. This puzzle lost its reservation (reclaimed
-				// by a retry that minted a replacement) and is a durable orphan.
-				// This catches the gap where writeCleanupRecord failed AND the
-				// workflow later completed — neither the stuck-processing reaper
-				// (skips 'complete'/'ready') nor the cleanup-record reaper (no
-				// record) would otherwise reach it.
-				mismatches.push(candidate);
-			} catch (err) {
-				console.error(
-					`Reaper orphan: reservation check failed for ${candidate.id}, skipping:`,
-					err
-				);
-				result.errors++;
-				result.details.push({
-					puzzleId: candidate.id,
-					action: 'orphan-reservation-check-failed',
-					error: String(err)
-				});
-			}
-		})
-	);
+					// Ownership mismatch: the idempotency key now belongs to a
+					// different puzzleId. This puzzle lost its reservation (reclaimed
+					// by a retry that minted a replacement) and is a durable orphan.
+					// This catches the gap where writeCleanupRecord failed AND the
+					// workflow later completed — neither the stuck-processing reaper
+					// (skips 'complete'/'ready') nor the cleanup-record reaper (no
+					// record) would otherwise reach it.
+					return candidate;
+				} catch (err) {
+					console.error(
+						`Reaper orphan: reservation check failed for ${candidate.id}, skipping:`,
+						err
+					);
+					result.errors++;
+					result.details.push({
+						puzzleId: candidate.id,
+						action: 'orphan-reservation-check-failed',
+						error: String(err)
+					});
+					return null;
+				}
+			})
+		)
+	).filter((c): c is { id: string; pieceCount: number; idempotencyKey: string } => c !== null);
 
 	const batch = mismatches.slice(0, REAP_BATCH_LIMIT);
 
