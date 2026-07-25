@@ -143,6 +143,19 @@ function makeProcessingPuzzle(id: string): any {
 	};
 }
 
+// Pin Math.random to its midpoint for this suite. Production applies ±20%
+// jitter to retry backoffs; the retry-budget tests below assert the expected
+// 500 ms base delay, so the jitter must be deterministic. This is a suite-
+// local concern (moved out of the global test-setup.ts).
+let randomSpy: ReturnType<typeof vi.spyOn> | undefined;
+beforeEach(() => {
+	randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0.5);
+});
+afterEach(() => {
+	randomSpy?.mockRestore();
+	randomSpy = undefined;
+});
+
 // ─── player-allowlist error catches ──────────────────────────────────────────
 
 describe('Admin Worker — player-allowlist error catches', () => {
@@ -406,6 +419,12 @@ describe('Admin Worker — R2 probe after upload error', () => {
 		__resetRateLimitStore();
 		mockSuccessfulCreate();
 		vi.mocked(storage.uploadOriginalImage).mockRejectedValue(new Error('R2 upload failed'));
+		// A valid Idempotency-Key is required for the route to reserve a key,
+		// which makes the fail/release reservation cleanup paths reachable.
+		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
+			existing: false,
+			puzzleId: 'r2-probe-puzzle'
+		} as any);
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 	});
 
@@ -421,23 +440,38 @@ describe('Admin Worker — R2 probe after upload error', () => {
 		} as any);
 
 		const env = { ...baseEnv, PUZZLE_WORKFLOW: { create: vi.fn() } } as any;
-		const res = await admin.fetch(createRequest(), env);
+		const res = await admin.fetch(createRequest('r2-probe-cleanup-fail'), env);
 		expect(res.status).toBe(500);
 		const body = (await res.json()) as any;
 		expect(body.message).toBe('Failed to upload image');
-		expect(storage.failIdempotencyKey).not.toHaveBeenCalled();
+		// originalCommitted=true and cleanup failed → failReservation path.
+		// The reservation is marked failed (not released) so a same-key retry
+		// reclaims through the DO's serialized path instead of minting a
+		// duplicate alongside the orphaned original.
+		expect(storage.failIdempotencyKey).toHaveBeenCalledWith(
+			env.PUZZLE_METADATA_DO,
+			'r2-probe-cleanup-fail',
+			expect.any(String)
+		);
+		expect(storage.releaseIdempotencyKey).not.toHaveBeenCalled();
 	});
 
 	it('logs error when R2 probe (originalImageExists) throws', async () => {
 		vi.mocked(storage.originalImageExists).mockRejectedValue(new Error('R2 probe failed'));
 
 		const env = { ...baseEnv, PUZZLE_WORKFLOW: { create: vi.fn() } } as any;
-		const res = await admin.fetch(createRequest(), env);
+		const res = await admin.fetch(createRequest('r2-probe-throws'), env);
 		expect(res.status).toBe(500);
 		const body = (await res.json()) as any;
 		expect(body.message).toBe('Failed to upload image');
-		// originalCommitted stays false → releaseReservation path
-		expect(storage.releaseIdempotencyKey).not.toHaveBeenCalled();
+		// originalCommitted stays false (probe threw) → releaseReservation path.
+		// The reservation is released so a same-key retry can mint a fresh id.
+		expect(storage.releaseIdempotencyKey).toHaveBeenCalledWith(
+			env.PUZZLE_METADATA_DO,
+			'r2-probe-throws',
+			expect.any(String)
+		);
+		expect(storage.failIdempotencyKey).not.toHaveBeenCalled();
 	});
 });
 

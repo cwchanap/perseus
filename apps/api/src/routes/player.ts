@@ -45,48 +45,36 @@ const MAX_DISPLAY_NAME_LENGTH = 255;
  * leaves D1 pointing at the legacy path (the DB write did not succeed),
  * which is correct as long as the legacy file is restored.
  *
- * The migratedLegacy flag indicates whether THIS upload created the
- * backup by renaming the legacy file. However, a concurrent upload may
- * have created the backup instead — so every rollback attempts rmdir +
- * rename when the directory becomes empty, regardless of the flag. This
- * closes the window where two concurrent first-time uploads both fail:
- * the first rollback (migratedLegacy=true) cannot rmdir because the
- * second upload's file remains, and the second rollback (migratedLegacy=
- * false) would previously skip the restore entirely, stranding the backup
+ * Every rollback attempts rmdir + rename when the directory becomes empty,
+ * regardless of which upload created the backup. This closes the window
+ * where two concurrent first-time uploads both fail: the first rollback
+ * cannot rmdir because the second upload's file remains, and the second
+ * rollback would previously skip the restore entirely, stranding the backup
  * and leaving D1 pointing at a path whose file is gone (404 on serve).
+ * Whether THIS upload created the backup is irrelevant to the restore
+ * logic — the backup is restored by whichever rollback observes an empty
+ * directory.
  */
 async function rollbackLegacyMigration(
 	playerDir: string,
 	versionedPath: string,
-	legacyBackupPath: string,
-	migratedLegacy: boolean
+	legacyBackupPath: string
 ): Promise<void> {
 	await unlink(versionedPath).catch(() => {});
-	if (migratedLegacy) {
-		// This upload moved the legacy file to the backup path. Try to
-		// restore it; if the directory isn't empty (concurrent uploads'
-		// files remain), rmdir fails and the backup stays for the last
-		// rollback to restore.
-		await rmdir(playerDir).catch(() => {});
-		await rename(legacyBackupPath, playerDir).catch((err) => {
-			console.error('Failed to restore legacy avatar backup:', err);
-		});
-	} else {
-		// This upload did not create the backup, but a concurrent one
-		// may have. If the versioned directory is now empty (all
-		// concurrent uploads rolled back), rmdir succeeds and we
-		// restore the backup so the serve route's legacy fallback
-		// resolves. If other files remain, rmdir fails and we leave
-		// the backup for the last rollback to handle.
-		try {
-			await rmdir(playerDir);
-		} catch {
-			return;
-		}
-		await rename(legacyBackupPath, playerDir).catch((err) => {
-			console.error('Failed to restore legacy avatar backup:', err);
-		});
+	// If the versioned directory is now empty (all concurrent uploads
+	// rolled back), rmdir succeeds and we restore the legacy file so the
+	// serve route's legacy fallback resolves. If other files remain, rmdir
+	// fails and we leave the backup for the last rollback to handle —
+	// attempting rename onto a non-empty directory would only log a
+	// spurious error, so return early instead.
+	try {
+		await rmdir(playerDir);
+	} catch {
+		return;
 	}
+	await rename(legacyBackupPath, playerDir).catch((err) => {
+		console.error('Failed to restore legacy avatar backup:', err);
+	});
 }
 
 player.get('/profile', requirePlayerAuth, async (c) => {
@@ -260,7 +248,7 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 		await writeFile(versionedPath, Buffer.from(bytes));
 	} catch (writeErr) {
 		console.error('Avatar file write failed; rolling back legacy migration:', writeErr);
-		await rollbackLegacyMigration(playerDir, versionedPath, legacyBackupPath, migratedLegacy);
+		await rollbackLegacyMigration(playerDir, versionedPath, legacyBackupPath);
 		return c.json({ error: 'internal_error', message: 'Failed to store avatar' }, 500);
 	}
 
@@ -281,7 +269,7 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 		);
 	} catch (err) {
 		console.error('Avatar DB write failed; rolling back avatar file:', err);
-		await rollbackLegacyMigration(playerDir, versionedPath, legacyBackupPath, migratedLegacy);
+		await rollbackLegacyMigration(playerDir, versionedPath, legacyBackupPath);
 		return c.json({ error: 'internal_error', message: 'Failed to update avatar' }, 500);
 	}
 	// D1 committed — the versioned file is now authoritative. Remove the

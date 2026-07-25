@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Hono } from 'hono';
 
 // Mock the Worker DB factory so the route never touches a real D1 binding.
@@ -447,6 +447,19 @@ describe('player avatar route (Worker)', () => {
 		store?.clear();
 	});
 
+	afterEach(async () => {
+		// Restore the store-backed getProfileOverride factory implementation
+		// even when a test's assertions fail before reaching an in-test
+		// restore block. mockReset clears any per-test mockImplementation;
+		// the reinstall below mirrors the module-level factory (line 37).
+		const shared = await import('@perseus/shared');
+		const store = (shared as any).__store as Map<string, any>;
+		vi.mocked(shared.getProfileOverride).mockReset();
+		vi.mocked(shared.getProfileOverride).mockImplementation(async (_db, playerId) => {
+			return store.get(playerId) ?? null;
+		});
+	});
+
 	it('POST avatar stores to R2 and returns avatarUrl', async () => {
 		const { bucket, store } = createMockBucket();
 		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
@@ -879,14 +892,6 @@ describe('player avatar route (Worker)', () => {
 		]);
 		expect(resA.status).toBe(200);
 		expect(resB.status).toBe(200);
-
-		// Restore the original factory mock so later tests are unaffected.
-		// Re-assigning to the captured mock fn would recurse, so restore
-		// the factory-style implementation that reads the live store.
-		vi.mocked(shared.getProfileOverride).mockImplementation(async (_db, playerId) => {
-			const s = (shared as any).__store as Map<string, any>;
-			return s.get(playerId) ?? null;
-		});
 
 		// Exactly one versioned object remains — the D1-selected one. The
 		// losing upload's object was deleted by its own post-write re-read

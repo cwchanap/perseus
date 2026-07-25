@@ -527,7 +527,7 @@ async function validateEntryImage(
 	return { ok: true, image, imagePath, detectedMime };
 }
 
-type UploadResult = { id: string; name: string; ok: boolean; detail: string };
+type UploadResult = { id: string; name: string; ok: boolean; detail: string; skipped?: boolean };
 
 /**
  * Process a single catalog entry: check idempotency, validate image, upload
@@ -544,7 +544,13 @@ async function processEntry(
 	const dedupKey = idempotencyKey(entry.name, entry.pieceCount, entry.aspectRatio);
 	if (existingKeys.has(dedupKey)) {
 		console.log(`SKIP ${entry.id} ${entry.name}: already exists on server`);
-		return { id: entry.id, name: entry.name, ok: true, detail: 'already exists — skipped' };
+		return {
+			id: entry.id,
+			name: entry.name,
+			ok: true,
+			detail: 'already exists — skipped',
+			skipped: true
+		};
 	}
 
 	const validation = await validateEntryImage(entry, options.imagesDir);
@@ -670,11 +676,11 @@ export async function cmdUpload(options: Options): Promise<void> {
 	for (const entry of selected) {
 		const result = await processEntry(entry, options, baseHeaders, cookie, existingKeys);
 		results.push(result);
-		if (result.detail === 'already exists — skipped') skipped++;
+		if (result.skipped) skipped++;
 		if (options.delayMs > 0) await sleep(options.delayMs);
 	}
 
-	const ok = results.filter((r) => r.ok && r.detail !== 'already exists — skipped').length;
+	const ok = results.filter((r) => r.ok && !r.skipped).length;
 	const fail = results.filter((r) => !r.ok).length;
 	console.log(`\nDone: ${ok} uploaded, ${skipped} skipped, ${fail} failed`);
 	if (fail > 0) throw new FatalError(`${fail} puzzle(s) failed to upload`);

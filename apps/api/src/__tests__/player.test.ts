@@ -13,6 +13,31 @@ import {
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
+// Poll the versioned-avatar directory until it contains at least `count`
+// entries. Replaces fixed setTimeout delays in the interleaving tests with
+// an observable wait on the actual upload state, avoiding flakiness from
+// timing assumptions. The legacy avatar path becomes a directory after the
+// migration rename+mkdir, so transient ENOTDIR/ENOENT errors are retried.
+async function waitForVersionedFiles(
+	playerDir: string,
+	count: number,
+	timeoutMs = 2000
+): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		try {
+			const entries = readdirSync(playerDir);
+			if (entries.length >= count) return;
+		} catch {
+			// playerDir may still be the legacy file or not yet created.
+		}
+		await new Promise((resolve) => setTimeout(resolve, 5));
+	}
+	throw new Error(
+		`waitForVersionedFiles: expected >= ${count} entries in ${playerDir} within ${timeoutMs}ms`
+	);
+}
+
 // The Bun player route resolves its DB via the `../db` singleton, which loads
 // `bun:sqlite`. The api test runner (vitest under Node) cannot load that
 // builtin, so we mock the DB factory and the shared repositories with an
@@ -586,8 +611,9 @@ describe('player avatar route (Bun)', () => {
 			body: makeForm()
 		});
 
-		// Wait for A to reach the DB write (rename + mkdir + writeFile).
-		await new Promise((resolve) => setTimeout(resolve, 50));
+		// Wait for A to reach the DB write (rename + mkdir + writeFile):
+		// one versioned file should appear under avatars/p1/.
+		await waitForVersionedFiles(legacyPath, 1);
 
 		// Start B — sees the directory (no migration), writes tokenB,
 		// then blocks on the DB write.
@@ -597,8 +623,8 @@ describe('player avatar route (Bun)', () => {
 			body: makeForm()
 		});
 
-		// Wait for B to reach the DB write.
-		await new Promise((resolve) => setTimeout(resolve, 50));
+		// Wait for B to reach the DB write: two versioned files now.
+		await waitForVersionedFiles(legacyPath, 2);
 
 		// Release A — DB fails, A rolls back. rmdir fails (B's file
 		// remains), so the backup is NOT restored yet.
@@ -743,8 +769,9 @@ describe('player avatar route (Bun)', () => {
 			body: makeForm()
 		});
 
-		// Wait for A to reach the DB write (rename + mkdir + writeFile).
-		await new Promise((resolve) => setTimeout(resolve, 50));
+		// Wait for A to reach the DB write (rename + mkdir + writeFile):
+		// one versioned file should appear under avatars/p1/.
+		await waitForVersionedFiles(legacyPath, 1);
 
 		// Start B — sees the directory (no migration), writes tokenB,
 		// then blocks on the DB write.
@@ -754,8 +781,8 @@ describe('player avatar route (Bun)', () => {
 			body: makeForm()
 		});
 
-		// Wait for B to reach the DB write.
-		await new Promise((resolve) => setTimeout(resolve, 50));
+		// Wait for B to reach the DB write: two versioned files now.
+		await waitForVersionedFiles(legacyPath, 2);
 
 		// Release B FIRST — DB fails, B rolls back (migratedLegacy=false).
 		// B's rmdir fails (A's tokenA file remains) → line 84 early return.

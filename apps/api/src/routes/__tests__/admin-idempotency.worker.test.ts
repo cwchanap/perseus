@@ -51,14 +51,8 @@ vi.mock('../../db.worker', () => ({
 
 vi.mock('@perseus/shared', async (importOriginal) => {
 	const original = await importOriginal<typeof import('@perseus/shared')>();
-	return {
-		...original,
-		validateImageEndMarker: vi.fn().mockResolvedValue(true),
-		deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined),
-		deletePuzzleStats: vi.fn().mockResolvedValue(undefined),
-		insertPuzzleOwnership: vi.fn().mockResolvedValue(undefined),
-		SYSTEM_OWNER_ID: 'system'
-	};
+	const { sharedMockOverrides } = await import('./helpers/shared-mock');
+	return { ...original, ...sharedMockOverrides };
 });
 
 import admin from '../admin.worker';

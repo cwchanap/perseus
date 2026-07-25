@@ -1291,7 +1291,7 @@ describe('PuzzleMetadataDO.fetch - /reservation (read-only lookup)', () => {
 		);
 		// /reservation must NOT write a puzzleId to storage (unlike /update,
 		// /status, /delete which initialize doPuzzleId on first call).
-		expect(storage.get('puzzleId')).resolves.toBeNull();
+		await expect(storage.get('puzzleId')).resolves.toBeNull();
 	});
 });
 

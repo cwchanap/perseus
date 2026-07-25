@@ -63,10 +63,10 @@ afterAll(async () => {
 	}
 });
 
-describe('storage reclaim race — line 378 (concurrent writer wins between rm and retry)', () => {
+describe('storage reclaim race — concurrent writer wins between rm and retry', () => {
 	it('returns existing when a concurrent writer publishes between empty-file reclaim and retry', async () => {
-		// This test deterministically covers line 378: the second
-		// atomicPublishReservation call finds a file with content
+		// This test deterministically covers the reclaim-race path: the
+		// second atomicPublishReservation call finds a file with content
 		// (published by a concurrent writer between the rm and retry),
 		// reads it, and returns { existing: true, puzzleId: writer's id }.
 		resetLinkCallCount();

@@ -945,7 +945,7 @@ describe('reapCleanupRecords', () => {
 		(storage.listCleanupRecords as any).mockResolvedValue([
 			{ puzzleId: 'dup-1', pieceCount: 50, createdAt: NOW - 60000 }
 		]);
-		// Make deletePuzzleAssets throw a non-R2 error to trigger the outer catch
+		// Make deletePuzzleMetadata throw a non-R2 error to trigger the outer catch
 		(storage.deletePuzzleMetadata as any).mockImplementation(() => {
 			throw new Error('unexpected catastrophic failure');
 		});

@@ -333,7 +333,9 @@ admin.post('/puzzles', requireAuth, async (c) => {
 				400
 			);
 		}
-		const hasEndMarker = await validateImageEndMarker(image, detectedType);
+		const hasEndMarker = await validateImageEndMarker(image, detectedType, {
+			requireFullDecode: true
+		});
 		if (!hasEndMarker) {
 			return c.json({ error: 'bad_request', message: 'Image is corrupted or truncated' }, 400);
 		}

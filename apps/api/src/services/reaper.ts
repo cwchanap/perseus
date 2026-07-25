@@ -766,9 +766,38 @@ export async function reapOrphanedReservations(env: Env): Promise<ReapResult> {
 	// reconcile). Reuse the same full-catalog scan the stuck-processing
 	// reaper performs; the scale TODO at reapStuckPuzzles applies here too.
 	const candidates: Array<{ id: string; pieceCount: number; idempotencyKey: string }> = [];
-	for (const puzzle of puzzles) {
-		try {
-			const meta = await getPuzzle(env.PUZZLE_METADATA, puzzle.id);
+	// Read full metadata concurrently in bounded chunks to avoid exceeding
+	// Worker subrequest/CPU budgets while preserving input-order candidate
+	// collection (chunks processed sequentially; Promise.all preserves order
+	// within each chunk). Per-puzzle error accounting/details are preserved.
+	const META_CHUNK_SIZE = 10;
+	for (let i = 0; i < puzzles.length; i += META_CHUNK_SIZE) {
+		const chunk = puzzles.slice(i, i + META_CHUNK_SIZE);
+		const metas = await Promise.all(
+			chunk.map(async (puzzle) => {
+				try {
+					const meta = await getPuzzle(env.PUZZLE_METADATA, puzzle.id);
+					return { puzzle, meta };
+				} catch (err) {
+					return { puzzle, err };
+				}
+			})
+		);
+		for (const entry of metas) {
+			if ('err' in entry) {
+				console.error(
+					`Reaper orphan: failed to read metadata for ${entry.puzzle.id}, skipping:`,
+					entry.err
+				);
+				result.errors++;
+				result.details.push({
+					puzzleId: entry.puzzle.id,
+					action: 'orphan-meta-read-failed',
+					error: String(entry.err)
+				});
+				continue;
+			}
+			const { puzzle, meta } = entry;
 			if (meta && typeof meta.idempotencyKey === 'string' && meta.idempotencyKey) {
 				candidates.push({
 					id: puzzle.id,
@@ -776,14 +805,6 @@ export async function reapOrphanedReservations(env: Env): Promise<ReapResult> {
 					idempotencyKey: meta.idempotencyKey
 				});
 			}
-		} catch (err) {
-			console.error(`Reaper orphan: failed to read metadata for ${puzzle.id}, skipping:`, err);
-			result.errors++;
-			result.details.push({
-				puzzleId: puzzle.id,
-				action: 'orphan-meta-read-failed',
-				error: String(err)
-			});
 		}
 	}
 	result.candidates = candidates.length;

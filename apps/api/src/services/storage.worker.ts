@@ -766,10 +766,16 @@ export async function listCleanupRecords(kv: KVNamespace): Promise<CleanupRecord
 		if (list.list_complete) break;
 		cursor = list.cursor;
 	}
+	const fetched = await Promise.all(keys.map((k) => kv.get(k.name, 'json')));
 	const records: CleanupRecord[] = [];
-	for (const { name } of keys) {
-		const data = await kv.get(name, 'json');
-		if (data && typeof data === 'object' && 'puzzleId' in data) {
+	for (const data of fetched) {
+		if (
+			data &&
+			typeof data === 'object' &&
+			'puzzleId' in data &&
+			'pieceCount' in data &&
+			typeof data.pieceCount === 'number'
+		) {
 			records.push(data as CleanupRecord);
 		}
 	}

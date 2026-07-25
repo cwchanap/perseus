@@ -270,6 +270,26 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 		} catch (err) {
 			console.error('Avatar upload: failed to re-read override for cleanup:', err);
 		}
+	} else if (previousToken === null) {
+		// No prior avatar, but a concurrent upload may have overwritten our
+		// token between our write and this re-read. If so, our versionedKey is
+		// an unreachable orphan — delete it. Without this branch, two
+		// overlapping first-time uploads (both read null) leave the loser's
+		// object orphaned: A reads null, B reads null, A writes token A, B
+		// writes token B (overwriting A), A re-reads and sees B but skips
+		// cleanup (previousToken null) — token A's object lingers forever.
+		// R2 delete is idempotent, so a concurrent winner that also deletes
+		// its previousToken (null → no-op) is harmless.
+		try {
+			const currentOverride = await getProfileOverride(db, playerId);
+			if (currentOverride?.avatarUpdateToken !== avatarUpdateToken) {
+				await c.env.PUZZLES_BUCKET.delete(versionedKey).catch((err) =>
+					console.error('Avatar upload: failed to delete losing R2 object:', err)
+				);
+			}
+		} catch (err) {
+			console.error('Avatar upload: failed to re-read override for cleanup:', err);
+		}
 	}
 	// Reset the rate-limit counter on success so repeated successful uploads
 	// don't accumulate toward an unnecessary lockout. The middleware increments
