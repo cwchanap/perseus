@@ -1158,6 +1158,54 @@ describe('cleanup records', () => {
 		expect(records[0].puzzleId).toBe('p-1');
 	});
 
+	it('listCleanupRecords rejects non-string puzzleId (number/object/null)', async () => {
+		const kv = createMockKV();
+		kv._store.set(
+			'cleanup:good',
+			JSON.stringify({ puzzleId: 'good', pieceCount: 50, createdAt: 0 })
+		);
+		// Numeric puzzleId — must be rejected (would flow into asset deletion).
+		kv._store.set('cleanup:num', JSON.stringify({ puzzleId: 123, pieceCount: 50, createdAt: 0 }));
+		// Object puzzleId — must be rejected.
+		kv._store.set(
+			'cleanup:obj',
+			JSON.stringify({ puzzleId: { x: 1 }, pieceCount: 50, createdAt: 0 })
+		);
+		// Empty-string puzzleId — must be rejected.
+		kv._store.set('cleanup:empty', JSON.stringify({ puzzleId: '', pieceCount: 50, createdAt: 0 }));
+
+		const records = await listCleanupRecords(kv as unknown as KVNamespace);
+		expect(records).toHaveLength(1);
+		expect(records[0].puzzleId).toBe('good');
+	});
+
+	it('listCleanupRecords rejects non-finite pieceCount (NaN/Infinity/string)', async () => {
+		const kv = createMockKV();
+		kv._store.set(
+			'cleanup:good',
+			JSON.stringify({ puzzleId: 'good', pieceCount: 50, createdAt: 0 })
+		);
+		// NaN pieceCount — must be rejected.
+		kv._store.set(
+			'cleanup:nan',
+			JSON.stringify({ puzzleId: 'nan', pieceCount: NaN, createdAt: 0 })
+		);
+		// Infinity pieceCount — must be rejected.
+		kv._store.set(
+			'cleanup:inf',
+			JSON.stringify({ puzzleId: 'inf', pieceCount: Infinity, createdAt: 0 })
+		);
+		// String pieceCount — must be rejected (typeof check).
+		kv._store.set(
+			'cleanup:str',
+			JSON.stringify({ puzzleId: 'str', pieceCount: '50', createdAt: 0 })
+		);
+
+		const records = await listCleanupRecords(kv as unknown as KVNamespace);
+		expect(records).toHaveLength(1);
+		expect(records[0].puzzleId).toBe('good');
+	});
+
 	it('listCleanupRecords handles paginated KV list results', async () => {
 		const store = new Map<string, string>();
 		store.set('cleanup:p-1', JSON.stringify({ puzzleId: 'p-1', pieceCount: 50, createdAt: 0 }));

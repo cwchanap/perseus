@@ -774,7 +774,10 @@ export async function listCleanupRecords(kv: KVNamespace): Promise<CleanupRecord
 			typeof data === 'object' &&
 			'puzzleId' in data &&
 			'pieceCount' in data &&
-			typeof data.pieceCount === 'number'
+			typeof data.puzzleId === 'string' &&
+			data.puzzleId.length > 0 &&
+			typeof data.pieceCount === 'number' &&
+			Number.isFinite(data.pieceCount)
 		) {
 			records.push(data as CleanupRecord);
 		}

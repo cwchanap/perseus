@@ -67,6 +67,16 @@ export const AVATAR_GC_AGE_MS = 1 * 60 * 60 * 1000; // 1 hour
 /** Limit the number of avatar objects deleted per scheduled run. */
 export const AVATAR_GC_BATCH_LIMIT = 200;
 
+/**
+ * Maximum number of R2 list pages fetched per scheduled avatar GC run. Each
+ * page returns up to 1000 objects, so this bounds the list calls and memory
+ * per run. The R2 list cursor is persisted between runs so the scan resumes
+ * where it left off — without it, one run would list the entire avatars/
+ * prefix before deleting anything, accumulating excessive R2 list calls and
+ * memory as the bucket grows.
+ */
+export const AVATAR_GC_MAX_PAGES = 10;
+
 // --- Reaper cursor persistence ---
 //
 // Each reaper selects a bounded batch from a deterministically-ordered
@@ -111,6 +121,42 @@ async function writeReaperCursor(kv: KVNamespace, name: string, cursor: number):
 		await kv.put(REAPER_CURSOR_PREFIX + name, String(cursor));
 	} catch (err) {
 		console.error(`Reaper: failed to persist cursor for ${name}:`, err);
+	}
+}
+
+/**
+ * Read a persisted opaque-string cursor (e.g. an R2 list continuation
+ * cursor). Returns undefined when missing/unparseable — the caller treats
+ * that as "start from the beginning." Distinct from readReaperCursor
+ * because R2 cursors are opaque strings, not numeric offsets.
+ */
+async function readReaperStringCursor(kv: KVNamespace, name: string): Promise<string | undefined> {
+	try {
+		const raw = await kv.get(REAPER_CURSOR_PREFIX + name);
+		return typeof raw === 'string' && raw.length > 0 ? raw : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * Persist an opaque-string cursor. A null/undefined cursor clears the
+ * stored value so the next run starts from the beginning (used when a
+ * listing scan completes). Best-effort — logged, not fatal.
+ */
+async function writeReaperStringCursor(
+	kv: KVNamespace,
+	name: string,
+	cursor: string | undefined
+): Promise<void> {
+	try {
+		if (cursor === undefined) {
+			await kv.delete(REAPER_CURSOR_PREFIX + name);
+		} else {
+			await kv.put(REAPER_CURSOR_PREFIX + name, cursor);
+		}
+	} catch (err) {
+		console.error(`Reaper: failed to persist string cursor for ${name}:`, err);
 	}
 }
 
@@ -728,16 +774,17 @@ export async function reapCleanupRecords(env: Env): Promise<ReapResult> {
  * key currently maps to. If the current owner differs from this puzzle's
  * id, the puzzle lost its reservation to a retry and is a durable orphan
  * — regardless of whether a cleanup record exists or the workflow
- * completed. A null reservation (no record) is also treated as an orphan:
- * in every release path in this codebase, the puzzle's KV metadata is
- * deleted BEFORE its reservation is released (admin delete, reaper
- * cleanup, and create-flow failure cleanup all follow this order, and
- * cleanup failures use failReservation — which preserves the record —
- * rather than release). So a puzzle that still exists in KV with an
- * idempotencyKey but has no reservation record was superseded and had
- * its replacement's reservation erased (e.g. an admin deleted the
- * replacement, releasing the key). Without treating null as reapable,
- * such an orphan becomes unreachable by every cleanup mechanism.
+ * completed. A null reservation (no record) is NOT treated as an orphan:
+ * the absence of a record is a weak signal that can result from DO state
+ * loss, a release that followed KV deletion (the codebase's normal
+ * deletion ordering), or an operational action. Reaping on null alone
+ * risks destroying a healthy completed puzzle whose reservation record is
+ * simply absent — an irreversible mistake. Instead, null reservations
+ * are skipped and logged with a distinct action so operators can review
+ * and force-delete true orphans via the runbook. A reservation ownership
+ * mismatch (the key now points at a different puzzleId) remains
+ * sufficient evidence by itself — that is a durable, positive orphan
+ * signal.
  *
  * Ownership mismatches are determined BEFORE applying REAP_BATCH_LIMIT.
  * The source catalog is sorted newest-first (listPuzzles), so batching
@@ -838,19 +885,25 @@ export async function reapOrphanedReservations(env: Env): Promise<ReapResult> {
 						candidate.idempotencyKey
 					);
 					if (reservation === null) {
-						// No reservation record. Under the codebase's deletion
-						// ordering invariant (KV is always deleted before a
-						// reservation is released — in every release path, the
-						// puzzle's KV metadata is removed first, and cleanup
-						// failures use failReservation instead of release), a
-						// puzzle that still exists in KV with an idempotencyKey
-						// but no reservation record is an orphan. The gap this
-						// closes: a retry reclaims key K for replacement puzzle B,
-						// the orphan's cleanup-record write fails, then an admin
-						// deletes B — releasing K and erasing the mismatch signal.
-						// Without treating null as reapable, the orphan becomes
-						// unreachable by every cleanup mechanism.
-						return candidate;
+						// No reservation record. This is NOT treated as an
+						// orphan signal: the absence of a record can result
+						// from DO state loss, a release that followed KV
+						// deletion (the codebase's normal deletion ordering),
+						// or an operational action. Reaping on null alone
+						// risks destroying a healthy completed puzzle whose
+						// reservation record is simply absent — an
+						// irreversible mistake. Skip and log a distinct
+						// action so operators can review and force-delete
+						// true orphans via the runbook. A positive ownership
+						// mismatch (below) remains sufficient evidence.
+						console.warn(
+							`Reaper orphan: no reservation record for ${candidate.id} (key ${candidate.idempotencyKey}); skipping — verify and force-delete if orphaned`
+						);
+						result.details.push({
+							puzzleId: candidate.id,
+							action: 'skip-null-reservation'
+						});
+						return null;
 					}
 					if (reservation.puzzleId === candidate.id) {
 						// This puzzle IS the current reservation owner — not an orphan.
@@ -1081,11 +1134,13 @@ export async function reapOrphanedReservations(env: Env): Promise<ReapResult> {
  * that a future overlapping write can invalidate, and first-time concurrent
  * uploads (both read null) skip cleanup entirely.
  *
- * This reaper closes that gap with delayed GC: it lists all versioned avatar
- * objects in R2, batch-queries D1 for each player's authoritative token, and
- * deletes any versioned object whose token is not authoritative AND whose
- * age exceeds AVATAR_GC_AGE_MS. The age threshold ensures in-flight uploads
- * have completed before their objects are considered garbage.
+ * This reaper closes that gap with delayed GC: it lists versioned avatar
+ * objects in R2 (bounded to AVATAR_GC_MAX_PAGES per run, resuming from a
+ * persisted R2 list cursor), batch-queries D1 for each player's
+ * authoritative token, and deletes any versioned object whose token is
+ * not authoritative AND whose age exceeds AVATAR_GC_AGE_MS. The age
+ * threshold ensures in-flight uploads have completed before their objects
+ * are considered garbage.
  *
  * The legacy unversioned key `avatars/{playerId}` (pre-migration fallback) is
  * never deleted — it serves as the D1-unavailable fallback in the serve route.
@@ -1093,6 +1148,12 @@ export async function reapOrphanedReservations(env: Env): Promise<ReapResult> {
  * If D1 is unavailable, the reaper skips all players (fail closed) rather than
  * deleting objects it cannot verify. R2 deletes are idempotent, so concurrent
  * runs or runs overlapping with an upload are safe.
+ *
+ * Bounded listing: the R2 list cursor is persisted in KV between runs so the
+ * scan resumes where it left off. When a scan reaches the end of the prefix
+ * (page.truncated === false), the cursor is cleared so the next run starts a
+ * fresh sweep. This bounds list calls and memory per run regardless of bucket
+ * size; the tradeoff is that a full sweep takes multiple scheduled runs.
  */
 export async function reapOrphanedAvatars(env: Env, now = Date.now()): Promise<ReapResult> {
 	const result: ReapResult = {
@@ -1103,17 +1164,35 @@ export async function reapOrphanedAvatars(env: Env, now = Date.now()): Promise<R
 		details: []
 	};
 
-	// List all objects under the avatars/ prefix (paginated).
+	// List objects under the avatars/ prefix, bounded to AVATAR_GC_MAX_PAGES
+	// per run. The R2 list cursor is persisted between runs so the scan
+	// resumes where it left off — without it, one run would list the entire
+	// prefix before deleting anything, accumulating excessive R2 list calls
+	// and memory as the bucket grows.
+	const R2_CURSOR_NAME = 'orphaned-avatars-r2';
 	const allObjects: Array<{ key: string; uploaded: Date }> = [];
-	let listCursor: string | undefined;
-	while (true) {
+	let listCursor = await readReaperStringCursor(env.PUZZLE_METADATA, R2_CURSOR_NAME);
+	let pagesListed = 0;
+	let listComplete = false;
+	while (pagesListed < AVATAR_GC_MAX_PAGES) {
 		const page = await env.PUZZLES_BUCKET.list({ prefix: 'avatars/', cursor: listCursor });
 		for (const obj of page.objects) {
 			allObjects.push({ key: obj.key, uploaded: obj.uploaded });
 		}
-		if (!page.truncated) break;
+		pagesListed++;
+		if (!page.truncated) {
+			listComplete = true;
+			break;
+		}
 		listCursor = page.cursor;
 	}
+	// Persist the cursor for the next run. If the listing completed, clear
+	// the cursor so the next run starts a fresh sweep from the beginning.
+	await writeReaperStringCursor(
+		env.PUZZLE_METADATA,
+		R2_CURSOR_NAME,
+		listComplete ? undefined : listCursor
+	);
 	result.scanned = allObjects.length;
 
 	// Parse keys into versioned (avatars/{playerId}/{token}) and legacy
