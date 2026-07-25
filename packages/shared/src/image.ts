@@ -268,7 +268,15 @@ export async function parseImageDimensions(
 // the decoder/generator — producing a 500 after R2 upload and metadata
 // creation.
 //
-// Format-specific checks:
+// The primary validation is a bounded decode via the runtime's native
+// image decoder (createImageBitmap in Cloudflare Workers, Bun.Image in
+// Bun). A successful decode proves the image is complete and valid —
+// stronger than structural marker checks, which only verify marker
+// presence without validating payload boundaries, CRC correctness, or
+// decodability. The structural scanners are retained as a fallback for
+// environments where no native decoder is available.
+//
+// Format-specific structural checks (fallback):
 // - PNG: must end with an IEND chunk AND contain at least one IDAT chunk
 //   (image data) before IEND.
 // - JPEG: must contain an EOI marker (FF D9) near the end (allow trailing
@@ -283,6 +291,15 @@ export async function parseImageDimensions(
 // IDAT/SOS/VP8 well within the first 2 MiB.
 const STRUCTURAL_SCAN_LIMIT = 2 * 1024 * 1024;
 
+// Cap structural scanner iterations. The byte cap (STRUCTURAL_SCAN_LIMIT)
+// bounds data scanned but not loop iterations: a crafted stream of
+// zero-length chunks (12 bytes each for PNG, 8 bytes each for WebP) can
+// produce ~174k (PNG) or ~262k (WebP) iterations within 2 MiB — each
+// performing a separate async slice().arrayBuffer() — enough to exhaust
+// a Workers CPU budget. Legitimate images have well under 1,000 chunks.
+// 10,000 is ~10x headroom and matches the JPEG scanner's existing cap.
+const STRUCTURAL_ITERATION_LIMIT = 10_000;
+
 /**
  * Scan PNG chunks from offset 8 (after the 8-byte signature) and return true
  * if at least one IDAT chunk is found before IEND. Each PNG chunk is:
@@ -294,7 +311,9 @@ async function pngHasIDAT(file: BlobLike): Promise<boolean> {
 	const size = file.size;
 	let pos = 8; // Skip PNG signature
 	const scanEnd = Math.min(size, STRUCTURAL_SCAN_LIMIT);
+	let iterations = 0;
 	while (pos + 8 <= scanEnd) {
+		if (++iterations > STRUCTURAL_ITERATION_LIMIT) return false;
 		const header = new Uint8Array(await file.slice(pos, pos + 8).arrayBuffer());
 		if (header.byteLength < 8) return false;
 		const dv = new DataView(header.buffer, header.byteOffset, header.byteLength);
@@ -378,11 +397,16 @@ async function jpegHasSOS(file: BlobLike): Promise<boolean> {
  * image data. Each WebP chunk is: 4-byte fourCC + 4-byte little-endian
  * chunkSize + chunkSize bytes data (padded to even size).
  */
-async function webpHasImageChunk(file: BlobLike): Promise<boolean> {
+async function webpHasImageChunk(file: BlobLike, riffBoundary: number): Promise<boolean> {
 	const size = file.size;
 	let pos = 12; // Skip RIFF + size + WEBP
-	const scanEnd = Math.min(size, STRUCTURAL_SCAN_LIMIT);
+	// Stop at the declared RIFF boundary, not file.size — trailing bytes
+	// beyond the RIFF container are not valid WebP chunks and could cause
+	// the scanner to misinterpret arbitrary data as chunk headers.
+	const scanEnd = Math.min(riffBoundary, STRUCTURAL_SCAN_LIMIT);
+	let iterations = 0;
 	while (pos + 8 <= scanEnd) {
+		if (++iterations > STRUCTURAL_ITERATION_LIMIT) return false;
 		const header = new Uint8Array(await file.slice(pos, pos + 8).arrayBuffer());
 		if (header.byteLength < 8) return false;
 		const fourCC = String.fromCharCode(header[0], header[1], header[2], header[3]);
@@ -398,7 +422,64 @@ async function webpHasImageChunk(file: BlobLike): Promise<boolean> {
 	return false;
 }
 
-export async function validateImageEndMarker(file: BlobLike, mimeType: string): Promise<boolean> {
+/**
+ * Attempt a bounded decode of the image using the runtime's native decoder.
+ * A successful decode proves the image is complete and valid — stronger than
+ * structural marker checks. Returns:
+ *   true  — decode succeeded (image is valid)
+ *   false — decode failed (image is corrupt)
+ *   null  — no native decoder available (caller should fall back to structural)
+ *
+ * In Cloudflare Workers, uses createImageBitmap (Web API global). In Bun,
+ * uses Bun.Image with a terminal call (bytes()) to force a full decode —
+ * metadata() only reads the header and would not catch corrupt image data.
+ * The decode is bounded by the caller's MAX_FILE_SIZE check (already
+ * performed before this function is called) and the runtime's CPU limit.
+ */
+async function boundedDecode(file: BlobLike): Promise<boolean | null> {
+	let bytes: ArrayBuffer;
+	try {
+		bytes = await file.arrayBuffer();
+	} catch {
+		return false;
+	}
+
+	// Cloudflare Workers path: createImageBitmap is a global that decodes
+	// the full image. Throws on corrupt/truncated input.
+	const createImageBitmapFn = (globalThis as { createImageBitmap?: unknown }).createImageBitmap;
+	if (typeof createImageBitmapFn === 'function') {
+		try {
+			await (createImageBitmapFn as (input: ArrayBuffer) => Promise<unknown>)(bytes);
+			return true;
+		} catch {
+			return false;
+		}
+	}
+
+	// Bun path: Bun.Image decodes lazily — a terminal call (bytes()) forces
+	// a full decode. metadata() only reads the header, so it is insufficient.
+	const BunGlobal = (
+		globalThis as { Bun?: { Image?: new (input: ArrayBuffer) => { bytes(): Promise<Uint8Array> } } }
+	).Bun;
+	if (BunGlobal && typeof BunGlobal.Image === 'function') {
+		try {
+			const img = new BunGlobal.Image(bytes);
+			await img.bytes();
+			return true;
+		} catch {
+			return false;
+		}
+	}
+
+	return null;
+}
+
+/**
+ * Structural validation fallback: check format-specific end markers and
+ * image-data markers without fully decoding. Used when no native decoder
+ * is available. Exported for direct testing of the fallback path.
+ */
+export async function validateImageStructural(file: BlobLike, mimeType: string): Promise<boolean> {
 	try {
 		const size = file.size;
 
@@ -463,8 +544,10 @@ export async function validateImageEndMarker(file: BlobLike, mimeType: string): 
 			if (!(riffSize >= 12 && size >= riffSize)) return false;
 			// Require a VP8, VP8L, or ANMF chunk (actual image frame data).
 			// A VP8X-only WebP (extended container header with canvas dims
-			// but no frame) has no decodable image data.
-			return await webpHasImageChunk(file);
+			// but no frame) has no decodable image data. Scan only within
+			// the declared RIFF boundary — trailing bytes beyond it are not
+			// valid WebP chunks.
+			return await webpHasImageChunk(file, riffSize);
 		}
 
 		// Unknown format — fail safe (reject) rather than allow potentially
@@ -474,4 +557,15 @@ export async function validateImageEndMarker(file: BlobLike, mimeType: string): 
 		console.error('Failed to validate image end marker:', error);
 		return false;
 	}
+}
+
+export async function validateImageEndMarker(file: BlobLike, mimeType: string): Promise<boolean> {
+	// Primary: bounded decode via the runtime's native decoder. A successful
+	// decode proves the image is complete and valid — stronger than structural
+	// marker checks, which only verify marker presence without validating
+	// payload boundaries, CRC correctness, or decodability.
+	const decoded = await boundedDecode(file);
+	if (decoded !== null) return decoded;
+	// Fallback: structural validation when no native decoder is available.
+	return validateImageStructural(file, mimeType);
 }

@@ -4,6 +4,7 @@ import {
 	detectImageType,
 	parseImageDimensions,
 	validateImageEndMarker,
+	validateImageStructural,
 	type BlobLike
 } from '../image';
 
@@ -730,9 +731,14 @@ describe('parseImageDimensions', () => {
 	});
 });
 
-// ─── validateImageEndMarker ─────────────────────────────────────────
+// ─── validateImageStructural (fallback path) ───────────────────────
+// These tests exercise the structural marker checks directly. In production,
+// validateImageEndMarker prefers a bounded decode via the runtime's native
+// decoder; the structural checks are the fallback when no decoder is
+// available. The synthetic bytes below pass structural checks but are NOT
+// actually decodable — they test the marker-scanning logic, not decodability.
 
-describe('validateImageEndMarker', () => {
+describe('validateImageStructural', () => {
 	it('validates a PNG with IDAT and IEND chunks', async () => {
 		const header = pngHeaderBytes(600, 400);
 		// Append a minimal IDAT chunk: 4-byte length (1) + "IDAT" + 1 byte data + 4-byte CRC = 13 bytes
@@ -747,14 +753,14 @@ describe('validateImageEndMarker', () => {
 		full.set(header, 0);
 		full.set(idat, header.length);
 		full.set(iend, header.length + idat.length);
-		expect(await validateImageEndMarker(makeBlob(full), 'image/png')).toBe(true);
+		expect(await validateImageStructural(makeBlob(full), 'image/png')).toBe(true);
 	});
 
 	it('rejects a PNG without IEND (truncated after header)', async () => {
 		// Just the header, no IEND — this is the vulnerability: a truncated
 		// PNG that passes parseImageDimensions but has no image data.
 		const header = pngHeaderBytes(600, 400);
-		expect(await validateImageEndMarker(makeBlob(header), 'image/png')).toBe(false);
+		expect(await validateImageStructural(makeBlob(header), 'image/png')).toBe(false);
 	});
 
 	it('rejects a header-only PNG with IEND but no IDAT (no image data)', async () => {
@@ -768,7 +774,7 @@ describe('validateImageEndMarker', () => {
 		const full = new Uint8Array(header.length + iend.length);
 		full.set(header, 0);
 		full.set(iend, header.length);
-		expect(await validateImageEndMarker(makeBlob(full), 'image/png')).toBe(false);
+		expect(await validateImageStructural(makeBlob(full), 'image/png')).toBe(false);
 	});
 
 	it('rejects a PNG with wrong end bytes (not IEND)', async () => {
@@ -780,7 +786,30 @@ describe('validateImageEndMarker', () => {
 		const full = new Uint8Array(header.length + tail.length);
 		full.set(header, 0);
 		full.set(tail, header.length);
-		expect(await validateImageEndMarker(makeBlob(full), 'image/png')).toBe(false);
+		expect(await validateImageStructural(makeBlob(full), 'image/png')).toBe(false);
+	});
+
+	it('rejects a PNG with more than 10,000 chunks (iteration limit)', async () => {
+		// A crafted PNG with many zero-length chunks could exhaust CPU
+		// before reaching IDAT. The iteration cap (10,000) prevents this.
+		// Each zero-length chunk is 12 bytes (4 length + 4 type + 0 data + 4 CRC).
+		// 10,001 chunks = 120,012 bytes — well within the 2 MiB byte cap.
+		const header = pngHeaderBytes(600, 400);
+		const chunkCount = 10_001;
+		const chunkSize = 12;
+		const chunks = new Uint8Array(chunkCount * chunkSize);
+		for (let i = 0; i < chunkCount; i++) {
+			// Zero-length "tEXt" chunk (type doesn't matter as long as it's
+			// not IDAT or IEND)
+			chunks[i * chunkSize + 4] = 0x74; // t
+			chunks[i * chunkSize + 5] = 0x45; // E
+			chunks[i * chunkSize + 6] = 0x58; // X
+			chunks[i * chunkSize + 7] = 0x74; // t
+		}
+		const full = new Uint8Array(header.length + chunks.length);
+		full.set(header, 0);
+		full.set(chunks, header.length);
+		expect(await validateImageStructural(makeBlob(full), 'image/png')).toBe(false);
 	});
 
 	it('validates a JPEG with SOS and EOI markers', async () => {
@@ -794,7 +823,7 @@ describe('validateImageEndMarker', () => {
 		full.set(header, 0);
 		full.set(sos, header.length);
 		full.set(eoi, header.length + sos.length);
-		expect(await validateImageEndMarker(makeBlob(full), 'image/jpeg')).toBe(true);
+		expect(await validateImageStructural(makeBlob(full), 'image/jpeg')).toBe(true);
 	});
 
 	it('validates a JPEG with trailing fill bytes after EOI', async () => {
@@ -808,13 +837,13 @@ describe('validateImageEndMarker', () => {
 		full.set(header, 0);
 		full.set(sos, header.length);
 		full.set(eoi, header.length + sos.length);
-		expect(await validateImageEndMarker(makeBlob(full), 'image/jpeg')).toBe(true);
+		expect(await validateImageStructural(makeBlob(full), 'image/jpeg')).toBe(true);
 	});
 
 	it('rejects a JPEG without EOI (truncated)', async () => {
 		const header = jpegHeaderBytes(600, 400);
 		// No EOI — just the header
-		expect(await validateImageEndMarker(makeBlob(header), 'image/jpeg')).toBe(false);
+		expect(await validateImageStructural(makeBlob(header), 'image/jpeg')).toBe(false);
 	});
 
 	it('rejects a header-only JPEG with EOI but no SOS (no scan data)', async () => {
@@ -826,7 +855,7 @@ describe('validateImageEndMarker', () => {
 		const full = new Uint8Array(header.length + eoi.length);
 		full.set(header, 0);
 		full.set(eoi, header.length);
-		expect(await validateImageEndMarker(makeBlob(full), 'image/jpeg')).toBe(false);
+		expect(await validateImageStructural(makeBlob(full), 'image/jpeg')).toBe(false);
 	});
 
 	it('validates a WebP where file size >= declared RIFF size', async () => {
@@ -835,7 +864,7 @@ describe('validateImageEndMarker', () => {
 		// the actual payload size so the check passes.
 		const dv = new DataView(header.buffer);
 		dv.setUint32(4, header.length - 8, true);
-		expect(await validateImageEndMarker(makeBlob(header), 'image/webp')).toBe(true);
+		expect(await validateImageStructural(makeBlob(header), 'image/webp')).toBe(true);
 	});
 
 	it('rejects a truncated WebP (file smaller than declared RIFF size)', async () => {
@@ -843,7 +872,7 @@ describe('validateImageEndMarker', () => {
 		// Declare a larger RIFF size than the actual file
 		const dv = new DataView(header.buffer);
 		dv.setUint32(4, 1000, true); // claims 1008 bytes, file is only 34
-		expect(await validateImageEndMarker(makeBlob(header), 'image/webp')).toBe(false);
+		expect(await validateImageStructural(makeBlob(header), 'image/webp')).toBe(false);
 	});
 
 	it('rejects a WebP whose RIFF length has the high bit set (unsigned overflow)', async () => {
@@ -856,7 +885,7 @@ describe('validateImageEndMarker', () => {
 		const header = webpVp8Bytes(600, 400);
 		const dv = new DataView(header.buffer);
 		dv.setUint32(4, 0xffffffff, true); // declares ~4 GiB, file is 34 bytes
-		expect(await validateImageEndMarker(makeBlob(header), 'image/webp')).toBe(false);
+		expect(await validateImageStructural(makeBlob(header), 'image/webp')).toBe(false);
 	});
 
 	it('rejects a WebP with a zero declared RIFF length', async () => {
@@ -867,7 +896,7 @@ describe('validateImageEndMarker', () => {
 		const header = webpVp8Bytes(600, 400);
 		const dv = new DataView(header.buffer);
 		dv.setUint32(4, 0, true); // declares 8 bytes total, file is 34
-		expect(await validateImageEndMarker(makeBlob(header), 'image/webp')).toBe(false);
+		expect(await validateImageStructural(makeBlob(header), 'image/webp')).toBe(false);
 	});
 
 	it('rejects a VP8X-only WebP with no image frame chunk', async () => {
@@ -878,7 +907,168 @@ describe('validateImageEndMarker', () => {
 		// Set RIFF size to actual file size so the size check passes.
 		const dv = new DataView(header.buffer);
 		dv.setUint32(4, header.length - 8, true);
-		expect(await validateImageEndMarker(makeBlob(header), 'image/webp')).toBe(false);
+		expect(await validateImageStructural(makeBlob(header), 'image/webp')).toBe(false);
+	});
+
+	it('rejects a WebP with more than 10,000 chunks (iteration limit)', async () => {
+		// A crafted WebP with many tiny chunks could exhaust CPU before
+		// reaching VP8/VP8L/ANMF. The iteration cap (10,000) prevents this.
+		// Each zero-length chunk is 8 bytes (4 fourCC + 4 size).
+		// 10,001 chunks = 80,008 bytes + 12 header = 80,020 — within 2 MiB.
+		const chunkCount = 10_001;
+		const chunkSize = 8;
+		const buf = new Uint8Array(12 + chunkCount * chunkSize);
+		// RIFF header
+		buf.set([0x52, 0x49, 0x46, 0x46], 0); // "RIFF"
+		const dv = new DataView(buf.buffer);
+		dv.setUint32(4, buf.length - 8, true); // RIFF size
+		buf.set([0x57, 0x45, 0x42, 0x50], 8); // "WEBP"
+		for (let i = 0; i < chunkCount; i++) {
+			const off = 12 + i * chunkSize;
+			// "XXXX" fourCC (not VP8/VP8L/ANMF)
+			buf.set([0x58, 0x58, 0x58, 0x58], off);
+			// zero chunk size
+		}
+		expect(await validateImageStructural(makeBlob(buf), 'image/webp')).toBe(false);
+	});
+
+	it('rejects unknown image format', async () => {
+		const blob = makeBlob(new Uint8Array([0x00, 0x01, 0x02, 0x03]));
+		expect(await validateImageStructural(blob, 'image/gif')).toBe(false);
+	});
+
+	it('rejects PNG smaller than 12 bytes', async () => {
+		const blob = makeBlob(new Uint8Array(8));
+		expect(await validateImageStructural(blob, 'image/png')).toBe(false);
+	});
+
+	it('rejects JPEG smaller than 4 bytes', async () => {
+		const blob = makeBlob(new Uint8Array(2));
+		expect(await validateImageStructural(blob, 'image/jpeg')).toBe(false);
+	});
+});
+
+// ─── validateImageEndMarker (bounded decode primary path) ──────────
+// validateImageEndMarker first attempts a bounded decode via the runtime's
+// native decoder (Bun.Image in Bun, createImageBitmap in Workers). A
+// successful decode proves the image is complete and valid — stronger than
+// structural marker checks. These tests use real decodable images generated
+// from a data URL, plus corrupt variants, to verify the decode path.
+
+describe('validateImageEndMarker', () => {
+	// Generate real decodable images from a 1x1 red pixel PNG data URL.
+	// Bun.Image can encode to PNG, JPEG, and WebP from this source.
+	const RED_PIXEL_DATA_URL =
+		'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==';
+
+	let realPng: Uint8Array;
+	let realJpeg: Uint8Array;
+	let realWebp: Uint8Array;
+
+	// Generate all three formats once. Bun.Image.png()/jpeg()/webp() return
+	// a new Image; .bytes() is the terminal call that produces encoded bytes.
+	// Using allTests: true would run this for every test; instead we generate
+	// lazily on first use.
+	// Cast through unknown: bun-types' `Bun` namespace doesn't expose `Image`
+	// under this project's lib config, but it exists at runtime.
+	type BunImageLike = {
+		png(): { bytes(): Promise<Uint8Array> };
+		jpeg(): { bytes(): Promise<Uint8Array> };
+		webp(): { bytes(): Promise<Uint8Array> };
+	};
+	async function ensureImages() {
+		if (realPng) return;
+		const BunGlobal = (
+			globalThis as unknown as { Bun?: { Image: new (input: string) => BunImageLike } }
+		).Bun;
+		if (!BunGlobal?.Image) {
+			throw new Error('Bun.Image is required for validateImageEndMarker tests');
+		}
+		const source = new BunGlobal.Image(RED_PIXEL_DATA_URL);
+		realPng = await source.png().bytes();
+		realJpeg = await source.jpeg().bytes();
+		realWebp = await source.webp().bytes();
+	}
+
+	it('validates a real decodable PNG', async () => {
+		await ensureImages();
+		expect(await validateImageEndMarker(makeBlob(realPng), 'image/png')).toBe(true);
+	});
+
+	it('validates a real decodable JPEG', async () => {
+		await ensureImages();
+		expect(await validateImageEndMarker(makeBlob(realJpeg), 'image/jpeg')).toBe(true);
+	});
+
+	it('validates a real decodable WebP', async () => {
+		await ensureImages();
+		expect(await validateImageEndMarker(makeBlob(realWebp), 'image/webp')).toBe(true);
+	});
+
+	it('rejects a truncated PNG (IDAT data cut off)', async () => {
+		await ensureImages();
+		const truncated = realPng.slice(0, realPng.length - 20);
+		expect(await validateImageEndMarker(makeBlob(truncated), 'image/png')).toBe(false);
+	});
+
+	it('rejects a truncated JPEG (scan data cut off)', async () => {
+		await ensureImages();
+		const truncated = realJpeg.slice(0, realJpeg.length - 20);
+		expect(await validateImageEndMarker(makeBlob(truncated), 'image/jpeg')).toBe(false);
+	});
+
+	it('rejects a truncated WebP (frame data cut off)', async () => {
+		await ensureImages();
+		const truncated = realWebp.slice(0, realWebp.length - 20);
+		expect(await validateImageEndMarker(makeBlob(truncated), 'image/webp')).toBe(false);
+	});
+
+	it('rejects a PNG with valid header + IEND but no IDAT (structural pass, decode fail)', async () => {
+		// This is the key case: the structural fallback would accept this
+		// (IEND present, but no IDAT → structural rejects). The bounded
+		// decode also rejects it (not decodable). Both paths agree: reject.
+		const header = pngHeaderBytes(600, 400);
+		const iend = new Uint8Array([
+			0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82
+		]);
+		const full = new Uint8Array(header.length + iend.length);
+		full.set(header, 0);
+		full.set(iend, header.length);
+		expect(await validateImageEndMarker(makeBlob(full), 'image/png')).toBe(false);
+	});
+
+	it('rejects a PNG with valid header + IDAT marker + IEND but corrupt IDAT data', async () => {
+		// Structural fallback would accept this (IDAT present, IEND present).
+		// Bounded decode rejects it (IDAT data is not valid compressed data).
+		// This is the case the bounded decode catches that structural cannot.
+		const header = pngHeaderBytes(600, 400);
+		const idat = new Uint8Array([
+			0x00, 0x00, 0x00, 0x01, 0x49, 0x44, 0x41, 0x54, 0x00, 0x00, 0x00, 0x00, 0x00
+		]);
+		const iend = new Uint8Array([
+			0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82
+		]);
+		const full = new Uint8Array(header.length + idat.length + iend.length);
+		full.set(header, 0);
+		full.set(idat, header.length);
+		full.set(iend, header.length + idat.length);
+		expect(await validateImageEndMarker(makeBlob(full), 'image/png')).toBe(false);
+	});
+
+	it('rejects a JPEG with valid header + SOS + EOI but corrupt scan data', async () => {
+		// Structural fallback would accept this (SOS present, EOI present).
+		// Bounded decode rejects it (scan data is not valid). This is the
+		// case the bounded decode catches that structural cannot.
+		const header = jpegHeaderBytes(600, 400);
+		const sos = new Uint8Array([
+			0xff, 0xda, 0x00, 0x0c, 0x03, 0x01, 0x00, 0x02, 0x11, 0x03, 0x11, 0x00, 0x3f, 0x00
+		]);
+		const eoi = new Uint8Array([0xff, 0xd9]);
+		const full = new Uint8Array(header.length + sos.length + eoi.length);
+		full.set(header, 0);
+		full.set(sos, header.length);
+		full.set(eoi, header.length + sos.length);
+		expect(await validateImageEndMarker(makeBlob(full), 'image/jpeg')).toBe(false);
 	});
 
 	it('rejects unknown image format', async () => {

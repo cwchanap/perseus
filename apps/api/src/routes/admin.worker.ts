@@ -121,7 +121,15 @@ function internalErrorResponse(message: string): Response {
 /**
  * Rereserve an idempotency key with our minted UUID. If we win, return
  * `{ kind: 'won', puzzleId }`. If someone else already won the reclaim:
- * - If their puzzle is live (not failed), return it as 200.
+ * - If their puzzle is ready, return it as 200 immediately.
+ * - If their puzzle is processing and their reservation is committed, probe
+ *   workflow liveness and the authoritative DO status before acknowledging
+ *   — mirrors the main existing-reservation path. A committed reservation
+ *   with processing metadata may belong to a workflow that died before
+ *   writing a terminal status; returning 200 without verifying liveness
+ *   would let a dead puzzle be acknowledged as success and later reaped.
+ * - If their puzzle is processing and their reservation is pending, return
+ *   409 (the winner has not committed yet — may still fail).
  * - If their committed reservation has no metadata (deleted puzzle + failed
  *   release), probe R2 and if the original image is gone, release their
  *   stale reservation and rereserve one more time (allowNestedReclaim).
@@ -131,6 +139,7 @@ async function reclaimReservationOrFail(
 	bucket: R2Bucket,
 	doNs: DurableObjectNamespace,
 	kv: KVNamespace,
+	workflow: WorkflowBinding,
 	idempotencyKey: string,
 	newPuzzleId: string,
 	context: string,
@@ -173,6 +182,62 @@ async function reclaimReservationOrFail(
 				)
 			};
 		}
+		// Committed winner. A 'ready' puzzle means the workflow completed
+		// — safe to acknowledge immediately. A 'processing' puzzle may
+		// belong to a workflow that died before writing a terminal status;
+		// probe liveness and the authoritative DO status before returning
+		// 200, mirroring the main existing-reservation path. Without this
+		// check, a dead committed winner would be returned as 200 and
+		// later reaped, contradicting the main path which explicitly
+		// recognises that a committed puzzle can remain processing after
+		// its workflow has died.
+		if (raceExisting.status === 'processing') {
+			const liveness = await probeWorkflowLiveness(workflow, reclaimed.puzzleId);
+			if (liveness === 'dead') {
+				// Workflow is dead. The DO is the source of truth: if it
+				// says 'ready', KV is just lagging and the puzzle is valid
+				// — return 200. Otherwise (processing/failed/null) the
+				// puzzle is stuck or being reaped; signal 409 so the
+				// client does not treat a disappearing puzzle as success.
+				let authoritative: string | null = null;
+				try {
+					authoritative = await getAuthoritativeStatus(doNs, reclaimed.puzzleId);
+				} catch (doErr) {
+					console.error(
+						`DO status check failed for committed processing reclaim winner ${reclaimed.puzzleId} ${context}:`,
+						doErr
+					);
+					return {
+						kind: 'return',
+						response: conflictResponse(
+							'Idempotency key reclaimed by a request whose workflow is dead; status could not be verified, retry'
+						)
+					};
+				}
+				if (authoritative === 'ready') {
+					return {
+						kind: 'return',
+						response: Response.json(stripIdempotencyKey(raceExisting), { status: 200 })
+					};
+				}
+				return {
+					kind: 'return',
+					response: conflictResponse(
+						'Idempotency key reclaimed by a request whose workflow is dead; retry'
+					)
+				};
+			}
+			if (liveness === 'unknown') {
+				return {
+					kind: 'return',
+					response: conflictResponse(
+						'Idempotency key reclaimed by a processing puzzle; workflow liveness could not be verified, retry'
+					)
+				};
+			}
+			// liveness === 'alive': workflow is running. Fall through to
+			// return the live puzzle as 200.
+		}
 		// stripIdempotencyKey: idempotencyKey is a server-side dedup secret
 		// and must never leak in a response body (mirrors the 201 path below).
 		return {
@@ -190,6 +255,7 @@ async function reclaimReservationOrFail(
 			bucket,
 			doNs,
 			kv,
+			workflow,
 			idempotencyKey,
 			reclaimed.puzzleId,
 			newPuzzleId,
@@ -213,6 +279,7 @@ async function probeReleaseAndRereclaimOrFail(
 	bucket: R2Bucket,
 	doNs: DurableObjectNamespace,
 	kv: KVNamespace,
+	workflow: WorkflowBinding,
 	idempotencyKey: string,
 	stalePuzzleId: string,
 	newPuzzleId: string,
@@ -249,7 +316,16 @@ async function probeReleaseAndRereclaimOrFail(
 			response: internalErrorResponse('Failed to release stale reservation')
 		};
 	}
-	return reclaimReservationOrFail(bucket, doNs, kv, idempotencyKey, newPuzzleId, context, false);
+	return reclaimReservationOrFail(
+		bucket,
+		doNs,
+		kv,
+		workflow,
+		idempotencyKey,
+		newPuzzleId,
+		context,
+		false
+	);
 }
 
 /**
@@ -1119,6 +1195,7 @@ admin.post('/puzzles', requireAuth, async (c) => {
 								c.env.PUZZLES_BUCKET,
 								c.env.PUZZLE_METADATA_DO,
 								c.env.PUZZLE_METADATA,
+								c.env.PUZZLE_WORKFLOW,
 								idempotencyKey,
 								id,
 								'on reclaim'
@@ -1195,6 +1272,7 @@ admin.post('/puzzles', requireAuth, async (c) => {
 										c.env.PUZZLES_BUCKET,
 										c.env.PUZZLE_METADATA_DO,
 										c.env.PUZZLE_METADATA,
+										c.env.PUZZLE_WORKFLOW,
 										idempotencyKey,
 										id,
 										'on dead-pending reclaim'
@@ -1352,6 +1430,7 @@ admin.post('/puzzles', requireAuth, async (c) => {
 								c.env.PUZZLES_BUCKET,
 								c.env.PUZZLE_METADATA_DO,
 								c.env.PUZZLE_METADATA,
+								c.env.PUZZLE_WORKFLOW,
 								idempotencyKey,
 								reserved.puzzleId,
 								id,

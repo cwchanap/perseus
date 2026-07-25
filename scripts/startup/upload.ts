@@ -233,16 +233,22 @@ export async function pollForExistingKey(
  * network errors, and HTTP 409 idempotency conflicts). Other 4xx responses are
  * not retried — they are deterministic validation/authorization failures.
  *
- * Duplicate prevention has two layers:
- *   1. Idempotency-Key header (primary): the server reserves the key in
- *      PuzzleMetadataDO (strongly consistent) before minting a UUID. A retried
- *      POST that reaches the server returns the original puzzle (200) instead
- *      of creating a duplicate — no KV propagation race.
- *   2. KV-lag polling (secondary): before each retry, GET /api/admin/puzzles
- *      checks if the puzzle already exists. If found, a synthetic OK response
- *      is returned without re-POSTing. This catches the case where the first
- *      POST succeeded but the response was lost, without needing a second
- *      round-trip to the server.
+ * Duplicate prevention relies on the Idempotency-Key header (server-side,
+ * strongly consistent via PuzzleMetadataDO). A retried POST that reaches the
+ * server returns the original puzzle (200) instead of creating a duplicate.
+ *
+ * After a failed POST, the CLI does NOT poll the puzzle list to infer
+ * idempotency success. The puzzle list is eventually consistent KV — a
+ * 'processing' record found there does not prove the reservation was
+ * committed (the route starts the workflow before committing, so a fast
+ * workflow can produce 'processing' or even 'ready' metadata while commit
+ * attempts are failing). Inferring success from the list would let the CLI
+ * stop retrying while the reservation remains pending and reclaimable,
+ * potentially minting a duplicate on a future seed run. Instead, the CLI
+ * re-POSTs with the same Idempotency-Key until the server returns 200/201
+ * (or 4xx for a deterministic failure). If all attempts are exhausted, the
+ * entry is reported as failed; re-running the seed command is safe because
+ * the Idempotency-Key deduplicates on the server.
  */
 export async function uploadWithRetry(
 	server: string,
@@ -255,21 +261,11 @@ export async function uploadWithRetry(
 	let lastError: Error | undefined;
 	const maxAttempts = retryConfig.maxAttempts;
 	// Send the Idempotency-Key header so the server can dedup a retried POST
-	// after a lost response via PuzzleMetadataDO (strongly consistent) instead
-	// of relying solely on the eventually-consistent KV poll below.
+	// after a lost response via PuzzleMetadataDO (strongly consistent). This
+	// is the sole dedup mechanism — the CLI does not infer success from the
+	// eventually-consistent puzzle list (see rationale above).
 	const idempotencyHeader = idempotencyKeyHeader(dedupKey);
 	for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-		// When true, the post-failure existence poll only accepts 'ready'
-		// puzzles as synthetic success. Set after an HTTP 409: the server
-		// explicitly told us another request with this key is in flight, so
-		// this POST did not succeed. A 'processing' record found by the poll
-		// would be the in-flight winner's uncommitted metadata — treating it
-		// as success would let the CLI stop while the reservation is still
-		// pending and could fail. Only 'ready' (workflow completed →
-		// reservation committed) is a safe final result. For 5xx/network
-		// errors, 'processing' is still accepted: the POST may have succeeded
-		// but the response was lost, so the in-flight metadata is ours.
-		let requireReady = false;
 		try {
 			const response = await fetch(`${server}/api/admin/puzzles`, {
 				method: 'POST',
@@ -287,39 +283,27 @@ export async function uploadWithRetry(
 				// Idempotency conflict: another request with the same
 				// Idempotency-Key is already in flight. The winner will commit
 				// and a re-POST returns its puzzle (200) once metadata lands, so
-				// treat 409 as transient and retry (polling first, as below)
-				// instead of reporting a hard FAIL. No duplicate is created —
+				// treat 409 as transient and re-POST. No duplicate is created —
 				// the DO reservation blocks the loser's POST until the winner
 				// finishes, at which point the reserve returns the existing
 				// puzzle (200) rather than a 409.
 				lastError = new Error('HTTP 409 idempotency conflict — winner in flight');
-				requireReady = true;
 			} else if (response.status < 500) {
 				// Other 4xx are deterministic validation/authorization failures.
 				return response;
 			} else {
-				// 5xx — transient, retry
+				// 5xx — transient, retry. The server's 500 path for "commit
+				// failed; retry" explicitly instructs the client to re-POST.
+				// Do not poll the puzzle list: a 'processing' record does not
+				// prove the reservation was committed (the workflow starts
+				// before the commit, so metadata can exist while the
+				// reservation is still pending).
 				lastError = new Error(`HTTP ${response.status} ${response.statusText}`);
 			}
 		} catch (error) {
 			lastError = error instanceof Error ? error : new Error(String(error));
 		}
 		if (attempt < maxAttempts) {
-			// After a transient failure: poll for the puzzle before re-POSTing.
-			// The Idempotency-Key header above is the primary dedup mechanism
-			// (server-side, strongly consistent via DO). This KV poll is a
-			// secondary check — it catches the case where the first POST
-			// succeeded but the response was lost, without needing the server
-			// to support idempotency. With the header in place, a re-POST that
-			// reaches the server will return the original puzzle (200) instead
-			// of creating a duplicate, even if this poll misses due to KV lag.
-			if (await pollForExistingKey(server, baseHeaders, cookie, dedupKey, requireReady)) {
-				console.log(`  verified: ${entryName} already on server — skipping retry`);
-				return new Response(
-					JSON.stringify({ id: 'verified', status: 'response lost — verified via re-fetch' }),
-					{ status: 200, headers: { 'Content-Type': 'application/json' } }
-				);
-			}
 			console.error(`  retry ${attempt}/${maxAttempts} (${lastError.message})`);
 		}
 	}
@@ -599,26 +583,11 @@ async function processEntry(
 		};
 	} catch (error) {
 		const detail = error instanceof Error ? error.message : String(error);
-		// All retries exhausted. The final attempt may have succeeded
-		// server-side but lost its response. Poll with bounded backoff before
-		// declaring failure — a single GET can miss KV lag and report FAIL
-		// for a puzzle that was actually created.
-		let verified = false;
-		try {
-			verified = await pollForExistingKey(options.server, baseHeaders, cookie, dedupKey);
-		} catch {
-			// re-fetch itself failed; cannot verify — record original failure
-		}
-		if (verified) {
-			existingKeys.add(dedupKey);
-			console.log(`OK   ${entry.id} ${entry.name} -> verified (response lost on final attempt)`);
-			return {
-				id: entry.id,
-				name: entry.name,
-				ok: true,
-				detail: 'verified — response lost on final attempt'
-			};
-		}
+		// All retries exhausted. Do not poll the puzzle list to infer
+		// success — a 'processing' or even 'ready' record does not prove
+		// the reservation was committed (the route starts the workflow
+		// before the commit). Report failure; re-running the seed command
+		// is safe because the Idempotency-Key deduplicates on the server.
 		console.error(`FAIL ${entry.id} ${entry.name}: ${detail}`);
 		return { id: entry.id, name: entry.name, ok: false, detail };
 	}

@@ -216,10 +216,13 @@ describe('readError', () => {
 });
 
 // ─── uploadWithRetry ────────────────────────────────────────────────
-// Server-side Idempotency-Key + 409-in-flight handling prevent most
-// duplicates, but a lost response can still leave success unverifiable.
-// These tests verify that a verification GET failure aborts the retry
-// loop instead of blindly re-POSTing.
+// Server-side Idempotency-Key is the sole dedup mechanism. After a failed
+// POST (5xx, network error, 409), the CLI re-POSTs with the same
+// Idempotency-Key instead of polling the eventually-consistent puzzle list.
+// A 'processing' record in the list does not prove the reservation was
+// committed (the route starts the workflow before the commit), so polling
+// could produce a false synthetic 200 and let the CLI stop while the
+// reservation remains pending and reclaimable.
 
 const originalFetch = globalThis.fetch;
 const originalSleep = retryConfig.sleepFn;
@@ -233,16 +236,12 @@ describe('uploadWithRetry', () => {
 		retryConfig.sleepFn = originalSleep;
 	});
 
-	it('aborts retries when verification GET fails (does not re-POST)', async () => {
+	it('re-POSTs on 5xx failure until maxAttempts, then throws', async () => {
 		const callLog: string[] = [];
 		globalThis.fetch = mock(async (url: string | URL | Request, init?: RequestInit) => {
 			const method = init?.method ?? 'GET';
 			callLog.push(`${method} ${String(url)}`);
-			if (method === 'POST') {
-				return new Response('Internal Server Error', { status: 500 });
-			}
-			// GET verification — simulate server unavailable
-			return new Response('Service Unavailable', { status: 503 });
+			return new Response('Internal Server Error', { status: 500 });
 		}) as unknown as typeof fetch;
 
 		await expect(
@@ -254,106 +253,47 @@ describe('uploadWithRetry', () => {
 				'test-puzzle',
 				'test-puzzle\u000048\u00001:1'
 			)
-		).rejects.toThrow('Could not fetch existing puzzles');
+		).rejects.toThrow('HTTP 500');
 
-		// Only one POST should have been sent — no retry after GET failure
+		// All 3 attempts should have been POSTs (no GET verification poll)
 		const posts = callLog.filter((c) => c.startsWith('POST'));
-		expect(posts.length).toBe(1);
+		const gets = callLog.filter((c) => c.startsWith('GET'));
+		expect(posts.length).toBe(3);
+		expect(gets.length).toBe(0);
 	});
 
-	it('returns synthetic OK when verification GET finds the dedup key', async () => {
+	it('re-POSTs on network error until maxAttempts, then throws', async () => {
 		const callLog: string[] = [];
 		globalThis.fetch = mock(async (url: string | URL | Request, init?: RequestInit) => {
 			const method = init?.method ?? 'GET';
 			callLog.push(`${method} ${String(url)}`);
-			if (method === 'POST') {
-				return new Response('Internal Server Error', { status: 500 });
-			}
-			// GET verification — puzzle already exists server-side
-			return new Response(
-				JSON.stringify({
-					puzzles: [{ name: 'test-puzzle', pieceCount: 48, aspectRatio: '1:1', status: 'ready' }]
-				}),
-				{ status: 200, headers: { 'Content-Type': 'application/json' } }
-			);
+			throw new Error('Network error: connection refused');
 		}) as unknown as typeof fetch;
 
-		const res = await uploadWithRetry(
-			'http://localhost:3000',
-			{},
-			'session=abc',
-			new FormData(),
-			'test-puzzle',
-			'test-puzzle\u000048\u00001:1'
-		);
-		expect(res.ok).toBe(true);
-		// Only one POST — the retry was skipped because verification found it
+		await expect(
+			uploadWithRetry(
+				'http://localhost:3000',
+				{},
+				'session=abc',
+				new FormData(),
+				'test-puzzle',
+				'test-puzzle\u000048\u00001:1'
+			)
+		).rejects.toThrow('Network error');
+
 		const posts = callLog.filter((c) => c.startsWith('POST'));
-		expect(posts.length).toBe(1);
+		expect(posts.length).toBe(3);
 	});
 
-	it('treats HTTP 409 idempotency conflict as retriable and verifies (no hard FAIL)', async () => {
+	it('re-POSTs on HTTP 409 idempotency conflict until maxAttempts, then throws', async () => {
 		const callLog: string[] = [];
 		globalThis.fetch = mock(async (url: string | URL | Request, init?: RequestInit) => {
 			const method = init?.method ?? 'GET';
 			callLog.push(`${method} ${String(url)}`);
-			if (method === 'POST') {
-				// Server reports another request with the same Idempotency-Key is in flight.
-				return new Response(JSON.stringify({ error: 'conflict' }), {
-					status: 409,
-					headers: { 'Content-Type': 'application/json' }
-				});
-			}
-			// Verification GET — the winner has since committed the puzzle.
-			return new Response(
-				JSON.stringify({
-					puzzles: [{ name: 'test-puzzle', pieceCount: 48, aspectRatio: '1:1', status: 'ready' }]
-				}),
-				{ status: 200, headers: { 'Content-Type': 'application/json' } }
-			);
-		}) as unknown as typeof fetch;
-
-		const res = await uploadWithRetry(
-			'http://localhost:3000',
-			{},
-			'session=abc',
-			new FormData(),
-			'test-puzzle',
-			'test-puzzle\u000048\u00001:1'
-		);
-		// A 409 must NOT be a terminal failure: the retry loop polls and, finding
-		// the winner's puzzle, returns a synthetic OK instead of surfacing the 409.
-		expect(res.ok).toBe(true);
-		const posts = callLog.filter((c) => c.startsWith('POST'));
-		expect(posts.length).toBe(1);
-	});
-
-	it('does not synthesize success from a processing puzzle after HTTP 409 (pending reservation)', async () => {
-		// After a 409, the winner's reservation may still be pending
-		// (uncommitted). A 'processing' KV record is not sufficient
-		// evidence of a committed, final result — the winner could still
-		// fail. The poll must reject 'processing' and re-POST so the
-		// server can reconcile. Only 'ready' is accepted as synthetic
-		// success after a 409.
-		const callLog: string[] = [];
-		globalThis.fetch = mock(async (url: string | URL | Request, init?: RequestInit) => {
-			const method = init?.method ?? 'GET';
-			callLog.push(`${method} ${String(url)}`);
-			if (method === 'POST') {
-				return new Response(JSON.stringify({ error: 'conflict' }), {
-					status: 409,
-					headers: { 'Content-Type': 'application/json' }
-				});
-			}
-			// Verification GET — winner is still processing (not ready).
-			return new Response(
-				JSON.stringify({
-					puzzles: [
-						{ name: 'test-puzzle', pieceCount: 48, aspectRatio: '1:1', status: 'processing' }
-					]
-				}),
-				{ status: 200, headers: { 'Content-Type': 'application/json' } }
-			);
+			return new Response(JSON.stringify({ error: 'conflict' }), {
+				status: 409,
+				headers: { 'Content-Type': 'application/json' }
+			});
 		}) as unknown as typeof fetch;
 
 		await expect(
@@ -367,9 +307,119 @@ describe('uploadWithRetry', () => {
 			)
 		).rejects.toThrow('HTTP 409');
 
-		// All 3 attempts should have re-POSTed (poll found processing, not ready).
 		const posts = callLog.filter((c) => c.startsWith('POST'));
 		expect(posts.length).toBe(3);
+	});
+
+	it('returns immediately on 4xx (non-409) without retrying', async () => {
+		const callLog: string[] = [];
+		globalThis.fetch = mock(async (url: string | URL | Request, init?: RequestInit) => {
+			const method = init?.method ?? 'GET';
+			callLog.push(`${method} ${String(url)}`);
+			return new Response(JSON.stringify({ error: 'bad_request', message: 'Invalid' }), {
+				status: 400,
+				headers: { 'Content-Type': 'application/json' }
+			});
+		}) as unknown as typeof fetch;
+
+		const res = await uploadWithRetry(
+			'http://localhost:3000',
+			{},
+			'session=abc',
+			new FormData(),
+			'test-puzzle',
+			'test-puzzle\u000048\u00001:1'
+		);
+		expect(res.status).toBe(400);
+		const posts = callLog.filter((c) => c.startsWith('POST'));
+		expect(posts.length).toBe(1);
+	});
+
+	it('returns immediately on 201 success', async () => {
+		const callLog: string[] = [];
+		globalThis.fetch = mock(async (url: string | URL | Request, init?: RequestInit) => {
+			const method = init?.method ?? 'GET';
+			callLog.push(`${method} ${String(url)}`);
+			return new Response(JSON.stringify({ id: 'abc', status: 'processing' }), {
+				status: 201,
+				headers: { 'Content-Type': 'application/json' }
+			});
+		}) as unknown as typeof fetch;
+
+		const res = await uploadWithRetry(
+			'http://localhost:3000',
+			{},
+			'session=abc',
+			new FormData(),
+			'test-puzzle',
+			'test-puzzle\u000048\u00001:1'
+		);
+		expect(res.status).toBe(201);
+		const posts = callLog.filter((c) => c.startsWith('POST'));
+		expect(posts.length).toBe(1);
+	});
+
+	it('succeeds on retry after initial 5xx (re-POST returns 201)', async () => {
+		const callLog: string[] = [];
+		let postCount = 0;
+		globalThis.fetch = mock(async (url: string | URL | Request, init?: RequestInit) => {
+			const method = init?.method ?? 'GET';
+			callLog.push(`${method} ${String(url)}`);
+			if (method === 'POST') {
+				postCount++;
+				if (postCount === 1) {
+					return new Response('Internal Server Error', { status: 500 });
+				}
+				return new Response(JSON.stringify({ id: 'abc', status: 'processing' }), {
+					status: 201,
+					headers: { 'Content-Type': 'application/json' }
+				});
+			}
+			return new Response(JSON.stringify({ puzzles: [] }), { status: 200 });
+		}) as unknown as typeof fetch;
+
+		const res = await uploadWithRetry(
+			'http://localhost:3000',
+			{},
+			'session=abc',
+			new FormData(),
+			'test-puzzle',
+			'test-puzzle\u000048\u00001:1'
+		);
+		expect(res.status).toBe(201);
+		const posts = callLog.filter((c) => c.startsWith('POST'));
+		expect(posts.length).toBe(2);
+	});
+
+	it('sends Idempotency-Key header on every POST (including retries)', async () => {
+		const capturedHeaders: Record<string, string>[] = [];
+		globalThis.fetch = mock(async (url: string | URL | Request, init?: RequestInit) => {
+			const method = init?.method ?? 'GET';
+			if (method === 'POST') {
+				capturedHeaders.push(init?.headers as Record<string, string>);
+				return new Response('Internal Server Error', { status: 500 });
+			}
+			return new Response(JSON.stringify({ puzzles: [] }), { status: 200 });
+		}) as unknown as typeof fetch;
+
+		await expect(
+			uploadWithRetry(
+				'http://localhost:3000',
+				{},
+				'session=abc',
+				new FormData(),
+				'test-puzzle',
+				'test-puzzle\u000048\u00001:1'
+			)
+		).rejects.toThrow('HTTP 500');
+
+		// All 3 POSTs should carry the same Idempotency-Key header
+		expect(capturedHeaders.length).toBe(3);
+		const key = capturedHeaders[0]['Idempotency-Key'];
+		expect(key).toMatch(/^[0-9a-f]{64}$/);
+		for (const h of capturedHeaders) {
+			expect(h['Idempotency-Key']).toBe(key);
+		}
 	});
 
 	it('sends Idempotency-Key header on POST', async () => {
