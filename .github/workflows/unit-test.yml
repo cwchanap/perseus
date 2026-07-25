@@ -29,7 +29,17 @@ jobs:
         run: bun install
 
       - name: Run script tests
-        run: bun run test:scripts
+        run: |
+          set -o pipefail
+          bun run test:scripts 2>&1 | tee script-test-output.log
+
+      - name: Upload script test failure output
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: script-test-output
+          path: script-test-output.log
+          retention-days: 1
 
       - name: Run shell script tests
         run: bun run test:shell
