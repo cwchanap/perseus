@@ -120,16 +120,19 @@ function createMockBucket() {
 	return { bucket, store };
 }
 
-// Minimal WebP: RIFF....WEBP + VP8X chunk with canvas dimensions.
+// Minimal WebP: RIFF....WEBP + VP8X chunk with canvas dimensions + a VP8
+// chunk (actual image frame data). The VP8 chunk is required by
+// validateImageEndMarker — a VP8X-only WebP has canvas dimensions but no
+// decodable image data and would fail in the decoder.
 const WEBP_BYTES = new Uint8Array([
 	0x52,
 	0x49,
 	0x46,
 	0x46, // "RIFF"
-	0x16,
+	0x28,
 	0x00,
 	0x00,
-	0x00, // file size = 30 - 8 = 22 (little-endian)
+	0x00, // file size = 48 - 8 = 40 (little-endian)
 	0x57,
 	0x45,
 	0x42,
@@ -151,7 +154,26 @@ const WEBP_BYTES = new Uint8Array([
 	0x00, // width-1 = 47 → width = 48
 	0x2f,
 	0x00,
-	0x00 // height-1 = 47 → height = 48
+	0x00, // height-1 = 47 → height = 48
+	// VP8 chunk (lossy frame): fourCC + chunkSize + dummy frame data
+	0x56,
+	0x50,
+	0x38,
+	0x20, // "VP8 "
+	0x0a,
+	0x00,
+	0x00,
+	0x00, // chunk size = 10
+	0x00,
+	0x00,
+	0x00,
+	0x00,
+	0x00,
+	0x00,
+	0x00,
+	0x00,
+	0x00,
+	0x00 // 10 bytes dummy frame data
 ]);
 
 describe('player avatar – WebP sniffing (Worker)', () => {

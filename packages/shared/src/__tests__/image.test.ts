@@ -239,7 +239,11 @@ describe('detectImageType', () => {
 // trickiest code paths (JPEG SOF marker scan, three WebP VP8 variants).
 
 function pngHeaderBytes(width: number, height: number): Uint8Array {
-	const b = new Uint8Array(32);
+	// 8 (signature) + 25 (IHDR chunk: 4 length + 4 type + 13 data + 4 CRC) = 33.
+	// The extra byte beyond the old 32 ensures the IHDR chunk is complete so
+	// chunk-boundary walkers (pngHasIDAT) find the next chunk at offset 33,
+	// not misaligned by a missing CRC byte.
+	const b = new Uint8Array(33);
 	// PNG signature
 	b.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
 	// IHDR chunk length = 13
@@ -729,15 +733,20 @@ describe('parseImageDimensions', () => {
 // ─── validateImageEndMarker ─────────────────────────────────────────
 
 describe('validateImageEndMarker', () => {
-	it('validates a PNG with IEND chunk at the end', async () => {
+	it('validates a PNG with IDAT and IEND chunks', async () => {
 		const header = pngHeaderBytes(600, 400);
+		// Append a minimal IDAT chunk: 4-byte length (1) + "IDAT" + 1 byte data + 4-byte CRC = 13 bytes
+		const idat = new Uint8Array([
+			0x00, 0x00, 0x00, 0x01, 0x49, 0x44, 0x41, 0x54, 0x00, 0x00, 0x00, 0x00, 0x00
+		]);
 		// Append IEND chunk: 4-byte zero length + "IEND" + CRC AE 42 60 82
 		const iend = new Uint8Array([
 			0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82
 		]);
-		const full = new Uint8Array(header.length + iend.length);
+		const full = new Uint8Array(header.length + idat.length + iend.length);
 		full.set(header, 0);
-		full.set(iend, header.length);
+		full.set(idat, header.length);
+		full.set(iend, header.length + idat.length);
 		expect(await validateImageEndMarker(makeBlob(full), 'image/png')).toBe(true);
 	});
 
@@ -746,6 +755,20 @@ describe('validateImageEndMarker', () => {
 		// PNG that passes parseImageDimensions but has no image data.
 		const header = pngHeaderBytes(600, 400);
 		expect(await validateImageEndMarker(makeBlob(header), 'image/png')).toBe(false);
+	});
+
+	it('rejects a header-only PNG with IEND but no IDAT (no image data)', async () => {
+		// A PNG with IHDR + IEND but no IDAT chunk: valid structure but no
+		// image data. Without the IDAT check this would pass validation and
+		// fail later in the decoder, producing a 500 after R2 upload.
+		const header = pngHeaderBytes(600, 400);
+		const iend = new Uint8Array([
+			0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82
+		]);
+		const full = new Uint8Array(header.length + iend.length);
+		full.set(header, 0);
+		full.set(iend, header.length);
+		expect(await validateImageEndMarker(makeBlob(full), 'image/png')).toBe(false);
 	});
 
 	it('rejects a PNG with wrong end bytes (not IEND)', async () => {
@@ -760,26 +783,31 @@ describe('validateImageEndMarker', () => {
 		expect(await validateImageEndMarker(makeBlob(full), 'image/png')).toBe(false);
 	});
 
-	it('validates a JPEG with EOI marker at the end', async () => {
+	it('validates a JPEG with SOS and EOI markers', async () => {
 		const header = jpegHeaderBytes(600, 400);
-		// Append EOI marker (FF D9)
-		const full = new Uint8Array(header.length + 2);
+		// Append SOS marker (FF DA) with a minimal segment + EOI (FF D9)
+		const sos = new Uint8Array([
+			0xff, 0xda, 0x00, 0x0c, 0x03, 0x01, 0x00, 0x02, 0x11, 0x03, 0x11, 0x00, 0x3f, 0x00
+		]);
+		const eoi = new Uint8Array([0xff, 0xd9]);
+		const full = new Uint8Array(header.length + sos.length + eoi.length);
 		full.set(header, 0);
-		full[header.length] = 0xff;
-		full[header.length + 1] = 0xd9;
+		full.set(sos, header.length);
+		full.set(eoi, header.length + sos.length);
 		expect(await validateImageEndMarker(makeBlob(full), 'image/jpeg')).toBe(true);
 	});
 
 	it('validates a JPEG with trailing fill bytes after EOI', async () => {
 		const header = jpegHeaderBytes(600, 400);
+		const sos = new Uint8Array([
+			0xff, 0xda, 0x00, 0x0c, 0x03, 0x01, 0x00, 0x02, 0x11, 0x03, 0x11, 0x00, 0x3f, 0x00
+		]);
 		// Append EOI + some trailing padding (some encoders do this)
-		const full = new Uint8Array(header.length + 5);
+		const eoi = new Uint8Array([0xff, 0xd9, 0x00, 0x00, 0x00]);
+		const full = new Uint8Array(header.length + sos.length + eoi.length);
 		full.set(header, 0);
-		full[header.length] = 0xff;
-		full[header.length + 1] = 0xd9;
-		full[header.length + 2] = 0x00;
-		full[header.length + 3] = 0x00;
-		full[header.length + 4] = 0x00;
+		full.set(sos, header.length);
+		full.set(eoi, header.length + sos.length);
 		expect(await validateImageEndMarker(makeBlob(full), 'image/jpeg')).toBe(true);
 	});
 
@@ -787,6 +815,18 @@ describe('validateImageEndMarker', () => {
 		const header = jpegHeaderBytes(600, 400);
 		// No EOI — just the header
 		expect(await validateImageEndMarker(makeBlob(header), 'image/jpeg')).toBe(false);
+	});
+
+	it('rejects a header-only JPEG with EOI but no SOS (no scan data)', async () => {
+		// A JPEG with SOF + EOI but no SOS: valid headers but no compressed
+		// image data. Without the SOS check this would pass validation and
+		// fail later in the decoder.
+		const header = jpegHeaderBytes(600, 400);
+		const eoi = new Uint8Array([0xff, 0xd9]);
+		const full = new Uint8Array(header.length + eoi.length);
+		full.set(header, 0);
+		full.set(eoi, header.length);
+		expect(await validateImageEndMarker(makeBlob(full), 'image/jpeg')).toBe(false);
 	});
 
 	it('validates a WebP where file size >= declared RIFF size', async () => {
@@ -827,6 +867,17 @@ describe('validateImageEndMarker', () => {
 		const header = webpVp8Bytes(600, 400);
 		const dv = new DataView(header.buffer);
 		dv.setUint32(4, 0, true); // declares 8 bytes total, file is 34
+		expect(await validateImageEndMarker(makeBlob(header), 'image/webp')).toBe(false);
+	});
+
+	it('rejects a VP8X-only WebP with no image frame chunk', async () => {
+		// A VP8X (extended container) chunk carries only canvas dimensions
+		// and flags — no decodable image data. Without the image-chunk
+		// check this would pass validation and fail in the decoder.
+		const header = webpVp8XBytes(600, 400);
+		// Set RIFF size to actual file size so the size check passes.
+		const dv = new DataView(header.buffer);
+		dv.setUint32(4, header.length - 8, true);
 		expect(await validateImageEndMarker(makeBlob(header), 'image/webp')).toBe(false);
 	});
 

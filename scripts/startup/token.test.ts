@@ -12,12 +12,15 @@ import {
 	clearStaleAccessLock,
 	loadDotEnvMap
 } from './token';
-import { applyDotenvOverrides } from './types';
+import { applyDotenvOverrides, __resetAccessAudForTesting } from './types';
 
 // cloudflaredTokenPath/cloudflaredLockPath require ACCESS_AUD to be set (the
 // hardcoded broad-app default was removed because it no longer matches the
-// narrow CLI Access app). Set a test AUD for all tests in this file.
-beforeAll(() => applyDotenvOverrides({ CF_ACCESS_AUD: 'test-aud-12345' }));
+// narrow CLI Access app). Set a test AUD only in the describe blocks that
+// need it (cloudflaredTokenPath, clearStaleAccessLock). The resolveAccessToken
+// tests MUST NOT have ACCESS_AUD set — otherwise resolveCloudflaredToken
+// would spawn a real `cloudflared access token` subprocess on developer
+// machines with cloudflared installed, hanging for 15s or opening a browser.
 
 // Build a fake JWT that passes isJwtLike: 3+ dot-separated parts, > 40 chars,
 // no whitespace, no "Unable to find".
@@ -259,6 +262,13 @@ describe('resolveAccessToken', () => {
 		// or touching real credentials.
 		originalHome = process.env.HOME;
 		process.env.HOME = tmpDir;
+		// Ensure ACCESS_AUD is unset so resolveCloudflaredToken returns
+		// undefined early (line: `if (!ACCESS_AUD) return undefined`) instead
+		// of spawning a real `cloudflared access token` subprocess. A
+		// developer with CF_ACCESS_AUD in their shell environment would
+		// otherwise trigger the binary, an interactive browser flow, or a
+		// 15-second timeout during unit tests.
+		__resetAccessAudForTesting();
 	});
 
 	afterEach(() => {
@@ -397,6 +407,8 @@ describe('cacheToken', () => {
 // ─── cloudflaredTokenPath / cloudflaredLockPath ─────────────────────
 
 describe('cloudflaredTokenPath', () => {
+	beforeAll(() => applyDotenvOverrides({ CF_ACCESS_AUD: 'test-aud-12345' }));
+
 	it('returns path under .cloudflared with hostname-aud-token basename', () => {
 		const path = cloudflaredTokenPath('https://example.com');
 		expect(path).toBeDefined();
@@ -418,6 +430,8 @@ describe('cloudflaredTokenPath', () => {
 describe('clearStaleAccessLock', () => {
 	let tmpDir: string;
 	let originalHome: string | undefined;
+
+	beforeAll(() => applyDotenvOverrides({ CF_ACCESS_AUD: 'test-aud-12345' }));
 
 	beforeEach(() => {
 		tmpDir = mkdtempSync(join(tmpdir(), 'perseus-lock-'));

@@ -328,6 +328,50 @@ describe('uploadWithRetry', () => {
 		expect(posts.length).toBe(1);
 	});
 
+	it('does not synthesize success from a processing puzzle after HTTP 409 (pending reservation)', async () => {
+		// After a 409, the winner's reservation may still be pending
+		// (uncommitted). A 'processing' KV record is not sufficient
+		// evidence of a committed, final result — the winner could still
+		// fail. The poll must reject 'processing' and re-POST so the
+		// server can reconcile. Only 'ready' is accepted as synthetic
+		// success after a 409.
+		const callLog: string[] = [];
+		globalThis.fetch = mock(async (url: string | URL | Request, init?: RequestInit) => {
+			const method = init?.method ?? 'GET';
+			callLog.push(`${method} ${String(url)}`);
+			if (method === 'POST') {
+				return new Response(JSON.stringify({ error: 'conflict' }), {
+					status: 409,
+					headers: { 'Content-Type': 'application/json' }
+				});
+			}
+			// Verification GET — winner is still processing (not ready).
+			return new Response(
+				JSON.stringify({
+					puzzles: [
+						{ name: 'test-puzzle', pieceCount: 48, aspectRatio: '1:1', status: 'processing' }
+					]
+				}),
+				{ status: 200, headers: { 'Content-Type': 'application/json' } }
+			);
+		}) as unknown as typeof fetch;
+
+		await expect(
+			uploadWithRetry(
+				'http://localhost:3000',
+				{},
+				'session=abc',
+				new FormData(),
+				'test-puzzle',
+				'test-puzzle\u000048\u00001:1'
+			)
+		).rejects.toThrow('HTTP 409');
+
+		// All 3 attempts should have re-POSTed (poll found processing, not ready).
+		const posts = callLog.filter((c) => c.startsWith('POST'));
+		expect(posts.length).toBe(3);
+	});
+
 	it('sends Idempotency-Key header on POST', async () => {
 		let capturedHeaders: Record<string, string> = {};
 		globalThis.fetch = mock(async (url: string | URL | Request, init?: RequestInit) => {
