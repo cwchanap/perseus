@@ -13,6 +13,7 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('@perseus/shared')>();
 	return {
 		...actual,
+		validateImageEndMarker: vi.fn().mockResolvedValue(true),
 		insertPuzzleOwnership: vi.fn().mockResolvedValue(undefined),
 		deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined)
 	};
@@ -158,7 +159,7 @@ describe('Puzzle Routes - UUID Validation', () => {
 			expect(insertPuzzleOwnership).toHaveBeenCalledBefore(mockEnv.PUZZLE_WORKFLOW.create as any);
 		});
 
-		it('proceeds when dimensions cannot be parsed (graceful fallback)', async () => {
+		it('rejects when dimensions cannot be parsed (corrupted or truncated)', async () => {
 			vi.mocked(playerAuth.getPlayerSession).mockResolvedValue({
 				sessionHash: 'session-hash',
 				user: {
@@ -170,12 +171,10 @@ describe('Puzzle Routes - UUID Validation', () => {
 				createdAt: 2000,
 				expiresAt: Date.now() + 1000
 			});
-			vi.mocked(storage.uploadOriginalImage).mockResolvedValue(undefined);
-			vi.mocked(storage.createPuzzleMetadata).mockResolvedValue(undefined);
 
-			// PNG with valid magic bytes but truncated (no IHDR data at offset 16)
+			// PNG with valid magic bytes but truncated (too short for parseImageDimensions)
 			const truncatedPng = new Uint8Array([
-				0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0, 0
+				0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00
 			]);
 			const formData = new FormData();
 			formData.append('name', 'Truncated Puzzle');
@@ -192,7 +191,9 @@ describe('Puzzle Routes - UUID Validation', () => {
 				mockEnv as any
 			);
 
-			expect(res.status).toBe(201);
+			expect(res.status).toBe(400);
+			const body = (await res.json()) as any;
+			expect(body.message).toBe('Image is corrupted or truncated');
 		});
 
 		it('rejects image with mismatched aspect ratio when dimensions are parseable', async () => {

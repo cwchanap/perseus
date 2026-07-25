@@ -64,7 +64,18 @@ import { __resetRateLimitStore } from '../../middleware/rate-limit.worker';
 import { insertPuzzleOwnership, deletePuzzleOwnership, SYSTEM_OWNER_ID } from '@perseus/shared';
 
 // Valid PNG magic bytes header for test blobs
-const PNG_HEADER = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0, 0]);
+const PNG_HEADER = new Uint8Array([
+	0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+	0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00
+]);
+
+// 3x4 PNG for 3:4 (portrait) aspect ratio tests
+const PNG_3X4 = new Uint8Array([
+	0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+	0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x04, 0x08, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00
+]);
 
 describe('Admin Routes - Player Allowlist', () => {
 	const metadataKv = {} as KVNamespace;
@@ -641,7 +652,7 @@ describe('Admin Routes - Workflow Trigger Cleanup', () => {
 			formData.append('name', 'Portrait Puzzle');
 			formData.append('pieceCount', '48');
 			formData.append('aspectRatio', '3:4');
-			const blob = new Blob([PNG_HEADER], { type: 'image/png' });
+			const blob = new Blob([PNG_3X4], { type: 'image/png' });
 			formData.append('image', blob, 'test.png');
 
 			const req = new Request('http://localhost/puzzles', {
@@ -861,8 +872,10 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 				}
 			};
 
-			// Valid JPEG magic bytes
-			const jpegHeader = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0]);
+			// Valid JPEG with SOF0 marker (1x1 for default 1:1 aspect ratio)
+			const jpegHeader = new Uint8Array([
+				0xff, 0xd8, 0xff, 0xc0, 0x00, 0x0b, 0x08, 0x00, 0x01, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00
+			]);
 			const formData = new FormData();
 			formData.append('name', 'Test Puzzle');
 			formData.append('pieceCount', '225');

@@ -35,7 +35,8 @@ import {
 	deletePuzzleOwnership,
 	detectImageType,
 	insertPuzzleOwnership,
-	parseImageDimensions
+	parseImageDimensions,
+	validateImageEndMarker
 } from '@perseus/shared';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -221,21 +222,29 @@ puzzles.post('/', requirePlayerAuth, async (c) => {
 			);
 		}
 
+		// Validate that image dimensions match the requested aspect ratio.
+		// parseImageDimensions returns null for files with valid magic bytes
+		// but malformed/truncated headers — reject those early so corrupt
+		// images don't reach R2 or the puzzle generator. Also check the
+		// format's end marker (IEND/EOI/RIFF size) to catch files with a
+		// valid header but missing body/trailer, matching the avatar upload
+		// path's validation.
 		const dimensions = await parseImageDimensions(image, detectedType);
-		if (dimensions) {
-			if (!aspectRatiosMatch(dimensions.width, dimensions.height, aspectRatio)) {
-				return c.json(
-					{
-						error: 'bad_request',
-						message: `Image aspect ratio (${dimensions.width}x${dimensions.height}) does not match requested ratio ${aspectRatio}. Please pre-crop the image to match.`
-					},
-					400
-				);
-			}
-		} else {
-			console.warn(
-				`Could not parse dimensions for ${detectedType} image; skipping aspect-ratio validation`
+		if (!dimensions || dimensions.width <= 0 || dimensions.height <= 0) {
+			return c.json({ error: 'bad_request', message: 'Image is corrupted or truncated' }, 400);
+		}
+		if (!aspectRatiosMatch(dimensions.width, dimensions.height, aspectRatio)) {
+			return c.json(
+				{
+					error: 'bad_request',
+					message: `Image aspect ratio (${dimensions.width}x${dimensions.height}) does not match requested ratio ${aspectRatio}. Please pre-crop the image to match.`
+				},
+				400
 			);
+		}
+		const hasEndMarker = await validateImageEndMarker(image, detectedType);
+		if (!hasEndMarker) {
+			return c.json({ error: 'bad_request', message: 'Image is corrupted or truncated' }, 400);
 		}
 
 		const id = crypto.randomUUID();

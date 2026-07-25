@@ -32,6 +32,7 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	const original = await importOriginal<typeof import('@perseus/shared')>();
 	return {
 		...original,
+		validateImageEndMarker: vi.fn().mockResolvedValue(true),
 		insertPuzzleOwnership: vi.fn().mockResolvedValue(undefined),
 		deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined),
 		deletePuzzleStats: vi.fn().mockResolvedValue(undefined),
@@ -57,7 +58,11 @@ import * as storage from '../../services/storage.worker';
 import * as auth from '../../middleware/auth.worker';
 import { __resetRateLimitStore } from '../../middleware/rate-limit.worker';
 
-const PNG_HEADER = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0, 0]);
+const PNG_HEADER = new Uint8Array([
+	0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+	0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00
+]);
 
 const JPEG_300X300 = new Uint8Array([
 	0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01,
@@ -172,10 +177,7 @@ describe('Admin Worker - parseImageDimensions error catch', () => {
 		__resetRateLimitStore();
 	});
 
-	it('proceeds when parseImageDimensions encounters a truncated PNG header', async () => {
-		vi.mocked(storage.uploadOriginalImage).mockResolvedValue(undefined);
-		vi.mocked(storage.createPuzzleMetadata).mockResolvedValue(undefined);
-
+	it('rejects when parseImageDimensions encounters a truncated PNG header', async () => {
 		const mockEnv = {
 			...baseEnv,
 			PUZZLE_WORKFLOW: { create: vi.fn().mockResolvedValue(undefined) }
@@ -199,7 +201,10 @@ describe('Admin Worker - parseImageDimensions error catch', () => {
 
 		const res = await admin.fetch(req, mockEnv as any);
 
-		expect(res.status).toBe(201);
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as any;
+		expect(body.message).toBe('Image is corrupted or truncated');
+		expect(storage.uploadOriginalImage).not.toHaveBeenCalled();
 	});
 });
 

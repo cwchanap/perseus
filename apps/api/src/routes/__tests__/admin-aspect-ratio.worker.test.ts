@@ -25,6 +25,7 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	const original = await importOriginal<typeof import('@perseus/shared')>();
 	return {
 		...original,
+		validateImageEndMarker: vi.fn().mockResolvedValue(true),
 		insertPuzzleOwnership: vi.fn().mockResolvedValue(undefined),
 		deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined),
 		deletePuzzleStats: vi.fn().mockResolvedValue(undefined),
@@ -479,9 +480,9 @@ describe('Admin Routes - Image aspect ratio validation', () => {
 		expect(body.message).toContain('300x200');
 	});
 
-	it('proceeds when dimensions cannot be parsed (graceful fallback)', async () => {
-		// PNG with valid magic bytes but truncated (no IHDR data at offset 16)
-		const header = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0, 0]);
+	it('rejects when dimensions cannot be parsed (corrupted or truncated)', async () => {
+		// PNG with valid magic bytes but truncated (too short for parseImageDimensions)
+		const header = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00]);
 		const blob = new Blob([header], { type: 'image/png' });
 		const formData = new FormData();
 		formData.append('name', 'Tiny Puzzle');
@@ -497,9 +498,9 @@ describe('Admin Routes - Image aspect ratio validation', () => {
 
 		const res = await admin.fetch(req, baseEnv as any);
 
-		// Should NOT reject on aspect ratio — proceeds to upload (which may fail,
-		// but the aspect ratio check itself should pass gracefully)
-		expect(res.status).not.toBe(400);
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as any;
+		expect(body.message).toBe('Image is corrupted or truncated');
 	});
 
 	it('accepts VP8X WebP with matching 4:3 aspect ratio', async () => {

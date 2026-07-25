@@ -11,7 +11,11 @@ const originalJwtSecret = process.env.JWT_SECRET;
 process.env.ADMIN_PASSKEY = 'coverage-admin-passkey';
 process.env.JWT_SECRET = 'coverage-jwt-secret-for-bun-1234567890123456';
 
-const PNG_HEADER = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0, 0]);
+const PNG_HEADER = new Uint8Array([
+	0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+	0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00
+]);
 
 const PNG_500x500 = new Uint8Array([
 	0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
@@ -70,6 +74,7 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	const original = await importOriginal<typeof import('@perseus/shared')>();
 	return {
 		...original,
+		validateImageEndMarker: vi.fn().mockResolvedValue(true),
 		insertPuzzleOwnership: vi.fn().mockResolvedValue(undefined),
 		deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined),
 		deletePuzzleStats: vi.fn().mockResolvedValue(undefined),
@@ -116,13 +121,16 @@ function makeJpegSof(width: number, height: number): Uint8Array {
 		0xff,
 		0xc0,
 		0x00,
-		0x09,
+		0x0b,
 		0x08,
 		(height >> 8) & 0xff,
 		height & 0xff,
 		(width >> 8) & 0xff,
 		width & 0xff,
-		0x01
+		0x01,
+		0x00,
+		0x00,
+		0x00
 	]);
 }
 
@@ -135,7 +143,7 @@ function makeJpegWithRst(width: number, height: number): Uint8Array {
 		0xff,
 		0xc0,
 		0x00,
-		0x09,
+		0x0b,
 		0x08,
 		(height >> 8) & 0xff,
 		height & 0xff,
@@ -167,13 +175,16 @@ function makeJpegWithApp0(width: number, height: number): Uint8Array {
 		0xff,
 		0xc0,
 		0x00,
-		0x09,
+		0x0b,
 		0x08,
 		(height >> 8) & 0xff,
 		height & 0xff,
 		(width >> 8) & 0xff,
 		width & 0xff,
-		0x01
+		0x01,
+		0x00,
+		0x00,
+		0x00
 	]);
 }
 
@@ -422,7 +433,7 @@ describe('parseImageDimensions - JPEG branches', () => {
 		expect(res.status).toBe(201);
 	});
 
-	it('returns null dimensions for JPEG with SOS marker and still succeeds', async () => {
+	it('rejects null dimensions for JPEG with SOS marker', async () => {
 		const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xda, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
 		const fd = buildFormData({
 			name: 'JPEG SOS Puzzle',
@@ -431,10 +442,10 @@ describe('parseImageDimensions - JPEG branches', () => {
 		});
 		const req = new Request('http://localhost/puzzles', { method: 'POST', body: fd });
 		const res = await app.fetch(req);
-		expect(res.status).toBe(201);
+		expect(res.status).toBe(400);
 	});
 
-	it('returns null dimensions for JPEG with EOI marker', async () => {
+	it('rejects null dimensions for JPEG with EOI marker', async () => {
 		const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xd9, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
 		const fd = buildFormData({
 			name: 'JPEG EOI Puzzle',
@@ -443,10 +454,10 @@ describe('parseImageDimensions - JPEG branches', () => {
 		});
 		const req = new Request('http://localhost/puzzles', { method: 'POST', body: fd });
 		const res = await app.fetch(req);
-		expect(res.status).toBe(201);
+		expect(res.status).toBe(400);
 	});
 
-	it('returns null dimensions for JPEG with SOF segLen less than 11', async () => {
+	it('rejects null dimensions for JPEG with SOF segLen less than 11', async () => {
 		// SOF minimum Lf is 11 (Lf + P + Y + X + Nf + 3*Nf with Nf>=1).
 		const jpeg = new Uint8Array([
 			0xff, 0xd8, 0xff, 0xc0, 0x00, 0x08, 0x08, 0x01, 0xf4, 0x01, 0xf4, 0x01
@@ -458,10 +469,10 @@ describe('parseImageDimensions - JPEG branches', () => {
 		});
 		const req = new Request('http://localhost/puzzles', { method: 'POST', body: fd });
 		const res = await app.fetch(req);
-		expect(res.status).toBe(201);
+		expect(res.status).toBe(400);
 	});
 
-	it('returns null for JPEG with non-FF byte after skipping a marker segment', async () => {
+	it('rejects null for JPEG with non-FF byte after skipping a marker segment', async () => {
 		const jpeg = new Uint8Array([
 			0xff, 0xd8, 0xff, 0xe0, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 			0x00, 0x00, 0x00, 0x00, 0x00
@@ -473,7 +484,7 @@ describe('parseImageDimensions - JPEG branches', () => {
 		});
 		const req = new Request('http://localhost/puzzles', { method: 'POST', body: fd });
 		const res = await app.fetch(req);
-		expect(res.status).toBe(201);
+		expect(res.status).toBe(400);
 	});
 });
 
@@ -533,7 +544,7 @@ describe('parseImageDimensions - WebP branches', () => {
 		expect(res.status).toBe(201);
 	});
 
-	it('returns null dimensions for WebP with unknown fourCC and still succeeds', async () => {
+	it('rejects null dimensions for WebP with unknown fourCC', async () => {
 		const fd = buildFormData({
 			name: 'Unknown WebP Puzzle',
 			pieceCount: '25',
@@ -541,7 +552,7 @@ describe('parseImageDimensions - WebP branches', () => {
 		});
 		const req = new Request('http://localhost/puzzles', { method: 'POST', body: fd });
 		const res = await app.fetch(req);
-		expect(res.status).toBe(201);
+		expect(res.status).toBe(400);
 	});
 });
 

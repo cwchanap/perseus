@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * Coverage tests for puzzles.ts (Bun runtime):
- * - console.warn when image dimensions cannot be parsed (line 342)
+ * - rejects when image dimensions cannot be parsed (corrupted or truncated)
  * - cleanup failure log when storePuzzle returns false (line 368)
  * - cleanup failure log when ownership insert fails (line 390)
  */
@@ -51,6 +51,7 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('@perseus/shared')>();
 	return {
 		...actual,
+		validateImageEndMarker: vi.fn().mockResolvedValue(true),
 		insertPuzzleOwnership: vi.fn().mockResolvedValue(undefined),
 		deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined)
 	};
@@ -101,9 +102,7 @@ const PNG_HEADER = new Uint8Array([
 
 // PNG with valid magic bytes but truncated (no IHDR data at offset 16).
 // detectImageType returns 'image/png' but parseImageDimensions returns null.
-const TRUNCATED_PNG = new Uint8Array([
-	0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0, 0
-]);
+const TRUNCATED_PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00]);
 
 function makePuzzle(overrides: Record<string, any> = {}): any {
 	return {
@@ -158,14 +157,12 @@ describe('POST / - dimensions parse fallback (line 342)', () => {
 		vi.mocked(storage.createPuzzle).mockResolvedValue(true);
 	});
 
-	it('logs a warning and proceeds when image dimensions cannot be parsed', async () => {
-		const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-
+	it('rejects when image dimensions cannot be parsed', async () => {
 		const res = await post(buildForm(TRUNCATED_PNG));
 
-		expect(res.status).toBe(201);
-		expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Could not parse dimensions'));
-		warnSpy.mockRestore();
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as any;
+		expect(body.message).toBe('Image is corrupted or truncated');
 	});
 });
 
