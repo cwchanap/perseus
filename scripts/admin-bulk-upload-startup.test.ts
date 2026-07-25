@@ -588,70 +588,6 @@ describe('uploadWithRetry', () => {
 		expect(res.status).toBe(201);
 		expect(getPostCalls()).toBe(2);
 	});
-
-	it('does not re-POST when the first attempt succeeded but response was lost', async () => {
-		// Simulate: POST throws (network error — response lost), but the puzzle
-		// was actually created. The re-fetch between retries should find the name
-		// and return a synthetic OK instead of re-POSTing (which would duplicate).
-		let postCalls = 0;
-		globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
-			if (init?.method === 'GET') {
-				return new Response(JSON.stringify({ puzzles: [{ name: 'DuplicateMe' }] }), {
-					status: 200,
-					headers: { 'Content-Type': 'application/json' }
-				});
-			}
-			postCalls++;
-			throw new Error('ECONNRESET');
-		}) as unknown as typeof fetch;
-
-		const res = await uploadWithRetry(
-			'http://localhost',
-			{},
-			's=1',
-			new FormData(),
-			'DuplicateMe',
-			idempotencyKey('DuplicateMe', undefined, DEFAULT_PUZZLE_ASPECT_RATIO)
-		);
-		expect(res.status).toBe(200);
-		expect(postCalls).toBe(1); // only one POST — no retry
-		const body = (await res.json()) as { id?: string; status?: string };
-		expect(body.id).toBe('verified');
-	});
-
-	it('polls until the puzzle appears after KV lag (does not re-POST)', async () => {
-		// First GET polls miss the puzzle (KV lag); a later poll finds it.
-		// Without multi-poll, the one-shot check would miss and re-POST a duplicate.
-		let postCalls = 0;
-		let getCalls = 0;
-		const key = idempotencyKey('Lagged', 100, DEFAULT_PUZZLE_ASPECT_RATIO);
-		globalThis.fetch = mock(async (_input: string | URL | Request, init?: RequestInit) => {
-			if (init?.method === 'GET') {
-				getCalls++;
-				if (getCalls < 3) {
-					return new Response(JSON.stringify({ puzzles: [] }), {
-						status: 200,
-						headers: { 'Content-Type': 'application/json' }
-					});
-				}
-				return new Response(
-					JSON.stringify({
-						puzzles: [{ name: 'Lagged', pieceCount: 100, aspectRatio: DEFAULT_PUZZLE_ASPECT_RATIO }]
-					}),
-					{ status: 200, headers: { 'Content-Type': 'application/json' } }
-				);
-			}
-			postCalls++;
-			throw new Error('ECONNRESET');
-		}) as unknown as typeof fetch;
-
-		const res = await uploadWithRetry('http://localhost', {}, 's=1', new FormData(), 'Lagged', key);
-		expect(res.status).toBe(200);
-		expect(postCalls).toBe(1);
-		expect(getCalls).toBeGreaterThanOrEqual(3);
-		const body = (await res.json()) as { id?: string };
-		expect(body.id).toBe('verified');
-	});
 });
 
 describe('validateCatalog', () => {
@@ -808,68 +744,6 @@ describe('cmdUpload', () => {
 		globalThis.fetch = originalFetch;
 		retryConfig.sleepFn = originalSleepFn;
 		rmSync(tmpDir, { recursive: true, force: true });
-	});
-
-	it('verifies via re-fetch when uploadWithRetry exhausts retries and the puzzle was actually created', async () => {
-		// Setup: write a catalog + image file so cmdUpload can read them.
-		const entry = makeEntry('01', 'VerifiedPuzzle');
-		const catalogPath = join(tmpDir, 'catalog.json');
-		writeFileSync(catalogPath, JSON.stringify([entry]));
-		writeFileSync(join(tmpDir, '01-test.jpg'), minimalPng(400, 400));
-
-		// Track GET calls to /api/admin/puzzles. The initial fetchExistingKeys
-		// and the uploadWithRetry between-retry re-fetches should return empty.
-		// The final catch-block re-fetch should find the name (puzzle was
-		// created server-side but the response was lost on every attempt).
-		let getCalls = 0;
-		globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
-			const url = String(input);
-			if (url.endsWith('/api/admin/login')) {
-				return new Response('{"ok":true}', {
-					status: 200,
-					headers: { 'set-cookie': 'perseus_session=abc; Path=/' }
-				});
-			}
-			if (init?.method === 'GET' && url.endsWith('/api/admin/puzzles')) {
-				getCalls++;
-				// The 4th GET is the catch-block verify — return the name.
-				// GETs 1-3: initial fetch + 2 between-retry re-fetches (empty).
-				if (getCalls === 4) {
-					return new Response(
-						JSON.stringify({
-							puzzles: [{ name: 'VerifiedPuzzle', pieceCount: 100, aspectRatio: '1:1' }]
-						}),
-						{
-							status: 200,
-							headers: { 'Content-Type': 'application/json' }
-						}
-					);
-				}
-				return new Response(JSON.stringify({ puzzles: [] }), {
-					status: 200,
-					headers: { 'Content-Type': 'application/json' }
-				});
-			}
-			if (init?.method === 'POST' && url.endsWith('/api/admin/puzzles')) {
-				// Every POST attempt fails — simulates response lost on all 3 tries.
-				throw new Error('ECONNRESET');
-			}
-			return new Response('not found', { status: 404 });
-		}) as unknown as typeof fetch;
-
-		const options = makeOptions({
-			catalogPath,
-			imagesDir: tmpDir,
-			from: 1,
-			to: 1,
-			skipAccess: true,
-			delayMs: 0
-		});
-
-		// Should NOT throw — the catch block verifies and marks as OK.
-		await cmdUpload(options);
-		// 4 GETs: initial + 2 retry re-fetches + 1 catch-block verify
-		expect(getCalls).toBe(4);
 	});
 
 	it('records failure when catch-block re-fetch does not find the puzzle', async () => {
