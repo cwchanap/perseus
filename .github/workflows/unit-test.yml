@@ -38,9 +38,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: script-test-output
-          path: |
-            script-test-output.log
-            scripts/admin-bulk-upload-startup.test.ts
+          path: script-test-output.log
           retention-days: 1
 
       - name: Run shell script tests
