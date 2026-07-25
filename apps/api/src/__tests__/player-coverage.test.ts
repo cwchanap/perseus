@@ -20,6 +20,10 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	>();
 	return {
 		...actual,
+		// Mock validateImageEndMarker so synthetic test images (valid
+		// headers but not decodable) pass validation. The real function
+		// has dedicated unit tests in packages/shared.
+		validateImageEndMarker: vi.fn().mockResolvedValue(true),
 		__store: store,
 		getProfileOverride: vi.fn((db: unknown, playerId: string) => store.get(playerId) ?? null),
 		updateProfileDisplayName: vi.fn((db: unknown, playerId: string, displayName: string | null) => {

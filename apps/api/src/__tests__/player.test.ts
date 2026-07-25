@@ -33,6 +33,10 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	const statsStore = new Map<string, unknown[]>();
 	return {
 		...actual,
+		// Mock validateImageEndMarker so the synthetic PNG_BYTES fixture
+		// (valid headers but not decodable) passes validation. The real
+		// function has dedicated unit tests in packages/shared.
+		validateImageEndMarker: vi.fn().mockResolvedValue(true),
 		// Exposed for test-only reset between cases.
 		__store: store,
 		__puzzlesStore: puzzlesStore,
