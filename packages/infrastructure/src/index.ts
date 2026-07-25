@@ -84,7 +84,10 @@ const adminAccess = createAdminAccessResources({
 	adminEmail: config.requireSecret('adminAccessEmail'),
 	deviceSerialsJson: config.requireSecret('adminDeviceSerials'),
 	sessionDuration: config.get('adminAccessSessionDuration'),
-	cliServiceTokenDuration: config.get('adminCliServiceTokenDuration') || undefined
+	// The existing credential was created with the original one-year lifetime.
+	// Cloudflare rejects shortening its expiration in place; rotate the service
+	// token explicitly when changing this lifetime so new credentials are handled.
+	cliServiceTokenDuration: '8760h'
 });
 
 export const r2BucketName = r2Bucket.name;
