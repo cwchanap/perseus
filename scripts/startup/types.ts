@@ -41,6 +41,18 @@ export function applyDotenvOverrides(dotenv: Record<string, string>): void {
 	if (dotenv.CF_ACCESS_AUD) ACCESS_AUD = dotenv.CF_ACCESS_AUD;
 }
 
+/**
+ * @internal Test-only: reset ACCESS_AUD to undefined. Needed because
+ * applyDotenvOverrides can only set (not clear) the module-level `let`, and
+ * tests that exercise resolveCloudflaredToken must ensure ACCESS_AUD is
+ * unset so the test never spawns a real `cloudflared access token` subprocess
+ * (which could hang for 15s or open a browser flow on a developer machine
+ * with cloudflared installed and CF_ACCESS_AUD in the shell environment).
+ */
+export function __resetAccessAudForTesting(): void {
+	ACCESS_AUD = undefined;
+}
+
 export const FETCH_TIMEOUT_MS = 30_000;
 export const UPLOAD_TIMEOUT_MS = 120_000;
 export const PROBE_TIMEOUT_MS = 15_000;

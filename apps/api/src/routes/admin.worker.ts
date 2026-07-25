@@ -154,6 +154,25 @@ async function reclaimReservationOrFail(
 	// Someone else won the reclaim — check if their puzzle is live.
 	const raceExisting = await getPuzzle(kv, reclaimed.puzzleId);
 	if (raceExisting && raceExisting.status !== 'failed') {
+		// Only acknowledge a committed winner. A pending winner has not
+		// committed its reservation yet — it may still fail between
+		// metadata creation and commit (workflow.create error, commit
+		// conflict), and acknowledging it as 200 would tell the loser
+		// the upload succeeded while the reservation remains reclaimable.
+		// The main existing-reservation path applies the same principle:
+		// a pending reservation with processing metadata probes liveness
+		// and commits before returning 200 (or returns 409 on fresh
+		// pending). Here, the reclaim loser simply signals 409 so the
+		// client retries — by the next retry the winner will have
+		// committed (returns 200 via the main path) or failed (reclaimed).
+		if (reclaimed.status === 'pending') {
+			return {
+				kind: 'return',
+				response: conflictResponse(
+					'Idempotency key reclaimed by a request that has not committed yet; retry'
+				)
+			};
+		}
 		// stripIdempotencyKey: idempotencyKey is a server-side dedup secret
 		// and must never leak in a response body (mirrors the 201 path below).
 		return {

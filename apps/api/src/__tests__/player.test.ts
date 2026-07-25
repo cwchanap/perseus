@@ -249,8 +249,11 @@ describe('player profile routes (Bun)', () => {
 });
 
 // Minimal PNG with a valid IHDR chunk so parseImageDimensions can extract
-// width/height. PNG signature (8) + IHDR length (4) + "IHDR" (4) + width (4)
-// + height (4) = 24 bytes. parseImageDimensions reads bytes 16–24 for dims.
+// width/height, plus an IDAT chunk (image data) and IEND chunk so
+// validateImageEndMarker confirms the image is structurally complete.
+// PNG signature (8) + IHDR (25) + IDAT (13) + IEND (12) = 58 bytes.
+// parseImageDimensions reads bytes 16–24 for dims; validateImageEndMarker
+// checks the last 12 bytes for IEND and scans chunks for at least one IDAT.
 const PNG_BYTES = [
 	0x89,
 	0x50,
@@ -276,6 +279,29 @@ const PNG_BYTES = [
 	0x00,
 	0x00,
 	0x01, // height = 1
+	0x08,
+	0x02,
+	0x00,
+	0x00,
+	0x00, // bitDepth=8, colorType=2, compression=0, filter=0, interlace=0
+	0x00,
+	0x00,
+	0x00,
+	0x00, // IHDR CRC (dummy — tests don't validate CRC)
+	// IDAT chunk: length=1, 1 byte data, dummy CRC
+	0x00,
+	0x00,
+	0x00,
+	0x01, // IDAT length = 1
+	0x49,
+	0x44,
+	0x41,
+	0x54, // "IDAT"
+	0x00, // 1 byte data
+	0x00,
+	0x00,
+	0x00,
+	0x00, // IDAT CRC (dummy)
 	// IEND chunk: 4-byte zero length + "IEND" + CRC AE 42 60 82
 	0x00,
 	0x00,

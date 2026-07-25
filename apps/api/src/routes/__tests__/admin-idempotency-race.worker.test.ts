@@ -118,7 +118,13 @@ describe('Admin Worker idempotency reclaim races', () => {
 		mockCreateSuccess();
 	});
 
-	it('returns the concurrent reclaim winner when its puzzle is live', async () => {
+	it('returns 409 when the concurrent reclaim winner is still pending (uncommitted)', async () => {
+		// A pending reclaim winner has not committed its reservation yet —
+		// it may still fail between metadata creation and commit. Returning
+		// 200 would tell the loser the upload succeeded while the
+		// reservation remains reclaimable. Signal 409 so the client retries;
+		// by the next retry the winner will have committed (200 via the main
+		// path) or failed (reclaimed).
 		vi.mocked(storage.reserveIdempotencyKey)
 			.mockResolvedValueOnce({
 				existing: true,
@@ -129,6 +135,37 @@ describe('Admin Worker idempotency reclaim races', () => {
 				existing: true,
 				puzzleId: 'winner-puzzle',
 				status: 'pending'
+			});
+		vi.mocked(storage.getPuzzle)
+			.mockResolvedValueOnce({ id: 'failed-puzzle', status: 'failed' } as any)
+			.mockResolvedValueOnce({
+				id: 'winner-puzzle',
+				status: 'processing',
+				idempotencyKey: 'race-key'
+			} as any);
+
+		const response = await admin.fetch(createRequest('race-key'), createEnv() as any);
+
+		expect(response.status).toBe(409);
+		const body = await response.json();
+		expect(body).toMatchObject({
+			error: 'conflict',
+			message: 'Idempotency key reclaimed by a request that has not committed yet; retry'
+		});
+		expect(storage.uploadOriginalImage).not.toHaveBeenCalled();
+	});
+
+	it('returns the concurrent reclaim winner when its reservation is committed', async () => {
+		vi.mocked(storage.reserveIdempotencyKey)
+			.mockResolvedValueOnce({
+				existing: true,
+				puzzleId: 'failed-puzzle',
+				status: 'committed'
+			})
+			.mockResolvedValueOnce({
+				existing: true,
+				puzzleId: 'winner-puzzle',
+				status: 'committed'
 			});
 		vi.mocked(storage.getPuzzle)
 			.mockResolvedValueOnce({ id: 'failed-puzzle', status: 'failed' } as any)

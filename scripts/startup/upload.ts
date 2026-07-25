@@ -133,7 +133,8 @@ export function idempotencyKeyHeader(dedupKey: string): string {
 export async function fetchExistingKeys(
 	server: string,
 	baseHeaders: Record<string, string>,
-	cookie: string
+	cookie: string,
+	requireReady = false
 ): Promise<Set<string>> {
 	const res = await fetch(`${server}/api/admin/puzzles`, {
 		method: 'GET',
@@ -161,6 +162,16 @@ export async function fetchExistingKeys(
 		// of skipping permanently. processing and ready puzzles are retained
 		// for deduplication — they represent successful (or in-flight) uploads.
 		if (p.status === 'failed') continue;
+		// When requireReady is set (used after an HTTP 409 idempotency
+		// conflict), only a 'ready' puzzle is sufficient evidence of a
+		// committed, fully-generated upload. A 'processing' record means
+		// the winner's reservation may still be pending (uncommitted) and
+		// could still fail — treating it as synthetic success would let
+		// the CLI stop retrying while the reservation remains reclaimable.
+		// 'ready' implies the workflow completed, which can only happen
+		// after the reservation was committed, so it is safe to treat as
+		// a final idempotent result.
+		if (requireReady && p.status !== 'ready') continue;
 		if (typeof p.name === 'string' && p.name.trim()) {
 			// Normalize missing aspectRatio to the server default (1:1). Legacy
 			// puzzles may omit aspectRatio in their summary; the API treats a
@@ -204,13 +215,14 @@ export async function pollForExistingKey(
 	server: string,
 	baseHeaders: Record<string, string>,
 	cookie: string,
-	dedupKey: string
+	dedupKey: string,
+	requireReady = false
 ): Promise<boolean> {
 	const attempts = retryConfig.verifyPollAttempts;
 	const baseDelayMs = retryConfig.verifyPollBaseDelayMs;
 	for (let i = 0; i < attempts; i++) {
 		await retryConfig.sleepFn(baseDelayMs * 2 ** i);
-		const existing = await fetchExistingKeys(server, baseHeaders, cookie);
+		const existing = await fetchExistingKeys(server, baseHeaders, cookie, requireReady);
 		if (existing.has(dedupKey)) return true;
 	}
 	return false;
@@ -247,6 +259,17 @@ export async function uploadWithRetry(
 	// of relying solely on the eventually-consistent KV poll below.
 	const idempotencyHeader = idempotencyKeyHeader(dedupKey);
 	for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+		// When true, the post-failure existence poll only accepts 'ready'
+		// puzzles as synthetic success. Set after an HTTP 409: the server
+		// explicitly told us another request with this key is in flight, so
+		// this POST did not succeed. A 'processing' record found by the poll
+		// would be the in-flight winner's uncommitted metadata — treating it
+		// as success would let the CLI stop while the reservation is still
+		// pending and could fail. Only 'ready' (workflow completed →
+		// reservation committed) is a safe final result. For 5xx/network
+		// errors, 'processing' is still accepted: the POST may have succeeded
+		// but the response was lost, so the in-flight metadata is ours.
+		let requireReady = false;
 		try {
 			const response = await fetch(`${server}/api/admin/puzzles`, {
 				method: 'POST',
@@ -270,6 +293,7 @@ export async function uploadWithRetry(
 				// finishes, at which point the reserve returns the existing
 				// puzzle (200) rather than a 409.
 				lastError = new Error('HTTP 409 idempotency conflict — winner in flight');
+				requireReady = true;
 			} else if (response.status < 500) {
 				// Other 4xx are deterministic validation/authorization failures.
 				return response;
@@ -289,7 +313,7 @@ export async function uploadWithRetry(
 			// to support idempotency. With the header in place, a re-POST that
 			// reaches the server will return the original puzzle (200) instead
 			// of creating a duplicate, even if this poll misses due to KV lag.
-			if (await pollForExistingKey(server, baseHeaders, cookie, dedupKey)) {
+			if (await pollForExistingKey(server, baseHeaders, cookie, dedupKey, requireReady)) {
 				console.log(`  verified: ${entryName} already on server — skipping retry`);
 				return new Response(
 					JSON.stringify({ id: 'verified', status: 'response lost — verified via re-fetch' }),

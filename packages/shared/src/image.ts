@@ -260,15 +260,144 @@ export async function parseImageDimensions(
 }
 
 // Validate that the image file is structurally complete by checking for the
-// format's end marker. parseImageDimensions only validates the header bytes;
-// without this check a file with a valid header prefix but missing body/trailer
-// (e.g. a PNG with an IHDR but no IDAT or IEND) would pass validation and be
-// stored as a corrupt avatar that renders broken for the player.
+// format's end marker AND that it contains actual image data (not just a
+// header + trailer). parseImageDimensions only validates the header bytes;
+// without the image-data check a file with a valid header prefix but no
+// body (e.g. a PNG with an IHDR and IEND but no IDAT, or a JPEG with SOF
+// and EOI but no SOS) would pass validation, be stored, and then fail in
+// the decoder/generator — producing a 500 after R2 upload and metadata
+// creation.
 //
 // Format-specific checks:
-// - PNG: must end with an IEND chunk (12 bytes: 4-byte zero length + "IEND" + CRC AE 42 60 82)
-// - JPEG: must contain an EOI marker (FF D9) near the end (allow trailing fill bytes)
-// - WebP: RIFF file size at offset 4-7 must not exceed the actual file size
+// - PNG: must end with an IEND chunk AND contain at least one IDAT chunk
+//   (image data) before IEND.
+// - JPEG: must contain an EOI marker (FF D9) near the end (allow trailing
+//   fill bytes) AND contain an SOS marker (start of scan) before EOI.
+// - WebP: RIFF file size at offset 4-7 must not exceed the actual file
+//   size AND the file must contain a VP8, VP8L, or ANMF chunk (actual
+//   image frame data), not just a VP8X container header.
+
+// Cap structural scans at 2 MiB to bound CPU on untrusted inputs. A crafted
+// file with millions of tiny chunks/markers could otherwise exhaust the
+// Workers CPU budget before reaching image data. Legitimate images place
+// IDAT/SOS/VP8 well within the first 2 MiB.
+const STRUCTURAL_SCAN_LIMIT = 2 * 1024 * 1024;
+
+/**
+ * Scan PNG chunks from offset 8 (after the 8-byte signature) and return true
+ * if at least one IDAT chunk is found before IEND. Each PNG chunk is:
+ *   4-byte big-endian length + 4-byte type + length bytes data + 4-byte CRC
+ * Total chunk size = length + 12. Returns false if IEND is reached without
+ * IDAT, or if the chunk chain is malformed/truncated.
+ */
+async function pngHasIDAT(file: BlobLike): Promise<boolean> {
+	const size = file.size;
+	let pos = 8; // Skip PNG signature
+	const scanEnd = Math.min(size, STRUCTURAL_SCAN_LIMIT);
+	while (pos + 8 <= scanEnd) {
+		const header = new Uint8Array(await file.slice(pos, pos + 8).arrayBuffer());
+		if (header.byteLength < 8) return false;
+		const dv = new DataView(header.buffer, header.byteOffset, header.byteLength);
+		const length = dv.getUint32(0);
+		const type = String.fromCharCode(header[4], header[5], header[6], header[7]);
+		if (type === 'IDAT') return true;
+		if (type === 'IEND') return false;
+		// Advance past this chunk: length(data) + 4(length) + 4(type) + 4(CRC)
+		const next = pos + length + 12;
+		// Guard against overflow / malformed length that would loop forever
+		if (next <= pos || next > size) return false;
+		pos = next;
+	}
+	return false;
+}
+
+/**
+ * Scan JPEG markers from offset 2 (after SOI FF D8) and return true if an
+ * SOS marker (FF DA, start of scan) is found before EOI (FF D9). Without
+ * SOS, the JPEG has no compressed image data — just headers. Reuses the
+ * same marker-walking logic as parseImageDimensions (fill byte handling,
+ * standalone markers, segment skipping) but looks for SOS instead of SOF.
+ */
+async function jpegHasSOS(file: BlobLike): Promise<boolean> {
+	const CHUNK_SIZE = 64 * 1024;
+	let pos = 2; // Skip SOI (FF D8)
+	let bufStart = 0;
+	let iterations = 0;
+	let buf = new Uint8Array(await file.slice(0, Math.min(file.size, CHUNK_SIZE)).arrayBuffer());
+
+	async function refill(): Promise<boolean> {
+		if (bufStart + buf.length >= file.size) return false;
+		bufStart = pos;
+		const end = Math.min(file.size, pos + CHUNK_SIZE);
+		buf = new Uint8Array(await file.slice(pos, end).arrayBuffer());
+		return buf.length > 0;
+	}
+
+	async function ensure(need: number): Promise<boolean> {
+		if (pos - bufStart + need <= buf.length) return true;
+		if (!(await refill())) return false;
+		return pos - bufStart + need <= buf.length;
+	}
+
+	while (true) {
+		if (pos > STRUCTURAL_SCAN_LIMIT) return false;
+		if (++iterations > 10_000) return false;
+		if (!(await ensure(1))) break;
+		if (buf[pos - bufStart] !== 0xff) break;
+		pos += 1;
+
+		// Consume 0xFF fill bytes individually
+		while ((await ensure(1)) && buf[pos - bufStart] === 0xff) {
+			pos += 1;
+		}
+		if (!(await ensure(1))) break;
+		const marker = buf[pos - bufStart];
+		pos += 1;
+
+		// SOS (FF DA) — start of scan, image data follows
+		if (marker === 0xda) return true;
+		// EOI (FF D9) — end of image, reached without SOS
+		if (marker === 0xd9) return false;
+		// Standalone markers (no payload): RST0-RST7, TEM
+		if ((marker >= 0xd0 && marker <= 0xd7) || marker === 0x01) continue;
+
+		// Skip this marker segment: read 2-byte segLen, advance by segLen.
+		if (!(await ensure(2))) break;
+		const i = pos - bufStart;
+		const segLen = (buf[i] << 8) | buf[i + 1];
+		if (segLen < 2) return false;
+		pos += segLen;
+	}
+	return false;
+}
+
+/**
+ * Scan WebP chunks from offset 12 (after RIFF + size + WEBP) and return true
+ * if a VP8, VP8L, or ANMF chunk is found. A VP8X (extended container) chunk
+ * alone is not sufficient — it carries only canvas dimensions and flags, not
+ * image data. Each WebP chunk is: 4-byte fourCC + 4-byte little-endian
+ * chunkSize + chunkSize bytes data (padded to even size).
+ */
+async function webpHasImageChunk(file: BlobLike): Promise<boolean> {
+	const size = file.size;
+	let pos = 12; // Skip RIFF + size + WEBP
+	const scanEnd = Math.min(size, STRUCTURAL_SCAN_LIMIT);
+	while (pos + 8 <= scanEnd) {
+		const header = new Uint8Array(await file.slice(pos, pos + 8).arrayBuffer());
+		if (header.byteLength < 8) return false;
+		const fourCC = String.fromCharCode(header[0], header[1], header[2], header[3]);
+		if (fourCC === 'VP8 ' || fourCC === 'VP8L' || fourCC === 'ANMF') return true;
+		const dv = new DataView(header.buffer, header.byteOffset, header.byteLength);
+		const chunkSize = dv.getUint32(4, true);
+		// Advance past chunk header (8) + data (chunkSize) + padding to even
+		const padded = chunkSize + (chunkSize % 2);
+		const next = pos + 8 + padded;
+		if (next <= pos || next > size) return false;
+		pos = next;
+	}
+	return false;
+}
+
 export async function validateImageEndMarker(file: BlobLike, mimeType: string): Promise<boolean> {
 	try {
 		const size = file.size;
@@ -277,7 +406,7 @@ export async function validateImageEndMarker(file: BlobLike, mimeType: string): 
 			// PNG must end with an IEND chunk: 00 00 00 00 49 45 4E 44 AE 42 60 82
 			if (size < 12) return false;
 			const tail = new Uint8Array(await file.slice(size - 12, size).arrayBuffer());
-			return (
+			const hasIEND =
 				tail[4] === 0x49 && // I
 				tail[5] === 0x45 && // E
 				tail[6] === 0x4e && // N
@@ -285,8 +414,13 @@ export async function validateImageEndMarker(file: BlobLike, mimeType: string): 
 				tail[8] === 0xae &&
 				tail[9] === 0x42 &&
 				tail[10] === 0x60 &&
-				tail[11] === 0x82
-			);
+				tail[11] === 0x82;
+			if (!hasIEND) return false;
+			// Require at least one IDAT chunk (actual image data) before IEND.
+			// A PNG with only IHDR + IEND has no image data and will fail in
+			// the decoder — reject it at validation time rather than after
+			// R2 upload and metadata creation.
+			return await pngHasIDAT(file);
 		}
 
 		if (mimeType === 'image/jpeg') {
@@ -297,10 +431,18 @@ export async function validateImageEndMarker(file: BlobLike, mimeType: string): 
 			if (size < 4) return false;
 			const tailLen = Math.min(size, 1024);
 			const tail = new Uint8Array(await file.slice(size - tailLen, size).arrayBuffer());
+			let hasEOI = false;
 			for (let i = tail.length - 2; i >= 0; i--) {
-				if (tail[i] === 0xff && tail[i + 1] === 0xd9) return true;
+				if (tail[i] === 0xff && tail[i + 1] === 0xd9) {
+					hasEOI = true;
+					break;
+				}
 			}
-			return false;
+			if (!hasEOI) return false;
+			// Require an SOS marker (start of scan) before EOI. A JPEG with
+			// only SOF + EOI has headers but no compressed image data and
+			// will fail in the decoder.
+			return await jpegHasSOS(file);
 		}
 
 		if (mimeType === 'image/webp') {
@@ -318,7 +460,11 @@ export async function validateImageEndMarker(file: BlobLike, mimeType: string): 
 			const header = new Uint8Array(await file.slice(0, 8).arrayBuffer());
 			const dv = new DataView(header.buffer, header.byteOffset, header.byteLength);
 			const riffSize = dv.getUint32(4, true) + 8;
-			return riffSize >= 12 && size >= riffSize;
+			if (!(riffSize >= 12 && size >= riffSize)) return false;
+			// Require a VP8, VP8L, or ANMF chunk (actual image frame data).
+			// A VP8X-only WebP (extended container header with canvas dims
+			// but no frame) has no decodable image data.
+			return await webpHasImageChunk(file);
 		}
 
 		// Unknown format — fail safe (reject) rather than allow potentially
