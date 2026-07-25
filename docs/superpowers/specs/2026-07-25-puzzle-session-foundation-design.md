@@ -82,13 +82,24 @@ The organization extension fields are:
 
 - persisted viewport state when a consuming feature explicitly opts into it;
 - inventory filter;
-- preview size;
 - active tray;
 - staging membership;
 - tray names.
 
 Fields may be absent until their owning feature is implemented. The codec must preserve
 recognized optional fields without requiring the current route to populate them.
+
+Preview size is not PuzzleSession state. HPA-220 defines it as a device-local user preference
+that applies across runs, so its owning preference store persists it separately. Components
+may consume that preference alongside session state without adding it to the session
+serializer.
+
+Fresh run IDs are canonical lowercase UUID v4 strings created with `crypto.randomUUID()`.
+The engine receives an injectable ID factory for deterministic tests. Migrated records use
+`legacy-${sha256}`, where `sha256` is the 64-character lowercase hexadecimal SHA-256 digest of
+the stable canonical JSON form of the legacy payload. Shared run-ID validation accepts exactly
+those two shapes. Canonical JSON recursively sorts object keys, preserves array order, omits
+undefined object properties, and otherwise uses standard JSON primitive serialization.
 
 ## Lifecycle and Timing
 
@@ -110,6 +121,8 @@ An explicit pause moves `active` to `paused` and checkpoints elapsed time. Resum
 paused session to `active`. A hidden tab suspends the clock without changing persisted
 lifecycle. Visibility restoration restarts the clock only when the lifecycle is `active` and
 the timer had already started. Explicitly paused sessions never auto-resume on visibility.
+The clock runs only for `timed` sessions with `known` timing quality; relaxed and legacy
+unknown-time sessions keep a null elapsed value.
 
 The in-process clock uses an injected scheduler/time source so tests can advance it
 deterministically. Persisted time is expressed as whole active seconds. A known timed
@@ -120,24 +133,32 @@ Completing the last unique piece moves the session to `completed` and seals a co
 record. Undo may return board state and lifecycle to `active`, matching current behavior, but
 the completion record remains sealed. Redo may restore the completed board without emitting
 another completion. Time accumulated after that sealed completion cannot replace the sealed
-run result.
+run result. If the player undoes and then makes a fresh placement that completes the board
+again, the existing seal makes that crossing a completion no-op: it emits no completion event,
+does not resubmit, and does not increment local or server totals.
 
 Restart:
 
-- creates a new cryptographically random run ID;
+- creates a new UUID v4 run ID with `crypto.randomUUID()`;
 - clears placements, selection, active rotation state, history, counters, assistance, and
   completion state;
 - generates and persists a fresh canonical tray order;
 - retains applicable mode and organization preferences;
 - returns to `setup`, after which the current route immediately starts the new run.
 
+Restart is valid from `active`, `paused`, and `completed`. It returns a typed
+`nothing_to_restart` no-op from `setup` and a `disposed` no-op from `disposed`.
+
 Resetting active rotation preserves the current Play Again behavior. A future setup feature
 may add a separate preferred-rotation setting without treating the completed run's active
 rotation state as that preference.
 
-`disposed` is terminal. All gameplay actions become typed no-ops after disposal. Disposal is
-runtime-only: the route checkpoints the last resumable state before disposal, and the
-serializer never writes `disposed` as a restorable lifecycle.
+`disposed` is terminal for one in-memory PuzzleSession instance and represents route/component
+unmount, not player abandonment. All actions on that instance become typed no-ops. The route
+checkpoints the last resumable state before disposal, so loading the puzzle later constructs a
+new instance from that snapshot. The serializer never writes `disposed` as a restorable
+lifecycle. HPA-236 requires the `disposed` lifecycle name; clearing or abandoning persisted
+progress is a separate storage action.
 
 ## Result Classification
 
@@ -153,7 +174,10 @@ Rules:
   class.
 - Enabling rotation makes a standard run `rotation_timed`.
 - Using a hint or future Ghost Reference makes any timed run `assisted_timed`.
-- Ordinary hold/toggle reference viewing does not alter result class in version 1.
+- Dispatching `use_reference` with `hold` or `toggle` records one deliberate activation but
+  does not alter result class in version 1.
+- Dispatching `use_reference` with `ghost` records one deliberate activation and makes a timed
+  run `assisted_timed`.
 - Once assisted, disabling a mode or undoing gameplay does not restore eligibility.
 - A relaxed run remains `relaxed`.
 - Restoring a session preserves its stored class; subsequent assistance may still downgrade it.
@@ -184,13 +208,27 @@ type PuzzleSessionAction =
 	| { type: 'set_rotation_mode'; enabled: boolean }
 	| { type: 'rotate_piece'; pieceId: number }
 	| { type: 'attempt_placement'; pieceId: number; x: number; y: number }
+	| { type: 'complete' }
 	| { type: 'undo' }
 	| { type: 'redo' }
 	| { type: 'use_hint' }
 	| { type: 'use_reference'; mode: ReferenceMode }
 	| { type: 'update_tray_organization'; update: TrayOrganizationUpdate }
 	| { type: 'retry_completion_submission' };
+
+type ReferenceMode = 'hold' | 'toggle' | 'ghost';
+type InventoryFilter = 'all' | 'corners' | 'edges' | 'center';
+type TrayOrganizationUpdate =
+	| { type: 'reorder'; trayId: string; pieceIds: number[] }
+	| { type: 'set_filter'; filter: InventoryFilter }
+	| { type: 'set_active_tray'; trayId: string }
+	| { type: 'move_piece'; pieceId: number; toTrayId: string }
+	| { type: 'rename_tray'; trayId: string; name: string }
+	| { type: 'remove_tray'; trayId: string };
 ```
+
+These organization variants establish the invariant-preserving domain boundary. HPA-220 and
+HPA-237 own the UI, naming constraints, and availability rules for their respective variants.
 
 `attempt_placement` is the sole placement entry point. The session validates:
 
@@ -200,10 +238,15 @@ type PuzzleSessionAction =
 - rotation is upright when rotation mode requires it;
 - the mutation preserves placement uniqueness.
 
+An accepted final placement invokes the same guarded `complete` transition exposed in the
+action union. Dispatching `complete` directly is a no-op unless every unique piece is validly
+placed and the run has no completion seal, so it cannot bypass placement validation.
+
 The outcome is a bounded accepted or rejected value. Rejection reasons distinguish real
 gameplay failures such as wrong slot or non-upright rotation from disabled lifecycle,
 duplicate, or malformed programmatic requests. Only real gameplay rejection increments the
-incorrect-attempt counter.
+incorrect-attempt counter. A duplicate request—such as one from stale keyboard state—is a
+silent no-op because the UI should already prevent it; it is not counted as a player mistake.
 
 Mouse, direct drag, future touch tap-to-place, and keyboard interaction translate into this
 same action. No input path may directly edit placements or invoke completion.
@@ -264,6 +307,11 @@ The serialized projection contains:
 - recognized optional organization fields;
 - numeric `lastUpdated` in epoch milliseconds.
 
+For a fresh known timed run, `elapsedActiveSeconds` is `0` even before the timer starts.
+`null` is reserved for relaxed sessions and legacy unknown-time sessions. A
+`legacy_unknown` run keeps `elapsedActiveSeconds: null` for its lifetime; this design chooses
+not to manufacture or display a partial post-migration solve time.
+
 The serializer is an allowlist projection. It cannot include selection, history, pointers,
 drag/gesture state, focus, dialogs, modal visibility, active hint highlighting, rejection
 animation, DOM elements, measurements, or clock handles.
@@ -283,10 +331,9 @@ and source as validation context and produces version 1 deterministically:
 - timer-started is true when the legacy record contains any placement, has rotation enabled,
   or contains a non-zero piece rotation; otherwise it is false;
 - source comes from the resolved puzzle source;
-- missing tray order is generated by sorting piece IDs, then applying a stable
-  puzzle-ID-seeded shuffle;
-- the run ID is derived from a stable hash of the canonical legacy payload and receives a
-  reserved `legacy-` prefix;
+- missing tray order is generated by sorting piece IDs, then applying Fisher-Yates using a
+  Mulberry32 PRNG seeded with the 32-bit FNV-1a hash of the puzzle ID;
+- the run ID is `legacy-` plus the lowercase SHA-256 digest of stable canonical legacy JSON;
 - missing counters become zero;
 - rotation fields use the current compatibility defaults;
 - result class reflects known rotation state;
@@ -296,9 +343,9 @@ and source as validation context and produces version 1 deterministically:
 - an existing ISO `lastUpdated` is converted to epoch milliseconds; a missing or invalid
   value becomes `0` so migration never manufactures false recency.
 
-Legacy unknown-time runs may continue accumulating post-migration active time for display,
-but their timing quality remains `legacy_unknown` for that run. They can count as a
-completion and submit a nullable time, but they cannot create a canonical best.
+Legacy unknown-time runs remain untimed for the rest of that run. They can count as a
+completion and submit a null time, but they cannot create a canonical best. Restart creates a
+new known-time run with a UUID v4 run ID and normal timing.
 
 The migrated payload is written back best-effort. A failed write does not stop hydration or
 play.
@@ -311,7 +358,8 @@ Every load validates:
 - matching puzzle ID and source;
 - lifecycle, mode, result class, timing quality, and their cross-field consistency;
 - finite non-negative elapsed time and timestamp values;
-- run ID shape;
+- a canonical lowercase UUID v4 or `legacy-` followed by exactly 64 lowercase hexadecimal
+  characters;
 - unique, known, in-bounds placements;
 - a tray order containing every piece exactly once;
 - valid rotation values and known piece IDs;
@@ -342,7 +390,9 @@ interface PuzzleStatsV1 {
 ```
 
 Existing unversioned `bestTime`, `completedAt`, and `totalCompletions` values migrate as a
-standard best and historical completion count, with no recorded run ID.
+standard best and historical completion count, with no recorded run ID. Both
+`standardBestCompletedAt` and `lastCompletedAt` use epoch milliseconds; migration parses the
+existing ISO `completedAt` string into that unit.
 
 Recording a sealed run always increments `totalCompletions` once. Only an eligible
 `standard_timed` completion may create or improve `standardBestTime`. UI consumers expose the
@@ -351,6 +401,12 @@ badge when the value is null. `lastRecordedRunId` makes retrying or rehydrating 
 completed session idempotent without retaining an unbounded local run history. This is safe
 because each puzzle has one persisted active/latest session key; restart replaces that
 snapshot before a later run can complete.
+
+Local and server statistics are independent mirrors of a completion. Temporary divergence is
+acceptable when one write succeeds and the other fails. Device-local gallery/session UI reads
+local stats; authenticated profile views read server stats. The session retries failed server
+submission while its completion record remains available, but this foundation does not
+reconcile local stats from the server or server stats from local storage.
 
 ## Completion API
 
@@ -375,6 +431,12 @@ Validation requires:
 - a valid run ID.
 
 Both Bun and Worker routes use one shared validator and repository contract.
+
+For a versioned request, the server upserts a canonical best only when
+`resultClass === 'standard_timed'`, `timingQuality === 'known'`, and
+`elapsedActiveSeconds !== null`. The sealed-completion fact is a client/session invariant; a
+valid versioned completion request represents that sealed result at the server boundary.
+Checking result class alone is never sufficient.
 
 For deployment compatibility, the endpoint also accepts the existing `{ timeSeconds }`
 request. It records that request through the legacy standard-timed path, including the
@@ -405,6 +467,19 @@ also upsert the canonical best using minimum-time semantics; that upsert is safe
 independently of whether the ledger insert was new. Versioned runs do not increment the
 historical baseline field.
 
+If a run ID already exists, puzzle ID, result class, timing quality, and elapsed time must
+exactly match the ledger row. An exact replay continues idempotently, including repairing a
+best upsert that failed after the ledger write. That repair reuses the ledger's original
+completion timestamp rather than treating the retry as a later completion. Reusing a run ID
+with different facts returns `conflict` and performs no stats mutation; callers cannot launder
+an assisted run into a standard best by changing a retry payload.
+
+Only a versioned request satisfying the full canonical-best predicate may insert or update
+`puzzle_stats`. Rotation, assisted, relaxed, and legacy-unknown runs are ledger-only and never
+create a `puzzle_stats` row. When a player's first eligible standard completion creates that
+row, it explicitly initializes the historical baseline `totalCompletions` field to `0`; the
+new run is already counted by the ledger.
+
 This avoids changing the physical `best_time_seconds NOT NULL` column. The public profile/stat
 read model instead starts from the union of historical stats and ledgered completions, then
 left-joins the standard-best row. Consequently:
@@ -416,8 +491,14 @@ left-joins the standard-best row. Consequently:
 - sorting puts rows with standard bests in the existing ascending order and defines a stable
   placement for null-best rows: standard-best rows sort first by ascending time, followed by
   null-best rows, with puzzle ID as the tiebreaker in both groups;
-- pagination cursors encode `(hasStandardBest, bestTimeSeconds, puzzleId)` so nullable-best
-  ordering remains stable across pages.
+- new pagination cursors use `v2|0|<bestTimeSeconds>|<puzzleId>` for standard-best rows and
+  `v2|1||<puzzleId>` for null-best rows. Sort group `0` precedes group `1`.
+
+The stats cursor is independently versioned from the completion request. During rollout, the
+parser continues accepting the current `<bestTimeSeconds>|<puzzleId>` composite cursor and
+the older bare `<bestTimeSeconds>` fallback, mapping both to sort group `0`. It strictly
+validates recognized legacy and `v2` shapes; malformed or unknown versions return
+`bad_request` instead of silently changing pagination semantics.
 
 The player summary's puzzles-solved and total-completion counts use the same combined read
 model so profile tiles and stat rows cannot disagree.
@@ -470,8 +551,11 @@ Cover:
 - undo/redo boundaries;
 - counter behavior across undo/redo;
 - result-class monotonicity;
-- restart with new run ID and retained preferences;
+- restart with new run ID and retained mode/organization preferences;
 - exactly-once completion;
+- undo followed by a fresh final placement remaining completion-idempotent;
+- duplicate placement remaining a non-counting no-op;
+- direct completion remaining guarded by full-board state;
 - retry and stale acknowledgement behavior.
 
 ### Codec and storage tests
@@ -481,6 +565,7 @@ Cover:
 - version 1 round trip;
 - allowlisted serialization and transient-field exclusion;
 - deterministic migration of representative legacy records;
+- `legacy-<sha256>` generation and validator round trip;
 - unknown elapsed time and best ineligibility;
 - malformed JSON and malformed fields;
 - future version handling;
@@ -498,11 +583,15 @@ Cover:
 - standard-only best creation and improvement;
 - null best for variant-only completion history;
 - run-ledger idempotency;
+- conflicting payload reuse of one run ID being rejected without stats mutation;
 - repeated eligible-best upsert safety;
+- `standard_timed` plus `legacy_unknown` remaining ledger-only;
+- non-standard completion never creating a `puzzle_stats` row;
 - legacy request compatibility;
 - request validation for every result class and timing quality;
 - player summary and stat-row consistency;
 - nullable-best ordering and pagination;
+- legacy and version 2 cursor parsing plus malformed-version rejection;
 - Bun/Worker route parity.
 
 ### Route regression tests
@@ -543,3 +632,6 @@ source/test-driven unless a regression requires a browser reproduction.
 - The HPA-222 reference-mode UI.
 - Choosing or importing an analytics provider.
 - Separate personal bests for rotation or assisted result classes.
+- Multi-tab session coordination. Concurrent tabs for the same puzzle retain today's
+  last-write-wins local-storage behavior.
+- Automatic reconciliation between device-local and server completion statistics.
