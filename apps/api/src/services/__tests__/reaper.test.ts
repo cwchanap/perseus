@@ -8,7 +8,8 @@ import {
 	REAP_AFTER_MS,
 	REAP_BATCH_LIMIT,
 	AVATAR_GC_AGE_MS,
-	AVATAR_GC_BATCH_LIMIT
+	AVATAR_GC_BATCH_LIMIT,
+	AVATAR_GC_MAX_PAGES
 } from '../reaper';
 
 // Mock storage.worker functions
@@ -81,6 +82,9 @@ function makeKvMock(): KVNamespace {
 		get: vi.fn(async (key: string) => store.get(key) ?? null),
 		put: vi.fn(async (key: string, value: string) => {
 			store.set(key, value);
+		}),
+		delete: vi.fn(async (key: string) => {
+			store.delete(key);
 		}),
 		// Expose the store for tests that need to pre-seed or inspect cursors.
 		_store: store
@@ -1048,13 +1052,16 @@ describe('reapOrphanedReservations', () => {
 		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
 	});
 
-	it('reaps puzzles with no reservation record (orphan after replacement deletion)', async () => {
-		// Scenario: puzzle A lost key K to replacement B, A's cleanup-record
-		// write failed, then an admin deleted B — releasing K and erasing the
-		// reservation record. A's lookup returns null, but A is still an
-		// orphan: in every release path, KV is deleted before the reservation
-		// is released, so a puzzle still in KV with an idempotencyKey but no
-		// reservation was superseded.
+	it('skips puzzles with no reservation record (fail closed — operator review)', async () => {
+		// A missing reservation record is NOT a durable orphan signal: it can
+		// result from DO state loss, a release that followed KV deletion (the
+		// codebase's normal deletion ordering), or an operational action.
+		// Reaping on null alone risks destroying a healthy completed puzzle
+		// whose reservation record is simply absent — an irreversible
+		// mistake. The reaper skips and logs a distinct action so operators
+		// can review and force-delete true orphans via the runbook. A
+		// positive ownership mismatch (separate test) remains sufficient
+		// evidence for reaping.
 		(storage.listPuzzles as any).mockResolvedValue({
 			puzzles: [puzzleSummary('a', 'ready', OLD_READY)],
 			invalidCount: 0
@@ -1063,13 +1070,14 @@ describe('reapOrphanedReservations', () => {
 			puzzleMeta('a', { idempotencyKey: 'key-K', pieceCount: 50 })
 		);
 		(storage.getIdempotencyReservation as any).mockResolvedValue(null);
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
 		const env = makeEnv({ a: 'complete' });
 		const result = await reapOrphanedReservations(env);
-		expect(result.reaped).toBe(1);
-		expect(storage.deleteMetadataDO).toHaveBeenCalledWith(env.PUZZLE_METADATA_DO, 'a');
-		expect(storage.deletePuzzleAssets).toHaveBeenCalledWith(env.PUZZLES_BUCKET, 'a', 50);
-		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'a');
-		expect(result.details.some((d) => d.action === 'orphan-reaped')).toBe(true);
+		expect(result.reaped).toBe(0);
+		expect(storage.deleteMetadataDO).not.toHaveBeenCalled();
+		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
+		expect(result.details.some((d) => d.action === 'skip-null-reservation')).toBe(true);
 	});
 
 	it('skips orphaned puzzles whose workflow is still alive', async () => {
@@ -1813,6 +1821,91 @@ describe('reapOrphanedAvatars', () => {
 		expect(result.candidates).toBe(3);
 		expect(result.reaped).toBe(3);
 		expect(env.PUZZLES_BUCKET.list).toHaveBeenCalledTimes(2);
+	});
+
+	it('bounds R2 listing to AVATAR_GC_MAX_PAGES and persists the cursor', async () => {
+		// Each list call returns truncated=true so the reaper would list
+		// forever without the page bound. Verify it stops after
+		// AVATAR_GC_MAX_PAGES calls and persists the cursor for the next run.
+		let callCount = 0;
+		const env = {
+			...makeEnv(),
+			PUZZLES_BUCKET: {
+				list: vi.fn(async () => {
+					callCount++;
+					return {
+						objects: [r2Object(`avatars/p1/token-${callCount}`, OLD)],
+						truncated: true,
+						cursor: `cursor-${callCount}`
+					};
+				}),
+				delete: vi.fn(async () => undefined)
+			} as any
+		} as any;
+		(getAvatarTokensByPlayerIds as any).mockResolvedValue(new Map());
+		const result = await reapOrphanedAvatars(env, NOW);
+		expect(env.PUZZLES_BUCKET.list).toHaveBeenCalledTimes(AVATAR_GC_MAX_PAGES);
+		expect(result.scanned).toBe(AVATAR_GC_MAX_PAGES);
+		// The cursor must be persisted so the next run resumes.
+		const kvStore = (env.PUZZLE_METADATA as any)._store as Map<string, string>;
+		expect(kvStore.get('reaper:cursor:orphaned-avatars-r2')).toBe(`cursor-${AVATAR_GC_MAX_PAGES}`);
+	});
+
+	it('resumes R2 listing from the persisted cursor on the next run', async () => {
+		// Pre-seed the cursor so the first list call receives it. Verify
+		// the reaper passes the stored cursor to R2.list.
+		const env = {
+			...makeEnv(),
+			PUZZLES_BUCKET: {
+				list: vi.fn(async (opts: { cursor?: string }) => ({
+					objects: [r2Object(`avatars/p1/token-${opts.cursor ?? 'start'}`, OLD)],
+					truncated: false,
+					cursor: undefined
+				})),
+				delete: vi.fn(async () => undefined)
+			} as any
+		} as any;
+		const kvStore = (env.PUZZLE_METADATA as any)._store as Map<string, string>;
+		kvStore.set('reaper:cursor:orphaned-avatars-r2', 'resumed-cursor');
+		(getAvatarTokensByPlayerIds as any).mockResolvedValue(new Map());
+		await reapOrphanedAvatars(env, NOW);
+		expect(env.PUZZLES_BUCKET.list).toHaveBeenCalledWith({
+			prefix: 'avatars/',
+			cursor: 'resumed-cursor'
+		});
+		// Listing completed (truncated=false) → cursor must be cleared.
+		expect(kvStore.has('reaper:cursor:orphaned-avatars-r2')).toBe(false);
+	});
+
+	it('clears the R2 cursor when the listing completes within the page bound', async () => {
+		// Listing completes on page 2 (truncated=false). The cursor must be
+		// cleared so the next run starts a fresh sweep from the beginning.
+		let callCount = 0;
+		const env = {
+			...makeEnv(),
+			PUZZLES_BUCKET: {
+				list: vi.fn(async () => {
+					callCount++;
+					if (callCount === 1) {
+						return {
+							objects: [r2Object('avatars/p1/token-A', OLD)],
+							truncated: true,
+							cursor: 'next-page'
+						};
+					}
+					return {
+						objects: [r2Object('avatars/p2/token-B', OLD)],
+						truncated: false,
+						cursor: undefined
+					};
+				}),
+				delete: vi.fn(async () => undefined)
+			} as any
+		} as any;
+		(getAvatarTokensByPlayerIds as any).mockResolvedValue(new Map());
+		await reapOrphanedAvatars(env, NOW);
+		const kvStore = (env.PUZZLE_METADATA as any)._store as Map<string, string>;
+		expect(kvStore.has('reaper:cursor:orphaned-avatars-r2')).toBe(false);
 	});
 
 	it('skips malformed keys (not avatars/{playerId}/{token})', async () => {
