@@ -28,17 +28,17 @@ jobs:
       - name: Install dependencies
         run: bun install
 
-      - name: Install Playwright browsers
-        run: bun run --cwd apps/web test:install-browsers
-
-      - name: Run unit tests with coverage
-        run: bun run test:unit
-
       - name: Run script tests
         run: bun run test:scripts
 
       - name: Run shell script tests
         run: bun run test:shell
+
+      - name: Install Playwright browsers
+        run: bun run --cwd apps/web test:install-browsers
+
+      - name: Run unit tests with coverage
+        run: bun run test:unit
 
       - name: Upload LCOV reports for triage
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
