@@ -219,28 +219,36 @@ jobs:
         # non-zero with a "no stack output named 'd1DatabaseId'" message —
         # that is the legitimate first-deploy signal. Authentication, backend,
         # or malformed-state errors also exit non-zero but are NOT first-
-        # deploy signals; swallowing them would hide real failures. We
-        # capture stderr, classify the failure, and only emit an empty
-        # db_id for the missing-output case. Everything else fails the job.
+        # deploy signals; swallowing them would hide real failures. Keep
+        # stdout separate from stderr so Pulumi's login diagnostics cannot be
+        # concatenated with the database ID.
         id: read-db-id
         run: |
           set -euo pipefail
           cd packages/infrastructure
           STACK="$PULUMI_ORG/perseus-infrastructure/production"
+          STDERR_FILE="$(mktemp)"
+          trap 'rm -f "$STDERR_FILE"' EXIT
           set +e
-          OUTPUT=$(pulumi stack output d1DatabaseId --stack "$STACK" --non-interactive 2>&1)
+          OUTPUT=$(pulumi stack output d1DatabaseId --stack "$STACK" --non-interactive 2>"$STDERR_FILE")
           STATUS=$?
           set -e
+          ERROR_OUTPUT="$(cat "$STDERR_FILE")"
           if [ "$STATUS" -eq 0 ]; then
-            EXISTING_DB_ID="$(printf '%s' "$OUTPUT" | tr -d '[:space:]')"
+            EXISTING_DB_ID="$(printf '%s' "$OUTPUT" | tr -d '\r\n')"
+            if ! printf '%s' "$EXISTING_DB_ID" | grep -Eq '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'; then
+              echo "Pulumi returned an invalid D1 database ID: '$EXISTING_DB_ID'"
+              exit 1
+            fi
             echo "Existing D1 database ID: '${EXISTING_DB_ID}'"
             echo "db_id=${EXISTING_DB_ID}" >> "$GITHUB_OUTPUT"
-          elif printf '%s' "$OUTPUT" | grep -qi "no stack output named"; then
+          elif printf '%s\n%s' "$OUTPUT" "$ERROR_OUTPUT" | grep -qi "no stack output named"; then
             echo "Stack has no d1DatabaseId output yet — treating as first deploy."
             echo "db_id=" >> "$GITHUB_OUTPUT"
           else
             echo "pulumi stack output failed unexpectedly (exit ${STATUS}):"
             printf '%s\n' "$OUTPUT"
+            printf '%s\n' "$ERROR_OUTPUT" >&2
             exit 1
           fi
         env:
@@ -351,6 +359,10 @@ jobs:
           DB_ID="$NEW_DB_ID"
           if [ -z "$DB_ID" ]; then
             echo "Pulumi stack output d1DatabaseId is missing; cannot apply migrations safely."
+            exit 1
+          fi
+          if ! printf '%s' "$DB_ID" | grep -Eq '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'; then
+            echo "Pulumi returned an invalid D1 database ID: '$DB_ID'"
             exit 1
           fi
           echo "Applying migrations to newly created D1 database $DB_ID (first deploy)"
