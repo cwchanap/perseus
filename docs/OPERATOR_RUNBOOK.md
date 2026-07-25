@@ -208,15 +208,18 @@ entirely). The reaper closes that gap with delayed GC.
 
 **Behavior:**
 
-- Lists all objects under `avatars/`, batch-queries D1 for each player's
-  authoritative `avatarUpdateToken`, and deletes any versioned object
-  whose token is not authoritative AND whose age exceeds
-  `AVATAR_GC_AGE_MS` (1 hour). The age threshold ensures in-flight
-  uploads have completed before their objects are considered garbage.
-- Processes at most `AVATAR_GC_BATCH_LIMIT` (200) deletions per run via
-  a rotating batch starting at a persisted cursor
-  (`orphaned-avatars`), so persistently-failing objects don't starve
-  later orphans.
+- Lists one bounded page of objects under `avatars/` per run
+  (`limit: AVATAR_GC_BATCH_LIMIT` = 200), resuming from the persisted R2
+  cursor `reaper:cursor:orphaned-avatars-r2`. It batch-queries D1 for
+  each player's authoritative `avatarUpdateToken`, and deletes every
+  versioned object in that page whose token is not authoritative AND
+  whose age exceeds `AVATAR_GC_AGE_MS` (1 hour). The age threshold
+  ensures in-flight uploads have completed before their objects are
+  considered garbage.
+- The R2 list cursor is the single progression mechanism: every eligible
+  orphan in a listed page is processed before the cursor advances, so no
+  orphan is starved. When a page is not truncated, the cursor is cleared
+  so the next run starts a fresh sweep.
 - **Fail-closed on D1 unavailability:** if D1 is unreachable, the reaper
   skips all deletion and records an `avatar-gc-d1-unavailable` detail —
   it cannot determine which objects are orphaned without the
@@ -239,7 +242,7 @@ the scheduled run's `scanned`/`candidates`/`reaped`/`errors` counts.
 **Manual cleanup:** the automated sweep makes manual cleanup unnecessary
 in normal operation. If a manual sweep is ever required (e.g. D1 was
 unavailable for an extended period and orphans accumulated beyond what
-the rotating batch reclaims quickly), use a token-aware, dry-run-first
+the per-run page reclaims quickly), use a token-aware, dry-run-first
 procedure: list `avatars/` objects, cross-reference each
 `avatars/{playerId}/{token}` against D1's `avatarUpdateToken`, and
 delete only objects whose token is not authoritative AND whose age
