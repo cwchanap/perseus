@@ -4,6 +4,7 @@ import { Hono } from 'hono';
 import {
 	DEFAULT_PUZZLE_ASPECT_RATIO,
 	MAX_FILE_SIZE,
+	MAX_IMAGE_DIMENSION,
 	MAX_PIECES,
 	PUZZLE_CATEGORIES,
 	ALLOWED_MIME_TYPES,
@@ -1079,7 +1080,25 @@ admin.post('/puzzles', requireAuth, async (c) => {
 				400
 			);
 		}
-		const hasEndMarker = await validateImageEndMarker(image, detectedType);
+		// Enforce MAX_IMAGE_DIMENSION before validateImageEndMarker(), which
+		// fully decodes the image via Photon. A highly compressed file under
+		// MAX_FILE_SIZE can declare extremely large dimensions and cause
+		// Photon to allocate a large decoded pixel buffer before the request
+		// is rejected. The workflow enforces this again, but that protects
+		// the workflow's decode, not the earlier API decode. Matches the
+		// avatar upload path's per-axis dimension check before decode.
+		if (dimensions.width > MAX_IMAGE_DIMENSION || dimensions.height > MAX_IMAGE_DIMENSION) {
+			return c.json(
+				{
+					error: 'bad_request',
+					message: `Image dimensions ${dimensions.width}x${dimensions.height} exceed maximum ${MAX_IMAGE_DIMENSION}px per axis`
+				},
+				400
+			);
+		}
+		const hasEndMarker = await validateImageEndMarker(image, detectedType, {
+			requireFullDecode: true
+		});
 		if (!hasEndMarker) {
 			return c.json({ error: 'bad_request', message: 'Image is corrupted or truncated' }, 400);
 		}

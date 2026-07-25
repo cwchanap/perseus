@@ -304,6 +304,15 @@ export async function uploadWithRetry(
 			lastError = error instanceof Error ? error : new Error(String(error));
 		}
 		if (attempt < maxAttempts) {
+			// Exponential backoff with jitter before the next attempt.
+			// Without a delay, 409 idempotency conflicts exhaust the retry
+			// budget before the winning request finishes committing — three
+			// immediate retries can all arrive while the winner is still
+			// in flight. The jitter (0.8–1.2×) spreads concurrent retries
+			// from parallel seed entries so they don't all land on the
+			// same tick.
+			const delay = retryConfig.baseDelayMs * 2 ** (attempt - 1) * (0.8 + Math.random() * 0.4);
+			await retryConfig.sleepFn(delay);
 			console.error(`  retry ${attempt}/${maxAttempts} (${lastError.message})`);
 		}
 	}
