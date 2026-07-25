@@ -8,6 +8,7 @@ vi.mock('../../services/storage.worker', () => ({
 	deletePuzzleMetadata: vi.fn(),
 	deleteOriginalImage: vi.fn(),
 	failIdempotencyKey: vi.fn(),
+	getAuthoritativeStatus: vi.fn(),
 	getPuzzle: vi.fn(),
 	listPuzzles: vi.fn(),
 	originalImageExists: vi.fn(),
@@ -155,7 +156,10 @@ describe('Admin Worker idempotency reclaim races', () => {
 		expect(storage.uploadOriginalImage).not.toHaveBeenCalled();
 	});
 
-	it('returns the concurrent reclaim winner when its reservation is committed', async () => {
+	it('returns the concurrent reclaim winner when its reservation is committed and workflow is alive', async () => {
+		// A committed winner with processing metadata is only acknowledged
+		// after probing workflow liveness. When the workflow is alive
+		// (running), the puzzle is in-flight and safe to return as 200.
 		vi.mocked(storage.reserveIdempotencyKey)
 			.mockResolvedValueOnce({
 				existing: true,
@@ -184,6 +188,152 @@ describe('Admin Worker idempotency reclaim races', () => {
 		// never leak in the 200 reclaim-winner response (the 201 path already
 		// stripped it; this branch was missed).
 		expect(body).not.toHaveProperty('idempotencyKey');
+		expect(storage.uploadOriginalImage).not.toHaveBeenCalled();
+	});
+
+	it('returns 409 for a committed reclaim winner whose workflow is dead (not ready)', async () => {
+		// A committed winner with processing metadata whose workflow has
+		// died (errored/terminated) is NOT acknowledged as 200 — the puzzle
+		// is stuck and will be reaped. Signal 409 so the client retries;
+		// by the next retry the reaper will have cleaned it up and the key
+		// will be reclaimable. Mirrors the main existing-reservation path.
+		vi.mocked(storage.reserveIdempotencyKey)
+			.mockResolvedValueOnce({
+				existing: true,
+				puzzleId: 'failed-puzzle',
+				status: 'committed'
+			})
+			.mockResolvedValueOnce({
+				existing: true,
+				puzzleId: 'dead-winner',
+				status: 'committed'
+			});
+		vi.mocked(storage.getPuzzle)
+			.mockResolvedValueOnce({ id: 'failed-puzzle', status: 'failed' } as any)
+			.mockResolvedValueOnce({
+				id: 'dead-winner',
+				status: 'processing',
+				idempotencyKey: 'dead-key'
+			} as any);
+		vi.mocked(storage.getAuthoritativeStatus).mockResolvedValue('processing');
+		const workflow = createWorkflow('errored');
+
+		const response = await admin.fetch(createRequest('dead-key'), createEnv(workflow) as any);
+
+		expect(response.status).toBe(409);
+		const body = await response.json();
+		expect(body).toMatchObject({
+			error: 'conflict',
+			message: 'Idempotency key reclaimed by a request whose workflow is dead; retry'
+		});
+		expect(workflow.get).toHaveBeenCalledWith('dead-winner');
+		expect(storage.getAuthoritativeStatus).toHaveBeenCalledWith(expect.anything(), 'dead-winner');
+		expect(storage.uploadOriginalImage).not.toHaveBeenCalled();
+	});
+
+	it('returns 200 for a committed reclaim winner whose workflow is dead but DO says ready', async () => {
+		// The workflow is dead but the DO (source of truth) says 'ready' —
+		// KV is just lagging. The puzzle is valid; return 200. Mirrors the
+		// main existing-reservation path's dead+ready branch.
+		vi.mocked(storage.reserveIdempotencyKey)
+			.mockResolvedValueOnce({
+				existing: true,
+				puzzleId: 'failed-puzzle',
+				status: 'committed'
+			})
+			.mockResolvedValueOnce({
+				existing: true,
+				puzzleId: 'ready-winner',
+				status: 'committed'
+			});
+		vi.mocked(storage.getPuzzle)
+			.mockResolvedValueOnce({ id: 'failed-puzzle', status: 'failed' } as any)
+			.mockResolvedValueOnce({
+				id: 'ready-winner',
+				status: 'processing',
+				idempotencyKey: 'ready-key'
+			} as any);
+		vi.mocked(storage.getAuthoritativeStatus).mockResolvedValue('ready');
+		const workflow = createWorkflow('errored');
+
+		const response = await admin.fetch(createRequest('ready-key'), createEnv(workflow) as any);
+
+		expect(response.status).toBe(200);
+		const body = await response.json();
+		expect(body).toMatchObject({ id: 'ready-winner', status: 'processing' });
+		expect(body).not.toHaveProperty('idempotencyKey');
+		expect(storage.uploadOriginalImage).not.toHaveBeenCalled();
+	});
+
+	it('returns 409 for a committed reclaim winner whose workflow liveness is unknown', async () => {
+		// Workflow API unreachable — can't safely acknowledge a processing
+		// puzzle whose liveness cannot be verified. Signal 409 so the
+		// client retries. Mirrors the main existing-reservation path.
+		vi.mocked(storage.reserveIdempotencyKey)
+			.mockResolvedValueOnce({
+				existing: true,
+				puzzleId: 'failed-puzzle',
+				status: 'committed'
+			})
+			.mockResolvedValueOnce({
+				existing: true,
+				puzzleId: 'unknown-winner',
+				status: 'committed'
+			});
+		vi.mocked(storage.getPuzzle)
+			.mockResolvedValueOnce({ id: 'failed-puzzle', status: 'failed' } as any)
+			.mockResolvedValueOnce({
+				id: 'unknown-winner',
+				status: 'processing',
+				idempotencyKey: 'unknown-key'
+			} as any);
+		// 'unknown' is the fallback status from probeWorkflowLiveness for
+		// unrecognized status strings.
+		const workflow = createWorkflow('unknown');
+
+		const response = await admin.fetch(createRequest('unknown-key'), createEnv(workflow) as any);
+
+		expect(response.status).toBe(409);
+		const body = await response.json();
+		expect(body).toMatchObject({
+			error: 'conflict',
+			message:
+				'Idempotency key reclaimed by a processing puzzle; workflow liveness could not be verified, retry'
+		});
+		expect(storage.uploadOriginalImage).not.toHaveBeenCalled();
+	});
+
+	it('returns the concurrent reclaim winner immediately when its status is ready', async () => {
+		// A 'ready' puzzle means the workflow completed — no liveness probe
+		// needed. Return 200 immediately without calling workflow.get.
+		vi.mocked(storage.reserveIdempotencyKey)
+			.mockResolvedValueOnce({
+				existing: true,
+				puzzleId: 'failed-puzzle',
+				status: 'committed'
+			})
+			.mockResolvedValueOnce({
+				existing: true,
+				puzzleId: 'ready-winner',
+				status: 'committed'
+			});
+		vi.mocked(storage.getPuzzle)
+			.mockResolvedValueOnce({ id: 'failed-puzzle', status: 'failed' } as any)
+			.mockResolvedValueOnce({
+				id: 'ready-winner',
+				status: 'ready',
+				idempotencyKey: 'ready-key'
+			} as any);
+		const workflow = createWorkflow('errored');
+
+		const response = await admin.fetch(createRequest('ready-key'), createEnv(workflow) as any);
+
+		expect(response.status).toBe(200);
+		const body = await response.json();
+		expect(body).toMatchObject({ id: 'ready-winner', status: 'ready' });
+		expect(body).not.toHaveProperty('idempotencyKey');
+		// workflow.get should NOT be called — ready status skips liveness probe
+		expect(workflow.get).not.toHaveBeenCalled();
 		expect(storage.uploadOriginalImage).not.toHaveBeenCalled();
 	});
 
