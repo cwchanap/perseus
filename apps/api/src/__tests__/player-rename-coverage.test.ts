@@ -137,10 +137,14 @@ function pngWithMarker(marker: number): number[] {
 		0xde, // IHDR CRC
 		// IDAT chunk: a minimal 1x1 RGB PNG. The marker byte is embedded
 		// in the raw pixel data so two uploads produce different files.
+		// Structurally valid: the length matches the 11-byte payload, a
+		// 4-byte CRC field follows the data, and IEND is preceded by its
+		// zero-length field so chunk-walking validation reaches IEND at
+		// the correct offset.
 		0x00,
 		0x00,
 		0x00,
-		0x0c, // IDAT length = 12
+		0x0b, // IDAT length = 11 (matches the 11 payload bytes below)
 		0x49,
 		0x44,
 		0x41,
@@ -156,14 +160,22 @@ function pngWithMarker(marker: number): number[] {
 		0x00,
 		0x00,
 		0x00,
+		0x00,
+		0x00,
+		0x00,
+		0x00, // IDAT CRC (present so chunk-walking advances past IDAT; not verified)
+		0x00,
+		0x00,
+		0x00,
+		0x00, // IEND length = 0
 		0x49,
 		0x45,
 		0x4e,
-		0x44,
+		0x44, // "IEND"
 		0xae,
 		0x42,
 		0x60,
-		0x82 // IEND
+		0x82 // IEND CRC
 	];
 }
 

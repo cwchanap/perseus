@@ -99,117 +99,46 @@ export async function parseImageDimensions(
 		}
 
 		if (mimeType === 'image/jpeg') {
-			// JPEG: scan SOF markers (FF C0..FF C3, FF C5..FF C7, FF C9..FF CB, FF CD..FF CF)
-			// Height/width are at offset+5/offset+7 within each marker segment.
-			// Read in chunks to handle JPEGs with large APP segments (EXIF, ICC
-			// profiles) that push the SOF marker beyond any fixed read limit.
-			// Fill bytes (0xFF 0xFF…) are consumed individually per the JPEG spec:
-			// multiple 0xFF bytes can precede a marker, each is a fill byte, not
-			// a marker pair.
-			//
-			// Cap the scan at SOF_SCAN_LIMIT to bound CPU on untrusted inputs
-			// (avatar/player puzzle uploads up to MAX_FILE_SIZE/AVATAR_MAX_BYTES).
-			// A crafted JPEG of millions of tiny marker segments (RST0-RST7,
-			// TEM, fill bytes) could otherwise exhaust the Workers CPU budget
-			// before reaching SOF/EOI/EOF. 2 MiB is generous — the largest
-			// legitimate APP segments (ICC profiles, full EXIF) are well under
-			// 64 KiB each, and JPEG segLen is a 16-bit field (max 65535), so
-			// reaching 2 MiB requires ~30 max-length APP segments before SOF,
-			// which no real encoder produces. Bail to null (callers reject)
-			// rather than throwing so the untrusted route returns 400, not 500.
-			const SOF_SCAN_LIMIT = 2 * 1024 * 1024;
-			// Secondary cap on iteration count. The byte cap bounds data scanned
-			// but not loop iterations: a crafted stream of 2-byte standalone
-			// markers (FF D0 RST0 … FF D7 RST7, FF 01 TEM) advances only 2 bytes
-			// per loop turn, so 2 MiB permits ~1M iterations of mostly-sync
-			// work — enough to exhaust a Workers CPU budget even though the data
-			// fits the byte cap. Legitimate JPEGs reach SOF in well under 500
-			// iterations even with large ICC/EXIF segments (~30 max-length APP
-			// segments is the extreme), so 10_000 is ~20x headroom and still
-			// only a few ms of CPU.
-			const SOF_ITERATION_LIMIT = 10_000;
-			const CHUNK_SIZE = 64 * 1024;
-			let pos = 2; // absolute file offset, skip FF D8 SOI
-			let bufStart = 0;
-			let iterations = 0;
-			let buf = new Uint8Array(await file.slice(0, Math.min(file.size, CHUNK_SIZE)).arrayBuffer());
-
-			// Refill buf so that pos is within the buffer; returns false at EOF.
-			async function refill(): Promise<boolean> {
-				if (bufStart + buf.length >= file.size) return false;
-				bufStart = pos;
-				const end = Math.min(file.size, pos + CHUNK_SIZE);
-				buf = new Uint8Array(await file.slice(pos, end).arrayBuffer());
-				return buf.length > 0;
-			}
-
-			// Ensure `need` bytes are available from pos in buf; refill if needed.
-			async function ensure(need: number): Promise<boolean> {
-				if (pos - bufStart + need <= buf.length) return true;
-				if (!(await refill())) return false;
-				return pos - bufStart + need <= buf.length;
-			}
-
-			while (true) {
-				// Bail beyond the scan cap — see SOF_SCAN_LIMIT rationale above.
-				if (pos > SOF_SCAN_LIMIT) return null;
-				// Secondary defense: cap iterations so a tiny-marker flood
-				// can't spin ~1M times within the byte cap. See
-				// SOF_ITERATION_LIMIT rationale above.
-				if (++iterations > SOF_ITERATION_LIMIT) return null;
-				// Expect 0xFF marker prefix
-				if (!(await ensure(1))) break;
-				if (buf[pos - bufStart] !== 0xff) break;
-				pos += 1;
-
-				// Consume 0xFF fill bytes individually
-				while ((await ensure(1)) && buf[pos - bufStart] === 0xff) {
-					pos += 1;
+			// JPEG: scan SOF markers (FF C0..FF C3, FF C5..FF C7, FF C9..FF CB,
+			// FF CD..FF CF). Height/width are at offset+5/offset+7 within each
+			// marker segment. SOS (FF DA) or EOI (FF D9) terminate the scan — no
+			// SOF means no dimensions. The chunked-buffer walk, fill-byte
+			// handling, standalone-marker skipping, and segment-length validation
+			// live in walkJpegMarkers (shared with jpegHasSOS). CPU is bounded by
+			// STRUCTURAL_SCAN_LIMIT (2 MiB) and STRUCTURAL_ITERATION_LIMIT — see
+			// their rationale above. Returns null (callers reject) rather than
+			// throwing so the untrusted route returns 400, not 500.
+			return walkJpegMarkers<{ width: number; height: number } | null>(
+				file,
+				async (marker, reader) => {
+					// SOS (FF DA) or EOI (FF D9) — stop scanning, no SOF found.
+					if (marker === 0xda || marker === 0xd9) return null;
+					// SOF markers carry dimensions
+					if (
+						(marker >= 0xc0 && marker <= 0xc3) ||
+						(marker >= 0xc5 && marker <= 0xc7) ||
+						(marker >= 0xc9 && marker <= 0xcb) ||
+						(marker >= 0xcd && marker <= 0xcf)
+					) {
+						// Need 7 bytes: segLen(2) + precision(1) + height(2) + width(2)
+						if (!(await reader.ensure(7))) return null;
+						const segLen = (reader.byteAt(0) << 8) | reader.byteAt(1);
+						// SOF minimum: Lf(2) + P(1) + Y(2) + X(2) + Nf(1) + 3*Nf
+						// with Nf >= 1 → Lf >= 11. Reject anything shorter.
+						if (segLen < 11) return null;
+						// Reject truncated SOF: the full declared segment must be
+						// present. ensure(7) only guarantees the dimension fields;
+						// a larger segLen with EOF mid-segment would still return dims.
+						if (reader.pos + segLen > reader.fileSize) return null;
+						const height = (reader.byteAt(3) << 8) | reader.byteAt(4);
+						const width = (reader.byteAt(5) << 8) | reader.byteAt(6);
+						return { width, height };
+					}
+					// Other markers: continue the walk (walkJpegMarkers skips
+					// the segment, handles standalone markers and fill bytes).
+					return undefined;
 				}
-				if (!(await ensure(1))) break;
-				const marker = buf[pos - bufStart];
-				pos += 1;
-
-				// SOS (FF DA) or EOI (FF D9) — stop scanning
-				if (marker === 0xda || marker === 0xd9) break;
-				// Standalone markers (no payload): RST0-RST7, TEM
-				if ((marker >= 0xd0 && marker <= 0xd7) || marker === 0x01) continue;
-
-				// SOF markers carry dimensions
-				if (
-					(marker >= 0xc0 && marker <= 0xc3) ||
-					(marker >= 0xc5 && marker <= 0xc7) ||
-					(marker >= 0xc9 && marker <= 0xcb) ||
-					(marker >= 0xcd && marker <= 0xcf)
-				) {
-					// Need 7 bytes: segLen(2) + precision(1) + height(2) + width(2)
-					if (!(await ensure(7))) return null;
-					const i = pos - bufStart;
-					const segLen = (buf[i] << 8) | buf[i + 1];
-					// SOF minimum: Lf(2) + P(1) + Y(2) + X(2) + Nf(1) + 3*Nf
-					// with Nf >= 1 → Lf >= 11. Reject anything shorter.
-					if (segLen < 11) return null;
-					// Reject truncated SOF: the full declared segment must be present
-					// in the file. `ensure(7)` only guarantees the dimension fields;
-					// a larger segLen with EOF mid-segment would still return dims.
-					if (pos + segLen > file.size) return null;
-					const height = (buf[i + 3] << 8) | buf[i + 4];
-					const width = (buf[i + 5] << 8) | buf[i + 6];
-					return { width, height };
-				}
-
-				// Skip this marker segment: read 2-byte segLen, advance by segLen.
-				// Per the JPEG spec, segLen includes the 2-byte length field itself,
-				// so the minimum valid value is 2. Reject anything smaller — a
-				// segLen of 0 or 1 is malformed and would advance pos by less than
-				// the length field width, leaving the parser misaligned.
-				if (!(await ensure(2))) break;
-				const i = pos - bufStart;
-				const segLen = (buf[i] << 8) | buf[i + 1];
-				if (segLen < 2) return null;
-				pos += segLen;
-			}
-			return null;
+			);
 		}
 
 		if (mimeType === 'image/webp') {
@@ -302,6 +231,103 @@ const STRUCTURAL_SCAN_LIMIT = 2 * 1024 * 1024;
 const STRUCTURAL_ITERATION_LIMIT = 10_000;
 
 /**
+ * Reader passed to walkJpegMarkers' onMarker callback. Exposes the buffered
+ * reader state so callers can extract marker-specific fields (e.g. SOF
+ * dimensions) without re-implementing the chunked-refill logic.
+ */
+interface JpegMarkerReader {
+	/** Verify `need` bytes are available past the current marker position. */
+	ensure: (need: number) => Promise<boolean>;
+	/** Read a byte at the given offset from the current marker position. */
+	byteAt: (offset: number) => number;
+	/** Absolute file offset of the byte following the marker byte. */
+	readonly pos: number;
+	/** Total file size (for truncation checks). */
+	readonly fileSize: number;
+}
+
+/**
+ * Shared chunked-buffer JPEG marker walker. Scans JPEG markers from offset 2
+ * (after SOI FF D8), handling 0xFF fill bytes, standalone markers (RST0-RST7,
+ * TEM), and 2-byte segment-length validation per the JPEG spec. For each
+ * marker encountered, calls `onMarker`; if it returns non-undefined, stops and
+ * returns that value. Returns null if the walk ends (EOF, malformed stream,
+ * or STRUCTURAL_SCAN_LIMIT/STRUCTURAL_ITERATION_LIMIT exceeded).
+ *
+ * Both parseImageDimensions (looking for SOF, stopping on SOS/EOI) and
+ * jpegHasSOS (looking for SOS, stopping on EOI) delegate to this helper so
+ * the fill-byte, standalone-marker, and segment-skip logic exists once.
+ */
+async function walkJpegMarkers<T>(
+	file: BlobLike,
+	onMarker: (marker: number, reader: JpegMarkerReader) => Promise<T | undefined>
+): Promise<T | null> {
+	const CHUNK_SIZE = 64 * 1024;
+	let pos = 2; // absolute file offset, skip FF D8 SOI
+	let bufStart = 0;
+	let iterations = 0;
+	let buf = new Uint8Array(await file.slice(0, Math.min(file.size, CHUNK_SIZE)).arrayBuffer());
+
+	async function refill(): Promise<boolean> {
+		if (bufStart + buf.length >= file.size) return false;
+		bufStart = pos;
+		const end = Math.min(file.size, pos + CHUNK_SIZE);
+		buf = new Uint8Array(await file.slice(pos, end).arrayBuffer());
+		return buf.length > 0;
+	}
+
+	async function ensure(need: number): Promise<boolean> {
+		if (pos - bufStart + need <= buf.length) return true;
+		if (!(await refill())) return false;
+		return pos - bufStart + need <= buf.length;
+	}
+
+	const reader: JpegMarkerReader = {
+		ensure,
+		byteAt: (offset) => buf[pos - bufStart + offset],
+		get pos() {
+			return pos;
+		},
+		get fileSize() {
+			return file.size;
+		}
+	};
+
+	while (true) {
+		if (pos > STRUCTURAL_SCAN_LIMIT) return null;
+		if (++iterations > STRUCTURAL_ITERATION_LIMIT) return null;
+		// Expect 0xFF marker prefix
+		if (!(await ensure(1))) break;
+		if (buf[pos - bufStart] !== 0xff) break;
+		pos += 1;
+
+		// Consume 0xFF fill bytes individually
+		while ((await ensure(1)) && buf[pos - bufStart] === 0xff) {
+			pos += 1;
+		}
+		if (!(await ensure(1))) break;
+		const marker = buf[pos - bufStart];
+		pos += 1;
+
+		// Caller decides whether this marker terminates the walk.
+		const result = await onMarker(marker, reader);
+		if (result !== undefined) return result;
+
+		// Standalone markers (no payload): RST0-RST7, TEM
+		if ((marker >= 0xd0 && marker <= 0xd7) || marker === 0x01) continue;
+
+		// Skip this marker segment: read 2-byte segLen, advance by segLen.
+		// segLen includes the 2-byte length field itself, so minimum is 2.
+		if (!(await ensure(2))) break;
+		const i = pos - bufStart;
+		const segLen = (buf[i] << 8) | buf[i + 1];
+		if (segLen < 2) return null;
+		pos += segLen;
+	}
+	return null;
+}
+
+/**
  * Scan PNG chunks from offset 8 (after the 8-byte signature) and return true
  * if at least one IDAT chunk is found before IEND. Each PNG chunk is:
  *   4-byte big-endian length + 4-byte type + length bytes data + 4-byte CRC
@@ -334,61 +360,20 @@ async function pngHasIDAT(file: BlobLike): Promise<boolean> {
 /**
  * Scan JPEG markers from offset 2 (after SOI FF D8) and return true if an
  * SOS marker (FF DA, start of scan) is found before EOI (FF D9). Without
- * SOS, the JPEG has no compressed image data — just headers. Reuses the
- * same marker-walking logic as parseImageDimensions (fill byte handling,
- * standalone markers, segment skipping) but looks for SOS instead of SOF.
+ * SOS, the JPEG has no compressed image data — just headers. Delegates to
+ * walkJpegMarkers (shared with parseImageDimensions) for fill-byte handling,
+ * standalone markers, and segment skipping.
  */
 async function jpegHasSOS(file: BlobLike): Promise<boolean> {
-	const CHUNK_SIZE = 64 * 1024;
-	let pos = 2; // Skip SOI (FF D8)
-	let bufStart = 0;
-	let iterations = 0;
-	let buf = new Uint8Array(await file.slice(0, Math.min(file.size, CHUNK_SIZE)).arrayBuffer());
-
-	async function refill(): Promise<boolean> {
-		if (bufStart + buf.length >= file.size) return false;
-		bufStart = pos;
-		const end = Math.min(file.size, pos + CHUNK_SIZE);
-		buf = new Uint8Array(await file.slice(pos, end).arrayBuffer());
-		return buf.length > 0;
-	}
-
-	async function ensure(need: number): Promise<boolean> {
-		if (pos - bufStart + need <= buf.length) return true;
-		if (!(await refill())) return false;
-		return pos - bufStart + need <= buf.length;
-	}
-
-	while (true) {
-		if (pos > STRUCTURAL_SCAN_LIMIT) return false;
-		if (++iterations > 10_000) return false;
-		if (!(await ensure(1))) break;
-		if (buf[pos - bufStart] !== 0xff) break;
-		pos += 1;
-
-		// Consume 0xFF fill bytes individually
-		while ((await ensure(1)) && buf[pos - bufStart] === 0xff) {
-			pos += 1;
-		}
-		if (!(await ensure(1))) break;
-		const marker = buf[pos - bufStart];
-		pos += 1;
-
+	const result = await walkJpegMarkers<boolean>(file, async (marker) => {
 		// SOS (FF DA) — start of scan, image data follows
 		if (marker === 0xda) return true;
 		// EOI (FF D9) — end of image, reached without SOS
 		if (marker === 0xd9) return false;
-		// Standalone markers (no payload): RST0-RST7, TEM
-		if ((marker >= 0xd0 && marker <= 0xd7) || marker === 0x01) continue;
-
-		// Skip this marker segment: read 2-byte segLen, advance by segLen.
-		if (!(await ensure(2))) break;
-		const i = pos - bufStart;
-		const segLen = (buf[i] << 8) | buf[i + 1];
-		if (segLen < 2) return false;
-		pos += segLen;
-	}
-	return false;
+		// Other markers: continue the walk.
+		return undefined;
+	});
+	return result === true;
 }
 
 /**

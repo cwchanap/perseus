@@ -192,31 +192,60 @@ logs `scanned`, `candidates`, `reaped`, and `errors` counts.
 **Source:** `apps/api/src/services/reaper.ts`,
 `apps/api/src/worker.ts` (scheduled handler).
 
-### Out of scope: avatar versioned-key orphans
+### Avatar versioned-key orphans (automated GC)
 
-The reaper does **not** sweep avatar objects. Each player-avatar upload
-writes to a versioned key (`avatars/{playerId}/{token}`); D1's
-`avatarUpdateToken` selects which version the serve route reads. After a
-successful upload, the route re-reads D1 and deletes whichever versioned
-object is definitively no longer authoritative — the previous token's
-object if this upload is still authoritative, or this upload's own object
-if a concurrent upload overwrote it. If that best-effort delete fails
-transiently (R2 unavailable), the superseded object lingers — it is not
-reachable by the serve route (which reads only the D1-selected token's
-key), so this is a storage-cost concern, not a correctness or security
-concern. There is **no automated sweep**; lingering versioned objects
-accumulate until manual cleanup:
+The reaper sweeps avatar objects via `reapOrphanedAvatars`
+(`apps/api/src/services/reaper.ts`). Each player-avatar upload writes to
+a versioned key (`avatars/{playerId}/{token}`); D1's `avatarUpdateToken`
+selects which version the serve route reads. After a successful upload,
+the route re-reads D1 and deletes whichever versioned object is
+definitively no longer authoritative — the previous token's object if
+this upload is still authoritative, or this upload's own object if a
+concurrent upload overwrote it. Concurrent overlapping uploads can still
+orphan a loser's object (the authority check is a TOCTOU window, and
+first-time concurrent uploads that both read `null` skip cleanup
+entirely). The reaper closes that gap with delayed GC.
 
-```sh
-wrangler r2 object list PUZZLES_BUCKET --prefix 'avatars/' | \
-  awk '{print $4}' | xargs -I{} wrangler r2 object delete PUZZLES_BUCKET/{}
-```
+**Behavior:**
 
-Run this only if R2 listing shows accumulated versioned orphans have
-become material. The legacy unversioned key (`avatars/{playerId}`) is
-kept as a fallback for avatars uploaded before the versioned-key
-migration — do not delete it unless every player has re-uploaded since
-the migration.
+- Lists all objects under `avatars/`, batch-queries D1 for each player's
+  authoritative `avatarUpdateToken`, and deletes any versioned object
+  whose token is not authoritative AND whose age exceeds
+  `AVATAR_GC_AGE_MS` (1 hour). The age threshold ensures in-flight
+  uploads have completed before their objects are considered garbage.
+- Processes at most `AVATAR_GC_BATCH_LIMIT` (200) deletions per run via
+  a rotating batch starting at a persisted cursor
+  (`orphaned-avatars`), so persistently-failing objects don't starve
+  later orphans.
+- **Fail-closed on D1 unavailability:** if D1 is unreachable, the reaper
+  skips all deletion and records an `avatar-gc-d1-unavailable` detail —
+  it cannot determine which objects are orphaned without the
+  authoritative token. A future run catches them once D1 recovers.
+- The legacy unversioned key (`avatars/{playerId}`) is **never deleted**;
+  it serves as the D1-unavailable fallback in the serve route.
+
+**Detail actions** in `result.details`:
+
+- `avatar-gc-reaped` — object deleted successfully.
+- `avatar-gc-delete-failed` — R2 delete threw; `error` field has details.
+- `avatar-gc-d1-unavailable` — D1 query failed; no deletions attempted.
+
+**Monitoring:** check Worker logs for `Reaper avatar GC:` messages and
+the scheduled run's `scanned`/`candidates`/`reaped`/`errors` counts.
+
+**Source:** `apps/api/src/services/reaper.ts` (`reapOrphanedAvatars`),
+`apps/api/src/worker.ts` (scheduled handler).
+
+**Manual cleanup:** the automated sweep makes manual cleanup unnecessary
+in normal operation. If a manual sweep is ever required (e.g. D1 was
+unavailable for an extended period and orphans accumulated beyond what
+the rotating batch reclaims quickly), use a token-aware, dry-run-first
+procedure: list `avatars/` objects, cross-reference each
+`avatars/{playerId}/{token}` against D1's `avatarUpdateToken`, and
+delete only objects whose token is not authoritative AND whose age
+exceeds `AVATAR_GC_AGE_MS`. Never bulk-delete the entire `avatars/`
+prefix — the legacy unversioned key and any authoritative versioned
+keys must be preserved.
 
 ---
 

@@ -5,12 +5,12 @@
 // bundles a minimal worker (via esbuild) that imports validateImageEndMarker
 // from the shared package and runs it inside a real workerd instance via
 // Miniflare. It verifies:
-//   1. A valid image decodes successfully via Photon (requireFullDecode: true
+//   1. A valid PNG decodes successfully via Photon (requireFullDecode: true
 //      returns true).
-//   2. A corrupt/truncated image is rejected (requireFullDecode: true returns
-//      false).
-//   3. requireFullDecode: true fails closed when no decoder is available
-//      (simulated by passing an unknown MIME type that no decoder handles).
+//   2. Non-image bytes are rejected via Photon decode failure
+//      (requireFullDecode: true returns false).
+//   3. A valid PNG returns true without requireFullDecode (the structural
+//      fallback is not needed when Photon decodes successfully).
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Miniflare } from 'miniflare';
@@ -30,10 +30,6 @@ const REAL_PNG = new Uint8Array(
 		'base64'
 	)
 );
-
-// Random bytes — not a valid image. Photon will fail to decode and
-// boundedDecode returns false. This verifies the Worker path rejects
-// non-image payloads rather than silently accepting them.
 
 let mf: Miniflare;
 

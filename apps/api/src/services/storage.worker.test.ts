@@ -1225,7 +1225,7 @@ describe('listPuzzlesPage — cursor fallback', () => {
 	it('falls back to isAfterCursor when cursor item is not in the filtered set', async () => {
 		// Cursor points to a puzzle that was deleted or changed status, so
 		// findIndex returns -1. The code falls back to filtering with
-		// isAfterCursor (line 545).
+		// isAfterCursor.
 		const kv = createMockKV();
 		// Three ready puzzles; cursor points to a deleted one between p1 and p2.
 		kv._store.set('puzzle:p1', JSON.stringify(makeReadyPuzzle({ id: 'p1', createdAt: 3000 })));

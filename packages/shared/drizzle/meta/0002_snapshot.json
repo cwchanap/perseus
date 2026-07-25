@@ -2,7 +2,7 @@
 	"version": "6",
 	"dialect": "sqlite",
 	"id": "feb806b8-d6f3-23fe-b169-0566a49285b3",
-	"prevId": "a1b2c3d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+	"prevId": "6e6b92d4-4e95-4b36-8aeb-d7a2e4920f46",
 	"tables": {
 		"player_profiles": {
 			"name": "player_profiles",
