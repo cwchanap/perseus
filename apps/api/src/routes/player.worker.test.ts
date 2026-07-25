@@ -26,6 +26,10 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	const statsStore = new Map<string, unknown[]>();
 	return {
 		...actual,
+		// Mock validateImageEndMarker so the synthetic PNG_BYTES fixture
+		// (valid headers but not decodable) passes validation. The real
+		// function has dedicated unit tests in packages/shared.
+		validateImageEndMarker: vi.fn().mockResolvedValue(true),
 		// Exposed for test-only reset between cases.
 		__store: store,
 		__puzzlesStore: puzzlesStore,
@@ -93,6 +97,7 @@ import player from './player.worker';
 import type { Env } from '../worker';
 import * as playerAuth from '../services/player-auth.worker';
 import type { PlayerSessionRecord } from '../services/player-auth.worker';
+import { validateImageEndMarker } from '@perseus/shared';
 
 const TEST_PLAYER: PlayerSessionRecord = {
 	user: {
@@ -549,7 +554,11 @@ describe('player avatar route (Worker)', () => {
 		// A PNG with a valid IHDR header but no IEND chunk passes
 		// parseImageDimensions but should be rejected by
 		// validateImageEndMarker — a truncated image would render broken
-		// for the player.
+		// for the player. The mock defaults to true (so normal avatar
+		// uploads pass); override it to false here to test the rejection
+		// path. The real validateImageEndMarker has dedicated unit tests
+		// in packages/shared/src/__tests__/image.test.ts.
+		vi.mocked(validateImageEndMarker).mockResolvedValueOnce(false);
 		const { bucket } = createMockBucket();
 		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
 		// PNG_BYTES without the last 12 bytes (IEND chunk)

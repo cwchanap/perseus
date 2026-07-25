@@ -269,10 +269,11 @@ export async function parseImageDimensions(
 // creation.
 //
 // The primary validation is a bounded decode via the runtime's native
-// image decoder (createImageBitmap in Cloudflare Workers, Bun.Image in
-// Bun). A successful decode proves the image is complete and valid —
-// stronger than structural marker checks, which only verify marker
-// presence without validating payload boundaries, CRC correctness, or
+// image decoder (Bun.Image in Bun; createImageBitmap in runtimes that
+// expose it, e.g. browsers; @cf-wasm/photon in Cloudflare Workers). A
+// successful decode proves the image is complete and valid — stronger
+// than structural marker checks, which only verify marker presence
+// without validating payload boundaries, CRC correctness, or
 // decodability. The structural scanners are retained as a fallback for
 // environments where no native decoder is available.
 //
@@ -430,13 +431,20 @@ async function webpHasImageChunk(file: BlobLike, riffBoundary: number): Promise<
  *   false — decode failed (image is corrupt)
  *   null  — no native decoder available (caller should fall back to structural)
  *
- * In Cloudflare Workers, uses createImageBitmap (Web API global). In Bun,
- * uses Bun.Image with a terminal call (bytes()) to force a full decode —
- * metadata() only reads the header and would not catch corrupt image data.
+ * Decoder selection order:
+ * 1. createImageBitmap — browsers and runtimes that expose the Web
+ *    ImageBitmap API. As of this writing Cloudflare Workers does NOT expose
+ *    createImageBitmap.
+ * 2. Bun.Image — Bun runtime. Uses a terminal call (bytes()) to force a
+ *    full decode; metadata() only reads the header.
+ * 3. @cf-wasm/photon — WebAssembly image decoder that works in Cloudflare
+ *    Workers. Loaded via dynamic import so the WASM module is only bundled
+ *    by apps that actually call this code path. If the package is not
+ *    installed the import fails and we fall through to structural validation.
  * The decode is bounded by the caller's MAX_FILE_SIZE check (already
  * performed before this function is called) and the runtime's CPU limit.
  */
-async function boundedDecode(file: BlobLike): Promise<boolean | null> {
+async function boundedDecode(file: BlobLike, mimeType: string): Promise<boolean | null> {
 	let bytes: ArrayBuffer;
 	try {
 		bytes = await file.arrayBuffer();
@@ -444,13 +452,25 @@ async function boundedDecode(file: BlobLike): Promise<boolean | null> {
 		return false;
 	}
 
-	// Cloudflare Workers path: createImageBitmap is a global that decodes
-	// the full image. Throws on corrupt/truncated input.
-	const createImageBitmapFn = (globalThis as { createImageBitmap?: unknown }).createImageBitmap;
+	// createImageBitmap path: available in browsers and any runtime that
+	// exposes the Web ImageBitmap API. The spec requires a Blob (or other
+	// ImageBitmapSource), NOT a raw ArrayBuffer — passing ArrayBuffer is
+	// rejected by spec-compliant implementations. Wrap in a Blob with the
+	// sniffed MIME type so the decoder selects the right codec. Throws on
+	// corrupt/truncated input. Close the bitmap to release memory promptly.
+	type ImageBitmapLike = { close(): void };
+	const createImageBitmapFn = (
+		globalThis as { createImageBitmap?: (input: Blob) => Promise<ImageBitmapLike> }
+	).createImageBitmap;
 	if (typeof createImageBitmapFn === 'function') {
+		const blob = new Blob([bytes], { type: mimeType });
 		try {
-			await (createImageBitmapFn as (input: ArrayBuffer) => Promise<unknown>)(bytes);
-			return true;
+			const bitmap = await createImageBitmapFn(blob);
+			try {
+				return true;
+			} finally {
+				bitmap.close();
+			}
 		} catch {
 			return false;
 		}
@@ -469,6 +489,40 @@ async function boundedDecode(file: BlobLike): Promise<boolean | null> {
 		} catch {
 			return false;
 		}
+	}
+
+	// @cf-wasm/photon path: a WebAssembly image decoder that works in
+	// Cloudflare Workers (where neither createImageBitmap nor Bun.Image is
+	// available). PhotonImage.new_from_byteslice() calls image::load_from_memory
+	// under the hood, which fully decodes the image into a pixel buffer —
+	// proving the image is complete and valid. Throws on corrupt/truncated
+	// input. The dynamic import resolves from the consuming app's node_modules;
+	// if the package is not installed the import rejects and we fall through
+	// to structural validation (return null). The WASM module is ~1.6 MB
+	// uncompressed but is only bundled by apps that reach this code path.
+	type PhotonImageLike = { get_width(): number; free(): void };
+	type PhotonModuleLike = {
+		PhotonImage: { new_from_byteslice(vec: Uint8Array): PhotonImageLike };
+	};
+	try {
+		const photon = (await import('@cf-wasm/photon')) as PhotonModuleLike;
+		if (photon?.PhotonImage) {
+			try {
+				const image = photon.PhotonImage.new_from_byteslice(new Uint8Array(bytes));
+				try {
+					// get_width() forces the decode to complete and confirms
+					// the image has valid dimensions.
+					const w = image.get_width();
+					return w > 0;
+				} finally {
+					image.free();
+				}
+			} catch {
+				return false;
+			}
+		}
+	} catch {
+		// @cf-wasm/photon not installed — fall through to structural validation
 	}
 
 	return null;
@@ -564,7 +618,7 @@ export async function validateImageEndMarker(file: BlobLike, mimeType: string): 
 	// decode proves the image is complete and valid — stronger than structural
 	// marker checks, which only verify marker presence without validating
 	// payload boundaries, CRC correctness, or decodability.
-	const decoded = await boundedDecode(file);
+	const decoded = await boundedDecode(file, mimeType);
 	if (decoded !== null) return decoded;
 	// Fallback: structural validation when no native decoder is available.
 	return validateImageStructural(file, mimeType);

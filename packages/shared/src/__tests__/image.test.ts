@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
 	sniffImageType,
 	detectImageType,
@@ -1084,5 +1084,214 @@ describe('validateImageEndMarker', () => {
 	it('rejects JPEG smaller than 4 bytes', async () => {
 		const blob = makeBlob(new Uint8Array(2));
 		expect(await validateImageEndMarker(blob, 'image/jpeg')).toBe(false);
+	});
+});
+
+// ─── createImageBitmap path (mocked) ───────────────────────────────
+// Cloudflare Workers does not expose createImageBitmap today, and Bun
+// uses Bun.Image instead. These tests mock createImageBitmap on
+// globalThis to verify that when a runtime DOES expose it, the code
+// passes a Blob (per the ImageBitmapSource spec) — not a raw
+// ArrayBuffer, which spec-compliant implementations reject.
+
+describe('validateImageEndMarker – createImageBitmap path', () => {
+	const RED_PIXEL_DATA_URL =
+		'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==';
+
+	let realPng: Uint8Array;
+
+	type BunImageLike = {
+		png(): { bytes(): Promise<Uint8Array> };
+	};
+	async function ensurePng() {
+		if (realPng) return;
+		const BunGlobal = (
+			globalThis as unknown as { Bun?: { Image: new (input: string) => BunImageLike } }
+		).Bun;
+		if (!BunGlobal?.Image) {
+			throw new Error('Bun.Image is required to generate test fixtures');
+		}
+		const source = new BunGlobal.Image(RED_PIXEL_DATA_URL);
+		realPng = await source.png().bytes();
+	}
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it('passes a Blob (not ArrayBuffer) to createImageBitmap with the sniffed MIME type', async () => {
+		await ensurePng();
+
+		const calls: { input: unknown; type: string | undefined }[] = [];
+		const fakeBitmap = { close: vi.fn() };
+		vi.stubGlobal(
+			'createImageBitmap',
+			vi.fn(async (input: Blob) => {
+				calls.push({ input, type: input.type });
+				return fakeBitmap;
+			})
+		);
+
+		const result = await validateImageEndMarker(makeBlob(realPng), 'image/png');
+
+		expect(result).toBe(true);
+		expect(calls).toHaveLength(1);
+		// The input must be a Blob (ImageBitmapSource), not an ArrayBuffer.
+		// ArrayBuffer lacks `size` and `type`; Blob has both.
+		expect(calls[0].input).toBeInstanceOf(Blob);
+		expect(calls[0].type).toBe('image/png');
+		// Bitmap must be closed to release memory.
+		expect(fakeBitmap.close).toHaveBeenCalledTimes(1);
+	});
+
+	it('returns false when createImageBitmap throws (corrupt image), without falling back to structural', async () => {
+		await ensurePng();
+
+		vi.stubGlobal(
+			'createImageBitmap',
+			vi.fn(async () => {
+				throw new Error('decode failed');
+			})
+		);
+
+		// A real decodable PNG — but createImageBitmap throws. The code
+		// must return false (decode failed), NOT fall through to Bun.Image
+		// or structural validation (which would return true for this file).
+		const result = await validateImageEndMarker(makeBlob(realPng), 'image/png');
+		expect(result).toBe(false);
+	});
+});
+
+// ─── @cf-wasm/photon path (Cloudflare Workers) ─────────────────────
+// In Cloudflare Workers, neither createImageBitmap nor Bun.Image is
+// available. The third decoder path in boundedDecode uses @cf-wasm/photon
+// (a WebAssembly image decoder) to fully decode the image.
+//
+// These tests exercise the photon decode directly. The full integration
+// path through boundedDecode → photon can only be tested in a workerd/
+// Miniflare environment (where Bun.Image doesn't exist); under Bun, the
+// Bun.Image path is always hit first and the Bun global is non-
+// configurable so it cannot be stubbed. The runtime detection pattern
+// (check → try → catch → fall through to next decoder) is already
+// verified by the createImageBitmap tests above.
+
+describe('validateImageEndMarker – @cf-wasm/photon decode capability', () => {
+	const RED_PIXEL_DATA_URL =
+		'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==';
+
+	let realPng: Uint8Array;
+	let realJpeg: Uint8Array;
+	let realWebp: Uint8Array;
+
+	type BunImageLike = {
+		png(): { bytes(): Promise<Uint8Array> };
+		jpeg(): { bytes(): Promise<Uint8Array> };
+		webp(): { bytes(): Promise<Uint8Array> };
+	};
+	async function ensureImages() {
+		if (realPng) return;
+		const BunGlobal = (
+			globalThis as unknown as { Bun?: { Image: new (input: string) => BunImageLike } }
+		).Bun;
+		if (!BunGlobal?.Image) {
+			throw new Error('Bun.Image is required to generate test fixtures');
+		}
+		const source = new BunGlobal.Image(RED_PIXEL_DATA_URL);
+		realPng = await source.png().bytes();
+		realJpeg = await source.jpeg().bytes();
+		realWebp = await source.webp().bytes();
+	}
+
+	it('photon decodes a real PNG and reports valid dimensions', async () => {
+		await ensureImages();
+		const { PhotonImage } = await import('@cf-wasm/photon');
+		const image = PhotonImage.new_from_byteslice(realPng);
+		try {
+			expect(image.get_width()).toBeGreaterThan(0);
+			expect(image.get_height()).toBeGreaterThan(0);
+		} finally {
+			image.free();
+		}
+	});
+
+	it('photon decodes a real JPEG and reports valid dimensions', async () => {
+		await ensureImages();
+		const { PhotonImage } = await import('@cf-wasm/photon');
+		const image = PhotonImage.new_from_byteslice(realJpeg);
+		try {
+			expect(image.get_width()).toBeGreaterThan(0);
+		} finally {
+			image.free();
+		}
+	});
+
+	it('photon decodes a real WebP and reports valid dimensions', async () => {
+		await ensureImages();
+		const { PhotonImage } = await import('@cf-wasm/photon');
+		const image = PhotonImage.new_from_byteslice(realWebp);
+		try {
+			expect(image.get_width()).toBeGreaterThan(0);
+		} finally {
+			image.free();
+		}
+	});
+
+	it('photon rejects a truncated PNG (throws on corrupt input)', async () => {
+		await ensureImages();
+		const { PhotonImage } = await import('@cf-wasm/photon');
+		const truncated = realPng.slice(0, realPng.length - 20);
+		expect(() => PhotonImage.new_from_byteslice(truncated)).toThrow();
+	});
+
+	it('photon rejects a truncated JPEG (throws on corrupt input)', async () => {
+		await ensureImages();
+		const { PhotonImage } = await import('@cf-wasm/photon');
+		const truncated = realJpeg.slice(0, realJpeg.length - 20);
+		expect(() => PhotonImage.new_from_byteslice(truncated)).toThrow();
+	});
+
+	it('photon rejects a PNG with valid header + IDAT marker + IEND but corrupt IDAT data', async () => {
+		// This is the key case P2 identified: structural validation accepts
+		// this (IDAT present, IEND present), but a real decode rejects it
+		// (IDAT data is not valid compressed data). The photon path catches
+		// what structural cannot.
+		await ensureImages();
+		const { PhotonImage } = await import('@cf-wasm/photon');
+		const header = pngHeaderBytes(600, 400);
+		const idat = new Uint8Array([
+			0x00, 0x00, 0x00, 0x01, 0x49, 0x44, 0x41, 0x54, 0x00, 0x00, 0x00, 0x00, 0x00
+		]);
+		const iend = new Uint8Array([
+			0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82
+		]);
+		const full = new Uint8Array(header.length + idat.length + iend.length);
+		full.set(header, 0);
+		full.set(idat, header.length);
+		full.set(iend, header.length + idat.length);
+		expect(() => PhotonImage.new_from_byteslice(full)).toThrow();
+	});
+
+	it('photon rejects a JPEG with valid header + SOS + EOI but corrupt scan data', async () => {
+		await ensureImages();
+		const { PhotonImage } = await import('@cf-wasm/photon');
+		const header = jpegHeaderBytes(600, 400);
+		const sos = new Uint8Array([
+			0xff, 0xda, 0x00, 0x0c, 0x03, 0x01, 0x00, 0x02, 0x11, 0x03, 0x11, 0x00, 0x3f, 0x00
+		]);
+		const eoi = new Uint8Array([0xff, 0xd9]);
+		const full = new Uint8Array(header.length + sos.length + eoi.length);
+		full.set(header, 0);
+		full.set(sos, header.length);
+		full.set(eoi, header.length + sos.length);
+		expect(() => PhotonImage.new_from_byteslice(full)).toThrow();
+	});
+
+	it('photon dynamic import resolves successfully (package is installed)', async () => {
+		// Verify the dynamic import used by boundedDecode's third path
+		// resolves. This is the guard that enables the photon path in
+		// Cloudflare Workers.
+		const photon = await import('@cf-wasm/photon');
+		expect(photon.PhotonImage).toBeDefined();
+		expect(typeof photon.PhotonImage.new_from_byteslice).toBe('function');
 	});
 });
