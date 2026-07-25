@@ -8,8 +8,7 @@ import {
 	REAP_AFTER_MS,
 	REAP_BATCH_LIMIT,
 	AVATAR_GC_AGE_MS,
-	AVATAR_GC_BATCH_LIMIT,
-	AVATAR_GC_MAX_PAGES
+	AVATAR_GC_BATCH_LIMIT
 } from '../reaper';
 
 // Mock storage.worker functions
@@ -1640,14 +1639,26 @@ describe('reapOrphanedAvatars', () => {
 
 	function makeAvatarEnv(objects: Array<{ key: string; uploaded: number }>) {
 		const deleteFn = vi.fn(async () => undefined);
+		const allObjects = objects.map((o) => r2Object(o.key, o.uploaded));
+		// Simulate R2 list pagination: honor `limit` and `cursor`, returning
+		// a truncated page with a continuation cursor when more objects
+		// remain. The cursor is a numeric offset string, which is sufficient
+		// for tests — the reaper treats it as opaque.
 		return {
 			...makeEnv(),
 			PUZZLES_BUCKET: {
-				list: vi.fn(async () => ({
-					objects: objects.map((o) => r2Object(o.key, o.uploaded)),
-					truncated: false,
-					cursor: undefined
-				})),
+				list: vi.fn(async (opts: { limit?: number; cursor?: string } = {}) => {
+					const limit = opts.limit ?? 1000;
+					const offset = opts.cursor ? parseInt(opts.cursor, 10) : 0;
+					const slice = allObjects.slice(offset, offset + limit);
+					const nextOffset = offset + slice.length;
+					const truncated = nextOffset < allObjects.length && slice.length === limit;
+					return {
+						objects: slice,
+						truncated,
+						cursor: truncated ? String(nextOffset) : undefined
+					};
+				}),
 				delete: deleteFn
 			} as any
 		} as any;
@@ -1757,7 +1768,11 @@ describe('reapOrphanedAvatars', () => {
 		expect(env.PUZZLES_BUCKET.delete).not.toHaveBeenCalledWith('avatars/p2/token-D');
 	});
 
-	it('respects AVATAR_GC_BATCH_LIMIT', async () => {
+	it('respects AVATAR_GC_BATCH_LIMIT (bounds list + deletes per run)', async () => {
+		// More orphans than AVATAR_GC_BATCH_LIMIT. The reaper lists one page
+		// of AVATAR_GC_BATCH_LIMIT objects per run and processes every
+		// eligible orphan in that page, so the first run reaps exactly
+		// AVATAR_GC_BATCH_LIMIT and persists the R2 cursor for the rest.
 		const objects = Array.from({ length: AVATAR_GC_BATCH_LIMIT + 5 }, (_, i) => ({
 			key: `avatars/p1/token-${i}`,
 			uploaded: OLD
@@ -1766,9 +1781,19 @@ describe('reapOrphanedAvatars', () => {
 		// No authoritative token — all are orphans
 		(getAvatarTokensByPlayerIds as any).mockResolvedValue(new Map());
 		const result = await reapOrphanedAvatars(env, NOW);
-		expect(result.candidates).toBe(objects.length);
+		expect(result.scanned).toBe(AVATAR_GC_BATCH_LIMIT);
+		expect(result.candidates).toBe(AVATAR_GC_BATCH_LIMIT);
 		expect(result.reaped).toBe(AVATAR_GC_BATCH_LIMIT);
 		expect(env.PUZZLES_BUCKET.delete).toHaveBeenCalledTimes(AVATAR_GC_BATCH_LIMIT);
+		// The list must be bounded by AVATAR_GC_BATCH_LIMIT.
+		expect(env.PUZZLES_BUCKET.list).toHaveBeenCalledWith({
+			prefix: 'avatars/',
+			cursor: undefined,
+			limit: AVATAR_GC_BATCH_LIMIT
+		});
+		// Remaining objects → cursor persisted for the next run.
+		const kvStore = (env.PUZZLE_METADATA as any)._store as Map<string, string>;
+		expect(kvStore.has('reaper:cursor:orphaned-avatars-r2')).toBe(true);
 	});
 
 	it('handles R2 delete failure gracefully (records error, continues)', async () => {
@@ -1787,31 +1812,48 @@ describe('reapOrphanedAvatars', () => {
 		expect(result.details.some((d) => d.action === 'avatar-gc-delete-failed')).toBe(true);
 	});
 
-	it('handles R2 list pagination (truncated=true)', async () => {
-		const page1 = [
-			{ key: 'avatars/p1/token-A', uploaded: OLD },
-			{ key: 'avatars/p1/token-B', uploaded: OLD }
-		];
-		const page2 = [{ key: 'avatars/p2/token-C', uploaded: OLD }];
-		let callCount = 0;
+	it('lists one page per run and persists the cursor when truncated', async () => {
+		// A truncated page must persist the R2 cursor so the next run
+		// resumes. The reaper must make exactly ONE list call per run —
+		// listing multiple pages per run would re-introduce the starvation
+		// gap (R2 cursor advancing past unprocessed orphans).
 		const env = {
 			...makeEnv(),
 			PUZZLES_BUCKET: {
-				list: vi.fn(async () => {
-					callCount++;
-					if (callCount === 1) {
-						return {
-							objects: page1.map((o) => r2Object(o.key, o.uploaded)),
-							truncated: true,
-							cursor: 'next-page'
-						};
-					}
-					return {
-						objects: page2.map((o) => r2Object(o.key, o.uploaded)),
-						truncated: false,
-						cursor: undefined
-					};
-				}),
+				list: vi.fn(async () => ({
+					objects: [r2Object('avatars/p1/token-A', OLD)],
+					truncated: true,
+					cursor: 'next-page'
+				})),
+				delete: vi.fn(async () => undefined)
+			} as any
+		} as any;
+		(getAvatarTokensByPlayerIds as any).mockResolvedValue(new Map());
+		const result = await reapOrphanedAvatars(env, NOW);
+		expect(env.PUZZLES_BUCKET.list).toHaveBeenCalledTimes(1);
+		expect(result.scanned).toBe(1);
+		expect(result.reaped).toBe(1);
+		const kvStore = (env.PUZZLE_METADATA as any)._store as Map<string, string>;
+		expect(kvStore.get('reaper:cursor:orphaned-avatars-r2')).toBe('next-page');
+	});
+
+	it('processes every orphan in a truncated page before advancing the cursor', async () => {
+		// A truncated page with multiple orphans: every orphan in the page
+		// must be deleted in this run. The cursor advances only past this
+		// one page, so none of these orphans are deferred to a future sweep.
+		const page = [
+			{ key: 'avatars/p1/token-A', uploaded: OLD },
+			{ key: 'avatars/p1/token-B', uploaded: OLD },
+			{ key: 'avatars/p2/token-C', uploaded: OLD }
+		];
+		const env = {
+			...makeEnv(),
+			PUZZLES_BUCKET: {
+				list: vi.fn(async () => ({
+					objects: page.map((o) => r2Object(o.key, o.uploaded)),
+					truncated: true,
+					cursor: 'next-page'
+				})),
 				delete: vi.fn(async () => undefined)
 			} as any
 		} as any;
@@ -1820,40 +1862,15 @@ describe('reapOrphanedAvatars', () => {
 		expect(result.scanned).toBe(3);
 		expect(result.candidates).toBe(3);
 		expect(result.reaped).toBe(3);
-		expect(env.PUZZLES_BUCKET.list).toHaveBeenCalledTimes(2);
-	});
-
-	it('bounds R2 listing to AVATAR_GC_MAX_PAGES and persists the cursor', async () => {
-		// Each list call returns truncated=true so the reaper would list
-		// forever without the page bound. Verify it stops after
-		// AVATAR_GC_MAX_PAGES calls and persists the cursor for the next run.
-		let callCount = 0;
-		const env = {
-			...makeEnv(),
-			PUZZLES_BUCKET: {
-				list: vi.fn(async () => {
-					callCount++;
-					return {
-						objects: [r2Object(`avatars/p1/token-${callCount}`, OLD)],
-						truncated: true,
-						cursor: `cursor-${callCount}`
-					};
-				}),
-				delete: vi.fn(async () => undefined)
-			} as any
-		} as any;
-		(getAvatarTokensByPlayerIds as any).mockResolvedValue(new Map());
-		const result = await reapOrphanedAvatars(env, NOW);
-		expect(env.PUZZLES_BUCKET.list).toHaveBeenCalledTimes(AVATAR_GC_MAX_PAGES);
-		expect(result.scanned).toBe(AVATAR_GC_MAX_PAGES);
-		// The cursor must be persisted so the next run resumes.
+		expect(env.PUZZLES_BUCKET.delete).toHaveBeenCalledTimes(3);
+		// Cursor persisted for the next page.
 		const kvStore = (env.PUZZLE_METADATA as any)._store as Map<string, string>;
-		expect(kvStore.get('reaper:cursor:orphaned-avatars-r2')).toBe(`cursor-${AVATAR_GC_MAX_PAGES}`);
+		expect(kvStore.get('reaper:cursor:orphaned-avatars-r2')).toBe('next-page');
 	});
 
 	it('resumes R2 listing from the persisted cursor on the next run', async () => {
 		// Pre-seed the cursor so the first list call receives it. Verify
-		// the reaper passes the stored cursor to R2.list.
+		// the reaper passes the stored cursor (and the limit) to R2.list.
 		const env = {
 			...makeEnv(),
 			PUZZLES_BUCKET: {
@@ -1871,34 +1888,24 @@ describe('reapOrphanedAvatars', () => {
 		await reapOrphanedAvatars(env, NOW);
 		expect(env.PUZZLES_BUCKET.list).toHaveBeenCalledWith({
 			prefix: 'avatars/',
-			cursor: 'resumed-cursor'
+			cursor: 'resumed-cursor',
+			limit: AVATAR_GC_BATCH_LIMIT
 		});
 		// Listing completed (truncated=false) → cursor must be cleared.
 		expect(kvStore.has('reaper:cursor:orphaned-avatars-r2')).toBe(false);
 	});
 
-	it('clears the R2 cursor when the listing completes within the page bound', async () => {
-		// Listing completes on page 2 (truncated=false). The cursor must be
-		// cleared so the next run starts a fresh sweep from the beginning.
-		let callCount = 0;
+	it('clears the R2 cursor when the page is not truncated', async () => {
+		// A single non-truncated page completes the sweep for this run. The
+		// cursor must be cleared so the next run starts a fresh sweep.
 		const env = {
 			...makeEnv(),
 			PUZZLES_BUCKET: {
-				list: vi.fn(async () => {
-					callCount++;
-					if (callCount === 1) {
-						return {
-							objects: [r2Object('avatars/p1/token-A', OLD)],
-							truncated: true,
-							cursor: 'next-page'
-						};
-					}
-					return {
-						objects: [r2Object('avatars/p2/token-B', OLD)],
-						truncated: false,
-						cursor: undefined
-					};
-				}),
+				list: vi.fn(async () => ({
+					objects: [r2Object('avatars/p1/token-A', OLD)],
+					truncated: false,
+					cursor: undefined
+				})),
 				delete: vi.fn(async () => undefined)
 			} as any
 		} as any;
@@ -1929,7 +1936,9 @@ describe('reapOrphanedAvatars', () => {
 	// all deletion — so orphaned avatar objects would accumulate indefinitely.
 	// The chunking fix is unit-tested in repositories.test.ts; this test
 	// verifies the reaper correctly handles >100 players end-to-end: orphaned
-	// objects are collected and authoritative objects are preserved.
+	// objects are collected and authoritative objects are preserved. The list
+	// is bounded to AVATAR_GC_BATCH_LIMIT per run, so a full sweep requires
+	// multiple runs (240 objects / 200 per run = 2 runs).
 	it('handles >100 distinct players (orphans collected, authoritative preserved)', async () => {
 		const objects: Array<{ key: string; uploaded: number }> = [];
 		const authoritativeMap = new Map<string, string | null>();
@@ -1941,10 +1950,22 @@ describe('reapOrphanedAvatars', () => {
 		}
 		const env = makeAvatarEnv(objects);
 		(getAvatarTokensByPlayerIds as any).mockResolvedValue(authoritativeMap);
-		const result = await reapOrphanedAvatars(env, NOW);
-		// Every player has one orphan object (token-orphan) — 120 total.
-		expect(result.candidates).toBe(120);
-		expect(result.reaped).toBe(120);
+		const kvStore = (env.PUZZLE_METADATA as any)._store as Map<string, string>;
+		// Run the reaper repeatedly until the sweep completes (cursor cleared).
+		// Each run lists one page of AVATAR_GC_BATCH_LIMIT objects and
+		// processes every eligible orphan in that page.
+		let totalReaped = 0;
+		let runs = 0;
+		while (runs < 10) {
+			const result = await reapOrphanedAvatars(env, NOW);
+			totalReaped += result.reaped;
+			runs++;
+			if (!kvStore.has('reaper:cursor:orphaned-avatars-r2')) break;
+		}
+		// Every player has one orphan object (token-orphan) — 120 total,
+		// reaped across 2 runs (200 objects then 40).
+		expect(runs).toBe(2);
+		expect(totalReaped).toBe(120);
 		// Authoritative objects must NOT be deleted.
 		for (let i = 0; i < 120; i++) {
 			expect(env.PUZZLES_BUCKET.delete).not.toHaveBeenCalledWith(`avatars/p${i}/token-auth`);
@@ -1952,6 +1973,45 @@ describe('reapOrphanedAvatars', () => {
 		// Orphan objects must be deleted.
 		for (let i = 0; i < 120; i++) {
 			expect(env.PUZZLES_BUCKET.delete).toHaveBeenCalledWith(`avatars/p${i}/token-orphan`);
+		}
+	});
+
+	// Regression: the previous two-cursor design listed up to 10 R2 pages per
+	// run but only deleted 200 orphans via a separate numeric cursor. The R2
+	// cursor advanced past the entire window, so unselected orphans in that
+	// window were not revisited until the full scan wrapped — and the numeric
+	// cursor was then applied to a different orphan array, starving them
+	// indefinitely. This test verifies the single-cursor fix: with more
+	// orphans than fit in one page, every orphan is reaped across successive
+	// runs, with no orphan left behind regardless of position in the bucket.
+	it('reaps every orphan across multiple pages (no starvation)', async () => {
+		// 3 full pages of orphans (AVATAR_GC_BATCH_LIMIT each) + a partial
+		// page. All are orphans (no authoritative token).
+		const totalObjects = AVATAR_GC_BATCH_LIMIT * 3 + 7;
+		const objects = Array.from({ length: totalObjects }, (_, i) => ({
+			key: `avatars/p${i}/token-${i}`,
+			uploaded: OLD
+		}));
+		const env = makeAvatarEnv(objects);
+		(getAvatarTokensByPlayerIds as any).mockResolvedValue(new Map());
+		const kvStore = (env.PUZZLE_METADATA as any)._store as Map<string, string>;
+		const deletedKeys = new Set<string>();
+		env.PUZZLES_BUCKET.delete = vi.fn(async (key: string) => {
+			deletedKeys.add(key);
+		});
+		// Run the reaper repeatedly until the sweep completes.
+		let runs = 0;
+		while (runs < 10) {
+			await reapOrphanedAvatars(env, NOW);
+			runs++;
+			if (!kvStore.has('reaper:cursor:orphaned-avatars-r2')) break;
+		}
+		// 4 runs: 3 full pages + 1 partial page.
+		expect(runs).toBe(4);
+		// Every orphan must be deleted — no starvation.
+		expect(deletedKeys.size).toBe(totalObjects);
+		for (let i = 0; i < totalObjects; i++) {
+			expect(deletedKeys.has(`avatars/p${i}/token-${i}`)).toBe(true);
 		}
 	});
 });

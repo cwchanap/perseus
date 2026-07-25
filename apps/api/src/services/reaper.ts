@@ -64,18 +64,15 @@ export const REAP_BATCH_LIMIT = 50;
  */
 export const AVATAR_GC_AGE_MS = 1 * 60 * 60 * 1000; // 1 hour
 
-/** Limit the number of avatar objects deleted per scheduled run. */
-export const AVATAR_GC_BATCH_LIMIT = 200;
-
 /**
- * Maximum number of R2 list pages fetched per scheduled avatar GC run. Each
- * page returns up to 1000 objects, so this bounds the list calls and memory
- * per run. The R2 list cursor is persisted between runs so the scan resumes
- * where it left off — without it, one run would list the entire avatars/
- * prefix before deleting anything, accumulating excessive R2 list calls and
- * memory as the bucket grows.
+ * Limit the number of avatar objects listed (and thus deleted) per scheduled
+ * run. Acts as the `limit` on the single R2 list call per run: every
+ * eligible orphan in the listed page is processed before the R2 cursor
+ * advances, so this bound guarantees no orphan is starved behind a separate
+ * progression mechanism. The tradeoff is that a full sweep takes more
+ * scheduled runs as the bucket grows.
  */
-export const AVATAR_GC_MAX_PAGES = 10;
+export const AVATAR_GC_BATCH_LIMIT = 200;
 
 // --- Reaper cursor persistence ---
 //
@@ -1134,13 +1131,24 @@ export async function reapOrphanedReservations(env: Env): Promise<ReapResult> {
  * that a future overlapping write can invalidate, and first-time concurrent
  * uploads (both read null) skip cleanup entirely.
  *
- * This reaper closes that gap with delayed GC: it lists versioned avatar
- * objects in R2 (bounded to AVATAR_GC_MAX_PAGES per run, resuming from a
- * persisted R2 list cursor), batch-queries D1 for each player's
- * authoritative token, and deletes any versioned object whose token is
- * not authoritative AND whose age exceeds AVATAR_GC_AGE_MS. The age
- * threshold ensures in-flight uploads have completed before their objects
- * are considered garbage.
+ * This reaper closes that gap with delayed GC: it lists ONE bounded page of
+ * versioned avatar objects in R2 per run (limit = AVATAR_GC_BATCH_LIMIT,
+ * resuming from a persisted R2 list cursor), batch-queries D1 for each
+ * player's authoritative token, and deletes every orphaned object in that
+ * page whose age exceeds AVATAR_GC_AGE_MS. The age threshold ensures
+ * in-flight uploads have completed before their objects are considered
+ * garbage.
+ *
+ * Single progression mechanism: the R2 list cursor is the ONLY cursor. Every
+ * eligible orphan in the listed page is processed before the cursor advances,
+ * so no orphan can be starved behind a separate numeric cursor that advances
+ * past unprocessed objects (the bug the previous two-cursor design had: it
+ * listed up to 10 pages per run but only deleted 200 orphans via a separate
+ * numeric cursor, leaving the rest unvisited until the full scan wrapped —
+ * and the numeric cursor was then applied to a completely different orphan
+ * array). One page per run with `limit: AVATAR_GC_BATCH_LIMIT` bounds list
+ * calls, memory, and deletes per run, and guarantees every listed orphan is
+ * attempted.
  *
  * The legacy unversioned key `avatars/{playerId}` (pre-migration fallback) is
  * never deleted — it serves as the D1-unavailable fallback in the serve route.
@@ -1150,10 +1158,10 @@ export async function reapOrphanedReservations(env: Env): Promise<ReapResult> {
  * runs or runs overlapping with an upload are safe.
  *
  * Bounded listing: the R2 list cursor is persisted in KV between runs so the
- * scan resumes where it left off. When a scan reaches the end of the prefix
- * (page.truncated === false), the cursor is cleared so the next run starts a
- * fresh sweep. This bounds list calls and memory per run regardless of bucket
- * size; the tradeoff is that a full sweep takes multiple scheduled runs.
+ * scan resumes where it left off. When a page is not truncated, the cursor is
+ * cleared so the next run starts a fresh sweep. This bounds list calls and
+ * memory per run regardless of bucket size; the tradeoff is that a full sweep
+ * takes multiple scheduled runs.
  */
 export async function reapOrphanedAvatars(env: Env, now = Date.now()): Promise<ReapResult> {
 	const result: ReapResult = {
@@ -1164,34 +1172,30 @@ export async function reapOrphanedAvatars(env: Env, now = Date.now()): Promise<R
 		details: []
 	};
 
-	// List objects under the avatars/ prefix, bounded to AVATAR_GC_MAX_PAGES
-	// per run. The R2 list cursor is persisted between runs so the scan
-	// resumes where it left off — without it, one run would list the entire
-	// prefix before deleting anything, accumulating excessive R2 list calls
-	// and memory as the bucket grows.
+	// List ONE bounded page of objects under the avatars/ prefix per run.
+	// The R2 list cursor is persisted between runs so the scan resumes where
+	// it left off. Bounding the list to AVATAR_GC_BATCH_LIMIT and processing
+	// every eligible orphan in that page uses a single progression mechanism
+	// — the R2 cursor — so no orphan is starved behind a separate cursor that
+	// advances past unprocessed objects.
 	const R2_CURSOR_NAME = 'orphaned-avatars-r2';
-	const allObjects: Array<{ key: string; uploaded: Date }> = [];
-	let listCursor = await readReaperStringCursor(env.PUZZLE_METADATA, R2_CURSOR_NAME);
-	let pagesListed = 0;
-	let listComplete = false;
-	while (pagesListed < AVATAR_GC_MAX_PAGES) {
-		const page = await env.PUZZLES_BUCKET.list({ prefix: 'avatars/', cursor: listCursor });
-		for (const obj of page.objects) {
-			allObjects.push({ key: obj.key, uploaded: obj.uploaded });
-		}
-		pagesListed++;
-		if (!page.truncated) {
-			listComplete = true;
-			break;
-		}
-		listCursor = page.cursor;
-	}
-	// Persist the cursor for the next run. If the listing completed, clear
-	// the cursor so the next run starts a fresh sweep from the beginning.
+	const listCursor = await readReaperStringCursor(env.PUZZLE_METADATA, R2_CURSOR_NAME);
+	const page = await env.PUZZLES_BUCKET.list({
+		prefix: 'avatars/',
+		cursor: listCursor,
+		limit: AVATAR_GC_BATCH_LIMIT
+	});
+	const allObjects: Array<{ key: string; uploaded: Date }> = page.objects.map((obj) => ({
+		key: obj.key,
+		uploaded: obj.uploaded
+	}));
+	// Persist the cursor for the next run. If the page is not truncated, the
+	// listing reached the end of the prefix — clear the cursor so the next
+	// run starts a fresh sweep from the beginning.
 	await writeReaperStringCursor(
 		env.PUZZLE_METADATA,
 		R2_CURSOR_NAME,
-		listComplete ? undefined : listCursor
+		page.truncated ? page.cursor : undefined
 	);
 	result.scanned = allObjects.length;
 
@@ -1259,15 +1263,15 @@ export async function reapOrphanedAvatars(env: Env, now = Date.now()): Promise<R
 		return result;
 	}
 
-	// Process a rotating page starting at the persisted cursor. The cursor
-	// advances by the page size regardless of individual R2 delete success,
-	// so persistently-failing objects (e.g. a corrupted key that always
-	// errors) don't starve later orphans behind the same prefix.
-	const cursor = await readReaperCursor(env.PUZZLE_METADATA, 'orphaned-avatars');
-	const batch = rotateSlice(orphans, cursor, AVATAR_GC_BATCH_LIMIT);
-
+	// Process every eligible orphan in this page. There is no separate
+	// numeric cursor — the R2 list cursor is the single progression
+	// mechanism, so every orphan in a listed page is attempted before the
+	// scan advances. This closes the starvation gap the previous two-cursor
+	// design had (R2 cursor advancing past unprocessed orphans). The list
+	// `limit` already bounds the page size to AVATAR_GC_BATCH_LIMIT, so the
+	// delete count per run is bounded by construction.
 	await Promise.all(
-		batch.map(async (obj) => {
+		orphans.map(async (obj) => {
 			try {
 				await env.PUZZLES_BUCKET.delete(obj.key);
 				result.reaped++;
@@ -1285,12 +1289,6 @@ export async function reapOrphanedAvatars(env: Env, now = Date.now()): Promise<R
 				});
 			}
 		})
-	);
-
-	await writeReaperCursor(
-		env.PUZZLE_METADATA,
-		'orphaned-avatars',
-		(cursor + batch.length) % orphans.length
 	);
 
 	return result;
