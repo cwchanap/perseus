@@ -202,7 +202,9 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 	// parseImageDimensions only validates the header; without this check a
 	// file with a valid header but missing body/trailer would pass and be
 	// stored as a corrupt avatar that renders broken for the player.
-	const hasEndMarker = await validateImageEndMarker(file, detected);
+	const hasEndMarker = await validateImageEndMarker(file, detected, {
+		requireFullDecode: true
+	});
 	if (!hasEndMarker) {
 		return c.json({ error: 'bad_request', message: 'Image is corrupted or truncated' }, 400);
 	}
