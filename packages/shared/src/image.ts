@@ -613,13 +613,24 @@ export async function validateImageStructural(file: BlobLike, mimeType: string):
 	}
 }
 
-export async function validateImageEndMarker(file: BlobLike, mimeType: string): Promise<boolean> {
+export async function validateImageEndMarker(
+	file: BlobLike,
+	mimeType: string,
+	options: { requireFullDecode?: boolean } = {}
+): Promise<boolean> {
 	// Primary: bounded decode via the runtime's native decoder. A successful
 	// decode proves the image is complete and valid — stronger than structural
 	// marker checks, which only verify marker presence without validating
 	// payload boundaries, CRC correctness, or decodability.
 	const decoded = await boundedDecode(file, mimeType);
 	if (decoded !== null) return decoded;
+	// No native decoder was available. In production upload routes
+	// (requireFullDecode), fail closed — the structural fallback can accept
+	// marker-correct but non-decodable payloads, which is weaker than the
+	// decode proof those routes need before committing the image to R2 and
+	// kicking off the workflow. Non-production callers (tests, local dev)
+	// retain the structural fallback so they work without Photon installed.
+	if (options.requireFullDecode) return false;
 	// Fallback: structural validation when no native decoder is available.
 	return validateImageStructural(file, mimeType);
 }

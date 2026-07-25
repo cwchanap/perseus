@@ -1160,6 +1160,30 @@ describe('validateImageEndMarker – createImageBitmap path', () => {
 		const result = await validateImageEndMarker(makeBlob(realPng), 'image/png');
 		expect(result).toBe(false);
 	});
+
+	it('requireFullDecode: true returns same result as false when a decoder is available', async () => {
+		await ensurePng();
+		// When a decoder is available (createImageBitmap here), the
+		// requireFullDecode option has no effect — the decode result is
+		// returned directly. The option only changes behavior when
+		// boundedDecode returns null (no decoder), where requireFullDecode
+		// fails closed instead of falling back to structural validation.
+		// The null path can't be tested under Bun because Bun.Image is
+		// always present and non-configurable; the workerd Miniflare test
+		// (image.workerd.test.ts) covers the Photon path.
+		vi.stubGlobal(
+			'createImageBitmap',
+			vi.fn(async () => ({ close: vi.fn() }))
+		);
+		const withOption = await validateImageEndMarker(makeBlob(realPng), 'image/png', {
+			requireFullDecode: true
+		});
+		const withoutOption = await validateImageEndMarker(makeBlob(realPng), 'image/png', {
+			requireFullDecode: false
+		});
+		expect(withOption).toBe(true);
+		expect(withoutOption).toBe(true);
+	});
 });
 
 // ─── @cf-wasm/photon path (Cloudflare Workers) ─────────────────────

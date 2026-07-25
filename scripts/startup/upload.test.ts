@@ -311,6 +311,39 @@ describe('uploadWithRetry', () => {
 		expect(posts.length).toBe(3);
 	});
 
+	it('calls sleepFn between retry attempts with exponential backoff', async () => {
+		const sleepCalls: number[] = [];
+		retryConfig.sleepFn = mock(async (ms: number) => {
+			sleepCalls.push(ms);
+		});
+
+		globalThis.fetch = mock(async () => {
+			return new Response('Internal Server Error', { status: 500 });
+		}) as unknown as typeof fetch;
+
+		await expect(
+			uploadWithRetry(
+				'http://localhost:3000',
+				{},
+				'session=abc',
+				new FormData(),
+				'test-puzzle',
+				'test-puzzle\u000048\u00001:1'
+			)
+		).rejects.toThrow('HTTP 500');
+
+		// 3 attempts → 2 sleeps (between attempt 1→2 and 2→3).
+		// No sleep after the final attempt.
+		expect(sleepCalls.length).toBe(2);
+		// Exponential backoff: baseDelayMs * 2^(attempt-1) * jitter(0.8–1.2).
+		// attempt=1: 1000 * 1 * [0.8, 1.2] = [800, 1200]
+		// attempt=2: 1000 * 2 * [0.8, 1.2] = [1600, 2400]
+		expect(sleepCalls[0]).toBeGreaterThanOrEqual(800);
+		expect(sleepCalls[0]).toBeLessThanOrEqual(1200);
+		expect(sleepCalls[1]).toBeGreaterThanOrEqual(1600);
+		expect(sleepCalls[1]).toBeLessThanOrEqual(2400);
+	});
+
 	it('returns immediately on 4xx (non-409) without retrying', async () => {
 		const callLog: string[] = [];
 		globalThis.fetch = mock(async (url: string | URL | Request, init?: RequestInit) => {

@@ -18,6 +18,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { extname } from 'node:path';
 import {
 	DEFAULT_PUZZLE_ASPECT_RATIO,
+	MAX_IMAGE_DIMENSION,
 	aspectRatiosMatch,
 	isPuzzleAspectRatio,
 	stripIdempotencyKey
@@ -213,6 +214,20 @@ puzzles.post('/', requirePlayerAuth, async (c) => {
 				{
 					error: 'bad_request',
 					message: `Image aspect ratio (${dimensions.width}x${dimensions.height}) does not match requested ratio ${aspectRatio}. Please pre-crop the image to match.`
+				},
+				400
+			);
+		}
+		// Enforce MAX_IMAGE_DIMENSION before validateImageEndMarker(), which
+		// fully decodes the image. A highly compressed file under MAX_FILE_SIZE
+		// can declare extremely large dimensions and cause the decoder to
+		// allocate a large decoded pixel buffer before the request is rejected.
+		// Matches the avatar upload path's per-axis dimension check before decode.
+		if (dimensions.width > MAX_IMAGE_DIMENSION || dimensions.height > MAX_IMAGE_DIMENSION) {
+			return c.json(
+				{
+					error: 'bad_request',
+					message: `Image dimensions ${dimensions.width}x${dimensions.height} exceed maximum ${MAX_IMAGE_DIMENSION}px per axis`
 				},
 				400
 			);
