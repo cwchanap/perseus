@@ -1162,6 +1162,18 @@ export async function reapOrphanedReservations(env: Env): Promise<ReapResult> {
  * cleared so the next run starts a fresh sweep. This bounds list calls and
  * memory per run regardless of bucket size; the tradeoff is that a full sweep
  * takes multiple scheduled runs.
+ *
+ * Cursor advancement ordering: the cursor is persisted ONLY after the page
+ * has been classified and all deletion attempts have settled. On D1 lookup
+ * failure, the current cursor is RETAINED so the next run retries the same
+ * page once D1 recovers — without that, a transient D1 outage would skip the
+ * entire page until the R2 scan wrapped all the way around, delaying GC of
+ * every orphan on the page by a full sweep (potentially unbounded on a
+ * continuously growing bucket). After deletion attempts finish, the cursor
+ * advances even if individual deletes failed; those failures are retried on
+ * the next full sweep without blocking later pages (R2 deletes are
+ * idempotent, so re-blocking later pages for a persistently-failing key
+ * would re-introduce the starvation gap the single-cursor design closed).
  */
 export async function reapOrphanedAvatars(env: Env, now = Date.now()): Promise<ReapResult> {
 	const result: ReapResult = {
@@ -1189,14 +1201,13 @@ export async function reapOrphanedAvatars(env: Env, now = Date.now()): Promise<R
 		key: obj.key,
 		uploaded: obj.uploaded
 	}));
-	// Persist the cursor for the next run. If the page is not truncated, the
-	// listing reached the end of the prefix — clear the cursor so the next
-	// run starts a fresh sweep from the beginning.
-	await writeReaperStringCursor(
-		env.PUZZLE_METADATA,
-		R2_CURSOR_NAME,
-		page.truncated ? page.cursor : undefined
-	);
+	// Compute the next cursor once. The cursor advances ONLY after the
+	// page has been successfully classified and all deletion attempts have
+	// settled — see the cursor-advancement-ordering note in the doc comment
+	// above. On D1 lookup failure, the current cursor is retained so the
+	// next run retries this same page once D1 recovers, instead of skipping
+	// it until the full R2 scan wraps.
+	const nextCursor = page.truncated ? page.cursor : undefined;
 	result.scanned = allObjects.length;
 
 	// Parse keys into versioned (avatars/{playerId}/{token}) and legacy
@@ -1222,6 +1233,8 @@ export async function reapOrphanedAvatars(env: Env, now = Date.now()): Promise<R
 	}
 
 	if (versioned.length === 0) {
+		// Page processed — no versioned objects to classify. Advance.
+		await writeReaperStringCursor(env.PUZZLE_METADATA, R2_CURSOR_NAME, nextCursor);
 		return result;
 	}
 
@@ -1236,6 +1249,12 @@ export async function reapOrphanedAvatars(env: Env, now = Date.now()): Promise<R
 		const db = getWorkerDb(env);
 		tokensByPlayer = await getAvatarTokensByPlayerIds(db, playerIds);
 	} catch (dbErr) {
+		// D1 unavailable — fail closed (no deletes). Do NOT advance the
+		// cursor: retaining the current cursor means the next run retries
+		// this same page once D1 recovers, instead of skipping it until the
+		// full R2 scan wraps around (which on a large or continuously
+		// growing bucket can delay GC of every orphan on this page
+		// indefinitely).
 		console.error('Reaper avatar GC: D1 unavailable, skipping all deletion:', dbErr);
 		result.errors++;
 		result.details.push({
@@ -1260,6 +1279,8 @@ export async function reapOrphanedAvatars(env: Env, now = Date.now()): Promise<R
 	result.candidates = orphans.length;
 
 	if (orphans.length === 0) {
+		// Page processed — no orphans eligible for deletion. Advance.
+		await writeReaperStringCursor(env.PUZZLE_METADATA, R2_CURSOR_NAME, nextCursor);
 		return result;
 	}
 
@@ -1290,6 +1311,12 @@ export async function reapOrphanedAvatars(env: Env, now = Date.now()): Promise<R
 			}
 		})
 	);
+
+	// Page processed — advance even if individual deletes failed. R2
+	// deletes are idempotent, so a persistently-failing key is retried on
+	// the next full sweep without blocking later pages (re-blocking would
+	// re-introduce the starvation gap the single-cursor design closed).
+	await writeReaperStringCursor(env.PUZZLE_METADATA, R2_CURSOR_NAME, nextCursor);
 
 	return result;
 }

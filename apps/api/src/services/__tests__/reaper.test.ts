@@ -1746,6 +1746,103 @@ describe('reapOrphanedAvatars', () => {
 		expect(env.PUZZLES_BUCKET.delete).not.toHaveBeenCalled();
 	});
 
+	// Regression: the cursor must NOT advance when D1 rejects. The reaper
+	// lists one page per run and persists the R2 list cursor in KV between
+	// runs. If the cursor were persisted before the D1 authority lookup,
+	// a transient D1 outage would cause the reaper to skip the entire page
+	// until the R2 scan wrapped all the way around — on a large or
+	// continuously growing bucket, that delay is unbounded. Retaining the
+	// cursor means the next run retries the same page once D1 recovers.
+	it('retains the R2 cursor when D1 rejects (truncated page, cursor unchanged)', async () => {
+		// Pre-seed a cursor so we can detect any advance. Use a truncated
+		// page so the reaper would persist a new cursor if it advanced.
+		const env = {
+			...makeEnv(),
+			PUZZLES_BUCKET: {
+				list: vi.fn(async (opts: { cursor?: string } = {}) => ({
+					objects: [
+						r2Object(`avatars/p1/token-${opts.cursor ?? 'seed'}`, OLD),
+						r2Object('avatars/p1/token-B', OLD)
+					],
+					truncated: true,
+					cursor: 'next-page'
+				})),
+				delete: vi.fn(async () => undefined)
+			} as any
+		} as any;
+		const kvStore = (env.PUZZLE_METADATA as any)._store as Map<string, string>;
+		const seededCursor = 'seeded-cursor';
+		kvStore.set('reaper:cursor:orphaned-avatars-r2', seededCursor);
+		(getAvatarTokensByPlayerIds as any).mockRejectedValue(new Error('D1 down'));
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const result = await reapOrphanedAvatars(env, NOW);
+
+		expect(result.reaped).toBe(0);
+		expect(result.errors).toBe(1);
+		expect(result.details.some((d) => d.action === 'avatar-gc-d1-unavailable')).toBe(true);
+		expect(env.PUZZLES_BUCKET.delete).not.toHaveBeenCalled();
+		// The cursor must be unchanged — the same page will be retried on
+		// the next run once D1 recovers.
+		expect(kvStore.get('reaper:cursor:orphaned-avatars-r2')).toBe(seededCursor);
+		// And the reaper must NOT have called list with the would-be next
+		// cursor — only the seeded cursor.
+		expect(env.PUZZLES_BUCKET.list).toHaveBeenCalledTimes(1);
+		expect(env.PUZZLES_BUCKET.list).toHaveBeenCalledWith({
+			prefix: 'avatars/',
+			cursor: seededCursor,
+			limit: AVATAR_GC_BATCH_LIMIT
+		});
+	});
+
+	// Regression: after D1 recovers, the retained cursor must cause the
+	// reaper to revisit the same page and process its orphans. This
+	// verifies the recovery path the retained cursor enables.
+	it('retries the same page on the next run after D1 recovers', async () => {
+		const listCalls: Array<{ cursor?: string }> = [];
+		const env = {
+			...makeEnv(),
+			PUZZLES_BUCKET: {
+				list: vi.fn(async (opts: { cursor?: string } = {}) => {
+					listCalls.push(opts);
+					return {
+						objects: [
+							r2Object('avatars/p1/token-orphan', OLD),
+							r2Object('avatars/p1/token-auth', OLD)
+						],
+						truncated: true,
+						cursor: 'next-page'
+					};
+				}),
+				delete: vi.fn(async () => undefined)
+			} as any
+		} as any;
+		const kvStore = (env.PUZZLE_METADATA as any)._store as Map<string, string>;
+		const seededCursor = 'seeded-cursor';
+		kvStore.set('reaper:cursor:orphaned-avatars-r2', seededCursor);
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		// Run 1: D1 rejects — cursor must be retained.
+		(getAvatarTokensByPlayerIds as any).mockRejectedValueOnce(new Error('D1 down'));
+		const result1 = await reapOrphanedAvatars(env, NOW);
+		expect(result1.reaped).toBe(0);
+		expect(result1.errors).toBe(1);
+		expect(kvStore.get('reaper:cursor:orphaned-avatars-r2')).toBe(seededCursor);
+
+		// Run 2: D1 recovers — same page is revisited and orphans are reaped.
+		(getAvatarTokensByPlayerIds as any).mockResolvedValueOnce(new Map([['p1', 'token-auth']]));
+		const result2 = await reapOrphanedAvatars(env, NOW);
+		expect(result2.reaped).toBe(1);
+		expect(env.PUZZLES_BUCKET.delete).toHaveBeenCalledWith('avatars/p1/token-orphan');
+		// Both runs listed with the same seeded cursor — the second run
+		// retried the same page, not the next one.
+		expect(listCalls).toHaveLength(2);
+		expect(listCalls[0]?.cursor).toBe(seededCursor);
+		expect(listCalls[1]?.cursor).toBe(seededCursor);
+		// After successful processing, the cursor advances.
+		expect(kvStore.get('reaper:cursor:orphaned-avatars-r2')).toBe('next-page');
+	});
+
 	it('handles multiple players with mixed authoritative/orphan tokens', async () => {
 		const env = makeAvatarEnv([
 			{ key: 'avatars/p1/token-A', uploaded: OLD },
