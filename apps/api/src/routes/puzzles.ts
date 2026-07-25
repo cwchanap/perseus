@@ -26,7 +26,12 @@ import { generatePuzzle, isValidPieceCount } from '../services/puzzle-generator'
 import { requirePlayerAuth } from '../middleware/player-auth';
 import type { PlayerSessionRecord } from '../services/player-auth';
 import { getDb } from '../db';
-import { detectImageType, insertPuzzleOwnership, parseImageDimensions } from '@perseus/shared';
+import {
+	detectImageType,
+	insertPuzzleOwnership,
+	parseImageDimensions,
+	validateImageEndMarker
+} from '@perseus/shared';
 import { isPuzzleReady } from './puzzle-ready';
 
 const puzzles = new Hono<{
@@ -192,21 +197,29 @@ puzzles.post('/', requirePlayerAuth, async (c) => {
 			);
 		}
 
+		// Validate that image dimensions match the requested aspect ratio.
+		// parseImageDimensions returns null for files with valid magic bytes
+		// but malformed/truncated headers — reject those early so corrupt
+		// images don't reach the filesystem or the puzzle generator. Also
+		// check the format's end marker (IEND/EOI/RIFF size) to catch files
+		// with a valid header but missing body/trailer, matching the avatar
+		// upload path's validation.
 		const dimensions = await parseImageDimensions(image, detectedType);
-		if (dimensions) {
-			if (!aspectRatiosMatch(dimensions.width, dimensions.height, aspectRatio)) {
-				return c.json(
-					{
-						error: 'bad_request',
-						message: `Image aspect ratio (${dimensions.width}x${dimensions.height}) does not match requested ratio ${aspectRatio}. Please pre-crop the image to match.`
-					},
-					400
-				);
-			}
-		} else {
-			console.warn(
-				`Could not parse dimensions for ${detectedType} image; skipping aspect-ratio validation`
+		if (!dimensions || dimensions.width <= 0 || dimensions.height <= 0) {
+			return c.json({ error: 'bad_request', message: 'Image is corrupted or truncated' }, 400);
+		}
+		if (!aspectRatiosMatch(dimensions.width, dimensions.height, aspectRatio)) {
+			return c.json(
+				{
+					error: 'bad_request',
+					message: `Image aspect ratio (${dimensions.width}x${dimensions.height}) does not match requested ratio ${aspectRatio}. Please pre-crop the image to match.`
+				},
+				400
 			);
+		}
+		const hasEndMarker = await validateImageEndMarker(image, detectedType);
+		if (!hasEndMarker) {
+			return c.json({ error: 'bad_request', message: 'Image is corrupted or truncated' }, 400);
 		}
 
 		id = crypto.randomUUID();

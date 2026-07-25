@@ -8,7 +8,18 @@ const originalJwtSecret = process.env.JWT_SECRET;
 process.env.ADMIN_PASSKEY = 'test-admin-passkey-for-bun';
 process.env.JWT_SECRET = 'test-jwt-secret-for-bun-admin-testing-12345';
 
-const PNG_HEADER = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0, 0]);
+const PNG_HEADER = new Uint8Array([
+	0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+	0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00
+]);
+
+// 4x3 PNG for 4:3 aspect ratio tests
+const PNG_4X3 = new Uint8Array([
+	0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+	0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x03, 0x08, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00
+]);
 
 // Mock all dependencies before admin.ts is imported (vi.mock is hoisted)
 vi.mock('../../middleware/auth', () => ({
@@ -72,6 +83,7 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('@perseus/shared')>();
 	return {
 		...actual,
+		validateImageEndMarker: vi.fn().mockResolvedValue(true),
 		insertPuzzleOwnership: vi.fn().mockResolvedValue(undefined),
 		deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined),
 		deletePuzzleStats: vi.fn().mockResolvedValue(undefined),
@@ -636,7 +648,7 @@ describe('POST /puzzles', () => {
 			name: 'Landscape Puzzle',
 			pieceCount: '48',
 			aspectRatio: '4:3',
-			image: new Blob([PNG_HEADER], { type: 'image/png' })
+			image: new Blob([PNG_4X3], { type: 'image/png' })
 		});
 		const req = new Request('http://localhost/puzzles', { method: 'POST', body: fd });
 		const res = await app.fetch(req);

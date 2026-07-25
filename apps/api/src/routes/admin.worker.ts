@@ -66,7 +66,8 @@ import {
 	isStalePendingReservation,
 	isWorkflowNotFoundError,
 	parseImageDimensions,
-	SYSTEM_OWNER_ID
+	SYSTEM_OWNER_ID,
+	validateImageEndMarker
 } from '@perseus/shared';
 import type { AppDb } from '@perseus/shared';
 
@@ -242,12 +243,14 @@ async function probeReleaseAndRereclaimOrFail(
  * Returns 'alive' when the workflow is in any non-terminal active status
  * (queued, running, paused, waiting, waitingForPause, rollingBack) or
  * complete (finalize succeeded, so the DO has 'ready' — the puzzle is
- * done, not stuck). Returns 'dead' when it errored/terminated, when the
- * status string is the 'unknown' fallback, or when the instance was never
- * created (Cloudflare throws `instance.not_found` — the original create
- * died before PUZZLE_WORKFLOW.create, so the puzzle is orphaned, not
- * transient). Returns 'unknown' only when the workflow API could not be
- * reached. Callers must treat 'unknown' as transient (return 409) —
+ * done, not stuck). Returns 'dead' only when the status is confirmed
+ * terminal (errored, terminated) or when the instance was never created
+ * (Cloudflare throws `instance.not_found` — the original create died
+ * before PUZZLE_WORKFLOW.create, so the puzzle is orphaned, not
+ * transient). Returns 'unknown' when the workflow API could not be
+ * reached, when the status is the 'unknown' fallback, or when the status
+ * is an unrecognized string (e.g. a newly introduced Cloudflare Workflow
+ * state). Callers must treat 'unknown' as transient (return 409) —
  * committing on unknown could lock a stuck puzzle, reclaiming on unknown
  * could mint a duplicate of a live one.
  */
@@ -259,15 +262,17 @@ async function probeWorkflowLiveness(
 		const instance = await workflow.get(puzzleId);
 		const status = (await instance.status()).status;
 		if (isAliveWorkflowStatus(status)) return 'alive';
-		// 'errored' | 'terminated' = confirmed dead. 'unknown' means
-		// liveness cannot be established — the workflow may still be
-		// running, so signal 'unknown' (retry later) rather than 'dead'
-		// (which would trigger cleanup/deletion of potentially-live assets).
-		if (status === 'unknown') return 'unknown';
-		// Any other unrecognized status string — treat as dead (the
-		// workflow is in a state we don't know about, but it's not one of
-		// the documented active statuses).
-		return 'dead';
+		// 'errored' | 'terminated' = confirmed dead. 'unknown' and any
+		// other unrecognized status string mean liveness cannot be
+		// established — the workflow may still be running (e.g. a newly
+		// introduced Cloudflare Workflow state we don't know about), so
+		// signal 'unknown' (retry later) rather than 'dead' (which would
+		// trigger cleanup/deletion of potentially-live assets). This
+		// mirrors terminateAndAwaitStopped, which only treats
+		// isDeadWorkflowStatus() as stopped and continues polling
+		// otherwise.
+		if (isDeadWorkflowStatus(status)) return 'dead';
+		return 'unknown';
 	} catch (err) {
 		if (isWorkflowNotFoundError(err)) {
 			// Instance never created — original died before/during workflow
@@ -959,20 +964,30 @@ admin.post('/puzzles', requireAuth, async (c) => {
 			);
 		}
 
-		// Validate that image dimensions match the requested aspect ratio
+		// Validate that image dimensions match the requested aspect ratio.
+		// parseImageDimensions returns null for files with valid magic bytes
+		// but malformed/truncated headers — reject those early so corrupt
+		// images don't reach R2 or the puzzle generator. Also check the
+		// format's end marker (IEND/EOI/RIFF size) to catch files with a
+		// valid header but missing body/trailer, matching the avatar upload
+		// path's validation.
 		const dimensions = await parseImageDimensions(image, detectedType);
-		if (dimensions) {
-			if (!aspectRatiosMatch(dimensions.width, dimensions.height, aspectRatio)) {
-				return c.json(
-					{
-						error: 'bad_request',
-						message: `Image aspect ratio (${dimensions.width}x${dimensions.height}) does not match requested ratio ${aspectRatio}. Please pre-crop the image to match.`
-					},
-					400
-				);
-			}
+		if (!dimensions || dimensions.width <= 0 || dimensions.height <= 0) {
+			return c.json({ error: 'bad_request', message: 'Image is corrupted or truncated' }, 400);
 		}
-		// If dimensions can't be parsed, proceed — the workflow will use actual pixel dimensions
+		if (!aspectRatiosMatch(dimensions.width, dimensions.height, aspectRatio)) {
+			return c.json(
+				{
+					error: 'bad_request',
+					message: `Image aspect ratio (${dimensions.width}x${dimensions.height}) does not match requested ratio ${aspectRatio}. Please pre-crop the image to match.`
+				},
+				400
+			);
+		}
+		const hasEndMarker = await validateImageEndMarker(image, detectedType);
+		if (!hasEndMarker) {
+			return c.json({ error: 'bad_request', message: 'Image is corrupted or truncated' }, 400);
+		}
 
 		// Server-side idempotency: if the client sends an Idempotency-Key
 		// header, reserve it in PuzzleMetadataDO (strongly consistent) before
@@ -1199,7 +1214,28 @@ admin.post('/puzzles', requireAuth, async (c) => {
 											reserved.puzzleId
 										);
 									} catch (err) {
+										// The commit failed (transient DO error or
+										// conflict from a concurrent reclaim). The
+										// reservation is still pending or has been
+										// reclaimed by another request — returning
+										// 200 with the existing processing puzzle
+										// would let the startup uploader stop
+										// retrying while the reservation remains
+										// reclaimable (could mint a duplicate on a
+										// future retry). Signal transient (409) so
+										// the client retries: on retry, either the
+										// reservation is now committed (returns
+										// 200) or still pending (re-probes
+										// liveness) or reclaimed by another
+										// request (returns that request's puzzle).
 										console.error('Failed to commit pending reservation on retry:', err);
+										return c.json(
+											{
+												error: 'conflict',
+												message: 'Idempotency-Key in flight; reservation commit failed, retry'
+											},
+											409
+										);
 									}
 								}
 							} else if (reserved.status === 'committed') {

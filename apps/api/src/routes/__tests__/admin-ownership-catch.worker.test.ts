@@ -42,6 +42,7 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('@perseus/shared')>();
 	return {
 		...actual,
+		validateImageEndMarker: vi.fn().mockResolvedValue(true),
 		deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined)
 	};
 });

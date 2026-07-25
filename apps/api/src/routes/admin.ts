@@ -45,7 +45,8 @@ import {
 	detectImageType,
 	insertPuzzleOwnership,
 	parseImageDimensions,
-	SYSTEM_OWNER_ID
+	SYSTEM_OWNER_ID,
+	validateImageEndMarker
 } from '@perseus/shared';
 
 const admin = new Hono();
@@ -297,20 +298,30 @@ admin.post('/puzzles', requireAuth, async (c) => {
 			);
 		}
 
-		// Validate that image dimensions match the requested aspect ratio
+		// Validate that image dimensions match the requested aspect ratio.
+		// parseImageDimensions returns null for files with valid magic bytes
+		// but malformed/truncated headers — reject those early so corrupt
+		// images don't reach the filesystem or the puzzle generator. Also
+		// check the format's end marker (IEND/EOI/RIFF size) to catch files
+		// with a valid header but missing body/trailer, matching the avatar
+		// upload path's validation.
 		const dimensions = await parseImageDimensions(image, detectedType);
-		if (dimensions) {
-			if (!aspectRatiosMatch(dimensions.width, dimensions.height, aspectRatio)) {
-				return c.json(
-					{
-						error: 'bad_request',
-						message: `Image aspect ratio (${dimensions.width}x${dimensions.height}) does not match requested ratio ${aspectRatio}. Please pre-crop the image to match.`
-					},
-					400
-				);
-			}
+		if (!dimensions || dimensions.width <= 0 || dimensions.height <= 0) {
+			return c.json({ error: 'bad_request', message: 'Image is corrupted or truncated' }, 400);
 		}
-		// If dimensions can't be parsed, proceed — the generator will use actual pixel dimensions
+		if (!aspectRatiosMatch(dimensions.width, dimensions.height, aspectRatio)) {
+			return c.json(
+				{
+					error: 'bad_request',
+					message: `Image aspect ratio (${dimensions.width}x${dimensions.height}) does not match requested ratio ${aspectRatio}. Please pre-crop the image to match.`
+				},
+				400
+			);
+		}
+		const hasEndMarker = await validateImageEndMarker(image, detectedType);
+		if (!hasEndMarker) {
+			return c.json({ error: 'bad_request', message: 'Image is corrupted or truncated' }, 400);
+		}
 
 		// Server-side idempotency: reserve the key atomically before minting a
 		// UUID or creating assets. Exclusive file create closes the concurrent-

@@ -19,5 +19,11 @@ export const sharedMockOverrides = {
 	insertPuzzleOwnership: vi.fn().mockResolvedValue(undefined),
 	deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined),
 	deletePuzzleStats: vi.fn().mockResolvedValue(undefined),
-	SYSTEM_OWNER_ID: 'system'
+	SYSTEM_OWNER_ID: 'system',
+	// Mock validateImageEndMarker so minimal test PNG/JPEG headers (which
+	// lack IEND/EOI end markers) pass the structural-integrity check added
+	// to the puzzle upload paths. The real function has dedicated unit
+	// tests in packages/shared/src/__tests__/image.test.ts; route tests
+	// verify the rejection path separately via explicit mocks.
+	validateImageEndMarker: vi.fn().mockResolvedValue(true)
 };

@@ -12,8 +12,14 @@ const originalJwtSecret = process.env.JWT_SECRET;
 process.env.ADMIN_PASSKEY = 'extra-test-admin-passkey';
 process.env.JWT_SECRET = 'extra-test-jwt-secret-for-bun-12345678901234';
 
-const PNG_HEADER = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0, 0]);
-const JPEG_HEADER = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0]);
+const PNG_HEADER = new Uint8Array([
+	0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+	0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00
+]);
+const JPEG_HEADER = new Uint8Array([
+	0xff, 0xd8, 0xff, 0xc0, 0x00, 0x0b, 0x08, 0x00, 0x01, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00
+]);
 
 vi.mock('../../middleware/auth', () => ({
 	createSession: vi.fn().mockResolvedValue('mock-session-token'),
@@ -62,6 +68,7 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	const original = await importOriginal<typeof import('@perseus/shared')>();
 	return {
 		...original,
+		validateImageEndMarker: vi.fn().mockResolvedValue(true),
 		insertPuzzleOwnership: vi.fn().mockResolvedValue(undefined),
 		deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined),
 		deletePuzzleStats: vi.fn().mockResolvedValue(undefined),

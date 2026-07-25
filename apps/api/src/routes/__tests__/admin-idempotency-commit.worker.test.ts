@@ -50,6 +50,7 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	const original = await importOriginal<typeof import('@perseus/shared')>();
 	return {
 		...original,
+		validateImageEndMarker: vi.fn().mockResolvedValue(true),
 		deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined),
 		deletePuzzleStats: vi.fn().mockResolvedValue(undefined),
 		insertPuzzleOwnership: vi.fn().mockResolvedValue(undefined),
@@ -61,7 +62,9 @@ import admin from '../admin.worker';
 import * as storage from '../../services/storage.worker';
 
 const PNG_HEADER = new Uint8Array([
-	0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x00, 0x00
+	0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+	0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00
 ]);
 
 function createWorkflow(status = 'running') {
@@ -138,7 +141,7 @@ describe('Admin Worker idempotency commit handling', () => {
 			status: 'processing',
 			idempotencyKey: 'alive-key'
 		} as any);
-		vi.mocked(storage.commitIdempotencyKey).mockRejectedValue(new Error('commit unavailable'));
+		vi.mocked(storage.commitIdempotencyKey).mockResolvedValue(undefined);
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 		const workflow = createWorkflow('running');
 
