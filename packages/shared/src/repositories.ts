@@ -1,6 +1,13 @@
 import { eq, lt, gt, desc, asc, count, sql, and, inArray } from 'drizzle-orm';
+import type { RecordPuzzleCompletionV1 } from '@perseus/types';
 import type { AppDb, NewPuzzleRow, PlayerProfileRow } from './types';
 import { puzzles, playerProfiles, puzzleStats } from './schema';
+import {
+	interpretVersionedCompletionWrite,
+	type CompletionWriteExecutor,
+	type VersionedCompletionResult,
+	type VersionedCompletionWrite
+} from './completion-writes';
 
 // Statuses that appear in a player's "My Puzzles" list and "Uploaded" count.
 // 'processing' is included so an in-flight upload is visible to its owner
@@ -279,7 +286,7 @@ function parsePlayerPuzzleCursor(cursor: string) {
 // recorded even for a deduped retry.
 const COMPLETION_DEDUPE_WINDOW_MS = 30_000;
 
-export async function recordCompletion(
+export async function recordLegacyCompletion(
 	db: AppDb,
 	playerId: string,
 	puzzleId: string,
@@ -319,6 +326,29 @@ export async function recordCompletion(
 			}
 		})
 		.run();
+}
+
+/** @deprecated Use recordLegacyCompletion until versioned route cutover is complete. */
+export const recordCompletion = recordLegacyCompletion;
+
+export async function recordVersionedCompletion(
+	executor: CompletionWriteExecutor,
+	playerId: string,
+	puzzleId: string,
+	request: RecordPuzzleCompletionV1,
+	receivedAt = Date.now()
+): Promise<VersionedCompletionResult> {
+	const input: VersionedCompletionWrite = {
+		playerId,
+		puzzleId,
+		runId: request.runId,
+		resultClass: request.resultClass,
+		timingQuality: request.timingQuality,
+		elapsedActiveSeconds: request.elapsedActiveSeconds,
+		receivedAt
+	};
+	const execution = await executor.write(input);
+	return interpretVersionedCompletionWrite(input, execution.stored, execution.inserted);
 }
 
 export async function listPlayerStats(
