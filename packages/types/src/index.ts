@@ -245,7 +245,13 @@ export interface RecordPuzzleCompletionV1 {
 export type RecordPuzzleCompletionResponse =
 	| { ok: true }
 	| {
-			error: 'bad_request' | 'unauthorized' | 'not_found' | 'run_id_conflict' | 'internal_error';
+			error:
+				| 'bad_request'
+				| 'unauthorized'
+				| 'not_found'
+				| 'run_id_conflict'
+				| 'completion_quota_exceeded'
+				| 'internal_error';
 			message: string;
 	  };
 
