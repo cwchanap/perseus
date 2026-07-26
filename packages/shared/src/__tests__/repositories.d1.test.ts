@@ -8,7 +8,7 @@ import * as schema from '../schema';
 import { createD1CompletionWriteExecutor, createD1Db, type D1AppDb } from '../drivers/d1';
 import { completionFactsMatch, type VersionedCompletionWrite } from '../completion-writes';
 import {
-	recordCompletion,
+	recordLegacyCompletion,
 	recordVersionedCompletion,
 	listPlayerStats,
 	getPlayerSummary,
@@ -326,7 +326,7 @@ describe('recordVersionedCompletion against real D1', () => {
 
 describe('recordCompletion against real D1', () => {
 	it('inserts a new stat row on first completion', async () => {
-		await recordCompletion(db, 'p1', 'pz1', 100);
+		await recordLegacyCompletion(db, 'p1', 'pz1', 100);
 		const stats = await listPlayerStats(db, 'p1', { limit: 10 });
 		expect(stats.rows).toHaveLength(1);
 		expect(stats.rows[0].bestTimeSeconds).toBe(100);
@@ -336,11 +336,11 @@ describe('recordCompletion against real D1', () => {
 	it('upserts: tracks MIN best time and increments count for spaced solves', async () => {
 		vi.useFakeTimers();
 		try {
-			await recordCompletion(db, 'p1', 'pz1', 100);
+			await recordLegacyCompletion(db, 'p1', 'pz1', 100);
 			vi.advanceTimersByTime(31_000);
-			await recordCompletion(db, 'p1', 'pz1', 80);
+			await recordLegacyCompletion(db, 'p1', 'pz1', 80);
 			vi.advanceTimersByTime(31_000);
-			await recordCompletion(db, 'p1', 'pz1', 120);
+			await recordLegacyCompletion(db, 'p1', 'pz1', 120);
 			const stats = await listPlayerStats(db, 'p1', { limit: 10 });
 			expect(stats.rows).toHaveLength(1);
 			expect(stats.rows[0].bestTimeSeconds).toBe(80); // MIN of 100, 80, 120
@@ -353,10 +353,10 @@ describe('recordCompletion against real D1', () => {
 	it('dedupes rapid retries within the 30s window (onConflictDoUpdate raw SQL)', async () => {
 		vi.useFakeTimers();
 		try {
-			await recordCompletion(db, 'p1', 'pz1', 100);
+			await recordLegacyCompletion(db, 'p1', 'pz1', 100);
 			// No time advanced — these are immediate retries.
-			await recordCompletion(db, 'p1', 'pz1', 80);
-			await recordCompletion(db, 'p1', 'pz1', 120);
+			await recordLegacyCompletion(db, 'p1', 'pz1', 80);
+			await recordLegacyCompletion(db, 'p1', 'pz1', 120);
 			const stats = await listPlayerStats(db, 'p1', { limit: 10 });
 			expect(stats.rows).toHaveLength(1);
 			expect(stats.rows[0].bestTimeSeconds).toBe(80); // MIN still applied
@@ -373,7 +373,7 @@ describe('listPlayerStats composite cursor against real D1', () => {
 		try {
 			// Insert 5 completions with distinct best times.
 			for (let i = 0; i < 5; i++) {
-				await recordCompletion(db, 'p1', `pz${i}`, 100 + i * 10);
+				await recordLegacyCompletion(db, 'p1', `pz${i}`, 100 + i * 10);
 				vi.advanceTimersByTime(31_000);
 			}
 			const page1 = await listPlayerStats(db, 'p1', { limit: 2 });
@@ -409,11 +409,11 @@ describe('listPlayerStats composite cursor against real D1', () => {
 		try {
 			// Two puzzles with the same best time — cursor must use puzzleId
 			// as the tiebreaker to avoid skipping or duplicating rows.
-			await recordCompletion(db, 'p1', 'pzB', 100);
+			await recordLegacyCompletion(db, 'p1', 'pzB', 100);
 			vi.advanceTimersByTime(31_000);
-			await recordCompletion(db, 'p1', 'pzA', 100);
+			await recordLegacyCompletion(db, 'p1', 'pzA', 100);
 			vi.advanceTimersByTime(31_000);
-			await recordCompletion(db, 'p1', 'pzC', 100);
+			await recordLegacyCompletion(db, 'p1', 'pzC', 100);
 
 			const page1 = await listPlayerStats(db, 'p1', { limit: 2 });
 			expect(page1.rows).toHaveLength(2);
@@ -718,7 +718,7 @@ describe('ensurePuzzleOwnership backfill against real D1', () => {
 			status: 'ready',
 			createdAt: 50
 		});
-		await recordCompletion(db, 'p1', 'pz-legacy', 120);
+		await recordLegacyCompletion(db, 'p1', 'pz-legacy', 120);
 		const stats = await listPlayerStats(db, 'p1', { limit: 10 });
 		expect(stats.rows).toHaveLength(1);
 		expect(stats.rows[0].puzzleName).toBe('Legacy Puzzle');
@@ -773,7 +773,7 @@ describe('ensurePuzzleOwnership backfill against real D1', () => {
 		const stats = await listPlayerStats(db, 'p1', { limit: 10 });
 		expect(stats.rows).toHaveLength(0); // no completions recorded
 		// The single system row resolves the name once a completion lands.
-		await recordCompletion(db, 'p1', 'pz-sys', 60);
+		await recordLegacyCompletion(db, 'p1', 'pz-sys', 60);
 		const after = await listPlayerStats(db, 'p1', { limit: 10 });
 		expect(after.rows).toHaveLength(1);
 		expect(after.rows[0].puzzleName).toBe('System Puzzle');

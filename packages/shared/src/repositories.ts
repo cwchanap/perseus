@@ -328,9 +328,6 @@ export async function recordLegacyCompletion(
 		.run();
 }
 
-/** @deprecated Use recordLegacyCompletion until versioned route cutover is complete. */
-export const recordCompletion = recordLegacyCompletion;
-
 export async function recordVersionedCompletion(
 	executor: CompletionWriteExecutor,
 	playerId: string,

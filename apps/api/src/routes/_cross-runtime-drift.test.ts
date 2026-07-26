@@ -18,11 +18,22 @@ import { Hono } from 'hono';
 
 // --- Mocks shared by both runtimes ---------------------------------------
 
+const completionWrites = vi.hoisted(() => ({
+	write: vi.fn(),
+	deletePuzzleCompletionData: vi.fn()
+}));
+
 // Both route modules resolve their DB through a runtime-specific singleton
 // that loads a runtime-only SQLite builtin. Mock both so neither loads under
 // vitest/node.
-vi.mock('../db', () => ({ getDb: vi.fn(() => ({})) }));
-vi.mock('../db.worker', () => ({ getWorkerDb: vi.fn(() => ({})) }));
+vi.mock('../db', () => ({
+	getDb: vi.fn(() => ({})),
+	getDbContext: vi.fn(() => ({ db: {}, completionWrites }))
+}));
+vi.mock('../db.worker', () => ({
+	getWorkerDb: vi.fn(() => ({})),
+	getWorkerDbContext: vi.fn(() => ({ db: {}, completionWrites }))
+}));
 
 // Shared repositories: keep the real image utilities (sniffImageType,
 // parseImageDimensions, validateImageEndMarker) so the dimension cap is
@@ -43,7 +54,13 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 			totalCompletions: 0
 		})),
 		listPlayerPuzzles: vi.fn(async () => ({ rows: [], nextCursor: undefined })),
-		listPlayerStats: vi.fn(async () => ({ rows: [] }))
+		listPlayerStats: vi.fn(async () => ({ rows: [] })),
+		recordLegacyCompletion: vi.fn(async () => undefined),
+		recordVersionedCompletion: vi.fn(async () => ({
+			status: 'recorded' as const,
+			completedAt: 100
+		})),
+		ensurePuzzleOwnership: vi.fn(async () => undefined)
 	};
 });
 
@@ -51,11 +68,25 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 // fixed test player so requirePlayerAuth passes end-to-end.
 vi.mock('../services/player-auth', () => ({ getPlayerSession: vi.fn() }));
 vi.mock('../services/player-auth.worker', () => ({ getPlayerSession: vi.fn() }));
+vi.mock('../services/storage', () => ({ getPuzzle: vi.fn() }));
+vi.mock('../services/storage.worker', () => ({ getPuzzle: vi.fn() }));
+vi.mock('./puzzle-ready', () => ({ isPuzzleReady: vi.fn() }));
 
 import playerBun from './player';
 import playerWorker from './player.worker';
+import completionBun from './puzzles.complete';
+import completionWorker from './puzzles.complete.worker';
 import * as playerAuthBun from '../services/player-auth';
 import * as playerAuthWorker from '../services/player-auth.worker';
+import * as storageBun from '../services/storage';
+import * as storageWorker from '../services/storage.worker';
+import * as puzzleReady from './puzzle-ready';
+import * as completionShared from './puzzles.complete.shared';
+import {
+	recordLegacyCompletion,
+	recordVersionedCompletion,
+	ensurePuzzleOwnership
+} from '@perseus/shared';
 import type { PlayerSessionRecord } from '../services/player-auth';
 import type { Env } from '../worker';
 
@@ -74,6 +105,14 @@ const TEST_PLAYER: PlayerSessionRecord = {
 };
 
 const AUTH_COOKIE = { Cookie: 'perseus_player_session=player-token' };
+const PUZZLE_ID = '123e4567-e89b-42d3-a456-426614174000';
+const VERSIONED_REQUEST = {
+	version: 1,
+	runId: '223e4567-e89b-42d3-a456-426614174000',
+	resultClass: 'standard_timed',
+	timingQuality: 'known',
+	elapsedActiveSeconds: 90
+} as const;
 
 // Minimal PNG with width=600, height=600 (exceeds MAX_AVATAR_DIMENSION=512).
 // PNG signature (8) + IHDR length (4) + "IHDR" (4) + width (4) + height (4) +
@@ -184,5 +223,127 @@ describe('cross-runtime drift: avatar dimension cap (Bun ↔ Worker)', () => {
 		const workerBody = (await workerRes.json()) as { error: string; message: string };
 		expect(bunBody.error).toBe(workerBody.error);
 		expect(bunBody.message).toBe(workerBody.message);
+	});
+});
+
+function buildCompletionApps() {
+	const bun = new Hono();
+	bun.route('/api/puzzles', completionBun);
+	const worker = new Hono<{
+		Bindings: Env;
+		Variables: { playerSession: PlayerSessionRecord };
+	}>();
+	worker.route('/api/puzzles', completionWorker);
+	return { bun, worker };
+}
+
+async function postCompletionToBoth(
+	body: unknown,
+	headers: Record<string, string> = {
+		'Content-Type': 'application/json',
+		...AUTH_COOKIE
+	}
+) {
+	const { bun, worker } = buildCompletionApps();
+	const init = {
+		method: 'POST',
+		headers,
+		body: JSON.stringify(body)
+	};
+	const env = { DB: {}, PUZZLE_METADATA: {} } as unknown as Env;
+	return Promise.all([
+		bun.request(`/api/puzzles/${PUZZLE_ID}/complete`, init),
+		worker.request(`/api/puzzles/${PUZZLE_ID}/complete`, init, env)
+	]);
+}
+
+describe('cross-runtime drift: completion route (Bun ↔ Worker)', () => {
+	beforeEach(() => {
+		vi.mocked(playerAuthBun.getPlayerSession).mockResolvedValue(TEST_PLAYER);
+		vi.mocked(playerAuthWorker.getPlayerSession).mockResolvedValue(TEST_PLAYER);
+		vi.mocked(storageBun.getPuzzle).mockResolvedValue({
+			id: PUZZLE_ID,
+			name: 'Test Puzzle',
+			pieceCount: 4,
+			createdAt: 100,
+			status: 'ready'
+		} as never);
+		vi.mocked(storageWorker.getPuzzle).mockResolvedValue({
+			id: PUZZLE_ID,
+			name: 'Test Puzzle',
+			pieceCount: 4,
+			createdAt: 100,
+			status: 'ready'
+		} as never);
+		vi.mocked(puzzleReady.isPuzzleReady).mockReturnValue(true);
+		vi.mocked(recordLegacyCompletion).mockClear();
+		vi.mocked(recordVersionedCompletion).mockReset();
+		vi.mocked(recordVersionedCompletion).mockResolvedValue({
+			status: 'recorded',
+			completedAt: 100
+		});
+		vi.mocked(ensurePuzzleOwnership).mockClear();
+	});
+
+	it.each([
+		{ name: 'legacy accepted', body: { timeSeconds: 90 }, status: 200 },
+		{ name: 'versioned accepted', body: VERSIONED_REQUEST, status: 200 },
+		{
+			name: 'invalid versioned input does not fall back to legacy',
+			body: { version: 2, timeSeconds: 90 },
+			status: 400
+		}
+	])('keeps the $name response code aligned', async ({ body, status }) => {
+		const responses = await postCompletionToBoth(body);
+		expect(responses.map((response) => response.status)).toEqual([status, status]);
+	});
+
+	it('routes both runtimes through the shared parser and result mapper', async () => {
+		const parserSpy = vi.spyOn(completionShared, 'parseCompletionRequest');
+		const resultSpy = vi.spyOn(completionShared, 'completionResultToResponse');
+		const responses = await postCompletionToBoth(VERSIONED_REQUEST);
+
+		expect(responses.map((response) => response.status)).toEqual([200, 200]);
+		expect(parserSpy).toHaveBeenCalledTimes(2);
+		expect(resultSpy).toHaveBeenCalledTimes(2);
+		parserSpy.mockRestore();
+		resultSpy.mockRestore();
+	});
+
+	it('keeps replay and conflict response codes and bodies aligned', async () => {
+		vi.mocked(recordVersionedCompletion)
+			.mockResolvedValueOnce({ status: 'replayed', completedAt: 50 })
+			.mockResolvedValueOnce({ status: 'replayed', completedAt: 50 });
+		const replayResponses = await postCompletionToBoth(VERSIONED_REQUEST);
+		expect(replayResponses.map((response) => response.status)).toEqual([200, 200]);
+		expect(await Promise.all(replayResponses.map((response) => response.json()))).toEqual([
+			{ ok: true },
+			{ ok: true }
+		]);
+
+		vi.mocked(recordVersionedCompletion)
+			.mockResolvedValueOnce({ status: 'conflict' })
+			.mockResolvedValueOnce({ status: 'conflict' });
+		const conflictResponses = await postCompletionToBoth(VERSIONED_REQUEST);
+		expect(conflictResponses.map((response) => response.status)).toEqual([409, 409]);
+		const conflictBodies = await Promise.all(conflictResponses.map((response) => response.json()));
+		expect(conflictBodies[0]).toEqual(conflictBodies[1]);
+		expect(conflictBodies[0]).toMatchObject({ error: 'run_id_conflict' });
+	});
+
+	it('keeps structured repository failure responses aligned', async () => {
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const internalErrorSpy = vi.spyOn(completionShared, 'completionInternalErrorResponse');
+		vi.mocked(recordVersionedCompletion)
+			.mockRejectedValueOnce(new Error('Bun write failed'))
+			.mockRejectedValueOnce(new Error('Worker write failed'));
+		const responses = await postCompletionToBoth(VERSIONED_REQUEST);
+		expect(responses.map((response) => response.status)).toEqual([500, 500]);
+		const bodies = await Promise.all(responses.map((response) => response.json()));
+		expect(bodies[0]).toEqual(bodies[1]);
+		expect(bodies[0]).toMatchObject({ error: 'internal_error' });
+		expect(internalErrorSpy).toHaveBeenCalledTimes(2);
+		internalErrorSpy.mockRestore();
+		consoleSpy.mockRestore();
 	});
 });
