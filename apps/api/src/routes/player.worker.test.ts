@@ -79,9 +79,16 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 			})
 		),
 		listPlayerStats: vi.fn(
-			async (db: unknown, playerId: string): Promise<{ rows: unknown[] }> => ({
-				rows: statsStore.get(playerId) ?? []
-			})
+			async (
+				_db: unknown,
+				playerId: string,
+				opts: { cursor?: string }
+			): Promise<{ rows: unknown[] }> => {
+				if (opts.cursor !== undefined) {
+					actual.parsePlayerStatsCursor(opts.cursor);
+				}
+				return { rows: statsStore.get(playerId) ?? [] };
+			}
 		)
 	};
 });
@@ -1215,6 +1222,20 @@ describe('player lists (Worker)', () => {
 			message: 'Invalid stats cursor'
 		});
 		consoleSpy.mockRestore();
+	});
+
+	it('GET stats rejects an explicitly empty cursor', async () => {
+		const response = await buildApp().request(
+			'/api/player/stats?cursor=',
+			{ headers: AUTH_COOKIE },
+			DUMMY_ENV
+		);
+
+		expect(response.status).toBe(400);
+		expect(await response.json()).toEqual({
+			error: 'bad_request',
+			message: 'Invalid stats cursor'
+		});
 	});
 
 	it('GET stats does not mislabel database errors as invalid cursors', async () => {

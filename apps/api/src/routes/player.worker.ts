@@ -372,7 +372,7 @@ player.get('/stats', requirePlayerAuth, async (c) => {
 	const db = getWorkerDb(c.env);
 	const session = c.get('playerSession');
 	const limit = Number(c.req.query('limit') ?? '20');
-	const cursor = c.req.query('cursor') || undefined;
+	const cursor = c.req.query('cursor');
 	let result: Awaited<ReturnType<typeof listPlayerStats>>;
 	try {
 		result = await listPlayerStats(db, session.user.id, {
