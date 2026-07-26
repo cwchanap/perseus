@@ -23,8 +23,17 @@ vi.mock('$app/navigation', () => ({
 	goto: vi.fn()
 }));
 
+vi.mock('$lib/stores/timer', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('$lib/stores/timer')>();
+	return {
+		...actual,
+		formatTime: vi.fn(actual.formatTime)
+	};
+});
+
 import { getPlayerProfile, getPlayerPuzzles, getPlayerStats } from '$lib/services/api';
 import { uploadPlayerAvatar, resolveAssetUrl } from '$lib/services/api';
+import { formatTime } from '$lib/stores/timer';
 
 const puzzles: PlayerPuzzleSummary[] = [
 	{
@@ -45,6 +54,14 @@ const stats: PlayerStatRow[] = [
 		totalCompletions: 1,
 		firstCompletedAt: 1,
 		lastCompletedAt: 2
+	},
+	{
+		puzzleId: 'variant-only',
+		puzzleName: 'Variant Result',
+		bestTimeSeconds: null,
+		totalCompletions: 2,
+		firstCompletedAt: 100,
+		lastCompletedAt: 200
 	}
 ];
 
@@ -91,6 +108,30 @@ describe('profile page', () => {
 		await expect.element(page.getByTestId('profile-summary-uploaded')).toBeVisible();
 		await expect.element(page.getByTestId('profile-summary-solved')).toHaveTextContent('3');
 		await expect.element(page.getByTestId('profile-summary-completions')).toHaveTextContent('7');
+	});
+
+	it('presents nullable and numeric puzzle results without formatting null', async () => {
+		vi.mocked(getPlayerProfile).mockResolvedValue({
+			id: 'p1',
+			email: 'e',
+			name: 'Player One',
+			picture: null,
+			createdAt: 1,
+			lastLoginAt: 2,
+			summary: { puzzlesUploaded: 1, puzzlesSolved: 2, totalCompletions: 3 }
+		});
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({ puzzles, nextCursor: undefined });
+		vi.mocked(getPlayerStats).mockResolvedValue({ stats });
+
+		render(ProfilePage);
+
+		await expect.element(page.getByRole('heading', { name: 'Puzzle Results' })).toBeVisible();
+		await expect.element(page.getByText('No standard time')).toBeVisible();
+		await expect.element(page.getByText('00:42')).toBeVisible();
+		await expect.element(page.getByText('2×')).toBeVisible();
+		await expect.element(page.getByTestId('card-best-time')).not.toBeInTheDocument();
+		expect(formatTime).toHaveBeenCalledWith(42);
+		expect(formatTime).not.toHaveBeenCalledWith(null);
 	});
 
 	it('shows an error with retry when loading the profile fails', async () => {
@@ -277,8 +318,8 @@ describe('profile page', () => {
 		// Profile still renders despite the puzzles failure (no error screen).
 		await expect.element(page.getByText('Survivor')).toBeVisible();
 		await expect.element(page.getByText("You haven't uploaded any puzzles yet.")).toBeVisible();
-		// The best-times list (from the still-loaded stats) also renders.
-		await expect.element(page.getByText('Best Times')).toBeVisible();
+		// The puzzle-results list (from the still-loaded stats) also renders.
+		await expect.element(page.getByText('Puzzle Results')).toBeVisible();
 	});
 
 	it('renders the first puzzle page and shows Load more when nextCursor is present', async () => {
@@ -302,7 +343,7 @@ describe('profile page', () => {
 		vi.mocked(getPlayerStats).mockResolvedValue({ stats, nextCursor: undefined });
 
 		render(ProfilePage);
-		// PuzzleCard renders the name in an <h3>; the Best Times list renders the
+		// PuzzleCard renders the name in an <h3>; the Puzzle Results list renders the
 		// same name in a link, so scope to the heading to stay unambiguous.
 		await expect.element(page.getByRole('heading', { name: 'Forest Puzzle' })).toBeVisible();
 		await expect
@@ -352,7 +393,7 @@ describe('profile page', () => {
 		await expect.element(page.getByTestId('load-more-puzzles')).not.toBeInTheDocument();
 	});
 
-	it('paginates the Best Times list independently of My Puzzles', async () => {
+	it('paginates the Puzzle Results list independently of My Puzzles', async () => {
 		vi.mocked(getPlayerProfile).mockResolvedValue({
 			id: 'p1',
 			email: 'e',

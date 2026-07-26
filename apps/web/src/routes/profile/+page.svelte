@@ -375,7 +375,7 @@
 			{/if}
 		{/if}
 
-		<h2 class="mt-8 font-(--font-display) text-(--text-0)">Best Times</h2>
+		<h2 class="mt-8 font-(--font-display) text-(--text-0)">Puzzle Results</h2>
 		{#if stats.length === 0}
 			<p class="text-sm text-(--text-2)">No solves recorded yet.</p>
 		{:else}
@@ -394,9 +394,13 @@
 						<span class="shrink-0 text-xs text-(--text-2)">
 							{s.totalCompletions}×
 						</span>
-						<span class="shrink-0 font-(--font-mono) text-(--gold)">
-							{formatTime(s.bestTimeSeconds)}
-						</span>
+						{#if s.bestTimeSeconds === null}
+							<span class="shrink-0 text-xs text-(--text-2)">No standard time</span>
+						{:else}
+							<span class="shrink-0 font-(--font-mono) text-(--gold)">
+								{formatTime(s.bestTimeSeconds)}
+							</span>
+						{/if}
 					</li>
 				{/each}
 			</ul>

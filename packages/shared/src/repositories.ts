@@ -1,4 +1,4 @@
-import { eq, lt, gt, desc, asc, count, sql, and, inArray } from 'drizzle-orm';
+import { eq, lt, desc, asc, count, sql, and, inArray } from 'drizzle-orm';
 import type { RecordPuzzleCompletionV1 } from '@perseus/types';
 import type { AppDb, NewPuzzleRow, PlayerProfileRow } from './types';
 import { puzzles, playerProfiles, puzzleStats } from './schema';
@@ -24,7 +24,7 @@ const VISIBLE_PLAYER_PUZZLE_STATUSES = ['ready', 'failed', 'processing'] as cons
 // system-owned row never leaks into a player's "My Puzzles" list or count.
 // It DOES participate in the listPlayerStats left join, so a signed-in
 // player who solves an admin-created puzzle sees the puzzle's name (not a
-// UUID) in their Best Times list.
+// UUID) in their Puzzle Results list.
 export const SYSTEM_OWNER_ID = 'system';
 
 export async function getProfileOverride(
@@ -181,7 +181,7 @@ export async function insertPuzzleOwnership(db: AppDb, row: NewPuzzleRow): Promi
 // a puzzle that predates the D1 mirror. Uses the system sentinel owner so the
 // row never leaks into a real player's "My Puzzles" list/counts (those filter
 // by ownerId = playerId), but it DOES participate in listPlayerStats' left
-// join so the Best Times UI shows the puzzle's name instead of its UUID.
+// join so the Puzzle Results UI shows the puzzle's name instead of its UUID.
 //
 // ON CONFLICT (id) DO NOTHING: if a row already exists (player-owned, or a
 // previously backfilled system row), it is left untouched. The KV/DO metadata
@@ -351,69 +351,6 @@ export async function recordVersionedCompletion(
 	return interpretVersionedCompletionWrite(input, execution.stored, execution.inserted);
 }
 
-export async function listPlayerStats(
-	db: AppDb,
-	playerId: string,
-	opts: { limit: number; cursor?: string }
-): Promise<{
-	rows: {
-		playerId: string;
-		puzzleId: string;
-		puzzleName: string | null;
-		bestTimeSeconds: number;
-		totalCompletions: number;
-		firstCompletedAt: number;
-		lastCompletedAt: number;
-	}[];
-	nextCursor?: string;
-}> {
-	// Floor to an integer before clamping — see listPlayerPuzzles for the
-	// rationale. A fractional ?limit would otherwise bind a non-integer to
-	// SQL LIMIT and D1/SQLite would reject it with a datatype error.
-	const limit = Math.floor(Math.min(Math.max(opts.limit, 1), 100));
-	// Composite cursor (bestTimeSeconds, puzzleId) avoids skipping a row when
-	// two puzzles share the same best time: rows are ordered by bestTimeSeconds
-	// ASC then puzzleId ASC, and the cursor excludes anything at or "before"
-	// the last row of the previous page on that lexicographic ordering.
-	// drizzle's `.where()` replaces (not merges) the previous condition, so
-	// chaining a second `.where()` for the cursor would silently drop the
-	// ownerId filter and leak other players' stats across pages.
-	//
-	// Known limitation: bestTimeSeconds is mutable. If a player improves their
-	// best time on a puzzle between page fetches, that row moves earlier in
-	// the ASC ordering and may be skipped (it falls "before" the cursor). This
-	// is acceptable for a personal best-times list — the row will reappear on
-	// the next full reload, and the impact is limited to a transient missing
-	// entry in an append-only scroll, not a data-integrity issue.
-	const cond =
-		opts.cursor !== undefined
-			? and(eq(puzzleStats.playerId, playerId), parsePlayerStatsCursor(opts.cursor))
-			: eq(puzzleStats.playerId, playerId);
-	// Left join on puzzles so a deleted puzzle's stat row still surfaces
-	// (puzzleName null). Ordered by best time ascending (fastest first), with
-	// puzzleId as a deterministic tiebreaker for equal best times.
-	const all = await db
-		.select({
-			playerId: puzzleStats.playerId,
-			puzzleId: puzzleStats.puzzleId,
-			puzzleName: puzzles.name,
-			bestTimeSeconds: puzzleStats.bestTimeSeconds,
-			totalCompletions: puzzleStats.totalCompletions,
-			firstCompletedAt: puzzleStats.firstCompletedAt,
-			lastCompletedAt: puzzleStats.lastCompletedAt
-		})
-		.from(puzzleStats)
-		.leftJoin(puzzles, eq(puzzleStats.puzzleId, puzzles.id))
-		.where(cond)
-		.orderBy(asc(puzzleStats.bestTimeSeconds), asc(puzzleStats.puzzleId))
-		.limit(limit + 1)
-		.all();
-	const rows = all.slice(0, limit);
-	const nextCursor =
-		all.length > limit ? encodePlayerStatsCursor(rows[rows.length - 1]) : undefined;
-	return { rows, nextCursor };
-}
-
 export type PlayerStatsCursor =
 	| { version: 2; group: 0; bestTimeSeconds: number; puzzleId: string }
 	| { version: 2; group: 1; puzzleId: string }
@@ -440,7 +377,7 @@ function parseCursorSeconds(value: string, cursor: string): number {
 	return seconds;
 }
 
-export function parseCombinedPlayerStatsCursor(cursor: string): PlayerStatsCursor {
+export function parsePlayerStatsCursor(cursor: string): PlayerStatsCursor {
 	const parts = cursor.split('|');
 	if (parts[0] === 'v2') {
 		if (parts.length !== 4) {
@@ -485,7 +422,7 @@ export function parseCombinedPlayerStatsCursor(cursor: string): PlayerStatsCurso
 	throw new InvalidPlayerStatsCursorError(cursor);
 }
 
-export interface CombinedPlayerStat {
+export interface PlayerStat {
 	playerId: string;
 	puzzleId: string;
 	puzzleName: string | null;
@@ -495,11 +432,11 @@ export interface CombinedPlayerStat {
 	lastCompletedAt: number;
 }
 
-interface CombinedPlayerStatQueryRow extends CombinedPlayerStat {
+interface PlayerStatQueryRow extends PlayerStat {
 	sortGroup: number;
 }
 
-function combinedPlayerStatsCtes(playerId: string) {
+function playerStatsCtes(playerId: string) {
 	return sql`
 		ledger_stats AS (
 			SELECT
@@ -523,7 +460,7 @@ function combinedPlayerStatsCtes(playerId: string) {
 	`;
 }
 
-function combinedPlayerStatsCursorPredicate(cursor: PlayerStatsCursor) {
+function playerStatsCursorPredicate(cursor: PlayerStatsCursor) {
 	if (cursor.version === 2 && cursor.group === 1) {
 		return sql`"sortGroup" = 1 AND "puzzleId" > ${cursor.puzzleId}`;
 	}
@@ -548,25 +485,23 @@ function combinedPlayerStatsCursorPredicate(cursor: PlayerStatsCursor) {
 	)`;
 }
 
-function encodeCombinedPlayerStatsCursor(row: CombinedPlayerStat): string {
+function encodePlayerStatsCursor(row: PlayerStat): string {
 	return row.bestTimeSeconds === null
 		? `v2|1||${row.puzzleId}`
 		: `v2|0|${row.bestTimeSeconds}|${row.puzzleId}`;
 }
 
-export async function listCombinedPlayerStats(
+export async function listPlayerStats(
 	db: AppDb,
 	playerId: string,
 	opts: { limit: number; cursor?: string }
-): Promise<{ rows: CombinedPlayerStat[]; nextCursor?: string }> {
+): Promise<{ rows: PlayerStat[]; nextCursor?: string }> {
 	const limit = Math.floor(Math.min(Math.max(opts.limit, 1), 100));
-	const cursor =
-		opts.cursor === undefined ? undefined : parseCombinedPlayerStatsCursor(opts.cursor);
-	const cursorPredicate =
-		cursor === undefined ? sql`true` : combinedPlayerStatsCursorPredicate(cursor);
-	const all = await db.all<CombinedPlayerStatQueryRow>(sql`
+	const cursor = opts.cursor === undefined ? undefined : parsePlayerStatsCursor(opts.cursor);
+	const cursorPredicate = cursor === undefined ? sql`true` : playerStatsCursorPredicate(cursor);
+	const all = await db.all<PlayerStatQueryRow>(sql`
 		WITH
-		${combinedPlayerStatsCtes(playerId)},
+		${playerStatsCtes(playerId)},
 		combined_stats AS (
 			SELECT
 				${playerId} AS "playerId",
@@ -642,82 +577,11 @@ export async function listCombinedPlayerStats(
 			})
 		);
 	const nextCursor =
-		all.length > limit ? encodeCombinedPlayerStatsCursor(rows[rows.length - 1]) : undefined;
+		all.length > limit ? encodePlayerStatsCursor(rows[rows.length - 1]) : undefined;
 	return { rows, nextCursor };
 }
 
-// Composite cursor format: "<bestTimeSeconds>|<puzzleId>". bestTimeSeconds is
-// an integer second count; puzzleId is the stat row's text primary key. Both
-// are URL-safe enough for a query parameter when encoded via
-// encodeURIComponent at the API boundary.
-function encodePlayerStatsCursor(row: { bestTimeSeconds: number; puzzleId: string }): string {
-	return `${row.bestTimeSeconds}|${row.puzzleId}`;
-}
-
-function parsePlayerStatsCursor(cursor: string) {
-	// (bestTimeSeconds, puzzleId) ordering: a row is "after" the cursor if its
-	// bestTimeSeconds is strictly greater than the cursor's, OR its
-	// bestTimeSeconds equals the cursor's and its puzzleId is strictly greater
-	// (lexicographically) than the cursor's puzzleId. We want to exclude rows
-	// at or "before" the cursor (already served), so the condition keeps rows
-	// strictly "after".
-	const sep = cursor.lastIndexOf('|');
-	if (sep <= 0) {
-		// Malformed cursor: fall back to treating the whole string as a
-		// bestTimeSeconds value for backward compatibility with older clients.
-		// Stats are ordered ASC, so "after" means strictly greater.
-		const ts = Number(cursor);
-		return Number.isFinite(ts) ? gt(puzzleStats.bestTimeSeconds, ts) : sql`false`;
-	}
-	const bestStr = cursor.slice(0, sep);
-	const idStr = cursor.slice(sep + 1);
-	const best = Number(bestStr);
-	if (!Number.isFinite(best)) return sql`false`;
-	return sql`(${puzzleStats.bestTimeSeconds} > ${best} OR (${puzzleStats.bestTimeSeconds} = ${best} AND ${puzzleStats.puzzleId} > ${idStr}))`;
-}
-
 export async function getPlayerSummary(
-	db: AppDb,
-	playerId: string
-): Promise<{ puzzlesUploaded: number; puzzlesSolved: number; totalCompletions: number }> {
-	// Intentionally non-transactional: the two counts (uploaded puzzles,
-	// solved puzzles + total completions) are independent reads from
-	// separate tables. Wrapping them in a transaction would add a round-trip
-	// for no correctness benefit — a concurrent insert/delete between the two
-	// reads could make the counts momentarily inconsistent regardless, and
-	// the profile UI treats these as approximate summary tiles, not as an
-	// atomic snapshot. D1/SQLite also doesn't support read-only transactions
-	// any differently from plain reads here. The two reads are independent,
-	// so run them concurrently to cut profile latency (mirrors the player
-	// route's own Promise.all over the same pair).
-	const [uploadedRows, solvedRows] = await Promise.all([
-		db
-			.select({ n: count() })
-			.from(puzzles)
-			.where(
-				and(
-					eq(puzzles.ownerId, playerId),
-					inArray(puzzles.status, [...VISIBLE_PLAYER_PUZZLE_STATUSES])
-				)
-			)
-			.all(),
-		db
-			.select({
-				solved: count(),
-				completions: sql<number>`COALESCE(SUM(${puzzleStats.totalCompletions}), 0)`
-			})
-			.from(puzzleStats)
-			.where(eq(puzzleStats.playerId, playerId))
-			.all()
-	]);
-	return {
-		puzzlesUploaded: uploadedRows[0]?.n ?? 0,
-		puzzlesSolved: solvedRows[0]?.solved ?? 0,
-		totalCompletions: Number(solvedRows[0]?.completions ?? 0)
-	};
-}
-
-export async function getCombinedPlayerSummary(
 	db: AppDb,
 	playerId: string
 ): Promise<{ puzzlesUploaded: number; puzzlesSolved: number; totalCompletions: number }> {
@@ -733,7 +597,7 @@ export async function getCombinedPlayerSummary(
 			)
 			.all(),
 		db.all<{ puzzlesSolved: number; totalCompletions: number }>(sql`
-			WITH ${combinedPlayerStatsCtes(playerId)}
+			WITH ${playerStatsCtes(playerId)}
 			SELECT
 				COUNT(*) AS "puzzlesSolved",
 				COALESCE(

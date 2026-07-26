@@ -1263,7 +1263,28 @@ describe('player profile validators', () => {
 
 	it('validates a stat row', () => {
 		expect(isPlayerStatRow(stat)).toBe(true);
-		expect(isPlayerStatRow({ ...stat, bestTimeSeconds: 'x' })).toBe(false);
+	});
+
+	it('validates a stat row without a standard best time', () => {
+		const nullableStat: PlayerStatRow = { ...stat, bestTimeSeconds: null };
+
+		expect(isPlayerStatRow(nullableStat)).toBe(true);
+	});
+
+	it('rejects a stat row with a missing standard best time', () => {
+		const { bestTimeSeconds: _bestTimeSeconds, ...missingBest } = stat;
+
+		expect(isPlayerStatRow(missingBest)).toBe(false);
+	});
+
+	it.each([
+		['undefined', { ...stat, bestTimeSeconds: undefined }],
+		['string', { ...stat, bestTimeSeconds: '90' }],
+		['NaN', { ...stat, bestTimeSeconds: NaN }],
+		['positive infinity', { ...stat, bestTimeSeconds: Infinity }],
+		['negative infinity', { ...stat, bestTimeSeconds: -Infinity }]
+	])('rejects a stat row with a %s standard best time', (_case, value) => {
+		expect(isPlayerStatRow(value)).toBe(false);
 	});
 
 	const puzzle: PlayerPuzzleSummary = {

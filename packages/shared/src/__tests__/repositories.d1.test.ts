@@ -11,8 +11,7 @@ import {
 	recordCompletion,
 	recordVersionedCompletion,
 	listPlayerStats,
-	listCombinedPlayerStats,
-	getCombinedPlayerSummary,
+	getPlayerSummary,
 	InvalidPlayerStatsCursorError,
 	insertPuzzleOwnership,
 	ensurePuzzleOwnership,
@@ -436,7 +435,7 @@ describe('listPlayerStats composite cursor against real D1', () => {
 	});
 });
 
-describe('combined player stats against real D1', () => {
+describe('player stats against real D1', () => {
 	it('combines historical and ledger groups with additive counts and timestamp extrema', async () => {
 		await db.insert(schema.puzzles).values({
 			id: 'historical',
@@ -520,7 +519,7 @@ describe('combined player stats against real D1', () => {
 			}
 		]);
 
-		const result = await listCombinedPlayerStats(db, 'p1', { limit: 10 });
+		const result = await listPlayerStats(db, 'p1', { limit: 10 });
 
 		expect(
 			result.rows.map(
@@ -562,7 +561,7 @@ describe('combined player stats against real D1', () => {
 				lastCompletedAt: 800
 			}
 		]);
-		expect(await getCombinedPlayerSummary(db, 'p1')).toEqual({
+		expect(await getPlayerSummary(db, 'p1')).toEqual({
 			puzzlesUploaded: 1,
 			puzzlesSolved: 4,
 			totalCompletions: 10
@@ -617,12 +616,12 @@ describe('combined player stats against real D1', () => {
 			}
 		]);
 
-		const first = await listCombinedPlayerStats(db, 'p1', { limit: 1 });
+		const first = await listPlayerStats(db, 'p1', { limit: 1 });
 		expect(first.rows.map((row) => row.puzzleId)).toEqual(['pz-a']);
 		expect(first.nextCursor).toBe('v2|0|10|pz-a');
 		expect(
 			(
-				await listCombinedPlayerStats(db, 'p1', {
+				await listPlayerStats(db, 'p1', {
 					limit: 10,
 					cursor: first.nextCursor
 				})
@@ -630,7 +629,7 @@ describe('combined player stats against real D1', () => {
 		).toEqual(['pz-b', 'pz-c', 'pz-n1', 'pz-n2']);
 		expect(
 			(
-				await listCombinedPlayerStats(db, 'p1', {
+				await listPlayerStats(db, 'p1', {
 					limit: 10,
 					cursor: 'v2|0|20|pz-c'
 				})
@@ -638,7 +637,7 @@ describe('combined player stats against real D1', () => {
 		).toEqual(['pz-n1', 'pz-n2']);
 		expect(
 			(
-				await listCombinedPlayerStats(db, 'p1', {
+				await listPlayerStats(db, 'p1', {
 					limit: 10,
 					cursor: 'v2|1||pz-n1'
 				})
@@ -646,7 +645,7 @@ describe('combined player stats against real D1', () => {
 		).toEqual(['pz-n2']);
 		expect(
 			(
-				await listCombinedPlayerStats(db, 'p1', {
+				await listPlayerStats(db, 'p1', {
 					limit: 10,
 					cursor: '10|pz-a'
 				})
@@ -654,13 +653,13 @@ describe('combined player stats against real D1', () => {
 		).toEqual(['pz-b', 'pz-c', 'pz-n1', 'pz-n2']);
 		expect(
 			(
-				await listCombinedPlayerStats(db, 'p1', {
+				await listPlayerStats(db, 'p1', {
 					limit: 10,
 					cursor: '10'
 				})
 			).rows.map((row) => row.puzzleId)
 		).toEqual(['pz-c', 'pz-n1', 'pz-n2']);
-		expect((await listCombinedPlayerStats(db, 'p1', { limit: 4 })).nextCursor).toBe('v2|1||pz-n1');
+		expect((await listPlayerStats(db, 'p1', { limit: 4 })).nextCursor).toBe('v2|1||pz-n1');
 	});
 
 	it.each([
@@ -668,7 +667,7 @@ describe('combined player stats against real D1', () => {
 		['legacy composite', '9007199254740991|pz-a'],
 		['legacy bare', '9007199254740991']
 	])('accepts Number.MAX_SAFE_INTEGER in a %s cursor against D1', async (_kind, cursor) => {
-		const result = await listCombinedPlayerStats(db, 'p1', { limit: 10, cursor });
+		const result = await listPlayerStats(db, 'p1', { limit: 10, cursor });
 
 		expect(result.rows).toEqual([]);
 	});
@@ -678,7 +677,7 @@ describe('combined player stats against real D1', () => {
 		['legacy composite', '9007199254740992|pz-a'],
 		['legacy bare', '9007199254740992']
 	])('rejects Number.MAX_SAFE_INTEGER + 1 in a %s cursor against D1', async (_kind, cursor) => {
-		await expect(listCombinedPlayerStats(db, 'p1', { limit: 10, cursor })).rejects.toBeInstanceOf(
+		await expect(listPlayerStats(db, 'p1', { limit: 10, cursor })).rejects.toBeInstanceOf(
 			InvalidPlayerStatsCursorError
 		);
 	});
@@ -698,8 +697,8 @@ describe('combined player stats against real D1', () => {
 		'v2|0|10|',
 		'v2|1|10|pz-a',
 		'v2|1||'
-	])('rejects malformed combined cursor %j against D1', async (cursor) => {
-		await expect(listCombinedPlayerStats(db, 'p1', { limit: 10, cursor })).rejects.toBeInstanceOf(
+	])('rejects malformed player stats cursor %j against D1', async (cursor) => {
+		await expect(listPlayerStats(db, 'p1', { limit: 10, cursor })).rejects.toBeInstanceOf(
 			InvalidPlayerStatsCursorError
 		);
 	});
@@ -710,7 +709,7 @@ describe('ensurePuzzleOwnership backfill against real D1', () => {
 		// Simulate a completion of a puzzle that has no D1 ownership row (e.g.
 		// an admin puzzle whose best-effort ownership insert failed). Without
 		// the backfill, listPlayerStats left-joins a missing row and surfaces
-		// puzzleName null (the Best Times UI then shows the UUID).
+		// puzzleName null (the Puzzle Results UI then shows the UUID).
 		await ensurePuzzleOwnership(db, {
 			id: 'pz-legacy',
 			ownerId: SYSTEM_OWNER_ID,

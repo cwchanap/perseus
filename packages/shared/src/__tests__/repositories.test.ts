@@ -18,8 +18,6 @@ import {
 	recordCompletion,
 	listPlayerStats,
 	getPlayerSummary,
-	listCombinedPlayerStats,
-	getCombinedPlayerSummary,
 	InvalidPlayerStatsCursorError,
 	SYSTEM_OWNER_ID
 } from '../repositories';
@@ -444,7 +442,7 @@ describe('repositories', () => {
 
 	it('listPlayerStats resolves names for system-owned (admin) puzzles', async () => {
 		// Admin-created puzzles are mirrored into D1 with a system sentinel
-		// owner so the Best Times join can resolve their name. A player who
+		// owner so the Puzzle Results join can resolve their name. A player who
 		// solves such a puzzle should see the name, not a null fallback.
 		await insertPuzzleOwnership(helper.db, {
 			id: 'adminPz',
@@ -497,23 +495,21 @@ describe('repositories', () => {
 		expect(result.rows).toHaveLength(0);
 	});
 
-	it('listPlayerStats malformed cursor falls back to bestTime-only filter', async () => {
+	it('listPlayerStats accepts a legacy bare best-time cursor', async () => {
 		await recordCompletion(helper.db, 'p1', 'pz1', 10);
 		await recordCompletion(helper.db, 'p1', 'pz2', 20);
 		await recordCompletion(helper.db, 'p1', 'pz3', 30);
-		// Malformed cursor with no '|' separator: falls back to treating the
-		// whole string as a bestTimeSeconds value. Stats are ordered ASC, so
-		// "after" means strictly greater. "20" → rows with bestTime > 20.
+		// Legacy bare cursors continue to mean strictly greater best time.
 		const result = await listPlayerStats(helper.db, 'p1', { limit: 10, cursor: '20' });
 		expect(result.rows).toHaveLength(1);
 		expect(result.rows[0].puzzleId).toBe('pz3');
 	});
 
-	it('listPlayerStats garbage cursor returns no rows', async () => {
+	it('listPlayerStats rejects a garbage cursor', async () => {
 		await recordCompletion(helper.db, 'p1', 'pz1', 10);
-		// Non-numeric, no separator → sql`false` → no rows match.
-		const result = await listPlayerStats(helper.db, 'p1', { limit: 10, cursor: 'garbage' });
-		expect(result.rows).toHaveLength(0);
+		await expect(
+			listPlayerStats(helper.db, 'p1', { limit: 10, cursor: 'garbage' })
+		).rejects.toBeInstanceOf(InvalidPlayerStatsCursorError);
 	});
 
 	it('listPlayerPuzzles floors fractional limits to an integer', async () => {
@@ -545,7 +541,7 @@ describe('repositories', () => {
 	});
 });
 
-describe('combined player stats', () => {
+describe('player stats', () => {
 	let helper: ReturnType<typeof makeDb>;
 
 	beforeEach(() => {
@@ -687,7 +683,7 @@ describe('combined player stats', () => {
 			}
 		]);
 
-		const result = await listCombinedPlayerStats(helper.db, 'p1', { limit: 10 });
+		const result = await listPlayerStats(helper.db, 'p1', { limit: 10 });
 
 		expect(result).toEqual({
 			rows: [
@@ -797,7 +793,7 @@ describe('combined player stats', () => {
 			}
 		]);
 
-		expect(await getCombinedPlayerSummary(helper.db, 'p1')).toEqual({
+		expect(await getPlayerSummary(helper.db, 'p1')).toEqual({
 			puzzlesUploaded: 1,
 			puzzlesSolved: 3,
 			totalCompletions: 8
@@ -852,29 +848,29 @@ describe('combined player stats', () => {
 			}
 		]);
 
-		const first = await listCombinedPlayerStats(helper.db, 'p1', { limit: 1.5 });
+		const first = await listPlayerStats(helper.db, 'p1', { limit: 1.5 });
 		expect(first.rows.map((row) => row.puzzleId)).toEqual(['pz-a']);
 		expect(first.nextCursor).toBe('v2|0|10|pz-a');
 
-		const numericTie = await listCombinedPlayerStats(helper.db, 'p1', {
+		const numericTie = await listPlayerStats(helper.db, 'p1', {
 			limit: 10,
 			cursor: 'v2|0|10|pz-a'
 		});
 		expect(numericTie.rows.map((row) => row.puzzleId)).toEqual(['pz-b', 'pz-c', 'pz-n1', 'pz-n2']);
 
-		const crossToNull = await listCombinedPlayerStats(helper.db, 'p1', {
+		const crossToNull = await listPlayerStats(helper.db, 'p1', {
 			limit: 10,
 			cursor: 'v2|0|20|pz-c'
 		});
 		expect(crossToNull.rows.map((row) => row.puzzleId)).toEqual(['pz-n1', 'pz-n2']);
 
-		const withinNull = await listCombinedPlayerStats(helper.db, 'p1', {
+		const withinNull = await listPlayerStats(helper.db, 'p1', {
 			limit: 10,
 			cursor: 'v2|1||pz-n1'
 		});
 		expect(withinNull.rows.map((row) => row.puzzleId)).toEqual(['pz-n2']);
 
-		const legacyComposite = await listCombinedPlayerStats(helper.db, 'p1', {
+		const legacyComposite = await listPlayerStats(helper.db, 'p1', {
 			limit: 10,
 			cursor: '10|pz-a'
 		});
@@ -885,16 +881,16 @@ describe('combined player stats', () => {
 			'pz-n2'
 		]);
 
-		const legacyBare = await listCombinedPlayerStats(helper.db, 'p1', {
+		const legacyBare = await listPlayerStats(helper.db, 'p1', {
 			limit: 10,
 			cursor: '10'
 		});
 		expect(legacyBare.rows.map((row) => row.puzzleId)).toEqual(['pz-c', 'pz-n1', 'pz-n2']);
 
-		const nullCursor = await listCombinedPlayerStats(helper.db, 'p1', { limit: 4 });
+		const nullCursor = await listPlayerStats(helper.db, 'p1', { limit: 4 });
 		expect(nullCursor.nextCursor).toBe('v2|1||pz-n1');
 
-		const zeroLegacy = await listCombinedPlayerStats(helper.db, 'p1', {
+		const zeroLegacy = await listPlayerStats(helper.db, 'p1', {
 			limit: 10,
 			cursor: '0'
 		});
@@ -906,7 +902,7 @@ describe('combined player stats', () => {
 		['legacy composite', '9007199254740991|pz-a'],
 		['legacy bare', '9007199254740991']
 	])('accepts Number.MAX_SAFE_INTEGER in a %s cursor', async (_kind, cursor) => {
-		const result = await listCombinedPlayerStats(helper.db, 'p1', { limit: 10, cursor });
+		const result = await listPlayerStats(helper.db, 'p1', { limit: 10, cursor });
 
 		expect(result.rows).toEqual([]);
 	});
@@ -916,9 +912,9 @@ describe('combined player stats', () => {
 		['legacy composite', '9007199254740992|pz-a'],
 		['legacy bare', '9007199254740992']
 	])('rejects Number.MAX_SAFE_INTEGER + 1 in a %s cursor', async (_kind, cursor) => {
-		await expect(
-			listCombinedPlayerStats(helper.db, 'p1', { limit: 10, cursor })
-		).rejects.toBeInstanceOf(InvalidPlayerStatsCursorError);
+		await expect(listPlayerStats(helper.db, 'p1', { limit: 10, cursor })).rejects.toBeInstanceOf(
+			InvalidPlayerStatsCursorError
+		);
 	});
 
 	it.each([
@@ -944,9 +940,9 @@ describe('combined player stats', () => {
 		'v2|0|10|pz-a|extra',
 		'v2|1|10|pz-a',
 		'v2|1||'
-	])('rejects malformed combined player stats cursor %j', async (cursor) => {
-		await expect(
-			listCombinedPlayerStats(helper.db, 'p1', { limit: 10, cursor })
-		).rejects.toBeInstanceOf(InvalidPlayerStatsCursorError);
+	])('rejects malformed player stats cursor %j', async (cursor) => {
+		await expect(listPlayerStats(helper.db, 'p1', { limit: 10, cursor })).rejects.toBeInstanceOf(
+			InvalidPlayerStatsCursorError
+		);
 	});
 });
