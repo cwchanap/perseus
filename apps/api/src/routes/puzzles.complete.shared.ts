@@ -3,7 +3,7 @@ import {
 	type RecordPuzzleCompletionResponse,
 	type RecordPuzzleCompletionV1
 } from '@perseus/types';
-import type { VersionedCompletionResult } from '@perseus/shared';
+import type { LegacyCompletionWriteExecution, VersionedCompletionResult } from '@perseus/shared';
 
 const MAX_COMPLETION_TIME_SECONDS = 24 * 60 * 60;
 
@@ -17,8 +17,10 @@ export type CompletionRequestParseResult =
 
 type CompletionResultResponse = {
 	body: RecordPuzzleCompletionResponse;
-	status: 200 | 409;
+	status: 200 | 404 | 409 | 429;
 };
+
+export type CompletionRouteResult = VersionedCompletionResult | LegacyCompletionWriteExecution;
 
 type CompletionInternalErrorResponse = {
 	body: RecordPuzzleCompletionResponse;
@@ -65,8 +67,23 @@ export function parseCompletionRequest(value: unknown): CompletionRequestParseRe
 }
 
 export function completionResultToResponse(
-	result: VersionedCompletionResult
+	result: CompletionRouteResult
 ): CompletionResultResponse {
+	if (result.status === 'tombstoned') {
+		return {
+			body: { error: 'not_found', message: 'Puzzle not found' },
+			status: 404
+		};
+	}
+	if (result.status === 'quota_exceeded') {
+		return {
+			body: {
+				error: 'completion_quota_exceeded',
+				message: 'Completion history limit reached'
+			},
+			status: 429
+		};
+	}
 	if (result.status === 'conflict') {
 		return {
 			body: {

@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { Env } from '../worker';
-import { getWorkerDb, getWorkerDbContext } from '../db.worker';
+import { getWorkerDbContext } from '../db.worker';
 import {
 	recordLegacyCompletion,
 	recordVersionedCompletion,
@@ -59,14 +59,7 @@ router.post('/:id/complete', requirePlayerAuth, async (c) => {
 	}
 
 	const session = c.get('playerSession');
-	const db = getWorkerDb(c.env);
-	// Lazily backfill a system-owned D1 row for puzzles that predate the D1
-	// mirror or whose best-effort ownership insert failed at creation time.
-	// Without this row, listPlayerStats left-joins a missing puzzles row and
-	// the Best Times UI shows the puzzle UUID instead of its name. Best-effort:
-	// a failure is logged, not fatal — the completion write below is the
-	// authoritative write and would surface a real D1 outage anyway.
-	await ensurePuzzleOwnership(db, {
+	const ownershipRow = {
 		id: puzzleId,
 		ownerId: SYSTEM_OWNER_ID,
 		name: puzzle.name,
@@ -74,29 +67,32 @@ router.post('/:id/complete', requirePlayerAuth, async (c) => {
 		...(puzzle.category ? { category: puzzle.category } : {}),
 		status: 'ready',
 		createdAt: puzzle.createdAt
-	}).catch((err) => console.error(`Failed to backfill puzzle ownership for ${puzzleId}:`, err));
+	} as const;
 
 	try {
-		if (parsed.value.kind === 'legacy') {
-			const result = await recordLegacyCompletion(
-				getWorkerDbContext(c.env).completionWrites,
-				session.user.id,
-				puzzleId,
-				parsed.value.timeSeconds
-			);
-			if (result.status === 'tombstoned') {
-				return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
-			}
-			return c.json({ ok: true });
-		}
-
-		const result = await recordVersionedCompletion(
-			getWorkerDbContext(c.env).completionWrites,
-			session.user.id,
-			puzzleId,
-			parsed.value.request
-		);
+		const { db, completionWrites } = getWorkerDbContext(c.env);
+		const result =
+			parsed.value.kind === 'legacy'
+				? await recordLegacyCompletion(
+						completionWrites,
+						session.user.id,
+						puzzleId,
+						parsed.value.timeSeconds
+					)
+				: await recordVersionedCompletion(
+						completionWrites,
+						session.user.id,
+						puzzleId,
+						parsed.value.request
+					);
 		const response = completionResultToResponse(result);
+		if (response.status !== 404) {
+			// Lazily backfill a system-owned row for puzzles that predate the DB
+			// mirror. Tombstones skip this so deletion cannot recreate ownership.
+			await ensurePuzzleOwnership(db, ownershipRow).catch((err) =>
+				console.error(`Failed to backfill puzzle ownership for ${puzzleId}:`, err)
+			);
+		}
 		return c.json(response.body, response.status);
 	} catch (error) {
 		console.error(`Failed to record completion for puzzle ${puzzleId}:`, error);

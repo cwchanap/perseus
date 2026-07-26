@@ -1,5 +1,5 @@
 import { Database } from 'bun:sqlite';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Miniflare } from 'miniflare';
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -93,6 +93,63 @@ async function applyWrites(executor: CompletionWriteExecutor, inputs: VersionedC
 }
 
 describe('createBunDbContext', () => {
+	it('runs both completion write protocols through immediate transactions', async () => {
+		const immediateInputs: unknown[] = [];
+		const originalTransaction = Database.prototype.transaction;
+		const transactionSpy = vi.spyOn(Database.prototype, 'transaction').mockImplementation(function (
+			this: Database,
+			callback
+		) {
+			const transaction = originalTransaction.call(this, callback);
+			const wrapped = ((input: unknown) => transaction(input)) as typeof transaction;
+			wrapped.deferred = transaction.deferred.bind(transaction);
+			wrapped.immediate = ((input: unknown) => {
+				immediateInputs.push(input);
+				return transaction.immediate(input);
+			}) as typeof transaction.immediate;
+			wrapped.exclusive = transaction.exclusive.bind(transaction);
+			return wrapped;
+		});
+		const dataDir = mkdtempSync(join(tmpdir(), 'perseus-bun-immediate-'));
+		const context = createBunDbContext(dataDir, 3);
+
+		try {
+			await context.completionWrites.write(completion());
+			await context.completionWrites.writeLegacy({
+				playerId: 'p1',
+				puzzleId: 'pz2',
+				timeSeconds: 50,
+				receivedAt: 2_000
+			});
+
+			expect(immediateInputs).toEqual([
+				completion(),
+				{
+					playerId: 'p1',
+					puzzleId: 'pz2',
+					timeSeconds: 50,
+					receivedAt: 2_000
+				}
+			]);
+		} finally {
+			context.close();
+			rmSync(dataDir, { recursive: true, force: true });
+			transactionSpy.mockRestore();
+		}
+	});
+
+	it.each([0, -1, 1.5, 100_001, Number.NaN])(
+		'rejects invalid Bun retained-run limit $limit',
+		(limit) => {
+			const dataDir = mkdtempSync(join(tmpdir(), 'perseus-bun-invalid-limit-'));
+			try {
+				expect(() => createBunDbContext(dataDir, limit)).toThrow(RangeError);
+			} finally {
+				rmSync(dataDir, { recursive: true, force: true });
+			}
+		}
+	);
+
 	it('records the first run and replays it with the original stored timestamp', async () => {
 		const context = bunContext!;
 		const first = await context.completionWrites.write(completion());
