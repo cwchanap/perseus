@@ -529,6 +529,29 @@ describe('recordVersionedCompletion against real D1', () => {
 		expect(await db.select().from(schema.playerCompletionUsage)).toHaveLength(0);
 	});
 
+	it('rejects a zero-change versioned write without a tombstone or quota', async () => {
+		const executor = createD1CompletionWriteExecutor(db, 3);
+		await d1
+			.prepare(
+				'CREATE TRIGGER ignore_completion_run_insert BEFORE INSERT ON puzzle_completion_runs BEGIN SELECT RAISE(IGNORE); END'
+			)
+			.run();
+		try {
+			await expect(
+				recordVersionedCompletion(executor, 'p1', 'pz1', completion(), 1_000)
+			).rejects.toThrow(
+				'Completion ledger write returned no stored row without tombstone or quota'
+			);
+		} finally {
+			await d1.prepare('DROP TRIGGER ignore_completion_run_insert').run();
+		}
+
+		expect(await db.select().from(schema.puzzleCompletionRuns)).toHaveLength(0);
+		expect(await db.select().from(schema.puzzleStats)).toHaveLength(0);
+		expect(await db.select().from(schema.playerCompletionUsage)).toHaveLength(0);
+		expect(await db.select().from(schema.puzzleDeletionTombstones)).toHaveLength(0);
+	});
+
 	it('decrements usage on deletion and never creates a negative missing or zero row', async () => {
 		const executor = createD1CompletionWriteExecutor(db, 3);
 		await recordVersionedCompletion(executor, 'p1', 'pz1', completion({ runId: 'p1-pz1' }), 1_000);
