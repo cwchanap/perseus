@@ -63,7 +63,6 @@ import {
 import { getWorkerDb, getWorkerDbContext } from '../db.worker';
 import {
 	deletePuzzleOwnership,
-	deletePuzzleStats,
 	detectImageType,
 	insertPuzzleOwnership,
 	isAliveWorkflowStatus,
