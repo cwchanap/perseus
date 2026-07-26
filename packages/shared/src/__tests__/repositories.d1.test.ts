@@ -574,7 +574,7 @@ describe('recordVersionedCompletion against real D1', () => {
 		expect(await db.select().from(schema.playerCompletionUsage)).toHaveLength(0);
 	});
 
-	it('deletePuzzleStats removes every player ledger and baseline row for one puzzle', async () => {
+	it('deletePuzzleStats delegates lifecycle finish for every player row on one puzzle', async () => {
 		const executor = createD1CompletionWriteExecutor(db);
 		await db.insert(schema.puzzleStats).values([
 			{

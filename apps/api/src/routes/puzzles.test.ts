@@ -1,9 +1,17 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+const dbContextMock = vi.hoisted(() => ({
+	db: {},
+	completionWrites: {
+		isPuzzleTombstoned: vi.fn().mockResolvedValue(false)
+	}
+}));
+
 // vi.mock is hoisted — must appear before any imports that use the mocked modules.
 vi.mock('../db', () => ({
-	getDb: vi.fn(() => ({}))
+	getDb: vi.fn(() => dbContextMock.db),
+	getDbContext: vi.fn(() => dbContextMock)
 }));
 
 vi.mock('node:fs/promises', () => ({
@@ -126,6 +134,7 @@ function makePuzzle(overrides: Record<string, any> = {}): any {
 describe('POST / - Upload puzzle for player', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		dbContextMock.completionWrites.isPuzzleTombstoned.mockResolvedValue(false);
 	});
 
 	it('returns 401 when the player session cookie is missing', async () => {
@@ -221,6 +230,52 @@ describe('POST / - Upload puzzle for player', () => {
 			})
 		);
 		expect(body).toEqual(expect.objectContaining({ name: 'Player Puzzle', category: 'Art' }));
+	});
+
+	it('rejects a tombstoned generated ID before publishing filesystem or ownership data', async () => {
+		vi.mocked(playerAuth.getPlayerSession).mockResolvedValue({
+			sessionHash: 'session-hash',
+			user: {
+				id: 'player-1',
+				email: 'player@example.com',
+				createdAt: 1000,
+				lastLoginAt: 2000
+			},
+			createdAt: 2000,
+			expiresAt: Date.now() + 1000
+		});
+		const generatedId = '550e8400-e29b-41d4-a716-446655440000';
+		const uuidSpy = vi.spyOn(crypto, 'randomUUID').mockReturnValue(generatedId);
+		dbContextMock.completionWrites.isPuzzleTombstoned.mockResolvedValue(true);
+		const formData = new FormData();
+		formData.append('name', 'Player Puzzle');
+		formData.append('pieceCount', '48');
+		formData.append('aspectRatio', '3:4');
+		formData.append('image', new Blob([PNG_HEADER], { type: 'image/png' }), 'test.png');
+
+		try {
+			const res = await puzzles.fetch(
+				new Request('http://localhost/', {
+					method: 'POST',
+					headers: { Cookie: 'perseus_player_session=player-token' },
+					body: formData
+				})
+			);
+
+			expect(res.status).toBe(500);
+			expect(await res.json()).toEqual({
+				error: 'internal_error',
+				message: 'Failed to allocate puzzle ID'
+			});
+			expect(dbContextMock.completionWrites.isPuzzleTombstoned).toHaveBeenCalledWith(generatedId);
+			expect(fsPromises.mkdir).not.toHaveBeenCalled();
+			expect(fsPromises.writeFile).not.toHaveBeenCalled();
+			expect(puzzleGenerator.generatePuzzle).not.toHaveBeenCalled();
+			expect(storage.createPuzzle).not.toHaveBeenCalled();
+			expect(insertPuzzleOwnership).not.toHaveBeenCalled();
+		} finally {
+			uuidSpy.mockRestore();
+		}
 	});
 
 	it('returns 500 and cleans up when ownership insert fails', async () => {

@@ -193,7 +193,7 @@ export function createBunDbContext(
 	};
 	const writeVersionedTransaction = sqlite.transaction(writeVersioned);
 	const writeLegacyTransaction = sqlite.transaction(writeLegacy);
-	const deletePuzzleCompletionData = sqlite.transaction((puzzleId: string) => {
+	const finishPuzzleDeletionTransaction = sqlite.transaction((puzzleId: string) => {
 		db.delete(puzzleStats).where(eq(puzzleStats.puzzleId, puzzleId)).run();
 		db.delete(puzzleCompletionRuns).where(eq(puzzleCompletionRuns.puzzleId, puzzleId)).run();
 	});
@@ -206,8 +206,25 @@ export function createBunDbContext(
 			return writeLegacyTransaction.immediate(input);
 		},
 
-		async deletePuzzleCompletionData(puzzleId) {
-			deletePuzzleCompletionData(puzzleId);
+		async beginPuzzleDeletion(puzzleId, deletedAt) {
+			db.insert(puzzleDeletionTombstones)
+				.values({ puzzleId, deletedAt })
+				.onConflictDoNothing({ target: puzzleDeletionTombstones.puzzleId })
+				.run();
+		},
+
+		async finishPuzzleDeletion(puzzleId) {
+			finishPuzzleDeletionTransaction.immediate(puzzleId);
+		},
+
+		async isPuzzleTombstoned(puzzleId) {
+			return (
+				db
+					.select({ puzzleId: puzzleDeletionTombstones.puzzleId })
+					.from(puzzleDeletionTombstones)
+					.where(eq(puzzleDeletionTombstones.puzzleId, puzzleId))
+					.get() !== undefined
+			);
 		}
 	};
 

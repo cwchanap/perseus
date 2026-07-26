@@ -5,7 +5,9 @@ const dbContextMock = vi.hoisted(() => ({
 	db: {},
 	completionWrites: {
 		write: vi.fn(),
-		deletePuzzleCompletionData: vi.fn(async () => undefined)
+		deletePuzzleCompletionData: vi.fn(async () => undefined),
+		finishPuzzleDeletion: vi.fn(async () => undefined),
+		isPuzzleTombstoned: vi.fn().mockResolvedValue(false)
 	}
 }));
 
@@ -700,6 +702,50 @@ describe('Admin Routes - Workflow Trigger Cleanup', () => {
 					status: 'processing'
 				})
 			);
+		});
+
+		it('rejects a tombstoned generated ID before publishing Worker data', async () => {
+			const generatedId = '550e8400-e29b-41d4-a716-446655440000';
+			const uuidSpy = vi.spyOn(crypto, 'randomUUID').mockReturnValue(generatedId);
+			dbContextMock.completionWrites.isPuzzleTombstoned.mockResolvedValueOnce(true);
+			const mockEnv = {
+				ADMIN_PASSKEY: 'test-passkey',
+				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+				PUZZLE_METADATA: {} as KVNamespace,
+				PUZZLES_BUCKET: {} as R2Bucket,
+				PUZZLE_WORKFLOW: {
+					create: vi.fn()
+				}
+			};
+			const formData = new FormData();
+			formData.append('name', 'Tombstoned Puzzle');
+			formData.append('pieceCount', '48');
+			formData.append('aspectRatio', '3:4');
+			formData.append('image', new Blob([PNG_3X4], { type: 'image/png' }), 'test.png');
+
+			try {
+				const res = await admin.fetch(
+					new Request('http://localhost/puzzles', {
+						method: 'POST',
+						headers: { cookie: 'session=valid.token' },
+						body: formData
+					}),
+					mockEnv as any
+				);
+
+				expect(res.status).toBe(500);
+				expect(await res.json()).toEqual({
+					error: 'internal_error',
+					message: 'Failed to allocate puzzle ID'
+				});
+				expect(dbContextMock.completionWrites.isPuzzleTombstoned).toHaveBeenCalledWith(generatedId);
+				expect(storage.uploadOriginalImage).not.toHaveBeenCalled();
+				expect(storage.createPuzzleMetadata).not.toHaveBeenCalled();
+				expect(insertPuzzleOwnership).not.toHaveBeenCalled();
+				expect(mockEnv.PUZZLE_WORKFLOW.create).not.toHaveBeenCalled();
+			} finally {
+				uuidSpy.mockRestore();
+			}
 		});
 
 		it('should cleanup both metadata and image when workflow.create() fails', async () => {
@@ -1862,7 +1908,7 @@ describe('Admin Routes - Login Success/Failure', () => {
 describe('Admin Routes - Delete Puzzle Cases', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
-		dbContextMock.completionWrites.deletePuzzleCompletionData.mockResolvedValue(undefined);
+		dbContextMock.completionWrites.finishPuzzleDeletion.mockResolvedValue(undefined);
 	});
 
 	const mockEnv = {
@@ -2011,14 +2057,12 @@ describe('Admin Routes - Delete Puzzle Cases', () => {
 			dbContextMock.db,
 			'550e8400-e29b-41d4-a716-446655440000'
 		);
-		expect(dbContextMock.completionWrites.deletePuzzleCompletionData).toHaveBeenCalledWith(
+		expect(dbContextMock.completionWrites.finishPuzzleDeletion).toHaveBeenCalledWith(
 			'550e8400-e29b-41d4-a716-446655440000'
 		);
 		expect(
 			(storage.deletePuzzleMetadata as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]
-		).toBeLessThan(
-			dbContextMock.completionWrites.deletePuzzleCompletionData.mock.invocationCallOrder[0]
-		);
+		).toBeLessThan(dbContextMock.completionWrites.finishPuzzleDeletion.mock.invocationCallOrder[0]);
 	});
 
 	it('still returns 204 when atomic completion cleanup fails after KV deletion', async () => {
@@ -2037,7 +2081,7 @@ describe('Admin Routes - Delete Puzzle Cases', () => {
 			success: true,
 			failedKeys: []
 		});
-		dbContextMock.completionWrites.deletePuzzleCompletionData.mockRejectedValueOnce(
+		dbContextMock.completionWrites.finishPuzzleDeletion.mockRejectedValueOnce(
 			new Error('D1 completion cleanup failed')
 		);
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -2056,9 +2100,7 @@ describe('Admin Routes - Delete Puzzle Cases', () => {
 		);
 		expect(
 			(storage.deletePuzzleMetadata as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]
-		).toBeLessThan(
-			dbContextMock.completionWrites.deletePuzzleCompletionData.mock.invocationCallOrder[0]
-		);
+		).toBeLessThan(dbContextMock.completionWrites.finishPuzzleDeletion.mock.invocationCallOrder[0]);
 		consoleSpy.mockRestore();
 	});
 });

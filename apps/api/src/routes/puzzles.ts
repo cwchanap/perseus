@@ -26,7 +26,7 @@ import {
 import { generatePuzzle, isValidPieceCount } from '../services/puzzle-generator';
 import { requirePlayerAuth } from '../middleware/player-auth';
 import type { PlayerSessionRecord } from '../services/player-auth';
-import { getDb } from '../db';
+import { getDbContext } from '../db';
 import {
 	detectImageType,
 	insertPuzzleOwnership,
@@ -238,6 +238,10 @@ puzzles.post('/', requirePlayerAuth, async (c) => {
 		}
 
 		id = crypto.randomUUID();
+		const dbContext = getDbContext();
+		if (await dbContext.completionWrites.isPuzzleTombstoned(id)) {
+			return c.json({ error: 'internal_error', message: 'Failed to allocate puzzle ID' }, 500);
+		}
 		const imageBuffer = Buffer.from(await image.arrayBuffer());
 
 		await mkdir(getPuzzleDir(id), { recursive: true });
@@ -267,7 +271,7 @@ puzzles.post('/', requirePlayerAuth, async (c) => {
 		// row is invisible to the player. On failure, roll back the saved puzzle
 		// and fail the request instead of returning success.
 		try {
-			await insertPuzzleOwnership(getDb(), {
+			await insertPuzzleOwnership(dbContext.db, {
 				id,
 				ownerId: c.get('playerSession').user.id,
 				name: trimmedName,
