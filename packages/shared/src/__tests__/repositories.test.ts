@@ -15,7 +15,7 @@ import {
 	deletePuzzleStats,
 	setPuzzleStatus,
 	listPlayerPuzzles,
-	recordCompletion,
+	recordLegacyCompletion,
 	listPlayerStats,
 	getPlayerSummary,
 	InvalidPlayerStatsCursorError,
@@ -361,11 +361,11 @@ describe('repositories', () => {
 		// the count increments and best time tracks the MIN across all of them.
 		vi.useFakeTimers();
 		try {
-			await recordCompletion(helper.db, 'p1', 'pz1', 100);
+			await recordLegacyCompletion(helper.db, 'p1', 'pz1', 100);
 			vi.advanceTimersByTime(31_000);
-			await recordCompletion(helper.db, 'p1', 'pz1', 80);
+			await recordLegacyCompletion(helper.db, 'p1', 'pz1', 80);
 			vi.advanceTimersByTime(31_000);
-			await recordCompletion(helper.db, 'p1', 'pz1', 120);
+			await recordLegacyCompletion(helper.db, 'p1', 'pz1', 120);
 			const stats = await listPlayerStats(helper.db, 'p1', { limit: 10 });
 			expect(stats.rows).toHaveLength(1);
 			expect(stats.rows[0].bestTimeSeconds).toBe(80); // MIN of 100, 80, 120
@@ -381,10 +381,10 @@ describe('repositories', () => {
 		// considered for the best-time MIN.
 		vi.useFakeTimers();
 		try {
-			await recordCompletion(helper.db, 'p1', 'pz1', 100);
+			await recordLegacyCompletion(helper.db, 'p1', 'pz1', 100);
 			// No time advanced — these are immediate retries.
-			await recordCompletion(helper.db, 'p1', 'pz1', 80);
-			await recordCompletion(helper.db, 'p1', 'pz1', 120);
+			await recordLegacyCompletion(helper.db, 'p1', 'pz1', 80);
+			await recordLegacyCompletion(helper.db, 'p1', 'pz1', 120);
 			const stats = await listPlayerStats(helper.db, 'p1', { limit: 10 });
 			expect(stats.rows).toHaveLength(1);
 			expect(stats.rows[0].bestTimeSeconds).toBe(80); // MIN still applied
@@ -403,8 +403,8 @@ describe('repositories', () => {
 			status: 'ready',
 			createdAt: 1
 		});
-		await recordCompletion(helper.db, 'p1', 'pz1', 50);
-		await recordCompletion(helper.db, 'p1', 'pzX', 50); // a puzzle not owned by p1
+		await recordLegacyCompletion(helper.db, 'p1', 'pz1', 50);
+		await recordLegacyCompletion(helper.db, 'p1', 'pzX', 50); // a puzzle not owned by p1
 		const summary = await getPlayerSummary(helper.db, 'p1');
 		expect(summary).toEqual({ puzzlesUploaded: 1, puzzlesSolved: 2, totalCompletions: 2 });
 	});
@@ -426,9 +426,9 @@ describe('repositories', () => {
 			status: 'ready',
 			createdAt: 2
 		});
-		await recordCompletion(helper.db, 'p1', 'pz1', 50);
-		await recordCompletion(helper.db, 'p2', 'pz1', 30);
-		await recordCompletion(helper.db, 'p1', 'pz2', 40);
+		await recordLegacyCompletion(helper.db, 'p1', 'pz1', 50);
+		await recordLegacyCompletion(helper.db, 'p2', 'pz1', 30);
+		await recordLegacyCompletion(helper.db, 'p1', 'pz2', 40);
 
 		await deletePuzzleStats(helper.db, 'pz1');
 
@@ -452,7 +452,7 @@ describe('repositories', () => {
 			status: 'ready',
 			createdAt: 1
 		});
-		await recordCompletion(helper.db, 'p1', 'adminPz', 42);
+		await recordLegacyCompletion(helper.db, 'p1', 'adminPz', 42);
 
 		const { rows } = await listPlayerStats(helper.db, 'p1', { limit: 10 });
 		expect(rows).toHaveLength(1);
@@ -496,9 +496,9 @@ describe('repositories', () => {
 	});
 
 	it('listPlayerStats accepts a legacy bare best-time cursor', async () => {
-		await recordCompletion(helper.db, 'p1', 'pz1', 10);
-		await recordCompletion(helper.db, 'p1', 'pz2', 20);
-		await recordCompletion(helper.db, 'p1', 'pz3', 30);
+		await recordLegacyCompletion(helper.db, 'p1', 'pz1', 10);
+		await recordLegacyCompletion(helper.db, 'p1', 'pz2', 20);
+		await recordLegacyCompletion(helper.db, 'p1', 'pz3', 30);
 		// Legacy bare cursors continue to mean strictly greater best time.
 		const result = await listPlayerStats(helper.db, 'p1', { limit: 10, cursor: '20' });
 		expect(result.rows).toHaveLength(1);
@@ -506,7 +506,7 @@ describe('repositories', () => {
 	});
 
 	it('listPlayerStats rejects a garbage cursor', async () => {
-		await recordCompletion(helper.db, 'p1', 'pz1', 10);
+		await recordLegacyCompletion(helper.db, 'p1', 'pz1', 10);
 		await expect(
 			listPlayerStats(helper.db, 'p1', { limit: 10, cursor: 'garbage' })
 		).rejects.toBeInstanceOf(InvalidPlayerStatsCursorError);
@@ -532,9 +532,9 @@ describe('repositories', () => {
 	});
 
 	it('listPlayerStats floors fractional limits to an integer', async () => {
-		await recordCompletion(helper.db, 'p1', 'pz1', 10);
-		await recordCompletion(helper.db, 'p1', 'pz2', 20);
-		await recordCompletion(helper.db, 'p1', 'pz3', 30);
+		await recordLegacyCompletion(helper.db, 'p1', 'pz1', 10);
+		await recordLegacyCompletion(helper.db, 'p1', 'pz2', 20);
+		await recordLegacyCompletion(helper.db, 'p1', 'pz3', 30);
 		const result = await listPlayerStats(helper.db, 'p1', { limit: 1.5 });
 		expect(result.rows).toHaveLength(1);
 		expect(result.nextCursor).toBeDefined();

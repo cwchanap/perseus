@@ -1,18 +1,23 @@
 import { Hono } from 'hono';
-import { getDb } from '../db';
-import { recordCompletion, ensurePuzzleOwnership, SYSTEM_OWNER_ID } from '@perseus/shared';
+import { getDb, getDbContext } from '../db';
+import {
+	recordLegacyCompletion,
+	recordVersionedCompletion,
+	ensurePuzzleOwnership,
+	SYSTEM_OWNER_ID
+} from '@perseus/shared';
 import { isPuzzleId } from '@perseus/types';
 import { getPuzzle } from '../services/storage';
 import { isPuzzleReady } from './puzzle-ready';
 import { requirePlayerAuth } from '../middleware/player-auth';
 import type { PlayerSessionRecord } from '../services/player-auth';
+import {
+	completionInternalErrorResponse,
+	completionResultToResponse,
+	parseCompletionRequest
+} from './puzzles.complete.shared';
 
 const router = new Hono<{ Variables: { playerSession: PlayerSessionRecord } }>();
-
-// Sanity ceiling for reported solve times. The client timer only counts
-// visible active time (it pauses on tab-hide), so any real solve is far below
-// this; values above are garbage / abuse and rejected before hitting the DB.
-const MAX_COMPLETION_TIME_SECONDS = 24 * 60 * 60;
 
 router.post('/:id/complete', requirePlayerAuth, async (c) => {
 	const puzzleId = c.req.param('id');
@@ -29,22 +34,8 @@ router.post('/:id/complete', requirePlayerAuth, async (c) => {
 	} catch {
 		return c.json({ error: 'bad_request', message: 'Invalid JSON body' }, 400);
 	}
-	const timeSeconds =
-		body && typeof body === 'object' && 'timeSeconds' in body
-			? (body as { timeSeconds: unknown }).timeSeconds
-			: undefined;
-	if (typeof timeSeconds !== 'number' || !Number.isFinite(timeSeconds) || timeSeconds < 1) {
-		return c.json(
-			{ error: 'bad_request', message: 'timeSeconds must be a number of at least 1 second' },
-			400
-		);
-	}
-	if (timeSeconds > MAX_COMPLETION_TIME_SECONDS) {
-		return c.json(
-			{ error: 'bad_request', message: 'timeSeconds exceeds the maximum allowed solve time' },
-			400
-		);
-	}
+	const parsed = parseCompletionRequest(body);
+	if (!parsed.ok) return c.json(parsed.body, parsed.status);
 
 	// Confirm the puzzle exists and is ready before recording, so puzzle_stats
 	// can't accumulate rows for non-existent or not-yet-generated puzzles.
@@ -57,7 +48,8 @@ router.post('/:id/complete', requirePlayerAuth, async (c) => {
 		puzzle = await getPuzzle(puzzleId);
 	} catch (error) {
 		console.error(`Failed to retrieve puzzle ${puzzleId}:`, error);
-		return c.json({ error: 'internal_error', message: 'Failed to retrieve puzzle' }, 500);
+		const response = completionInternalErrorResponse('Failed to retrieve puzzle');
+		return c.json(response.body, response.status);
 	}
 	if (!puzzle || !isPuzzleReady(puzzle)) {
 		return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
@@ -69,7 +61,7 @@ router.post('/:id/complete', requirePlayerAuth, async (c) => {
 	// mirror or whose best-effort ownership insert failed at creation time.
 	// Without this row, listPlayerStats left-joins a missing puzzles row and
 	// the Best Times UI shows the puzzle UUID instead of its name. Best-effort:
-	// a failure is logged, not fatal — recordCompletion below is the
+	// a failure is logged, not fatal — the completion write below is the
 	// authoritative write and would surface a real DB outage anyway.
 	await ensurePuzzleOwnership(db, {
 		id: puzzleId,
@@ -80,8 +72,26 @@ router.post('/:id/complete', requirePlayerAuth, async (c) => {
 		status: 'ready',
 		createdAt: puzzle.createdAt
 	}).catch((err) => console.error(`Failed to backfill puzzle ownership for ${puzzleId}:`, err));
-	await recordCompletion(db, session.user.id, puzzleId, Math.floor(timeSeconds));
-	return c.json({ ok: true });
+
+	try {
+		if (parsed.value.kind === 'legacy') {
+			await recordLegacyCompletion(db, session.user.id, puzzleId, parsed.value.timeSeconds);
+			return c.json({ ok: true });
+		}
+
+		const result = await recordVersionedCompletion(
+			getDbContext().completionWrites,
+			session.user.id,
+			puzzleId,
+			parsed.value.request
+		);
+		const response = completionResultToResponse(result);
+		return c.json(response.body, response.status);
+	} catch (error) {
+		console.error(`Failed to record completion for puzzle ${puzzleId}:`, error);
+		const response = completionInternalErrorResponse('Failed to record completion');
+		return c.json(response.body, response.status);
+	}
 });
 
 export default router;
