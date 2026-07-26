@@ -5,6 +5,7 @@ const dbContextMock = vi.hoisted(() => ({
 	db: {},
 	completionWrites: {
 		write: vi.fn(),
+		beginPuzzleDeletion: vi.fn(async () => undefined),
 		finishPuzzleDeletion: vi.fn(async () => undefined)
 	}
 }));
@@ -13,6 +14,8 @@ vi.mock('../storage.worker', () => ({
 	deletePuzzleAssets: vi.fn(),
 	deleteMetadataDO: vi.fn(),
 	deletePuzzleMetadata: vi.fn(),
+	deleteCleanupRecord: vi.fn(),
+	writeCleanupRecord: vi.fn(),
 	getAuthoritativeStatus: vi.fn(),
 	getPuzzle: vi.fn(),
 	listPuzzles: vi.fn(),
@@ -28,8 +31,7 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	const actual = (await importOriginal()) as Record<string, unknown>;
 	return {
 		...actual,
-		deletePuzzleOwnership: vi.fn(),
-		deletePuzzleStats: vi.fn(async () => undefined)
+		deletePuzzleOwnership: vi.fn()
 	};
 });
 
@@ -38,15 +40,16 @@ import {
 	deletePuzzleAssets,
 	deleteMetadataDO,
 	deletePuzzleMetadata,
+	deleteCleanupRecord,
+	writeCleanupRecord,
 	getAuthoritativeStatus,
 	getPuzzle,
 	listPuzzles,
 	releaseIdempotencyKey
 } from '../storage.worker';
-import { deletePuzzleOwnership, deletePuzzleStats } from '@perseus/shared';
+import { deletePuzzleOwnership } from '@perseus/shared';
 
 void releaseIdempotencyKey;
-void deletePuzzleStats;
 
 const NOW = 1700000000000;
 
@@ -88,20 +91,35 @@ describe('reaper D1 cleanup coverage', () => {
 		(deletePuzzleAssets as any).mockResolvedValue({ success: true, failedKeys: [] });
 		(deleteMetadataDO as any).mockResolvedValue(undefined);
 		(deletePuzzleMetadata as any).mockResolvedValue({ success: true } as any);
+		(deleteCleanupRecord as any).mockResolvedValue(undefined);
+		(writeCleanupRecord as any).mockResolvedValue(undefined);
+		dbContextMock.completionWrites.beginPuzzleDeletion.mockResolvedValue(undefined);
+		dbContextMock.completionWrites.finishPuzzleDeletion.mockResolvedValue(undefined);
 	});
 
-	it('still reaps when the best-effort D1 ownership deletion rejects', async () => {
+	it('retains the deletion fence when required D1 ownership deletion rejects', async () => {
 		(deletePuzzleOwnership as any).mockRejectedValue(new Error('D1 delete failed'));
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 		const env = makeEnv();
 
 		const result = await reapStuckPuzzles(env, NOW);
 
-		expect(result.reaped).toBe(1);
-		expect(deletePuzzleAssets).toHaveBeenCalledWith(env.PUZZLES_BUCKET, 'stuck-puzzle', 0);
-		expect(consoleSpy).toHaveBeenCalledWith(
-			'Reaper: failed to delete D1 ownership for stuck-puzzle:',
-			expect.any(Error)
+		expect(result.reaped).toBe(0);
+		expect(result.errors).toBe(1);
+		expect(writeCleanupRecord).toHaveBeenCalledWith(
+			env.PUZZLE_METADATA,
+			expect.objectContaining({ puzzleId: 'stuck-puzzle', pieceCount: 0 })
 		);
+		expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledWith(
+			'stuck-puzzle',
+			expect.any(Number)
+		);
+		expect(deletePuzzleAssets).toHaveBeenCalledWith(env.PUZZLES_BUCKET, 'stuck-puzzle', 0);
+		expect(deletePuzzleOwnership).toHaveBeenCalledWith(dbContextMock.db, 'stuck-puzzle');
+		expect(deleteCleanupRecord).not.toHaveBeenCalled();
+		expect(result.details).toContainEqual(
+			expect.objectContaining({ puzzleId: 'stuck-puzzle', action: 'd1-finish-failed' })
+		);
+		expect(consoleSpy).toHaveBeenCalled();
 	});
 });
