@@ -5,6 +5,7 @@ const { legacyDb, completionWrites } = vi.hoisted(() => ({
 	legacyDb: {},
 	completionWrites: {
 		write: vi.fn(),
+		writeLegacy: vi.fn(),
 		deletePuzzleCompletionData: vi.fn()
 	}
 }));
@@ -16,17 +17,9 @@ vi.mock('../db', () => ({
 
 vi.mock('@perseus/shared', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('@perseus/shared')>();
-	const completions = new Map<string, number[]>();
 	return {
 		...actual,
-		__completions: completions,
-		recordLegacyCompletion: vi.fn(
-			async (db: unknown, playerId: string, _puzzleId: string, time: number) => {
-				const arr = completions.get(playerId) ?? [];
-				arr.push(time);
-				completions.set(playerId, arr);
-			}
-		),
+		recordLegacyCompletion: vi.fn(async () => ({ status: 'recorded' as const })),
 		recordVersionedCompletion: vi.fn(async () => ({
 			status: 'recorded' as const,
 			completedAt: 100
@@ -264,7 +257,8 @@ describe('POST /api/puzzles/:id/complete (Bun)', () => {
 		// its own requests (the not.toHaveBeenCalled() assertions depend on this).
 		vi.mocked(storage.getPuzzle).mockClear();
 		vi.mocked(puzzleReady.isPuzzleReady).mockClear();
-		vi.mocked(recordLegacyCompletion).mockClear();
+		vi.mocked(recordLegacyCompletion).mockReset();
+		vi.mocked(recordLegacyCompletion).mockResolvedValue({ status: 'recorded' });
 		vi.mocked(recordVersionedCompletion).mockReset();
 		vi.mocked(recordVersionedCompletion).mockResolvedValue({
 			status: 'recorded',
@@ -282,8 +276,21 @@ describe('POST /api/puzzles/:id/complete (Bun)', () => {
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as { ok: boolean };
 		expect(body.ok).toBe(true);
-		expect(recordLegacyCompletion).toHaveBeenCalledWith(legacyDb, 'p1', PUZZLE_ID, 90);
+		expect(recordLegacyCompletion).toHaveBeenCalledWith(completionWrites, 'p1', PUZZLE_ID, 90);
 		expect(recordVersionedCompletion).not.toHaveBeenCalled();
+	});
+
+	it('returns 404 when a legacy completion is fenced by a tombstone', async () => {
+		vi.mocked(recordLegacyCompletion).mockResolvedValueOnce({ status: 'tombstoned' });
+
+		const res = await buildApp().request(`/api/puzzles/${PUZZLE_ID}/complete`, {
+			method: 'POST',
+			headers: jsonHeaders(),
+			body: JSON.stringify({ timeSeconds: 90 })
+		});
+
+		expect(res.status).toBe(404);
+		expect(await res.json()).toEqual({ error: 'not_found', message: 'Puzzle not found' });
 	});
 
 	it('backfills a system-owned puzzle row before recording the completion', async () => {
@@ -488,7 +495,7 @@ describe('POST /api/puzzles/:id/complete (Bun)', () => {
 			headers: jsonHeaders(),
 			body: JSON.stringify({ timeSeconds: 90.7 })
 		});
-		expect(recordLegacyCompletion).toHaveBeenCalledWith(legacyDb, 'p1', PUZZLE_ID, 90);
+		expect(recordLegacyCompletion).toHaveBeenCalledWith(completionWrites, 'p1', PUZZLE_ID, 90);
 	});
 
 	it.each(VERSIONED_CASES)('records $name without rewriting fields', async ({ request }) => {

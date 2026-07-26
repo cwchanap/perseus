@@ -75,7 +75,15 @@ router.post('/:id/complete', requirePlayerAuth, async (c) => {
 
 	try {
 		if (parsed.value.kind === 'legacy') {
-			await recordLegacyCompletion(db, session.user.id, puzzleId, parsed.value.timeSeconds);
+			const result = await recordLegacyCompletion(
+				getDbContext().completionWrites,
+				session.user.id,
+				puzzleId,
+				parsed.value.timeSeconds
+			);
+			if (result.status === 'tombstoned') {
+				return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
+			}
 			return c.json({ ok: true });
 		}
 

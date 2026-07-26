@@ -10,6 +10,13 @@ export interface VersionedCompletionWrite {
 	receivedAt: number;
 }
 
+export interface LegacyCompletionWrite {
+	playerId: string;
+	puzzleId: string;
+	timeSeconds: number;
+	receivedAt: number;
+}
+
 export interface StoredCompletionFacts {
 	puzzleId: string;
 	resultClass: ResultClass;
@@ -18,20 +25,27 @@ export interface StoredCompletionFacts {
 	completedAt: number;
 }
 
-export interface CompletionWriteExecution {
-	stored: StoredCompletionFacts;
-	inserted: boolean;
-}
+export const MAX_RETAINED_COMPLETION_RUNS = 100_000;
+
+export type VersionedCompletionWriteExecution =
+	| { status: 'stored'; stored: StoredCompletionFacts; inserted: boolean }
+	| { status: 'tombstoned' }
+	| { status: 'quota_exceeded' };
+
+export type LegacyCompletionWriteExecution = { status: 'recorded' } | { status: 'tombstoned' };
 
 export interface CompletionWriteExecutor {
-	write(input: VersionedCompletionWrite): Promise<CompletionWriteExecution>;
+	write(input: VersionedCompletionWrite): Promise<VersionedCompletionWriteExecution>;
+	writeLegacy(input: LegacyCompletionWrite): Promise<LegacyCompletionWriteExecution>;
 	deletePuzzleCompletionData(puzzleId: string): Promise<void>;
 }
 
 export type VersionedCompletionResult =
 	| { status: 'recorded'; completedAt: number }
 	| { status: 'replayed'; completedAt: number }
-	| { status: 'conflict' };
+	| { status: 'conflict' }
+	| { status: 'tombstoned' }
+	| { status: 'quota_exceeded' };
 
 export function isCanonicalBest(input: VersionedCompletionWrite): boolean {
 	return (
@@ -55,12 +69,12 @@ export function completionFactsMatch(
 
 export function interpretVersionedCompletionWrite(
 	input: VersionedCompletionWrite,
-	stored: StoredCompletionFacts,
-	inserted: boolean
+	execution: VersionedCompletionWriteExecution
 ): VersionedCompletionResult {
-	if (!completionFactsMatch(input, stored)) return { status: 'conflict' };
+	if (execution.status !== 'stored') return { status: execution.status };
+	if (!completionFactsMatch(input, execution.stored)) return { status: 'conflict' };
 	return {
-		status: inserted ? 'recorded' : 'replayed',
-		completedAt: stored.completedAt
+		status: execution.inserted ? 'recorded' : 'replayed',
+		completedAt: execution.stored.completedAt
 	};
 }

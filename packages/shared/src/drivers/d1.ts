@@ -2,12 +2,21 @@ import { and, eq, isNotNull, isNull, sql } from 'drizzle-orm';
 import { drizzle, type DrizzleD1Database } from 'drizzle-orm/d1';
 import type { ResultClass, TimingQuality } from '@perseus/types';
 import * as schema from '../schema';
-import { puzzleCompletionRuns, puzzleStats } from '../schema';
+import {
+	playerCompletionUsage,
+	puzzleCompletionRuns,
+	puzzleDeletionTombstones,
+	puzzleStats
+} from '../schema';
 import type {
 	CompletionWriteExecutor,
+	LegacyCompletionWrite,
+	LegacyCompletionWriteExecution,
 	StoredCompletionFacts,
-	VersionedCompletionWrite
+	VersionedCompletionWrite,
+	VersionedCompletionWriteExecution
 } from '../completion-writes';
+import { MAX_RETAINED_COMPLETION_RUNS } from '../completion-writes';
 
 interface D1Env {
 	DB: D1Database;
@@ -23,27 +32,87 @@ export function createD1Db(env: D1Env): D1AppDb {
 	return drizzle(env.DB, { schema });
 }
 
-export function createD1CompletionWriteExecutor(db: D1AppDb): CompletionWriteExecutor {
+const COMPLETION_DEDUPE_WINDOW_MS = 30_000;
+
+function toStoredFacts(row: {
+	puzzleId: string;
+	resultClass: string;
+	timingQuality: string;
+	elapsedActiveSeconds: number | null;
+	completedAt: number;
+}): StoredCompletionFacts {
 	return {
-		async write(input: VersionedCompletionWrite) {
+		puzzleId: row.puzzleId,
+		resultClass: row.resultClass as ResultClass,
+		timingQuality: row.timingQuality as TimingQuality,
+		elapsedActiveSeconds: row.elapsedActiveSeconds,
+		completedAt: row.completedAt
+	};
+}
+
+export function createD1CompletionWriteExecutor(
+	db: D1AppDb,
+	retainedRunLimit = MAX_RETAINED_COMPLETION_RUNS
+): CompletionWriteExecutor {
+	if (
+		!Number.isInteger(retainedRunLimit) ||
+		retainedRunLimit <= 0 ||
+		retainedRunLimit > MAX_RETAINED_COMPLETION_RUNS
+	) {
+		throw new RangeError(
+			`retainedRunLimit must be a positive integer no greater than ${MAX_RETAINED_COMPLETION_RUNS}`
+		);
+	}
+
+	return {
+		async write(input: VersionedCompletionWrite): Promise<VersionedCompletionWriteExecution> {
 			const elapsedMatches =
 				input.elapsedActiveSeconds === null
 					? isNull(puzzleCompletionRuns.elapsedActiveSeconds)
 					: eq(puzzleCompletionRuns.elapsedActiveSeconds, input.elapsedActiveSeconds);
 			const insertRun = db
 				.insert(puzzleCompletionRuns)
-				.values({
-					playerId: input.playerId,
-					runId: input.runId,
-					puzzleId: input.puzzleId,
-					resultClass: input.resultClass,
-					timingQuality: input.timingQuality,
-					elapsedActiveSeconds: input.elapsedActiveSeconds,
-					completedAt: input.receivedAt
-				})
+				.select(
+					db
+						.select({
+							playerId: sql<string>`${input.playerId}`.as('player_id'),
+							runId: sql<string>`${input.runId}`.as('run_id'),
+							puzzleId: sql<string>`${input.puzzleId}`.as('puzzle_id'),
+							resultClass: sql<ResultClass>`${input.resultClass}`.as('result_class'),
+							timingQuality: sql<TimingQuality>`${input.timingQuality}`.as('timing_quality'),
+							elapsedActiveSeconds:
+								input.elapsedActiveSeconds === null
+									? sql<null>`NULL`.as('elapsed_active_seconds')
+									: sql<number>`${input.elapsedActiveSeconds}`.as('elapsed_active_seconds'),
+							completedAt: sql<number>`${input.receivedAt}`.as('completed_at')
+						})
+						.from(sql`(SELECT 1)`).where(sql`
+							NOT EXISTS (
+								SELECT 1 FROM puzzle_deletion_tombstones WHERE puzzle_id = ${input.puzzleId}
+							)
+							AND (
+								EXISTS (
+									SELECT 1 FROM puzzle_completion_runs
+									WHERE player_id = ${input.playerId} AND run_id = ${input.runId}
+								)
+								OR COALESCE(
+									(
+										SELECT retained_runs FROM player_completion_usage
+										WHERE player_id = ${input.playerId}
+									),
+									0
+								) < ${retainedRunLimit}
+							)
+						`)
+				)
 				.onConflictDoNothing({
 					target: [puzzleCompletionRuns.playerId, puzzleCompletionRuns.runId]
 				});
+			const readTombstone = db
+				.select({ puzzleId: puzzleDeletionTombstones.puzzleId })
+				.from(puzzleDeletionTombstones)
+				.where(eq(puzzleDeletionTombstones.puzzleId, input.puzzleId))
+				.limit(1);
 			const readStored = db
 				.select({
 					puzzleId: puzzleCompletionRuns.puzzleId,
@@ -59,6 +128,11 @@ export function createD1CompletionWriteExecutor(db: D1AppDb): CompletionWriteExe
 						eq(puzzleCompletionRuns.runId, input.runId)
 					)
 				)
+				.limit(1);
+			const readUsage = db
+				.select({ retainedRuns: playerCompletionUsage.retainedRuns })
+				.from(playerCompletionUsage)
+				.where(eq(playerCompletionUsage.playerId, input.playerId))
 				.limit(1);
 			const upsertBest = db
 				.insert(puzzleStats)
@@ -85,7 +159,11 @@ export function createD1CompletionWriteExecutor(db: D1AppDb): CompletionWriteExe
 								elapsedMatches,
 								eq(puzzleCompletionRuns.resultClass, 'standard_timed'),
 								eq(puzzleCompletionRuns.timingQuality, 'known'),
-								isNotNull(puzzleCompletionRuns.elapsedActiveSeconds)
+								isNotNull(puzzleCompletionRuns.elapsedActiveSeconds),
+								sql`NOT EXISTS (
+									SELECT 1 FROM puzzle_deletion_tombstones
+									WHERE puzzle_id = ${input.puzzleId}
+								)`
 							)
 						)
 				)
@@ -96,22 +174,64 @@ export function createD1CompletionWriteExecutor(db: D1AppDb): CompletionWriteExe
 					}
 				});
 
-			const [insertResult, storedRows] = await db.batch([insertRun, readStored, upsertBest]);
-			const row = storedRows[0];
-			if (!row) {
-				throw new Error('Completion ledger write did not return a stored row');
+			const [insertResult, tombstoneRows, storedRows, usageRows] = await db.batch([
+				insertRun,
+				readTombstone,
+				readStored,
+				readUsage,
+				upsertBest
+			]);
+			if (tombstoneRows.length > 0) return { status: 'tombstoned' };
+			if (storedRows[0]) {
+				return {
+					status: 'stored',
+					stored: toStoredFacts(storedRows[0]),
+					inserted: insertResult.meta.changes > 0
+				};
 			}
-			const stored: StoredCompletionFacts = {
-				puzzleId: row.puzzleId,
-				resultClass: row.resultClass as ResultClass,
-				timingQuality: row.timingQuality as TimingQuality,
-				elapsedActiveSeconds: row.elapsedActiveSeconds,
-				completedAt: row.completedAt
-			};
-			return {
-				stored,
-				inserted: insertResult.meta.changes === 1
-			};
+			if ((usageRows[0]?.retainedRuns ?? 0) >= retainedRunLimit) {
+				return { status: 'quota_exceeded' };
+			}
+			throw new Error('Completion ledger write returned no stored row without tombstone or quota');
+		},
+
+		async writeLegacy(input: LegacyCompletionWrite): Promise<LegacyCompletionWriteExecution> {
+			const upsertStats = db
+				.insert(puzzleStats)
+				.select(
+					db
+						.select({
+							playerId: sql<string>`${input.playerId}`.as('player_id'),
+							puzzleId: sql<string>`${input.puzzleId}`.as('puzzle_id'),
+							bestTimeSeconds: sql<number>`${input.timeSeconds}`.as('best_time_seconds'),
+							totalCompletions: sql<number>`1`.as('total_completions'),
+							firstCompletedAt: sql<number>`${input.receivedAt}`.as('first_completed_at'),
+							lastCompletedAt: sql<number>`${input.receivedAt}`.as('last_completed_at')
+						})
+						.from(sql`(SELECT 1)`).where(sql`
+							NOT EXISTS (
+								SELECT 1 FROM puzzle_deletion_tombstones WHERE puzzle_id = ${input.puzzleId}
+							)
+						`)
+				)
+				.onConflictDoUpdate({
+					target: [puzzleStats.playerId, puzzleStats.puzzleId],
+					set: {
+						bestTimeSeconds: sql`MIN(${puzzleStats.bestTimeSeconds}, excluded.best_time_seconds)`,
+						totalCompletions: sql`CASE WHEN excluded.last_completed_at - ${puzzleStats.lastCompletedAt} >= ${COMPLETION_DEDUPE_WINDOW_MS} THEN ${puzzleStats.totalCompletions} + 1 ELSE ${puzzleStats.totalCompletions} END`,
+						lastCompletedAt: sql`CASE WHEN excluded.last_completed_at - ${puzzleStats.lastCompletedAt} >= ${COMPLETION_DEDUPE_WINDOW_MS} THEN excluded.last_completed_at ELSE ${puzzleStats.lastCompletedAt} END`
+					}
+				});
+			const readTombstone = db
+				.select({ puzzleId: puzzleDeletionTombstones.puzzleId })
+				.from(puzzleDeletionTombstones)
+				.where(eq(puzzleDeletionTombstones.puzzleId, input.puzzleId))
+				.limit(1);
+
+			const [upsertResult, tombstoneRows] = await db.batch([upsertStats, readTombstone]);
+			if (tombstoneRows.length > 0) return { status: 'tombstoned' };
+			if (upsertResult.meta.changes === 1) return { status: 'recorded' };
+			throw new Error('Legacy completion write changed no rows without tombstone');
 		},
 
 		async deletePuzzleCompletionData(puzzleId: string) {

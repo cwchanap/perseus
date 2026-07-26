@@ -6,11 +6,13 @@ import { mkdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as schema from '../schema';
-import { puzzleCompletionRuns, puzzleStats } from '../schema';
+import { puzzleCompletionRuns, puzzleDeletionTombstones, puzzleStats } from '../schema';
 import {
 	completionFactsMatch,
 	isCanonicalBest,
 	type CompletionWriteExecutor,
+	type LegacyCompletionWrite,
+	type LegacyCompletionWriteExecution,
 	type StoredCompletionFacts,
 	type VersionedCompletionWrite
 } from '../completion-writes';
@@ -21,6 +23,8 @@ export interface BunDbContext {
 	completionWrites: CompletionWriteExecutor;
 	close(): void;
 }
+
+const COMPLETION_DEDUPE_WINDOW_MS = 30_000;
 
 export function createBunDbContext(dataDir: string): BunDbContext {
 	mkdirSync(dataDir, { recursive: true });
@@ -102,10 +106,44 @@ export function createBunDbContext(dataDir: string): BunDbContext {
 		}
 
 		return {
+			status: 'stored' as const,
 			stored,
 			inserted: inserted !== undefined
 		};
 	});
+	const writeLegacyCompletion = sqlite.transaction(
+		(input: LegacyCompletionWrite): LegacyCompletionWriteExecution => {
+			const tombstone = db
+				.select({ puzzleId: puzzleDeletionTombstones.puzzleId })
+				.from(puzzleDeletionTombstones)
+				.where(eq(puzzleDeletionTombstones.puzzleId, input.puzzleId))
+				.get();
+			if (tombstone) return { status: 'tombstoned' };
+
+			const result = db
+				.insert(puzzleStats)
+				.values({
+					playerId: input.playerId,
+					puzzleId: input.puzzleId,
+					bestTimeSeconds: input.timeSeconds,
+					totalCompletions: 1,
+					firstCompletedAt: input.receivedAt,
+					lastCompletedAt: input.receivedAt
+				})
+				.onConflictDoUpdate({
+					target: [puzzleStats.playerId, puzzleStats.puzzleId],
+					set: {
+						bestTimeSeconds: sql`MIN(${puzzleStats.bestTimeSeconds}, excluded.best_time_seconds)`,
+						totalCompletions: sql`CASE WHEN excluded.last_completed_at - ${puzzleStats.lastCompletedAt} >= ${COMPLETION_DEDUPE_WINDOW_MS} THEN ${puzzleStats.totalCompletions} + 1 ELSE ${puzzleStats.totalCompletions} END`,
+						lastCompletedAt: sql`CASE WHEN excluded.last_completed_at - ${puzzleStats.lastCompletedAt} >= ${COMPLETION_DEDUPE_WINDOW_MS} THEN excluded.last_completed_at ELSE ${puzzleStats.lastCompletedAt} END`
+					}
+				})
+				.returning({ playerId: puzzleStats.playerId })
+				.get();
+			if (result) return { status: 'recorded' };
+			throw new Error('Legacy completion write changed no rows without tombstone');
+		}
+	);
 	const deletePuzzleCompletionData = sqlite.transaction((puzzleId: string) => {
 		db.delete(puzzleStats).where(eq(puzzleStats.puzzleId, puzzleId)).run();
 		db.delete(puzzleCompletionRuns).where(eq(puzzleCompletionRuns.puzzleId, puzzleId)).run();
@@ -113,6 +151,10 @@ export function createBunDbContext(dataDir: string): BunDbContext {
 	const completionWrites: CompletionWriteExecutor = {
 		async write(input) {
 			return writeCompletion(input);
+		},
+
+		async writeLegacy(input) {
+			return writeLegacyCompletion.immediate(input);
 		},
 
 		async deletePuzzleCompletionData(puzzleId) {
