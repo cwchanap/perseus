@@ -1139,6 +1139,9 @@ admin.post('/puzzles', requireAuth, async (c) => {
 		}
 
 		id = crypto.randomUUID();
+		if (await getWorkerDbContext(c.env).completionWrites.isPuzzleTombstoned(id)) {
+			return c.json({ error: 'internal_error', message: 'Failed to allocate puzzle ID' }, 500);
+		}
 		if (idempotencyKey) {
 			try {
 				const reserved = await reserveIdempotencyKey(c.env.PUZZLE_METADATA_DO, idempotencyKey, id);

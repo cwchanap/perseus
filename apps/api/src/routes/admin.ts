@@ -42,7 +42,6 @@ import {
 import { getDb, getDbContext } from '../db';
 import {
 	deletePuzzleOwnership,
-	deletePuzzleStats,
 	detectImageType,
 	insertPuzzleOwnership,
 	parseImageDimensions,
@@ -361,6 +360,9 @@ admin.post('/puzzles', requireAuth, async (c) => {
 		}
 
 		id = crypto.randomUUID();
+		if (await getDbContext().completionWrites.isPuzzleTombstoned(id)) {
+			return c.json({ error: 'internal_error', message: 'Failed to allocate puzzle ID' }, 500);
+		}
 		if (idempotencyKey) {
 			try {
 				const reserved = await reserveIdempotencyKey(idempotencyKey, id);
@@ -570,16 +572,53 @@ admin.post('/puzzle-delete/:id', requireAuth, async (c) => {
 		// be deleted instead of 500-ing.
 		const exists = await puzzleExists(id);
 		if (!exists) {
-			return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
+			try {
+				const { db, completionWrites } = getDbContext();
+				if (!(await completionWrites.isPuzzleTombstoned(id))) {
+					return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
+				}
+				await completionWrites.finishPuzzleDeletion(id);
+				await deletePuzzleOwnership(db, id).catch((err) =>
+					console.error(`Failed to delete ownership row for puzzle ${id}:`, err)
+				);
+				return c.body(null, 204);
+			} catch (err) {
+				console.error(`Failed to resume deletion for puzzle ${id}:`, err);
+				return c.json(
+					{ error: 'internal_error', message: 'Failed to finish puzzle deletion' },
+					500
+				);
+			}
 		}
 		// puzzle stays null — proceed with deletion; idempotency reservation
 		// release is skipped (no key available).
 	}
 
+	let dbContext: ReturnType<typeof getDbContext>;
+	try {
+		dbContext = getDbContext();
+	} catch (err) {
+		console.error(`Failed to init DB before deleting puzzle ${id}:`, err);
+		return c.json({ error: 'internal_error', message: 'Failed to begin puzzle deletion' }, 500);
+	}
+
+	try {
+		await dbContext.completionWrites.beginPuzzleDeletion(id, Date.now());
+	} catch (err) {
+		console.error(`Failed to tombstone puzzle ${id} before filesystem cleanup:`, err);
+		return c.json({ error: 'internal_error', message: 'Failed to begin puzzle deletion' }, 500);
+	}
 	const deleted = await deleteStoredPuzzle(id);
 
 	if (!deleted) {
 		return c.json({ error: 'internal_error', message: 'Failed to delete puzzle' }, 500);
+	}
+
+	try {
+		await dbContext.completionWrites.finishPuzzleDeletion(id);
+	} catch (err) {
+		console.error(`Failed to finish deletion for puzzle ${id}:`, err);
+		return c.json({ error: 'internal_error', message: 'Failed to finish puzzle deletion' }, 500);
 	}
 
 	// Best-effort release of the idempotency reservation so the key can be
@@ -595,25 +634,11 @@ admin.post('/puzzle-delete/:id', requireAuth, async (c) => {
 		}
 	}
 
-	// Best-effort cleanup of the D1 ownership row (see admin.worker.ts for the
-	// full rationale). Logged, not fatal — filesystem deletion above is the
-	// source of truth for puzzle existence in the Bun runtime. getDb() is a
-	// lazy init that can throw on first call; wrap it in the same best-effort
-	// handling so a DB init failure doesn't bubble a 500 after a successful
-	// puzzle deletion.
-	try {
-		const { db, completionWrites } = getDbContext();
-		await deletePuzzleOwnership(db, id).catch((err) =>
-			console.error(`Failed to delete ownership row for puzzle ${id}:`, err)
-		);
-		// Best-effort atomic cleanup of completion ledger and baseline rows
-		// (see admin.worker.ts).
-		await deletePuzzleStats(completionWrites, id).catch((err) =>
-			console.error(`Failed to delete stats rows for puzzle ${id}:`, err)
-		);
-	} catch (err) {
-		console.error(`Failed to init DB for ownership cleanup of puzzle ${id}:`, err);
-	}
+	// Ownership remains a separate best-effort cleanup operation. The
+	// tombstone trigger prevents it from being recreated after begin.
+	await deletePuzzleOwnership(dbContext.db, id).catch((err) =>
+		console.error(`Failed to delete ownership row for puzzle ${id}:`, err)
+	);
 
 	return c.body(null, 204);
 });

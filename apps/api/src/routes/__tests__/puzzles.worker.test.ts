@@ -5,8 +5,16 @@ import * as storage from '../../services/storage.worker';
 import * as playerAuth from '../../services/player-auth.worker';
 import { insertPuzzleOwnership } from '@perseus/shared';
 
+const dbContextMock = vi.hoisted(() => ({
+	db: {},
+	completionWrites: {
+		isPuzzleTombstoned: vi.fn().mockResolvedValue(false)
+	}
+}));
+
 vi.mock('../../db.worker', () => ({
-	getWorkerDb: vi.fn(() => ({}))
+	getWorkerDb: vi.fn(() => dbContextMock.db),
+	getWorkerDbContext: vi.fn(() => dbContextMock)
 }));
 
 vi.mock('@perseus/shared', async (importOriginal) => {
@@ -72,6 +80,10 @@ describe('Puzzle Routes - UUID Validation', () => {
 	};
 
 	describe('POST / - Upload puzzle for player', () => {
+		beforeEach(() => {
+			dbContextMock.completionWrites.isPuzzleTombstoned.mockResolvedValue(false);
+		});
+
 		it('returns 401 when the player session cookie is missing', async () => {
 			const formData = new FormData();
 			formData.append('name', 'Player Puzzle');
@@ -157,6 +169,53 @@ describe('Puzzle Routes - UUID Validation', () => {
 				})
 			);
 			expect(insertPuzzleOwnership).toHaveBeenCalledBefore(mockEnv.PUZZLE_WORKFLOW.create as any);
+		});
+
+		it('rejects a tombstoned generated ID before publishing Worker data', async () => {
+			vi.clearAllMocks();
+			vi.mocked(playerAuth.getPlayerSession).mockResolvedValue({
+				sessionHash: 'session-hash',
+				user: {
+					id: 'player-1',
+					email: 'player@example.com',
+					createdAt: 1000,
+					lastLoginAt: 2000
+				},
+				createdAt: 2000,
+				expiresAt: Date.now() + 1000
+			});
+			const generatedId = '550e8400-e29b-41d4-a716-446655440000';
+			const uuidSpy = vi.spyOn(crypto, 'randomUUID').mockReturnValue(generatedId);
+			dbContextMock.completionWrites.isPuzzleTombstoned.mockResolvedValue(true);
+			const formData = new FormData();
+			formData.append('name', 'Player Puzzle');
+			formData.append('pieceCount', '48');
+			formData.append('aspectRatio', '3:4');
+			formData.append('image', new Blob([PNG_HEADER], { type: 'image/png' }), 'test.png');
+
+			try {
+				const res = await puzzles.fetch(
+					new Request('http://localhost/', {
+						method: 'POST',
+						headers: { Cookie: 'perseus_player_session=player-token' },
+						body: formData
+					}),
+					mockEnv as any
+				);
+
+				expect(res.status).toBe(500);
+				expect(await res.json()).toEqual({
+					error: 'internal_error',
+					message: 'Failed to allocate puzzle ID'
+				});
+				expect(dbContextMock.completionWrites.isPuzzleTombstoned).toHaveBeenCalledWith(generatedId);
+				expect(storage.uploadOriginalImage).not.toHaveBeenCalled();
+				expect(storage.createPuzzleMetadata).not.toHaveBeenCalled();
+				expect(insertPuzzleOwnership).not.toHaveBeenCalled();
+				expect(mockEnv.PUZZLE_WORKFLOW.create).not.toHaveBeenCalled();
+			} finally {
+				uuidSpy.mockRestore();
+			}
 		});
 
 		it('rejects when dimensions cannot be parsed (corrupted or truncated)', async () => {

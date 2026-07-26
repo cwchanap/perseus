@@ -234,11 +234,28 @@ export function createD1CompletionWriteExecutor(
 			throw new Error('Legacy completion write changed no rows without tombstone');
 		},
 
-		async deletePuzzleCompletionData(puzzleId: string) {
+		async beginPuzzleDeletion(puzzleId: string, deletedAt: number) {
+			await db
+				.insert(puzzleDeletionTombstones)
+				.values({ puzzleId, deletedAt })
+				.onConflictDoNothing({ target: puzzleDeletionTombstones.puzzleId })
+				.run();
+		},
+
+		async finishPuzzleDeletion(puzzleId: string) {
 			await db.batch([
 				db.delete(puzzleStats).where(eq(puzzleStats.puzzleId, puzzleId)),
 				db.delete(puzzleCompletionRuns).where(eq(puzzleCompletionRuns.puzzleId, puzzleId))
 			]);
+		},
+
+		async isPuzzleTombstoned(puzzleId: string) {
+			const row = await db
+				.select({ puzzleId: puzzleDeletionTombstones.puzzleId })
+				.from(puzzleDeletionTombstones)
+				.where(eq(puzzleDeletionTombstones.puzzleId, puzzleId))
+				.limit(1);
+			return row.length > 0;
 		}
 	};
 }

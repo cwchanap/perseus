@@ -197,15 +197,14 @@ export async function deletePuzzleOwnership(db: AppDb, id: string): Promise<void
 	await db.delete(puzzles).where(eq(puzzles.id, id)).run();
 }
 
-// Remove every player's completion ledger and historical baseline rows for
-// a deleted puzzle. The executor owns the runtime-specific transaction so
-// neither physical table can be deleted without the other. Called
-// best-effort from puzzle deletion paths alongside deletePuzzleOwnership.
+// Compatibility delegate while deletion callers move to the executor lifecycle.
+// The executor owns the runtime-specific transaction so neither completion table
+// can be deleted without the other.
 export async function deletePuzzleStats(
 	executor: CompletionWriteExecutor,
 	puzzleId: string
 ): Promise<void> {
-	await executor.deletePuzzleCompletionData(puzzleId);
+	await executor.finishPuzzleDeletion(puzzleId);
 }
 
 export async function setPuzzleStatus(db: AppDb, id: string, status: string): Promise<void> {

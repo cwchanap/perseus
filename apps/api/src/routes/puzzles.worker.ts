@@ -31,7 +31,7 @@ import {
 } from '../services/storage.worker';
 import { requirePlayerAuth } from '../middleware/player-auth.worker';
 import type { PlayerSessionRecord } from '../services/player-auth.worker';
-import { getWorkerDb } from '../db.worker';
+import { getWorkerDbContext } from '../db.worker';
 import {
 	deletePuzzleOwnership,
 	detectImageType,
@@ -267,6 +267,10 @@ puzzles.post('/', requirePlayerAuth, async (c) => {
 		}
 
 		const id = crypto.randomUUID();
+		const dbContext = getWorkerDbContext(c.env);
+		if (await dbContext.completionWrites.isPuzzleTombstoned(id)) {
+			return c.json({ error: 'internal_error', message: 'Failed to allocate puzzle ID' }, 500);
+		}
 		const { rows: gridRows, cols: gridCols } = getGridDimensionsForAspectRatio(
 			pieceCount,
 			aspectRatio
@@ -319,7 +323,7 @@ puzzles.post('/', requirePlayerAuth, async (c) => {
 		// always visible to its owner. A committed puzzle without an ownership
 		// row would process silently and never appear in the player's list.
 		try {
-			await insertPuzzleOwnership(getWorkerDb(c.env), {
+			await insertPuzzleOwnership(dbContext.db, {
 				id,
 				ownerId: c.get('playerSession').user.id,
 				name: trimmedName,
@@ -348,7 +352,7 @@ puzzles.post('/', requirePlayerAuth, async (c) => {
 		}
 
 		if (!c.env.PUZZLE_WORKFLOW || typeof c.env.PUZZLE_WORKFLOW.create !== 'function') {
-			await deletePuzzleOwnership(getWorkerDb(c.env), id).catch((err) =>
+			await deletePuzzleOwnership(dbContext.db, id).catch((err) =>
 				console.error('Failed to cleanup ownership after missing workflow binding:', err)
 			);
 			const metadataCleanup = await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
@@ -381,7 +385,7 @@ puzzles.post('/', requirePlayerAuth, async (c) => {
 			});
 		} catch (error) {
 			console.error('Failed to trigger workflow:', error);
-			await deletePuzzleOwnership(getWorkerDb(c.env), id).catch((err) =>
+			await deletePuzzleOwnership(dbContext.db, id).catch((err) =>
 				console.error('Failed to cleanup ownership after workflow trigger failure:', err)
 			);
 			const metadataCleanup = await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);

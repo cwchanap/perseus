@@ -12,7 +12,10 @@ const dbContextMock = vi.hoisted(() => ({
 	db: {},
 	completionWrites: {
 		write: vi.fn(),
-		deletePuzzleCompletionData: vi.fn(async () => undefined)
+		deletePuzzleCompletionData: vi.fn(async () => undefined),
+		beginPuzzleDeletion: vi.fn(async () => undefined),
+		finishPuzzleDeletion: vi.fn(async () => undefined),
+		isPuzzleTombstoned: vi.fn().mockResolvedValue(false)
 	}
 }));
 
@@ -500,6 +503,7 @@ describe('Player Allowlist Routes', () => {
 describe('POST /puzzles', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		dbContextMock.completionWrites.isPuzzleTombstoned.mockResolvedValue(false);
 		(generatorMock.isValidPieceCount as ReturnType<typeof vi.fn>).mockReturnValue(true);
 		(storageMock.createPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(true);
 		(generatorMock.generatePuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -671,6 +675,39 @@ describe('POST /puzzles', () => {
 		);
 	});
 
+	it('rejects a tombstoned generated ID before publishing filesystem or ownership data', async () => {
+		const generatedId = '550e8400-e29b-41d4-a716-446655440000';
+		const uuidSpy = vi.spyOn(crypto, 'randomUUID').mockReturnValue(generatedId);
+		dbContextMock.completionWrites.isPuzzleTombstoned.mockResolvedValue(true);
+		const fsMock = await import('node:fs/promises');
+		const { insertPuzzleOwnership } = await import('@perseus/shared');
+		const fd = buildFormData({
+			name: 'Tombstoned Puzzle',
+			pieceCount: '25',
+			image: new Blob([PNG_HEADER], { type: 'image/png' })
+		});
+
+		try {
+			const res = await app.fetch(
+				new Request('http://localhost/puzzles', { method: 'POST', body: fd })
+			);
+
+			expect(res.status).toBe(500);
+			expect(await res.json()).toEqual({
+				error: 'internal_error',
+				message: 'Failed to allocate puzzle ID'
+			});
+			expect(dbContextMock.completionWrites.isPuzzleTombstoned).toHaveBeenCalledWith(generatedId);
+			expect(fsMock.mkdir).not.toHaveBeenCalled();
+			expect(fsMock.writeFile).not.toHaveBeenCalled();
+			expect(generatorMock.generatePuzzle).not.toHaveBeenCalled();
+			expect(storageMock.createPuzzle).not.toHaveBeenCalled();
+			expect(insertPuzzleOwnership).not.toHaveBeenCalled();
+		} finally {
+			uuidSpy.mockRestore();
+		}
+	});
+
 	it('still returns 201 when the D1 ownership mirror insert fails (best-effort)', async () => {
 		// The .catch handler on insertPuzzleOwnership swallows the rejection so
 		// a transient D1 issue doesn't take admin puzzle creation down.
@@ -753,6 +790,9 @@ describe('DELETE /puzzles/:id', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		dbContextMock.completionWrites.deletePuzzleCompletionData.mockResolvedValue(undefined);
+		dbContextMock.completionWrites.beginPuzzleDeletion.mockResolvedValue(undefined);
+		dbContextMock.completionWrites.finishPuzzleDeletion.mockResolvedValue(undefined);
+		dbContextMock.completionWrites.isPuzzleTombstoned.mockResolvedValue(false);
 	});
 
 	it('returns 404 when puzzle does not exist', async () => {
@@ -825,14 +865,61 @@ describe('DELETE /puzzles/:id', () => {
 		const { getDbContext } = await import('../../db');
 		expect(getDbContext).toHaveBeenCalledTimes(1);
 		expect(deletePuzzleOwnership).toHaveBeenCalledWith(dbContextMock.db, 'existing-puzzle-id');
-		expect(dbContextMock.completionWrites.deletePuzzleCompletionData).toHaveBeenCalledWith(
+		expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledWith(
+			'existing-puzzle-id',
+			expect.any(Number)
+		);
+		expect(dbContextMock.completionWrites.finishPuzzleDeletion).toHaveBeenCalledWith(
 			'existing-puzzle-id'
+		);
+		expect((storageMock.deletePuzzle as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]).toBe(
+			dbContextMock.completionWrites.beginPuzzleDeletion.mock.invocationCallOrder[0] + 1
 		);
 		expect(
 			(storageMock.deletePuzzle as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]
-		).toBeLessThan(
-			dbContextMock.completionWrites.deletePuzzleCompletionData.mock.invocationCallOrder[0]
+		).toBeLessThan(dbContextMock.completionWrites.finishPuzzleDeletion.mock.invocationCallOrder[0]);
+	});
+
+	it('resumes required completion cleanup when a tombstoned puzzle is already off disk', async () => {
+		(storageMock.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+		(storageMock.puzzleExists as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+		dbContextMock.completionWrites.isPuzzleTombstoned.mockResolvedValue(true);
+
+		const res = await app.fetch(
+			new Request('http://localhost/puzzle-delete/existing-puzzle-id', { method: 'POST' })
 		);
+
+		expect(res.status).toBe(204);
+		expect(dbContextMock.completionWrites.finishPuzzleDeletion).toHaveBeenCalledWith(
+			'existing-puzzle-id'
+		);
+		expect(storageMock.deletePuzzle).not.toHaveBeenCalled();
+	});
+
+	it('returns 500 when required completion cleanup fails after filesystem deletion', async () => {
+		(storageMock.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
+			id: 'existing-puzzle-id',
+			name: 'Test',
+			pieceCount: 4,
+			createdAt: 1700000000000
+		});
+		(storageMock.deletePuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+		dbContextMock.completionWrites.finishPuzzleDeletion.mockRejectedValueOnce(
+			new Error('D1 stats down')
+		);
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const res = await app.fetch(
+			new Request('http://localhost/puzzle-delete/existing-puzzle-id', { method: 'POST' })
+		);
+
+		expect(res.status).toBe(500);
+		expect(await res.json()).toEqual({
+			error: 'internal_error',
+			message: 'Failed to finish puzzle deletion'
+		});
+		expect(storageMock.deletePuzzle).toHaveBeenCalledWith('existing-puzzle-id');
+		consoleSpy.mockRestore();
 	});
 
 	it('still returns 204 when ownership cleanup throws (best-effort)', async () => {
@@ -853,41 +940,7 @@ describe('DELETE /puzzles/:id', () => {
 		expect(res.status).toBe(204);
 	});
 
-	it('still returns 204 when atomic completion cleanup throws after puzzle deletion', async () => {
-		(storageMock.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
-			id: 'existing-puzzle-id',
-			name: 'Test',
-			pieceCount: 4,
-			createdAt: 1700000000000
-		});
-		(storageMock.deletePuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(true);
-		dbContextMock.completionWrites.deletePuzzleCompletionData.mockRejectedValueOnce(
-			new Error('D1 stats down')
-		);
-		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-
-		const req = new Request('http://localhost/puzzle-delete/existing-puzzle-id', {
-			method: 'POST'
-		});
-		const res = await app.fetch(req);
-		expect(res.status).toBe(204);
-		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining('Failed to delete stats rows'),
-			expect.any(Error)
-		);
-		expect(storageMock.deletePuzzle).toHaveBeenCalledWith('existing-puzzle-id');
-		expect(
-			(storageMock.deletePuzzle as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]
-		).toBeLessThan(
-			dbContextMock.completionWrites.deletePuzzleCompletionData.mock.invocationCallOrder[0]
-		);
-		consoleSpy.mockRestore();
-	});
-
-	it('still returns 204 when getDbContext throws on ownership cleanup (best-effort)', async () => {
-		// getDbContext is a lazy init that can throw on first call; the outer catch
-		// logs the failure so a DB init error doesn't bubble a 500 after a
-		// successful puzzle deletion.
+	it('returns 500 before filesystem cleanup when the deletion context cannot initialize', async () => {
 		(storageMock.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
 			id: 'existing-puzzle-id',
 			name: 'Test',
@@ -905,11 +958,16 @@ describe('DELETE /puzzles/:id', () => {
 			method: 'POST'
 		});
 		const res = await app.fetch(req);
-		expect(res.status).toBe(204);
+		expect(res.status).toBe(500);
+		expect(await res.json()).toEqual({
+			error: 'internal_error',
+			message: 'Failed to begin puzzle deletion'
+		});
 		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining('Failed to init DB for ownership cleanup'),
+			expect.stringContaining('Failed to init DB before deleting puzzle'),
 			expect.any(Error)
 		);
+		expect(storageMock.deletePuzzle).not.toHaveBeenCalled();
 		consoleSpy.mockRestore();
 	});
 

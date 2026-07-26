@@ -1,6 +1,7 @@
 import { Database } from 'bun:sqlite';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Miniflare } from 'miniflare';
+import { eq } from 'drizzle-orm';
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -47,6 +48,7 @@ beforeEach(async () => {
 	await d1.prepare('DELETE FROM puzzle_completion_runs').run();
 	await d1.prepare('DELETE FROM puzzle_stats').run();
 	await d1.prepare('DELETE FROM player_completion_usage').run();
+	await d1.prepare('DELETE FROM puzzles').run();
 	await d1.prepare('DELETE FROM puzzle_deletion_tombstones').run();
 	bunDir = mkdtempSync(join(tmpdir(), 'perseus-bun-driver-'));
 	bunContext = createBunDbContext(bunDir);
@@ -91,6 +93,162 @@ async function applyWrites(executor: CompletionWriteExecutor, inputs: VersionedC
 		await executor.write(input);
 	}
 }
+
+type LifecycleRuntime = 'Bun' | 'D1';
+
+function lifecycleHarness(runtime: LifecycleRuntime): {
+	db: AppDb;
+	executor: CompletionWriteExecutor;
+	runSql(sql: string): Promise<void>;
+} {
+	if (runtime === 'Bun') {
+		return {
+			db: bunContext!.db,
+			executor: bunContext!.completionWrites,
+			async runSql(sql) {
+				const triggerDb = new Database(join(bunDir, 'perseus.db'));
+				try {
+					triggerDb.run(sql);
+				} finally {
+					triggerDb.close();
+				}
+			}
+		};
+	}
+	return {
+		db: d1Db,
+		executor: createD1CompletionWriteExecutor(d1Db),
+		async runSql(sql) {
+			await d1.prepare(sql).run();
+		}
+	};
+}
+
+describe.each<LifecycleRuntime>(['Bun', 'D1'])('%s puzzle deletion lifecycle', (runtime) => {
+	it('begins one permanent tombstone without changing its original deletion timestamp', async () => {
+		const { db, executor } = lifecycleHarness(runtime);
+
+		expect(await executor.isPuzzleTombstoned('pz1')).toBe(false);
+		await executor.beginPuzzleDeletion('pz1', 1_000);
+		expect(await executor.isPuzzleTombstoned('pz1')).toBe(true);
+		await executor.beginPuzzleDeletion('pz1', 9_000);
+
+		expect(await db.select().from(schema.puzzleDeletionTombstones)).toEqual([
+			{ puzzleId: 'pz1', deletedAt: 1_000 }
+		]);
+	});
+
+	it('finishes atomically, frees retained usage, and is idempotent', async () => {
+		const { db, executor } = lifecycleHarness(runtime);
+		await executor.write(completion());
+		await executor.beginPuzzleDeletion('pz1', 2_000);
+
+		await executor.finishPuzzleDeletion('pz1');
+		await executor.finishPuzzleDeletion('pz1');
+
+		expect(await rows(db)).toEqual({ ledger: [], stats: [] });
+		expect(await db.select().from(schema.playerCompletionUsage)).toEqual([]);
+		expect(
+			await executor.write(completion({ puzzleId: 'pz2', runId: 'run-2', receivedAt: 3_000 }))
+		).toMatchObject({ status: 'stored', inserted: true });
+	});
+
+	it('rolls the entire finish operation back when the ledger delete fails', async () => {
+		const { db, executor, runSql } = lifecycleHarness(runtime);
+		await executor.write(completion());
+		await executor.beginPuzzleDeletion('pz1', 2_000);
+		await runSql(
+			"CREATE TRIGGER fail_lifecycle_ledger_delete BEFORE DELETE ON puzzle_completion_runs BEGIN SELECT RAISE(ABORT, 'forced lifecycle ledger delete failure'); END"
+		);
+
+		try {
+			await expect(executor.finishPuzzleDeletion('pz1')).rejects.toThrow(
+				'forced lifecycle ledger delete failure'
+			);
+			expect((await rows(db)).stats).toHaveLength(1);
+			expect((await rows(db)).ledger).toHaveLength(1);
+		} finally {
+			await runSql('DROP TRIGGER fail_lifecycle_ledger_delete');
+		}
+	});
+
+	it('rejects completion serialized after begin without recreating completion data', async () => {
+		const { db, executor } = lifecycleHarness(runtime);
+		await executor.beginPuzzleDeletion('pz1', 2_000);
+
+		expect(await executor.write(completion())).toEqual({ status: 'tombstoned' });
+		expect(
+			await executor.writeLegacy({
+				playerId: 'p1',
+				puzzleId: 'pz1',
+				timeSeconds: 100,
+				receivedAt: 3_000
+			})
+		).toEqual({ status: 'tombstoned' });
+		expect(await rows(db)).toEqual({ ledger: [], stats: [] });
+	});
+
+	it('rejects direct inserts and updates for every tombstone-guarded table', async () => {
+		const { db, executor } = lifecycleHarness(runtime);
+		await db.insert(schema.puzzles).values({
+			id: 'pz1',
+			ownerId: 'p1',
+			name: 'Before deletion',
+			pieceCount: 4,
+			status: 'ready',
+			createdAt: 1
+		});
+		await executor.write(completion());
+		await executor.beginPuzzleDeletion('pz1', 2_000);
+
+		await expect(
+			db.insert(schema.puzzles).values({
+				id: 'pz1',
+				ownerId: 'p2',
+				name: 'Recreated',
+				pieceCount: 4,
+				status: 'ready',
+				createdAt: 2
+			})
+		).rejects.toThrow('puzzle_deleted');
+		await expect(
+			db.update(schema.puzzles).set({ name: 'Updated' }).where(eq(schema.puzzles.id, 'pz1'))
+		).rejects.toThrow('puzzle_deleted');
+		await expect(
+			db.insert(schema.puzzleStats).values({
+				playerId: 'p2',
+				puzzleId: 'pz1',
+				bestTimeSeconds: 80,
+				totalCompletions: 1,
+				firstCompletedAt: 2_000,
+				lastCompletedAt: 2_000
+			})
+		).rejects.toThrow('puzzle_deleted');
+		await expect(
+			db
+				.update(schema.puzzleStats)
+				.set({ bestTimeSeconds: 50 })
+				.where(eq(schema.puzzleStats.puzzleId, 'pz1'))
+		).rejects.toThrow('puzzle_deleted');
+		await expect(
+			db.insert(schema.puzzleCompletionRuns).values({
+				playerId: 'p2',
+				runId: 'run-2',
+				puzzleId: 'pz1',
+				resultClass: 'standard_timed',
+				timingQuality: 'known',
+				elapsedActiveSeconds: 80,
+				completedAt: 2_000
+			})
+		).rejects.toThrow('puzzle_deleted');
+		await expect(
+			db
+				.update(schema.puzzleCompletionRuns)
+				.set({ completedAt: 3_000 })
+				.where(eq(schema.puzzleCompletionRuns.puzzleId, 'pz1'))
+		).rejects.toThrow('puzzle_deleted');
+	});
+});
 
 describe('createBunDbContext', () => {
 	it('runs both completion write protocols through immediate transactions', async () => {
@@ -323,7 +481,7 @@ describe('createBunDbContext', () => {
 			})
 		]);
 
-		await context.completionWrites.deletePuzzleCompletionData('pz1');
+		await context.completionWrites.finishPuzzleDeletion('pz1');
 
 		expect(await rows(context.db)).toEqual({
 			ledger: [
@@ -359,7 +517,7 @@ describe('createBunDbContext', () => {
 		);
 		triggerDb.close();
 
-		await expect(context.completionWrites.deletePuzzleCompletionData('pz1')).rejects.toThrow(
+		await expect(context.completionWrites.finishPuzzleDeletion('pz1')).rejects.toThrow(
 			'forced ledger delete failure'
 		);
 

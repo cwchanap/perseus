@@ -555,7 +555,7 @@ describe('repositories', () => {
 		expect(summary).toEqual({ puzzlesUploaded: 1, puzzlesSolved: 2, totalCompletions: 2 });
 	});
 
-	it('deletePuzzleStats removes every player ledger and baseline row for one puzzle', async () => {
+	it('deletePuzzleStats delegates lifecycle finish for every player row on one puzzle', async () => {
 		const dataDir = mkdtempSync(join(tmpdir(), 'perseus-repositories-'));
 		const context = createBunDbContext(dataDir);
 		try {

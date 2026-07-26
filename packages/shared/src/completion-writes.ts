@@ -37,7 +37,9 @@ export type LegacyCompletionWriteExecution = { status: 'recorded' } | { status: 
 export interface CompletionWriteExecutor {
 	write(input: VersionedCompletionWrite): Promise<VersionedCompletionWriteExecution>;
 	writeLegacy(input: LegacyCompletionWrite): Promise<LegacyCompletionWriteExecution>;
-	deletePuzzleCompletionData(puzzleId: string): Promise<void>;
+	beginPuzzleDeletion(puzzleId: string, deletedAt: number): Promise<void>;
+	finishPuzzleDeletion(puzzleId: string): Promise<void>;
+	isPuzzleTombstoned(puzzleId: string): Promise<boolean>;
 }
 
 export type VersionedCompletionResult =
