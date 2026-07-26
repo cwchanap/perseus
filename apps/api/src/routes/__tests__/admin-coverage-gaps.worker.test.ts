@@ -1002,7 +1002,7 @@ describe('Admin Worker — terminateAndAwaitStopped workflow.get() throws', () =
 
 		expect(res.status).toBe(500);
 		const body = (await res.json()) as any;
-		// Terminate returns false — cleanup defers to reaper (tombstone + record).
+		// Liveness is unconfirmed, so cleanup retains the record without fence/source mutation.
 		expect(body.message).toContain('workflow termination pending');
 		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
 		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
@@ -1013,9 +1013,9 @@ describe('Admin Worker — terminateAndAwaitStopped workflow.get() throws', () =
 	});
 });
 
-// ─── cleanupOrphanedWorkflow: cleanup record delete fails (best-effort) ──────
+// ─── cleanupOrphanedWorkflow: required record deletion ───────────────────────
 
-describe('Admin Worker — cleanup record delete failure is best-effort', () => {
+describe('Admin Worker — required cleanup record delete failure retains retry state', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		__resetRateLimitStore();

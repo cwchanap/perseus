@@ -499,25 +499,14 @@ export async function reapStuckPuzzles(env: Env, now = Date.now()): Promise<Reap
 }
 
 /**
- * Process explicit cleanup records left by the admin route when it could not
- * confirm workflow termination within the bounded timeout. These records
- * ensure that puzzles deferred to the reaper are eventually cleaned up even
- * if the workflow completes after the deferral (finalize wrote 'ready' to
- * the DO, then the D1 mirror step finishes and the workflow becomes
- * 'complete'). Without this, the reaper's stuck-processing scan would never
- * select such puzzles (they're no longer 'processing' in KV) and would skip
- * 'complete' workflows.
+ * Process explicit cleanup records retained after deletion was chosen. The
+ * workflow-liveness gate is read-only with respect to the permanent fence and
+ * source state: unconfirmed liveness causes no D1 fence or DO/R2/KV mutation.
  *
- * The DO tombstone is confirmed (or performed) here before deleting R2/KV
- * assets. The admin route attempts to tombstone the DO before writing the
- * cleanup record, but that tombstone can fail (DO unreachable, transient
- * error). If this function skipped the tombstone — assuming it was already
- * done — a failed initial tombstone would leave the DO alive after the
- * reaper deletes R2 and KV, creating a metadata-resurrection path if
- * anything later updates that DO. deleteMetadataDO is idempotent (calling
- * /delete on an already-tombstoned DO is a 200 no-op), so re-tombstoning
- * is always safe. The cleanup record itself is deleted only after
- * tombstone, R2, and KV cleanup all succeed.
+ * Once stopped, cleanup re-persists the record before establishing the
+ * permanent D1 fence, then mutates DO/R2/KV source state. Completion and
+ * ownership cleanup must finish before the cleanup record is deleted. Any
+ * required failure retains the record for retry.
  */
 export async function reapCleanupRecords(env: Env): Promise<ReapResult> {
 	const result: ReapResult = {
@@ -594,15 +583,10 @@ export async function reapCleanupRecords(env: Env): Promise<ReapResult> {
 
 				await ensureWorkerPuzzleDeletionFence(env, record);
 
-				// Tombstone the DO BEFORE deleting R2 assets and KV metadata.
-				// The admin route attempts this before writing the cleanup
-				// record, but that attempt can fail. deleteMetadataDO is
-				// idempotent (a no-op on an already-tombstoned DO), so calling
-				// it here is always safe — it either confirms the prior
-				// tombstone or performs it for the first time. If it fails, do
-				// NOT delete R2/KV — a live DO can resurrect stale metadata via
-				// KV sync after R2/KV cleanup. Preserve the cleanup record for
-				// the next reaper run.
+				// The cleanup record and permanent D1 fence now precede the
+				// first source mutation. Tombstone the DO before deleting
+				// R2/KV so it cannot resurrect stale metadata. If this or any
+				// later required step fails, preserve the record for retry.
 				try {
 					await deleteMetadataDO(env.PUZZLE_METADATA_DO, record.puzzleId);
 				} catch (doErr) {

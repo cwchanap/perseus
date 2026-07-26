@@ -182,8 +182,22 @@ export function createBunDbContext(
 				target: [puzzleStats.playerId, puzzleStats.puzzleId],
 				set: {
 					bestTimeSeconds: sql`MIN(${puzzleStats.bestTimeSeconds}, excluded.best_time_seconds)`,
-					totalCompletions: sql`CASE WHEN excluded.last_completed_at - ${puzzleStats.lastCompletedAt} >= ${COMPLETION_DEDUPE_WINDOW_MS} THEN ${puzzleStats.totalCompletions} + 1 ELSE ${puzzleStats.totalCompletions} END`,
-					lastCompletedAt: sql`CASE WHEN excluded.last_completed_at - ${puzzleStats.lastCompletedAt} >= ${COMPLETION_DEDUPE_WINDOW_MS} THEN excluded.last_completed_at ELSE ${puzzleStats.lastCompletedAt} END`
+					totalCompletions: sql`
+						CASE
+							WHEN excluded.last_completed_at - ${puzzleStats.lastCompletedAt} >=
+								${COMPLETION_DEDUPE_WINDOW_MS}
+							THEN ${puzzleStats.totalCompletions} + 1
+							ELSE ${puzzleStats.totalCompletions}
+						END
+					`,
+					lastCompletedAt: sql`
+						CASE
+							WHEN excluded.last_completed_at - ${puzzleStats.lastCompletedAt} >=
+								${COMPLETION_DEDUPE_WINDOW_MS}
+							THEN excluded.last_completed_at
+							ELSE ${puzzleStats.lastCompletedAt}
+						END
+					`
 				}
 			})
 			.returning({ playerId: puzzleStats.playerId })
