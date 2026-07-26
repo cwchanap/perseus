@@ -1,6 +1,14 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+const dbContextMock = vi.hoisted(() => ({
+	db: {},
+	completionWrites: {
+		write: vi.fn(),
+		deletePuzzleCompletionData: vi.fn(async () => undefined)
+	}
+}));
+
 // Mock the storage and auth modules before importing admin
 vi.mock('../../services/storage.worker', () => ({
 	getPuzzle: vi.fn(),
@@ -47,13 +55,18 @@ vi.mock('../../services/player-auth.worker', () => ({
 // handle and repository so the test doesn't bind a real D1 session and so the
 // cleanup is assertable.
 vi.mock('../../db.worker', () => ({
-	getWorkerDb: vi.fn(() => ({}))
+	getWorkerDb: vi.fn(() => dbContextMock.db),
+	getWorkerDbContext: vi.fn(() => dbContextMock)
 }));
 
 vi.mock('@perseus/shared', async (importOriginal) => {
 	const original = await importOriginal<typeof import('@perseus/shared')>();
 	const { sharedMockOverrides } = await import('./helpers/shared-mock');
-	return { ...original, ...sharedMockOverrides };
+	return {
+		...original,
+		...sharedMockOverrides,
+		deletePuzzleStats: original.deletePuzzleStats
+	};
 });
 
 import admin from '../admin.worker';
@@ -1849,6 +1862,7 @@ describe('Admin Routes - Login Success/Failure', () => {
 describe('Admin Routes - Delete Puzzle Cases', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		dbContextMock.completionWrites.deletePuzzleCompletionData.mockResolvedValue(undefined);
 	});
 
 	const mockEnv = {
@@ -1991,6 +2005,61 @@ describe('Admin Routes - Delete Puzzle Cases', () => {
 		const res = await admin.fetch(req, mockEnv as any);
 
 		expect(res.status).toBe(204);
+		const { getWorkerDbContext } = await import('../../db.worker');
+		expect(getWorkerDbContext).toHaveBeenCalledWith(mockEnv);
+		expect(deletePuzzleOwnership).toHaveBeenCalledWith(
+			dbContextMock.db,
+			'550e8400-e29b-41d4-a716-446655440000'
+		);
+		expect(dbContextMock.completionWrites.deletePuzzleCompletionData).toHaveBeenCalledWith(
+			'550e8400-e29b-41d4-a716-446655440000'
+		);
+		expect(
+			(storage.deletePuzzleMetadata as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]
+		).toBeLessThan(
+			dbContextMock.completionWrites.deletePuzzleCompletionData.mock.invocationCallOrder[0]
+		);
+	});
+
+	it('still returns 204 when atomic completion cleanup fails after KV deletion', async () => {
+		(storage.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
+			id: '550e8400-e29b-41d4-a716-446655440000',
+			name: 'Test',
+			pieceCount: 4,
+			status: 'ready',
+			pieces: [],
+			version: 0
+		});
+		(storage.deletePuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue({
+			success: true
+		});
+		(storage.deletePuzzleAssets as ReturnType<typeof vi.fn>).mockResolvedValue({
+			success: true,
+			failedKeys: []
+		});
+		dbContextMock.completionWrites.deletePuzzleCompletionData.mockRejectedValueOnce(
+			new Error('D1 completion cleanup failed')
+		);
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const req = new Request('http://localhost/puzzle-delete/550e8400-e29b-41d4-a716-446655440000', {
+			method: 'POST',
+			headers: { cookie: 'session=valid.token' }
+		});
+
+		const res = await admin.fetch(req, mockEnv as any);
+
+		expect(res.status).toBe(204);
+		expect(consoleSpy).toHaveBeenCalledWith(
+			expect.stringContaining('Failed to delete stats rows'),
+			expect.any(Error)
+		);
+		expect(
+			(storage.deletePuzzleMetadata as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]
+		).toBeLessThan(
+			dbContextMock.completionWrites.deletePuzzleCompletionData.mock.invocationCallOrder[0]
+		);
+		consoleSpy.mockRestore();
 	});
 });
 

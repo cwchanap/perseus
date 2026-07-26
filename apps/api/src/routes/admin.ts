@@ -39,7 +39,7 @@ import {
 	isPuzzleAspectRatio,
 	stripIdempotencyKey
 } from '@perseus/types';
-import { getDb } from '../db';
+import { getDb, getDbContext } from '../db';
 import {
 	deletePuzzleOwnership,
 	deletePuzzleStats,
@@ -602,11 +602,13 @@ admin.post('/puzzle-delete/:id', requireAuth, async (c) => {
 	// handling so a DB init failure doesn't bubble a 500 after a successful
 	// puzzle deletion.
 	try {
-		await deletePuzzleOwnership(getDb(), id).catch((err) =>
+		const { db, completionWrites } = getDbContext();
+		await deletePuzzleOwnership(db, id).catch((err) =>
 			console.error(`Failed to delete ownership row for puzzle ${id}:`, err)
 		);
-		// Best-effort cleanup of puzzle_stats rows (see admin.worker.ts).
-		await deletePuzzleStats(getDb(), id).catch((err) =>
+		// Best-effort atomic cleanup of completion ledger and baseline rows
+		// (see admin.worker.ts).
+		await deletePuzzleStats(completionWrites, id).catch((err) =>
 			console.error(`Failed to delete stats rows for puzzle ${id}:`, err)
 		);
 	} catch (err) {

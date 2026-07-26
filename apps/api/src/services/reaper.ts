@@ -37,7 +37,7 @@ import {
 	listCleanupRecords,
 	releaseIdempotencyKey
 } from './storage.worker';
-import { getWorkerDb } from '../db.worker';
+import { getWorkerDb, getWorkerDbContext } from '../db.worker';
 import {
 	deletePuzzleOwnership,
 	deletePuzzleStats,
@@ -456,15 +456,13 @@ export async function reapStuckPuzzles(env: Env, now = Date.now()): Promise<Reap
 					// exists in the player list mirror and the next reaper pass can
 					// retry KV cleanup.
 					try {
-						await deletePuzzleOwnership(getWorkerDb(env), puzzle.id).catch((err) =>
+						const { db, completionWrites } = getWorkerDbContext(env);
+						await deletePuzzleOwnership(db, puzzle.id).catch((err) =>
 							console.error(`Reaper: failed to delete D1 ownership for ${puzzle.id}:`, err)
 						);
-						// Best-effort cleanup of puzzle_stats rows so a reaped
-						// puzzle doesn't linger in players' best-times lists with a
-						// null name after the left join. Mirrors the admin delete
-						// path, which calls deletePuzzleStats alongside
-						// deletePuzzleOwnership. Logged, not fatal.
-						await deletePuzzleStats(getWorkerDb(env), puzzle.id).catch((err) =>
+						// Best-effort atomic cleanup of completion ledger and
+						// baseline rows. Logged, not fatal.
+						await deletePuzzleStats(completionWrites, puzzle.id).catch((err) =>
 							console.error(`Reaper: failed to delete D1 stats for ${puzzle.id}:`, err)
 						);
 					} catch (dbErr) {
@@ -684,15 +682,16 @@ export async function reapCleanupRecords(env: Env): Promise<ReapResult> {
 
 					// Best-effort D1 ownership cleanup.
 					try {
-						await deletePuzzleOwnership(getWorkerDb(env), record.puzzleId).catch((err) =>
+						const { db, completionWrites } = getWorkerDbContext(env);
+						await deletePuzzleOwnership(db, record.puzzleId).catch((err) =>
 							console.error(
 								`Reaper cleanup: failed to delete D1 ownership for ${record.puzzleId}:`,
 								err
 							)
 						);
-						// Best-effort cleanup of puzzle_stats rows (see reapStuck-
-						// Puzzles for rationale). Mirrors the admin delete path.
-						await deletePuzzleStats(getWorkerDb(env), record.puzzleId).catch((err) =>
+						// Best-effort atomic cleanup of completion ledger and
+						// baseline rows (see reapStuckPuzzles for rationale).
+						await deletePuzzleStats(completionWrites, record.puzzleId).catch((err) =>
 							console.error(
 								`Reaper cleanup: failed to delete D1 stats for ${record.puzzleId}:`,
 								err
@@ -1085,12 +1084,13 @@ export async function reapOrphanedReservations(env: Env): Promise<ReapResult> {
 				// Best-effort D1 ownership cleanup so a reaped orphan doesn't
 				// keep surfacing in the uploader's "My Puzzles" list as a 404.
 				try {
-					await deletePuzzleOwnership(getWorkerDb(env), candidate.id).catch((err) =>
+					const { db, completionWrites } = getWorkerDbContext(env);
+					await deletePuzzleOwnership(db, candidate.id).catch((err) =>
 						console.error(`Reaper orphan: failed to delete D1 ownership for ${candidate.id}:`, err)
 					);
-					// Best-effort cleanup of puzzle_stats rows (see reapStuck-
-					// Puzzles for rationale). Mirrors the admin delete path.
-					await deletePuzzleStats(getWorkerDb(env), candidate.id).catch((err) =>
+					// Best-effort atomic cleanup of completion ledger and
+					// baseline rows (see reapStuckPuzzles for rationale).
+					await deletePuzzleStats(completionWrites, candidate.id).catch((err) =>
 						console.error(`Reaper orphan: failed to delete D1 stats for ${candidate.id}:`, err)
 					);
 				} catch (dbErr) {

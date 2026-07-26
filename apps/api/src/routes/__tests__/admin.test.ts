@@ -8,6 +8,14 @@ const originalJwtSecret = process.env.JWT_SECRET;
 process.env.ADMIN_PASSKEY = 'test-admin-passkey-for-bun';
 process.env.JWT_SECRET = 'test-jwt-secret-for-bun-admin-testing-12345';
 
+const dbContextMock = vi.hoisted(() => ({
+	db: {},
+	completionWrites: {
+		write: vi.fn(),
+		deletePuzzleCompletionData: vi.fn(async () => undefined)
+	}
+}));
+
 const PNG_HEADER = new Uint8Array([
 	0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
 	0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -76,7 +84,8 @@ vi.mock('../../services/player-auth', () => ({
 // Mock the db handle and the repository so tests don't pull in `bun:sqlite`
 // (unavailable in the vitest/node runner) and so ownership cleanup is assertable.
 vi.mock('../../db', () => ({
-	getDb: vi.fn(() => ({}))
+	getDb: vi.fn(() => dbContextMock.db),
+	getDbContext: vi.fn(() => dbContextMock)
 }));
 
 vi.mock('@perseus/shared', async (importOriginal) => {
@@ -86,7 +95,6 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 		validateImageEndMarker: vi.fn().mockResolvedValue(true),
 		insertPuzzleOwnership: vi.fn().mockResolvedValue(undefined),
 		deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined),
-		deletePuzzleStats: vi.fn().mockResolvedValue(undefined),
 		SYSTEM_OWNER_ID: 'system'
 	};
 });
@@ -744,6 +752,7 @@ describe('POST /puzzles', () => {
 describe('DELETE /puzzles/:id', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		dbContextMock.completionWrites.deletePuzzleCompletionData.mockResolvedValue(undefined);
 	});
 
 	it('returns 404 when puzzle does not exist', async () => {
@@ -813,7 +822,17 @@ describe('DELETE /puzzles/:id', () => {
 		// Ownership row is cleaned up best-effort so deleted puzzles don't linger
 		// in the uploader's "My Puzzles" list or inflate puzzlesUploaded.
 		const { deletePuzzleOwnership } = await import('@perseus/shared');
-		expect(deletePuzzleOwnership).toHaveBeenCalledWith({}, 'existing-puzzle-id');
+		const { getDbContext } = await import('../../db');
+		expect(getDbContext).toHaveBeenCalledTimes(1);
+		expect(deletePuzzleOwnership).toHaveBeenCalledWith(dbContextMock.db, 'existing-puzzle-id');
+		expect(dbContextMock.completionWrites.deletePuzzleCompletionData).toHaveBeenCalledWith(
+			'existing-puzzle-id'
+		);
+		expect(
+			(storageMock.deletePuzzle as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]
+		).toBeLessThan(
+			dbContextMock.completionWrites.deletePuzzleCompletionData.mock.invocationCallOrder[0]
+		);
 	});
 
 	it('still returns 204 when ownership cleanup throws (best-effort)', async () => {
@@ -834,9 +853,7 @@ describe('DELETE /puzzles/:id', () => {
 		expect(res.status).toBe(204);
 	});
 
-	it('still returns 204 when deletePuzzleStats throws (best-effort)', async () => {
-		// The .catch handler on deletePuzzleStats swallows the rejection so a
-		// failed stats cleanup doesn't turn a successful deletion into a 500.
+	it('still returns 204 when atomic completion cleanup throws after puzzle deletion', async () => {
 		(storageMock.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
 			id: 'existing-puzzle-id',
 			name: 'Test',
@@ -844,8 +861,7 @@ describe('DELETE /puzzles/:id', () => {
 			createdAt: 1700000000000
 		});
 		(storageMock.deletePuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(true);
-		const { deletePuzzleStats } = await import('@perseus/shared');
-		(deletePuzzleStats as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+		dbContextMock.completionWrites.deletePuzzleCompletionData.mockRejectedValueOnce(
 			new Error('D1 stats down')
 		);
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -859,11 +875,17 @@ describe('DELETE /puzzles/:id', () => {
 			expect.stringContaining('Failed to delete stats rows'),
 			expect.any(Error)
 		);
+		expect(storageMock.deletePuzzle).toHaveBeenCalledWith('existing-puzzle-id');
+		expect(
+			(storageMock.deletePuzzle as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]
+		).toBeLessThan(
+			dbContextMock.completionWrites.deletePuzzleCompletionData.mock.invocationCallOrder[0]
+		);
 		consoleSpy.mockRestore();
 	});
 
-	it('still returns 204 when getDb throws on ownership cleanup (best-effort)', async () => {
-		// getDb is a lazy init that can throw on first call; the outer catch
+	it('still returns 204 when getDbContext throws on ownership cleanup (best-effort)', async () => {
+		// getDbContext is a lazy init that can throw on first call; the outer catch
 		// logs the failure so a DB init error doesn't bubble a 500 after a
 		// successful puzzle deletion.
 		(storageMock.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -873,8 +895,8 @@ describe('DELETE /puzzles/:id', () => {
 			createdAt: 1700000000000
 		});
 		(storageMock.deletePuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(true);
-		const { getDb } = await import('../../db');
-		(getDb as ReturnType<typeof vi.fn>).mockImplementationOnce(() => {
+		const { getDbContext } = await import('../../db');
+		(getDbContext as ReturnType<typeof vi.fn>).mockImplementationOnce(() => {
 			throw new Error('DB init failed');
 		});
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});

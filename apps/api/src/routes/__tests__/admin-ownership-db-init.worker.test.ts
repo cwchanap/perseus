@@ -14,6 +14,14 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+const dbContextMock = vi.hoisted(() => ({
+	db: {},
+	completionWrites: {
+		write: vi.fn(),
+		deletePuzzleCompletionData: vi.fn(async () => undefined)
+	}
+}));
+
 vi.mock('../../services/storage.worker', () => ({
 	getPuzzle: vi.fn(),
 	deletePuzzleAssets: vi.fn(),
@@ -30,7 +38,8 @@ vi.mock('../../services/storage.worker', () => ({
 }));
 
 vi.mock('../../db.worker', () => ({
-	getWorkerDb: vi.fn(() => ({}))
+	getWorkerDb: vi.fn(() => dbContextMock.db),
+	getWorkerDbContext: vi.fn(() => dbContextMock)
 }));
 
 vi.mock('@perseus/shared', async (importOriginal) => {
@@ -53,7 +62,7 @@ vi.mock('../../middleware/auth.worker', () => ({
 }));
 
 import admin from '../admin.worker';
-import { getWorkerDb } from '../../db.worker';
+import { getWorkerDb, getWorkerDbContext } from '../../db.worker';
 import { deletePuzzleOwnership, deletePuzzleStats } from '@perseus/shared';
 import * as storage from '../../services/storage.worker';
 import { __resetRateLimitStore } from '../../middleware/rate-limit.worker';
@@ -88,7 +97,8 @@ describe('Admin Worker - D1 ownership best-effort catch blocks', () => {
 		vi.clearAllMocks();
 		__resetRateLimitStore();
 		// Restore default non-throwing getWorkerDb between tests.
-		vi.mocked(getWorkerDb).mockImplementation(() => ({}) as any);
+		vi.mocked(getWorkerDb).mockImplementation(() => dbContextMock.db as any);
+		vi.mocked(getWorkerDbContext).mockImplementation(() => dbContextMock as any);
 		vi.mocked(deletePuzzleOwnership).mockResolvedValue(undefined as any);
 		vi.mocked(deletePuzzleStats).mockResolvedValue(undefined as any);
 		vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -216,8 +226,8 @@ describe('Admin Worker - D1 ownership best-effort catch blocks', () => {
 		);
 	});
 
-	it('still returns 204 when getWorkerDb throws during DELETE ownership cleanup (line 748)', async () => {
-		vi.mocked(getWorkerDb).mockImplementation(() => {
+	it('still returns 204 when getWorkerDbContext throws during DELETE ownership cleanup', async () => {
+		vi.mocked(getWorkerDbContext).mockImplementation(() => {
 			throw new Error('DB init failed');
 		});
 		vi.mocked(storage.getPuzzle).mockResolvedValue({
