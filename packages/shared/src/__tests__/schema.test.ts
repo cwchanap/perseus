@@ -265,6 +265,17 @@ describe('schema tables', () => {
 				'guard_puzzles_not_tombstoned_update',
 				'increment_player_completion_usage'
 			]);
+			const updateTriggerSql = sqlite
+				.query(
+					"SELECT name, sql FROM sqlite_master WHERE type = 'trigger' AND name LIKE '%not_tombstoned_update' ORDER BY name"
+				)
+				.all() as { name: string; sql: string }[];
+			expect(updateTriggerSql).toHaveLength(3);
+			for (const trigger of updateTriggerSql) {
+				expect(trigger.sql).toContain('OLD.');
+				expect(trigger.sql).toContain('NEW.');
+				expect(trigger.sql).toContain('puzzle_deletion_tombstones');
+			}
 
 			const usage = db
 				.select()

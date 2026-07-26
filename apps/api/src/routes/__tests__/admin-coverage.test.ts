@@ -67,7 +67,11 @@ vi.mock('../../services/storage', () => ({
 // admin.ts imports @perseus/shared for ownership cleanup on delete; mock it
 // (and the db handle) so the test doesn't pull in `bun:sqlite`.
 vi.mock('../../db', () => ({
-	getDb: vi.fn(() => ({}))
+	getDb: vi.fn(() => ({})),
+	getDbContext: vi.fn(() => ({
+		db: {},
+		completionWrites: { isPuzzleTombstoned: vi.fn().mockResolvedValue(false) }
+	}))
 }));
 
 vi.mock('@perseus/shared', async (importOriginal) => {

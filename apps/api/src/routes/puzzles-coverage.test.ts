@@ -8,7 +8,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('../db', () => ({
-	getDb: vi.fn(() => ({}))
+	getDb: vi.fn(() => ({})),
+	getDbContext: vi.fn(() => ({
+		db: {},
+		completionWrites: { isPuzzleTombstoned: vi.fn().mockResolvedValue(false) }
+	}))
 }));
 
 vi.mock('node:fs/promises', () => ({

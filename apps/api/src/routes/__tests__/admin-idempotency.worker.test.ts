@@ -46,7 +46,11 @@ vi.mock('../../services/player-auth.worker', () => ({
 }));
 
 vi.mock('../../db.worker', () => ({
-	getWorkerDb: vi.fn(() => ({}))
+	getWorkerDb: vi.fn(() => ({})),
+	getWorkerDbContext: vi.fn(() => ({
+		db: {},
+		completionWrites: { isPuzzleTombstoned: vi.fn().mockResolvedValue(false) }
+	}))
 }));
 
 vi.mock('@perseus/shared', async (importOriginal) => {
