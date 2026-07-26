@@ -18,6 +18,9 @@ import {
 	recordCompletion,
 	listPlayerStats,
 	getPlayerSummary,
+	listCombinedPlayerStats,
+	getCombinedPlayerSummary,
+	InvalidPlayerStatsCursorError,
 	SYSTEM_OWNER_ID
 } from '../repositories';
 
@@ -539,5 +542,391 @@ describe('repositories', () => {
 		const result = await listPlayerStats(helper.db, 'p1', { limit: 1.5 });
 		expect(result.rows).toHaveLength(1);
 		expect(result.nextCursor).toBeDefined();
+	});
+});
+
+describe('combined player stats', () => {
+	let helper: ReturnType<typeof makeDb>;
+
+	beforeEach(() => {
+		helper = makeDb();
+	});
+
+	it('combines historical baselines and versioned ledger groups without double-counting', async () => {
+		await helper.db.insert(schema.puzzles).values([
+			{
+				id: 'historical',
+				ownerId: 'p1',
+				name: 'Historical',
+				pieceCount: 4,
+				status: 'ready',
+				createdAt: 1
+			},
+			{
+				id: 'standard',
+				ownerId: SYSTEM_OWNER_ID,
+				name: 'Standard',
+				pieceCount: 4,
+				status: 'ready',
+				createdAt: 2
+			},
+			{
+				id: 'overlap',
+				ownerId: SYSTEM_OWNER_ID,
+				name: 'Overlap',
+				pieceCount: 4,
+				status: 'ready',
+				createdAt: 3
+			},
+			{
+				id: 'variant-a',
+				ownerId: SYSTEM_OWNER_ID,
+				name: 'Variant A',
+				pieceCount: 4,
+				status: 'ready',
+				createdAt: 4
+			},
+			{
+				id: 'variant-b',
+				ownerId: SYSTEM_OWNER_ID,
+				name: 'Variant B',
+				pieceCount: 4,
+				status: 'ready',
+				createdAt: 5
+			}
+		]);
+		await helper.db.insert(schema.puzzleStats).values([
+			{
+				playerId: 'p1',
+				puzzleId: 'historical',
+				bestTimeSeconds: 90,
+				totalCompletions: 2,
+				firstCompletedAt: 200,
+				lastCompletedAt: 500
+			},
+			{
+				playerId: 'p1',
+				puzzleId: 'standard',
+				bestTimeSeconds: 40,
+				totalCompletions: 0,
+				firstCompletedAt: 300,
+				lastCompletedAt: 300
+			},
+			{
+				playerId: 'p1',
+				puzzleId: 'overlap',
+				bestTimeSeconds: 60,
+				totalCompletions: 3,
+				firstCompletedAt: 300,
+				lastCompletedAt: 700
+			}
+		]);
+		await helper.db.insert(schema.puzzleCompletionRuns).values([
+			{
+				playerId: 'p1',
+				runId: 'standard-1',
+				puzzleId: 'standard',
+				resultClass: 'standard_timed',
+				timingQuality: 'known',
+				elapsedActiveSeconds: 40,
+				completedAt: 300
+			},
+			{
+				playerId: 'p1',
+				runId: 'overlap-1',
+				puzzleId: 'overlap',
+				resultClass: 'rotation_timed',
+				timingQuality: 'known',
+				elapsedActiveSeconds: 80,
+				completedAt: 100
+			},
+			{
+				playerId: 'p1',
+				runId: 'overlap-2',
+				puzzleId: 'overlap',
+				resultClass: 'relaxed',
+				timingQuality: 'known',
+				elapsedActiveSeconds: null,
+				completedAt: 900
+			},
+			{
+				playerId: 'p1',
+				runId: 'variant-a-1',
+				puzzleId: 'variant-a',
+				resultClass: 'relaxed',
+				timingQuality: 'known',
+				elapsedActiveSeconds: null,
+				completedAt: 600
+			},
+			{
+				playerId: 'p1',
+				runId: 'variant-b-1',
+				puzzleId: 'variant-b',
+				resultClass: 'assisted_timed',
+				timingQuality: 'known',
+				elapsedActiveSeconds: 70,
+				completedAt: 400
+			},
+			{
+				playerId: 'p1',
+				runId: 'variant-b-2',
+				puzzleId: 'variant-b',
+				resultClass: 'relaxed',
+				timingQuality: 'known',
+				elapsedActiveSeconds: null,
+				completedAt: 800
+			},
+			{
+				playerId: 'other',
+				runId: 'other-1',
+				puzzleId: 'variant-a',
+				resultClass: 'relaxed',
+				timingQuality: 'known',
+				elapsedActiveSeconds: null,
+				completedAt: 50
+			}
+		]);
+
+		const result = await listCombinedPlayerStats(helper.db, 'p1', { limit: 10 });
+
+		expect(result).toEqual({
+			rows: [
+				{
+					playerId: 'p1',
+					puzzleId: 'standard',
+					puzzleName: 'Standard',
+					bestTimeSeconds: 40,
+					totalCompletions: 1,
+					firstCompletedAt: 300,
+					lastCompletedAt: 300
+				},
+				{
+					playerId: 'p1',
+					puzzleId: 'overlap',
+					puzzleName: 'Overlap',
+					bestTimeSeconds: 60,
+					totalCompletions: 5,
+					firstCompletedAt: 100,
+					lastCompletedAt: 900
+				},
+				{
+					playerId: 'p1',
+					puzzleId: 'historical',
+					puzzleName: 'Historical',
+					bestTimeSeconds: 90,
+					totalCompletions: 2,
+					firstCompletedAt: 200,
+					lastCompletedAt: 500
+				},
+				{
+					playerId: 'p1',
+					puzzleId: 'variant-a',
+					puzzleName: 'Variant A',
+					bestTimeSeconds: null,
+					totalCompletions: 1,
+					firstCompletedAt: 600,
+					lastCompletedAt: 600
+				},
+				{
+					playerId: 'p1',
+					puzzleId: 'variant-b',
+					puzzleName: 'Variant B',
+					bestTimeSeconds: null,
+					totalCompletions: 2,
+					firstCompletedAt: 400,
+					lastCompletedAt: 800
+				}
+			]
+		});
+	});
+
+	it('uses the combined solved-group and additive completion formula in the summary', async () => {
+		await helper.db.insert(schema.puzzles).values({
+			id: 'uploaded',
+			ownerId: 'p1',
+			name: 'Uploaded',
+			pieceCount: 4,
+			status: 'ready',
+			createdAt: 1
+		});
+		await helper.db.insert(schema.puzzleStats).values([
+			{
+				playerId: 'p1',
+				puzzleId: 'historical',
+				bestTimeSeconds: 90,
+				totalCompletions: 2,
+				firstCompletedAt: 100,
+				lastCompletedAt: 200
+			},
+			{
+				playerId: 'p1',
+				puzzleId: 'overlap',
+				bestTimeSeconds: 60,
+				totalCompletions: 3,
+				firstCompletedAt: 300,
+				lastCompletedAt: 400
+			}
+		]);
+		await helper.db.insert(schema.puzzleCompletionRuns).values([
+			{
+				playerId: 'p1',
+				runId: 'overlap-1',
+				puzzleId: 'overlap',
+				resultClass: 'relaxed',
+				timingQuality: 'known',
+				elapsedActiveSeconds: null,
+				completedAt: 500
+			},
+			{
+				playerId: 'p1',
+				runId: 'variant-1',
+				puzzleId: 'variant',
+				resultClass: 'relaxed',
+				timingQuality: 'known',
+				elapsedActiveSeconds: null,
+				completedAt: 600
+			},
+			{
+				playerId: 'p1',
+				runId: 'variant-2',
+				puzzleId: 'variant',
+				resultClass: 'rotation_timed',
+				timingQuality: 'known',
+				elapsedActiveSeconds: 75,
+				completedAt: 700
+			}
+		]);
+
+		expect(await getCombinedPlayerSummary(helper.db, 'p1')).toEqual({
+			puzzlesUploaded: 1,
+			puzzlesSolved: 3,
+			totalCompletions: 8
+		});
+	});
+
+	it('continues v2 and legacy cursors across numeric and null-best groups', async () => {
+		await helper.db.insert(schema.puzzleStats).values([
+			{
+				playerId: 'p1',
+				puzzleId: 'pz-a',
+				bestTimeSeconds: 10,
+				totalCompletions: 1,
+				firstCompletedAt: 100,
+				lastCompletedAt: 100
+			},
+			{
+				playerId: 'p1',
+				puzzleId: 'pz-b',
+				bestTimeSeconds: 10,
+				totalCompletions: 1,
+				firstCompletedAt: 200,
+				lastCompletedAt: 200
+			},
+			{
+				playerId: 'p1',
+				puzzleId: 'pz-c',
+				bestTimeSeconds: 20,
+				totalCompletions: 1,
+				firstCompletedAt: 300,
+				lastCompletedAt: 300
+			}
+		]);
+		await helper.db.insert(schema.puzzleCompletionRuns).values([
+			{
+				playerId: 'p1',
+				runId: 'null-1',
+				puzzleId: 'pz-n1',
+				resultClass: 'relaxed',
+				timingQuality: 'known',
+				elapsedActiveSeconds: null,
+				completedAt: 400
+			},
+			{
+				playerId: 'p1',
+				runId: 'null-2',
+				puzzleId: 'pz-n2',
+				resultClass: 'relaxed',
+				timingQuality: 'known',
+				elapsedActiveSeconds: null,
+				completedAt: 500
+			}
+		]);
+
+		const first = await listCombinedPlayerStats(helper.db, 'p1', { limit: 1.5 });
+		expect(first.rows.map((row) => row.puzzleId)).toEqual(['pz-a']);
+		expect(first.nextCursor).toBe('v2|0|10|pz-a');
+
+		const numericTie = await listCombinedPlayerStats(helper.db, 'p1', {
+			limit: 10,
+			cursor: 'v2|0|10|pz-a'
+		});
+		expect(numericTie.rows.map((row) => row.puzzleId)).toEqual(['pz-b', 'pz-c', 'pz-n1', 'pz-n2']);
+
+		const crossToNull = await listCombinedPlayerStats(helper.db, 'p1', {
+			limit: 10,
+			cursor: 'v2|0|20|pz-c'
+		});
+		expect(crossToNull.rows.map((row) => row.puzzleId)).toEqual(['pz-n1', 'pz-n2']);
+
+		const withinNull = await listCombinedPlayerStats(helper.db, 'p1', {
+			limit: 10,
+			cursor: 'v2|1||pz-n1'
+		});
+		expect(withinNull.rows.map((row) => row.puzzleId)).toEqual(['pz-n2']);
+
+		const legacyComposite = await listCombinedPlayerStats(helper.db, 'p1', {
+			limit: 10,
+			cursor: '10|pz-a'
+		});
+		expect(legacyComposite.rows.map((row) => row.puzzleId)).toEqual([
+			'pz-b',
+			'pz-c',
+			'pz-n1',
+			'pz-n2'
+		]);
+
+		const legacyBare = await listCombinedPlayerStats(helper.db, 'p1', {
+			limit: 10,
+			cursor: '10'
+		});
+		expect(legacyBare.rows.map((row) => row.puzzleId)).toEqual(['pz-c', 'pz-n1', 'pz-n2']);
+
+		const nullCursor = await listCombinedPlayerStats(helper.db, 'p1', { limit: 4 });
+		expect(nullCursor.nextCursor).toBe('v2|1||pz-n1');
+
+		const zeroLegacy = await listCombinedPlayerStats(helper.db, 'p1', {
+			limit: 10,
+			cursor: '0'
+		});
+		expect(zeroLegacy.rows).toHaveLength(5);
+	});
+
+	it.each([
+		'',
+		'garbage',
+		'01',
+		'-1',
+		' 1',
+		'1 ',
+		'1.5',
+		'1e2',
+		'NaN',
+		'Infinity',
+		'10|',
+		'|pz-a',
+		'10|pz-a|extra',
+		'v1|0|10|pz-a',
+		'v3|0|10|pz-a',
+		'v2|2||pz-a',
+		'v2|0||pz-a',
+		'v2|0|01|pz-a',
+		'v2|0|10|',
+		'v2|0|10|pz-a|extra',
+		'v2|1|10|pz-a',
+		'v2|1||'
+	])('rejects malformed combined player stats cursor %j', async (cursor) => {
+		await expect(
+			listCombinedPlayerStats(helper.db, 'p1', { limit: 10, cursor })
+		).rejects.toBeInstanceOf(InvalidPlayerStatsCursorError);
 	});
 });
