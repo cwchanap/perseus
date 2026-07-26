@@ -1,0 +1,293 @@
+{
+	"version": "6",
+	"dialect": "sqlite",
+	"id": "f268ce45-31bc-4c7b-9f2a-eb1f26e1109d",
+	"prevId": "feb806b8-d6f3-23fe-b169-0566a49285b3",
+	"tables": {
+		"player_profiles": {
+			"name": "player_profiles",
+			"columns": {
+				"player_id": {
+					"name": "player_id",
+					"type": "text",
+					"primaryKey": true,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"display_name": {
+					"name": "display_name",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false,
+					"autoincrement": false
+				},
+				"avatar_url": {
+					"name": "avatar_url",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false,
+					"autoincrement": false
+				},
+				"avatar_updated_at": {
+					"name": "avatar_updated_at",
+					"type": "integer",
+					"primaryKey": false,
+					"notNull": false,
+					"autoincrement": false
+				},
+				"avatar_update_token": {
+					"name": "avatar_update_token",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false,
+					"autoincrement": false
+				},
+				"updated_at": {
+					"name": "updated_at",
+					"type": "integer",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				}
+			},
+			"indexes": {},
+			"foreignKeys": {},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {},
+			"checkConstraints": {}
+		},
+		"puzzle_completion_runs": {
+			"name": "puzzle_completion_runs",
+			"columns": {
+				"player_id": {
+					"name": "player_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"run_id": {
+					"name": "run_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"puzzle_id": {
+					"name": "puzzle_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"result_class": {
+					"name": "result_class",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"timing_quality": {
+					"name": "timing_quality",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"elapsed_active_seconds": {
+					"name": "elapsed_active_seconds",
+					"type": "integer",
+					"primaryKey": false,
+					"notNull": false,
+					"autoincrement": false
+				},
+				"completed_at": {
+					"name": "completed_at",
+					"type": "integer",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				}
+			},
+			"indexes": {
+				"idx_pcr_player_puzzle_completed": {
+					"name": "idx_pcr_player_puzzle_completed",
+					"columns": ["player_id", "puzzle_id", "completed_at"],
+					"isUnique": false
+				},
+				"idx_pcr_puzzle": {
+					"name": "idx_pcr_puzzle",
+					"columns": ["puzzle_id"],
+					"isUnique": false
+				}
+			},
+			"foreignKeys": {},
+			"compositePrimaryKeys": {
+				"puzzle_completion_runs_player_id_run_id_pk": {
+					"columns": ["player_id", "run_id"],
+					"name": "puzzle_completion_runs_player_id_run_id_pk"
+				}
+			},
+			"uniqueConstraints": {},
+			"checkConstraints": {
+				"pcr_result_class_check": {
+					"name": "pcr_result_class_check",
+					"value": "\"puzzle_completion_runs\".\"result_class\" IN ('standard_timed', 'rotation_timed', 'assisted_timed', 'relaxed')"
+				},
+				"pcr_timing_quality_check": {
+					"name": "pcr_timing_quality_check",
+					"value": "\"puzzle_completion_runs\".\"timing_quality\" IN ('known', 'legacy_unknown')"
+				},
+				"pcr_elapsed_active_seconds_check": {
+					"name": "pcr_elapsed_active_seconds_check",
+					"value": "(\n\t\t\t\t(\"puzzle_completion_runs\".\"timing_quality\" = 'legacy_unknown' AND \"puzzle_completion_runs\".\"result_class\" != 'relaxed' AND \"puzzle_completion_runs\".\"elapsed_active_seconds\" IS NULL)\n\t\t\t\tOR (\"puzzle_completion_runs\".\"timing_quality\" = 'known' AND \"puzzle_completion_runs\".\"result_class\" = 'relaxed' AND \"puzzle_completion_runs\".\"elapsed_active_seconds\" IS NULL)\n\t\t\t\tOR (\n\t\t\t\t\t\"puzzle_completion_runs\".\"timing_quality\" = 'known'\n\t\t\t\t\tAND \"puzzle_completion_runs\".\"result_class\" IN ('standard_timed', 'rotation_timed', 'assisted_timed')\n\t\t\t\t\tAND \"puzzle_completion_runs\".\"elapsed_active_seconds\" IS NOT NULL\n\t\t\t\t\tAND typeof(\"puzzle_completion_runs\".\"elapsed_active_seconds\") = 'integer'\n\t\t\t\t\tAND \"puzzle_completion_runs\".\"elapsed_active_seconds\" BETWEEN 1 AND 86400\n\t\t\t\t)\n\t\t\t)"
+				}
+			}
+		},
+		"puzzle_stats": {
+			"name": "puzzle_stats",
+			"columns": {
+				"player_id": {
+					"name": "player_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"puzzle_id": {
+					"name": "puzzle_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"best_time_seconds": {
+					"name": "best_time_seconds",
+					"type": "integer",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"total_completions": {
+					"name": "total_completions",
+					"type": "integer",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false,
+					"default": 1
+				},
+				"first_completed_at": {
+					"name": "first_completed_at",
+					"type": "integer",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"last_completed_at": {
+					"name": "last_completed_at",
+					"type": "integer",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				}
+			},
+			"indexes": {
+				"idx_ps_player": {
+					"name": "idx_ps_player",
+					"columns": ["player_id"],
+					"isUnique": false
+				}
+			},
+			"foreignKeys": {},
+			"compositePrimaryKeys": {
+				"puzzle_stats_player_id_puzzle_id_pk": {
+					"columns": ["player_id", "puzzle_id"],
+					"name": "puzzle_stats_player_id_puzzle_id_pk"
+				}
+			},
+			"uniqueConstraints": {},
+			"checkConstraints": {}
+		},
+		"puzzles": {
+			"name": "puzzles",
+			"columns": {
+				"id": {
+					"name": "id",
+					"type": "text",
+					"primaryKey": true,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"owner_id": {
+					"name": "owner_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"name": {
+					"name": "name",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"piece_count": {
+					"name": "piece_count",
+					"type": "integer",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"category": {
+					"name": "category",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false,
+					"autoincrement": false
+				},
+				"status": {
+					"name": "status",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false,
+					"default": "'processing'"
+				},
+				"created_at": {
+					"name": "created_at",
+					"type": "integer",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				}
+			},
+			"indexes": {
+				"idx_puzzles_owner": {
+					"name": "idx_puzzles_owner",
+					"columns": ["owner_id", "created_at"],
+					"isUnique": false
+				}
+			},
+			"foreignKeys": {},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {},
+			"checkConstraints": {
+				"puzzles_status_check": {
+					"name": "puzzles_status_check",
+					"value": "\"puzzles\".\"status\" IN ('processing', 'ready', 'failed')"
+				}
+			}
+		}
+	},
+	"views": {},
+	"enums": {},
+	"_meta": {
+		"schemas": {},
+		"tables": {},
+		"columns": {}
+	},
+	"internal": {
+		"indexes": {}
+	}
+}

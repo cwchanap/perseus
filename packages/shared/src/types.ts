@@ -5,6 +5,8 @@ export type PlayerProfileRow = typeof schema.playerProfiles.$inferSelect;
 export type NewPlayerProfileRow = typeof schema.playerProfiles.$inferInsert;
 export type PuzzleStatRow = typeof schema.puzzleStats.$inferSelect;
 export type NewPuzzleStatRow = typeof schema.puzzleStats.$inferInsert;
+export type PuzzleCompletionRunRow = typeof schema.puzzleCompletionRuns.$inferSelect;
+export type NewPuzzleCompletionRunRow = typeof schema.puzzleCompletionRuns.$inferInsert;
 export type PuzzleRow = typeof schema.puzzles.$inferSelect;
 export type NewPuzzleRow = typeof schema.puzzles.$inferInsert;
 

@@ -22,6 +22,13 @@
 			"when": 1784775000000,
 			"tag": "0002_avatar_update_token",
 			"breakpoints": true
+		},
+		{
+			"idx": 3,
+			"version": "6",
+			"when": 1785025172221,
+			"tag": "0003_puzzle_completion_runs",
+			"breakpoints": true
 		}
 	]
 }
