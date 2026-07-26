@@ -99,6 +99,7 @@ type CompletionFailureCode =
 	| 'unauthorized'
 	| 'not_found'
 	| 'run_id_conflict'
+	| 'completion_quota_exceeded'
 	| 'internal_error';
 
 type CompletionEffectState =
@@ -575,6 +576,7 @@ type RecordPuzzleCompletionResponse =
 	| { error: 'unauthorized'; message: string }
 	| { error: 'not_found'; message: string }
 	| { error: 'run_id_conflict'; message: string }
+	| { error: 'completion_quota_exceeded'; message: string }
 	| { error: 'internal_error'; message: string };
 ```
 
@@ -590,11 +592,18 @@ Validation requires:
 
 Invalid JSON, fields, or timing combinations return HTTP 400. Authentication failure remains
 HTTP 401. Missing or non-ready puzzles return HTTP 404. Reusing a run ID with different
-completion facts returns HTTP 409 with `run_id_conflict`. Caught metadata/repository failures
-return a structured HTTP 500 `internal_error`; transport failure remains a client-side
+completion facts returns HTTP 409 with `run_id_conflict`. A new versioned run above the retained
+ledger quota returns HTTP 429 with `completion_quota_exceeded`. Caught metadata/repository
+failures return a structured HTTP 500 `internal_error`; transport failure remains a client-side
 `network_error`. Both Bun and Worker routes use one shared validator, repository input/result
 contract, and pure result interpreter. Their runtime shells supply auth, puzzle lookup, and a
 driver-specific `CompletionWriteExecutor`, not only the erased cross-runtime `AppDb` handle.
+
+The client classifies `completion_quota_exceeded` as terminal and non-retryable. A `not_found`
+response after puzzle deletion, including an exact run replay, is also terminal and
+non-retryable. HPA-372 must implement these classifications before enabling the versioned
+completion caller in production. HPA-371 leaves the current web caller on the legacy request,
+which cannot receive the versioned quota response.
 
 For a versioned request, the server upserts a canonical best only when
 `resultClass === 'standard_timed'`, `timingQuality === 'known'`, and
@@ -871,7 +880,8 @@ Cover:
 - accepted legacy/versioned rollout double-count limitation;
 - distinct multi-tab run IDs counting independently as the accepted non-coordination behavior;
 - request validation for every result class and timing quality;
-- HTTP 400/401/404/409/500 response mapping and client transport-failure classification;
+- HTTP 400/401/404/409/429/500 response mapping and client transport-failure classification;
+- terminal, non-retryable classification for quota rejection and tombstoned-puzzle `not_found`;
 - player summary and stat-row consistency;
 - combined `MIN(firstCompletedAt)`/`MAX(lastCompletedAt)` timestamp derivation, including
   variant-only rows;

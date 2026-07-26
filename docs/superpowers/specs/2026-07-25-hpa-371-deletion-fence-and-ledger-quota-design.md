@@ -27,7 +27,8 @@ combined statistics model, and Bun/Worker behavioral parity.
 - Legacy `{ timeSeconds }` completions do not consume versioned-run quota.
 - Puzzle deletion frees quota by deleting that puzzle's ledger rows.
 - A player-account purge must idempotently delete that player's ledger rows and therefore free
-  all quota. It must be safe to rerun after a partial purge.
+  all quota. It must be safe to rerun after a partial purge. This is a contract for a future
+  account-purge feature; HPA-371 does not add a purge helper or endpoint.
 - A deleted puzzle ID is permanently fenced and cannot be reused.
 - The `100_000` limit is intentionally fixed in migration constraints and triggers. Changing it
   requires a later additive migration rather than an environment-only configuration change.
@@ -57,7 +58,13 @@ CREATE TABLE puzzle_deletion_tombstones (
 CREATE TABLE player_completion_usage (
 	player_id TEXT PRIMARY KEY NOT NULL,
 	retained_runs INTEGER NOT NULL
+		CHECK (retained_runs BETWEEN 0 AND 100000)
 );
+
+INSERT INTO player_completion_usage (player_id, retained_runs)
+SELECT player_id, COUNT(*)
+FROM puzzle_completion_runs
+GROUP BY player_id;
 ```
 
 `player_completion_usage.retained_runs` is constrained to the inclusive range `0..100_000`.
@@ -72,6 +79,123 @@ The migration also installs database triggers with these responsibilities:
   an existing `(player_id, run_id)` to reach normal replay/conflict interpretation;
 - increment usage only after a ledger row is actually inserted;
 - decrement usage after a ledger row is deleted and remove zero-valued usage rows.
+
+### Migration trigger appendix
+
+Migration `0004` pins the defense-in-depth trigger behavior:
+
+```sql
+CREATE TRIGGER guard_puzzles_not_tombstoned_insert
+BEFORE INSERT ON puzzles
+WHEN EXISTS (
+	SELECT 1
+	FROM puzzle_deletion_tombstones
+	WHERE puzzle_id = NEW.id
+)
+BEGIN
+	SELECT RAISE(ABORT, 'puzzle_deleted');
+END;
+
+CREATE TRIGGER guard_puzzles_not_tombstoned_update
+BEFORE UPDATE ON puzzles
+WHEN EXISTS (
+	SELECT 1
+	FROM puzzle_deletion_tombstones
+	WHERE puzzle_id = NEW.id
+)
+BEGIN
+	SELECT RAISE(ABORT, 'puzzle_deleted');
+END;
+
+CREATE TRIGGER guard_puzzle_stats_not_tombstoned_insert
+BEFORE INSERT ON puzzle_stats
+WHEN EXISTS (
+	SELECT 1
+	FROM puzzle_deletion_tombstones
+	WHERE puzzle_id = NEW.puzzle_id
+)
+BEGIN
+	SELECT RAISE(ABORT, 'puzzle_deleted');
+END;
+
+CREATE TRIGGER guard_puzzle_stats_not_tombstoned_update
+BEFORE UPDATE ON puzzle_stats
+WHEN EXISTS (
+	SELECT 1
+	FROM puzzle_deletion_tombstones
+	WHERE puzzle_id = NEW.puzzle_id
+)
+BEGIN
+	SELECT RAISE(ABORT, 'puzzle_deleted');
+END;
+
+CREATE TRIGGER guard_puzzle_completion_runs_not_tombstoned_insert
+BEFORE INSERT ON puzzle_completion_runs
+WHEN EXISTS (
+	SELECT 1
+	FROM puzzle_deletion_tombstones
+	WHERE puzzle_id = NEW.puzzle_id
+)
+BEGIN
+	SELECT RAISE(ABORT, 'puzzle_deleted');
+END;
+
+CREATE TRIGGER guard_puzzle_completion_runs_not_tombstoned_update
+BEFORE UPDATE ON puzzle_completion_runs
+WHEN EXISTS (
+	SELECT 1
+	FROM puzzle_deletion_tombstones
+	WHERE puzzle_id = NEW.puzzle_id
+)
+BEGIN
+	SELECT RAISE(ABORT, 'puzzle_deleted');
+END;
+
+CREATE TRIGGER guard_puzzle_completion_run_quota
+BEFORE INSERT ON puzzle_completion_runs
+WHEN NOT EXISTS (
+	SELECT 1
+	FROM puzzle_completion_runs
+	WHERE player_id = NEW.player_id
+		AND run_id = NEW.run_id
+)
+AND COALESCE(
+	(
+		SELECT retained_runs
+		FROM player_completion_usage
+		WHERE player_id = NEW.player_id
+	),
+	0
+) >= 100000
+BEGIN
+	SELECT RAISE(ABORT, 'completion_quota_exceeded');
+END;
+
+CREATE TRIGGER increment_player_completion_usage
+AFTER INSERT ON puzzle_completion_runs
+BEGIN
+	INSERT INTO player_completion_usage (player_id, retained_runs)
+	VALUES (NEW.player_id, 1)
+	ON CONFLICT (player_id) DO UPDATE
+	SET retained_runs = retained_runs + 1;
+END;
+
+CREATE TRIGGER decrement_player_completion_usage
+AFTER DELETE ON puzzle_completion_runs
+BEGIN
+	UPDATE player_completion_usage
+	SET retained_runs = retained_runs - 1
+	WHERE player_id = OLD.player_id
+		AND retained_runs > 0;
+
+	DELETE FROM player_completion_usage
+	WHERE player_id = OLD.player_id
+		AND retained_runs = 0;
+END;
+```
+
+The sentinel strings are stable operator diagnostics only. Authoritative executors do not parse
+them into expected 404/429 outcomes; an unexpected trigger abort maps to `internal_error`.
 
 The `(player_id, run_id)` ledger primary key provides the required player-prefix lookup for
 quota enforcement. The usage table avoids counting the full ledger on every completion.
@@ -99,14 +223,24 @@ Worker deletion uses this order:
 2. **Begin deletion:** insert the D1 puzzle tombstone idempotently.
 3. **Clean source data:** terminate/tombstone workflow metadata as applicable, delete R2 assets,
    and delete KV metadata using the existing safe ordering.
-4. **Finish database cleanup:** atomically remove `puzzle_stats` and
-   `puzzle_completion_runs`, then complete separate ownership cleanup.
+4. **Finish database cleanup:** require successful atomic removal of `puzzle_stats` and
+   `puzzle_completion_runs`, then require successful separate ownership cleanup.
 5. **Finish retry state:** delete the KV cleanup record only after every required cleanup step
    succeeds.
 
 Stuck-processing, explicit-cleanup-record, orphan, and admin force-delete paths all converge on
 this sequence. Reaper discovery continues to scan KV cleanup records; it does not scan D1
 tombstones.
+
+Stuck-processing and orphan discovery paths currently begin without a cleanup record. They must
+first create or idempotently ensure that record, before D1 tombstoning or any destructive source
+work. Failure to persist it aborts the attempt. The explicit-record and admin force-delete paths
+reuse their existing record.
+
+Completion-data and ownership cleanup are no longer best-effort prerequisites for cleanup-record
+deletion. If either D1 step fails, the caller retains both the KV cleanup record and permanent
+tombstone and reports/requeues a retriable cleanup failure. Existing tests that accept D1
+cleanup failure followed by cleanup-record deletion must be inverted.
 
 Bun has no KV cleanup-record dependency. It inserts the D1/SQLite tombstone first, then performs
 filesystem cleanup and database cleanup. Repeating the admin operation resumes cleanup.
@@ -145,39 +279,58 @@ Expected tombstone and quota outcomes come from explicit executor decisions:
   `INSERT ... SELECT` inside one `db.batch()` transaction. Companion read statements in the same
   batch return the stored run, tombstone, and usage state needed for typed interpretation.
 
+The D1 insert follows this logical SQL shape:
+
+```sql
+INSERT INTO puzzle_completion_runs (
+	player_id,
+	run_id,
+	puzzle_id,
+	result_class,
+	timing_quality,
+	elapsed_active_seconds,
+	completed_at
+)
+SELECT ?, ?, ?, ?, ?, ?, ?
+WHERE NOT EXISTS (
+	SELECT 1
+	FROM puzzle_deletion_tombstones
+	WHERE puzzle_id = ?
+)
+AND (
+	EXISTS (
+		SELECT 1
+		FROM puzzle_completion_runs
+		WHERE player_id = ?
+			AND run_id = ?
+	)
+	OR COALESCE(
+		(
+			SELECT retained_runs
+			FROM player_completion_usage
+			WHERE player_id = ?
+		),
+		0
+	) < ?
+)
+ON CONFLICT (player_id, run_id) DO NOTHING;
+```
+
+The same D1 batch reads the input puzzle's tombstone, the stored run, and the player's usage.
+After the batch succeeds, a pure interpreter applies tombstone → replay/conflict → quota →
+recorded precedence using those reads and the insert's `meta.changes`. Expected 404/429 outcomes
+therefore soft-fail without invoking a trigger. A trigger abort rolls back the batch and maps to 500. Production binds the shared `100_000` constant; tests may inject a smaller executor limit
+without changing the migration's hard upper-bound trigger.
+
 The database triggers are defense in depth for future or out-of-band writers. A tombstone or
 quota trigger firing in the authoritative executor path indicates that its transactional
 pre-check invariant was violated; it maps to structured `internal_error`, not to an expected
 404 or 429 result.
 
-The quota guard must allow an existing run ID to reach replay/conflict handling even when the
-player is at the limit. Migration `0004` uses this exact trigger shape:
-
-```sql
-CREATE TRIGGER guard_puzzle_completion_run_quota
-BEFORE INSERT ON puzzle_completion_runs
-WHEN NOT EXISTS (
-	SELECT 1
-	FROM puzzle_completion_runs
-	WHERE player_id = NEW.player_id
-		AND run_id = NEW.run_id
-)
-AND COALESCE(
-	(
-		SELECT retained_runs
-		FROM player_completion_usage
-		WHERE player_id = NEW.player_id
-	),
-	0
-) >= 100000
-BEGIN
-	SELECT RAISE(ABORT, 'completion_quota_exceeded');
-END;
-```
-
-SQLite evaluates the `BEFORE INSERT` trigger before `ON CONFLICT DO NOTHING`, so the explicit
-existing-run lookup is required for replay at quota. The executor's conditional insert and the
-trigger independently preserve the same rule.
+The quota guard in the migration appendix allows an existing run ID to reach replay/conflict
+handling even when the player is at the limit. SQLite evaluates `BEFORE INSERT` before
+`ON CONFLICT DO NOTHING`, so its explicit existing-run lookup is required. The executor's
+conditional insert and the trigger independently preserve the same rule.
 
 For a versioned request:
 
@@ -248,6 +401,12 @@ The shared completion response contract adds:
 }
 ```
 
+HPA-371 adds this value to `RecordPuzzleCompletionResponse` in `@perseus/types`. Client effect
+classification treats `completion_quota_exceeded` as terminal and non-retryable. A tombstoned
+`not_found` response is also terminal. HPA-372 must add both classifications before enabling
+the versioned completion caller in production. The current HPA-371 web caller remains legacy
+and cannot receive the versioned quota response.
+
 Shared result mapping returns:
 
 - tombstoned: 404 `not_found`;
@@ -279,6 +438,9 @@ ownership. The authoritative completion result still determines the route respon
   baseline, ledger, or usage rows.
 - Completion writes serialized before the tombstone are removed by the later finish-deletion
   transaction.
+- Exact replay after deletion is the deliberate exception to indefinite replay success: it
+  returns structured 404 whether or not finish-deletion has already removed the ledger row.
+  Clients classify it as terminal and do not retry it indefinitely.
 - Stats reads are not filtered by the tombstone. During the begin-to-finish window an existing
   stats row may remain visible but is frozen against further mutation; it disappears when
   finish-deletion succeeds. This transient or retry-length visibility is accepted.
@@ -308,13 +470,18 @@ Run the same cases against real Bun SQLite and real D1:
 - usage increments only for a new ledger row;
 - exact replay and conflict do not change usage;
 - the quota trigger's existing-run exemption works with `ON CONFLICT DO NOTHING`;
-- run `100_000` is accepted and run `100_001` is rejected;
-- replay/conflict still work at `100_000`;
+- the final available run is accepted and the next distinct run is rejected;
+- replay/conflict still work at the effective limit;
 - ledger deletion decrements usage and removes a zero usage row;
 - deleting a ledger row when its usage row is missing does not create a negative counter;
 - usage/ledger reconciliation holds after every executor sequence;
 - concurrent final-capacity writes admit at most the remaining capacity;
 - any statement failure rolls back ledger and usage changes together.
+
+Routine Bun/D1 executor suites inject a small limit and create the matching small number of real
+ledger rows so the usage invariant remains true. Migration tests inspect that the production
+constant is `100_000`, then exercise the exact quota-trigger body with an equivalent
+small-threshold trigger and matching rows. They do not insert `100_000` rows in every suite.
 
 ### Routes and callers
 
@@ -323,10 +490,15 @@ Run the same cases against real Bun SQLite and real D1:
 - quota rejection returns structured 429 in both runtimes;
 - auth, readiness, legacy compatibility, replay, and conflict behavior remain unchanged;
 - admin and all reaper paths begin the fence before source deletion;
+- stuck-processing and orphan paths ensure a cleanup record before beginning deletion;
 - a fence failure prevents source deletion;
 - post-fence source failures retain retryable deletion state;
+- completion-data or ownership cleanup failure retains the cleanup record and tombstone;
+- cleanup-record deletion never follows a failed required D1 cleanup;
 - Worker paths retain both the KV cleanup record and D1 tombstone until cleanup succeeds;
 - creation rejects a tombstoned ID before source publication;
+- exact replay of a tombstoned puzzle returns terminal 404;
+- the shared response union includes terminal `completion_quota_exceeded`;
 - runtime drift tests pin the same result mapping.
 
 ### Full verification
@@ -349,6 +521,10 @@ usage counters. The existing subsequent-deploy workflow already has this orderin
 documented first-deploy gap remains unchanged: a brand-new stack must receive all migrations
 before DB-backed routes are considered available.
 
+During a mixed-version deployment window, an old Worker that writes after migration `0004` may
+hit a tombstone trigger and return its existing structured generic 500 rather than the new typed 404. The fence still prevents mutation. This brief status-parity gap is accepted until the new
+Worker version has replaced old instances.
+
 No production data exists for HPA-371 yet, so the migration backfill is principally a safety
 property for local/pre-production databases and future cherry-pick ordering.
 
@@ -359,4 +535,5 @@ property for local/pre-production databases and future cherry-pick ordering.
 - Public leaderboard anti-cheat.
 - Cross-player or IP-based completion throttling in addition to the retained-run quota.
 - Moving all puzzle lifecycle state into a Durable Object.
-- Changing HPA-372 client persistence or `PuzzleSession` behavior.
+- Implementing HPA-372 client persistence or `PuzzleSession` behavior. Updating its contract
+  dependency and terminal-failure plan is required before implementation begins.
