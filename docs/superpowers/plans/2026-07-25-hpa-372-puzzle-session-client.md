@@ -24,8 +24,12 @@ Web Crypto random bytes, `@noble/hashes`, Bun, HPA-371 shared completion types
 - Linear delivery issue:
   `https://linear.app/cwchanap/issue/HPA-372/foundation-extract-puzzlesession-and-migrate-client-persistence`.
 - This plan is blocked until the HPA-371 server contract and additive migration are deployed.
+- The HPA-371 deployment gate includes the deletion-fence/quota corrective plan. Do not enable
+  this plan's v1 caller until HPA-371 returns typed tombstone 404 and quota 429 outcomes.
 - Import `ResultClass`, `TimingQuality`, `RecordPuzzleCompletionV1`, response types, and run-ID
   validation from `@perseus/types`; do not fork a client-only copy.
+- Classify `completion_quota_exceeded` and a deleted-puzzle `not_found` as terminal and
+  non-retryable. Neither hydration nor manual background retry may resubmit them indefinitely.
 - Preserve the current puzzle route's visible behavior. HPA-372 adds no setup screen, pause
   button, new toolbar, mobile tray, staging UI, or completion-report redesign.
 - The pure engine imports no Svelte, DOM, local storage, fetch client, or analytics provider.
@@ -125,6 +129,7 @@ export type CompletionFailureCode =
 	| 'unauthorized'
 	| 'not_found'
 	| 'run_id_conflict'
+	| 'completion_quota_exceeded'
 	| 'internal_error';
 
 export interface RunIdFactory {
@@ -614,7 +619,7 @@ Cover:
 - terminal effect acknowledgement ignored;
 - retry re-emits pending or retryable failures and resets them to pending first;
 - network/internal/storage failures retryable;
-- bad-request/not-found/conflict terminal;
+- bad-request/not-found/conflict/completion-quota-exceeded terminal;
 - unauthorized is retryable only through an explicit retry after a newly authenticated
   transition and is skipped by hydration auto-retry;
 - one-shot hydration retry emits each eligible effect at most once;
@@ -904,7 +909,7 @@ recordCompletion(
 ): Promise<RecordPuzzleCompletionResponse>;
 ```
 
-Assert exact v1 JSON, credentials, and structured handling of 400/401/404/409/500. Assert a
+Assert exact v1 JSON, credentials, and structured handling of 400/401/404/409/429/500. Assert a
 fetch rejection remains distinguishable as transport/network failure to the route adapter.
 
 - [ ] **Step 4: Run the red service tests**
@@ -933,6 +938,7 @@ information for the route to map:
 401 -> unauthorized
 404 -> not_found
 409 -> run_id_conflict
+429 -> completion_quota_exceeded
 500 -> internal_error
 fetch rejection -> network_error
 ```
@@ -1227,8 +1233,6 @@ rtk git commit -m "refactor(web): drive puzzle route from PuzzleSession"
 
 - Modify: `apps/web/src/routes/puzzle/[id]/+page.svelte`
 - Modify: `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts`
-- Modify: `apps/web/src/lib/stores/playerAuth.ts` only if a read-only transition helper is
-  needed
 - Delete: `apps/web/src/lib/services/progress.ts`
 - Delete: `apps/web/src/lib/services/__tests__/progress.test.ts`
 - Delete: `apps/web/src/lib/services/__tests__/progress-errors.test.ts`
@@ -1245,7 +1249,7 @@ Cover:
 - local/server success acknowledged independently;
 - local failure does not block celebration and keeps transient new-best presentation;
 - transport/500 failures retryable;
-- 400/404/409 terminal;
+- 400/404/409/429 terminal;
 - 401 waits for a transition from anonymous/loading to newly authenticated before retry;
 - hydration retries pending/retryable eligible effects once;
 - hydration does not retry unauthorized before new authentication;
@@ -1277,7 +1281,8 @@ For `server_submission`:
 
 1. skip local source (`not_applicable` is already sealed);
 2. call `recordCompletion(puzzle.id, completionRequestFromSeal(seal))`;
-3. map HTTP/transport failure to the approved failure code/retryability;
+3. map HTTP/transport failure to the approved failure code/retryability, including
+   `not_found`/404 and `completion_quota_exceeded`/429 as terminal `retryable: false`;
 4. acknowledge using the captured `seal.runId`.
 
 Subscribe to `playerAuth` only to detect a new authenticated transition and dispatch the
@@ -1418,6 +1423,8 @@ empty commit.
 HPA-372 is ready only when:
 
 - HPA-371 is already deployed;
+- HPA-371's typed tombstone 404 and quota 429 contract is covered by the web API and effect
+  tests;
 - all unit, API/shared regression, E2E, check, lint, and build commands pass;
 - current visible gameplay remains unchanged;
 - progress and completion retries are versioned/idempotent;

@@ -2,6 +2,10 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Corrective follow-up:** After this original plan, execute
+> [`2026-07-25-hpa-371-deletion-fence-and-ledger-quota-corrections.md`](2026-07-25-hpa-371-deletion-fence-and-ledger-quota-corrections.md)
+> before declaring HPA-371 deployable or unblocking HPA-372.
+
 **Goal:** Ship the independently deployable server half of HPA-236: a versioned, idempotent
 completion endpoint; an atomic per-run ledger; a combined statistics read model; nullable
 standard-best presentation; and legacy-request compatibility.
@@ -724,10 +728,6 @@ rtk git commit -m "feat(stats): build combined completion read model"
 - Modify: `apps/api/src/__tests__/player.test.ts`
 - Modify: `apps/web/src/routes/profile/+page.svelte`
 - Modify: `apps/web/src/routes/profile/page.svelte.test.ts`
-- Modify: `apps/web/src/lib/components/PuzzleCard.svelte` only if its public best-time prop is
-  still typed as non-null
-- Modify: `apps/web/src/lib/components/__tests__/PuzzleCard.svelte.test.ts` only if the prop
-  type changes
 
 - [ ] **Step 1: Write the nullable shared-type red tests**
 
