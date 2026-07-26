@@ -414,6 +414,238 @@ export async function listPlayerStats(
 	return { rows, nextCursor };
 }
 
+export type PlayerStatsCursor =
+	| { version: 2; group: 0; bestTimeSeconds: number; puzzleId: string }
+	| { version: 2; group: 1; puzzleId: string }
+	| { version: 1; kind: 'composite'; bestTimeSeconds: number; puzzleId: string }
+	| { version: 1; kind: 'bare'; bestTimeSeconds: number };
+
+export class InvalidPlayerStatsCursorError extends Error {
+	constructor(cursor: string) {
+		super(`Invalid player stats cursor: ${cursor}`);
+		this.name = 'InvalidPlayerStatsCursorError';
+	}
+}
+
+const CANONICAL_CURSOR_SECONDS = /^(0|[1-9]\d*)$/u;
+
+function parseCursorSeconds(value: string, cursor: string): number {
+	if (!CANONICAL_CURSOR_SECONDS.test(value)) {
+		throw new InvalidPlayerStatsCursorError(cursor);
+	}
+	const seconds = Number(value);
+	if (!Number.isSafeInteger(seconds)) {
+		throw new InvalidPlayerStatsCursorError(cursor);
+	}
+	return seconds;
+}
+
+export function parseCombinedPlayerStatsCursor(cursor: string): PlayerStatsCursor {
+	const parts = cursor.split('|');
+	if (parts[0] === 'v2') {
+		if (parts.length !== 4) {
+			throw new InvalidPlayerStatsCursorError(cursor);
+		}
+		const [, group, bestTimeSeconds, puzzleId] = parts;
+		if (puzzleId.length === 0) {
+			throw new InvalidPlayerStatsCursorError(cursor);
+		}
+		if (group === '0') {
+			return {
+				version: 2,
+				group: 0,
+				bestTimeSeconds: parseCursorSeconds(bestTimeSeconds, cursor),
+				puzzleId
+			};
+		}
+		if (group === '1' && bestTimeSeconds === '') {
+			return { version: 2, group: 1, puzzleId };
+		}
+		throw new InvalidPlayerStatsCursorError(cursor);
+	}
+	if (parts.length === 2) {
+		const [bestTimeSeconds, puzzleId] = parts;
+		if (puzzleId.length === 0) {
+			throw new InvalidPlayerStatsCursorError(cursor);
+		}
+		return {
+			version: 1,
+			kind: 'composite',
+			bestTimeSeconds: parseCursorSeconds(bestTimeSeconds, cursor),
+			puzzleId
+		};
+	}
+	if (parts.length === 1) {
+		return {
+			version: 1,
+			kind: 'bare',
+			bestTimeSeconds: parseCursorSeconds(parts[0], cursor)
+		};
+	}
+	throw new InvalidPlayerStatsCursorError(cursor);
+}
+
+export interface CombinedPlayerStat {
+	playerId: string;
+	puzzleId: string;
+	puzzleName: string | null;
+	bestTimeSeconds: number | null;
+	totalCompletions: number;
+	firstCompletedAt: number;
+	lastCompletedAt: number;
+}
+
+interface CombinedPlayerStatQueryRow extends CombinedPlayerStat {
+	sortGroup: number;
+}
+
+function combinedPlayerStatsCtes(playerId: string) {
+	return sql`
+		ledger_stats AS (
+			SELECT
+				player_id,
+				puzzle_id,
+				COUNT(*) AS ledger_count,
+				MIN(completed_at) AS ledger_first_completed_at,
+				MAX(completed_at) AS ledger_last_completed_at
+			FROM puzzle_completion_runs
+			WHERE player_id = ${playerId}
+			GROUP BY player_id, puzzle_id
+		),
+		solved_groups AS (
+			SELECT puzzle_id
+			FROM puzzle_stats
+			WHERE player_id = ${playerId}
+			UNION
+			SELECT puzzle_id
+			FROM ledger_stats
+		)
+	`;
+}
+
+function combinedPlayerStatsCursorPredicate(cursor: PlayerStatsCursor) {
+	if (cursor.version === 2 && cursor.group === 1) {
+		return sql`"sortGroup" = 1 AND "puzzleId" > ${cursor.puzzleId}`;
+	}
+	if (cursor.version === 1 && cursor.kind === 'bare') {
+		return sql`(
+			"sortGroup" = 1
+			OR ("sortGroup" = 0 AND "bestTimeSeconds" > ${cursor.bestTimeSeconds})
+		)`;
+	}
+	return sql`(
+		"sortGroup" = 1
+		OR (
+			"sortGroup" = 0
+			AND (
+				"bestTimeSeconds" > ${cursor.bestTimeSeconds}
+				OR (
+					"bestTimeSeconds" = ${cursor.bestTimeSeconds}
+					AND "puzzleId" > ${cursor.puzzleId}
+				)
+			)
+		)
+	)`;
+}
+
+function encodeCombinedPlayerStatsCursor(row: CombinedPlayerStat): string {
+	return row.bestTimeSeconds === null
+		? `v2|1||${row.puzzleId}`
+		: `v2|0|${row.bestTimeSeconds}|${row.puzzleId}`;
+}
+
+export async function listCombinedPlayerStats(
+	db: AppDb,
+	playerId: string,
+	opts: { limit: number; cursor?: string }
+): Promise<{ rows: CombinedPlayerStat[]; nextCursor?: string }> {
+	const limit = Math.floor(Math.min(Math.max(opts.limit, 1), 100));
+	const cursor =
+		opts.cursor === undefined ? undefined : parseCombinedPlayerStatsCursor(opts.cursor);
+	const cursorPredicate =
+		cursor === undefined ? sql`true` : combinedPlayerStatsCursorPredicate(cursor);
+	const all = await db.all<CombinedPlayerStatQueryRow>(sql`
+		WITH
+		${combinedPlayerStatsCtes(playerId)},
+		combined_stats AS (
+			SELECT
+				${playerId} AS "playerId",
+				solved_groups.puzzle_id AS "puzzleId",
+				puzzles.name AS "puzzleName",
+				puzzle_stats.best_time_seconds AS "bestTimeSeconds",
+				(
+					COALESCE(puzzle_stats.total_completions, 0)
+					+ COALESCE(ledger_stats.ledger_count, 0)
+				) AS "totalCompletions",
+				CASE
+					WHEN puzzle_stats.first_completed_at IS NULL
+						THEN ledger_stats.ledger_first_completed_at
+					WHEN ledger_stats.ledger_first_completed_at IS NULL
+						THEN puzzle_stats.first_completed_at
+					WHEN puzzle_stats.first_completed_at < ledger_stats.ledger_first_completed_at
+						THEN puzzle_stats.first_completed_at
+					ELSE ledger_stats.ledger_first_completed_at
+				END AS "firstCompletedAt",
+				CASE
+					WHEN puzzle_stats.last_completed_at IS NULL
+						THEN ledger_stats.ledger_last_completed_at
+					WHEN ledger_stats.ledger_last_completed_at IS NULL
+						THEN puzzle_stats.last_completed_at
+					WHEN puzzle_stats.last_completed_at > ledger_stats.ledger_last_completed_at
+						THEN puzzle_stats.last_completed_at
+					ELSE ledger_stats.ledger_last_completed_at
+				END AS "lastCompletedAt",
+				CASE WHEN puzzle_stats.best_time_seconds IS NULL THEN 1 ELSE 0 END
+					AS "sortGroup"
+			FROM solved_groups
+			LEFT JOIN puzzle_stats
+				ON puzzle_stats.player_id = ${playerId}
+				AND puzzle_stats.puzzle_id = solved_groups.puzzle_id
+			LEFT JOIN ledger_stats
+				ON ledger_stats.puzzle_id = solved_groups.puzzle_id
+			LEFT JOIN puzzles
+				ON puzzles.id = solved_groups.puzzle_id
+		)
+		SELECT
+			"playerId",
+			"puzzleId",
+			"puzzleName",
+			"bestTimeSeconds",
+			"totalCompletions",
+			"firstCompletedAt",
+			"lastCompletedAt",
+			"sortGroup"
+		FROM combined_stats
+		WHERE ${cursorPredicate}
+		ORDER BY "sortGroup" ASC, "bestTimeSeconds" ASC, "puzzleId" ASC
+		LIMIT ${limit + 1}
+	`);
+	const rows = all
+		.slice(0, limit)
+		.map(
+			({
+				playerId: rowPlayerId,
+				puzzleId,
+				puzzleName,
+				bestTimeSeconds,
+				totalCompletions,
+				firstCompletedAt,
+				lastCompletedAt
+			}) => ({
+				playerId: rowPlayerId,
+				puzzleId,
+				puzzleName,
+				bestTimeSeconds,
+				totalCompletions: Number(totalCompletions),
+				firstCompletedAt: Number(firstCompletedAt),
+				lastCompletedAt: Number(lastCompletedAt)
+			})
+		);
+	const nextCursor =
+		all.length > limit ? encodeCombinedPlayerStatsCursor(rows[rows.length - 1]) : undefined;
+	return { rows, nextCursor };
+}
+
 // Composite cursor format: "<bestTimeSeconds>|<puzzleId>". bestTimeSeconds is
 // an integer second count; puzzleId is the stat row's text primary key. Both
 // are URL-safe enough for a query parameter when encoded via
@@ -482,5 +714,46 @@ export async function getPlayerSummary(
 		puzzlesUploaded: uploadedRows[0]?.n ?? 0,
 		puzzlesSolved: solvedRows[0]?.solved ?? 0,
 		totalCompletions: Number(solvedRows[0]?.completions ?? 0)
+	};
+}
+
+export async function getCombinedPlayerSummary(
+	db: AppDb,
+	playerId: string
+): Promise<{ puzzlesUploaded: number; puzzlesSolved: number; totalCompletions: number }> {
+	const [uploadedRows, solvedRows] = await Promise.all([
+		db
+			.select({ n: count() })
+			.from(puzzles)
+			.where(
+				and(
+					eq(puzzles.ownerId, playerId),
+					inArray(puzzles.status, [...VISIBLE_PLAYER_PUZZLE_STATUSES])
+				)
+			)
+			.all(),
+		db.all<{ puzzlesSolved: number; totalCompletions: number }>(sql`
+			WITH ${combinedPlayerStatsCtes(playerId)}
+			SELECT
+				COUNT(*) AS "puzzlesSolved",
+				COALESCE(
+					SUM(
+						COALESCE(puzzle_stats.total_completions, 0)
+						+ COALESCE(ledger_stats.ledger_count, 0)
+					),
+					0
+				) AS "totalCompletions"
+			FROM solved_groups
+			LEFT JOIN puzzle_stats
+				ON puzzle_stats.player_id = ${playerId}
+				AND puzzle_stats.puzzle_id = solved_groups.puzzle_id
+			LEFT JOIN ledger_stats
+				ON ledger_stats.puzzle_id = solved_groups.puzzle_id
+		`)
+	]);
+	return {
+		puzzlesUploaded: uploadedRows[0]?.n ?? 0,
+		puzzlesSolved: Number(solvedRows[0]?.puzzlesSolved ?? 0),
+		totalCompletions: Number(solvedRows[0]?.totalCompletions ?? 0)
 	};
 }
