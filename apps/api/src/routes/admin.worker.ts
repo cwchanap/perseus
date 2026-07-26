@@ -586,10 +586,20 @@ async function executeFencedSourceDeletion(
 	}
 	// Optional caller-specific step between KV deletion and the
 	// required D1 finish (e.g. idempotency key release in the
-	// force-delete path). Must be self-contained — errors here do
-	// not abort the sequence.
+	// force-delete path). Documented as non-fatal: errors here must
+	// not abort the sequence or skip the required D1 finish below.
+	// The helper enforces this contract itself so a caller that
+	// forgets to catch internally cannot leave the puzzle half-
+	// deleted (R2+KV gone, D1 finish never run).
 	if (beforeFinish) {
-		await beforeFinish();
+		try {
+			await beforeFinish();
+		} catch (hookErr) {
+			console.error(
+				`Non-fatal beforeFinish hook failed for ${puzzleId}${logCtx}; continuing to required finish:`,
+				hookErr
+			);
+		}
 	}
 	// Step 5: Completion and ownership cleanup are required. The
 	// helper deletes the durable cleanup record only after both D1
