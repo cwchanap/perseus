@@ -202,7 +202,7 @@ export interface PlayerStatRow {
 	// Joined from the puzzles table; null when the puzzle has been deleted
 	// but the stat row remains (no FK enforcement in D1/SQLite here).
 	puzzleName: string | null;
-	bestTimeSeconds: number;
+	bestTimeSeconds: number | null;
 	totalCompletions: number;
 	firstCompletedAt: number;
 	lastCompletedAt: number;
@@ -358,7 +358,7 @@ export function isPlayerStatRow(value: unknown): value is PlayerStatRow {
 	return (
 		isNonEmptyString(v.puzzleId) &&
 		(v.puzzleName === null || isNonEmptyString(v.puzzleName)) &&
-		isFiniteNumber(v.bestTimeSeconds) &&
+		(v.bestTimeSeconds === null || isFiniteNumber(v.bestTimeSeconds)) &&
 		isFiniteNumber(v.totalCompletions) &&
 		isFiniteNumber(v.firstCompletedAt) &&
 		isFiniteNumber(v.lastCompletedAt)

@@ -1139,10 +1139,98 @@ describe('player lists (Worker)', () => {
 		expect(body.stats[0].bestTimeSeconds).toBe(90);
 	});
 
-	it('GET stats forwards limit query param', async () => {
+	it('GET stats returns a variant-only row and profile totals from the combined model', async () => {
+		const shared = await import('@perseus/shared');
+		(shared as any).__statsStore.set('p1', [
+			{
+				puzzleId: 'variant-only',
+				puzzleName: 'Variant Result',
+				bestTimeSeconds: null,
+				totalCompletions: 2,
+				firstCompletedAt: 100,
+				lastCompletedAt: 200
+			}
+		]);
+		vi.mocked(shared.getPlayerSummary).mockResolvedValueOnce({
+			puzzlesUploaded: 0,
+			puzzlesSolved: 1,
+			totalCompletions: 2
+		});
+
+		const [statsResponse, profileResponse] = await Promise.all([
+			buildApp().request('/api/player/stats', { headers: AUTH_COOKIE }, DUMMY_ENV),
+			buildApp().request('/api/player/profile', { headers: AUTH_COOKIE }, DUMMY_ENV)
+		]);
+
+		expect(statsResponse.status).toBe(200);
+		expect(await statsResponse.json()).toEqual({
+			stats: [
+				{
+					puzzleId: 'variant-only',
+					puzzleName: 'Variant Result',
+					bestTimeSeconds: null,
+					totalCompletions: 2,
+					firstCompletedAt: 100,
+					lastCompletedAt: 200
+				}
+			]
+		});
+		expect(profileResponse.status).toBe(200);
+		expect(((await profileResponse.json()) as any).summary).toEqual({
+			puzzlesUploaded: 0,
+			puzzlesSolved: 1,
+			totalCompletions: 2
+		});
+	});
+
+	it('GET stats forwards limit and v2 cursor query params', async () => {
 		const { listPlayerStats } = await import('@perseus/shared');
-		await buildApp().request('/api/player/stats?limit=10', { headers: AUTH_COOKIE }, DUMMY_ENV);
-		expect(listPlayerStats).toHaveBeenCalledWith(expect.anything(), 'p1', { limit: 10 });
+		await buildApp().request(
+			'/api/player/stats?limit=10&cursor=v2%7C1%7C%7Cvariant-only',
+			{ headers: AUTH_COOKIE },
+			DUMMY_ENV
+		);
+		expect(listPlayerStats).toHaveBeenCalledWith(expect.anything(), 'p1', {
+			limit: 10,
+			cursor: 'v2|1||variant-only'
+		});
+	});
+
+	it('GET stats returns structured 400 for an invalid cursor', async () => {
+		const { InvalidPlayerStatsCursorError, listPlayerStats } = await import('@perseus/shared');
+		vi.mocked(listPlayerStats).mockRejectedValueOnce(
+			new InvalidPlayerStatsCursorError('v3|0|10|pz1')
+		);
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const response = await buildApp().request(
+			'/api/player/stats?cursor=v3%7C0%7C10%7Cpz1',
+			{ headers: AUTH_COOKIE },
+			DUMMY_ENV
+		);
+
+		expect(response.status).toBe(400);
+		expect(await response.json()).toEqual({
+			error: 'bad_request',
+			message: 'Invalid stats cursor'
+		});
+		consoleSpy.mockRestore();
+	});
+
+	it('GET stats does not mislabel database errors as invalid cursors', async () => {
+		const { listPlayerStats } = await import('@perseus/shared');
+		vi.mocked(listPlayerStats).mockRejectedValueOnce(new Error('database unavailable'));
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const response = await buildApp().request(
+			'/api/player/stats',
+			{ headers: AUTH_COOKIE },
+			DUMMY_ENV
+		);
+
+		expect(response.status).toBe(500);
+		expect(response.status).not.toBe(400);
+		consoleSpy.mockRestore();
 	});
 
 	it('GET stats requires authentication', async () => {

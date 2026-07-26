@@ -8,6 +8,7 @@ import {
 	getPlayerSummary,
 	listPlayerPuzzles,
 	listPlayerStats,
+	InvalidPlayerStatsCursorError,
 	sniffImageType,
 	parseImageDimensions,
 	validateImageEndMarker
@@ -372,10 +373,19 @@ player.get('/stats', requirePlayerAuth, async (c) => {
 	const session = c.get('playerSession');
 	const limit = Number(c.req.query('limit') ?? '20');
 	const cursor = c.req.query('cursor') || undefined;
-	const { rows, nextCursor } = await listPlayerStats(db, session.user.id, {
-		limit: Number.isFinite(limit) ? limit : 20,
-		...(cursor !== undefined ? { cursor } : {})
-	});
+	let result: Awaited<ReturnType<typeof listPlayerStats>>;
+	try {
+		result = await listPlayerStats(db, session.user.id, {
+			limit: Number.isFinite(limit) ? limit : 20,
+			...(cursor !== undefined ? { cursor } : {})
+		});
+	} catch (error) {
+		if (error instanceof InvalidPlayerStatsCursorError) {
+			return c.json({ error: 'bad_request', message: 'Invalid stats cursor' }, 400);
+		}
+		throw error;
+	}
+	const { rows, nextCursor } = result;
 	// Project DB rows to the public PlayerStatRow contract, stripping playerId
 	// (the client already knows its own ID from the auth session).
 	const stats: PlayerStatRow[] = rows.map((r) => ({
