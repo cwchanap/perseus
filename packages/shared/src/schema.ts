@@ -47,6 +47,50 @@ export const puzzleStats = sqliteTable(
 	})
 );
 
+export const puzzleCompletionRuns = sqliteTable(
+	'puzzle_completion_runs',
+	{
+		playerId: text('player_id').notNull(),
+		runId: text('run_id').notNull(),
+		puzzleId: text('puzzle_id').notNull(),
+		resultClass: text('result_class').notNull(),
+		timingQuality: text('timing_quality').notNull(),
+		elapsedActiveSeconds: integer('elapsed_active_seconds'),
+		completedAt: integer('completed_at').notNull()
+	},
+	(t) => ({
+		pk: primaryKey({ columns: [t.playerId, t.runId] }),
+		playerPuzzleCompletedIdx: index('idx_pcr_player_puzzle_completed').on(
+			t.playerId,
+			t.puzzleId,
+			t.completedAt
+		),
+		puzzleIdx: index('idx_pcr_puzzle').on(t.puzzleId),
+		resultClassCheck: check(
+			'pcr_result_class_check',
+			sql`${t.resultClass} IN ('standard_timed', 'rotation_timed', 'assisted_timed', 'relaxed')`
+		),
+		timingQualityCheck: check(
+			'pcr_timing_quality_check',
+			sql`${t.timingQuality} IN ('known', 'legacy_unknown')`
+		),
+		elapsedActiveSecondsCheck: check(
+			'pcr_elapsed_active_seconds_check',
+			sql`(
+				(${t.timingQuality} = 'legacy_unknown' AND ${t.resultClass} != 'relaxed' AND ${t.elapsedActiveSeconds} IS NULL)
+				OR (${t.timingQuality} = 'known' AND ${t.resultClass} = 'relaxed' AND ${t.elapsedActiveSeconds} IS NULL)
+				OR (
+					${t.timingQuality} = 'known'
+					AND ${t.resultClass} IN ('standard_timed', 'rotation_timed', 'assisted_timed')
+					AND ${t.elapsedActiveSeconds} IS NOT NULL
+					AND typeof(${t.elapsedActiveSeconds}) = 'integer'
+					AND ${t.elapsedActiveSeconds} BETWEEN 1 AND 86400
+				)
+			)`
+		)
+	})
+);
+
 export const puzzles = sqliteTable(
 	'puzzles',
 	{
