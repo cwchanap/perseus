@@ -28,7 +28,8 @@ import {
 	type PlayerPuzzleSummary,
 	type PlayerStatRow,
 	type ResultClass,
-	type TimingQuality
+	type TimingQuality,
+	type RecordPuzzleCompletionResponse
 } from './index';
 
 // Helper to create a valid piece
@@ -101,6 +102,15 @@ describe('constants', () => {
 describe('versioned puzzle completion contract', () => {
 	const validRunId = '123e4567-e89b-42d3-a456-426614174000';
 	const legacyRunId = `legacy-${'a'.repeat(64)}`;
+
+	it('accepts the completion quota exceeded response', () => {
+		const response: RecordPuzzleCompletionResponse = {
+			error: 'completion_quota_exceeded',
+			message: 'Completion history limit reached'
+		};
+
+		expect(response).toMatchObject({ error: 'completion_quota_exceeded' });
+	});
 
 	it.each([
 		[validRunId, true],

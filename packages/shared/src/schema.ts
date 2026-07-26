@@ -91,6 +91,22 @@ export const puzzleCompletionRuns = sqliteTable(
 	})
 );
 
+export const puzzleDeletionTombstones = sqliteTable('puzzle_deletion_tombstones', {
+	puzzleId: text('puzzle_id').primaryKey(),
+	deletedAt: integer('deleted_at').notNull()
+});
+
+export const playerCompletionUsage = sqliteTable(
+	'player_completion_usage',
+	{
+		playerId: text('player_id').primaryKey(),
+		retainedRuns: integer('retained_runs').notNull()
+	},
+	(t) => ({
+		retainedRunsCheck: check('pcu_retained_runs_check', sql`${t.retainedRuns} BETWEEN 0 AND 100000`)
+	})
+);
+
 export const puzzles = sqliteTable(
 	'puzzles',
 	{

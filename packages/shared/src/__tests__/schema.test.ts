@@ -3,7 +3,17 @@ import { Database } from 'bun:sqlite';
 import { drizzle } from 'drizzle-orm/bun-sqlite';
 import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
 import { eq } from 'drizzle-orm';
-import { playerProfiles, puzzleCompletionRuns, puzzleStats, puzzles } from '../schema';
+import { cpSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+	playerCompletionUsage,
+	playerProfiles,
+	puzzleCompletionRuns,
+	puzzleDeletionTombstones,
+	puzzleStats,
+	puzzles
+} from '../schema';
 
 describe('schema tables', () => {
 	function makeDb() {
@@ -148,5 +158,175 @@ describe('schema tables', () => {
 			'completed_at'
 		]);
 		sqlite.close();
+	});
+
+	it('applies the deletion fence and quota migration with a complete backfill', () => {
+		const migrationsFolder = mkdtempSync(join(tmpdir(), 'perseus-migrations-'));
+		const metaFolder = join(migrationsFolder, 'meta');
+		mkdirSync(metaFolder);
+
+		try {
+			const journal = JSON.parse(readFileSync('./drizzle/meta/_journal.json', 'utf8')) as {
+				entries: { idx: number }[];
+			};
+			journal.entries = journal.entries.filter((entry) => entry.idx <= 3);
+			writeFileSync(join(metaFolder, '_journal.json'), JSON.stringify(journal));
+
+			for (const migration of [
+				'0000_true_fantastic_four.sql',
+				'0001_avatar_updated_at.sql',
+				'0002_avatar_update_token.sql',
+				'0003_puzzle_completion_runs.sql'
+			]) {
+				cpSync(join('./drizzle', migration), join(migrationsFolder, migration));
+			}
+
+			const sqlite = new Database(':memory:');
+			const db = drizzle(sqlite);
+			migrate(db, { migrationsFolder });
+
+			const preMigrationTables = sqlite
+				.query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
+				.all() as { name: string }[];
+			expect(preMigrationTables.map((table) => table.name)).not.toContain(
+				'player_completion_usage'
+			);
+
+			db.insert(puzzleCompletionRuns)
+				.values([
+					{
+						playerId: 'p1',
+						runId: 'p1-run-1',
+						puzzleId: 'pz1',
+						resultClass: 'standard_timed',
+						timingQuality: 'known',
+						elapsedActiveSeconds: 60,
+						completedAt: 1
+					},
+					{
+						playerId: 'p1',
+						runId: 'p1-run-2',
+						puzzleId: 'pz2',
+						resultClass: 'standard_timed',
+						timingQuality: 'known',
+						elapsedActiveSeconds: 61,
+						completedAt: 2
+					},
+					{
+						playerId: 'p2',
+						runId: 'p2-run-1',
+						puzzleId: 'pz1',
+						resultClass: 'standard_timed',
+						timingQuality: 'known',
+						elapsedActiveSeconds: 62,
+						completedAt: 3
+					},
+					{
+						playerId: 'p2',
+						runId: 'p2-run-2',
+						puzzleId: 'pz2',
+						resultClass: 'standard_timed',
+						timingQuality: 'known',
+						elapsedActiveSeconds: 63,
+						completedAt: 4
+					},
+					{
+						playerId: 'p2',
+						runId: 'p2-run-3',
+						puzzleId: 'pz3',
+						resultClass: 'standard_timed',
+						timingQuality: 'known',
+						elapsedActiveSeconds: 64,
+						completedAt: 5
+					}
+				])
+				.run();
+
+			migrate(db, { migrationsFolder: './drizzle' });
+
+			const tableNames = sqlite
+				.query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
+				.all() as { name: string }[];
+			expect(tableNames.map((table) => table.name)).toEqual(
+				expect.arrayContaining(['player_completion_usage', 'puzzle_deletion_tombstones'])
+			);
+
+			const triggerNames = sqlite
+				.query("SELECT name FROM sqlite_master WHERE type = 'trigger' ORDER BY name")
+				.all() as { name: string }[];
+			expect(triggerNames.map((trigger) => trigger.name)).toEqual([
+				'decrement_player_completion_usage',
+				'guard_puzzle_completion_run_quota',
+				'guard_puzzle_completion_runs_not_tombstoned_insert',
+				'guard_puzzle_completion_runs_not_tombstoned_update',
+				'guard_puzzle_stats_not_tombstoned_insert',
+				'guard_puzzle_stats_not_tombstoned_update',
+				'guard_puzzles_not_tombstoned_insert',
+				'guard_puzzles_not_tombstoned_update',
+				'increment_player_completion_usage'
+			]);
+
+			const usage = db
+				.select()
+				.from(playerCompletionUsage)
+				.orderBy(playerCompletionUsage.playerId)
+				.all();
+			expect(usage).toEqual([
+				{ playerId: 'p1', retainedRuns: 2 },
+				{ playerId: 'p2', retainedRuns: 3 }
+			]);
+
+			expect(() =>
+				db.insert(playerCompletionUsage).values({ playerId: 'negative', retainedRuns: -1 }).run()
+			).toThrow();
+			expect(() =>
+				db
+					.insert(playerCompletionUsage)
+					.values({ playerId: 'over-limit', retainedRuns: 100_001 })
+					.run()
+			).toThrow();
+			expect(() =>
+				db
+					.insert(puzzleDeletionTombstones)
+					.values({ puzzleId: 'deleted-puzzle', deletedAt: 1 })
+					.run()
+			).not.toThrow();
+			sqlite.close();
+		} finally {
+			rmSync(migrationsFolder, { recursive: true, force: true });
+		}
+	});
+
+	it('keeps migration 0004 additive and safely breakpoint-delimited', () => {
+		const migrationSql = readFileSync('./drizzle/0004_puzzle_deletion_fence.sql', 'utf8');
+		const statements = migrationSql
+			.split('--> statement-breakpoint')
+			.map((statement) => statement.trim())
+			.filter(Boolean);
+		const triggers = statements.filter((statement) => statement.startsWith('CREATE TRIGGER'));
+
+		expect(migrationSql).toContain('100000');
+		expect(migrationSql).not.toMatch(/\b(?:ALTER|DROP|RENAME)\s+(?:TABLE|INDEX|TRIGGER)\b/i);
+		expect(statements).toHaveLength(12);
+		expect(triggers).toHaveLength(9);
+		expect(triggers.every((trigger) => trigger.includes('BEGIN') && trigger.endsWith('END;'))).toBe(
+			true
+		);
+
+		const journal = JSON.parse(readFileSync('./drizzle/meta/_journal.json', 'utf8')) as {
+			entries: { idx: number; tag: string }[];
+		};
+		const snapshot = JSON.parse(readFileSync('./drizzle/meta/0004_snapshot.json', 'utf8')) as {
+			tables: Record<string, unknown>;
+		};
+		expect(journal.entries).toContainEqual({
+			idx: 4,
+			version: '6',
+			when: expect.any(Number),
+			tag: '0004_puzzle_deletion_fence',
+			breakpoints: true
+		});
+		expect(snapshot.tables).toHaveProperty('player_completion_usage');
+		expect(snapshot.tables).toHaveProperty('puzzle_deletion_tombstones');
 	});
 });
