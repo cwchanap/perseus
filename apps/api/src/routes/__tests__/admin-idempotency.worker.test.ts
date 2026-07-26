@@ -45,12 +45,18 @@ vi.mock('../../services/player-auth.worker', () => ({
 	revokePlayerSessionsForEmail: vi.fn()
 }));
 
+const dbContextMock = vi.hoisted(() => ({
+	db: {},
+	completionWrites: {
+		beginPuzzleDeletion: vi.fn().mockResolvedValue(undefined),
+		finishPuzzleDeletion: vi.fn().mockResolvedValue(undefined),
+		isPuzzleTombstoned: vi.fn().mockResolvedValue(false)
+	}
+}));
+
 vi.mock('../../db.worker', () => ({
-	getWorkerDb: vi.fn(() => ({})),
-	getWorkerDbContext: vi.fn(() => ({
-		db: {},
-		completionWrites: { isPuzzleTombstoned: vi.fn().mockResolvedValue(false) }
-	}))
+	getWorkerDb: vi.fn(() => dbContextMock.db),
+	getWorkerDbContext: vi.fn(() => dbContextMock)
 }));
 
 vi.mock('@perseus/shared', async (importOriginal) => {
@@ -527,11 +533,11 @@ describe('Admin Worker idempotency recovery', () => {
 		expect(storage.deletePuzzleAssets).toHaveBeenCalledWith(env.PUZZLES_BUCKET, 'puzzle-1', 225);
 	});
 
-	it('does NOT delete R2 assets when terminate() fails — defers to reaper instead', async () => {
+	it('does not mutate source state when terminate() fails — defers to reaper instead', async () => {
 		// Regression: if terminate() rejects, a live workflow can still write
-		// thumbnails/pieces to R2 after the cleanup sweep. The fix: do NOT
-		// delete R2/KV assets when termination is unconfirmed. Tombstone the
-		// DO (prevents metadata resurrection) and leave KV/R2 for the reaper.
+		// thumbnails/pieces to R2 after the cleanup sweep. Leave all source
+		// state intact until the reaper confirms the workflow is stopped and
+		// establishes the permanent D1 deletion fence.
 		(storage.reserveIdempotencyKey as any).mockResolvedValue({
 			existing: false,
 			puzzleId: 'puzzle-1'
@@ -566,9 +572,10 @@ describe('Admin Worker idempotency recovery', () => {
 		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
 		// KV metadata must NOT be deleted — the reaper needs it to find the puzzle
 		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
-		// DO must be tombstoned — prevents the live workflow from resurrecting
-		// metadata in KV via the DO's KV sync
-		expect(storage.deleteMetadataDO).toHaveBeenCalledWith(env.PUZZLE_METADATA_DO, 'puzzle-1');
+		expect(dbContextMock.completionWrites.beginPuzzleDeletion).not.toHaveBeenCalled();
+		expect(storage.deleteMetadataDO).not.toHaveBeenCalled();
+		expect(dbContextMock.completionWrites.finishPuzzleDeletion).not.toHaveBeenCalled();
+		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
 	});
 
 	it.each(['complete', 'errored', 'terminated'])(

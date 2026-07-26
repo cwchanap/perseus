@@ -35,7 +35,6 @@ import {
 	releaseIdempotencyKey,
 	reserveIdempotencyKey,
 	writeCleanupRecord,
-	deleteCleanupRecord,
 	type PuzzleMetadata
 } from '../services/storage.worker';
 import { isIdempotencyCommitConflict } from '../services/idempotency-conflict';
@@ -525,18 +524,16 @@ async function terminateAndAwaitStopped(
  *      stuck-processing reaper skips 'complete' workflows, and the
  *      cleanup-record reaper has no record to process).
  *   2. Terminate and await the workflow reaching a stopped state. If
- *      termination cannot be confirmed, tombstone the DO (best-effort)
- *      and defer R2/KV cleanup to the reaper. The cleanup record ensures
- *      the reaper picks this puzzle up even after the workflow later
- *      transitions to 'complete'.
- *   3. Tombstone the DO. If it fails, defer to the reaper (record stays).
+ *      termination cannot be confirmed, leave source state unchanged and
+ *      defer the fenced cleanup to the reaper.
+ *   3. Insert the permanent D1 fence, then tombstone the DO. If either
+ *      fails, defer to the reaper (record stays).
  *   4. Delete all R2 assets. If deletion fails partially, preserve KV
  *      and the record so the reaper can retry R2 cleanup.
  *   5. Delete KV metadata. If deletion fails, preserve the record so
  *      the reaper can retry KV cleanup.
- *   6. Delete the cleanup record (best-effort) only after every required
- *      step succeeds.
- *   7. D1 ownership cleanup (best-effort).
+ *   6. Require completion and ownership cleanup, then delete the cleanup
+ *      record only after every required step succeeds.
  *
  * Returns a 500 Response with a message describing the outcome. The
  * caller is responsible for clearing `reservedIdempotencyKey` after
@@ -550,12 +547,13 @@ async function cleanupOrphanedWorkflow(
 ): Promise<Response> {
 	// Step 1: Write the cleanup record first. This is the ONLY durable
 	// retry path for partial failures in this branch.
+	const cleanupRecord = {
+		puzzleId,
+		pieceCount,
+		createdAt: Date.now()
+	};
 	try {
-		await writeCleanupRecord(env.PUZZLE_METADATA, {
-			puzzleId,
-			pieceCount,
-			createdAt: Date.now()
-		});
+		await writeCleanupRecord(env.PUZZLE_METADATA, cleanupRecord);
 	} catch (cleanupErr) {
 		console.error(
 			`Failed to write cleanup record for ${puzzleId} ${context}; aborting cleanup:`,
@@ -579,13 +577,8 @@ async function cleanupOrphanedWorkflow(
 	const stopped = await terminateAndAwaitStopped(env.PUZZLE_WORKFLOW, puzzleId);
 	if (!stopped) {
 		console.error(
-			`Workflow ${puzzleId} not stopped after terminate() ${context}; tombstoning DO and deferring R2/KV cleanup to reaper`
+			`Workflow ${puzzleId} not stopped after terminate() ${context}; deferring fenced cleanup to reaper`
 		);
-		try {
-			await deleteMetadataDO(env.PUZZLE_METADATA_DO, puzzleId);
-		} catch (doErr) {
-			console.error(`Failed to tombstone metadata DO for ${puzzleId} ${context}:`, doErr);
-		}
 		return Response.json(
 			{
 				error: ErrorCode.InternalError,
@@ -596,7 +589,24 @@ async function cleanupOrphanedWorkflow(
 		);
 	}
 
-	// Step 3: Tombstone the DO — prevents the dead workflow's
+	// Step 3: Commit deletion only after the workflow-liveness gate. Re-write
+	// the record idempotently, then insert the permanent D1 tombstone
+	// immediately before the first source mutation.
+	try {
+		await ensureWorkerPuzzleDeletionFence(env, cleanupRecord);
+	} catch (fenceErr) {
+		console.error(`Failed to begin fenced cleanup for ${puzzleId} ${context}:`, fenceErr);
+		return Response.json(
+			{
+				error: ErrorCode.InternalError,
+				message:
+					'Idempotency reservation was reclaimed by a retry; deletion fence failed, reaper will retry'
+			},
+			{ status: 500 }
+		);
+	}
+
+	// Step 4: Tombstone the DO — prevents the dead workflow's
 	// post-termination step from resurrecting stale metadata in KV via
 	// the DO's KV sync. If tombstone fails, preserve KV and defer all
 	// cleanup to the reaper. The cleanup record is the reaper's signal.
@@ -614,7 +624,7 @@ async function cleanupOrphanedWorkflow(
 		);
 	}
 
-	// Step 4: Delete ALL R2 assets (original + thumbnail + any pieces the
+	// Step 5: Delete ALL R2 assets (original + thumbnail + any pieces the
 	// workflow already generated). If R2 deletion fails (partially or
 	// totally), do NOT delete KV or D1 — the failed R2 keys would become
 	// invisible orphans. Preserve KV and the cleanup record so the reaper
@@ -635,7 +645,7 @@ async function cleanupOrphanedWorkflow(
 		);
 	}
 
-	// Step 5: R2 fully deleted — safe to delete KV metadata. If KV
+	// Step 6: R2 fully deleted — safe to delete KV metadata. If KV
 	// deletion fails, do NOT delete the cleanup record or D1 ownership:
 	// the reaper needs the record to retry KV cleanup.
 	const metadataCleanup = await deletePuzzleMetadata(env.PUZZLE_METADATA, puzzleId);
@@ -651,22 +661,21 @@ async function cleanupOrphanedWorkflow(
 		);
 	}
 
-	// Step 6: Every required cleanup operation succeeded — delete the
-	// cleanup record so the reaper does not re-process this puzzle.
-	// Best-effort: a failed delete only causes a redundant reaper pass.
+	// Step 7: Completion and ownership cleanup are required. The helper
+	// removes the cleanup record only after both D1 operations succeed.
 	try {
-		await deleteCleanupRecord(env.PUZZLE_METADATA, puzzleId);
-	} catch (recordErr) {
-		console.error(`Failed to delete cleanup record for ${puzzleId} ${context}:`, recordErr);
+		await finishWorkerPuzzleDeletion(env, puzzleId);
+	} catch (finishErr) {
+		console.error(`Failed to finish fenced cleanup for ${puzzleId} ${context}:`, finishErr);
+		return Response.json(
+			{
+				error: ErrorCode.InternalError,
+				message:
+					'Idempotency reservation was reclaimed by a retry; required cleanup failed, reaper will retry'
+			},
+			{ status: 500 }
+		);
 	}
-
-	// Step 7: D1 ownership cleanup (best-effort).
-	await withDbBestEffort(
-		env,
-		`Failed to cleanup ownership ${context}:`,
-		`Failed to init DB for ownership cleanup of puzzle ${puzzleId}:`,
-		(db) => deletePuzzleOwnership(db, puzzleId)
-	);
 
 	return Response.json(
 		{

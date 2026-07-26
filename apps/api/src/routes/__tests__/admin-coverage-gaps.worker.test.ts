@@ -268,7 +268,7 @@ describe('Admin Worker — terminateAndAwaitStopped error paths via dead-commit 
 		} as any;
 	}
 
-	it('tombstones DO and defers to reaper when pre-status read fails', async () => {
+	it('leaves source unchanged and defers to reaper when pre-status read fails', async () => {
 		const statusFn = vi.fn().mockRejectedValue(new Error('status API down'));
 		const terminateFn = vi.fn();
 		const env = setupDeadCommitConflict(statusFn, terminateFn);
@@ -279,11 +279,10 @@ describe('Admin Worker — terminateAndAwaitStopped error paths via dead-commit 
 		const body = (await res.json()) as any;
 		expect(body.message).toContain('workflow termination pending');
 		expect(terminateFn).not.toHaveBeenCalled();
-		expect(storage.deleteMetadataDO).toHaveBeenCalledWith(
-			env.PUZZLE_METADATA_DO,
-			'conflict-puzzle'
-		);
 		expect(storage.writeCleanupRecord).toHaveBeenCalled();
+		expect(dbContextMock.completionWrites.beginPuzzleDeletion).not.toHaveBeenCalled();
+		expect(storage.deleteMetadataDO).not.toHaveBeenCalled();
+		expect(dbContextMock.completionWrites.finishPuzzleDeletion).not.toHaveBeenCalled();
 	});
 
 	it('tombstones DO and defers to reaper when post-status re-read fails after terminate threw', async () => {
@@ -574,7 +573,6 @@ describe('Admin Worker — alive-commit conflict cleanup', () => {
 		expect(res.status).toBe(500);
 		const body = (await res.json()) as any;
 		expect(body.message).toContain('workflow termination pending');
-		expect(storage.deleteMetadataDO).toHaveBeenCalledWith(env.PUZZLE_METADATA_DO, 'alive-puzzle');
 		expect(storage.writeCleanupRecord).toHaveBeenCalledWith(
 			env.PUZZLE_METADATA,
 			expect.objectContaining({ puzzleId: 'alive-puzzle' })
@@ -585,7 +583,10 @@ describe('Admin Worker — alive-commit conflict cleanup', () => {
 		);
 		// Record must NOT be deleted — the reaper needs it to retry.
 		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
+		expect(dbContextMock.completionWrites.beginPuzzleDeletion).not.toHaveBeenCalled();
+		expect(storage.deleteMetadataDO).not.toHaveBeenCalled();
 		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expect(dbContextMock.completionWrites.finishPuzzleDeletion).not.toHaveBeenCalled();
 	});
 
 	it('returns 500 when DO tombstone fails after terminate succeeds', async () => {
@@ -737,22 +738,21 @@ describe('Admin Worker — dead-commit conflict cleanup error paths', () => {
 		} as any;
 	}
 
-	it('logs when DO tombstone fails after terminate fails', async () => {
+	it('does not attempt the DO tombstone when terminate fails', async () => {
 		const terminateFn = vi.fn().mockRejectedValue(new Error('terminate failed'));
 		const statusFn = vi.fn().mockResolvedValue({ status: 'running' });
 
 		const env = setupDeadCommitConflict(terminateFn, statusFn);
-		vi.mocked(storage.deleteMetadataDO).mockRejectedValue(new Error('DO delete failed'));
 
 		const res = await admin.fetch(createRequest('dead-conflict-do-fail-not-stopped'), env);
 
 		expect(res.status).toBe(500);
 		const body = (await res.json()) as any;
 		expect(body.message).toContain('workflow termination pending');
-		// DO tombstone was attempted but failed — logged, not fatal
-		expect(storage.deleteMetadataDO).toHaveBeenCalledWith(env.PUZZLE_METADATA_DO, 'dead-puzzle');
-		// R2 assets not deleted
+		expect(dbContextMock.completionWrites.beginPuzzleDeletion).not.toHaveBeenCalled();
+		expect(storage.deleteMetadataDO).not.toHaveBeenCalled();
 		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expect(dbContextMock.completionWrites.finishPuzzleDeletion).not.toHaveBeenCalled();
 	});
 
 	it('returns 500 when DO tombstone fails after terminate succeeds', async () => {
@@ -1028,7 +1028,7 @@ describe('Admin Worker — cleanup record delete failure is best-effort', () => 
 		vi.restoreAllMocks();
 	});
 
-	it('still reports puzzle cleaned up when deleteCleanupRecord throws', async () => {
+	it('retains retry state when deleteCleanupRecord throws', async () => {
 		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
 			existing: false,
 			puzzleId: 'record-del-puzzle'
@@ -1055,11 +1055,20 @@ describe('Admin Worker — cleanup record delete failure is best-effort', () => 
 
 		expect(res.status).toBe(500);
 		const body = (await res.json()) as any;
-		// Best-effort: the puzzle IS cleaned up (all assets deleted), the
-		// record delete failure only causes a redundant reaper pass.
-		expect(body.message).toContain('puzzle cleaned up');
+		expect(body.message).toContain('required cleanup failed');
 		expect(storage.deletePuzzleAssets).toHaveBeenCalled();
 		expect(storage.deletePuzzleMetadata).toHaveBeenCalled();
+		expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledWith(
+			'record-del-puzzle',
+			expect.any(Number)
+		);
+		expect(dbContextMock.completionWrites.finishPuzzleDeletion).toHaveBeenCalledWith(
+			'record-del-puzzle'
+		);
+		expect(storage.deleteCleanupRecord).toHaveBeenCalledWith(
+			baseEnv.PUZZLE_METADATA,
+			'record-del-puzzle'
+		);
 	});
 });
 

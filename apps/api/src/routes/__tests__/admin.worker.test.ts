@@ -1855,6 +1855,77 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 			expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
 			expect(storage.deleteOriginalImage).not.toHaveBeenCalled();
 		});
+
+		it('fences and finishes a losing creation before removing its cleanup record', async () => {
+			(storage.reserveIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue({
+				existing: false,
+				puzzleId: 'losing-uuid',
+				status: 'pending'
+			});
+			(storage.uploadOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.createPuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(storage.commitIdempotencyKey as ReturnType<typeof vi.fn>).mockRejectedValue(
+				new Error('Cannot committed reservation in status failed')
+			);
+			(storage.deletePuzzleAssets as ReturnType<typeof vi.fn>).mockResolvedValue({
+				success: true,
+				failedKeys: []
+			});
+			(storage.deletePuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue({
+				success: true
+			});
+
+			const mockEnv = {
+				ADMIN_PASSKEY: 'test-passkey',
+				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+				PUZZLE_METADATA: {} as KVNamespace,
+				PUZZLES_BUCKET: {} as R2Bucket,
+				PUZZLE_WORKFLOW: {
+					create: vi.fn().mockResolvedValue(undefined),
+					get: vi.fn(async () => ({
+						status: vi.fn().mockResolvedValue({ status: 'complete' })
+					}))
+				},
+				PUZZLE_METADATA_DO: {} as DurableObjectNamespace
+			};
+
+			const formData = new FormData();
+			formData.append('name', 'Losing Puzzle');
+			formData.append('pieceCount', '225');
+			formData.append('image', new Blob([PNG_HEADER], { type: 'image/png' }), 'test.png');
+
+			const response = await admin.fetch(
+				new Request('http://localhost/puzzles', {
+					method: 'POST',
+					headers: {
+						cookie: 'session=valid.token',
+						'Idempotency-Key': 'losing-create-key'
+					},
+					body: formData
+				}),
+				mockEnv as any
+			);
+
+			expect(response.status).toBe(500);
+			expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledWith(
+				'losing-uuid',
+				expect.any(Number)
+			);
+			expect(dbContextMock.completionWrites.finishPuzzleDeletion).toHaveBeenCalledWith(
+				'losing-uuid'
+			);
+			expect(
+				dbContextMock.completionWrites.beginPuzzleDeletion.mock.invocationCallOrder[0]
+			).toBeLessThan(
+				(storage.deleteMetadataDO as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]
+			);
+			expect(
+				dbContextMock.completionWrites.finishPuzzleDeletion.mock.invocationCallOrder[0]
+			).toBeLessThan(
+				(storage.deleteCleanupRecord as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]
+			);
+			expect(deletePuzzleOwnership).toHaveBeenCalledWith(dbContextMock.db, 'losing-uuid');
+		});
 	});
 });
 
