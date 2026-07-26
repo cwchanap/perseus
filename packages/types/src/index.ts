@@ -221,6 +221,34 @@ export interface ErrorResponse {
 	message: string;
 }
 
+export const RESULT_CLASSES = [
+	'standard_timed',
+	'rotation_timed',
+	'assisted_timed',
+	'relaxed'
+] as const;
+
+export type ResultClass = (typeof RESULT_CLASSES)[number];
+
+export const TIMING_QUALITIES = ['known', 'legacy_unknown'] as const;
+
+export type TimingQuality = (typeof TIMING_QUALITIES)[number];
+
+export interface RecordPuzzleCompletionV1 {
+	version: 1;
+	runId: string;
+	resultClass: ResultClass;
+	timingQuality: TimingQuality;
+	elapsedActiveSeconds: number | null;
+}
+
+export type RecordPuzzleCompletionResponse =
+	| { ok: true }
+	| {
+			error: 'bad_request' | 'unauthorized' | 'not_found' | 'run_id_conflict' | 'internal_error';
+			message: string;
+	  };
+
 export interface WorkflowParams {
 	puzzleId: string;
 }
@@ -378,6 +406,54 @@ const PUZZLE_ID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}
 
 export function isPuzzleId(value: unknown): value is string {
 	return typeof value === 'string' && PUZZLE_ID_REGEX.test(value);
+}
+
+const PUZZLE_RUN_ID_REGEX =
+	/^(?:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|legacy-[0-9a-f]{64})$/;
+
+export function isPuzzleRunId(value: unknown): value is string {
+	return typeof value === 'string' && PUZZLE_RUN_ID_REGEX.test(value);
+}
+
+export function isRecordPuzzleCompletionV1(
+	value: unknown,
+	maxElapsedActiveSeconds: number
+): value is RecordPuzzleCompletionV1 {
+	if (typeof value !== 'object' || value === null) return false;
+	if (
+		!Number.isFinite(maxElapsedActiveSeconds) ||
+		!Number.isInteger(maxElapsedActiveSeconds) ||
+		maxElapsedActiveSeconds <= 0
+	) {
+		return false;
+	}
+
+	const completion = value as Record<string, unknown>;
+	const fields = ['version', 'runId', 'resultClass', 'timingQuality', 'elapsedActiveSeconds'];
+	const completionKeys = Object.keys(completion);
+	if (
+		completionKeys.length !== fields.length ||
+		!fields.every((field) => Object.hasOwn(completion, field)) ||
+		!completionKeys.every((field) => fields.includes(field))
+	) {
+		return false;
+	}
+	if (completion.version !== 1 || !isPuzzleRunId(completion.runId)) return false;
+	if (!RESULT_CLASSES.includes(completion.resultClass as ResultClass)) return false;
+	if (!TIMING_QUALITIES.includes(completion.timingQuality as TimingQuality)) return false;
+
+	if (completion.timingQuality === 'legacy_unknown') {
+		return completion.resultClass !== 'relaxed' && completion.elapsedActiveSeconds === null;
+	}
+	if (completion.resultClass === 'relaxed') return completion.elapsedActiveSeconds === null;
+
+	return (
+		typeof completion.elapsedActiveSeconds === 'number' &&
+		Number.isFinite(completion.elapsedActiveSeconds) &&
+		Number.isInteger(completion.elapsedActiveSeconds) &&
+		completion.elapsedActiveSeconds > 0 &&
+		completion.elapsedActiveSeconds <= maxElapsedActiveSeconds
+	);
 }
 
 export function validateWorkflowParams(params: unknown): params is WorkflowParams {

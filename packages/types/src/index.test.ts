@@ -20,11 +20,15 @@ import {
 	isPlayerPuzzleSummary,
 	isPlayerStatRow,
 	isPuzzleId,
+	isPuzzleRunId,
+	isRecordPuzzleCompletionV1,
 	type PlayerSessionResponse,
 	type PlayerAllowlistEntry,
 	type PlayerProfile,
 	type PlayerPuzzleSummary,
-	type PlayerStatRow
+	type PlayerStatRow,
+	type ResultClass,
+	type TimingQuality
 } from './index';
 
 // Helper to create a valid piece
@@ -91,6 +95,233 @@ describe('constants', () => {
 		expect(PUZZLE_CATEGORIES).toContain('Abstract');
 		expect(PUZZLE_CATEGORIES).toContain('Food');
 		expect(PUZZLE_CATEGORIES).toContain('Travel');
+	});
+});
+
+describe('versioned puzzle completion contract', () => {
+	const validRunId = '123e4567-e89b-42d3-a456-426614174000';
+	const legacyRunId = `legacy-${'a'.repeat(64)}`;
+
+	it.each([
+		[validRunId, true],
+		[legacyRunId, true],
+		['123E4567-E89B-42D3-A456-426614174000', false],
+		['123e4567-e89b-12d3-a456-426614174000', false],
+		['123e4567-e89b-42d3-c456-426614174000', false],
+		[`legacy-${'A'.repeat(64)}`, false],
+		[`legacy-${'a'.repeat(63)}`, false],
+		['not-a-run-id', false],
+		[' legacy-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', false],
+		['123e4567-e89b-42d3-a456-426614174000 ', false]
+	])('validates puzzle run ID %j as %s', (candidate, expected) => {
+		expect(isPuzzleRunId(candidate)).toBe(expected);
+	});
+
+	const timedClasses: ResultClass[] = ['standard_timed', 'rotation_timed', 'assisted_timed'];
+	const timingQualities: TimingQuality[] = ['known', 'legacy_unknown'];
+
+	it.each(timedClasses)(
+		'accepts known %s completions with a positive whole-second elapsed time',
+		(resultClass) => {
+			expect(
+				isRecordPuzzleCompletionV1(
+					{
+						version: 1,
+						runId: validRunId,
+						resultClass,
+						timingQuality: 'known',
+						elapsedActiveSeconds: 1
+					},
+					86_400
+				)
+			).toBe(true);
+		}
+	);
+
+	it('accepts known relaxed completions with no elapsed time', () => {
+		expect(
+			isRecordPuzzleCompletionV1(
+				{
+					version: 1,
+					runId: legacyRunId,
+					resultClass: 'relaxed',
+					timingQuality: 'known',
+					elapsedActiveSeconds: null
+				},
+				86_400
+			)
+		).toBe(true);
+	});
+
+	it.each(timedClasses)(
+		'accepts legacy-unknown %s completions with no elapsed time',
+		(resultClass) => {
+			expect(
+				isRecordPuzzleCompletionV1(
+					{
+						version: 1,
+						runId: validRunId,
+						resultClass,
+						timingQuality: 'legacy_unknown',
+						elapsedActiveSeconds: null
+					},
+					86_400
+				)
+			).toBe(true);
+		}
+	);
+
+	it.each(timingQualities)('uses the exported timing quality %s', (timingQuality) => {
+		expect(['known', 'legacy_unknown']).toContain(timingQuality);
+	});
+
+	it.each([
+		[
+			{
+				version: 1,
+				runId: validRunId,
+				resultClass: 'relaxed',
+				timingQuality: 'legacy_unknown',
+				elapsedActiveSeconds: null
+			},
+			false
+		],
+		[
+			{
+				version: 1,
+				runId: validRunId,
+				resultClass: 'standard_timed',
+				timingQuality: 'known',
+				elapsedActiveSeconds: null
+			},
+			false
+		],
+		[
+			{
+				version: 1,
+				runId: validRunId,
+				resultClass: 'relaxed',
+				timingQuality: 'known',
+				elapsedActiveSeconds: 1
+			},
+			false
+		],
+		[
+			{
+				version: 1,
+				runId: validRunId,
+				resultClass: 'standard_timed',
+				timingQuality: 'legacy_unknown',
+				elapsedActiveSeconds: 1
+			},
+			false
+		],
+		[
+			{
+				version: 1,
+				runId: validRunId,
+				resultClass: 'standard_timed',
+				timingQuality: 'known',
+				elapsedActiveSeconds: 0
+			},
+			false
+		],
+		[
+			{
+				version: 1,
+				runId: validRunId,
+				resultClass: 'standard_timed',
+				timingQuality: 'known',
+				elapsedActiveSeconds: -1
+			},
+			false
+		],
+		[
+			{
+				version: 1,
+				runId: validRunId,
+				resultClass: 'standard_timed',
+				timingQuality: 'known',
+				elapsedActiveSeconds: 1.5
+			},
+			false
+		],
+		[
+			{
+				version: 1,
+				runId: validRunId,
+				resultClass: 'standard_timed',
+				timingQuality: 'known',
+				elapsedActiveSeconds: Infinity
+			},
+			false
+		],
+		[
+			{
+				version: 1,
+				runId: validRunId,
+				resultClass: 'standard_timed',
+				timingQuality: 'known',
+				elapsedActiveSeconds: 86_401
+			},
+			false
+		],
+		[
+			{
+				version: 1,
+				resultClass: 'standard_timed',
+				timingQuality: 'known',
+				elapsedActiveSeconds: 1
+			},
+			false
+		],
+		[
+			{ version: 1, runId: validRunId, resultClass: 'standard_timed', timingQuality: 'known' },
+			false
+		],
+		[
+			{
+				version: 1,
+				runId: validRunId,
+				resultClass: 'invalid',
+				timingQuality: 'known',
+				elapsedActiveSeconds: 1
+			},
+			false
+		],
+		[
+			{
+				version: 1,
+				runId: validRunId,
+				resultClass: 'standard_timed',
+				timingQuality: 'invalid',
+				elapsedActiveSeconds: 1
+			},
+			false
+		],
+		[
+			{
+				version: 2,
+				runId: validRunId,
+				resultClass: 'standard_timed',
+				timingQuality: 'known',
+				elapsedActiveSeconds: 1
+			},
+			false
+		],
+		[
+			{
+				version: 1,
+				runId: validRunId,
+				resultClass: 'standard_timed',
+				timingQuality: 'known',
+				elapsedActiveSeconds: 1,
+				ignored: true
+			},
+			false
+		]
+	])('rejects invalid completion request %j', (candidate, expected) => {
+		expect(isRecordPuzzleCompletionV1(candidate, 86_400)).toBe(expected);
 	});
 });
 
