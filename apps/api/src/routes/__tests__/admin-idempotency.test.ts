@@ -7,7 +7,7 @@
  * paths (lines ~521-555), including the cleanup-failed "stuck on disk"
  * branches that mirror the Worker's failReservation() semantics.
  */
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 
 // Set env vars before any imports so the IIFE in admin.ts resolves correctly.
 const originalAdminPasskey = process.env.ADMIN_PASSKEY;
@@ -238,6 +238,246 @@ describe('POST /puzzles - Idempotency-Key reservation existing branch', () => {
 	});
 });
 
+describe('POST /puzzles - Idempotency-Key reservation tombstone-aware reclaim', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		(generatorMock.isValidPieceCount as ReturnType<typeof vi.fn>).mockReturnValue(true);
+		(generatorMock.generatePuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(mockPuzzleResult);
+		(storageMock.createPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+		dbContextMock.completionWrites.isPuzzleTombstoned.mockResolvedValue(false);
+	});
+	afterEach(() => {
+		// Reset mocks whose base implementations this block mutates back
+		// to their hoisted defaults, so later describe blocks start clean.
+		storageMock.reserveIdempotencyKey.mockReset();
+		storageMock.getPuzzle.mockReset();
+		dbContextMock.completionWrites.isPuzzleTombstoned.mockReset();
+		dbContextMock.completionWrites.isPuzzleTombstoned.mockResolvedValue(false);
+	});
+
+	it('returns 409 (not 200) when the reserved puzzle is on disk but tombstoned (deletion in progress)', async () => {
+		// Closes the same-key create-vs-delete race: the delete route
+		// tombstones before releasing, so a concurrent create that reads
+		// the still-present puzzle must NOT acknowledge it as 200.
+		const tombstonedPuzzle = {
+			id: 'dying-id',
+			name: 'Dying',
+			pieceCount: 25,
+			idempotencyKey: 'key-dying'
+		};
+		(storageMock.reserveIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue({
+			existing: true,
+			puzzleId: 'dying-id'
+		});
+		(storageMock.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(tombstonedPuzzle);
+		// First isPuzzleTombstoned call is the fresh-UUID allocation check
+		// (must pass false so creation proceeds); subsequent calls are the
+		// existing-reservation tombstone check (must return true).
+		dbContextMock.completionWrites.isPuzzleTombstoned
+			.mockResolvedValueOnce(false)
+			.mockResolvedValue(true);
+
+		const res = await app.fetch(postPuzzlesRequest({ 'Idempotency-Key': 'key-dying' }));
+		expect(res.status).toBe(409);
+		const body = await res.json();
+		expect(body.error).toBe('conflict');
+		// Must not acknowledge the dying puzzle, must not mint a new one.
+		expect(storageMock.createPuzzle).not.toHaveBeenCalled();
+		expect(storageMock.releaseIdempotencyKey).not.toHaveBeenCalled();
+	});
+
+	it('reclaims a stale reservation when the reserved puzzle is missing and tombstoned', async () => {
+		// Delete completed but the reservation release failed: the
+		// tombstone distinguishes this from an in-flight create, so it is
+		// safe to owner-check-release and re-reserve with our UUID.
+		(storageMock.reserveIdempotencyKey as ReturnType<typeof vi.fn>)
+			.mockResolvedValueOnce({ existing: true, puzzleId: 'dead-id' })
+			.mockResolvedValueOnce({ existing: false, puzzleId: 'new-uuid' });
+		(storageMock.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+		dbContextMock.completionWrites.isPuzzleTombstoned
+			.mockResolvedValueOnce(false) // fresh-UUID allocation check
+			.mockResolvedValue(true); // reserved puzzle is tombstoned -> reclaim
+
+		const res = await app.fetch(postPuzzlesRequest({ 'Idempotency-Key': 'key-dead' }));
+		expect(res.status).toBe(201);
+		expect(storageMock.releaseIdempotencyKey).toHaveBeenCalledWith('key-dead', 'dead-id');
+		// Re-reserve won, then create ran.
+		expect(storageMock.createPuzzle).toHaveBeenCalled();
+	});
+
+	it('returns 409 when a concurrent winner reclaimed the stale reservation first and is tombstoned', async () => {
+		(storageMock.reserveIdempotencyKey as ReturnType<typeof vi.fn>)
+			.mockResolvedValueOnce({ existing: true, puzzleId: 'dead-id' })
+			// Re-reserve loses to a concurrent winner that is also tombstoned.
+			.mockResolvedValueOnce({ existing: true, puzzleId: 'other-dead-id' });
+		(storageMock.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+		dbContextMock.completionWrites.isPuzzleTombstoned
+			.mockResolvedValueOnce(false) // fresh-UUID allocation check
+			.mockResolvedValue(true); // both dead-id and other-dead-id tombstoned
+
+		const res = await app.fetch(postPuzzlesRequest({ 'Idempotency-Key': 'key-dead' }));
+		expect(res.status).toBe(409);
+		expect(storageMock.releaseIdempotencyKey).toHaveBeenCalledWith('key-dead', 'dead-id');
+		expect(storageMock.createPuzzle).not.toHaveBeenCalled();
+	});
+
+	it('returns 200 when a concurrent winner reclaimed and committed a live puzzle', async () => {
+		const winnerPuzzle = {
+			id: 'winner-id',
+			name: 'Winner',
+			pieceCount: 25,
+			idempotencyKey: 'key-dead'
+		};
+		(storageMock.reserveIdempotencyKey as ReturnType<typeof vi.fn>)
+			.mockResolvedValueOnce({ existing: true, puzzleId: 'dead-id' })
+			.mockResolvedValueOnce({ existing: true, puzzleId: 'winner-id' });
+		// First getPuzzle (for dead-id) returns null; second (for winner) returns live.
+		(storageMock.getPuzzle as ReturnType<typeof vi.fn>)
+			.mockResolvedValueOnce(null)
+			.mockResolvedValueOnce(winnerPuzzle);
+		dbContextMock.completionWrites.isPuzzleTombstoned
+			.mockResolvedValueOnce(false) // fresh-UUID allocation check
+			.mockResolvedValueOnce(true) // dead-id is tombstoned -> reclaim
+			.mockResolvedValueOnce(false); // winner-id is live -> acknowledge
+
+		const res = await app.fetch(postPuzzlesRequest({ 'Idempotency-Key': 'key-dead' }));
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.id).toBe('winner-id');
+		expect(storageMock.createPuzzle).not.toHaveBeenCalled();
+	});
+
+	it('returns 409 when the tombstone check itself errors (fail closed)', async () => {
+		(storageMock.reserveIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue({
+			existing: true,
+			puzzleId: 'maybe-dead-id'
+		});
+		(storageMock.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
+			id: 'maybe-dead-id',
+			name: 'Maybe',
+			pieceCount: 25
+		});
+		dbContextMock.completionWrites.isPuzzleTombstoned.mockRejectedValue(new Error('D1 down'));
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		try {
+			const res = await app.fetch(postPuzzlesRequest({ 'Idempotency-Key': 'key-maybe' }));
+			expect(res.status).toBe(409);
+			expect(storageMock.createPuzzle).not.toHaveBeenCalled();
+		} finally {
+			consoleSpy.mockRestore();
+		}
+	});
+});
+
+describe('delete-vs-create same-key concurrency (barrier-controlled)', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		(generatorMock.isValidPieceCount as ReturnType<typeof vi.fn>).mockReturnValue(true);
+		(generatorMock.generatePuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(mockPuzzleResult);
+		(storageMock.createPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+		(storageMock.releaseIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+		dbContextMock.completionWrites.isPuzzleTombstoned.mockResolvedValue(false);
+		dbContextMock.completionWrites.beginPuzzleDeletion.mockResolvedValue(undefined);
+		dbContextMock.completionWrites.finishPuzzleDeletion.mockResolvedValue(undefined);
+	});
+	afterEach(() => {
+		storageMock.reserveIdempotencyKey.mockReset();
+		storageMock.getPuzzle.mockReset();
+		storageMock.deletePuzzle.mockReset();
+		dbContextMock.completionWrites.isPuzzleTombstoned.mockReset();
+		dbContextMock.completionWrites.isPuzzleTombstoned.mockResolvedValue(false);
+		dbContextMock.completionWrites.beginPuzzleDeletion.mockReset();
+		dbContextMock.completionWrites.beginPuzzleDeletion.mockResolvedValue(undefined);
+		dbContextMock.completionWrites.finishPuzzleDeletion.mockReset();
+		dbContextMock.completionWrites.finishPuzzleDeletion.mockResolvedValue(undefined);
+	});
+
+	it('a concurrent same-key create returns 409 (not 200) while a delete holds the reservation and has tombstoned', async () => {
+		// Race under test (the one the P1 fix closes):
+		//   delete: read meta -> tombstone -> [deleteSource gated] -> release
+		//   create: reserve -> getPuzzle (still on disk) -> isPuzzleTombstoned
+		// Before the fix, the delete released the reservation BEFORE
+		// tombstoning, so the create re-reserved against the still-present
+		// puzzle via the legacy metadata fallback and returned 200 for a
+		// puzzle about to disappear. After the fix, the reservation stays
+		// owned through deletion and the tombstone makes the create return
+		// 409 instead of acknowledging the dying puzzle.
+		const dyingPuzzle = {
+			id: 'race-id',
+			name: 'Race',
+			pieceCount: 25,
+			idempotencyKey: 'race-key'
+		};
+		// Delete reads the puzzle metadata.
+		(storageMock.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(dyingPuzzle);
+		// Reservation stays owned (reserve returns existing:true for the
+		// concurrent create).
+		(storageMock.reserveIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue({
+			existing: true,
+			puzzleId: 'race-id'
+		});
+		// Barrier: deleteSource blocks until the create has observed the
+		// tombstoned reservation.
+		let releaseDeleteSource!: () => void;
+		const deleteSourceBarrier = new Promise<void>((resolve) => {
+			releaseDeleteSource = resolve;
+		});
+		(storageMock.deletePuzzle as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+			await deleteSourceBarrier;
+			return true;
+		});
+		// Tombstone is inserted before deleteSource, so the create's
+		// isPuzzleTombstoned check sees it. First call is the create's
+		// fresh-UUID allocation check (false); second is the existing-
+		// reservation check (true).
+		dbContextMock.completionWrites.isPuzzleTombstoned
+			.mockResolvedValueOnce(false)
+			.mockResolvedValue(true);
+
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		try {
+			// Start the delete; it tombstones then parks at deleteSource.
+			const deleteResPromise = app.fetch(
+				new Request('http://localhost/puzzle-delete/race-id', { method: 'POST' })
+			);
+			// Let the delete reach the gated deleteSource. A microtask
+			// flush isn't enough because beginPuzzleDeletion is async; poll
+			// until beginPuzzleDeletion has been called.
+			await vi.waitFor(() =>
+				expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledWith(
+					'race-id',
+					expect.any(Number)
+				)
+			);
+			// Also wait until deletePuzzle (the gated call) has been
+			// invoked, so the delete is genuinely parked inside it.
+			await vi.waitFor(() => expect(storageMock.deletePuzzle).toHaveBeenCalledWith('race-id'));
+
+			// Now fire the concurrent create with the same key. The
+			// reservation still maps to race-id and the puzzle is still on
+			// disk, but the tombstone is in place.
+			const createRes = await app.fetch(postPuzzlesRequest({ 'Idempotency-Key': 'race-key' }));
+			expect(createRes.status).toBe(409);
+			const body = await createRes.json();
+			expect(body.error).toBe('conflict');
+			// The create must not mint a replacement or acknowledge the
+			// dying puzzle, and must not release the delete's reservation.
+			expect(storageMock.createPuzzle).not.toHaveBeenCalled();
+			expect(storageMock.releaseIdempotencyKey).not.toHaveBeenCalledWith('race-key', 'race-id');
+
+			// Release the delete; it completes and releases its reservation.
+			releaseDeleteSource();
+			const deleteRes = await deleteResPromise;
+			expect(deleteRes.status).toBe(204);
+			// Delete released its own reservation after source deletion.
+			expect(storageMock.releaseIdempotencyKey).toHaveBeenCalledWith('race-key', 'race-id');
+			expect(dbContextMock.completionWrites.finishPuzzleDeletion).toHaveBeenCalledWith('race-id');
+		} finally {
+			consoleSpy.mockRestore();
+		}
+	});
+});
+
 describe('POST /puzzles - Idempotency-Key reserve failure', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -402,7 +642,9 @@ describe('DELETE /puzzles/:id - idempotency reservation release', () => {
 		expect(res.status).toBe(204);
 		expect(storageMock.deletePuzzle).toHaveBeenCalledWith('del-id');
 		expect(storageMock.releaseIdempotencyKey).toHaveBeenCalledWith('del-key', 'del-id');
-		expect(storageMock.releaseIdempotencyKey).toHaveBeenCalledBefore(storageMock.deletePuzzle);
+		// Release happens AFTER source deletion so the reservation stays
+		// owned throughout deletion (closes the same-key create race).
+		expect(storageMock.deletePuzzle).toHaveBeenCalledBefore(storageMock.releaseIdempotencyKey);
 	});
 
 	it('releases the reservation before a failed finish and resumes deletion on retry', async () => {
@@ -445,7 +687,11 @@ describe('DELETE /puzzles/:id - idempotency reservation release', () => {
 		}
 	});
 
-	it('returns 500 without deleting source when reservation release fails', async () => {
+	it('proceeds with deletion when reservation release fails (non-fatal, reclaimable via tombstone)', async () => {
+		// Release now happens AFTER source deletion and is non-fatal: the
+		// tombstone inserted before source delete lets a future same-key
+		// create reclaim the stale reservation, so a failed release must
+		// not block or roll back deletion.
 		(storageMock.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
 			id: 'del-id',
 			name: 'Del',
@@ -459,13 +705,15 @@ describe('DELETE /puzzles/:id - idempotency reservation release', () => {
 		try {
 			const req = new Request('http://localhost/puzzle-delete/del-id', { method: 'POST' });
 			const res = await app.fetch(req);
-			expect(res.status).toBe(500);
-			expect(await res.json()).toEqual({
-				error: 'internal_error',
-				message: 'Failed to release idempotency reservation'
-			});
+			expect(res.status).toBe(204);
+			expect(storageMock.deletePuzzle).toHaveBeenCalledWith('del-id');
 			expect(storageMock.releaseIdempotencyKey).toHaveBeenCalledWith('del-key', 'del-id');
-			expect(storageMock.deletePuzzle).not.toHaveBeenCalled();
+			// Tombstone was inserted before source deletion.
+			expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledWith(
+				'del-id',
+				expect.any(Number)
+			);
+			expect(dbContextMock.completionWrites.finishPuzzleDeletion).toHaveBeenCalledWith('del-id');
 		} finally {
 			consoleSpy.mockRestore();
 		}

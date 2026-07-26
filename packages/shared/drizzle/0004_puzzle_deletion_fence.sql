@@ -9,10 +9,28 @@ CREATE TABLE `puzzle_deletion_tombstones` (
 	`deleted_at` integer NOT NULL
 );
 --> statement-breakpoint
-INSERT INTO player_completion_usage (player_id, retained_runs)
-SELECT player_id, COUNT(*)
-FROM puzzle_completion_runs
-GROUP BY player_id;
+-- Preflight the backfill through a guard table that mirrors the
+-- retained_runs CHECK constraint. Any player whose existing ledger
+-- exceeds 100000 rows aborts the INSERT here, before the real usage
+-- table is touched. Mirrors maintenance/reconcile_completion_usage.sql.
+-- Do NOT clamp the count: a clamped quota counter would disagree with
+-- the retained ledger and silently break the quota trigger.
+CREATE TABLE `completion_usage_backfill_guard` (
+	`retained_runs` integer NOT NULL
+		CHECK (retained_runs BETWEEN 0 AND 100000)
+);
+--> statement-breakpoint
+INSERT INTO `completion_usage_backfill_guard` (`retained_runs`)
+SELECT COUNT(*)
+FROM `puzzle_completion_runs`
+GROUP BY `player_id`;
+--> statement-breakpoint
+INSERT INTO `player_completion_usage` (`player_id`, `retained_runs`)
+SELECT `player_id`, COUNT(*)
+FROM `puzzle_completion_runs`
+GROUP BY `player_id`;
+--> statement-breakpoint
+DROP TABLE `completion_usage_backfill_guard`;
 --> statement-breakpoint
 CREATE TRIGGER guard_puzzles_not_tombstoned_insert
 BEFORE INSERT ON puzzles

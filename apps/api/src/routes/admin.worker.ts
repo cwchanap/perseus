@@ -35,6 +35,7 @@ import {
 	releaseIdempotencyKey,
 	reserveIdempotencyKey,
 	writeCleanupRecord,
+	type CleanupRecord,
 	type PuzzleMetadata
 } from '../services/storage.worker';
 import { isIdempotencyCommitConflict } from '../services/idempotency-conflict';
@@ -521,18 +522,24 @@ type FencedDeletionResponder = (message: string) => Response;
 
 async function executeFencedSourceDeletion(
 	env: Env,
-	puzzleId: string,
-	pieceCount: number,
+	cleanupRecord: CleanupRecord,
 	messagePrefix: string,
 	responder: FencedDeletionResponder,
 	beforeFinish?: () => Promise<void>,
 	logContext = ''
 ): Promise<{ ok: true } | { ok: false; response: Response }> {
+	const puzzleId = cleanupRecord.puzzleId;
+	const pieceCount = cleanupRecord.pieceCount;
 	const logCtx = logContext ? ` ${logContext}` : '';
 	// Step 1: Re-establish the fence (idempotent). Insert the D1
-	// tombstone immediately before the first source mutation.
+	// tombstone immediately before the first source mutation. Pass the
+	// caller's exact cleanup record through so an optional idempotencyKey
+	// (and original createdAt) survives the re-write — writeCleanupRecord
+	// is a KV.put replacement, not a merge, so rebuilding a reduced record
+	// here would drop the key and leave the reaper unable to release the
+	// reservation if a later step fails.
 	try {
-		await ensureWorkerPuzzleDeletionFence(env, { puzzleId, pieceCount, createdAt: Date.now() });
+		await ensureWorkerPuzzleDeletionFence(env, cleanupRecord);
 	} catch (fenceErr) {
 		console.error(`Failed to begin fenced cleanup for ${puzzleId}${logCtx}:`, fenceErr);
 		return {
@@ -688,8 +695,7 @@ async function cleanupOrphanedWorkflow(
 	// returning a 500 {error, message} on any step failure.
 	const result = await executeFencedSourceDeletion(
 		env,
-		puzzleId,
-		pieceCount,
+		cleanupRecord,
 		'Idempotency reservation was reclaimed by a retry; ',
 		(message) => Response.json({ error: ErrorCode.InternalError, message }, { status: 500 }),
 		undefined,
@@ -2056,8 +2062,7 @@ admin.post('/puzzle-delete/:id', requireAuth, async (c) => {
 		// any step failure.
 		const deletionResult = await executeFencedSourceDeletion(
 			c.env,
-			id,
-			pieceCount,
+			cleanupRecord,
 			'',
 			(message) => c.json({ error: ErrorCode.InternalError, message }, 500),
 			async () => {

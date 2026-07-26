@@ -430,8 +430,14 @@ describe('schema tables', () => {
 		const triggers = statements.filter((statement) => statement.startsWith('CREATE TRIGGER'));
 
 		expect(migrationSql).toContain('100000');
-		expect(migrationSql).not.toMatch(/\b(?:ALTER|DROP|RENAME)\s+(?:TABLE|INDEX|TRIGGER)\b/i);
-		expect(statements).toHaveLength(12);
+		// No destructive ops on existing tables/indexes/triggers. The only
+		// DROP TABLE allowed is the temp backfill guard created earlier in
+		// the same migration (self-contained, not an existing asset).
+		const destructiveMatches =
+			migrationSql.match(/\b(?:ALTER|DROP|RENAME)\s+(?:TABLE|INDEX|TRIGGER)\b/gi) ?? [];
+		expect(destructiveMatches).toEqual(['DROP TABLE']);
+		expect(migrationSql).toMatch(/DROP TABLE `completion_usage_backfill_guard`/);
+		expect(statements).toHaveLength(15);
 		expect(triggers).toHaveLength(9);
 		expect(triggers.every((trigger) => trigger.includes('BEGIN') && trigger.endsWith('END;'))).toBe(
 			true
@@ -452,6 +458,66 @@ describe('schema tables', () => {
 		});
 		expect(snapshot.tables).toHaveProperty('player_completion_usage');
 		expect(snapshot.tables).toHaveProperty('puzzle_deletion_tombstones');
+	});
+
+	it('aborts migration 0004 backfill when a player exceeds the retained_runs cap and leaves no guard table', () => {
+		// Apply 0000-0003 only, then load 100001 runs for one player before
+		// running 0004. The guard-table preflight must abort before the real
+		// usage table is touched, and the temp guard must not survive.
+		const migrationsFolder = mkdtempSync(join(tmpdir(), 'migrations-oversize-'));
+		try {
+			const metaDir = join(migrationsFolder, 'meta');
+			mkdirSync(metaDir, { recursive: true });
+			const journal = JSON.parse(readFileSync('./drizzle/meta/_journal.json', 'utf8')) as {
+				entries: { idx: number }[];
+			};
+			journal.entries = journal.entries.filter((entry) => entry.idx <= 3);
+			writeFileSync(join(metaDir, '_journal.json'), JSON.stringify(journal));
+			for (const migration of [
+				'0000_true_fantastic_four.sql',
+				'0001_avatar_updated_at.sql',
+				'0002_avatar_update_token.sql',
+				'0003_puzzle_completion_runs.sql'
+			]) {
+				cpSync(join('./drizzle', migration), join(migrationsFolder, migration));
+			}
+
+			const sqlite = new Database(':memory:');
+			const db = drizzle(sqlite);
+			migrate(db, { migrationsFolder });
+
+			// Insert 100001 distinct runs for one player via raw batched
+			// exec (drizzle's parameterized insert would exceed SQLite's
+			// 32766-variable limit for a single statement).
+			sqlite.exec('BEGIN');
+			for (let batchStart = 0; batchStart <= 100_000; batchStart += 500) {
+				const batchEnd = Math.min(batchStart + 500, 100_001);
+				const values: string[] = [];
+				for (let i = batchStart; i < batchEnd; i++) {
+					values.push(`('over','run-${i}','pz','standard_timed','known',1,${i})`);
+				}
+				sqlite.exec(
+					`INSERT INTO puzzle_completion_runs (player_id, run_id, puzzle_id, result_class, timing_quality, elapsed_active_seconds, completed_at) VALUES ${values.join(',')};`
+				);
+			}
+			sqlite.exec('COMMIT');
+
+			// Running 0004 must throw because the guard-table INSERT violates
+			// the retained_runs CHECK (100001 > 100000). The sync dialect
+			// wraps each migrate() call in BEGIN/COMMIT, so the failed
+			// migration rolls back every 0004 statement — neither the real
+			// usage table nor the guard survives.
+			expect(() => migrate(db, { migrationsFolder: './drizzle' })).toThrow();
+
+			const tables = sqlite
+				.query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
+				.all() as { name: string }[];
+			expect(tables.map((t) => t.name)).not.toContain('completion_usage_backfill_guard');
+			expect(tables.map((t) => t.name)).not.toContain('player_completion_usage');
+			sqlite.close();
+		} finally {
+			rmSync(migrationsFolder, { recursive: true, force: true });
+		}
 	});
 
 	it('rebuilds exact grouped usage and removes stale zero-ledger rows', () => {

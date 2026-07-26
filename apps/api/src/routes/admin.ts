@@ -372,41 +372,100 @@ admin.post('/puzzles', requireAuth, async (c) => {
 			console.error(`Tombstone check failed for puzzle ${id}, continuing:`, err);
 		}
 		if (idempotencyKey) {
+			const conflictResponse = () =>
+				c.json(
+					{
+						error: 'conflict',
+						message: 'A request with this Idempotency-Key is already in progress'
+					},
+					409
+				);
+			// Check whether a reserved puzzle is being deleted. The delete
+			// route tombstones BEFORE releasing its reservation, so a
+			// tombstoned ID is distinguishable from an in-flight create and
+			// must never be acknowledged as a successful create. Fail closed
+			// on D1 error — we cannot safely distinguish deleted from live.
+			const checkTombstoned = async (puzzleId: string): Promise<boolean | 'error'> => {
+				try {
+					return await getDbContext().completionWrites.isPuzzleTombstoned(puzzleId);
+				} catch (err) {
+					console.error(`Tombstone check failed for reserved puzzle ${puzzleId}:`, err);
+					return 'error';
+				}
+			};
 			try {
 				const reserved = await reserveIdempotencyKey(idempotencyKey, id);
 				if (reserved.existing) {
 					const existing = await getPuzzle(reserved.puzzleId);
-					if (existing) {
+					const tombstoned = await checkTombstoned(reserved.puzzleId);
+					if (tombstoned === 'error') return conflictResponse();
+					if (existing && !tombstoned) {
 						// Bun path is synchronous generation — puzzles have no
 						// processing/failed lifecycle (see Puzzle in types/index.ts).
 						// Failed-reclaim lives only on the Worker path.
 						return c.json(stripIdempotencyKey(existing), 200);
 					}
-					// Reservation maps to a missing puzzle. Two causes: the prior
-					// create cleaned up its assets (deleteStoredPuzzle succeeded)
-					// but the reservation release failed (filesystem error), OR
-					// the create is still in flight and hasn't written metadata
-					// yet. The Bun filesystem reservation has no lifecycle status
-					// or TTL, so we CANNOT distinguish "in-flight" from
-					// "orphaned". Reclaiming is unsafe: a concurrent request B
-					// that overlaps with an in-flight request A would see A's
-					// puzzle as missing, release A's reservation (the owner-check
-					// on releaseIdempotencyKey passes because the file maps to A's
-					// UUID, which B received from reserveIdempotencyKey), re-
-					// reserve with B's UUID, and both requests would proceed to
-					// create separate puzzles under one Idempotency-Key. Return
-					// 409 so the client retries; a truly orphaned reservation
-					// (create died after cleanup) is left for the dev to manually
-					// remove from the idempotency directory — there is no Bun-
-					// side reaper, and bricking a key in dev is recoverable while
-					// minting duplicates is not.
-					return c.json(
-						{
-							error: 'conflict',
-							message: 'A request with this Idempotency-Key is already in progress'
-						},
-						409
-					);
+					if (existing && tombstoned) {
+						// Puzzle is still on disk but deletion is in progress
+						// (tombstoned before source delete). Do not acknowledge
+						// it; the client retries after the delete route
+						// releases the reservation and the source is gone.
+						return conflictResponse();
+					}
+					// existing === null. Two sub-cases:
+					//  - tombstoned: the puzzle was deleted but the
+					//    reservation release failed (or has not run yet). The
+					//    tombstone distinguishes this from an in-flight create,
+					//    so it is safe to owner-check-release the stale mapping
+					//    and re-reserve with our minted UUID.
+					//  - !tombstoned: a prior create cleaned up its assets but
+					//    the reservation release failed, OR a create is in
+					//    flight and hasn't written metadata yet. The Bun
+					//    filesystem reservation has no lifecycle status or TTL,
+					//    so we CANNOT distinguish "in-flight" from "orphaned".
+					//    Reclaiming is unsafe: a concurrent request B that
+					//    overlaps with an in-flight request A would see A's
+					//    puzzle as missing, release A's reservation (the owner-
+					//    check passes because the file maps to A's UUID, which
+					//    B received from reserveIdempotencyKey), re-reserve
+					//    with B's UUID, and both requests would proceed to
+					//    create separate puzzles under one Idempotency-Key.
+					//    Return 409 so the client retries; a truly orphaned
+					//    reservation (create died after cleanup) is left for
+					//    the dev to manually remove from the idempotency
+					//    directory — there is no Bun-side reaper, and bricking
+					//    a key in dev is recoverable while minting duplicates
+					//    is not.
+					if (!tombstoned) return conflictResponse();
+					// Tombstoned + missing metadata: reclaim the stale
+					// reservation. Owner-checked release (file maps to
+					// reserved.puzzleId), then re-reserve with our UUID.
+					try {
+						await releaseIdempotencyKey(idempotencyKey, reserved.puzzleId);
+					} catch (releaseErr) {
+						console.error(
+							`Failed to release stale reservation for tombstoned puzzle ${reserved.puzzleId}:`,
+							releaseErr
+						);
+						return conflictResponse();
+					}
+					const reclaimed = await reserveIdempotencyKey(idempotencyKey, id);
+					if (!reclaimed.existing) {
+						id = reclaimed.puzzleId;
+						reservedIdempotencyKey = idempotencyKey;
+						// Fall through to create.
+					} else {
+						// Someone else won the reclaim. Acknowledge their
+						// puzzle only if it is live and not tombstoned;
+						// otherwise 409 so the client retries.
+						const winner = await getPuzzle(reclaimed.puzzleId);
+						const winnerTombstoned = await checkTombstoned(reclaimed.puzzleId);
+						if (winnerTombstoned === 'error') return conflictResponse();
+						if (winner && !winnerTombstoned) {
+							return c.json(stripIdempotencyKey(winner), 200);
+						}
+						return conflictResponse();
+					}
 				} else {
 					id = reserved.puzzleId;
 					reservedIdempotencyKey = idempotencyKey;
@@ -586,9 +645,11 @@ admin.post('/puzzle-delete/:id', requireAuth, async (c) => {
 					return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
 				}
 				await completionWrites.finishPuzzleDeletion(id);
-				await deletePuzzleOwnership(db, id).catch((err) =>
-					console.error(`Failed to delete ownership row for puzzle ${id}:`, err)
-				);
+				// Ownership cleanup is required, not best-effort: a transient
+				// SQLite failure would leave the deleted puzzle visible in
+				// "My Puzzles" and puzzlesUploaded inflated. The permanent
+				// tombstone makes a retried deletion safe.
+				await deletePuzzleOwnership(db, id);
 				return c.body(null, 204);
 			} catch (err) {
 				console.error(`Failed to resume deletion for puzzle ${id}:`, err);
@@ -610,23 +671,13 @@ admin.post('/puzzle-delete/:id', requireAuth, async (c) => {
 		return c.json({ error: 'internal_error', message: 'Failed to begin puzzle deletion' }, 500);
 	}
 
-	// Release the owner-checked reservation before tombstoning. If the
-	// release fails, the puzzle remains readable and unfenced — a retry
-	// can re-read the key from metadata and retry the release. Releasing
-	// before the tombstone also means a later required-finish failure
-	// cannot strand the key.
-	if (puzzle?.idempotencyKey) {
-		try {
-			await releaseIdempotencyKey(puzzle.idempotencyKey, id);
-		} catch (err) {
-			console.error(`Failed to release idempotency reservation for puzzle ${id}:`, err);
-			return c.json(
-				{ error: 'internal_error', message: 'Failed to release idempotency reservation' },
-				500
-			);
-		}
-	}
-
+	// Tombstone BEFORE releasing the reservation or deleting source. The
+	// tombstone is what lets a concurrent same-key create distinguish a
+	// puzzle being deleted from an in-flight create (see the existing-
+	// reservation branch in POST /puzzles). Releasing first would let a
+	// concurrent create re-reserve against the still-present puzzle via
+	// the legacy metadata fallback in reserveIdempotencyKey, acknowledge
+	// it as 200, then this route deletes it out from under the caller.
 	try {
 		await dbContext.completionWrites.beginPuzzleDeletion(id, Date.now());
 	} catch (err) {
@@ -640,6 +691,21 @@ admin.post('/puzzle-delete/:id', requireAuth, async (c) => {
 		return c.json({ error: 'internal_error', message: 'Failed to delete puzzle' }, 500);
 	}
 
+	// Release the owner-checked reservation AFTER source deletion commits.
+	// The reservation stays owned throughout deletion, so a concurrent
+	// same-key create sees existing:<this puzzle> and — with the tombstone
+	// check in POST /puzzles — returns 409 instead of acknowledging a
+	// puzzle about to disappear. A failed release is non-fatal: the
+	// tombstone lets a future create reclaim the stale reservation (the
+	// existing-reservation branch checks isPuzzleTombstoned and re-reserves).
+	if (puzzle?.idempotencyKey) {
+		try {
+			await releaseIdempotencyKey(puzzle.idempotencyKey, id);
+		} catch (err) {
+			console.error(`Failed to release idempotency reservation for puzzle ${id}:`, err);
+		}
+	}
+
 	try {
 		await dbContext.completionWrites.finishPuzzleDeletion(id);
 	} catch (err) {
@@ -647,11 +713,17 @@ admin.post('/puzzle-delete/:id', requireAuth, async (c) => {
 		return c.json({ error: 'internal_error', message: 'Failed to finish puzzle deletion' }, 500);
 	}
 
-	// Ownership remains a separate best-effort cleanup operation. The
-	// tombstone trigger prevents it from being recreated after begin.
-	await deletePuzzleOwnership(dbContext.db, id).catch((err) =>
-		console.error(`Failed to delete ownership row for puzzle ${id}:`, err)
-	);
+	// Ownership cleanup is required, not best-effort. A transient SQLite
+	// failure here would leave the deleted puzzle visible in "My Puzzles"
+	// and puzzlesUploaded inflated indefinitely; Bun has no cleanup-record
+	// reaper to correct it later. The permanent tombstone makes a retried
+	// deletion safe and prevents completion writes from recreating the row.
+	try {
+		await deletePuzzleOwnership(dbContext.db, id);
+	} catch (err) {
+		console.error(`Failed to delete ownership row for puzzle ${id}:`, err);
+		return c.json({ error: 'internal_error', message: 'Failed to delete puzzle ownership' }, 500);
+	}
 
 	return c.body(null, 204);
 });

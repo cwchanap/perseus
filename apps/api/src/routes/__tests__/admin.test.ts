@@ -922,7 +922,11 @@ describe('DELETE /puzzles/:id', () => {
 		consoleSpy.mockRestore();
 	});
 
-	it('still returns 204 when ownership cleanup throws (best-effort)', async () => {
+	it('returns 500 when ownership cleanup fails so the caller retries', async () => {
+		// Ownership cleanup is required, not best-effort: a transient SQLite
+		// failure would leave the deleted puzzle visible in "My Puzzles" and
+		// puzzlesUploaded inflated. The permanent tombstone makes a retried
+		// deletion safe (completion writes cannot recreate the row).
 		(storageMock.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
 			id: 'existing-puzzle-id',
 			name: 'Test',
@@ -932,12 +936,18 @@ describe('DELETE /puzzles/:id', () => {
 		(storageMock.deletePuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(true);
 		const { deletePuzzleOwnership } = await import('@perseus/shared');
 		(deletePuzzleOwnership as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('D1 down'));
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
 		const req = new Request('http://localhost/puzzle-delete/existing-puzzle-id', {
 			method: 'POST'
 		});
 		const res = await app.fetch(req);
-		expect(res.status).toBe(204);
+		expect(res.status).toBe(500);
+		expect(await res.json()).toEqual({
+			error: 'internal_error',
+			message: 'Failed to delete puzzle ownership'
+		});
+		consoleSpy.mockRestore();
 	});
 
 	it('returns 500 before filesystem cleanup when the deletion context cannot initialize', async () => {
