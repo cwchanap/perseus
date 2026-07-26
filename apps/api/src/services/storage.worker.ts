@@ -731,16 +731,13 @@ export async function deletePuzzleAssets(
 
 // --- Cleanup records for deferred reaper processing ---
 //
-// When the admin route cannot confirm workflow termination within the bounded
-// timeout (terminateAndAwaitStopped returns false), it tombstones the DO and
-// defers R2/KV cleanup to the reaper. Without an explicit cleanup record, a
-// workflow that completes after the deferral (finalize wrote 'ready' to the
-// DO, then the D1 mirror step finishes and the workflow becomes 'complete')
-// is never reaped: the reaper only selects 'processing' KV entries and
-// explicitly skips 'complete' workflows. The cleanup record is an independent
-// KV key that the reaper scans regardless of puzzle status, ensuring the
-// deferred puzzle is eventually cleaned up even after it transitions to
-// 'ready'/'complete'.
+// Cleanup records are durable retry state once deletion is chosen. Eligibility
+// and workflow-liveness gates are read-only with respect to the permanent fence
+// and source state: unconfirmed liveness causes no D1 fence or DO/R2/KV
+// mutation. Cleanup persists the record first, then establishes the permanent
+// D1 fence, mutates DO/R2/KV, requires completion and ownership cleanup, and
+// deletes the record only after every required step succeeds. Required failures
+// retain the record for a later reaper pass.
 
 export interface CleanupRecord {
 	puzzleId: string;

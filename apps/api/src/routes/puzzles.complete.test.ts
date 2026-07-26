@@ -24,8 +24,8 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 			status: 'recorded' as const,
 			completedAt: 100
 		})),
-		// Stub the backfill so it doesn't hit the mock DB ({}). The route calls
-		// this best-effort before either completion repository.
+		// Stub the backfill so it doesn't hit the mock DB ({}). The route makes
+		// the completion decision first, then backfills only non-tombstoned responses.
 		ensurePuzzleOwnership: vi.fn(async () => {}),
 		SYSTEM_OWNER_ID: actual.SYSTEM_OWNER_ID
 	};

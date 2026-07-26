@@ -2600,9 +2600,8 @@ describe('Admin Routes - Force Delete', () => {
 
 	it('should defer to reaper when force-delete cannot confirm workflow stopped', async () => {
 		// Workflow status read fails — terminateAndAwaitStopped returns false,
-		// so the route tombstones the DO best-effort, writes a cleanup record,
-		// and defers R2/KV cleanup to the reaper instead of deleting assets
-		// while the workflow may still be writing to R2.
+		// so the route retains the cleanup record but does not establish the D1
+		// fence or mutate DO/R2/KV source state while liveness is unconfirmed.
 		(storage.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
 			id: '550e8400-e29b-41d4-a716-446655440000',
 			name: 'Stuck Puzzle',

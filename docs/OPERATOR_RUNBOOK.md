@@ -267,23 +267,22 @@ that normally prevents deletion of in-flight puzzles. The delete route
 follows the same safe lifecycle as the reaper and the commit-conflict
 cleanup path:
 
-1. **Terminate and await the workflow stopped** (processing puzzles only).
-   If termination cannot be confirmed, the DO is tombstoned best-effort,
-   a cleanup record is written, and R2/KV cleanup is deferred to the
-   reaper — a live workflow can still write R2 objects, so deleting
-   assets prematurely would leave orphans the reaper cannot discover.
-2. **Tombstone the metadata DO** before any R2/KV deletion, so a dead
-   workflow's post-termination step cannot resurrect stale metadata in
-   KV via the DO's KV sync.
-3. **Delete R2 assets** (original + thumbnail + generated pieces). On
-   partial failure, KV is preserved and a cleanup record is written so
-   the reaper retries R2 cleanup (returns 207 Multi-Status).
-4. **Delete KV metadata** only after R2 fully succeeds. On failure, the
-   cleanup record is preserved for a reaper retry.
-5. **Release the idempotency reservation** and **delete D1 ownership +
-   stats** rows (best-effort).
-6. **Delete the cleanup record** (best-effort) only after every required
-   step succeeds.
+1. **Pass read-only eligibility gates** before choosing deletion.
+2. **Persist the cleanup record first** once deletion is chosen. This
+   durable retry state must exist before destructive work begins.
+3. **Pass the workflow-liveness gate without mutating fence/source state.**
+   For a processing puzzle, request termination and confirm that the
+   workflow stopped. Unconfirmed liveness causes no permanent D1 fence or
+   DO/R2/KV source mutation; the cleanup record remains for a reaper retry.
+4. **Establish the permanent D1 deletion fence** before mutating source
+   state. Fence failure leaves DO/R2/KV untouched and retains the record.
+5. **Mutate DO/R2/KV source state in order:** tombstone the metadata DO,
+   delete R2 assets, then delete KV metadata. Any failure retains the
+   cleanup record; R2 failure also preserves KV for discoverability.
+6. **Finish required completion and ownership cleanup.** A failure keeps
+   the permanent fence and cleanup record so a later pass can retry.
+7. **Delete the cleanup record as a required final step** only after all
+   preceding cleanup succeeds. Failure is retriable and retains the record.
 
 The delete route uses `POST /api/admin/puzzle-delete/:id` (not
 `DELETE /api/admin/puzzles/:id`) so it is NOT a sub-path of the narrow CLI
