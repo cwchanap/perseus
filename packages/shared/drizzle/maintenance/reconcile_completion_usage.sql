@@ -1,3 +1,5 @@
+BEGIN;
+
 CREATE TABLE completion_usage_reconcile_guard (
 	retained_runs INTEGER NOT NULL
 		CHECK (retained_runs BETWEEN 0 AND 100000)
@@ -16,3 +18,5 @@ FROM puzzle_completion_runs
 GROUP BY player_id;
 
 DROP TABLE completion_usage_reconcile_guard;
+
+COMMIT;

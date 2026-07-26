@@ -406,7 +406,7 @@ describe('repositories', () => {
 		}
 	});
 
-	it('recordCompletion soft-fails under the Bun tombstone fence without mutating stats', async () => {
+	it('recordLegacyCompletion soft-fails under the Bun tombstone fence without mutating stats', async () => {
 		expect(await recordLegacyCompletion(helper.completionWrites, 'p1', 'pz1', 100)).toEqual({
 			status: 'recorded'
 		});
@@ -422,7 +422,7 @@ describe('repositories', () => {
 		expect(await helper.db.select().from(schema.puzzleStats)).toEqual(original);
 	});
 
-	it('recordCompletion soft-fails a first Bun write under the tombstone fence', async () => {
+	it('recordLegacyCompletion soft-fails a first Bun write under the tombstone fence', async () => {
 		await helper.db
 			.insert(schema.puzzleDeletionTombstones)
 			.values({ puzzleId: 'pz1', deletedAt: Date.now() })

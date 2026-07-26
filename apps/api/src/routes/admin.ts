@@ -360,8 +360,12 @@ admin.post('/puzzles', requireAuth, async (c) => {
 		}
 
 		id = crypto.randomUUID();
-		if (await getDbContext().completionWrites.isPuzzleTombstoned(id)) {
-			return c.json({ error: 'internal_error', message: 'Failed to allocate puzzle ID' }, 500);
+		try {
+			if (await getDbContext().completionWrites.isPuzzleTombstoned(id)) {
+				return c.json({ error: 'internal_error', message: 'Failed to allocate puzzle ID' }, 500);
+			}
+		} catch (err) {
+			console.error(`Tombstone check failed for puzzle ${id}, continuing:`, err);
 		}
 		if (idempotencyKey) {
 			try {
@@ -602,17 +606,11 @@ admin.post('/puzzle-delete/:id', requireAuth, async (c) => {
 		return c.json({ error: 'internal_error', message: 'Failed to begin puzzle deletion' }, 500);
 	}
 
-	try {
-		await dbContext.completionWrites.beginPuzzleDeletion(id, Date.now());
-	} catch (err) {
-		console.error(`Failed to tombstone puzzle ${id} before filesystem cleanup:`, err);
-		return c.json({ error: 'internal_error', message: 'Failed to begin puzzle deletion' }, 500);
-	}
-
-	// Release the owner-checked reservation while metadata still carries its
-	// key. This is required before source deletion: if it fails, the puzzle
-	// remains on disk so a retry can read the key and retry the release. Once
-	// released, a later required-finish failure cannot strand the key.
+	// Release the owner-checked reservation before tombstoning. If the
+	// release fails, the puzzle remains readable and unfenced — a retry
+	// can re-read the key from metadata and retry the release. Releasing
+	// before the tombstone also means a later required-finish failure
+	// cannot strand the key.
 	if (puzzle?.idempotencyKey) {
 		try {
 			await releaseIdempotencyKey(puzzle.idempotencyKey, id);
@@ -623,6 +621,13 @@ admin.post('/puzzle-delete/:id', requireAuth, async (c) => {
 				500
 			);
 		}
+	}
+
+	try {
+		await dbContext.completionWrites.beginPuzzleDeletion(id, Date.now());
+	} catch (err) {
+		console.error(`Failed to tombstone puzzle ${id} before filesystem cleanup:`, err);
+		return c.json({ error: 'internal_error', message: 'Failed to begin puzzle deletion' }, 500);
 	}
 
 	const deleted = await deleteStoredPuzzle(id);

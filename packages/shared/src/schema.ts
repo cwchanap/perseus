@@ -1,5 +1,6 @@
 import { sqliteTable, text, integer, primaryKey, index, check } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
+import { MAX_COMPLETION_TIME_SECONDS } from '@perseus/types';
 
 // D1 ownership/stats tables are a BEST-EFFORT MIRROR of the authoritative
 // KV/DO puzzle metadata store. The DO (PuzzleMetadataDO) is the source of
@@ -84,7 +85,7 @@ export const puzzleCompletionRuns = sqliteTable(
 					AND ${t.resultClass} IN ('standard_timed', 'rotation_timed', 'assisted_timed')
 					AND ${t.elapsedActiveSeconds} IS NOT NULL
 					AND typeof(${t.elapsedActiveSeconds}) = 'integer'
-					AND ${t.elapsedActiveSeconds} BETWEEN 1 AND 86400
+					AND ${t.elapsedActiveSeconds} BETWEEN 1 AND ${MAX_COMPLETION_TIME_SECONDS}
 				)
 			)`
 		)

@@ -242,6 +242,8 @@ export interface RecordPuzzleCompletionV1 {
 	elapsedActiveSeconds: number | null;
 }
 
+export const MAX_COMPLETION_TIME_SECONDS = 24 * 60 * 60;
+
 export type RecordPuzzleCompletionResponse =
 	| { ok: true }
 	| {
@@ -426,11 +428,7 @@ export function isRecordPuzzleCompletionV1(
 	maxElapsedActiveSeconds: number
 ): value is RecordPuzzleCompletionV1 {
 	if (typeof value !== 'object' || value === null) return false;
-	if (
-		!Number.isFinite(maxElapsedActiveSeconds) ||
-		!Number.isInteger(maxElapsedActiveSeconds) ||
-		maxElapsedActiveSeconds <= 0
-	) {
+	if (!Number.isInteger(maxElapsedActiveSeconds) || maxElapsedActiveSeconds <= 0) {
 		return false;
 	}
 
@@ -439,7 +437,6 @@ export function isRecordPuzzleCompletionV1(
 	const completionKeys = Object.keys(completion);
 	if (
 		completionKeys.length !== fields.length ||
-		!fields.every((field) => Object.hasOwn(completion, field)) ||
 		!completionKeys.every((field) => fields.includes(field))
 	) {
 		return false;
@@ -455,7 +452,6 @@ export function isRecordPuzzleCompletionV1(
 
 	return (
 		typeof completion.elapsedActiveSeconds === 'number' &&
-		Number.isFinite(completion.elapsedActiveSeconds) &&
 		Number.isInteger(completion.elapsedActiveSeconds) &&
 		completion.elapsedActiveSeconds > 0 &&
 		completion.elapsedActiveSeconds <= maxElapsedActiveSeconds
