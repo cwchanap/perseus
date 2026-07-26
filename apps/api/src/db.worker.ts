@@ -1,19 +1,26 @@
-import { createD1Db } from '@perseus/shared/d1';
+import { createD1CompletionWriteExecutor, createD1Db } from '@perseus/shared/d1';
 import type { Env } from './worker';
 import type { AppDb } from '@perseus/shared';
+import type { ApiDbContext } from './db';
 
-// Cache the drizzle instance per-env. createD1Db only captures the env.DB
-// binding reference, which is stable for the lifetime of the worker isolate,
-// so reusing one instance avoids per-request allocation overhead and matches
-// the Bun runtime's caching in db.ts. The cache is keyed by env identity in
-// case the same isolate ever handles multiple env shapes.
-const cache = new WeakMap<Env, AppDb>();
+// Cache the runtime context per-env. The DB binding is stable for the lifetime
+// of the worker isolate, so reusing one context avoids per-request allocation
+// and keeps its DB and completion executor identities aligned.
+const cache = new WeakMap<Env, ApiDbContext>();
+
+export function getWorkerDbContext(env: Env): ApiDbContext {
+	let context = cache.get(env);
+	if (!context) {
+		const db = createD1Db(env);
+		context = {
+			db,
+			completionWrites: createD1CompletionWriteExecutor(db)
+		};
+		cache.set(env, context);
+	}
+	return context;
+}
 
 export function getWorkerDb(env: Env): AppDb {
-	let db = cache.get(env);
-	if (!db) {
-		db = createD1Db(env);
-		cache.set(env, db);
-	}
-	return db;
+	return getWorkerDbContext(env).db;
 }
