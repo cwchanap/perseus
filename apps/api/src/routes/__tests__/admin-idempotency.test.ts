@@ -251,6 +251,7 @@ describe('POST /puzzles - Idempotency-Key reservation tombstone-aware reclaim', 
 		// to their hoisted defaults, so later describe blocks start clean.
 		storageMock.reserveIdempotencyKey.mockReset();
 		storageMock.getPuzzle.mockReset();
+		storageMock.getPuzzle.mockResolvedValue(null);
 		dbContextMock.completionWrites.isPuzzleTombstoned.mockReset();
 		dbContextMock.completionWrites.isPuzzleTombstoned.mockResolvedValue(false);
 	});
@@ -357,7 +358,13 @@ describe('POST /puzzles - Idempotency-Key reservation tombstone-aware reclaim', 
 			name: 'Maybe',
 			pieceCount: 25
 		});
-		dbContextMock.completionWrites.isPuzzleTombstoned.mockRejectedValue(new Error('D1 down'));
+		// First isPuzzleTombstoned call is the fresh-UUID allocation check
+		// (must pass false so creation proceeds to the reservation); the
+		// second call is the existing-reservation tombstone check, which
+		// fails closed with a D1 error.
+		dbContextMock.completionWrites.isPuzzleTombstoned
+			.mockResolvedValueOnce(false)
+			.mockRejectedValue(new Error('D1 down'));
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 		try {
 			const res = await app.fetch(postPuzzlesRequest({ 'Idempotency-Key': 'key-maybe' }));
@@ -383,7 +390,9 @@ describe('delete-vs-create same-key concurrency (barrier-controlled)', () => {
 	afterEach(() => {
 		storageMock.reserveIdempotencyKey.mockReset();
 		storageMock.getPuzzle.mockReset();
+		storageMock.getPuzzle.mockResolvedValue(null);
 		storageMock.deletePuzzle.mockReset();
+		storageMock.deletePuzzle.mockResolvedValue(true);
 		dbContextMock.completionWrites.isPuzzleTombstoned.mockReset();
 		dbContextMock.completionWrites.isPuzzleTombstoned.mockResolvedValue(false);
 		dbContextMock.completionWrites.beginPuzzleDeletion.mockReset();
@@ -473,6 +482,10 @@ describe('delete-vs-create same-key concurrency (barrier-controlled)', () => {
 			expect(storageMock.releaseIdempotencyKey).toHaveBeenCalledWith('race-key', 'race-id');
 			expect(dbContextMock.completionWrites.finishPuzzleDeletion).toHaveBeenCalledWith('race-id');
 		} finally {
+			// Safety net: if an assertion above threw before the explicit
+			// release, unblock the gated delete so deleteResPromise doesn't
+			// hang. Promise resolve is idempotent — a no-op if already called.
+			releaseDeleteSource();
 			consoleSpy.mockRestore();
 		}
 	});
