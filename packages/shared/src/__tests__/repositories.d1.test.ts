@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import * as schema from '../schema';
 import { createD1CompletionWriteExecutor, createD1Db, type D1AppDb } from '../drivers/d1';
+import { completionFactsMatch, type VersionedCompletionWrite } from '../completion-writes';
 import {
 	recordCompletion,
 	recordVersionedCompletion,
@@ -70,6 +71,33 @@ function completion(overrides: Partial<RecordPuzzleCompletionV1> = {}): RecordPu
 		...overrides
 	};
 }
+
+describe('completionFactsMatch', () => {
+	it('rejects stored facts that differ only in timing quality', () => {
+		const input: VersionedCompletionWrite = {
+			playerId: 'p1',
+			puzzleId: 'pz1',
+			runId: 'run-1',
+			resultClass: 'standard_timed',
+			timingQuality: 'known',
+			elapsedActiveSeconds: 100,
+			receivedAt: 1_000
+		};
+
+		// Migration 0003 makes an isolated schema-valid timing mismatch impossible:
+		// timing quality determines elapsed nullability. Fabricate stored facts
+		// to isolate the comparator.
+		expect(
+			completionFactsMatch(input, {
+				puzzleId: 'pz1',
+				resultClass: 'standard_timed',
+				timingQuality: 'legacy_unknown',
+				elapsedActiveSeconds: 100,
+				completedAt: 1_000
+			})
+		).toBe(false);
+	});
+});
 
 describe('recordVersionedCompletion against real D1', () => {
 	it('records the first standard timed run in the ledger and creates a zero-baseline best', async () => {
