@@ -12,6 +12,15 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+const dbContextMock = vi.hoisted(() => ({
+	db: {},
+	completionWrites: {
+		beginPuzzleDeletion: vi.fn().mockResolvedValue(undefined),
+		finishPuzzleDeletion: vi.fn().mockResolvedValue(undefined),
+		isPuzzleTombstoned: vi.fn().mockResolvedValue(false)
+	}
+}));
+
 vi.mock('../../services/storage.worker', () => ({
 	commitIdempotencyKey: vi.fn(),
 	createPuzzleMetadata: vi.fn(),
@@ -59,11 +68,8 @@ vi.mock('../../services/player-auth.worker', () => ({
 }));
 
 vi.mock('../../db.worker', () => ({
-	getWorkerDb: vi.fn(() => ({})),
-	getWorkerDbContext: vi.fn(() => ({
-		db: {},
-		completionWrites: { isPuzzleTombstoned: vi.fn().mockResolvedValue(false) }
-	}))
+	getWorkerDb: vi.fn(() => dbContextMock.db),
+	getWorkerDbContext: vi.fn(() => dbContextMock)
 }));
 
 vi.mock('@perseus/shared', async (importOriginal) => {
@@ -876,6 +882,8 @@ describe('Admin Worker — dead-commit conflict cleanup error paths', () => {
 describe('Admin Worker — DELETE /puzzles/:id idempotency release failure', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		dbContextMock.completionWrites.beginPuzzleDeletion.mockResolvedValue(undefined);
+		dbContextMock.completionWrites.finishPuzzleDeletion.mockResolvedValue(undefined);
 		__resetRateLimitStore();
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 	});
@@ -908,6 +916,19 @@ describe('Admin Worker — DELETE /puzzles/:id idempotency release failure', () 
 			'idem-key-1',
 			puzzleId
 		);
+		expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledWith(
+			puzzleId,
+			expect.any(Number)
+		);
+		expect(vi.mocked(storage.deleteMetadataDO).mock.invocationCallOrder[0]).toBeGreaterThan(
+			dbContextMock.completionWrites.beginPuzzleDeletion.mock.invocationCallOrder[0]
+		);
+		expect(vi.mocked(storage.releaseIdempotencyKey).mock.invocationCallOrder[0]).toBeLessThan(
+			dbContextMock.completionWrites.finishPuzzleDeletion.mock.invocationCallOrder[0]
+		);
+		expect(
+			dbContextMock.completionWrites.finishPuzzleDeletion.mock.invocationCallOrder[0]
+		).toBeLessThan(vi.mocked(storage.deleteCleanupRecord).mock.invocationCallOrder[0]);
 	});
 });
 

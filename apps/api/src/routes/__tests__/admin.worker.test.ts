@@ -6,6 +6,7 @@ const dbContextMock = vi.hoisted(() => ({
 	completionWrites: {
 		write: vi.fn(),
 		deletePuzzleCompletionData: vi.fn(async () => undefined),
+		beginPuzzleDeletion: vi.fn(async () => undefined),
 		finishPuzzleDeletion: vi.fn(async () => undefined),
 		isPuzzleTombstoned: vi.fn().mockResolvedValue(false)
 	}
@@ -435,6 +436,11 @@ describe('Admin Routes - Puzzle Deletion', () => {
 				mockEnv.PUZZLE_METADATA,
 				expect.objectContaining({ puzzleId: '550e8400-e29b-41d4-a716-446655440000' })
 			);
+			expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledWith(
+				'550e8400-e29b-41d4-a716-446655440000',
+				expect.any(Number)
+			);
+			expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
 
 			// D1 ownership cleanup is NOT reached on R2 partial failure — the
 			// reaper handles D1 cleanup after R2/KV succeed on retry.
@@ -1908,6 +1914,7 @@ describe('Admin Routes - Login Success/Failure', () => {
 describe('Admin Routes - Delete Puzzle Cases', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		dbContextMock.completionWrites.beginPuzzleDeletion.mockResolvedValue(undefined);
 		dbContextMock.completionWrites.finishPuzzleDeletion.mockResolvedValue(undefined);
 	});
 
@@ -2060,12 +2067,26 @@ describe('Admin Routes - Delete Puzzle Cases', () => {
 		expect(dbContextMock.completionWrites.finishPuzzleDeletion).toHaveBeenCalledWith(
 			'550e8400-e29b-41d4-a716-446655440000'
 		);
+		expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledWith(
+			'550e8400-e29b-41d4-a716-446655440000',
+			expect.any(Number)
+		);
+		expect(
+			dbContextMock.completionWrites.beginPuzzleDeletion.mock.invocationCallOrder[0]
+		).toBeLessThan(
+			(storage.deleteMetadataDO as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]
+		);
 		expect(
 			(storage.deletePuzzleMetadata as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]
 		).toBeLessThan(dbContextMock.completionWrites.finishPuzzleDeletion.mock.invocationCallOrder[0]);
+		expect(
+			dbContextMock.completionWrites.finishPuzzleDeletion.mock.invocationCallOrder[0]
+		).toBeLessThan(
+			(storage.deleteCleanupRecord as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]
+		);
 	});
 
-	it('still returns 204 when atomic completion cleanup fails after KV deletion', async () => {
+	it('returns retriable 500 and retains the fence when completion cleanup fails', async () => {
 		(storage.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
 			id: '550e8400-e29b-41d4-a716-446655440000',
 			name: 'Test',
@@ -2093,14 +2114,76 @@ describe('Admin Routes - Delete Puzzle Cases', () => {
 
 		const res = await admin.fetch(req, mockEnv as any);
 
-		expect(res.status).toBe(204);
-		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining('Failed to delete stats rows'),
-			expect.any(Error)
-		);
+		expect(res.status).toBe(500);
+		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
+		expect(deletePuzzleOwnership).not.toHaveBeenCalled();
 		expect(
 			(storage.deletePuzzleMetadata as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]
 		).toBeLessThan(dbContextMock.completionWrites.finishPuzzleDeletion.mock.invocationCallOrder[0]);
+		consoleSpy.mockRestore();
+	});
+
+	it('prevents DO, R2, and KV mutation when beginning the D1 fence fails', async () => {
+		(storage.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
+			id: '550e8400-e29b-41d4-a716-446655440000',
+			name: 'Test',
+			pieceCount: 4,
+			status: 'ready',
+			pieces: [],
+			version: 0
+		});
+		dbContextMock.completionWrites.beginPuzzleDeletion.mockRejectedValueOnce(
+			new Error('D1 unavailable')
+		);
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const req = new Request('http://localhost/puzzle-delete/550e8400-e29b-41d4-a716-446655440000', {
+			method: 'POST',
+			headers: { cookie: 'session=valid.token' }
+		});
+
+		const res = await admin.fetch(req, mockEnv as any);
+
+		expect(res.status).toBe(500);
+		expect(storage.writeCleanupRecord).toHaveBeenCalled();
+		expect(storage.deleteMetadataDO).not.toHaveBeenCalled();
+		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
+		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
+		consoleSpy.mockRestore();
+	});
+
+	it('returns retriable 500 and retains the record when ownership cleanup fails', async () => {
+		(storage.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
+			id: '550e8400-e29b-41d4-a716-446655440000',
+			name: 'Test',
+			pieceCount: 4,
+			status: 'ready',
+			pieces: [],
+			version: 0
+		});
+		(storage.deletePuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue({
+			success: true
+		});
+		(storage.deletePuzzleAssets as ReturnType<typeof vi.fn>).mockResolvedValue({
+			success: true,
+			failedKeys: []
+		});
+		(deletePuzzleOwnership as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+			new Error('ownership cleanup failed')
+		);
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const req = new Request('http://localhost/puzzle-delete/550e8400-e29b-41d4-a716-446655440000', {
+			method: 'POST',
+			headers: { cookie: 'session=valid.token' }
+		});
+
+		const res = await admin.fetch(req, mockEnv as any);
+
+		expect(res.status).toBe(500);
+		expect(dbContextMock.completionWrites.finishPuzzleDeletion).toHaveBeenCalledOnce();
+		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
 		consoleSpy.mockRestore();
 	});
 });
@@ -2478,13 +2561,19 @@ describe('Admin Routes - Force Delete', () => {
 		const res = await admin.fetch(req, failingEnv as any);
 
 		expect(res.status).toBe(500);
-		// Best-effort DO tombstone attempted before deferring.
-		expect(storage.deleteMetadataDO).toHaveBeenCalled();
+		// Liveness is still uncertain, so deletion has not committed: neither
+		// the D1 fence nor source mutations may occur.
+		expect(dbContextMock.completionWrites.beginPuzzleDeletion).not.toHaveBeenCalled();
+		expect(storage.deleteMetadataDO).not.toHaveBeenCalled();
 		// Cleanup record written so the reaper retries after the workflow
 		// finally terminates.
 		expect(storage.writeCleanupRecord).toHaveBeenCalledWith(
 			mockEnv.PUZZLE_METADATA,
 			expect.objectContaining({ puzzleId: '550e8400-e29b-41d4-a716-446655440000' })
+		);
+		const workflow = await failingEnv.PUZZLE_WORKFLOW.get();
+		expect(vi.mocked(storage.writeCleanupRecord).mock.invocationCallOrder[0]).toBeLessThan(
+			workflow.status.mock.invocationCallOrder[0]
 		);
 		// R2 and KV are NOT touched — the workflow may still write R2
 		// objects, and KV must remain so the reaper can discover the puzzle.

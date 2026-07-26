@@ -40,6 +40,10 @@ import {
 } from '../services/storage.worker';
 import { isIdempotencyCommitConflict } from '../services/idempotency-conflict';
 import {
+	ensureWorkerPuzzleDeletionFence,
+	finishWorkerPuzzleDeletion
+} from '../services/puzzle-deletion.worker';
+import {
 	createSession,
 	setSessionCookie,
 	clearSessionCookie,
@@ -1965,13 +1969,14 @@ admin.post('/puzzle-delete/:id', requireAuth, async (c) => {
 		// the cleanup-record reaper (no record), and the orphan reconciler
 		// (reservation still points at this puzzle, so it looks like the
 		// current owner). The record is deleted only after full success.
+		const cleanupRecord = {
+			puzzleId: id,
+			pieceCount,
+			...(puzzle?.idempotencyKey ? { idempotencyKey: puzzle.idempotencyKey } : {}),
+			createdAt: Date.now()
+		};
 		try {
-			await writeCleanupRecord(c.env.PUZZLE_METADATA, {
-				puzzleId: id,
-				pieceCount,
-				...(puzzle?.idempotencyKey ? { idempotencyKey: puzzle.idempotencyKey } : {}),
-				createdAt: Date.now()
-			});
+			await writeCleanupRecord(c.env.PUZZLE_METADATA, cleanupRecord);
 		} catch (recordErr) {
 			console.error(`Failed to write cleanup record for puzzle ${id}, aborting:`, recordErr);
 			return c.json(
@@ -1995,13 +2000,8 @@ admin.post('/puzzle-delete/:id', requireAuth, async (c) => {
 			const stopped = await terminateAndAwaitStopped(c.env.PUZZLE_WORKFLOW, id);
 			if (!stopped) {
 				console.error(
-					`Force-delete: workflow ${id} not stopped after terminate(); tombstoning DO and deferring R2/KV cleanup to reaper`
+					`Force-delete: workflow ${id} not stopped after terminate(); deferring deletion to reaper`
 				);
-				try {
-					await deleteMetadataDO(c.env.PUZZLE_METADATA_DO, id);
-				} catch (doErr) {
-					console.error(`Force-delete: failed to tombstone metadata DO for ${id}:`, doErr);
-				}
 				return c.json(
 					{
 						error: 'internal_error',
@@ -2012,6 +2012,12 @@ admin.post('/puzzle-delete/:id', requireAuth, async (c) => {
 				);
 			}
 		}
+
+		// Deletion commits here, after all read-only and workflow-liveness
+		// gates. Re-persist the cleanup record, then insert the D1 tombstone
+		// immediately before the first source mutation. Both operations are
+		// idempotent, so a retry can safely re-establish the fence.
+		await ensureWorkerPuzzleDeletionFence(c.env, cleanupRecord);
 
 		// Step 2: Tombstone the DO BEFORE deleting R2/KV. Prevents a (dead)
 		// workflow's post-termination step from resurrecting stale metadata
@@ -2075,35 +2081,11 @@ admin.post('/puzzle-delete/:id', requireAuth, async (c) => {
 			}
 		}
 
-		// Step 6: Best-effort cleanup of the D1 ownership row so a deleted
-		// puzzle doesn't keep appearing in the uploader's "My Puzzles" list
-		// (404 on click) or inflate their puzzlesUploaded count. KV/R2
-		// deletion above is the source of truth for puzzle existence, so a
-		// failed ownership delete is logged, not fatal. (Admin-created
-		// puzzles are mirrored with a system sentinel owner; this removes
-		// that row too.) getWorkerDb is a lazy init that can throw on first
-		// call; obtain the cached runtime context once so ownership uses its
-		// DB while completion cleanup uses the paired atomic executor.
-		try {
-			const { db, completionWrites } = getWorkerDbContext(c.env);
-			await deletePuzzleOwnership(db, id).catch((err) =>
-				console.error(`Failed to delete ownership row for puzzle ${id}:`, err)
-			);
-			await deletePuzzleStats(completionWrites, id).catch((err) =>
-				console.error(`Failed to delete stats rows for puzzle ${id}:`, err)
-			);
-		} catch (err) {
-			console.error(`Failed to init DB for ownership cleanup of puzzle ${id}:`, err);
-		}
-
-		// Step 7: Every required cleanup operation succeeded — delete the
-		// cleanup record so the reaper does not re-process this puzzle.
-		// Best-effort: a failed delete only causes a redundant reaper pass.
-		try {
-			await deleteCleanupRecord(c.env.PUZZLE_METADATA, id);
-		} catch (recordErr) {
-			console.error(`Failed to delete cleanup record for puzzle ${id}:`, recordErr);
-		}
+		// Step 6: Completion and ownership cleanup are required. The helper
+		// deletes the durable cleanup record only after both D1 operations
+		// succeed. Any failure rejects so the record and tombstone remain for
+		// a retriable cleanup pass.
+		await finishWorkerPuzzleDeletion(c.env, id);
 
 		return c.body(null, 204);
 	} catch (error) {

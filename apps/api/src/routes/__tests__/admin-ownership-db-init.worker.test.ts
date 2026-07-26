@@ -6,11 +6,11 @@
  * - getWorkerDb throwing during missing-workflow-binding cleanup (line 636)
  * - deletePuzzleOwnership rejecting during workflow-trigger-failure cleanup (line 671)
  * - getWorkerDb throwing during workflow-trigger-failure cleanup (line 674)
- * - getWorkerDb throwing during DELETE ownership cleanup (line 748)
+ * - getWorkerDbContext throwing before committed DELETE source mutation
+ * - required completion cleanup rejecting after DELETE source mutation
  *
- * All paths are best-effort: a D1 init failure or ownership cleanup rejection
- * must not change the final response status (503/500/204) determined by the
- * KV/R2 source-of-truth operations.
+ * Creation rollback ownership paths remain best-effort. Committed admin
+ * deletion requires the D1 fence and finish lifecycle to succeed.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
@@ -19,6 +19,7 @@ const dbContextMock = vi.hoisted(() => ({
 	completionWrites: {
 		write: vi.fn(),
 		isPuzzleTombstoned: vi.fn().mockResolvedValue(false),
+		beginPuzzleDeletion: vi.fn(async () => undefined),
 		finishPuzzleDeletion: vi.fn(async () => undefined)
 	}
 }));
@@ -64,7 +65,7 @@ vi.mock('../../middleware/auth.worker', () => ({
 
 import admin from '../admin.worker';
 import { getWorkerDb, getWorkerDbContext } from '../../db.worker';
-import { deletePuzzleOwnership, deletePuzzleStats } from '@perseus/shared';
+import { deletePuzzleOwnership } from '@perseus/shared';
 import * as storage from '../../services/storage.worker';
 import { __resetRateLimitStore } from '../../middleware/rate-limit.worker';
 
@@ -101,7 +102,8 @@ describe('Admin Worker - D1 ownership best-effort catch blocks', () => {
 		vi.mocked(getWorkerDb).mockImplementation(() => dbContextMock.db as any);
 		vi.mocked(getWorkerDbContext).mockImplementation(() => dbContextMock as any);
 		vi.mocked(deletePuzzleOwnership).mockResolvedValue(undefined as any);
-		vi.mocked(deletePuzzleStats).mockResolvedValue(undefined as any);
+		dbContextMock.completionWrites.beginPuzzleDeletion.mockResolvedValue(undefined);
+		dbContextMock.completionWrites.finishPuzzleDeletion.mockResolvedValue(undefined);
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 	});
 	afterEach(() => {
@@ -227,7 +229,7 @@ describe('Admin Worker - D1 ownership best-effort catch blocks', () => {
 		);
 	});
 
-	it('still returns 204 when getWorkerDbContext throws during DELETE ownership cleanup', async () => {
+	it('returns 500 without source mutation when DELETE fence DB init fails', async () => {
 		vi.mocked(getWorkerDbContext).mockImplementation(() => {
 			throw new Error('DB init failed');
 		});
@@ -249,17 +251,18 @@ describe('Admin Worker - D1 ownership best-effort catch blocks', () => {
 			headers: { cookie: 'session=valid.token' }
 		});
 		const res = await admin.fetch(req, mockEnv as any);
-		expect(res.status).toBe(204);
+		expect(res.status).toBe(500);
 		expect(console.error).toHaveBeenCalledWith(
-			expect.stringContaining('Failed to init DB for ownership cleanup'),
+			expect.stringContaining(`Error deleting puzzle ${VALID_UUID}`),
 			expect.any(Error)
 		);
-		// R2 asset deletion ran before the D1 ownership catch in the safe
-		// lifecycle (tombstone → R2 → KV → reservation → D1).
-		expect(storage.deletePuzzleAssets).toHaveBeenCalledTimes(1);
+		expect(storage.writeCleanupRecord).toHaveBeenCalled();
+		expect(storage.deleteMetadataDO).not.toHaveBeenCalled();
+		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
 	});
 
-	it('logs when deletePuzzleStats rejects during DELETE cleanup (best-effort)', async () => {
+	it('returns 500 and retains the record when required completion cleanup rejects', async () => {
 		vi.mocked(storage.getPuzzle).mockResolvedValue({
 			id: VALID_UUID,
 			name: 'Ready Puzzle',
@@ -271,7 +274,9 @@ describe('Admin Worker - D1 ownership best-effort catch blocks', () => {
 			success: true,
 			failedKeys: []
 		} as any);
-		vi.mocked(deletePuzzleStats).mockRejectedValueOnce(new Error('D1 stats down') as any);
+		dbContextMock.completionWrites.finishPuzzleDeletion.mockRejectedValueOnce(
+			new Error('D1 stats down')
+		);
 
 		const mockEnv = { ...baseEnv, PUZZLE_WORKFLOW: { create: vi.fn() } };
 		const req = new Request(`http://localhost/puzzle-delete/${VALID_UUID}`, {
@@ -279,10 +284,13 @@ describe('Admin Worker - D1 ownership best-effort catch blocks', () => {
 			headers: { cookie: 'session=valid.token' }
 		});
 		const res = await admin.fetch(req, mockEnv as any);
-		expect(res.status).toBe(204);
+		expect(res.status).toBe(500);
 		expect(console.error).toHaveBeenCalledWith(
-			expect.stringContaining('Failed to delete stats rows'),
+			expect.stringContaining(`Error deleting puzzle ${VALID_UUID}`),
 			expect.any(Error)
 		);
+		expect(storage.deletePuzzleAssets).toHaveBeenCalledTimes(1);
+		expect(deletePuzzleOwnership).not.toHaveBeenCalled();
+		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
 	});
 });

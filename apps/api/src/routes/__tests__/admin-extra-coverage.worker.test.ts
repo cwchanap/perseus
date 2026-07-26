@@ -8,6 +8,15 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+const dbContextMock = vi.hoisted(() => ({
+	db: {},
+	completionWrites: {
+		beginPuzzleDeletion: vi.fn().mockResolvedValue(undefined),
+		finishPuzzleDeletion: vi.fn().mockResolvedValue(undefined),
+		isPuzzleTombstoned: vi.fn().mockResolvedValue(false)
+	}
+}));
+
 vi.mock('../../services/storage.worker', () => ({
 	getPuzzle: vi.fn(),
 	deletePuzzleAssets: vi.fn(),
@@ -25,11 +34,8 @@ vi.mock('../../services/storage.worker', () => ({
 }));
 
 vi.mock('../../db.worker', () => ({
-	getWorkerDb: vi.fn(() => ({})),
-	getWorkerDbContext: vi.fn(() => ({
-		db: {},
-		completionWrites: { isPuzzleTombstoned: vi.fn().mockResolvedValue(false) }
-	}))
+	getWorkerDb: vi.fn(() => dbContextMock.db),
+	getWorkerDbContext: vi.fn(() => dbContextMock)
 }));
 
 vi.mock('@perseus/shared', async (importOriginal) => {
@@ -455,6 +461,11 @@ describe('Admin Worker - DELETE metadata deletion failure', () => {
 			baseEnv.PUZZLE_METADATA,
 			expect.objectContaining({ puzzleId: 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d' })
 		);
+		expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledWith(
+			'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d',
+			expect.any(Number)
+		);
+		expect(dbContextMock.completionWrites.finishPuzzleDeletion).not.toHaveBeenCalled();
 		vi.restoreAllMocks();
 	});
 });

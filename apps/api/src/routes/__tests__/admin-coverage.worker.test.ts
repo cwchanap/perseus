@@ -5,6 +5,14 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+const dbContextMock = vi.hoisted(() => ({
+	db: {},
+	completionWrites: {
+		beginPuzzleDeletion: vi.fn().mockResolvedValue(undefined),
+		finishPuzzleDeletion: vi.fn().mockResolvedValue(undefined)
+	}
+}));
+
 vi.mock('../../services/storage.worker', () => ({
 	getPuzzle: vi.fn(),
 	deletePuzzleAssets: vi.fn(),
@@ -20,6 +28,17 @@ vi.mock('../../services/storage.worker', () => ({
 	writeCleanupRecord: vi.fn().mockResolvedValue(undefined),
 	deleteCleanupRecord: vi.fn().mockResolvedValue(undefined)
 }));
+
+vi.mock('../../db.worker', () => ({
+	getWorkerDb: vi.fn(() => dbContextMock.db),
+	getWorkerDbContext: vi.fn(() => dbContextMock)
+}));
+
+vi.mock('@perseus/shared', async (importOriginal) => {
+	const original = await importOriginal<typeof import('@perseus/shared')>();
+	const { sharedMockOverrides } = await import('./helpers/shared-mock');
+	return { ...original, ...sharedMockOverrides };
+});
 
 vi.mock('../../middleware/auth.worker', () => ({
 	verifySession: vi.fn(),
