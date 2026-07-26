@@ -253,7 +253,7 @@ describe('Admin Worker - D1 ownership best-effort catch blocks', () => {
 		const res = await admin.fetch(req, mockEnv as any);
 		expect(res.status).toBe(500);
 		expect(console.error).toHaveBeenCalledWith(
-			expect.stringContaining(`Error deleting puzzle ${VALID_UUID}`),
+			expect.stringContaining(`Failed to begin fenced cleanup for ${VALID_UUID}`),
 			expect.any(Error)
 		);
 		expect(storage.writeCleanupRecord).toHaveBeenCalled();
@@ -286,7 +286,7 @@ describe('Admin Worker - D1 ownership best-effort catch blocks', () => {
 		const res = await admin.fetch(req, mockEnv as any);
 		expect(res.status).toBe(500);
 		expect(console.error).toHaveBeenCalledWith(
-			expect.stringContaining(`Error deleting puzzle ${VALID_UUID}`),
+			expect.stringContaining(`Failed to finish fenced cleanup for ${VALID_UUID}`),
 			expect.any(Error)
 		);
 		expect(storage.deletePuzzleAssets).toHaveBeenCalledTimes(1);

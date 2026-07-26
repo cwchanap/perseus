@@ -360,6 +360,10 @@ admin.post('/puzzles', requireAuth, async (c) => {
 		}
 
 		id = crypto.randomUUID();
+		// Fail-open: a freshly minted UUID colliding with a tombstone is
+		// astronomically unlikely, and blocking admin creation on a
+		// transient D1 error is worse than skipping this guard. Player
+		// routes are fail-closed because they read existing state.
 		try {
 			if (await getDbContext().completionWrites.isPuzzleTombstoned(id)) {
 				return c.json({ error: 'internal_error', message: 'Failed to allocate puzzle ID' }, 500);

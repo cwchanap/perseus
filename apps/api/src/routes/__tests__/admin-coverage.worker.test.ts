@@ -113,10 +113,10 @@ describe('Admin Routes - Puzzle deletion error paths', () => {
 		expect(res.status).toBe(500);
 		const body = (await res.json()) as any;
 		expect(body.error).toBe('internal_error');
-		expect(body.message).toBe('Failed to delete KV metadata; deferred to reaper');
+		expect(body.message).toBe('KV metadata cleanup failed, reaper will retry');
 
 		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining('Failed to delete puzzle metadata:'),
+			expect.stringContaining('Failed to delete metadata for '),
 			expect.any(Error)
 		);
 		// Cleanup record written so the reaper retries KV deletion.

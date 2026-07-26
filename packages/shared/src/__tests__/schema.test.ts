@@ -332,6 +332,95 @@ describe('schema tables', () => {
 		}
 	});
 
+	it('exercises the quota-trigger body with a small-threshold trigger and matching rows', () => {
+		const { db, sqlite } = makeDb();
+
+		// Replace the production trigger (threshold 100_000) with an
+		// equivalent small-threshold trigger (threshold 3) so the body
+		// can be exercised without inserting 100_000 rows.
+		sqlite.exec('DROP TRIGGER guard_puzzle_completion_run_quota;');
+		sqlite.exec(`
+			CREATE TRIGGER guard_puzzle_completion_run_quota
+			BEFORE INSERT ON puzzle_completion_runs
+			WHEN NOT EXISTS (
+				SELECT 1
+				FROM puzzle_completion_runs
+				WHERE player_id = NEW.player_id
+					AND run_id = NEW.run_id
+			)
+			AND COALESCE(
+				(
+					SELECT retained_runs
+					FROM player_completion_usage
+					WHERE player_id = NEW.player_id
+				),
+				0
+			) >= 3
+			BEGIN
+				SELECT RAISE(ABORT, 'completion_quota_exceeded');
+			END;
+		`);
+
+		const baseRun = {
+			playerId: 'p1',
+			puzzleId: 'pz1',
+			resultClass: 'standard_timed' as const,
+			timingQuality: 'known' as const,
+			elapsedActiveSeconds: 60
+		};
+
+		// Insert 3 distinct runs — the increment trigger keeps usage in sync.
+		for (let i = 1; i <= 3; i++) {
+			expect(() =>
+				db
+					.insert(puzzleCompletionRuns)
+					.values({ ...baseRun, runId: `run-${i}`, completedAt: i })
+					.run()
+			).not.toThrow();
+		}
+		expect(
+			sqlite.query("SELECT retained_runs FROM player_completion_usage WHERE player_id = 'p1'").get()
+		).toEqual({ retained_runs: 3 });
+
+		// A 4th distinct run fires the trigger body: RAISE(ABORT).
+		expect(() =>
+			db
+				.insert(puzzleCompletionRuns)
+				.values({ ...baseRun, runId: 'run-4', completedAt: 4 })
+				.run()
+		).toThrow(/completion_quota_exceeded/);
+
+		// The rejected insert did not create a row or change usage.
+		expect(
+			sqlite.query("SELECT COUNT(*) AS n FROM puzzle_completion_runs WHERE player_id = 'p1'").get()
+		).toEqual({ n: 3 });
+		expect(
+			sqlite.query("SELECT retained_runs FROM player_completion_usage WHERE player_id = 'p1'").get()
+		).toEqual({ retained_runs: 3 });
+
+		// Existing-run exemption: a duplicate run_id at quota does NOT fire
+		// the trigger (the WHEN NOT EXISTS clause is false) and succeeds via
+		// ON CONFLICT DO NOTHING — matching the executor's replay path.
+		sqlite.exec(`
+			INSERT INTO puzzle_completion_runs (
+				player_id, run_id, puzzle_id, result_class,
+				timing_quality, elapsed_active_seconds, completed_at
+			)
+			VALUES ('p1', 'run-1', 'pz1', 'standard_timed', 'known', 60, 99)
+			ON CONFLICT (player_id, run_id) DO NOTHING;
+		`);
+
+		// No new row, no usage increment — the replay is a no-op.
+		expect(
+			sqlite.query("SELECT COUNT(*) AS n FROM puzzle_completion_runs WHERE player_id = 'p1'").get()
+		).toEqual({ n: 3 });
+		expect(
+			sqlite.query("SELECT retained_runs FROM player_completion_usage WHERE player_id = 'p1'").get()
+		).toEqual({ retained_runs: 3 });
+
+		sqlite.close();
+	});
+
 	it('keeps migration 0004 additive and safely breakpoint-delimited', () => {
 		const migrationSql = readFileSync('./drizzle/0004_puzzle_deletion_fence.sql', 'utf8');
 		const statements = migrationSql
