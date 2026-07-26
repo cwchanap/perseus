@@ -15,14 +15,20 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Hono } from 'hono';
+import type { CompletionWriteExecutor } from '@perseus/shared';
 
 // --- Mocks shared by both runtimes ---------------------------------------
 
-const completionWrites = vi.hoisted(() => ({
-	write: vi.fn(),
-	writeLegacy: vi.fn(),
-	deletePuzzleCompletionData: vi.fn()
-}));
+const completionWrites = vi.hoisted(
+	() =>
+		({
+			write: vi.fn(),
+			writeLegacy: vi.fn(),
+			beginPuzzleDeletion: vi.fn(),
+			finishPuzzleDeletion: vi.fn(),
+			isPuzzleTombstoned: vi.fn()
+		}) as unknown as CompletionWriteExecutor
+);
 
 // Both route modules resolve their DB through a runtime-specific singleton
 // that loads a runtime-only SQLite builtin. Mock both so neither loads under

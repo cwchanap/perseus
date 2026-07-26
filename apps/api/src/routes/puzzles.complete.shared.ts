@@ -1,11 +1,10 @@
 import {
 	isRecordPuzzleCompletionV1,
+	MAX_COMPLETION_TIME_SECONDS,
 	type RecordPuzzleCompletionResponse,
 	type RecordPuzzleCompletionV1
 } from '@perseus/types';
 import type { LegacyCompletionWriteExecution, VersionedCompletionResult } from '@perseus/shared';
-
-const MAX_COMPLETION_TIME_SECONDS = 24 * 60 * 60;
 
 export type ParsedCompletionRequest =
 	| { kind: 'legacy'; timeSeconds: number }

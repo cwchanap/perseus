@@ -33,14 +33,16 @@ describe('schema tables', () => {
 			.map((statement) => statement.trim())
 			.filter(Boolean);
 
-		sqlite.run('BEGIN;');
 		try {
 			for (const statement of statements) {
 				sqlite.run(statement);
 			}
-			sqlite.run('COMMIT;');
 		} catch (error) {
-			sqlite.exec('ROLLBACK;');
+			try {
+				sqlite.exec('ROLLBACK;');
+			} catch {
+				// Transaction may have already been rolled back by SQLite
+			}
 			throw error;
 		}
 	}

@@ -221,7 +221,9 @@ export async function listPlayerPuzzles(
 	// otherwise survive the clamp and bind a non-integer (2.5) to SQL LIMIT,
 	// which SQLite/D1 rejects with a datatype error. Flooring treats 1.5 as 1
 	// (the nearest valid integer at or below the requested value).
-	const limit = Math.floor(Math.min(Math.max(opts.limit, 1), 100));
+	const limit = Math.floor(
+		Math.min(Math.max(Number.isFinite(opts.limit) ? opts.limit : 1, 1), 100)
+	);
 	// Composite cursor (createdAt, id) avoids skipping a row when two puzzles
 	// share the same createdAt timestamp: rows are ordered by createdAt DESC
 	// then id DESC, and the cursor excludes anything strictly "after" the last
@@ -457,7 +459,9 @@ export async function listPlayerStats(
 	playerId: string,
 	opts: { limit: number; cursor?: string }
 ): Promise<{ rows: PlayerStat[]; nextCursor?: string }> {
-	const limit = Math.floor(Math.min(Math.max(opts.limit, 1), 100));
+	const limit = Math.floor(
+		Math.min(Math.max(Number.isFinite(opts.limit) ? opts.limit : 1, 1), 100)
+	);
 	const cursor = opts.cursor === undefined ? undefined : parsePlayerStatsCursor(opts.cursor);
 	const cursorPredicate = cursor === undefined ? sql`true` : playerStatsCursorPredicate(cursor);
 	const all = await db.all<PlayerStatQueryRow>(sql`

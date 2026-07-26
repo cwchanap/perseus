@@ -1,13 +1,16 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Hono } from 'hono';
+import type { CompletionWriteExecutor } from '@perseus/shared';
 
 const { legacyDb, completionWrites } = vi.hoisted(() => ({
 	legacyDb: {},
 	completionWrites: {
 		write: vi.fn(),
 		writeLegacy: vi.fn(),
-		deletePuzzleCompletionData: vi.fn()
-	}
+		beginPuzzleDeletion: vi.fn(),
+		finishPuzzleDeletion: vi.fn(),
+		isPuzzleTombstoned: vi.fn()
+	} as unknown as CompletionWriteExecutor
 }));
 
 vi.mock('../db', () => ({

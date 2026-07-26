@@ -181,6 +181,24 @@ describe('versioned puzzle completion contract', () => {
 		}
 	);
 
+	it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
+		'rejects an otherwise valid timed completion when maxElapsedActiveSeconds is %s',
+		(maxElapsed) => {
+			expect(
+				isRecordPuzzleCompletionV1(
+					{
+						version: 1,
+						runId: validRunId,
+						resultClass: 'standard_timed',
+						timingQuality: 'known',
+						elapsedActiveSeconds: 1
+					},
+					maxElapsed
+				)
+			).toBe(false);
+		}
+	);
+
 	it.each(timingQualities)('uses the exported timing quality %s', (timingQuality) => {
 		expect(['known', 'legacy_unknown']).toContain(timingQuality);
 	});

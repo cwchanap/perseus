@@ -312,7 +312,7 @@ describe('createBunDbContext', () => {
 	});
 
 	it.each([0, -1, 1.5, 100_001, Number.NaN])(
-		'rejects invalid Bun retained-run limit $limit',
+		'rejects invalid Bun retained-run limit %s',
 		(limit) => {
 			const dataDir = mkdtempSync(join(tmpdir(), 'perseus-bun-invalid-limit-'));
 			try {
@@ -551,7 +551,7 @@ describe('createBunDbContext', () => {
 
 describe('completion write driver parity', () => {
 	it.each([0, -1, 1.5, 100_001, Number.NaN])(
-		'rejects invalid D1 retained-run limit $limit',
+		'rejects invalid D1 retained-run limit %s',
 		(limit) => {
 			expect(() => createD1CompletionWriteExecutor(d1Db, limit)).toThrow(RangeError);
 		}

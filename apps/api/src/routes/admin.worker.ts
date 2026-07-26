@@ -1151,8 +1151,12 @@ admin.post('/puzzles', requireAuth, async (c) => {
 		}
 
 		id = crypto.randomUUID();
-		if (await getWorkerDbContext(c.env).completionWrites.isPuzzleTombstoned(id)) {
-			return c.json({ error: 'internal_error', message: 'Failed to allocate puzzle ID' }, 500);
+		try {
+			if (await getWorkerDbContext(c.env).completionWrites.isPuzzleTombstoned(id)) {
+				return c.json({ error: 'internal_error', message: 'Failed to allocate puzzle ID' }, 500);
+			}
+		} catch (err) {
+			console.error(`Tombstone check failed for puzzle ${id}, continuing:`, err);
 		}
 		if (idempotencyKey) {
 			try {

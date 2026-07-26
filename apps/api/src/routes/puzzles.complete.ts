@@ -83,7 +83,7 @@ router.post('/:id/complete', requirePlayerAuth, async (c) => {
 						parsed.value.request
 					);
 		const response = completionResultToResponse(result);
-		if (response.status !== 404) {
+		if (result.status !== 'tombstoned') {
 			// Lazily backfill a system-owned row for puzzles that predate the DB
 			// mirror. Tombstones skip this so deletion cannot recreate ownership.
 			await ensurePuzzleOwnership(db, ownershipRow).catch((err) =>
