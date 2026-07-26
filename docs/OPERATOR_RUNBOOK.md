@@ -349,3 +349,59 @@ full analysis in `packages/infrastructure/src/admin-access.ts` (the
 `apps/workflows/src/index.ts` (PuzzleMetadataDO),
 `packages/types/src/index.ts` (`stripIdempotencyKey`),
 `scripts/startup/upload.ts` (`idempotencyKey`/`idempotencyKeyHeader`).
+
+---
+
+## 10. Completion Usage Reconciliation and Capacity
+
+**Use this operator-only maintenance procedure only when completion usage
+counters need repair.** The reconciliation rebuilds
+`player_completion_usage` from the retained `puzzle_completion_runs` ledger.
+
+1. Pause or disable all completion writes for the maintenance window. Do not
+   continue while any API or workflow can append completion runs.
+2. Run this read-only preflight report. Abort and investigate if it returns
+   any row; an oversized group cannot be reconciled safely.
+
+   ```sql
+   SELECT player_id, COUNT(*) AS retained_runs
+   FROM puzzle_completion_runs
+   GROUP BY player_id
+   HAVING COUNT(*) > 100000;
+   ```
+
+3. Execute the checked-in maintenance SQL as one atomic D1 execution:
+
+   ```bash
+   rtk bunx wrangler d1 execute perseus-player-data --remote --config apps/api/wrangler.production.toml --file packages/shared/drizzle/maintenance/reconcile_completion_usage.sql
+   ```
+
+4. Verify that the following mismatch query returns no rows before resuming
+   writes:
+
+   ```sql
+   SELECT actual.player_id, actual.retained_runs, usage.retained_runs
+   FROM (
+   SELECT player_id, COUNT(*) AS retained_runs
+   FROM puzzle_completion_runs
+   GROUP BY player_id
+   ) AS actual
+   LEFT JOIN player_completion_usage AS usage
+   ON usage.player_id = actual.player_id
+   WHERE usage.retained_runs IS NULL
+   OR usage.retained_runs != actual.retained_runs
+   UNION ALL
+   SELECT usage.player_id, 0, usage.retained_runs
+   FROM player_completion_usage AS usage
+   LEFT JOIN puzzle_completion_runs AS runs
+   ON runs.player_id = usage.player_id
+   WHERE runs.player_id IS NULL;
+   ```
+
+5. Resume completion writes only after the mismatch query returns no rows.
+6. Monitor D1 `databaseSizeBytes`, ledger row count, tombstone row count, and
+   their growth trend. Escalate before reaching the active plan's D1 size
+   limit. Never prune tombstones without another permanent no-reuse mechanism.
+
+**Source:** `packages/shared/drizzle/maintenance/reconcile_completion_usage.sql`,
+`packages/shared/drizzle/0004_puzzle_deletion_fence.sql`.

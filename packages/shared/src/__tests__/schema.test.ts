@@ -23,6 +23,28 @@ describe('schema tables', () => {
 		return { db, sqlite };
 	}
 
+	function reconcileCompletionUsage(sqlite: Database) {
+		const reconciliationSql = readFileSync(
+			'./drizzle/maintenance/reconcile_completion_usage.sql',
+			'utf8'
+		);
+		const statements = reconciliationSql
+			.split(';')
+			.map((statement) => statement.trim())
+			.filter(Boolean);
+
+		sqlite.run('BEGIN;');
+		try {
+			for (const statement of statements) {
+				sqlite.run(statement);
+			}
+			sqlite.run('COMMIT;');
+		} catch (error) {
+			sqlite.exec('ROLLBACK;');
+			throw error;
+		}
+	}
+
 	it('creates all three tables', () => {
 		const { db, sqlite } = makeDb();
 		// Insert + read one row per table to confirm shape.
@@ -339,5 +361,149 @@ describe('schema tables', () => {
 		});
 		expect(snapshot.tables).toHaveProperty('player_completion_usage');
 		expect(snapshot.tables).toHaveProperty('puzzle_deletion_tombstones');
+	});
+
+	it('rebuilds exact grouped usage and removes stale zero-ledger rows', () => {
+		const { db, sqlite } = makeDb();
+		db.insert(puzzleCompletionRuns)
+			.values([
+				{
+					playerId: 'p1',
+					runId: 'run-1',
+					puzzleId: 'pz1',
+					resultClass: 'standard_timed',
+					timingQuality: 'known',
+					elapsedActiveSeconds: 60,
+					completedAt: 1
+				},
+				{
+					playerId: 'p1',
+					runId: 'run-2',
+					puzzleId: 'pz2',
+					resultClass: 'standard_timed',
+					timingQuality: 'known',
+					elapsedActiveSeconds: 61,
+					completedAt: 2
+				},
+				{
+					playerId: 'p2',
+					runId: 'run-1',
+					puzzleId: 'pz1',
+					resultClass: 'standard_timed',
+					timingQuality: 'known',
+					elapsedActiveSeconds: 62,
+					completedAt: 3
+				}
+			])
+			.run();
+		sqlite.run("UPDATE player_completion_usage SET retained_runs = 99 WHERE player_id = 'p1'");
+		db.insert(playerCompletionUsage).values({ playerId: 'stale', retainedRuns: 1 }).run();
+
+		reconcileCompletionUsage(sqlite);
+
+		expect(
+			db.select().from(playerCompletionUsage).orderBy(playerCompletionUsage.playerId).all()
+		).toEqual([
+			{ playerId: 'p1', retainedRuns: 2 },
+			{ playerId: 'p2', retainedRuns: 1 }
+		]);
+		sqlite.close();
+	});
+
+	it('is idempotent when it rebuilds completion usage twice', () => {
+		const { db, sqlite } = makeDb();
+		db.insert(puzzleCompletionRuns)
+			.values({
+				playerId: 'p1',
+				runId: 'run-1',
+				puzzleId: 'pz1',
+				resultClass: 'standard_timed',
+				timingQuality: 'known',
+				elapsedActiveSeconds: 60,
+				completedAt: 1
+			})
+			.run();
+
+		reconcileCompletionUsage(sqlite);
+		const firstRebuild = db.select().from(playerCompletionUsage).all();
+		reconcileCompletionUsage(sqlite);
+
+		expect(db.select().from(playerCompletionUsage).all()).toEqual(firstRebuild);
+		sqlite.close();
+	});
+
+	it('rolls back an oversized reconciliation before changing usage or leaving a guard table', () => {
+		const { db, sqlite } = makeDb();
+		db.insert(playerCompletionUsage).values({ playerId: 'unchanged', retainedRuns: 4 }).run();
+		sqlite.exec('DROP TRIGGER guard_puzzle_completion_run_quota;');
+		sqlite.exec('DROP TRIGGER increment_player_completion_usage;');
+		sqlite.exec(`
+			WITH RECURSIVE run_numbers(value) AS (
+				VALUES(1)
+				UNION ALL
+				SELECT value + 1 FROM run_numbers WHERE value < 100001
+			)
+			INSERT INTO puzzle_completion_runs (
+				player_id,
+				run_id,
+				puzzle_id,
+				result_class,
+				timing_quality,
+				elapsed_active_seconds,
+				completed_at
+			)
+			SELECT
+				'oversized',
+				'run-' || value,
+				'pz1',
+				'relaxed',
+				'known',
+				NULL,
+				value
+			FROM run_numbers;
+		`);
+		expect(
+			sqlite
+				.query(
+					"SELECT COUNT(*) AS retained_runs FROM puzzle_completion_runs WHERE player_id = 'oversized'"
+				)
+				.get()
+		).toEqual({ retained_runs: 100_001 });
+
+		expect(() => reconcileCompletionUsage(sqlite)).toThrow(/CHECK constraint failed/);
+		expect(db.select().from(playerCompletionUsage).all()).toEqual([
+			{ playerId: 'unchanged', retainedRuns: 4 }
+		]);
+		expect(
+			sqlite
+				.query(
+					"SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'completion_usage_reconcile_guard'"
+				)
+				.all()
+		).toEqual([]);
+		sqlite.close();
+	});
+
+	it('allows ledger deletion when a player has no usage row', () => {
+		const { db, sqlite } = makeDb();
+		db.insert(puzzleCompletionRuns)
+			.values({
+				playerId: 'p1',
+				runId: 'run-1',
+				puzzleId: 'pz1',
+				resultClass: 'standard_timed',
+				timingQuality: 'known',
+				elapsedActiveSeconds: 60,
+				completedAt: 1
+			})
+			.run();
+		db.delete(playerCompletionUsage).where(eq(playerCompletionUsage.playerId, 'p1')).run();
+
+		expect(() =>
+			db.delete(puzzleCompletionRuns).where(eq(puzzleCompletionRuns.playerId, 'p1')).run()
+		).not.toThrow();
+		expect(db.select().from(puzzleCompletionRuns).all()).toEqual([]);
+		expect(db.select().from(playerCompletionUsage).all()).toEqual([]);
+		sqlite.close();
 	});
 });
