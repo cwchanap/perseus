@@ -664,6 +664,26 @@ describe('combined player stats against real D1', () => {
 	});
 
 	it.each([
+		['v2 group-0', 'v2|0|9007199254740991|pz-a'],
+		['legacy composite', '9007199254740991|pz-a'],
+		['legacy bare', '9007199254740991']
+	])('accepts Number.MAX_SAFE_INTEGER in a %s cursor against D1', async (_kind, cursor) => {
+		const result = await listCombinedPlayerStats(db, 'p1', { limit: 10, cursor });
+
+		expect(result.rows).toEqual([]);
+	});
+
+	it.each([
+		['v2 group-0', 'v2|0|9007199254740992|pz-a'],
+		['legacy composite', '9007199254740992|pz-a'],
+		['legacy bare', '9007199254740992']
+	])('rejects Number.MAX_SAFE_INTEGER + 1 in a %s cursor against D1', async (_kind, cursor) => {
+		await expect(listCombinedPlayerStats(db, 'p1', { limit: 10, cursor })).rejects.toBeInstanceOf(
+			InvalidPlayerStatsCursorError
+		);
+	});
+
+	it.each([
 		'',
 		'garbage',
 		'01',
