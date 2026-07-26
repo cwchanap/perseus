@@ -5,6 +5,7 @@ import { puzzles, playerProfiles, puzzleStats } from './schema';
 import {
 	interpretVersionedCompletionWrite,
 	type CompletionWriteExecutor,
+	type LegacyCompletionWriteExecution,
 	type VersionedCompletionResult,
 	type VersionedCompletionWrite
 } from './completion-writes';
@@ -275,24 +276,12 @@ function parsePlayerPuzzleCursor(cursor: string) {
 	return sql`(${puzzles.createdAt} < ${createdAt} OR (${puzzles.createdAt} = ${createdAt} AND ${puzzles.id} < ${idStr}))`;
 }
 
-// Server-side dedupe window for completion submissions. Two completions of
-// the same (player, puzzle) closer together than this are treated as a retried
-// or duplicated submission (e.g. a re-POST after a lost response, or a
-// double-tap) and do NOT increment totalCompletions. Genuine re-solves take
-// longer than this even for small puzzles (navigation + re-solving), so they
-// still count. This is a heuristic — the server cannot distinguish a rapid
-// legitimate replay from a retry without a client-provided idempotency key —
-// but it closes the realistic double-count vector without a schema change.
-// bestTimeSeconds still takes the MIN regardless, so a better time is always
-// recorded even for a deduped retry.
-const COMPLETION_DEDUPE_WINDOW_MS = 30_000;
-
 export async function recordLegacyCompletion(
-	db: AppDb,
+	executor: CompletionWriteExecutor,
 	playerId: string,
 	puzzleId: string,
 	timeSeconds: number
-): Promise<void> {
+): Promise<LegacyCompletionWriteExecution> {
 	// Accepted risk: the server cannot verify that the client actually solved
 	// the puzzle. Any authenticated player can POST an arbitrary timeSeconds
 	// for any ready puzzle. The impact is self-scoped (only the caller's own
@@ -301,32 +290,7 @@ export async function recordLegacyCompletion(
 	// MAX_COMPLETION_TIME_SECONDS ceiling in the route layer rejects obvious
 	// garbage values.
 	const now = Date.now();
-	await db
-		.insert(puzzleStats)
-		.values({
-			playerId,
-			puzzleId,
-			bestTimeSeconds: timeSeconds,
-			totalCompletions: 1,
-			firstCompletedAt: now,
-			lastCompletedAt: now
-		})
-		.onConflictDoUpdate({
-			target: [puzzleStats.playerId, puzzleStats.puzzleId],
-			set: {
-				// best time always tracks the minimum observed (`excluded` is
-				// SQLite's name for the conflicting incoming row). Safe even for a
-				// deduped retry, which carries the same time anyway.
-				bestTimeSeconds: sql`MIN(${puzzleStats.bestTimeSeconds}, excluded.best_time_seconds)`,
-				// Only count the solve and advance lastCompletedAt when it falls
-				// outside the dedupe window of the last RECORDED completion. A rapid
-				// retry within the window leaves both untouched, preventing inflated
-				// counts. `excluded.last_completed_at` is the incoming now.
-				totalCompletions: sql`CASE WHEN excluded.last_completed_at - ${puzzleStats.lastCompletedAt} >= ${COMPLETION_DEDUPE_WINDOW_MS} THEN ${puzzleStats.totalCompletions} + 1 ELSE ${puzzleStats.totalCompletions} END`,
-				lastCompletedAt: sql`CASE WHEN excluded.last_completed_at - ${puzzleStats.lastCompletedAt} >= ${COMPLETION_DEDUPE_WINDOW_MS} THEN excluded.last_completed_at ELSE ${puzzleStats.lastCompletedAt} END`
-			}
-		})
-		.run();
+	return executor.writeLegacy({ playerId, puzzleId, timeSeconds, receivedAt: now });
 }
 
 export async function recordVersionedCompletion(
@@ -346,7 +310,7 @@ export async function recordVersionedCompletion(
 		receivedAt
 	};
 	const execution = await executor.write(input);
-	return interpretVersionedCompletionWrite(input, execution.stored, execution.inserted);
+	return interpretVersionedCompletionWrite(input, execution);
 }
 
 export type PlayerStatsCursor =

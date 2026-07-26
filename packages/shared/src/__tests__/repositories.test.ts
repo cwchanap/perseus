@@ -1,7 +1,5 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { afterEach, describe, it, expect, beforeEach, vi } from 'vitest';
 import { Database } from 'bun:sqlite';
-import { drizzle } from 'drizzle-orm/bun-sqlite';
-import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -27,10 +25,15 @@ import {
 } from '../repositories';
 
 function makeDb() {
-	const sqlite = new Database(':memory:');
-	const db = drizzle(sqlite, { schema });
-	migrate(db, { migrationsFolder: './drizzle' });
-	return { db, close: () => sqlite.close() };
+	const dataDir = mkdtempSync(join(tmpdir(), 'perseus-repositories-db-'));
+	const context = createBunDbContext(dataDir);
+	return {
+		...context,
+		close() {
+			context.close();
+			rmSync(dataDir, { recursive: true, force: true });
+		}
+	};
 }
 
 describe('repositories', () => {
@@ -38,6 +41,10 @@ describe('repositories', () => {
 
 	beforeEach(() => {
 		helper = makeDb();
+	});
+
+	afterEach(() => {
+		helper.close();
 	});
 
 	it('getProfileOverride returns null when absent', async () => {
@@ -365,11 +372,11 @@ describe('repositories', () => {
 		// the count increments and best time tracks the MIN across all of them.
 		vi.useFakeTimers();
 		try {
-			await recordLegacyCompletion(helper.db, 'p1', 'pz1', 100);
+			await recordLegacyCompletion(helper.completionWrites, 'p1', 'pz1', 100);
 			vi.advanceTimersByTime(31_000);
-			await recordLegacyCompletion(helper.db, 'p1', 'pz1', 80);
+			await recordLegacyCompletion(helper.completionWrites, 'p1', 'pz1', 80);
 			vi.advanceTimersByTime(31_000);
-			await recordLegacyCompletion(helper.db, 'p1', 'pz1', 120);
+			await recordLegacyCompletion(helper.completionWrites, 'p1', 'pz1', 120);
 			const stats = await listPlayerStats(helper.db, 'p1', { limit: 10 });
 			expect(stats.rows).toHaveLength(1);
 			expect(stats.rows[0].bestTimeSeconds).toBe(80); // MIN of 100, 80, 120
@@ -385,10 +392,10 @@ describe('repositories', () => {
 		// considered for the best-time MIN.
 		vi.useFakeTimers();
 		try {
-			await recordLegacyCompletion(helper.db, 'p1', 'pz1', 100);
+			await recordLegacyCompletion(helper.completionWrites, 'p1', 'pz1', 100);
 			// No time advanced — these are immediate retries.
-			await recordLegacyCompletion(helper.db, 'p1', 'pz1', 80);
-			await recordLegacyCompletion(helper.db, 'p1', 'pz1', 120);
+			await recordLegacyCompletion(helper.completionWrites, 'p1', 'pz1', 80);
+			await recordLegacyCompletion(helper.completionWrites, 'p1', 'pz1', 120);
 			const stats = await listPlayerStats(helper.db, 'p1', { limit: 10 });
 			expect(stats.rows).toHaveLength(1);
 			expect(stats.rows[0].bestTimeSeconds).toBe(80); // MIN still applied
@@ -396,6 +403,34 @@ describe('repositories', () => {
 		} finally {
 			vi.useRealTimers();
 		}
+	});
+
+	it('recordCompletion soft-fails under the Bun tombstone fence without mutating stats', async () => {
+		expect(await recordLegacyCompletion(helper.completionWrites, 'p1', 'pz1', 100)).toEqual({
+			status: 'recorded'
+		});
+		const original = await helper.db.select().from(schema.puzzleStats);
+		await helper.db
+			.insert(schema.puzzleDeletionTombstones)
+			.values({ puzzleId: 'pz1', deletedAt: Date.now() })
+			.run();
+
+		expect(await recordLegacyCompletion(helper.completionWrites, 'p1', 'pz1', 50)).toEqual({
+			status: 'tombstoned'
+		});
+		expect(await helper.db.select().from(schema.puzzleStats)).toEqual(original);
+	});
+
+	it('recordCompletion soft-fails a first Bun write under the tombstone fence', async () => {
+		await helper.db
+			.insert(schema.puzzleDeletionTombstones)
+			.values({ puzzleId: 'pz1', deletedAt: Date.now() })
+			.run();
+
+		expect(await recordLegacyCompletion(helper.completionWrites, 'p1', 'pz1', 100)).toEqual({
+			status: 'tombstoned'
+		});
+		expect(await helper.db.select().from(schema.puzzleStats)).toHaveLength(0);
 	});
 
 	it('getPlayerSummary aggregates counts', async () => {
@@ -407,8 +442,8 @@ describe('repositories', () => {
 			status: 'ready',
 			createdAt: 1
 		});
-		await recordLegacyCompletion(helper.db, 'p1', 'pz1', 50);
-		await recordLegacyCompletion(helper.db, 'p1', 'pzX', 50); // a puzzle not owned by p1
+		await recordLegacyCompletion(helper.completionWrites, 'p1', 'pz1', 50);
+		await recordLegacyCompletion(helper.completionWrites, 'p1', 'pzX', 50); // a puzzle not owned by p1
 		const summary = await getPlayerSummary(helper.db, 'p1');
 		expect(summary).toEqual({ puzzlesUploaded: 1, puzzlesSolved: 2, totalCompletions: 2 });
 	});
@@ -553,7 +588,7 @@ describe('repositories', () => {
 			status: 'ready',
 			createdAt: 1
 		});
-		await recordLegacyCompletion(helper.db, 'p1', 'adminPz', 42);
+		await recordLegacyCompletion(helper.completionWrites, 'p1', 'adminPz', 42);
 
 		const { rows } = await listPlayerStats(helper.db, 'p1', { limit: 10 });
 		expect(rows).toHaveLength(1);
@@ -597,9 +632,9 @@ describe('repositories', () => {
 	});
 
 	it('listPlayerStats accepts a legacy bare best-time cursor', async () => {
-		await recordLegacyCompletion(helper.db, 'p1', 'pz1', 10);
-		await recordLegacyCompletion(helper.db, 'p1', 'pz2', 20);
-		await recordLegacyCompletion(helper.db, 'p1', 'pz3', 30);
+		await recordLegacyCompletion(helper.completionWrites, 'p1', 'pz1', 10);
+		await recordLegacyCompletion(helper.completionWrites, 'p1', 'pz2', 20);
+		await recordLegacyCompletion(helper.completionWrites, 'p1', 'pz3', 30);
 		// Legacy bare cursors continue to mean strictly greater best time.
 		const result = await listPlayerStats(helper.db, 'p1', { limit: 10, cursor: '20' });
 		expect(result.rows).toHaveLength(1);
@@ -607,7 +642,7 @@ describe('repositories', () => {
 	});
 
 	it('listPlayerStats rejects a garbage cursor', async () => {
-		await recordLegacyCompletion(helper.db, 'p1', 'pz1', 10);
+		await recordLegacyCompletion(helper.completionWrites, 'p1', 'pz1', 10);
 		await expect(
 			listPlayerStats(helper.db, 'p1', { limit: 10, cursor: 'garbage' })
 		).rejects.toBeInstanceOf(InvalidPlayerStatsCursorError);
@@ -633,9 +668,9 @@ describe('repositories', () => {
 	});
 
 	it('listPlayerStats floors fractional limits to an integer', async () => {
-		await recordLegacyCompletion(helper.db, 'p1', 'pz1', 10);
-		await recordLegacyCompletion(helper.db, 'p1', 'pz2', 20);
-		await recordLegacyCompletion(helper.db, 'p1', 'pz3', 30);
+		await recordLegacyCompletion(helper.completionWrites, 'p1', 'pz1', 10);
+		await recordLegacyCompletion(helper.completionWrites, 'p1', 'pz2', 20);
+		await recordLegacyCompletion(helper.completionWrites, 'p1', 'pz3', 30);
 		const result = await listPlayerStats(helper.db, 'p1', { limit: 1.5 });
 		expect(result.rows).toHaveLength(1);
 		expect(result.nextCursor).toBeDefined();
@@ -647,6 +682,10 @@ describe('player stats', () => {
 
 	beforeEach(() => {
 		helper = makeDb();
+	});
+
+	afterEach(() => {
+		helper.close();
 	});
 
 	it('combines historical baselines and versioned ledger groups without double-counting', async () => {

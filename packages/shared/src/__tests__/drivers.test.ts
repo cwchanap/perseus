@@ -46,6 +46,8 @@ afterAll(async () => {
 beforeEach(async () => {
 	await d1.prepare('DELETE FROM puzzle_completion_runs').run();
 	await d1.prepare('DELETE FROM puzzle_stats').run();
+	await d1.prepare('DELETE FROM player_completion_usage').run();
+	await d1.prepare('DELETE FROM puzzle_deletion_tombstones').run();
 	bunDir = mkdtempSync(join(tmpdir(), 'perseus-bun-driver-'));
 	bunContext = createBunDbContext(bunDir);
 });
@@ -98,6 +100,7 @@ describe('createBunDbContext', () => {
 		const replay = await context.completionWrites.write(completion({ receivedAt: 9_000 }));
 
 		expect(first).toEqual({
+			status: 'stored',
 			stored: {
 				puzzleId: 'pz1',
 				resultClass: 'standard_timed',
@@ -108,6 +111,7 @@ describe('createBunDbContext', () => {
 			inserted: true
 		});
 		expect(replay).toEqual({
+			status: 'stored',
 			stored: {
 				puzzleId: 'pz1',
 				resultClass: 'standard_timed',
@@ -151,6 +155,7 @@ describe('createBunDbContext', () => {
 		);
 
 		expect(conflict).toEqual({
+			status: 'stored',
 			stored: {
 				puzzleId: 'pz1',
 				resultClass: 'standard_timed',
@@ -315,6 +320,13 @@ describe('createBunDbContext', () => {
 });
 
 describe('completion write driver parity', () => {
+	it.each([0, -1, 1.5, 100_001, Number.NaN])(
+		'rejects invalid D1 retained-run limit $limit',
+		(limit) => {
+			expect(() => createD1CompletionWriteExecutor(d1Db, limit)).toThrow(RangeError);
+		}
+	);
+
 	it.each([
 		{
 			name: 'first write and exact replay',

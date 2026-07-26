@@ -20,6 +20,7 @@ import { Hono } from 'hono';
 
 const completionWrites = vi.hoisted(() => ({
 	write: vi.fn(),
+	writeLegacy: vi.fn(),
 	deletePuzzleCompletionData: vi.fn()
 }));
 
@@ -55,7 +56,7 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 		})),
 		listPlayerPuzzles: vi.fn(async () => ({ rows: [], nextCursor: undefined })),
 		listPlayerStats: vi.fn(async () => ({ rows: [] })),
-		recordLegacyCompletion: vi.fn(async () => undefined),
+		recordLegacyCompletion: vi.fn(async () => ({ status: 'recorded' as const })),
 		recordVersionedCompletion: vi.fn(async () => ({
 			status: 'recorded' as const,
 			completedAt: 100
