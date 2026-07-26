@@ -1,13 +1,14 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { Miniflare } from 'miniflare';
-import { drizzle } from 'drizzle-orm/d1';
+import type { RecordPuzzleCompletionV1 } from '@perseus/types';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import * as schema from '../schema';
-import type { AppDb } from '../types';
+import { createD1CompletionWriteExecutor, createD1Db, type D1AppDb } from '../drivers/d1';
 import {
 	recordCompletion,
+	recordVersionedCompletion,
 	listPlayerStats,
 	insertPuzzleOwnership,
 	ensurePuzzleOwnership,
@@ -28,7 +29,7 @@ const migrationSql = readdirSync(migrationsDir)
 	.join('\n');
 
 let mf: Miniflare;
-let db: AppDb;
+let db: D1AppDb;
 let d1: D1Database;
 
 beforeAll(async () => {
@@ -45,7 +46,7 @@ beforeAll(async () => {
 		const trimmed = stmt.trim();
 		if (trimmed) await d1.prepare(trimmed).run();
 	}
-	db = drizzle(d1, { schema }) as unknown as AppDb;
+	db = createD1Db({ DB: d1 });
 }, 30_000);
 
 afterAll(async () => {
@@ -53,9 +54,244 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+	await d1.prepare('DELETE FROM puzzle_completion_runs').run();
 	await d1.prepare('DELETE FROM puzzle_stats').run();
 	await d1.prepare('DELETE FROM puzzles').run();
 	await d1.prepare('DELETE FROM player_profiles').run();
+});
+
+function completion(overrides: Partial<RecordPuzzleCompletionV1> = {}): RecordPuzzleCompletionV1 {
+	return {
+		version: 1,
+		runId: 'run-1',
+		resultClass: 'standard_timed',
+		timingQuality: 'known',
+		elapsedActiveSeconds: 100,
+		...overrides
+	};
+}
+
+describe('recordVersionedCompletion against real D1', () => {
+	it('records the first standard timed run in the ledger and creates a zero-baseline best', async () => {
+		const executor = createD1CompletionWriteExecutor(db);
+		const result = await recordVersionedCompletion(executor, 'p1', 'pz1', completion(), 1_000);
+
+		expect(result).toEqual({ status: 'recorded', completedAt: 1_000 });
+		expect(await db.select().from(schema.puzzleCompletionRuns)).toEqual([
+			{
+				playerId: 'p1',
+				runId: 'run-1',
+				puzzleId: 'pz1',
+				resultClass: 'standard_timed',
+				timingQuality: 'known',
+				elapsedActiveSeconds: 100,
+				completedAt: 1_000
+			}
+		]);
+		expect(await db.select().from(schema.puzzleStats)).toEqual([
+			{
+				playerId: 'p1',
+				puzzleId: 'pz1',
+				bestTimeSeconds: 100,
+				totalCompletions: 0,
+				firstCompletedAt: 1_000,
+				lastCompletedAt: 1_000
+			}
+		]);
+	});
+
+	it('replays exactly once and repairs a missing best from the original ledger timestamp', async () => {
+		const executor = createD1CompletionWriteExecutor(db);
+		await recordVersionedCompletion(executor, 'p1', 'pz1', completion(), 1_000);
+		await d1.prepare('DELETE FROM puzzle_stats').run();
+
+		const result = await recordVersionedCompletion(executor, 'p1', 'pz1', completion(), 9_000);
+
+		expect(result).toEqual({ status: 'replayed', completedAt: 1_000 });
+		expect(await db.select().from(schema.puzzleCompletionRuns)).toHaveLength(1);
+		expect(await db.select().from(schema.puzzleStats)).toEqual([
+			{
+				playerId: 'p1',
+				puzzleId: 'pz1',
+				bestTimeSeconds: 100,
+				totalCompletions: 0,
+				firstCompletedAt: 1_000,
+				lastCompletedAt: 1_000
+			}
+		]);
+	});
+
+	it.each([
+		{
+			name: 'puzzle',
+			puzzleId: 'pz-other',
+			request: completion()
+		},
+		{
+			name: 'result class',
+			puzzleId: 'pz1',
+			request: completion({ resultClass: 'rotation_timed' })
+		},
+		{
+			name: 'timing quality',
+			puzzleId: 'pz1',
+			request: completion({ timingQuality: 'legacy_unknown', elapsedActiveSeconds: null })
+		},
+		{
+			name: 'elapsed value',
+			puzzleId: 'pz1',
+			request: completion({ elapsedActiveSeconds: 101 })
+		}
+	])(
+		'rejects a replay with a different $name without changing stats',
+		async ({ puzzleId, request }) => {
+			const executor = createD1CompletionWriteExecutor(db);
+			await recordVersionedCompletion(executor, 'p1', 'pz1', completion(), 1_000);
+
+			const result = await recordVersionedCompletion(executor, 'p1', puzzleId, request, 2_000);
+
+			expect(result).toEqual({ status: 'conflict' });
+			expect(await db.select().from(schema.puzzleCompletionRuns)).toEqual([
+				{
+					playerId: 'p1',
+					runId: 'run-1',
+					puzzleId: 'pz1',
+					resultClass: 'standard_timed',
+					timingQuality: 'known',
+					elapsedActiveSeconds: 100,
+					completedAt: 1_000
+				}
+			]);
+			expect(await db.select().from(schema.puzzleStats)).toEqual([
+				{
+					playerId: 'p1',
+					puzzleId: 'pz1',
+					bestTimeSeconds: 100,
+					totalCompletions: 0,
+					firstCompletedAt: 1_000,
+					lastCompletedAt: 1_000
+				}
+			]);
+		}
+	);
+
+	it.each([
+		completion({
+			runId: 'rotation',
+			resultClass: 'rotation_timed',
+			elapsedActiveSeconds: 110
+		}),
+		completion({
+			runId: 'assisted',
+			resultClass: 'assisted_timed',
+			elapsedActiveSeconds: 120
+		}),
+		completion({
+			runId: 'relaxed',
+			resultClass: 'relaxed',
+			elapsedActiveSeconds: null
+		}),
+		completion({
+			runId: 'legacy',
+			timingQuality: 'legacy_unknown',
+			elapsedActiveSeconds: null
+		})
+	])('keeps non-canonical run $runId in the ledger only', async (request) => {
+		const executor = createD1CompletionWriteExecutor(db);
+
+		expect(await recordVersionedCompletion(executor, 'p1', 'pz1', request, 1_000)).toEqual({
+			status: 'recorded',
+			completedAt: 1_000
+		});
+		expect(await db.select().from(schema.puzzleCompletionRuns)).toHaveLength(1);
+		expect(await db.select().from(schema.puzzleStats)).toHaveLength(0);
+	});
+
+	it('records distinct run IDs independently while preserving the zero legacy baseline', async () => {
+		const executor = createD1CompletionWriteExecutor(db);
+
+		await recordVersionedCompletion(executor, 'p1', 'pz1', completion(), 1_000);
+		await recordVersionedCompletion(
+			executor,
+			'p1',
+			'pz1',
+			completion({ runId: 'run-2', elapsedActiveSeconds: 80 }),
+			2_000
+		);
+
+		expect(await db.select().from(schema.puzzleCompletionRuns)).toHaveLength(2);
+		expect(await db.select().from(schema.puzzleStats)).toEqual([
+			{
+				playerId: 'p1',
+				puzzleId: 'pz1',
+				bestTimeSeconds: 80,
+				totalCompletions: 0,
+				firstCompletedAt: 1_000,
+				lastCompletedAt: 1_000
+			}
+		]);
+	});
+
+	it('updates only the best time on a historical stats row', async () => {
+		await db.insert(schema.puzzleStats).values({
+			playerId: 'p1',
+			puzzleId: 'pz1',
+			bestTimeSeconds: 120,
+			totalCompletions: 7,
+			firstCompletedAt: 100,
+			lastCompletedAt: 900
+		});
+		const executor = createD1CompletionWriteExecutor(db);
+
+		await recordVersionedCompletion(executor, 'p1', 'pz1', completion(), 1_000);
+		await recordVersionedCompletion(
+			executor,
+			'p1',
+			'pz1',
+			completion({ runId: 'run-slower', elapsedActiveSeconds: 140 }),
+			2_000
+		);
+
+		expect(await db.select().from(schema.puzzleStats)).toEqual([
+			{
+				playerId: 'p1',
+				puzzleId: 'pz1',
+				bestTimeSeconds: 100,
+				totalCompletions: 7,
+				firstCompletedAt: 100,
+				lastCompletedAt: 900
+			}
+		]);
+	});
+
+	it('rolls back the ledger insert when the conditional best statement fails', async () => {
+		const executor = createD1CompletionWriteExecutor(db);
+		await d1
+			.prepare(
+				"CREATE TRIGGER fail_puzzle_stats_insert BEFORE INSERT ON puzzle_stats BEGIN SELECT RAISE(ABORT, 'forced best failure'); END"
+			)
+			.run();
+		try {
+			await expect(
+				recordVersionedCompletion(executor, 'p1', 'pz1', completion(), 1_000)
+			).rejects.toThrow();
+		} finally {
+			await d1.prepare('DROP TRIGGER fail_puzzle_stats_insert').run();
+		}
+
+		expect(await db.select().from(schema.puzzleCompletionRuns)).toHaveLength(0);
+		expect(await db.select().from(schema.puzzleStats)).toHaveLength(0);
+	});
+
+	it('deletes puzzle stats and ledger rows together through the executor', async () => {
+		const executor = createD1CompletionWriteExecutor(db);
+		await recordVersionedCompletion(executor, 'p1', 'pz1', completion(), 1_000);
+
+		await executor.deletePuzzleCompletionData('pz1');
+
+		expect(await db.select().from(schema.puzzleCompletionRuns)).toHaveLength(0);
+		expect(await db.select().from(schema.puzzleStats)).toHaveLength(0);
+	});
 });
 
 describe('recordCompletion against real D1', () => {
