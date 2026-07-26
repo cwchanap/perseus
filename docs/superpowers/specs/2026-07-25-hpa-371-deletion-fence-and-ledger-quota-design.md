@@ -54,22 +54,40 @@ CREATE TABLE puzzle_deletion_tombstones (
 	puzzle_id TEXT PRIMARY KEY NOT NULL,
 	deleted_at INTEGER NOT NULL
 );
+--> statement-breakpoint
 
 CREATE TABLE player_completion_usage (
 	player_id TEXT PRIMARY KEY NOT NULL,
 	retained_runs INTEGER NOT NULL
 		CHECK (retained_runs BETWEEN 0 AND 100000)
 );
+--> statement-breakpoint
 
 INSERT INTO player_completion_usage (player_id, retained_runs)
 SELECT player_id, COUNT(*)
 FROM puzzle_completion_runs
 GROUP BY player_id;
+--> statement-breakpoint
 ```
 
 `player_completion_usage.retained_runs` is constrained to the inclusive range `0..100_000`.
 Within the same migration file, migration `0004` creates both tables, backfills usage from
 `puzzle_completion_runs`, and only then creates the enforcement and maintenance triggers.
+
+The implementation updates the complete Drizzle migration artifact set:
+
+- `packages/shared/src/schema.ts` declares both tables and their constraints for typed reads;
+- `packages/shared/drizzle/0004_*.sql` contains the tables, backfill, and triggers;
+- `packages/shared/drizzle/meta/_journal.json` registers migration `0004`;
+- `packages/shared/drizzle/meta/0004_snapshot.json` records the generated schema state.
+
+Every top-level statement in `0004_*.sql` is separated by
+`--> statement-breakpoint`. Each compound `CREATE TRIGGER ... BEGIN ... END;` remains one
+statement, with the breakpoint after `END;` when another statement follows. This is mandatory
+because the Bun Drizzle migrator prepares and runs each breakpoint-delimited chunk, and
+`bun:sqlite` otherwise executes only the first statement in a multi-statement prepared string.
+Wrangler consumes the same migration file, so migration tests must prove Bun and D1 receive the
+same complete schema.
 
 The migration also installs database triggers with these responsibilities:
 
@@ -95,6 +113,7 @@ WHEN EXISTS (
 BEGIN
 	SELECT RAISE(ABORT, 'puzzle_deleted');
 END;
+--> statement-breakpoint
 
 CREATE TRIGGER guard_puzzles_not_tombstoned_update
 BEFORE UPDATE ON puzzles
@@ -106,6 +125,7 @@ WHEN EXISTS (
 BEGIN
 	SELECT RAISE(ABORT, 'puzzle_deleted');
 END;
+--> statement-breakpoint
 
 CREATE TRIGGER guard_puzzle_stats_not_tombstoned_insert
 BEFORE INSERT ON puzzle_stats
@@ -117,6 +137,7 @@ WHEN EXISTS (
 BEGIN
 	SELECT RAISE(ABORT, 'puzzle_deleted');
 END;
+--> statement-breakpoint
 
 CREATE TRIGGER guard_puzzle_stats_not_tombstoned_update
 BEFORE UPDATE ON puzzle_stats
@@ -128,6 +149,7 @@ WHEN EXISTS (
 BEGIN
 	SELECT RAISE(ABORT, 'puzzle_deleted');
 END;
+--> statement-breakpoint
 
 CREATE TRIGGER guard_puzzle_completion_runs_not_tombstoned_insert
 BEFORE INSERT ON puzzle_completion_runs
@@ -139,6 +161,7 @@ WHEN EXISTS (
 BEGIN
 	SELECT RAISE(ABORT, 'puzzle_deleted');
 END;
+--> statement-breakpoint
 
 CREATE TRIGGER guard_puzzle_completion_runs_not_tombstoned_update
 BEFORE UPDATE ON puzzle_completion_runs
@@ -150,6 +173,7 @@ WHEN EXISTS (
 BEGIN
 	SELECT RAISE(ABORT, 'puzzle_deleted');
 END;
+--> statement-breakpoint
 
 CREATE TRIGGER guard_puzzle_completion_run_quota
 BEFORE INSERT ON puzzle_completion_runs
@@ -170,6 +194,7 @@ AND COALESCE(
 BEGIN
 	SELECT RAISE(ABORT, 'completion_quota_exceeded');
 END;
+--> statement-breakpoint
 
 CREATE TRIGGER increment_player_completion_usage
 AFTER INSERT ON puzzle_completion_runs
@@ -179,6 +204,7 @@ BEGIN
 	ON CONFLICT (player_id) DO UPDATE
 	SET retained_runs = retained_runs + 1;
 END;
+--> statement-breakpoint
 
 CREATE TRIGGER decrement_player_completion_usage
 AFTER DELETE ON puzzle_completion_runs
@@ -217,33 +243,59 @@ responsibilities:
 - the D1 tombstone is the permanent write fence observed by completion, statistics, and
   ownership writes.
 
-Worker deletion uses this order:
+Each Worker path first completes its read-only eligibility and deferral gates. Workflow-status
+lookup failures, alive workflows, unknown statuses, non-orphan reservation owners, and other
+existing skip outcomes return without creating a new cleanup record or D1 tombstone. In
+particular, the cleanup-record reaper must not permanently fence a ready puzzle merely because
+its workflow status cannot yet be confirmed.
 
-1. **Persist retry discovery:** write the KV cleanup record before destructive work.
-2. **Begin deletion:** insert the D1 puzzle tombstone idempotently.
-3. **Clean source data:** terminate/tombstone workflow metadata as applicable, delete R2 assets,
-   and delete KV metadata using the existing safe ordering.
+Once a path has decided to perform destructive cleanup, it uses this order:
+
+1. **Persist retry discovery:** create or idempotently ensure the KV cleanup record.
+2. **Begin deletion:** insert the D1 puzzle tombstone idempotently, immediately before the first
+   destructive source mutation.
+3. **Clean source data:** tombstone workflow metadata first, then delete R2 assets and KV metadata
+   using the existing safe ordering.
 4. **Finish database cleanup:** require successful atomic removal of `puzzle_stats` and
    `puzzle_completion_runs`, then require successful separate ownership cleanup.
 5. **Finish retry state:** delete the KV cleanup record only after every required cleanup step
    succeeds.
 
-Stuck-processing, explicit-cleanup-record, orphan, and admin force-delete paths all converge on
-this sequence. Reaper discovery continues to scan KV cleanup records; it does not scan D1
-tombstones.
+Stuck-processing, explicit-cleanup-record, orphan, and admin force-delete paths converge on this
+commit sequence after their path-specific gates. Reaper discovery continues to scan KV cleanup
+records; it does not scan D1 tombstones. An admin force-delete request may persist its cleanup
+record before workflow termination because the authorized request already establishes deletion
+intent, but it still inserts the D1 tombstone only when it commits to destructive source cleanup.
 
-Stuck-processing and orphan discovery paths currently begin without a cleanup record. They must
-first create or idempotently ensure that record, before D1 tombstoning or any destructive source
-work. Failure to persist it aborts the attempt. The explicit-record and admin force-delete paths
-reuse their existing record.
+Stuck-processing and orphan discovery paths currently begin without a cleanup record. After
+they prove eligibility and confirm the workflow has stopped, they create or idempotently ensure
+the record before D1 tombstoning or source mutation. Failure to persist it aborts the attempt.
+The explicit-record and admin force-delete paths reuse their existing record.
+
+The record retains its current durable shape:
+
+```ts
+interface CleanupRecord {
+	puzzleId: string;
+	pieceCount: number;
+	idempotencyKey?: string;
+	createdAt: number;
+}
+```
+
+`puzzleId` is also the Cloudflare Workflow instance key, so paths whose instance was never
+created do not need a separate workflow ID; workflow-not-found remains a stopped/safe signal.
+Stuck paths copy `idempotencyKey` when metadata has one, orphan paths always include it, and the
+field remains optional for force-delete or no-key uploads.
 
 Completion-data and ownership cleanup are no longer best-effort prerequisites for cleanup-record
 deletion. If either D1 step fails, the caller retains both the KV cleanup record and permanent
 tombstone and reports/requeues a retriable cleanup failure. Existing tests that accept D1
 cleanup failure followed by cleanup-record deletion must be inverted.
 
-Bun has no KV cleanup-record dependency. It inserts the D1/SQLite tombstone first, then performs
-filesystem cleanup and database cleanup. Repeating the admin operation resumes cleanup.
+Bun has no KV cleanup-record dependency. After its path-specific preconditions, it inserts the
+SQLite tombstone immediately before filesystem cleanup and then performs database cleanup.
+Repeating the admin operation resumes cleanup.
 
 If KV cleanup-record creation or begin-deletion tombstoning fails, destructive source deletion
 does not start. The Worker retains a successfully created KV record so the reaper can retry the
@@ -268,6 +320,32 @@ automatic tombstone pruning is allowed.
 
 Both concrete executors perform tombstone and quota decisions inside the same database
 transaction as completion writes.
+
+The executor contract expands so both currently shipping legacy writes and versioned writes
+return typed expected outcomes:
+
+```ts
+type VersionedCompletionWriteExecution =
+	| {
+			status: 'stored';
+			stored: StoredCompletionFacts;
+			inserted: boolean;
+	  }
+	| { status: 'tombstoned' }
+	| { status: 'quota_exceeded' };
+
+type LegacyCompletionWriteExecution = { status: 'recorded' } | { status: 'tombstoned' };
+
+interface CompletionWriteExecutor {
+	write(input: VersionedCompletionWrite): Promise<VersionedCompletionWriteExecution>;
+	writeLegacy(input: LegacyCompletionWrite): Promise<LegacyCompletionWriteExecution>;
+	deletePuzzleCompletionData(puzzleId: string): Promise<void>;
+}
+```
+
+`recordLegacyCompletion` delegates to `writeLegacy` instead of taking a bare `AppDb`. Expected
+tombstone and quota outcomes are values, not exceptions. Unexpected driver, trigger, or
+invariant failures still reject and map to structured 500.
 
 ### Enforcement model
 
@@ -316,11 +394,43 @@ AND (
 ON CONFLICT (player_id, run_id) DO NOTHING;
 ```
 
-The same D1 batch reads the input puzzle's tombstone, the stored run, and the player's usage.
-After the batch succeeds, a pure interpreter applies tombstone → replay/conflict → quota →
-recorded precedence using those reads and the insert's `meta.changes`. Expected 404/429 outcomes
-therefore soft-fail without invoking a trigger. A trigger abort rolls back the batch and maps to 500. Production binds the shared `100_000` constant; tests may inject a smaller executor limit
-without changing the migration's hard upper-bound trigger.
+The D1 versioned batch pins this statement order:
+
+1. conditional ledger insert;
+2. input-puzzle tombstone read;
+3. stored-run read, after the insert so a newly inserted row is visible;
+4. player usage read;
+5. canonical-best upsert.
+
+The canonical-best upsert's inner `SELECT` retains the existing exact-facts and eligibility
+predicates and adds the same fence:
+
+```sql
+AND NOT EXISTS (
+	SELECT 1
+	FROM puzzle_deletion_tombstones
+	WHERE puzzle_id = ?
+)
+```
+
+This predicate is required even though the ledger insert is conditional. During an exact replay
+in the begin-to-finish window, the old ledger row still exists and would otherwise drive
+`ON CONFLICT DO UPDATE` into the `puzzle_stats` tombstone trigger, rolling the batch back as a 500. A zero-row `INSERT ... SELECT` does not invoke that trigger, so the guarded batch can return
+the promised typed 404.
+
+After the batch succeeds, the pure interpreter applies:
+
+1. a tombstone row returns `tombstoned`, even when an old ledger row still exists;
+2. a stored row returns recorded, replay, or conflict using exact facts and the ledger insert's
+   `meta.changes`;
+3. no stored row plus usage at or above the effective limit returns `quota_exceeded`;
+4. no stored row with neither tombstone nor quota is an invariant violation and maps to
+   `internal_error`.
+
+A missing stored row is therefore expected only for a typed tombstone or quota rejection.
+Expected 404/429 outcomes soft-fail without invoking a trigger. A trigger abort rolls back the
+batch and maps to 500. Production binds the shared `100_000` constant; tests may inject a
+smaller executor limit without changing the migration's hard upper-bound trigger.
 
 The database triggers are defense in depth for future or out-of-band writers. A tombstone or
 quota trigger firing in the authoritative executor path indicates that its transactional
@@ -348,9 +458,12 @@ The result precedence is:
 3. quota rejection for a new run;
 4. recorded completion.
 
-For a legacy request, the executor checks the same tombstone inside the transaction before
-updating the historical `puzzle_stats` baseline. Legacy writes retain their current flooring,
-best-time, count, and timestamp semantics.
+For a legacy request, Bun checks the tombstone in the same `BEGIN IMMEDIATE` transaction before
+updating the historical `puzzle_stats` baseline. D1 uses one batch containing a conditional
+baseline `INSERT ... SELECT ... WHERE NOT EXISTS (tombstone)` followed by a tombstone read. A
+present tombstone returns the typed legacy `tombstoned` result; a zero-row upsert without a
+tombstone is an invariant failure. Legacy writes retain their current flooring, best-time,
+count, timestamp, and rapid-retry deduplication semantics.
 
 Database triggers provide defense in depth for any ownership or statistics caller outside the
 primary executor path. Database-specific trigger strings are not exposed through route
@@ -390,6 +503,41 @@ GROUP BY player_id;
 The procedure aborts without changing counters when an actual count exceeds `100_000`; it does
 not silently prune indefinitely idempotent run IDs.
 
+The `CHECK` constraint prevents a normal write from persisting a usage value above `100_000`.
+An out-of-range value therefore indicates a failed migration, disabled constraints, or database
+corruption and maps to `internal_error`; it is not an expected quota outcome. A valid
+at-limit value continues to soft-fail as typed HTTP 429.
+
+### Capacity envelope and accepted risk
+
+Cloudflare currently limits one D1 database to
+[10 GB on Workers Paid and 500 MB on Free](https://developers.cloudflare.com/d1/platform/limits/).
+A local `bun:sqlite` sizing probe using UUID-shaped IDs and the current ledger indexes measured
+approximately:
+
+- 38.2 MiB for `100_000` completion-ledger rows belonging to one player;
+- 9.8 MiB for `100_000` puzzle tombstones.
+
+These are order-of-magnitude SQLite measurements, not guaranteed D1 billing or storage
+predictions. They show that the previously assumed 10 MiB per maxed player is too low: a 10 GB
+database holds only roughly 250 such players before accounting for every other table, index, and
+SQLite overhead. Typical players are expected to remain far below the cap, but the fixed
+`100_000` limit is an abuse ceiling, not a statement that many fully maxed players fit in one
+database.
+
+The tombstone table grows once per deleted puzzle and is intentionally permanent to enforce
+no-reuse. Puzzle creation requires authentication and invokes upload, R2, and workflow work;
+deletion is performed by authorized admin or evidence-based reaper paths. Those costs lower the
+growth velocity relative to a cheap completion POST, but there is no durable application-level
+puzzle create/delete quota, so lifetime tombstone growth remains unbounded.
+
+HPA-371 accepts both the global cross-account ledger risk and permanent tombstone growth rather
+than weakening idempotency or the deletion fence. The operator runbook adds D1
+`databaseSizeBytes`, ledger-row, and tombstone-row monitoring plus an escalation procedure before
+the database approaches its plan limit. A future capacity ticket may lower the per-player limit,
+add puzzle-creation budgets, or shard data; it must not prune tombstones unless another permanent
+mechanism preserves the deleted-ID no-reuse invariant.
+
 ## API and Runtime Contexts
 
 The shared completion response contract adds:
@@ -415,21 +563,25 @@ Shared result mapping returns:
 - changed-facts reuse: 409 `run_id_conflict`;
 - unexpected context/executor/database failure: structured 500 `internal_error`.
 
-Both route shells acquire only the runtime database context needed by the parsed request kind,
-and do so inside the structured internal-error boundary. Auth, puzzle-readiness checks, and
-runtime-specific metadata lookup remain outside that write boundary and retain their current
-status mapping.
+Each route shell calls its context getter exactly once inside the structured internal-error
+boundary: `getDbContext()` for Bun or `getWorkerDbContext(env)` for Worker. Both accessors already
+construct the same cached `{ db, completionWrites }` pair used by both request kinds; splitting
+`getDb()` and `getDbContext()` by parsed kind would not avoid initialization or change failure
+behavior. Auth, puzzle-readiness checks, and runtime-specific metadata lookup remain outside the
+write boundary and retain their current status mapping.
 
-Concretely, the legacy branch calls `getDb()` and the versioned branch calls `getDbContext()`
-inside the same `try/catch` that maps failures through `completionInternalErrorResponse`. The
-Worker branch does the equivalent with `getWorkerDb()` or `getWorkerDbContext()`. A request must
-not initialize the context used only by the other request kind.
-
-The best-effort ownership backfill remains, but a tombstone trigger makes it unable to recreate
-ownership. The authoritative completion result still determines the route response.
+Inside the boundary, the route passes `completionWrites` to either the legacy or versioned
+repository operation and maps the typed result. It performs the best-effort ownership backfill
+with the same context only after the completion decision is known not to be tombstoned. This
+avoids predictable `puzzles` trigger errors and log noise for every request against a fenced
+puzzle. A deletion racing after a successful completion decision can still make the later
+backfill fail; that failure remains logged and non-authoritative, while the tombstone trigger
+prevents ownership resurrection.
 
 ## Failure and Retry Semantics
 
+- A read-only eligibility or workflow deferral before begin deletion leaves the puzzle unfenced
+  and writable; no destructive mutation has started.
 - Tombstone insertion failure aborts deletion before destructive source mutation; a previously
   written KV cleanup record is retained for retry.
 - A failure after tombstone insertion does not reactivate the puzzle or remove the fence.
@@ -452,6 +604,11 @@ ownership. The authoritative completion result still determines the route respon
 ### Schema and migration
 
 - migration `0004` applies after `0000` through `0003`;
+- `schema.ts`, `0004_*.sql`, `_journal.json`, and `0004_snapshot.json` describe the same tables
+  and constraints;
+- every top-level SQL statement is breakpoint-delimited, with each compound trigger kept intact;
+- the production Bun migrator and Wrangler/D1 test harness both apply every table, backfill, and
+  trigger rather than silently stopping after the first statement;
 - existing ledger rows backfill exact per-player usage;
 - usage backfill precedes trigger creation in the same migration file;
 - tombstone and usage constraints reject invalid data;
@@ -463,6 +620,11 @@ ownership. The authoritative completion result still determines the route respon
 Run the same cases against real Bun SQLite and real D1:
 
 - tombstoned legacy and versioned writes are rejected without mutation;
+- D1 exact replay during the fence window skips the canonical-best upsert and returns typed
+  tombstoned instead of rolling back as 500;
+- the D1 statement order makes a newly inserted run visible to its stored-row read;
+- no stored row maps only to tombstone or quota when the companion reads prove that outcome, and
+  otherwise maps to an invariant error;
 - a completion paused after readiness cannot write after begin deletion;
 - writes serialized before begin deletion are removed by finish deletion;
 - ownership, baseline, ledger, and usage rows cannot be recreated after deletion;
@@ -486,11 +648,18 @@ small-threshold trigger and matching rows. They do not insert `100_000` rows in 
 ### Routes and callers
 
 - Bun and Worker context initialization failures return structured 500;
+- each route initializes one shared context inside the structured error boundary;
 - tombstoned requests return structured 404 in both runtimes;
+- the currently shipping legacy request path returns typed 404 rather than relying on a trigger
+  abort;
 - quota rejection returns structured 429 in both runtimes;
 - auth, readiness, legacy compatibility, replay, and conflict behavior remain unchanged;
 - admin and all reaper paths begin the fence before source deletion;
-- stuck-processing and orphan paths ensure a cleanup record before beginning deletion;
+- cleanup-record workflow-status failure, alive, and unknown skip gates do not create a D1
+  tombstone;
+- stuck-processing and orphan paths complete eligibility and liveness gates, then ensure a
+  cleanup record immediately before beginning deletion;
+- workflow-not-found uses `puzzleId` as the instance key and needs no extra cleanup-record field;
 - a fence failure prevents source deletion;
 - post-fence source failures retain retryable deletion state;
 - completion-data or ownership cleanup failure retains the cleanup record and tombstone;
@@ -498,6 +667,7 @@ small-threshold trigger and matching rows. They do not insert `100_000` rows in 
 - Worker paths retain both the KV cleanup record and D1 tombstone until cleanup succeeds;
 - creation rejects a tombstoned ID before source publication;
 - exact replay of a tombstoned puzzle returns terminal 404;
+- tombstoned completion does not attempt the best-effort ownership backfill;
 - the shared response union includes terminal `completion_quota_exceeded`;
 - runtime drift tests pin the same result mapping.
 
@@ -510,7 +680,7 @@ Reapply local migrations and rerun:
 - production build;
 - `git diff --check`;
 - additive-migration/deploy-order audit;
-- operator-runbook reconciliation procedure validation;
+- operator-runbook reconciliation and D1-capacity monitoring procedure validation;
 - authenticated legacy/v1/replay/conflict smoke;
 - a tombstone race smoke and a quota-boundary repository smoke.
 
@@ -522,8 +692,9 @@ documented first-deploy gap remains unchanged: a brand-new stack must receive al
 before DB-backed routes are considered available.
 
 During a mixed-version deployment window, an old Worker that writes after migration `0004` may
-hit a tombstone trigger and return its existing structured generic 500 rather than the new typed 404. The fence still prevents mutation. This brief status-parity gap is accepted until the new
-Worker version has replaced old instances.
+hit a tombstone or quota trigger and return its existing structured generic 500 rather than the
+new typed 404 or 429. The fence and quota still prevent mutation. This brief status-parity gap is
+accepted until the new Worker version has replaced old instances.
 
 No production data exists for HPA-371 yet, so the migration backfill is principally a safety
 property for local/pre-production databases and future cherry-pick ordering.

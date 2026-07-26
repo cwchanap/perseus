@@ -598,6 +598,9 @@ failures return a structured HTTP 500 `internal_error`; transport failure remain
 `network_error`. Both Bun and Worker routes use one shared validator, repository input/result
 contract, and pure result interpreter. Their runtime shells supply auth, puzzle lookup, and a
 driver-specific `CompletionWriteExecutor`, not only the erased cross-runtime `AppDb` handle.
+That executor owns both legacy and versioned completion writes so each runtime can make the
+tombstone decision atomically with its statistics mutation and return expected tombstone/quota
+outcomes as typed values rather than database exceptions.
 
 The client classifies `completion_quota_exceeded` as terminal and non-retryable. A `not_found`
 response after puzzle deletion, including an exact run replay, is also terminal and
@@ -626,7 +629,9 @@ For deployment compatibility, the endpoint also accepts the existing `{ timeSeco
 request. It records that request through the legacy standard-timed path, including the
 existing rapid-retry deduplication. This supports already-loaded clients while the new web
 bundle rolls out. Legacy requests continue incrementing the historical baseline field;
-versioned requests use the run ledger and never increment that baseline.
+versioned requests use the run ledger and never increment that baseline. The legacy repository
+operation delegates to `CompletionWriteExecutor.writeLegacy`; a puzzle tombstoned after the
+route's readiness check returns the same structured terminal 404 as a versioned request.
 
 A versioned completion followed by a stale tab's legacy request can count the same solve once
 in the ledger and once in the historical baseline. The legacy path retains its existing
@@ -661,6 +666,11 @@ totals are calculated as the historical baseline plus ledgered runs. Eligible st
 also upsert the canonical best using minimum-time semantics; that upsert is safe to repeat
 independently of whether the ledger insert was new. Versioned runs do not increment the
 historical baseline field.
+
+The corrective migration updates `schema.ts`, the `0004` SQL, Drizzle's migration journal, and
+the `0004` snapshot together. Every top-level SQL statement is separated with Drizzle's
+statement-breakpoint marker so the Bun migrator and Wrangler/D1 apply the same complete tables,
+backfill, and compound triggers.
 
 The ledger key is `(player_id, run_id)`. Puzzle ID is deliberately not part of that key, so a
 run cannot be retargeted to another puzzle.
@@ -872,6 +882,11 @@ Cover:
 - conflicting payload reuse of one run ID being rejected without stats mutation;
 - D1-batch/Bun-transaction executor parity and atomic rollback when any ledger/best statement
   fails;
+- D1 statement ordering, typed no-row tombstone/quota interpretation, and tombstone-guarded
+  canonical-best replay;
+- typed legacy tombstone rejection without baseline mutation;
+- Bun/Drizzle and Wrangler/D1 migration parity, including all `0004` metadata artifacts and
+  statement breakpoints;
 - required ledger indexes in the generated migration;
 - repeated eligible-best upsert safety;
 - `standard_timed` plus `legacy_unknown` remaining ledger-only;
