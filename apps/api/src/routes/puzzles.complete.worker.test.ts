@@ -48,6 +48,7 @@ vi.mock('../services/player-auth.worker', () => ({
 }));
 
 import complete from '../routes/puzzles.complete.worker';
+import * as dbModule from '../db.worker';
 import * as playerAuth from '../services/player-auth.worker';
 import * as storage from '../services/storage.worker';
 import {
@@ -242,6 +243,13 @@ function jsonHeaders() {
 
 describe('POST /api/puzzles/:id/complete (Worker)', () => {
 	beforeEach(() => {
+		vi.mocked(dbModule.getWorkerDb).mockReset();
+		vi.mocked(dbModule.getWorkerDb).mockReturnValue(legacyDb as never);
+		vi.mocked(dbModule.getWorkerDbContext).mockReset();
+		vi.mocked(dbModule.getWorkerDbContext).mockReturnValue({
+			db: legacyDb,
+			completionWrites
+		} as never);
 		vi.mocked(playerAuth.getPlayerSession).mockResolvedValue(TEST_PLAYER);
 		vi.mocked(storage.getPuzzle).mockResolvedValue({
 			id: PUZZLE_ID,
@@ -295,9 +303,10 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 
 		expect(res.status).toBe(404);
 		expect(await res.json()).toEqual({ error: 'not_found', message: 'Puzzle not found' });
+		expect(ensurePuzzleOwnership).not.toHaveBeenCalled();
 	});
 
-	it('backfills a system-owned puzzle row before recording the completion', async () => {
+	it('backfills a system-owned puzzle row after recording the completion', async () => {
 		const res = await buildApp().request(
 			`/api/puzzles/${PUZZLE_ID}/complete`,
 			{
@@ -318,11 +327,12 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 			status: 'ready',
 			createdAt: 100
 		});
-		// Backfill must happen before the stat write so a missing row never
-		// coexists with a recorded completion.
+		// The completion decision comes first so tombstoned outcomes cannot
+		// recreate ownership while a deletion is in flight.
 		const backfillOrder = vi.mocked(ensurePuzzleOwnership).mock.invocationCallOrder[0];
 		const recordOrder = vi.mocked(recordLegacyCompletion).mock.invocationCallOrder[0];
-		expect(backfillOrder).toBeLessThan(recordOrder);
+		expect(backfillOrder).toBeGreaterThan(recordOrder);
+		expect(dbModule.getWorkerDbContext).toHaveBeenCalledOnce();
 	});
 
 	it('still records the completion when the ownership backfill fails (best-effort)', async () => {
@@ -607,6 +617,7 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 
 		expect(res.status).toBe(200);
 		expect(await res.json()).toEqual({ ok: true });
+		expect(ensurePuzzleOwnership).toHaveBeenCalledOnce();
 	});
 
 	it('returns structured 409 for a versioned run ID conflict', async () => {
@@ -623,7 +634,79 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 
 		expect(res.status).toBe(409);
 		expect(await res.json()).toMatchObject({ error: 'run_id_conflict' });
+		expect(ensurePuzzleOwnership).toHaveBeenCalledOnce();
 	});
+
+	it('returns structured 429 for a new versioned run at quota', async () => {
+		vi.mocked(recordVersionedCompletion).mockResolvedValueOnce({ status: 'quota_exceeded' });
+		const res = await buildApp().request(
+			`/api/puzzles/${PUZZLE_ID}/complete`,
+			{
+				method: 'POST',
+				headers: jsonHeaders(),
+				body: JSON.stringify(VERSIONED_CASES[0].request)
+			},
+			DUMMY_ENV
+		);
+
+		expect(res.status).toBe(429);
+		expect(await res.json()).toEqual({
+			error: 'completion_quota_exceeded',
+			message: 'Completion history limit reached'
+		});
+		expect(ensurePuzzleOwnership).toHaveBeenCalledOnce();
+	});
+
+	it('returns structured 404 for a versioned replay fenced by a tombstone', async () => {
+		vi.mocked(recordVersionedCompletion).mockResolvedValueOnce({ status: 'tombstoned' });
+		const res = await buildApp().request(
+			`/api/puzzles/${PUZZLE_ID}/complete`,
+			{
+				method: 'POST',
+				headers: jsonHeaders(),
+				body: JSON.stringify(VERSIONED_CASES[0].request)
+			},
+			DUMMY_ENV
+		);
+
+		expect(res.status).toBe(404);
+		expect(await res.json()).toEqual({ error: 'not_found', message: 'Puzzle not found' });
+		expect(ensurePuzzleOwnership).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		{ name: 'legacy', body: { timeSeconds: 90 } },
+		{ name: 'versioned', body: VERSIONED_CASES[0].request }
+	])(
+		'returns structured 500 when Worker context acquisition fails for $name input',
+		async ({ body }) => {
+			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			vi.mocked(dbModule.getWorkerDbContext).mockImplementationOnce(() => {
+				throw new Error('context unavailable');
+			});
+
+			const res = await buildApp().request(
+				`/api/puzzles/${PUZZLE_ID}/complete`,
+				{
+					method: 'POST',
+					headers: jsonHeaders(),
+					body: JSON.stringify(body)
+				},
+				DUMMY_ENV
+			);
+
+			expect(res.status).toBe(500);
+			expect(await res.json()).toEqual({
+				error: 'internal_error',
+				message: 'Failed to record completion'
+			});
+			expect(dbModule.getWorkerDb).not.toHaveBeenCalled();
+			expect(recordLegacyCompletion).not.toHaveBeenCalled();
+			expect(recordVersionedCompletion).not.toHaveBeenCalled();
+			expect(ensurePuzzleOwnership).not.toHaveBeenCalled();
+			consoleSpy.mockRestore();
+		}
+	);
 
 	it.each(MALFORMED_VERSIONED_CASES)(
 		'rejects malformed versioned request: $name',

@@ -6,15 +6,22 @@ import { mkdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as schema from '../schema';
-import { puzzleCompletionRuns, puzzleDeletionTombstones, puzzleStats } from '../schema';
+import {
+	playerCompletionUsage,
+	puzzleCompletionRuns,
+	puzzleDeletionTombstones,
+	puzzleStats
+} from '../schema';
 import {
 	completionFactsMatch,
 	isCanonicalBest,
+	MAX_RETAINED_COMPLETION_RUNS,
 	type CompletionWriteExecutor,
 	type LegacyCompletionWrite,
 	type LegacyCompletionWriteExecution,
 	type StoredCompletionFacts,
-	type VersionedCompletionWrite
+	type VersionedCompletionWrite,
+	type VersionedCompletionWriteExecution
 } from '../completion-writes';
 import type { AppDb } from '../types';
 
@@ -26,7 +33,20 @@ export interface BunDbContext {
 
 const COMPLETION_DEDUPE_WINDOW_MS = 30_000;
 
-export function createBunDbContext(dataDir: string): BunDbContext {
+export function createBunDbContext(
+	dataDir: string,
+	retainedRunLimit = MAX_RETAINED_COMPLETION_RUNS
+): BunDbContext {
+	if (
+		!Number.isInteger(retainedRunLimit) ||
+		retainedRunLimit <= 0 ||
+		retainedRunLimit > MAX_RETAINED_COMPLETION_RUNS
+	) {
+		throw new RangeError(
+			`retainedRunLimit must be a positive integer no greater than ${MAX_RETAINED_COMPLETION_RUNS}`
+		);
+	}
+
 	mkdirSync(dataDir, { recursive: true });
 	const sqlite = new Database(join(dataDir, 'perseus.db'));
 	const db = drizzle(sqlite, { schema });
@@ -41,24 +61,15 @@ export function createBunDbContext(dataDir: string): BunDbContext {
 	const migrationsFolder = existsSync(bundledMigrations) ? bundledMigrations : sourceMigrations;
 	migrate(db, { migrationsFolder });
 
-	const writeCompletion = sqlite.transaction((input: VersionedCompletionWrite) => {
-		const inserted = db
-			.insert(puzzleCompletionRuns)
-			.values({
-				playerId: input.playerId,
-				runId: input.runId,
-				puzzleId: input.puzzleId,
-				resultClass: input.resultClass,
-				timingQuality: input.timingQuality,
-				elapsedActiveSeconds: input.elapsedActiveSeconds,
-				completedAt: input.receivedAt
-			})
-			.onConflictDoNothing({
-				target: [puzzleCompletionRuns.playerId, puzzleCompletionRuns.runId]
-			})
-			.returning({ runId: puzzleCompletionRuns.runId })
+	const writeVersioned = (input: VersionedCompletionWrite): VersionedCompletionWriteExecution => {
+		const tombstone = db
+			.select({ puzzleId: puzzleDeletionTombstones.puzzleId })
+			.from(puzzleDeletionTombstones)
+			.where(eq(puzzleDeletionTombstones.puzzleId, input.puzzleId))
 			.get();
-		const row = db
+		if (tombstone) return { status: 'tombstoned' };
+
+		let row = db
 			.select({
 				puzzleId: puzzleCompletionRuns.puzzleId,
 				resultClass: puzzleCompletionRuns.resultClass,
@@ -74,8 +85,44 @@ export function createBunDbContext(dataDir: string): BunDbContext {
 				)
 			)
 			.get();
+		let inserted = false;
 		if (!row) {
-			throw new Error('Completion ledger write did not return a stored row');
+			const usage = db
+				.select({ retainedRuns: playerCompletionUsage.retainedRuns })
+				.from(playerCompletionUsage)
+				.where(eq(playerCompletionUsage.playerId, input.playerId))
+				.get();
+			if ((usage?.retainedRuns ?? 0) >= retainedRunLimit) {
+				return { status: 'quota_exceeded' };
+			}
+
+			const insertedRow = db
+				.insert(puzzleCompletionRuns)
+				.values({
+					playerId: input.playerId,
+					runId: input.runId,
+					puzzleId: input.puzzleId,
+					resultClass: input.resultClass,
+					timingQuality: input.timingQuality,
+					elapsedActiveSeconds: input.elapsedActiveSeconds,
+					completedAt: input.receivedAt
+				})
+				.onConflictDoNothing({
+					target: [puzzleCompletionRuns.playerId, puzzleCompletionRuns.runId]
+				})
+				.returning({
+					puzzleId: puzzleCompletionRuns.puzzleId,
+					resultClass: puzzleCompletionRuns.resultClass,
+					timingQuality: puzzleCompletionRuns.timingQuality,
+					elapsedActiveSeconds: puzzleCompletionRuns.elapsedActiveSeconds,
+					completedAt: puzzleCompletionRuns.completedAt
+				})
+				.get();
+			if (!insertedRow) {
+				throw new Error('Completion ledger write did not return a stored row');
+			}
+			row = insertedRow;
+			inserted = true;
 		}
 		const stored: StoredCompletionFacts = {
 			puzzleId: row.puzzleId,
@@ -84,14 +131,16 @@ export function createBunDbContext(dataDir: string): BunDbContext {
 			elapsedActiveSeconds: row.elapsedActiveSeconds,
 			completedAt: row.completedAt
 		};
-		const bestTimeSeconds = input.elapsedActiveSeconds;
-
-		if (completionFactsMatch(input, stored) && isCanonicalBest(input) && bestTimeSeconds !== null) {
+		if (
+			completionFactsMatch(input, stored) &&
+			isCanonicalBest(input) &&
+			stored.elapsedActiveSeconds !== null
+		) {
 			db.insert(puzzleStats)
 				.values({
 					playerId: input.playerId,
 					puzzleId: stored.puzzleId,
-					bestTimeSeconds,
+					bestTimeSeconds: stored.elapsedActiveSeconds,
 					totalCompletions: 0,
 					firstCompletedAt: stored.completedAt,
 					lastCompletedAt: stored.completedAt
@@ -108,53 +157,53 @@ export function createBunDbContext(dataDir: string): BunDbContext {
 		return {
 			status: 'stored' as const,
 			stored,
-			inserted: inserted !== undefined
+			inserted
 		};
-	});
-	const writeLegacyCompletion = sqlite.transaction(
-		(input: LegacyCompletionWrite): LegacyCompletionWriteExecution => {
-			const tombstone = db
-				.select({ puzzleId: puzzleDeletionTombstones.puzzleId })
-				.from(puzzleDeletionTombstones)
-				.where(eq(puzzleDeletionTombstones.puzzleId, input.puzzleId))
-				.get();
-			if (tombstone) return { status: 'tombstoned' };
+	};
+	const writeLegacy = (input: LegacyCompletionWrite): LegacyCompletionWriteExecution => {
+		const tombstone = db
+			.select({ puzzleId: puzzleDeletionTombstones.puzzleId })
+			.from(puzzleDeletionTombstones)
+			.where(eq(puzzleDeletionTombstones.puzzleId, input.puzzleId))
+			.get();
+		if (tombstone) return { status: 'tombstoned' };
 
-			const result = db
-				.insert(puzzleStats)
-				.values({
-					playerId: input.playerId,
-					puzzleId: input.puzzleId,
-					bestTimeSeconds: input.timeSeconds,
-					totalCompletions: 1,
-					firstCompletedAt: input.receivedAt,
-					lastCompletedAt: input.receivedAt
-				})
-				.onConflictDoUpdate({
-					target: [puzzleStats.playerId, puzzleStats.puzzleId],
-					set: {
-						bestTimeSeconds: sql`MIN(${puzzleStats.bestTimeSeconds}, excluded.best_time_seconds)`,
-						totalCompletions: sql`CASE WHEN excluded.last_completed_at - ${puzzleStats.lastCompletedAt} >= ${COMPLETION_DEDUPE_WINDOW_MS} THEN ${puzzleStats.totalCompletions} + 1 ELSE ${puzzleStats.totalCompletions} END`,
-						lastCompletedAt: sql`CASE WHEN excluded.last_completed_at - ${puzzleStats.lastCompletedAt} >= ${COMPLETION_DEDUPE_WINDOW_MS} THEN excluded.last_completed_at ELSE ${puzzleStats.lastCompletedAt} END`
-					}
-				})
-				.returning({ playerId: puzzleStats.playerId })
-				.get();
-			if (result) return { status: 'recorded' };
-			throw new Error('Legacy completion write changed no rows without tombstone');
-		}
-	);
+		const result = db
+			.insert(puzzleStats)
+			.values({
+				playerId: input.playerId,
+				puzzleId: input.puzzleId,
+				bestTimeSeconds: input.timeSeconds,
+				totalCompletions: 1,
+				firstCompletedAt: input.receivedAt,
+				lastCompletedAt: input.receivedAt
+			})
+			.onConflictDoUpdate({
+				target: [puzzleStats.playerId, puzzleStats.puzzleId],
+				set: {
+					bestTimeSeconds: sql`MIN(${puzzleStats.bestTimeSeconds}, excluded.best_time_seconds)`,
+					totalCompletions: sql`CASE WHEN excluded.last_completed_at - ${puzzleStats.lastCompletedAt} >= ${COMPLETION_DEDUPE_WINDOW_MS} THEN ${puzzleStats.totalCompletions} + 1 ELSE ${puzzleStats.totalCompletions} END`,
+					lastCompletedAt: sql`CASE WHEN excluded.last_completed_at - ${puzzleStats.lastCompletedAt} >= ${COMPLETION_DEDUPE_WINDOW_MS} THEN excluded.last_completed_at ELSE ${puzzleStats.lastCompletedAt} END`
+				}
+			})
+			.returning({ playerId: puzzleStats.playerId })
+			.get();
+		if (result) return { status: 'recorded' };
+		throw new Error('Legacy completion write changed no rows without tombstone');
+	};
+	const writeVersionedTransaction = sqlite.transaction(writeVersioned);
+	const writeLegacyTransaction = sqlite.transaction(writeLegacy);
 	const deletePuzzleCompletionData = sqlite.transaction((puzzleId: string) => {
 		db.delete(puzzleStats).where(eq(puzzleStats.puzzleId, puzzleId)).run();
 		db.delete(puzzleCompletionRuns).where(eq(puzzleCompletionRuns.puzzleId, puzzleId)).run();
 	});
 	const completionWrites: CompletionWriteExecutor = {
 		async write(input) {
-			return writeCompletion(input);
+			return writeVersionedTransaction.immediate(input);
 		},
 
 		async writeLegacy(input) {
-			return writeLegacyCompletion.immediate(input);
+			return writeLegacyTransaction.immediate(input);
 		},
 
 		async deletePuzzleCompletionData(puzzleId) {

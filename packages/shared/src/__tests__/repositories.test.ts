@@ -18,15 +18,16 @@ import {
 	setPuzzleStatus,
 	listPlayerPuzzles,
 	recordLegacyCompletion,
+	recordVersionedCompletion,
 	listPlayerStats,
 	getPlayerSummary,
 	InvalidPlayerStatsCursorError,
 	SYSTEM_OWNER_ID
 } from '../repositories';
 
-function makeDb() {
+function makeDb(retainedRunLimit?: number) {
 	const dataDir = mkdtempSync(join(tmpdir(), 'perseus-repositories-db-'));
-	const context = createBunDbContext(dataDir);
+	const context = createBunDbContext(dataDir, retainedRunLimit);
 	return {
 		...context,
 		close() {
@@ -431,6 +432,112 @@ describe('repositories', () => {
 			status: 'tombstoned'
 		});
 		expect(await helper.db.select().from(schema.puzzleStats)).toHaveLength(0);
+	});
+
+	it('enforces Bun versioned quota after existing-run lookup while preserving usage', async () => {
+		helper.close();
+		helper = makeDb(3);
+		const request = {
+			version: 1 as const,
+			runId: 'run-1',
+			resultClass: 'standard_timed' as const,
+			timingQuality: 'known' as const,
+			elapsedActiveSeconds: 99
+		};
+
+		for (let index = 1; index <= 3; index++) {
+			expect(
+				await recordVersionedCompletion(
+					helper.completionWrites,
+					'p1',
+					'pz1',
+					{
+						...request,
+						runId: `run-${index}`,
+						elapsedActiveSeconds: 100 - index
+					},
+					index * 1_000
+				)
+			).toEqual({ status: 'recorded', completedAt: index * 1_000 });
+		}
+
+		expect(
+			await recordVersionedCompletion(
+				helper.completionWrites,
+				'p1',
+				'pz1',
+				{ ...request, runId: 'run-4', elapsedActiveSeconds: 1 },
+				4_000
+			)
+		).toEqual({ status: 'quota_exceeded' });
+		expect(
+			await recordVersionedCompletion(
+				helper.completionWrites,
+				'p1',
+				'pz1',
+				{ ...request, runId: 'run-3', elapsedActiveSeconds: 97 },
+				9_000
+			)
+		).toEqual({ status: 'replayed', completedAt: 3_000 });
+		expect(
+			await recordVersionedCompletion(
+				helper.completionWrites,
+				'p1',
+				'pz1',
+				{ ...request, runId: 'run-3', elapsedActiveSeconds: 1 },
+				9_000
+			)
+		).toEqual({ status: 'conflict' });
+		expect(await helper.db.select().from(schema.puzzleCompletionRuns)).toHaveLength(3);
+		expect(await helper.db.select().from(schema.playerCompletionUsage)).toEqual([
+			{ playerId: 'p1', retainedRuns: 3 }
+		]);
+		expect((await helper.db.select().from(schema.puzzleStats))[0].bestTimeSeconds).toBe(97);
+	});
+
+	it('gives the Bun tombstone fence precedence over replay and quota outcomes', async () => {
+		helper.close();
+		helper = makeDb(3);
+		const request = {
+			version: 1 as const,
+			runId: 'run-1',
+			resultClass: 'standard_timed' as const,
+			timingQuality: 'known' as const,
+			elapsedActiveSeconds: 100
+		};
+
+		await recordVersionedCompletion(helper.completionWrites, 'p1', 'pz1', request, 1_000);
+		for (let index = 2; index <= 3; index++) {
+			await recordVersionedCompletion(
+				helper.completionWrites,
+				'p1',
+				'pz2',
+				{ ...request, runId: `run-${index}` },
+				index * 1_000
+			);
+		}
+		const originalStats = await helper.db.select().from(schema.puzzleStats);
+		await helper.db
+			.insert(schema.puzzleDeletionTombstones)
+			.values({ puzzleId: 'pz1', deletedAt: 4_000 })
+			.run();
+
+		expect(
+			await recordVersionedCompletion(helper.completionWrites, 'p1', 'pz1', request, 9_000)
+		).toEqual({ status: 'tombstoned' });
+		expect(
+			await recordVersionedCompletion(
+				helper.completionWrites,
+				'p1',
+				'pz1',
+				{ ...request, runId: 'run-4' },
+				9_000
+			)
+		).toEqual({ status: 'tombstoned' });
+		expect(await helper.db.select().from(schema.puzzleStats)).toEqual(originalStats);
+		expect(await helper.db.select().from(schema.playerCompletionUsage)).toEqual([
+			{ playerId: 'p1', retainedRuns: 3 }
+		]);
 	});
 
 	it('getPlayerSummary aggregates counts', async () => {

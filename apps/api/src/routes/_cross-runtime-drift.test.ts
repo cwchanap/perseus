@@ -277,7 +277,8 @@ describe('cross-runtime drift: completion route (Bun ↔ Worker)', () => {
 			status: 'ready'
 		} as never);
 		vi.mocked(puzzleReady.isPuzzleReady).mockReturnValue(true);
-		vi.mocked(recordLegacyCompletion).mockClear();
+		vi.mocked(recordLegacyCompletion).mockReset();
+		vi.mocked(recordLegacyCompletion).mockResolvedValue({ status: 'recorded' });
 		vi.mocked(recordVersionedCompletion).mockReset();
 		vi.mocked(recordVersionedCompletion).mockResolvedValue({
 			status: 'recorded',
@@ -330,6 +331,33 @@ describe('cross-runtime drift: completion route (Bun ↔ Worker)', () => {
 		const conflictBodies = await Promise.all(conflictResponses.map((response) => response.json()));
 		expect(conflictBodies[0]).toEqual(conflictBodies[1]);
 		expect(conflictBodies[0]).toMatchObject({ error: 'run_id_conflict' });
+	});
+
+	it.each([
+		{
+			name: 'tombstone',
+			outcome: { status: 'tombstoned' as const },
+			status: 404,
+			body: { error: 'not_found', message: 'Puzzle not found' }
+		},
+		{
+			name: 'quota',
+			outcome: { status: 'quota_exceeded' as const },
+			status: 429,
+			body: {
+				error: 'completion_quota_exceeded',
+				message: 'Completion history limit reached'
+			}
+		}
+	])('keeps the versioned $name branch aligned', async ({ outcome, status, body }) => {
+		vi.mocked(recordVersionedCompletion)
+			.mockResolvedValueOnce(outcome)
+			.mockResolvedValueOnce(outcome);
+
+		const responses = await postCompletionToBoth(VERSIONED_REQUEST);
+
+		expect(responses.map((response) => response.status)).toEqual([status, status]);
+		expect(await Promise.all(responses.map((response) => response.json()))).toEqual([body, body]);
 	});
 
 	it('keeps structured repository failure responses aligned', async () => {
