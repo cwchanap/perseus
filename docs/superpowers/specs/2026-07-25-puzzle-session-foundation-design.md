@@ -6,6 +6,12 @@
 - **Date:** 2026-07-25
 - **Status:** Approved design
 
+> **HPA-371 corrective addendum:** The final whole-branch review found that completion writes
+> need a durable puzzle-deletion fence and bounded per-player ledger storage. The approved
+> correction is specified in
+> [`2026-07-25-hpa-371-deletion-fence-and-ledger-quota-design.md`](2026-07-25-hpa-371-deletion-fence-and-ledger-quota-design.md)
+> and supersedes this document where the two differ.
+
 ## Objective
 
 Extract the puzzle route's run state and transitions into one testable `PuzzleSession` domain
