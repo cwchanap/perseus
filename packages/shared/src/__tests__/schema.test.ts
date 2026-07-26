@@ -497,7 +497,9 @@ describe('schema tables', () => {
 					values.push(`('over','run-${i}','pz','standard_timed','known',1,${i})`);
 				}
 				sqlite.exec(
-					`INSERT INTO puzzle_completion_runs (player_id, run_id, puzzle_id, result_class, timing_quality, elapsed_active_seconds, completed_at) VALUES ${values.join(',')};`
+					`INSERT INTO puzzle_completion_runs ` +
+						`(player_id, run_id, puzzle_id, result_class, timing_quality, ` +
+						`elapsed_active_seconds, completed_at) VALUES ${values.join(',')};`
 				);
 			}
 			sqlite.exec('COMMIT');
