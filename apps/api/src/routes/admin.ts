@@ -608,6 +608,23 @@ admin.post('/puzzle-delete/:id', requireAuth, async (c) => {
 		console.error(`Failed to tombstone puzzle ${id} before filesystem cleanup:`, err);
 		return c.json({ error: 'internal_error', message: 'Failed to begin puzzle deletion' }, 500);
 	}
+
+	// Release the owner-checked reservation while metadata still carries its
+	// key. This is required before source deletion: if it fails, the puzzle
+	// remains on disk so a retry can read the key and retry the release. Once
+	// released, a later required-finish failure cannot strand the key.
+	if (puzzle?.idempotencyKey) {
+		try {
+			await releaseIdempotencyKey(puzzle.idempotencyKey, id);
+		} catch (err) {
+			console.error(`Failed to release idempotency reservation for puzzle ${id}:`, err);
+			return c.json(
+				{ error: 'internal_error', message: 'Failed to release idempotency reservation' },
+				500
+			);
+		}
+	}
+
 	const deleted = await deleteStoredPuzzle(id);
 
 	if (!deleted) {
@@ -619,19 +636,6 @@ admin.post('/puzzle-delete/:id', requireAuth, async (c) => {
 	} catch (err) {
 		console.error(`Failed to finish deletion for puzzle ${id}:`, err);
 		return c.json({ error: 'internal_error', message: 'Failed to finish puzzle deletion' }, 500);
-	}
-
-	// Best-effort release of the idempotency reservation so the key can be
-	// reused after deletion. Owner-checked: only deletes if the file content
-	// matches this puzzleId. Logged, not fatal — filesystem deletion above
-	// is the source of truth for puzzle existence. Skipped when metadata was
-	// corrupt (no idempotency key available).
-	if (puzzle?.idempotencyKey) {
-		try {
-			await releaseIdempotencyKey(puzzle.idempotencyKey, id);
-		} catch (err) {
-			console.error(`Failed to release idempotency reservation for puzzle ${id}:`, err);
-		}
 	}
 
 	// Ownership remains a separate best-effort cleanup operation. The

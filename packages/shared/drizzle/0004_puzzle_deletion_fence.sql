@@ -30,7 +30,7 @@ BEFORE UPDATE ON puzzles
 WHEN EXISTS (
 	SELECT 1
 	FROM puzzle_deletion_tombstones
-	WHERE puzzle_id = NEW.id
+	WHERE puzzle_id = OLD.id OR puzzle_id = NEW.id
 )
 BEGIN
 	SELECT RAISE(ABORT, 'puzzle_deleted');
@@ -52,7 +52,7 @@ BEFORE UPDATE ON puzzle_stats
 WHEN EXISTS (
 	SELECT 1
 	FROM puzzle_deletion_tombstones
-	WHERE puzzle_id = NEW.puzzle_id
+	WHERE puzzle_id = OLD.puzzle_id OR puzzle_id = NEW.puzzle_id
 )
 BEGIN
 	SELECT RAISE(ABORT, 'puzzle_deleted');
@@ -74,7 +74,7 @@ BEFORE UPDATE ON puzzle_completion_runs
 WHEN EXISTS (
 	SELECT 1
 	FROM puzzle_deletion_tombstones
-	WHERE puzzle_id = NEW.puzzle_id
+	WHERE puzzle_id = OLD.puzzle_id OR puzzle_id = NEW.puzzle_id
 )
 BEGIN
 	SELECT RAISE(ABORT, 'puzzle_deleted');

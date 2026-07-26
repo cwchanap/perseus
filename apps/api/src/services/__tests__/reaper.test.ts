@@ -15,7 +15,7 @@ const dbContextMock = vi.hoisted(() => ({
 	db: {},
 	completionWrites: {
 		write: vi.fn(),
-		deletePuzzleCompletionData: vi.fn(async () => undefined)
+		finishPuzzleDeletion: vi.fn(async () => undefined)
 	}
 }));
 
@@ -142,7 +142,7 @@ describe('reapStuckPuzzles', () => {
 		(storage.deletePuzzleMetadata as any).mockResolvedValue({ success: true });
 		(storage.deleteMetadataDO as any).mockResolvedValue(undefined);
 		(deletePuzzleOwnership as any).mockResolvedValue(undefined);
-		dbContextMock.completionWrites.deletePuzzleCompletionData.mockResolvedValue(undefined);
+		dbContextMock.completionWrites.finishPuzzleDeletion.mockResolvedValue(undefined);
 		(getWorkerDbContext as any).mockReturnValue(dbContextMock);
 	});
 
@@ -217,11 +217,9 @@ describe('reapStuckPuzzles', () => {
 		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'stuck-1');
 		expect(getWorkerDbContext).toHaveBeenCalledWith(env);
 		expect(deletePuzzleOwnership).toHaveBeenCalledWith(dbContextMock.db, 'stuck-1');
-		expect(dbContextMock.completionWrites.deletePuzzleCompletionData).toHaveBeenCalledWith(
-			'stuck-1'
-		);
+		expect(dbContextMock.completionWrites.finishPuzzleDeletion).toHaveBeenCalledWith('stuck-1');
 		expect((storage.deletePuzzleMetadata as any).mock.invocationCallOrder[0]).toBeLessThan(
-			dbContextMock.completionWrites.deletePuzzleCompletionData.mock.invocationCallOrder[0]
+			dbContextMock.completionWrites.finishPuzzleDeletion.mock.invocationCallOrder[0]
 		);
 		// Puzzles without an idempotencyKey must not trigger a DO release.
 		expect(storage.releaseIdempotencyKey).not.toHaveBeenCalled();
@@ -238,7 +236,7 @@ describe('reapStuckPuzzles', () => {
 			name: 'Puzzle stuck-1',
 			pieceCount: 100
 		});
-		dbContextMock.completionWrites.deletePuzzleCompletionData.mockRejectedValueOnce(
+		dbContextMock.completionWrites.finishPuzzleDeletion.mockRejectedValueOnce(
 			new Error('D1 completion cleanup failed')
 		);
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -252,7 +250,7 @@ describe('reapStuckPuzzles', () => {
 			expect.any(Error)
 		);
 		expect((storage.deletePuzzleMetadata as any).mock.invocationCallOrder[0]).toBeLessThan(
-			dbContextMock.completionWrites.deletePuzzleCompletionData.mock.invocationCallOrder[0]
+			dbContextMock.completionWrites.finishPuzzleDeletion.mock.invocationCallOrder[0]
 		);
 		consoleSpy.mockRestore();
 	});
@@ -767,7 +765,7 @@ describe('reapCleanupRecords', () => {
 		(storage.releaseIdempotencyKey as any).mockResolvedValue(undefined);
 		(storage.deleteMetadataDO as any).mockResolvedValue(undefined);
 		(deletePuzzleOwnership as any).mockResolvedValue(undefined);
-		dbContextMock.completionWrites.deletePuzzleCompletionData.mockResolvedValue(undefined);
+		dbContextMock.completionWrites.finishPuzzleDeletion.mockResolvedValue(undefined);
 		(getWorkerDbContext as any).mockReturnValue(dbContextMock);
 		(storage.listCleanupRecords as any).mockResolvedValue([]);
 	});
@@ -792,9 +790,9 @@ describe('reapCleanupRecords', () => {
 		expect(storage.deleteCleanupRecord).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'dup-1');
 		expect(getWorkerDbContext).toHaveBeenCalledWith(env);
 		expect(deletePuzzleOwnership).toHaveBeenCalledWith(dbContextMock.db, 'dup-1');
-		expect(dbContextMock.completionWrites.deletePuzzleCompletionData).toHaveBeenCalledWith('dup-1');
+		expect(dbContextMock.completionWrites.finishPuzzleDeletion).toHaveBeenCalledWith('dup-1');
 		expect((storage.deletePuzzleMetadata as any).mock.invocationCallOrder[0]).toBeLessThan(
-			dbContextMock.completionWrites.deletePuzzleCompletionData.mock.invocationCallOrder[0]
+			dbContextMock.completionWrites.finishPuzzleDeletion.mock.invocationCallOrder[0]
 		);
 	});
 
@@ -802,7 +800,7 @@ describe('reapCleanupRecords', () => {
 		(storage.listCleanupRecords as any).mockResolvedValue([
 			{ puzzleId: 'dup-1', pieceCount: 50, createdAt: NOW - 60000 }
 		]);
-		dbContextMock.completionWrites.deletePuzzleCompletionData.mockRejectedValueOnce(
+		dbContextMock.completionWrites.finishPuzzleDeletion.mockRejectedValueOnce(
 			new Error('D1 completion cleanup failed')
 		);
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -817,7 +815,7 @@ describe('reapCleanupRecords', () => {
 			expect.any(Error)
 		);
 		expect((storage.deletePuzzleMetadata as any).mock.invocationCallOrder[0]).toBeLessThan(
-			dbContextMock.completionWrites.deletePuzzleCompletionData.mock.invocationCallOrder[0]
+			dbContextMock.completionWrites.finishPuzzleDeletion.mock.invocationCallOrder[0]
 		);
 		consoleSpy.mockRestore();
 	});
@@ -1081,7 +1079,7 @@ describe('reapOrphanedReservations', () => {
 		(storage.releaseIdempotencyKey as any).mockResolvedValue(undefined);
 		(storage.getIdempotencyReservation as any).mockResolvedValue(null);
 		(deletePuzzleOwnership as any).mockResolvedValue(undefined);
-		dbContextMock.completionWrites.deletePuzzleCompletionData.mockResolvedValue(undefined);
+		dbContextMock.completionWrites.finishPuzzleDeletion.mockResolvedValue(undefined);
 		(getWorkerDbContext as any).mockReturnValue(dbContextMock);
 	});
 
@@ -1217,9 +1215,9 @@ describe('reapOrphanedReservations', () => {
 		);
 		expect(getWorkerDbContext).toHaveBeenCalledWith(env);
 		expect(deletePuzzleOwnership).toHaveBeenCalledWith(dbContextMock.db, 'a');
-		expect(dbContextMock.completionWrites.deletePuzzleCompletionData).toHaveBeenCalledWith('a');
+		expect(dbContextMock.completionWrites.finishPuzzleDeletion).toHaveBeenCalledWith('a');
 		expect((storage.deletePuzzleMetadata as any).mock.invocationCallOrder[0]).toBeLessThan(
-			dbContextMock.completionWrites.deletePuzzleCompletionData.mock.invocationCallOrder[0]
+			dbContextMock.completionWrites.finishPuzzleDeletion.mock.invocationCallOrder[0]
 		);
 		expect(result.details.some((d) => d.action === 'orphan-reaped')).toBe(true);
 	});
@@ -1236,7 +1234,7 @@ describe('reapOrphanedReservations', () => {
 			puzzleId: 'b',
 			status: 'committed'
 		});
-		dbContextMock.completionWrites.deletePuzzleCompletionData.mockRejectedValueOnce(
+		dbContextMock.completionWrites.finishPuzzleDeletion.mockRejectedValueOnce(
 			new Error('D1 completion cleanup failed')
 		);
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -1250,7 +1248,7 @@ describe('reapOrphanedReservations', () => {
 			expect.any(Error)
 		);
 		expect((storage.deletePuzzleMetadata as any).mock.invocationCallOrder[0]).toBeLessThan(
-			dbContextMock.completionWrites.deletePuzzleCompletionData.mock.invocationCallOrder[0]
+			dbContextMock.completionWrites.finishPuzzleDeletion.mock.invocationCallOrder[0]
 		);
 		consoleSpy.mockRestore();
 	});

@@ -21,6 +21,15 @@ const PNG_HEADER = new Uint8Array([
 	0x00
 ]);
 
+const dbContextMock = vi.hoisted(() => ({
+	db: {},
+	completionWrites: {
+		isPuzzleTombstoned: vi.fn().mockResolvedValue(false),
+		beginPuzzleDeletion: vi.fn().mockResolvedValue(undefined),
+		finishPuzzleDeletion: vi.fn().mockResolvedValue(undefined)
+	}
+}));
+
 vi.mock('../../middleware/auth', () => ({
 	createSession: vi.fn().mockResolvedValue('mock-session-token'),
 	setSessionCookie: vi.fn(),
@@ -63,7 +72,8 @@ vi.mock('../../services/storage', () => ({
 }));
 
 vi.mock('../../db', () => ({
-	getDb: vi.fn(() => ({}))
+	getDb: vi.fn(() => dbContextMock.db),
+	getDbContext: vi.fn(() => dbContextMock)
 }));
 
 vi.mock('@perseus/shared', async (importOriginal) => {
@@ -372,6 +382,9 @@ describe('POST /puzzles - reservation release in outer catch (generatePuzzle thr
 describe('DELETE /puzzles/:id - idempotency reservation release', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		dbContextMock.completionWrites.isPuzzleTombstoned.mockResolvedValue(false);
+		dbContextMock.completionWrites.beginPuzzleDeletion.mockResolvedValue(undefined);
+		dbContextMock.completionWrites.finishPuzzleDeletion.mockResolvedValue(undefined);
 		(storageMock.deletePuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(true);
 		(storageMock.releaseIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 	});
@@ -389,9 +402,50 @@ describe('DELETE /puzzles/:id - idempotency reservation release', () => {
 		expect(res.status).toBe(204);
 		expect(storageMock.deletePuzzle).toHaveBeenCalledWith('del-id');
 		expect(storageMock.releaseIdempotencyKey).toHaveBeenCalledWith('del-key', 'del-id');
+		expect(storageMock.releaseIdempotencyKey).toHaveBeenCalledBefore(storageMock.deletePuzzle);
 	});
 
-	it('logs and still returns 204 when releaseIdempotencyKey throws', async () => {
+	it('releases the reservation before a failed finish and resumes deletion on retry', async () => {
+		let reservationPuzzleId: string | undefined = 'del-id';
+		(storageMock.getPuzzle as ReturnType<typeof vi.fn>)
+			.mockResolvedValueOnce({
+				id: 'del-id',
+				name: 'Del',
+				pieceCount: 25,
+				idempotencyKey: 'del-key'
+			})
+			.mockResolvedValueOnce(null);
+		(storageMock.puzzleExists as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+		(storageMock.releaseIdempotencyKey as ReturnType<typeof vi.fn>).mockImplementation(
+			async (_key: string, puzzleId: string) => {
+				if (reservationPuzzleId === puzzleId) reservationPuzzleId = undefined;
+			}
+		);
+		dbContextMock.completionWrites.finishPuzzleDeletion
+			.mockRejectedValueOnce(new Error('finish failed'))
+			.mockResolvedValueOnce(undefined);
+		dbContextMock.completionWrites.isPuzzleTombstoned.mockResolvedValue(true);
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		try {
+			const first = await app.fetch(
+				new Request('http://localhost/puzzle-delete/del-id', { method: 'POST' })
+			);
+			const retry = await app.fetch(
+				new Request('http://localhost/puzzle-delete/del-id', { method: 'POST' })
+			);
+
+			expect(first.status).toBe(500);
+			expect(retry.status).toBe(204);
+			expect(reservationPuzzleId).toBeUndefined();
+			expect(storageMock.releaseIdempotencyKey).toHaveBeenCalledWith('del-key', 'del-id');
+			expect(dbContextMock.completionWrites.finishPuzzleDeletion).toHaveBeenCalledTimes(2);
+		} finally {
+			consoleSpy.mockRestore();
+		}
+	});
+
+	it('returns 500 without deleting source when reservation release fails', async () => {
 		(storageMock.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
 			id: 'del-id',
 			name: 'Del',
@@ -405,8 +459,13 @@ describe('DELETE /puzzles/:id - idempotency reservation release', () => {
 		try {
 			const req = new Request('http://localhost/puzzle-delete/del-id', { method: 'POST' });
 			const res = await app.fetch(req);
-			expect(res.status).toBe(204);
+			expect(res.status).toBe(500);
+			expect(await res.json()).toEqual({
+				error: 'internal_error',
+				message: 'Failed to release idempotency reservation'
+			});
 			expect(storageMock.releaseIdempotencyKey).toHaveBeenCalledWith('del-key', 'del-id');
+			expect(storageMock.deletePuzzle).not.toHaveBeenCalled();
 		} finally {
 			consoleSpy.mockRestore();
 		}

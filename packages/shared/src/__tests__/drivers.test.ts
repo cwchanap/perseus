@@ -215,6 +215,9 @@ describe.each<LifecycleRuntime>(['Bun', 'D1'])('%s puzzle deletion lifecycle', (
 			db.update(schema.puzzles).set({ name: 'Updated' }).where(eq(schema.puzzles.id, 'pz1'))
 		).rejects.toThrow('puzzle_deleted');
 		await expect(
+			db.update(schema.puzzles).set({ id: 'pz2' }).where(eq(schema.puzzles.id, 'pz1'))
+		).rejects.toThrow('puzzle_deleted');
+		await expect(
 			db.insert(schema.puzzleStats).values({
 				playerId: 'p2',
 				puzzleId: 'pz1',
@@ -228,6 +231,12 @@ describe.each<LifecycleRuntime>(['Bun', 'D1'])('%s puzzle deletion lifecycle', (
 			db
 				.update(schema.puzzleStats)
 				.set({ bestTimeSeconds: 50 })
+				.where(eq(schema.puzzleStats.puzzleId, 'pz1'))
+		).rejects.toThrow('puzzle_deleted');
+		await expect(
+			db
+				.update(schema.puzzleStats)
+				.set({ puzzleId: 'pz2' })
 				.where(eq(schema.puzzleStats.puzzleId, 'pz1'))
 		).rejects.toThrow('puzzle_deleted');
 		await expect(
@@ -245,6 +254,12 @@ describe.each<LifecycleRuntime>(['Bun', 'D1'])('%s puzzle deletion lifecycle', (
 			db
 				.update(schema.puzzleCompletionRuns)
 				.set({ completedAt: 3_000 })
+				.where(eq(schema.puzzleCompletionRuns.puzzleId, 'pz1'))
+		).rejects.toThrow('puzzle_deleted');
+		await expect(
+			db
+				.update(schema.puzzleCompletionRuns)
+				.set({ puzzleId: 'pz2' })
 				.where(eq(schema.puzzleCompletionRuns.puzzleId, 'pz1'))
 		).rejects.toThrow('puzzle_deleted');
 	});
