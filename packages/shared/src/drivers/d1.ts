@@ -160,6 +160,11 @@ export function createD1CompletionWriteExecutor(
 								eq(puzzleCompletionRuns.resultClass, 'standard_timed'),
 								eq(puzzleCompletionRuns.timingQuality, 'known'),
 								isNotNull(puzzleCompletionRuns.elapsedActiveSeconds),
+								// Required: without this predicate, a tombstone inserted
+								// between insertRun and upsertBest would let the upsert
+								// match a row, hit the puzzle_stats tombstone guard
+								// trigger, and ABORT as a 500 instead of the typed
+								// 'tombstoned' result returned below.
 								sql`NOT EXISTS (
 									SELECT 1 FROM puzzle_deletion_tombstones
 									WHERE puzzle_id = ${input.puzzleId}

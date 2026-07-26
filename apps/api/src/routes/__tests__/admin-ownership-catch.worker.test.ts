@@ -115,7 +115,7 @@ describe('Admin Worker - DELETE /puzzles/:id required ownership cleanup', () => 
 		expect(dbContextMock.completionWrites.finishPuzzleDeletion).toHaveBeenCalledWith(VALID_UUID);
 		expect(deletePuzzleOwnership).toHaveBeenCalledTimes(1);
 		expect(consoleSpy).toHaveBeenCalledWith(
-			`Error deleting puzzle ${VALID_UUID}:`,
+			`Failed to finish fenced cleanup for ${VALID_UUID}:`,
 			expect.any(Error)
 		);
 		expect(storage.deletePuzzleAssets).toHaveBeenCalledTimes(1);

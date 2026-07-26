@@ -359,7 +359,7 @@ describe('Admin Routes - Puzzle Deletion', () => {
 	});
 
 	describe('DELETE /puzzles/:id', () => {
-		it('should return 207 when some assets fail to delete', async () => {
+		it('should return 500 when some assets fail to delete', async () => {
 			// Mock getPuzzle to return a valid puzzle
 			(storage.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
 				id: '550e8400-e29b-41d4-a716-446655440000',
@@ -412,17 +412,18 @@ describe('Admin Routes - Puzzle Deletion', () => {
 
 			const res = await admin.fetch(req, mockEnv);
 
-			// Should return 207
-			expect(res.status).toBe(207);
+			// Should return 500 with {error, message} — conforms to the same
+			// envelope as every other failure branch and the sibling
+			// cleanupOrphanedWorkflow path.
+			expect(res.status).toBe(500);
 
 			const body = (await res.json()) as any;
-			expect(body.success).toBe(false);
-			expect(body.partialSuccess).toBe(true);
-			expect(body.warning).toBe('R2 asset deletion partial; KV preserved for reaper retry');
-			expect(body.failedAssets).toEqual([
-				'puzzles/test-puzzle/pieces/0.png',
-				'puzzles/test-puzzle/pieces/1.png'
-			]);
+			expect(body.error).toBe('internal_error');
+			expect(body.message).toContain('R2 cleanup partial');
+			// The non-conformant {success, partialSuccess, warning, failedAssets}
+			// body shape is gone — failed keys are logged, not in the response.
+			expect(body).not.toHaveProperty('partialSuccess');
+			expect(body).not.toHaveProperty('failedAssets');
 
 			// Safe ordering: KV metadata is NOT deleted when R2 deletion fails
 			// partially — the failed R2 keys would become invisible orphans

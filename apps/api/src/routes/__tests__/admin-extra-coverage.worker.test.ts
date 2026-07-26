@@ -456,7 +456,7 @@ describe('Admin Worker - DELETE metadata deletion failure', () => {
 		expect(res.status).toBe(500);
 		const body = (await res.json()) as any;
 		expect(body.error).toBe('internal_error');
-		expect(body.message).toBe('Failed to delete KV metadata; deferred to reaper');
+		expect(body.message).toBe('KV metadata cleanup failed, reaper will retry');
 		expect(storage.writeCleanupRecord).toHaveBeenCalledWith(
 			baseEnv.PUZZLE_METADATA,
 			expect.objectContaining({ puzzleId: 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d' })
