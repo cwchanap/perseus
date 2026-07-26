@@ -29,7 +29,6 @@ import {
 	deletePuzzleAssets,
 	deleteMetadataDO,
 	deletePuzzleMetadata,
-	deleteCleanupRecord,
 	getAuthoritativeStatus,
 	getIdempotencyReservation,
 	getPuzzle,
@@ -37,16 +36,18 @@ import {
 	listCleanupRecords,
 	releaseIdempotencyKey
 } from './storage.worker';
-import { getWorkerDb, getWorkerDbContext } from '../db.worker';
+import { getWorkerDb } from '../db.worker';
 import {
-	deletePuzzleOwnership,
-	deletePuzzleStats,
 	getAvatarTokensByPlayerIds,
 	isAliveWorkflowStatus,
 	isDeadWorkflowStatus,
 	isWorkflowNotFoundError
 } from '@perseus/shared';
 import type { Env } from '../worker';
+import {
+	ensureWorkerPuzzleDeletionFence,
+	finishWorkerPuzzleDeletion
+} from './puzzle-deletion.worker';
 
 /** Reap puzzles stuck in processing for longer than this. */
 export const REAP_AFTER_MS = 2 * 60 * 60 * 1000; // 2 hours
@@ -346,6 +347,14 @@ export async function reapStuckPuzzles(env: Env, now = Date.now()): Promise<Reap
 					return;
 				}
 
+				const pieceCount = typeof meta.pieceCount === 'number' ? meta.pieceCount : 0;
+				await ensureWorkerPuzzleDeletionFence(env, {
+					puzzleId: puzzle.id,
+					pieceCount,
+					...(meta.idempotencyKey ? { idempotencyKey: meta.idempotencyKey } : {}),
+					createdAt: Date.now()
+				});
+
 				// Tombstone the DO BEFORE deleting R2 assets and KV metadata.
 				// The DO tombstone prevents a (dead) workflow's post-termination
 				// step from resurrecting stale metadata in KV via the DO's KV
@@ -378,7 +387,6 @@ export async function reapStuckPuzzles(env: Env, now = Date.now()): Promise<Reap
 				// already tombstoned, so getAuthoritativeStatus returns null on
 				// the next run, which means "truly orphaned → proceed."
 				try {
-					const pieceCount = typeof meta.pieceCount === 'number' ? meta.pieceCount : 0;
 					const r2Result = await deletePuzzleAssets(env.PUZZLES_BUCKET, puzzle.id, pieceCount);
 					if (!r2Result.success) {
 						console.error(
@@ -417,12 +425,6 @@ export async function reapStuckPuzzles(env: Env, now = Date.now()): Promise<Reap
 				// on failure so operators see the failure in the run summary.
 				const kvResult = await deletePuzzleMetadata(env.PUZZLE_METADATA, puzzle.id);
 				if (kvResult.success) {
-					result.reaped++;
-					result.details.push({
-						puzzleId: puzzle.id,
-						action: 'reaped'
-					});
-
 					// Best-effort DO idempotency reservation release. Without
 					// this, a reaped puzzle leaves its reservation pointing at
 					// the dead puzzleId indefinitely — a same-key re-upload
@@ -447,30 +449,24 @@ export async function reapStuckPuzzles(env: Env, now = Date.now()): Promise<Reap
 						}
 					}
 
-					// Best-effort D1 ownership row cleanup. Player uploads insert
-					// a D1 ownership row with status 'processing', which is visible
-					// in the uploader's "My Puzzles" list (VISIBLE_PLAYER_PUZZLE_
-					// STATUSES includes 'processing'). Without this, a reaped
-					// player puzzle keeps surfacing as a card that 404s on click.
-					// Gate on KV success: if KV deletion failed, the puzzle still
-					// exists in the player list mirror and the next reaper pass can
-					// retry KV cleanup.
 					try {
-						const { db, completionWrites } = getWorkerDbContext(env);
-						await deletePuzzleOwnership(db, puzzle.id).catch((err) =>
-							console.error(`Reaper: failed to delete D1 ownership for ${puzzle.id}:`, err)
-						);
-						// Best-effort atomic cleanup of completion ledger and
-						// baseline rows. Logged, not fatal.
-						await deletePuzzleStats(completionWrites, puzzle.id).catch((err) =>
-							console.error(`Reaper: failed to delete D1 stats for ${puzzle.id}:`, err)
-						);
-					} catch (dbErr) {
-						console.error(
-							`Reaper: failed to init DB for ownership cleanup of ${puzzle.id}:`,
-							dbErr
-						);
+						await finishWorkerPuzzleDeletion(env, puzzle.id);
+					} catch (finishErr) {
+						console.error(`Reaper: required D1 finish failed for ${puzzle.id}:`, finishErr);
+						result.errors++;
+						result.details.push({
+							puzzleId: puzzle.id,
+							action: 'd1-finish-failed',
+							error: String(finishErr)
+						});
+						return;
 					}
+
+					result.reaped++;
+					result.details.push({
+						puzzleId: puzzle.id,
+						action: 'reaped'
+					});
 				} else {
 					console.error(`Reaper: failed to delete KV metadata for ${puzzle.id}:`, kvResult.error);
 					result.errors++;
@@ -596,6 +592,8 @@ export async function reapCleanupRecords(env: Env): Promise<ReapResult> {
 					return;
 				}
 
+				await ensureWorkerPuzzleDeletionFence(env, record);
+
 				// Tombstone the DO BEFORE deleting R2 assets and KV metadata.
 				// The admin route attempts this before writing the cleanup
 				// record, but that attempt can fail. deleteMetadataDO is
@@ -658,12 +656,6 @@ export async function reapCleanupRecords(env: Env): Promise<ReapResult> {
 				// R2 deletion succeeded — delete KV metadata and D1.
 				const kvResult = await deletePuzzleMetadata(env.PUZZLE_METADATA, record.puzzleId);
 				if (kvResult.success) {
-					result.reaped++;
-					result.details.push({
-						puzzleId: record.puzzleId,
-						action: 'cleanup-reaped'
-					});
-
 					// Best-effort idempotency reservation release.
 					if (record.idempotencyKey) {
 						try {
@@ -680,39 +672,27 @@ export async function reapCleanupRecords(env: Env): Promise<ReapResult> {
 						}
 					}
 
-					// Best-effort D1 ownership cleanup.
 					try {
-						const { db, completionWrites } = getWorkerDbContext(env);
-						await deletePuzzleOwnership(db, record.puzzleId).catch((err) =>
-							console.error(
-								`Reaper cleanup: failed to delete D1 ownership for ${record.puzzleId}:`,
-								err
-							)
-						);
-						// Best-effort atomic cleanup of completion ledger and
-						// baseline rows (see reapStuckPuzzles for rationale).
-						await deletePuzzleStats(completionWrites, record.puzzleId).catch((err) =>
-							console.error(
-								`Reaper cleanup: failed to delete D1 stats for ${record.puzzleId}:`,
-								err
-							)
-						);
-					} catch (dbErr) {
+						await finishWorkerPuzzleDeletion(env, record.puzzleId);
+					} catch (finishErr) {
 						console.error(
-							`Reaper cleanup: failed to init DB for ownership cleanup of ${record.puzzleId}:`,
-							dbErr
+							`Reaper cleanup: required D1 finish failed for ${record.puzzleId}:`,
+							finishErr
 						);
+						result.errors++;
+						result.details.push({
+							puzzleId: record.puzzleId,
+							action: 'cleanup-d1-finish-failed',
+							error: String(finishErr)
+						});
+						return;
 					}
 
-					// Delete the cleanup record itself.
-					try {
-						await deleteCleanupRecord(env.PUZZLE_METADATA, record.puzzleId);
-					} catch (cleanupErr) {
-						console.error(
-							`Reaper cleanup: failed to delete cleanup record for ${record.puzzleId}:`,
-							cleanupErr
-						);
-					}
+					result.reaped++;
+					result.details.push({
+						puzzleId: record.puzzleId,
+						action: 'cleanup-reaped'
+					});
 				} else {
 					console.error(
 						`Reaper cleanup: failed to delete KV metadata for ${record.puzzleId}:`,
@@ -985,6 +965,13 @@ export async function reapOrphanedReservations(env: Env): Promise<ReapResult> {
 					return;
 				}
 
+				await ensureWorkerPuzzleDeletionFence(env, {
+					puzzleId: candidate.id,
+					pieceCount: candidate.pieceCount,
+					idempotencyKey: candidate.idempotencyKey,
+					createdAt: Date.now()
+				});
+
 				// Tombstone the DO BEFORE deleting R2/KV — prevents a (dead)
 				// workflow's post-termination step from resurrecting stale
 				// metadata in KV via the DO's KV sync. Idempotent (no-op on an
@@ -1058,12 +1045,6 @@ export async function reapOrphanedReservations(env: Env): Promise<ReapResult> {
 					return;
 				}
 
-				result.reaped++;
-				result.details.push({
-					puzzleId: candidate.id,
-					action: 'orphan-reaped'
-				});
-
 				// Best-effort idempotency reservation release. The mismatch
 				// already proves the key belongs to a different puzzleId, so
 				// this release targets (key, orphanId) — a 404 (owner mismatch)
@@ -1081,24 +1062,24 @@ export async function reapOrphanedReservations(env: Env): Promise<ReapResult> {
 					);
 				}
 
-				// Best-effort D1 ownership cleanup so a reaped orphan doesn't
-				// keep surfacing in the uploader's "My Puzzles" list as a 404.
 				try {
-					const { db, completionWrites } = getWorkerDbContext(env);
-					await deletePuzzleOwnership(db, candidate.id).catch((err) =>
-						console.error(`Reaper orphan: failed to delete D1 ownership for ${candidate.id}:`, err)
-					);
-					// Best-effort atomic cleanup of completion ledger and
-					// baseline rows (see reapStuckPuzzles for rationale).
-					await deletePuzzleStats(completionWrites, candidate.id).catch((err) =>
-						console.error(`Reaper orphan: failed to delete D1 stats for ${candidate.id}:`, err)
-					);
-				} catch (dbErr) {
-					console.error(
-						`Reaper orphan: failed to init DB for ownership cleanup of ${candidate.id}:`,
-						dbErr
-					);
+					await finishWorkerPuzzleDeletion(env, candidate.id);
+				} catch (finishErr) {
+					console.error(`Reaper orphan: required D1 finish failed for ${candidate.id}:`, finishErr);
+					result.errors++;
+					result.details.push({
+						puzzleId: candidate.id,
+						action: 'orphan-d1-finish-failed',
+						error: String(finishErr)
+					});
+					return;
 				}
+
+				result.reaped++;
+				result.details.push({
+					puzzleId: candidate.id,
+					action: 'orphan-reaped'
+				});
 			} catch (err) {
 				console.error(`Reaper orphan: unexpected error for ${candidate.id}:`, err);
 				result.errors++;
