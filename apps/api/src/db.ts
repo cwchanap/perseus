@@ -1,11 +1,21 @@
-import { createBunDb } from '@perseus/shared/bun';
+import type { AppDb, CompletionWriteExecutor } from '@perseus/shared';
+import { createBunDbContext } from '@perseus/shared/bun';
 
-let cached: ReturnType<typeof createBunDb> | null = null;
+export interface ApiDbContext {
+	db: AppDb;
+	completionWrites: CompletionWriteExecutor;
+}
 
-export function getDb() {
+let cached: ReturnType<typeof createBunDbContext> | null = null;
+
+export function getDbContext(): ApiDbContext {
 	if (!cached) {
 		const dataDir = process.env.DATA_DIR || './data';
-		cached = createBunDb(dataDir);
+		cached = createBunDbContext(dataDir);
 	}
 	return cached;
+}
+
+export function getDb(): AppDb {
+	return getDbContext().db;
 }
