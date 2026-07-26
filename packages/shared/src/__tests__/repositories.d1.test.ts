@@ -13,6 +13,7 @@ import {
 	listPlayerStats,
 	getPlayerSummary,
 	InvalidPlayerStatsCursorError,
+	deletePuzzleStats,
 	insertPuzzleOwnership,
 	ensurePuzzleOwnership,
 	listPlayerPuzzles,
@@ -313,14 +314,123 @@ describe('recordVersionedCompletion against real D1', () => {
 		expect(await db.select().from(schema.puzzleStats)).toHaveLength(0);
 	});
 
-	it('deletes puzzle stats and ledger rows together through the executor', async () => {
+	it('deletePuzzleStats removes every player ledger and baseline row for one puzzle', async () => {
 		const executor = createD1CompletionWriteExecutor(db);
-		await recordVersionedCompletion(executor, 'p1', 'pz1', completion(), 1_000);
+		await db.insert(schema.puzzleStats).values([
+			{
+				playerId: 'p1',
+				puzzleId: 'pz1',
+				bestTimeSeconds: 50,
+				totalCompletions: 4,
+				firstCompletedAt: 100,
+				lastCompletedAt: 400
+			},
+			{
+				playerId: 'p2',
+				puzzleId: 'pz1',
+				bestTimeSeconds: 30,
+				totalCompletions: 2,
+				firstCompletedAt: 200,
+				lastCompletedAt: 300
+			},
+			{
+				playerId: 'p1',
+				puzzleId: 'pz2',
+				bestTimeSeconds: 40,
+				totalCompletions: 1,
+				firstCompletedAt: 500,
+				lastCompletedAt: 500
+			}
+		]);
+		await db.insert(schema.puzzleCompletionRuns).values([
+			{
+				playerId: 'p1',
+				runId: 'run-p1-pz1',
+				puzzleId: 'pz1',
+				resultClass: 'standard_timed',
+				timingQuality: 'known',
+				elapsedActiveSeconds: 50,
+				completedAt: 400
+			},
+			{
+				playerId: 'p2',
+				runId: 'run-p2-pz1',
+				puzzleId: 'pz1',
+				resultClass: 'standard_timed',
+				timingQuality: 'known',
+				elapsedActiveSeconds: 30,
+				completedAt: 300
+			},
+			{
+				playerId: 'p1',
+				runId: 'run-p1-pz2',
+				puzzleId: 'pz2',
+				resultClass: 'standard_timed',
+				timingQuality: 'known',
+				elapsedActiveSeconds: 40,
+				completedAt: 500
+			}
+		]);
 
-		await executor.deletePuzzleCompletionData('pz1');
+		await deletePuzzleStats(executor, 'pz1');
 
-		expect(await db.select().from(schema.puzzleCompletionRuns)).toHaveLength(0);
-		expect(await db.select().from(schema.puzzleStats)).toHaveLength(0);
+		expect(await db.select().from(schema.puzzleStats)).toEqual([
+			{
+				playerId: 'p1',
+				puzzleId: 'pz2',
+				bestTimeSeconds: 40,
+				totalCompletions: 1,
+				firstCompletedAt: 500,
+				lastCompletedAt: 500
+			}
+		]);
+		expect(await db.select().from(schema.puzzleCompletionRuns)).toEqual([
+			{
+				playerId: 'p1',
+				runId: 'run-p1-pz2',
+				puzzleId: 'pz2',
+				resultClass: 'standard_timed',
+				timingQuality: 'known',
+				elapsedActiveSeconds: 40,
+				completedAt: 500
+			}
+		]);
+	});
+
+	it('deletePuzzleStats rolls back the baseline delete when the ledger delete fails', async () => {
+		const executor = createD1CompletionWriteExecutor(db);
+		await db.insert(schema.puzzleStats).values({
+			playerId: 'p1',
+			puzzleId: 'pz1',
+			bestTimeSeconds: 50,
+			totalCompletions: 4,
+			firstCompletedAt: 100,
+			lastCompletedAt: 400
+		});
+		await db.insert(schema.puzzleCompletionRuns).values({
+			playerId: 'p1',
+			runId: 'run-p1-pz1',
+			puzzleId: 'pz1',
+			resultClass: 'standard_timed',
+			timingQuality: 'known',
+			elapsedActiveSeconds: 50,
+			completedAt: 400
+		});
+		await d1
+			.prepare(
+				"CREATE TRIGGER fail_completion_run_delete BEFORE DELETE ON puzzle_completion_runs BEGIN SELECT RAISE(ABORT, 'forced ledger delete failure'); END"
+			)
+			.run();
+		try {
+			await expect(deletePuzzleStats(executor, 'pz1')).rejects.toThrow(
+				'forced ledger delete failure'
+			);
+		} finally {
+			await d1.prepare('DROP TRIGGER fail_completion_run_delete').run();
+		}
+
+		expect(await db.select().from(schema.puzzleStats)).toHaveLength(1);
+		expect(await db.select().from(schema.puzzleCompletionRuns)).toHaveLength(1);
 	});
 });
 

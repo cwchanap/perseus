@@ -56,7 +56,7 @@ import {
 	listAllowlistEntries,
 	revokePlayerSessionsForEmail
 } from '../services/player-auth.worker';
-import { getWorkerDb } from '../db.worker';
+import { getWorkerDb, getWorkerDbContext } from '../db.worker';
 import {
 	deletePuzzleOwnership,
 	deletePuzzleStats,
@@ -2079,23 +2079,19 @@ admin.post('/puzzle-delete/:id', requireAuth, async (c) => {
 		// failed ownership delete is logged, not fatal. (Admin-created
 		// puzzles are mirrored with a system sentinel owner; this removes
 		// that row too.) getWorkerDb is a lazy init that can throw on first
-		// call; wrap both cleanup calls so a DB init failure doesn't bubble
-		// a 500 after a successful KV delete (mirrors admin.ts).
-		await withDbBestEffort(
-			c.env,
-			`Failed to delete ownership row for puzzle ${id}:`,
-			`Failed to init DB for ownership cleanup of puzzle ${id}:`,
-			(db) => deletePuzzleOwnership(db, id)
-		);
-		// Best-effort cleanup of any puzzle_stats rows referencing this puzzle
-		// so deleted puzzles don't linger in players' best-times lists with a
-		// null name. Logged, not fatal — same rationale as ownership cleanup.
-		await withDbBestEffort(
-			c.env,
-			`Failed to delete stats rows for puzzle ${id}:`,
-			`Failed to init DB for ownership cleanup of puzzle ${id}:`,
-			(db) => deletePuzzleStats(db, id)
-		);
+		// call; obtain the cached runtime context once so ownership uses its
+		// DB while completion cleanup uses the paired atomic executor.
+		try {
+			const { db, completionWrites } = getWorkerDbContext(c.env);
+			await deletePuzzleOwnership(db, id).catch((err) =>
+				console.error(`Failed to delete ownership row for puzzle ${id}:`, err)
+			);
+			await deletePuzzleStats(completionWrites, id).catch((err) =>
+				console.error(`Failed to delete stats rows for puzzle ${id}:`, err)
+			);
+		} catch (err) {
+			console.error(`Failed to init DB for ownership cleanup of puzzle ${id}:`, err);
+		}
 
 		// Step 7: Every required cleanup operation succeeded — delete the
 		// cleanup record so the reaper does not re-process this puzzle.

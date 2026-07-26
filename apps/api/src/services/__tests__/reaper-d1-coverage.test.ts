@@ -1,6 +1,14 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+const dbContextMock = vi.hoisted(() => ({
+	db: {},
+	completionWrites: {
+		write: vi.fn(),
+		deletePuzzleCompletionData: vi.fn(async () => undefined)
+	}
+}));
+
 vi.mock('../storage.worker', () => ({
 	deletePuzzleAssets: vi.fn(),
 	deleteMetadataDO: vi.fn(),
@@ -12,7 +20,8 @@ vi.mock('../storage.worker', () => ({
 }));
 
 vi.mock('../../db.worker', () => ({
-	getWorkerDb: vi.fn(() => ({}))
+	getWorkerDb: vi.fn(() => dbContextMock.db),
+	getWorkerDbContext: vi.fn(() => dbContextMock)
 }));
 
 vi.mock('@perseus/shared', async (importOriginal) => {

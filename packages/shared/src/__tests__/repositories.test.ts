@@ -2,7 +2,11 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Database } from 'bun:sqlite';
 import { drizzle } from 'drizzle-orm/bun-sqlite';
 import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import * as schema from '../schema';
+import { createBunDbContext } from '../drivers/bun';
 import {
 	getProfileOverride,
 	updateProfileDisplayName,
@@ -409,35 +413,132 @@ describe('repositories', () => {
 		expect(summary).toEqual({ puzzlesUploaded: 1, puzzlesSolved: 2, totalCompletions: 2 });
 	});
 
-	it('deletePuzzleStats removes all players stat rows for a puzzle', async () => {
-		await insertPuzzleOwnership(helper.db, {
-			id: 'pz1',
-			ownerId: 'p1',
-			name: 'Cat',
-			pieceCount: 4,
-			status: 'ready',
-			createdAt: 1
-		});
-		await insertPuzzleOwnership(helper.db, {
-			id: 'pz2',
-			ownerId: 'p1',
-			name: 'Dog',
-			pieceCount: 9,
-			status: 'ready',
-			createdAt: 2
-		});
-		await recordLegacyCompletion(helper.db, 'p1', 'pz1', 50);
-		await recordLegacyCompletion(helper.db, 'p2', 'pz1', 30);
-		await recordLegacyCompletion(helper.db, 'p1', 'pz2', 40);
+	it('deletePuzzleStats removes every player ledger and baseline row for one puzzle', async () => {
+		const dataDir = mkdtempSync(join(tmpdir(), 'perseus-repositories-'));
+		const context = createBunDbContext(dataDir);
+		try {
+			await context.db.insert(schema.puzzleStats).values([
+				{
+					playerId: 'p1',
+					puzzleId: 'pz1',
+					bestTimeSeconds: 50,
+					totalCompletions: 4,
+					firstCompletedAt: 100,
+					lastCompletedAt: 400
+				},
+				{
+					playerId: 'p2',
+					puzzleId: 'pz1',
+					bestTimeSeconds: 30,
+					totalCompletions: 2,
+					firstCompletedAt: 200,
+					lastCompletedAt: 300
+				},
+				{
+					playerId: 'p1',
+					puzzleId: 'pz2',
+					bestTimeSeconds: 40,
+					totalCompletions: 1,
+					firstCompletedAt: 500,
+					lastCompletedAt: 500
+				}
+			]);
+			await context.db.insert(schema.puzzleCompletionRuns).values([
+				{
+					playerId: 'p1',
+					runId: 'run-p1-pz1',
+					puzzleId: 'pz1',
+					resultClass: 'standard_timed',
+					timingQuality: 'known',
+					elapsedActiveSeconds: 50,
+					completedAt: 400
+				},
+				{
+					playerId: 'p2',
+					runId: 'run-p2-pz1',
+					puzzleId: 'pz1',
+					resultClass: 'standard_timed',
+					timingQuality: 'known',
+					elapsedActiveSeconds: 30,
+					completedAt: 300
+				},
+				{
+					playerId: 'p1',
+					runId: 'run-p1-pz2',
+					puzzleId: 'pz2',
+					resultClass: 'standard_timed',
+					timingQuality: 'known',
+					elapsedActiveSeconds: 40,
+					completedAt: 500
+				}
+			]);
 
-		await deletePuzzleStats(helper.db, 'pz1');
+			await deletePuzzleStats(context.completionWrites, 'pz1');
 
-		const p1Stats = await listPlayerStats(helper.db, 'p1', { limit: 10 });
-		const p2Stats = await listPlayerStats(helper.db, 'p2', { limit: 10 });
-		// Only pz2's stat row remains for p1; p2's stats are fully cleared.
-		expect(p1Stats.rows).toHaveLength(1);
-		expect(p1Stats.rows[0].puzzleId).toBe('pz2');
-		expect(p2Stats.rows).toHaveLength(0);
+			expect(await context.db.select().from(schema.puzzleStats)).toEqual([
+				{
+					playerId: 'p1',
+					puzzleId: 'pz2',
+					bestTimeSeconds: 40,
+					totalCompletions: 1,
+					firstCompletedAt: 500,
+					lastCompletedAt: 500
+				}
+			]);
+			expect(await context.db.select().from(schema.puzzleCompletionRuns)).toEqual([
+				{
+					playerId: 'p1',
+					runId: 'run-p1-pz2',
+					puzzleId: 'pz2',
+					resultClass: 'standard_timed',
+					timingQuality: 'known',
+					elapsedActiveSeconds: 40,
+					completedAt: 500
+				}
+			]);
+		} finally {
+			context.close();
+			rmSync(dataDir, { recursive: true, force: true });
+		}
+	});
+
+	it('deletePuzzleStats rolls back the baseline delete when the ledger delete fails', async () => {
+		const dataDir = mkdtempSync(join(tmpdir(), 'perseus-repositories-'));
+		const context = createBunDbContext(dataDir);
+		try {
+			await context.db.insert(schema.puzzleStats).values({
+				playerId: 'p1',
+				puzzleId: 'pz1',
+				bestTimeSeconds: 50,
+				totalCompletions: 4,
+				firstCompletedAt: 100,
+				lastCompletedAt: 400
+			});
+			await context.db.insert(schema.puzzleCompletionRuns).values({
+				playerId: 'p1',
+				runId: 'run-p1-pz1',
+				puzzleId: 'pz1',
+				resultClass: 'standard_timed',
+				timingQuality: 'known',
+				elapsedActiveSeconds: 50,
+				completedAt: 400
+			});
+			const triggerDb = new Database(join(dataDir, 'perseus.db'));
+			triggerDb.run(
+				"CREATE TRIGGER fail_completion_run_delete BEFORE DELETE ON puzzle_completion_runs BEGIN SELECT RAISE(ABORT, 'forced ledger delete failure'); END"
+			);
+			triggerDb.close();
+
+			await expect(deletePuzzleStats(context.completionWrites, 'pz1')).rejects.toThrow(
+				'forced ledger delete failure'
+			);
+
+			expect(await context.db.select().from(schema.puzzleStats)).toHaveLength(1);
+			expect(await context.db.select().from(schema.puzzleCompletionRuns)).toHaveLength(1);
+		} finally {
+			context.close();
+			rmSync(dataDir, { recursive: true, force: true });
+		}
 	});
 
 	it('listPlayerStats resolves names for system-owned (admin) puzzles', async () => {

@@ -11,6 +11,14 @@ import {
 	AVATAR_GC_BATCH_LIMIT
 } from '../reaper';
 
+const dbContextMock = vi.hoisted(() => ({
+	db: {},
+	completionWrites: {
+		write: vi.fn(),
+		deletePuzzleCompletionData: vi.fn(async () => undefined)
+	}
+}));
+
 // Mock storage.worker functions
 vi.mock('../storage.worker', () => ({
 	deletePuzzleAssets: vi.fn(),
@@ -27,7 +35,8 @@ vi.mock('../storage.worker', () => ({
 
 // Mock db.worker so the reaper's D1 ownership cleanup doesn't touch a real DB.
 vi.mock('../../db.worker', () => ({
-	getWorkerDb: vi.fn(() => ({}))
+	getWorkerDb: vi.fn(() => dbContextMock.db),
+	getWorkerDbContext: vi.fn(() => dbContextMock)
 }));
 
 // Mock @perseus/shared's deletePuzzleOwnership and getAvatarTokensByPlayerIds
@@ -55,7 +64,7 @@ import {
 	releaseIdempotencyKey,
 	getIdempotencyReservation
 } from '../storage.worker';
-import { getWorkerDb } from '../../db.worker';
+import { getWorkerDb, getWorkerDbContext } from '../../db.worker';
 import { deletePuzzleOwnership, getAvatarTokensByPlayerIds } from '@perseus/shared';
 
 const storage = {
@@ -133,7 +142,8 @@ describe('reapStuckPuzzles', () => {
 		(storage.deletePuzzleMetadata as any).mockResolvedValue({ success: true });
 		(storage.deleteMetadataDO as any).mockResolvedValue(undefined);
 		(deletePuzzleOwnership as any).mockResolvedValue(undefined);
-		(getWorkerDb as any).mockReturnValue({});
+		dbContextMock.completionWrites.deletePuzzleCompletionData.mockResolvedValue(undefined);
+		(getWorkerDbContext as any).mockReturnValue(dbContextMock);
 	});
 
 	it('returns empty result when no puzzles exist', async () => {
@@ -205,9 +215,46 @@ describe('reapStuckPuzzles', () => {
 		expect(result.reaped).toBe(1);
 		expect(storage.deletePuzzleAssets).toHaveBeenCalledWith(env.PUZZLES_BUCKET, 'stuck-1', 100);
 		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'stuck-1');
-		expect(deletePuzzleOwnership).toHaveBeenCalledWith({}, 'stuck-1');
+		expect(getWorkerDbContext).toHaveBeenCalledWith(env);
+		expect(deletePuzzleOwnership).toHaveBeenCalledWith(dbContextMock.db, 'stuck-1');
+		expect(dbContextMock.completionWrites.deletePuzzleCompletionData).toHaveBeenCalledWith(
+			'stuck-1'
+		);
+		expect((storage.deletePuzzleMetadata as any).mock.invocationCallOrder[0]).toBeLessThan(
+			dbContextMock.completionWrites.deletePuzzleCompletionData.mock.invocationCallOrder[0]
+		);
 		// Puzzles without an idempotencyKey must not trigger a DO release.
 		expect(storage.releaseIdempotencyKey).not.toHaveBeenCalled();
+	});
+
+	it('still reaps when atomic completion cleanup fails after KV deletion', async () => {
+		(storage.listPuzzles as any).mockResolvedValue({
+			puzzles: [puzzleSummary('stuck-1', 'processing', OLD_PROCESSING)],
+			invalidCount: 0
+		});
+		(storage.getPuzzle as any).mockResolvedValue({
+			id: 'stuck-1',
+			status: 'processing',
+			name: 'Puzzle stuck-1',
+			pieceCount: 100
+		});
+		dbContextMock.completionWrites.deletePuzzleCompletionData.mockRejectedValueOnce(
+			new Error('D1 completion cleanup failed')
+		);
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const env = makeEnv({ 'stuck-1': 'errored' });
+
+		const result = await reapStuckPuzzles(env, NOW);
+
+		expect(result.reaped).toBe(1);
+		expect(consoleSpy).toHaveBeenCalledWith(
+			expect.stringContaining('failed to delete D1 stats for stuck-1'),
+			expect.any(Error)
+		);
+		expect((storage.deletePuzzleMetadata as any).mock.invocationCallOrder[0]).toBeLessThan(
+			dbContextMock.completionWrites.deletePuzzleCompletionData.mock.invocationCallOrder[0]
+		);
+		consoleSpy.mockRestore();
 	});
 
 	it('releases the DO reservation for a reaped puzzle that carries an idempotencyKey', async () => {
@@ -551,9 +598,9 @@ describe('reapStuckPuzzles', () => {
 			name: 'Puzzle stuck-1',
 			pieceCount: 100
 		});
-		// getWorkerDb throws on lazy init — the outer try/catch logs and
+		// getWorkerDbContext throws on lazy init — the outer try/catch logs and
 		// continues (KV/R2 cleanup is the source of truth for visibility).
-		(getWorkerDb as any).mockImplementation(() => {
+		(getWorkerDbContext as any).mockImplementation(() => {
 			throw new Error('DB init failed');
 		});
 		const env = makeEnv({ 'stuck-1': 'errored' });
@@ -720,7 +767,8 @@ describe('reapCleanupRecords', () => {
 		(storage.releaseIdempotencyKey as any).mockResolvedValue(undefined);
 		(storage.deleteMetadataDO as any).mockResolvedValue(undefined);
 		(deletePuzzleOwnership as any).mockResolvedValue(undefined);
-		(getWorkerDb as any).mockReturnValue({});
+		dbContextMock.completionWrites.deletePuzzleCompletionData.mockResolvedValue(undefined);
+		(getWorkerDbContext as any).mockReturnValue(dbContextMock);
 		(storage.listCleanupRecords as any).mockResolvedValue([]);
 	});
 
@@ -742,7 +790,36 @@ describe('reapCleanupRecords', () => {
 		expect(storage.deletePuzzleAssets).toHaveBeenCalledWith(env.PUZZLES_BUCKET, 'dup-1', 50);
 		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'dup-1');
 		expect(storage.deleteCleanupRecord).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'dup-1');
-		expect(deletePuzzleOwnership).toHaveBeenCalledWith(expect.anything(), 'dup-1');
+		expect(getWorkerDbContext).toHaveBeenCalledWith(env);
+		expect(deletePuzzleOwnership).toHaveBeenCalledWith(dbContextMock.db, 'dup-1');
+		expect(dbContextMock.completionWrites.deletePuzzleCompletionData).toHaveBeenCalledWith('dup-1');
+		expect((storage.deletePuzzleMetadata as any).mock.invocationCallOrder[0]).toBeLessThan(
+			dbContextMock.completionWrites.deletePuzzleCompletionData.mock.invocationCallOrder[0]
+		);
+	});
+
+	it('still reaps a cleanup record when atomic completion cleanup fails', async () => {
+		(storage.listCleanupRecords as any).mockResolvedValue([
+			{ puzzleId: 'dup-1', pieceCount: 50, createdAt: NOW - 60000 }
+		]);
+		dbContextMock.completionWrites.deletePuzzleCompletionData.mockRejectedValueOnce(
+			new Error('D1 completion cleanup failed')
+		);
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const env = makeEnv({ 'dup-1': 'complete' });
+
+		const result = await reapCleanupRecords(env);
+
+		expect(result.reaped).toBe(1);
+		expect(storage.deleteCleanupRecord).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'dup-1');
+		expect(consoleSpy).toHaveBeenCalledWith(
+			expect.stringContaining('failed to delete D1 stats for dup-1'),
+			expect.any(Error)
+		);
+		expect((storage.deletePuzzleMetadata as any).mock.invocationCallOrder[0]).toBeLessThan(
+			dbContextMock.completionWrites.deletePuzzleCompletionData.mock.invocationCallOrder[0]
+		);
+		consoleSpy.mockRestore();
 	});
 
 	it('cleans up errored workflows from cleanup records', async () => {
@@ -918,18 +995,18 @@ describe('reapCleanupRecords', () => {
 		expect(deletePuzzleOwnership).toHaveBeenCalledWith(expect.anything(), 'dup-1');
 	});
 
-	it('logs but still reaps when D1 init (getWorkerDb) throws', async () => {
+	it('logs but still reaps when D1 init (getWorkerDbContext) throws', async () => {
 		(storage.listCleanupRecords as any).mockResolvedValue([
 			{ puzzleId: 'dup-1', pieceCount: 50, createdAt: NOW - 60000 }
 		]);
-		(getWorkerDb as any).mockImplementation(() => {
+		(getWorkerDbContext as any).mockImplementation(() => {
 			throw new Error('D1 init failed');
 		});
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 		const env = makeEnv({ 'dup-1': 'complete' });
 		const result = await reapCleanupRecords(env);
 		expect(result.reaped).toBe(1);
-		(getWorkerDb as any).mockReturnValue({});
+		(getWorkerDbContext as any).mockReturnValue(dbContextMock);
 	});
 
 	it('logs but still reaps when cleanup record delete fails', async () => {
@@ -1004,7 +1081,8 @@ describe('reapOrphanedReservations', () => {
 		(storage.releaseIdempotencyKey as any).mockResolvedValue(undefined);
 		(storage.getIdempotencyReservation as any).mockResolvedValue(null);
 		(deletePuzzleOwnership as any).mockResolvedValue(undefined);
-		(getWorkerDb as any).mockReturnValue({});
+		dbContextMock.completionWrites.deletePuzzleCompletionData.mockResolvedValue(undefined);
+		(getWorkerDbContext as any).mockReturnValue(dbContextMock);
 	});
 
 	function puzzleMeta(id: string, overrides: Partial<Record<string, unknown>> = {}) {
@@ -1137,8 +1215,44 @@ describe('reapOrphanedReservations', () => {
 			'key-K',
 			'a'
 		);
-		expect(deletePuzzleOwnership).toHaveBeenCalledWith(expect.anything(), 'a');
+		expect(getWorkerDbContext).toHaveBeenCalledWith(env);
+		expect(deletePuzzleOwnership).toHaveBeenCalledWith(dbContextMock.db, 'a');
+		expect(dbContextMock.completionWrites.deletePuzzleCompletionData).toHaveBeenCalledWith('a');
+		expect((storage.deletePuzzleMetadata as any).mock.invocationCallOrder[0]).toBeLessThan(
+			dbContextMock.completionWrites.deletePuzzleCompletionData.mock.invocationCallOrder[0]
+		);
 		expect(result.details.some((d) => d.action === 'orphan-reaped')).toBe(true);
+	});
+
+	it('still reaps an orphan when atomic completion cleanup fails after KV deletion', async () => {
+		(storage.listPuzzles as any).mockResolvedValue({
+			puzzles: [puzzleSummary('a', 'ready', OLD_READY)],
+			invalidCount: 0
+		});
+		(storage.getPuzzle as any).mockResolvedValue(
+			puzzleMeta('a', { idempotencyKey: 'key-K', pieceCount: 50 })
+		);
+		(storage.getIdempotencyReservation as any).mockResolvedValue({
+			puzzleId: 'b',
+			status: 'committed'
+		});
+		dbContextMock.completionWrites.deletePuzzleCompletionData.mockRejectedValueOnce(
+			new Error('D1 completion cleanup failed')
+		);
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const env = makeEnv({ a: 'complete' });
+
+		const result = await reapOrphanedReservations(env);
+
+		expect(result.reaped).toBe(1);
+		expect(consoleSpy).toHaveBeenCalledWith(
+			expect.stringContaining('failed to delete D1 stats for a'),
+			expect.any(Error)
+		);
+		expect((storage.deletePuzzleMetadata as any).mock.invocationCallOrder[0]).toBeLessThan(
+			dbContextMock.completionWrites.deletePuzzleCompletionData.mock.invocationCallOrder[0]
+		);
+		consoleSpy.mockRestore();
 	});
 
 	it('reaps an orphan whose workflow is dead (errored)', async () => {
@@ -1508,7 +1622,7 @@ describe('reapOrphanedReservations', () => {
 		expect(result.reaped).toBe(1);
 	});
 
-	it('still reaps when D1 init (getWorkerDb) throws for ownership cleanup', async () => {
+	it('still reaps when D1 init (getWorkerDbContext) throws for ownership cleanup', async () => {
 		(storage.listPuzzles as any).mockResolvedValue({
 			puzzles: [puzzleSummary('a', 'ready', OLD_READY)],
 			invalidCount: 0
@@ -1520,7 +1634,7 @@ describe('reapOrphanedReservations', () => {
 			puzzleId: 'b',
 			status: 'committed'
 		});
-		(getWorkerDb as any).mockImplementationOnce(() => {
+		(getWorkerDbContext as any).mockImplementationOnce(() => {
 			throw new Error('DB init failed');
 		});
 		vi.spyOn(console, 'error').mockImplementation(() => {});
