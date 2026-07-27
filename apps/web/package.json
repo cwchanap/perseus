@@ -18,6 +18,7 @@
 		"test:install-browsers": "playwright install --with-deps chromium --only-shell"
 	},
 	"dependencies": {
+		"@noble/hashes": "^2.2.0",
 		"@perseus/types": "workspace:*"
 	},
 	"devDependencies": {
