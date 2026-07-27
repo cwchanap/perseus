@@ -983,3 +983,242 @@ describe('PuzzleSession tray organization', () => {
 		expect(outcome.type).toBe('tray_organization_noop');
 	});
 });
+
+// --- Task 5: completion sealing and typed effects -----------------------------
+
+import type { SealedCompletion } from './types';
+
+function completeOnePieceSession(
+	overrides: Partial<{ mode: 'timed' | 'relaxed'; source: 'api' | 'local' }> = {}
+): { session: ReturnType<typeof createPuzzleSession>; seal: SealedCompletion } {
+	const session = createPuzzleSession(
+		makeOptions({ metadata: makeMetadata(1), mode: overrides.mode })
+	);
+	session.dispatch({ type: 'start' });
+	// For local-source tests, reconstruct (makeOptions uses api source).
+	session.dispatch({ type: 'attempt_placement', pieceId: 0, x: 0, y: 0 });
+	const seal = session.getState().sealedCompletion;
+	if (!seal) throw new Error('expected seal');
+	return { session, seal };
+}
+
+describe('PuzzleSession completion sealing', () => {
+	it('seals on the final placement and moves lifecycle to completed', () => {
+		const { session, seal } = completeOnePieceSession();
+
+		expect(seal.runId).toBe(session.getState().runId);
+		expect(session.getState().lifecycle).toBe('completed');
+		expect(seal.localStats.status).toBe('pending');
+		expect(seal.serverSubmission.status).toBe('pending');
+	});
+
+	it('clamps a known timed elapsed time to at least one second in the seal', () => {
+		const clock = new ManualClock();
+		const session = createPuzzleSession({
+			metadata: makeMetadata(1),
+			runIdFactory: makeRunIdFactory(),
+			clock
+		});
+		session.dispatch({ type: 'start' });
+		session.dispatch({ type: 'attempt_placement', pieceId: 0, x: 0, y: 0 });
+
+		const seal = session.getState().sealedCompletion!;
+		expect(seal.timingQuality).toBe('known');
+		expect(seal.elapsedActiveSeconds).toBeGreaterThanOrEqual(1);
+	});
+
+	it('uses null elapsed for a relaxed seal', () => {
+		const { seal } = completeOnePieceSession({ mode: 'relaxed' });
+
+		expect(seal.resultClass).toBe('relaxed');
+		expect(seal.elapsedActiveSeconds).toBeNull();
+	});
+
+	it('uses null elapsed and server pending for a local-source seal', () => {
+		const session = createPuzzleSession({
+			metadata: { ...makeMetadata(1), source: 'local' },
+			runIdFactory: makeRunIdFactory(),
+			clock: new ManualClock()
+		});
+		session.dispatch({ type: 'start' });
+		session.dispatch({ type: 'attempt_placement', pieceId: 0, x: 0, y: 0 });
+
+		const seal = session.getState().sealedCompletion!;
+		expect(seal.serverSubmission.status).toBe('not_applicable');
+		expect(seal.localStats.status).toBe('pending');
+	});
+
+	it('direct complete on a full board is idempotent (already sealed)', () => {
+		const { session } = completeOnePieceSession();
+
+		expect(session.dispatch({ type: 'complete' }).type).toBe('completion_noop');
+	});
+
+	it('undo reactivates the board/lifecycle but cannot alter the seal', () => {
+		const { session, seal } = completeOnePieceSession();
+
+		session.dispatch({ type: 'undo' });
+
+		expect(session.getState().lifecycle).toBe('active');
+		expect(session.getState().placedPieces).toEqual([]);
+		expect(session.getState().sealedCompletion).toEqual(seal);
+	});
+
+	it('redo restores the completed board without emitting a second completion', () => {
+		const { session, seal } = completeOnePieceSession();
+		session.dispatch({ type: 'undo' });
+
+		session.dispatch({ type: 'redo' });
+
+		expect(session.getState().lifecycle).toBe('completed');
+		expect(session.getState().sealedCompletion).toBe(seal);
+	});
+
+	it('a fresh final placement after undo does not create a second seal', () => {
+		const { session, seal } = completeOnePieceSession();
+		session.dispatch({ type: 'undo' });
+		expect(session.getState().sealedCompletion).toBe(seal);
+
+		session.dispatch({ type: 'attempt_placement', pieceId: 0, x: 0, y: 0 });
+
+		expect(session.getState().sealedCompletion).toBe(seal);
+		expect(session.getState().lifecycle).toBe('completed');
+	});
+
+	it('a completed seal is restored from a hydrated snapshot without re-emitting', () => {
+		const sealed: SealedCompletion = {
+			runId: 'run-sealed',
+			resultClass: 'standard_timed',
+			timingQuality: 'known',
+			elapsedActiveSeconds: 30,
+			completedAt: 1000,
+			localStats: { status: 'succeeded' },
+			serverSubmission: { status: 'succeeded' }
+		};
+		const restored: PersistedPuzzleSessionV1 = {
+			schemaVersion: 1,
+			puzzleId: 'pz1',
+			source: 'api',
+			lifecycle: 'completed',
+			mode: 'timed',
+			runId: 'run-sealed',
+			origin: 'resumed',
+			elapsedActiveSeconds: 30,
+			timingQuality: 'known',
+			timerStarted: true,
+			placedPieces: [{ pieceId: 0, x: 0, y: 0 }],
+			trayOrder: [0],
+			rotationEnabled: false,
+			pieceRotations: {},
+			counters: { incorrectAttempts: 0, hintsUsed: 0, referenceActivations: 0 },
+			facts: { rotationUsed: false, hintUsed: false, ghostReferenceUsed: false },
+			hasUserActivity: true,
+			resultClass: 'standard_timed',
+			sealedCompletion: sealed,
+			lastUpdated: 0
+		};
+		const session = createPuzzleSession({
+			...makeOptions({ metadata: makeMetadata(1) }),
+			restored
+		});
+
+		expect(session.getState().sealedCompletion).toEqual(sealed);
+		// A re-complete on the restored seal is a noop.
+		expect(session.dispatch({ type: 'complete' }).type).toBe('completion_noop');
+	});
+});
+
+describe('PuzzleSession completion effect coordination', () => {
+	it('acknowledges a pending local effect as succeeded', () => {
+		const { session, seal } = completeOnePieceSession();
+
+		const outcome = session.dispatch({
+			type: 'acknowledge_completion_effect',
+			runId: seal.runId,
+			effect: 'local_stats',
+			result: { status: 'succeeded' }
+		});
+
+		expect(outcome.type).toBe('effect_acknowledged');
+		expect(session.getState().sealedCompletion!.localStats.status).toBe('succeeded');
+	});
+
+	it('acknowledges a pending server effect as a retryable failure', () => {
+		const { session, seal } = completeOnePieceSession();
+
+		session.dispatch({
+			type: 'acknowledge_completion_effect',
+			runId: seal.runId,
+			effect: 'server_submission',
+			result: { status: 'failed', code: 'network_error', retryable: true }
+		});
+
+		const server = session.getState().sealedCompletion!.serverSubmission;
+		expect(server.status).toBe('failed');
+		if (server.status === 'failed') expect(server.code).toBe('network_error');
+	});
+
+	it('ignores an acknowledgement for a different run id', () => {
+		const { session } = completeOnePieceSession();
+
+		const outcome = session.dispatch({
+			type: 'acknowledge_completion_effect',
+			runId: 'some-other-run',
+			effect: 'local_stats',
+			result: { status: 'succeeded' }
+		});
+
+		expect(outcome.type).toBe('effect_acknowledgement_noop');
+		expect(session.getState().sealedCompletion!.localStats.status).toBe('pending');
+	});
+
+	it('ignores an acknowledgement for an already-terminal effect', () => {
+		const { session, seal } = completeOnePieceSession();
+		session.dispatch({
+			type: 'acknowledge_completion_effect',
+			runId: seal.runId,
+			effect: 'local_stats',
+			result: { status: 'succeeded' }
+		});
+
+		const outcome = session.dispatch({
+			type: 'acknowledge_completion_effect',
+			runId: seal.runId,
+			effect: 'local_stats',
+			result: { status: 'failed', code: 'storage_error', retryable: true }
+		});
+
+		expect(outcome.type).toBe('effect_acknowledgement_noop');
+		expect(session.getState().sealedCompletion!.localStats.status).toBe('succeeded');
+	});
+
+	it('retry re-emits a retryable failed server effect after resetting it to pending', () => {
+		const { session, seal } = completeOnePieceSession();
+		session.dispatch({
+			type: 'acknowledge_completion_effect',
+			runId: seal.runId,
+			effect: 'server_submission',
+			result: { status: 'failed', code: 'network_error', retryable: true }
+		});
+
+		const outcome = session.dispatch({ type: 'retry_completion_effects' });
+
+		expect(outcome.type).toBe('completion_sealed');
+		expect(session.getState().sealedCompletion!.serverSubmission.status).toBe('pending');
+	});
+
+	it('does not retry a terminal quota failure', () => {
+		const { session, seal } = completeOnePieceSession();
+		session.dispatch({
+			type: 'acknowledge_completion_effect',
+			runId: seal.runId,
+			effect: 'server_submission',
+			result: { status: 'failed', code: 'completion_quota_exceeded', retryable: false }
+		});
+
+		session.dispatch({ type: 'retry_completion_effects' });
+
+		const server = session.getState().sealedCompletion!.serverSubmission;
+		expect(server.status).toBe('failed');
+	});
+});
