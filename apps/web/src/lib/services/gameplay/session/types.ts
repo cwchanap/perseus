@@ -200,6 +200,19 @@ export type SessionLoadResult =
 	| { status: 'invalid'; reason: string }
 	| { status: 'incompatible'; schemaVersion: number };
 
+export interface SessionPersistenceError {
+	kind: 'read_error' | 'write_error' | 'remove_error';
+	puzzleId: string;
+	cause: unknown;
+}
+
+export interface SessionStorageAdapter {
+	loadSession(puzzleId: string, context: SessionValidationContext): SessionLoadResult;
+	saveSession(puzzleId: string, snapshot: PersistedPuzzleSessionV1): void;
+	clearSession(puzzleId: string): void;
+	isResumable(snapshot: PersistedPuzzleSessionV1): boolean;
+}
+
 /**
  * Validation context supplied by the loader: the resolved puzzle and source
  * provide the canonical piece IDs, grid, and source type used to validate a
