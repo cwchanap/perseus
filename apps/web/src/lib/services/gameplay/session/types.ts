@@ -330,4 +330,10 @@ export interface CreatePuzzleSessionOptions {
 	onEvent?: PuzzleSessionEventCallback;
 	/** Restored snapshot (loaded or migrated). When absent, a fresh run is created. */
 	restored?: PersistedPuzzleSessionV1;
+	/**
+	 * Canonical tray order for a fresh run. The route supplies its shuffled
+	 * order; when omitted the engine falls back to ascending piece ids.
+	 * Restored snapshots carry their own `trayOrder`.
+	 */
+	initialTrayOrder?: number[];
 }
