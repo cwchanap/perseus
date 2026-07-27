@@ -24,6 +24,10 @@ import type {
 	PlacementOutcome,
 	ResultClass,
 	ReferenceMode,
+	SealedCompletion,
+	CompletionEffect,
+	CompletionEffectState,
+	CompletionFailureCode,
 	PlacedPiece,
 	TrayOrganizationUpdate,
 	SessionLifecycle
@@ -290,6 +294,9 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 		const completed = isBoardComplete();
 		pushHistory();
 		emit({ type: 'placement_accepted', pieceId, completed });
+		if (completed) {
+			handleBoardCompletion();
+		}
 		notify();
 		return { type: 'placement', outcome: { status: 'accepted', completed } };
 	}
@@ -444,6 +451,115 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 		return { type: 'lifecycle_transitioned', from, to: 'setup' };
 	}
 
+	// --- Completion sealing and typed effects ---------------------------------
+
+	/**
+	 * Called after a placement that completes the board. If a seal already exists
+	 * (undo-then-recomplete), restores the completed lifecycle without resealing
+	 * or re-emitting. Otherwise seals once.
+	 */
+	function handleBoardCompletion() {
+		if (state.sealedCompletion) {
+			if (state.lifecycle !== 'completed') {
+				transitionToInternal('completed');
+			}
+			return;
+		}
+		doComplete();
+	}
+
+	function doComplete(): PuzzleSessionOutcome {
+		if (state.sealedCompletion) {
+			return { type: 'completion_noop', reason: 'already_sealed' };
+		}
+		if (state.lifecycle !== 'active') {
+			return { type: 'completion_noop', reason: 'lifecycle_disallows' };
+		}
+		if (!isBoardComplete()) {
+			return { type: 'completion_noop', reason: 'board_incomplete' };
+		}
+		stopClock();
+		const seal: SealedCompletion = {
+			runId: state.runId,
+			resultClass: state.resultClass,
+			timingQuality: state.timingQuality,
+			elapsedActiveSeconds: sealElapsed(),
+			completedAt: clock.wallNow(),
+			localStats: { status: 'pending' },
+			serverSubmission:
+				state.source === 'api' ? { status: 'pending' } : { status: 'not_applicable' }
+		};
+		state.sealedCompletion = seal;
+		transitionToInternal('completed');
+		emit({ type: 'completion_sealed', seal });
+		emit({ type: 'completion_effect_request', effect: 'local_stats', seal });
+		if (seal.serverSubmission.status === 'pending') {
+			emit({ type: 'completion_effect_request', effect: 'server_submission', seal });
+		}
+		notify();
+		return { type: 'completion_sealed', seal };
+	}
+
+	function sealElapsed(): number | null {
+		if (state.mode === 'relaxed' || state.timingQuality !== 'known') {
+			return null;
+		}
+		return Math.max(1, state.elapsedActiveSeconds ?? 0);
+	}
+
+	function doAcknowledge(
+		runId: string,
+		effect: CompletionEffect,
+		result:
+			| { status: 'succeeded' }
+			| { status: 'failed'; code: CompletionFailureCode; retryable: boolean }
+	): PuzzleSessionOutcome {
+		const seal = state.sealedCompletion;
+		if (!seal || seal.runId !== runId) {
+			return { type: 'effect_acknowledgement_noop', reason: 'run_id_mismatch' };
+		}
+		const current = effect === 'local_stats' ? seal.localStats : seal.serverSubmission;
+		if (
+			current.status === 'succeeded' ||
+			current.status === 'not_applicable' ||
+			(current.status === 'failed' && !current.retryable)
+		) {
+			return { type: 'effect_acknowledgement_noop', reason: 'effect_terminal' };
+		}
+		const nextState = result as CompletionEffectState;
+		state.sealedCompletion =
+			effect === 'local_stats'
+				? { ...seal, localStats: nextState }
+				: { ...seal, serverSubmission: nextState };
+		notify();
+		return { type: 'effect_acknowledged', effect };
+	}
+
+	function doRetryCompletionEffects(): PuzzleSessionOutcome {
+		const seal = state.sealedCompletion;
+		if (!seal) {
+			return { type: 'completion_noop', reason: 'board_incomplete' };
+		}
+		let localStats = seal.localStats;
+		let serverSubmission = seal.serverSubmission;
+		if (localStats.status === 'failed' && localStats.retryable) {
+			localStats = { status: 'pending' };
+		}
+		if (serverSubmission.status === 'failed' && serverSubmission.retryable) {
+			serverSubmission = { status: 'pending' };
+		}
+		const updated = { ...seal, localStats, serverSubmission };
+		state.sealedCompletion = updated;
+		if (localStats.status === 'pending') {
+			emit({ type: 'completion_effect_request', effect: 'local_stats', seal: updated });
+		}
+		if (serverSubmission.status === 'pending') {
+			emit({ type: 'completion_effect_request', effect: 'server_submission', seal: updated });
+		}
+		notify();
+		return { type: 'completion_sealed', seal: updated };
+	}
+
 	// --- Undo / redo ----------------------------------------------------------
 
 	function doUndo(): PuzzleSessionOutcome {
@@ -457,9 +573,15 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 		if (previous === undefined) {
 			return { type: 'history_noop', reason: 'at_start' };
 		}
+		const wasCompleted = state.lifecycle === 'completed';
 		applyHistorySnapshot(previous);
 		state.resultClass = recomputeResultClass();
 		updateHistoryFlags();
+		// Undo from a completed run reactivates the board/lifecycle, but the
+		// immutable seal is retained and a fresh completion is a no-op.
+		if (wasCompleted && state.lifecycle === 'completed') {
+			transitionToInternal('active');
+		}
 		notify();
 		return { type: 'history_restored', direction: 'undo' };
 	}
@@ -475,6 +597,11 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 		applyHistorySnapshot(next);
 		state.resultClass = recomputeResultClass();
 		updateHistoryFlags();
+		// Restoring the completed board after an undo returns lifecycle to
+		// completed without emitting a second completion (seal is retained).
+		if (state.sealedCompletion && isBoardComplete() && state.lifecycle !== 'completed') {
+			transitionToInternal('completed');
+		}
 		notify();
 		return { type: 'history_restored', direction: 'redo' };
 	}
@@ -555,10 +682,12 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 			case 'restart':
 				return doRestart();
 			case 'complete':
-				// Completion sealing lands in Task 5.
-				return { type: 'completion_noop', reason: 'board_incomplete' };
+				return doComplete();
+			case 'acknowledge_completion_effect':
+				return doAcknowledge(action.runId, action.effect, action.result);
+			case 'retry_completion_effects':
+				return doRetryCompletionEffects();
 			default:
-				// Effect actions arrive in Task 5.
 				return { type: 'lifecycle_noop', reason: 'invalid_transition' };
 		}
 	}
