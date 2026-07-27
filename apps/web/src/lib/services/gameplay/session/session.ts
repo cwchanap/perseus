@@ -1,21 +1,27 @@
-// PuzzleSession transition engine: lifecycle and the single injected clock.
+// PuzzleSession transition engine: lifecycle, clock, gameplay, and history.
 //
-// The engine is framework-independent. It imports no Svelte, DOM, storage,
-// fetch, or analytics. Time and scheduling arrive through one injected Clock;
-// fresh run ids arrive through one injected RunIdFactory. Gameplay, assistance,
-// and completion transitions are layered onto this same dispatch surface by
-// later tasks; this module owns construction, lifecycle, timing, visibility,
-// restart, and disposal.
+// Framework-independent. Imports no Svelte, DOM, storage, fetch, or analytics.
+// Time and scheduling arrive through one injected Clock; fresh run ids through
+// one injected RunIdFactory; rotation generation through an optional factory.
+// Completion sealing and typed effect coordination are layered on by Task 5.
 
+import { createHistory, type History } from '$lib/services/gameplay/history';
+import {
+	rotateClockwise,
+	isUpright,
+	generateRandomRotations
+} from '$lib/services/gameplay/rotation';
+import type { Rotation } from '$lib/types/gameplay';
 import type {
-	Clock,
 	CreatePuzzleSessionOptions,
 	PuzzleSessionAction,
 	PuzzleSessionOutcome,
 	PuzzleSessionState,
 	PuzzleSessionEvent,
-	PuzzleSessionEventCallback,
 	PersistedPuzzleSessionV1,
+	PlacementOutcome,
+	ResultClass,
+	PlacedPiece,
 	SessionLifecycle
 } from './types';
 
@@ -27,13 +33,24 @@ export interface PuzzleSession {
 	dispose(): void;
 }
 
+interface PlacementHistoryState {
+	placedPieces: PlacedPiece[];
+	pieceRotations: Record<number, Rotation>;
+	rotationEnabled: boolean;
+}
+
 export function createPuzzleSession(options: CreatePuzzleSessionOptions): PuzzleSession {
 	const clock = options.clock;
 	const runIdFactory = options.runIdFactory;
 	const onEvent = options.onEvent;
 	const metadata = options.metadata;
+	const pieceById = new Map(metadata.pieces.map((piece) => [piece.id, piece]));
+	const createRotations =
+		options.createRotations ??
+		((ids: number[]) => generateRandomRotations(ids, hashSeed(metadata.puzzleId)));
 
 	let state = buildInitialState(options);
+	let placementHistory = makeHistoryBaseline(state);
 	let monotonicStart: number | null = null;
 	let tickHandle: unknown = null;
 	let clockRunning = false;
@@ -43,12 +60,11 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 	function emit(event: PuzzleSessionEvent) {
 		if (onEvent) onEvent(event);
 	}
-
 	function notify() {
 		emit({ type: 'state_changed' });
 	}
 
-	// --- Clock management -----------------------------------------------------
+	// --- Clock ----------------------------------------------------------------
 
 	function startClock() {
 		if (disposed) return;
@@ -70,22 +86,15 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 		monotonicStart = null;
 	}
 
-	/**
-	 * Begin accumulating time on the first counted gameplay action. Counted
-	 * actions (placement attempt, accepted piece rotation) are wired by the
-	 * gameplay layer; mode toggles, hints, and reference viewing do not start
-	 * the clock.
-	 */
 	function ensureTimerStarted() {
 		if (state.timerStarted) return;
 		if (state.mode !== 'timed' || state.timingQuality !== 'known') return;
 		if (state.lifecycle !== 'active') return;
 		state.timerStarted = true;
 		startClock();
-		notify();
 	}
 
-	// --- Lifecycle transitions ------------------------------------------------
+	// --- Lifecycle ------------------------------------------------------------
 
 	function doStart(): PuzzleSessionOutcome {
 		if (state.lifecycle !== 'setup') {
@@ -133,14 +142,217 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 	}
 
 	function doDispose(): PuzzleSessionOutcome {
-		if (disposed) {
-			return { type: 'disposed' };
-		}
+		if (disposed) return { type: 'disposed' };
 		stopClock();
 		disposed = true;
 		transitionToInternal('disposed');
 		notify();
 		return { type: 'disposed' };
+	}
+
+	// --- Gameplay helpers -----------------------------------------------------
+
+	function isPiecePlaced(pieceId: number): boolean {
+		return state.placedPieces.some((placement) => placement.pieceId === pieceId);
+	}
+
+	function uniquePlacedCount(): number {
+		return new Set(state.placedPieces.map((placement) => placement.pieceId)).size;
+	}
+
+	function isBoardComplete(): boolean {
+		return state.pieceCount > 0 && uniquePlacedCount() >= state.pieceCount;
+	}
+
+	function recomputeResultClass(): ResultClass {
+		if (state.mode === 'relaxed') return 'relaxed';
+		if (state.facts.hintUsed || state.facts.ghostReferenceUsed) return 'assisted_timed';
+		if (state.facts.rotationUsed) return 'rotation_timed';
+		return 'standard_timed';
+	}
+
+	function snapshot(): PlacementHistoryState {
+		return {
+			placedPieces: state.placedPieces.map((piece) => ({ ...piece })),
+			pieceRotations: { ...state.pieceRotations },
+			rotationEnabled: state.rotationEnabled
+		};
+	}
+
+	function pushHistory() {
+		placementHistory.push(snapshot());
+		updateHistoryFlags();
+	}
+
+	function updateHistoryFlags() {
+		state.canUndo = placementHistory.canUndo();
+		state.canRedo = placementHistory.canRedo();
+	}
+
+	function applyHistorySnapshot(snapshotState: PlacementHistoryState) {
+		state.placedPieces = snapshotState.placedPieces.map((piece) => ({ ...piece }));
+		state.pieceRotations = { ...snapshotState.pieceRotations };
+		state.rotationEnabled = snapshotState.rotationEnabled;
+	}
+
+	// --- Selection ------------------------------------------------------------
+
+	function doSelect(pieceId: number): PuzzleSessionOutcome {
+		if (state.lifecycle !== 'active') {
+			return { type: 'selection_noop', reason: 'lifecycle_disallows_gameplay' };
+		}
+		if (!pieceById.has(pieceId)) {
+			return { type: 'selection_noop', reason: 'unknown_piece' };
+		}
+		if (isPiecePlaced(pieceId)) {
+			return { type: 'selection_noop', reason: 'already_placed' };
+		}
+		state.selectedPieceId = pieceId;
+		notify();
+		return { type: 'selection_changed', pieceId };
+	}
+
+	function doCancelSelection(): PuzzleSessionOutcome {
+		state.selectedPieceId = null;
+		notify();
+		return { type: 'selection_changed', pieceId: null };
+	}
+
+	// --- Rotation mode + per-piece rotation -----------------------------------
+
+	function doSetRotationMode(enabled: boolean): PuzzleSessionOutcome {
+		if (state.lifecycle !== 'active') {
+			return { type: 'rotation_mode_noop', reason: 'lifecycle_disables_rotation_toggle' };
+		}
+		if (state.placedPieces.length > 0) {
+			return { type: 'rotation_mode_noop', reason: 'pieces_already_placed' };
+		}
+		const next = enabled;
+		if (next && !state.rotationEnabled) {
+			const ids = metadata.pieces.map((piece) => piece.id);
+			state.pieceRotations = createRotations(ids);
+		}
+		state.rotationEnabled = next;
+		if (next) {
+			state.facts.rotationUsed = true;
+		}
+		state.resultClass = recomputeResultClass();
+		pushHistory();
+		notify();
+		return { type: 'rotation_mode_changed', enabled: next };
+	}
+
+	function doRotatePiece(pieceId: number): PuzzleSessionOutcome {
+		if (state.lifecycle !== 'active')
+			return { type: 'rotation_noop', reason: 'piece_not_rotatable' };
+		if (!state.rotationEnabled) return { type: 'rotation_noop', reason: 'piece_not_rotatable' };
+		if (!pieceById.has(pieceId) || isPiecePlaced(pieceId)) {
+			return { type: 'rotation_noop', reason: 'piece_not_rotatable' };
+		}
+		ensureTimerStarted();
+		const current = state.pieceRotations[pieceId] ?? 0;
+		state.pieceRotations = { ...state.pieceRotations, [pieceId]: rotateClockwise(current) };
+		state.hasUserActivity = true;
+		pushHistory();
+		notify();
+		return { type: 'piece_rotated', pieceId };
+	}
+
+	// --- Placement ------------------------------------------------------------
+
+	function doAttemptPlacement(pieceId: number, x: number, y: number): PuzzleSessionOutcome {
+		const placementOutcome = validatePlacement(pieceId, x, y);
+		if (placementOutcome.status !== 'accepted') {
+			if (placementOutcome.status === 'rejected') {
+				ensureTimerStarted();
+				state.counters = {
+					...state.counters,
+					incorrectAttempts: state.counters.incorrectAttempts + 1
+				};
+				state.hasUserActivity = true;
+				emit({ type: 'placement_rejected', pieceId, reason: placementOutcome.reason });
+				notify();
+			}
+			return { type: 'placement', outcome: placementOutcome };
+		}
+
+		const nextPlacement: PlacedPiece = { pieceId, x, y };
+		state.placedPieces = [...state.placedPieces, nextPlacement];
+		ensureTimerStarted();
+		state.hasUserActivity = true;
+		if (state.selectedPieceId === pieceId) {
+			state.selectedPieceId = null;
+		}
+		const completed = isBoardComplete();
+		pushHistory();
+		emit({ type: 'placement_accepted', pieceId, completed });
+		notify();
+		return { type: 'placement', outcome: { status: 'accepted', completed } };
+	}
+
+	function validatePlacement(pieceId: number, x: number, y: number): PlacementOutcome {
+		if (state.lifecycle !== 'active') {
+			return { status: 'noop', reason: 'lifecycle_disallows_gameplay' };
+		}
+		const piece = pieceById.get(pieceId);
+		if (!piece) {
+			return { status: 'noop', reason: 'unknown_piece' };
+		}
+		if (isPiecePlaced(pieceId)) {
+			return { status: 'noop', reason: 'duplicate_piece' };
+		}
+		if (
+			!Number.isInteger(x) ||
+			!Number.isInteger(y) ||
+			x < 0 ||
+			y < 0 ||
+			x >= state.gridCols ||
+			y >= state.gridRows
+		) {
+			return { status: 'noop', reason: 'invalid_coordinates' };
+		}
+		if (x !== piece.correctX || y !== piece.correctY) {
+			return { status: 'rejected', reason: 'wrong_slot', counted: true };
+		}
+		if (state.rotationEnabled && !isUpright(state.pieceRotations[pieceId] ?? 0)) {
+			return { status: 'rejected', reason: 'non_upright', counted: true };
+		}
+		return { status: 'accepted', completed: false };
+	}
+
+	// --- Undo / redo ----------------------------------------------------------
+
+	function doUndo(): PuzzleSessionOutcome {
+		if (!placementHistory.canUndo()) {
+			return {
+				type: 'history_noop',
+				reason: placementHistory.getCurrent() === undefined ? 'empty' : 'at_start'
+			};
+		}
+		const previous = placementHistory.undo();
+		if (previous === undefined) {
+			return { type: 'history_noop', reason: 'at_start' };
+		}
+		applyHistorySnapshot(previous);
+		state.resultClass = recomputeResultClass();
+		updateHistoryFlags();
+		notify();
+		return { type: 'history_restored', direction: 'undo' };
+	}
+
+	function doRedo(): PuzzleSessionOutcome {
+		if (!placementHistory.canRedo()) {
+			return { type: 'history_noop', reason: 'at_end' };
+		}
+		const next = placementHistory.redo();
+		if (next === undefined) {
+			return { type: 'history_noop', reason: 'at_end' };
+		}
+		applyHistorySnapshot(next);
+		state.resultClass = recomputeResultClass();
+		updateHistoryFlags();
+		notify();
+		return { type: 'history_restored', direction: 'redo' };
 	}
 
 	// --- Visibility -----------------------------------------------------------
@@ -181,7 +393,7 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 		}
 	}
 
-	// --- Dispatch (lifecycle subset; gameplay/completion added by later tasks) -
+	// --- Dispatch -------------------------------------------------------------
 
 	function dispatch(action: PuzzleSessionAction): PuzzleSessionOutcome {
 		if (disposed) {
@@ -196,18 +408,31 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 				return doResume();
 			case 'dispose':
 				return doDispose();
+			case 'select_piece':
+				return doSelect(action.pieceId);
+			case 'cancel_selection':
+				return doCancelSelection();
+			case 'set_rotation_mode':
+				return doSetRotationMode(action.enabled);
+			case 'rotate_piece':
+				return doRotatePiece(action.pieceId);
+			case 'attempt_placement':
+				return doAttemptPlacement(action.pieceId, action.x, action.y);
+			case 'undo':
+				return doUndo();
+			case 'redo':
+				return doRedo();
+			case 'complete':
+				// Completion sealing lands in Task 5.
+				return { type: 'completion_noop', reason: 'board_incomplete' };
 			default:
-				// Gameplay, assistance, completion, and effect actions are owned by
-				// Tasks 3-5. Until then they are inert no-ops so the engine remains
-				// usable in isolation.
+				// Assistance, organization, and effect actions arrive in Tasks 4-5.
 				return { type: 'lifecycle_noop', reason: 'invalid_transition' };
 		}
 	}
 
 	// --- Construction side-effects -------------------------------------------
 
-	// A restored active known-timed session with the clock already started
-	// resumes accumulating immediately (the tab is visible at construction).
 	if (
 		state.lifecycle === 'active' &&
 		state.timerStarted &&
@@ -274,10 +499,6 @@ function hydrate(
 	snapshot: PersistedPuzzleSessionV1,
 	metadata: CreatePuzzleSessionOptions['metadata']
 ): PuzzleSessionState {
-	// Runtime-only fields are reset on hydration; persisted projection is the
-	// source of truth for everything below. pieceCount/gridCols/gridRows come
-	// from the resolved puzzle metadata (not the persisted projection). History
-	// is not persisted, so a restored session starts with undo/redo unavailable.
 	return {
 		puzzleId: snapshot.puzzleId,
 		source: snapshot.source,
@@ -315,4 +536,20 @@ function hydrate(
 		canUndo: false,
 		canRedo: false
 	};
+}
+
+function makeHistoryBaseline(state: PuzzleSessionState): History<PlacementHistoryState> {
+	return createHistory<PlacementHistoryState>({
+		placedPieces: state.placedPieces.map((piece) => ({ ...piece })),
+		pieceRotations: { ...state.pieceRotations },
+		rotationEnabled: state.rotationEnabled
+	});
+}
+
+function hashSeed(value: string): number {
+	let hash = 0;
+	for (const char of value) {
+		hash = (Math.imul(hash, 31) + char.charCodeAt(0)) >>> 0;
+	}
+	return hash || 1;
 }

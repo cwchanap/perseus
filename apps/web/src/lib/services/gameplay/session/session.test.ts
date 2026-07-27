@@ -479,3 +479,318 @@ describe('PuzzleSession clock and timing', () => {
 		expect(state.lifecycle).toBe('disposed');
 	});
 });
+
+// --- Task 3: selection, placement, rotation, history ---------------------------
+
+import type { Rotation } from '$lib/types/gameplay';
+
+function deterministicRotations(ids: number[]): Record<number, Rotation> {
+	const out: Record<number, Rotation> = {};
+	ids.forEach((id, i) => {
+		out[id] = ((i % 4) * 90) as Rotation;
+	});
+	return out;
+}
+
+function startedSession(
+	overrides: Partial<{
+		pieceCount: number;
+		createRotations: (ids: number[]) => Record<number, Rotation>;
+	}> = {}
+) {
+	const clock = new ManualClock();
+	const session = createPuzzleSession(
+		makeOptions({
+			clock,
+			metadata: makeMetadata(overrides.pieceCount ?? 4)
+		})
+	);
+	// Inject createRotations by reconstructing if needed.
+	if (overrides.createRotations) {
+		// Recreate with rotations factory.
+		const session2 = createPuzzleSession({
+			metadata: makeMetadata(overrides.pieceCount ?? 4),
+			runIdFactory: makeRunIdFactory(),
+			clock,
+			createRotations: overrides.createRotations
+		});
+		session2.dispatch({ type: 'start' });
+		return { session: session2, clock };
+	}
+	session.dispatch({ type: 'start' });
+	return { session, clock };
+}
+
+describe('PuzzleSession selection', () => {
+	it('selects a known unplaced piece', () => {
+		const { session } = startedSession();
+
+		const outcome = session.dispatch({ type: 'select_piece', pieceId: 1 });
+
+		expect(outcome).toEqual({ type: 'selection_changed', pieceId: 1 });
+		expect(session.getState().selectedPieceId).toBe(1);
+	});
+
+	it('cancels the current selection', () => {
+		const { session } = startedSession();
+		session.dispatch({ type: 'select_piece', pieceId: 1 });
+
+		session.dispatch({ type: 'cancel_selection' });
+
+		expect(session.getState().selectedPieceId).toBeNull();
+	});
+
+	it('no-ops selection of an unknown piece', () => {
+		const { session } = startedSession();
+
+		expect(session.dispatch({ type: 'select_piece', pieceId: 99 }).type).toBe('selection_noop');
+		expect(session.getState().selectedPieceId).toBeNull();
+	});
+
+	it('no-ops selection of an already-placed piece', () => {
+		const { session } = startedSession();
+		session.dispatch({ type: 'attempt_placement', pieceId: 0, x: 0, y: 0 });
+
+		expect(session.dispatch({ type: 'select_piece', pieceId: 0 }).type).toBe('selection_noop');
+	});
+
+	it('clears selection when the selected piece is placed', () => {
+		const { session } = startedSession();
+		session.dispatch({ type: 'select_piece', pieceId: 0 });
+
+		session.dispatch({ type: 'attempt_placement', pieceId: 0, x: 0, y: 0 });
+
+		expect(session.getState().selectedPieceId).toBeNull();
+	});
+});
+
+describe('PuzzleSession placement', () => {
+	it('accepts a correct placement once', () => {
+		const { session } = startedSession();
+
+		const outcome = session.dispatch({
+			type: 'attempt_placement',
+			pieceId: 0,
+			x: 0,
+			y: 0
+		});
+
+		expect(outcome).toEqual({
+			type: 'placement',
+			outcome: { status: 'accepted', completed: false }
+		});
+		expect(session.getState().placedPieces).toEqual([{ pieceId: 0, x: 0, y: 0 }]);
+	});
+
+	it('rejects a wrong-slot placement and counts it once', () => {
+		const { session } = startedSession();
+
+		const outcome = session.dispatch({
+			type: 'attempt_placement',
+			pieceId: 0,
+			x: 1,
+			y: 0
+		});
+
+		expect(outcome).toEqual({
+			type: 'placement',
+			outcome: { status: 'rejected', reason: 'wrong_slot', counted: true }
+		});
+		expect(session.getState().counters.incorrectAttempts).toBe(1);
+		expect(session.getState().placedPieces).toEqual([]);
+	});
+
+	it('no-ops an unknown piece without counting', () => {
+		const { session } = startedSession();
+
+		const outcome = session.dispatch({ type: 'attempt_placement', pieceId: 99, x: 0, y: 0 });
+
+		expect(outcome.type).toBe('placement');
+		expect(session.getState().counters.incorrectAttempts).toBe(0);
+	});
+
+	it('no-ops a duplicate (already-placed) piece without counting', () => {
+		const { session } = startedSession();
+		session.dispatch({ type: 'attempt_placement', pieceId: 0, x: 0, y: 0 });
+
+		const outcome = session.dispatch({ type: 'attempt_placement', pieceId: 0, x: 0, y: 0 });
+
+		expect(outcome.type).toBe('placement');
+		expect((outcome as { outcome: { status: string } }).outcome.status).toBe('noop');
+		expect(session.getState().counters.incorrectAttempts).toBe(0);
+	});
+
+	it('no-ops non-integer coordinates without counting', () => {
+		const { session } = startedSession();
+
+		const outcome = session.dispatch({
+			type: 'attempt_placement',
+			pieceId: 0,
+			x: 0.5,
+			y: 0
+		});
+
+		expect((outcome as { outcome: { status: string } }).outcome.status).toBe('noop');
+		expect(session.getState().counters.incorrectAttempts).toBe(0);
+	});
+
+	it('reports completed=true when the final unique piece is placed', () => {
+		const { session } = startedSession({ pieceCount: 2 });
+		session.dispatch({ type: 'attempt_placement', pieceId: 0, x: 0, y: 0 });
+
+		const outcome = session.dispatch({ type: 'attempt_placement', pieceId: 1, x: 1, y: 0 });
+
+		expect((outcome as { outcome: { completed: boolean } }).outcome.completed).toBe(true);
+	});
+
+	it('starts the clock on an accepted placement', () => {
+		const { session, clock } = startedSession();
+
+		session.dispatch({ type: 'attempt_placement', pieceId: 0, x: 0, y: 0 });
+
+		expect(session.getState().timerStarted).toBe(true);
+		expect(clock.activeIntervalCount).toBe(1);
+	});
+
+	it('direct complete before a valid full board is a no-op', () => {
+		const { session } = startedSession();
+
+		const outcome = session.dispatch({ type: 'complete' });
+
+		expect(outcome.type).toBe('completion_noop');
+	});
+
+	it('no-ops placement outside active gameplay (e.g. setup)', () => {
+		const session = createPuzzleSession(makeOptions());
+
+		const outcome = session.dispatch({ type: 'attempt_placement', pieceId: 0, x: 0, y: 0 });
+
+		expect((outcome as { outcome: { status: string } }).outcome.status).toBe('noop');
+	});
+});
+
+describe('PuzzleSession rotation and history', () => {
+	it('locks rotation-mode toggle unless active with zero pieces placed', () => {
+		const session = createPuzzleSession(makeOptions());
+
+		expect(session.dispatch({ type: 'set_rotation_mode', enabled: true }).type).toBe(
+			'rotation_mode_noop'
+		);
+	});
+
+	it('enabling rotation immediately sets rotationUsed and rotation_timed result class', () => {
+		const { session } = startedSession({ createRotations: deterministicRotations });
+
+		session.dispatch({ type: 'set_rotation_mode', enabled: true });
+
+		expect(session.getState().rotationEnabled).toBe(true);
+		expect(session.getState().facts.rotationUsed).toBe(true);
+		expect(session.getState().resultClass).toBe('rotation_timed');
+		expect(session.getState().timerStarted).toBe(false);
+	});
+
+	it('disabling rotation after enabling does not restore standard eligibility', () => {
+		const { session } = startedSession({ createRotations: deterministicRotations });
+		session.dispatch({ type: 'set_rotation_mode', enabled: true });
+
+		session.dispatch({ type: 'set_rotation_mode', enabled: false });
+
+		expect(session.getState().rotationEnabled).toBe(false);
+		expect(session.getState().facts.rotationUsed).toBe(true);
+		expect(session.getState().resultClass).toBe('rotation_timed');
+	});
+
+	it('locks rotation toggle after the first placement', () => {
+		const { session } = startedSession();
+		session.dispatch({ type: 'attempt_placement', pieceId: 0, x: 0, y: 0 });
+
+		expect(session.dispatch({ type: 'set_rotation_mode', enabled: true }).type).toBe(
+			'rotation_mode_noop'
+		);
+	});
+
+	it('rotates an unplaced piece 90 degrees clockwise', () => {
+		const { session } = startedSession({ createRotations: deterministicRotations });
+		session.dispatch({ type: 'set_rotation_mode', enabled: true });
+		// piece 1 starts at 90 (deterministic: index 1 -> 90)
+		expect(session.getState().pieceRotations[1]).toBe(90);
+
+		session.dispatch({ type: 'rotate_piece', pieceId: 1 });
+
+		expect(session.getState().pieceRotations[1]).toBe(180);
+		expect(session.getState().timerStarted).toBe(true);
+	});
+
+	it('does not rotate a placed or unknown piece', () => {
+		const { session } = startedSession({ createRotations: deterministicRotations });
+		session.dispatch({ type: 'set_rotation_mode', enabled: true });
+		session.dispatch({ type: 'attempt_placement', pieceId: 0, x: 0, y: 0 });
+
+		expect(session.dispatch({ type: 'rotate_piece', pieceId: 0 }).type).toBe('rotation_noop');
+		expect(session.dispatch({ type: 'rotate_piece', pieceId: 99 }).type).toBe('rotation_noop');
+	});
+
+	it('rejects non-upright placement and counts it', () => {
+		const { session } = startedSession({ createRotations: deterministicRotations });
+		session.dispatch({ type: 'set_rotation_mode', enabled: true });
+		// piece 0 starts at 0 (upright) per deterministic; rotate it to 90 first.
+		session.dispatch({ type: 'rotate_piece', pieceId: 0 });
+
+		const outcome = session.dispatch({ type: 'attempt_placement', pieceId: 0, x: 0, y: 0 });
+
+		expect((outcome as { outcome: { status: string; reason?: string } }).outcome).toMatchObject({
+			status: 'rejected',
+			reason: 'non_upright'
+		});
+		expect(session.getState().counters.incorrectAttempts).toBe(1);
+	});
+
+	it('undo restores placements, rotations, and rotation-mode; not selection/counters', () => {
+		const { session } = startedSession({ createRotations: deterministicRotations });
+		session.dispatch({ type: 'attempt_placement', pieceId: 0, x: 0, y: 0 });
+		session.dispatch({ type: 'select_piece', pieceId: 1 });
+
+		const outcome = session.dispatch({ type: 'undo' });
+
+		expect(outcome.type).toBe('history_restored');
+		expect(session.getState().placedPieces).toEqual([]);
+		expect(session.getState().canUndo).toBe(false);
+		expect(session.getState().canRedo).toBe(true);
+		// selection and counters are not restored/affected by undo; selection is transient.
+		expect(session.getState().selectedPieceId).toBe(1);
+	});
+
+	it('redo re-applies the undone placement', () => {
+		const { session } = startedSession();
+		session.dispatch({ type: 'attempt_placement', pieceId: 0, x: 0, y: 0 });
+		session.dispatch({ type: 'undo' });
+
+		session.dispatch({ type: 'redo' });
+
+		expect(session.getState().placedPieces).toEqual([{ pieceId: 0, x: 0, y: 0 }]);
+		expect(session.getState().canRedo).toBe(false);
+	});
+
+	it('undo keeps rotationUsed and the rotation_timed result class', () => {
+		const { session } = startedSession({ createRotations: deterministicRotations });
+		session.dispatch({ type: 'set_rotation_mode', enabled: true });
+		session.dispatch({ type: 'rotate_piece', pieceId: 0 });
+
+		session.dispatch({ type: 'undo' });
+
+		// rotationEnabled restored from history (was true at snapshot), but the
+		// monotonic rotationUsed fact and result class remain.
+		expect(session.getState().facts.rotationUsed).toBe(true);
+		expect(session.getState().resultClass).toBe('rotation_timed');
+	});
+
+	it('history boundaries return typed no-ops', () => {
+		const { session } = startedSession();
+
+		expect(session.dispatch({ type: 'undo' }).type).toBe('history_noop');
+		session.dispatch({ type: 'attempt_placement', pieceId: 0, x: 0, y: 0 });
+		session.dispatch({ type: 'undo' });
+		expect(session.dispatch({ type: 'redo' }).type).toBe('history_restored');
+		expect(session.dispatch({ type: 'redo' }).type).toBe('history_noop');
+	});
+});
