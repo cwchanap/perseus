@@ -39,6 +39,8 @@ export interface PuzzleSession {
 	setDocumentHidden(hidden: boolean): void;
 	checkpointTime(): void;
 	dispose(): void;
+	/** Framework-neutral subscription; listeners fire on every state change. */
+	subscribe(listener: () => void): () => void;
 }
 
 interface PlacementHistoryState {
@@ -64,12 +66,14 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 	let clockRunning = false;
 	let documentHidden = false;
 	let disposed = false;
+	const listeners = new Set<() => void>();
 
 	function emit(event: PuzzleSessionEvent) {
 		if (onEvent) onEvent(event);
 	}
 	function notify() {
 		emit({ type: 'state_changed' });
+		for (const listener of listeners) listener();
 	}
 
 	// --- Clock ----------------------------------------------------------------
@@ -711,6 +715,12 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 		checkpointTime,
 		dispose: () => {
 			void doDispose();
+		},
+		subscribe: (listener: () => void) => {
+			listeners.add(listener);
+			return () => {
+				listeners.delete(listener);
+			};
 		}
 	};
 }
