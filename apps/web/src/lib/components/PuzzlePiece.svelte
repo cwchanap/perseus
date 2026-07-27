@@ -3,11 +3,6 @@
 	import { SvelteMap } from 'svelte/reactivity';
 	import type { PuzzlePiece } from '$lib/types/puzzle';
 	import type { Rotation } from '$lib/types/gameplay';
-	import {
-		selectedPieceId,
-		setSelectedPiece,
-		clearSelectedPiece
-	} from '$lib/stores/pieceSelection';
 	import { EXPANSION_FACTOR, TAB_RATIO } from '$lib/constants/puzzle';
 
 	interface Props {
@@ -20,6 +15,9 @@
 		rotationEnabled?: boolean;
 		rotation?: Rotation;
 		onRotate?: (pieceId: number) => void;
+		selected?: boolean;
+		onSelect?: (pieceId: number) => void;
+		onCancelSelection?: () => void;
 	}
 
 	let {
@@ -31,7 +29,10 @@
 		onDragEnd,
 		rotationEnabled = false,
 		rotation = 0,
-		onRotate
+		onRotate,
+		selected = false,
+		onSelect,
+		onCancelSelection
 	}: Props = $props();
 
 	let isTouchDragging = $state(false);
@@ -44,11 +45,6 @@
 	let lastClientY = 0;
 	let activeDropZone: HTMLElement | null = null;
 	let touchListenersAttached = false;
-	let currentSelectedId = $state<number | null>(null);
-
-	const unsubscribeSelection = selectedPieceId.subscribe((value) => {
-		currentSelectedId = value;
-	});
 
 	function handleDragStart(event: DragEvent) {
 		if (isPlaced || !event.dataTransfer) return;
@@ -276,10 +272,10 @@
 		if (event.key !== 'Enter' && event.key !== ' ') return;
 		event.preventDefault();
 
-		if (currentSelectedId === piece.id) {
-			clearSelectedPiece();
+		if (selected) {
+			onCancelSelection?.();
 		} else {
-			setSelectedPiece(piece.id);
+			onSelect?.(piece.id);
 			onDragStart?.(piece);
 		}
 	}
@@ -297,7 +293,6 @@
 	onDestroy(() => {
 		cleanupTouchListeners();
 		resetTouchDragState(true);
-		unsubscribeSelection();
 	});
 </script>
 
@@ -329,8 +324,8 @@
 		class:opacity-50={isPlaced}
 		class:cursor-not-allowed={isPlaced}
 		class:cursor-grabbing={isTouchDragging}
-		class:ring-2={currentSelectedId === piece.id}
-		class:ring-blue-400={currentSelectedId === piece.id}
+		class:ring-2={selected}
+		class:ring-blue-400={selected}
 		draggable={!isPlaced}
 		ondragstart={handleDragStart}
 		ontouchstart={handleTouchStart}
@@ -338,12 +333,12 @@
 		role="button"
 		tabindex={isPlaced ? -1 : 0}
 		aria-label="Puzzle piece {piece.id}"
-		aria-grabbed={currentSelectedId === piece.id}
-		aria-pressed={currentSelectedId === piece.id}
+		aria-grabbed={selected}
+		aria-pressed={selected}
 		aria-disabled={isPlaced}
 		data-testid="puzzle-piece"
 		data-piece-id={piece.id}
-		data-selected={currentSelectedId === piece.id}
+		data-selected={selected}
 	>
 		<!-- Shadow wrapper: drop-shadow respects PNG transparency -->
 		<div

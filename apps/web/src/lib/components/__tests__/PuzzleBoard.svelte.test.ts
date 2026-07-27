@@ -1,4 +1,4 @@
-// Component test for PuzzleBoard
+// Component test for PuzzleBoard (controlled selection)
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
@@ -7,21 +7,6 @@ import type { Puzzle, PlacedPiece, PuzzlePiece } from '$lib/types/puzzle';
 import { BASE_OFFSET, EXPANSION_FACTOR, TAB_RATIO } from '$lib/constants/puzzle';
 
 const resolveImage = (piece: { id: number }) => `/test/${piece.id}.png`;
-
-let mockSelectedId: number | null = null;
-
-// Mock the stores
-vi.mock('$lib/stores/pieceSelection', () => ({
-	selectedPieceId: {
-		subscribe: vi.fn((callback: (value: number | null) => void) => {
-			callback(mockSelectedId);
-			return () => {};
-		})
-	},
-	clearSelectedPiece: vi.fn()
-}));
-
-import { clearSelectedPiece } from '$lib/stores/pieceSelection';
 
 function createMockPuzzle(gridSize: number = 3): Puzzle {
 	const pieces: PuzzlePiece[] = [];
@@ -59,7 +44,6 @@ function createMockPuzzle(gridSize: number = 3): Puzzle {
 
 describe('PuzzleBoard', () => {
 	beforeEach(() => {
-		mockSelectedId = null;
 		vi.clearAllMocks();
 	});
 
@@ -94,7 +78,6 @@ describe('PuzzleBoard', () => {
 			resolveImage
 		});
 
-		// Check that image is rendered for placed piece
 		await expect.element(page.getByRole('img').first()).toBeVisible();
 		await expect.element(page.getByRole('img').first()).toHaveAttribute('src', '/test/0.png');
 	});
@@ -150,7 +133,7 @@ describe('PuzzleBoard', () => {
 		const onPiecePlaced = vi.fn();
 		const onIncorrectPlacement = vi.fn();
 		const canPlacePiece = vi.fn(() => false);
-		mockSelectedId = 0;
+		const onCancelSelection = vi.fn();
 
 		render(PuzzleBoard, {
 			puzzle,
@@ -158,6 +141,8 @@ describe('PuzzleBoard', () => {
 			onPiecePlaced,
 			onIncorrectPlacement,
 			canPlacePiece,
+			selectedPieceId: 0,
+			onCancelSelection,
 			resolveImage
 		});
 
@@ -170,19 +155,21 @@ describe('PuzzleBoard', () => {
 		expect(canPlacePiece).toHaveBeenCalledWith(0);
 		expect(onIncorrectPlacement).toHaveBeenCalledWith(0);
 		expect(onPiecePlaced).not.toHaveBeenCalled();
-		expect(vi.mocked(clearSelectedPiece)).not.toHaveBeenCalled();
+		expect(onCancelSelection).not.toHaveBeenCalled();
 	});
 
-	it('should clear keyboard selection only after a successful placement', async () => {
+	it('should cancel keyboard selection only after a successful placement', async () => {
 		const puzzle = createMockPuzzle(3);
 		const onPiecePlaced = vi.fn();
-		mockSelectedId = 0;
+		const onCancelSelection = vi.fn();
 
 		render(PuzzleBoard, {
 			puzzle,
 			placedPieces: [],
 			onPiecePlaced,
 			onIncorrectPlacement: vi.fn(),
+			selectedPieceId: 0,
+			onCancelSelection,
 			resolveImage
 		});
 
@@ -193,7 +180,32 @@ describe('PuzzleBoard', () => {
 		dropZone.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
 
 		expect(onPiecePlaced).toHaveBeenCalledWith(0, 0, 0);
-		expect(vi.mocked(clearSelectedPiece)).toHaveBeenCalledOnce();
+		expect(onCancelSelection).toHaveBeenCalledOnce();
+	});
+
+	it('should not act on keyboard placement when no piece is selected', async () => {
+		const puzzle = createMockPuzzle(3);
+		const onPiecePlaced = vi.fn();
+		const onCancelSelection = vi.fn();
+
+		render(PuzzleBoard, {
+			puzzle,
+			placedPieces: [],
+			onPiecePlaced,
+			onIncorrectPlacement: vi.fn(),
+			selectedPieceId: null,
+			onCancelSelection,
+			resolveImage
+		});
+
+		const dropZone = await page
+			.getByRole('button', { name: 'Drop zone at position 0, 0' })
+			.element();
+		dropZone.focus();
+		dropZone.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+
+		expect(onPiecePlaced).not.toHaveBeenCalled();
+		expect(onCancelSelection).not.toHaveBeenCalled();
 	});
 
 	it('should call onBoardPointerDown when the board receives a pointerdown event', async () => {

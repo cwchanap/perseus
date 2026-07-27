@@ -121,7 +121,7 @@ vi.mock('$lib/services/api', () => {
 		fetchPuzzle: vi.fn(),
 		getPieceImageUrl: vi.fn(() => imageSrc),
 		getReferenceImageUrl: vi.fn(() => imageSrc),
-		recordCompletion: vi.fn(() => Promise.resolve()),
+		recordCompletionLegacy: vi.fn(() => Promise.resolve()),
 		ApiError: MockApiError
 	};
 });
@@ -210,7 +210,7 @@ vi.mock('$lib/stores/timer', () => ({
 import {
 	fetchPuzzle,
 	ApiError,
-	recordCompletion,
+	recordCompletionLegacy,
 	getPieceImageUrl,
 	getReferenceImageUrl
 } from '$lib/services/api';
@@ -874,7 +874,7 @@ describe('Puzzle route gameplay integration', () => {
 
 		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
 		expect(saveCompletionTime).toHaveBeenCalledTimes(1);
-		expect(recordCompletion).toHaveBeenCalledTimes(1);
+		expect(recordCompletionLegacy).toHaveBeenCalledTimes(1);
 
 		// Close the celebration modal via Escape on the modal element
 		const modal = await page.getByTestId('celebration-modal').element();
@@ -891,7 +891,7 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
 		expect(saveCompletionTime).toHaveBeenCalledTimes(1);
 		// Remote sync should also remain at a single call across undo/redo.
-		expect(recordCompletion).toHaveBeenCalledTimes(1);
+		expect(recordCompletionLegacy).toHaveBeenCalledTimes(1);
 	});
 
 	it('clears tray selection when redo re-places the selected piece', async () => {
@@ -947,13 +947,13 @@ describe('Puzzle route gameplay integration', () => {
 	});
 
 	it('records completion again after Play Again even if the prior POST resolves late', async () => {
-		// Regression: a stale recordCompletion().then() from the first solve
+		// Regression: a stale recordCompletionLegacy().then() from the first solve
 		// would set completionRecorded back to true after Play Again reset it
 		// to false, causing the second solve to skip both the local best-time
 		// save and the server completion POST. The per-solve token guards the
 		// callback so only the active solve can mark itself recorded.
 		const firstPost = createDeferred<void>();
-		vi.mocked(recordCompletion).mockImplementationOnce(() => firstPost.promise);
+		vi.mocked(recordCompletionLegacy).mockImplementationOnce(() => firstPost.promise);
 		await renderPuzzlePage();
 
 		// First solve triggers the (deferred) server POST.
@@ -961,7 +961,7 @@ describe('Puzzle route gameplay integration', () => {
 		await placePiece(1, 1, 0);
 		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
 		expect(saveCompletionTime).toHaveBeenCalledTimes(1);
-		expect(recordCompletion).toHaveBeenCalledTimes(1);
+		expect(recordCompletionLegacy).toHaveBeenCalledTimes(1);
 
 		// Play Again before the first POST resolves — resets
 		// completionRecorded to false and invalidates the in-flight callback.
@@ -979,13 +979,13 @@ describe('Puzzle route gameplay integration', () => {
 		await placePiece(1, 1, 0);
 		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
 		expect(saveCompletionTime).toHaveBeenCalledTimes(2);
-		expect(recordCompletion).toHaveBeenCalledTimes(2);
+		expect(recordCompletionLegacy).toHaveBeenCalledTimes(2);
 	});
 
 	it('does not POST completion to the API for local-source quick puzzles', async () => {
 		// Regression: quick puzzles use device-local `q-...` ids that
 		// loadPuzzleSource deliberately keeps off the API. An unconditional
-		// recordCompletion(puzzle.id, ...) would leak the `q-...` id to
+		// recordCompletionLegacy(puzzle.id, ...) would leak the `q-...` id to
 		// /api/puzzles/:id/complete on every quick solve and get rejected.
 		// The completion call must be gated to api-source puzzles.
 		const quickPuzzle = createMockPuzzle();
@@ -1017,7 +1017,7 @@ describe('Puzzle route gameplay integration', () => {
 		expect(saveCompletionTime).toHaveBeenCalledTimes(1);
 		expect(saveCompletionTime).toHaveBeenCalledWith('q-local-only', expect.any(Number));
 		// But the server completion endpoint is never hit — no id leak.
-		expect(recordCompletion).not.toHaveBeenCalled();
+		expect(recordCompletionLegacy).not.toHaveBeenCalled();
 	});
 
 	it('navigates to home when clicking BACK TO ARCADE in celebration modal', async () => {
