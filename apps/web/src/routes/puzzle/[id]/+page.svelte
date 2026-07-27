@@ -6,7 +6,7 @@
 	import { loadPuzzleSource, type LoadedPuzzleSource } from '$lib/services/puzzleSource';
 	import { getProgress, saveProgress, clearProgress } from '$lib/services/progress';
 	import { getBestTime, saveCompletionTime } from '$lib/services/stats';
-	import { recordCompletion } from '$lib/services/api';
+	import { recordCompletionLegacy } from '$lib/services/api';
 	import { createTimerStore, formatTime } from '$lib/stores/timer';
 	import type { TimerState } from '$lib/stores/timer';
 	import { SvelteMap } from 'svelte/reactivity';
@@ -497,7 +497,7 @@
 				// completion recorded synchronously; the local best time above is
 				// the only persistent record for quick puzzles.
 				if (puzzleSource?.source === 'api') {
-					recordCompletion(puzzle.id, timeSeconds)
+					recordCompletionLegacy(puzzle.id, timeSeconds)
 						.then(() => {
 							if (completionToken === activeCompletionId) {
 								completionRecorded = true;

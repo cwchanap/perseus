@@ -1,88 +1,235 @@
-// Statistics service for localStorage persistence of personal best times
+// Versioned local statistics for puzzle completions.
+//
+// The canonical personal best is available only to eligible standard_timed runs
+// with known timing. Rotation, assisted, relaxed, and legacy-unknown runs count
+// toward totalCompletions but never create or overwrite the standard best.
 
-export interface PuzzleStats {
+import type { SealedCompletion } from './gameplay/session/types';
+
+export interface PuzzleStatsV1 {
+	schemaVersion: 1;
 	puzzleId: string;
-	bestTime: number;
-	completedAt: string;
+	standardBestTime: number | null;
+	standardBestCompletedAt: number | null;
 	totalCompletions: number;
+	lastCompletedAt: number;
+	lastRecordedRunId: string | null;
 }
 
 const STATS_KEY_PREFIX = 'puzzle-stats-';
+const CURRENT_STATS_SCHEMA_VERSION = 1;
+
+export type RecordLocalCompletionResult =
+	| { status: 'recorded'; isNewStandardBest: boolean; stats: PuzzleStatsV1 }
+	| { status: 'replayed'; isNewStandardBest: boolean; stats: PuzzleStatsV1 }
+	| { status: 'failed'; isNewStandardBest: boolean; inMemoryStats: PuzzleStatsV1 };
 
 function getStorageKey(puzzleId: string): string {
 	return `${STATS_KEY_PREFIX}${puzzleId}`;
 }
 
-export function getStats(puzzleId: string): PuzzleStats | null {
+function isEligibleStandardBest(seal: SealedCompletion): boolean {
+	return (
+		seal.resultClass === 'standard_timed' &&
+		seal.timingQuality === 'known' &&
+		seal.elapsedActiveSeconds !== null
+	);
+}
+
+function migrateLegacy(raw: Record<string, unknown>, puzzleId: string): PuzzleStatsV1 | null {
+	if (raw.schemaVersion === CURRENT_STATS_SCHEMA_VERSION) {
+		return validateV1(raw, puzzleId);
+	}
+	// Legacy unversioned shape: { puzzleId, bestTime, completedAt (ISO), totalCompletions }.
+	const bestTime = raw.bestTime;
+	const completedAt = raw.completedAt;
+	const totalCompletions = raw.totalCompletions;
+	if (
+		typeof bestTime !== 'number' ||
+		!Number.isFinite(bestTime) ||
+		typeof completedAt !== 'string' ||
+		typeof totalCompletions !== 'number' ||
+		!Number.isInteger(totalCompletions)
+	) {
+		return null;
+	}
+	const completedMs = Date.parse(completedAt);
+	const ts = Number.isFinite(completedMs) ? completedMs : 0;
+	return {
+		schemaVersion: CURRENT_STATS_SCHEMA_VERSION,
+		puzzleId,
+		standardBestTime: bestTime,
+		standardBestCompletedAt: ts,
+		totalCompletions,
+		lastCompletedAt: ts,
+		lastRecordedRunId: null
+	};
+}
+
+function validateV1(raw: Record<string, unknown>, puzzleId: string): PuzzleStatsV1 | null {
+	if (raw.schemaVersion !== CURRENT_STATS_SCHEMA_VERSION) return null;
+	if (raw.puzzleId !== puzzleId) return null;
+	const standardBestTime = raw.standardBestTime;
+	if (
+		standardBestTime !== null &&
+		(typeof standardBestTime !== 'number' ||
+			!Number.isFinite(standardBestTime) ||
+			standardBestTime < 0)
+	) {
+		return null;
+	}
+	const standardBestCompletedAt = raw.standardBestCompletedAt;
+	if (
+		standardBestCompletedAt !== null &&
+		(typeof standardBestCompletedAt !== 'number' ||
+			!Number.isFinite(standardBestCompletedAt) ||
+			standardBestCompletedAt < 0)
+	) {
+		return null;
+	}
+	const totalCompletions = raw.totalCompletions;
+	if (
+		typeof totalCompletions !== 'number' ||
+		!Number.isInteger(totalCompletions) ||
+		totalCompletions < 0
+	) {
+		return null;
+	}
+	const lastCompletedAt = raw.lastCompletedAt;
+	if (
+		typeof lastCompletedAt !== 'number' ||
+		!Number.isFinite(lastCompletedAt) ||
+		lastCompletedAt < 0
+	) {
+		return null;
+	}
+	const lastRecordedRunId = raw.lastRecordedRunId;
+	if (lastRecordedRunId !== null && typeof lastRecordedRunId !== 'string') return null;
+	return {
+		schemaVersion: CURRENT_STATS_SCHEMA_VERSION,
+		puzzleId,
+		standardBestTime: (standardBestTime as number | null) ?? null,
+		standardBestCompletedAt: (standardBestCompletedAt as number | null) ?? null,
+		totalCompletions: totalCompletions as number,
+		lastCompletedAt: lastCompletedAt as number,
+		lastRecordedRunId: (lastRecordedRunId as string | null) ?? null
+	};
+}
+
+export function getStats(puzzleId: string): PuzzleStatsV1 | null {
 	if (typeof window === 'undefined') return null;
 
+	let raw: string | null;
 	try {
-		const data = localStorage.getItem(getStorageKey(puzzleId));
-		if (!data) return null;
-		const parsed = JSON.parse(data);
-		if (
-			typeof parsed === 'object' &&
-			parsed !== null &&
-			typeof parsed.puzzleId === 'string' &&
-			typeof parsed.bestTime === 'number' &&
-			typeof parsed.completedAt === 'string' &&
-			typeof parsed.totalCompletions === 'number'
-		) {
-			return parsed as PuzzleStats;
-		}
-		localStorage.removeItem(getStorageKey(puzzleId));
+		raw = localStorage.getItem(getStorageKey(puzzleId));
+	} catch {
 		return null;
-	} catch (e) {
-		if (e instanceof SyntaxError) {
-			console.error('Failed to parse puzzle stats from localStorage:', e);
-			try {
-				localStorage.removeItem(getStorageKey(puzzleId));
-			} catch {
-				// best effort cleanup
-			}
-		} else {
-			console.error('Failed to read puzzle stats from localStorage:', e);
+	}
+	if (!raw) return null;
+
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(raw);
+	} catch {
+		try {
+			localStorage.removeItem(getStorageKey(puzzleId));
+		} catch {
+			// best-effort cleanup
 		}
 		return null;
 	}
+
+	if (!parsed || typeof parsed !== 'object') return null;
+	const record = parsed as Record<string, unknown>;
+	const stats = migrateLegacy(record, puzzleId);
+	if (!stats) {
+		try {
+			localStorage.removeItem(getStorageKey(puzzleId));
+		} catch {
+			// best-effort cleanup
+		}
+		return null;
+	}
+	return stats;
 }
 
 export function getBestTime(puzzleId: string): number | null {
-	const stats = getStats(puzzleId);
-	return stats?.bestTime ?? null;
+	return getStats(puzzleId)?.standardBestTime ?? null;
 }
 
-export function saveCompletionTime(puzzleId: string, timeSeconds: number): boolean {
-	if (typeof window === 'undefined') return false;
-
-	const existing = getStats(puzzleId);
-	const now = new Date().toISOString();
-	const isNewBest = !existing || timeSeconds < existing.bestTime;
-	const bestTime = existing && !isNewBest ? existing.bestTime : timeSeconds;
-	const completedAt = existing && !isNewBest ? existing.completedAt : now;
-
-	const stats: PuzzleStats = {
+function freshStats(puzzleId: string): PuzzleStatsV1 {
+	return {
+		schemaVersion: CURRENT_STATS_SCHEMA_VERSION,
 		puzzleId,
-		bestTime,
-		completedAt,
-		totalCompletions: (existing?.totalCompletions ?? 0) + 1
+		standardBestTime: null,
+		standardBestCompletedAt: null,
+		totalCompletions: 0,
+		lastCompletedAt: 0,
+		lastRecordedRunId: null
+	};
+}
+
+/**
+ * Record a sealed run in local statistics. Idempotent per run id: a replayed
+ * run does not increment totals. Only an eligible standard-timed known run with
+ * non-null elapsed may create or improve the canonical best.
+ */
+export function recordLocalCompletion(
+	puzzleId: string,
+	seal: SealedCompletion
+): RecordLocalCompletionResult {
+	const base = getStats(puzzleId) ?? freshStats(puzzleId);
+
+	if (base.lastRecordedRunId === seal.runId) {
+		return { status: 'replayed', isNewStandardBest: false, stats: base };
+	}
+
+	const eligible = isEligibleStandardBest(seal);
+	const elapsed = seal.elapsedActiveSeconds ?? 0;
+	const isNewStandardBest =
+		eligible && (base.standardBestTime === null || elapsed < base.standardBestTime);
+
+	const next: PuzzleStatsV1 = {
+		schemaVersion: CURRENT_STATS_SCHEMA_VERSION,
+		puzzleId,
+		standardBestTime: isNewStandardBest ? elapsed : base.standardBestTime,
+		standardBestCompletedAt: isNewStandardBest ? seal.completedAt : base.standardBestCompletedAt,
+		totalCompletions: base.totalCompletions + 1,
+		lastCompletedAt: Math.max(base.lastCompletedAt, seal.completedAt),
+		lastRecordedRunId: seal.runId
 	};
 
 	try {
-		localStorage.setItem(getStorageKey(puzzleId), JSON.stringify(stats));
-	} catch (e) {
-		console.error('Failed to save puzzle stats:', e);
-		// Return isNewBest anyway so UI correctly shows personal best even if save failed
+		localStorage.setItem(getStorageKey(puzzleId), JSON.stringify(next));
+	} catch {
+		return { status: 'failed', isNewStandardBest, inMemoryStats: next };
 	}
-	return isNewBest;
+	return { status: 'recorded', isNewStandardBest, stats: next };
 }
 
 export function clearStats(puzzleId: string): void {
 	if (typeof window === 'undefined') return;
-
 	try {
 		localStorage.removeItem(getStorageKey(puzzleId));
-	} catch (e) {
-		console.error('Failed to clear puzzle stats:', e);
+	} catch {
+		// best-effort
 	}
+}
+
+/**
+ * @deprecated Compatibility shim retained until the puzzle route migrates to
+ * recordLocalCompletion (HPA-372 Tasks 10/11). Returns the in-memory new-best
+ * verdict even when the local write fails.
+ */
+export function saveCompletionTime(puzzleId: string, timeSeconds: number): boolean {
+	const seal: SealedCompletion = {
+		runId: `compat-${timeSeconds}-${Math.floor(Math.random() * 1e9)}-${Date.now()}`,
+		resultClass: 'standard_timed',
+		timingQuality: 'known',
+		elapsedActiveSeconds: timeSeconds,
+		completedAt: Date.now(),
+		localStats: { status: 'succeeded' },
+		serverSubmission: { status: 'not_applicable' }
+	};
+	return recordLocalCompletion(puzzleId, seal).isNewStandardBest;
 }

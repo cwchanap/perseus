@@ -17,6 +17,7 @@ import type {
 	PlayerStatRow
 } from '$lib/types/puzzle';
 import type { PuzzleAspectRatio } from '@perseus/types';
+import type { RecordPuzzleCompletionV1 } from '@perseus/types';
 // NOTE: This app is built with adapter-static, so public env vars are embedded at build time.
 // Set PUBLIC_API_BASE before building to target a different API.
 import { PUBLIC_API_BASE } from '$env/static/public';
@@ -436,7 +437,24 @@ export async function getPlayerStats(params?: {
 	return handleResponse<{ stats: PlayerStatRow[]; nextCursor?: string }>(response);
 }
 
-export async function recordCompletion(puzzleId: string, timeSeconds: number): Promise<void> {
+export async function recordCompletion(
+	puzzleId: string,
+	request: RecordPuzzleCompletionV1
+): Promise<void> {
+	const response = await fetch(`${API_BASE}/api/puzzles/${puzzleId}/complete`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		credentials: 'include',
+		body: JSON.stringify(request)
+	});
+	await handleVoidResponse(response);
+}
+
+/**
+ * @deprecated Legacy `{ timeSeconds }` caller retained until the puzzle route
+ * migrates to the sealed v1 request (HPA-372 Tasks 10/11).
+ */
+export async function recordCompletionLegacy(puzzleId: string, timeSeconds: number): Promise<void> {
 	const response = await fetch(`${API_BASE}/api/puzzles/${puzzleId}/complete`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
