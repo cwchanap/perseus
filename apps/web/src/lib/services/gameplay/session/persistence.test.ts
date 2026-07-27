@@ -178,3 +178,340 @@ describe('legacyRunId', () => {
 		expect(a).not.toBe(b);
 	});
 });
+
+// --- Task 6: versioned codec, legacy migration, storage adapter ---------------
+
+import {
+	serializeSession,
+	loadPersistedSession,
+	isResumable,
+	createSessionStorageAdapter,
+	fnv1aUtf8,
+	mulberry32,
+	deterministicLegacyTrayOrder
+} from './persistence';
+import type {
+	PuzzleSessionState,
+	PersistedPuzzleSessionV1,
+	SessionValidationContext
+} from './types';
+
+function makeState(overrides: Partial<PuzzleSessionState> = {}): PuzzleSessionState {
+	return {
+		puzzleId: 'pz1',
+		source: 'api',
+		runId: '11111111-1111-4111-8111-111111111111',
+		origin: 'new',
+		lifecycle: 'active',
+		mode: 'timed',
+		timingQuality: 'known',
+		elapsedActiveSeconds: 5,
+		timerStarted: true,
+		pieceCount: 4,
+		gridCols: 2,
+		gridRows: 2,
+		placedPieces: [{ pieceId: 0, x: 0, y: 0 }],
+		trayOrder: [0, 1, 2, 3],
+		rotationEnabled: false,
+		pieceRotations: {},
+		selectedPieceId: null,
+		activeReferenceMode: null,
+		organization: null,
+		counters: { incorrectAttempts: 1, hintsUsed: 0, referenceActivations: 0 },
+		facts: { rotationUsed: false, hintUsed: false, ghostReferenceUsed: false },
+		hasUserActivity: true,
+		resultClass: 'standard_timed',
+		sealedCompletion: null,
+		canUndo: true,
+		canRedo: false,
+		...overrides
+	};
+}
+
+const ctx: SessionValidationContext = {
+	puzzleId: 'pz1',
+	source: 'api',
+	pieceIds: [0, 1, 2, 3],
+	gridCols: 2,
+	gridRows: 2,
+	pieceCount: 4
+};
+
+describe('serializeSession', () => {
+	it('round-trips a schema v1 snapshot', () => {
+		const snapshot = serializeSession(makeState(), 1_000)!;
+
+		const reloaded = loadPersistedSession(JSON.stringify(snapshot), ctx);
+
+		expect(reloaded.status).toBe('loaded');
+		if (reloaded.status === 'loaded') {
+			expect(reloaded.snapshot).toEqual({ ...snapshot, lastUpdated: 1_000 });
+		}
+	});
+
+	it('excludes transient runtime fields from the projection', () => {
+		const snapshot = serializeSession(
+			makeState({ selectedPieceId: 2, activeReferenceMode: 'hold', canUndo: true, canRedo: true }),
+			1_000
+		);
+
+		expect(snapshot).not.toHaveProperty('selectedPieceId');
+		expect(snapshot).not.toHaveProperty('activeReferenceMode');
+		expect(snapshot).not.toHaveProperty('canUndo');
+		expect(snapshot).not.toHaveProperty('canRedo');
+		expect(snapshot).not.toHaveProperty('pieceCount');
+	});
+
+	it('returns null for a disposed session', () => {
+		expect(serializeSession(makeState({ lifecycle: 'disposed' }), 1_000)).toBeNull();
+	});
+
+	it('omits organization when null', () => {
+		const snapshot = serializeSession(makeState({ organization: null }), 1_000)!;
+		expect(snapshot.organization).toBeUndefined();
+	});
+});
+
+describe('loadPersistedSession validation', () => {
+	it('returns missing for a null raw value', () => {
+		expect(loadPersistedSession(null, ctx).status).toBe('missing');
+	});
+
+	it('returns invalid for malformed JSON', () => {
+		expect(loadPersistedSession('{not json', ctx).status).toBe('invalid');
+	});
+
+	it('returns incompatible for a future schema version', () => {
+		const future = JSON.stringify({ schemaVersion: 99, puzzleId: 'pz1' });
+		const result = loadPersistedSession(future, ctx);
+		expect(result.status).toBe('incompatible');
+	});
+
+	it('rejects a puzzle id mismatch', () => {
+		const snapshot = serializeSession(makeState(), 1_000);
+		const result = loadPersistedSession(JSON.stringify(snapshot), { ...ctx, puzzleId: 'other' });
+		expect(result.status).toBe('invalid');
+	});
+
+	it('rejects a persisted disposed lifecycle', () => {
+		const snapshot = serializeSession(makeState(), 1_000);
+		const tampered = { ...snapshot, lifecycle: 'disposed' };
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx).status).toBe('invalid');
+	});
+});
+
+describe('legacy v0 migration', () => {
+	it('migrates an unversioned progress record to legacy_unknown with null elapsed', () => {
+		const legacy = {
+			puzzleId: 'pz1',
+			placedPieces: [{ pieceId: 0, x: 0, y: 0 }],
+			rotationEnabled: false,
+			pieceRotations: {},
+			lastUpdated: '2024-01-01T00:00:00.000Z'
+		};
+
+		const result = loadPersistedSession(JSON.stringify(legacy), ctx);
+
+		expect(result.status).toBe('migrated');
+		if (result.status === 'migrated') {
+			const snap = result.snapshot;
+			expect(snap.schemaVersion).toBe(1);
+			expect(snap.mode).toBe('timed');
+			expect(snap.origin).toBe('resumed');
+			expect(snap.timingQuality).toBe('legacy_unknown');
+			expect(snap.elapsedActiveSeconds).toBeNull();
+			expect(snap.timerStarted).toBe(false);
+			expect(snap.runId).toMatch(/^legacy-[0-9a-f]{64}$/);
+			expect(snap.hasUserActivity).toBe(true);
+			expect(snap.lifecycle).toBe('active');
+			expect(snap.lastUpdated).toBe(Date.parse('2024-01-01T00:00:00.000Z'));
+		}
+	});
+
+	it('produces a completed lifecycle when every unique piece is placed', () => {
+		const legacy = {
+			puzzleId: 'pz1',
+			placedPieces: [
+				{ pieceId: 0, x: 0, y: 0 },
+				{ pieceId: 1, x: 1, y: 0 },
+				{ pieceId: 2, x: 0, y: 1 },
+				{ pieceId: 3, x: 1, y: 1 }
+			],
+			rotationEnabled: false,
+			pieceRotations: {},
+			lastUpdated: '2024-01-01T00:00:00.000Z'
+		};
+
+		const result = loadPersistedSession(JSON.stringify(legacy), ctx);
+
+		if (result.status === 'migrated') {
+			expect(result.snapshot.lifecycle).toBe('completed');
+		}
+	});
+
+	it('produces a deterministic tray order seeded by the puzzle id', () => {
+		const legacy = { puzzleId: 'pz1', placedPieces: [], lastUpdated: '2024-01-01T00:00:00.000Z' };
+		const expected = deterministicLegacyTrayOrder([0, 1, 2, 3], 'pz1');
+
+		const result = loadPersistedSession(JSON.stringify(legacy), ctx);
+
+		if (result.status === 'migrated') {
+			expect(result.snapshot.trayOrder).toEqual(expected);
+			expect(new Set(result.snapshot.trayOrder)).toEqual(new Set([0, 1, 2, 3]));
+		}
+	});
+
+	it('uses the same legacy run id on retry (deterministic)', () => {
+		const legacy = { puzzleId: 'pz1', placedPieces: [], lastUpdated: '2024-01-01T00:00:00.000Z' };
+		const a = loadPersistedSession(JSON.stringify(legacy), ctx);
+		const b = loadPersistedSession(JSON.stringify(legacy), ctx);
+
+		if (a.status === 'migrated' && b.status === 'migrated') {
+			expect(a.snapshot.runId).toBe(b.snapshot.runId);
+		}
+	});
+
+	it('marks hasUserActivity false for an empty legacy record', () => {
+		const legacy = {
+			puzzleId: 'pz1',
+			placedPieces: [],
+			rotationEnabled: false,
+			pieceRotations: {},
+			lastUpdated: ''
+		};
+
+		const result = loadPersistedSession(JSON.stringify(legacy), ctx);
+
+		if (result.status === 'migrated') {
+			expect(result.snapshot.hasUserActivity).toBe(false);
+		}
+	});
+
+	it('maps a rotation-enabled legacy record to rotation_timed', () => {
+		const legacy = {
+			puzzleId: 'pz1',
+			placedPieces: [],
+			rotationEnabled: true,
+			pieceRotations: { 0: 90 },
+			lastUpdated: ''
+		};
+
+		const result = loadPersistedSession(JSON.stringify(legacy), ctx);
+
+		if (result.status === 'migrated') {
+			expect(result.snapshot.resultClass).toBe('rotation_timed');
+			expect(result.snapshot.facts.rotationUsed).toBe(true);
+		}
+	});
+});
+
+describe('deterministic tray-order helpers', () => {
+	it('fnv1aUtf8 is deterministic for the same input', () => {
+		expect(fnv1aUtf8('pz1')).toBe(fnv1aUtf8('pz1'));
+		expect(fnv1aUtf8('pz1')).not.toBe(fnv1aUtf8('pz2'));
+	});
+
+	it('mulberry32 produces a deterministic sequence for a seed', () => {
+		const a = mulberry32(42);
+		const b = mulberry32(42);
+		const seqA = [a(), a(), a()];
+		const seqB = [b(), b(), b()];
+		expect(seqA).toEqual(seqB);
+	});
+
+	it('deterministicLegacyTrayOrder contains every piece exactly once', () => {
+		const order = deterministicLegacyTrayOrder([0, 1, 2, 3, 4], 'pz1');
+		expect(order.sort((x, y) => x - y)).toEqual([0, 1, 2, 3, 4]);
+	});
+});
+
+describe('isResumable', () => {
+	it('is true for active + activity + no seal', () => {
+		const snap = serializeSession(
+			makeState({ lifecycle: 'active', hasUserActivity: true, sealedCompletion: null }),
+			1
+		)!;
+		expect(isResumable(snap)).toBe(true);
+	});
+
+	it('is false for a sealed completion', () => {
+		const seal: PersistedPuzzleSessionV1['sealedCompletion'] = {
+			runId: 'r',
+			resultClass: 'standard_timed',
+			timingQuality: 'known',
+			elapsedActiveSeconds: 5,
+			completedAt: 1,
+			localStats: { status: 'succeeded' },
+			serverSubmission: { status: 'succeeded' }
+		};
+		const snap = serializeSession(
+			makeState({ lifecycle: 'completed', sealedCompletion: seal }),
+			1
+		)!;
+		expect(isResumable(snap)).toBe(false);
+	});
+
+	it('is false without user activity', () => {
+		const snap = serializeSession(makeState({ hasUserActivity: false }), 1)!;
+		expect(isResumable(snap)).toBe(false);
+	});
+});
+
+describe('createSessionStorageAdapter', () => {
+	it('round-trips a snapshot through storage and reports loaded', () => {
+		let store: Record<string, string> = {};
+		const storage = memoryStorage(store);
+		const adapter = createSessionStorageAdapter({ storage });
+
+		const snapshot = serializeSession(makeState(), 1_000)!;
+		adapter.saveSession('pz1', snapshot);
+
+		const result = adapter.loadSession('pz1', ctx);
+		expect(result.status).toBe('loaded');
+		expect(store['puzzle-progress-pz1']).toBeDefined();
+	});
+
+	it('reports missing when no key exists', () => {
+		const adapter = createSessionStorageAdapter({ storage: memoryStorage({}) });
+		expect(adapter.loadSession('pz1', ctx).status).toBe('missing');
+	});
+
+	it('clear removes the key', () => {
+		const store: Record<string, string> = {};
+		const adapter = createSessionStorageAdapter({ storage: memoryStorage(store) });
+		adapter.saveSession('pz1', serializeSession(makeState(), 1)!);
+		adapter.clearSession('pz1');
+		expect(store['puzzle-progress-pz1']).toBeUndefined();
+	});
+
+	it('reports write errors through onError without throwing', () => {
+		const errors: string[] = [];
+		const storage = memoryStorage({});
+		storage.setItem = () => {
+			throw new Error('quota');
+		};
+		const adapter = createSessionStorageAdapter({ storage, onError: (e) => errors.push(e.kind) });
+
+		expect(() => adapter.saveSession('pz1', serializeSession(makeState(), 1)!)).not.toThrow();
+		expect(errors).toContain('write_error');
+	});
+});
+
+function memoryStorage(store: Record<string, string>): Storage {
+	return {
+		get length() {
+			return Object.keys(store).length;
+		},
+		key: (i: number) => Object.keys(store)[i] ?? null,
+		getItem: (k: string) => (k in store ? store[k] : null),
+		setItem: (k: string, v: string) => {
+			store[k] = v;
+		},
+		removeItem: (k: string) => {
+			delete store[k];
+		},
+		clear: () => {
+			store = {};
+		}
+	};
+}
