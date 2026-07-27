@@ -1046,12 +1046,19 @@ describe('player profile service functions', () => {
 		expect(stats).toEqual([]);
 	});
 
-	it('recordCompletion POSTs timeSeconds', async () => {
+	it('recordCompletion POSTs the versioned v1 body', async () => {
 		vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}', { status: 200 })));
-		await recordCompletion('pz1', 90);
+		const request = {
+			version: 1 as const,
+			runId: '11111111-1111-4111-8111-111111111111',
+			resultClass: 'standard_timed' as const,
+			timingQuality: 'known' as const,
+			elapsedActiveSeconds: 90
+		};
+		await recordCompletion('pz1', request);
 		const calls = vi.mocked(fetch).mock.calls;
 		const init = calls[0]?.[1] as RequestInit;
-		expect(init.body).toBe(JSON.stringify({ timeSeconds: 90 }));
+		expect(init.body).toBe(JSON.stringify(request));
 	});
 
 	it('getAvatarUrl builds the path', () => {
