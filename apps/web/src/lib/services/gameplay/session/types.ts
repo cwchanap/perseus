@@ -278,6 +278,8 @@ export type PuzzleSessionOutcome =
 	| { type: 'rotation_mode_changed'; enabled: boolean }
 	| { type: 'rotation_mode_noop'; reason: RotationModeNoopReason }
 	| { type: 'piece_rotated'; pieceId: number }
+	| { type: 'rotation_noop'; reason: 'piece_not_rotatable' }
+	| { type: 'history_restored'; direction: 'undo' | 'redo' }
 	| { type: 'history_noop'; reason: 'empty' | 'at_start' | 'at_end' }
 	| { type: 'hint_used'; pieceId: number | null }
 	| { type: 'hint_noop'; reason: 'all_placed' }
@@ -336,4 +338,10 @@ export interface CreatePuzzleSessionOptions {
 	 * Restored snapshots carry their own `trayOrder`.
 	 */
 	initialTrayOrder?: number[];
+	/**
+	 * Deterministic per-piece rotation generator used when rotation mode is
+	 * enabled. Defaults to a seeded implementation derived from the puzzle id.
+	 * Tests inject a fixed mapping.
+	 */
+	createRotations?: (pieceIds: number[]) => Record<number, Rotation>;
 }
