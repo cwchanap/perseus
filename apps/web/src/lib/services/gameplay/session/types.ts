@@ -146,6 +146,9 @@ export interface PuzzleSessionState {
 	/** Runtime-only active reference mode; never serialized. */
 	activeReferenceMode: ReferenceMode | null;
 
+	/** Optional persisted tray organization (HPA-220/237 own the UI). */
+	organization: PersistedTrayOrganization | null;
+
 	counters: SessionCounters;
 	facts: SessionFacts;
 	hasUserActivity: boolean;
@@ -344,4 +347,9 @@ export interface CreatePuzzleSessionOptions {
 	 * Tests inject a fixed mapping.
 	 */
 	createRotations?: (pieceIds: number[]) => Record<number, Rotation>;
+	/**
+	 * Canonical tray-order factory used for fresh construction and restart.
+	 * The route supplies a shuffle; the engine defaults to ascending piece ids.
+	 */
+	createTrayOrder?: () => number[];
 }

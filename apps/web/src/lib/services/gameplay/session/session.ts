@@ -6,6 +6,7 @@
 // Completion sealing and typed effect coordination are layered on by Task 5.
 
 import { createHistory, type History } from '$lib/services/gameplay/history';
+import { getHintPieceId } from '$lib/services/gameplay/hints';
 import {
 	rotateClockwise,
 	isUpright,
@@ -19,9 +20,12 @@ import type {
 	PuzzleSessionState,
 	PuzzleSessionEvent,
 	PersistedPuzzleSessionV1,
+	PersistedTrayOrganization,
 	PlacementOutcome,
 	ResultClass,
+	ReferenceMode,
 	PlacedPiece,
+	TrayOrganizationUpdate,
 	SessionLifecycle
 } from './types';
 
@@ -320,6 +324,126 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 		return { status: 'accepted', completed: false };
 	}
 
+	// --- Assistance: hints and reference --------------------------------------
+
+	function doUseHint(): PuzzleSessionOutcome {
+		if (state.lifecycle !== 'active') {
+			return { type: 'hint_noop', reason: 'all_placed' };
+		}
+		const placedIds = new Set(state.placedPieces.map((placement) => placement.pieceId));
+		const hintPieceId = getHintPieceId(state.trayOrder, placedIds, state.selectedPieceId);
+		if (hintPieceId === null) {
+			return { type: 'hint_noop', reason: 'all_placed' };
+		}
+		state.counters = { ...state.counters, hintsUsed: state.counters.hintsUsed + 1 };
+		state.facts = { ...state.facts, hintUsed: true };
+		state.hasUserActivity = true;
+		state.resultClass = recomputeResultClass();
+		const piece = pieceById.get(hintPieceId);
+		const target = piece ? { x: piece.correctX, y: piece.correctY } : null;
+		emit({ type: 'hint_target', pieceId: hintPieceId, target });
+		notify();
+		return { type: 'hint_used', pieceId: hintPieceId };
+	}
+
+	function doSetReferenceMode(mode: ReferenceMode | null): PuzzleSessionOutcome {
+		const previous = state.activeReferenceMode;
+		state.activeReferenceMode = mode;
+		let activationCounted = false;
+		if (mode !== null && previous === null) {
+			state.counters = {
+				...state.counters,
+				referenceActivations: state.counters.referenceActivations + 1
+			};
+			activationCounted = true;
+			state.hasUserActivity = true;
+		}
+		if (mode === 'ghost') {
+			state.facts = { ...state.facts, ghostReferenceUsed: true };
+		}
+		state.resultClass = recomputeResultClass();
+		notify();
+		return { type: 'reference_mode_changed', mode, activationCounted };
+	}
+
+	// --- Tray organization ----------------------------------------------------
+
+	function doUpdateTrayOrganization(update: TrayOrganizationUpdate): PuzzleSessionOutcome {
+		const base: PersistedTrayOrganization = state.organization ?? {
+			filter: 'all',
+			activeTray: 'main',
+			membership: {},
+			names: {}
+		};
+		const organization: PersistedTrayOrganization = {
+			filter: base.filter,
+			activeTray: base.activeTray,
+			membership: { ...base.membership },
+			names: { ...base.names }
+		};
+
+		switch (update.type) {
+			case 'set_filter':
+				organization.filter = update.filter;
+				break;
+			case 'set_active_tray':
+				organization.activeTray = update.trayId;
+				break;
+			case 'rename_tray':
+				organization.names[update.trayId] = update.name;
+				break;
+			case 'remove_tray':
+				if (Object.values(organization.membership).includes(update.trayId)) {
+					return { type: 'tray_organization_noop', reason: 'invalid_update' };
+				}
+				delete organization.names[update.trayId];
+				break;
+			case 'move_piece':
+				if (!pieceById.has(update.pieceId)) {
+					return { type: 'tray_organization_noop', reason: 'invalid_update' };
+				}
+				organization.membership[update.pieceId] = update.toTrayId;
+				break;
+			case 'reorder':
+				for (const id of update.pieceIds) {
+					if (!pieceById.has(id)) {
+						return { type: 'tray_organization_noop', reason: 'invalid_update' };
+					}
+				}
+				break;
+		}
+		state.organization = organization;
+		state.hasUserActivity = true;
+		notify();
+		return { type: 'tray_organization_applied', update };
+	}
+
+	// --- Restart --------------------------------------------------------------
+
+	function doRestart(): PuzzleSessionOutcome {
+		if (state.lifecycle === 'setup') {
+			return { type: 'lifecycle_noop', reason: 'nothing_to_restart' };
+		}
+		if (state.lifecycle === 'disposed') {
+			return { type: 'lifecycle_noop', reason: 'disposed' };
+		}
+		const from = state.lifecycle;
+		const retainedMode = state.mode;
+		const retainedOrganization = state.organization;
+		stopClock();
+		state = freshState({ ...options, mode: retainedMode });
+		state.organization = retainedOrganization;
+		state.trayOrder = options.createTrayOrder
+			? options.createTrayOrder()
+			: metadata.pieces
+					.map((piece) => piece.id)
+					.slice()
+					.sort((a, b) => a - b);
+		placementHistory = makeHistoryBaseline(state);
+		notify();
+		return { type: 'lifecycle_transitioned', from, to: 'setup' };
+	}
+
 	// --- Undo / redo ----------------------------------------------------------
 
 	function doUndo(): PuzzleSessionOutcome {
@@ -422,11 +546,19 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 				return doUndo();
 			case 'redo':
 				return doRedo();
+			case 'use_hint':
+				return doUseHint();
+			case 'set_reference_mode':
+				return doSetReferenceMode(action.mode);
+			case 'update_tray_organization':
+				return doUpdateTrayOrganization(action.update);
+			case 'restart':
+				return doRestart();
 			case 'complete':
 				// Completion sealing lands in Task 5.
 				return { type: 'completion_noop', reason: 'board_incomplete' };
 			default:
-				// Assistance, organization, and effect actions arrive in Tasks 4-5.
+				// Effect actions arrive in Task 5.
 				return { type: 'lifecycle_noop', reason: 'invalid_transition' };
 		}
 	}
@@ -485,6 +617,7 @@ function freshState(options: CreatePuzzleSessionOptions): PuzzleSessionState {
 		pieceRotations: {},
 		selectedPieceId: null,
 		activeReferenceMode: null,
+		organization: null,
 		counters: { incorrectAttempts: 0, hintsUsed: 0, referenceActivations: 0 },
 		facts: { rotationUsed: false, hintUsed: false, ghostReferenceUsed: false },
 		hasUserActivity: false,
@@ -518,6 +651,7 @@ function hydrate(
 		pieceRotations: { ...snapshot.pieceRotations },
 		selectedPieceId: null,
 		activeReferenceMode: null,
+		organization: snapshot.organization ? cloneOrganization(snapshot.organization) : null,
 		counters: { ...snapshot.counters },
 		facts: { ...snapshot.facts },
 		hasUserActivity: snapshot.hasUserActivity,
@@ -552,4 +686,13 @@ function hashSeed(value: string): number {
 		hash = (Math.imul(hash, 31) + char.charCodeAt(0)) >>> 0;
 	}
 	return hash || 1;
+}
+
+function cloneOrganization(org: PersistedTrayOrganization): PersistedTrayOrganization {
+	return {
+		filter: org.filter,
+		activeTray: org.activeTray,
+		membership: { ...org.membership },
+		names: { ...org.names }
+	};
 }
