@@ -21,7 +21,11 @@
 	import ReferenceOverlay from '$lib/components/ReferenceOverlay.svelte';
 	import { shuffleArray } from '$lib/utils/shuffle';
 	import { resolve } from '$app/paths';
-	import { selectedPieceId, clearSelectedPiece } from '$lib/stores/pieceSelection';
+	import {
+		selectedPieceId,
+		setSelectedPiece,
+		clearSelectedPiece
+	} from '$lib/stores/pieceSelection';
 	import { createHistory } from '$lib/services/gameplay/history';
 	import { getHintPieceId } from '$lib/services/gameplay/hints';
 	import {
@@ -1034,6 +1038,8 @@
 										{canPlacePiece}
 										onBoardPointerDown={handleBoardPointerDown}
 										resolveImage={puzzleSource!.resolvePieceImage}
+										selectedPieceId={currentSelectedPieceId}
+										onCancelSelection={() => clearSelectedPiece()}
 									/>
 								</div>
 							</ZoomableBoardFrame>
@@ -1070,6 +1076,9 @@
 										rotation={getDisplayedRotation(piece.id)}
 										onRotate={handlePieceRotate}
 										resolveImage={puzzleSource!.resolvePieceImage}
+										selected={currentSelectedPieceId === piece.id}
+										onSelect={(id) => setSelectedPiece(id)}
+										onCancelSelection={() => clearSelectedPiece()}
 									/>
 								</div>
 							{/if}

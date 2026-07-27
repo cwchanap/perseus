@@ -1,7 +1,5 @@
 <script lang="ts">
-	import { onDestroy } from 'svelte';
 	import type { Puzzle, PuzzlePiece, PlacedPiece } from '$lib/types/puzzle';
-	import { selectedPieceId, clearSelectedPiece } from '$lib/stores/pieceSelection';
 	import { EXPANSION_FACTOR, TAB_RATIO } from '$lib/constants/puzzle';
 
 	interface Props {
@@ -13,6 +11,8 @@
 		canPlacePiece?: (pieceId: number) => boolean;
 		onBoardPointerDown?: (event: PointerEvent) => void;
 		resolveImage: (piece: PuzzlePiece) => string;
+		selectedPieceId?: number | null;
+		onCancelSelection?: () => void;
 	}
 
 	let {
@@ -23,15 +23,12 @@
 		activeHintTarget = null,
 		canPlacePiece,
 		onBoardPointerDown,
-		resolveImage
+		resolveImage,
+		selectedPieceId = null,
+		onCancelSelection
 	}: Props = $props();
 
 	let dragOverCell: { x: number; y: number } | null = $state(null);
-	let currentSelectedId = $state<number | null>(null);
-
-	const unsubscribeSelection = selectedPieceId.subscribe((value) => {
-		currentSelectedId = value;
-	});
 
 	function isPiecePlaced(x: number, y: number, excludePieceId?: number): PlacedPiece | undefined {
 		return placedPieces.find((p) => p.x === x && p.y === y && p.pieceId !== excludePieceId);
@@ -92,11 +89,11 @@
 
 	function handleKeyDown(event: KeyboardEvent, x: number, y: number) {
 		if (event.key !== 'Enter' && event.key !== ' ') return;
-		if (currentSelectedId === null) return;
+		if (selectedPieceId === null) return;
 		event.preventDefault();
-		const didPlace = placePiece(currentSelectedId, x, y);
+		const didPlace = placePiece(selectedPieceId, x, y);
 		if (didPlace) {
-			clearSelectedPiece();
+			onCancelSelection?.();
 		}
 	}
 
@@ -116,10 +113,6 @@
 	function handleBoardPointerDown(event: PointerEvent) {
 		onBoardPointerDown?.(event);
 	}
-
-	onDestroy(() => {
-		unsubscribeSelection();
-	});
 </script>
 
 <div

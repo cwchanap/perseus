@@ -1,4 +1,4 @@
-// Component tests for PuzzlePiece
+// Component tests for PuzzlePiece (controlled selection)
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { page, userEvent } from 'vitest/browser';
@@ -7,28 +7,6 @@ import type { PuzzlePiece as PuzzlePieceType } from '$lib/types/puzzle';
 import { BASE_OFFSET, EXPANSION_FACTOR, TAB_RATIO } from '$lib/constants/puzzle';
 
 const resolveImage = (piece: { id: number }) => `/test/${piece.id}.png`;
-
-// Track which piece id is "selected" in the store mock
-let mockSelectedId: number | null = null;
-
-vi.mock('$lib/stores/pieceSelection', () => {
-	const setSelectedPiece = vi.fn();
-	const clearSelectedPiece = vi.fn();
-	return {
-		selectedPieceId: {
-			// Captures mockSelectedId by reference so tests can set it before render
-			subscribe: vi.fn((callback: (v: number | null) => void) => {
-				callback(mockSelectedId);
-				return () => {};
-			})
-		},
-		setSelectedPiece,
-		clearSelectedPiece
-	};
-});
-
-// Import the mocked modules so we can inspect calls in tests
-import { setSelectedPiece, clearSelectedPiece } from '$lib/stores/pieceSelection';
 
 const mockPiece: PuzzlePieceType = {
 	id: 7,
@@ -77,7 +55,6 @@ function appendDropZone(id: string): HTMLElement {
 
 describe('PuzzlePiece', () => {
 	beforeEach(() => {
-		mockSelectedId = null;
 		vi.clearAllMocks();
 	});
 
@@ -193,36 +170,39 @@ describe('PuzzlePiece', () => {
 	});
 
 	describe('selection state', () => {
-		it('shows data-selected=false when no piece is selected', async () => {
-			mockSelectedId = null;
-			render(PuzzlePiece, { piece: mockPiece, isPlaced: false, resolveImage });
+		it('shows data-selected=false when the selected prop is false', async () => {
+			render(PuzzlePiece, {
+				piece: mockPiece,
+				isPlaced: false,
+				resolveImage,
+				selected: false
+			});
 
 			await expect
 				.element(page.getByTestId('puzzle-piece'))
 				.toHaveAttribute('data-selected', 'false');
 		});
 
-		it('shows data-selected=false when a different piece is selected', async () => {
-			mockSelectedId = 99;
-			render(PuzzlePiece, { piece: mockPiece, isPlaced: false, resolveImage });
-
-			await expect
-				.element(page.getByTestId('puzzle-piece'))
-				.toHaveAttribute('data-selected', 'false');
-		});
-
-		it('shows data-selected=true when this piece is selected', async () => {
-			mockSelectedId = 7;
-			render(PuzzlePiece, { piece: mockPiece, isPlaced: false, resolveImage });
+		it('shows data-selected=true when the selected prop is true', async () => {
+			render(PuzzlePiece, {
+				piece: mockPiece,
+				isPlaced: false,
+				resolveImage,
+				selected: true
+			});
 
 			await expect
 				.element(page.getByTestId('puzzle-piece'))
 				.toHaveAttribute('data-selected', 'true');
 		});
 
-		it('shows aria-grabbed=true when this piece is selected', async () => {
-			mockSelectedId = 7;
-			render(PuzzlePiece, { piece: mockPiece, isPlaced: false, resolveImage });
+		it('shows aria-grabbed=true when selected', async () => {
+			render(PuzzlePiece, {
+				piece: mockPiece,
+				isPlaced: false,
+				resolveImage,
+				selected: true
+			});
 
 			await expect
 				.element(page.getByTestId('puzzle-piece'))
@@ -230,8 +210,12 @@ describe('PuzzlePiece', () => {
 		});
 
 		it('shows aria-grabbed=false when not selected', async () => {
-			mockSelectedId = null;
-			render(PuzzlePiece, { piece: mockPiece, isPlaced: false, resolveImage });
+			render(PuzzlePiece, {
+				piece: mockPiece,
+				isPlaced: false,
+				resolveImage,
+				selected: false
+			});
 
 			await expect
 				.element(page.getByTestId('puzzle-piece'))
@@ -324,34 +308,45 @@ describe('PuzzlePiece', () => {
 	});
 
 	describe('keyboard interaction', () => {
-		it('calls setSelectedPiece and onDragStart on Enter when not selected', async () => {
-			mockSelectedId = null;
+		it('calls onSelect and onDragStart on Enter when not selected', async () => {
+			const onSelect = vi.fn();
 			const onDragStart = vi.fn();
 
-			render(PuzzlePiece, { piece: mockPiece, isPlaced: false, resolveImage, onDragStart });
+			render(PuzzlePiece, {
+				piece: mockPiece,
+				isPlaced: false,
+				resolveImage,
+				selected: false,
+				onSelect,
+				onDragStart
+			});
 
 			const el = page.getByTestId('puzzle-piece');
 			await el.click();
 			await userEvent.keyboard('{Enter}');
 
-			expect(vi.mocked(setSelectedPiece)).toHaveBeenCalledWith(7);
+			expect(onSelect).toHaveBeenCalledWith(7);
 			expect(onDragStart).toHaveBeenCalledWith(mockPiece);
 		});
 
-		it('calls clearSelectedPiece on Enter when this piece is already selected', async () => {
-			mockSelectedId = 7;
-			render(PuzzlePiece, { piece: mockPiece, isPlaced: false, resolveImage });
+		it('calls onCancelSelection on Enter when this piece is already selected', async () => {
+			const onCancelSelection = vi.fn();
+			render(PuzzlePiece, {
+				piece: mockPiece,
+				isPlaced: false,
+				resolveImage,
+				selected: true,
+				onCancelSelection
+			});
 
 			const el = page.getByTestId('puzzle-piece');
 			await el.click();
 			await userEvent.keyboard('{Enter}');
 
-			expect(vi.mocked(clearSelectedPiece)).toHaveBeenCalled();
+			expect(onCancelSelection).toHaveBeenCalled();
 		});
 
 		it('placed pieces have tabindex=-1 so they receive no keyboard focus', async () => {
-			// When isPlaced=true the component sets tabindex=-1 and aria-disabled=true,
-			// removing the piece from the tab order so users cannot keyboard-activate it.
 			render(PuzzlePiece, { piece: mockPiece, isPlaced: true, resolveImage });
 
 			const el = page.getByTestId('puzzle-piece');
@@ -360,30 +355,59 @@ describe('PuzzlePiece', () => {
 		});
 
 		it('responds to Space key the same as Enter', async () => {
-			mockSelectedId = null;
+			const onSelect = vi.fn();
 			const onDragStart = vi.fn();
 
-			render(PuzzlePiece, { piece: mockPiece, isPlaced: false, resolveImage, onDragStart });
+			render(PuzzlePiece, {
+				piece: mockPiece,
+				isPlaced: false,
+				resolveImage,
+				selected: false,
+				onSelect,
+				onDragStart
+			});
 
 			const el = page.getByTestId('puzzle-piece');
 			await el.click();
 			await userEvent.keyboard(' ');
 
-			expect(vi.mocked(setSelectedPiece)).toHaveBeenCalledWith(7);
+			expect(onSelect).toHaveBeenCalledWith(7);
 			expect(onDragStart).toHaveBeenCalledWith(mockPiece);
 		});
 
 		it('ignores other key presses', async () => {
+			const onSelect = vi.fn();
 			const onDragStart = vi.fn();
 
-			render(PuzzlePiece, { piece: mockPiece, isPlaced: false, resolveImage, onDragStart });
+			render(PuzzlePiece, {
+				piece: mockPiece,
+				isPlaced: false,
+				resolveImage,
+				onSelect,
+				onDragStart
+			});
 
 			const el = page.getByTestId('puzzle-piece');
 			await el.click();
 			await userEvent.keyboard('a');
 
-			expect(vi.mocked(setSelectedPiece)).not.toHaveBeenCalled();
+			expect(onSelect).not.toHaveBeenCalled();
 			expect(onDragStart).not.toHaveBeenCalled();
+		});
+
+		it('does not select a placed piece via keyboard', async () => {
+			const onSelect = vi.fn();
+			render(PuzzlePiece, {
+				piece: mockPiece,
+				isPlaced: true,
+				resolveImage,
+				onSelect
+			});
+
+			const el = await page.getByTestId('puzzle-piece').element();
+			el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+
+			expect(onSelect).not.toHaveBeenCalled();
 		});
 	});
 
