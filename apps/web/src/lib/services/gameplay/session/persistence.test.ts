@@ -459,7 +459,7 @@ describe('isResumable', () => {
 
 describe('createSessionStorageAdapter', () => {
 	it('round-trips a snapshot through storage and reports loaded', () => {
-		let store: Record<string, string> = {};
+		const store: Record<string, string> = {};
 		const storage = memoryStorage(store);
 		const adapter = createSessionStorageAdapter({ storage });
 

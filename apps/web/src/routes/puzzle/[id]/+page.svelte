@@ -20,7 +20,6 @@
 	import ReferenceOverlay from '$lib/components/ReferenceOverlay.svelte';
 	import { shuffleArray } from '$lib/utils/shuffle';
 	import { resolve } from '$app/paths';
-	import { getHintPieceId } from '$lib/services/gameplay/hints';
 	import {
 		getResponsivePuzzleBoardMetrics,
 		type ResponsivePuzzleBoardMetrics
@@ -46,7 +45,6 @@
 	const REJECTED_DURATION_MS = 500;
 	const HINT_DURATION_MS = 1800;
 	const ZOOM_STEP = 0.2;
-	const CHECKPOINT_INTERVAL_MS = 5000;
 
 	function createBrowserClock(): Clock {
 		return {
@@ -91,8 +89,6 @@
 
 	let bestTime: number | null = $state(null);
 	let isNewBest = $state(false);
-	let completionRecorded = $state(false);
-	let activeCompletionId = 0;
 	let activeLoadRequestId = 0;
 
 	let sessionUnsubscribe: (() => void) | null = null;
@@ -153,7 +149,6 @@
 		}
 
 		activeLoadRequestId += 1;
-		activeCompletionId += 1;
 		if (puzzleSource) {
 			puzzleSource.cleanup();
 			puzzleSource = null;
@@ -309,19 +304,10 @@
 		bestTime = getBestTime(puzzle.id);
 		showCelebration = true;
 
-		const completionToken = activeCompletionId;
 		if (puzzleSource?.source === 'api') {
-			recordCompletionLegacy(puzzle.id, timeSeconds)
-				.then(() => {
-					if (completionToken === activeCompletionId) {
-						completionRecorded = true;
-					}
-				})
-				.catch((err) => {
-					console.error('Failed to record completion on server', err);
-				});
-		} else {
-			completionRecorded = true;
+			recordCompletionLegacy(puzzle.id, timeSeconds).catch((err) => {
+				console.error('Failed to record completion on server', err);
+			});
 		}
 	}
 
@@ -474,8 +460,6 @@
 			rejectedPiece = null;
 			bestTime = getBestTime(id);
 			isNewBest = false;
-			completionRecorded = false;
-			activeCompletionId += 1;
 
 			// Construct the session store.
 			const store = createPuzzleSessionStore({
@@ -726,8 +710,6 @@
 		referencePointerId = null;
 		referenceHoldSource = null;
 		isNewBest = false;
-		completionRecorded = false;
-		activeCompletionId += 1;
 		sessionStorageAdapter.clearSession(puzzle.id);
 		sessionStore.dispatch({ type: 'restart' });
 		sessionStore.dispatch({ type: 'start' });

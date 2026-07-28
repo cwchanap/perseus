@@ -51,7 +51,6 @@ interface PlacementHistoryState {
 
 export function createPuzzleSession(options: CreatePuzzleSessionOptions): PuzzleSession {
 	const clock = options.clock;
-	const runIdFactory = options.runIdFactory;
 	const onEvent = options.onEvent;
 	const metadata = options.metadata;
 	const pieceById = new Map(metadata.pieces.map((piece) => [piece.id, piece]));

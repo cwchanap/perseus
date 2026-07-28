@@ -263,7 +263,6 @@ import {
 	getReferenceImageUrl
 } from '$lib/services/api';
 import type { LoadedPuzzleSource } from '$lib/services/puzzleSource';
-import { saveProgress, clearProgress } from '$lib/services/progress';
 import { saveCompletionTime, getBestTime } from '$lib/services/stats';
 import { goto } from '$app/navigation';
 
