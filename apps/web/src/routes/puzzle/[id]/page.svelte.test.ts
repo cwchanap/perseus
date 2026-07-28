@@ -265,9 +265,7 @@ import {
 import type { LoadedPuzzleSource } from '$lib/services/puzzleSource';
 import { saveProgress, clearProgress } from '$lib/services/progress';
 import { saveCompletionTime, getBestTime } from '$lib/services/stats';
-import { get } from 'svelte/store';
 import { goto } from '$app/navigation';
-import { clearSelectedPiece, selectedPieceId, setSelectedPiece } from '$lib/stores/pieceSelection';
 
 function createPiece(
 	id: number,
@@ -368,7 +366,6 @@ describe('Puzzle route gameplay integration', () => {
 			status: 200,
 			error: null
 		});
-		clearSelectedPiece();
 	});
 
 	it('renders the gameplay toolbar and zoomable board frame on load', async () => {
@@ -910,7 +907,7 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.element(page.getByText('1/2')).toBeVisible();
 
 		// Selection should be cleared since piece 0 is now on the board
-		expect(get(selectedPieceId)).toBeNull();
+		await expect.poll(() => page.getByLabelText('Puzzle piece 0').query()).toBeNull();
 	});
 
 	it('starts the timer when rotating a piece before any placement', async () => {
