@@ -4,10 +4,9 @@
 	import { onDestroy, untrack } from 'svelte';
 	import { ApiError } from '$lib/services/api';
 	import { loadPuzzleSource, type LoadedPuzzleSource } from '$lib/services/puzzleSource';
-	import { getProgress, saveProgress, clearProgress } from '$lib/services/progress';
 	import { getBestTime, saveCompletionTime } from '$lib/services/stats';
 	import { recordCompletionLegacy } from '$lib/services/api';
-	import { createTimerStore, formatTime } from '$lib/stores/timer';
+	import { formatTime } from '$lib/stores/timer';
 	import type { TimerState } from '$lib/stores/timer';
 	import { SvelteMap } from 'svelte/reactivity';
 	import type { Puzzle, PlacedPiece, PuzzlePiece as TPuzzlePiece } from '$lib/types/puzzle';
@@ -21,51 +20,58 @@
 	import ReferenceOverlay from '$lib/components/ReferenceOverlay.svelte';
 	import { shuffleArray } from '$lib/utils/shuffle';
 	import { resolve } from '$app/paths';
-	import {
-		selectedPieceId,
-		setSelectedPiece,
-		clearSelectedPiece
-	} from '$lib/stores/pieceSelection';
-	import { createHistory } from '$lib/services/gameplay/history';
 	import { getHintPieceId } from '$lib/services/gameplay/hints';
 	import {
 		getResponsivePuzzleBoardMetrics,
 		type ResponsivePuzzleBoardMetrics
 	} from '$lib/services/puzzleLayout';
-	import {
-		rotateClockwise,
-		generateRandomRotations,
-		isUpright
-	} from '$lib/services/gameplay/rotation';
+	import { isUpright, generateRandomRotations } from '$lib/services/gameplay/rotation';
 	import { clampZoom, clampPan, calculateFitZoom } from '$lib/services/gameplay/viewport';
+	import {
+		createPuzzleSessionStore,
+		type PuzzleSessionStore
+	} from '$lib/services/gameplay/session/store';
+	import {
+		createBrowserRunIdFactory,
+		createSessionStorageAdapter,
+		serializeSession
+	} from '$lib/services/gameplay/session/persistence';
+	import type {
+		Clock,
+		PuzzleMetadata,
+		PuzzleSessionState,
+		PuzzleSessionEvent
+	} from '$lib/services/gameplay/session/types';
 
 	const REJECTED_DURATION_MS = 500;
 	const HINT_DURATION_MS = 1800;
 	const ZOOM_STEP = 0.2;
+	const CHECKPOINT_INTERVAL_MS = 5000;
 
-	interface PlacementHistoryState {
-		placedPieces: PlacedPiece[];
-		pieceRotations: Record<number, Rotation>;
-		rotationEnabled: boolean;
+	function createBrowserClock(): Clock {
+		return {
+			monotonicNow: () => performance.now(),
+			wallNow: () => Date.now(),
+			setInterval: (cb: () => void, ms: number) => globalThis.setInterval(cb, ms),
+			clearInterval: (handle: unknown) =>
+				globalThis.clearInterval(handle as ReturnType<typeof setInterval>)
+		};
 	}
+
+	const runIdFactory = createBrowserRunIdFactory();
+	const sessionStorageAdapter = createSessionStorageAdapter();
+	const clock = createBrowserClock();
 
 	let puzzle: Puzzle | null = $state(null);
 	let puzzleSource: LoadedPuzzleSource | null = $state(null);
 	let loading = $state(true);
 	let error: string | null = $state(null);
 	let errorStatus: number | null = $state(null);
-	let placedPieces: PlacedPiece[] = $state([]);
 	let showCelebration = $state(false);
 	let rejectedPiece: number | null = $state(null);
-	let shuffledPieceIds: number[] = $state([]);
-	let rotationEnabled = $state(false);
-	let pieceRotations = $state<Record<number, Rotation>>({});
 	let showReferenceOverlay = $state(false);
 	let activeHintPieceId = $state<number | null>(null);
 	let activeHintTarget = $state<{ x: number; y: number } | null>(null);
-	let canUndo = $state(false);
-	let canRedo = $state(false);
-	let currentSelectedPieceId = $state<number | null>(null);
 	let boardViewportElement = $state<HTMLElement | null>(null);
 	let zoom = $state(1);
 	let minZoom = $state(1);
@@ -79,43 +85,25 @@
 	let viewportWidth = $state(typeof window !== 'undefined' ? window.innerWidth : 1280);
 	let viewportHeight = $state(typeof window !== 'undefined' ? window.innerHeight : 900);
 
-	const timer = createTimerStore();
-	let timerState: TimerState = $state({ elapsed: 0, running: false });
-	let timerStarted = $state(false);
+	// Session-driven canonical state.
+	let sessionStore: PuzzleSessionStore | null = $state(null);
+	let sessionState = $state<PuzzleSessionState | null>(null);
+
 	let bestTime: number | null = $state(null);
 	let isNewBest = $state(false);
 	let completionRecorded = $state(false);
+	let activeCompletionId = 0;
+	let activeLoadRequestId = 0;
 
-	let timerUnsubscribe: (() => void) | null = null;
-	let selectionUnsubscribe: (() => void) | null = null;
+	let sessionUnsubscribe: (() => void) | null = null;
+	let checkpointInterval: ReturnType<typeof setInterval> | null = null;
 	let rejectedPieceTimeout: ReturnType<typeof setTimeout> | null = null;
 	let hintTimeout: ReturnType<typeof setTimeout> | null = null;
-	let placementHistory = createHistory<PlacementHistoryState>({
-		placedPieces: [],
-		pieceRotations: {},
-		rotationEnabled: false
-	});
 	let activePanPointerId: number | null = null;
 	let panStartClientX = 0;
 	let panStartClientY = 0;
 	let panOriginX = 0;
 	let panOriginY = 0;
-	let activeLoadRequestId = 0;
-	// Per-solve token guarding the completion POST callback. Incremented on
-	// every reset (play again, new puzzle load, destroy) so a stale
-	// recordCompletion().then() from a prior solve cannot flip
-	// completionRecorded back to true after handlePlayAgain reset it — which
-	// would otherwise make the next solve skip both the local best-time save
-	// and the server completion POST.
-	let activeCompletionId = 0;
-
-	timerUnsubscribe = timer.subscribe((state) => {
-		timerState = state;
-	});
-
-	selectionUnsubscribe = selectedPieceId.subscribe((value) => {
-		currentSelectedPieceId = value;
-	});
 
 	if (typeof window !== 'undefined') {
 		window.addEventListener('pointermove', handleWindowPointerMove);
@@ -127,14 +115,13 @@
 	}
 
 	onDestroy(() => {
-		if (timerUnsubscribe) {
-			timerUnsubscribe();
-			timerUnsubscribe = null;
+		if (sessionUnsubscribe) {
+			sessionUnsubscribe();
+			sessionUnsubscribe = null;
 		}
-
-		if (selectionUnsubscribe) {
-			selectionUnsubscribe();
-			selectionUnsubscribe = null;
+		if (checkpointInterval !== null) {
+			clearInterval(checkpointInterval);
+			checkpointInterval = null;
 		}
 
 		if (rejectedPieceTimeout !== null) {
@@ -162,11 +149,26 @@
 			puzzleSource.cleanup();
 			puzzleSource = null;
 		}
-		clearSelectedPiece();
-		timer.destroy();
+		if (sessionStore) {
+			sessionStore.dispose();
+			sessionStore = null;
+		}
 	});
 
 	const puzzleId = $derived($page.params.id);
+
+	// --- Session-derived canonical state -----------------------------------------
+	const placedPieces = $derived<PlacedPiece[]>(sessionState?.placedPieces ?? []);
+	const rotationEnabled = $derived(sessionState?.rotationEnabled ?? false);
+	const pieceRotations = $derived<Record<number, Rotation>>(sessionState?.pieceRotations ?? {});
+	const currentSelectedPieceId = $derived(sessionState?.selectedPieceId ?? null);
+	const canUndo = $derived(sessionState?.canUndo ?? false);
+	const canRedo = $derived(sessionState?.canRedo ?? false);
+	const timerState = $derived<TimerState>({
+		elapsed: sessionState?.elapsedActiveSeconds ?? 0,
+		running: sessionState?.lifecycle === 'active' && (sessionState?.timerStarted ?? false)
+	});
+
 	const placedPieceIds = $derived.by(
 		() => new Set(placedPieces.map((placement) => placement.pieceId))
 	);
@@ -191,7 +193,7 @@
 	});
 
 	const shuffledPieces = $derived(
-		shuffledPieceIds
+		(sessionState?.trayOrder ?? [])
 			.map((id) => piecesMap.get(id))
 			.filter((piece): piece is TPuzzlePiece => piece !== undefined)
 	);
@@ -249,32 +251,77 @@
 		recomputeZoomBounds();
 	}
 
-	function clonePlacedPieces(pieces: PlacedPiece[]): PlacedPiece[] {
-		return pieces.map((piece) => ({ ...piece }));
+	function getDisplayedRotation(pieceId: number): Rotation {
+		return rotationEnabled ? (pieceRotations[pieceId] ?? 0) : 0;
 	}
 
-	function clonePieceRotations(rotations: Record<number, Rotation>): Record<number, Rotation> {
-		return { ...rotations };
+	function isPiecePlaced(pieceId: number): boolean {
+		return placedPieceIds.has(pieceId);
 	}
 
-	function createPlacementHistoryState(
-		nextPlacedPieces: PlacedPiece[] = placedPieces,
-		nextPieceRotations: Record<number, Rotation> = pieceRotations,
-		nextRotationEnabled = rotationEnabled
-	): PlacementHistoryState {
-		return {
-			placedPieces: clonePlacedPieces(nextPlacedPieces),
-			pieceRotations: clonePieceRotations(nextPieceRotations),
-			rotationEnabled: nextRotationEnabled
-		};
+	function canPlacePiece(pieceId: number): boolean {
+		return !rotationEnabled || isUpright(pieceRotations[pieceId] ?? 0);
 	}
 
-	function getRotationSeed(value: string): number {
-		let hash = 0;
-		for (const char of value) {
-			hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+	function isRotationToggleLocked(): boolean {
+		return placedPieces.length > 0;
+	}
+
+	// --- Persistence -------------------------------------------------------------
+
+	function checkpointSession() {
+		if (!sessionStore || !sessionState || !puzzle) return;
+		if (sessionState.lifecycle === 'disposed') return;
+		const serialized = serializeSession(sessionState);
+		if (serialized) {
+			sessionStorageAdapter.saveSession(puzzle.id, serialized);
 		}
-		return hash || 1;
+	}
+
+	// --- Completion adapter (interim — Task 11 replaces with typed effects) ------
+
+	function handleCompletionSeal(seal: { runId: string; elapsedActiveSeconds: number | null }) {
+		if (!puzzle) return;
+		const timeSeconds = Math.max(1, seal.elapsedActiveSeconds ?? 0);
+		isNewBest = saveCompletionTime(puzzle.id, timeSeconds);
+		bestTime = getBestTime(puzzle.id);
+		showCelebration = true;
+
+		const completionToken = activeCompletionId;
+		if (puzzleSource?.source === 'api') {
+			recordCompletionLegacy(puzzle.id, timeSeconds)
+				.then(() => {
+					if (completionToken === activeCompletionId) {
+						completionRecorded = true;
+					}
+				})
+				.catch((err) => {
+					console.error('Failed to record completion on server', err);
+				});
+		} else {
+			completionRecorded = true;
+		}
+	}
+
+	function handleSessionEvent(event: PuzzleSessionEvent) {
+		if (event.type === 'completion_sealed') {
+			handleCompletionSeal(event.seal);
+		} else if (event.type === 'placement_rejected') {
+			if (rejectedPieceTimeout !== null) {
+				clearTimeout(rejectedPieceTimeout);
+			}
+			rejectedPiece = event.pieceId;
+			rejectedPieceTimeout = setTimeout(() => {
+				rejectedPiece = null;
+				rejectedPieceTimeout = null;
+			}, REJECTED_DURATION_MS);
+		} else if (event.type === 'hint_target') {
+			if (event.pieceId !== null && event.target) {
+				showHintTarget(event.pieceId, event.target);
+			} else {
+				clearHintTarget();
+			}
+		}
 	}
 
 	function getViewportBounds(scale = zoom): ViewportBounds {
@@ -317,76 +364,6 @@
 		return Math.min(1, calculateFitZoom(boardWidth, boardHeight, viewportWidth, viewportHeight, 1));
 	}
 
-	function updateHistoryControls() {
-		canUndo = placementHistory.canUndo();
-		canRedo = placementHistory.canRedo();
-	}
-
-	function resetPlacementHistory(
-		initialPlacedPieces: PlacedPiece[] = [],
-		initialPieceRotations: Record<number, Rotation> = {},
-		initialRotationEnabled = rotationEnabled
-	) {
-		placementHistory = createHistory<PlacementHistoryState>(
-			createPlacementHistoryState(
-				initialPlacedPieces,
-				initialPieceRotations,
-				initialRotationEnabled
-			)
-		);
-		updateHistoryControls();
-	}
-
-	function createInitialRotations(
-		puzzleData: Puzzle,
-		placements: PlacedPiece[],
-		enabled: boolean,
-		savedRotations: Record<number, Rotation> = {}
-	): Record<number, Rotation> {
-		if (!enabled) {
-			return { ...savedRotations };
-		}
-
-		const rotations = Object.fromEntries(
-			puzzleData.pieces.map((piece) => [piece.id, (savedRotations[piece.id] ?? 0) as Rotation])
-		) as Record<number, Rotation>;
-
-		const placedIds = new Set(placements.map((placement) => placement.pieceId));
-		const missingIds = puzzleData.pieces
-			.map((piece) => piece.id)
-			.filter((pieceId) => !placedIds.has(pieceId) && savedRotations[pieceId] === undefined);
-
-		if (missingIds.length === 0) {
-			return rotations;
-		}
-
-		const generated = generateRandomRotations(
-			missingIds,
-			getRotationSeed(`${puzzleData.id}:${missingIds.join(',')}`)
-		);
-
-		return {
-			...rotations,
-			...generated
-		};
-	}
-
-	function getDisplayedRotation(pieceId: number): Rotation {
-		return rotationEnabled ? (pieceRotations[pieceId] ?? 0) : 0;
-	}
-
-	function persistProgress(
-		nextPlacedPieces: PlacedPiece[] = placedPieces,
-		nextRotationEnabled = rotationEnabled,
-		nextPieceRotations: Record<number, Rotation> = pieceRotations
-	) {
-		if (!puzzle) return;
-
-		saveProgress(puzzle.id, clonePlacedPieces(nextPlacedPieces), nextRotationEnabled, {
-			...nextPieceRotations
-		});
-	}
-
 	async function loadPuzzle(id: string) {
 		const requestId = ++activeLoadRequestId;
 		loading = true;
@@ -394,14 +371,29 @@
 		errorStatus = null;
 
 		try {
-			// Clean up any prior source's blob URLs before loading a new one.
-			// Read via `untrack` so this effect-driven function does not subscribe to
-			// `puzzleSource` writes (which would re-trigger the effect in a loop).
 			const priorSource = untrack(() => puzzleSource);
 			if (priorSource) {
 				priorSource.cleanup();
 				puzzleSource = null;
 			}
+			// Dispose any prior session before constructing a new one.
+			const priorUnsub = untrack(() => sessionUnsubscribe);
+			const priorCheckpoint = untrack(() => checkpointInterval);
+			const priorStore = untrack(() => sessionStore);
+			if (priorUnsub) {
+				priorUnsub();
+				sessionUnsubscribe = null;
+			}
+			if (priorCheckpoint !== null) {
+				clearInterval(priorCheckpoint);
+				checkpointInterval = null;
+			}
+			if (priorStore) {
+				priorStore.dispose();
+				sessionStore = null;
+				sessionState = null;
+			}
+
 			const source = await loadPuzzleSource(id);
 			if (requestId !== activeLoadRequestId) {
 				source.cleanup();
@@ -410,47 +402,91 @@
 			const loadedPuzzle = source.puzzle;
 			puzzleSource = source;
 
-			const savedProgress = getProgress(id);
-			const restoredPlacedPieces = clonePlacedPieces(savedProgress?.placedPieces ?? []);
-			const restoredRotationEnabled = savedProgress?.rotationEnabled ?? false;
-			const restoredPieceRotations = createInitialRotations(
-				loadedPuzzle,
-				restoredPlacedPieces,
-				restoredRotationEnabled,
-				savedProgress?.pieceRotations ?? {}
-			);
+			// Build session metadata and validation context.
+			const metadata: PuzzleMetadata = {
+				puzzleId: loadedPuzzle.id,
+				source: source.source,
+				pieceCount: loadedPuzzle.pieceCount,
+				gridCols: loadedPuzzle.gridCols,
+				gridRows: loadedPuzzle.gridRows,
+				pieces: loadedPuzzle.pieces.map((p) => ({
+					id: p.id,
+					correctX: p.correctX,
+					correctY: p.correctY
+				}))
+			};
+
+			// Load/migrate/validate persisted session.
+			const loadResult = sessionStorageAdapter.loadSession(loadedPuzzle.id, {
+				puzzleId: loadedPuzzle.id,
+				source: source.source,
+				pieceIds: loadedPuzzle.pieces.map((p) => p.id),
+				gridCols: loadedPuzzle.gridCols,
+				gridRows: loadedPuzzle.gridRows,
+				pieceCount: loadedPuzzle.pieceCount
+			});
+
+			const restored =
+				loadResult.status === 'loaded' || loadResult.status === 'migrated'
+					? loadResult.snapshot
+					: undefined;
 
 			puzzle = loadedPuzzle;
-			shuffledPieceIds = shuffleArray(loadedPuzzle.pieces.map((piece) => piece.id));
-			placedPieces = restoredPlacedPieces;
-			rotationEnabled = restoredRotationEnabled;
-			pieceRotations = restoredPieceRotations;
 			showCelebration = false;
 			showReferenceOverlay = false;
 			clearHintTarget();
-			clearSelectedPiece();
 			if (rejectedPieceTimeout !== null) {
 				clearTimeout(rejectedPieceTimeout);
 				rejectedPieceTimeout = null;
 			}
 			rejectedPiece = null;
 			bestTime = getBestTime(id);
-			timer.reset();
-			timerStarted = false;
 			isNewBest = false;
 			completionRecorded = false;
-			// A new puzzle load starts a fresh solve session: invalidate any
-			// in-flight completion callback from a prior puzzle so it cannot
-			// mark this new (still-unsolved) session as recorded.
 			activeCompletionId += 1;
-			resetPlacementHistory(restoredPlacedPieces, restoredPieceRotations, restoredRotationEnabled);
+
+			// Construct the session store.
+			const store = createPuzzleSessionStore({
+				metadata,
+				runIdFactory,
+				clock,
+				onEvent: handleSessionEvent,
+				restored,
+				createTrayOrder: () => shuffleArray(loadedPuzzle.pieces.map((p) => p.id)),
+				createRotations: (pieceIds: number[]) => {
+					let hash = 0;
+					const seedStr = `${loadedPuzzle.id}:${pieceIds.join(',')}`;
+					for (const ch of seedStr) {
+						hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+					}
+					return generateRandomRotations(pieceIds, hash || 1);
+				}
+			});
+			sessionStore = store;
+			sessionState = null;
+
+			// Subscribe for reactive state updates.
+			sessionUnsubscribe = store.subscribe((state) => {
+				sessionState = state;
+			});
+
+			// Auto-start fresh sessions immediately.
+			if (!restored) {
+				store.dispatch({ type: 'start' });
+			}
+
+			// Periodic checkpoint.
+			// checkpointInterval = setInterval(() => {
+			// 	checkpointSession();
+			// }, CHECKPOINT_INTERVAL_MS);
+
 			pendingViewportReset = true;
 		} catch (e) {
 			if (requestId !== activeLoadRequestId) return;
 
 			errorStatus = e instanceof ApiError ? e.status : null;
 			if (e instanceof ApiError && e.status === 404) {
-				clearProgress(id);
+				sessionStorageAdapter.clearSession(id);
 				error = 'Mission no longer available';
 			} else {
 				console.error(`Failed to load puzzle ${id}:`, e);
@@ -463,106 +499,24 @@
 		}
 	}
 
-	function ensureTimerStarted() {
-		if (!timerStarted) {
-			timerStarted = true;
-			timer.start();
-		}
-	}
-
-	function syncCompletionState(previousCount: number, nextPlacedPieces: PlacedPiece[]) {
-		if (!puzzle) return;
-
-		const wasComplete = previousCount >= puzzle.pieceCount;
-		const isComplete = nextPlacedPieces.length >= puzzle.pieceCount;
-
-		if (isComplete && !wasComplete) {
-			timer.pause();
-			if (!completionRecorded) {
-				// The timer ticks in whole seconds starting from 0, so a very
-				// fast solve (e.g. a 4-piece puzzle) can complete with elapsed
-				// still at 0. The completion API rejects timeSeconds < 1, which
-				// would leave the server stat un-synced while the local best is
-				// saved as a nonsensical 0s. Clamp to at least 1 second.
-				const timeSeconds = Math.max(1, timerState.elapsed);
-				isNewBest = saveCompletionTime(puzzle.id, timeSeconds);
-				bestTime = getBestTime(puzzle.id);
-				// Only mark completion as recorded once the server confirms it.
-				// Setting the flag synchronously would suppress retries when the
-				// POST fails, leaving the solve permanently un-synced. Capture
-				// the current solve token so a stale callback from a prior
-				// solve (e.g. after Play Again reset completionRecorded to
-				// false) cannot flip it back to true and suppress the next
-				// solve's recording.
-				const completionToken = activeCompletionId;
-				// Quick puzzles (source === 'local') use device-local `q-...` ids
-				// that must never be sent to the API — loadPuzzleSource already
-				// guards fetches that way. Skip the server POST for them and mark
-				// completion recorded synchronously; the local best time above is
-				// the only persistent record for quick puzzles.
-				if (puzzleSource?.source === 'api') {
-					recordCompletionLegacy(puzzle.id, timeSeconds)
-						.then(() => {
-							if (completionToken === activeCompletionId) {
-								completionRecorded = true;
-							}
-						})
-						.catch((error) => {
-							console.error('Failed to record completion on server', error);
-						});
-				} else {
-					completionRecorded = true;
-				}
-			}
-			showCelebration = true;
-			return;
-		}
-
-		if (!isComplete && wasComplete) {
-			showCelebration = false;
-			isNewBest = false;
-			if (timerStarted) {
-				timer.resume();
-			}
-		}
-	}
-
 	function handlePiecePlaced(pieceId: number, x: number, y: number) {
-		ensureTimerStarted();
+		if (!sessionStore) return;
 		if (activeHintPieceId === pieceId) {
 			clearHintTarget();
 		}
-
-		const previousCount = placedPieces.length;
-		const newPlacement: PlacedPiece = { pieceId, x, y };
-		const nextPlacedPieces = [
-			...placedPieces.filter((placement) => placement.pieceId !== pieceId),
-			newPlacement
-		];
-
-		placedPieces = nextPlacedPieces;
-		placementHistory.push(createPlacementHistoryState(nextPlacedPieces, pieceRotations));
-		updateHistoryControls();
-		persistProgress(nextPlacedPieces);
-		syncCompletionState(previousCount, nextPlacedPieces);
+		sessionStore.dispatch({ type: 'attempt_placement', pieceId, x, y });
+		checkpointSession();
 	}
 
 	function handleIncorrectPlacement(pieceId: number) {
-		ensureTimerStarted();
-
 		if (rejectedPieceTimeout !== null) {
 			clearTimeout(rejectedPieceTimeout);
 		}
-
 		rejectedPiece = pieceId;
 		rejectedPieceTimeout = setTimeout(() => {
 			rejectedPiece = null;
 			rejectedPieceTimeout = null;
 		}, REJECTED_DURATION_MS);
-	}
-
-	function isPiecePlaced(pieceId: number): boolean {
-		return placedPieceIds.has(pieceId);
 	}
 
 	function clearHintTarget() {
@@ -586,108 +540,50 @@
 	}
 
 	function handleHint() {
-		if (!puzzle) return;
-
-		const hintPieceId = getHintPieceId(shuffledPieceIds, placedPieceIds, currentSelectedPieceId);
-		if (hintPieceId === null) {
-			clearHintTarget();
-			return;
-		}
-
-		const hintedPiece = piecesMap.get(hintPieceId);
-		if (!hintedPiece) return;
-
-		showHintTarget(hintPieceId, { x: hintedPiece.correctX, y: hintedPiece.correctY });
-	}
-
-	function canPlacePiece(pieceId: number): boolean {
-		return !rotationEnabled || isUpright(pieceRotations[pieceId] ?? 0);
+		if (!sessionStore) return;
+		sessionStore.dispatch({ type: 'use_hint' });
 	}
 
 	function handleUndo() {
-		const previousState = placementHistory.undo();
-		if (previousState === undefined) return;
-
-		const previousCount = placedPieces.length;
-		placedPieces = clonePlacedPieces(previousState.placedPieces);
-		pieceRotations = clonePieceRotations(previousState.pieceRotations);
-		rotationEnabled = previousState.rotationEnabled;
-		updateHistoryControls();
-		persistProgress(placedPieces, previousState.rotationEnabled, pieceRotations);
-		syncCompletionState(previousCount, placedPieces);
+		if (!sessionStore) return;
+		sessionStore.dispatch({ type: 'undo' });
+		checkpointSession();
 	}
 
 	function handleRedo() {
-		const nextState = placementHistory.redo();
-		if (nextState === undefined) return;
-
-		const previousCount = placedPieces.length;
-		placedPieces = clonePlacedPieces(nextState.placedPieces);
-		pieceRotations = clonePieceRotations(nextState.pieceRotations);
-		rotationEnabled = nextState.rotationEnabled;
-		updateHistoryControls();
-		persistProgress(placedPieces, nextState.rotationEnabled, pieceRotations);
-		syncCompletionState(previousCount, placedPieces);
-
-		if (currentSelectedPieceId !== null && placedPieceIds.has(currentSelectedPieceId)) {
-			clearSelectedPiece();
-		}
-	}
-
-	function isRotationToggleLocked(): boolean {
-		return placedPieces.length > 0;
+		if (!sessionStore) return;
+		sessionStore.dispatch({ type: 'redo' });
+		checkpointSession();
 	}
 
 	function handleReferenceDown(event?: PointerEvent | KeyboardEvent) {
 		const isPointerEvent = event instanceof PointerEvent;
-
 		referenceHoldSource = isPointerEvent ? 'pointer' : 'keyboard';
 		referencePointerId = isPointerEvent ? event.pointerId : null;
 		showReferenceOverlay = true;
+		sessionStore?.dispatch({ type: 'set_reference_mode', mode: 'hold' });
 	}
 
 	function handleReferenceUp(event?: PointerEvent | KeyboardEvent) {
 		if (referenceHoldSource === 'pointer' && !(event instanceof PointerEvent)) {
 			return;
 		}
-
 		showReferenceOverlay = false;
 		referencePointerId = null;
 		referenceHoldSource = null;
+		sessionStore?.dispatch({ type: 'set_reference_mode', mode: null });
 	}
 
 	function handleRotationToggle() {
-		if (!puzzle || isRotationToggleLocked()) return;
-
-		const nextRotationEnabled = !rotationEnabled;
-		const nextPieceRotations = nextRotationEnabled
-			? createInitialRotations(puzzle, placedPieces, true, pieceRotations)
-			: pieceRotations;
-
-		rotationEnabled = nextRotationEnabled;
-		pieceRotations = nextPieceRotations;
-		placementHistory.push(
-			createPlacementHistoryState(placedPieces, nextPieceRotations, nextRotationEnabled)
-		);
-		updateHistoryControls();
-		persistProgress(placedPieces, nextRotationEnabled, nextPieceRotations);
+		if (!sessionStore || isRotationToggleLocked()) return;
+		sessionStore.dispatch({ type: 'set_rotation_mode', enabled: !rotationEnabled });
+		checkpointSession();
 	}
 
 	function handlePieceRotate(pieceId: number) {
-		if (!rotationEnabled || isPiecePlaced(pieceId)) return;
-
-		ensureTimerStarted();
-
-		const nextPieceRotations = {
-			...pieceRotations,
-			[pieceId]: rotateClockwise(pieceRotations[pieceId] ?? 0)
-		} as Record<number, Rotation>;
-
-		pieceRotations = nextPieceRotations;
-		placementHistory.push(createPlacementHistoryState(placedPieces, nextPieceRotations));
-		updateHistoryControls();
-
-		persistProgress(placedPieces, rotationEnabled, nextPieceRotations);
+		if (!sessionStore || !rotationEnabled || isPiecePlaced(pieceId)) return;
+		sessionStore.dispatch({ type: 'rotate_piece', pieceId });
+		checkpointSession();
 	}
 
 	function setView(nextZoom: number, nextPanX = panX, nextPanY = panY) {
@@ -763,8 +659,7 @@
 		showReferenceOverlay = false;
 		referencePointerId = null;
 		referenceHoldSource = null;
-
-		clearSelectedPiece();
+		sessionStore?.dispatch({ type: 'cancel_selection' });
 		isPanning = false;
 		activePanPointerId = null;
 	}
@@ -790,31 +685,19 @@
 	}
 
 	function handlePlayAgain() {
-		if (!puzzle) return;
+		if (!puzzle || !sessionStore) return;
 
-		placedPieces = [];
-		rotationEnabled = false;
-		pieceRotations = {};
 		showReferenceOverlay = false;
 		showCelebration = false;
 		clearHintTarget();
 		rejectedPiece = null;
 		referencePointerId = null;
 		referenceHoldSource = null;
-		clearProgress(puzzle.id);
-		timer.reset();
-		timerStarted = false;
 		isNewBest = false;
 		completionRecorded = false;
-		// Invalidate any in-flight completion callback from the just-finished
-		// solve. Without this, a slow recordCompletion().then() that resolves
-		// after Play Again would set completionRecorded back to true, causing
-		// the next solve to skip both the local best-time save and the server
-		// completion POST.
 		activeCompletionId += 1;
-		clearSelectedPiece();
-		shuffledPieceIds = shuffleArray(puzzle.pieces.map((piece) => piece.id));
-		resetPlacementHistory([], {}, false);
+		sessionStorageAdapter.clearSession(puzzle.id);
+		sessionStore.dispatch({ type: 'restart' });
 		pendingViewportReset = true;
 	}
 
@@ -1039,7 +922,7 @@
 										onBoardPointerDown={handleBoardPointerDown}
 										resolveImage={puzzleSource!.resolvePieceImage}
 										selectedPieceId={currentSelectedPieceId}
-										onCancelSelection={() => clearSelectedPiece()}
+										onCancelSelection={() => sessionStore?.dispatch({ type: 'cancel_selection' })}
 									/>
 								</div>
 							</ZoomableBoardFrame>
@@ -1077,8 +960,8 @@
 										onRotate={handlePieceRotate}
 										resolveImage={puzzleSource!.resolvePieceImage}
 										selected={currentSelectedPieceId === piece.id}
-										onSelect={(id) => setSelectedPiece(id)}
-										onCancelSelection={() => clearSelectedPiece()}
+										onSelect={(id) => sessionStore?.dispatch({ type: 'select_piece', pieceId: id })}
+										onCancelSelection={() => sessionStore?.dispatch({ type: 'cancel_selection' })}
 									/>
 								</div>
 							{/if}
