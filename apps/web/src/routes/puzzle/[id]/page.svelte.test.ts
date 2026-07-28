@@ -105,7 +105,44 @@ vi.mock('$lib/services/gameplay/rotation', async () => {
 vi.mock('$lib/services/gameplay/session/persistence', () => ({
 	createBrowserRunIdFactory: () => ({ create: () => 'test-run-id' }),
 	createSessionStorageAdapter: () => ({
-		loadSession: () => ({ status: 'missing' as const }),
+		loadSession: (puzzleId: string) => {
+			if (progressState.value?.puzzleId === puzzleId) {
+				return {
+					status: 'loaded' as const,
+					snapshot: {
+						schemaVersion: 1 as const,
+						puzzleId,
+						source: 'api' as const,
+						lifecycle: 'active' as const,
+						mode: 'timed' as const,
+						runId: 'test-run-id',
+						origin: 'resumed' as const,
+						elapsedActiveSeconds: null,
+						timingQuality: 'known' as const,
+						timerStarted: false,
+						placedPieces: progressState.value.placedPieces.map((p) => ({ ...p })),
+						trayOrder: [0, 1],
+						rotationEnabled: progressState.value.rotationEnabled,
+						pieceRotations: { ...progressState.value.pieceRotations },
+						counters: {
+							incorrectAttempts: 0,
+							hintsUsed: 0,
+							referenceActivations: 0
+						},
+						facts: {
+							rotationUsed: false,
+							hintUsed: false,
+							ghostReferenceUsed: false
+						},
+						hasUserActivity: false,
+						resultClass: 'standard_timed' as const,
+						sealedCompletion: null,
+						lastUpdated: Date.now()
+					}
+				};
+			}
+			return { status: 'missing' as const };
+		},
 		saveSession: () => {},
 		clearSession: () => {},
 		isResumable: () => false
