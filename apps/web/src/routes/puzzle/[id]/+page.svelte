@@ -102,6 +102,15 @@
 	let activePanPointerId: number | null = null;
 	let panStartClientX = 0;
 	let panStartClientY = 0;
+
+	// Guard against Svelte 5 event delegation double-fire: when a component
+	// re-renders mid-event (e.g. after selection changes a prop), Svelte can
+	// invoke the same handler a second time with the updated prop. Without
+	// this guard, select→cancel fires synchronously and the selection is
+	// immediately undone. The flag is set on select and cleared on the next
+	// macrotask, so real user interactions (select, then later deselect) are
+	// unaffected.
+	let suppressCancel = false;
 	let panOriginX = 0;
 	let panOriginY = 0;
 
@@ -267,6 +276,19 @@
 		return placedPieces.length > 0;
 	}
 
+	function handleSelectPiece(id: number) {
+		suppressCancel = true;
+		sessionStore?.dispatch({ type: 'select_piece', pieceId: id });
+	}
+
+	function handleCancelSelection() {
+		if (suppressCancel) {
+			suppressCancel = false;
+			return;
+		}
+		sessionStore?.dispatch({ type: 'cancel_selection' });
+	}
+
 	// --- Persistence -------------------------------------------------------------
 
 	function checkpointSession() {
@@ -306,6 +328,16 @@
 	function handleSessionEvent(event: PuzzleSessionEvent) {
 		if (event.type === 'completion_sealed') {
 			handleCompletionSeal(event.seal);
+		} else if (
+			event.type === 'lifecycle' &&
+			event.to === 'completed' &&
+			event.from !== 'completed'
+		) {
+			// Re-show celebration on re-completion (e.g., undo + redo).
+			// The seal (stats recording) is only done once via
+			// completion_sealed, but the modal should reappear each
+			// time the board transitions back to complete.
+			showCelebration = true;
 		} else if (event.type === 'placement_rejected') {
 			if (rejectedPieceTimeout !== null) {
 				clearTimeout(rejectedPieceTimeout);
@@ -698,6 +730,7 @@
 		activeCompletionId += 1;
 		sessionStorageAdapter.clearSession(puzzle.id);
 		sessionStore.dispatch({ type: 'restart' });
+		sessionStore.dispatch({ type: 'start' });
 		pendingViewportReset = true;
 	}
 
@@ -922,7 +955,7 @@
 										onBoardPointerDown={handleBoardPointerDown}
 										resolveImage={puzzleSource!.resolvePieceImage}
 										selectedPieceId={currentSelectedPieceId}
-										onCancelSelection={() => sessionStore?.dispatch({ type: 'cancel_selection' })}
+										onCancelSelection={handleCancelSelection}
 									/>
 								</div>
 							</ZoomableBoardFrame>
@@ -960,8 +993,8 @@
 										onRotate={handlePieceRotate}
 										resolveImage={puzzleSource!.resolvePieceImage}
 										selected={currentSelectedPieceId === piece.id}
-										onSelect={(id) => sessionStore?.dispatch({ type: 'select_piece', pieceId: id })}
-										onCancelSelection={() => sessionStore?.dispatch({ type: 'cancel_selection' })}
+										onSelect={handleSelectPiece}
+										onCancelSelection={handleCancelSelection}
 									/>
 								</div>
 							{/if}
