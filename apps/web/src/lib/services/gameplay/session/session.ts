@@ -557,29 +557,25 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 		}
 		let localStats = seal.localStats;
 		let serverSubmission = seal.serverSubmission;
-		let retried = false;
+		// Track only effects whose failed state was actually reset to pending.
+		// Re-emitting for effects that were already pending (e.g. an in-flight
+		// initial submission) would duplicate side effects.
+		const retryEffects: CompletionEffect[] = [];
 		if (localStats.status === 'failed' && localStats.retryable) {
 			localStats = { status: 'pending' };
-			retried = true;
+			retryEffects.push('local_stats');
 		}
 		if (serverSubmission.status === 'failed' && serverSubmission.retryable) {
 			serverSubmission = { status: 'pending' };
-			retried = true;
+			retryEffects.push('server_submission');
 		}
-		if (!retried) {
+		if (retryEffects.length === 0) {
 			return { type: 'completion_noop', reason: 'no_retryable_effects' };
 		}
 		const updated = { ...seal, localStats, serverSubmission };
 		state.sealedCompletion = updated;
 		// Defer effect requests until after notify() to avoid re-entrant dispatch
 		// mutating state.sealedCompletion mid-transition (see doComplete).
-		const retryEffects: CompletionEffect[] = [];
-		if (localStats.status === 'pending') {
-			retryEffects.push('local_stats');
-		}
-		if (serverSubmission.status === 'pending') {
-			retryEffects.push('server_submission');
-		}
 		notify();
 		for (const effect of retryEffects) {
 			emit({ type: 'completion_effect_request', effect, seal: updated });
