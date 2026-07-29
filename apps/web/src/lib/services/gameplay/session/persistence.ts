@@ -668,8 +668,8 @@ function cloneSeal(seal: SealedCompletion): SealedCompletion {
 		timingQuality: seal.timingQuality,
 		elapsedActiveSeconds: seal.elapsedActiveSeconds,
 		completedAt: seal.completedAt,
-		localStats: seal.localStats,
-		serverSubmission: seal.serverSubmission
+		localStats: { ...seal.localStats },
+		serverSubmission: { ...seal.serverSubmission }
 	};
 }
 

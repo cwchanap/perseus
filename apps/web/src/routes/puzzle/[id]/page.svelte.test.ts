@@ -51,6 +51,14 @@ const puzzleSourceState = vi.hoisted(() => ({
 	override: null as null | (() => Promise<LoadedPuzzleSource>)
 }));
 
+// Hoisted spies shared with the createSessionStorageAdapter mock so tests can
+// assert checkpoint behavior directly. vi.clearAllMocks() only clears call
+// history, so these references remain valid across tests.
+const sessionStorageSpies = vi.hoisted(() => ({
+	saveSession: vi.fn(),
+	clearSession: vi.fn()
+}));
+
 vi.mock('$app/stores', () => ({
 	page: mockPageStore
 }));
@@ -143,8 +151,8 @@ vi.mock('$lib/services/gameplay/session/persistence', () => ({
 			}
 			return { status: 'missing' as const };
 		},
-		saveSession: vi.fn(),
-		clearSession: vi.fn(),
+		saveSession: sessionStorageSpies.saveSession,
+		clearSession: sessionStorageSpies.clearSession,
 		isResumable: () => false
 	}),
 	serializeSession: vi.fn(() => null)
@@ -1214,73 +1222,26 @@ describe('Puzzle route gameplay integration', () => {
 		}
 	});
 
-	it('handles server submission failure with a 400 ApiError (bad_request)', async () => {
-		vi.mocked(recordCompletion).mockRejectedValueOnce(
-			new ApiError(400, 'bad_request', 'Invalid request')
-		);
-		await renderPuzzlePage();
-		await placePiece(0, 0, 0);
-		await placePiece(1, 1, 0);
+	it.each([
+		{ status: 400, code: 'bad_request', message: 'Invalid request' },
+		{ status: 401, code: 'unauthorized', message: 'Unauthorized' },
+		{ status: 404, code: 'not_found', message: 'Puzzle not found' },
+		{ status: 409, code: 'run_id_conflict', message: 'Conflict' },
+		{ status: 429, code: 'quota_exceeded', message: 'Too many requests' },
+		{ status: 500, code: 'internal_error', message: 'Server error' }
+	])(
+		'handles server submission failure with a $status ApiError ($code)',
+		async ({ status, code, message }) => {
+			vi.mocked(recordCompletion).mockRejectedValueOnce(new ApiError(status, code, message));
+			await renderPuzzlePage();
+			await placePiece(0, 0, 0);
+			await placePiece(1, 1, 0);
 
-		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
-		// The local stats still recorded; the server failure is acknowledged gracefully.
-		expect(recordLocalCompletion).toHaveBeenCalledTimes(1);
-	});
-
-	it('handles server submission failure with a 401 ApiError (unauthorized)', async () => {
-		vi.mocked(recordCompletion).mockRejectedValueOnce(
-			new ApiError(401, 'unauthorized', 'Unauthorized')
-		);
-		await renderPuzzlePage();
-		await placePiece(0, 0, 0);
-		await placePiece(1, 1, 0);
-
-		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
-	});
-
-	it('handles server submission failure with a 404 ApiError (not_found)', async () => {
-		vi.mocked(recordCompletion).mockRejectedValueOnce(
-			new ApiError(404, 'not_found', 'Puzzle not found')
-		);
-		await renderPuzzlePage();
-		await placePiece(0, 0, 0);
-		await placePiece(1, 1, 0);
-
-		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
-	});
-
-	it('handles server submission failure with a 409 ApiError (run_id_conflict)', async () => {
-		vi.mocked(recordCompletion).mockRejectedValueOnce(
-			new ApiError(409, 'run_id_conflict', 'Conflict')
-		);
-		await renderPuzzlePage();
-		await placePiece(0, 0, 0);
-		await placePiece(1, 1, 0);
-
-		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
-	});
-
-	it('handles server submission failure with a 429 ApiError (quota_exceeded)', async () => {
-		vi.mocked(recordCompletion).mockRejectedValueOnce(
-			new ApiError(429, 'quota_exceeded', 'Too many requests')
-		);
-		await renderPuzzlePage();
-		await placePiece(0, 0, 0);
-		await placePiece(1, 1, 0);
-
-		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
-	});
-
-	it('handles server submission failure with a 500 ApiError (internal_error)', async () => {
-		vi.mocked(recordCompletion).mockRejectedValueOnce(
-			new ApiError(500, 'internal_error', 'Server error')
-		);
-		await renderPuzzlePage();
-		await placePiece(0, 0, 0);
-		await placePiece(1, 1, 0);
-
-		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
-	});
+			await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+			// The local stats still recorded; the server failure is acknowledged gracefully.
+			expect(recordLocalCompletion).toHaveBeenCalledTimes(1);
+		}
+	);
 
 	it('handles server submission failure with a non-ApiError (network_error)', async () => {
 		vi.mocked(recordCompletion).mockRejectedValueOnce(new Error('Network failure'));
@@ -1341,9 +1302,9 @@ describe('Puzzle route gameplay integration', () => {
 		await renderPuzzlePage();
 		await placePiece(0, 0, 0);
 
-		// checkpointSession is called after each placement; verify serializeSession
-		// was invoked (the checkpoint path ran).
-		expect(vi.mocked(serializeSession)).toHaveBeenCalled();
+		// checkpointSession is called after each placement; verify the shared
+		// saveSession spy was invoked (the checkpoint path persisted a snapshot).
+		expect(sessionStorageSpies.saveSession).toHaveBeenCalled();
 	});
 
 	it('fires the periodic checkpoint interval', async () => {

@@ -1327,6 +1327,10 @@ describe('PuzzleSession tray organization branches', () => {
 		const { session } = startedSession();
 		session.dispatch({
 			type: 'update_tray_organization',
+			update: { type: 'rename_tray', trayId: 'temp', name: 'Temp' }
+		});
+		session.dispatch({
+			type: 'update_tray_organization',
 			update: { type: 'set_active_tray', trayId: 'temp' }
 		});
 		const outcome = session.dispatch({
@@ -1335,6 +1339,8 @@ describe('PuzzleSession tray organization branches', () => {
 		});
 		expect(outcome.type).toBe('tray_organization_applied');
 		expect(session.getState().organization?.names['temp']).toBeUndefined();
+		// Current behavior: activeTray is not reset when the active tray is removed.
+		expect(session.getState().organization?.activeTray).toBe('temp');
 	});
 
 	it('rejects removing a tray that still has members', () => {

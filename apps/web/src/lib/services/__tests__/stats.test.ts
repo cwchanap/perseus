@@ -279,10 +279,16 @@ describe('Stats Service', () => {
 			expect(getStats(puzzleId)).toBeNull();
 		});
 
-		it('returns null and cleans up for a JSON array (not an object)', () => {
+		it('returns null and cleans up when parseStoredStats rejects a JSON array', () => {
 			localStorage.setItem(`puzzle-stats-${puzzleId}`, '[1, 2, 3]');
 			expect(getStats(puzzleId)).toBeNull();
 			expect(localStorage.getItem(`puzzle-stats-${puzzleId}`)).toBeNull();
+		});
+
+		it('returns null but leaves the key in place for a JSON primitive (typeof !== "object")', () => {
+			localStorage.setItem(`puzzle-stats-${puzzleId}`, '42');
+			expect(getStats(puzzleId)).toBeNull();
+			expect(localStorage.getItem(`puzzle-stats-${puzzleId}`)).toBe('42');
 		});
 	});
 });

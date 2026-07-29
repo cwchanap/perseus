@@ -1,51 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { loadPersistedSession } from './persistence';
-import type { PersistedPuzzleSessionV1, SessionValidationContext } from './types';
-
-const RUN_ID = '11111111-1111-4111-8111-111111111111';
-const context: SessionValidationContext = {
-	puzzleId: 'pz1',
-	source: 'api',
-	pieceIds: [0, 1, 2, 3],
-	gridCols: 2,
-	gridRows: 2,
-	pieceCount: 4
-};
-
-function validSnapshot(): PersistedPuzzleSessionV1 {
-	return {
-		schemaVersion: 1,
-		puzzleId: 'pz1',
-		source: 'api',
-		lifecycle: 'active',
-		mode: 'timed',
-		runId: RUN_ID,
-		origin: 'new',
-		elapsedActiveSeconds: 5,
-		timingQuality: 'known',
-		timerStarted: true,
-		placedPieces: [{ pieceId: 0, x: 0, y: 0 }],
-		trayOrder: [0, 1, 2, 3],
-		rotationEnabled: false,
-		pieceRotations: {},
-		counters: { incorrectAttempts: 0, hintsUsed: 0, referenceActivations: 0 },
-		facts: { rotationUsed: false, hintUsed: false, ghostReferenceUsed: false },
-		hasUserActivity: true,
-		resultClass: 'standard_timed',
-		sealedCompletion: null,
-		lastUpdated: 1_000
-	};
-}
-
-function load(value: unknown) {
-	return loadPersistedSession(JSON.stringify(value), context);
-}
-
-function expectInvalid(mutator: (record: Record<string, unknown>) => void): void {
-	const record = JSON.parse(JSON.stringify(validSnapshot())) as Record<string, unknown>;
-	mutator(record);
-	expect(load(record).status).toBe('invalid');
-}
+import { expectInvalid, load } from './persistence.test-fixtures';
 
 describe('PuzzleSession persisted field validation', () => {
 	it.each([null, 42, 'snapshot'])('rejects non-object payload %j', (value: unknown) => {
@@ -59,16 +13,25 @@ describe('PuzzleSession persisted field validation', () => {
 	});
 
 	it.each([
-		(record: Record<string, unknown>) => (record.puzzleId = 'other'),
-		(record: Record<string, unknown>) => (record.source = 'disk'),
-		(record: Record<string, unknown>) => (record.source = 'local'),
-		(record: Record<string, unknown>) => (record.lifecycle = 'disposed'),
-		(record: Record<string, unknown>) => (record.mode = 'turbo'),
-		(record: Record<string, unknown>) => (record.origin = 'imported'),
-		(record: Record<string, unknown>) => (record.timingQuality = 'guess'),
-		(record: Record<string, unknown>) => (record.resultClass = 'invalid'),
-		(record: Record<string, unknown>) => (record.runId = 'not-a-run-id')
-	])('rejects an invalid identity field', (mutate) => {
+		{ name: 'puzzleId', mutate: (r: Record<string, unknown>) => (r.puzzleId = 'other') },
+		{ name: 'source=disk', mutate: (r: Record<string, unknown>) => (r.source = 'disk') },
+		{ name: 'source=local', mutate: (r: Record<string, unknown>) => (r.source = 'local') },
+		{
+			name: 'lifecycle=disposed',
+			mutate: (r: Record<string, unknown>) => (r.lifecycle = 'disposed')
+		},
+		{ name: 'mode=turbo', mutate: (r: Record<string, unknown>) => (r.mode = 'turbo') },
+		{ name: 'origin=imported', mutate: (r: Record<string, unknown>) => (r.origin = 'imported') },
+		{
+			name: 'timingQuality=guess',
+			mutate: (r: Record<string, unknown>) => (r.timingQuality = 'guess')
+		},
+		{
+			name: 'resultClass=invalid',
+			mutate: (r: Record<string, unknown>) => (r.resultClass = 'invalid')
+		},
+		{ name: 'runId', mutate: (r: Record<string, unknown>) => (r.runId = 'not-a-run-id') }
+	])('rejects an invalid identity field: $name', ({ mutate }) => {
 		expectInvalid(mutate);
 	});
 
@@ -108,25 +71,27 @@ describe('PuzzleSession persisted field validation', () => {
 	});
 
 	it.each([
-		{},
-		[null],
-		[{ pieceId: '0', x: 0, y: 0 }],
-		[{ pieceId: 0, x: '0', y: 0 }],
-		[{ pieceId: 0, x: 0, y: '0' }],
-		[{ pieceId: 99, x: 0, y: 0 }],
+		[{}],
+		[[null]],
+		[[{ pieceId: '0', x: 0, y: 0 }]],
+		[[{ pieceId: 0, x: '0', y: 0 }]],
+		[[{ pieceId: 0, x: 0, y: '0' }]],
+		[[{ pieceId: 99, x: 0, y: 0 }]],
 		[
-			{ pieceId: 0, x: 0, y: 0 },
-			{ pieceId: 0, x: 1, y: 0 }
+			[
+				{ pieceId: 0, x: 0, y: 0 },
+				{ pieceId: 0, x: 1, y: 0 }
+			]
 		],
-		[{ pieceId: 0, x: -1, y: 0 }],
-		[{ pieceId: 0, x: 0, y: 2 }]
+		[[{ pieceId: 0, x: -1, y: 0 }]],
+		[[{ pieceId: 0, x: 0, y: 2 }]]
 	])('rejects invalid placements %j', (placedPieces: unknown) => {
 		expectInvalid((record) => {
 			record.placedPieces = placedPieces;
 		});
 	});
 
-	it.each([{}, [0, 1, 2], [0, 1, 2, '3'], [0, 1, 2, 99], [0, 1, 2, 2]])(
+	it.each([[{}], [[0, 1, 2]], [[0, 1, 2, '3']], [[0, 1, 2, 99]], [[0, 1, 2, 2]]])(
 		'rejects invalid tray order %j',
 		(trayOrder: unknown) => {
 			expectInvalid((record) => {
