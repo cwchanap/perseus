@@ -169,6 +169,7 @@ vi.mock('$lib/services/api', () => {
 		fetchPuzzle: vi.fn(),
 		getPieceImageUrl: vi.fn(() => imageSrc),
 		getReferenceImageUrl: vi.fn(() => imageSrc),
+		recordCompletion: vi.fn(() => Promise.resolve()),
 		recordCompletionLegacy: vi.fn(() => Promise.resolve()),
 		ApiError: MockApiError
 	};
@@ -211,7 +212,20 @@ vi.mock('$lib/services/progress', () => ({
 
 vi.mock('$lib/services/stats', () => ({
 	getBestTime: vi.fn(() => null),
-	saveCompletionTime: vi.fn(() => false)
+	saveCompletionTime: vi.fn(() => false),
+	recordLocalCompletion: vi.fn(() => ({
+		status: 'recorded' as const,
+		isNewStandardBest: false,
+		stats: {
+			schemaVersion: 1,
+			puzzleId: 'test-puzzle',
+			standardBestTime: null,
+			standardBestCompletedAt: null,
+			totalCompletions: 1,
+			lastCompletedAt: Date.now(),
+			lastRecordedRunId: 'test-run-id'
+		}
+	}))
 }));
 
 vi.mock('$lib/stores/timer', () => ({
@@ -258,12 +272,12 @@ vi.mock('$lib/stores/timer', () => ({
 import {
 	fetchPuzzle,
 	ApiError,
-	recordCompletionLegacy,
+	recordCompletion,
 	getPieceImageUrl,
 	getReferenceImageUrl
 } from '$lib/services/api';
 import type { LoadedPuzzleSource } from '$lib/services/puzzleSource';
-import { saveCompletionTime, getBestTime } from '$lib/services/stats';
+import { recordLocalCompletion, getBestTime } from '$lib/services/stats';
 import { goto } from '$app/navigation';
 
 function createPiece(
@@ -866,8 +880,8 @@ describe('Puzzle route gameplay integration', () => {
 		await placePiece(1, 1, 0);
 
 		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
-		expect(saveCompletionTime).toHaveBeenCalledTimes(1);
-		expect(recordCompletionLegacy).toHaveBeenCalledTimes(1);
+		expect(recordLocalCompletion).toHaveBeenCalledTimes(1);
+		expect(recordCompletion).toHaveBeenCalledTimes(1);
 
 		// Close the celebration modal via Escape on the modal element
 		const modal = await page.getByTestId('celebration-modal').element();
@@ -879,12 +893,12 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.element(page.getByText('1/2')).toBeVisible();
 		await expect.poll(() => page.getByTestId('celebration-modal').query()).toBeNull();
 
-		// Redo — should re-show celebration but NOT call saveCompletionTime again
+		// Redo — should re-show celebration but NOT call recordLocalCompletion again
 		await page.getByLabelText('Redo').click();
 		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
-		expect(saveCompletionTime).toHaveBeenCalledTimes(1);
+		expect(recordLocalCompletion).toHaveBeenCalledTimes(1);
 		// Remote sync should also remain at a single call across undo/redo.
-		expect(recordCompletionLegacy).toHaveBeenCalledTimes(1);
+		expect(recordCompletion).toHaveBeenCalledTimes(1);
 	});
 
 	it('clears tray selection when redo re-places the selected piece', async () => {
@@ -939,21 +953,21 @@ describe('Puzzle route gameplay integration', () => {
 	});
 
 	it('records completion again after Play Again even if the prior POST resolves late', async () => {
-		// Regression: a stale recordCompletionLegacy().then() from the first solve
+		// Regression: a stale recordCompletion().then() from the first solve
 		// would set completionRecorded back to true after Play Again reset it
 		// to false, causing the second solve to skip both the local best-time
 		// save and the server completion POST. The per-solve token guards the
 		// callback so only the active solve can mark itself recorded.
 		const firstPost = createDeferred<void>();
-		vi.mocked(recordCompletionLegacy).mockImplementationOnce(() => firstPost.promise);
+		vi.mocked(recordCompletion).mockImplementationOnce(() => firstPost.promise);
 		await renderPuzzlePage();
 
 		// First solve triggers the (deferred) server POST.
 		await placePiece(0, 0, 0);
 		await placePiece(1, 1, 0);
 		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
-		expect(saveCompletionTime).toHaveBeenCalledTimes(1);
-		expect(recordCompletionLegacy).toHaveBeenCalledTimes(1);
+		expect(recordLocalCompletion).toHaveBeenCalledTimes(1);
+		expect(recordCompletion).toHaveBeenCalledTimes(1);
 
 		// Play Again before the first POST resolves — resets
 		// completionRecorded to false and invalidates the in-flight callback.
@@ -970,14 +984,14 @@ describe('Puzzle route gameplay integration', () => {
 		await placePiece(0, 0, 0);
 		await placePiece(1, 1, 0);
 		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
-		expect(saveCompletionTime).toHaveBeenCalledTimes(2);
-		expect(recordCompletionLegacy).toHaveBeenCalledTimes(2);
+		expect(recordLocalCompletion).toHaveBeenCalledTimes(2);
+		expect(recordCompletion).toHaveBeenCalledTimes(2);
 	});
 
 	it('does not POST completion to the API for local-source quick puzzles', async () => {
 		// Regression: quick puzzles use device-local `q-...` ids that
 		// loadPuzzleSource deliberately keeps off the API. An unconditional
-		// recordCompletionLegacy(puzzle.id, ...) would leak the `q-...` id to
+		// recordCompletion(puzzle.id, ...) would leak the `q-...` id to
 		// /api/puzzles/:id/complete on every quick solve and get rejected.
 		// The completion call must be gated to api-source puzzles.
 		const quickPuzzle = createMockPuzzle();
@@ -1006,10 +1020,13 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
 
 		// Local best time is still recorded for quick puzzles.
-		expect(saveCompletionTime).toHaveBeenCalledTimes(1);
-		expect(saveCompletionTime).toHaveBeenCalledWith('q-local-only', expect.any(Number));
+		expect(recordLocalCompletion).toHaveBeenCalledTimes(1);
+		expect(recordLocalCompletion).toHaveBeenCalledWith(
+			'q-local-only',
+			expect.objectContaining({ runId: expect.any(String) })
+		);
 		// But the server completion endpoint is never hit — no id leak.
-		expect(recordCompletionLegacy).not.toHaveBeenCalled();
+		expect(recordCompletion).not.toHaveBeenCalled();
 	});
 
 	it('navigates to home when clicking BACK TO ARCADE in celebration modal', async () => {
@@ -1111,8 +1128,20 @@ describe('Puzzle route gameplay integration', () => {
 	});
 
 	it('shows NEW RECORD badge when completion is a new personal best', async () => {
-		vi.mocked(saveCompletionTime).mockReturnValueOnce(true);
-		vi.mocked(getBestTime).mockReturnValueOnce(null).mockReturnValueOnce(42);
+		vi.mocked(recordLocalCompletion).mockReturnValueOnce({
+			status: 'recorded',
+			isNewStandardBest: true,
+			stats: {
+				schemaVersion: 1,
+				puzzleId: 'test-puzzle',
+				standardBestTime: 42,
+				standardBestCompletedAt: Date.now(),
+				totalCompletions: 1,
+				lastCompletedAt: Date.now(),
+				lastRecordedRunId: 'test-run-id'
+			}
+		});
+		vi.mocked(getBestTime).mockReturnValueOnce(null);
 		await renderPuzzlePage();
 		await placePiece(0, 0, 0);
 		await placePiece(1, 1, 0);
