@@ -3,74 +3,39 @@ import { format } from 'prettier/standalone';
 import * as estreePlugin from 'prettier/plugins/estree';
 import * as typescriptPlugin from 'prettier/plugins/typescript';
 import persistenceSource from './persistence.validation.test.ts?raw';
+import sessionEdgeSource from './session.edge.test.ts?raw';
 
-interface Patch {
-	start: number;
-	deleteCount: number;
-	lines: string[];
+interface DiffLine {
+	kind: 'add' | 'remove';
+	line: string;
 }
 
-function base64(value: string): string {
-	const bytes = new TextEncoder().encode(value);
-	let binary = '';
-	for (const byte of bytes) binary += String.fromCharCode(byte);
-	return btoa(binary);
-}
+function diffLines(original: string, formatted: string): DiffLine[] {
+	const left = original.split('\n');
+	const right = formatted.split('\n');
+	const table = Array.from({ length: left.length + 1 }, () => new Uint16Array(right.length + 1));
 
-function logChunks(value: string): void {
-	const encoded = base64(value);
-	for (let offset = 0; offset < encoded.length; offset += 3_000) {
-		const index = String(offset / 3_000).padStart(3, '0');
-		console.log(`PATCH_CHUNK:${index}:${encoded.slice(offset, offset + 3_000)}`);
-	}
-}
-
-function createPatch(original: string, formatted: string): Patch[] {
-	const before = original.split('\n');
-	const after = formatted.split('\n');
-	const common = Array.from(
-		{ length: before.length + 1 },
-		() => new Uint16Array(after.length + 1)
-	);
-
-	for (let i = before.length - 1; i >= 0; i--) {
-		for (let j = after.length - 1; j >= 0; j--) {
-			common[i][j] =
-				before[i] === after[j]
-					? common[i + 1][j + 1] + 1
-					: Math.max(common[i + 1][j], common[i][j + 1]);
+	for (let i = left.length - 1; i >= 0; i--) {
+		for (let j = right.length - 1; j >= 0; j--) {
+			table[i][j] =
+				left[i] === right[j] ? table[i + 1][j + 1] + 1 : Math.max(table[i + 1][j], table[i][j + 1]);
 		}
 	}
 
-	const patches: Patch[] = [];
+	const changes: DiffLine[] = [];
 	let i = 0;
 	let j = 0;
-	while (i < before.length || j < after.length) {
-		if (i < before.length && j < after.length && before[i] === after[j]) {
+	while (i < left.length || j < right.length) {
+		if (i < left.length && j < right.length && left[i] === right[j]) {
 			i++;
 			j++;
-			continue;
+		} else if (j < right.length && (i === left.length || table[i][j + 1] >= table[i + 1][j])) {
+			changes.push({ kind: 'add', line: right[j++] });
+		} else {
+			changes.push({ kind: 'remove', line: left[i++] });
 		}
-
-		const patch: Patch = { start: i, deleteCount: 0, lines: [] };
-		while (
-			(i < before.length || j < after.length) &&
-			!(i < before.length && j < after.length && before[i] === after[j])
-		) {
-			if (
-				i < before.length &&
-				(j >= after.length || common[i + 1][j] >= common[i][j + 1])
-			) {
-				patch.deleteCount++;
-				i++;
-			} else {
-				patch.lines.push(after[j]);
-				j++;
-			}
-		}
-		patches.push(patch);
 	}
-	return patches;
+	return changes;
 }
 
 const options = {
@@ -83,12 +48,14 @@ const options = {
 };
 
 describe('temporary formatter diagnostic', () => {
-	it('prints repository formatting edits', async () => {
-		const formatted = await format(persistenceSource, options);
-		const patches = createPatch(persistenceSource, formatted);
+	it('prints repository formatting differences', async () => {
+		const persistence = await format(persistenceSource, options);
+		const sessionEdge = await format(sessionEdgeSource, options);
 
-		logChunks(JSON.stringify(patches));
+		console.log(`FORMAT_DIFF:persistence:${JSON.stringify(diffLines(persistenceSource, persistence))}`);
+		console.log(`FORMAT_DIFF:session-edge:${JSON.stringify(diffLines(sessionEdgeSource, sessionEdge))}`);
 
-		expect(patches.length).toBeGreaterThan(0);
+		expect(persistence).not.toBe(persistenceSource);
+		expect(sessionEdge).toBe(sessionEdgeSource);
 	});
 });
