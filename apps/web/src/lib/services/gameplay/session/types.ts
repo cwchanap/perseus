@@ -366,3 +366,19 @@ export interface CreatePuzzleSessionOptions {
 	 */
 	createTrayOrder?: () => number[];
 }
+
+// --- Seal projection ----------------------------------------------------------
+
+/**
+ * Project an immutable sealed completion into the v1 API request shape.
+ * Excludes client-only fields like `completedAt`.
+ */
+export function completionRequestFromSeal(seal: SealedCompletion): RecordPuzzleCompletionV1 {
+	return {
+		version: 1,
+		runId: seal.runId,
+		resultClass: seal.resultClass,
+		timingQuality: seal.timingQuality,
+		elapsedActiveSeconds: seal.elapsedActiveSeconds
+	};
+}

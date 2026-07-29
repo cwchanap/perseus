@@ -4,8 +4,9 @@
 	import { onDestroy, untrack } from 'svelte';
 	import { ApiError } from '$lib/services/api';
 	import { loadPuzzleSource, type LoadedPuzzleSource } from '$lib/services/puzzleSource';
-	import { getBestTime, saveCompletionTime } from '$lib/services/stats';
-	import { recordCompletionLegacy } from '$lib/services/api';
+	import { getBestTime } from '$lib/services/stats';
+	import { recordLocalCompletion } from '$lib/services/stats';
+	import { recordCompletion } from '$lib/services/api';
 	import { formatTime } from '$lib/stores/timer';
 	import type { TimerState } from '$lib/stores/timer';
 	import { SvelteMap } from 'svelte/reactivity';
@@ -39,8 +40,11 @@
 		Clock,
 		PuzzleMetadata,
 		PuzzleSessionState,
-		PuzzleSessionEvent
+		PuzzleSessionEvent,
+		SealedCompletion,
+		CompletionFailureCode
 	} from '$lib/services/gameplay/session/types';
+	import { completionRequestFromSeal } from '$lib/services/gameplay/session/types';
 
 	const REJECTED_DURATION_MS = 500;
 	const HINT_DURATION_MS = 1800;
@@ -295,34 +299,91 @@
 		}
 	}
 
-	// --- Completion adapter (interim — Task 11 replaces with typed effects) ------
+	// --- Completion effects -------------------------------------------------------
 
-	function handleCompletionSeal(seal: { runId: string; elapsedActiveSeconds: number | null }) {
+	function mapCompletionError(err: unknown): {
+		code: CompletionFailureCode;
+		retryable: boolean;
+	} {
+		if (err instanceof ApiError) {
+			switch (err.status) {
+				case 400:
+					return { code: 'bad_request', retryable: false };
+				case 401:
+					return { code: 'unauthorized', retryable: true };
+				case 404:
+					return { code: 'not_found', retryable: false };
+				case 409:
+					return { code: 'run_id_conflict', retryable: false };
+				case 429:
+					return { code: 'completion_quota_exceeded', retryable: false };
+				default:
+					return { code: 'internal_error', retryable: true };
+			}
+		}
+		return { code: 'network_error', retryable: true };
+	}
+
+	function handleLocalStatsEffect(seal: SealedCompletion) {
 		if (!puzzle) return;
-		const timeSeconds = Math.max(1, seal.elapsedActiveSeconds ?? 0);
-		isNewBest = saveCompletionTime(puzzle.id, timeSeconds);
-		bestTime = getBestTime(puzzle.id);
+		const result = recordLocalCompletion(puzzle.id, seal);
+
+		if (result.status === 'failed') {
+			isNewBest = result.isNewStandardBest;
+		} else {
+			isNewBest = result.isNewStandardBest;
+			bestTime = result.stats.standardBestTime;
+		}
 		showCelebration = true;
 
-		if (puzzleSource?.source === 'api') {
-			recordCompletionLegacy(puzzle.id, timeSeconds).catch((err) => {
-				console.error('Failed to record completion on server', err);
+		sessionStore?.dispatch({
+			type: 'acknowledge_completion_effect',
+			runId: seal.runId,
+			effect: 'local_stats',
+			result:
+				result.status === 'failed'
+					? { status: 'failed', code: 'storage_error', retryable: false }
+					: { status: 'succeeded' }
+		});
+	}
+
+	async function handleServerSubmissionEffect(seal: SealedCompletion) {
+		if (!puzzle || puzzleSource?.source !== 'api') return;
+
+		try {
+			await recordCompletion(puzzle.id, completionRequestFromSeal(seal));
+			sessionStore?.dispatch({
+				type: 'acknowledge_completion_effect',
+				runId: seal.runId,
+				effect: 'server_submission',
+				result: { status: 'succeeded' }
+			});
+		} catch (err) {
+			const { code, retryable } = mapCompletionError(err);
+			console.error('Failed to submit completion to server', err);
+			sessionStore?.dispatch({
+				type: 'acknowledge_completion_effect',
+				runId: seal.runId,
+				effect: 'server_submission',
+				result: { status: 'failed', code, retryable }
 			});
 		}
 	}
 
 	function handleSessionEvent(event: PuzzleSessionEvent) {
 		if (event.type === 'completion_sealed') {
-			handleCompletionSeal(event.seal);
+			showCelebration = true;
+		} else if (event.type === 'completion_effect_request') {
+			if (event.effect === 'local_stats') {
+				handleLocalStatsEffect(event.seal);
+			} else if (event.effect === 'server_submission') {
+				void handleServerSubmissionEffect(event.seal);
+			}
 		} else if (
 			event.type === 'lifecycle' &&
 			event.to === 'completed' &&
 			event.from !== 'completed'
 		) {
-			// Re-show celebration on re-completion (e.g., undo + redo).
-			// The seal (stats recording) is only done once via
-			// completion_sealed, but the modal should reappear each
-			// time the board transitions back to complete.
 			showCelebration = true;
 		} else if (event.type === 'placement_rejected') {
 			if (rejectedPieceTimeout !== null) {
