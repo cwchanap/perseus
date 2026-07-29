@@ -1374,8 +1374,8 @@ describe('PuzzleSession tray organization branches', () => {
 		});
 		expect(outcome.type).toBe('tray_organization_applied');
 		expect(session.getState().organization?.names['temp']).toBeUndefined();
-		// Current behavior: activeTray is not reset when the active tray is removed.
-		expect(session.getState().organization?.activeTray).toBe('temp');
+		// Removing the active tray falls back to the default 'main' tray.
+		expect(session.getState().organization?.activeTray).toBe('main');
 	});
 
 	it('rejects removing a tray that still has members', () => {
