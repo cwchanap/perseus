@@ -291,4 +291,64 @@ describe('Stats Service', () => {
 			expect(localStorage.getItem(`puzzle-stats-${puzzleId}`)).toBe('42');
 		});
 	});
+
+	describe('defensive branches', () => {
+		it('coerces an unparseable legacy completedAt to a zero timestamp', () => {
+			localStorage.setItem(
+				`puzzle-stats-${puzzleId}`,
+				JSON.stringify({
+					puzzleId,
+					bestTime: 90,
+					completedAt: 'not-a-real-date',
+					totalCompletions: 2
+				})
+			);
+			const stats = getStats(puzzleId);
+			expect(stats?.schemaVersion).toBe(1);
+			expect(stats?.standardBestTime).toBe(90);
+			expect(stats?.standardBestCompletedAt).toBe(0);
+			expect(stats?.lastCompletedAt).toBe(0);
+			expect(stats?.totalCompletions).toBe(2);
+		});
+
+		it('loads a valid v1 record with all nullable best fields set to null', () => {
+			localStorage.setItem(
+				`puzzle-stats-${puzzleId}`,
+				JSON.stringify({
+					schemaVersion: 1,
+					puzzleId,
+					standardBestTime: null,
+					standardBestCompletedAt: null,
+					totalCompletions: 1,
+					lastCompletedAt: 1000,
+					lastRecordedRunId: null
+				})
+			);
+			const stats = getStats(puzzleId);
+			expect(stats).not.toBeNull();
+			expect(stats?.standardBestTime).toBeNull();
+			expect(stats?.standardBestCompletedAt).toBeNull();
+			expect(stats?.lastRecordedRunId).toBeNull();
+			expect(stats?.totalCompletions).toBe(1);
+		});
+
+		it('returns null when localStorage.getItem throws (e.g. sandboxed origin)', () => {
+			const real = localStorage;
+			vi.stubGlobal('localStorage', {
+				getItem: () => {
+					throw new DOMException('The operation is insecure');
+				},
+				setItem: (key: string, value: string) => real.setItem(key, value),
+				removeItem: (key: string) => real.removeItem(key),
+				clear: () => real.clear(),
+				length: 0,
+				key: () => null
+			});
+			try {
+				expect(getStats(puzzleId)).toBeNull();
+			} finally {
+				vi.unstubAllGlobals();
+			}
+		});
+	});
 });

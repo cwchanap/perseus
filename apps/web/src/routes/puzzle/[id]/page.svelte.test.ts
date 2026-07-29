@@ -1349,3 +1349,83 @@ describe('Puzzle route gameplay integration', () => {
 		}
 	});
 });
+
+// --- Patch coverage: defensive guards and event handler branches --------------
+
+describe('Puzzle page defensive guard coverage', () => {
+	it('ignores undo/redo keyboard shortcuts while the puzzle is still loading', async () => {
+		const loadDeferred = createDeferred<Puzzle>();
+		vi.mocked(fetchPuzzle).mockReturnValue(loadDeferred.promise);
+		render(PuzzlePage);
+
+		await expect.element(page.getByText('LOADING MISSION...')).toBeVisible();
+
+		// These shortcuts should be no-ops since sessionStore is null.
+		window.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }));
+		window.dispatchEvent(new KeyboardEvent('keydown', { key: 'y', ctrlKey: true, bubbles: true }));
+
+		// Page is still loading — no crash, no board rendered.
+		await expect.element(page.getByText('LOADING MISSION...')).toBeVisible();
+
+		loadDeferred.resolve(createMockPuzzle());
+		await expect.element(page.getByTestId('puzzle-board')).toBeVisible();
+	});
+
+	it('handles placement_rejected session events for non-upright rotated pieces', async () => {
+		await renderPuzzlePage();
+
+		// Enable rotation mode and rotate piece 0 to 90 degrees (non-upright).
+		await page.getByLabelText('Rotation mode').click();
+		await page.getByRole('button', { name: 'Rotate piece 0' }).click();
+
+		// Attempt to place the non-upright piece at its correct position.
+		// The PuzzleBoard sees correct coordinates and calls onPiecePlaced,
+		// which dispatches attempt_placement to the session. The session
+		// rejects it (non_upright) and emits a placement_rejected event.
+		await selectPiece(0);
+		await placeSelectedPieceAt(0, 0);
+
+		// The placement_rejected event handler sets rejectedPiece, which
+		// triggers the rejected animation on the piece slot.
+		await expect.element(page.getByTestId('piece-slot-0')).toHaveClass(/rejected/);
+		// Board should still show 0/2 (placement was rejected).
+		await expect.element(page.getByText('0/2')).toBeVisible();
+	});
+
+	it('clears a pending rejected-piece timeout when a second rejection arrives', async () => {
+		await renderPuzzlePage();
+
+		// First incorrect placement triggers the rejected animation.
+		await selectPiece(0);
+		await placeSelectedPieceAt(1, 0);
+		await expect.element(page.getByTestId('piece-slot-0')).toHaveClass(/rejected/);
+
+		// Second incorrect placement on the same piece should clear the
+		// existing timeout and set a new one (exercises the
+		// clearTimeout branch in the rejected-piece handler).
+		await selectPiece(0);
+		await placeSelectedPieceAt(1, 0);
+		await expect.element(page.getByTestId('piece-slot-0')).toHaveClass(/rejected/);
+	});
+
+	it('does not crash when the checkpoint interval fires during loading', async () => {
+		// During the loading state, the PuzzleBoard is not rendered, so
+		// handlePiecePlaced cannot be called via UI. However, the
+		// checkpointSession periodic interval can fire during loading,
+		// exercising the null-session guard.
+		vi.useFakeTimers();
+		try {
+			vi.mocked(fetchPuzzle).mockReturnValue(new Promise(() => {})); // never resolves
+			render(PuzzlePage);
+			await vi.advanceTimersByTimeAsync(0);
+
+			// Advance past CHECKPOINT_INTERVAL_MS (5_000ms) while loading.
+			// checkpointSession should no-op via the null-session guard.
+			await vi.advanceTimersByTimeAsync(5_100);
+
+			await expect.element(page.getByText('LOADING MISSION...')).toBeVisible();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+});

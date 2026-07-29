@@ -505,6 +505,50 @@ describe('createSessionStorageAdapter', () => {
 		expect(() => adapter.saveSession('pz1', serializeSession(makeState(), 1)!)).not.toThrow();
 		expect(errors).toContain('write_error');
 	});
+
+	it('reports read errors through onError and loads as missing', () => {
+		const errors: string[] = [];
+		const storage = memoryStorage({});
+		storage.getItem = () => {
+			throw new Error('read denied');
+		};
+		const adapter = createSessionStorageAdapter({ storage, onError: (e) => errors.push(e.kind) });
+
+		expect(adapter.loadSession('pz1', ctx).status).toBe('missing');
+		expect(errors).toContain('read_error');
+	});
+
+	it('reports remove errors through onError without throwing', () => {
+		const errors: string[] = [];
+		const storage = memoryStorage({});
+		storage.removeItem = () => {
+			throw new Error('remove denied');
+		};
+		const adapter = createSessionStorageAdapter({ storage, onError: (e) => errors.push(e.kind) });
+
+		expect(() => adapter.clearSession('pz1')).not.toThrow();
+		expect(errors).toContain('remove_error');
+	});
+});
+
+describe('isResumable sealed-active guard', () => {
+	it('is false for an active session carrying a sealed completion', () => {
+		const seal: PersistedPuzzleSessionV1['sealedCompletion'] = {
+			runId: 'r',
+			resultClass: 'standard_timed',
+			timingQuality: 'known',
+			elapsedActiveSeconds: 5,
+			completedAt: 1,
+			localStats: { status: 'succeeded' },
+			serverSubmission: { status: 'succeeded' }
+		};
+		const snap = serializeSession(
+			makeState({ lifecycle: 'active', hasUserActivity: true, sealedCompletion: seal }),
+			1
+		)!;
+
+		expect(isResumable(snap)).toBe(false);
+	});
 });
 
 // --- Patch coverage: validation branches, storage adapter error handling --------

@@ -1453,3 +1453,96 @@ describe('PuzzleSession hint with empty tray', () => {
 		expect(outcome).toEqual({ type: 'hint_noop', reason: 'all_placed' });
 	});
 });
+
+// --- Patch coverage: defensive guards and clock internals ----------------------
+
+function activeKnownTimedRestored(): PersistedPuzzleSessionV1 {
+	return {
+		schemaVersion: 1,
+		puzzleId: 'pz1',
+		source: 'api',
+		lifecycle: 'active',
+		mode: 'timed',
+		runId: 'run-x',
+		origin: 'resumed',
+		elapsedActiveSeconds: 0,
+		timingQuality: 'known',
+		timerStarted: true,
+		placedPieces: [],
+		trayOrder: [0, 1, 2, 3],
+		rotationEnabled: false,
+		pieceRotations: {},
+		counters: { incorrectAttempts: 0, hintsUsed: 0, referenceActivations: 0 },
+		facts: { rotationUsed: false, hintUsed: false, ghostReferenceUsed: false },
+		hasUserActivity: true,
+		resultClass: 'standard_timed',
+		sealedCompletion: null,
+		lastUpdated: 0
+	};
+}
+
+describe('PuzzleSession defensive guard coverage', () => {
+	it('invokes the onEvent callback for lifecycle and state events', () => {
+		const events: string[] = [];
+		const session = createPuzzleSession({
+			...makeOptions(),
+			onEvent: (event) => events.push(event.type)
+		});
+
+		session.dispatch({ type: 'start' });
+
+		expect(events).toContain('lifecycle');
+		expect(events).toContain('state_changed');
+	});
+
+	it('setDocumentHidden is a no-op after dispose', () => {
+		const clock = new ManualClock();
+		const session = createPuzzleSession(makeOptions({ clock }));
+		session.dispatch({ type: 'start' });
+		session.dispose();
+
+		session.setDocumentHidden(true);
+
+		expect(session.getState().lifecycle).toBe('disposed');
+		expect(clock.activeIntervalCount).toBe(0);
+	});
+
+	it('the clock interval callback checkpoints elapsed whole seconds', () => {
+		const clock = new ManualClock();
+		const session = createPuzzleSession({
+			...makeOptions({ clock }),
+			restored: activeKnownTimedRestored()
+		});
+		expect(clock.activeIntervalCount).toBe(1);
+
+		clock.advance(2_000);
+		// ManualClock does not auto-fire interval callbacks; invoke the pending
+		// entry directly to exercise the arrow-body checkpoint path.
+		for (const entry of clock.intervals) {
+			if (entry.active) entry.cb();
+		}
+
+		expect(session.getState().elapsedActiveSeconds).toBe(2);
+	});
+
+	it('checkpointTime is a no-op when no whole second has elapsed', () => {
+		const clock = new ManualClock();
+		const session = createPuzzleSession({
+			...makeOptions({ clock }),
+			restored: activeKnownTimedRestored()
+		});
+		const before = session.getState().elapsedActiveSeconds;
+
+		session.checkpointTime();
+
+		expect(session.getState().elapsedActiveSeconds).toBe(before);
+	});
+
+	it('rotate_piece is a no-op when rotation mode is disabled in an active session', () => {
+		const { session } = startedSession();
+
+		const outcome = session.dispatch({ type: 'rotate_piece', pieceId: 0 });
+
+		expect(outcome).toEqual({ type: 'rotation_noop', reason: 'piece_not_rotatable' });
+	});
+});
