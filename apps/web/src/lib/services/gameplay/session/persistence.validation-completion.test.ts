@@ -90,17 +90,14 @@ describe('PuzzleSession completion persistence validation', () => {
 		});
 	});
 
-	it.each([
-		null,
-		{ filter: 'invalid' },
-		{ activeTray: 1 },
-		{ membership: [] },
-		{ names: [] }
-	])('rejects invalid organization %j', (organization: unknown) => {
-		expectInvalid((record) => {
-			record.organization = organization;
-		});
-	});
+	it.each([null, { filter: 'invalid' }, { activeTray: 1 }, { membership: [] }, { names: [] }])(
+		'rejects invalid organization %j',
+		(organization: unknown) => {
+			expectInvalid((record) => {
+				record.organization = organization;
+			});
+		}
+	);
 
 	it('loads failed and pending effects and defaults organization fields', () => {
 		const record = JSON.parse(JSON.stringify(validSnapshot())) as Record<string, unknown>;
