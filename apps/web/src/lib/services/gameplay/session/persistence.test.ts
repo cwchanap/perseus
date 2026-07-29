@@ -190,6 +190,7 @@ import {
 	mulberry32,
 	deterministicLegacyTrayOrder
 } from './persistence';
+import { memoryStorage } from './persistence.test-fixtures';
 import type {
 	PuzzleSessionState,
 	PersistedPuzzleSessionV1,
@@ -290,13 +291,16 @@ describe('loadPersistedSession validation', () => {
 	it('rejects a puzzle id mismatch', () => {
 		const snapshot = serializeSession(makeState(), 1_000);
 		const result = loadPersistedSession(JSON.stringify(snapshot), { ...ctx, puzzleId: 'other' });
-		expect(result.status).toBe('invalid');
+		expect(result).toEqual({ status: 'invalid', reason: 'cross_field_violation' });
 	});
 
 	it('rejects a persisted disposed lifecycle', () => {
 		const snapshot = serializeSession(makeState(), 1_000);
 		const tampered = { ...snapshot, lifecycle: 'disposed' };
-		expect(loadPersistedSession(JSON.stringify(tampered), ctx).status).toBe('invalid');
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx)).toEqual({
+			status: 'invalid',
+			reason: 'cross_field_violation'
+		});
 	});
 });
 
@@ -503,27 +507,6 @@ describe('createSessionStorageAdapter', () => {
 	});
 });
 
-function memoryStorage(store: Record<string, string>): Storage {
-	return {
-		get length() {
-			return Object.keys(store).length;
-		},
-		key: (i: number) => Object.keys(store)[i] ?? null,
-		getItem: (k: string) => (k in store ? store[k] : null),
-		setItem: (k: string, v: string) => {
-			store[k] = v;
-		},
-		removeItem: (k: string) => {
-			delete store[k];
-		},
-		clear: () => {
-			for (const key of Object.keys(store)) {
-				delete store[key];
-			}
-		}
-	};
-}
-
 // --- Patch coverage: validation branches, storage adapter error handling --------
 
 describe('serializeSession with organization', () => {
@@ -585,19 +568,28 @@ describe('loadPersistedSession additional validation branches', () => {
 			1_000
 		)!;
 		const tampered = { ...snapshot, elapsedActiveSeconds: 10 };
-		expect(loadPersistedSession(JSON.stringify(tampered), ctx).status).toBe('invalid');
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx)).toEqual({
+			status: 'invalid',
+			reason: 'cross_field_violation'
+		});
 	});
 
 	it('rejects a record with a non-integer lastUpdated', () => {
 		const snapshot = serializeSession(makeState(), 1_000)!;
 		const tampered = { ...snapshot, lastUpdated: 1.5 };
-		expect(loadPersistedSession(JSON.stringify(tampered), ctx).status).toBe('invalid');
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx)).toEqual({
+			status: 'invalid',
+			reason: 'cross_field_violation'
+		});
 	});
 
 	it('rejects a record with invalid facts (missing boolean field)', () => {
 		const snapshot = serializeSession(makeState(), 1_000)!;
 		const tampered = { ...snapshot, facts: { rotationUsed: true, hintUsed: false } };
-		expect(loadPersistedSession(JSON.stringify(tampered), ctx).status).toBe('invalid');
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx)).toEqual({
+			status: 'invalid',
+			reason: 'cross_field_violation'
+		});
 	});
 
 	it('rejects a record with invalid counters (negative incorrectAttempts)', () => {
@@ -606,7 +598,10 @@ describe('loadPersistedSession additional validation branches', () => {
 			...snapshot,
 			counters: { incorrectAttempts: -1, hintsUsed: 0, referenceActivations: 0 }
 		};
-		expect(loadPersistedSession(JSON.stringify(tampered), ctx).status).toBe('invalid');
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx)).toEqual({
+			status: 'invalid',
+			reason: 'cross_field_violation'
+		});
 	});
 
 	it('rejects a record with non-integer hintsUsed', () => {
@@ -615,7 +610,10 @@ describe('loadPersistedSession additional validation branches', () => {
 			...snapshot,
 			counters: { incorrectAttempts: 0, hintsUsed: 1.5, referenceActivations: 0 }
 		};
-		expect(loadPersistedSession(JSON.stringify(tampered), ctx).status).toBe('invalid');
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx)).toEqual({
+			status: 'invalid',
+			reason: 'cross_field_violation'
+		});
 	});
 
 	it('rejects a record with negative referenceActivations', () => {
@@ -624,7 +622,10 @@ describe('loadPersistedSession additional validation branches', () => {
 			...snapshot,
 			counters: { incorrectAttempts: 0, hintsUsed: 0, referenceActivations: -2 }
 		};
-		expect(loadPersistedSession(JSON.stringify(tampered), ctx).status).toBe('invalid');
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx)).toEqual({
+			status: 'invalid',
+			reason: 'cross_field_violation'
+		});
 	});
 
 	it('rejects a seal with a pending localStats state', () => {
@@ -642,7 +643,10 @@ describe('loadPersistedSession additional validation branches', () => {
 				serverSubmission: { status: 'succeeded' }
 			}
 		};
-		expect(loadPersistedSession(JSON.stringify(tampered), ctx).status).toBe('invalid');
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx)).toEqual({
+			status: 'invalid',
+			reason: 'cross_field_violation'
+		});
 	});
 
 	it('rejects a seal with a failed state missing code', () => {
@@ -660,7 +664,10 @@ describe('loadPersistedSession additional validation branches', () => {
 				serverSubmission: { status: 'failed', retryable: true }
 			}
 		};
-		expect(loadPersistedSession(JSON.stringify(tampered), ctx).status).toBe('invalid');
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx)).toEqual({
+			status: 'invalid',
+			reason: 'cross_field_violation'
+		});
 	});
 
 	it('rejects a seal with a non-finite completedAt', () => {
@@ -678,7 +685,10 @@ describe('loadPersistedSession additional validation branches', () => {
 				serverSubmission: { status: 'succeeded' }
 			}
 		};
-		expect(loadPersistedSession(JSON.stringify(tampered), ctx).status).toBe('invalid');
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx)).toEqual({
+			status: 'invalid',
+			reason: 'cross_field_violation'
+		});
 	});
 
 	it('rejects a seal with a negative elapsedActiveSeconds', () => {
@@ -696,7 +706,10 @@ describe('loadPersistedSession additional validation branches', () => {
 				serverSubmission: { status: 'succeeded' }
 			}
 		};
-		expect(loadPersistedSession(JSON.stringify(tampered), ctx).status).toBe('invalid');
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx)).toEqual({
+			status: 'invalid',
+			reason: 'cross_field_violation'
+		});
 	});
 
 	it('rejects a seal with a runId mismatch', () => {
@@ -714,13 +727,19 @@ describe('loadPersistedSession additional validation branches', () => {
 				serverSubmission: { status: 'succeeded' }
 			}
 		};
-		expect(loadPersistedSession(JSON.stringify(tampered), ctx).status).toBe('invalid');
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx)).toEqual({
+			status: 'invalid',
+			reason: 'cross_field_violation'
+		});
 	});
 
 	it('rejects a completed lifecycle without a seal', () => {
 		const snapshot = serializeSession(makeState(), 1_000)!;
 		const tampered = { ...snapshot, lifecycle: 'completed', sealedCompletion: null };
-		expect(loadPersistedSession(JSON.stringify(tampered), ctx).status).toBe('invalid');
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx)).toEqual({
+			status: 'invalid',
+			reason: 'cross_field_violation'
+		});
 	});
 
 	it('rejects an organization with an invalid filter', () => {
@@ -729,7 +748,10 @@ describe('loadPersistedSession additional validation branches', () => {
 			...snapshot,
 			organization: { filter: 'bogus', activeTray: 'main', membership: {}, names: {} }
 		};
-		expect(loadPersistedSession(JSON.stringify(tampered), ctx).status).toBe('invalid');
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx)).toEqual({
+			status: 'invalid',
+			reason: 'cross_field_violation'
+		});
 	});
 
 	it('rejects an organization with a non-string activeTray', () => {
@@ -738,7 +760,10 @@ describe('loadPersistedSession additional validation branches', () => {
 			...snapshot,
 			organization: { filter: 'all', activeTray: 123, membership: {}, names: {} }
 		};
-		expect(loadPersistedSession(JSON.stringify(tampered), ctx).status).toBe('invalid');
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx)).toEqual({
+			status: 'invalid',
+			reason: 'cross_field_violation'
+		});
 	});
 
 	it('rejects an organization with a non-object membership', () => {
@@ -747,7 +772,10 @@ describe('loadPersistedSession additional validation branches', () => {
 			...snapshot,
 			organization: { filter: 'all', activeTray: 'main', membership: 'not-object', names: {} }
 		};
-		expect(loadPersistedSession(JSON.stringify(tampered), ctx).status).toBe('invalid');
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx)).toEqual({
+			status: 'invalid',
+			reason: 'cross_field_violation'
+		});
 	});
 
 	it('rejects an organization with a non-object names', () => {
@@ -756,7 +784,10 @@ describe('loadPersistedSession additional validation branches', () => {
 			...snapshot,
 			organization: { filter: 'all', activeTray: 'main', membership: {}, names: [] }
 		};
-		expect(loadPersistedSession(JSON.stringify(tampered), ctx).status).toBe('invalid');
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx)).toEqual({
+			status: 'invalid',
+			reason: 'cross_field_violation'
+		});
 	});
 
 	it('accepts a valid organization with explicit fields', () => {
@@ -781,19 +812,28 @@ describe('loadPersistedSession additional validation branches', () => {
 	it('rejects a record with a non-numeric elapsedActiveSeconds', () => {
 		const snapshot = serializeSession(makeState(), 1_000)!;
 		const tampered = { ...snapshot, elapsedActiveSeconds: 'not-a-number' };
-		expect(loadPersistedSession(JSON.stringify(tampered), ctx).status).toBe('invalid');
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx)).toEqual({
+			status: 'invalid',
+			reason: 'cross_field_violation'
+		});
 	});
 
 	it('rejects a record with a negative elapsedActiveSeconds', () => {
 		const snapshot = serializeSession(makeState(), 1_000)!;
 		const tampered = { ...snapshot, elapsedActiveSeconds: -5 };
-		expect(loadPersistedSession(JSON.stringify(tampered), ctx).status).toBe('invalid');
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx)).toEqual({
+			status: 'invalid',
+			reason: 'cross_field_violation'
+		});
 	});
 
 	it('rejects a record with a non-integer elapsedActiveSeconds', () => {
 		const snapshot = serializeSession(makeState(), 1_000)!;
 		const tampered = { ...snapshot, elapsedActiveSeconds: 1.5 };
-		expect(loadPersistedSession(JSON.stringify(tampered), ctx).status).toBe('invalid');
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx)).toEqual({
+			status: 'invalid',
+			reason: 'cross_field_violation'
+		});
 	});
 
 	it('round-trips a completed snapshot with a valid sealed completion', () => {
@@ -836,57 +876,6 @@ describe('loadPersistedSession additional validation branches', () => {
 		expect(result.status).toBe('loaded');
 		if (result.status === 'loaded') {
 			expect(result.snapshot.sealedCompletion?.serverSubmission.status).toBe('not_applicable');
-		}
-	});
-});
-
-describe('createSessionStorageAdapter error handling', () => {
-	it('reports read errors through onError and returns missing', () => {
-		const errors: string[] = [];
-		const storage = memoryStorage({});
-		storage.getItem = () => {
-			throw new Error('read denied');
-		};
-		const adapter = createSessionStorageAdapter({ storage, onError: (e) => errors.push(e.kind) });
-
-		expect(adapter.loadSession('pz1', ctx).status).toBe('missing');
-		expect(errors).toContain('read_error');
-	});
-
-	it('reports remove errors through onError without throwing', () => {
-		const errors: string[] = [];
-		const storage = memoryStorage({});
-		storage.removeItem = () => {
-			throw new Error('remove denied');
-		};
-		const adapter = createSessionStorageAdapter({ storage, onError: (e) => errors.push(e.kind) });
-
-		expect(() => adapter.clearSession('pz1')).not.toThrow();
-		expect(errors).toContain('remove_error');
-	});
-
-	it('falls back to noopThrowingStorage when no storage is available', () => {
-		const originalLocalStorage = globalThis.localStorage;
-		try {
-			// Remove localStorage so the adapter falls back to noopThrowingStorage.
-			Object.defineProperty(globalThis, 'localStorage', {
-				configurable: true,
-				value: undefined
-			});
-			const errors: string[] = [];
-			const adapter = createSessionStorageAdapter({ onError: (e) => errors.push(e.kind) });
-
-			// saveSession throws inside noopThrowingStorage → write_error.
-			expect(() => adapter.saveSession('pz1', serializeSession(makeState(), 1)!)).not.toThrow();
-			expect(errors).toContain('write_error');
-
-			// loadSession returns missing (noopThrowingStorage.getItem returns null).
-			expect(adapter.loadSession('pz1', ctx).status).toBe('missing');
-		} finally {
-			Object.defineProperty(globalThis, 'localStorage', {
-				configurable: true,
-				value: originalLocalStorage
-			});
 		}
 	});
 });
