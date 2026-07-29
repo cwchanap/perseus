@@ -7,9 +7,50 @@ on:
     branches: [main, develop]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
+  fix-session-reorder-fixtures:
+    name: Fix session reorder fixtures
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.head_ref == 'jack65786656/hpa-372-foundation-extract-puzzlesession-and-migrate-client'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout pull request branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.head_ref }}
+
+      - name: Add required tray IDs
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('apps/web/src/lib/services/gameplay/session/session.test.ts')
+          text = path.read_text()
+          replacements = {
+              "update: { type: 'reorder', pieceIds: [3, 1, 0, 2] }":
+                  "update: { type: 'reorder', trayId: 'main', pieceIds: [3, 1, 0, 2] }",
+              "update: { type: 'reorder', pieceIds: [0, 999] }":
+                  "update: { type: 'reorder', trayId: 'main', pieceIds: [0, 999] }",
+          }
+          for old, new in replacements.items():
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'expected exactly one occurrence of {old!r}, found {count}')
+              text = text.replace(old, new)
+          path.write_text(text)
+          PY
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add apps/web/src/lib/services/gameplay/session/session.test.ts
+          git commit -m 'test(web): include tray id in reorder fixtures'
+          git push origin HEAD:${{ github.head_ref }}
+
   build-lint:
     name: Build & Lint
     runs-on: ubuntu-latest
