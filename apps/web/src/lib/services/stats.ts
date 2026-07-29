@@ -36,7 +36,7 @@ function isEligibleStandardBest(seal: SealedCompletion): boolean {
 	);
 }
 
-function migrateLegacy(raw: Record<string, unknown>, puzzleId: string): PuzzleStatsV1 | null {
+function parseStoredStats(raw: Record<string, unknown>, puzzleId: string): PuzzleStatsV1 | null {
 	if (raw.schemaVersion === CURRENT_STATS_SCHEMA_VERSION) {
 		return validateV1(raw, puzzleId);
 	}
@@ -47,6 +47,7 @@ function migrateLegacy(raw: Record<string, unknown>, puzzleId: string): PuzzleSt
 	if (
 		typeof bestTime !== 'number' ||
 		!Number.isFinite(bestTime) ||
+		bestTime < 0 ||
 		typeof completedAt !== 'string' ||
 		typeof totalCompletions !== 'number' ||
 		!Number.isInteger(totalCompletions)
@@ -141,7 +142,7 @@ export function getStats(puzzleId: string): PuzzleStatsV1 | null {
 
 	if (!parsed || typeof parsed !== 'object') return null;
 	const record = parsed as Record<string, unknown>;
-	const stats = migrateLegacy(record, puzzleId);
+	const stats = parseStoredStats(record, puzzleId);
 	if (!stats) {
 		try {
 			localStorage.removeItem(getStorageKey(puzzleId));

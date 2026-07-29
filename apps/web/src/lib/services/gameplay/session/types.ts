@@ -300,12 +300,17 @@ export type PuzzleSessionOutcome =
 	| { type: 'hint_used'; pieceId: number | null }
 	| { type: 'hint_noop'; reason: 'all_placed' }
 	| { type: 'reference_mode_changed'; mode: ReferenceMode | null; activationCounted: boolean }
+	| { type: 'reference_mode_noop'; reason: 'lifecycle_disallows_gameplay' }
 	| { type: 'tray_organization_applied'; update: TrayOrganizationUpdate }
 	| { type: 'tray_organization_noop'; reason: 'invalid_update' }
 	| { type: 'completion_sealed'; seal: SealedCompletion }
 	| {
 			type: 'completion_noop';
-			reason: 'already_sealed' | 'board_incomplete' | 'lifecycle_disallows';
+			reason:
+				| 'already_sealed'
+				| 'board_incomplete'
+				| 'lifecycle_disallows'
+				| 'no_retryable_effects';
 	  }
 	| { type: 'effect_acknowledged'; effect: CompletionEffect }
 	| { type: 'effect_acknowledgement_noop'; reason: 'run_id_mismatch' | 'effect_terminal' }

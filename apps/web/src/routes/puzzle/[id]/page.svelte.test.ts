@@ -367,6 +367,14 @@ async function placeSelectedPieceAt(x: number, y: number) {
 	dropZone.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
 }
 
+async function getPieceRotation(pieceId: number): Promise<number> {
+	const piece = await page.getByLabelText(`Puzzle piece ${pieceId}`).element();
+	const visual = piece.querySelector('[data-testid="puzzle-piece-visual"]');
+	const style = visual?.getAttribute('style') ?? '';
+	const match = style.match(/rotate\(([\d.]+)deg\)/);
+	return match ? parseInt(match[1], 10) : 0;
+}
+
 describe('Puzzle route gameplay integration', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -653,19 +661,32 @@ describe('Puzzle route gameplay integration', () => {
 		await page.getByLabelText('Rotation mode').click();
 		await page.getByRole('button', { name: 'Rotate piece 1' }).click();
 		await placePiece(0, 0, 0);
+		await expect.element(page.getByText('1/2')).toBeVisible();
+		expect(await getPieceRotation(1)).toBe(90);
+
 		await page.getByRole('button', { name: 'Rotate piece 1' }).click();
+		await expect.element(page.getByText('1/2')).toBeVisible();
+		expect(await getPieceRotation(1)).toBe(180);
 
 		// First undo reverses the rotation (180 -> 90), piece remains placed
 		await page.getByLabelText('Undo').click();
+		await expect.element(page.getByText('1/2')).toBeVisible();
+		expect(await getPieceRotation(1)).toBe(90);
 
 		// Second undo removes the placement, rotation preserved from pre-placement state
 		await page.getByLabelText('Undo').click();
+		await expect.element(page.getByText('0/2')).toBeVisible();
+		expect(await getPieceRotation(1)).toBe(90);
 
 		// Redo re-applies the placement
 		await page.getByLabelText('Redo').click();
+		await expect.element(page.getByText('1/2')).toBeVisible();
+		expect(await getPieceRotation(1)).toBe(90);
 
 		// Second redo re-applies the rotation
 		await page.getByLabelText('Redo').click();
+		await expect.element(page.getByText('1/2')).toBeVisible();
+		expect(await getPieceRotation(1)).toBe(180);
 	});
 
 	it('restores rotation mode from history snapshots during undo and redo', async () => {
@@ -954,10 +975,10 @@ describe('Puzzle route gameplay integration', () => {
 
 	it('records completion again after Play Again even if the prior POST resolves late', async () => {
 		// Regression: a stale recordCompletion().then() from the first solve
-		// would set completionRecorded back to true after Play Again reset it
-		// to false, causing the second solve to skip both the local best-time
-		// save and the server completion POST. The per-solve token guards the
-		// callback so only the active solve can mark itself recorded.
+		// would re-acknowledge the old seal after Play Again started a new run,
+		// causing the second solve to skip both the local best-time save and
+		// the server completion POST. The sealed-completion run ID guards the
+		// callback so only the active run's seal can be acknowledged.
 		const firstPost = createDeferred<void>();
 		vi.mocked(recordCompletion).mockImplementationOnce(() => firstPost.promise);
 		await renderPuzzlePage();
@@ -969,13 +990,15 @@ describe('Puzzle route gameplay integration', () => {
 		expect(recordLocalCompletion).toHaveBeenCalledTimes(1);
 		expect(recordCompletion).toHaveBeenCalledTimes(1);
 
-		// Play Again before the first POST resolves — resets
-		// completionRecorded to false and invalidates the in-flight callback.
+		// Play Again before the first POST resolves — starts a new run with a
+		// fresh seal, so the in-flight callback's stale run ID cannot
+		// acknowledge the new seal.
 		await page.getByRole('button', { name: 'PLAY AGAIN' }).click();
 		await expect.poll(() => page.getByTestId('celebration-modal').query()).toBeNull();
 
-		// The stale first POST now resolves. Without the token guard this
-		// would flip completionRecorded back to true.
+		// The stale first POST now resolves. Its acknowledge_completion_effect
+		// dispatch carries the old run ID, which no longer matches the active
+		// seal's run ID, so it is rejected as a run_id_mismatch no-op.
 		firstPost.resolve();
 		await Promise.resolve();
 		await Promise.resolve();
@@ -1072,7 +1095,8 @@ describe('Puzzle route gameplay integration', () => {
 		window.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }));
 		window.dispatchEvent(new KeyboardEvent('keydown', { key: 'y', ctrlKey: true, bubbles: true }));
 
-		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+		// Board state remains complete — undo/redo shortcuts were blocked.
+		await expect.element(page.getByText('2/2')).toBeVisible();
 	});
 
 	it('zooms in and out via toolbar buttons', async () => {

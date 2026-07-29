@@ -344,6 +344,7 @@ describe('legacy v0 migration', () => {
 
 		const result = loadPersistedSession(JSON.stringify(legacy), ctx);
 
+		expect(result.status).toBe('migrated');
 		if (result.status === 'migrated') {
 			expect(result.snapshot.lifecycle).toBe('completed');
 		}
@@ -355,6 +356,7 @@ describe('legacy v0 migration', () => {
 
 		const result = loadPersistedSession(JSON.stringify(legacy), ctx);
 
+		expect(result.status).toBe('migrated');
 		if (result.status === 'migrated') {
 			expect(result.snapshot.trayOrder).toEqual(expected);
 			expect(new Set(result.snapshot.trayOrder)).toEqual(new Set([0, 1, 2, 3]));
@@ -366,6 +368,8 @@ describe('legacy v0 migration', () => {
 		const a = loadPersistedSession(JSON.stringify(legacy), ctx);
 		const b = loadPersistedSession(JSON.stringify(legacy), ctx);
 
+		expect(a.status).toBe('migrated');
+		expect(b.status).toBe('migrated');
 		if (a.status === 'migrated' && b.status === 'migrated') {
 			expect(a.snapshot.runId).toBe(b.snapshot.runId);
 		}
@@ -382,6 +386,7 @@ describe('legacy v0 migration', () => {
 
 		const result = loadPersistedSession(JSON.stringify(legacy), ctx);
 
+		expect(result.status).toBe('migrated');
 		if (result.status === 'migrated') {
 			expect(result.snapshot.hasUserActivity).toBe(false);
 		}
@@ -398,6 +403,7 @@ describe('legacy v0 migration', () => {
 
 		const result = loadPersistedSession(JSON.stringify(legacy), ctx);
 
+		expect(result.status).toBe('migrated');
 		if (result.status === 'migrated') {
 			expect(result.snapshot.resultClass).toBe('rotation_timed');
 			expect(result.snapshot.facts.rotationUsed).toBe(true);
@@ -511,7 +517,9 @@ function memoryStorage(store: Record<string, string>): Storage {
 			delete store[k];
 		},
 		clear: () => {
-			store = {};
+			for (const key of Object.keys(store)) {
+				delete store[key];
+			}
 		}
 	};
 }

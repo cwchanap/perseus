@@ -499,24 +499,19 @@ function startedSession(
 	}> = {}
 ) {
 	const clock = new ManualClock();
-	const session = createPuzzleSession(
-		makeOptions({
-			clock,
-			metadata: makeMetadata(overrides.pieceCount ?? 4)
-		})
-	);
-	// Inject createRotations by reconstructing if needed.
-	if (overrides.createRotations) {
-		// Recreate with rotations factory.
-		const session2 = createPuzzleSession({
-			metadata: makeMetadata(overrides.pieceCount ?? 4),
-			runIdFactory: makeRunIdFactory(),
-			clock,
-			createRotations: overrides.createRotations
-		});
-		session2.dispatch({ type: 'start' });
-		return { session: session2, clock };
-	}
+	const session = overrides.createRotations
+		? createPuzzleSession({
+				metadata: makeMetadata(overrides.pieceCount ?? 4),
+				runIdFactory: makeRunIdFactory(),
+				clock,
+				createRotations: overrides.createRotations
+			})
+		: createPuzzleSession(
+				makeOptions({
+					clock,
+					metadata: makeMetadata(overrides.pieceCount ?? 4)
+				})
+			);
 	session.dispatch({ type: 'start' });
 	return { session, clock };
 }
@@ -948,11 +943,9 @@ describe('PuzzleSession restart', () => {
 	});
 
 	it('works from completed', () => {
-		const session = createPuzzleSession(makeOptions());
-		session.dispatch({ type: 'start' });
-		// Force completed lifecycle via restored-style transition is not available
-		// here; restart from active is the tested path. This asserts restart does
-		// not throw when lifecycle is non-setup.
+		const { session } = completeOnePieceSession();
+		expect(session.getState().lifecycle).toBe('completed');
+
 		expect(session.dispatch({ type: 'restart' }).type).toBe('lifecycle_transitioned');
 	});
 });
@@ -988,14 +981,14 @@ describe('PuzzleSession tray organization', () => {
 
 import type { SealedCompletion } from './types';
 
-function completeOnePieceSession(
-	overrides: Partial<{ mode: 'timed' | 'relaxed'; source: 'api' | 'local' }> = {}
-): { session: ReturnType<typeof createPuzzleSession>; seal: SealedCompletion } {
+function completeOnePieceSession(overrides: Partial<{ mode: 'timed' | 'relaxed' }> = {}): {
+	session: ReturnType<typeof createPuzzleSession>;
+	seal: SealedCompletion;
+} {
 	const session = createPuzzleSession(
 		makeOptions({ metadata: makeMetadata(1), mode: overrides.mode })
 	);
 	session.dispatch({ type: 'start' });
-	// For local-source tests, reconstruct (makeOptions uses api source).
 	session.dispatch({ type: 'attempt_placement', pieceId: 0, x: 0, y: 0 });
 	const seal = session.getState().sealedCompletion;
 	if (!seal) throw new Error('expected seal');

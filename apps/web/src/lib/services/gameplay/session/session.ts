@@ -357,6 +357,9 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 	}
 
 	function doSetReferenceMode(mode: ReferenceMode | null): PuzzleSessionOutcome {
+		if (state.lifecycle !== 'active') {
+			return { type: 'reference_mode_noop', reason: 'lifecycle_disallows_gameplay' };
+		}
 		const previous = state.activeReferenceMode;
 		state.activeReferenceMode = mode;
 		let activationCounted = false;
@@ -450,6 +453,7 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 					.slice()
 					.sort((a, b) => a - b);
 		placementHistory = makeHistoryBaseline(state);
+		emit({ type: 'lifecycle', from, to: 'setup' });
 		notify();
 		return { type: 'lifecycle_transitioned', from, to: 'setup' };
 	}
@@ -545,11 +549,17 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 		}
 		let localStats = seal.localStats;
 		let serverSubmission = seal.serverSubmission;
+		let retried = false;
 		if (localStats.status === 'failed' && localStats.retryable) {
 			localStats = { status: 'pending' };
+			retried = true;
 		}
 		if (serverSubmission.status === 'failed' && serverSubmission.retryable) {
 			serverSubmission = { status: 'pending' };
+			retried = true;
+		}
+		if (!retried) {
+			return { type: 'completion_noop', reason: 'no_retryable_effects' };
 		}
 		const updated = { ...seal, localStats, serverSubmission };
 		state.sealedCompletion = updated;
@@ -708,7 +718,7 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 	}
 
 	return {
-		getState: () => state,
+		getState: () => Object.freeze({ ...state }),
 		dispatch,
 		setDocumentHidden,
 		checkpointTime,

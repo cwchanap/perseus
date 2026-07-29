@@ -6,7 +6,29 @@
 
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
-import type { RunIdFactory } from './types';
+import type {
+	RunIdFactory,
+	PuzzleSessionState,
+	PersistedPuzzleSessionV1,
+	PersistedTrayOrganization,
+	SessionValidationContext,
+	SessionLoadResult,
+	SessionStorageAdapter,
+	SessionPersistenceError,
+	PlacedPiece,
+	Rotation,
+	RestorableLifecycle,
+	SessionMode,
+	SessionOrigin,
+	PuzzleSourceType,
+	TimingQuality,
+	ResultClass,
+	CompletionEffectState,
+	CompletionFailureCode,
+	SealedCompletion
+} from './types';
+import { CURRENT_SESSION_SCHEMA_VERSION } from './types';
+import { isPuzzleRunId, RESULT_CLASSES, TIMING_QUALITIES } from '@perseus/types';
 
 /**
  * SHA-256 over the UTF-8 bytes of `value`, returned as 64 lowercase hex chars.
@@ -81,29 +103,6 @@ function fallbackUuidV4(source: Crypto | undefined): string {
 	const hex = bytesToHex(bytes);
 	return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
-
-import type {
-	PuzzleSessionState,
-	PersistedPuzzleSessionV1,
-	PersistedTrayOrganization,
-	SessionValidationContext,
-	SessionLoadResult,
-	SessionStorageAdapter,
-	SessionPersistenceError,
-	PlacedPiece,
-	Rotation,
-	RestorableLifecycle,
-	SessionMode,
-	SessionOrigin,
-	PuzzleSourceType,
-	TimingQuality,
-	ResultClass,
-	CompletionEffectState,
-	CompletionFailureCode,
-	SealedCompletion
-} from './types';
-import { CURRENT_SESSION_SCHEMA_VERSION } from './types';
-import { isPuzzleRunId, RESULT_CLASSES, TIMING_QUALITIES } from '@perseus/types';
 
 const PROGRESS_KEY_PREFIX = 'puzzle-progress-';
 const RESTORABLE_LIFECYCLES = new Set(['setup', 'active', 'paused', 'completed']);
@@ -449,7 +448,7 @@ function validateCounters(raw: unknown): PuzzleSessionState['counters'] | null {
 }
 
 function validateEffectState(raw: unknown): CompletionEffectState | false | null {
-	if (raw === null) return null; // seal fields are non-null in practice; handled by caller
+	if (raw === null) return null; // absent state: caller uses not_applicable, never pending
 	if (typeof raw !== 'object') return false;
 	const state = (raw as Record<string, unknown>).status;
 	if (state === 'pending' || state === 'succeeded' || state === 'not_applicable') {
@@ -472,6 +471,13 @@ function validateSeal(raw: unknown, expectedRunId: string): SealedCompletion | n
 	if (!RESULT_CLASS_SET.has(s.resultClass as string)) return false;
 	if (!TIMING_QUALITY_SET.has(s.timingQuality as string)) return false;
 	if (typeof s.completedAt !== 'number' || !Number.isFinite(s.completedAt)) return false;
+	const elapsed = s.elapsedActiveSeconds;
+	if (
+		elapsed !== null &&
+		(typeof elapsed !== 'number' || !Number.isFinite(elapsed) || elapsed < 0)
+	) {
+		return false;
+	}
 	const localStats = validateEffectState(s.localStats);
 	if (localStats === false) return false;
 	const serverSubmission = validateEffectState(s.serverSubmission);
@@ -480,10 +486,10 @@ function validateSeal(raw: unknown, expectedRunId: string): SealedCompletion | n
 		runId: s.runId as string,
 		resultClass: s.resultClass as ResultClass,
 		timingQuality: s.timingQuality as TimingQuality,
-		elapsedActiveSeconds: (s.elapsedActiveSeconds as number | null) ?? null,
+		elapsedActiveSeconds: (elapsed as number | null) ?? null,
 		completedAt: s.completedAt as number,
-		localStats: (localStats as CompletionEffectState) ?? { status: 'pending' },
-		serverSubmission: (serverSubmission as CompletionEffectState) ?? { status: 'pending' }
+		localStats: (localStats as CompletionEffectState) ?? { status: 'not_applicable' },
+		serverSubmission: (serverSubmission as CompletionEffectState) ?? { status: 'not_applicable' }
 	};
 }
 
@@ -498,8 +504,16 @@ function validateOrganization(raw: unknown): PersistedTrayOrganization | false |
 		return false;
 	}
 	if (o.activeTray !== undefined && typeof o.activeTray !== 'string') return false;
-	if (o.membership !== undefined && typeof o.membership !== 'object') return false;
-	if (o.names !== undefined && typeof o.names !== 'object') return false;
+	if (
+		o.membership !== undefined &&
+		(typeof o.membership !== 'object' || o.membership === null || Array.isArray(o.membership))
+	)
+		return false;
+	if (
+		o.names !== undefined &&
+		(typeof o.names !== 'object' || o.names === null || Array.isArray(o.names))
+	)
+		return false;
 	return {
 		filter: (o.filter as PersistedTrayOrganization['filter']) ?? 'all',
 		activeTray: (o.activeTray as string) ?? 'main',
