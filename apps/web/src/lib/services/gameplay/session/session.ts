@@ -410,6 +410,9 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 					return { type: 'tray_organization_noop', reason: 'invalid_update' };
 				}
 				delete organization.names[update.trayId];
+				if (organization.activeTray === update.trayId) {
+					organization.activeTray = 'main';
+				}
 				break;
 			case 'move_piece':
 				if (!pieceById.has(update.pieceId)) {

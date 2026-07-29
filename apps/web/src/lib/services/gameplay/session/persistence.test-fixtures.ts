@@ -39,7 +39,7 @@ export function validSnapshot(): PersistedPuzzleSessionV1 {
 }
 
 export function load(value: unknown, ctx: SessionValidationContext = context) {
-	return loadPersistedSession(JSON.stringify(value), ctx);
+	return loadPersistedSession(JSON.stringify(value) ?? null, ctx);
 }
 
 export function expectInvalid(mutator: (record: Record<string, unknown>) => void): void {
