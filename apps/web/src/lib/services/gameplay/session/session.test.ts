@@ -1215,3 +1215,235 @@ describe('PuzzleSession completion effect coordination', () => {
 		expect(server.status).toBe('failed');
 	});
 });
+
+// --- Patch coverage: lifecycle no-ops, tray org branches, retry, subscribe -----
+
+describe('PuzzleSession lifecycle no-ops from non-active states', () => {
+	it('rejects selection from setup (lifecycle_disallows_gameplay)', () => {
+		const session = createPuzzleSession(makeOptions());
+		const outcome = session.dispatch({ type: 'select_piece', pieceId: 0 });
+		expect(outcome).toEqual({ type: 'selection_noop', reason: 'lifecycle_disallows_gameplay' });
+	});
+
+	it('rejects rotation toggle from setup (lifecycle_disables_rotation_toggle)', () => {
+		const session = createPuzzleSession(makeOptions());
+		const outcome = session.dispatch({ type: 'set_rotation_mode', enabled: true });
+		expect(outcome.type).toBe('rotation_mode_noop');
+	});
+
+	it('rejects piece rotation from setup (piece_not_rotatable)', () => {
+		const session = createPuzzleSession(makeOptions());
+		const outcome = session.dispatch({ type: 'rotate_piece', pieceId: 0 });
+		expect(outcome).toEqual({ type: 'rotation_noop', reason: 'piece_not_rotatable' });
+	});
+
+	it('rejects hint from setup (all_placed reason for non-active)', () => {
+		const session = createPuzzleSession(makeOptions());
+		const outcome = session.dispatch({ type: 'use_hint' });
+		expect(outcome).toEqual({ type: 'hint_noop', reason: 'all_placed' });
+	});
+
+	it('rejects reference mode from setup (lifecycle_disallows_gameplay)', () => {
+		const session = createPuzzleSession(makeOptions());
+		const outcome = session.dispatch({ type: 'set_reference_mode', mode: 'hold' });
+		expect(outcome).toEqual({
+			type: 'reference_mode_noop',
+			reason: 'lifecycle_disallows_gameplay'
+		});
+	});
+
+	it('rejects direct complete from setup (lifecycle_disallows)', () => {
+		const session = createPuzzleSession(makeOptions());
+		const outcome = session.dispatch({ type: 'complete' });
+		expect(outcome).toEqual({ type: 'completion_noop', reason: 'lifecycle_disallows' });
+	});
+
+	it('rejects restart when disposed', () => {
+		const session = createPuzzleSession(makeOptions());
+		session.dispatch({ type: 'start' });
+		session.dispatch({ type: 'dispose' });
+
+		const outcome = session.dispatch({ type: 'restart' });
+		expect(outcome).toEqual({ type: 'lifecycle_noop', reason: 'disposed' });
+	});
+});
+
+describe('PuzzleSession resume with active timer', () => {
+	it('restarts the clock on resume when the timer was already started', () => {
+		const clock = new ManualClock();
+		const session = createPuzzleSession(makeOptions({ clock }));
+		session.dispatch({ type: 'start' });
+		// Start the timer via a counted action (placement).
+		session.dispatch({ type: 'attempt_placement', pieceId: 0, x: 0, y: 0 });
+		expect(clock.activeIntervalCount).toBe(1);
+
+		session.dispatch({ type: 'pause' });
+		expect(clock.activeIntervalCount).toBe(0);
+
+		session.dispatch({ type: 'resume' });
+		expect(clock.activeIntervalCount).toBe(1);
+	});
+});
+
+describe('PuzzleSession default rotation factory', () => {
+	it('uses the default createRotations factory when none is provided', () => {
+		const session = createPuzzleSession(makeOptions());
+		session.dispatch({ type: 'start' });
+
+		const outcome = session.dispatch({ type: 'set_rotation_mode', enabled: true });
+		expect(outcome.type).toBe('rotation_mode_changed');
+		// The default factory produces a rotation for every piece id.
+		const state = session.getState();
+		expect(Object.keys(state.pieceRotations).length).toBe(state.pieceCount);
+	});
+});
+
+describe('PuzzleSession tray organization branches', () => {
+	it('applies a set_active_tray update', () => {
+		const { session } = startedSession();
+		const outcome = session.dispatch({
+			type: 'update_tray_organization',
+			update: { type: 'set_active_tray', trayId: 'group-a' }
+		});
+		expect(outcome.type).toBe('tray_organization_applied');
+		expect(session.getState().organization?.activeTray).toBe('group-a');
+	});
+
+	it('applies a rename_tray update', () => {
+		const { session } = startedSession();
+		session.dispatch({
+			type: 'update_tray_organization',
+			update: { type: 'set_active_tray', trayId: 'group-a' }
+		});
+		const outcome = session.dispatch({
+			type: 'update_tray_organization',
+			update: { type: 'rename_tray', trayId: 'group-a', name: 'My Group' }
+		});
+		expect(outcome.type).toBe('tray_organization_applied');
+		expect(session.getState().organization?.names['group-a']).toBe('My Group');
+	});
+
+	it('removes a tray that has no members', () => {
+		const { session } = startedSession();
+		session.dispatch({
+			type: 'update_tray_organization',
+			update: { type: 'set_active_tray', trayId: 'temp' }
+		});
+		const outcome = session.dispatch({
+			type: 'update_tray_organization',
+			update: { type: 'remove_tray', trayId: 'temp' }
+		});
+		expect(outcome.type).toBe('tray_organization_applied');
+		expect(session.getState().organization?.names['temp']).toBeUndefined();
+	});
+
+	it('rejects removing a tray that still has members', () => {
+		const { session } = startedSession();
+		session.dispatch({
+			type: 'update_tray_organization',
+			update: { type: 'move_piece', pieceId: 0, toTrayId: 'group-a' }
+		});
+		const outcome = session.dispatch({
+			type: 'update_tray_organization',
+			update: { type: 'remove_tray', trayId: 'group-a' }
+		});
+		expect(outcome).toEqual({ type: 'tray_organization_noop', reason: 'invalid_update' });
+	});
+
+	it('applies a move_piece update for a known piece', () => {
+		const { session } = startedSession();
+		const outcome = session.dispatch({
+			type: 'update_tray_organization',
+			update: { type: 'move_piece', pieceId: 1, toTrayId: 'group-b' }
+		});
+		expect(outcome.type).toBe('tray_organization_applied');
+		expect(session.getState().organization?.membership[1]).toBe('group-b');
+	});
+
+	it('applies a reorder update with all known piece ids', () => {
+		const { session } = startedSession();
+		const outcome = session.dispatch({
+			type: 'update_tray_organization',
+			update: { type: 'reorder', pieceIds: [3, 1, 0, 2] }
+		});
+		expect(outcome.type).toBe('tray_organization_applied');
+	});
+
+	it('rejects a reorder update containing an unknown piece id', () => {
+		const { session } = startedSession();
+		const outcome = session.dispatch({
+			type: 'update_tray_organization',
+			update: { type: 'reorder', pieceIds: [0, 999] }
+		});
+		expect(outcome).toEqual({ type: 'tray_organization_noop', reason: 'invalid_update' });
+	});
+});
+
+describe('PuzzleSession retry and dispatch edge cases', () => {
+	it('retry_completion_effects is a no-op when there is no seal (board_incomplete)', () => {
+		const { session } = startedSession();
+		const outcome = session.dispatch({ type: 'retry_completion_effects' });
+		expect(outcome).toEqual({ type: 'completion_noop', reason: 'board_incomplete' });
+	});
+
+	it('retry re-emits a retryable failed local_stats effect', () => {
+		const { session, seal } = completeOnePieceSession();
+		session.dispatch({
+			type: 'acknowledge_completion_effect',
+			runId: seal.runId,
+			effect: 'local_stats',
+			result: { status: 'failed', code: 'storage_error', retryable: true }
+		});
+
+		const outcome = session.dispatch({ type: 'retry_completion_effects' });
+		expect(outcome.type).toBe('completion_sealed');
+		expect(session.getState().sealedCompletion!.localStats.status).toBe('pending');
+	});
+
+	it('dispatch with an unknown action type returns a lifecycle no-op', () => {
+		const { session } = startedSession();
+		const outcome = session.dispatch({ type: 'bogus_action' } as unknown as {
+			type: 'start';
+		});
+		expect(outcome).toEqual({ type: 'lifecycle_noop', reason: 'invalid_transition' });
+	});
+});
+
+describe('PuzzleSession subscribe', () => {
+	it('notifies subscribers on state change and supports unsubscribe', () => {
+		const { session } = startedSession();
+		let notifyCount = 0;
+		const unsubscribe = session.subscribe(() => {
+			notifyCount++;
+		});
+
+		// A selection dispatch should notify subscribers.
+		session.dispatch({ type: 'select_piece', pieceId: 0 });
+		expect(notifyCount).toBeGreaterThan(0);
+		const countAfterSelect = notifyCount;
+
+		unsubscribe();
+
+		session.dispatch({ type: 'cancel_selection' });
+		expect(notifyCount).toBe(countAfterSelect);
+	});
+});
+
+describe('PuzzleSession hint with empty tray', () => {
+	it('returns all_placed no-op when getHintPieceId finds no unplaced piece in tray', () => {
+		// An empty initialTrayOrder means getHintPieceId returns null even though
+		// the board is not complete (pieceCount > 0). The lifecycle stays 'active'
+		// so the hint_noop comes from the hintPieceId === null branch, not the
+		// lifecycle guard.
+		const session = createPuzzleSession({
+			metadata: makeMetadata(4),
+			runIdFactory: makeRunIdFactory(),
+			clock: new ManualClock(),
+			initialTrayOrder: []
+		});
+		session.dispatch({ type: 'start' });
+
+		const outcome = session.dispatch({ type: 'use_hint' });
+		expect(outcome).toEqual({ type: 'hint_noop', reason: 'all_placed' });
+	});
+});
