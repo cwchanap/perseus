@@ -143,11 +143,11 @@ vi.mock('$lib/services/gameplay/session/persistence', () => ({
 			}
 			return { status: 'missing' as const };
 		},
-		saveSession: () => {},
-		clearSession: () => {},
+		saveSession: vi.fn(),
+		clearSession: vi.fn(),
 		isResumable: () => false
 	}),
-	serializeSession: () => null
+	serializeSession: vi.fn(() => null)
 }));
 
 vi.mock('$lib/services/api', () => {
@@ -278,6 +278,7 @@ import {
 } from '$lib/services/api';
 import type { LoadedPuzzleSource } from '$lib/services/puzzleSource';
 import { recordLocalCompletion, getBestTime } from '$lib/services/stats';
+import { serializeSession } from '$lib/services/gameplay/session/persistence';
 import { goto } from '$app/navigation';
 
 function createPiece(
@@ -1210,6 +1211,180 @@ describe('Puzzle route gameplay integration', () => {
 				configurable: true,
 				value: originalInnerHeight
 			});
+		}
+	});
+
+	it('handles server submission failure with a 400 ApiError (bad_request)', async () => {
+		vi.mocked(recordCompletion).mockRejectedValueOnce(
+			new ApiError(400, 'bad_request', 'Invalid request')
+		);
+		await renderPuzzlePage();
+		await placePiece(0, 0, 0);
+		await placePiece(1, 1, 0);
+
+		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+		// The local stats still recorded; the server failure is acknowledged gracefully.
+		expect(recordLocalCompletion).toHaveBeenCalledTimes(1);
+	});
+
+	it('handles server submission failure with a 401 ApiError (unauthorized)', async () => {
+		vi.mocked(recordCompletion).mockRejectedValueOnce(
+			new ApiError(401, 'unauthorized', 'Unauthorized')
+		);
+		await renderPuzzlePage();
+		await placePiece(0, 0, 0);
+		await placePiece(1, 1, 0);
+
+		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+	});
+
+	it('handles server submission failure with a 404 ApiError (not_found)', async () => {
+		vi.mocked(recordCompletion).mockRejectedValueOnce(
+			new ApiError(404, 'not_found', 'Puzzle not found')
+		);
+		await renderPuzzlePage();
+		await placePiece(0, 0, 0);
+		await placePiece(1, 1, 0);
+
+		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+	});
+
+	it('handles server submission failure with a 409 ApiError (run_id_conflict)', async () => {
+		vi.mocked(recordCompletion).mockRejectedValueOnce(
+			new ApiError(409, 'run_id_conflict', 'Conflict')
+		);
+		await renderPuzzlePage();
+		await placePiece(0, 0, 0);
+		await placePiece(1, 1, 0);
+
+		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+	});
+
+	it('handles server submission failure with a 429 ApiError (quota_exceeded)', async () => {
+		vi.mocked(recordCompletion).mockRejectedValueOnce(
+			new ApiError(429, 'quota_exceeded', 'Too many requests')
+		);
+		await renderPuzzlePage();
+		await placePiece(0, 0, 0);
+		await placePiece(1, 1, 0);
+
+		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+	});
+
+	it('handles server submission failure with a 500 ApiError (internal_error)', async () => {
+		vi.mocked(recordCompletion).mockRejectedValueOnce(
+			new ApiError(500, 'internal_error', 'Server error')
+		);
+		await renderPuzzlePage();
+		await placePiece(0, 0, 0);
+		await placePiece(1, 1, 0);
+
+		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+	});
+
+	it('handles server submission failure with a non-ApiError (network_error)', async () => {
+		vi.mocked(recordCompletion).mockRejectedValueOnce(new Error('Network failure'));
+		await renderPuzzlePage();
+		await placePiece(0, 0, 0);
+		await placePiece(1, 1, 0);
+
+		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+	});
+
+	it('shows NEW RECORD badge even when local stats storage fails', async () => {
+		vi.mocked(recordLocalCompletion).mockReturnValueOnce({
+			status: 'failed',
+			isNewStandardBest: true,
+			inMemoryStats: {
+				schemaVersion: 1,
+				puzzleId: 'test-puzzle',
+				standardBestTime: 42,
+				standardBestCompletedAt: Date.now(),
+				totalCompletions: 1,
+				lastCompletedAt: Date.now(),
+				lastRecordedRunId: 'test-run-id'
+			}
+		});
+		vi.mocked(getBestTime).mockReturnValueOnce(null);
+		await renderPuzzlePage();
+		await placePiece(0, 0, 0);
+		await placePiece(1, 1, 0);
+
+		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+		await expect.element(page.getByText('NEW RECORD')).toBeVisible();
+	});
+
+	it('checkpoints the session to storage when serializeSession returns a snapshot', async () => {
+		// Make serializeSession return a non-null snapshot so saveSession is called.
+		vi.mocked(serializeSession).mockReturnValue({
+			schemaVersion: 1,
+			puzzleId: 'test-puzzle',
+			source: 'api',
+			lifecycle: 'active',
+			mode: 'timed',
+			runId: 'test-run-id',
+			origin: 'new',
+			elapsedActiveSeconds: 0,
+			timingQuality: 'known',
+			timerStarted: false,
+			placedPieces: [{ pieceId: 0, x: 0, y: 0 }],
+			trayOrder: [0, 1],
+			rotationEnabled: false,
+			pieceRotations: {},
+			counters: { incorrectAttempts: 0, hintsUsed: 0, referenceActivations: 0 },
+			facts: { rotationUsed: false, hintUsed: false, ghostReferenceUsed: false },
+			hasUserActivity: true,
+			resultClass: 'standard_timed',
+			sealedCompletion: null,
+			lastUpdated: Date.now()
+		});
+		await renderPuzzlePage();
+		await placePiece(0, 0, 0);
+
+		// checkpointSession is called after each placement; verify serializeSession
+		// was invoked (the checkpoint path ran).
+		expect(vi.mocked(serializeSession)).toHaveBeenCalled();
+	});
+
+	it('fires the periodic checkpoint interval', async () => {
+		vi.useFakeTimers();
+		try {
+			vi.mocked(serializeSession).mockReturnValue({
+				schemaVersion: 1,
+				puzzleId: 'test-puzzle',
+				source: 'api',
+				lifecycle: 'active',
+				mode: 'timed',
+				runId: 'test-run-id',
+				origin: 'new',
+				elapsedActiveSeconds: 0,
+				timingQuality: 'known',
+				timerStarted: false,
+				placedPieces: [],
+				trayOrder: [0, 1],
+				rotationEnabled: false,
+				pieceRotations: {},
+				counters: { incorrectAttempts: 0, hintsUsed: 0, referenceActivations: 0 },
+				facts: { rotationUsed: false, hintUsed: false, ghostReferenceUsed: false },
+				hasUserActivity: false,
+				resultClass: 'standard_timed',
+				sealedCompletion: null,
+				lastUpdated: Date.now()
+			});
+			vi.mocked(fetchPuzzle).mockResolvedValue(createMockPuzzle());
+			render(PuzzlePage);
+
+			// Wait for the puzzle board to render (uses real microtasks).
+			await vi.advanceTimersByTimeAsync(0);
+
+			const callsBeforeInterval = vi.mocked(serializeSession).mock.calls.length;
+
+			// Advance past the CHECKPOINT_INTERVAL_MS (5_000ms) to fire the interval.
+			await vi.advanceTimersByTimeAsync(5_100);
+
+			expect(vi.mocked(serializeSession).mock.calls.length).toBeGreaterThan(callsBeforeInterval);
+		} finally {
+			vi.useRealTimers();
 		}
 	});
 });

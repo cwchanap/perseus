@@ -523,3 +523,370 @@ function memoryStorage(store: Record<string, string>): Storage {
 		}
 	};
 }
+
+// --- Patch coverage: validation branches, storage adapter error handling --------
+
+describe('serializeSession with organization', () => {
+	it('includes a cloned organization when present', () => {
+		const org = {
+			filter: 'edges' as const,
+			activeTray: 'group-a',
+			membership: { 0: 'group-a' },
+			names: { 'group-a': 'Edges' }
+		};
+		const snapshot = serializeSession(makeState({ organization: org }), 1_000)!;
+		expect(snapshot.organization).toEqual(org);
+		// Mutating the source state after serialization must not affect the snapshot.
+		org.names['group-a'] = 'Mutated';
+		expect(snapshot.organization?.names['group-a']).toBe('Edges');
+	});
+});
+
+describe('loadPersistedSession additional validation branches', () => {
+	it('returns invalid:not_object for a JSON primitive', () => {
+		expect(loadPersistedSession('42', ctx)).toEqual({ status: 'invalid', reason: 'not_object' });
+	});
+
+	it('returns invalid:bad_schema_version when schemaVersion is not an integer', () => {
+		const snapshot = serializeSession(makeState(), 1_000)!;
+		const tampered = { ...snapshot, schemaVersion: 1.5 };
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx)).toEqual({
+			status: 'invalid',
+			reason: 'bad_schema_version'
+		});
+	});
+
+	it('returns invalid:unsupported_schema_version for a past non-zero version', () => {
+		const snapshot = serializeSession(makeState(), 1_000)!;
+		const tampered = { ...snapshot, schemaVersion: 0 };
+		// Version 0 is not > CURRENT (1), not === CURRENT (1), so falls through to
+		// unsupported_schema_version rather than legacy v0 (which has no schemaVersion key).
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx)).toEqual({
+			status: 'invalid',
+			reason: 'unsupported_schema_version'
+		});
+	});
+
+	it('returns invalid:legacy_migration_failed when a legacy record has bad placements', () => {
+		const legacy = {
+			puzzleId: 'pz1',
+			placedPieces: [{ pieceId: 999, x: 0, y: 0 }],
+			lastUpdated: '2024-01-01T00:00:00.000Z'
+		};
+		expect(loadPersistedSession(JSON.stringify(legacy), ctx)).toEqual({
+			status: 'invalid',
+			reason: 'legacy_migration_failed'
+		});
+	});
+
+	it('rejects a relaxed mode record with non-null elapsed', () => {
+		const snapshot = serializeSession(
+			makeState({ mode: 'relaxed', elapsedActiveSeconds: null }),
+			1_000
+		)!;
+		const tampered = { ...snapshot, elapsedActiveSeconds: 10 };
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx).status).toBe('invalid');
+	});
+
+	it('rejects a record with a non-integer lastUpdated', () => {
+		const snapshot = serializeSession(makeState(), 1_000)!;
+		const tampered = { ...snapshot, lastUpdated: 1.5 };
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx).status).toBe('invalid');
+	});
+
+	it('rejects a record with invalid facts (missing boolean field)', () => {
+		const snapshot = serializeSession(makeState(), 1_000)!;
+		const tampered = { ...snapshot, facts: { rotationUsed: true, hintUsed: false } };
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx).status).toBe('invalid');
+	});
+
+	it('rejects a record with invalid counters (negative incorrectAttempts)', () => {
+		const snapshot = serializeSession(makeState(), 1_000)!;
+		const tampered = {
+			...snapshot,
+			counters: { incorrectAttempts: -1, hintsUsed: 0, referenceActivations: 0 }
+		};
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx).status).toBe('invalid');
+	});
+
+	it('rejects a record with non-integer hintsUsed', () => {
+		const snapshot = serializeSession(makeState(), 1_000)!;
+		const tampered = {
+			...snapshot,
+			counters: { incorrectAttempts: 0, hintsUsed: 1.5, referenceActivations: 0 }
+		};
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx).status).toBe('invalid');
+	});
+
+	it('rejects a record with negative referenceActivations', () => {
+		const snapshot = serializeSession(makeState(), 1_000)!;
+		const tampered = {
+			...snapshot,
+			counters: { incorrectAttempts: 0, hintsUsed: 0, referenceActivations: -2 }
+		};
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx).status).toBe('invalid');
+	});
+
+	it('rejects a seal with a pending localStats state', () => {
+		const snapshot = serializeSession(makeState(), 1_000)!;
+		const tampered = {
+			...snapshot,
+			lifecycle: 'completed',
+			sealedCompletion: {
+				runId: snapshot.runId,
+				resultClass: 'standard_timed',
+				timingQuality: 'known',
+				elapsedActiveSeconds: 5,
+				completedAt: 1_000,
+				localStats: { status: 'bogus' },
+				serverSubmission: { status: 'succeeded' }
+			}
+		};
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx).status).toBe('invalid');
+	});
+
+	it('rejects a seal with a failed state missing code', () => {
+		const snapshot = serializeSession(makeState(), 1_000)!;
+		const tampered = {
+			...snapshot,
+			lifecycle: 'completed',
+			sealedCompletion: {
+				runId: snapshot.runId,
+				resultClass: 'standard_timed',
+				timingQuality: 'known',
+				elapsedActiveSeconds: 5,
+				completedAt: 1_000,
+				localStats: { status: 'succeeded' },
+				serverSubmission: { status: 'failed', retryable: true }
+			}
+		};
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx).status).toBe('invalid');
+	});
+
+	it('rejects a seal with a non-finite completedAt', () => {
+		const snapshot = serializeSession(makeState(), 1_000)!;
+		const tampered = {
+			...snapshot,
+			lifecycle: 'completed',
+			sealedCompletion: {
+				runId: snapshot.runId,
+				resultClass: 'standard_timed',
+				timingQuality: 'known',
+				elapsedActiveSeconds: 5,
+				completedAt: Infinity,
+				localStats: { status: 'succeeded' },
+				serverSubmission: { status: 'succeeded' }
+			}
+		};
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx).status).toBe('invalid');
+	});
+
+	it('rejects a seal with a negative elapsedActiveSeconds', () => {
+		const snapshot = serializeSession(makeState(), 1_000)!;
+		const tampered = {
+			...snapshot,
+			lifecycle: 'completed',
+			sealedCompletion: {
+				runId: snapshot.runId,
+				resultClass: 'standard_timed',
+				timingQuality: 'known',
+				elapsedActiveSeconds: -1,
+				completedAt: 1_000,
+				localStats: { status: 'succeeded' },
+				serverSubmission: { status: 'succeeded' }
+			}
+		};
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx).status).toBe('invalid');
+	});
+
+	it('rejects a seal with a runId mismatch', () => {
+		const snapshot = serializeSession(makeState(), 1_000)!;
+		const tampered = {
+			...snapshot,
+			lifecycle: 'completed',
+			sealedCompletion: {
+				runId: 'different-run-id',
+				resultClass: 'standard_timed',
+				timingQuality: 'known',
+				elapsedActiveSeconds: 5,
+				completedAt: 1_000,
+				localStats: { status: 'succeeded' },
+				serverSubmission: { status: 'succeeded' }
+			}
+		};
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx).status).toBe('invalid');
+	});
+
+	it('rejects a completed lifecycle without a seal', () => {
+		const snapshot = serializeSession(makeState(), 1_000)!;
+		const tampered = { ...snapshot, lifecycle: 'completed', sealedCompletion: null };
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx).status).toBe('invalid');
+	});
+
+	it('rejects an organization with an invalid filter', () => {
+		const snapshot = serializeSession(makeState(), 1_000)!;
+		const tampered = {
+			...snapshot,
+			organization: { filter: 'bogus', activeTray: 'main', membership: {}, names: {} }
+		};
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx).status).toBe('invalid');
+	});
+
+	it('rejects an organization with a non-string activeTray', () => {
+		const snapshot = serializeSession(makeState(), 1_000)!;
+		const tampered = {
+			...snapshot,
+			organization: { filter: 'all', activeTray: 123, membership: {}, names: {} }
+		};
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx).status).toBe('invalid');
+	});
+
+	it('rejects an organization with a non-object membership', () => {
+		const snapshot = serializeSession(makeState(), 1_000)!;
+		const tampered = {
+			...snapshot,
+			organization: { filter: 'all', activeTray: 'main', membership: 'not-object', names: {} }
+		};
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx).status).toBe('invalid');
+	});
+
+	it('rejects an organization with a non-object names', () => {
+		const snapshot = serializeSession(makeState(), 1_000)!;
+		const tampered = {
+			...snapshot,
+			organization: { filter: 'all', activeTray: 'main', membership: {}, names: [] }
+		};
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx).status).toBe('invalid');
+	});
+
+	it('accepts a valid organization with explicit fields', () => {
+		const snapshot = serializeSession(makeState(), 1_000)!;
+		const tampered = {
+			...snapshot,
+			organization: {
+				filter: 'corners',
+				activeTray: 'main',
+				membership: { 0: 'g1' },
+				names: { g1: 'Corners' }
+			}
+		};
+		const result = loadPersistedSession(JSON.stringify(tampered), ctx);
+		expect(result.status).toBe('loaded');
+		if (result.status === 'loaded') {
+			expect(result.snapshot.organization?.filter).toBe('corners');
+			expect(result.snapshot.organization?.membership[0]).toBe('g1');
+		}
+	});
+
+	it('rejects a record with a non-numeric elapsedActiveSeconds', () => {
+		const snapshot = serializeSession(makeState(), 1_000)!;
+		const tampered = { ...snapshot, elapsedActiveSeconds: 'not-a-number' };
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx).status).toBe('invalid');
+	});
+
+	it('rejects a record with a negative elapsedActiveSeconds', () => {
+		const snapshot = serializeSession(makeState(), 1_000)!;
+		const tampered = { ...snapshot, elapsedActiveSeconds: -5 };
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx).status).toBe('invalid');
+	});
+
+	it('rejects a record with a non-integer elapsedActiveSeconds', () => {
+		const snapshot = serializeSession(makeState(), 1_000)!;
+		const tampered = { ...snapshot, elapsedActiveSeconds: 1.5 };
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx).status).toBe('invalid');
+	});
+
+	it('round-trips a completed snapshot with a valid sealed completion', () => {
+		const seal: PersistedPuzzleSessionV1['sealedCompletion'] = {
+			runId: '11111111-1111-4111-8111-111111111111',
+			resultClass: 'standard_timed',
+			timingQuality: 'known',
+			elapsedActiveSeconds: 42,
+			completedAt: 1_000,
+			localStats: { status: 'succeeded' },
+			serverSubmission: { status: 'failed', code: 'network_error', retryable: true }
+		};
+		const snapshot = serializeSession(
+			makeState({ lifecycle: 'completed', sealedCompletion: seal }),
+			1_000
+		)!;
+		const result = loadPersistedSession(JSON.stringify(snapshot), ctx);
+		expect(result.status).toBe('loaded');
+		if (result.status === 'loaded') {
+			expect(result.snapshot.sealedCompletion).not.toBeNull();
+			expect(result.snapshot.sealedCompletion?.serverSubmission.status).toBe('failed');
+		}
+	});
+
+	it('round-trips a completed snapshot with a not_applicable server submission', () => {
+		const seal: PersistedPuzzleSessionV1['sealedCompletion'] = {
+			runId: '11111111-1111-4111-8111-111111111111',
+			resultClass: 'standard_timed',
+			timingQuality: 'known',
+			elapsedActiveSeconds: 42,
+			completedAt: 1_000,
+			localStats: { status: 'succeeded' },
+			serverSubmission: { status: 'not_applicable' }
+		};
+		const snapshot = serializeSession(
+			makeState({ lifecycle: 'completed', sealedCompletion: seal }),
+			1_000
+		)!;
+		const result = loadPersistedSession(JSON.stringify(snapshot), ctx);
+		expect(result.status).toBe('loaded');
+		if (result.status === 'loaded') {
+			expect(result.snapshot.sealedCompletion?.serverSubmission.status).toBe('not_applicable');
+		}
+	});
+});
+
+describe('createSessionStorageAdapter error handling', () => {
+	it('reports read errors through onError and returns missing', () => {
+		const errors: string[] = [];
+		const storage = memoryStorage({});
+		storage.getItem = () => {
+			throw new Error('read denied');
+		};
+		const adapter = createSessionStorageAdapter({ storage, onError: (e) => errors.push(e.kind) });
+
+		expect(adapter.loadSession('pz1', ctx).status).toBe('missing');
+		expect(errors).toContain('read_error');
+	});
+
+	it('reports remove errors through onError without throwing', () => {
+		const errors: string[] = [];
+		const storage = memoryStorage({});
+		storage.removeItem = () => {
+			throw new Error('remove denied');
+		};
+		const adapter = createSessionStorageAdapter({ storage, onError: (e) => errors.push(e.kind) });
+
+		expect(() => adapter.clearSession('pz1')).not.toThrow();
+		expect(errors).toContain('remove_error');
+	});
+
+	it('falls back to noopThrowingStorage when no storage is available', () => {
+		const originalLocalStorage = globalThis.localStorage;
+		try {
+			// Remove localStorage so the adapter falls back to noopThrowingStorage.
+			Object.defineProperty(globalThis, 'localStorage', {
+				configurable: true,
+				value: undefined
+			});
+			const errors: string[] = [];
+			const adapter = createSessionStorageAdapter({ onError: (e) => errors.push(e.kind) });
+
+			// saveSession throws inside noopThrowingStorage → write_error.
+			expect(() => adapter.saveSession('pz1', serializeSession(makeState(), 1)!)).not.toThrow();
+			expect(errors).toContain('write_error');
+
+			// loadSession returns missing (noopThrowingStorage.getItem returns null).
+			expect(adapter.loadSession('pz1', ctx).status).toBe('missing');
+		} finally {
+			Object.defineProperty(globalThis, 'localStorage', {
+				configurable: true,
+				value: originalLocalStorage
+			});
+		}
+	});
+});

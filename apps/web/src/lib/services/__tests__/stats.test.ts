@@ -166,4 +166,123 @@ describe('Stats Service', () => {
 			expect(() => clearStats('nonexistent-puzzle')).not.toThrow();
 		});
 	});
+
+	describe('parseStoredStats / validateV1 rejection branches', () => {
+		it('returns null and cleans up for a legacy record with a non-numeric bestTime', () => {
+			localStorage.setItem(
+				`puzzle-stats-${puzzleId}`,
+				JSON.stringify({
+					puzzleId,
+					bestTime: 'not-a-number',
+					completedAt: '2024-01-01T00:00:00.000Z',
+					totalCompletions: 2
+				})
+			);
+			expect(getStats(puzzleId)).toBeNull();
+			// The invalid record should have been cleaned up.
+			expect(localStorage.getItem(`puzzle-stats-${puzzleId}`)).toBeNull();
+		});
+
+		it('returns null for a v1 record with an invalid standardBestTime', () => {
+			localStorage.setItem(
+				`puzzle-stats-${puzzleId}`,
+				JSON.stringify({
+					schemaVersion: 1,
+					puzzleId,
+					standardBestTime: 'bad',
+					standardBestCompletedAt: null,
+					totalCompletions: 1,
+					lastCompletedAt: 1000,
+					lastRecordedRunId: null
+				})
+			);
+			expect(getStats(puzzleId)).toBeNull();
+		});
+
+		it('returns null for a v1 record with a negative standardBestCompletedAt', () => {
+			localStorage.setItem(
+				`puzzle-stats-${puzzleId}`,
+				JSON.stringify({
+					schemaVersion: 1,
+					puzzleId,
+					standardBestTime: null,
+					standardBestCompletedAt: -5,
+					totalCompletions: 1,
+					lastCompletedAt: 1000,
+					lastRecordedRunId: null
+				})
+			);
+			expect(getStats(puzzleId)).toBeNull();
+		});
+
+		it('returns null for a v1 record with a non-integer totalCompletions', () => {
+			localStorage.setItem(
+				`puzzle-stats-${puzzleId}`,
+				JSON.stringify({
+					schemaVersion: 1,
+					puzzleId,
+					standardBestTime: null,
+					standardBestCompletedAt: null,
+					totalCompletions: 1.5,
+					lastCompletedAt: 1000,
+					lastRecordedRunId: null
+				})
+			);
+			expect(getStats(puzzleId)).toBeNull();
+		});
+
+		it('returns null for a v1 record with a non-numeric lastCompletedAt', () => {
+			localStorage.setItem(
+				`puzzle-stats-${puzzleId}`,
+				JSON.stringify({
+					schemaVersion: 1,
+					puzzleId,
+					standardBestTime: null,
+					standardBestCompletedAt: null,
+					totalCompletions: 1,
+					lastCompletedAt: 'not-a-number',
+					lastRecordedRunId: null
+				})
+			);
+			expect(getStats(puzzleId)).toBeNull();
+		});
+
+		it('returns null for a v1 record with a non-string lastRecordedRunId', () => {
+			localStorage.setItem(
+				`puzzle-stats-${puzzleId}`,
+				JSON.stringify({
+					schemaVersion: 1,
+					puzzleId,
+					standardBestTime: null,
+					standardBestCompletedAt: null,
+					totalCompletions: 1,
+					lastCompletedAt: 1000,
+					lastRecordedRunId: 123
+				})
+			);
+			expect(getStats(puzzleId)).toBeNull();
+		});
+
+		it('returns null for a v1 record with a puzzleId mismatch', () => {
+			localStorage.setItem(
+				`puzzle-stats-${puzzleId}`,
+				JSON.stringify({
+					schemaVersion: 1,
+					puzzleId: 'different-puzzle',
+					standardBestTime: null,
+					standardBestCompletedAt: null,
+					totalCompletions: 1,
+					lastCompletedAt: 1000,
+					lastRecordedRunId: null
+				})
+			);
+			expect(getStats(puzzleId)).toBeNull();
+		});
+
+		it('returns null and cleans up for a JSON array (not an object)', () => {
+			localStorage.setItem(`puzzle-stats-${puzzleId}`, '[1, 2, 3]');
+			expect(getStats(puzzleId)).toBeNull();
+			expect(localStorage.getItem(`puzzle-stats-${puzzleId}`)).toBeNull();
+		});
+	});
 });
