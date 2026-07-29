@@ -171,6 +171,14 @@
 	const currentSelectedPieceId = $derived(sessionState?.selectedPieceId ?? null);
 	const canUndo = $derived(sessionState?.canUndo ?? false);
 	const canRedo = $derived(sessionState?.canRedo ?? false);
+	// A retryable server-submission failure surfaces a manual retry affordance
+	// in the celebration modal. The engine's retry_completion_effects action
+	// re-emits the server_submission effect request, which re-runs
+	// recordCompletion through handleServerSubmissionEffect.
+	const serverSubmissionRetryable = $derived.by(() => {
+		const submission = sessionState?.sealedCompletion?.serverSubmission;
+		return submission?.status === 'failed' && submission.retryable === true;
+	});
 	const timerState = $derived<TimerState>({
 		elapsed: sessionState?.elapsedActiveSeconds ?? 0,
 		running: sessionState?.lifecycle === 'active' && (sessionState?.timerStarted ?? false)
@@ -367,6 +375,13 @@
 				result: { status: 'failed', code, retryable }
 			});
 		}
+	}
+
+	function handleRetryServerSubmission() {
+		// Re-emits any retryable-failed completion effects (here, the server
+		// submission). The engine resets the effect to pending and fires a new
+		// completion_effect_request, which handleServerSubmissionEffect picks up.
+		sessionStore?.dispatch({ type: 'retry_completion_effects' });
 	}
 
 	function handleSessionEvent(event: PuzzleSessionEvent) {
@@ -1093,6 +1108,19 @@
 
 			<div class="modal-bottom-line"></div>
 
+			{#if serverSubmissionRetryable}
+				<div class="modal-server-retry" role="alert" data-testid="server-retry-banner">
+					<span class="server-retry-label">MISSION SYNC FAILED</span>
+					<button
+						onclick={handleRetryServerSubmission}
+						class="arcade-btn-ghost"
+						data-testid="retry-server-submission"
+					>
+						RETRY SYNC
+					</button>
+				</div>
+			{/if}
+
 			<div class="modal-actions">
 				<button onclick={handlePlayAgain} class="arcade-btn">PLAY AGAIN</button>
 				<button onclick={handleGoHome} class="arcade-btn-ghost">BACK TO ARCADE</button>
@@ -1564,6 +1592,20 @@
 		gap: 0.875rem;
 		flex-wrap: wrap;
 		padding-top: 0.5rem;
+	}
+
+	.modal-server-retry {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.5rem;
+		padding: 0.5rem 0 0.25rem;
+	}
+
+	.server-retry-label {
+		color: var(--accent-warn, #ffb86b);
+		font-size: 0.7rem;
+		letter-spacing: 0.12em;
 	}
 
 	/* ===== REDUCED MOTION ACCESSIBILITY ===== */

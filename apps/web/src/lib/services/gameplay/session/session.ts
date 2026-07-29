@@ -418,12 +418,10 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 				organization.membership[update.pieceId] = update.toTrayId;
 				break;
 			case 'reorder':
-				for (const id of update.pieceIds) {
-					if (!pieceById.has(id)) {
-						return { type: 'tray_organization_noop', reason: 'invalid_update' };
-					}
-				}
-				break;
+				// Reorder is not implemented in this HPA; tray-organization UI is
+				// owned by HPA-220/237. Return a no-op so the branch cannot be
+				// mistaken for working. Do not mutate state or notify.
+				return { type: 'tray_organization_noop', reason: 'not_implemented' };
 		}
 		state.organization = organization;
 		state.hasUserActivity = true;
@@ -499,11 +497,18 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 		state.sealedCompletion = seal;
 		transitionToInternal('completed');
 		emit({ type: 'completion_sealed', seal });
-		emit({ type: 'completion_effect_request', effect: 'local_stats', seal });
+		// Defer effect requests until after notify() so the route's synchronous
+		// acknowledge_completion_effect dispatch cannot reassign state.sealedCompletion
+		// mid-transition (re-entrant dispatch). Listeners observe the sealed state
+		// before any effect handler mutates it.
+		const pendingEffects: CompletionEffect[] = ['local_stats'];
 		if (seal.serverSubmission.status === 'pending') {
-			emit({ type: 'completion_effect_request', effect: 'server_submission', seal });
+			pendingEffects.push('server_submission');
 		}
 		notify();
+		for (const effect of pendingEffects) {
+			emit({ type: 'completion_effect_request', effect, seal });
+		}
 		return { type: 'completion_sealed', seal };
 	}
 
@@ -563,13 +568,19 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 		}
 		const updated = { ...seal, localStats, serverSubmission };
 		state.sealedCompletion = updated;
+		// Defer effect requests until after notify() to avoid re-entrant dispatch
+		// mutating state.sealedCompletion mid-transition (see doComplete).
+		const retryEffects: CompletionEffect[] = [];
 		if (localStats.status === 'pending') {
-			emit({ type: 'completion_effect_request', effect: 'local_stats', seal: updated });
+			retryEffects.push('local_stats');
 		}
 		if (serverSubmission.status === 'pending') {
-			emit({ type: 'completion_effect_request', effect: 'server_submission', seal: updated });
+			retryEffects.push('server_submission');
 		}
 		notify();
+		for (const effect of retryEffects) {
+			emit({ type: 'completion_effect_request', effect, seal: updated });
+		}
 		return { type: 'completion_sealed', seal: updated };
 	}
 
