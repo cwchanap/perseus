@@ -1214,6 +1214,41 @@ describe('PuzzleSession completion effect coordination', () => {
 		const server = session.getState().sealedCompletion!.serverSubmission;
 		expect(server.status).toBe('failed');
 	});
+
+	it('emits completion_effect_request only after subscribers see the sealed state', () => {
+		// Regression: doComplete must notify() before emitting effect requests,
+		// so a synchronous acknowledge in onEvent cannot reassign
+		// state.sealedCompletion mid-transition. Subscribers must observe the
+		// completed/sealed state before any effect handler runs.
+		const log: string[] = [];
+		const session = createPuzzleSession({
+			metadata: makeMetadata(1),
+			runIdFactory: makeRunIdFactory(),
+			clock: new ManualClock(),
+			onEvent: (event) => {
+				if (event.type === 'completion_effect_request') {
+					// At the moment the effect request fires, the engine state
+					// must already be sealed+completed (proving notify() ran).
+					log.push(`effect:${event.effect}:${session.getState().lifecycle}`);
+				}
+			}
+		});
+		session.subscribe(() => {
+			const s = session.getState();
+			if (s.lifecycle === 'completed' && s.sealedCompletion) {
+				log.push('notified');
+			}
+		});
+		session.dispatch({ type: 'start' });
+		session.dispatch({ type: 'attempt_placement', pieceId: 0, x: 0, y: 0 });
+
+		// Subscriber notification must precede every effect request emission.
+		const firstEffectIndex = log.findIndex((entry) => entry.startsWith('effect:'));
+		const notifiedIndex = log.indexOf('notified');
+		expect(notifiedIndex).toBeGreaterThanOrEqual(0);
+		expect(firstEffectIndex).toBeGreaterThan(notifiedIndex);
+		expect(log.filter((e) => e.startsWith('effect:')).length).toBe(2);
+	});
 });
 
 // --- Patch coverage: lifecycle no-ops, tray org branches, retry, subscribe -----
@@ -1366,22 +1401,16 @@ describe('PuzzleSession tray organization branches', () => {
 		expect(session.getState().organization?.membership[1]).toBe('group-b');
 	});
 
-	it('applies a reorder update with all known piece ids', () => {
+	it('returns a not_implemented no-op for a reorder update (HPA-220/237 own tray-org UI)', () => {
 		const { session } = startedSession();
+		const trayOrderBefore = session.getState().trayOrder.slice();
 		const outcome = session.dispatch({
 			type: 'update_tray_organization',
 			update: { type: 'reorder', trayId: 'main', pieceIds: [3, 1, 0, 2] }
 		});
-		expect(outcome.type).toBe('tray_organization_applied');
-	});
-
-	it('rejects a reorder update containing an unknown piece id', () => {
-		const { session } = startedSession();
-		const outcome = session.dispatch({
-			type: 'update_tray_organization',
-			update: { type: 'reorder', trayId: 'main', pieceIds: [0, 999] }
-		});
-		expect(outcome).toEqual({ type: 'tray_organization_noop', reason: 'invalid_update' });
+		expect(outcome).toEqual({ type: 'tray_organization_noop', reason: 'not_implemented' });
+		// Reorder must not mutate state or persist a misleading "applied" result.
+		expect(session.getState().trayOrder).toEqual(trayOrderBefore);
 	});
 });
 

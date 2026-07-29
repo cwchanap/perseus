@@ -1252,6 +1252,49 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
 	});
 
+	it('retries server submission from the celebration modal after a retryable 500 failure', async () => {
+		// Regression: a transient 5xx during recordCompletion permanently lost
+		// the server record because retry_completion_effects was never dispatched
+		// from the route. The modal now surfaces a RETRY SYNC affordance for
+		// retryable failures; clicking it re-emits the server_submission effect.
+		vi.mocked(recordCompletion).mockRejectedValueOnce(
+			new ApiError(500, 'internal_error', 'Server error')
+		);
+		await renderPuzzlePage();
+		await placePiece(0, 0, 0);
+		await placePiece(1, 1, 0);
+
+		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+		// The first attempt failed with a retryable 500.
+		expect(recordCompletion).toHaveBeenCalledTimes(1);
+		await expect.element(page.getByTestId('server-retry-banner')).toBeVisible();
+
+		// The retry attempt succeeds.
+		vi.mocked(recordCompletion).mockResolvedValueOnce(undefined);
+		await page.getByTestId('retry-server-submission').click();
+
+		// Flush the async handleServerSubmissionEffect retry + acknowledge.
+		await Promise.resolve();
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(recordCompletion).toHaveBeenCalledTimes(2);
+		// Succeeded → seal's serverSubmission is no longer retryable → banner hidden.
+		await expect.poll(() => page.getByTestId('server-retry-banner').query()).toBeNull();
+	});
+
+	it('does not show a retry affordance for a terminal (non-retryable) 404 failure', async () => {
+		vi.mocked(recordCompletion).mockRejectedValueOnce(
+			new ApiError(404, 'not_found', 'Puzzle not found')
+		);
+		await renderPuzzlePage();
+		await placePiece(0, 0, 0);
+		await placePiece(1, 1, 0);
+
+		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+		await expect.poll(() => page.getByTestId('server-retry-banner').query()).toBeNull();
+	});
+
 	it('shows NEW RECORD badge even when local stats storage fails', async () => {
 		vi.mocked(recordLocalCompletion).mockReturnValueOnce({
 			status: 'failed',
