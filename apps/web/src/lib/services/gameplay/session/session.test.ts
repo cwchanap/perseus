@@ -1200,6 +1200,46 @@ describe('PuzzleSession completion effect coordination', () => {
 		expect(session.getState().sealedCompletion!.serverSubmission.status).toBe('pending');
 	});
 
+	it('retry does not re-emit effects that were already pending (no duplicate submission)', () => {
+		// Regression: retry must only re-emit effects whose failed state was
+		// reset to pending. An effect that was already pending (e.g. an
+		// in-flight initial server_submission) must not be re-emitted, or the
+		// side effect would run twice.
+		const emitted: string[] = [];
+		const session = createPuzzleSession({
+			metadata: makeMetadata(1),
+			runIdFactory: makeRunIdFactory(),
+			clock: new ManualClock(),
+			onEvent: (event) => {
+				if (event.type === 'completion_effect_request') {
+					emitted.push(event.effect);
+				}
+			}
+		});
+		session.dispatch({ type: 'start' });
+		session.dispatch({ type: 'attempt_placement', pieceId: 0, x: 0, y: 0 });
+		const seal = session.getState().sealedCompletion!;
+		// Initial completion emits both effects.
+		expect(emitted).toEqual(['local_stats', 'server_submission']);
+
+		emitted.length = 0;
+		// Fail only local_stats; server_submission stays pending (in flight).
+		session.dispatch({
+			type: 'acknowledge_completion_effect',
+			runId: seal.runId,
+			effect: 'local_stats',
+			result: { status: 'failed', code: 'storage_error', retryable: true }
+		});
+
+		const outcome = session.dispatch({ type: 'retry_completion_effects' });
+		expect(outcome.type).toBe('completion_sealed');
+
+		// Only local_stats was reset from failed -> pending; server_submission
+		// was already pending and must not be re-emitted.
+		expect(emitted).toEqual(['local_stats']);
+		expect(session.getState().sealedCompletion!.serverSubmission.status).toBe('pending');
+	});
+
 	it('does not retry a terminal quota failure', () => {
 		const { session, seal } = completeOnePieceSession();
 		session.dispatch({
