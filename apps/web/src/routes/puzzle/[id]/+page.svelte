@@ -2,11 +2,9 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { onDestroy, untrack } from 'svelte';
-	import { ApiError } from '$lib/services/api';
+	import { ApiError, recordCompletion } from '$lib/services/api';
 	import { loadPuzzleSource, type LoadedPuzzleSource } from '$lib/services/puzzleSource';
-	import { getBestTime } from '$lib/services/stats';
-	import { recordLocalCompletion } from '$lib/services/stats';
-	import { recordCompletion } from '$lib/services/api';
+	import { getBestTime, recordLocalCompletion } from '$lib/services/stats';
 	import { formatTime } from '$lib/stores/timer';
 	import type { TimerState } from '$lib/stores/timer';
 	import { SvelteMap } from 'svelte/reactivity';
@@ -49,6 +47,7 @@
 	const REJECTED_DURATION_MS = 500;
 	const HINT_DURATION_MS = 1800;
 	const ZOOM_STEP = 0.2;
+	const CHECKPOINT_INTERVAL_MS = 5_000;
 
 	function createBrowserClock(): Clock {
 		return {
@@ -553,9 +552,9 @@
 			}
 
 			// Periodic checkpoint.
-			// checkpointInterval = setInterval(() => {
-			// 	checkpointSession();
-			// }, CHECKPOINT_INTERVAL_MS);
+			checkpointInterval = setInterval(() => {
+				checkpointSession();
+			}, CHECKPOINT_INTERVAL_MS);
 
 			pendingViewportReset = true;
 		} catch (e) {

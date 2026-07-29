@@ -437,17 +437,21 @@ export async function getPlayerStats(params?: {
 	return handleResponse<{ stats: PlayerStatRow[]; nextCursor?: string }>(response);
 }
 
-export async function recordCompletion(
-	puzzleId: string,
-	request: RecordPuzzleCompletionV1
-): Promise<void> {
+async function postCompletion(puzzleId: string, body: unknown): Promise<void> {
 	const response = await fetch(`${API_BASE}/api/puzzles/${puzzleId}/complete`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		credentials: 'include',
-		body: JSON.stringify(request)
+		body: JSON.stringify(body)
 	});
 	await handleVoidResponse(response);
+}
+
+export async function recordCompletion(
+	puzzleId: string,
+	request: RecordPuzzleCompletionV1
+): Promise<void> {
+	return postCompletion(puzzleId, request);
 }
 
 /**
@@ -455,11 +459,5 @@ export async function recordCompletion(
  * migrates to the sealed v1 request (HPA-372 Tasks 10/11).
  */
 export async function recordCompletionLegacy(puzzleId: string, timeSeconds: number): Promise<void> {
-	const response = await fetch(`${API_BASE}/api/puzzles/${puzzleId}/complete`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		credentials: 'include',
-		body: JSON.stringify({ timeSeconds })
-	});
-	await handleVoidResponse(response);
+	return postCompletion(puzzleId, { timeSeconds });
 }

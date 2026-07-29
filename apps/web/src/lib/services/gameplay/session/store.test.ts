@@ -91,12 +91,18 @@ describe('createPuzzleSessionStore', () => {
 		store.dispatch({ type: 'start' });
 		store.dispatch({ type: 'attempt_placement', pieceId: 0, x: 0, y: 0 });
 
+		// Accumulate some visible elapsed time before hiding.
+		clock.advance(3_000);
+		store.checkpointTime();
+		const preHideElapsed = get(store).elapsedActiveSeconds;
+
 		store.setDocumentHidden(true);
 		clock.advance(5_000);
 		store.checkpointTime();
 		store.setDocumentHidden(false);
 
 		expect(get(store).lifecycle).toBe('active');
+		expect(get(store).elapsedActiveSeconds).toBe(preHideElapsed);
 	});
 
 	it('unsubscribe does not dispose the engine', () => {
