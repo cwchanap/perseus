@@ -1364,7 +1364,7 @@ describe('PuzzleSession tray organization branches', () => {
 		const { session } = startedSession();
 		const outcome = session.dispatch({
 			type: 'update_tray_organization',
-			update: { type: 'reorder', pieceIds: [3, 1, 0, 2] }
+			update: { type: 'reorder', trayId: 'main', pieceIds: [3, 1, 0, 2] }
 		});
 		expect(outcome.type).toBe('tray_organization_applied');
 	});
@@ -1373,7 +1373,7 @@ describe('PuzzleSession tray organization branches', () => {
 		const { session } = startedSession();
 		const outcome = session.dispatch({
 			type: 'update_tray_organization',
-			update: { type: 'reorder', pieceIds: [0, 999] }
+			update: { type: 'reorder', trayId: 'main', pieceIds: [0, 999] }
 		});
 		expect(outcome).toEqual({ type: 'tray_organization_noop', reason: 'invalid_update' });
 	});
