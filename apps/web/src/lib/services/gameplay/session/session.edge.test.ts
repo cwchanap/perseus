@@ -127,4 +127,23 @@ describe('PuzzleSession edge coverage', () => {
 			names: { side: 'Side pieces' }
 		});
 	});
+
+	it('clones restored completion seal data', () => {
+		const restored = restoredSnapshot();
+		restored.lifecycle = 'completed';
+		restored.sealedCompletion = {
+			runId: restored.runId,
+			resultClass: 'standard_timed',
+			timingQuality: 'known',
+			elapsedActiveSeconds: 5,
+			completedAt: 1_000,
+			localStats: { status: 'succeeded' },
+			serverSubmission: { status: 'succeeded' }
+		};
+
+		const session = createPuzzleSession(makeOptions({ restored }));
+
+		expect(session.getState().sealedCompletion).toEqual(restored.sealedCompletion);
+		expect(session.getState().sealedCompletion).not.toBe(restored.sealedCompletion);
+	});
 });
