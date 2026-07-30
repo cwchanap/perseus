@@ -254,7 +254,17 @@ export type PuzzleSessionAction =
 				| { status: 'succeeded' }
 				| { status: 'failed'; code: CompletionFailureCode; retryable: boolean };
 	  }
-	| { type: 'retry_completion_effects' }
+	| {
+			type: 'retry_completion_effects';
+			/**
+			 * When true, also reset `unauthorized` failures to pending. By
+			 * default (false/absent) unauthorized failures are skipped so
+			 * hydration auto-retry does not re-submit a guaranteed-to-fail
+			 * request for an anonymous user. The route sets this to true only
+			 * after a newly authenticated transition or an explicit user retry.
+			 */
+			includeUnauthorized?: boolean;
+	  }
 	| { type: 'resume_completion_effects' };
 
 // --- Outcomes -----------------------------------------------------------------

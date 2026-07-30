@@ -186,6 +186,8 @@ vi.mock('$lib/services/api', () => {
 		getReferenceImageUrl: vi.fn(() => imageSrc),
 		recordCompletion: vi.fn(() => Promise.resolve()),
 		recordCompletionLegacy: vi.fn(() => Promise.resolve()),
+		getPlayerSession: vi.fn(() => Promise.resolve({ authenticated: false })),
+		logoutPlayer: vi.fn(() => Promise.resolve()),
 		ApiError: MockApiError
 	};
 });
@@ -294,6 +296,7 @@ import {
 import type { LoadedPuzzleSource } from '$lib/services/puzzleSource';
 import { recordLocalCompletion, getBestTime } from '$lib/services/stats';
 import { serializeSession } from '$lib/services/gameplay/session/persistence';
+import { shuffleArray } from '$lib/utils/shuffle';
 import { goto } from '$app/navigation';
 
 function createPiece(
@@ -416,6 +419,24 @@ describe('Puzzle route gameplay integration', () => {
 		await expect
 			.element(page.getByLabelText('Rotation mode'))
 			.toHaveAttribute('aria-pressed', 'false');
+	});
+
+	it('shuffles the tray order on a fresh puzzle load (not sorted ascending)', async () => {
+		// The route must supply a shuffled initialTrayOrder for fresh sessions.
+		// Without it, freshState sorts piece IDs ascending, producing a
+		// deterministic tray on every first play. The pre-PR route shuffled
+		// every newly loaded puzzle; this test preserves that contract.
+		vi.mocked(shuffleArray).mockImplementationOnce(
+			<T>(values: T[]) => [...values].reverse() as T[]
+		);
+		await renderPuzzlePage();
+
+		// With the reversed shuffle, piece 1 should appear before piece 0.
+		const slot0 = await page.getByTestId('piece-slot-0').element();
+		const slot1 = await page.getByTestId('piece-slot-1').element();
+		const slots = document.querySelectorAll('[data-testid^="piece-slot-"]');
+		expect(slots[0]).toBe(slot1);
+		expect(slots[1]).toBe(slot0);
 	});
 
 	it('sizes the board responsively and makes tray slots match board cells', async () => {
@@ -1306,7 +1327,7 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.poll(() => page.getByTestId('server-retry-banner').query()).toBeNull();
 	});
 
-	it('shows NEW RECORD badge even when local stats storage fails', async () => {
+	it('does not claim NEW RECORD when local stats storage fails', async () => {
 		vi.mocked(recordLocalCompletion).mockReturnValueOnce({
 			status: 'failed',
 			isNewStandardBest: true,
@@ -1326,7 +1347,12 @@ describe('Puzzle route gameplay integration', () => {
 		await placePiece(1, 1, 0);
 
 		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
-		await expect.element(page.getByText('NEW RECORD')).toBeVisible();
+		// The in-memory new-best presentation is still available (PERSONAL BEST
+		// label + time), but the persisted-best wording (NEW RECORD) is
+		// suppressed because the local write did not succeed.
+		await expect.element(page.getByText('PERSONAL BEST')).toBeVisible();
+		await expect.element(page.getByTestId('new-best-unsaved')).toBeVisible();
+		await expect.poll(() => page.getByText('NEW RECORD').query()).toBeNull();
 	});
 
 	it('checkpoints the session to storage when serializeSession returns a snapshot', async () => {
@@ -1583,6 +1609,48 @@ describe('Puzzle page defensive guard coverage', () => {
 		await expect.element(page.getByTestId('puzzle-board')).toBeVisible();
 	});
 
+	it('persists the session immediately when the document becomes hidden', async () => {
+		vi.mocked(serializeSession).mockReturnValue({
+			schemaVersion: 1,
+			puzzleId: 'test-puzzle',
+			source: 'api',
+			lifecycle: 'active',
+			mode: 'timed',
+			runId: 'test-run-id',
+			origin: 'new',
+			elapsedActiveSeconds: 0,
+			timingQuality: 'known',
+			timerStarted: false,
+			placedPieces: [],
+			trayOrder: [0, 1],
+			rotationEnabled: false,
+			pieceRotations: {},
+			counters: { incorrectAttempts: 0, hintsUsed: 0, referenceActivations: 0 },
+			facts: { rotationUsed: false, hintUsed: false, ghostReferenceUsed: false },
+			hasUserActivity: false,
+			resultClass: 'standard_timed',
+			sealedCompletion: null,
+			lastUpdated: Date.now()
+		});
+		await renderPuzzlePage();
+
+		const callsBefore = sessionStorageSpies.saveSession.mock.calls.length;
+		const originalHidden = Object.getOwnPropertyDescriptor(document, 'hidden');
+		Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+		try {
+			document.dispatchEvent(new Event('visibilitychange'));
+		} finally {
+			if (originalHidden) {
+				Object.defineProperty(document, 'hidden', originalHidden);
+			}
+		}
+
+		// handleVisibilityChange must checkpointSession after suspending the
+		// timer, so a mobile browser that kills the hidden page without
+		// delivering pagehide does not lose the last visible interval.
+		expect(sessionStorageSpies.saveSession.mock.calls.length).toBeGreaterThan(callsBefore);
+	});
+
 	it('dispatches resume_completion_effects when restoring a session with a sealed completion', async () => {
 		// Configure the mock loadSession to return a snapshot with a
 		// sealedCompletion so the page dispatches resume_completion_effects
@@ -1608,6 +1676,35 @@ describe('Puzzle page defensive guard coverage', () => {
 		// The restored session is completed; resume_completion_effects is
 		// dispatched. The page should show the completed state ("ALL PIECES
 		// PLACED") without crashing.
+		await expect.element(page.getByText('ALL PIECES PLACED')).toBeVisible();
+	});
+
+	it('does not auto-retry unauthorized server submission failures on hydration', async () => {
+		// A persisted session with an unauthorized server-submission failure
+		// must NOT be re-submitted on hydration. The auto-retry skips
+		// unauthorized failures (includeUnauthorized defaults to false); only
+		// an explicit user retry or an auth transition triggers a retry.
+		sealedCompletionOverride.value = {
+			runId: 'test-run-id',
+			resultClass: 'standard_timed',
+			timingQuality: 'known',
+			elapsedActiveSeconds: 42,
+			completedAt: Date.now(),
+			localStats: { status: 'succeeded' },
+			serverSubmission: { status: 'failed', code: 'unauthorized', retryable: true }
+		};
+		setSavedProgress({
+			placedPieces: [
+				{ pieceId: 0, x: 0, y: 0 },
+				{ pieceId: 1, x: 1, y: 0 }
+			]
+		});
+
+		await renderPuzzlePage();
+
+		// The restored session is completed; the unauthorized failure is NOT
+		// re-submitted (recordCompletion is not called).
+		expect(recordCompletion).not.toHaveBeenCalled();
 		await expect.element(page.getByText('ALL PIECES PLACED')).toBeVisible();
 	});
 });

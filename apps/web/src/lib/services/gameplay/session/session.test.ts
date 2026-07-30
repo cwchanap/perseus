@@ -979,15 +979,24 @@ describe('PuzzleSession tray organization', () => {
 
 // --- Task 5: completion sealing and typed effects -----------------------------
 
-import type { SealedCompletion } from './types';
+import type { SealedCompletion, PuzzleSessionEventCallback } from './types';
 
-function completeOnePieceSession(overrides: Partial<{ mode: 'timed' | 'relaxed' }> = {}): {
+function completeOnePieceSession(
+	overrides: Partial<{
+		mode: 'timed' | 'relaxed';
+		onEvent: PuzzleSessionEventCallback;
+	}> = {}
+): {
 	session: ReturnType<typeof createPuzzleSession>;
 	seal: SealedCompletion;
 } {
-	const session = createPuzzleSession(
-		makeOptions({ metadata: makeMetadata(1), mode: overrides.mode })
-	);
+	const session = createPuzzleSession({
+		metadata: makeMetadata(1),
+		runIdFactory: makeRunIdFactory(),
+		clock: new ManualClock(),
+		mode: overrides.mode,
+		onEvent: overrides.onEvent
+	});
 	session.dispatch({ type: 'start' });
 	session.dispatch({ type: 'attempt_placement', pieceId: 0, x: 0, y: 0 });
 	const seal = session.getState().sealedCompletion;
@@ -1253,6 +1262,83 @@ describe('PuzzleSession completion effect coordination', () => {
 
 		const server = session.getState().sealedCompletion!.serverSubmission;
 		expect(server.status).toBe('failed');
+	});
+
+	it('retry skips unauthorized failures by default (hydration auto-retry)', () => {
+		const { session, seal } = completeOnePieceSession();
+		session.dispatch({
+			type: 'acknowledge_completion_effect',
+			runId: seal.runId,
+			effect: 'server_submission',
+			result: { status: 'failed', code: 'unauthorized', retryable: true }
+		});
+
+		const outcome = session.dispatch({ type: 'retry_completion_effects' });
+
+		// No retryable effects to reset (unauthorized is skipped), so no-op.
+		expect(outcome.type).toBe('completion_noop');
+		const server = session.getState().sealedCompletion!.serverSubmission;
+		expect(server.status).toBe('failed');
+	});
+
+	it('retry with includeUnauthorized resets unauthorized failures to pending', () => {
+		const emitted: string[] = [];
+		const { session, seal } = completeOnePieceSession({
+			onEvent: (event) => {
+				if (event.type === 'completion_effect_request') {
+					emitted.push(event.effect);
+				}
+			}
+		});
+		session.dispatch({
+			type: 'acknowledge_completion_effect',
+			runId: seal.runId,
+			effect: 'server_submission',
+			result: { status: 'failed', code: 'unauthorized', retryable: true }
+		});
+
+		emitted.length = 0;
+		const outcome = session.dispatch({
+			type: 'retry_completion_effects',
+			includeUnauthorized: true
+		});
+
+		expect(outcome.type).toBe('completion_sealed');
+		expect(emitted).toEqual(['server_submission']);
+		expect(session.getState().sealedCompletion!.serverSubmission.status).toBe('pending');
+	});
+
+	it('retry without flag retries non-unauthorized failures alongside unauthorized (skips only unauthorized)', () => {
+		const emitted: string[] = [];
+		const { session, seal } = completeOnePieceSession({
+			onEvent: (event) => {
+				if (event.type === 'completion_effect_request') {
+					emitted.push(event.effect);
+				}
+			}
+		});
+		session.dispatch({
+			type: 'acknowledge_completion_effect',
+			runId: seal.runId,
+			effect: 'local_stats',
+			result: { status: 'failed', code: 'storage_error', retryable: true }
+		});
+		session.dispatch({
+			type: 'acknowledge_completion_effect',
+			runId: seal.runId,
+			effect: 'server_submission',
+			result: { status: 'failed', code: 'unauthorized', retryable: true }
+		});
+
+		emitted.length = 0;
+		const outcome = session.dispatch({ type: 'retry_completion_effects' });
+
+		// local_stats (storage_error) is retried; unauthorized is skipped.
+		expect(outcome.type).toBe('completion_sealed');
+		expect(emitted).toEqual(['local_stats']);
+		const sealState = session.getState().sealedCompletion!;
+		expect(sealState.localStats.status).toBe('pending');
+		expect(sealState.serverSubmission.status).toBe('failed');
 	});
 
 	it('emits completion_effect_request only after subscribers see the sealed state', () => {

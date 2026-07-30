@@ -549,7 +549,7 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 		return { type: 'effect_acknowledged', effect };
 	}
 
-	function doRetryCompletionEffects(): PuzzleSessionOutcome {
+	function doRetryCompletionEffects(includeUnauthorized: boolean): PuzzleSessionOutcome {
 		const seal = state.sealedCompletion;
 		if (!seal) {
 			return { type: 'completion_noop', reason: 'board_incomplete' };
@@ -564,7 +564,15 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 			localStats = { status: 'pending' };
 			retryEffects.push('local_stats');
 		}
-		if (serverSubmission.status === 'failed' && serverSubmission.retryable) {
+		if (
+			serverSubmission.status === 'failed' &&
+			serverSubmission.retryable &&
+			// Skip unauthorized failures unless the caller explicitly opts in
+			// (e.g. after a newly authenticated transition). Hydration
+			// auto-retry must not re-submit a guaranteed-to-fail 401 for an
+			// anonymous user on every reload.
+			(includeUnauthorized || (serverSubmission as { code?: string }).code !== 'unauthorized')
+		) {
 			serverSubmission = { status: 'pending' };
 			retryEffects.push('server_submission');
 		}
@@ -735,7 +743,7 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 			case 'acknowledge_completion_effect':
 				return doAcknowledge(action.runId, action.effect, action.result);
 			case 'retry_completion_effects':
-				return doRetryCompletionEffects();
+				return doRetryCompletionEffects(action.includeUnauthorized ?? false);
 			case 'resume_completion_effects':
 				return doResumeCompletionEffects();
 			default:
