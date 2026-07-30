@@ -6,26 +6,20 @@
 		puzzle: Puzzle;
 		placedPieces: PlacedPiece[];
 		onPiecePlaced: (pieceId: number, x: number, y: number) => void;
-		onIncorrectPlacement: (pieceId: number) => void;
 		activeHintTarget?: { x: number; y: number } | null;
-		canPlacePiece?: (pieceId: number) => boolean;
 		onBoardPointerDown?: (event: PointerEvent) => void;
 		resolveImage: (piece: PuzzlePiece) => string;
 		selectedPieceId?: number | null;
-		onCancelSelection?: () => void;
 	}
 
 	let {
 		puzzle,
 		placedPieces,
 		onPiecePlaced,
-		onIncorrectPlacement,
 		activeHintTarget = null,
-		canPlacePiece,
 		onBoardPointerDown,
 		resolveImage,
-		selectedPieceId = null,
-		onCancelSelection
+		selectedPieceId = null
 	}: Props = $props();
 
 	let dragOverCell: { x: number; y: number } | null = $state(null);
@@ -56,20 +50,13 @@
 		const piece = puzzle.pieces.find((p) => p.id === pieceId);
 		if (!piece) return false;
 
-		if (canPlacePiece && !canPlacePiece(pieceId)) {
-			onIncorrectPlacement(pieceId);
-			return false;
-		}
-
-		if (isPiecePlaced(x, y, pieceId)) return false;
-
-		if (piece.correctX === x && piece.correctY === y) {
-			onPiecePlaced(pieceId, x, y);
-			return true;
-		} else {
-			onIncorrectPlacement(pieceId);
-			return false;
-		}
+		// Route every valid piece/coordinate to the session via onPiecePlaced.
+		// The session engine determines accept vs. reject and emits
+		// placement_rejected for rejected attempts; the route drives the shake
+		// animation from that event. Filtering here would bypass the session's
+		// canonical counter/timer/rejection logic.
+		onPiecePlaced(pieceId, x, y);
+		return true;
 	}
 
 	function handleDrop(event: DragEvent, x: number, y: number) {
@@ -91,10 +78,10 @@
 		if (event.key !== 'Enter' && event.key !== ' ') return;
 		if (selectedPieceId === null) return;
 		event.preventDefault();
-		const didPlace = placePiece(selectedPieceId, x, y);
-		if (didPlace) {
-			onCancelSelection?.();
-		}
+		// The session engine clears selectedPieceId on accepted placements;
+		// on rejected placements the selection is retained so the user can
+		// try another cell. placePiece routes the attempt to the session.
+		placePiece(selectedPieceId, x, y);
 	}
 
 	function getCellStyle(x: number, y: number): string {

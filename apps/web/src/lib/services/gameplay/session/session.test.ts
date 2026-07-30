@@ -1484,6 +1484,194 @@ describe('PuzzleSession retry and dispatch edge cases', () => {
 	});
 });
 
+describe('PuzzleSession resume_completion_effects (restore recovery)', () => {
+	it('is a no-op when there is no seal (board_incomplete)', () => {
+		const { session } = startedSession();
+		const outcome = session.dispatch({ type: 'resume_completion_effects' });
+		expect(outcome).toEqual({ type: 'completion_noop', reason: 'board_incomplete' });
+	});
+
+	it('re-emits completion_effect_request for pending effects after restore', () => {
+		const emitted: string[] = [];
+		const { session, seal } = completeOnePieceSession();
+		// After completion, both effects were already emitted during doComplete.
+		// Re-attach an event listener to observe resume emissions.
+		// (onEvent was set at construction; instead, re-create with a listener.)
+		const restoredSnapshot: PersistedPuzzleSessionV1 = {
+			schemaVersion: 1,
+			puzzleId: session.getState().puzzleId,
+			source: 'api',
+			lifecycle: 'completed',
+			mode: 'timed',
+			runId: seal.runId,
+			origin: 'resumed',
+			elapsedActiveSeconds: seal.elapsedActiveSeconds,
+			timingQuality: seal.timingQuality,
+			timerStarted: true,
+			placedPieces: session.getState().placedPieces.map((p) => ({ ...p })),
+			trayOrder: session.getState().trayOrder.slice(),
+			rotationEnabled: false,
+			pieceRotations: {},
+			counters: { ...session.getState().counters },
+			facts: { ...session.getState().facts },
+			hasUserActivity: true,
+			resultClass: seal.resultClass,
+			sealedCompletion: {
+				runId: seal.runId,
+				resultClass: seal.resultClass,
+				timingQuality: seal.timingQuality,
+				elapsedActiveSeconds: seal.elapsedActiveSeconds,
+				completedAt: seal.completedAt,
+				localStats: { status: 'pending' },
+				serverSubmission: { status: 'pending' }
+			},
+			lastUpdated: 0
+		};
+
+		const resumed = createPuzzleSession({
+			metadata: makeMetadata(1),
+			runIdFactory: makeRunIdFactory(),
+			clock: new ManualClock(),
+			restored: restoredSnapshot,
+			onEvent: (event) => {
+				if (event.type === 'completion_effect_request') {
+					emitted.push(event.effect);
+				}
+			}
+		});
+
+		const outcome = resumed.dispatch({ type: 'resume_completion_effects' });
+		expect(outcome.type).toBe('completion_sealed');
+		// Both pending effects should be re-emitted so the route can re-drive
+		// the local stats recording and server submission.
+		expect(emitted).toEqual(['local_stats', 'server_submission']);
+	});
+
+	it('does not re-emit succeeded or failed effects (idempotent)', () => {
+		const emitted: string[] = [];
+		const { session, seal } = completeOnePieceSession();
+		// Acknowledge both effects so neither is pending.
+		session.dispatch({
+			type: 'acknowledge_completion_effect',
+			runId: seal.runId,
+			effect: 'local_stats',
+			result: { status: 'succeeded' }
+		});
+		session.dispatch({
+			type: 'acknowledge_completion_effect',
+			runId: seal.runId,
+			effect: 'server_submission',
+			result: { status: 'succeeded' }
+		});
+
+		// Re-create with a listener and a snapshot reflecting succeeded state.
+		const restoredSnapshot: PersistedPuzzleSessionV1 = {
+			schemaVersion: 1,
+			puzzleId: session.getState().puzzleId,
+			source: 'api',
+			lifecycle: 'completed',
+			mode: 'timed',
+			runId: seal.runId,
+			origin: 'resumed',
+			elapsedActiveSeconds: seal.elapsedActiveSeconds,
+			timingQuality: seal.timingQuality,
+			timerStarted: true,
+			placedPieces: session.getState().placedPieces.map((p) => ({ ...p })),
+			trayOrder: session.getState().trayOrder.slice(),
+			rotationEnabled: false,
+			pieceRotations: {},
+			counters: { ...session.getState().counters },
+			facts: { ...session.getState().facts },
+			hasUserActivity: true,
+			resultClass: seal.resultClass,
+			sealedCompletion: {
+				runId: seal.runId,
+				resultClass: seal.resultClass,
+				timingQuality: seal.timingQuality,
+				elapsedActiveSeconds: seal.elapsedActiveSeconds,
+				completedAt: seal.completedAt,
+				localStats: { status: 'succeeded' },
+				serverSubmission: { status: 'succeeded' }
+			},
+			lastUpdated: 0
+		};
+
+		const resumed = createPuzzleSession({
+			metadata: makeMetadata(1),
+			runIdFactory: makeRunIdFactory(),
+			clock: new ManualClock(),
+			restored: restoredSnapshot,
+			onEvent: (event) => {
+				if (event.type === 'completion_effect_request') {
+					emitted.push(event.effect);
+				}
+			}
+		});
+
+		const outcome = resumed.dispatch({ type: 'resume_completion_effects' });
+		expect(outcome).toEqual({ type: 'completion_noop', reason: 'no_pending_effects' });
+		expect(emitted).toEqual([]);
+	});
+
+	it('re-emits only the pending effect when one is already succeeded', () => {
+		const emitted: string[] = [];
+		const { session, seal } = completeOnePieceSession();
+		session.dispatch({
+			type: 'acknowledge_completion_effect',
+			runId: seal.runId,
+			effect: 'local_stats',
+			result: { status: 'succeeded' }
+		});
+		// server_submission stays pending (simulating interrupted submission).
+
+		const restoredSnapshot: PersistedPuzzleSessionV1 = {
+			schemaVersion: 1,
+			puzzleId: session.getState().puzzleId,
+			source: 'api',
+			lifecycle: 'completed',
+			mode: 'timed',
+			runId: seal.runId,
+			origin: 'resumed',
+			elapsedActiveSeconds: seal.elapsedActiveSeconds,
+			timingQuality: seal.timingQuality,
+			timerStarted: true,
+			placedPieces: session.getState().placedPieces.map((p) => ({ ...p })),
+			trayOrder: session.getState().trayOrder.slice(),
+			rotationEnabled: false,
+			pieceRotations: {},
+			counters: { ...session.getState().counters },
+			facts: { ...session.getState().facts },
+			hasUserActivity: true,
+			resultClass: seal.resultClass,
+			sealedCompletion: {
+				runId: seal.runId,
+				resultClass: seal.resultClass,
+				timingQuality: seal.timingQuality,
+				elapsedActiveSeconds: seal.elapsedActiveSeconds,
+				completedAt: seal.completedAt,
+				localStats: { status: 'succeeded' },
+				serverSubmission: { status: 'pending' }
+			},
+			lastUpdated: 0
+		};
+
+		const resumed = createPuzzleSession({
+			metadata: makeMetadata(1),
+			runIdFactory: makeRunIdFactory(),
+			clock: new ManualClock(),
+			restored: restoredSnapshot,
+			onEvent: (event) => {
+				if (event.type === 'completion_effect_request') {
+					emitted.push(event.effect);
+				}
+			}
+		});
+
+		resumed.dispatch({ type: 'resume_completion_effects' });
+		expect(emitted).toEqual(['server_submission']);
+	});
+});
+
 describe('PuzzleSession subscribe', () => {
 	it('notifies subscribers on state change and supports unsubscribe', () => {
 		const { session } = startedSession();

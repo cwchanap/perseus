@@ -254,7 +254,8 @@ export type PuzzleSessionAction =
 				| { status: 'succeeded' }
 				| { status: 'failed'; code: CompletionFailureCode; retryable: boolean };
 	  }
-	| { type: 'retry_completion_effects' };
+	| { type: 'retry_completion_effects' }
+	| { type: 'resume_completion_effects' };
 
 // --- Outcomes -----------------------------------------------------------------
 
@@ -310,7 +311,8 @@ export type PuzzleSessionOutcome =
 				| 'already_sealed'
 				| 'board_incomplete'
 				| 'lifecycle_disallows'
-				| 'no_retryable_effects';
+				| 'no_retryable_effects'
+				| 'no_pending_effects';
 	  }
 	| { type: 'effect_acknowledged'; effect: CompletionEffect }
 	| { type: 'effect_acknowledgement_noop'; reason: 'run_id_mismatch' | 'effect_terminal' }

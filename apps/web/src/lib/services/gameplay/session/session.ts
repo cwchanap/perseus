@@ -583,6 +583,38 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 		return { type: 'completion_sealed', seal: updated };
 	}
 
+	/**
+	 * Re-emit completion_effect_request for any effect currently in the
+	 * `pending` state. Used after restoring a session from persistence so that
+	 * effects whose side effects never completed (e.g. a server submission
+	 * interrupted by a page close) are re-driven. Unlike retry, this does not
+	 * reset failed effects — it only resumes ones that were never acknowledged.
+	 * Idempotent: effects already succeeded/failed are left untouched.
+	 */
+	function doResumeCompletionEffects(): PuzzleSessionOutcome {
+		const seal = state.sealedCompletion;
+		if (!seal) {
+			return { type: 'completion_noop', reason: 'board_incomplete' };
+		}
+		const resumeEffects: CompletionEffect[] = [];
+		if (seal.localStats.status === 'pending') {
+			resumeEffects.push('local_stats');
+		}
+		if (seal.serverSubmission.status === 'pending') {
+			resumeEffects.push('server_submission');
+		}
+		if (resumeEffects.length === 0) {
+			return { type: 'completion_noop', reason: 'no_pending_effects' };
+		}
+		// Defer effect requests until after notify() for the same re-entrancy
+		// reason as doComplete/doRetryCompletionEffects.
+		notify();
+		for (const effect of resumeEffects) {
+			emit({ type: 'completion_effect_request', effect, seal });
+		}
+		return { type: 'completion_sealed', seal };
+	}
+
 	// --- Undo / redo ----------------------------------------------------------
 
 	function doUndo(): PuzzleSessionOutcome {
@@ -710,6 +742,8 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 				return doAcknowledge(action.runId, action.effect, action.result);
 			case 'retry_completion_effects':
 				return doRetryCompletionEffects();
+			case 'resume_completion_effects':
+				return doResumeCompletionEffects();
 			default:
 				return { type: 'lifecycle_noop', reason: 'invalid_transition' };
 		}
