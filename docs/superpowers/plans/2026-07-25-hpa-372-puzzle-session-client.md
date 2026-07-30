@@ -863,6 +863,7 @@ export interface PuzzleStatsV1 {
 	totalCompletions: number;
 	lastCompletedAt: number;
 	lastRecordedRunId: string | null;
+	recordedRunIds: string[];
 }
 ```
 
@@ -895,6 +896,7 @@ Test:
 - rotation, assisted, relaxed, and legacy-unknown leave best null/unchanged;
 - same `lastRecordedRunId` is idempotent;
 - new run ID increments;
+- stale run ID in `recordedRunIds` ring is idempotent (dedup across ring, not just most recent);
 - completion timestamp and standard-best timestamp semantics;
 - storage failure preserves in-memory new-best result but returns failed.
 

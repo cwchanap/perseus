@@ -229,20 +229,23 @@ vi.mock('$lib/services/progress', () => ({
 
 vi.mock('$lib/services/stats', () => ({
 	getBestTime: vi.fn(() => null),
-	saveCompletionTime: vi.fn(() => false),
-	recordLocalCompletion: vi.fn(() => ({
-		status: 'recorded' as const,
-		isNewStandardBest: false,
-		stats: {
-			schemaVersion: 1,
-			puzzleId: 'test-puzzle',
-			standardBestTime: null,
-			standardBestCompletedAt: null,
-			totalCompletions: 1,
-			lastCompletedAt: Date.now(),
-			lastRecordedRunId: 'test-run-id'
-		}
-	}))
+	saveCompletionTime: vi.fn(() => Promise.resolve(false)),
+	recordLocalCompletion: vi.fn(() =>
+		Promise.resolve({
+			status: 'recorded' as const,
+			isNewStandardBest: false,
+			stats: {
+				schemaVersion: 1,
+				puzzleId: 'test-puzzle',
+				standardBestTime: null,
+				standardBestCompletedAt: null,
+				totalCompletions: 1,
+				lastCompletedAt: Date.now(),
+				lastRecordedRunId: 'test-run-id',
+				recordedRunIds: ['test-run-id']
+			}
+		})
+	)
 }));
 
 vi.mock('$lib/stores/timer', () => ({
@@ -1193,7 +1196,7 @@ describe('Puzzle route gameplay integration', () => {
 	});
 
 	it('shows NEW RECORD badge when completion is a new personal best', async () => {
-		vi.mocked(recordLocalCompletion).mockReturnValueOnce({
+		vi.mocked(recordLocalCompletion).mockResolvedValueOnce({
 			status: 'recorded',
 			isNewStandardBest: true,
 			stats: {
@@ -1329,7 +1332,7 @@ describe('Puzzle route gameplay integration', () => {
 	});
 
 	it('does not claim NEW RECORD when local stats storage fails', async () => {
-		vi.mocked(recordLocalCompletion).mockReturnValueOnce({
+		vi.mocked(recordLocalCompletion).mockResolvedValueOnce({
 			status: 'failed',
 			isNewStandardBest: true,
 			inMemoryStats: {

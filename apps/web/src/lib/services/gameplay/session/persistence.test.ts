@@ -1110,6 +1110,23 @@ describe('loadPersistedSession additional validation branches', () => {
 		}
 	});
 
+	it('rejects an organization with a membership entry for an unknown piece ID', () => {
+		const snapshot = serializeSession(makeState(), 1_000)!;
+		const tampered = {
+			...snapshot,
+			organization: {
+				filter: 'all',
+				activeTray: 'main',
+				membership: { 99: 'g1' },
+				names: { g1: 'Group 1' }
+			}
+		};
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx)).toEqual({
+			status: 'invalid',
+			reason: 'cross_field_violation'
+		});
+	});
+
 	it('rejects a record with a non-numeric elapsedActiveSeconds', () => {
 		const snapshot = serializeSession(makeState(), 1_000)!;
 		const tampered = { ...snapshot, elapsedActiveSeconds: 'not-a-number' };

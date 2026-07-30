@@ -387,9 +387,9 @@
 		return { code: 'network_error', retryable: true };
 	}
 
-	function handleLocalStatsEffect(seal: SealedCompletion) {
+	async function handleLocalStatsEffect(seal: SealedCompletion) {
 		if (!puzzle) return;
-		const result = recordLocalCompletion(puzzle.id, seal);
+		const result = await recordLocalCompletion(puzzle.id, seal);
 
 		if (result.status === 'failed') {
 			isNewBest = result.isNewStandardBest;
@@ -458,7 +458,7 @@
 			showCelebration = true;
 		} else if (event.type === 'completion_effect_request') {
 			if (event.effect === 'local_stats') {
-				handleLocalStatsEffect(event.seal);
+				void handleLocalStatsEffect(event.seal);
 			} else if (event.effect === 'server_submission') {
 				void handleServerSubmissionEffect(event.seal);
 			}
@@ -671,8 +671,11 @@
 			// engine's hidden-time exclusion is correct from the first tick.
 			store.setDocumentHidden(typeof document !== 'undefined' ? document.hidden : false);
 
-			// Auto-start fresh sessions immediately.
-			if (!restored) {
+			// Auto-start fresh sessions and any restored setup session. A
+			// restored active/paused/completed snapshot is left untouched per
+			// the approved persistence contract; only setup needs the start
+			// transition to become playable.
+			if (!restored || restored.lifecycle === 'setup') {
 				store.dispatch({ type: 'start' });
 			}
 
@@ -934,6 +937,11 @@
 		sessionStorageAdapter.clearSession(puzzle.id);
 		sessionStore.dispatch({ type: 'restart' });
 		sessionStore.dispatch({ type: 'start' });
+		// Checkpoint immediately so the new run's tray order and retained
+		// organization survive an abrupt browser kill before the periodic
+		// interval fires. The approved persistence contract requires an
+		// immediate write after restart.
+		checkpointSession();
 		pendingViewportReset = true;
 	}
 
