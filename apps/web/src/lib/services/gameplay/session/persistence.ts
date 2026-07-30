@@ -446,7 +446,7 @@ function validateV1(
 	// any other combination is corruption.
 	if (placedPieces.length === knownPieceIds.size && lifecycle !== 'completed') return null;
 
-	const organization = validateOrganization(record.organization);
+	const organization = validateOrganization(record.organization, knownPieceIds);
 	if (organization === false) return null;
 
 	const viewport = validateViewport(record.viewport);
@@ -679,7 +679,10 @@ function validateSeal(
 	};
 }
 
-function validateOrganization(raw: unknown): PersistedTrayOrganization | false | undefined {
+function validateOrganization(
+	raw: unknown,
+	knownPieceIds: Set<number>
+): PersistedTrayOrganization | false | undefined {
 	if (raw === undefined) return undefined;
 	if (!raw || typeof raw !== 'object') return false;
 	const o = raw as Record<string, unknown>;
@@ -689,6 +692,9 @@ function validateOrganization(raw: unknown): PersistedTrayOrganization | false |
 	if (o.activeTray !== undefined && typeof o.activeTray !== 'string') return false;
 
 	// membership: piece-id (numeric key) -> tray-id (string value).
+	// Reject any piece ID not in the puzzle's known set — the runtime
+	// (doSelect, doAttemptPlacement) rejects unknown pieces via pieceById,
+	// and a persisted membership entry for an unknown piece is corruption.
 	const membership: Record<number, string> = {};
 	if (o.membership !== undefined) {
 		if (typeof o.membership !== 'object' || o.membership === null || Array.isArray(o.membership))
@@ -696,6 +702,7 @@ function validateOrganization(raw: unknown): PersistedTrayOrganization | false |
 		for (const [key, value] of Object.entries(o.membership as Record<string, unknown>)) {
 			const id = Number(key);
 			if (!Number.isInteger(id) || id < 0) return false;
+			if (!knownPieceIds.has(id)) return false;
 			if (typeof value !== 'string') return false;
 			membership[id] = value;
 		}

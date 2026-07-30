@@ -13,6 +13,7 @@ export interface PuzzleStatsV1 {
 	standardBestCompletedAt: number | null;
 	totalCompletions: number;
 	lastCompletedAt: number;
+	/** Most recently recorded run ID; also the newest entry in `recordedRunIds`. */
 	lastRecordedRunId: string | null;
 	/**
 	 * Bounded ring of recently recorded run IDs, newest first. Dedup is per
@@ -59,7 +60,8 @@ function parseStoredStats(raw: Record<string, unknown>, puzzleId: string): Puzzl
 		bestTime < 0 ||
 		typeof completedAt !== 'string' ||
 		typeof totalCompletions !== 'number' ||
-		!Number.isInteger(totalCompletions)
+		!Number.isInteger(totalCompletions) ||
+		totalCompletions < 0
 	) {
 		return null;
 	}
@@ -117,6 +119,7 @@ function validateV1(raw: Record<string, unknown>, puzzleId: string): PuzzleStats
 	const lastRecordedRunId = raw.lastRecordedRunId;
 	if (lastRecordedRunId !== null && typeof lastRecordedRunId !== 'string') return null;
 	const recordedRunIds = normalizeRecordedRunIds(raw.recordedRunIds, lastRecordedRunId);
+	if (recordedRunIds === false) return null;
 	return {
 		schemaVersion: CURRENT_STATS_SCHEMA_VERSION,
 		puzzleId,
@@ -130,16 +133,22 @@ function validateV1(raw: Record<string, unknown>, puzzleId: string): PuzzleStats
 }
 
 /**
- * Validate and normalize the recorded-run-id ring. Absent on older records;
- * seeded from `lastRecordedRunId` for back-compat. Each entry must be a
- * string; the ring is capped at MAX_RECORDED_RUN_IDS (newest first).
+ * Validate and normalize the recorded-run-id ring. Returns `false` for a
+ * present-but-malformed field (non-array, or array with non-string entries) —
+ * silently dropping entries would weaken replay dedup and let an old run count
+ * again. Absent (`undefined`) on older records is valid and seeded from
+ * `lastRecordedRunId` for back-compat. The ring is capped at
+ * MAX_RECORDED_RUN_IDS (newest first).
  */
-function normalizeRecordedRunIds(raw: unknown, lastRecordedRunId: string | null): string[] {
-	if (Array.isArray(raw)) {
-		const ids = raw.filter((id): id is string => typeof id === 'string');
-		return Array.from(new Set(ids)).slice(0, MAX_RECORDED_RUN_IDS);
+function normalizeRecordedRunIds(raw: unknown, lastRecordedRunId: string | null): string[] | false {
+	if (raw === undefined) {
+		return lastRecordedRunId ? [lastRecordedRunId] : [];
 	}
-	return lastRecordedRunId ? [lastRecordedRunId] : [];
+	if (!Array.isArray(raw)) return false;
+	for (const id of raw) {
+		if (typeof id !== 'string') return false;
+	}
+	return Array.from(new Set(raw)).slice(0, MAX_RECORDED_RUN_IDS);
 }
 
 export function getStats(puzzleId: string): PuzzleStatsV1 | null {
@@ -200,8 +209,25 @@ function freshStats(puzzleId: string): PuzzleStatsV1 {
  * Record a sealed run in local statistics. Idempotent per run id: a replayed
  * run does not increment totals. Only an eligible standard-timed known run with
  * non-null elapsed may create or improve the canonical best.
+ *
+ * Cross-tab safe: the read-modify-write is serialized per puzzle via a Web
+ * Lock so two tabs completing different runs concurrently cannot both read
+ * the same aggregate and overwrite one another. Falls back to an unlocked
+ * write when the Web Locks API is unavailable (SSR, legacy browsers).
  */
-export function recordLocalCompletion(
+export async function recordLocalCompletion(
+	puzzleId: string,
+	seal: SealedCompletion
+): Promise<RecordLocalCompletionResult> {
+	if (typeof navigator !== 'undefined' && navigator.locks?.request) {
+		return navigator.locks.request(`perseus-stats-${puzzleId}`, () =>
+			recordLocalCompletionUnsafe(puzzleId, seal)
+		);
+	}
+	return recordLocalCompletionUnsafe(puzzleId, seal);
+}
+
+function recordLocalCompletionUnsafe(
 	puzzleId: string,
 	seal: SealedCompletion
 ): RecordLocalCompletionResult {
@@ -261,7 +287,7 @@ export function clearStats(puzzleId: string): void {
  * recordLocalCompletion (HPA-372 Tasks 10/11). Returns the in-memory new-best
  * verdict even when the local write fails.
  */
-export function saveCompletionTime(puzzleId: string, timeSeconds: number): boolean {
+export async function saveCompletionTime(puzzleId: string, timeSeconds: number): Promise<boolean> {
 	const seal: SealedCompletion = {
 		runId: `compat-${timeSeconds}-${Math.floor(Math.random() * 1e9)}-${Date.now()}`,
 		resultClass: 'standard_timed',
@@ -271,5 +297,5 @@ export function saveCompletionTime(puzzleId: string, timeSeconds: number): boole
 		localStats: { status: 'succeeded' },
 		serverSubmission: { status: 'not_applicable' }
 	};
-	return recordLocalCompletion(puzzleId, seal).isNewStandardBest;
+	return (await recordLocalCompletion(puzzleId, seal)).isNewStandardBest;
 }

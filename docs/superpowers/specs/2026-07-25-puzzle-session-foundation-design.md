@@ -533,6 +533,7 @@ interface PuzzleStatsV1 {
 	totalCompletions: number;
 	lastCompletedAt: number;
 	lastRecordedRunId: string | null;
+	recordedRunIds: string[];
 }
 ```
 
@@ -545,8 +546,11 @@ existing ISO `completedAt` string into that unit. A missing or unparseable times
 Recording a sealed run always increments `totalCompletions` once. Only an eligible
 `standard_timed` completion may create or improve `standardBestTime`. UI consumers expose the
 standard best through the existing `getBestTime` compatibility function and render no best
-badge when the value is null. `lastRecordedRunId` makes retrying or rehydrating the current
-completed session idempotent without retaining an unbounded local run history. This is safe
+badge when the value is null. `lastRecordedRunId` and the bounded `recordedRunIds` ring (newest
+first, capped at 32 entries) make retrying or rehydrating a completed session idempotent without
+retaining an unbounded local run history. Dedup is per run ID across the entire ring, not just
+the most recent run, so a stale pending session replaying an older run after a newer completion
+does not double count. This is safe
 because each puzzle has one persisted active/latest session key; restart replaces that
 snapshot before a later run can complete.
 

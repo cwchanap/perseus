@@ -56,29 +56,29 @@ describe('Stats Service', () => {
 			expect(stats?.lastRecordedRunId).toBeNull();
 		});
 
-		it('getBestTime returns the standard best', () => {
-			recordLocalCompletion(puzzleId, makeSeal({ elapsedActiveSeconds: 90 }));
+		it('getBestTime returns the standard best', async () => {
+			await recordLocalCompletion(puzzleId, makeSeal({ elapsedActiveSeconds: 90 }));
 			expect(getBestTime(puzzleId)).toBe(90);
 		});
 
-		it('getBestTime returns null when no standard best exists', () => {
-			recordLocalCompletion(puzzleId, makeSeal({ resultClass: 'rotation_timed' }));
+		it('getBestTime returns null when no standard best exists', async () => {
+			await recordLocalCompletion(puzzleId, makeSeal({ resultClass: 'rotation_timed' }));
 			expect(getBestTime(puzzleId)).toBeNull();
 		});
 	});
 
 	describe('recordLocalCompletion eligibility', () => {
-		it('records an eligible standard-timed run as the standard best', () => {
-			const result = recordLocalCompletion(puzzleId, makeSeal({ elapsedActiveSeconds: 100 }));
+		it('records an eligible standard-timed run as the standard best', async () => {
+			const result = await recordLocalCompletion(puzzleId, makeSeal({ elapsedActiveSeconds: 100 }));
 			expect(result.status).toBe('recorded');
 			expect(result.isNewStandardBest).toBe(true);
 			expect(getStats(puzzleId)?.standardBestTime).toBe(100);
 			expect(getStats(puzzleId)?.totalCompletions).toBe(1);
 		});
 
-		it('improves the standard best when the new time is faster', () => {
-			recordLocalCompletion(puzzleId, makeSeal({ elapsedActiveSeconds: 100, runId: 'r1' }));
-			const result = recordLocalCompletion(
+		it('improves the standard best when the new time is faster', async () => {
+			await recordLocalCompletion(puzzleId, makeSeal({ elapsedActiveSeconds: 100, runId: 'r1' }));
+			const result = await recordLocalCompletion(
 				puzzleId,
 				makeSeal({ elapsedActiveSeconds: 80, runId: 'r2' })
 			);
@@ -87,9 +87,9 @@ describe('Stats Service', () => {
 			expect(getStats(puzzleId)?.totalCompletions).toBe(2);
 		});
 
-		it('keeps the standard best when the new time is slower', () => {
-			recordLocalCompletion(puzzleId, makeSeal({ elapsedActiveSeconds: 80, runId: 'r1' }));
-			const result = recordLocalCompletion(
+		it('keeps the standard best when the new time is slower', async () => {
+			await recordLocalCompletion(puzzleId, makeSeal({ elapsedActiveSeconds: 80, runId: 'r1' }));
+			const result = await recordLocalCompletion(
 				puzzleId,
 				makeSeal({ elapsedActiveSeconds: 120, runId: 'r2' })
 			);
@@ -97,16 +97,22 @@ describe('Stats Service', () => {
 			expect(getStats(puzzleId)?.standardBestTime).toBe(80);
 		});
 
-		it('counts a rotation_timed run toward totals but never the best', () => {
-			recordLocalCompletion(puzzleId, makeSeal({ resultClass: 'rotation_timed', runId: 'r1' }));
+		it('counts a rotation_timed run toward totals but never the best', async () => {
+			await recordLocalCompletion(
+				puzzleId,
+				makeSeal({ resultClass: 'rotation_timed', runId: 'r1' })
+			);
 			expect(getStats(puzzleId)?.standardBestTime).toBeNull();
 			expect(getStats(puzzleId)?.totalCompletions).toBe(1);
 		});
 
-		it('counts an assisted/relaxed/legacy-unknown run without touching the best', () => {
-			recordLocalCompletion(puzzleId, makeSeal({ resultClass: 'assisted_timed', runId: 'r1' }));
-			recordLocalCompletion(puzzleId, makeSeal({ resultClass: 'relaxed', runId: 'r2' }));
-			recordLocalCompletion(
+		it('counts an assisted/relaxed/legacy-unknown run without touching the best', async () => {
+			await recordLocalCompletion(
+				puzzleId,
+				makeSeal({ resultClass: 'assisted_timed', runId: 'r1' })
+			);
+			await recordLocalCompletion(puzzleId, makeSeal({ resultClass: 'relaxed', runId: 'r2' }));
+			await recordLocalCompletion(
 				puzzleId,
 				makeSeal({ timingQuality: 'legacy_unknown', elapsedActiveSeconds: null, runId: 'r3' })
 			);
@@ -114,26 +120,26 @@ describe('Stats Service', () => {
 			expect(getStats(puzzleId)?.totalCompletions).toBe(3);
 		});
 
-		it('is idempotent per run id (replay does not increment totals)', () => {
-			recordLocalCompletion(puzzleId, makeSeal({ runId: 'r1' }));
-			const replay = recordLocalCompletion(puzzleId, makeSeal({ runId: 'r1' }));
+		it('is idempotent per run id (replay does not increment totals)', async () => {
+			await recordLocalCompletion(puzzleId, makeSeal({ runId: 'r1' }));
+			const replay = await recordLocalCompletion(puzzleId, makeSeal({ runId: 'r1' }));
 			expect(replay.status).toBe('replayed');
 			expect(getStats(puzzleId)?.totalCompletions).toBe(1);
 		});
 
-		it('is idempotent per run id across an intervening completion (A -> B -> A)', () => {
+		it('is idempotent per run id across an intervening completion (A -> B -> A)', async () => {
 			// Stale pending sessions from different tabs can replay an older run
 			// after a newer completion has already been recorded. Dedup must be
 			// per-run-id, not just against the most recent run.
-			recordLocalCompletion(puzzleId, makeSeal({ runId: 'A' }));
-			recordLocalCompletion(puzzleId, makeSeal({ runId: 'B' }));
-			const replay = recordLocalCompletion(puzzleId, makeSeal({ runId: 'A' }));
+			await recordLocalCompletion(puzzleId, makeSeal({ runId: 'A' }));
+			await recordLocalCompletion(puzzleId, makeSeal({ runId: 'B' }));
+			const replay = await recordLocalCompletion(puzzleId, makeSeal({ runId: 'A' }));
 			expect(replay.status).toBe('replayed');
 			expect(getStats(puzzleId)?.totalCompletions).toBe(2);
 		});
 
-		it('reports failure but preserves the in-memory new-best verdict when storage throws', () => {
-			recordLocalCompletion(puzzleId, makeSeal({ elapsedActiveSeconds: 100, runId: 'r1' }));
+		it('reports failure but preserves the in-memory new-best verdict when storage throws', async () => {
+			await recordLocalCompletion(puzzleId, makeSeal({ elapsedActiveSeconds: 100, runId: 'r1' }));
 			const real = localStorage;
 			vi.stubGlobal('localStorage', {
 				getItem: (k: string) => real.getItem(k),
@@ -146,7 +152,7 @@ describe('Stats Service', () => {
 				key: () => null
 			});
 			try {
-				const result = recordLocalCompletion(
+				const result = await recordLocalCompletion(
 					puzzleId,
 					makeSeal({ elapsedActiveSeconds: 50, runId: 'r2' })
 				);
@@ -159,16 +165,16 @@ describe('Stats Service', () => {
 	});
 
 	describe('saveCompletionTime (compat shim)', () => {
-		it('returns the new-best boolean for the legacy caller', () => {
-			expect(saveCompletionTime(puzzleId, 100)).toBe(true);
-			expect(saveCompletionTime(puzzleId, 80)).toBe(true);
-			expect(saveCompletionTime(puzzleId, 200)).toBe(false);
+		it('returns the new-best boolean for the legacy caller', async () => {
+			expect(await saveCompletionTime(puzzleId, 100)).toBe(true);
+			expect(await saveCompletionTime(puzzleId, 80)).toBe(true);
+			expect(await saveCompletionTime(puzzleId, 200)).toBe(false);
 		});
 	});
 
 	describe('clearStats', () => {
-		it('removes stats from localStorage', () => {
-			recordLocalCompletion(puzzleId, makeSeal());
+		it('removes stats from localStorage', async () => {
+			await recordLocalCompletion(puzzleId, makeSeal());
 			clearStats(puzzleId);
 			expect(getStats(puzzleId)).toBeNull();
 		});
@@ -272,6 +278,71 @@ describe('Stats Service', () => {
 				})
 			);
 			expect(getStats(puzzleId)).toBeNull();
+		});
+
+		it('returns null for a legacy record with a negative totalCompletions', () => {
+			localStorage.setItem(
+				`puzzle-stats-${puzzleId}`,
+				JSON.stringify({
+					puzzleId,
+					bestTime: 90,
+					completedAt: '2024-01-01T00:00:00.000Z',
+					totalCompletions: -1
+				})
+			);
+			expect(getStats(puzzleId)).toBeNull();
+		});
+
+		it('returns null for a v1 record with a non-array recordedRunIds', () => {
+			localStorage.setItem(
+				`puzzle-stats-${puzzleId}`,
+				JSON.stringify({
+					schemaVersion: 1,
+					puzzleId,
+					standardBestTime: null,
+					standardBestCompletedAt: null,
+					totalCompletions: 1,
+					lastCompletedAt: 1000,
+					lastRecordedRunId: 'r1',
+					recordedRunIds: 'r1'
+				})
+			);
+			expect(getStats(puzzleId)).toBeNull();
+		});
+
+		it('returns null for a v1 record with a recordedRunIds array containing non-strings', () => {
+			localStorage.setItem(
+				`puzzle-stats-${puzzleId}`,
+				JSON.stringify({
+					schemaVersion: 1,
+					puzzleId,
+					standardBestTime: null,
+					standardBestCompletedAt: null,
+					totalCompletions: 1,
+					lastCompletedAt: 1000,
+					lastRecordedRunId: 'r1',
+					recordedRunIds: ['r1', 123]
+				})
+			);
+			expect(getStats(puzzleId)).toBeNull();
+		});
+
+		it('seeds recordedRunIds from lastRecordedRunId when absent (back-compat)', () => {
+			localStorage.setItem(
+				`puzzle-stats-${puzzleId}`,
+				JSON.stringify({
+					schemaVersion: 1,
+					puzzleId,
+					standardBestTime: null,
+					standardBestCompletedAt: null,
+					totalCompletions: 1,
+					lastCompletedAt: 1000,
+					lastRecordedRunId: 'r1'
+				})
+			);
+			const stats = getStats(puzzleId);
+			expect(stats).not.toBeNull();
+			expect(stats?.recordedRunIds).toEqual(['r1']);
 		});
 
 		it('returns null for a v1 record with a puzzleId mismatch', () => {
