@@ -26,6 +26,7 @@ function validState(overrides: Partial<PuzzleSessionState> = {}): PuzzleSessionS
 		selectedPieceId: null,
 		activeReferenceMode: null,
 		organization: null,
+		viewport: null,
 		counters: { incorrectAttempts: 0, hintsUsed: 0, referenceActivations: 0 },
 		facts: { rotationUsed: false, hintUsed: false, ghostReferenceUsed: false },
 		hasUserActivity: true,

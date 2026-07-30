@@ -13,7 +13,8 @@ const context: SessionValidationContext = {
 	pieceIds: [0],
 	gridCols: 1,
 	gridRows: 1,
-	pieceCount: 1
+	pieceCount: 1,
+	pieces: [{ id: 0, correctX: 0, correctY: 0 }]
 };
 const snapshot: PersistedPuzzleSessionV1 = {
 	schemaVersion: 1,

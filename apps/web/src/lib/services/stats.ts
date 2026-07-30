@@ -14,10 +14,19 @@ export interface PuzzleStatsV1 {
 	totalCompletions: number;
 	lastCompletedAt: number;
 	lastRecordedRunId: string | null;
+	/**
+	 * Bounded ring of recently recorded run IDs, newest first. Dedup is per
+	 * run ID across more than just the most recent run, so a stale pending
+	 * session replaying an older run after a newer completion does not double
+	 * count. Absent on older records; seeded from `lastRecordedRunId`.
+	 */
+	recordedRunIds: string[];
 }
 
 const STATS_KEY_PREFIX = 'puzzle-stats-';
 const CURRENT_STATS_SCHEMA_VERSION = 1;
+/** Maximum number of run IDs retained for replay dedup. */
+const MAX_RECORDED_RUN_IDS = 32;
 
 export type RecordLocalCompletionResult =
 	| { status: 'recorded'; isNewStandardBest: boolean; stats: PuzzleStatsV1 }
@@ -63,7 +72,8 @@ function parseStoredStats(raw: Record<string, unknown>, puzzleId: string): Puzzl
 		standardBestCompletedAt: ts,
 		totalCompletions,
 		lastCompletedAt: ts,
-		lastRecordedRunId: null
+		lastRecordedRunId: null,
+		recordedRunIds: []
 	};
 }
 
@@ -106,6 +116,7 @@ function validateV1(raw: Record<string, unknown>, puzzleId: string): PuzzleStats
 	}
 	const lastRecordedRunId = raw.lastRecordedRunId;
 	if (lastRecordedRunId !== null && typeof lastRecordedRunId !== 'string') return null;
+	const recordedRunIds = normalizeRecordedRunIds(raw.recordedRunIds, lastRecordedRunId);
 	return {
 		schemaVersion: CURRENT_STATS_SCHEMA_VERSION,
 		puzzleId,
@@ -113,8 +124,22 @@ function validateV1(raw: Record<string, unknown>, puzzleId: string): PuzzleStats
 		standardBestCompletedAt: (standardBestCompletedAt as number | null) ?? null,
 		totalCompletions: totalCompletions as number,
 		lastCompletedAt: lastCompletedAt as number,
-		lastRecordedRunId: (lastRecordedRunId as string | null) ?? null
+		lastRecordedRunId: (lastRecordedRunId as string | null) ?? null,
+		recordedRunIds
 	};
+}
+
+/**
+ * Validate and normalize the recorded-run-id ring. Absent on older records;
+ * seeded from `lastRecordedRunId` for back-compat. Each entry must be a
+ * string; the ring is capped at MAX_RECORDED_RUN_IDS (newest first).
+ */
+function normalizeRecordedRunIds(raw: unknown, lastRecordedRunId: string | null): string[] {
+	if (Array.isArray(raw)) {
+		const ids = raw.filter((id): id is string => typeof id === 'string');
+		return Array.from(new Set(ids)).slice(0, MAX_RECORDED_RUN_IDS);
+	}
+	return lastRecordedRunId ? [lastRecordedRunId] : [];
 }
 
 export function getStats(puzzleId: string): PuzzleStatsV1 | null {
@@ -166,7 +191,8 @@ function freshStats(puzzleId: string): PuzzleStatsV1 {
 		standardBestCompletedAt: null,
 		totalCompletions: 0,
 		lastCompletedAt: 0,
-		lastRecordedRunId: null
+		lastRecordedRunId: null,
+		recordedRunIds: []
 	};
 }
 
@@ -181,7 +207,17 @@ export function recordLocalCompletion(
 ): RecordLocalCompletionResult {
 	const base = getStats(puzzleId) ?? freshStats(puzzleId);
 
-	if (base.lastRecordedRunId === seal.runId) {
+	// Dedup against the bounded ring of recorded run IDs, not just the most
+	// recent. A stale pending session can replay an older run after a newer
+	// completion; such a replay must not increment totals.
+	const recorded = new Set(
+		base.recordedRunIds.length > 0
+			? base.recordedRunIds
+			: base.lastRecordedRunId
+				? [base.lastRecordedRunId]
+				: []
+	);
+	if (recorded.has(seal.runId)) {
 		return { status: 'replayed', isNewStandardBest: false, stats: base };
 	}
 
@@ -190,6 +226,8 @@ export function recordLocalCompletion(
 	const isNewStandardBest =
 		eligible && (base.standardBestTime === null || elapsed < base.standardBestTime);
 
+	const nextRunIds = [seal.runId, ...base.recordedRunIds].slice(0, MAX_RECORDED_RUN_IDS);
+
 	const next: PuzzleStatsV1 = {
 		schemaVersion: CURRENT_STATS_SCHEMA_VERSION,
 		puzzleId,
@@ -197,7 +235,8 @@ export function recordLocalCompletion(
 		standardBestCompletedAt: isNewStandardBest ? seal.completedAt : base.standardBestCompletedAt,
 		totalCompletions: base.totalCompletions + 1,
 		lastCompletedAt: Math.max(base.lastCompletedAt, seal.completedAt),
-		lastRecordedRunId: seal.runId
+		lastRecordedRunId: seal.runId,
+		recordedRunIds: nextRunIds
 	};
 
 	try {

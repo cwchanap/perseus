@@ -212,11 +212,11 @@ function makeState(overrides: Partial<PuzzleSessionState> = {}): PuzzleSessionSt
 		pieceCount: 4,
 		gridCols: 2,
 		gridRows: 2,
+		// Partial board: an in-progress active session. A full board without a
+		// sealed completion is a dead state and must be rejected by the loader.
 		placedPieces: [
 			{ pieceId: 0, x: 0, y: 0 },
-			{ pieceId: 1, x: 1, y: 0 },
-			{ pieceId: 2, x: 0, y: 1 },
-			{ pieceId: 3, x: 1, y: 1 }
+			{ pieceId: 1, x: 1, y: 0 }
 		],
 		trayOrder: [0, 1, 2, 3],
 		rotationEnabled: false,
@@ -224,6 +224,7 @@ function makeState(overrides: Partial<PuzzleSessionState> = {}): PuzzleSessionSt
 		selectedPieceId: null,
 		activeReferenceMode: null,
 		organization: null,
+		viewport: null,
 		counters: { incorrectAttempts: 1, hintsUsed: 0, referenceActivations: 0 },
 		facts: { rotationUsed: false, hintUsed: false, ghostReferenceUsed: false },
 		hasUserActivity: true,
@@ -241,7 +242,13 @@ const ctx: SessionValidationContext = {
 	pieceIds: [0, 1, 2, 3],
 	gridCols: 2,
 	gridRows: 2,
-	pieceCount: 4
+	pieceCount: 4,
+	pieces: [
+		{ id: 0, correctX: 0, correctY: 0 },
+		{ id: 1, correctX: 1, correctY: 0 },
+		{ id: 2, correctX: 0, correctY: 1 },
+		{ id: 3, correctX: 1, correctY: 1 }
+	]
 };
 
 describe('serializeSession', () => {
@@ -276,6 +283,24 @@ describe('serializeSession', () => {
 	it('omits organization when null', () => {
 		const snapshot = serializeSession(makeState({ organization: null }), 1_000)!;
 		expect(snapshot.organization).toBeUndefined();
+	});
+
+	it('preserves a recognized viewport across a load round-trip even when unset at runtime', () => {
+		// A v1 snapshot carrying optional viewport state must survive load
+		// (and subsequent re-serialization) even though the current route does
+		// not populate it — the codec preserves recognized optional fields.
+		const base = serializeSession(makeState({ viewport: null }), 1_000)!;
+		const withViewport = { ...base, viewport: { zoom: 1.5, panX: -10, panY: 20 } };
+
+		const loaded = loadPersistedSession(JSON.stringify(withViewport), ctx);
+		expect(loaded.status).toBe('loaded');
+		if (loaded.status === 'loaded') {
+			expect(loaded.snapshot.viewport).toEqual({ zoom: 1.5, panX: -10, panY: 20 });
+		}
+
+		// An invalid viewport shape is rejected rather than silently dropped.
+		const bad = { ...base, viewport: { zoom: 'big', panX: 0, panY: 0 } };
+		expect(loadPersistedSession(JSON.stringify(bad), ctx).status).toBe('invalid');
 	});
 });
 
@@ -725,7 +750,8 @@ describe('loadPersistedSession additional validation branches', () => {
 		const snapshot = serializeSession(
 			makeState({
 				facts: { rotationUsed: false, hintUsed: true, ghostReferenceUsed: false },
-				resultClass: 'assisted_timed'
+				resultClass: 'assisted_timed',
+				counters: { incorrectAttempts: 1, hintsUsed: 1, referenceActivations: 0 }
 			}),
 			1_000
 		)!;
@@ -1122,7 +1148,16 @@ describe('loadPersistedSession additional validation branches', () => {
 			serverSubmission: { status: 'failed', code: 'network_error', retryable: true }
 		};
 		const snapshot = serializeSession(
-			makeState({ lifecycle: 'completed', sealedCompletion: seal }),
+			makeState({
+				lifecycle: 'completed',
+				sealedCompletion: seal,
+				placedPieces: [
+					{ pieceId: 0, x: 0, y: 0 },
+					{ pieceId: 1, x: 1, y: 0 },
+					{ pieceId: 2, x: 0, y: 1 },
+					{ pieceId: 3, x: 1, y: 1 }
+				]
+			}),
 			1_000
 		)!;
 		const result = loadPersistedSession(JSON.stringify(snapshot), ctx);
@@ -1147,7 +1182,17 @@ describe('loadPersistedSession additional validation branches', () => {
 			serverSubmission: { status: 'not_applicable' }
 		};
 		const snapshot = serializeSession(
-			makeState({ lifecycle: 'completed', sealedCompletion: seal, source: 'local' }),
+			makeState({
+				lifecycle: 'completed',
+				sealedCompletion: seal,
+				source: 'local',
+				placedPieces: [
+					{ pieceId: 0, x: 0, y: 0 },
+					{ pieceId: 1, x: 1, y: 0 },
+					{ pieceId: 2, x: 0, y: 1 },
+					{ pieceId: 3, x: 1, y: 1 }
+				]
+			}),
 			1_000
 		)!;
 		const result = loadPersistedSession(JSON.stringify(snapshot), localCtx);

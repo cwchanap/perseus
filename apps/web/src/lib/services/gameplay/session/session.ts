@@ -238,10 +238,18 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 		if (state.placedPieces.length > 0) {
 			return { type: 'rotation_mode_noop', reason: 'pieces_already_placed' };
 		}
+		const previous = state.rotationEnabled;
 		const next = enabled;
-		if (next && !state.rotationEnabled) {
+		if (next && !previous) {
 			const ids = metadata.pieces.map((piece) => piece.id);
 			state.pieceRotations = createRotations(ids);
+		}
+		// Enabling or disabling rotation is a persistent state change that
+		// permanently affects result eligibility, so it must count as user
+		// activity for resume discovery (isResumable). Required by the
+		// approved persistence contract.
+		if (next !== previous) {
+			state.hasUserActivity = true;
 		}
 		state.rotationEnabled = next;
 		if (next) {
@@ -812,6 +820,7 @@ function freshState(options: CreatePuzzleSessionOptions): PuzzleSessionState {
 		selectedPieceId: null,
 		activeReferenceMode: null,
 		organization: null,
+		viewport: null,
 		counters: { incorrectAttempts: 0, hintsUsed: 0, referenceActivations: 0 },
 		facts: { rotationUsed: false, hintUsed: false, ghostReferenceUsed: false },
 		hasUserActivity: false,
@@ -846,6 +855,7 @@ function hydrate(
 		selectedPieceId: null,
 		activeReferenceMode: null,
 		organization: snapshot.organization ? cloneOrganization(snapshot.organization) : null,
+		viewport: snapshot.viewport ? { ...snapshot.viewport } : null,
 		counters: { ...snapshot.counters },
 		facts: { ...snapshot.facts },
 		hasUserActivity: snapshot.hasUserActivity,
