@@ -25,7 +25,8 @@ import type {
 	ResultClass,
 	CompletionEffectState,
 	CompletionFailureCode,
-	SealedCompletion
+	SealedCompletion,
+	PersistedViewport
 } from './types';
 import { CURRENT_SESSION_SCHEMA_VERSION } from './types';
 import {
@@ -130,6 +131,22 @@ const COMPLETION_FAILURE_CODE_SET = new Set<string>([
 ]);
 const VALID_ORG_FILTERS = new Set(['all', 'corners', 'edges', 'center']);
 
+/**
+ * Whether a completion failure code is retryable. Mirrors the route's
+ * mapCompletionError policy: storage/network/internal/unauthorized are
+ * retryable; bad_request/not_found/run_id_conflict/quota are terminal.
+ * `unauthorized` is retryable so the engine's includeUnauthorized gate (not
+ * the persisted flag) controls actual re-submission.
+ */
+function isFailureRetryable(code: CompletionFailureCode): boolean {
+	return (
+		code === 'storage_error' ||
+		code === 'network_error' ||
+		code === 'internal_error' ||
+		code === 'unauthorized'
+	);
+}
+
 function progressKey(puzzleId: string): string {
 	return `${PROGRESS_KEY_PREFIX}${puzzleId}`;
 }
@@ -172,6 +189,9 @@ export function serializeSession(
 	};
 	if (state.organization) {
 		snapshot.organization = cloneOrganization(state.organization);
+	}
+	if (state.viewport) {
+		snapshot.viewport = { ...state.viewport };
 	}
 	return snapshot;
 }
@@ -372,8 +392,29 @@ function validateV1(
 					: 'standard_timed';
 	if (resultClass !== expectedClass) return null;
 
+	// Cross-field consistency between monotonic facts and the persisted
+	// counters/state that produced them. resultClass alone does not catch a
+	// snapshot whose facts disagree with the rest of the record: e.g.
+	// rotationEnabled: true with rotationUsed: false, or hintsUsed: 5 with
+	// hintUsed: false. Such a record could load and later complete with the
+	// wrong eligibility.
+	const hasRotations = rotationEnabled || Object.keys(pieceRotations).length > 0;
+	if (hasRotations && !derivedFacts.rotationUsed) return null;
+	if (counters.hintsUsed > 0 && !derivedFacts.hintUsed) return null;
+	if (derivedFacts.hintUsed && counters.hintsUsed <= 0) return null;
+	if (derivedFacts.ghostReferenceUsed && counters.referenceActivations <= 0) return null;
+
 	const hasUserActivity = record.hasUserActivity;
 	if (typeof hasUserActivity !== 'boolean') return null;
+	// Placements, counted actions, or a monotonic rotation fact all imply the
+	// player has interacted. A snapshot with any of these but hasUserActivity
+	// false is corruption and would be hidden by resume discovery.
+	const hasCountedAction =
+		placedPieces.length > 0 ||
+		counters.incorrectAttempts > 0 ||
+		counters.hintsUsed > 0 ||
+		counters.referenceActivations > 0;
+	if ((hasCountedAction || derivedFacts.rotationUsed) && !hasUserActivity) return null;
 
 	const sealedCompletion = validateSeal(
 		record.sealedCompletion,
@@ -398,9 +439,18 @@ function validateV1(
 	// completion only on a full board; a completed snapshot with missing
 	// placements is corruption.
 	if (lifecycle === 'completed' && placedPieces.length !== knownPieceIds.size) return null;
+	// Inverse: a full board implies the run completed. Restoring a full board
+	// in an active/paused lifecycle leaves no inventory pieces to place and no
+	// completion event to generate the missing seal or effects — a dead state.
+	// The engine only ever reaches a full board through completion sealing, so
+	// any other combination is corruption.
+	if (placedPieces.length === knownPieceIds.size && lifecycle !== 'completed') return null;
 
 	const organization = validateOrganization(record.organization);
 	if (organization === false) return null;
+
+	const viewport = validateViewport(record.viewport);
+	if (viewport === false) return null;
 
 	const snapshot: PersistedPuzzleSessionV1 = {
 		schemaVersion: CURRENT_SESSION_SCHEMA_VERSION,
@@ -429,6 +479,7 @@ function validateV1(
 		lastUpdated: lastUpdated as number
 	};
 	if (organization) snapshot.organization = organization;
+	if (viewport) snapshot.viewport = viewport;
 	return snapshot;
 }
 
@@ -438,7 +489,13 @@ function validatePlacements(
 	context: SessionValidationContext
 ): PlacedPiece[] | null {
 	if (!Array.isArray(raw)) return null;
+	// Canonical cell for each piece, mirroring the engine's correctX/correctY
+	// invariant. A persisted placement must sit in its piece's own correct cell.
+	const canonical = new Map(
+		context.pieces.map((piece) => [piece.id, { x: piece.correctX, y: piece.correctY }])
+	);
 	const seen = new Set<number>();
+	const occupied = new Set<string>();
 	const out: PlacedPiece[] = [];
 	for (const entry of raw) {
 		if (!entry || typeof entry !== 'object') return null;
@@ -449,6 +506,18 @@ function validatePlacements(
 		if (!knownPieceIds.has(pieceId)) return null;
 		if (seen.has(pieceId)) return null;
 		if (x < 0 || y < 0 || x >= context.gridCols || y >= context.gridRows) return null;
+		// Each piece must occupy its canonical cell — the same invariant the
+		// engine enforces on live placement. Without this, a corrupted
+		// completed snapshot could restore and replay effects with pieces in
+		// wrong cells.
+		const expected = canonical.get(pieceId);
+		if (!expected || expected.x !== x || expected.y !== y) return null;
+		// Unique occupied cell. Canonical coordinates already guarantee this
+		// when each piece has a distinct correct cell; this is defense in depth
+		// against a context whose pieces share a cell.
+		const cellKey = `${x},${y}`;
+		if (occupied.has(cellKey)) return null;
+		occupied.add(cellKey);
 		seen.add(pieceId);
 		out.push({ pieceId, x, y });
 	}
@@ -518,6 +587,11 @@ function validateEffectState(raw: unknown): CompletionEffectState | false | null
 		const retryable = (raw as Record<string, unknown>).retryable;
 		if (typeof code !== 'string' || typeof retryable !== 'boolean') return false;
 		if (!COMPLETION_FAILURE_CODE_SET.has(code)) return false;
+		// Retryability must agree with the failure code, matching the policy
+		// the route uses when producing failures. A corrupted snapshot with a
+		// terminal code marked retryable would be re-driven forever, and a
+		// retryable code marked terminal would permanently lose the completion.
+		if (retryable !== isFailureRetryable(code as CompletionFailureCode)) return false;
 		return { status: 'failed', code: code as CompletionFailureCode, retryable };
 	}
 	return false;
@@ -570,13 +644,30 @@ function validateSeal(
 	if (localStats === null || localStats === false) return false;
 	// Local stats apply to every completion; not_applicable is never valid.
 	if ((localStats as CompletionEffectState).status === 'not_applicable') return false;
+	// local_stats only ever fails with storage_error (the localStorage write
+	// in recordLocalCompletion). Any other code is corruption.
+	if (
+		(localStats as CompletionEffectState).status === 'failed' &&
+		(localStats as { code?: string }).code !== 'storage_error'
+	)
+		return false;
 	const serverSubmission = validateEffectState(s.serverSubmission);
 	if (serverSubmission === null || serverSubmission === false) return false;
 	// Server submission is not_applicable only for local puzzles. For an API
-	// puzzle it must be a concrete pending/succeeded/failed state.
-	if ((serverSubmission as CompletionEffectState).status === 'not_applicable' && source === 'api') {
-		return false;
+	// puzzle it must be a concrete pending/succeeded/failed state; for a local
+	// puzzle it must always be not_applicable (there is no server to submit to).
+	if (source === 'api') {
+		if ((serverSubmission as CompletionEffectState).status === 'not_applicable') return false;
+	} else {
+		if ((serverSubmission as CompletionEffectState).status !== 'not_applicable') return false;
 	}
+	// server_submission never fails with storage_error (that code belongs only
+	// to the local-stats localStorage write).
+	if (
+		(serverSubmission as CompletionEffectState).status === 'failed' &&
+		(serverSubmission as { code?: string }).code === 'storage_error'
+	)
+		return false;
 	return {
 		runId: s.runId as string,
 		resultClass: s.resultClass as ResultClass,
@@ -626,6 +717,31 @@ function validateOrganization(raw: unknown): PersistedTrayOrganization | false |
 		membership,
 		names
 	};
+}
+
+/**
+ * Validate an optional persisted viewport. Returns `undefined` when absent
+ * (the current route does not populate it), the validated value when present,
+ * or `false` on a malformed shape. A recognized viewport must survive a
+ * round-trip per the approved persistence contract.
+ */
+function validateViewport(raw: unknown): PersistedViewport | false | undefined {
+	if (raw === undefined) return undefined;
+	if (!raw || typeof raw !== 'object') return false;
+	const v = raw as Record<string, unknown>;
+	const { zoom, panX, panY } = v;
+	if (
+		typeof zoom !== 'number' ||
+		!Number.isFinite(zoom) ||
+		zoom <= 0 ||
+		typeof panX !== 'number' ||
+		!Number.isFinite(panX) ||
+		typeof panY !== 'number' ||
+		!Number.isFinite(panY)
+	) {
+		return false;
+	}
+	return { zoom, panX, panY };
 }
 
 // --- Legacy migration ---------------------------------------------------------

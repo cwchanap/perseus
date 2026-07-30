@@ -602,7 +602,12 @@
 				pieceIds: loadedPuzzle.pieces.map((p) => p.id),
 				gridCols: loadedPuzzle.gridCols,
 				gridRows: loadedPuzzle.gridRows,
-				pieceCount: loadedPuzzle.pieceCount
+				pieceCount: loadedPuzzle.pieceCount,
+				pieces: loadedPuzzle.pieces.map((p) => ({
+					id: p.id,
+					correctX: p.correctX,
+					correctY: p.correctY
+				}))
 			});
 
 			const restored =

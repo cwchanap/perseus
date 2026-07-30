@@ -110,6 +110,18 @@ export interface PersistedTrayOrganization {
 	names: Record<string, string>;
 }
 
+/**
+ * Optional persisted viewport (zoom/pan) state. Reserved for a consuming
+ * feature that explicitly opts into persisting it; absent until then. The
+ * codec validates and preserves it across a round-trip even when the current
+ * route does not populate it, per the approved persistence contract.
+ */
+export interface PersistedViewport {
+	zoom: number;
+	panX: number;
+	panY: number;
+}
+
 // --- Runtime state ------------------------------------------------------------
 
 export interface PuzzleSessionState {
@@ -142,6 +154,9 @@ export interface PuzzleSessionState {
 
 	/** Optional persisted tray organization (HPA-220/237 own the UI). */
 	organization: PersistedTrayOrganization | null;
+
+	/** Optional persisted viewport state; null until a feature opts in. */
+	viewport: PersistedViewport | null;
 
 	counters: SessionCounters;
 	facts: SessionFacts;
@@ -181,6 +196,7 @@ export interface PersistedPuzzleSessionV1 {
 	resultClass: ResultClass;
 	sealedCompletion: SealedCompletion | null;
 	organization?: PersistedTrayOrganization;
+	viewport?: PersistedViewport;
 	lastUpdated: number;
 }
 
@@ -208,8 +224,8 @@ export interface SessionStorageAdapter {
 
 /**
  * Validation context supplied by the loader: the resolved puzzle and source
- * provide the canonical piece IDs, grid, and source type used to validate a
- * persisted/migrated snapshot.
+ * provide the canonical piece IDs, grid, source type, and canonical placement
+ * coordinates used to validate a persisted/migrated snapshot.
  */
 export interface SessionValidationContext {
 	puzzleId: string;
@@ -218,6 +234,12 @@ export interface SessionValidationContext {
 	gridCols: number;
 	gridRows: number;
 	pieceCount: number;
+	/**
+	 * Canonical placement descriptor for every piece. Used to validate that
+	 * persisted placements sit in each piece's own correct cell, matching the
+	 * same invariant the engine enforces on live placement.
+	 */
+	pieces: ReadonlyArray<{ id: number; correctX: number; correctY: number }>;
 }
 
 // --- Action contract ----------------------------------------------------------

@@ -148,4 +148,41 @@ describe('PuzzleSession persisted field validation', () => {
 			record.hasUserActivity = 1;
 		});
 	});
+
+	it('rejects rotation enabled without the rotationUsed fact', () => {
+		expectInvalid((record) => {
+			record.rotationEnabled = true;
+			// facts.rotationUsed stays false; resultClass stays standard_timed
+		});
+	});
+
+	it('rejects a hint count without the hintUsed fact', () => {
+		expectInvalid((record) => {
+			record.counters = { incorrectAttempts: 0, hintsUsed: 3, referenceActivations: 0 };
+			// facts.hintUsed stays false
+		});
+	});
+
+	it('rejects the hintUsed fact without a positive hint count', () => {
+		expectInvalid((record) => {
+			record.facts = { rotationUsed: false, hintUsed: true, ghostReferenceUsed: false };
+			record.resultClass = 'assisted_timed';
+			// counters.hintsUsed stays 0
+		});
+	});
+
+	it('rejects ghostReferenceUsed without a reference activation', () => {
+		expectInvalid((record) => {
+			record.facts = { rotationUsed: false, hintUsed: false, ghostReferenceUsed: true };
+			record.resultClass = 'assisted_timed';
+			// counters.referenceActivations stays 0
+		});
+	});
+
+	it('rejects placements without user activity', () => {
+		expectInvalid((record) => {
+			record.hasUserActivity = false;
+			// placedPieces stays non-empty
+		});
+	});
 });

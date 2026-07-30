@@ -1203,7 +1203,8 @@ describe('Puzzle route gameplay integration', () => {
 				standardBestCompletedAt: Date.now(),
 				totalCompletions: 1,
 				lastCompletedAt: Date.now(),
-				lastRecordedRunId: 'test-run-id'
+				lastRecordedRunId: 'test-run-id',
+				recordedRunIds: ['test-run-id']
 			}
 		});
 		vi.mocked(getBestTime).mockReturnValueOnce(null);
@@ -1338,7 +1339,8 @@ describe('Puzzle route gameplay integration', () => {
 				standardBestCompletedAt: Date.now(),
 				totalCompletions: 1,
 				lastCompletedAt: Date.now(),
-				lastRecordedRunId: 'test-run-id'
+				lastRecordedRunId: 'test-run-id',
+				recordedRunIds: ['test-run-id']
 			}
 		});
 		vi.mocked(getBestTime).mockReturnValueOnce(null);

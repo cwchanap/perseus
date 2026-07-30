@@ -121,6 +121,17 @@ describe('Stats Service', () => {
 			expect(getStats(puzzleId)?.totalCompletions).toBe(1);
 		});
 
+		it('is idempotent per run id across an intervening completion (A -> B -> A)', () => {
+			// Stale pending sessions from different tabs can replay an older run
+			// after a newer completion has already been recorded. Dedup must be
+			// per-run-id, not just against the most recent run.
+			recordLocalCompletion(puzzleId, makeSeal({ runId: 'A' }));
+			recordLocalCompletion(puzzleId, makeSeal({ runId: 'B' }));
+			const replay = recordLocalCompletion(puzzleId, makeSeal({ runId: 'A' }));
+			expect(replay.status).toBe('replayed');
+			expect(getStats(puzzleId)?.totalCompletions).toBe(2);
+		});
+
 		it('reports failure but preserves the in-memory new-best verdict when storage throws', () => {
 			recordLocalCompletion(puzzleId, makeSeal({ elapsedActiveSeconds: 100, runId: 'r1' }));
 			const real = localStorage;

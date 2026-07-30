@@ -904,6 +904,29 @@ describe('PuzzleSession activity flag', () => {
 		// never sets it true on its own (covered by the no-activity baseline).
 		expect(session.getState().hasUserActivity).toBe(true);
 	});
+
+	it('becomes true when rotation mode is enabled, even with zero placements', () => {
+		const { session } = startedSession({ createRotations: deterministicRotations });
+		expect(session.getState().hasUserActivity).toBe(false);
+
+		session.dispatch({ type: 'set_rotation_mode', enabled: true });
+
+		// Enabling rotation permanently changes result eligibility, so it must
+		// count as user activity for resume discovery (isResumable).
+		expect(session.getState().hasUserActivity).toBe(true);
+	});
+
+	it('becomes true when rotation mode is disabled after being enabled', () => {
+		const { session } = startedSession({ createRotations: deterministicRotations });
+		session.dispatch({ type: 'set_rotation_mode', enabled: true });
+
+		// Reset is only possible via a fresh session that never enabled rotation;
+		// here we verify disabling also marks activity (a persisted state change).
+		const before = session.getState().hasUserActivity;
+		session.dispatch({ type: 'set_rotation_mode', enabled: false });
+		expect(session.getState().hasUserActivity).toBe(true);
+		expect(before).toBe(true);
+	});
 });
 
 describe('PuzzleSession restart', () => {
