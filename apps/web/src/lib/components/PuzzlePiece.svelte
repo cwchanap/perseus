@@ -45,7 +45,6 @@
 	let lastClientY = 0;
 	let activeDropZone: HTMLElement | null = null;
 	let touchListenersAttached = false;
-	let suppressCancel = false;
 
 	function handleDragStart(event: DragEvent) {
 		if (isPlaced || !event.dataTransfer) return;
@@ -263,20 +262,19 @@
 		onDragStart?.(piece);
 	}
 
+	// Keyboard selection/deselection is wired with a non-delegated listener
+	// (via the `keydownAction` Svelte action below) instead of `onkeydown={}`.
+	// Svelte 5 event delegation can re-invoke a delegated handler after a
+	// mid-event re-render (e.g. selection changes the `selected` prop), which
+	// for this toggle means select→cancel fires synchronously and the
+	// selection is immediately undone. A latched boolean guard against that
+	// double-fire would stay set when the double-fire does not occur and
+	// swallow the next genuine Enter/Space, forcing keyboard users to press
+	// twice to deselect. A non-delegated listener fires exactly once per
+	// native keydown regardless of re-renders, so no guard is needed and a
+	// single press both selects and deselects.
 	function handleKeyDown(event: KeyboardEvent) {
 		if (isPlaced) return;
-		// Guard against Svelte 5 event delegation double-fire: when a
-		// component re-renders mid-event (e.g. after selection changes a
-		// prop), Svelte can invoke the same handler a second time with the
-		// updated prop. Without this guard, select→cancel fires
-		// synchronously and the selection is immediately undone. The flag
-		// is set on select and cleared on the next cancel (the
-		// double-fire). Note: clearing this flag with a timer
-		// (setTimeout/queueMicrotask/rAF) breaks the guard because the
-		// double-fire fires after all those scheduling tiers in the test
-		// environment, so the flag is intentionally only cleared in the
-		// cancel branch. Scoping the flag to this piece (instead of the
-		// parent page) prevents cross-piece interference.
 		if (rotationEnabled && (event.key === 'r' || event.key === 'R')) {
 			event.preventDefault();
 			onRotate?.(piece.id);
@@ -286,16 +284,20 @@
 		event.preventDefault();
 
 		if (selected) {
-			if (suppressCancel) {
-				suppressCancel = false;
-				return;
-			}
 			onCancelSelection?.();
 		} else {
 			onSelect?.(piece.id);
 			onDragStart?.(piece);
-			suppressCancel = true;
 		}
+	}
+
+	function keydownAction(node: HTMLElement) {
+		node.addEventListener('keydown', handleKeyDown);
+		return {
+			destroy() {
+				node.removeEventListener('keydown', handleKeyDown);
+			}
+		};
 	}
 
 	function handleRotateClick(event: MouseEvent) {
@@ -347,7 +349,7 @@
 		draggable={!isPlaced}
 		ondragstart={handleDragStart}
 		ontouchstart={handleTouchStart}
-		onkeydown={handleKeyDown}
+		use:keydownAction
 		role="button"
 		tabindex={isPlaced ? -1 : 0}
 		aria-label="Puzzle piece {piece.id}"

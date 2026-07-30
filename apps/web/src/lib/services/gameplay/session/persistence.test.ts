@@ -903,7 +903,31 @@ describe('loadPersistedSession additional validation branches', () => {
 		}
 	});
 
-	it('round-trips a completed snapshot with a not_applicable server submission', () => {
+	it('round-trips a completed local snapshot with a not_applicable server submission', () => {
+		// not_applicable server submission is valid only for local puzzles;
+		// for an API puzzle it would suppress the server submission.
+		const localCtx: SessionValidationContext = { ...ctx, source: 'local' };
+		const seal: PersistedPuzzleSessionV1['sealedCompletion'] = {
+			runId: '11111111-1111-4111-8111-111111111111',
+			resultClass: 'standard_timed',
+			timingQuality: 'known',
+			elapsedActiveSeconds: 42,
+			completedAt: 1_000,
+			localStats: { status: 'succeeded' },
+			serverSubmission: { status: 'not_applicable' }
+		};
+		const snapshot = serializeSession(
+			makeState({ lifecycle: 'completed', sealedCompletion: seal, source: 'local' }),
+			1_000
+		)!;
+		const result = loadPersistedSession(JSON.stringify(snapshot), localCtx);
+		expect(result.status).toBe('loaded');
+		if (result.status === 'loaded') {
+			expect(result.snapshot.sealedCompletion?.serverSubmission.status).toBe('not_applicable');
+		}
+	});
+
+	it('rejects a not_applicable server submission for an API puzzle', () => {
 		const seal: PersistedPuzzleSessionV1['sealedCompletion'] = {
 			runId: '11111111-1111-4111-8111-111111111111',
 			resultClass: 'standard_timed',
@@ -918,10 +942,7 @@ describe('loadPersistedSession additional validation branches', () => {
 			1_000
 		)!;
 		const result = loadPersistedSession(JSON.stringify(snapshot), ctx);
-		expect(result.status).toBe('loaded');
-		if (result.status === 'loaded') {
-			expect(result.snapshot.sealedCompletion?.serverSubmission.status).toBe('not_applicable');
-		}
+		expect(result.status).toBe('invalid');
 	});
 });
 

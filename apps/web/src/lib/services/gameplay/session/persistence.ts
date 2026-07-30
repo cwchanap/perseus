@@ -334,7 +334,11 @@ function validateV1(
 	const hasUserActivity = record.hasUserActivity;
 	if (typeof hasUserActivity !== 'boolean') return null;
 
-	const sealedCompletion = validateSeal(record.sealedCompletion, runId as string);
+	const sealedCompletion = validateSeal(
+		record.sealedCompletion,
+		runId as string,
+		source as PuzzleSourceType
+	);
 	if (sealedCompletion === false) return null;
 	const seal = sealedCompletion === null ? null : (sealedCompletion as unknown as SealedCompletion);
 
@@ -448,7 +452,7 @@ function validateCounters(raw: unknown): PuzzleSessionState['counters'] | null {
 }
 
 function validateEffectState(raw: unknown): CompletionEffectState | false | null {
-	if (raw === null) return null; // absent state: caller uses not_applicable, never pending
+	if (raw === null) return null; // absent state: caller decides applicability
 	if (typeof raw !== 'object') return false;
 	const state = (raw as Record<string, unknown>).status;
 	if (state === 'pending' || state === 'succeeded' || state === 'not_applicable') {
@@ -463,7 +467,11 @@ function validateEffectState(raw: unknown): CompletionEffectState | false | null
 	return false;
 }
 
-function validateSeal(raw: unknown, expectedRunId: string): SealedCompletion | null | false {
+function validateSeal(
+	raw: unknown,
+	expectedRunId: string,
+	source: PuzzleSourceType
+): SealedCompletion | null | false {
 	if (raw === null) return null;
 	if (!raw || typeof raw !== 'object') return false;
 	const s = raw as Record<string, unknown>;
@@ -478,18 +486,31 @@ function validateSeal(raw: unknown, expectedRunId: string): SealedCompletion | n
 	) {
 		return false;
 	}
+	// Completion effects must be present and applicable. A missing/null
+	// effect is corruption (the engine and legacy migration always emit a
+	// concrete state), so reject rather than silently defaulting to
+	// not_applicable — otherwise a corrupted API snapshot with null effects
+	// would load and permanently suppress both local stats and the server
+	// submission.
 	const localStats = validateEffectState(s.localStats);
-	if (localStats === false) return false;
+	if (localStats === null || localStats === false) return false;
+	// Local stats apply to every completion; not_applicable is never valid.
+	if ((localStats as CompletionEffectState).status === 'not_applicable') return false;
 	const serverSubmission = validateEffectState(s.serverSubmission);
-	if (serverSubmission === false) return false;
+	if (serverSubmission === null || serverSubmission === false) return false;
+	// Server submission is not_applicable only for local puzzles. For an API
+	// puzzle it must be a concrete pending/succeeded/failed state.
+	if ((serverSubmission as CompletionEffectState).status === 'not_applicable' && source === 'api') {
+		return false;
+	}
 	return {
 		runId: s.runId as string,
 		resultClass: s.resultClass as ResultClass,
 		timingQuality: s.timingQuality as TimingQuality,
 		elapsedActiveSeconds: (elapsed as number | null) ?? null,
 		completedAt: s.completedAt as number,
-		localStats: (localStats as CompletionEffectState) ?? { status: 'not_applicable' },
-		serverSubmission: (serverSubmission as CompletionEffectState) ?? { status: 'not_applicable' }
+		localStats: localStats as CompletionEffectState,
+		serverSubmission: serverSubmission as CompletionEffectState
 	};
 }
 

@@ -62,20 +62,51 @@ describe('PuzzleSession completion persistence validation', () => {
 		}
 	});
 
-	it('defaults null completion effects to not-applicable', () => {
+	it('rejects null completion effects instead of defaulting to not-applicable', () => {
+		// A null effect is corruption: the engine and legacy migration always
+		// emit a concrete state. Defaulting null to not_applicable would let a
+		// corrupted API snapshot load and permanently suppress both local
+		// stats and the server submission.
+		const base = () => {
+			const record = JSON.parse(JSON.stringify(validSnapshot())) as Record<string, unknown>;
+			record.lifecycle = 'completed';
+			return record;
+		};
+
+		const nullLocal = base();
+		nullLocal.sealedCompletion = seal({ localStats: null });
+		expect(load(nullLocal).status).toBe('invalid');
+
+		const nullServer = base();
+		nullServer.sealedCompletion = seal({ serverSubmission: null });
+		expect(load(nullServer).status).toBe('invalid');
+	});
+
+	it('rejects a not_applicable local-stats effect (local stats apply to every completion)', () => {
 		const record = JSON.parse(JSON.stringify(validSnapshot())) as Record<string, unknown>;
 		record.lifecycle = 'completed';
+		record.sealedCompletion = seal({ localStats: { status: 'not_applicable' } });
+		expect(load(record).status).toBe('invalid');
+	});
+
+	it('rejects a not_applicable server submission for an API puzzle', () => {
+		const record = JSON.parse(JSON.stringify(validSnapshot())) as Record<string, unknown>;
+		record.lifecycle = 'completed';
+		record.sealedCompletion = seal({ serverSubmission: { status: 'not_applicable' } });
+		// default context source is 'api'
+		expect(load(record).status).toBe('invalid');
+	});
+
+	it('allows a not_applicable server submission for a local puzzle', () => {
+		const record = JSON.parse(JSON.stringify(validSnapshot())) as Record<string, unknown>;
+		record.lifecycle = 'completed';
+		record.source = 'local';
 		record.sealedCompletion = seal({
-			elapsedActiveSeconds: null,
-			localStats: null,
-			serverSubmission: null
+			serverSubmission: { status: 'not_applicable' }
 		});
-
-		const result = load(record);
-
+		const result = load(record, { ...context, source: 'local' });
 		expect(result.status).toBe('loaded');
 		if (result.status === 'loaded') {
-			expect(result.snapshot.sealedCompletion?.localStats).toEqual({ status: 'not_applicable' });
 			expect(result.snapshot.sealedCompletion?.serverSubmission).toEqual({
 				status: 'not_applicable'
 			});
