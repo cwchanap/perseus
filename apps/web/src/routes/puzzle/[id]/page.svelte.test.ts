@@ -1505,7 +1505,9 @@ describe('Puzzle page defensive guard coverage', () => {
 		// Pressing Enter on the already-selected piece triggers
 		// handleCancelSelection. The first Enter after select clears
 		// suppressCancel (set by handleSelectPiece); the second Enter
-		// actually dispatches cancel_selection (line 303).
+		// actually dispatches cancel_selection. The suppressCancel flag
+		// now lives in PuzzlePiece (scoped to the piece) instead of the
+		// parent page, preventing cross-piece interference.
 		const piece = await page.getByLabelText('Puzzle piece 0').element();
 		piece.focus();
 		piece.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));

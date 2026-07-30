@@ -94,6 +94,12 @@
 	let isNewBest = $state(false);
 	let activeLoadRequestId = 0;
 
+	// When a persisted session has a future schema version (incompatible),
+	// the current deployment cannot read it. A fresh session is constructed
+	// for gameplay, but all persistence writes/clears are suppressed so the
+	// older deployment does not destroy progress written by a newer schema.
+	let persistenceReadOnly = false;
+
 	let sessionUnsubscribe: (() => void) | null = null;
 	let checkpointInterval: ReturnType<typeof setInterval> | null = null;
 	let rejectedPieceTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -102,17 +108,6 @@
 	let panStartClientX = 0;
 	let panStartClientY = 0;
 
-	// Guard against Svelte 5 event delegation double-fire: when a component
-	// re-renders mid-event (e.g. after selection changes a prop), Svelte can
-	// invoke the same handler a second time with the updated prop. Without
-	// this guard, select→cancel fires synchronously and the selection is
-	// immediately undone. The flag is set on select and cleared on the next
-	// cancel (the double-fire). Note: clearing this flag with a timer
-	// (setTimeout/queueMicrotask/rAF) breaks the guard because the
-	// double-fire fires after all those scheduling tiers in the test
-	// environment, so the flag is intentionally only cleared in
-	// handleCancelSelection.
-	let suppressCancel = false;
 	let panOriginX = 0;
 	let panOriginY = 0;
 
@@ -291,21 +286,17 @@
 	}
 
 	function handleSelectPiece(id: number) {
-		suppressCancel = true;
 		sessionStore?.dispatch({ type: 'select_piece', pieceId: id });
 	}
 
 	function handleCancelSelection() {
-		if (suppressCancel) {
-			suppressCancel = false;
-			return;
-		}
 		sessionStore?.dispatch({ type: 'cancel_selection' });
 	}
 
 	// --- Persistence -------------------------------------------------------------
 
 	function checkpointSession() {
+		if (persistenceReadOnly) return;
 		if (!sessionStore || !sessionState || !puzzle) return;
 		if (sessionState.lifecycle === 'disposed') return;
 		const serialized = serializeSession(sessionState);
@@ -486,6 +477,7 @@
 		loading = true;
 		error = null;
 		errorStatus = null;
+		persistenceReadOnly = false;
 
 		try {
 			const priorSource = untrack(() => puzzleSource);
@@ -493,6 +485,14 @@
 				priorSource.cleanup();
 				puzzleSource = null;
 			}
+			// Flush the prior session's clock and persist a final snapshot
+			// before tearing it down. When switching directly between
+			// /puzzle/[id] routes the component is reused and onDestroy does
+			// not fire, so without this flush recent activity since the last
+			// 5-second checkpoint would be lost. untrack prevents the $state
+			// reads inside persistSessionFinal from registering as effect
+			// dependencies (which would re-trigger loadPuzzle infinitely).
+			untrack(persistSessionFinal);
 			// Dispose any prior session before constructing a new one.
 			const priorUnsub = untrack(() => sessionUnsubscribe);
 			const priorCheckpoint = untrack(() => checkpointInterval);
@@ -548,8 +548,16 @@
 					? loadResult.snapshot
 					: undefined;
 
+			// A future-schema session is unreadable by this deployment. A fresh
+			// session is constructed for gameplay, but persistence is suppressed
+			// so the older code does not overwrite the newer-schema progress.
+			persistenceReadOnly = loadResult.status === 'incompatible';
+
 			puzzle = loadedPuzzle;
-			showCelebration = false;
+			// Restore the celebration modal for a previously completed session
+			// so the user retains access to Play Again and retry controls.
+			// Fresh/incompatible sessions start without the modal.
+			showCelebration = restored?.lifecycle === 'completed';
 			showReferenceOverlay = false;
 			clearHintTarget();
 			if (rejectedPieceTimeout !== null) {
@@ -596,11 +604,16 @@
 
 			// Resume any pending completion effects that were interrupted by a
 			// page close/navigate before the server submission or local stats
-			// could be acknowledged. The engine re-emits completion_effect_request
-			// for effects still in the pending state; succeeded/failed effects are
-			// left untouched (idempotent).
+			// could be acknowledged. resume_completion_effects re-emits
+			// completion_effect_request for effects still in the pending state.
+			// retry_completion_effects resets retryable-failed effects to pending
+			// and re-emits them, recovering persisted failures that the user has
+			// not yet manually retried. Calling resume first then retry avoids
+			// double-emit: resume only touches already-pending effects, retry
+			// only touches failed effects — the two sets are disjoint.
 			if (restored?.sealedCompletion) {
 				store.dispatch({ type: 'resume_completion_effects' });
+				store.dispatch({ type: 'retry_completion_effects' });
 			}
 
 			// Periodic checkpoint.
@@ -764,6 +777,9 @@
 			showReferenceOverlay = false;
 			referencePointerId = null;
 			referenceHoldSource = null;
+			// End the reference hold in the session so a later press counts
+			// as a new inactive-to-active activation.
+			sessionStore?.dispatch({ type: 'set_reference_mode', mode: null });
 		}
 
 		if (activePanPointerId !== event.pointerId) return;
@@ -773,6 +789,9 @@
 	}
 
 	function handleWindowBlur() {
+		if (referenceHoldSource !== null) {
+			sessionStore?.dispatch({ type: 'set_reference_mode', mode: null });
+		}
 		showReferenceOverlay = false;
 		referencePointerId = null;
 		referenceHoldSource = null;
@@ -815,6 +834,10 @@
 		referencePointerId = null;
 		referenceHoldSource = null;
 		isNewBest = false;
+		// Play Again is a deliberate abandonment of the current record. Clear
+		// the incompatible (future-schema) entry if present and re-enable
+		// persistence for the fresh run.
+		persistenceReadOnly = false;
 		sessionStorageAdapter.clearSession(puzzle.id);
 		sessionStore.dispatch({ type: 'restart' });
 		sessionStore.dispatch({ type: 'start' });

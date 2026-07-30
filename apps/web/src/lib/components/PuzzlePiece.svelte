@@ -45,6 +45,7 @@
 	let lastClientY = 0;
 	let activeDropZone: HTMLElement | null = null;
 	let touchListenersAttached = false;
+	let suppressCancel = false;
 
 	function handleDragStart(event: DragEvent) {
 		if (isPlaced || !event.dataTransfer) return;
@@ -264,6 +265,18 @@
 
 	function handleKeyDown(event: KeyboardEvent) {
 		if (isPlaced) return;
+		// Guard against Svelte 5 event delegation double-fire: when a
+		// component re-renders mid-event (e.g. after selection changes a
+		// prop), Svelte can invoke the same handler a second time with the
+		// updated prop. Without this guard, select→cancel fires
+		// synchronously and the selection is immediately undone. The flag
+		// is set on select and cleared on the next cancel (the
+		// double-fire). Note: clearing this flag with a timer
+		// (setTimeout/queueMicrotask/rAF) breaks the guard because the
+		// double-fire fires after all those scheduling tiers in the test
+		// environment, so the flag is intentionally only cleared in the
+		// cancel branch. Scoping the flag to this piece (instead of the
+		// parent page) prevents cross-piece interference.
 		if (rotationEnabled && (event.key === 'r' || event.key === 'R')) {
 			event.preventDefault();
 			onRotate?.(piece.id);
@@ -273,10 +286,15 @@
 		event.preventDefault();
 
 		if (selected) {
+			if (suppressCancel) {
+				suppressCancel = false;
+				return;
+			}
 			onCancelSelection?.();
 		} else {
 			onSelect?.(piece.id);
 			onDragStart?.(piece);
+			suppressCancel = true;
 		}
 	}
 
