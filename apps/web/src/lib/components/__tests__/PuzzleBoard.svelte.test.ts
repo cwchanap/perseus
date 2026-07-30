@@ -51,13 +51,11 @@ describe('PuzzleBoard', () => {
 		const puzzle = createMockPuzzle(3);
 		const placedPieces: PlacedPiece[] = [];
 		const onPiecePlaced = vi.fn();
-		const onIncorrectPlacement = vi.fn();
 
 		render(PuzzleBoard, {
 			puzzle,
 			placedPieces,
 			onPiecePlaced,
-			onIncorrectPlacement,
 			resolveImage
 		});
 
@@ -68,13 +66,11 @@ describe('PuzzleBoard', () => {
 		const puzzle = createMockPuzzle(3);
 		const placedPieces: PlacedPiece[] = [{ pieceId: 0, x: 0, y: 0 }];
 		const onPiecePlaced = vi.fn();
-		const onIncorrectPlacement = vi.fn();
 
 		render(PuzzleBoard, {
 			puzzle,
 			placedPieces,
 			onPiecePlaced,
-			onIncorrectPlacement,
 			resolveImage
 		});
 
@@ -90,7 +86,6 @@ describe('PuzzleBoard', () => {
 			puzzle,
 			placedPieces,
 			onPiecePlaced: vi.fn(),
-			onIncorrectPlacement: vi.fn(),
 			resolveImage
 		});
 
@@ -118,7 +113,6 @@ describe('PuzzleBoard', () => {
 			puzzle,
 			placedPieces: [],
 			onPiecePlaced: vi.fn(),
-			onIncorrectPlacement: vi.fn(),
 			activeHintTarget: { x: 1, y: 2 },
 			resolveImage
 		});
@@ -128,73 +122,38 @@ describe('PuzzleBoard', () => {
 		await expect.element(page.getByTestId('hint-target')).toHaveAttribute('data-y', '2');
 	});
 
-	it('should reject placement when canPlacePiece returns false', async () => {
+	it('should route every keyboard placement attempt to onPiecePlaced (session decides accept/reject)', async () => {
 		const puzzle = createMockPuzzle(3);
 		const onPiecePlaced = vi.fn();
-		const onIncorrectPlacement = vi.fn();
-		const canPlacePiece = vi.fn(() => false);
-		const onCancelSelection = vi.fn();
 
 		render(PuzzleBoard, {
 			puzzle,
 			placedPieces: [],
 			onPiecePlaced,
-			onIncorrectPlacement,
-			canPlacePiece,
 			selectedPieceId: 0,
-			onCancelSelection,
 			resolveImage
 		});
 
 		const dropZone = await page
-			.getByRole('button', { name: 'Drop zone at position 0, 0' })
+			.getByRole('button', { name: 'Drop zone at position 1, 0' })
 			.element();
 		dropZone.focus();
 		dropZone.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
 
-		expect(canPlacePiece).toHaveBeenCalledWith(0);
-		expect(onIncorrectPlacement).toHaveBeenCalledWith(0);
-		expect(onPiecePlaced).not.toHaveBeenCalled();
-		expect(onCancelSelection).not.toHaveBeenCalled();
-	});
-
-	it('should cancel keyboard selection only after a successful placement', async () => {
-		const puzzle = createMockPuzzle(3);
-		const onPiecePlaced = vi.fn();
-		const onCancelSelection = vi.fn();
-
-		render(PuzzleBoard, {
-			puzzle,
-			placedPieces: [],
-			onPiecePlaced,
-			onIncorrectPlacement: vi.fn(),
-			selectedPieceId: 0,
-			onCancelSelection,
-			resolveImage
-		});
-
-		const dropZone = await page
-			.getByRole('button', { name: 'Drop zone at position 0, 0' })
-			.element();
-		dropZone.focus();
-		dropZone.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-
-		expect(onPiecePlaced).toHaveBeenCalledWith(0, 0, 0);
-		expect(onCancelSelection).toHaveBeenCalledOnce();
+		// Even though piece 0's correct slot is (0,0), the board routes the
+		// attempt to the session via onPiecePlaced without filtering.
+		expect(onPiecePlaced).toHaveBeenCalledWith(0, 1, 0);
 	});
 
 	it('should not act on keyboard placement when no piece is selected', async () => {
 		const puzzle = createMockPuzzle(3);
 		const onPiecePlaced = vi.fn();
-		const onCancelSelection = vi.fn();
 
 		render(PuzzleBoard, {
 			puzzle,
 			placedPieces: [],
 			onPiecePlaced,
-			onIncorrectPlacement: vi.fn(),
 			selectedPieceId: null,
-			onCancelSelection,
 			resolveImage
 		});
 
@@ -205,7 +164,6 @@ describe('PuzzleBoard', () => {
 		dropZone.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
 
 		expect(onPiecePlaced).not.toHaveBeenCalled();
-		expect(onCancelSelection).not.toHaveBeenCalled();
 	});
 
 	it('should call onBoardPointerDown when the board receives a pointerdown event', async () => {
@@ -216,7 +174,6 @@ describe('PuzzleBoard', () => {
 			puzzle,
 			placedPieces: [],
 			onPiecePlaced: vi.fn(),
-			onIncorrectPlacement: vi.fn(),
 			onBoardPointerDown,
 			resolveImage
 		});
@@ -230,16 +187,14 @@ describe('PuzzleBoard', () => {
 		expect(onBoardPointerDown.mock.calls[0][0]).toBeInstanceOf(PointerEvent);
 	});
 
-	it('should accept a desktop drag/drop placement with the dragged piece id', async () => {
+	it('should route a desktop drag/drop placement to onPiecePlaced regardless of correctness', async () => {
 		const puzzle = createMockPuzzle(3);
 		const onPiecePlaced = vi.fn();
-		const onIncorrectPlacement = vi.fn();
 
 		render(PuzzleBoard, {
 			puzzle,
 			placedPieces: [],
 			onPiecePlaced,
-			onIncorrectPlacement,
 			resolveImage
 		});
 
@@ -266,6 +221,5 @@ describe('PuzzleBoard', () => {
 		);
 
 		expect(onPiecePlaced).toHaveBeenCalledWith(0, 0, 0);
-		expect(onIncorrectPlacement).not.toHaveBeenCalled();
 	});
 });

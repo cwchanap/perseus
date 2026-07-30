@@ -23,7 +23,7 @@
 		getResponsivePuzzleBoardMetrics,
 		type ResponsivePuzzleBoardMetrics
 	} from '$lib/services/puzzleLayout';
-	import { isUpright, generateRandomRotations } from '$lib/services/gameplay/rotation';
+	import { generateRandomRotations } from '$lib/services/gameplay/rotation';
 	import { clampZoom, clampPan, calculateFitZoom } from '$lib/services/gameplay/viewport';
 	import {
 		createPuzzleSessionStore,
@@ -107,8 +107,11 @@
 	// invoke the same handler a second time with the updated prop. Without
 	// this guard, select→cancel fires synchronously and the selection is
 	// immediately undone. The flag is set on select and cleared on the next
-	// macrotask, so real user interactions (select, then later deselect) are
-	// unaffected.
+	// cancel (the double-fire). Note: clearing this flag with a timer
+	// (setTimeout/queueMicrotask/rAF) breaks the guard because the
+	// double-fire fires after all those scheduling tiers in the test
+	// environment, so the flag is intentionally only cleared in
+	// handleCancelSelection.
 	let suppressCancel = false;
 	let panOriginX = 0;
 	let panOriginY = 0;
@@ -120,6 +123,8 @@
 		window.addEventListener('keydown', handleWindowKeyDown);
 		window.addEventListener('blur', handleWindowBlur);
 		window.addEventListener('resize', handleWindowResize);
+		window.addEventListener('pagehide', handlePageHide);
+		document.addEventListener('visibilitychange', handleVisibilityChange);
 	}
 
 	onDestroy(() => {
@@ -149,7 +154,14 @@
 			window.removeEventListener('keydown', handleWindowKeyDown);
 			window.removeEventListener('blur', handleWindowBlur);
 			window.removeEventListener('resize', handleWindowResize);
+			window.removeEventListener('pagehide', handlePageHide);
+			document.removeEventListener('visibilitychange', handleVisibilityChange);
 		}
+
+		// Flush the clock and persist a final snapshot before disposing so
+		// the periodic 5s checkpoint interval does not leave a data-loss
+		// window of several seconds (including recent hint/reference usage).
+		persistSessionFinal();
 
 		activeLoadRequestId += 1;
 		if (puzzleSource) {
@@ -274,10 +286,6 @@
 		return placedPieceIds.has(pieceId);
 	}
 
-	function canPlacePiece(pieceId: number): boolean {
-		return !rotationEnabled || isUpright(pieceRotations[pieceId] ?? 0);
-	}
-
 	function isRotationToggleLocked(): boolean {
 		return placedPieces.length > 0;
 	}
@@ -304,6 +312,22 @@
 		if (serialized) {
 			sessionStorageAdapter.saveSession(puzzle.id, serialized);
 		}
+	}
+
+	/**
+	 * Flush the session clock into elapsedActiveSeconds and persist the
+	 * snapshot immediately. Used before teardown and page hide to minimize
+	 * the data-loss window of the periodic 5s checkpoint.
+	 */
+	function persistSessionFinal() {
+		if (!sessionStore || !sessionState || !puzzle) return;
+		if (sessionState.lifecycle === 'disposed') return;
+		sessionStore.checkpointTime();
+		checkpointSession();
+	}
+
+	function handlePageHide() {
+		persistSessionFinal();
 	}
 
 	// --- Completion effects -------------------------------------------------------
@@ -561,9 +585,22 @@
 				sessionState = state;
 			});
 
+			// Initialize the session with the current page visibility so the
+			// engine's hidden-time exclusion is correct from the first tick.
+			store.setDocumentHidden(typeof document !== 'undefined' ? document.hidden : false);
+
 			// Auto-start fresh sessions immediately.
 			if (!restored) {
 				store.dispatch({ type: 'start' });
+			}
+
+			// Resume any pending completion effects that were interrupted by a
+			// page close/navigate before the server submission or local stats
+			// could be acknowledged. The engine re-emits completion_effect_request
+			// for effects still in the pending state; succeeded/failed effects are
+			// left untouched (idempotent).
+			if (restored?.sealedCompletion) {
+				store.dispatch({ type: 'resume_completion_effects' });
 			}
 
 			// Periodic checkpoint.
@@ -597,17 +634,6 @@
 		}
 		sessionStore.dispatch({ type: 'attempt_placement', pieceId, x, y });
 		checkpointSession();
-	}
-
-	function handleIncorrectPlacement(pieceId: number) {
-		if (rejectedPieceTimeout !== null) {
-			clearTimeout(rejectedPieceTimeout);
-		}
-		rejectedPiece = pieceId;
-		rejectedPieceTimeout = setTimeout(() => {
-			rejectedPiece = null;
-			rejectedPieceTimeout = null;
-		}, REJECTED_DURATION_MS);
 	}
 
 	function clearHintTarget() {
@@ -753,6 +779,10 @@
 		sessionStore?.dispatch({ type: 'cancel_selection' });
 		isPanning = false;
 		activePanPointerId = null;
+	}
+
+	function handleVisibilityChange() {
+		sessionStore?.setDocumentHidden(document.hidden);
 	}
 
 	function handleWindowKeyDown(event: KeyboardEvent) {
@@ -1006,13 +1036,10 @@
 										puzzle={currentPuzzle}
 										{placedPieces}
 										onPiecePlaced={handlePiecePlaced}
-										onIncorrectPlacement={handleIncorrectPlacement}
 										{activeHintTarget}
-										{canPlacePiece}
 										onBoardPointerDown={handleBoardPointerDown}
 										resolveImage={puzzleSource!.resolvePieceImage}
 										selectedPieceId={currentSelectedPieceId}
-										onCancelSelection={handleCancelSelection}
 									/>
 								</div>
 							</ZoomableBoardFrame>
