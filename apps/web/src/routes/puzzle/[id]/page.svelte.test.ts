@@ -43,6 +43,13 @@ const progressState = vi.hoisted(() => ({
 	value: null as GameProgress | null
 }));
 
+// Hoisted override for the sealedCompletion field in the mocked
+// loadSession snapshot. When non-null, the mock returns a resumed session
+// with a sealedCompletion, exercising the resume_completion_effects path.
+const sealedCompletionOverride = vi.hoisted(() => ({
+	value: null as null | Record<string, unknown>
+}));
+
 // Configurable puzzleSource mock so individual tests can simulate a
 // local-only quick-puzzle source (`source: 'local'`) without leaking the
 // device-local `q-...` id to the API-backed `fetchPuzzle` path.
@@ -144,7 +151,7 @@ vi.mock('$lib/services/gameplay/session/persistence', () => ({
 						},
 						hasUserActivity: false,
 						resultClass: 'standard_timed' as const,
-						sealedCompletion: null,
+						sealedCompletion: sealedCompletionOverride.value,
 						lastUpdated: Date.now()
 					}
 				};
@@ -388,6 +395,7 @@ describe('Puzzle route gameplay integration', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		progressState.value = null;
+		sealedCompletionOverride.value = null;
 		puzzleSourceState.override = null;
 		mockPageStore.set({
 			url: { pathname: '/puzzle/test-puzzle' },
@@ -1396,6 +1404,20 @@ describe('Puzzle route gameplay integration', () => {
 // --- Patch coverage: defensive guards and event handler branches --------------
 
 describe('Puzzle page defensive guard coverage', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		progressState.value = null;
+		sealedCompletionOverride.value = null;
+		puzzleSourceState.override = null;
+		mockPageStore.set({
+			url: { pathname: '/puzzle/test-puzzle' },
+			params: { id: 'test-puzzle' },
+			route: { id: '/puzzle/[id]' },
+			status: 200,
+			error: null
+		});
+	});
+
 	it('ignores undo/redo keyboard shortcuts while the puzzle is still loading', async () => {
 		const loadDeferred = createDeferred<Puzzle>();
 		vi.mocked(fetchPuzzle).mockReturnValue(loadDeferred.promise);
@@ -1470,5 +1492,123 @@ describe('Puzzle page defensive guard coverage', () => {
 		} finally {
 			vi.useRealTimers();
 		}
+	});
+
+	it('dispatches cancel_selection when a selected tray piece receives Enter twice', async () => {
+		await renderPuzzlePage();
+		await selectPiece(0);
+
+		await expect
+			.element(page.getByLabelText('Puzzle piece 0'))
+			.toHaveAttribute('data-selected', 'true');
+
+		// Pressing Enter on the already-selected piece triggers
+		// handleCancelSelection. The first Enter after select clears
+		// suppressCancel (set by handleSelectPiece); the second Enter
+		// actually dispatches cancel_selection (line 303).
+		const piece = await page.getByLabelText('Puzzle piece 0').element();
+		piece.focus();
+		piece.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+		// First Enter clears suppressCancel; selection stays.
+		await expect
+			.element(page.getByLabelText('Puzzle piece 0'))
+			.toHaveAttribute('data-selected', 'true');
+
+		piece.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+		// Second Enter dispatches cancel_selection, clearing selection.
+		await expect
+			.element(page.getByLabelText('Puzzle piece 0'))
+			.toHaveAttribute('data-selected', 'false');
+	});
+
+	it('persists the session on pagehide', async () => {
+		vi.mocked(serializeSession).mockReturnValue({
+			schemaVersion: 1,
+			puzzleId: 'test-puzzle',
+			source: 'api',
+			lifecycle: 'active',
+			mode: 'timed',
+			runId: 'test-run-id',
+			origin: 'new',
+			elapsedActiveSeconds: 0,
+			timingQuality: 'known',
+			timerStarted: false,
+			placedPieces: [],
+			trayOrder: [0, 1],
+			rotationEnabled: false,
+			pieceRotations: {},
+			counters: { incorrectAttempts: 0, hintsUsed: 0, referenceActivations: 0 },
+			facts: { rotationUsed: false, hintUsed: false, ghostReferenceUsed: false },
+			hasUserActivity: false,
+			resultClass: 'standard_timed',
+			sealedCompletion: null,
+			lastUpdated: Date.now()
+		});
+		await renderPuzzlePage();
+
+		const callsBefore = sessionStorageSpies.saveSession.mock.calls.length;
+		window.dispatchEvent(new Event('pagehide'));
+
+		// handlePageHide → persistSessionFinal → checkpointSession → saveSession.
+		expect(sessionStorageSpies.saveSession.mock.calls.length).toBeGreaterThan(callsBefore);
+	});
+
+	it('clears the rejected-piece highlight after the timeout fires', async () => {
+		vi.useFakeTimers();
+		try {
+			await renderPuzzlePage();
+
+			// Trigger an incorrect placement to set rejectedPiece and start the
+			// timeout that clears it (lines 432-433).
+			await selectPiece(0);
+			await placeSelectedPieceAt(1, 0);
+			await expect.element(page.getByTestId('piece-slot-0')).toHaveClass(/rejected/);
+
+			// Advance past REJECTED_DURATION_MS (500ms) to fire the timeout
+			// callback that resets rejectedPiece and rejectedPieceTimeout.
+			await vi.advanceTimersByTimeAsync(600);
+
+			await expect.element(page.getByTestId('piece-slot-0')).not.toHaveClass(/rejected/);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('dispatches setDocumentHidden on visibilitychange', async () => {
+		await renderPuzzlePage();
+
+		// The visibilitychange listener calls setDocumentHidden on the
+		// sessionStore. We verify it doesn't throw and the page remains stable.
+		document.dispatchEvent(new Event('visibilitychange'));
+
+		await expect.element(page.getByTestId('puzzle-board')).toBeVisible();
+	});
+
+	it('dispatches resume_completion_effects when restoring a session with a sealed completion', async () => {
+		// Configure the mock loadSession to return a snapshot with a
+		// sealedCompletion so the page dispatches resume_completion_effects
+		// on load (line 603).
+		sealedCompletionOverride.value = {
+			runId: 'test-run-id',
+			resultClass: 'standard_timed',
+			timingQuality: 'known',
+			elapsedActiveSeconds: 42,
+			completedAt: Date.now(),
+			localStats: { status: 'succeeded' },
+			serverSubmission: { status: 'pending' }
+		};
+		setSavedProgress({
+			placedPieces: [
+				{ pieceId: 0, x: 0, y: 0 },
+				{ pieceId: 1, x: 1, y: 0 }
+			]
+		});
+
+		await renderPuzzlePage();
+
+		// The restored session is completed; resume_completion_effects is
+		// dispatched. The page should show the completed state ("ALL PIECES
+		// PLACED") without crashing.
+		await expect.element(page.getByText('ALL PIECES PLACED')).toBeVisible();
 	});
 });
