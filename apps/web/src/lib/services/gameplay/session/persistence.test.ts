@@ -637,6 +637,92 @@ describe('loadPersistedSession additional validation branches', () => {
 		});
 	});
 
+	it('rejects a standard_timed record with hintUsed: true (should be assisted_timed)', () => {
+		const snapshot = serializeSession(makeState(), 1_000)!;
+		const tampered = {
+			...snapshot,
+			facts: { rotationUsed: false, hintUsed: true, ghostReferenceUsed: false },
+			resultClass: 'standard_timed'
+		};
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx)).toEqual({
+			status: 'invalid',
+			reason: 'cross_field_violation'
+		});
+	});
+
+	it('rejects a standard_timed record with ghostReferenceUsed: true (should be assisted_timed)', () => {
+		const snapshot = serializeSession(makeState(), 1_000)!;
+		const tampered = {
+			...snapshot,
+			facts: { rotationUsed: false, hintUsed: false, ghostReferenceUsed: true },
+			resultClass: 'standard_timed'
+		};
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx)).toEqual({
+			status: 'invalid',
+			reason: 'cross_field_violation'
+		});
+	});
+
+	it('rejects a standard_timed record with rotationUsed: true (should be rotation_timed)', () => {
+		const snapshot = serializeSession(makeState(), 1_000)!;
+		const tampered = {
+			...snapshot,
+			facts: { rotationUsed: true, hintUsed: false, ghostReferenceUsed: false },
+			resultClass: 'standard_timed'
+		};
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx)).toEqual({
+			status: 'invalid',
+			reason: 'cross_field_violation'
+		});
+	});
+
+	it('rejects a rotation_timed record with hintUsed: true (should be assisted_timed)', () => {
+		const snapshot = serializeSession(
+			makeState({
+				rotationEnabled: true,
+				facts: { rotationUsed: true, hintUsed: false, ghostReferenceUsed: false },
+				resultClass: 'rotation_timed'
+			}),
+			1_000
+		)!;
+		const tampered = {
+			...snapshot,
+			facts: { rotationUsed: true, hintUsed: true, ghostReferenceUsed: false },
+			resultClass: 'rotation_timed'
+		};
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx)).toEqual({
+			status: 'invalid',
+			reason: 'cross_field_violation'
+		});
+	});
+
+	it('rejects a non-relaxed record with relaxed mode (should be relaxed)', () => {
+		const snapshot = serializeSession(
+			makeState({ mode: 'relaxed', resultClass: 'relaxed', elapsedActiveSeconds: null }),
+			1_000
+		)!;
+		const tampered = {
+			...snapshot,
+			resultClass: 'standard_timed'
+		};
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx)).toEqual({
+			status: 'invalid',
+			reason: 'cross_field_violation'
+		});
+	});
+
+	it('accepts a record whose resultClass matches the monotonic facts', () => {
+		const snapshot = serializeSession(
+			makeState({
+				facts: { rotationUsed: false, hintUsed: true, ghostReferenceUsed: false },
+				resultClass: 'assisted_timed'
+			}),
+			1_000
+		)!;
+		const result = loadPersistedSession(JSON.stringify(snapshot), ctx);
+		expect(result.status).toBe('loaded');
+	});
+
 	it('rejects a record with invalid counters (negative incorrectAttempts)', () => {
 		const snapshot = serializeSession(makeState(), 1_000)!;
 		const tampered = {
@@ -747,6 +833,135 @@ describe('loadPersistedSession additional validation branches', () => {
 				timingQuality: 'known',
 				elapsedActiveSeconds: -1,
 				completedAt: 1_000,
+				localStats: { status: 'succeeded' },
+				serverSubmission: { status: 'succeeded' }
+			}
+		};
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx)).toEqual({
+			status: 'invalid',
+			reason: 'cross_field_violation'
+		});
+	});
+
+	it('rejects a known timed seal with elapsed 0 (server requires positive)', () => {
+		const snapshot = serializeSession(makeState(), 1_000)!;
+		const tampered = {
+			...snapshot,
+			lifecycle: 'completed',
+			sealedCompletion: {
+				runId: snapshot.runId,
+				resultClass: 'standard_timed',
+				timingQuality: 'known',
+				elapsedActiveSeconds: 0,
+				completedAt: 1_000,
+				localStats: { status: 'succeeded' },
+				serverSubmission: { status: 'succeeded' }
+			}
+		};
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx)).toEqual({
+			status: 'invalid',
+			reason: 'cross_field_violation'
+		});
+	});
+
+	it('rejects a known timed seal with fractional elapsed (server requires integer)', () => {
+		const snapshot = serializeSession(makeState(), 1_000)!;
+		const tampered = {
+			...snapshot,
+			lifecycle: 'completed',
+			sealedCompletion: {
+				runId: snapshot.runId,
+				resultClass: 'standard_timed',
+				timingQuality: 'known',
+				elapsedActiveSeconds: 1.5,
+				completedAt: 1_000,
+				localStats: { status: 'succeeded' },
+				serverSubmission: { status: 'succeeded' }
+			}
+		};
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx)).toEqual({
+			status: 'invalid',
+			reason: 'cross_field_violation'
+		});
+	});
+
+	it('rejects a known timed seal with null elapsed (server requires a number)', () => {
+		const snapshot = serializeSession(makeState(), 1_000)!;
+		const tampered = {
+			...snapshot,
+			lifecycle: 'completed',
+			sealedCompletion: {
+				runId: snapshot.runId,
+				resultClass: 'standard_timed',
+				timingQuality: 'known',
+				elapsedActiveSeconds: null,
+				completedAt: 1_000,
+				localStats: { status: 'succeeded' },
+				serverSubmission: { status: 'succeeded' }
+			}
+		};
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx)).toEqual({
+			status: 'invalid',
+			reason: 'cross_field_violation'
+		});
+	});
+
+	it('rejects a relaxed seal with a numeric elapsed (server requires null)', () => {
+		const snapshot = serializeSession(
+			makeState({ mode: 'relaxed', resultClass: 'relaxed', elapsedActiveSeconds: null }),
+			1_000
+		)!;
+		const tampered = {
+			...snapshot,
+			lifecycle: 'completed',
+			sealedCompletion: {
+				runId: snapshot.runId,
+				resultClass: 'relaxed',
+				timingQuality: 'known',
+				elapsedActiveSeconds: 5,
+				completedAt: 1_000,
+				localStats: { status: 'succeeded' },
+				serverSubmission: { status: 'succeeded' }
+			}
+		};
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx)).toEqual({
+			status: 'invalid',
+			reason: 'cross_field_violation'
+		});
+	});
+
+	it('rejects a legacy_unknown seal with a numeric elapsed (server requires null)', () => {
+		const snapshot = serializeSession(makeState(), 1_000)!;
+		const tampered = {
+			...snapshot,
+			lifecycle: 'completed',
+			sealedCompletion: {
+				runId: snapshot.runId,
+				resultClass: 'standard_timed',
+				timingQuality: 'legacy_unknown',
+				elapsedActiveSeconds: 5,
+				completedAt: 1_000,
+				localStats: { status: 'succeeded' },
+				serverSubmission: { status: 'succeeded' }
+			}
+		};
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx)).toEqual({
+			status: 'invalid',
+			reason: 'cross_field_violation'
+		});
+	});
+
+	it('rejects a seal with a negative completedAt', () => {
+		const snapshot = serializeSession(makeState(), 1_000)!;
+		const tampered = {
+			...snapshot,
+			lifecycle: 'completed',
+			sealedCompletion: {
+				runId: snapshot.runId,
+				resultClass: 'standard_timed',
+				timingQuality: 'known',
+				elapsedActiveSeconds: 5,
+				completedAt: -1,
 				localStats: { status: 'succeeded' },
 				serverSubmission: { status: 'succeeded' }
 			}

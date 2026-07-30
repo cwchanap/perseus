@@ -43,6 +43,7 @@
 		CompletionFailureCode
 	} from '$lib/services/gameplay/session/types';
 	import { completionRequestFromSeal } from '$lib/services/gameplay/session/types';
+	import { playerAuth } from '$lib/stores/playerAuth';
 
 	const REJECTED_DURATION_MS = 500;
 	const HINT_DURATION_MS = 1800;
@@ -92,6 +93,10 @@
 
 	let bestTime: number | null = $state(null);
 	let isNewBest = $state(false);
+	// True when the local stats write failed for the current completion. The
+	// in-memory new-best presentation is still shown, but the persisted-best
+	// wording (NEW RECORD) is suppressed until the write succeeds.
+	let localStatsFailed = $state(false);
 	let activeLoadRequestId = 0;
 
 	// When a persisted session has a future schema version (incompatible),
@@ -108,6 +113,14 @@
 	let panStartClientX = 0;
 	let panStartClientY = 0;
 
+	// Track the previous player-auth status so a transition to authenticated
+	// (login or session restore) triggers a one-shot retry of any unauthorized
+	// server-submission failures. Hydration's auto-retry deliberately skips
+	// unauthorized failures; this subscription closes that gap once auth is
+	// actually present.
+	let prevAuthStatus: 'loading' | 'authenticated' | 'anonymous' = 'loading';
+	let authUnsubscribe: (() => void) | null = null;
+
 	let panOriginX = 0;
 	let panOriginY = 0;
 
@@ -121,6 +134,25 @@
 		window.addEventListener('pagehide', handlePageHide);
 		document.addEventListener('visibilitychange', handleVisibilityChange);
 	}
+
+	// Subscribe to playerAuth so a transition to authenticated triggers a
+	// one-shot retry of any unauthorized server-submission failures. The
+	// hydration auto-retry (loadPuzzle) deliberately skips unauthorized
+	// failures; this subscription closes that gap once auth is present.
+	authUnsubscribe = playerAuth.subscribe((authState) => {
+		const prev = prevAuthStatus;
+		prevAuthStatus = authState.status;
+		// Only retry on a real transition into authenticated (not the initial
+		// loading -> authenticated, which the hydration path handles for
+		// non-unauthorized failures; and not authenticated -> authenticated
+		// re-emissions).
+		if (prev !== 'authenticated' && authState.status === 'authenticated') {
+			sessionStore?.dispatch({
+				type: 'retry_completion_effects',
+				includeUnauthorized: true
+			});
+		}
+	});
 
 	onDestroy(() => {
 		// Flush the clock and persist a final snapshot before disposing so
@@ -136,6 +168,10 @@
 		if (sessionUnsubscribe) {
 			sessionUnsubscribe();
 			sessionUnsubscribe = null;
+		}
+		if (authUnsubscribe) {
+			authUnsubscribe();
+			authUnsubscribe = null;
 		}
 		if (checkpointInterval !== null) {
 			clearInterval(checkpointInterval);
@@ -357,9 +393,12 @@
 
 		if (result.status === 'failed') {
 			isNewBest = result.isNewStandardBest;
+			bestTime = result.inMemoryStats.standardBestTime;
+			localStatsFailed = true;
 		} else {
 			isNewBest = result.isNewStandardBest;
 			bestTime = result.stats.standardBestTime;
+			localStatsFailed = false;
 		}
 		showCelebration = true;
 
@@ -405,8 +444,13 @@
 	function handleRetryServerSubmission() {
 		// Re-emits any retryable-failed completion effects (here, the server
 		// submission). The engine resets the effect to pending and fires a new
-		// completion_effect_request, which handleServerSubmissionEffect picks up.
-		sessionStore?.dispatch({ type: 'retry_completion_effects' });
+		// completion_effect_request, which handleServerSubmissionEffect picks
+		// up. includeUnauthorized lets an explicit user retry attempt an
+		// unauthorized submission (e.g. after the user logs in).
+		sessionStore?.dispatch({
+			type: 'retry_completion_effects',
+			includeUnauthorized: true
+		});
 	}
 
 	function handleSessionEvent(event: PuzzleSessionEvent) {
@@ -585,14 +629,21 @@
 			rejectedPiece = null;
 			bestTime = getBestTime(id);
 			isNewBest = false;
+			localStatsFailed = false;
 
 			// Construct the session store.
+			// Generate one shuffled tray order for the fresh run. The engine
+			// ignores initialTrayOrder when a restored snapshot is present
+			// (hydrate reads the snapshot's own trayOrder), so this is only
+			// consumed by freshState. createTrayOrder remains for Play Again.
+			const shuffledTrayOrder = shuffleArray(loadedPuzzle.pieces.map((p) => p.id));
 			const store = createPuzzleSessionStore({
 				metadata,
 				runIdFactory,
 				clock,
 				onEvent: handleSessionEvent,
 				restored,
+				initialTrayOrder: shuffledTrayOrder,
 				createTrayOrder: () => shuffleArray(loadedPuzzle.pieces.map((p) => p.id)),
 				createRotations: (pieceIds: number[]) => {
 					let hash = 0;
@@ -820,6 +871,13 @@
 
 	function handleVisibilityChange() {
 		sessionStore?.setDocumentHidden(document.hidden);
+		// When the document is hidden the engine suspends the timer and
+		// checkpoints the in-memory clock. Persist the resulting snapshot
+		// immediately so a mobile browser that kills the hidden page without
+		// delivering pagehide does not lose the last visible interval.
+		if (document.hidden) {
+			checkpointSession();
+		}
 	}
 
 	function handleWindowKeyDown(event: KeyboardEvent) {
@@ -852,6 +910,7 @@
 		referencePointerId = null;
 		referenceHoldSource = null;
 		isNewBest = false;
+		localStatsFailed = false;
 		// Play Again is a deliberate abandonment of the current record. Clear
 		// the incompatible (future-schema) entry if present and re-enable
 		// persistence for the fresh run.
@@ -1169,7 +1228,11 @@
 					<div class="modal-stat new-best">
 						<span class="mstat-label">PERSONAL BEST</span>
 						<span class="mstat-value gold">{formatTime(bestTime ?? timerState.elapsed)}</span>
-						<span class="new-record-badge">NEW RECORD</span>
+						{#if localStatsFailed}
+							<span class="new-record-badge unsaved" data-testid="new-best-unsaved">UNSAVED</span>
+						{:else}
+							<span class="new-record-badge">NEW RECORD</span>
+						{/if}
 					</div>
 				{/if}
 			</div>
@@ -1652,6 +1715,13 @@
 		padding: 0.15rem 0.625rem;
 		text-shadow: 0 0 8px var(--gold);
 		box-shadow: 0 0 15px var(--gold-glow);
+	}
+
+	.new-record-badge.unsaved {
+		color: var(--hot, #ff4444);
+		border-color: var(--hot-dim, rgba(255, 68, 68, 0.4));
+		text-shadow: 0 0 8px var(--hot-glow, rgba(255, 68, 68, 0.5));
+		box-shadow: 0 0 12px var(--hot-glow, rgba(255, 68, 68, 0.3));
 	}
 
 	.modal-actions {

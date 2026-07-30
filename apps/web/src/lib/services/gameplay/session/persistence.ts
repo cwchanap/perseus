@@ -28,7 +28,13 @@ import type {
 	SealedCompletion
 } from './types';
 import { CURRENT_SESSION_SCHEMA_VERSION } from './types';
-import { isPuzzleRunId, RESULT_CLASSES, TIMING_QUALITIES } from '@perseus/types';
+import {
+	isPuzzleRunId,
+	isRecordPuzzleCompletionV1,
+	MAX_COMPLETION_TIME_SECONDS,
+	RESULT_CLASSES,
+	TIMING_QUALITIES
+} from '@perseus/types';
 
 /**
  * SHA-256 over the UTF-8 bytes of `value`, returned as 64 lowercase hex chars.
@@ -331,6 +337,23 @@ function validateV1(
 		return null;
 	}
 
+	// Cross-field consistency: resultClass must match the class derived from
+	// mode and monotonic facts. The engine's recomputeResultClass uses the
+	// same precedence. Without this check, a corrupted snapshot with
+	// hintUsed: true and resultClass: standard_timed would be accepted and
+	// sealed with standard_timed, making an assisted solve eligible for
+	// standard-best accounting.
+	const derivedFacts = facts as Record<string, boolean>;
+	const expectedClass: ResultClass =
+		mode === 'relaxed'
+			? 'relaxed'
+			: derivedFacts.hintUsed || derivedFacts.ghostReferenceUsed
+				? 'assisted_timed'
+				: derivedFacts.rotationUsed
+					? 'rotation_timed'
+					: 'standard_timed';
+	if (resultClass !== expectedClass) return null;
+
 	const hasUserActivity = record.hasUserActivity;
 	if (typeof hasUserActivity !== 'boolean') return null;
 
@@ -478,12 +501,30 @@ function validateSeal(
 	if (s.runId !== expectedRunId) return false;
 	if (!RESULT_CLASS_SET.has(s.resultClass as string)) return false;
 	if (!TIMING_QUALITY_SET.has(s.timingQuality as string)) return false;
-	if (typeof s.completedAt !== 'number' || !Number.isFinite(s.completedAt)) return false;
+	if (typeof s.completedAt !== 'number' || !Number.isFinite(s.completedAt) || s.completedAt < 0) {
+		return false;
+	}
 	const elapsed = s.elapsedActiveSeconds;
 	if (
 		elapsed !== null &&
 		(typeof elapsed !== 'number' || !Number.isFinite(elapsed) || elapsed < 0)
 	) {
+		return false;
+	}
+	// Validate the projected completion request against the same contract the
+	// server enforces (isRecordPuzzleCompletionV1). Without this, a persisted
+	// seal with e.g. elapsed 0, a fractional value, or a null-for-known-timed
+	// value would pass local validation but be rejected by the server when
+	// hydration replays the pending submission — permanently losing it as a
+	// terminal bad_request.
+	const projectedRequest = {
+		version: 1,
+		runId: s.runId,
+		resultClass: s.resultClass,
+		timingQuality: s.timingQuality,
+		elapsedActiveSeconds: elapsed
+	};
+	if (!isRecordPuzzleCompletionV1(projectedRequest, MAX_COMPLETION_TIME_SECONDS)) {
 		return false;
 	}
 	// Completion effects must be present and applicable. A missing/null
