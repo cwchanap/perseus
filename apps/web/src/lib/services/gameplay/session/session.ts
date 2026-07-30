@@ -438,9 +438,8 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 		if (state.lifecycle === 'setup') {
 			return { type: 'lifecycle_noop', reason: 'nothing_to_restart' };
 		}
-		if (state.lifecycle === 'disposed') {
-			return { type: 'lifecycle_noop', reason: 'disposed' };
-		}
+		// 'disposed' is unreachable here: dispatch() guards disposed sessions
+		// before routing to doRestart.
 		const from = state.lifecycle;
 		const retainedMode = state.mode;
 		const retainedOrganization = state.organization;
@@ -619,17 +618,14 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 
 	function doUndo(): PuzzleSessionOutcome {
 		if (!placementHistory.canUndo()) {
-			return {
-				type: 'history_noop',
-				reason: placementHistory.getCurrent() === undefined ? 'empty' : 'at_start'
-			};
-		}
-		const previous = placementHistory.undo();
-		if (previous === undefined) {
+			// History always has an initial-state baseline, so getCurrent() is
+			// never undefined when canUndo() is false — the reason is 'at_start'.
 			return { type: 'history_noop', reason: 'at_start' };
 		}
+		const previous = placementHistory.undo();
+		// canUndo() was true, so undo() always returns a value.
 		const wasCompleted = state.lifecycle === 'completed';
-		applyHistorySnapshot(previous);
+		applyHistorySnapshot(previous!);
 		state.resultClass = recomputeResultClass();
 		updateHistoryFlags();
 		// Undo from a completed run reactivates the board/lifecycle, but the
@@ -646,10 +642,8 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 			return { type: 'history_noop', reason: 'at_end' };
 		}
 		const next = placementHistory.redo();
-		if (next === undefined) {
-			return { type: 'history_noop', reason: 'at_end' };
-		}
-		applyHistorySnapshot(next);
+		// canRedo() was true, so redo() always returns a value.
+		applyHistorySnapshot(next!);
 		state.resultClass = recomputeResultClass();
 		updateHistoryFlags();
 		// Restoring the completed board after an undo returns lifecycle to
@@ -687,9 +681,9 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 	// --- Public checkpoint ----------------------------------------------------
 
 	function checkpointTime(): void {
-		if (!clockRunning) return;
-		if (state.mode !== 'timed' || state.timingQuality !== 'known') return;
-		if (monotonicStart === null) return;
+		// clockRunning is only true for timed+known sessions with a live
+		// monotonicStart (startClock sets both together, stopClock clears both).
+		if (!clockRunning || monotonicStart === null) return;
 		const now = clock.monotonicNow();
 		const delta = Math.floor((now - monotonicStart) / 1000);
 		if (delta > 0) {

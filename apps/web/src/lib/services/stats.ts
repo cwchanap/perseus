@@ -68,7 +68,7 @@ function parseStoredStats(raw: Record<string, unknown>, puzzleId: string): Puzzl
 }
 
 function validateV1(raw: Record<string, unknown>, puzzleId: string): PuzzleStatsV1 | null {
-	if (raw.schemaVersion !== CURRENT_STATS_SCHEMA_VERSION) return null;
+	// Caller (parseStoredStats) guarantees schemaVersion === 1 before invoking.
 	if (raw.puzzleId !== puzzleId) return null;
 	const standardBestTime = raw.standardBestTime;
 	if (

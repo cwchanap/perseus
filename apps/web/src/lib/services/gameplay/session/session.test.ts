@@ -1803,3 +1803,138 @@ describe('PuzzleSession defensive guard coverage', () => {
 		expect(outcome).toEqual({ type: 'rotation_noop', reason: 'piece_not_rotatable' });
 	});
 });
+
+// --- Patch coverage: rotation, tray, completion, checkpoint branches -------------
+
+describe('PuzzleSession rotation edge coverage', () => {
+	it('rotates a piece whose rotation entry is missing (defaults to 0)', () => {
+		// Inject a createRotations that returns an empty map so the piece has no
+		// prior rotation entry; doRotatePiece falls back to 0 before rotating.
+		const { session } = startedSession({
+			pieceCount: 2,
+			createRotations: () => ({})
+		});
+		session.dispatch({ type: 'set_rotation_mode', enabled: true });
+
+		const outcome = session.dispatch({ type: 'rotate_piece', pieceId: 0 });
+
+		expect(outcome.type).toBe('piece_rotated');
+		expect(session.getState().pieceRotations[0]).toBe(90);
+	});
+
+	it('accepts a correct placement when rotation is on but the piece has no rotation entry (defaults to upright 0)', () => {
+		// With an empty rotation map, validatePlacement's `pieceRotations[pieceId] ?? 0`
+		// falls back to 0 (upright), so the non_upright rejection is skipped.
+		const { session } = startedSession({
+			pieceCount: 1,
+			createRotations: () => ({})
+		});
+		session.dispatch({ type: 'set_rotation_mode', enabled: true });
+
+		const outcome = session.dispatch({ type: 'attempt_placement', pieceId: 0, x: 0, y: 0 });
+
+		expect(outcome.type).toBe('placement');
+		if (outcome.type === 'placement' && outcome.outcome.status === 'accepted') {
+			expect(outcome.outcome.completed).toBe(true);
+		}
+	});
+
+	it('accepts a correct placement when rotation is enabled and the piece is upright', () => {
+		// Rotation enabled but piece rotation is 0 (upright) → the non_upright
+		// rejection branch is skipped and the placement is accepted.
+		const { session } = startedSession({
+			pieceCount: 1,
+			createRotations: (ids) => {
+				const out: Record<number, Rotation> = {};
+				ids.forEach((id) => (out[id] = 0));
+				return out;
+			}
+		});
+		session.dispatch({ type: 'set_rotation_mode', enabled: true });
+
+		const outcome = session.dispatch({ type: 'attempt_placement', pieceId: 0, x: 0, y: 0 });
+
+		expect(outcome.type).toBe('placement');
+		if (outcome.type === 'placement' && outcome.outcome.status === 'accepted') {
+			expect(outcome.outcome.completed).toBe(true);
+		}
+	});
+});
+
+describe('PuzzleSession tray organization remove edge', () => {
+	it('removes a non-active tray without resetting the active tray', () => {
+		const { session } = startedSession();
+		session.dispatch({
+			type: 'update_tray_organization',
+			update: { type: 'rename_tray', trayId: 'temp', name: 'Temp' }
+		});
+		session.dispatch({
+			type: 'update_tray_organization',
+			update: { type: 'set_active_tray', trayId: 'main' }
+		});
+
+		const outcome = session.dispatch({
+			type: 'update_tray_organization',
+			update: { type: 'remove_tray', trayId: 'temp' }
+		});
+
+		expect(outcome.type).toBe('tray_organization_applied');
+		expect(session.getState().organization?.names['temp']).toBeUndefined();
+		// Active tray was 'main', not 'temp', so it stays 'main'.
+		expect(session.getState().organization?.activeTray).toBe('main');
+	});
+});
+
+describe('PuzzleSession completion effect terminal failure', () => {
+	it('treats a non-retryable failed effect as terminal on re-acknowledgement', () => {
+		const { session, seal } = completeOnePieceSession();
+
+		// First acknowledgement: mark server_submission as a non-retryable failure.
+		session.dispatch({
+			type: 'acknowledge_completion_effect',
+			runId: seal.runId,
+			effect: 'server_submission',
+			result: { status: 'failed', code: 'completion_quota_exceeded', retryable: false }
+		});
+
+		// Second acknowledgement: the effect is already failed+non-retryable → terminal.
+		const outcome = session.dispatch({
+			type: 'acknowledge_completion_effect',
+			runId: seal.runId,
+			effect: 'server_submission',
+			result: { status: 'succeeded' }
+		});
+
+		expect(outcome).toEqual({ type: 'effect_acknowledgement_noop', reason: 'effect_terminal' });
+		expect(session.getState().sealedCompletion!.serverSubmission.status).toBe('failed');
+	});
+});
+
+describe('PuzzleSession checkpoint no-op coverage', () => {
+	it('checkpointTime is a no-op when the clock is not running', () => {
+		// A fresh setup session never started the clock; checkpointTime returns
+		// immediately via the !clockRunning guard.
+		const session = createPuzzleSession(makeOptions());
+		const before = session.getState().elapsedActiveSeconds;
+
+		session.checkpointTime();
+
+		expect(session.getState().elapsedActiveSeconds).toBe(before);
+	});
+});
+
+describe('PuzzleSession restart with createTrayOrder', () => {
+	it('uses the injected createTrayOrder on restart', () => {
+		const customOrder = [3, 1, 0, 2];
+		const session = createPuzzleSession({
+			metadata: makeMetadata(4),
+			runIdFactory: makeRunIdFactory(),
+			clock: new ManualClock(),
+			createTrayOrder: () => customOrder.slice()
+		});
+		session.dispatch({ type: 'start' });
+		session.dispatch({ type: 'restart' });
+
+		expect(session.getState().trayOrder).toEqual(customOrder);
+	});
+});

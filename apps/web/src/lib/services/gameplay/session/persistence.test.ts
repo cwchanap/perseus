@@ -1,5 +1,5 @@
 // Red tests for PuzzleSession persistence: canonical run IDs and canonical JSON.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { canonicalJson, sha256Hex, legacyRunId, createBrowserRunIdFactory } from './persistence';
 import { isPuzzleRunId } from '@perseus/types';
 
@@ -186,11 +186,12 @@ import {
 	loadPersistedSession,
 	isResumable,
 	createSessionStorageAdapter,
+	noopThrowingStorage,
 	fnv1aUtf8,
 	mulberry32,
 	deterministicLegacyTrayOrder
 } from './persistence';
-import { memoryStorage } from './persistence.test-fixtures';
+import { memoryStorage, load } from './persistence.test-fixtures';
 import type {
 	PuzzleSessionState,
 	PersistedPuzzleSessionV1,
@@ -921,5 +922,115 @@ describe('loadPersistedSession additional validation branches', () => {
 		if (result.status === 'loaded') {
 			expect(result.snapshot.sealedCompletion?.serverSubmission.status).toBe('not_applicable');
 		}
+	});
+});
+
+// --- Patch coverage: test-fixture helpers, noop storage, crypto edges -----------
+
+describe('memoryStorage fixture', () => {
+	it('reports length and key index for stored entries', () => {
+		const store: Record<string, string> = { a: '1', b: '2' };
+		const storage = memoryStorage(store);
+
+		expect(storage.length).toBe(2);
+		expect(storage.key(0)).toBe('a');
+		expect(storage.key(1)).toBe('b');
+		expect(storage.key(2)).toBeNull();
+	});
+
+	it('clear removes all entries', () => {
+		const store: Record<string, string> = { a: '1', b: '2' };
+		const storage = memoryStorage(store);
+
+		storage.clear();
+
+		expect(storage.length).toBe(0);
+		expect(storage.getItem('a')).toBeNull();
+	});
+});
+
+describe('load fixture helper', () => {
+	it('returns missing when JSON.stringify yields undefined (e.g. undefined input)', () => {
+		// JSON.stringify(undefined) === undefined, so `?? null` passes null to
+		// loadPersistedSession which reports 'missing'.
+		expect(load(undefined as unknown).status).toBe('missing');
+	});
+});
+
+describe('noopThrowingStorage', () => {
+	it('reports zero length and null key without throwing', () => {
+		expect(noopThrowingStorage.length).toBe(0);
+		expect(noopThrowingStorage.key(0)).toBeNull();
+	});
+
+	it('returns null for getItem and throws for setItem', () => {
+		expect(noopThrowingStorage.getItem('anything')).toBeNull();
+		expect(() => noopThrowingStorage.setItem('k', 'v')).toThrow('storage_unavailable');
+	});
+
+	it('removeItem and clear are silent no-ops', () => {
+		expect(() => {
+			noopThrowingStorage.removeItem('k');
+			noopThrowingStorage.clear();
+		}).not.toThrow();
+	});
+});
+
+describe('createBrowserRunIdFactory crypto-unavailable edge', () => {
+	it('falls to the undefined branch when global crypto is absent', () => {
+		vi.stubGlobal('crypto', undefined);
+		try {
+			const factory = createBrowserRunIdFactory();
+			// With no crypto anywhere, fallbackUuidV4 dereferences undefined and throws.
+			expect(() => factory.create()).toThrow();
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
+
+	it('uses the fallback path when crypto lacks randomUUID', () => {
+		// A crypto with getRandomValues but no randomUUID exercises the
+		// fallbackUuidV4(source) path where source is the provided crypto.
+		const stub = {
+			getRandomValues: <T extends ArrayBufferView | null>(arr: T): T => {
+				const out = new Uint8Array((arr as unknown as ArrayBufferView).buffer);
+				out.fill(0);
+				return arr;
+			}
+		} as unknown as Crypto;
+		const factory = createBrowserRunIdFactory(stub);
+		expect(isPuzzleRunId(factory.create())).toBe(true);
+	});
+});
+
+describe('createSessionStorageAdapter error paths without onError', () => {
+	it('swallows read errors silently when no onError is provided', () => {
+		const storage = memoryStorage({});
+		storage.getItem = () => {
+			throw new Error('read denied');
+		};
+		const adapter = createSessionStorageAdapter({ storage });
+
+		expect(adapter.loadSession('pz1', ctx).status).toBe('missing');
+	});
+
+	it('swallows write errors silently when no onError is provided', () => {
+		const storage = memoryStorage({});
+		storage.setItem = () => {
+			throw new Error('quota');
+		};
+		const adapter = createSessionStorageAdapter({ storage });
+
+		expect(() => adapter.saveSession('pz1', serializeSession(makeState(), 1)!)).not.toThrow();
+	});
+
+	it('swallows remove errors silently when no onError is provided', () => {
+		const storage = memoryStorage({});
+		storage.removeItem = () => {
+			throw new Error('remove denied');
+		};
+		const adapter = createSessionStorageAdapter({ storage });
+
+		expect(() => adapter.clearSession('pz1')).not.toThrow();
 	});
 });

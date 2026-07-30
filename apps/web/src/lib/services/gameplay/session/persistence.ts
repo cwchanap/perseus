@@ -648,7 +648,8 @@ export function createSessionStorageAdapter(options?: {
 	};
 }
 
-const noopThrowingStorage: Storage = {
+/** Storage stub used when no localStorage is available. Exported for tests. */
+export const noopThrowingStorage: Storage = {
 	get length() {
 		return 0;
 	},
