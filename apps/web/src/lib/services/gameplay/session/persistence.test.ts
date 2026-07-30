@@ -212,7 +212,12 @@ function makeState(overrides: Partial<PuzzleSessionState> = {}): PuzzleSessionSt
 		pieceCount: 4,
 		gridCols: 2,
 		gridRows: 2,
-		placedPieces: [{ pieceId: 0, x: 0, y: 0 }],
+		placedPieces: [
+			{ pieceId: 0, x: 0, y: 0 },
+			{ pieceId: 1, x: 1, y: 0 },
+			{ pieceId: 2, x: 0, y: 1 },
+			{ pieceId: 3, x: 1, y: 1 }
+		],
 		trayOrder: [0, 1, 2, 3],
 		rotationEnabled: false,
 		pieceRotations: {},
@@ -609,7 +614,7 @@ describe('loadPersistedSession additional validation branches', () => {
 
 	it('rejects a relaxed mode record with non-null elapsed', () => {
 		const snapshot = serializeSession(
-			makeState({ mode: 'relaxed', elapsedActiveSeconds: null }),
+			makeState({ mode: 'relaxed', elapsedActiveSeconds: null, timerStarted: false }),
 			1_000
 		)!;
 		const tampered = { ...snapshot, elapsedActiveSeconds: 10 };
@@ -698,7 +703,12 @@ describe('loadPersistedSession additional validation branches', () => {
 
 	it('rejects a non-relaxed record with relaxed mode (should be relaxed)', () => {
 		const snapshot = serializeSession(
-			makeState({ mode: 'relaxed', resultClass: 'relaxed', elapsedActiveSeconds: null }),
+			makeState({
+				mode: 'relaxed',
+				resultClass: 'relaxed',
+				elapsedActiveSeconds: null,
+				timerStarted: false
+			}),
 			1_000
 		)!;
 		const tampered = {
@@ -908,7 +918,12 @@ describe('loadPersistedSession additional validation branches', () => {
 
 	it('rejects a relaxed seal with a numeric elapsed (server requires null)', () => {
 		const snapshot = serializeSession(
-			makeState({ mode: 'relaxed', resultClass: 'relaxed', elapsedActiveSeconds: null }),
+			makeState({
+				mode: 'relaxed',
+				resultClass: 'relaxed',
+				elapsedActiveSeconds: null,
+				timerStarted: false
+			}),
 			1_000
 		)!;
 		const tampered = {
