@@ -625,7 +625,10 @@ describe('Puzzle route gameplay integration', () => {
 			.element(page.getByTestId('puzzle-piece-visual').first())
 			.toHaveAttribute('style', 'transform: rotate(0deg);');
 
-		await selectPiece(0);
+		// Piece 0 remains selected from the selectPiece(0) above: a rejected
+		// placement does not clear selection, and rotating does not either.
+		// Re-selecting would now toggle it off (Enter on a selected piece
+		// deselects), so place the still-selected piece directly.
 		await placeSelectedPieceAt(0, 0);
 		await expect.element(page.getByText('1/2')).toBeVisible();
 	});
@@ -1467,8 +1470,10 @@ describe('Puzzle page defensive guard coverage', () => {
 
 		// Second incorrect placement on the same piece should clear the
 		// existing timeout and set a new one (exercises the
-		// clearTimeout branch in the rejected-piece handler).
-		await selectPiece(0);
+		// clearTimeout branch in the rejected-piece handler). The piece is
+		// still selected from the first attempt (a rejected placement does
+		// not clear selection), so place it directly — re-selecting would
+		// toggle selection off.
 		await placeSelectedPieceAt(1, 0);
 		await expect.element(page.getByTestId('piece-slot-0')).toHaveClass(/rejected/);
 	});
@@ -1494,7 +1499,7 @@ describe('Puzzle page defensive guard coverage', () => {
 		}
 	});
 
-	it('dispatches cancel_selection when a selected tray piece receives Enter twice', async () => {
+	it('dispatches cancel_selection when a selected tray piece receives Enter', async () => {
 		await renderPuzzlePage();
 		await selectPiece(0);
 
@@ -1502,22 +1507,14 @@ describe('Puzzle page defensive guard coverage', () => {
 			.element(page.getByLabelText('Puzzle piece 0'))
 			.toHaveAttribute('data-selected', 'true');
 
-		// Pressing Enter on the already-selected piece triggers
-		// handleCancelSelection. The first Enter after select clears
-		// suppressCancel (set by handleSelectPiece); the second Enter
-		// actually dispatches cancel_selection. The suppressCancel flag
-		// now lives in PuzzlePiece (scoped to the piece) instead of the
-		// parent page, preventing cross-piece interference.
+		// Pressing Enter on the already-selected piece deselects it on the
+		// first press. Suppression of the Svelte 5 delegation double-fire is
+		// scoped to the originating select event's identity, so it never
+		// latches across independent keypresses (no two-press-to-deselect).
 		const piece = await page.getByLabelText('Puzzle piece 0').element();
 		piece.focus();
 		piece.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-		// First Enter clears suppressCancel; selection stays.
-		await expect
-			.element(page.getByLabelText('Puzzle piece 0'))
-			.toHaveAttribute('data-selected', 'true');
-
-		piece.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-		// Second Enter dispatches cancel_selection, clearing selection.
+		// A single Enter dispatches cancel_selection, clearing selection.
 		await expect
 			.element(page.getByLabelText('Puzzle piece 0'))
 			.toHaveAttribute('data-selected', 'false');

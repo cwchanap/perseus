@@ -123,6 +123,16 @@
 	}
 
 	onDestroy(() => {
+		// Flush the clock and persist a final snapshot before disposing so
+		// the periodic 5s checkpoint interval does not leave a data-loss
+		// window of several seconds (including recent hint/reference usage).
+		// This must run BEFORE sessionUnsubscribe: checkpointTime() updates the
+		// store snapshot and notifies subscribers, which writes the fresh
+		// value into sessionState; checkpointSession() then serializes that
+		// fresh value. Unsubscribing first would leave sessionState stale, so
+		// the final checkpoint would persist the pre-checkpoint elapsed time.
+		persistSessionFinal();
+
 		if (sessionUnsubscribe) {
 			sessionUnsubscribe();
 			sessionUnsubscribe = null;
@@ -152,11 +162,6 @@
 			window.removeEventListener('pagehide', handlePageHide);
 			document.removeEventListener('visibilitychange', handleVisibilityChange);
 		}
-
-		// Flush the clock and persist a final snapshot before disposing so
-		// the periodic 5s checkpoint interval does not leave a data-loss
-		// window of several seconds (including recent hint/reference usage).
-		persistSessionFinal();
 
 		activeLoadRequestId += 1;
 		if (puzzleSource) {
@@ -364,7 +369,12 @@
 			effect: 'local_stats',
 			result:
 				result.status === 'failed'
-					? { status: 'failed', code: 'storage_error', retryable: false }
+					? // storage_error is recoverable: recordLocalCompletion is
+						// idempotent per run id, so a replayed run does not
+						// double count. Keeping it retryable lets the next
+						// hydration re-drive the write instead of permanently
+						// losing the completion count / personal best.
+						{ status: 'failed', code: 'storage_error', retryable: true }
 					: { status: 'succeeded' }
 		});
 	}
@@ -477,7 +487,6 @@
 		loading = true;
 		error = null;
 		errorStatus = null;
-		persistenceReadOnly = false;
 
 		try {
 			const priorSource = untrack(() => puzzleSource);
@@ -510,6 +519,15 @@
 				sessionStore = null;
 				sessionState = null;
 			}
+
+			// The prior session has now been flushed and disposed. Only now is
+			// it safe to clear the read-only guard: persistSessionFinal above
+			// reads persistenceReadOnly (via checkpointSession), so resetting
+			// it earlier would have let a prior future-schema session's fresh
+			// in-memory v1 state be checkpointed over the unreadable persisted
+			// value, destroying newer-schema progress on puzzle-to-puzzle
+			// navigation (onDestroy does not fire when the route is reused).
+			persistenceReadOnly = false;
 
 			const source = await loadPuzzleSource(id);
 			if (requestId !== activeLoadRequestId) {
