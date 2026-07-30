@@ -118,6 +118,17 @@ const VALID_SOURCES = new Set<PuzzleSourceType>(['api', 'local']);
 const VALID_ROTATIONS = new Set<Rotation>([0, 90, 180, 270]);
 const RESULT_CLASS_SET = new Set<string>(RESULT_CLASSES);
 const TIMING_QUALITY_SET = new Set<string>(TIMING_QUALITIES);
+const COMPLETION_FAILURE_CODE_SET = new Set<string>([
+	'storage_error',
+	'network_error',
+	'bad_request',
+	'unauthorized',
+	'not_found',
+	'run_id_conflict',
+	'completion_quota_exceeded',
+	'internal_error'
+]);
+const VALID_ORG_FILTERS = new Set(['all', 'corners', 'edges', 'center']);
 
 function progressKey(puzzleId: string): string {
 	return `${PROGRESS_KEY_PREFIX}${puzzleId}`;
@@ -296,10 +307,17 @@ function validateV1(
 	}
 	if (mode === 'relaxed' && elapsed !== null) return null;
 	if (timingQuality === 'legacy_unknown' && elapsed !== null) return null;
+	// Inverse: a known timed session must carry a whole-number elapsed
+	// value. Without this, checkpointTime coalesces null to 0 and the
+	// clock silently resumes from zero.
+	if (mode === 'timed' && timingQuality === 'known' && elapsed === null) return null;
 
 	const timerStarted = record.timerStarted;
 	if (typeof timerStarted !== 'boolean') return null;
 	if (timingQuality === 'legacy_unknown' && timerStarted) return null;
+	// Inverse: a relaxed session must not present a running timer — it
+	// can never accumulate and would display a stuck clock.
+	if (mode === 'relaxed' && timerStarted) return null;
 
 	const lastUpdated = record.lastUpdated;
 	if (
@@ -366,6 +384,20 @@ function validateV1(
 	const seal = sealedCompletion === null ? null : (sealedCompletion as unknown as SealedCompletion);
 
 	if (lifecycle === 'completed' && seal === null) return null;
+
+	// Seal must agree with the outer session's derived result class and
+	// timing quality. Without this, a record with hintUsed: true (outer
+	// assisted_timed) but a standard_timed seal would load and replay
+	// local/server effects from the wrong class.
+	if (seal !== null) {
+		if (seal.resultClass !== resultClass) return null;
+		if (seal.timingQuality !== timingQuality) return null;
+	}
+
+	// A completed run must have every piece placed. The engine seals
+	// completion only on a full board; a completed snapshot with missing
+	// placements is corruption.
+	if (lifecycle === 'completed' && placedPieces.length !== knownPieceIds.size) return null;
 
 	const organization = validateOrganization(record.organization);
 	if (organization === false) return null;
@@ -485,6 +517,7 @@ function validateEffectState(raw: unknown): CompletionEffectState | false | null
 		const code = (raw as Record<string, unknown>).code;
 		const retryable = (raw as Record<string, unknown>).retryable;
 		if (typeof code !== 'string' || typeof retryable !== 'boolean') return false;
+		if (!COMPLETION_FAILURE_CODE_SET.has(code)) return false;
 		return { status: 'failed', code: code as CompletionFailureCode, retryable };
 	}
 	return false;
@@ -559,28 +592,39 @@ function validateOrganization(raw: unknown): PersistedTrayOrganization | false |
 	if (raw === undefined) return undefined;
 	if (!raw || typeof raw !== 'object') return false;
 	const o = raw as Record<string, unknown>;
-	if (
-		o.filter !== undefined &&
-		!['all', 'corners', 'edges', 'center'].includes(o.filter as string)
-	) {
+	if (o.filter !== undefined && !VALID_ORG_FILTERS.has(o.filter as string)) {
 		return false;
 	}
 	if (o.activeTray !== undefined && typeof o.activeTray !== 'string') return false;
-	if (
-		o.membership !== undefined &&
-		(typeof o.membership !== 'object' || o.membership === null || Array.isArray(o.membership))
-	)
-		return false;
-	if (
-		o.names !== undefined &&
-		(typeof o.names !== 'object' || o.names === null || Array.isArray(o.names))
-	)
-		return false;
+
+	// membership: piece-id (numeric key) -> tray-id (string value).
+	const membership: Record<number, string> = {};
+	if (o.membership !== undefined) {
+		if (typeof o.membership !== 'object' || o.membership === null || Array.isArray(o.membership))
+			return false;
+		for (const [key, value] of Object.entries(o.membership as Record<string, unknown>)) {
+			const id = Number(key);
+			if (!Number.isInteger(id) || id < 0) return false;
+			if (typeof value !== 'string') return false;
+			membership[id] = value;
+		}
+	}
+
+	// names: tray-id (string key) -> display name (string value).
+	const names: Record<string, string> = {};
+	if (o.names !== undefined) {
+		if (typeof o.names !== 'object' || o.names === null || Array.isArray(o.names)) return false;
+		for (const [key, value] of Object.entries(o.names as Record<string, unknown>)) {
+			if (typeof value !== 'string') return false;
+			names[key] = value;
+		}
+	}
+
 	return {
 		filter: (o.filter as PersistedTrayOrganization['filter']) ?? 'all',
 		activeTray: (o.activeTray as string) ?? 'main',
-		membership: { ...((o.membership as Record<string, unknown>) ?? {}) } as Record<number, string>,
-		names: { ...((o.names as Record<string, unknown>) ?? {}) } as Record<string, string>
+		membership,
+		names
 	};
 }
 

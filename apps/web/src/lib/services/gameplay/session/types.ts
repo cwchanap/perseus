@@ -101,12 +101,6 @@ export type TrayOrganizationUpdate =
 	| { type: 'rename_tray'; trayId: string; name: string }
 	| { type: 'remove_tray'; trayId: string };
 
-export interface PersistedViewport {
-	zoom: number;
-	panX: number;
-	panY: number;
-}
-
 export interface PersistedTrayOrganization {
 	filter: InventoryFilter;
 	activeTray: string;
@@ -186,7 +180,6 @@ export interface PersistedPuzzleSessionV1 {
 	hasUserActivity: boolean;
 	resultClass: ResultClass;
 	sealedCompletion: SealedCompletion | null;
-	viewport?: PersistedViewport;
 	organization?: PersistedTrayOrganization;
 	lastUpdated: number;
 }

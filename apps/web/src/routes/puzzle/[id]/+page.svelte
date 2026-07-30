@@ -680,9 +680,18 @@
 			// not yet manually retried. Calling resume first then retry avoids
 			// double-emit: resume only touches already-pending effects, retry
 			// only touches failed effects — the two sets are disjoint.
+			//
+			// When auth is already authenticated at mount time (SPA navigation),
+			// the auth subscription above fired before sessionStore existed and
+			// no-oped. Include unauthorized effects in this retry so a persisted
+			// unauthorized failure is recovered immediately rather than waiting
+			// for an auth transition that will never come.
 			if (restored?.sealedCompletion) {
 				store.dispatch({ type: 'resume_completion_effects' });
-				store.dispatch({ type: 'retry_completion_effects' });
+				store.dispatch({
+					type: 'retry_completion_effects',
+					includeUnauthorized: prevAuthStatus === 'authenticated'
+				});
 			}
 
 			// Periodic checkpoint.
@@ -741,6 +750,7 @@
 	function handleHint() {
 		if (!sessionStore) return;
 		sessionStore.dispatch({ type: 'use_hint' });
+		checkpointSession();
 	}
 
 	function handleUndo() {
@@ -761,6 +771,7 @@
 		referencePointerId = isPointerEvent ? event.pointerId : null;
 		showReferenceOverlay = true;
 		sessionStore?.dispatch({ type: 'set_reference_mode', mode: 'hold' });
+		checkpointSession();
 	}
 
 	function handleReferenceUp(event?: PointerEvent | KeyboardEvent) {

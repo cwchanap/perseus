@@ -25,7 +25,12 @@ export function validSnapshot(): PersistedPuzzleSessionV1 {
 		elapsedActiveSeconds: 5,
 		timingQuality: 'known',
 		timerStarted: true,
-		placedPieces: [{ pieceId: 0, x: 0, y: 0 }],
+		placedPieces: [
+			{ pieceId: 0, x: 0, y: 0 },
+			{ pieceId: 1, x: 1, y: 0 },
+			{ pieceId: 2, x: 0, y: 1 },
+			{ pieceId: 3, x: 1, y: 1 }
+		],
 		trayOrder: [0, 1, 2, 3],
 		rotationEnabled: false,
 		pieceRotations: {},
