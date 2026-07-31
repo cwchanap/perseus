@@ -481,8 +481,22 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 						.sort((a, b) => a - b),
 			metadata.pieces
 		);
+		// Generate the next run id BEFORE stopping the clock. If the factory
+		// throws, the prior state remains fully intact with its tick interval
+		// still live; otherwise stopClock() would clear the interval while
+		// state.timerStarted stayed true, freezing elapsed time permanently
+		// (ensureTimerStarted no-ops on timerStarted, checkpointTime no-ops on
+		// clockRunning). A collision with the current run id would make the new
+		// run indistinguishable from the old one for completion tracking, so
+		// treat it as a bug rather than silently reusing it.
+		const nextRunId = safeOptions.runIdFactory.create();
+		if (nextRunId === state.runId) {
+			throw new Error(
+				`runIdFactory produced a run id equal to the current run id (${nextRunId}); restart requires a fresh run id`
+			);
+		}
 		stopClock();
-		state = freshState({ ...safeOptions, mode: retainedMode });
+		state = freshState({ ...safeOptions, mode: retainedMode }, nextRunId);
 		state.organization = retainedOrganization;
 		state.trayOrder = restartOrder;
 		placementHistory = makeHistoryBaseline(state);
@@ -831,16 +845,18 @@ function buildInitialState(options: CreatePuzzleSessionOptions): PuzzleSessionSt
 	if (options.restored) {
 		return hydrate(options.restored, options.metadata);
 	}
-	return freshState(options);
+	// Initial construction has no prior state to leave inconsistent, so a
+	// factory throw here simply fails session creation as expected.
+	return freshState(options, options.runIdFactory.create());
 }
 
-function freshState(options: CreatePuzzleSessionOptions): PuzzleSessionState {
+function freshState(options: CreatePuzzleSessionOptions, runId: string): PuzzleSessionState {
 	const mode = options.mode ?? 'timed';
 	const ids = options.metadata.pieces.map((piece) => piece.id);
 	return {
 		puzzleId: options.metadata.puzzleId,
 		source: options.metadata.source,
-		runId: options.runIdFactory.create(),
+		runId,
 		origin: 'new',
 		lifecycle: 'setup',
 		mode,
