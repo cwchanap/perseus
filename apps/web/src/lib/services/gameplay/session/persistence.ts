@@ -127,16 +127,21 @@ const COMPLETION_FAILURE_CODE_SET = new Set<string>([
 	'not_found',
 	'run_id_conflict',
 	'completion_quota_exceeded',
-	'internal_error'
+	'internal_error',
+	'incompatible_schema'
 ]);
 const VALID_ORG_FILTERS = new Set(['all', 'corners', 'edges', 'center']);
 
 /**
  * Whether a completion failure code is retryable. Mirrors the route's
  * mapCompletionError policy: storage/network/internal/unauthorized are
- * retryable; bad_request/not_found/run_id_conflict/quota are terminal.
- * `unauthorized` is retryable so the engine's includeUnauthorized gate (not
- * the persisted flag) controls actual re-submission.
+ * retryable; bad_request/not_found/run_id_conflict/quota/incompatible_schema
+ * are terminal. `unauthorized` is retryable so the engine's
+ * includeUnauthorized gate (not the persisted flag) controls actual
+ * re-submission. `incompatible_schema` is terminal because a future-schema
+ * local-stats record cannot be written by this deployment — retrying on
+ * hydration would re-fail forever; the newer client that owns the record
+ * must handle it.
  *
  * Exported so the route's mapCompletionError derives `retryable` from the
  * same source as this validator, keeping the producer and consumer of the
@@ -648,11 +653,15 @@ function validateSeal(
 	if (localStats === null || localStats === false) return false;
 	// Local stats apply to every completion; not_applicable is never valid.
 	if ((localStats as CompletionEffectState).status === 'not_applicable') return false;
-	// local_stats only ever fails with storage_error (the localStorage write
-	// in recordLocalCompletion). Any other code is corruption.
+	// local_stats only ever fails with storage_error (a transient
+	// localStorage write failure in recordLocalCompletion) or
+	// incompatible_schema (a terminal failure: a future-schema stats record
+	// was preserved unread and this deployment can never overwrite it). Any
+	// other code is corruption.
 	if (
 		(localStats as CompletionEffectState).status === 'failed' &&
-		(localStats as { code?: string }).code !== 'storage_error'
+		(localStats as { code?: string }).code !== 'storage_error' &&
+		(localStats as { code?: string }).code !== 'incompatible_schema'
 	)
 		return false;
 	const serverSubmission = validateEffectState(s.serverSubmission);
@@ -665,11 +674,13 @@ function validateSeal(
 	} else {
 		if ((serverSubmission as CompletionEffectState).status !== 'not_applicable') return false;
 	}
-	// server_submission never fails with storage_error (that code belongs only
-	// to the local-stats localStorage write).
+	// server_submission never fails with a local-stats-only code
+	// (storage_error or incompatible_schema both belong only to the
+	// local-stats localStorage write path).
 	if (
 		(serverSubmission as CompletionEffectState).status === 'failed' &&
-		(serverSubmission as { code?: string }).code === 'storage_error'
+		((serverSubmission as { code?: string }).code === 'storage_error' ||
+			(serverSubmission as { code?: string }).code === 'incompatible_schema')
 	)
 		return false;
 	return {

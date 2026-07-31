@@ -447,12 +447,20 @@
 			effect: 'local_stats',
 			result:
 				result.status === 'failed'
-					? // storage_error is recoverable: recordLocalCompletion is
-						// idempotent per run id, so a replayed run does not
-						// double count. Keeping it retryable lets the next
-						// hydration re-drive the write instead of permanently
-						// losing the completion count / personal best.
-						{ status: 'failed', code: 'storage_error', retryable: true }
+					? result.reason === 'incompatible_schema'
+						? // A future-schema local-stats record was preserved
+							// unread. This deployment can never overwrite it, so
+							// the failure is terminal: auto-retry on hydration
+							// would re-fail forever. The newer client that owns
+							// the record must handle it on upgrade.
+							{ status: 'failed', code: 'incompatible_schema', retryable: false }
+						: // storage_error is recoverable: recordLocalCompletion
+							// is idempotent per run id, so a replayed run does
+							// not double count. Keeping it retryable lets the
+							// next hydration re-drive the write instead of
+							// permanently losing the completion count / personal
+							// best.
+							{ status: 'failed', code: 'storage_error', retryable: true }
 					: { status: 'succeeded' }
 		});
 	}

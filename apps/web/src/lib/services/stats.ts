@@ -29,10 +29,24 @@ const CURRENT_STATS_SCHEMA_VERSION = 1;
 /** Maximum number of run IDs retained for replay dedup. */
 const MAX_RECORDED_RUN_IDS = 32;
 
+export type LocalStatsFailureReason = 'storage_error' | 'incompatible_schema';
+
 export type RecordLocalCompletionResult =
 	| { status: 'recorded'; isNewStandardBest: boolean; stats: PuzzleStatsV1 }
 	| { status: 'replayed'; isNewStandardBest: boolean; stats: PuzzleStatsV1 }
-	| { status: 'failed'; isNewStandardBest: boolean; inMemoryStats: PuzzleStatsV1 };
+	| {
+			status: 'failed';
+			isNewStandardBest: boolean;
+			inMemoryStats: PuzzleStatsV1;
+			/**
+			 * Why the write did not persist. `storage_error` is a transient
+			 * failure (Web Locks unavailable/rejected, or localStorage.setItem
+			 * threw) and is retryable on hydration. `incompatible_schema` means
+			 * a future-schema record was preserved unread; this deployment can
+			 * never overwrite it, so the failure is terminal.
+			 */
+			reason: LocalStatsFailureReason;
+	  };
 
 /**
  * Outcome of parsing a stored stats record. A future-schema record
@@ -297,12 +311,12 @@ export async function recordLocalCompletion(
 			// Lock acquisition failed or the callback rejected. Convert to a
 			// retryable failure so the route acknowledges the effect instead
 			// of leaving an unhandled promise rejection pending.
-			return computeFailedResult(puzzleId, seal);
+			return computeResultWithoutWrite(puzzleId, seal);
 		}
 	}
 	// Web Locks unavailable: skip the lossy unlocked write. Compute the
 	// in-memory verdict for display and return a retryable failure.
-	return computeFailedResult(puzzleId, seal);
+	return computeResultWithoutWrite(puzzleId, seal);
 }
 
 /**
@@ -346,7 +360,12 @@ function computeRecord(
 	if (stored?.kind === 'incompatible') {
 		const baseline = freshStats(puzzleId);
 		return {
-			result: { status: 'failed', isNewStandardBest: false, inMemoryStats: baseline },
+			result: {
+				status: 'failed',
+				isNewStandardBest: false,
+				inMemoryStats: baseline,
+				reason: 'incompatible_schema'
+			},
 			next: baseline
 		};
 	}
@@ -405,26 +424,36 @@ function recordLocalCompletionUnsafe(
 	try {
 		localStorage.setItem(getStorageKey(puzzleId), JSON.stringify(next));
 	} catch {
-		return { status: 'failed', isNewStandardBest: result.isNewStandardBest, inMemoryStats: next };
+		return {
+			status: 'failed',
+			isNewStandardBest: result.isNewStandardBest,
+			inMemoryStats: next,
+			reason: 'storage_error'
+		};
 	}
 	return result;
 }
 
 /**
  * Fallback for the no-locks and rejected-lock paths: compute the in-memory
- * verdict (so the badge display stays accurate) but do NOT perform the
+ * verdict (so the badge display stays accurate) WITHOUT performing the
  * unlocked read-modify-write, which two tabs could race on. A would-be
- * 'recorded' result is converted to a retryable 'failed' result carrying
- * the would-be next stats; 'replayed' and incompatible-'failed' results
- * need no write and pass through unchanged.
+ * 'recorded' result is converted to a retryable 'failed' result (reason
+ * `storage_error`) carrying the would-be next stats; 'replayed' and
+ * incompatible-'failed' results need no write and pass through unchanged.
  */
-function computeFailedResult(
+function computeResultWithoutWrite(
 	puzzleId: string,
 	seal: SealedCompletion
 ): RecordLocalCompletionResult {
 	const { result, next } = computeRecord(puzzleId, seal);
 	if (result.status === 'recorded') {
-		return { status: 'failed', isNewStandardBest: result.isNewStandardBest, inMemoryStats: next };
+		return {
+			status: 'failed',
+			isNewStandardBest: result.isNewStandardBest,
+			inMemoryStats: next,
+			reason: 'storage_error'
+		};
 	}
 	return result;
 }

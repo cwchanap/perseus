@@ -158,6 +158,11 @@ describe('Stats Service', () => {
 				);
 				expect(result.status).toBe('failed');
 				expect(result.isNewStandardBest).toBe(true);
+				// A transient storage failure is retryable, distinct from a
+				// terminal incompatible-schema failure.
+				if (result.status === 'failed') {
+					expect(result.reason).toBe('storage_error');
+				}
 			} finally {
 				vi.unstubAllGlobals();
 			}
@@ -212,6 +217,12 @@ describe('Stats Service', () => {
 			);
 			const result = await recordLocalCompletion(puzzleId, makeSeal({ runId: 'r1' }));
 			expect(result.status).toBe('failed');
+			// The failure is terminal (incompatible_schema), not a transient
+			// storage error: this deployment can never overwrite the newer
+			// record, so the route acknowledges it as non-retryable.
+			if (result.status === 'failed') {
+				expect(result.reason).toBe('incompatible_schema');
+			}
 			const after = JSON.parse(localStorage.getItem(`puzzle-stats-${puzzleId}`)!);
 			expect(after.schemaVersion).toBe(2);
 			expect(after.future).toBe(true);
@@ -593,6 +604,9 @@ describe('Stats Service - Web Locks unavailable fallback', () => {
 		const result = await recordLocalCompletion(puzzleId, seal);
 
 		expect(result.status).toBe('failed');
+		if (result.status === 'failed') {
+			expect(result.reason).toBe('storage_error');
+		}
 		// No unlocked read-modify-write occurred: storage stays empty.
 		expect(getStats(puzzleId)).toBeNull();
 	});
@@ -674,6 +688,9 @@ describe('Stats Service - Web Locks rejection', () => {
 		// propagating as an unhandled promise rejection (the route fires the
 		// handler with `void`).
 		expect(result.status).toBe('failed');
+		if (result.status === 'failed') {
+			expect(result.reason).toBe('storage_error');
+		}
 		expect(getStats(puzzleId)).toBeNull();
 	});
 });

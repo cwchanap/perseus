@@ -35,7 +35,8 @@ export type CompletionFailureCode =
 	| 'not_found'
 	| 'run_id_conflict'
 	| 'completion_quota_exceeded'
-	| 'internal_error';
+	| 'internal_error'
+	| 'incompatible_schema';
 
 export type CompletionEffectState =
 	| { status: 'pending' }
@@ -324,7 +325,7 @@ export type PuzzleSessionOutcome =
 	| { type: 'history_restored'; direction: 'undo' | 'redo' }
 	| { type: 'history_noop'; reason: 'empty' | 'at_start' | 'at_end' }
 	| { type: 'hint_used'; pieceId: number | null }
-	| { type: 'hint_noop'; reason: 'all_placed' }
+	| { type: 'hint_noop'; reason: 'all_placed' | 'lifecycle_disallows_gameplay' }
 	| { type: 'reference_mode_changed'; mode: ReferenceMode | null; activationCounted: boolean }
 	| { type: 'reference_mode_noop'; reason: 'lifecycle_disallows_gameplay' }
 	| { type: 'tray_organization_applied'; update: TrayOrganizationUpdate }

@@ -142,12 +142,45 @@ describe('PuzzleSession completion persistence validation', () => {
 		expect(load(failed, { ...context, source: 'local' }).status).toBe('invalid');
 	});
 
-	it('rejects a local-stats failure that does not use the storage_error code', () => {
+	it('rejects a local-stats failure that does not use the storage_error or incompatible_schema code', () => {
 		const record = JSON.parse(JSON.stringify(validSnapshot())) as Record<string, unknown>;
 		record.lifecycle = 'completed';
 		record.placedPieces = fullBoardPlacements();
 		record.sealedCompletion = seal({
 			localStats: { status: 'failed', code: 'network_error', retryable: true }
+		});
+		expect(load(record).status).toBe('invalid');
+	});
+
+	it('accepts a terminal incompatible_schema local-stats failure', () => {
+		// A future-schema stats record cannot be overwritten by this
+		// deployment, so the route acknowledges local_stats with the terminal
+		// incompatible_schema code. The validator must accept it on hydration
+		// so the terminal state persists instead of being rejected as corrupt.
+		const record = JSON.parse(JSON.stringify(validSnapshot())) as Record<string, unknown>;
+		record.lifecycle = 'completed';
+		record.placedPieces = fullBoardPlacements();
+		record.sealedCompletion = seal({
+			localStats: { status: 'failed', code: 'incompatible_schema', retryable: false },
+			serverSubmission: { status: 'succeeded' }
+		});
+		const result = load(record);
+		expect(result.status).toBe('loaded');
+		if (result.status === 'loaded') {
+			expect(result.snapshot.sealedCompletion?.localStats).toEqual({
+				status: 'failed',
+				code: 'incompatible_schema',
+				retryable: false
+			});
+		}
+	});
+
+	it('rejects an incompatible_schema server-submission failure (local-stats-only code)', () => {
+		const record = JSON.parse(JSON.stringify(validSnapshot())) as Record<string, unknown>;
+		record.lifecycle = 'completed';
+		record.placedPieces = fullBoardPlacements();
+		record.sealedCompletion = seal({
+			serverSubmission: { status: 'failed', code: 'incompatible_schema', retryable: false }
 		});
 		expect(load(record).status).toBe('invalid');
 	});
