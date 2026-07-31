@@ -411,6 +411,18 @@ function computeRecord(
 	return { result: { status: 'recorded', isNewStandardBest, stats: next }, next };
 }
 
+function storageErrorResult(
+	recorded: Extract<RecordLocalCompletionResult, { status: 'recorded' }>,
+	next: PuzzleStatsV1
+): RecordLocalCompletionResult {
+	return {
+		status: 'failed',
+		isNewStandardBest: recorded.isNewStandardBest,
+		inMemoryStats: next,
+		reason: 'storage_error'
+	};
+}
+
 function recordLocalCompletionUnsafe(
 	puzzleId: string,
 	seal: SealedCompletion
@@ -424,12 +436,7 @@ function recordLocalCompletionUnsafe(
 	try {
 		localStorage.setItem(getStorageKey(puzzleId), JSON.stringify(next));
 	} catch {
-		return {
-			status: 'failed',
-			isNewStandardBest: result.isNewStandardBest,
-			inMemoryStats: next,
-			reason: 'storage_error'
-		};
+		return storageErrorResult(result, next);
 	}
 	return result;
 }
@@ -448,12 +455,7 @@ function computeResultWithoutWrite(
 ): RecordLocalCompletionResult {
 	const { result, next } = computeRecord(puzzleId, seal);
 	if (result.status === 'recorded') {
-		return {
-			status: 'failed',
-			isNewStandardBest: result.isNewStandardBest,
-			inMemoryStats: next,
-			reason: 'storage_error'
-		};
+		return storageErrorResult(result, next);
 	}
 	return result;
 }
