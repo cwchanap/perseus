@@ -32,7 +32,8 @@
 	import {
 		createBrowserRunIdFactory,
 		createSessionStorageAdapter,
-		serializeSession
+		serializeSession,
+		isFailureRetryable
 	} from '$lib/services/gameplay/session/persistence';
 	import type {
 		Clock,
@@ -368,23 +369,34 @@
 		code: CompletionFailureCode;
 		retryable: boolean;
 	} {
+		let code: CompletionFailureCode;
 		if (err instanceof ApiError) {
 			switch (err.status) {
 				case 400:
-					return { code: 'bad_request', retryable: false };
+					code = 'bad_request';
+					break;
 				case 401:
-					return { code: 'unauthorized', retryable: true };
+					code = 'unauthorized';
+					break;
 				case 404:
-					return { code: 'not_found', retryable: false };
+					code = 'not_found';
+					break;
 				case 409:
-					return { code: 'run_id_conflict', retryable: false };
+					code = 'run_id_conflict';
+					break;
 				case 429:
-					return { code: 'completion_quota_exceeded', retryable: false };
+					code = 'completion_quota_exceeded';
+					break;
 				default:
-					return { code: 'internal_error', retryable: true };
+					code = 'internal_error';
+					break;
 			}
+		} else {
+			code = 'network_error';
 		}
-		return { code: 'network_error', retryable: true };
+		// Derive retryable from the shared policy so the persisted flag stays
+		// consistent with the persistence validator's isFailureRetryable.
+		return { code, retryable: isFailureRetryable(code) };
 	}
 
 	async function handleLocalStatsEffect(seal: SealedCompletion) {

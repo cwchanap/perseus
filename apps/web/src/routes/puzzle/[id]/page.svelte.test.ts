@@ -117,53 +117,58 @@ vi.mock('$lib/services/gameplay/rotation', async () => {
 	};
 });
 
-vi.mock('$lib/services/gameplay/session/persistence', () => ({
-	createBrowserRunIdFactory: () => ({ create: () => 'test-run-id' }),
-	createSessionStorageAdapter: () => ({
-		loadSession: (puzzleId: string) => {
-			if (progressState.value?.puzzleId === puzzleId) {
-				return {
-					status: 'loaded' as const,
-					snapshot: {
-						schemaVersion: 1 as const,
-						puzzleId,
-						source: 'api' as const,
-						lifecycle: 'active' as const,
-						mode: 'timed' as const,
-						runId: 'test-run-id',
-						origin: 'resumed' as const,
-						elapsedActiveSeconds: null,
-						timingQuality: 'known' as const,
-						timerStarted: false,
-						placedPieces: progressState.value.placedPieces.map((p) => ({ ...p })),
-						trayOrder: [0, 1],
-						rotationEnabled: progressState.value.rotationEnabled,
-						pieceRotations: { ...progressState.value.pieceRotations },
-						counters: {
-							incorrectAttempts: 0,
-							hintsUsed: 0,
-							referenceActivations: 0
-						},
-						facts: {
-							rotationUsed: false,
-							hintUsed: false,
-							ghostReferenceUsed: false
-						},
-						hasUserActivity: false,
-						resultClass: 'standard_timed' as const,
-						sealedCompletion: sealedCompletionOverride.value,
-						lastUpdated: Date.now()
-					}
-				};
-			}
-			return { status: 'missing' as const };
-		},
-		saveSession: sessionStorageSpies.saveSession,
-		clearSession: sessionStorageSpies.clearSession,
-		isResumable: () => false
-	}),
-	serializeSession: vi.fn(() => null)
-}));
+vi.mock('$lib/services/gameplay/session/persistence', async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import('$lib/services/gameplay/session/persistence')>();
+	return {
+		...actual,
+		createBrowserRunIdFactory: () => ({ create: () => 'test-run-id' }),
+		createSessionStorageAdapter: () => ({
+			loadSession: (puzzleId: string) => {
+				if (progressState.value?.puzzleId === puzzleId) {
+					return {
+						status: 'loaded' as const,
+						snapshot: {
+							schemaVersion: 1 as const,
+							puzzleId,
+							source: 'api' as const,
+							lifecycle: 'active' as const,
+							mode: 'timed' as const,
+							runId: 'test-run-id',
+							origin: 'resumed' as const,
+							elapsedActiveSeconds: null,
+							timingQuality: 'known' as const,
+							timerStarted: false,
+							placedPieces: progressState.value.placedPieces.map((p) => ({ ...p })),
+							trayOrder: [0, 1],
+							rotationEnabled: progressState.value.rotationEnabled,
+							pieceRotations: { ...progressState.value.pieceRotations },
+							counters: {
+								incorrectAttempts: 0,
+								hintsUsed: 0,
+								referenceActivations: 0
+							},
+							facts: {
+								rotationUsed: false,
+								hintUsed: false,
+								ghostReferenceUsed: false
+							},
+							hasUserActivity: false,
+							resultClass: 'standard_timed' as const,
+							sealedCompletion: sealedCompletionOverride.value,
+							lastUpdated: Date.now()
+						}
+					};
+				}
+				return { status: 'missing' as const };
+			},
+			saveSession: sessionStorageSpies.saveSession,
+			clearSession: sessionStorageSpies.clearSession,
+			isResumable: () => false
+		}),
+		serializeSession: vi.fn(() => null)
+	};
+});
 
 vi.mock('$lib/services/api', () => {
 	const imageSrc = 'data:image/gif;base64,R0lGODlhAQABAAAAACw=';
@@ -1690,14 +1695,16 @@ describe('Puzzle page defensive guard coverage', () => {
 		await renderPuzzlePage();
 
 		const callsBefore = sessionStorageSpies.saveSession.mock.calls.length;
-		const originalHidden = Object.getOwnPropertyDescriptor(document, 'hidden');
+		// `document.hidden` is an inherited accessor on Document.prototype,
+		// so getOwnPropertyDescriptor returns undefined and the override
+		// creates an own property that shadows it. Remove that own property
+		// in finally so the prototype accessor is restored for subsequent
+		// tests.
 		Object.defineProperty(document, 'hidden', { configurable: true, value: true });
 		try {
 			document.dispatchEvent(new Event('visibilitychange'));
 		} finally {
-			if (originalHidden) {
-				Object.defineProperty(document, 'hidden', originalHidden);
-			}
+			delete (document as { hidden?: unknown }).hidden;
 		}
 
 		// handleVisibilityChange must checkpointSession after suspending the

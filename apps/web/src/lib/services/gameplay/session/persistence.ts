@@ -137,8 +137,12 @@ const VALID_ORG_FILTERS = new Set(['all', 'corners', 'edges', 'center']);
  * retryable; bad_request/not_found/run_id_conflict/quota are terminal.
  * `unauthorized` is retryable so the engine's includeUnauthorized gate (not
  * the persisted flag) controls actual re-submission.
+ *
+ * Exported so the route's mapCompletionError derives `retryable` from the
+ * same source as this validator, keeping the producer and consumer of the
+ * persisted flag in lockstep.
  */
-function isFailureRetryable(code: CompletionFailureCode): boolean {
+export function isFailureRetryable(code: CompletionFailureCode): boolean {
 	return (
 		code === 'storage_error' ||
 		code === 'network_error' ||

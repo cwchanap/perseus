@@ -6,7 +6,8 @@ import type {
 	PuzzleMetadata,
 	RunIdFactory,
 	Clock,
-	PersistedPuzzleSessionV1
+	PersistedPuzzleSessionV1,
+	CompletionEffectState
 } from './types';
 
 interface ManagedInterval {
@@ -1027,6 +1028,50 @@ function completeOnePieceSession(
 	return { session, seal };
 }
 
+/**
+ * Build a restored v1 snapshot mirroring `session`'s completed state but with
+ * the two completion effect statuses supplied by the caller. Used by the
+ * resume_completion_effects tests to exercise pending/succeeded/failed
+ * combinations without repeating the snapshot literal.
+ */
+function makeRestoredSnapshot(
+	session: ReturnType<typeof createPuzzleSession>,
+	seal: SealedCompletion,
+	effects: { localStats: CompletionEffectState; serverSubmission: CompletionEffectState }
+): PersistedPuzzleSessionV1 {
+	const s = session.getState();
+	return {
+		schemaVersion: 1,
+		puzzleId: s.puzzleId,
+		source: 'api',
+		lifecycle: 'completed',
+		mode: 'timed',
+		runId: seal.runId,
+		origin: 'resumed',
+		elapsedActiveSeconds: seal.elapsedActiveSeconds,
+		timingQuality: seal.timingQuality,
+		timerStarted: true,
+		placedPieces: s.placedPieces.map((p) => ({ ...p })),
+		trayOrder: s.trayOrder.slice(),
+		rotationEnabled: false,
+		pieceRotations: {},
+		counters: { ...s.counters },
+		facts: { ...s.facts },
+		hasUserActivity: true,
+		resultClass: seal.resultClass,
+		sealedCompletion: {
+			runId: seal.runId,
+			resultClass: seal.resultClass,
+			timingQuality: seal.timingQuality,
+			elapsedActiveSeconds: seal.elapsedActiveSeconds,
+			completedAt: seal.completedAt,
+			localStats: effects.localStats,
+			serverSubmission: effects.serverSubmission
+		},
+		lastUpdated: 0
+	};
+}
+
 describe('PuzzleSession completion sealing', () => {
 	it('seals on the final placement and moves lifecycle to completed', () => {
 		const { session, seal } = completeOnePieceSession();
@@ -1606,36 +1651,10 @@ describe('PuzzleSession resume_completion_effects (restore recovery)', () => {
 		// After completion, both effects were already emitted during doComplete.
 		// Re-attach an event listener to observe resume emissions.
 		// (onEvent was set at construction; instead, re-create with a listener.)
-		const restoredSnapshot: PersistedPuzzleSessionV1 = {
-			schemaVersion: 1,
-			puzzleId: session.getState().puzzleId,
-			source: 'api',
-			lifecycle: 'completed',
-			mode: 'timed',
-			runId: seal.runId,
-			origin: 'resumed',
-			elapsedActiveSeconds: seal.elapsedActiveSeconds,
-			timingQuality: seal.timingQuality,
-			timerStarted: true,
-			placedPieces: session.getState().placedPieces.map((p) => ({ ...p })),
-			trayOrder: session.getState().trayOrder.slice(),
-			rotationEnabled: false,
-			pieceRotations: {},
-			counters: { ...session.getState().counters },
-			facts: { ...session.getState().facts },
-			hasUserActivity: true,
-			resultClass: seal.resultClass,
-			sealedCompletion: {
-				runId: seal.runId,
-				resultClass: seal.resultClass,
-				timingQuality: seal.timingQuality,
-				elapsedActiveSeconds: seal.elapsedActiveSeconds,
-				completedAt: seal.completedAt,
-				localStats: { status: 'pending' },
-				serverSubmission: { status: 'pending' }
-			},
-			lastUpdated: 0
-		};
+		const restoredSnapshot = makeRestoredSnapshot(session, seal, {
+			localStats: { status: 'pending' },
+			serverSubmission: { status: 'pending' }
+		});
 
 		const resumed = createPuzzleSession({
 			metadata: makeMetadata(1),
@@ -1674,36 +1693,10 @@ describe('PuzzleSession resume_completion_effects (restore recovery)', () => {
 		});
 
 		// Re-create with a listener and a snapshot reflecting succeeded state.
-		const restoredSnapshot: PersistedPuzzleSessionV1 = {
-			schemaVersion: 1,
-			puzzleId: session.getState().puzzleId,
-			source: 'api',
-			lifecycle: 'completed',
-			mode: 'timed',
-			runId: seal.runId,
-			origin: 'resumed',
-			elapsedActiveSeconds: seal.elapsedActiveSeconds,
-			timingQuality: seal.timingQuality,
-			timerStarted: true,
-			placedPieces: session.getState().placedPieces.map((p) => ({ ...p })),
-			trayOrder: session.getState().trayOrder.slice(),
-			rotationEnabled: false,
-			pieceRotations: {},
-			counters: { ...session.getState().counters },
-			facts: { ...session.getState().facts },
-			hasUserActivity: true,
-			resultClass: seal.resultClass,
-			sealedCompletion: {
-				runId: seal.runId,
-				resultClass: seal.resultClass,
-				timingQuality: seal.timingQuality,
-				elapsedActiveSeconds: seal.elapsedActiveSeconds,
-				completedAt: seal.completedAt,
-				localStats: { status: 'succeeded' },
-				serverSubmission: { status: 'succeeded' }
-			},
-			lastUpdated: 0
-		};
+		const restoredSnapshot = makeRestoredSnapshot(session, seal, {
+			localStats: { status: 'succeeded' },
+			serverSubmission: { status: 'succeeded' }
+		});
 
 		const resumed = createPuzzleSession({
 			metadata: makeMetadata(1),
@@ -1733,36 +1726,10 @@ describe('PuzzleSession resume_completion_effects (restore recovery)', () => {
 		});
 		// server_submission stays pending (simulating interrupted submission).
 
-		const restoredSnapshot: PersistedPuzzleSessionV1 = {
-			schemaVersion: 1,
-			puzzleId: session.getState().puzzleId,
-			source: 'api',
-			lifecycle: 'completed',
-			mode: 'timed',
-			runId: seal.runId,
-			origin: 'resumed',
-			elapsedActiveSeconds: seal.elapsedActiveSeconds,
-			timingQuality: seal.timingQuality,
-			timerStarted: true,
-			placedPieces: session.getState().placedPieces.map((p) => ({ ...p })),
-			trayOrder: session.getState().trayOrder.slice(),
-			rotationEnabled: false,
-			pieceRotations: {},
-			counters: { ...session.getState().counters },
-			facts: { ...session.getState().facts },
-			hasUserActivity: true,
-			resultClass: seal.resultClass,
-			sealedCompletion: {
-				runId: seal.runId,
-				resultClass: seal.resultClass,
-				timingQuality: seal.timingQuality,
-				elapsedActiveSeconds: seal.elapsedActiveSeconds,
-				completedAt: seal.completedAt,
-				localStats: { status: 'succeeded' },
-				serverSubmission: { status: 'pending' }
-			},
-			lastUpdated: 0
-		};
+		const restoredSnapshot = makeRestoredSnapshot(session, seal, {
+			localStats: { status: 'succeeded' },
+			serverSubmission: { status: 'pending' }
+		});
 
 		const resumed = createPuzzleSession({
 			metadata: makeMetadata(1),
