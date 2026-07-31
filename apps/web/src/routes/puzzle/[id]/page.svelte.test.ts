@@ -1110,6 +1110,56 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.poll(() => page.getByText('NEW RECORD').query()).toBeNull();
 	});
 
+	it("does not reopen a dismissed celebration modal when the same run's local-stats write resolves late", async () => {
+		// Regression: handleLocalStatsEffect set showCelebration = true when
+		// the (Web-Lock-queued) local-stats write resolved. Because undo of
+		// the final move retains the seal, and Escape dismissal only flips
+		// showCelebration, a late-resolving write against the SAME retained
+		// seal passed the stillActiveRun fence and reopened the modal the
+		// user had deliberately dismissed. The completion_sealed and
+		// lifecycle->completed events already open the modal; the local-stats
+		// resolution must only update badge data, not reopen the modal.
+		const lateLocalWrite = createDeferred<Awaited<ReturnType<typeof recordLocalCompletion>>>();
+		vi.mocked(recordLocalCompletion).mockImplementationOnce(() => lateLocalWrite.promise);
+		await renderPuzzlePage();
+
+		// Solve → modal opens via completion_sealed; local-stats write pending.
+		await placePiece(0, 0, 0);
+		await placePiece(1, 1, 0);
+		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+		expect(recordLocalCompletion).toHaveBeenCalledTimes(1);
+
+		// Dismiss the modal via Escape (same run; seal retained).
+		const modal = await page.getByTestId('celebration-modal').element();
+		modal.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+		await expect.poll(() => page.getByTestId('celebration-modal').query()).toBeNull();
+
+		// The local-stats write now resolves with a new-best verdict for the
+		// still-active run. stillActiveRun is true, but the modal must NOT
+		// reopen — the user already dismissed it.
+		lateLocalWrite.resolve({
+			status: 'recorded',
+			isNewStandardBest: true,
+			stats: {
+				schemaVersion: 1,
+				puzzleId: 'test-puzzle',
+				standardBestTime: 42,
+				standardBestCompletedAt: Date.now(),
+				totalCompletions: 1,
+				lastCompletedAt: Date.now(),
+				lastRecordedRunId: 'test-run-id',
+				recordedRunIds: ['test-run-id']
+			}
+		});
+		// Flush the pending handleLocalStatsEffect continuation.
+		await Promise.resolve();
+		await Promise.resolve();
+		await Promise.resolve();
+
+		// The dismissed modal must stay dismissed.
+		await expect.poll(() => page.getByTestId('celebration-modal').query()).toBeNull();
+	});
+
 	it('does not POST completion to the API for local-source quick puzzles', async () => {
 		// Regression: quick puzzles use device-local `q-...` ids that
 		// loadPuzzleSource deliberately keeps off the API. An unconditional

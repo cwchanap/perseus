@@ -55,17 +55,23 @@ class ManualClock implements Clock {
 }
 
 function makeMetadata(pieceCount = 4): PuzzleMetadata {
+	// Build a grid that satisfies gridCols * gridRows === pieceCount so the
+	// metadata passes the engine's construction validation. Use a 2-column
+	// layout for even counts >= 2 (preserving the coordinates existing tests
+	// assume for pieceCount 2 and 4) and a single column otherwise.
+	const gridCols = pieceCount >= 2 && pieceCount % 2 === 0 ? 2 : 1;
+	const gridRows = pieceCount / gridCols;
 	const pieces = Array.from({ length: pieceCount }, (_, i) => ({
 		id: i,
-		correctX: i % 2,
-		correctY: Math.floor(i / 2)
+		correctX: i % gridCols,
+		correctY: Math.floor(i / gridCols)
 	}));
 	return {
 		puzzleId: 'pz1',
 		source: 'api',
 		pieceCount,
-		gridCols: 2,
-		gridRows: Math.ceil(pieceCount / 2),
+		gridCols,
+		gridRows,
 		pieces
 	};
 }
@@ -1141,17 +1147,17 @@ describe('PuzzleSession completion sealing', () => {
 		session.dispatch({ type: 'redo' });
 
 		expect(session.getState().lifecycle).toBe('completed');
-		expect(session.getState().sealedCompletion).toBe(seal);
+		expect(session.getState().sealedCompletion).toEqual(seal);
 	});
 
 	it('a fresh final placement after undo does not create a second seal', () => {
 		const { session, seal } = completeOnePieceSession();
 		session.dispatch({ type: 'undo' });
-		expect(session.getState().sealedCompletion).toBe(seal);
+		expect(session.getState().sealedCompletion).toEqual(seal);
 
 		session.dispatch({ type: 'attempt_placement', pieceId: 0, x: 0, y: 0 });
 
-		expect(session.getState().sealedCompletion).toBe(seal);
+		expect(session.getState().sealedCompletion).toEqual(seal);
 		expect(session.getState().lifecycle).toBe('completed');
 	});
 
@@ -1769,21 +1775,18 @@ describe('PuzzleSession subscribe', () => {
 });
 
 describe('PuzzleSession hint with empty tray', () => {
-	it('returns all_placed no-op when getHintPieceId finds no unplaced piece in tray', () => {
-		// An empty initialTrayOrder means getHintPieceId returns null even though
-		// the board is not complete (pieceCount > 0). The lifecycle stays 'active'
-		// so the hint_noop comes from the hintPieceId === null branch, not the
-		// lifecycle guard.
-		const session = createPuzzleSession({
-			metadata: makeMetadata(4),
-			runIdFactory: makeRunIdFactory(),
-			clock: new ManualClock(),
-			initialTrayOrder: []
-		});
-		session.dispatch({ type: 'start' });
-
-		const outcome = session.dispatch({ type: 'use_hint' });
-		expect(outcome).toEqual({ type: 'hint_noop', reason: 'all_placed' });
+	it('rejects an incomplete initialTrayOrder at construction', () => {
+		// An empty initialTrayOrder is an incomplete tray (missing all
+		// pieces), which violates the construction invariant. The engine
+		// throws rather than building an unsolvable session.
+		expect(() =>
+			createPuzzleSession({
+				metadata: makeMetadata(4),
+				runIdFactory: makeRunIdFactory(),
+				clock: new ManualClock(),
+				initialTrayOrder: []
+			})
+		).toThrow();
 	});
 });
 
@@ -2012,5 +2015,243 @@ describe('PuzzleSession restart with createTrayOrder', () => {
 		session.dispatch({ type: 'restart' });
 
 		expect(session.getState().trayOrder).toEqual(customOrder);
+	});
+});
+
+describe('PuzzleSession snapshot and event immutability', () => {
+	it('getState returns a deep-frozen copy: mutating it does not affect engine state', () => {
+		const { session } = completeOnePieceSession();
+
+		const snapshot = session.getState();
+		// Shallow fields are frozen.
+		expect(Object.isFrozen(snapshot)).toBe(true);
+		// Nested mutable fields are frozen too.
+		expect(Object.isFrozen(snapshot.placedPieces)).toBe(true);
+		expect(Object.isFrozen(snapshot.counters)).toBe(true);
+		expect(Object.isFrozen(snapshot.facts)).toBe(true);
+		expect(Object.isFrozen(snapshot.sealedCompletion)).toBe(true);
+
+		// Mutating the snapshot's placedPieces must throw / be a no-op and
+		// must NOT change the engine's internal state. A subsequent
+		// getState() reflects the unmutated engine state.
+		expect(() => snapshot.placedPieces.push({ pieceId: 99, x: 99, y: 99 })).toThrow();
+		expect(() => (snapshot.counters.incorrectAttempts as number)++).toThrow();
+
+		const fresh = session.getState();
+		expect(fresh.placedPieces).toEqual([{ pieceId: 0, x: 0, y: 0 }]);
+		expect(fresh.counters.incorrectAttempts).toBe(0);
+		expect(fresh.placedPieces).not.toBe(snapshot.placedPieces);
+		expect(fresh.counters).not.toBe(snapshot.counters);
+	});
+
+	it('completion_sealed and completion_effect_request events carry a cloned seal', () => {
+		const events: Array<{ type: string; seal?: SealedCompletion }> = [];
+		const { session, seal } = completeOnePieceSession({
+			onEvent: (e) => events.push(e)
+		});
+		// completeOnePieceSession already completed; seal captured from state.
+		// Re-trigger an effect request by retrying a failed effect.
+		session.dispatch({
+			type: 'acknowledge_completion_effect',
+			runId: seal.runId,
+			effect: 'local_stats',
+			result: { status: 'failed', code: 'storage_error', retryable: true }
+		});
+		session.dispatch({ type: 'retry_completion_effects' });
+
+		const sealEvents = events.filter(
+			(e): e is { type: 'completion_effect_request'; seal: SealedCompletion } =>
+				e.type === 'completion_effect_request'
+		);
+		expect(sealEvents.length).toBeGreaterThan(0);
+		for (const e of sealEvents) {
+			// The emitted seal is a distinct object from the engine's internal
+			// state.sealedCompletion, so a consumer mutating it cannot corrupt
+			// the engine.
+			expect(e.seal).not.toBe(session.getState().sealedCompletion);
+			expect(e.seal.localStats).not.toBe(session.getState().sealedCompletion!.localStats);
+			// Mutating the event payload's seal must not change engine state.
+			expect(() => (e.seal.localStats.status = 'succeeded')).toThrow();
+		}
+	});
+});
+
+describe('PuzzleSession construction metadata validation', () => {
+	function baseMetadata(overrides: Partial<PuzzleMetadata> = {}): PuzzleMetadata {
+		return { ...makeMetadata(4), ...overrides };
+	}
+
+	it('clones accepted metadata so caller mutations do not affect the engine', () => {
+		const pieces = Array.from({ length: 4 }, (_, i) => ({
+			id: i,
+			correctX: i % 2,
+			correctY: Math.floor(i / 2)
+		}));
+		const metadata: PuzzleMetadata = {
+			puzzleId: 'pz1',
+			source: 'api',
+			pieceCount: 4,
+			gridCols: 2,
+			gridRows: 2,
+			pieces
+		};
+		const session = createPuzzleSession({
+			metadata,
+			runIdFactory: makeRunIdFactory(),
+			clock: new ManualClock()
+		});
+		// Mutate the caller's pieces array after construction.
+		pieces.push({ id: 99, correctX: 99, correctY: 99 });
+		pieces[0].correctX = 7;
+
+		// The engine's view is unaffected: it still accepts piece 0 at (0,0).
+		session.dispatch({ type: 'start' });
+		const outcome = session.dispatch({
+			type: 'attempt_placement',
+			pieceId: 0,
+			x: 0,
+			y: 0
+		});
+		expect(outcome).toEqual({
+			type: 'placement',
+			outcome: { status: 'accepted', completed: false }
+		});
+	});
+
+	it('throws on duplicate piece ids', () => {
+		const metadata = baseMetadata({
+			pieces: [
+				{ id: 0, correctX: 0, correctY: 0 },
+				{ id: 0, correctX: 1, correctY: 0 },
+				{ id: 2, correctX: 0, correctY: 1 },
+				{ id: 3, correctX: 1, correctY: 1 }
+			]
+		});
+		expect(() =>
+			createPuzzleSession({ metadata, runIdFactory: makeRunIdFactory(), clock: new ManualClock() })
+		).toThrow(/duplicate piece id/);
+	});
+
+	it('throws on duplicate canonical cells', () => {
+		const metadata = baseMetadata({
+			pieces: [
+				{ id: 0, correctX: 0, correctY: 0 },
+				{ id: 1, correctX: 0, correctY: 0 },
+				{ id: 2, correctX: 1, correctY: 0 },
+				{ id: 3, correctX: 1, correctY: 1 }
+			]
+		});
+		expect(() =>
+			createPuzzleSession({ metadata, runIdFactory: makeRunIdFactory(), clock: new ManualClock() })
+		).toThrow(/duplicate canonical cell/);
+	});
+
+	it('throws on out-of-bounds canonical coordinates', () => {
+		const metadata = baseMetadata({
+			pieces: [
+				{ id: 0, correctX: 0, correctY: 0 },
+				{ id: 1, correctX: 5, correctY: 0 },
+				{ id: 2, correctX: 0, correctY: 1 },
+				{ id: 3, correctX: 1, correctY: 1 }
+			]
+		});
+		expect(() =>
+			createPuzzleSession({ metadata, runIdFactory: makeRunIdFactory(), clock: new ManualClock() })
+		).toThrow(/correctX out of bounds/);
+	});
+
+	it('throws on fractional canonical coordinates', () => {
+		const metadata = baseMetadata({
+			pieces: [
+				{ id: 0, correctX: 0.5, correctY: 0 },
+				{ id: 1, correctX: 1, correctY: 0 },
+				{ id: 2, correctX: 0, correctY: 1 },
+				{ id: 3, correctX: 1, correctY: 1 }
+			]
+		});
+		expect(() =>
+			createPuzzleSession({ metadata, runIdFactory: makeRunIdFactory(), clock: new ManualClock() })
+		).toThrow(/correctX out of bounds/);
+	});
+
+	it('throws when pieces.length !== pieceCount', () => {
+		const metadata = baseMetadata({ pieceCount: 4 });
+		// Only 3 pieces supplied.
+		(metadata as PuzzleMetadata).pieces = metadata.pieces.slice(0, 3);
+		expect(() =>
+			createPuzzleSession({ metadata, runIdFactory: makeRunIdFactory(), clock: new ManualClock() })
+		).toThrow(/pieces.length must equal pieceCount/);
+	});
+
+	it('throws when gridCols * gridRows !== pieceCount', () => {
+		// 3 pieces in a 2x2 grid: pieces.length === pieceCount (3), but
+		// gridCols * gridRows (4) !== pieceCount (3). The grid-math check
+		// runs before the pieces-length check, so this isolates it.
+		const metadata: PuzzleMetadata = {
+			puzzleId: 'pz1',
+			source: 'api',
+			pieceCount: 3,
+			gridCols: 2,
+			gridRows: 2,
+			pieces: [
+				{ id: 0, correctX: 0, correctY: 0 },
+				{ id: 1, correctX: 1, correctY: 0 },
+				{ id: 2, correctX: 0, correctY: 1 }
+			]
+		};
+		expect(() =>
+			createPuzzleSession({ metadata, runIdFactory: makeRunIdFactory(), clock: new ManualClock() })
+		).toThrow(/gridCols \* gridRows must equal pieceCount/);
+	});
+
+	it('throws on a non-integer piece id', () => {
+		const metadata = baseMetadata({
+			pieces: [
+				{ id: 0.5, correctX: 0, correctY: 0 },
+				{ id: 1, correctX: 1, correctY: 0 },
+				{ id: 2, correctX: 0, correctY: 1 },
+				{ id: 3, correctX: 1, correctY: 1 }
+			]
+		});
+		expect(() =>
+			createPuzzleSession({ metadata, runIdFactory: makeRunIdFactory(), clock: new ManualClock() })
+		).toThrow(/id must be an integer/);
+	});
+
+	it('throws on an initialTrayOrder with an unknown piece id', () => {
+		expect(() =>
+			createPuzzleSession({
+				metadata: makeMetadata(4),
+				runIdFactory: makeRunIdFactory(),
+				clock: new ManualClock(),
+				initialTrayOrder: [0, 1, 2, 99]
+			})
+		).toThrow(/unknown piece id/);
+	});
+
+	it('throws on an initialTrayOrder with a duplicate id', () => {
+		expect(() =>
+			createPuzzleSession({
+				metadata: makeMetadata(4),
+				runIdFactory: makeRunIdFactory(),
+				clock: new ManualClock(),
+				initialTrayOrder: [0, 1, 2, 0]
+			})
+		).toThrow(/duplicate piece id/);
+	});
+
+	it('accepts a complete duplicate-free initialTrayOrder and clones it', () => {
+		const order = [3, 1, 0, 2];
+		const session = createPuzzleSession({
+			metadata: makeMetadata(4),
+			runIdFactory: makeRunIdFactory(),
+			clock: new ManualClock(),
+			initialTrayOrder: order
+		});
+		expect(session.getState().trayOrder).toEqual(order);
+		// Mutating the caller's array does not affect the engine.
+		order.push(99);
+		order.sort((a, b) => a - b);
+		expect(session.getState().trayOrder).toEqual([3, 1, 0, 2]);
 	});
 });

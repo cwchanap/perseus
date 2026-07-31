@@ -431,7 +431,14 @@
 				bestTime = result.stats.standardBestTime;
 				localStatsFailed = false;
 			}
-			showCelebration = true;
+			// Do not independently reopen the celebration modal here. The
+			// completion_sealed and lifecycle->completed events already open
+			// it when the run seals. Reopening on the local-stats resolution
+			// would re-trigger a modal the user deliberately dismissed
+			// (Escape / Play Again's dismissal path) whenever the Web-Lock
+			// write resolves late against the same retained seal — e.g. after
+			// undoing the final move, which retains the seal. The badge data
+			// above still updates for the active run.
 		}
 
 		sessionStore?.dispatch({
