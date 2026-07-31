@@ -12,8 +12,13 @@
 		logout,
 		removePlayerAllowlistEntry
 	} from '$lib/services/api';
-	import { clearProgress } from '$lib/services/progress';
+	import { createSessionStorageAdapter } from '$lib/services/gameplay/session/persistence';
 	import type { PlayerAllowlistEntry, PuzzleSummary } from '$lib/types/puzzle';
+
+	// Reuses the session persistence adapter so the localStorage key prefix
+	// (puzzle-progress-) stays encapsulated in one place. Admin only needs the
+	// best-effort clear after a delete; no session-awareness required.
+	const sessionStorageAdapter = createSessionStorageAdapter();
 
 	let loggingOut = $state(false);
 	let logoutError: string | null = $state(null);
@@ -185,7 +190,7 @@
 		deletingId = puzzleId;
 		try {
 			const deleteResult = await deletePuzzle(puzzleId, { force: isProcessing });
-			clearProgress(puzzleId);
+			sessionStorageAdapter.clearSession(puzzleId);
 			if (deleteResult && 'partialSuccess' in deleteResult && deleteResult.partialSuccess) {
 				showSuccess(deleteResult.warning);
 			}
