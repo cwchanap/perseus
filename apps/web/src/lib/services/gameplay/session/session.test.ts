@@ -2255,3 +2255,274 @@ describe('PuzzleSession construction metadata validation', () => {
 		expect(session.getState().trayOrder).toEqual([3, 1, 0, 2]);
 	});
 });
+
+// --- Invariant boundary: completion outcomes and factory results ------------
+//
+// The engine's stated invariant (see session.ts) is that a consumer must not
+// be able to mutate internal state through any public boundary. These tests
+// pin the boundaries that previously leaked the engine's mutable seal or
+// accepted unvalidated factory output.
+
+describe('PuzzleSession completion outcome immutability', () => {
+	it('completion_sealed outcome (via retry) is a frozen clone distinct from internal state', () => {
+		const { session, seal } = completeOnePieceSession();
+		// Move local_stats to a retryable failed state, then retry to obtain a
+		// completion_sealed outcome from doRetryCompletionEffects.
+		session.dispatch({
+			type: 'acknowledge_completion_effect',
+			runId: seal.runId,
+			effect: 'local_stats',
+			result: { status: 'failed', code: 'storage_error', retryable: true }
+		});
+		const outcome = session.dispatch({ type: 'retry_completion_effects' });
+		expect(outcome.type).toBe('completion_sealed');
+		if (outcome.type !== 'completion_sealed') return;
+		const internal = session.getState().sealedCompletion!;
+		expect(outcome.seal).not.toBe(internal);
+		expect(outcome.seal.localStats).not.toBe(internal.localStats);
+		expect(Object.isFrozen(outcome.seal)).toBe(true);
+		expect(Object.isFrozen(outcome.seal.localStats)).toBe(true);
+		// Mutating the outcome's seal must not change engine state.
+		expect(() => (outcome.seal.localStats.status = 'succeeded')).toThrow();
+		expect(session.getState().sealedCompletion!.localStats.status).toBe('pending');
+	});
+
+	it('resume_completion_effects returns a frozen clone distinct from internal state', () => {
+		const { session } = completeOnePieceSession();
+		// Both effects start pending, so resume re-emits and returns a seal.
+		const outcome = session.dispatch({ type: 'resume_completion_effects' });
+		expect(outcome.type).toBe('completion_sealed');
+		if (outcome.type !== 'completion_sealed') return;
+		const internal = session.getState().sealedCompletion!;
+		expect(outcome.seal).not.toBe(internal);
+		expect(outcome.seal.serverSubmission).not.toBe(internal.serverSubmission);
+		expect(Object.isFrozen(outcome.seal)).toBe(true);
+	});
+
+	it('acknowledge clones the caller-supplied result so later mutation cannot alter state', () => {
+		const { session, seal } = completeOnePieceSession();
+		const result: { status: 'failed'; code: 'storage_error'; retryable: boolean } = {
+			status: 'failed',
+			code: 'storage_error',
+			retryable: true
+		};
+		const outcome = session.dispatch({
+			type: 'acknowledge_completion_effect',
+			runId: seal.runId,
+			effect: 'local_stats',
+			result
+		});
+		expect(outcome.type).toBe('effect_acknowledged');
+		expect(session.getState().sealedCompletion!.localStats.status).toBe('failed');
+
+		// Mutating the caller's result object after dispatch must not change
+		// the engine's retained effect state.
+		(result as unknown as { status: string }).status = 'succeeded';
+		expect(session.getState().sealedCompletion!.localStats.status).toBe('failed');
+		// The retained state must not be the caller's object.
+		expect(session.getState().sealedCompletion!.localStats).not.toBe(result);
+	});
+
+	it('hydrate clones nested effect states so a persisted snapshot cannot mutate engine state', () => {
+		const restored: PersistedPuzzleSessionV1 = {
+			schemaVersion: 1,
+			puzzleId: 'pz1',
+			source: 'api',
+			lifecycle: 'completed',
+			mode: 'timed',
+			runId: 'run-hydrate',
+			origin: 'resumed',
+			elapsedActiveSeconds: 12,
+			timingQuality: 'known',
+			timerStarted: true,
+			placedPieces: [{ pieceId: 0, x: 0, y: 0 }],
+			trayOrder: [0],
+			rotationEnabled: false,
+			pieceRotations: {},
+			counters: { incorrectAttempts: 0, hintsUsed: 0, referenceActivations: 0 },
+			facts: { rotationUsed: false, hintUsed: false, ghostReferenceUsed: false },
+			hasUserActivity: true,
+			resultClass: 'standard_timed',
+			sealedCompletion: {
+				runId: 'run-hydrate',
+				resultClass: 'standard_timed',
+				timingQuality: 'known',
+				elapsedActiveSeconds: 12,
+				completedAt: 1_000,
+				localStats: { status: 'succeeded' },
+				serverSubmission: { status: 'failed', code: 'network_error', retryable: true }
+			},
+			lastUpdated: 0
+		};
+		const session = createPuzzleSession({
+			...makeOptions({ metadata: makeMetadata(1) }),
+			restored
+		});
+
+		const internal = session.getState().sealedCompletion!;
+		// Nested effect states must be distinct objects from the snapshot's.
+		expect(internal.localStats).not.toBe(restored.sealedCompletion!.localStats);
+		expect(internal.serverSubmission).not.toBe(restored.sealedCompletion!.serverSubmission);
+
+		// Mutating the snapshot's effect state after construction must not
+		// change the engine's retained state.
+		(restored.sealedCompletion!.serverSubmission as unknown as { status: string }).status =
+			'succeeded';
+		expect(internal.serverSubmission.status).toBe('failed');
+	});
+});
+
+describe('PuzzleSession factory result validation and cloning', () => {
+	it('clones createRotations output so a factory retaining its map cannot mutate state', () => {
+		const retained: Record<number, Rotation> = { 0: 90, 1: 180 };
+		const { session } = startedSession({
+			pieceCount: 2,
+			createRotations: () => retained
+		});
+		session.dispatch({ type: 'set_rotation_mode', enabled: true });
+		expect(session.getState().pieceRotations).toEqual({ 0: 90, 1: 180 });
+
+		// Mutating the factory's retained object after dispatch must not change
+		// engine state.
+		retained[0] = 270;
+		expect(session.getState().pieceRotations[0]).toBe(90);
+	});
+
+	it('rejects a createRotations result with an unknown piece id', () => {
+		const { session } = startedSession({
+			pieceCount: 2,
+			createRotations: () => ({ 0: 90, 99: 180 })
+		});
+		expect(() => session.dispatch({ type: 'set_rotation_mode', enabled: true })).toThrow(
+			/unknown piece id/
+		);
+	});
+
+	it('rejects a createRotations result with an invalid rotation value', () => {
+		const { session } = startedSession({
+			pieceCount: 1,
+			createRotations: () => ({ 0: 45 as Rotation })
+		});
+		expect(() => session.dispatch({ type: 'set_rotation_mode', enabled: true })).toThrow(
+			/invalid rotation/
+		);
+	});
+
+	it('rejects a createRotations result that is not an object', () => {
+		const { session } = startedSession({
+			pieceCount: 1,
+			createRotations: (() => null) as unknown as () => Record<number, Rotation>
+		});
+		expect(() => session.dispatch({ type: 'set_rotation_mode', enabled: true })).toThrow(
+			/must be an object/
+		);
+	});
+
+	it('clones createTrayOrder output on restart so a factory retaining its array cannot mutate state', () => {
+		const retained = [3, 1, 0, 2];
+		const session = createPuzzleSession({
+			metadata: makeMetadata(4),
+			runIdFactory: makeRunIdFactory(),
+			clock: new ManualClock(),
+			createTrayOrder: () => retained
+		});
+		session.dispatch({ type: 'start' });
+		session.dispatch({ type: 'restart' });
+		expect(session.getState().trayOrder).toEqual([3, 1, 0, 2]);
+
+		// Mutating the factory's retained array after restart must not change
+		// engine state.
+		retained.push(99);
+		retained.sort((a, b) => a - b);
+		expect(session.getState().trayOrder).toEqual([3, 1, 0, 2]);
+	});
+
+	it('rejects a restart createTrayOrder with a duplicate id and leaves state consistent', () => {
+		const session = createPuzzleSession({
+			metadata: makeMetadata(4),
+			runIdFactory: makeRunIdFactory(),
+			clock: new ManualClock(),
+			createTrayOrder: () => [0, 1, 2, 0]
+		});
+		session.dispatch({ type: 'start' });
+		const beforeLifecycle = session.getState().lifecycle;
+		const beforeTrayOrder = session.getState().trayOrder.slice();
+
+		expect(() => session.dispatch({ type: 'restart' })).toThrow(/duplicate piece id/);
+
+		// The session is left in its prior consistent state: lifecycle and
+		// tray order unchanged (no half-applied transition).
+		expect(session.getState().lifecycle).toBe(beforeLifecycle);
+		expect(session.getState().trayOrder).toEqual(beforeTrayOrder);
+	});
+
+	it('rejects a restart createTrayOrder with an unknown id and leaves state consistent', () => {
+		const session = createPuzzleSession({
+			metadata: makeMetadata(4),
+			runIdFactory: makeRunIdFactory(),
+			clock: new ManualClock(),
+			createTrayOrder: () => [0, 1, 2, 99]
+		});
+		session.dispatch({ type: 'start' });
+		const beforeLifecycle = session.getState().lifecycle;
+
+		expect(() => session.dispatch({ type: 'restart' })).toThrow(/unknown piece id/);
+		expect(session.getState().lifecycle).toBe(beforeLifecycle);
+	});
+
+	it('leaves state consistent when createTrayOrder throws on restart', () => {
+		let throwOnce = true;
+		const session = createPuzzleSession({
+			metadata: makeMetadata(4),
+			runIdFactory: makeRunIdFactory(),
+			clock: new ManualClock(),
+			createTrayOrder: () => {
+				if (throwOnce) throw new Error('factory boom');
+				return [0, 1, 2, 3];
+			}
+		});
+		session.dispatch({ type: 'start' });
+		const beforeLifecycle = session.getState().lifecycle;
+		const beforeTrayOrder = session.getState().trayOrder.slice();
+
+		expect(() => session.dispatch({ type: 'restart' })).toThrow('factory boom');
+		// No half-applied transition: state, lifecycle, and tray order intact.
+		expect(session.getState().lifecycle).toBe(beforeLifecycle);
+		expect(session.getState().trayOrder).toEqual(beforeTrayOrder);
+
+		// The session is still usable: a subsequent restart with a working
+		// factory succeeds.
+		throwOnce = false;
+		const outcome = session.dispatch({ type: 'restart' });
+		expect(outcome.type).toBe('lifecycle_transitioned');
+		expect(session.getState().lifecycle).toBe('setup');
+	});
+
+	it('rejects a restart createTrayOrder with the wrong length and leaves state consistent', () => {
+		const session = createPuzzleSession({
+			metadata: makeMetadata(4),
+			runIdFactory: makeRunIdFactory(),
+			clock: new ManualClock(),
+			createTrayOrder: () => [0, 1, 2]
+		});
+		session.dispatch({ type: 'start' });
+		const beforeLifecycle = session.getState().lifecycle;
+
+		expect(() => session.dispatch({ type: 'restart' })).toThrow(/length must equal pieceCount/);
+		expect(session.getState().lifecycle).toBe(beforeLifecycle);
+	});
+
+	it('rejects a restart createTrayOrder that is not an array and leaves state consistent', () => {
+		const session = createPuzzleSession({
+			metadata: makeMetadata(4),
+			runIdFactory: makeRunIdFactory(),
+			clock: new ManualClock(),
+			createTrayOrder: (() => 'not-an-array') as unknown as () => number[]
+		});
+		session.dispatch({ type: 'start' });
+		const beforeLifecycle = session.getState().lifecycle;
+
+		expect(() => session.dispatch({ type: 'restart' })).toThrow(/must be an array/);
+		expect(session.getState().lifecycle).toBe(beforeLifecycle);
+	});
+});
