@@ -20,6 +20,11 @@ feature scenario in the gameplay UX epic.
 This document is the single implementation source of truth. It incorporates all design-review
 resolutions and supersedes earlier drafts and the removed review addendum.
 
+> **Pinned-version note:** This design targets Playwright 1.57.0. Its `--only-shell` option is
+> defined as replacing Chromium with `chromium-headless-shell` when Chromium is requested; it
+> does not replace or suppress an accompanying WebKit installation. The implementation verifies
+> this exact resolution with `playwright install --dry-run --only-shell chromium webkit`.
+
 ## Current Repository Baseline
 
 The current web E2E setup is intentionally small:
