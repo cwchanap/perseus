@@ -2,8 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
 import PuzzlePage from './+page.svelte';
-import type { GameProgress, PlacedPiece, Puzzle, PuzzlePiece } from '$lib/types/puzzle';
-import type { Rotation } from '$lib/types/gameplay';
+import type { GameProgress, Puzzle, PuzzlePiece } from '$lib/types/puzzle';
 import { getResponsivePuzzleBoardMetrics } from '$lib/services/puzzleLayout';
 
 const mockPageStore = vi.hoisted(() => {
@@ -207,41 +206,6 @@ vi.mock('$lib/services/api', () => {
 		ApiError: MockApiError
 	};
 });
-
-vi.mock('$lib/services/progress', () => ({
-	getProgress: vi.fn((puzzleId: string) => {
-		if (progressState.value?.puzzleId !== puzzleId) {
-			return null;
-		}
-
-		return {
-			...progressState.value,
-			placedPieces: progressState.value.placedPieces.map((placement) => ({ ...placement })),
-			pieceRotations: { ...progressState.value.pieceRotations }
-		};
-	}),
-	saveProgress: vi.fn(
-		(
-			puzzleId: string,
-			placedPieces: PlacedPiece[],
-			rotationEnabled = false,
-			pieceRotations: Record<number, Rotation> = {}
-		) => {
-			progressState.value = {
-				puzzleId,
-				placedPieces: placedPieces.map((placement) => ({ ...placement })),
-				rotationEnabled,
-				pieceRotations: { ...pieceRotations },
-				lastUpdated: '2024-01-01T00:00:00.000Z'
-			};
-		}
-	),
-	clearProgress: vi.fn((puzzleId: string) => {
-		if (progressState.value?.puzzleId === puzzleId) {
-			progressState.value = null;
-		}
-	})
-}));
 
 vi.mock('$lib/services/stats', () => ({
 	getBestTime: vi.fn(() => null),

@@ -37,8 +37,10 @@ vi.mock('$lib/services/api', () => {
 	};
 });
 
-vi.mock('$lib/services/progress', () => ({
-	clearProgress: vi.fn()
+vi.mock('$lib/services/gameplay/session/persistence', () => ({
+	createSessionStorageAdapter: () => ({
+		clearSession: vi.fn()
+	})
 }));
 
 vi.mock('$app/navigation', () => ({
