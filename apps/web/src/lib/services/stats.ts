@@ -345,7 +345,12 @@ function recordLocalCompletionUnsafe(
 	const isNewStandardBest =
 		eligible && (base.standardBestTime === null || elapsed < base.standardBestTime);
 
-	const nextRunIds = [seal.runId, ...base.recordedRunIds].slice(0, MAX_RECORDED_RUN_IDS);
+	// Seed the rebuilt ring from the same `recorded` set used for dedup (which
+	// falls back to lastRecordedRunId when recordedRunIds is empty), so the
+	// fallback id is retained in the ring rather than dropped. seal.runId is
+	// already excluded from `recorded` by the replay early-return above, so
+	// there is no duplicate. Capped at MAX_RECORDED_RUN_IDS, newest first.
+	const nextRunIds = [seal.runId, ...recorded].slice(0, MAX_RECORDED_RUN_IDS);
 
 	const next: PuzzleStatsV1 = {
 		schemaVersion: CURRENT_STATS_SCHEMA_VERSION,

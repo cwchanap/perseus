@@ -46,9 +46,9 @@
 		dragOverCell = null;
 	}
 
-	function placePiece(pieceId: number, x: number, y: number): boolean {
+	function placePiece(pieceId: number, x: number, y: number): void {
 		const piece = puzzle.pieces.find((p) => p.id === pieceId);
-		if (!piece) return false;
+		if (!piece) return;
 
 		// Route every valid piece/coordinate to the session via onPiecePlaced.
 		// The session engine determines accept vs. reject and emits
@@ -56,7 +56,6 @@
 		// animation from that event. Filtering here would bypass the session's
 		// canonical counter/timer/rejection logic.
 		onPiecePlaced(pieceId, x, y);
-		return true;
 	}
 
 	function handleDrop(event: DragEvent, x: number, y: number) {

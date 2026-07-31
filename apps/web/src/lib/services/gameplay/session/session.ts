@@ -253,7 +253,7 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 		}
 		state.rotationEnabled = next;
 		if (next) {
-			state.facts.rotationUsed = true;
+			state.facts = { ...state.facts, rotationUsed: true };
 		}
 		state.resultClass = recomputeResultClass();
 		pushHistory();
@@ -579,7 +579,7 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 			// (e.g. after a newly authenticated transition). Hydration
 			// auto-retry must not re-submit a guaranteed-to-fail 401 for an
 			// anonymous user on every reload.
-			(includeUnauthorized || (serverSubmission as { code?: string }).code !== 'unauthorized')
+			(includeUnauthorized || serverSubmission.code !== 'unauthorized')
 		) {
 			serverSubmission = { status: 'pending' };
 			retryEffects.push('server_submission');
@@ -621,9 +621,11 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 		if (resumeEffects.length === 0) {
 			return { type: 'completion_noop', reason: 'no_pending_effects' };
 		}
-		// Defer effect requests until after notify() for the same re-entrancy
-		// reason as doComplete/doRetryCompletionEffects.
-		notify();
+		// This function re-emits pending completion_effect_request events
+		// without mutating state (unlike doComplete/doRetryCompletionEffects,
+		// which reassign state.sealedCompletion and must notify before emitting
+		// so subscribers observe the new seal). No state change means no notify()
+		// is needed; the effect requests are emitted directly.
 		for (const effect of resumeEffects) {
 			emit({ type: 'completion_effect_request', effect, seal });
 		}
