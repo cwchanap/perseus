@@ -1472,10 +1472,10 @@ describe('PuzzleSession lifecycle no-ops from non-active states', () => {
 		expect(outcome).toEqual({ type: 'rotation_noop', reason: 'piece_not_rotatable' });
 	});
 
-	it('rejects hint from setup (all_placed reason for non-active)', () => {
+	it('rejects hint from setup (lifecycle_disallows_gameplay for non-active)', () => {
 		const session = createPuzzleSession(makeOptions());
 		const outcome = session.dispatch({ type: 'use_hint' });
-		expect(outcome).toEqual({ type: 'hint_noop', reason: 'all_placed' });
+		expect(outcome).toEqual({ type: 'hint_noop', reason: 'lifecycle_disallows_gameplay' });
 	});
 
 	it('rejects reference mode from setup (lifecycle_disallows_gameplay)', () => {

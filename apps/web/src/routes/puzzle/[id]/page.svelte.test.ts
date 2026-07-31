@@ -1449,7 +1449,8 @@ describe('Puzzle route gameplay integration', () => {
 				lastCompletedAt: Date.now(),
 				lastRecordedRunId: 'test-run-id',
 				recordedRunIds: ['test-run-id']
-			}
+			},
+			reason: 'storage_error'
 		});
 		vi.mocked(getBestTime).mockReturnValueOnce(null);
 		await renderPuzzlePage();
@@ -1460,6 +1461,40 @@ describe('Puzzle route gameplay integration', () => {
 		// The in-memory new-best presentation is still available (PERSONAL BEST
 		// label + time), but the persisted-best wording (NEW RECORD) is
 		// suppressed because the local write did not succeed.
+		await expect.element(page.getByText('PERSONAL BEST')).toBeVisible();
+		await expect.element(page.getByTestId('new-best-unsaved')).toBeVisible();
+		await expect.poll(() => page.getByText('NEW RECORD').query()).toBeNull();
+	});
+
+	it('handles an incompatible-schema local-stats failure (terminal, no NEW RECORD)', async () => {
+		// A future-schema local-stats record cannot be overwritten by this
+		// deployment, so recordLocalCompletion reports a terminal
+		// incompatible_schema failure. The route must still surface the
+		// in-memory new-best presentation (PERSONAL BEST + UNSAVED) without
+		// claiming a persisted NEW RECORD — the same UI treatment as a
+		// transient storage_error, but the underlying acknowledge carries
+		// retryable: false (verified at the stats-service and type level).
+		vi.mocked(recordLocalCompletion).mockResolvedValueOnce({
+			status: 'failed',
+			isNewStandardBest: true,
+			inMemoryStats: {
+				schemaVersion: 1,
+				puzzleId: 'test-puzzle',
+				standardBestTime: 42,
+				standardBestCompletedAt: Date.now(),
+				totalCompletions: 1,
+				lastCompletedAt: Date.now(),
+				lastRecordedRunId: 'test-run-id',
+				recordedRunIds: ['test-run-id']
+			},
+			reason: 'incompatible_schema'
+		});
+		vi.mocked(getBestTime).mockReturnValueOnce(null);
+		await renderPuzzlePage();
+		await placePiece(0, 0, 0);
+		await placePiece(1, 1, 0);
+
+		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
 		await expect.element(page.getByText('PERSONAL BEST')).toBeVisible();
 		await expect.element(page.getByTestId('new-best-unsaved')).toBeVisible();
 		await expect.poll(() => page.getByText('NEW RECORD').query()).toBeNull();

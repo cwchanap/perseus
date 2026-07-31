@@ -356,7 +356,7 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 
 	function doUseHint(): PuzzleSessionOutcome {
 		if (state.lifecycle !== 'active') {
-			return { type: 'hint_noop', reason: 'all_placed' };
+			return { type: 'hint_noop', reason: 'lifecycle_disallows_gameplay' };
 		}
 		const placedIds = new Set(state.placedPieces.map((placement) => placement.pieceId));
 		const hintPieceId = getHintPieceId(state.trayOrder, placedIds, state.selectedPieceId);
