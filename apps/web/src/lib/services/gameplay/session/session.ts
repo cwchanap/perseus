@@ -252,7 +252,12 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 		const next = enabled;
 		if (next && !previous) {
 			const ids = metadata.pieces.map((piece) => piece.id);
-			state.pieceRotations = createRotations(ids);
+			// Clone and validate the factory output before assigning: a
+			// factory that retains its returned object could otherwise mutate
+			// state.pieceRotations later without dispatch, and a malformed
+			// mapping (unknown ids / invalid rotation values) would corrupt
+			// placement gating.
+			state.pieceRotations = validateAndCloneRotations(createRotations(ids), pieceById);
 		}
 		// Enabling or disabling rotation is a persistent state change that
 		// permanently affects result eligibility, so it must count as user
@@ -461,15 +466,25 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 		const from = state.lifecycle;
 		const retainedMode = state.mode;
 		const retainedOrganization = state.organization;
+		// Compute and validate the restart tray order BEFORE stopping the
+		// clock or replacing state. If createTrayOrder() throws or returns a
+		// malformed order, the session is left in its prior consistent state
+		// rather than a half-applied transition (state replaced, history not
+		// rebuilt, subscribers not notified). Cloning prevents a factory that
+		// retains its returned array from mutating state.trayOrder later.
+		const restartOrder = validateAndCloneTrayOrder(
+			safeOptions.createTrayOrder
+				? safeOptions.createTrayOrder()
+				: metadata.pieces
+						.map((piece) => piece.id)
+						.slice()
+						.sort((a, b) => a - b),
+			metadata.pieces
+		);
 		stopClock();
 		state = freshState({ ...safeOptions, mode: retainedMode });
 		state.organization = retainedOrganization;
-		state.trayOrder = safeOptions.createTrayOrder
-			? safeOptions.createTrayOrder()
-			: metadata.pieces
-					.map((piece) => piece.id)
-					.slice()
-					.sort((a, b) => a - b);
+		state.trayOrder = restartOrder;
 		placementHistory = makeHistoryBaseline(state);
 		emit({ type: 'lifecycle', from, to: 'setup' });
 		notify();
@@ -529,7 +544,10 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 		for (const effect of pendingEffects) {
 			emit({ type: 'completion_effect_request', effect, seal });
 		}
-		return { type: 'completion_sealed', seal };
+		// Return a deep-frozen clone so a consumer cannot mutate the engine's
+		// internal state.sealedCompletion through the dispatch outcome (the
+		// returned seal would otherwise be the same object retained in state).
+		return { type: 'completion_sealed', seal: deepFreeze(cloneSeal(seal)) };
 	}
 
 	function sealElapsed(): number | null {
@@ -558,7 +576,10 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 		) {
 			return { type: 'effect_acknowledgement_noop', reason: 'effect_terminal' };
 		}
-		const nextState = result as CompletionEffectState;
+		// Clone the caller-supplied result before retaining it: a caller that
+		// holds the result object could otherwise mutate the engine's sealed
+		// effect state after dispatch without a transition or notification.
+		const nextState = cloneEffectState(result);
 		state.sealedCompletion =
 			effect === 'local_stats'
 				? { ...seal, localStats: nextState }
@@ -605,7 +626,9 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 		for (const effect of retryEffects) {
 			emit({ type: 'completion_effect_request', effect, seal: updated });
 		}
-		return { type: 'completion_sealed', seal: updated };
+		// Return a deep-frozen clone; the internal seal is `updated`, retained
+		// in state.sealedCompletion, and must not leak to the caller.
+		return { type: 'completion_sealed', seal: deepFreeze(cloneSeal(updated)) };
 	}
 
 	/**
@@ -639,7 +662,9 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 		for (const effect of resumeEffects) {
 			emit({ type: 'completion_effect_request', effect, seal });
 		}
-		return { type: 'completion_sealed', seal };
+		// Return a deep-frozen clone; the internal seal is retained in
+		// state.sealedCompletion and must not leak to the caller.
+		return { type: 'completion_sealed', seal: deepFreeze(cloneSeal(seal)) };
 	}
 
 	// --- Undo / redo ----------------------------------------------------------
@@ -879,8 +904,8 @@ function hydrate(
 					timingQuality: snapshot.sealedCompletion.timingQuality,
 					elapsedActiveSeconds: snapshot.sealedCompletion.elapsedActiveSeconds,
 					completedAt: snapshot.sealedCompletion.completedAt,
-					localStats: snapshot.sealedCompletion.localStats,
-					serverSubmission: snapshot.sealedCompletion.serverSubmission
+					localStats: cloneEffectState(snapshot.sealedCompletion.localStats),
+					serverSubmission: cloneEffectState(snapshot.sealedCompletion.serverSubmission)
 				}
 			: null,
 		canUndo: false,
@@ -928,9 +953,17 @@ function cloneSeal(seal: SealedCompletion): SealedCompletion {
 		timingQuality: seal.timingQuality,
 		elapsedActiveSeconds: seal.elapsedActiveSeconds,
 		completedAt: seal.completedAt,
-		localStats: { ...seal.localStats },
-		serverSubmission: { ...seal.serverSubmission }
+		localStats: cloneEffectState(seal.localStats),
+		serverSubmission: cloneEffectState(seal.serverSubmission)
 	};
+}
+
+// Effect states are flat discriminated unions; a shallow spread is a complete
+// clone. Used at every boundary that retains or publishes an effect state
+// (cloneSeal, doAcknowledge, hydrate) so a caller or persisted snapshot
+// cannot mutate the engine's sealed effect state by reference.
+function cloneEffectState(state: CompletionEffectState): CompletionEffectState {
+	return { ...state };
 }
 
 function cloneState(state: PuzzleSessionState): PuzzleSessionState {
@@ -1053,23 +1086,73 @@ function validateAndCloneMetadata(
 	};
 	let clonedTrayOrder: number[] | undefined;
 	if (initialTrayOrder !== undefined) {
-		if (!Array.isArray(initialTrayOrder)) {
-			throw new Error('Invalid initialTrayOrder: must be an array');
-		}
-		if (initialTrayOrder.length !== metadata.pieceCount) {
-			throw new Error('Invalid initialTrayOrder: length must equal pieceCount');
-		}
-		const seen = new Set<number>();
-		for (const id of initialTrayOrder) {
-			if (!Number.isInteger(id) || !ids.has(id)) {
-				throw new Error(`Invalid initialTrayOrder: unknown piece id ${String(id)}`);
-			}
-			if (seen.has(id)) {
-				throw new Error(`Invalid initialTrayOrder: duplicate piece id ${id}`);
-			}
-			seen.add(id);
-		}
-		clonedTrayOrder = initialTrayOrder.slice();
+		clonedTrayOrder = validateAndCloneTrayOrder(initialTrayOrder, clonedPieces, 'initialTrayOrder');
 	}
 	return { metadata: clonedMetadata, initialTrayOrder: clonedTrayOrder };
+}
+
+// --- Factory result validation ----------------------------------------------
+//
+// createRotations and createTrayOrder are caller-supplied factories whose
+// output is assigned directly to engine state. Like construction metadata,
+// their results are validated and cloned at the invariant boundary so a
+// factory that retains its returned object cannot mutate state later without
+// dispatch, and a malformed result (unknown ids, duplicates, invalid rotation
+// values) is rejected rather than corrupting placement gating.
+
+const VALID_ROTATIONS = new Set<Rotation>([0, 90, 180, 270]);
+
+function validateAndCloneRotations(
+	rotations: Record<number, Rotation>,
+	pieceById: Map<number, unknown>
+): Record<number, Rotation> {
+	if (!rotations || typeof rotations !== 'object') {
+		throw new Error('Invalid createRotations result: must be an object');
+	}
+	const cloned: Record<number, Rotation> = {};
+	for (const key of Object.keys(rotations)) {
+		const id = Number(key);
+		if (!Number.isInteger(id) || !pieceById.has(id)) {
+			throw new Error(`Invalid createRotations result: unknown piece id ${key}`);
+		}
+		const value = rotations[id];
+		if (!VALID_ROTATIONS.has(value)) {
+			throw new Error(
+				`Invalid createRotations result: invalid rotation ${String(value)} for piece ${id}`
+			);
+		}
+		cloned[id] = value;
+	}
+	return cloned;
+}
+
+/**
+ * Validate that `order` is an exact permutation of the piece ids in `pieces`
+ * (correct length, all ids known, no duplicates) and return a cloned array.
+ * Used at construction (initialTrayOrder) and restart (createTrayOrder) so a
+ * malformed order is rejected before any state is committed.
+ */
+function validateAndCloneTrayOrder(
+	order: number[],
+	pieces: ReadonlyArray<{ id: number }>,
+	label = 'trayOrder'
+): number[] {
+	if (!Array.isArray(order)) {
+		throw new Error(`Invalid ${label}: must be an array`);
+	}
+	if (order.length !== pieces.length) {
+		throw new Error(`Invalid ${label}: length must equal pieceCount`);
+	}
+	const validIds = new Set(pieces.map((piece) => piece.id));
+	const seen = new Set<number>();
+	for (const id of order) {
+		if (!Number.isInteger(id) || !validIds.has(id)) {
+			throw new Error(`Invalid ${label}: unknown piece id ${String(id)}`);
+		}
+		if (seen.has(id)) {
+			throw new Error(`Invalid ${label}: duplicate piece id ${id}`);
+		}
+		seen.add(id);
+	}
+	return order.slice();
 }
