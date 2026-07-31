@@ -37,12 +37,44 @@ Task 0 virtual no-op foundation
   -> Task 5 fixture catalog/assets
   -> Task 6 routing/personas/API/persistence
   -> Task 7 shared test fixture/gotoFixture
-  -> Task 8 interactions/WebKit spike
+  -> Task 8 interactions/dialog base/WebKit spike
   -> Task 9 small-fixture smoke
   -> Task 10 large/a11y coverage
   -> Task 11 CI/docs
   -> Task 12 stability audit
 ```
+
+## Shared Plan Interfaces
+
+Task 6 produces this bounded completion configuration for Task 7:
+
+```ts
+export type CompletionScenario =
+	| { kind: 'success' }
+	| { kind: 'deferred-success' }
+	| { kind: 'network-abort' }
+	| { kind: 'http-failure'; status: 400 | 401 | 404 | 409 | 429 | 500 };
+```
+
+Task 8 completes this shared player-facing surface:
+
+```ts
+export class GameplayPage {
+	gotoFixture(id: GameplayFixtureId, options?: GotoFixtureOptions): Promise<void>;
+	expectReady(): Promise<void>;
+	placeWithMouse(pieceId: number, x: number, y: number): Promise<void>;
+	selectAndPlaceWithKeyboard(pieceId: number, x: number, y: number): Promise<void>;
+	tapPiece(pieceId: number): Promise<void>;
+	dragWithTouch(pieceId: number, x: number, y: number): Promise<void>;
+	expectPiecePlaced(pieceId: number, x: number, y: number): Promise<void>;
+	waitForDialog(name: string | RegExp): Promise<Locator>;
+	expectDialogInitialFocus(dialog: Locator, target: Locator): Promise<void>;
+	activateDialogAction(dialog: Locator, name: string | RegExp): Promise<void>;
+	dismissDialog(dialog: Locator, method: 'escape' | 'visible-close-button'): Promise<void>;
+}
+```
+
+Concrete setup, pause, mobile-tray, and redesigned-completion methods are added by HPA-219, HPA-221, and HPA-224 when those surfaces exist; HPA-226 supplies the base role/focus/action contract.
 
 ---
 
@@ -525,11 +557,11 @@ git commit -m "test(web): add deterministic gameplay fixture catalog"
 - Create: `apps/web/e2e/gameplay-fixtures/persisted-state.ts`
 - Create: `apps/web/e2e/gameplay-fixtures/harness-services.spec.ts`
 
-**Produces:** `FixtureRouter`, `AuthPersona`, `ApiScenarioController`, and `PersistedStateController` used by Task 7.
+**Produces:** `FixtureRouter`, `AuthPersona`, `CompletionScenario`, `ApiScenarioController`, and `PersistedStateController` used by Task 7.
 
 - [ ] **Step 1: Write service-level tests**
 
-Prove known fixture routes fulfill; unknown `e2e-*` paths fail without fallback; ordinary traffic falls through; personas match auth contracts; deferred teardown fails until released/cancelled; request bodies are recorded; storage seeds are deterministic.
+Prove known fixture routes fulfill; unknown `e2e-*` paths fail without fallback; ordinary traffic falls through; personas match auth contracts; each `CompletionScenario` installs the expected route behavior; deferred teardown fails until released/cancelled; request bodies are recorded; storage seeds are deterministic.
 
 - [ ] **Step 2: Verify RED**
 
@@ -544,7 +576,7 @@ Register specific routes first. A URL containing the fixture ID is fulfilled or 
 
 - [ ] **Step 4: Implement personas and API scenarios**
 
-Use shared response types. Deferred routes expose `release()` and `cancel()`; teardown reports route and request details.
+Use shared response types. Map the bounded `CompletionScenario` union to route behavior. Deferred routes expose `release()` and `cancel()`; teardown reports route and request details.
 
 - [ ] **Step 5: Implement persistence controls**
 
@@ -578,11 +610,6 @@ export interface GotoFixtureOptions {
 	seedStats?: unknown;
 	clock?: { startAt: Date } | false;
 	completion?: CompletionScenario;
-}
-
-export class GameplayPage {
-	gotoFixture(id: GameplayFixtureId, options?: GotoFixtureOptions): Promise<void>;
-	expectReady(): Promise<void>;
 }
 ```
 
@@ -621,18 +648,16 @@ git commit -m "test(web): add shared gameplay E2E fixture"
 
 ---
 
-### Task 8: Implement Interactions and WebKit Spike
+### Task 8: Implement Interactions, Dialog Base, and WebKit Spike
 
 **Files:**
 - Modify: `apps/web/e2e/support/gameplay-page.ts`
 - Create: `apps/web/e2e/gameplay-interactions.spec.ts`
 - Create: `apps/web/e2e/webkit-drag-spike.spec.ts`
 
-**Produces:** mouse, keyboard, tap, touch-drag, and placement assertion methods.
-
 - [ ] **Step 1: Write rendered-UI tests**
 
-Cover correct/rejected mouse placement, Enter/Space selection and placement, supported touch drag, and source scoping through `piece-slot-${id}`.
+Cover correct/rejected mouse placement, Enter/Space selection and placement, supported touch drag, source scoping through `piece-slot-${id}`, and current completion-dialog role/action/focus behavior.
 
 - [ ] **Step 2: Implement mouse/keyboard**
 
@@ -642,14 +667,18 @@ Prefer `dragTo`; encapsulate any standards-shaped fallback privately. Attach bou
 
 Use Playwright touch/pointer APIs where possible; otherwise dispatch a bounded touch sequence from locator coordinates.
 
-- [ ] **Step 4: Verify Chromium/WebKit**
+- [ ] **Step 4: Implement dialog base**
+
+Locate dialogs by role and accessible name. Assert initial focus using `toBeFocused`, activate visible actions by role/name, and support only Escape or an accessible visible close button for dismissal. Do not add setup/pause/mobile-tray-specific selectors before their owning features exist.
+
+- [ ] **Step 5: Verify Chromium/WebKit**
 
 ```bash
 bun run --cwd apps/web test:e2e -- e2e/gameplay-interactions.spec.ts \
   --project=chromium-desktop --project=webkit-mobile --retries=0
 ```
 
-- [ ] **Step 5: Run 20-pass WebKit spike**
+- [ ] **Step 6: Run 20-pass WebKit spike**
 
 ```bash
 bun run --cwd apps/web test:e2e -- e2e/webkit-drag-spike.spec.ts \
@@ -658,7 +687,7 @@ bun run --cwd apps/web test:e2e -- e2e/webkit-drag-spike.spec.ts \
 
 Zero failures permits `@webkit-critical`; any failure moves native mouse drag to `@extended`, keeps keyboard/touch critical, and requires a linked follow-up issue.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add apps/web/e2e/support/gameplay-page.ts \
@@ -775,7 +804,7 @@ Browser jobs upload `apps/web/test-results` and `apps/web/playwright-report` on 
 
 - [ ] **Step 2: Write README**
 
-Document fixture directories/grids/IDs, interception, virtual module/import rules, fallback semantics, atomic `gotoFixture()` init, clock/rAF implications, localStorage, completion matrix, deferred cleanup, commands, WebKit result, browser dry-run, artifacts, a11y limits, and feature ownership.
+Document fixture directories/grids/IDs, total interception, virtual module/import rules, fallback semantics, atomic `gotoFixture()` init, clock/rAF implications, localStorage, completion matrix, deferred cleanup, cross-input and dialog-base extension rules, explicit project commands, WebKit result, Firefox deferral, browser dry-run, artifacts, a11y limits, and feature ownership.
 
 - [ ] **Step 3: Update `CLAUDE.md`**
 
@@ -864,7 +893,7 @@ Add a PR comment mapping each criterion to command output, fixture coverage, aut
 git status --short
 ```
 
-If output is empty, do not commit. Otherwise stage every listed path explicitly, verify the staged diff with `git diff --cached`, then run:
+If output is empty, do not commit. Otherwise stage every listed path explicitly, verify `git diff --cached`, then run:
 
 ```bash
 git commit -m "test(web): stabilize deterministic gameplay E2E suite"
