@@ -2525,4 +2525,60 @@ describe('PuzzleSession factory result validation and cloning', () => {
 		expect(() => session.dispatch({ type: 'restart' })).toThrow(/must be an array/);
 		expect(session.getState().lifecycle).toBe(beforeLifecycle);
 	});
+
+	it('leaves the clock running when runIdFactory throws on restart', () => {
+		const clock = new ManualClock();
+		// Succeed on construction (call 1), throw on the first restart (call 2),
+		// then succeed on the retry restart (call 3).
+		let calls = 0;
+		const session = createPuzzleSession({
+			metadata: makeMetadata(4),
+			runIdFactory: {
+				create: () => {
+					calls++;
+					if (calls === 2) throw new Error('runid boom');
+					return `run-${calls}`;
+				}
+			},
+			clock
+		});
+		session.dispatch({ type: 'start' });
+		// Start the timer via a counted action so the tick interval is live.
+		session.dispatch({ type: 'attempt_placement', pieceId: 0, x: 0, y: 0 });
+		expect(clock.activeIntervalCount).toBe(1);
+		const beforeRunId = session.getState().runId;
+		const beforeElapsed = session.getState().elapsedActiveSeconds;
+
+		expect(() => session.dispatch({ type: 'restart' })).toThrow('runid boom');
+
+		// The clock was never stopped: the tick interval is still live and
+		// elapsed time keeps advancing. Prior to the fix, stopClock() ran
+		// before the factory call, freezing the timer permanently.
+		expect(clock.activeIntervalCount).toBe(1);
+		expect(session.getState().runId).toBe(beforeRunId);
+		clock.advance(3_000);
+		session.checkpointTime();
+		expect(session.getState().elapsedActiveSeconds).toBe((beforeElapsed ?? 0) + 3);
+
+		// The session is still usable: a subsequent restart with a working
+		// factory succeeds and produces a fresh run id.
+		const outcome = session.dispatch({ type: 'restart' });
+		expect(outcome.type).toBe('lifecycle_transitioned');
+		expect(session.getState().runId).toBe('run-3');
+		expect(session.getState().runId).not.toBe(beforeRunId);
+	});
+
+	it('rejects a runIdFactory that returns the current run id on restart', () => {
+		const session = createPuzzleSession({
+			metadata: makeMetadata(4),
+			runIdFactory: { create: () => 'same-run' },
+			clock: new ManualClock()
+		});
+		session.dispatch({ type: 'start' });
+		const beforeLifecycle = session.getState().lifecycle;
+
+		expect(() => session.dispatch({ type: 'restart' })).toThrow(/equal to the current run id/);
+		// State fully intact: clock not stopped, lifecycle unchanged.
+		expect(session.getState().lifecycle).toBe(beforeLifecycle);
+	});
 });

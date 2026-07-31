@@ -122,7 +122,18 @@ vi.mock('$lib/services/gameplay/session/persistence', async (importOriginal) => 
 		await importOriginal<typeof import('$lib/services/gameplay/session/persistence')>();
 	return {
 		...actual,
-		createBrowserRunIdFactory: () => ({ create: () => 'test-run-id' }),
+		// The first create() call (initial session construction) returns the
+		// canonical 'test-run-id' that non-restart assertions expect; each
+		// subsequent call (restart) returns a fresh id so the engine's
+		// run-id collision guard is satisfied and regression tests actually
+		// exercise the "fresh run id after Play Again" behavior their comments
+		// describe. Production uses Web Crypto UUIDv4, which never collides.
+		createBrowserRunIdFactory: () => {
+			let n = 0;
+			return {
+				create: () => (n++ === 0 ? 'test-run-id' : `test-run-id-${n}`)
+			};
+		},
 		createSessionStorageAdapter: () => ({
 			loadSession: (puzzleId: string) => {
 				if (progressState.value?.puzzleId === puzzleId) {
