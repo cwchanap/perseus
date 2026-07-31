@@ -172,6 +172,131 @@ describe('Stats Service', () => {
 		});
 	});
 
+	describe('future schema compatibility', () => {
+		it('getStats returns null but preserves a higher-schema record instead of deleting it', () => {
+			// A record written by a newer client (schemaVersion > 1) is
+			// unreadable by this deployment. getStats must return null
+			// (cannot interpret it) but must NOT remove it, so a subsequent
+			// upgrade can still read it. Treating it as legacy+invalid would
+			// destroy the newer client's statistics.
+			localStorage.setItem(
+				`puzzle-stats-${puzzleId}`,
+				JSON.stringify({
+					schemaVersion: 2,
+					puzzleId,
+					someFutureField: 'unreadable-by-v1'
+				})
+			);
+			expect(getStats(puzzleId)).toBeNull();
+			const preserved = localStorage.getItem(`puzzle-stats-${puzzleId}`);
+			expect(preserved).not.toBeNull();
+			expect(JSON.parse(preserved!).schemaVersion).toBe(2);
+		});
+
+		it('getBestTime returns null without deleting a higher-schema record', () => {
+			localStorage.setItem(
+				`puzzle-stats-${puzzleId}`,
+				JSON.stringify({ schemaVersion: 3, puzzleId })
+			);
+			expect(getBestTime(puzzleId)).toBeNull();
+			expect(localStorage.getItem(`puzzle-stats-${puzzleId}`)).not.toBeNull();
+		});
+
+		it('recordLocalCompletion does not overwrite a higher-schema record', async () => {
+			// An older deployment must not overwrite statistics written by a
+			// newer client. The write is suppressed (read-only mode), matching
+			// the session-persistence incompatible-schema policy.
+			localStorage.setItem(
+				`puzzle-stats-${puzzleId}`,
+				JSON.stringify({ schemaVersion: 2, puzzleId, future: true })
+			);
+			const result = await recordLocalCompletion(puzzleId, makeSeal({ runId: 'r1' }));
+			expect(result.status).toBe('failed');
+			const after = JSON.parse(localStorage.getItem(`puzzle-stats-${puzzleId}`)!);
+			expect(after.schemaVersion).toBe(2);
+			expect(after.future).toBe(true);
+		});
+
+		it('still migrates an absent-schemaVersion legacy record (not treated as future)', () => {
+			// Only an ABSENT schemaVersion is legacy; a present higher one is
+			// incompatible. This guards against regressing the legacy path.
+			localStorage.setItem(
+				`puzzle-stats-${puzzleId}`,
+				JSON.stringify({
+					puzzleId,
+					bestTime: 90,
+					completedAt: '2024-01-01T00:00:00.000Z',
+					totalCompletions: 2
+				})
+			);
+			expect(getStats(puzzleId)?.standardBestTime).toBe(90);
+		});
+	});
+
+	describe('recorded-run-id ring consistency', () => {
+		function putV1(overrides: Record<string, unknown>) {
+			localStorage.setItem(
+				`puzzle-stats-${puzzleId}`,
+				JSON.stringify({
+					schemaVersion: 1,
+					puzzleId,
+					standardBestTime: null,
+					standardBestCompletedAt: null,
+					totalCompletions: 2,
+					lastCompletedAt: 1000,
+					lastRecordedRunId: 'A',
+					recordedRunIds: ['A', 'B'],
+					...overrides
+				})
+			);
+		}
+
+		it('rejects a record whose lastRecordedRunId disagrees with the ring head', () => {
+			// lastRecordedRunId 'A' but ring head 'B': contradictory. Because
+			// recording dedups against the ring, run A would count again on
+			// replay. Such a corrupt record must be rejected, not salvaged.
+			putV1({ lastRecordedRunId: 'A', recordedRunIds: ['B', 'A'] });
+			expect(getStats(puzzleId)).toBeNull();
+		});
+
+		it('rejects a record with duplicate run ids in the ring', () => {
+			// Silent dedup would mask corruption. Reject instead.
+			putV1({ lastRecordedRunId: 'A', recordedRunIds: ['A', 'A'] });
+			expect(getStats(puzzleId)).toBeNull();
+		});
+
+		it('rejects a record where totalCompletions is less than the retained run-id count', () => {
+			putV1({ totalCompletions: 1, lastRecordedRunId: 'A', recordedRunIds: ['A', 'B', 'C'] });
+			expect(getStats(puzzleId)).toBeNull();
+		});
+
+		it('rejects a record with a null lastRecordedRunId but a non-empty ring', () => {
+			putV1({ lastRecordedRunId: null, recordedRunIds: ['A', 'B'] });
+			expect(getStats(puzzleId)).toBeNull();
+		});
+
+		it('rejects a record with a set lastRecordedRunId but an empty ring', () => {
+			putV1({ lastRecordedRunId: 'A', recordedRunIds: [] });
+			expect(getStats(puzzleId)).toBeNull();
+		});
+
+		it('accepts a consistent record whose lastRecordedRunId matches the ring head', () => {
+			putV1({ totalCompletions: 2, lastRecordedRunId: 'A', recordedRunIds: ['A', 'B'] });
+			const stats = getStats(puzzleId);
+			expect(stats).not.toBeNull();
+			expect(stats?.lastRecordedRunId).toBe('A');
+			expect(stats?.recordedRunIds).toEqual(['A', 'B']);
+		});
+
+		it('accepts a record with both lastRecordedRunId and ring empty together', () => {
+			putV1({ totalCompletions: 0, lastRecordedRunId: null, recordedRunIds: [] });
+			const stats = getStats(puzzleId);
+			expect(stats).not.toBeNull();
+			expect(stats?.lastRecordedRunId).toBeNull();
+			expect(stats?.recordedRunIds).toEqual([]);
+		});
+	});
+
 	describe('clearStats', () => {
 		it('removes stats from localStorage', async () => {
 			await recordLocalCompletion(puzzleId, makeSeal());

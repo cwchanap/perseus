@@ -389,18 +389,38 @@
 
 	async function handleLocalStatsEffect(seal: SealedCompletion) {
 		if (!puzzle) return;
-		const result = await recordLocalCompletion(puzzle.id, seal);
+		// Capture the originating puzzle + run before awaiting: the Web Lock
+		// write can be queued behind another tab. If the user hits Play Again
+		// or navigates to another puzzle while the write is pending, the stale
+		// completion must not reopen the modal or apply its best-time
+		// presentation to the new run. The acknowledge dispatch below is
+		// run-id guarded by the engine, but the UI mutations are not, so they
+		// are fenced here against the current session's active seal.
+		const originPuzzleId = puzzle.id;
+		const originRunId = seal.runId;
+		const result = await recordLocalCompletion(originPuzzleId, seal);
 
-		if (result.status === 'failed') {
-			isNewBest = result.isNewStandardBest;
-			bestTime = result.inMemoryStats.standardBestTime;
-			localStatsFailed = true;
-		} else {
-			isNewBest = result.isNewStandardBest;
-			bestTime = result.stats.standardBestTime;
-			localStatsFailed = false;
+		// A delayed response from an earlier run is ignored for UI purposes.
+		// The acknowledge is still dispatched; the engine rejects it as a
+		// run_id_mismatch no-op when the run no longer matches. `sessionState`
+		// is the route's live mirror of the store (updated synchronously on
+		// dispatch), so after Play Again (restart → null seal) or navigation
+		// (new puzzle id) the stale run no longer matches.
+		const stillActiveRun =
+			puzzle?.id === originPuzzleId && sessionState?.sealedCompletion?.runId === originRunId;
+
+		if (stillActiveRun) {
+			if (result.status === 'failed') {
+				isNewBest = result.isNewStandardBest;
+				bestTime = result.inMemoryStats.standardBestTime;
+				localStatsFailed = true;
+			} else {
+				isNewBest = result.isNewStandardBest;
+				bestTime = result.stats.standardBestTime;
+				localStatsFailed = false;
+			}
+			showCelebration = true;
 		}
-		showCelebration = true;
 
 		sessionStore?.dispatch({
 			type: 'acknowledge_completion_effect',
