@@ -1055,6 +1055,56 @@ describe('Puzzle route gameplay integration', () => {
 		expect(recordCompletion).toHaveBeenCalledTimes(2);
 	});
 
+	it('does not reopen the celebration modal when a stale local-stats write resolves after Play Again', async () => {
+		// Regression: handleLocalStatsEffect awaited recordLocalCompletion then
+		// unconditionally mutated showCelebration/isNewBest/bestTime. If the
+		// user hit Play Again while the (Web-Lock-queued) write was pending,
+		// the stale completion reopened the modal and applied the old run's
+		// best-time presentation to the new run. The UI mutations must be
+		// fenced to the originating run, like the server-POST case above.
+		const staleLocalWrite = createDeferred<Awaited<ReturnType<typeof recordLocalCompletion>>>();
+		vi.mocked(recordLocalCompletion).mockImplementationOnce(() => staleLocalWrite.promise);
+		await renderPuzzlePage();
+
+		// First solve triggers the (deferred) local stats write.
+		await placePiece(0, 0, 0);
+		await placePiece(1, 1, 0);
+		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+		expect(recordLocalCompletion).toHaveBeenCalledTimes(1);
+
+		// Play Again before the local write resolves — abandons the run and
+		// starts a fresh one with a new seal/run id.
+		await page.getByRole('button', { name: 'PLAY AGAIN' }).click();
+		await expect.poll(() => page.getByTestId('celebration-modal').query()).toBeNull();
+
+		// The stale local write now resolves with a new-best verdict for the
+		// OLD run. Its acknowledge dispatch is run-id guarded, but the UI
+		// mutations (showCelebration/isNewBest) must also be fenced so the
+		// modal does not reopen on the new run.
+		staleLocalWrite.resolve({
+			status: 'recorded',
+			isNewStandardBest: true,
+			stats: {
+				schemaVersion: 1,
+				puzzleId: 'test-puzzle',
+				standardBestTime: 42,
+				standardBestCompletedAt: Date.now(),
+				totalCompletions: 1,
+				lastCompletedAt: Date.now(),
+				lastRecordedRunId: 'test-run-id',
+				recordedRunIds: ['test-run-id']
+			}
+		});
+		// Flush the pending handleLocalStatsEffect continuation.
+		await Promise.resolve();
+		await Promise.resolve();
+		await Promise.resolve();
+
+		// The stale run's modal/badge must NOT reappear on the new run.
+		await expect.poll(() => page.getByTestId('celebration-modal').query()).toBeNull();
+		await expect.poll(() => page.getByText('NEW RECORD').query()).toBeNull();
+	});
+
 	it('does not POST completion to the API for local-source quick puzzles', async () => {
 		// Regression: quick puzzles use device-local `q-...` ids that
 		// loadPuzzleSource deliberately keeps off the API. An unconditional

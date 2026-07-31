@@ -34,6 +34,18 @@ export type RecordLocalCompletionResult =
 	| { status: 'replayed'; isNewStandardBest: boolean; stats: PuzzleStatsV1 }
 	| { status: 'failed'; isNewStandardBest: boolean; inMemoryStats: PuzzleStatsV1 };
 
+/**
+ * Outcome of parsing a stored stats record. A future-schema record
+ * (`schemaVersion` present and higher than current) is `incompatible`: it is
+ * unreadable by this deployment and must be preserved (not deleted or
+ * overwritten) so a newer client can still read it. This mirrors the session
+ * persistence layer's incompatible-schema policy.
+ */
+type ParsedStats =
+	| { kind: 'valid'; stats: PuzzleStatsV1 }
+	| { kind: 'incompatible'; schemaVersion: number }
+	| { kind: 'invalid' };
+
 function getStorageKey(puzzleId: string): string {
 	return `${STATS_KEY_PREFIX}${puzzleId}`;
 }
@@ -46,10 +58,7 @@ function isEligibleStandardBest(seal: SealedCompletion): boolean {
 	);
 }
 
-function parseStoredStats(raw: Record<string, unknown>, puzzleId: string): PuzzleStatsV1 | null {
-	if (raw.schemaVersion === CURRENT_STATS_SCHEMA_VERSION) {
-		return validateV1(raw, puzzleId);
-	}
+function parseLegacyRecord(raw: Record<string, unknown>, puzzleId: string): PuzzleStatsV1 | null {
 	// Legacy unversioned shape: { puzzleId, bestTime, completedAt (ISO), totalCompletions }.
 	const bestTime = raw.bestTime;
 	const completedAt = raw.completedAt;
@@ -77,6 +86,30 @@ function parseStoredStats(raw: Record<string, unknown>, puzzleId: string): Puzzl
 		lastRecordedRunId: null,
 		recordedRunIds: []
 	};
+}
+
+function parseStoredStats(raw: Record<string, unknown>, puzzleId: string): ParsedStats {
+	// A present schemaVersion gates the versioned path. Only an ABSENT
+	// schemaVersion is treated as legacy unversioned; a higher version is
+	// incompatible (preserved), and a present-but-bogus version is invalid.
+	if (Object.hasOwn(raw, 'schemaVersion')) {
+		const version = raw.schemaVersion;
+		if (typeof version !== 'number' || !Number.isInteger(version)) {
+			return { kind: 'invalid' };
+		}
+		if (version > CURRENT_STATS_SCHEMA_VERSION) {
+			return { kind: 'incompatible', schemaVersion: version };
+		}
+		if (version === CURRENT_STATS_SCHEMA_VERSION) {
+			const v1 = validateV1(raw, puzzleId);
+			return v1 ? { kind: 'valid', stats: v1 } : { kind: 'invalid' };
+		}
+		// A present-but-older versioned shape has no migration target (legacy
+		// is unversioned); treat as corrupt.
+		return { kind: 'invalid' };
+	}
+	const legacy = parseLegacyRecord(raw, puzzleId);
+	return legacy ? { kind: 'valid', stats: legacy } : { kind: 'invalid' };
 }
 
 function validateV1(raw: Record<string, unknown>, puzzleId: string): PuzzleStatsV1 | null {
@@ -120,6 +153,10 @@ function validateV1(raw: Record<string, unknown>, puzzleId: string): PuzzleStats
 	if (lastRecordedRunId !== null && typeof lastRecordedRunId !== 'string') return null;
 	const recordedRunIds = normalizeRecordedRunIds(raw.recordedRunIds, lastRecordedRunId);
 	if (recordedRunIds === false) return null;
+	// A retained run id implies a recorded completion; a record claiming fewer
+	// completions than retained ids is internally inconsistent and likely
+	// corrupt. Reject rather than salvage, since replay dedup trusts the ring.
+	if ((totalCompletions as number) < recordedRunIds.length) return null;
 	return {
 		schemaVersion: CURRENT_STATS_SCHEMA_VERSION,
 		puzzleId,
@@ -134,21 +171,39 @@ function validateV1(raw: Record<string, unknown>, puzzleId: string): PuzzleStats
 
 /**
  * Validate and normalize the recorded-run-id ring. Returns `false` for a
- * present-but-malformed field (non-array, or array with non-string entries) —
- * silently dropping entries would weaken replay dedup and let an old run count
- * again. Absent (`undefined`) on older records is valid and seeded from
+ * present-but-malformed field (non-array, non-string entries) — silently
+ * dropping entries would weaken replay dedup and let an old run count again.
+ * Absent (`undefined`) on older records is valid and seeded from
  * `lastRecordedRunId` for back-compat. The ring is capped at
  * MAX_RECORDED_RUN_IDS (newest first).
+ *
+ * Consistency is enforced rather than salvaged: duplicate ids are rejected
+ * (silent dedup would mask corruption), and `lastRecordedRunId` must equal the
+ * ring head when both are present (or both be empty/null together). A mismatch
+ * such as `lastRecordedRunId: "A"` with `recordedRunIds: ["B"]` is
+ * contradictory — since recording dedups against the ring, run A would count
+ * again on replay.
  */
 function normalizeRecordedRunIds(raw: unknown, lastRecordedRunId: string | null): string[] | false {
 	if (raw === undefined) {
+		// Back-compat: older v1 records have no ring; seed from
+		// lastRecordedRunId. The seeded ring is consistent by construction.
 		return lastRecordedRunId ? [lastRecordedRunId] : [];
 	}
 	if (!Array.isArray(raw)) return false;
 	for (const id of raw) {
 		if (typeof id !== 'string') return false;
 	}
-	return Array.from(new Set(raw)).slice(0, MAX_RECORDED_RUN_IDS);
+	// Reject duplicates rather than silently deduping.
+	if (new Set(raw).size !== raw.length) return false;
+	// The ring (newest first) must agree with lastRecordedRunId: both empty
+	// together, or lastRecordedRunId === ring head.
+	if (raw.length === 0) {
+		if (lastRecordedRunId !== null) return false;
+	} else if (lastRecordedRunId === null || raw[0] !== lastRecordedRunId) {
+		return false;
+	}
+	return raw.slice(0, MAX_RECORDED_RUN_IDS);
 }
 
 export function getStats(puzzleId: string): PuzzleStatsV1 | null {
@@ -176,16 +231,23 @@ export function getStats(puzzleId: string): PuzzleStatsV1 | null {
 
 	if (!parsed || typeof parsed !== 'object') return null;
 	const record = parsed as Record<string, unknown>;
-	const stats = parseStoredStats(record, puzzleId);
-	if (!stats) {
-		try {
-			localStorage.removeItem(getStorageKey(puzzleId));
-		} catch {
-			// best-effort cleanup
-		}
+	const result = parseStoredStats(record, puzzleId);
+	if (result.kind === 'valid') {
+		return result.stats;
+	}
+	if (result.kind === 'incompatible') {
+		// Preserve the newer-schema record; an older deployment must not
+		// destroy statistics it cannot read. The record is left in place for
+		// a newer client to interpret.
 		return null;
 	}
-	return stats;
+	// invalid: best-effort cleanup of a corrupt current-schema/legacy record.
+	try {
+		localStorage.removeItem(getStorageKey(puzzleId));
+	} catch {
+		// best-effort cleanup
+	}
+	return null;
 }
 
 export function getBestTime(puzzleId: string): number | null {
@@ -227,11 +289,42 @@ export async function recordLocalCompletion(
 	return recordLocalCompletionUnsafe(puzzleId, seal);
 }
 
+/**
+ * Read and parse the stored stats record WITHOUT side effects (no deletion).
+ * Returns `null` for a missing/unreadable record. Used by the write path to
+ * detect an incompatible future-schema record before touching storage.
+ */
+function readStoredStats(puzzleId: string): ParsedStats | null {
+	let raw: string | null;
+	try {
+		raw = localStorage.getItem(getStorageKey(puzzleId));
+	} catch {
+		return null;
+	}
+	if (!raw) return null;
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(raw);
+	} catch {
+		return null;
+	}
+	if (!parsed || typeof parsed !== 'object') return null;
+	return parseStoredStats(parsed as Record<string, unknown>, puzzleId);
+}
+
 function recordLocalCompletionUnsafe(
 	puzzleId: string,
 	seal: SealedCompletion
 ): RecordLocalCompletionResult {
-	const base = getStats(puzzleId) ?? freshStats(puzzleId);
+	const stored = readStoredStats(puzzleId);
+	// An incompatible (future-schema) record must not be overwritten by an
+	// older deployment. Suppress the write and report failure against an
+	// empty in-memory baseline so no unverified "new best" is claimed. The
+	// newer client that wrote the record still owns it.
+	if (stored?.kind === 'incompatible') {
+		return { status: 'failed', isNewStandardBest: false, inMemoryStats: freshStats(puzzleId) };
+	}
+	const base = stored?.kind === 'valid' ? stored.stats : freshStats(puzzleId);
 
 	// Dedup against the bounded ring of recorded run IDs, not just the most
 	// recent. A stale pending session can replay an older run after a newer
