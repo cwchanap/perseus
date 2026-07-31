@@ -10,56 +10,39 @@
 
 ## Global Constraints
 
-- Target the repository-pinned Playwright `1.57.0` contract.
+- Target Playwright `1.57.0`.
 - Use `trace: 'retain-on-failure'` and `screenshot: 'on-first-failure'`.
 - Keep `failOnFlakyTests: Boolean(process.env.CI)` and zero retries in stability commands.
-- Fixture piece IDs are zero-based: `id = row * cols + col`.
-- Fixture rows and columns come from `getGridDimensionsForAspectRatio`; transposed grids are invalid.
-- Every request containing an `e2e-*` fixture ID is intercepted before it reaches either backend runtime.
-- Missing runtime configuration falls back only for ordinary API puzzles and `q-*` Quick Puzzles; an unconfigured `e2e-*` fixture is a hard error.
-- A malformed or mismatched supplied runtime configuration is always a hard error.
+- Fixture IDs are zero-based: `id = row * cols + col`.
+- Fixture grids come from `getGridDimensionsForAspectRatio`; transposed grids are invalid.
+- Intercept every request containing an `e2e-*` fixture ID before either backend sees it.
+- Missing runtime config falls back only for ordinary API and `q-*` puzzles; an unconfigured `e2e-*` puzzle is a hard error.
+- Malformed or mismatched supplied config is always a hard error.
 - Normal production bundles contain no E2E reader, fixture ID, runtime global, or validation marker.
-- New gameplay E2E tests use the shared extended `test` object and `GameplayPage`; do not add another per-file mock stack.
-- `localStorage` is the canonical PuzzleSession persistence medium.
-- `page.clock.install()` occurs before navigation in deterministic timer tests.
-- `page.waitForTimeout()` is prohibited unless an inline comment names the browser behavior and explains why no observable signal exists.
-- Native WebKit mouse drag is PR-blocking only after a 20-run, zero-retry `ubuntu-latest` headless-WebKit spike passes.
-- Browser emulation does not certify physical-device gestures or assistive technology.
+- New gameplay tests import the shared extended `test` object and use `GameplayPage`.
+- `localStorage` is the canonical PuzzleSession medium.
+- Install Playwright clock before navigation in deterministic timer tests.
+- Do not use `page.waitForTimeout()` without an inline browser-specific justification.
+- Native WebKit mouse drag becomes PR-blocking only after a 20-run, zero-retry `ubuntu-latest` spike passes.
+- Browser emulation does not certify physical devices or assistive technology.
 
----
+## Dependency Order
 
-## File Structure
-
-### Production and build boundary
-
-- `apps/web/src/lib/services/gameplay/runtime.types.ts` — shared adapter/configuration types and pure validators.
-- `apps/web/build/gameplay-runtime-override-plugin.ts` — testable pre-enforced Vite virtual-module plugin.
-- `apps/web/src/virtual-modules.d.ts` — declaration for `virtual:perseus-gameplay-runtime-override`.
-- `apps/web/src/lib/services/gameplay/runtime.ts` — route-level production adapter and virtual-module consumer.
-- `apps/web/src/lib/testing/e2e-gameplay-runtime.ts` — strict E2E configuration reader.
-- `apps/web/vite.config.ts` — installs the virtual-module plugin for Vite and browser-mode Vitest.
-- `apps/web/eslint.config.js` — import restrictions preventing seam bypasses.
-- `apps/web/src/routes/puzzle/[id]/+page.svelte` — adapts runtime dependencies into `createPuzzleSessionStore`.
-- `apps/web/scripts/assert-no-e2e-harness.ts` — non-vacuous normal-build sentinel scanner.
-
-### Playwright harness
-
-- `apps/web/e2e/gameplay-fixtures/` — typed builder, catalog, padded SVGs, route controls, personas, API outcomes, persistence.
-- `apps/web/e2e/support/test.ts` — canonical extended Playwright `test` and `expect`.
-- `apps/web/e2e/support/diagnostics.ts` — automatic console, page-error, request, and scenario attachments.
-- `apps/web/e2e/support/accessibility.ts` — axe, focus, and live-region helpers.
-- `apps/web/e2e/support/gameplay-page.ts` — setup lifecycle and player-facing interaction methods.
-
-### Verification suites
-
-- `apps/web/src/lib/services/gameplay/runtime.test.ts`
-- `apps/web/src/lib/testing/e2e-gameplay-runtime.test.ts`
-- `apps/web/build/gameplay-runtime-override-plugin.test.ts`
-- `apps/web/e2e/playwright-clock-contract.spec.ts`
-- `apps/web/e2e/gameplay-infrastructure.spec.ts`
-- `apps/web/e2e/gameplay-large-fixtures.spec.ts`
-- `apps/web/e2e/gameplay-accessibility.spec.ts`
-- `apps/web/e2e/README.md`
+```text
+Task 0 virtual no-op foundation
+  -> Task 1 production runtime adapter
+  -> Task 2 strict E2E reader
+  -> Task 3 production bundle safety
+  -> Task 4 Playwright projects/contracts
+  -> Task 5 fixture catalog/assets
+  -> Task 6 routing/personas/API/persistence
+  -> Task 7 shared test fixture/gotoFixture
+  -> Task 8 interactions/WebKit spike
+  -> Task 9 small-fixture smoke
+  -> Task 10 large/a11y coverage
+  -> Task 11 CI/docs
+  -> Task 12 stability audit
+```
 
 ---
 
@@ -72,7 +55,7 @@
 - Create: `apps/web/src/virtual-modules.d.ts`
 - Modify: `apps/web/vite.config.ts`
 
-**Interfaces:**
+**Produces:**
 
 ```ts
 export interface GameplayRuntimeDependencies {
@@ -86,9 +69,7 @@ export interface GameplayRuntimeOverrideContext {
 	puzzleId: string;
 	pieceIds: readonly number[];
 }
-```
 
-```ts
 export function gameplayRuntimeOverridePlugin(options?: {
 	harnessEnabled?: boolean;
 	readerPath?: string;
@@ -97,18 +78,17 @@ export function gameplayRuntimeOverridePlugin(options?: {
 
 - [ ] **Step 1: Write failing plugin tests**
 
-Test the plugin by calling `resolveId` and `load` directly:
+Test exact resolution and no-op output:
 
 ```ts
 it('resolves only the exact virtual id', async () => {
 	const plugin = gameplayRuntimeOverridePlugin({ harnessEnabled: false });
-	expect(await plugin.resolveId?.call({} as never, 'virtual:perseus-gameplay-runtime-override')).toBe(
-		'\0virtual:perseus-gameplay-runtime-override'
-	);
+	expect(await plugin.resolveId?.call({} as never, 'virtual:perseus-gameplay-runtime-override'))
+		.toBe('\0virtual:perseus-gameplay-runtime-override');
 	expect(await plugin.resolveId?.call({} as never, './runtime-override')).toBeNull();
 });
 
-it('emits a no-op module for ordinary Vite and Vitest', async () => {
+it('emits a no-op module outside the harness build', async () => {
 	const plugin = gameplayRuntimeOverridePlugin({ harnessEnabled: false });
 	const code = await plugin.load?.call(
 		{} as never,
@@ -119,7 +99,7 @@ it('emits a no-op module for ordinary Vite and Vitest', async () => {
 });
 ```
 
-- [ ] **Step 2: Run the focused test and verify RED**
+- [ ] **Step 2: Verify RED**
 
 ```bash
 bun test apps/web/build/gameplay-runtime-override-plugin.test.ts
@@ -127,18 +107,18 @@ bun test apps/web/build/gameplay-runtime-override-plugin.test.ts
 
 Expected: FAIL because the plugin does not exist.
 
-- [ ] **Step 3: Implement shared types and the no-op-capable plugin**
+- [ ] **Step 3: Implement shared types and plugin**
 
-Use these IDs:
+Use:
 
 ```ts
 const virtualId = 'virtual:perseus-gameplay-runtime-override';
 const resolvedVirtualId = `\0${virtualId}`;
 ```
 
-The plugin uses `enforce: 'pre'`. With `harnessEnabled: false`, `load()` returns an inline module exporting `readGameplayRuntimeOverride()` that returns `null`. With `harnessEnabled: true`, it re-exports from `readerPath`; Task 2 supplies and validates that concrete file.
+The plugin is `enforce: 'pre'`. Normal mode emits an inline `readGameplayRuntimeOverride()` returning `null`. Harness mode re-exports from `readerPath`; Task 2 supplies the reader.
 
-- [ ] **Step 4: Add the TypeScript declaration**
+- [ ] **Step 4: Add the module declaration**
 
 ```ts
 declare module 'virtual:perseus-gameplay-runtime-override' {
@@ -153,21 +133,15 @@ declare module 'virtual:perseus-gameplay-runtime-override' {
 }
 ```
 
-- [ ] **Step 5: Install the plugin in `vite.config.ts`**
-
-Place it before Tailwind and SvelteKit plugins:
+- [ ] **Step 5: Install plugin before Tailwind and SvelteKit**
 
 ```ts
-plugins: [
-	gameplayRuntimeOverridePlugin(),
-	tailwindcss(),
-	sveltekit()
-]
+plugins: [gameplayRuntimeOverridePlugin(), tailwindcss(), sveltekit()]
 ```
 
-The default factory reads `PERSEUS_E2E_HARNESS === '1'` once when the config is created. Ordinary Vite and browser-mode Vitest therefore receive the no-op module.
+Capture `PERSEUS_E2E_HARNESS === '1'` when the config is created; an existing Vitest process does not switch modes after environment mutation.
 
-- [ ] **Step 6: Run focused, type, and existing unit checks**
+- [ ] **Step 6: Verify GREEN**
 
 ```bash
 bun test apps/web/build/gameplay-runtime-override-plugin.test.ts
@@ -175,23 +149,19 @@ bun run --cwd apps/web check
 bun run --cwd apps/web test:unit
 ```
 
-Expected: PASS.
-
 - [ ] **Step 7: Commit**
 
 ```bash
-git add \
-  apps/web/src/lib/services/gameplay/runtime.types.ts \
+git add apps/web/src/lib/services/gameplay/runtime.types.ts \
   apps/web/build/gameplay-runtime-override-plugin.ts \
   apps/web/build/gameplay-runtime-override-plugin.test.ts \
-  apps/web/src/virtual-modules.d.ts \
-  apps/web/vite.config.ts
+  apps/web/src/virtual-modules.d.ts apps/web/vite.config.ts
 git commit -m "test(web): add gameplay runtime virtual module"
 ```
 
 ---
 
-### Task 1: Extract the Production Gameplay Runtime Adapter
+### Task 1: Extract the Production Runtime Adapter
 
 **Files:**
 - Create: `apps/web/src/lib/services/gameplay/runtime.ts`
@@ -199,7 +169,7 @@ git commit -m "test(web): add gameplay runtime virtual module"
 - Modify: `apps/web/src/routes/puzzle/[id]/+page.svelte`
 - Modify: `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts`
 
-**Interfaces:**
+**Produces:**
 
 ```ts
 export function createGameplayRuntimeDependencies(
@@ -210,31 +180,23 @@ export function createGameplayRuntimeDependencies(
 
 - [ ] **Step 1: Write failing adapter tests**
 
-Mock the already-resolvable virtual module to return `null`, and mock shuffle to reverse IDs. Assert initial/restart order and complete rotation keys. Add a test where the virtual module returns a fixed override and production shuffle is not called.
+Mock the virtual module to return `null`; mock shuffle to reverse IDs. Assert initial/restart order, complete rotation keys, and production run-ID factory. Add a test where a fixed override is returned and production shuffle is not called.
 
-```ts
-vi.mock('virtual:perseus-gameplay-runtime-override', () => ({
-	readGameplayRuntimeOverride: vi.fn(() => null)
-}));
-```
-
-- [ ] **Step 2: Run and verify RED**
+- [ ] **Step 2: Verify RED**
 
 ```bash
 bun run --cwd apps/web test:unit -- src/lib/services/gameplay/runtime.test.ts
 ```
 
-Expected: FAIL because `runtime.ts` does not exist.
-
-- [ ] **Step 3: Implement the adapter**
+- [ ] **Step 3: Implement adapter**
 
 1. Call `readGameplayRuntimeOverride({ puzzleId, pieceIds })`.
-2. Return the override when non-null.
-3. Otherwise use `createBrowserRunIdFactory`, `shuffleArray`, and the current puzzle-ID/piece-ID rotation seed.
-4. Clone arrays/objects at each return boundary.
-5. Validate production-generated tray orders as complete permutations before returning them.
+2. Return non-null override.
+3. Otherwise use `createBrowserRunIdFactory`, `shuffleArray`, and the existing puzzle-derived rotation seed.
+4. Clone arrays/objects at return boundaries.
+5. Validate generated tray orders as complete permutations.
 
-- [ ] **Step 4: Refactor the puzzle route**
+- [ ] **Step 4: Refactor the route**
 
 ```ts
 const pieceIds = loadedPuzzle.pieces.map((piece) => piece.id);
@@ -253,13 +215,13 @@ const store = createPuzzleSessionStore({
 });
 ```
 
-Preserve hydration, subscription, auto-start, completion-effect, and checkpoint ordering.
+Preserve hydration, subscription, auto-start, completion effects, and checkpoint ordering.
 
 - [ ] **Step 5: Update route tests**
 
-Mock `createGameplayRuntimeDependencies` with fixed orders/rotations. Assert a fresh route consumes the configured initial order and restart consumes the restart factory through the real session engine.
+Mock fixed runtime values. Assert fresh load consumes initial order and restart consumes the restart factory through the real session engine.
 
-- [ ] **Step 6: Run focused and route tests**
+- [ ] **Step 6: Verify GREEN**
 
 ```bash
 bun run --cwd apps/web test:unit -- \
@@ -267,13 +229,10 @@ bun run --cwd apps/web test:unit -- \
   'src/routes/puzzle/[id]/page.svelte.test.ts'
 ```
 
-Expected: PASS.
-
 - [ ] **Step 7: Commit**
 
 ```bash
-git add \
-  apps/web/src/lib/services/gameplay/runtime.ts \
+git add apps/web/src/lib/services/gameplay/runtime.ts \
   apps/web/src/lib/services/gameplay/runtime.test.ts \
   'apps/web/src/routes/puzzle/[id]/+page.svelte' \
   'apps/web/src/routes/puzzle/[id]/page.svelte.test.ts'
@@ -282,7 +241,7 @@ git commit -m "refactor(web): add gameplay runtime adapter"
 
 ---
 
-### Task 2: Implement the Strict E2E Runtime Reader and Import Guardrails
+### Task 2: Implement the Strict E2E Reader and Import Guardrails
 
 **Files:**
 - Create: `apps/web/src/lib/testing/e2e-gameplay-runtime.ts`
@@ -290,7 +249,7 @@ git commit -m "refactor(web): add gameplay runtime adapter"
 - Modify: `apps/web/build/gameplay-runtime-override-plugin.test.ts`
 - Modify: `apps/web/eslint.config.js`
 
-**Interfaces:**
+**Produces:**
 
 ```ts
 export interface PerseusE2EGameplayConfigV1 {
@@ -303,47 +262,34 @@ export interface PerseusE2EGameplayConfigV1 {
 }
 ```
 
-- [ ] **Step 1: Write reader activation tests**
+- [ ] **Step 1: Write reader tests**
 
-Cover:
-- absent global + ordinary ID → `null`;
-- absent global + `q-*` → `null`;
-- absent global + `e2e-*` → `PERSEUS_E2E_CONFIG: missing`;
-- malformed global on any ID → hard error;
-- fixture mismatch → hard error;
-- global must be frozen;
-- run IDs satisfy `isPuzzleRunId`;
-- initial/restart orders are complete permutations;
-- rotations contain exactly canonical IDs and valid values;
-- sequence exhaustion throws;
-- returned arrays/objects are clones.
+Cover absent config for ordinary/`q-*`, absent config for `e2e-*`, malformed config, fixture mismatch, frozen-object requirement, valid run IDs, complete tray permutations, exact rotation keys, sequence exhaustion, and clone isolation.
 
-- [ ] **Step 2: Run and verify RED**
+- [ ] **Step 2: Verify RED**
 
 ```bash
 bun run --cwd apps/web test:unit -- src/lib/testing/e2e-gameplay-runtime.test.ts
 ```
 
-Expected: FAIL because the reader does not exist.
+- [ ] **Step 3: Implement reader**
 
-- [ ] **Step 3: Implement the strict reader**
+Use `PERSEUS_E2E_CONFIG:` for every error. Validate the complete frozen global before creating closures. Store run/restart cursors inside the returned dependency object. Never fall back after config is present.
 
-Use `PERSEUS_E2E_CONFIG:` for every configuration error. Validate the entire frozen global before creating closures. Keep run-ID/restart-order cursors inside the returned dependency object. Never fall back to production randomness after a config is present.
+- [ ] **Step 4: Test harness plugin output**
 
-- [ ] **Step 4: Prove the harness plugin re-exports the concrete reader**
-
-Extend the plugin test with an explicit `readerPath` and `harnessEnabled: true`. Assert generated code re-exports from that exact normalized path and contains no inline fallback.
+With `harnessEnabled: true` and an explicit normalized `readerPath`, assert generated code re-exports that path and has no inline fallback.
 
 - [ ] **Step 5: Add ESLint restrictions**
 
-Use `no-restricted-imports` to reject from production source:
+Reject from production source:
 - `$lib/testing/e2e-gameplay-runtime`;
-- relative paths ending in `e2e-gameplay-runtime`;
-- any `runtime-override` path.
+- relative imports ending in `e2e-gameplay-runtime`;
+- paths containing `runtime-override`.
 
-Add a narrow override allowing `runtime.ts` to import only `virtual:perseus-gameplay-runtime-override`. Testing files may import the concrete reader directly.
+Allow only `runtime.ts` to import `virtual:perseus-gameplay-runtime-override`. Testing files may import the concrete reader.
 
-- [ ] **Step 6: Run verification**
+- [ ] **Step 6: Verify GREEN**
 
 ```bash
 bun run --cwd apps/web test:unit -- \
@@ -354,22 +300,18 @@ bun run --cwd apps/web check
 bun run --cwd apps/web lint
 ```
 
-Expected: PASS.
-
 - [ ] **Step 7: Commit**
 
 ```bash
-git add \
-  apps/web/src/lib/testing/e2e-gameplay-runtime.ts \
+git add apps/web/src/lib/testing/e2e-gameplay-runtime.ts \
   apps/web/src/lib/testing/e2e-gameplay-runtime.test.ts \
-  apps/web/build/gameplay-runtime-override-plugin.test.ts \
-  apps/web/eslint.config.js
+  apps/web/build/gameplay-runtime-override-plugin.test.ts apps/web/eslint.config.js
 git commit -m "test(web): enforce deterministic runtime configuration"
 ```
 
 ---
 
-### Task 3: Add a Non-Vacuous Production-Bundle Safety Check
+### Task 3: Add Non-Vacuous Production-Bundle Safety
 
 **Files:**
 - Create: `apps/web/scripts/assert-no-e2e-harness.ts`
@@ -377,7 +319,7 @@ git commit -m "test(web): enforce deterministic runtime configuration"
 - Modify: `apps/web/package.json`
 - Modify: `.github/workflows/e2e-test.yml`
 
-**Interface:**
+**Produces:**
 
 ```ts
 export async function assertNoE2EHarness(buildDirectory: string): Promise<{
@@ -388,7 +330,7 @@ export async function assertNoE2EHarness(buildDirectory: string): Promise<{
 
 - [ ] **Step 1: Write scanner tests**
 
-Use temporary directories to prove missing, empty, no-JavaScript, unreadable, and sentinel-containing output fails. A clean nested build returns positive file and byte counts.
+Missing, empty, no-JavaScript, unreadable, and sentinel-containing outputs fail. Clean nested JavaScript returns positive counts.
 
 Sentinels:
 
@@ -401,26 +343,24 @@ const SENTINELS = [
 ] as const;
 ```
 
-- [ ] **Step 2: Run and verify RED**
+- [ ] **Step 2: Verify RED**
 
 ```bash
 bun test apps/web/scripts/assert-no-e2e-harness.test.ts
 ```
 
-- [ ] **Step 3: Implement recursive scanning**
+- [ ] **Step 3: Implement scanner**
 
-Resolve `apps/web/build/` from the web app directory. Sort paths for stable output. Require at least one readable `.js` file and positive total bytes. Report every sentinel and source file before exiting non-zero.
+Resolve `apps/web/build/`, sort recursive `.js` paths, require at least one readable file and positive bytes, and report every match.
 
-- [ ] **Step 4: Add package scripts**
+- [ ] **Step 4: Add scripts**
 
 ```json
 "build:e2e": "PERSEUS_E2E_HARNESS=1 bun run build",
 "test:e2e:assert-production-bundle": "bun run build && bun scripts/assert-no-e2e-harness.ts"
 ```
 
-- [ ] **Step 5: Wire `.github/workflows/e2e-test.yml`**
-
-After dependency installation and before browser installation:
+- [ ] **Step 5: Wire workflow before browser installation**
 
 ```yaml
 - name: Verify production bundle excludes E2E harness
@@ -453,7 +393,7 @@ git commit -m "test(web): verify production bundle excludes E2E harness"
 - Create: `apps/web/scripts/assert-browser-install.ts`
 - Create: `apps/web/scripts/assert-browser-install.test.ts`
 
-- [ ] **Step 1: Write the clock contract**
+- [ ] **Step 1: Write clock contract**
 
 ```ts
 import { expect, test } from '@playwright/test';
@@ -468,26 +408,20 @@ test('@smoke installed clock advances performance.now exactly', async ({ page })
 });
 ```
 
-- [ ] **Step 2: Write browser-install dry-run parser tests**
+- [ ] **Step 2: Write browser-install parser tests**
 
-Require `chromium-headless-shell` and `webkit`, and reject a full Chromium browser entry. Matching tolerates version/URL changes but not browser-name changes.
+Require `chromium-headless-shell` and `webkit`; reject a full Chromium browser entry. Tolerate version/URL changes.
 
-- [ ] **Step 3: Expand Playwright configuration**
+- [ ] **Step 3: Expand Playwright config**
 
-Add:
-- `failOnFlakyTests: Boolean(process.env.CI)`;
-- `retries: process.env.CI ? 1 : 0`;
-- `trace: 'retain-on-failure'`;
-- `screenshot: 'on-first-failure'`;
-- GitHub + HTML reporters in CI, list + HTML locally;
-- projects: Chromium desktop/mobile/tablet and WebKit mobile/tablet;
-- `build:e2e` for the web preview server;
-- existing API server environment unchanged.
+Add valid artifact/retry/report settings and projects:
+- `chromium-desktop` 1440 × 900;
+- `chromium-mobile` 390 × 844;
+- `chromium-tablet` 768 × 1024;
+- `webkit-mobile` 390 × 844;
+- `webkit-tablet` 768 × 1024.
 
-Viewport sizes:
-- 1440 × 900;
-- 390 × 844;
-- 768 × 1024.
+Use `build:e2e` for web preview; preserve API server environment.
 
 - [ ] **Step 4: Add explicit scripts**
 
@@ -502,21 +436,19 @@ Viewport sizes:
 "test:install-browsers:dry-run": "playwright install --dry-run --only-shell chromium webkit"
 ```
 
-- [ ] **Step 5: Implement browser-install assertion and run RED/GREEN**
+- [ ] **Step 5: Verify browser resolution**
 
 ```bash
 bun test apps/web/scripts/assert-browser-install.test.ts
 bun run --cwd apps/web test:install-browsers:dry-run | bun apps/web/scripts/assert-browser-install.ts
 ```
 
-- [ ] **Step 6: Install browsers and run the clock probe**
+- [ ] **Step 6: Install and run clock probe**
 
 ```bash
 bun run --cwd apps/web test:install-browsers
-bun run --cwd apps/web test:e2e -- \
-  e2e/playwright-clock-contract.spec.ts \
-  --project=chromium-desktop \
-  --retries=0
+bun run --cwd apps/web test:e2e -- e2e/playwright-clock-contract.spec.ts \
+  --project=chromium-desktop --retries=0
 ```
 
 Expected: exact 2,000 ms advancement.
@@ -531,7 +463,7 @@ git commit -m "test(web): add Playwright projects and contract probes"
 
 ---
 
-### Task 5: Build the Deterministic Fixture Catalog and Padded Assets
+### Task 5: Build Fixture Catalog and Padded Assets
 
 **Files:**
 - Create: `apps/web/e2e/gameplay-fixtures/builder.ts`
@@ -541,7 +473,7 @@ git commit -m "test(web): add Playwright projects and contract probes"
 - Create: `apps/web/e2e/gameplay-fixtures/assets.ts`
 - Create: `apps/web/e2e/gameplay-fixtures/assets.test.ts`
 
-**Interfaces:**
+**Produces:**
 
 ```ts
 export type GameplayFixtureId =
@@ -550,63 +482,41 @@ export type GameplayFixtureId =
 	| 'e2e-portrait-12'
 	| 'e2e-square-100'
 	| 'e2e-square-225';
-
-export interface GameplayFixture {
-	id: GameplayFixtureId;
-	puzzle: Puzzle;
-	aspectRatio: PuzzleAspectRatio;
-	initialTrayOrder: readonly number[];
-	restartTrayOrders: readonly (readonly number[])[];
-	rotations: Readonly<Record<number, Rotation>>;
-	runIds: readonly string[];
-}
 ```
 
 - [ ] **Step 1: Write invariant tests**
 
-Assert exact grids:
-- 1:1/4 → 2 × 2;
-- 4:3/12 → 3 × 4;
-- 3:4/12 → 4 × 3;
-- 1:1/100 → 10 × 10;
-- 1:1/225 → 15 × 15.
+Exact grids: 2 × 2, 3 × 4, 4 × 3, 10 × 10, 15 × 15. Also assert zero-based IDs, unique coordinates, flat outer edges, complementary neighbors, complete tray permutations, valid rotations, and unique valid run IDs.
 
-Also assert zero-based IDs, unique coordinates, flat outer edges, complementary neighbors, complete tray permutations, valid rotations, and valid unique run IDs.
-
-- [ ] **Step 2: Run and verify RED**
+- [ ] **Step 2: Verify RED**
 
 ```bash
 bun test apps/web/e2e/gameplay-fixtures/builder.test.ts
 ```
 
-- [ ] **Step 3: Implement the builder**
+- [ ] **Step 3: Implement builder**
 
-Use `getGridDimensionsForAspectRatio` and shared edge helpers. Do not accept caller-supplied unchecked rows/columns. Freeze catalog values or clone at consumer boundaries.
+Use shared grid/edge helpers. Never accept unchecked rows/columns. Freeze catalog values or clone at consumer boundaries.
 
-- [ ] **Step 4: Define five immutable fixtures**
+- [ ] **Step 4: Define five fixtures**
 
-Use fixed UUIDv4-shaped run IDs, fixed timestamps, literal deterministic tray permutations, and fixed rotation maps.
+Use fixed UUIDv4-shaped run IDs, timestamps, literal deterministic tray permutations, and rotation maps.
 
 - [ ] **Step 5: Implement padded SVGs**
 
-Generate XML-safe, dependency-free SVGs with transparent padding compatible with `TAB_RATIO` and `EXPANSION_FACTOR`. Include fixture ID, piece ID, and coordinates; do not use remote fonts/assets.
+Generate XML-safe, dependency-free SVGs with transparent padding matching `TAB_RATIO` and `EXPANSION_FACTOR`. Include fixture/piece identity and coordinates.
 
-- [ ] **Step 6: Run fixture tests**
+- [ ] **Step 6: Verify and commit**
 
 ```bash
 bun test apps/web/e2e/gameplay-fixtures/*.test.ts
-```
-
-- [ ] **Step 7: Commit**
-
-```bash
 git add apps/web/e2e/gameplay-fixtures
 git commit -m "test(web): add deterministic gameplay fixture catalog"
 ```
 
 ---
 
-### Task 6: Add Fixture Routing, Personas, API Outcomes, and Persistence Controls
+### Task 6: Add Routing, Personas, API Outcomes, and Persistence Controls
 
 **Files:**
 - Create: `apps/web/e2e/gameplay-fixtures/fixture-router.ts`
@@ -615,56 +525,32 @@ git commit -m "test(web): add deterministic gameplay fixture catalog"
 - Create: `apps/web/e2e/gameplay-fixtures/persisted-state.ts`
 - Create: `apps/web/e2e/gameplay-fixtures/harness-services.spec.ts`
 
-**Interfaces:**
+**Produces:** `FixtureRouter`, `AuthPersona`, `ApiScenarioController`, and `PersistedStateController` used by Task 7.
 
-```ts
-export interface FixtureRouter {
-	install(page: Page, fixture: GameplayFixture): Promise<void>;
-	assertNoUnexpectedFixtureRequests(): void;
-}
+- [ ] **Step 1: Write service-level tests**
 
-export type AuthPersona =
-	| { kind: 'anonymous' }
-	| { kind: 'authenticated'; user: PlayerUser }
-	| { kind: 'deferred'; release: () => Promise<void> }
-	| { kind: 'failed'; status: number };
+Prove known fixture routes fulfill; unknown `e2e-*` paths fail without fallback; ordinary traffic falls through; personas match auth contracts; deferred teardown fails until released/cancelled; request bodies are recorded; storage seeds are deterministic.
 
-export interface ApiScenarioController {
-	completeWithSuccess(): void;
-	completeWithDeferredSuccess(): DeferredRoute;
-	completeWithHttpFailure(status: 400 | 401 | 404 | 409 | 429 | 500): void;
-	completeWithNetworkAbort(): void;
-	requests(): readonly RecordedRequest[];
-	assertSettled(): void;
-}
-```
-
-- [ ] **Step 1: Write service-level Playwright tests**
-
-Prove known fixture routes fulfill; unknown `e2e-*` paths fail without backend fallback; ordinary traffic falls through; personas match auth contracts; deferred teardown fails until released/cancelled; request bodies are recorded; reset/seed controls modify canonical localStorage deterministically.
-
-- [ ] **Step 2: Run and verify RED**
+- [ ] **Step 2: Verify RED**
 
 ```bash
-bun run --cwd apps/web test:e2e -- \
-  e2e/gameplay-fixtures/harness-services.spec.ts \
-  --project=chromium-desktop \
-  --retries=0
+bun run --cwd apps/web test:e2e -- e2e/gameplay-fixtures/harness-services.spec.ts \
+  --project=chromium-desktop --retries=0
 ```
 
-- [ ] **Step 3: Implement total fixture interception**
+- [ ] **Step 3: Implement total interception**
 
-Register specific routes before broad routes. Any URL containing the fixture ID is either fulfilled by a known handler or fails immediately; never call `fallback()` for `e2e-*` traffic.
+Register specific routes first. A URL containing the fixture ID is fulfilled or fails immediately; it never calls `fallback()`.
 
 - [ ] **Step 4: Implement personas and API scenarios**
 
-Use shared response types. Deferred routes expose explicit `release()` and `cancel()`. `assertSettled()` reports route name and request details.
+Use shared response types. Deferred routes expose `release()` and `cancel()`; teardown reports route and request details.
 
 - [ ] **Step 5: Implement persistence controls**
 
-Use production codecs/validators for normal seeds. Provide a separately named raw-storage helper only for migration/corruption tests. Reset cookies, localStorage, sessionStorage, and defensively present IndexedDB/Cache Storage.
+Normal seeds use production validators/codecs. A separately named raw helper serves migration/corruption tests. Fresh contexts provide default isolation; explicit same-context reset clears cookies plus browser stores before reload.
 
-- [ ] **Step 6: Run GREEN and commit**
+- [ ] **Step 6: Verify and commit**
 
 ```bash
 bun run --cwd apps/web test:e2e -- e2e/gameplay-fixtures/harness-services.spec.ts \
@@ -675,7 +561,7 @@ git commit -m "test(web): add deterministic gameplay harness services"
 
 ---
 
-### Task 7: Create the Canonical Extended Test Fixture and `gotoFixture()`
+### Task 7: Create Canonical Test Fixture and `gotoFixture()`
 
 **Files:**
 - Create: `apps/web/e2e/support/test.ts`
@@ -683,7 +569,7 @@ git commit -m "test(web): add deterministic gameplay harness services"
 - Create: `apps/web/e2e/support/gameplay-page.ts`
 - Create: `apps/web/e2e/support/test-fixture.spec.ts`
 
-**Interface:**
+**Produces:**
 
 ```ts
 export interface GotoFixtureOptions {
@@ -702,11 +588,13 @@ export class GameplayPage {
 
 - [ ] **Step 1: Write lifecycle-order tests**
 
-Assert order: fixture lookup → routes → reset/seed → frozen init-script global → optional clock install → navigation → observable ready state. Add unconfigured `e2e-*` failure and ordinary/Quick Puzzle fallback tests.
+Assert: fixture lookup → route registration → cookie reset → optional clock install → one atomic init script → navigation → ready state.
 
-- [ ] **Step 2: Implement automatic diagnostics**
+The single init script synchronously clears/seeds localStorage/sessionStorage and defines/deep-freezes `window.__PERSEUS_E2E_GAMEPLAY_V1__`. Do not register separate storage and config init scripts whose evaluation order is unspecified.
 
-Attach console errors, page errors, failed requests, unexpected non-success responses, fixture/persona identity, API request records, and pending deferred routes. Expected errors require narrow scenario allowlists.
+- [ ] **Step 2: Implement diagnostics**
+
+Attach console errors, page errors, failed requests, unexpected responses, fixture/persona identity, API records, and pending deferred routes. Expected errors use narrow scenario allowlists.
 
 - [ ] **Step 3: Implement canonical `test.extend`**
 
@@ -714,18 +602,14 @@ Export `test`/`expect`. Automatic teardown calls `assertSettled()` and `assertNo
 
 - [ ] **Step 4: Implement `gotoFixture()`**
 
-Use `page.addInitScript` before navigation. Deep-freeze config. Install clock before any page operation when requested. Wait for `puzzle-board` and expected tray-piece count, never a fixed delay.
+Install clock before any navigation when requested. Use one atomic init script. Wait for `puzzle-board` and expected tray count; never fixed delay.
 
 - [ ] **Step 5: Verify existing suite compatibility**
 
 ```bash
-bun run --cwd apps/web test:e2e -- \
-  e2e/support/test-fixture.spec.ts \
-  e2e/gallery.spec.ts \
-  e2e/profile.spec.ts \
-  e2e/quick-puzzle.spec.ts \
-  --project=chromium-desktop \
-  --retries=0
+bun run --cwd apps/web test:e2e -- e2e/support/test-fixture.spec.ts \
+  e2e/gallery.spec.ts e2e/profile.spec.ts e2e/quick-puzzle.spec.ts \
+  --project=chromium-desktop --retries=0
 ```
 
 - [ ] **Step 6: Commit**
@@ -737,43 +621,35 @@ git commit -m "test(web): add shared gameplay E2E fixture"
 
 ---
 
-### Task 8: Implement Player-Facing Interaction Methods and WebKit Spike
+### Task 8: Implement Interactions and WebKit Spike
 
 **Files:**
 - Modify: `apps/web/e2e/support/gameplay-page.ts`
 - Create: `apps/web/e2e/gameplay-interactions.spec.ts`
 - Create: `apps/web/e2e/webkit-drag-spike.spec.ts`
 
-**Interface:**
+**Produces:** mouse, keyboard, tap, touch-drag, and placement assertion methods.
 
-```ts
-placeWithMouse(pieceId: number, x: number, y: number): Promise<void>;
-selectAndPlaceWithKeyboard(pieceId: number, x: number, y: number): Promise<void>;
-tapPiece(pieceId: number): Promise<void>;
-dragWithTouch(pieceId: number, x: number, y: number): Promise<void>;
-expectPiecePlaced(pieceId: number, x: number, y: number): Promise<void>;
-```
-
-- [ ] **Step 1: Write rendered-UI interaction tests**
+- [ ] **Step 1: Write rendered-UI tests**
 
 Cover correct/rejected mouse placement, Enter/Space selection and placement, supported touch drag, and source scoping through `piece-slot-${id}`.
 
-- [ ] **Step 2: Implement mouse and keyboard methods**
+- [ ] **Step 2: Implement mouse/keyboard**
 
-Prefer `dragTo`. Encapsulate any standards-shaped drag-event fallback privately. Attach source/target bounds on failure. Keyboard flow verifies selected state before target activation.
+Prefer `dragTo`; encapsulate any standards-shaped fallback privately. Attach bounds on failure. Keyboard verifies selection before target activation.
 
-- [ ] **Step 3: Implement current touch path**
+- [ ] **Step 3: Implement touch path**
 
-Use Playwright touch/pointer APIs where possible; otherwise dispatch a bounded touch sequence using locator-derived coordinates.
+Use Playwright touch/pointer APIs where possible; otherwise dispatch a bounded touch sequence from locator coordinates.
 
-- [ ] **Step 4: Run Chromium/WebKit compatibility**
+- [ ] **Step 4: Verify Chromium/WebKit**
 
 ```bash
 bun run --cwd apps/web test:e2e -- e2e/gameplay-interactions.spec.ts \
   --project=chromium-desktop --project=webkit-mobile --retries=0
 ```
 
-- [ ] **Step 5: Run the 20-pass WebKit drag spike**
+- [ ] **Step 5: Run 20-pass WebKit spike**
 
 ```bash
 bun run --cwd apps/web test:e2e -- e2e/webkit-drag-spike.spec.ts \
@@ -792,44 +668,44 @@ git commit -m "test(web): add gameplay interaction driver"
 
 ---
 
-### Task 9: Add Small-Fixture Completion, Auth, Timer, and Persistence Smoke
+### Task 9: Add Small-Fixture Smoke Coverage
 
 **Files:**
 - Create: `apps/web/e2e/gameplay-infrastructure.spec.ts`
 - Modify: `apps/web/e2e/puzzle-solving.spec.ts`
 
-- [ ] **Step 1: Replace skipped known-puzzle/placement coverage**
+- [ ] **Step 1: Replace skipped known-puzzle/placement tests**
 
-Add `@smoke` fixture load and placement tests, then remove or migrate the matching skips so each scenario has one owner.
+Add `@smoke` fixture load/placement coverage, then remove or migrate matching skips.
 
-- [ ] **Step 2: Add authenticated completion**
+- [ ] **Step 2: Authenticated completion**
 
-One rejected attempt, solve pieces 0–3 through UI, assert celebration, local stats, one successful request, deterministic run ID/result class/elapsed payload.
+One rejected attempt, solve IDs 0–3 through UI, assert celebration, local stats, one successful request, deterministic run ID/result class/elapsed payload.
 
-- [ ] **Step 3: Add anonymous completion**
+- [ ] **Step 3: Anonymous completion**
 
-Assert celebration/local stats still succeed and exactly one server submission attempt records 401. Do not assert “no request.”
+Assert celebration/local stats and exactly one attempted server request returning 401.
 
-- [ ] **Step 4: Add deferred retry**
+- [ ] **Step 4: Deferred retry**
 
-Hold response, complete board, expose retryable failure, activate visible retry, then succeed. Initial and retry requests use the same sealed payload.
+Hold response, complete, expose retryable failure, use visible retry, then succeed with the same sealed payload.
 
-- [ ] **Step 5: Add deterministic timer integration**
+- [ ] **Step 5: Timer integration**
 
-Install clock, perform first counted action, advance exactly five seconds, finish, and assert timer UI plus sealed request elapsed seconds.
+Install clock, perform first counted action, advance exactly five seconds, finish, and assert timer UI plus sealed elapsed seconds.
 
-- [ ] **Step 6: Add persistence seed/reset**
+- [ ] **Step 6: Persistence seed/reset**
 
-Seed one placed piece and known order; assert restoration. Fresh context without seed starts empty and lacks the canonical key.
+Seed one placement/order and assert restoration. Fresh context starts empty with no canonical key.
 
-- [ ] **Step 7: Run smoke and audit skips**
+- [ ] **Step 7: Verify and audit skips**
 
 ```bash
 bun run --cwd apps/web test:e2e:smoke -- --retries=0
 rg "test\.skip|describe\.skip" apps/web/e2e
 ```
 
-Every remaining skip must name the exact owning HPA ticket and missing UI dependency.
+Every remaining skip names the exact owning HPA ticket and missing UI dependency.
 
 - [ ] **Step 8: Commit**
 
@@ -840,7 +716,7 @@ git commit -m "test(web): add deterministic gameplay smoke coverage"
 
 ---
 
-### Task 10: Add Aspect-Ratio, Large-Layout, and Accessibility Coverage
+### Task 10: Add Large-Layout and Accessibility Coverage
 
 **Files:**
 - Create: `apps/web/e2e/gameplay-large-fixtures.spec.ts`
@@ -857,26 +733,21 @@ bun add --cwd apps/web -d @axe-core/playwright
 
 - [ ] **Step 2: Add ratio/large tests**
 
-Assert 3 × 4 landscape, 4 × 3 portrait, usable board/control layout by viewport, full 100/225 tray counts, and one representative interaction without full solve. Tag large cases `@extended`.
+Assert 3 × 4 landscape, 4 × 3 portrait, usable layout by viewport, full 100/225 tray counts, and one representative interaction without full solve. Tag large cases `@extended`.
 
 - [ ] **Step 3: Implement accessibility helper**
 
-Use `AxeBuilder`; fail on serious/critical findings; attach full JSON. Provide role-based initial-focus, containment, and live-region helpers. Exclusions require comments naming owning feature tickets.
+Use `AxeBuilder`; fail on serious/critical findings and attach full JSON. Add role-based focus, containment, and live-region helpers. Exclusions name owning tickets.
 
-- [ ] **Step 4: Add gallery/gameplay/current-completion scans**
+- [ ] **Step 4: Add scans**
 
-Tag `@a11y`. Do not claim manual screen-reader certification.
+Cover gallery, active gameplay, and current completion. Tag `@a11y`; do not claim manual screen-reader certification.
 
-- [ ] **Step 5: Run explicit matrices**
+- [ ] **Step 5: Verify and commit**
 
 ```bash
 bun run --cwd apps/web test:e2e:extended -- --retries=0
 bun run --cwd apps/web test:e2e:a11y -- --retries=0
-```
-
-- [ ] **Step 6: Commit**
-
-```bash
 git add apps/web/e2e/gameplay-large-fixtures.spec.ts \
   apps/web/e2e/support/accessibility.ts apps/web/e2e/gameplay-accessibility.spec.ts \
   apps/web/package.json bun.lock
@@ -885,32 +756,32 @@ git commit -m "test(web): add large-fixture and accessibility coverage"
 
 ---
 
-### Task 11: Split CI Jobs and Document the Harness
+### Task 11: Split CI Jobs and Document Harness
 
 **Files:**
 - Modify: `.github/workflows/e2e-test.yml`
 - Create: `apps/web/e2e/README.md`
 - Modify: `CLAUDE.md`
 
-- [ ] **Step 1: Split workflow jobs**
+- [ ] **Step 1: Split jobs**
 
-Create bounded jobs:
-1. production bundle safety, no browser install;
+Create:
+1. production bundle safety without browser installation;
 2. Chromium smoke;
 3. WebKit critical;
-4. extended/a11y on main, manual trigger, or documented schedule.
+4. extended/a11y on `main` and `workflow_dispatch`.
 
 Browser jobs upload `apps/web/test-results` and `apps/web/playwright-report` on failure.
 
-- [ ] **Step 2: Document the harness**
+- [ ] **Step 2: Write README**
 
-README covers fixture directories, exact grids/zero-based IDs, total interception, virtual module/import restrictions, fallback semantics, `gotoFixture()` order, clock/rAF implications, localStorage, completion matrix, deferred cleanup, commands, WebKit spike result, browser install dry-run, artifacts, accessibility limitations, and feature ownership.
+Document fixture directories/grids/IDs, interception, virtual module/import rules, fallback semantics, atomic `gotoFixture()` init, clock/rAF implications, localStorage, completion matrix, deferred cleanup, commands, WebKit result, browser dry-run, artifacts, a11y limits, and feature ownership.
 
 - [ ] **Step 3: Update `CLAUDE.md`**
 
-Link the README, list smoke/extended commands, and require new gameplay tests to import from `e2e/support/test`.
+Link README, list smoke/extended commands, and require new gameplay tests to import `e2e/support/test`.
 
-- [ ] **Step 4: Validate commands**
+- [ ] **Step 4: Verify commands**
 
 ```bash
 bun run --cwd apps/web test:e2e:assert-production-bundle
@@ -929,13 +800,13 @@ git commit -m "ci: split deterministic gameplay E2E jobs"
 
 ---
 
-### Task 12: Run the Full Stability Gate and Requirement Audit
+### Task 12: Full Stability Gate and Requirement Audit
 
 **Files:**
-- Modify only files required to fix verified failures.
-- Update `apps/web/e2e/README.md` only if the actual WebKit result differs from the planned critical/extended split.
+- Modify only files proven necessary by failing verification.
+- Update `apps/web/e2e/README.md` if actual WebKit results change the documented split.
 
-- [ ] **Step 1: Static and unit verification**
+- [ ] **Step 1: Static/unit checks**
 
 ```bash
 bun run --cwd apps/web check
@@ -953,21 +824,21 @@ bun run --cwd apps/web test:e2e:assert-production-bundle
 bun run --cwd apps/web build:e2e
 ```
 
-- [ ] **Step 3: Repeated Chromium smoke**
+- [ ] **Step 3: Chromium stability**
 
 ```bash
 bun run --cwd apps/web test:e2e:stability
 bun run --cwd apps/web test:e2e:smoke -- --retries=0
 ```
 
-- [ ] **Step 4: Repeated WebKit critical**
+- [ ] **Step 4: WebKit stability**
 
 ```bash
 bun run --cwd apps/web test:e2e:webkit -- \
   --repeat-each=10 --retries=0 --workers=1
 ```
 
-- [ ] **Step 5: Extended and accessibility**
+- [ ] **Step 5: Extended/a11y**
 
 ```bash
 bun run --cwd apps/web test:e2e:extended -- --retries=0
@@ -983,27 +854,28 @@ rg "e2e-gameplay-runtime|runtime-override|__PERSEUS_E2E_GAMEPLAY_V1__|e2e-square
   apps/web/src --glob '!lib/testing/**' --glob '!virtual-modules.d.ts'
 ```
 
-Expected: no unexplained gameplay skip, no unjustified timeout, and only the approved virtual import in production source.
-
 - [ ] **Step 7: Record acceptance evidence**
 
-Add a PR comment mapping each HPA-226 criterion to command output, fixture coverage, auth/completion behavior, WebKit decision, bundle scan counts, and artifact paths.
+Add a PR comment mapping each criterion to command output, fixture coverage, auth/completion behavior, WebKit decision, bundle scan counts, and artifact paths.
 
-- [ ] **Step 8: Commit only verification-driven fixes**
+- [ ] **Step 8: Commit only if verification changed files**
 
 ```bash
-git add <only-files-changed-to-fix-failing-verification>
-git commit -m "test(web): stabilize deterministic gameplay E2E suite"
+git status --short
 ```
 
-Do not create an empty commit.
+If output is empty, do not commit. Otherwise stage every listed path explicitly, verify the staged diff with `git diff --cached`, then run:
+
+```bash
+git commit -m "test(web): stabilize deterministic gameplay E2E suite"
+```
 
 ---
 
 ## Execution Notes
 
-- Implement from a fresh worktree based on the latest `main` after the design/plan PR is merged.
-- Use test-driven development for each task: focused failing test, minimal implementation, passing focused test, then broader regression checks.
-- Keep one independently reviewable commit per task; do not batch unrelated tasks.
-- If implementation reveals a contradiction with the approved design, amend the design in a separate documentation commit before changing scope.
-- HPA-218 through HPA-224 and HPA-237 consume this foundation and remain responsible for feature-specific E2E scenarios.
+- Execute from a fresh worktree based on latest `main` after the design/plan PR merges.
+- Use TDD per task: focused failing test, minimal implementation, passing focused test, broader regression check.
+- Keep one independently reviewable commit per task.
+- If implementation contradicts the approved design, amend the design in a separate documentation commit before changing scope.
+- HPA-218 through HPA-224 and HPA-237 remain responsible for feature-specific E2E scenarios.
