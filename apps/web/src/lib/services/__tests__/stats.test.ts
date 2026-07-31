@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
 	getStats,
 	getBestTime,
@@ -557,5 +557,123 @@ describe('Stats Service', () => {
 				vi.unstubAllGlobals();
 			}
 		});
+	});
+});
+
+describe('Stats Service - Web Locks unavailable fallback', () => {
+	const puzzleId = 'test-stats-locks-fallback';
+	let originalDescriptor: PropertyDescriptor | undefined;
+
+	function disableWebLocks() {
+		originalDescriptor = Object.getOwnPropertyDescriptor(navigator, 'locks');
+		Object.defineProperty(navigator, 'locks', { value: undefined, configurable: true });
+	}
+
+	function restoreWebLocks() {
+		if (originalDescriptor) {
+			Object.defineProperty(navigator, 'locks', originalDescriptor);
+		} else {
+			// 'locks' was inherited, not an own property: remove the shadowing
+			// own property we added so the inherited accessor is visible again.
+			delete (navigator as unknown as Record<string, unknown>).locks;
+		}
+	}
+
+	beforeEach(() => {
+		localStorage.clear();
+		disableWebLocks();
+	});
+
+	afterEach(() => {
+		restoreWebLocks();
+	});
+
+	it('returns a retryable failure and does NOT perform the lossy unlocked write', async () => {
+		const seal = makeSeal({ elapsedActiveSeconds: 100, runId: 'r1' });
+		const result = await recordLocalCompletion(puzzleId, seal);
+
+		expect(result.status).toBe('failed');
+		// No unlocked read-modify-write occurred: storage stays empty.
+		expect(getStats(puzzleId)).toBeNull();
+	});
+
+	it('still computes the in-memory new-best verdict for display without writing', async () => {
+		// Seed a prior best of 200 directly in storage.
+		localStorage.setItem(
+			`puzzle-stats-${puzzleId}`,
+			JSON.stringify({
+				schemaVersion: 1,
+				puzzleId,
+				standardBestTime: 200,
+				standardBestCompletedAt: 500,
+				totalCompletions: 1,
+				lastCompletedAt: 500,
+				lastRecordedRunId: 'prior',
+				recordedRunIds: ['prior']
+			})
+		);
+		const seal = makeSeal({ elapsedActiveSeconds: 100, runId: 'new-run' });
+		const result = await recordLocalCompletion(puzzleId, seal);
+
+		expect(result.status).toBe('failed');
+		if (result.status === 'failed') {
+			// The would-be next stats are reported for accurate badge display.
+			expect(result.isNewStandardBest).toBe(true);
+			expect(result.inMemoryStats.standardBestTime).toBe(100);
+			expect(result.inMemoryStats.totalCompletions).toBe(2);
+		}
+		// The stored record is unchanged: no lossy write.
+		expect(getStats(puzzleId)?.standardBestTime).toBe(200);
+		expect(getStats(puzzleId)?.totalCompletions).toBe(1);
+	});
+
+	it('returns replayed (no write) for an already-recorded run', async () => {
+		localStorage.setItem(
+			`puzzle-stats-${puzzleId}`,
+			JSON.stringify({
+				schemaVersion: 1,
+				puzzleId,
+				standardBestTime: 100,
+				standardBestCompletedAt: 500,
+				totalCompletions: 1,
+				lastCompletedAt: 500,
+				lastRecordedRunId: 'dup-run',
+				recordedRunIds: ['dup-run']
+			})
+		);
+		const seal = makeSeal({ elapsedActiveSeconds: 50, runId: 'dup-run' });
+		const result = await recordLocalCompletion(puzzleId, seal);
+
+		// Replay needs no write, so it is safe even without a lock.
+		expect(result.status).toBe('replayed');
+		expect(getStats(puzzleId)?.totalCompletions).toBe(1);
+		expect(getStats(puzzleId)?.standardBestTime).toBe(100);
+	});
+});
+
+describe('Stats Service - Web Locks rejection', () => {
+	const puzzleId = 'test-stats-locks-reject';
+	let requestSpy: ReturnType<typeof vi.spyOn>;
+
+	beforeEach(() => {
+		localStorage.clear();
+		requestSpy = vi
+			.spyOn(navigator.locks, 'request')
+			.mockImplementation(() => Promise.reject(new Error('lock resource exhausted')));
+	});
+
+	afterEach(() => {
+		requestSpy.mockRestore();
+	});
+
+	it('converts a rejected navigator.locks.request into a retryable failure without an uncaught rejection', async () => {
+		const seal = makeSeal({ elapsedActiveSeconds: 100, runId: 'r1' });
+		const result = await recordLocalCompletion(puzzleId, seal);
+
+		// The rejection is caught and surfaced as a failed result rather than
+		// propagating as an unhandled promise rejection (the route fires the
+		// handler with `void`).
+		expect(result.status).toBe('failed');
+		expect(getStats(puzzleId)).toBeNull();
 	});
 });

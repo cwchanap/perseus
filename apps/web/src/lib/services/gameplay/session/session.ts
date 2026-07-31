@@ -30,7 +30,8 @@ import type {
 	CompletionFailureCode,
 	PlacedPiece,
 	TrayOrganizationUpdate,
-	SessionLifecycle
+	SessionLifecycle,
+	PuzzleMetadata
 } from './types';
 
 export interface PuzzleSession {
@@ -52,13 +53,22 @@ interface PlacementHistoryState {
 export function createPuzzleSession(options: CreatePuzzleSessionOptions): PuzzleSession {
 	const clock = options.clock;
 	const onEvent = options.onEvent;
-	const metadata = options.metadata;
+	// Validate and clone caller-supplied metadata before retaining it. The
+	// engine is the invariant boundary: construction throws when metadata
+	// violates required invariants (per the approved design). Cloning
+	// prevents a caller from mutating the pieces array or tray order after
+	// construction and bypassing dispatch.
+	const { metadata, initialTrayOrder } = validateAndCloneMetadata(
+		options.metadata,
+		options.initialTrayOrder
+	);
+	const safeOptions: CreatePuzzleSessionOptions = { ...options, metadata, initialTrayOrder };
 	const pieceById = new Map(metadata.pieces.map((piece) => [piece.id, piece]));
 	const createRotations =
 		options.createRotations ??
 		((ids: number[]) => generateRandomRotations(ids, hashSeed(metadata.puzzleId)));
 
-	let state = buildInitialState(options);
+	let state = buildInitialState(safeOptions);
 	let placementHistory = makeHistoryBaseline(state);
 	let monotonicStart: number | null = null;
 	let tickHandle: unknown = null;
@@ -68,7 +78,7 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 	const listeners = new Set<() => void>();
 
 	function emit(event: PuzzleSessionEvent) {
-		if (onEvent) onEvent(event);
+		if (onEvent) onEvent(cloneEventPayload(event));
 	}
 	function notify() {
 		emit({ type: 'state_changed' });
@@ -452,10 +462,10 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 		const retainedMode = state.mode;
 		const retainedOrganization = state.organization;
 		stopClock();
-		state = freshState({ ...options, mode: retainedMode });
+		state = freshState({ ...safeOptions, mode: retainedMode });
 		state.organization = retainedOrganization;
-		state.trayOrder = options.createTrayOrder
-			? options.createTrayOrder()
+		state.trayOrder = safeOptions.createTrayOrder
+			? safeOptions.createTrayOrder()
 			: metadata.pieces
 					.map((piece) => piece.id)
 					.slice()
@@ -774,7 +784,7 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 	}
 
 	return {
-		getState: () => Object.freeze({ ...state }),
+		getState: () => deepFreeze(cloneState(state)),
 		dispatch,
 		setDocumentHidden,
 		checkpointTime,
@@ -901,4 +911,165 @@ function cloneOrganization(org: PersistedTrayOrganization): PersistedTrayOrganiz
 		membership: { ...org.membership },
 		names: { ...org.names }
 	};
+}
+
+// --- Snapshot / event immutability -------------------------------------------
+//
+// getState() and event payloads are the engine's invariant boundary: a
+// consumer must not be able to mutate internal state (e.g. push into
+// placedPieces) and bypass dispatch. getState() therefore returns a
+// deep-cloned, deep-frozen copy, and seal-bearing events are emitted with
+// cloned seals so an event consumer cannot mutate state.sealedCompletion.
+
+function cloneSeal(seal: SealedCompletion): SealedCompletion {
+	return {
+		runId: seal.runId,
+		resultClass: seal.resultClass,
+		timingQuality: seal.timingQuality,
+		elapsedActiveSeconds: seal.elapsedActiveSeconds,
+		completedAt: seal.completedAt,
+		localStats: { ...seal.localStats },
+		serverSubmission: { ...seal.serverSubmission }
+	};
+}
+
+function cloneState(state: PuzzleSessionState): PuzzleSessionState {
+	return {
+		...state,
+		placedPieces: state.placedPieces.map((piece) => ({ ...piece })),
+		trayOrder: state.trayOrder.slice(),
+		pieceRotations: { ...state.pieceRotations },
+		organization: state.organization ? cloneOrganization(state.organization) : null,
+		viewport: state.viewport ? { ...state.viewport } : null,
+		counters: { ...state.counters },
+		facts: { ...state.facts },
+		sealedCompletion: state.sealedCompletion ? cloneSeal(state.sealedCompletion) : null
+	};
+}
+
+function deepFreeze<T>(value: T): T {
+	if (value === null || typeof value !== 'object') return value;
+	if (Array.isArray(value)) {
+		Object.freeze(value);
+		for (const item of value) deepFreeze(item);
+	} else {
+		Object.freeze(value);
+		for (const key of Object.keys(value as object)) {
+			deepFreeze((value as Record<string, unknown>)[key]);
+		}
+	}
+	return value;
+}
+
+function cloneEventPayload(event: PuzzleSessionEvent): PuzzleSessionEvent {
+	switch (event.type) {
+		case 'completion_sealed':
+			return deepFreeze({ ...event, seal: cloneSeal(event.seal) });
+		case 'completion_effect_request':
+			return deepFreeze({ ...event, seal: cloneSeal(event.seal) });
+		default:
+			return event;
+	}
+}
+
+// --- Construction metadata validation ----------------------------------------
+//
+// createPuzzleSession is the invariant boundary: it throws when caller
+// metadata violates required invariants (per the approved design). This
+// guards production paths where fetchPuzzle() casts the API response to
+// Puzzle without runtime validation. The shared metadata guard checks
+// grid math and finite coordinates but not unique ids, integer/in-bounds
+// coordinates, or unique canonical cells — those are established here.
+// Accepted metadata and tray order are cloned so a caller cannot mutate
+// them after construction.
+
+function validateAndCloneMetadata(
+	metadata: PuzzleMetadata,
+	initialTrayOrder: number[] | undefined
+): { metadata: PuzzleMetadata; initialTrayOrder: number[] | undefined } {
+	if (typeof metadata.puzzleId !== 'string' || metadata.puzzleId.length === 0) {
+		throw new Error('Invalid puzzle metadata: puzzleId must be a non-empty string');
+	}
+	if (metadata.source !== 'api' && metadata.source !== 'local') {
+		throw new Error('Invalid puzzle metadata: source must be "api" or "local"');
+	}
+	if (!Number.isInteger(metadata.gridCols) || metadata.gridCols < 1) {
+		throw new Error('Invalid puzzle metadata: gridCols must be a positive integer');
+	}
+	if (!Number.isInteger(metadata.gridRows) || metadata.gridRows < 1) {
+		throw new Error('Invalid puzzle metadata: gridRows must be a positive integer');
+	}
+	if (!Number.isInteger(metadata.pieceCount) || metadata.pieceCount < 1) {
+		throw new Error('Invalid puzzle metadata: pieceCount must be a positive integer');
+	}
+	if (metadata.gridCols * metadata.gridRows !== metadata.pieceCount) {
+		throw new Error('Invalid puzzle metadata: gridCols * gridRows must equal pieceCount');
+	}
+	const pieces = metadata.pieces;
+	if (!Array.isArray(pieces)) {
+		throw new Error('Invalid puzzle metadata: pieces must be an array');
+	}
+	if (pieces.length !== metadata.pieceCount) {
+		throw new Error('Invalid puzzle metadata: pieces.length must equal pieceCount');
+	}
+	const ids = new Set<number>();
+	const cells = new Set<string>();
+	const clonedPieces: Array<{ id: number; correctX: number; correctY: number }> = [];
+	for (let i = 0; i < pieces.length; i++) {
+		const piece = pieces[i];
+		if (!piece || typeof piece !== 'object') {
+			throw new Error(`Invalid puzzle metadata: piece ${i} is not an object`);
+		}
+		const { id, correctX, correctY } = piece;
+		if (!Number.isInteger(id)) {
+			throw new Error(`Invalid puzzle metadata: piece ${i} id must be an integer`);
+		}
+		if (!Number.isInteger(correctX) || correctX < 0 || correctX >= metadata.gridCols) {
+			throw new Error(`Invalid puzzle metadata: piece ${i} correctX out of bounds`);
+		}
+		if (!Number.isInteger(correctY) || correctY < 0 || correctY >= metadata.gridRows) {
+			throw new Error(`Invalid puzzle metadata: piece ${i} correctY out of bounds`);
+		}
+		if (ids.has(id)) {
+			throw new Error(`Invalid puzzle metadata: duplicate piece id ${id}`);
+		}
+		ids.add(id);
+		const cellKey = `${correctX},${correctY}`;
+		if (cells.has(cellKey)) {
+			throw new Error(
+				`Invalid puzzle metadata: duplicate canonical cell (${correctX}, ${correctY})`
+			);
+		}
+		cells.add(cellKey);
+		clonedPieces.push({ id, correctX, correctY });
+	}
+	const clonedMetadata: PuzzleMetadata = {
+		puzzleId: metadata.puzzleId,
+		source: metadata.source,
+		pieceCount: metadata.pieceCount,
+		gridCols: metadata.gridCols,
+		gridRows: metadata.gridRows,
+		pieces: clonedPieces
+	};
+	let clonedTrayOrder: number[] | undefined;
+	if (initialTrayOrder !== undefined) {
+		if (!Array.isArray(initialTrayOrder)) {
+			throw new Error('Invalid initialTrayOrder: must be an array');
+		}
+		if (initialTrayOrder.length !== metadata.pieceCount) {
+			throw new Error('Invalid initialTrayOrder: length must equal pieceCount');
+		}
+		const seen = new Set<number>();
+		for (const id of initialTrayOrder) {
+			if (!Number.isInteger(id) || !ids.has(id)) {
+				throw new Error(`Invalid initialTrayOrder: unknown piece id ${String(id)}`);
+			}
+			if (seen.has(id)) {
+				throw new Error(`Invalid initialTrayOrder: duplicate piece id ${id}`);
+			}
+			seen.add(id);
+		}
+		clonedTrayOrder = initialTrayOrder.slice();
+	}
+	return { metadata: clonedMetadata, initialTrayOrder: clonedTrayOrder };
 }
