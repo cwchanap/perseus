@@ -28,6 +28,9 @@ jobs:
       - name: Install dependencies
         run: bun install
 
+      - name: Verify production bundle excludes E2E harness
+        run: bun run --cwd apps/web test:e2e:assert-production-bundle
+
       - name: Install Playwright browsers
         run: bun run --cwd apps/web test:install-browsers
 
