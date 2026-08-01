@@ -9,7 +9,14 @@ import { gameplayRuntimeOverridePlugin } from './build/gameplay-runtime-override
 const harnessEnabled = process.env.PERSEUS_E2E_HARNESS === '1';
 
 export default defineConfig({
-	plugins: [gameplayRuntimeOverridePlugin({ harnessEnabled }), tailwindcss(), sveltekit()],
+	plugins: [
+		gameplayRuntimeOverridePlugin({
+			harnessEnabled,
+			readerPath: harnessEnabled ? '/src/lib/testing/e2e-gameplay-runtime' : undefined
+		}),
+		tailwindcss(),
+		sveltekit()
+	],
 
 	test: {
 		expect: { requireAssertions: true },
