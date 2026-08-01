@@ -65,6 +65,30 @@ const sessionStorageSpies = vi.hoisted(() => ({
 	clearSession: vi.fn()
 }));
 
+// Hoisted gameplay runtime spies. The route sources run-id/tray-order/rotations
+// from createGameplayRuntimeDependencies; mocking it here yields deterministic
+// gameplay values without touching the production shuffle or run-id factories.
+// The run-id counter mirrors the original browser factory contract: the first
+// create() returns the canonical 'test-run-id' that restored-session and
+// completion assertions expect; each subsequent call returns a fresh id so the
+// engine's run-id collision guard is satisfied across Play Again / navigation.
+const runtimeState = vi.hoisted(() => {
+	let runIdCount = 0;
+	return {
+		resetRunId: () => {
+			runIdCount = 0;
+		},
+		runIdFactory: {
+			create: vi.fn(() => (runIdCount++ === 0 ? 'test-run-id' : `test-run-id-${runIdCount}`))
+		},
+		createInitialTrayOrder: vi.fn((ids: number[]) => [...ids]),
+		createRestartTrayOrder: vi.fn((ids: number[]) => [...ids]),
+		createRotations: vi.fn((_puzzleId: string, ids: number[]) =>
+			Object.fromEntries(ids.map((id) => [id, 0]))
+		)
+	};
+});
+
 vi.mock('$app/stores', () => ({
 	page: mockPageStore
 }));
@@ -77,8 +101,13 @@ vi.mock('$app/paths', () => ({
 	resolve: (path: string) => path
 }));
 
-vi.mock('$lib/utils/shuffle', () => ({
-	shuffleArray: vi.fn((values: number[]) => [...values])
+vi.mock('$lib/services/gameplay/runtime', () => ({
+	createGameplayRuntimeDependencies: vi.fn(() => ({
+		runIdFactory: runtimeState.runIdFactory,
+		createInitialTrayOrder: runtimeState.createInitialTrayOrder,
+		createRestartTrayOrder: runtimeState.createRestartTrayOrder,
+		createRotations: runtimeState.createRotations
+	}))
 }));
 
 vi.mock('$lib/services/puzzleSource', () => ({
@@ -103,36 +132,11 @@ vi.mock('$lib/services/puzzleSource', () => ({
 	})
 }));
 
-vi.mock('$lib/services/gameplay/rotation', async () => {
-	const actual = await vi.importActual<typeof import('$lib/services/gameplay/rotation')>(
-		'$lib/services/gameplay/rotation'
-	);
-
-	return {
-		...actual,
-		generateRandomRotations: vi.fn((pieceIds: number[]) =>
-			Object.fromEntries(pieceIds.map((pieceId) => [pieceId, 0]))
-		)
-	};
-});
-
 vi.mock('$lib/services/gameplay/session/persistence', async (importOriginal) => {
 	const actual =
 		await importOriginal<typeof import('$lib/services/gameplay/session/persistence')>();
 	return {
 		...actual,
-		// The first create() call (initial session construction) returns the
-		// canonical 'test-run-id' that non-restart assertions expect; each
-		// subsequent call (restart) returns a fresh id so the engine's
-		// run-id collision guard is satisfied and regression tests actually
-		// exercise the "fresh run id after Play Again" behavior their comments
-		// describe. Production uses Web Crypto UUIDv4, which never collides.
-		createBrowserRunIdFactory: () => {
-			let n = 0;
-			return {
-				create: () => (n++ === 0 ? 'test-run-id' : `test-run-id-${n}`)
-			};
-		},
 		createSessionStorageAdapter: () => ({
 			loadSession: (puzzleId: string) => {
 				if (progressState.value?.puzzleId === puzzleId) {
@@ -279,7 +283,6 @@ import {
 import type { LoadedPuzzleSource } from '$lib/services/puzzleSource';
 import { recordLocalCompletion, getBestTime } from '$lib/services/stats';
 import { serializeSession } from '$lib/services/gameplay/session/persistence';
-import { shuffleArray } from '$lib/utils/shuffle';
 import { goto } from '$app/navigation';
 
 function createPiece(
@@ -380,6 +383,7 @@ async function getPieceRotation(pieceId: number): Promise<number> {
 describe('Puzzle route gameplay integration', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		runtimeState.resetRunId();
 		progressState.value = null;
 		sealedCompletionOverride.value = null;
 		puzzleSourceState.override = null;
@@ -409,17 +413,35 @@ describe('Puzzle route gameplay integration', () => {
 		// Without it, freshState sorts piece IDs ascending, producing a
 		// deterministic tray on every first play. The pre-PR route shuffled
 		// every newly loaded puzzle; this test preserves that contract.
-		vi.mocked(shuffleArray).mockImplementationOnce(
-			<T>(values: T[]) => [...values].reverse() as T[]
+		runtimeState.createInitialTrayOrder.mockImplementationOnce((ids: number[]) =>
+			[...ids].reverse()
 		);
 		await renderPuzzlePage();
 
-		// With the reversed shuffle, piece 1 should appear before piece 0.
+		// With the reversed order, piece 1 should appear before piece 0.
 		const slot0 = await page.getByTestId('piece-slot-0').element();
 		const slot1 = await page.getByTestId('piece-slot-1').element();
 		const slots = document.querySelectorAll('[data-testid^="piece-slot-"]');
 		expect(slots[0]).toBe(slot1);
 		expect(slots[1]).toBe(slot0);
+	});
+
+	it('routes fresh load through createInitialTrayOrder and Play Again through createRestartTrayOrder', async () => {
+		// Verifies the route consumes the runtime adapter's tray-order
+		// factories through the real session engine: fresh load uses the
+		// initial factory, Play Again (restart) uses the restart factory.
+		await renderPuzzlePage();
+		expect(runtimeState.createInitialTrayOrder).toHaveBeenCalledTimes(1);
+		expect(runtimeState.createRestartTrayOrder).not.toHaveBeenCalled();
+
+		await placePiece(0, 0, 0);
+		await placePiece(1, 1, 0);
+		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+
+		await page.getByRole('button', { name: 'PLAY AGAIN' }).click();
+		await expect.poll(() => page.getByTestId('celebration-modal').query()).toBeNull();
+
+		expect(runtimeState.createRestartTrayOrder).toHaveBeenCalledTimes(1);
 	});
 
 	it('sizes the board responsively and makes tray slots match board cells', async () => {
@@ -1555,6 +1577,7 @@ describe('Puzzle route gameplay integration', () => {
 describe('Puzzle page defensive guard coverage', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		runtimeState.resetRunId();
 		progressState.value = null;
 		sealedCompletionOverride.value = null;
 		puzzleSourceState.override = null;
