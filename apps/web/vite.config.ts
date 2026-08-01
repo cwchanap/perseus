@@ -2,7 +2,7 @@ import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vitest/config';
 import { playwright } from '@vitest/browser-playwright';
 import { sveltekit } from '@sveltejs/kit/vite';
-import { gameplayRuntimeOverridePlugin } from './build/gameplay-runtime-override-plugin';
+import { gameplayRuntimeOverridePlugin } from './vite-plugins/gameplay-runtime-override-plugin';
 
 // Captured when the config is created. An already-running Vitest process does
 // not switch modes after environment mutation, so this is read at module-eval.
