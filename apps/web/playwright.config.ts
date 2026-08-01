@@ -32,6 +32,7 @@ export default defineConfig({
 		}
 	],
 	testDir: 'e2e',
+	testMatch: '**/*.spec.ts',
 	trace: 'retain-on-failure',
 	screenshot: 'on-first-failure',
 	failOnFlakyTests: Boolean(process.env.CI),
