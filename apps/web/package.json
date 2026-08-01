@@ -6,6 +6,7 @@
 	"scripts": {
 		"dev": "vite dev --port 4692",
 		"build": "PUBLIC_API_BASE=${PUBLIC_API_BASE:-} vite build",
+		"build:e2e": "PERSEUS_E2E_HARNESS=1 bun run build",
 		"preview": "vite preview",
 		"prepare": "svelte-kit sync || echo ''",
 		"check": "PUBLIC_API_BASE=${PUBLIC_API_BASE:-} svelte-kit sync && PUBLIC_API_BASE=${PUBLIC_API_BASE:-} svelte-check --tsconfig ./tsconfig.json",
@@ -15,6 +16,7 @@
 		"test:unit:watch": "vitest --browser",
 		"test": "bun run test:unit && bun run test:e2e",
 		"test:e2e": "playwright test",
+		"test:e2e:assert-production-bundle": "bun run build && bun scripts/assert-no-e2e-harness.ts",
 		"test:install-browsers": "playwright install --with-deps chromium --only-shell"
 	},
 	"dependencies": {
