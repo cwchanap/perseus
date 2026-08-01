@@ -52,5 +52,61 @@ export default defineConfig(
 				svelteConfig
 			}
 		}
+	},
+	// Universal guardrail: the virtual gameplay override module may only be
+	// imported by `src/lib/services/gameplay/runtime.ts`. This config is placed
+	// before the production-source config below so the latter can override it
+	// (flat config: last matching config wins for a given rule) and add the
+	// concrete-reader restrictions for production files without losing this one.
+	{
+		files: ['**/*.{js,ts,svelte}'],
+		ignores: ['src/lib/services/gameplay/runtime.ts'],
+		rules: {
+			'no-restricted-imports': [
+				'error',
+				{
+					paths: [
+						{
+							name: 'virtual:perseus-gameplay-runtime-override',
+							message:
+								'Only src/lib/services/gameplay/runtime.ts may import the virtual gameplay override module'
+						}
+					]
+				}
+			]
+		}
+	},
+	// Production-source guardrail: keep the concrete E2E reader and any runtime
+	// override module out of the production bundle. Overrides the universal
+	// config above for production files (it re-declares the virtual restriction
+	// so prod source keeps both blocks). Testing files are exempt so they may
+	// import the concrete reader; runtime.ts is exempt for the virtual import.
+	{
+		files: ['src/**'],
+		ignores: ['src/lib/testing/**', 'src/lib/services/gameplay/runtime.ts'],
+		rules: {
+			'no-restricted-imports': [
+				'error',
+				{
+					paths: [
+						{
+							name: 'virtual:perseus-gameplay-runtime-override',
+							message:
+								'Only src/lib/services/gameplay/runtime.ts may import the virtual gameplay override module'
+						}
+					],
+					patterns: [
+						{
+							group: ['**/e2e-gameplay-runtime'],
+							message: 'E2E gameplay runtime reader must not be imported from production source'
+						},
+						{
+							group: ['**/*runtime-override*'],
+							message: 'Runtime override modules must not be imported from production source'
+						}
+					]
+				}
+			]
+		}
 	}
 );
