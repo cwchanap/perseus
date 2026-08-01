@@ -15,9 +15,15 @@
 		"test:unit": "vitest --run --browser --coverage",
 		"test:unit:watch": "vitest --browser",
 		"test": "bun run test:unit && bun run test:e2e",
-		"test:e2e": "playwright test",
+		"test:e2e": "playwright test --project=chromium-desktop --grep-invert @extended",
+		"test:e2e:smoke": "playwright test --grep @smoke --project=chromium-desktop --project=chromium-mobile",
+		"test:e2e:webkit": "playwright test --grep @webkit-critical --project=webkit-mobile",
+		"test:e2e:extended": "playwright test --grep @extended --project=chromium-desktop --project=chromium-mobile --project=chromium-tablet --project=webkit-mobile --project=webkit-tablet",
+		"test:e2e:a11y": "playwright test --grep @a11y --project=chromium-desktop --project=chromium-tablet --project=webkit-mobile",
+		"test:e2e:stability": "playwright test --grep @smoke --project=chromium-desktop --repeat-each=10 --retries=0 --workers=1",
 		"test:e2e:assert-production-bundle": "bun run build && bun scripts/assert-no-e2e-harness.ts",
-		"test:install-browsers": "playwright install --with-deps chromium --only-shell"
+		"test:install-browsers": "playwright install --with-deps --only-shell chromium webkit",
+		"test:install-browsers:dry-run": "playwright install --dry-run --only-shell chromium webkit"
 	},
 	"dependencies": {
 		"@noble/hashes": "^2.2.0",

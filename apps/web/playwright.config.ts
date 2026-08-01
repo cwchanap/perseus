@@ -1,4 +1,4 @@
-import { defineConfig } from '@playwright/test';
+import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
 	use: {
@@ -21,7 +21,7 @@ export default defineConfig({
 			}
 		},
 		{
-			command: 'bun run build && bun run preview -- --port 4173 --strictPort',
+			command: 'bun run build:e2e && bun run preview -- --port 4173 --strictPort',
 			port: 4173,
 			cwd: '.',
 			reuseExistingServer: !process.env.CI,
@@ -31,5 +31,32 @@ export default defineConfig({
 			}
 		}
 	],
-	testDir: 'e2e'
+	testDir: 'e2e',
+	trace: 'retain-on-failure',
+	screenshot: 'on-first-failure',
+	failOnFlakyTests: Boolean(process.env.CI),
+	reporter: process.env.CI ? [['github'], ['html', { open: 'never' }]] : 'list',
+	outputDir: 'test-results',
+	projects: [
+		{
+			name: 'chromium-desktop',
+			use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 } }
+		},
+		{
+			name: 'chromium-mobile',
+			use: { ...devices['Desktop Chrome'], viewport: { width: 390, height: 844 } }
+		},
+		{
+			name: 'chromium-tablet',
+			use: { ...devices['Desktop Chrome'], viewport: { width: 768, height: 1024 } }
+		},
+		{
+			name: 'webkit-mobile',
+			use: { ...devices['Desktop Safari'], viewport: { width: 390, height: 844 } }
+		},
+		{
+			name: 'webkit-tablet',
+			use: { ...devices['Desktop Safari'], viewport: { width: 768, height: 1024 } }
+		}
+	]
 });
