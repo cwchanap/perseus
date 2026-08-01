@@ -101,8 +101,8 @@ export interface PersistedStateController {
 	read(page: Page, puzzleId: string): Promise<string | null>;
 	/** Remove the localStorage value for `puzzleId`. */
 	clear(page: Page, puzzleId: string): Promise<void>;
-	/** Clear cookies + localStorage + sessionStorage in the current context. */
-	resetSameContext(page: Page, context: BrowserContext): Promise<void>;
+	/** Clear cookies + localStorage + sessionStorage in the page's own context. */
+	resetSameContext(page: Page): Promise<void>;
 	/** Open a brand-new isolated browser context. */
 	freshContext(browser: Browser): Promise<BrowserContext>;
 }
@@ -146,8 +146,8 @@ export function createPersistedStateController(): PersistedStateController {
 			await page.evaluate((key) => localStorage.removeItem(key), progressKey(puzzleId));
 		},
 
-		async resetSameContext(page, context) {
-			await context.clearCookies();
+		async resetSameContext(page) {
+			await page.context().clearCookies();
 			await page.evaluate(() => {
 				localStorage.clear();
 				sessionStorage.clear();

@@ -110,6 +110,23 @@ test.describe('FixtureRouter', () => {
 		expect(JSON.parse(res.body).error).toBeTruthy();
 	});
 
+	test('fulfills (never falls back) for unknown sub-paths under a known fixture', async ({
+		page
+	}) => {
+		const router = createFixtureRouter();
+		await router.install(page);
+		await gotoApiOrigin(page);
+
+		// A path the router does not recognize, but which carries a KNOWN fixture
+		// id. The total-interception invariant requires the router to answer it
+		// (marker present) rather than silently fall through to the backend.
+		const res = await fetchApi(page, `/api/puzzles/${FIXTURE_ID}/unknown-endpoint`);
+
+		expect(res.status).toBe(404);
+		expect(res.headers[FIXTURE_ROUTER_HEADER]).toBe('fixture-router');
+		expect(JSON.parse(res.body).error).toBeTruthy();
+	});
+
 	test('lets ordinary (non-e2e) traffic fall through to the backend untouched', async ({
 		page
 	}) => {
