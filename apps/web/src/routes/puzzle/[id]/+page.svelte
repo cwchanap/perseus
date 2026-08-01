@@ -17,20 +17,18 @@
 	import ZoomableBoardFrame from '$lib/components/ZoomableBoardFrame.svelte';
 	import GameTimer from '$lib/components/GameTimer.svelte';
 	import ReferenceOverlay from '$lib/components/ReferenceOverlay.svelte';
-	import { shuffleArray } from '$lib/utils/shuffle';
 	import { resolve } from '$app/paths';
 	import {
 		getResponsivePuzzleBoardMetrics,
 		type ResponsivePuzzleBoardMetrics
 	} from '$lib/services/puzzleLayout';
-	import { generateRandomRotations } from '$lib/services/gameplay/rotation';
 	import { clampZoom, clampPan, calculateFitZoom } from '$lib/services/gameplay/viewport';
+	import { createGameplayRuntimeDependencies } from '$lib/services/gameplay/runtime';
 	import {
 		createPuzzleSessionStore,
 		type PuzzleSessionStore
 	} from '$lib/services/gameplay/session/store';
 	import {
-		createBrowserRunIdFactory,
 		createSessionStorageAdapter,
 		serializeSession,
 		isFailureRetryable
@@ -61,7 +59,6 @@
 		};
 	}
 
-	const runIdFactory = createBrowserRunIdFactory();
 	const sessionStorageAdapter = createSessionStorageAdapter();
 	const clock = createBrowserClock();
 
@@ -683,28 +680,22 @@
 			isNewBest = false;
 			localStatsFailed = false;
 
-			// Construct the session store.
-			// Generate one shuffled tray order for the fresh run. The engine
-			// ignores initialTrayOrder when a restored snapshot is present
-			// (hydrate reads the snapshot's own trayOrder), so this is only
-			// consumed by freshState. createTrayOrder remains for Play Again.
-			const shuffledTrayOrder = shuffleArray(loadedPuzzle.pieces.map((p) => p.id));
+			// Construct the session store. Runtime gameplay dependencies (run-id
+			// factory, tray order, rotations) are sourced from the gameplay runtime
+			// adapter, which the E2E harness can override for deterministic play.
+			const pieceIds = loadedPuzzle.pieces.map((piece) => piece.id);
+			const runtime = createGameplayRuntimeDependencies(loadedPuzzle.id, pieceIds);
+
 			const store = createPuzzleSessionStore({
 				metadata,
-				runIdFactory,
+				runIdFactory: runtime.runIdFactory,
 				clock,
-				onEvent: handleSessionEvent,
 				restored,
-				initialTrayOrder: shuffledTrayOrder,
-				createTrayOrder: () => shuffleArray(loadedPuzzle.pieces.map((p) => p.id)),
-				createRotations: (pieceIds: number[]) => {
-					let hash = 0;
-					const seedStr = `${loadedPuzzle.id}:${pieceIds.join(',')}`;
-					for (const ch of seedStr) {
-						hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
-					}
-					return generateRandomRotations(pieceIds, hash || 1);
-				}
+				initialTrayOrder: runtime.createInitialTrayOrder(pieceIds),
+				createTrayOrder: () => runtime.createRestartTrayOrder(pieceIds),
+				createRotations: (requestedPieceIds: number[]) =>
+					runtime.createRotations(loadedPuzzle.id, requestedPieceIds),
+				onEvent: handleSessionEvent
 			});
 			sessionStore = store;
 			sessionState = null;
