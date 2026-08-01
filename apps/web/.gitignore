@@ -8,10 +8,8 @@ node_modules
 .netlify
 .wrangler
 .svelte-kit
-# Ignore generated build output, but track build-time source files under build/.
-build/**
-!build/
-!build/*.ts
+.build
+build
 
 # OS
 .DS_Store
