@@ -6,7 +6,9 @@
 //   - known fixture id  → fulfill immediately (metadata JSON, padded piece SVG,
 //     reference/thumbnail SVG). The completion POST is the one exception: it
 //     calls `route.fallback()` so the ApiScenarioController (registered
-//     separately for `/complete`) owns the outcome.
+//     separately for `/complete`) owns the outcome. Any OTHER sub-path under a
+//     known id (e.g. a future API endpoint) is fulfilled with a 404, never
+//     passed through.
 //   - unknown `e2e-*` id → fulfill 404 immediately. It NEVER calls `fallback()`,
 //     so a typo'd fixture id can never leak to the real API.
 //   - any other path → `route.fallback()` so ordinary traffic (gallery list,
@@ -143,8 +145,15 @@ export function createFixtureRouter(): FixtureRouter {
 			return;
 		}
 
-		// Any other sub-path under a known fixture: fall through (unexpected).
-		await route.fallback();
+		// Any other sub-path under a known fixture id: fail immediately. The
+		// total-interception invariant forbids fallback once a fixture id is
+		// present, so a future API path added under /api/puzzles/:id/… fails
+		// loudly here instead of silently reaching the real backend.
+		await route.fulfill({
+			status: 404,
+			json: { error: 'unknown_fixture_path', fixtureId: id, path: pathname },
+			headers: markerHeaders()
+		});
 	}
 
 	return {
