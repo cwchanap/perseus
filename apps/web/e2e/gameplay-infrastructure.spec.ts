@@ -1,0 +1,298 @@
+// Deterministic gameplay smoke coverage (HPA-226 Task 9).
+//
+// Exercises the full completion lifecycle against the e2e-square-4 fixture
+// (2x2 grid, 4 pieces) via the canonical GameplayPage harness: fixture load +
+// placement, authenticated/anonymous completion, deferred retry, timer
+// integration, and persistence seed/reset. Supersedes the bare skips in
+// puzzle-solving.spec.ts, which now point here.
+//
+// Determinism: every completion test installs + pauses a Playwright clock
+// AFTER load (gotoFixture runs under the real clock so fetch/navigation are
+// unaffected). Installing the clock authoritatively resets performance.now()
+// to zero, then pauseAt pins it there, so the monotonic clock driving
+// elapsedActiveSeconds never accrues real wall-clock time. The timer test
+// advances it explicitly with runFor(). The sealed run id and result class
+// come from the frozen fixture config, so the recorded server payload is
+// byte-stable across runs.
+//
+// Tags: @smoke — runs in the smoke gate (chromium-desktop + chromium-mobile).
+import type { Page } from '@playwright/test';
+import { test, expect } from './support/test';
+import type { GameplayPage } from './support/gameplay-page';
+import { getFixture } from './gameplay-fixtures/catalog';
+import { buildMinimalSeed, progressKey } from './gameplay-fixtures/persisted-state';
+
+const FIXTURE_ID = 'e2e-square-4' as const;
+const START_AT = new Date('2026-01-01T00:00:00Z');
+const STATS_KEY = `puzzle-stats-${FIXTURE_ID}`;
+const COMPLETION_URL = /\/api\/puzzles\/e2e-square-4\/complete(?:\?.*)?$/;
+
+/** Piece id -> placement coordinates (correctX, correctY) for the 2x2 grid. */
+const COORDS: Record<number, { x: number; y: number }> = {
+	0: { x: 0, y: 0 },
+	1: { x: 1, y: 0 },
+	2: { x: 0, y: 1 },
+	3: { x: 1, y: 1 }
+};
+
+/** The deterministic run id a fresh solve seals with (fixture runIds[0]). */
+function firstRunId(): string {
+	return getFixture(FIXTURE_ID).runIds[0]!;
+}
+
+/** Place the given pieces via keyboard in id order. */
+async function placePieces(gameplayPage: GameplayPage, ids: number[]): Promise<void> {
+	for (const id of ids) {
+		const { x, y } = COORDS[id]!;
+		await gameplayPage.selectAndPlaceWithKeyboard(id, x, y);
+	}
+}
+
+/**
+ * Install + pause the clock at START_AT so elapsedActiveSeconds is fully
+ * deterministic. Installing the clock (rather than pausing an already-live
+ * one) authoritatively resets performance.now() to zero regardless of how much
+ * real time elapsed during load, and pauseAt pins it there. The engine's
+ * monotonic clock resolves performance.now() at call time, so the first
+ * placement captures monotonicStart = 0.
+ */
+async function freezeClock(page: Page): Promise<void> {
+	await page.clock.install({ time: START_AT });
+	await page.clock.pauseAt(START_AT);
+}
+
+/** Poll localStorage stats until totalCompletions reaches `expected`. */
+async function expectStatsCompletions(page: Page, expected: number): Promise<void> {
+	await expect
+		.poll(async () => {
+			const raw = await page.evaluate((k) => localStorage.getItem(k), STATS_KEY);
+			if (!raw) return 0;
+			try {
+				return (JSON.parse(raw).totalCompletions as number) ?? 0;
+			} catch {
+				return 0;
+			}
+		})
+		.toBe(expected);
+}
+
+test.describe('gameplay smoke @smoke', () => {
+	// --- Step 1: fixture load + placement ----------------------------------------
+
+	test('fixture load renders the board and four tray pieces @smoke', async ({ gameplayPage }) => {
+		await gameplayPage.gotoFixture();
+
+		await expect(gameplayPage.page.getByTestId('puzzle-board')).toBeVisible();
+		await expect(gameplayPage.page.locator('[data-testid^="piece-slot-"]')).toHaveCount(4);
+	});
+
+	test('keyboard placement places a piece on the board @smoke', async ({ gameplayPage }) => {
+		await gameplayPage.gotoFixture();
+
+		await gameplayPage.selectAndPlaceWithKeyboard(0, 0, 0);
+		await gameplayPage.expectPiecePlaced(0, 0, 0);
+	});
+
+	// --- Step 2: authenticated completion ---------------------------------------
+
+	test('authenticated completion: celebration, local stats, one sealed request @smoke', async ({
+		gameplayPage,
+		page
+	}) => {
+		const runId = firstRunId();
+		await gameplayPage.gotoFixture({
+			persona: 'authenticated',
+			completion: { kind: 'success' }
+		});
+		await freezeClock(page);
+
+		await placePieces(gameplayPage, [0, 1, 2, 3]);
+
+		// completion_sealed opens the celebration modal.
+		await expect(page.getByTestId('celebration-modal')).toBeVisible();
+
+		// Local stats recorded (Web Lock write resolves under a paused clock).
+		await expectStatsCompletions(page, 1);
+
+		// Exactly one server completion request, carrying the deterministic seal.
+		await expect.poll(() => gameplayPage.apiController.recordedRequests.length).toBe(1);
+		const body = gameplayPage.apiController.recordedRequests[0]!.bodyJson as Record<
+			string,
+			unknown
+		>;
+		expect(body).toEqual({
+			version: 1,
+			runId,
+			resultClass: 'standard_timed',
+			timingQuality: 'known',
+			elapsedActiveSeconds: 1
+		});
+
+		// The local stats record pins the same run id (idempotency guard).
+		const stats = await page.evaluate((k) => localStorage.getItem(k), STATS_KEY);
+		expect(JSON.parse(stats!).lastRecordedRunId).toBe(runId);
+	});
+
+	// --- Step 3: anonymous completion -------------------------------------------
+
+	test('anonymous completion: celebration, local stats, one 401 request @smoke', async ({
+		gameplayPage,
+		page
+	}) => {
+		await gameplayPage.gotoFixture({
+			persona: 'anonymous',
+			completion: { kind: 'http-failure', status: 401 }
+		});
+		await freezeClock(page);
+		// Chromium also logs a browser-level "Failed to load resource" for the
+		// 401 response (distinct from the page's own console.error, which the
+		// http-failure scenario already allowlists).
+		gameplayPage.diagnostics.expectConsoleError('Failed to load resource');
+
+		const statuses: number[] = [];
+		page.on('response', (res) => {
+			if (COMPLETION_URL.test(res.url())) statuses.push(res.status());
+		});
+
+		await placePieces(gameplayPage, [0, 1, 2, 3]);
+
+		await expect(page.getByTestId('celebration-modal')).toBeVisible();
+		await expectStatsCompletions(page, 1);
+
+		// Exactly one server attempt, returning 401 (no auto-retry of an
+		// unauthorized submission within a single page session).
+		await expect.poll(() => gameplayPage.apiController.recordedRequests.length).toBe(1);
+		await expect.poll(() => statuses.length).toBe(1);
+		expect(statuses[0]).toBe(401);
+	});
+
+	// --- Step 4: deferred retry -------------------------------------------------
+	//
+	// The ApiScenarioController binds one immutable outcome per install, so a
+	// failure-then-success flow is driven by a stateful route registered after
+	// load (it takes precedence over the fixture router's /complete fallback).
+	// The completion diagnostics are declared as network-abort, the one scenario
+	// whose status is tolerated, so both the driven 500 and the retry's 200 pass
+	// teardown and the page's "Failed to submit" console.error is allowlisted.
+
+	test('deferred retry: held failure then manual retry succeeds with the same seal @smoke', async ({
+		gameplayPage,
+		page
+	}) => {
+		const runId = firstRunId();
+		await gameplayPage.gotoFixture({
+			persona: 'authenticated'
+		});
+		await freezeClock(page);
+		gameplayPage.diagnostics.setCompletion(FIXTURE_ID, { kind: 'network-abort' });
+		// The driven 500 logs both the page's console.error (allowlisted via the
+		// network-abort scenario) and Chromium's "Failed to load resource".
+		gameplayPage.diagnostics.expectConsoleError('Failed to load resource');
+
+		const bodies: Record<string, unknown>[] = [];
+		let attempts = 0;
+		await page.route(COMPLETION_URL, async (route) => {
+			attempts += 1;
+			const text = route.request().postData();
+			bodies.push(text ? (JSON.parse(text) as Record<string, unknown>) : {});
+			const failed = attempts === 1;
+			await route.fulfill({
+				status: failed ? 500 : 200,
+				json: failed ? { error: 'internal_error' } : { ok: true }
+			});
+		});
+
+		await placePieces(gameplayPage, [0, 1, 2, 3]);
+
+		// The first submission failed with a retryable internal_error; the
+		// celebration modal surfaces the manual retry affordance.
+		await expect(page.getByTestId('celebration-modal')).toBeVisible();
+		await expect(page.getByTestId('server-retry-banner')).toBeVisible();
+		await expect.poll(() => bodies.length).toBe(1);
+
+		// Manual retry re-submits the SAME sealed payload and succeeds.
+		await page.getByTestId('retry-server-submission').click();
+		await expect(page.getByTestId('server-retry-banner')).not.toBeVisible();
+		await expect.poll(() => bodies.length).toBe(2);
+
+		expect(bodies[0]).toMatchObject({
+			version: 1,
+			runId,
+			resultClass: 'standard_timed'
+		});
+		// The seal is immutable: the retry projects an identical request body.
+		expect(bodies[1]).toEqual(bodies[0]);
+	});
+
+	// --- Step 5: timer integration ---------------------------------------------
+
+	test('timer integration: five advanced seconds seal as elapsed=5 @smoke', async ({
+		gameplayPage,
+		page
+	}) => {
+		await gameplayPage.gotoFixture({
+			completion: { kind: 'success' }
+		});
+		await freezeClock(page);
+
+		// The first counted action starts the timer (monotonicStart = 0).
+		await gameplayPage.selectAndPlaceWithKeyboard(0, COORDS[0]!.x, COORDS[0]!.y);
+		await gameplayPage.expectPiecePlaced(0, 0, 0);
+
+		// Advance exactly five seconds; the 1s checkpoint ticks accrue 5s.
+		await page.clock.runFor(5_000);
+
+		// Timer UI reflects the elapsed seconds.
+		await expect(page.getByTestId('game-timer')).toHaveAttribute('aria-label', 'Timer: 00:05');
+
+		// Finish the run (clock paused -> no extra time accrues).
+		await placePieces(gameplayPage, [1, 2, 3]);
+
+		await expect(page.getByTestId('celebration-modal')).toBeVisible();
+		await expect.poll(() => gameplayPage.apiController.recordedRequests.length).toBe(1);
+		const body = gameplayPage.apiController.recordedRequests[0]!.bodyJson as Record<
+			string,
+			unknown
+		>;
+		expect(body).toMatchObject({
+			runId: firstRunId(),
+			resultClass: 'standard_timed',
+			elapsedActiveSeconds: 5
+		});
+	});
+
+	// --- Step 6: persistence seed / reset ---------------------------------------
+
+	test('persistence seed: a seeded placement is restored onto the board @smoke', async ({
+		gameplayPage,
+		page
+	}) => {
+		const seeded = buildMinimalSeed(FIXTURE_ID);
+		seeded.placedPieces = [{ pieceId: 0, x: 0, y: 0 }];
+		seeded.hasUserActivity = true;
+
+		// A restored placement leaves the tray with three pieces, so
+		// gotoFixture's full-tray ready check (four slots) intentionally rejects
+		// — the page has still hydrated from the seeded session. The rejection
+		// is specifically the count assertion, so verify the restoration.
+		await expect(gameplayPage.gotoFixture({ seedSession: seeded })).rejects.toThrow(/toHaveCount/);
+		await expect(page.getByTestId('puzzle-board')).toBeVisible();
+		await gameplayPage.expectPiecePlaced(0, 0, 0);
+		await expect(page.locator('[data-testid^="piece-slot-"]')).toHaveCount(3);
+	});
+
+	test('persistence reset: a fresh context starts with no canonical session key @smoke', async ({
+		gameplayPage,
+		page
+	}) => {
+		// Each test receives an isolated page, so this exercises a genuinely
+		// fresh context with no seeded storage.
+		await gameplayPage.gotoFixture({});
+		await expect(page.getByTestId('puzzle-board')).toBeVisible();
+
+		// A fresh in-memory session is not checkpointed until the first counted
+		// action, so the canonical progress key is absent right after load.
+		const stored = await page.evaluate((k) => localStorage.getItem(k), progressKey(FIXTURE_ID));
+		expect(stored).toBeNull();
+	});
+});
