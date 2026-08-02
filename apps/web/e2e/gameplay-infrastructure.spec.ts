@@ -6,14 +6,13 @@
 // integration, and persistence seed/reset. Supersedes the bare skips in
 // puzzle-solving.spec.ts, which now point here.
 //
-// Determinism: every completion test installs + pauses a Playwright clock
-// AFTER load (gotoFixture runs under the real clock so fetch/navigation are
-// unaffected). Installing the clock authoritatively resets performance.now()
-// to zero, then pauseAt pins it there, so the monotonic clock driving
-// elapsedActiveSeconds never accrues real wall-clock time. The timer test
-// advances it explicitly with runFor(). The sealed run id and result class
-// come from the frozen fixture config, so the recorded server payload is
-// byte-stable across runs.
+// Determinism: every completion test passes `clock: { startAt }` to
+// gotoFixture, which installs AND pauses Playwright's clock before navigation
+// (see gameplay-page.ts). performance.now() stays at zero until a test calls
+// page.clock.runFor(), so the monotonic clock driving elapsedActiveSeconds
+// never accrues real wall-clock time. The timer test advances it explicitly.
+// The sealed run id and result class come from the frozen fixture config, so
+// the recorded server payload is byte-stable across runs.
 //
 // Tags: @smoke — runs in the smoke gate (chromium-desktop + chromium-mobile).
 import type { Page } from '@playwright/test';
@@ -46,19 +45,6 @@ async function placePieces(gameplayPage: GameplayPage, ids: number[]): Promise<v
 		const { x, y } = COORDS[id]!;
 		await gameplayPage.selectAndPlaceWithKeyboard(id, x, y);
 	}
-}
-
-/**
- * Install + pause the clock at START_AT so elapsedActiveSeconds is fully
- * deterministic. Installing the clock (rather than pausing an already-live
- * one) authoritatively resets performance.now() to zero regardless of how much
- * real time elapsed during load, and pauseAt pins it there. The engine's
- * monotonic clock resolves performance.now() at call time, so the first
- * placement captures monotonicStart = 0.
- */
-async function freezeClock(page: Page): Promise<void> {
-	await page.clock.install({ time: START_AT });
-	await page.clock.pauseAt(START_AT);
 }
 
 /** Poll localStorage stats until totalCompletions reaches `expected`. */
@@ -102,11 +88,27 @@ test.describe('gameplay smoke @smoke', () => {
 		const runId = firstRunId();
 		await gameplayPage.gotoFixture({
 			persona: 'authenticated',
+			clock: { startAt: START_AT },
 			completion: { kind: 'success' }
 		});
-		await freezeClock(page);
 
-		await placePieces(gameplayPage, [0, 1, 2, 3]);
+		// One rejected attempt first: piece 0 belongs at (0,0); placing it at
+		// (1,0) is a wrong_slot rejection. The piece stays in the tray and the
+		// board gains nothing (all four slots still present).
+		await gameplayPage.selectAndPlaceWithKeyboard(0, 1, 0);
+		await expect(page.getByTestId('piece-slot-0')).toBeVisible();
+		await expect(page.locator('[data-testid^="piece-slot-"]')).toHaveCount(4);
+
+		// The engine RETAINS the selection after a rejection (so the user can
+		// try another cell), so place piece 0 by activating its correct
+		// drop-zone directly — re-selecting would toggle the piece off.
+		const home = gameplayPage.dropZone(0, 0);
+		await home.focus();
+		await home.press('Enter');
+		await gameplayPage.expectPiecePlaced(0, 0, 0);
+
+		// Solve the remaining pieces through the UI.
+		await placePieces(gameplayPage, [1, 2, 3]);
 
 		// completion_sealed opens the celebration modal.
 		await expect(page.getByTestId('celebration-modal')).toBeVisible();
@@ -141,9 +143,9 @@ test.describe('gameplay smoke @smoke', () => {
 	}) => {
 		await gameplayPage.gotoFixture({
 			persona: 'anonymous',
+			clock: { startAt: START_AT },
 			completion: { kind: 'http-failure', status: 401 }
 		});
-		await freezeClock(page);
 		// Chromium also logs a browser-level "Failed to load resource" for the
 		// 401 response (distinct from the page's own console.error, which the
 		// http-failure scenario already allowlists).
@@ -181,9 +183,9 @@ test.describe('gameplay smoke @smoke', () => {
 	}) => {
 		const runId = firstRunId();
 		await gameplayPage.gotoFixture({
-			persona: 'authenticated'
+			persona: 'authenticated',
+			clock: { startAt: START_AT }
 		});
-		await freezeClock(page);
 		gameplayPage.diagnostics.setCompletion(FIXTURE_ID, { kind: 'network-abort' });
 		// The driven 500 logs both the page's console.error (allowlisted via the
 		// network-abort scenario) and Chromium's "Failed to load resource".
@@ -231,9 +233,9 @@ test.describe('gameplay smoke @smoke', () => {
 		page
 	}) => {
 		await gameplayPage.gotoFixture({
+			clock: { startAt: START_AT },
 			completion: { kind: 'success' }
 		});
-		await freezeClock(page);
 
 		// The first counted action starts the timer (monotonicStart = 0).
 		await gameplayPage.selectAndPlaceWithKeyboard(0, COORDS[0]!.x, COORDS[0]!.y);
