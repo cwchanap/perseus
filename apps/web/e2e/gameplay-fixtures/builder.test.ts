@@ -36,6 +36,11 @@ function validRunIds(count: number): string[] {
 	return ids;
 }
 
+function validSeedRunId(): string {
+	// Distinct tail (0xfffe) so it never collides with validRunIds (0x1..count).
+	return '00000000-0000-4000-8000-00000000fffe';
+}
+
 function makeDefinition(
 	pieceCount: number,
 	aspectRatio: PuzzleAspectRatio,
@@ -52,6 +57,7 @@ function makeDefinition(
 		createdAt: 1700000000000,
 		hasReference: true,
 		runIds: validRunIds(4),
+		seedRunId: validSeedRunId(),
 		initialTrayOrder: identityPermutation(pieceCount),
 		restartTrayOrders: [identityPermutation(pieceCount)],
 		rotations: zeroRotations(pieceCount),
@@ -189,6 +195,25 @@ describe('buildFixture - run ids', () => {
 	it('keeps run ids unique and uuid-shaped', () => {
 		const fixture = buildFixture(makeDefinition(4, '1:1'));
 		expect(new Set(fixture.runIds).size).toBe(fixture.runIds.length);
+	});
+});
+
+describe('buildFixture - seed run id', () => {
+	it('rejects a malformed seedRunId', () => {
+		expect(() => buildFixture(makeDefinition(4, '1:1', { seedRunId: 'not-a-uuid' }))).toThrow(
+			/seedRunId/i
+		);
+	});
+
+	it('rejects a seedRunId that collides with a runId', () => {
+		const id = validRunIds(4)[0]!;
+		expect(() => buildFixture(makeDefinition(4, '1:1', { seedRunId: id }))).toThrow(/seedRunId/i);
+	});
+
+	it('accepts a valid, non-colliding seedRunId and exposes it on the fixture', () => {
+		const fixture = buildFixture(makeDefinition(4, '1:1'));
+		expect(fixture.seedRunId).toBe(validSeedRunId());
+		expect(fixture.runIds).not.toContain(fixture.seedRunId);
 	});
 });
 

@@ -4,11 +4,14 @@
 // BEFORE either backend sees it:
 //
 //   - known fixture id  → fulfill immediately (metadata JSON, padded piece SVG,
-//     reference/thumbnail SVG). The completion POST is the one exception: it
-//     calls `route.fallback()` so the ApiScenarioController (registered
-//     separately for `/complete`) owns the outcome. Any OTHER sub-path under a
-//     known id (e.g. a future API endpoint) is fulfilled with a 404, never
-//     passed through.
+//     reference/thumbnail SVG). The completion POST is fulfilled with a default
+//     200 success so it NEVER reaches the real backend, even when no
+//     ApiScenarioController is installed. When a controller IS installed
+//     (registered after the router), Playwright's reverse-registration-order
+//     precedence means the controller route runs first and owns the outcome;
+//     the router's default is only reached when no controller intercepts.
+//     Any OTHER sub-path under a known id (e.g. a future API endpoint) is
+//     fulfilled with a 404, never passed through.
 //   - unknown `e2e-*` id → fulfill 404 immediately. It NEVER calls `fallback()`,
 //     so a typo'd fixture id can never leak to the real API.
 //   - any other path → `route.fallback()` so ordinary traffic (gallery list,
@@ -18,9 +21,11 @@
 // fixture-router` header so tests can prove who answered a request.
 //
 // Playwright route precedence: routes run in REVERSE registration order, and
-// `route.fallback()` passes control to earlier-registered handlers. Because the
-// router falls back on the known-fixture `/complete` path, the
-// ApiScenarioController handles completion regardless of install order.
+// `route.fallback()` passes control to earlier-registered handlers. The router
+// is installed before the ApiScenarioController, so the controller (registered
+// later) runs first on `/complete` and owns the outcome when a scenario is
+// installed. The router's default completion fulfillment is the safety net that
+// guarantees total interception when no controller is present.
 import type { Page, Route } from '@playwright/test';
 import type { ReadyPuzzle } from '@perseus/types';
 import { FIXTURE_IDS, getFixture, type GameplayFixtureId } from './catalog';
@@ -96,9 +101,20 @@ export function createFixtureRouter(): FixtureRouter {
 
 		const fixture = getFixture(id as GameplayFixtureId);
 
-		// The completion POST is owned by the ApiScenarioController.
+		// The completion POST: fulfill with a default 200 success so it NEVER
+		// reaches the real backend, even when no ApiScenarioController is
+		// installed. When a controller IS installed (registered after the
+		// router), Playwright's reverse-registration-order precedence means the
+		// controller route runs first and owns the outcome; this default is only
+		// reached when no controller intercepts. This preserves the
+		// total-interception invariant: no e2e-* request can ever leak to the
+		// real backend.
 		if (pathname === `/api/puzzles/${id}/complete`) {
-			await route.fallback();
+			await route.fulfill({
+				status: 200,
+				json: { ok: true },
+				headers: markerHeaders()
+			});
 			return;
 		}
 

@@ -57,6 +57,12 @@ export interface GameplayFixtureDefinition {
 	expectedRows?: number;
 	expectedCols?: number;
 	runIds: readonly string[];
+	/**
+	 * Run ID for restored sessions (buildMinimalSeed). Must be a valid UUIDv4
+	 * and must NOT appear in `runIds`, so a Play Again on a restored session
+	 * never collides with the first factory allocation.
+	 */
+	seedRunId: string;
 	initialTrayOrder: readonly number[];
 	restartTrayOrders: readonly (readonly number[])[];
 	rotations: Readonly<Record<number, Rotation>>;
@@ -75,6 +81,7 @@ export interface GameplayFixture {
 	readonly hasReference: boolean;
 	readonly pieces: readonly PuzzlePiece[];
 	readonly runIds: readonly string[];
+	readonly seedRunId: string;
 	readonly initialTrayOrder: readonly number[];
 	readonly restartTrayOrders: readonly (readonly number[])[];
 	readonly rotations: Readonly<Record<number, Rotation>>;
@@ -117,6 +124,15 @@ function validateRunIds(runIds: readonly string[]): void {
 			fail(`runIds contains a duplicate: "${id}"`);
 		}
 		seen.add(id);
+	}
+}
+
+function validateSeedRunId(seedRunId: string, runIds: readonly string[]): void {
+	if (!UUID_V4_PATTERN.test(seedRunId)) {
+		fail(`seedRunId is not a valid UUIDv4: "${seedRunId}"`);
+	}
+	if (runIds.includes(seedRunId)) {
+		fail(`seedRunId "${seedRunId}" must not appear in runIds (would collide on Play Again)`);
 	}
 }
 
@@ -247,6 +263,7 @@ export function buildFixture(def: GameplayFixtureDefinition): GameplayFixture {
 	}
 
 	validateRunIds(def.runIds);
+	validateSeedRunId(def.seedRunId, def.runIds);
 	assertPermutation(def.initialTrayOrder, def.pieceCount, 'initialTrayOrder');
 	for (let i = 0; i < def.restartTrayOrders.length; i += 1) {
 		assertPermutation(def.restartTrayOrders[i], def.pieceCount, `restartTrayOrders[${i}]`);
@@ -277,6 +294,7 @@ export function buildFixture(def: GameplayFixtureDefinition): GameplayFixture {
 		hasReference: def.hasReference,
 		pieces,
 		runIds,
+		seedRunId: def.seedRunId,
 		initialTrayOrder,
 		restartTrayOrders,
 		rotations
