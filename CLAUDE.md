@@ -146,7 +146,21 @@ Pulumi TypeScript program for Cloudflare deployment. `packages/infrastructure/sr
 
 - API tests: files matching `src/**/*.test.ts` excluding `src/__tests__/puzzles.test.ts`; worker tests use `.worker.test.ts` naming convention
 - Web unit tests run in browser mode via Playwright/Chromium (headless); all tests require assertions (`requireAssertions: true`)
-- Web E2E tests: `apps/web/e2e/` directory with Playwright (`gallery.spec.ts`, `puzzle-solving.spec.ts`)
+- Web E2E tests: `apps/web/e2e/` directory with Playwright (`gallery.spec.ts`, `puzzle-solving.spec.ts`); deterministic gameplay harness documented in [`apps/web/e2e/README.md`](apps/web/e2e/README.md)
+
+## E2E Testing
+
+Deterministic gameplay E2E lives in [`apps/web/e2e/`](apps/web/e2e/README.md). Key commands (from repo root):
+
+- `bun run --cwd apps/web test:e2e` — default local run (chromium-desktop, excludes `@extended`)
+- `bun run --cwd apps/web test:e2e:smoke` — `@smoke` on chromium desktop + mobile (PR gate)
+- `bun run --cwd apps/web test:e2e:webkit` — `@webkit-critical` on webkit-mobile (PR gate)
+- `bun run --cwd apps/web test:e2e:extended` — `@extended` across all five projects (main only)
+- `bun run --cwd apps/web test:e2e:a11y` — `@a11y` axe-core scan (main only)
+- `bun run --cwd apps/web test:e2e:stability` — `@smoke` repeated 10× for flake detection
+- `bun run --cwd apps/web test:e2e:assert-production-bundle` — verify the prod bundle excludes harness sentinels
+
+New gameplay tests must import `test` and `expect` from `e2e/support/test`, which provides the `gameplayPage` fixture (atomic `gotoFixture()` init + automatic teardown). See the [harness README](apps/web/e2e/README.md) for fixtures, interception rules, the completion matrix, and extension rules.
 
 ## Operator Runbook
 
