@@ -50,6 +50,9 @@ jobs:
       - name: Run unit tests with coverage
         run: bun run test:unit
 
+      - name: Run web bun:test invariants
+        run: bun test apps/web/vite-plugins apps/web/scripts apps/web/e2e/gameplay-fixtures/builder.test.ts apps/web/e2e/gameplay-fixtures/catalog.test.ts apps/web/e2e/gameplay-fixtures/assets.test.ts
+
       - name: Upload LCOV reports for triage
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
