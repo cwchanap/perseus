@@ -30,6 +30,7 @@
 		"@perseus/types": "workspace:*"
 	},
 	"devDependencies": {
+		"@axe-core/playwright": "^4.12.1",
 		"@eslint/compat": "^1.4.0",
 		"@eslint/js": "^9.39.1",
 		"@playwright/test": "^1.57.0",
