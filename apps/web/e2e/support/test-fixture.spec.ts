@@ -15,7 +15,6 @@ import { buildMinimalSeed, progressKey } from '../gameplay-fixtures/persisted-st
 import { test } from './test';
 
 const FIXTURE_ID = 'e2e-square-4' as const;
-const API_ORIGIN = process.env.PUBLIC_API_BASE ?? 'http://localhost:3999';
 const STATS_KEY = `puzzle-stats-${FIXTURE_ID}`;
 
 /** Read the piece-slot ids in DOM order (the deterministic tray order). */
@@ -202,7 +201,3 @@ test.describe('gotoFixture lifecycle', () => {
 		expect(() => gameplayPage.assertNoUnexpectedFixtureRequests()).not.toThrow();
 	});
 });
-
-// Reference API_ORIGIN so an unset env is visible in output rather than silently
-// defaulted; the value is only used for documentation here.
-void API_ORIGIN;
