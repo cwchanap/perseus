@@ -117,6 +117,12 @@ export class GameplayPage {
 			);
 		}
 		this.loading = true;
+		// Set the one-shot loaded guard before attempting loadFixture: a
+		// failed attempt leaves routes/init scripts installed on the page, so
+		// a retry would stack duplicates. Marking loaded upfront blocks retries
+		// regardless of outcome, while still letting assertSettled()/assert
+		// NoUnexpectedFixtureRequests() run their post-load validation.
+		this.loaded = true;
 		try {
 			await this.loadFixture(options);
 		} finally {
@@ -242,8 +248,6 @@ export class GameplayPage {
 
 		// --- Stage 7: ready state -----------------------------------------------
 		await this.expectReady(fixture, options.expectedTrayCount);
-
-		this.loaded = true;
 	}
 
 	/**
