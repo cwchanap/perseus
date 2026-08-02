@@ -7,7 +7,7 @@
 //   1. fixture lookup        getFixture(id)
 //   2. route registration    fixture router (+ persona + completion scenario)
 //   3. cookie reset          context.clearCookies()
-//   4. optional clock        page.clock.install({ time }) — BEFORE navigation
+//   4. optional clock        page.clock.install({ time }) + pauseAt — BEFORE nav
 //   5. ONE atomic init script clears/seeds storage and freezes the config
 //   6. navigation            page.goto('/puzzle/<id>')
 //   7. ready state           puzzle-board visible + expected tray count
@@ -52,7 +52,9 @@ export interface GotoFixtureOptions {
 	/** Stats record to seed under `puzzle-stats-<id>`. Written verbatim. */
 	seedStats?: unknown;
 	/**
-	 * Clock control. `{ startAt }` installs Playwright's clock before navigation;
+	 * Clock control. `{ startAt }` installs AND pauses Playwright's clock at
+	 * `startAt` before navigation, so navigation does not advance it and
+	 * performance.now() stays at zero until a test calls page.clock.runFor();
 	 * `false` (or omitted) leaves the real wall clock in place.
 	 */
 	clock?: { startAt: Date } | false;
@@ -114,9 +116,15 @@ export class GameplayPage {
 		// --- Stage 3: cookie reset ----------------------------------------------
 		await this.page.context().clearCookies();
 
-		// --- Stage 4: optional clock install (BEFORE navigation) ----------------
+		// --- Stage 4: optional clock install + pause (BEFORE navigation) --------
+		// Pausing immediately after install freezes the clock at startAt so
+		// navigation (and everything up to the first user action) does not
+		// advance performance.now(). A test advances time explicitly via
+		// page.clock.runFor(). Navigation with a paused clock is safe: pages do
+		// not need advancing time to initialize, and fetch is clock-independent.
 		if (options.clock && typeof options.clock === 'object') {
 			await this.page.clock.install({ time: options.clock.startAt });
+			await this.page.clock.pauseAt(options.clock.startAt);
 		}
 
 		// --- Stage 5: ONE atomic init script ------------------------------------
