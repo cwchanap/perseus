@@ -16,7 +16,7 @@
 // scripts have an unspecified evaluation order, so seeding the session after
 // the app read it (or vice versa) would be non-deterministic. One script does
 // clear -> seed -> freeze-config, synchronously, before any app script runs.
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 import { expect } from '@playwright/test';
 import type { PersistedPuzzleSessionV1 } from '../../src/lib/services/gameplay/session/types';
 import { loadPersistedSession } from '../../src/lib/services/gameplay/session/persistence';
@@ -211,6 +211,219 @@ export class GameplayPage {
 		await expect(this.page.locator('[data-testid^="piece-slot-"]')).toHaveCount(fixture.pieceCount);
 	}
 
+	// --- Interaction helpers ---------------------------------------------------
+
+	/** Locate the tray piece source (slot) by piece ID. */
+	pieceSource(pieceId: number): Locator {
+		return this.page.getByTestId(`piece-slot-${pieceId}`);
+	}
+
+	/** Locate the board drop-zone at grid coordinates (x, y). */
+	dropZone(x: number, y: number): Locator {
+		return this.page.locator(`[data-testid="drop-zone"][data-x="${x}"][data-y="${y}"]`);
+	}
+
+	// --- Mouse -----------------------------------------------------------------
+
+	/**
+	 * Place a piece via mouse HTML5 drag-and-drop. Uses Playwright's dragTo()
+	 * as the primary path. On browsers where dragTo() does not produce a drop
+	 * event for HTML5 DnD (e.g. WebKit, mobile Chromium), falls back to
+	 * dispatching the DnD event sequence directly. On failure, attaches
+	 * source/target bounding boxes for diagnostics.
+	 */
+	async placeWithMouse(pieceId: number, x: number, y: number): Promise<void> {
+		const source = this.pieceSource(pieceId);
+		const target = this.dropZone(x, y);
+		await source.waitFor({ state: 'visible' });
+		await target.waitFor({ state: 'visible' });
+		const sourceBox = await source.boundingBox();
+		const targetBox = await target.boundingBox();
+
+		let placed = false;
+		try {
+			await source.dragTo(target);
+			// Verify the drop registered — on some browsers dragTo() does not
+			// produce a drop event for HTML5 DnD.
+			placed = await this.page
+				.getByTestId(`piece-slot-${pieceId}`)
+				.waitFor({ state: 'detached', timeout: 1500 })
+				.then(() => true)
+				.catch(() => false);
+		} catch {
+			// dragTo() threw — will try fallback.
+		}
+
+		if (!placed) {
+			try {
+				await this.dispatchDnDFallback(pieceId, x, y);
+			} catch (fallbackErr) {
+				throw this.enrichDragError(fallbackErr, sourceBox, targetBox);
+			}
+		}
+	}
+
+	// --- Keyboard --------------------------------------------------------------
+
+	/**
+	 * Select a piece via keyboard, then place it at (x, y). Verifies the piece
+	 * is selected before activating the target drop-zone.
+	 *
+	 * Defaults to Enter; pass 'Space' to test Space selection/placement.
+	 */
+	async selectAndPlaceWithKeyboard(
+		pieceId: number,
+		x: number,
+		y: number,
+		key: 'Enter' | 'Space' = 'Enter'
+	): Promise<void> {
+		const piece = this.pieceSource(pieceId).getByTestId('puzzle-piece');
+		await piece.focus();
+		await piece.press(key);
+		// Verify selection before activating the target.
+		await expect(piece).toHaveAttribute('data-selected', 'true');
+		const target = this.dropZone(x, y);
+		await target.focus();
+		await target.press(key);
+	}
+
+	// --- Touch -----------------------------------------------------------------
+
+	/** Tap a piece in the tray (basic touch interaction). */
+	async tapPiece(pieceId: number): Promise<void> {
+		await this.pieceSource(pieceId).tap();
+	}
+
+	/**
+	 * Drag a piece to (x, y) using dispatched TouchEvents. The puzzle's touch
+	 * handler listens for touchstart on the piece element and touchmove/touchend
+	 * on window; this method dispatches that exact sequence from locator
+	 * coordinates so the handler's synthetic-DragEvent drop path is exercised.
+	 */
+	async dragWithTouch(pieceId: number, x: number, y: number): Promise<void> {
+		const source = this.pieceSource(pieceId);
+		const target = this.dropZone(x, y);
+		await source.waitFor({ state: 'visible' });
+		await target.waitFor({ state: 'visible' });
+		const sourceBox = await source.boundingBox();
+		const targetBox = await target.boundingBox();
+		if (!sourceBox || !targetBox) {
+			throw new Error(
+				`dragWithTouch: missing bounds — source=${JSON.stringify(sourceBox)}, target=${JSON.stringify(targetBox)}`
+			);
+		}
+		// Dispatched touch events trigger Svelte 5's delegated ontouchstart,
+		// which Chrome treats as passive at the document level. The handler's
+		// preventDefault logs a benign console warning; allowlist it so the
+		// diagnostics teardown does not mistake it for a regression.
+		this.diagnostics.expectConsoleError('Unable to preventDefault');
+		await this.page.evaluate(
+			(data: { pieceId: number; sx: number; sy: number; tx: number; ty: number }) => {
+				const { pieceId, sx, sy, tx, ty } = data;
+				const pieceEl = document.querySelector(
+					`[data-testid="piece-slot-${pieceId}"] [data-testid="puzzle-piece"]`
+				) as HTMLElement | null;
+				if (!pieceEl) {
+					throw new Error(`dragWithTouch: piece element not found for piece ${pieceId}`);
+				}
+
+				const makeTouch = (cx: number, cy: number): Touch =>
+					new Touch({
+						identifier: 0,
+						target: pieceEl,
+						clientX: cx,
+						clientY: cy,
+						pageX: cx,
+						pageY: cy,
+						screenX: cx,
+						screenY: cy,
+						radiusX: 1,
+						radiusY: 1,
+						force: 1
+					});
+
+				const dispatch = (
+					type: 'touchstart' | 'touchmove' | 'touchend',
+					target: Element | Window,
+					cx: number,
+					cy: number
+				): void => {
+					const touch = makeTouch(cx, cy);
+					const ended = type === 'touchend';
+					const ev = new TouchEvent(type, {
+						touches: ended ? [] : [touch],
+						targetTouches: ended ? [] : [touch],
+						changedTouches: [touch],
+						bubbles: true,
+						cancelable: true
+					});
+					target.dispatchEvent(ev);
+				};
+
+				// 1. touchstart on the piece element → starts the touch drag.
+				dispatch('touchstart', pieceEl, sx, sy);
+				// 2. touchmove via window listener → tracks + highlights drop zone.
+				const midX = sx + (tx - sx) / 2;
+				const midY = sy + (ty - sy) / 2;
+				dispatch('touchmove', window, midX, midY);
+				dispatch('touchmove', window, tx, ty);
+				// 3. touchend via window listener → synthesizes drop on the zone.
+				dispatch('touchend', window, tx, ty);
+			},
+			{
+				pieceId,
+				sx: sourceBox.x + sourceBox.width / 2,
+				sy: sourceBox.y + sourceBox.height / 2,
+				tx: targetBox.x + targetBox.width / 2,
+				ty: targetBox.y + targetBox.height / 2
+			}
+		);
+	}
+
+	// --- Placement assertions --------------------------------------------------
+
+	/**
+	 * Assert a piece is placed at (x, y): the tray slot is gone and the
+	 * drop-zone shows the placed-piece image.
+	 */
+	async expectPiecePlaced(pieceId: number, x: number, y: number): Promise<void> {
+		await expect(this.page.getByTestId(`piece-slot-${pieceId}`)).toHaveCount(0);
+		await expect(this.dropZone(x, y).locator('img[alt="Placed piece"]')).toBeVisible();
+	}
+
+	// --- Dialog base -----------------------------------------------------------
+
+	/** Wait for a dialog with the given accessible name to appear. */
+	async waitForDialog(name: string | RegExp): Promise<Locator> {
+		const dialog = this.page.getByRole('dialog', { name });
+		await expect(dialog).toBeVisible();
+		return dialog;
+	}
+
+	/** Assert the dialog's initial focus landed on the target element. */
+	async expectDialogInitialFocus(dialog: Locator, target: Locator): Promise<void> {
+		await expect(target).toBeFocused();
+	}
+
+	/** Click a visible action button inside the dialog by accessible name. */
+	async activateDialogAction(dialog: Locator, name: string | RegExp): Promise<void> {
+		await dialog.getByRole('button', { name }).click();
+	}
+
+	/** Dismiss the dialog via Escape or an accessible visible close button. */
+	async dismissDialog(dialog: Locator, method: 'escape' | 'visible-close-button'): Promise<void> {
+		if (method === 'escape') {
+			// Ensure focus is inside the dialog so the Escape keydown propagates
+			// through the dialog container's delegated Escape handler.
+			await dialog.getByRole('button').first().focus();
+			await this.page.keyboard.press('Escape');
+		} else {
+			await dialog.getByRole('button', { name: /close/i }).click();
+		}
+	}
+
+	// --- Lifecycle -------------------------------------------------------------
+
 	/**
 	 * Assert no pending deferred routes / unreleased API scenarios remain, and
 	 * that the page experienced no unexpected console/page/request errors.
@@ -229,6 +442,48 @@ export class GameplayPage {
 
 	dispose(): void {
 		this.diagnostics.dispose();
+	}
+
+	/** Wrap a drag error with source/target bounding boxes for diagnostics. */
+	private enrichDragError(
+		err: unknown,
+		sourceBox: { x: number; y: number; width: number; height: number } | null,
+		targetBox: { x: number; y: number; width: number; height: number } | null
+	): Error {
+		const msg = err instanceof Error ? err.message : String(err);
+		return new Error(
+			`placeWithMouse failed: ${msg}\n` +
+				`  source bounds: ${JSON.stringify(sourceBox)}\n` +
+				`  target bounds: ${JSON.stringify(targetBox)}`
+		);
+	}
+
+	/**
+	 * Dispatch the HTML5 DnD event sequence (dragover + drop) directly on the
+	 * target drop-zone. Used when Playwright's dragTo() does not produce a drop
+	 * event (e.g. on WebKit or mobile Chromium).
+	 */
+	private async dispatchDnDFallback(pieceId: number, x: number, y: number): Promise<void> {
+		await this.dropZone(x, y).evaluate((target, pid) => {
+			const dt = new DataTransfer();
+			dt.setData('text/plain', String(pid));
+			dt.dropEffect = 'move';
+			dt.effectAllowed = 'move';
+			target.dispatchEvent(
+				new DragEvent('dragover', {
+					bubbles: true,
+					cancelable: true,
+					dataTransfer: dt
+				})
+			);
+			target.dispatchEvent(
+				new DragEvent('drop', {
+					bubbles: true,
+					cancelable: true,
+					dataTransfer: dt
+				})
+			);
+		}, pieceId);
 	}
 
 	/**
