@@ -143,6 +143,12 @@ describe('catalog - tray permutations and rotations', () => {
 			for (const runId of fixture.runIds) expect(UUID_V4.test(runId)).toBe(true);
 			expect(new Set(fixture.runIds).size).toBe(fixture.runIds.length);
 		});
+
+		it(`${id} seedRunId is a valid UUIDv4 not in runIds`, () => {
+			const fixture = getFixture(id);
+			expect(UUID_V4.test(fixture.seedRunId)).toBe(true);
+			expect(fixture.runIds).not.toContain(fixture.seedRunId);
+		});
 	}
 });
 
@@ -170,13 +176,16 @@ describe('catalog - runtime config projection', () => {
 });
 
 describe('catalog - run ids are globally unique across fixtures', () => {
-	it('has no cross-fixture run-id collisions', () => {
+	it('has no cross-fixture run-id collisions (including seedRunIds)', () => {
 		const all = new Set<string>();
 		for (const id of FIXTURE_IDS) {
 			for (const runId of getFixture(id).runIds) {
 				expect(all.has(runId)).toBe(false);
 				all.add(runId);
 			}
+			const seed = getFixture(id).seedRunId;
+			expect(all.has(seed)).toBe(false);
+			all.add(seed);
 		}
 	});
 });

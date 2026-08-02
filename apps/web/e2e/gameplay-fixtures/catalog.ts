@@ -49,6 +49,19 @@ function runIdsFor(fixtureIndex: number, count: number): string[] {
 	return ids;
 }
 
+/**
+ * Deterministic UUIDv4-shaped seed run ID for restored sessions. Uses a
+ * distinct tail range (0xfffe offset) so it never collides with any id in
+ * `runIdsFor` (which uses 0..count-1). This is the run ID `buildMinimalSeed`
+ * plants in a restored session — separate from the allocation pool so Play
+ * Again's first `runIdFactory.create()` returns `runIds[0]`, not the seed.
+ */
+function seedRunIdFor(fixtureIndex: number): string {
+	const seq = (fixtureIndex + 1) * 0x10000 + 0xfffe;
+	const tail = seq.toString(16).padStart(12, '0');
+	return `00000000-0000-4000-8000-${tail}`;
+}
+
 /** Deterministic Fisher-Yates shuffle driven by a fixed-seed LCG. */
 function seededShuffle(seed: number, length: number): number[] {
 	const arr = Array.from({ length }, (_, i) => i);
@@ -79,6 +92,7 @@ const square4 = buildFixture({
 	createdAt: 1710000000000,
 	hasReference: true,
 	runIds: runIdsFor(0, RUN_ID_COUNT),
+	seedRunId: seedRunIdFor(0),
 	initialTrayOrder: [3, 1, 0, 2],
 	restartTrayOrders: [
 		[1, 2, 3, 0],
@@ -97,6 +111,7 @@ const landscape12 = buildFixture({
 	createdAt: 1710000001000,
 	hasReference: true,
 	runIds: runIdsFor(1, RUN_ID_COUNT),
+	seedRunId: seedRunIdFor(1),
 	initialTrayOrder: seededShuffle(0x1a2b3c, 12),
 	restartTrayOrders: [seededShuffle(0x4d5e6f, 12), seededShuffle(0x7a8b9c, 12)],
 	rotations: allZeroRotations(12)
@@ -112,6 +127,7 @@ const portrait12 = buildFixture({
 	createdAt: 1710000002000,
 	hasReference: true,
 	runIds: runIdsFor(2, RUN_ID_COUNT),
+	seedRunId: seedRunIdFor(2),
 	initialTrayOrder: seededShuffle(0x112233, 12),
 	restartTrayOrders: [seededShuffle(0x445566, 12), seededShuffle(0x778899, 12)],
 	rotations: allZeroRotations(12)
@@ -127,6 +143,7 @@ const square100 = buildFixture({
 	createdAt: 1710000003000,
 	hasReference: true,
 	runIds: runIdsFor(3, RUN_ID_COUNT),
+	seedRunId: seedRunIdFor(3),
 	initialTrayOrder: seededShuffle(0xabcdef, 100),
 	restartTrayOrders: [seededShuffle(0xfedcba, 100)],
 	rotations: allZeroRotations(100)
@@ -142,6 +159,7 @@ const square225 = buildFixture({
 	createdAt: 1710000004000,
 	hasReference: true,
 	runIds: runIdsFor(4, RUN_ID_COUNT),
+	seedRunId: seedRunIdFor(4),
 	initialTrayOrder: seededShuffle(0x13579b, 225),
 	restartTrayOrders: [seededShuffle(0x97531b, 225)],
 	rotations: allZeroRotations(225)

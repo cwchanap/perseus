@@ -172,7 +172,7 @@ test.describe('gameplay smoke @smoke', () => {
 	//
 	// The ApiScenarioController binds one immutable outcome per install, so a
 	// failure-then-success flow is driven by a stateful route registered after
-	// load (it takes precedence over the fixture router's /complete fallback).
+	// load (it takes precedence over the fixture router's /complete default).
 	// The completion diagnostics are declared as network-abort, the one scenario
 	// whose status is tolerated, so both the driven 500 and the retry's 200 pass
 	// teardown and the page's "Failed to submit" console.error is allowlisted.
@@ -295,5 +295,53 @@ test.describe('gameplay smoke @smoke', () => {
 		// action, so the canonical progress key is absent right after load.
 		const stored = await page.evaluate((k) => localStorage.getItem(k), progressKey(FIXTURE_ID));
 		expect(stored).toBeNull();
+	});
+
+	test('restored completed session: Play Again restarts without a run-id collision @smoke', async ({
+		gameplayPage,
+		page
+	}) => {
+		// Build a completed session seed using the fixture's seedRunId (which
+		// is NOT in runIds). Before the seedRunId fix, buildMinimalSeed used
+		// runIds[0], so Play Again's first runIdFactory.create() returned the
+		// same id and the session engine threw a collision error.
+		const fixture = getFixture(FIXTURE_ID);
+		const seeded = buildMinimalSeed(FIXTURE_ID);
+		seeded.lifecycle = 'completed';
+		seeded.placedPieces = [
+			{ pieceId: 0, x: 0, y: 0 },
+			{ pieceId: 1, x: 1, y: 0 },
+			{ pieceId: 2, x: 0, y: 1 },
+			{ pieceId: 3, x: 1, y: 1 }
+		];
+		seeded.timerStarted = true;
+		seeded.elapsedActiveSeconds = 5;
+		seeded.hasUserActivity = true;
+		seeded.sealedCompletion = {
+			runId: fixture.seedRunId,
+			resultClass: 'standard_timed',
+			timingQuality: 'known',
+			elapsedActiveSeconds: 5,
+			completedAt: 1710000005000,
+			localStats: { status: 'succeeded' },
+			serverSubmission: { status: 'succeeded' }
+		};
+
+		await gameplayPage.gotoFixture({
+			seedSession: seeded,
+			expectedTrayCount: 0,
+			completion: { kind: 'success' }
+		});
+
+		// A restored completed session opens the celebration modal.
+		const dialog = await gameplayPage.waitForDialog(/E2E SQUARE 4/i);
+
+		// Play Again restarts the session. The first runIdFactory.create()
+		// returns runIds[0] — distinct from seedRunId — so no collision.
+		await gameplayPage.activateDialogAction(dialog, 'PLAY AGAIN');
+		await expect(page.getByTestId('celebration-modal')).not.toBeVisible();
+
+		// The board reset: a full tray of 4 pieces is visible again.
+		await expect(page.locator('[data-testid^="piece-slot-"]')).toHaveCount(4);
 	});
 });

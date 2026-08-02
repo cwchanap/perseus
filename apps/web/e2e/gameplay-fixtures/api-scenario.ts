@@ -12,6 +12,14 @@
 // to tear down while any route is still held — surfacing its URL and body so a
 // forgotten release is obvious.
 import type { Page, Route } from '@playwright/test';
+import { FIXTURE_ROUTER_HEADER } from './fixture-router';
+
+/** Provenance value stamped on every scenario-fulfilled completion response. */
+export const SCENARIO_SOURCE = 'api-scenario';
+
+function scenarioHeaders(): Record<string, string> {
+	return { [FIXTURE_ROUTER_HEADER]: SCENARIO_SOURCE };
+}
 
 /**
  * Bounded union of completion outcomes Task 7 can drive. Each kind maps to a
@@ -113,7 +121,11 @@ export function createApiScenarioController(): ApiScenarioController {
 			released = true;
 			const held = pending.splice(0);
 			for (const entry of held) {
-				await entry.route.fulfill({ status: 200, json: { ok: true } });
+				await entry.route.fulfill({
+					status: 200,
+					json: { ok: true },
+					headers: scenarioHeaders()
+				});
 			}
 		},
 		async cancel() {
@@ -128,12 +140,16 @@ export function createApiScenarioController(): ApiScenarioController {
 	async function applyScenario(route: Route, scenario: CompletionScenario): Promise<void> {
 		switch (scenario.kind) {
 			case 'success': {
-				await route.fulfill({ status: 200, json: { ok: true } });
+				await route.fulfill({ status: 200, json: { ok: true }, headers: scenarioHeaders() });
 				return;
 			}
 			case 'http-failure': {
 				const status = scenario.status;
-				await route.fulfill({ status, json: { error: 'http_failure', status } });
+				await route.fulfill({
+					status,
+					json: { error: 'http_failure', status },
+					headers: scenarioHeaders()
+				});
 				return;
 			}
 			case 'network-abort': {

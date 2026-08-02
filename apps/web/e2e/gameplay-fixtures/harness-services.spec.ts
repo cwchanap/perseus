@@ -16,6 +16,7 @@ import { createFixtureRouter, fixtureToMetadata, FIXTURE_ROUTER_HEADER } from '.
 import { createAuthPersona } from './auth-persona';
 import {
 	createApiScenarioController,
+	SCENARIO_SOURCE,
 	type CompletionScenario,
 	type RecordedRequest
 } from './api-scenario';
@@ -142,6 +143,29 @@ test.describe('FixtureRouter', () => {
 		expect(res.headers[FIXTURE_ROUTER_HEADER]).toBeUndefined();
 		expect(res.status).toBe(200);
 	});
+
+	test('intercepts POST /complete with a default 200 when no scenario controller is installed (no backend hit)', async ({
+		page
+	}) => {
+		const router = createFixtureRouter();
+		await router.install(page);
+		await gotoApiOrigin(page);
+
+		// POST /complete with ONLY the fixture router installed — no
+		// ApiScenarioController. The total-interception invariant requires the
+		// router to answer this itself so the request can never reach the real
+		// backend and perform a real side effect.
+		const res = await fetchApi(page, `/api/puzzles/${FIXTURE_ID}/complete`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ runId: 'test-run-id' })
+		});
+
+		expect(res.status).toBe(200);
+		// The marker header proves the fixture router answered, not the backend.
+		expect(res.headers[FIXTURE_ROUTER_HEADER]).toBe('fixture-router');
+		expect(JSON.parse(res.body)).toEqual({ ok: true });
+	});
 });
 
 // --- AuthPersona -------------------------------------------------------------
@@ -188,7 +212,9 @@ const COMPLETION_BODY = {
 	elapsedActiveSeconds: 5
 };
 
-async function postCompletion(page: Page): Promise<{ status: number; ok: boolean; body: string }> {
+async function postCompletion(
+	page: Page
+): Promise<{ status: number; ok: boolean; headers: Record<string, string>; body: string }> {
 	return fetchApi(page, `/api/puzzles/${FIXTURE_ID}/complete`, {
 		method: 'POST',
 		headers: { 'content-type': 'application/json' },
@@ -208,6 +234,10 @@ test.describe('ApiScenarioController', () => {
 		const res = await postCompletion(page);
 
 		expect(res.status).toBe(200);
+		// The scenario controller stamps its own provenance header so tests
+		// can distinguish a scenario-fulfilled completion from the router's
+		// default or a real-backend leak.
+		expect(res.headers[FIXTURE_ROUTER_HEADER]).toBe(SCENARIO_SOURCE);
 		expect(controller.recordedRequests).toHaveLength(1);
 		const recorded: RecordedRequest = controller.recordedRequests[0]!;
 		expect(recorded.method).toBe('POST');
@@ -281,6 +311,7 @@ test.describe('ApiScenarioController', () => {
 		await handle.release();
 		const res = await pending;
 		expect(res.status).toBe(200);
+		expect(res.headers[FIXTURE_ROUTER_HEADER]).toBe(SCENARIO_SOURCE);
 
 		expect(handle.pendingCount).toBe(0);
 		controller.assertClean();

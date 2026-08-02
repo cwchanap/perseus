@@ -124,9 +124,14 @@ export function createPageDiagnostics(page: Page): PageDiagnostics {
 
 		if (isCompletion) {
 			// The completion path is owned by the ApiScenarioController when a
-			// scenario is installed. Without one, any completion response leaked
-			// to the real backend (a real side effect) — flag it.
+			// scenario is installed, or by the fixture router's default 200 when
+			// no controller is present. A response from either (identified by the
+			// provenance header) is never a leak. Without both a scenario AND the
+			// router marker, the completion reached the real backend — flag it.
 			if (!expectedCompletion) {
+				if (marker === 'fixture-router' || marker === 'api-scenario') {
+					return;
+				}
 				leakedFixtureRequests.push({ url: response.url(), method, status });
 				return;
 			}

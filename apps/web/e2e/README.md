@@ -108,28 +108,31 @@ The fixture router (`e2e/gameplay-fixtures/fixture-router.ts`) intercepts
 backend sees it. The invariant is total: an `e2e-*` request can never fall
 through to the real API.
 
-| Request shape                                  | Router behavior                                                                                                    |
-| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `GET /api/puzzles/<known-id>`                  | Fulfill with the `ReadyPuzzle` metadata JSON.                                                                      |
-| `GET /api/puzzles/<known-id>/pieces/<n>/image` | Fulfill with a padded piece SVG. 404 if `n` is out of range.                                                       |
-| `GET /api/puzzles/<known-id>/reference`        | Fulfill with the reference SVG.                                                                                    |
-| `GET /api/puzzles/<known-id>/thumbnail`        | Fulfill with the thumbnail SVG.                                                                                    |
-| `POST /api/puzzles/<known-id>/complete`        | `route.fallback()` — the `ApiScenarioController` (registered separately) owns the outcome.                         |
-| Any **other** sub-path under a known id        | Fulfill **404** (`unknown_fixture_path`). Never passed through.                                                    |
-| `/api/puzzles/e2e-<unknown-id>` (typo)         | Fulfill **404** (`unknown_e2e_fixture`) immediately. Never `fallback()`.                                           |
-| Any non-`e2e-*` path                           | `route.fallback()` — ordinary traffic (gallery list, auth session, real puzzle ids) reaches the backend untouched. |
+| Request shape                                  | Router behavior                                                                                                                                                                             |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/puzzles/<known-id>`                  | Fulfill with the `ReadyPuzzle` metadata JSON.                                                                                                                                               |
+| `GET /api/puzzles/<known-id>/pieces/<n>/image` | Fulfill with a padded piece SVG. 404 if `n` is out of range.                                                                                                                                |
+| `GET /api/puzzles/<known-id>/reference`        | Fulfill with the reference SVG.                                                                                                                                                             |
+| `GET /api/puzzles/<known-id>/thumbnail`        | Fulfill with the thumbnail SVG.                                                                                                                                                             |
+| `POST /api/puzzles/<known-id>/complete`        | Fulfill **200** `{ ok: true }` by default. When an `ApiScenarioController` is installed (registered after the router), it takes precedence and owns the outcome. Never reaches the backend. |
+| Any **other** sub-path under a known id        | Fulfill **404** (`unknown_fixture_path`). Never passed through.                                                                                                                             |
+| `/api/puzzles/e2e-<unknown-id>` (typo)         | Fulfill **404** (`unknown_e2e_fixture`) immediately. Never `fallback()`.                                                                                                                    |
+| Any non-`e2e-*` path                           | `route.fallback()` — ordinary traffic (gallery list, auth session, real puzzle ids) reaches the backend untouched.                                                                          |
 
 Every router-fulfilled response carries the `x-perseus-e2e-source:
-fixture-router` header so tests can prove who answered a request. The page
-diagnostics layer (`e2e/support/diagnostics.ts`) records any `e2e-*` response
-that reaches the real backend (no marker, not a completion path) as a **leak**
-and fails teardown — so a future API path added under `/api/puzzles/:id/…` fails
-loudly instead of silently reaching production.
+fixture-router` header so tests can prove who answered a request. The
+`ApiScenarioController` stamps the same header with value `api-scenario` on its
+responses. The page diagnostics layer (`e2e/support/diagnostics.ts`) records
+any `e2e-*` response that reaches the real backend (no marker, not a completion
+path) as a **leak** and fails teardown — so a future API path added under
+`/api/puzzles/:id/…` fails loudly instead of silently reaching production.
 
 Playwright route precedence: routes run in **reverse** registration order, and
-`route.fallback()` passes control to earlier-registered handlers. Because the
-router falls back on the known-fixture `/complete` path, the
-`ApiScenarioController` handles completion regardless of install order.
+`route.fallback()` passes control to earlier-registered handlers. The router is
+installed before the `ApiScenarioController`, so the controller (registered
+later) runs first on `/complete` and owns the outcome when a scenario is
+installed. The router's default 200 completion fulfillment is the safety net
+that guarantees total interception when no controller is present.
 
 ---
 

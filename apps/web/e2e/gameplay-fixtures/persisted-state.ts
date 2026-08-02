@@ -66,7 +66,7 @@ export function buildMinimalSeed(fixtureId: GameplayFixtureId): PersistedPuzzleS
 		source: 'api',
 		lifecycle: 'active',
 		mode: 'timed',
-		runId: fixture.runIds[0]!,
+		runId: fixture.seedRunId,
 		origin: 'new',
 		elapsedActiveSeconds: 0,
 		timingQuality: 'known',
