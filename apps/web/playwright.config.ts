@@ -45,19 +45,41 @@ export default defineConfig({
 		},
 		{
 			name: 'chromium-mobile',
-			use: { ...devices['Desktop Chrome'], viewport: { width: 390, height: 844 } }
+			// Touch + mobile viewport semantics: the harness touch-drag and
+			// touch-layout paths only render under a touch-capable context.
+			use: {
+				...devices['Desktop Chrome'],
+				viewport: { width: 390, height: 844 },
+				hasTouch: true,
+				isMobile: true
+			}
 		},
 		{
 			name: 'chromium-tablet',
-			use: { ...devices['Desktop Chrome'], viewport: { width: 768, height: 1024 } }
+			use: {
+				...devices['Desktop Chrome'],
+				viewport: { width: 768, height: 1024 },
+				hasTouch: true,
+				isMobile: true
+			}
 		},
 		{
 			name: 'webkit-mobile',
-			use: { ...devices['Desktop Safari'], viewport: { width: 390, height: 844 } }
+			use: {
+				...devices['Desktop Safari'],
+				viewport: { width: 390, height: 844 },
+				hasTouch: true,
+				isMobile: true
+			}
 		},
 		{
 			name: 'webkit-tablet',
-			use: { ...devices['Desktop Safari'], viewport: { width: 768, height: 1024 } }
+			use: {
+				...devices['Desktop Safari'],
+				viewport: { width: 768, height: 1024 },
+				hasTouch: true,
+				isMobile: true
+			}
 		}
 	]
 });

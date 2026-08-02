@@ -411,9 +411,9 @@ bun run --cwd apps/web test:install-browsers:dry-run
 ```
 
 This prints the exact Chromium and WebKit shells `test:install-browsers` would
-install (`--dry-run --only-shell chromium webkit`). The harness drives only the
-"shell" builds (no headless shell), matching the projects in
-`playwright.config.ts`.
+install (`--dry-run --only-shell chromium webkit`). The `--only-shell` flag
+resolves `chromium` to the `chromium-headless-shell` build — no full Chromium
+browser is installed — matching the projects in `playwright.config.ts`.
 
 To list which tests a given script will execute, dry-run Playwright itself:
 

@@ -63,6 +63,20 @@ describe('assertNoE2EHarness', () => {
 		}
 	});
 
+	it('rejects when a nested directory is unreadable, naming the directory', async () => {
+		const locked = join(dir, 'locked');
+		await mkdir(locked);
+		await writeFile(join(locked, 'chunk.js'), 'export const x = 1;\n', 'utf8');
+		await chmod(locked, 0o000);
+		try {
+			const message = await rejectionMessage(dir);
+			expect(message).toContain('unreadable directory');
+			expect(message).toContain('locked');
+		} finally {
+			await chmod(locked, 0o755);
+		}
+	});
+
 	it('rejects when total bytes scanned is zero (empty js file)', async () => {
 		await writeNested('empty.js', '');
 		await expect(assertNoE2EHarness(dir)).rejects.toThrow();

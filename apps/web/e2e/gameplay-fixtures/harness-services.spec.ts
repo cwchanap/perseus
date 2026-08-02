@@ -137,8 +137,10 @@ test.describe('FixtureRouter', () => {
 		// The gallery list path has no e2e id, so the router must not match it.
 		const res = await fetchApi(page, `/api/puzzles`);
 
-		// Whatever the real backend answered, the router did NOT fulfill it.
+		// Whatever the real backend answered, the router did NOT fulfill it —
+		// and the backend must have answered, not errored.
 		expect(res.headers[FIXTURE_ROUTER_HEADER]).toBeUndefined();
+		expect(res.status).toBe(200);
 	});
 });
 

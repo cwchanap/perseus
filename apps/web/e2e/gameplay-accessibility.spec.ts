@@ -91,10 +91,7 @@ test.describe('accessibility @a11y', () => {
 		});
 
 		// Solve all four pieces via keyboard for cross-browser reliability.
-		await gameplayPage.selectAndPlaceWithKeyboard(0, 0, 0);
-		await gameplayPage.selectAndPlaceWithKeyboard(1, 1, 0);
-		await gameplayPage.selectAndPlaceWithKeyboard(2, 0, 1);
-		await gameplayPage.selectAndPlaceWithKeyboard(3, 1, 1);
+		await gameplayPage.solveFixture();
 
 		const dialog = page.getByRole('dialog');
 		await expect(dialog).toBeVisible();

@@ -159,6 +159,19 @@ export function createApiScenarioController(): ApiScenarioController {
 		}
 	}
 
+	function assertClean() {
+		if (pending.length > 0) {
+			const details = pending
+				.map(
+					(p, i) => `  [#${i + 1}] ${p.method} ${p.url}` + (p.bodyText ? ` body=${p.bodyText}` : '')
+				)
+				.join('\n');
+			throw new Error(
+				`ApiScenarioController teardown: ${pending.length} deferred route(s) still pending:\n${details}`
+			);
+		}
+	}
+
 	return {
 		async install(page: Page, fixtureId: string, scenario: CompletionScenario) {
 			const pattern = new RegExp(`/api/puzzles/${escapeRegExp(fixtureId)}/complete$`);
@@ -175,20 +188,13 @@ export function createApiScenarioController(): ApiScenarioController {
 			return pending.map(({ url, method, bodyText }) => ({ url, method, bodyText }));
 		},
 		assertClean() {
-			if (pending.length > 0) {
-				const details = pending
-					.map(
-						(p, i) =>
-							`  [#${i + 1}] ${p.method} ${p.url}` + (p.bodyText ? ` body=${p.bodyText}` : '')
-					)
-					.join('\n');
-				throw new Error(
-					`ApiScenarioController teardown: ${pending.length} deferred route(s) still pending:\n${details}`
-				);
-			}
+			assertClean();
 		},
+		// Call the local function rather than this.assertClean(): dispose() is
+		// typically destructured off the controller before the call, which would
+		// make `this` undefined and crash before the pending-route check runs.
 		dispose() {
-			this.assertClean();
+			assertClean();
 		}
 	};
 }

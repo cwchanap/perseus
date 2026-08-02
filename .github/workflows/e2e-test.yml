@@ -55,7 +55,12 @@ jobs:
         run: bun install
 
       - name: Install Playwright browsers
-        run: bun run --cwd apps/web test:install-browsers
+        run: |
+          # Validate the install contract (chromium-headless-shell + webkit, no
+          # full chromium) BEFORE downloading anything; a violated contract
+          # fails the job here, in seconds.
+          bun run --cwd apps/web test:install-browsers:dry-run
+          bun run --cwd apps/web test:install-browsers
 
       - name: Run smoke E2E tests
         run: bun run --cwd apps/web test:e2e:smoke -- --retries=0
@@ -91,7 +96,12 @@ jobs:
         run: bun install
 
       - name: Install Playwright browsers
-        run: bun run --cwd apps/web test:install-browsers
+        run: |
+          # Validate the install contract (chromium-headless-shell + webkit, no
+          # full chromium) BEFORE downloading anything; a violated contract
+          # fails the job here, in seconds.
+          bun run --cwd apps/web test:install-browsers:dry-run
+          bun run --cwd apps/web test:install-browsers
 
       - name: Run WebKit critical E2E tests
         run: bun run --cwd apps/web test:e2e:webkit -- --retries=0
@@ -127,7 +137,12 @@ jobs:
         run: bun install
 
       - name: Install Playwright browsers
-        run: bun run --cwd apps/web test:install-browsers
+        run: |
+          # Validate the install contract (chromium-headless-shell + webkit, no
+          # full chromium) BEFORE downloading anything; a violated contract
+          # fails the job here, in seconds.
+          bun run --cwd apps/web test:install-browsers:dry-run
+          bun run --cwd apps/web test:install-browsers
 
       - name: Run extended E2E tests
         run: bun run --cwd apps/web test:e2e:extended -- --retries=0

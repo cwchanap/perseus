@@ -256,6 +256,14 @@ export function buildFixture(def: GameplayFixtureDefinition): GameplayFixture {
 	const pieces = buildPieces(def, rows, cols);
 	assertEdgeInvariants(pieces, rows, cols);
 
+	// Copy the caller's arrays before the fixture is frozen: deepFreeze is
+	// destructive, so freezing the fixture must not freeze the definition's
+	// arrays (a caller may reuse them across fixtures or keep building).
+	const runIds = [...def.runIds];
+	const initialTrayOrder = [...def.initialTrayOrder];
+	const restartTrayOrders = def.restartTrayOrders.map((order) => [...order]);
+	const rotations = { ...def.rotations };
+
 	const fixture: GameplayFixture = {
 		fixtureId: def.fixtureId,
 		name: def.name,
@@ -268,10 +276,10 @@ export function buildFixture(def: GameplayFixtureDefinition): GameplayFixture {
 		createdAt: def.createdAt,
 		hasReference: def.hasReference,
 		pieces,
-		runIds: def.runIds,
-		initialTrayOrder: def.initialTrayOrder,
-		restartTrayOrders: def.restartTrayOrders,
-		rotations: def.rotations
+		runIds,
+		initialTrayOrder,
+		restartTrayOrders,
+		rotations
 	};
 
 	return deepFreeze(fixture);

@@ -16,8 +16,14 @@ async function findJsFiles(dir: string): Promise<string[]> {
 		let entries;
 		try {
 			entries = await readdir(current, { withFileTypes: true });
-		} catch {
-			continue;
+		} catch (err) {
+			// Skipping an unreadable directory would silently leave its .js files
+			// unscanned — exactly the leak the sentinel check exists to prevent.
+			// Fail loudly and name the directory.
+			const reason = err instanceof Error ? err.message : String(err);
+			throw new Error(
+				`assertNoE2EHarness: unreadable directory ${relative(dir, current) || '.'}: ${reason}`
+			);
 		}
 		for (const entry of entries) {
 			const full = resolve(current, entry.name);
@@ -36,8 +42,8 @@ async function findJsFiles(dir: string): Promise<string[]> {
  *
  * Recursively scans every `.js` file under `buildDirectory` for known harness
  * sentinels and throws if any are found, or if the build is vacuous (missing,
- * empty, no JavaScript, unreadable files, or zero bytes). Returns the count of
- * files and bytes scanned on success.
+ * empty, no JavaScript, unreadable files or directories, or zero bytes).
+ * Returns the count of files and bytes scanned on success.
  */
 export async function assertNoE2EHarness(buildDirectory: string): Promise<{
 	filesScanned: number;

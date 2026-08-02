@@ -12,19 +12,21 @@ import { FIXTURE_IDS, getFixture } from './catalog';
 
 function openSvgTag(svg: string): string {
 	const match = svg.match(/<svg\b[^>]*>/);
-	expect(match, 'svg must have an opening <svg> tag').toBeDefined();
+	// String.match returns null on failure; not.toBeNull() surfaces the
+	// descriptive assertion message before the result is dereferenced.
+	expect(match, 'svg must have an opening <svg> tag').not.toBeNull();
 	return match![0];
 }
 
 function attr(tag: string, name: string): string {
 	const match = tag.match(new RegExp(`\\b${name}="([^"]*)"`));
-	expect(match, `expected attribute "${name}" on tag`).toBeDefined();
+	expect(match, `expected attribute "${name}" on tag`).not.toBeNull();
 	return match![1];
 }
 
 function firstRect(svg: string): string {
 	const match = svg.match(/<rect\b[^>]*\/>/);
-	expect(match, 'svg must contain a <rect/>').toBeDefined();
+	expect(match, 'svg must contain a <rect/>').not.toBeNull();
 	return match![0];
 }
 
