@@ -39,12 +39,7 @@ import {
 	type CompletionScenario,
 	type DeferredHandle
 } from '../gameplay-fixtures/api-scenario';
-import {
-	buildSessionValidationContext,
-	createPersistedStateController,
-	progressKey,
-	type PersistedStateController
-} from '../gameplay-fixtures/persisted-state';
+import { buildSessionValidationContext, progressKey } from '../gameplay-fixtures/persisted-state';
 import { createPageDiagnostics, type PageDiagnostics } from './diagnostics';
 
 export interface GotoFixtureOptions {
@@ -78,7 +73,6 @@ export class GameplayPage {
 	fixture: GameplayFixture | null = null;
 
 	private readonly fixtureRouter: FixtureRouter;
-	private readonly stateController: PersistedStateController;
 	private loaded = false;
 
 	constructor(page: Page) {
@@ -86,7 +80,6 @@ export class GameplayPage {
 		this.diagnostics = createPageDiagnostics(page);
 		this.fixtureRouter = createFixtureRouter();
 		this.apiController = createApiScenarioController();
-		this.stateController = createPersistedStateController();
 	}
 
 	/**
