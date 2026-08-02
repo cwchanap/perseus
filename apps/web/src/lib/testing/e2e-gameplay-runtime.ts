@@ -10,7 +10,10 @@
 //   - Read the global ONCE per call and validate the complete frozen shape
 //     before creating any closures.
 //   - Missing global falls back to null for ordinary and `q-*` puzzles; an
-//     unconfigured `e2e-*` puzzle is a hard error.
+//     unconfigured `e2e-*` puzzle is a hard error — but only in the browser.
+//     During server rendering (no window) the reader returns null without
+//     throwing: the override is only ever consulted after hydration, so an
+//     `e2e-*` puzzle rendered server-side simply gets no override.
 //   - Once config is present, any defect is a hard error — never fall back.
 //   - Every error message is prefixed with `PERSEUS_E2E_CONFIG:`.
 //   - Arrays/objects are cloned at return boundaries so callers cannot mutate
@@ -44,12 +47,22 @@ const VALID_ROTATIONS: readonly number[] = [0, 90, 180, 270];
  *
  * Returns `null` when no config is present and the puzzle is not an `e2e-*`
  * fixture (letting the production runtime supply its own factories). Throws
- * for an unconfigured `e2e-*` puzzle or for any defect in a present config.
+ * for an unconfigured `e2e-*` puzzle or for any defect in a present config —
+ * both only in the browser. During server rendering the reader returns `null`
+ * without throwing: the override is only consulted after hydration, so an
+ * `e2e-*` puzzle rendered server-side simply gets no override.
  */
 export function readGameplayRuntimeOverride(
 	context: GameplayRuntimeOverrideContext
 ): GameplayRuntimeDependencies | null {
-	const raw = readGlobal();
+	const global = readGlobal();
+	if (!global.available) {
+		// Server render: there is no window to read and the runtime is never
+		// consulted before hydration (the route builds it post-hydration), so
+		// an unconfigured e2e-* puzzle must not hard-error here.
+		return null;
+	}
+	const raw = global.value;
 	if (raw === undefined || raw === null) {
 		if (context.puzzleId.startsWith('e2e-')) {
 			throw new Error(
@@ -64,8 +77,12 @@ export function readGameplayRuntimeOverride(
 	return buildDependencies(config);
 }
 
-function readGlobal(): unknown {
-	return (window as unknown as Record<string, unknown>)[CONFIG_GLOBAL];
+function readGlobal(): { available: true; value: unknown } | { available: false } {
+	if (typeof window === 'undefined') {
+		// Server rendering: the global cannot exist without a window.
+		return { available: false };
+	}
+	return { available: true, value: (window as unknown as Record<string, unknown>)[CONFIG_GLOBAL] };
 }
 
 function validateConfig(

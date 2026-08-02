@@ -64,10 +64,7 @@ test.describe('Gameplay interactions', () => {
 		test('role, focus, action activation, and escape dismissal', async ({ gameplayPage, page }) => {
 			await gameplayPage.gotoFixture({ completion: { kind: 'success' } });
 			// Use keyboard placement for cross-browser reliability.
-			await gameplayPage.selectAndPlaceWithKeyboard(0, 0, 0);
-			await gameplayPage.selectAndPlaceWithKeyboard(1, 1, 0);
-			await gameplayPage.selectAndPlaceWithKeyboard(2, 0, 1);
-			await gameplayPage.selectAndPlaceWithKeyboard(3, 1, 1);
+			await gameplayPage.solveFixture();
 
 			// Dialog opens with the puzzle name as its accessible name.
 			const dialog = await gameplayPage.waitForDialog(/E2E SQUARE 4/i);
@@ -86,10 +83,7 @@ test.describe('Gameplay interactions', () => {
 
 		test('escape dismisses the dialog', async ({ gameplayPage, page }) => {
 			await gameplayPage.gotoFixture({ completion: { kind: 'success' } });
-			await gameplayPage.selectAndPlaceWithKeyboard(0, 0, 0);
-			await gameplayPage.selectAndPlaceWithKeyboard(1, 1, 0);
-			await gameplayPage.selectAndPlaceWithKeyboard(2, 0, 1);
-			await gameplayPage.selectAndPlaceWithKeyboard(3, 1, 1);
+			await gameplayPage.solveFixture();
 			const dialog = await gameplayPage.waitForDialog(/E2E SQUARE 4/i);
 			await gameplayPage.dismissDialog(dialog, 'escape');
 			await expect(page.getByTestId('celebration-modal')).not.toBeVisible();

@@ -75,21 +75,23 @@ export function buildPieceSvg(fixture: GameplayFixture, pieceId: number): string
 
 /**
  * Render the full reference image as a single SVG. Each piece occupies its
- * correct grid cell at `FIXTURE_BASE_PIECE_SIZE` per side, so the canvas matches
- * the fixture's declared `imageWidth` × `imageHeight`.
+ * correct grid cell at `imageWidth / cols` × `imageHeight / rows`, so the
+ * rects tile the fixture's declared `imageWidth` × `imageHeight` canvas
+ * exactly (cell sizes are derived from the fixture, not a fixed base size).
  */
 export function buildReferenceSvg(fixture: GameplayFixture): string {
 	const width = fixture.imageWidth;
 	const height = fixture.imageHeight;
-	const cell = FIXTURE_BASE_PIECE_SIZE;
+	const cellWidth = width / fixture.cols;
+	const cellHeight = height / fixture.rows;
 	const fixtureId = escapeXml(fixture.fixtureId);
 	const rects = fixture.pieces
 		.map((piece) => {
-			const x = piece.correctX * cell;
-			const y = piece.correctY * cell;
+			const x = piece.correctX * cellWidth;
+			const y = piece.correctY * cellHeight;
 			const fill = pieceColor(piece.id, 55);
 			const stroke = pieceColor(piece.id, 30);
-			return `\t<rect x="${x}" y="${y}" width="${cell}" height="${cell}" fill="${fill}" stroke="${stroke}" stroke-width="1"/>`;
+			return `\t<rect x="${x}" y="${y}" width="${cellWidth}" height="${cellHeight}" fill="${fill}" stroke="${stroke}" stroke-width="1"/>`;
 		})
 		.join('\n');
 	return [

@@ -57,7 +57,11 @@ describe('assertBrowserInstall', () => {
 	});
 
 	it('fails when a full chromium browser entry is present alongside headless shell', async () => {
-		const output = `${SHELL_AND_WEBKIT}\nbrowser: chromium version 143.0.7499.4\n  Install location: /x/chromium-1200\n`;
+		const output =
+			SHELL_AND_WEBKIT +
+			'\n' +
+			'browser: chromium version 143.0.7499.4\n' +
+			'  Install location: /x/chromium-1200\n';
 		const message = await rejectionMessage(output);
 		expect(message).toContain('chromium');
 	});

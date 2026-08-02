@@ -1,3 +1,7 @@
+// Exemption: this spec intentionally imports from '@playwright/test' rather
+// than e2e/support/test — it is a runtime-contract check for the Playwright
+// clock API itself, not a gameplay test, so the gameplayPage fixture and its
+// teardown post-conditions do not apply.
 import { expect, test } from '@playwright/test';
 
 test('@smoke installed clock advances performance.now exactly', async ({ page }) => {

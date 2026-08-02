@@ -23,7 +23,7 @@
 		"test:e2e:stability": "playwright test --grep @smoke --project=chromium-desktop --repeat-each=10 --retries=0 --workers=1",
 		"test:e2e:assert-production-bundle": "bun run build && bun scripts/assert-no-e2e-harness.ts",
 		"test:install-browsers": "playwright install --with-deps --only-shell chromium webkit",
-		"test:install-browsers:dry-run": "playwright install --dry-run --only-shell chromium webkit"
+		"test:install-browsers:dry-run": "set -o pipefail && playwright install --dry-run --only-shell chromium webkit | bun scripts/assert-browser-install.ts"
 	},
 	"dependencies": {
 		"@noble/hashes": "^2.2.0",

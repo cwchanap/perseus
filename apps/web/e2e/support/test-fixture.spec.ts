@@ -8,11 +8,10 @@
 //
 // Run: bun run --cwd apps/web test:e2e -- e2e/support/test-fixture.spec.ts \
 //      --project=chromium-desktop --retries=0
-import { expect } from '@playwright/test';
 import { buildGameplayConfig, getFixture } from '../gameplay-fixtures/catalog';
 import { FIXTURE_ROUTER_SOURCE } from '../gameplay-fixtures/fixture-router';
 import { buildMinimalSeed, progressKey } from '../gameplay-fixtures/persisted-state';
-import { test } from './test';
+import { test, expect } from './test';
 
 const FIXTURE_ID = 'e2e-square-4' as const;
 const STATS_KEY = `puzzle-stats-${FIXTURE_ID}`;
@@ -177,8 +176,9 @@ test.describe('gotoFixture lifecycle', () => {
 		await expect(gameplayPage.page.getByTestId('puzzle-board')).toBeVisible();
 
 		const now = await gameplayPage.page.evaluate(() => Date.now());
-		// Clock is installed (not frozen): it advances in real time from startAt.
-		// Real "now" is months away, so a 60s window unambiguously proves control.
+		// gotoFixture pauses the installed clock at startAt before navigation, so
+		// Date.now() is frozen at startAt (not advancing in real time). Real "now"
+		// is months away, so a 60s window unambiguously proves the clock won.
 		expect(Math.abs(now - startAt.getTime())).toBeLessThan(60_000);
 	});
 

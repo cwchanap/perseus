@@ -111,7 +111,9 @@ export function createFixtureRouter(): FixtureRouter {
 		const pieceMatch = pathname.match(PIECE_IMAGE_PATH);
 		if (pieceMatch) {
 			const pieceId = Number(pieceMatch[1]);
-			if (!fixture.pieces[pieceId]) {
+			// Match by id, not array index: sparse or non-contiguous piece id
+			// sets must 404 just like any other unknown piece.
+			if (!fixture.pieces.some((piece) => piece.id === pieceId)) {
 				await route.fulfill({
 					status: 404,
 					json: { error: 'unknown_piece', fixtureId: id, pieceId },

@@ -103,7 +103,7 @@ export function createPageDiagnostics(page: Page): PageDiagnostics {
 		failedRequests.push({
 			url,
 			method: request.method(),
-			failure: request.failure() ?? 'unknown'
+			failure: request.failure()?.errorText ?? 'unknown'
 		});
 	}
 
@@ -118,7 +118,7 @@ export function createPageDiagnostics(page: Page): PageDiagnostics {
 		}
 
 		const isE2E = E2E_PATH.test(pathname);
-		const isCompletion = COMPLETION_PATH.test(response.url());
+		const isCompletion = COMPLETION_PATH.test(pathname);
 		const status = response.status();
 		const marker = response.headers()[FIXTURE_ROUTER_HEADER];
 

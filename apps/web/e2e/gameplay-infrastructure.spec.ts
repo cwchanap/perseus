@@ -273,11 +273,10 @@ test.describe('gameplay smoke @smoke', () => {
 		seeded.placedPieces = [{ pieceId: 0, x: 0, y: 0 }];
 		seeded.hasUserActivity = true;
 
-		// A restored placement leaves the tray with three pieces, so
-		// gotoFixture's full-tray ready check (four slots) intentionally rejects
-		// — the page has still hydrated from the seeded session. The rejection
-		// is specifically the count assertion, so verify the restoration.
-		await expect(gameplayPage.gotoFixture({ seedSession: seeded })).rejects.toThrow(/toHaveCount/);
+		// A restored placement leaves the tray with three pieces, so the
+		// ready-state wait must match the restored tray count (three), not the
+		// fixture's full tray (four).
+		await gameplayPage.gotoFixture({ seedSession: seeded, expectedTrayCount: 3 });
 		await expect(page.getByTestId('puzzle-board')).toBeVisible();
 		await gameplayPage.expectPiecePlaced(0, 0, 0);
 		await expect(page.locator('[data-testid^="piece-slot-"]')).toHaveCount(3);

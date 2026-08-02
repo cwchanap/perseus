@@ -21,12 +21,21 @@ export const test = base.extend<{ gameplayPage: GameplayPage }>({
 		try {
 			await use(gameplayPage);
 		} finally {
-			// Enforce post-conditions, then release listeners. assertSettled and
+			// Enforce post-conditions, then release listeners. The nesting
+			// guarantees both assertions are evaluated (a throw from the first
+			// does not skip the second) and dispose() always runs even when a
+			// post-condition throws. assertSettled and
 			// assertNoUnexpectedFixtureRequests are no-ops when gotoFixture() was
 			// never called, so importing the fixture is always safe.
-			gameplayPage.assertSettled();
-			gameplayPage.assertNoUnexpectedFixtureRequests();
-			gameplayPage.dispose();
+			try {
+				gameplayPage.assertSettled();
+			} finally {
+				try {
+					gameplayPage.assertNoUnexpectedFixtureRequests();
+				} finally {
+					gameplayPage.dispose();
+				}
+			}
 		}
 	}
 });
