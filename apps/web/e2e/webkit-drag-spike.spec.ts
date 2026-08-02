@@ -9,10 +9,19 @@
 // is to measure raw dragTo() reliability so we can decide whether native mouse
 // drag tests belong in @webkit-critical or @extended.
 //
-// Run with:
+// This spike is gated behind PERSEUS_RUN_SPIKE so it never runs in a normal
+// test invocation (default, extended, webkit). Set the env var to opt in.
 //
-//   bun run --cwd apps/web test:e2e -- e2e/webkit-drag-spike.spec.ts \
+// Run on WebKit (20 passes):
+//
+//   PERSEUS_RUN_SPIKE=1 bun run --cwd apps/web test:e2e -- \
+//     e2e/webkit-drag-spike.spec.ts \
 //     --project=webkit-mobile --repeat-each=20 --retries=0 --workers=1
+//
+// Run on Chromium (sanity check):
+//
+//   PERSEUS_RUN_SPIKE=1 bun run --cwd apps/web test:e2e -- \
+//     e2e/webkit-drag-spike.spec.ts --project=chromium-desktop --retries=0
 //
 // Outcome decision:
 //
@@ -31,11 +40,12 @@
 //   - placeWithMouse falls back to dispatching DnD events (dragover + drop)
 //     when dragTo() does not register a drop, so it remains usable across
 //     all browsers.
-//   - Follow-up: investigate WebKit-compatible mouse drag (e.g. CDP input
-//     dispatch, or a dedicated WebKit drag simulation path).
+//
+// Follow-up: https://linear.app/cwchanap/issue/HPA-517/webkit-html5-drag-and-drop-does-not-fire-drop-events-via-playwright
 import { test, expect } from './support/test';
 
 test('webkit mouse drag places a piece (stability spike)', async ({ gameplayPage, page }) => {
+	test.skip(!process.env.PERSEUS_RUN_SPIKE, 'Spike — set PERSEUS_RUN_SPIKE=1 to run');
 	await gameplayPage.gotoFixture();
 	// Call dragTo() directly — no DnD-dispatch fallback — to measure raw
 	// dragTo() reliability on WebKit.
