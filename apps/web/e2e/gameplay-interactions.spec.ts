@@ -53,7 +53,7 @@ test.describe('Gameplay interactions', () => {
 		});
 	});
 
-	test('touch drag places a piece @webkit-critical (chromium-mobile)', async ({ gameplayPage }) => {
+	test('touch drag places a piece @smoke (chromium-mobile)', async ({ gameplayPage }) => {
 		test.skip(PROJECT() !== 'chromium-mobile', 'touch drag tested on chromium-mobile');
 		await gameplayPage.gotoFixture();
 		await gameplayPage.dragWithTouch(0, 0, 0);
