@@ -9,5 +9,9 @@ bun.lockb
 .svelte-kit
 build
 
+# Playwright generated artifacts
+playwright-report
+test-results
+
 # Static files
 /static/
