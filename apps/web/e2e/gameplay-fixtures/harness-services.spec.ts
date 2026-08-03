@@ -18,7 +18,7 @@ import {
 	FIXTURE_ROUTER_HEADER,
 	HARNESS_VIOLATION_HEADER
 } from './fixture-router';
-import { createAuthPersona, AUTHENTICATED_PLAYER } from './auth-persona';
+import { createAuthPersona, AUTHENTICATED_PLAYER, AUTH_PERSONA_SOURCE } from './auth-persona';
 import {
 	createApiScenarioController,
 	SCENARIO_SOURCE,
@@ -64,7 +64,7 @@ async function fetchApi(
 
 // --- FixtureRouter -----------------------------------------------------------
 
-test.describe('FixtureRouter', () => {
+test.describe('FixtureRouter @smoke', () => {
 	test('fulfills known fixture metadata with a valid ReadyPuzzle and a marker header', async ({
 		page
 	}) => {
@@ -114,6 +114,9 @@ test.describe('FixtureRouter', () => {
 		expect(res.status).toBe(404);
 		// The router fulfilled it (marker present) — it never reached fallback.
 		expect(res.headers[FIXTURE_ROUTER_HEADER]).toBe('fixture-router');
+		// An unknown fixture id is a harness misconfiguration: the violation
+		// header makes diagnostics fail teardown so a typo'd id cannot pass.
+		expect(res.headers[HARNESS_VIOLATION_HEADER]).toBe('unknown_e2e_fixture');
 		expect(JSON.parse(res.body).error).toBeTruthy();
 	});
 
@@ -131,7 +134,29 @@ test.describe('FixtureRouter', () => {
 
 		expect(res.status).toBe(404);
 		expect(res.headers[FIXTURE_ROUTER_HEADER]).toBe('fixture-router');
+		// An unregistered e2e sub-path is a hard harness failure: the violation
+		// header makes diagnostics fail teardown so a silent 404 the app swallows
+		// cannot pass E2E.
+		expect(res.headers[HARNESS_VIOLATION_HEADER]).toBe('unknown_fixture_path');
 		expect(JSON.parse(res.body).error).toBeTruthy();
+	});
+
+	test('fails unknown piece ids under a known fixture with a violation marker', async ({
+		page
+	}) => {
+		const router = createFixtureRouter();
+		await router.install(page);
+		await gotoApiOrigin(page);
+
+		// A piece id not in the fixture. The router 404s (marker present) and
+		// stamps the violation header so diagnostics fails teardown — the app
+		// must never request a non-existent piece.
+		const res = await fetchApi(page, `/api/puzzles/${FIXTURE_ID}/pieces/999/image`);
+
+		expect(res.status).toBe(404);
+		expect(res.headers[FIXTURE_ROUTER_HEADER]).toBe('fixture-router');
+		expect(res.headers[HARNESS_VIOLATION_HEADER]).toBe('unknown_piece');
+		expect(JSON.parse(res.body).error).toBe('unknown_piece');
 	});
 
 	test('lets ordinary (non-e2e) traffic fall through to the backend untouched', async ({
@@ -228,7 +253,7 @@ test.describe('FixtureRouter', () => {
 
 // --- AuthPersona -------------------------------------------------------------
 
-test.describe('AuthPersona', () => {
+test.describe('AuthPersona @smoke', () => {
 	test('authenticated persona reports an authenticated PlayerSessionResponse contract', async ({
 		page
 	}) => {
@@ -238,6 +263,8 @@ test.describe('AuthPersona', () => {
 
 		const res = await fetchApi(page, `/api/auth/session`);
 		expect(res.status).toBe(200);
+		// Provenance: the persona answered, not the real backend.
+		expect(res.headers[FIXTURE_ROUTER_HEADER]).toBe(AUTH_PERSONA_SOURCE);
 		const session = JSON.parse(res.body) as PlayerSessionResponse;
 		expect(session.authenticated).toBe(true);
 		expect(session.user).toBeDefined();
@@ -254,6 +281,7 @@ test.describe('AuthPersona', () => {
 
 		const res = await fetchApi(page, `/api/auth/session`);
 		expect(res.status).toBe(200);
+		expect(res.headers[FIXTURE_ROUTER_HEADER]).toBe(AUTH_PERSONA_SOURCE);
 		const session = JSON.parse(res.body) as PlayerSessionResponse;
 		expect(session.authenticated).toBe(false);
 		expect(session.user).toBeUndefined();
@@ -280,6 +308,7 @@ test.describe('AuthPersona', () => {
 
 		const res = await fetchApi(page, `/api/auth/session`);
 		expect(res.status).toBe(500);
+		expect(res.headers[FIXTURE_ROUTER_HEADER]).toBe(AUTH_PERSONA_SOURCE);
 		expect(JSON.parse(res.body).error).toBe('session_unavailable');
 	});
 
@@ -290,6 +319,7 @@ test.describe('AuthPersona', () => {
 
 		const res = await fetchApi(page, `/api/auth/session`);
 		expect(res.status).toBe(503);
+		expect(res.headers[FIXTURE_ROUTER_HEADER]).toBe(AUTH_PERSONA_SOURCE);
 	});
 
 	test('deferred-session persona holds the request; release() resolves it', async ({ page }) => {
@@ -305,6 +335,7 @@ test.describe('AuthPersona', () => {
 		await handle!.release({ authenticated: true, user: AUTHENTICATED_PLAYER });
 		const res = await pending;
 		expect(res.status).toBe(200);
+		expect(res.headers[FIXTURE_ROUTER_HEADER]).toBe(AUTH_PERSONA_SOURCE);
 		const session = JSON.parse(res.body) as PlayerSessionResponse;
 		expect(session.authenticated).toBe(true);
 		expect(handle!.pendingCount).toBe(0);
@@ -351,7 +382,7 @@ async function postCompletion(
 	});
 }
 
-test.describe('ApiScenarioController', () => {
+test.describe('ApiScenarioController @smoke', () => {
 	test('records the completion request body (url, method, headers, body)', async ({ page }) => {
 		const router = createFixtureRouter();
 		await router.install(page);
@@ -514,7 +545,7 @@ test.describe('ApiScenarioController', () => {
 
 // --- PersistedStateController -----------------------------------------------
 
-test.describe('PersistedStateController', () => {
+test.describe('PersistedStateController @smoke', () => {
 	test('seedValid writes a deterministic localStorage payload that round-trips through the production codec', async ({
 		page
 	}) => {
@@ -572,9 +603,10 @@ test.describe('PersistedStateController', () => {
 //
 // These tests prove the diagnostics layer flags the false-green conditions
 // the review identified: undeclared completions, wrong provenance, wrong
-// fixture ID, wrong method, and broad network-abort suppression.
+// fixture ID, wrong method, broad network-abort suppression, unknown e2e
+// paths, and auth-persona provenance leaks.
 
-test.describe('PageDiagnostics', () => {
+test.describe('PageDiagnostics @smoke', () => {
 	/** Set up router + diagnostics, navigate to API origin, return diagnostics. */
 	async function setup(
 		page: Page,
@@ -700,6 +732,155 @@ test.describe('PageDiagnostics', () => {
 		// NOT suppressed by the network-abort allowlist for e2e-square-4.
 		expect(diagnostics.harnessViolations).toHaveLength(1);
 		expect(diagnostics.harnessViolations[0]!.violation).toBe('undeclared_completion');
+		diagnostics.dispose();
+	});
+
+	// --- P2: unknown e2e paths are hard harness failures ---------------------
+
+	test('P2: unknown sub-path under a known fixture is a harness violation that fails teardown', async ({
+		page
+	}) => {
+		const diagnostics = await setup(page);
+
+		await fetchApi(page, `/api/puzzles/${FIXTURE_ID}/unknown-endpoint`);
+		await waitForResponses(diagnostics, 1);
+
+		expect(diagnostics.harnessViolations).toHaveLength(1);
+		expect(diagnostics.harnessViolations[0]!.violation).toBe('unknown_fixture_path');
+		expect(() => diagnostics.assertNoUnexpectedErrors()).toThrow();
+		diagnostics.dispose();
+	});
+
+	test('P2: unknown e2e fixture id is a harness violation that fails teardown', async ({
+		page
+	}) => {
+		const diagnostics = await setup(page);
+
+		await fetchApi(page, `/api/puzzles/e2e-does-not-exist`);
+		await waitForResponses(diagnostics, 1);
+
+		expect(diagnostics.harnessViolations).toHaveLength(1);
+		expect(diagnostics.harnessViolations[0]!.violation).toBe('unknown_e2e_fixture');
+		expect(() => diagnostics.assertNoUnexpectedErrors()).toThrow();
+		diagnostics.dispose();
+	});
+
+	test('P2: unknown piece id is a harness violation that fails teardown', async ({ page }) => {
+		const diagnostics = await setup(page);
+
+		await fetchApi(page, `/api/puzzles/${FIXTURE_ID}/pieces/999/image`);
+		await waitForResponses(diagnostics, 1);
+
+		expect(diagnostics.harnessViolations).toHaveLength(1);
+		expect(diagnostics.harnessViolations[0]!.violation).toBe('unknown_piece');
+		expect(() => diagnostics.assertNoUnexpectedErrors()).toThrow();
+		diagnostics.dispose();
+	});
+
+	// --- P1#2: auth-persona provenance ---------------------------------------
+
+	/** Set up diagnostics + router + an auth persona, return the diagnostics. */
+	async function setupAuth(
+		page: Page,
+		kind: Parameters<typeof createAuthPersona>[0]
+	): Promise<PageDiagnostics> {
+		const diagnostics = createPageDiagnostics(page);
+		const router = createFixtureRouter();
+		await router.install(page);
+		const persona = createAuthPersona(kind);
+		await persona.install(page);
+		diagnostics.setAuthPersona(kind, persona.failedStatus ?? undefined);
+		await gotoApiOrigin(page);
+		return diagnostics;
+	}
+
+	test('P1#2: anonymous persona 200 with auth-persona marker passes clean', async ({ page }) => {
+		const diagnostics = await setupAuth(page, 'anonymous');
+
+		// Track when the auth response has been processed by diagnostics. The
+		// diagnostics listener is registered first (in createPageDiagnostics),
+		// so by the time this test listener fires, diagnostics has already
+		// processed the response.
+		let authSeen = false;
+		page.on('response', (res) => {
+			if (res.url().includes('/api/auth/session')) authSeen = true;
+		});
+
+		await fetchApi(page, `/api/auth/session`);
+		await expect.poll(() => authSeen).toBe(true);
+
+		expect(diagnostics.unexpectedResponses).toHaveLength(0);
+		expect(diagnostics.harnessViolations).toHaveLength(0);
+		expect(() => diagnostics.assertNoUnexpectedErrors()).not.toThrow();
+		diagnostics.dispose();
+	});
+
+	test('P1#2: failed-session 500 with auth-persona marker is allowed (not unexpected)', async ({
+		page
+	}) => {
+		const diagnostics = await setupAuth(page, 'failed-session');
+
+		let authSeen = false;
+		page.on('response', (res) => {
+			if (res.url().includes('/api/auth/session')) authSeen = true;
+		});
+
+		await fetchApi(page, `/api/auth/session`);
+		await expect.poll(() => authSeen).toBe(true);
+
+		// The configured 500 is allowed (not unexpected); the auth-failure
+		// console errors are allowlisted by setAuthPersona.
+		expect(diagnostics.unexpectedResponses).toHaveLength(0);
+		expect(() => diagnostics.assertNoUnexpectedErrors()).not.toThrow();
+		diagnostics.dispose();
+	});
+
+	test('P1#2: /api/auth/session WITHOUT the auth-persona marker is flagged (real-backend leak)', async ({
+		page
+	}) => {
+		// Simulate the persona route missing and the real backend answering
+		// 200 (no provenance marker). Diagnostics must flag it — otherwise a
+		// real-backend 200 could masquerade as the intended persona response.
+		const diagnostics = createPageDiagnostics(page);
+		await page.route(/\/api\/auth\/session(?:\?.*)?$/, async (route) => {
+			await route.fulfill({ status: 200, json: { authenticated: false } });
+		});
+		diagnostics.setAuthPersona('anonymous');
+		await gotoApiOrigin(page);
+
+		await fetchApi(page, `/api/auth/session`);
+		await waitForResponses(diagnostics, 1);
+
+		expect(diagnostics.unexpectedResponses).toHaveLength(1);
+		expect(() => diagnostics.assertNoUnexpectedErrors()).toThrow();
+		diagnostics.dispose();
+	});
+
+	test('P1#2: deferred-session cancel() abort is tolerated (not a failed request)', async ({
+		page
+	}) => {
+		const diagnostics = createPageDiagnostics(page);
+		const persona = createAuthPersona('deferred-session');
+		const handle = await persona.install(page);
+		diagnostics.setAuthPersona('deferred-session');
+		await gotoApiOrigin(page);
+
+		// Fire the GET without awaiting; it stalls on the held route.
+		const pending = fetchApi(page, `/api/auth/session`).catch(() => ({
+			status: 0,
+			ok: false,
+			headers: {},
+			body: ''
+		}));
+		await expect.poll(() => handle!.pendingCount).toBe(1);
+
+		await handle!.cancel();
+		await pending;
+
+		// The abort is the configured outcome, not a regression: no failed
+		// request is recorded and teardown stays clean.
+		expect(diagnostics.failedRequests).toHaveLength(0);
+		expect(() => diagnostics.assertNoUnexpectedErrors()).not.toThrow();
 		diagnostics.dispose();
 	});
 });

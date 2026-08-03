@@ -168,6 +168,12 @@ export class GameplayPage {
 		const personaSpec: AuthPersona | AuthPersonaKind = options.persona ?? 'anonymous';
 		const persona = typeof personaSpec === 'string' ? createAuthPersona(personaSpec) : personaSpec;
 		this.authHandle = await persona.install(this.page);
+		// Declare the auth persona so diagnostics expects its outcome on
+		// /api/auth/session: requires the auth-persona provenance marker (so a
+		// real-backend leak cannot masquerade as the persona), narrowly allows
+		// the configured failure status / cancel abort, and allowlists the
+		// page's auth-failure console errors.
+		this.diagnostics.setAuthPersona(persona.kind, persona.failedStatus);
 
 		// --- Stage 3: cookie reset ----------------------------------------------
 		await this.page.context().clearCookies();

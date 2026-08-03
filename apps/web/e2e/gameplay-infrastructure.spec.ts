@@ -350,3 +350,66 @@ test.describe('gameplay smoke @smoke', () => {
 		await expect(page.locator('[data-testid^="piece-slot-"]')).toHaveCount(4);
 	});
 });
+
+// --- Auth personas through the canonical GameplayPage fixture -----------------
+//
+// The service-level AuthPersona tests (harness-services.spec.ts) prove each
+// persona answers /api/auth/session with the right contract, but they bypass
+// GameplayPage diagnostics. These integration tests exercise the personas
+// through gotoFixture so the automatic teardown proves the expected auth
+// outcome (a driven 500, a cancelled deferred request, a released deferred
+// request) is not mistaken for a regression: diagnostics requires the
+// auth-persona provenance marker, narrowly allows the configured failure
+// status / abort, and allowlists the page's auth-failure console errors.
+test.describe('auth personas through gameplayPage @smoke', () => {
+	test('failed-session persona: page falls back to anonymous and teardown stays clean @smoke', async ({
+		gameplayPage,
+		page
+	}) => {
+		// The auth GET returns 500; playerAuth.refresh() catches it and falls
+		// back to anonymous, so the board still renders and is interactive.
+		await gameplayPage.gotoFixture({ persona: 'failed-session' });
+
+		await expect(page.getByTestId('puzzle-board')).toBeVisible();
+		await gameplayPage.selectAndPlaceWithKeyboard(0, 0, 0);
+		await gameplayPage.expectPiecePlaced(0, 0, 0);
+	});
+
+	test('deferred-session persona cancel(): aborts the held auth request and teardown stays clean @smoke', async ({
+		gameplayPage,
+		page
+	}) => {
+		// The deferred persona holds the auth GET pending; the board renders
+		// independently of auth (the layout renders children unconditionally).
+		await gameplayPage.gotoFixture({ persona: 'deferred-session' });
+		await expect(page.getByTestId('puzzle-board')).toBeVisible();
+
+		expect(gameplayPage.authHandle).not.toBeNull();
+		// The layout's onMount fires playerAuth.refresh() -> the held GET.
+		await expect.poll(() => gameplayPage.authHandle!.pendingCount).toBe(1);
+
+		// Cancel aborts the held request; refresh() catches the abort and falls
+		// back to anonymous. Diagnostics tolerates the abort (deferred-session)
+		// and the auth-failure console errors are allowlisted.
+		await gameplayPage.authHandle!.cancel();
+		expect(gameplayPage.authHandle!.cancelled).toBe(true);
+		expect(gameplayPage.authHandle!.pendingCount).toBe(0);
+	});
+
+	test('deferred-session persona release(): resolves auth and teardown stays clean @smoke', async ({
+		gameplayPage,
+		page
+	}) => {
+		await gameplayPage.gotoFixture({ persona: 'deferred-session' });
+		await expect(page.getByTestId('puzzle-board')).toBeVisible();
+
+		expect(gameplayPage.authHandle).not.toBeNull();
+		await expect.poll(() => gameplayPage.authHandle!.pendingCount).toBe(1);
+
+		// Release resolves the held request with the anonymous session (200,
+		// stamped with the auth-persona provenance marker). No console error.
+		await gameplayPage.authHandle!.release({ authenticated: false });
+		expect(gameplayPage.authHandle!.released).toBe(true);
+		expect(gameplayPage.authHandle!.pendingCount).toBe(0);
+	});
+});

@@ -27,7 +27,7 @@ async function trayOrder(page: import('@playwright/test').Page): Promise<number[
 
 // --- Stages 1, 6, 7: fixture lookup -> navigation -> ready state ---------------
 
-test.describe('gotoFixture lifecycle', () => {
+test.describe('gotoFixture lifecycle @smoke', () => {
 	test('loads the default fixture and reaches a ready puzzle board (lookup, navigation, ready)', async ({
 		gameplayPage
 	}) => {
