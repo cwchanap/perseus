@@ -114,11 +114,14 @@ export function createFixtureRouter(): FixtureRouter {
 		const id = idMatch[1] as string;
 
 		if (!KNOWN_FIXTURE_IDS.has(id)) {
-			// Unknown e2e-* id: fail immediately, never reach the backend.
+			// Unknown e2e-* id: fail immediately, never reach the backend. This
+			// is a harness misconfiguration (a typo'd fixture id), so it stamps
+			// the violation header — diagnostics fails teardown so a typo cannot
+			// pass E2E silently.
 			await route.fulfill({
 				status: 404,
 				json: { error: 'unknown_e2e_fixture', fixtureId: id },
-				headers: markerHeaders()
+				headers: violationHeaders('unknown_e2e_fixture')
 			});
 			return;
 		}
@@ -171,7 +174,7 @@ export function createFixtureRouter(): FixtureRouter {
 				await route.fulfill({
 					status: 404,
 					json: { error: 'unknown_piece', fixtureId: id, pieceId },
-					headers: markerHeaders()
+					headers: violationHeaders('unknown_piece')
 				});
 				return;
 			}
@@ -212,11 +215,14 @@ export function createFixtureRouter(): FixtureRouter {
 		// Any other sub-path under a known fixture id: fail immediately. The
 		// total-interception invariant forbids fallback once a fixture id is
 		// present, so a future API path added under /api/puzzles/:id/… fails
-		// loudly here instead of silently reaching the real backend.
+		// loudly here instead of silently reaching the real backend. It stamps
+		// the violation header so diagnostics fails teardown — an unregistered
+		// e2e request is a hard harness failure, not a silent 404 the app can
+		// swallow.
 		await route.fulfill({
 			status: 404,
 			json: { error: 'unknown_fixture_path', fixtureId: id, path: pathname },
-			headers: markerHeaders()
+			headers: violationHeaders('unknown_fixture_path')
 		});
 	}
 

@@ -13,9 +13,10 @@
 // path) is a leak and fails teardown.
 //
 // Harness violation detection: responses carrying `x-perseus-e2e-violation`
-// (undeclared completion, wrong HTTP method) are recorded as harness violations
-// and fail teardown regardless of HTTP status — so a regression that bypasses
-// the scenario controller or uses the wrong method cannot pass E2E silently.
+// (undeclared completion, wrong HTTP method, unknown fixture id/piece/sub-path)
+// are recorded as harness violations and fail teardown regardless of HTTP
+// status — so a regression that bypasses the scenario controller, uses the
+// wrong method, or hits an unregistered e2e path cannot pass E2E silently.
 //
 // Completion provenance: when a completion scenario is declared, diagnostics
 // requires the response marker to equal `api-scenario` (the controller's
@@ -23,6 +24,13 @@
 // confirms the method is POST. A response from the fixture router's 403
 // default (or a real-backend response with the expected status) is flagged as
 // unexpected — proving the configured scenario actually handled the response.
+//
+// Auth provenance: when an auth persona is declared, diagnostics requires the
+// `/api/auth/session` response marker to equal `auth-persona` (the persona's
+// provenance), narrowly allows the configured failure status (failed-session)
+// or 200 (authenticated/anonymous/deferred-release), and tolerates a
+// deferred-session cancel's request abort. A real-backend response (no marker)
+// is flagged as unexpected — proving the persona, not the backend, answered.
 import type { ConsoleMessage, Page, Request, Response } from '@playwright/test';
 import type { CompletionScenario } from '../gameplay-fixtures/api-scenario';
 import { SCENARIO_SOURCE } from '../gameplay-fixtures/api-scenario';
@@ -30,11 +38,14 @@ import {
 	FIXTURE_ROUTER_HEADER,
 	HARNESS_VIOLATION_HEADER
 } from '../gameplay-fixtures/fixture-router';
+import { AUTH_PERSONA_SOURCE, type AuthPersonaKind } from '../gameplay-fixtures/auth-persona';
 
 const E2E_PATH = /\/api\/puzzles\/e2e-[a-z0-9-]+/;
 const COMPLETION_PATH = /\/api\/puzzles\/e2e-[a-z0-9-]+\/complete(?:\?.*)?$/;
 /** Extracts the fixture id from an e2e-* completion URL. */
 const FIXTURE_ID_FROM_URL = /\/api\/puzzles\/(e2e-[a-z0-9-]+)\/complete/;
+/** The player auth session endpoint (not an e2e-* path). */
+const AUTH_SESSION_PATH = /\/api\/auth\/session(?:\?.*)?$/;
 
 export interface ConsoleErrorRecord {
 	text: string;
@@ -72,6 +83,15 @@ export interface HarnessViolationRecord {
 export interface PageDiagnostics {
 	/** Declare the active completion scenario so its outcome is expected. */
 	setCompletion(fixtureId: string | undefined, scenario: CompletionScenario | undefined): void;
+	/**
+	 * Declare the active auth persona so `/api/auth/session` outcomes are
+	 * expected. When declared, diagnostics requires the auth-persona
+	 * provenance marker on the response (so a real-backend leak cannot masquerade
+	 * as the persona), narrowly allows the configured failure status
+	 * (`failed-session`) or request abort (`deferred-session` cancel), and
+	 * allowlists the page's auth-failure console errors.
+	 */
+	setAuthPersona(kind: AuthPersonaKind | undefined, failedStatus?: number): void;
 	/** Allowlist a console-error message substring as expected. */
 	expectConsoleError(messageSubstring: string): void;
 	readonly consoleErrors: readonly ConsoleErrorRecord[];
@@ -92,6 +112,12 @@ interface ExpectedCompletion {
 	scenario: CompletionScenario;
 }
 
+interface ExpectedAuth {
+	kind: AuthPersonaKind;
+	/** Status the `failed-session` persona returns; ignored for other kinds. */
+	failedStatus: number;
+}
+
 export function createPageDiagnostics(page: Page): PageDiagnostics {
 	const consoleErrors: ConsoleErrorRecord[] = [];
 	const pageErrors: PageErrorRecord[] = [];
@@ -101,6 +127,7 @@ export function createPageDiagnostics(page: Page): PageDiagnostics {
 	const harnessViolations: HarnessViolationRecord[] = [];
 	const expectedConsoleSubstrings: string[] = [];
 	let expectedCompletion: ExpectedCompletion | undefined;
+	let expectedAuth: ExpectedAuth | undefined;
 
 	function isExpectedConsole(text: string): boolean {
 		return expectedConsoleSubstrings.some((sub) => text.includes(sub));
@@ -133,6 +160,16 @@ export function createPageDiagnostics(page: Page): PageDiagnostics {
 			if (path && path.test(url) && request.method() === 'POST') {
 				return;
 			}
+		}
+		// A deferred-session persona's cancel() aborts its held GET
+		// /api/auth/session. That abort is the configured outcome, not a
+		// regression — allow it only when a deferred-session persona is active.
+		if (
+			expectedAuth?.kind === 'deferred-session' &&
+			AUTH_SESSION_PATH.test(url) &&
+			request.method() === 'GET'
+		) {
+			return;
 		}
 		failedRequests.push({
 			url,
@@ -214,6 +251,36 @@ export function createPageDiagnostics(page: Page): PageDiagnostics {
 			return;
 		}
 
+		// Auth session endpoint: when an auth persona is declared, the response
+		// must come from the persona (provenance marker `auth-persona`), not the
+		// real backend. A missing/wrong marker is a leak — e.g. the persona route
+		// missed and the real API answered 200, which diagnostics could not
+		// otherwise distinguish from the intended deterministic response. The
+		// declared persona narrowly allows its configured outcome: 200 for
+		// authenticated/anonymous/deferred-release, or the configured status for
+		// failed-session. (A deferred-session cancel aborts the request, handled
+		// in onRequestFailed above; no response reaches here.)
+		if (AUTH_SESSION_PATH.test(pathname)) {
+			if (!expectedAuth) {
+				// No persona declared: a >=400 from the real backend is still a
+				// real error (fall through to the generic check below).
+				if (status >= 400) {
+					unexpectedResponses.push({ url: response.url(), method, status });
+				}
+				return;
+			}
+			if (marker !== AUTH_PERSONA_SOURCE) {
+				unexpectedResponses.push({ url: response.url(), method, status });
+				return;
+			}
+			const expectedStatus =
+				expectedAuth.kind === 'failed-session' ? expectedAuth.failedStatus : 200;
+			if (status !== expectedStatus) {
+				unexpectedResponses.push({ url: response.url(), method, status });
+			}
+			return;
+		}
+
 		// Non-e2e traffic reaching the real backend: a >=400 is a real error.
 		if (status >= 400) {
 			unexpectedResponses.push({ url: response.url(), method, status });
@@ -242,6 +309,22 @@ export function createPageDiagnostics(page: Page): PageDiagnostics {
 				}
 			} else {
 				expectedCompletion = undefined;
+			}
+		},
+		setAuthPersona(kind, failedStatus) {
+			if (kind) {
+				expectedAuth = { kind, failedStatus: failedStatus ?? 500 };
+				// failed-session (HTTP error) and deferred-session (cancel abort)
+				// both make playerAuth.refresh() catch and log a console.error,
+				// and Chromium logs a "Failed to load resource" for the failed/
+				// aborted request. Allowlist both so the driven auth failure is
+				// not mistaken for a regression.
+				if (kind === 'failed-session' || kind === 'deferred-session') {
+					expectedConsoleSubstrings.push('Failed to refresh player session');
+					expectedConsoleSubstrings.push('Failed to load resource');
+				}
+			} else {
+				expectedAuth = undefined;
 			}
 		},
 		expectConsoleError(messageSubstring) {

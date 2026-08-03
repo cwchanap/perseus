@@ -18,9 +18,17 @@
 //   - failed-session: returns a configurable HTTP error status (default 500).
 import type { Page, Route } from '@playwright/test';
 import type { PlayerSessionResponse, PlayerUser } from '@perseus/types';
-import { HARNESS_VIOLATION_HEADER } from './fixture-router';
+import { FIXTURE_ROUTER_HEADER, HARNESS_VIOLATION_HEADER } from './fixture-router';
 
 export type AuthPersonaKind = 'authenticated' | 'anonymous' | 'deferred-session' | 'failed-session';
+
+/**
+ * Provenance value stamped on every auth-persona response via the shared
+ * `x-perseus-e2e-source` header, so diagnostics can prove the persona (not the
+ * real backend) answered `/api/auth/session` and distinguish a persona-driven
+ * failure from a real regression.
+ */
+export const AUTH_PERSONA_SOURCE = 'auth-persona';
 
 const SESSION_PATTERN = /\/api\/auth\/session(?:\?.*)?$/;
 
@@ -62,6 +70,8 @@ export interface AuthPersona {
 	readonly kind: AuthPersonaKind;
 	/** The `PlayerSessionResponse` the persona answers with, when immediate. */
 	readonly sessionResponse: PlayerSessionResponse | undefined;
+	/** HTTP status the `failed-session` persona returns (undefined for other kinds). */
+	readonly failedStatus: 500 | 502 | 503 | undefined;
 	/** Register the `/api/auth/session` intercept on the page. */
 	install(page: Page): Promise<AuthSessionHandle | null>;
 }
@@ -72,8 +82,15 @@ export interface AuthPersonaOptions {
 	failedStatus?: 500 | 502 | 503;
 }
 
+function personaHeaders(): Record<string, string> {
+	return { [FIXTURE_ROUTER_HEADER]: AUTH_PERSONA_SOURCE };
+}
+
 function methodNotAllowedHeaders(): Record<string, string> {
-	return { [HARNESS_VIOLATION_HEADER]: 'method_not_allowed' };
+	return {
+		[FIXTURE_ROUTER_HEADER]: AUTH_PERSONA_SOURCE,
+		[HARNESS_VIOLATION_HEADER]: 'method_not_allowed'
+	};
 }
 
 export function createAuthPersona(
@@ -92,6 +109,7 @@ export function createAuthPersona(
 	return {
 		kind,
 		sessionResponse,
+		failedStatus: kind === 'failed-session' ? failedStatus : undefined,
 		async install(page: Page): Promise<AuthSessionHandle | null> {
 			if (kind === 'deferred-session') {
 				const pending: PendingSessionRoute[] = [];
@@ -124,7 +142,7 @@ export function createAuthPersona(
 						released = true;
 						const held = pending.splice(0);
 						for (const entry of held) {
-							await entry.route.fulfill({ json: response });
+							await entry.route.fulfill({ json: response, headers: personaHeaders() });
 						}
 					},
 					async cancel() {
@@ -150,11 +168,12 @@ export function createAuthPersona(
 				if (kind === 'failed-session') {
 					await route.fulfill({
 						status: failedStatus,
-						json: { error: 'session_unavailable', status: failedStatus }
+						json: { error: 'session_unavailable', status: failedStatus },
+						headers: personaHeaders()
 					});
 					return;
 				}
-				await route.fulfill({ json: sessionResponse });
+				await route.fulfill({ json: sessionResponse, headers: personaHeaders() });
 			});
 			return null;
 		}
