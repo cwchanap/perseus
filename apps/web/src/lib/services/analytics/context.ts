@@ -35,9 +35,7 @@ export interface AssistanceUsageSnapshot {
 	referenceActivations: number;
 }
 
-export function classifyPieceCountBucket(
-	pieceCount: number
-): AnalyticsPieceCountBucket | null {
+export function classifyPieceCountBucket(pieceCount: number): AnalyticsPieceCountBucket | null {
 	if (!Number.isInteger(pieceCount) || pieceCount < 1 || pieceCount > MAX_PIECES) return null;
 	if (pieceCount <= 24) return '1-24';
 	if (pieceCount <= 49) return '25-49';
@@ -114,10 +112,7 @@ export function classifyPrimaryInput(snapshot: PrimaryInputSnapshot): AnalyticsP
 export function classifyAssistanceMode(
 	snapshot: AssistanceUsageSnapshot
 ): AnalyticsAssistanceMode | null {
-	if (
-		!Number.isInteger(snapshot.referenceActivations) ||
-		snapshot.referenceActivations < 0
-	) {
+	if (!Number.isInteger(snapshot.referenceActivations) || snapshot.referenceActivations < 0) {
 		return null;
 	}
 	if (snapshot.hintUsed && snapshot.referenceActivations > 0) return 'mixed';
