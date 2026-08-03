@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-	ANALYTICS_BATCH_SCHEMA_VERSION,
 	ANALYTICS_EVENT_SCHEMA_VERSION,
 	type AnalyticsBatchV1,
 	type AnalyticsEventV1
