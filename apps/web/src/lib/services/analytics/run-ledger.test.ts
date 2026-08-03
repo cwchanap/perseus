@@ -84,7 +84,7 @@ describe('analytics run ledger', () => {
 			runs: [
 				{
 					runId: runA,
-					lastRecoredAt: 1_000,
+					lastRecordedAt: 1_000,
 					events: [
 						{
 							eventSchemaVersion: 1,
@@ -93,7 +93,7 @@ describe('analytics run ledger', () => {
 						}
 					]
 				}
-		]
+			]
 		});
 	});
 
@@ -115,13 +115,13 @@ describe('analytics run ledger', () => {
 			'hint_used',
 			'reference_used',
 			'puzzle_completed',
-			'personal_best_beated'
+			'personal_best_beaten'
 		] as const;
 		for (const [index, eventName] of names.entries()) {
 			expect(mark(ledger, { eventName, recordedAt: 1_000 + index })).toBe('recorded');
 		}
 		const stored = read(storage) as {
-			runs: Array<{ lastRecordedAt: number; events: unknown[] };
+			runs: Array<{ lastRecordedAt: number; events: unknown[] }>;
 		};
 		expect(stored.runs).toHaveLength(1);
 		expect(stored.runs[0].events).toHaveLength(6);
