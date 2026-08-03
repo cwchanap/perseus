@@ -41,9 +41,9 @@ describe('analytics context projection', () => {
 
 	describe('aspect buckets', () => {
 		it('prefers a declared aspect over pixel dimensions', () => {
-			expect(
-				classifyAspectBucket({ declaredAspect: 'portrait', width: 1600, height: 900 })
-			).toBe('portrait');
+			expect(classifyAspectBucket({ declaredAspect: 'portrait', width: 1600, height: 900 })).toBe(
+				'portrait'
+			);
 		});
 
 		it.each([
@@ -75,12 +75,9 @@ describe('analytics context projection', () => {
 			expect(classifyViewportClass(width)).toBe(expected);
 		});
 
-		it.each([-1, Number.NaN, Number.POSITIVE_INFINITY])(
-			'rejects invalid width %s',
-			(width) => {
-				expect(classifyViewportClass(width)).toBeNull();
-			}
-		);
+		it.each([-1, Number.NaN, Number.POSITIVE_INFINITY])('rejects invalid width %s', (width) => {
+			expect(classifyViewportClass(width)).toBeNull();
+		});
 	});
 
 	describe('progress buckets', () => {
@@ -181,30 +178,19 @@ describe('analytics context projection', () => {
 		it('maps local content to player uploaded and API content to bounded or unknown origin', () => {
 			expect(resolveContentOrigin({ puzzleSource: 'local' })).toBe('player_uploaded');
 			expect(resolveContentOrigin({ puzzleSource: 'api' })).toBe('unknown');
-			expect(
-				resolveContentOrigin({ puzzleSource: 'api', apiOrigin: 'player_uploaded' })
-			).toBe('player_uploaded');
-			expect(resolveContentOrigin({ puzzleSource: 'api', apiOrigin: 'system' })).toBe(
-				'system'
+			expect(resolveContentOrigin({ puzzleSource: 'api', apiOrigin: 'player_uploaded' })).toBe(
+				'player_uploaded'
 			);
+			expect(resolveContentOrigin({ puzzleSource: 'api', apiOrigin: 'system' })).toBe('system');
 		});
 	});
 
 	describe('persisted assistance classification', () => {
 		it.each([
-			[
-				{ hintUsed: false, ghostReferenceUsed: false, referenceActivations: 0 },
-				'none'
-			],
+			[{ hintUsed: false, ghostReferenceUsed: false, referenceActivations: 0 }, 'none'],
 			[{ hintUsed: true, ghostReferenceUsed: false, referenceActivations: 0 }, 'hint'],
-			[
-				{ hintUsed: false, ghostReferenceUsed: false, referenceActivations: 2 },
-				'reference'
-			],
-			[
-				{ hintUsed: false, ghostReferenceUsed: true, referenceActivations: 2 },
-				'ghost_reference'
-			],
+			[{ hintUsed: false, ghostReferenceUsed: false, referenceActivations: 2 }, 'reference'],
+			[{ hintUsed: false, ghostReferenceUsed: true, referenceActivations: 2 }, 'ghost_reference'],
 			[{ hintUsed: true, ghostReferenceUsed: false, referenceActivations: 2 }, 'mixed'],
 			[{ hintUsed: true, ghostReferenceUsed: true, referenceActivations: 2 }, 'mixed']
 		] as const)('classifies $0 as $1', (snapshot, expected) => {
