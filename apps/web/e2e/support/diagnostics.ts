@@ -33,7 +33,7 @@
 // is flagged as unexpected — proving the persona, not the backend, answered.
 import type { ConsoleMessage, Page, Request, Response } from '@playwright/test';
 import type { CompletionScenario } from '../gameplay-fixtures/api-scenario';
-import { SCENARIO_SOURCE } from '../gameplay-fixtures/api-scenario';
+import { completionUrlPattern, SCENARIO_SOURCE } from '../gameplay-fixtures/api-scenario';
 import {
 	FIXTURE_ROUTER_HEADER,
 	HARNESS_VIOLATION_HEADER
@@ -147,8 +147,7 @@ export function createPageDiagnostics(page: Page): PageDiagnostics {
 	/** Build a regex matching only the declared fixture's completion URL. */
 	function expectedCompletionPath(): RegExp | null {
 		if (!expectedCompletion) return null;
-		const escaped = expectedCompletion.fixtureId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-		return new RegExp(`/api/puzzles/${escaped}/complete(?:\\?.*)?$`);
+		return completionUrlPattern(expectedCompletion.fixtureId);
 	}
 
 	function onRequestFailed(request: Request): void {

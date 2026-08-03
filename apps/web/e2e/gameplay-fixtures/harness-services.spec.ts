@@ -9,8 +9,9 @@
 //
 // Run: bun run --cwd apps/web test:e2e -- e2e/gameplay-fixtures/harness-services.spec.ts \
 //      --project=chromium-desktop --retries=0
-import { expect, test, type Page } from '@playwright/test';
+import { type Page } from '@playwright/test';
 import { validatePuzzleMetadata, type PlayerSessionResponse } from '@perseus/types';
+import { expect, test } from '../support/test';
 import { getFixture } from './catalog';
 import {
 	createFixtureRouter,

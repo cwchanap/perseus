@@ -80,6 +80,16 @@ function escapeRegExp(value: string): string {
 	return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/**
+ * Regex matching a known fixture's completion URL, with an optional query
+ * string (e.g. `/complete?retry=1`). Shared with diagnostics so the
+ * controller's `page.route` pattern and diagnostics' expected-path check
+ * cannot drift apart.
+ */
+export function completionUrlPattern(fixtureId: string): RegExp {
+	return new RegExp(`/api/puzzles/${escapeRegExp(fixtureId)}/complete(?:\\?.*)?$`);
+}
+
 export interface ApiScenarioController {
 	/**
 	 * Register the completion route for `fixtureId`. Returns the deferred handle
@@ -206,7 +216,7 @@ export function createApiScenarioController(): ApiScenarioController {
 			// future client-side change that appends query parameters does not
 			// bypass the controller and fall through to the fixture router's
 			// 403 default.
-			const pattern = new RegExp(`/api/puzzles/${escapeRegExp(fixtureId)}/complete(?:\\?.*)?$`);
+			const pattern = completionUrlPattern(fixtureId);
 			await page.route(pattern, async (route) => {
 				const method = route.request().method();
 				if (method !== 'POST') {
