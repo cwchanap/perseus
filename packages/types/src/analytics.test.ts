@@ -310,8 +310,8 @@ describe('analytics v1 batch validation', () => {
 	});
 });
 
-// @ts-expect-error arbitrary event variants are forbidden
 const invalidEventName: AnalyticsEventInputV1 = {
+	// @ts-expect-error arbitrary event variants are forbidden
 	eventName: 'made_up',
 	runId,
 	context: makeContext(),
@@ -319,12 +319,12 @@ const invalidEventName: AnalyticsEventInputV1 = {
 };
 void invalidEventName;
 
-// @ts-expect-error free-form properties are forbidden
 const invalidProperties: AnalyticsEventInputV1 = {
 	eventName: 'puzzle_opened',
 	runId,
 	context: makeContext(),
 	data: null,
+	// @ts-expect-error free-form properties are forbidden
 	properties: {}
 };
 void invalidProperties;
