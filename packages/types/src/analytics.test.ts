@@ -15,8 +15,8 @@ import {
 } from './analytics';
 
 const runId = '123e4567-e89b-42d3-a456-426614174000';
-const galleryEventId = '11111111-1111-4111-8111-111111111111';
-const exitEventId = '22222222-2222-4222-8222-222222222222';
+const galleryEventId = 'abcdefab-cdef-4abc-8def-abcdefabcdef';
+const exitEventId = 'bcdefabc-defa-4bcd-9efa-bcdefabcdefa';
 
 function makeContext(
 	overrides: Partial<AnalyticsPuzzleContextV1> = {}
