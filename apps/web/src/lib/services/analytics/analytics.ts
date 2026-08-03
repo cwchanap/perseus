@@ -88,10 +88,7 @@ function normalizeCompletionCounters(input: unknown): unknown {
 	}
 
 	const hintsUsed = Math.min(input.data.hintsUsed, ANALYTICS_MAX_COUNTER);
-	const referenceActivations = Math.min(
-		input.data.referenceActivations,
-		ANALYTICS_MAX_COUNTER
-	);
+	const referenceActivations = Math.min(input.data.referenceActivations, ANALYTICS_MAX_COUNTER);
 	return {
 		eventName: input.eventName,
 		runId: input.runId,
