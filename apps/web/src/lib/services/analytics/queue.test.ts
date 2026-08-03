@@ -1,0 +1,283 @@
+import { describe, expect, it, vi } from 'vitest';
+import {
+	ANALYTICS_BATCH_SCHEMA_VERSION,
+	ANALYTICS_EVENT_SCHEMA_VERSION,
+	type AnalyticsBatchV1,
+	type AnalyticsEventV1
+} from '@perseus/types';
+import {
+	ANALYTICS_QUEUE_FLUSH_INTERVAL_MS,
+	ANALYTICS_QUEUE_MAX_EVENTS,
+	createAnalyticsDeliveryQueue,
+	type AnalyticsScheduler
+} from './queue';
+import type { AnalyticsTransport } from './transport';
+
+function event(occurredAt: number): AnalyticsEventV1 {
+	return {
+		eventName: 'gallery_viewed',
+		runId: null,
+		context: {
+			authentication: 'unknown',
+			viewportClass: 'desktop',
+			primaryInput: 'fine_pointer'
+		},
+		data: null,
+		schemaVersion: ANALYTICS_EVENT_SCHEMA_VERSION,
+		eventId: 'abcdefab-cdef-4abc-8def-abcdefabcdef',
+		occurredAt
+	};
+}
+
+function createScheduler() {
+	let nextHandle = 1;
+	const callbacks = new Map<number, () => void>();
+	const scheduler: AnalyticsScheduler = {
+		setTimeout(callback) {
+			const handle = nextHandle++;
+			callbacks.set(handle, callback);
+			return handle;
+		},
+		clearTimeout(handle) {
+			callbacks.delete(handle as number);
+		}
+	};
+	return {
+		scheduler,
+		get size() {
+			return callbacks.size;
+		},
+		runNext() {
+			const entry = callbacks.entries().next().value as [number, () => void] | undefined;
+			if (!entry) return false;
+			callbacks.delete(entry[0]);
+			entry[1]();
+			return true;
+		}
+	};
+}
+
+function createCapturingTransport(): AnalyticsTransport & { batches: AnalyticsBatchV1[] } {
+	const batches: AnalyticsBatchV1[] = [];
+	return {
+		batches,
+		async send(batch) {
+			batches.push(batch);
+		},
+		sendOnPageHide(batch) {
+			batches.push(batch);
+			return true;
+		}
+	};
+}
+
+function deferred<T>() {
+	let resolve!: (value: T | PromiseLike<T>) => void;
+	let reject!: (reason?: unknown) => void;
+	const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+		resolve = resolvePromise;
+		reject = rejectPromise;
+	});
+	return { promise, resolve, reject };
+}
+
+async function settle(): Promise<void> {
+	await Promise.resolve();
+	await Promise.resolve();
+}
+
+describe('bounded analytics delivery queue', () => {
+	it('locks the queue constants', () => {
+		expect(ANALYTICS_QUEUE_MAX_EVENTS).toBe(100);
+		expect(ANALYTICS_QUEUE_FLUSH_INTERVAL_MS).toBe(1_000);
+	});
+
+	it('schedules one timer and flushes when it fires', async () => {
+		const timer = createScheduler();
+		const transport = createCapturingTransport();
+		const queue = createAnalyticsDeliveryQueue({
+			transport,
+			scheduler: timer.scheduler
+		});
+
+		queue.enqueue(event(1));
+		queue.enqueue(event(2));
+		expect(queue.size).toBe(2);
+		expect(timer.size).toBe(1);
+		expect(timer.runNext()).toBe(true);
+		await settle();
+
+		expect(queue.size).toBe(0);
+		expect(transport.batches.map((batch) => batch.events.map((item) => item.occurredAt))).toEqual([
+			[1, 2]
+		]);
+	});
+
+	it('starts an immediate flush when a full batch is queued', async () => {
+		const timer = createScheduler();
+		const transport = createCapturingTransport();
+		const queue = createAnalyticsDeliveryQueue({
+			transport,
+			scheduler: timer.scheduler,
+			maxBatchSize: 3
+		});
+
+		queue.enqueue(event(1));
+		queue.enqueue(event(2));
+		queue.enqueue(event(3));
+		await queue.flush();
+
+		expect(timer.size).toBe(0);
+		expect(transport.batches[0].events.map((item) => item.occurredAt)).toEqual([1, 2, 3]);
+	});
+
+	it('drains multiple batches in order', async () => {
+		const transport = createCapturingTransport();
+		const queue = createAnalyticsDeliveryQueue({
+			transport,
+			maxBatchSize: 20,
+			flushIntervalMs: 60_000
+		});
+		for (let index = 1; index <= 45; index++) queue.enqueue(event(index));
+
+		await queue.flush();
+
+		expect(transport.batches.map((batch) => batch.events.length)).toEqual([20, 20, 5]);
+		expect(transport.batches.flatMap((batch) => batch.events.map((item) => item.occurredAt))).toEqual(
+			Array.from({ length: 45 }, (_, index) => index + 1)
+		);
+	});
+
+	it('deduplicates concurrent flush calls', async () => {
+		const pending = deferred<void>();
+		const send = vi.fn(() => pending.promise);
+		const queue = createAnalyticsDeliveryQueue({ transport: { send } });
+		queue.enqueue(event(1));
+
+		const first = queue.flush();
+		const second = queue.flush();
+		expect(first).toBe(second);
+		expect(send).toHaveBeenCalledTimes(1);
+
+		pending.resolve();
+		await first;
+		expect(queue.size).toBe(0);
+	});
+
+	it('preserves enqueue order while a batch is in flight', async () => {
+		const firstSend = deferred<void>();
+		const batches: number[][] = [];
+		let sendCount = 0;
+		const transport: AnalyticsTransport = {
+			async send(batch) {
+				batches.push(batch.events.map((item) => item.occurredAt));
+				sendCount++;
+				if (sendCount === 1) await firstSend.promise;
+			}
+		};
+		const queue = createAnalyticsDeliveryQueue({ transport, maxBatchSize: 2 });
+		queue.enqueue(event(1));
+		queue.enqueue(event(2));
+		queue.enqueue(event(3));
+
+		firstSend.resolve();
+		await queue.flush();
+		expect(batches).toEqual([[1, 2], [3]]);
+	});
+
+	it('drops a rejected batch, stops that flush, and keeps remaining events queued', async () => {
+		const errors: string[] = [];
+		let sends = 0;
+		const transport: AnalyticsTransport = {
+			async send() {
+				sends++;
+				throw new Error('rejected');
+			}
+		};
+		const queue = createAnalyticsDeliveryQueue({
+			transport,
+			maxBatchSize: 20,
+			flushIntervalMs: 60_000,
+			onError: (code) => errors.push(code)
+		});
+		for (let index = 1; index <= 25; index++) queue.enqueue(event(index));
+
+		await queue.flush();
+
+		expect(sends).toBe(1);
+		expect(queue.size).toBe(5);
+		expect(errors).toEqual(['transport_error']);
+	});
+
+	it('drops the oldest event on overflow and reports it', async () => {
+		const transport = createCapturingTransport();
+		const errors: string[] = [];
+		const queue = createAnalyticsDeliveryQueue({
+			transport,
+			maxEvents: 3,
+			maxBatchSize: 10,
+			flushIntervalMs: 60_000,
+			onError: (code) => errors.push(code)
+		});
+		queue.enqueue(event(1));
+		queue.enqueue(event(2));
+		queue.enqueue(event(3));
+		queue.enqueue(event(4));
+		await queue.flush();
+
+		expect(transport.batches[0].events.map((item) => item.occurredAt)).toEqual([2, 3, 4]);
+		expect(errors).toEqual(['queue_overflow']);
+	});
+
+	it('sends the newest queued tail plus the exit event on page hide', () => {
+		const transport = createCapturingTransport();
+		const queue = createAnalyticsDeliveryQueue({
+			transport,
+			maxBatchSize: 5,
+			flushIntervalMs: 60_000
+		});
+		queue.enqueue(event(1));
+		queue.enqueue(event(2));
+		queue.enqueue(event(3));
+		queue.enqueue(event(4));
+
+		expect(queue.flushForPageHide(event(5))).toBe(true);
+		expect(transport.batches[0].events.map((item) => item.occurredAt)).toEqual([1, 2, 3, 4, 5]);
+		expect(queue.size).toBe(0);
+	});
+
+	it('keeps queued events when page-hide delivery is unsupported or rejected', () => {
+		const queueWithoutSupport = createAnalyticsDeliveryQueue({
+			transport: { async send() {} },
+			maxBatchSize: 5
+		});
+		queueWithoutSupport.enqueue(event(1));
+		expect(queueWithoutSupport.flushForPageHide(event(2))).toBe(false);
+		expect(queueWithoutSupport.size).toBe(1);
+
+		const queueRejected = createAnalyticsDeliveryQueue({
+			transport: { async send() {}, sendOnPageHide: () => false },
+			maxBatchSize: 5
+		});
+		queueRejected.enqueue(event(1));
+		expect(queueRejected.flushForPageHide(event(2))).toBe(false);
+		expect(queueRejected.size).toBe(1);
+	});
+
+	it('clears timers and queued events when disposed', async () => {
+		const timer = createScheduler();
+		const transport = createCapturingTransport();
+		const queue = createAnalyticsDeliveryQueue({
+			transport,
+			scheduler: timer.scheduler
+		});
+		queue.enqueue(event(1));
+		queue.dispose();
+
+		expect(queue.size).toBe(0);
+		expect(timer.size).toBe(0);
+		expect(timer.runNext()).toBe(false);
+		await queue.flush();
+		expect(transport.batches).toEqual([]);
+	});
+});
