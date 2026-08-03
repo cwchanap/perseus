@@ -13,11 +13,7 @@ export {
 	resolveAuthenticationClass,
 	resolveContentOrigin
 } from './context';
-export type {
-	AnalyticsAuthStatus,
-	AssistanceUsageSnapshot,
-	PrimaryInputSnapshot
-} from './context';
+export type { AnalyticsAuthStatus, AssistanceUsageSnapshot, PrimaryInputSnapshot } from './context';
 
 export { createAnalyticsRunLedger } from './run-ledger';
 export type {
@@ -29,8 +25,5 @@ export type {
 
 export type { AnalyticsTransport } from './transport';
 export { createHttpAnalyticsTransport } from './transports/http';
-export {
-	createMemoryAnalyticsTransport,
-	type MemoryAnalyticsTransport
-} from './transports/memory';
+export { createMemoryAnalyticsTransport, type MemoryAnalyticsTransport } from './transports/memory';
 export { createNoopAnalyticsTransport } from './transports/noop';
