@@ -99,6 +99,14 @@ async function settle(): Promise<void> {
 	await Promise.resolve();
 }
 
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T | PromiseLike<T>) => void } {
+	let resolve!: (value: T | PromiseLike<T>) => void;
+	const promise = new Promise<T>((resolvePromise) => {
+		resolve = resolvePromise;
+	});
+	return { promise, resolve };
+}
+
 describe('analytics client facade', () => {
 	it('materializes and queues a transient event with injected time and UUID', async () => {
 		const transport = createMemoryAnalyticsTransport();
@@ -352,5 +360,205 @@ describe('analytics client facade', () => {
 		client.track(galleryInput());
 		await client.flush();
 		expect(transport.getEvents()).toEqual([]);
+	});
+
+	it('materializes an occurrence with the default crypto.randomUUID id', async () => {
+		const transport = createMemoryAnalyticsTransport();
+		const client = createAnalyticsClient({
+			transport,
+			ledger: createLedger().ledger,
+			now: () => 6_000,
+			strictValidation: true
+		});
+		client.track(galleryInput());
+		await client.flush();
+		expect(transport.getEvents()).toHaveLength(1);
+		expect(transport.getEvents()[0]?.eventId).toMatch(
+			/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+		);
+	});
+
+	it('reports a throwing clock as invalid input', async () => {
+		const transport = createMemoryAnalyticsTransport();
+		const errors: string[] = [];
+		const client = createAnalyticsClient({
+			transport,
+			ledger: createLedger().ledger,
+			now: () => {
+				throw new Error('clock unavailable');
+			},
+			strictValidation: false,
+			onError: (code) => errors.push(code)
+		});
+		client.track(galleryInput());
+		await client.flush();
+		expect(transport.getEvents()).toEqual([]);
+		expect(errors).toEqual(['invalid_input']);
+	});
+
+	it('rejects a transient event whose context fails validation', async () => {
+		const transport = createMemoryAnalyticsTransport();
+		const errors: string[] = [];
+		const client = createAnalyticsClient({
+			transport,
+			ledger: createLedger().ledger,
+			createEventId: () => occurrenceId,
+			strictValidation: false,
+			onError: (code) => errors.push(code)
+		});
+		client.track({
+			...galleryInput(),
+			context: {
+				authentication: 'loading',
+				viewportClass: 'desktop',
+				primaryInput: 'fine_pointer'
+			}
+		} as never);
+		await client.flush();
+		expect(transport.getEvents()).toEqual([]);
+		expect(errors).toEqual(['invalid_input']);
+	});
+
+	it('reports a throwing id generator as an invalid event id', async () => {
+		const transport = createMemoryAnalyticsTransport();
+		const errors: string[] = [];
+		const client = createAnalyticsClient({
+			transport,
+			ledger: createLedger().ledger,
+			createEventId: () => {
+				throw new Error('uuid unavailable');
+			},
+			strictValidation: false,
+			onError: (code) => errors.push(code)
+		});
+		client.track(galleryInput());
+		await client.flush();
+		expect(transport.getEvents()).toEqual([]);
+		expect(errors).toEqual(['invalid_event_id']);
+	});
+
+	it('rejects a non-gallery transient event name', async () => {
+		const transport = createMemoryAnalyticsTransport();
+		const errors: string[] = [];
+		const client = createAnalyticsClient({
+			transport,
+			ledger: createLedger().ledger,
+			createEventId: () => occurrenceId,
+			strictValidation: false,
+			onError: (code) => errors.push(code)
+		});
+		client.track({ ...openedInput(), eventName: 'puzzle_opened' } as never);
+		await client.flush();
+		expect(transport.getEvents()).toEqual([]);
+		expect(errors).toEqual(['invalid_input']);
+	});
+
+	it('reports a throwing ledger as storage unavailable', async () => {
+		const transport = createMemoryAnalyticsTransport();
+		const errors: string[] = [];
+		const throwingLedger: AnalyticsRunLedger = {
+			markIfNew() {
+				throw new Error('storage locked');
+			}
+		};
+		const client = createAnalyticsClient({
+			transport,
+			ledger: throwingLedger,
+			strictValidation: false,
+			onError: (code) => errors.push(code)
+		});
+		client.trackOncePerRun(openedInput());
+		await client.flush();
+		expect(transport.getEvents()).toEqual([]);
+		expect(errors).toEqual(['ledger_storage_unavailable']);
+	});
+
+	it('rejects a page-hide flush with the wrong event name', () => {
+		const transport = createMemoryAnalyticsTransport();
+		const errors: string[] = [];
+		const client = createAnalyticsClient({
+			transport,
+			ledger: createLedger().ledger,
+			now: () => 7_000,
+			createEventId: () => occurrenceId,
+			strictValidation: false,
+			onError: (code) => errors.push(code)
+		});
+		expect(
+			client.flushForPageHide({ ...openedInput(), eventName: 'gallery_viewed' } as never)
+		).toBe(false);
+		expect(transport.getEvents()).toEqual([]);
+		expect(errors).toEqual(['invalid_input']);
+	});
+
+	it('saturates completion counters from reference activations alone', async () => {
+		const transport = createMemoryAnalyticsTransport();
+		const { ledger } = createLedger();
+		const client = createAnalyticsClient({
+			transport,
+			ledger,
+			now: () => 8_000,
+			strictValidation: true
+		});
+		client.trackOncePerRun({
+			eventName: 'puzzle_completed',
+			runId,
+			context: context({
+				progressBucket: '100',
+				resultClass: 'assisted_timed',
+				assistanceMode: 'ghost_reference'
+			}),
+			data: {
+				elapsedActiveSeconds: 60,
+				hintsUsed: 0,
+				referenceActivations: ANALYTICS_MAX_COUNTER + 3,
+				countersSaturated: false
+			}
+		});
+		await client.flush();
+		expect(transport.getEvents()[0]).toMatchObject({
+			data: {
+				hintsUsed: 0,
+				referenceActivations: ANALYTICS_MAX_COUNTER,
+				countersSaturated: true
+			}
+		});
+	});
+
+	it('reports an unsafe timestamp for a once-per-run event', async () => {
+		const transport = createMemoryAnalyticsTransport();
+		const errors: string[] = [];
+		const client = createAnalyticsClient({
+			transport,
+			ledger: createLedger().ledger,
+			now: () => -1,
+			strictValidation: false,
+			onError: (code) => errors.push(code)
+		});
+		client.trackOncePerRun(openedInput());
+		await client.flush();
+		expect(transport.getEvents()).toEqual([]);
+		expect(errors).toEqual(['invalid_input']);
+	});
+
+	it('reports queue overflow when the bounded queue fills past capacity', async () => {
+		const pending = deferred<void>();
+		const blockingTransport = {
+			async send() {
+				await pending.promise;
+			}
+		};
+		const errors: string[] = [];
+		const client = createAnalyticsClient({
+			transport: blockingTransport,
+			ledger: createLedger().ledger,
+			createEventId: () => occurrenceId,
+			strictValidation: false,
+			onError: (code) => errors.push(code)
+		});
+		for (let index = 0; index < 121; index++) client.track(galleryInput());
+		expect(errors).toEqual(['queue_overflow']);
+		pending.resolve();
+		await client.flush();
 	});
 });

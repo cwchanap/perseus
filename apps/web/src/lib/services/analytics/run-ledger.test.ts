@@ -261,4 +261,161 @@ describe('analytics run ledger', () => {
 		);
 		expect(errors).toEqual(['invalid_record', 'remove_error']);
 	});
+
+	it.each([
+		[
+			'future event schema version',
+			JSON.stringify({
+				schemaVersion: 1,
+				runs: [
+					{
+						runId: runA,
+						lastRecordedAt: 1_000,
+						events: [{ eventSchemaVersion: 2, eventName: 'puzzle_opened', recordedAt: 1_000 }]
+					}
+				]
+			})
+		],
+		[
+			'unknown event name',
+			JSON.stringify({
+				schemaVersion: 1,
+				runs: [
+					{
+						runId: runA,
+						lastRecordedAt: 1_000,
+						events: [{ eventSchemaVersion: 1, eventName: 'made_up', recordedAt: 1_000 }]
+					}
+				]
+			})
+		],
+		[
+			'unsafe recorded timestamp',
+			JSON.stringify({
+				schemaVersion: 1,
+				runs: [
+					{
+						runId: runA,
+						lastRecordedAt: 1_000,
+						events: [{ eventSchemaVersion: 1, eventName: 'puzzle_opened', recordedAt: -1 }]
+					}
+				]
+			})
+		]
+	])(
+		'resets storage with a run event that has valid keys but invalid values (%s)',
+		(_label, raw) => {
+			const storage = makeStorage({ [ANALYTICS_RUN_LEDGER_KEY]: raw });
+			const errors: string[] = [];
+			const ledger = createAnalyticsRunLedger({ storage, onError: (code) => errors.push(code) });
+			expect(mark(ledger)).toBe('recorded');
+			expect(errors).toContain('invalid_record');
+		}
+	);
+
+	it.each([
+		[
+			'invalid run id',
+			JSON.stringify({
+				schemaVersion: 1,
+				runs: [
+					{
+						runId: 'not-a-run-id',
+						lastRecordedAt: 1_000,
+						events: [{ eventSchemaVersion: 1, eventName: 'puzzle_opened', recordedAt: 1_000 }]
+					}
+				]
+			})
+		],
+		[
+			'non-array events',
+			JSON.stringify({
+				schemaVersion: 1,
+				runs: [{ runId: runA, lastRecordedAt: 1_000, events: 'bad' }]
+			})
+		],
+		[
+			'empty events',
+			JSON.stringify({
+				schemaVersion: 1,
+				runs: [{ runId: runA, lastRecordedAt: 1_000, events: [] }]
+			})
+		],
+		[
+			'unsafe last recorded timestamp',
+			JSON.stringify({
+				schemaVersion: 1,
+				runs: [
+					{
+						runId: runA,
+						lastRecordedAt: -1,
+						events: [{ eventSchemaVersion: 1, eventName: 'puzzle_opened', recordedAt: 1_000 }]
+					}
+				]
+			})
+		]
+	])(
+		'resets storage with a run record that has valid keys but invalid values (%s)',
+		(_label, raw) => {
+			const storage = makeStorage({ [ANALYTICS_RUN_LEDGER_KEY]: raw });
+			const errors: string[] = [];
+			const ledger = createAnalyticsRunLedger({ storage, onError: (code) => errors.push(code) });
+			expect(mark(ledger)).toBe('recorded');
+			expect(errors).toContain('invalid_record');
+		}
+	);
+
+	it.each([
+		['non-record ledger value', '42'],
+		['non-integer schema version', JSON.stringify({ schemaVersion: 1.5, runs: [] })],
+		['non-record run element', JSON.stringify({ schemaVersion: 1, runs: [42] })],
+		[
+			'duplicate event keys',
+			JSON.stringify({
+				schemaVersion: 1,
+				runs: [
+					{
+						runId: runA,
+						lastRecordedAt: 1_000,
+						events: [
+							{ eventSchemaVersion: 1, eventName: 'puzzle_opened', recordedAt: 500 },
+							{ eventSchemaVersion: 1, eventName: 'puzzle_opened', recordedAt: 1_000 }
+						]
+					}
+				]
+			})
+		],
+		[
+			'lastRecordedAt mismatch',
+			JSON.stringify({
+				schemaVersion: 1,
+				runs: [
+					{
+						runId: runA,
+						lastRecordedAt: 2_000,
+						events: [{ eventSchemaVersion: 1, eventName: 'puzzle_opened', recordedAt: 1_000 }]
+					}
+				]
+			})
+		]
+	])('resets storage with a structurally invalid ledger (%s)', (_label, raw) => {
+		const storage = makeStorage({ [ANALYTICS_RUN_LEDGER_KEY]: raw });
+		const errors: string[] = [];
+		const ledger = createAnalyticsRunLedger({ storage, onError: (code) => errors.push(code) });
+		expect(mark(ledger)).toBe('recorded');
+		expect(errors).toContain('invalid_record');
+	});
+
+	it('returns storage unavailable for an invalid mark input', () => {
+		const storage = makeStorage();
+		const ledger = createAnalyticsRunLedger({ storage });
+		expect(
+			ledger.markIfNew({
+				eventSchemaVersion: 1,
+				eventName: 'puzzle_opened',
+				runId: 'not-a-run-id',
+				recordedAt: 1_000
+			})
+		).toBe('storage_unavailable');
+	});
 });

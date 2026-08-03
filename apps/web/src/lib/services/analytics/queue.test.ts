@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
 	ANALYTICS_EVENT_SCHEMA_VERSION,
+	ANALYTICS_MAX_BATCH_SIZE,
 	type AnalyticsBatchV1,
 	type AnalyticsEventV1
 } from '@perseus/types';
@@ -276,6 +277,80 @@ describe('bounded analytics delivery queue', () => {
 		expect(queue.size).toBe(0);
 		expect(timer.size).toBe(0);
 		expect(timer.runNext()).toBe(false);
+		await queue.flush();
+		expect(transport.batches).toEqual([]);
+	});
+
+	it.each([
+		['max_events', { maxEvents: 0 }],
+		['max_batch_size', { maxBatchSize: 0 }],
+		['flush_interval_ms', { flushIntervalMs: 0 }]
+	] as const)('rejects a non-positive %s option', (_name, overrides) => {
+		expect(() =>
+			createAnalyticsDeliveryQueue({ transport: createCapturingTransport(), ...overrides })
+		).toThrow(RangeError);
+	});
+
+	it('rejects a max batch size that exceeds the contract cap', () => {
+		expect(() =>
+			createAnalyticsDeliveryQueue({
+				transport: createCapturingTransport(),
+				maxBatchSize: ANALYTICS_MAX_BATCH_SIZE + 1
+			})
+		).toThrow(RangeError);
+	});
+
+	it('reports a throwing page-hide transport and keeps queued events', () => {
+		const errors: string[] = [];
+		const transport: AnalyticsTransport = {
+			async send() {},
+			sendOnPageHide() {
+				throw new Error('beacon failed');
+			}
+		};
+		const queue = createAnalyticsDeliveryQueue({
+			transport,
+			maxBatchSize: 5,
+			flushIntervalMs: 60_000,
+			onError: (code) => errors.push(code)
+		});
+		queue.enqueue(event(1));
+		expect(queue.flushForPageHide(event(2))).toBe(false);
+		expect(queue.size).toBe(1);
+		expect(errors).toEqual(['transport_error']);
+	});
+
+	it('leaves the unsent tail queued after a partial page-hide flush', () => {
+		const pending = deferred<void>();
+		const pageHideBatches: AnalyticsBatchV1[] = [];
+		const transport: AnalyticsTransport = {
+			async send() {
+				await pending.promise;
+			},
+			sendOnPageHide(batch) {
+				pageHideBatches.push(batch);
+				return true;
+			}
+		};
+		const queue = createAnalyticsDeliveryQueue({
+			transport,
+			maxBatchSize: 3,
+			flushIntervalMs: 60_000
+		});
+		for (let index = 1; index <= 7; index++) queue.enqueue(event(index));
+		expect(queue.flushForPageHide(event(8))).toBe(true);
+		expect(pageHideBatches[0].events.map((item) => item.occurredAt)).toEqual([6, 7, 8]);
+		expect(queue.size).toBe(2);
+		pending.resolve();
+	});
+
+	it('ignores a second dispose call', async () => {
+		const transport = createCapturingTransport();
+		const queue = createAnalyticsDeliveryQueue({ transport });
+		queue.enqueue(event(1));
+		queue.dispose();
+		queue.dispose();
+		expect(queue.size).toBe(0);
 		await queue.flush();
 		expect(transport.batches).toEqual([]);
 	});

@@ -116,6 +116,30 @@ describe('HTTP analytics transport', () => {
 		});
 		await Promise.resolve();
 	});
+
+	it('uses the default fetch when none is injected and delivers via beacon', () => {
+		const sendBeacon = vi.fn<(url: string, data?: BodyInit | null) => boolean>(() => true);
+		const transport = createHttpAnalyticsTransport({
+			endpoint: '/api/analytics/events',
+			sendBeacon
+		});
+		expect(transport.sendOnPageHide?.(batch(event))).toBe(true);
+		expect(sendBeacon).toHaveBeenCalledTimes(1);
+	});
+
+	it('returns false when the fallback fetch throws synchronously', () => {
+		const sendBeacon = vi.fn<(url: string, data?: BodyInit | null) => boolean>(() => false);
+		const fetchFn = vi.fn(() => {
+			throw new Error('fetch unavailable');
+		});
+		const transport = createHttpAnalyticsTransport({
+			endpoint: '/api/analytics/events',
+			fetchFn,
+			sendBeacon
+		});
+		expect(transport.sendOnPageHide?.(batch(event))).toBe(false);
+		expect(fetchFn).toHaveBeenCalledTimes(1);
+	});
 });
 
 describe('memory analytics transport', () => {
