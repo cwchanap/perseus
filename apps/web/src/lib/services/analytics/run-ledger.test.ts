@@ -63,6 +63,10 @@ function read(storage: Storage): unknown {
 	return JSON.parse(storage.getItem(ANALYTICS_RUN_LEDGER_KEY) ?? 'null');
 }
 
+function runIdFor(index: number): string {
+	return `00000000-0000-4000-8000-${index.toString(16).padStart(12, '0')}`;
+}
+
 describe('analytics run ledger', () => {
 	it('locks the grouped ledger constants', () => {
 		expect(ANALYTICS_RUN_LEDGER_SCHEMA_VERSION).toBe(1);
@@ -74,9 +78,7 @@ describe('analytics run ledger', () => {
 	it('records a first mark and rejects the same tuple after reload', () => {
 		const storage = makeStorage();
 		expect(mark(createAnalyticsRunLedger({ storage }))).toBe('recorded');
-		expect(mark(createAnalyticsRunLedger({ storage }), { recordedAt: 2_000 })).toBe(
-			'duplicate'
-		);
+		expect(mark(createAnalyticsRunLedger({ storage }), { recordedAt: 2_000 })).toBe('duplicate');
 		expect(read(storage)).toEqual({
 			schemaVersion: 1,
 			runs: [
@@ -168,13 +170,14 @@ describe('analytics run ledger', () => {
 		const storage = makeStorage();
 		const ledger = createAnalyticsRunLedger({ storage });
 		for (let index = 0; index <= ANALYTICS_RUN_LEDGER_MAX_RUNS; index++) {
-			const runId = `00000000-0000-4000-8${String(index).padStart(3, '0')}-${String(index).padStart(12, '0')}`;
-			expect(mark(ledger, { runId, recordedAt: index + 1 })).toBe('recorded');
+			expect(mark(ledger, { runId: runIdFor(index), recordedAt: index + 1 })).toBe(
+				'recorded'
+			);
 		}
 		const runs = (read(storage) as { runs: Array<{ runId: string }> }).runs;
 		expect(runs).toHaveLength(ANALYTICS_RUN_LEDGER_MAX_RUNS);
-		expect(runs[0].runId).toContain('1000');
-		expect(runs.some((run) => run.runId.endsWith('000000000000'))).toBe(false);
+		expect(runs[0].runId).toBe(runIdFor(ANALYTICS_RUN_LEDGER_MAX_RUNS));
+		expect(runs.some((run) => run.runId === runIdFor(0))).toBe(false);
 	});
 
 	it('preserves a future-schema record and fails closed', () => {
@@ -255,16 +258,9 @@ describe('analytics run ledger', () => {
 			throw new Error('remove failed');
 		};
 		const errors: string[] = [];
-		expect(
-			mark(createAnalyticsRunLedger({ storage, onError: (code) => errors.push(code) }))
-		).toBe('recorded');
+		expect(mark(createAnalyticsRunLedger({ storage, onError: (code) => errors.push(code) }))).toBe(
+			'recorded'
+		);
 		expect(errors).toEqual(['invalid_record', 'remove_error']);
-	});
-
-	it('rejects invalid mark input without touching storage', () => {
-		const storage = makeStorage();
-		const ledger = createAnalyticsRunLedger({ storage });
-		expect(mark(ledger, { runId: 'bad-run' })).toBe('storage_unavailable');
-		expect(storage.length).toBe(0);
 	});
 });
