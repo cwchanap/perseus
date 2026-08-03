@@ -10,8 +10,7 @@ export const ANALYTICS_RUN_LEDGER_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 export const ANALYTICS_RUN_LEDGER_MAX_RUNS = 1_000;
 export const ANALYTICS_RUN_LEDGER_MAX_EVENTS_PER_RUN = 6;
 
-export type AnalyticsOncePerRunEventNameV1 =
-	AnalyticsOncePerRunEventInputV1['eventName'];
+export type AnalyticsOncePerRunEventNameV1 = AnalyticsOncePerRunEventInputV1['eventName'];
 
 export interface AnalyticsRunLedgerEventV1 {
 	eventSchemaVersion: typeof ANALYTICS_EVENT_SCHEMA_VERSION;
@@ -84,7 +83,9 @@ function isSafeTimestamp(value: unknown): value is number {
 }
 
 function isEventName(value: unknown): value is AnalyticsOncePerRunEventNameV1 {
-	return typeof value === 'string' && VALID_EVENT_NAMES.has(value as AnalyticsOncePerRunEventNameV1);
+	return (
+		typeof value === 'string' && VALID_EVENT_NAMES.has(value as AnalyticsOncePerRunEventNameV1)
+	);
 }
 
 function isMarkInput(value: AnalyticsRunLedgerMarkInputV1): boolean {
@@ -235,8 +236,7 @@ export function createAnalyticsRunLedger(options?: {
 	onError?: (code: AnalyticsRunLedgerErrorCode) => void;
 }): AnalyticsRunLedger {
 	const storage =
-		options?.storage ??
-		(typeof localStorage !== 'undefined' ? localStorage : undefined);
+		options?.storage ?? (typeof localStorage !== 'undefined' ? localStorage : undefined);
 	const onError = options?.onError;
 
 	return {
@@ -248,8 +248,7 @@ export function createAnalyticsRunLedger(options?: {
 			if (parsed.kind === 'incompatible') return 'incompatible_schema';
 			if (parsed.kind === 'invalid') recoverInvalidRecord(storage, onError);
 
-			const ledger =
-				parsed.kind === 'valid' ? cloneLedger(parsed.ledger) : emptyLedger();
+			const ledger = parsed.kind === 'valid' ? cloneLedger(parsed.ledger) : emptyLedger();
 			const oldestRetainedAt = input.recordedAt - ANALYTICS_RUN_LEDGER_RETENTION_MS;
 			ledger.runs = ledger.runs.filter((run) => run.lastRecordedAt >= oldestRetainedAt);
 
