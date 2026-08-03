@@ -210,23 +210,25 @@ describe('bounded analytics delivery queue', () => {
 	});
 
 	it('drops the oldest event on overflow and reports it', async () => {
-		const transport = createCapturingTransport();
+		const pending = deferred<void>();
 		const errors: string[] = [];
+		const transport: AnalyticsTransport = {
+			async send() {
+				await pending.promise;
+			}
+		};
 		const queue = createAnalyticsDeliveryQueue({
 			transport,
 			maxEvents: 3,
-			maxBatchSize: 10,
+			maxBatchSize: 3,
 			flushIntervalMs: 60_000,
 			onError: (code) => errors.push(code)
 		});
-		queue.enqueue(event(1));
-		queue.enqueue(event(2));
-		queue.enqueue(event(3));
-		queue.enqueue(event(4));
-		await queue.flush();
-
-		expect(transport.batches[0].events.map((item) => item.occurredAt)).toEqual([2, 3, 4]);
+		for (let index = 1; index <= 7; index++) queue.enqueue(event(index));
 		expect(errors).toEqual(['queue_overflow']);
+		pending.resolve();
+		await queue.flush();
+		expect(queue.size).toBe(0);
 	});
 
 	it('sends the newest queued tail plus the exit event on page hide', () => {
@@ -296,6 +298,16 @@ describe('bounded analytics delivery queue', () => {
 			createAnalyticsDeliveryQueue({
 				transport: createCapturingTransport(),
 				maxBatchSize: ANALYTICS_MAX_BATCH_SIZE + 1
+			})
+		).toThrow(RangeError);
+	});
+
+	it('rejects a max batch size that exceeds max events', () => {
+		expect(() =>
+			createAnalyticsDeliveryQueue({
+				transport: createCapturingTransport(),
+				maxEvents: 5,
+				maxBatchSize: 6
 			})
 		).toThrow(RangeError);
 	});

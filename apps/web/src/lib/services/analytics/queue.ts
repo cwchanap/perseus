@@ -64,6 +64,9 @@ export function createAnalyticsDeliveryQueue(options: {
 	if (maxBatchSize > ANALYTICS_MAX_BATCH_SIZE) {
 		throw new RangeError('max_batch_size_exceeds_contract');
 	}
+	if (maxBatchSize > maxEvents) {
+		throw new RangeError('max_batch_size_exceeds_max_events');
+	}
 
 	let events: AnalyticsEventV1[] = [];
 	let timer: unknown | null = null;
