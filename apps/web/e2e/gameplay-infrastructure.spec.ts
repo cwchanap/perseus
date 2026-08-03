@@ -19,8 +19,6 @@ import type { Page } from '@playwright/test';
 import { test, expect } from './support/test';
 import type { GameplayPage } from './support/gameplay-page';
 import { getFixture } from './gameplay-fixtures/catalog';
-import { FIXTURE_ROUTER_HEADER } from './gameplay-fixtures/fixture-router';
-import { SCENARIO_SOURCE } from './gameplay-fixtures/api-scenario';
 import { buildMinimalSeed, progressKey } from './gameplay-fixtures/persisted-state';
 
 const FIXTURE_ID = 'e2e-square-4' as const;
@@ -172,12 +170,14 @@ test.describe('gameplay smoke @smoke', () => {
 
 	// --- Step 4: deferred retry -------------------------------------------------
 	//
-	// The ApiScenarioController binds one immutable outcome per install, so a
-	// failure-then-success flow is driven by a stateful route registered after
-	// load (it takes precedence over the fixture router's /complete default).
-	// The completion diagnostics are declared as network-abort, the one scenario
-	// whose status is tolerated, so both the driven 500 and the retry's 200 pass
-	// teardown and the page's "Failed to submit" console.error is allowlisted.
+	// The failure-then-success flow is driven by the controller-owned
+	// `retry-sequence` scenario: the ApiScenarioController fulfills the first
+	// POST with `failureStatus` (500) and every subsequent POST with 200,
+	// recording every attempt. Diagnostics declares the scenario (not
+	// network-abort), so only 500 and 200 are allowed on the completion path —
+	// a controller regression that returns the wrong status (or a custom route
+	// impersonating the controller) is flagged. The controller stamps the
+	// api-scenario provenance marker itself; the test never stamps it manually.
 
 	test('deferred retry: held failure then manual retry succeeds with the same seal @smoke', async ({
 		gameplayPage,
@@ -186,42 +186,29 @@ test.describe('gameplay smoke @smoke', () => {
 		const runId = firstRunId();
 		await gameplayPage.gotoFixture({
 			persona: 'authenticated',
-			clock: { startAt: START_AT }
+			clock: { startAt: START_AT },
+			completion: { kind: 'retry-sequence', failureStatus: 500 }
 		});
-		gameplayPage.diagnostics.setCompletion(FIXTURE_ID, { kind: 'network-abort' });
-		// The driven 500 logs both the page's console.error (allowlisted via the
-		// network-abort scenario) and Chromium's "Failed to load resource".
+		// The driven 500 logs both the page's console.error (allowlisted via
+		// the retry-sequence scenario) and Chromium's "Failed to load resource".
 		gameplayPage.diagnostics.expectConsoleError('Failed to load resource');
-
-		const bodies: Record<string, unknown>[] = [];
-		let attempts = 0;
-		await page.route(COMPLETION_URL, async (route) => {
-			attempts += 1;
-			const text = route.request().postData();
-			bodies.push(text ? (JSON.parse(text) as Record<string, unknown>) : {});
-			const failed = attempts === 1;
-			await route.fulfill({
-				status: failed ? 500 : 200,
-				json: failed ? { error: 'internal_error' } : { ok: true },
-				// Stamp the api-scenario provenance marker so diagnostics
-				// recognizes this as a controller-owned completion response.
-				headers: { [FIXTURE_ROUTER_HEADER]: SCENARIO_SOURCE }
-			});
-		});
 
 		await placePieces(gameplayPage, [0, 1, 2, 3]);
 
-		// The first submission failed with a retryable internal_error; the
-		// celebration modal surfaces the manual retry affordance.
+		// The first submission failed with a retryable 500; the celebration
+		// modal surfaces the manual retry affordance.
 		await expect(page.getByTestId('celebration-modal')).toBeVisible();
 		await expect(page.getByTestId('server-retry-banner')).toBeVisible();
-		await expect.poll(() => bodies.length).toBe(1);
+		await expect.poll(() => gameplayPage.apiController.recordedRequests.length).toBe(1);
 
 		// Manual retry re-submits the SAME sealed payload and succeeds.
 		await page.getByTestId('retry-server-submission').click();
 		await expect(page.getByTestId('server-retry-banner')).not.toBeVisible();
-		await expect.poll(() => bodies.length).toBe(2);
+		await expect.poll(() => gameplayPage.apiController.recordedRequests.length).toBe(2);
 
+		const bodies = gameplayPage.apiController.recordedRequests.map(
+			(r) => r.bodyJson as Record<string, unknown>
+		);
 		expect(bodies[0]).toMatchObject({
 			version: 1,
 			runId,

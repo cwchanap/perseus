@@ -234,9 +234,15 @@ export function createPageDiagnostics(page: Page): PageDiagnostics {
 				unexpectedResponses.push({ url: response.url(), method, status });
 				return;
 			}
-			// 4. The status must be consistent with the driven scenario.
-			const expected = completionStatus(expectedCompletion.scenario);
-			if (expected !== null && status !== expected) {
+			// 4. The status must be consistent with the driven scenario. A
+			// network-abort scenario aborts the request, so NO response should
+			// arrive — any response here means the controller did not abort (a
+			// regression) or a custom route impersonated the controller (the
+			// provenance header alone does not prove controller ownership once a
+			// test can stamp it manually). For the other scenarios, the status
+			// must be one of the scenario's allowed statuses.
+			const allowed = completionStatuses(expectedCompletion.scenario);
+			if (allowed === 'no-response' || !allowed.includes(status)) {
 				unexpectedResponses.push({ url: response.url(), method, status });
 			}
 			return;
@@ -300,10 +306,15 @@ export function createPageDiagnostics(page: Page): PageDiagnostics {
 		setCompletion(fixtureId, scenario) {
 			if (fixtureId && scenario) {
 				expectedCompletion = { fixtureId, scenario };
-				// http-failure and network-abort both make the puzzle page log a
-				// console.error on the failed server submission. Allowlist it so
-				// the driven failure is not mistaken for a regression.
-				if (scenario.kind === 'http-failure' || scenario.kind === 'network-abort') {
+				// http-failure, network-abort, and retry-sequence all make the
+				// puzzle page log a console.error on the failed server
+				// submission (retry-sequence's first attempt fails). Allowlist
+				// it so the driven failure is not mistaken for a regression.
+				if (
+					scenario.kind === 'http-failure' ||
+					scenario.kind === 'network-abort' ||
+					scenario.kind === 'retry-sequence'
+				) {
 					expectedConsoleSubstrings.push('Failed to submit completion to server');
 				}
 			} else {
@@ -391,21 +402,31 @@ export function createPageDiagnostics(page: Page): PageDiagnostics {
 	};
 }
 
-/** The HTTP status a scenario produces on the completion response, or null. */
-function completionStatus(scenario: CompletionScenario): number | null {
+/**
+ * The HTTP statuses a scenario may produce on the completion response, or
+ * `'no-response'` when the scenario produces no response at all (network-abort:
+ * the request is aborted, so `onResponse` never fires — any response that DOES
+ * arrive is a controller regression or a custom route impersonating the
+ * controller and is flagged as unexpected by the caller).
+ */
+function completionStatuses(scenario: CompletionScenario): number[] | 'no-response' {
 	switch (scenario.kind) {
 		case 'success':
-			return 200;
+			return [200];
 		case 'http-failure':
-			return scenario.status;
+			return [scenario.status];
+		case 'retry-sequence':
+			// First attempt → failureStatus, subsequent attempts → 200.
+			return [scenario.failureStatus, 200];
 		case 'deferred-success':
-			return 200;
+			return [200];
 		case 'network-abort':
-			// No response (aborted); any status is tolerated here.
-			return null;
+			// The request is aborted; no response should arrive. Any response
+			// is unexpected (handled by the caller).
+			return 'no-response';
 		default: {
 			const exhaustive: never = scenario;
-			throw new Error(`completionStatus: unhandled ${JSON.stringify(exhaustive)}`);
+			throw new Error(`completionStatuses: unhandled ${JSON.stringify(exhaustive)}`);
 		}
 	}
 }

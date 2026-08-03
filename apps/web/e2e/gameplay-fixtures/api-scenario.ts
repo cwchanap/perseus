@@ -41,7 +41,8 @@ export type CompletionScenario =
 	| { kind: 'success' }
 	| { kind: 'deferred-success' }
 	| { kind: 'network-abort' }
-	| { kind: 'http-failure'; status: 400 | 401 | 404 | 409 | 429 | 500 };
+	| { kind: 'http-failure'; status: 400 | 401 | 404 | 409 | 429 | 500 }
+	| { kind: 'retry-sequence'; failureStatus: 400 | 401 | 404 | 409 | 429 | 500 };
 
 export interface RecordedRequest {
 	url: string;
@@ -159,7 +160,11 @@ export function createApiScenarioController(): ApiScenarioController {
 		}
 	};
 
-	async function applyScenario(route: Route, scenario: CompletionScenario): Promise<void> {
+	async function applyScenario(
+		route: Route,
+		scenario: CompletionScenario,
+		attempt: number
+	): Promise<void> {
 		switch (scenario.kind) {
 			case 'success': {
 				await route.fulfill({ status: 200, json: { ok: true }, headers: scenarioHeaders() });
@@ -170,6 +175,23 @@ export function createApiScenarioController(): ApiScenarioController {
 				await route.fulfill({
 					status,
 					json: { error: 'http_failure', status },
+					headers: scenarioHeaders()
+				});
+				return;
+			}
+			case 'retry-sequence': {
+				// Controller-owned failure-then-success sequence: the first
+				// attempt fulfills with `failureStatus`, every subsequent
+				// attempt fulfills with 200. The controller records every
+				// request, so a test can assert on both the failed and the
+				// retried sealed payloads. Both responses carry the api-scenario
+				// provenance marker, so diagnostics can prove the controller
+				// (not a custom route) handled each attempt.
+				const failed = attempt === 1;
+				const status = failed ? scenario.failureStatus : 200;
+				await route.fulfill({
+					status,
+					json: failed ? { error: 'http_failure', status } : { ok: true },
 					headers: scenarioHeaders()
 				});
 				return;
@@ -217,6 +239,10 @@ export function createApiScenarioController(): ApiScenarioController {
 			// bypass the controller and fall through to the fixture router's
 			// 403 default.
 			const pattern = completionUrlPattern(fixtureId);
+			// Per-install attempt counter so stateful scenarios (retry-sequence)
+			// can vary their response by attempt without leaking state across
+			// installs. Stateless scenarios ignore it.
+			let attempts = 0;
 			await page.route(pattern, async (route) => {
 				const method = route.request().method();
 				if (method !== 'POST') {
@@ -228,7 +254,8 @@ export function createApiScenarioController(): ApiScenarioController {
 					return;
 				}
 				record(route);
-				await applyScenario(route, scenario);
+				attempts += 1;
+				await applyScenario(route, scenario, attempts);
 			});
 			return handle;
 		},

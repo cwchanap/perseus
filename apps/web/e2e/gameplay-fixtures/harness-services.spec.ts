@@ -501,6 +501,58 @@ test.describe('ApiScenarioController @smoke', () => {
 		expect(() => controller.assertClean()).not.toThrow();
 	});
 
+	// --- retry-sequence: controller-owned failure-then-success ----------------
+
+	test('retry-sequence: first attempt fails with failureStatus, second succeeds with 200, both recorded', async ({
+		page
+	}) => {
+		const router = createFixtureRouter();
+		await router.install(page);
+		await gotoApiOrigin(page);
+
+		const controller = createApiScenarioController();
+		await controller.install(page, FIXTURE_ID, {
+			kind: 'retry-sequence',
+			failureStatus: 500
+		});
+
+		// First attempt → 500 (retryable failure).
+		const first = await postCompletion(page);
+		expect(first.status).toBe(500);
+		expect(first.headers[FIXTURE_ROUTER_HEADER]).toBe(SCENARIO_SOURCE);
+
+		// Second attempt → 200 (retry succeeds).
+		const second = await postCompletion(page);
+		expect(second.status).toBe(200);
+		expect(second.headers[FIXTURE_ROUTER_HEADER]).toBe(SCENARIO_SOURCE);
+
+		// Both attempts were recorded by the controller (not a custom route).
+		expect(controller.recordedRequests).toHaveLength(2);
+		expect(controller.recordedRequests[0]!.method).toBe('POST');
+		expect(controller.recordedRequests[1]!.method).toBe('POST');
+		expect(controller.recordedRequests[0]!.bodyJson).toEqual(COMPLETION_BODY);
+		expect(controller.recordedRequests[1]!.bodyJson).toEqual(COMPLETION_BODY);
+		controller.assertClean();
+	});
+
+	test('retry-sequence: a third attempt also succeeds (failure is one-shot)', async ({ page }) => {
+		const router = createFixtureRouter();
+		await router.install(page);
+		await gotoApiOrigin(page);
+
+		const controller = createApiScenarioController();
+		await controller.install(page, FIXTURE_ID, {
+			kind: 'retry-sequence',
+			failureStatus: 409
+		});
+
+		expect((await postCompletion(page)).status).toBe(409);
+		expect((await postCompletion(page)).status).toBe(200);
+		expect((await postCompletion(page)).status).toBe(200);
+		expect(controller.recordedRequests).toHaveLength(3);
+		controller.assertClean();
+	});
+
 	// --- Finding 1: query-string acceptance + method enforcement -------------
 
 	test('controller intercepts /complete?retry=1 (query string does not bypass the controller)', async ({
@@ -733,6 +785,42 @@ test.describe('PageDiagnostics @smoke', () => {
 		// NOT suppressed by the network-abort allowlist for e2e-square-4.
 		expect(diagnostics.harnessViolations).toHaveLength(1);
 		expect(diagnostics.harnessViolations[0]!.violation).toBe('undeclared_completion');
+		diagnostics.dispose();
+	});
+
+	test('P1: network-abort flags ANY HTTP response on the completion path as unexpected (no wildcard)', async ({
+		page
+	}) => {
+		// A real network-abort aborts the request — no response arrives. If a
+		// controller regression (or a custom route that manually stamps the
+		// api-scenario provenance header) returns an HTTP response instead of
+		// aborting, diagnostics must flag it. The provenance header alone does
+		// not prove controller ownership once a test can stamp it manually, so
+		// network-abort cannot be used as a wildcard that tolerates any status.
+		const diagnostics = createPageDiagnostics(page);
+		const router = createFixtureRouter();
+		await router.install(page);
+		// Install a custom route that impersonates the controller: it stamps
+		// the api-scenario marker and returns 500 then 200, exactly the abuse
+		// pattern the review flagged.
+		await page.route(/\/api\/puzzles\/e2e-square-4\/complete(?:\?.*)?$/, async (route) => {
+			await route.fulfill({
+				status: 500,
+				json: { error: 'internal_error' },
+				headers: { [FIXTURE_ROUTER_HEADER]: SCENARIO_SOURCE }
+			});
+		});
+		diagnostics.setCompletion(FIXTURE_ID, { kind: 'network-abort' });
+		await gotoApiOrigin(page);
+
+		await postCompletion(page);
+		await waitForResponses(diagnostics, 1);
+
+		// The 500 response is flagged as unexpected: network-abort expects NO
+		// response. The manually-stamped provenance header does NOT exempt it.
+		expect(diagnostics.unexpectedResponses).toHaveLength(1);
+		expect(diagnostics.unexpectedResponses[0]!.status).toBe(500);
+		expect(() => diagnostics.assertNoUnexpectedErrors()).toThrow();
 		diagnostics.dispose();
 	});
 
