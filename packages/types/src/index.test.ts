@@ -29,7 +29,8 @@ import {
 	type PlayerStatRow,
 	type ResultClass,
 	type TimingQuality,
-	type RecordPuzzleCompletionResponse
+	type RecordPuzzleCompletionResponse,
+	coercePuzzleStatus
 } from './index';
 
 // Helper to create a valid piece
@@ -96,6 +97,16 @@ describe('constants', () => {
 		expect(PUZZLE_CATEGORIES).toContain('Abstract');
 		expect(PUZZLE_CATEGORIES).toContain('Food');
 		expect(PUZZLE_CATEGORIES).toContain('Travel');
+	});
+});
+
+describe('coercePuzzleStatus', () => {
+	it.each(['processing', 'ready', 'failed'])('passes through a valid status %s', (status) => {
+		expect(coercePuzzleStatus(status)).toBe(status);
+	});
+
+	it('defaults an unexpected value to failed', () => {
+		expect(coercePuzzleStatus('corrupted')).toBe('failed');
 	});
 });
 

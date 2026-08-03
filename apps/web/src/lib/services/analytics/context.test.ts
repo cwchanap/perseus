@@ -46,6 +46,11 @@ describe('analytics context projection', () => {
 			);
 		});
 
+		it('rejects an unrecognized declared aspect', () => {
+			expect(
+				classifyAspectBucket({ declaredAspect: 'panorama' as never, width: 100, height: 100 })
+			).toBeNull();
+		});
 		it.each([
 			[{ width: 100, height: 100 }, 'square'],
 			[{ width: 200, height: 100 }, 'landscape'],
@@ -299,6 +304,33 @@ describe('analytics context projection', () => {
 					sessionOrigin: 'new',
 					rotationUsed: false,
 					placedPieceCount: 101,
+					assistance: {
+						hintUsed: false,
+						ghostReferenceUsed: false,
+						referenceActivations: 0
+					}
+				})
+			).toBeNull();
+		});
+
+		it('returns null when projections succeed but the context fails event validation', () => {
+			expect(
+				buildAnalyticsPuzzleContextV1({
+					client: {
+						authentication: 'anonymous',
+						viewportClass: 'desktop',
+						primaryInput: 'fine_pointer'
+					},
+					puzzleSource: 'api',
+					pieceCount: 100,
+					imageWidth: 100,
+					imageHeight: 100,
+					sessionMode: 'timed',
+					resultClass: 'relaxed',
+					timingQuality: 'known',
+					sessionOrigin: 'new',
+					rotationUsed: false,
+					placedPieceCount: 50,
 					assistance: {
 						hintUsed: false,
 						ghostReferenceUsed: false,
