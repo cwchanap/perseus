@@ -75,7 +75,7 @@ describe('HTTP analytics transport', () => {
 	});
 
 	it('uses an application/json Blob for accepted page-hide beacons', async () => {
-		const sendBeacon = vi.fn(() => true);
+		const sendBeacon = vi.fn<(url: string | URL, data?: BodyInit | null) => boolean>(() => true);
 		const fetchFn = vi.fn(async () => new Response(null, { status: 202 }));
 		const transport = createHttpAnalyticsTransport({
 			endpoint: '/api/analytics/events',
@@ -86,15 +86,16 @@ describe('HTTP analytics transport', () => {
 		expect(transport.sendOnPageHide?.(batch(event))).toBe(true);
 		expect(fetchFn).not.toHaveBeenCalled();
 		expect(sendBeacon).toHaveBeenCalledTimes(1);
-		const [url, body] = sendBeacon.mock.calls[0];
+		const [url, body] = sendBeacon.mock.calls[0]!;
 		expect(url).toBe('/api/analytics/events');
 		expect(body).toBeInstanceOf(Blob);
-		expect((body as Blob).type).toBe('application/json');
-		expect(await (body as Blob).text()).toBe(JSON.stringify(batch(event)));
+		if (!(body instanceof Blob)) throw new Error('expected analytics beacon Blob');
+		expect(body.type).toBe('application/json');
+		expect(await body.text()).toBe(JSON.stringify(batch(event)));
 	});
 
 	it('falls back to a swallowed keepalive fetch when the beacon is unavailable or rejected', async () => {
-		const sendBeacon = vi.fn(() => false);
+		const sendBeacon = vi.fn<(url: string | URL, data?: BodyInit | null) => boolean>(() => false);
 		const fetchFn = vi.fn(async () => {
 			throw new Error('page terminated');
 		});
