@@ -143,9 +143,9 @@ describe('bounded analytics delivery queue', () => {
 		await queue.flush();
 
 		expect(transport.batches.map((batch) => batch.events.length)).toEqual([20, 20, 5]);
-		expect(transport.batches.flatMap((batch) => batch.events.map((item) => item.occurredAt))).toEqual(
-			Array.from({ length: 45 }, (_, index) => index + 1)
-		);
+		expect(
+			transport.batches.flatMap((batch) => batch.events.map((item) => item.occurredAt))
+		).toEqual(Array.from({ length: 45 }, (_, index) => index + 1));
 	});
 
 	it('deduplicates concurrent flush calls', async () => {
