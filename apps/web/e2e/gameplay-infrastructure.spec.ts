@@ -19,6 +19,8 @@ import type { Page } from '@playwright/test';
 import { test, expect } from './support/test';
 import type { GameplayPage } from './support/gameplay-page';
 import { getFixture } from './gameplay-fixtures/catalog';
+import { FIXTURE_ROUTER_HEADER } from './gameplay-fixtures/fixture-router';
+import { SCENARIO_SOURCE } from './gameplay-fixtures/api-scenario';
 import { buildMinimalSeed, progressKey } from './gameplay-fixtures/persisted-state';
 
 const FIXTURE_ID = 'e2e-square-4' as const;
@@ -200,7 +202,10 @@ test.describe('gameplay smoke @smoke', () => {
 			const failed = attempts === 1;
 			await route.fulfill({
 				status: failed ? 500 : 200,
-				json: failed ? { error: 'internal_error' } : { ok: true }
+				json: failed ? { error: 'internal_error' } : { ok: true },
+				// Stamp the api-scenario provenance marker so diagnostics
+				// recognizes this as a controller-owned completion response.
+				headers: { [FIXTURE_ROUTER_HEADER]: SCENARIO_SOURCE }
 			});
 		});
 

@@ -8,15 +8,33 @@
 //
 // Fixture-request leak detection: every `e2e-*` response must be answered by
 // the fixture router (it stamps the `x-perseus-e2e-source` marker) or, for the
-// `/complete` path, by the ApiScenarioController. Any `e2e-*` response that
-// reaches the real backend (no marker, not a completion path) is a leak and
-// fails teardown.
+// `/complete` path, by the ApiScenarioController (marker `api-scenario`). Any
+// `e2e-*` response that reaches the real backend (no marker, not a completion
+// path) is a leak and fails teardown.
+//
+// Harness violation detection: responses carrying `x-perseus-e2e-violation`
+// (undeclared completion, wrong HTTP method) are recorded as harness violations
+// and fail teardown regardless of HTTP status — so a regression that bypasses
+// the scenario controller or uses the wrong method cannot pass E2E silently.
+//
+// Completion provenance: when a completion scenario is declared, diagnostics
+// requires the response marker to equal `api-scenario` (the controller's
+// provenance), validates the fixture ID matches the declared scenario, and
+// confirms the method is POST. A response from the fixture router's 403
+// default (or a real-backend response with the expected status) is flagged as
+// unexpected — proving the configured scenario actually handled the response.
 import type { ConsoleMessage, Page, Request, Response } from '@playwright/test';
 import type { CompletionScenario } from '../gameplay-fixtures/api-scenario';
-import { FIXTURE_ROUTER_HEADER } from '../gameplay-fixtures/fixture-router';
+import { SCENARIO_SOURCE } from '../gameplay-fixtures/api-scenario';
+import {
+	FIXTURE_ROUTER_HEADER,
+	HARNESS_VIOLATION_HEADER
+} from '../gameplay-fixtures/fixture-router';
 
 const E2E_PATH = /\/api\/puzzles\/e2e-[a-z0-9-]+/;
 const COMPLETION_PATH = /\/api\/puzzles\/e2e-[a-z0-9-]+\/complete(?:\?.*)?$/;
+/** Extracts the fixture id from an e2e-* completion URL. */
+const FIXTURE_ID_FROM_URL = /\/api\/puzzles\/(e2e-[a-z0-9-]+)\/complete/;
 
 export interface ConsoleErrorRecord {
 	text: string;
@@ -44,6 +62,13 @@ export interface LeakedFixtureRequestRecord {
 	status: number;
 }
 
+export interface HarnessViolationRecord {
+	url: string;
+	method: string;
+	status: number;
+	violation: string;
+}
+
 export interface PageDiagnostics {
 	/** Declare the active completion scenario so its outcome is expected. */
 	setCompletion(fixtureId: string | undefined, scenario: CompletionScenario | undefined): void;
@@ -54,6 +79,7 @@ export interface PageDiagnostics {
 	readonly failedRequests: readonly FailedRequestRecord[];
 	readonly unexpectedResponses: readonly UnexpectedResponseRecord[];
 	readonly leakedFixtureRequests: readonly LeakedFixtureRequestRecord[];
+	readonly harnessViolations: readonly HarnessViolationRecord[];
 	/** Throw if any non-allowlisted console/page/failed/unexpected error occurred. */
 	assertNoUnexpectedErrors(): void;
 	/** Throw if any e2e-* request leaked past the router to the real backend. */
@@ -72,6 +98,7 @@ export function createPageDiagnostics(page: Page): PageDiagnostics {
 	const failedRequests: FailedRequestRecord[] = [];
 	const unexpectedResponses: UnexpectedResponseRecord[] = [];
 	const leakedFixtureRequests: LeakedFixtureRequestRecord[] = [];
+	const harnessViolations: HarnessViolationRecord[] = [];
 	const expectedConsoleSubstrings: string[] = [];
 	let expectedCompletion: ExpectedCompletion | undefined;
 
@@ -90,15 +117,22 @@ export function createPageDiagnostics(page: Page): PageDiagnostics {
 		pageErrors.push({ message: err.message });
 	}
 
+	/** Build a regex matching only the declared fixture's completion URL. */
+	function expectedCompletionPath(): RegExp | null {
+		if (!expectedCompletion) return null;
+		const escaped = expectedCompletion.fixtureId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+		return new RegExp(`/api/puzzles/${escaped}/complete(?:\\?.*)?$`);
+	}
+
 	function onRequestFailed(request: Request): void {
 		const url = request.url();
-		// A deliberately aborted completion submission is expected.
-		if (
-			expectedCompletion?.scenario.kind === 'network-abort' &&
-			COMPLETION_PATH.test(url) &&
-			request.method() === 'POST'
-		) {
-			return;
+		// A deliberately aborted completion submission is expected — but only
+		// for the configured fixture's completion URL, not any e2e-* completion.
+		if (expectedCompletion?.scenario.kind === 'network-abort') {
+			const path = expectedCompletionPath();
+			if (path && path.test(url) && request.method() === 'POST') {
+				return;
+			}
 		}
 		failedRequests.push({
 			url,
@@ -117,26 +151,54 @@ export function createPageDiagnostics(page: Page): PageDiagnostics {
 			return;
 		}
 
+		const status = response.status();
+		const headers = response.headers();
+		const marker = headers[FIXTURE_ROUTER_HEADER];
+
+		// Harness violations (undeclared completion, wrong method) are flagged
+		// first, regardless of path or status. The violation header is only set
+		// by the harness, so its presence proves the response is a harness-level
+		// contract violation that should fail the test.
+		const violation = headers[HARNESS_VIOLATION_HEADER];
+		if (violation) {
+			harnessViolations.push({ url: response.url(), method, status, violation });
+			return;
+		}
+
 		const isE2E = E2E_PATH.test(pathname);
 		const isCompletion = COMPLETION_PATH.test(pathname);
-		const status = response.status();
-		const marker = response.headers()[FIXTURE_ROUTER_HEADER];
 
 		if (isCompletion) {
-			// The completion path is owned by the ApiScenarioController when a
-			// scenario is installed, or by the fixture router's default 200 when
-			// no controller is present. A response from either (identified by the
-			// provenance header) is never a leak. Without both a scenario AND the
-			// router marker, the completion reached the real backend — flag it.
 			if (!expectedCompletion) {
-				if (marker === 'fixture-router' || marker === 'api-scenario') {
-					return;
-				}
-				leakedFixtureRequests.push({ url: response.url(), method, status });
+				// No scenario declared: any completion response is an undeclared
+				// write. The fixture router returns 403 with the violation header
+				// (caught above), but a real-backend response or any other
+				// unmarked completion is also a violation.
+				unexpectedResponses.push({ url: response.url(), method, status });
 				return;
 			}
-			// A scenario is installed: its outcome is expected. Only a status
-			// inconsistent with the driven scenario is unexpected.
+			// A scenario is installed: prove the controller handled it.
+			// 1. The marker must be `api-scenario` — the controller's provenance.
+			//    A `fixture-router` marker means the controller missed (e.g. a
+			//    URL shape it did not match) and the router's 403 default ran
+			//    instead; a missing marker means the real backend answered.
+			if (marker !== SCENARIO_SOURCE) {
+				unexpectedResponses.push({ url: response.url(), method, status });
+				return;
+			}
+			// 2. The fixture ID must match the declared scenario's fixture.
+			const fixtureMatch = response.url().match(FIXTURE_ID_FROM_URL);
+			const urlFixtureId = fixtureMatch?.[1];
+			if (urlFixtureId !== expectedCompletion.fixtureId) {
+				unexpectedResponses.push({ url: response.url(), method, status });
+				return;
+			}
+			// 3. The method must be POST — the production completion contract.
+			if (method !== 'POST') {
+				unexpectedResponses.push({ url: response.url(), method, status });
+				return;
+			}
+			// 4. The status must be consistent with the driven scenario.
 			const expected = completionStatus(expectedCompletion.scenario);
 			if (expected !== null && status !== expected) {
 				unexpectedResponses.push({ url: response.url(), method, status });
@@ -200,6 +262,9 @@ export function createPageDiagnostics(page: Page): PageDiagnostics {
 		get leakedFixtureRequests() {
 			return leakedFixtureRequests;
 		},
+		get harnessViolations() {
+			return harnessViolations;
+		},
 		assertNoUnexpectedErrors() {
 			const parts: string[] = [];
 			if (consoleErrors.length > 0) {
@@ -216,6 +281,11 @@ export function createPageDiagnostics(page: Page): PageDiagnostics {
 			if (unexpectedResponses.length > 0) {
 				parts.push(
 					`unexpected responses:\n${unexpectedResponses.map((r) => `  - ${r.method} ${r.url} -> ${r.status}`).join('\n')}`
+				);
+			}
+			if (harnessViolations.length > 0) {
+				parts.push(
+					`harness violations:\n${harnessViolations.map((r) => `  - ${r.method} ${r.url} -> ${r.status} (${r.violation})`).join('\n')}`
 				);
 			}
 			if (parts.length > 0) {
