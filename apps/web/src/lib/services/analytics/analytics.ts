@@ -64,6 +64,12 @@ function isNonNegativeSafeInteger(value: unknown): value is number {
 	return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
 
+function isOncePerRunEventName(
+	value: AnalyticsEventInputV1['eventName']
+): value is AnalyticsOncePerRunEventInputV1['eventName'] {
+	return ONCE_PER_RUN_EVENT_NAMES.has(value);
+}
+
 function cloneInput<T extends AnalyticsEventInputV1>(input: T): T {
 	return {
 		eventName: input.eventName,
@@ -184,7 +190,7 @@ export function createAnalyticsClient(options: {
 		const normalized = normalizeCompletionCounters(input);
 		if (
 			!isAnalyticsEventInputV1(normalized) ||
-			!ONCE_PER_RUN_EVENT_NAMES.has(normalized.eventName) ||
+			!isOncePerRunEventName(normalized.eventName) ||
 			typeof normalized.runId !== 'string'
 		) {
 			rejectValidation('invalid_input');
