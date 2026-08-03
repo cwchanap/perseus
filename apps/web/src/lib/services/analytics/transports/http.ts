@@ -1,12 +1,14 @@
 import type { AnalyticsBatchV1 } from '@perseus/types';
 import type { AnalyticsTransport } from '../transport';
 
+type AnalyticsFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
 export function createHttpAnalyticsTransport(options: {
 	endpoint: string;
-	fetchFn?: typeof fetch;
+	fetchFn?: AnalyticsFetch;
 	sendBeacon?: (url: string, data?: BodyInit | null) => boolean;
 }): AnalyticsTransport {
-	const fetchFn = options.fetchFn ?? fetch;
+	const fetchFn = options.fetchFn ?? globalThis.fetch;
 	const sendBeacon =
 		options.sendBeacon ??
 		(typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function'
