@@ -406,7 +406,7 @@ describe('analytics run ledger', () => {
 		expect(errors).toContain('invalid_record');
 	});
 
-	it('returns storage unavailable for an invalid mark input', () => {
+	it('returns invalid_input for an invalid mark input', () => {
 		const storage = makeStorage();
 		const ledger = createAnalyticsRunLedger({ storage });
 		expect(
@@ -416,6 +416,6 @@ describe('analytics run ledger', () => {
 				runId: 'not-a-run-id',
 				recordedAt: 1_000
 			})
-		).toBe('storage_unavailable');
+		).toBe('invalid_input');
 	});
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	ANALYTICS_EVENT_SCHEMA_VERSION,
+	ANALYTICS_MAX_BATCH_SIZE,
 	ANALYTICS_MAX_COUNTER,
 	buildAnalyticsRunEventIdV1,
 	type AnalyticsEventInputV1,
@@ -12,7 +13,7 @@ import type {
 	AnalyticsRunLedger,
 	AnalyticsRunLedgerMarkInputV1
 } from './run-ledger';
-import type { AnalyticsScheduler } from './queue';
+import { ANALYTICS_QUEUE_MAX_EVENTS, type AnalyticsScheduler } from './queue';
 import { createMemoryAnalyticsTransport } from './transports/memory';
 
 const runId = '123e4567-e89b-42d3-a456-426614174000';
@@ -179,7 +180,8 @@ describe('analytics client facade', () => {
 
 	it.each([
 		['storage_unavailable', 'ledger_storage_unavailable'],
-		['incompatible_schema', 'ledger_incompatible_schema']
+		['incompatible_schema', 'ledger_incompatible_schema'],
+		['invalid_input', 'invalid_input']
 	] as const)('reports ledger result %s as %s', async (result, expected) => {
 		const transport = createMemoryAnalyticsTransport();
 		const { ledger } = createLedger(result);
@@ -556,7 +558,8 @@ describe('analytics client facade', () => {
 			strictValidation: false,
 			onError: (code) => errors.push(code)
 		});
-		for (let index = 0; index < 121; index++) client.track(galleryInput());
+		for (let index = 0; index < ANALYTICS_MAX_BATCH_SIZE + ANALYTICS_QUEUE_MAX_EVENTS + 1; index++)
+			client.track(galleryInput());
 		expect(errors).toEqual(['queue_overflow']);
 		pending.resolve();
 		await client.flush();

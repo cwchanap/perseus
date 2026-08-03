@@ -324,12 +324,12 @@ describe('analytics validator branch coverage', () => {
 	it('rejects an event whose client context fails validation', () => {
 		expect(
 			isAnalyticsEventV1({
-				eventSchemaVersion: ANALYTICS_EVENT_SCHEMA_VERSION,
+				schemaVersion: ANALYTICS_EVENT_SCHEMA_VERSION,
 				eventId: buildAnalyticsRunEventIdV1('puzzle_opened', runId),
 				eventName: 'puzzle_opened',
 				runId,
 				occurredAt: 1_000,
-				context: { ...context(), authentication: 'unknown' as never },
+				context: { ...context(), authentication: 'loading' as never },
 				data: null
 			})
 		).toBe(false);

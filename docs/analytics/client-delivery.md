@@ -91,11 +91,11 @@ would not turn queueing into a delivery acknowledgement.
 
 The private queue uses these production constants:
 
-| Policy | Value |
-| --- | --- |
-| Maximum retained events | 100 |
-| Maximum batch size | 20 |
-| Scheduled flush delay | 1,000 ms |
+| Policy                  | Value    |
+| ----------------------- | -------- |
+| Maximum retained events | 100      |
+| Maximum batch size      | 20       |
+| Scheduled flush delay   | 1,000 ms |
 
 Behavior:
 
@@ -149,10 +149,14 @@ page-hide batch, only the included queued tail is removed.
 
 The HTTP adapter:
 
-1. attempts `navigator.sendBeacon` with an `application/json` `Blob`;
-2. if beacon is unavailable, throws, or returns false, starts a swallowed `fetch` with
-   `keepalive: true` and the same credentials/cache policy;
-3. never waits for either path during navigation.
+1. starts a swallowed `fetch` with `keepalive: true` and the same
+   credentials/cache policy as normal delivery (`credentials: 'omit'`);
+2. never waits for the fetch to settle during navigation.
+
+`navigator.sendBeacon` is intentionally avoided because it cannot be configured
+with `credentials: 'omit'` and would send cookies on same-origin requests,
+violating the analytics privacy contract. Beacon should only be reconsidered if
+the endpoint becomes explicitly cookieless and the privacy contract is updated.
 
 Production page-hide reliability is designed primarily for same-origin delivery. Local
 cross-origin beacon/keepalive behavior is diagnostic and best effort.

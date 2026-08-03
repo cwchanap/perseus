@@ -12,25 +12,15 @@ export const ANALYTICS_EVENT_SCHEMA_VERSION = 1 as const;
 export const ANALYTICS_BATCH_SCHEMA_VERSION = 1 as const;
 export const ANALYTICS_MAX_BATCH_SIZE = 20;
 export const ANALYTICS_MAX_COUNTER = 10_000;
-export const ANALYTICS_MAX_MOUNT_TO_FIRST_PLACEMENT_MS =
-	MAX_COMPLETION_TIME_SECONDS * 1000;
+export const ANALYTICS_MAX_MOUNT_TO_FIRST_PLACEMENT_MS = MAX_COMPLETION_TIME_SECONDS * 1000;
 
-export const ANALYTICS_AUTHENTICATION_CLASSES = [
-	'anonymous',
-	'authenticated',
-	'unknown'
-] as const;
-export type AnalyticsAuthenticationClass =
-	(typeof ANALYTICS_AUTHENTICATION_CLASSES)[number];
+export const ANALYTICS_AUTHENTICATION_CLASSES = ['anonymous', 'authenticated', 'unknown'] as const;
+export type AnalyticsAuthenticationClass = (typeof ANALYTICS_AUTHENTICATION_CLASSES)[number];
 
 export const ANALYTICS_PUZZLE_SOURCES = ['api', 'local'] as const;
 export type AnalyticsPuzzleSource = (typeof ANALYTICS_PUZZLE_SOURCES)[number];
 
-export const ANALYTICS_CONTENT_ORIGINS = [
-	'system',
-	'player_uploaded',
-	'unknown'
-] as const;
+export const ANALYTICS_CONTENT_ORIGINS = ['system', 'player_uploaded', 'unknown'] as const;
 export type AnalyticsContentOrigin = (typeof ANALYTICS_CONTENT_ORIGINS)[number];
 
 export const ANALYTICS_PIECE_COUNT_BUCKETS = [
@@ -41,8 +31,7 @@ export const ANALYTICS_PIECE_COUNT_BUCKETS = [
 	'150-225',
 	'226+'
 ] as const;
-export type AnalyticsPieceCountBucket =
-	(typeof ANALYTICS_PIECE_COUNT_BUCKETS)[number];
+export type AnalyticsPieceCountBucket = (typeof ANALYTICS_PIECE_COUNT_BUCKETS)[number];
 
 export const ANALYTICS_ASPECT_BUCKETS = ['square', 'landscape', 'portrait'] as const;
 export type AnalyticsAspectBucket = (typeof ANALYTICS_ASPECT_BUCKETS)[number];
@@ -64,14 +53,7 @@ export type AnalyticsSessionMode = (typeof ANALYTICS_SESSION_MODES)[number];
 export const ANALYTICS_SESSION_ORIGINS = ['new', 'resumed'] as const;
 export type AnalyticsSessionOrigin = (typeof ANALYTICS_SESSION_ORIGINS)[number];
 
-export const ANALYTICS_PROGRESS_BUCKETS = [
-	'0',
-	'1-24',
-	'25-49',
-	'50-74',
-	'75-99',
-	'100'
-] as const;
+export const ANALYTICS_PROGRESS_BUCKETS = ['0', '1-24', '25-49', '50-74', '75-99', '100'] as const;
 export type AnalyticsProgressBucket = (typeof ANALYTICS_PROGRESS_BUCKETS)[number];
 
 export const ANALYTICS_ASSISTANCE_MODES = [
@@ -169,7 +151,7 @@ type WithAnalyticsMetadata<T> = T extends AnalyticsEventInputV1
 			schemaVersion: typeof ANALYTICS_EVENT_SCHEMA_VERSION;
 			eventId: string;
 			occurredAt: number;
-	  }
+		}
 	: never;
 
 export type AnalyticsEventV1 = WithAnalyticsMetadata<AnalyticsEventInputV1>;
@@ -181,17 +163,20 @@ export interface AnalyticsBatchV1 {
 
 export type AnalyticsEventNameV1 = AnalyticsEventInputV1['eventName'];
 
+export const ANALYTICS_ONCE_PER_RUN_EVENT_NAMES = [
+	'puzzle_opened',
+	'first_piece_placed',
+	'hint_used',
+	'reference_used',
+	'puzzle_completed',
+	'personal_best_beaten'
+] as const;
+
+export type AnalyticsOncePerRunEventNameV1 = (typeof ANALYTICS_ONCE_PER_RUN_EVENT_NAMES)[number];
+
 export type AnalyticsOncePerRunEventInputV1 = Extract<
 	AnalyticsEventInputV1,
-	{
-		eventName:
-			| 'puzzle_opened'
-			| 'first_piece_placed'
-			| 'hint_used'
-			| 'reference_used'
-			| 'puzzle_completed'
-			| 'personal_best_beaten';
-	}
+	{ eventName: AnalyticsOncePerRunEventNameV1 }
 >;
 
 export type AnalyticsTrackedOccurrenceEventInputV1 = Extract<
@@ -204,8 +189,7 @@ export type PuzzleExitedIncompleteEventInputV1 = Extract<
 	{ eventName: 'puzzle_exited_incomplete' }
 >;
 
-export type AnalyticsDeterministicRunEventNameV1 =
-	AnalyticsOncePerRunEventInputV1['eventName'];
+export type AnalyticsDeterministicRunEventNameV1 = AnalyticsOncePerRunEventNameV1;
 
 const EVENT_INPUT_KEYS = ['eventName', 'runId', 'context', 'data'] as const;
 const EVENT_KEYS = [
@@ -235,8 +219,7 @@ const PUZZLE_CONTEXT_KEYS = [
 	'assistanceMode'
 ] as const;
 
-const LOWERCASE_UUID_V4 =
-	/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const LOWERCASE_UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 const RESULT_CLASS_SET = new Set<string>(RESULT_CLASSES);
 const TIMING_QUALITY_SET = new Set<string>(TIMING_QUALITIES);
@@ -252,14 +235,7 @@ const SESSION_ORIGIN_SET = new Set<string>(ANALYTICS_SESSION_ORIGINS);
 const PROGRESS_BUCKET_SET = new Set<string>(ANALYTICS_PROGRESS_BUCKETS);
 const ASSISTANCE_MODE_SET = new Set<string>(ANALYTICS_ASSISTANCE_MODES);
 const REFERENCE_MODE_SET = new Set<string>(ANALYTICS_REFERENCE_MODES);
-const DETERMINISTIC_EVENT_NAME_SET = new Set<string>([
-	'puzzle_opened',
-	'first_piece_placed',
-	'hint_used',
-	'reference_used',
-	'puzzle_completed',
-	'personal_best_beaten'
-]);
+const DETERMINISTIC_EVENT_NAME_SET = new Set<string>(ANALYTICS_ONCE_PER_RUN_EVENT_NAMES);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -271,12 +247,7 @@ function hasExactKeys(value: Record<string, unknown>, expected: readonly string[
 }
 
 function isSafeIntegerInRange(value: unknown, min: number, max: number): value is number {
-	return (
-		typeof value === 'number' &&
-		Number.isSafeInteger(value) &&
-		value >= min &&
-		value <= max
-	);
+	return typeof value === 'number' && Number.isSafeInteger(value) && value >= min && value <= max;
 }
 
 function isEnumValue(value: unknown, values: Set<string>): value is string {
@@ -328,29 +299,21 @@ function isPuzzleContextV1(value: unknown): value is AnalyticsPuzzleContextV1 {
 	if (resultClass === 'rotation_timed' && !rotationUsed) return false;
 	if (sessionMode === 'timed' && rotationUsed && resultClass === 'standard_timed') return false;
 
+	// Assistance takes precedence over rotation: when both rotation and qualifying
+	// assistance are used, the result must be assisted_timed, not rotation_timed.
 	const qualifyingAssistance =
-		assistanceMode === 'hint' ||
-		assistanceMode === 'ghost_reference' ||
-		assistanceMode === 'mixed';
+		assistanceMode === 'hint' || assistanceMode === 'ghost_reference' || assistanceMode === 'mixed';
 	if (sessionMode === 'timed' && qualifyingAssistance && resultClass !== 'assisted_timed') {
 		return false;
 	}
-	if (
-		sessionMode === 'timed' &&
-		resultClass === 'assisted_timed' &&
-		!qualifyingAssistance
-	) {
+	if (sessionMode === 'timed' && resultClass === 'assisted_timed' && !qualifyingAssistance) {
 		return false;
 	}
-
-	if (timingQuality === 'legacy_unknown' && resultClass === 'relaxed') return false;
 
 	return true;
 }
 
-function isRunEventBase(
-	value: Record<string, unknown>
-): value is Record<string, unknown> & {
+function isRunEventBase(value: Record<string, unknown>): value is Record<string, unknown> & {
 	runId: string;
 	context: AnalyticsPuzzleContextV1;
 } {
@@ -361,9 +324,7 @@ function isNull(value: unknown): value is null {
 	return value === null;
 }
 
-function isFirstPlacementData(
-	value: unknown
-): value is { mountToFirstPlacementMs: number } {
+function isFirstPlacementData(value: unknown): value is { mountToFirstPlacementMs: number } {
 	return (
 		isRecord(value) &&
 		hasExactKeys(value, ['mountToFirstPlacementMs']) &&
@@ -395,11 +356,7 @@ function isCompletionData(
 			'countersSaturated'
 		]) &&
 		(value.elapsedActiveSeconds === null ||
-			isSafeIntegerInRange(
-				value.elapsedActiveSeconds,
-				1,
-				MAX_COMPLETION_TIME_SECONDS
-			)) &&
+			isSafeIntegerInRange(value.elapsedActiveSeconds, 1, MAX_COMPLETION_TIME_SECONDS)) &&
 		isSafeIntegerInRange(value.hintsUsed, 0, ANALYTICS_MAX_COUNTER) &&
 		isSafeIntegerInRange(value.referenceActivations, 0, ANALYTICS_MAX_COUNTER) &&
 		typeof value.countersSaturated === 'boolean' &&
@@ -425,11 +382,7 @@ function isIncompleteExitData(value: unknown): value is {
 		isRecord(value) &&
 		hasExactKeys(value, ['elapsedActiveSeconds', 'placedPieceCount']) &&
 		(value.elapsedActiveSeconds === null ||
-			isSafeIntegerInRange(
-				value.elapsedActiveSeconds,
-				0,
-				MAX_COMPLETION_TIME_SECONDS
-			)) &&
+			isSafeIntegerInRange(value.elapsedActiveSeconds, 0, MAX_COMPLETION_TIME_SECONDS)) &&
 		isSafeIntegerInRange(value.placedPieceCount, 0, MAX_PIECES)
 	);
 }
@@ -498,8 +451,7 @@ export function isAnalyticsEventInputV1(value: unknown): value is AnalyticsEvent
 		case 'hint_used':
 			return (
 				isRunEventBase(value) &&
-				(value.context.assistanceMode === 'hint' ||
-					value.context.assistanceMode === 'mixed') &&
+				(value.context.assistanceMode === 'hint' || value.context.assistanceMode === 'mixed') &&
 				isNull(value.data)
 			);
 		case 'reference_used': {
@@ -511,8 +463,7 @@ export function isAnalyticsEventInputV1(value: unknown): value is AnalyticsEvent
 				);
 			}
 			return (
-				value.context.assistanceMode === 'reference' ||
-				value.context.assistanceMode === 'mixed'
+				value.context.assistanceMode === 'reference' || value.context.assistanceMode === 'mixed'
 			);
 		}
 		case 'puzzle_completed': {
@@ -524,11 +475,8 @@ export function isAnalyticsEventInputV1(value: unknown): value is AnalyticsEvent
 				return false;
 			}
 			return (
-				completionTimingIsValid(
-					value.runId,
-					value.context,
-					value.data.elapsedActiveSeconds
-				) && completionContextMatchesCounters(value.context, value.data)
+				completionTimingIsValid(value.runId, value.context, value.data.elapsedActiveSeconds) &&
+				completionContextMatchesCounters(value.context, value.data)
 			);
 		}
 		case 'personal_best_beaten':

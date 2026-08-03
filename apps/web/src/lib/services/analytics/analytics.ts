@@ -186,7 +186,9 @@ export function createAnalyticsClient(options: {
 		return event;
 	}
 
-	function materializeOncePerRun(input: unknown): AnalyticsEventV1 | null {
+	function materializeOncePerRun(
+		input: unknown
+	): { event: AnalyticsEventV1; eventName: AnalyticsOncePerRunEventInputV1['eventName'] } | null {
 		const normalized = normalizeCompletionCounters(input);
 		if (
 			!isAnalyticsEventInputV1(normalized) ||
@@ -198,17 +200,18 @@ export function createAnalyticsClient(options: {
 		}
 		const occurredAt = readOccurredAt();
 		if (occurredAt === null) return null;
+		const validatedEventName = normalized.eventName;
 		const event = {
 			...cloneInput(normalized),
 			schemaVersion: ANALYTICS_EVENT_SCHEMA_VERSION,
-			eventId: buildAnalyticsRunEventIdV1(normalized.eventName, normalized.runId),
+			eventId: buildAnalyticsRunEventIdV1(validatedEventName, normalized.runId),
 			occurredAt
 		};
 		if (!isAnalyticsEventV1(event)) {
 			rejectValidation('invalid_input');
 			return null;
 		}
-		return event;
+		return { event, eventName: validatedEventName };
 	}
 
 	return {
@@ -221,14 +224,16 @@ export function createAnalyticsClient(options: {
 			if (event !== null) queue.enqueue(event);
 		},
 		trackOncePerRun(input): void {
-			const event = materializeOncePerRun(input);
-			if (event === null || typeof event.runId !== 'string') return;
+			const materialized = materializeOncePerRun(input);
+			if (materialized === null) return;
+			const { event, eventName } = materialized;
+			if (typeof event.runId !== 'string') return;
 
 			let result;
 			try {
 				result = options.ledger.markIfNew({
 					eventSchemaVersion: ANALYTICS_EVENT_SCHEMA_VERSION,
-					eventName: input.eventName,
+					eventName,
 					runId: event.runId,
 					recordedAt: event.occurredAt
 				});
@@ -243,6 +248,8 @@ export function createAnalyticsClient(options: {
 				options.onError?.('ledger_storage_unavailable');
 			} else if (result === 'incompatible_schema') {
 				options.onError?.('ledger_incompatible_schema');
+			} else if (result === 'invalid_input') {
+				options.onError?.('invalid_input');
 			}
 		},
 		flushForPageHide(input): boolean {

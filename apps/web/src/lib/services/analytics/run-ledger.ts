@@ -37,7 +37,8 @@ export type AnalyticsLedgerMarkResult =
 	| 'recorded'
 	| 'duplicate'
 	| 'storage_unavailable'
-	| 'incompatible_schema';
+	| 'incompatible_schema'
+	| 'invalid_input';
 
 export type AnalyticsRunLedgerErrorCode =
 	| 'read_error'
@@ -146,7 +147,10 @@ function parseRun(value: unknown): AnalyticsRunLedgerRecordV1 | null {
 	};
 }
 
-function parseLedger(value: unknown): ParsedLedger {
+function parseLedger(
+	value: unknown,
+	onError?: (code: AnalyticsRunLedgerErrorCode) => void
+): ParsedLedger {
 	if (!isRecord(value) || !Object.hasOwn(value, 'schemaVersion')) return { kind: 'invalid' };
 	if (!Number.isInteger(value.schemaVersion)) return { kind: 'invalid' };
 	if ((value.schemaVersion as number) > ANALYTICS_RUN_LEDGER_SCHEMA_VERSION) {
@@ -163,12 +167,19 @@ function parseLedger(value: unknown): ParsedLedger {
 
 	const runs: AnalyticsRunLedgerRecordV1[] = [];
 	const runIds = new Set<string>();
+	let droppedRuns = false;
 	for (const rawRun of value.runs) {
 		const run = parseRun(rawRun);
-		if (run === null || runIds.has(run.runId)) return { kind: 'invalid' };
+		if (run === null) {
+			droppedRuns = true;
+			continue;
+		}
+		if (runIds.has(run.runId)) return { kind: 'invalid' };
 		runIds.add(run.runId);
 		runs.push(run);
 	}
+
+	if (droppedRuns) onError?.('invalid_record');
 
 	return {
 		kind: 'valid',
@@ -198,7 +209,7 @@ function readLedger(
 	} catch {
 		return { kind: 'invalid' };
 	}
-	return parseLedger(value);
+	return parseLedger(value, onError);
 }
 
 function recoverInvalidRecord(
@@ -241,7 +252,8 @@ export function createAnalyticsRunLedger(options?: {
 
 	return {
 		markIfNew(input): AnalyticsLedgerMarkResult {
-			if (storage === undefined || !isMarkInput(input)) return 'storage_unavailable';
+			if (storage === undefined) return 'storage_unavailable';
+			if (!isMarkInput(input)) return 'invalid_input';
 
 			const parsed = readLedger(storage, onError);
 			if (parsed.kind === 'read_error') return 'storage_unavailable';

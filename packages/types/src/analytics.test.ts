@@ -18,9 +18,7 @@ const runId = '123e4567-e89b-42d3-a456-426614174000';
 const galleryEventId = 'abcdefab-cdef-4abc-8def-abcdefabcdef';
 const exitEventId = 'bcdefabc-defa-4bcd-9efa-bcdefabcdefa';
 
-function makeContext(
-	overrides: Partial<AnalyticsPuzzleContextV1> = {}
-): AnalyticsPuzzleContextV1 {
+function makeContext(overrides: Partial<AnalyticsPuzzleContextV1> = {}): AnalyticsPuzzleContextV1 {
 	return {
 		authentication: 'unknown',
 		viewportClass: 'desktop',
@@ -120,6 +118,56 @@ function validInputs(): AnalyticsEventInputV1[] {
 	];
 }
 
+function openedInput(): AnalyticsEventInputV1 {
+	return {
+		eventName: 'puzzle_opened',
+		runId,
+		context: makeContext(),
+		data: null
+	};
+}
+
+function firstPlacedInput(): AnalyticsEventInputV1 {
+	return {
+		eventName: 'first_piece_placed',
+		runId,
+		context: makeContext({ progressBucket: '1-24' }),
+		data: { mountToFirstPlacementMs: 250 }
+	};
+}
+
+function hintInput(): AnalyticsEventInputV1 {
+	return {
+		eventName: 'hint_used',
+		runId,
+		context: makeContext({ resultClass: 'assisted_timed', assistanceMode: 'hint' }),
+		data: null
+	};
+}
+
+function completedInput(): AnalyticsEventInputV1 {
+	return {
+		eventName: 'puzzle_completed',
+		runId,
+		context: makeContext({ progressBucket: '100' }),
+		data: {
+			elapsedActiveSeconds: 120,
+			hintsUsed: 0,
+			referenceActivations: 0,
+			countersSaturated: false
+		}
+	};
+}
+
+function personalBestInput(): AnalyticsEventInputV1 {
+	return {
+		eventName: 'personal_best_beaten',
+		runId,
+		context: makeContext({ progressBucket: '100' }),
+		data: { elapsedActiveSeconds: 120 }
+	};
+}
+
 describe('analytics v1 constants', () => {
 	it('locks schema and delivery limits', () => {
 		expect(ANALYTICS_EVENT_SCHEMA_VERSION).toBe(1);
@@ -150,58 +198,58 @@ describe('analytics v1 input validation', () => {
 		{ name: 'unknown event', value: { eventName: 'made_up' } },
 		{
 			name: 'extra root key',
-			value: { ...validInputs()[1], puzzleId: 'forbidden' }
+			value: { ...openedInput(), puzzleId: 'forbidden' }
 		},
 		{
 			name: 'extra context key',
 			value: {
-				...validInputs()[1],
+				...openedInput(),
 				context: { ...makeContext(), userAgent: 'forbidden' }
 			}
 		},
 		{
 			name: 'bad run id',
-			value: { ...validInputs()[1], runId: 'not-a-run-id' }
+			value: { ...openedInput(), runId: 'not-a-run-id' }
 		},
 		{
 			name: 'bad auth class',
 			value: {
-				...validInputs()[1],
+				...openedInput(),
 				context: { ...makeContext(), authentication: 'loading' }
 			}
 		},
 		{
 			name: 'relaxed mode with timed result',
 			value: {
-				...validInputs()[1],
+				...openedInput(),
 				context: makeContext({ sessionMode: 'relaxed', resultClass: 'standard_timed' })
 			}
 		},
 		{
 			name: 'rotation result without rotation fact',
 			value: {
-				...validInputs()[1],
+				...openedInput(),
 				context: makeContext({ resultClass: 'rotation_timed', rotationUsed: false })
 			}
 		},
 		{
 			name: 'hint result without assisted class',
 			value: {
-				...validInputs()[3],
+				...hintInput(),
 				context: makeContext({ assistanceMode: 'hint', resultClass: 'standard_timed' })
 			}
 		},
 		{
 			name: 'completion without progress 100',
 			value: {
-				...validInputs()[5],
+				...completedInput(),
 				context: makeContext({ progressBucket: '75-99' })
 			}
 		},
 		{
 			name: 'completion reference contradiction',
 			value: {
-				...validInputs()[5],
+				...completedInput(),
 				context: makeContext({ progressBucket: '100', assistanceMode: 'none' }),
 				data: {
 					elapsedActiveSeconds: 120,
@@ -214,7 +262,7 @@ describe('analytics v1 input validation', () => {
 		{
 			name: 'personal best with rotation',
 			value: {
-				...validInputs()[6],
+				...personalBestInput(),
 				context: makeContext({
 					progressBucket: '100',
 					rotationUsed: true,
@@ -225,14 +273,14 @@ describe('analytics v1 input validation', () => {
 		{
 			name: 'negative placement latency',
 			value: {
-				...validInputs()[2],
+				...firstPlacedInput(),
 				data: { mountToFirstPlacementMs: -1 }
 			}
 		},
 		{
 			name: 'placement latency above cap',
 			value: {
-				...validInputs()[2],
+				...firstPlacedInput(),
 				data: {
 					mountToFirstPlacementMs: ANALYTICS_MAX_MOUNT_TO_FIRST_PLACEMENT_MS + 1
 				}
@@ -241,7 +289,7 @@ describe('analytics v1 input validation', () => {
 		{
 			name: 'counter above cap',
 			value: {
-				...validInputs()[5],
+				...completedInput(),
 				data: {
 					elapsedActiveSeconds: 120,
 					hintsUsed: ANALYTICS_MAX_COUNTER + 1,
@@ -282,7 +330,9 @@ describe('analytics v1 batch validation', () => {
 		expect(
 			isAnalyticsBatchV1({
 				schemaVersion: ANALYTICS_BATCH_SCHEMA_VERSION,
-				events: validInputs().slice(0, 2).map((input) => materialize(input))
+				events: validInputs()
+					.slice(0, 2)
+					.map((input) => materialize(input))
 			})
 		).toBe(true);
 	});
@@ -297,9 +347,9 @@ describe('analytics v1 batch validation', () => {
 				)
 			})
 		).toBe(false);
-		expect(
-			isAnalyticsBatchV1({ schemaVersion: 2, events: [materialize(validInputs()[1])] })
-		).toBe(false);
+		expect(isAnalyticsBatchV1({ schemaVersion: 2, events: [materialize(validInputs()[1])] })).toBe(
+			false
+		);
 		expect(
 			isAnalyticsBatchV1({
 				schemaVersion: 1,
