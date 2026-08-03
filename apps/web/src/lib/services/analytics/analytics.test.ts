@@ -286,10 +286,7 @@ describe('analytics client facade', () => {
 		const transport = createMemoryAnalyticsTransport();
 		const { ledger } = createLedger();
 		let nextId = 0;
-		const ids = [
-			'abcdefab-cdef-4abc-8def-abcdefabcdef',
-			'bcdefabc-defa-4bcd-9efa-bcdefabcdefa'
-		];
+		const ids = ['abcdefab-cdef-4abc-8def-abcdefabcdef', 'bcdefabc-defa-4bcd-9efa-bcdefabcdefa'];
 		const client = createAnalyticsClient({
 			transport,
 			ledger,
