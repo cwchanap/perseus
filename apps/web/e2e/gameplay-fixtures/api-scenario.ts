@@ -11,14 +11,26 @@
 // pending until `release()`/`cancel()` is called, and `assertClean()` refuses
 // to tear down while any route is still held — surfacing its URL and body so a
 // forgotten release is obvious.
+//
+// HTTP method enforcement: the controller enforces POST for /complete. A
+// non-POST request receives a 405 with the harness violation header so a
+// client-side method regression cannot pass E2E silently.
+//
+// The route pattern accepts an optional query string (e.g. `/complete?retry=1`)
+// so a future client-side change that appends query parameters does not bypass
+// the controller and fall through to the fixture router's 403 default.
 import type { Page, Route } from '@playwright/test';
-import { FIXTURE_ROUTER_HEADER } from './fixture-router';
+import { FIXTURE_ROUTER_HEADER, HARNESS_VIOLATION_HEADER } from './fixture-router';
 
 /** Provenance value stamped on every scenario-fulfilled completion response. */
 export const SCENARIO_SOURCE = 'api-scenario';
 
 function scenarioHeaders(): Record<string, string> {
 	return { [FIXTURE_ROUTER_HEADER]: SCENARIO_SOURCE };
+}
+
+function violationHeaders(violation: string): Record<string, string> {
+	return { [FIXTURE_ROUTER_HEADER]: SCENARIO_SOURCE, [HARNESS_VIOLATION_HEADER]: violation };
 }
 
 /**
@@ -190,8 +202,21 @@ export function createApiScenarioController(): ApiScenarioController {
 
 	return {
 		async install(page: Page, fixtureId: string, scenario: CompletionScenario) {
-			const pattern = new RegExp(`/api/puzzles/${escapeRegExp(fixtureId)}/complete$`);
+			// Accept an optional query string (e.g. `/complete?retry=1`) so a
+			// future client-side change that appends query parameters does not
+			// bypass the controller and fall through to the fixture router's
+			// 403 default.
+			const pattern = new RegExp(`/api/puzzles/${escapeRegExp(fixtureId)}/complete(?:\\?.*)?$`);
 			await page.route(pattern, async (route) => {
+				const method = route.request().method();
+				if (method !== 'POST') {
+					await route.fulfill({
+						status: 405,
+						json: { error: 'method_not_allowed', allowed: 'POST' },
+						headers: violationHeaders('method_not_allowed')
+					});
+					return;
+				}
 				record(route);
 				await applyScenario(route, scenario);
 			});

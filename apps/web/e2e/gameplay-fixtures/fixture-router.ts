@@ -4,27 +4,37 @@
 // BEFORE either backend sees it:
 //
 //   - known fixture id  → fulfill immediately (metadata JSON, padded piece SVG,
-//     reference/thumbnail SVG). The completion POST is fulfilled with a default
-//     200 success so it NEVER reaches the real backend, even when no
-//     ApiScenarioController is installed. When a controller IS installed
-//     (registered after the router), Playwright's reverse-registration-order
-//     precedence means the controller route runs first and owns the outcome;
-//     the router's default is only reached when no controller intercepts.
-//     Any OTHER sub-path under a known id (e.g. a future API endpoint) is
-//     fulfilled with a 404, never passed through.
+//     reference/thumbnail SVG). The completion POST is fulfilled with a 403
+//     `undeclared_completion` so it NEVER reaches the real backend, even when
+//     no ApiScenarioController is installed. An undeclared completion is a
+//     harness violation — only the ApiScenarioController produces a successful
+//     completion. When a controller IS installed (registered after the
+//     router), Playwright's reverse-registration-order precedence means the
+//     controller route runs first and owns the outcome; the router's 403 is
+//     only reached when no controller intercepts. Any OTHER sub-path under a
+//     known id (e.g. a future API endpoint) is fulfilled with a 404, never
+//     passed through.
 //   - unknown `e2e-*` id → fulfill 404 immediately. It NEVER calls `fallback()`,
 //     so a typo'd fixture id can never leak to the real API.
 //   - any other path → `route.fallback()` so ordinary traffic (gallery list,
 //     auth session, real puzzle ids) reaches the backend untouched.
 //
 // Every router-fulfilled response carries the `x-perseus-e2e-source:
-// fixture-router` header so tests can prove who answered a request.
+// fixture-router` header so tests can prove who answered a request. Harness
+// violations (undeclared completion, wrong HTTP method) additionally carry
+// `x-perseus-e2e-violation` so the diagnostics layer can flag them as test
+// failures regardless of HTTP status.
+//
+// HTTP method enforcement: the router enforces the production contract —
+// POST for /complete, GET for metadata, piece, reference, and thumbnail
+// endpoints. A wrong-method request receives a 405 with the violation header
+// so a client-side method regression cannot pass E2E silently.
 //
 // Playwright route precedence: routes run in REVERSE registration order, and
 // `route.fallback()` passes control to earlier-registered handlers. The router
 // is installed before the ApiScenarioController, so the controller (registered
 // later) runs first on `/complete` and owns the outcome when a scenario is
-// installed. The router's default completion fulfillment is the safety net that
+// installed. The router's 403 completion default is the safety net that
 // guarantees total interception when no controller is present.
 import type { Page, Route } from '@playwright/test';
 import type { ReadyPuzzle } from '@perseus/types';
@@ -33,6 +43,7 @@ import { buildPieceSvg, buildReferenceSvg, SVG_CONTENT_TYPE } from './assets';
 
 export const FIXTURE_ROUTER_HEADER = 'x-perseus-e2e-source';
 export const FIXTURE_ROUTER_SOURCE = 'fixture-router';
+export const HARNESS_VIOLATION_HEADER = 'x-perseus-e2e-violation';
 
 /** Path matcher for page.route: any `/api/puzzles/e2e-<id>` request. */
 const FIXTURE_PATH_PATTERN = /\/api\/puzzles\/e2e-[a-z0-9-]+/;
@@ -41,6 +52,19 @@ const PIECE_IMAGE_PATH = /^\/api\/puzzles\/e2e-[a-z0-9-]+\/pieces\/(\d+)\/image$
 
 function markerHeaders(): Record<string, string> {
 	return { [FIXTURE_ROUTER_HEADER]: FIXTURE_ROUTER_SOURCE };
+}
+
+function violationHeaders(violation: string): Record<string, string> {
+	return { [FIXTURE_ROUTER_HEADER]: FIXTURE_ROUTER_SOURCE, [HARNESS_VIOLATION_HEADER]: violation };
+}
+
+/** Fulfill a 405 Method Not Allowed with the harness violation marker. */
+async function methodNotAllowed(route: Route, allowed: string): Promise<void> {
+	await route.fulfill({
+		status: 405,
+		json: { error: 'method_not_allowed', allowed },
+		headers: violationHeaders('method_not_allowed')
+	});
 }
 
 /**
@@ -100,32 +124,46 @@ export function createFixtureRouter(): FixtureRouter {
 		}
 
 		const fixture = getFixture(id as GameplayFixtureId);
+		const method = route.request().method();
 
-		// The completion POST: fulfill with a default 200 success so it NEVER
-		// reaches the real backend, even when no ApiScenarioController is
-		// installed. When a controller IS installed (registered after the
-		// router), Playwright's reverse-registration-order precedence means the
-		// controller route runs first and owns the outcome; this default is only
-		// reached when no controller intercepts. This preserves the
-		// total-interception invariant: no e2e-* request can ever leak to the
-		// real backend.
+		// The completion POST: fulfill with a 403 `undeclared_completion` so it
+		// NEVER reaches the real backend, even when no ApiScenarioController is
+		// installed. An undeclared completion is a harness violation — only the
+		// ApiScenarioController produces a successful completion. When a
+		// controller IS installed (registered after the router), Playwright's
+		// reverse-registration-order precedence means the controller route
+		// runs first and owns the outcome; this 403 is only reached when no
+		// controller intercepts. This preserves the total-interception
+		// invariant: no e2e-* request can ever leak to the real backend.
 		if (pathname === `/api/puzzles/${id}/complete`) {
+			if (method !== 'POST') {
+				await methodNotAllowed(route, 'POST');
+				return;
+			}
 			await route.fulfill({
-				status: 200,
-				json: { ok: true },
-				headers: markerHeaders()
+				status: 403,
+				json: { error: 'undeclared_completion', fixtureId: id },
+				headers: violationHeaders('undeclared_completion')
 			});
 			return;
 		}
 
 		// Exact metadata: GET /api/puzzles/<id>.
 		if (pathname === `/api/puzzles/${id}`) {
+			if (method !== 'GET') {
+				await methodNotAllowed(route, 'GET');
+				return;
+			}
 			await route.fulfill({ json: fixtureToMetadata(fixture), headers: markerHeaders() });
 			return;
 		}
 
 		const pieceMatch = pathname.match(PIECE_IMAGE_PATH);
 		if (pieceMatch) {
+			if (method !== 'GET') {
+				await methodNotAllowed(route, 'GET');
+				return;
+			}
 			const pieceId = Number(pieceMatch[1]);
 			// Match by id, not array index: sparse or non-contiguous piece id
 			// sets must 404 just like any other unknown piece.
@@ -146,6 +184,10 @@ export function createFixtureRouter(): FixtureRouter {
 		}
 
 		if (pathname === `/api/puzzles/${id}/reference`) {
+			if (method !== 'GET') {
+				await methodNotAllowed(route, 'GET');
+				return;
+			}
 			await route.fulfill({
 				contentType: SVG_CONTENT_TYPE,
 				body: buildReferenceSvg(fixture),
@@ -155,6 +197,10 @@ export function createFixtureRouter(): FixtureRouter {
 		}
 
 		if (pathname === `/api/puzzles/${id}/thumbnail`) {
+			if (method !== 'GET') {
+				await methodNotAllowed(route, 'GET');
+				return;
+			}
 			await route.fulfill({
 				contentType: SVG_CONTENT_TYPE,
 				body: buildReferenceSvg(fixture),

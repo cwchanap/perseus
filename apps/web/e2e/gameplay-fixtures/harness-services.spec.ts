@@ -12,8 +12,13 @@
 import { expect, test, type Page } from '@playwright/test';
 import { validatePuzzleMetadata, type PlayerSessionResponse } from '@perseus/types';
 import { getFixture } from './catalog';
-import { createFixtureRouter, fixtureToMetadata, FIXTURE_ROUTER_HEADER } from './fixture-router';
-import { createAuthPersona } from './auth-persona';
+import {
+	createFixtureRouter,
+	fixtureToMetadata,
+	FIXTURE_ROUTER_HEADER,
+	HARNESS_VIOLATION_HEADER
+} from './fixture-router';
+import { createAuthPersona, AUTHENTICATED_PLAYER } from './auth-persona';
 import {
 	createApiScenarioController,
 	SCENARIO_SOURCE,
@@ -21,6 +26,7 @@ import {
 	type RecordedRequest
 } from './api-scenario';
 import { buildMinimalSeed, createPersistedStateController, progressKey } from './persisted-state';
+import { createPageDiagnostics, type PageDiagnostics } from '../support/diagnostics';
 
 const API_ORIGIN = process.env.PUBLIC_API_BASE ?? 'http://localhost:3999';
 const FIXTURE_ID = 'e2e-square-4' as const;
@@ -144,7 +150,7 @@ test.describe('FixtureRouter', () => {
 		expect(res.status).toBe(200);
 	});
 
-	test('intercepts POST /complete with a default 200 when no scenario controller is installed (no backend hit)', async ({
+	test('intercepts POST /complete with a 403 undeclared_completion when no scenario controller is installed (no backend hit)', async ({
 		page
 	}) => {
 		const router = createFixtureRouter();
@@ -154,17 +160,69 @@ test.describe('FixtureRouter', () => {
 		// POST /complete with ONLY the fixture router installed — no
 		// ApiScenarioController. The total-interception invariant requires the
 		// router to answer this itself so the request can never reach the real
-		// backend and perform a real side effect.
+		// backend and perform a real side effect. An undeclared completion is a
+		// harness violation: the router returns 403 (not 200) and stamps the
+		// violation header so diagnostics flags it at teardown.
 		const res = await fetchApi(page, `/api/puzzles/${FIXTURE_ID}/complete`, {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
 			body: JSON.stringify({ runId: 'test-run-id' })
 		});
 
-		expect(res.status).toBe(200);
+		expect(res.status).toBe(403);
 		// The marker header proves the fixture router answered, not the backend.
 		expect(res.headers[FIXTURE_ROUTER_HEADER]).toBe('fixture-router');
-		expect(JSON.parse(res.body)).toEqual({ ok: true });
+		// The violation header lets diagnostics flag this as an undeclared write.
+		expect(res.headers[HARNESS_VIOLATION_HEADER]).toBe('undeclared_completion');
+		expect(JSON.parse(res.body)).toEqual({
+			error: 'undeclared_completion',
+			fixtureId: FIXTURE_ID
+		});
+	});
+
+	// --- HTTP method enforcement (Finding 3) ---------------------------------
+
+	test('GET /complete returns 405 method_not_allowed', async ({ page }) => {
+		const router = createFixtureRouter();
+		await router.install(page);
+		await gotoApiOrigin(page);
+
+		const res = await fetchApi(page, `/api/puzzles/${FIXTURE_ID}/complete`, { method: 'GET' });
+		expect(res.status).toBe(405);
+		expect(res.headers[HARNESS_VIOLATION_HEADER]).toBe('method_not_allowed');
+		expect(JSON.parse(res.body).error).toBe('method_not_allowed');
+	});
+
+	test('POST /metadata returns 405 method_not_allowed', async ({ page }) => {
+		const router = createFixtureRouter();
+		await router.install(page);
+		await gotoApiOrigin(page);
+
+		const res = await fetchApi(page, `/api/puzzles/${FIXTURE_ID}`, { method: 'POST' });
+		expect(res.status).toBe(405);
+		expect(res.headers[HARNESS_VIOLATION_HEADER]).toBe('method_not_allowed');
+	});
+
+	test('POST /pieces/:id/image returns 405 method_not_allowed', async ({ page }) => {
+		const router = createFixtureRouter();
+		await router.install(page);
+		await gotoApiOrigin(page);
+
+		const res = await fetchApi(page, `/api/puzzles/${FIXTURE_ID}/pieces/0/image`, {
+			method: 'POST'
+		});
+		expect(res.status).toBe(405);
+		expect(res.headers[HARNESS_VIOLATION_HEADER]).toBe('method_not_allowed');
+	});
+
+	test('POST /reference returns 405 method_not_allowed', async ({ page }) => {
+		const router = createFixtureRouter();
+		await router.install(page);
+		await gotoApiOrigin(page);
+
+		const res = await fetchApi(page, `/api/puzzles/${FIXTURE_ID}/reference`, { method: 'POST' });
+		expect(res.status).toBe(405);
+		expect(res.headers[HARNESS_VIOLATION_HEADER]).toBe('method_not_allowed');
 	});
 });
 
@@ -199,6 +257,77 @@ test.describe('AuthPersona', () => {
 		const session = JSON.parse(res.body) as PlayerSessionResponse;
 		expect(session.authenticated).toBe(false);
 		expect(session.user).toBeUndefined();
+	});
+
+	// --- HTTP method enforcement (Finding 3) ---------------------------------
+
+	test('POST /api/auth/session returns 405 method_not_allowed', async ({ page }) => {
+		const persona = createAuthPersona('anonymous');
+		await persona.install(page);
+		await gotoApiOrigin(page);
+
+		const res = await fetchApi(page, `/api/auth/session`, { method: 'POST' });
+		expect(res.status).toBe(405);
+		expect(res.headers[HARNESS_VIOLATION_HEADER]).toBe('method_not_allowed');
+	});
+
+	// --- New personas (Finding 4) --------------------------------------------
+
+	test('failed-session persona returns 500 by default', async ({ page }) => {
+		const persona = createAuthPersona('failed-session');
+		await persona.install(page);
+		await gotoApiOrigin(page);
+
+		const res = await fetchApi(page, `/api/auth/session`);
+		expect(res.status).toBe(500);
+		expect(JSON.parse(res.body).error).toBe('session_unavailable');
+	});
+
+	test('failed-session persona with custom status returns 503', async ({ page }) => {
+		const persona = createAuthPersona('failed-session', { failedStatus: 503 });
+		await persona.install(page);
+		await gotoApiOrigin(page);
+
+		const res = await fetchApi(page, `/api/auth/session`);
+		expect(res.status).toBe(503);
+	});
+
+	test('deferred-session persona holds the request; release() resolves it', async ({ page }) => {
+		const persona = createAuthPersona('deferred-session');
+		const handle = await persona.install(page);
+		expect(handle).not.toBeNull();
+		await gotoApiOrigin(page);
+
+		// Fire the GET without awaiting — it must stall until release().
+		const pending = fetchApi(page, `/api/auth/session`);
+		await expect.poll(() => handle!.pendingCount).toBe(1);
+
+		await handle!.release({ authenticated: true, user: AUTHENTICATED_PLAYER });
+		const res = await pending;
+		expect(res.status).toBe(200);
+		const session = JSON.parse(res.body) as PlayerSessionResponse;
+		expect(session.authenticated).toBe(true);
+		expect(handle!.pendingCount).toBe(0);
+	});
+
+	test('deferred-session persona cancel() aborts the held request', async ({ page }) => {
+		const persona = createAuthPersona('deferred-session');
+		const handle = await persona.install(page);
+		await gotoApiOrigin(page);
+
+		const pending = fetchApi(page, `/api/auth/session`).catch(() => ({
+			status: 0,
+			ok: false,
+			headers: {},
+			body: ''
+		}));
+		await expect.poll(() => handle!.pendingCount).toBe(1);
+
+		await handle!.cancel();
+		const res = await pending;
+		expect(res.status).toBe(0);
+		expect(handle!.pendingCount).toBe(0);
+		expect(handle!.cancelled).toBe(true);
 	});
 });
 
@@ -339,6 +468,48 @@ test.describe('ApiScenarioController', () => {
 		expect(handle.pendingCount).toBe(0);
 		expect(() => controller.assertClean()).not.toThrow();
 	});
+
+	// --- Finding 1: query-string acceptance + method enforcement -------------
+
+	test('controller intercepts /complete?retry=1 (query string does not bypass the controller)', async ({
+		page
+	}) => {
+		const router = createFixtureRouter();
+		await router.install(page);
+		await gotoApiOrigin(page);
+
+		const controller = createApiScenarioController();
+		await controller.install(page, FIXTURE_ID, { kind: 'success' });
+
+		const res = await fetchApi(page, `/api/puzzles/${FIXTURE_ID}/complete?retry=1`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify(COMPLETION_BODY)
+		});
+
+		// The controller handled it (api-scenario marker), not the router's
+		// 403 default.
+		expect(res.status).toBe(200);
+		expect(res.headers[FIXTURE_ROUTER_HEADER]).toBe(SCENARIO_SOURCE);
+		expect(controller.recordedRequests).toHaveLength(1);
+	});
+
+	test('GET /complete with controller returns 405 method_not_allowed', async ({ page }) => {
+		const router = createFixtureRouter();
+		await router.install(page);
+		await gotoApiOrigin(page);
+
+		const controller = createApiScenarioController();
+		await controller.install(page, FIXTURE_ID, { kind: 'success' });
+
+		const res = await fetchApi(page, `/api/puzzles/${FIXTURE_ID}/complete`, {
+			method: 'GET'
+		});
+		expect(res.status).toBe(405);
+		expect(res.headers[HARNESS_VIOLATION_HEADER]).toBe('method_not_allowed');
+		// The controller did NOT record the wrong-method request.
+		expect(controller.recordedRequests).toHaveLength(0);
+	});
 });
 
 // --- PersistedStateController -----------------------------------------------
@@ -394,5 +565,141 @@ test.describe('PersistedStateController', () => {
 
 		const readBack = await page.evaluate((k) => localStorage.getItem(k), progressKey(FIXTURE_ID));
 		expect(readBack).toBe(garbage);
+	});
+});
+
+// --- PageDiagnostics contract (Findings 1 & 2) --------------------------------
+//
+// These tests prove the diagnostics layer flags the false-green conditions
+// the review identified: undeclared completions, wrong provenance, wrong
+// fixture ID, wrong method, and broad network-abort suppression.
+
+test.describe('PageDiagnostics', () => {
+	/** Set up router + diagnostics, navigate to API origin, return diagnostics. */
+	async function setup(
+		page: Page,
+		opts?: { completion?: { fixtureId: string; scenario: CompletionScenario } }
+	): Promise<PageDiagnostics> {
+		const diagnostics = createPageDiagnostics(page);
+		const router = createFixtureRouter();
+		await router.install(page);
+		if (opts?.completion) {
+			const controller = createApiScenarioController();
+			await controller.install(page, opts.completion.fixtureId, opts.completion.scenario);
+			diagnostics.setCompletion(opts.completion.fixtureId, opts.completion.scenario);
+		}
+		await gotoApiOrigin(page);
+		return diagnostics;
+	}
+
+	/** Wait for diagnostics to observe at least `n` responses, then assert. */
+	async function waitForResponses(diagnostics: PageDiagnostics, n: number): Promise<void> {
+		await expect
+			.poll(() => diagnostics.unexpectedResponses.length + diagnostics.harnessViolations.length)
+			.toBeGreaterThanOrEqual(n);
+	}
+
+	test('Finding 2: undeclared completion (router 403) is flagged as a harness violation', async ({
+		page
+	}) => {
+		const diagnostics = await setup(page);
+
+		await fetchApi(page, `/api/puzzles/${FIXTURE_ID}/complete`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify(COMPLETION_BODY)
+		});
+		await waitForResponses(diagnostics, 1);
+
+		expect(diagnostics.harnessViolations).toHaveLength(1);
+		expect(diagnostics.harnessViolations[0]!.violation).toBe('undeclared_completion');
+		expect(() => diagnostics.assertNoUnexpectedErrors()).toThrow();
+		diagnostics.dispose();
+	});
+
+	test('Finding 1: scenario-declared completion with api-scenario marker passes clean', async ({
+		page
+	}) => {
+		const diagnostics = await setup(page, {
+			completion: { fixtureId: FIXTURE_ID, scenario: { kind: 'success' } }
+		});
+
+		// Track when the completion response event has been processed by
+		// diagnostics. The diagnostics listener is registered first (in
+		// createPageDiagnostics), so by the time this test listener fires,
+		// diagnostics has already processed the response.
+		let completionSeen = false;
+		page.on('response', (res) => {
+			if (res.url().includes('/complete')) completionSeen = true;
+		});
+
+		await postCompletion(page);
+		await expect.poll(() => completionSeen).toBe(true);
+
+		expect(diagnostics.unexpectedResponses).toHaveLength(0);
+		expect(diagnostics.harnessViolations).toHaveLength(0);
+		expect(() => diagnostics.assertNoUnexpectedErrors()).not.toThrow();
+		diagnostics.dispose();
+	});
+
+	test('Finding 1: scenario-declared completion WITHOUT api-scenario marker is flagged (router 403 fallback)', async ({
+		page
+	}) => {
+		// Install the router but NOT the controller — simulate the controller
+		// missing (e.g. URL shape mismatch). The router returns 403 with the
+		// violation header. Diagnostics should flag it.
+		const diagnostics = createPageDiagnostics(page);
+		const router = createFixtureRouter();
+		await router.install(page);
+		diagnostics.setCompletion(FIXTURE_ID, { kind: 'success' });
+		await gotoApiOrigin(page);
+
+		await postCompletion(page);
+		await waitForResponses(diagnostics, 1);
+
+		// The router's 403 carries the violation header → harness violation.
+		expect(diagnostics.harnessViolations).toHaveLength(1);
+		expect(diagnostics.harnessViolations[0]!.violation).toBe('undeclared_completion');
+		diagnostics.dispose();
+	});
+
+	test('Finding 3: wrong-method completion (GET) is flagged as a harness violation', async ({
+		page
+	}) => {
+		const diagnostics = await setup(page);
+
+		await fetchApi(page, `/api/puzzles/${FIXTURE_ID}/complete`, { method: 'GET' });
+		await waitForResponses(diagnostics, 1);
+
+		expect(diagnostics.harnessViolations).toHaveLength(1);
+		expect(diagnostics.harnessViolations[0]!.violation).toBe('method_not_allowed');
+		diagnostics.dispose();
+	});
+
+	test('Finding 1: network-abort suppression is narrow to the configured fixture', async ({
+		page
+	}) => {
+		// Declare network-abort for e2e-square-4. A failed POST to a DIFFERENT
+		// e2e fixture's /complete must NOT be suppressed.
+		const diagnostics = createPageDiagnostics(page);
+		const router = createFixtureRouter();
+		await router.install(page);
+		diagnostics.setCompletion(FIXTURE_ID, { kind: 'network-abort' });
+		await gotoApiOrigin(page);
+
+		// Simulate a failed request to a different fixture's completion URL.
+		// The router returns 403 for this (undeclared), which is a violation.
+		await fetchApi(page, `/api/puzzles/e2e-landscape-12/complete`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify(COMPLETION_BODY)
+		});
+		await waitForResponses(diagnostics, 1);
+
+		// The other fixture's completion is a harness violation (undeclared),
+		// NOT suppressed by the network-abort allowlist for e2e-square-4.
+		expect(diagnostics.harnessViolations).toHaveLength(1);
+		expect(diagnostics.harnessViolations[0]!.violation).toBe('undeclared_completion');
+		diagnostics.dispose();
 	});
 });

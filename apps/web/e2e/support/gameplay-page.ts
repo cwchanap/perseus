@@ -31,7 +31,8 @@ import { createFixtureRouter, type FixtureRouter } from '../gameplay-fixtures/fi
 import {
 	createAuthPersona,
 	type AuthPersona,
-	type AuthPersonaKind
+	type AuthPersonaKind,
+	type AuthSessionHandle
 } from '../gameplay-fixtures/auth-persona';
 import {
 	createApiScenarioController,
@@ -45,7 +46,13 @@ import { createPageDiagnostics, type PageDiagnostics } from './diagnostics';
 export interface GotoFixtureOptions {
 	/** Fixture to load. Defaults to DEFAULT_FIXTURE_ID ('e2e-square-4'). */
 	fixtureId?: GameplayFixtureId;
-	/** Auth persona to install. Omit to let the real API answer /api/auth/session. */
+	/**
+	 * Auth persona to install. Defaults to `anonymous` so the harness never
+	 * depends on the real API for auth. Pass `authenticated`, `anonymous`,
+	 * `deferred-session`, or `failed-session` for the four design personas, or
+	 * a full `AuthPersona` object (e.g. `createAuthPersona('failed-session',
+	 * { failedStatus: 503 })`).
+	 */
 	persona?: AuthPersona | AuthPersonaKind;
 	/** Validated session snapshot to seed under the production progress key. */
 	seedSession?: PersistedPuzzleSessionV1;
@@ -58,7 +65,11 @@ export interface GotoFixtureOptions {
 	 * `false` (or omitted) leaves the real wall clock in place.
 	 */
 	clock?: { startAt: Date } | false;
-	/** Completion scenario to drive POST /complete. Omit to leave it unmocked. */
+	/**
+	 * Completion scenario to drive POST /complete. Omit to fail any completion
+	 * as an undeclared write — the fixture router returns a 403
+	 * `undeclared_completion` and diagnostics flags it as a harness violation.
+	 */
 	completion?: CompletionScenario;
 	/**
 	 * Expected number of tray pieces once the fixture is ready. Defaults to
@@ -78,6 +89,8 @@ export class GameplayPage {
 	readonly apiController: ApiScenarioController;
 	/** Handle for the most recently installed completion scenario, if deferred. */
 	completionHandle: DeferredHandle | null = null;
+	/** Handle for a deferred-session auth persona, if installed. */
+	authHandle: AuthSessionHandle | null = null;
 	/** The fixture loaded by the last gotoFixture() call. */
 	fixture: GameplayFixture | null = null;
 
@@ -148,11 +161,13 @@ export class GameplayPage {
 			this.completionHandle = null;
 			this.diagnostics.setCompletion(undefined, undefined);
 		}
-		if (options.persona) {
-			const persona =
-				typeof options.persona === 'string' ? createAuthPersona(options.persona) : options.persona;
-			await persona.install(this.page);
-		}
+		// Default to the anonymous persona so the harness never depends on
+		// the real API for auth (per the HPA-226 design: "The default persona
+		// is anonymous"). A test that needs a different persona passes it
+		// explicitly.
+		const personaSpec: AuthPersona | AuthPersonaKind = options.persona ?? 'anonymous';
+		const persona = typeof personaSpec === 'string' ? createAuthPersona(personaSpec) : personaSpec;
+		this.authHandle = await persona.install(this.page);
 
 		// --- Stage 3: cookie reset ----------------------------------------------
 		await this.page.context().clearCookies();
@@ -504,13 +519,24 @@ export class GameplayPage {
 	// --- Lifecycle -------------------------------------------------------------
 
 	/**
-	 * Assert no pending deferred routes / unreleased API scenarios remain, and
-	 * that the page experienced no unexpected console/page/request errors.
+	 * Assert no pending deferred routes / unreleased API scenarios / unreleased
+	 * auth sessions remain, and that the page experienced no unexpected
+	 * console/page/request errors.
 	 */
 	assertSettled(): void {
 		if (!this.loaded) return;
 		this.apiController.assertClean();
+		this.assertAuthClean();
 		this.diagnostics.assertNoUnexpectedErrors();
+	}
+
+	/** Throw if a deferred-session persona has a pending held route. */
+	private assertAuthClean(): void {
+		if (this.authHandle && this.authHandle.pendingCount > 0) {
+			throw new Error(
+				`AuthPersona teardown: ${this.authHandle.pendingCount} deferred session route(s) still pending — call release() or cancel() on gameplayPage.authHandle`
+			);
+		}
 	}
 
 	/** Assert no e2e-* request leaked past the fixture router to the backend. */
