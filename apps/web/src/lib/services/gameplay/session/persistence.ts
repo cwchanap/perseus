@@ -437,6 +437,11 @@ function validateV1(
 		counters.hintsUsed === 0 &&
 		counters.referenceActivations === 0 &&
 		timerStarted === false &&
+		// A pre-activity run must sit at its mode's baseline clock: timed
+		// starts at zero and relaxed never accumulates (see doConfigureSetup),
+		// so any elapsed time contradicts "configured but genuinely unused"
+		// and would let a fabricated snapshot resume timing from later.
+		elapsed === (mode === 'timed' ? 0 : null) &&
 		lifecycle !== 'completed' &&
 		record.sealedCompletion === null;
 	if (
