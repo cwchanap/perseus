@@ -90,9 +90,27 @@ export function createAnalyticsDeliveryQueue(options: {
 	function flush(): Promise<void> {
 		if (disposed) return Promise.resolve();
 		if (activeFlush !== null) return activeFlush;
+		if (events.length === 0) {
+			clearScheduledFlush();
+			return Promise.resolve();
+		}
 		clearScheduledFlush();
 
-		activeFlush = (async () => {
+		// Assign activeFlush to a manually-created promise BEFORE starting the
+		// async work. If activeFlush were assigned from the async IIFE's return
+		// value, a path that completes synchronously (a transport that throws
+		// before the first await suspension) would run the finally and set
+		// activeFlush = null, only for the outer assignment to overwrite it
+		// with a settled promise and permanently wedge the queue.
+		let resolveFlush!: () => void;
+		const promise = new Promise<void>((resolve) => {
+			resolveFlush = resolve;
+		});
+		activeFlush = promise;
+		void runFlush().finally(resolveFlush);
+		return activeFlush;
+
+		async function runFlush(): Promise<void> {
 			try {
 				while (!disposed && events.length > 0) {
 					const batchEvents = events.splice(0, maxBatchSize);
@@ -107,8 +125,7 @@ export function createAnalyticsDeliveryQueue(options: {
 				activeFlush = null;
 				if (!disposed && events.length > 0) scheduleFlush();
 			}
-		})();
-		return activeFlush;
+		}
 	}
 
 	return {

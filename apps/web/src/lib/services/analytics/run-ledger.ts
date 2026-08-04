@@ -147,10 +147,7 @@ function parseRun(value: unknown): AnalyticsRunLedgerRecordV1 | null {
 	};
 }
 
-function parseLedger(
-	value: unknown,
-	onError?: (code: AnalyticsRunLedgerErrorCode) => void
-): ParsedLedger {
+function parseLedger(value: unknown): ParsedLedger {
 	if (!isRecord(value) || !Object.hasOwn(value, 'schemaVersion')) return { kind: 'invalid' };
 	if (!Number.isInteger(value.schemaVersion)) return { kind: 'invalid' };
 	if ((value.schemaVersion as number) > ANALYTICS_RUN_LEDGER_SCHEMA_VERSION) {
@@ -167,19 +164,13 @@ function parseLedger(
 
 	const runs: AnalyticsRunLedgerRecordV1[] = [];
 	const runIds = new Set<string>();
-	let droppedRuns = false;
 	for (const rawRun of value.runs) {
 		const run = parseRun(rawRun);
-		if (run === null) {
-			droppedRuns = true;
-			continue;
-		}
+		if (run === null) return { kind: 'invalid' };
 		if (runIds.has(run.runId)) return { kind: 'invalid' };
 		runIds.add(run.runId);
 		runs.push(run);
 	}
-
-	if (droppedRuns) onError?.('invalid_record');
 
 	return {
 		kind: 'valid',
@@ -209,7 +200,7 @@ function readLedger(
 	} catch {
 		return { kind: 'invalid' };
 	}
-	return parseLedger(value, onError);
+	return parseLedger(value);
 }
 
 function recoverInvalidRecord(
@@ -246,8 +237,18 @@ export function createAnalyticsRunLedger(options?: {
 	storage?: Storage;
 	onError?: (code: AnalyticsRunLedgerErrorCode) => void;
 }): AnalyticsRunLedger {
-	const storage =
-		options?.storage ?? (typeof localStorage !== 'undefined' ? localStorage : undefined);
+	// Resolving the default storage must not escape into product code: in
+	// sandboxed or storage-disabled contexts the localStorage getter itself can
+	// throw SecurityError, and `typeof` only suppresses ReferenceError for
+	// unresolved identifiers, not a throwing accessor.
+	let storage: Storage | undefined = options?.storage;
+	if (storage === undefined) {
+		try {
+			storage = typeof localStorage !== 'undefined' ? localStorage : undefined;
+		} catch {
+			storage = undefined;
+		}
+	}
 	const onError = options?.onError;
 
 	return {

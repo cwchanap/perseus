@@ -8,6 +8,7 @@ import {
 	type AnalyticsPuzzleContextV1
 } from '@perseus/types';
 import { createAnalyticsClient } from './analytics';
+import { createAnalyticsRunLedger } from './run-ledger';
 import type {
 	AnalyticsLedgerMarkResult,
 	AnalyticsRunLedger,
@@ -70,6 +71,30 @@ function createLedger(result: AnalyticsLedgerMarkResult = 'recorded') {
 		}
 	};
 	return { ledger, marks };
+}
+
+function makeMemoryStorage(initial: Record<string, string> = {}): Storage {
+	const values = new Map(Object.entries(initial));
+	return {
+		get length() {
+			return values.size;
+		},
+		clear() {
+			values.clear();
+		},
+		getItem(key) {
+			return values.get(key) ?? null;
+		},
+		key(index) {
+			return [...values.keys()][index] ?? null;
+		},
+		removeItem(key) {
+			values.delete(key);
+		},
+		setItem(key, value) {
+			values.set(key, value);
+		}
+	};
 }
 
 function createScheduler() {
@@ -362,6 +387,69 @@ describe('analytics client facade', () => {
 		client.track(galleryInput());
 		await client.flush();
 		expect(transport.getEvents()).toEqual([]);
+	});
+
+	it('does not consume once-per-run ledger marks after disposal', async () => {
+		// Two clients share one real ledger backed by one storage. Disposing the
+		// first client must not let a later trackOncePerRun call mark the ledger
+		// (and then silently drop the event on the disposed queue), which would
+		// suppress the same event for the second client as a duplicate.
+		const storage = makeMemoryStorage();
+		const ledger = createAnalyticsRunLedger({ storage });
+		const first = createAnalyticsClient({
+			transport: createMemoryAnalyticsTransport(),
+			ledger,
+			now: () => 1_000,
+			createEventId: () => occurrenceId,
+			strictValidation: true
+		});
+		first.dispose();
+		first.trackOncePerRun(openedInput());
+
+		const secondTransport = createMemoryAnalyticsTransport();
+		const second = createAnalyticsClient({
+			transport: secondTransport,
+			ledger,
+			now: () => 2_000,
+			createEventId: () => occurrenceId,
+			strictValidation: true
+		});
+		second.trackOncePerRun(openedInput());
+		await second.flush();
+
+		expect(secondTransport.getEvents()).toHaveLength(1);
+		expect(secondTransport.getEvents()[0]).toMatchObject({
+			eventName: 'puzzle_opened',
+			occurredAt: 2_000
+		});
+	});
+
+	it('ignores track, flushForPageHide, and flush after disposal', async () => {
+		const transport = createMemoryAnalyticsTransport();
+		const { ledger, marks } = createLedger();
+		const client = createAnalyticsClient({
+			transport,
+			ledger,
+			now: () => 1_000,
+			createEventId: () => occurrenceId,
+			strictValidation: false
+		});
+		client.dispose();
+
+		client.track(galleryInput());
+		client.trackOncePerRun(openedInput());
+		expect(
+			client.flushForPageHide({
+				eventName: 'puzzle_exited_incomplete',
+				runId,
+				context: context({ progressBucket: '25-49' }),
+				data: { elapsedActiveSeconds: 30, placedPieceCount: 80 }
+			})
+		).toBe(false);
+		await client.flush();
+
+		expect(transport.getEvents()).toEqual([]);
+		expect(marks).toEqual([]);
 	});
 
 	it('materializes an occurrence with the default crypto.randomUUID id', async () => {
