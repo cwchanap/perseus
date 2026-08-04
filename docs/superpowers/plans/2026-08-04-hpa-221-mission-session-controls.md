@@ -18,6 +18,7 @@
 - Device preferences use only `perseus-gameplay-preferences-v1` with `{ mode, rotationEnabled, startImmediately }`.
 - Start Immediately applies only to fresh route entry; explicit Restart and Play Again always show setup.
 - Existing `hasUserActivity` semantics remain the only resumability and restart-confirmation threshold.
+- Preserve the existing Play Again read-only guard and old-session clear before creating the replacement run.
 - The existing active rotation toggle remains available until the first successful placement and exposes the fixed reason `Rotation is locked after the first placement` afterward.
 - Relaxed uses the existing `relaxed` result class and sealed-completion transport; no backend or API changes.
 - Use three focused dialog components and one focus action; do not build a modal manager, dialog stack, or generic disabled-reason system.
@@ -66,7 +67,7 @@
 
 - [ ] **Step 1: Write failing setup-configuration tests**
 
-Append these cases to `session.test.ts`:
+Append to `session.test.ts`:
 
 ```ts
 it('configures mode and rotation in setup without activity or a new run id', () => {
@@ -120,8 +121,6 @@ it('rejects configure_setup after start', () => {
 
 - [ ] **Step 2: Run the focused test and verify failure**
 
-Run:
-
 ```bash
 cd apps/web
 bunx vitest --run --browser src/lib/services/gameplay/session/session.test.ts
@@ -129,9 +128,9 @@ bunx vitest --run --browser src/lib/services/gameplay/session/session.test.ts
 
 Expected: TypeScript/test failure because `configure_setup` and `setup_configured` do not exist.
 
-- [ ] **Step 3: Extend the action, outcome, and invariant documentation**
+- [ ] **Step 3: Extend action, outcome, and invariant documentation**
 
-In `types.ts`, append this action member:
+Append this action member in `types.ts`:
 
 ```ts
 | { type: 'configure_setup'; mode: SessionMode; rotationEnabled: boolean }
@@ -155,7 +154,7 @@ Replace the unconditional `SessionFacts` monotonicity comment with:
 
 - [ ] **Step 4: Implement the minimal setup transition**
 
-Add this helper inside `createPuzzleSession()` before the active rotation handler:
+Add inside `createPuzzleSession()` before the active rotation handler:
 
 ```ts
 function doConfigureSetup(
@@ -200,8 +199,6 @@ case 'configure_setup':
 Do not change `doRestart()` or `doSetRotationMode()`.
 
 - [ ] **Step 5: Run the focused test and verify pass**
-
-Run:
 
 ```bash
 cd apps/web
@@ -287,14 +284,12 @@ describe('pre-activity configured rotation validation', () => {
 
 - [ ] **Step 2: Run the new test and verify the valid rows fail**
 
-Run:
-
 ```bash
 cd apps/web
 bunx vitest --run --browser src/lib/services/gameplay/session/persistence.validation-activity.test.ts
 ```
 
-Expected: the setup/active/paused rows fail because `rotationUsed: true` currently implies `hasUserActivity: true`.
+Expected: setup/active/paused rows fail because `rotationUsed: true` currently implies `hasUserActivity: true`.
 
 - [ ] **Step 3: Add the bounded predicate in the existing validator**
 
@@ -314,7 +309,7 @@ const isPreActivityConfiguredRotation =
 	record.sealedCompletion === null;
 ```
 
-Replace the existing rejection with:
+Replace the rejection with:
 
 ```ts
 if (
@@ -326,11 +321,9 @@ if (
 }
 ```
 
-Do not weaken any result-class, rotation-map, counter, timing-quality, or completion-seal checks.
+Do not weaken result-class, rotation-map, counter, timing-quality, or completion-seal checks.
 
 - [ ] **Step 4: Run focused persistence tests**
-
-Run:
 
 ```bash
 cd apps/web
@@ -359,12 +352,7 @@ git commit -m "fix(web): allow configured rotation before activity"
 - Create: `apps/web/src/lib/services/gameplay/session/preferences.test.ts`
 
 **Interfaces:**
-- Produces:
-  - `GAMEPLAY_PREFERENCES_KEY`
-  - `GameplayPreferences`
-  - `DEFAULT_GAMEPLAY_PREFERENCES`
-  - `loadGameplayPreferences(storage?: Storage): GameplayPreferences`
-  - `saveGameplayPreferences(preferences: GameplayPreferences, storage?: Storage): void`
+- Produces `GAMEPLAY_PREFERENCES_KEY`, `GameplayPreferences`, `DEFAULT_GAMEPLAY_PREFERENCES`, `loadGameplayPreferences()`, and `saveGameplayPreferences()`.
 
 - [ ] **Step 1: Write failing codec tests**
 
@@ -408,7 +396,6 @@ describe('gameplay preferences', () => {
 				startImmediately: 1
 			})
 		});
-
 		expect(loadGameplayPreferences(storage)).toEqual(DEFAULT_GAMEPLAY_PREFERENCES);
 	});
 
@@ -420,7 +407,6 @@ describe('gameplay preferences', () => {
 		storage.setItem = () => {
 			throw new Error('write denied');
 		};
-
 		expect(loadGameplayPreferences(storage)).toEqual(DEFAULT_GAMEPLAY_PREFERENCES);
 		expect(() => saveGameplayPreferences(DEFAULT_GAMEPLAY_PREFERENCES, storage)).not.toThrow();
 	});
@@ -428,8 +414,6 @@ describe('gameplay preferences', () => {
 ```
 
 - [ ] **Step 2: Run the test and verify failure**
-
-Run:
 
 ```bash
 cd apps/web
@@ -542,115 +526,63 @@ git commit -m "feat(web): add gameplay setup preferences"
 
 - [ ] **Step 1: Write dialog behavior tests**
 
-Create `SessionDialogs.svelte.test.ts` with these representative cases:
+Create `SessionDialogs.svelte.test.ts` with tests for mandatory Escape blocking, optional Escape dismissal, inline restart confirmation, one Exit discard action, initial focus, and Tab wrap. Use these exact base props:
 
 ```ts
-import { describe, expect, it, vi } from 'vitest';
-import { render } from 'vitest-browser-svelte';
-import { page } from 'vitest/browser';
-import MissionSetupDialog from '../MissionSetupDialog.svelte';
-import SessionPauseDialog from '../SessionPauseDialog.svelte';
-import ExitSessionDialog from '../ExitSessionDialog.svelte';
-
-const draft = {
-	mode: 'timed' as const,
-	rotationEnabled: false,
-	startImmediately: false
+const setupProps = {
+	puzzleName: 'Test Mission',
+	pieceCount: 4,
+	gridCols: 2,
+	gridRows: 2,
+	draft: {
+		mode: 'timed' as const,
+		rotationEnabled: false,
+		startImmediately: false
+	},
+	inputHelp: 'Select a piece, then choose its slot.',
+	onDraftChange: vi.fn(),
+	onStart: vi.fn(),
+	onCancel: vi.fn(),
+	onExit: vi.fn()
 };
+```
 
-describe('session dialogs', () => {
-	it('keeps mandatory setup open on Escape and exposes Return to Arcade', async () => {
-		const onCancel = vi.fn();
-		const onExit = vi.fn();
-		render(MissionSetupDialog, {
-			props: {
-				puzzleName: 'Test Mission',
-				pieceCount: 4,
-				gridCols: 2,
-				gridRows: 2,
-				draft,
-				mandatory: true,
-				inputHelp: 'Select a piece, then choose its slot.',
-				onDraftChange: vi.fn(),
-				onStart: vi.fn(),
-				onCancel,
-				onExit
-			}
-		});
+Representative assertions:
 
-		const dialog = page.getByRole('dialog', { name: 'Mission Setup' });
-		await expect.element(dialog).toBeVisible();
-		await dialog.element().then((element) =>
-			element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
-		);
-		expect(onCancel).not.toHaveBeenCalled();
-		await page.getByRole('button', { name: 'Return to Arcade' }).click();
-		expect(onExit).toHaveBeenCalledOnce();
-	});
+```ts
+render(MissionSetupDialog, { props: { ...setupProps, mandatory: true } });
+const mandatory = await page.getByRole('dialog', { name: 'Mission Setup' }).element();
+mandatory.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+expect(setupProps.onCancel).not.toHaveBeenCalled();
+await page.getByRole('button', { name: 'Return to Arcade' }).click();
+expect(setupProps.onExit).toHaveBeenCalledOnce();
+```
 
-	it('dismisses optional setup on Escape', async () => {
-		const onCancel = vi.fn();
-		render(MissionSetupDialog, {
-			props: {
-				puzzleName: 'Test Mission',
-				pieceCount: 4,
-				gridCols: 2,
-				gridRows: 2,
-				draft,
-				mandatory: false,
-				inputHelp: 'Select a piece, then choose its slot.',
-				onDraftChange: vi.fn(),
-				onStart: vi.fn(),
-				onCancel,
-				onExit: vi.fn()
-			}
-		});
-
-		const dialog = await page.getByRole('dialog', { name: 'Mission Setup' }).element();
-		dialog.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-		expect(onCancel).toHaveBeenCalledOnce();
-	});
-
-	it('switches Pause content to restart confirmation without another dialog', async () => {
-		const onRequestRestart = vi.fn();
-		const view = render(SessionPauseDialog, {
-			props: {
-				presentation: 'paused',
-				mode: 'timed',
-				confirmingRestart: false,
-				onResume: vi.fn(),
-				onRequestRestart,
-				onConfirmRestart: vi.fn(),
-				onCancelRestart: vi.fn(),
-				onExit: vi.fn()
-			}
-		});
-
-		await page.getByRole('button', { name: 'Restart' }).click();
-		expect(onRequestRestart).toHaveBeenCalledOnce();
-		await view.rerender({
-			presentation: 'paused',
-			mode: 'timed',
-			confirmingRestart: true,
-			onResume: vi.fn(),
-			onRequestRestart,
-			onConfirmRestart: vi.fn(),
-			onCancelRestart: vi.fn(),
-			onExit: vi.fn()
-		});
-		await expect.element(page.getByText('Restart this mission?')).toBeVisible();
-		expect(await page.getByRole('dialog').all()).toHaveLength(1);
-	});
-
-	it('exposes one discard confirmation in Exit', async () => {
-		const onDiscard = vi.fn();
-		render(ExitSessionDialog, {
-			props: { onSave: vi.fn(), onDiscard, onCancel: vi.fn() }
-		});
-		await page.getByRole('button', { name: 'Discard & Exit' }).click();
-		expect(onDiscard).toHaveBeenCalledOnce();
-	});
+```ts
+const view = render(SessionPauseDialog, {
+	props: {
+		presentation: 'paused',
+		mode: 'timed',
+		confirmingRestart: false,
+		onResume: vi.fn(),
+		onRequestRestart: vi.fn(),
+		onConfirmRestart: vi.fn(),
+		onCancelRestart: vi.fn(),
+		onExit: vi.fn()
+	}
 });
+await view.rerender({
+	presentation: 'paused',
+	mode: 'timed',
+	confirmingRestart: true,
+	onResume: vi.fn(),
+	onRequestRestart: vi.fn(),
+	onConfirmRestart: vi.fn(),
+	onCancelRestart: vi.fn(),
+	onExit: vi.fn()
+});
+await expect.element(page.getByText('Restart this mission?')).toBeVisible();
+expect(await page.getByRole('dialog').all()).toHaveLength(1);
 ```
 
 - [ ] **Step 2: Run the dialog test and verify module failures**
@@ -660,7 +592,7 @@ cd apps/web
 bunx vitest --run --browser src/lib/components/__tests__/SessionDialogs.svelte.test.ts
 ```
 
-Expected: module-not-found failures for the new action/components.
+Expected: module-not-found failures.
 
 - [ ] **Step 3: Implement `modalFocus`**
 
@@ -718,9 +650,9 @@ export function modalFocus(node: HTMLElement, focusKey: unknown = true) {
 }
 ```
 
-- [ ] **Step 4: Implement the three presentational components**
+- [ ] **Step 4: Implement three presentational components**
 
-Use native inputs/buttons and the existing gameplay modal classes. Required prop surfaces:
+Use these prop surfaces:
 
 ```ts
 // MissionSetupDialog.svelte
@@ -762,13 +694,7 @@ interface Props {
 }
 ```
 
-Each component must:
-
-- render exactly one `role="dialog"`/`aria-modal="true"` surface;
-- use `use:modalFocus` on the dialog box;
-- use `100dvh`, `env(safe-area-inset-*)`, and an internal scroll container;
-- call `onCancel` on Escape only where the surface is dismissible;
-- contain no session store, navigation, persistence, or timer logic.
+Each component must render one `role="dialog"`/`aria-modal="true"` surface, use `100dvh`, safe-area padding, and an internal scroll container. Use `use:modalFocus={mandatory}` in Mission Setup, `use:modalFocus={confirmingRestart}` in Pause/Resume, and `use:modalFocus` in Exit so focus resets when the Pause body changes. Components contain no session, navigation, persistence, or timer logic.
 
 - [ ] **Step 5: Run dialog tests and verify pass**
 
@@ -777,9 +703,7 @@ cd apps/web
 bunx vitest --run --browser src/lib/components/__tests__/SessionDialogs.svelte.test.ts
 ```
 
-Expected: all dialog tests pass.
-
-- [ ] **Step 6: Commit the UI primitives**
+- [ ] **Step 6: Commit UI primitives**
 
 ```bash
 git add apps/web/src/lib/actions/modalFocus.ts \
@@ -801,57 +725,40 @@ git commit -m "feat(web): add mission session dialogs"
 
 **Interfaces:**
 - Consumes: `configure_setup`, preference codec, `MissionSetupDialog`.
-- Produces route-local state:
-  - `sessionDialog: 'setup' | 'pause' | 'exit' | null`
-  - `setupMandatory: boolean`
-  - `setupDraft: GameplayPreferences`
-  - `devicePreferences: GameplayPreferences`
-  - `pausePresentation: 'resume' | 'paused'`
-  - `restartConfirmation: boolean`
-  - `exitOrigin: 'active' | 'paused'`
+- Produces route-local state only: `sessionDialog`, `setupMandatory`, `setupDraft`, `devicePreferences`, `pausePresentation`, `restartConfirmation`, and `exitOrigin`.
 
-- [ ] **Step 1: Add configurable preference and resumability mocks to route tests**
+- [ ] **Step 1: Add configurable route-test state**
 
-In `page.svelte.test.ts`, add hoisted state:
+Add hoisted state with a writable union, not a `'timed'` literal-only inference:
 
 ```ts
 const preferenceState = vi.hoisted(() => ({
 	value: {
-		mode: 'timed' as const,
+		mode: 'timed',
 		rotationEnabled: false,
 		startImmediately: false
+	} as {
+		mode: 'timed' | 'relaxed';
+		rotationEnabled: boolean;
+		startImmediately: boolean;
 	},
 	save: vi.fn()
 }));
 
 const resumableState = vi.hoisted(() => ({ value: false }));
+const restoredLifecycleState = vi.hoisted(() => ({
+	value: 'active' as 'setup' | 'active' | 'paused' | 'completed'
+}));
+const timingQualityState = vi.hoisted(() => ({
+	value: 'known' as 'known' | 'legacy_unknown'
+}));
 ```
 
-Mock the preference module:
+Mock the preference module with `loadGameplayPreferences` returning a clone and `saveGameplayPreferences` using `preferenceState.save`. Update the persistence mock to use `restoredLifecycleState.value`, `timingQualityState.value`, `resumableState.value`, and the real `serializeSession` from `importOriginal`.
 
-```ts
-vi.mock('$lib/services/gameplay/session/preferences', async (importOriginal) => {
-	const actual =
-		await importOriginal<typeof import('$lib/services/gameplay/session/preferences')>();
-	return {
-		...actual,
-		loadGameplayPreferences: vi.fn(() => ({ ...preferenceState.value })),
-		saveGameplayPreferences: preferenceState.save
-	};
-});
-```
+- [ ] **Step 2: Write failing entry/setup tests**
 
-Change the persistence mock to keep the real `serializeSession` and use:
-
-```ts
-isResumable: () => resumableState.value
-```
-
-Reset both hoisted states in `beforeEach()`.
-
-- [ ] **Step 2: Write failing route tests for entry/setup behavior**
-
-Add these cases:
+Add cases for:
 
 ```ts
 it('shows configured setup for a fresh session', async () => {
@@ -861,12 +768,13 @@ it('shows configured setup for a fresh session', async () => {
 		startImmediately: false
 	};
 	await renderPuzzlePage();
-
 	await expect.element(page.getByRole('dialog', { name: 'Mission Setup' })).toBeVisible();
 	await expect.element(page.getByLabelText('Relaxed')).toBeChecked();
 	await expect.element(page.getByLabelText('Enable rotation')).toBeChecked();
 });
+```
 
+```ts
 it('starts a fresh session immediately from preferences', async () => {
 	preferenceState.value = {
 		mode: 'timed',
@@ -874,38 +782,28 @@ it('starts a fresh session immediately from preferences', async () => {
 		startImmediately: true
 	};
 	await renderPuzzlePage();
-
 	await expect.element(page.getByRole('dialog', { name: 'Mission Setup' })).not.toBeInTheDocument();
 	await expect.element(page.getByRole('button', { name: 'Open mission setup' })).toBeVisible();
 });
+```
 
+```ts
 it('does not auto-skip a restored setup session', async () => {
 	preferenceState.value = {
 		mode: 'relaxed',
 		rotationEnabled: true,
 		startImmediately: true
 	};
-	progressState.value = {
-		puzzleId: 'test-puzzle',
-		placedPieces: [],
-		rotationEnabled: false,
-		pieceRotations: {},
-		lastUpdated: '2024-01-01T00:00:00.000Z'
-	};
-	// Extend the existing mock snapshot selector so this case returns lifecycle setup.
+	restoredLifecycleState.value = 'setup';
+	setSavedProgress({ placedPieces: [] });
 	await renderPuzzlePage();
-
 	await expect.element(page.getByRole('dialog', { name: 'Mission Setup' })).toBeVisible();
 	await expect.element(page.getByLabelText('Timed')).toBeChecked();
 	await expect.element(page.getByLabelText('Start immediately next time')).toBeChecked();
 });
 ```
 
-Add a hoisted `restoredLifecycleState` with default `'active'`, use it in the storage mock, and set it to `'setup'` in the restored setup test.
-
-- [ ] **Step 3: Add the local route state and helpers**
-
-At route scope add:
+- [ ] **Step 3: Add route-local state and setup helpers**
 
 ```ts
 type SessionDialog = 'setup' | 'pause' | 'exit' | null;
@@ -917,11 +815,7 @@ let devicePreferences = $state<GameplayPreferences>({ ...DEFAULT_GAMEPLAY_PREFER
 let pausePresentation = $state<'resume' | 'paused'>('paused');
 let restartConfirmation = $state(false);
 let exitOrigin = $state<'active' | 'paused'>('active');
-```
 
-Add:
-
-```ts
 function draftFromSession(): GameplayPreferences {
 	return {
 		mode: sessionState?.mode ?? devicePreferences.mode,
@@ -939,7 +833,7 @@ function showMissionSetup(mandatory: boolean): void {
 
 - [ ] **Step 4: Replace route auto-start with explicit entry handling**
 
-After store subscription and visibility initialization:
+After subscription and visibility initialization:
 
 ```ts
 devicePreferences = loadGameplayPreferences();
@@ -970,7 +864,9 @@ if (!restored) {
 
 Remove the old unconditional fresh/setup auto-start block.
 
-Add setup confirmation:
+- [ ] **Step 5: Implement setup confirmation and Open Setup**
+
+Use:
 
 ```ts
 function confirmMissionSetup(): void {
@@ -1012,7 +908,7 @@ function confirmMissionSetup(): void {
 }
 ```
 
-Add Open Setup only when:
+Derive:
 
 ```ts
 const canOpenSetup = $derived(
@@ -1020,23 +916,9 @@ const canOpenSetup = $derived(
 );
 ```
 
-- [ ] **Step 5: Extend `PuzzleToolbar` minimally**
+- [ ] **Step 6: Extend `PuzzleToolbar` minimally**
 
-Add props:
-
-```ts
-onPause: () => void;
-onOpenSetup: () => void;
-canOpenSetup: boolean;
-```
-
-Render direct buttons for Pause and optional Setup. For the existing rotation button use:
-
-```svelte
-aria-describedby={rotationToggleDisabled ? 'rotation-lock-reason' : undefined}
-```
-
-and render:
+Add `onPause`, `onOpenSetup`, and `canOpenSetup`. Render direct Pause and optional Setup buttons. Add `aria-describedby` to the existing disabled rotation button and this fixed hidden text:
 
 ```svelte
 {#if rotationToggleDisabled}
@@ -1046,28 +928,16 @@ and render:
 {/if}
 ```
 
-Do not add a generic toolbar action model or disabled-reason component.
+- [ ] **Step 7: Render setup outside the inert page**
 
-- [ ] **Step 6: Render `MissionSetupDialog` and inert the page**
+Derive `hasSessionModal = sessionDialog !== null || showCelebration`, use it for the page `inert`/`aria-hidden`, and render `MissionSetupDialog` outside the inert page when `sessionDialog === 'setup'`.
 
-Derive:
-
-```ts
-const hasSessionModal = $derived(sessionDialog !== null || showCelebration);
-```
-
-Use it for the page `inert`/`aria-hidden` attributes. Render `MissionSetupDialog` outside the inert page when `sessionDialog === 'setup'`, passing puzzle metadata, `setupDraft`, `setupMandatory`, `confirmMissionSetup`, optional cancel, and Return to Arcade.
-
-- [ ] **Step 7: Run focused route tests**
+- [ ] **Step 8: Run route tests and commit**
 
 ```bash
 cd apps/web
 bunx vitest --run --browser src/routes/puzzle/[id]/page.svelte.test.ts
 ```
-
-Expected: new entry/setup cases and existing route integration tests pass.
-
-- [ ] **Step 8: Commit entry/setup integration**
 
 ```bash
 git add apps/web/src/routes/puzzle/[id]/+page.svelte \
@@ -1085,62 +955,32 @@ git commit -m "feat(web): add mission setup entry flow"
 - Test: `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts`
 
 **Interfaces:**
-- Consumes: existing `pause`, `resume`, `restart`, `configure_setup`, `serializeSession`, `isResumable`.
-- Produces private route functions only; no new shared service.
+- Consumes: existing `pause`, `resume`, `restart`, `configure_setup`, `serializeSession`, and `isResumable`.
+- Produces private route functions only.
 
-- [ ] **Step 1: Write failing route tests for control flows**
+- [ ] **Step 1: Write failing route tests**
 
-Add cases that assert:
+Add tests for restored active → Resume with a paused checkpoint, restart confirmation only after activity, Save/Discard exit, and Exit Cancel restoring the correct origin.
+
+Representative assertions:
 
 ```ts
-it('shows Resume for a restored active session and checkpoints paused lifecycle', async () => {
-	setSavedProgress({ placedPieces: [{ pieceId: 0, x: 0, y: 0 }] });
-	resumableState.value = true;
-	await renderPuzzlePage();
-
-	await expect.element(page.getByRole('dialog', { name: 'Resume Mission' })).toBeVisible();
-	expect(sessionStorageSpies.saveSession).toHaveBeenCalled();
-});
-
-it('confirms restart only after existing activity', async () => {
-	await renderPuzzlePage();
-	await page.getByRole('button', { name: 'Start Mission' }).click();
-	await placePiece(0, 0, 0);
-	await page.getByRole('button', { name: 'Pause mission' }).click();
-	await page.getByRole('button', { name: 'Restart' }).click();
-
-	await expect.element(page.getByText('Restart this mission?')).toBeVisible();
-	await page.getByRole('button', { name: 'Confirm restart' }).click();
-	await expect.element(page.getByRole('dialog', { name: 'Mission Setup' })).toBeVisible();
-});
-
-it('discards only the active session on exit', async () => {
-	resumableState.value = true;
-	await renderPuzzlePage();
-	await page.getByRole('button', { name: 'Start Mission' }).click();
-	await placePiece(0, 0, 0);
-	await page.getByRole('button', { name: 'Return to arcade' }).click();
-	await page.getByRole('button', { name: 'Discard & Exit' }).click();
-
-	expect(sessionStorageSpies.clearSession).toHaveBeenCalledWith('test-puzzle');
-	expect(goto).toHaveBeenCalledWith('/');
-});
+setSavedProgress({ placedPieces: [{ pieceId: 0, x: 0, y: 0 }] });
+resumableState.value = true;
+await renderPuzzlePage();
+await expect.element(page.getByRole('dialog', { name: 'Resume Mission' })).toBeVisible();
+expect(sessionStorageSpies.saveSession).toHaveBeenCalled();
 ```
 
-Update role names to match the final component copy exactly.
-
-- [ ] **Step 2: Run the focused route test and verify failure**
-
-```bash
-cd apps/web
-bunx vitest --run --browser src/routes/puzzle/[id]/page.svelte.test.ts
+```ts
+await page.getByRole('button', { name: 'Pause mission' }).click();
+await page.getByRole('button', { name: 'Restart' }).click();
+await expect.element(page.getByText('Restart this mission?')).toBeVisible();
+await page.getByRole('button', { name: 'Confirm restart' }).click();
+await expect.element(page.getByRole('dialog', { name: 'Mission Setup' })).toBeVisible();
 ```
 
-Expected: failures because Pause/Restart/Exit handlers are not wired.
-
-- [ ] **Step 3: Add one private transient cleanup function**
-
-Move the existing blur/reference cleanup into:
+- [ ] **Step 2: Add one private transient cleanup function**
 
 ```ts
 function clearTransientGameplayState(): void {
@@ -1160,9 +1000,9 @@ function clearTransientGameplayState(): void {
 }
 ```
 
-Keep the helper route-private.
+Keep it route-private.
 
-- [ ] **Step 4: Implement Pause and Resume handlers**
+- [ ] **Step 3: Implement Pause and Resume**
 
 ```ts
 function openPauseDialog(presentation: 'resume' | 'paused' = 'paused'): void {
@@ -1183,9 +1023,7 @@ function resumeSession(): void {
 }
 ```
 
-Use `openPauseDialog` for the toolbar Pause action. Restored active loading may dispatch `pause` directly before calling `openPauseDialog('resume')` to avoid duplicate dispatch.
-
-- [ ] **Step 5: Implement restart/replay through route composition**
+- [ ] **Step 4: Implement restart composition**
 
 ```ts
 function restartWithCurrentChoices(): void {
@@ -1215,9 +1053,20 @@ function requestRestart(): void {
 }
 ```
 
-Change Play Again to call `restartWithCurrentChoices()` and do not dispatch `start`; setup must always open after replay.
+Preserve the existing Play Again preamble before calling this helper:
 
-- [ ] **Step 6: Implement Return to Arcade and exit-origin restoration**
+```ts
+function handlePlayAgain(): void {
+	if (!puzzle || !sessionStore) return;
+	persistenceReadOnly = false;
+	sessionStorageAdapter.clearSession(puzzle.id);
+	restartWithCurrentChoices();
+}
+```
+
+Do not dispatch `start`; Play Again must open setup.
+
+- [ ] **Step 5: Implement Return to Arcade**
 
 ```ts
 function currentRunIsResumable(): boolean {
@@ -1263,22 +1112,16 @@ function cancelExit(): void {
 }
 ```
 
-Route the header Arcade action, mandatory setup Exit, Pause Exit, and completion Back to Arcade through `requestReturnToArcade()`.
+Route every Arcade action through `requestReturnToArcade()`.
 
-- [ ] **Step 7: Render Pause and Exit dialogs**
+- [ ] **Step 6: Render Pause and Exit, run tests, commit**
 
-Render `SessionPauseDialog` for `sessionDialog === 'pause'` and `ExitSessionDialog` for `sessionDialog === 'exit'`. The Pause component receives `restartConfirmation`; Cancel restart sets it back to false without changing lifecycle.
-
-- [ ] **Step 8: Run route tests and verify pass**
+Render `SessionPauseDialog` and `ExitSessionDialog` outside the inert page. Cancel restart sets `restartConfirmation = false` without changing lifecycle.
 
 ```bash
 cd apps/web
 bunx vitest --run --browser src/routes/puzzle/[id]/page.svelte.test.ts
 ```
-
-Expected: new pause/restart/exit tests and existing route tests pass.
-
-- [ ] **Step 9: Commit session-control integration**
 
 ```bash
 git add apps/web/src/routes/puzzle/[id]/+page.svelte \
@@ -1295,56 +1138,14 @@ git commit -m "feat(web): add pause restart and exit controls"
 - Test: `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts`
 
 **Interfaces:**
-- Consumes: existing `sessionState.mode`, `sessionState.timingQuality`, and sealed result class.
+- Consumes: `sessionState.mode`, `sessionState.timingQuality`, and sealed result class.
 - Produces presentation-only derived values; no domain or API changes.
 
 - [ ] **Step 1: Write failing presentation tests**
 
-Add route cases:
+Add a Relaxed route test that starts the setup flow, asserts `RELAXED`, completes the puzzle, and asserts no `FINAL TIME` or `PERSONAL BEST`. Add a legacy-unknown restored test that asserts `TIME UNAVAILABLE` and no timer wrapper.
 
-```ts
-it('shows Relaxed without timed HUD or completion claims', async () => {
-	preferenceState.value = {
-		mode: 'relaxed',
-		rotationEnabled: false,
-		startImmediately: false
-	};
-	await renderPuzzlePage();
-	await page.getByRole('button', { name: 'Start Mission' }).click();
-
-	await expect.element(page.getByTestId('relaxed-mode-indicator')).toHaveTextContent('RELAXED');
-	await expect.element(page.getByTestId('game-timer')).not.toBeInTheDocument();
-
-	await placePiece(0, 0, 0);
-	await placePiece(1, 1, 0);
-	const dialog = page.getByRole('dialog', { name: /Test Mission/i });
-	await expect.element(dialog.getByText('MISSION COMPLETE')).toBeVisible();
-	await expect.element(dialog.getByText('FINAL TIME')).not.toBeInTheDocument();
-	await expect.element(dialog.getByText('PERSONAL BEST')).not.toBeInTheDocument();
-});
-
-it('does not show timed-best claims for legacy-unknown resumed runs', async () => {
-	setSavedProgress({ placedPieces: [{ pieceId: 0, x: 0, y: 0 }] });
-	// Extend the storage mock with timingQualityOverride = 'legacy_unknown'.
-	await renderPuzzlePage();
-
-	await expect.element(page.getByTestId('time-unavailable-indicator')).toHaveTextContent(
-		'TIME UNAVAILABLE'
-	);
-	await expect.element(page.getByTestId('game-timer')).not.toBeInTheDocument();
-});
-```
-
-- [ ] **Step 2: Run route tests and verify failure**
-
-```bash
-cd apps/web
-bunx vitest --run --browser src/routes/puzzle/[id]/page.svelte.test.ts
-```
-
-Expected: failures because timed UI is unconditional.
-
-- [ ] **Step 3: Add direct presentation derivations**
+- [ ] **Step 2: Add direct presentation derivations**
 
 ```ts
 const showKnownTimedPresentation = $derived(
@@ -1356,30 +1157,28 @@ const showUnknownTimePresentation = $derived(
 );
 ```
 
-In the HUD:
+Use a wrapper instead of passing an unsupported prop into `GameTimer`:
 
-- render `<GameTimer data-testid="game-timer">` only for known Timed;
-- render `RELAXED` for Relaxed;
-- render `TIME UNAVAILABLE` for legacy unknown.
+```svelte
+{#if showKnownTimedPresentation}
+	<div data-testid="game-timer">
+		<GameTimer {timerState} {bestTime} />
+	</div>
+{:else if showRelaxedPresentation}
+	<div data-testid="relaxed-mode-indicator">RELAXED</div>
+{:else if showUnknownTimePresentation}
+	<div data-testid="time-unavailable-indicator">TIME UNAVAILABLE</div>
+{/if}
+```
 
-In completion:
+In completion, render the existing rank/time/best block only for known Timed. Render neutral `MISSION COMPLETE` and no time/best fields for Relaxed or legacy unknown. Leave completion effect dispatch unchanged.
 
-- render the existing timed rank/time/best block only for known Timed;
-- render neutral `MISSION COMPLETE` and no time/best fields for Relaxed or legacy unknown;
-- leave completion effect dispatch and request projection unchanged.
-
-Pass mode into `SessionPauseDialog` so Resume/Pause labels identify Relaxed directly.
-
-- [ ] **Step 4: Run route tests and verify pass**
+- [ ] **Step 3: Run tests and commit**
 
 ```bash
 cd apps/web
 bunx vitest --run --browser src/routes/puzzle/[id]/page.svelte.test.ts
 ```
-
-Expected: all route integration tests pass.
-
-- [ ] **Step 5: Commit presentation changes**
 
 ```bash
 git add apps/web/src/routes/puzzle/[id]/+page.svelte \
@@ -1389,7 +1188,7 @@ git commit -m "feat(web): add relaxed session presentation"
 
 ---
 
-### Task 8: Add deterministic session-control E2E coverage and verify the feature
+### Task 8: Add deterministic session-control E2E coverage and verify
 
 **Files:**
 - Modify: `apps/web/e2e/support/gameplay-page.ts`
@@ -1397,27 +1196,12 @@ git commit -m "feat(web): add relaxed session presentation"
 
 **Interfaces:**
 - Extends `GotoFixtureOptions` with `seedPreferences?: GameplayPreferences`.
-- Adds helpers for setup, pause/resume, and reading the current persisted session.
+- Adds `missionSetupDialog()`, `startMission()`, `pauseMission()`, `resumeMission()`, and `readPersistedSession()`.
 - Uses existing `ApiScenarioController.recordedRequests` for Relaxed completion assertions.
 
-- [ ] **Step 1: Extend atomic fixture initialization with preferences**
+- [ ] **Step 1: Extend the existing atomic init script**
 
-Import:
-
-```ts
-import {
-	GAMEPLAY_PREFERENCES_KEY,
-	type GameplayPreferences
-} from '../../src/lib/services/gameplay/session/preferences';
-```
-
-Add to `GotoFixtureOptions`:
-
-```ts
-seedPreferences?: GameplayPreferences;
-```
-
-Add `preferencesJson` and `preferencesKey` to the single existing `addInitScript` argument. Inside the script, after storage clear and before freezing gameplay config:
+Import the preferences key/type and add `seedPreferences?: GameplayPreferences`. Add `preferencesJson` and `preferencesKey` to the single existing `addInitScript` argument, then seed:
 
 ```ts
 if (args.preferencesJson) {
@@ -1428,8 +1212,6 @@ if (args.preferencesJson) {
 Do not add a second init script.
 
 - [ ] **Step 2: Add concise page-object helpers**
-
-Add:
 
 ```ts
 missionSetupDialog(): Locator {
@@ -1443,7 +1225,9 @@ async startMission(options: {
 } = {}): Promise<void> {
 	const dialog = this.missionSetupDialog();
 	await expect(dialog).toBeVisible();
-	if (options.mode) await dialog.getByLabel(options.mode === 'timed' ? 'Timed' : 'Relaxed').check();
+	if (options.mode) {
+		await dialog.getByLabel(options.mode === 'timed' ? 'Timed' : 'Relaxed').check();
+	}
 	if (options.rotationEnabled !== undefined) {
 		await dialog.getByLabel('Enable rotation').setChecked(options.rotationEnabled);
 	}
@@ -1455,128 +1239,30 @@ async startMission(options: {
 	await dialog.getByRole('button', { name: 'Start Mission' }).click();
 	await expect(dialog).not.toBeVisible();
 }
-
-async pauseMission(): Promise<Locator> {
-	await this.page.getByRole('button', { name: 'Pause mission' }).click();
-	const dialog = this.page.getByRole('dialog', { name: 'Mission Paused' });
-	await expect(dialog).toBeVisible();
-	return dialog;
-}
-
-async resumeMission(dialog: Locator): Promise<void> {
-	await dialog.getByRole('button', { name: 'Resume' }).click();
-	await expect(dialog).not.toBeVisible();
-}
 ```
 
-Add `readPersistedSession()` by reading `progressKey(this.fixture!.fixtureId)` and parsing it as `PersistedPuzzleSessionV1 | null`.
+Add Pause/Resume helpers and `readPersistedSession()` using the existing `progressKey()`.
 
-- [ ] **Step 3: Write the four E2E tests**
+- [ ] **Step 3: Create the four E2E tests**
 
-Create `gameplay-session-controls.spec.ts`:
+Create `gameplay-session-controls.spec.ts` with:
 
-```ts
-import { test, expect } from './support/test';
-import { buildMinimalSeed } from './gameplay-fixtures/persisted-state';
+1. Timed setup, first placement, 3 seconds active, 5 seconds paused, 2 seconds resumed, final timer `00:05`.
+2. Relaxed completion, no timed labels, recorded request `resultClass === 'relaxed'`.
+3. Seeded active Relaxed+rotation session, Resume, Restart, new run ID, empty placements, retained setup choices.
+4. `webkit-mobile` setup/Pause action reachability, dynamic-height viewport, and Shift+Tab wrap.
 
-test.describe('Mission session controls', () => {
-	test('Timed setup, pause, and resume exclude decision time @smoke', async ({
-		gameplayPage,
-		page
-	}) => {
-		await gameplayPage.gotoFixture({
-			clock: { startAt: new Date('2026-08-04T12:00:00Z') }
-		});
-		await gameplayPage.startMission({ mode: 'timed' });
-		await gameplayPage.selectAndPlaceWithKeyboard(0, 0, 0);
-		await page.clock.runFor(3_000);
-		const pause = await gameplayPage.pauseMission();
-		await page.clock.runFor(5_000);
-		await gameplayPage.resumeMission(pause);
-		await page.clock.runFor(2_000);
-		await expect(page.getByTestId('game-timer')).toContainText('00:05');
-	});
+Use `buildMinimalSeed('e2e-square-4')` for the restored test and the existing `ApiScenarioController.recordedRequests` for request inspection.
 
-	test('Relaxed completion uses relaxed result class and no timed claims @smoke', async ({
-		gameplayPage,
-		page
-	}) => {
-		await gameplayPage.gotoFixture({ completion: { kind: 'success' } });
-		await gameplayPage.startMission({ mode: 'relaxed' });
-		await gameplayPage.solveFixture();
-
-		await expect(page.getByText('FINAL TIME')).not.toBeVisible();
-		const request = gameplayPage.apiController.recordedRequests.at(-1)?.bodyJson as {
-			resultClass?: string;
-		};
-		expect(request.resultClass).toBe('relaxed');
-	});
-
-	test('restored active run resumes then restarts with retained choices @smoke', async ({
-		gameplayPage,
-		page
-	}) => {
-		const seed = {
-			...buildMinimalSeed('e2e-square-4'),
-			mode: 'relaxed' as const,
-			rotationEnabled: true,
-			pieceRotations: { 0: 90, 1: 180, 2: 270, 3: 0 },
-			facts: { rotationUsed: true, hintUsed: false, ghostReferenceUsed: false },
-			resultClass: 'relaxed' as const
-		};
-		await gameplayPage.gotoFixture({ seedSession: seed });
-
-		const resume = page.getByRole('dialog', { name: 'Resume Mission' });
-		await expect(resume).toBeVisible();
-		await resume.getByRole('button', { name: 'Restart' }).click();
-		await expect(gameplayPage.missionSetupDialog()).toBeVisible();
-		await expect(gameplayPage.missionSetupDialog().getByLabel('Relaxed')).toBeChecked();
-		await expect(gameplayPage.missionSetupDialog().getByLabel('Enable rotation')).toBeChecked();
-		const restarted = await gameplayPage.readPersistedSession();
-		expect(restarted?.runId).not.toBe(seed.runId);
-		expect(restarted?.placedPieces).toEqual([]);
-	});
-
-	test('mobile dialogs keep actions reachable and focus contained @webkit-critical', async ({
-		gameplayPage,
-		page
-	}) => {
-		test.skip(test.info().project.name !== 'webkit-mobile');
-		await gameplayPage.gotoFixture();
-		const setup = gameplayPage.missionSetupDialog();
-		await expect(setup.getByRole('button', { name: 'Start Mission' })).toBeInViewport();
-		await gameplayPage.startMission();
-		const pause = await gameplayPage.pauseMission();
-		const first = pause.getByRole('button', { name: 'Resume' });
-		const last = pause.getByRole('button', { name: 'Return to Arcade' });
-		await first.focus();
-		await page.keyboard.press('Shift+Tab');
-		await expect(last).toBeFocused();
-	});
-});
-```
-
-Use the exact fixture ID type accepted by `buildMinimalSeed`; if `GameplayFixtureId` is required for the literal, retain the literal `e2e-square-4` as shown.
-
-- [ ] **Step 4: Run the new E2E file in Chromium desktop**
+- [ ] **Step 4: Run focused E2E**
 
 ```bash
 cd apps/web
 bunx playwright test e2e/gameplay-session-controls.spec.ts --project=chromium-desktop
-```
-
-Expected: the three non-WebKit cases pass; the WebKit-only case skips.
-
-- [ ] **Step 5: Run the mobile/WebKit critical case**
-
-```bash
-cd apps/web
 bunx playwright test e2e/gameplay-session-controls.spec.ts --project=webkit-mobile
 ```
 
-Expected: all applicable cases pass, including focus containment.
-
-- [ ] **Step 6: Commit E2E coverage**
+- [ ] **Step 5: Commit E2E coverage**
 
 ```bash
 git add apps/web/e2e/support/gameplay-page.ts \
@@ -1584,9 +1270,7 @@ git add apps/web/e2e/support/gameplay-page.ts \
 git commit -m "test(web): cover mission session controls"
 ```
 
-- [ ] **Step 7: Run complete web verification**
-
-Run in this order:
+- [ ] **Step 6: Run complete web verification**
 
 ```bash
 cd apps/web
@@ -1598,34 +1282,18 @@ bun run test:e2e
 bun run test:e2e:webkit
 ```
 
-Expected:
+Expected: check/lint/build exit 0; all Vitest browser tests pass; Chromium desktop and WebKit critical E2E pass.
 
-- `svelte-check` reports 0 errors and 0 warnings introduced by HPA-221;
-- Prettier/ESLint pass;
-- all Vitest browser tests pass;
-- production build exits 0;
-- Chromium desktop E2E passes;
-- WebKit critical E2E passes.
-
-- [ ] **Step 8: Inspect the final diff against KISS guardrails**
-
-Run:
+- [ ] **Step 7: Inspect final KISS scope**
 
 ```bash
 git diff --stat main...HEAD
 git diff --name-only main...HEAD
 ```
 
-Confirm:
+Confirm no new controller/store, lifecycle, schema version, API route, backend migration, analytics event, modal framework, generic toolbar action model, or `doRestart` behavior change. Confirm route-local dialog state is not serialized.
 
-- no new controller/store, lifecycle, schema version, API route, backend migration, analytics event, modal framework, or generic toolbar action model;
-- `doRestart()` remains behaviorally unchanged;
-- all new shared files have one responsibility;
-- route-local dialog state is not serialized.
-
-- [ ] **Step 9: Commit any verification-only formatting fixes**
-
-Only when verification changed files:
+- [ ] **Step 8: Commit verification-only formatting fixes when files changed**
 
 ```bash
 git add apps/web
