@@ -688,6 +688,49 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.element(page.getByText('1/2')).toBeVisible();
 	});
 
+	it('shows a RELAXED indicator and a neutral completion for a relaxed run', async () => {
+		preferenceState.value = {
+			mode: 'relaxed',
+			rotationEnabled: false,
+			startImmediately: false
+		};
+		await renderPuzzlePage();
+		await expect.element(page.getByRole('dialog', { name: 'Mission Setup' })).toBeVisible();
+
+		await page.getByRole('button', { name: 'Start Mission' }).click();
+		await expect.poll(() => page.getByRole('dialog', { name: 'Mission Setup' }).query()).toBeNull();
+
+		// The RELAXED indicator replaces the timer wrapper.
+		await expect.element(page.getByTestId('relaxed-mode-indicator')).toBeVisible();
+		await expect.element(page.getByText('RELAXED')).toBeVisible();
+		await expect.poll(() => page.getByTestId('game-timer').query()).toBeNull();
+
+		await placePiece(0, 0, 0);
+		await placePiece(1, 1, 0);
+		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+
+		// Neutral completion: MISSION COMPLETE with no time or best fields.
+		await expect.element(page.getByText('MISSION COMPLETE')).toBeVisible();
+		await expect.poll(() => page.getByText('FINAL TIME').query()).toBeNull();
+		await expect.poll(() => page.getByText('PERSONAL BEST').query()).toBeNull();
+	});
+
+	it('shows TIME UNAVAILABLE instead of the timer for a legacy-unknown restored run', async () => {
+		timingQualityState.value = 'legacy_unknown';
+		restoredLifecycleState.value = 'active';
+		setSavedProgress({
+			placedPieces: [{ pieceId: 0, x: 0, y: 0 }]
+		});
+
+		await renderPuzzlePage();
+
+		// The static TIME UNAVAILABLE indicator replaces the timer wrapper;
+		// no GameTimer is rendered for a legacy-unknown timed session.
+		await expect.element(page.getByTestId('time-unavailable-indicator')).toBeVisible();
+		await expect.element(page.getByText('TIME UNAVAILABLE')).toBeVisible();
+		await expect.poll(() => page.getByTestId('game-timer').query()).toBeNull();
+	});
+
 	it('clears pan state on window blur', async () => {
 		await renderPuzzlePage();
 

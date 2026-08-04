@@ -257,6 +257,18 @@
 		running: sessionState?.lifecycle === 'active' && (sessionState?.timerStarted ?? false)
 	});
 
+	// Presentation gating for the HUD timer and completion stats. Relaxed
+	// runs have no clock; legacy-unknown restored runs have an elapsed value
+	// that is not trustworthy. Both render a static indicator in place of the
+	// live timer and a neutral completion without time/best fields.
+	const showKnownTimedPresentation = $derived(
+		sessionState?.mode === 'timed' && sessionState.timingQuality === 'known'
+	);
+	const showRelaxedPresentation = $derived(sessionState?.mode === 'relaxed');
+	const showUnknownTimePresentation = $derived(
+		sessionState?.mode === 'timed' && sessionState.timingQuality === 'legacy_unknown'
+	);
+
 	// Setup may be reopened while the run is active but has not yet seen any
 	// user activity. After the first placement the choices are locked.
 	const canOpenSetup = $derived(
@@ -1321,7 +1333,18 @@
 					>
 				</div>
 				<div class="hud-divider"></div>
-				<GameTimer {timerState} {bestTime} />
+				{#if showKnownTimedPresentation}
+					<!-- GameTimer renders its own data-testid="game-timer"; the
+					     wrapper stays testid-free so existing assertions keep
+					     resolving to the timer block. -->
+					<div>
+						<GameTimer {timerState} {bestTime} />
+					</div>
+				{:else if showRelaxedPresentation}
+					<div data-testid="relaxed-mode-indicator">RELAXED</div>
+				{:else if showUnknownTimePresentation}
+					<div data-testid="time-unavailable-indicator">TIME UNAVAILABLE</div>
+				{/if}
 			</div>
 		{/if}
 	</header>
@@ -1508,27 +1531,31 @@
 			<div class="modal-top-line"></div>
 
 			<div class="modal-tag">// MISSION COMPLETE</div>
-			<div class="modal-rank">S RANK</div>
+			{#if showKnownTimedPresentation}
+				<div class="modal-rank">S RANK</div>
+			{/if}
 
 			<h2 id="modal-title" class="modal-title">{puzzle?.name?.toUpperCase()}</h2>
 
-			<div class="modal-stats">
-				<div class="modal-stat">
-					<span class="mstat-label">FINAL TIME</span>
-					<span class="mstat-value">{formatTime(timerState.elapsed)}</span>
-				</div>
-				{#if isNewBest}
-					<div class="modal-stat new-best">
-						<span class="mstat-label">PERSONAL BEST</span>
-						<span class="mstat-value gold">{formatTime(bestTime ?? timerState.elapsed)}</span>
-						{#if localStatsFailed}
-							<span class="new-record-badge unsaved" data-testid="new-best-unsaved">UNSAVED</span>
-						{:else}
-							<span class="new-record-badge">NEW RECORD</span>
-						{/if}
+			{#if showKnownTimedPresentation}
+				<div class="modal-stats">
+					<div class="modal-stat">
+						<span class="mstat-label">FINAL TIME</span>
+						<span class="mstat-value">{formatTime(timerState.elapsed)}</span>
 					</div>
-				{/if}
-			</div>
+					{#if isNewBest}
+						<div class="modal-stat new-best">
+							<span class="mstat-label">PERSONAL BEST</span>
+							<span class="mstat-value gold">{formatTime(bestTime ?? timerState.elapsed)}</span>
+							{#if localStatsFailed}
+								<span class="new-record-badge unsaved" data-testid="new-best-unsaved">UNSAVED</span>
+							{:else}
+								<span class="new-record-badge">NEW RECORD</span>
+							{/if}
+						</div>
+					{/if}
+				</div>
+			{/if}
 
 			<div class="modal-bottom-line"></div>
 
