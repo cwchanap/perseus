@@ -423,7 +423,29 @@ function validateV1(
 		counters.incorrectAttempts > 0 ||
 		counters.hintsUsed > 0 ||
 		counters.referenceActivations > 0;
-	if ((hasCountedAction || derivedFacts.rotationUsed) && !hasUserActivity) return null;
+	// Narrow exception: a setup-only configure_setup action may persist
+	// pieceRotations + rotationUsed while the session still has no user
+	// activity. Every activity signal must be absent — zero placements, zero
+	// counters, timer not started, not completed, no sealed completion — so
+	// this can never mask a genuinely active run.
+	const isPreActivityConfiguredRotation =
+		derivedFacts.rotationUsed &&
+		hasRotations &&
+		!hasUserActivity &&
+		placedPieces.length === 0 &&
+		counters.incorrectAttempts === 0 &&
+		counters.hintsUsed === 0 &&
+		counters.referenceActivations === 0 &&
+		timerStarted === false &&
+		lifecycle !== 'completed' &&
+		record.sealedCompletion === null;
+	if (
+		(hasCountedAction || derivedFacts.rotationUsed) &&
+		!hasUserActivity &&
+		!isPreActivityConfiguredRotation
+	) {
+		return null;
+	}
 
 	const sealedCompletion = validateSeal(
 		record.sealedCompletion,
