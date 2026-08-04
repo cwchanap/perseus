@@ -57,6 +57,35 @@ const puzzleSourceState = vi.hoisted(() => ({
 	override: null as null | (() => Promise<LoadedPuzzleSource>)
 }));
 
+// Configurable device-preferences state for the mocked preference module.
+// NOTE: the default `startImmediately: true` is a test-harness adaptation,
+// NOT the production default. Route-entry tests that specifically exercise
+// the mandatory setup dialog set `startImmediately: false` explicitly. The
+// production default (no stored preferences) is startImmediately: false,
+// which would block every pre-existing gameplay test on the mandatory
+// setup dialog; keeping the harness default true preserves the established
+// "fresh load is immediately playable" contract those tests rely on.
+const preferenceState = vi.hoisted(() => ({
+	value: {
+		mode: 'timed',
+		rotationEnabled: false,
+		startImmediately: true
+	} as {
+		mode: 'timed' | 'relaxed';
+		rotationEnabled: boolean;
+		startImmediately: boolean;
+	},
+	save: vi.fn()
+}));
+
+const resumableState = vi.hoisted(() => ({ value: false }));
+const restoredLifecycleState = vi.hoisted(() => ({
+	value: 'active' as 'setup' | 'active' | 'paused' | 'completed'
+}));
+const timingQualityState = vi.hoisted(() => ({
+	value: 'known' as 'known' | 'legacy_unknown'
+}));
+
 // Hoisted spies shared with the createSessionStorageAdapter mock so tests can
 // assert checkpoint behavior directly. vi.clearAllMocks() only clears call
 // history, so these references remain valid across tests.
@@ -146,12 +175,12 @@ vi.mock('$lib/services/gameplay/session/persistence', async (importOriginal) => 
 							schemaVersion: 1 as const,
 							puzzleId,
 							source: 'api' as const,
-							lifecycle: 'active' as const,
+							lifecycle: restoredLifecycleState.value,
 							mode: 'timed' as const,
 							runId: 'test-run-id',
 							origin: 'resumed' as const,
 							elapsedActiveSeconds: null,
-							timingQuality: 'known' as const,
+							timingQuality: timingQualityState.value,
 							timerStarted: false,
 							placedPieces: progressState.value.placedPieces.map((p) => ({ ...p })),
 							trayOrder: [0, 1],
@@ -178,9 +207,24 @@ vi.mock('$lib/services/gameplay/session/persistence', async (importOriginal) => 
 			},
 			saveSession: sessionStorageSpies.saveSession,
 			clearSession: sessionStorageSpies.clearSession,
-			isResumable: () => false
+			isResumable: () => resumableState.value
 		}),
-		serializeSession: vi.fn(() => null)
+		// Default to the real serializer so checkpoint paths persist real
+		// snapshots; individual tests may still override with mockReturnValue.
+		serializeSession: vi.fn((state) => actual.serializeSession(state))
+	};
+});
+
+// Mock the device-preferences codec. loadGameplayPreferences returns a clone
+// of the hoisted preferenceState; saveGameplayPreferences records the written
+// preferences on preferenceState.save so tests can assert what was persisted.
+vi.mock('$lib/services/gameplay/session/preferences', async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import('$lib/services/gameplay/session/preferences')>();
+	return {
+		...actual,
+		loadGameplayPreferences: vi.fn(() => ({ ...preferenceState.value })),
+		saveGameplayPreferences: preferenceState.save
 	};
 });
 
@@ -387,6 +431,14 @@ describe('Puzzle route gameplay integration', () => {
 		progressState.value = null;
 		sealedCompletionOverride.value = null;
 		puzzleSourceState.override = null;
+		preferenceState.value = {
+			mode: 'timed',
+			rotationEnabled: false,
+			startImmediately: true
+		};
+		resumableState.value = false;
+		restoredLifecycleState.value = 'active';
+		timingQualityState.value = 'known';
 		mockPageStore.set({
 			url: { pathname: '/puzzle/test-puzzle' },
 			params: { id: 'test-puzzle' },
@@ -554,7 +606,12 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.poll(() => page.getByTestId('reference-overlay').query()).toBeNull();
 	});
 
-	it('allows toggling rotation off when restored with rotation enabled but no placed pieces', async () => {
+	it('pauses a restored active session at entry and checkpoints the paused state', async () => {
+		// Restored active runs are deliberately paused at route entry so the
+		// player re-engages through the resume flow (wired in the session
+		// controls task); the paused checkpoint is written immediately. The
+		// restored configuration is retained in the paused presentation.
+		restoredLifecycleState.value = 'active';
 		setSavedProgress({
 			placedPieces: [],
 			rotationEnabled: true,
@@ -566,13 +623,69 @@ describe('Puzzle route gameplay integration', () => {
 		await expect
 			.element(page.getByLabelText('Rotation mode'))
 			.toHaveAttribute('aria-pressed', 'true');
-		await expect.element(page.getByLabelText('Rotation mode')).toBeEnabled();
+		expect(sessionStorageSpies.saveSession).toHaveBeenCalled();
+	});
 
-		await page.getByLabelText('Rotation mode').click();
+	it('shows configured setup for a fresh session', async () => {
+		preferenceState.value = {
+			mode: 'relaxed',
+			rotationEnabled: true,
+			startImmediately: false
+		};
+		await renderPuzzlePage();
+		await expect.element(page.getByRole('dialog', { name: 'Mission Setup' })).toBeVisible();
+		await expect.element(page.getByLabelText('Relaxed')).toBeChecked();
+		await expect.element(page.getByLabelText('Enable rotation')).toBeChecked();
+	});
 
+	it('starts a fresh session immediately from preferences', async () => {
+		preferenceState.value = {
+			mode: 'timed',
+			rotationEnabled: false,
+			startImmediately: true
+		};
+		await renderPuzzlePage();
 		await expect
-			.element(page.getByLabelText('Rotation mode'))
-			.toHaveAttribute('aria-pressed', 'false');
+			.element(page.getByRole('dialog', { name: 'Mission Setup' }))
+			.not.toBeInTheDocument();
+		await expect.element(page.getByRole('button', { name: 'Open mission setup' })).toBeVisible();
+	});
+
+	it('does not auto-skip a restored setup session', async () => {
+		// Start Immediately applies only to fresh route entry: a restored
+		// setup session always presents the mandatory setup dialog regardless
+		// of device preferences.
+		preferenceState.value = {
+			mode: 'relaxed',
+			rotationEnabled: true,
+			startImmediately: true
+		};
+		restoredLifecycleState.value = 'setup';
+		setSavedProgress({ placedPieces: [] });
+		await renderPuzzlePage();
+		await expect.element(page.getByRole('dialog', { name: 'Mission Setup' })).toBeVisible();
+		await expect.element(page.getByLabelText('Timed')).toBeChecked();
+		await expect.element(page.getByLabelText('Start immediately next time')).toBeChecked();
+	});
+
+	it('starts the mission from setup and saves the chosen preferences', async () => {
+		preferenceState.value = {
+			mode: 'relaxed',
+			rotationEnabled: false,
+			startImmediately: false
+		};
+		await renderPuzzlePage();
+		await expect.element(page.getByRole('dialog', { name: 'Mission Setup' })).toBeVisible();
+
+		await page.getByRole('button', { name: 'Start Mission' }).click();
+		await expect.poll(() => page.getByRole('dialog', { name: 'Mission Setup' }).query()).toBeNull();
+		expect(preferenceState.save).toHaveBeenCalledWith(
+			expect.objectContaining({ mode: 'relaxed', startImmediately: false })
+		);
+
+		// The configured run is active and playable.
+		await placePiece(0, 0, 0);
+		await expect.element(page.getByText('1/2')).toBeVisible();
 	});
 
 	it('clears pan state on window blur', async () => {
@@ -1581,6 +1694,14 @@ describe('Puzzle page defensive guard coverage', () => {
 		progressState.value = null;
 		sealedCompletionOverride.value = null;
 		puzzleSourceState.override = null;
+		preferenceState.value = {
+			mode: 'timed',
+			rotationEnabled: false,
+			startImmediately: true
+		};
+		resumableState.value = false;
+		restoredLifecycleState.value = 'active';
+		timingQualityState.value = 'known';
 		mockPageStore.set({
 			url: { pathname: '/puzzle/test-puzzle' },
 			params: { id: 'test-puzzle' },

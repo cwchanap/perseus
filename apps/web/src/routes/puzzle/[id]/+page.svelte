@@ -14,9 +14,16 @@
 	import PuzzleBoard from '$lib/components/PuzzleBoard.svelte';
 	import PuzzlePiece from '$lib/components/PuzzlePiece.svelte';
 	import PuzzleToolbar from '$lib/components/PuzzleToolbar.svelte';
+	import MissionSetupDialog from '$lib/components/MissionSetupDialog.svelte';
 	import ZoomableBoardFrame from '$lib/components/ZoomableBoardFrame.svelte';
 	import GameTimer from '$lib/components/GameTimer.svelte';
 	import ReferenceOverlay from '$lib/components/ReferenceOverlay.svelte';
+	import {
+		DEFAULT_GAMEPLAY_PREFERENCES,
+		loadGameplayPreferences,
+		saveGameplayPreferences,
+		type GameplayPreferences
+	} from '$lib/services/gameplay/session/preferences';
 	import { resolve } from '$app/paths';
 	import {
 		getResponsivePuzzleBoardMetrics,
@@ -88,6 +95,16 @@
 	// Session-driven canonical state.
 	let sessionStore: PuzzleSessionStore | null = $state(null);
 	let sessionState = $state<PuzzleSessionState | null>(null);
+
+	// Route-local session-control state. This state is never serialized:
+	// it only drives dialog presentation and entry orchestration, while the
+	// PuzzleSession store remains the sole canonical owner of run state.
+	type SessionDialog = 'setup' | 'pause' | 'exit' | null;
+
+	let sessionDialog = $state<SessionDialog>(null);
+	let setupMandatory = $state(false);
+	let setupDraft = $state<GameplayPreferences>({ ...DEFAULT_GAMEPLAY_PREFERENCES });
+	let devicePreferences = $state<GameplayPreferences>({ ...DEFAULT_GAMEPLAY_PREFERENCES });
 
 	let bestTime: number | null = $state(null);
 	let isNewBest = $state(false);
@@ -229,6 +246,16 @@
 		elapsed: sessionState?.elapsedActiveSeconds ?? 0,
 		running: sessionState?.lifecycle === 'active' && (sessionState?.timerStarted ?? false)
 	});
+
+	// Setup may be reopened while the run is active but has not yet seen any
+	// user activity. After the first placement the choices are locked.
+	const canOpenSetup = $derived(
+		sessionState?.lifecycle === 'active' && sessionState.hasUserActivity === false
+	);
+
+	// Any open session dialog (or the celebration modal) makes the page inert
+	// so focus and interaction stay contained in the dialog surface.
+	const hasSessionModal = $derived(sessionDialog !== null || showCelebration);
 
 	const placedPieceIds = $derived.by(
 		() => new Set(placedPieces.map((placement) => placement.pieceId))
@@ -669,6 +696,10 @@
 			// so the user retains access to Play Again and retry controls.
 			// Fresh/incompatible sessions start without the modal.
 			showCelebration = restored?.lifecycle === 'completed';
+			// Route-local dialog state is never serialized; reset it per
+			// puzzle load so a stale dialog from the prior puzzle cannot trap
+			// the new one (the entry handling below re-opens as needed).
+			sessionDialog = null;
 			showReferenceOverlay = false;
 			clearHintTarget();
 			if (rejectedPieceTimeout !== null) {
@@ -709,12 +740,33 @@
 			// engine's hidden-time exclusion is correct from the first tick.
 			store.setDocumentHidden(typeof document !== 'undefined' ? document.hidden : false);
 
-			// Auto-start fresh sessions and any restored setup session. A
-			// restored active/paused/completed snapshot is left untouched per
-			// the approved persistence contract; only setup needs the start
-			// transition to become playable.
-			if (!restored || restored.lifecycle === 'setup') {
-				store.dispatch({ type: 'start' });
+			// Route entry: a fresh session is configured from device
+			// preferences and either started immediately or presented as a
+			// mandatory setup dialog. A restored setup session always presents
+			// setup (Start Immediately applies only to fresh route entry).
+			// Restored active/paused runs are deliberately paused at entry and
+			// presented for resume so the player re-engages explicitly.
+			devicePreferences = loadGameplayPreferences();
+
+			if (!restored) {
+				store.dispatch({
+					type: 'configure_setup',
+					mode: devicePreferences.mode,
+					rotationEnabled: devicePreferences.rotationEnabled
+				});
+				if (devicePreferences.startImmediately) {
+					store.dispatch({ type: 'start' });
+				} else {
+					showMissionSetup(true);
+				}
+			} else if (restored.lifecycle === 'setup') {
+				showMissionSetup(true);
+			} else if (restored.lifecycle === 'active') {
+				store.dispatch({ type: 'pause' });
+				checkpointSession();
+				sessionDialog = 'pause';
+			} else if (restored.lifecycle === 'paused') {
+				sessionDialog = 'pause';
 			}
 
 			// Resume any pending completion effects that were interrupted by a
@@ -957,6 +1009,75 @@
 		}
 	}
 
+	// --- Session-control entry and setup ---------------------------------------
+
+	// Seed the setup draft from the live session configuration when one
+	// exists (fresh runs are pre-configured from device preferences before
+	// the dialog opens), falling back to device preferences. Start Immediately
+	// is a device preference, never a per-run session field.
+	function draftFromSession(): GameplayPreferences {
+		return {
+			mode: sessionState?.mode ?? devicePreferences.mode,
+			rotationEnabled: sessionState?.rotationEnabled ?? devicePreferences.rotationEnabled,
+			startImmediately: devicePreferences.startImmediately
+		};
+	}
+
+	function showMissionSetup(mandatory: boolean): void {
+		setupDraft = draftFromSession();
+		setupMandatory = mandatory;
+		sessionDialog = 'setup';
+	}
+
+	function confirmMissionSetup(): void {
+		if (!sessionStore || !sessionState) return;
+		saveGameplayPreferences(setupDraft);
+		devicePreferences = { ...setupDraft };
+
+		if (sessionState.lifecycle === 'setup') {
+			sessionStore.dispatch({
+				type: 'configure_setup',
+				mode: setupDraft.mode,
+				rotationEnabled: setupDraft.rotationEnabled
+			});
+			sessionStore.dispatch({ type: 'start' });
+			checkpointSession();
+			sessionDialog = null;
+			return;
+		}
+
+		const settingsChanged =
+			setupDraft.mode !== sessionState.mode ||
+			setupDraft.rotationEnabled !== sessionState.rotationEnabled;
+		if (!settingsChanged) {
+			sessionDialog = null;
+			return;
+		}
+
+		// Reconfiguring an active pre-activity run composes restart →
+		// configure_setup → start so the new choices get a fresh run and the
+		// tray/rotation state is rebuilt deterministically.
+		const next = { ...setupDraft };
+		sessionStore.dispatch({ type: 'restart' });
+		sessionStore.dispatch({
+			type: 'configure_setup',
+			mode: next.mode,
+			rotationEnabled: next.rotationEnabled
+		});
+		sessionStore.dispatch({ type: 'start' });
+		checkpointSession();
+		pendingViewportReset = true;
+		sessionDialog = null;
+	}
+
+	function handleToolbarPause() {
+		if (sessionState?.lifecycle === 'active') {
+			sessionStore?.dispatch({ type: 'pause' });
+			checkpointSession();
+		}
+		sessionDialog = 'pause';
+	}
+
 	function handlePlayAgain() {
 		if (!puzzle || !sessionStore) return;
 
@@ -1051,7 +1172,7 @@
 	<title>{puzzle?.name || 'Mission'} | Perseus Arcade</title>
 </svelte:head>
 
-<div class="puzzle-page" inert={showCelebration} aria-hidden={showCelebration}>
+<div class="puzzle-page" inert={hasSessionModal} aria-hidden={hasSessionModal}>
 	<!-- HUD Header -->
 	<header class="hud-header">
 		<div class="hud-left">
@@ -1168,6 +1289,9 @@
 							onZoomOut={handleZoomOut}
 							onResetView={resetViewport}
 							onRotationToggle={handleRotationToggle}
+							onPause={handleToolbarPause}
+							onOpenSetup={() => showMissionSetup(false)}
+							{canOpenSetup}
 							{canUndo}
 							{canRedo}
 							{rotationEnabled}
@@ -1320,6 +1444,23 @@
 			</div>
 		</div>
 	</div>
+{/if}
+
+<!-- Mission Setup Modal (outside the inert page) -->
+{#if sessionDialog === 'setup'}
+	<MissionSetupDialog
+		puzzleName={puzzle?.name ?? ''}
+		pieceCount={puzzle?.pieceCount ?? 0}
+		gridCols={puzzle?.gridCols ?? 0}
+		gridRows={puzzle?.gridRows ?? 0}
+		draft={setupDraft}
+		mandatory={setupMandatory}
+		inputHelp="Choose your mode and rotation settings before starting."
+		onDraftChange={(draft) => (setupDraft = draft)}
+		onStart={confirmMissionSetup}
+		onCancel={() => (sessionDialog = null)}
+		onExit={handleGoHome}
+	/>
 {/if}
 
 <style>
