@@ -85,8 +85,9 @@ export interface SessionCounters {
 }
 
 /**
- * Monotonic eligibility facts. They only ever flip toward less-competitive and
- * are deliberately excluded from undo/redo history snapshots.
+ * Eligibility facts may be revised while a run is still in setup and has no
+ * user activity. Once activity begins, they are monotonic and may only move
+ * toward less-competitive result classes. They remain outside undo/redo.
  */
 export interface SessionFacts {
 	rotationUsed: boolean;
@@ -246,6 +247,7 @@ export interface SessionValidationContext {
 // --- Action contract ----------------------------------------------------------
 
 export type PuzzleSessionAction =
+	| { type: 'configure_setup'; mode: SessionMode; rotationEnabled: boolean }
 	| { type: 'start' }
 	| { type: 'pause' }
 	| { type: 'resume' }
@@ -314,6 +316,7 @@ export type SelectionNoopReason =
 
 export type PuzzleSessionOutcome =
 	| { type: 'lifecycle_transitioned'; from: SessionLifecycle; to: SessionLifecycle }
+	| { type: 'setup_configured'; mode: SessionMode; rotationEnabled: boolean }
 	| { type: 'lifecycle_noop'; reason: LifecycleNoopReason }
 	| { type: 'selection_changed'; pieceId: number | null }
 	| { type: 'selection_noop'; reason: SelectionNoopReason }
