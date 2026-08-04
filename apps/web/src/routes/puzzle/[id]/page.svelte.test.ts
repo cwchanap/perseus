@@ -1124,6 +1124,11 @@ describe('Puzzle route gameplay integration', () => {
 		await page.getByRole('button', { name: 'PLAY AGAIN' }).click();
 
 		await expect.poll(() => page.getByTestId('celebration-modal').query()).toBeNull();
+		// Play Again opens Mission Setup for the replacement run (no auto-start).
+		await expect.element(page.getByRole('dialog', { name: 'Mission Setup' })).toBeVisible();
+		await page.getByRole('button', { name: 'Start Mission' }).click();
+		await expect.poll(() => page.getByRole('dialog', { name: 'Mission Setup' }).query()).toBeNull();
+
 		await expect.element(page.getByText('0/2')).toBeVisible();
 		await expect.element(page.getByTestId('game-timer')).toHaveClass('timer-block timer-off');
 		await expect.element(page.getByLabelText('Puzzle piece 0')).toBeVisible();
@@ -1151,9 +1156,11 @@ describe('Puzzle route gameplay integration', () => {
 
 		// Play Again before the first POST resolves — starts a new run with a
 		// fresh seal, so the in-flight callback's stale run ID cannot
-		// acknowledge the new seal.
+		// acknowledge the new seal. The replacement run starts from setup.
 		await page.getByRole('button', { name: 'PLAY AGAIN' }).click();
 		await expect.poll(() => page.getByTestId('celebration-modal').query()).toBeNull();
+		await page.getByRole('button', { name: 'Start Mission' }).click();
+		await expect.poll(() => page.getByRole('dialog', { name: 'Mission Setup' }).query()).toBeNull();
 
 		// The stale first POST now resolves. Its acknowledge_completion_effect
 		// dispatch carries the old run ID, which no longer matches the active
@@ -1188,9 +1195,12 @@ describe('Puzzle route gameplay integration', () => {
 		expect(recordLocalCompletion).toHaveBeenCalledTimes(1);
 
 		// Play Again before the local write resolves — abandons the run and
-		// starts a fresh one with a new seal/run id.
+		// starts a fresh one with a new seal/run id. The replacement run
+		// starts from setup.
 		await page.getByRole('button', { name: 'PLAY AGAIN' }).click();
 		await expect.poll(() => page.getByTestId('celebration-modal').query()).toBeNull();
+		await page.getByRole('button', { name: 'Start Mission' }).click();
+		await expect.poll(() => page.getByRole('dialog', { name: 'Mission Setup' }).query()).toBeNull();
 
 		// The stale local write now resolves with a new-best verdict for the
 		// OLD run. Its acknowledge dispatch is run-id guarded, but the UI
@@ -1682,6 +1692,118 @@ describe('Puzzle route gameplay integration', () => {
 		} finally {
 			vi.useRealTimers();
 		}
+	});
+
+	it('shows a Resume dialog for a restored active session and checkpoints the paused snapshot', async () => {
+		setSavedProgress({ placedPieces: [{ pieceId: 0, x: 0, y: 0 }] });
+		resumableState.value = true;
+		await renderPuzzlePage();
+		await expect.element(page.getByRole('dialog', { name: 'Resume Mission' })).toBeVisible();
+		expect(sessionStorageSpies.saveSession).toHaveBeenCalled();
+	});
+
+	it('resumes a paused run from the Resume dialog', async () => {
+		restoredLifecycleState.value = 'paused';
+		setSavedProgress({ placedPieces: [{ pieceId: 0, x: 0, y: 0 }] });
+		resumableState.value = true;
+		await renderPuzzlePage();
+		await expect.element(page.getByRole('dialog', { name: 'Resume Mission' })).toBeVisible();
+
+		await page.getByRole('button', { name: 'Resume' }).click();
+		await expect
+			.poll(() => page.getByRole('dialog', { name: 'Resume Mission' }).query())
+			.toBeNull();
+
+		// The board is interactive again: pausing via the toolbar reopens the
+		// pause dialog (a real click would be intercepted while the page is inert).
+		await page.getByRole('button', { name: 'Pause mission' }).click();
+		await expect.element(page.getByRole('dialog', { name: 'Mission Paused' })).toBeVisible();
+	});
+
+	it('confirms restart after activity and opens Mission Setup on confirm', async () => {
+		await renderPuzzlePage();
+		await placePiece(0, 0, 0);
+
+		await page.getByRole('button', { name: 'Pause mission' }).click();
+		await expect.element(page.getByRole('dialog', { name: 'Mission Paused' })).toBeVisible();
+
+		await page.getByRole('button', { name: 'Restart' }).click();
+		await expect.element(page.getByText('Restart this mission?')).toBeVisible();
+
+		await page.getByRole('button', { name: 'Confirm restart' }).click();
+		await expect.element(page.getByRole('dialog', { name: 'Mission Setup' })).toBeVisible();
+	});
+
+	it('restarts immediately into setup when the run has no user activity', async () => {
+		await renderPuzzlePage();
+
+		await page.getByRole('button', { name: 'Pause mission' }).click();
+		await page.getByRole('button', { name: 'Restart' }).click();
+
+		// No activity → no confirmation; setup opens for the replacement run.
+		await expect.element(page.getByRole('dialog', { name: 'Mission Setup' })).toBeVisible();
+		await expect.poll(() => page.getByText('Restart this mission?').query()).toBeNull();
+	});
+
+	it('saves the session and navigates to the arcade on Save & Exit', async () => {
+		await renderPuzzlePage();
+		await placePiece(0, 0, 0);
+		resumableState.value = true;
+
+		await page.getByRole('button', { name: 'Pause mission' }).click();
+		await page.getByRole('button', { name: 'Exit' }).click();
+		await expect.element(page.getByRole('dialog', { name: 'Exit Mission' })).toBeVisible();
+
+		await page.getByRole('button', { name: 'Save & Exit' }).click();
+		expect(goto).toHaveBeenCalledWith('/');
+		expect(sessionStorageSpies.saveSession).toHaveBeenCalled();
+		expect(sessionStorageSpies.clearSession).not.toHaveBeenCalled();
+	});
+
+	it('discards the session and navigates to the arcade on Discard', async () => {
+		await renderPuzzlePage();
+		await placePiece(0, 0, 0);
+		resumableState.value = true;
+
+		await page.getByRole('button', { name: 'Pause mission' }).click();
+		await page.getByRole('button', { name: 'Exit' }).click();
+		await expect.element(page.getByRole('dialog', { name: 'Exit Mission' })).toBeVisible();
+
+		await page.getByRole('button', { name: 'Discard' }).click();
+		expect(sessionStorageSpies.clearSession).toHaveBeenCalledWith('test-puzzle');
+		expect(goto).toHaveBeenCalledWith('/');
+	});
+
+	it('resumes the active run when canceling exit from an active origin', async () => {
+		await renderPuzzlePage();
+		await placePiece(0, 0, 0);
+		resumableState.value = true;
+
+		// The HUD arcade link routes through requestReturnToArcade: a
+		// resumable active run pauses and asks for confirmation rather than
+		// navigating away immediately.
+		await page.getByTestId('back-to-arcade-link').click();
+		await expect.element(page.getByRole('dialog', { name: 'Exit Mission' })).toBeVisible();
+
+		await page.getByRole('button', { name: 'Cancel' }).click();
+		await expect.poll(() => page.getByRole('dialog', { name: 'Exit Mission' }).query()).toBeNull();
+
+		// Active origin resumes: the timer keeps running again.
+		await expect.element(page.getByTestId('game-timer')).toHaveClass('timer-block timer-on');
+	});
+
+	it('returns to the pause dialog when canceling exit from a paused origin', async () => {
+		restoredLifecycleState.value = 'paused';
+		setSavedProgress({ placedPieces: [{ pieceId: 0, x: 0, y: 0 }] });
+		resumableState.value = true;
+		await renderPuzzlePage();
+		await expect.element(page.getByRole('dialog', { name: 'Resume Mission' })).toBeVisible();
+
+		await page.getByRole('button', { name: 'Exit' }).click();
+		await expect.element(page.getByRole('dialog', { name: 'Exit Mission' })).toBeVisible();
+
+		await page.getByRole('button', { name: 'Cancel' }).click();
+		await expect.element(page.getByRole('dialog', { name: 'Mission Paused' })).toBeVisible();
 	});
 });
 

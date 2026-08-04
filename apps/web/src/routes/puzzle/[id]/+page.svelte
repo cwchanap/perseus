@@ -15,6 +15,8 @@
 	import PuzzlePiece from '$lib/components/PuzzlePiece.svelte';
 	import PuzzleToolbar from '$lib/components/PuzzleToolbar.svelte';
 	import MissionSetupDialog from '$lib/components/MissionSetupDialog.svelte';
+	import SessionPauseDialog from '$lib/components/SessionPauseDialog.svelte';
+	import ExitSessionDialog from '$lib/components/ExitSessionDialog.svelte';
 	import ZoomableBoardFrame from '$lib/components/ZoomableBoardFrame.svelte';
 	import GameTimer from '$lib/components/GameTimer.svelte';
 	import ReferenceOverlay from '$lib/components/ReferenceOverlay.svelte';
@@ -105,6 +107,14 @@
 	let setupMandatory = $state(false);
 	let setupDraft = $state<GameplayPreferences>({ ...DEFAULT_GAMEPLAY_PREFERENCES });
 	let devicePreferences = $state<GameplayPreferences>({ ...DEFAULT_GAMEPLAY_PREFERENCES });
+	// How the pause dialog presents itself: 'resume' (restored run awaiting
+	// explicit re-engagement) or 'paused' (user-initiated toolbar pause).
+	let pausePresentation = $state<'resume' | 'paused'>('paused');
+	// True while the pause dialog shows the restart confirmation view.
+	let restartConfirmation = $state(false);
+	// Which lifecycle the exit request originated from, so Cancel can restore
+	// the correct surface (active resumes the run; paused returns to pause).
+	let exitOrigin = $state<'active' | 'paused'>('active');
 
 	let bestTime: number | null = $state(null);
 	let isNewBest = $state(false);
@@ -700,6 +710,7 @@
 			// puzzle load so a stale dialog from the prior puzzle cannot trap
 			// the new one (the entry handling below re-opens as needed).
 			sessionDialog = null;
+			restartConfirmation = false;
 			showReferenceOverlay = false;
 			clearHintTarget();
 			if (rejectedPieceTimeout !== null) {
@@ -764,8 +775,10 @@
 			} else if (restored.lifecycle === 'active') {
 				store.dispatch({ type: 'pause' });
 				checkpointSession();
+				pausePresentation = 'resume';
 				sessionDialog = 'pause';
 			} else if (restored.lifecycle === 'paused') {
+				pausePresentation = 'resume';
 				sessionDialog = 'pause';
 			}
 
@@ -1071,41 +1084,131 @@
 	}
 
 	function handleToolbarPause() {
+		openPauseDialog('paused');
+	}
+
+	// --- Pause / resume / restart / exit composition ---------------------------
+
+	// Consolidated route-local cleanup of transient gameplay presentation
+	// (reference hold, selection, hint, rejection animation, panning). Invoked
+	// before any lifecycle transition so a stale overlay/interaction cannot
+	// leak into the next presentation. PuzzleSession remains the sole
+	// canonical owner of run state; this only touches route-local UI state.
+	function clearTransientGameplayState(): void {
+		if (referenceHoldSource !== null) {
+			sessionStore?.dispatch({ type: 'set_reference_mode', mode: null });
+		}
+		showReferenceOverlay = false;
+		referencePointerId = null;
+		referenceHoldSource = null;
+		sessionStore?.dispatch({ type: 'cancel_selection' });
+		clearHintTarget();
+		if (rejectedPieceTimeout !== null) clearTimeout(rejectedPieceTimeout);
+		rejectedPieceTimeout = null;
+		rejectedPiece = null;
+		isPanning = false;
+		activePanPointerId = null;
+	}
+
+	function openPauseDialog(presentation: 'resume' | 'paused' = 'paused'): void {
 		if (sessionState?.lifecycle === 'active') {
+			clearTransientGameplayState();
 			sessionStore?.dispatch({ type: 'pause' });
 			checkpointSession();
 		}
+		pausePresentation = presentation;
+		restartConfirmation = false;
 		sessionDialog = 'pause';
 	}
 
-	function handlePlayAgain() {
-		if (!puzzle || !sessionStore) return;
+	function resumeSession(): void {
+		sessionStore?.dispatch({ type: 'resume' });
+		restartConfirmation = false;
+		sessionDialog = null;
+	}
 
-		showReferenceOverlay = false;
+	function restartWithCurrentChoices(): void {
+		if (!sessionStore || !sessionState) return;
+		const mode = sessionState.mode;
+		const rotationEnabled = sessionState.rotationEnabled;
+
+		clearTransientGameplayState();
 		showCelebration = false;
-		clearHintTarget();
-		rejectedPiece = null;
-		referencePointerId = null;
-		referenceHoldSource = null;
 		isNewBest = false;
 		localStatsFailed = false;
-		// Play Again is a deliberate abandonment of the current record. Clear
-		// the incompatible (future-schema) entry if present and re-enable
-		// persistence for the fresh run.
-		persistenceReadOnly = false;
-		sessionStorageAdapter.clearSession(puzzle.id);
 		sessionStore.dispatch({ type: 'restart' });
-		sessionStore.dispatch({ type: 'start' });
+		sessionStore.dispatch({ type: 'configure_setup', mode, rotationEnabled });
 		// Checkpoint immediately so the new run's tray order and retained
 		// organization survive an abrupt browser kill before the periodic
 		// interval fires. The approved persistence contract requires an
 		// immediate write after restart.
 		checkpointSession();
+		devicePreferences = loadGameplayPreferences();
+		showMissionSetup(true);
+		restartConfirmation = false;
 		pendingViewportReset = true;
 	}
 
-	function handleGoHome() {
-		goto(resolve('/'));
+	function requestRestart(): void {
+		if (sessionState?.hasUserActivity) {
+			restartConfirmation = true;
+			return;
+		}
+		restartWithCurrentChoices();
+	}
+
+	function handlePlayAgain() {
+		if (!puzzle || !sessionStore) return;
+
+		// Play Again is a deliberate abandonment of the current record. Clear
+		// the incompatible (future-schema) entry if present and re-enable
+		// persistence for the fresh run, then open setup with the current
+		// choices (no auto-start).
+		persistenceReadOnly = false;
+		sessionStorageAdapter.clearSession(puzzle.id);
+		restartWithCurrentChoices();
+	}
+
+	function currentRunIsResumable(): boolean {
+		if (!sessionState) return false;
+		const snapshot = serializeSession(sessionState);
+		return snapshot ? sessionStorageAdapter.isResumable(snapshot) : false;
+	}
+
+	function requestReturnToArcade(): void {
+		if (!currentRunIsResumable()) {
+			persistSessionFinal();
+			void goto(resolve('/'));
+			return;
+		}
+
+		exitOrigin = sessionState?.lifecycle === 'paused' ? 'paused' : 'active';
+		if (exitOrigin === 'active') {
+			clearTransientGameplayState();
+			sessionStore?.dispatch({ type: 'pause' });
+			checkpointSession();
+		}
+		sessionDialog = 'exit';
+	}
+
+	function saveAndExit(): void {
+		persistSessionFinal();
+		void goto(resolve('/'));
+	}
+
+	function discardAndExit(): void {
+		if (puzzle) sessionStorageAdapter.clearSession(puzzle.id);
+		void goto(resolve('/'));
+	}
+
+	function cancelExit(): void {
+		if (exitOrigin === 'active') {
+			sessionStore?.dispatch({ type: 'resume' });
+			sessionDialog = null;
+		} else {
+			pausePresentation = 'paused';
+			sessionDialog = 'pause';
+		}
 	}
 
 	function manageModalFocus(node: HTMLElement, isOpen: boolean) {
@@ -1181,6 +1284,10 @@
 				class="back-btn"
 				aria-label="Return to arcade"
 				data-testid="back-to-arcade-link"
+				onclick={(e) => {
+					e.preventDefault();
+					requestReturnToArcade();
+				}}
 			>
 				<svg
 					class="back-icon"
@@ -1440,7 +1547,7 @@
 
 			<div class="modal-actions">
 				<button onclick={handlePlayAgain} class="arcade-btn">PLAY AGAIN</button>
-				<button onclick={handleGoHome} class="arcade-btn-ghost">BACK TO ARCADE</button>
+				<button onclick={requestReturnToArcade} class="arcade-btn-ghost">BACK TO ARCADE</button>
 			</div>
 		</div>
 	</div>
@@ -1459,8 +1566,27 @@
 		onDraftChange={(draft) => (setupDraft = draft)}
 		onStart={confirmMissionSetup}
 		onCancel={() => (sessionDialog = null)}
-		onExit={handleGoHome}
+		onExit={requestReturnToArcade}
 	/>
+{/if}
+
+<!-- Mission Pause Modal (outside the inert page) -->
+{#if sessionDialog === 'pause'}
+	<SessionPauseDialog
+		presentation={pausePresentation}
+		mode={sessionState?.mode ?? 'timed'}
+		confirmingRestart={restartConfirmation}
+		onResume={resumeSession}
+		onRequestRestart={requestRestart}
+		onConfirmRestart={restartWithCurrentChoices}
+		onCancelRestart={() => (restartConfirmation = false)}
+		onExit={requestReturnToArcade}
+	/>
+{/if}
+
+<!-- Exit Mission Modal (outside the inert page) -->
+{#if sessionDialog === 'exit'}
+	<ExitSessionDialog onSave={saveAndExit} onDiscard={discardAndExit} onCancel={cancelExit} />
 {/if}
 
 <style>
