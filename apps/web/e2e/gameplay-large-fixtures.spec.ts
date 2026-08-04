@@ -13,6 +13,14 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './support/test';
 import { getFixture } from './gameplay-fixtures/catalog';
+import { DEFAULT_GAMEPLAY_PREFERENCES } from '../src/lib/services/gameplay/session/preferences';
+
+/**
+ * Device preferences that auto-start fresh sessions. HPA-221 made Mission
+ * Setup mandatory on fresh route entry, so tests that interact with the board
+ * immediately seed `startImmediately` to skip the dialog.
+ */
+const IMMEDIATE_START = { ...DEFAULT_GAMEPLAY_PREFERENCES, startImmediately: true };
 
 /**
  * Read the distinct rendered grid dimensions from the live board: cols = the
@@ -108,7 +116,10 @@ test.describe('large fixtures @extended', () => {
 	test('representative interaction: one piece places on the 100-piece board', async ({
 		gameplayPage
 	}) => {
-		await gameplayPage.gotoFixture({ fixtureId: 'e2e-square-100' });
+		await gameplayPage.gotoFixture({
+			fixtureId: 'e2e-square-100',
+			seedPreferences: IMMEDIATE_START
+		});
 		// Piece 0's correct cell is (0,0) on every fixture. Place just one
 		// piece — full solve coverage lives in gameplay-infrastructure.spec.
 		await gameplayPage.selectAndPlaceWithKeyboard(0, 0, 0);

@@ -20,6 +20,14 @@ import {
 	scanAccessibility,
 	assertNoSeriousViolations
 } from './support/accessibility';
+import { DEFAULT_GAMEPLAY_PREFERENCES } from '../src/lib/services/gameplay/session/preferences';
+
+/**
+ * Device preferences that auto-start fresh sessions. HPA-221 made Mission
+ * Setup mandatory on fresh route entry, so tests that interact with the board
+ * immediately seed `startImmediately` to skip the dialog.
+ */
+const IMMEDIATE_START = { ...DEFAULT_GAMEPLAY_PREFERENCES, startImmediately: true };
 
 /** Representative gallery cards so the scan covers real interactive markup
  *  (card links, images, buttons) rather than just the empty state. */
@@ -68,7 +76,10 @@ test.describe('accessibility @a11y', () => {
 		gameplayPage,
 		page
 	}) => {
-		await gameplayPage.gotoFixture({ fixtureId: 'e2e-square-4' });
+		await gameplayPage.gotoFixture({
+			fixtureId: 'e2e-square-4',
+			seedPreferences: IMMEDIATE_START
+		});
 
 		// A board drop-zone lives inside the page's main landmark.
 		await expectContainedIn(gameplayPage.dropZone(0, 0), page.getByRole('main'));
@@ -87,7 +98,8 @@ test.describe('accessibility @a11y', () => {
 	}) => {
 		await gameplayPage.gotoFixture({
 			fixtureId: 'e2e-square-4',
-			completion: { kind: 'success' }
+			completion: { kind: 'success' },
+			seedPreferences: IMMEDIATE_START
 		});
 
 		// Solve all four pieces via keyboard for cross-browser reliability.

@@ -43,10 +43,14 @@
 //
 // Follow-up: https://linear.app/cwchanap/issue/HPA-517/webkit-html5-drag-and-drop-does-not-fire-drop-events-via-playwright
 import { test, expect } from './support/test';
+import { DEFAULT_GAMEPLAY_PREFERENCES } from '../src/lib/services/gameplay/session/preferences';
 
 test('webkit mouse drag places a piece (stability spike)', async ({ gameplayPage, page }) => {
 	test.skip(!process.env.PERSEUS_RUN_SPIKE, 'Spike — set PERSEUS_RUN_SPIKE=1 to run');
-	await gameplayPage.gotoFixture();
+	// Auto-start so the mandatory Mission Setup dialog does not block the drag.
+	await gameplayPage.gotoFixture({
+		seedPreferences: { ...DEFAULT_GAMEPLAY_PREFERENCES, startImmediately: true }
+	});
 	// Call dragTo() directly — no DnD-dispatch fallback — to measure raw
 	// dragTo() reliability on WebKit.
 	const source = gameplayPage.pieceSource(0);
