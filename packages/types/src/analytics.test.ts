@@ -367,20 +367,24 @@ describe('analytics v1 input validation', () => {
 		).toBe(true);
 	});
 
-	it('accepts an incomplete exit at a reachable progress-bucket boundary (25-49 bucket, 24 placed, 75-99)', () => {
-		// total=25 is inside the '25-49' bucket, 25 > 24 (incomplete), and
-		// floor(24/25*100) = 96 -> '75-99'. This is the smallest valid total
-		// that makes the supplied progress bucket reachable, so it guards the
-		// boundary right next to the saturating '1-24' rejection above.
-		expect(
-			isAnalyticsEventInputV1({
-				eventName: 'puzzle_exited_incomplete',
-				runId,
-				context: makeContext({ pieceCountBucket: '25-49', progressBucket: '75-99' }),
-				data: { elapsedActiveSeconds: 15, placedPieceCount: 24 }
-			})
-		).toBe(true);
-	});
+	it(
+		'accepts an incomplete exit at a reachable progress-bucket boundary ' +
+			'(25-49 bucket, 24 placed, 75-99)',
+		() => {
+			// total=25 is inside the '25-49' bucket, 25 > 24 (incomplete), and
+			// floor(24/25*100) = 96 -> '75-99'. This is the smallest valid total
+			// that makes the supplied progress bucket reachable, so it guards the
+			// boundary right next to the saturating '1-24' rejection above.
+			expect(
+				isAnalyticsEventInputV1({
+					eventName: 'puzzle_exited_incomplete',
+					runId,
+					context: makeContext({ pieceCountBucket: '25-49', progressBucket: '75-99' }),
+					data: { elapsedActiveSeconds: 15, placedPieceCount: 24 }
+				})
+			).toBe(true);
+		}
+	);
 });
 
 describe('analytics v1 envelope validation', () => {
