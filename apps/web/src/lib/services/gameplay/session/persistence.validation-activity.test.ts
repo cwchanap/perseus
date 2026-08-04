@@ -46,6 +46,13 @@ describe('pre-activity configured rotation validation', () => {
 				resultClass: 'assisted_timed'
 			}
 		],
+		[
+			'positive elapsed time',
+			// A timed run whose timer never started cannot have accumulated
+			// time; accepting it would let a fabricated snapshot restore a
+			// positive clock and later continue timing from it.
+			{ elapsedActiveSeconds: 30 }
+		],
 		['completed lifecycle', { lifecycle: 'completed' }]
 	] as const)('rejects a false-activity snapshot with %s', (_name, patch) => {
 		expect(load({ ...configuredRotation('active'), ...patch }).status).toBe('invalid');
