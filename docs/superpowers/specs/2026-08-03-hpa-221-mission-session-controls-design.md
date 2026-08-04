@@ -181,7 +181,7 @@ Show the same Resume surface without changing canonical state.
 
 ### Restored completed
 
-Preserve the existing completion flow. HPA-221 changes only Relaxed-specific labels and timed-stat visibility.
+Preserve the existing completion flow. HPA-221 changes only Relaxed-specific labels and timed-stat visibility. Legacy unknown-time runs retain their existing ineligible timing quality and must not gain timed-best presentation.
 
 ## Mission Setup
 
@@ -189,7 +189,7 @@ Show one modal containing:
 
 - puzzle name, piece count, and grid dimensions;
 - Timed/Relaxed choice;
-- rotation choice with concise lock/result-class explanation;
+- rotation choice with concise explanation that it remains changeable until the first successful placement and then locks;
 - input-specific help;
 - Start Immediately checkbox;
 - Start;
@@ -197,7 +197,7 @@ Show one modal containing:
 
 For mandatory fresh/restored setup, Start dispatches `configure_setup`, writes all preferences, dispatches `start`, and closes the modal.
 
-The existing toolbar rotation toggle remains available after Start until the first successful placement.
+The existing toolbar rotation toggle remains available after Start until the first successful placement. Once locked, expose the fixed accessible reason “Rotation is locked after the first placement.” Do not build a generic disabled-reason or tooltip system for this ticket.
 
 Escape does not dismiss mandatory setup. Escape dismisses optional pre-activity reopened setup and leaves the run unchanged.
 
@@ -284,7 +284,7 @@ onOpenSetup: () => void;
 canOpenSetup: boolean;
 ```
 
-Do not pass session state, add generic action arrays, or introduce slots, registries, overflow architecture, or a mode redesign.
+Do not pass session state, add generic action arrays, or introduce slots, registries, overflow architecture, a generic disabled-reason system, or a mode redesign.
 
 Use three focused components:
 
@@ -294,7 +294,7 @@ Use three focused components:
 
 Extract the existing focus trap into one small reusable Svelte action. Reusing it in the existing completion modal should be a mechanical replacement only; do not redesign completion.
 
-Required dialog behavior is limited to correct semantics/labels, initial focus, Tab containment, explicit Escape behavior, predictable focus restoration, clearly named destructive actions, and scrollable layouts at 390 × 844, tablet, and desktop sizes.
+Required dialog behavior is limited to correct semantics/labels, initial focus, Tab containment, explicit Escape behavior, predictable focus restoration, clearly named destructive actions, safe-area insets, and scrollable layouts using dynamic viewport height at 390 × 844, tablet, and desktop sizes. Orientation/browser-chrome/virtual-keyboard changes must not hide the primary actions.
 
 ## Testing
 
@@ -311,14 +311,14 @@ Cover:
 
 ### Route/component tests
 
-Cover mandatory setup, Start Immediately/Open Setup, restored setup preference ownership, pause-on-restored-active, transient cleanup, restart confirmation, Play Again, exit save/discard/cancel origins, Relaxed presentation, and component-level focus/Escape behavior.
+Cover mandatory setup, Start Immediately/Open Setup, restored setup preference ownership, pause-on-restored-active, legacy-unknown timed-best suppression, transient cleanup, restart confirmation, Play Again, exit save/discard/cancel origins, Relaxed presentation, rotation-lock explanation, and component-level focus/Escape behavior.
 
 ### Representative E2E tests
 
 1. Timed setup → first meaningful action → pause excludes time → resume.
 2. Relaxed setup → completion classified `relaxed` → no timed-best presentation.
 3. Seeded active session → Resume → restart → fresh run ID and cleared progress with retained choices.
-4. 390 × 844 smoke for setup, pause, exit/restart reachability, and one focus-containment check.
+4. 390 × 844 smoke for setup, pause, exit/restart reachability, safe-area/dynamic-height usability, and one focus-containment check.
 
 Do not duplicate the complete focus/Escape matrix in E2E or create browser permutations for unit-level state transitions.
 
@@ -335,7 +335,7 @@ The implementation must not add:
 - persisted UI/transient state;
 - schema v2 or a migration for the validator adjustment;
 - backend schema or Relaxed-specific transport changes;
-- toolbar plugins, generic action arrays, or overflow rewrite;
+- toolbar plugins, generic action arrays, overflow rewrite, or generic disabled-reason system;
 - feature flags or analytics additions;
 - HPA-224 completion-report work;
 - unrelated route/design-system refactors.
@@ -351,13 +351,14 @@ The implementation must not add:
 - Eligibility facts are mutable only during setup and monotonic after activity begins.
 - Restored setup preserves persisted mode/rotation, shows the device Start Immediately value, and never auto-skips.
 - Restored active/paused sessions show Resume without counting modal time.
+- Legacy unknown-time runs remain ineligible and receive no timed-best claim.
 - Timed sessions exclude pause, control-dialog, and hidden-tab time.
 - Relaxed never renders or writes a timed personal best.
 - Pause blocks gameplay and clears transient interaction state.
-- Existing toolbar rotation remains available until the first successful placement.
+- Existing toolbar rotation remains available until the first successful placement and exposes a fixed accessible lock reason afterward.
 - Restart uses existing `hasUserActivity`, leaves `doRestart` unchanged, and reapplies choices through `configure_setup`.
 - Completed Play Again opens setup without discard confirmation or Start Immediately auto-skip.
 - Exit saves by default, exposes one discard action, and restores the correct prior surface on Cancel.
 - Mandatory setup always offers Return to Arcade.
-- Dialogs remain usable/focus-safe across mobile, tablet, and desktop.
+- Dialogs remain safe-area-aware, usable, and focus-safe across mobile, tablet, orientation/browser-chrome changes, and desktop.
 - Feature-owned tests cover integrated behavior without duplicating foundation coverage.
