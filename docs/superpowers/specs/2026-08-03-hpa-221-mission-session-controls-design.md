@@ -138,7 +138,9 @@ Defaults are Timed, rotation off, and Start Immediately off.
 
 Expose synchronous validated read and best-effort write functions. Missing, corrupt, or unavailable storage falls back to defaults; writes never block play. A future incompatible format gets a new key.
 
-Read preferences once for a fresh puzzle. Write them only when setup is confirmed. Do not add a Svelte preference store, migration registry, account sync, or shared settings platform.
+Read preferences once per puzzle-route load. Apply their mode/rotation and auto-start behavior only to a fresh session. A restored setup keeps its persisted run choices, but its Start Immediately checkbox reflects the current device preference and may update it.
+
+Write all three preference values whenever setup is confirmed. Do not add a Svelte preference store, migration registry, account sync, or shared settings platform.
 
 ## Entry flows
 
@@ -146,12 +148,12 @@ Read preferences once for a fresh puzzle. Write them only when setup is confirme
 
 1. Create the session in `setup`.
 2. Read preferences once.
-3. Immediately dispatch `configure_setup` with those preferences so session checkpoints match the displayed choices.
+3. Immediately dispatch `configure_setup` with the preferred mode/rotation so session checkpoints match the displayed choices.
 4. If Start Immediately is on, dispatch `start`.
-5. Otherwise show Mission Setup with a draft copied from the configured session.
+5. Otherwise show Mission Setup with a draft copied from the configured session and the stored Start Immediately value.
 6. Expose Open Setup only until existing `hasUserActivity` becomes true.
 
-Unsaved modal edits are not persisted. The canonical setup session always contains the last confirmed choices.
+Unsaved modal edits are not persisted. The canonical setup session always contains the last confirmed run choices.
 
 ### Reopen setup before activity
 
@@ -159,13 +161,13 @@ Open Mission Setup over the unchanged active session and make the page behind it
 
 - Cancel/Escape closes the modal without a session action.
 - A Start Immediately-only change writes preferences and closes the modal.
-- If mode or rotation changes, capture the draft, dispatch existing `restart`, dispatch setup-only `configure_setup`, dispatch `start`, then checkpoint.
+- If mode or rotation changes, write all preferences, capture the draft, dispatch existing `restart`, dispatch setup-only `configure_setup`, dispatch `start`, then checkpoint.
 - A changed setting may therefore produce a new run ID and tray order. That is acceptable because the replaced run has no activity or completion identity.
 - The path disappears as soon as `hasUserActivity` becomes true, including after the existing toolbar rotation toggle is changed.
 
 ### Restored setup
 
-Show setup from the persisted mode/rotation. Device preferences, including Start Immediately, never overwrite or bypass an existing setup run.
+Show setup from the persisted mode/rotation and the current device Start Immediately preference. Never auto-start or replace the persisted run from device preferences.
 
 ### Restored active
 
@@ -193,7 +195,7 @@ Show one modal containing:
 - Start;
 - Return to Arcade.
 
-For mandatory fresh/restored setup, Start dispatches `configure_setup`, writes preferences, dispatches `start`, and closes the modal.
+For mandatory fresh/restored setup, Start dispatches `configure_setup`, writes all preferences, dispatches `start`, and closes the modal.
 
 The existing toolbar rotation toggle remains available after Start until the first successful placement.
 
@@ -233,12 +235,12 @@ For restart:
 3. dispatch existing `restart` unchanged;
 4. dispatch `configure_setup` with the captured choices;
 5. checkpoint the configured setup run;
-6. show Mission Setup;
+6. show Mission Setup with the current Start Immediately device preference;
 7. reset the existing viewport state.
 
-An incomplete run without activity skips confirmation. Completed Play Again uses the same restart/configure sequence without confirmation.
+An incomplete run without activity skips confirmation. Completed Play Again uses the same restart/configure sequence without confirmation. Explicit restart/replay always shows setup; Start Immediately applies only to fresh route entry.
 
-No changes are required in `doRestart`; existing mode retention may remain, but route composition is the single source of the HPA-221 choice-retention behavior.
+No changes are required in `doRestart`; route composition is the single source of HPA-221 choice retention.
 
 ## Return to Arcade
 
@@ -309,7 +311,7 @@ Cover:
 
 ### Route/component tests
 
-Cover mandatory setup, Start Immediately/Open Setup, restored setup, pause-on-restored-active, transient cleanup, restart confirmation, Play Again, exit save/discard/cancel origins, Relaxed presentation, and component-level focus/Escape behavior.
+Cover mandatory setup, Start Immediately/Open Setup, restored setup preference ownership, pause-on-restored-active, transient cleanup, restart confirmation, Play Again, exit save/discard/cancel origins, Relaxed presentation, and component-level focus/Escape behavior.
 
 ### Representative E2E tests
 
@@ -344,17 +346,17 @@ The implementation must not add:
 - The canonical fresh setup session is configured from device preferences before checkpointing.
 - Open Setup is available only before existing `hasUserActivity`.
 - Canceling Open Setup leaves the active run unchanged.
-- Changing run settings from Open Setup replaces the zero-activity run via restart/configure/start.
+- Confirming Open Setup writes all device preferences; changed run settings replace the zero-activity run via restart/configure/start.
 - Configured rotation sessions persist/load without false corruption while remaining non-active until actual interaction.
 - Eligibility facts are mutable only during setup and monotonic after activity begins.
-- Restored setup ignores device preferences and Start Immediately.
+- Restored setup preserves persisted mode/rotation, shows the device Start Immediately value, and never auto-skips.
 - Restored active/paused sessions show Resume without counting modal time.
 - Timed sessions exclude pause, control-dialog, and hidden-tab time.
 - Relaxed never renders or writes a timed personal best.
 - Pause blocks gameplay and clears transient interaction state.
 - Existing toolbar rotation remains available until the first successful placement.
 - Restart uses existing `hasUserActivity`, leaves `doRestart` unchanged, and reapplies choices through `configure_setup`.
-- Completed Play Again opens setup without discard confirmation.
+- Completed Play Again opens setup without discard confirmation or Start Immediately auto-skip.
 - Exit saves by default, exposes one discard action, and restores the correct prior surface on Cancel.
 - Mandatory setup always offers Return to Arcade.
 - Dialogs remain usable/focus-safe across mobile, tablet, and desktop.
