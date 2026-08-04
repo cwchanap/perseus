@@ -20,11 +20,19 @@ import { test, expect } from './support/test';
 import type { GameplayPage } from './support/gameplay-page';
 import { getFixture } from './gameplay-fixtures/catalog';
 import { buildMinimalSeed, progressKey } from './gameplay-fixtures/persisted-state';
+import { DEFAULT_GAMEPLAY_PREFERENCES } from '../src/lib/services/gameplay/session/preferences';
 
 const FIXTURE_ID = 'e2e-square-4' as const;
 const START_AT = new Date('2026-01-01T00:00:00Z');
 const STATS_KEY = `puzzle-stats-${FIXTURE_ID}`;
 const COMPLETION_URL = /\/api\/puzzles\/e2e-square-4\/complete(?:\?.*)?$/;
+
+/**
+ * Device preferences that auto-start fresh sessions. HPA-221 made Mission
+ * Setup mandatory on fresh route entry, so tests that interact with the board
+ * immediately seed `startImmediately` to skip the dialog.
+ */
+const IMMEDIATE_START = { ...DEFAULT_GAMEPLAY_PREFERENCES, startImmediately: true };
 
 /** Piece id -> placement coordinates (correctX, correctY) for the 2x2 grid. */
 const COORDS: Record<number, { x: number; y: number }> = {
@@ -73,7 +81,7 @@ test.describe('gameplay smoke @smoke', () => {
 	});
 
 	test('keyboard placement places a piece on the board @smoke', async ({ gameplayPage }) => {
-		await gameplayPage.gotoFixture();
+		await gameplayPage.gotoFixture({ seedPreferences: IMMEDIATE_START });
 
 		await gameplayPage.selectAndPlaceWithKeyboard(0, 0, 0);
 		await gameplayPage.expectPiecePlaced(0, 0, 0);
@@ -89,7 +97,8 @@ test.describe('gameplay smoke @smoke', () => {
 		await gameplayPage.gotoFixture({
 			persona: 'authenticated',
 			clock: { startAt: START_AT },
-			completion: { kind: 'success' }
+			completion: { kind: 'success' },
+			seedPreferences: IMMEDIATE_START
 		});
 
 		// One rejected attempt first: piece 0 belongs at (0,0); placing it at
@@ -144,7 +153,8 @@ test.describe('gameplay smoke @smoke', () => {
 		await gameplayPage.gotoFixture({
 			persona: 'anonymous',
 			clock: { startAt: START_AT },
-			completion: { kind: 'http-failure', status: 401 }
+			completion: { kind: 'http-failure', status: 401 },
+			seedPreferences: IMMEDIATE_START
 		});
 		// Chromium also logs a browser-level "Failed to load resource" for the
 		// 401 response (distinct from the page's own console.error, which the
@@ -187,7 +197,8 @@ test.describe('gameplay smoke @smoke', () => {
 		await gameplayPage.gotoFixture({
 			persona: 'authenticated',
 			clock: { startAt: START_AT },
-			completion: { kind: 'retry-sequence', failureStatus: 500 }
+			completion: { kind: 'retry-sequence', failureStatus: 500 },
+			seedPreferences: IMMEDIATE_START
 		});
 		// The driven 500 logs both the page's console.error (allowlisted via
 		// the retry-sequence scenario) and Chromium's "Failed to load resource".
@@ -226,7 +237,8 @@ test.describe('gameplay smoke @smoke', () => {
 	}) => {
 		await gameplayPage.gotoFixture({
 			clock: { startAt: START_AT },
-			completion: { kind: 'success' }
+			completion: { kind: 'success' },
+			seedPreferences: IMMEDIATE_START
 		});
 
 		// The first counted action starts the timer (monotonicStart = 0).
@@ -355,7 +367,10 @@ test.describe('auth personas through gameplayPage @smoke', () => {
 	}) => {
 		// The auth GET returns 500; playerAuth.refresh() catches it and falls
 		// back to anonymous, so the board still renders and is interactive.
-		await gameplayPage.gotoFixture({ persona: 'failed-session' });
+		await gameplayPage.gotoFixture({
+			persona: 'failed-session',
+			seedPreferences: IMMEDIATE_START
+		});
 
 		await expect(page.getByTestId('puzzle-board')).toBeVisible();
 		await gameplayPage.selectAndPlaceWithKeyboard(0, 0, 0);

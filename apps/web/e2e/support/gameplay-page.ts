@@ -40,6 +40,10 @@ import {
 	type CompletionScenario,
 	type DeferredHandle
 } from '../gameplay-fixtures/api-scenario';
+import {
+	GAMEPLAY_PREFERENCES_KEY,
+	type GameplayPreferences
+} from '../../src/lib/services/gameplay/session/preferences';
 import { buildSessionValidationContext, progressKey } from '../gameplay-fixtures/persisted-state';
 import { createPageDiagnostics, type PageDiagnostics } from './diagnostics';
 
@@ -58,6 +62,16 @@ export interface GotoFixtureOptions {
 	seedSession?: PersistedPuzzleSessionV1;
 	/** Stats record to seed under `puzzle-stats-<id>`. Written verbatim. */
 	seedStats?: unknown;
+	/**
+	 * Device gameplay preferences to seed under the production preferences
+	 * key (`perseus-gameplay-preferences-v1`), inside the SAME atomic init
+	 * script as the session snapshot so the app reads one deterministic
+	 * store on fresh route entry. Omit to leave the store empty — a fresh
+	 * session then presents the mandatory Mission Setup dialog. Seed
+	 * `{ ...DEFAULT_GAMEPLAY_PREFERENCES, startImmediately: true }` to
+	 * auto-start fresh sessions and skip the dialog.
+	 */
+	seedPreferences?: GameplayPreferences;
 	/**
 	 * Clock control. `{ startAt }` installs AND pauses Playwright's clock at
 	 * `startAt` before navigation, so navigation does not advance it and
@@ -199,6 +213,9 @@ export class GameplayPage {
 			: null;
 		const statsJson = options.seedStats !== undefined ? JSON.stringify(options.seedStats) : null;
 		const statsKey = `${STATS_KEY_PREFIX}${fixtureId}`;
+		const preferencesJson = options.seedPreferences
+			? JSON.stringify(options.seedPreferences)
+			: null;
 		const configJson = JSON.stringify(buildGameplayConfig(fixture));
 
 		await this.page.addInitScript(
@@ -207,6 +224,8 @@ export class GameplayPage {
 				sessionJson: string | null;
 				statsKey: string;
 				statsJson: string | null;
+				preferencesKey: string;
+				preferencesJson: string | null;
 				configJson: string;
 				configGlobal: string;
 			}) => {
@@ -230,6 +249,13 @@ export class GameplayPage {
 				if (args.statsJson) {
 					try {
 						localStorage.setItem(args.statsKey, args.statsJson);
+					} catch {
+						/* ignore quota/access errors */
+					}
+				}
+				if (args.preferencesJson) {
+					try {
+						localStorage.setItem(args.preferencesKey, args.preferencesJson);
 					} catch {
 						/* ignore quota/access errors */
 					}
@@ -259,6 +285,8 @@ export class GameplayPage {
 				sessionJson,
 				statsKey,
 				statsJson,
+				preferencesKey: GAMEPLAY_PREFERENCES_KEY,
+				preferencesJson,
 				configJson,
 				configGlobal: CONFIG_GLOBAL
 			}
@@ -520,6 +548,79 @@ export class GameplayPage {
 		} else {
 			await dialog.getByRole('button', { name: /close/i }).click();
 		}
+	}
+
+	// --- Mission session controls ----------------------------------------------
+
+	/** Locate the Mission Setup dialog. */
+	missionSetupDialog(): Locator {
+		return this.page.getByRole('dialog', { name: 'Mission Setup' });
+	}
+
+	/**
+	 * Configure and start a mission from the Mission Setup dialog. Options
+	 * only touch controls whose value is specified, so a dialog pre-filled
+	 * with retained choices (e.g. after a restart) keeps them by default.
+	 * Resolves once the dialog has closed.
+	 */
+	async startMission(
+		options: {
+			mode?: 'timed' | 'relaxed';
+			rotationEnabled?: boolean;
+			startImmediately?: boolean;
+		} = {}
+	): Promise<void> {
+		const dialog = this.missionSetupDialog();
+		await expect(dialog).toBeVisible();
+		if (options.mode) {
+			await dialog.getByLabel(options.mode === 'timed' ? 'Timed' : 'Relaxed').check();
+		}
+		if (options.rotationEnabled !== undefined) {
+			await dialog.getByLabel('Enable rotation').setChecked(options.rotationEnabled);
+		}
+		if (options.startImmediately !== undefined) {
+			await dialog.getByLabel('Start immediately next time').setChecked(options.startImmediately);
+		}
+		await dialog.getByRole('button', { name: 'Start Mission' }).click();
+		await expect(dialog).not.toBeVisible();
+	}
+
+	/**
+	 * Pause the active run via the toolbar Pause button. Returns the pause
+	 * dialog (accessible name 'Mission Paused').
+	 */
+	async pauseMission(): Promise<Locator> {
+		await this.page.getByRole('button', { name: 'Pause mission' }).click();
+		const dialog = this.page.getByRole('dialog', { name: 'Mission Paused' });
+		await expect(dialog).toBeVisible();
+		return dialog;
+	}
+
+	/**
+	 * Resume a paused run — either a user-initiated toolbar pause ('Mission
+	 * Paused') or a restored run awaiting explicit re-engagement ('Resume
+	 * Mission'). Resolves once the dialog has closed.
+	 */
+	async resumeMission(): Promise<void> {
+		const dialog = this.page.getByRole('dialog', {
+			name: /^(Mission Paused|Resume Mission)$/
+		});
+		await expect(dialog).toBeVisible();
+		await dialog.getByRole('button', { name: 'Resume' }).click();
+		await expect(dialog).not.toBeVisible();
+	}
+
+	/**
+	 * Read the currently persisted session snapshot for the loaded fixture
+	 * from localStorage, or null when the canonical progress key is absent.
+	 */
+	async readPersistedSession(): Promise<PersistedPuzzleSessionV1 | null> {
+		const fixtureId = this.fixture?.fixtureId ?? DEFAULT_FIXTURE_ID;
+		const raw = await this.page.evaluate(
+			(key: string) => localStorage.getItem(key),
+			progressKey(fixtureId)
+		);
+		return raw === null ? null : (JSON.parse(raw) as PersistedPuzzleSessionV1);
 	}
 
 	// --- Lifecycle -------------------------------------------------------------
