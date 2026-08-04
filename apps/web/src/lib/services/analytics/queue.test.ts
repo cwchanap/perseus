@@ -389,7 +389,8 @@ describe('bounded analytics delivery queue', () => {
 		const transport: AnalyticsTransport = {
 			send() {
 				sends++;
-				throw new Error('sync throw');
+				if (sends === 1) throw new Error('sync throw');
+				return Promise.resolve();
 			}
 		};
 		const queue = createAnalyticsDeliveryQueue({
@@ -400,16 +401,22 @@ describe('bounded analytics delivery queue', () => {
 		});
 		queue.enqueue(event(1));
 
-		await queue.flush();
+		// flush() must always return a Promise<void>, even when the transport
+		// throws synchronously before the first await suspension. Returning
+		// null here would break .then()/.catch() callers.
+		const firstFlush = queue.flush();
+		expect(firstFlush).toBeInstanceOf(Promise);
+		await firstFlush;
 		expect(sends).toBe(1);
 		expect(errors).toEqual(['transport_error']);
-		// activeFlush must be cleared so a later enqueue can flush again.
-		const recovering = createCapturingTransport();
-		const queue2 = createAnalyticsDeliveryQueue({ transport: recovering });
-		queue2.enqueue(event(2));
-		await queue2.flush();
-		expect(recovering.batches.map((batch) => batch.events.map((item) => item.occurredAt))).toEqual([
-			[2]
-		]);
+
+		// The same queue must remain usable: a later enqueue must still
+		// deliver through the same transport on a subsequent flush.
+		queue.enqueue(event(2));
+		const secondFlush = queue.flush();
+		expect(secondFlush).toBeInstanceOf(Promise);
+		await secondFlush;
+		expect(sends).toBe(2);
+		expect(queue.size).toBe(0);
 	});
 });
