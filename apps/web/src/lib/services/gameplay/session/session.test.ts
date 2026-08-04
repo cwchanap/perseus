@@ -2582,3 +2582,51 @@ describe('PuzzleSession factory result validation and cloning', () => {
 		expect(session.getState().lifecycle).toBe(beforeLifecycle);
 	});
 });
+
+it('configures mode and rotation in setup without activity or a new run id', () => {
+	const session = createPuzzleSession({
+		...makeOptions(),
+		createRotations: () => ({ 0: 90, 1: 180, 2: 270, 3: 0 })
+	});
+	const originalRunId = session.getState().runId;
+
+	expect(
+		session.dispatch({ type: 'configure_setup', mode: 'relaxed', rotationEnabled: true })
+	).toEqual({ type: 'setup_configured', mode: 'relaxed', rotationEnabled: true });
+
+	const relaxed = session.getState();
+	expect(relaxed.runId).toBe(originalRunId);
+	expect(relaxed.lifecycle).toBe('setup');
+	expect(relaxed.mode).toBe('relaxed');
+	expect(relaxed.elapsedActiveSeconds).toBeNull();
+	expect(relaxed.timerStarted).toBe(false);
+	expect(relaxed.rotationEnabled).toBe(true);
+	expect(relaxed.pieceRotations).toEqual({ 0: 90, 1: 180, 2: 270, 3: 0 });
+	expect(relaxed.facts.rotationUsed).toBe(true);
+	expect(relaxed.resultClass).toBe('relaxed');
+	expect(relaxed.hasUserActivity).toBe(false);
+	expect(relaxed.canUndo).toBe(false);
+	expect(relaxed.canRedo).toBe(false);
+
+	session.dispatch({ type: 'configure_setup', mode: 'timed', rotationEnabled: false });
+	const timed = session.getState();
+	expect(timed.runId).toBe(originalRunId);
+	expect(timed.mode).toBe('timed');
+	expect(timed.elapsedActiveSeconds).toBe(0);
+	expect(timed.rotationEnabled).toBe(false);
+	expect(timed.pieceRotations).toEqual({});
+	expect(timed.facts.rotationUsed).toBe(false);
+	expect(timed.resultClass).toBe('standard_timed');
+	expect(timed.hasUserActivity).toBe(false);
+});
+
+it('rejects configure_setup after start', () => {
+	const session = createPuzzleSession(makeOptions());
+	session.dispatch({ type: 'start' });
+
+	expect(
+		session.dispatch({ type: 'configure_setup', mode: 'relaxed', rotationEnabled: true })
+	).toEqual({ type: 'lifecycle_noop', reason: 'lifecycle_disallows' });
+	expect(session.getState().mode).toBe('timed');
+	expect(session.getState().rotationEnabled).toBe(false);
+});

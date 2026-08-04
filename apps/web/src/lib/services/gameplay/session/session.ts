@@ -241,6 +241,37 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 
 	// --- Rotation mode + per-piece rotation -----------------------------------
 
+	function doConfigureSetup(
+		mode: PuzzleSessionState['mode'],
+		rotationEnabled: boolean
+	): PuzzleSessionOutcome {
+		if (state.lifecycle !== 'setup') {
+			return { type: 'lifecycle_noop', reason: 'lifecycle_disallows' };
+		}
+
+		const ids = metadata.pieces.map((piece) => piece.id);
+		const pieceRotations = rotationEnabled
+			? validateAndCloneRotations(createRotations(ids), pieceById)
+			: {};
+
+		state.mode = mode;
+		state.elapsedActiveSeconds = mode === 'timed' ? 0 : null;
+		state.timerStarted = false;
+		state.rotationEnabled = rotationEnabled;
+		state.pieceRotations = pieceRotations;
+		state.facts = { ...state.facts, rotationUsed: rotationEnabled };
+		state.resultClass = recomputeResultClass();
+		state.hasUserActivity = false;
+		state.selectedPieceId = null;
+		state.activeReferenceMode = null;
+		state.canUndo = false;
+		state.canRedo = false;
+		placementHistory = makeHistoryBaseline(state);
+		notify();
+
+		return { type: 'setup_configured', mode, rotationEnabled };
+	}
+
 	function doSetRotationMode(enabled: boolean): PuzzleSessionOutcome {
 		if (state.lifecycle !== 'active') {
 			return { type: 'rotation_mode_noop', reason: 'lifecycle_disables_rotation_toggle' };
@@ -767,6 +798,8 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 			return { type: 'lifecycle_noop', reason: 'disposed' };
 		}
 		switch (action.type) {
+			case 'configure_setup':
+				return doConfigureSetup(action.mode, action.rotationEnabled);
 			case 'start':
 				return doStart();
 			case 'pause':
