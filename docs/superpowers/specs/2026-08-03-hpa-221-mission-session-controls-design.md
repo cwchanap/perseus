@@ -200,7 +200,7 @@ Show Mission Setup using persisted mode and rotation. Device preferences, includ
 
 Construct the store from the persisted snapshot without rewriting it. Immediately after subscribing, dispatch the existing `pause` action, checkpoint the paused state, and show Resume.
 
-The brief construction-time timer interval is stopped by `pause`; whole-second checkpointing prevents sub-second modal time from being added. Do not add a snapshot-normalization path, lifecycle, migration, resume token, or interruption-reason enum.
+The brief construction-time timer interval is stopped by `pause`; elapsed time is stored in whole seconds, so sub-second modal time is not added. Do not add a snapshot-normalization path, lifecycle, migration, resume token, or interruption-reason enum.
 
 ### Restored paused session
 
