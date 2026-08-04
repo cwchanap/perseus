@@ -46,6 +46,20 @@ export const ANALYTICS_PIECE_COUNT_BUCKET_UPPER_BOUNDS: Record<AnalyticsPieceCou
 		'226+': MAX_PIECES
 	};
 
+// Inclusive lower bound of each piece-count bucket. The companion to
+// ANALYTICS_PIECE_COUNT_BUCKET_UPPER_BOUNDS, used by the incomplete-exit
+// cross-check to bound the existence search over plausible totalPieceCount
+// values. '1-24' starts at 1 because a puzzle must have at least one piece.
+export const ANALYTICS_PIECE_COUNT_BUCKET_LOWER_BOUNDS: Record<AnalyticsPieceCountBucket, number> =
+	{
+		'1-24': 1,
+		'25-49': 25,
+		'50-99': 50,
+		'100-149': 100,
+		'150-225': 150,
+		'226+': 226
+	};
+
 export const ANALYTICS_ASPECT_BUCKETS = ['square', 'landscape', 'portrait'] as const;
 export type AnalyticsAspectBucket = (typeof ANALYTICS_ASPECT_BUCKETS)[number];
 
@@ -267,6 +281,37 @@ function isEnumValue(value: unknown, values: Set<string>): value is string {
 	return typeof value === 'string' && values.has(value);
 }
 
+// Classifies the ratio of placed pieces to the total into one of the
+// ANALYTICS_PROGRESS_BUCKETS. This is the single source of truth for the
+// progress-bucket contract: the apps/web context projection re-exports it, and
+// the incomplete-exit cross-check below relies on it so the validator can never
+// drift from the client-side classifier. Returns null for inputs that cannot
+// describe a real puzzle run (non-integers, totals outside 1..MAX_PIECES, or
+// placed counts outside 0..pieceCount).
+export function classifyProgressBucket(
+	placedPieceCount: number,
+	pieceCount: number
+): AnalyticsProgressBucket | null {
+	if (
+		!Number.isInteger(placedPieceCount) ||
+		!Number.isInteger(pieceCount) ||
+		pieceCount < 1 ||
+		pieceCount > MAX_PIECES ||
+		placedPieceCount < 0 ||
+		placedPieceCount > pieceCount
+	) {
+		return null;
+	}
+	if (placedPieceCount === 0) return '0';
+	if (placedPieceCount === pieceCount) return '100';
+
+	const percentage = Math.floor((placedPieceCount / pieceCount) * 100);
+	if (percentage <= 24) return '1-24';
+	if (percentage <= 49) return '25-49';
+	if (percentage <= 74) return '50-74';
+	return '75-99';
+}
+
 function isClientContextV1(value: unknown): value is AnalyticsClientContextV1 {
 	if (!isRecord(value) || !hasExactKeys(value, CLIENT_CONTEXT_KEYS)) return false;
 	return (
@@ -419,7 +464,22 @@ function incompleteExitContextMatchesData(
 	if (data.placedPieceCount > ANALYTICS_PIECE_COUNT_BUCKET_UPPER_BOUNDS[context.pieceCountBucket]) {
 		return false;
 	}
-	return true;
+	// Verify the supplied progressBucket is actually reachable for at least one
+	// incomplete puzzle size inside the reported pieceCountBucket. Without this,
+	// combinations like (1-24, 24 placed, 75-99) or (226+, 1 placed, 75-99) pass
+	// the bounds checks above even though no valid totalPieceCount in the bucket
+	// can produce them. The bucket ranges are capped at MAX_PIECES, so this is a
+	// small bounded existence search that stays consistent with
+	// classifyProgressBucket (the single source of truth for the bucket mapping).
+	const lower = ANALYTICS_PIECE_COUNT_BUCKET_LOWER_BOUNDS[context.pieceCountBucket];
+	const upper = ANALYTICS_PIECE_COUNT_BUCKET_UPPER_BOUNDS[context.pieceCountBucket];
+	for (let total = lower; total <= upper; total++) {
+		if (total <= data.placedPieceCount) continue;
+		if (classifyProgressBucket(data.placedPieceCount, total) === context.progressBucket) {
+			return true;
+		}
+	}
+	return false;
 }
 
 function completionContextMatchesCounters(

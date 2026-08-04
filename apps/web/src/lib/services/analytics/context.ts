@@ -1,5 +1,6 @@
 import {
 	MAX_PIECES,
+	classifyProgressBucket,
 	isAnalyticsEventInputV1,
 	type AnalyticsAspectBucket,
 	type AnalyticsAssistanceMode,
@@ -8,7 +9,6 @@ import {
 	type AnalyticsContentOrigin,
 	type AnalyticsPieceCountBucket,
 	type AnalyticsPrimaryInput,
-	type AnalyticsProgressBucket,
 	type AnalyticsPuzzleContextV1,
 	type AnalyticsPuzzleSource,
 	type AnalyticsSessionMode,
@@ -72,29 +72,11 @@ export function classifyViewportClass(width: number): AnalyticsViewportClass | n
 	return 'desktop';
 }
 
-export function classifyProgressBucket(
-	placedPieceCount: number,
-	pieceCount: number
-): AnalyticsProgressBucket | null {
-	if (
-		!Number.isInteger(placedPieceCount) ||
-		!Number.isInteger(pieceCount) ||
-		pieceCount < 1 ||
-		pieceCount > MAX_PIECES ||
-		placedPieceCount < 0 ||
-		placedPieceCount > pieceCount
-	) {
-		return null;
-	}
-	if (placedPieceCount === 0) return '0';
-	if (placedPieceCount === pieceCount) return '100';
-
-	const percentage = Math.floor((placedPieceCount / pieceCount) * 100);
-	if (percentage <= 24) return '1-24';
-	if (percentage <= 49) return '25-49';
-	if (percentage <= 74) return '50-74';
-	return '75-99';
-}
+// classifyProgressBucket is re-exported from @perseus/types (the contract-level
+// single source of truth) so the client context projection and the server-side
+// incomplete-exit validator share one implementation. The re-export below keeps
+// this module's public surface stable for existing importers.
+export { classifyProgressBucket };
 
 export function classifyPrimaryInput(snapshot: PrimaryInputSnapshot): AnalyticsPrimaryInput {
 	if (snapshot.lastInteraction === 'keyboard') return 'keyboard';

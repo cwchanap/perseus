@@ -335,6 +335,22 @@ describe('analytics v1 input validation', () => {
 				...exitInput(),
 				context: makeContext({ pieceCountBucket: '1-24', progressBucket: '50-74' })
 			}
+		},
+		{
+			name: 'incomplete exit where placedPieceCount saturates the piece-count bucket (1-24, 24 placed, 75-99)',
+			value: {
+				...exitInput(),
+				context: makeContext({ pieceCountBucket: '1-24', progressBucket: '75-99' }),
+				data: { elapsedActiveSeconds: 15, placedPieceCount: 24 }
+			}
+		},
+		{
+			name: 'incomplete exit where progressBucket is unreachable for every total in the bucket (226+, 1 placed, 75-99)',
+			value: {
+				...exitInput(),
+				context: makeContext({ pieceCountBucket: '226+', progressBucket: '75-99' }),
+				data: { elapsedActiveSeconds: 15, placedPieceCount: 1 }
+			}
 		}
 	])('rejects $name', ({ value }) => {
 		expect(isAnalyticsEventInputV1(value)).toBe(false);
@@ -347,6 +363,21 @@ describe('analytics v1 input validation', () => {
 				runId,
 				context: makeContext({ progressBucket: '0' }),
 				data: { elapsedActiveSeconds: 0, placedPieceCount: 0 }
+			})
+		).toBe(true);
+	});
+
+	it('accepts an incomplete exit at a reachable progress-bucket boundary (25-49 bucket, 24 placed, 75-99)', () => {
+		// total=25 is inside the '25-49' bucket, 25 > 24 (incomplete), and
+		// floor(24/25*100) = 96 -> '75-99'. This is the smallest valid total
+		// that makes the supplied progress bucket reachable, so it guards the
+		// boundary right next to the saturating '1-24' rejection above.
+		expect(
+			isAnalyticsEventInputV1({
+				eventName: 'puzzle_exited_incomplete',
+				runId,
+				context: makeContext({ pieceCountBucket: '25-49', progressBucket: '75-99' }),
+				data: { elapsedActiveSeconds: 15, placedPieceCount: 24 }
 			})
 		).toBe(true);
 	});
