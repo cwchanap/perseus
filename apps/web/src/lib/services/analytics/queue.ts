@@ -108,7 +108,11 @@ export function createAnalyticsDeliveryQueue(options: {
 		});
 		activeFlush = promise;
 		void runFlush().finally(resolveFlush);
-		return activeFlush;
+		// Return the stable local promise, not activeFlush. When the transport
+		// throws synchronously, runFlush's finally sets activeFlush = null
+		// before this point, so rereading activeFlush would return null and
+		// violate the Promise<void> contract for .then()/.catch() callers.
+		return promise;
 
 		async function runFlush(): Promise<void> {
 			try {

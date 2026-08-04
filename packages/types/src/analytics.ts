@@ -33,6 +33,19 @@ export const ANALYTICS_PIECE_COUNT_BUCKETS = [
 ] as const;
 export type AnalyticsPieceCountBucket = (typeof ANALYTICS_PIECE_COUNT_BUCKETS)[number];
 
+// Inclusive upper bound of each piece-count bucket. Used to cross-check that a
+// reported placedPieceCount cannot exceed the total pieces implied by the
+// bucket. '226+' is capped at MAX_PIECES, the global contract ceiling.
+export const ANALYTICS_PIECE_COUNT_BUCKET_UPPER_BOUNDS: Record<AnalyticsPieceCountBucket, number> =
+	{
+		'1-24': 24,
+		'25-49': 49,
+		'50-99': 99,
+		'100-149': 149,
+		'150-225': 225,
+		'226+': MAX_PIECES
+	};
+
 export const ANALYTICS_ASPECT_BUCKETS = ['square', 'landscape', 'portrait'] as const;
 export type AnalyticsAspectBucket = (typeof ANALYTICS_ASPECT_BUCKETS)[number];
 
@@ -387,6 +400,28 @@ function isIncompleteExitData(value: unknown): value is {
 	);
 }
 
+// Cross-checks the puzzle_exited_incomplete context against its data. The
+// generic context validator only checks fields independently, so without this
+// a forged or outdated client could submit semantically impossible V1 events
+// (e.g. progressBucket '100' on an incomplete exit, or placedPieceCount
+// exceeding the total pieces implied by pieceCountBucket) that still pass
+// isAnalyticsEventV1/isAnalyticsBatchV1 at the collector trust boundary.
+function incompleteExitContextMatchesData(
+	context: AnalyticsPuzzleContextV1,
+	data: { elapsedActiveSeconds: number | null; placedPieceCount: number }
+): boolean {
+	if (context.progressBucket === '100') return false;
+	if (data.placedPieceCount === 0) {
+		if (context.progressBucket !== '0') return false;
+	} else if (context.progressBucket === '0') {
+		return false;
+	}
+	if (data.placedPieceCount > ANALYTICS_PIECE_COUNT_BUCKET_UPPER_BOUNDS[context.pieceCountBucket]) {
+		return false;
+	}
+	return true;
+}
+
 function completionContextMatchesCounters(
 	context: AnalyticsPuzzleContextV1,
 	data: Extract<AnalyticsEventInputV1, { eventName: 'puzzle_completed' }>['data']
@@ -490,8 +525,10 @@ export function isAnalyticsEventInputV1(value: unknown): value is AnalyticsEvent
 				value.context.assistanceMode === 'none' &&
 				isPersonalBestData(value.data)
 			);
-		case 'puzzle_exited_incomplete':
-			return isRunEventBase(value) && isIncompleteExitData(value.data);
+		case 'puzzle_exited_incomplete': {
+			if (!isRunEventBase(value) || !isIncompleteExitData(value.data)) return false;
+			return incompleteExitContextMatchesData(value.context, value.data);
+		}
 		default:
 			return false;
 	}

@@ -168,6 +168,15 @@ function personalBestInput(): AnalyticsEventInputV1 {
 	};
 }
 
+function exitInput(): AnalyticsEventInputV1 {
+	return {
+		eventName: 'puzzle_exited_incomplete',
+		runId,
+		context: makeContext({ progressBucket: '25-49' }),
+		data: { elapsedActiveSeconds: 15, placedPieceCount: 80 }
+	};
+}
+
 describe('analytics v1 constants', () => {
 	it('locks schema and delivery limits', () => {
 		expect(ANALYTICS_EVENT_SCHEMA_VERSION).toBe(1);
@@ -297,9 +306,49 @@ describe('analytics v1 input validation', () => {
 					countersSaturated: true
 				}
 			}
+		},
+		{
+			name: 'incomplete exit at progress 100',
+			value: {
+				...exitInput(),
+				context: makeContext({ progressBucket: '100' })
+			}
+		},
+		{
+			name: 'incomplete exit with zero placements but non-zero progress bucket',
+			value: {
+				...exitInput(),
+				context: makeContext({ progressBucket: '1-24' }),
+				data: { elapsedActiveSeconds: 15, placedPieceCount: 0 }
+			}
+		},
+		{
+			name: 'incomplete exit with placements but progress bucket 0',
+			value: {
+				...exitInput(),
+				context: makeContext({ progressBucket: '0' })
+			}
+		},
+		{
+			name: 'incomplete exit with placedPieceCount above pieceCountBucket upper bound',
+			value: {
+				...exitInput(),
+				context: makeContext({ pieceCountBucket: '1-24', progressBucket: '50-74' })
+			}
 		}
 	])('rejects $name', ({ value }) => {
 		expect(isAnalyticsEventInputV1(value)).toBe(false);
+	});
+
+	it('accepts an incomplete exit with zero placements and progress bucket 0', () => {
+		expect(
+			isAnalyticsEventInputV1({
+				eventName: 'puzzle_exited_incomplete',
+				runId,
+				context: makeContext({ progressBucket: '0' }),
+				data: { elapsedActiveSeconds: 0, placedPieceCount: 0 }
+			})
+		).toBe(true);
 	});
 });
 
