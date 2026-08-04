@@ -36,6 +36,21 @@ describe('MissionSetupDialog', () => {
 		expect(setupProps.onExit).toHaveBeenCalledOnce();
 	});
 
+	it('hides Cancel in mandatory mode, leaving Start Mission and Return to Arcade', async () => {
+		// A mandatory setup cannot be cancelled: dismissing it would leave the
+		// session in the 'setup' lifecycle with no way back in (a soft-locked
+		// board). Only Start Mission and the Return to Arcade exit remain.
+		render(MissionSetupDialog, { ...setupProps, mandatory: true });
+		await expect.element(page.getByRole('button', { name: 'Cancel' })).not.toBeInTheDocument();
+		await expect.element(page.getByRole('button', { name: 'Start Mission' })).toBeVisible();
+		await expect.element(page.getByRole('button', { name: 'Return to Arcade' })).toBeVisible();
+	});
+
+	it('keeps Cancel available in non-mandatory mode', async () => {
+		render(MissionSetupDialog, { ...setupProps, mandatory: false });
+		await expect.element(page.getByRole('button', { name: 'Cancel' })).toBeVisible();
+	});
+
 	it('dismisses on Escape when not mandatory', async () => {
 		render(MissionSetupDialog, { ...setupProps, mandatory: false });
 		const dialog = await page.getByRole('dialog', { name: 'Mission Setup' }).element();

@@ -110,7 +110,9 @@
 			<p id="mission-setup-help" class="mt-4 text-xs text-gray-500">{inputHelp}</p>
 
 			<div class="mt-6 flex flex-wrap justify-end gap-2">
-				<button type="button" onclick={onCancel} class={secondaryButtonClass}>Cancel</button>
+				{#if !mandatory}
+					<button type="button" onclick={onCancel} class={secondaryButtonClass}>Cancel</button>
+				{/if}
 				<button type="button" onclick={onExit} class={secondaryButtonClass}>
 					Return to Arcade
 				</button>
