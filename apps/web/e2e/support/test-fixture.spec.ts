@@ -101,6 +101,11 @@ test.describe('gotoFixture lifecycle @smoke', () => {
 		gameplayPage
 	}) => {
 		const snapshot = buildMinimalSeed(FIXTURE_ID);
+		// The HPA-221 entry flow pauses a restored ACTIVE run at route entry
+		// and checkpoints it, which would rewrite the seeded value. Seed a
+		// PAUSED run instead so the verbatim-init-script guarantee stays
+		// observable: paused runs are presented for resume without a write.
+		snapshot.lifecycle = 'paused';
 		const stats = {
 			schemaVersion: 1 as const,
 			puzzleId: FIXTURE_ID,
