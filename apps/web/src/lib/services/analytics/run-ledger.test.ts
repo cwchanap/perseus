@@ -406,6 +406,40 @@ describe('analytics run ledger', () => {
 		expect(errors).toContain('invalid_record');
 	});
 
+	it('resets the ledger when a malformed run accompanies a valid duplicate', () => {
+		// A valid run holds the puzzle_opened dedup tuple, and a second run is
+		// malformed. The malformed run must force a full reset (the documented
+		// policy for malformed current-schema storage) rather than being
+		// silently dropped while the valid duplicate suppresses the mark and
+		// leaves the corrupt ledger persisted indefinitely.
+		const raw = JSON.stringify({
+			schemaVersion: 1,
+			runs: [
+				{
+					runId: runA,
+					lastRecordedAt: 1_000,
+					events: [{ eventSchemaVersion: 1, eventName: 'puzzle_opened', recordedAt: 1_000 }]
+				},
+				{
+					runId: runB,
+					lastRecordedAt: 'not-a-timestamp',
+					events: 'not-an-array'
+				}
+			]
+		});
+		const storage = makeStorage({ [ANALYTICS_RUN_LEDGER_KEY]: raw });
+		const errors: string[] = [];
+		const ledger = createAnalyticsRunLedger({ storage, onError: (code) => errors.push(code) });
+
+		// Without the fix this returns 'duplicate' and leaves the corrupt ledger
+		// in storage. With the reset path the mark is recorded fresh.
+		expect(mark(ledger)).toBe('recorded');
+		expect(errors).toContain('invalid_record');
+
+		const stored = read(storage) as { runs: Array<{ runId: string }> };
+		expect(stored.runs.map((run) => run.runId)).toEqual([runA]);
+	});
+
 	it('returns invalid_input for an invalid mark input', () => {
 		const storage = makeStorage();
 		const ledger = createAnalyticsRunLedger({ storage });
@@ -417,5 +451,36 @@ describe('analytics run ledger', () => {
 				recordedAt: 1_000
 			})
 		).toBe('invalid_input');
+	});
+
+	it('returns storage unavailable when the default localStorage getter throws', () => {
+		// Sandboxed or storage-disabled contexts can throw SecurityError on the
+		// localStorage property access itself, before getItem/setItem ever run.
+		// Construction must not escape that throw, and markIfNew must report
+		// storage_unavailable rather than wedging application composition.
+		const own = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+		Object.defineProperty(globalThis, 'localStorage', {
+			configurable: true,
+			get() {
+				throw new Error('storage access denied');
+			}
+		});
+		try {
+			const ledger = createAnalyticsRunLedger();
+			expect(
+				ledger.markIfNew({
+					eventSchemaVersion: 1,
+					eventName: 'puzzle_opened',
+					runId: runA,
+					recordedAt: 1_000
+				})
+			).toBe('storage_unavailable');
+		} finally {
+			if (own) {
+				Object.defineProperty(globalThis, 'localStorage', own);
+			} else {
+				delete (globalThis as { localStorage?: Storage }).localStorage;
+			}
+		}
 	});
 });

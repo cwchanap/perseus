@@ -143,6 +143,14 @@ export function createAnalyticsClient(options: {
 		onError: reportQueueError
 	});
 
+	// Facade-level disposed flag. The private queue drops events silently once
+	// disposed, but without this guard trackOncePerRun would still materialize
+	// an event and call ledger.markIfNew(), consuming a once-per-run mark that
+	// a later client sharing the same ledger would then suppress as a
+	// duplicate. Every tracking/page-hide method must bail out before any
+	// validation, materialization, clock/UUID access, or ledger write.
+	let disposed = false;
+
 	function readOccurredAt(): number | null {
 		let occurredAt: number;
 		try {
@@ -216,6 +224,7 @@ export function createAnalyticsClient(options: {
 
 	return {
 		track(input): void {
+			if (disposed) return;
 			if (!isRecord(input) || input.eventName !== 'gallery_viewed') {
 				rejectValidation('invalid_input');
 				return;
@@ -224,6 +233,7 @@ export function createAnalyticsClient(options: {
 			if (event !== null) queue.enqueue(event);
 		},
 		trackOncePerRun(input): void {
+			if (disposed) return;
 			const materialized = materializeOncePerRun(input);
 			if (materialized === null) return;
 			const { event, eventName } = materialized;
@@ -253,6 +263,7 @@ export function createAnalyticsClient(options: {
 			}
 		},
 		flushForPageHide(input): boolean {
+			if (disposed) return false;
 			if (!isRecord(input) || input.eventName !== 'puzzle_exited_incomplete') {
 				rejectValidation('invalid_input');
 				return false;
@@ -261,9 +272,12 @@ export function createAnalyticsClient(options: {
 			return event !== null && queue.flushForPageHide(event);
 		},
 		flush(): Promise<void> {
+			if (disposed) return Promise.resolve();
 			return queue.flush();
 		},
 		dispose(): void {
+			if (disposed) return;
+			disposed = true;
 			queue.dispose();
 		}
 	};

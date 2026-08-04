@@ -366,4 +366,50 @@ describe('bounded analytics delivery queue', () => {
 		await queue.flush();
 		expect(transport.batches).toEqual([]);
 	});
+
+	it('does not wedge the queue after an empty manual flush', async () => {
+		const transport = createCapturingTransport();
+		const queue = createAnalyticsDeliveryQueue({ transport });
+
+		// An empty flush must not leave a settled promise pinned in activeFlush.
+		await queue.flush();
+
+		// A subsequent enqueue must still schedule and deliver the event.
+		queue.enqueue(event(1));
+		await queue.flush();
+		expect(transport.batches.map((batch) => batch.events.map((item) => item.occurredAt))).toEqual([
+			[1]
+		]);
+		expect(queue.size).toBe(0);
+	});
+
+	it('does not wedge the queue when the transport throws synchronously', async () => {
+		const errors: string[] = [];
+		let sends = 0;
+		const transport: AnalyticsTransport = {
+			send() {
+				sends++;
+				throw new Error('sync throw');
+			}
+		};
+		const queue = createAnalyticsDeliveryQueue({
+			transport,
+			maxBatchSize: 20,
+			flushIntervalMs: 60_000,
+			onError: (code) => errors.push(code)
+		});
+		queue.enqueue(event(1));
+
+		await queue.flush();
+		expect(sends).toBe(1);
+		expect(errors).toEqual(['transport_error']);
+		// activeFlush must be cleared so a later enqueue can flush again.
+		const recovering = createCapturingTransport();
+		const queue2 = createAnalyticsDeliveryQueue({ transport: recovering });
+		queue2.enqueue(event(2));
+		await queue2.flush();
+		expect(recovering.batches.map((batch) => batch.events.map((item) => item.occurredAt))).toEqual([
+			[2]
+		]);
+	});
 });
