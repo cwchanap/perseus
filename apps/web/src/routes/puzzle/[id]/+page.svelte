@@ -1015,7 +1015,10 @@
 	}
 
 	function handleWindowKeyDown(event: KeyboardEvent) {
-		if (showCelebration) return;
+		// Any open modal — the celebration overlay or a session dialog
+		// (pause/exit/setup) — blocks gameplay shortcuts so undo/redo cannot
+		// mutate placements behind the dialog while it is open.
+		if (hasSessionModal) return;
 
 		const key = event.key.toLowerCase();
 		const modifierPressed = event.metaKey || event.ctrlKey;

@@ -1411,6 +1411,33 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.element(page.getByText('2/2')).toBeVisible();
 	});
 
+	it('blocks undo and redo keyboard shortcuts while a session dialog is open', async () => {
+		await renderPuzzlePage();
+		await placePiece(0, 0, 0);
+		await expect.element(page.getByText('1/2')).toBeVisible();
+
+		// Open the pause dialog; the route is inert while it is open.
+		await page.getByRole('button', { name: 'Pause mission' }).click();
+		await expect.element(page.getByRole('dialog', { name: 'Mission Paused' })).toBeVisible();
+
+		// Ctrl+Z is blocked (the same top-of-handler guard also blocks
+		// Ctrl+Y): the placement must not be reverted behind the dialog.
+		window.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }));
+		await expect.element(page.getByText('1/2')).toBeVisible();
+
+		// The undo stack was not consumed behind the dialog: nothing is
+		// redoable after resuming.
+		await page.getByRole('button', { name: 'Resume' }).click();
+		await expect
+			.poll(() => page.getByRole('dialog', { name: 'Mission Paused' }).query())
+			.toBeNull();
+		await expect.element(page.getByLabelText('Redo')).toBeDisabled();
+
+		// Undo still reverts the placement — the stack survived intact.
+		await page.getByLabelText('Undo').click();
+		await expect.element(page.getByText('0/2')).toBeVisible();
+	});
+
 	it('zooms in and out via toolbar buttons', async () => {
 		await renderPuzzlePage();
 
