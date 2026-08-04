@@ -11,6 +11,9 @@
 		onZoomOut: () => void;
 		onResetView: () => void;
 		onRotationToggle: () => void;
+		onPause?: () => void;
+		onOpenSetup?: () => void;
+		canOpenSetup?: boolean;
 		canUndo: boolean;
 		canRedo: boolean;
 		rotationEnabled: boolean;
@@ -28,6 +31,9 @@
 		onZoomOut,
 		onResetView,
 		onRotationToggle,
+		onPause,
+		onOpenSetup,
+		canOpenSetup = false,
 		canUndo,
 		canRedo,
 		rotationEnabled,
@@ -89,10 +95,25 @@
 	<button
 		aria-label="Rotation mode"
 		aria-pressed={rotationEnabled ? 'true' : 'false'}
+		aria-describedby={rotationToggleDisabled ? 'rotation-lock-reason' : undefined}
 		disabled={rotationToggleDisabled}
 		onclick={onRotationToggle}
 		class={`${toolbarButtonClass} ${rotationEnabled ? pressedRotationButtonClass : ''}`}
 	>
 		Rotate
 	</button>
+
+	{#if rotationToggleDisabled}
+		<span id="rotation-lock-reason" class="sr-only">
+			Rotation is locked after the first placement
+		</span>
+	{/if}
+
+	<button aria-label="Pause mission" onclick={onPause} class={toolbarButtonClass}> Pause </button>
+
+	{#if canOpenSetup}
+		<button aria-label="Open mission setup" onclick={onOpenSetup} class={toolbarButtonClass}>
+			Setup
+		</button>
+	{/if}
 </div>
