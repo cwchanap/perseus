@@ -2,69 +2,59 @@
 
 ## Status
 
-Revised after the second YAGNI and persistence review on 2026-08-03.
+Revised after YAGNI, persistence, and KISS self-review on 2026-08-04.
 
 ## Objective
 
-Add concise mission setup, deliberate resume, explicit pause, safe restart and exit, and Relaxed mode presentation without creating a second session controller or expanding the architecture beyond the existing `PuzzleSession` contract.
+Add mission setup, deliberate resume, explicit pause, restart/exit controls, and Relaxed presentation without creating another state machine or expanding the architecture beyond the existing `PuzzleSession` contract.
 
 `PuzzleSession` remains the sole owner of lifecycle, mode, timing, run identity, placements, rotation, history, assistance facts, result class, completion sealing, and persisted run state.
 
-## Product decisions
+## KISS decisions
 
-- Setup is one modal surface, never a wizard.
-- Fresh runs show setup unless the player enabled **Start immediately next time**.
-- Start Immediately and pre-activity setup reopening remain in v1 because HPA-221 explicitly requires both.
-- Reopening setup is route-owned UI over an unchanged pre-activity active run. It does not add an active-session mode mutator or a new lifecycle transition.
-- Changing run settings from reopened setup restarts the zero-activity run, then configures and starts the replacement run.
-- Returning active or paused runs show a dominant one-action Resume surface.
-- Setup chooses the initial rotation state. The existing toolbar rotation toggle remains available until the first successful placement.
-- Existing `hasUserActivity` semantics are the only progress and restart-confirmation threshold.
-- Pause blocks puzzle interaction and clears transient interaction state.
-- Restart returns to setup with the current mode and rotation choices, creates a fresh run, and clears progress.
-- Replaying a completed run goes directly to fresh setup without a discard confirmation.
-- Exit saves a resumable run by default; discard is explicit and needs no second confirmation.
-- Relaxed reuses the existing `relaxed` result class and completion path. It may count as a completion but never updates the canonical timed best.
-- HPA-221 adds only the toolbar callbacks it needs. It does not implement HPA-217's toolbar architecture or a mode-badge redesign.
+- Add one setup-only domain action: `configure_setup`.
+- Do not add `reopen_setup`, an active-session setup mutator, or an `active -> setup` transition.
+- Do not modify `doRestart`. The route composes existing `restart` with `configure_setup` to restore the prior mode/rotation choices.
+- Use one bounded schema-v1 validator exception for a configured rotation run that has not recorded activity.
+- Keep setup edits and dialog visibility as route-local Svelte state.
+- Use one tiny local-storage preferences module, three focused dialog components, and one reusable focus action.
+- Keep restart confirmation inside the Pause dialog instead of adding another dialog component.
+- Keep four representative E2E flows; test state permutations below the browser layer.
 
 ## Existing foundation
 
-The current code already provides:
+The current implementation already provides:
 
-- lifecycle values `setup`, `active`, `paused`, `completed`, and `disposed`;
-- session modes `timed` and `relaxed`;
-- persisted elapsed active time and hidden-tab exclusion;
+- lifecycle `setup`, `active`, `paused`, `completed`, and `disposed`;
+- modes `timed` and `relaxed`;
+- persisted active elapsed time and hidden-tab exclusion;
 - bounded result classes and timing quality;
-- pause, resume, restart, and completion transitions;
-- fresh run IDs on restart;
-- gameplay gating outside the active lifecycle;
-- `hasUserActivity` and `isResumable` as canonical activity/resume signals;
-- local and server completion effects projected from an immutable completion seal;
-- deterministic gameplay fixtures, seeded persistence, controlled clocks, and reusable Playwright helpers.
+- start, pause, resume, restart, and completion transitions;
+- new run IDs on restart;
+- gameplay gating outside `active`;
+- `hasUserActivity` and `isResumable` as the canonical activity/resume signals;
+- local/server effects projected from an immutable completion seal;
+- deterministic gameplay fixtures and reusable Playwright helpers.
 
-The puzzle route currently auto-starts fresh and restored setup sessions, lacks setup/pause/resume/restart/exit surfaces, and always renders timed HUD/completion content.
+The puzzle route currently auto-starts fresh/setup sessions, lacks the HPA-221 control surfaces, and always presents timed HUD/completion content.
 
-## Architecture and ownership
+## Ownership
 
-`PuzzleSession` owns canonical run state and transition invariants.
+`PuzzleSession` owns run invariants. The puzzle route only:
 
-The puzzle route owns orchestration and external effects:
+- reads/writes device preferences;
+- chooses the visible dialog;
+- keeps an uncommitted setup draft;
+- dispatches session actions;
+- clears transient route interaction state;
+- checkpoints before navigation/teardown;
+- navigates to the Arcade.
 
-- read and write device preferences;
-- choose which dialog is visible;
-- keep setup edits in a local draft;
-- map UI actions to existing or bounded `PuzzleSession` actions;
-- clear route-owned transient interactions;
-- checkpoint before exit or teardown;
-- navigate back to the Arcade.
+Dialog visibility, setup drafts, focus, pointer/gesture state, hint/rejection presentation, and reference-overlay state are transient and never serialized.
 
-Dialog visibility, setup drafts, focus state, gesture state, hint highlights, rejection animation, and reference-overlay visibility remain transient and are not serialized.
+No coordinator store may mirror lifecycle, mode, progress, or resumability. UI derives those values from `sessionState`.
 
-HPA-221 must not add a coordinator store mirroring lifecycle, mode, or progress. Route-derived values come directly from `sessionState`; transient dialog state remains local Svelte state.
-
-## Domain changes
-
-### `configure_setup`
+## Domain change: `configure_setup`
 
 Add one action:
 
@@ -78,81 +68,63 @@ export type PuzzleSessionAction =
   // existing actions...
 ```
 
-This is the only new pre-start mode/rotation mutator in HPA-221. Do not also add `set_mode`, `set_setup_rotation`, or setup-aware behavior to `set_rotation_mode`.
-
-It is valid only while lifecycle is `setup`.
+It is valid only while lifecycle is `setup` and is the only new pre-start mode/rotation mutator in this ticket.
 
 It atomically:
 
 - sets `mode`;
-- sets `elapsedActiveSeconds` to `0` for Timed and `null` for Relaxed;
+- sets `elapsedActiveSeconds` to `0` for Timed or `null` for Relaxed;
 - leaves `timerStarted` false;
 - sets `rotationEnabled`;
-- generates per-piece rotations when rotation is enabled;
-- clears per-piece rotations when rotation is disabled;
-- sets `facts.rotationUsed` from the final setup choice;
+- generates or clears the piece-rotation map;
+- sets `facts.rotationUsed` from the configured rotation choice;
 - recomputes `resultClass`;
-- keeps `hasUserActivity` false;
+- leaves `hasUserActivity` false;
 - preserves the current run ID.
 
-Repeated configuration in `setup` is allowed and does not mint another run ID.
+The action may be called again while still in setup, for example when the player edits a restored setup run. It must not be valid after `start`.
 
-### Pre-activity eligibility invariant
+Do not add `set_mode`, `set_setup_rotation`, setup-aware behavior to `set_rotation_mode`, or another configuration action.
 
-`SessionFacts` is currently documented as monotonic. HPA-221 narrows that invariant explicitly:
+### Eligibility fact invariant
 
-- before meaningful activity, `configure_setup` may revise `rotationUsed` in either direction so the final setup choice remains truthful;
-- once `hasUserActivity` becomes true, eligibility facts remain monotonic and may only move toward less-competitive result classes;
-- the existing active `set_rotation_mode` behavior remains unchanged: enabling rotation marks activity and permanently sets `rotationUsed`.
+`SessionFacts` is mutable only before meaningful activity:
 
-Update the `SessionFacts` documentation to state this pre-activity exception rather than leaving the existing invariant silently false.
+- `configure_setup` may set or clear `rotationUsed` while lifecycle is `setup` and `hasUserActivity` is false;
+- once activity begins, eligibility facts are monotonic and may only move toward less-competitive classes;
+- the existing active `set_rotation_mode` behavior remains unchanged: changing rotation marks activity, and enabling it permanently records rotation use.
 
-### Restart adjustment
-
-The existing restart already retains `mode` and organization. HPA-221 adds only rotation-choice retention.
-
-Restart continues to:
-
-- create a fresh run ID;
-- clear placements, elapsed time, timer-start state, history, counters, assistance facts, completion state, and selection;
-- regenerate canonical tray order;
-- return lifecycle to `setup`.
-
-It additionally retains `rotationEnabled`. When retained rotation is enabled, restart generates a fresh rotation mapping and establishes the matching pre-activity `rotationUsed` and `resultClass` state.
-
-Do not add a `preferredRotation` field or couple device preferences into the engine. Device defaults and current-run restart retention remain separate concerns.
+Update the `SessionFacts` documentation to state this narrow pre-activity exception.
 
 ## Persistence compatibility
 
-No schema-version bump is required, but a validator change is required.
+The current v1 loader rejects `rotationUsed: true` with `hasUserActivity: false`, but that is a valid configured state before the player acts. Without a validator adjustment, setup/active/paused rotation snapshots can be written and then discarded as corrupt on reload.
 
-Today the v1 loader rejects every snapshot where `rotationUsed` is true and `hasUserActivity` is false. That rule conflicts with valid setup-configured and restarted rotation runs, which must remain non-active until the player actually interacts.
-
-Relax validation only for a bounded **pre-activity configured rotation** state:
+Add one local predicate equivalent to **pre-activity configured rotation**:
 
 - `rotationUsed` is true;
-- `rotationEnabled` or a valid rotation map is present;
+- rotation is enabled or a valid rotation map exists;
 - `hasUserActivity` is false;
-- placements and all counted-action counters are empty/zero;
+- placements and counted-action counters are empty/zero;
 - `timerStarted` is false;
-- there is no sealed completion;
-- lifecycle is `setup`, `active`, or `paused`.
+- lifecycle is not `completed`;
+- no completion seal exists.
 
-Counted actions, placements, started timing, or completion facts must still require `hasUserActivity: true`. Existing corruption checks for result class, rotations, counters, seals, and timing quality remain authoritative.
+The existing cross-field activity rejection permits only that predicate. Counted actions, placements, started timing, or completion facts continue to require `hasUserActivity: true`.
 
-This is a backward-compatible validation-contract adjustment inside schema v1, not a migration or schema v2.
+This is a backward-compatible schema-v1 validation adjustment, not a migration or schema bump. Existing result-class, rotation-map, counter, timing-quality, and seal checks remain unchanged.
 
-Add focused persistence tests proving that valid setup/active/paused pre-activity rotation snapshots round-trip, while rotation or counted-action facts paired with false activity outside that bounded state remain rejected.
+Add table-driven persistence tests for valid setup/active/paused pre-activity rotation snapshots and invalid near-miss states.
 
 ## Device preferences
 
-Use one versioned local-storage key:
+Use one versioned key:
 
 ```text
 perseus-gameplay-preferences-v1
 ```
 
-The payload does not repeat the version:
+Payload:
 
 ```ts
 interface GameplayPreferences {
@@ -162,146 +134,147 @@ interface GameplayPreferences {
 }
 ```
 
-Defaults:
+Defaults are Timed, rotation off, and Start Immediately off.
 
-- mode: `timed`;
-- rotation: disabled;
-- start immediately: disabled.
+Expose synchronous validated read and best-effort write functions. Missing, corrupt, or unavailable storage falls back to defaults; writes never block play. A future incompatible format gets a new key.
 
-The module exposes synchronous validated read and safe write functions. Missing, malformed, or unavailable storage falls back to defaults; write failure never blocks play.
-
-Read preferences once on fresh puzzle entry and write final values when the player starts or confirms setup. Do not introduce a Svelte store, migration registry, account synchronization, shared preference package, or reactive session coupling. A future incompatible format uses a new key.
+Read preferences once for a fresh puzzle. Write them only when setup is confirmed. Do not add a Svelte preference store, migration registry, account sync, or shared settings platform.
 
 ## Entry flows
 
 ### Fresh session
 
-1. Create the fresh session in `setup`.
-2. Read device preferences once.
-3. If Start Immediately is false, open Mission Setup with the preferences as its draft.
-4. If Start Immediately is true, dispatch `configure_setup`, then `start`.
-5. Until `hasUserActivity` becomes true, expose Open Setup in the toolbar.
+1. Create the session in `setup`.
+2. Read preferences once.
+3. Immediately dispatch `configure_setup` with those preferences so session checkpoints match the displayed choices.
+4. If Start Immediately is on, dispatch `start`.
+5. Otherwise show Mission Setup with a draft copied from the configured session.
+6. Expose Open Setup only until existing `hasUserActivity` becomes true.
 
-### Pre-activity setup reopening
+Unsaved modal edits are not persisted. The canonical setup session always contains the last confirmed choices.
 
-Open the setup modal over the unchanged active session and make the page behind it inert.
+### Reopen setup before activity
 
-- Escape/Cancel discards the local draft and closes the modal without a session action.
-- If mode and rotation are unchanged, save any preference-only change and close the modal.
-- If mode or rotation changed, dispatch `restart`, `configure_setup`, then `start`; checkpoint the replacement run.
-- A settings change therefore creates a new run ID and may regenerate tray order. This is acceptable because the replaced run has no meaningful activity or completion identity.
-- This path is unavailable as soon as existing `hasUserActivity` becomes true. A toolbar rotation toggle therefore closes the Open Setup window, matching the current activity contract.
+Open Mission Setup over the unchanged active session and make the page behind it inert.
 
-### Restored setup session
+- Cancel/Escape closes the modal without a session action.
+- A Start Immediately-only change writes preferences and closes the modal.
+- If mode or rotation changes, capture the draft, dispatch existing `restart`, dispatch setup-only `configure_setup`, dispatch `start`, then checkpoint.
+- A changed setting may therefore produce a new run ID and tray order. That is acceptable because the replaced run has no activity or completion identity.
+- The path disappears as soon as `hasUserActivity` becomes true, including after the existing toolbar rotation toggle is changed.
 
-Show Mission Setup using persisted mode and rotation. Device preferences, including Start Immediately, never overwrite or bypass an existing setup run.
+### Restored setup
 
-### Restored active session
+Show setup from the persisted mode/rotation. Device preferences, including Start Immediately, never overwrite or bypass an existing setup run.
 
-Construct the store from the persisted snapshot without rewriting it. Immediately after subscribing, dispatch the existing `pause` action, checkpoint the paused state, and show Resume.
+### Restored active
 
-The brief construction-time timer interval is stopped by `pause`; elapsed time is stored in whole seconds, so sub-second modal time is not added. Do not add a snapshot-normalization path, lifecycle, migration, resume token, or interruption-reason enum.
+Construct the store from the persisted snapshot, subscribe, immediately dispatch existing `pause`, checkpoint, and show Resume.
 
-### Restored paused session
+Do not rewrite the snapshot or add a migration, resume token, interrupt reason, or lifecycle. The existing clock stores whole seconds, and the immediate pause prevents modal time from accumulating.
 
-Show the same Resume surface without changing canonical run data.
+### Restored paused
 
-### Restored completed session
+Show the same Resume surface without changing canonical state.
+
+### Restored completed
 
 Preserve the existing completion flow. HPA-221 changes only Relaxed-specific labels and timed-stat visibility.
 
 ## Mission Setup
 
-The modal contains:
+Show one modal containing:
 
-- puzzle name;
-- piece count and grid dimensions;
-- Timed and Relaxed choice;
-- rotation toggle with concise lock/result-class explanation;
+- puzzle name, piece count, and grid dimensions;
+- Timed/Relaxed choice;
+- rotation choice with concise lock/result-class explanation;
 - input-specific help;
-- Start Immediately Next Time checkbox;
-- primary Start action;
-- secondary Return to Arcade action.
+- Start Immediately checkbox;
+- Start;
+- Return to Arcade.
 
 For mandatory fresh/restored setup, Start dispatches `configure_setup`, writes preferences, dispatches `start`, and closes the modal.
 
-Setup sets the initial rotation state. After Start, the existing toolbar rotation toggle remains available until the first successful placement.
+The existing toolbar rotation toggle remains available after Start until the first successful placement.
 
-Escape behavior:
-
-- fresh or restored mandatory setup does not dismiss with Escape;
-- optional pre-activity reopened setup dismisses with Escape and leaves the active run unchanged.
+Escape does not dismiss mandatory setup. Escape dismisses optional pre-activity reopened setup and leaves the run unchanged.
 
 ## Pause and resume
 
-Add one private route helper:
+Add one private route function:
 
 ```ts
 function clearTransientGameplayState(): void
 ```
 
-It clears active reference state/overlay, reference pointer ownership, selection, hint/rejection timeouts and presentation, and pan/drag/pointer gesture state.
+It clears active reference state/overlay, pointer ownership, selection, hint/rejection presentation and timers, and pan/drag/pointer state. It must not become a manager, service, event bus, or serialized snapshot.
 
-Do not promote this helper into a manager, event bus, serialized snapshot, or shared gameplay service.
+Explicit Pause:
 
-Explicit pause:
-
-1. clear transient gameplay state;
+1. clear transient state;
 2. dispatch `pause`;
-3. open the Pause dialog;
-4. checkpoint the paused session.
+3. checkpoint;
+4. show the Pause dialog.
 
-Opening Exit or destructive restart confirmation from active play uses the same pause transition so decision time does not count. Cancel returns to the Pause surface rather than silently resuming.
+The Pause dialog provides Resume, Restart, and Return to Arcade. If restart needs confirmation, replace the Pause dialog body with a simple confirmation view rather than opening another modal.
 
-The page behind setup, resume, pause, restart-confirmation, and exit dialogs is inert. Resume dispatches `resume`, closes the dialog, and restores focus to the Pause trigger when possible. Transient interaction state is intentionally not restored.
+Resume dispatches `resume`, closes the dialog, and restores focus to the Pause trigger when possible. Transient interaction state is intentionally not restored.
 
-Document visibility continues to call only `setDocumentHidden(document.hidden)`. Hidden tabs suspend active timing and checkpoint but do not open a modal or change lifecycle.
+Document visibility continues to call only `setDocumentHidden(document.hidden)`. It suspends/checkpoints timing without opening Pause or changing lifecycle.
 
 ## Restart and replay
 
-Use existing `hasUserActivity` without introducing another progress flag. This intentionally inherits current activity semantics: rotation toggle, hint, reference activation, placement attempt, or supported organization change can require confirmation even without a placed piece.
+Use existing `hasUserActivity` as the only confirmation threshold. Rotation toggles, hints, reference activation, placement attempts, and supported organization changes retain their current activity semantics.
 
-- Active or paused incomplete run without activity: restart directly.
-- Active or paused incomplete run with activity: show one destructive confirmation.
-- Completed Play Again: restart directly and open setup; no discard warning.
+For restart:
 
-After restart, persist the new setup-state snapshot immediately, open Mission Setup with retained mode/rotation, and reset the existing viewport state. Restart does not clear or reread device preferences.
+1. capture the current mode and rotation choice;
+2. if the incomplete run has activity, confirm once within the Pause dialog;
+3. dispatch existing `restart` unchanged;
+4. dispatch `configure_setup` with the captured choices;
+5. checkpoint the configured setup run;
+6. show Mission Setup;
+7. reset the existing viewport state.
+
+An incomplete run without activity skips confirmation. Completed Play Again uses the same restart/configure sequence without confirmation.
+
+No changes are required in `doRestart`; existing mode retention may remain, but route composition is the single source of the HPA-221 choice-retention behavior.
 
 ## Return to Arcade
 
-When `isResumable` is true, show:
+- A non-resumable run navigates after a final checkpoint.
+- A resumable run shows Save & Exit, Discard & Exit, and Cancel.
+- The Exit dialog is the only discard confirmation.
+- Save checkpoints then navigates.
+- Discard uses the existing best-effort session clear and does not clear preferences or completion statistics.
 
-- **Save & Exit** as primary;
-- **Discard & Exit** as destructive;
-- Cancel.
+When Exit is opened from active gameplay, pause first; Cancel resumes gameplay. When opened from the Pause dialog, Cancel returns to Pause. Do not add a general dialog stack to model this two-case return behavior.
 
-The Exit dialog itself is the discard confirmation. Save checkpoints before navigation. Discard uses the existing best-effort session clear and does not clear preferences or local completion statistics.
-
-When the run is not resumable, including mandatory setup with no activity, navigate directly after a final checkpoint. Return to Arcade must remain available inside mandatory setup because the inert page behind it is not interactive.
+Mandatory setup includes Return to Arcade because the inert page behind it is unavailable.
 
 ## Relaxed mode
 
-Relaxed reuses existing session and completion contracts:
+Relaxed reuses existing contracts:
 
 - `mode` and `resultClass` are `relaxed`;
-- `elapsedActiveSeconds` remains `null`;
-- timed local-best logic is inapplicable;
-- server completion submission uses the existing sealed-completion effect path;
-- the completion may count but cannot update the standard timed best.
+- `elapsedActiveSeconds` is `null`;
+- timed local-best logic does not apply;
+- server submission uses the existing sealed-completion effect path;
+- completion may count but cannot update the standard timed best.
 
-Presentation:
+Presentation is limited to:
 
-- Setup explains that Relaxed has no timer or timed personal best.
-- HUD shows `RELAXED` instead of elapsed/best time.
-- Pause and Resume identify Relaxed mode.
-- Completion hides final-time and timed-personal-best content.
-- The hard-coded timed rank is replaced only for Relaxed with a neutral completion label.
+- setup explanation;
+- `RELAXED` in the HUD instead of elapsed/best time;
+- mode label in Pause/Resume;
+- no final-time or timed-best content on completion;
+- a neutral completion label instead of the hard-coded timed rank.
 
-HPA-224 remains responsible for the complete result-report redesign.
+HPA-224 remains responsible for the full completion-report redesign.
 
 ## Toolbar and dialogs
 
-Until HPA-217 lands, extend `PuzzleToolbar` only with:
+Until HPA-217 lands, add only these toolbar props:
 
 ```ts
 onPause: () => void;
@@ -309,80 +282,80 @@ onOpenSetup: () => void;
 canOpenSetup: boolean;
 ```
 
-Do not pass the whole session state, add generic action arrays, introduce slots/registries/overflow infrastructure, or redesign mode presentation. Relaxed status stays in the HUD.
+Do not pass session state, add generic action arrays, or introduce slots, registries, overflow architecture, or a mode redesign.
 
-Add focused setup, pause/resume, and exit components. A small restart confirmation may remain route-local. Extract the existing focus trap into a small reusable action, not a modal service.
+Use three focused components:
 
-Required behavior is limited to correct dialog semantics, initial focus, Tab containment, explicit Escape behavior, predictable focus restoration, clearly named destructive actions, and usable scrollable layouts at 390 × 844, tablet, and desktop sizes.
+- Mission Setup;
+- Pause/Resume, including restart confirmation view;
+- Exit.
+
+Extract the existing focus trap into one small reusable Svelte action. Reusing it in the existing completion modal should be a mechanical replacement only; do not redesign completion.
+
+Required dialog behavior is limited to correct semantics/labels, initial focus, Tab containment, explicit Escape behavior, predictable focus restoration, clearly named destructive actions, and scrollable layouts at 390 × 844, tablet, and desktop sizes.
 
 ## Testing
 
-### Session and persistence unit tests
+### Unit tests
 
 Cover:
 
-- Timed and Relaxed setup configuration;
-- rotation enable/disable and result-class truth in setup;
-- configuration rejected outside setup;
-- repeated setup configuration without activity or a new run ID;
-- restart retaining rotation while existing mode retention remains unchanged;
-- valid pre-activity rotation snapshots loading in setup/active/paused lifecycle;
-- corrupt counted-action or completed snapshots still rejected when activity is false;
-- serialization remaining schema version 1.
-
-### Preference tests
-
-Cover defaults, valid round-trip, one corrupt record, and one storage exception path.
+- Timed/Relaxed setup configuration;
+- rotation configuration and result-class truth;
+- rejection outside setup;
+- pre-activity eligibility mutability versus post-activity monotonicity;
+- valid pre-activity rotation persistence and invalid near misses;
+- preference defaults, round-trip, corrupt input, and unavailable storage.
 
 ### Route/component tests
 
-Cover mandatory setup, Start Immediately with pre-activity reopening, restored setup ignoring preferences, restored active pause-on-load, pause cleanup, restart threshold, Play Again, save/discard exit, Relaxed presentation, and component-level Escape/focus rules.
+Cover mandatory setup, Start Immediately/Open Setup, restored setup, pause-on-restored-active, transient cleanup, restart confirmation, Play Again, exit save/discard/cancel origins, Relaxed presentation, and component-level focus/Escape behavior.
 
 ### Representative E2E tests
 
-1. Fresh Timed run: setup, first meaningful action starts time, pause excludes time, resume continues.
-2. Relaxed run: setup, completion, no timed HUD/best presentation, request classified `relaxed`.
-3. Seeded active run: Resume, restart confirmation, fresh run ID, cleared progress, retained choices.
-4. Mobile 390 × 844 smoke: setup, pause, exit/restart reachability, and one focus-containment check.
+1. Timed setup → first meaningful action → pause excludes time → resume.
+2. Relaxed setup → completion classified `relaxed` → no timed-best presentation.
+3. Seeded active session → Resume → restart → fresh run ID and cleared progress with retained choices.
+4. 390 × 844 smoke for setup, pause, exit/restart reachability, and one focus-containment check.
 
-Do not duplicate the full Escape/focus matrix in E2E or build exhaustive browser permutations for unit-level transitions.
+Do not duplicate the complete focus/Escape matrix in E2E or create browser permutations for unit-level state transitions.
 
-## Non-goals and YAGNI guardrails
+## Non-goals and guardrails
 
 The implementation must not add:
 
 - another session state machine or canonical store;
-- an active-session mode/rotation setup mutator;
-- a general `active -> setup` transition;
-- separate mode and setup-rotation actions;
-- a `preferredRotation` session field;
+- an active-session setup mutator or `active -> setup` transition;
+- separate mode/setup-rotation actions or preferred-rotation state;
+- restart-specific domain retention logic;
 - a modal manager, dialog stack, or design-system dialog rewrite;
-- a preference framework, reactive preference store, shared preferences package, or duplicate payload version;
+- a preference framework, reactive store, or shared settings package;
 - persisted UI/transient state;
-- a persistence schema v2 or migration for this validator adjustment;
-- a backend schema change or Relaxed-specific completion transport;
-- a toolbar plugin system, generic action array, or overflow rewrite;
-- feature flags or analytics events "while here";
+- schema v2 or a migration for the validator adjustment;
+- backend schema or Relaxed-specific transport changes;
+- toolbar plugins, generic action arrays, or overflow rewrite;
+- feature flags or analytics additions;
 - HPA-224 completion-report work;
-- unrelated route or design-system refactors.
+- unrelated route/design-system refactors.
 
 ## Acceptance criteria
 
-- Fresh sessions show one concise setup surface unless Start Immediately is enabled.
-- Start Immediately users can reopen setup only before `hasUserActivity`.
-- Canceling reopened setup leaves the current active run unchanged.
-- Changing mode/rotation in reopened setup replaces the zero-activity run through restart/configure/start; run-ID stability is not required.
-- Setup-configured rotation sessions persist and load without being classified as corrupt while remaining non-active until actual interaction.
-- Eligibility facts are mutable only during pre-activity setup and monotonic after activity begins.
-- Restored setup runs ignore device preferences and Start Immediately.
-- Restored active/paused sessions show a dominant Resume path without counting modal time.
-- Timed sessions restore elapsed active time and exclude pause, control-dialog, and hidden-tab time.
-- Relaxed sessions never render or write a timed personal best.
-- Explicit pause prevents gameplay interactions and clears transient selection/reference/gesture state.
-- Setup chooses initial rotation; the existing toolbar toggle remains available until the first successful placement.
-- Restart uses existing `hasUserActivity`, creates a new run ID, clears run progress, and adds only rotation retention beyond current behavior.
-- Completed Play Again opens fresh setup without a discard confirmation.
-- Exit saves resumable progress by default and exposes one explicit discard action.
+- Fresh sessions show setup unless Start Immediately is enabled.
+- The canonical fresh setup session is configured from device preferences before checkpointing.
+- Open Setup is available only before existing `hasUserActivity`.
+- Canceling Open Setup leaves the active run unchanged.
+- Changing run settings from Open Setup replaces the zero-activity run via restart/configure/start.
+- Configured rotation sessions persist/load without false corruption while remaining non-active until actual interaction.
+- Eligibility facts are mutable only during setup and monotonic after activity begins.
+- Restored setup ignores device preferences and Start Immediately.
+- Restored active/paused sessions show Resume without counting modal time.
+- Timed sessions exclude pause, control-dialog, and hidden-tab time.
+- Relaxed never renders or writes a timed personal best.
+- Pause blocks gameplay and clears transient interaction state.
+- Existing toolbar rotation remains available until the first successful placement.
+- Restart uses existing `hasUserActivity`, leaves `doRestart` unchanged, and reapplies choices through `configure_setup`.
+- Completed Play Again opens setup without discard confirmation.
+- Exit saves by default, exposes one discard action, and restores the correct prior surface on Cancel.
 - Mandatory setup always offers Return to Arcade.
-- Dialogs remain usable and focus-safe across mobile, tablet, and desktop.
-- Feature-owned automated tests cover integrated flows without duplicating foundation coverage.
+- Dialogs remain usable/focus-safe across mobile, tablet, and desktop.
+- Feature-owned tests cover integrated behavior without duplicating foundation coverage.
