@@ -59,13 +59,12 @@ No coordinator store may mirror lifecycle, mode, progress, or resumability. UI d
 Add one action:
 
 ```ts
-export type PuzzleSessionAction =
-  | {
-      type: 'configure_setup';
-      mode: SessionMode;
-      rotationEnabled: boolean;
-    }
-  // existing actions...
+export type PuzzleSessionAction = {
+	type: 'configure_setup';
+	mode: SessionMode;
+	rotationEnabled: boolean;
+};
+// existing actions...
 ```
 
 It is valid only while lifecycle is `setup` and is the only new pre-start mode/rotation mutator in this ticket.
@@ -128,9 +127,9 @@ Payload:
 
 ```ts
 interface GameplayPreferences {
-  mode: 'timed' | 'relaxed';
-  rotationEnabled: boolean;
-  startImmediately: boolean;
+	mode: 'timed' | 'relaxed';
+	rotationEnabled: boolean;
+	startImmediately: boolean;
 }
 ```
 
@@ -206,7 +205,7 @@ Escape does not dismiss mandatory setup. Escape dismisses optional pre-activity 
 Add one private route function:
 
 ```ts
-function clearTransientGameplayState(): void
+function clearTransientGameplayState(): void;
 ```
 
 It clears active reference state/overlay, pointer ownership, selection, hint/rejection presentation and timers, and pan/drag/pointer state. It must not become a manager, service, event bus, or serialized snapshot.

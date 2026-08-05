@@ -9,15 +9,15 @@ owns reporting.
 
 Every event has exactly these keys:
 
-| Field | V1 rule |
-| --- | --- |
-| `eventName` | One of the eight event names in this catalog. |
-| `runId` | `null` for `gallery_viewed`; otherwise an accepted puzzle run ID. |
-| `context` | An exact `AnalyticsClientContextV1` or `AnalyticsPuzzleContextV1` snapshot. |
-| `data` | The exact event-specific object or `null`. No generic property bag is permitted. |
-| `schemaVersion` | Exactly `1`. |
-| `eventId` | Deterministic for six once-per-run events; fresh lowercase UUID v4 for occurrence events. |
-| `occurredAt` | Client wall-clock timestamp in integer milliseconds, `0..Number.MAX_SAFE_INTEGER`. |
+| Field           | V1 rule                                                                                   |
+| --------------- | ----------------------------------------------------------------------------------------- |
+| `eventName`     | One of the eight event names in this catalog.                                             |
+| `runId`         | `null` for `gallery_viewed`; otherwise an accepted puzzle run ID.                         |
+| `context`       | An exact `AnalyticsClientContextV1` or `AnalyticsPuzzleContextV1` snapshot.               |
+| `data`          | The exact event-specific object or `null`. No generic property bag is permitted.          |
+| `schemaVersion` | Exactly `1`.                                                                              |
+| `eventId`       | Deterministic for six once-per-run events; fresh lowercase UUID v4 for occurrence events. |
+| `occurredAt`    | Client wall-clock timestamp in integer milliseconds, `0..Number.MAX_SAFE_INTEGER`.        |
 
 Objects are exact-key validated at the event, context, data, batch, and persisted-ledger levels.
 Unknown or additional fields invalidate the object.
@@ -53,27 +53,27 @@ result, rotation, or assistance values.
 
 ### Client context
 
-| Field | Values and derivation |
-| --- | --- |
-| `authentication` | `unknown` while auth is loading, otherwise `anonymous` or `authenticated`. `unknown` must remain a separate reporting cohort. |
-| `viewportClass` | `mobile` for width `< 768`, `tablet` for `768..1023.999…`, `desktop` for width `>= 1024`. Width must be finite and non-negative. |
-| `primaryInput` | Last keyboard interaction wins; touch maps to `coarse_pointer`; mouse/pen map to `fine_pointer`; media-query fallback may choose coarse/fine; otherwise `unknown`. |
+| Field            | Values and derivation                                                                                                                                              |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `authentication` | `unknown` while auth is loading, otherwise `anonymous` or `authenticated`. `unknown` must remain a separate reporting cohort.                                      |
+| `viewportClass`  | `mobile` for width `< 768`, `tablet` for `768..1023.999…`, `desktop` for width `>= 1024`. Width must be finite and non-negative.                                   |
+| `primaryInput`   | Last keyboard interaction wins; touch maps to `coarse_pointer`; mouse/pen map to `fine_pointer`; media-query fallback may choose coarse/fine; otherwise `unknown`. |
 
 ### Puzzle context
 
-| Field | Values and derivation |
-| --- | --- |
-| `puzzleSource` | `api` or `local`. |
-| `contentOrigin` | Local/Quick content is `player_uploaded`. API content defaults to `unknown` until a trusted ownership signal is available; an explicit bounded API origin may be `system` or `player_uploaded`. |
-| `pieceCountBucket` | `1-24`, `25-49`, `50-99`, `100-149`, `150-225`, or `226+`; piece count must be an integer in `1..250`. |
-| `aspectBucket` | `square`, `landscape`, or `portrait`. A declared aspect takes precedence; positive finite pixel dimensions are only the fallback. |
-| `sessionMode` | `timed` or `relaxed`. |
-| `resultClass` | `standard_timed`, `rotation_timed`, `assisted_timed`, or `relaxed`. |
-| `timingQuality` | `known` or `legacy_unknown`. |
-| `sessionOrigin` | `new` or `resumed`. |
-| `rotationUsed` | Monotonic run fact: whether rotation was used at any time before this event, not the current toggle state. |
-| `progressBucket` | `0`, `1-24`, `25-49`, `50-74`, `75-99`, or `100`. Percentage is `Math.floor(placedPieceCount / pieceCount * 100)`; only exact completion returns `100`. |
-| `assistanceMode` | Cumulative interpretation from persisted facts/counters: `none`, `hint`, `reference`, `ghost_reference`, or `mixed`. |
+| Field              | Values and derivation                                                                                                                                                                           |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `puzzleSource`     | `api` or `local`.                                                                                                                                                                               |
+| `contentOrigin`    | Local/Quick content is `player_uploaded`. API content defaults to `unknown` until a trusted ownership signal is available; an explicit bounded API origin may be `system` or `player_uploaded`. |
+| `pieceCountBucket` | `1-24`, `25-49`, `50-99`, `100-149`, `150-225`, or `226+`; piece count must be an integer in `1..250`.                                                                                          |
+| `aspectBucket`     | `square`, `landscape`, or `portrait`. A declared aspect takes precedence; positive finite pixel dimensions are only the fallback.                                                               |
+| `sessionMode`      | `timed` or `relaxed`.                                                                                                                                                                           |
+| `resultClass`      | `standard_timed`, `rotation_timed`, `assisted_timed`, or `relaxed`.                                                                                                                             |
+| `timingQuality`    | `known` or `legacy_unknown`.                                                                                                                                                                    |
+| `sessionOrigin`    | `new` or `resumed`.                                                                                                                                                                             |
+| `rotationUsed`     | Monotonic run fact: whether rotation was used at any time before this event, not the current toggle state.                                                                                      |
+| `progressBucket`   | `0`, `1-24`, `25-49`, `50-74`, `75-99`, or `100`. Percentage is `Math.floor(placedPieceCount / pieceCount * 100)`; only exact completion returns `100`.                                         |
+| `assistanceMode`   | Cumulative interpretation from persisted facts/counters: `none`, `hint`, `reference`, `ghost_reference`, or `mixed`.                                                                            |
 
 Assistance derivation is:
 

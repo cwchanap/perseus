@@ -24,12 +24,7 @@ analytics data. These changes require no PuzzleSession persistence migration.
 Replace the base-plan cumulative `AnalyticsAssistanceMode` union with:
 
 ```ts
-export type AnalyticsAssistanceMode =
-	| 'none'
-	| 'hint'
-	| 'reference'
-	| 'ghost_reference'
-	| 'mixed';
+export type AnalyticsAssistanceMode = 'none' | 'hint' | 'reference' | 'ghost_reference' | 'mixed';
 ```
 
 Replace `AssistanceUsageSnapshot.referenceModesUsed` with:
@@ -56,7 +51,9 @@ V1 deliberately does not claim whether a resumed run used hold, toggle, or both.
 `reference_used.data.referenceMode` still records the first counted transition when it occurs:
 
 ```ts
-data: { referenceMode: 'hold' | 'toggle' | 'ghost' };
+data: {
+	referenceMode: 'hold' | 'toggle' | 'ghost';
+}
 ```
 
 That event-local field is not used to reconstruct cumulative assistance after reload.
@@ -132,14 +129,15 @@ The queue remains private and is not exported through the product-facing barrel.
 Rename the data field:
 
 ```ts
-data: { mountToFirstPlacementMs: number };
+data: {
+	mountToFirstPlacementMs: number;
+}
 ```
 
 and rename the limit:
 
 ```ts
-export const ANALYTICS_MAX_MOUNT_TO_FIRST_PLACEMENT_MS =
-	MAX_COMPLETION_TIME_SECONDS * 1000;
+export const ANALYTICS_MAX_MOUNT_TO_FIRST_PLACEMENT_MS = MAX_COMPLETION_TIME_SECONDS * 1000;
 ```
 
 The anchor is a monotonic timestamp captured when the current puzzle-route mount finishes
@@ -183,7 +181,7 @@ data: {
 	hintsUsed: number;
 	referenceActivations: number;
 	countersSaturated: boolean;
-};
+}
 ```
 
 `countersSaturated` is true when either raw counter exceeded the cap. Validators accept only
@@ -239,7 +237,7 @@ bucket primary metrics by client `occurredAt`.
 Progress percentage uses:
 
 ```ts
-Math.floor((placedPieceCount / pieceCount) * 100)
+Math.floor((placedPieceCount / pieceCount) * 100);
 ```
 
 Only `placedPieceCount === pieceCount` returns `100`. For example, `249 / 250` maps to `75-99`.
