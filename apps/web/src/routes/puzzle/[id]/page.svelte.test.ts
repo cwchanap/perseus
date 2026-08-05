@@ -1940,6 +1940,112 @@ describe('Puzzle route gameplay integration', () => {
 		await page.getByRole('button', { name: 'Cancel' }).click();
 		await expect.element(page.getByRole('dialog', { name: 'Mission Paused' })).toBeVisible();
 	});
+
+	it('reconfigures an active pre-activity run when setup choices change', async () => {
+		// An active run with no user activity can reopen setup (non-mandatory).
+		// Changing mode or rotation and confirming composes restart →
+		// configure_setup → start so the new choices take effect on a fresh run.
+		preferenceState.value = {
+			mode: 'timed',
+			rotationEnabled: false,
+			startImmediately: true
+		};
+		await renderPuzzlePage();
+		await expect.element(page.getByTestId('game-timer')).toBeVisible();
+
+		// Open the non-mandatory setup dialog from the toolbar.
+		await page.getByRole('button', { name: 'Open mission setup' }).click();
+		await expect.element(page.getByRole('dialog', { name: 'Mission Setup' })).toBeVisible();
+
+		// Change the draft: switch to Relaxed mode (fires onDraftChange).
+		await page.getByLabelText('Relaxed').click();
+
+		// Confirm — the reconfigure branch runs restart → configure_setup → start.
+		await page.getByRole('button', { name: 'Start Mission' }).click();
+		await expect.poll(() => page.getByRole('dialog', { name: 'Mission Setup' }).query()).toBeNull();
+
+		// The run is now relaxed: the RELAXED indicator replaces the timer.
+		await expect.element(page.getByTestId('relaxed-mode-indicator')).toBeVisible();
+		await expect.poll(() => page.getByTestId('game-timer').query()).toBeNull();
+	});
+
+	it('closes setup without restarting when no settings changed', async () => {
+		// Opening setup from the toolbar and confirming without changing mode
+		// or rotation takes the !settingsChanged early-return branch: the
+		// dialog closes and the original run continues uninterrupted.
+		preferenceState.value = {
+			mode: 'timed',
+			rotationEnabled: false,
+			startImmediately: true
+		};
+		await renderPuzzlePage();
+
+		await page.getByRole('button', { name: 'Open mission setup' }).click();
+		await expect.element(page.getByRole('dialog', { name: 'Mission Setup' })).toBeVisible();
+
+		// Confirm without changing anything.
+		await page.getByRole('button', { name: 'Start Mission' }).click();
+		await expect.poll(() => page.getByRole('dialog', { name: 'Mission Setup' }).query()).toBeNull();
+
+		// The original timed run is still active (no restart occurred).
+		await expect.element(page.getByTestId('game-timer')).toBeVisible();
+	});
+
+	it('closes the non-mandatory setup dialog without starting when Cancel is clicked', async () => {
+		// The onCancel inline handler (line 1557) sets sessionDialog = null,
+		// dismissing the dialog without dispatching start or configure_setup.
+		preferenceState.value = {
+			mode: 'timed',
+			rotationEnabled: false,
+			startImmediately: true
+		};
+		await renderPuzzlePage();
+
+		await page.getByRole('button', { name: 'Open mission setup' }).click();
+		await expect.element(page.getByRole('dialog', { name: 'Mission Setup' })).toBeVisible();
+
+		await page.getByRole('button', { name: 'Cancel' }).click();
+		await expect.poll(() => page.getByRole('dialog', { name: 'Mission Setup' }).query()).toBeNull();
+
+		// The original timed run is still active.
+		await expect.element(page.getByTestId('game-timer')).toBeVisible();
+	});
+
+	it('clears the reference overlay when pausing while it is held', async () => {
+		// clearTransientGameplayState dispatches set_reference_mode null when
+		// the reference hold is active (line 1126). Pausing while the overlay
+		// is open must tear it down so it does not leak behind the pause dialog.
+		// A synthetic pointerdown activates the hold; a direct click event on
+		// the Pause button (without a preceding pointerup) ensures the hold is
+		// still active when clearTransientGameplayState runs.
+		await renderPuzzlePage();
+
+		const referenceButton = await page.getByLabelText('Reference').element();
+		referenceButton.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
+		await expect.element(page.getByTestId('reference-overlay')).toBeVisible();
+
+		const pauseButton = await page.getByRole('button', { name: 'Pause mission' }).element();
+		pauseButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+		await expect.element(page.getByRole('dialog', { name: 'Mission Paused' })).toBeVisible();
+		await expect.poll(() => page.getByTestId('reference-overlay').query()).toBeNull();
+	});
+
+	it('cancels the restart confirmation and returns to the pause dialog', async () => {
+		// The onCancelRestart inline handler (line 1571) sets
+		// restartConfirmation = false, returning from the confirmation view to
+		// the pause surface without restarting.
+		await renderPuzzlePage();
+		await placePiece(0, 0, 0);
+
+		await page.getByRole('button', { name: 'Pause mission' }).click();
+		await page.getByRole('button', { name: 'Restart' }).click();
+		await expect.element(page.getByText('Restart this mission?')).toBeVisible();
+
+		await page.getByRole('button', { name: 'Cancel' }).click();
+		// Back to the pause surface (not the confirmation view).
+		await expect.poll(() => page.getByText('Restart this mission?').query()).toBeNull();
+		await expect.element(page.getByRole('dialog', { name: 'Mission Paused' })).toBeVisible();
+	});
 });
 
 // --- Patch coverage: defensive guards and event handler branches --------------
