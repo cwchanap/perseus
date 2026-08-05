@@ -1909,6 +1909,35 @@ describe('Puzzle route gameplay integration', () => {
 		expect(goto).toHaveBeenCalledWith('/');
 	});
 
+	it('does not re-save the session when the route unmounts after Discard', async () => {
+		// Regression: discardAndExit clears storage and starts navigation, but
+		// the component stays mounted until navigation completes. onDestroy
+		// unconditionally calls persistSessionFinal(), and the 5s checkpoint
+		// interval can also fire in that window — both would write the paused
+		// snapshot back under the just-cleared key. The fix sets
+		// persistenceReadOnly and cancels the checkpoint interval before
+		// clearing storage, so unmounting after Discard must not call
+		// saveSession.
+		vi.mocked(fetchPuzzle).mockResolvedValue(createMockPuzzle());
+		const view = render(PuzzlePage);
+		await expect.element(page.getByTestId('puzzle-board')).toBeVisible();
+		await placePiece(0, 0, 0);
+		resumableState.value = true;
+
+		await page.getByRole('button', { name: 'Pause mission' }).click();
+		await page.getByRole('button', { name: 'Exit' }).click();
+		await expect.element(page.getByRole('dialog', { name: 'Exit Mission' })).toBeVisible();
+
+		await page.getByRole('button', { name: 'Discard' }).click();
+		expect(sessionStorageSpies.clearSession).toHaveBeenCalledWith('test-puzzle');
+		// Discard itself must not persist; clear history so any later call
+		// (e.g. from teardown) is attributable to the regression.
+		sessionStorageSpies.saveSession.mockClear();
+
+		view.unmount();
+		expect(sessionStorageSpies.saveSession).not.toHaveBeenCalled();
+	});
+
 	it('resumes the active run when canceling exit from an active origin', async () => {
 		await renderPuzzlePage();
 		await placePiece(0, 0, 0);

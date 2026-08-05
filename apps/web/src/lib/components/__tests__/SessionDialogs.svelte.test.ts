@@ -255,4 +255,19 @@ describe('ExitSessionDialog', () => {
 		await page.getByRole('button', { name: 'Discard' }).click();
 		expect(onDiscard).toHaveBeenCalledOnce();
 	});
+
+	it('fires onCancel when Escape is pressed on the dialog', async () => {
+		// The route suppresses its global keyboard handler while a session
+		// modal is open, and modalFocus only traps Tab, so the dialog must
+		// handle Escape itself to remain dismissible.
+		const onCancel = vi.fn();
+		const onSave = vi.fn();
+		const onDiscard = vi.fn();
+		render(ExitSessionDialog, { onSave, onDiscard, onCancel });
+		const dialog = await page.getByRole('dialog', { name: 'Exit Mission' }).element();
+		dialog.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+		expect(onCancel).toHaveBeenCalledOnce();
+		expect(onSave).not.toHaveBeenCalled();
+		expect(onDiscard).not.toHaveBeenCalled();
+	});
 });

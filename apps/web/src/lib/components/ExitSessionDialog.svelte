@@ -25,6 +25,7 @@
 		aria-label="Exit Mission"
 		tabindex="-1"
 		use:modalFocus
+		onkeydown={(e) => e.key === 'Escape' && onCancel()}
 		class="flex max-h-[100dvh] w-full max-w-md flex-col overflow-hidden rounded-2xl bg-white shadow-xl"
 	>
 		<div class="min-h-0 flex-1 overflow-y-auto p-6">

@@ -1005,6 +1005,31 @@ describe('PuzzleSession tray organization', () => {
 
 		expect(outcome.type).toBe('tray_organization_noop');
 	});
+
+	it('rejects tray organization during setup so configure_setup cannot erase its activity', () => {
+		// Regression: doUpdateTrayOrganization sets hasUserActivity and
+		// mutates state.organization, but doConfigureSetup resets
+		// hasUserActivity while preserving state.organization. Allowing
+		// organization during setup would let a later configure_setup make a
+		// changed session appear unused. The guard rejects the action in the
+		// setup lifecycle, so organization stays null and a subsequent
+		// configure_setup leaves hasUserActivity false with no organization.
+		const session = createPuzzleSession(makeOptions());
+		expect(session.getState().lifecycle).toBe('setup');
+
+		const outcome = session.dispatch({
+			type: 'update_tray_organization',
+			update: { type: 'set_filter', filter: 'edges' }
+		});
+
+		expect(outcome).toEqual({ type: 'tray_organization_noop', reason: 'lifecycle_disallows' });
+		expect(session.getState().organization).toBeNull();
+		expect(session.getState().hasUserActivity).toBe(false);
+
+		session.dispatch({ type: 'configure_setup', mode: 'relaxed', rotationEnabled: true });
+		expect(session.getState().hasUserActivity).toBe(false);
+		expect(session.getState().organization).toBeNull();
+	});
 });
 
 // --- Task 5: completion sealing and typed effects -----------------------------
