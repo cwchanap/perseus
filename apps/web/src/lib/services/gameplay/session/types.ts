@@ -332,7 +332,10 @@ export type PuzzleSessionOutcome =
 	| { type: 'reference_mode_changed'; mode: ReferenceMode | null; activationCounted: boolean }
 	| { type: 'reference_mode_noop'; reason: 'lifecycle_disallows_gameplay' }
 	| { type: 'tray_organization_applied'; update: TrayOrganizationUpdate }
-	| { type: 'tray_organization_noop'; reason: 'invalid_update' | 'not_implemented' }
+	| {
+			type: 'tray_organization_noop';
+			reason: 'invalid_update' | 'not_implemented' | 'lifecycle_disallows';
+	  }
 	| { type: 'completion_sealed'; seal: SealedCompletion }
 	| {
 			type: 'completion_noop';

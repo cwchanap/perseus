@@ -427,9 +427,15 @@ function validateV1(
 	// pieceRotations + rotationUsed while the session still has no user
 	// activity. Every activity signal must be absent — zero placements, zero
 	// counters, timer not started, not completed, no sealed completion — so
-	// this can never mask a genuinely active run.
+	// this can never mask a genuinely active run. configure_setup clears both
+	// the rotation map and the rotation fact when rotation is disabled, so a
+	// snapshot with rotationEnabled: false plus residual rotations is
+	// corruption: require rotationEnabled so a malformed record cannot
+	// restore with rotation shown as disabled while retaining rotation_timed
+	// eligibility.
 	const isPreActivityConfiguredRotation =
 		derivedFacts.rotationUsed &&
+		rotationEnabled &&
 		hasRotations &&
 		!hasUserActivity &&
 		placedPieces.length === 0 &&

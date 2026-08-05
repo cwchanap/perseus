@@ -1229,6 +1229,17 @@
 	}
 
 	function discardAndExit(): void {
+		// Prevent the teardown onDestroy handler and any in-flight checkpoint
+		// tick from writing the paused snapshot back under the just-cleared
+		// key. The component stays mounted until navigation completes, so
+		// without this guard persistSessionFinal() (called unconditionally in
+		// onDestroy) would re-save the session, and the 5s checkpoint interval
+		// could also fire in the interim.
+		persistenceReadOnly = true;
+		if (checkpointInterval !== null) {
+			clearInterval(checkpointInterval);
+			checkpointInterval = null;
+		}
 		if (puzzle) sessionStorageAdapter.clearSession(puzzle.id);
 		void goto(resolve('/'));
 	}

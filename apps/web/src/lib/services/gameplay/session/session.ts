@@ -436,6 +436,16 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 	// --- Tray organization ----------------------------------------------------
 
 	function doUpdateTrayOrganization(update: TrayOrganizationUpdate): PuzzleSessionOutcome {
+		// Tray organization is a gameplay action: it sets hasUserActivity and
+		// mutates state.organization. doConfigureSetup resets hasUserActivity
+		// (and selection/history) but preserves state.organization, so allowing
+		// organization during setup would let a later configure_setup make a
+		// changed session appear unused. Every other gameplay action guards on
+		// lifecycle === 'active'; tray organization must too, at minimum
+		// rejecting the setup lifecycle where configure_setup can still run.
+		if (state.lifecycle === 'setup') {
+			return { type: 'tray_organization_noop', reason: 'lifecycle_disallows' };
+		}
 		const base: PersistedTrayOrganization = state.organization ?? {
 			filter: 'all',
 			activeTray: 'main',
