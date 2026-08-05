@@ -87,6 +87,55 @@ describe('MissionSetupDialog', () => {
 		);
 		expect(document.activeElement).toBe(last);
 	});
+
+	it('fires onDraftChange with relaxed mode when Relaxed is selected', async () => {
+		render(MissionSetupDialog, { ...setupProps, mandatory: true });
+		await page.getByLabelText('Relaxed').click();
+		expect(setupProps.onDraftChange).toHaveBeenCalledWith(
+			expect.objectContaining({ mode: 'relaxed' })
+		);
+	});
+
+	it('fires onDraftChange with timed mode when Timed is selected', async () => {
+		const draft = {
+			mode: 'relaxed' as const,
+			rotationEnabled: false,
+			startImmediately: false
+		};
+		render(MissionSetupDialog, { ...setupProps, draft, mandatory: true });
+		await page.getByLabelText('Timed').click();
+		expect(setupProps.onDraftChange).toHaveBeenCalledWith(
+			expect.objectContaining({ mode: 'timed' })
+		);
+	});
+
+	it('fires onDraftChange toggling rotationEnabled when Enable rotation is clicked', async () => {
+		render(MissionSetupDialog, { ...setupProps, mandatory: true });
+		await page.getByLabelText('Enable rotation').click();
+		expect(setupProps.onDraftChange).toHaveBeenCalledWith(
+			expect.objectContaining({ rotationEnabled: true })
+		);
+	});
+
+	it('fires onDraftChange toggling startImmediately when Start immediately is clicked', async () => {
+		render(MissionSetupDialog, { ...setupProps, mandatory: true });
+		await page.getByLabelText('Start immediately next time').click();
+		expect(setupProps.onDraftChange).toHaveBeenCalledWith(
+			expect.objectContaining({ startImmediately: true })
+		);
+	});
+
+	it('fires onStart when Start Mission is clicked', async () => {
+		render(MissionSetupDialog, { ...setupProps, mandatory: true });
+		await page.getByRole('button', { name: 'Start Mission' }).click();
+		expect(setupProps.onStart).toHaveBeenCalledOnce();
+	});
+
+	it('fires onCancel when Cancel is clicked in non-mandatory mode', async () => {
+		render(MissionSetupDialog, { ...setupProps, mandatory: false });
+		await page.getByRole('button', { name: 'Cancel' }).click();
+		expect(setupProps.onCancel).toHaveBeenCalledOnce();
+	});
 });
 
 describe('SessionPauseDialog', () => {
@@ -113,6 +162,89 @@ describe('SessionPauseDialog', () => {
 		});
 		await expect.element(page.getByText('Restart this mission?')).toBeVisible();
 		expect(await page.getByRole('dialog').all()).toHaveLength(1);
+	});
+
+	it('shows Relaxed mission label for a relaxed-mode pause', async () => {
+		render(SessionPauseDialog, {
+			presentation: 'paused',
+			mode: 'relaxed',
+			confirmingRestart: false,
+			onResume: vi.fn(),
+			onRequestRestart: vi.fn(),
+			onConfirmRestart: vi.fn(),
+			onCancelRestart: vi.fn(),
+			onExit: vi.fn()
+		});
+		await expect.element(page.getByText('Relaxed mission')).toBeVisible();
+	});
+
+	it('shows Timed mission label for a timed-mode pause', async () => {
+		render(SessionPauseDialog, {
+			presentation: 'paused',
+			mode: 'timed',
+			confirmingRestart: false,
+			onResume: vi.fn(),
+			onRequestRestart: vi.fn(),
+			onConfirmRestart: vi.fn(),
+			onCancelRestart: vi.fn(),
+			onExit: vi.fn()
+		});
+		await expect.element(page.getByText('Timed mission')).toBeVisible();
+	});
+
+	it('fires onResume, onRequestRestart, and onExit from the pause surface', async () => {
+		const onResume = vi.fn();
+		const onRequestRestart = vi.fn();
+		const onExit = vi.fn();
+		render(SessionPauseDialog, {
+			presentation: 'paused',
+			mode: 'timed',
+			confirmingRestart: false,
+			onResume,
+			onRequestRestart,
+			onConfirmRestart: vi.fn(),
+			onCancelRestart: vi.fn(),
+			onExit
+		});
+		await page.getByRole('button', { name: 'Exit' }).click();
+		expect(onExit).toHaveBeenCalledOnce();
+		await page.getByRole('button', { name: 'Restart' }).click();
+		expect(onRequestRestart).toHaveBeenCalledOnce();
+		await page.getByRole('button', { name: 'Resume' }).click();
+		expect(onResume).toHaveBeenCalledOnce();
+	});
+
+	it('fires onConfirmRestart and onCancelRestart from the confirmation surface', async () => {
+		const onConfirmRestart = vi.fn();
+		const onCancelRestart = vi.fn();
+		render(SessionPauseDialog, {
+			presentation: 'paused',
+			mode: 'timed',
+			confirmingRestart: true,
+			onResume: vi.fn(),
+			onRequestRestart: vi.fn(),
+			onConfirmRestart,
+			onCancelRestart,
+			onExit: vi.fn()
+		});
+		await page.getByRole('button', { name: 'Cancel' }).click();
+		expect(onCancelRestart).toHaveBeenCalledOnce();
+		await page.getByRole('button', { name: 'Confirm restart' }).click();
+		expect(onConfirmRestart).toHaveBeenCalledOnce();
+	});
+
+	it('labels the dialog Resume Mission for the resume presentation', async () => {
+		render(SessionPauseDialog, {
+			presentation: 'resume',
+			mode: 'timed',
+			confirmingRestart: false,
+			onResume: vi.fn(),
+			onRequestRestart: vi.fn(),
+			onConfirmRestart: vi.fn(),
+			onCancelRestart: vi.fn(),
+			onExit: vi.fn()
+		});
+		await expect.element(page.getByRole('dialog', { name: 'Resume Mission' })).toBeVisible();
 	});
 });
 
