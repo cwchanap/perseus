@@ -57,11 +57,13 @@
 ### Task 1: Add setup-only `configure_setup`
 
 **Files:**
+
 - Modify: `apps/web/src/lib/services/gameplay/session/types.ts`
 - Modify: `apps/web/src/lib/services/gameplay/session/session.ts`
 - Test: `apps/web/src/lib/services/gameplay/session/session.test.ts`
 
 **Interfaces:**
+
 - Consumes: existing `SessionMode`, `createRotations`, `recomputeResultClass()`, `makeHistoryBaseline()`.
 - Produces: action `{ type: 'configure_setup'; mode: SessionMode; rotationEnabled: boolean }` and outcome `{ type: 'setup_configured'; mode: SessionMode; rotationEnabled: boolean }`.
 
@@ -221,10 +223,12 @@ git commit -m "feat(web): add puzzle setup configuration action"
 ### Task 2: Permit only valid pre-activity rotation snapshots
 
 **Files:**
+
 - Create: `apps/web/src/lib/services/gameplay/session/persistence.validation-activity.test.ts`
 - Modify: `apps/web/src/lib/services/gameplay/session/persistence.ts`
 
 **Interfaces:**
+
 - Consumes: `validSnapshot()`, `load()`, schema-v1 cross-field validation.
 - Produces: one local boolean named `isPreActivityConfiguredRotation` used only by the existing activity consistency check.
 
@@ -267,14 +271,20 @@ describe('pre-activity configured rotation validation', () => {
 	it.each([
 		['started timer', { timerStarted: true }],
 		['placed piece', { placedPieces: [{ pieceId: 0, x: 0, y: 0 }] }],
-		['incorrect attempt', {
-			counters: { incorrectAttempts: 1, hintsUsed: 0, referenceActivations: 0 }
-		}],
-		['hint use', {
-			counters: { incorrectAttempts: 0, hintsUsed: 1, referenceActivations: 0 },
-			facts: { rotationUsed: true, hintUsed: true, ghostReferenceUsed: false },
-			resultClass: 'assisted_timed'
-		}],
+		[
+			'incorrect attempt',
+			{
+				counters: { incorrectAttempts: 1, hintsUsed: 0, referenceActivations: 0 }
+			}
+		],
+		[
+			'hint use',
+			{
+				counters: { incorrectAttempts: 0, hintsUsed: 1, referenceActivations: 0 },
+				facts: { rotationUsed: true, hintUsed: true, ghostReferenceUsed: false },
+				resultClass: 'assisted_timed'
+			}
+		],
 		['completed lifecycle', { lifecycle: 'completed' }]
 	] as const)('rejects a false-activity snapshot with %s', (_name, patch) => {
 		expect(load({ ...configuredRotation('active'), ...patch }).status).toBe('invalid');
@@ -348,10 +358,12 @@ git commit -m "fix(web): allow configured rotation before activity"
 ### Task 3: Add the tiny device-preferences codec
 
 **Files:**
+
 - Create: `apps/web/src/lib/services/gameplay/session/preferences.ts`
 - Create: `apps/web/src/lib/services/gameplay/session/preferences.test.ts`
 
 **Interfaces:**
+
 - Produces `GAMEPLAY_PREFERENCES_KEY`, `GameplayPreferences`, `DEFAULT_GAMEPLAY_PREFERENCES`, `loadGameplayPreferences()`, and `saveGameplayPreferences()`.
 
 - [ ] **Step 1: Write failing codec tests**
@@ -469,9 +481,7 @@ export function loadGameplayPreferences(
 		const raw = storage.getItem(GAMEPLAY_PREFERENCES_KEY);
 		if (raw === null) return { ...DEFAULT_GAMEPLAY_PREFERENCES };
 		const parsed: unknown = JSON.parse(raw);
-		return isGameplayPreferences(parsed)
-			? { ...parsed }
-			: { ...DEFAULT_GAMEPLAY_PREFERENCES };
+		return isGameplayPreferences(parsed) ? { ...parsed } : { ...DEFAULT_GAMEPLAY_PREFERENCES };
 	} catch {
 		return { ...DEFAULT_GAMEPLAY_PREFERENCES };
 	}
@@ -512,6 +522,7 @@ git commit -m "feat(web): add gameplay setup preferences"
 ### Task 4: Extract focus handling and add three dialog components
 
 **Files:**
+
 - Create: `apps/web/src/lib/actions/modalFocus.ts`
 - Create: `apps/web/src/lib/components/MissionSetupDialog.svelte`
 - Create: `apps/web/src/lib/components/SessionPauseDialog.svelte`
@@ -519,6 +530,7 @@ git commit -m "feat(web): add gameplay setup preferences"
 - Create: `apps/web/src/lib/components/__tests__/SessionDialogs.svelte.test.ts`
 
 **Interfaces:**
+
 - Produces `modalFocus(node: HTMLElement, focusKey?: unknown)`.
 - `MissionSetupDialog` consumes a `GameplayPreferences` draft and emits whole-draft changes.
 - `SessionPauseDialog` owns no state; `confirmingRestart` selects normal versus confirmation content.
@@ -603,7 +615,8 @@ const FOCUSABLE =
 	'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 export function modalFocus(node: HTMLElement, focusKey: unknown = true) {
-	const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+	const previousFocus =
+		document.activeElement instanceof HTMLElement ? document.activeElement : null;
 	let activeKey = focusKey;
 	let focusTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -719,11 +732,13 @@ git commit -m "feat(web): add mission session dialogs"
 ### Task 5: Wire fresh/restored setup entry and toolbar controls
 
 **Files:**
+
 - Modify: `apps/web/src/routes/puzzle/[id]/+page.svelte`
 - Modify: `apps/web/src/lib/components/PuzzleToolbar.svelte`
 - Test: `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts`
 
 **Interfaces:**
+
 - Consumes: `configure_setup`, preference codec, `MissionSetupDialog`.
 - Produces route-local state only: `sessionDialog`, `setupMandatory`, `setupDraft`, `devicePreferences`, `pausePresentation`, `restartConfirmation`, and `exitOrigin`.
 
@@ -951,10 +966,12 @@ git commit -m "feat(web): add mission setup entry flow"
 ### Task 6: Wire pause, restart, replay, and exit composition
 
 **Files:**
+
 - Modify: `apps/web/src/routes/puzzle/[id]/+page.svelte`
 - Test: `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts`
 
 **Interfaces:**
+
 - Consumes: existing `pause`, `resume`, `restart`, `configure_setup`, `serializeSession`, and `isResumable`.
 - Produces private route functions only.
 
@@ -1134,10 +1151,12 @@ git commit -m "feat(web): add pause restart and exit controls"
 ### Task 7: Add Relaxed and legacy-unknown presentation rules
 
 **Files:**
+
 - Modify: `apps/web/src/routes/puzzle/[id]/+page.svelte`
 - Test: `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts`
 
 **Interfaces:**
+
 - Consumes: `sessionState.mode`, `sessionState.timingQuality`, and sealed result class.
 - Produces presentation-only derived values; no domain or API changes.
 
@@ -1191,10 +1210,12 @@ git commit -m "feat(web): add relaxed session presentation"
 ### Task 8: Add deterministic session-control E2E coverage and verify
 
 **Files:**
+
 - Modify: `apps/web/e2e/support/gameplay-page.ts`
 - Create: `apps/web/e2e/gameplay-session-controls.spec.ts`
 
 **Interfaces:**
+
 - Extends `GotoFixtureOptions` with `seedPreferences?: GameplayPreferences`.
 - Adds `missionSetupDialog()`, `startMission()`, `pauseMission()`, `resumeMission()`, and `readPersistedSession()`.
 - Uses existing `ApiScenarioController.recordedRequests` for Relaxed completion assertions.

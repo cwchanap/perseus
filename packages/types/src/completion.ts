@@ -6,8 +6,4 @@ export {
 	isRecordPuzzleCompletionV1
 } from './core';
 
-export type {
-	ResultClass,
-	TimingQuality,
-	RecordPuzzleCompletionV1
-} from './core';
+export type { ResultClass, TimingQuality, RecordPuzzleCompletionV1 } from './core';

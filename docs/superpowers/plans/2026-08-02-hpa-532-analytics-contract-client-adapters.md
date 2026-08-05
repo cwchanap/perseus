@@ -148,41 +148,41 @@ existing handwritten runtime-validator conventions.
 
 ### Shared contract
 
-| File | Responsibility |
-| --- | --- |
-| `packages/types/src/completion.ts` | Existing result-class, timing-quality, completion request, run-ID, and completion validators extracted from the root barrel to avoid circular imports |
-| `packages/types/src/puzzle-limits.ts` | Existing `MAX_PIECES` leaf export used by analytics validation without importing the root barrel |
-| `packages/types/src/analytics.ts` | V1 inputs/envelopes, numeric/cross-field invariants, bounded dimensions, ID rules, exact validators, and batch contract |
-| `packages/types/src/analytics.test.ts` | Event matrix, strict-key/PII rejection, IDs, versions, batches, and compile-time negative tests |
-| `packages/types/src/index.ts` | Re-export completion and analytics modules while preserving current package imports |
-| `packages/types/src/index.test.ts` | Unchanged regression suite proving the extraction preserves existing completion behavior |
+| File                                   | Responsibility                                                                                                                                        |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/types/src/completion.ts`     | Existing result-class, timing-quality, completion request, run-ID, and completion validators extracted from the root barrel to avoid circular imports |
+| `packages/types/src/puzzle-limits.ts`  | Existing `MAX_PIECES` leaf export used by analytics validation without importing the root barrel                                                      |
+| `packages/types/src/analytics.ts`      | V1 inputs/envelopes, numeric/cross-field invariants, bounded dimensions, ID rules, exact validators, and batch contract                               |
+| `packages/types/src/analytics.test.ts` | Event matrix, strict-key/PII rejection, IDs, versions, batches, and compile-time negative tests                                                       |
+| `packages/types/src/index.ts`          | Re-export completion and analytics modules while preserving current package imports                                                                   |
+| `packages/types/src/index.test.ts`     | Unchanged regression suite proving the extraction preserves existing completion behavior                                                              |
 
 ### Web client
 
-| File | Responsibility |
-| --- | --- |
-| `apps/web/src/lib/services/analytics/context.ts` | Pure bounded context projection and bucket classifiers |
-| `apps/web/src/lib/services/analytics/context.test.ts` | Piece-count, declared/pixel aspect, viewport, progress, input, auth, content-origin, rotation, timing, and assistance boundaries |
-| `apps/web/src/lib/services/analytics/run-ledger.ts` | Versioned grouped-by-run localStorage ledger and once-per-run mark/prune policy |
-| `apps/web/src/lib/services/analytics/run-ledger.test.ts` | Reload idempotency, grouped-run capacity, key tuple, retention, corruption, future schemas, and storage failures |
-| `apps/web/src/lib/services/analytics/transport.ts` | Provider-independent transport interface |
-| `apps/web/src/lib/services/analytics/transports/http.ts` | Configurable JSON batch transport plus page-hide beacon/keepalive path |
-| `apps/web/src/lib/services/analytics/transports/memory.ts` | Deterministic capture/reset/fail-next transport for tests |
-| `apps/web/src/lib/services/analytics/transports/noop.ts` | Disabled transport with no network activity |
-| `apps/web/src/lib/services/analytics/transport.test.ts` | HTTP shape/privacy, endpoint override, page-hide, memory, and no-op behavior |
-| `apps/web/src/lib/services/analytics/queue.ts` | Bounded queue, timers, batching, concurrency, overflow, and failure isolation |
-| `apps/web/src/lib/services/analytics/queue.test.ts` | Fake-timer batching, overflow, failure, concurrency, and page-hide coverage |
-| `apps/web/src/lib/services/analytics/analytics.ts` | Event materialization, validation, ledger gating, queue orchestration, and public facade |
-| `apps/web/src/lib/services/analytics/analytics.test.ts` | Sequencing, IDs/timestamps, duplicate suppression, occurrence events, invalid input, and transport failures |
-| `apps/web/src/lib/services/analytics/index.ts` | Stable public exports for later product code |
+| File                                                       | Responsibility                                                                                                                   |
+| ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web/src/lib/services/analytics/context.ts`           | Pure bounded context projection and bucket classifiers                                                                           |
+| `apps/web/src/lib/services/analytics/context.test.ts`      | Piece-count, declared/pixel aspect, viewport, progress, input, auth, content-origin, rotation, timing, and assistance boundaries |
+| `apps/web/src/lib/services/analytics/run-ledger.ts`        | Versioned grouped-by-run localStorage ledger and once-per-run mark/prune policy                                                  |
+| `apps/web/src/lib/services/analytics/run-ledger.test.ts`   | Reload idempotency, grouped-run capacity, key tuple, retention, corruption, future schemas, and storage failures                 |
+| `apps/web/src/lib/services/analytics/transport.ts`         | Provider-independent transport interface                                                                                         |
+| `apps/web/src/lib/services/analytics/transports/http.ts`   | Configurable JSON batch transport plus page-hide beacon/keepalive path                                                           |
+| `apps/web/src/lib/services/analytics/transports/memory.ts` | Deterministic capture/reset/fail-next transport for tests                                                                        |
+| `apps/web/src/lib/services/analytics/transports/noop.ts`   | Disabled transport with no network activity                                                                                      |
+| `apps/web/src/lib/services/analytics/transport.test.ts`    | HTTP shape/privacy, endpoint override, page-hide, memory, and no-op behavior                                                     |
+| `apps/web/src/lib/services/analytics/queue.ts`             | Bounded queue, timers, batching, concurrency, overflow, and failure isolation                                                    |
+| `apps/web/src/lib/services/analytics/queue.test.ts`        | Fake-timer batching, overflow, failure, concurrency, and page-hide coverage                                                      |
+| `apps/web/src/lib/services/analytics/analytics.ts`         | Event materialization, validation, ledger gating, queue orchestration, and public facade                                         |
+| `apps/web/src/lib/services/analytics/analytics.test.ts`    | Sequencing, IDs/timestamps, duplicate suppression, occurrence events, invalid input, and transport failures                      |
+| `apps/web/src/lib/services/analytics/index.ts`             | Stable public exports for later product code                                                                                     |
 
 ### Documentation
 
-| File | Responsibility |
-| --- | --- |
-| `docs/analytics/event-catalog.md` | Exact event semantics, fields, units, dimensions, buckets, versioning, and extension rules |
-| `docs/analytics/client-delivery.md` | Factory ownership, ledger mark-versus-delivery semantics, queue, transports, and HPA-533/HPA-534 handoff |
-| `docs/analytics/privacy.md` | Data minimization, prohibited fields, run-ID scope, local ledger, and the production privacy/consent gate |
+| File                                | Responsibility                                                                                            |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `docs/analytics/event-catalog.md`   | Exact event semantics, fields, units, dimensions, buckets, versioning, and extension rules                |
+| `docs/analytics/client-delivery.md` | Factory ownership, ledger mark-versus-delivery semantics, queue, transports, and HPA-533/HPA-534 handoff  |
+| `docs/analytics/privacy.md`         | Data minimization, prohibited fields, run-ID scope, local ledger, and the production privacy/consent gate |
 
 No package dependency or lockfile change is expected.
 
@@ -200,20 +200,10 @@ export const ANALYTICS_MAX_COUNTER = 10_000;
 export type AnalyticsAuthenticationClass = 'anonymous' | 'authenticated';
 export type AnalyticsPuzzleSource = 'api' | 'local';
 export type AnalyticsContentOrigin = 'system' | 'player_uploaded' | 'unknown';
-export type AnalyticsPieceCountBucket =
-	| '1-24'
-	| '25-49'
-	| '50-99'
-	| '100-149'
-	| '150-225'
-	| '226+';
+export type AnalyticsPieceCountBucket = '1-24' | '25-49' | '50-99' | '100-149' | '150-225' | '226+';
 export type AnalyticsAspectBucket = 'square' | 'landscape' | 'portrait';
 export type AnalyticsViewportClass = 'mobile' | 'tablet' | 'desktop';
-export type AnalyticsPrimaryInput =
-	| 'coarse_pointer'
-	| 'fine_pointer'
-	| 'keyboard'
-	| 'unknown';
+export type AnalyticsPrimaryInput = 'coarse_pointer' | 'fine_pointer' | 'keyboard' | 'unknown';
 export type AnalyticsSessionMode = 'timed' | 'relaxed';
 export type AnalyticsSessionOrigin = 'new' | 'resumed';
 export type AnalyticsProgressBucket = '0' | '1-24' | '25-49' | '50-74' | '75-99' | '100';
@@ -346,8 +336,7 @@ export type PuzzleExitedIncompleteEventInputV1 = Extract<
 ID rules:
 
 ```ts
-export type AnalyticsDeterministicRunEventNameV1 =
-	AnalyticsOncePerRunEventInputV1['eventName'];
+export type AnalyticsDeterministicRunEventNameV1 = AnalyticsOncePerRunEventInputV1['eventName'];
 
 export function buildAnalyticsRunEventIdV1(
 	eventName: AnalyticsDeterministicRunEventNameV1,
@@ -382,11 +371,7 @@ export {
 	isPuzzleRunId,
 	isRecordPuzzleCompletionV1
 };
-export type {
-	ResultClass,
-	TimingQuality,
-	RecordPuzzleCompletionV1
-};
+export type { ResultClass, TimingQuality, RecordPuzzleCompletionV1 };
 ```
 
 ```ts
@@ -437,7 +422,7 @@ Use explicit exact-key helpers and an event-name switch. Import completion primi
 events validate canonical lowercase UUID v4 IDs. Once-per-run events validate:
 
 ```ts
-event.eventId === buildAnalyticsRunEventIdV1(event.eventName, event.runId)
+event.eventId === buildAnalyticsRunEventIdV1(event.eventName, event.runId);
 ```
 
 - [ ] **Step 5: Run focused and package tests**
@@ -495,9 +480,7 @@ export function classifyProgressBucket(
 	pieceCount: number
 ): AnalyticsProgressBucket | null;
 export function classifyPrimaryInput(snapshot: PrimaryInputSnapshot): AnalyticsPrimaryInput;
-export function classifyAssistanceMode(
-	snapshot: AssistanceUsageSnapshot
-): AnalyticsAssistanceMode;
+export function classifyAssistanceMode(snapshot: AssistanceUsageSnapshot): AnalyticsAssistanceMode;
 export function resolveAuthenticationClass(
 	status: 'loading' | 'authenticated' | 'anonymous'
 ): AnalyticsAuthenticationClass | null;
@@ -611,7 +594,7 @@ validation, corrupt reset, future-schema preservation, and read/write exceptions
 
 - [ ] **Step 2: Run the focused browser test and verify failure**
 - [ ] **Step 3: Implement latest-read grouped-run marking, tuple comparison, pruning, and
-fail-closed behavior**
+      fail-closed behavior**
 - [ ] **Step 4: Run focused tests**
 - [ ] **Step 5: Commit with `feat(web): add analytics run ledger`**
 
@@ -759,7 +742,7 @@ Behavior:
   not carry a second `enabled` flag.
 
 - [ ] **Step 1: Write failing facade and compile-time-negative tests, including the closed error
-  code union and occurrence/once-per-run ID rules**
+      code union and occurrence/once-per-run ID rules**
 - [ ] **Step 2: Run the focused test and verify failure**
 - [ ] **Step 3: Implement event materialization, ledger gating, and queue orchestration**
 - [ ] **Step 4: Add a public barrel with client/context/ledger/transport factories only**
@@ -824,7 +807,7 @@ HPA-532 requires no E2E run because no route or application-runtime wiring chang
 
 - [ ] Every HPA-532 acceptance criterion maps to a task above.
 - [ ] `completion.ts`, `puzzle-limits.ts`, and `analytics.ts` are leaf modules; none imports the root
-  barrel.
+      barrel.
 - [ ] Existing `@perseus/types` completion imports remain source-compatible.
 - [ ] No event includes puzzle/player identity or uncontrolled text.
 - [ ] Runtime validators reject extra keys at every nesting level.
@@ -839,7 +822,7 @@ HPA-532 requires no E2E run because no route or application-runtime wiring chang
 - [ ] Context is documented as an event-time snapshot.
 - [ ] Mode/result/timing/assistance/rotation cross-field invariants and numeric limits are explicit.
 - [ ] Assistance `mixed` semantics, `referenceMode`, declared-aspect precedence, and time units are
-  explicit.
+      explicit.
 - [ ] Completion data contains no redundant `placedPieceCount`.
 - [ ] Client construction requires an explicit `strictValidation` choice.
 - [ ] HTTP endpoint configuration supports production same-origin and local cross-origin use.
@@ -848,7 +831,7 @@ HPA-532 requires no E2E run because no route or application-runtime wiring chang
 - [ ] Storage and transport failures cannot escape into gameplay code.
 - [ ] No route/component imports analytics yet and no request is sent automatically.
 - [ ] HPA-533 can consume `AnalyticsBatchV1` and `isAnalyticsBatchV1` without web imports and map
-  `timingQuality`, `rotationUsed`, and `eventId` without semantic drift.
+      `timingQuality`, `rotationUsed`, and `eventId` without semantic drift.
 - [ ] HPA-534 can construct one client and emit events without queue/storage internals.
 - [ ] Documentation contains no incomplete placeholders or conflicting definitions.
 
