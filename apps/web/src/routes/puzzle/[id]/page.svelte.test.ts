@@ -1096,6 +1096,38 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.poll(() => page.getByText('TEST MISSION').query()).toBeNull();
 	});
 
+	it('clears an open session dialog when navigating to a puzzle that fails to load', async () => {
+		vi.mocked(fetchPuzzle).mockImplementation(async (id: string) => {
+			if (id === 'test-puzzle') return createMockPuzzle();
+			throw new Error('Network error');
+		});
+
+		render(PuzzlePage);
+		await expect.element(page.getByTestId('puzzle-board')).toBeVisible();
+
+		// Open the pause dialog on the active session.
+		await page.getByRole('button', { name: 'Pause mission' }).click();
+		await expect.element(page.getByRole('dialog', { name: 'Mission Paused' })).toBeVisible();
+
+		// Navigate to a puzzle whose fetch rejects: the route must tear down
+		// the prior session and its dialogs BEFORE the fetch so no stale
+		// dialog lingers over the loading screen or the error panel.
+		mockPageStore.set({
+			url: { pathname: '/puzzle/next-puzzle' },
+			params: { id: 'next-puzzle' },
+			route: { id: '/puzzle/[id]' },
+			status: 200,
+			error: null
+		});
+
+		await expect.element(page.getByText('Failed to load mission')).toBeVisible();
+
+		// The stale pause dialog must not linger over the error panel.
+		await expect
+			.poll(() => page.getByRole('dialog', { name: 'Mission Paused' }).query())
+			.toBeNull();
+	});
+
 	it('does not re-record completion on undo/redo of the final move', async () => {
 		await renderPuzzlePage();
 
@@ -1395,6 +1427,39 @@ describe('Puzzle route gameplay integration', () => {
 		expect(document.activeElement).toBe(playAgainBtn);
 		document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true }));
 		expect(document.activeElement).toBe(backToArcadeBtn);
+	});
+
+	it('moves focus into the celebration modal when it opens', async () => {
+		await renderPuzzlePage();
+
+		await placePiece(0, 0, 0);
+		await placePiece(1, 1, 0);
+		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+
+		// The first focusable control in the modal receives focus on open.
+		const playAgainBtn = await page.getByRole('button', { name: 'PLAY AGAIN' }).element();
+		await expect.poll(() => document.activeElement).toBe(playAgainBtn);
+	});
+
+	it('hides the Pause control once the session is completed', async () => {
+		await renderPuzzlePage();
+
+		// Positive control: an active session shows the Pause button.
+		await expect.element(page.getByLabelText('Pause mission')).toBeVisible();
+
+		await placePiece(0, 0, 0);
+		await placePiece(1, 1, 0);
+		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+
+		// Dismiss the celebration modal (Escape) on the completed session.
+		const modal = await page.getByTestId('celebration-modal').element();
+		modal.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+		await expect.poll(() => page.getByTestId('celebration-modal').query()).toBeNull();
+
+		// The toolbar stays visible but Pause is no longer available: the
+		// session is completed, so pausing/resume would be a no-op.
+		await expect.element(page.getByTestId('puzzle-toolbar')).toBeVisible();
+		await expect.poll(() => page.getByLabelText('Pause mission').query()).toBeNull();
 	});
 
 	it('blocks undo and redo keyboard shortcuts while celebration modal is open', async () => {

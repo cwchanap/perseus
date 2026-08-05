@@ -14,6 +14,7 @@
 		onPause?: () => void;
 		onOpenSetup?: () => void;
 		canOpenSetup?: boolean;
+		canPause?: boolean;
 		canUndo: boolean;
 		canRedo: boolean;
 		rotationEnabled: boolean;
@@ -34,6 +35,7 @@
 		onPause,
 		onOpenSetup,
 		canOpenSetup = false,
+		canPause = false,
 		canUndo,
 		canRedo,
 		rotationEnabled,
@@ -109,7 +111,9 @@
 		</span>
 	{/if}
 
-	<button aria-label="Pause mission" onclick={onPause} class={toolbarButtonClass}> Pause </button>
+	{#if canPause}
+		<button aria-label="Pause mission" onclick={onPause} class={toolbarButtonClass}> Pause </button>
+	{/if}
 
 	{#if canOpenSetup}
 		<button aria-label="Open mission setup" onclick={onOpenSetup} class={toolbarButtonClass}>

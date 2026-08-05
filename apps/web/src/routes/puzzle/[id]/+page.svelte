@@ -11,6 +11,7 @@
 	import type { Puzzle, PlacedPiece, PuzzlePiece as TPuzzlePiece } from '$lib/types/puzzle';
 	import type { Rotation } from '$lib/types/gameplay';
 	import type { ViewportBounds } from '$lib/services/gameplay/viewport';
+	import { modalFocus } from '$lib/actions/modalFocus';
 	import PuzzleBoard from '$lib/components/PuzzleBoard.svelte';
 	import PuzzlePiece from '$lib/components/PuzzlePiece.svelte';
 	import PuzzleToolbar from '$lib/components/PuzzleToolbar.svelte';
@@ -274,6 +275,11 @@
 	const canOpenSetup = $derived(
 		sessionState?.lifecycle === 'active' && sessionState.hasUserActivity === false
 	);
+
+	// The Pause control is only meaningful while a run is actively playing:
+	// on a completed session (celebration dismissed) pausing would open a
+	// dialog whose Resume is a no-op.
+	const canPause = $derived(sessionState?.lifecycle === 'active');
 
 	// Any open session dialog (or the celebration modal) makes the page inert
 	// so focus and interaction stay contained in the dialog surface.
@@ -657,6 +663,16 @@
 				sessionState = null;
 			}
 
+			// Route-local dialog state is never serialized; clear it as soon
+			// as the prior session is torn down and BEFORE the next puzzle
+			// fetch, so a stale dialog or celebration cannot linger over the
+			// loading screen or the error panel if the load fails. The entry
+			// handling below re-opens dialogs as needed from the new puzzle's
+			// restored state.
+			sessionDialog = null;
+			restartConfirmation = false;
+			showCelebration = false;
+
 			// The prior session has now been flushed and disposed. Only now is
 			// it safe to clear the read-only guard: persistSessionFinal above
 			// reads persistenceReadOnly (via checkpointSession), so resetting
@@ -716,13 +732,9 @@
 			puzzle = loadedPuzzle;
 			// Restore the celebration modal for a previously completed session
 			// so the user retains access to Play Again and retry controls.
-			// Fresh/incompatible sessions start without the modal.
+			// Fresh/incompatible sessions start without the modal. (The
+			// dialog/celebration reset itself ran before the fetch above.)
 			showCelebration = restored?.lifecycle === 'completed';
-			// Route-local dialog state is never serialized; reset it per
-			// puzzle load so a stale dialog from the prior puzzle cannot trap
-			// the new one (the entry handling below re-opens as needed).
-			sessionDialog = null;
-			restartConfirmation = false;
 			showReferenceOverlay = false;
 			clearHintTarget();
 			if (rejectedPieceTimeout !== null) {
@@ -1126,6 +1138,11 @@
 	}
 
 	function openPauseDialog(presentation: 'resume' | 'paused' = 'paused'): void {
+		// Defensive guard: the pause dialog is only meaningful for a run that
+		// is active or already paused. A programmatic call on a completed or
+		// setup session (e.g. after the celebration modal was dismissed) must
+		// not present "Mission Paused" — Resume would be a no-op behind it.
+		if (sessionState?.lifecycle !== 'active' && sessionState?.lifecycle !== 'paused') return;
 		if (sessionState?.lifecycle === 'active') {
 			clearTransientGameplayState();
 			sessionStore?.dispatch({ type: 'pause' });
@@ -1224,65 +1241,6 @@
 			pausePresentation = 'paused';
 			sessionDialog = 'pause';
 		}
-	}
-
-	function manageModalFocus(node: HTMLElement, isOpen: boolean) {
-		let previousFocus: HTMLElement | null = null;
-		let focusableElements: HTMLElement[] = [];
-		let firstElement: HTMLElement | null = null;
-		let lastElement: HTMLElement | null = null;
-		let focusTimeout: ReturnType<typeof setTimeout> | null = null;
-		let restoreFocusTimeout: ReturnType<typeof setTimeout> | null = null;
-
-		const getFocusableElements = (element: HTMLElement) => {
-			return Array.from(
-				element.querySelectorAll<HTMLElement>(
-					'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-				)
-			).filter((el) => !el.hasAttribute('disabled') && el.offsetParent !== null);
-		};
-
-		const trapFocus = (e: KeyboardEvent) => {
-			if (e.key !== 'Tab') return;
-
-			if (e.shiftKey) {
-				if (document.activeElement === firstElement) {
-					e.preventDefault();
-					lastElement?.focus();
-				}
-			} else if (document.activeElement === lastElement) {
-				e.preventDefault();
-				firstElement?.focus();
-			}
-		};
-
-		if (isOpen) {
-			previousFocus = document.activeElement as HTMLElement;
-			focusableElements = getFocusableElements(node);
-			firstElement = focusableElements[0] || null;
-			lastElement = focusableElements[focusableElements.length - 1] || null;
-			focusTimeout = setTimeout(() => firstElement?.focus(), 100);
-			document.addEventListener('keydown', trapFocus);
-		}
-
-		return {
-			destroy() {
-				if (focusTimeout !== null) {
-					clearTimeout(focusTimeout);
-					focusTimeout = null;
-				}
-				if (restoreFocusTimeout !== null) {
-					clearTimeout(restoreFocusTimeout);
-					restoreFocusTimeout = null;
-				}
-
-				document.removeEventListener('keydown', trapFocus);
-
-				if (previousFocus) {
-					restoreFocusTimeout = setTimeout(() => previousFocus?.focus(), 0);
-				}
-			}
-		};
 	}
 </script>
 
@@ -1425,6 +1383,7 @@
 							onPause={handleToolbarPause}
 							onOpenSetup={() => showMissionSetup(false)}
 							{canOpenSetup}
+							{canPause}
 							{canUndo}
 							{canRedo}
 							{rotationEnabled}
@@ -1528,7 +1487,7 @@
 			role="dialog"
 			aria-modal="true"
 			aria-labelledby="modal-title"
-			use:manageModalFocus={showCelebration}
+			use:modalFocus
 		>
 			<div class="modal-scan-line"></div>
 			<div class="modal-top-line"></div>

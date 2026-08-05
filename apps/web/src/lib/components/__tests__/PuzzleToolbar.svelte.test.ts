@@ -251,4 +251,24 @@ describe('PuzzleToolbar', () => {
 			await expect.element(page.getByLabelText('Reference')).toBeInTheDocument();
 		});
 	});
+
+	describe('canPause gating', () => {
+		it('shows Pause button when canPause is true', async () => {
+			renderToolbar({ canPause: true });
+
+			await expect.element(page.getByLabelText('Pause mission')).toBeInTheDocument();
+		});
+
+		it('hides Pause button when canPause is false', async () => {
+			renderToolbar({ canPause: false });
+
+			await expect.poll(() => page.getByLabelText('Pause mission').query()).toBeNull();
+		});
+
+		it('hides Pause button by default when canPause is not provided', async () => {
+			renderToolbar();
+
+			await expect.poll(() => page.getByLabelText('Pause mission').query()).toBeNull();
+		});
+	});
 });
