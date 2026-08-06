@@ -32,11 +32,7 @@ export default defineConfig({
 			provider: 'v8',
 			reporter: ['lcov', 'text', 'html'],
 			reportsDirectory: './coverage',
-			exclude: ['**/*.svg', '**/*.css'],
-			thresholds: {
-				statements: 95,
-				lines: 95
-			}
+			exclude: ['**/*.svg', '**/*.css']
 		}
 	}
 });

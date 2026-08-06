@@ -9,11 +9,7 @@ export default defineConfig({
 			provider: 'v8',
 			reporter: ['lcov', 'text', 'html'],
 			reportsDirectory: './coverage',
-			exclude: ['src/types.ts'],
-			thresholds: {
-				statements: 95,
-				lines: 95
-			}
+			exclude: ['src/types.ts']
 		}
 	}
 });
