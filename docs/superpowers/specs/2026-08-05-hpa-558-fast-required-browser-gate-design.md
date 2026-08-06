@@ -8,120 +8,219 @@
 
 ## Objective
 
-Reduce Perseus browser CI to one fast required check for ordinary code changes while keeping the
-existing WebKit, extended, accessibility, and stability suites available as an explicit
-pre-release lane.
+Reduce Perseus's automatic CI cost for ordinary development while preserving one fast Chromium
+E2E lane and keeping broader browser coverage available before releases.
 
-This optimizes for fast, inexpensive hobby-project iteration. It changes when existing coverage
-runs; it does not delete useful E2E scenarios, redesign the Playwright harness, or add a CI
-orchestration framework.
+The final shape is deliberately small:
+
+- documentation-only changes skip all three automatic code workflows at the trigger;
+- browser-mode unit tests install Chromium only;
+- one automatic E2E job runs production-bundle safety plus Chromium desktop/mobile smoke;
+- one manual job runs WebKit, extended, accessibility, and stability suites;
+- the CI-only browser-install dry-run parser and its tests are deleted.
+
+This changes when existing tests run. It does not delete product scenarios, add a scheduler, add
+caching infrastructure, or create a path-classification framework.
 
 ## Current Repository Baseline
 
-`.github/workflows/e2e-test.yml` currently creates three jobs on a normal pull request:
+Three workflows run on every pull request to `main` or `develop`:
 
-1. `Production bundle safety`
-2. `Chromium smoke`
-3. `WebKit critical`
+1. `.github/workflows/build-lint.yml`
+2. `.github/workflows/unit-test.yml`
+3. `.github/workflows/e2e-test.yml`
 
-Each browser job checks out the repository, installs dependencies, validates the browser install
-contract, and downloads Playwright browsers. A push to `main` also runs the five-project extended
-suite and accessibility scans. The stability command exists locally but has no explicit operator
-cadence.
+A documentation-only pull request therefore still performs a full build/lint pass, installs
+Playwright browsers for browser-mode unit tests, and starts the E2E workflow.
 
-The broad suites and their package commands are useful. The continuous installation and execution
-cost is the part being reduced.
+The current browser costs are broader than the original HPA-558 plan accounted for:
+
+- `unit-test.yml` runs `test:install-browsers`, which installs Chromium and WebKit;
+- `apps/web/vite.config.ts` declares only a Chromium Vitest browser instance;
+- `e2e-test.yml` separately installs Chromium and WebKit in its browser jobs;
+- `production-bundle-safety` duplicates checkout, Bun setup, and dependency installation;
+- the install dry-run parser is executed repeatedly to protect CI configuration rather than
+  product behavior.
+
+At planning time, authenticated repository-admin API checks reported no repository rulesets and no
+branch protection on `main`. No check is currently required by GitHub settings.
 
 ## Sequencing Constraint
 
-HPA-558 must be implemented after HPA-555.
+HPA-558's E2E workflow implementation must follow HPA-555.
 
-`apps/web/playwright.config.ts` currently boots the duplicate Bun HTTP API. HPA-555 replaces that
-server with the Worker-backed local runtime and makes one contributor guide canonical. HPA-558
-must start from or rebase onto a `main` commit containing those changes so its workflow and active
-documentation describe the runtime that will remain.
-
-The planning documents may merge before HPA-555. The implementation must not begin until:
+`apps/web/playwright.config.ts` currently starts the duplicate Bun HTTP API. HPA-555 replaces that
+server with the Worker-backed local runtime. The implementation branch must start from or rebase
+onto a `main` commit where:
 
 - Playwright no longer runs `build:bun && start:bun`;
-- the Worker-backed E2E server is green; and
-- `AGENTS.md` is a short pointer rather than a duplicate of `CLAUDE.md`.
+- the Worker-backed E2E server passes Chromium smoke; and
+- the deleted Bun HTTP scripts are absent.
+
+The planning documents may merge before HPA-555.
+
+`AGENTS.md` requires no separate handling in HPA-558. It is a symlink to `CLAUDE.md`, so editing the
+canonical guide updates what both entry points expose.
 
 ## Approaches Considered
 
-### 1. Skip the required workflow with `paths-ignore`
+### 1. Inline Git diff classifier inside the E2E job
 
-This is the smallest YAML diff, but a workflow skipped by path filtering can leave a required
-check pending and block the pull request. That conflicts with the requirement that documentation-
-only pull requests remain mergeable.
+This keeps the E2E workflow present for documentation-only pull requests and conditionally skips
+its expensive steps. It requires full-history checkout, custom Bash, duplicated fixture tests, and
+an always-on summary step.
+
+That machinery was originally justified by required-check pending behavior. This repository has no
+required checks or branch protection, so the complexity provides no current value.
 
 Rejected.
 
-### 2. Add a path-filter job, browser job, and required summary job
+### 2. Committed reusable path-classifier script
 
-This can make a final status succeed when the browser job is skipped, but introduces three jobs,
-`needs` wiring, and result aggregation solely to avoid one browser run.
+A committed shell script and shell tests would be preferable to copying classifier logic into a
+temporary file, and it would follow the repository's existing tested-shell convention. It is still
+unnecessary because trigger-level path filtering fully solves the current problem.
 
-Rejected as unnecessary orchestration.
+Rejected under YAGNI.
 
-### 3. Keep one required job and skip only its expensive steps
+### 3. Trigger-level documentation filters plus direct browser commands
 
-The existing `Chromium smoke` job remains the required status check. It always starts, checks out
-the repository, classifies changed paths, and writes a scope summary. Documentation-only changes
-finish successfully without Bun or Playwright setup. Any code change, unknown event, missing
-comparison SHA, or diff-resolution failure runs the full browser gate.
+Add the same `paths-ignore` rules to all three automatic code workflows. Add a Chromium-only
+browser-install script, use it in browser-mode unit tests and the automatic Chromium E2E lane, and
+keep the full Chromium+WebKit install for the manual pre-release lane.
+
+This is the smallest implementation, removes more CI cost than an E2E-only classifier, and matches
+the repository's actual lack of required-check enforcement.
 
 Chosen.
 
-## Chosen Workflow Shape
+## Documentation-Only Trigger Policy
 
-Keep one workflow file: `.github/workflows/e2e-test.yml`.
+Apply this policy to `push` and `pull_request` in:
 
-```text
-pull_request or push
-  |
-  v
-Chromium smoke (required; existing check name)
-  |
-  +-- checkout with full history
-  +-- classify changed paths conservatively
-  +-- write an unconditional job summary
-  +-- docs-only -> successful no-op
-  +-- otherwise:
-        setup Bun
-        install dependencies once
-        assert the production bundle is harness-free
-        install Chromium once
-        run Chromium desktop/mobile smoke
+- `.github/workflows/build-lint.yml`
+- `.github/workflows/unit-test.yml`
+- `.github/workflows/e2e-test.yml`
 
-workflow_dispatch
-  |
-  v
-Manual pre-release suites
-  |
-  +-- setup Bun and install dependencies once
-  +-- install Chromium + WebKit once
-  +-- run WebKit critical
-  +-- run extended five-project suite
-  +-- run accessibility suite
-  +-- run Chromium stability repeats
+```yaml
+paths-ignore:
+  - 'docs/**'
+  - '**/*.md'
+  - '**/*.mdx'
 ```
 
-There is no matrix, shard scheduler, dynamic risk score, cache service, retry policy, path-filter
-dependency, suite-selection input, or result aggregation layer.
+A change is skipped only when every changed path is ignored by GitHub's trigger filter. Mixed
+documentation and code changes still run all applicable workflows.
 
-## Event and Concurrency Model
+This policy intentionally covers all three workflows rather than only E2E:
 
-Retain the current target branches:
+- Unit Tests is browser CI because it installs Playwright and runs browser-mode Vitest.
+- Build & Lint performs no useful validation for the ignored documentation paths and would remain a
+  large share of docs-only CI cost if left automatic.
+- One shared trigger policy is easier to understand than different definitions of
+  "documentation-only" in each workflow.
 
-- `pull_request` to `main` or `develop`
-- `push` to `main` or `develop`
-- `workflow_dispatch`
+Do not add a custom path action, shell classifier, `fetch-depth: 0`, summary job, or classifier
+fixture harness.
 
-Do not add trigger-level `paths` or `paths-ignore`; the required check must still reach a terminal
-status for documentation-only pull requests.
+### Future branch-protection note
 
-Use workflow-level concurrency:
+If required checks or repository rulesets are added later, revisit this policy before making a
+path-filtered workflow required. A skipped required workflow can remain pending. That future
+configuration change should solve the problem when it exists; HPA-558 does not add protection
+machinery preemptively.
+
+## Browser Installation Contract
+
+`apps/web/package.json` exposes two direct commands:
+
+```json
+"test:install-browsers:chromium": "playwright install --with-deps --only-shell chromium",
+"test:install-browsers": "playwright install --with-deps --only-shell chromium webkit"
+```
+
+Use the Chromium-only command in:
+
+- `.github/workflows/unit-test.yml`
+- automatic `Chromium smoke` E2E job
+
+Use the full command only in:
+
+- the manual pre-release E2E job;
+- local development when a contributor explicitly wants broad Chromium+WebKit coverage.
+
+Delete:
+
+- `test:install-browsers:dry-run`
+- `apps/web/scripts/assert-browser-install.ts`
+- `apps/web/scripts/assert-browser-install.test.ts`
+
+The package commands are the source of truth. No repository parser validates Playwright CLI
+dry-run output.
+
+## Automatic E2E Lane
+
+Keep `.github/workflows/e2e-test.yml` as one workflow with mutually exclusive automatic and manual
+jobs.
+
+The automatic job keeps ID and display name:
+
+```text
+chromium-smoke / Chromium smoke
+```
+
+For code changes, run in order:
+
+1. checkout;
+2. setup Bun `1.3.14`;
+3. install dependencies once;
+4. run `bun run --cwd apps/web test:e2e:assert-production-bundle`;
+5. run `bun run --cwd apps/web test:install-browsers:chromium`;
+6. run `bun run --cwd apps/web test:e2e:smoke -- --retries=0`;
+7. upload failure artifacts as `chromium-smoke-results`.
+
+The production-bundle assertion stays before browser installation so harness leakage fails without
+paying the browser-download cost.
+
+Remove the standalone `production-bundle-safety` and `webkit-critical` jobs. Remove automatic
+extended/accessibility execution on `main`.
+
+The job is the repository's single automatic **E2E** browser lane. Browser-mode unit tests remain
+in `unit-test.yml` and use Chromium only.
+
+## Manual Pre-Release Lane
+
+Repurpose the existing broad-suite job into:
+
+```text
+manual-pre-release / Manual pre-release suites
+```
+
+Run it only for `workflow_dispatch`.
+
+The job performs one checkout, one Bun setup, one dependency install, and one full
+Chromium+WebKit browser install. It then runs sequentially:
+
+1. WebKit critical with zero retries;
+2. extended five-project coverage with zero retries;
+3. accessibility coverage with zero retries;
+4. Chromium stability repeats.
+
+The lane remains fail-fast. Do not add:
+
+- a matrix;
+- `continue-on-error`;
+- result aggregation;
+- suite-selection inputs;
+- retries;
+- sharding.
+
+Use the repository's pinned artifact action and upload one failure artifact:
+`manual-pre-release-results`.
+
+## Concurrency
+
+Add workflow-level concurrency to E2E:
 
 ```yaml
 concurrency:
@@ -131,230 +230,113 @@ concurrency:
   cancel-in-progress: true
 ```
 
-Including `event_name` prevents a push from canceling a manual pre-release run on the same branch.
-A newer event for the same PR cancels its older run. A newer manual dispatch on the same ref
-supersedes the older manual run.
+Including `event_name` prevents a push run from canceling a manual dispatch on the same branch.
+Newer events for the same PR cancel older automatic E2E work. Newer manual dispatches on the same
+ref supersede older manual runs.
 
-## Documentation-Only Classification
-
-The required job uses the repository checkout and `git diff --name-only`; it does not call a
-third-party path-filter action or a shared repository script.
-
-Comparison ranges:
-
-- pull request: `base.sha...head.sha`;
-- push: `before..github.sha`;
-- manual dispatch: handled by the mutually exclusive manual job.
-
-A change is documentation-only only when every resolved path matches one of:
-
-- `docs/**`
-- `**/*.md`
-- `**/*.mdx`
-
-Everything else runs the browser gate.
-
-The classifier is deliberately fail-open toward validation:
-
-- an all-zero or missing push `before` SHA runs the browser gate;
-- an unknown event runs the browser gate;
-- an empty changed-file list runs the browser gate;
-- an invalid or unavailable Git range runs the browser gate;
-- any `git diff` failure is caught and converted to `run_browser=true` rather than failing the job.
-
-The checkout uses `fetch-depth: 0`. A false negative in classification therefore spends extra CI
-minutes; it does not skip validation or block merging because of classifier mechanics.
-
-## Scope Summary
-
-After classification, one unconditional step writes to `$GITHUB_STEP_SUMMARY`:
-
-- `Browser gate will run.` for browser-relevant or conservatively unresolved changes;
-- `Documentation-only change; Bun and Playwright setup skipped.` for a successful no-op.
-
-This makes the outcome visible in the GitHub UI without requiring readers to inspect shell logs.
-
-## Required `Chromium smoke` Job
-
-Keep job ID `chromium-smoke` and display name `Chromium smoke` so the surviving branch-protection
-check remains stable.
-
-For browser-relevant changes, run in order:
-
-1. checkout with credentials disabled and `fetch-depth: 0`;
-2. classify changed paths;
-3. write the scope summary;
-4. setup Bun `1.3.14`;
-5. run `bun install` once;
-6. run `bun run --cwd apps/web test:e2e:assert-production-bundle`;
-7. run `bun run --cwd apps/web test:install-browsers:chromium` once;
-8. run `bun run --cwd apps/web test:e2e:smoke -- --retries=0`;
-9. upload failure artifacts with the existing pinned `upload-artifact` action.
-
-The production-bundle assertion stays before the browser download so a harness leak fails without
-paying the browser-install cost.
-
-For documentation-only changes, steps 4-9 are skipped and the job succeeds after the explicit
-summary.
-
-## Manual Pre-Release Job
-
-Add one mutually exclusive job in the same workflow:
-
-```yaml
-if: github.event_name == 'workflow_dispatch'
-```
-
-The required Chromium job uses the inverse condition. A manual dispatch therefore runs only the
-broad lane.
-
-The manual job installs dependencies once and runs
-`bun run --cwd apps/web test:install-browsers` once, then executes sequentially:
-
-1. `bun run --cwd apps/web test:e2e:webkit -- --retries=0`
-2. `bun run --cwd apps/web test:e2e:extended -- --retries=0`
-3. `bun run --cwd apps/web test:e2e:a11y -- --retries=0`
-4. `bun run --cwd apps/web test:e2e:stability`
-
-The lane is intentionally fail-fast. It does not use `continue-on-error`, a matrix, or a final
-result aggregator. One failure stops later suites; fix it and rerun the lane.
-
-Upload failure artifacts as `manual-pre-release-results` with the repository's existing pinned
-action:
-
-```yaml
-uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-```
-
-## Pre-Release Operator Habit
-
-Moving broad suites out of automatic `main` pushes is an intentional cost tradeoff, but they must
-not become forgotten commands.
-
-Update `docs/OPERATOR_RUNBOOK.md` with one explicit habit:
-
-> Before a planned production release or before merging a release candidate to `main`, dispatch
-> `E2E Tests` → `Manual pre-release suites` on the candidate branch or commit and require it to
-> pass. Ordinary development pushes do not run this lane automatically.
-
-This is a human release checkpoint, not a new automatic deployment dependency. Do not wire the
-manual lane into every `main` push or add release orchestration in HPA-558.
-
-## Browser Installation Contract
-
-`apps/web/package.json` keeps the full install command and adds one direct Chromium-only command:
-
-```json
-"test:install-browsers:chromium": "playwright install --with-deps --only-shell chromium",
-"test:install-browsers": "playwright install --with-deps --only-shell chromium webkit"
-```
-
-Delete:
-
-- `test:install-browsers:dry-run`;
-- `apps/web/scripts/assert-browser-install.ts`;
-- `apps/web/scripts/assert-browser-install.test.ts`.
-
-The parser and its tests defend CI download configuration rather than product behavior. The two
-package scripts are the readable source of truth for browser installation.
-
-Do not edit completed HPA-226 design or plan history. Remove stale active references from the
-workflow, package manifest, canonical contributor guide, and E2E README.
+No concurrency change is needed for Build & Lint or Unit Tests in HPA-558.
 
 ## Active Documentation
 
-Update these active surfaces:
+Update:
 
-- `apps/web/e2e/README.md` — full local/required/manual E2E command reference;
-- `CLAUDE.md` — concise current cadence table used by coding agents;
-- `docs/OPERATOR_RUNBOOK.md` — pre-release dispatch habit.
+- `apps/web/e2e/README.md`
+- `CLAUDE.md`
+- `docs/OPERATOR_RUNBOOK.md`
 
-Because HPA-555 is a prerequisite, `AGENTS.md` should already be a short pointer to the canonical
-contributor guide. Do not copy the cadence table back into it. During implementation, search all
-non-historical files for `PR gate`, `main only`, and the broad command names; update any remaining
-active cadence statement without modifying `docs/superpowers/specs/**` or
-`docs/superpowers/plans/**` history.
+Do not edit `AGENTS.md` separately; it is a symlink to `CLAUDE.md`.
 
 The active docs must state:
 
-- `test:e2e:smoke` is the only required browser suite for code changes;
-- the production-bundle assertion runs in the same required job;
+- documentation-only changes skip Build & Lint, Unit Tests, and E2E workflows;
+- `test:e2e:smoke` is the automatic Chromium desktop/mobile E2E lane;
+- the production-bundle assertion runs in the same automatic E2E job;
+- browser-mode unit tests install Chromium only;
 - WebKit, extended, accessibility, and stability are local/manual pre-release commands;
-- documentation-only changes receive a successful no-op `Chromium smoke` check;
-- the custom browser-install dry-run assertion no longer exists;
-- the manual lane is dispatched before planned production releases.
+- the dry-run assertion no longer exists;
+- operators dispatch the manual lane before a planned production release.
 
-## Branch Protection Hard Gate
+Do not edit completed HPA-226 design or implementation-plan history.
 
-After the implementation workflow is merged to the default branch, immediately update the
-repository ruleset or branch protection before treating HPA-558 as complete or opening/merging
-follow-up pull requests:
+## Release Habit
 
-- require `Chromium smoke`;
-- remove `Production bundle safety` if currently required;
-- remove `WebKit critical` if currently required;
-- do not require `Manual pre-release suites`.
+Before a planned production release or before merging a release candidate to `main`, dispatch:
 
-This ordering is mandatory. If removed jobs remain required, later pull requests can remain
-pending forever. The documentation-only probe happens only after the protection settings are
-updated.
+```text
+E2E Tests -> Manual pre-release suites
+```
 
-## Failure Behavior and Artifacts
+Require the manual run to pass on the candidate branch or commit.
 
-- classifier resolution failure runs the browser gate instead of failing the classifier step;
-- production-bundle failure stops before Chromium installation;
-- Chromium installation or smoke failure fails the required check;
-- manual-suite failure stops later manual steps and fails the manual job;
-- required failures retain `chromium-smoke-results`;
-- manual failures use `manual-pre-release-results`;
-- no retries are added.
+This is a deliberate human release checkpoint. HPA-558 does not add a weekly schedule or wire broad
+tests into every deploy. A scheduled lane would reintroduce automatic cost and is unnecessary while
+releases are occasional and controlled by one operator.
+
+## Risks and Tradeoffs
+
+### Broad browser regressions can live longer between releases
+
+WebKit, accessibility, extended layout, and stability regressions will not be detected on every
+commit. The accepted mitigation is the documented manual pre-release run.
+
+If release frequency grows or manual runs are repeatedly missed, a scheduled broad lane can be
+considered in a later ticket with evidence that the operator habit is insufficient.
+
+### Trigger filters assume no required checks
+
+The chosen `paths-ignore` approach is correct for the repository's current unprotected branches.
+Adding required checks later requires revisiting path filtering.
+
+### Documentation-only changes receive no automatic code checks
+
+The ignored paths are Markdown/MDX and `docs/**`; current code workflows do not provide meaningful
+documentation-specific validation for them. A dedicated docs lint workflow can be introduced later
+only if documentation validation becomes valuable.
 
 ## Validation
 
-Before HPA-558 is complete:
+Before implementation is complete:
 
-1. Confirm HPA-555 is on `main` and Playwright uses the Worker-backed API server.
-2. Format-check the workflow, package manifest, E2E README, canonical guide, and runbook.
-3. Confirm no active references remain to the deleted dry-run parser or old CI cadence.
-4. Exercise classifier fixtures for docs-only, mixed paths, empty changes, all-zero `before`, and
-   an invalid diff range; unresolved cases must select browser CI without failing the step.
-5. Run the production-bundle assertion locally.
-6. Install Chromium through the new package command.
-7. Run Chromium desktop/mobile smoke with zero retries.
-8. Use Playwright `--list` to confirm all four broad commands still select tests.
-9. Dispatch the manual lane on the implementation branch and confirm one dependency install and
-   one browser install precede the four suites.
-10. Confirm a superseded PR run is canceled.
-11. Merge the implementation workflow.
-12. Immediately update branch protection to require only `Chromium smoke` among these browser
-    checks.
-13. Open a documentation-only probe PR and confirm a successful no-op check with no Bun or browser
-    setup.
-14. Open or reuse a code PR and confirm a failing `Chromium smoke` blocks merging.
+1. Confirm HPA-555 is merged and Playwright uses the Worker-backed API.
+2. Format-check the three workflows, package manifest, E2E README, canonical guide, and runbook.
+3. Confirm all three automatic workflows contain identical docs-only `paths-ignore` patterns.
+4. Confirm `unit-test.yml` and automatic E2E install Chromium only.
+5. Confirm the manual lane installs Chromium+WebKit once.
+6. Confirm no active references remain to the dry-run command or parser.
+7. Run the production-bundle assertion locally.
+8. Run browser-mode unit tests with the Chromium-only install.
+9. Run Chromium desktop/mobile smoke with zero retries.
+10. Use Playwright `--list` to confirm all four broad commands still select tests.
+11. Dispatch the manual lane on the implementation branch and confirm the four suites run
+    sequentially.
+12. After merge, open a documentation-only probe PR and confirm Build & Lint, Unit Tests, and E2E
+    are not created.
+13. Confirm a mixed docs+code PR still starts all three automatic workflows.
+14. Confirm a superseded automatic E2E run is canceled.
 
 ## Non-Goals
 
+- adding branch protection or repository rulesets;
+- adding a custom path classifier or committed classifier tests;
+- adding a weekly broad-suite schedule;
 - deleting or rewriting E2E scenarios;
 - adding Firefox or physical-device coverage;
-- adding retries, sharding, suite-selection inputs, risk scoring, or test-impact analysis;
-- adding dependency or Playwright browser caches;
-- changing Playwright projects or tags;
+- adding retries, sharding, matrices, caches, risk scoring, or test-impact analysis;
+- changing Playwright projects or test tags;
 - changing the HPA-555 Worker-backed E2E server;
-- preserving the custom install assertion for compatibility;
-- automatically running broad suites on every `main` push;
-- creating a release automation system.
+- preserving the browser-install parser for compatibility.
 
 ## Acceptance Mapping
 
 | Acceptance criterion | Design response |
 | --- | --- |
-| One required browser E2E job | Preserve `Chromium smoke` as the only required job. |
-| Production bundle plus Chromium desktop/mobile smoke | Run both sequentially after one dependency install. |
+| One automatic browser E2E job | Preserve `Chromium smoke`; browser-mode unit tests remain separate. |
+| Production bundle plus Chromium smoke | Run both sequentially after one dependency install. |
 | Broad suites are manual/pre-release | Run WebKit, extended, accessibility, and stability only on dispatch. |
-| Superseded runs cancel | Add event/ref concurrency with `cancel-in-progress: true`. |
-| Docs-only changes skip browser setup | Keep the required job alive, classify conservatively, summarize, and gate expensive steps. |
-| Classifier failures do not block | Catch invalid ranges and run the browser gate. |
-| Broad commands remain runnable | Preserve and document all four commands plus a release cadence. |
-| No matrix or custom orchestration | Use two mutually exclusive sequential jobs and one inline classifier. |
-| Remove setup-only assertion | Delete the dry-run package command, parser, and parser tests. |
-| Required checks remain mergeable | Make branch-protection cleanup an immediate post-merge hard gate. |
+| Superseded E2E runs cancel | Add event/ref concurrency with `cancel-in-progress: true`. |
+| Docs-only changes skip browser CI | Apply trigger filters to E2E and browser-mode Unit Tests. |
+| Docs-only changes avoid wasted code CI | Apply the same filter to Build & Lint. |
+| Broad commands remain runnable | Preserve all commands and document a release habit. |
+| No matrix or orchestration layer | Use direct trigger filters and two sequential E2E jobs. |
+| Remove setup-only assertion | Delete the dry-run command, parser, and parser tests. |
+| Unit tests do not download WebKit | Use the Chromium-only install command in `unit-test.yml`. |
