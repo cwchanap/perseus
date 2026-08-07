@@ -18,7 +18,7 @@
 - Preserve generic roadmap/non-goal wording such as “do not add analytics” when it protects gameplay scope. Remove only obsolete implementation/rollout assumptions.
 - HPA-533, HPA-534, and HPA-535 stay canceled. Do not recreate their collector, instrumentation, dashboard, or baseline work under a different name.
 - Future analytics work starts from a new, smaller ticket only when real users exist and a specific decision needs usage data, operating cost/reliability needs production measurement, or an experiment has a defined metric and action threshold.
-- The main documentation risk is stale PRD language silently re-establishing analytics as a near-term prerequisite. Task 3 therefore performs an explicit full PRD defer sweep and ends with a residual search that must be empty.
+- The main documentation risk is stale PRD language silently re-establishing analytics as a near-term prerequisite. Task 3 therefore performs an explicit full PRD defer sweep and ends with residual searches that must leave only deliberate defer/future-scope language.
 
 ---
 
@@ -379,9 +379,9 @@ At the top of `## Document History`, add this row before `2.1`:
 
 Do not alter unrelated roadmap risks or future feature descriptions in this task.
 
-- [ ] **Step 6: Run the residual analytics-rollout search**
+- [ ] **Step 6: Run the residual analytics-rollout searches**
 
-Run:
+First, fail on exact obsolete rollout language:
 
 ```bash
 rg -n "HPA-53[2345]|Analytics Engine|Add real product analytics|Admin analytics dashboard|Recommended first analytics events|Suggested first measurable KPIs|Implement analytics before setting user growth targets|Requires analytics implementation" \
@@ -391,7 +391,13 @@ rg -n "HPA-53[2345]|Analytics Engine|Add real product analytics|Admin analytics 
 
 Expected: no matches.
 
-Generic statements such as “do not add analytics,” “analytics is deferred,” or future work gated by the explicit revisit criteria are intentionally allowed.
+Then review all remaining analytics references rather than pretending every use of the word must disappear:
+
+```bash
+rg -n "analytics|event tracking|dashboard" docs/PRD.md
+```
+
+Expected: only deliberate current-state/defer/future-scope language consistent with the Metrics revisit criteria. There must be no wording that makes analytics a prerequisite for current solo gameplay, prescribes the deleted HPA-532 event catalog, or requires a custom analytics platform.
 
 Also verify the retained hash dependency still has a real consumer:
 
