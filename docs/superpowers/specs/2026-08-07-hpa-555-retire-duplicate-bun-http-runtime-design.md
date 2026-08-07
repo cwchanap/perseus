@@ -15,6 +15,7 @@ The API currently has two parallel HTTP stacks:
 - `apps/api/package.json` already uses `wrangler dev` for normal API development and Wrangler for the production build while still exposing `dev:bun`, `build:bun`, and `start:bun`.
 - `apps/web/playwright.config.ts` is the important remaining consumer of the Bun HTTP server: it builds and starts the Bun API on port 3999 for gameplay E2E.
 - `scripts/admin-upload-puzzle.ts` still defaults local uploads to port 3000 even though the canonical Wrangler development server is port 4690.
+- `apps/api/.env.example` still documents Bun-only `PORT` and `DATA_DIR` settings.
 
 The Worker implementation is the canonical runtime. It already owns Cloudflare bindings, scheduled cleanup, production routing, and the richer route/service implementations. Maintaining parity with the Bun filesystem implementation adds duplicate code, duplicate tests, and duplicate documentation without current product value.
 
@@ -108,7 +109,7 @@ The API Worker has an `ASSETS` binding that normally points at the web build, wh
 
 Do not add a second permanent Wrangler configuration solely for E2E.
 
-## Package and Script Cleanup
+## Package, Tooling, and Environment Cleanup
 
 In `apps/api/package.json`:
 
@@ -122,6 +123,8 @@ In `apps/api/package.json`:
 Do not remove Bun from the workspace.
 
 Update `scripts/admin-upload-puzzle.ts` so its local default and help text use `http://127.0.0.1:4690`. Do not change the production-first startup/bulk uploader defaults.
+
+Update `apps/api/.env.example` to remove the Bun-only `PORT` and `DATA_DIR` entries. Keep the Worker secrets/OAuth examples, including the local callback URL on port 4690. Wrangler configuration, not a Bun `PORT` variable, owns the normal local server port.
 
 ## Documentation
 
@@ -150,7 +153,7 @@ Endpoint contracts, authentication behavior, and Cloudflare infrastructure are o
 2. Remove the Bun entry point and Bun-only HTTP implementation, fixing small Worker type dependencies exposed by deletion.
 3. Delete Bun-only/parity tests while preserving Worker and genuinely shared test suites.
 4. Replace the Playwright E2E backend with the Wrangler Worker runtime on port 3999 and make local migration/bootstrap deterministic.
-5. Remove obsolete Bun server scripts and API-only dependencies, and point local single-upload tooling at Worker port 4690.
+5. Remove obsolete Bun server scripts and API-only dependencies, point local single-upload tooling at Worker port 4690, and remove Bun-only env examples.
 6. Update contributor/API/root documentation to describe the single Worker runtime and link operational detail to the existing runbook.
 7. Run the focused verification and a final dead-reference sweep.
 
@@ -162,6 +165,7 @@ Required checks:
 - Worker `/health` responds successfully on port 4690.
 - At least one D1-backed API path is exercised locally to confirm bindings/migrations are usable.
 - the local single-upload CLI defaults to port 4690
+- `apps/api/.env.example` contains no Bun-only `PORT` or `DATA_DIR`
 - `bun run build --filter=@perseus/api` passes.
 - `bun run check --filter=@perseus/api` passes.
 - `bun run lint --filter=@perseus/api` passes.
