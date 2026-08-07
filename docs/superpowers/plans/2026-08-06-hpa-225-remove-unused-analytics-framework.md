@@ -4,7 +4,7 @@
 
 **Goal:** Remove the unused HPA-532 analytics framework and its repository-level rollout assumptions without changing gallery, gameplay, completion, persistence, or deployment behavior.
 
-**Architecture:** Treat this as a pure deletion. Remove the self-contained browser analytics runtime and shared event contract, then align product documentation with the decision to defer analytics until real usage or a concrete product question justifies collection. Keep shared gameplay/completion primitives and dependencies that have non-analytics consumers; do not introduce a replacement telemetry layer or compatibility wrapper.
+**Architecture:** Treat this as a pure deletion. Remove the self-contained browser analytics runtime and shared event contract, then align the full product-documentation surface with the decision to defer analytics until real usage or a concrete product question justifies collection. Keep shared gameplay/completion primitives and dependencies that have non-analytics consumers; do not introduce a replacement telemetry layer or compatibility wrapper.
 
 **Tech Stack:** TypeScript 5.9, Svelte 5, SvelteKit, Vitest, Playwright, Bun 1.3, Turborepo.
 
@@ -18,6 +18,7 @@
 - Preserve generic roadmap/non-goal wording such as “do not add analytics” when it protects gameplay scope. Remove only obsolete implementation/rollout assumptions.
 - HPA-533, HPA-534, and HPA-535 stay canceled. Do not recreate their collector, instrumentation, dashboard, or baseline work under a different name.
 - Future analytics work starts from a new, smaller ticket only when real users exist and a specific decision needs usage data, operating cost/reliability needs production measurement, or an experiment has a defined metric and action threshold.
+- The main documentation risk is stale PRD language silently re-establishing analytics as a near-term prerequisite. Task 3 therefore performs an explicit full PRD defer sweep and ends with a residual search that must be empty.
 
 ---
 
@@ -37,7 +38,7 @@
 ### Modify
 
 - `packages/types/src/index.ts` — remove the `./analytics` barrel export and leave the existing gameplay/domain exports intact.
-- `docs/PRD.md` — remove analytics-first near-term roadmap assumptions and replace the fixed event recommendation with HPA-225 revisit criteria.
+- `docs/PRD.md` — perform the complete analytics-defer posture change: current-status row, Now/Next roadmap rows, metrics wording, fixed event/KPI recommendations, risk mitigation, future dependency wording, appendix scope, version/date, and document history.
 
 ### Intentionally unchanged
 
@@ -203,7 +204,7 @@ git commit -m "chore(types): remove analytics contract"
 
 ---
 
-### Task 3: Delete obsolete analytics docs, align the PRD, and verify the repository
+### Task 3: Delete obsolete analytics docs, fully defer analytics in the PRD, and verify the repository
 
 **Files:**
 
@@ -217,7 +218,7 @@ git commit -m "chore(types): remove analytics contract"
 **Interfaces:**
 
 - Consumes: HPA-225's deletion-first decision and revisit criteria.
-- Produces: repository documentation that accurately says analytics is deferred rather than an active prerequisite or near-term platform initiative.
+- Produces: repository documentation that consistently says analytics is deferred rather than an active prerequisite, growth mitigation, or already-designed future platform.
 
 - [ ] **Step 1: Delete the obsolete analytics documentation**
 
@@ -232,28 +233,54 @@ git rm \
 
 Keep this HPA-225 implementation plan; it records why the framework was removed and how to verify the deletion.
 
-- [ ] **Step 2: Change the PRD near-term roadmap from analytics-first to deferred analytics**
+- [ ] **Step 2: Update the PRD version and current platform status**
 
-In `docs/PRD.md`, replace the current `Now: strengthen the current single-player product` analytics row:
+At the top of `docs/PRD.md`, change:
 
 ```markdown
-| Add real product analytics | Not started | The repo currently has no code-backed DAU, retention, or funnel metrics |
+> **Version:** 2.1
+> **Last Updated:** 2026-04-25
+```
+
+to:
+
+```markdown
+> **Version:** 2.2
+> **Last Updated:** 2026-08-06
+```
+
+In `### 7. Backend and platform operations`, change:
+
+```markdown
+| Product analytics / event tracking   | Not implemented | No analytics SDK or event pipeline exists |
+```
+
+to:
+
+```markdown
+| Product analytics / event tracking   | Deferred        | HPA-225 removes the unused framework; no SDK or event pipeline is enabled |
+```
+
+This records the deliberate defer decision rather than presenting the absence as an implementation gap.
+
+- [ ] **Step 3: Rewrite both roadmap rows that still make analytics near-term work**
+
+In `### Now: strengthen the current single-player product`, replace:
+
+```markdown
+| Add real product analytics                 | Not started | The repo currently has no code-backed DAU, retention, or funnel metrics |
 ```
 
 with:
 
 ```markdown
-| Defer product analytics | Deferred | Revisit only when real usage or a concrete product decision needs measurement |
+| Defer product analytics                    | Deferred    | Revisit only when real usage or a concrete product decision needs measurement |
 ```
 
-Do not add an alternate collector, vendor, dashboard, or event schema to the roadmap.
-
-- [ ] **Step 3: Remove the dashboard prerequisite from the immediate `Next` roadmap**
-
-Replace:
+In `### Next: add repeat-play loops and server-backed competition`, replace:
 
 ```markdown
-| Admin analytics dashboard    | Not started | Depends on product analytics instrumentation                                |
+| Admin analytics dashboard    | Not started | Depends on product analytics instrumentation |
 ```
 
 with:
@@ -262,11 +289,31 @@ with:
 | Product analytics / reporting | Deferred | Revisit with real usage and a specific decision; prefer a managed low-maintenance surface |
 ```
 
-This keeps analytics visible as a future possibility without making it a prerequisite for current gameplay work.
+Do not add an alternate collector, vendor, dashboard, or event schema to either roadmap section.
 
-- [ ] **Step 4: Replace the fixed first-event catalog with explicit revisit criteria**
+- [ ] **Step 4: Replace the fixed analytics catalog and dashboard/KPI prescription with revisit criteria**
 
-In `## Metrics & Analytics Status`, keep the factual current-status table showing that aggregated product metrics are unavailable. Replace the `### Recommended first analytics events` section and its fixed event list with:
+Under `## Metrics & Analytics Status`, keep `### Current status` and the factual table of what is measurable today.
+
+Change the two unavailable rows from:
+
+```markdown
+| Product funnel metrics   | Not available          | Requires analytics implementation |
+| Retention / DAU          | Not available          | Requires analytics implementation |
+```
+
+to:
+
+```markdown
+| Product funnel metrics   | Not available          | Unavailable until analytics is revisited |
+| Retention / DAU          | Not available          | Unavailable until analytics is revisited |
+```
+
+Delete the entire `### Recommended first analytics events` section and its event list.
+
+Delete the entire `### Suggested first measurable KPIs` section and its dashboard questions.
+
+Replace both sections with exactly:
 
 ```markdown
 ### Revisit criteria
@@ -282,19 +329,69 @@ When analytics is revisited, start with only the few events needed for that deci
 managed, low-maintenance collection/reporting surface over a custom analytics platform.
 ```
 
-Do not preserve the old HPA-532 event names as a future compatibility contract.
+Do not preserve the old HPA-532 event names or dashboard questions as a future compatibility contract.
 
-- [ ] **Step 5: Check for stale rollout-specific references**
+- [ ] **Step 5: Align risk, future-dependency, appendix, and history wording with the defer decision**
+
+In `### Product risks`, replace:
+
+```markdown
+| No analytics baseline | Product prioritization remains guess-driven | Implement analytics before setting user growth targets |
+```
+
+with:
+
+```markdown
+| No usage baseline | Product prioritization relies on direct observation and support feedback | Continue solo-gameplay decisions without analytics until the Metrics revisit criteria are met |
+```
+
+In `### Technical dependencies for future roadmap`, replace:
+
+```markdown
+- **Advanced analytics** needs event collection, storage, privacy policy, and dashboarding
+  choices
+```
+
+with:
+
+```markdown
+- **Product analytics** is intentionally deferred; if the Metrics revisit criteria are met,
+  choose the smallest managed collection/reporting surface needed for the decision
+```
+
+In `### Explicitly out of current scope`, replace:
+
+```markdown
+- Admin analytics dashboard
+```
+
+with:
+
+```markdown
+- Product analytics / reporting until the Metrics revisit criteria are met
+```
+
+At the top of `## Document History`, add this row before `2.1`:
+
+```markdown
+| 2.2     | 2026-08-06   | Product + Engineering | Deferred product analytics under HPA-225; removed the fixed event/KPI rollout assumptions and documented explicit revisit criteria |
+```
+
+Do not alter unrelated roadmap risks or future feature descriptions in this task.
+
+- [ ] **Step 6: Run the residual analytics-rollout search**
 
 Run:
 
 ```bash
-rg -n "HPA-53[2345]|Analytics Engine|Add real product analytics|Admin analytics dashboard|Recommended first analytics events" \
+rg -n "HPA-53[2345]|Analytics Engine|Add real product analytics|Admin analytics dashboard|Recommended first analytics events|Suggested first measurable KPIs|Implement analytics before setting user growth targets|Requires analytics implementation" \
   apps packages docs \
   --glob '!docs/superpowers/plans/2026-08-06-hpa-225-remove-unused-analytics-framework.md'
 ```
 
-Expected: no matches. Generic statements such as “do not add analytics” or “analytics is deferred” are intentionally allowed.
+Expected: no matches.
+
+Generic statements such as “do not add analytics,” “analytics is deferred,” or future work gated by the explicit revisit criteria are intentionally allowed.
 
 Also verify the retained hash dependency still has a real consumer:
 
@@ -304,7 +401,7 @@ rg -n "@noble/hashes" apps/web/src apps/web/package.json
 
 Expected: `apps/web/package.json` plus gameplay session persistence usage. Do not remove the dependency or regenerate `bun.lock`.
 
-- [ ] **Step 6: Format-check the changed documentation**
+- [ ] **Step 7: Format-check the changed documentation**
 
 Run:
 
@@ -316,7 +413,7 @@ bunx prettier --check \
 
 Expected: both files pass without changes.
 
-- [ ] **Step 7: Run the full repository verification gate**
+- [ ] **Step 8: Run the full repository verification gate**
 
 Run from the repository root:
 
@@ -338,7 +435,7 @@ Then run the existing representative browser smoke suite:
 
 Expected: the existing gallery/gameplay smoke paths remain green. Do not add analytics-specific E2E coverage to replace deleted tests.
 
-- [ ] **Step 8: Commit documentation alignment after all verification passes**
+- [ ] **Step 9: Commit documentation alignment after all verification passes**
 
 ```bash
 git add docs/PRD.md docs/superpowers/plans/2026-08-06-hpa-225-remove-unused-analytics-framework.md
@@ -372,11 +469,11 @@ Expected: all commands exit `0`.
 
 Review the final diff and confirm:
 
-- only analytics-specific code/tests/contracts/docs plus PRD wording were removed or changed;
+- only analytics-specific code/tests/contracts/docs plus the explicit PRD defer sweep were removed or changed;
 - no gallery, puzzle route, completion, persistence, API, Worker, or infrastructure behavior changed;
 - no replacement analytics architecture exists;
 - `apps/web/package.json`, `packages/types/package.json`, and `bun.lock` are unchanged;
-- the remaining repository documentation treats analytics as deferred rather than a prerequisite.
+- the remaining repository documentation treats analytics as deferred rather than a prerequisite, growth mitigation, or predesigned event/dashboard platform.
 
 ## Linear Cleanup After the Implementation PR Merges
 
