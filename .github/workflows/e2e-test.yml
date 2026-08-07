@@ -5,6 +5,7 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main, develop]
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
 permissions:
@@ -15,6 +16,7 @@ jobs:
   # harness sentinel. Runs before any browser is downloaded so a harness leak
   # fails the suite in seconds, not minutes.
   production-bundle-safety:
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     name: Production bundle safety
     runs-on: ubuntu-latest
     steps:
