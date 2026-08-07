@@ -384,14 +384,22 @@ Do not alter unrelated roadmap risks or future feature descriptions in this task
 First, fail on exact obsolete rollout language:
 
 ```bash
-rg -n "HPA-53[2345]|Analytics Engine|Add real product analytics|Admin analytics dashboard|Recommended first analytics events|Suggested first measurable KPIs|Implement analytics before setting user growth targets|Requires analytics implementation" \
+rg -n "Analytics Engine|Add real product analytics|Admin analytics dashboard|Recommended first analytics events|Suggested first measurable KPIs|Implement analytics before setting user growth targets|Requires analytics implementation" \
   apps packages docs \
   --glob '!docs/superpowers/plans/2026-08-06-hpa-225-remove-unused-analytics-framework.md'
 ```
 
 Expected: no matches.
 
-Then review all remaining analytics references rather than pretending every use of the word must disappear:
+Then review all remaining HPA-532/533/534/535 references rather than deleting legitimate historical/canceled context blindly:
+
+```bash
+rg -n "HPA-53[2345]" docs
+```
+
+Expected: no live rollout plan or active prerequisite. Historical/defer references are allowed only when they clearly state that HPA-532 is superseded or HPA-533/HPA-534/HPA-535 are canceled.
+
+Finally review all remaining analytics wording in the PRD:
 
 ```bash
 rg -n "analytics|event tracking|dashboard" docs/PRD.md
