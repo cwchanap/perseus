@@ -489,6 +489,16 @@ Review the final diff and confirm:
 - `apps/web/package.json`, `packages/types/package.json`, and `bun.lock` are unchanged;
 - the remaining repository documentation treats analytics as deferred rather than a prerequisite, growth mitigation, or predesigned event/dashboard platform.
 
+## Review Disposition
+
+The design-review feedback on PR #42 is resolved as follows:
+
+- Accepted: make the PRD defer sweep exhaustive instead of changing only the Now row, Next row, and event-list section.
+- Accepted: remove the KPI/dashboard prescription and replace the “implement analytics” risk mitigation with direct observation/support feedback until revisit criteria fire.
+- Accepted: add an explicit stale-PRD risk and verification step so future work does not silently recreate the deleted platform.
+- Kept as designed: three implementation commits remain because the web check, shared-types gate, and final repository gate give cheap failure isolation during a large deletion.
+- Kept as designed: root check/lint/unit/build plus the existing browser smoke suite remain the behavior-preservation gate; no analytics-specific E2E is added.
+
 ## Linear Cleanup After the Implementation PR Merges
 
 Keep this outside the code commits:
