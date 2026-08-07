@@ -295,7 +295,7 @@ to:
 In `### 7. Backend and platform operations`, change:
 
 ```markdown
-| Product analytics / event tracking   | Not implemented | No analytics SDK or event pipeline exists |
+| Product analytics / event tracking | Not implemented | No analytics SDK or event pipeline exists |
 ```
 
 to the semantic content:
@@ -311,7 +311,7 @@ Prettier will realign the Markdown table in Step 7.
 In `### Now: strengthen the current single-player product`, replace:
 
 ```markdown
-| Add real product analytics                 | Not started | The repo currently has no code-backed DAU, retention, or funnel metrics |
+| Add real product analytics | Not started | The repo currently has no code-backed DAU, retention, or funnel metrics |
 ```
 
 with the semantic content:
@@ -323,7 +323,7 @@ with the semantic content:
 In `### Next: add repeat-play loops and server-backed competition`, replace:
 
 ```markdown
-| Admin analytics dashboard    | Not started | Depends on product analytics instrumentation |
+| Admin analytics dashboard | Not started | Depends on product analytics instrumentation |
 ```
 
 with the semantic content:
@@ -341,8 +341,8 @@ Under `## Metrics & Analytics Status`, keep `### Current status` and the factual
 Change the two unavailable rows from:
 
 ```markdown
-| Product funnel metrics   | Not available          | Requires analytics implementation |
-| Retention / DAU          | Not available          | Requires analytics implementation |
+| Product funnel metrics | Not available | Requires analytics implementation |
+| Retention / DAU | Not available | Requires analytics implementation |
 ```
 
 to the semantic content:

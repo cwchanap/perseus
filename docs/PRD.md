@@ -1,7 +1,7 @@
 # Perseus - Product Requirements Document
 
-> **Version:** 2.1
-> **Last Updated:** 2026-04-25
+> **Version:** 2.2
+> **Last Updated:** 2026-08-06
 > **Status:** Current product baseline
 > **Owner:** Product + Engineering
 > **Source of truth:** Repository implementation on `main`
@@ -54,7 +54,7 @@ Workflows, R2, KV, and a Durable Object to generate and store puzzle assets.
 - No daily challenge or leaderboards
 - No achievements, sharing, or multiplayer
 - No offline mode (no service worker or PWA packaging)
-- No product analytics baseline in the codebase
+- Product analytics deliberately deferred (see Metrics revisit criteria)
 
 ---
 
@@ -263,7 +263,7 @@ storage is cleared.
 | Cached metadata store                | Implemented     | KV is used as an eventually consistent cache                                                                                                                          |
 | Public reference image endpoint      | Implemented     | `GET /api/puzzles/:id/reference` serves original image from R2; `hasReference` field on puzzle responses reflects R2 presence; graceful degradation if R2 unavailable |
 | Observability / invocation logs      | Implemented     | Pulumi enables Worker observability and logs                                                                                                                          |
-| Product analytics / event tracking   | Not implemented | No analytics SDK or event pipeline exists                                                                                                                             |
+| Product analytics / event tracking   | Deferred        | HPA-225 removes the unused framework; no SDK or event pipeline is enabled                                                                                             |
 | Realtime multiplayer infrastructure  | Not implemented | No room model, websocket flow, or shared player state exists                                                                                                          |
 
 **Implementation references:** `apps/api/src/worker.ts`,
@@ -318,7 +318,7 @@ fully hardened implementation.
 
 | Initiative                                 | Status      | Why it matters                                                                                  |
 | ------------------------------------------ | ----------- | ----------------------------------------------------------------------------------------------- |
-| Add real product analytics                 | Not started | The repo currently has no code-backed DAU, retention, or funnel metrics                         |
+| Defer product analytics                    | Deferred    | Revisit only when real usage or a concrete product decision needs measurement                   |
 | Close single-player usability gaps         | Done        | Reference image, hints, zoom/pan, undo/redo, and piece rotation were all shipped in this period |
 | Resolve piece-count strategy               | Not started | Current 225-piece lock limits casual entry and runtime parity                                   |
 | Finish realistic puzzle E2E coverage       | In progress | Gallery E2E exists, but full puzzle interaction coverage depends on seeded puzzle fixtures      |
@@ -329,13 +329,13 @@ community or social features.
 
 ### Next: add repeat-play loops and server-backed competition
 
-| Initiative                   | Status      | Notes                                                                       |
-| ---------------------------- | ----------- | --------------------------------------------------------------------------- |
-| Daily challenge              | Not started | Natural next step for repeat engagement, but needs server-backed scheduling |
-| Leaderboards                 | Not started | Requires new persistence and anti-abuse design                              |
-| Player identity / cloud sync | Not started | Prerequisite for cross-device progress and durable competition              |
-| Admin scheduling             | Not started | Needed to manage featured or date-based content                             |
-| Admin analytics dashboard    | Not started | Depends on product analytics instrumentation                                |
+| Initiative                    | Status      | Notes                                                                                     |
+| ----------------------------- | ----------- | ----------------------------------------------------------------------------------------- |
+| Daily challenge               | Not started | Natural next step for repeat engagement, but needs server-backed scheduling               |
+| Leaderboards                  | Not started | Requires new persistence and anti-abuse design                                            |
+| Player identity / cloud sync  | Not started | Prerequisite for cross-device progress and durable competition                            |
+| Admin scheduling              | Not started | Needed to manage featured or date-based content                                           |
+| Product analytics / reporting | Deferred    | Revisit with real usage and a specific decision; prefer a managed low-maintenance surface |
 
 **Recommendation:** Treat `daily challenge + leaderboard + player identity` as one coherent
 product wave rather than isolated features.
@@ -368,35 +368,20 @@ DAU, retention, session duration, abandonment, or conversion reporting in the co
 | Workflow / platform logs | Available              | Worker observability and invocation logs are configured in infrastructure     |
 | Player personal best     | Available locally only | Stored in browser `localStorage`, not aggregated                              |
 | Player completion count  | Available locally only | Stored per puzzle in `localStorage`, not reported centrally                   |
-| Product funnel metrics   | Not available          | Requires analytics implementation                                             |
-| Retention / DAU          | Not available          | Requires analytics implementation                                             |
+| Product funnel metrics   | Not available          | Unavailable until analytics is revisited                                      |
+| Retention / DAU          | Not available          | Unavailable until analytics is revisited                                      |
 
-### Recommended first analytics events
+### Revisit criteria
 
-When analytics is added, the first event set should stay close to the current product:
+Do not build product analytics yet. Open a new, smaller analytics ticket only when at least one
+of these is true:
 
-- `gallery_viewed`
-- `category_filtered`
-- `puzzle_opened`
-- `first_piece_placed`
-- `puzzle_completed`
-- `puzzle_abandoned`
-- `personal_best_beaten`
-- `admin_login_succeeded`
-- `admin_upload_started`
-- `puzzle_generation_failed`
-- `puzzle_generation_completed`
+- Real users exist and a specific product decision depends on usage data.
+- Operating cost or reliability needs production measurement.
+- A release experiment has a defined metric and action threshold.
 
-### Suggested first measurable KPIs
-
-Once instrumentation exists, the first dashboard should answer:
-
-- How many players open a puzzle after viewing the gallery?
-- What percent of started puzzles are completed?
-- Which categories drive the highest start and completion rates?
-- How often are puzzles replayed to improve personal best?
-- How reliable is generation success or failure by upload?
-- How long does generation take end-to-end?
+When analytics is revisited, start with only the few events needed for that decision and prefer a
+managed, low-maintenance collection/reporting surface over a custom analytics platform.
 
 ---
 
@@ -438,14 +423,14 @@ The period from 2026-03-31 to 2026-04-25 delivered two distinct phases:
 
 ### Product risks
 
-| Risk                                | Impact                                                  | Mitigation                                                                                                           |
-| ----------------------------------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| No analytics baseline               | Product prioritization remains guess-driven             | Implement analytics before setting user growth targets                                                               |
-| Local-only progress and stats       | Player history is lost across devices or storage clears | Add player identity and cloud sync before promising durable progression                                              |
-| Fixed 225-piece production flow     | Limits onboarding flexibility and product breadth       | Decide whether to keep a single canonical difficulty or reintroduce multiple piece counts                            |
-| No server-backed competition model  | Daily challenge and leaderboards cannot launch cleanly  | Add persistence designed for rankings and submissions                                                                |
-| Admin tooling is create/delete only | Content ops may become cumbersome as the catalog grows  | Add edit, scheduling, and operational views                                                                          |
-| E2E interaction coverage gap        | Regression risk for the new gameplay controls           | Add seeded puzzle fixtures in CI so hint, undo/redo, zoom, rotation, and reference flows can be exercised end-to-end |
+| Risk                                | Impact                                                                   | Mitigation                                                                                                           |
+| ----------------------------------- | ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| No usage baseline                   | Product prioritization relies on direct observation and support feedback | Continue solo-gameplay decisions without analytics until the Metrics revisit criteria are met                        |
+| Local-only progress and stats       | Player history is lost across devices or storage clears                  | Add player identity and cloud sync before promising durable progression                                              |
+| Fixed 225-piece production flow     | Limits onboarding flexibility and product breadth                        | Decide whether to keep a single canonical difficulty or reintroduce multiple piece counts                            |
+| No server-backed competition model  | Daily challenge and leaderboards cannot launch cleanly                   | Add persistence designed for rankings and submissions                                                                |
+| Admin tooling is create/delete only | Content ops may become cumbersome as the catalog grows                   | Add edit, scheduling, and operational views                                                                          |
+| E2E interaction coverage gap        | Regression risk for the new gameplay controls                            | Add seeded puzzle fixtures in CI so hint, undo/redo, zoom, rotation, and reference flows can be exercised end-to-end |
 
 ### Technical dependencies for future roadmap
 
@@ -454,8 +439,8 @@ The period from 2026-03-31 to 2026-04-25 delivered two distinct phases:
 - **Multiplayer** needs realtime shared state, likely via Durable Object room coordination or
   another realtime transport
 - **PWA / offline** needs a service worker, cache policy, and offline asset lifecycle design
-- **Advanced analytics** needs event collection, storage, privacy policy, and dashboarding
-  choices
+- **Product analytics** is intentionally deferred; if the Metrics revisit criteria are met,
+  choose the smallest managed collection/reporting surface needed for the decision
 
 ---
 
@@ -502,7 +487,7 @@ than current commitments:
 - Player accounts
 - Cloud progress sync
 - PWA / offline mode
-- Admin analytics dashboard
+- Product analytics / reporting until the Metrics revisit criteria are met
 - Admin scheduling / publish controls
 - Theme toggle
 - Sound effects
@@ -511,8 +496,9 @@ than current commitments:
 
 ## Document History
 
-| Version | Date         | Author       | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| ------- | ------------ | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2.1     | 2026-04-25   | Claude Code  | Updated status fields to reflect April 2026 feature work: hints, undo/redo, zoom/pan, reference image overlay, and piece rotation are all implemented; added public reference image API row; updated progress persistence note to include rotation state; marked "Close single-player usability gaps" roadmap item as Done; updated test coverage figures; added E2E interaction coverage gap to risks; removed now-implemented items from out-of-scope list; added new gameplay service implementation references; updated Document History |
-| 2.0     | 2026-03-31   | Copilot      | Rewrote PRD to match implemented repository status, current constraints, and realistic roadmap                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| 1.0     | January 2026 | Product Team | Initial aspirational PRD with future feature requirements                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Version | Date         | Author                | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ------- | ------------ | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2.2     | 2026-08-06   | Product + Engineering | Deferred product analytics under HPA-225; removed the fixed event/KPI rollout assumptions and documented explicit revisit criteria                                                                                                                                                                                                                                                                                                                                                                                                           |
+| 2.1     | 2026-04-25   | Claude Code           | Updated status fields to reflect April 2026 feature work: hints, undo/redo, zoom/pan, reference image overlay, and piece rotation are all implemented; added public reference image API row; updated progress persistence note to include rotation state; marked "Close single-player usability gaps" roadmap item as Done; updated test coverage figures; added E2E interaction coverage gap to risks; removed now-implemented items from out-of-scope list; added new gameplay service implementation references; updated Document History |
+| 2.0     | 2026-03-31   | Copilot               | Rewrote PRD to match implemented repository status, current constraints, and realistic roadmap                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| 1.0     | January 2026 | Product Team          | Initial aspirational PRD with future feature requirements                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
