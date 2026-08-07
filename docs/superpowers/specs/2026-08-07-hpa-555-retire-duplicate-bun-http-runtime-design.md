@@ -101,7 +101,7 @@ The E2E API process must:
 - expose the required E2E secrets/origin variables to the Worker
 - preserve `PUBLIC_API_BASE=http://localhost:3999`
 
-Prefer one small `dev:e2e` script in `apps/api/package.json` if it keeps `playwright.config.ts` readable. This is command reuse, not a new architecture layer.
+Add one small `dev:e2e` script in `apps/api/package.json` for this bootstrap command and have Playwright invoke it. This keeps the test configuration readable without introducing a new architecture layer.
 
 The E2E flow must work from a clean checkout/build state. The API Worker has an `ASSETS` binding that points at the web build, while Playwright currently starts multiple `webServer` processes. Verify that this does not introduce a startup race. If it does, use the smallest fix, such as prebuilding once or overriding the assets directory for the API-only E2E Worker. Do not add a second permanent Wrangler configuration solely for E2E unless the existing config cannot support the test harness cleanly.
 
@@ -112,6 +112,7 @@ In `apps/api/package.json`:
 - remove `dev:bun`
 - remove `build:bun`
 - remove `start:bun`
+- add `dev:e2e` for the local migration + Worker E2E bootstrap
 - keep normal `dev`, `build`, `deploy`, migration, test, check, and lint commands
 - remove `@types/bun` from the API package only if no surviving API source/test requires it
 
@@ -124,7 +125,7 @@ Make one short contributor guide canonical.
 - Keep `CLAUDE.md` as the canonical contributor guide.
 - Replace `AGENTS.md` with a short pointer to `CLAUDE.md` instead of maintaining a copy.
 - Remove dual-runtime descriptions, Bun HTTP environment variables, obsolete file references, and stale references such as the removed `progress.ts` service from current contributor documentation.
-- Delete or reduce `apps/api/README.md` to a short Worker-oriented package overview if it no longer adds useful information.
+- Replace `apps/api/README.md` with a short Worker-oriented package overview that points contributors to `CLAUDE.md` for detailed repository guidance.
 - Keep the root `README.md` focused on product purpose and quick-start development.
 - Link deployment, admin, D1 recovery, seeding, security, and other operational procedures to `docs/OPERATOR_RUNBOOK.md` instead of duplicating them.
 
