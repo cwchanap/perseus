@@ -4,7 +4,7 @@
 
 **Goal:** Remove the unused HPA-532 analytics framework and its repository-level rollout assumptions without changing gallery, gameplay, completion, persistence, or deployment behavior.
 
-**Architecture:** Treat this as a pure deletion. Remove the self-contained browser analytics runtime and shared event contract, then align the full product-documentation surface with the decision to defer analytics until real usage or a concrete product question justifies collection. Keep shared gameplay/completion primitives and dependencies that have non-analytics consumers; do not introduce a replacement telemetry layer or compatibility wrapper.
+**Architecture:** Treat this as a pure deletion. Remove the self-contained browser analytics runtime, the shared analytics contract, and the two analytics-only type re-export shims that become orphaned with it. Then align the product documentation with the decision to defer analytics until real usage or a concrete product question justifies collection. Keep shared domain logic and dependencies that still have non-analytics consumers; do not introduce a replacement telemetry layer or compatibility wrapper.
 
 **Tech Stack:** TypeScript 5.9, Svelte 5, SvelteKit, Vitest, Playwright, Bun 1.3, Turborepo.
 
@@ -13,12 +13,13 @@
 - Do not replace the deleted framework with another analytics provider abstraction, collector, sink, queue, ledger, dashboard, counter service, consent system, or event schema.
 - Do not preserve compatibility exports or wrapper modules for the deleted analytics API.
 - Product behavior must remain unchanged; analytics was never wired into gallery or puzzle routes and no data migration is required.
-- Keep `packages/types/src/completion.ts`, `packages/types/src/core.ts`, and `packages/types/src/puzzle-limits.ts`; they have gameplay responsibilities independent of HPA-532.
+- Keep `packages/types/src/core.ts` unchanged; it remains the canonical public domain/type implementation.
+- Delete `packages/types/src/completion.ts` and `packages/types/src/puzzle-limits.ts` only after reconfirming they have no consumers outside the analytics contract. They are analytics-era narrowing shims, not independent gameplay modules.
 - Keep `@noble/hashes` in `apps/web/package.json`; gameplay session persistence uses it independently of analytics.
 - Preserve generic roadmap/non-goal wording such as “do not add analytics” when it protects gameplay scope. Remove only obsolete implementation/rollout assumptions.
 - HPA-533, HPA-534, and HPA-535 stay canceled. Do not recreate their collector, instrumentation, dashboard, or baseline work under a different name.
 - Future analytics work starts from a new, smaller ticket only when real users exist and a specific decision needs usage data, operating cost/reliability needs production measurement, or an experiment has a defined metric and action threshold.
-- The main documentation risk is stale PRD language silently re-establishing analytics as a near-term prerequisite. Task 3 therefore performs an explicit full PRD defer sweep and ends with residual searches that must leave only deliberate defer/future-scope language.
+- The main documentation risk is stale PRD language silently re-establishing analytics as a near-term prerequisite. Task 3 therefore performs an explicit full PRD defer sweep and ends with residual searches that must leave only deliberate current-state/defer/future-scope language.
 
 ---
 
@@ -29,6 +30,8 @@
 - `apps/web/src/lib/services/analytics/` — entire unused client, context projection, queue, ledger, transports, barrel, and colocated tests.
 - `packages/types/src/analytics.ts` — unused shared analytics event contract and validators.
 - `packages/types/src/analytics.test.ts` — tests for the deleted analytics contract.
+- `packages/types/src/completion.ts` — analytics-only re-export shim over `core.ts`.
+- `packages/types/src/puzzle-limits.ts` — analytics-only `MAX_PIECES` re-export shim over `core.ts`.
 - `docs/analytics/client-delivery.md` — obsolete client delivery/collector handoff design.
 - `docs/analytics/event-catalog.md` — obsolete fixed event catalog.
 - `docs/analytics/privacy.md` — privacy/consent decisions that only support the deleted analytics architecture.
@@ -37,15 +40,16 @@
 
 ### Modify
 
-- `packages/types/src/index.ts` — remove the `./analytics` barrel export and leave the existing gameplay/domain exports intact.
-- `docs/PRD.md` — perform the complete analytics-defer posture change: current-status row, Now/Next roadmap rows, metrics wording, fixed event/KPI recommendations, risk mitigation, future dependency wording, appendix scope, version/date, and document history.
+- `packages/types/src/index.ts` — remove the `./analytics` barrel export and leave `./core` as the public package surface.
+- `docs/PRD.md` — perform the complete analytics-defer posture change: executive summary constraint, current-status row, Now/Next roadmap rows, metrics wording, fixed event/KPI recommendations, risk mitigation, future dependency wording, appendix scope, version/date, and document history.
 
 ### Intentionally unchanged
 
+- `packages/types/src/core.ts` — canonical domain/type implementation remains unchanged.
 - `apps/web/package.json` — current dependency inventory shows no analytics-only dependency. In particular, keep `@noble/hashes` because gameplay persistence imports it.
 - `packages/types/package.json` — no analytics-only dependency or script exists.
 - `bun.lock` — should not change because no dependency removal is planned.
-- Gallery, puzzle route, completion, gameplay session, persistence, API, Worker, and infrastructure source files.
+- Gallery, puzzle route, gameplay session, persistence, API, Worker, and infrastructure source files.
 
 ---
 
@@ -57,7 +61,7 @@
 
 **Interfaces:**
 
-- Consumes: no product-facing interface. Current code search shows no imports of `apps/web/src/lib/services/analytics/` outside its own documentation/planning material.
+- Consumes: no product-facing interface. Current code search shows no imports of `apps/web/src/lib/services/analytics/` outside its own tree/planning material.
 - Produces: no replacement interface. Product routes continue to operate without analytics wiring.
 
 - [ ] **Step 1: Reconfirm the deletion boundary on the implementation branch**
@@ -92,7 +96,7 @@ rg -n "services/analytics|createAnalyticsClient|createAnalyticsRunLedger|Analyti
 
 Expected: no matches.
 
-- [ ] **Step 4: Run the web type/build boundary check**
+- [ ] **Step 4: Run the web boundary check**
 
 Run:
 
@@ -104,27 +108,30 @@ Expected: exit code `0` with no missing analytics imports or Svelte/TypeScript e
 
 - [ ] **Step 5: Commit the browser-runtime deletion**
 
+`git rm` already stages the deletion. Commit it directly:
+
 ```bash
-git add -A apps/web/src/lib/services/analytics
 git commit -m "chore(web): remove unused analytics runtime"
 ```
 
 ---
 
-### Task 2: Remove the shared analytics contract and public export
+### Task 2: Remove the shared analytics contract, orphan shims, and public export
 
 **Files:**
 
 - Delete: `packages/types/src/analytics.ts`
 - Delete: `packages/types/src/analytics.test.ts`
+- Delete: `packages/types/src/completion.ts`
+- Delete: `packages/types/src/puzzle-limits.ts`
 - Modify: `packages/types/src/index.ts`
 
 **Interfaces:**
 
-- Consumes: existing non-analytics exports from `packages/types/src/core.ts`, `completion.ts`, and the rest of the package.
-- Produces: the same `@perseus/types` public surface minus analytics-only constants, event unions, validators, and helpers.
+- Consumes: non-analytics exports directly from `packages/types/src/core.ts`.
+- Produces: the same `@perseus/types` gameplay/domain public surface minus analytics-only constants, event unions, validators, helpers, and the now-unused narrowing shims.
 
-- [ ] **Step 1: Reconfirm analytics symbols have no consumers after Task 1**
+- [ ] **Step 1: Reconfirm analytics symbols and narrowing shims have no independent consumers**
 
 Run:
 
@@ -136,7 +143,7 @@ rg -n "ANALYTICS_|Analytics[A-Z]|isAnalytics|buildAnalyticsRunEventIdV1" apps pa
 
 Expected: no runtime/test consumers outside the analytics files being deleted.
 
-Then confirm the remaining barrel reference:
+Confirm the analytics barrel reference:
 
 ```bash
 rg -n "['\"]\./analytics['\"]" packages/types/src
@@ -144,13 +151,29 @@ rg -n "['\"]\./analytics['\"]" packages/types/src
 
 Expected: only `packages/types/src/index.ts`.
 
-- [ ] **Step 2: Delete the analytics contract and tests**
+Confirm the two re-export shims have no consumers outside `analytics.ts`:
+
+```bash
+rg -n "from ['\"]\./(completion|puzzle-limits)['\"]|types/(completion|puzzle-limits)" \
+  apps packages \
+  --glob '!packages/types/src/analytics.ts'
+```
+
+Expected: no matches.
+
+- [ ] **Step 2: Delete the analytics contract, tests, and orphan re-export shims**
 
 Run:
 
 ```bash
-git rm packages/types/src/analytics.ts packages/types/src/analytics.test.ts
+git rm \
+  packages/types/src/analytics.ts \
+  packages/types/src/analytics.test.ts \
+  packages/types/src/completion.ts \
+  packages/types/src/puzzle-limits.ts
 ```
+
+Do not copy their exports elsewhere. `core.ts` already defines the domain symbols used through the package barrel.
 
 - [ ] **Step 3: Remove the analytics barrel export**
 
@@ -168,21 +191,30 @@ to:
 
 ```ts
 // Barrel re-export: shared types and validation functions are defined in the
-// appropriate domain modules and aggregated here for the `@perseus/types` entry.
+// appropriate domain module and aggregated here for the `@perseus/types` entry.
 export * from './core';
 ```
 
-Do not move analytics types into `core.ts`, `completion.ts`, or another compatibility module.
+Do not add a compatibility export for analytics or the deleted shim paths.
 
-- [ ] **Step 4: Verify shared gameplay primitives remain untouched**
+- [ ] **Step 4: Verify `core.ts` is untouched and the shims are gone**
 
 Run:
 
 ```bash
-git diff -- packages/types/src/completion.ts packages/types/src/core.ts packages/types/src/puzzle-limits.ts
+git diff -- packages/types/src/core.ts
 ```
 
 Expected: empty diff.
+
+Run:
+
+```bash
+test ! -e packages/types/src/completion.ts
+test ! -e packages/types/src/puzzle-limits.ts
+```
+
+Expected: both commands exit `0`.
 
 - [ ] **Step 5: Run the shared-types test gate**
 
@@ -192,13 +224,24 @@ Run:
 (cd packages/types && bun run test:unit)
 ```
 
-Expected: exit code `0`; existing completion, puzzle, player, and shared validation tests remain green without analytics tests.
+Expected: exit code `0`; existing completion, puzzle, player, and shared validation tests remain green through the `./core` barrel export.
 
-- [ ] **Step 6: Commit the shared-contract deletion**
+- [ ] **Step 6: Run the workspace type/check gate before committing the public-surface change**
+
+Run from the repository root:
+
+```bash
+bun run check
+```
+
+Expected: exit code `0` across workspace consumers. This is the cross-package proof that removing `export * from './analytics'` and the two private shim files did not break any app/package import.
+
+- [ ] **Step 7: Commit the shared-contract deletion**
+
+`git rm` already stages deleted files. Stage only the modified barrel and commit:
 
 ```bash
 git add packages/types/src/index.ts
-git add -u packages/types/src/analytics.ts packages/types/src/analytics.test.ts
 git commit -m "chore(types): remove analytics contract"
 ```
 
@@ -255,13 +298,13 @@ In `### 7. Backend and platform operations`, change:
 | Product analytics / event tracking   | Not implemented | No analytics SDK or event pipeline exists |
 ```
 
-to:
+to the semantic content:
 
 ```markdown
-| Product analytics / event tracking   | Deferred        | HPA-225 removes the unused framework; no SDK or event pipeline is enabled |
+| Product analytics / event tracking | Deferred | HPA-225 removes the unused framework; no SDK or event pipeline is enabled |
 ```
 
-This records the deliberate defer decision rather than presenting the absence as an implementation gap.
+Prettier will realign the Markdown table in Step 7.
 
 - [ ] **Step 3: Rewrite both roadmap rows that still make analytics near-term work**
 
@@ -271,10 +314,10 @@ In `### Now: strengthen the current single-player product`, replace:
 | Add real product analytics                 | Not started | The repo currently has no code-backed DAU, retention, or funnel metrics |
 ```
 
-with:
+with the semantic content:
 
 ```markdown
-| Defer product analytics                    | Deferred    | Revisit only when real usage or a concrete product decision needs measurement |
+| Defer product analytics | Deferred | Revisit only when real usage or a concrete product decision needs measurement |
 ```
 
 In `### Next: add repeat-play loops and server-backed competition`, replace:
@@ -283,17 +326,17 @@ In `### Next: add repeat-play loops and server-backed competition`, replace:
 | Admin analytics dashboard    | Not started | Depends on product analytics instrumentation |
 ```
 
-with:
+with the semantic content:
 
 ```markdown
 | Product analytics / reporting | Deferred | Revisit with real usage and a specific decision; prefer a managed low-maintenance surface |
 ```
 
-Do not add an alternate collector, vendor, dashboard, or event schema to either roadmap section.
+Do not hand-align these rows. Prettier owns table pipe alignment in Step 7. Do not add an alternate collector, vendor, dashboard, or event schema to either roadmap section.
 
 - [ ] **Step 4: Replace the fixed analytics catalog and dashboard/KPI prescription with revisit criteria**
 
-Under `## Metrics & Analytics Status`, keep `### Current status` and the factual table of what is measurable today.
+Under `## Metrics & Analytics Status`, keep `### Current status` and the factual statement that the repository has no product analytics pipeline.
 
 Change the two unavailable rows from:
 
@@ -302,18 +345,18 @@ Change the two unavailable rows from:
 | Retention / DAU          | Not available          | Requires analytics implementation |
 ```
 
-to:
+to the semantic content:
 
 ```markdown
-| Product funnel metrics   | Not available          | Unavailable until analytics is revisited |
-| Retention / DAU          | Not available          | Unavailable until analytics is revisited |
+| Product funnel metrics | Not available | Unavailable until analytics is revisited |
+| Retention / DAU | Not available | Unavailable until analytics is revisited |
 ```
 
 Delete the entire `### Recommended first analytics events` section and its event list.
 
 Delete the entire `### Suggested first measurable KPIs` section and its dashboard questions.
 
-Replace both sections with exactly:
+Replace both sections with:
 
 ```markdown
 ### Revisit criteria
@@ -331,7 +374,19 @@ managed, low-maintenance collection/reporting surface over a custom analytics pl
 
 Do not preserve the old HPA-532 event names or dashboard questions as a future compatibility contract.
 
-- [ ] **Step 5: Align risk, future-dependency, appendix, and history wording with the defer decision**
+- [ ] **Step 5: Align the executive summary, risk, future dependency, appendix, and history wording**
+
+In the Executive Summary's current-constraints list, replace:
+
+```markdown
+- No product analytics baseline in the codebase
+```
+
+with:
+
+```markdown
+- Product analytics deliberately deferred (see Metrics revisit criteria)
+```
 
 In `### Product risks`, replace:
 
@@ -339,7 +394,7 @@ In `### Product risks`, replace:
 | No analytics baseline | Product prioritization remains guess-driven | Implement analytics before setting user growth targets |
 ```
 
-with:
+with the semantic content:
 
 ```markdown
 | No usage baseline | Product prioritization relies on direct observation and support feedback | Continue solo-gameplay decisions without analytics until the Metrics revisit criteria are met |
@@ -371,20 +426,20 @@ with:
 - Product analytics / reporting until the Metrics revisit criteria are met
 ```
 
-At the top of `## Document History`, add this row before `2.1`:
+At the top of `## Document History`, add this semantic row before `2.1`:
 
 ```markdown
-| 2.2     | 2026-08-06   | Product + Engineering | Deferred product analytics under HPA-225; removed the fixed event/KPI rollout assumptions and documented explicit revisit criteria |
+| 2.2 | 2026-08-06 | Product + Engineering | Deferred product analytics under HPA-225; removed the fixed event/KPI rollout assumptions and documented explicit revisit criteria |
 ```
 
-Do not alter unrelated roadmap risks or future feature descriptions in this task.
+Do not hand-align changed table rows; Step 7 intentionally runs Prettier. Do not alter unrelated roadmap risks or future feature descriptions in this task.
 
-- [ ] **Step 6: Run the residual analytics-rollout searches**
+- [ ] **Step 6: Run residual analytics-rollout searches**
 
 First, fail on exact obsolete rollout language:
 
 ```bash
-rg -n "Analytics Engine|Add real product analytics|Admin analytics dashboard|Recommended first analytics events|Suggested first measurable KPIs|Implement analytics before setting user growth targets|Requires analytics implementation" \
+rg -n "Analytics Engine|Add real product analytics|Admin analytics dashboard|Recommended first analytics events|Suggested first measurable KPIs|Implement analytics before setting user growth targets|Requires analytics implementation|No product analytics baseline in the codebase" \
   apps packages docs \
   --glob '!docs/superpowers/plans/2026-08-06-hpa-225-remove-unused-analytics-framework.md'
 ```
@@ -415,17 +470,21 @@ rg -n "@noble/hashes" apps/web/src apps/web/package.json
 
 Expected: `apps/web/package.json` plus gameplay session persistence usage. Do not remove the dependency or regenerate `bun.lock`.
 
-- [ ] **Step 7: Format-check the changed documentation**
+- [ ] **Step 7: Normalize and verify Markdown formatting**
 
-Run:
+The changed PRD table rows have different cell widths, so formatting changes are expected. Run Prettier in write mode first, then prove the result is stable:
 
 ```bash
+bunx prettier --write \
+  docs/PRD.md \
+  docs/superpowers/plans/2026-08-06-hpa-225-remove-unused-analytics-framework.md
+
 bunx prettier --check \
   docs/PRD.md \
   docs/superpowers/plans/2026-08-06-hpa-225-remove-unused-analytics-framework.md
 ```
 
-Expected: both files pass without changes.
+Expected: `--write` may realign Markdown table pipes in `docs/PRD.md`; `--check` then exits `0`. Review the resulting diff so formatting-only table alignment is not mistaken for semantic scope expansion.
 
 - [ ] **Step 8: Run the full repository verification gate**
 
@@ -451,11 +510,10 @@ Expected: the existing gallery/gameplay smoke paths remain green. Do not add ana
 
 - [ ] **Step 9: Commit documentation alignment after all verification passes**
 
+`git rm` already stages the deleted documentation. Stage the two modified Markdown files and commit:
+
 ```bash
 git add docs/PRD.md docs/superpowers/plans/2026-08-06-hpa-225-remove-unused-analytics-framework.md
-git add -u docs/analytics \
-  docs/superpowers/plans/2026-08-02-hpa-532-analytics-contract-client-adapters.md \
-  docs/superpowers/plans/2026-08-03-hpa-532-third-pass-contract-amendments.md
 git commit -m "docs: defer product analytics"
 ```
 
@@ -476,6 +534,8 @@ Run:
 ```bash
 test ! -d apps/web/src/lib/services/analytics
 test ! -e packages/types/src/analytics.ts
+test ! -e packages/types/src/completion.ts
+test ! -e packages/types/src/puzzle-limits.ts
 test ! -d docs/analytics
 ```
 
@@ -483,21 +543,12 @@ Expected: all commands exit `0`.
 
 Review the final diff and confirm:
 
-- only analytics-specific code/tests/contracts/docs plus the explicit PRD defer sweep were removed or changed;
-- no gallery, puzzle route, completion, persistence, API, Worker, or infrastructure behavior changed;
+- only analytics-specific code/tests/contracts/shims/docs plus the explicit PRD defer sweep were removed or changed;
+- `packages/types/src/core.ts` is unchanged;
+- no gallery, puzzle route, gameplay persistence, API, Worker, or infrastructure behavior changed;
 - no replacement analytics architecture exists;
 - `apps/web/package.json`, `packages/types/package.json`, and `bun.lock` are unchanged;
 - the remaining repository documentation treats analytics as deferred rather than a prerequisite, growth mitigation, or predesigned event/dashboard platform.
-
-## Review Disposition
-
-The design-review feedback on PR #42 is resolved as follows:
-
-- Accepted: make the PRD defer sweep exhaustive instead of changing only the Now row, Next row, and event-list section.
-- Accepted: remove the KPI/dashboard prescription and replace the “implement analytics” risk mitigation with direct observation/support feedback until revisit criteria fire.
-- Accepted: add an explicit stale-PRD risk and verification step so future work does not silently recreate the deleted platform.
-- Kept as designed: three implementation commits remain because the web check, shared-types gate, and final repository gate give cheap failure isolation during a large deletion.
-- Kept as designed: root check/lint/unit/build plus the existing browser smoke suite remain the behavior-preservation gate; no analytics-specific E2E is added.
 
 ## Linear Cleanup After the Implementation PR Merges
 
