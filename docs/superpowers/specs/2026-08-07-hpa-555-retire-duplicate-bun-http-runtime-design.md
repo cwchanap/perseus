@@ -16,6 +16,7 @@ The API currently has two parallel HTTP stacks:
 - `apps/web/playwright.config.ts` is the important remaining consumer of the Bun HTTP server: it builds and starts the Bun API on port 3999 for gameplay E2E.
 - `scripts/admin-upload-puzzle.ts` still defaults local uploads to port 3000 even though the canonical Wrangler development server is port 4690.
 - `apps/api/.env.example` still documents Bun-only `PORT` and `DATA_DIR` settings.
+- The root `README.md` currently contains substantial Admin CLI operating procedures that are not yet present in `docs/OPERATOR_RUNBOOK.md`.
 
 The Worker implementation is the canonical runtime. It already owns Cloudflare bindings, scheduled cleanup, production routing, and the richer route/service implementations. Maintaining parity with the Bun filesystem implementation adds duplicate code, duplicate tests, and duplicate documentation without current product value.
 
@@ -61,7 +62,8 @@ Expected Bun-only deletion set:
 - Bun-specific player-auth storage/service implementation
 - Bun-only puzzle generation helpers under `apps/api` when their only consumers are the deleted filesystem routes/tests
 - `apps/api/src/db.ts`
-- Bun/filesystem route tests and runtime-parity tests
+- all Bun/filesystem tests whose import graph reaches the deleted modules, including direct sibling imports such as `./storage` and `./rate-limit`
+- cross-runtime parity/drift tests
 - any local API types/helpers used only by those files
 
 Before deleting any less-obvious helper, verify imports. In particular, keep shared domain, image, database, CLI, or test utilities if they still have consumers outside the deleted HTTP stack.
@@ -81,6 +83,7 @@ Use the same rule for any other Worker-to-Bun type-only dependency discovered du
 Delete tests whose purpose disappears with the Bun runtime:
 
 - Bun filesystem/server implementation tests
+- tests that directly import or mock deleted Bun-only routes, middleware, database, auth, storage, or generator modules
 - cross-runtime parity/drift tests
 - duplicate tests that only prove both route implementations behave the same
 
@@ -92,7 +95,7 @@ Do not rename the surviving `.worker.test.ts` suite wholesale in this ticket.
 
 ## Playwright E2E Backend
 
-Replace the Bun API `webServer` entry in `apps/web/playwright.config.ts` with the Worker runtime.
+Replace the Bun API `webServer` entry in `apps/web/playwright.config.ts` with the Worker runtime before deleting the Bun server.
 
 The E2E API process must:
 
@@ -102,10 +105,13 @@ The E2E API process must:
 - listen on port 3999
 - inject deterministic test values for the required Worker variables
 - preserve `PUBLIC_API_BASE=http://localhost:3999`
+- use an explicit longer Playwright web-server startup timeout so a cold Wrangler/migration boot is not constrained by Playwright's default startup timeout
 
 Add one small `dev:e2e` script in `apps/api/package.json` for this bootstrap command and have Playwright invoke it. This keeps the test configuration readable without introducing a new architecture layer.
 
 The API Worker has an `ASSETS` binding that normally points at the web build, while Playwright launches its API and frontend web servers concurrently. Avoid making API startup depend on the frontend build winning that race. For E2E only, create an empty directory under the already-generated API `dist/` area and use Wrangler's `--assets` override so the `ASSETS` binding exists without requiring the frontend build. The frontend continues to be served by Playwright's Vite preview server.
+
+The smoke suite is the integration proof that the Worker-backed test server boots and the existing gameplay harness still works. Worker-focused API tests remain responsible for endpoint behavior; do not expand HPA-555 into a new E2E parity suite.
 
 Do not add a second permanent Wrangler configuration solely for E2E.
 
@@ -118,7 +124,8 @@ In `apps/api/package.json`:
 - remove `start:bun`
 - add `dev:e2e` for the local migration + Worker E2E bootstrap
 - keep normal `dev`, `build`, `deploy`, migration, test, check, and lint commands
-- remove `@types/bun` from the API package if the surviving API source/test tree has no Bun-specific type dependency
+
+Treat the API package's Bun type dependency atomically with TypeScript configuration. After deleting the Bun HTTP source/tests, verify the surviving `apps/api/src` tree has no `bun:*` imports or `Bun.*` usage. If it is clean, remove both `@types/bun` from `apps/api/package.json` and `"bun"` from `apps/api/tsconfig.json` `compilerOptions.types`. Do not remove one while silently relying on workspace hoisting for the other.
 
 Do not remove Bun from the workspace.
 
@@ -128,14 +135,14 @@ Update `apps/api/.env.example` to remove the Bun-only `PORT` and `DATA_DIR` entr
 
 ## Documentation
 
-Make one contributor guide canonical without inventing another documentation layer.
+Make one contributor guide canonical without losing existing operator procedures or inventing another documentation layer.
 
 - Keep `CLAUDE.md` as the canonical contributor guide.
 - Do not edit `AGENTS.md` separately; it is already a symlink to `CLAUDE.md`.
 - Remove dual-runtime descriptions, Bun HTTP environment variables, obsolete file references, and stale references such as the removed `progress.ts` service from current contributor documentation.
 - Replace `apps/api/README.md` with a short Worker-oriented package overview that points contributors to `CLAUDE.md` for detailed repository guidance.
-- Keep the root `README.md` focused on product purpose and quick-start development, including the correct Worker local port where a local API URL is shown.
-- Link deployment, admin, D1 recovery, seeding, security, and other operational procedures to `docs/OPERATOR_RUNBOOK.md` instead of duplicating them.
+- Before slimming the root `README.md`, move its Admin CLI operating guidance into `docs/OPERATOR_RUNBOOK.md`. Preserve the useful credentials, single-upload, bulk-upload, token-rotation, idempotency, and notes content; update local API URLs from port 3000 to 4690. Where the runbook already has an authoritative seed-workflow or Cloudflare Access section, link to that existing section rather than duplicating it.
+- Keep the root `README.md` focused on product purpose, quick-start development, and links to the contributor guide and operator runbook.
 
 Historical design/plan documents do not need to be rewritten merely because they describe the architecture that existed when they were authored.
 
@@ -149,13 +156,13 @@ Endpoint contracts, authentication behavior, and Cloudflare infrastructure are o
 
 ## Implementation Order
 
-1. Run a repository-wide reference sweep for the Bun entry point, unsuffixed route/service/middleware siblings, Bun DB adapter, filesystem storage, Bun-only generator/helpers, Bun scripts, and parity tests.
-2. Remove the Bun entry point and Bun-only HTTP implementation, fixing small Worker type dependencies exposed by deletion.
-3. Delete Bun-only/parity tests while preserving Worker and genuinely shared test suites.
-4. Replace the Playwright E2E backend with the Wrangler Worker runtime on port 3999 and make local migration/bootstrap deterministic.
-5. Remove obsolete Bun server scripts and API-only dependencies, point local single-upload tooling at Worker port 4690, and remove Bun-only env examples.
-6. Update contributor/API/root documentation to describe the single Worker runtime and link operational detail to the existing runbook.
-7. Run the focused verification and a final dead-reference sweep.
+1. Run a repository-wide reference sweep and baseline the Worker tests/E2E dependencies.
+2. Replace the Playwright Bun backend with the Wrangler Worker runtime on port 3999, make local migration/bootstrap deterministic, and prove the existing smoke suite passes.
+3. Remove the Bun entry point and Bun-only HTTP implementation, fixing small Worker type dependencies exposed by deletion.
+4. Delete the complete Bun-only/parity test set, remove stale Vitest configuration, remove obsolete Bun server scripts, and clean API Bun types only if source usage is gone.
+5. Point local single-upload tooling at Worker port 4690 and remove Bun-only environment examples.
+6. Move the existing Admin CLI operating guidance into the operator runbook, then simplify the root/API/contributor documentation around the single Worker runtime.
+7. Run the focused Worker verification and final dead-reference sweep.
 
 ## Verification
 
@@ -169,12 +176,14 @@ Required checks:
 - `bun run build --filter=@perseus/api` passes.
 - `bun run check --filter=@perseus/api` passes.
 - `bun run lint --filter=@perseus/api` passes.
-- focused Worker API tests pass.
+- the full surviving API Vitest suite passes.
 - `bun run --cwd apps/web test:e2e:smoke` passes against the Worker-backed API server on port 3999.
 - no `dev:bun`, `build:bun`, or `start:bun` scripts remain.
-- no production/test imports reference deleted Bun HTTP modules.
+- no production/test imports reference deleted Bun HTTP modules, including direct sibling imports such as `./storage`, `./rate-limit`, `./auth`, or `./player-auth`.
+- API TypeScript config and package dependencies do not retain a one-sided Bun type dependency.
 - no cross-runtime parity test remains.
 - current contributor documentation no longer describes a dual HTTP runtime.
+- Admin CLI operating procedures remain available in `docs/OPERATOR_RUNBOOK.md` after the root README is shortened.
 
 ## Non-Goals
 
