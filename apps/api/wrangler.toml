@@ -58,6 +58,12 @@ name = "perseus-dev"
 
 [env.dev.vars]
 NODE_ENV = "development"
+# Local dev auth/CORS vars. These are dummy values — production secrets are
+# set via `wrangler secret` against wrangler.production.toml. JWT_SECRET must
+# be >= 32 chars (MIN_JWT_SECRET_LENGTH in auth.worker.ts).
+JWT_SECRET = "local-dev-jwt-secret-not-for-production-use"
+ADMIN_PASSKEY = "local-dev-passkey"
+ALLOWED_ORIGINS = "http://localhost:5173,http://localhost:4173,http://localhost:4692"
 
 # Development R2 bucket override
 [[env.dev.r2_buckets]]

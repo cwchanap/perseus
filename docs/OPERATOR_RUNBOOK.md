@@ -417,17 +417,23 @@ is `bun run admin:startup:upload`.
 
 ### Credentials
 
-| Variable                  | Purpose                                                 |
-| ------------------------- | ------------------------------------------------------- |
-| `ADMIN_PASSKEY`           | Perseus admin passkey (same as admin UI login)          |
-| `CF_ACCESS_CLIENT_ID`     | Access service token client id → `CF-Access-Client-Id`  |
-| `CF_ACCESS_CLIENT_SECRET` | Access service token secret → `CF-Access-Client-Secret` |
+| Variable                  | Purpose                                                    |
+| ------------------------- | ---------------------------------------------------------- |
+| `ADMIN_PASSKEY`           | Perseus admin passkey (same as admin UI login)             |
+| `CF_ACCESS_CLIENT_ID`     | Access service token client id → `CF-Access-Client-Id`     |
+| `CF_ACCESS_CLIENT_SECRET` | Access service token secret → `CF-Access-Client-Secret`    |
+| `CF_ACCESS_TOKEN`         | Alternative: pre-obtained Access JWT → `--cf-access-token` |
 
 **Local API** (`http://127.0.0.1:4690`): only `ADMIN_PASSKEY` is required.
 Use `--skip-access` if needed.
 
-**Production** (`https://perseus.cwchanap.dev`): all three are required for
-the CLI.
+**Production** (`https://perseus.cwchanap.dev`): `ADMIN_PASSKEY` is always
+required, plus **one** of the two Access auth methods:
+
+1. **Service token (preferred):** `CF_ACCESS_CLIENT_ID` +
+   `CF_ACCESS_CLIENT_SECRET` from Pulumi stack outputs.
+2. **Access JWT (alternative):** `CF_ACCESS_TOKEN` env var or
+   `--cf-access-token` flag with a pre-obtained `CF_Authorization` JWT.
 
 After infrastructure deploy, load the service token from Pulumi stack outputs
 (or paste them into `apps/api/.env` next to `ADMIN_PASSKEY`):
@@ -458,7 +464,7 @@ bun run admin:upload -- \
   --aspect 1:1 \
   --category Nature
 
-# Production (requires CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET env vars)
+# Production (requires ADMIN_PASSKEY + CF_ACCESS_CLIENT_ID/SECRET, or --cf-access-token)
 bun run admin:upload -- \
   --server https://perseus.cwchanap.dev \
   --image ./my-puzzle.jpg \
@@ -481,8 +487,9 @@ bun run admin:upload -- \
 | `--skip-access`     | Local API only (no Access headers)                                   |
 
 **Production Access:** set `CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET`
-env vars (same as the bulk uploader). The script probes the service token
-before uploading and aborts on rejection. See "Credentials" above.
+env vars (same as the bulk uploader), or pass `--cf-access-token` with a
+pre-obtained Access JWT. The script probes the service token before uploading
+and aborts on rejection. See "Credentials" above.
 
 **Valid piece counts (examples):**
 
