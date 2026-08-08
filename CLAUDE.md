@@ -59,7 +59,7 @@ cd apps/api && bun run test:watch
 ### Monorepo Structure
 
 - `apps/web` - SvelteKit frontend with static adapter, Tailwind CSS v4
-- `apps/api` - Hono HTTP API with **dual runtime targets**: Bun (local dev) and Cloudflare Workers (production)
+- `apps/api` - Hono HTTP API on Cloudflare Workers (local dev and production); Bun is the package manager/test runner, not a second HTTP runtime
 - `apps/workflows` - Cloudflare Workers Workflows for async puzzle piece generation
 - `packages/types` - Shared TypeScript types and validation functions used by all apps
 - `packages/infrastructure` - Pulumi IaC for Cloudflare deployment (Workers, KV, R2, Workflows, Durable Objects)
@@ -71,19 +71,10 @@ cd apps/api && bun run test:watch
 - **Testing**: Vitest with browser-mode Playwright for Svelte component tests; E2E via Playwright
 - **Routes**: `src/routes/` - SvelteKit file-based routing (gallery, puzzle `[id]`, admin)
 - **State**: `src/lib/stores/` - Svelte stores (e.g., piece selection)
-- **Services**: `src/lib/services/progress.ts` - puzzle progress tracking (client-side)
 
-### API (`@perseus/api`) — Dual Runtime
+### API (`@perseus/api`)
 
-The API has parallel implementations for two runtimes. Files without `.worker` suffix run on Bun; files with `.worker.ts` run on Cloudflare Workers.
-
-| Layer          | Bun (local)                                   | Cloudflare Worker (production)             |
-| -------------- | --------------------------------------------- | ------------------------------------------ |
-| Entry          | `src/index.ts`                                | `src/worker.ts`                            |
-| Puzzles routes | `src/routes/puzzles.ts`                       | `src/routes/puzzles.worker.ts`             |
-| Admin routes   | `src/routes/admin.ts`                         | `src/routes/admin.worker.ts`               |
-| Storage        | `src/services/storage.ts` (filesystem + JSON) | `src/services/storage.worker.ts` (KV + R2) |
-| Middleware     | `src/middleware/auth.ts`                      | `src/middleware/auth.worker.ts`            |
+The API is Hono on Cloudflare Workers for both local development and production. `src/worker.ts` is the HTTP entry; the route, service, and middleware implementations live in `*.worker.ts` files (e.g. `src/routes/puzzles.worker.ts`, `src/routes/admin.worker.ts`, `src/services/storage.worker.ts`, `src/middleware/auth.worker.ts`). Local development runs via Wrangler (`bun run dev --filter=@perseus/api`) on `http://localhost:4690`, with local D1, KV, R2, Durable Object, and Workflow bindings — no second runtime.
 
 The **Worker** (`src/worker.ts`) also serves static web assets via `env.ASSETS` (Cloudflare Workers Assets binding), acting as a combined API + static file server in production.
 
@@ -99,7 +90,7 @@ Runs on Cloudflare Workers. Contains:
 
 ### Shared Types (`@perseus/types`)
 
-`packages/types/src/index.ts` defines all shared types (`PuzzleMetadata`, `PuzzlePiece`, `EdgeConfig`, etc.) and validation functions (`validatePuzzleMetadata`, `validateWorkflowParams`, etc.). Import from `@perseus/types` in Worker code; the Bun API imports from its local `src/types/index.ts`.
+`packages/types/src/index.ts` defines all shared types (`PuzzleMetadata`, `PuzzlePiece`, `EdgeConfig`, etc.) and validation functions (`validatePuzzleMetadata`, `validateWorkflowParams`, etc.). Import from `@perseus/types` in Worker code.
 
 ### Puzzle Generation Algorithm
 
@@ -136,15 +127,9 @@ Pulumi TypeScript program for Cloudflare deployment. `packages/infrastructure/sr
 - `TRUSTED_PROXY`, `TRUSTED_PROXY_LIST` — optional IP spoofing protection
 - `PUZZLES_BUCKET` (R2), `PUZZLE_METADATA` (KV), `PUZZLE_METADATA_DO` (DO), `PUZZLE_WORKFLOW`, `ASSETS` — Cloudflare bindings
 
-**Bun API** (local dev, `src/index.ts`):
-
-- Same secret env vars; no Cloudflare bindings
-- `DATA_DIR` — filesystem path for puzzle data (default: `./data`)
-- `PORT` — API port (default: 3000)
-
 ## Testing Notes
 
-- API tests: files matching `src/**/*.test.ts` excluding `src/__tests__/puzzles.test.ts`; worker tests use `.worker.test.ts` naming convention
+- API tests: files matching `src/**/*.test.ts`; worker-runtime tests use the `.worker.test.ts` naming convention
 - Web unit tests run in browser mode via Playwright/Chromium (headless); all tests require assertions (`requireAssertions: true`)
 - Web E2E tests: `apps/web/e2e/` directory with Playwright (`gallery.spec.ts`, `puzzle-solving.spec.ts`); deterministic gameplay harness documented in [`apps/web/e2e/README.md`](apps/web/e2e/README.md)
 

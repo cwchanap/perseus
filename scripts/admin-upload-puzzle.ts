@@ -25,7 +25,7 @@ import {
 // uploader (admin:startup:*) defaults to production via DEFAULT_SERVER, but
 // here a localhost default matches the usage text and README "Local" example.
 // PERSEUS_SERVER (arg or dotenv) still overrides.
-const LOCAL_SERVER = 'http://127.0.0.1:3000';
+const LOCAL_SERVER = 'http://127.0.0.1:4690';
 
 interface Options extends AccessCredentials {
 	server: string;
@@ -42,7 +42,7 @@ function usage(exitCode = 1): never {
   bun run admin:upload -- --image ./puzzle.jpg --name "Puzzle Name" --pieces 48 --aspect 3:4
 
 Options:
-  --server <url>              API server base URL (default: http://127.0.0.1:3000)
+  --server <url>              API server base URL (default: http://127.0.0.1:4690)
   --passkey <value>           Admin passkey (or set ADMIN_PASSKEY)
   --image <path>              Image file to upload
   --name <value>              Puzzle name
