@@ -1,55 +1,17 @@
 # Perseus API
 
-A lightweight HTTP API built with [Hono](https://hono.dev/) and Bun.
+Hono API running on Cloudflare Workers for local development and production. Bun remains the package manager and test runner; it is not a second HTTP runtime.
 
 ## Development
 
+From the repository root:
+
 ```bash
-# From the root of the monorepo
+cd apps/api && bun run db:migrate:local
+cd ../..
 bun run dev --filter=@perseus/api
-
-# Or from this directory
-bun run dev
 ```
 
-The API will start on `http://localhost:3000`
+The normal local API port is `4690`. Local D1, KV, R2, Durable Object, and Workflow bindings are provided by Wrangler.
 
-## Available Endpoints
-
-- `GET /` - API information and version
-- `GET /health` - Health check endpoint
-- `GET /api/hello?name=World` - Example API route
-
-## Building
-
-```bash
-# From the root
-bun run build --filter=@perseus/api
-
-# Or from this directory
-bun run build
-```
-
-## Production
-
-```bash
-# Build first
-bun run build
-
-# Then start
-bun run start
-```
-
-## Scripts
-
-- `dev` - Start development server with hot reload
-- `build` - Build for production
-- `start` - Start production server
-- `check` - TypeScript type checking
-- `lint` - Run Prettier and ESLint
-
-## Tech Stack
-
-- **Runtime**: Bun
-- **Framework**: Hono
-- **Language**: TypeScript
+For repository layout, environment variables, testing, and contributor conventions, see [`../../CLAUDE.md`](../../CLAUDE.md). For deployment and admin procedures, see [`../../docs/OPERATOR_RUNBOOK.md`](../../docs/OPERATOR_RUNBOOK.md).
