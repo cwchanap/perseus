@@ -58,6 +58,20 @@ Then trigger the workflow. Subsequent deploys are unaffected.
 
 ---
 
+## Manual Pre-Release Browser Validation
+
+Before a planned production release or before merging a release candidate to
+`main`, dispatch **E2E Tests** on the candidate branch or commit. Require
+**Manual pre-release suites** to pass.
+
+The lane runs WebKit critical, extended five-project coverage, accessibility,
+and Chromium stability sequentially. Ordinary pushes do not run this broad
+lane automatically.
+
+Accepted tradeoff: broad browser regressions can live until the pre-release run.
+
+---
+
 ## 2. D1 Migration Safety
 
 The deploy ordering (migrations first, workers second on subsequent

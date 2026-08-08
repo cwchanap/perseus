@@ -21,6 +21,7 @@ see the source under `src/lib/services/gameplay/`.
 ## Table of contents
 
 - [Project commands](#project-commands)
+- [E2E lanes](#e2e-lanes)
 - [Fixture catalog](#fixture-catalog)
 - [Total request interception](#total-request-interception)
 - [Virtual module and import rules](#virtual-module-and-import-rules)
@@ -34,7 +35,6 @@ see the source under `src/lib/services/gameplay/`.
 - [Browser matrix and tags](#browser-matrix-and-tags)
 - [WebKit drag result (HPA-517)](#webkit-drag-result-hpa-517)
 - [Firefox deferral](#firefox-deferral)
-- [Browser dry-run](#browser-dry-run)
 - [CI artifacts](#ci-artifacts)
 - [Accessibility limits](#accessibility-limits)
 
@@ -43,21 +43,40 @@ see the source under `src/lib/services/gameplay/`.
 ## Project commands
 
 All commands run from the repo root unless noted. The `test:e2e:*` family is
-defined in `apps/web/package.json`.
+defined in `apps/web/package.json`; invoke a command with
+`bun run --cwd apps/web <command>`.
 
-| Script                                                     | Tag                      | Projects                                                                                   | Purpose                                                                                                                |
-| ---------------------------------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
-| `bun run --cwd apps/web test:e2e`                          | (all except `@extended`) | `chromium-desktop`                                                                         | The default local run. Excludes the slow `@extended` lane.                                                             |
-| `bun run --cwd apps/web test:e2e:smoke`                    | `@smoke`                 | `chromium-desktop`, `chromium-mobile`                                                      | Primary gameplay gate: fixture load, keyboard/touch placement, completion, timer, persistence. Runs in CI on every PR. |
-| `bun run --cwd apps/web test:e2e:webkit`                   | `@webkit-critical`       | `webkit-mobile`                                                                            | Cross-browser gate: keyboard, touch, completion dialog on WebKit.                                                      |
-| `bun run --cwd apps/web test:e2e:extended`                 | `@extended`              | `chromium-desktop`, `chromium-mobile`, `chromium-tablet`, `webkit-mobile`, `webkit-tablet` | Slow lane: mouse drag, large fixtures, responsive layout. CI runs this only on `main` and `workflow_dispatch`.         |
-| `bun run --cwd apps/web test:e2e:a11y`                     | `@a11y`                  | `chromium-desktop`, `chromium-tablet`, `webkit-mobile`                                     | axe-core accessibility scan. CI runs this only on `main` and `workflow_dispatch`.                                      |
-| `bun run --cwd apps/web test:e2e:stability`                | `@smoke`                 | `chromium-desktop`                                                                         | Stability sweep: `--repeat-each=10 --retries=0 --workers=1`. Smoke tests must remain flake-free under repetition.      |
-| `bun run --cwd apps/web test:e2e:assert-production-bundle` | —                        | —                                                                                          | Build + scan the production bundle for harness sentinels. No browser required. Runs first in CI.                       |
-| `bun run --cwd apps/web test:install-browsers`             | —                        | —                                                                                          | Install the Chromium and WebKit shells Playwright drives (`--with-deps --only-shell`).                                 |
-| `bun run --cwd apps/web test:install-browsers:dry-run`     | —                        | —                                                                                          | Print what `test:install-browsers` would install, without installing.                                                  |
+| Command                             | Role                                                     |
+| ----------------------------------- | -------------------------------------------------------- |
+| `test:install-browsers:chromium`    | Chromium-only install for Unit Tests and automatic E2E.  |
+| `test:e2e:assert-production-bundle` | First validation in automatic E2E.                       |
+| `test:e2e:smoke`                    | Automatic Chromium desktop/mobile E2E lane.              |
+| `test:install-browsers`             | Chromium+WebKit install for local/manual broad coverage. |
+| `test:e2e:webkit`                   | Manual pre-release WebKit critical coverage.             |
+| `test:e2e:extended`                 | Manual pre-release five-project coverage.                |
+| `test:e2e:a11y`                     | Manual pre-release accessibility coverage.               |
+| `test:e2e:stability`                | Manual pre-release ten-repeat Chromium stability sweep.  |
+
+The default local `test:e2e` script remains available for Chromium gameplay
+runs and excludes the slow `@extended` scenarios.
 
 Pass Playwright flags after `--`, e.g. `bun run --cwd apps/web test:e2e:smoke -- --retries=0 --grep "fixture load"`.
+
+---
+
+## E2E lanes
+
+```text
+Automatic code-change E2E:
+  production-bundle assertion -> Chromium install -> desktop/mobile smoke
+
+Manual workflow dispatch:
+  Chromium+WebKit install -> WebKit -> extended -> accessibility -> stability
+```
+
+Documentation-only changes do not start Build & Lint, Unit Tests, or E2E. Unit
+Tests installs Chromium only; manual broad coverage installs Chromium and
+WebKit.
 
 ---
 
@@ -342,9 +361,9 @@ To add a new **interaction method** (a new input modality, a new gesture):
 1. Add the method to `GameplayPage` in `e2e/support/gameplay-page.ts`.
 2. Drive it through the existing `pieceSource(pieceId)` / `dropZone(x, y)`
    locators so source scoping stays consistent.
-3. Verify it on Chromium first, then WebKit. Tag it:
-   - `@webkit-critical` if it is reliable on WebKit (keyboard, touch, dialog).
-   - `@extended` if it is unreliable on WebKit (mouse drag — see below).
+3. Verify it on Chromium first, then WebKit. Keep reliable WebKit interactions
+   (keyboard, touch, dialog) in the `test:e2e:webkit` coverage and keep mouse
+   drag in `@extended` (see below).
 4. Add a placement assertion via `expectPiecePlaced(pieceId, x, y)` or a new
    assertion helper in the same file.
 
@@ -368,12 +387,14 @@ auditable, then exercise it from a spec.
 Tests are tagged and the `test:e2e:*` scripts select projects by tag. Tags live
 in `test.describe(...)` or individual `test(...)` titles.
 
-| Tag                | CI job            | Projects                                               | Cadence                            |
-| ------------------ | ----------------- | ------------------------------------------------------ | ---------------------------------- |
-| `@smoke`           | `chromium-smoke`  | `chromium-desktop`, `chromium-mobile`                  | Every PR + push.                   |
-| `@webkit-critical` | `webkit-critical` | `webkit-mobile`                                        | Every PR + push.                   |
-| `@extended`        | `extended-a11y`   | all five projects                                      | `main` + `workflow_dispatch` only. |
-| `@a11y`            | `extended-a11y`   | `chromium-desktop`, `chromium-tablet`, `webkit-mobile` | `main` + `workflow_dispatch` only. |
+| Tag         | Lane                 | Projects                                               | Cadence                                                  |
+| ----------- | -------------------- | ------------------------------------------------------ | -------------------------------------------------------- |
+| `@smoke`    | `chromium-smoke`     | `chromium-desktop`, `chromium-mobile`                  | Automatic code-change E2E and manual stability dispatch. |
+| `@extended` | `manual-pre-release` | all five projects                                      | `workflow_dispatch` only.                                |
+| `@a11y`     | `manual-pre-release` | `chromium-desktop`, `chromium-tablet`, `webkit-mobile` | `workflow_dispatch` only.                                |
+
+The `test:e2e:webkit` command selects reliable WebKit scenarios on
+`webkit-mobile` and runs only in the manual pre-release lane.
 
 The five Playwright projects (`playwright.config.ts`):
 
@@ -395,9 +416,9 @@ WebKit; every attempt left the piece in the tray.
 Action taken:
 
 - Native **mouse drag** tests are tagged `@extended` (Chromium-only matrix), not
-  `@webkit-critical`.
-- **Keyboard, touch, and completion dialog** tests are tagged `@webkit-critical`
-  (reliable on WebKit).
+  in the manual WebKit suite.
+- **Keyboard, touch, and completion dialog** tests are included in the WebKit
+  suite (reliable on WebKit).
 - `placeWithMouse` falls back to dispatching the DnD event sequence
   (`dragover` + `drop`) directly when `dragTo()` does not register a drop, so the
   helper remains usable across all browsers.
@@ -427,28 +448,6 @@ under on Firefox, and extend the `test:install-browsers` shell list.
 
 ---
 
-## Browser dry-run
-
-To verify which browsers Playwright will resolve **without** installing them:
-
-```bash
-bun run --cwd apps/web test:install-browsers:dry-run
-```
-
-This prints the exact Chromium and WebKit shells `test:install-browsers` would
-install (`--dry-run --only-shell chromium webkit`). The `--only-shell` flag
-resolves `chromium` to the `chromium-headless-shell` build — no full Chromium
-browser is installed — matching the projects in `playwright.config.ts`.
-
-To list which tests a given script will execute, dry-run Playwright itself:
-
-```bash
-bun run --cwd apps/web test:e2e:smoke -- --list
-bun run --cwd apps/web test:e2e:webkit -- --list
-```
-
----
-
 ## CI artifacts
 
 Every browser job uploads its artifacts **on failure only** (`if: failure()`),
@@ -458,12 +457,11 @@ retained for 7 days:
   for failed tests; `trace: 'retain-on-failure'`, `screenshot: 'on-first-failure'`).
 - `apps/web/playwright-report` — the HTML report.
 
-The artifact name identifies the job (`chromium-smoke-results`,
-`webkit-critical-results`, `extended-a11y-results`). The `production-bundle-safety`
-job uploads nothing — it either passes or fails with a sentinel-leak message in
-its own log.
+The artifact name identifies the lane (`chromium-smoke-results`,
+`manual-pre-release-results`). The production-bundle assertion is part of the
+Chromium smoke job and uploads no separate artifact.
 
-See `.github/workflows/e2e-test.yml` for the four-job split.
+See `.github/workflows/e2e-test.yml` for the two-job split.
 
 ---
 
