@@ -3,9 +3,17 @@ name: Unit Tests
 on:
   push:
     branches: [main, develop]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - '**/*.mdx'
   pull_request:
     branches: [main, develop]
     types: [opened, synchronize, reopened, ready_for_review]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - '**/*.mdx'
 
 permissions:
   contents: read
@@ -46,8 +54,8 @@ jobs:
       - name: Run shell script tests
         run: bun run test:shell
 
-      - name: Install Playwright browsers
-        run: bun run --cwd apps/web test:install-browsers
+      - name: Install Chromium
+        run: bun run --cwd apps/web test:install-browsers:chromium
 
       - name: Run unit tests with coverage
         run: bun run test:unit
