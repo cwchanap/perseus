@@ -1,7 +1,11 @@
 import { createD1CompletionWriteExecutor, createD1Db } from '@perseus/shared/d1';
+import type { AppDb, CompletionWriteExecutor } from '@perseus/shared';
 import type { Env } from './worker';
-import type { AppDb } from '@perseus/shared';
-import type { ApiDbContext } from './db';
+
+export interface ApiDbContext {
+	db: AppDb;
+	completionWrites: CompletionWriteExecutor;
+}
 
 // Cache the runtime context per-env. The DB binding is stable for the lifetime
 // of the worker isolate, so reusing one context avoids per-request allocation

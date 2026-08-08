@@ -5,7 +5,6 @@ export default defineConfig({
 		globals: true,
 		setupFiles: ['./src/test-setup.ts'],
 		include: ['src/**/*.test.ts'],
-		exclude: ['src/__tests__/puzzles.test.ts'],
 		coverage: {
 			provider: 'v8',
 			reporter: ['lcov', 'text', 'html'],
