@@ -7,7 +7,7 @@ import { test, expect, type Page } from '@playwright/test';
 // path here leaves the real request un-intercepted, so the store settles as
 // anonymous and the page silently redirects to /login — passing the
 // "redirects anonymous" test for the wrong reason and breaking authed tests.
-// The e2e harness runs against the real Bun API, but player auth requires a
+// The e2e harness runs against the real Worker API, but player auth requires a
 // Google OAuth round-trip we can't perform in CI. Intercepting the API calls
 // at the Playwright layer lets us exercise the full profile UI (identity card,
 // summary tiles, My Puzzles grid, Best Times list) without seeding a session.

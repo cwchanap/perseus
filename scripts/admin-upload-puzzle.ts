@@ -23,7 +23,7 @@ import {
 
 // This CLI targets local dev by default (ad-hoc single uploads). The bulk
 // uploader (admin:startup:*) defaults to production via DEFAULT_SERVER, but
-// here a localhost default matches the usage text and README "Local" example.
+// here a localhost default matches the usage text and the runbook (§11 Local API).
 // PERSEUS_SERVER (arg or dotenv) still overrides.
 const LOCAL_SERVER = 'http://127.0.0.1:4690';
 
@@ -54,7 +54,7 @@ Options:
 
 Production Access (automated):
   Set CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET env vars (from Pulumi
-  stack outputs) — same as the bulk uploader. See README "Admin CLI" section.
+  stack outputs) — same as the bulk uploader. See docs/OPERATOR_RUNBOOK.md §11 (Admin CLI Uploads).
 `);
 	process.exit(exitCode);
 }
