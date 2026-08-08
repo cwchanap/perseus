@@ -387,11 +387,12 @@ auditable, then exercise it from a spec.
 Tests are tagged and the `test:e2e:*` scripts select projects by tag. Tags live
 in `test.describe(...)` or individual `test(...)` titles.
 
-| Tag         | Lane                 | Projects                                               | Cadence                                                  |
-| ----------- | -------------------- | ------------------------------------------------------ | -------------------------------------------------------- |
-| `@smoke`    | `chromium-smoke`     | `chromium-desktop`, `chromium-mobile`                  | Automatic code-change E2E and manual stability dispatch. |
-| `@extended` | `manual-pre-release` | all five projects                                      | `workflow_dispatch` only.                                |
-| `@a11y`     | `manual-pre-release` | `chromium-desktop`, `chromium-tablet`, `webkit-mobile` | `workflow_dispatch` only.                                |
+| Tag         | Lane                 | Projects                                               | Cadence                             |
+| ----------- | -------------------- | ------------------------------------------------------ | ----------------------------------- |
+| `@smoke`    | `chromium-smoke`     | `chromium-desktop`, `chromium-mobile`                  | Automatic code-change E2E.          |
+| `@smoke`    | `manual-pre-release` | `chromium-desktop`                                     | Stability `workflow_dispatch` only. |
+| `@extended` | `manual-pre-release` | all five projects                                      | `workflow_dispatch` only.           |
+| `@a11y`     | `manual-pre-release` | `chromium-desktop`, `chromium-tablet`, `webkit-mobile` | `workflow_dispatch` only.           |
 
 The `test:e2e:webkit` command selects reliable WebKit scenarios on
 `webkit-mobile` and runs only in the manual pre-release lane.
@@ -415,7 +416,7 @@ WebKit; every attempt left the piece in the tray.
 
 Action taken:
 
-- Native **mouse drag** tests are tagged `@extended` (Chromium-only matrix), not
+- Native **mouse drag** tests are tagged `@extended` (all five projects), not
   in the manual WebKit suite.
 - **Keyboard, touch, and completion dialog** tests are included in the WebKit
   suite (reliable on WebKit).
