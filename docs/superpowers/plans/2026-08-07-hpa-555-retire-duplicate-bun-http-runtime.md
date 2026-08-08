@@ -136,7 +136,7 @@ Expected: all pass.
 
 ```bash
 rg -n \
-  "['\"](\.\.?/)+(db|routes/(admin|auth|player|puzzles)(\.complete)?|middleware/(auth|player-auth|rate-limit)|services/(storage|player-auth|puzzle-generator)|utils/jigsawPath|types(/index)?)[ '\"]" \
+  "['\"](\.\.?/)+(db|routes/(admin|auth|player|puzzles)(\.complete)?|middleware/(auth|player-auth|rate-limit)|services/(storage|player-auth|puzzle-generator)|utils/jigsawPath|types(/index)?)['\"]" \
   apps/api/src --glob '*.ts'
 ```
 
@@ -232,7 +232,7 @@ Do not port these just to preserve test count; their implementation target is go
 
 ```bash
 ! rg -n \
-  "['\"](\.\.?/)+(db|routes/(admin|auth|player|puzzles)(\.complete)?|middleware/(auth|player-auth|rate-limit)|services/(storage|player-auth|puzzle-generator)|utils/jigsawPath|types(/index)?)[ '\"]" \
+  "['\"](\.\.?/)+(db|routes/(admin|auth|player|puzzles)(\.complete)?|middleware/(auth|player-auth|rate-limit)|services/(storage|player-auth|puzzle-generator)|utils/jigsawPath|types(/index)?)['\"]" \
   apps/api/src --glob '*.ts'
 ```
 
@@ -479,7 +479,7 @@ git commit -m "docs: make Worker runtime and operations canonical"
 ! test -e apps/api/src/routes/_cross-runtime-drift.test.ts
 
 ! rg -n \
-  "['\"](\.\.?/)+(db|routes/(admin|auth|player|puzzles)(\.complete)?|middleware/(auth|player-auth|rate-limit)|services/(storage|player-auth|puzzle-generator)|utils/jigsawPath|types(/index)?)[ '\"]" \
+  "['\"](\.\.?/)+(db|routes/(admin|auth|player|puzzles)(\.complete)?|middleware/(auth|player-auth|rate-limit)|services/(storage|player-auth|puzzle-generator)|utils/jigsawPath|types(/index)?)['\"]" \
   apps/api/src --glob '*.ts'
 
 ! rg -n "dev:bun|build:bun|start:bun" apps/api/package.json apps/web/playwright.config.ts
