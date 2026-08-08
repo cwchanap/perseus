@@ -125,7 +125,7 @@ player.post('/avatar', requirePlayerAuth, avatarRateLimit, async (c) => {
 	} catch {
 		return c.json({ error: 'bad_request', message: 'Invalid form data' }, 400);
 	}
-	const file = formData.get('avatar');
+	const file = formData.get('avatar') as File | string | null;
 	if (!(file instanceof File)) {
 		return c.json({ error: 'bad_request', message: 'avatar file is required' }, 400);
 	}
