@@ -102,7 +102,7 @@ curl --fail http://localhost:4690/health
 Expected body:
 
 ```json
-{"status":"ok"}
+{ "status": "ok" }
 ```
 
 Stop the dev process after the probe.
@@ -160,7 +160,7 @@ Expected: HTTP 200 with the Perseus API info JSON. Stop the dev process.
 Add to `apps/api/package.json`:
 
 ```json
-"dev:e2e": "mkdir -p dist/e2e-assets && touch dist/e2e-assets/index.html && bun run db:migrate:local && wrangler dev --port 3999 --env dev -c wrangler.toml -c ../workflows/wrangler.dev.toml --assets dist/e2e-assets --var JWT_SECRET:e2e-test-secret --var ADMIN_PASSKEY:e2e-test-passkey --var GOOGLE_CLIENT_ID:e2e-google-client --var GOOGLE_CLIENT_SECRET:e2e-google-secret --var AUTH_REDIRECT_BASE_URL:http://localhost:3999 --var ALLOWED_ORIGINS:http://localhost:4173,http://127.0.0.1:4173 --var NODE_ENV:development"
+"dev:e2e": "mkdir -p dist/e2e-assets && touch dist/e2e-assets/index.html && bun run db:migrate:local && wrangler dev --port 3999 --env dev -c wrangler.toml -c ../workflows/wrangler.dev.toml --assets dist/e2e-assets --var JWT_SECRET:e2e-test-jwt-secret-not-for-production --var ADMIN_PASSKEY:e2e-test-passkey --var GOOGLE_CLIENT_ID:e2e-google-client --var GOOGLE_CLIENT_SECRET:e2e-google-secret --var AUTH_REDIRECT_BASE_URL:http://localhost:3999 --var ALLOWED_ORIGINS:http://localhost:4173,http://127.0.0.1:4173 --var NODE_ENV:development"
 ```
 
 Keep the normal `dev` command unchanged.
@@ -192,7 +192,7 @@ Replace only the API `webServer` entry with:
 Keep the frontend server entry and:
 
 ```ts
-PUBLIC_API_BASE: process.env.PUBLIC_API_BASE ?? 'http://localhost:3999'
+PUBLIC_API_BASE: process.env.PUBLIC_API_BASE ?? 'http://localhost:3999';
 ```
 
 unchanged.
@@ -537,7 +537,7 @@ Do not duplicate material the runbook already owns: replace the old seed-workflo
 
 Replace it with:
 
-```markdown
+````markdown
 # Perseus
 
 Single-player jigsaw puzzle arcade built with SvelteKit, a Hono API on Cloudflare Workers, and Cloudflare Workflows for piece generation.
@@ -550,6 +550,7 @@ cd apps/api && bun run db:migrate:local
 cd ../..
 bun run dev
 ```
+````
 
 The API development server runs on `http://localhost:4690`.
 
@@ -557,7 +558,8 @@ The API development server runs on `http://localhost:4690`.
 
 - Contributor guide: [`CLAUDE.md`](CLAUDE.md) (`AGENTS.md` is a symlink to the same guide)
 - Production/admin operations: [`docs/OPERATOR_RUNBOOK.md`](docs/OPERATOR_RUNBOOK.md)
-```
+
+````
 
 - [ ] **Step 5: Replace the API README**
 
@@ -576,12 +578,13 @@ From the repository root:
 cd apps/api && bun run db:migrate:local
 cd ../..
 bun run dev --filter=@perseus/api
-```
+````
 
 The normal local API port is `4690`. Local D1, KV, R2, Durable Object, and Workflow bindings are provided by Wrangler.
 
 For repository layout, environment variables, testing, and contributor conventions, see [`../../CLAUDE.md`](../../CLAUDE.md). For deployment and admin procedures, see [`../../docs/OPERATOR_RUNBOOK.md`](../../docs/OPERATOR_RUNBOOK.md).
-```
+
+````
 
 - [ ] **Step 6: Make `CLAUDE.md` Worker-only**
 
@@ -607,7 +610,7 @@ Keep unrelated infrastructure/testing/runbook guidance unchanged.
 rg -n \
   "Admin CLI Uploads|admin:upload|admin:startup:upload|CF_ACCESS_CLIENT_ID|Token rotation|Idempotency" \
   docs/OPERATOR_RUNBOOK.md
-```
+````
 
 Expected: no stale runtime guidance; the runbook still contains the operating procedures removed from root README.
 
@@ -695,7 +698,7 @@ curl --fail http://localhost:4690/api
 Expected health body:
 
 ```json
-{"status":"ok"}
+{ "status": "ok" }
 ```
 
 Both requests must return 2xx.
