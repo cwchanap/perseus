@@ -5,6 +5,7 @@
 	"type": "module",
 	"scripts": {
 		"dev": "wrangler dev --port 4690 --env dev --inspector-port 9231 -c wrangler.toml -c ../workflows/wrangler.dev.toml",
+		"dev:e2e": "mkdir -p dist/e2e-assets && touch dist/e2e-assets/index.html && bun run db:migrate:local && wrangler dev --port 3999 --env dev -c wrangler.toml -c ../workflows/wrangler.dev.toml --assets dist/e2e-assets --var JWT_SECRET:e2e-test-secret --var ADMIN_PASSKEY:e2e-test-passkey --var GOOGLE_CLIENT_ID:e2e-google-client --var GOOGLE_CLIENT_SECRET:e2e-google-secret --var AUTH_REDIRECT_BASE_URL:http://localhost:3999 --var ALLOWED_ORIGINS:http://localhost:4173,http://127.0.0.1:4173 --var NODE_ENV:development",
 		"dev:bun": "bun run --watch src/index.ts",
 		"build": "wrangler deploy --dry-run --outdir dist --config wrangler.production.toml",
 		"build:bun": "bun build src/index.ts --outdir dist --target bun && rm -rf dist/drizzle && cp -R ../../packages/shared/drizzle dist/drizzle",
