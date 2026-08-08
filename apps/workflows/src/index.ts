@@ -95,7 +95,7 @@ type ReservationRecord = {
 };
 
 /** Current reservation record schema version. Bump on breaking shape changes. */
-export const CURRENT_RESERVATION_SCHEMA = 1;
+const CURRENT_RESERVATION_SCHEMA = 1;
 
 function isStalePending(reservation: ReservationRecord, now = Date.now()): boolean {
 	if (reservation.status !== 'pending') return false;
