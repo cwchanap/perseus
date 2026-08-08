@@ -170,7 +170,7 @@ Required checks:
 
 - `bun run dev --filter=@perseus/api` starts the Worker development runtime successfully after local D1 migrations.
 - Worker `/health` responds successfully on port 4690.
-- At least one D1-backed API path is exercised locally to confirm bindings/migrations are usable.
+- local D1 migrations apply (or report already applied), and a local D1 schema query succeeds against `perseus-player-data`; Worker API tests remain the endpoint-behavior check.
 - the local single-upload CLI defaults to port 4690
 - `apps/api/.env.example` contains no Bun-only `PORT` or `DATA_DIR`
 - `bun run build --filter=@perseus/api` passes.
