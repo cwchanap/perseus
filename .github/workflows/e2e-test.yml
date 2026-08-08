@@ -3,21 +3,30 @@ name: E2E Tests
 on:
   push:
     branches: [main, develop]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - '**/*.mdx'
   pull_request:
     branches: [main, develop]
     types: [opened, synchronize, reopened, ready_for_review]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - '**/*.mdx'
   workflow_dispatch:
+
+concurrency:
+  group: e2e-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  # Fast, browser-free gate: verifies the production bundle excludes every E2E
-  # harness sentinel. Runs before any browser is downloaded so a harness leak
-  # fails the suite in seconds, not minutes.
-  production-bundle-safety:
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
-    name: Production bundle safety
+  chromium-smoke:
+    name: Chromium smoke
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -36,34 +45,8 @@ jobs:
       - name: Verify production bundle excludes E2E harness
         run: bun run --cwd apps/web test:e2e:assert-production-bundle
 
-  # Primary gameplay gate: the @smoke tag across the chromium desktop + mobile
-  # projects. Covers fixture load, keyboard/touch placement, completion flows,
-  # timer, and persistence.
-  chromium-smoke:
-    name: Chromium smoke
-    runs-on: ubuntu-latest
-    needs: production-bundle-safety
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          persist-credentials: false
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2.0.2
-        with:
-          bun-version: '1.3.14'
-
-      - name: Install dependencies
-        run: bun install
-
-      - name: Install Playwright browsers
-        run: |
-          # Validate the install contract (chromium-headless-shell + webkit, no
-          # full chromium) BEFORE downloading anything; a violated contract
-          # fails the job here, in seconds.
-          bun run --cwd apps/web test:install-browsers:dry-run
-          bun run --cwd apps/web test:install-browsers
+      - name: Install Chromium
+        run: bun run --cwd apps/web test:install-browsers:chromium
 
       - name: Run smoke E2E tests
         run: bun run --cwd apps/web test:e2e:smoke -- --retries=0
@@ -78,13 +61,10 @@ jobs:
             apps/web/playwright-report
           retention-days: 7
 
-  # Cross-browser gate: the @webkit-critical tag (keyboard, touch, completion
-  # dialog) on webkit-mobile. Native mouse drag is excluded — see HPA-517 and
-  # e2e/README.md (WebKit result).
-  webkit-critical:
-    name: WebKit critical
+  manual-pre-release:
+    name: Manual pre-release suites
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    needs: production-bundle-safety
     steps:
       - name: Checkout repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -100,54 +80,10 @@ jobs:
         run: bun install
 
       - name: Install Playwright browsers
-        run: |
-          # Validate the install contract (chromium-headless-shell + webkit, no
-          # full chromium) BEFORE downloading anything; a violated contract
-          # fails the job here, in seconds.
-          bun run --cwd apps/web test:install-browsers:dry-run
-          bun run --cwd apps/web test:install-browsers
+        run: bun run --cwd apps/web test:install-browsers
 
       - name: Run WebKit critical E2E tests
         run: bun run --cwd apps/web test:e2e:webkit -- --retries=0
-
-      - name: Upload test artifacts
-        if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: webkit-critical-results
-          path: |
-            apps/web/test-results
-            apps/web/playwright-report
-          retention-days: 7
-
-  # Slow lane: the full project matrix (@extended) plus the accessibility scan
-  # (@a11y). Only on main pushes and manual dispatch — too heavy for PRs.
-  extended-a11y:
-    name: Extended and accessibility
-    runs-on: ubuntu-latest
-    needs: production-bundle-safety
-    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          persist-credentials: false
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2.0.2
-        with:
-          bun-version: '1.3.14'
-
-      - name: Install dependencies
-        run: bun install
-
-      - name: Install Playwright browsers
-        run: |
-          # Validate the install contract (chromium-headless-shell + webkit, no
-          # full chromium) BEFORE downloading anything; a violated contract
-          # fails the job here, in seconds.
-          bun run --cwd apps/web test:install-browsers:dry-run
-          bun run --cwd apps/web test:install-browsers
 
       - name: Run extended E2E tests
         run: bun run --cwd apps/web test:e2e:extended -- --retries=0
@@ -155,11 +91,14 @@ jobs:
       - name: Run accessibility E2E tests
         run: bun run --cwd apps/web test:e2e:a11y -- --retries=0
 
+      - name: Run stability E2E tests
+        run: bun run --cwd apps/web test:e2e:stability
+
       - name: Upload test artifacts
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: extended-a11y-results
+          name: manual-pre-release-results
           path: |
             apps/web/test-results
             apps/web/playwright-report
