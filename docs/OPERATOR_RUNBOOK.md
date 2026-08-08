@@ -550,7 +550,7 @@ The service token expires after 90 days
 (`DEFAULT_ADMIN_CLI_SERVICE_TOKEN_DURATION = '2160h'`). To adjust the
 expiration:
 
-1. `cd packages/infrastructure && pulumi config set adminCliServiceTokenDuration 4380h` (6 months, or leave unset for the 1-year default)
+1. `cd packages/infrastructure && pulumi config set adminCliServiceTokenDuration 4380h` (6 months, or leave unset for the default `2160h` / 90 days)
 2. `pulumi up` — Pulumi updates the token's expiration in-place (client_id/secret stay the same)
 
 To rotate credentials (new client_id + client_secret):
