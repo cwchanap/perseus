@@ -138,12 +138,14 @@ Pulumi TypeScript program for Cloudflare deployment. `packages/infrastructure/sr
 Deterministic gameplay E2E lives in [`apps/web/e2e/`](apps/web/e2e/README.md). Key commands (from repo root):
 
 - `bun run --cwd apps/web test:e2e` — default local run (chromium-desktop, excludes `@extended`)
-- `bun run --cwd apps/web test:e2e:smoke` — `@smoke` on chromium desktop + mobile (PR gate)
-- `bun run --cwd apps/web test:e2e:webkit` — `@webkit-critical` on webkit-mobile (PR gate)
-- `bun run --cwd apps/web test:e2e:extended` — `@extended` across all five projects (main only)
-- `bun run --cwd apps/web test:e2e:a11y` — `@a11y` axe-core scan (main only)
-- `bun run --cwd apps/web test:e2e:stability` — `@smoke` repeated 10× for flake detection
-- `bun run --cwd apps/web test:e2e:assert-production-bundle` — verify the prod bundle excludes harness sentinels
+- `bun run --cwd apps/web test:e2e:smoke` — automatic Chromium desktop/mobile E2E
+- `bun run --cwd apps/web test:e2e:webkit` — local/manual pre-release
+- `bun run --cwd apps/web test:e2e:extended` — local/manual pre-release
+- `bun run --cwd apps/web test:e2e:a11y` — local/manual pre-release
+- `bun run --cwd apps/web test:e2e:stability` — local/manual pre-release
+- `bun run --cwd apps/web test:e2e:assert-production-bundle` — automatic pre-browser assertion
+
+Unit Tests installs Chromium only, and docs-only changes skip all three automatic code workflows: Build & Lint, Unit Tests, and E2E.
 
 New gameplay tests must import `test` and `expect` from `e2e/support/test`, which provides the `gameplayPage` fixture (atomic `gotoFixture()` init + automatic teardown). See the [harness README](apps/web/e2e/README.md) for fixtures, interception rules, the completion matrix, and extension rules.
 
