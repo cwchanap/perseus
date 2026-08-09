@@ -35,8 +35,7 @@ export type CompletionFailureCode =
 	| 'not_found'
 	| 'run_id_conflict'
 	| 'completion_quota_exceeded'
-	| 'internal_error'
-	| 'incompatible_schema';
+	| 'internal_error';
 
 export type CompletionEffectState =
 	| { status: 'pending' }
