@@ -70,7 +70,7 @@ describe('PuzzleSession completion persistence validation', () => {
 	});
 
 	it('rejects null completion effects instead of defaulting to not-applicable', () => {
-		// A null effect is corruption: the engine and legacy migration always
+		// A null effect is corruption: the current engine always
 		// emit a concrete state. Defaulting null to not_applicable would let a
 		// corrupted API snapshot load and permanently suppress both local
 		// stats and the server submission.
