@@ -171,8 +171,6 @@ describe('Stats Service', () => {
 				);
 				expect(result.status).toBe('failed');
 				expect(result.isNewStandardBest).toBe(true);
-				// A transient storage failure is retryable, distinct from a
-				// transient storage failure.
 				if (result.status === 'failed') {
 					expect(result.reason).toBe('storage_error');
 				}

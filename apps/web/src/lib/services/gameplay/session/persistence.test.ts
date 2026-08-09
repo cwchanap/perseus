@@ -237,22 +237,6 @@ describe('loadPersistedSession validation', () => {
 		}
 	});
 
-	it('ignores obsolete timingQuality on a current schema-1 snapshot', () => {
-		const raw = { ...serializeSession(makeState(), 1_000)!, timingQuality: 'known' } as Record<
-			string,
-			unknown
-		>;
-		const result = loadPersistedSession(JSON.stringify(raw), ctx);
-
-		expect(result.status).toBe('loaded');
-		if (result.status !== 'loaded') throw new Error('expected loaded snapshot');
-		expect(result.snapshot).not.toHaveProperty('timingQuality');
-	});
-
-	it('omits timingQuality when serializing a current session', () => {
-		expect(serializeSession(makeState(), 1_000)).not.toHaveProperty('timingQuality');
-	});
-
 	it('rejects a puzzle id mismatch', () => {
 		const snapshot = serializeSession(makeState(), 1_000);
 		const result = loadPersistedSession(JSON.stringify(snapshot), { ...ctx, puzzleId: 'other' });

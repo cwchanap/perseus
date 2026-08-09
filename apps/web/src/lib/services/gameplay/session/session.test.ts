@@ -109,8 +109,7 @@ describe('PuzzleSession lifecycle', () => {
 		expect(state.sealedCompletion).toBeNull();
 	});
 
-	it('keeps timing quality out of state and completion request projection', () => {
-		const session = createPuzzleSession(makeOptions());
+	it('keeps completion request projection current-only', () => {
 		const seal: SealedCompletion = {
 			runId: 'run-1',
 			resultClass: 'standard_timed',
@@ -120,7 +119,6 @@ describe('PuzzleSession lifecycle', () => {
 			serverSubmission: { status: 'succeeded' }
 		};
 
-		expect(session.getState()).not.toHaveProperty('timingQuality');
 		expect(completionRequestFromSeal(seal)).toEqual({
 			version: 1,
 			runId: 'run-1',

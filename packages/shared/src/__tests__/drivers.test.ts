@@ -73,7 +73,16 @@ function completion(overrides: Partial<VersionedCompletionWrite> = {}): Versione
 }
 
 async function rows(db: AppDb) {
-	const ledger = await db.select().from(schema.puzzleCompletionRuns);
+	const ledger = await db
+		.select({
+			playerId: schema.puzzleCompletionRuns.playerId,
+			runId: schema.puzzleCompletionRuns.runId,
+			puzzleId: schema.puzzleCompletionRuns.puzzleId,
+			resultClass: schema.puzzleCompletionRuns.resultClass,
+			elapsedActiveSeconds: schema.puzzleCompletionRuns.elapsedActiveSeconds,
+			completedAt: schema.puzzleCompletionRuns.completedAt
+		})
+		.from(schema.puzzleCompletionRuns);
 	const stats = await db.select().from(schema.puzzleStats);
 	return {
 		ledger: [...ledger].sort(
@@ -180,7 +189,7 @@ describe.each<LifecycleRuntime>(['Bun', 'D1'])('%s puzzle deletion lifecycle', (
 	});
 
 	it('rejects direct inserts and updates for every tombstone-guarded table', async () => {
-		const { db, executor } = lifecycleHarness(runtime);
+		const { db, executor, runSql } = lifecycleHarness(runtime);
 		await db.insert(schema.puzzles).values({
 			id: 'pz1',
 			ownerId: 'p1',
@@ -231,15 +240,13 @@ describe.each<LifecycleRuntime>(['Bun', 'D1'])('%s puzzle deletion lifecycle', (
 				.where(eq(schema.puzzleStats.puzzleId, 'pz1'))
 		).rejects.toThrow('puzzle_deleted');
 		await expect(
-			db.insert(schema.puzzleCompletionRuns).values({
-				playerId: 'p2',
-				runId: 'run-2',
-				puzzleId: 'pz1',
-				resultClass: 'standard_timed',
-				timingQuality: 'known',
-				elapsedActiveSeconds: 80,
-				completedAt: 2_000
-			})
+			runSql(
+				`
+					INSERT INTO puzzle_completion_runs (
+						player_id, run_id, puzzle_id, result_class, timing_quality, elapsed_active_seconds, completed_at
+					) VALUES ('p2', 'run-2', 'pz1', 'standard_timed', 'known', 80, 2000)
+				`
+			)
 		).rejects.toThrow('puzzle_deleted');
 		await expect(
 			db
@@ -333,7 +340,6 @@ describe('createBunDbContext', () => {
 					runId: 'run-1',
 					puzzleId: 'pz1',
 					resultClass: 'standard_timed',
-					timingQuality: 'known',
 					elapsedActiveSeconds: 100,
 					completedAt: 1_000
 				}
@@ -434,7 +440,6 @@ describe('createBunDbContext', () => {
 					runId: 'rotation',
 					puzzleId: 'pz1',
 					resultClass: 'rotation_timed',
-					timingQuality: 'known',
 					elapsedActiveSeconds: 120,
 					completedAt: 1_000
 				}
@@ -479,7 +484,6 @@ describe('createBunDbContext', () => {
 					runId: 'run-2',
 					puzzleId: 'pz2',
 					resultClass: 'standard_timed',
-					timingQuality: 'known',
 					elapsedActiveSeconds: 80,
 					completedAt: 2_000
 				}
