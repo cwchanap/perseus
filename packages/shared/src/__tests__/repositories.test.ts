@@ -1,4 +1,4 @@
-import { afterEach, describe, it, expect, beforeEach, vi } from 'vitest';
+import { afterEach, describe, it, expect, beforeEach } from 'vitest';
 import { Database } from 'bun:sqlite';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -17,7 +17,6 @@ import {
 	deletePuzzleStats,
 	setPuzzleStatus,
 	listPlayerPuzzles,
-	recordLegacyCompletion,
 	recordVersionedCompletion,
 	listPlayerStats,
 	getPlayerSummary,
@@ -34,6 +33,16 @@ function makeDb(retainedRunLimit?: number) {
 			context.close();
 			rmSync(dataDir, { recursive: true, force: true });
 		}
+	};
+}
+
+function currentCompletion(runId: string, elapsedActiveSeconds: number) {
+	return {
+		version: 1 as const,
+		runId,
+		resultClass: 'standard_timed' as const,
+		timingQuality: 'known' as const,
+		elapsedActiveSeconds
 	};
 }
 
@@ -368,72 +377,6 @@ describe('repositories', () => {
 		expect(page2.rows.every((r) => r.ownerId === 'alice')).toBe(true);
 	});
 
-	it('recordCompletion upserts best time and increments count for spaced solves', async () => {
-		// Spaced beyond the dedupe window, each submission is a distinct solve:
-		// the count increments and best time tracks the MIN across all of them.
-		vi.useFakeTimers();
-		try {
-			await recordLegacyCompletion(helper.completionWrites, 'p1', 'pz1', 100);
-			vi.advanceTimersByTime(31_000);
-			await recordLegacyCompletion(helper.completionWrites, 'p1', 'pz1', 80);
-			vi.advanceTimersByTime(31_000);
-			await recordLegacyCompletion(helper.completionWrites, 'p1', 'pz1', 120);
-			const stats = await listPlayerStats(helper.db, 'p1', { limit: 10 });
-			expect(stats.rows).toHaveLength(1);
-			expect(stats.rows[0].bestTimeSeconds).toBe(80); // MIN of 100, 80, 120
-			expect(stats.rows[0].totalCompletions).toBe(3);
-		} finally {
-			vi.useRealTimers();
-		}
-	});
-
-	it('recordCompletion dedupes rapid retries within the window', async () => {
-		// A rapid re-POST (e.g. after a lost response or a double-tap) within the
-		// dedupe window must NOT inflate the count, but its time is still
-		// considered for the best-time MIN.
-		vi.useFakeTimers();
-		try {
-			await recordLegacyCompletion(helper.completionWrites, 'p1', 'pz1', 100);
-			// No time advanced — these are immediate retries.
-			await recordLegacyCompletion(helper.completionWrites, 'p1', 'pz1', 80);
-			await recordLegacyCompletion(helper.completionWrites, 'p1', 'pz1', 120);
-			const stats = await listPlayerStats(helper.db, 'p1', { limit: 10 });
-			expect(stats.rows).toHaveLength(1);
-			expect(stats.rows[0].bestTimeSeconds).toBe(80); // MIN still applied
-			expect(stats.rows[0].totalCompletions).toBe(1); // deduped, not 3
-		} finally {
-			vi.useRealTimers();
-		}
-	});
-
-	it('recordLegacyCompletion soft-fails under the Bun tombstone fence without mutating stats', async () => {
-		expect(await recordLegacyCompletion(helper.completionWrites, 'p1', 'pz1', 100)).toEqual({
-			status: 'recorded'
-		});
-		const original = await helper.db.select().from(schema.puzzleStats);
-		await helper.db
-			.insert(schema.puzzleDeletionTombstones)
-			.values({ puzzleId: 'pz1', deletedAt: Date.now() })
-			.run();
-
-		expect(await recordLegacyCompletion(helper.completionWrites, 'p1', 'pz1', 50)).toEqual({
-			status: 'tombstoned'
-		});
-		expect(await helper.db.select().from(schema.puzzleStats)).toEqual(original);
-	});
-
-	it('recordLegacyCompletion soft-fails a first Bun write under the tombstone fence', async () => {
-		await helper.db
-			.insert(schema.puzzleDeletionTombstones)
-			.values({ puzzleId: 'pz1', deletedAt: Date.now() })
-			.run();
-
-		expect(await recordLegacyCompletion(helper.completionWrites, 'p1', 'pz1', 100)).toEqual({
-			status: 'tombstoned'
-		});
-		expect(await helper.db.select().from(schema.puzzleStats)).toHaveLength(0);
-	});
-
 	it('enforces Bun versioned quota after existing-run lookup while preserving usage', async () => {
 		helper.close();
 		helper = makeDb(3);
@@ -549,8 +492,18 @@ describe('repositories', () => {
 			status: 'ready',
 			createdAt: 1
 		});
-		await recordLegacyCompletion(helper.completionWrites, 'p1', 'pz1', 50);
-		await recordLegacyCompletion(helper.completionWrites, 'p1', 'pzX', 50); // a puzzle not owned by p1
+		await recordVersionedCompletion(
+			helper.completionWrites,
+			'p1',
+			'pz1',
+			currentCompletion('summary-pz1', 50)
+		);
+		await recordVersionedCompletion(
+			helper.completionWrites,
+			'p1',
+			'pzX',
+			currentCompletion('summary-pzX', 50)
+		); // a puzzle not owned by p1
 		const summary = await getPlayerSummary(helper.db, 'p1');
 		expect(summary).toEqual({ puzzlesUploaded: 1, puzzlesSolved: 2, totalCompletions: 2 });
 	});
@@ -695,7 +648,12 @@ describe('repositories', () => {
 			status: 'ready',
 			createdAt: 1
 		});
-		await recordLegacyCompletion(helper.completionWrites, 'p1', 'adminPz', 42);
+		await recordVersionedCompletion(
+			helper.completionWrites,
+			'p1',
+			'adminPz',
+			currentCompletion('admin-puzzle', 42)
+		);
 
 		const { rows } = await listPlayerStats(helper.db, 'p1', { limit: 10 });
 		expect(rows).toHaveLength(1);
@@ -738,18 +696,38 @@ describe('repositories', () => {
 		expect(result.rows).toHaveLength(0);
 	});
 
-	it('listPlayerStats accepts a legacy bare best-time cursor', async () => {
-		await recordLegacyCompletion(helper.completionWrites, 'p1', 'pz1', 10);
-		await recordLegacyCompletion(helper.completionWrites, 'p1', 'pz2', 20);
-		await recordLegacyCompletion(helper.completionWrites, 'p1', 'pz3', 30);
-		// Legacy bare cursors continue to mean strictly greater best time.
+	it('listPlayerStats accepts a bare best-time cursor', async () => {
+		await recordVersionedCompletion(
+			helper.completionWrites,
+			'p1',
+			'pz1',
+			currentCompletion('cursor-1', 10)
+		);
+		await recordVersionedCompletion(
+			helper.completionWrites,
+			'p1',
+			'pz2',
+			currentCompletion('cursor-2', 20)
+		);
+		await recordVersionedCompletion(
+			helper.completionWrites,
+			'p1',
+			'pz3',
+			currentCompletion('cursor-3', 30)
+		);
+		// Bare cursors continue to mean strictly greater best time.
 		const result = await listPlayerStats(helper.db, 'p1', { limit: 10, cursor: '20' });
 		expect(result.rows).toHaveLength(1);
 		expect(result.rows[0].puzzleId).toBe('pz3');
 	});
 
 	it('listPlayerStats rejects a garbage cursor', async () => {
-		await recordLegacyCompletion(helper.completionWrites, 'p1', 'pz1', 10);
+		await recordVersionedCompletion(
+			helper.completionWrites,
+			'p1',
+			'pz1',
+			currentCompletion('garbage-cursor', 10)
+		);
 		await expect(
 			listPlayerStats(helper.db, 'p1', { limit: 10, cursor: 'garbage' })
 		).rejects.toBeInstanceOf(InvalidPlayerStatsCursorError);
@@ -775,9 +753,24 @@ describe('repositories', () => {
 	});
 
 	it('listPlayerStats floors fractional limits to an integer', async () => {
-		await recordLegacyCompletion(helper.completionWrites, 'p1', 'pz1', 10);
-		await recordLegacyCompletion(helper.completionWrites, 'p1', 'pz2', 20);
-		await recordLegacyCompletion(helper.completionWrites, 'p1', 'pz3', 30);
+		await recordVersionedCompletion(
+			helper.completionWrites,
+			'p1',
+			'pz1',
+			currentCompletion('fractional-1', 10)
+		);
+		await recordVersionedCompletion(
+			helper.completionWrites,
+			'p1',
+			'pz2',
+			currentCompletion('fractional-2', 20)
+		);
+		await recordVersionedCompletion(
+			helper.completionWrites,
+			'p1',
+			'pz3',
+			currentCompletion('fractional-3', 30)
+		);
 		const result = await listPlayerStats(helper.db, 'p1', { limit: 1.5 });
 		expect(result.rows).toHaveLength(1);
 		expect(result.nextCursor).toBeDefined();

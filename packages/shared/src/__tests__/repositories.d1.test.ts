@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { Miniflare } from 'miniflare';
 import type { RecordPuzzleCompletionV1 } from '@perseus/types';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -8,7 +8,6 @@ import * as schema from '../schema';
 import { createD1CompletionWriteExecutor, createD1Db, type D1AppDb } from '../drivers/d1';
 import { completionFactsMatch, type VersionedCompletionWrite } from '../completion-writes';
 import {
-	recordLegacyCompletion,
 	recordVersionedCompletion,
 	listPlayerStats,
 	getPlayerSummary,
@@ -694,170 +693,83 @@ describe('recordVersionedCompletion against real D1', () => {
 	});
 });
 
-describe('recordCompletion against real D1', () => {
-	it('soft-fails a legacy write to a tombstoned puzzle without creating stats', async () => {
-		const executor = createD1CompletionWriteExecutor(db);
-		await db
-			.insert(schema.puzzleDeletionTombstones)
-			.values({ puzzleId: 'pz1', deletedAt: 500 })
-			.run();
-
-		expect(await recordLegacyCompletion(executor, 'p1', 'pz1', 100)).toEqual({
-			status: 'tombstoned'
-		});
-		expect(await db.select().from(schema.puzzleStats)).toHaveLength(0);
-	});
-
-	it('leaves an existing legacy row unchanged after its puzzle is tombstoned', async () => {
-		const executor = createD1CompletionWriteExecutor(db);
-		expect(await recordLegacyCompletion(executor, 'p1', 'pz1', 100)).toEqual({
-			status: 'recorded'
-		});
-		const original = await db.select().from(schema.puzzleStats);
-		await db
-			.insert(schema.puzzleDeletionTombstones)
-			.values({ puzzleId: 'pz1', deletedAt: Date.now() })
-			.run();
-
-		expect(await recordLegacyCompletion(executor, 'p1', 'pz1', 50)).toEqual({
-			status: 'tombstoned'
-		});
-		expect(await db.select().from(schema.puzzleStats)).toEqual(original);
-	});
-
-	it('rejects a zero-change legacy write without a tombstone as an invariant failure', async () => {
-		const executor = createD1CompletionWriteExecutor(db);
-		await d1
-			.prepare(
-				'CREATE TRIGGER ignore_puzzle_stats_insert BEFORE INSERT ON puzzle_stats BEGIN SELECT RAISE(IGNORE); END'
-			)
-			.run();
-		try {
-			await expect(recordLegacyCompletion(executor, 'p1', 'pz1', 100)).rejects.toThrow(
-				'Legacy completion write changed no rows without tombstone'
-			);
-		} finally {
-			await d1.prepare('DROP TRIGGER ignore_puzzle_stats_insert').run();
-		}
-
-		expect(await db.select().from(schema.puzzleStats)).toHaveLength(0);
-	});
-
-	it('inserts a new stat row on first completion', async () => {
-		await recordLegacyCompletion(createD1CompletionWriteExecutor(db), 'p1', 'pz1', 100);
-		const stats = await listPlayerStats(db, 'p1', { limit: 10 });
-		expect(stats.rows).toHaveLength(1);
-		expect(stats.rows[0].bestTimeSeconds).toBe(100);
-		expect(stats.rows[0].totalCompletions).toBe(1);
-	});
-
-	it('upserts: tracks MIN best time and increments count for spaced solves', async () => {
-		vi.useFakeTimers();
-		try {
-			const executor = createD1CompletionWriteExecutor(db);
-			await recordLegacyCompletion(executor, 'p1', 'pz1', 100);
-			vi.advanceTimersByTime(31_000);
-			await recordLegacyCompletion(executor, 'p1', 'pz1', 80);
-			vi.advanceTimersByTime(31_000);
-			await recordLegacyCompletion(executor, 'p1', 'pz1', 120);
-			const stats = await listPlayerStats(db, 'p1', { limit: 10 });
-			expect(stats.rows).toHaveLength(1);
-			expect(stats.rows[0].bestTimeSeconds).toBe(80); // MIN of 100, 80, 120
-			expect(stats.rows[0].totalCompletions).toBe(3);
-		} finally {
-			vi.useRealTimers();
-		}
-	});
-
-	it('dedupes rapid retries within the 30s window (onConflictDoUpdate raw SQL)', async () => {
-		vi.useFakeTimers();
-		try {
-			const executor = createD1CompletionWriteExecutor(db);
-			await recordLegacyCompletion(executor, 'p1', 'pz1', 100);
-			// No time advanced — these are immediate retries.
-			await recordLegacyCompletion(executor, 'p1', 'pz1', 80);
-			await recordLegacyCompletion(executor, 'p1', 'pz1', 120);
-			const stats = await listPlayerStats(db, 'p1', { limit: 10 });
-			expect(stats.rows).toHaveLength(1);
-			expect(stats.rows[0].bestTimeSeconds).toBe(80); // MIN still applied
-			expect(stats.rows[0].totalCompletions).toBe(1); // deduped, not 3
-		} finally {
-			vi.useRealTimers();
-		}
-	});
-});
-
 describe('listPlayerStats composite cursor against real D1', () => {
 	it('paginates with (bestTimeSeconds, puzzleId) cursor without skipping rows', async () => {
-		vi.useFakeTimers();
-		try {
-			// Insert 5 completions with distinct best times.
-			for (let i = 0; i < 5; i++) {
-				await recordLegacyCompletion(
-					createD1CompletionWriteExecutor(db),
-					'p1',
-					`pz${i}`,
-					100 + i * 10
-				);
-				vi.advanceTimersByTime(31_000);
-			}
-			const page1 = await listPlayerStats(db, 'p1', { limit: 2 });
-			expect(page1.rows).toHaveLength(2);
-			expect(page1.nextCursor).toBeDefined();
-			// Ordered by bestTimeSeconds ASC
-			expect(page1.rows[0].bestTimeSeconds).toBe(100);
-			expect(page1.rows[1].bestTimeSeconds).toBe(110);
-
-			const page2 = await listPlayerStats(db, 'p1', {
-				limit: 2,
-				cursor: page1.nextCursor!
-			});
-			expect(page2.rows).toHaveLength(2);
-			expect(page2.nextCursor).toBeDefined();
-			expect(page2.rows[0].bestTimeSeconds).toBe(120);
-			expect(page2.rows[1].bestTimeSeconds).toBe(130);
-
-			const page3 = await listPlayerStats(db, 'p1', {
-				limit: 2,
-				cursor: page2.nextCursor!
-			});
-			expect(page3.rows).toHaveLength(1);
-			expect(page3.nextCursor).toBeUndefined();
-			expect(page3.rows[0].bestTimeSeconds).toBe(140);
-		} finally {
-			vi.useRealTimers();
+		// Insert 5 current completions with distinct best times.
+		for (let i = 0; i < 5; i++) {
+			await recordVersionedCompletion(
+				createD1CompletionWriteExecutor(db),
+				'p1',
+				`pz${i}`,
+				completion({ runId: `cursor-${i}`, elapsedActiveSeconds: 100 + i * 10 }),
+				1_000 + i
+			);
 		}
+		const page1 = await listPlayerStats(db, 'p1', { limit: 2 });
+		expect(page1.rows).toHaveLength(2);
+		expect(page1.nextCursor).toBeDefined();
+		// Ordered by bestTimeSeconds ASC
+		expect(page1.rows[0].bestTimeSeconds).toBe(100);
+		expect(page1.rows[1].bestTimeSeconds).toBe(110);
+
+		const page2 = await listPlayerStats(db, 'p1', {
+			limit: 2,
+			cursor: page1.nextCursor!
+		});
+		expect(page2.rows).toHaveLength(2);
+		expect(page2.nextCursor).toBeDefined();
+		expect(page2.rows[0].bestTimeSeconds).toBe(120);
+		expect(page2.rows[1].bestTimeSeconds).toBe(130);
+
+		const page3 = await listPlayerStats(db, 'p1', {
+			limit: 2,
+			cursor: page2.nextCursor!
+		});
+		expect(page3.rows).toHaveLength(1);
+		expect(page3.nextCursor).toBeUndefined();
+		expect(page3.rows[0].bestTimeSeconds).toBe(140);
 	});
 
 	it('handles tie-break on equal bestTimeSeconds via puzzleId', async () => {
-		vi.useFakeTimers();
-		try {
-			// Two puzzles with the same best time — cursor must use puzzleId
-			// as the tiebreaker to avoid skipping or duplicating rows.
-			const executor = createD1CompletionWriteExecutor(db);
-			await recordLegacyCompletion(executor, 'p1', 'pzB', 100);
-			vi.advanceTimersByTime(31_000);
-			await recordLegacyCompletion(executor, 'p1', 'pzA', 100);
-			vi.advanceTimersByTime(31_000);
-			await recordLegacyCompletion(executor, 'p1', 'pzC', 100);
+		// Two puzzles with the same best time — cursor must use puzzleId
+		// as the tiebreaker to avoid skipping or duplicating rows.
+		const executor = createD1CompletionWriteExecutor(db);
+		await recordVersionedCompletion(
+			executor,
+			'p1',
+			'pzB',
+			completion({ runId: 'tie-b', elapsedActiveSeconds: 100 }),
+			1_000
+		);
+		await recordVersionedCompletion(
+			executor,
+			'p1',
+			'pzA',
+			completion({ runId: 'tie-a', elapsedActiveSeconds: 100 }),
+			2_000
+		);
+		await recordVersionedCompletion(
+			executor,
+			'p1',
+			'pzC',
+			completion({ runId: 'tie-c', elapsedActiveSeconds: 100 }),
+			3_000
+		);
 
-			const page1 = await listPlayerStats(db, 'p1', { limit: 2 });
-			expect(page1.rows).toHaveLength(2);
-			expect(page1.nextCursor).toBeDefined();
-			// Ordered by bestTimeSeconds ASC, puzzleId ASC
-			expect(page1.rows[0].puzzleId).toBe('pzA');
-			expect(page1.rows[1].puzzleId).toBe('pzB');
+		const page1 = await listPlayerStats(db, 'p1', { limit: 2 });
+		expect(page1.rows).toHaveLength(2);
+		expect(page1.nextCursor).toBeDefined();
+		// Ordered by bestTimeSeconds ASC, puzzleId ASC
+		expect(page1.rows[0].puzzleId).toBe('pzA');
+		expect(page1.rows[1].puzzleId).toBe('pzB');
 
-			const page2 = await listPlayerStats(db, 'p1', {
-				limit: 2,
-				cursor: page1.nextCursor!
-			});
-			expect(page2.rows).toHaveLength(1);
-			expect(page2.rows[0].puzzleId).toBe('pzC');
-			expect(page2.nextCursor).toBeUndefined();
-		} finally {
-			vi.useRealTimers();
-		}
+		const page2 = await listPlayerStats(db, 'p1', {
+			limit: 2,
+			cursor: page1.nextCursor!
+		});
+		expect(page2.rows).toHaveLength(1);
+		expect(page2.rows[0].puzzleId).toBe('pzC');
+		expect(page2.nextCursor).toBeUndefined();
 	});
 });
 
@@ -1137,17 +1049,22 @@ describe('ensurePuzzleOwnership backfill against real D1', () => {
 		// the backfill, listPlayerStats left-joins a missing row and surfaces
 		// puzzleName null (the Puzzle Results UI then shows the UUID).
 		await ensurePuzzleOwnership(db, {
-			id: 'pz-legacy',
+			id: 'pz-backfill',
 			ownerId: SYSTEM_OWNER_ID,
-			name: 'Legacy Puzzle',
+			name: 'Backfill Puzzle',
 			pieceCount: 4,
 			status: 'ready',
 			createdAt: 50
 		});
-		await recordLegacyCompletion(createD1CompletionWriteExecutor(db), 'p1', 'pz-legacy', 120);
+		await recordVersionedCompletion(
+			createD1CompletionWriteExecutor(db),
+			'p1',
+			'pz-backfill',
+			completion({ runId: 'backfill-run', elapsedActiveSeconds: 120 })
+		);
 		const stats = await listPlayerStats(db, 'p1', { limit: 10 });
 		expect(stats.rows).toHaveLength(1);
-		expect(stats.rows[0].puzzleName).toBe('Legacy Puzzle');
+		expect(stats.rows[0].puzzleName).toBe('Backfill Puzzle');
 	});
 
 	it('leaves an existing ownership row untouched (ON CONFLICT DO NOTHING)', async () => {
@@ -1199,7 +1116,12 @@ describe('ensurePuzzleOwnership backfill against real D1', () => {
 		const stats = await listPlayerStats(db, 'p1', { limit: 10 });
 		expect(stats.rows).toHaveLength(0); // no completions recorded
 		// The single system row resolves the name once a completion lands.
-		await recordLegacyCompletion(createD1CompletionWriteExecutor(db), 'p1', 'pz-sys', 60);
+		await recordVersionedCompletion(
+			createD1CompletionWriteExecutor(db),
+			'p1',
+			'pz-sys',
+			completion({ runId: 'system-run', elapsedActiveSeconds: 60 })
+		);
 		const after = await listPlayerStats(db, 'p1', { limit: 10 });
 		expect(after.rows).toHaveLength(1);
 		expect(after.rows[0].puzzleName).toBe('System Puzzle');

@@ -10,13 +10,6 @@ export interface VersionedCompletionWrite {
 	receivedAt: number;
 }
 
-export interface LegacyCompletionWrite {
-	playerId: string;
-	puzzleId: string;
-	timeSeconds: number;
-	receivedAt: number;
-}
-
 export interface StoredCompletionFacts {
 	puzzleId: string;
 	resultClass: ResultClass;
@@ -32,11 +25,8 @@ export type VersionedCompletionWriteExecution =
 	| { status: 'tombstoned' }
 	| { status: 'quota_exceeded' };
 
-export type LegacyCompletionWriteExecution = { status: 'recorded' } | { status: 'tombstoned' };
-
 export interface CompletionWriteExecutor {
 	write(input: VersionedCompletionWrite): Promise<VersionedCompletionWriteExecution>;
-	writeLegacy(input: LegacyCompletionWrite): Promise<LegacyCompletionWriteExecution>;
 	beginPuzzleDeletion(puzzleId: string, deletedAt: number): Promise<void>;
 	finishPuzzleDeletion(puzzleId: string): Promise<void>;
 	isPuzzleTombstoned(puzzleId: string): Promise<boolean>;

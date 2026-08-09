@@ -24,7 +24,6 @@ import {
 	getPlayerPuzzles,
 	getPlayerStats,
 	recordCompletion,
-	recordCompletionLegacy,
 	getAvatarUrl,
 	resolveAssetUrl,
 	ApiError
@@ -1060,15 +1059,6 @@ describe('player profile service functions', () => {
 		const calls = vi.mocked(fetch).mock.calls;
 		const init = calls[0]?.[1] as RequestInit;
 		expect(init.body).toBe(JSON.stringify(request));
-	});
-
-	it('recordCompletionLegacy POSTs the legacy { timeSeconds } body', async () => {
-		vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}', { status: 200 })));
-		await recordCompletionLegacy('pz1', 42);
-		const calls = vi.mocked(fetch).mock.calls;
-		const init = calls[0]?.[1] as RequestInit;
-		expect(init.body).toBe(JSON.stringify({ timeSeconds: 42 }));
-		expect(init.method).toBe('POST');
 	});
 
 	it('getAvatarUrl builds the path', () => {

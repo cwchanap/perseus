@@ -2,11 +2,10 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { CompletionWriteExecutor } from '@perseus/shared';
 
-const { legacyDb, completionWrites } = vi.hoisted(() => ({
-	legacyDb: {},
+const { workerDb, completionWrites } = vi.hoisted(() => ({
+	workerDb: {},
 	completionWrites: {
 		write: vi.fn(),
-		writeLegacy: vi.fn(),
 		beginPuzzleDeletion: vi.fn(),
 		finishPuzzleDeletion: vi.fn(),
 		isPuzzleTombstoned: vi.fn()
@@ -14,15 +13,14 @@ const { legacyDb, completionWrites } = vi.hoisted(() => ({
 }));
 
 vi.mock('../db.worker', () => ({
-	getWorkerDb: vi.fn(() => legacyDb),
-	getWorkerDbContext: vi.fn(() => ({ db: legacyDb, completionWrites }))
+	getWorkerDb: vi.fn(() => workerDb),
+	getWorkerDbContext: vi.fn(() => ({ db: workerDb, completionWrites }))
 }));
 
 vi.mock('@perseus/shared', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('@perseus/shared')>();
 	return {
 		...actual,
-		recordLegacyCompletion: vi.fn(async () => ({ status: 'recorded' as const })),
 		recordVersionedCompletion: vi.fn(async () => ({
 			status: 'recorded' as const,
 			completedAt: 100
@@ -54,12 +52,7 @@ import complete from '../routes/puzzles.complete.worker';
 import * as dbModule from '../db.worker';
 import * as playerAuth from '../services/player-auth.worker';
 import * as storage from '../services/storage.worker';
-import {
-	recordLegacyCompletion,
-	recordVersionedCompletion,
-	ensurePuzzleOwnership,
-	SYSTEM_OWNER_ID
-} from '@perseus/shared';
+import { recordVersionedCompletion, ensurePuzzleOwnership, SYSTEM_OWNER_ID } from '@perseus/shared';
 import type { RecordPuzzleCompletionV1 } from '@perseus/types';
 import type { PlayerSessionRecord } from '../services/player-auth.worker';
 
@@ -247,10 +240,10 @@ function jsonHeaders() {
 describe('POST /api/puzzles/:id/complete (Worker)', () => {
 	beforeEach(() => {
 		vi.mocked(dbModule.getWorkerDb).mockReset();
-		vi.mocked(dbModule.getWorkerDb).mockReturnValue(legacyDb as never);
+		vi.mocked(dbModule.getWorkerDb).mockReturnValue(workerDb as never);
 		vi.mocked(dbModule.getWorkerDbContext).mockReset();
 		vi.mocked(dbModule.getWorkerDbContext).mockReturnValue({
-			db: legacyDb,
+			db: workerDb,
 			completionWrites
 		} as never);
 		vi.mocked(playerAuth.getPlayerSession).mockResolvedValue(TEST_PLAYER);
@@ -264,8 +257,6 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 		// Reset call history on every asserted mock so each test only reflects
 		// its own requests (the not.toHaveBeenCalled() assertions depend on this).
 		vi.mocked(storage.getPuzzle).mockClear();
-		vi.mocked(recordLegacyCompletion).mockReset();
-		vi.mocked(recordLegacyCompletion).mockResolvedValue({ status: 'recorded' });
 		vi.mocked(recordVersionedCompletion).mockReset();
 		vi.mocked(recordVersionedCompletion).mockResolvedValue({
 			status: 'recorded',
@@ -274,39 +265,15 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 		vi.mocked(ensurePuzzleOwnership).mockClear();
 	});
 
-	it('records an exact legacy completion through the legacy repository', async () => {
+	it('rejects the removed legacy timeSeconds body', async () => {
 		const res = await buildApp().request(
 			`/api/puzzles/${PUZZLE_ID}/complete`,
-			{
-				method: 'POST',
-				headers: jsonHeaders(),
-				body: JSON.stringify({ timeSeconds: 90 })
-			},
+			{ method: 'POST', headers: jsonHeaders(), body: JSON.stringify({ timeSeconds: 90 }) },
 			DUMMY_ENV
 		);
-		expect(res.status).toBe(200);
-		const body = (await res.json()) as { ok: boolean };
-		expect(body.ok).toBe(true);
-		expect(recordLegacyCompletion).toHaveBeenCalledWith(completionWrites, 'p1', PUZZLE_ID, 90);
+
+		expect(res.status).toBe(400);
 		expect(recordVersionedCompletion).not.toHaveBeenCalled();
-	});
-
-	it('returns 404 when a legacy completion is fenced by a tombstone', async () => {
-		vi.mocked(recordLegacyCompletion).mockResolvedValueOnce({ status: 'tombstoned' });
-
-		const res = await buildApp().request(
-			`/api/puzzles/${PUZZLE_ID}/complete`,
-			{
-				method: 'POST',
-				headers: jsonHeaders(),
-				body: JSON.stringify({ timeSeconds: 90 })
-			},
-			DUMMY_ENV
-		);
-
-		expect(res.status).toBe(404);
-		expect(await res.json()).toEqual({ error: 'not_found', message: 'Puzzle not found' });
-		expect(ensurePuzzleOwnership).not.toHaveBeenCalled();
 	});
 
 	it('backfills a system-owned puzzle row after recording the completion', async () => {
@@ -315,7 +282,7 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 			{
 				method: 'POST',
 				headers: jsonHeaders(),
-				body: JSON.stringify({ timeSeconds: 90 })
+				body: JSON.stringify(VERSIONED_CASES[0].request)
 			},
 			DUMMY_ENV
 		);
@@ -333,7 +300,7 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 		// The completion decision comes first so tombstoned outcomes cannot
 		// recreate ownership while a deletion is in flight.
 		const backfillOrder = vi.mocked(ensurePuzzleOwnership).mock.invocationCallOrder[0];
-		const recordOrder = vi.mocked(recordLegacyCompletion).mock.invocationCallOrder[0];
+		const recordOrder = vi.mocked(recordVersionedCompletion).mock.invocationCallOrder[0];
 		expect(backfillOrder).toBeGreaterThan(recordOrder);
 		expect(dbModule.getWorkerDbContext).toHaveBeenCalledOnce();
 	});
@@ -346,12 +313,12 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 			{
 				method: 'POST',
 				headers: jsonHeaders(),
-				body: JSON.stringify({ timeSeconds: 90 })
+				body: JSON.stringify(VERSIONED_CASES[0].request)
 			},
 			DUMMY_ENV
 		);
 		expect(res.status).toBe(200);
-		expect(recordLegacyCompletion).toHaveBeenCalled();
+		expect(recordVersionedCompletion).toHaveBeenCalled();
 		consoleSpy.mockRestore();
 	});
 
@@ -372,7 +339,7 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 			{
 				method: 'POST',
 				headers: jsonHeaders(),
-				body: JSON.stringify({ timeSeconds: 90 })
+				body: JSON.stringify(VERSIONED_CASES[0].request)
 			},
 			DUMMY_ENV
 		);
@@ -394,7 +361,7 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 			{
 				method: 'POST',
 				headers: jsonHeaders(),
-				body: JSON.stringify({ timeSeconds: 90 })
+				body: JSON.stringify(VERSIONED_CASES[0].request)
 			},
 			DUMMY_ENV
 		);
@@ -408,7 +375,7 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 			{
 				method: 'POST',
 				headers: jsonHeaders(),
-				body: JSON.stringify({ timeSeconds: 90 })
+				body: JSON.stringify(VERSIONED_CASES[0].request)
 			},
 			DUMMY_ENV
 		);
@@ -422,12 +389,11 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 			{
 				method: 'POST',
 				headers: jsonHeaders(),
-				body: JSON.stringify({ timeSeconds: 90 })
+				body: JSON.stringify(VERSIONED_CASES[0].request)
 			},
 			DUMMY_ENV
 		);
 		expect(res.status).toBe(404);
-		expect(recordLegacyCompletion).not.toHaveBeenCalled();
 		expect(recordVersionedCompletion).not.toHaveBeenCalled();
 	});
 
@@ -444,12 +410,11 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 			{
 				method: 'POST',
 				headers: jsonHeaders(),
-				body: JSON.stringify({ timeSeconds: 90 })
+				body: JSON.stringify(VERSIONED_CASES[0].request)
 			},
 			DUMMY_ENV
 		);
 		expect(res.status).toBe(404);
-		expect(recordLegacyCompletion).not.toHaveBeenCalled();
 		expect(recordVersionedCompletion).not.toHaveBeenCalled();
 	});
 
@@ -461,7 +426,7 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 			{
 				method: 'POST',
 				headers: jsonHeaders(),
-				body: JSON.stringify({ timeSeconds: 90 })
+				body: JSON.stringify(VERSIONED_CASES[0].request)
 			},
 			DUMMY_ENV
 		);
@@ -469,76 +434,8 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 		const body = (await res.json()) as { error: string; message: string };
 		expect(body.error).toBe('internal_error');
 		expect(body.message).toBe('Failed to retrieve puzzle');
-		expect(recordLegacyCompletion).not.toHaveBeenCalled();
 		expect(recordVersionedCompletion).not.toHaveBeenCalled();
 		consoleSpy.mockRestore();
-	});
-
-	it('rejects non-numeric timeSeconds', async () => {
-		const res = await buildApp().request(
-			`/api/puzzles/${PUZZLE_ID}/complete`,
-			{
-				method: 'POST',
-				headers: jsonHeaders(),
-				body: JSON.stringify({ timeSeconds: 'fast' })
-			},
-			DUMMY_ENV
-		);
-		expect(res.status).toBe(400);
-	});
-
-	it('rejects missing timeSeconds', async () => {
-		const res = await buildApp().request(
-			`/api/puzzles/${PUZZLE_ID}/complete`,
-			{
-				method: 'POST',
-				headers: jsonHeaders(),
-				body: JSON.stringify({})
-			},
-			DUMMY_ENV
-		);
-		expect(res.status).toBe(400);
-	});
-
-	it('rejects legacy compatibility input with extra fields', async () => {
-		const res = await buildApp().request(
-			`/api/puzzles/${PUZZLE_ID}/complete`,
-			{
-				method: 'POST',
-				headers: jsonHeaders(),
-				body: JSON.stringify({ timeSeconds: 90, resultClass: 'standard_timed' })
-			},
-			DUMMY_ENV
-		);
-		expect(res.status).toBe(400);
-		expect(recordLegacyCompletion).not.toHaveBeenCalled();
-	});
-
-	it('rejects negative timeSeconds', async () => {
-		const res = await buildApp().request(
-			`/api/puzzles/${PUZZLE_ID}/complete`,
-			{
-				method: 'POST',
-				headers: jsonHeaders(),
-				body: JSON.stringify({ timeSeconds: -5 })
-			},
-			DUMMY_ENV
-		);
-		expect(res.status).toBe(400);
-	});
-
-	it('rejects timeSeconds above the 24h sanity ceiling', async () => {
-		const res = await buildApp().request(
-			`/api/puzzles/${PUZZLE_ID}/complete`,
-			{
-				method: 'POST',
-				headers: jsonHeaders(),
-				body: JSON.stringify({ timeSeconds: 24 * 60 * 60 + 1 })
-			},
-			DUMMY_ENV
-		);
-		expect(res.status).toBe(400);
-		expect(storage.getPuzzle).not.toHaveBeenCalled();
 	});
 
 	it('rejects invalid JSON body with 400', async () => {
@@ -561,24 +458,11 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 			{
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ timeSeconds: 90 })
+				body: JSON.stringify(VERSIONED_CASES[0].request)
 			},
 			DUMMY_ENV
 		);
 		expect(res.status).toBe(401);
-	});
-
-	it('floors fractional timeSeconds', async () => {
-		await buildApp().request(
-			`/api/puzzles/${PUZZLE_ID}/complete`,
-			{
-				method: 'POST',
-				headers: jsonHeaders(),
-				body: JSON.stringify({ timeSeconds: 90.7 })
-			},
-			DUMMY_ENV
-		);
-		expect(recordLegacyCompletion).toHaveBeenCalledWith(completionWrites, 'p1', PUZZLE_ID, 90);
 	});
 
 	it.each(VERSIONED_CASES)('records $name without rewriting fields', async ({ request }) => {
@@ -600,7 +484,6 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 			PUZZLE_ID,
 			request
 		);
-		expect(recordLegacyCompletion).not.toHaveBeenCalled();
 	});
 
 	it('returns 200 for an exact versioned replay', async () => {
@@ -677,39 +560,32 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 		expect(ensurePuzzleOwnership).not.toHaveBeenCalled();
 	});
 
-	it.each([
-		{ name: 'legacy', body: { timeSeconds: 90 } },
-		{ name: 'versioned', body: VERSIONED_CASES[0].request }
-	])(
-		'returns structured 500 when Worker context acquisition fails for $name input',
-		async ({ body }) => {
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-			vi.mocked(dbModule.getWorkerDbContext).mockImplementationOnce(() => {
-				throw new Error('context unavailable');
-			});
+	it('returns structured 500 when Worker context acquisition fails', async () => {
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		vi.mocked(dbModule.getWorkerDbContext).mockImplementationOnce(() => {
+			throw new Error('context unavailable');
+		});
 
-			const res = await buildApp().request(
-				`/api/puzzles/${PUZZLE_ID}/complete`,
-				{
-					method: 'POST',
-					headers: jsonHeaders(),
-					body: JSON.stringify(body)
-				},
-				DUMMY_ENV
-			);
+		const res = await buildApp().request(
+			`/api/puzzles/${PUZZLE_ID}/complete`,
+			{
+				method: 'POST',
+				headers: jsonHeaders(),
+				body: JSON.stringify(VERSIONED_CASES[0].request)
+			},
+			DUMMY_ENV
+		);
 
-			expect(res.status).toBe(500);
-			expect(await res.json()).toEqual({
-				error: 'internal_error',
-				message: 'Failed to record completion'
-			});
-			expect(dbModule.getWorkerDb).not.toHaveBeenCalled();
-			expect(recordLegacyCompletion).not.toHaveBeenCalled();
-			expect(recordVersionedCompletion).not.toHaveBeenCalled();
-			expect(ensurePuzzleOwnership).not.toHaveBeenCalled();
-			consoleSpy.mockRestore();
-		}
-	);
+		expect(res.status).toBe(500);
+		expect(await res.json()).toEqual({
+			error: 'internal_error',
+			message: 'Failed to record completion'
+		});
+		expect(dbModule.getWorkerDb).not.toHaveBeenCalled();
+		expect(recordVersionedCompletion).not.toHaveBeenCalled();
+		expect(ensurePuzzleOwnership).not.toHaveBeenCalled();
+		consoleSpy.mockRestore();
+	});
 
 	it.each(MALFORMED_VERSIONED_CASES)(
 		'rejects malformed versioned request: $name',
@@ -726,28 +602,9 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 
 			expect(res.status).toBe(400);
 			expect(storage.getPuzzle).not.toHaveBeenCalled();
-			expect(recordLegacyCompletion).not.toHaveBeenCalled();
 			expect(recordVersionedCompletion).not.toHaveBeenCalled();
 		}
 	);
-
-	it('returns structured 500 when the legacy repository fails', async () => {
-		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-		vi.mocked(recordLegacyCompletion).mockRejectedValueOnce(new Error('legacy write failed'));
-		const res = await buildApp().request(
-			`/api/puzzles/${PUZZLE_ID}/complete`,
-			{
-				method: 'POST',
-				headers: jsonHeaders(),
-				body: JSON.stringify({ timeSeconds: 90 })
-			},
-			DUMMY_ENV
-		);
-
-		expect(res.status).toBe(500);
-		expect(await res.json()).toMatchObject({ error: 'internal_error' });
-		consoleSpy.mockRestore();
-	});
 
 	it('returns structured 500 when the versioned executor fails', async () => {
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});

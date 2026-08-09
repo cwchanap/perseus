@@ -248,7 +248,6 @@ vi.mock('$lib/services/api', () => {
 		getPieceImageUrl: vi.fn(() => imageSrc),
 		getReferenceImageUrl: vi.fn(() => imageSrc),
 		recordCompletion: vi.fn(() => Promise.resolve()),
-		recordCompletionLegacy: vi.fn(() => Promise.resolve()),
 		getPlayerSession: vi.fn(() => Promise.resolve({ authenticated: false })),
 		logoutPlayer: vi.fn(() => Promise.resolve()),
 		ApiError: MockApiError

@@ -177,14 +177,6 @@ describe.each<LifecycleRuntime>(['Bun', 'D1'])('%s puzzle deletion lifecycle', (
 		await executor.beginPuzzleDeletion('pz1', 2_000);
 
 		expect(await executor.write(completion())).toEqual({ status: 'tombstoned' });
-		expect(
-			await executor.writeLegacy({
-				playerId: 'p1',
-				puzzleId: 'pz1',
-				timeSeconds: 100,
-				receivedAt: 3_000
-			})
-		).toEqual({ status: 'tombstoned' });
 		expect(await rows(db)).toEqual({ ledger: [], stats: [] });
 	});
 
@@ -266,7 +258,7 @@ describe.each<LifecycleRuntime>(['Bun', 'D1'])('%s puzzle deletion lifecycle', (
 });
 
 describe('createBunDbContext', () => {
-	it('runs both completion write protocols through immediate transactions', async () => {
+	it('runs completion writes through immediate transactions', async () => {
 		const immediateInputs: unknown[] = [];
 		const originalTransaction = Database.prototype.transaction;
 		const transactionSpy = vi.spyOn(Database.prototype, 'transaction').mockImplementation(function (
@@ -288,22 +280,8 @@ describe('createBunDbContext', () => {
 
 		try {
 			await context.completionWrites.write(completion());
-			await context.completionWrites.writeLegacy({
-				playerId: 'p1',
-				puzzleId: 'pz2',
-				timeSeconds: 50,
-				receivedAt: 2_000
-			});
 
-			expect(immediateInputs).toEqual([
-				completion(),
-				{
-					playerId: 'p1',
-					puzzleId: 'pz2',
-					timeSeconds: 50,
-					receivedAt: 2_000
-				}
-			]);
+			expect(immediateInputs).toEqual([completion()]);
 		} finally {
 			context.close();
 			rmSync(dataDir, { recursive: true, force: true });

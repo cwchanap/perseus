@@ -4,22 +4,16 @@ import {
 	type RecordPuzzleCompletionResponse,
 	type RecordPuzzleCompletionV1
 } from '@perseus/types';
-import type { LegacyCompletionWriteExecution, VersionedCompletionResult } from '@perseus/shared';
-
-export type ParsedCompletionRequest =
-	| { kind: 'legacy'; timeSeconds: number }
-	| { kind: 'versioned'; request: RecordPuzzleCompletionV1 };
+import type { VersionedCompletionResult } from '@perseus/shared';
 
 export type CompletionRequestParseResult =
-	| { ok: true; value: ParsedCompletionRequest }
+	| { ok: true; value: RecordPuzzleCompletionV1 }
 	| { ok: false; body: RecordPuzzleCompletionResponse; status: 400 };
 
 type CompletionResultResponse = {
 	body: RecordPuzzleCompletionResponse;
 	status: 200 | 404 | 409 | 429;
 };
-
-export type CompletionRouteResult = VersionedCompletionResult | LegacyCompletionWriteExecution;
 
 type CompletionInternalErrorResponse = {
 	body: RecordPuzzleCompletionResponse;
@@ -35,38 +29,14 @@ function badRequest(message: string): CompletionRequestParseResult {
 }
 
 export function parseCompletionRequest(value: unknown): CompletionRequestParseResult {
-	if (typeof value === 'object' && value !== null && Object.hasOwn(value, 'version')) {
-		if (!isRecordPuzzleCompletionV1(value, MAX_COMPLETION_TIME_SECONDS)) {
-			return badRequest('Invalid versioned completion request');
-		}
-		return { ok: true, value: { kind: 'versioned', request: value } };
+	if (!isRecordPuzzleCompletionV1(value, MAX_COMPLETION_TIME_SECONDS)) {
+		return badRequest('Invalid completion request');
 	}
-
-	if (
-		typeof value !== 'object' ||
-		value === null ||
-		Object.keys(value).length !== 1 ||
-		!Object.hasOwn(value, 'timeSeconds')
-	) {
-		return badRequest('timeSeconds must be a number of at least 1 second');
-	}
-
-	const timeSeconds = (value as { timeSeconds: unknown }).timeSeconds;
-	if (typeof timeSeconds !== 'number' || !Number.isFinite(timeSeconds) || timeSeconds < 1) {
-		return badRequest('timeSeconds must be a number of at least 1 second');
-	}
-	if (timeSeconds > MAX_COMPLETION_TIME_SECONDS) {
-		return badRequest('timeSeconds exceeds the maximum allowed solve time');
-	}
-
-	return {
-		ok: true,
-		value: { kind: 'legacy', timeSeconds: Math.floor(timeSeconds) }
-	};
+	return { ok: true, value };
 }
 
 export function completionResultToResponse(
-	result: CompletionRouteResult
+	result: VersionedCompletionResult
 ): CompletionResultResponse {
 	if (result.status === 'tombstoned') {
 		return {
