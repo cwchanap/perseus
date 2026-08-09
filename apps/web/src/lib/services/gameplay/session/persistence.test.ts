@@ -106,7 +106,6 @@ function makeState(overrides: Partial<PuzzleSessionState> = {}): PuzzleSessionSt
 		origin: 'new',
 		lifecycle: 'active',
 		mode: 'timed',
-		timingQuality: 'known',
 		elapsedActiveSeconds: 5,
 		timerStarted: true,
 		pieceCount: 4,
@@ -238,6 +237,22 @@ describe('loadPersistedSession validation', () => {
 		}
 	});
 
+	it('ignores obsolete timingQuality on a current schema-1 snapshot', () => {
+		const raw = { ...serializeSession(makeState(), 1_000)!, timingQuality: 'known' } as Record<
+			string,
+			unknown
+		>;
+		const result = loadPersistedSession(JSON.stringify(raw), ctx);
+
+		expect(result.status).toBe('loaded');
+		if (result.status !== 'loaded') throw new Error('expected loaded snapshot');
+		expect(result.snapshot).not.toHaveProperty('timingQuality');
+	});
+
+	it('omits timingQuality when serializing a current session', () => {
+		expect(serializeSession(makeState(), 1_000)).not.toHaveProperty('timingQuality');
+	});
+
 	it('rejects a puzzle id mismatch', () => {
 		const snapshot = serializeSession(makeState(), 1_000);
 		const result = loadPersistedSession(JSON.stringify(snapshot), { ...ctx, puzzleId: 'other' });
@@ -267,7 +282,6 @@ describe('isResumable', () => {
 		const seal: PersistedPuzzleSessionV1['sealedCompletion'] = {
 			runId: 'r',
 			resultClass: 'standard_timed',
-			timingQuality: 'known',
 			elapsedActiveSeconds: 5,
 			completedAt: 1,
 			localStats: { status: 'succeeded' },
@@ -378,7 +392,6 @@ describe('isResumable sealed-active guard', () => {
 		const seal: PersistedPuzzleSessionV1['sealedCompletion'] = {
 			runId: 'r',
 			resultClass: 'standard_timed',
-			timingQuality: 'known',
 			elapsedActiveSeconds: 5,
 			completedAt: 1,
 			localStats: { status: 'succeeded' },
@@ -601,7 +614,6 @@ describe('loadPersistedSession additional validation branches', () => {
 			sealedCompletion: {
 				runId: snapshot.runId,
 				resultClass: 'standard_timed',
-				timingQuality: 'known',
 				elapsedActiveSeconds: 5,
 				completedAt: 1_000,
 				localStats: { status: 'bogus' },
@@ -622,7 +634,6 @@ describe('loadPersistedSession additional validation branches', () => {
 			sealedCompletion: {
 				runId: snapshot.runId,
 				resultClass: 'standard_timed',
-				timingQuality: 'known',
 				elapsedActiveSeconds: 5,
 				completedAt: 1_000,
 				localStats: { status: 'succeeded' },
@@ -643,7 +654,6 @@ describe('loadPersistedSession additional validation branches', () => {
 			sealedCompletion: {
 				runId: snapshot.runId,
 				resultClass: 'standard_timed',
-				timingQuality: 'known',
 				elapsedActiveSeconds: 5,
 				completedAt: Infinity,
 				localStats: { status: 'succeeded' },
@@ -664,7 +674,6 @@ describe('loadPersistedSession additional validation branches', () => {
 			sealedCompletion: {
 				runId: snapshot.runId,
 				resultClass: 'standard_timed',
-				timingQuality: 'known',
 				elapsedActiveSeconds: -1,
 				completedAt: 1_000,
 				localStats: { status: 'succeeded' },
@@ -685,7 +694,6 @@ describe('loadPersistedSession additional validation branches', () => {
 			sealedCompletion: {
 				runId: snapshot.runId,
 				resultClass: 'standard_timed',
-				timingQuality: 'known',
 				elapsedActiveSeconds: 0,
 				completedAt: 1_000,
 				localStats: { status: 'succeeded' },
@@ -706,7 +714,6 @@ describe('loadPersistedSession additional validation branches', () => {
 			sealedCompletion: {
 				runId: snapshot.runId,
 				resultClass: 'standard_timed',
-				timingQuality: 'known',
 				elapsedActiveSeconds: 1.5,
 				completedAt: 1_000,
 				localStats: { status: 'succeeded' },
@@ -727,7 +734,6 @@ describe('loadPersistedSession additional validation branches', () => {
 			sealedCompletion: {
 				runId: snapshot.runId,
 				resultClass: 'standard_timed',
-				timingQuality: 'known',
 				elapsedActiveSeconds: null,
 				completedAt: 1_000,
 				localStats: { status: 'succeeded' },
@@ -756,28 +762,6 @@ describe('loadPersistedSession additional validation branches', () => {
 			sealedCompletion: {
 				runId: snapshot.runId,
 				resultClass: 'relaxed',
-				timingQuality: 'known',
-				elapsedActiveSeconds: 5,
-				completedAt: 1_000,
-				localStats: { status: 'succeeded' },
-				serverSubmission: { status: 'succeeded' }
-			}
-		};
-		expect(loadPersistedSession(JSON.stringify(tampered), ctx)).toEqual({
-			status: 'invalid',
-			reason: 'cross_field_violation'
-		});
-	});
-
-	it('rejects a legacy_unknown seal with a numeric elapsed (server requires null)', () => {
-		const snapshot = serializeSession(makeState(), 1_000)!;
-		const tampered = {
-			...snapshot,
-			lifecycle: 'completed',
-			sealedCompletion: {
-				runId: snapshot.runId,
-				resultClass: 'standard_timed',
-				timingQuality: 'legacy_unknown',
 				elapsedActiveSeconds: 5,
 				completedAt: 1_000,
 				localStats: { status: 'succeeded' },
@@ -798,7 +782,6 @@ describe('loadPersistedSession additional validation branches', () => {
 			sealedCompletion: {
 				runId: snapshot.runId,
 				resultClass: 'standard_timed',
-				timingQuality: 'known',
 				elapsedActiveSeconds: 5,
 				completedAt: -1,
 				localStats: { status: 'succeeded' },
@@ -819,7 +802,6 @@ describe('loadPersistedSession additional validation branches', () => {
 			sealedCompletion: {
 				runId: 'different-run-id',
 				resultClass: 'standard_timed',
-				timingQuality: 'known',
 				elapsedActiveSeconds: 5,
 				completedAt: 1_000,
 				localStats: { status: 'succeeded' },
@@ -956,7 +938,6 @@ describe('loadPersistedSession additional validation branches', () => {
 		const seal: PersistedPuzzleSessionV1['sealedCompletion'] = {
 			runId: '11111111-1111-4111-8111-111111111111',
 			resultClass: 'standard_timed',
-			timingQuality: 'known',
 			elapsedActiveSeconds: 42,
 			completedAt: 1_000,
 			localStats: { status: 'succeeded' },
@@ -990,7 +971,6 @@ describe('loadPersistedSession additional validation branches', () => {
 		const seal: PersistedPuzzleSessionV1['sealedCompletion'] = {
 			runId: '11111111-1111-4111-8111-111111111111',
 			resultClass: 'standard_timed',
-			timingQuality: 'known',
 			elapsedActiveSeconds: 42,
 			completedAt: 1_000,
 			localStats: { status: 'succeeded' },
@@ -1021,7 +1001,6 @@ describe('loadPersistedSession additional validation branches', () => {
 		const seal: PersistedPuzzleSessionV1['sealedCompletion'] = {
 			runId: '11111111-1111-4111-8111-111111111111',
 			resultClass: 'standard_timed',
-			timingQuality: 'known',
 			elapsedActiveSeconds: 42,
 			completedAt: 1_000,
 			localStats: { status: 'succeeded' },

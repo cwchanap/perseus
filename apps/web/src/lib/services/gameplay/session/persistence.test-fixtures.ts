@@ -29,7 +29,6 @@ export function validSnapshot(): PersistedPuzzleSessionV1 {
 		runId: RUN_ID,
 		origin: 'new',
 		elapsedActiveSeconds: 5,
-		timingQuality: 'known',
 		timerStarted: true,
 		// Partial board: a genuinely in-progress session. A full board without a
 		// sealed completion is a dead state and must be rejected by the loader.
@@ -76,7 +75,6 @@ export function seal(patch: Record<string, unknown> = {}) {
 	return {
 		runId: RUN_ID,
 		resultClass: 'standard_timed',
-		timingQuality: 'known',
 		elapsedActiveSeconds: 5,
 		completedAt: 1_000,
 		localStats: { status: 'succeeded' },

@@ -89,7 +89,7 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 
 	function startClock() {
 		if (disposed) return;
-		if (state.mode !== 'timed' || state.timingQuality !== 'known') return;
+		if (state.mode !== 'timed') return;
 		if (clockRunning) return;
 		monotonicStart = clock.monotonicNow();
 		tickHandle = clock.setInterval(() => checkpointTime(), 1000);
@@ -109,7 +109,7 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 
 	function ensureTimerStarted() {
 		if (state.timerStarted) return;
-		if (state.mode !== 'timed' || state.timingQuality !== 'known') return;
+		if (state.mode !== 'timed') return;
 		if (state.lifecycle !== 'active') return;
 		state.timerStarted = true;
 		startClock();
@@ -137,12 +137,7 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 			return { type: 'lifecycle_noop', reason: 'invalid_transition' };
 		}
 		transitionToInternal('active');
-		if (
-			state.timerStarted &&
-			state.mode === 'timed' &&
-			state.timingQuality === 'known' &&
-			!documentHidden
-		) {
+		if (state.timerStarted && state.mode === 'timed' && !documentHidden) {
 			startClock();
 		}
 		notify();
@@ -577,7 +572,6 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 		const seal: SealedCompletion = {
 			runId: state.runId,
 			resultClass: state.resultClass,
-			timingQuality: state.timingQuality,
 			elapsedActiveSeconds: sealElapsed(),
 			completedAt: clock.wallNow(),
 			localStats: { status: 'pending' },
@@ -606,7 +600,7 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 	}
 
 	function sealElapsed(): number | null {
-		if (state.mode === 'relaxed' || state.timingQuality !== 'known') {
+		if (state.mode === 'relaxed') {
 			return null;
 		}
 		return Math.max(1, state.elapsedActiveSeconds ?? 0);
@@ -778,7 +772,6 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 			state.lifecycle === 'active' &&
 			state.timerStarted &&
 			state.mode === 'timed' &&
-			state.timingQuality === 'known' &&
 			!clockRunning
 		) {
 			startClock();
@@ -789,7 +782,7 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 	// --- Public checkpoint ----------------------------------------------------
 
 	function checkpointTime(): void {
-		// clockRunning is only true for timed+known sessions with a live
+		// clockRunning is only true for timed sessions with a live
 		// monotonicStart (startClock sets both together, stopClock clears both).
 		if (!clockRunning || monotonicStart === null) return;
 		const now = clock.monotonicNow();
@@ -859,7 +852,6 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 		state.lifecycle === 'active' &&
 		state.timerStarted &&
 		state.mode === 'timed' &&
-		state.timingQuality === 'known' &&
 		!documentHidden
 	) {
 		startClock();
@@ -903,7 +895,6 @@ function freshState(options: CreatePuzzleSessionOptions, runId: string): PuzzleS
 		origin: 'new',
 		lifecycle: 'setup',
 		mode,
-		timingQuality: 'known',
 		elapsedActiveSeconds: mode === 'timed' ? 0 : null,
 		timerStarted: false,
 		pieceCount: options.metadata.pieceCount,
@@ -938,7 +929,6 @@ function hydrate(
 		origin: snapshot.origin,
 		lifecycle: snapshot.lifecycle,
 		mode: snapshot.mode,
-		timingQuality: snapshot.timingQuality,
 		elapsedActiveSeconds: snapshot.elapsedActiveSeconds,
 		timerStarted: snapshot.timerStarted,
 		pieceCount: metadata.pieceCount,
@@ -960,7 +950,6 @@ function hydrate(
 			? {
 					runId: snapshot.sealedCompletion.runId,
 					resultClass: snapshot.sealedCompletion.resultClass,
-					timingQuality: snapshot.sealedCompletion.timingQuality,
 					elapsedActiveSeconds: snapshot.sealedCompletion.elapsedActiveSeconds,
 					completedAt: snapshot.sealedCompletion.completedAt,
 					localStats: cloneEffectState(snapshot.sealedCompletion.localStats),
@@ -1009,7 +998,6 @@ function cloneSeal(seal: SealedCompletion): SealedCompletion {
 	return {
 		runId: seal.runId,
 		resultClass: seal.resultClass,
-		timingQuality: seal.timingQuality,
 		elapsedActiveSeconds: seal.elapsedActiveSeconds,
 		completedAt: seal.completedAt,
 		localStats: cloneEffectState(seal.localStats),

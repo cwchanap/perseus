@@ -6,7 +6,6 @@ function makeSeal(overrides: Partial<SealedCompletion> = {}): SealedCompletion {
 	return {
 		runId: '11111111-1111-4111-8111-111111111111',
 		resultClass: 'standard_timed',
-		timingQuality: 'known',
 		elapsedActiveSeconds: 120,
 		completedAt: 1_000,
 		localStats: { status: 'pending' },
@@ -124,18 +123,14 @@ describe('Stats Service', () => {
 			expect(getStats(puzzleId)?.totalCompletions).toBe(1);
 		});
 
-		it('counts an assisted/relaxed/legacy-unknown run without touching the best', async () => {
+		it('counts assisted and relaxed runs without touching the best', async () => {
 			await recordLocalCompletion(
 				puzzleId,
 				makeSeal({ resultClass: 'assisted_timed', runId: 'r1' })
 			);
 			await recordLocalCompletion(puzzleId, makeSeal({ resultClass: 'relaxed', runId: 'r2' }));
-			await recordLocalCompletion(
-				puzzleId,
-				makeSeal({ timingQuality: 'legacy_unknown', elapsedActiveSeconds: null, runId: 'r3' })
-			);
 			expect(getStats(puzzleId)?.standardBestTime).toBeNull();
-			expect(getStats(puzzleId)?.totalCompletions).toBe(3);
+			expect(getStats(puzzleId)?.totalCompletions).toBe(2);
 		});
 
 		it('is idempotent per run id (replay does not increment totals)', async () => {

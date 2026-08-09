@@ -52,7 +52,6 @@ function restoredSnapshot(): PersistedPuzzleSessionV1 {
 		runId: '11111111-1111-4111-8111-111111111111',
 		origin: 'resumed',
 		elapsedActiveSeconds: 5,
-		timingQuality: 'known',
 		timerStarted: true,
 		placedPieces: [{ pieceId: 0, x: 0, y: 0 }],
 		trayOrder: [0, 1, 2, 3],
@@ -134,7 +133,6 @@ describe('PuzzleSession edge coverage', () => {
 		restored.sealedCompletion = {
 			runId: restored.runId,
 			resultClass: 'standard_timed',
-			timingQuality: 'known',
 			elapsedActiveSeconds: 5,
 			completedAt: 1_000,
 			localStats: { status: 'succeeded' },

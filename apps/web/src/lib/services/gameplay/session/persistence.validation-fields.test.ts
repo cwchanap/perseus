@@ -23,10 +23,6 @@ describe('PuzzleSession persisted field validation', () => {
 		{ name: 'mode=turbo', mutate: (r: Record<string, unknown>) => (r.mode = 'turbo') },
 		{ name: 'origin=imported', mutate: (r: Record<string, unknown>) => (r.origin = 'imported') },
 		{
-			name: 'timingQuality=guess',
-			mutate: (r: Record<string, unknown>) => (r.timingQuality = 'guess')
-		},
-		{
 			name: 'resultClass=invalid',
 			mutate: (r: Record<string, unknown>) => (r.resultClass = 'invalid')
 		},
@@ -41,14 +37,10 @@ describe('PuzzleSession persisted field validation', () => {
 		});
 	});
 
-	it('rejects elapsed time in relaxed and legacy-unknown modes', () => {
+	it('rejects elapsed time in relaxed mode', () => {
 		expectInvalid((record) => {
 			record.mode = 'relaxed';
 			record.resultClass = 'relaxed';
-			record.elapsedActiveSeconds = 1;
-		});
-		expectInvalid((record) => {
-			record.timingQuality = 'legacy_unknown';
 			record.elapsedActiveSeconds = 1;
 		});
 	});
@@ -56,11 +48,6 @@ describe('PuzzleSession persisted field validation', () => {
 	it('rejects invalid timer state', () => {
 		expectInvalid((record) => {
 			record.timerStarted = 'yes';
-		});
-		expectInvalid((record) => {
-			record.timingQuality = 'legacy_unknown';
-			record.elapsedActiveSeconds = null;
-			record.timerStarted = true;
 		});
 	});
 

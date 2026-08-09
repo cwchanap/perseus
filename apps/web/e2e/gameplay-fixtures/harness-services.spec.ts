@@ -192,7 +192,7 @@ test.describe('FixtureRouter @smoke', () => {
 		const res = await fetchApi(page, `/api/puzzles/${FIXTURE_ID}/complete`, {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ runId: 'test-run-id' })
+			body: JSON.stringify({ runId: '00000000-0000-4000-8000-000000000001' })
 		});
 
 		expect(res.status).toBe(403);
@@ -369,7 +369,6 @@ const COMPLETION_BODY = {
 	version: 1 as const,
 	runId: '00000000-0000-4000-8000-000000000001',
 	resultClass: 'standard_timed' as const,
-	timingQuality: 'known' as const,
 	elapsedActiveSeconds: 5
 };
 

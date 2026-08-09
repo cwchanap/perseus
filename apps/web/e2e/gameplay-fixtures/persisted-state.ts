@@ -69,7 +69,6 @@ export function buildMinimalSeed(fixtureId: GameplayFixtureId): PersistedPuzzleS
 		runId: fixture.seedRunId,
 		origin: 'new',
 		elapsedActiveSeconds: 0,
-		timingQuality: 'known',
 		timerStarted: false,
 		placedPieces: [],
 		trayOrder: [...fixture.initialTrayOrder],

@@ -66,7 +66,6 @@ function completion(overrides: Partial<VersionedCompletionWrite> = {}): Versione
 		puzzleId: 'pz1',
 		runId: 'run-1',
 		resultClass: 'standard_timed',
-		timingQuality: 'known',
 		elapsedActiveSeconds: 100,
 		receivedAt: 1_000,
 		...overrides
@@ -312,7 +311,6 @@ describe('createBunDbContext', () => {
 			stored: {
 				puzzleId: 'pz1',
 				resultClass: 'standard_timed',
-				timingQuality: 'known',
 				elapsedActiveSeconds: 100,
 				completedAt: 1_000
 			},
@@ -323,7 +321,6 @@ describe('createBunDbContext', () => {
 			stored: {
 				puzzleId: 'pz1',
 				resultClass: 'standard_timed',
-				timingQuality: 'known',
 				elapsedActiveSeconds: 100,
 				completedAt: 1_000
 			},
@@ -367,7 +364,6 @@ describe('createBunDbContext', () => {
 			stored: {
 				puzzleId: 'pz1',
 				resultClass: 'standard_timed',
-				timingQuality: 'known',
 				elapsedActiveSeconds: 100,
 				completedAt: 1_000
 			},

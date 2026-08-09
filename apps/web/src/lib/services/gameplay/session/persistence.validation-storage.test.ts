@@ -13,7 +13,6 @@ function validState(overrides: Partial<PuzzleSessionState> = {}): PuzzleSessionS
 		origin: 'new',
 		lifecycle: 'active',
 		mode: 'timed',
-		timingQuality: 'known',
 		elapsedActiveSeconds: 5,
 		timerStarted: true,
 		pieceCount: 4,
@@ -70,7 +69,6 @@ describe('PuzzleSession persistence adapter and cloning', () => {
 			sealedCompletion: {
 				runId: RUN_ID,
 				resultClass: 'standard_timed',
-				timingQuality: 'known',
 				elapsedActiveSeconds: 5,
 				completedAt: 1_000,
 				localStats: { status: 'succeeded' },

@@ -41,7 +41,6 @@ function currentCompletion(runId: string, elapsedActiveSeconds: number) {
 		version: 1 as const,
 		runId,
 		resultClass: 'standard_timed' as const,
-		timingQuality: 'known' as const,
 		elapsedActiveSeconds
 	};
 }
@@ -384,7 +383,6 @@ describe('repositories', () => {
 			version: 1 as const,
 			runId: 'run-1',
 			resultClass: 'standard_timed' as const,
-			timingQuality: 'known' as const,
 			elapsedActiveSeconds: 99
 		};
 
@@ -445,7 +443,6 @@ describe('repositories', () => {
 			version: 1 as const,
 			runId: 'run-1',
 			resultClass: 'standard_timed' as const,
-			timingQuality: 'known' as const,
 			elapsedActiveSeconds: 100
 		};
 

@@ -82,9 +82,10 @@ const resumableState = vi.hoisted(() => ({ value: false }));
 const restoredLifecycleState = vi.hoisted(() => ({
 	value: 'active' as 'setup' | 'active' | 'paused' | 'completed'
 }));
-const timingQualityState = vi.hoisted(() => ({
-	value: 'known' as 'known' | 'legacy_unknown'
-}));
+
+const testRunId = (index: number) =>
+	`223e4567-e89b-42d3-a456-${String(426614174000 + index).padStart(12, '0')}`;
+const TEST_RUN_ID = testRunId(0);
 
 // Hoisted spies shared with the createSessionStorageAdapter mock so tests can
 // assert checkpoint behavior directly. vi.clearAllMocks() only clears call
@@ -97,10 +98,10 @@ const sessionStorageSpies = vi.hoisted(() => ({
 // Hoisted gameplay runtime spies. The route sources run-id/tray-order/rotations
 // from createGameplayRuntimeDependencies; mocking it here yields deterministic
 // gameplay values without touching the production shuffle or run-id factories.
-// The run-id counter mirrors the original browser factory contract: the first
-// create() returns the canonical 'test-run-id' that restored-session and
-// completion assertions expect; each subsequent call returns a fresh id so the
-// engine's run-id collision guard is satisfied across Play Again / navigation.
+// The run-id counter mirrors the browser factory contract: the first create()
+// returns the canonical test UUID that restored-session and completion
+// assertions expect; each subsequent call returns a fresh UUID so the engine's
+// run-id collision guard is satisfied across Play Again / navigation.
 const runtimeState = vi.hoisted(() => {
 	let runIdCount = 0;
 	return {
@@ -108,7 +109,7 @@ const runtimeState = vi.hoisted(() => {
 			runIdCount = 0;
 		},
 		runIdFactory: {
-			create: vi.fn(() => (runIdCount++ === 0 ? 'test-run-id' : `test-run-id-${runIdCount}`))
+			create: vi.fn(() => testRunId(runIdCount++))
 		},
 		createInitialTrayOrder: vi.fn((ids: number[]) => [...ids]),
 		createRestartTrayOrder: vi.fn((ids: number[]) => [...ids]),
@@ -177,10 +178,9 @@ vi.mock('$lib/services/gameplay/session/persistence', async (importOriginal) => 
 							source: 'api' as const,
 							lifecycle: restoredLifecycleState.value,
 							mode: 'timed' as const,
-							runId: 'test-run-id',
+							runId: TEST_RUN_ID,
 							origin: 'resumed' as const,
 							elapsedActiveSeconds: null,
-							timingQuality: timingQualityState.value,
 							timerStarted: false,
 							placedPieces: progressState.value.placedPieces.map((p) => ({ ...p })),
 							trayOrder: [0, 1],
@@ -267,8 +267,8 @@ vi.mock('$lib/services/stats', () => ({
 				standardBestCompletedAt: null,
 				totalCompletions: 1,
 				lastCompletedAt: Date.now(),
-				lastRecordedRunId: 'test-run-id',
-				recordedRunIds: ['test-run-id']
+				lastRecordedRunId: TEST_RUN_ID,
+				recordedRunIds: [TEST_RUN_ID]
 			}
 		})
 	)
@@ -436,7 +436,6 @@ describe('Puzzle route gameplay integration', () => {
 		};
 		resumableState.value = false;
 		restoredLifecycleState.value = 'active';
-		timingQualityState.value = 'known';
 		mockPageStore.set({
 			url: { pathname: '/puzzle/test-puzzle' },
 			params: { id: 'test-puzzle' },
@@ -711,22 +710,6 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.element(page.getByText('MISSION COMPLETE')).toBeVisible();
 		await expect.poll(() => page.getByText('FINAL TIME').query()).toBeNull();
 		await expect.poll(() => page.getByText('PERSONAL BEST').query()).toBeNull();
-	});
-
-	it('shows TIME UNAVAILABLE instead of the timer for a legacy-unknown restored run', async () => {
-		timingQualityState.value = 'legacy_unknown';
-		restoredLifecycleState.value = 'active';
-		setSavedProgress({
-			placedPieces: [{ pieceId: 0, x: 0, y: 0 }]
-		});
-
-		await renderPuzzlePage();
-
-		// The static TIME UNAVAILABLE indicator replaces the timer wrapper;
-		// no GameTimer is rendered for a legacy-unknown timed session.
-		await expect.element(page.getByTestId('time-unavailable-indicator')).toBeVisible();
-		await expect.element(page.getByText('TIME UNAVAILABLE')).toBeVisible();
-		await expect.poll(() => page.getByTestId('game-timer').query()).toBeNull();
 	});
 
 	it('clears pan state on window blur', async () => {
@@ -1289,8 +1272,8 @@ describe('Puzzle route gameplay integration', () => {
 				standardBestCompletedAt: Date.now(),
 				totalCompletions: 1,
 				lastCompletedAt: Date.now(),
-				lastRecordedRunId: 'test-run-id',
-				recordedRunIds: ['test-run-id']
+				lastRecordedRunId: TEST_RUN_ID,
+				recordedRunIds: [TEST_RUN_ID]
 			}
 		});
 		// Flush the pending handleLocalStatsEffect continuation.
@@ -1340,8 +1323,8 @@ describe('Puzzle route gameplay integration', () => {
 				standardBestCompletedAt: Date.now(),
 				totalCompletions: 1,
 				lastCompletedAt: Date.now(),
-				lastRecordedRunId: 'test-run-id',
-				recordedRunIds: ['test-run-id']
+				lastRecordedRunId: TEST_RUN_ID,
+				recordedRunIds: [TEST_RUN_ID]
 			}
 		});
 		// Flush the pending handleLocalStatsEffect continuation.
@@ -1564,8 +1547,8 @@ describe('Puzzle route gameplay integration', () => {
 				standardBestCompletedAt: Date.now(),
 				totalCompletions: 1,
 				lastCompletedAt: Date.now(),
-				lastRecordedRunId: 'test-run-id',
-				recordedRunIds: ['test-run-id']
+				lastRecordedRunId: TEST_RUN_ID,
+				recordedRunIds: [TEST_RUN_ID]
 			}
 		});
 		vi.mocked(getBestTime).mockReturnValueOnce(null);
@@ -1700,8 +1683,8 @@ describe('Puzzle route gameplay integration', () => {
 				standardBestCompletedAt: Date.now(),
 				totalCompletions: 1,
 				lastCompletedAt: Date.now(),
-				lastRecordedRunId: 'test-run-id',
-				recordedRunIds: ['test-run-id']
+				lastRecordedRunId: TEST_RUN_ID,
+				recordedRunIds: [TEST_RUN_ID]
 			},
 			reason: 'storage_error'
 		});
@@ -1727,10 +1710,9 @@ describe('Puzzle route gameplay integration', () => {
 			source: 'api',
 			lifecycle: 'active',
 			mode: 'timed',
-			runId: 'test-run-id',
+			runId: TEST_RUN_ID,
 			origin: 'new',
 			elapsedActiveSeconds: 0,
-			timingQuality: 'known',
 			timerStarted: false,
 			placedPieces: [{ pieceId: 0, x: 0, y: 0 }],
 			trayOrder: [0, 1],
@@ -1760,10 +1742,9 @@ describe('Puzzle route gameplay integration', () => {
 				source: 'api',
 				lifecycle: 'active',
 				mode: 'timed',
-				runId: 'test-run-id',
+				runId: TEST_RUN_ID,
 				origin: 'new',
 				elapsedActiveSeconds: 0,
-				timingQuality: 'known',
 				timerStarted: false,
 				placedPieces: [],
 				trayOrder: [0, 1],
@@ -2056,7 +2037,6 @@ describe('Puzzle page defensive guard coverage', () => {
 		};
 		resumableState.value = false;
 		restoredLifecycleState.value = 'active';
-		timingQualityState.value = 'known';
 		mockPageStore.set({
 			url: { pathname: '/puzzle/test-puzzle' },
 			params: { id: 'test-puzzle' },
@@ -2172,10 +2152,9 @@ describe('Puzzle page defensive guard coverage', () => {
 			source: 'api',
 			lifecycle: 'active',
 			mode: 'timed',
-			runId: 'test-run-id',
+			runId: TEST_RUN_ID,
 			origin: 'new',
 			elapsedActiveSeconds: 0,
-			timingQuality: 'known',
 			timerStarted: false,
 			placedPieces: [],
 			trayOrder: [0, 1],
@@ -2235,10 +2214,9 @@ describe('Puzzle page defensive guard coverage', () => {
 			source: 'api',
 			lifecycle: 'active',
 			mode: 'timed',
-			runId: 'test-run-id',
+			runId: TEST_RUN_ID,
 			origin: 'new',
 			elapsedActiveSeconds: 0,
-			timingQuality: 'known',
 			timerStarted: false,
 			placedPieces: [],
 			trayOrder: [0, 1],
@@ -2277,9 +2255,8 @@ describe('Puzzle page defensive guard coverage', () => {
 		// sealedCompletion so the page dispatches resume_completion_effects
 		// on load (line 603).
 		sealedCompletionOverride.value = {
-			runId: 'test-run-id',
+			runId: TEST_RUN_ID,
 			resultClass: 'standard_timed',
-			timingQuality: 'known',
 			elapsedActiveSeconds: 42,
 			completedAt: Date.now(),
 			localStats: { status: 'succeeded' },
@@ -2306,9 +2283,8 @@ describe('Puzzle page defensive guard coverage', () => {
 		// unauthorized failures (includeUnauthorized defaults to false); only
 		// an explicit user retry or an auth transition triggers a retry.
 		sealedCompletionOverride.value = {
-			runId: 'test-run-id',
+			runId: TEST_RUN_ID,
 			resultClass: 'standard_timed',
-			timingQuality: 'known',
 			elapsedActiveSeconds: 42,
 			completedAt: Date.now(),
 			localStats: { status: 'succeeded' },
