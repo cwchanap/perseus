@@ -5,6 +5,7 @@
 // totalCompletions but never create or overwrite the standard best.
 
 import type { SealedCompletion } from './gameplay/session/types';
+import { isPuzzleRunId } from '@perseus/types';
 
 export interface PuzzleStatsV1 {
 	schemaVersion: 1;
@@ -118,9 +119,9 @@ function validateV1(raw: Record<string, unknown>, puzzleId: string): PuzzleStats
 
 /**
  * Validate and normalize the recorded-run-id ring. Returns `false` for a
- * missing or malformed field (non-array, non-string entries) — silently
+ * missing or malformed field (non-array, non-UUID-v4 entries) — silently
  * dropping entries would weaken replay dedup and let an old run count again.
- * The ring is capped at MAX_RECORDED_RUN_IDS (newest first).
+ * The ring must not exceed MAX_RECORDED_RUN_IDS entries (newest first).
  *
  * Consistency is enforced rather than salvaged: duplicate ids are rejected
  * (silent dedup would mask corruption), and `lastRecordedRunId` must equal the
@@ -131,8 +132,9 @@ function validateV1(raw: Record<string, unknown>, puzzleId: string): PuzzleStats
  */
 function normalizeRecordedRunIds(raw: unknown, lastRecordedRunId: string | null): string[] | false {
 	if (!Array.isArray(raw)) return false;
+	if (raw.length > MAX_RECORDED_RUN_IDS) return false;
 	for (const id of raw) {
-		if (typeof id !== 'string') return false;
+		if (!isPuzzleRunId(id)) return false;
 	}
 	// Reject duplicates rather than silently deduping.
 	if (new Set(raw).size !== raw.length) return false;
@@ -143,7 +145,7 @@ function normalizeRecordedRunIds(raw: unknown, lastRecordedRunId: string | null)
 	} else if (lastRecordedRunId === null || raw[0] !== lastRecordedRunId) {
 		return false;
 	}
-	return raw.slice(0, MAX_RECORDED_RUN_IDS);
+	return raw;
 }
 
 export function getStats(puzzleId: string): PuzzleStatsV1 | null {
@@ -202,7 +204,7 @@ function freshStats(puzzleId: string): PuzzleStatsV1 {
 
 /**
  * Record a sealed run in local statistics. Idempotent per run id: a replayed
- * run does not increment totals. Only an eligible standard-timed known run with
+ * run does not increment totals. Only an eligible standard-timed run with
  * non-null elapsed may create or improve the canonical best.
  *
  * Cross-tab safe: the read-modify-write is serialized per puzzle via a Web

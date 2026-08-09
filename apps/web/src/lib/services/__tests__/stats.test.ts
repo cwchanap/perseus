@@ -14,6 +14,10 @@ function makeSeal(overrides: Partial<SealedCompletion> = {}): SealedCompletion {
 	};
 }
 
+function makeRunId(index: number): string {
+	return `00000000-0000-4000-8000-${index.toString(16).padStart(12, '0')}`;
+}
+
 describe('Stats Service', () => {
 	const puzzleId = 'test-puzzle-stats-123';
 
@@ -94,10 +98,13 @@ describe('Stats Service', () => {
 		});
 
 		it('improves the standard best when the new time is faster', async () => {
-			await recordLocalCompletion(puzzleId, makeSeal({ elapsedActiveSeconds: 100, runId: 'r1' }));
+			await recordLocalCompletion(
+				puzzleId,
+				makeSeal({ elapsedActiveSeconds: 100, runId: makeRunId(1) })
+			);
 			const result = await recordLocalCompletion(
 				puzzleId,
-				makeSeal({ elapsedActiveSeconds: 80, runId: 'r2' })
+				makeSeal({ elapsedActiveSeconds: 80, runId: makeRunId(2) })
 			);
 			expect(result.isNewStandardBest).toBe(true);
 			expect(getStats(puzzleId)?.standardBestTime).toBe(80);
@@ -105,10 +112,13 @@ describe('Stats Service', () => {
 		});
 
 		it('keeps the standard best when the new time is slower', async () => {
-			await recordLocalCompletion(puzzleId, makeSeal({ elapsedActiveSeconds: 80, runId: 'r1' }));
+			await recordLocalCompletion(
+				puzzleId,
+				makeSeal({ elapsedActiveSeconds: 80, runId: makeRunId(1) })
+			);
 			const result = await recordLocalCompletion(
 				puzzleId,
-				makeSeal({ elapsedActiveSeconds: 120, runId: 'r2' })
+				makeSeal({ elapsedActiveSeconds: 120, runId: makeRunId(2) })
 			);
 			expect(result.isNewStandardBest).toBe(false);
 			expect(getStats(puzzleId)?.standardBestTime).toBe(80);
@@ -117,7 +127,7 @@ describe('Stats Service', () => {
 		it('counts a rotation_timed run toward totals but never the best', async () => {
 			await recordLocalCompletion(
 				puzzleId,
-				makeSeal({ resultClass: 'rotation_timed', runId: 'r1' })
+				makeSeal({ resultClass: 'rotation_timed', runId: makeRunId(1) })
 			);
 			expect(getStats(puzzleId)?.standardBestTime).toBeNull();
 			expect(getStats(puzzleId)?.totalCompletions).toBe(1);
@@ -126,16 +136,19 @@ describe('Stats Service', () => {
 		it('counts assisted and relaxed runs without touching the best', async () => {
 			await recordLocalCompletion(
 				puzzleId,
-				makeSeal({ resultClass: 'assisted_timed', runId: 'r1' })
+				makeSeal({ resultClass: 'assisted_timed', runId: makeRunId(1) })
 			);
-			await recordLocalCompletion(puzzleId, makeSeal({ resultClass: 'relaxed', runId: 'r2' }));
+			await recordLocalCompletion(
+				puzzleId,
+				makeSeal({ resultClass: 'relaxed', runId: makeRunId(2) })
+			);
 			expect(getStats(puzzleId)?.standardBestTime).toBeNull();
 			expect(getStats(puzzleId)?.totalCompletions).toBe(2);
 		});
 
 		it('is idempotent per run id (replay does not increment totals)', async () => {
-			await recordLocalCompletion(puzzleId, makeSeal({ runId: 'r1' }));
-			const replay = await recordLocalCompletion(puzzleId, makeSeal({ runId: 'r1' }));
+			await recordLocalCompletion(puzzleId, makeSeal({ runId: makeRunId(1) }));
+			const replay = await recordLocalCompletion(puzzleId, makeSeal({ runId: makeRunId(1) }));
 			expect(replay.status).toBe('replayed');
 			expect(getStats(puzzleId)?.totalCompletions).toBe(1);
 		});
@@ -144,15 +157,18 @@ describe('Stats Service', () => {
 			// Stale pending sessions from different tabs can replay an older run
 			// after a newer completion has already been recorded. Dedup must be
 			// per-run-id, not just against the most recent run.
-			await recordLocalCompletion(puzzleId, makeSeal({ runId: 'A' }));
-			await recordLocalCompletion(puzzleId, makeSeal({ runId: 'B' }));
-			const replay = await recordLocalCompletion(puzzleId, makeSeal({ runId: 'A' }));
+			await recordLocalCompletion(puzzleId, makeSeal({ runId: makeRunId(1) }));
+			await recordLocalCompletion(puzzleId, makeSeal({ runId: makeRunId(2) }));
+			const replay = await recordLocalCompletion(puzzleId, makeSeal({ runId: makeRunId(1) }));
 			expect(replay.status).toBe('replayed');
 			expect(getStats(puzzleId)?.totalCompletions).toBe(2);
 		});
 
 		it('reports failure but preserves the in-memory new-best verdict when storage throws', async () => {
-			await recordLocalCompletion(puzzleId, makeSeal({ elapsedActiveSeconds: 100, runId: 'r1' }));
+			await recordLocalCompletion(
+				puzzleId,
+				makeSeal({ elapsedActiveSeconds: 100, runId: makeRunId(1) })
+			);
 			const real = localStorage;
 			vi.stubGlobal('localStorage', {
 				getItem: (k: string) => real.getItem(k),
@@ -167,7 +183,7 @@ describe('Stats Service', () => {
 			try {
 				const result = await recordLocalCompletion(
 					puzzleId,
-					makeSeal({ elapsedActiveSeconds: 50, runId: 'r2' })
+					makeSeal({ elapsedActiveSeconds: 50, runId: makeRunId(2) })
 				);
 				expect(result.status).toBe('failed');
 				expect(result.isNewStandardBest).toBe(true);
@@ -191,8 +207,8 @@ describe('Stats Service', () => {
 					standardBestCompletedAt: null,
 					totalCompletions: 2,
 					lastCompletedAt: 1000,
-					lastRecordedRunId: 'A',
-					recordedRunIds: ['A', 'B'],
+					lastRecordedRunId: makeRunId(1),
+					recordedRunIds: [makeRunId(1), makeRunId(2)],
 					...overrides
 				})
 			);
@@ -202,37 +218,84 @@ describe('Stats Service', () => {
 			// lastRecordedRunId 'A' but ring head 'B': contradictory. Because
 			// recording dedups against the ring, run A would count again on
 			// replay. Such a corrupt record must be rejected, not salvaged.
-			putV1({ lastRecordedRunId: 'A', recordedRunIds: ['B', 'A'] });
+			putV1({
+				lastRecordedRunId: makeRunId(1),
+				recordedRunIds: [makeRunId(2), makeRunId(1)]
+			});
 			expect(getStats(puzzleId)).toBeNull();
 		});
 
 		it('rejects a record with duplicate run ids in the ring', () => {
 			// Silent dedup would mask corruption. Reject instead.
-			putV1({ lastRecordedRunId: 'A', recordedRunIds: ['A', 'A'] });
+			putV1({
+				lastRecordedRunId: makeRunId(1),
+				recordedRunIds: [makeRunId(1), makeRunId(1)]
+			});
 			expect(getStats(puzzleId)).toBeNull();
 		});
 
 		it('rejects a record where totalCompletions is less than the retained run-id count', () => {
-			putV1({ totalCompletions: 1, lastRecordedRunId: 'A', recordedRunIds: ['A', 'B', 'C'] });
+			putV1({
+				totalCompletions: 1,
+				lastRecordedRunId: makeRunId(1),
+				recordedRunIds: [makeRunId(1), makeRunId(2), makeRunId(3)]
+			});
 			expect(getStats(puzzleId)).toBeNull();
 		});
 
 		it('rejects a record with a null lastRecordedRunId but a non-empty ring', () => {
-			putV1({ lastRecordedRunId: null, recordedRunIds: ['A', 'B'] });
+			putV1({ lastRecordedRunId: null, recordedRunIds: [makeRunId(1), makeRunId(2)] });
 			expect(getStats(puzzleId)).toBeNull();
 		});
 
 		it('rejects a record with a set lastRecordedRunId but an empty ring', () => {
-			putV1({ lastRecordedRunId: 'A', recordedRunIds: [] });
+			putV1({ lastRecordedRunId: makeRunId(1), recordedRunIds: [] });
 			expect(getStats(puzzleId)).toBeNull();
 		});
 
 		it('accepts a consistent record whose lastRecordedRunId matches the ring head', () => {
-			putV1({ totalCompletions: 2, lastRecordedRunId: 'A', recordedRunIds: ['A', 'B'] });
+			putV1({
+				totalCompletions: 2,
+				lastRecordedRunId: makeRunId(1),
+				recordedRunIds: [makeRunId(1), makeRunId(2)]
+			});
 			const stats = getStats(puzzleId);
 			expect(stats).not.toBeNull();
-			expect(stats?.lastRecordedRunId).toBe('A');
-			expect(stats?.recordedRunIds).toEqual(['A', 'B']);
+			expect(stats?.lastRecordedRunId).toBe(makeRunId(1));
+			expect(stats?.recordedRunIds).toEqual([makeRunId(1), makeRunId(2)]);
+		});
+
+		it('rejects a current ring containing a non-UUID run id and cleans it up', () => {
+			const nonUuidRunId = 'legacy-run-id';
+			putV1({
+				totalCompletions: 2,
+				lastRecordedRunId: nonUuidRunId,
+				recordedRunIds: [nonUuidRunId, makeRunId(2)]
+			});
+			expect(getStats(puzzleId)).toBeNull();
+			expect(localStorage.getItem(`puzzle-stats-${puzzleId}`)).toBeNull();
+		});
+
+		it('rejects an over-capacity current ring and cleans it up', () => {
+			const recordedRunIds = Array.from({ length: 33 }, (_, index) => makeRunId(index + 1));
+			putV1({
+				totalCompletions: recordedRunIds.length,
+				lastRecordedRunId: recordedRunIds[0],
+				recordedRunIds
+			});
+			expect(getStats(puzzleId)).toBeNull();
+			expect(localStorage.getItem(`puzzle-stats-${puzzleId}`)).toBeNull();
+		});
+
+		it('accepts a valid current ring at the 32-entry maximum', () => {
+			const recordedRunIds = Array.from({ length: 32 }, (_, index) => makeRunId(index + 1));
+			putV1({
+				totalCompletions: recordedRunIds.length,
+				lastRecordedRunId: recordedRunIds[0],
+				recordedRunIds
+			});
+			const stats = getStats(puzzleId);
+			expect(stats?.recordedRunIds).toEqual(recordedRunIds);
 		});
 
 		it('accepts a record with both lastRecordedRunId and ring empty together', () => {
@@ -380,8 +443,8 @@ describe('Stats Service', () => {
 					standardBestCompletedAt: null,
 					totalCompletions: 1,
 					lastCompletedAt: 1000,
-					lastRecordedRunId: 'r1',
-					recordedRunIds: 'r1'
+					lastRecordedRunId: makeRunId(1),
+					recordedRunIds: makeRunId(1)
 				})
 			);
 			expect(getStats(puzzleId)).toBeNull();
@@ -397,8 +460,8 @@ describe('Stats Service', () => {
 					standardBestCompletedAt: null,
 					totalCompletions: 1,
 					lastCompletedAt: 1000,
-					lastRecordedRunId: 'r1',
-					recordedRunIds: ['r1', 123]
+					lastRecordedRunId: makeRunId(1),
+					recordedRunIds: [makeRunId(1), 123]
 				})
 			);
 			expect(getStats(puzzleId)).toBeNull();
@@ -414,7 +477,7 @@ describe('Stats Service', () => {
 					standardBestCompletedAt: null,
 					totalCompletions: 1,
 					lastCompletedAt: 1000,
-					lastRecordedRunId: 'r1'
+					lastRecordedRunId: makeRunId(1)
 				})
 			);
 			expect(getStats(puzzleId)).toBeNull();
@@ -517,7 +580,7 @@ describe('Stats Service - Web Locks unavailable fallback', () => {
 	});
 
 	it('returns a retryable failure and does NOT perform the lossy unlocked write', async () => {
-		const seal = makeSeal({ elapsedActiveSeconds: 100, runId: 'r1' });
+		const seal = makeSeal({ elapsedActiveSeconds: 100, runId: makeRunId(1) });
 		const result = await recordLocalCompletion(puzzleId, seal);
 
 		expect(result.status).toBe('failed');
@@ -539,11 +602,11 @@ describe('Stats Service - Web Locks unavailable fallback', () => {
 				standardBestCompletedAt: 500,
 				totalCompletions: 1,
 				lastCompletedAt: 500,
-				lastRecordedRunId: 'prior',
-				recordedRunIds: ['prior']
+				lastRecordedRunId: makeRunId(1),
+				recordedRunIds: [makeRunId(1)]
 			})
 		);
-		const seal = makeSeal({ elapsedActiveSeconds: 100, runId: 'new-run' });
+		const seal = makeSeal({ elapsedActiveSeconds: 100, runId: makeRunId(2) });
 		const result = await recordLocalCompletion(puzzleId, seal);
 
 		expect(result.status).toBe('failed');
@@ -568,11 +631,11 @@ describe('Stats Service - Web Locks unavailable fallback', () => {
 				standardBestCompletedAt: 500,
 				totalCompletions: 1,
 				lastCompletedAt: 500,
-				lastRecordedRunId: 'dup-run',
-				recordedRunIds: ['dup-run']
+				lastRecordedRunId: makeRunId(1),
+				recordedRunIds: [makeRunId(1)]
 			})
 		);
-		const seal = makeSeal({ elapsedActiveSeconds: 50, runId: 'dup-run' });
+		const seal = makeSeal({ elapsedActiveSeconds: 50, runId: makeRunId(1) });
 		const result = await recordLocalCompletion(puzzleId, seal);
 
 		// Replay needs no write, so it is safe even without a lock.
@@ -598,7 +661,7 @@ describe('Stats Service - Web Locks rejection', () => {
 	});
 
 	it('converts a rejected navigator.locks.request into a retryable failure without an uncaught rejection', async () => {
-		const seal = makeSeal({ elapsedActiveSeconds: 100, runId: 'r1' });
+		const seal = makeSeal({ elapsedActiveSeconds: 100, runId: makeRunId(1) });
 		const result = await recordLocalCompletion(puzzleId, seal);
 
 		// The rejection is caught and surfaced as a failed result rather than

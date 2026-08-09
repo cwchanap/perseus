@@ -637,7 +637,7 @@ test.describe('PersistedStateController @smoke', () => {
 		expect(readBack).toBeNull();
 	});
 
-	test('seedRaw bypasses validation, writing arbitrary bytes for migration/corruption tests', async ({
+	test('seedRaw bypasses validation, writing arbitrary bytes for corruption tests', async ({
 		page
 	}) => {
 		const state = createPersistedStateController();
