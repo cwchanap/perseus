@@ -60,7 +60,7 @@ defined in `apps/web/package.json`; invoke a command with
 The default local `test:e2e` script remains available for Chromium gameplay
 runs and excludes the slow `@extended` scenarios.
 
-Pass Playwright flags after `--`, e.g. `bun run --cwd apps/web test:e2e:smoke -- --retries=0 --grep "fixture load"`.
+Pass Playwright flags after `--`, e.g. `bun run --cwd apps/web test:e2e:smoke -- --retries=0 --grep 'fixture load'`.
 
 ---
 
