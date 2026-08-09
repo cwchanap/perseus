@@ -61,7 +61,7 @@ Then trigger the workflow. Subsequent deploys are unaffected.
 ## Manual Pre-Release Browser Validation
 
 Before a planned production release or before merging a release candidate to
-`main`, dispatch **E2E Tests** on the candidate branch or commit. Require
+`main`, dispatch **E2E Tests** on the candidate branch or tag. Require
 **Manual pre-release suites** to pass.
 
 The lane runs WebKit critical, extended five-project coverage, accessibility,
