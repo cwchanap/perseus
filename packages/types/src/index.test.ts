@@ -143,21 +143,21 @@ describe('versioned puzzle completion contract', () => {
 			);
 		});
 
-		it('rejects the obsolete timingQuality field', () => {
-			expect(isRecordPuzzleCompletionV1({ ...timed, timingQuality: 'known' }, 86_400)).toBe(false);
+		it('rejects unexpected extra fields', () => {
+			expect(isRecordPuzzleCompletionV1({ ...timed, obsoleteField: true }, 86_400)).toBe(false);
 		});
 
-		it('rejects legacy hash run IDs while accepting UUID-v4 run IDs', () => {
-			const legacyRunId = `legacy-${'a'.repeat(64)}`;
+		it('rejects hash-shaped non-UUID run IDs while accepting UUID-v4 run IDs', () => {
+			const hashRunId = `legacy-${'a'.repeat(64)}`;
 
-			expect(isPuzzleRunId(legacyRunId)).toBe(false);
-			expect(isRecordPuzzleCompletionV1({ ...timed, runId: legacyRunId }, 86_400)).toBe(false);
+			expect(isPuzzleRunId(hashRunId)).toBe(false);
+			expect(isRecordPuzzleCompletionV1({ ...timed, runId: hashRunId }, 86_400)).toBe(false);
 			expect(isPuzzleRunId(currentRunId)).toBe(true);
 		});
 	});
 
 	const validRunId = '123e4567-e89b-42d3-a456-426614174000';
-	const legacyRunId = `legacy-${'a'.repeat(64)}`;
+	const hashRunId = `legacy-${'a'.repeat(64)}`;
 
 	it('accepts the completion quota exceeded response', () => {
 		const response: RecordPuzzleCompletionResponse = {
@@ -170,7 +170,7 @@ describe('versioned puzzle completion contract', () => {
 
 	it.each([
 		[validRunId, true],
-		[legacyRunId, false],
+		[hashRunId, false],
 		['123E4567-E89B-42D3-A456-426614174000', false],
 		['123e4567-e89b-12d3-a456-426614174000', false],
 		['123e4567-e89b-42d3-c456-426614174000', false],

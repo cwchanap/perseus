@@ -4,6 +4,7 @@ import type { RecordPuzzleCompletionV1 } from '@perseus/types';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { sql } from 'drizzle-orm';
 import * as schema from '../schema';
 import { createD1CompletionWriteExecutor, createD1Db, type D1AppDb } from '../drivers/d1';
 import { completionFactsMatch, type VersionedCompletionWrite } from '../completion-writes';
@@ -73,6 +74,36 @@ function completion(overrides: Partial<RecordPuzzleCompletionV1> = {}): RecordPu
 		elapsedActiveSeconds: 100,
 		...overrides
 	};
+}
+
+type StoredRunFixture = {
+	playerId: string;
+	runId: string;
+	puzzleId: string;
+	resultClass: 'standard_timed' | 'rotation_timed' | 'assisted_timed' | 'relaxed';
+	elapsedActiveSeconds: number | null;
+	completedAt: number;
+};
+
+async function insertStoredRun(db: D1AppDb, row: StoredRunFixture) {
+	await db.run(sql`
+		INSERT INTO puzzle_completion_runs
+			(player_id, run_id, puzzle_id, result_class, timing_quality, elapsed_active_seconds, completed_at)
+		VALUES (${row.playerId}, ${row.runId}, ${row.puzzleId}, ${row.resultClass}, 'known', ${row.elapsedActiveSeconds}, ${row.completedAt})
+	`);
+}
+
+async function selectRunFacts(db: D1AppDb) {
+	return db
+		.select({
+			playerId: schema.puzzleCompletionRuns.playerId,
+			runId: schema.puzzleCompletionRuns.runId,
+			puzzleId: schema.puzzleCompletionRuns.puzzleId,
+			resultClass: schema.puzzleCompletionRuns.resultClass,
+			elapsedActiveSeconds: schema.puzzleCompletionRuns.elapsedActiveSeconds,
+			completedAt: schema.puzzleCompletionRuns.completedAt
+		})
+		.from(schema.puzzleCompletionRuns);
 }
 
 describe('completionFactsMatch', () => {
@@ -311,13 +342,12 @@ describe('recordVersionedCompletion against real D1', () => {
 		const result = await recordVersionedCompletion(executor, 'p1', 'pz1', completion(), 1_000);
 
 		expect(result).toEqual({ status: 'recorded', completedAt: 1_000 });
-		expect(await db.select().from(schema.puzzleCompletionRuns)).toEqual([
+		expect(await selectRunFacts(db)).toEqual([
 			{
 				playerId: 'p1',
 				runId: 'run-1',
 				puzzleId: 'pz1',
 				resultClass: 'standard_timed',
-				timingQuality: 'known',
 				elapsedActiveSeconds: 100,
 				completedAt: 1_000
 			}
@@ -380,13 +410,12 @@ describe('recordVersionedCompletion against real D1', () => {
 			const result = await recordVersionedCompletion(executor, 'p1', puzzleId, request, 2_000);
 
 			expect(result).toEqual({ status: 'conflict' });
-			expect(await db.select().from(schema.puzzleCompletionRuns)).toEqual([
+			expect(await selectRunFacts(db)).toEqual([
 				{
 					playerId: 'p1',
 					runId: 'run-1',
 					puzzleId: 'pz1',
 					resultClass: 'standard_timed',
-					timingQuality: 'known',
 					elapsedActiveSeconds: 100,
 					completedAt: 1_000
 				}
@@ -581,35 +610,30 @@ describe('recordVersionedCompletion against real D1', () => {
 				lastCompletedAt: 500
 			}
 		]);
-		await db.insert(schema.puzzleCompletionRuns).values([
-			{
-				playerId: 'p1',
-				runId: 'run-p1-pz1',
-				puzzleId: 'pz1',
-				resultClass: 'standard_timed',
-				timingQuality: 'known',
-				elapsedActiveSeconds: 50,
-				completedAt: 400
-			},
-			{
-				playerId: 'p2',
-				runId: 'run-p2-pz1',
-				puzzleId: 'pz1',
-				resultClass: 'standard_timed',
-				timingQuality: 'known',
-				elapsedActiveSeconds: 30,
-				completedAt: 300
-			},
-			{
-				playerId: 'p1',
-				runId: 'run-p1-pz2',
-				puzzleId: 'pz2',
-				resultClass: 'standard_timed',
-				timingQuality: 'known',
-				elapsedActiveSeconds: 40,
-				completedAt: 500
-			}
-		]);
+		await insertStoredRun(db, {
+			playerId: 'p1',
+			runId: 'run-p1-pz1',
+			puzzleId: 'pz1',
+			resultClass: 'standard_timed',
+			elapsedActiveSeconds: 50,
+			completedAt: 400
+		});
+		await insertStoredRun(db, {
+			playerId: 'p2',
+			runId: 'run-p2-pz1',
+			puzzleId: 'pz1',
+			resultClass: 'standard_timed',
+			elapsedActiveSeconds: 30,
+			completedAt: 300
+		});
+		await insertStoredRun(db, {
+			playerId: 'p1',
+			runId: 'run-p1-pz2',
+			puzzleId: 'pz2',
+			resultClass: 'standard_timed',
+			elapsedActiveSeconds: 40,
+			completedAt: 500
+		});
 
 		await deletePuzzleStats(executor, 'pz1');
 
@@ -623,13 +647,12 @@ describe('recordVersionedCompletion against real D1', () => {
 				lastCompletedAt: 500
 			}
 		]);
-		expect(await db.select().from(schema.puzzleCompletionRuns)).toEqual([
+		expect(await selectRunFacts(db)).toEqual([
 			{
 				playerId: 'p1',
 				runId: 'run-p1-pz2',
 				puzzleId: 'pz2',
 				resultClass: 'standard_timed',
-				timingQuality: 'known',
 				elapsedActiveSeconds: 40,
 				completedAt: 500
 			}
@@ -646,12 +669,11 @@ describe('recordVersionedCompletion against real D1', () => {
 			firstCompletedAt: 100,
 			lastCompletedAt: 400
 		});
-		await db.insert(schema.puzzleCompletionRuns).values({
+		await insertStoredRun(db, {
 			playerId: 'p1',
 			runId: 'run-p1-pz1',
 			puzzleId: 'pz1',
 			resultClass: 'standard_timed',
-			timingQuality: 'known',
 			elapsedActiveSeconds: 50,
 			completedAt: 400
 		});
@@ -789,53 +811,46 @@ describe('player stats against real D1', () => {
 				lastCompletedAt: 700
 			}
 		]);
-		await db.insert(schema.puzzleCompletionRuns).values([
-			{
-				playerId: 'p1',
-				runId: 'standard-1',
-				puzzleId: 'standard',
-				resultClass: 'standard_timed',
-				timingQuality: 'known',
-				elapsedActiveSeconds: 40,
-				completedAt: 300
-			},
-			{
-				playerId: 'p1',
-				runId: 'overlap-1',
-				puzzleId: 'overlap',
-				resultClass: 'rotation_timed',
-				timingQuality: 'known',
-				elapsedActiveSeconds: 80,
-				completedAt: 100
-			},
-			{
-				playerId: 'p1',
-				runId: 'overlap-2',
-				puzzleId: 'overlap',
-				resultClass: 'relaxed',
-				timingQuality: 'known',
-				elapsedActiveSeconds: null,
-				completedAt: 900
-			},
-			{
-				playerId: 'p1',
-				runId: 'variant-1',
-				puzzleId: 'variant',
-				resultClass: 'relaxed',
-				timingQuality: 'known',
-				elapsedActiveSeconds: null,
-				completedAt: 400
-			},
-			{
-				playerId: 'p1',
-				runId: 'variant-2',
-				puzzleId: 'variant',
-				resultClass: 'assisted_timed',
-				timingQuality: 'known',
-				elapsedActiveSeconds: 70,
-				completedAt: 800
-			}
-		]);
+		await insertStoredRun(db, {
+			playerId: 'p1',
+			runId: 'standard-1',
+			puzzleId: 'standard',
+			resultClass: 'standard_timed',
+			elapsedActiveSeconds: 40,
+			completedAt: 300
+		});
+		await insertStoredRun(db, {
+			playerId: 'p1',
+			runId: 'overlap-1',
+			puzzleId: 'overlap',
+			resultClass: 'rotation_timed',
+			elapsedActiveSeconds: 80,
+			completedAt: 100
+		});
+		await insertStoredRun(db, {
+			playerId: 'p1',
+			runId: 'overlap-2',
+			puzzleId: 'overlap',
+			resultClass: 'relaxed',
+			elapsedActiveSeconds: null,
+			completedAt: 900
+		});
+		await insertStoredRun(db, {
+			playerId: 'p1',
+			runId: 'variant-1',
+			puzzleId: 'variant',
+			resultClass: 'relaxed',
+			elapsedActiveSeconds: null,
+			completedAt: 400
+		});
+		await insertStoredRun(db, {
+			playerId: 'p1',
+			runId: 'variant-2',
+			puzzleId: 'variant',
+			resultClass: 'assisted_timed',
+			elapsedActiveSeconds: 70,
+			completedAt: 800
+		});
 
 		const result = await listPlayerStats(db, 'p1', { limit: 10 });
 
@@ -913,26 +928,22 @@ describe('player stats against real D1', () => {
 				lastCompletedAt: 300
 			}
 		]);
-		await db.insert(schema.puzzleCompletionRuns).values([
-			{
-				playerId: 'p1',
-				runId: 'null-1',
-				puzzleId: 'pz-n1',
-				resultClass: 'relaxed',
-				timingQuality: 'known',
-				elapsedActiveSeconds: null,
-				completedAt: 400
-			},
-			{
-				playerId: 'p1',
-				runId: 'null-2',
-				puzzleId: 'pz-n2',
-				resultClass: 'relaxed',
-				timingQuality: 'known',
-				elapsedActiveSeconds: null,
-				completedAt: 500
-			}
-		]);
+		await insertStoredRun(db, {
+			playerId: 'p1',
+			runId: 'null-1',
+			puzzleId: 'pz-n1',
+			resultClass: 'relaxed',
+			elapsedActiveSeconds: null,
+			completedAt: 400
+		});
+		await insertStoredRun(db, {
+			playerId: 'p1',
+			runId: 'null-2',
+			puzzleId: 'pz-n2',
+			resultClass: 'relaxed',
+			elapsedActiveSeconds: null,
+			completedAt: 500
+		});
 
 		const first = await listPlayerStats(db, 'p1', { limit: 1 });
 		expect(first.rows.map((row) => row.puzzleId)).toEqual(['pz-a']);
