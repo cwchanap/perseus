@@ -19,7 +19,7 @@ export interface PuzzleStatsV1 {
 	 * Bounded ring of recently recorded run IDs, newest first. Dedup is per
 	 * run ID across more than just the most recent run, so a stale pending
 	 * session replaying an older run after a newer completion does not double
-	 * count. Absent on older records; seeded from `lastRecordedRunId`.
+	 * count.
 	 */
 	recordedRunIds: string[];
 }
@@ -29,7 +29,7 @@ const CURRENT_STATS_SCHEMA_VERSION = 1;
 /** Maximum number of run IDs retained for replay dedup. */
 const MAX_RECORDED_RUN_IDS = 32;
 
-export type LocalStatsFailureReason = 'storage_error' | 'incompatible_schema';
+export type LocalStatsFailureReason = 'storage_error';
 
 export type RecordLocalCompletionResult =
 	| { status: 'recorded'; isNewStandardBest: boolean; stats: PuzzleStatsV1 }
@@ -41,24 +41,10 @@ export type RecordLocalCompletionResult =
 			/**
 			 * Why the write did not persist. `storage_error` is a transient
 			 * failure (Web Locks unavailable/rejected, or localStorage.setItem
-			 * threw) and is retryable on hydration. `incompatible_schema` means
-			 * a future-schema record was preserved unread; this deployment can
-			 * never overwrite it, so the failure is terminal.
+			 * threw) and is retryable on hydration.
 			 */
 			reason: LocalStatsFailureReason;
 	  };
-
-/**
- * Outcome of parsing a stored stats record. A future-schema record
- * (`schemaVersion` present and higher than current) is `incompatible`: it is
- * unreadable by this deployment and must be preserved (not deleted or
- * overwritten) so a newer client can still read it. This mirrors the session
- * persistence layer's incompatible-schema policy.
- */
-type ParsedStats =
-	| { kind: 'valid'; stats: PuzzleStatsV1 }
-	| { kind: 'incompatible'; schemaVersion: number }
-	| { kind: 'invalid' };
 
 function getStorageKey(puzzleId: string): string {
 	return `${STATS_KEY_PREFIX}${puzzleId}`;
@@ -72,58 +58,9 @@ function isEligibleStandardBest(seal: SealedCompletion): boolean {
 	);
 }
 
-function parseLegacyRecord(raw: Record<string, unknown>, puzzleId: string): PuzzleStatsV1 | null {
-	// Legacy unversioned shape: { puzzleId, bestTime, completedAt (ISO), totalCompletions }.
-	const bestTime = raw.bestTime;
-	const completedAt = raw.completedAt;
-	const totalCompletions = raw.totalCompletions;
-	if (
-		typeof bestTime !== 'number' ||
-		!Number.isFinite(bestTime) ||
-		bestTime < 0 ||
-		typeof completedAt !== 'string' ||
-		typeof totalCompletions !== 'number' ||
-		!Number.isInteger(totalCompletions) ||
-		totalCompletions < 0
-	) {
-		return null;
-	}
-	const completedMs = Date.parse(completedAt);
-	const ts = Number.isFinite(completedMs) ? completedMs : 0;
-	return {
-		schemaVersion: CURRENT_STATS_SCHEMA_VERSION,
-		puzzleId,
-		standardBestTime: bestTime,
-		standardBestCompletedAt: ts,
-		totalCompletions,
-		lastCompletedAt: ts,
-		lastRecordedRunId: null,
-		recordedRunIds: []
-	};
-}
-
-function parseStoredStats(raw: Record<string, unknown>, puzzleId: string): ParsedStats {
-	// A present schemaVersion gates the versioned path. Only an ABSENT
-	// schemaVersion is treated as legacy unversioned; a higher version is
-	// incompatible (preserved), and a present-but-bogus version is invalid.
-	if (Object.hasOwn(raw, 'schemaVersion')) {
-		const version = raw.schemaVersion;
-		if (typeof version !== 'number' || !Number.isInteger(version)) {
-			return { kind: 'invalid' };
-		}
-		if (version > CURRENT_STATS_SCHEMA_VERSION) {
-			return { kind: 'incompatible', schemaVersion: version };
-		}
-		if (version === CURRENT_STATS_SCHEMA_VERSION) {
-			const v1 = validateV1(raw, puzzleId);
-			return v1 ? { kind: 'valid', stats: v1 } : { kind: 'invalid' };
-		}
-		// A present-but-older versioned shape has no migration target (legacy
-		// is unversioned); treat as corrupt.
-		return { kind: 'invalid' };
-	}
-	const legacy = parseLegacyRecord(raw, puzzleId);
-	return legacy ? { kind: 'valid', stats: legacy } : { kind: 'invalid' };
+function parseStoredStats(raw: Record<string, unknown>, puzzleId: string): PuzzleStatsV1 | null {
+	if (raw.schemaVersion !== CURRENT_STATS_SCHEMA_VERSION) return null;
+	return validateV1(raw, puzzleId);
 }
 
 function validateV1(raw: Record<string, unknown>, puzzleId: string): PuzzleStatsV1 | null {
@@ -185,11 +122,9 @@ function validateV1(raw: Record<string, unknown>, puzzleId: string): PuzzleStats
 
 /**
  * Validate and normalize the recorded-run-id ring. Returns `false` for a
- * present-but-malformed field (non-array, non-string entries) — silently
+ * missing or malformed field (non-array, non-string entries) — silently
  * dropping entries would weaken replay dedup and let an old run count again.
- * Absent (`undefined`) on older records is valid and seeded from
- * `lastRecordedRunId` for back-compat. The ring is capped at
- * MAX_RECORDED_RUN_IDS (newest first).
+ * The ring is capped at MAX_RECORDED_RUN_IDS (newest first).
  *
  * Consistency is enforced rather than salvaged: duplicate ids are rejected
  * (silent dedup would mask corruption), and `lastRecordedRunId` must equal the
@@ -199,11 +134,6 @@ function validateV1(raw: Record<string, unknown>, puzzleId: string): PuzzleStats
  * again on replay.
  */
 function normalizeRecordedRunIds(raw: unknown, lastRecordedRunId: string | null): string[] | false {
-	if (raw === undefined) {
-		// Back-compat: older v1 records have no ring; seed from
-		// lastRecordedRunId. The seeded ring is consistent by construction.
-		return lastRecordedRunId ? [lastRecordedRunId] : [];
-	}
 	if (!Array.isArray(raw)) return false;
 	for (const id of raw) {
 		if (typeof id !== 'string') return false;
@@ -222,10 +152,11 @@ function normalizeRecordedRunIds(raw: unknown, lastRecordedRunId: string | null)
 
 export function getStats(puzzleId: string): PuzzleStatsV1 | null {
 	if (typeof window === 'undefined') return null;
+	const key = getStorageKey(puzzleId);
 
 	let raw: string | null;
 	try {
-		raw = localStorage.getItem(getStorageKey(puzzleId));
+		raw = localStorage.getItem(key);
 	} catch {
 		return null;
 	}
@@ -236,28 +167,20 @@ export function getStats(puzzleId: string): PuzzleStatsV1 | null {
 		parsed = JSON.parse(raw);
 	} catch {
 		try {
-			localStorage.removeItem(getStorageKey(puzzleId));
+			localStorage.removeItem(key);
 		} catch {
 			// best-effort cleanup
 		}
 		return null;
 	}
 
-	if (!parsed || typeof parsed !== 'object') return null;
-	const record = parsed as Record<string, unknown>;
-	const result = parseStoredStats(record, puzzleId);
-	if (result.kind === 'valid') {
-		return result.stats;
+	if (parsed && typeof parsed === 'object') {
+		const stats = parseStoredStats(parsed as Record<string, unknown>, puzzleId);
+		if (stats) return stats;
 	}
-	if (result.kind === 'incompatible') {
-		// Preserve the newer-schema record; an older deployment must not
-		// destroy statistics it cannot read. The record is left in place for
-		// a newer client to interpret.
-		return null;
-	}
-	// invalid: best-effort cleanup of a corrupt current-schema/legacy record.
+	// Best-effort cleanup of any stale, malformed, or unsupported record.
 	try {
-		localStorage.removeItem(getStorageKey(puzzleId));
+		localStorage.removeItem(key);
 	} catch {
 		// best-effort cleanup
 	}
@@ -321,10 +244,9 @@ export async function recordLocalCompletion(
 
 /**
  * Read and parse the stored stats record WITHOUT side effects (no deletion).
- * Returns `null` for a missing/unreadable record. Used by the write path to
- * detect an incompatible future-schema record before touching storage.
+ * Returns `null` for a missing/unreadable record.
  */
-function readStoredStats(puzzleId: string): ParsedStats | null {
+function readStoredStats(puzzleId: string): PuzzleStatsV1 | null {
 	let raw: string | null;
 	try {
 		raw = localStorage.getItem(getStorageKey(puzzleId));
@@ -353,34 +275,12 @@ function computeRecord(
 	seal: SealedCompletion
 ): { result: RecordLocalCompletionResult; next: PuzzleStatsV1 } {
 	const stored = readStoredStats(puzzleId);
-	// An incompatible (future-schema) record must not be overwritten by an
-	// older deployment. Suppress the write and report failure against an
-	// empty in-memory baseline so no unverified "new best" is claimed. The
-	// newer client that wrote the record still owns it.
-	if (stored?.kind === 'incompatible') {
-		const baseline = freshStats(puzzleId);
-		return {
-			result: {
-				status: 'failed',
-				isNewStandardBest: false,
-				inMemoryStats: baseline,
-				reason: 'incompatible_schema'
-			},
-			next: baseline
-		};
-	}
-	const base = stored?.kind === 'valid' ? stored.stats : freshStats(puzzleId);
+	const base = stored ?? freshStats(puzzleId);
 
 	// Dedup against the bounded ring of recorded run IDs, not just the most
 	// recent. A stale pending session can replay an older run after a newer
 	// completion; such a replay must not increment totals.
-	const recorded = new Set(
-		base.recordedRunIds.length > 0
-			? base.recordedRunIds
-			: base.lastRecordedRunId
-				? [base.lastRecordedRunId]
-				: []
-	);
+	const recorded = new Set(base.recordedRunIds);
 	if (recorded.has(seal.runId)) {
 		return { result: { status: 'replayed', isNewStandardBest: false, stats: base }, next: base };
 	}
@@ -390,11 +290,10 @@ function computeRecord(
 	const isNewStandardBest =
 		eligible && (base.standardBestTime === null || elapsed < base.standardBestTime);
 
-	// Seed the rebuilt ring from the same `recorded` set used for dedup (which
-	// falls back to lastRecordedRunId when recordedRunIds is empty), so the
-	// fallback id is retained in the ring rather than dropped. seal.runId is
-	// already excluded from `recorded` by the replay early-return above, so
-	// there is no duplicate. Capped at MAX_RECORDED_RUN_IDS, newest first.
+	// Seed the rebuilt ring from the same `recorded` set used for dedup, so
+	// seal.runId is retained alongside prior IDs. It is already excluded from
+	// `recorded` by the replay early-return above, so there is no duplicate.
+	// Capped at MAX_RECORDED_RUN_IDS, newest first.
 	const nextRunIds = [seal.runId, ...recorded].slice(0, MAX_RECORDED_RUN_IDS);
 
 	const next: PuzzleStatsV1 = {
@@ -429,8 +328,7 @@ function recordLocalCompletionUnsafe(
 ): RecordLocalCompletionResult {
 	const { result, next } = computeRecord(puzzleId, seal);
 	if (result.status !== 'recorded') {
-		// 'replayed' (no write needed) or 'failed' (incompatible: no write
-		// allowed). Return as-is.
+		// 'replayed' needs no write. Return it as-is.
 		return result;
 	}
 	try {
@@ -446,8 +344,8 @@ function recordLocalCompletionUnsafe(
  * verdict (so the badge display stays accurate) WITHOUT performing the
  * unlocked read-modify-write, which two tabs could race on. A would-be
  * 'recorded' result is converted to a retryable 'failed' result (reason
- * `storage_error`) carrying the would-be next stats; 'replayed' and
- * incompatible-'failed' results need no write and pass through unchanged.
+ * `storage_error`) carrying the would-be next stats; a 'replayed' result
+ * needs no write and passes through unchanged.
  */
 function computeResultWithoutWrite(
 	puzzleId: string,
@@ -467,22 +365,4 @@ export function clearStats(puzzleId: string): void {
 	} catch {
 		// best-effort
 	}
-}
-
-/**
- * @deprecated Compatibility shim retained until the puzzle route migrates to
- * recordLocalCompletion (HPA-372 Tasks 10/11). Returns the in-memory new-best
- * verdict even when the local write fails.
- */
-export async function saveCompletionTime(puzzleId: string, timeSeconds: number): Promise<boolean> {
-	const seal: SealedCompletion = {
-		runId: `compat-${timeSeconds}-${Math.floor(Math.random() * 1e9)}-${Date.now()}`,
-		resultClass: 'standard_timed',
-		timingQuality: 'known',
-		elapsedActiveSeconds: timeSeconds,
-		completedAt: Date.now(),
-		localStats: { status: 'succeeded' },
-		serverSubmission: { status: 'not_applicable' }
-	};
-	return (await recordLocalCompletion(puzzleId, seal)).isNewStandardBest;
 }

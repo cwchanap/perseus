@@ -1,11 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import {
-	getStats,
-	getBestTime,
-	recordLocalCompletion,
-	clearStats,
-	saveCompletionTime
-} from '../stats';
+import { getStats, getBestTime, recordLocalCompletion, clearStats } from '../stats';
 import type { SealedCompletion } from '../gameplay/session/types';
 
 function makeSeal(overrides: Partial<SealedCompletion> = {}): SealedCompletion {
@@ -35,13 +29,16 @@ describe('Stats Service', () => {
 		});
 
 		it('returns null for malformed JSON', () => {
-			localStorage.setItem(`puzzle-stats-${puzzleId}`, 'invalid json{{{');
+			const key = `puzzle-stats-${puzzleId}`;
+			localStorage.setItem(key, 'invalid json{{{');
 			expect(getStats(puzzleId)).toBeNull();
+			expect(localStorage.getItem(key)).toBeNull();
 		});
 
-		it('migrates a legacy unversioned record to a standard best', () => {
+		it('deletes an unversioned record', () => {
+			const key = `puzzle-stats-${puzzleId}`;
 			localStorage.setItem(
-				`puzzle-stats-${puzzleId}`,
+				key,
 				JSON.stringify({
 					puzzleId,
 					bestTime: 90,
@@ -49,11 +46,24 @@ describe('Stats Service', () => {
 					totalCompletions: 2
 				})
 			);
-			const stats = getStats(puzzleId);
-			expect(stats?.schemaVersion).toBe(1);
-			expect(stats?.standardBestTime).toBe(90);
-			expect(stats?.totalCompletions).toBe(2);
-			expect(stats?.lastRecordedRunId).toBeNull();
+			expect(getStats(puzzleId)).toBeNull();
+			expect(localStorage.getItem(key)).toBeNull();
+		});
+
+		it('deletes a JSON primitive instead of reparsing it forever', () => {
+			const key = `puzzle-stats-${puzzleId}`;
+			localStorage.setItem(key, '42');
+
+			expect(getStats(puzzleId)).toBeNull();
+			expect(localStorage.getItem(key)).toBeNull();
+		});
+
+		it('deletes a higher-schema record', () => {
+			const key = `puzzle-stats-${puzzleId}`;
+			localStorage.setItem(key, JSON.stringify({ schemaVersion: 2, puzzleId }));
+
+			expect(getStats(puzzleId)).toBeNull();
+			expect(localStorage.getItem(key)).toBeNull();
 		});
 
 		it('getBestTime returns the standard best', async () => {
@@ -159,88 +169,13 @@ describe('Stats Service', () => {
 				expect(result.status).toBe('failed');
 				expect(result.isNewStandardBest).toBe(true);
 				// A transient storage failure is retryable, distinct from a
-				// terminal incompatible-schema failure.
+				// transient storage failure.
 				if (result.status === 'failed') {
 					expect(result.reason).toBe('storage_error');
 				}
 			} finally {
 				vi.unstubAllGlobals();
 			}
-		});
-	});
-
-	describe('saveCompletionTime (compat shim)', () => {
-		it('returns the new-best boolean for the legacy caller', async () => {
-			expect(await saveCompletionTime(puzzleId, 100)).toBe(true);
-			expect(await saveCompletionTime(puzzleId, 80)).toBe(true);
-			expect(await saveCompletionTime(puzzleId, 200)).toBe(false);
-		});
-	});
-
-	describe('future schema compatibility', () => {
-		it('getStats returns null but preserves a higher-schema record instead of deleting it', () => {
-			// A record written by a newer client (schemaVersion > 1) is
-			// unreadable by this deployment. getStats must return null
-			// (cannot interpret it) but must NOT remove it, so a subsequent
-			// upgrade can still read it. Treating it as legacy+invalid would
-			// destroy the newer client's statistics.
-			localStorage.setItem(
-				`puzzle-stats-${puzzleId}`,
-				JSON.stringify({
-					schemaVersion: 2,
-					puzzleId,
-					someFutureField: 'unreadable-by-v1'
-				})
-			);
-			expect(getStats(puzzleId)).toBeNull();
-			const preserved = localStorage.getItem(`puzzle-stats-${puzzleId}`);
-			expect(preserved).not.toBeNull();
-			expect(JSON.parse(preserved!).schemaVersion).toBe(2);
-		});
-
-		it('getBestTime returns null without deleting a higher-schema record', () => {
-			localStorage.setItem(
-				`puzzle-stats-${puzzleId}`,
-				JSON.stringify({ schemaVersion: 3, puzzleId })
-			);
-			expect(getBestTime(puzzleId)).toBeNull();
-			expect(localStorage.getItem(`puzzle-stats-${puzzleId}`)).not.toBeNull();
-		});
-
-		it('recordLocalCompletion does not overwrite a higher-schema record', async () => {
-			// An older deployment must not overwrite statistics written by a
-			// newer client. The write is suppressed (read-only mode), matching
-			// the session-persistence incompatible-schema policy.
-			localStorage.setItem(
-				`puzzle-stats-${puzzleId}`,
-				JSON.stringify({ schemaVersion: 2, puzzleId, future: true })
-			);
-			const result = await recordLocalCompletion(puzzleId, makeSeal({ runId: 'r1' }));
-			expect(result.status).toBe('failed');
-			// The failure is terminal (incompatible_schema), not a transient
-			// storage error: this deployment can never overwrite the newer
-			// record, so the route acknowledges it as non-retryable.
-			if (result.status === 'failed') {
-				expect(result.reason).toBe('incompatible_schema');
-			}
-			const after = JSON.parse(localStorage.getItem(`puzzle-stats-${puzzleId}`)!);
-			expect(after.schemaVersion).toBe(2);
-			expect(after.future).toBe(true);
-		});
-
-		it('still migrates an absent-schemaVersion legacy record (not treated as future)', () => {
-			// Only an ABSENT schemaVersion is legacy; a present higher one is
-			// incompatible. This guards against regressing the legacy path.
-			localStorage.setItem(
-				`puzzle-stats-${puzzleId}`,
-				JSON.stringify({
-					puzzleId,
-					bestTime: 90,
-					completedAt: '2024-01-01T00:00:00.000Z',
-					totalCompletions: 2
-				})
-			);
-			expect(getStats(puzzleId)?.standardBestTime).toBe(90);
 		});
 	});
 
@@ -321,7 +256,7 @@ describe('Stats Service', () => {
 	});
 
 	describe('parseStoredStats / validateV1 rejection branches', () => {
-		it('returns null and cleans up for a legacy record with a non-numeric bestTime', () => {
+		it('returns null and cleans up for an unversioned record with invalid fields', () => {
 			localStorage.setItem(
 				`puzzle-stats-${puzzleId}`,
 				JSON.stringify({
@@ -346,7 +281,8 @@ describe('Stats Service', () => {
 					standardBestCompletedAt: null,
 					totalCompletions: 1,
 					lastCompletedAt: 1000,
-					lastRecordedRunId: null
+					lastRecordedRunId: null,
+					recordedRunIds: []
 				})
 			);
 			expect(getStats(puzzleId)).toBeNull();
@@ -362,7 +298,8 @@ describe('Stats Service', () => {
 					standardBestCompletedAt: -5,
 					totalCompletions: 1,
 					lastCompletedAt: 1000,
-					lastRecordedRunId: null
+					lastRecordedRunId: null,
+					recordedRunIds: []
 				})
 			);
 			expect(getStats(puzzleId)).toBeNull();
@@ -378,7 +315,8 @@ describe('Stats Service', () => {
 					standardBestCompletedAt: null,
 					totalCompletions: 1.5,
 					lastCompletedAt: 1000,
-					lastRecordedRunId: null
+					lastRecordedRunId: null,
+					recordedRunIds: []
 				})
 			);
 			expect(getStats(puzzleId)).toBeNull();
@@ -394,7 +332,8 @@ describe('Stats Service', () => {
 					standardBestCompletedAt: null,
 					totalCompletions: 1,
 					lastCompletedAt: 'not-a-number',
-					lastRecordedRunId: null
+					lastRecordedRunId: null,
+					recordedRunIds: []
 				})
 			);
 			expect(getStats(puzzleId)).toBeNull();
@@ -410,13 +349,14 @@ describe('Stats Service', () => {
 					standardBestCompletedAt: null,
 					totalCompletions: 1,
 					lastCompletedAt: 1000,
-					lastRecordedRunId: 123
+					lastRecordedRunId: 123,
+					recordedRunIds: []
 				})
 			);
 			expect(getStats(puzzleId)).toBeNull();
 		});
 
-		it('returns null for a legacy record with a negative totalCompletions', () => {
+		it('returns null for an unversioned record with a negative totalCompletions', () => {
 			localStorage.setItem(
 				`puzzle-stats-${puzzleId}`,
 				JSON.stringify({
@@ -463,7 +403,7 @@ describe('Stats Service', () => {
 			expect(getStats(puzzleId)).toBeNull();
 		});
 
-		it('seeds recordedRunIds from lastRecordedRunId when absent (back-compat)', () => {
+		it('rejects a v1 record when recordedRunIds is absent', () => {
 			localStorage.setItem(
 				`puzzle-stats-${puzzleId}`,
 				JSON.stringify({
@@ -476,9 +416,7 @@ describe('Stats Service', () => {
 					lastRecordedRunId: 'r1'
 				})
 			);
-			const stats = getStats(puzzleId);
-			expect(stats).not.toBeNull();
-			expect(stats?.recordedRunIds).toEqual(['r1']);
+			expect(getStats(puzzleId)).toBeNull();
 		});
 
 		it('returns null for a v1 record with a puzzleId mismatch', () => {
@@ -491,7 +429,8 @@ describe('Stats Service', () => {
 					standardBestCompletedAt: null,
 					totalCompletions: 1,
 					lastCompletedAt: 1000,
-					lastRecordedRunId: null
+					lastRecordedRunId: null,
+					recordedRunIds: []
 				})
 			);
 			expect(getStats(puzzleId)).toBeNull();
@@ -502,33 +441,9 @@ describe('Stats Service', () => {
 			expect(getStats(puzzleId)).toBeNull();
 			expect(localStorage.getItem(`puzzle-stats-${puzzleId}`)).toBeNull();
 		});
-
-		it('returns null but leaves the key in place for a JSON primitive (typeof !== "object")', () => {
-			localStorage.setItem(`puzzle-stats-${puzzleId}`, '42');
-			expect(getStats(puzzleId)).toBeNull();
-			expect(localStorage.getItem(`puzzle-stats-${puzzleId}`)).toBe('42');
-		});
 	});
 
 	describe('defensive branches', () => {
-		it('coerces an unparseable legacy completedAt to a zero timestamp', () => {
-			localStorage.setItem(
-				`puzzle-stats-${puzzleId}`,
-				JSON.stringify({
-					puzzleId,
-					bestTime: 90,
-					completedAt: 'not-a-real-date',
-					totalCompletions: 2
-				})
-			);
-			const stats = getStats(puzzleId);
-			expect(stats?.schemaVersion).toBe(1);
-			expect(stats?.standardBestTime).toBe(90);
-			expect(stats?.standardBestCompletedAt).toBe(0);
-			expect(stats?.lastCompletedAt).toBe(0);
-			expect(stats?.totalCompletions).toBe(2);
-		});
-
 		it('loads a valid v1 record with all nullable best fields set to null', () => {
 			localStorage.setItem(
 				`puzzle-stats-${puzzleId}`,
@@ -539,7 +454,8 @@ describe('Stats Service', () => {
 					standardBestCompletedAt: null,
 					totalCompletions: 1,
 					lastCompletedAt: 1000,
-					lastRecordedRunId: null
+					lastRecordedRunId: null,
+					recordedRunIds: []
 				})
 			);
 			const stats = getStats(puzzleId);
