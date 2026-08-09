@@ -338,15 +338,15 @@ export type CompletionRequestParseResult =
   | { ok: false; body: RecordPuzzleCompletionResponse; status: 400 };
 ```
 
-Delete `CompletionRouteResult` and make:
+Delete `CompletionRouteResult` and change the existing response-mapping function signature to:
 
 ```ts
 export function completionResultToResponse(
   result: VersionedCompletionResult
 ): CompletionResultResponse {
-  // existing current-result mapping
-}
 ```
+
+Keep its existing `tombstoned`, `quota_exceeded`, `conflict`, and success response branches unchanged.
 
 The parser becomes:
 
@@ -359,7 +359,7 @@ export function parseCompletionRequest(value: unknown): CompletionRequestParseRe
 }
 ```
 
-The Worker route calls `recordVersionedCompletion(..., parsed.value)` directly.
+The Worker route calls `recordVersionedCompletion` directly with `parsed.value`.
 
 - [ ] **Step 4: Delete legacy repository/executor/driver code**
 
@@ -544,7 +544,7 @@ it('ignores obsolete timingQuality on a current schema-1 snapshot', () => {
 });
 ```
 
-Also add a serializer assertion using the existing current `makeState()` helper:
+Add a serializer assertion using the existing current `makeState()` helper:
 
 ```ts
 expect(serializeSession(makeState())).not.toHaveProperty('timingQuality');
