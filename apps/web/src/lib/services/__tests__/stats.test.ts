@@ -58,6 +58,14 @@ describe('Stats Service', () => {
 			expect(localStorage.getItem(key)).toBeNull();
 		});
 
+		it('deletes an empty stored string', () => {
+			const key = `puzzle-stats-${puzzleId}`;
+			localStorage.setItem(key, '');
+
+			expect(getStats(puzzleId)).toBeNull();
+			expect(localStorage.getItem(key)).toBeNull();
+		});
+
 		it('deletes a higher-schema record', () => {
 			const key = `puzzle-stats-${puzzleId}`;
 			localStorage.setItem(key, JSON.stringify({ schemaVersion: 2, puzzleId }));
