@@ -160,7 +160,7 @@ export function getStats(puzzleId: string): PuzzleStatsV1 | null {
 	} catch {
 		return null;
 	}
-	if (!raw) return null;
+	if (raw === null) return null;
 
 	let parsed: unknown;
 	try {
