@@ -79,72 +79,38 @@ const RUN_ID = '223e4567-e89b-42d3-a456-426614174000';
 
 const VERSIONED_CASES: { name: string; request: RecordPuzzleCompletionV1 }[] = [
 	{
-		name: 'known standard timed',
+		name: 'standard timed',
 		request: {
 			version: 1,
 			runId: RUN_ID,
 			resultClass: 'standard_timed',
-			timingQuality: 'known',
 			elapsedActiveSeconds: 91
 		}
 	},
 	{
-		name: 'known rotation timed',
+		name: 'rotation timed',
 		request: {
 			version: 1,
 			runId: RUN_ID,
 			resultClass: 'rotation_timed',
-			timingQuality: 'known',
 			elapsedActiveSeconds: 92
 		}
 	},
 	{
-		name: 'known assisted timed',
+		name: 'assisted timed',
 		request: {
 			version: 1,
 			runId: RUN_ID,
 			resultClass: 'assisted_timed',
-			timingQuality: 'known',
 			elapsedActiveSeconds: 93
 		}
 	},
 	{
-		name: 'known relaxed',
+		name: 'relaxed',
 		request: {
 			version: 1,
 			runId: RUN_ID,
 			resultClass: 'relaxed',
-			timingQuality: 'known',
-			elapsedActiveSeconds: null
-		}
-	},
-	{
-		name: 'legacy-unknown standard timed',
-		request: {
-			version: 1,
-			runId: RUN_ID,
-			resultClass: 'standard_timed',
-			timingQuality: 'legacy_unknown',
-			elapsedActiveSeconds: null
-		}
-	},
-	{
-		name: 'legacy-unknown rotation timed',
-		request: {
-			version: 1,
-			runId: RUN_ID,
-			resultClass: 'rotation_timed',
-			timingQuality: 'legacy_unknown',
-			elapsedActiveSeconds: null
-		}
-	},
-	{
-		name: 'legacy-unknown assisted timed',
-		request: {
-			version: 1,
-			runId: RUN_ID,
-			resultClass: 'assisted_timed',
-			timingQuality: 'legacy_unknown',
 			elapsedActiveSeconds: null
 		}
 	}
@@ -160,7 +126,6 @@ const MALFORMED_VERSIONED_CASES: { name: string; request: unknown }[] = [
 		request: {
 			version: 1,
 			resultClass: 'standard_timed',
-			timingQuality: 'known',
 			elapsedActiveSeconds: 90
 		}
 	},
@@ -170,27 +135,15 @@ const MALFORMED_VERSIONED_CASES: { name: string; request: unknown }[] = [
 			version: 1,
 			runId: RUN_ID,
 			resultClass: 'unknown',
-			timingQuality: 'known',
 			elapsedActiveSeconds: 90
 		}
 	},
 	{
-		name: 'legacy-unknown relaxed result',
-		request: {
-			version: 1,
-			runId: RUN_ID,
-			resultClass: 'relaxed',
-			timingQuality: 'legacy_unknown',
-			elapsedActiveSeconds: null
-		}
-	},
-	{
-		name: 'known timed result with null timing',
+		name: 'timed result with null elapsed time',
 		request: {
 			version: 1,
 			runId: RUN_ID,
 			resultClass: 'standard_timed',
-			timingQuality: 'known',
 			elapsedActiveSeconds: null
 		}
 	},
@@ -200,7 +153,6 @@ const MALFORMED_VERSIONED_CASES: { name: string; request: unknown }[] = [
 			version: 1,
 			runId: RUN_ID,
 			resultClass: 'standard_timed',
-			timingQuality: 'known',
 			elapsedActiveSeconds: 90.7
 		}
 	},
@@ -210,7 +162,6 @@ const MALFORMED_VERSIONED_CASES: { name: string; request: unknown }[] = [
 			version: 1,
 			runId: RUN_ID,
 			resultClass: 'standard_timed',
-			timingQuality: 'known',
 			elapsedActiveSeconds: 86_401
 		}
 	},
@@ -220,7 +171,6 @@ const MALFORMED_VERSIONED_CASES: { name: string; request: unknown }[] = [
 			version: 1,
 			runId: RUN_ID,
 			resultClass: 'standard_timed',
-			timingQuality: 'known',
 			elapsedActiveSeconds: 90,
 			timeSeconds: 90
 		}

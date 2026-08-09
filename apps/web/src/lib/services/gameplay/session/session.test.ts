@@ -1,13 +1,15 @@
 // Red tests for PuzzleSession lifecycle and the single injected clock.
 import { describe, it, expect } from 'vitest';
 import { createPuzzleSession } from './session';
+import { completionRequestFromSeal } from './types';
 import type {
 	PuzzleSessionState,
 	PuzzleMetadata,
 	RunIdFactory,
 	Clock,
 	PersistedPuzzleSessionV1,
-	CompletionEffectState
+	CompletionEffectState,
+	SealedCompletion
 } from './types';
 
 interface ManagedInterval {
@@ -93,19 +95,38 @@ function makeOptions(
 }
 
 describe('PuzzleSession lifecycle', () => {
-	it('creates a fresh session in setup with a known timed identity', () => {
+	it('creates a fresh session in setup with a timed identity', () => {
 		const session = createPuzzleSession(makeOptions());
 		const state = session.getState();
 
 		expect(state.lifecycle).toBe('setup');
 		expect(state.origin).toBe('new');
 		expect(state.mode).toBe('timed');
-		expect(state.timingQuality).toBe('known');
 		expect(state.timerStarted).toBe(false);
 		expect(state.elapsedActiveSeconds).toBe(0);
 		expect(state.placedPieces).toEqual([]);
 		expect(state.runId).toMatch(/^run-\d+$/);
 		expect(state.sealedCompletion).toBeNull();
+	});
+
+	it('keeps timing quality out of state and completion request projection', () => {
+		const session = createPuzzleSession(makeOptions());
+		const seal: SealedCompletion = {
+			runId: 'run-1',
+			resultClass: 'standard_timed',
+			elapsedActiveSeconds: 90,
+			completedAt: 1_000,
+			localStats: { status: 'succeeded' },
+			serverSubmission: { status: 'succeeded' }
+		};
+
+		expect(session.getState()).not.toHaveProperty('timingQuality');
+		expect(completionRequestFromSeal(seal)).toEqual({
+			version: 1,
+			runId: 'run-1',
+			resultClass: 'standard_timed',
+			elapsedActiveSeconds: 90
+		});
 	});
 
 	it('moves setup -> active on start and returns a transitioned outcome', () => {
@@ -186,7 +207,6 @@ describe('PuzzleSession lifecycle', () => {
 				runId: 'run-restored',
 				origin: 'resumed',
 				elapsedActiveSeconds: lifecycle === 'completed' ? 42 : 12,
-				timingQuality: 'known',
 				timerStarted: lifecycle === 'active',
 				placedPieces: [],
 				trayOrder: [0, 1, 2, 3],
@@ -228,38 +248,7 @@ describe('PuzzleSession clock and timing', () => {
 		expect(clock.activeIntervalCount).toBe(0);
 	});
 
-	it('keeps elapsed null and the clock off for legacy_unknown sessions', () => {
-		const clock = new ManualClock();
-		const restored: PersistedPuzzleSessionV1 = {
-			schemaVersion: 1,
-			puzzleId: 'pz1',
-			source: 'api',
-			lifecycle: 'active',
-			mode: 'timed',
-			runId: 'legacy-abc',
-			origin: 'resumed',
-			elapsedActiveSeconds: null,
-			timingQuality: 'legacy_unknown',
-			timerStarted: false,
-			placedPieces: [{ pieceId: 0, x: 0, y: 0 }],
-			trayOrder: [0, 1, 2, 3],
-			rotationEnabled: false,
-			pieceRotations: {},
-			counters: { incorrectAttempts: 0, hintsUsed: 0, referenceActivations: 0 },
-			facts: { rotationUsed: false, hintUsed: false, ghostReferenceUsed: false },
-			hasUserActivity: true,
-			resultClass: 'standard_timed',
-			sealedCompletion: null,
-			lastUpdated: 0
-		};
-		const session = createPuzzleSession({ ...makeOptions({ clock }), restored });
-
-		expect(session.getState().elapsedActiveSeconds).toBeNull();
-		expect(session.getState().timingQuality).toBe('legacy_unknown');
-		expect(clock.activeIntervalCount).toBe(0);
-	});
-
-	it('restarts the clock on construction for an active known timed restored session', () => {
+	it('restarts the clock on construction for an active timed restored session', () => {
 		const clock = new ManualClock();
 		const restored: PersistedPuzzleSessionV1 = {
 			schemaVersion: 1,
@@ -270,7 +259,6 @@ describe('PuzzleSession clock and timing', () => {
 			runId: 'run-x',
 			origin: 'resumed',
 			elapsedActiveSeconds: 10,
-			timingQuality: 'known',
 			timerStarted: true,
 			placedPieces: [],
 			trayOrder: [0, 1, 2, 3],
@@ -302,7 +290,6 @@ describe('PuzzleSession clock and timing', () => {
 			runId: 'run-x',
 			origin: 'resumed',
 			elapsedActiveSeconds: 0,
-			timingQuality: 'known',
 			timerStarted: true,
 			placedPieces: [],
 			trayOrder: [0, 1, 2, 3],
@@ -336,7 +323,6 @@ describe('PuzzleSession clock and timing', () => {
 			runId: 'run-x',
 			origin: 'resumed',
 			elapsedActiveSeconds: 0,
-			timingQuality: 'known',
 			timerStarted: true,
 			placedPieces: [],
 			trayOrder: [0, 1, 2, 3],
@@ -373,7 +359,6 @@ describe('PuzzleSession clock and timing', () => {
 			runId: 'run-x',
 			origin: 'resumed',
 			elapsedActiveSeconds: 0,
-			timingQuality: 'known',
 			timerStarted: true,
 			placedPieces: [],
 			trayOrder: [0, 1, 2, 3],
@@ -409,7 +394,6 @@ describe('PuzzleSession clock and timing', () => {
 			runId: 'run-x',
 			origin: 'resumed',
 			elapsedActiveSeconds: 5,
-			timingQuality: 'known',
 			timerStarted: true,
 			placedPieces: [],
 			trayOrder: [0, 1, 2, 3],
@@ -443,7 +427,6 @@ describe('PuzzleSession clock and timing', () => {
 			runId: 'run-x',
 			origin: 'resumed',
 			elapsedActiveSeconds: 0,
-			timingQuality: 'known',
 			timerStarted: true,
 			placedPieces: [],
 			trayOrder: [0, 1, 2, 3],
@@ -1034,7 +1017,7 @@ describe('PuzzleSession tray organization', () => {
 
 // --- Task 5: completion sealing and typed effects -----------------------------
 
-import type { SealedCompletion, PuzzleSessionEventCallback } from './types';
+import type { PuzzleSessionEventCallback } from './types';
 
 function completeOnePieceSession(
 	overrides: Partial<{
@@ -1080,7 +1063,6 @@ function makeRestoredSnapshot(
 		runId: seal.runId,
 		origin: 'resumed',
 		elapsedActiveSeconds: seal.elapsedActiveSeconds,
-		timingQuality: seal.timingQuality,
 		timerStarted: true,
 		placedPieces: s.placedPieces.map((p) => ({ ...p })),
 		trayOrder: s.trayOrder.slice(),
@@ -1093,7 +1075,6 @@ function makeRestoredSnapshot(
 		sealedCompletion: {
 			runId: seal.runId,
 			resultClass: seal.resultClass,
-			timingQuality: seal.timingQuality,
 			elapsedActiveSeconds: seal.elapsedActiveSeconds,
 			completedAt: seal.completedAt,
 			localStats: effects.localStats,
@@ -1124,7 +1105,6 @@ describe('PuzzleSession completion sealing', () => {
 		session.dispatch({ type: 'attempt_placement', pieceId: 0, x: 0, y: 0 });
 
 		const seal = session.getState().sealedCompletion!;
-		expect(seal.timingQuality).toBe('known');
 		expect(seal.elapsedActiveSeconds).toBeGreaterThanOrEqual(1);
 	});
 
@@ -1190,7 +1170,6 @@ describe('PuzzleSession completion sealing', () => {
 		const sealed: SealedCompletion = {
 			runId: 'run-sealed',
 			resultClass: 'standard_timed',
-			timingQuality: 'known',
 			elapsedActiveSeconds: 30,
 			completedAt: 1000,
 			localStats: { status: 'succeeded' },
@@ -1205,7 +1184,6 @@ describe('PuzzleSession completion sealing', () => {
 			runId: 'run-sealed',
 			origin: 'resumed',
 			elapsedActiveSeconds: 30,
-			timingQuality: 'known',
 			timerStarted: true,
 			placedPieces: [{ pieceId: 0, x: 0, y: 0 }],
 			trayOrder: [0],
@@ -1827,7 +1805,6 @@ function activeKnownTimedRestored(): PersistedPuzzleSessionV1 {
 		runId: 'run-x',
 		origin: 'resumed',
 		elapsedActiveSeconds: 0,
-		timingQuality: 'known',
 		timerStarted: true,
 		placedPieces: [],
 		trayOrder: [0, 1, 2, 3],
@@ -2358,7 +2335,6 @@ describe('PuzzleSession completion outcome immutability', () => {
 			runId: 'run-hydrate',
 			origin: 'resumed',
 			elapsedActiveSeconds: 12,
-			timingQuality: 'known',
 			timerStarted: true,
 			placedPieces: [{ pieceId: 0, x: 0, y: 0 }],
 			trayOrder: [0],
@@ -2371,7 +2347,6 @@ describe('PuzzleSession completion outcome immutability', () => {
 			sealedCompletion: {
 				runId: 'run-hydrate',
 				resultClass: 'standard_timed',
-				timingQuality: 'known',
 				elapsedActiveSeconds: 12,
 				completedAt: 1_000,
 				localStats: { status: 'succeeded' },

@@ -101,7 +101,6 @@ test.describe('mission session controls', () => {
 			version: 1,
 			runId: getFixture(FIXTURE_ID).runIds[0],
 			resultClass: 'relaxed',
-			timingQuality: 'known',
 			elapsedActiveSeconds: null
 		});
 	});

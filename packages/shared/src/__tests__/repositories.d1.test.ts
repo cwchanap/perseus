@@ -70,20 +70,18 @@ function completion(overrides: Partial<RecordPuzzleCompletionV1> = {}): RecordPu
 		version: 1,
 		runId: 'run-1',
 		resultClass: 'standard_timed',
-		timingQuality: 'known',
 		elapsedActiveSeconds: 100,
 		...overrides
 	};
 }
 
 describe('completionFactsMatch', () => {
-	it('rejects stored facts that differ only in timing quality', () => {
+	it('matches stored facts without timing quality', () => {
 		const input: VersionedCompletionWrite = {
 			playerId: 'p1',
 			puzzleId: 'pz1',
 			runId: 'run-1',
 			resultClass: 'standard_timed',
-			timingQuality: 'known',
 			elapsedActiveSeconds: 100,
 			receivedAt: 1_000
 		};
@@ -95,11 +93,10 @@ describe('completionFactsMatch', () => {
 			completionFactsMatch(input, {
 				puzzleId: 'pz1',
 				resultClass: 'standard_timed',
-				timingQuality: 'legacy_unknown',
 				elapsedActiveSeconds: 100,
 				completedAt: 1_000
 			})
-		).toBe(false);
+		).toBe(true);
 	});
 });
 
@@ -111,7 +108,6 @@ describe('recordVersionedCompletion against real D1', () => {
 			puzzleId: 'pz1',
 			runId: 'run-1',
 			resultClass: 'standard_timed',
-			timingQuality: 'known',
 			elapsedActiveSeconds: 100,
 			receivedAt: 1_000
 		};
@@ -121,7 +117,6 @@ describe('recordVersionedCompletion against real D1', () => {
 			stored: {
 				puzzleId: 'pz1',
 				resultClass: 'standard_timed',
-				timingQuality: 'known',
 				elapsedActiveSeconds: 100,
 				completedAt: 1_000
 			},
@@ -136,7 +131,6 @@ describe('recordVersionedCompletion against real D1', () => {
 			stored: {
 				puzzleId: 'pz1',
 				resultClass: 'standard_timed',
-				timingQuality: 'known',
 				elapsedActiveSeconds: 100,
 				completedAt: 1_000
 			},
@@ -274,7 +268,6 @@ describe('recordVersionedCompletion against real D1', () => {
 			puzzleId: 'pz1',
 			runId: 'run-1',
 			resultClass: 'standard_timed',
-			timingQuality: 'known',
 			elapsedActiveSeconds: 100,
 			receivedAt: 1_000
 		});
@@ -283,7 +276,6 @@ describe('recordVersionedCompletion against real D1', () => {
 			puzzleId: 'pz1',
 			runId: 'run-2',
 			resultClass: 'standard_timed',
-			timingQuality: 'known',
 			elapsedActiveSeconds: 90,
 			receivedAt: 2_000
 		});
@@ -294,7 +286,6 @@ describe('recordVersionedCompletion against real D1', () => {
 				puzzleId: 'pz1',
 				runId: 'run-3',
 				resultClass: 'standard_timed',
-				timingQuality: 'known',
 				elapsedActiveSeconds: 80,
 				receivedAt: 3_000
 			}),
@@ -303,7 +294,6 @@ describe('recordVersionedCompletion against real D1', () => {
 				puzzleId: 'pz1',
 				runId: 'run-4',
 				resultClass: 'standard_timed',
-				timingQuality: 'known',
 				elapsedActiveSeconds: 70,
 				receivedAt: 4_000
 			})
@@ -377,11 +367,6 @@ describe('recordVersionedCompletion against real D1', () => {
 			request: completion({ resultClass: 'rotation_timed' })
 		},
 		{
-			name: 'timing quality',
-			puzzleId: 'pz1',
-			request: completion({ timingQuality: 'legacy_unknown', elapsedActiveSeconds: null })
-		},
-		{
 			name: 'elapsed value',
 			puzzleId: 'pz1',
 			request: completion({ elapsedActiveSeconds: 101 })
@@ -433,11 +418,6 @@ describe('recordVersionedCompletion against real D1', () => {
 		completion({
 			runId: 'relaxed',
 			resultClass: 'relaxed',
-			elapsedActiveSeconds: null
-		}),
-		completion({
-			runId: 'legacy',
-			timingQuality: 'legacy_unknown',
 			elapsedActiveSeconds: null
 		})
 	])('keeps non-canonical run $runId in the ledger only', async (request) => {

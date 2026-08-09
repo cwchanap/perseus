@@ -69,7 +69,6 @@ export function createBunDbContext(
 			.select({
 				puzzleId: puzzleCompletionRuns.puzzleId,
 				resultClass: puzzleCompletionRuns.resultClass,
-				timingQuality: puzzleCompletionRuns.timingQuality,
 				elapsedActiveSeconds: puzzleCompletionRuns.elapsedActiveSeconds,
 				completedAt: puzzleCompletionRuns.completedAt
 			})
@@ -99,7 +98,7 @@ export function createBunDbContext(
 					runId: input.runId,
 					puzzleId: input.puzzleId,
 					resultClass: input.resultClass,
-					timingQuality: input.timingQuality,
+					timingQuality: 'known',
 					elapsedActiveSeconds: input.elapsedActiveSeconds,
 					completedAt: input.receivedAt
 				})
@@ -109,7 +108,6 @@ export function createBunDbContext(
 				.returning({
 					puzzleId: puzzleCompletionRuns.puzzleId,
 					resultClass: puzzleCompletionRuns.resultClass,
-					timingQuality: puzzleCompletionRuns.timingQuality,
 					elapsedActiveSeconds: puzzleCompletionRuns.elapsedActiveSeconds,
 					completedAt: puzzleCompletionRuns.completedAt
 				})
@@ -123,7 +121,6 @@ export function createBunDbContext(
 		const stored: StoredCompletionFacts = {
 			puzzleId: row.puzzleId,
 			resultClass: row.resultClass as StoredCompletionFacts['resultClass'],
-			timingQuality: row.timingQuality as StoredCompletionFacts['timingQuality'],
 			elapsedActiveSeconds: row.elapsedActiveSeconds,
 			completedAt: row.completedAt
 		};

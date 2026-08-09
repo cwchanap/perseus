@@ -135,7 +135,6 @@ test.describe('gameplay smoke @smoke', () => {
 			version: 1,
 			runId,
 			resultClass: 'standard_timed',
-			timingQuality: 'known',
 			elapsedActiveSeconds: 1
 		});
 
@@ -324,7 +323,6 @@ test.describe('gameplay smoke @smoke', () => {
 		seeded.sealedCompletion = {
 			runId: fixture.seedRunId,
 			resultClass: 'standard_timed',
-			timingQuality: 'known',
 			elapsedActiveSeconds: 5,
 			completedAt: 1710000005000,
 			localStats: { status: 'succeeded' },

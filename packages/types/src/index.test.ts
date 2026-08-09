@@ -28,7 +28,6 @@ import {
 	type PlayerPuzzleSummary,
 	type PlayerStatRow,
 	type ResultClass,
-	type TimingQuality,
 	type RecordPuzzleCompletionResponse,
 	coercePuzzleStatus
 } from './index';
@@ -111,6 +110,52 @@ describe('coercePuzzleStatus', () => {
 });
 
 describe('versioned puzzle completion contract', () => {
+	const currentRunId = '223e4567-e89b-42d3-a456-426614174000';
+
+	describe('current four-field request', () => {
+		const timed = {
+			version: 1,
+			runId: currentRunId,
+			resultClass: 'standard_timed' as const,
+			elapsedActiveSeconds: 90
+		};
+		const relaxed = {
+			version: 1,
+			runId: currentRunId,
+			resultClass: 'relaxed' as const,
+			elapsedActiveSeconds: null
+		};
+
+		it('accepts timed and relaxed four-field requests', () => {
+			expect(isRecordPuzzleCompletionV1(timed, 86_400)).toBe(true);
+			expect(isRecordPuzzleCompletionV1(relaxed, 86_400)).toBe(true);
+		});
+
+		it('rejects timed requests without elapsed seconds', () => {
+			expect(isRecordPuzzleCompletionV1({ ...timed, elapsedActiveSeconds: null }, 86_400)).toBe(
+				false
+			);
+		});
+
+		it('rejects relaxed requests with elapsed seconds', () => {
+			expect(isRecordPuzzleCompletionV1({ ...relaxed, elapsedActiveSeconds: 90 }, 86_400)).toBe(
+				false
+			);
+		});
+
+		it('rejects the obsolete timingQuality field', () => {
+			expect(isRecordPuzzleCompletionV1({ ...timed, timingQuality: 'known' }, 86_400)).toBe(false);
+		});
+
+		it('rejects legacy hash run IDs while accepting UUID-v4 run IDs', () => {
+			const legacyRunId = `legacy-${'a'.repeat(64)}`;
+
+			expect(isPuzzleRunId(legacyRunId)).toBe(false);
+			expect(isRecordPuzzleCompletionV1({ ...timed, runId: legacyRunId }, 86_400)).toBe(false);
+			expect(isPuzzleRunId(currentRunId)).toBe(true);
+		});
+	});
+
 	const validRunId = '123e4567-e89b-42d3-a456-426614174000';
 	const legacyRunId = `legacy-${'a'.repeat(64)}`;
 
@@ -125,7 +170,7 @@ describe('versioned puzzle completion contract', () => {
 
 	it.each([
 		[validRunId, true],
-		[legacyRunId, true],
+		[legacyRunId, false],
 		['123E4567-E89B-42D3-A456-426614174000', false],
 		['123e4567-e89b-12d3-a456-426614174000', false],
 		['123e4567-e89b-42d3-c456-426614174000', false],
@@ -139,10 +184,9 @@ describe('versioned puzzle completion contract', () => {
 	});
 
 	const timedClasses: ResultClass[] = ['standard_timed', 'rotation_timed', 'assisted_timed'];
-	const timingQualities: TimingQuality[] = ['known', 'legacy_unknown'];
 
 	it.each(timedClasses)(
-		'accepts known %s completions with a positive whole-second elapsed time',
+		'accepts %s completions with a positive whole-second elapsed time',
 		(resultClass) => {
 			expect(
 				isRecordPuzzleCompletionV1(
@@ -150,7 +194,6 @@ describe('versioned puzzle completion contract', () => {
 						version: 1,
 						runId: validRunId,
 						resultClass,
-						timingQuality: 'known',
 						elapsedActiveSeconds: 1
 					},
 					86_400
@@ -159,38 +202,19 @@ describe('versioned puzzle completion contract', () => {
 		}
 	);
 
-	it('accepts known relaxed completions with no elapsed time', () => {
+	it('accepts relaxed completions with no elapsed time', () => {
 		expect(
 			isRecordPuzzleCompletionV1(
 				{
 					version: 1,
-					runId: legacyRunId,
+					runId: validRunId,
 					resultClass: 'relaxed',
-					timingQuality: 'known',
 					elapsedActiveSeconds: null
 				},
 				86_400
 			)
 		).toBe(true);
 	});
-
-	it.each(timedClasses)(
-		'accepts legacy-unknown %s completions with no elapsed time',
-		(resultClass) => {
-			expect(
-				isRecordPuzzleCompletionV1(
-					{
-						version: 1,
-						runId: validRunId,
-						resultClass,
-						timingQuality: 'legacy_unknown',
-						elapsedActiveSeconds: null
-					},
-					86_400
-				)
-			).toBe(true);
-		}
-	);
 
 	it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
 		'rejects an otherwise valid timed completion when maxElapsedActiveSeconds is %s',
@@ -201,7 +225,6 @@ describe('versioned puzzle completion contract', () => {
 						version: 1,
 						runId: validRunId,
 						resultClass: 'standard_timed',
-						timingQuality: 'known',
 						elapsedActiveSeconds: 1
 					},
 					maxElapsed
@@ -210,27 +233,12 @@ describe('versioned puzzle completion contract', () => {
 		}
 	);
 
-	it.each(timingQualities)('uses the exported timing quality %s', (timingQuality) => {
-		expect(['known', 'legacy_unknown']).toContain(timingQuality);
-	});
-
 	it.each([
 		[
 			{
 				version: 1,
 				runId: validRunId,
-				resultClass: 'relaxed',
-				timingQuality: 'legacy_unknown',
-				elapsedActiveSeconds: null
-			},
-			false
-		],
-		[
-			{
-				version: 1,
-				runId: validRunId,
 				resultClass: 'standard_timed',
-				timingQuality: 'known',
 				elapsedActiveSeconds: null
 			},
 			false
@@ -240,7 +248,6 @@ describe('versioned puzzle completion contract', () => {
 				version: 1,
 				runId: validRunId,
 				resultClass: 'relaxed',
-				timingQuality: 'known',
 				elapsedActiveSeconds: 1
 			},
 			false
@@ -250,17 +257,6 @@ describe('versioned puzzle completion contract', () => {
 				version: 1,
 				runId: validRunId,
 				resultClass: 'standard_timed',
-				timingQuality: 'legacy_unknown',
-				elapsedActiveSeconds: 1
-			},
-			false
-		],
-		[
-			{
-				version: 1,
-				runId: validRunId,
-				resultClass: 'standard_timed',
-				timingQuality: 'known',
 				elapsedActiveSeconds: 0
 			},
 			false
@@ -270,7 +266,6 @@ describe('versioned puzzle completion contract', () => {
 				version: 1,
 				runId: validRunId,
 				resultClass: 'standard_timed',
-				timingQuality: 'known',
 				elapsedActiveSeconds: -1
 			},
 			false
@@ -280,7 +275,6 @@ describe('versioned puzzle completion contract', () => {
 				version: 1,
 				runId: validRunId,
 				resultClass: 'standard_timed',
-				timingQuality: 'known',
 				elapsedActiveSeconds: 1.5
 			},
 			false
@@ -290,7 +284,6 @@ describe('versioned puzzle completion contract', () => {
 				version: 1,
 				runId: validRunId,
 				resultClass: 'standard_timed',
-				timingQuality: 'known',
 				elapsedActiveSeconds: Infinity
 			},
 			false
@@ -300,7 +293,6 @@ describe('versioned puzzle completion contract', () => {
 				version: 1,
 				runId: validRunId,
 				resultClass: 'standard_timed',
-				timingQuality: 'known',
 				elapsedActiveSeconds: 86_401
 			},
 			false
@@ -309,31 +301,16 @@ describe('versioned puzzle completion contract', () => {
 			{
 				version: 1,
 				resultClass: 'standard_timed',
-				timingQuality: 'known',
 				elapsedActiveSeconds: 1
 			},
 			false
 		],
-		[
-			{ version: 1, runId: validRunId, resultClass: 'standard_timed', timingQuality: 'known' },
-			false
-		],
+		[{ version: 1, runId: validRunId, resultClass: 'standard_timed' }, false],
 		[
 			{
 				version: 1,
 				runId: validRunId,
 				resultClass: 'invalid',
-				timingQuality: 'known',
-				elapsedActiveSeconds: 1
-			},
-			false
-		],
-		[
-			{
-				version: 1,
-				runId: validRunId,
-				resultClass: 'standard_timed',
-				timingQuality: 'invalid',
 				elapsedActiveSeconds: 1
 			},
 			false
@@ -343,7 +320,6 @@ describe('versioned puzzle completion contract', () => {
 				version: 2,
 				runId: validRunId,
 				resultClass: 'standard_timed',
-				timingQuality: 'known',
 				elapsedActiveSeconds: 1
 			},
 			false
@@ -353,7 +329,6 @@ describe('versioned puzzle completion contract', () => {
 				version: 1,
 				runId: validRunId,
 				resultClass: 'standard_timed',
-				timingQuality: 'known',
 				elapsedActiveSeconds: 1,
 				ignored: true
 			},

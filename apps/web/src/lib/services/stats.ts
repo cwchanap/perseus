@@ -1,8 +1,8 @@
 // Versioned local statistics for puzzle completions.
 //
 // The canonical personal best is available only to eligible standard_timed runs
-// with known timing. Rotation, assisted, relaxed, and legacy-unknown runs count
-// toward totalCompletions but never create or overwrite the standard best.
+// with an elapsed time. Rotation, assisted, and relaxed runs count toward
+// totalCompletions but never create or overwrite the standard best.
 
 import type { SealedCompletion } from './gameplay/session/types';
 
@@ -51,11 +51,7 @@ function getStorageKey(puzzleId: string): string {
 }
 
 function isEligibleStandardBest(seal: SealedCompletion): boolean {
-	return (
-		seal.resultClass === 'standard_timed' &&
-		seal.timingQuality === 'known' &&
-		seal.elapsedActiveSeconds !== null
-	);
+	return seal.resultClass === 'standard_timed' && seal.elapsedActiveSeconds !== null;
 }
 
 function parseStoredStats(raw: Record<string, unknown>, puzzleId: string): PuzzleStatsV1 | null {

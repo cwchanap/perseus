@@ -288,7 +288,6 @@ export async function recordVersionedCompletion(
 		puzzleId,
 		runId: request.runId,
 		resultClass: request.resultClass,
-		timingQuality: request.timingQuality,
 		elapsedActiveSeconds: request.elapsedActiveSeconds,
 		receivedAt
 	};

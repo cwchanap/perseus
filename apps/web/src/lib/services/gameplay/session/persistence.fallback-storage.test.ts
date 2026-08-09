@@ -25,7 +25,6 @@ const snapshot: PersistedPuzzleSessionV1 = {
 	runId: RUN_ID,
 	origin: 'new',
 	elapsedActiveSeconds: 0,
-	timingQuality: 'known',
 	timerStarted: false,
 	placedPieces: [],
 	trayOrder: [0],

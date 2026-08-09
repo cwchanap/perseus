@@ -4,12 +4,12 @@
 // storage, fetch, or analytics. Cross-runtime completion types come from
 // @perseus/types so the client shares one contract with both API runtimes.
 
-import type { ResultClass, TimingQuality, RecordPuzzleCompletionV1 } from '@perseus/types';
+import type { ResultClass, RecordPuzzleCompletionV1 } from '@perseus/types';
 import type { Rotation } from '$lib/types/gameplay';
 import type { PlacedPiece } from '$lib/types/puzzle';
 
 export type { Rotation, PlacedPiece };
-export type { ResultClass, TimingQuality, RecordPuzzleCompletionV1 };
+export type { ResultClass, RecordPuzzleCompletionV1 };
 
 // --- Primitive lifecycle / mode / origin types --------------------------------
 
@@ -50,7 +50,6 @@ export type CompletionEffectState =
 export interface SealedCompletion {
 	readonly runId: string;
 	readonly resultClass: ResultClass;
-	readonly timingQuality: TimingQuality;
 	readonly elapsedActiveSeconds: number | null;
 	readonly completedAt: number;
 	readonly localStats: CompletionEffectState;
@@ -132,9 +131,8 @@ export interface PuzzleSessionState {
 	origin: SessionOrigin;
 	lifecycle: SessionLifecycle;
 	mode: SessionMode;
-	timingQuality: TimingQuality;
 
-	/** Accumulated active whole seconds. `null` for relaxed and legacy_unknown. */
+	/** Accumulated active whole seconds. `null` for relaxed sessions. */
 	elapsedActiveSeconds: number | null;
 	/** Whether the clock has begun accumulating for this run. */
 	timerStarted: boolean;
@@ -185,7 +183,6 @@ export interface PersistedPuzzleSessionV1 {
 	runId: string;
 	origin: SessionOrigin;
 	elapsedActiveSeconds: number | null;
-	timingQuality: TimingQuality;
 	timerStarted: boolean;
 	placedPieces: PlacedPiece[];
 	trayOrder: number[];
@@ -414,7 +411,6 @@ export function completionRequestFromSeal(seal: SealedCompletion): RecordPuzzleC
 		version: 1,
 		runId: seal.runId,
 		resultClass: seal.resultClass,
-		timingQuality: seal.timingQuality,
 		elapsedActiveSeconds: seal.elapsedActiveSeconds
 	};
 }

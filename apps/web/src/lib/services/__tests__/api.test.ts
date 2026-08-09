@@ -1052,7 +1052,6 @@ describe('player profile service functions', () => {
 			version: 1 as const,
 			runId: '11111111-1111-4111-8111-111111111111',
 			resultClass: 'standard_timed' as const,
-			timingQuality: 'known' as const,
 			elapsedActiveSeconds: 90
 		};
 		await recordCompletion('pz1', request);

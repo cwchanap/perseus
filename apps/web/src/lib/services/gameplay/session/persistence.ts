@@ -14,7 +14,6 @@ import type {
 	SessionMode,
 	SessionOrigin,
 	PuzzleSourceType,
-	TimingQuality,
 	ResultClass,
 	CompletionEffectState,
 	CompletionFailureCode,
@@ -26,8 +25,7 @@ import {
 	isPuzzleRunId,
 	isRecordPuzzleCompletionV1,
 	MAX_COMPLETION_TIME_SECONDS,
-	RESULT_CLASSES,
-	TIMING_QUALITIES
+	RESULT_CLASSES
 } from '@perseus/types';
 
 /**
@@ -67,7 +65,6 @@ const VALID_ORIGINS = new Set<SessionOrigin>(['new', 'resumed']);
 const VALID_SOURCES = new Set<PuzzleSourceType>(['api', 'local']);
 const VALID_ROTATIONS = new Set<Rotation>([0, 90, 180, 270]);
 const RESULT_CLASS_SET = new Set<string>(RESULT_CLASSES);
-const TIMING_QUALITY_SET = new Set<string>(TIMING_QUALITIES);
 const COMPLETION_FAILURE_CODE_SET = new Set<string>([
 	'storage_error',
 	'network_error',
@@ -123,7 +120,6 @@ export function serializeSession(
 		runId: state.runId,
 		origin: state.origin,
 		elapsedActiveSeconds: state.elapsedActiveSeconds,
-		timingQuality: state.timingQuality,
 		timerStarted: state.timerStarted,
 		placedPieces: state.placedPieces.map((piece) => ({
 			pieceId: piece.pieceId,
@@ -210,11 +206,9 @@ function validateV1(
 
 	const mode = record.mode;
 	const origin = record.origin;
-	const timingQuality = record.timingQuality;
 	const resultClass = record.resultClass;
 	if (!VALID_MODES.has(mode as SessionMode)) return null;
 	if (!VALID_ORIGINS.has(origin as SessionOrigin)) return null;
-	if (!TIMING_QUALITY_SET.has(timingQuality as string)) return null;
 	if (!RESULT_CLASS_SET.has(resultClass as string)) return null;
 
 	const runId = record.runId;
@@ -231,15 +225,13 @@ function validateV1(
 		return null;
 	}
 	if (mode === 'relaxed' && elapsed !== null) return null;
-	if (timingQuality === 'legacy_unknown' && elapsed !== null) return null;
-	// Inverse: a known timed session must carry a whole-number elapsed
+	// Inverse: a timed session must carry a whole-number elapsed
 	// value. Without this, checkpointTime coalesces null to 0 and the
 	// clock silently resumes from zero.
-	if (mode === 'timed' && timingQuality === 'known' && elapsed === null) return null;
+	if (mode === 'timed' && elapsed === null) return null;
 
 	const timerStarted = record.timerStarted;
 	if (typeof timerStarted !== 'boolean') return null;
-	if (timingQuality === 'legacy_unknown' && timerStarted) return null;
 	// Inverse: a relaxed session must not present a running timer — it
 	// can never accumulate and would display a stuck clock.
 	if (mode === 'relaxed' && timerStarted) return null;
@@ -364,13 +356,12 @@ function validateV1(
 
 	if (lifecycle === 'completed' && seal === null) return null;
 
-	// Seal must agree with the outer session's derived result class and
-	// timing quality. Without this, a record with hintUsed: true (outer
-	// assisted_timed) but a standard_timed seal would load and replay
-	// local/server effects from the wrong class.
+	// Seal must agree with the outer session's derived result class. Without
+	// this, a record with hintUsed: true (outer assisted_timed) but a
+	// standard_timed seal would load and replay local/server effects from the
+	// wrong class.
 	if (seal !== null) {
 		if (seal.resultClass !== resultClass) return null;
-		if (seal.timingQuality !== timingQuality) return null;
 	}
 
 	// A completed run must have every piece placed. The engine seals
@@ -399,7 +390,6 @@ function validateV1(
 		runId: runId as string,
 		origin: origin as SessionOrigin,
 		elapsedActiveSeconds: elapsed as number | null,
-		timingQuality: timingQuality as TimingQuality,
 		timerStarted: timerStarted as boolean,
 		placedPieces,
 		trayOrder,
@@ -545,7 +535,6 @@ function validateSeal(
 	const s = raw as Record<string, unknown>;
 	if (s.runId !== expectedRunId) return false;
 	if (!RESULT_CLASS_SET.has(s.resultClass as string)) return false;
-	if (!TIMING_QUALITY_SET.has(s.timingQuality as string)) return false;
 	if (typeof s.completedAt !== 'number' || !Number.isFinite(s.completedAt) || s.completedAt < 0) {
 		return false;
 	}
@@ -558,7 +547,7 @@ function validateSeal(
 	}
 	// Validate the projected completion request against the same contract the
 	// server enforces (isRecordPuzzleCompletionV1). Without this, a persisted
-	// seal with e.g. elapsed 0, a fractional value, or a null-for-known-timed
+	// seal with e.g. elapsed 0, a fractional value, or a null-for-timed
 	// value would pass local validation but be rejected by the server when
 	// hydration replays the pending submission — permanently losing it as a
 	// terminal bad_request.
@@ -566,7 +555,6 @@ function validateSeal(
 		version: 1,
 		runId: s.runId,
 		resultClass: s.resultClass,
-		timingQuality: s.timingQuality,
 		elapsedActiveSeconds: elapsed
 	};
 	if (!isRecordPuzzleCompletionV1(projectedRequest, MAX_COMPLETION_TIME_SECONDS)) {
@@ -609,7 +597,6 @@ function validateSeal(
 	return {
 		runId: s.runId as string,
 		resultClass: s.resultClass as ResultClass,
-		timingQuality: s.timingQuality as TimingQuality,
 		elapsedActiveSeconds: (elapsed as number | null) ?? null,
 		completedAt: s.completedAt as number,
 		localStats: localStats as CompletionEffectState,
@@ -762,7 +749,6 @@ function cloneSeal(seal: SealedCompletion): SealedCompletion {
 	return {
 		runId: seal.runId,
 		resultClass: seal.resultClass,
-		timingQuality: seal.timingQuality,
 		elapsedActiveSeconds: seal.elapsedActiveSeconds,
 		completedAt: seal.completedAt,
 		localStats: { ...seal.localStats },

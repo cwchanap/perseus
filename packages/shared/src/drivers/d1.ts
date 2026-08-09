@@ -1,6 +1,6 @@
 import { and, eq, isNotNull, isNull, sql } from 'drizzle-orm';
 import { drizzle, type DrizzleD1Database } from 'drizzle-orm/d1';
-import type { ResultClass, TimingQuality } from '@perseus/types';
+import type { ResultClass } from '@perseus/types';
 import * as schema from '../schema';
 import {
 	playerCompletionUsage,
@@ -33,14 +33,12 @@ export function createD1Db(env: D1Env): D1AppDb {
 function toStoredFacts(row: {
 	puzzleId: string;
 	resultClass: string;
-	timingQuality: string;
 	elapsedActiveSeconds: number | null;
 	completedAt: number;
 }): StoredCompletionFacts {
 	return {
 		puzzleId: row.puzzleId,
 		resultClass: row.resultClass as ResultClass,
-		timingQuality: row.timingQuality as TimingQuality,
 		elapsedActiveSeconds: row.elapsedActiveSeconds,
 		completedAt: row.completedAt
 	};
@@ -75,7 +73,7 @@ export function createD1CompletionWriteExecutor(
 							runId: sql<string>`${input.runId}`.as('run_id'),
 							puzzleId: sql<string>`${input.puzzleId}`.as('puzzle_id'),
 							resultClass: sql<ResultClass>`${input.resultClass}`.as('result_class'),
-							timingQuality: sql<TimingQuality>`${input.timingQuality}`.as('timing_quality'),
+							timingQuality: sql<'known'>`'known'`.as('timing_quality'),
 							elapsedActiveSeconds:
 								input.elapsedActiveSeconds === null
 									? sql<null>`NULL`.as('elapsed_active_seconds')
@@ -113,7 +111,6 @@ export function createD1CompletionWriteExecutor(
 				.select({
 					puzzleId: puzzleCompletionRuns.puzzleId,
 					resultClass: puzzleCompletionRuns.resultClass,
-					timingQuality: puzzleCompletionRuns.timingQuality,
 					elapsedActiveSeconds: puzzleCompletionRuns.elapsedActiveSeconds,
 					completedAt: puzzleCompletionRuns.completedAt
 				})
@@ -151,10 +148,8 @@ export function createD1CompletionWriteExecutor(
 								eq(puzzleCompletionRuns.runId, input.runId),
 								eq(puzzleCompletionRuns.puzzleId, input.puzzleId),
 								eq(puzzleCompletionRuns.resultClass, input.resultClass),
-								eq(puzzleCompletionRuns.timingQuality, input.timingQuality),
 								elapsedMatches,
 								eq(puzzleCompletionRuns.resultClass, 'standard_timed'),
-								eq(puzzleCompletionRuns.timingQuality, 'known'),
 								isNotNull(puzzleCompletionRuns.elapsedActiveSeconds),
 								// Required: without this predicate, a tombstone inserted
 								// between insertRun and upsertBest would let the upsert

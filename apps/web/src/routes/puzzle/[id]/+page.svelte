@@ -253,16 +253,9 @@
 	});
 
 	// Presentation gating for the HUD timer and completion stats. Relaxed
-	// runs have no clock; legacy-unknown restored runs have an elapsed value
-	// that is not trustworthy. Both render a static indicator in place of the
-	// live timer and a neutral completion without time/best fields.
-	const showKnownTimedPresentation = $derived(
-		sessionState?.mode === 'timed' && sessionState.timingQuality === 'known'
-	);
+	// runs have no clock; timed runs show the elapsed time and completion stats.
+	const showTimedPresentation = $derived(sessionState?.mode === 'timed');
 	const showRelaxedPresentation = $derived(sessionState?.mode === 'relaxed');
-	const showUnknownTimePresentation = $derived(
-		sessionState?.mode === 'timed' && sessionState.timingQuality === 'legacy_unknown'
-	);
 
 	// Setup may be reopened while the run is active but has not yet seen any
 	// user activity. After the first placement the choices are locked.
@@ -1263,7 +1256,7 @@
 					>
 				</div>
 				<div class="hud-divider"></div>
-				{#if showKnownTimedPresentation}
+				{#if showTimedPresentation}
 					<!-- GameTimer renders its own data-testid="game-timer"; the
 					     wrapper stays testid-free so existing assertions keep
 					     resolving to the timer block. -->
@@ -1272,8 +1265,6 @@
 					</div>
 				{:else if showRelaxedPresentation}
 					<div data-testid="relaxed-mode-indicator">RELAXED</div>
-				{:else if showUnknownTimePresentation}
-					<div data-testid="time-unavailable-indicator">TIME UNAVAILABLE</div>
 				{/if}
 			</div>
 		{/if}
@@ -1462,13 +1453,13 @@
 			<div class="modal-top-line"></div>
 
 			<div class="modal-tag">// MISSION COMPLETE</div>
-			{#if showKnownTimedPresentation}
+			{#if showTimedPresentation}
 				<div class="modal-rank">S RANK</div>
 			{/if}
 
 			<h2 id="modal-title" class="modal-title">{puzzle?.name?.toUpperCase()}</h2>
 
-			{#if showKnownTimedPresentation}
+			{#if showTimedPresentation}
 				<div class="modal-stats">
 					<div class="modal-stat">
 						<span class="mstat-label">FINAL TIME</span>
