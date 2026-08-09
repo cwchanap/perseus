@@ -207,9 +207,7 @@ export const CURRENT_SESSION_SCHEMA_VERSION = 1;
 export type SessionLoadResult =
 	| { status: 'missing' }
 	| { status: 'loaded'; snapshot: PersistedPuzzleSessionV1 }
-	| { status: 'migrated'; snapshot: PersistedPuzzleSessionV1 }
-	| { status: 'invalid'; reason: string }
-	| { status: 'incompatible'; schemaVersion: number };
+	| { status: 'invalid'; reason: string };
 
 export interface SessionPersistenceError {
 	kind: 'read_error' | 'write_error' | 'remove_error';
@@ -227,7 +225,7 @@ export interface SessionStorageAdapter {
 /**
  * Validation context supplied by the loader: the resolved puzzle and source
  * provide the canonical piece IDs, grid, source type, and canonical placement
- * coordinates used to validate a persisted/migrated snapshot.
+ * coordinates used to validate a persisted snapshot.
  */
 export interface SessionValidationContext {
 	puzzleId: string;
@@ -385,7 +383,7 @@ export interface CreatePuzzleSessionOptions {
 	runIdFactory: RunIdFactory;
 	clock: Clock;
 	onEvent?: PuzzleSessionEventCallback;
-	/** Restored snapshot (loaded or migrated). When absent, a fresh run is created. */
+	/** Restored snapshot (loaded). When absent, a fresh run is created. */
 	restored?: PersistedPuzzleSessionV1;
 	/**
 	 * Canonical tray order for a fresh run. The route supplies its shuffled

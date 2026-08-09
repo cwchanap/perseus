@@ -1914,10 +1914,9 @@ describe('Puzzle route gameplay integration', () => {
 		// the component stays mounted until navigation completes. onDestroy
 		// unconditionally calls persistSessionFinal(), and the 5s checkpoint
 		// interval can also fire in that window — both would write the paused
-		// snapshot back under the just-cleared key. The fix sets
-		// persistenceReadOnly and cancels the checkpoint interval before
-		// clearing storage, so unmounting after Discard must not call
-		// saveSession.
+		// snapshot back under the just-cleared key. Discard disposes the session
+		// and cancels the checkpoint interval before clearing storage, so
+		// unmounting after Discard must not call saveSession.
 		vi.mocked(fetchPuzzle).mockResolvedValue(createMockPuzzle());
 		const view = render(PuzzlePage);
 		await expect.element(page.getByTestId('puzzle-board')).toBeVisible();

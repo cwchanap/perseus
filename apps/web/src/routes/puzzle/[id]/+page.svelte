@@ -125,12 +125,6 @@
 	let localStatsFailed = $state(false);
 	let activeLoadRequestId = 0;
 
-	// When a persisted session has a future schema version (incompatible),
-	// the current deployment cannot read it. A fresh session is constructed
-	// for gameplay, but all persistence writes/clears are suppressed so the
-	// older deployment does not destroy progress written by a newer schema.
-	let persistenceReadOnly = false;
-
 	let sessionUnsubscribe: (() => void) | null = null;
 	let checkpointInterval: ReturnType<typeof setInterval> | null = null;
 	let rejectedPieceTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -390,7 +384,6 @@
 	// --- Persistence -------------------------------------------------------------
 
 	function checkpointSession() {
-		if (persistenceReadOnly) return;
 		if (!sessionStore || !sessionState || !puzzle) return;
 		if (sessionState.lifecycle === 'disposed') return;
 		const serialized = serializeSession(sessionState);
@@ -673,15 +666,6 @@
 			restartConfirmation = false;
 			showCelebration = false;
 
-			// The prior session has now been flushed and disposed. Only now is
-			// it safe to clear the read-only guard: persistSessionFinal above
-			// reads persistenceReadOnly (via checkpointSession), so resetting
-			// it earlier would have let a prior future-schema session's fresh
-			// in-memory v1 state be checkpointed over the unreadable persisted
-			// value, destroying newer-schema progress on puzzle-to-puzzle
-			// navigation (onDestroy does not fire when the route is reused).
-			persistenceReadOnly = false;
-
 			const source = await loadPuzzleSource(id);
 			if (requestId !== activeLoadRequestId) {
 				source.cleanup();
@@ -704,7 +688,7 @@
 				}))
 			};
 
-			// Load/migrate/validate persisted session.
+			// Load and validate the current persisted session.
 			const loadResult = sessionStorageAdapter.loadSession(loadedPuzzle.id, {
 				puzzleId: loadedPuzzle.id,
 				source: source.source,
@@ -719,20 +703,12 @@
 				}))
 			});
 
-			const restored =
-				loadResult.status === 'loaded' || loadResult.status === 'migrated'
-					? loadResult.snapshot
-					: undefined;
-
-			// A future-schema session is unreadable by this deployment. A fresh
-			// session is constructed for gameplay, but persistence is suppressed
-			// so the older code does not overwrite the newer-schema progress.
-			persistenceReadOnly = loadResult.status === 'incompatible';
+			const restored = loadResult.status === 'loaded' ? loadResult.snapshot : undefined;
 
 			puzzle = loadedPuzzle;
 			// Restore the celebration modal for a previously completed session
 			// so the user retains access to Play Again and retry controls.
-			// Fresh/incompatible sessions start without the modal. (The
+			// Fresh sessions start without the modal. (The
 			// dialog/celebration reset itself ran before the fetch above.)
 			showCelebration = restored?.lifecycle === 'completed';
 			showReferenceOverlay = false;
@@ -1193,10 +1169,8 @@
 		if (!puzzle || !sessionStore) return;
 
 		// Play Again is a deliberate abandonment of the current record. Clear
-		// the incompatible (future-schema) entry if present and re-enable
-		// persistence for the fresh run, then open setup with the current
-		// choices (no auto-start).
-		persistenceReadOnly = false;
+		// the current entry, then open setup with the current choices (no
+		// auto-start).
 		sessionStorageAdapter.clearSession(puzzle.id);
 		restartWithCurrentChoices();
 	}
@@ -1229,17 +1203,14 @@
 	}
 
 	function discardAndExit(): void {
-		// Prevent the teardown onDestroy handler and any in-flight checkpoint
-		// tick from writing the paused snapshot back under the just-cleared
-		// key. The component stays mounted until navigation completes, so
-		// without this guard persistSessionFinal() (called unconditionally in
-		// onDestroy) would re-save the session, and the 5s checkpoint interval
-		// could also fire in the interim.
-		persistenceReadOnly = true;
+		// Dispose before clearing so teardown and any in-flight checkpoint tick
+		// see no live session to persist while navigation completes.
 		if (checkpointInterval !== null) {
 			clearInterval(checkpointInterval);
 			checkpointInterval = null;
 		}
+		sessionStore?.dispose();
+		sessionState = null;
 		if (puzzle) sessionStorageAdapter.clearSession(puzzle.id);
 		void goto(resolve('/'));
 	}

@@ -1,11 +1,4 @@
-// Synchronous, browser-compatible run-ID and canonical-JSON helpers.
-//
-// The codec must remain synchronous and must not depend on the secure-context
-// only `crypto.subtle`. SHA-256 uses the audited `@noble/hashes` WASM-free
-// implementation over UTF-8 bytes.
-
-import { sha256 } from '@noble/hashes/sha2.js';
-import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
+// Synchronous, browser-compatible run-ID helpers.
 import type {
 	RunIdFactory,
 	PuzzleSessionState,
@@ -38,50 +31,6 @@ import {
 } from '@perseus/types';
 
 /**
- * SHA-256 over the UTF-8 bytes of `value`, returned as 64 lowercase hex chars.
- */
-export function sha256Hex(value: string): string {
-	return bytesToHex(sha256(utf8ToBytes(value)));
-}
-
-/**
- * Canonical JSON form: object keys sorted recursively (arrays preserve order,
- * undefined object properties omitted). Used to produce a stable hash input so
- * the same logical payload yields the same run id regardless of insertion order.
- */
-export function canonicalJson(value: unknown): string {
-	return JSON.stringify(canonicalize(value));
-}
-
-function canonicalize(value: unknown): unknown {
-	if (Array.isArray(value)) {
-		return value.map(canonicalize);
-	}
-	if (value === null || typeof value !== 'object') {
-		return value;
-	}
-	const input = value as Record<string, unknown>;
-	const sorted: Record<string, unknown> = {};
-	for (const key of Object.keys(input).sort()) {
-		const child = input[key];
-		if (child !== undefined) {
-			sorted[key] = canonicalize(child);
-		}
-	}
-	return sorted;
-}
-
-/**
- * Deterministic legacy run id: `legacy-` + SHA-256 of the canonical JSON of the
- * raw legacy payload. The raw value is canonicalized as-is — before any
- * migration normalization — so a failed migration write produces the same id on
- * retry. The original `lastUpdated` is part of the hashed payload.
- */
-export function legacyRunId(rawLegacyValue: unknown): string {
-	return `legacy-${sha256Hex(canonicalJson(rawLegacyValue))}`;
-}
-
-/**
  * Factory for fresh canonical lowercase UUID v4 run ids. Uses `crypto.randomUUID`
  * when present, and otherwise formats 16 bytes from `crypto.getRandomValues`,
  * setting the version (4) and variant (8-b) nibbles. Never falls back to
@@ -107,7 +56,7 @@ function fallbackUuidV4(source: Crypto | undefined): string {
 	// RFC 4122 v4: version nibble (byte 6 high) = 0100, variant (byte 8 high) = 10.
 	bytes[6] = (bytes[6] & 0x0f) | 0x40;
 	bytes[8] = (bytes[8] & 0x3f) | 0x80;
-	const hex = bytesToHex(bytes);
+	const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
 	return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
@@ -206,7 +155,7 @@ export function serializeSession(
 }
 
 /**
- * Load, version-check, and validate/migrate a persisted session. The codec
+ * Load, version-check, and validate a persisted session. The codec
  * never partially hydrates invalid data.
  */
 export function loadPersistedSession(
@@ -227,29 +176,14 @@ export function loadPersistedSession(
 	}
 
 	const record = parsed as Record<string, unknown>;
-	if (Object.hasOwn(record, 'schemaVersion')) {
-		const version = record.schemaVersion;
-		if (typeof version !== 'number' || !Number.isInteger(version)) {
-			return { status: 'invalid', reason: 'bad_schema_version' };
-		}
-		if (version > CURRENT_SESSION_SCHEMA_VERSION) {
-			return { status: 'incompatible', schemaVersion: version };
-		}
-		if (version === CURRENT_SESSION_SCHEMA_VERSION) {
-			const result = validateV1(record, context);
-			return result === null
-				? { status: 'invalid', reason: 'cross_field_violation' }
-				: { status: 'loaded', snapshot: result };
-		}
+	if (record.schemaVersion !== CURRENT_SESSION_SCHEMA_VERSION) {
 		return { status: 'invalid', reason: 'unsupported_schema_version' };
 	}
 
-	// Legacy v0 (no schemaVersion).
-	const migrated = migrateV0toV1(record, context);
-	if (migrated === null) {
-		return { status: 'invalid', reason: 'legacy_migration_failed' };
-	}
-	return { status: 'migrated', snapshot: migrated };
+	const snapshot = validateV1(record, context);
+	return snapshot
+		? { status: 'loaded', snapshot }
+		: { status: 'invalid', reason: 'cross_field_violation' };
 }
 
 /**
@@ -260,39 +194,6 @@ export function isResumable(snapshot: PersistedPuzzleSessionV1): boolean {
 	if (snapshot.lifecycle !== 'active' && snapshot.lifecycle !== 'paused') return false;
 	if (snapshot.sealedCompletion !== null) return false;
 	return snapshot.hasUserActivity;
-}
-
-// --- Deterministic legacy tray order ------------------------------------------
-
-export function fnv1aUtf8(value: string): number {
-	let hash = 0x811c9dc5;
-	for (let i = 0; i < value.length; i++) {
-		hash ^= value.charCodeAt(i);
-		hash = Math.imul(hash, 0x01000193);
-	}
-	return hash >>> 0;
-}
-
-export function mulberry32(seed: number): () => number {
-	let a = seed >>> 0;
-	return () => {
-		a = (a + 0x6d2b79f5) >>> 0;
-		let t = a;
-		t = Math.imul(t ^ (t >>> 15), t | 1);
-		t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-		return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-	};
-}
-
-export function deterministicLegacyTrayOrder(pieceIds: number[], puzzleId: string): number[] {
-	const sorted = pieceIds.slice().sort((a, b) => a - b);
-	const rng = mulberry32(fnv1aUtf8(puzzleId));
-	const out = sorted.slice();
-	for (let i = out.length - 1; i > 0; i--) {
-		const j = Math.floor(rng() * (i + 1));
-		[out[i], out[j]] = [out[j], out[i]];
-	}
-	return out;
 }
 
 // --- V1 validation ------------------------------------------------------------
@@ -677,7 +578,7 @@ function validateSeal(
 		return false;
 	}
 	// Completion effects must be present and applicable. A missing/null
-	// effect is corruption (the engine and legacy migration always emit a
+	// effect is corruption (the engine always emits a
 	// concrete state), so reject rather than silently defaulting to
 	// not_applicable — otherwise a corrupted API snapshot with null effects
 	// would load and permanently suppress both local stats and the server
@@ -799,85 +700,6 @@ function validateViewport(raw: unknown): PersistedViewport | false | undefined {
 	return { zoom, panX, panY };
 }
 
-// --- Legacy migration ---------------------------------------------------------
-
-function migrateV0toV1(
-	record: Record<string, unknown>,
-	context: SessionValidationContext
-): PersistedPuzzleSessionV1 | null {
-	if (record.puzzleId !== undefined && record.puzzleId !== context.puzzleId) return null;
-
-	const placedPieces = validatePlacements(record.placedPieces, new Set(context.pieceIds), context);
-	if (placedPieces === null) return null;
-
-	const rotationEnabled =
-		typeof record.rotationEnabled === 'boolean' ? record.rotationEnabled : false;
-	const pieceRotations =
-		record.pieceRotations && typeof record.pieceRotations === 'object'
-			? validateRotations(record.pieceRotations, new Set(context.pieceIds))
-			: {};
-	if (pieceRotations === null) return null;
-
-	const hasRotation = rotationEnabled || Object.keys(pieceRotations).length > 0;
-	const hasUserActivity = placedPieces.length > 0 || hasRotation;
-	const allPlaced =
-		context.pieceIds.length > 0 &&
-		context.pieceIds.every((id) => placedPieces.some((placement) => placement.pieceId === id));
-
-	const lastUpdatedMs = parseLegacyLastUpdated(record.lastUpdated);
-	const runId = legacyRunId(record);
-	const trayOrder = deterministicLegacyTrayOrder(context.pieceIds, context.puzzleId);
-
-	const resultClass: ResultClass = hasRotation ? 'rotation_timed' : 'standard_timed';
-
-	let seal: SealedCompletion | null = null;
-	if (allPlaced) {
-		seal = {
-			runId,
-			resultClass,
-			timingQuality: 'legacy_unknown',
-			elapsedActiveSeconds: null,
-			completedAt: lastUpdatedMs,
-			// Terminal effect states prevent re-submission of historical solves.
-			localStats: { status: 'succeeded' },
-			serverSubmission:
-				context.source === 'api' ? { status: 'succeeded' } : { status: 'not_applicable' }
-		};
-	}
-
-	return {
-		schemaVersion: CURRENT_SESSION_SCHEMA_VERSION,
-		puzzleId: context.puzzleId,
-		source: context.source,
-		lifecycle: allPlaced ? 'completed' : 'active',
-		mode: 'timed',
-		runId,
-		origin: 'resumed',
-		elapsedActiveSeconds: null,
-		timingQuality: 'legacy_unknown',
-		timerStarted: false,
-		placedPieces,
-		trayOrder,
-		rotationEnabled,
-		pieceRotations,
-		counters: { incorrectAttempts: 0, hintsUsed: 0, referenceActivations: 0 },
-		facts: { rotationUsed: hasRotation, hintUsed: false, ghostReferenceUsed: false },
-		hasUserActivity,
-		resultClass,
-		sealedCompletion: seal,
-		lastUpdated: lastUpdatedMs
-	};
-}
-
-function parseLegacyLastUpdated(value: unknown): number {
-	if (typeof value === 'string' && value.length > 0) {
-		const parsed = Date.parse(value);
-		if (Number.isFinite(parsed)) return parsed;
-	}
-	if (typeof value === 'number' && Number.isFinite(value) && value >= 0) return Math.floor(value);
-	return 0;
-}
-
 // --- Storage adapter ----------------------------------------------------------
 
 export function createSessionStorageAdapter(options?: {
@@ -898,7 +720,15 @@ export function createSessionStorageAdapter(options?: {
 			if (onError) onError({ kind: 'read_error', puzzleId, cause });
 			return { status: 'missing' };
 		}
-		return loadPersistedSession(raw, context);
+		const result = loadPersistedSession(raw, context);
+		if (result.status !== 'invalid') return result;
+
+		try {
+			storage.removeItem(progressKey(puzzleId));
+		} catch (cause) {
+			if (onError) onError({ kind: 'remove_error', puzzleId, cause });
+		}
+		return { status: 'missing' };
 	}
 
 	function saveSession(puzzleId: string, snapshot: PersistedPuzzleSessionV1): void {

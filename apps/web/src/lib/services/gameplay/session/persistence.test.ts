@@ -1,6 +1,6 @@
-// Red tests for PuzzleSession persistence: canonical run IDs and canonical JSON.
+// Tests for current-schema PuzzleSession persistence and canonical run IDs.
 import { describe, it, expect, vi } from 'vitest';
-import { canonicalJson, sha256Hex, legacyRunId, createBrowserRunIdFactory } from './persistence';
+import { createBrowserRunIdFactory } from './persistence';
 import { isPuzzleRunId } from '@perseus/types';
 
 describe('createBrowserRunIdFactory', () => {
@@ -82,114 +82,14 @@ describe('createBrowserRunIdFactory', () => {
 	});
 });
 
-describe('canonicalJson', () => {
-	it('recursively sorts object keys at every depth', () => {
-		expect(canonicalJson({ b: 1, a: { d: 4, c: 3 } })).toBe('{"a":{"c":3,"d":4},"b":1}');
-	});
-
-	it('sorts deeply nested object keys', () => {
-		expect(canonicalJson({ z: { y: { x: 1 } }, a: 2 })).toBe('{"a":2,"z":{"y":{"x":1}}}');
-	});
-
-	it('preserves array order', () => {
-		expect(canonicalJson({ order: [3, 1, 2] })).toBe('{"order":[3,1,2]}');
-	});
-
-	it('sorts keys inside array elements but keeps element order', () => {
-		expect(
-			canonicalJson({
-				items: [
-					{ b: 1, a: 2 },
-					{ d: 4, c: 3 }
-				]
-			})
-		).toBe('{"items":[{"a":2,"b":1},{"c":3,"d":4}]}');
-	});
-
-	it('omits undefined object properties', () => {
-		expect(canonicalJson({ a: 1, b: undefined, c: 3 })).toBe('{"a":1,"c":3}');
-	});
-
-	it('omits undefined nested object properties', () => {
-		expect(canonicalJson({ a: { x: undefined, y: 1 } })).toBe('{"a":{"y":1}}');
-	});
-
-	it('keeps null values', () => {
-		expect(canonicalJson({ a: null, b: 1 })).toBe('{"a":null,"b":1}');
-	});
-
-	it('preserves the original lastUpdated value in the serialized form', () => {
-		const legacy = { puzzleId: 'p1', placedPieces: [], lastUpdated: '2024-01-01T00:00:00.000Z' };
-		expect(canonicalJson(legacy)).toBe(
-			'{"lastUpdated":"2024-01-01T00:00:00.000Z","placedPieces":[],"puzzleId":"p1"}'
-		);
-	});
-
-	it('serializes primitives', () => {
-		expect(canonicalJson('abc')).toBe('"abc"');
-		expect(canonicalJson(42)).toBe('42');
-		expect(canonicalJson(true)).toBe('true');
-		expect(canonicalJson(null)).toBe('null');
-	});
-});
-
-describe('sha256Hex', () => {
-	it('matches the known vector for the empty string', () => {
-		expect(sha256Hex('')).toBe('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855');
-	});
-
-	it('matches the known vector for "abc"', () => {
-		expect(sha256Hex('abc')).toBe(
-			'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad'
-		);
-	});
-});
-
-describe('legacyRunId', () => {
-	it('is legacy- followed by 64 lowercase hex characters', () => {
-		const id = legacyRunId({ puzzleId: 'p1', placedPieces: [{ pieceId: 0, x: 0, y: 0 }] });
-		expect(id).toMatch(/^legacy-[0-9a-f]{64}$/);
-	});
-
-	it('equals legacy- + sha256Hex(canonicalJson(value))', () => {
-		const value = { b: 2, a: 1, lastUpdated: '2024-01-01T00:00:00.000Z' };
-		expect(legacyRunId(value)).toBe(`legacy-${sha256Hex(canonicalJson(value))}`);
-	});
-
-	it('is deterministic regardless of object key insertion order', () => {
-		expect(legacyRunId({ b: 2, a: 1 })).toBe(legacyRunId({ a: 1, b: 2 }));
-	});
-
-	it('ignores undefined properties when hashing', () => {
-		expect(legacyRunId({ a: 1, b: undefined })).toBe(legacyRunId({ a: 1 }));
-	});
-
-	it('includes the original lastUpdated in the hashed payload', () => {
-		const early = legacyRunId({ puzzleId: 'p1', lastUpdated: '2024-01-01T00:00:00.000Z' });
-		const later = legacyRunId({ puzzleId: 'p1', lastUpdated: '2024-02-02T00:00:00.000Z' });
-		expect(early).not.toBe(later);
-	});
-
-	it('hashes before migration normalizes fields (raw input is canonicalized as-is)', () => {
-		// A raw legacy payload with extra/unknown fields is hashed verbatim (canonicalized),
-		// so changing any field changes the id.
-		const a = legacyRunId({ puzzleId: 'p1', placedPieces: [] });
-		const b = legacyRunId({ puzzleId: 'p1', placedPieces: [], extra: true });
-		expect(a).not.toBe(b);
-	});
-});
-
-// --- Task 6: versioned codec, legacy migration, storage adapter ---------------
+// --- Current-schema codec and storage adapter ---------------------------------
 
 import {
 	serializeSession,
 	loadPersistedSession,
 	isResumable,
 	createSessionStorageAdapter,
-	noopThrowingStorage,
-	fnv1aUtf8,
-	mulberry32,
-	deterministicLegacyTrayOrder
+	noopThrowingStorage
 } from './persistence';
 import { memoryStorage, load } from './persistence.test-fixtures';
 import type {
@@ -313,10 +213,29 @@ describe('loadPersistedSession validation', () => {
 		expect(loadPersistedSession('{not json', ctx).status).toBe('invalid');
 	});
 
-	it('returns incompatible for a future schema version', () => {
+	it('returns invalid for an unsupported schema version', () => {
 		const future = JSON.stringify({ schemaVersion: 99, puzzleId: 'pz1' });
 		const result = loadPersistedSession(future, ctx);
-		expect(result.status).toBe('incompatible');
+		expect(result).toEqual({ status: 'invalid', reason: 'unsupported_schema_version' });
+	});
+
+	it('returns invalid for an unversioned record', () => {
+		const legacy = JSON.stringify({ puzzleId: 'pz1', placedPieces: [], lastUpdated: 10 });
+		expect(loadPersistedSession(legacy, ctx)).toEqual({
+			status: 'invalid',
+			reason: 'unsupported_schema_version'
+		});
+	});
+
+	it('accepts obsolete extra fields on a current-schema snapshot', () => {
+		const snapshot = serializeSession(makeState(), 1_000)!;
+		const withObsoleteField = { ...snapshot, obsoleteField: { oldTrayState: true } };
+		const result = loadPersistedSession(JSON.stringify(withObsoleteField), ctx);
+
+		expect(result.status).toBe('loaded');
+		if (result.status === 'loaded') {
+			expect(result.snapshot).not.toHaveProperty('obsoleteField');
+		}
 	});
 
 	it('rejects a puzzle id mismatch', () => {
@@ -332,137 +251,6 @@ describe('loadPersistedSession validation', () => {
 			status: 'invalid',
 			reason: 'cross_field_violation'
 		});
-	});
-});
-
-describe('legacy v0 migration', () => {
-	it('migrates an unversioned progress record to legacy_unknown with null elapsed', () => {
-		const legacy = {
-			puzzleId: 'pz1',
-			placedPieces: [{ pieceId: 0, x: 0, y: 0 }],
-			rotationEnabled: false,
-			pieceRotations: {},
-			lastUpdated: '2024-01-01T00:00:00.000Z'
-		};
-
-		const result = loadPersistedSession(JSON.stringify(legacy), ctx);
-
-		expect(result.status).toBe('migrated');
-		if (result.status === 'migrated') {
-			const snap = result.snapshot;
-			expect(snap.schemaVersion).toBe(1);
-			expect(snap.mode).toBe('timed');
-			expect(snap.origin).toBe('resumed');
-			expect(snap.timingQuality).toBe('legacy_unknown');
-			expect(snap.elapsedActiveSeconds).toBeNull();
-			expect(snap.timerStarted).toBe(false);
-			expect(snap.runId).toMatch(/^legacy-[0-9a-f]{64}$/);
-			expect(snap.hasUserActivity).toBe(true);
-			expect(snap.lifecycle).toBe('active');
-			expect(snap.lastUpdated).toBe(Date.parse('2024-01-01T00:00:00.000Z'));
-		}
-	});
-
-	it('produces a completed lifecycle when every unique piece is placed', () => {
-		const legacy = {
-			puzzleId: 'pz1',
-			placedPieces: [
-				{ pieceId: 0, x: 0, y: 0 },
-				{ pieceId: 1, x: 1, y: 0 },
-				{ pieceId: 2, x: 0, y: 1 },
-				{ pieceId: 3, x: 1, y: 1 }
-			],
-			rotationEnabled: false,
-			pieceRotations: {},
-			lastUpdated: '2024-01-01T00:00:00.000Z'
-		};
-
-		const result = loadPersistedSession(JSON.stringify(legacy), ctx);
-
-		expect(result.status).toBe('migrated');
-		if (result.status === 'migrated') {
-			expect(result.snapshot.lifecycle).toBe('completed');
-		}
-	});
-
-	it('produces a deterministic tray order seeded by the puzzle id', () => {
-		const legacy = { puzzleId: 'pz1', placedPieces: [], lastUpdated: '2024-01-01T00:00:00.000Z' };
-		const expected = deterministicLegacyTrayOrder([0, 1, 2, 3], 'pz1');
-
-		const result = loadPersistedSession(JSON.stringify(legacy), ctx);
-
-		expect(result.status).toBe('migrated');
-		if (result.status === 'migrated') {
-			expect(result.snapshot.trayOrder).toEqual(expected);
-			expect(new Set(result.snapshot.trayOrder)).toEqual(new Set([0, 1, 2, 3]));
-		}
-	});
-
-	it('uses the same legacy run id on retry (deterministic)', () => {
-		const legacy = { puzzleId: 'pz1', placedPieces: [], lastUpdated: '2024-01-01T00:00:00.000Z' };
-		const a = loadPersistedSession(JSON.stringify(legacy), ctx);
-		const b = loadPersistedSession(JSON.stringify(legacy), ctx);
-
-		expect(a.status).toBe('migrated');
-		expect(b.status).toBe('migrated');
-		if (a.status === 'migrated' && b.status === 'migrated') {
-			expect(a.snapshot.runId).toBe(b.snapshot.runId);
-		}
-	});
-
-	it('marks hasUserActivity false for an empty legacy record', () => {
-		const legacy = {
-			puzzleId: 'pz1',
-			placedPieces: [],
-			rotationEnabled: false,
-			pieceRotations: {},
-			lastUpdated: ''
-		};
-
-		const result = loadPersistedSession(JSON.stringify(legacy), ctx);
-
-		expect(result.status).toBe('migrated');
-		if (result.status === 'migrated') {
-			expect(result.snapshot.hasUserActivity).toBe(false);
-		}
-	});
-
-	it('maps a rotation-enabled legacy record to rotation_timed', () => {
-		const legacy = {
-			puzzleId: 'pz1',
-			placedPieces: [],
-			rotationEnabled: true,
-			pieceRotations: { 0: 90 },
-			lastUpdated: ''
-		};
-
-		const result = loadPersistedSession(JSON.stringify(legacy), ctx);
-
-		expect(result.status).toBe('migrated');
-		if (result.status === 'migrated') {
-			expect(result.snapshot.resultClass).toBe('rotation_timed');
-			expect(result.snapshot.facts.rotationUsed).toBe(true);
-		}
-	});
-});
-
-describe('deterministic tray-order helpers', () => {
-	it('fnv1aUtf8 is deterministic for the same input', () => {
-		expect(fnv1aUtf8('pz1')).toBe(fnv1aUtf8('pz1'));
-		expect(fnv1aUtf8('pz1')).not.toBe(fnv1aUtf8('pz2'));
-	});
-
-	it('mulberry32 produces a deterministic sequence for a seed', () => {
-		const a = mulberry32(42);
-		const b = mulberry32(42);
-		const seqA = [a(), a(), a()];
-		const seqB = [b(), b(), b()];
-		expect(seqA).toEqual(seqB);
-	});
-
-	it('deterministicLegacyTrayOrder contains every piece exactly once', () => {
-		const order = deterministicLegacyTrayOrder([0, 1, 2, 3, 4], 'pz1');
-		expect(order.sort((x, y) => x - y)).toEqual([0, 1, 2, 3, 4]);
 	});
 });
 
@@ -499,6 +287,29 @@ describe('isResumable', () => {
 });
 
 describe('createSessionStorageAdapter', () => {
+	it('clears unversioned stored state and reports missing', () => {
+		const store: Record<string, string> = {};
+		const storage = memoryStorage(store);
+		storage.setItem(
+			'puzzle-progress-pz1',
+			JSON.stringify({ puzzleId: 'pz1', placedPieces: [], lastUpdated: 10 })
+		);
+		const adapter = createSessionStorageAdapter({ storage });
+
+		expect(adapter.loadSession('pz1', ctx)).toEqual({ status: 'missing' });
+		expect(storage.getItem('puzzle-progress-pz1')).toBeNull();
+	});
+
+	it('clears a different schema version and reports missing', () => {
+		const store: Record<string, string> = {};
+		const storage = memoryStorage(store);
+		storage.setItem('puzzle-progress-pz1', JSON.stringify({ schemaVersion: 2, puzzleId: 'pz1' }));
+		const adapter = createSessionStorageAdapter({ storage });
+
+		expect(adapter.loadSession('pz1', ctx)).toEqual({ status: 'missing' });
+		expect(storage.getItem('puzzle-progress-pz1')).toBeNull();
+	});
+
 	it('round-trips a snapshot through storage and reports loaded', () => {
 		const store: Record<string, string> = {};
 		const storage = memoryStorage(store);
@@ -605,35 +416,22 @@ describe('loadPersistedSession additional validation branches', () => {
 		expect(loadPersistedSession('42', ctx)).toEqual({ status: 'invalid', reason: 'not_object' });
 	});
 
-	it('returns invalid:bad_schema_version when schemaVersion is not an integer', () => {
+	it('returns invalid:unsupported_schema_version when schemaVersion is not current', () => {
 		const snapshot = serializeSession(makeState(), 1_000)!;
 		const tampered = { ...snapshot, schemaVersion: 1.5 };
-		expect(loadPersistedSession(JSON.stringify(tampered), ctx)).toEqual({
-			status: 'invalid',
-			reason: 'bad_schema_version'
-		});
-	});
-
-	it('returns invalid:unsupported_schema_version for a past non-zero version', () => {
-		const snapshot = serializeSession(makeState(), 1_000)!;
-		const tampered = { ...snapshot, schemaVersion: 0 };
-		// Version 0 is not > CURRENT (1), not === CURRENT (1), so falls through to
-		// unsupported_schema_version rather than legacy v0 (which has no schemaVersion key).
 		expect(loadPersistedSession(JSON.stringify(tampered), ctx)).toEqual({
 			status: 'invalid',
 			reason: 'unsupported_schema_version'
 		});
 	});
 
-	it('returns invalid:legacy_migration_failed when a legacy record has bad placements', () => {
-		const legacy = {
-			puzzleId: 'pz1',
-			placedPieces: [{ pieceId: 999, x: 0, y: 0 }],
-			lastUpdated: '2024-01-01T00:00:00.000Z'
-		};
-		expect(loadPersistedSession(JSON.stringify(legacy), ctx)).toEqual({
+	it('returns invalid:unsupported_schema_version for a past non-zero version', () => {
+		const snapshot = serializeSession(makeState(), 1_000)!;
+		const tampered = { ...snapshot, schemaVersion: 0 };
+		// Any schema version other than the current version is unsupported.
+		expect(loadPersistedSession(JSON.stringify(tampered), ctx)).toEqual({
 			status: 'invalid',
-			reason: 'legacy_migration_failed'
+			reason: 'unsupported_schema_version'
 		});
 	});
 

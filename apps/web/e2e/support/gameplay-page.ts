@@ -742,13 +742,8 @@ export class GameplayPage {
 		const context = buildSessionValidationContext(fixtureId);
 		const json = JSON.stringify(snapshot);
 		const result = loadPersistedSession(json, context);
-		if (result.status !== 'loaded' && result.status !== 'migrated') {
-			const reason =
-				result.status === 'invalid'
-					? `invalid (${result.reason})`
-					: result.status === 'incompatible'
-						? `incompatible (schemaVersion=${result.schemaVersion})`
-						: result.status;
+		if (result.status !== 'loaded') {
+			const reason = result.status === 'invalid' ? `invalid (${result.reason})` : result.status;
 			throw new Error(`gotoFixture seedSession: snapshot failed production validation: ${reason}`);
 		}
 		return json;

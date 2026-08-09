@@ -9,7 +9,7 @@
 //     (`loadPersistedSession`) and refuses to write anything the codec rejects,
 //     so a test can never silently plant a state the app would ignore.
 //   - `seedRaw` bypasses validation entirely, writing arbitrary bytes for
-//     migration and corruption tests.
+//     corruption tests.
 //
 // Fresh Playwright contexts already isolate storage per test; `resetSameContext`
 // clears cookies plus both browser stores for the rarer case where a test must
@@ -95,7 +95,7 @@ export interface PersistedStateController {
 		fixtureId: GameplayFixtureId,
 		snapshot: PersistedPuzzleSessionV1
 	): Promise<string>;
-	/** Write `rawJson` verbatim, bypassing all validation (migration/corruption). */
+	/** Write `rawJson` verbatim, bypassing all validation for corruption tests. */
 	seedRaw(page: Page, puzzleId: string, rawJson: string): Promise<void>;
 	/** Read the current localStorage value for `puzzleId` (or null). */
 	read(page: Page, puzzleId: string): Promise<string | null>;
@@ -113,13 +113,8 @@ export function createPersistedStateController(): PersistedStateController {
 			const context = buildSessionValidationContext(fixtureId);
 			const json = JSON.stringify(snapshot);
 			const result = loadPersistedSession(json, context);
-			if (result.status !== 'loaded' && result.status !== 'migrated') {
-				const reason =
-					result.status === 'invalid'
-						? `invalid (${result.reason})`
-						: result.status === 'incompatible'
-							? `incompatible (schemaVersion=${result.schemaVersion})`
-							: result.status;
+			if (result.status !== 'loaded') {
+				const reason = result.status === 'invalid' ? `invalid (${result.reason})` : result.status;
 				throw new Error(`seedValid: snapshot failed production validation: ${reason}`);
 			}
 			const key = progressKey(fixtureId);
