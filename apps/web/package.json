@@ -26,7 +26,6 @@
 		"test:install-browsers": "playwright install --with-deps --only-shell chromium webkit"
 	},
 	"dependencies": {
-		"@noble/hashes": "^2.2.0",
 		"@perseus/types": "workspace:*"
 	},
 	"devDependencies": {
