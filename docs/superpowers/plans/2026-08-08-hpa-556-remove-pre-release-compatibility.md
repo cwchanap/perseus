@@ -6,7 +6,7 @@
 
 **Architecture:** Keep the existing `PuzzleSession`, storage adapter, local-stat service, Worker route, repository, and completion-ledger boundaries. Invalid local data is deleted and treated as missing; the completion API accepts one exact-key versioned request; Timed vs Relaxed directly defines elapsed-time semantics. The physical D1 `timing_quality` column/CHECK remains untouched as storage-only history; application drivers write `known` without exposing a timing-quality domain type.
 
-**Tech Stack:** TypeScript, Svelte 5/SvelteKit, Vitest, Hono/Cloudflare Workers, Drizzle ORM, Cloudflare D1, Bun SQLite, Playwright, Bun/Turborepo.
+**Tech Stack:** TypeScript, Svelte 5/SvelteKit, Vitest browser tests, Hono/Cloudflare Workers, Drizzle ORM, Cloudflare D1, Bun SQLite, Playwright, Bun/Turborepo.
 
 ## Global Constraints
 
@@ -17,11 +17,18 @@
 - Missing, malformed, different-schema, or invariant-invalid local session/stat data is disposable and resets to fresh current state.
 - Remove compatibility readers/writers rather than replacing them with migration registries, fallback readers, adapters, controllers, or stores.
 - Remove `TimingQuality` from domain/API/session contracts instead of preserving a one-value type.
-- Keep the physical D1 `timing_quality` column and its historical CHECK unchanged; D1/Bun drivers write storage-only `known`.
+- Keep the physical D1 `timing_quality` column and historical CHECK unchanged; D1/Bun drivers write storage-only `known`.
 - Do **not** run `drizzle-kit generate`; do not add or modify any file under `packages/shared/drizzle/`.
 - Preserve `PuzzleSession` as the gameplay state owner.
 - Do not include HPA-557 route component extraction or HPA-218/HPA-224 feature work.
 - Historical `docs/superpowers/` plans/specs are provenance and do not need rewriting.
+
+## Execution Risks
+
+- **Task 4 cross-package blast radius:** the tree is intentionally uncompilable at some uncommitted intermediate points. Keep the final commit atomic, but use package-local and focused browser gates between layers so failures stay attributable.
+- **Current schema-1 session reset:** adding exact-key session validation would discard otherwise valid in-flight sessions. Protect the existing permissive behavior with a raw-object regression test.
+- **Lockfile drift:** dependency removal must not opportunistically bump unrelated packages. Inspect the `bun.lock` diff before committing Task 1.
+- **Accidental D1 migration:** no schema generation is part of HPA-556. The final migration-directory diff must be empty.
 
 ---
 
@@ -38,14 +45,12 @@
 - Modify: `apps/web/package.json`
 - Modify: `bun.lock`
 - Test: `apps/web/src/lib/services/gameplay/session/persistence*.test.ts`
-- Test: `apps/web/e2e/gameplay-infrastructure.spec.ts`
-- Test: `apps/web/e2e/support/test-fixture.spec.ts`
 
 **Interfaces:**
-- Consumes: `CURRENT_SESSION_SCHEMA_VERSION`, `SessionValidationContext`, `PersistedPuzzleSessionV1`.
-- Produces: `SessionLoadResult = { status: 'missing' } | { status: 'loaded'; snapshot: PersistedPuzzleSessionV1 } | { status: 'invalid'; reason: string }`; the storage adapter converts `invalid` into destructive cleanup + `missing`.
+- Consumes: `CURRENT_SESSION_SCHEMA_VERSION`, `SessionValidationContext`, current `PersistedPuzzleSessionV1`.
+- Produces: `SessionLoadResult = { status: 'missing' } | { status: 'loaded'; snapshot: PersistedPuzzleSessionV1 } | { status: 'invalid'; reason: string }`; the storage adapter converts `invalid` into best-effort cleanup plus `missing`.
 
-- [ ] **Step 1: Replace migration/preservation tests with reset tests**
+- [ ] **Step 1: Replace migration/preservation assertions with destructive-reset assertions**
 
 Delete persistence tests for `canonicalJson`, `sha256Hex`, `legacyRunId`, `fnv1aUtf8`, `mulberry32`, `deterministicLegacyTrayOrder`, v0 migration, and future-schema preservation. Add adapter-level tests:
 
@@ -72,7 +77,7 @@ it('clears a different schema version and reports missing', () => {
 });
 ```
 
-Keep current-v1 invariant/round-trip tests; `timingQuality` is removed from those fixtures in Task 4.
+Keep current-v1 invariant and round-trip tests. `timingQuality` is removed from current-v1 typed fixtures in Task 4.
 
 - [ ] **Step 2: Run the full persistence test group and confirm the new assertions fail**
 
@@ -81,11 +86,19 @@ cd apps/web
 bunx vitest --run --browser src/lib/services/gameplay/session/persistence*.test.ts
 ```
 
-Expected: FAIL because unversioned data still migrates and higher schemas are still preserved.
+Expected: FAIL because unversioned data still migrates and higher schemas are preserved.
 
-- [ ] **Step 3: Delete compatibility codec code and make invalid data destructive**
+- [ ] **Step 3: Delete session compatibility codec code**
 
-In `persistence.ts`, remove Noble hash imports, canonical JSON/hash helpers, legacy run-ID generation, deterministic legacy tray helpers, `migrateV0toV1`, and legacy timestamp parsing. Only the current schema reaches `validateV1`:
+In `persistence.ts` remove:
+
+- `@noble/hashes` imports;
+- `sha256Hex`, `canonicalJson`, `canonicalize`, `legacyRunId`;
+- `fnv1aUtf8`, `mulberry32`, `deterministicLegacyTrayOrder`;
+- `migrateV0toV1`, `parseLegacyLastUpdated`;
+- higher-schema `incompatible` handling.
+
+Only schema 1 reaches `validateV1`:
 
 ```ts
 const record = parsed as Record<string, unknown>;
@@ -99,7 +112,11 @@ return snapshot
   : { status: 'invalid', reason: 'cross_field_violation' };
 ```
 
-Make the adapter consume invalid data as recovery:
+Remove `migrated` and `incompatible` from `SessionLoadResult`.
+
+- [ ] **Step 4: Make the storage adapter own destructive recovery**
+
+Keep `loadPersistedSession()` pure. In `createSessionStorageAdapter().loadSession()` convert `invalid` into removal plus `missing`:
 
 ```ts
 const result = loadPersistedSession(raw, context);
@@ -113,17 +130,17 @@ try {
 return { status: 'missing' };
 ```
 
-Remove `migrated` and `incompatible` from `SessionLoadResult`.
+Do not add a migration or fallback reader.
 
-- [ ] **Step 4: Remove route and E2E-helper branches for removed load results**
+- [ ] **Step 5: Remove route and E2E-helper branches for deleted load results**
 
-In `+page.svelte`, delete `persistenceReadOnly` and all checkpoint suppression/reset branches. Restore only loaded state:
+In `+page.svelte`, delete `persistenceReadOnly` and its checkpoint/reset branches. Restore only loaded state:
 
 ```ts
 const restored = loadResult.status === 'loaded' ? loadResult.snapshot : undefined;
 ```
 
-In both `e2e/gameplay-fixtures/persisted-state.ts` and `e2e/support/gameplay-page.ts`, `seedValid`/`validateSeed` accept only `loaded`:
+In `e2e/gameplay-fixtures/persisted-state.ts` and `e2e/support/gameplay-page.ts`, `seedValid` / `validateSeed` accept only `loaded`:
 
 ```ts
 const result = loadPersistedSession(json, context);
@@ -133,34 +150,31 @@ if (result.status !== 'loaded') {
 }
 ```
 
-Update route tests so a stale/different-schema stored value is cleared and a fresh playable session is created.
+Update route tests so a stale or different-schema persisted value is cleared and a fresh playable session is created.
 
-- [ ] **Step 5: Remove the now-unused web hash dependency**
+- [ ] **Step 6: Remove `@noble/hashes` and fence the lockfile diff**
 
-Delete `@noble/hashes` from `apps/web/package.json`, then regenerate the lockfile:
+Remove `@noble/hashes` from `apps/web/package.json`, then run from the repository root:
 
 ```bash
-cd ../..
 bun install
+git diff -- apps/web/package.json bun.lock
 ```
 
-Do not hand-edit `bun.lock`.
+Expected: the package manifest removes `@noble/hashes`; `bun.lock` changes are limited to that dependency and entries that become unreachable because of its removal. There must be no unrelated package additions or version bumps.
 
-- [ ] **Step 6: Verify unit + E2E support compilation**
+If unrelated resolution drift appears, do not commit it. Restore `bun.lock`, rerun `bun install` once against the restored lockfile, and re-inspect. If unrelated drift repeats, stop Task 1 and investigate rather than accepting it.
+
+- [ ] **Step 7: Verify Task 1 and commit**
 
 ```bash
 cd apps/web
-bunx vitest --run --browser src/lib/services/gameplay/session/persistence*.test.ts 'src/routes/puzzle/[id]/page.svelte.test.ts'
+bunx vitest --run --browser src/lib/services/gameplay/session/persistence*.test.ts \
+  'src/routes/puzzle/[id]/page.svelte.test.ts'
 bun run check
 bunx playwright test --list --project=chromium-desktop
-```
-
-Expected: all persistence tests pass; Svelte/TypeScript check passes; Playwright can enumerate the suite with the narrowed load-result union.
-
-- [ ] **Step 7: Commit**
-
-```bash
 cd ../..
+
 git add apps/web/src/lib/services/gameplay/session/types.ts \
   apps/web/src/lib/services/gameplay/session/persistence.ts \
   apps/web/src/lib/services/gameplay/session/persistence.test.ts \
@@ -171,6 +185,8 @@ git add apps/web/src/lib/services/gameplay/session/types.ts \
   apps/web/package.json bun.lock
 git commit -m "refactor: make session persistence current-only"
 ```
+
+Expected: persistence tests, route tests, web check, and Playwright enumeration pass.
 
 ---
 
@@ -186,12 +202,12 @@ git commit -m "refactor: make session persistence current-only"
 - Modify: `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts`
 
 **Interfaces:**
-- Consumes: `PuzzleStatsV1`, `SealedCompletion`, current Web Locks write path.
-- Produces: stale stats reset; the only local write failure reason is retryable `storage_error`.
+- Consumes: `PuzzleStatsV1`, `SealedCompletion`, Web Locks write path.
+- Produces: stale/invalid stats reset; the only local write failure reason is retryable `storage_error`.
 
-- [ ] **Step 1: Replace stats compatibility assertions with destructive-reset assertions**
+- [ ] **Step 1: Replace compatibility assertions with complete destructive-reset assertions**
 
-Delete legacy stats migration, future-schema preservation, `saveCompletionTime`, and missing-`recordedRunIds` fallback tests. Add:
+Delete tests for legacy stats migration, future-schema preservation, `saveCompletionTime`, and missing-`recordedRunIds` backfill. Add:
 
 ```ts
 it('deletes an unversioned stats record', () => {
@@ -212,7 +228,17 @@ it('deletes a higher-schema stats record', () => {
   expect(getStats(puzzleId)).toBeNull();
   expect(localStorage.getItem(key)).toBeNull();
 });
+
+it('deletes a JSON primitive instead of reparsing it forever', () => {
+  const key = `puzzle-stats-${puzzleId}`;
+  localStorage.setItem(key, '42');
+
+  expect(getStats(puzzleId)).toBeNull();
+  expect(localStorage.getItem(key)).toBeNull();
+});
 ```
+
+Keep the existing malformed-JSON reset assertion as well.
 
 - [ ] **Step 2: Run the focused stats test and confirm failure**
 
@@ -221,11 +247,21 @@ cd apps/web
 bunx vitest --run --browser src/lib/services/__tests__/stats.test.ts
 ```
 
-Expected: FAIL while legacy/future records are still migrated or preserved.
+Expected: FAIL while legacy/future records are still migrated or preserved and primitive JSON is not deleted.
 
-- [ ] **Step 3: Collapse stats parsing and failure states**
+- [ ] **Step 3: Collapse stats parsing to current valid/invalid behavior**
 
-Delete `parseLegacyRecord`, incompatible-schema parsing, `saveCompletionTime`, and `recordedRunIds` fallback seeding. Current parsing becomes:
+In `stats.ts`:
+
+- delete `parseLegacyRecord`;
+- remove incompatible-schema parsing/preservation;
+- require `schemaVersion === CURRENT_STATS_SCHEMA_VERSION`;
+- require `recordedRunIds` to be present and internally consistent;
+- remove `saveCompletionTime`;
+- remove `incompatible_schema` from local failure results;
+- route JSON primitives through the same best-effort `removeItem` path used for other invalid records.
+
+Current parser shape:
 
 ```ts
 function parseStoredStats(raw: Record<string, unknown>, puzzleId: string): PuzzleStatsV1 | null {
@@ -234,11 +270,24 @@ function parseStoredStats(raw: Record<string, unknown>, puzzleId: string): Puzzl
 }
 ```
 
-Best-effort delete invalid records before treating them as empty. Keep current run-ID dedup and Web Locks behavior.
+Primitive cleanup remains deliberately simple:
 
-- [ ] **Step 4: Remove `incompatible_schema` from completion effects**
+```ts
+if (!parsed || typeof parsed !== 'object') {
+  try {
+    localStorage.removeItem(getStorageKey(puzzleId));
+  } catch {
+    // best-effort cleanup
+  }
+  return null;
+}
+```
 
-Delete that code from `CompletionFailureCode`, `isFailureRetryable`, persistence effect validation, and route acknowledgement. Local failure acknowledgement becomes:
+Keep run-ID dedup and Web Locks behavior unchanged.
+
+- [ ] **Step 4: Remove the terminal incompatible-stats completion branch and stale mocks**
+
+Delete `incompatible_schema` from `CompletionFailureCode`, `isFailureRetryable`, persistence effect validation, and route acknowledgement. Local acknowledgement becomes:
 
 ```ts
 result:
@@ -247,7 +296,9 @@ result:
     : { status: 'succeeded' }
 ```
 
-- [ ] **Step 5: Verify and commit**
+In `page.svelte.test.ts`, remove the stale `saveCompletionTime` property from the `$lib/services/stats` mock when the shim is deleted.
+
+- [ ] **Step 5: Verify Task 2 and commit**
 
 ```bash
 bunx vitest --run --browser src/lib/services/__tests__/stats.test.ts \
@@ -255,6 +306,7 @@ bunx vitest --run --browser src/lib/services/__tests__/stats.test.ts \
   'src/routes/puzzle/[id]/page.svelte.test.ts'
 bun run check
 cd ../..
+
 git add apps/web/src/lib/services/stats.ts \
   apps/web/src/lib/services/__tests__/stats.test.ts \
   apps/web/src/lib/services/gameplay/session/types.ts \
@@ -265,9 +317,11 @@ git add apps/web/src/lib/services/stats.ts \
 git commit -m "refactor: reset stale local statistics"
 ```
 
+Expected: focused tests and web check pass.
+
 ---
 
-### Task 3: Remove the legacy completion request/write path, including the web client shim
+### Task 3: Remove the legacy completion request/write path and web client shim
 
 **Files:**
 - Modify: `apps/api/src/routes/puzzles.complete.shared.ts`
@@ -282,14 +336,15 @@ git commit -m "refactor: reset stale local statistics"
 - Modify: `packages/shared/src/__tests__/drivers.test.ts`
 - Modify: `apps/web/src/lib/services/api.ts`
 - Modify: `apps/web/src/lib/services/__tests__/api.test.ts`
+- Modify: `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts`
 
 **Interfaces:**
 - Consumes: current `RecordPuzzleCompletionV1`, `recordVersionedCompletion`, `CompletionWriteExecutor.write`.
-- Produces: one request parser, one server write path, and one web client method (`recordCompletion`); no `writeLegacy` or `recordCompletionLegacy` API remains.
+- Produces: one parser, one server write path, and one web client (`recordCompletion`); no `ParsedCompletionRequest`, legacy result union, `writeLegacy`, `recordLegacyCompletion`, or `recordCompletionLegacy` remains.
 
-- [ ] **Step 1: Make the Worker route test reject `{ timeSeconds }`**
+- [ ] **Step 1: Make the Worker route reject `{ timeSeconds }`**
 
-Delete legacy success/tombstone mocks and add:
+Delete legacy success/tombstone test cases and add:
 
 ```ts
 it('rejects the removed legacy timeSeconds body', async () => {
@@ -313,11 +368,23 @@ bunx vitest run src/routes/puzzles.complete.worker.test.ts
 
 Expected: FAIL because the legacy body is still accepted.
 
-- [ ] **Step 3: Collapse parser and route to the current request**
+- [ ] **Step 3: Collapse parser/result aliases explicitly**
 
-`parseCompletionRequest` returns only `RecordPuzzleCompletionV1`:
+In `puzzles.complete.shared.ts`:
+
+- delete `ParsedCompletionRequest`;
+- make `CompletionRequestParseResult.value` a `RecordPuzzleCompletionV1` directly;
+- delete `CompletionRouteResult`;
+- make `completionResultToResponse(result: VersionedCompletionResult)` accept the current result directly;
+- remove the `LegacyCompletionWriteExecution` import.
+
+The parser becomes:
 
 ```ts
+export type CompletionRequestParseResult =
+  | { ok: true; value: RecordPuzzleCompletionV1 }
+  | { ok: false; body: RecordPuzzleCompletionResponse; status: 400 };
+
 export function parseCompletionRequest(value: unknown): CompletionRequestParseResult {
   if (!isRecordPuzzleCompletionV1(value, MAX_COMPLETION_TIME_SECONDS)) {
     return badRequest('Invalid completion request');
@@ -337,11 +404,20 @@ const result = await recordVersionedCompletion(
 );
 ```
 
-- [ ] **Step 4: Delete legacy repository/executor/driver code**
+- [ ] **Step 4: Delete the legacy repository/executor/driver path**
 
-Remove `LegacyCompletionWrite`, `LegacyCompletionWriteExecution`, `CompletionWriteExecutor.writeLegacy`, `recordLegacyCompletion`, both driver `writeLegacy` implementations, and the 30-second legacy dedupe constant. Keep current ledger idempotency, tombstones, quota, and best-time writes unchanged.
+Remove:
 
-- [ ] **Step 5: Delete the web legacy POST shim at the same boundary**
+- `LegacyCompletionWrite`;
+- `LegacyCompletionWriteExecution`;
+- `CompletionWriteExecutor.writeLegacy`;
+- `recordLegacyCompletion`;
+- both driver `writeLegacy` implementations;
+- the 30-second legacy dedupe constant and legacy-only tests.
+
+Keep versioned ledger idempotency, tombstones, quota, and best-time behavior unchanged.
+
+- [ ] **Step 5: Delete the web legacy POST shim and stale route mock property**
 
 Remove from `apps/web/src/lib/services/api.ts`:
 
@@ -351,22 +427,30 @@ export async function recordCompletionLegacy(puzzleId: string, timeSeconds: numb
 }
 ```
 
-Delete its tests. Keep/adjust the current `recordCompletion` test so it asserts the versioned request body exactly.
+Delete its API tests. Keep the current `recordCompletion` test and assert its request body exactly.
 
-- [ ] **Step 6: Verify API/shared/web client and commit**
+Also remove `recordCompletionLegacy` from the `$lib/services/api` mock factory in `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts`; a dead mock property will not fail the route test but would fail the residue fence later.
 
-At this stage the current request still has `timingQuality`; Task 4 removes it atomically.
+- [ ] **Step 6: Verify Task 3 and commit**
+
+At this stage the current request still carries `timingQuality`; Task 4 removes it.
 
 ```bash
 cd ../../packages/shared
-bun --bun vitest run src/__tests__/repositories.test.ts src/__tests__/repositories.d1.test.ts src/__tests__/drivers.test.ts
+bun --bun vitest run src/__tests__/repositories.test.ts \
+  src/__tests__/repositories.d1.test.ts \
+  src/__tests__/drivers.test.ts
 bun run check
+
 cd ../../apps/api
 bunx vitest run src/routes/puzzles.complete.worker.test.ts
 bun run check
+
 cd ../web
-bunx vitest --run --browser src/lib/services/__tests__/api.test.ts
+bunx vitest --run --browser src/lib/services/__tests__/api.test.ts \
+  'src/routes/puzzle/[id]/page.svelte.test.ts'
 bun run check
+
 cd ../..
 git add apps/api/src/routes/puzzles.complete.shared.ts \
   apps/api/src/routes/puzzles.complete.worker.ts \
@@ -379,17 +463,18 @@ git add apps/api/src/routes/puzzles.complete.shared.ts \
   packages/shared/src/__tests__/repositories.d1.test.ts \
   packages/shared/src/__tests__/drivers.test.ts \
   apps/web/src/lib/services/api.ts \
-  apps/web/src/lib/services/__tests__/api.test.ts
+  apps/web/src/lib/services/__tests__/api.test.ts \
+  'apps/web/src/routes/puzzle/[id]/page.svelte.test.ts'
 git commit -m "refactor: remove legacy completion writes"
 ```
+
+Expected: shared, API, and web-client focused gates pass.
 
 ---
 
 ### Task 4: Remove `TimingQuality` and legacy run IDs end-to-end
 
-This is one atomic cross-package commit. Intermediate root builds may be broken while consumers are being updated; use the package-local gates below after each boundary, then commit only after all layers pass.
-
-**Files — shared/public contract:**
+**Files:**
 - Modify: `packages/types/src/core.ts`
 - Modify: `packages/types/src/index.test.ts`
 - Modify: `packages/shared/src/completion-writes.ts`
@@ -401,30 +486,27 @@ This is one atomic cross-package commit. Intermediate root builds may be broken 
 - Modify: `packages/shared/src/__tests__/drivers.test.ts`
 - Modify: `apps/api/src/routes/puzzles.complete.worker.test.ts`
 - Modify: `apps/web/src/lib/services/__tests__/api.test.ts`
-
-**Files — web session/runtime:**
 - Modify: `apps/web/src/lib/services/gameplay/session/types.ts`
 - Modify: `apps/web/src/lib/services/gameplay/session/session.ts`
 - Modify: `apps/web/src/lib/services/gameplay/session/persistence.ts`
 - Modify: `apps/web/src/lib/services/stats.ts`
 - Modify: `apps/web/src/routes/puzzle/[id]/+page.svelte`
-- Modify: `apps/web/src/lib/services/gameplay/session/persistence.test-fixtures.ts`
 - Modify: `apps/web/src/lib/services/gameplay/session/session.test.ts`
 - Modify: `apps/web/src/lib/services/gameplay/session/session.edge.test.ts`
 - Modify: `apps/web/src/lib/services/gameplay/session/persistence.test.ts`
+- Modify: `apps/web/src/lib/services/gameplay/session/persistence.test-fixtures.ts`
 - Modify: `apps/web/src/lib/services/gameplay/session/persistence.validation-fields.test.ts`
 - Modify: `apps/web/src/lib/services/gameplay/session/persistence.validation-completion.test.ts`
 - Modify: `apps/web/src/lib/services/gameplay/session/persistence.validation-storage.test.ts`
 - Modify: `apps/web/src/lib/services/gameplay/session/persistence.fallback-storage.test.ts`
 - Modify: `apps/web/src/lib/services/__tests__/stats.test.ts`
 - Modify: `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts`
-
-**Files — E2E contract fixtures/support:**
 - Modify: `apps/web/e2e/gameplay-fixtures/persisted-state.ts`
+- Modify: `apps/web/e2e/support/gameplay-page.ts`
+- Modify: `apps/web/e2e/support/test-fixture.spec.ts`
 - Modify: `apps/web/e2e/gameplay-infrastructure.spec.ts`
 - Modify: `apps/web/e2e/gameplay-session-controls.spec.ts`
 - Modify: `apps/web/e2e/gameplay-fixtures/harness-services.spec.ts`
-- Test: `apps/web/e2e/support/test-fixture.spec.ts`
 
 **Intentionally unchanged physical storage files:**
 - `packages/shared/src/schema.ts`
@@ -432,14 +514,11 @@ This is one atomic cross-package commit. Intermediate root builds may be broken 
 - `packages/shared/drizzle/**`
 
 **Interfaces:**
-- Produces four-field `RecordPuzzleCompletionV1`.
-- Produces UUID-v4-only `isPuzzleRunId`.
-- `PuzzleSessionState`, `PersistedPuzzleSessionV1`, and `SealedCompletion` have no `timingQuality`.
-- Shared completion write/fact interfaces have no `timingQuality`; D1/Bun drivers fill the existing storage column with `'known'` internally.
+- Produces: four-field `RecordPuzzleCompletionV1`; UUID-v4-only run IDs; no timing-quality field in domain/API/session contracts; drivers write storage-only `'known'`.
 
-- [ ] **Step 1: Write shared contract red tests**
+- [ ] **Step 1: Write the four-field request/UUID tests first**
 
-Update `packages/types/src/index.test.ts` so the current request shape is:
+Update `packages/types/src/index.test.ts` so current requests omit `timingQuality`:
 
 ```ts
 const timed = {
@@ -457,12 +536,14 @@ const relaxed = {
 };
 ```
 
-Add rejections:
+Assert:
 
-```ts
-expect(isRecordPuzzleCompletionV1({ ...timed, timingQuality: 'known' }, 86_400)).toBe(false);
-expect(isPuzzleRunId(`legacy-${'a'.repeat(64)}`)).toBe(false);
-```
+- both shapes validate;
+- a timed request with `null` elapsed fails;
+- Relaxed with non-null elapsed fails;
+- a request carrying `timingQuality: 'known'` fails exact-key validation;
+- `legacy-${'a'.repeat(64)}` fails `isPuzzleRunId`;
+- UUID v4 succeeds.
 
 Run:
 
@@ -471,29 +552,16 @@ cd packages/types
 bun run test:unit
 ```
 
-Expected: FAIL until the contract is changed.
+Expected: FAIL before the four-field validator/UUID change.
 
-- [ ] **Step 2: Change `@perseus/types` and prove that package independently**
+- [ ] **Step 2: Cut the public completion request to four fields, but temporarily retain the timing-quality export**
 
-In `core.ts`:
+In `packages/types/src/core.ts`:
 
-- delete `TIMING_QUALITIES` and `TimingQuality`;
 - remove `timingQuality` from `RecordPuzzleCompletionV1`;
 - make `isPuzzleRunId` UUID-v4-only;
-- make `isRecordPuzzleCompletionV1` exact-key over `version`, `runId`, `resultClass`, `elapsedActiveSeconds`;
-- encode timing validity solely from `resultClass`.
-
-```ts
-if (completion.resultClass === 'relaxed') {
-  return completion.elapsedActiveSeconds === null;
-}
-return (
-  typeof completion.elapsedActiveSeconds === 'number' &&
-  Number.isInteger(completion.elapsedActiveSeconds) &&
-  completion.elapsedActiveSeconds > 0 &&
-  completion.elapsedActiveSeconds <= maxElapsedActiveSeconds
-);
-```
+- update `isRecordPuzzleCompletionV1` to exactly four keys and derive elapsed rules from `resultClass`;
+- **temporarily keep** `TimingQuality` / `TIMING_QUALITIES` exported during the uncommitted Task 4 sequence so current web persistence can still execute its red tests before Step 5.
 
 Run:
 
@@ -501,108 +569,141 @@ Run:
 bun run test:unit
 ```
 
-Expected: PASS for `@perseus/types`.
+Expected: PASS for `@perseus/types` request/UUID behavior.
 
-- [ ] **Step 3: Remove timing quality from shared write interfaces, but not the physical schema**
+Do not commit this intermediate state.
 
-In `completion-writes.ts` and `repositories.ts`, remove timing quality from `VersionedCompletionWrite` and `StoredCompletionFacts`, `completionFactsMatch`, and canonical-best logic.
+- [ ] **Step 3: Remove timing quality from the shared completion contract and use storage-only `known`**
 
-In both D1/Bun drivers, keep the existing table column internal:
+In `packages/shared/src/completion-writes.ts` and `repositories.ts`:
+
+- remove timing quality from `VersionedCompletionWrite` and `StoredCompletionFacts`;
+- remove it from conflict matching;
+- make canonical-best logic depend only on standard-timed + non-null elapsed;
+- stop projecting it from `RecordPuzzleCompletionV1`.
+
+In D1/Bun drivers, write the retained physical column directly:
 
 ```ts
 timingQuality: 'known'
 ```
 
-Do not export a new one-value `TimingQuality` type. Do not modify `schema.ts` or `schema.test.ts`; they describe/test the checked-in physical schema created by migrations.
+Do not change `schema.ts`, `schema.test.ts`, or migrations. Update shared tests to current interface inputs while retaining assertions for the physical storage column only where needed.
 
-Update shared repository/driver tests to send the new input shape and expect current behavior. Then run:
+Run:
 
 ```bash
-cd ../shared
+cd ../../packages/shared
 bun run check
 bun run test:unit
 ```
 
-Expected: PASS for `@perseus/shared` while the physical migration/schema remains unchanged.
+Expected: PASS for `@perseus/shared` against the existing migration-defined CHECK.
 
-- [ ] **Step 4: Remove timing quality from API and web domain/runtime**
+- [ ] **Step 4: Prepare web session-side behavioral tests before changing the engine**
 
-Update the Worker request tests and web API test to the four-field request.
-
-In web session code:
-
-- remove the field from `PuzzleSessionState`, `PersistedPuzzleSessionV1`, `SealedCompletion`, serialization, hydration, and `completionRequestFromSeal`;
-- change clock gates from `mode === 'timed' && timingQuality === 'known'` to `mode === 'timed'`;
-- make sealing return `null` only for Relaxed mode;
-- remove timing-quality checks from local best eligibility;
-- delete `showUnknownTimePresentation` and `TIME UNAVAILABLE`; presentation is Timed vs Relaxed only.
-
-Representative engine simplification:
+Keep the current runtime implementation untouched for this step. Add/adjust tests so they compile against the current session types but assert the post-cut behavior:
 
 ```ts
-function sealElapsed(): number | null {
-  if (state.mode === 'relaxed') return null;
-  return Math.max(1, state.elapsedActiveSeconds ?? 0);
-}
+expect(createPuzzleSession(options).getState()).not.toHaveProperty('timingQuality');
 ```
 
-- [ ] **Step 5: Protect current schema-1 hydration from accidental exact-key validation**
-
-Add a persistence regression test using a raw object so TypeScript does not hide the obsolete field:
+For serialization/projection, build the currently-required input but assert the output does not carry the field:
 
 ```ts
-it('ignores obsolete timingQuality on current schema-1 hydration', () => {
+const snapshot = serializeSession(makeState({ timingQuality: 'known' }));
+expect(snapshot).not.toHaveProperty('timingQuality');
+
+const request = completionRequestFromSeal(makeSeal({ timingQuality: 'known' }));
+expect(request).toEqual({
+  version: 1,
+  runId: RUN_ID,
+  resultClass: 'standard_timed',
+  elapsedActiveSeconds: 90
+});
+```
+
+Add the permissive-hydration regression with a raw object so TypeScript does not hide the obsolete extra field:
+
+```ts
+it('ignores obsolete timingQuality on a current schema-1 snapshot', () => {
   const raw = { ...validSnapshot(), timingQuality: 'known' } as Record<string, unknown>;
   const result = loadPersistedSession(JSON.stringify(raw), context);
 
   expect(result.status).toBe('loaded');
   if (result.status !== 'loaded') throw new Error('expected loaded snapshot');
-  expect(result.snapshot).not.toHaveProperty('timingQuality');
-  expect(JSON.parse(JSON.stringify(result.snapshot))).not.toHaveProperty('timingQuality');
+  expect(serializeSession(hydrateForTest(result.snapshot))).not.toHaveProperty('timingQuality');
 });
 ```
 
-Do **not** add an exact-key check to session `validateV1`. Unknown extra keys remain ignored; missing/wrong current fields and cross-field invariant failures still reset.
+Use the existing session/persistence fixture helpers rather than introducing `hydrateForTest` if no such helper exists; the important assertion is load succeeds and the next production serialization omits the obsolete key.
 
-- [ ] **Step 6: Update every remaining fixture/caller in the known blast radius**
-
-Remove `timingQuality` from:
-
-- `persistence.test-fixtures.ts` `validSnapshot()` / seal builders;
-- `session.edge.test.ts` restored snapshots;
-- persistence validation-storage/fallback/fields/completion tests;
-- session/stats/route tests;
-- deterministic E2E persisted-state builders and gameplay session-control/infrastructure fixtures.
-
-Keep `apps/web/e2e/support/test-fixture.spec.ts` as an integration assertion over `buildMinimalSeed`; it should require no direct timing-quality field once the helper is current-only.
-
-- [ ] **Step 7: Run package and web gates, then smoke E2E immediately**
+Run:
 
 ```bash
-cd packages/types
-bun run test:unit
-cd ../shared
-bun run check
-bun run test:unit
-cd ../../apps/api
-bun run check
-bunx vitest run src/routes/puzzles.complete.worker.test.ts
-cd ../web
-bun run check
-bunx vitest --run --browser src/lib/services/__tests__/api.test.ts \
-  src/lib/services/__tests__/stats.test.ts \
-  src/lib/services/gameplay/session/session*.test.ts \
-  src/lib/services/gameplay/session/persistence*.test.ts \
-  'src/routes/puzzle/[id]/page.svelte.test.ts'
-bun run test:e2e:smoke
+cd apps/web
+bunx vitest --run --browser src/lib/services/gameplay/session/session*.test.ts \
+  src/lib/services/gameplay/session/persistence*.test.ts
 ```
 
-Expected: current Timed and Relaxed browser flows, local completion, and current authenticated completion fixtures remain green after the four-field contract cut.
+Expected: FAIL on the new behavioral assertions while the engine/serializer still publishes timing quality. The failure should be behavioral, not an unresolved-import/type failure.
 
-- [ ] **Step 8: Commit the atomic cut**
+- [ ] **Step 5: Remove timing quality from the web session domain/runtime, then remove the temporary shared type export**
+
+Update session/domain code:
+
+- remove `timingQuality` from `PuzzleSessionState`, `SealedCompletion`, `PersistedPuzzleSessionV1`, cloning, hydration, and `completionRequestFromSeal`;
+- remove `TIMING_QUALITY_SET` and all timing-quality validation branches from persistence;
+- make timed/Relaxed clock behavior depend only on `mode`;
+- make `sealElapsed()` return `null` only for Relaxed and a positive elapsed value for timed modes;
+- update local-stats standard-best eligibility to standard-timed + non-null elapsed;
+- remove timing quality from session-side typed fixture builders and edge/storage/fallback/completion validation tests;
+- keep the raw obsolete-field hydration test from Step 4.
+
+After the last web/session import is removed, delete `TimingQuality` and `TIMING_QUALITIES` from `packages/types/src/core.ts`.
+
+Run the immediate internal gate **before editing route/E2E fixtures**:
 
 ```bash
+cd ../../packages/types
+bun run test:unit
+
+cd ../../apps/web
+bunx vitest --run --browser src/lib/services/gameplay/session/session*.test.ts \
+  src/lib/services/gameplay/session/persistence*.test.ts \
+  src/lib/services/__tests__/stats.test.ts
+```
+
+Expected: PASS. If this fails, fix the session/domain cut before touching the route or E2E support layer.
+
+- [ ] **Step 6: Update route, API tests, and E2E fixtures/support after the session core is green**
+
+Remove remaining timing-quality references from:
+
+- Worker current request tests;
+- web API current request tests;
+- route presentation/effects and route tests;
+- `buildMinimalSeed()` and other persisted-state fixtures;
+- `gameplay-page.ts` seeded-session helpers;
+- `test-fixture.spec.ts`, gameplay infrastructure/session-control tests, and harness-service payload assertions.
+
+Delete `showUnknownTimePresentation` and `TIME UNAVAILABLE`; presentation becomes Timed vs Relaxed only.
+
+Run:
+
+```bash
+bun run check
+bunx playwright test --list --project=chromium-desktop
+```
+
+Expected: web/Svelte/TypeScript check passes and the complete E2E suite enumerates with current contract types.
+
+- [ ] **Step 7: Run contract smoke and commit the atomic Task 4 cut**
+
+```bash
+bun run test:e2e:smoke
 cd ../..
+
 git add packages/types/src/core.ts packages/types/src/index.test.ts \
   packages/shared/src/completion-writes.ts packages/shared/src/repositories.ts \
   packages/shared/src/drivers/d1.ts packages/shared/src/drivers/bun.ts \
@@ -610,50 +711,31 @@ git add packages/types/src/core.ts packages/types/src/index.test.ts \
   packages/shared/src/__tests__/repositories.d1.test.ts \
   packages/shared/src/__tests__/drivers.test.ts \
   apps/api/src/routes/puzzles.complete.worker.test.ts \
-  apps/web/src/lib/services/__tests__/api.test.ts \
-  apps/web/src/lib/services/gameplay/session/types.ts \
-  apps/web/src/lib/services/gameplay/session/session.ts \
-  apps/web/src/lib/services/gameplay/session/persistence.ts \
-  apps/web/src/lib/services/gameplay/session/persistence.test-fixtures.ts \
-  apps/web/src/lib/services/gameplay/session/session.test.ts \
-  apps/web/src/lib/services/gameplay/session/session.edge.test.ts \
-  apps/web/src/lib/services/gameplay/session/persistence.test.ts \
-  apps/web/src/lib/services/gameplay/session/persistence.validation-fields.test.ts \
-  apps/web/src/lib/services/gameplay/session/persistence.validation-completion.test.ts \
-  apps/web/src/lib/services/gameplay/session/persistence.validation-storage.test.ts \
-  apps/web/src/lib/services/gameplay/session/persistence.fallback-storage.test.ts \
-  apps/web/src/lib/services/stats.ts apps/web/src/lib/services/__tests__/stats.test.ts \
-  'apps/web/src/routes/puzzle/[id]/+page.svelte' \
-  'apps/web/src/routes/puzzle/[id]/page.svelte.test.ts' \
-  apps/web/e2e/gameplay-fixtures/persisted-state.ts \
-  apps/web/e2e/gameplay-infrastructure.spec.ts \
-  apps/web/e2e/gameplay-session-controls.spec.ts \
-  apps/web/e2e/gameplay-fixtures/harness-services.spec.ts
-git commit -m "refactor: remove timing-quality compatibility"
+  apps/web/src/lib/services apps/web/src/routes/puzzle apps/web/e2e
+git commit -m "refactor: remove timing quality compatibility"
 ```
+
+Expected: smoke passes against the Worker/local-D1 backend using the new four-field request and storage-only `known` writes.
 
 ---
 
-### Task 5: Clean active compatibility wording and prove residue is intentional
+### Task 5: Prove active compatibility residue is gone without touching physical D1 history
 
 **Files:**
-- Modify: `apps/web/e2e/gameplay-fixtures/persisted-state.ts`
-- Test: `apps/web/e2e/support/test-fixture.spec.ts`
 - Verify unchanged: `packages/shared/src/schema.ts`
 - Verify unchanged: `packages/shared/src/__tests__/schema.test.ts`
 - Verify unchanged: `packages/shared/drizzle/**`
+- Verify active runtime/tests under `apps/` and `packages/`.
 
 **Interfaces:**
-- Consumes: current-only session/completion contracts from Tasks 1–4.
-- Produces: no compatibility shims outside the explicitly retained physical D1 storage representation.
+- Consumes: current-only contracts from Tasks 1–4.
+- Produces: explicit evidence that compatibility names are gone except intentional physical-storage history.
 
-- [ ] **Step 1: Update E2E fixture comments to current-only terminology**
+- [ ] **Step 1: Remove stale active comments/fixture wording**
 
-In `persisted-state.ts`, change comments that describe raw seeding as “migration/corruption” to “stale-schema/corruption”. Keep `seedRaw`; it remains useful for proving invalid data resets.
+Delete or rewrite active comments that still claim migration/future-schema/legacy completion support. Do not rewrite historical `docs/superpowers/` provenance.
 
-- [ ] **Step 2: Run the full active-code compatibility residue scan**
-
-Run from repository root:
+- [ ] **Step 2: Run the broad active-code residue scan**
 
 ```bash
 rg -n \
@@ -666,27 +748,11 @@ rg -n \
 
 Expected: no output.
 
-Check the old completion-body field only at the former completion surfaces:
+- [ ] **Step 3: Prove `timingQuality` exists only at the intentional physical-storage boundary**
 
 ```bash
-rg -n '\btimeSeconds\b' \
-  apps/api/src/routes/puzzles.complete.shared.ts \
-  apps/api/src/routes/puzzles.complete.worker.ts \
-  apps/api/src/routes/puzzles.complete.worker.test.ts \
-  apps/web/src/lib/services/api.ts \
-  apps/web/src/lib/services/__tests__/api.test.ts \
-  packages/shared/src/completion-writes.ts \
-  packages/shared/src/repositories.ts \
-  packages/shared/src/drivers
-```
-
-Expected: no output.
-
-- [ ] **Step 3: Assert the only remaining physical timing-quality references are storage-boundary files**
-
-```bash
-actual="$(rg -l 'timingQuality|legacy_unknown' apps packages \
-  --glob '!packages/shared/drizzle/**' | sort)"
+actual="$(rg -l 'timingQuality|legacy_unknown' packages/shared/src apps packages/types/src \
+  --glob '!docs/**' | sort -u)"
 expected="$(printf '%s\n' \
   packages/shared/src/__tests__/schema.test.ts \
   packages/shared/src/drivers/bun.ts \
@@ -695,7 +761,7 @@ expected="$(printf '%s\n' \
 test "$actual" = "$expected"
 ```
 
-Expected: exit 0. Any additional file is an unremoved domain/test compatibility consumer.
+Expected: exit 0. Any additional file is an unremoved application/test compatibility consumer.
 
 - [ ] **Step 4: Assert no database migration was generated**
 
@@ -703,48 +769,60 @@ Expected: exit 0. Any additional file is an unremoved domain/test compatibility 
 git diff --exit-code main...HEAD -- packages/shared/drizzle
 ```
 
-Expected: exit 0 with no diff.
+Expected: exit 0.
 
-- [ ] **Step 5: Run the fixture integration test and commit comment cleanup**
+- [ ] **Step 5: Verify the old completion body cannot survive in current client/server paths**
 
 ```bash
-cd apps/web
-bun run test:e2e -- e2e/support/test-fixture.spec.ts --project=chromium-desktop --retries=0
-cd ../..
-git add apps/web/e2e/gameplay-fixtures/persisted-state.ts
-git commit -m "test: align gameplay fixtures with current persistence"
+rg -n 'timeSeconds' \
+  apps/api/src/routes/puzzles.complete.shared.ts \
+  apps/api/src/routes/puzzles.complete.worker.ts \
+  apps/web/src/lib/services/api.ts \
+  packages/shared/src/completion-writes.ts \
+  packages/shared/src/repositories.ts \
+  packages/shared/src/drivers/d1.ts \
+  packages/shared/src/drivers/bun.ts
 ```
+
+Expected: no output.
+
+- [ ] **Step 6: Commit active wording/fence cleanup if files changed**
+
+If Step 1 changed active files:
+
+```bash
+git add <the exact active files changed in Step 1>
+git commit -m "docs: remove stale gameplay compatibility wording"
+```
+
+If Step 1 required no file changes, do not create an empty commit.
 
 ---
 
-### Task 6: Final repository verification
+### Task 6: Run the full repository gate and hand off to implementation review
 
 **Files:**
-- No planned source changes. This task is a clean-tree verification gate.
+- Verify the whole repository.
+- Verify no `packages/shared/drizzle/**` changes.
 
 **Interfaces:**
-- Consumes: implementation commits from Tasks 1–5.
-- Produces: evidence that current-only contracts work across types, shared storage, API, web, and browser smoke without a D1 migration.
+- Consumes: completed HPA-556 implementation tree.
+- Produces: merge-readiness evidence for the implementation PR.
 
-- [ ] **Step 1: Run workspace static/build gates**
+- [ ] **Step 1: Run workspace type, lint, unit, and build gates**
+
+From the repository root:
 
 ```bash
 bun run check
 bun run lint
+bun run test:unit
 bun run build
 ```
 
-Expected: all packages pass.
+Expected: all commands exit 0.
 
-- [ ] **Step 2: Run workspace unit tests**
-
-```bash
-bun run test:unit
-```
-
-Expected: all package unit suites pass.
-
-- [ ] **Step 3: Run current gameplay browser smoke again**
+- [ ] **Step 2: Re-run current gameplay smoke**
 
 ```bash
 cd apps/web
@@ -752,9 +830,9 @@ bun run test:e2e:smoke
 cd ../..
 ```
 
-Expected: smoke suite passes against the Worker backend with current Timed/Relaxed completion contracts.
+Expected: smoke passes.
 
-- [ ] **Step 4: Re-run residue and migration fences**
+- [ ] **Step 3: Re-run residue and migration fences**
 
 ```bash
 rg -n \
@@ -763,30 +841,30 @@ rg -n \
   --glob '!packages/shared/drizzle/**' \
   --glob '!packages/shared/src/schema.ts' \
   --glob '!packages/shared/src/__tests__/schema.test.ts'
+
 git diff --exit-code main...HEAD -- packages/shared/drizzle
 git diff --check
 ```
 
-Expected: residue grep prints nothing; D1 migration diff and whitespace check both exit 0.
+Expected: residue command emits nothing; migration diff and whitespace diff checks exit 0.
 
-- [ ] **Step 5: Require a clean implementation worktree**
+- [ ] **Step 4: Inspect the final change shape**
 
 ```bash
 git status --short
+git diff --stat main...HEAD
+git log --oneline --decorate main..HEAD
 ```
 
-Expected: no output. Do not create a verification-only commit.
+Expected: clean working tree, deletion/refactor-focused diff, no migration files, and focused task commits.
 
----
+- [ ] **Step 5: Implementation handoff**
 
-## Implementation result
+Summarize in the implementation PR:
 
-When all six tasks are complete:
-
-- browser session/stat persistence supports one current shape and resets stale data;
-- current schema-1 session hydration tolerates obsolete extra keys but never reads or rewrites `timingQuality`;
-- the web client and Worker endpoint expose only the current versioned completion request;
-- `TimingQuality`, `legacy_unknown`, legacy run IDs, legacy write APIs, future-schema read-only mode, and compatibility-only helpers/tests are gone from application/domain code;
-- the D1 physical `timing_quality` column/CHECK remains untouched, with only storage drivers writing `known`;
-- `packages/shared/drizzle/**` is unchanged;
-- HPA-557 can proceed against a smaller current-only route/domain surface.
+- deleted compatibility paths;
+- current request/session/stat contracts;
+- permissive same-v1 extra-field hydration rule;
+- intentionally retained physical D1 `timing_quality`/CHECK;
+- exact validation commands and results;
+- confirmation that `packages/shared/drizzle/**` is unchanged.
