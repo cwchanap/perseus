@@ -180,7 +180,7 @@ vi.mock('$lib/services/gameplay/session/persistence', async (importOriginal) => 
 							mode: 'timed' as const,
 							runId: TEST_RUN_ID,
 							origin: 'resumed' as const,
-							elapsedActiveSeconds: null,
+							elapsedActiveSeconds: 0,
 							timerStarted: false,
 							placedPieces: progressState.value.placedPieces.map((p) => ({ ...p })),
 							trayOrder: [0, 1],
