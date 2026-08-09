@@ -96,14 +96,11 @@ Rules:
 
 The web client becomes current-only at the same boundary: delete `recordCompletionLegacy`, its unit coverage, and stale route-test mock properties that reference it.
 
+The Worker parser surface also collapses rather than retaining one-member compatibility aliases: `ParsedCompletionRequest` and `CompletionRouteResult` are deleted, `CompletionRequestParseResult.value` is `RecordPuzzleCompletionV1`, and `completionResultToResponse` consumes `VersionedCompletionResult` directly.
+
 ### PuzzleSession and persisted session
 
-Remove `TimingQuality` from:
-
-- runtime `PuzzleSessionState`;
-- `SealedCompletion`;
-- `PersistedPuzzleSessionV1`;
-- session serialization/hydration and completion projection.
+Remove `TimingQuality` from runtime `PuzzleSessionState`, `SealedCompletion`, `PersistedPuzzleSessionV1`, serialization/hydration, and completion projection.
 
 Timing semantics become direct:
 
@@ -112,7 +109,7 @@ Timing semantics become direct:
 
 `CURRENT_SESSION_SCHEMA_VERSION` stays `1`. The loader supports only schema 1 and current invariants. It does not migrate missing-schema data and does not preserve higher/lower schemas.
 
-**Current-v1 hydration remains field-permissive.** Session validation is not an exact-key API validator. A schema-1 snapshot may contain obsolete/unknown extra properties, including `timingQuality: 'known'` from the immediately previous build. The loader stops reading that property, validates the current fields/invariants it still owns, and the next serialization omits it. This is not a migration framework; it preserves the existing non-exact-key validator behavior while removing the concept from runtime state.
+**Current-v1 hydration remains field-permissive.** Session validation is not an exact-key API validator. A schema-1 snapshot may contain obsolete/unknown extra properties, including `timingQuality: 'known'` from the immediately previous build. The loader stops reading that property, validates the current fields/invariants it still owns, and returns a current snapshot without the obsolete key. Normal serialization therefore omits it on the next checkpoint.
 
 The storage adapter owns destructive recovery:
 
@@ -138,24 +135,15 @@ Keep the current `PuzzleStatsV1` schema and run-ID dedup ring, but remove compat
 
 **Every present record that is not a valid current object is disposable.** This includes malformed JSON, JSON primitives such as `42`, `null`, or strings, different schema versions, and invariant-invalid current objects. Each is best-effort deleted and treated as empty stats. The Web Locks behavior remains: current writes stay serialized when possible, while storage/lock failures remain retryable `storage_error` failures.
 
-Delete stale test mocks for `saveCompletionTime` when this shim is removed so the residue fence represents actual runtime/test consumers rather than mock leftovers.
+Delete stale test mocks for `saveCompletionTime` when the shim is removed so the final residue fence represents real consumers.
 
 ### Server completion write path
 
 The Worker completion route validates one current request and calls `recordVersionedCompletion` directly.
 
-Delete:
+Delete `recordLegacyCompletion`, `LegacyCompletionWrite`, `LegacyCompletionWriteExecution`, `CompletionWriteExecutor.writeLegacy`, D1/Bun legacy stats upserts and dedupe heuristic, `recordCompletionLegacy`, legacy parser/result aliases, legacy tests, and stale mock properties.
 
-- `ParsedCompletionRequest` and its legacy/versioned variants;
-- `CompletionRouteResult` as a legacy/current union;
-- `recordLegacyCompletion`;
-- `LegacyCompletionWrite` / `LegacyCompletionWriteExecution`;
-- `CompletionWriteExecutor.writeLegacy`;
-- D1/Bun driver legacy stats upsert and its 30-second dedupe heuristic;
-- `recordCompletionLegacy` from the web API service;
-- legacy-only route/client/repository/driver tests and stale mock properties.
-
-`CompletionRequestParseResult.value` becomes `RecordPuzzleCompletionV1`, and `completionResultToResponse` accepts `VersionedCompletionResult` directly. The current run ledger remains the source of idempotency and conflict detection.
+The current run ledger remains the source of idempotency and conflict detection.
 
 ## D1 `timing_quality` storage boundary
 
@@ -168,7 +156,7 @@ For current writes:
 - stored completion facts and repository interfaces no longer expose the column;
 - canonical-best logic becomes `resultClass === 'standard_timed' && elapsedActiveSeconds !== null`.
 
-The existing `packages/shared/src/schema.ts` representation and `packages/shared/drizzle/**` migrations continue describing the physical database, including the historical CHECK that permits `legacy_unknown`. Once application writers always supply `known`, the CHECK's reachable shapes are exactly the current Relaxed and timed shapes, so narrowing it would add migration churn without a behavioral gain.
+The existing `packages/shared/src/schema.ts` representation and `packages/shared/drizzle/**` migrations continue describing the physical database, including the historical CHECK that permits `legacy_unknown`. Once application writers always supply `known`, the CHECK's reachable shapes are exactly the current Relaxed and timed shapes, so narrowing it would add migration churn without behavioral gain.
 
 **Migration fence:** do not run `drizzle-kit generate`, do not add or modify anything under `packages/shared/drizzle/`, and verify the implementation diff for that directory is empty.
 
@@ -179,26 +167,15 @@ The puzzle route returns to two presentation modes:
 - **Timed:** show timer and timed completion statistics;
 - **Relaxed:** show Relaxed presentation without a timer.
 
-Delete:
-
-- `showUnknownTimePresentation` / `TIME UNAVAILABLE` behavior;
-- future-schema `persistenceReadOnly` state and checkpoint suppression;
-- the local-stat `incompatible_schema` acknowledgement branch.
-
-Current retry behavior remains unchanged for real storage/network/auth/server failures.
+Delete `showUnknownTimePresentation`, `TIME UNAVAILABLE`, `persistenceReadOnly`, and the local-stat `incompatible_schema` acknowledgement branch. Current retry behavior remains unchanged for real storage/network/auth/server failures.
 
 ## Dependency and fixture cleanup
 
 After legacy run hashing is deleted, `@noble/hashes` has no live `apps/web` consumer. Remove it from `apps/web/package.json` and update `bun.lock` with Bun, then inspect the lockfile diff. The accepted diff may remove `@noble/hashes` and entries that become unreachable because of that removal; it must not contain unrelated package version changes or additions.
 
-Update all live consumers in the same work rather than relying on final cleanup discovery, including:
+Update all live consumers in the same work rather than relying on final cleanup discovery, including web API client/tests and route mock factories, session test fixtures and edge/storage tests, route tests, and E2E persisted-state/support helpers.
 
-- web API client/tests and route mock factories;
-- session test fixtures and edge/storage tests;
-- route tests;
-- E2E persisted-state fixtures and support helpers.
-
-Historical `docs/superpowers/` plans/specs remain provenance and do not need rewriting. Active residue scans exclude those historical documents and the intentionally retained physical D1 schema/migrations where appropriate.
+Historical `docs/superpowers/` plans/specs remain provenance and do not need rewriting.
 
 ## Testing strategy
 
@@ -207,27 +184,18 @@ Use existing tests as the behavior fence, deleting compatibility-only assertions
 Focused replacement assertions:
 
 - shared type validator accepts current Timed/Relaxed requests and rejects `{ timeSeconds }`, legacy run IDs, and removed fields;
-- session storage loads current snapshots, destructively recovers from stale data, and accepts schema-1 snapshots with obsolete extra `timingQuality` while omitting that field on the next serialization;
+- session storage loads current snapshots, destructively recovers from stale data, and accepts schema-1 snapshots with obsolete extra `timingQuality` while returning/serializing the current shape without it;
 - local stats delete malformed JSON, JSON primitives, different schemas, and invalid current records while preserving current run-ID dedup;
 - Worker completion route rejects legacy bodies and stores current requests through the versioned ledger only;
 - web API tests prove only the current completion client remains;
 - route tests cover Timed/Relaxed presentation and fresh fallback after stale persistence;
-- the full `persistence*.test.ts` group runs after load-result changes;
-- Task 4 prepares session-side behavioral tests before changing the engine, then runs `session*.test.ts` + `persistence*.test.ts` immediately after the engine/domain cut;
-- current gameplay smoke E2E runs immediately after the atomic four-field contract cut, then again in final verification.
-
-The cross-package timing-quality removal follows this caller checklist:
-
-1. `@perseus/types`: request shape, validator, UUID-only run IDs, `TIMING_QUALITIES` removal;
-2. `@perseus/shared`: write/fact interfaces, best/conflict logic, driver storage literal, repository callers;
-3. web session domain: state, seal, persistence, hydration, clock gating, completion projection;
-4. local stats eligibility;
-5. route presentation/effects;
-6. unit and E2E fixtures/support code.
+- the whole `persistence*.test.ts` group runs after load-result changes;
+- Task 4 establishes package-local gates, adds session-side behavioral red tests before changing the engine, then runs `session*.test.ts` + `persistence*.test.ts` immediately after the session/domain cut and before route/E2E fixture edits;
+- current gameplay smoke E2E runs immediately after the four-field contract cut and again in final verification.
 
 ## Risks and mitigations
 
-- **Broad Task 4 blast radius:** removing a cross-package type can make the workspace temporarily uncompilable. Mitigation: package-local gates first, then session-side red tests, then an immediate `session*.test.ts` + `persistence*.test.ts` gate before route/E2E fixture edits.
+- **Broad Task 4 blast radius:** removing a cross-package type can make the workspace temporarily uncompilable. Mitigation: keep `TimingQuality` temporarily exported only during the uncommitted request/shared substeps, add behavioral web tests before changing the engine, then remove the export after session consumers are gone and run focused session/persistence gates before route/E2E work.
 - **Accidental current-session wipe:** exact-key session validation would reject existing schema-1 snapshots carrying obsolete fields. Mitigation: preserve field-permissive hydration and add the explicit obsolete-`timingQuality` regression test.
 - **Lockfile drift:** a dependency-removal install could rewrite unrelated resolutions. Mitigation: inspect `apps/web/package.json` + `bun.lock` diff and reject unrelated version/addition churn.
 - **Accidental D1 rebuild:** schema generation would turn a deletion-only change into migration work. Mitigation: no `drizzle-kit generate` and a hard `packages/shared/drizzle/**` no-diff gate.
