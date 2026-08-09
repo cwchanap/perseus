@@ -6,24 +6,24 @@
 
 ## Context
 
-`apps/web/src/routes/puzzle/[id]/+page.svelte` is the orchestration point for a puzzle run and also contains most of the gameplay presentation. After HPA-556 removed pre-release compatibility, the route still owns:
+`apps/web/src/routes/puzzle/[id]/+page.svelte` is both the gameplay orchestration root and the owner of most puzzle presentation. After HPA-556 removed pre-release compatibility, the route still combines:
 
-- puzzle-source loading and disposal;
-- `PuzzleSession` construction, subscription, persistence checkpoints, lifecycle changes, completion effects, and authentication retry;
-- global undo/redo shortcuts and route-level page/visibility handling;
-- board toolbar composition, reference overlay, board viewport markup, zoom/pan state and pointer handling;
-- inventory ordering, piece markup, hint/rejection presentation, rotation and selection wiring;
-- completion modal markup, retry presentation, best-time presentation, and modal CSS;
+- puzzle-source loading and cleanup;
+- `PuzzleSession` construction, subscription, persistence, lifecycle, completion effects, and authentication retry;
+- global shortcuts and page/visibility handling;
+- board toolbar, reference overlay, viewport markup, zoom/pan mechanics, and board composition;
+- inventory ordering, piece markup, hint/rejection presentation, rotation, and selection wiring;
+- completion modal markup, timing/best-time presentation, retry presentation, and modal CSS;
 - setup, pause, and exit dialog composition;
 - page, HUD, board, inventory, modal, and responsive-layout CSS.
 
-The route already composes focused primitives such as `PuzzleToolbar`, `PuzzleBoard`, `ZoomableBoardFrame`, `ReferenceOverlay`, `GameTimer`, `PuzzlePiece`, `MissionSetupDialog`, `SessionPauseDialog`, and `ExitSessionDialog`. The problem is therefore not missing abstractions; it is that the surrounding feature-level composition still lives in one route file.
+The route already uses focused primitives such as `PuzzleToolbar`, `PuzzleBoard`, `ZoomableBoardFrame`, `ReferenceOverlay`, `GameTimer`, `PuzzlePiece`, `MissionSetupDialog`, `SessionPauseDialog`, and `ExitSessionDialog`. The problem is not missing infrastructure. The missing boundary is the feature-level composition around those primitives.
 
-HPA-556 is now merged in PR #49, and HPA-563 is complete. HPA-557 is therefore unblocked. It is a useful dependency because HPA-217, HPA-219, HPA-220, HPA-222, HPA-223, and HPA-224 all need a stable feature-level place to extend gameplay UI without returning every change to the route.
+HPA-556 is merged in PR #49 and HPA-563 is complete, so HPA-557 is unblocked. HPA-557 is also the structural dependency for HPA-217, HPA-219, HPA-220, HPA-222, HPA-223, and HPA-224.
 
 ## Goals
 
-1. Make `+page.svelte` primarily a gameplay composition/orchestration root.
+1. Make `+page.svelte` primarily a gameplay orchestration/composition root.
 2. Extract exactly three feature-level components:
    - `PuzzleBoardPanel.svelte`
    - `PuzzleInventoryPanel.svelte`
@@ -31,56 +31,56 @@ HPA-556 is now merged in PR #49, and HPA-563 is complete. HPA-557 is therefore u
 3. Keep `PuzzleSession` as the only canonical gameplay state owner.
 4. Keep source loading, persistence, lifecycle coordination, completion effects, auth retry, and global keyboard shortcuts in the route.
 5. Move markup and CSS to the component that visually owns it.
-6. Move zoom/pan mechanics into the board panel because they are strictly viewport-local presentation state, while keeping session-changing callbacks in the route.
-7. Establish the HPA-223 accessibility boundary now: one route-owned polite live region and one `announce(message)` callback passed to panels, without implementing the broader accessibility ticket.
-8. Preserve current behavior, DOM test IDs, and gameplay semantics.
+6. Move zoom/pan mechanics into the board panel because they are ephemeral viewport presentation, while keeping session-changing callbacks in the route.
+7. Establish the HPA-223 boundary now: one route-owned polite live region and one `announce(message)` callback passed to the three feature components.
+8. Preserve current behavior, copy, ARIA semantics, CSS contracts, and existing test IDs.
 
 ## Non-goals
 
-- no new gameplay controller, store, state machine, event bus, context layer, dependency-injection layer, or generic panel system;
-- no redesign of the board, toolbar, inventory, completion modal, setup/pause/exit dialogs, or responsive breakpoints;
-- no new persistence or completion behavior;
-- no inventory filters/shuffle, mobile drawer, persistent reference mode, responsive-toolbar redesign, S-rank replacement, or roving-focus implementation from downstream tickets;
-- no extraction of tiny one-use helpers solely to reduce route line count;
-- no generic `Panel`, `GameplayDialog`, or callback-bus abstraction;
+- no gameplay controller, route store, state machine, event bus, context layer, dependency-injection layer, generic panel system, or view-model wrapper;
+- no board, toolbar, inventory, completion, setup/pause/exit, or breakpoint redesign;
+- no persistence or completion behavior changes;
+- no inventory filters/shuffle, mobile drawer, persistent reference mode, toolbar redesign, S-rank replacement, or roving-focus implementation from downstream tickets;
+- no tiny helper extraction solely to reduce line count;
+- no generic `Panel` or `GameplayDialog` abstraction;
 - no backward-compatibility work.
 
 ## Options considered
 
 ### Option A — Three concrete feature wrappers with explicit props/callbacks (recommended)
 
-Extract board, inventory, and completion presentation into the exact components named by the ticket. Keep gameplay/session orchestration in the route. Let the board panel own only its local viewport mechanics; pass every action that mutates `PuzzleSession` or route lifecycle back through explicit callbacks.
+Extract board, inventory, and completion presentation into the exact components named by the ticket. Keep gameplay/session orchestration in the route. Let the board panel own only its viewport-local mechanics; every action that mutates `PuzzleSession` or route lifecycle remains a route callback.
 
 **Pros**
 
-- directly matches the six downstream tickets' expected extension points;
-- removes the largest markup/CSS collision zones without inventing architecture;
-- preserves `PuzzleSession` and the route's proven lifecycle/effect code;
+- gives every blocked gameplay ticket an obvious extension point;
+- removes the major markup/CSS collision zones without replacement architecture;
+- preserves the proven `PuzzleSession` and route lifecycle/effect code;
 - gives zoom/pan a natural local owner without making it domain state;
-- easy to review because each extraction has a clear before/after boundary.
+- easy to review because each extraction has a clear boundary.
 
 **Cons**
 
-- the panel prop lists are intentionally explicit and somewhat long;
-- a small amount of visual panel-header CSS is duplicated between board and inventory rather than generalized.
+- prop lists are intentionally explicit and somewhat long;
+- board/inventory share a small amount of panel-header styling rather than gaining a generic panel abstraction.
 
-### Option B — Add one `PuzzleGameplayShell` that owns board, inventory, and completion
+### Option B — Add one `PuzzleGameplayShell`
 
-Move most gameplay UI under one large feature component and leave the route responsible only for loading/session setup.
+Move board, inventory, and completion into one large shell and leave only loading/session setup in the route.
 
-**Rejected:** this simply moves the monolith one directory deeper. It also creates pressure to move lifecycle/completion state into the shell or introduce a controller/store to avoid a very large shell API.
+**Rejected:** this moves the monolith rather than splitting it, and pressures the code toward a controller/store just to make the shell API manageable.
 
-### Option C — Extract only board and inventory; leave completion inline
+### Option C — Extract only board and inventory
 
-This reduces route size faster and avoids a third component in the first pass.
+Leave the completion modal inline for a later ticket.
 
-**Rejected:** HPA-224 is explicitly waiting for a completion component, and the existing modal already follows a concrete dialog pattern. Leaving it inline would preserve one of the major collision zones and immediately require another structural ticket.
+**Rejected:** HPA-224 is explicitly waiting for a completion boundary, and the modal already matches the existing concrete dialog pattern. Leaving it inline preserves a major collision zone.
 
 ## Decision
 
 Use **Option A**.
 
-The extraction is structural, not architectural. The route remains the place where gameplay state changes are coordinated. Components own presentation and presentation-local state only.
+The change is structural, not architectural. The route coordinates gameplay state changes. Components own presentation and presentation-local state only.
 
 ## Ownership model
 
@@ -88,77 +88,77 @@ The extraction is structural, not architectural. The route remains the place whe
 
 The route continues to own:
 
-- puzzle ID resolution, source loading, source cleanup, error/loading state;
-- `PuzzleSessionStore` construction/subscription/disposal;
-- session persistence and final/periodic checkpoints;
+- puzzle ID resolution, source loading, source cleanup, loading/error state;
+- `PuzzleSessionStore` construction, subscription, and disposal;
+- session persistence and periodic/final checkpoints;
 - completion local-stat and server-submission effects;
 - authentication-transition retry;
 - session setup/pause/restart/exit orchestration;
 - global Undo/Redo shortcuts;
-- document visibility/page-hide persistence behavior;
-- route-level reference-hold session semantics and selection cancellation on window blur;
-- session-event presentation values that originate from the engine (`rejectedPiece`, `activeHintPieceId`, `activeHintTarget`) and their existing timeout lifecycle;
+- document visibility and page-hide persistence;
+- reference-hold session semantics and selection cancellation on window blur;
+- session-event presentation values originating from the engine (`rejectedPiece`, `activeHintPieceId`, `activeHintTarget`) and their existing timeout lifecycle;
 - responsive board metrics shared by board and inventory;
-- the top-level page/HUD/progress/loading/error layout;
+- top-level page/HUD/progress/loading/error layout;
 - the two-column `game-layout` composition;
-- exactly one polite live region plus `announce(message)`.
+- exactly one polite live region and the `announce(message)` callback.
 
-The route must not gain a wrapper object that groups all props. Explicit component props are preferable to a new view-model/controller abstraction.
+Do not replace explicit component props with a route view-model object.
 
 ### `PuzzleBoardPanel.svelte`
 
 The board panel owns:
 
-- the `PUZZLE BOARD` panel wrapper and header;
+- the `PUZZLE BOARD` wrapper/header;
 - `PuzzleToolbar` composition;
 - `ReferenceOverlay` composition;
 - board viewport and canvas markup;
 - `ZoomableBoardFrame` and `PuzzleBoard` composition;
-- board panel CSS;
-- local zoom, min/max zoom, pan offsets, panning state, pointer origin, viewport element, and its `ResizeObserver`;
+- board-panel CSS;
+- local zoom, min/max zoom, pan offsets, panning state, pointer origins, viewport element, and `ResizeObserver`;
 - board-local window pointer move/up/cancel and blur cleanup;
-- recalculating/clamping zoom and pan when the viewport or board metrics change.
+- recalculating and clamping zoom/pan after viewport changes.
 
-The board panel does **not** dispatch to `PuzzleSession` directly. It receives callbacks for Undo, Redo, Hint, reference hold, placement, rotation mode, Pause, and Setup. It receives current session-derived values as props.
+The board panel never dispatches to `PuzzleSession`. It receives callbacks for Undo, Redo, Hint, reference hold, placement, rotation mode, Pause, and Setup.
 
-The route supplies a monotonically increasing `viewResetVersion: number`. The panel resets to fit-to-view when the puzzle changes or when `viewResetVersion` changes. This replaces route-owned `pendingViewportReset` without introducing an imperative component API.
+The route supplies a monotonically increasing `viewResetVersion`. The panel resets to fit-to-view when the puzzle changes or `viewResetVersion` changes. This replaces route-owned `pendingViewportReset` without an imperative component API.
 
-The route also supplies `interactionBlocked: boolean`. When a session/completion modal opens, the board panel cancels any in-progress pan locally. This keeps `clearTransientGameplayState()` from needing a component ref or shared panning state.
+The route also supplies `interactionBlocked`. When a session/completion modal opens, the panel cancels an in-progress pan locally. This avoids component refs or shared panning state.
 
 ### `PuzzleInventoryPanel.svelte`
 
 The inventory panel owns:
 
-- the `INVENTORY` panel wrapper, remaining-count display, piece grid, and complete message;
+- the `INVENTORY` wrapper/header, remaining count, piece grid, and complete message;
 - mapping `trayOrder` to puzzle pieces;
-- filtering already placed pieces;
-- display rotation lookup for inventory pieces;
+- filtering placed pieces;
+- display-rotation lookup;
 - `PuzzlePiece` composition;
-- inventory panel CSS and hint/rejection visual classes.
+- inventory CSS and hint/rejection visual classes.
 
-The inventory panel does **not** own canonical selection, rotations, tray order, hints, or placement state. Those remain `PuzzleSession`/route values passed as props. It receives `onRotate`, `onSelect`, and `onCancelSelection` callbacks.
+Canonical selection, rotations, tray order, hints, and placement stay in `PuzzleSession`/route values passed as props. The panel receives `onRotate`, `onSelect`, and `onCancelSelection` callbacks.
 
-No generic collection/panel component is introduced. The few repeated panel-header styles are duplicated intentionally; generalizing two wrappers would be more abstraction than the project currently needs.
+No generic collection/panel component is added. Duplicating the small board/inventory header styles is cheaper and clearer at two consumers.
 
 ### `PuzzleCompletionDialog.svelte`
 
 The completion dialog owns:
 
-- the existing `celebration-modal` dialog/backdrop markup;
+- existing `celebration-modal` markup;
 - `modalFocus` usage;
-- timed versus Relaxed completion presentation;
-- final-time/personal-best/new-record/unsaved presentation;
-- retry banner and action buttons;
+- Timed versus Relaxed completion presentation;
+- final-time, personal-best, new-record, and unsaved presentation;
+- retry banner and actions;
 - Escape-to-dismiss handling;
-- all completion-modal CSS.
+- completion-modal CSS.
 
-It receives plain presentation values and callbacks from the route. It does not own completion effects, retry policy, local-stat writes, or session restart/navigation logic.
+It receives plain presentation values and callbacks. It does not own completion effects, retry policy, local-stat writes, session restart, or navigation.
 
-`formatTime` moves with the completion presentation and may be imported by the component directly. The route should not format display strings for it.
+`formatTime` moves with the dialog because it is display formatting used only by completion presentation.
 
-## Proposed component interfaces
+## Component interfaces
 
-Exact prop names may be adjusted mechanically during implementation if Svelte typing requires it, but ownership must stay as follows.
+Use these prop names unless an existing imported type requires only a mechanical type annotation change. Do not change ownership or replace them with grouped controller/view-model props.
 
 ### Board panel
 
@@ -233,14 +233,21 @@ interface Props {
 }
 ```
 
-`announce` is a deliberate forward-compatible seam required by HPA-557/HPA-223. HPA-557 does not add the full set of accessibility announcements; the prop is established so HPA-223 can implement panel-local outcomes without pulling UI behavior back into the route. If the prop is otherwise unused during this extraction, the component should keep it explicitly typed and document that it is reserved for HPA-223 rather than inventing a context/event system.
+The `announce` prop is the only accessibility seam introduced by HPA-557. HPA-223 will later add panel-local roving focus and actual outcome announcements. HPA-557 does not add an announcer store, context provider, preferences, or announcement catalog.
 
 ## Live-region boundary
 
 The route renders exactly one region:
 
 ```svelte
-<div class="sr-only" aria-live="polite" aria-atomic="true">{announcement}</div>
+<div
+  class="sr-only"
+  aria-live="polite"
+  aria-atomic="true"
+  data-testid="gameplay-announcer"
+>
+  {announcement}
+</div>
 ```
 
 and owns:
@@ -253,97 +260,94 @@ function announce(message: string): void {
 }
 ```
 
-No second live region belongs inside a panel or dialog. HPA-223 can later refine repeat-message behavior if needed; HPA-557 only establishes ownership and the callback seam.
+No panel or dialog renders another live region.
 
 ## Viewport reset flow
 
-Current route-local `pendingViewportReset` couples session lifecycle to board DOM availability. Replace it with a simple value flow:
+Replace route-local `pendingViewportReset` with a simple value flow:
 
-1. route owns `boardViewResetVersion` initialized to `0`;
+1. route owns `boardViewResetVersion = 0`;
 2. successful puzzle load increments it after session construction;
 3. restart/reconfigure paths increment it where they currently set `pendingViewportReset = true`;
-4. `PuzzleBoardPanel` reacts to puzzle identity and `viewResetVersion` and resets when its viewport element exists;
-5. the panel's `ResizeObserver` recomputes bounds after layout changes.
+4. `PuzzleBoardPanel` reacts to puzzle identity and `viewResetVersion` once its viewport exists;
+5. the panel's `ResizeObserver` recomputes bounds on layout changes.
 
-This is not persisted and does not become gameplay state.
+This value is not persisted and never enters `PuzzleSession`.
 
 ## Route cleanup after extraction
 
-Once the three components are wired, remove route-only presentation imports and state/helpers that no longer belong there:
+Once the three components are wired, remove presentation imports/state/helpers that no longer belong in the route:
 
-- `modalFocus`, `PuzzleBoard`, `PuzzlePiece`, `PuzzleToolbar`, `ZoomableBoardFrame`, `ReferenceOverlay`, and `SvelteMap` imports;
-- board viewport element, zoom/min/max/pan/panning pointer fields, panning helper functions, and pointer-move listener;
-- inventory `piecesMap`, `shuffledPieces`, `getDisplayedRotation()`, and `isPiecePlaced()` helpers;
+- `modalFocus`, `PuzzleBoard`, `PuzzlePiece`, `PuzzleToolbar`, `ZoomableBoardFrame`, `ReferenceOverlay`, `SvelteMap`, and completion-only `formatTime` imports;
+- board viewport element, zoom/min/max/pan/panning fields, panning helpers, and pointer-move listener;
+- inventory piece map/order/display-rotation/placed-check helpers;
 - completion modal markup and modal CSS;
 - board/inventory CSS moved to their components.
 
-Keep route helpers that still change domain/session state, including `handlePiecePlaced`, `handleHint`, `handleUndo`, `handleRedo`, `handleReferenceDown`, `handleReferenceUp`, `handleRotationToggle`, `handlePieceRotate`, and selection callbacks.
+Keep route helpers that still mutate or coordinate domain/session state, including piece placement, Hint/Undo/Redo, reference hold, rotation, selection, completion effects, session setup/pause/restart/exit, persistence, and global shortcuts.
 
 ## Testing strategy
 
-This is a behavior-preserving extraction, so existing route tests remain the main integration fence. Add focused component tests only for behavior that actually moves behind a component boundary.
+This is behavior-preserving, so existing route tests remain the main integration fence. Add focused component tests only for behavior that moves behind a component boundary.
 
-### Board panel tests
+### Board panel
 
-Cover:
+Test:
 
-- existing board/toolbar test IDs remain present;
-- toolbar callbacks are forwarded;
-- placement callback is forwarded from `PuzzleBoard`;
-- zoom-in changes `ZoomableBoardFrame` transform;
+- current toolbar/board test IDs remain present;
+- toolbar and placement callbacks forward;
+- zoom changes `ZoomableBoardFrame` transform;
 - `viewResetVersion` restores fit/reset pan;
-- window blur or `interactionBlocked` cancels the `is-panning` presentation.
+- window blur and `interactionBlocked` cancel panning.
 
-### Inventory panel tests
+### Inventory panel
 
-Cover:
+Test:
 
-- tray order determines rendered piece order;
+- tray order controls rendered order;
 - placed pieces are omitted and remaining count is correct;
-- current selection/rotation state is passed to `PuzzlePiece`;
-- hint/rejection classes stay on the expected piece slot;
-- select/rotate/cancel callbacks still forward.
+- selection/rotation state reaches `PuzzlePiece`;
+- hint/rejection classes stay on the expected slot;
+- select/rotate/cancel callbacks forward.
 
-### Completion dialog tests
+### Completion dialog
 
-Cover:
+Test:
 
-- Timed mode renders rank, final time, personal best, new-record/unsaved presentation;
+- Timed mode renders rank, final time, personal best, and new-record/unsaved presentation;
 - Relaxed mode omits timed fields;
-- retry banner forwards retry action;
+- retry action forwards;
 - Escape calls `onDismiss`;
-- Play Again and Back to Arcade callbacks forward;
-- `celebration-modal` and existing test IDs remain unchanged.
+- Play Again and Back to Arcade forward;
+- existing modal/test IDs remain unchanged.
 
-### Route regression tests
+### Route regression
 
-Run the existing `page.svelte.test.ts` suite unchanged wherever possible. Update test internals only if component extraction changes query timing or module boundaries; do not weaken behavior assertions.
-
-Key existing behavior that must remain covered includes responsive sizing, reference hold, panning cleanup, selection cleanup on blur, timed/Relaxed completion, retry behavior, stale completion-effect protection, Play Again, setup/pause/exit flows, and local versus API puzzle completion semantics.
+Keep the existing `page.svelte.test.ts` suite intact wherever possible. Do not weaken assertions merely because markup moved. Existing coverage should continue to fence responsive sizing, reference hold, panning cleanup, selection cleanup on blur, Timed/Relaxed completion, retry behavior, stale completion-effect protection, Play Again, setup/pause/exit flows, and local-versus-API completion semantics.
 
 ### E2E
 
-Run the existing gameplay smoke suite after the extraction. HPA-557 adds no new end-to-end behavior, so no broad new E2E matrix is required.
+Run the existing gameplay smoke suite. HPA-557 adds no behavior, so no new broad cross-browser matrix is required.
 
 ## Risks and mitigations
 
-- **Too many props tempt a controller/view-model abstraction.** Mitigation: accept explicit props/callbacks; this is a composition boundary, not a new state layer.
-- **Moving zoom/pan can subtly change pointer cleanup.** Mitigation: add a focused board-panel browser test and keep existing route blur/panning tests as integration coverage.
-- **Scoped CSS can change layout when markup moves.** Mitigation: move each selector with its markup, preserve class names/custom-property contracts/test IDs, and run the responsive route test plus gameplay smoke E2E.
-- **Completion extraction can accidentally change modal focus or dismissal.** Mitigation: keep `modalFocus`, role/ARIA attributes, `celebration-modal`, and Escape behavior verbatim in the new component; add a focused component test.
-- **HPA-223 scope creep.** Mitigation: add one route live region and `announce` prop only. Do not add roving-focus logic, announcement catalogs, accessibility preferences, or a context provider.
-- **Generic panel abstraction creep.** Mitigation: duplicate the small board/inventory header styles rather than creating a reusable panel component before there are three real consumers.
+- **Long prop lists:** keep explicit props; do not introduce a view-model/controller merely to shorten component calls.
+- **Viewport behavior drift:** preserve existing fit/clamp algorithms and add a focused board-panel browser test before deleting route viewport state.
+- **Scoped CSS drift:** move selectors with owned markup and preserve class/custom-property names.
+- **Completion focus/dismissal drift:** move `modalFocus`, roles/ARIA, `celebration-modal`, and Escape handling together; add a focused dialog test.
+- **HPA-223 scope creep:** create only the live-region/callback seam. No roving focus or announcement logic here.
+- **Generic abstraction creep:** duplicate the small panel-header styles rather than generalize two consumers.
 
 ## Acceptance mapping
 
-- Route primarily composes feature components: board/inventory/completion markup and CSS leave `+page.svelte`.
-- Lifecycle/persistence/completion/auth semantics remain route-owned and unchanged.
-- Board/inventory/completion visual changes have one obvious component file.
-- `PuzzleSession` remains the sole canonical gameplay state owner; panel-local zoom/pan is ephemeral presentation only.
-- One route live region exists; `announce(message)` is passed to panels; future roving focus belongs inside each panel.
-- Existing focused/unit/component tests and gameplay smoke pass; new tests cover only moved component behavior.
+- route primarily composes board, inventory, completion, and existing session-dialog components;
+- lifecycle, persistence, completion, and authentication semantics remain route-owned and unchanged;
+- board/inventory/completion changes each have one obvious component file;
+- no new global state or duplicated gameplay-domain state is introduced;
+- route owns one live region and passes `announce(message)` to the feature components; future roving focus stays panel-local;
+- focused component/route tests and gameplay smoke pass;
 - HPA-217, HPA-219, HPA-220, HPA-222, HPA-223, and HPA-224 each have a concrete component boundary to extend.
 
 ## Implementation boundary
 
-HPA-557 should land as one implementation PR with small reviewable commits. It should not implement any downstream gameplay feature while extracting the route. The success condition is a smaller, easier-to-change composition root—not a new gameplay architecture.
+HPA-557 lands as one implementation PR with small reviewable commits. It must not implement downstream gameplay features while extracting the route. Success is a smaller, easier-to-change composition root, not a new gameplay architecture.
