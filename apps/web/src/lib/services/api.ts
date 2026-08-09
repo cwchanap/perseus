@@ -453,11 +453,3 @@ export async function recordCompletion(
 ): Promise<void> {
 	return postCompletion(puzzleId, request);
 }
-
-/**
- * @deprecated Legacy `{ timeSeconds }` caller retained until the puzzle route
- * migrates to the sealed v1 request (HPA-372 Tasks 10/11).
- */
-export async function recordCompletionLegacy(puzzleId: string, timeSeconds: number): Promise<void> {
-	return postCompletion(puzzleId, { timeSeconds });
-}

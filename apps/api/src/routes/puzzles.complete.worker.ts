@@ -1,12 +1,7 @@
 import { Hono } from 'hono';
 import type { Env } from '../worker';
 import { getWorkerDbContext } from '../db.worker';
-import {
-	recordLegacyCompletion,
-	recordVersionedCompletion,
-	ensurePuzzleOwnership,
-	SYSTEM_OWNER_ID
-} from '@perseus/shared';
+import { recordVersionedCompletion, ensurePuzzleOwnership, SYSTEM_OWNER_ID } from '@perseus/shared';
 import { isPuzzleId } from '@perseus/types';
 import { getPuzzle } from '../services/storage.worker';
 import { requirePlayerAuth } from '../middleware/player-auth.worker';
@@ -71,20 +66,12 @@ router.post('/:id/complete', requirePlayerAuth, async (c) => {
 
 	try {
 		const { db, completionWrites } = getWorkerDbContext(c.env);
-		const result =
-			parsed.value.kind === 'legacy'
-				? await recordLegacyCompletion(
-						completionWrites,
-						session.user.id,
-						puzzleId,
-						parsed.value.timeSeconds
-					)
-				: await recordVersionedCompletion(
-						completionWrites,
-						session.user.id,
-						puzzleId,
-						parsed.value.request
-					);
+		const result = await recordVersionedCompletion(
+			completionWrites,
+			session.user.id,
+			puzzleId,
+			parsed.value
+		);
 		const response = completionResultToResponse(result);
 		if (result.status !== 'tombstoned') {
 			// Lazily backfill a system-owned row for puzzles that predate the DB

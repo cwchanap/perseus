@@ -10,8 +10,6 @@ import {
 } from '../schema';
 import type {
 	CompletionWriteExecutor,
-	LegacyCompletionWrite,
-	LegacyCompletionWriteExecution,
 	StoredCompletionFacts,
 	VersionedCompletionWrite,
 	VersionedCompletionWriteExecution
@@ -31,8 +29,6 @@ export function createD1Db(env: D1Env): D1AppDb {
 	//   - manually: `bun run db:migrate` (remote) / `db:migrate:local` (dev).
 	return drizzle(env.DB, { schema });
 }
-
-const COMPLETION_DEDUPE_WINDOW_MS = 30_000;
 
 function toStoredFacts(row: {
 	puzzleId: string;
@@ -198,59 +194,6 @@ export function createD1CompletionWriteExecutor(
 				return { status: 'quota_exceeded' };
 			}
 			throw new Error('Completion ledger write returned no stored row without tombstone or quota');
-		},
-
-		async writeLegacy(input: LegacyCompletionWrite): Promise<LegacyCompletionWriteExecution> {
-			const upsertStats = db
-				.insert(puzzleStats)
-				.select(
-					db
-						.select({
-							playerId: sql<string>`${input.playerId}`.as('player_id'),
-							puzzleId: sql<string>`${input.puzzleId}`.as('puzzle_id'),
-							bestTimeSeconds: sql<number>`${input.timeSeconds}`.as('best_time_seconds'),
-							totalCompletions: sql<number>`1`.as('total_completions'),
-							firstCompletedAt: sql<number>`${input.receivedAt}`.as('first_completed_at'),
-							lastCompletedAt: sql<number>`${input.receivedAt}`.as('last_completed_at')
-						})
-						.from(sql`(SELECT 1)`).where(sql`
-							NOT EXISTS (
-								SELECT 1 FROM puzzle_deletion_tombstones WHERE puzzle_id = ${input.puzzleId}
-							)
-						`)
-				)
-				.onConflictDoUpdate({
-					target: [puzzleStats.playerId, puzzleStats.puzzleId],
-					set: {
-						bestTimeSeconds: sql`MIN(${puzzleStats.bestTimeSeconds}, excluded.best_time_seconds)`,
-						totalCompletions: sql`
-							CASE
-								WHEN excluded.last_completed_at - ${puzzleStats.lastCompletedAt} >=
-									${COMPLETION_DEDUPE_WINDOW_MS}
-								THEN ${puzzleStats.totalCompletions} + 1
-								ELSE ${puzzleStats.totalCompletions}
-							END
-						`,
-						lastCompletedAt: sql`
-							CASE
-								WHEN excluded.last_completed_at - ${puzzleStats.lastCompletedAt} >=
-									${COMPLETION_DEDUPE_WINDOW_MS}
-								THEN excluded.last_completed_at
-								ELSE ${puzzleStats.lastCompletedAt}
-							END
-						`
-					}
-				});
-			const readTombstone = db
-				.select({ puzzleId: puzzleDeletionTombstones.puzzleId })
-				.from(puzzleDeletionTombstones)
-				.where(eq(puzzleDeletionTombstones.puzzleId, input.puzzleId))
-				.limit(1);
-
-			const [upsertResult, tombstoneRows] = await db.batch([upsertStats, readTombstone]);
-			if (tombstoneRows.length > 0) return { status: 'tombstoned' };
-			if (upsertResult.meta.changes === 1) return { status: 'recorded' };
-			throw new Error('Legacy completion write changed no rows without tombstone');
 		},
 
 		async beginPuzzleDeletion(puzzleId: string, deletedAt: number) {

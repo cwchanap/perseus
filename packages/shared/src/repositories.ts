@@ -5,7 +5,6 @@ import { puzzles, playerProfiles, puzzleStats } from './schema';
 import {
 	interpretVersionedCompletionWrite,
 	type CompletionWriteExecutor,
-	type LegacyCompletionWriteExecution,
 	type VersionedCompletionResult,
 	type VersionedCompletionWrite
 } from './completion-writes';
@@ -275,23 +274,6 @@ function parsePlayerPuzzleCursor(cursor: string) {
 	const createdAt = Number(createdAtStr);
 	if (!Number.isFinite(createdAt)) return sql`false`;
 	return sql`(${puzzles.createdAt} < ${createdAt} OR (${puzzles.createdAt} = ${createdAt} AND ${puzzles.id} < ${idStr}))`;
-}
-
-export async function recordLegacyCompletion(
-	executor: CompletionWriteExecutor,
-	playerId: string,
-	puzzleId: string,
-	timeSeconds: number
-): Promise<LegacyCompletionWriteExecution> {
-	// Accepted risk: the server cannot verify that the client actually solved
-	// the puzzle. Any authenticated player can POST an arbitrary timeSeconds
-	// for any ready puzzle. The impact is self-scoped (only the caller's own
-	// stats are affected) and there is no leaderboard or competitive ranking
-	// at stake, so server-side verification is not worth the complexity. The
-	// MAX_COMPLETION_TIME_SECONDS ceiling in the route layer rejects obvious
-	// garbage values.
-	const now = Date.now();
-	return executor.writeLegacy({ playerId, puzzleId, timeSeconds, receivedAt: now });
 }
 
 export async function recordVersionedCompletion(
