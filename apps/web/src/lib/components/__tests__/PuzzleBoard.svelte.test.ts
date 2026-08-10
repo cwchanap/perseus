@@ -74,8 +74,10 @@ describe('PuzzleBoard', () => {
 			resolveImage
 		});
 
-		await expect.element(page.getByRole('img').first()).toBeVisible();
-		await expect.element(page.getByRole('img').first()).toHaveAttribute('src', '/test/0.png');
+		const placedImage = page.getByRole('img').first();
+		await expect.element(placedImage).toBeInTheDocument();
+		await expect.element(placedImage).toHaveAttribute('alt', 'Placed piece');
+		await expect.element(placedImage).toHaveAttribute('src', '/test/0.png');
 	});
 
 	it('should align placed piece base image bounds with the drop zone', async () => {
