@@ -67,11 +67,9 @@
 					class={`piece-slot aspect-square border border-(--border) p-[0.2rem] transition-[border-color,box-shadow] duration-150 ${
 						activeHintPieceId === piece.id
 							? 'hinted border-(--accent) shadow-[0_0_14px_var(--accent-glow)]'
-							: ''
-					} ${
-						rejectedPieceId === piece.id
-							? 'rejected animate-shake border-(--hot) shadow-[0_0_12px_var(--hot-glow)]'
-							: ''
+							: rejectedPieceId === piece.id
+								? 'rejected animate-shake border-(--hot) shadow-[0_0_12px_var(--hot-glow)]'
+								: ''
 					}`}
 					style={boardMetrics ? `--piece-slot-size: ${boardMetrics.pieceSlotSize}px;` : ''}
 					data-testid={`piece-slot-${piece.id}`}

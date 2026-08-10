@@ -562,6 +562,10 @@ git commit -m "refactor: extract puzzle board panel"
 - Consumes: puzzle, tray order, placements, rotations, selection, hint/rejection presentation, board metrics, image resolver, and selection/rotation callbacks.
 - Produces: complete inventory presentation. The route no longer maps tray IDs to pieces or renders piece slots, but it retains `placedPieceIds`/`isPiecePlaced()` for `handlePieceRotate()`.
 
+Preserve the existing inventory class precedence: when a piece is both hinted and rejected, the
+`hinted` presentation wins and the `rejected` class is omitted. A rejected piece receives the
+`rejected` presentation when no active hint applies.
+
 - [ ] **Step 1: Write failing inventory component tests with their own fixture**
 
 Create `apps/web/src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts`:
@@ -623,7 +627,7 @@ function baseProps() {
 }
 
 describe('PuzzleInventoryPanel', () => {
-  it('filters placed pieces and preserves hint/rejection presentation', async () => {
+  it('filters placed pieces and preserves hinted precedence', async () => {
     render(PuzzleInventoryPanel, {
       ...baseProps(),
       placedPieces: [{ pieceId: 0, x: 0, y: 0 }],
@@ -637,7 +641,20 @@ describe('PuzzleInventoryPanel', () => {
     const slot = document.querySelector('[data-testid="piece-slot-1"]');
     expect(slot).not.toBeNull();
     expect(slot?.className).toContain('hinted');
+    expect(slot?.className).not.toContain('rejected');
+  });
+
+  it('preserves rejected presentation when no hint is active', async () => {
+    render(PuzzleInventoryPanel, {
+      ...baseProps(),
+      placedPieces: [{ pieceId: 0, x: 0, y: 0 }],
+      rejectedPieceId: 1
+    });
+
+    const slot = document.querySelector('[data-testid="piece-slot-1"]');
+    expect(slot).not.toBeNull();
     expect(slot?.className).toContain('rejected');
+    expect(slot?.className).not.toContain('hinted');
   });
 
   it('renders unplaced pieces in tray order', async () => {

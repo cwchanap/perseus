@@ -54,7 +54,7 @@ function baseProps() {
 }
 
 describe('PuzzleInventoryPanel', () => {
-	it('filters placed pieces and preserves hint/rejection presentation', async () => {
+	it('filters placed pieces and preserves hinted precedence', async () => {
 		render(PuzzleInventoryPanel, {
 			...baseProps(),
 			placedPieces: [{ pieceId: 0, x: 0, y: 0 }],
@@ -68,7 +68,20 @@ describe('PuzzleInventoryPanel', () => {
 		const slot = document.querySelector('[data-testid="piece-slot-1"]');
 		expect(slot).not.toBeNull();
 		expect(slot?.className).toContain('hinted');
+		expect(slot?.className).not.toContain('rejected');
+	});
+
+	it('preserves rejected presentation when no hint is active', async () => {
+		render(PuzzleInventoryPanel, {
+			...baseProps(),
+			placedPieces: [{ pieceId: 0, x: 0, y: 0 }],
+			rejectedPieceId: 1
+		});
+
+		const slot = document.querySelector('[data-testid="piece-slot-1"]');
+		expect(slot).not.toBeNull();
 		expect(slot?.className).toContain('rejected');
+		expect(slot?.className).not.toContain('hinted');
 	});
 
 	it('renders unplaced pieces in tray order', async () => {
