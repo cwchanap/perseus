@@ -2,52 +2,43 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Show the newest valid unfinished current-device puzzle session among the gallery's
-currently discoverable server summaries plus surviving Quick Puzzle metadata, show placed/total
-progress on matching server cards, and reuse the existing puzzle route for hydration without new
-network requests or compatibility paths.
+**Goal:** Show the newest resumable current-device session available from the gallery's current
+server summaries plus persisted Quick Puzzle metadata, show always-visible Continue progress on
+matching ready server cards, and keep authoritative hydration/cleanup in `/puzzle/[id]`.
 
-**Architecture:** Add one synchronous `galleryProgress` service that converts the server summaries
-already held by the gallery plus `listQuick()` metadata into `SessionValidationContext`s, then
-delegates loading, current-schema validation, invalid cleanup, and resumability to the existing
-`SessionStorageAdapter`. The gallery owns discovery lifecycle and presentation; `PuzzleCard`
-receives only an optional placed count. The puzzle route remains unchanged.
+**Architecture:** Add one non-destructive `peekSession` method to the existing session storage
+adapter, then build one synchronous `galleryProgress` service over that seam. Read Quick Puzzle
+metadata once per gallery mount and recompute discovery when the server `puzzles` array changes.
+`PuzzleCard` remains a presentation component that receives only `placedCount`.
 
-**Tech Stack:** TypeScript, Svelte 5, SvelteKit, Vitest browser mode, Playwright, Bun, existing
+**Tech Stack:** TypeScript, Svelte 5, SvelteKit, Vitest browser mode, Playwright, Bun,
 `@perseus/types` grid helpers, existing PuzzleSession persistence codec
 
 ## Global Constraints
 
 - Design baseline:
   `docs/superpowers/specs/2026-08-09-hpa-218-gallery-local-progress-design.md`.
-- Linear issue:
-  `https://linear.app/cwchanap/issue/HPA-218/gameplay-ux-show-local-progress-and-continue-in-the-gallery`.
-- HPA-556 is complete; read only `PersistedPuzzleSessionV1` / current schema.
-- "Newest" means greatest `lastUpdated` among current ready server summaries plus surviving
-  `listQuick()` metadata. Do not build a device-global recent-session catalog.
-- Do not add migrations, legacy readers, recovery actions, or a retention policy.
-- Reuse `createSessionStorageAdapter().loadSession()` for invalid-data cleanup. Do not fork its
-  parser or validation rules.
-- A valid non-resumable snapshot, especially `lifecycle === 'completed'`, must remain stored.
-  Only the adapter's existing invalid path may remove progress.
-- A server puzzle is eligible only when it is `ready` and present in the gallery's current
-  `puzzles` array. Do not retain a separate catalog across search/filter changes.
-- Before calling `isValidPieceCountForAspectRatio` or `getGridDimensionsForAspectRatio`, guard the
-  runtime summary value with `isPuzzleAspectRatio`. Unexpected values are skipped and their
-  progress records remain untouched.
-- Build server validation geometry from the current summary's `pieceCount + aspectRatio` and the
-  production row-major ID contract. Do not fetch puzzle details.
-- Lock the row-major derivation with explicit parity tests for `1:1`/4 pieces, `4:3`/12 pieces,
-  and `3:4`/12 pieces. Do not add a shared row-major helper in this ticket.
-- Quick Puzzle candidates come only from `listQuick()`. Do not make session-only Quick Puzzle
-  metadata enumerable and do not build a cross-source catalog.
-- No API/backend changes, N+1 detail/availability calls, cache layer, global store, storage-event
-  listener, analytics, or cloud/account semantics.
-- Keep `/puzzle/[id]` as the only hydration/resume route. Do not modify the puzzle route or the
-  HPA-557 component boundaries.
-- Keep the existing `puzzle-progress-${puzzleId}` key and session schema version.
-- Follow the repository's existing TypeScript/Svelte formatting and test conventions.
-- Every behavior change starts with a focused failing test and ends with a focused green run.
+- Linear issue: HPA-218.
+- Use only the current `PersistedPuzzleSessionV1` schema.
+- Gallery discovery is read-only. It must never delete progress.
+- Existing `/puzzle/[id]` hydration keeps ownership of invalid-session cleanup through
+  `loadSession` with authoritative loaded puzzle pieces.
+- Server candidates must be ready, have a runtime-valid `PuzzleAspectRatio`, and have a valid
+  piece-count/aspect combination before any aspect-ratio grid helper is called.
+- Server progress is visible only for summaries in the gallery's current `puzzles` array.
+- Quick Puzzle candidates come only from one `listQuick()` call per gallery mount.
+- Do not add a retained catalog, storage scan, global store, storage-event listener, API call,
+  compatibility reader, migration, analytics, or cloud/account semantics.
+- Keep the row-major context derivation private; use explicit parity tests rather than a new
+  shared helper by default.
+- The always-visible card metadata is the user-facing Continue signal. The existing hover/focus
+  overlay remains decorative.
+- If the newest candidate is a loaded server puzzle, render both the Continue panel and progress
+  on that same card.
+- Keep the existing `/puzzle/[id]` href and route behavior.
+- Follow existing repository formatting and test conventions.
+- Start each behavior change with a failing focused test and run the corresponding focused green
+  test before committing.
 
 ---
 
@@ -57,43 +48,50 @@ receives only an optional placed count. The puzzle route remains unchanged.
 
 | File | Responsibility |
 | --- | --- |
-| `apps/web/src/lib/services/gameplay/galleryProgress.ts` | Build guarded gallery-visible validation contexts and discover valid resumable progress |
-| `apps/web/src/lib/services/gameplay/galleryProgress.test.ts` | Geometry parity, runtime guards, discovery ordering, exclusion, and cleanup |
+| `apps/web/src/lib/services/gameplay/galleryProgress.ts` | Build derived/current validation contexts and return read-only resumable gallery progress |
+| `apps/web/src/lib/services/gameplay/galleryProgress.test.ts` | Geometry parity, bounded newest selection, invalid-skip, completed exclusion, Quick Puzzle coverage |
 
 ### Modified files
 
 | File | Change |
 | --- | --- |
-| `apps/web/src/lib/components/PuzzleCard.svelte` | Optional placed-count presentation and Continue label |
-| `apps/web/src/lib/components/__tests__/PuzzleCard.svelte.test.ts` | Play/Continue/progress/non-ready coverage |
-| `apps/web/src/routes/+page.svelte` | Run local discovery, render newest-current-candidate Continue area, pass card progress |
-| `apps/web/src/routes/page.svelte.test.ts` | Continue presentation plus discovery-call wiring assertions |
-| `apps/web/e2e/gallery.spec.ts` | One current-schema resume smoke case using HPA-226 persistence helpers |
+| `apps/web/src/lib/services/gameplay/session/types.ts` | Add `peekSession` to `SessionStorageAdapter` |
+| `apps/web/src/lib/services/gameplay/session/persistence.ts` | Share one storage-read/parser path between non-destructive peek and destructive authoritative load |
+| `apps/web/src/lib/services/gameplay/session/persistence.validation-storage.test.ts` | Prove peek preserves invalid data while load still clears it |
+| `apps/web/src/lib/components/PuzzleCard.svelte` | Optional `placedCount`; always-visible Continue/progress metadata |
+| `apps/web/src/lib/components/__tests__/PuzzleCard.svelte.test.ts` | Touch-visible Continue/progress and non-ready coverage |
+| `apps/web/src/routes/+page.svelte` | Read `listQuick()` once on mount, run discovery, render panel, pass card progress |
+| `apps/web/src/routes/page.svelte.test.ts` | One-time Quick read, discovery wiring, replacement data, panel/card overlap |
+| `apps/web/e2e/gallery.spec.ts` | One production-validated partial-session resume smoke case |
 
-No API, shared-schema, database, workflow, `packages/types`, or puzzle-route production file should
-change.
+No API, database, workflow, shared-schema, or puzzle-route implementation file changes are needed.
 
 ---
 
-## Task 1: Add Current-Schema Gallery Progress Discovery
+## Task 1: Add Non-Destructive Session Peek and Gallery Discovery
 
 **Files:**
 
+- Modify: `apps/web/src/lib/services/gameplay/session/types.ts`
+- Modify: `apps/web/src/lib/services/gameplay/session/persistence.ts`
+- Modify: `apps/web/src/lib/services/gameplay/session/persistence.validation-storage.test.ts`
 - Create: `apps/web/src/lib/services/gameplay/galleryProgress.ts`
 - Create: `apps/web/src/lib/services/gameplay/galleryProgress.test.ts`
 - Reuse: `apps/web/src/lib/services/gameplay/session/persistence.test-fixtures.ts`
 
 **Interfaces:**
 
-- Consumes: `PuzzleSummary`, `StoredQuickPuzzle`, `SessionStorageAdapter`,
-  `SessionValidationContext`, `getGridDimensionsForAspectRatio`, `isPuzzleAspectRatio`, and
-  `isValidPieceCountForAspectRatio`.
-- Produces: `discoverGalleryProgress(options): GalleryProgressDiscovery`, consumed only by the
-  gallery page in Task 3.
-
-### Public contract
+- Consumes: `PuzzleSummary`, `StoredQuickPuzzle`, `SessionValidationContext`,
+  `SessionStorageAdapter`, `isPuzzleAspectRatio`, `isValidPieceCountForAspectRatio`,
+  `getGridDimensionsForAspectRatio`.
+- Produces:
 
 ```ts
+SessionStorageAdapter.peekSession(
+	puzzleId: string,
+	context: SessionValidationContext
+): SessionLoadResult;
+
 export interface GalleryProgress {
 	puzzleId: string;
 	name: string;
@@ -115,101 +113,110 @@ export function discoverGalleryProgress(options: {
 }): GalleryProgressDiscovery;
 ```
 
-### Private server-context helper
+- [ ] **Step 1: Write the failing non-destructive peek regression**
+
+In `persistence.validation-storage.test.ts`, use `memoryStorage()` and a deliberately invalid
+current-schema record:
 
 ```ts
-function serverValidationContext(puzzle: PuzzleSummary): SessionValidationContext | null {
-	if (puzzle.status !== 'ready') return null;
-	if (!isPuzzleAspectRatio(puzzle.aspectRatio)) return null;
-	if (!isValidPieceCountForAspectRatio(puzzle.pieceCount, puzzle.aspectRatio)) return null;
+it('peekSession reports invalid data without removing it', () => {
+	const snapshot = validSnapshot();
+	const raw = JSON.stringify({ ...snapshot, schemaVersion: 999 });
+	const store = { 'puzzle-progress-pz1': raw };
+	const adapter = createSessionStorageAdapter({ storage: memoryStorage(store) });
 
-	const { rows, cols } = getGridDimensionsForAspectRatio(puzzle.pieceCount, puzzle.aspectRatio);
-	const pieces = Array.from({ length: puzzle.pieceCount }, (_, id) => ({
-		id,
-		correctX: id % cols,
-		correctY: Math.floor(id / cols)
-	}));
-
-	return {
-		puzzleId: puzzle.id,
-		source: 'api',
-		pieceIds: pieces.map((piece) => piece.id),
-		gridCols: cols,
-		gridRows: rows,
-		pieceCount: puzzle.pieceCount,
-		pieces
-	};
-}
+	expect(adapter.peekSession('pz1', context)).toEqual({
+		status: 'invalid',
+		reason: 'unsupported_schema_version'
+	});
+	expect(store['puzzle-progress-pz1']).toBe(raw);
+});
 ```
 
-The `isPuzzleAspectRatio` guard is required before either aspect-ratio helper. Do not rely on the
-TypeScript annotation as runtime validation and do not wrap the grid helper in a broad catch.
-
-### Private Quick Puzzle context helper
+Keep/add the paired authoritative behavior in the same test file:
 
 ```ts
-function quickValidationContext(puzzle: StoredQuickPuzzle): SessionValidationContext {
-	return {
-		puzzleId: puzzle.id,
-		source: 'local',
-		pieceIds: puzzle.pieces.map((piece) => piece.id),
-		gridCols: puzzle.gridCols,
-		gridRows: puzzle.gridRows,
-		pieceCount: puzzle.pieceCount,
-		pieces: puzzle.pieces.map(({ id, correctX, correctY }) => ({ id, correctX, correctY }))
+it('loadSession still removes invalid data', () => {
+	const snapshot = validSnapshot();
+	const store = {
+		'puzzle-progress-pz1': JSON.stringify({ ...snapshot, schemaVersion: 999 })
 	};
-}
-```
+	const adapter = createSessionStorageAdapter({ storage: memoryStorage(store) });
 
-- [ ] **Step 1: Write the initial failing server-discovery test**
-
-Use `validSnapshot()` and `memoryStorage()` from
-`gameplay/session/persistence.test-fixtures.ts`:
-
-```ts
-const serverPuzzle: PuzzleSummary = {
-	id: 'pz1',
-	name: 'Resume Me',
-	pieceCount: 4,
-	aspectRatio: '1:1',
-	status: 'ready'
-};
-
-const store: Record<string, string> = {
-	'puzzle-progress-pz1': JSON.stringify(validSnapshot())
-};
-const sessionStorage = createSessionStorageAdapter({ storage: memoryStorage(store) });
-
-const result = discoverGalleryProgress({
-	serverPuzzles: [serverPuzzle],
-	quickPuzzles: [],
-	sessionStorage
+	expect(adapter.loadSession('pz1', context)).toEqual({ status: 'missing' });
+	expect(store['puzzle-progress-pz1']).toBeUndefined();
 });
-
-expect(result.byPuzzleId.get('pz1')).toMatchObject({
-	puzzleId: 'pz1',
-	name: 'Resume Me',
-	source: 'api',
-	placedCount: 2,
-	pieceCount: 4,
-	lastUpdated: 1_000
-});
-expect(result.newest?.puzzleId).toBe('pz1');
 ```
 
 Run:
 
 ```bash
-bun run test:unit --filter=@perseus/web -- gameplay/galleryProgress.test.ts
+bun run test:unit --filter=@perseus/web -- persistence.validation-storage.test.ts
 ```
 
-Expected: FAIL because `galleryProgress.ts` does not exist.
+Expected: FAIL because `peekSession` does not exist.
 
-- [ ] **Step 2: Add explicit row-major geometry parity tests**
+- [ ] **Step 2: Implement one shared read path plus `peekSession`**
 
-Use a spy `SessionStorageAdapter` whose `loadSession` records the supplied
-`SessionValidationContext` and returns `{ status: 'missing' }`. Feed three ready summaries and
-assert the captured contexts contain these exact tuple arrays:
+In `types.ts`:
+
+```ts
+export interface SessionStorageAdapter {
+	peekSession(puzzleId: string, context: SessionValidationContext): SessionLoadResult;
+	loadSession(puzzleId: string, context: SessionValidationContext): SessionLoadResult;
+	saveSession(puzzleId: string, snapshot: PersistedPuzzleSessionV1): void;
+	clearSession(puzzleId: string): void;
+	isResumable(snapshot: PersistedPuzzleSessionV1): boolean;
+}
+```
+
+In `createSessionStorageAdapter`, share the read/parser logic:
+
+```ts
+function readSession(puzzleId: string, context: SessionValidationContext): SessionLoadResult {
+	let raw: string | null;
+	try {
+		raw = storage.getItem(progressKey(puzzleId));
+	} catch (cause) {
+		onError?.({ kind: 'read_error', puzzleId, cause });
+		return { status: 'missing' };
+	}
+	return loadPersistedSession(raw, context);
+}
+
+function peekSession(puzzleId: string, context: SessionValidationContext): SessionLoadResult {
+	return readSession(puzzleId, context);
+}
+
+function loadSession(puzzleId: string, context: SessionValidationContext): SessionLoadResult {
+	const result = readSession(puzzleId, context);
+	if (result.status !== 'invalid') return result;
+
+	try {
+		storage.removeItem(progressKey(puzzleId));
+	} catch (cause) {
+		onError?.({ kind: 'remove_error', puzzleId, cause });
+	}
+	return { status: 'missing' };
+}
+```
+
+Return `peekSession` alongside the existing methods. Do not change route callers of `loadSession`.
+
+Run:
+
+```bash
+bun run test:unit --filter=@perseus/web -- persistence.validation-storage.test.ts
+bun run check --filter=@perseus/web
+```
+
+Expected: PASS.
+
+- [ ] **Step 3: Write failing server geometry parity tests**
+
+In `galleryProgress.test.ts`, inject a spy adapter whose `peekSession` captures the context and
+returns missing. Use explicit expected tuples; do not compute expected tuples through the same
+production formula.
 
 ```ts
 const expectedSquare4 = [
@@ -250,113 +257,151 @@ const expectedPortrait12 = [
 ];
 ```
 
-Test table:
+Feed summaries for `1:1`/4, `4:3`/12, and `3:4`/12 and assert the captured context `pieces`
+exactly equal these arrays.
+
+Also pass a runtime-corrupt value through a cast:
 
 ```ts
-[
-	{ aspectRatio: '1:1', pieceCount: 4, rows: 2, cols: 2, pieces: expectedSquare4 },
-	{ aspectRatio: '4:3', pieceCount: 12, rows: 3, cols: 4, pieces: expectedLandscape12 },
-	{ aspectRatio: '3:4', pieceCount: 12, rows: 4, cols: 3, pieces: expectedPortrait12 }
-]
-```
-
-For each row assert `gridRows`, `gridCols`, `pieceIds`, and `pieces`. This is the parity fence
-against the workflow, Quick Puzzle generator, and E2E builder contracts; do not replace it with a
-new shared helper.
-
-- [ ] **Step 3: Add runtime-summary guard and invalid-cleanup tests**
-
-Cover:
-
-- a summary with no `aspectRatio` is skipped and its raw progress key remains untouched;
-- a runtime summary with `aspectRatio: '16:9'` is skipped without throwing and without calling
-  `loadSession`;
-- the raw progress key for that invalid-aspect candidate remains untouched because no trustworthy
-  context exists;
-- `schemaVersion: 999` under a valid candidate key is removed through the existing adapter;
-- a current-schema snapshot with a wrong canonical placement is removed through the adapter;
-- processing/failed summaries never call `loadSession`.
-
-Create the runtime-invalid summary without weakening production types:
-
-```ts
-const badAspect = {
-	...serverPuzzle,
+const corrupt = {
+	id: 'bad',
+	name: 'Bad',
+	pieceCount: 4,
+	status: 'ready',
 	aspectRatio: '16:9'
 } as unknown as PuzzleSummary;
 ```
 
-For geometry corruption, clone `validSnapshot()` and change one placement from
-`{ pieceId: 0, x: 0, y: 0 }` to `{ pieceId: 0, x: 1, y: 0 }`.
+Assert discovery does not throw and never calls `peekSession` for that candidate.
 
-- [ ] **Step 4: Add selection, completion-preservation, and Quick Puzzle tests**
-
-Cover:
-
-- two valid resumable current candidates choose the greatest `lastUpdated`;
-- a fresh/no-activity snapshot is absent from `byPuzzleId`;
-- a later valid completed snapshot is absent and does not displace an older resumable snapshot;
-- the completed snapshot's storage key remains present after discovery;
-- a `StoredQuickPuzzle` with canonical 2x2 metadata and a local-source session is discoverable
-  without any server summary.
-
-For a completed snapshot, start from `validSnapshot()` and set:
-
-```ts
-lifecycle: 'completed',
-placedPieces: fullBoardPlacements(),
-sealedCompletion: seal(),
-lastUpdated: 2_000
-```
-
-For the Quick Puzzle snapshot set:
-
-```ts
-puzzleId: 'q-test',
-source: 'local'
-```
-
-- [ ] **Step 5: Implement guarded candidate construction and discovery**
-
-In `galleryProgress.ts`:
-
-1. import `getGridDimensionsForAspectRatio`, `isPuzzleAspectRatio`, and
-   `isValidPieceCountForAspectRatio` from `@perseus/types`;
-2. create/use the injected `SessionStorageAdapter`;
-3. turn eligible server summaries into contexts using the guarded helper above;
-4. turn provided Quick Puzzle metadata into contexts using stored canonical coordinates;
-5. for each candidate call `loadSession(candidate.id, context)`;
-6. ignore `missing` results;
-7. for `loaded`, call `isResumable(snapshot)` and ignore false without clearing;
-8. map resumable snapshots to `GalleryProgress` using `snapshot.placedPieces.length` and
-   `snapshot.lastUpdated`;
-9. fill one `Map<string, GalleryProgress>`;
-10. track the greatest `lastUpdated` in the same pass.
-
-Do not enumerate arbitrary localStorage keys, add a second parser, or introduce a shared geometry
-abstraction.
-
-- [ ] **Step 6: Run the focused service tests and web type check**
+Run:
 
 ```bash
 bun run test:unit --filter=@perseus/web -- gameplay/galleryProgress.test.ts
+```
+
+Expected: FAIL because `discoverGalleryProgress` does not exist.
+
+- [ ] **Step 4: Add failing discovery behavior tests**
+
+Use `validSnapshot()`, `fullBoardPlacements()`, `seal()`, and `memoryStorage()` to cover:
+
+```ts
+it('selects the greatest lastUpdated resumable current candidate', () => {
+	// API pz1 lastUpdated 1_000, Quick q-test lastUpdated 2_000.
+	// Expect newest.puzzleId === 'q-test'.
+});
+
+it('returns placed counts for matching ready server cards', () => {
+	// validSnapshot() has two placements.
+	// Expect byPuzzleId.get('pz1')?.placedCount === 2.
+});
+
+it('ignores completed snapshots without deleting them', () => {
+	// lifecycle completed + fullBoardPlacements() + seal().
+	// Expect no progress result and the raw storage key remains.
+});
+
+it('ignores invalid snapshots without deleting them', () => {
+	// schemaVersion 999 or canonical-placement mismatch.
+	// Expect no progress result and the raw storage key remains.
+});
+```
+
+For Quick Puzzle coverage, construct a `StoredQuickPuzzle` with a 2x2 `pieces` array and a local
+snapshot cloned from `validSnapshot()` with `puzzleId: 'q-test'` and `source: 'local'`.
+
+- [ ] **Step 5: Implement `discoverGalleryProgress`**
+
+Private server helper:
+
+```ts
+function serverValidationContext(puzzle: PuzzleSummary): SessionValidationContext | null {
+	if (puzzle.status !== 'ready') return null;
+	if (!isPuzzleAspectRatio(puzzle.aspectRatio)) return null;
+	if (!isValidPieceCountForAspectRatio(puzzle.pieceCount, puzzle.aspectRatio)) return null;
+
+	const { rows, cols } = getGridDimensionsForAspectRatio(puzzle.pieceCount, puzzle.aspectRatio);
+	const pieces = Array.from({ length: puzzle.pieceCount }, (_, id) => ({
+		id,
+		correctX: id % cols,
+		correctY: Math.floor(id / cols)
+	}));
+
+	return {
+		puzzleId: puzzle.id,
+		source: 'api',
+		pieceIds: pieces.map((piece) => piece.id),
+		gridCols: cols,
+		gridRows: rows,
+		pieceCount: puzzle.pieceCount,
+		pieces
+	};
+}
+```
+
+Private Quick helper:
+
+```ts
+function quickValidationContext(puzzle: StoredQuickPuzzle): SessionValidationContext {
+	return {
+		puzzleId: puzzle.id,
+		source: 'local',
+		pieceIds: puzzle.pieces.map((piece) => piece.id),
+		gridCols: puzzle.gridCols,
+		gridRows: puzzle.gridRows,
+		pieceCount: puzzle.pieceCount,
+		pieces: puzzle.pieces.map(({ id, correctX, correctY }) => ({ id, correctX, correctY }))
+	};
+}
+```
+
+Discovery loop behavior for every candidate:
+
+```ts
+const result = sessionStorage.peekSession(candidate.puzzleId, candidate.context);
+if (result.status !== 'loaded') continue;
+if (!sessionStorage.isResumable(result.snapshot)) continue;
+
+const progress: GalleryProgress = {
+	puzzleId: candidate.puzzleId,
+	name: candidate.name,
+	source: candidate.source,
+	placedCount: result.snapshot.placedPieces.length,
+	pieceCount: candidate.pieceCount,
+	lastUpdated: result.snapshot.lastUpdated
+};
+```
+
+Add API progress to `byPuzzleId`; Quick progress participates in `newest` but does not need a
+server-card map entry. Track the greatest `lastUpdated` while processing candidates.
+
+Run:
+
+```bash
+bun run test:unit --filter=@perseus/web -- \
+  persistence.validation-storage.test.ts \
+  gameplay/galleryProgress.test.ts
 bun run check --filter=@perseus/web
 ```
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add \
+  apps/web/src/lib/services/gameplay/session/types.ts \
+  apps/web/src/lib/services/gameplay/session/persistence.ts \
+  apps/web/src/lib/services/gameplay/session/persistence.validation-storage.test.ts \
   apps/web/src/lib/services/gameplay/galleryProgress.ts \
   apps/web/src/lib/services/gameplay/galleryProgress.test.ts
-git commit -m "feat(web): discover resumable gallery progress"
+git commit -m "feat(web): discover resumable gallery progress safely"
 ```
 
 ---
 
-## Task 2: Make PuzzleCard Present Continue Progress
+## Task 2: Show Touch-Visible Continue Progress on Puzzle Cards
 
 **Files:**
 
@@ -365,28 +410,44 @@ git commit -m "feat(web): discover resumable gallery progress"
 
 **Interfaces:**
 
-- Consumes: `PuzzleSummary` and optional `placedCount: number` supplied by the gallery.
-- Produces: no new domain API; only rendering changes.
+- Consumes: `puzzle: PuzzleSummary`, optional `placedCount?: number`.
+- Produces: presentation only.
 
-- [ ] **Step 1: Write failing component tests**
+- [ ] **Step 1: Write failing component tests for the always-visible signal**
 
 Add:
 
 ```ts
-render(PuzzleCard, { puzzle: mockPuzzle, placedCount: 7 });
+it('shows always-visible Continue progress for a resumable card', async () => {
+	render(PuzzleCard, { puzzle: mockPuzzle, placedCount: 7 });
+
+	await expect.element(page.getByText('CONTINUE · 7/25 PLACED')).toBeVisible();
+	await expect.element(page.getByTestId('puzzle-card')).toHaveAttribute(
+		'href',
+		'/puzzle/test-puzzle-123'
+	);
+});
 ```
 
-Assert:
+Retain/add:
 
-- overlay contains `CONTINUE` instead of `PLAY`;
-- metadata contains `7/25 PLACED`;
-- card href remains `/puzzle/test-puzzle-123`.
+```ts
+it('keeps the normal piece count without progress', async () => {
+	render(PuzzleCard, { puzzle: mockPuzzle });
+	await expect.element(page.getByText('25 PCS')).toBeVisible();
+});
 
-Also retain/add assertions that:
+it('does not expose Continue progress for non-ready cards', async () => {
+	render(PuzzleCard, {
+		puzzle: { ...mockPuzzle, status: 'processing' },
+		placedCount: 7
+	});
+	await expect.element(page.getByText(/CONTINUE/)).not.toBeInTheDocument();
+});
+```
 
-- no `placedCount` keeps `PLAY` and `25 PCS`;
-- a processing or failed card does not expose `CONTINUE` even if a caller supplies
-  `placedCount`.
+Keep the existing assertion that `card-overlay` has `aria-hidden="true"`. Do not assert overlay
+visibility as the user-facing Continue behavior.
 
 Run:
 
@@ -394,9 +455,9 @@ Run:
 bun run test:unit --filter=@perseus/web -- PuzzleCard.svelte.test.ts
 ```
 
-Expected: FAIL because `placedCount` is not yet a prop.
+Expected: FAIL because `placedCount` and the Continue metadata do not exist.
 
-- [ ] **Step 2: Add the optional prop and derived presentation state**
+- [ ] **Step 2: Add the optional prop and user-facing metadata**
 
 ```ts
 interface Props {
@@ -409,26 +470,25 @@ const isReady = $derived(puzzle.status === 'ready');
 const hasProgress = $derived(isReady && placedCount !== undefined);
 ```
 
-Use:
-
-```svelte
-▶ {hasProgress ? 'CONTINUE' : 'PLAY'}
-```
-
-and:
+Replace the always-visible piece-count text with:
 
 ```svelte
 {#if hasProgress}
-	{placedCount}/{puzzle.pieceCount} PLACED
+	CONTINUE · {placedCount}/{puzzle.pieceCount} PLACED
 {:else}
 	{puzzle.pieceCount} PCS
 {/if}
 ```
 
-Do not change the link destination, thumbnail behavior, category badge, best-time read, or
-processing/failed behavior. `PuzzleCard` must not read persistence itself.
+For desktop consistency, the existing `aria-hidden` hover/focus overlay may render:
 
-- [ ] **Step 3: Run component tests and type check**
+```svelte
+▶ {hasProgress ? 'CONTINUE' : 'PLAY'}
+```
+
+Do not change its opacity/hover mechanics and do not make it the only Continue signal.
+
+Run:
 
 ```bash
 bun run test:unit --filter=@perseus/web -- PuzzleCard.svelte.test.ts
@@ -437,18 +497,18 @@ bun run check --filter=@perseus/web
 
 Expected: PASS.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
 git add \
   apps/web/src/lib/components/PuzzleCard.svelte \
   apps/web/src/lib/components/__tests__/PuzzleCard.svelte.test.ts
-git commit -m "feat(web): show Continue progress on gallery cards"
+git commit -m "feat(web): show touch-visible gallery progress"
 ```
 
 ---
 
-## Task 3: Wire Discovery into the Gallery Page and Verify the Wiring
+## Task 3: Wire One-Time Quick Discovery into the Gallery
 
 **Files:**
 
@@ -457,47 +517,13 @@ git commit -m "feat(web): show Continue progress on gallery cards"
 
 **Interfaces:**
 
-- Consumes: `listQuick(): StoredQuickPuzzle[]` and
+- Consumes: `listQuick(): StoredQuickPuzzle[]`,
   `discoverGalleryProgress({ serverPuzzles, quickPuzzles })`.
-- Produces: `GalleryProgressDiscovery` page state used by the Continue section and `PuzzleCard`
-  props.
-
-### Page state
-
-Add imports:
-
-```ts
-import { listQuick } from '$lib/services/quickPuzzle';
-import {
-	discoverGalleryProgress,
-	type GalleryProgressDiscovery
-} from '$lib/services/gameplay/galleryProgress';
-```
-
-Initialize:
-
-```ts
-let localProgress: GalleryProgressDiscovery = $state({
-	byPuzzleId: new Map(),
-	newest: null
-});
-```
-
-Add one client-side effect tied to the current server results:
-
-```ts
-$effect(() => {
-	const serverPuzzles = puzzles;
-	localProgress = discoverGalleryProgress({
-		serverPuzzles,
-		quickPuzzles: listQuick()
-	});
-});
-```
-
-Do not add timers, storage listeners, or retained catalogs.
+- Produces: page-local `GalleryProgressDiscovery` used by the Continue panel and card props.
 
 - [ ] **Step 1: Add deterministic route-test mocks**
+
+Mock both boundaries:
 
 ```ts
 vi.mock('$lib/services/quickPuzzle', () => ({
@@ -512,7 +538,7 @@ vi.mock('$lib/services/gameplay/galleryProgress', () => ({
 }));
 ```
 
-Import the mocked functions in the test and reset both in `beforeEach`:
+Import the mocked functions and reset them in `beforeEach`:
 
 ```ts
 const mockedListQuick = vi.mocked(listQuick);
@@ -522,9 +548,9 @@ mockedListQuick.mockReturnValue([]);
 mockedDiscoverGalleryProgress.mockReturnValue({ byPuzzleId: new Map(), newest: null });
 ```
 
-- [ ] **Step 2: Write a failing test for the actual discovery call arguments**
+- [ ] **Step 2: Write the failing one-time Quick read + wiring test**
 
-Set explicit server and Quick Puzzle arrays:
+Use explicit arrays:
 
 ```ts
 const serverPuzzles = [
@@ -541,9 +567,7 @@ mockedFetchPuzzles.mockResolvedValue({
 mockedListQuick.mockReturnValue(quickPuzzles);
 ```
 
-Render the page, wait for the fetched card, then assert that **some** discovery call contains the
-resolved current arrays. Do not assert exact call count because the effect may run once with the
-initial empty `puzzles` value:
+After render and initial server load:
 
 ```ts
 await vi.waitFor(() => {
@@ -552,15 +576,11 @@ await vi.waitFor(() => {
 		quickPuzzles
 	});
 });
+expect(mockedListQuick).toHaveBeenCalledTimes(1);
 ```
 
-This test must fail before the page wiring exists even though the discovery service itself is
-mocked.
-
-- [ ] **Step 3: Write a failing replacement-data wiring test**
-
-Reuse the existing search/refetch pattern. Return `initialPuzzles` for the first request and
-`filteredPuzzles` for `q=forest`. After the filtered result is visible, assert:
+Then trigger a search replacement using the route test's existing debounce/refetch pattern.
+After the replacement result is visible:
 
 ```ts
 await vi.waitFor(() => {
@@ -569,44 +589,96 @@ await vi.waitFor(() => {
 		quickPuzzles
 	});
 });
+expect(mockedListQuick).toHaveBeenCalledTimes(1);
 ```
 
-Also assert no later matching call reintroduces `initialPuzzles`. This proves the effect follows
-the current replacement array instead of retaining a stale catalog.
+This proves server mutations recompute progress without rerunning the Quick Puzzle reaper/parser.
 
-- [ ] **Step 4: Write failing presentation tests**
+Run:
 
-For the standalone Quick Puzzle Continue section, return:
+```bash
+bun run test:unit --filter=@perseus/web -- routes/page.svelte.test.ts
+```
+
+Expected: FAIL because the page does not call these boundaries yet.
+
+- [ ] **Step 3: Write failing panel/card-overlap and Quick-panel tests**
+
+For a server overlap, mock discovery with the same `p1` as both `newest` and a map entry:
 
 ```ts
-{
-	byPuzzleId: new Map(),
-	newest: {
-		puzzleId: 'q-local',
-		name: 'Local Sunset',
-		source: 'local',
-		placedCount: 3,
-		pieceCount: 16,
-		lastUpdated: 2_000
-	}
-}
+const progress = {
+	puzzleId: 'p1',
+	name: 'Resume Me',
+	source: 'api' as const,
+	placedCount: 2,
+	pieceCount: 4,
+	lastUpdated: 2_000
+};
+
+mockedDiscoverGalleryProgress.mockReturnValue({
+	byPuzzleId: new Map([['p1', progress]]),
+	newest: progress
+});
 ```
 
-Assert:
+Assert both are visible:
 
-- `continue-on-device` region is visible;
-- `Local Sunset` is visible;
-- `3/16 PLACED` is visible;
-- link href is `/puzzle/q-local`.
+```ts
+await expect.element(page.getByTestId('continue-on-device')).toBeVisible();
+await expect.element(page.getByTestId('continue-on-device')).toHaveTextContent('Resume Me');
+await expect.element(page.getByText('CONTINUE · 2/4 PLACED')).toBeVisible();
+```
 
-For matching server-card progress, mock two ready summaries and return discovery with only `p1`
-in `byPuzzleId`. Assert `p1` shows `CONTINUE` + progress while `p2` retains `PLAY` + normal count.
+For Quick-only newest, return `newest` with `puzzleId: 'q-local'`, `source: 'local'`, and an empty
+`byPuzzleId`. Assert the Continue panel links to `/puzzle/q-local` without adding a Quick card.
 
-- [ ] **Step 5: Render the standalone Continue section**
+- [ ] **Step 4: Implement mount-time Quick read and reactive discovery**
 
-Place it after the gallery header/search controls and before the main loading/error/grid branch so
-a valid persisted Quick Puzzle continuation remains visible even if the server list is loading or
-unavailable:
+Add:
+
+```ts
+import { onMount } from 'svelte';
+import { listQuick } from '$lib/services/quickPuzzle';
+import type { StoredQuickPuzzle } from '$lib/services/quickPuzzle/types';
+import {
+	discoverGalleryProgress,
+	type GalleryProgressDiscovery
+} from '$lib/services/gameplay/galleryProgress';
+```
+
+State:
+
+```ts
+let quickPuzzles: StoredQuickPuzzle[] = $state([]);
+let localProgress: GalleryProgressDiscovery = $state({
+	byPuzzleId: new Map(),
+	newest: null
+});
+```
+
+Read Quick metadata once:
+
+```ts
+onMount(() => {
+	quickPuzzles = listQuick();
+});
+```
+
+Recompute from current arrays without calling `listQuick()` inside the effect:
+
+```ts
+$effect(() => {
+	const serverPuzzles = puzzles;
+	const localPuzzles = quickPuzzles;
+	localProgress = discoverGalleryProgress({
+		serverPuzzles,
+		quickPuzzles: localPuzzles
+	});
+});
+```
+
+Render the compact panel before the main loading/error/grid branch:
 
 ```svelte
 {#if localProgress.newest}
@@ -621,9 +693,7 @@ unavailable:
 {/if}
 ```
 
-Keep it compact: no carousel, history expansion, delete/recovery action, or image fetch.
-
-- [ ] **Step 6: Pass progress into matching server cards**
+Pass server-card progress:
 
 ```svelte
 {#each puzzles as puzzle (puzzle.id)}
@@ -634,9 +704,9 @@ Keep it compact: no carousel, history expansion, delete/recovery action, or imag
 {/each}
 ```
 
-Do not modify search, pagination, total counts, or fetch parameters.
+Do not change search, pagination, totals, or fetch parameters.
 
-- [ ] **Step 7: Run the focused page/service/component fence**
+Run:
 
 ```bash
 bun run test:unit --filter=@perseus/web -- \
@@ -648,7 +718,7 @@ bun run check --filter=@perseus/web
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add apps/web/src/routes/+page.svelte apps/web/src/routes/page.svelte.test.ts
@@ -668,29 +738,17 @@ git commit -m "feat(web): surface resumable progress in gallery"
 
 **Interfaces:**
 
-- Consumes: production-validated persisted-state seeds and deterministic fixture metadata.
-- Produces: one browser smoke test proving service → page → existing puzzle-route navigation.
+- Consumes: production-validated persisted seed + deterministic fixture metadata/detail routes.
+- Produces: one browser-level proof of panel/card overlap and navigation.
 
 - [ ] **Step 1: Generalize the gallery mock helper to `PuzzleSummary[]`**
 
-Import `PuzzleSummary` and change the local helpers from the narrow
-`{ id; name; pieceCount }[]` shape to `PuzzleSummary[]`. Existing tests can keep their current
-fixtures; the new test supplies `status` and `aspectRatio` explicitly.
+Import `PuzzleSummary` and change the local list helper to accept that shared type so the new test
+can provide `status` and `aspectRatio`.
 
-- [ ] **Step 2: Write the failing browser test using a production-validated seed**
+- [ ] **Step 2: Write the browser test with a production-validated partial seed**
 
 Use fixture `e2e-square-4`:
-
-```ts
-import { getFixture } from './gameplay-fixtures/catalog';
-import {
-	buildMinimalSeed,
-	createPersistedStateController
-} from './gameplay-fixtures/persisted-state';
-import { createFixtureRouter } from './gameplay-fixtures/fixture-router';
-```
-
-Build the partial snapshot from the fixture:
 
 ```ts
 const fixtureId = 'e2e-square-4';
@@ -711,7 +769,7 @@ const seed = {
 };
 ```
 
-Mock the gallery with:
+Mock the gallery list with:
 
 ```ts
 {
@@ -723,28 +781,34 @@ Mock the gallery with:
 }
 ```
 
-Navigate to `/` once to establish the origin, call
-`createPersistedStateController().seedValid(page, fixtureId, seed)`, then reload.
+Navigate to `/` once to establish origin, seed with
+`createPersistedStateController().seedValid(page, fixtureId, seed)`, install the existing fixture
+router for detail/asset requests, and reload.
 
-Assert:
+Assert both overlapping surfaces explicitly:
 
-- `continue-on-device` is visible;
-- `1/4 PLACED` is visible;
-- the matching gallery card presents `CONTINUE`;
-- clicking the Continue link navigates to `/puzzle/e2e-square-4`.
+```ts
+await expect(page.getByTestId('continue-on-device')).toContainText('Resume Fixture');
+await expect(page.getByTestId('continue-on-device')).toContainText('1/4 PLACED');
+await expect(page.getByTestId('puzzle-card')).toContainText('CONTINUE · 1/4 PLACED');
+```
 
-Install the deterministic fixture router before the click so the puzzle detail request never hits
-a real backend. Do not create a second E2E persistence helper.
+Click the panel's Continue link and assert the existing route opens:
 
-Run the new test by title first:
+```ts
+await page.getByTestId('continue-on-device').getByRole('link', { name: 'CONTINUE' }).click();
+await expect(page).toHaveURL(/\/puzzle\/e2e-square-4/);
+```
+
+Run:
 
 ```bash
 cd apps/web
 bunx playwright test e2e/gallery.spec.ts --project=chromium-desktop \
-  --grep "shows current-device progress and continues the newest available session"
+  --grep "shows current-device progress and continues the newest session"
 ```
 
-Expected before Tasks 1-3 are implemented: FAIL on missing Continue UI. After Tasks 1-3: PASS.
+Expected: PASS after Tasks 1-3.
 
 - [ ] **Step 3: Run the complete gallery E2E file**
 
@@ -764,7 +828,7 @@ git commit -m "test(web): cover gallery resume flow"
 
 ---
 
-## Task 5: Final Verification and Scope Fence
+## Task 5: Final Verification
 
 - [ ] **Step 1: Run the complete web unit suite**
 
@@ -781,8 +845,7 @@ bun run check --filter=@perseus/web
 bun run lint
 ```
 
-Expected: PASS, subject only to already-documented unchanged baseline warnings if any. Do not
-silently classify a new warning as baseline.
+Expected: PASS; do not classify a new warning as baseline.
 
 - [ ] **Step 3: Run the production web build**
 
@@ -792,7 +855,7 @@ bun run build --filter=@perseus/web
 
 Expected: PASS.
 
-- [ ] **Step 4: Run gallery smoke plus existing gameplay smoke**
+- [ ] **Step 4: Run gallery and gameplay browser gates**
 
 ```bash
 cd apps/web
@@ -801,97 +864,3 @@ bun run test:e2e:smoke
 ```
 
 Expected: PASS except repository-documented expected skips.
-
-- [ ] **Step 5: Verify the scope fence**
-
-```bash
-git diff --name-only main...HEAD
-git diff --check main...HEAD
-```
-
-Expected production/test files are limited to:
-
-```text
-apps/web/src/lib/services/gameplay/galleryProgress.ts
-apps/web/src/lib/services/gameplay/galleryProgress.test.ts
-apps/web/src/lib/components/PuzzleCard.svelte
-apps/web/src/lib/components/__tests__/PuzzleCard.svelte.test.ts
-apps/web/src/routes/+page.svelte
-apps/web/src/routes/page.svelte.test.ts
-apps/web/e2e/gallery.spec.ts
-```
-
-plus the approved design/plan documents. There must be no changes under:
-
-```text
-apps/api/
-apps/workflows/
-packages/shared/
-packages/types/
-apps/web/src/routes/puzzle/
-```
-
-- [ ] **Step 6: Verify acceptance criteria explicitly**
-
-Check the implementation against HPA-218:
-
-- the single Continue entry is the greatest-`lastUpdated` resumable session among current ready
-  gallery summaries plus surviving `listQuick()` metadata;
-- matching ready server cards show placed/total and Continue;
-- completed sessions are ignored without deletion;
-- invalid current-schema data is cleared by the existing adapter only when a trustworthy
-  validation context exists;
-- missing or runtime-invalid server aspect ratios are skipped without throwing or deleting their
-  unvalidated progress;
-- server geometry parity tests cover supported 2x2, 3x4, and 4x3 row-major layouts;
-- page tests prove discovery receives current fetched summaries and exact `listQuick()` data,
-  including after a replacement fetch;
-- server discovery uses current gallery summaries only;
-- Quick Puzzle discovery uses `listQuick()` only;
-- network traffic does not increase per card;
-- Continue links use the existing puzzle route.
-
-- [ ] **Step 7: Scan for scope-expanding residue**
-
-```bash
-git diff main...HEAD -- \
-  apps/web/src/lib/services/gameplay/galleryProgress.ts \
-  apps/web/src/routes/+page.svelte \
-  apps/web/src/lib/components/PuzzleCard.svelte
-```
-
-Reject the implementation if it introduces any of these concepts:
-
-```text
-history route
-recent-session catalog
-storage event listener
-server validation endpoint
-puzzle detail fetch for progress
-legacy session migration
-analytics
-cloud progress
-account progress
-row-major shared helper
-```
-
-- [ ] **Step 8: Commit any verification-only correction if required**
-
-Do not create a cleanup commit when no file changed. If verification exposes a real issue, add a
-focused regression test, rerun the affected fence, and commit only that correction.
-
-## Implementation Notes
-
-- HPA-557 can merge before or after this work. HPA-218 intentionally does not edit the puzzle
-  route, so ordinary rebasing should be limited to gallery-adjacent conflicts if main changes.
-- Do not convert the discovery result into a Svelte store. The gallery page is the only consumer
-  in this scope.
-- Do not scan all localStorage keys. Candidate-driven reads enforce the requirement that server
-  progress appears only when the page already has matching puzzle metadata.
-- Do not remove a completed snapshot simply because `isResumable` returns false; completion
-  effect reconciliation belongs to the existing puzzle hydration path.
-- Treat malformed summary metadata differently from invalid session data: without a trustworthy
-  `SessionValidationContext`, skip the summary and leave its progress record untouched.
-- The row-major contract remains private to `galleryProgress.ts` in this ticket. Explicit parity
-  tests are the maintenance boundary; extracting a shared helper is deferred until a real change
-  requires one.
