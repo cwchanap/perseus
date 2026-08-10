@@ -119,9 +119,9 @@ test.describe('Main Gallery Page', () => {
 				status: 'ready'
 			}
 		]);
+		await createFixtureRouter().install(page);
 		await page.goto('/');
 		await createPersistedStateController().seedValid(page, fixtureId, seed);
-		await createFixtureRouter().install(page);
 		await page.reload();
 
 		await expect(page.getByTestId('continue-on-device')).toContainText('Resume Fixture');
