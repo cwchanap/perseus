@@ -58,7 +58,7 @@ Result: all files matched Prettier code style; no diff errors.
 
 ## Commit
 
-`6e6b533` — `fix(web): skip malformed quick gallery candidates`
+`2dbe06e` — `fix(web): skip malformed quick gallery candidates`
 
 ## Self-review
 
