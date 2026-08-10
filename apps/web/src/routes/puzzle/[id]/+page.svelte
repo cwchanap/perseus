@@ -5,13 +5,12 @@
 	import { ApiError, recordCompletion } from '$lib/services/api';
 	import { loadPuzzleSource, type LoadedPuzzleSource } from '$lib/services/puzzleSource';
 	import { getBestTime, recordLocalCompletion } from '$lib/services/stats';
-	import { formatTime } from '$lib/stores/timer';
 	import type { TimerState } from '$lib/stores/timer';
 	import type { Puzzle, PlacedPiece } from '$lib/types/puzzle';
 	import type { Rotation } from '$lib/types/gameplay';
-	import { modalFocus } from '$lib/actions/modalFocus';
 	import PuzzleBoardPanel from '$lib/components/PuzzleBoardPanel.svelte';
 	import PuzzleInventoryPanel from '$lib/components/PuzzleInventoryPanel.svelte';
+	import PuzzleCompletionDialog from '$lib/components/PuzzleCompletionDialog.svelte';
 	import MissionSetupDialog from '$lib/components/MissionSetupDialog.svelte';
 	import SessionPauseDialog from '$lib/components/SessionPauseDialog.svelte';
 	import ExitSessionDialog from '$lib/components/ExitSessionDialog.svelte';
@@ -1192,70 +1191,19 @@
 
 <!-- Mission Complete Modal -->
 {#if showCelebration}
-	<div
-		class="modal-backdrop"
-		data-testid="celebration-modal"
-		role="presentation"
-		onkeydown={(e) => e.key === 'Escape' && (showCelebration = false)}
-	>
-		<div
-			class="modal-box"
-			role="dialog"
-			aria-modal="true"
-			aria-labelledby="modal-title"
-			use:modalFocus
-		>
-			<div class="modal-scan-line"></div>
-			<div class="modal-top-line"></div>
-
-			<div class="modal-tag">// MISSION COMPLETE</div>
-			{#if showTimedPresentation}
-				<div class="modal-rank">S RANK</div>
-			{/if}
-
-			<h2 id="modal-title" class="modal-title">{puzzle?.name?.toUpperCase()}</h2>
-
-			{#if showTimedPresentation}
-				<div class="modal-stats">
-					<div class="modal-stat">
-						<span class="mstat-label">FINAL TIME</span>
-						<span class="mstat-value">{formatTime(timerState.elapsed)}</span>
-					</div>
-					{#if isNewBest}
-						<div class="modal-stat new-best">
-							<span class="mstat-label">PERSONAL BEST</span>
-							<span class="mstat-value gold">{formatTime(bestTime ?? timerState.elapsed)}</span>
-							{#if localStatsFailed}
-								<span class="new-record-badge unsaved" data-testid="new-best-unsaved">UNSAVED</span>
-							{:else}
-								<span class="new-record-badge">NEW RECORD</span>
-							{/if}
-						</div>
-					{/if}
-				</div>
-			{/if}
-
-			<div class="modal-bottom-line"></div>
-
-			{#if serverSubmissionRetryable}
-				<div class="modal-server-retry" role="alert" data-testid="server-retry-banner">
-					<span class="server-retry-label">MISSION SYNC FAILED</span>
-					<button
-						onclick={handleRetryServerSubmission}
-						class="arcade-btn-ghost"
-						data-testid="retry-server-submission"
-					>
-						RETRY SYNC
-					</button>
-				</div>
-			{/if}
-
-			<div class="modal-actions">
-				<button onclick={handlePlayAgain} class="arcade-btn">PLAY AGAIN</button>
-				<button onclick={requestReturnToArcade} class="arcade-btn-ghost">BACK TO ARCADE</button>
-			</div>
-		</div>
-	</div>
+	<PuzzleCompletionDialog
+		puzzleName={puzzle?.name ?? ''}
+		timed={showTimedPresentation}
+		elapsedSeconds={timerState.elapsed}
+		{bestTime}
+		{isNewBest}
+		{localStatsFailed}
+		{serverSubmissionRetryable}
+		onRetryServerSubmission={handleRetryServerSubmission}
+		onPlayAgain={handlePlayAgain}
+		onBackToArcade={requestReturnToArcade}
+		onDismiss={() => (showCelebration = false)}
+	/>
 {/if}
 
 <!-- Mission Setup Modal (outside the inert page) -->
@@ -1520,170 +1468,6 @@
 		}
 	}
 
-	/* ===== CELEBRATION MODAL ===== */
-	.modal-backdrop {
-		position: fixed;
-		inset: 0;
-		z-index: 50;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		background: rgba(4, 4, 13, 0.9);
-		backdrop-filter: blur(6px);
-	}
-
-	.modal-box {
-		position: relative;
-		background: var(--bg-1);
-		border: 1px solid var(--accent);
-		padding: 2.5rem 2rem;
-		text-align: center;
-		max-width: 24rem;
-		width: calc(100% - 2rem);
-		box-shadow:
-			0 0 60px var(--accent-glow-strong),
-			0 0 120px var(--accent-glow),
-			inset 0 0 60px rgba(0, 240, 255, 0.03);
-		animation: celebration-in 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
-		overflow: hidden;
-	}
-
-	/* Animated scan line inside modal */
-	.modal-scan-line {
-		position: absolute;
-		left: 0;
-		right: 0;
-		height: 2px;
-		background: linear-gradient(90deg, transparent, var(--accent-dim), transparent);
-		animation: scan 2s linear infinite;
-		pointer-events: none;
-	}
-
-	@keyframes scan {
-		0% {
-			top: -2px;
-		}
-		100% {
-			top: calc(100% + 2px);
-		}
-	}
-
-	.modal-top-line,
-	.modal-bottom-line {
-		height: 1px;
-		background: linear-gradient(90deg, transparent, var(--accent), transparent);
-		opacity: 0.4;
-		margin: 0.75rem 0;
-	}
-
-	.modal-tag {
-		font-family: var(--font-mono);
-		font-size: 0.6rem;
-		color: var(--accent);
-		letter-spacing: 0.2em;
-		opacity: 0.7;
-		margin-bottom: 0.5rem;
-	}
-
-	.modal-rank {
-		font-family: var(--font-display);
-		font-size: 3rem;
-		font-weight: 900;
-		color: var(--accent);
-		text-shadow:
-			0 0 30px var(--accent),
-			0 0 60px var(--accent-glow-strong);
-		letter-spacing: 0.2em;
-		line-height: 1;
-		animation: neon-flicker 4s ease-in-out infinite;
-	}
-
-	.modal-title {
-		font-family: var(--font-display);
-		font-size: 0.75rem;
-		font-weight: 600;
-		letter-spacing: 0.15em;
-		color: var(--text-1);
-		margin-top: 0.5rem;
-		text-overflow: ellipsis;
-		overflow: hidden;
-		white-space: nowrap;
-	}
-
-	.modal-stats {
-		margin: 1.25rem 0;
-		display: flex;
-		flex-direction: column;
-		gap: 0.75rem;
-	}
-
-	.modal-stat {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 0.2rem;
-	}
-
-	.mstat-label {
-		font-family: var(--font-mono);
-		font-size: 0.58rem;
-		letter-spacing: 0.25em;
-		color: var(--text-2);
-	}
-
-	.mstat-value {
-		font-family: var(--font-mono);
-		font-size: 1.5rem;
-		letter-spacing: 0.1em;
-		color: var(--text-0);
-	}
-
-	.mstat-value.gold {
-		color: var(--gold);
-		text-shadow: 0 0 15px var(--gold-glow);
-	}
-
-	.new-record-badge {
-		font-family: var(--font-display);
-		font-size: 0.55rem;
-		font-weight: 700;
-		letter-spacing: 0.25em;
-		color: var(--gold);
-		border: 1px solid var(--gold-dim);
-		padding: 0.15rem 0.625rem;
-		text-shadow: 0 0 8px var(--gold);
-		box-shadow: 0 0 15px var(--gold-glow);
-	}
-
-	.new-record-badge.unsaved {
-		color: var(--hot, #ff4444);
-		border-color: var(--hot-dim, rgba(255, 68, 68, 0.4));
-		text-shadow: 0 0 8px var(--hot-glow, rgba(255, 68, 68, 0.5));
-		box-shadow: 0 0 12px var(--hot-glow, rgba(255, 68, 68, 0.3));
-	}
-
-	.modal-actions {
-		display: flex;
-		justify-content: center;
-		gap: 0.875rem;
-		flex-wrap: wrap;
-		padding-top: 0.5rem;
-	}
-
-	.modal-server-retry {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 0.5rem;
-		padding: 0.5rem 0 0.25rem;
-	}
-
-	.server-retry-label {
-		color: var(--accent-warn, #ffb86b);
-		font-size: 0.7rem;
-		letter-spacing: 0.12em;
-	}
-
 	/* ===== REDUCED MOTION ACCESSIBILITY ===== */
 	@media (prefers-reduced-motion: reduce) {
 		.progress-bar-fill {
@@ -1696,18 +1480,6 @@
 		}
 
 		.state-label {
-			animation: none;
-		}
-
-		.modal-scan-line {
-			animation: none;
-		}
-
-		.modal-box {
-			animation: none;
-		}
-
-		.modal-rank {
 			animation: none;
 		}
 
