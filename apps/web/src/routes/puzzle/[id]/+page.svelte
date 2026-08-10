@@ -7,12 +7,11 @@
 	import { getBestTime, recordLocalCompletion } from '$lib/services/stats';
 	import { formatTime } from '$lib/stores/timer';
 	import type { TimerState } from '$lib/stores/timer';
-	import { SvelteMap } from 'svelte/reactivity';
-	import type { Puzzle, PlacedPiece, PuzzlePiece as TPuzzlePiece } from '$lib/types/puzzle';
+	import type { Puzzle, PlacedPiece } from '$lib/types/puzzle';
 	import type { Rotation } from '$lib/types/gameplay';
 	import { modalFocus } from '$lib/actions/modalFocus';
 	import PuzzleBoardPanel from '$lib/components/PuzzleBoardPanel.svelte';
-	import PuzzlePiece from '$lib/components/PuzzlePiece.svelte';
+	import PuzzleInventoryPanel from '$lib/components/PuzzleInventoryPanel.svelte';
 	import MissionSetupDialog from '$lib/components/MissionSetupDialog.svelte';
 	import SessionPauseDialog from '$lib/components/SessionPauseDialog.svelte';
 	import ExitSessionDialog from '$lib/components/ExitSessionDialog.svelte';
@@ -267,22 +266,6 @@
 		boardViewResetVersion += 1;
 	}
 
-	const piecesMap = $derived.by(() => {
-		const map = new SvelteMap<number, TPuzzlePiece>();
-		if (puzzle) {
-			for (const piece of puzzle.pieces) {
-				map.set(piece.id, piece);
-			}
-		}
-		return map;
-	});
-
-	const shuffledPieces = $derived(
-		(sessionState?.trayOrder ?? [])
-			.map((id) => piecesMap.get(id))
-			.filter((piece): piece is TPuzzlePiece => piece !== undefined)
-	);
-
 	const progressPct = $derived.by(() => {
 		if (!puzzle || puzzle.pieceCount === 0) return 0;
 		if (placedPieces.length >= puzzle.pieceCount) return 100;
@@ -298,10 +281,6 @@
 	function handleWindowResize() {
 		viewportWidth = window.innerWidth;
 		viewportHeight = window.innerHeight;
-	}
-
-	function getDisplayedRotation(pieceId: number): Rotation {
-		return rotationEnabled ? (pieceRotations[pieceId] ?? 0) : 0;
 	}
 
 	function isPiecePlaced(pieceId: number): boolean {
@@ -1191,49 +1170,21 @@
 				/>
 
 				<!-- Inventory panel -->
-				<div class="inventory-panel">
-					<div class="panel-header">
-						<span class="panel-tag">INVENTORY</span>
-						<span class="inv-count">{currentPuzzle.pieceCount - placedPieces.length} LEFT</span>
-					</div>
-					<div class="pieces-grid">
-						{#each shuffledPieces as piece (piece.id)}
-							{#if !isPiecePlaced(piece.id)}
-								<div
-									class={`piece-slot aspect-square border border-(--border) p-[0.2rem] transition-[border-color,box-shadow] duration-150 ${
-										activeHintPieceId === piece.id
-											? 'hinted border-(--accent) shadow-[0_0_14px_var(--accent-glow)]'
-											: rejectedPiece === piece.id
-												? 'rejected animate-shake border-(--hot) shadow-[0_0_12px_var(--hot-glow)]'
-												: ''
-									}`}
-									style={currentBoardMetrics
-										? `--piece-slot-size: ${currentBoardMetrics.pieceSlotSize}px;`
-										: ''}
-									data-testid={`piece-slot-${piece.id}`}
-								>
-									<PuzzlePiece
-										{piece}
-										isPlaced={false}
-										{rotationEnabled}
-										rotation={getDisplayedRotation(piece.id)}
-										onRotate={handlePieceRotate}
-										resolveImage={puzzleSource!.resolvePieceImage}
-										selected={currentSelectedPieceId === piece.id}
-										onSelect={handleSelectPiece}
-										onCancelSelection={handleCancelSelection}
-									/>
-								</div>
-							{/if}
-						{/each}
-					</div>
-					{#if placedPieces.length === currentPuzzle.pieceCount}
-						<div class="complete-msg">
-							<span class="complete-icon">◆</span>
-							ALL PIECES PLACED
-						</div>
-					{/if}
-				</div>
+				<PuzzleInventoryPanel
+					puzzle={currentPuzzle}
+					boardMetrics={currentBoardMetrics}
+					trayOrder={sessionState?.trayOrder ?? []}
+					{placedPieces}
+					{rotationEnabled}
+					{pieceRotations}
+					selectedPieceId={currentSelectedPieceId}
+					{activeHintPieceId}
+					rejectedPieceId={rejectedPiece}
+					resolveImage={puzzleSource!.resolvePieceImage}
+					onRotate={handlePieceRotate}
+					onSelect={handleSelectPiece}
+					onCancelSelection={handleCancelSelection}
+				/>
 			</div>
 		{/if}
 	</main>
@@ -1569,86 +1520,6 @@
 		}
 	}
 
-	.panel-header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding: 0.625rem 1rem;
-		border-bottom: 1px solid var(--border);
-		background: var(--bg-2);
-	}
-
-	.panel-tag {
-		font-family: var(--font-display);
-		font-size: 0.6rem;
-		font-weight: 600;
-		letter-spacing: 0.2em;
-		color: var(--text-2);
-	}
-
-	/* Inventory panel */
-	.inventory-panel {
-		background: var(--bg-1);
-		border: 1px solid var(--border);
-		display: flex;
-		flex-direction: column;
-	}
-
-	.inv-count {
-		font-family: var(--font-mono);
-		font-size: 0.6rem;
-		color: var(--accent);
-		letter-spacing: 0.15em;
-	}
-
-	.pieces-grid {
-		display: grid;
-		grid-template-columns: repeat(
-			auto-fill,
-			minmax(var(--piece-slot-size), var(--piece-slot-size))
-		);
-		justify-content: center;
-		align-content: start;
-		gap: var(--inventory-gap);
-		padding: var(--inventory-pad);
-		overflow-y: auto;
-		flex: 1;
-	}
-
-	@media (min-width: 640px) and (max-width: 1023px) {
-		.pieces-grid {
-			grid-template-columns: repeat(
-				auto-fill,
-				minmax(var(--piece-slot-size), var(--piece-slot-size))
-			);
-		}
-	}
-
-	.piece-slot {
-		width: var(--piece-slot-size);
-		height: var(--piece-slot-size);
-	}
-
-	.complete-msg {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		gap: 0.5rem;
-		padding: 0.875rem;
-		font-family: var(--font-display);
-		font-size: 0.65rem;
-		font-weight: 700;
-		letter-spacing: 0.2em;
-		color: var(--green);
-		text-shadow: 0 0 12px var(--green);
-		border-top: 1px solid var(--border);
-	}
-
-	.complete-icon {
-		font-size: 0.5rem;
-		text-shadow: 0 0 8px var(--green);
-	}
-
 	/* ===== CELEBRATION MODAL ===== */
 	.modal-backdrop {
 		position: fixed;
@@ -1838,10 +1709,6 @@
 
 		.modal-rank {
 			animation: none;
-		}
-
-		.piece-slot.rejected {
-			box-shadow: none;
 		}
 
 		.arcade-btn:hover {
