@@ -3,134 +3,147 @@
 - **Issue:** HPA-218
 - **Parent:** HPA-215
 - **Date:** 2026-08-09
-- **Last reviewed:** 2026-08-10
-- **Status:** Approved design
+- **Status:** Proposed design — review amendments applied
 
 ## Objective
 
 Make unfinished current-device puzzle sessions visible from the gallery with the smallest useful
 resume experience:
 
-- show one **Continue on this device** entry for the newest valid unfinished session among the
-  puzzle contexts the gallery can currently identify without extra network requests;
-- show placed/total progress on matching server gallery cards and change their action label from
-  **Play** to **Continue**;
-- keep the existing `/puzzle/[id]` route responsible for loading the puzzle and hydrating the
-  persisted session.
+- show one **Continue on this device** entry for the newest resumable session among the puzzle
+  contexts the gallery already knows about;
+- show an always-visible Continue/progress signal on matching ready server cards;
+- keep `/puzzle/[id]` as the only route that loads authoritative puzzle detail and hydrates or
+  clears persisted session state.
 
-The candidate set is deliberately bounded to:
+This remains a gallery-only feature. It does not add a history screen, retained catalog, global
+store, backend endpoint, cloud synchronization, compatibility layer, or analytics.
 
-1. ready server puzzles present in the gallery page's current `PuzzleSummary[]`; and
-2. surviving persisted Quick Puzzles returned by `listQuick()`.
+## Current Seams
 
-This is not a device-global recent-session catalog. A resumable server puzzle that is not in the
-currently loaded gallery summaries is intentionally not discoverable until that summary is loaded
-again.
+The required foundations already exist:
 
-HPA-556 has removed the pre-release persistence compatibility paths, so this feature reads only
-the current `PersistedPuzzleSessionV1` schema. Invalid current-device data is deleted instead of
-migrated or recovered.
+- `apps/web/src/lib/services/gameplay/session/persistence.ts` owns the current
+  `puzzle-progress-${puzzleId}` format, `loadPersistedSession`, the storage adapter, and
+  `isResumable`.
+- `PersistedPuzzleSessionV1.lastUpdated` supplies the ordering signal.
+- `apps/web/src/routes/+page.svelte` owns the current server `PuzzleSummary[]` lifecycle,
+  including search replacement and pagination append.
+- Current `PuzzleSummary` includes `pieceCount`, `status`, and optional `aspectRatio`.
+- Shared puzzle metadata validation cross-checks `pieceCount`, `gridRows`, `gridCols`, and
+  `aspectRatio`, so a listed summary with a valid aspect ratio has trustworthy grid dimensions.
+- Metadata validation does **not** prove that every stored `PuzzlePiece.correctX/correctY` follows
+  the row-major producer convention. Full puzzle-route hydration does have authoritative pieces.
+- Server, Quick Puzzle, and E2E producers currently assign row-major IDs and coordinates:
+  `id = row * cols + col`, `correctX = col`, `correctY = row`.
+- `listQuick()` returns surviving persisted Quick Puzzle metadata, but it is not a pure lookup: it
+  parses complete stored entries and prunes expired/orphaned records, including companion progress
+  and stats keys.
+- `PuzzleCard.svelte` already reads local best-time storage in `onMount`. HPA-218 still keeps
+  progress discovery out of the card because progress requires validation context and global
+  newest-selection, not because the card is completely storage-free today.
 
-## Context and Existing Seams
-
-The required foundation already exists:
-
-- `apps/web/src/lib/services/gameplay/session/persistence.ts` owns the canonical
-  `puzzle-progress-${puzzleId}` key, current-schema parsing, geometry validation, invalid-record
-  cleanup, and `isResumable`.
-- `PersistedPuzzleSessionV1.lastUpdated` provides the ordering signal for the newest session.
-- `isResumable` already implements the product definition needed here: an `active` or `paused`
-  session with user activity and no sealed completion.
-- `apps/web/src/routes/+page.svelte` already owns the currently loaded server `PuzzleSummary[]`
-  and pagination/filter lifecycle.
-- `PuzzleSummary` already includes `pieceCount` and optional `aspectRatio` for current server
-  puzzles.
-- Server puzzle generation uses row-major piece IDs (`row * cols + col`) and canonical
-  coordinates (`correctX = col`, `correctY = row`). The Quick Puzzle generator and deterministic
-  E2E fixture builder use the same contract.
-- `getGridDimensionsForAspectRatio`, `isPuzzleAspectRatio`, and
-  `isValidPieceCountForAspectRatio` already live in `@perseus/types`.
-- `listQuick()` already returns surviving local Quick Puzzle metadata, including grid dimensions
-  and canonical piece coordinates, while pruning expired/orphaned entries.
-- `PuzzleCard.svelte` already owns the server-card action label and compact metadata row.
-- `apps/web/e2e/gameplay-fixtures/persisted-state.ts` already seeds persisted sessions through the
-  production codec before writing them.
-
-The web API client casts a successful JSON object to its TypeScript response type rather than
-runtime-validating every `PuzzleSummary` field. A corrupted or unexpected `aspectRatio` value can
-therefore reach gallery code even though the normal server path should produce valid metadata.
-The gallery context builder must guard the runtime value before calling grid helpers.
-
-HPA-557 is currently changing the puzzle-route presentation boundaries, but HPA-218 does not
-need to modify the puzzle route. Keeping HPA-218 gallery-only avoids coupling this work to that
-in-flight refactor.
+HPA-557 has merged. Its changes are limited to the puzzle route and extracted puzzle presentation
+components, so they do not change these gallery/persistence seams.
 
 ## Product Behavior
 
-### Continue on this device
+### Candidate set and bounded newest semantics
 
-The gallery shows at most one compact **Continue on this device** section. It represents the
-resumable session with the greatest `lastUpdated` value among the currently discoverable puzzle
-contexts:
+The gallery shows at most one **Continue on this device** panel. `newest` means the greatest
+`lastUpdated` among resumable sessions for:
 
-1. ready server puzzles present in the page's current `puzzles` array; and
-2. surviving persisted Quick Puzzles returned by `listQuick()`.
+1. ready server puzzles present in the page's **current** `puzzles` array; and
+2. surviving persisted Quick Puzzles returned by the page's one `listQuick()` call.
 
-The entry shows the puzzle name and placed/total count, then links directly to
-`/puzzle/${puzzleId}`. The puzzle route performs normal source loading and session hydration.
-The gallery does not preload the puzzle or create a second hydration path.
+This is intentionally not device-global discovery. Search/filter replacement can hide a server
+continuation when its summary is no longer loaded. Pagination can make a continuation appear when
+its summary becomes loaded. No previously seen server summaries are retained in a hidden catalog.
 
-A server session is intentionally invisible when its puzzle is not present in the gallery data
-currently held by the page. Search/filter changes can therefore hide that continuation until the
-matching puzzle is loaded again. This follows HPA-218's "already loaded gallery data" constraint
-without creating a retained catalog or cache.
+### Continue panel and matching server card may both render
 
-A Quick Puzzle session may appear only while its existing persisted Quick Puzzle metadata is
-returned by `listQuick()`. Session-only Quick Puzzle metadata that was never persisted is not
-made enumerable for this feature; adding a second cross-source catalog is out of scope.
+If the newest resumable session is a loaded server puzzle, the same puzzle appears in two places:
+
+- the standalone **Continue on this device** panel as the fast resume affordance; and
+- its normal gallery card with progress.
+
+This duplication is intentional. The panel answers "what should I continue now?" while the card
+preserves progress context in the normal gallery. Do not suppress either surface for the matching
+puzzle.
 
 ### Gallery cards
 
-For every ready server card with a valid resumable local session:
+For a ready server card with valid resumable progress:
 
-- the overlay label changes from **PLAY** to **CONTINUE**;
-- the compact piece-count line changes from `N PCS` to `placed/N PLACED`;
-- the card keeps the same `/puzzle/${id}` href and existing best-time display.
+- the normal `/puzzle/${id}` href is unchanged;
+- the always-visible metadata line shows `CONTINUE · placed/total PLACED`;
+- the existing hover/focus overlay may mirror `CONTINUE`, but the overlay remains `aria-hidden`
+  and decorative.
 
-Cards without resumable progress retain today's rendering. Processing and failed cards remain
-non-clickable and never present Continue, even if a stale progress key exists.
+The metadata line is the user-facing state because it works on touch devices where the hover
+layer is never shown. Tests must assert the always-visible metadata, not treat the opacity-zero
+hover overlay as the accessibility or mobile signal.
+
+Cards without resumable progress keep the current piece-count presentation. Processing and failed
+cards remain non-clickable and never show Continue progress.
+
+### Quick Puzzle continuation
+
+Quick Puzzle progress may appear in the standalone Continue panel when the corresponding persisted
+Quick Puzzle metadata survives the existing `listQuick()` pass. HPA-218 does not add Quick Puzzle
+cards to the server gallery and does not make session-only, non-persisted Quick Puzzle metadata
+enumerable.
 
 ### Completed and invalid sessions
 
-A valid completed snapshot is **ignored but not deleted**. Completed persistence can still carry
-completion-effect state that the puzzle route may need to reconcile, so HPA-218 must not treat
-"not resumable" as "safe to clear."
+A valid completed snapshot is not resumable and remains stored. Completion-effect reconciliation
+continues to belong to puzzle-route hydration.
 
-A record is deleted only when the existing current-schema loader reports it invalid. That
-includes malformed JSON, unsupported schema versions, source mismatches, piece/grid mismatches,
-and the existing cross-field validation failures. HPA-218 adds no migration, repair, or fallback
-parser.
+Gallery discovery is **non-destructive**. It may classify a candidate as missing, loaded, or
+invalid, but it must never remove the progress key. This is important because server gallery
+validation reconstructs piece coordinates from the current producer convention rather than
+reading authoritative `PuzzlePiece[]` detail.
 
-If current server summary metadata is insufficient or invalid for constructing a validation
-context, the gallery skips that candidate rather than guessing geometry or deleting progress it
-cannot safely validate. This includes:
+The existing puzzle route keeps the destructive cleanup behavior when the user opens a puzzle:
+it builds `SessionValidationContext` from the authoritative loaded puzzle pieces and calls the
+normal `loadSession` path. Therefore HPA-218's "invalid/mismatched data is cleared rather than
+migrated" rule still applies at the authoritative hydration boundary, not during passive gallery
+rendering.
 
-- missing `aspectRatio`;
-- a runtime `aspectRatio` value that fails `isPuzzleAspectRatio`;
-- an invalid piece-count/aspect-ratio combination;
-- a non-ready summary.
-
-Skipping one bad summary must not abort discovery for other candidates.
+If a server summary lacks a valid runtime `aspectRatio`, has an invalid piece-count/aspect
+combination, or otherwise cannot produce a trustworthy derived context, discovery skips it and
+leaves its persisted session untouched.
 
 ## Recommended Architecture
 
-Add one small service:
+### 1. Add a non-destructive session peek
+
+Extend the existing `SessionStorageAdapter` with one read-only method:
+
+```ts
+export interface SessionStorageAdapter {
+	peekSession(puzzleId: string, context: SessionValidationContext): SessionLoadResult;
+	loadSession(puzzleId: string, context: SessionValidationContext): SessionLoadResult;
+	saveSession(puzzleId: string, snapshot: PersistedPuzzleSessionV1): void;
+	clearSession(puzzleId: string): void;
+	isResumable(snapshot: PersistedPuzzleSessionV1): boolean;
+}
+```
+
+`peekSession` and `loadSession` share the same storage read and `loadPersistedSession` parser.
+Their only difference is invalid handling:
+
+- `peekSession`: return `{ status: 'invalid', reason }` and leave storage untouched;
+- `loadSession`: preserve today's behavior by removing invalid data and returning `missing`.
+
+This keeps one parser/validator while making passive discovery explicitly read-only. Do not add a
+second gallery-local session parser.
+
+### 2. Add one gallery discovery service
+
+Create:
 
 `apps/web/src/lib/services/gameplay/galleryProgress.ts`
-
-It converts the data already available to the gallery into validation contexts, delegates all
-persisted-session validation and cleanup to the existing `SessionStorageAdapter`, and returns a
-view-friendly result.
 
 ```ts
 export interface GalleryProgress {
@@ -154,33 +167,27 @@ export function discoverGalleryProgress(options: {
 }): GalleryProgressDiscovery;
 ```
 
-The service is synchronous because every input and persisted-session read is local. Production
-uses `createSessionStorageAdapter()` by default; tests can inject an adapter backed by an
-in-memory `Storage` or a small spy adapter.
+The service receives its candidate catalogs from the page, builds validation contexts, calls
+`peekSession`, filters with `isResumable`, returns per-server-card progress, and selects the
+largest `lastUpdated` in one pass.
+
+It does not enumerate localStorage keys, call the network, retain old server summaries, or clear
+invalid data.
 
 ### Server candidate construction
 
 For each server summary:
 
 1. require `status === 'ready'`;
-2. require `isPuzzleAspectRatio(puzzle.aspectRatio)` **before** calling any aspect-ratio grid
-   helper;
+2. require `isPuzzleAspectRatio(puzzle.aspectRatio)` **before** any aspect-ratio grid helper;
 3. require `isValidPieceCountForAspectRatio(puzzle.pieceCount, puzzle.aspectRatio)`;
 4. derive `{ rows, cols }` with `getGridDimensionsForAspectRatio`;
-5. construct canonical row-major pieces for IDs `0..pieceCount - 1`;
+5. derive row-major canonical piece descriptors;
 6. build `SessionValidationContext` with source `api`;
-7. call `sessionStorage.loadSession(puzzle.id, context)`;
-8. include the loaded snapshot only when `sessionStorage.isResumable(snapshot)` is true.
+7. call `peekSession`;
+8. include only a loaded, resumable snapshot.
 
-The runtime guard is intentionally local and cheap. Do not catch a thrown grid helper after the
-fact when the input can be rejected first.
-
-Because `loadSession` already removes invalid records, discovery must not add its own deletion or
-session-validation policy.
-
-### Row-major geometry contract
-
-The gallery needs a tiny private derivation:
+The row-major derivation stays private:
 
 ```ts
 const pieces = Array.from({ length: puzzle.pieceCount }, (_, id) => ({
@@ -190,56 +197,47 @@ const pieces = Array.from({ length: puzzle.pieceCount }, (_, id) => ({
 }));
 ```
 
-Do **not** add a new shared `buildRowMajorCanonicalPieces` helper for HPA-218. There are currently
-only a few simple producers and this ticket does not need another public abstraction. Instead,
-lock parity with table-driven tests for representative supported grids:
-
-- `1:1`, 4 pieces → 2x2;
-- `4:3`, 12 pieces → 3x4;
-- `3:4`, 12 pieces → 4x3.
-
-The expected `{ id, correctX, correctY }` tuples must be explicit in the test so a transpose or
-ID-order drift fails visibly. If the production generation contract becomes more complex later,
-extracting a shared helper can be evaluated with real pressure rather than preemptively.
+Do not add a shared row-major helper solely for this ticket. Lock this convention with explicit
+expected tuples for representative `2x2`, `3x4`, and `4x3` grids. If the production coordinate
+contract later gains real complexity, extraction can be reconsidered then.
 
 ### Quick Puzzle candidate construction
 
-For each `StoredQuickPuzzle` returned by `listQuick()`:
+For each provided `StoredQuickPuzzle`, use its persisted `gridCols`, `gridRows`, `pieceCount`, and
+canonical `pieces` directly to build a source `local` validation context. No Quick Puzzle image is
+decoded or rendered during discovery.
 
-1. use its stored `gridCols`, `gridRows`, `pieceCount`, and `pieces` directly;
-2. build `SessionValidationContext` with source `local`;
-3. call the same `loadSession` and `isResumable` path.
+### 3. Read Quick Puzzle metadata once per gallery mount
 
-No Quick Puzzle image is decoded or rendered during discovery.
+`listQuick()` is intentionally called once when the gallery mounts:
 
-### Gallery page integration
+```ts
+let quickPuzzles: StoredQuickPuzzle[] = $state([]);
 
-`+page.svelte` keeps one local discovery result and refreshes it whenever the currently loaded
-`puzzles` array changes. The effect calls `listQuick()` and `discoverGalleryProgress(...)`.
-This is intentionally not a global store:
+onMount(() => {
+	quickPuzzles = listQuick();
+});
 
-- returning to the gallery creates a fresh discovery pass from local persistence;
-- pagination adds candidates naturally when the page appends summaries;
-- search/category replacement naturally removes server candidates no longer in the current
-  result set;
-- no storage-event listener, cache invalidation, or cross-tab synchronization is needed.
+$effect(() => {
+	const serverPuzzles = puzzles;
+	const localPuzzles = quickPuzzles;
+	localProgress = discoverGalleryProgress({
+		serverPuzzles,
+		quickPuzzles: localPuzzles
+	});
+});
+```
 
-The page renders the standalone Continue section from `discovery.newest` and passes the matching
-`placedCount` to `PuzzleCard` from `discovery.byPuzzleId`.
+The discovery effect may rerun when `puzzles` changes and once when `quickPuzzles` is populated.
+It must not call `listQuick()` itself. Search changes and infinite-scroll appends therefore do not
+re-parse large base64 Quick Puzzle records or rerun the Quick Puzzle pruning side effects.
 
-Route tests may mock `discoverGalleryProgress` to keep presentation assertions focused, but they
-must also verify the page wiring itself:
+No storage-event listener or Quick Puzzle cache subsystem is added. Navigating away and back to
+the gallery naturally performs a fresh mount-time read.
 
-- after a server fetch resolves, discovery receives that exact current server summary array and
-  the current `listQuick()` return value;
-- after a search/filter replacement, discovery receives the replacement summary array rather
-  than stale results.
+### 4. Keep `PuzzleCard` presentational for progress
 
-This closes the integration seam without duplicating the service tests inside the route test.
-
-### PuzzleCard contract
-
-Keep `PuzzleCard` presentational with one optional prop:
+Extend its prop surface only:
 
 ```ts
 interface Props {
@@ -248,210 +246,192 @@ interface Props {
 }
 ```
 
-The parent decides whether a session is valid/resumable. `PuzzleCard` does not read localStorage,
-construct validation contexts, or select the newest session.
-
-## Alternatives Considered
-
-### 1. Central gallery discovery service — recommended
-
-**Pros**
-
-- reuses the canonical persistence validator and invalid cleanup;
-- performs zero additional network requests;
-- supports both server cards and the one Quick Puzzle continuation;
-- keeps localStorage/session semantics out of `PuzzleCard`;
-- has one deterministic place to test candidate ordering and geometry context construction.
-
-**Cons**
-
-- adds one small gallery-specific service.
-
-This is the best tradeoff because the service is a thin adapter over existing contracts rather
-than a new state subsystem.
-
-### 2. Let every PuzzleCard read its own progress
-
-This reduces the number of new files but spreads persistence knowledge across rendered cards,
-duplicates geometry/context construction, makes newest-session selection awkward, and still
-needs separate logic for Quick Puzzle continuation. It also couples a reusable presentational
-component to browser storage. Rejected.
-
-### 3. Add API detail/batch validation or enrich the backend specifically for resume
-
-The server could return full piece metadata or validate local sessions, but that adds backend
-contract work and network dependency to a device-local feature. It directly conflicts with the
-HPA-218 guardrail against batch validation and per-card availability requests. Rejected.
-
-### 4. Extract a shared row-major-piece builder now
-
-A five-line shared helper could remove literal duplication, but the contract is simple and the
-current producers also construct additional producer-specific fields such as edges and image
-paths. HPA-218 only needs `{ id, correctX, correctY }`. Explicit parity tests give the required
-confidence with less public API surface. Rejected for now under YAGNI.
+The page decides whether progress is valid. The card renders the always-visible Continue/progress
+metadata and keeps its existing best-time behavior. It does not build validation contexts or
+select the newest session.
 
 ## Data Flow
 
 ```text
-server fetchPuzzles() ----------------------+
-                                            |
-                                            v
-                                   current PuzzleSummary[]
-                                            |
-listQuick() -> StoredQuickPuzzle[] ----------+----> galleryProgress discovery
-                                                       |
-                                                       | guard summary + build context
-                                                       v
-                                            SessionStorageAdapter.loadSession()
-                                                       |
-                                          invalid -----+-----> existing cleanup
-                                                       |
-                                                    loaded
-                                                       |
-                                            SessionStorageAdapter.isResumable()
-                                                       |
-                                                       v
-                                  { byPuzzleId, newest GalleryProgress }
-                                      |                         |
-                                      v                         v
-                              PuzzleCard progress       Continue on this device
-                                      \                         /
-                                       \                       /
-                                        +--> /puzzle/[id] <---+
-                                                |
-                                                v
-                                      existing route hydration
+gallery mount ----> listQuick() once ----------------------+
+                                                          |
+fetchPuzzles()/filter/pagination ----> current puzzles ---+----> discoverGalleryProgress
+                                                                  |
+                                                        derived / stored contexts
+                                                                  |
+                                                        SessionStorageAdapter.peekSession
+                                                                  |
+                                                     loaded + isResumable only
+                                                                  |
+                                                   { byPuzzleId, newest }
+                                                      |             |
+                                                      v             v
+                                                PuzzleCard       Continue panel
+                                                      \             /
+                                                       \           /
+                                                        /puzzle/[id]
+                                                             |
+                                                  authoritative detail load
+                                                             |
+                                                  loadSession cleanup/hydration
 ```
 
 ## Error Handling
 
-- Browser storage read/remove failures continue through the existing adapter's resilient behavior;
-  discovery simply omits a session it cannot read.
-- Invalid persisted sessions are removed by the adapter and then appear as missing.
-- Missing, unsupported, or invalid server summary metadata is skipped before grid helpers run;
-  its progress record remains untouched because there is no trustworthy validation context.
-- A bad summary affects only that candidate and cannot blank the rest of the Continue UI.
-- Quick Puzzle pruning/expiry continues to be owned by `listQuick()`.
-- Discovery never throws solely because one candidate has no progress or malformed summary
-  metadata.
+- Storage read failures keep the existing adapter behavior: report through `onError` if supplied
+  and behave as missing.
+- Invalid gallery candidates are ignored and left stored.
+- Invalid data is still removed by the normal authoritative puzzle-route `loadSession` path.
+- Bad/missing runtime aspect ratios are rejected before grid helpers run.
+- Quick Puzzle expiry/orphan pruning remains owned by the one mount-time `listQuick()` call.
+- One bad candidate never aborts discovery for other candidates.
 
-No recovery banners or user-facing repair actions are added.
+No user-facing repair flow is added.
 
 ## Testing Strategy
 
-### Gallery-progress service
+### Session persistence seam
+
+Add one focused test proving:
+
+- `peekSession` returns `invalid` for a malformed/current-context mismatch and leaves the key;
+- `loadSession` on the same invalid data preserves today's destructive cleanup behavior.
+
+This is the only new cleanup/retention test HPA-218 needs.
+
+### Gallery discovery
 
 Focused tests cover:
 
-- reconstructing current server geometry from `pieceCount + aspectRatio`;
-- explicit row-major parity for representative `1:1`, `4:3`, and `3:4` grids using exact
-  `{ id, correctX, correctY }` tuples;
-- skipping a runtime-unknown aspect ratio such as `16:9` without throwing, calling the storage
-  adapter, or deleting an unvalidated progress record;
-- using Quick Puzzle canonical metadata without network access;
-- selecting the greatest `lastUpdated` resumable session among current candidates;
-- returning per-puzzle placed counts;
-- excluding fresh/no-activity and completed snapshots;
-- preserving valid completed snapshots in storage;
-- clearing unsupported-schema and geometry-mismatched records through the existing adapter;
-- skipping a server summary that lacks enough current metadata to validate, without deleting an
-  unvalidated record.
+- explicit row-major tuples for `1:1`/4 (`2x2`), `4:3`/12 (`3x4`), and `3:4`/12 (`4x3`);
+- runtime-invalid `aspectRatio` is skipped without throwing or deleting storage;
+- greatest `lastUpdated` among current resumable candidates wins;
+- placed count is `snapshot.placedPieces.length`;
+- fresh/no-activity and completed snapshots are excluded;
+- a valid completed snapshot remains stored because discovery only peeks;
+- invalid snapshots are ignored and remain stored until authoritative puzzle open;
+- Quick Puzzle discovery uses supplied metadata without a network call.
 
 ### PuzzleCard
 
 Component tests cover:
 
-- default **PLAY** and `N PCS` rendering;
-- **CONTINUE** plus `placed/N PLACED` when `placedCount` is provided;
-- unchanged puzzle href;
-- processing/failed cards never exposing Continue.
+- normal cards keep the existing piece count;
+- progress cards show the always-visible `CONTINUE · placed/total PLACED` metadata;
+- href remains `/puzzle/${id}`;
+- processing/failed cards never show Continue progress;
+- the overlay remains decorative (`aria-hidden`); tests do not use it as the user-facing signal.
 
 ### Gallery page
 
 Route tests cover:
 
-- rendering the newest-current-candidate Continue panel;
-- applying progress only to the matching server card;
-- verifying `discoverGalleryProgress` receives the fetched server summaries and the exact
-  `listQuick()` result;
-- verifying a search/filter replacement re-runs discovery with the replacement summaries, not
-  stale data;
-- keeping existing search/pagination behavior intact.
+- `listQuick()` runs once per mount even after server puzzle replacement;
+- discovery receives the fetched current server summaries and the stored `quickPuzzles` array;
+- discovery receives replacement summaries after a search/filter update without re-calling
+  `listQuick()`;
+- a newest server session intentionally renders both the Continue panel and progress on its
+  matching card;
+- a Quick Puzzle newest session can render the panel without creating a server card.
 
 ### Browser smoke
 
-Extend the existing gallery Playwright coverage with one current-schema persisted-session case:
-seed a valid partial session, reload the gallery, verify Continue/progress, click the existing
-puzzle link, and assert navigation to `/puzzle/[id]`. Reuse the HPA-226 persisted-state helper so
-the E2E seed is accepted by the production codec before it is written.
+Extend the existing gallery Playwright file with one current-schema partial server-session case.
+The test explicitly verifies both surfaces for the same puzzle:
+
+- Continue panel visible;
+- matching card's always-visible Continue/progress metadata visible;
+- Continue navigation reaches `/puzzle/[id]` through the existing fixture-backed route.
+
+Reuse HPA-226 `seedValid`, `buildMinimalSeed`, and the existing fixture router.
+
+## Alternatives Considered
+
+### Per-card progress reads
+
+Rejected. `PuzzleCard` already has a small best-time read, so avoiding *all* storage in the card is
+not the reason. Progress requires geometry-aware current-schema validation and one cross-card
+newest selection; doing that per card would duplicate context construction and still require a
+separate aggregator for the panel.
+
+### Device-global localStorage scan / retained server catalog
+
+Rejected. It expands scope, complicates filter semantics, and is unnecessary for the bounded
+"currently discoverable" requirement.
+
+### Backend detail/batch validation
+
+Rejected. Device-local progress should not add per-card or batch server work when current gallery
+metadata is sufficient for non-destructive discovery.
+
+### Shared row-major helper now
+
+Rejected for YAGNI. The contract is currently a five-line convention with explicit producer
+examples. Exact parity tests provide a cheaper fence until real divergence pressure exists.
 
 ## Non-goals
 
-- device-global session history or a dedicated recent-games route;
-- retaining a server puzzle catalog across search/filter changes;
+- device-global session history;
+- retained previously-seen server summaries;
+- a new Quick Puzzle catalog/cache;
+- per-card puzzle-detail requests;
 - server-side local-session validation;
-- per-card puzzle detail requests;
-- cloud/cross-device progress;
-- account semantics;
-- storage migrations or compatibility readers;
-- retention policy or stale-session UI;
+- cloud/cross-device progress or account semantics;
+- compatibility readers or migrations;
+- retention/recovery UI;
 - analytics;
-- changing puzzle-route hydration or HPA-557 component boundaries;
-- adding a new global store/cache/controller;
-- extracting a shared row-major geometry abstraction solely for this ticket.
+- changing puzzle-route hydration or HPA-557 presentation components;
+- a global gallery progress store;
+- a shared row-major abstraction solely for HPA-218.
 
 ## Risks and Mitigations
 
-### Derived server geometry drifts from generation
+### Derived server coordinates drift from authoritative puzzle pieces
 
-The discovery context depends on the current row-major generation contract. Keep the derivation
-private and small. Lock exact tuples for 2x2, 3x4, and 4x3 grids in service tests so transposition,
-ID-order, or coordinate drift is caught without adding another shared abstraction. If the server
-generation contract changes later, that change should update this context builder and parity test
-in the same change set.
+Discovery is read-only, so drift can hide Continue but cannot delete progress. Explicit `2x2`,
+`3x4`, and `4x3` tuple tests catch accidental transpose/order changes. Opening the puzzle remains
+the authoritative validation point.
 
-### Unexpected runtime aspect-ratio value aborts discovery
+### Quick Puzzle enumeration becomes expensive during gallery interaction
 
-The TypeScript type alone is not a runtime boundary. Guard with `isPuzzleAspectRatio` before
-`isValidPieceCountForAspectRatio` or `getGridDimensionsForAspectRatio`. Invalid values are skipped
-and their local progress remains untouched.
+Call `listQuick()` once on mount, not inside the reactive discovery effect. Search, category, and
+pagination mutations reuse the already-loaded Quick Puzzle metadata for that page lifetime.
 
-### Gallery filtering hides a resumable server puzzle
+### Panel/card duplication looks accidental
 
-This is deliberate: HPA-218 allows server progress only for puzzle data already loaded by the
-page. Retaining previously seen summaries would introduce a hidden catalog/cache that the issue
-explicitly does not need.
+Document it as intentional and test the overlapping server-puzzle case directly in both route and
+E2E coverage.
 
-### Page tests prove presentation but not discovery wiring
+### Hover-only Continue is invisible on touch
 
-Keep the discovery service mocked in route tests for focused rendering, but assert its call
-arguments after initial fetch and one replacement fetch. The browser smoke then proves the full
-service-to-page-to-navigation path.
-
-### Completed snapshots are accidentally cleared
-
-Discovery must distinguish `invalid` from merely `not resumable`. Only `loadSession` invalidation
-may clear storage; `isResumable === false` never triggers deletion.
+Treat the always-visible metadata row as the user-facing Continue signal. The hover/focus overlay
+is decorative and may mirror the wording for desktop consistency.
 
 ## Review Amendments — 2026-08-10
 
-The following review findings were validated against current `main` and incorporated without
-changing the architecture or file set:
+Two review passes were validated against current `main` and incorporated without introducing a
+new subsystem:
 
-1. guard runtime `aspectRatio` with `isPuzzleAspectRatio` before calling grid helpers;
-2. assert the gallery page passes current server summaries and `listQuick()` data into discovery;
-3. define "newest" as newest among the currently discoverable candidate set, not device-global;
-4. add explicit row-major parity tests across the three supported aspect ratios instead of a new
-   shared geometry helper.
+1. guard runtime `aspectRatio` before aspect-ratio helpers;
+2. assert page-to-discovery wiring rather than only mocked presentation;
+3. define newest as bounded to current server summaries plus surviving Quick Puzzle metadata;
+4. lock row-major parity with explicit tuples instead of extracting a helper;
+5. make gallery validation non-destructive through `peekSession` and leave cleanup at
+   authoritative puzzle open;
+6. call `listQuick()` once on mount rather than on every `puzzles` mutation;
+7. explicitly keep panel/card overlap for the newest loaded server puzzle;
+8. make always-visible card metadata the mobile/user-facing Continue signal;
+9. correct the per-card-storage rationale to reflect the card's existing best-time read;
+10. trim final verification to real test/check/build/E2E gates.
 
 ## Acceptance Mapping
 
 | HPA-218 acceptance criterion | Design response |
 | --- | --- |
-| Newest valid unfinished session among current gallery summaries + `listQuick()` is shown | Choose max `lastUpdated` among currently discovered resumable contexts |
-| Matching cards display progress and resume | `byPuzzleId` drives `PuzzleCard`; href remains `/puzzle/[id]` |
-| Completed sessions are not resumable | Reuse `isResumable`; leave valid completed record intact |
-| Invalid/mismatched data is cleared, not migrated | Reuse current `loadSession` cleanup path only when a trustworthy context exists |
-| One bad/malformed summary does not blank discovery | Runtime aspect-ratio guard skips the candidate before grid helpers run |
-| No per-card network requests | Reconstruct server context from loaded summary; Quick uses `listQuick()` |
-| Focused tests | Service parity/guard tests, card tests, route wiring assertions, and one gallery smoke case |
+| Newest valid unfinished current candidate is shown | Max `lastUpdated` among current ready server summaries + mount-time `listQuick()` metadata |
+| Matching cards display progress and Continue | Always-visible `CONTINUE · placed/total PLACED`; href unchanged |
+| Completed sessions are not resumable | `isResumable` excludes them; read-only discovery leaves them stored |
+| Invalid/mismatched data is cleared rather than migrated | Gallery ignores invalid data; existing authoritative puzzle-route `loadSession` clears it on open |
+| Bad derived context cannot destroy progress | Gallery uses non-destructive `peekSession` and runtime geometry guards |
+| No per-card network requests | Server context derives from current summary; Quick uses one mount-time local read |
+| Focused tests | Peek semantics, geometry parity, discovery, card, page wiring/overlap, and one browser smoke |
