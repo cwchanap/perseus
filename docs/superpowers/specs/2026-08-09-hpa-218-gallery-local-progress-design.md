@@ -366,13 +366,15 @@ metadata is sufficient for non-destructive discovery.
 
 ### Shared row-major helper now
 
-Rejected for YAGNI. The contract is currently a five-line convention with explicit producer
-examples. Exact parity tests provide a cheaper fence until real divergence pressure exists.
+Not planned by default. The contract is currently a five-line convention with explicit producer
+examples, so exact parity tests are cheaper today. If implementation reveals concrete reuse or
+correctness pressure that makes the existing producers meaningfully safer with a shared helper,
+that refactor can be evaluated on its merits rather than being forbidden by this ticket.
 
 ## Non-goals
 
 - device-global session history;
-- retained previously-seen server summaries;
+- retaining previously-seen server summaries;
 - a new Quick Puzzle catalog/cache;
 - per-card puzzle-detail requests;
 - server-side local-session validation;
@@ -381,8 +383,7 @@ examples. Exact parity tests provide a cheaper fence until real divergence press
 - retention/recovery UI;
 - analytics;
 - changing puzzle-route hydration or HPA-557 presentation components;
-- a global gallery progress store;
-- a shared row-major abstraction solely for HPA-218.
+- a global gallery progress store.
 
 ## Risks and Mitigations
 
@@ -415,7 +416,7 @@ new subsystem:
 1. guard runtime `aspectRatio` before aspect-ratio helpers;
 2. assert page-to-discovery wiring rather than only mocked presentation;
 3. define newest as bounded to current server summaries plus surviving Quick Puzzle metadata;
-4. lock row-major parity with explicit tuples instead of extracting a helper;
+4. lock row-major parity with explicit tuples instead of requiring a new helper;
 5. make gallery validation non-destructive through `peekSession` and leave cleanup at
    authoritative puzzle open;
 6. call `listQuick()` once on mount rather than on every `puzzles` mutation;
