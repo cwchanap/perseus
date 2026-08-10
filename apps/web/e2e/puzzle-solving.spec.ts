@@ -9,7 +9,9 @@ import { test, expect } from '@playwright/test';
 
 test.describe('Puzzle Solving Page', () => {
 	test('should show 404 page for non-existent puzzle', async ({ page }) => {
-		await page.goto('/puzzle/non-existent-id');
+		// Puzzle routes validate UUIDv4 ids before looking up metadata. Use a
+		// valid UUID that is absent from the E2E database so the API returns 404.
+		await page.goto('/puzzle/00000000-0000-4000-8000-000000000000');
 
 		// Should show a not-found style message
 		const errorMessage = page.getByText(
