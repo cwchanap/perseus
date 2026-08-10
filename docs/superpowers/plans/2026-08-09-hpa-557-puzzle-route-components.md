@@ -64,17 +64,11 @@ bunx vitest --run --browser 'src/routes/puzzle/[id]/page.svelte.test.ts'
 PUBLIC_API_BASE=${PUBLIC_API_BASE:-} bunx svelte-kit sync
 PUBLIC_API_BASE=${PUBLIC_API_BASE:-} bunx svelte-check --tsconfig ./tsconfig.json --fail-on-warnings
 bun run lint
-```
-
-Expected: PASS with zero Svelte warnings. If the warning-strict command fails on untouched base code, stop and confirm the baseline before folding unrelated warning cleanup into HPA-557.
-
-Also confirm the route integration test is untouched before implementation begins:
-
-```bash
+cd ../..
 git diff --exit-code -- 'apps/web/src/routes/puzzle/[id]/page.svelte.test.ts'
 ```
 
-Expected: exit 0.
+Expected: all commands pass, the Svelte check reports zero warnings, and the route-test diff is empty. If warning-strict checking fails on untouched base code, investigate that baseline separately rather than hiding unrelated warning cleanup in HPA-557.
 
 ## Execution Risks
 
@@ -104,9 +98,48 @@ Expected: exit 0.
 
 - [ ] **Step 1: Write failing board-panel browser tests with real pan bounds**
 
-Create `apps/web/src/lib/components/__tests__/PuzzleBoardPanel.svelte.test.ts` with a two-piece puzzle and deliberately oversized board metrics:
+Create `apps/web/src/lib/components/__tests__/PuzzleBoardPanel.svelte.test.ts` with the complete fixture below:
 
 ```ts
+import { describe, expect, it, vi } from 'vitest';
+import { render } from 'vitest-browser-svelte';
+import { page } from 'vitest/browser';
+import PuzzleBoardPanel from '../PuzzleBoardPanel.svelte';
+import type { ResponsivePuzzleBoardMetrics } from '$lib/services/puzzleLayout';
+import type { Puzzle } from '$lib/types/puzzle';
+
+const image = 'data:image/gif;base64,R0lGODlhAQABAAAAACw=';
+
+const puzzle: Puzzle = {
+  id: 'panel-test',
+  name: 'Panel Test',
+  pieceCount: 2,
+  gridCols: 2,
+  gridRows: 1,
+  imageWidth: 200,
+  imageHeight: 100,
+  createdAt: 1704067200000,
+  hasReference: true,
+  pieces: [
+    {
+      id: 0,
+      puzzleId: 'panel-test',
+      correctX: 0,
+      correctY: 0,
+      imagePath: 'pieces/0.png',
+      edges: { top: 'flat', right: 'blank', bottom: 'flat', left: 'flat' }
+    },
+    {
+      id: 1,
+      puzzleId: 'panel-test',
+      correctX: 1,
+      correctY: 0,
+      imagePath: 'pieces/1.png',
+      edges: { top: 'flat', right: 'flat', bottom: 'flat', left: 'tab' }
+    }
+  ]
+};
+
 const largeMetrics: ResponsivePuzzleBoardMetrics = {
   tier: 'extra-large',
   boardWidth: 2400,
@@ -122,11 +155,38 @@ const resizedMetrics: ResponsivePuzzleBoardMetrics = {
   cellSize: 1100,
   pieceSlotSize: 1100
 };
-```
 
-Use helpers that read the rendered transform instead of assuming an initial `scale(1)`:
+function props(overrides: Record<string, unknown> = {}) {
+  return {
+    puzzle,
+    boardMetrics: largeMetrics,
+    placedPieces: [],
+    selectedPieceId: null,
+    activeHintTarget: null,
+    resolveImage: () => image,
+    referenceImageUrl: image,
+    referenceActive: false,
+    canUndo: true,
+    canRedo: true,
+    canOpenSetup: true,
+    canPause: true,
+    rotationEnabled: false,
+    rotationToggleDisabled: false,
+    interactionBlocked: false,
+    viewResetVersion: 0,
+    onPiecePlaced: vi.fn(),
+    onUndo: vi.fn(),
+    onRedo: vi.fn(),
+    onHint: vi.fn(),
+    onReferenceDown: vi.fn(),
+    onReferenceUp: vi.fn(),
+    onRotationToggle: vi.fn(),
+    onPause: vi.fn(),
+    onOpenSetup: vi.fn(),
+    ...overrides
+  };
+}
 
-```ts
 function transformOf(element: HTMLElement): string {
   return element.getAttribute('style') ?? '';
 }
@@ -142,11 +202,7 @@ function scaleOf(transform: string): number {
   if (!match) throw new Error(`Missing scale() in ${transform}`);
   return Number(match[1]);
 }
-```
 
-Create a helper that zooms, begins a pointer pan, moves far enough to produce a real offset, and proves the offset is non-zero before returning the frame:
-
-```ts
 async function beginRealPan(pointerId: number): Promise<HTMLElement> {
   await page.getByLabelText('Zoom in').click();
   const viewport = await page.getByTestId('board-viewport').element();
@@ -179,65 +235,107 @@ async function beginRealPan(pointerId: number): Promise<HTMLElement> {
 
   return frame;
 }
+
+describe('PuzzleBoardPanel', () => {
+  it('forwards toolbar actions and shows Reference when available', async () => {
+    const input = props();
+    render(PuzzleBoardPanel, input);
+
+    await page.getByLabelText('Undo').click();
+    await page.getByLabelText('Redo').click();
+    await page.getByLabelText('Hint').click();
+    await page.getByLabelText('Rotation mode').click();
+    await page.getByLabelText('Pause mission').click();
+    await page.getByLabelText('Open mission setup').click();
+
+    expect(input.onUndo).toHaveBeenCalledOnce();
+    expect(input.onRedo).toHaveBeenCalledOnce();
+    expect(input.onHint).toHaveBeenCalledOnce();
+    expect(input.onRotationToggle).toHaveBeenCalledOnce();
+    expect(input.onPause).toHaveBeenCalledOnce();
+    expect(input.onOpenSetup).toHaveBeenCalledOnce();
+    await expect.element(page.getByLabelText('Reference')).toBeVisible();
+  });
+
+  it('hides Reference when puzzle.hasReference is not true', async () => {
+    render(PuzzleBoardPanel, props({ puzzle: { ...puzzle, hasReference: false } }));
+    expect(page.getByLabelText('Reference').query()).toBeNull();
+  });
+
+  it('resets real zoom and pan when viewResetVersion changes', async () => {
+    const input = props();
+    const view = render(PuzzleBoardPanel, input);
+    const frame = await page.getByTestId('zoomable-board-frame').element();
+    await expect.poll(() => transformOf(frame)).toContain('translate(0px, 0px)');
+    const fitTransform = transformOf(frame);
+
+    await beginRealPan(7);
+    expect(transformOf(frame)).not.toBe(fitTransform);
+
+    await view.rerender({ ...input, viewResetVersion: 1 });
+    await expect.poll(() => transformOf(frame)).toBe(fitTransform);
+    expect(translateOf(transformOf(frame))).toEqual({ x: 0, y: 0 });
+  });
+
+  it('cancels pan and ignores later pointer moves when interactionBlocked becomes true', async () => {
+    const input = props();
+    const view = render(PuzzleBoardPanel, input);
+    const frame = await beginRealPan(8);
+
+    await view.rerender({ ...input, interactionBlocked: true });
+    await expect.element(page.getByTestId('board-viewport')).not.toHaveClass(/is-panning/);
+    const blockedTransform = transformOf(frame);
+
+    window.dispatchEvent(
+      new PointerEvent('pointermove', {
+        pointerId: 8,
+        pointerType: 'mouse',
+        clientX: 260,
+        clientY: 220
+      })
+    );
+    await expect.poll(() => transformOf(frame)).toBe(blockedTransform);
+  });
+
+  it('reclamps on boardMetrics changes without resetting usable zoom', async () => {
+    const input = props();
+    const view = render(PuzzleBoardPanel, input);
+    const frame = await page.getByTestId('zoomable-board-frame').element();
+
+    await page.getByLabelText('Zoom in').click();
+    await expect.poll(() => scaleOf(transformOf(frame))).toBeGreaterThan(0);
+    const zoomBeforeResize = scaleOf(transformOf(frame));
+
+    await view.rerender({ ...input, boardMetrics: resizedMetrics });
+    await expect.poll(() => scaleOf(transformOf(frame))).toBe(zoomBeforeResize);
+  });
+
+  it('ends pan in capture phase even when the target stops bubbling pointerup', async () => {
+    render(PuzzleBoardPanel, props());
+    await beginRealPan(9);
+    const viewport = await page.getByTestId('board-viewport').element();
+    viewport.addEventListener('pointerup', (event) => event.stopPropagation(), { once: true });
+    viewport.dispatchEvent(
+      new PointerEvent('pointerup', {
+        bubbles: true,
+        pointerId: 9,
+        pointerType: 'mouse',
+        button: 0
+      })
+    );
+    await expect.element(page.getByTestId('board-viewport')).not.toHaveClass(/is-panning/);
+  });
+
+  it('cancels panning on window blur', async () => {
+    render(PuzzleBoardPanel, props());
+    await beginRealPan(10);
+    window.dispatchEvent(new Event('blur'));
+    await expect.element(page.getByTestId('board-viewport')).not.toHaveClass(/is-panning/);
+  });
+});
 ```
 
-Cover these contracts:
-
-```ts
-it('hides Reference when puzzle.hasReference is not true', async () => {
-  render(PuzzleBoardPanel, props({ puzzle: { ...puzzle, hasReference: false } }));
-  expect(page.getByLabelText('Reference').query()).toBeNull();
-});
-
-it('resets real zoom and pan when viewResetVersion changes', async () => {
-  const input = props();
-  const view = render(PuzzleBoardPanel, input);
-  const frame = await page.getByTestId('zoomable-board-frame').element();
-  await expect.poll(() => transformOf(frame)).toContain('translate(0px, 0px)');
-  const fitTransform = transformOf(frame);
-
-  await beginRealPan(7);
-  expect(transformOf(frame)).not.toBe(fitTransform);
-
-  await view.rerender({ ...input, viewResetVersion: 1 });
-  await expect.poll(() => transformOf(frame)).toBe(fitTransform);
-  expect(translateOf(transformOf(frame))).toEqual({ x: 0, y: 0 });
-});
-
-it('cancels pan and ignores later pointer moves when interactionBlocked becomes true', async () => {
-  const input = props();
-  const view = render(PuzzleBoardPanel, input);
-  const frame = await beginRealPan(8);
-
-  await view.rerender({ ...input, interactionBlocked: true });
-  await expect.element(page.getByTestId('board-viewport')).not.toHaveClass(/is-panning/);
-  const blockedTransform = transformOf(frame);
-
-  window.dispatchEvent(
-    new PointerEvent('pointermove', {
-      pointerId: 8,
-      pointerType: 'mouse',
-      clientX: 260,
-      clientY: 220
-    })
-  );
-  await expect.poll(() => transformOf(frame)).toBe(blockedTransform);
-});
-
-it('reclamps on boardMetrics changes without resetting usable zoom', async () => {
-  const input = props();
-  const view = render(PuzzleBoardPanel, input);
-  const frame = await page.getByTestId('zoomable-board-frame').element();
-
-  await page.getByLabelText('Zoom in').click();
-  const zoomBeforeResize = scaleOf(transformOf(frame));
-
-  await view.rerender({ ...input, boardMetrics: resizedMetrics });
-  await expect.poll(() => scaleOf(transformOf(frame))).toBe(zoomBeforeResize);
-});
-```
-
-Also keep toolbar-callback forwarding, capture-phase pointer-up, and window-blur pan-cancel cases.
+The oversized metrics are deliberate: the tests must prove non-zero pan before claiming reset/block behavior works.
 
 - [ ] **Step 2: Run the new test and verify the missing-component failure**
 
@@ -250,13 +348,51 @@ Expected: FAIL because `../PuzzleBoardPanel.svelte` does not exist.
 
 - [ ] **Step 3: Create `PuzzleBoardPanel.svelte` and separate reset from reclamp triggers**
 
-Import `untrack` and reuse the current viewport helpers:
+Use this explicit interface and reuse the existing primitives/helpers:
 
 ```ts
 import { untrack } from 'svelte';
+import PuzzleBoard from '$lib/components/PuzzleBoard.svelte';
+import PuzzleToolbar from '$lib/components/PuzzleToolbar.svelte';
+import ReferenceOverlay from '$lib/components/ReferenceOverlay.svelte';
+import ZoomableBoardFrame from '$lib/components/ZoomableBoardFrame.svelte';
+import { calculateFitZoom, clampPan, clampZoom } from '$lib/services/gameplay/viewport';
+import type { ViewportBounds } from '$lib/services/gameplay/viewport';
+import type { ResponsivePuzzleBoardMetrics } from '$lib/services/puzzleLayout';
+import type { PlacedPiece, Puzzle, PuzzlePiece } from '$lib/types/puzzle';
+
+type ReferenceHoldEvent = PointerEvent | KeyboardEvent;
+
+interface Props {
+  puzzle: Puzzle;
+  boardMetrics: ResponsivePuzzleBoardMetrics | null;
+  placedPieces: PlacedPiece[];
+  selectedPieceId: number | null;
+  activeHintTarget: { x: number; y: number } | null;
+  resolveImage: (piece: Pick<PuzzlePiece, 'id'>) => string;
+  referenceImageUrl: string | null;
+  referenceActive: boolean;
+  canUndo: boolean;
+  canRedo: boolean;
+  canOpenSetup: boolean;
+  canPause: boolean;
+  rotationEnabled: boolean;
+  rotationToggleDisabled: boolean;
+  interactionBlocked: boolean;
+  viewResetVersion: number;
+  onPiecePlaced: (pieceId: number, x: number, y: number) => void;
+  onUndo: () => void;
+  onRedo: () => void;
+  onHint: () => void;
+  onReferenceDown: (event?: ReferenceHoldEvent) => void;
+  onReferenceUp: (event?: ReferenceHoldEvent) => void;
+  onRotationToggle: () => void;
+  onPause: () => void;
+  onOpenSetup: () => void;
+}
 ```
 
-Move the existing route viewport state and helper bodies into the component. Preserve capture-phase pan termination with:
+Move the existing route viewport state and helper bodies into the component. Preserve capture-phase pan termination:
 
 ```svelte
 <svelte:window
@@ -267,7 +403,7 @@ Move the existing route viewport state and helper bodies into the component. Pre
 />
 ```
 
-Use separate effects. Track `boardViewportElement` availability outside `untrack`, but do not let viewport helper internals become dependencies:
+Use separate effects. Track `boardViewportElement` availability outside `untrack`, but do not let helper internals become dependencies:
 
 ```ts
 $effect(() => {
@@ -298,13 +434,29 @@ $effect(() => {
 });
 ```
 
-The first effect resets only for puzzle/reset signals or viewport binding. The second replaces the route's old resize-path recompute when responsive `boardMetrics` change. The observer handles actual viewport-box changes.
+The first effect resets only for puzzle/reset signals or viewport binding. The second replaces today's route resize-path recompute when responsive `boardMetrics` change. The observer handles actual viewport-box changes.
 
 Compose the existing primitives and derive reference availability from the puzzle:
 
 ```svelte
 <PuzzleToolbar
-  ...
+  onUndo={onUndo}
+  onRedo={onRedo}
+  onHint={onHint}
+  onReferenceDown={onReferenceDown}
+  onReferenceUp={onReferenceUp}
+  onZoomIn={handleZoomIn}
+  onZoomOut={handleZoomOut}
+  onResetView={resetViewport}
+  onRotationToggle={onRotationToggle}
+  onPause={onPause}
+  onOpenSetup={onOpenSetup}
+  {canOpenSetup}
+  {canPause}
+  {canUndo}
+  {canRedo}
+  {rotationEnabled}
+  {rotationToggleDisabled}
   hasReference={puzzle.hasReference === true}
 />
 ```
@@ -313,11 +465,21 @@ Keep `ReferenceOverlay` fixed full-screen. Move board-owned selectors into the p
 
 - [ ] **Step 4: Replace route board markup and make route resize metrics-only**
 
-Replace `pendingViewportReset` with a monotonic `boardViewResetVersion`, replace existing reset assignments with an increment helper, and delete the route effect that waits for `boardViewportElement`.
+Replace `pendingViewportReset` with:
+
+```ts
+let boardViewResetVersion = $state(0);
+
+function requestBoardViewReset(): void {
+  boardViewResetVersion += 1;
+}
+```
+
+Replace every current `pendingViewportReset = true` with `requestBoardViewReset()` and delete the route effect that waits for `boardViewportElement`.
 
 Delete route board viewport/zoom/pan state, viewport helper functions, pan pointer-move listener, and panning branches from route pointer-up/blur/`clearTransientGameplayState()`.
 
-Keep capture-phase route `pointerup`/`pointercancel` because reference hold still uses them. Keep route `handleWindowResize()` as:
+Keep capture-phase route `pointerup`/`pointercancel` because reference hold still uses them. Keep route resize metrics-only:
 
 ```ts
 function handleWindowResize() {
@@ -326,7 +488,39 @@ function handleWindowResize() {
 }
 ```
 
-Replace board markup with `PuzzleBoardPanel` using the design interface and keep `.game-layout` in the route. Remove board-only imports/selectors now.
+Replace board markup with:
+
+```svelte
+<PuzzleBoardPanel
+  puzzle={currentPuzzle}
+  boardMetrics={currentBoardMetrics}
+  {placedPieces}
+  selectedPieceId={currentSelectedPieceId}
+  {activeHintTarget}
+  resolveImage={puzzleSource!.resolvePieceImage}
+  referenceImageUrl={puzzleSource?.resolveReferenceImage() ?? null}
+  referenceActive={showReferenceOverlay}
+  {canUndo}
+  {canRedo}
+  {canOpenSetup}
+  {canPause}
+  {rotationEnabled}
+  rotationToggleDisabled={isRotationToggleLocked()}
+  interactionBlocked={hasSessionModal}
+  viewResetVersion={boardViewResetVersion}
+  onPiecePlaced={handlePiecePlaced}
+  onUndo={handleUndo}
+  onRedo={handleRedo}
+  onHint={handleHint}
+  onReferenceDown={handleReferenceDown}
+  onReferenceUp={handleReferenceUp}
+  onRotationToggle={handleRotationToggle}
+  onPause={handleToolbarPause}
+  onOpenSetup={() => showMissionSetup(false)}
+/>
+```
+
+Keep `.game-layout` in the route. Remove board-only imports and selectors in this task.
 
 - [ ] **Step 5: Run Task 1 regression, warning, lint, and frozen-route-test gates**
 
@@ -342,7 +536,7 @@ cd ../..
 git diff --exit-code -- 'apps/web/src/routes/puzzle/[id]/page.svelte.test.ts'
 ```
 
-Expected: PASS, zero Svelte warnings, and zero route-test diff.
+Expected: component + route tests pass, Svelte reports zero warnings, lint passes, and the route test is unchanged.
 
 - [ ] **Step 6: Commit Task 1 without staging the route test**
 
@@ -368,14 +562,107 @@ git commit -m "refactor: extract puzzle board panel"
 - Consumes: puzzle, tray order, placements, rotations, selection, hint/rejection presentation, board metrics, image resolver, and selection/rotation callbacks.
 - Produces: complete inventory presentation. The route no longer maps tray IDs to pieces or renders piece slots, but it retains `placedPieceIds`/`isPiecePlaced()` for `handlePieceRotate()`.
 
-- [ ] **Step 1: Write failing inventory component tests**
+- [ ] **Step 1: Write failing inventory component tests with their own fixture**
 
-Create `PuzzleInventoryPanel.svelte.test.ts` with a two-piece fixture. Cover tray order, placed-piece filtering/count, hint/rejection classes, selected/rotation state, and select/rotate/cancel callback forwarding.
-
-The placed fixture must use the real `PlacedPiece` shape:
+Create `apps/web/src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts`:
 
 ```ts
-placedPieces: [{ pieceId: 0, x: 0, y: 0 }]
+import { describe, expect, it, vi } from 'vitest';
+import { render } from 'vitest-browser-svelte';
+import { page } from 'vitest/browser';
+import PuzzleInventoryPanel from '../PuzzleInventoryPanel.svelte';
+import type { Puzzle } from '$lib/types/puzzle';
+
+const image = 'data:image/gif;base64,R0lGODlhAQABAAAAACw=';
+
+const puzzle: Puzzle = {
+  id: 'inventory-test',
+  name: 'Inventory Test',
+  pieceCount: 2,
+  gridCols: 2,
+  gridRows: 1,
+  imageWidth: 200,
+  imageHeight: 100,
+  createdAt: 1704067200000,
+  pieces: [
+    {
+      id: 0,
+      puzzleId: 'inventory-test',
+      correctX: 0,
+      correctY: 0,
+      imagePath: 'pieces/0.png',
+      edges: { top: 'flat', right: 'blank', bottom: 'flat', left: 'flat' }
+    },
+    {
+      id: 1,
+      puzzleId: 'inventory-test',
+      correctX: 1,
+      correctY: 0,
+      imagePath: 'pieces/1.png',
+      edges: { top: 'flat', right: 'flat', bottom: 'flat', left: 'tab' }
+    }
+  ]
+};
+
+function baseProps() {
+  return {
+    puzzle,
+    boardMetrics: null,
+    trayOrder: [1, 0],
+    placedPieces: [],
+    rotationEnabled: true,
+    pieceRotations: { 0: 0 as const, 1: 90 as const },
+    selectedPieceId: null,
+    activeHintPieceId: null,
+    rejectedPieceId: null,
+    resolveImage: () => image,
+    onRotate: vi.fn(),
+    onSelect: vi.fn(),
+    onCancelSelection: vi.fn()
+  };
+}
+
+describe('PuzzleInventoryPanel', () => {
+  it('filters placed pieces and preserves hint/rejection presentation', async () => {
+    render(PuzzleInventoryPanel, {
+      ...baseProps(),
+      placedPieces: [{ pieceId: 0, x: 0, y: 0 }],
+      selectedPieceId: 1,
+      activeHintPieceId: 1,
+      rejectedPieceId: 1
+    });
+
+    await expect.element(page.getByText('1 LEFT')).toBeVisible();
+    expect(document.querySelector('[data-testid="piece-slot-0"]')).toBeNull();
+    const slot = document.querySelector('[data-testid="piece-slot-1"]');
+    expect(slot).not.toBeNull();
+    expect(slot?.className).toContain('hinted');
+    expect(slot?.className).toContain('rejected');
+  });
+
+  it('renders unplaced pieces in tray order', async () => {
+    render(PuzzleInventoryPanel, baseProps());
+    const slots = Array.from(document.querySelectorAll<HTMLElement>('[data-testid^="piece-slot-"]'));
+    expect(slots.map((slot) => slot.dataset.testid)).toEqual(['piece-slot-1', 'piece-slot-0']);
+  });
+
+  it('forwards select, rotate, and cancel selection', async () => {
+    const input = baseProps();
+    const view = render(PuzzleInventoryPanel, input);
+
+    const piece = await page.getByLabelText('Puzzle piece 1').element();
+    piece.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(input.onSelect).toHaveBeenCalledWith(1);
+
+    await page.getByLabelText('Rotate piece 1').click();
+    expect(input.onRotate).toHaveBeenCalledWith(1);
+
+    await view.rerender({ ...input, selectedPieceId: 1 });
+    const selectedPiece = await page.getByLabelText('Puzzle piece 1').element();
+    selectedPiece.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(input.onCancelSelection).toHaveBeenCalledOnce();
+  });
+});
 ```
 
 - [ ] **Step 2: Run the new test and verify the missing-component failure**
@@ -389,7 +676,32 @@ Expected: FAIL because `../PuzzleInventoryPanel.svelte` does not exist.
 
 - [ ] **Step 3: Create `PuzzleInventoryPanel.svelte` and move inventory CSS**
 
-Use panel-local derived values:
+Use this explicit interface:
+
+```ts
+import PuzzlePiece from '$lib/components/PuzzlePiece.svelte';
+import type { ResponsivePuzzleBoardMetrics } from '$lib/services/puzzleLayout';
+import type { Rotation } from '$lib/types/gameplay';
+import type { PlacedPiece, Puzzle, PuzzlePiece as PuzzlePieceModel } from '$lib/types/puzzle';
+
+interface Props {
+  puzzle: Puzzle;
+  boardMetrics: ResponsivePuzzleBoardMetrics | null;
+  trayOrder: number[];
+  placedPieces: PlacedPiece[];
+  rotationEnabled: boolean;
+  pieceRotations: Record<number, Rotation>;
+  selectedPieceId: number | null;
+  activeHintPieceId: number | null;
+  rejectedPieceId: number | null;
+  resolveImage: (piece: Pick<PuzzlePieceModel, 'id'>) => string;
+  onRotate: (pieceId: number) => void;
+  onSelect: (pieceId: number) => void;
+  onCancelSelection: () => void;
+}
+```
+
+Use panel-local presentation derivations:
 
 ```ts
 const placedPieceIds = $derived.by(
@@ -405,6 +717,10 @@ const orderedPieces = $derived(
     .map((id) => piecesById.get(id))
     .filter((piece): piece is PuzzlePieceModel => piece !== undefined)
 );
+
+function displayedRotation(pieceId: number): Rotation {
+  return rotationEnabled ? (pieceRotations[pieceId] ?? 0) : 0;
+}
 ```
 
 Move inventory markup and its normal responsive selectors. Move this reduced-motion rule too:
@@ -421,9 +737,45 @@ Remove only the inventory rule from the route media block.
 
 - [ ] **Step 4: Replace route inventory markup but retain route rotation safety**
 
-Delete route `SvelteMap`, `piecesMap`, `shuffledPieces`, display-rotation helper, `PuzzlePiece` import, and inventory-owned selectors.
+Replace the inline inventory with:
 
-Keep route `placedPieceIds`, `isPiecePlaced()`, and the `handlePieceRotate()` guard exactly because the route still owns the session dispatch.
+```svelte
+<PuzzleInventoryPanel
+  puzzle={currentPuzzle}
+  boardMetrics={currentBoardMetrics}
+  trayOrder={sessionState?.trayOrder ?? []}
+  {placedPieces}
+  {rotationEnabled}
+  {pieceRotations}
+  selectedPieceId={currentSelectedPieceId}
+  {activeHintPieceId}
+  rejectedPieceId={rejectedPiece}
+  resolveImage={puzzleSource!.resolvePieceImage}
+  onRotate={handlePieceRotate}
+  onSelect={handleSelectPiece}
+  onCancelSelection={handleCancelSelection}
+/>
+```
+
+Delete route `SvelteMap`, `piecesMap`, `shuffledPieces`, `getDisplayedRotation()`, `PuzzlePiece` import, and inventory-owned selectors.
+
+Keep route rotation safety exactly:
+
+```ts
+const placedPieceIds = $derived.by(
+  () => new Set(placedPieces.map((placement) => placement.pieceId))
+);
+
+function isPiecePlaced(pieceId: number): boolean {
+  return placedPieceIds.has(pieceId);
+}
+
+function handlePieceRotate(pieceId: number) {
+  if (!sessionStore || !rotationEnabled || isPiecePlaced(pieceId)) return;
+  sessionStore.dispatch({ type: 'rotate_piece', pieceId });
+  checkpointSession();
+}
+```
 
 - [ ] **Step 5: Run Task 2 regression, warning, lint, and frozen-route-test gates**
 
@@ -439,7 +791,7 @@ cd ../..
 git diff --exit-code -- 'apps/web/src/routes/puzzle/[id]/page.svelte.test.ts'
 ```
 
-Expected: PASS, zero warnings, zero route-test diff.
+Expected: component + route tests pass, Svelte reports zero warnings, lint passes, and the route test is unchanged.
 
 - [ ] **Step 6: Commit Task 2 without staging the route test**
 
@@ -465,15 +817,82 @@ git commit -m "refactor: extract puzzle inventory panel"
 - Consumes: plain completion presentation values and route action callbacks.
 - Produces: one completion-dialog boundary preserving the existing backdrop Escape handler, inner `modalFocus`, Timed/Relaxed presentation, retry, Play Again, and Back behavior.
 
-- [ ] **Step 1: Write failing completion-dialog tests**
+- [ ] **Step 1: Write failing completion-dialog tests with their own props helper**
 
-Create `PuzzleCompletionDialog.svelte.test.ts` and cover:
+Create `apps/web/src/lib/components/__tests__/PuzzleCompletionDialog.svelte.test.ts`:
 
-- backdrop `celebration-modal` contains the focused inner `role="dialog"`;
-- retry, Play Again, Back, and backdrop Escape forward their callbacks;
-- Timed mode shows rank/final time/personal best;
-- Relaxed mode omits timed fields;
-- local-stat failure shows `new-best-unsaved` and suppresses `NEW RECORD`.
+```ts
+import { describe, expect, it, vi } from 'vitest';
+import { render } from 'vitest-browser-svelte';
+import { page } from 'vitest/browser';
+import PuzzleCompletionDialog from '../PuzzleCompletionDialog.svelte';
+
+function timedProps() {
+  return {
+    puzzleName: 'Test Mission',
+    timed: true,
+    elapsedSeconds: 75,
+    bestTime: 75,
+    isNewBest: true,
+    localStatsFailed: false,
+    serverSubmissionRetryable: true,
+    onRetryServerSubmission: vi.fn(),
+    onPlayAgain: vi.fn(),
+    onBackToArcade: vi.fn(),
+    onDismiss: vi.fn()
+  };
+}
+
+describe('PuzzleCompletionDialog', () => {
+  it('preserves backdrop Escape, inner dialog focus, and current actions', async () => {
+    const input = timedProps();
+    render(PuzzleCompletionDialog, input);
+
+    const backdrop = await page.getByTestId('celebration-modal').element();
+    const dialog = backdrop.querySelector<HTMLElement>('[role="dialog"]');
+    expect(dialog).not.toBeNull();
+    expect(dialog?.getAttribute('aria-modal')).toBe('true');
+    await expect.poll(() => dialog?.contains(document.activeElement)).toBe(true);
+
+    await expect.element(page.getByText('S RANK')).toBeVisible();
+    await expect.element(page.getByText('FINAL TIME')).toBeVisible();
+    await expect.element(page.getByText('NEW RECORD')).toBeVisible();
+
+    await page.getByTestId('retry-server-submission').click();
+    await page.getByRole('button', { name: 'PLAY AGAIN' }).click();
+    await page.getByRole('button', { name: 'BACK TO ARCADE' }).click();
+    expect(input.onRetryServerSubmission).toHaveBeenCalledOnce();
+    expect(input.onPlayAgain).toHaveBeenCalledOnce();
+    expect(input.onBackToArcade).toHaveBeenCalledOnce();
+
+    backdrop.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(input.onDismiss).toHaveBeenCalledOnce();
+  });
+
+  it('omits timed statistics for Relaxed completions', async () => {
+    render(PuzzleCompletionDialog, {
+      ...timedProps(),
+      puzzleName: 'Relaxed Mission',
+      timed: false,
+      elapsedSeconds: 0,
+      bestTime: null,
+      isNewBest: false,
+      serverSubmissionRetryable: false
+    });
+
+    await expect.element(page.getByText('MISSION COMPLETE')).toBeVisible();
+    expect(page.getByText('S RANK').query()).toBeNull();
+    expect(page.getByText('FINAL TIME').query()).toBeNull();
+    expect(page.getByText('PERSONAL BEST').query()).toBeNull();
+  });
+
+  it('shows UNSAVED instead of NEW RECORD when the local best write failed', async () => {
+    render(PuzzleCompletionDialog, { ...timedProps(), localStatsFailed: true });
+    await expect.element(page.getByTestId('new-best-unsaved')).toBeVisible();
+    expect(page.getByText('NEW RECORD').query()).toBeNull();
+  });
+});
+```
 
 - [ ] **Step 2: Run the new test and verify the missing-component failure**
 
@@ -485,6 +904,27 @@ bunx vitest --run --browser src/lib/components/__tests__/PuzzleCompletionDialog.
 Expected: FAIL because `../PuzzleCompletionDialog.svelte` does not exist.
 
 - [ ] **Step 3: Create the dialog by moving current DOM/CSS as-is**
+
+Use this explicit interface:
+
+```ts
+import { modalFocus } from '$lib/actions/modalFocus';
+import { formatTime } from '$lib/stores/timer';
+
+interface Props {
+  puzzleName: string;
+  timed: boolean;
+  elapsedSeconds: number;
+  bestTime: number | null;
+  isNewBest: boolean;
+  localStatsFailed: boolean;
+  serverSubmissionRetryable: boolean;
+  onRetryServerSubmission: () => void;
+  onPlayAgain: () => void;
+  onBackToArcade: () => void;
+  onDismiss: () => void;
+}
+```
 
 Keep Escape on the backdrop and `use:modalFocus` on the inner dialog:
 
@@ -502,7 +942,7 @@ Keep Escape on the backdrop and `use:modalFocus` on the inner dialog:
     aria-labelledby="modal-title"
     use:modalFocus
   >
-    <!-- existing completion contents with route values replaced by props -->
+    <!-- Copy the existing completion contents verbatim, replacing route state references with these props. -->
   </div>
 </div>
 ```
@@ -528,7 +968,27 @@ The route keeps its own `.arcade-btn:hover` reduced-motion override because the 
 
 - [ ] **Step 4: Replace route completion markup and remove completion residue now**
 
-Replace the celebration block with `PuzzleCompletionDialog`. Remove route `modalFocus`, completion-only `formatTime`, completion selectors, and only the completion-owned reduced-motion rules. Keep route loading/error reduced-motion rules intact.
+Replace the celebration block with:
+
+```svelte
+{#if showCelebration}
+  <PuzzleCompletionDialog
+    puzzleName={puzzle?.name ?? ''}
+    timed={showTimedPresentation}
+    elapsedSeconds={timerState.elapsed}
+    {bestTime}
+    {isNewBest}
+    {localStatsFailed}
+    {serverSubmissionRetryable}
+    onRetryServerSubmission={handleRetryServerSubmission}
+    onPlayAgain={handlePlayAgain}
+    onBackToArcade={requestReturnToArcade}
+    onDismiss={() => (showCelebration = false)}
+  />
+{/if}
+```
+
+Remove route `modalFocus`, completion-only `formatTime`, completion selectors, and only the completion-owned reduced-motion rules. Keep route loading/error reduced-motion rules intact.
 
 - [ ] **Step 5: Run Task 3 regression, warning, lint, and frozen-route-test gates**
 
@@ -544,7 +1004,7 @@ cd ../..
 git diff --exit-code -- 'apps/web/src/routes/puzzle/[id]/page.svelte.test.ts'
 ```
 
-Expected: PASS, zero warnings, zero route-test diff.
+Expected: component + route tests pass, Svelte reports zero warnings, lint passes, and the route test is unchanged.
 
 - [ ] **Step 6: Commit Task 3 without staging the route test**
 
