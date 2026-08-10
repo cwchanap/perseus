@@ -106,7 +106,7 @@ const puzzle: Puzzle = {
   ]
 };
 
-function props(overrides: Partial<Record<string, unknown>> = {}) {
+function props() {
   return {
     puzzle,
     boardMetrics: null,
@@ -132,8 +132,7 @@ function props(overrides: Partial<Record<string, unknown>> = {}) {
     onReferenceUp: vi.fn(),
     onRotationToggle: vi.fn(),
     onPause: vi.fn(),
-    onOpenSetup: vi.fn(),
-    ...overrides
+    onOpenSetup: vi.fn()
   };
 }
 
@@ -267,7 +266,7 @@ describe('PuzzleBoardPanel', () => {
 });
 ```
 
-The transform test intentionally records the actual initial fit transform; it must not assume the isolated viewport always starts at `scale(1)`.
+The transform test records the actual initial fit transform; it does not assume the isolated viewport starts at `scale(1)`.
 
 - [ ] **Step 2: Run the new test and verify the missing-component failure**
 
@@ -867,7 +866,7 @@ interface Props {
 }
 ```
 
-Preserve the current node ownership exactly:
+Move the current completion markup with only route-state references replaced by props/callbacks:
 
 ```svelte
 <div
@@ -883,12 +882,60 @@ Preserve the current node ownership exactly:
     aria-labelledby="modal-title"
     use:modalFocus
   >
-    <!-- move the existing completion contents here unchanged -->
+    <div class="modal-scan-line"></div>
+    <div class="modal-top-line"></div>
+
+    <div class="modal-tag">// MISSION COMPLETE</div>
+    {#if timed}
+      <div class="modal-rank">S RANK</div>
+    {/if}
+
+    <h2 id="modal-title" class="modal-title">{puzzleName.toUpperCase()}</h2>
+
+    {#if timed}
+      <div class="modal-stats">
+        <div class="modal-stat">
+          <span class="mstat-label">FINAL TIME</span>
+          <span class="mstat-value">{formatTime(elapsedSeconds)}</span>
+        </div>
+        {#if isNewBest}
+          <div class="modal-stat new-best">
+            <span class="mstat-label">PERSONAL BEST</span>
+            <span class="mstat-value gold">{formatTime(bestTime ?? elapsedSeconds)}</span>
+            {#if localStatsFailed}
+              <span class="new-record-badge unsaved" data-testid="new-best-unsaved">UNSAVED</span>
+            {:else}
+              <span class="new-record-badge">NEW RECORD</span>
+            {/if}
+          </div>
+        {/if}
+      </div>
+    {/if}
+
+    <div class="modal-bottom-line"></div>
+
+    {#if serverSubmissionRetryable}
+      <div class="modal-server-retry" role="alert" data-testid="server-retry-banner">
+        <span class="server-retry-label">MISSION SYNC FAILED</span>
+        <button
+          onclick={onRetryServerSubmission}
+          class="arcade-btn-ghost"
+          data-testid="retry-server-submission"
+        >
+          RETRY SYNC
+        </button>
+      </div>
+    {/if}
+
+    <div class="modal-actions">
+      <button onclick={onPlayAgain} class="arcade-btn">PLAY AGAIN</button>
+      <button onclick={onBackToArcade} class="arcade-btn-ghost">BACK TO ARCADE</button>
+    </div>
   </div>
 </div>
 ```
 
-Move the existing Timed/Relaxed fields, retry banner, `PLAY AGAIN` / `BACK TO ARCADE` actions, scan line, and all completion-modal CSS into this component. Preserve all visible copy, current class names, `celebration-modal`, `new-best-unsaved`, `server-retry-banner`, and `retry-server-submission` test IDs.
+Move the completion-modal CSS into this component with the markup. Preserve all visible copy, current class names, `celebration-modal`, `new-best-unsaved`, `server-retry-banner`, and `retry-server-submission` test IDs.
 
 Do not move completion effects, retry policy, local stats, restart, or navigation into this component.
 
@@ -951,7 +998,7 @@ From repository root:
 
 ```bash
 rg -n \
-  'import (PuzzleBoard|PuzzlePiece|PuzzleToolbar|ZoomableBoardFrame|ReferenceOverlay)|modalFocus|SvelteMap|formatTime' \
+  'import PuzzleBoard from|import PuzzlePiece from|import PuzzleToolbar from|import ZoomableBoardFrame from|import ReferenceOverlay from|modalFocus|SvelteMap|formatTime' \
   'apps/web/src/routes/puzzle/[id]/+page.svelte'
 
 rg -n \
@@ -966,7 +1013,7 @@ rg -n \
   apps/web/src/lib/components/PuzzleCompletionDialog.svelte
 ```
 
-Expected: no matches. `PuzzleBoardPanel`, `PuzzleInventoryPanel`, and `PuzzleCompletionDialog` imports themselves are allowed; the first pattern intentionally targets the old direct primitives.
+Expected: no matches.
 
 Confirm manually that route `handleWindowResize()` updates only viewport dimensions, route pointer-up/cancel listeners still use capture for reference hold, and `handlePieceRotate()` still checks placed-piece membership before dispatch.
 
