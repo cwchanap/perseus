@@ -9,9 +9,10 @@
 
 	interface Props {
 		puzzle: PuzzleSummary;
+		placedCount?: number;
 	}
 
-	let { puzzle }: Props = $props();
+	let { puzzle, placedCount }: Props = $props();
 
 	let bestTime: number | null = $state(null);
 	let thumbnailError = $state(false);
@@ -24,6 +25,7 @@
 	// them. Render a non-clickable card with a status badge so the player can
 	// still see their upload's state without hitting a dead link.
 	const isReady = $derived(puzzle.status === 'ready');
+	const hasProgress = $derived(isReady && placedCount !== undefined);
 	const statusLabel = $derived(puzzle.status === 'processing' ? 'PROCESSING…' : 'FAILED');
 </script>
 
@@ -59,7 +61,7 @@ font-(--font-display) font-bold tracking-[0.3em] text-(--accent)
 [box-shadow:0_0_30px_var(--accent-glow)] backdrop-blur-[6px]
 [text-shadow:0_0_20px_var(--accent)]"
 				>
-					▶ PLAY
+					▶ {hasProgress ? 'CONTINUE' : 'PLAY'}
 				</span>
 			</div>
 		{:else}
@@ -117,7 +119,11 @@ group-hover:opacity-100 group-focus-visible:opacity-100"
 				<span
 					class="h-[5px] w-[5px] shrink-0 rounded-full bg-(--accent) [box-shadow:0_0_6px_var(--accent)]"
 				></span>
-				{puzzle.pieceCount} PCS
+				{#if hasProgress}
+					CONTINUE · {placedCount}/{puzzle.pieceCount} PLACED
+				{:else}
+					{puzzle.pieceCount} PCS
+				{/if}
 			</span>
 			{#if bestTime !== null}
 				<span
