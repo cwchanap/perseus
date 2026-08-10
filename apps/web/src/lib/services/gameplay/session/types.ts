@@ -212,6 +212,7 @@ export interface SessionPersistenceError {
 }
 
 export interface SessionStorageAdapter {
+	peekSession(puzzleId: string, context: SessionValidationContext): SessionLoadResult;
 	loadSession(puzzleId: string, context: SessionValidationContext): SessionLoadResult;
 	saveSession(puzzleId: string, snapshot: PersistedPuzzleSessionV1): void;
 	clearSession(puzzleId: string): void;
