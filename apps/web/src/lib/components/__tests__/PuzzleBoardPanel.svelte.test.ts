@@ -102,10 +102,10 @@ function scaleOf(transform: string): number {
 
 async function beginRealPan(pointerId: number): Promise<Element> {
 	await page.getByLabelText('Zoom in').click();
-	const viewport = await page.getByTestId('board-viewport').element();
+	const board = await page.getByTestId('puzzle-board').element();
 	const frame = await page.getByTestId('zoomable-board-frame').element();
 
-	viewport.dispatchEvent(
+	board.dispatchEvent(
 		new PointerEvent('pointerdown', {
 			bubbles: true,
 			pointerId,
@@ -159,6 +159,37 @@ describe('PuzzleBoardPanel', () => {
 	it('hides Reference when puzzle.hasReference is not true', async () => {
 		render(PuzzleBoardPanel, props({ puzzle: { ...puzzle, hasReference: false } }));
 		expect(page.getByLabelText('Reference').query()).toBeNull();
+	});
+
+	it('starts panning only from the board target, not viewport padding', async () => {
+		render(PuzzleBoardPanel, props());
+		await page.getByLabelText('Zoom in').click();
+		const viewport = await page.getByTestId('board-viewport').element();
+		const board = await page.getByTestId('puzzle-board').element();
+
+		viewport.dispatchEvent(
+			new PointerEvent('pointerdown', {
+				bubbles: true,
+				pointerId: 11,
+				pointerType: 'mouse',
+				button: 0,
+				clientX: 20,
+				clientY: 20
+			})
+		);
+		await expect.element(page.getByTestId('board-viewport')).not.toHaveClass(/is-panning/);
+
+		board.dispatchEvent(
+			new PointerEvent('pointerdown', {
+				bubbles: true,
+				pointerId: 12,
+				pointerType: 'mouse',
+				button: 0,
+				clientX: 100,
+				clientY: 100
+			})
+		);
+		await expect.element(page.getByTestId('board-viewport')).toHaveClass(/is-panning/);
 	});
 
 	it('resets real zoom and pan when viewResetVersion changes', async () => {

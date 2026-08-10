@@ -1,7 +1,7 @@
 # HPA-557: Split the Puzzle Route into Concrete Feature Components — Design
 
-**Linear:** HPA-557  
-**Status:** Design for implementation  
+**Linear:** HPA-557
+**Status:** Design for implementation
 **Date:** 2026-08-09
 
 ## Context

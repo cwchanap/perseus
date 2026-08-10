@@ -60,7 +60,7 @@ Before Task 1, run the existing route tests, warning-strict Svelte check, and li
 
 ```bash
 cd apps/web
-bunx vitest --run --browser 'src/routes/puzzle/[id]/page.svelte.test.ts'
+bunx vitest --run --browser=chromium 'src/routes/puzzle/[id]/page.svelte.test.ts'
 PUBLIC_API_BASE=${PUBLIC_API_BASE:-} bunx svelte-kit sync
 PUBLIC_API_BASE=${PUBLIC_API_BASE:-} bunx svelte-check --tsconfig ./tsconfig.json --fail-on-warnings
 bun run lint
@@ -205,10 +205,10 @@ function scaleOf(transform: string): number {
 
 async function beginRealPan(pointerId: number): Promise<HTMLElement> {
   await page.getByLabelText('Zoom in').click();
-  const viewport = await page.getByTestId('board-viewport').element();
+  const board = await page.getByTestId('puzzle-board').element();
   const frame = await page.getByTestId('zoomable-board-frame').element();
 
-  viewport.dispatchEvent(
+  board.dispatchEvent(
     new PointerEvent('pointerdown', {
       bubbles: true,
       pointerId,
@@ -260,6 +260,37 @@ describe('PuzzleBoardPanel', () => {
   it('hides Reference when puzzle.hasReference is not true', async () => {
     render(PuzzleBoardPanel, props({ puzzle: { ...puzzle, hasReference: false } }));
     expect(page.getByLabelText('Reference').query()).toBeNull();
+  });
+
+  it('starts panning only from the board target, not viewport padding', async () => {
+    render(PuzzleBoardPanel, props());
+    await page.getByLabelText('Zoom in').click();
+    const viewport = await page.getByTestId('board-viewport').element();
+    const board = await page.getByTestId('puzzle-board').element();
+
+    viewport.dispatchEvent(
+      new PointerEvent('pointerdown', {
+        bubbles: true,
+        pointerId: 11,
+        pointerType: 'mouse',
+        button: 0,
+        clientX: 20,
+        clientY: 20
+      })
+    );
+    await expect.element(page.getByTestId('board-viewport')).not.toHaveClass(/is-panning/);
+
+    board.dispatchEvent(
+      new PointerEvent('pointerdown', {
+        bubbles: true,
+        pointerId: 12,
+        pointerType: 'mouse',
+        button: 0,
+        clientX: 100,
+        clientY: 100
+      })
+    );
+    await expect.element(page.getByTestId('board-viewport')).toHaveClass(/is-panning/);
   });
 
   it('resets real zoom and pan when viewResetVersion changes', async () => {
@@ -341,7 +372,7 @@ The oversized metrics are deliberate: the tests must prove non-zero pan before c
 
 ```bash
 cd apps/web
-bunx vitest --run --browser src/lib/components/__tests__/PuzzleBoardPanel.svelte.test.ts
+bunx vitest --run --browser=chromium src/lib/components/__tests__/PuzzleBoardPanel.svelte.test.ts
 ```
 
 Expected: FAIL because `../PuzzleBoardPanel.svelte` does not exist.
@@ -526,7 +557,7 @@ Keep `.game-layout` in the route. Remove board-only imports and selectors in thi
 
 ```bash
 cd apps/web
-bunx vitest --run --browser \
+bunx vitest --run --browser=chromium \
   src/lib/components/__tests__/PuzzleBoardPanel.svelte.test.ts \
   'src/routes/puzzle/[id]/page.svelte.test.ts'
 PUBLIC_API_BASE=${PUBLIC_API_BASE:-} bunx svelte-kit sync
@@ -686,7 +717,7 @@ describe('PuzzleInventoryPanel', () => {
 
 ```bash
 cd apps/web
-bunx vitest --run --browser src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts
+bunx vitest --run --browser=chromium src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts
 ```
 
 Expected: FAIL because `../PuzzleInventoryPanel.svelte` does not exist.
@@ -798,7 +829,7 @@ function handlePieceRotate(pieceId: number) {
 
 ```bash
 cd apps/web
-bunx vitest --run --browser \
+bunx vitest --run --browser=chromium \
   src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts \
   'src/routes/puzzle/[id]/page.svelte.test.ts'
 PUBLIC_API_BASE=${PUBLIC_API_BASE:-} bunx svelte-kit sync
@@ -915,7 +946,7 @@ describe('PuzzleCompletionDialog', () => {
 
 ```bash
 cd apps/web
-bunx vitest --run --browser src/lib/components/__tests__/PuzzleCompletionDialog.svelte.test.ts
+bunx vitest --run --browser=chromium src/lib/components/__tests__/PuzzleCompletionDialog.svelte.test.ts
 ```
 
 Expected: FAIL because `../PuzzleCompletionDialog.svelte` does not exist.
@@ -1011,7 +1042,7 @@ Remove route `modalFocus`, completion-only `formatTime`, completion selectors, a
 
 ```bash
 cd apps/web
-bunx vitest --run --browser \
+bunx vitest --run --browser=chromium \
   src/lib/components/__tests__/PuzzleCompletionDialog.svelte.test.ts \
   'src/routes/puzzle/[id]/page.svelte.test.ts'
 PUBLIC_API_BASE=${PUBLIC_API_BASE:-} bunx svelte-kit sync
@@ -1081,7 +1112,7 @@ Expected: exit 0.
 
 ```bash
 cd apps/web
-bunx vitest --run --browser \
+bunx vitest --run --browser=chromium \
   src/lib/components/__tests__/PuzzleBoardPanel.svelte.test.ts \
   src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts \
   src/lib/components/__tests__/PuzzleCompletionDialog.svelte.test.ts \
