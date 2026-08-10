@@ -10,17 +10,13 @@
 	import { SvelteMap } from 'svelte/reactivity';
 	import type { Puzzle, PlacedPiece, PuzzlePiece as TPuzzlePiece } from '$lib/types/puzzle';
 	import type { Rotation } from '$lib/types/gameplay';
-	import type { ViewportBounds } from '$lib/services/gameplay/viewport';
 	import { modalFocus } from '$lib/actions/modalFocus';
-	import PuzzleBoard from '$lib/components/PuzzleBoard.svelte';
+	import PuzzleBoardPanel from '$lib/components/PuzzleBoardPanel.svelte';
 	import PuzzlePiece from '$lib/components/PuzzlePiece.svelte';
-	import PuzzleToolbar from '$lib/components/PuzzleToolbar.svelte';
 	import MissionSetupDialog from '$lib/components/MissionSetupDialog.svelte';
 	import SessionPauseDialog from '$lib/components/SessionPauseDialog.svelte';
 	import ExitSessionDialog from '$lib/components/ExitSessionDialog.svelte';
-	import ZoomableBoardFrame from '$lib/components/ZoomableBoardFrame.svelte';
 	import GameTimer from '$lib/components/GameTimer.svelte';
-	import ReferenceOverlay from '$lib/components/ReferenceOverlay.svelte';
 	import {
 		DEFAULT_GAMEPLAY_PREFERENCES,
 		loadGameplayPreferences,
@@ -32,7 +28,6 @@
 		getResponsivePuzzleBoardMetrics,
 		type ResponsivePuzzleBoardMetrics
 	} from '$lib/services/puzzleLayout';
-	import { clampZoom, clampPan, calculateFitZoom } from '$lib/services/gameplay/viewport';
 	import { createGameplayRuntimeDependencies } from '$lib/services/gameplay/runtime';
 	import {
 		createPuzzleSessionStore,
@@ -56,7 +51,6 @@
 
 	const REJECTED_DURATION_MS = 500;
 	const HINT_DURATION_MS = 1800;
-	const ZOOM_STEP = 0.2;
 	const CHECKPOINT_INTERVAL_MS = 5_000;
 
 	function createBrowserClock(): Clock {
@@ -82,14 +76,7 @@
 	let showReferenceOverlay = $state(false);
 	let activeHintPieceId = $state<number | null>(null);
 	let activeHintTarget = $state<{ x: number; y: number } | null>(null);
-	let boardViewportElement = $state<HTMLElement | null>(null);
-	let zoom = $state(1);
-	let minZoom = $state(1);
-	let maxZoom = $state(3);
-	let panX = $state(0);
-	let panY = $state(0);
-	let isPanning = $state(false);
-	let pendingViewportReset = $state(false);
+	let boardViewResetVersion = $state(0);
 	let referencePointerId = $state<number | null>(null);
 	let referenceHoldSource = $state<'pointer' | 'keyboard' | null>(null);
 	let viewportWidth = $state(typeof window !== 'undefined' ? window.innerWidth : 1280);
@@ -129,9 +116,6 @@
 	let checkpointInterval: ReturnType<typeof setInterval> | null = null;
 	let rejectedPieceTimeout: ReturnType<typeof setTimeout> | null = null;
 	let hintTimeout: ReturnType<typeof setTimeout> | null = null;
-	let activePanPointerId: number | null = null;
-	let panStartClientX = 0;
-	let panStartClientY = 0;
 
 	// Track the previous player-auth status so a transition to authenticated
 	// (login or session restore) triggers a one-shot retry of any unauthorized
@@ -141,11 +125,7 @@
 	let prevAuthStatus: 'loading' | 'authenticated' | 'anonymous' = 'loading';
 	let authUnsubscribe: (() => void) | null = null;
 
-	let panOriginX = 0;
-	let panOriginY = 0;
-
 	if (typeof window !== 'undefined') {
-		window.addEventListener('pointermove', handleWindowPointerMove);
 		window.addEventListener('pointerup', handleWindowPointerUp, true);
 		window.addEventListener('pointercancel', handleWindowPointerUp, true);
 		window.addEventListener('keydown', handleWindowKeyDown);
@@ -209,7 +189,6 @@
 		}
 
 		if (typeof window !== 'undefined') {
-			window.removeEventListener('pointermove', handleWindowPointerMove);
 			window.removeEventListener('pointerup', handleWindowPointerUp, true);
 			window.removeEventListener('pointercancel', handleWindowPointerUp, true);
 			window.removeEventListener('keydown', handleWindowKeyDown);
@@ -275,7 +254,6 @@
 	const placedPieceIds = $derived.by(
 		() => new Set(placedPieces.map((placement) => placement.pieceId))
 	);
-	const canPanBoard = $derived(zoom > minZoom + 0.001);
 	const boardMetrics: ResponsivePuzzleBoardMetrics | null = $derived(
 		puzzle
 			? getResponsivePuzzleBoardMetrics(puzzle, {
@@ -284,6 +262,10 @@
 				})
 			: null
 	);
+
+	function requestBoardViewReset(): void {
+		boardViewResetVersion += 1;
+	}
 
 	const piecesMap = $derived.by(() => {
 		const map = new SvelteMap<number, TPuzzlePiece>();
@@ -313,45 +295,9 @@
 		}
 	});
 
-	$effect(() => {
-		if (!pendingViewportReset || !puzzle || !boardViewportElement) return;
-		resetViewport();
-		pendingViewportReset = false;
-	});
-
-	function recomputeZoomBounds() {
-		if (!puzzle || !boardViewportElement) return;
-		const fitZoom = getFitZoom();
-		minZoom = fitZoom;
-		maxZoom = Math.max(fitZoom * 3, fitZoom + 1, 3);
-		if (zoom < minZoom) {
-			zoom = minZoom;
-			panX = 0;
-			panY = 0;
-		} else if (zoom > maxZoom) {
-			zoom = maxZoom;
-			panX = 0;
-			panY = 0;
-		} else {
-			const clampedPan = clampPan(panX, panY, getViewportBounds(zoom));
-			panX = clampedPan.x;
-			panY = clampedPan.y;
-		}
-	}
-
-	$effect(() => {
-		if (!boardViewportElement) return;
-		const observer = new ResizeObserver(() => {
-			recomputeZoomBounds();
-		});
-		observer.observe(boardViewportElement);
-		return () => observer.disconnect();
-	});
-
 	function handleWindowResize() {
 		viewportWidth = window.innerWidth;
 		viewportHeight = window.innerHeight;
-		recomputeZoomBounds();
 	}
 
 	function getDisplayedRotation(pieceId: number): Rotation {
@@ -558,46 +504,6 @@
 		}
 	}
 
-	function getViewportBounds(scale = zoom): ViewportBounds {
-		if (!puzzle || !boardViewportElement) {
-			return { minX: 0, maxX: 0, minY: 0, maxY: 0 };
-		}
-
-		const viewportWidth = boardViewportElement.clientWidth;
-		const viewportHeight = boardViewportElement.clientHeight;
-		const boardWidth = boardMetrics?.boardWidth ?? puzzle.imageWidth;
-		const boardHeight = boardMetrics?.boardHeight ?? puzzle.imageHeight;
-		const scaledWidth = boardWidth * scale;
-		const scaledHeight = boardHeight * scale;
-		const maxOffsetX = Math.max(0, (scaledWidth - viewportWidth) / 2);
-		const maxOffsetY = Math.max(0, (scaledHeight - viewportHeight) / 2);
-
-		return {
-			minX: -maxOffsetX,
-			maxX: maxOffsetX,
-			minY: -maxOffsetY,
-			maxY: maxOffsetY
-		};
-	}
-
-	function getFitZoom(): number {
-		if (!puzzle || !boardViewportElement) return 1;
-
-		const viewportWidth = boardViewportElement.clientWidth;
-		const viewportHeight = boardViewportElement.clientHeight;
-		if (viewportWidth === 0 || viewportHeight === 0) return 1;
-		const boardWidth = boardMetrics?.boardWidth ?? puzzle.imageWidth;
-		const boardHeight = boardMetrics?.boardHeight ?? puzzle.imageHeight;
-		if (boardWidth <= 0 || boardHeight <= 0) {
-			console.error(
-				`Puzzle ${puzzle.id} has invalid board dimensions: ${boardWidth}x${boardHeight}`
-			);
-			return 1;
-		}
-
-		return Math.min(1, calculateFitZoom(boardWidth, boardHeight, viewportWidth, viewportHeight, 1));
-	}
-
 	async function loadPuzzle(id: string) {
 		const requestId = ++activeLoadRequestId;
 		loading = true;
@@ -790,7 +696,7 @@
 				checkpointSession();
 			}, CHECKPOINT_INTERVAL_MS);
 
-			pendingViewportReset = true;
+			requestBoardViewReset();
 		} catch (e) {
 			if (requestId !== activeLoadRequestId) return;
 
@@ -887,62 +793,6 @@
 		checkpointSession();
 	}
 
-	function setView(nextZoom: number, nextPanX = panX, nextPanY = panY) {
-		const clampedScale = clampZoom(nextZoom, minZoom, maxZoom);
-		const clampedPan = clampPan(nextPanX, nextPanY, getViewportBounds(clampedScale));
-		zoom = clampedScale;
-		panX = clampedPan.x;
-		panY = clampedPan.y;
-	}
-
-	function resetViewport() {
-		const fitZoom = getFitZoom();
-		minZoom = fitZoom;
-		maxZoom = Math.max(fitZoom * 3, fitZoom + 1, 3);
-		zoom = fitZoom;
-		panX = 0;
-		panY = 0;
-		isPanning = false;
-		activePanPointerId = null;
-	}
-
-	function handleZoomIn() {
-		setView(zoom + ZOOM_STEP);
-	}
-
-	function handleZoomOut() {
-		setView(zoom - ZOOM_STEP);
-	}
-
-	function handleBoardWheel(event: WheelEvent) {
-		event.preventDefault();
-		const zoomFactor = event.deltaY < 0 ? 1 + ZOOM_STEP : 1 - ZOOM_STEP;
-		setView(zoom * zoomFactor);
-	}
-
-	function handleBoardPointerDown(event: PointerEvent) {
-		if (!canPanBoard) return;
-		if (event.pointerType === 'mouse' && event.button !== 0) return;
-
-		event.preventDefault();
-		isPanning = true;
-		activePanPointerId = event.pointerId;
-		panStartClientX = event.clientX;
-		panStartClientY = event.clientY;
-		panOriginX = panX;
-		panOriginY = panY;
-	}
-
-	function handleWindowPointerMove(event: PointerEvent) {
-		if (!isPanning || activePanPointerId !== event.pointerId) return;
-
-		const deltaX = event.clientX - panStartClientX;
-		const deltaY = event.clientY - panStartClientY;
-		const clampedPan = clampPan(panOriginX + deltaX, panOriginY + deltaY, getViewportBounds());
-		panX = clampedPan.x;
-		panY = clampedPan.y;
-	}
-
 	function handleWindowPointerUp(event: PointerEvent) {
 		if (referenceHoldSource === 'pointer' && referencePointerId === event.pointerId) {
 			showReferenceOverlay = false;
@@ -952,11 +802,6 @@
 			// as a new inactive-to-active activation.
 			sessionStore?.dispatch({ type: 'set_reference_mode', mode: null });
 		}
-
-		if (activePanPointerId !== event.pointerId) return;
-
-		isPanning = false;
-		activePanPointerId = null;
 	}
 
 	function handleWindowBlur() {
@@ -967,8 +812,6 @@
 		referencePointerId = null;
 		referenceHoldSource = null;
 		sessionStore?.dispatch({ type: 'cancel_selection' });
-		isPanning = false;
-		activePanPointerId = null;
 	}
 
 	function handleVisibilityChange() {
@@ -1062,7 +905,7 @@
 		});
 		sessionStore.dispatch({ type: 'start' });
 		checkpointSession();
-		pendingViewportReset = true;
+		requestBoardViewReset();
 		sessionDialog = null;
 	}
 
@@ -1089,8 +932,6 @@
 		if (rejectedPieceTimeout !== null) clearTimeout(rejectedPieceTimeout);
 		rejectedPieceTimeout = null;
 		rejectedPiece = null;
-		isPanning = false;
-		activePanPointerId = null;
 	}
 
 	function openPauseDialog(presentation: 'resume' | 'paused' = 'paused'): void {
@@ -1134,7 +975,7 @@
 		devicePreferences = loadGameplayPreferences();
 		showMissionSetup(true);
 		restartConfirmation = false;
-		pendingViewportReset = true;
+		requestBoardViewReset();
 	}
 
 	function requestRestart(): void {
@@ -1313,10 +1154,6 @@
 		{:else if puzzle}
 			{@const currentPuzzle = puzzle}
 			{@const currentBoardMetrics = boardMetrics}
-			<ReferenceOverlay
-				imageUrl={puzzleSource?.resolveReferenceImage() ?? null}
-				active={showReferenceOverlay}
-			/>
 			<div
 				class="game-layout"
 				data-board-tier={currentBoardMetrics?.tier}
@@ -1325,65 +1162,33 @@
 					: ''}
 			>
 				<!-- Board panel -->
-				<div class="board-panel">
-					<div class="panel-header">
-						<span class="panel-tag">PUZZLE BOARD</span>
-					</div>
-					<div class="board-toolbar px-4 pt-3">
-						<PuzzleToolbar
-							onUndo={handleUndo}
-							onRedo={handleRedo}
-							onHint={handleHint}
-							onReferenceDown={handleReferenceDown}
-							onReferenceUp={handleReferenceUp}
-							onZoomIn={handleZoomIn}
-							onZoomOut={handleZoomOut}
-							onResetView={resetViewport}
-							onRotationToggle={handleRotationToggle}
-							onPause={handleToolbarPause}
-							onOpenSetup={() => showMissionSetup(false)}
-							{canOpenSetup}
-							{canPause}
-							{canUndo}
-							{canRedo}
-							{rotationEnabled}
-							rotationToggleDisabled={isRotationToggleLocked()}
-							hasReference={currentPuzzle.hasReference === true}
-						/>
-					</div>
-					<div class="board-wrap">
-						<div
-							class={`board-viewport flex min-h-72 items-center justify-center overflow-hidden ${
-								isPanning
-									? 'is-panning cursor-grabbing'
-									: canPanBoard
-										? 'can-pan cursor-grab touch-none'
-										: ''
-							}`}
-							bind:this={boardViewportElement}
-							data-testid="board-viewport"
-						>
-							<ZoomableBoardFrame scale={zoom} {panX} {panY} {isPanning} onWheel={handleBoardWheel}>
-								<div
-									class="board-canvas mx-auto"
-									style={currentBoardMetrics
-										? `--board-width: ${currentBoardMetrics.boardWidth}px; --board-height: ${currentBoardMetrics.boardHeight}px; --board-cell-size: ${currentBoardMetrics.cellSize}px; width: var(--board-width); height: var(--board-height);`
-										: `width: ${currentPuzzle.imageWidth}px;`}
-								>
-									<PuzzleBoard
-										puzzle={currentPuzzle}
-										{placedPieces}
-										onPiecePlaced={handlePiecePlaced}
-										{activeHintTarget}
-										onBoardPointerDown={handleBoardPointerDown}
-										resolveImage={puzzleSource!.resolvePieceImage}
-										selectedPieceId={currentSelectedPieceId}
-									/>
-								</div>
-							</ZoomableBoardFrame>
-						</div>
-					</div>
-				</div>
+				<PuzzleBoardPanel
+					puzzle={currentPuzzle}
+					boardMetrics={currentBoardMetrics}
+					{placedPieces}
+					selectedPieceId={currentSelectedPieceId}
+					{activeHintTarget}
+					resolveImage={puzzleSource!.resolvePieceImage}
+					referenceImageUrl={puzzleSource?.resolveReferenceImage() ?? null}
+					referenceActive={showReferenceOverlay}
+					{canUndo}
+					{canRedo}
+					{canOpenSetup}
+					{canPause}
+					{rotationEnabled}
+					rotationToggleDisabled={isRotationToggleLocked()}
+					interactionBlocked={hasSessionModal}
+					viewResetVersion={boardViewResetVersion}
+					onPiecePlaced={handlePiecePlaced}
+					onUndo={handleUndo}
+					onRedo={handleRedo}
+					onHint={handleHint}
+					onReferenceDown={handleReferenceDown}
+					onReferenceUp={handleReferenceUp}
+					onRotationToggle={handleRotationToggle}
+					onPause={handleToolbarPause}
+					onOpenSetup={() => showMissionSetup(false)}
+				/>
 
 				<!-- Inventory panel -->
 				<div class="inventory-panel">
@@ -1764,12 +1569,6 @@
 		}
 	}
 
-	/* Board panel */
-	.board-panel {
-		background: var(--bg-1);
-		border: 1px solid var(--border);
-	}
-
 	.panel-header {
 		display: flex;
 		align-items: center;
@@ -1785,16 +1584,6 @@
 		font-weight: 600;
 		letter-spacing: 0.2em;
 		color: var(--text-2);
-	}
-
-	.board-wrap {
-		padding: clamp(0.75rem, 2vw, 1.25rem);
-		overflow: auto;
-	}
-
-	.board-canvas {
-		width: var(--board-width);
-		height: var(--board-height);
 	}
 
 	/* Inventory panel */
