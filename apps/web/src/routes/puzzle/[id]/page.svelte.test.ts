@@ -604,6 +604,15 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.poll(() => page.getByTestId('reference-overlay').query()).toBeNull();
 	});
 
+	it('hides the reference button and overlay when the puzzle has no reference image', async () => {
+		vi.mocked(fetchPuzzle).mockResolvedValue({ ...createMockPuzzle(), hasReference: false });
+		render(PuzzlePage);
+		await expect.element(page.getByTestId('puzzle-board')).toBeVisible();
+
+		expect(page.getByLabelText('Reference').query()).toBeNull();
+		expect(page.getByTestId('reference-overlay').query()).toBeNull();
+	});
+
 	it('pauses a restored active session at entry and checkpoints the paused state', async () => {
 		// Restored active runs are deliberately paused at route entry so the
 		// player re-engages through the resume flow (wired in the session
