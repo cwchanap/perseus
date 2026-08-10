@@ -262,4 +262,62 @@ describe('discoverGalleryProgress', () => {
 		expect(discovery.byPuzzleId.get('pz1')?.placedCount).toBe(2);
 		expect(discovery.newest?.puzzleId).toBe('q-test');
 	});
+
+	it('rejects Quick records whose grid capacity does not match pieceCount', () => {
+		// 4 pieces projected onto a 3x3 grid (capacity 9): coordinates are
+		// individually in-bounds and unique, but the grid is non-canonical.
+		// Production records always satisfy gridCols * gridRows === pieceCount
+		// (see getGridDimensionsForAspectRatio), so a mismatch signals corrupt
+		// local state and must not surface as resumable progress.
+		const mismatchedQuick: StoredQuickPuzzle = {
+			...quickPuzzle(),
+			id: 'q-mismatch',
+			gridRows: 3,
+			gridCols: 3,
+			pieces: [
+				{
+					id: 0,
+					correctX: 0,
+					correctY: 0,
+					edges: { top: 'flat', right: 'tab', bottom: 'blank', left: 'flat' }
+				},
+				{
+					id: 1,
+					correctX: 1,
+					correctY: 0,
+					edges: { top: 'flat', right: 'flat', bottom: 'tab', left: 'blank' }
+				},
+				{
+					id: 2,
+					correctX: 0,
+					correctY: 1,
+					edges: { top: 'tab', right: 'blank', bottom: 'flat', left: 'flat' }
+				},
+				{
+					id: 3,
+					correctX: 1,
+					correctY: 1,
+					edges: { top: 'blank', right: 'flat', bottom: 'flat', left: 'tab' }
+				}
+			]
+		};
+		const quickSnapshot: PersistedPuzzleSessionV1 = {
+			...validSnapshot(),
+			puzzleId: 'q-mismatch',
+			source: 'local',
+			lastUpdated: 5_000
+		};
+		const store = {
+			'puzzle-progress-q-mismatch': JSON.stringify(quickSnapshot)
+		};
+
+		const discovery = discoverGalleryProgress({
+			serverPuzzles: [],
+			quickPuzzles: [mismatchedQuick],
+			sessionStorage: createSessionStorageAdapter({ storage: memoryStorage(store) })
+		});
+
+		expect(discovery.newest).toBeNull();
+		expect(discovery.byPuzzleId.has('q-mismatch')).toBe(false);
+	});
 });

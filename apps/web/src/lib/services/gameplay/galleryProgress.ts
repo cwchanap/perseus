@@ -70,6 +70,7 @@ function quickValidationContext(puzzle: StoredQuickPuzzle): SessionValidationCon
 		typeof puzzle.gridRows !== 'number' ||
 		!Number.isInteger(puzzle.gridRows) ||
 		puzzle.gridRows <= 0 ||
+		puzzle.gridCols * puzzle.gridRows !== puzzle.pieceCount ||
 		!Array.isArray(puzzle.pieces) ||
 		puzzle.pieces.length !== puzzle.pieceCount
 	) {
