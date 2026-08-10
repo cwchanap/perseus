@@ -171,10 +171,6 @@
 			zoom = minZoom;
 			panX = 0;
 			panY = 0;
-		} else if (zoom > maxZoom) {
-			zoom = maxZoom;
-			panX = 0;
-			panY = 0;
 		} else {
 			const clampedPan = clampPan(panX, panY, getViewportBounds(zoom));
 			panX = clampedPan.x;

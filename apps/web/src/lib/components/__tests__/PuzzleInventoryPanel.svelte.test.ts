@@ -108,4 +108,37 @@ describe('PuzzleInventoryPanel', () => {
 		selectedPiece.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
 		expect(input.onCancelSelection).toHaveBeenCalledOnce();
 	});
+
+	it('renders pieces with zero rotation when rotation is disabled', async () => {
+		render(PuzzleInventoryPanel, { ...baseProps(), rotationEnabled: false });
+		// Piece 1 has a stored rotation of 90, but with rotationEnabled=false
+		// the displayed rotation should be 0.
+		const slot1 = await page.getByTestId('piece-slot-1').element();
+		const visual = slot1.querySelector('[data-testid="puzzle-piece-visual"]');
+		expect(visual?.getAttribute('style') ?? '').not.toContain('rotate(90deg)');
+	});
+
+	it('defaults to zero rotation when a piece has no stored rotation entry', async () => {
+		render(PuzzleInventoryPanel, {
+			...baseProps(),
+			pieceRotations: { 1: 90 }
+		});
+		// Piece 0 has no entry in pieceRotations; the ?? 0 fallback should apply.
+		const slot0 = await page.getByTestId('piece-slot-0').element();
+		const visual = slot0.querySelector('[data-testid="puzzle-piece-visual"]');
+		expect(visual?.getAttribute('style') ?? '').toContain('rotate(0deg)');
+	});
+
+	it('shows the all-pieces-placed message when every piece is placed', async () => {
+		render(PuzzleInventoryPanel, {
+			...baseProps(),
+			placedPieces: [
+				{ pieceId: 0, x: 0, y: 0 },
+				{ pieceId: 1, x: 1, y: 0 }
+			]
+		});
+		await expect.element(page.getByText('ALL PIECES PLACED')).toBeVisible();
+		expect(page.getByTestId('piece-slot-0').query()).toBeNull();
+		expect(page.getByTestId('piece-slot-1').query()).toBeNull();
+	});
 });

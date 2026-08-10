@@ -271,4 +271,92 @@ describe('PuzzleBoardPanel', () => {
 		window.dispatchEvent(new Event('blur'));
 		await expect.element(page.getByTestId('board-viewport')).not.toHaveClass(/is-panning/);
 	});
+
+	it('zooms out via the toolbar button', async () => {
+		render(PuzzleBoardPanel, props());
+		const frame = await page.getByTestId('zoomable-board-frame').element();
+
+		await page.getByLabelText('Zoom in').click();
+		const zoomedInScale = scaleOf(transformOf(frame));
+		expect(zoomedInScale).toBeGreaterThan(0);
+
+		await page.getByLabelText('Zoom out').click();
+		await expect.poll(() => scaleOf(transformOf(frame))).toBeLessThan(zoomedInScale);
+	});
+
+	it('zooms via wheel on the board frame', async () => {
+		render(PuzzleBoardPanel, props());
+		const frame = await page.getByTestId('zoomable-board-frame').element();
+		const initialScale = scaleOf(transformOf(frame));
+
+		frame.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, bubbles: true }));
+		await expect.poll(() => scaleOf(transformOf(frame))).toBeGreaterThan(initialScale);
+	});
+
+	it('falls back to fit zoom of 1 for invalid board dimensions', async () => {
+		const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const invalidMetrics: ResponsivePuzzleBoardMetrics = {
+			...largeMetrics,
+			boardWidth: 0,
+			boardHeight: 0
+		};
+		// Render with valid metrics first so the viewport element has dimensions,
+		// then switch to invalid metrics to trigger the invalid-dimensions branch.
+		const input = props();
+		const view = render(PuzzleBoardPanel, input);
+		const viewport = await page.getByTestId('board-viewport').element();
+		const frame = await page.getByTestId('zoomable-board-frame').element();
+		await expect.poll(() => scaleOf(transformOf(frame))).toBeLessThan(1);
+
+		// Ensure the viewport has non-zero dimensions for the invalid-dims check.
+		viewport.style.width = '800px';
+		viewport.style.height = '600px';
+
+		await view.rerender({ ...input, boardMetrics: invalidMetrics });
+		// Invalid dimensions cause getFitZoom to return 1 (after logging once),
+		// so minZoom becomes 1 and the zoom snaps to 1.
+		await expect.poll(() => scaleOf(transformOf(frame))).toBe(1);
+
+		errorSpy.mockRestore();
+	});
+
+	it('ignores pointer move events from a non-active pointer id', async () => {
+		render(PuzzleBoardPanel, props());
+		const frame = await beginRealPan(13);
+		const transformBefore = transformOf(frame);
+
+		window.dispatchEvent(
+			new PointerEvent('pointermove', {
+				pointerId: 999,
+				pointerType: 'mouse',
+				clientX: 500,
+				clientY: 500
+			})
+		);
+		await expect.poll(() => transformOf(frame)).toBe(transformBefore);
+	});
+
+	it('ignores pointer up events from a non-active pointer id', async () => {
+		render(PuzzleBoardPanel, props());
+		await beginRealPan(14);
+
+		window.dispatchEvent(
+			new PointerEvent('pointerup', {
+				pointerId: 999,
+				pointerType: 'mouse',
+				button: 0
+			})
+		);
+		await expect.element(page.getByTestId('board-viewport')).toHaveClass(/is-panning/);
+
+		// Cleanup: cancel the still-active pan.
+		window.dispatchEvent(
+			new PointerEvent('pointerup', {
+				pointerId: 14,
+				pointerType: 'mouse',
+				button: 0
+			})
+		);
+		await expect.element(page.getByTestId('board-viewport')).not.toHaveClass(/is-panning/);
+	});
 });

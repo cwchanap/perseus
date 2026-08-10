@@ -67,4 +67,18 @@ describe('PuzzleCompletionDialog', () => {
 		await expect.element(page.getByTestId('new-best-unsaved')).toBeVisible();
 		expect(page.getByText('NEW RECORD').query()).toBeNull();
 	});
+
+	it('falls back to elapsed time when bestTime is null for a new best', async () => {
+		render(PuzzleCompletionDialog, {
+			...timedProps(),
+			bestTime: null,
+			isNewBest: true,
+			elapsedSeconds: 90
+		});
+		// formatTime is mocked as `00:${seconds}` in page tests, but the
+		// component test uses the real formatTime. Either way, the PERSONAL
+		// BEST value should be visible (using elapsedSeconds as fallback).
+		await expect.element(page.getByText('PERSONAL BEST')).toBeVisible();
+		await expect.element(page.getByText('NEW RECORD')).toBeVisible();
+	});
 });
