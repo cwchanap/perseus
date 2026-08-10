@@ -313,8 +313,8 @@ describe('PuzzleBoardPanel', () => {
 		viewport.style.height = '600px';
 
 		await view.rerender({ ...input, boardMetrics: invalidMetrics });
-		// Invalid dimensions cause getFitZoom to return 1 (after logging once),
-		// so minZoom becomes 1 and the zoom snaps to 1.
+		// Invalid dimensions cause getFitZoom to return 1 (after logging the
+		// error), so minZoom becomes 1 and the zoom snaps to 1.
 		await expect.poll(() => scaleOf(transformOf(frame))).toBe(1);
 
 		errorSpy.mockRestore();
@@ -368,33 +368,6 @@ describe('PuzzleBoardPanel', () => {
 		expect(boardCanvas!.style.width).toBe(`${puzzle.imageWidth}px`);
 		// The board should still render and be visible.
 		await expect.element(page.getByTestId('puzzle-board')).toBeVisible();
-	});
-
-	it('logs invalid board dimensions only once per puzzle id', async () => {
-		const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-		const invalidMetrics: ResponsivePuzzleBoardMetrics = {
-			...largeMetrics,
-			boardWidth: 0,
-			boardHeight: 0
-		};
-		const input = props();
-		const view = render(PuzzleBoardPanel, input);
-		const viewport = await page.getByTestId('board-viewport').element();
-		viewport.style.width = '800px';
-		viewport.style.height = '600px';
-
-		// First trigger: logs the error and adds puzzle id to the dedup set.
-		await view.rerender({ ...input, boardMetrics: invalidMetrics });
-		const frame = await page.getByTestId('zoomable-board-frame').element();
-		await expect.poll(() => scaleOf(transformOf(frame))).toBe(1);
-
-		// Switch back to valid metrics, then to invalid again — the dedup
-		// cache should suppress the second console.error call.
-		await view.rerender({ ...input, boardMetrics: largeMetrics });
-		await view.rerender({ ...input, boardMetrics: invalidMetrics });
-
-		expect(errorSpy).toHaveBeenCalledOnce();
-		errorSpy.mockRestore();
 	});
 
 	it('does not start panning when interactionBlocked is true', async () => {

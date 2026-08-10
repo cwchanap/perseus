@@ -55,10 +55,7 @@
 	}
 </script>
 
-<div
-	class="inventory-panel"
-	style={boardMetrics ? `--piece-slot-size: ${boardMetrics.pieceSlotSize}px;` : ''}
->
+<div class="inventory-panel">
 	<div class="panel-header">
 		<span class="panel-tag">INVENTORY</span>
 		<span class="inv-count">{puzzle.pieceCount - placedPieces.length} LEFT</span>
@@ -74,6 +71,7 @@
 								? 'rejected animate-shake border-(--hot) shadow-[0_0_12px_var(--hot-glow)]'
 								: ''
 					}`}
+					style={boardMetrics ? `--piece-slot-size: ${boardMetrics.pieceSlotSize}px;` : ''}
 					data-testid={`piece-slot-${piece.id}`}
 				>
 					<PuzzlePiece
@@ -118,7 +116,6 @@
 	}
 
 	.inventory-panel {
-		--piece-slot-size: 4rem;
 		background: var(--bg-1);
 		border: 1px solid var(--border);
 		display: flex;

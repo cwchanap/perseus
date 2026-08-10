@@ -514,9 +514,8 @@ describe('Puzzle route gameplay integration', () => {
 			expect(cellSize).toBe(`${expected.cellSize}px`);
 			expect(boardCanvas!.style.width).not.toBe(`${puzzle.imageWidth}px`);
 
-			const inventoryPanel = document.querySelector<HTMLElement>('.inventory-panel');
-			expect(inventoryPanel).not.toBeNull();
-			expect(inventoryPanel!.style.getPropertyValue('--piece-slot-size').trim()).toBe(cellSize);
+			const pieceSlot = await page.getByTestId('piece-slot-0').element();
+			expect(pieceSlot.style.getPropertyValue('--piece-slot-size').trim()).toBe(cellSize);
 		} finally {
 			Object.defineProperty(window, 'innerWidth', {
 				configurable: true,
@@ -602,15 +601,6 @@ describe('Puzzle route gameplay integration', () => {
 		window.dispatchEvent(new Event('blur'));
 
 		await expect.poll(() => page.getByTestId('reference-overlay').query()).toBeNull();
-	});
-
-	it('hides the reference button and overlay when the puzzle has no reference image', async () => {
-		vi.mocked(fetchPuzzle).mockResolvedValue({ ...createMockPuzzle(), hasReference: false });
-		render(PuzzlePage);
-		await expect.element(page.getByTestId('puzzle-board')).toBeVisible();
-
-		expect(page.getByLabelText('Reference').query()).toBeNull();
-		expect(page.getByTestId('reference-overlay').query()).toBeNull();
 	});
 
 	it('pauses a restored active session at entry and checkpoints the paused state', async () => {

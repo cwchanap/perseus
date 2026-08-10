@@ -81,8 +81,6 @@
 	let panStartClientY = $state(0);
 	let panOriginX = $state(0);
 	let panOriginY = $state(0);
-	// eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive dedup cache
-	const reportedInvalidDimensions = new Set<string>();
 
 	const canPanBoard = $derived(zoom > minZoom + 0.001);
 	const puzzleId = $derived(puzzle.id);
@@ -146,12 +144,9 @@
 		const boardWidth = boardMetrics?.boardWidth ?? puzzle.imageWidth;
 		const boardHeight = boardMetrics?.boardHeight ?? puzzle.imageHeight;
 		if (boardWidth <= 0 || boardHeight <= 0) {
-			if (!reportedInvalidDimensions.has(puzzle.id)) {
-				reportedInvalidDimensions.add(puzzle.id);
-				console.error(
-					`Puzzle ${puzzle.id} has invalid board dimensions: ${boardWidth}x${boardHeight}`
-				);
-			}
+			console.error(
+				`Puzzle ${puzzle.id} has invalid board dimensions: ${boardWidth}x${boardHeight}`
+			);
 			return 1;
 		}
 
