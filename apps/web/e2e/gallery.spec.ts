@@ -1,13 +1,20 @@
 import { test, expect, type Page } from '@playwright/test';
+import type { PuzzleSummary } from '@perseus/types';
+import { getFixture } from './gameplay-fixtures/catalog';
+import { createFixtureRouter } from './gameplay-fixtures/fixture-router';
+import {
+	buildMinimalSeed,
+	createPersistedStateController
+} from './gameplay-fixtures/persisted-state';
 
-const pagedResponse = (puzzles: Array<{ id: string; name: string; pieceCount: number }>) => ({
+const pagedResponse = (puzzles: PuzzleSummary[]) => ({
 	puzzles,
 	total: puzzles.length,
 	offset: 0,
 	limit: 20
 });
 
-const samplePuzzleSummary = {
+const samplePuzzleSummary: PuzzleSummary = {
 	id: 'puzzle-1',
 	name: 'Test Puzzle',
 	pieceCount: 1,
@@ -35,10 +42,7 @@ const samplePuzzle = {
 	]
 };
 
-async function mockPuzzleList(
-	page: Page,
-	puzzles: Array<{ id: string; name: string; pieceCount: number }>
-) {
+async function mockPuzzleList(page: Page, puzzles: PuzzleSummary[]) {
 	await page.route(/\/api\/puzzles(?:\?.*)?$/, (route) =>
 		route.fulfill({ json: pagedResponse(puzzles) })
 	);
@@ -88,6 +92,46 @@ test.describe('Main Gallery Page', () => {
 		await expect(page).toHaveURL(/\/puzzle\/puzzle-1/);
 	});
 
+	test('shows current-device progress and continues the newest session', async ({ page }) => {
+		const fixtureId = 'e2e-square-4';
+		const fixture = getFixture(fixtureId);
+		const firstPiece = fixture.pieces[0];
+		const seed = {
+			...buildMinimalSeed(fixtureId),
+			placedPieces: [
+				{
+					pieceId: firstPiece.id,
+					x: firstPiece.correctX,
+					y: firstPiece.correctY
+				}
+			],
+			timerStarted: true,
+			hasUserActivity: true,
+			lastUpdated: 2_000
+		};
+
+		await mockPuzzleList(page, [
+			{
+				id: fixtureId,
+				name: 'Resume Fixture',
+				pieceCount: fixture.pieceCount,
+				aspectRatio: fixture.aspectRatio,
+				status: 'ready'
+			}
+		]);
+		await page.goto('/');
+		await createPersistedStateController().seedValid(page, fixtureId, seed);
+		await createFixtureRouter().install(page);
+		await page.reload();
+
+		await expect(page.getByTestId('continue-on-device')).toContainText('Resume Fixture');
+		await expect(page.getByTestId('continue-on-device')).toContainText('1/4 PLACED');
+		await expect(page.getByTestId('puzzle-card')).toContainText('CONTINUE · 1/4 PLACED');
+
+		await page.getByTestId('continue-on-device').getByRole('link', { name: 'CONTINUE' }).click();
+		await expect(page).toHaveURL(/\/puzzle\/e2e-square-4/);
+	});
+
 	test('should show no-results state when search returns empty', async ({ page }) => {
 		// First load with puzzles, then search returns empty
 		await page.route(/\/api\/puzzles(?:\?.*)?$/, async (route) => {
@@ -109,12 +153,15 @@ test.describe('Main Gallery Page', () => {
 	});
 
 	test('should append more puzzles when scrolling to sentinel', async ({ page }) => {
-		const firstPage = Array.from({ length: 20 }, (_, i) => ({
+		const firstPage: PuzzleSummary[] = Array.from({ length: 20 }, (_, i) => ({
 			id: `p${i}`,
 			name: `Puzzle ${i}`,
-			pieceCount: 225
+			pieceCount: 225,
+			status: 'ready'
 		}));
-		const secondPage = [{ id: 'p20', name: 'Puzzle 20', pieceCount: 225 }];
+		const secondPage: PuzzleSummary[] = [
+			{ id: 'p20', name: 'Puzzle 20', pieceCount: 225, status: 'ready' }
+		];
 		const cursorValue = 'cursor-page-2';
 
 		let callCount = 0;
