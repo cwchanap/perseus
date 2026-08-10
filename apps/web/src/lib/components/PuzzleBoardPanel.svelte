@@ -81,6 +81,8 @@
 	let panStartClientY = $state(0);
 	let panOriginX = $state(0);
 	let panOriginY = $state(0);
+	// eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive dedup cache
+	const reportedInvalidDimensions = new Set<string>();
 
 	const canPanBoard = $derived(zoom > minZoom + 0.001);
 	const puzzleId = $derived(puzzle.id);
@@ -144,20 +146,27 @@
 		const boardWidth = boardMetrics?.boardWidth ?? puzzle.imageWidth;
 		const boardHeight = boardMetrics?.boardHeight ?? puzzle.imageHeight;
 		if (boardWidth <= 0 || boardHeight <= 0) {
-			console.error(
-				`Puzzle ${puzzle.id} has invalid board dimensions: ${boardWidth}x${boardHeight}`
-			);
+			if (!reportedInvalidDimensions.has(puzzle.id)) {
+				reportedInvalidDimensions.add(puzzle.id);
+				console.error(
+					`Puzzle ${puzzle.id} has invalid board dimensions: ${boardWidth}x${boardHeight}`
+				);
+			}
 			return 1;
 		}
 
 		return Math.min(1, calculateFitZoom(boardWidth, boardHeight, viewportWidth, viewportHeight, 1));
 	}
 
-	function recomputeZoomBounds() {
-		if (!boardViewportElement) return;
+	function applyZoomBounds() {
 		const fitZoom = getFitZoom();
 		minZoom = fitZoom;
 		maxZoom = Math.max(fitZoom * 3, fitZoom + 1, 3);
+	}
+
+	function recomputeZoomBounds() {
+		if (!boardViewportElement) return;
+		applyZoomBounds();
 		if (zoom < minZoom) {
 			zoom = minZoom;
 			panX = 0;
@@ -182,10 +191,8 @@
 	}
 
 	function resetViewport() {
-		const fitZoom = getFitZoom();
-		minZoom = fitZoom;
-		maxZoom = Math.max(fitZoom * 3, fitZoom + 1, 3);
-		zoom = fitZoom;
+		applyZoomBounds();
+		zoom = minZoom;
 		panX = 0;
 		panY = 0;
 		cancelPan();

@@ -190,6 +190,15 @@ describe('PuzzleBoardPanel', () => {
 			})
 		);
 		await expect.element(page.getByTestId('board-viewport')).toHaveClass(/is-panning/);
+
+		window.dispatchEvent(
+			new PointerEvent('pointerup', {
+				pointerId: 12,
+				pointerType: 'mouse',
+				button: 0
+			})
+		);
+		await expect.element(page.getByTestId('board-viewport')).not.toHaveClass(/is-panning/);
 	});
 
 	it('resets real zoom and pan when viewResetVersion changes', async () => {

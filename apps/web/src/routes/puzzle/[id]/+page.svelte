@@ -1133,6 +1133,7 @@
 		{:else if puzzle}
 			{@const currentPuzzle = puzzle}
 			{@const currentBoardMetrics = boardMetrics}
+			{@const source = puzzleSource!}
 			<div
 				class="game-layout"
 				data-board-tier={currentBoardMetrics?.tier}
@@ -1147,8 +1148,8 @@
 					{placedPieces}
 					selectedPieceId={currentSelectedPieceId}
 					{activeHintTarget}
-					resolveImage={puzzleSource!.resolvePieceImage}
-					referenceImageUrl={puzzleSource?.resolveReferenceImage() ?? null}
+					resolveImage={source.resolvePieceImage}
+					referenceImageUrl={source.resolveReferenceImage() ?? null}
 					referenceActive={showReferenceOverlay}
 					{canUndo}
 					{canRedo}
@@ -1180,7 +1181,7 @@
 					selectedPieceId={currentSelectedPieceId}
 					{activeHintPieceId}
 					rejectedPieceId={rejectedPiece}
-					resolveImage={puzzleSource!.resolvePieceImage}
+					resolveImage={source.resolvePieceImage}
 					onRotate={handlePieceRotate}
 					onSelect={handleSelectPiece}
 					onCancelSelection={handleCancelSelection}
