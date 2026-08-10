@@ -1,0 +1,98 @@
+import { describe, expect, it, vi } from 'vitest';
+import { render } from 'vitest-browser-svelte';
+import { page } from 'vitest/browser';
+import PuzzleInventoryPanel from '../PuzzleInventoryPanel.svelte';
+import type { Puzzle } from '$lib/types/puzzle';
+
+const image = 'data:image/gif;base64,R0lGODlhAQABAAAAACw=';
+
+const puzzle: Puzzle = {
+	id: 'inventory-test',
+	name: 'Inventory Test',
+	pieceCount: 2,
+	gridCols: 2,
+	gridRows: 1,
+	imageWidth: 200,
+	imageHeight: 100,
+	createdAt: 1704067200000,
+	pieces: [
+		{
+			id: 0,
+			puzzleId: 'inventory-test',
+			correctX: 0,
+			correctY: 0,
+			imagePath: 'pieces/0.png',
+			edges: { top: 'flat', right: 'blank', bottom: 'flat', left: 'flat' }
+		},
+		{
+			id: 1,
+			puzzleId: 'inventory-test',
+			correctX: 1,
+			correctY: 0,
+			imagePath: 'pieces/1.png',
+			edges: { top: 'flat', right: 'flat', bottom: 'flat', left: 'tab' }
+		}
+	]
+};
+
+function baseProps() {
+	return {
+		puzzle,
+		boardMetrics: null,
+		trayOrder: [1, 0],
+		placedPieces: [],
+		rotationEnabled: true,
+		pieceRotations: { 0: 0 as const, 1: 90 as const },
+		selectedPieceId: null,
+		activeHintPieceId: null,
+		rejectedPieceId: null,
+		resolveImage: () => image,
+		onRotate: vi.fn(),
+		onSelect: vi.fn(),
+		onCancelSelection: vi.fn()
+	};
+}
+
+describe('PuzzleInventoryPanel', () => {
+	it('filters placed pieces and preserves hint/rejection presentation', async () => {
+		render(PuzzleInventoryPanel, {
+			...baseProps(),
+			placedPieces: [{ pieceId: 0, x: 0, y: 0 }],
+			selectedPieceId: 1,
+			activeHintPieceId: 1,
+			rejectedPieceId: 1
+		});
+
+		await expect.element(page.getByText('1 LEFT')).toBeVisible();
+		expect(document.querySelector('[data-testid="piece-slot-0"]')).toBeNull();
+		const slot = document.querySelector('[data-testid="piece-slot-1"]');
+		expect(slot).not.toBeNull();
+		expect(slot?.className).toContain('hinted');
+		expect(slot?.className).toContain('rejected');
+	});
+
+	it('renders unplaced pieces in tray order', async () => {
+		render(PuzzleInventoryPanel, baseProps());
+		const slots = Array.from(
+			document.querySelectorAll<HTMLElement>('[data-testid^="piece-slot-"]')
+		);
+		expect(slots.map((slot) => slot.dataset.testid)).toEqual(['piece-slot-1', 'piece-slot-0']);
+	});
+
+	it('forwards select, rotate, and cancel selection', async () => {
+		const input = baseProps();
+		const view = render(PuzzleInventoryPanel, input);
+
+		const piece = await page.getByLabelText('Puzzle piece 1').element();
+		piece.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+		expect(input.onSelect).toHaveBeenCalledWith(1);
+
+		await page.getByLabelText('Rotate piece 1').click();
+		expect(input.onRotate).toHaveBeenCalledWith(1);
+
+		await view.rerender({ ...input, selectedPieceId: 1 });
+		const selectedPiece = await page.getByLabelText('Puzzle piece 1').element();
+		selectedPiece.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+		expect(input.onCancelSelection).toHaveBeenCalledOnce();
+	});
+});
