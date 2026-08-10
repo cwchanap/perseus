@@ -359,4 +359,96 @@ describe('PuzzleBoardPanel', () => {
 		);
 		await expect.element(page.getByTestId('board-viewport')).not.toHaveClass(/is-panning/);
 	});
+
+	it('falls back to puzzle image dimensions when boardMetrics is null', async () => {
+		render(PuzzleBoardPanel, props({ boardMetrics: null }));
+		const boardCanvas = document.querySelector<HTMLElement>('.board-canvas');
+		expect(boardCanvas).not.toBeNull();
+		// Without boardMetrics, the canvas style uses puzzle.imageWidth directly.
+		expect(boardCanvas!.style.width).toBe(`${puzzle.imageWidth}px`);
+		// The board should still render and be visible.
+		await expect.element(page.getByTestId('puzzle-board')).toBeVisible();
+	});
+
+	it('logs invalid board dimensions only once per puzzle id', async () => {
+		const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const invalidMetrics: ResponsivePuzzleBoardMetrics = {
+			...largeMetrics,
+			boardWidth: 0,
+			boardHeight: 0
+		};
+		const input = props();
+		const view = render(PuzzleBoardPanel, input);
+		const viewport = await page.getByTestId('board-viewport').element();
+		viewport.style.width = '800px';
+		viewport.style.height = '600px';
+
+		// First trigger: logs the error and adds puzzle id to the dedup set.
+		await view.rerender({ ...input, boardMetrics: invalidMetrics });
+		const frame = await page.getByTestId('zoomable-board-frame').element();
+		await expect.poll(() => scaleOf(transformOf(frame))).toBe(1);
+
+		// Switch back to valid metrics, then to invalid again — the dedup
+		// cache should suppress the second console.error call.
+		await view.rerender({ ...input, boardMetrics: largeMetrics });
+		await view.rerender({ ...input, boardMetrics: invalidMetrics });
+
+		expect(errorSpy).toHaveBeenCalledOnce();
+		errorSpy.mockRestore();
+	});
+
+	it('does not start panning when interactionBlocked is true', async () => {
+		render(PuzzleBoardPanel, props({ interactionBlocked: true }));
+		await page.getByLabelText('Zoom in').click();
+		const board = await page.getByTestId('puzzle-board').element();
+
+		board.dispatchEvent(
+			new PointerEvent('pointerdown', {
+				bubbles: true,
+				pointerId: 20,
+				pointerType: 'mouse',
+				button: 0,
+				clientX: 100,
+				clientY: 100
+			})
+		);
+		await expect.element(page.getByTestId('board-viewport')).not.toHaveClass(/is-panning/);
+	});
+
+	it('ignores right-click (non-primary button) for pan initiation', async () => {
+		render(PuzzleBoardPanel, props());
+		await page.getByLabelText('Zoom in').click();
+		const board = await page.getByTestId('puzzle-board').element();
+
+		board.dispatchEvent(
+			new PointerEvent('pointerdown', {
+				bubbles: true,
+				pointerId: 21,
+				pointerType: 'mouse',
+				button: 2,
+				clientX: 100,
+				clientY: 100
+			})
+		);
+		await expect.element(page.getByTestId('board-viewport')).not.toHaveClass(/is-panning/);
+	});
+
+	it('falls back to fit zoom of 1 when the viewport has zero dimensions', async () => {
+		const input = props();
+		const view = render(PuzzleBoardPanel, input);
+		const viewport = await page.getByTestId('board-viewport').element();
+		const frame = await page.getByTestId('zoomable-board-frame').element();
+		// Wait for initial fit zoom (board is larger than viewport, so < 1).
+		await expect.poll(() => scaleOf(transformOf(frame))).toBeLessThan(1);
+
+		// Hide the viewport so clientWidth/clientHeight become 0, then trigger
+		// a recompute by changing boardMetrics. getFitZoom returns 1 for
+		// zero-dimension viewports, so minZoom becomes 1 and zoom snaps to 1.
+		viewport.style.display = 'none';
+		await view.rerender({ ...input, boardMetrics: resizedMetrics });
+		await expect.poll(() => scaleOf(transformOf(frame))).toBe(1);
+
+		// Restore for cleanup.
+		viewport.style.display = '';
+	});
 });
