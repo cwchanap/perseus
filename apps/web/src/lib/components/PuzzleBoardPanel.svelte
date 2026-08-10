@@ -283,7 +283,6 @@
 						? 'can-pan cursor-grab touch-none'
 						: ''
 			}`}
-			onpointerdown={handleBoardPointerDown}
 			bind:this={boardViewportElement}
 			data-testid="board-viewport"
 		>
@@ -301,6 +300,7 @@
 						{activeHintTarget}
 						{resolveImage}
 						{selectedPieceId}
+						onBoardPointerDown={handleBoardPointerDown}
 					/>
 				</div>
 			</ZoomableBoardFrame>

@@ -894,10 +894,11 @@
 	// --- Pause / resume / restart / exit composition ---------------------------
 
 	// Consolidated route-local cleanup of transient gameplay presentation
-	// (reference hold, selection, hint, rejection animation, panning). Invoked
-	// before any lifecycle transition so a stale overlay/interaction cannot
-	// leak into the next presentation. PuzzleSession remains the sole
-	// canonical owner of run state; this only touches route-local UI state.
+	// (reference hold, selection, hint, rejection animation). Pan cancellation
+	// is panel-local and follows the interactionBlocked signal. Invoked before
+	// any lifecycle transition so stale overlay/interaction cannot leak into
+	// the next presentation. PuzzleSession remains the sole canonical owner of
+	// run state; this only touches route-local UI state.
 	function clearTransientGameplayState(): void {
 		if (referenceHoldSource !== null) {
 			sessionStore?.dispatch({ type: 'set_reference_mode', mode: null });
