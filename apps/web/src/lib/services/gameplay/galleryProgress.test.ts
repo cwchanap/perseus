@@ -234,4 +234,32 @@ describe('discoverGalleryProgress', () => {
 		expect(discovery.newest).toBeNull();
 		expect(store['puzzle-progress-pz1']).toBe(raw);
 	});
+
+	it('skips malformed current-schema Quick records without aborting valid candidates', () => {
+		const serverSnapshot = validSnapshot();
+		const quickSnapshot: PersistedPuzzleSessionV1 = {
+			...serverSnapshot,
+			puzzleId: 'q-test',
+			source: 'local',
+			lastUpdated: 2_000
+		};
+		const malformedQuick = {
+			...quickPuzzle(),
+			id: 'q-malformed',
+			pieces: undefined
+		} as unknown as StoredQuickPuzzle;
+		const store = {
+			'puzzle-progress-pz1': JSON.stringify(serverSnapshot),
+			'puzzle-progress-q-test': JSON.stringify(quickSnapshot)
+		};
+
+		const discovery = discoverGalleryProgress({
+			serverPuzzles: [serverPuzzle('pz1', 4, '1:1')],
+			quickPuzzles: [malformedQuick, quickPuzzle()],
+			sessionStorage: createSessionStorageAdapter({ storage: memoryStorage(store) })
+		});
+
+		expect(discovery.byPuzzleId.get('pz1')?.placedCount).toBe(2);
+		expect(discovery.newest?.puzzleId).toBe('q-test');
+	});
 });
