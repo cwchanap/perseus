@@ -30,10 +30,19 @@ describe('PuzzleCard', () => {
 		await expect.element(page.getByText('Test Puzzle')).toBeVisible();
 	});
 
-	it('should render piece count', async () => {
+	it('keeps the normal piece count without progress', async () => {
 		render(PuzzleCard, { puzzle: mockPuzzle });
 
 		await expect.element(page.getByText('25 PCS')).toBeVisible();
+	});
+
+	it('shows always-visible Continue progress for a resumable card', async () => {
+		render(PuzzleCard, { puzzle: mockPuzzle, placedCount: 7 });
+
+		await expect.element(page.getByText('CONTINUE · 7/25 PLACED')).toBeVisible();
+		await expect
+			.element(page.getByTestId('puzzle-card'))
+			.toHaveAttribute('href', '/puzzle/test-puzzle-123');
 	});
 
 	it('should link to puzzle page', async () => {
@@ -105,6 +114,15 @@ describe('PuzzleCard', () => {
 		await expect.element(card).not.toHaveAttribute('href');
 		await expect.element(page.getByTestId('card-status-overlay')).toBeVisible();
 		await expect.element(page.getByTestId('card-overlay')).not.toBeInTheDocument();
+	});
+
+	it('does not expose Continue progress for non-ready cards', async () => {
+		render(PuzzleCard, {
+			puzzle: { ...mockPuzzle, status: 'processing' },
+			placedCount: 7
+		});
+
+		await expect.element(page.getByText(/CONTINUE/)).not.toBeInTheDocument();
 	});
 
 	it('should render a non-clickable card with FAILED label for failed puzzles', async () => {
