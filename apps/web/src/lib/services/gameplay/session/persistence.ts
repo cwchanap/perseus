@@ -688,7 +688,7 @@ export function createSessionStorageAdapter(options?: {
 		noopThrowingStorage;
 	const onError = options?.onError;
 
-	function loadSession(puzzleId: string, context: SessionValidationContext): SessionLoadResult {
+	function readSession(puzzleId: string, context: SessionValidationContext): SessionLoadResult {
 		let raw: string | null;
 		try {
 			raw = storage.getItem(progressKey(puzzleId));
@@ -696,7 +696,15 @@ export function createSessionStorageAdapter(options?: {
 			if (onError) onError({ kind: 'read_error', puzzleId, cause });
 			return { status: 'missing' };
 		}
-		const result = loadPersistedSession(raw, context);
+		return loadPersistedSession(raw, context);
+	}
+
+	function peekSession(puzzleId: string, context: SessionValidationContext): SessionLoadResult {
+		return readSession(puzzleId, context);
+	}
+
+	function loadSession(puzzleId: string, context: SessionValidationContext): SessionLoadResult {
+		const result = readSession(puzzleId, context);
 		if (result.status !== 'invalid') return result;
 
 		try {
@@ -724,6 +732,7 @@ export function createSessionStorageAdapter(options?: {
 	}
 
 	return {
+		peekSession,
 		loadSession,
 		saveSession,
 		clearSession,

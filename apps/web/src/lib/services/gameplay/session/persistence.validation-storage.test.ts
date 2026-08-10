@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createSessionStorageAdapter, serializeSession } from './persistence';
-import { context, memoryStorage } from './persistence.test-fixtures';
+import { context, memoryStorage, validSnapshot } from './persistence.test-fixtures';
 import type { PuzzleSessionState, SessionPersistenceError } from './types';
 
 const RUN_ID = '11111111-1111-4111-8111-111111111111';
@@ -38,6 +38,30 @@ function validState(overrides: Partial<PuzzleSessionState> = {}): PuzzleSessionS
 }
 
 describe('PuzzleSession persistence adapter and cloning', () => {
+	it('peekSession reports invalid data without removing it', () => {
+		const snapshot = validSnapshot();
+		const raw = JSON.stringify({ ...snapshot, schemaVersion: 999 });
+		const store = { 'puzzle-progress-pz1': raw };
+		const adapter = createSessionStorageAdapter({ storage: memoryStorage(store) });
+
+		expect(adapter.peekSession('pz1', context)).toEqual({
+			status: 'invalid',
+			reason: 'unsupported_schema_version'
+		});
+		expect(store['puzzle-progress-pz1']).toBe(raw);
+	});
+
+	it('loadSession still removes invalid data', () => {
+		const snapshot = validSnapshot();
+		const store = {
+			'puzzle-progress-pz1': JSON.stringify({ ...snapshot, schemaVersion: 999 })
+		};
+		const adapter = createSessionStorageAdapter({ storage: memoryStorage(store) });
+
+		expect(adapter.loadSession('pz1', context)).toEqual({ status: 'missing' });
+		expect(store['puzzle-progress-pz1']).toBeUndefined();
+	});
+
 	it('reports storage read and remove failures', () => {
 		const errors: SessionPersistenceError[] = [];
 		const storage = memoryStorage({});
