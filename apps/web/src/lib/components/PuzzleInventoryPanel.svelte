@@ -55,7 +55,10 @@
 	}
 </script>
 
-<div class="inventory-panel">
+<div
+	class="inventory-panel"
+	style={boardMetrics ? `--piece-slot-size: ${boardMetrics.pieceSlotSize}px;` : ''}
+>
 	<div class="panel-header">
 		<span class="panel-tag">INVENTORY</span>
 		<span class="inv-count">{puzzle.pieceCount - placedPieces.length} LEFT</span>
@@ -71,7 +74,6 @@
 								? 'rejected animate-shake border-(--hot) shadow-[0_0_12px_var(--hot-glow)]'
 								: ''
 					}`}
-					style={boardMetrics ? `--piece-slot-size: ${boardMetrics.pieceSlotSize}px;` : ''}
 					data-testid={`piece-slot-${piece.id}`}
 				>
 					<PuzzlePiece
@@ -116,6 +118,7 @@
 	}
 
 	.inventory-panel {
+		--piece-slot-size: 4rem;
 		background: var(--bg-1);
 		border: 1px solid var(--border);
 		display: flex;
@@ -141,15 +144,6 @@
 		padding: var(--inventory-pad);
 		overflow-y: auto;
 		flex: 1;
-	}
-
-	@media (min-width: 640px) and (max-width: 1023px) {
-		.pieces-grid {
-			grid-template-columns: repeat(
-				auto-fill,
-				minmax(var(--piece-slot-size), var(--piece-slot-size))
-			);
-		}
 	}
 
 	.piece-slot {
@@ -179,6 +173,7 @@
 
 	@media (prefers-reduced-motion: reduce) {
 		.piece-slot.rejected {
+			animation: none;
 			box-shadow: none;
 		}
 	}

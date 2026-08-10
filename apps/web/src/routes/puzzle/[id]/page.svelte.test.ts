@@ -514,8 +514,9 @@ describe('Puzzle route gameplay integration', () => {
 			expect(cellSize).toBe(`${expected.cellSize}px`);
 			expect(boardCanvas!.style.width).not.toBe(`${puzzle.imageWidth}px`);
 
-			const pieceSlot = await page.getByTestId('piece-slot-0').element();
-			expect(pieceSlot.style.getPropertyValue('--piece-slot-size').trim()).toBe(cellSize);
+			const inventoryPanel = document.querySelector<HTMLElement>('.inventory-panel');
+			expect(inventoryPanel).not.toBeNull();
+			expect(inventoryPanel!.style.getPropertyValue('--piece-slot-size').trim()).toBe(cellSize);
 		} finally {
 			Object.defineProperty(window, 'innerWidth', {
 				configurable: true,
