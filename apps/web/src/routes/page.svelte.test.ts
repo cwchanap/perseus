@@ -4,6 +4,9 @@ import { page } from 'vitest/browser';
 import GalleryPage from './+page.svelte';
 import type { PuzzleSummary } from '$lib/types/puzzle';
 import { fetchPuzzles, ApiError } from '$lib/services/api';
+import { listQuick } from '$lib/services/quickPuzzle';
+import type { StoredQuickPuzzle } from '$lib/services/quickPuzzle/types';
+import { discoverGalleryProgress } from '$lib/services/gameplay/galleryProgress';
 
 vi.mock('$lib/services/api', () => {
 	class MockApiError extends Error {
@@ -27,6 +30,17 @@ vi.mock('$lib/services/stats', () => ({
 	getBestTime: vi.fn().mockReturnValue(null)
 }));
 
+vi.mock('$lib/services/quickPuzzle', () => ({
+	listQuick: vi.fn().mockReturnValue([])
+}));
+
+vi.mock('$lib/services/gameplay/galleryProgress', () => ({
+	discoverGalleryProgress: vi.fn().mockReturnValue({
+		byPuzzleId: new Map(),
+		newest: null
+	})
+}));
+
 vi.mock('$app/paths', () => ({
 	resolve: (p: string) => p
 }));
@@ -39,8 +53,50 @@ const makePuzzle = (id: string, overrides: Partial<PuzzleSummary> = {}): PuzzleS
 	...overrides
 });
 
+const storedQuickPuzzleFixture: StoredQuickPuzzle = {
+	id: 'q-local',
+	name: 'Local Mission',
+	aspectRatio: '1:1',
+	pieceCount: 4,
+	gridRows: 2,
+	gridCols: 2,
+	imageWidth: 100,
+	imageHeight: 100,
+	imageDataUrl: 'data:image/jpeg;base64,',
+	pieces: [
+		{
+			id: 0,
+			correctX: 0,
+			correctY: 0,
+			edges: { top: 'flat', right: 'tab', bottom: 'blank', left: 'flat' }
+		},
+		{
+			id: 1,
+			correctX: 1,
+			correctY: 0,
+			edges: { top: 'flat', right: 'flat', bottom: 'tab', left: 'blank' }
+		},
+		{
+			id: 2,
+			correctX: 0,
+			correctY: 1,
+			edges: { top: 'tab', right: 'blank', bottom: 'flat', left: 'flat' }
+		},
+		{
+			id: 3,
+			correctX: 1,
+			correctY: 1,
+			edges: { top: 'blank', right: 'flat', bottom: 'flat', left: 'tab' }
+		}
+	],
+	createdAt: 1_000,
+	schemaVersion: 1
+};
+
 type FetchPuzzlesResult = Awaited<ReturnType<typeof fetchPuzzles>>;
 const mockedFetchPuzzles = vi.mocked(fetchPuzzles);
+const mockedListQuick = vi.mocked(listQuick);
+const mockedDiscoverGalleryProgress = vi.mocked(discoverGalleryProgress);
 
 const observe = vi.fn();
 const disconnect = vi.fn();
@@ -61,6 +117,8 @@ describe('Gallery Page', () => {
 		intersectionCallback = null;
 		vi.stubGlobal('IntersectionObserver', MockIntersectionObserver as never);
 		mockedFetchPuzzles.mockResolvedValue({ puzzles: [], total: 0, offset: 0, limit: 20 });
+		mockedListQuick.mockReturnValue([]);
+		mockedDiscoverGalleryProgress.mockReturnValue({ byPuzzleId: new Map(), newest: null });
 	});
 
 	afterEach(() => {
@@ -82,6 +140,108 @@ describe('Gallery Page', () => {
 		const cards = page.getByTestId('puzzle-card');
 		await expect.element(cards.nth(0)).toBeVisible();
 		await expect.element(cards.nth(1)).toBeVisible();
+	});
+
+	it('reads Quick puzzles once and reuses them when server results change', async () => {
+		const serverPuzzles = [
+			makePuzzle('p1', { pieceCount: 4, aspectRatio: '1:1', status: 'ready' })
+		];
+		const filteredPuzzles = [
+			makePuzzle('p2', { pieceCount: 4, aspectRatio: '1:1', status: 'ready' })
+		];
+		const quickPuzzles = [storedQuickPuzzleFixture];
+
+		mockedFetchPuzzles
+			.mockResolvedValueOnce({ puzzles: serverPuzzles, total: 1, offset: 0, limit: 20 })
+			.mockResolvedValueOnce({ puzzles: filteredPuzzles, total: 1, offset: 0, limit: 20 });
+		mockedListQuick.mockReturnValue(quickPuzzles);
+
+		render(GalleryPage);
+
+		await vi.waitFor(() => {
+			expect(mockedDiscoverGalleryProgress).toHaveBeenCalledWith({
+				serverPuzzles,
+				quickPuzzles
+			});
+		});
+		expect(mockedListQuick).toHaveBeenCalledTimes(1);
+
+		await page.getByTestId('search-input').fill('filtered');
+		await vi.waitFor(() => {
+			expect(mockedFetchPuzzles).toHaveBeenCalledWith(
+				expect.objectContaining({ q: 'filtered', offset: 0 })
+			);
+		});
+		await expect.element(page.getByText('Puzzle p2')).toBeVisible();
+
+		await vi.waitFor(() => {
+			expect(mockedDiscoverGalleryProgress).toHaveBeenCalledWith({
+				serverPuzzles: filteredPuzzles,
+				quickPuzzles
+			});
+		});
+		expect(mockedListQuick).toHaveBeenCalledTimes(1);
+	});
+
+	it('shows panel and card progress when the newest server progress overlaps a card', async () => {
+		const serverPuzzles = [
+			makePuzzle('p1', {
+				name: 'Server Mission',
+				pieceCount: 4,
+				aspectRatio: '1:1',
+				status: 'ready'
+			})
+		];
+		const progress = {
+			puzzleId: 'p1',
+			name: 'Resume Me',
+			source: 'api' as const,
+			placedCount: 2,
+			pieceCount: 4,
+			lastUpdated: 2_000
+		};
+
+		mockedFetchPuzzles.mockResolvedValue({
+			puzzles: serverPuzzles,
+			total: 1,
+			offset: 0,
+			limit: 20
+		});
+		mockedDiscoverGalleryProgress.mockReturnValue({
+			byPuzzleId: new Map([['p1', progress]]),
+			newest: progress
+		});
+
+		render(GalleryPage);
+
+		await expect.element(page.getByTestId('continue-on-device')).toBeVisible();
+		await expect.element(page.getByTestId('continue-on-device')).toHaveTextContent('Resume Me');
+		await expect.element(page.getByText('CONTINUE · 2/4 PLACED')).toBeVisible();
+	});
+
+	it('links to a Quick-only newest progress without adding a Quick card', async () => {
+		const quickPuzzles = [storedQuickPuzzleFixture];
+		const progress = {
+			puzzleId: 'q-local',
+			name: 'Local Mission',
+			source: 'local' as const,
+			placedCount: 1,
+			pieceCount: 4,
+			lastUpdated: 2_000
+		};
+
+		mockedFetchPuzzles.mockResolvedValue({ puzzles: [], total: 0, offset: 0, limit: 20 });
+		mockedListQuick.mockReturnValue(quickPuzzles);
+		mockedDiscoverGalleryProgress.mockReturnValue({ byPuzzleId: new Map(), newest: progress });
+
+		render(GalleryPage);
+
+		const panel = page.getByTestId('continue-on-device');
+		await expect.element(panel).toBeVisible();
+		await expect
+			.element(panel.getByRole('link', { name: 'CONTINUE' }))
+			.toHaveAttribute('href', '/puzzle/q-local');
+		expect(document.querySelectorAll('[data-testid="puzzle-card"]')).toHaveLength(0);
 	});
 
 	it('shows empty state when total is 0 and no query is active', async () => {

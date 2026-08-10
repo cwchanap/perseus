@@ -1,9 +1,16 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { fetchPuzzles, ApiError } from '$lib/services/api';
 	import type { PuzzleSummary } from '$lib/types/puzzle';
 	import PuzzleCard from '$lib/components/PuzzleCard.svelte';
 	import CategoryFilter from '$lib/components/CategoryFilter.svelte';
 	import SearchBar from '$lib/components/SearchBar.svelte';
+	import { listQuick } from '$lib/services/quickPuzzle';
+	import type { StoredQuickPuzzle } from '$lib/services/quickPuzzle/types';
+	import {
+		discoverGalleryProgress,
+		type GalleryProgressDiscovery
+	} from '$lib/services/gameplay/galleryProgress';
 	import { CATEGORY_ALL } from '$lib/constants/categories';
 	import type { PuzzleCategory } from '$lib/constants/categories';
 	import { resolve } from '$app/paths';
@@ -20,9 +27,27 @@
 	let loadingMore = $state(false);
 	let scrollSentinel = $state<HTMLDivElement | null>(null);
 	let nextCursor: string | undefined = $state(undefined);
+	let quickPuzzles: StoredQuickPuzzle[] = $state([]);
+	let localProgress: GalleryProgressDiscovery = $state({
+		byPuzzleId: new Map(),
+		newest: null
+	});
 	let hasMore = $derived(nextCursor !== undefined);
 	let queryVersion = 0;
 	let loadMoreController: AbortController | null = null;
+
+	onMount(() => {
+		quickPuzzles = listQuick();
+	});
+
+	$effect(() => {
+		const serverPuzzles = puzzles;
+		const localPuzzles = quickPuzzles;
+		localProgress = discoverGalleryProgress({
+			serverPuzzles,
+			quickPuzzles: localPuzzles
+		});
+	});
 
 	// Debounce raw input into debouncedQuery (300 ms), trimming whitespace
 	$effect(() => {
@@ -195,6 +220,37 @@ font-black tracking-[0.06em] text-(--text-0) uppercase"
 			{/if}
 		</header>
 
+		{#if localProgress.newest}
+			<section
+				data-testid="continue-on-device"
+				aria-labelledby="continue-on-device-title"
+				class="mb-8 flex flex-wrap items-center gap-x-6 gap-y-3 border border-(--accent) bg-(--bg-1)
+				px-6 py-4 [box-shadow:0_0_25px_var(--accent-glow)]"
+			>
+				<div class="min-w-40">
+					<h2
+						id="continue-on-device-title"
+						class="text-[0.65rem] font-(--font-mono) tracking-[0.18em] text-(--accent) uppercase"
+					>
+						Continue on this device
+					</h2>
+					<p class="mt-1 truncate text-[0.9rem] font-(--font-display) font-bold text-(--text-0)">
+						{localProgress.newest.name}
+					</p>
+				</div>
+				<span class="text-[0.7rem] font-(--font-mono) tracking-[0.12em] text-(--text-1)">
+					{localProgress.newest.placedCount}/{localProgress.newest.pieceCount} PLACED
+				</span>
+				<a
+					href={resolve(`/puzzle/${localProgress.newest.puzzleId}`)}
+					class="border border-(--accent) px-5 py-2 text-[0.65rem] font-(--font-display) font-bold
+					tracking-[0.2em] text-(--accent) uppercase transition-colors hover:bg-(--accent-glow)"
+				>
+					CONTINUE
+				</a>
+			</section>
+		{/if}
+
 		{#if loading}
 			<div
 				class="flex flex-col items-center justify-center gap-6 py-24"
@@ -331,7 +387,7 @@ motion-reduce:animate-none sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4"
 				data-testid="puzzle-grid"
 			>
 				{#each puzzles as puzzle (puzzle.id)}
-					<PuzzleCard {puzzle} />
+					<PuzzleCard {puzzle} placedCount={localProgress.byPuzzleId.get(puzzle.id)?.placedCount} />
 				{/each}
 			</div>
 
