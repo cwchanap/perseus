@@ -15,7 +15,7 @@
 - inventory ordering, piece markup, hint/rejection presentation, rotation, and selection wiring;
 - completion modal markup, timing/best-time presentation, retry presentation, and modal CSS;
 - setup, pause, and exit dialog composition;
-- page, HUD, board, inventory, modal, and responsive-layout CSS.
+- page, HUD, board, inventory, modal, responsive-layout, and reduced-motion CSS.
 
 The route already uses focused primitives such as `PuzzleToolbar`, `PuzzleBoard`, `ZoomableBoardFrame`, `ReferenceOverlay`, `GameTimer`, `PuzzlePiece`, `MissionSetupDialog`, `SessionPauseDialog`, and `ExitSessionDialog`. The missing boundary is feature-level composition around those primitives, not another gameplay framework.
 
@@ -29,10 +29,10 @@ HPA-556 is merged in PR #49 and HPA-563 is complete, so HPA-557 is unblocked. It
    - `PuzzleInventoryPanel.svelte`
    - `PuzzleCompletionDialog.svelte`
 3. Keep `PuzzleSession` as the only canonical gameplay state owner.
-4. Keep source loading, persistence, lifecycle coordination, completion effects, auth retry, and global keyboard shortcuts in the route.
-5. Move markup and CSS to the component that visually owns it.
+4. Keep source loading, persistence, lifecycle coordination, completion effects, auth retry, responsive metrics, reference-hold semantics, and global keyboard shortcuts in the route.
+5. Move markup and CSS to the component that visually owns it, including reduced-motion rules.
 6. Move zoom/pan mechanics into the board panel because they are ephemeral viewport presentation, while keeping session-changing callbacks in the route.
-7. Preserve current behavior, copy, ARIA semantics, CSS contracts, event capture semantics, and existing test IDs.
+7. Preserve current behavior, copy, ARIA semantics, CSS contracts, event capture semantics, reduced-motion behavior, and existing test IDs.
 8. Leave HPA-223 accessibility behavior—including the live region and announcement callback—until HPA-223 has a real announcement to emit.
 
 ## Non-goals
@@ -101,7 +101,8 @@ The route continues to own:
 - responsive board metrics shared by board and inventory;
 - a small `placedPieceIds` derived set used by the route-side `handlePieceRotate()` guard;
 - top-level page/HUD/progress/loading/error layout;
-- the two-column `game-layout` composition.
+- the two-column `game-layout` composition;
+- route-owned reduced-motion rules for progress/loading/error presentation.
 
 Do not replace explicit component props with a route view-model object.
 
@@ -117,15 +118,26 @@ The board panel owns:
 - board-panel CSS;
 - local zoom, min/max zoom, pan offsets, panning state, pointer origins, viewport element, and `ResizeObserver`;
 - board-local window pointer move/up/cancel and blur cleanup;
-- recalculating and clamping zoom/pan after viewport changes.
+- recalculating and clamping zoom/pan after viewport or board-metric changes.
 
 The board panel never dispatches to `PuzzleSession`. It receives callbacks for Undo, Redo, Hint, reference hold, placement, rotation mode, Pause, and Setup.
 
-The route supplies a monotonically increasing `viewResetVersion`. The panel resets to fit-to-view when the puzzle changes or `viewResetVersion` changes. This replaces route-owned `pendingViewportReset` without an imperative component API.
+The route supplies a monotonically increasing `viewResetVersion`. The panel resets to fit-to-view only when the puzzle identity changes, `viewResetVersion` changes, or a new viewport element is bound. This replaces route-owned `pendingViewportReset` without an imperative component API.
 
 The route also supplies `interactionBlocked`. When a session/completion modal opens, the panel cancels an in-progress pan locally. This avoids component refs or shared panning state.
 
 `ReferenceOverlay` moves inside `PuzzleBoardPanel` as a composition child, but its existing fixed full-screen DOM contract remains unchanged (`fixed inset-0` with no non-fixed replacement wrapper).
+
+`PuzzleBoardPanel` derives toolbar reference availability from the existing puzzle prop:
+
+```svelte
+<PuzzleToolbar
+  ...
+  hasReference={puzzle.hasReference === true}
+/>
+```
+
+Do not add a separate `hasReference` prop and do not rely on `PuzzleToolbar`'s default `true`, because API puzzles without a reference must continue hiding the Reference action.
 
 ### `PuzzleInventoryPanel.svelte`
 
@@ -136,7 +148,8 @@ The inventory panel owns:
 - its own local filtering set for placed pieces;
 - display-rotation lookup;
 - `PuzzlePiece` composition;
-- inventory CSS and hint/rejection visual classes.
+- inventory CSS and hint/rejection visual classes;
+- the reduced-motion rule that removes rejected-piece glow.
 
 Canonical selection, rotations, tray order, hints, and placement stay in `PuzzleSession`/route values passed as props. The panel receives `onRotate`, `onSelect`, and `onCancelSelection` callbacks.
 
@@ -153,7 +166,8 @@ The completion dialog owns the current celebration presentation exactly as it ex
 - Timed versus Relaxed presentation;
 - final-time, personal-best, new-record, and unsaved presentation;
 - retry banner and actions;
-- completion-modal CSS.
+- completion-modal CSS;
+- completion-owned reduced-motion rules for scan line, modal entrance, rank animation, and completion buttons.
 
 It receives plain presentation values and callbacks. It does not own completion effects, retry policy, local-stat writes, session restart, or navigation.
 
@@ -244,7 +258,8 @@ The split must preserve the current dual use of window events for panning and re
 | `pointermove` for pan | `PuzzleBoardPanel` | normal window handler |
 | `pointerup` / `pointercancel` for pan | `PuzzleBoardPanel` | capture phase (`onpointerupcapture` / `onpointercancelcapture`) |
 | `blur` for pan | `PuzzleBoardPanel` | cancel local pan only |
-| board viewport `ResizeObserver` | `PuzzleBoardPanel` | recompute fit/min/max and clamp zoom/pan |
+| board viewport `ResizeObserver` | `PuzzleBoardPanel` | recompute fit/min/max and clamp zoom/pan when viewport box changes |
+| `boardMetrics` changes | `PuzzleBoardPanel` | recompute bounds and clamp current zoom/pan without resetting to fit |
 | `pointerup` / `pointercancel` for reference hold | route | keep current capture-phase listeners |
 | `blur` for reference + selection | route | end reference mode and cancel selection only |
 | window `resize` | route | update `viewportWidth` / `viewportHeight` for `boardMetrics` only; do not call board zoom helpers |
@@ -254,17 +269,61 @@ The split must preserve the current dual use of window events for panning and re
 
 After extraction, `clearTransientGameplayState()` no longer touches pan fields because those fields do not exist in the route. For pause/exit/setup/celebration transitions, the route changes `sessionDialog` or `showCelebration`; `hasSessionModal` updates; `interactionBlocked` flows to the board panel; the board panel effect calls `cancelPan()`.
 
-## Viewport reset flow
+## Viewport reset and reclamp semantics
 
-Replace route-local `pendingViewportReset` with a simple value flow:
+Reset-to-fit and resize/reclamp are different operations and must not share one reactive trigger.
 
-1. route owns `boardViewResetVersion = 0`;
-2. successful puzzle load increments it after session construction;
-3. restart/reconfigure paths increment it where they currently set `pendingViewportReset = true`;
-4. `PuzzleBoardPanel` reacts to puzzle identity and `viewResetVersion` once its viewport exists;
-5. the panel's `ResizeObserver` recomputes bounds on layout changes.
+Svelte effects track reactive values read synchronously by called functions. Therefore an effect that calls `resetViewport()` normally would also subscribe to `boardMetrics`, `zoom`, or other state read by the helper. Use `untrack` around the helper body while deliberately tracking only the trigger signals outside it.
 
-This value is not persisted and never enters `PuzzleSession`.
+The reset effect tracks puzzle identity, reset version, and viewport availability, then performs the reset untracked:
+
+```ts
+import { untrack } from 'svelte';
+
+$effect(() => {
+  puzzle.id;
+  viewResetVersion;
+  const viewport = boardViewportElement;
+  if (!viewport) return;
+  untrack(() => resetViewport());
+});
+```
+
+The metrics effect tracks `boardMetrics` and viewport availability, then recomputes/clamps the current view untracked:
+
+```ts
+$effect(() => {
+  boardMetrics;
+  const viewport = boardViewportElement;
+  if (!viewport) return;
+  untrack(() => recomputeZoomBounds());
+});
+```
+
+The existing viewport `ResizeObserver` also calls `recomputeZoomBounds()` when the viewport box changes.
+
+Consequences:
+
+- puzzle load/restart can explicitly reset to fit;
+- changing responsive metrics because the window resized does **not** discard the user's zoom level;
+- a board-size/tier change still updates `minZoom`, `maxZoom`, and pan bounds even if the viewport element's own box did not change;
+- a newly bound viewport still initializes correctly because `boardViewportElement` is tracked outside `untrack`.
+
+`boardViewResetVersion` is not persisted and never enters `PuzzleSession`.
+
+## Reduced-motion CSS ownership
+
+The current single `@media (prefers-reduced-motion: reduce)` block spans markup that will belong to different Svelte components. Split it with the markup rather than leaving orphaned scoped selectors in the route.
+
+After HPA-557:
+
+- **Route keeps:** `.progress-bar-fill`, `.loading-ring`, `.state-label`, `.err-icon`, `.error-panel`, and its `.arcade-btn:hover` override for the route-owned error action.
+- **Inventory panel gets:** `.piece-slot.rejected { box-shadow: none; }`.
+- **Completion dialog gets:** `.modal-scan-line`, `.modal-box`, `.modal-rank`, and a completion-local `.arcade-btn:hover` reduced-motion override.
+
+`.arcade-btn` is globally styled in `routes/layout.css` and is used both by the route error surface and the completion dialog, so the reduced-motion hover override is intentionally present in both owners after the split.
+
+Use `svelte-check --fail-on-warnings` during each extraction. Svelte's unused-selector warning catches route selectors left behind after markup moves. This does not prove every moved selector arrived in its new owner, so the explicit reduced-motion split above remains required.
 
 ## HPA-223 boundary is deferred, not prebuilt
 
@@ -277,25 +336,30 @@ Roving focus remains panel-local when HPA-223 is implemented; global shortcuts r
 Each extraction task removes its own route residue in the same commit:
 
 - board task removes board markup, board-only imports, viewport/pan state and helpers, pan listener branches, and board-owned CSS;
-- inventory task removes inventory markup, `SvelteMap`/piece-order/display helpers that become panel-local, `PuzzlePiece` route import, and inventory-owned CSS; it keeps the route-side placed-piece rotation guard;
-- completion task removes completion markup, `modalFocus`/completion-only `formatTime` route imports, and completion-owned CSS.
+- inventory task removes inventory markup, `SvelteMap`/piece-order/display helpers that become panel-local, `PuzzlePiece` route import, inventory CSS, and its reduced-motion rule; it keeps the route-side placed-piece rotation guard;
+- completion task removes completion markup, `modalFocus`/completion-only `formatTime` route imports, completion CSS, and completion reduced-motion rules.
 
 The final verification pass is an inventory check, not a catch-all cleanup commit. If residue remains, fix it in the task that owns it before that task is considered complete.
 
 ## Testing strategy
 
-This is behavior-preserving, so existing route tests remain the main integration fence. New component tests follow the existing convention under `apps/web/src/lib/components/__tests__/` with the `.svelte.test.ts` suffix.
+This is behavior-preserving, so `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts` remains a frozen integration fence. New component tests follow the existing convention under `apps/web/src/lib/components/__tests__/` with the `.svelte.test.ts` suffix.
+
+Do not edit the route test by default. Any route-test change is evidence that the extraction changed a public DOM/behavior contract and must be justified explicitly before it is staged.
 
 ### Board panel
 
-Test:
+Use board metrics larger than the browser test viewport so panning is physically possible. Test:
 
 - current toolbar/board test IDs remain present and callbacks forward;
+- the Reference action is hidden when `puzzle.hasReference !== true`;
 - zoom changes `ZoomableBoardFrame` transform without assuming the initial fit scale is exactly `1`;
-- after zoom/pan, incrementing `viewResetVersion` restores the original fit transform and zero pan;
-- setting `interactionBlocked=true` while panning clears the `is-panning` state without relying on blur;
-- window blur also cancels panning;
-- capture-phase pointer-up/cancel wiring is preserved in implementation.
+- pointer movement produces a non-zero translate while panning;
+- after real zoom/pan, incrementing `viewResetVersion` restores the original fit transform and zero pan;
+- setting `interactionBlocked=true` cancels an active pan, and subsequent pointer moves do not change the transform;
+- changing `boardMetrics` reclamps the current view rather than resetting it to fit;
+- window blur cancels panning;
+- capture-phase pointer-up/cancel wiring is preserved.
 
 ### Inventory panel
 
@@ -319,27 +383,40 @@ Test:
 - Play Again and Back to Arcade forward;
 - existing modal/test IDs remain unchanged.
 
-### Route regression
+### Per-task compiler/lint gate
 
-Keep `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts` intact wherever possible. Do not weaken assertions because markup moved. Existing coverage remains the integration fence for responsive sizing, reference hold, panning/selection cleanup, Timed/Relaxed completion, retry behavior, stale completion-effect protection, Play Again, setup/pause/exit flows, and local-versus-API completion semantics.
+Every extraction runs:
+
+```bash
+cd apps/web
+PUBLIC_API_BASE=${PUBLIC_API_BASE:-} bunx svelte-kit sync
+PUBLIC_API_BASE=${PUBLIC_API_BASE:-} bunx svelte-check --tsconfig ./tsconfig.json --fail-on-warnings
+bun run lint
+```
+
+The `--fail-on-warnings` flag is a one-off verification flag; HPA-557 does not need to change the package script.
 
 ### Verification scope
 
-Primary gates are web-scoped because HPA-557 changes only web presentation:
+Primary final gates are web-scoped because HPA-557 changes only web presentation:
 
-- focused component + route browser tests;
+- focused component + unchanged route browser tests;
 - `bun run test:unit --filter=@perseus/web`;
-- `cd apps/web && bun run check && bun run lint && bun run build`;
+- the warning-strict Svelte check above;
+- `cd apps/web && bun run lint && bun run build`;
 - `cd apps/web && bun run test:e2e:smoke`.
 
 A full monorepo build is optional unless implementation unexpectedly touches shared packages.
 
 ## Risks and mitigations
 
+- **Reset-on-resize regression:** separate explicit reset triggers from `boardMetrics` reclamping; use `untrack` so helper internals do not become effect dependencies.
+- **Stale fit after metric-tier changes:** react to `boardMetrics` directly in the panel in addition to the viewport `ResizeObserver`.
 - **Window-event split drift:** preserve the ownership table above, including capture-phase pan/reference pointer-up handling and route resize becoming metrics-only.
-- **Viewport boundary drift:** explicitly test both new cross-boundary signals, `viewResetVersion` and `interactionBlocked`, before deleting route pan state.
-- **Scoped CSS drift:** move selectors with owned markup in the same extraction commit and preserve class/custom-property names.
+- **Fake pan tests:** use oversized metrics and assert a non-zero translate before testing reset/block behavior.
+- **Scoped/reduced-motion CSS drift:** split the shared media block explicitly and run `svelte-check --fail-on-warnings` after each extraction.
 - **Completion focus/dismissal drift:** preserve backdrop Escape + inner `modalFocus` DOM contract exactly and test Escape on `celebration-modal`.
+- **Route-test drift:** keep the route integration test unchanged by default; do not silently weaken assertions to accommodate extraction mistakes.
 - **Long prop lists:** keep explicit props; do not introduce a view-model/controller merely to shorten component calls.
 - **HPA-223 scope creep:** do not prebuild dead announcement/live-region APIs; add them only when HPA-223 implements real behavior.
 - **Generic abstraction creep:** duplicate the small panel-header styles rather than generalize two consumers.
@@ -347,12 +424,16 @@ A full monorepo build is optional unless implementation unexpectedly touches sha
 ## Acceptance mapping
 
 - route primarily composes board, inventory, completion, and existing session-dialog components;
-- lifecycle, persistence, completion, and authentication semantics remain route-owned and unchanged;
+- lifecycle, persistence, completion, authentication, reference-hold, responsive-metric, and global-shortcut semantics remain route-owned and unchanged;
 - board/inventory/completion changes each have one obvious component file;
 - no new global state or duplicated gameplay-domain state is introduced;
 - board viewport mechanics and pan window events are panel-owned while reference/global/persistence window events remain route-owned;
+- `viewResetVersion` resets intentionally, while `boardMetrics` changes only reclamp the existing view;
+- reduced-motion behavior remains intact across route, inventory, and completion owners;
+- toolbar reference availability still derives from `puzzle.hasReference === true`;
+- route integration tests remain unchanged by default;
 - HPA-223 can add one route live region and component callbacks later without reshaping ownership, but HPA-557 ships no dead accessibility seam;
-- focused component/route tests and gameplay smoke pass;
+- focused component/route tests, warning-strict Svelte checks, lint, and gameplay smoke pass;
 - HPA-217, HPA-219, HPA-220, HPA-222, HPA-223, and HPA-224 each have a concrete component boundary to extend.
 
 ## Implementation boundary
