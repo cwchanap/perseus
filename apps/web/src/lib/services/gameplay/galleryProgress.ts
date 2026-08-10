@@ -57,15 +57,64 @@ function serverValidationContext(puzzle: PuzzleSummary): SessionValidationContex
 	};
 }
 
-function quickValidationContext(puzzle: StoredQuickPuzzle): SessionValidationContext {
+function quickValidationContext(puzzle: StoredQuickPuzzle): SessionValidationContext | null {
+	if (!puzzle || typeof puzzle !== 'object') return null;
+	if (
+		typeof puzzle.id !== 'string' ||
+		typeof puzzle.pieceCount !== 'number' ||
+		!Number.isInteger(puzzle.pieceCount) ||
+		puzzle.pieceCount <= 0 ||
+		typeof puzzle.gridCols !== 'number' ||
+		!Number.isInteger(puzzle.gridCols) ||
+		puzzle.gridCols <= 0 ||
+		typeof puzzle.gridRows !== 'number' ||
+		!Number.isInteger(puzzle.gridRows) ||
+		puzzle.gridRows <= 0 ||
+		!Array.isArray(puzzle.pieces) ||
+		puzzle.pieces.length !== puzzle.pieceCount
+	) {
+		return null;
+	}
+
+	const pieces: Array<{ id: number; correctX: number; correctY: number }> = [];
+	const pieceIds = new Set<number>();
+	const cells = new Set<string>();
+	for (const piece of puzzle.pieces) {
+		if (!piece || typeof piece !== 'object') return null;
+		const { id, correctX, correctY } = piece;
+		if (
+			typeof id !== 'number' ||
+			!Number.isInteger(id) ||
+			id < 0 ||
+			id >= puzzle.pieceCount ||
+			pieceIds.has(id) ||
+			typeof correctX !== 'number' ||
+			!Number.isInteger(correctX) ||
+			correctX < 0 ||
+			correctX >= puzzle.gridCols ||
+			typeof correctY !== 'number' ||
+			!Number.isInteger(correctY) ||
+			correctY < 0 ||
+			correctY >= puzzle.gridRows
+		) {
+			return null;
+		}
+
+		const cell = `${correctX},${correctY}`;
+		if (cells.has(cell)) return null;
+		pieceIds.add(id);
+		cells.add(cell);
+		pieces.push({ id, correctX, correctY });
+	}
+
 	return {
 		puzzleId: puzzle.id,
 		source: 'local',
-		pieceIds: puzzle.pieces.map((piece) => piece.id),
+		pieceIds: pieces.map((piece) => piece.id),
 		gridCols: puzzle.gridCols,
 		gridRows: puzzle.gridRows,
 		pieceCount: puzzle.pieceCount,
-		pieces: puzzle.pieces.map(({ id, correctX, correctY }) => ({ id, correctX, correctY }))
+		pieces
 	};
 }
 
@@ -91,12 +140,14 @@ export function discoverGalleryProgress(options: {
 		});
 	}
 	for (const puzzle of options.quickPuzzles) {
+		const context = quickValidationContext(puzzle);
+		if (!context) continue;
 		candidates.push({
 			puzzleId: puzzle.id,
 			name: puzzle.name,
 			source: 'local',
 			pieceCount: puzzle.pieceCount,
-			context: quickValidationContext(puzzle)
+			context
 		});
 	}
 
