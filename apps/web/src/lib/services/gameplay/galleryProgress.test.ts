@@ -320,4 +320,33 @@ describe('discoverGalleryProgress', () => {
 		expect(discovery.newest).toBeNull();
 		expect(discovery.byPuzzleId.has('q-mismatch')).toBe(false);
 	});
+
+	it('rejects Quick records whose id lacks the QUICK_PUZZLE_ID_PREFIX', () => {
+		// loadPuzzleSource routes only q- IDs to the local source; a non-q- id
+		// would fall through to the API path and 404. Gallery validation must
+		// enforce the same invariant so a malformed persisted Quick record can
+		// never surface a Continue link that cannot resume.
+		const nonQuickIdQuick: StoredQuickPuzzle = {
+			...quickPuzzle(),
+			id: 'server-looking-id'
+		};
+		const quickSnapshot: PersistedPuzzleSessionV1 = {
+			...validSnapshot(),
+			puzzleId: 'server-looking-id',
+			source: 'local',
+			lastUpdated: 5_000
+		};
+		const store = {
+			'puzzle-progress-server-looking-id': JSON.stringify(quickSnapshot)
+		};
+
+		const discovery = discoverGalleryProgress({
+			serverPuzzles: [],
+			quickPuzzles: [nonQuickIdQuick],
+			sessionStorage: createSessionStorageAdapter({ storage: memoryStorage(store) })
+		});
+
+		expect(discovery.newest).toBeNull();
+		expect(discovery.byPuzzleId.has('server-looking-id')).toBe(false);
+	});
 });

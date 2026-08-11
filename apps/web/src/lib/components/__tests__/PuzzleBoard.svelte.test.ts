@@ -7,6 +7,9 @@ import type { Puzzle, PlacedPiece, PuzzlePiece } from '$lib/types/puzzle';
 import { BASE_OFFSET, EXPANSION_FACTOR, TAB_RATIO } from '$lib/constants/puzzle';
 
 const resolveImage = (piece: { id: number }) => `/test/${piece.id}.png`;
+const PIXEL_PNG =
+	'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0v8AAAAASUVORK5CYII=';
+const resolveImageData = (_piece: { id: number }) => PIXEL_PNG;
 
 function createMockPuzzle(gridSize: number = 3): Puzzle {
 	const pieces: PuzzlePiece[] = [];
@@ -71,13 +74,20 @@ describe('PuzzleBoard', () => {
 			puzzle,
 			placedPieces,
 			onPiecePlaced,
-			resolveImage
+			resolveImage: resolveImageData
 		});
 
 		const placedImage = page.getByRole('img').first();
-		await expect.element(placedImage).toBeInTheDocument();
+		// The component-test environment does not generate Tailwind utilities, so
+		// the placed img's `h-full w-full` classes do not apply and the img falls
+		// back to its intrinsic dimensions. A 404 src (e.g. `/test/0.png`) yields a
+		// 0x0 rect, which makes toBeVisible() fail non-deterministically depending
+		// on image-load timing. Use a real 1x1 PNG data URI so the img has stable
+		// non-zero intrinsic dimensions and toBeVisible() is deterministic while
+		// still catching display:none / visibility:hidden regressions.
+		await expect.element(placedImage).toBeVisible();
 		await expect.element(placedImage).toHaveAttribute('alt', 'Placed piece');
-		await expect.element(placedImage).toHaveAttribute('src', '/test/0.png');
+		await expect.element(placedImage).toHaveAttribute('src', PIXEL_PNG);
 	});
 
 	it('should align placed piece base image bounds with the drop zone', async () => {
