@@ -349,4 +349,133 @@ describe('discoverGalleryProgress', () => {
 		expect(discovery.newest).toBeNull();
 		expect(discovery.byPuzzleId.has('server-looking-id')).toBe(false);
 	});
+
+	it('skips server puzzles that are not ready', () => {
+		const { adapter, contexts } = spyAdapter();
+		discoverGalleryProgress({
+			serverPuzzles: [
+				serverPuzzle('processing', 4, '1:1', { status: 'processing' }),
+				serverPuzzle('failed', 4, '1:1', { status: 'failed' })
+			],
+			quickPuzzles: [],
+			sessionStorage: adapter
+		});
+
+		expect(contexts).toHaveLength(0);
+	});
+
+	it('skips server puzzles with valid aspect ratio but invalid piece count', () => {
+		const { adapter, contexts } = spyAdapter();
+		// 1:1 requires a perfect-square piece count; 5 is not a perfect square.
+		discoverGalleryProgress({
+			serverPuzzles: [serverPuzzle('bad-count', 5, '1:1')],
+			quickPuzzles: [],
+			sessionStorage: adapter
+		});
+
+		expect(contexts).toHaveLength(0);
+	});
+
+	it('skips null or non-object Quick records', () => {
+		const { adapter, contexts } = spyAdapter();
+		discoverGalleryProgress({
+			serverPuzzles: [],
+			quickPuzzles: [null as unknown as StoredQuickPuzzle, 42 as unknown as StoredQuickPuzzle],
+			sessionStorage: adapter
+		});
+
+		expect(contexts).toHaveLength(0);
+	});
+
+	it('skips Quick records with a non-object piece entry', () => {
+		const { adapter, contexts } = spyAdapter();
+		const withNullPiece: StoredQuickPuzzle = {
+			...quickPuzzle(),
+			pieces: [null as unknown as StoredQuickPuzzle['pieces'][0], ...quickPuzzle().pieces.slice(1)]
+		};
+		discoverGalleryProgress({
+			serverPuzzles: [],
+			quickPuzzles: [withNullPiece],
+			sessionStorage: adapter
+		});
+
+		expect(contexts).toHaveLength(0);
+	});
+
+	it('skips Quick records with a duplicate piece id', () => {
+		const { adapter, contexts } = spyAdapter();
+		const base = quickPuzzle();
+		const withDupId: StoredQuickPuzzle = {
+			...base,
+			pieces: [
+				{ ...base.pieces[0] },
+				{ ...base.pieces[0], correctX: base.pieces[1].correctX, correctY: base.pieces[1].correctY },
+				...base.pieces.slice(2)
+			]
+		};
+		discoverGalleryProgress({
+			serverPuzzles: [],
+			quickPuzzles: [withDupId],
+			sessionStorage: adapter
+		});
+
+		expect(contexts).toHaveLength(0);
+	});
+
+	it('skips Quick records with two pieces occupying the same cell', () => {
+		const { adapter, contexts } = spyAdapter();
+		const base = quickPuzzle();
+		const withDupCell: StoredQuickPuzzle = {
+			...base,
+			pieces: [
+				{ ...base.pieces[0] },
+				{ ...base.pieces[1], correctX: base.pieces[0].correctX, correctY: base.pieces[0].correctY },
+				...base.pieces.slice(2)
+			]
+		};
+		discoverGalleryProgress({
+			serverPuzzles: [],
+			quickPuzzles: [withDupCell],
+			sessionStorage: adapter
+		});
+
+		expect(contexts).toHaveLength(0);
+	});
+
+	it('uses the default session storage adapter when none is provided', () => {
+		// Exercises the `?? createSessionStorageAdapter()` fallback. With an
+		// empty browser storage every peekSession returns 'missing', so no
+		// progress is discovered — but the fallback branch itself is exercised.
+		const discovery = discoverGalleryProgress({
+			serverPuzzles: [serverPuzzle('pz1', 4, '1:1')],
+			quickPuzzles: [quickPuzzle()]
+		});
+
+		expect(discovery.newest).toBeNull();
+		expect(discovery.byPuzzleId.size).toBe(0);
+	});
+
+	it('keeps the newest progress when a later candidate is older', () => {
+		const serverSnapshot = validSnapshot();
+		const quickSnapshot: PersistedPuzzleSessionV1 = {
+			...serverSnapshot,
+			puzzleId: 'q-test',
+			source: 'local',
+			lastUpdated: 500
+		};
+		const store = {
+			'puzzle-progress-pz1': JSON.stringify({ ...serverSnapshot, lastUpdated: 1_000 }),
+			'puzzle-progress-q-test': JSON.stringify(quickSnapshot)
+		};
+
+		const discovery = discoverGalleryProgress({
+			serverPuzzles: [serverPuzzle('pz1', 4, '1:1')],
+			quickPuzzles: [quickPuzzle()],
+			sessionStorage: createSessionStorageAdapter({ storage: memoryStorage(store) })
+		});
+
+		// Server (1000) is newer than Quick (500) → newest stays server.
+		expect(discovery.newest?.puzzleId).toBe('pz1');
+		expect(discovery.newest?.lastUpdated).toBe(1_000);
+	});
 });
