@@ -1,4 +1,5 @@
 test-results
+test-artifacts
 coverage
 node_modules
 
