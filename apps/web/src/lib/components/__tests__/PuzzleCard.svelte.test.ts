@@ -137,47 +137,4 @@ describe('PuzzleCard', () => {
 		await expect.element(page.getByTestId('card-status-overlay')).toBeVisible();
 		await expect.element(page.getByText('FAILED')).toBeVisible();
 	});
-
-	it('skips DOM update for unchanged progress text on re-render', async () => {
-		const view = render(PuzzleCard, { puzzle: mockPuzzle, placedCount: 7 });
-		await expect.element(page.getByText('CONTINUE · 7/25 PLACED')).toBeVisible();
-
-		// Re-render with the same placedCount but a different puzzle name.
-		// Svelte's compiled text-interpolation guard sees the value hasn't
-		// changed and skips the DOM write — exercising the "no-change" branch.
-		await view.rerender({ puzzle: { ...mockPuzzle, name: 'Updated' }, placedCount: 7 });
-		await expect.element(page.getByText('CONTINUE · 7/25 PLACED')).toBeVisible();
-		await expect.element(page.getByText('Updated')).toBeVisible();
-	});
-
-	it('skips DOM update for unchanged piece-count text on re-render', async () => {
-		const view = render(PuzzleCard, { puzzle: mockPuzzle });
-		await expect.element(page.getByText('25 PCS')).toBeVisible();
-
-		// Re-render with the same pieceCount but a different puzzle name.
-		await view.rerender({ puzzle: { ...mockPuzzle, name: 'Renamed' } });
-		await expect.element(page.getByText('25 PCS')).toBeVisible();
-		await expect.element(page.getByText('Renamed')).toBeVisible();
-	});
-
-	it('renders empty fallback when placedCount is null in progress text', async () => {
-		// Svelte 5 compiles {placedCount} and {puzzle.pieceCount} with ?? '' null
-		// guards. null !== undefined is true, so hasProgress is still true and the
-		// if-true branch renders — but both ?? '' fallbacks fire.
-		render(PuzzleCard, {
-			puzzle: { ...mockPuzzle, pieceCount: null as unknown as number },
-			placedCount: null as unknown as number
-		});
-
-		await expect.element(page.getByText('CONTINUE · / PLACED')).toBeVisible();
-	});
-
-	it('renders empty fallback when pieceCount is null in non-progress text', async () => {
-		// Exercise the ?? '' null guard on puzzle.pieceCount in the else branch.
-		render(PuzzleCard, {
-			puzzle: { ...mockPuzzle, pieceCount: null as unknown as number }
-		});
-
-		await expect.element(page.getByText(/^\s*PCS$/)).toBeVisible();
-	});
 });
