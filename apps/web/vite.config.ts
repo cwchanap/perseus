@@ -24,6 +24,8 @@ export default defineConfig({
 		browser: {
 			enabled: true,
 			provider: playwright(),
+			screenshotFailures: true,
+			screenshotDirectory: 'test-artifacts/screenshots',
 			instances: [{ browser: 'chromium', headless: true }]
 		},
 		include: ['src/**/*.{test,spec}.{js,ts}', 'src/**/*.svelte.{test,spec}.{js,ts}'],
