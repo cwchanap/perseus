@@ -5,6 +5,7 @@ import {
 } from '@perseus/types';
 import type { PuzzleSummary } from '$lib/types/puzzle';
 import type { StoredQuickPuzzle } from '$lib/services/quickPuzzle/types';
+import { QUICK_PUZZLE_ID_PREFIX } from '$lib/services/quickPuzzle/types';
 import { createSessionStorageAdapter } from './session/persistence';
 import type {
 	PuzzleSourceType,
@@ -61,6 +62,7 @@ function quickValidationContext(puzzle: StoredQuickPuzzle): SessionValidationCon
 	if (!puzzle || typeof puzzle !== 'object') return null;
 	if (
 		typeof puzzle.id !== 'string' ||
+		!puzzle.id.startsWith(QUICK_PUZZLE_ID_PREFIX) ||
 		typeof puzzle.pieceCount !== 'number' ||
 		!Number.isInteger(puzzle.pieceCount) ||
 		puzzle.pieceCount <= 0 ||
