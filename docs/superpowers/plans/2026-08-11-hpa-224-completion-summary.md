@@ -11,21 +11,23 @@
 ## Global Constraints
 
 - Remove `S RANK`; do not replace it with another rank, score, grade, or achievement formula.
-- `standard_timed` is the only personal-best category.
+- `standard_timed` remains the only personal-best **eligibility** category.
+- Personal-best **visibility** expands to any standard-timed completion with a known standard best.
 - `rotation_timed` and `assisted_timed` show final time but never standard-best comparison.
 - `relaxed` shows no competitive final time or personal-best comparison.
 - Reuse `PuzzleSessionState` / `SealedCompletion`; do not change their schemas or add a completion view model/store/controller.
 - Do not change API, D1, completion-request, local-stats, analytics, gallery, or profile contracts.
 - Keep completion-effect once-per-run behavior, retry UI, modal focus/Escape, Play Again, and Back to Arcade unchanged.
 - Do not add temporary `timed` + `resultClass` dual props just to make an intermediate commit compile.
+- Do not add a `REFERENCE` summary row for the currently unreachable ghost-reference path; any future feature exposing ghost mode must add distinguishing assistance context in that same feature.
 - Use focused tests for changed behavior; do not add a new test harness or broad browser matrix.
 
 ## File Structure
 
-- Modify `apps/web/src/lib/components/PuzzleCompletionDialog.svelte` — render the factual result/time/best/run-context presentation.
-- Modify `apps/web/src/lib/components/__tests__/PuzzleCompletionDialog.svelte.test.ts` — cover the result matrix and preserve modal behavior tests.
+- Modify `apps/web/src/lib/components/PuzzleCompletionDialog.svelte` — render factual result/time/best/run-context presentation.
+- Modify `apps/web/src/lib/components/__tests__/PuzzleCompletionDialog.svelte.test.ts` — cover the result matrix with unambiguous value selectors and preserve modal behavior tests.
 - Modify `apps/web/src/routes/puzzle/[id]/+page.svelte` — pass existing sealed/session facts into the dialog and gate rendering on live session state.
-- Modify `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts` — prove real `PuzzleSession` facts reach the dialog while retaining completion-effect regression fences.
+- Modify `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts` — prove real `PuzzleSession` facts and best-time wiring reach the dialog while retaining completion-effect regression fences.
 
 ---
 
@@ -61,6 +63,14 @@ interface Props {
   onDismiss: () => void;
 }
 ```
+
+- Produces these test selectors on value nodes:
+  - `completion-final-time`
+  - `completion-best-time`
+  - `completion-piece-count`
+  - `completion-hints-used`
+  - `completion-incorrect-attempts`
+  - `completion-rotation`
 
 - [ ] **Step 1: Rewrite the component fixture and focus/actions test, then add the failing result matrix**
 
@@ -105,7 +115,7 @@ it('preserves backdrop Escape, inner dialog focus, and current actions', async (
   await expect
     .element(page.getByTestId('completion-result-label'))
     .toHaveTextContent('STANDARD TIMED');
-  await expect.element(page.getByText('FINAL TIME')).toBeVisible();
+  await expect.element(page.getByTestId('completion-final-time')).toHaveTextContent(/^01:15$/);
 
   await page.getByTestId('retry-server-submission').click();
   await page.getByRole('button', { name: 'PLAY AGAIN' }).click();
@@ -129,19 +139,17 @@ it('shows a truthful standard timed summary without a rank', async () => {
   await expect
     .element(page.getByTestId('completion-result-label'))
     .toHaveTextContent('STANDARD TIMED');
-  await expect.element(page.getByText('FINAL TIME')).toBeVisible();
-  await expect.element(page.getByText('01:15')).toBeVisible();
-  await expect.element(page.getByText('PERSONAL BEST')).toBeVisible();
-  await expect.element(page.getByText('01:08')).toBeVisible();
+  await expect.element(page.getByTestId('completion-final-time')).toHaveTextContent(/^01:15$/);
+  await expect.element(page.getByTestId('completion-best-time')).toHaveTextContent(/^01:08$/);
   expect(page.getByText('NEW RECORD').query()).toBeNull();
-  await expect.element(page.getByTestId('completion-piece-count')).toHaveTextContent('12');
-  await expect.element(page.getByTestId('completion-hints-used')).toHaveTextContent('0');
+  await expect.element(page.getByTestId('completion-piece-count')).toHaveTextContent(/^12$/);
+  await expect.element(page.getByTestId('completion-hints-used')).toHaveTextContent(/^0$/);
   await expect
     .element(page.getByTestId('completion-incorrect-attempts'))
-    .toHaveTextContent('1');
+    .toHaveTextContent(/^1$/);
   await expect
     .element(page.getByTestId('completion-rotation'))
-    .toHaveTextContent('OFF · NOT USED');
+    .toHaveTextContent(/^OFF · NOT USED$/);
 });
 
 it('shows a standard timed new-best verdict', async () => {
@@ -151,6 +159,7 @@ it('shows a standard timed new-best verdict', async () => {
     isNewBest: true
   });
 
+  await expect.element(page.getByTestId('completion-best-time')).toHaveTextContent(/^01:15$/);
   await expect.element(page.getByText('NEW RECORD')).toBeVisible();
 });
 
@@ -162,8 +171,10 @@ it('falls back to elapsed time when bestTime is null for a new best', async () =
     elapsedSeconds: 90
   });
 
-  await expect.element(page.getByText('PERSONAL BEST')).toBeVisible();
-  await expect.element(page.getByText('01:30')).toBeVisible();
+  // FINAL TIME and PERSONAL BEST intentionally format to the same text here;
+  // target the dedicated best-value node so the locator is unambiguous.
+  await expect.element(page.getByTestId('completion-final-time')).toHaveTextContent(/^01:30$/);
+  await expect.element(page.getByTestId('completion-best-time')).toHaveTextContent(/^01:30$/);
   await expect.element(page.getByText('NEW RECORD')).toBeVisible();
 });
 
@@ -179,7 +190,7 @@ it('shows UNSAVED instead of NEW RECORD when a new-best write fails', async () =
   expect(page.getByText('NEW RECORD').query()).toBeNull();
 });
 
-it('shows rotation timed without a personal-best comparison', async () => {
+it('shows rotation timed without a personal-best comparison even when a standard best exists', async () => {
   render(PuzzleCompletionDialog, {
     ...standardTimedProps(),
     resultClass: 'rotation_timed',
@@ -190,12 +201,12 @@ it('shows rotation timed without a personal-best comparison', async () => {
   await expect
     .element(page.getByTestId('completion-result-label'))
     .toHaveTextContent('ROTATION TIMED');
-  await expect.element(page.getByText('FINAL TIME')).toBeVisible();
-  expect(page.getByText('PERSONAL BEST').query()).toBeNull();
-  await expect.element(page.getByTestId('completion-rotation')).toHaveTextContent('ON · USED');
+  await expect.element(page.getByTestId('completion-final-time')).toHaveTextContent(/^01:15$/);
+  expect(page.getByTestId('completion-best-time').query()).toBeNull();
+  await expect.element(page.getByTestId('completion-rotation')).toHaveTextContent(/^ON · USED$/);
 });
 
-it('shows assisted timed counters without a personal-best comparison', async () => {
+it('shows assisted timed counters without a personal-best comparison even when a standard best exists', async () => {
   render(PuzzleCompletionDialog, {
     ...standardTimedProps(),
     resultClass: 'assisted_timed',
@@ -206,11 +217,11 @@ it('shows assisted timed counters without a personal-best comparison', async () 
   await expect
     .element(page.getByTestId('completion-result-label'))
     .toHaveTextContent('ASSISTED TIMED');
-  await expect.element(page.getByTestId('completion-hints-used')).toHaveTextContent('2');
+  await expect.element(page.getByTestId('completion-hints-used')).toHaveTextContent(/^2$/);
   await expect
     .element(page.getByTestId('completion-incorrect-attempts'))
-    .toHaveTextContent('3');
-  expect(page.getByText('PERSONAL BEST').query()).toBeNull();
+    .toHaveTextContent(/^3$/);
+  expect(page.getByTestId('completion-best-time').query()).toBeNull();
 });
 
 it('shows Relaxed as a noncompetitive completion', async () => {
@@ -221,9 +232,9 @@ it('shows Relaxed as a noncompetitive completion', async () => {
   });
 
   await expect.element(page.getByTestId('completion-result-label')).toHaveTextContent('RELAXED');
-  expect(page.getByText('FINAL TIME').query()).toBeNull();
-  expect(page.getByText('PERSONAL BEST').query()).toBeNull();
-  await expect.element(page.getByTestId('completion-piece-count')).toHaveTextContent('12');
+  expect(page.getByTestId('completion-final-time').query()).toBeNull();
+  expect(page.getByTestId('completion-best-time').query()).toBeNull();
+  await expect.element(page.getByTestId('completion-piece-count')).toHaveTextContent(/^12$/);
 });
 ```
 
@@ -235,7 +246,7 @@ From `apps/web`:
 bunx vitest --run --browser src/lib/components/__tests__/PuzzleCompletionDialog.svelte.test.ts
 ```
 
-Expected: FAIL because the component still requires `timed`, renders `S RANK`, and lacks result/context fields.
+Expected: FAIL because the component still requires `timed`, renders `S RANK`, and lacks result/context fields and selectors.
 
 - [ ] **Step 3: Replace `timed` with the result-oriented props and derived display values**
 
@@ -276,21 +287,29 @@ Replace the giant rank with:
 <h2 id="modal-title" class="modal-title">{puzzleName.toUpperCase()}</h2>
 ```
 
-Render timing and personal best with result-class gates:
+Render timing and personal best with value-level test IDs:
 
 ```svelte
 <div class="modal-stats">
   {#if timedResult && elapsedSeconds !== null}
     <div class="modal-stat">
       <span class="mstat-label">FINAL TIME</span>
-      <span class="mstat-value">{formatTime(elapsedSeconds)}</span>
+      <span class="mstat-value" data-testid="completion-final-time">
+        {formatTime(elapsedSeconds)}
+      </span>
     </div>
   {/if}
 
   {#if standardTimedResult && displayedBestTime !== null}
     <div class="modal-stat">
       <span class="mstat-label">PERSONAL BEST</span>
-      <span class="mstat-value" class:gold={isNewBest}>{formatTime(displayedBestTime)}</span>
+      <span
+        class="mstat-value"
+        class:gold={isNewBest}
+        data-testid="completion-best-time"
+      >
+        {formatTime(displayedBestTime)}
+      </span>
       {#if isNewBest}
         {#if localStatsFailed}
           <span class="new-record-badge unsaved" data-testid="new-best-unsaved">UNSAVED</span>
@@ -303,30 +322,34 @@ Render timing and personal best with result-class gates:
 </div>
 ```
 
-Add the factual run summary:
+Add the factual run summary. Put test IDs on values, not wrappers:
 
 ```svelte
 <div class="completion-summary" data-testid="completion-run-summary">
-  <div class="summary-item" data-testid="completion-piece-count">
+  <div class="summary-item">
     <span class="mstat-label">PIECES</span>
-    <span class="summary-value">{pieceCount}</span>
+    <span class="summary-value" data-testid="completion-piece-count">{pieceCount}</span>
   </div>
-  <div class="summary-item" data-testid="completion-hints-used">
+  <div class="summary-item">
     <span class="mstat-label">HINTS USED</span>
-    <span class="summary-value">{hintsUsed}</span>
+    <span class="summary-value" data-testid="completion-hints-used">{hintsUsed}</span>
   </div>
-  <div class="summary-item" data-testid="completion-incorrect-attempts">
+  <div class="summary-item">
     <span class="mstat-label">INCORRECT ATTEMPTS</span>
-    <span class="summary-value">{incorrectAttempts}</span>
+    <span class="summary-value" data-testid="completion-incorrect-attempts">
+      {incorrectAttempts}
+    </span>
   </div>
-  <div class="summary-item" data-testid="completion-rotation">
+  <div class="summary-item">
     <span class="mstat-label">ROTATION</span>
-    <span class="summary-value">{rotationSummary}</span>
+    <span class="summary-value" data-testid="completion-rotation">{rotationSummary}</span>
   </div>
 </div>
 ```
 
 Delete `.modal-rank` CSS and remove it from the reduced-motion selector. Add only local styles for `.modal-result`, `.completion-summary`, `.summary-item`, and `.summary-value`, using existing font/color variables; keep the result label visually smaller than the former rank.
+
+Do **not** add a `REFERENCE` row. Current route reference use is hold-only and does not cause `assisted_timed`; future ghost-mode UI owns the corresponding explanatory summary change.
 
 - [ ] **Step 5: Run the component test and verify the dialog behavior is green before route wiring**
 
@@ -336,12 +359,63 @@ bunx vitest --run --browser src/lib/components/__tests__/PuzzleCompletionDialog.
 
 Expected: PASS. Do not commit yet: the route still uses the old prop contract until Step 8.
 
-- [ ] **Step 6: Add the failing route integration case and strengthen existing completion cases**
+- [ ] **Step 6: Add non-vacuous route integration cases and strengthen existing completion cases**
 
-Use the route test's existing `renderPuzzlePage`, `selectPiece`, `placeSelectedPieceAt`, and `placePiece` helpers:
+Use the route test's existing `renderPuzzlePage`, `selectPiece`, `placeSelectedPieceAt`, and `placePiece` helpers.
+
+First add a standard non-record case that proves the newly expanded best visibility is wired through the route. Keep the mocked local-stats result consistent with the pre-run best so the async effect cannot erase the test premise:
 
 ```ts
-it('shows assisted completion facts from PuzzleSession state', async () => {
+it('shows the known standard best for a standard completion that is not a new record', async () => {
+  vi.mocked(getBestTime).mockReturnValueOnce(42);
+  vi.mocked(recordLocalCompletion).mockResolvedValueOnce({
+    status: 'recorded',
+    isNewStandardBest: false,
+    stats: {
+      schemaVersion: 1,
+      puzzleId: 'test-puzzle',
+      standardBestTime: 42,
+      standardBestCompletedAt: 1704067200000,
+      totalCompletions: 2,
+      lastCompletedAt: Date.now(),
+      lastRecordedRunId: TEST_RUN_ID,
+      recordedRunIds: [TEST_RUN_ID]
+    }
+  });
+
+  await renderPuzzlePage();
+  await placePiece(0, 0, 0);
+  await placePiece(1, 1, 0);
+
+  await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+  await expect
+    .element(page.getByTestId('completion-result-label'))
+    .toHaveTextContent('STANDARD TIMED');
+  await expect.element(page.getByTestId('completion-best-time')).toHaveTextContent(/^00:42$/);
+  expect(page.getByText('NEW RECORD').query()).toBeNull();
+});
+```
+
+Then add the assisted case with the same known best. This makes the standard-best-hidden assertion meaningful end to end instead of passing merely because `bestTime` is null:
+
+```ts
+it('shows assisted completion facts without leaking the known standard best', async () => {
+  vi.mocked(getBestTime).mockReturnValueOnce(42);
+  vi.mocked(recordLocalCompletion).mockResolvedValueOnce({
+    status: 'recorded',
+    isNewStandardBest: false,
+    stats: {
+      schemaVersion: 1,
+      puzzleId: 'test-puzzle',
+      standardBestTime: 42,
+      standardBestCompletedAt: 1704067200000,
+      totalCompletions: 2,
+      lastCompletedAt: Date.now(),
+      lastRecordedRunId: TEST_RUN_ID,
+      recordedRunIds: [TEST_RUN_ID]
+    }
+  });
+
   await renderPuzzlePage();
 
   await selectPiece(1);
@@ -356,11 +430,11 @@ it('shows assisted completion facts from PuzzleSession state', async () => {
   await expect
     .element(page.getByTestId('completion-result-label'))
     .toHaveTextContent('ASSISTED TIMED');
-  await expect.element(page.getByTestId('completion-hints-used')).toHaveTextContent('1');
+  await expect.element(page.getByTestId('completion-hints-used')).toHaveTextContent(/^1$/);
   await expect
     .element(page.getByTestId('completion-incorrect-attempts'))
-    .toHaveTextContent('1');
-  expect(page.getByText('PERSONAL BEST').query()).toBeNull();
+    .toHaveTextContent(/^1$/);
+  expect(page.getByTestId('completion-best-time').query()).toBeNull();
   expect(recordLocalCompletion).toHaveBeenCalledTimes(1);
   expect(recordCompletion).toHaveBeenCalledTimes(1);
 });
@@ -379,9 +453,9 @@ Strengthen the existing Relaxed completion test with:
 
 ```ts
 await expect.element(page.getByTestId('completion-result-label')).toHaveTextContent('RELAXED');
-expect(page.getByText('FINAL TIME').query()).toBeNull();
-expect(page.getByText('PERSONAL BEST').query()).toBeNull();
-await expect.element(page.getByTestId('completion-piece-count')).toHaveTextContent('2');
+expect(page.getByTestId('completion-final-time').query()).toBeNull();
+expect(page.getByTestId('completion-best-time').query()).toBeNull();
+await expect.element(page.getByTestId('completion-piece-count')).toHaveTextContent(/^2$/);
 ```
 
 Keep the existing retry and once-per-run completion-effect tests unchanged.
@@ -396,7 +470,7 @@ bunx vitest --run --browser 'src/routes/puzzle/[id]/page.svelte.test.ts'
 
 Expected: FAIL because `+page.svelte` still passes `timed` and does not provide the new completion facts.
 
-- [ ] **Step 8: Wire the existing sealed/session facts without fabricating defaults**
+- [ ] **Step 8: Wire the existing sealed/session facts without fabricating defaults or losing sealed null**
 
 Replace the current celebration block with:
 
@@ -406,8 +480,9 @@ Replace the current celebration block with:
   <PuzzleCompletionDialog
     puzzleName={puzzle?.name ?? ''}
     resultClass={sessionState.sealedCompletion?.resultClass ?? sessionState.resultClass}
-    elapsedSeconds={sessionState.sealedCompletion?.elapsedActiveSeconds ??
-      sessionState.elapsedActiveSeconds}
+    elapsedSeconds={sessionState.sealedCompletion
+      ? sessionState.sealedCompletion.elapsedActiveSeconds
+      : sessionState.elapsedActiveSeconds}
     pieceCount={sessionState.pieceCount}
     hintsUsed={sessionState.counters.hintsUsed}
     incorrectAttempts={sessionState.counters.incorrectAttempts}
@@ -424,6 +499,8 @@ Replace the current celebration block with:
   />
 {/if}
 ```
+
+The ternary on `sealedCompletion` is intentional: a Relaxed seal owns a legitimate `null` elapsed value, so `??` on `sealedCompletion?.elapsedActiveSeconds` would incorrectly treat the sealed value as absent and fall through to live state.
 
 Do not add a `'standard_timed'` fallback, `completionSummary`, duplicate counters, or result-class derivation to the route. Do not modify `SealedCompletion`, `recordLocalCompletion`, `handleSessionEvent`, or server-submission logic.
 
@@ -462,7 +539,7 @@ Expected: PASS. HPA-563 removed the former 95% coverage threshold, but the unit 
 The component test intentionally contains a negative `S RANK` assertion, so fence production Svelte source rather than tests:
 
 ```bash
-if rg -n "S RANK|modal-rank" apps/web/src --glob '*.svelte' --glob '!**/*.svelte.test.*'; then
+if rg -n "S RANK|modal-rank" apps/web/src --glob '*.svelte'; then
   echo 'stale completion rank presentation remains in production Svelte source' >&2
   exit 1
 fi
@@ -503,8 +580,8 @@ cd ../..
 bun run check --filter=@perseus/web
 bun run lint --filter=@perseus/web
 bun run build --filter=@perseus/web
-if rg -n "S RANK|modal-rank" apps/web/src --glob '*.svelte' --glob '!**/*.svelte.test.*'; then exit 1; fi
+if rg -n "S RANK|modal-rank" apps/web/src --glob '*.svelte'; then exit 1; fi
 git diff --check main...HEAD
 ```
 
-No new Playwright E2E spec is required for HPA-224. The route browser tests already exercise real `PuzzleSession` transitions and fence completion once-per-run behavior, Escape, Play Again, retry, new-best, and Relaxed behavior; broader browser matrices remain pre-release coverage under HPA-215.
+No new Playwright E2E spec is required for HPA-224. The existing route browser tests exercise real `PuzzleSession` transitions and fence completion once-per-run behavior, Escape, Play Again, retry, standard-best, new-best, and Relaxed behavior; broader browser matrices remain pre-release coverage under HPA-215. The existing E2E assertion that Relaxed does not show `S RANK` can remain as a cheap standing fence.
