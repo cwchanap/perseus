@@ -123,6 +123,7 @@ For standard timed results:
 
 - show `FINAL TIME` from the sealed elapsed time;
 - when `bestTime !== null`, show the existing standard personal-best value;
+- when `isNewBest === true` but the stats result temporarily supplies `bestTime === null`, preserve the current fallback and display the run's final elapsed time as the personal-best value;
 - show `NEW RECORD` only when `isNewBest === true` and the local stats write succeeded;
 - show `UNSAVED` instead when the same new-best verdict exists but the local stats write failed;
 - on a restored completed session, `isNewBest` remains false, so the dialog shows the stored best without inferring a new record from equal times.
@@ -148,27 +149,30 @@ This deliberately reports existing semantics rather than inventing a new definit
 
 ## Route data flow
 
-The route should prefer the immutable completion seal for result/time and use current completed session state for the existing context facts:
+The celebration surface should only render once a live `sessionState` exists. Prefer the immutable completion seal for result/time, then fall back only to the already-authoritative current session fields. Never fabricate a `standard_timed` result when session facts are absent:
 
 ```svelte
-<PuzzleCompletionDialog
-  puzzleName={puzzle?.name ?? ''}
-  resultClass={sessionState?.sealedCompletion?.resultClass ?? sessionState?.resultClass ?? 'standard_timed'}
-  elapsedSeconds={sessionState?.sealedCompletion?.elapsedActiveSeconds ?? sessionState?.elapsedActiveSeconds ?? null}
-  pieceCount={sessionState?.pieceCount ?? puzzle?.pieceCount ?? 0}
-  hintsUsed={sessionState?.counters.hintsUsed ?? 0}
-  incorrectAttempts={sessionState?.counters.incorrectAttempts ?? 0}
-  rotationEnabled={sessionState?.rotationEnabled ?? false}
-  rotationUsed={sessionState?.facts.rotationUsed ?? false}
-  {bestTime}
-  {isNewBest}
-  {localStatsFailed}
-  {serverSubmissionRetryable}
-  ...
-/>
+{#if showCelebration && sessionState}
+  <PuzzleCompletionDialog
+    puzzleName={puzzle?.name ?? ''}
+    resultClass={sessionState.sealedCompletion?.resultClass ?? sessionState.resultClass}
+    elapsedSeconds={sessionState.sealedCompletion?.elapsedActiveSeconds ??
+      sessionState.elapsedActiveSeconds}
+    pieceCount={sessionState.pieceCount}
+    hintsUsed={sessionState.counters.hintsUsed}
+    incorrectAttempts={sessionState.counters.incorrectAttempts}
+    rotationEnabled={sessionState.rotationEnabled}
+    rotationUsed={sessionState.facts.rotationUsed}
+    {bestTime}
+    {isNewBest}
+    {localStatsFailed}
+    {serverSubmissionRetryable}
+    ...
+  />
+{/if}
 ```
 
-Do not copy these values into additional route-local state when completion occurs. The modal already makes the page inert, and restored completed sessions already reconstruct the same `PuzzleSessionState` from persistence.
+Do not copy these values into additional route-local state when completion occurs. The modal already makes the page inert, and restored completed sessions already reconstruct the same `PuzzleSessionState` from persistence. Gating on `sessionState` makes a missing state an absence of UI rather than silently inventing a competitive result.
 
 ## Completion-effect invariants
 
@@ -191,11 +195,12 @@ Expand the focused `PuzzleCompletionDialog` browser-component tests to cover the
 
 1. standard timed with an existing best — final time + personal best, no rank and no new-record badge;
 2. standard timed new best — `NEW RECORD`;
-3. standard timed new best with local storage failure — `UNSAVED`;
-4. rotation timed — final time + rotation result/context, no personal best;
-5. assisted timed — final time + assistance counters, no personal best;
-6. Relaxed — noncompetitive summary with no final-time/best fields;
-7. existing focus, Escape, retry, Play Again, and Back to Arcade callbacks remain covered.
+3. standard timed new best with `bestTime === null` — personal best falls back to the final elapsed time and still shows `NEW RECORD`;
+4. standard timed new best with local storage failure — `UNSAVED`;
+5. rotation timed — final time + rotation result/context, no personal best;
+6. assisted timed — final time + assistance counters, no personal best;
+7. Relaxed — noncompetitive summary with no final-time/best fields;
+8. existing focus, Escape, retry, Play Again, and Back to Arcade callbacks remain covered, but the focus/actions test should assert the new result label rather than retain the removed rank or duplicate the dedicated new-best assertion.
 
 ### Route tests
 
@@ -208,11 +213,21 @@ Reuse the existing puzzle-route helpers and tests rather than introducing a new 
 
 Rotation result presentation is sufficiently covered in the component matrix because the session engine already has focused result-class tests; the route does not need another long rotation solve solely to duplicate that domain coverage.
 
+## Implementation sequencing
+
+The dialog prop change and route wiring must land as one typecheckable implementation change set. Do not commit an intermediate tree where `PuzzleCompletionDialog` has the new props while `+page.svelte` still passes `timed`, and do not add temporary dual-prop compatibility solely to make an intermediate commit compile.
+
+TDD still proceeds in logical stages: add failing component tests, implement the dialog, add/strengthen failing route tests, wire the route, then run the combined focused tests and package typecheck before committing the implementation.
+
 ## Risks and mitigations
 
 ### Accidentally showing the standard best for nonstandard timed results
 
 **Mitigation:** gate personal-best markup on `resultClass === 'standard_timed'`, not merely on `bestTime !== null`.
+
+### Fabricating a competitive result while state is missing
+
+**Mitigation:** render the dialog only when `showCelebration && sessionState`; prefer the seal and fall back only to `sessionState.resultClass` / `sessionState.elapsedActiveSeconds`.
 
 ### Reconstructing completion facts differently from the domain
 
