@@ -1,11 +1,24 @@
 <script lang="ts">
 	import { modalFocus } from '$lib/actions/modalFocus';
 	import { formatTime } from '$lib/stores/timer';
+	import type { ResultClass } from '@perseus/types';
+
+	const RESULT_LABELS: Record<ResultClass, string> = {
+		standard_timed: 'STANDARD TIMED',
+		rotation_timed: 'ROTATION TIMED',
+		assisted_timed: 'ASSISTED TIMED',
+		relaxed: 'RELAXED'
+	};
 
 	interface Props {
 		puzzleName: string;
-		timed: boolean;
-		elapsedSeconds: number;
+		resultClass: ResultClass;
+		elapsedSeconds: number | null;
+		pieceCount: number;
+		hintsUsed: number;
+		incorrectAttempts: number;
+		rotationEnabled: boolean;
+		rotationUsed: boolean;
 		bestTime: number | null;
 		isNewBest: boolean;
 		localStatsFailed: boolean;
@@ -18,8 +31,13 @@
 
 	let {
 		puzzleName,
-		timed,
+		resultClass,
 		elapsedSeconds,
+		pieceCount,
+		hintsUsed,
+		incorrectAttempts,
+		rotationEnabled,
+		rotationUsed,
 		bestTime,
 		isNewBest,
 		localStatsFailed,
@@ -29,6 +47,14 @@
 		onBackToArcade,
 		onDismiss
 	}: Props = $props();
+
+	const resultLabel = $derived(RESULT_LABELS[resultClass]);
+	const timedResult = $derived(resultClass !== 'relaxed');
+	const standardTimedResult = $derived(resultClass === 'standard_timed');
+	const displayedBestTime = $derived(bestTime ?? (isNewBest ? elapsedSeconds : null));
+	const rotationSummary = $derived(
+		`${rotationEnabled ? 'ON' : 'OFF'} · ${rotationUsed ? 'USED' : 'NOT USED'}`
+	);
 </script>
 
 <div
@@ -48,31 +74,57 @@
 		<div class="modal-top-line"></div>
 
 		<div class="modal-tag">// MISSION COMPLETE</div>
-		{#if timed}
-			<div class="modal-rank">S RANK</div>
-		{/if}
+		<div class="modal-result" data-testid="completion-result-label">{resultLabel}</div>
 
 		<h2 id="modal-title" class="modal-title">{puzzleName.toUpperCase()}</h2>
 
-		{#if timed}
-			<div class="modal-stats">
+		<div class="modal-stats">
+			{#if timedResult && elapsedSeconds !== null}
 				<div class="modal-stat">
 					<span class="mstat-label">FINAL TIME</span>
-					<span class="mstat-value">{formatTime(elapsedSeconds)}</span>
+					<span class="mstat-value" data-testid="completion-final-time">
+						{formatTime(elapsedSeconds)}
+					</span>
 				</div>
-				{#if isNewBest}
-					<div class="modal-stat new-best">
-						<span class="mstat-label">PERSONAL BEST</span>
-						<span class="mstat-value gold">{formatTime(bestTime ?? elapsedSeconds)}</span>
+			{/if}
+
+			{#if standardTimedResult && displayedBestTime !== null}
+				<div class="modal-stat">
+					<span class="mstat-label">PERSONAL BEST</span>
+					<span class="mstat-value" class:gold={isNewBest} data-testid="completion-best-time">
+						{formatTime(displayedBestTime)}
+					</span>
+					{#if isNewBest}
 						{#if localStatsFailed}
 							<span class="new-record-badge unsaved" data-testid="new-best-unsaved">UNSAVED</span>
 						{:else}
 							<span class="new-record-badge">NEW RECORD</span>
 						{/if}
-					</div>
-				{/if}
+					{/if}
+				</div>
+			{/if}
+		</div>
+
+		<div class="completion-summary" data-testid="completion-run-summary">
+			<div class="summary-item">
+				<span class="mstat-label">PIECES</span>
+				<span class="summary-value" data-testid="completion-piece-count">{pieceCount}</span>
 			</div>
-		{/if}
+			<div class="summary-item">
+				<span class="mstat-label">HINTS USED</span>
+				<span class="summary-value" data-testid="completion-hints-used">{hintsUsed}</span>
+			</div>
+			<div class="summary-item">
+				<span class="mstat-label">INCORRECT ATTEMPTS</span>
+				<span class="summary-value" data-testid="completion-incorrect-attempts">
+					{incorrectAttempts}
+				</span>
+			</div>
+			<div class="summary-item">
+				<span class="mstat-label">ROTATION</span>
+				<span class="summary-value" data-testid="completion-rotation">{rotationSummary}</span>
+			</div>
+		</div>
 
 		<div class="modal-bottom-line"></div>
 
@@ -162,9 +214,9 @@
 		margin-bottom: 0.5rem;
 	}
 
-	.modal-rank {
+	.modal-result {
 		font-family: var(--font-display);
-		font-size: 3rem;
+		font-size: 1.5rem;
 		font-weight: 900;
 		color: var(--accent);
 		text-shadow:
@@ -220,6 +272,29 @@
 		text-shadow: 0 0 15px var(--gold-glow);
 	}
 
+	.completion-summary {
+		margin: 1.25rem 0 0;
+		display: grid;
+		grid-template-columns: repeat(2, 1fr);
+		gap: 0.875rem 0.75rem;
+		border-top: 1px solid var(--border);
+		padding-top: 1rem;
+	}
+
+	.summary-item {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.2rem;
+	}
+
+	.summary-value {
+		font-family: var(--font-mono);
+		font-size: 1rem;
+		letter-spacing: 0.1em;
+		color: var(--text-0);
+	}
+
 	.new-record-badge {
 		font-family: var(--font-display);
 		font-size: 0.55rem;
@@ -264,7 +339,7 @@
 	@media (prefers-reduced-motion: reduce) {
 		.modal-scan-line,
 		.modal-box,
-		.modal-rank {
+		.modal-result {
 			animation: none;
 		}
 

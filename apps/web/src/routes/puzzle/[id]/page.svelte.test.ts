@@ -710,6 +710,10 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.element(page.getByText('MISSION COMPLETE')).toBeVisible();
 		await expect.poll(() => page.getByText('FINAL TIME').query()).toBeNull();
 		await expect.poll(() => page.getByText('PERSONAL BEST').query()).toBeNull();
+		await expect.element(page.getByTestId('completion-result-label')).toHaveTextContent('RELAXED');
+		expect(page.getByTestId('completion-final-time').query()).toBeNull();
+		expect(page.getByTestId('completion-best-time').query()).toBeNull();
+		await expect.element(page.getByTestId('completion-piece-count')).toHaveTextContent(/^2$/);
 	});
 
 	it('clears pan state on window blur', async () => {
@@ -1556,8 +1560,83 @@ describe('Puzzle route gameplay integration', () => {
 		await placePiece(0, 0, 0);
 		await placePiece(1, 1, 0);
 		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+		await expect
+			.element(page.getByTestId('completion-result-label'))
+			.toHaveTextContent('STANDARD TIMED');
 		await expect.element(page.getByText('NEW RECORD')).toBeVisible();
 		await expect.element(page.getByText('PERSONAL BEST')).toBeVisible();
+	});
+
+	it('shows the known standard best for a standard completion that is not a new record', async () => {
+		vi.mocked(getBestTime).mockReturnValueOnce(42);
+		vi.mocked(recordLocalCompletion).mockResolvedValueOnce({
+			status: 'recorded',
+			isNewStandardBest: false,
+			stats: {
+				schemaVersion: 1,
+				puzzleId: 'test-puzzle',
+				standardBestTime: 42,
+				standardBestCompletedAt: 1704067200000,
+				totalCompletions: 2,
+				lastCompletedAt: Date.now(),
+				lastRecordedRunId: TEST_RUN_ID,
+				recordedRunIds: [TEST_RUN_ID]
+			}
+		});
+
+		await renderPuzzlePage();
+		await placePiece(0, 0, 0);
+		await placePiece(1, 1, 0);
+
+		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+		await expect
+			.element(page.getByTestId('completion-result-label'))
+			.toHaveTextContent('STANDARD TIMED');
+		await expect.element(page.getByTestId('completion-best-time')).toHaveTextContent(/^00:42$/);
+		expect(page.getByText('NEW RECORD').query()).toBeNull();
+	});
+
+	it('shows assisted completion facts without leaking the known standard best', async () => {
+		vi.mocked(getBestTime).mockReturnValueOnce(42);
+		vi.mocked(recordLocalCompletion).mockResolvedValueOnce({
+			status: 'recorded',
+			isNewStandardBest: false,
+			stats: {
+				schemaVersion: 1,
+				puzzleId: 'test-puzzle',
+				standardBestTime: 42,
+				standardBestCompletedAt: 1704067200000,
+				totalCompletions: 2,
+				lastCompletedAt: Date.now(),
+				lastRecordedRunId: TEST_RUN_ID,
+				recordedRunIds: [TEST_RUN_ID]
+			}
+		});
+
+		await renderPuzzlePage();
+
+		await selectPiece(1);
+		await page.getByLabelText('Hint').click();
+
+		await selectPiece(0);
+		await placeSelectedPieceAt(1, 0); // wrong slot; increments incorrectAttempts
+		// The rejected piece stays selected, so re-pressing Enter on it would
+		// cancel the selection instead of placing it. Place the other piece
+		// first (which clears selection), then place piece 0 at its slot.
+		await placePiece(1, 1, 0);
+		await placePiece(0, 0, 0);
+
+		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+		await expect
+			.element(page.getByTestId('completion-result-label'))
+			.toHaveTextContent('ASSISTED TIMED');
+		await expect.element(page.getByTestId('completion-hints-used')).toHaveTextContent(/^1$/);
+		await expect
+			.element(page.getByTestId('completion-incorrect-attempts'))
+			.toHaveTextContent(/^1$/);
+		expect(page.getByTestId('completion-best-time').query()).toBeNull();
+		expect(recordLocalCompletion).toHaveBeenCalledTimes(1);
+		expect(recordCompletion).toHaveBeenCalledTimes(1);
 	});
 
 	it('updates viewport dimensions on window resize', async () => {

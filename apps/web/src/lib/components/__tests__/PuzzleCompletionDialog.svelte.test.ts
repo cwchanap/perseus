@@ -3,13 +3,18 @@ import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
 import PuzzleCompletionDialog from '../PuzzleCompletionDialog.svelte';
 
-function timedProps() {
+function standardTimedProps() {
 	return {
 		puzzleName: 'Test Mission',
-		timed: true,
+		resultClass: 'standard_timed' as const,
 		elapsedSeconds: 75,
-		bestTime: 75,
-		isNewBest: true,
+		pieceCount: 12,
+		hintsUsed: 0,
+		incorrectAttempts: 1,
+		rotationEnabled: false,
+		rotationUsed: false,
+		bestTime: 68,
+		isNewBest: false,
 		localStatsFailed: false,
 		serverSubmissionRetryable: true,
 		onRetryServerSubmission: vi.fn(),
@@ -21,7 +26,7 @@ function timedProps() {
 
 describe('PuzzleCompletionDialog', () => {
 	it('preserves backdrop Escape, inner dialog focus, and current actions', async () => {
-		const input = timedProps();
+		const input = standardTimedProps();
 		render(PuzzleCompletionDialog, input);
 
 		const backdrop = await page.getByTestId('celebration-modal').element();
@@ -30,9 +35,10 @@ describe('PuzzleCompletionDialog', () => {
 		expect(dialog?.getAttribute('aria-modal')).toBe('true');
 		await expect.poll(() => dialog?.contains(document.activeElement)).toBe(true);
 
-		await expect.element(page.getByText('S RANK')).toBeVisible();
-		await expect.element(page.getByText('FINAL TIME')).toBeVisible();
-		await expect.element(page.getByText('NEW RECORD')).toBeVisible();
+		await expect
+			.element(page.getByTestId('completion-result-label'))
+			.toHaveTextContent('STANDARD TIMED');
+		await expect.element(page.getByTestId('completion-final-time')).toHaveTextContent(/^01:15$/);
 
 		await page.getByTestId('retry-server-submission').click();
 		await page.getByRole('button', { name: 'PLAY AGAIN' }).click();
@@ -45,40 +51,108 @@ describe('PuzzleCompletionDialog', () => {
 		expect(input.onDismiss).toHaveBeenCalledOnce();
 	});
 
-	it('omits timed statistics for Relaxed completions', async () => {
-		render(PuzzleCompletionDialog, {
-			...timedProps(),
-			puzzleName: 'Relaxed Mission',
-			timed: false,
-			elapsedSeconds: 0,
-			bestTime: null,
-			isNewBest: false,
-			serverSubmissionRetryable: false
-		});
+	it('shows a truthful standard timed summary without a rank', async () => {
+		render(PuzzleCompletionDialog, standardTimedProps());
 
-		await expect.element(page.getByText('MISSION COMPLETE')).toBeVisible();
 		expect(page.getByText('S RANK').query()).toBeNull();
-		expect(page.getByText('FINAL TIME').query()).toBeNull();
-		expect(page.getByText('PERSONAL BEST').query()).toBeNull();
+		await expect
+			.element(page.getByTestId('completion-result-label'))
+			.toHaveTextContent('STANDARD TIMED');
+		await expect.element(page.getByTestId('completion-final-time')).toHaveTextContent(/^01:15$/);
+		await expect.element(page.getByTestId('completion-best-time')).toHaveTextContent(/^01:08$/);
+		expect(page.getByText('NEW RECORD').query()).toBeNull();
+		await expect.element(page.getByTestId('completion-piece-count')).toHaveTextContent(/^12$/);
+		await expect.element(page.getByTestId('completion-hints-used')).toHaveTextContent(/^0$/);
+		await expect
+			.element(page.getByTestId('completion-incorrect-attempts'))
+			.toHaveTextContent(/^1$/);
+		await expect
+			.element(page.getByTestId('completion-rotation'))
+			.toHaveTextContent(/^OFF · NOT USED$/);
 	});
 
-	it('shows UNSAVED instead of NEW RECORD when the local best write failed', async () => {
-		render(PuzzleCompletionDialog, { ...timedProps(), localStatsFailed: true });
-		await expect.element(page.getByTestId('new-best-unsaved')).toBeVisible();
-		expect(page.getByText('NEW RECORD').query()).toBeNull();
+	it('shows a standard timed new-best verdict', async () => {
+		render(PuzzleCompletionDialog, {
+			...standardTimedProps(),
+			bestTime: 75,
+			isNewBest: true
+		});
+
+		await expect.element(page.getByTestId('completion-best-time')).toHaveTextContent(/^01:15$/);
+		await expect.element(page.getByText('NEW RECORD')).toBeVisible();
 	});
 
 	it('falls back to elapsed time when bestTime is null for a new best', async () => {
 		render(PuzzleCompletionDialog, {
-			...timedProps(),
+			...standardTimedProps(),
 			bestTime: null,
 			isNewBest: true,
 			elapsedSeconds: 90
 		});
-		// formatTime is mocked as `00:${seconds}` in page tests, but the
-		// component test uses the real formatTime. Either way, the PERSONAL
-		// BEST value should be visible (using elapsedSeconds as fallback).
-		await expect.element(page.getByText('PERSONAL BEST')).toBeVisible();
+
+		// FINAL TIME and PERSONAL BEST intentionally format to the same text here;
+		// target the dedicated best-value node so the locator is unambiguous.
+		await expect.element(page.getByTestId('completion-final-time')).toHaveTextContent(/^01:30$/);
+		await expect.element(page.getByTestId('completion-best-time')).toHaveTextContent(/^01:30$/);
 		await expect.element(page.getByText('NEW RECORD')).toBeVisible();
+	});
+
+	it('shows UNSAVED instead of NEW RECORD when a new-best write fails', async () => {
+		render(PuzzleCompletionDialog, {
+			...standardTimedProps(),
+			bestTime: 75,
+			isNewBest: true,
+			localStatsFailed: true
+		});
+
+		await expect.element(page.getByTestId('new-best-unsaved')).toBeVisible();
+		expect(page.getByText('NEW RECORD').query()).toBeNull();
+	});
+
+	it('shows rotation timed without a personal-best comparison even when a standard best exists', async () => {
+		render(PuzzleCompletionDialog, {
+			...standardTimedProps(),
+			resultClass: 'rotation_timed',
+			rotationEnabled: true,
+			rotationUsed: true
+		});
+
+		await expect
+			.element(page.getByTestId('completion-result-label'))
+			.toHaveTextContent('ROTATION TIMED');
+		await expect.element(page.getByTestId('completion-final-time')).toHaveTextContent(/^01:15$/);
+		expect(page.getByTestId('completion-best-time').query()).toBeNull();
+		await expect.element(page.getByTestId('completion-rotation')).toHaveTextContent(/^ON · USED$/);
+	});
+
+	it('shows assisted timed counters without a personal-best comparison even when a standard best exists', async () => {
+		render(PuzzleCompletionDialog, {
+			...standardTimedProps(),
+			resultClass: 'assisted_timed',
+			hintsUsed: 2,
+			incorrectAttempts: 3
+		});
+
+		await expect
+			.element(page.getByTestId('completion-result-label'))
+			.toHaveTextContent('ASSISTED TIMED');
+		await expect.element(page.getByTestId('completion-hints-used')).toHaveTextContent(/^2$/);
+		await expect
+			.element(page.getByTestId('completion-incorrect-attempts'))
+			.toHaveTextContent(/^3$/);
+		expect(page.getByTestId('completion-best-time').query()).toBeNull();
+	});
+
+	it('shows Relaxed as a noncompetitive completion', async () => {
+		render(PuzzleCompletionDialog, {
+			...standardTimedProps(),
+			resultClass: 'relaxed',
+			elapsedSeconds: null
+		});
+
+		await expect.element(page.getByTestId('completion-result-label')).toHaveTextContent('RELAXED');
+		expect(page.getByTestId('completion-final-time').query()).toBeNull();
+		expect(page.getByTestId('completion-best-time').query()).toBeNull();
+		await expect.element(page.getByTestId('completion-piece-count')).toHaveTextContent(/^12$/);
 	});
 });

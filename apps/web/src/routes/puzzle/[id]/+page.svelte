@@ -1192,11 +1192,18 @@
 </div>
 
 <!-- Mission Complete Modal -->
-{#if showCelebration}
+{#if showCelebration && sessionState}
 	<PuzzleCompletionDialog
 		puzzleName={puzzle?.name ?? ''}
-		timed={showTimedPresentation}
-		elapsedSeconds={timerState.elapsed}
+		resultClass={sessionState.sealedCompletion?.resultClass ?? sessionState.resultClass}
+		elapsedSeconds={sessionState.sealedCompletion
+			? sessionState.sealedCompletion.elapsedActiveSeconds
+			: sessionState.elapsedActiveSeconds}
+		pieceCount={sessionState.pieceCount}
+		hintsUsed={sessionState.counters.hintsUsed}
+		incorrectAttempts={sessionState.counters.incorrectAttempts}
+		rotationEnabled={sessionState.rotationEnabled}
+		rotationUsed={sessionState.facts.rotationUsed}
 		{bestTime}
 		{isNewBest}
 		{localStatsFailed}
