@@ -1200,10 +1200,11 @@
 			? sessionState.sealedCompletion.elapsedActiveSeconds
 			: sessionState.elapsedActiveSeconds}
 		pieceCount={sessionState.pieceCount}
-		hintsUsed={sessionState.counters.hintsUsed}
-		incorrectAttempts={sessionState.counters.incorrectAttempts}
-		rotationEnabled={sessionState.rotationEnabled}
-		rotationUsed={sessionState.facts.rotationUsed}
+		hintsUsed={sessionState.sealedCompletion?.hintsUsed ?? sessionState.counters.hintsUsed}
+		incorrectAttempts={sessionState.sealedCompletion?.incorrectAttempts ??
+			sessionState.counters.incorrectAttempts}
+		rotationEnabled={sessionState.sealedCompletion?.rotationEnabled ?? sessionState.rotationEnabled}
+		rotationUsed={sessionState.sealedCompletion?.rotationUsed ?? sessionState.facts.rotationUsed}
 		{bestTime}
 		{isNewBest}
 		{localStatsFailed}

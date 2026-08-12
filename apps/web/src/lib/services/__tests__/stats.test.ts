@@ -10,6 +10,10 @@ function makeSeal(overrides: Partial<SealedCompletion> = {}): SealedCompletion {
 		completedAt: 1_000,
 		localStats: { status: 'pending' },
 		serverSubmission: { status: 'pending' },
+		hintsUsed: 0,
+		incorrectAttempts: 0,
+		rotationEnabled: false,
+		rotationUsed: false,
 		...overrides
 	};
 }

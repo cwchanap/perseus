@@ -69,6 +69,49 @@ describe('PuzzleSession completion persistence validation', () => {
 		}
 	});
 
+	it('back-fills summary facts on the seal from outer state for an old snapshot lacking them', () => {
+		// Backward compatibility: seals persisted before hintsUsed/
+		// incorrectAttempts/rotationEnabled/rotationUsed were added to
+		// SealedCompletion must still load. The missing fields are filled
+		// from the outer session's counters/facts/rotationEnabled, which
+		// equal the sealed values at restore time (divergence only happens
+		// via undo/redo after restore, never at the persistence boundary).
+		const record = JSON.parse(JSON.stringify(validSnapshot())) as Record<string, unknown>;
+		record.lifecycle = 'completed';
+		record.placedPieces = fullBoardPlacements();
+		// seal() fixture omits the four summary fields by design.
+		record.sealedCompletion = seal();
+
+		const result = load(record);
+
+		expect(result.status).toBe('loaded');
+		if (result.status === 'loaded') {
+			const loaded = result.snapshot.sealedCompletion!;
+			expect(loaded.hintsUsed).toBe(0);
+			expect(loaded.incorrectAttempts).toBe(0);
+			expect(loaded.rotationEnabled).toBe(false);
+			expect(loaded.rotationUsed).toBe(false);
+		}
+	});
+
+	it('rejects a seal whose hintsUsed exceeds the outer counters (corruption)', () => {
+		const record = JSON.parse(JSON.stringify(validSnapshot())) as Record<string, unknown>;
+		record.lifecycle = 'completed';
+		record.placedPieces = fullBoardPlacements();
+		record.sealedCompletion = seal({ hintsUsed: 5 });
+
+		expect(load(record).status).toBe('invalid');
+	});
+
+	it('rejects a seal with a non-integer hintsUsed', () => {
+		const record = JSON.parse(JSON.stringify(validSnapshot())) as Record<string, unknown>;
+		record.lifecycle = 'completed';
+		record.placedPieces = fullBoardPlacements();
+		record.sealedCompletion = seal({ hintsUsed: 1.5 });
+
+		expect(load(record).status).toBe('invalid');
+	});
+
 	it('rejects null completion effects instead of defaulting to not-applicable', () => {
 		// A null effect is corruption: the current engine always
 		// emit a concrete state. Defaulting null to not_applicable would let a
