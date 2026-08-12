@@ -12,9 +12,10 @@ The current gameplay domain already contains the facts needed for an honest comp
 
 - `PuzzleSessionState.resultClass` distinguishes `standard_timed`, `rotation_timed`, `assisted_timed`, and `relaxed`;
 - `PuzzleSessionState.pieceCount` is the canonical puzzle size;
-- `PuzzleSessionState.counters` contains `hintsUsed` and `incorrectAttempts`;
+- `PuzzleSessionState.counters` contains `hintsUsed`, `incorrectAttempts`, and `referenceActivations`;
 - `PuzzleSessionState.rotationEnabled` describes the final rotation-mode state;
-- `PuzzleSessionState.facts.rotationUsed` is the monotonic eligibility fact set once rotation mode has been used/enabled during the run;
+- `PuzzleSessionState.facts.rotationUsed` is the monotonic rotation-eligibility fact;
+- `PuzzleSessionState.facts.hintUsed` and `ghostReferenceUsed` drive assisted eligibility;
 - `SealedCompletion.resultClass` and `elapsedActiveSeconds` provide the immutable result class and final timed duration;
 - local statistics already treat only `standard_timed` as eligible for `standardBestTime`.
 
@@ -25,7 +26,7 @@ The Linear issue predates the current extracted component and says to show value
 1. Remove the hard-coded `S RANK` with no replacement ranking system.
 2. Show one truthful result label derived from the existing `ResultClass`.
 3. Show final active time for timed results and no competitive time for Relaxed results.
-4. Keep the existing standard-timed personal-best semantics exactly as they are.
+4. Keep standard-timed **personal-best eligibility** unchanged while expanding personal-best **visibility** to any standard-timed completion with a known standard best.
 5. Show existing run context: piece count, hints used, incorrect attempts, and rotation state/use.
 6. Preserve completion effect behavior, retry UI, modal focus/Escape behavior, Play Again, and Back to Arcade.
 7. Keep the change local to the existing completion component and route wiring.
@@ -39,7 +40,8 @@ The Linear issue predates the current extracted component and says to show value
 - no `SealedCompletion`, persistence-schema, API, D1, or server changes;
 - no analytics instrumentation;
 - no profile/gallery statistics redesign;
-- no compatibility handling for removed pre-release formats.
+- no compatibility handling for removed pre-release formats;
+- no new reference-mode UI or reference metric solely for a future ghost-mode feature.
 
 ## Options considered
 
@@ -53,7 +55,7 @@ Evolve `PuzzleCompletionDialog` from a `timed: boolean` interface to an explicit
 - no duplicated domain or persistence model;
 - the dialog remains a presentational component with explicit props/callbacks;
 - standard-best eligibility stays owned by the existing stats service/result class contract;
-- easy to test as a pure presentation matrix plus a small route-wiring integration.
+- easy to test as a pure presentation matrix plus small route-wiring integrations.
 
 **Cons**
 
@@ -112,21 +114,27 @@ The component maps the existing result classes directly:
 
 | Result class | Label | Final time | Standard personal best |
 | --- | --- | --- | --- |
-| `standard_timed` | `STANDARD TIMED` | yes | yes |
+| `standard_timed` | `STANDARD TIMED` | yes | yes, when known |
 | `rotation_timed` | `ROTATION TIMED` | yes | no |
 | `assisted_timed` | `ASSISTED TIMED` | yes | no |
 | `relaxed` | `RELAXED` | no | no |
 
 The label is factual context, not a rank. It should use the existing compact display/mono visual language and must not replace `S RANK` with another oversized achievement-like treatment.
 
-For standard timed results:
+### Standard personal-best behavior
+
+Eligibility does not change: only `standard_timed` may create or overwrite `standardBestTime`.
+
+Visibility intentionally expands. For any standard-timed completion with a known `bestTime`, show `PERSONAL BEST`, even when the current run did not set a record or the page restored an already-completed session. Do not infer a record from equality.
+
+For a new best:
 
 - show `FINAL TIME` from the sealed elapsed time;
-- when `bestTime !== null`, show the existing standard personal-best value;
-- when `isNewBest === true` but the stats result temporarily supplies `bestTime === null`, preserve the current fallback and display the run's final elapsed time as the personal-best value;
-- show `NEW RECORD` only when `isNewBest === true` and the local stats write succeeded;
-- show `UNSAVED` instead when the same new-best verdict exists but the local stats write failed;
-- on a restored completed session, `isNewBest` remains false, so the dialog shows the stored best without inferring a new record from equal times.
+- when the local-stats result supplies the updated best, show it with `NEW RECORD`;
+- when `isNewBest === true` but `bestTime === null`, preserve the existing elapsed-time fallback for the best-value presentation;
+- show `UNSAVED` instead of `NEW RECORD` when the same new-best verdict exists but the local stats write failed.
+
+At the instant the modal first opens, `bestTime` may still be the pre-run best loaded on route entry. `recordLocalCompletion` runs asynchronously and can then replace it with the current result. A new-record run may therefore briefly show the old standard best before updating to the new value/badge. That transient is acceptable for this hobby-project slice; do not add loading state, duplicate completion state, or another orchestration layer to hide it.
 
 For `rotation_timed` and `assisted_timed`, show final time but never show a personal-best comparison, even if the route has a standard best loaded for the puzzle.
 
@@ -143,21 +151,32 @@ Show a compact factual summary for every result:
   - `OFF · NOT USED` when rotation is disabled and was never used;
   - `ON · USED` when enabled at completion and the run used rotation mode;
   - `OFF · USED` when rotation was enabled/used earlier but later disabled;
-  - `ON · NOT USED` is allowed defensively if such a state is ever supplied, but current `PuzzleSession` normally marks rotation used as soon as it is enabled.
+  - `ON · NOT USED` is accepted defensively if supplied, although current active-run behavior normally marks rotation used as soon as it is enabled.
 
 This deliberately reports existing semantics rather than inventing a new definition of “used” based on the number of piece-rotation button presses.
 
+### Result-label explainability invariant
+
+A result label must remain explainable by visible completion context that the current UI can actually produce.
+
+Today the route only activates reference mode as `hold`/`null`; it does not expose `ghost`. Therefore `assisted_timed` is currently reachable through Hint usage, and `HINTS USED` explains the assisted label. Although the domain also treats `ghostReferenceUsed` as assisted, adding a `REFERENCE` summary row now would be premature: ordinary hold-reference activations already increment `referenceActivations` without making the run assisted, so that row would not uniquely explain the classification and is outside HPA-224's requested summary.
+
+If a later feature makes ghost reference reachable from the UI, that same feature must extend the completion summary with visible context that distinguishes the assistance cause. Do not ship a reachable `ASSISTED TIMED` path whose summary shows no assistance reason.
+
 ## Route data flow
 
-The celebration surface should only render once a live `sessionState` exists. Prefer the immutable completion seal for result/time, then fall back only to the already-authoritative current session fields. Never fabricate a `standard_timed` result when session facts are absent:
+The celebration surface should only render once a live `sessionState` exists. Prefer the immutable completion seal for result/time, then fall back only to the already-authoritative current session fields. Never fabricate a `standard_timed` result when session facts are absent.
+
+Presence matters for elapsed time because a sealed Relaxed completion legitimately stores `elapsedActiveSeconds: null`. Prefer the seal by checking whether the seal exists, not by null-coalescing the elapsed field:
 
 ```svelte
 {#if showCelebration && sessionState}
   <PuzzleCompletionDialog
     puzzleName={puzzle?.name ?? ''}
     resultClass={sessionState.sealedCompletion?.resultClass ?? sessionState.resultClass}
-    elapsedSeconds={sessionState.sealedCompletion?.elapsedActiveSeconds ??
-      sessionState.elapsedActiveSeconds}
+    elapsedSeconds={sessionState.sealedCompletion
+      ? sessionState.sealedCompletion.elapsedActiveSeconds
+      : sessionState.elapsedActiveSeconds}
     pieceCount={sessionState.pieceCount}
     hintsUsed={sessionState.counters.hintsUsed}
     incorrectAttempts={sessionState.counters.incorrectAttempts}
@@ -172,7 +191,7 @@ The celebration surface should only render once a live `sessionState` exists. Pr
 {/if}
 ```
 
-Do not copy these values into additional route-local state when completion occurs. The modal already makes the page inert, and restored completed sessions already reconstruct the same `PuzzleSessionState` from persistence. Gating on `sessionState` makes a missing state an absence of UI rather than silently inventing a competitive result.
+Do not copy these values into additional route-local state when completion occurs. The modal already makes the page inert, and restored completed sessions already reconstruct the same `PuzzleSessionState` from persistence. Gating on `sessionState` makes missing state an absence of UI rather than silently inventing a competitive result.
 
 ## Completion-effect invariants
 
@@ -189,16 +208,29 @@ The summary component must not dispatch `PuzzleSession` actions or call persiste
 
 ## Testing strategy
 
+### Test selectors
+
+Place completion value test IDs on the value nodes, not on label/value wrappers. This avoids substring-weak assertions and disambiguates final time from a best-time fallback that may render the same formatted value.
+
+Use:
+
+- `completion-final-time` on the final-time value;
+- `completion-best-time` on the personal-best value;
+- `completion-piece-count` on the piece-count value;
+- `completion-hints-used` on the hint-count value;
+- `completion-incorrect-attempts` on the incorrect-attempt count value;
+- `completion-rotation` on the rotation summary value.
+
 ### Component tests
 
 Expand the focused `PuzzleCompletionDialog` browser-component tests to cover the presentation matrix directly:
 
 1. standard timed with an existing best — final time + personal best, no rank and no new-record badge;
 2. standard timed new best — `NEW RECORD`;
-3. standard timed new best with `bestTime === null` — personal best falls back to the final elapsed time and still shows `NEW RECORD`;
+3. standard timed new best with `bestTime === null` — assert `completion-best-time` equals the final elapsed value and still show `NEW RECORD`;
 4. standard timed new best with local storage failure — `UNSAVED`;
-5. rotation timed — final time + rotation result/context, no personal best;
-6. assisted timed — final time + assistance counters, no personal best;
+5. rotation timed with a known standard best — final time + rotation context, no personal best;
+6. assisted timed with a known standard best — final time + assistance counters, no personal best;
 7. Relaxed — noncompetitive summary with no final-time/best fields;
 8. existing focus, Escape, retry, Play Again, and Back to Arcade callbacks remain covered, but the focus/actions test should assert the new result label rather than retain the removed rank or duplicate the dedicated new-best assertion.
 
@@ -206,10 +238,13 @@ Expand the focused `PuzzleCompletionDialog` browser-component tests to cover the
 
 Reuse the existing puzzle-route helpers and tests rather than introducing a new harness:
 
+- add a standard-timed non-record completion with a known existing best and assert that `completion-best-time` is wired through while `NEW RECORD` remains absent;
 - strengthen the existing new-best completion test to verify the standard result label;
 - strengthen the existing Relaxed completion test to verify the new noncompetitive summary;
-- add one assisted-timed completion flow that uses a hint and one rejected placement before solving, then verifies result class and counters from real `PuzzleSession` state;
+- add one assisted-timed completion flow that starts with a known standard best, keeps that best in the mocked local-stats result, uses a hint and one rejected placement, then verifies the assisted result/counters and that the standard PB remains hidden;
 - retain the existing retry test and once-per-run completion-effect assertions unchanged as regression fences.
+
+The nonstandard route test must keep `bestTime` non-null through the async local-stats resolution; setting only `getBestTime` is not sufficient if the mocked `recordLocalCompletion` result later overwrites it with `null`.
 
 Rotation result presentation is sufficiently covered in the component matrix because the session engine already has focused result-class tests; the route does not need another long rotation solve solely to duplicate that domain coverage.
 
@@ -223,11 +258,23 @@ TDD still proceeds in logical stages: add failing component tests, implement the
 
 ### Accidentally showing the standard best for nonstandard timed results
 
-**Mitigation:** gate personal-best markup on `resultClass === 'standard_timed'`, not merely on `bestTime !== null`.
+**Mitigation:** gate personal-best markup on `resultClass === 'standard_timed'`, not merely on `bestTime !== null`; component and route tests both exercise nonstandard results with a non-null standard best.
+
+### Personal-best visibility changes asynchronously
+
+**Mitigation:** document and accept the existing-best → updated-best transition while `recordLocalCompletion` resolves. Do not add loading/orchestration state solely to suppress the brief transition.
+
+### A future assisted trigger is not explained in the summary
+
+**Mitigation:** current UI reaches `assisted_timed` through hints and displays `HINTS USED`. Any feature that exposes ghost reference must add distinguishing assistance context in the same change; do not pre-add an ambiguous reference-activation row now.
 
 ### Fabricating a competitive result while state is missing
 
 **Mitigation:** render the dialog only when `showCelebration && sessionState`; prefer the seal and fall back only to `sessionState.resultClass` / `sessionState.elapsedActiveSeconds`.
+
+### Treating sealed Relaxed null time as “missing”
+
+**Mitigation:** choose elapsed time based on whether `sealedCompletion` exists, not with `sealedCompletion?.elapsedActiveSeconds ?? ...`.
 
 ### Reconstructing completion facts differently from the domain
 
