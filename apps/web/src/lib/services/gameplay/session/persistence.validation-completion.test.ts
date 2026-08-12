@@ -204,6 +204,38 @@ describe('PuzzleSession completion persistence validation', () => {
 		expect(load(record).status).toBe('invalid');
 	});
 
+	it('loads a retained seal whose result class diverges from the outer class after undo, hint, and redo', () => {
+		// Regression: completing a standard timed run, then undoing, using a
+		// hint, and redoing retains the original standard_timed seal while the
+		// outer result class recomputes to assisted_timed. The engine produces
+		// this state legitimately (sealedCompletion is retained across
+		// undo/redo without resealing; hintUsed is monotonic). The loader must
+		// accept it: each result class is validated independently, and the
+		// seal records the class under which effects were submitted while the
+		// outer class records current live eligibility.
+		const record = JSON.parse(JSON.stringify(validSnapshot())) as Record<string, unknown>;
+		record.lifecycle = 'completed';
+		record.placedPieces = fullBoardPlacements();
+		// Outer state reflects the post-hint live class.
+		record.counters = { incorrectAttempts: 0, hintsUsed: 1, referenceActivations: 0 };
+		record.facts = { rotationUsed: false, hintUsed: true, ghostReferenceUsed: false };
+		record.resultClass = 'assisted_timed';
+		// Seal retains the original standard_timed completion boundary.
+		record.sealedCompletion = seal({
+			hintsUsed: 0,
+			resultClass: 'standard_timed'
+		});
+
+		const result = load(record);
+
+		expect(result.status).toBe('loaded');
+		if (result.status === 'loaded') {
+			expect(result.snapshot.resultClass).toBe('assisted_timed');
+			expect(result.snapshot.sealedCompletion?.resultClass).toBe('standard_timed');
+			expect(result.snapshot.sealedCompletion?.hintsUsed).toBe(0);
+		}
+	});
+
 	it.each([
 		{ code: 'bad_request', retryable: true },
 		{ code: 'not_found', retryable: true },

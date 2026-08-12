@@ -359,13 +359,16 @@ function validateV1(
 
 	if (lifecycle === 'completed' && seal === null) return null;
 
-	// Seal must agree with the outer session's derived result class. Without
-	// this, a record with hintUsed: true (outer assisted_timed) but a
-	// standard_timed seal would load and replay local/server effects from the
-	// wrong class.
-	if (seal !== null) {
-		if (seal.resultClass !== resultClass) return null;
-	}
+	// The seal's result class and the outer session's derived result class
+	// are validated independently (seal.resultClass against RESULT_CLASS_SET
+	// in validateSeal; outer resultClass against RESULT_CLASS_SET and the
+	// facts-derived class above). They are NOT required to match: after an
+	// undo, hint use, and redo the engine retains the original seal (sealed
+	// at the completion boundary under the then-current class) while the
+	// outer result class recomputes from the now-mutated monotonic facts.
+	// Requiring equality here would reject that valid retained-seal state on
+	// reload. The seal records the class under which effects were submitted;
+	// the outer class records the current live eligibility.
 
 	// A completed run must have every piece placed. The engine seals
 	// completion only on a full board; a completed snapshot with missing
