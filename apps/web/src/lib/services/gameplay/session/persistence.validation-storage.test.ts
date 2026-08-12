@@ -96,7 +96,11 @@ describe('PuzzleSession persistence adapter and cloning', () => {
 				elapsedActiveSeconds: 5,
 				completedAt: 1_000,
 				localStats: { status: 'succeeded' },
-				serverSubmission: { status: 'succeeded' }
+				serverSubmission: { status: 'succeeded' },
+				hintsUsed: 0,
+				incorrectAttempts: 0,
+				rotationEnabled: false,
+				rotationUsed: false
 			}
 		});
 		const snapshot = serializeSession(state, 2_000)!;

@@ -54,6 +54,17 @@ export interface SealedCompletion {
 	readonly completedAt: number;
 	readonly localStats: CompletionEffectState;
 	readonly serverSubmission: CompletionEffectState;
+	/**
+	 * Summary facts captured at the completion boundary. The completion dialog
+	 * projects these from the seal (not live sessionState) so an undo-then-
+	 * recomplete cycle cannot present counters that diverge from the recorded
+	 * completion. `rotationEnabled` is the mode at completion time; the others
+	 * mirror the live counters/facts at the sealing instant.
+	 */
+	readonly hintsUsed: number;
+	readonly incorrectAttempts: number;
+	readonly rotationEnabled: boolean;
+	readonly rotationUsed: boolean;
 }
 
 // --- Run IDs and clocks -------------------------------------------------------

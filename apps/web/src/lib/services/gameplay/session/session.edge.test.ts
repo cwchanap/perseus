@@ -136,7 +136,11 @@ describe('PuzzleSession edge coverage', () => {
 			elapsedActiveSeconds: 5,
 			completedAt: 1_000,
 			localStats: { status: 'succeeded' },
-			serverSubmission: { status: 'succeeded' }
+			serverSubmission: { status: 'succeeded' },
+			hintsUsed: 0,
+			incorrectAttempts: 0,
+			rotationEnabled: false,
+			rotationUsed: false
 		};
 
 		const session = createPuzzleSession(makeOptions({ restored }));

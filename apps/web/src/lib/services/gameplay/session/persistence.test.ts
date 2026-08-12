@@ -269,7 +269,11 @@ describe('isResumable', () => {
 			elapsedActiveSeconds: 5,
 			completedAt: 1,
 			localStats: { status: 'succeeded' },
-			serverSubmission: { status: 'succeeded' }
+			serverSubmission: { status: 'succeeded' },
+			hintsUsed: 0,
+			incorrectAttempts: 0,
+			rotationEnabled: false,
+			rotationUsed: false
 		};
 		const snap = serializeSession(
 			makeState({ lifecycle: 'completed', sealedCompletion: seal }),
@@ -379,7 +383,11 @@ describe('isResumable sealed-active guard', () => {
 			elapsedActiveSeconds: 5,
 			completedAt: 1,
 			localStats: { status: 'succeeded' },
-			serverSubmission: { status: 'succeeded' }
+			serverSubmission: { status: 'succeeded' },
+			hintsUsed: 0,
+			incorrectAttempts: 0,
+			rotationEnabled: false,
+			rotationUsed: false
 		};
 		const snap = serializeSession(
 			makeState({ lifecycle: 'active', hasUserActivity: true, sealedCompletion: seal }),
@@ -925,7 +933,11 @@ describe('loadPersistedSession additional validation branches', () => {
 			elapsedActiveSeconds: 42,
 			completedAt: 1_000,
 			localStats: { status: 'succeeded' },
-			serverSubmission: { status: 'failed', code: 'network_error', retryable: true }
+			serverSubmission: { status: 'failed', code: 'network_error', retryable: true },
+			hintsUsed: 0,
+			incorrectAttempts: 0,
+			rotationEnabled: false,
+			rotationUsed: false
 		};
 		const snapshot = serializeSession(
 			makeState({
@@ -958,7 +970,11 @@ describe('loadPersistedSession additional validation branches', () => {
 			elapsedActiveSeconds: 42,
 			completedAt: 1_000,
 			localStats: { status: 'succeeded' },
-			serverSubmission: { status: 'not_applicable' }
+			serverSubmission: { status: 'not_applicable' },
+			hintsUsed: 0,
+			incorrectAttempts: 0,
+			rotationEnabled: false,
+			rotationUsed: false
 		};
 		const snapshot = serializeSession(
 			makeState({
@@ -988,7 +1004,11 @@ describe('loadPersistedSession additional validation branches', () => {
 			elapsedActiveSeconds: 42,
 			completedAt: 1_000,
 			localStats: { status: 'succeeded' },
-			serverSubmission: { status: 'not_applicable' }
+			serverSubmission: { status: 'not_applicable' },
+			hintsUsed: 0,
+			incorrectAttempts: 0,
+			rotationEnabled: false,
+			rotationUsed: false
 		};
 		const snapshot = serializeSession(
 			makeState({ lifecycle: 'completed', sealedCompletion: seal }),

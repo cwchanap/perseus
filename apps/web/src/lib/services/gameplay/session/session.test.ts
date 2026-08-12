@@ -116,7 +116,11 @@ describe('PuzzleSession lifecycle', () => {
 			elapsedActiveSeconds: 90,
 			completedAt: 1_000,
 			localStats: { status: 'succeeded' },
-			serverSubmission: { status: 'succeeded' }
+			serverSubmission: { status: 'succeeded' },
+			hintsUsed: 0,
+			incorrectAttempts: 0,
+			rotationEnabled: false,
+			rotationUsed: false
 		};
 
 		expect(completionRequestFromSeal(seal)).toEqual({
@@ -1076,7 +1080,11 @@ function makeRestoredSnapshot(
 			elapsedActiveSeconds: seal.elapsedActiveSeconds,
 			completedAt: seal.completedAt,
 			localStats: effects.localStats,
-			serverSubmission: effects.serverSubmission
+			serverSubmission: effects.serverSubmission,
+			hintsUsed: 0,
+			incorrectAttempts: 0,
+			rotationEnabled: false,
+			rotationUsed: false
 		},
 		lastUpdated: 0
 	};
@@ -1164,6 +1172,49 @@ describe('PuzzleSession completion sealing', () => {
 		expect(session.getState().lifecycle).toBe('completed');
 	});
 
+	it('sealed summary facts stay frozen across an undo-then-recomplete cycle', () => {
+		// Reproduction for the completion-dialog divergence bug: completing a
+		// standard timed run, then undoing, using a hint, and redoing must not
+		// let the dialog present post-completion counters beside the original
+		// seal's result class. The seal captures the summary facts at the
+		// completion boundary; live counters/facts may diverge afterwards, but
+		// the dialog projects from the seal, not from live sessionState.
+		const { session, seal } = completeOnePieceSession();
+		expect(seal.resultClass).toBe('standard_timed');
+		expect(seal.hintsUsed).toBe(0);
+		expect(seal.incorrectAttempts).toBe(0);
+		expect(seal.rotationEnabled).toBe(false);
+		expect(seal.rotationUsed).toBe(false);
+
+		session.dispatch({ type: 'undo' });
+		expect(session.getState().lifecycle).toBe('active');
+
+		// Post-completion mutation: a hint increments the live counter and
+		// flips the derived result class, but must not touch the seal.
+		const hintOutcome = session.dispatch({ type: 'use_hint' });
+		expect(hintOutcome.type).toBe('hint_used');
+		expect(session.getState().counters.hintsUsed).toBe(1);
+		expect(session.getState().facts.hintUsed).toBe(true);
+		expect(session.getState().resultClass).toBe('assisted_timed');
+
+		session.dispatch({ type: 'redo' });
+		expect(session.getState().lifecycle).toBe('completed');
+
+		// The seal is retained without resealing, so its summary facts still
+		// describe the original standard run while live state has diverged.
+		const resealed = session.getState().sealedCompletion!;
+		expect(resealed).toEqual(seal);
+		expect(resealed.resultClass).toBe('standard_timed');
+		expect(resealed.hintsUsed).toBe(0);
+		expect(resealed.incorrectAttempts).toBe(0);
+		expect(resealed.rotationEnabled).toBe(false);
+		expect(resealed.rotationUsed).toBe(false);
+		// Live state diverges from the seal — this is the contrast the dialog
+		// must paper over by reading from the seal, not live sessionState.
+		expect(session.getState().counters.hintsUsed).toBe(1);
+		expect(session.getState().resultClass).toBe('assisted_timed');
+	});
+
 	it('a completed seal is restored from a hydrated snapshot without re-emitting', () => {
 		const sealed: SealedCompletion = {
 			runId: 'run-sealed',
@@ -1171,7 +1222,11 @@ describe('PuzzleSession completion sealing', () => {
 			elapsedActiveSeconds: 30,
 			completedAt: 1000,
 			localStats: { status: 'succeeded' },
-			serverSubmission: { status: 'succeeded' }
+			serverSubmission: { status: 'succeeded' },
+			hintsUsed: 0,
+			incorrectAttempts: 0,
+			rotationEnabled: false,
+			rotationUsed: false
 		};
 		const restored: PersistedPuzzleSessionV1 = {
 			schemaVersion: 1,
@@ -2348,7 +2403,11 @@ describe('PuzzleSession completion outcome immutability', () => {
 				elapsedActiveSeconds: 12,
 				completedAt: 1_000,
 				localStats: { status: 'succeeded' },
-				serverSubmission: { status: 'failed', code: 'network_error', retryable: true }
+				serverSubmission: { status: 'failed', code: 'network_error', retryable: true },
+				hintsUsed: 0,
+				incorrectAttempts: 0,
+				rotationEnabled: false,
+				rotationUsed: false
 			},
 			lastUpdated: 0
 		};

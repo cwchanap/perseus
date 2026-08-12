@@ -576,7 +576,15 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 			completedAt: clock.wallNow(),
 			localStats: { status: 'pending' },
 			serverSubmission:
-				state.source === 'api' ? { status: 'pending' } : { status: 'not_applicable' }
+				state.source === 'api' ? { status: 'pending' } : { status: 'not_applicable' },
+			// Capture the summary facts the completion dialog projects. Reading
+			// these from live sessionState after an undo-then-recomplete cycle
+			// would present counters that diverge from the recorded completion
+			// (the seal is retained across undo/redo without resealing).
+			hintsUsed: state.counters.hintsUsed,
+			incorrectAttempts: state.counters.incorrectAttempts,
+			rotationEnabled: state.rotationEnabled,
+			rotationUsed: state.facts.rotationUsed
 		};
 		state.sealedCompletion = seal;
 		transitionToInternal('completed');
@@ -953,7 +961,11 @@ function hydrate(
 					elapsedActiveSeconds: snapshot.sealedCompletion.elapsedActiveSeconds,
 					completedAt: snapshot.sealedCompletion.completedAt,
 					localStats: cloneEffectState(snapshot.sealedCompletion.localStats),
-					serverSubmission: cloneEffectState(snapshot.sealedCompletion.serverSubmission)
+					serverSubmission: cloneEffectState(snapshot.sealedCompletion.serverSubmission),
+					hintsUsed: snapshot.sealedCompletion.hintsUsed,
+					incorrectAttempts: snapshot.sealedCompletion.incorrectAttempts,
+					rotationEnabled: snapshot.sealedCompletion.rotationEnabled,
+					rotationUsed: snapshot.sealedCompletion.rotationUsed
 				}
 			: null,
 		canUndo: false,
@@ -1001,7 +1013,11 @@ function cloneSeal(seal: SealedCompletion): SealedCompletion {
 		elapsedActiveSeconds: seal.elapsedActiveSeconds,
 		completedAt: seal.completedAt,
 		localStats: cloneEffectState(seal.localStats),
-		serverSubmission: cloneEffectState(seal.serverSubmission)
+		serverSubmission: cloneEffectState(seal.serverSubmission),
+		hintsUsed: seal.hintsUsed,
+		incorrectAttempts: seal.incorrectAttempts,
+		rotationEnabled: seal.rotationEnabled,
+		rotationUsed: seal.rotationUsed
 	};
 }
 

@@ -349,7 +349,10 @@ function validateV1(
 	const sealedCompletion = validateSeal(
 		record.sealedCompletion,
 		runId as string,
-		source as PuzzleSourceType
+		source as PuzzleSourceType,
+		counters,
+		derivedFacts as { rotationUsed: boolean; hintUsed: boolean; ghostReferenceUsed: boolean },
+		rotationEnabled
 	);
 	if (sealedCompletion === false) return null;
 	const seal = sealedCompletion === null ? null : (sealedCompletion as unknown as SealedCompletion);
@@ -525,10 +528,21 @@ function validateEffectState(raw: unknown): CompletionEffectState | false | null
 	return false;
 }
 
+function validateSealCounter(raw: unknown, fallback: number): number | null {
+	if (raw === undefined) return fallback;
+	if (typeof raw !== 'number' || !Number.isInteger(raw) || raw < 0 || raw > fallback) {
+		return null;
+	}
+	return raw;
+}
+
 function validateSeal(
 	raw: unknown,
 	expectedRunId: string,
-	source: PuzzleSourceType
+	source: PuzzleSourceType,
+	outerCounters: { incorrectAttempts: number; hintsUsed: number; referenceActivations: number },
+	outerFacts: { rotationUsed: boolean; hintUsed: boolean; ghostReferenceUsed: boolean },
+	outerRotationEnabled: boolean
 ): SealedCompletion | null | false {
 	if (raw === null) return null;
 	if (!raw || typeof raw !== 'object') return false;
@@ -594,13 +608,37 @@ function validateSeal(
 		(serverSubmission as { code?: string }).code === 'storage_error'
 	)
 		return false;
+	// Summary facts are optional on read for backward compatibility with
+	// snapshots persisted before they were added to the seal: an absent
+	// field falls back to the outer session's value, which is equal to
+	// the sealed value at restore time (divergence only happens via
+	// undo/redo after restore). A present field is type-checked and, for
+	// counters, must agree with the monotonic outer counters that
+	// produced the seal — a stale or corrupted value would let the
+	// completion dialog present facts that contradict the recorded run.
+	const hintsUsed = validateSealCounter(s.hintsUsed, outerCounters.hintsUsed);
+	if (hintsUsed === null) return false;
+	const incorrectAttempts = validateSealCounter(
+		s.incorrectAttempts,
+		outerCounters.incorrectAttempts
+	);
+	if (incorrectAttempts === null) return false;
+	const rotationEnabled =
+		s.rotationEnabled === undefined ? outerRotationEnabled : s.rotationEnabled;
+	if (typeof rotationEnabled !== 'boolean') return false;
+	const rotationUsed = s.rotationUsed === undefined ? outerFacts.rotationUsed : s.rotationUsed;
+	if (typeof rotationUsed !== 'boolean') return false;
 	return {
 		runId: s.runId as string,
 		resultClass: s.resultClass as ResultClass,
 		elapsedActiveSeconds: (elapsed as number | null) ?? null,
 		completedAt: s.completedAt as number,
 		localStats: localStats as CompletionEffectState,
-		serverSubmission: serverSubmission as CompletionEffectState
+		serverSubmission: serverSubmission as CompletionEffectState,
+		hintsUsed,
+		incorrectAttempts,
+		rotationEnabled,
+		rotationUsed
 	};
 }
 
@@ -761,7 +799,11 @@ function cloneSeal(seal: SealedCompletion): SealedCompletion {
 		elapsedActiveSeconds: seal.elapsedActiveSeconds,
 		completedAt: seal.completedAt,
 		localStats: { ...seal.localStats },
-		serverSubmission: { ...seal.serverSubmission }
+		serverSubmission: { ...seal.serverSubmission },
+		hintsUsed: seal.hintsUsed,
+		incorrectAttempts: seal.incorrectAttempts,
+		rotationEnabled: seal.rotationEnabled,
+		rotationUsed: seal.rotationUsed
 	};
 }
 
