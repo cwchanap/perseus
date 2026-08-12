@@ -29,7 +29,7 @@
 
 **Interfaces:**
 - Consumes: `ResultClass` from `@perseus/types`, existing `formatTime`, existing `modalFocus`, and current completion callbacks.
-- Produces: the revised `PuzzleCompletionDialog` props used by Task 2:
+- Produces:
 
 ```ts
 interface Props {
@@ -52,9 +52,9 @@ interface Props {
 }
 ```
 
-- [ ] **Step 1: Rewrite the component fixture around result classes and add failing presentation-matrix tests**
+- [ ] **Step 1: Rewrite the component fixture and add failing result-matrix tests**
 
-Replace `timedProps()` with one standard-timed base fixture and add explicit factual fields:
+Replace `timedProps()` with:
 
 ```ts
 function standardTimedProps() {
@@ -79,7 +79,7 @@ function standardTimedProps() {
 }
 ```
 
-Replace the current S-rank assertions with a standard-timed summary test:
+Add/replace tests with these exact cases:
 
 ```ts
 it('shows a truthful standard timed summary without a rank', async () => {
@@ -97,12 +97,30 @@ it('shows a truthful standard timed summary without a rank', async () => {
   await expect.element(page.getByTestId('completion-incorrect-attempts')).toHaveTextContent('1');
   await expect.element(page.getByTestId('completion-rotation')).toHaveTextContent('OFF · NOT USED');
 });
-```
 
-Add nonstandard result coverage:
+it('shows a standard timed new-best verdict', async () => {
+  render(PuzzleCompletionDialog, {
+    ...standardTimedProps(),
+    bestTime: 75,
+    isNewBest: true
+  });
 
-```ts
-it('shows rotation timed result without a personal-best comparison', async () => {
+  await expect.element(page.getByText('NEW RECORD')).toBeVisible();
+});
+
+it('shows UNSAVED instead of NEW RECORD when a new-best write fails', async () => {
+  render(PuzzleCompletionDialog, {
+    ...standardTimedProps(),
+    bestTime: 75,
+    isNewBest: true,
+    localStatsFailed: true
+  });
+
+  await expect.element(page.getByTestId('new-best-unsaved')).toBeVisible();
+  expect(page.getByText('NEW RECORD').query()).toBeNull();
+});
+
+it('shows rotation timed without a personal-best comparison', async () => {
   render(PuzzleCompletionDialog, {
     ...standardTimedProps(),
     resultClass: 'rotation_timed',
@@ -116,7 +134,7 @@ it('shows rotation timed result without a personal-best comparison', async () =>
   await expect.element(page.getByTestId('completion-rotation')).toHaveTextContent('ON · USED');
 });
 
-it('shows assisted result and assistance counters without a personal-best comparison', async () => {
+it('shows assisted timed counters without a personal-best comparison', async () => {
   render(PuzzleCompletionDialog, {
     ...standardTimedProps(),
     resultClass: 'assisted_timed',
@@ -134,8 +152,7 @@ it('shows Relaxed as a noncompetitive completion', async () => {
   render(PuzzleCompletionDialog, {
     ...standardTimedProps(),
     resultClass: 'relaxed',
-    elapsedSeconds: null,
-    bestTime: 68
+    elapsedSeconds: null
   });
 
   await expect.element(page.getByTestId('completion-result-label')).toHaveTextContent('RELAXED');
@@ -145,21 +162,21 @@ it('shows Relaxed as a noncompetitive completion', async () => {
 });
 ```
 
-Retain/update the existing new-best, unsaved, focus/Escape, retry, Play Again, and Back to Arcade tests. New-best tests should use `resultClass: 'standard_timed'`; do not infer `NEW RECORD` from time equality.
+Retain the existing focus, Escape, retry, Play Again, and Back to Arcade callback assertions in the component suite.
 
-- [ ] **Step 2: Run the focused component test and verify the new contract fails**
+- [ ] **Step 2: Run the focused component test and verify it fails for the old contract**
 
-Run from `apps/web`:
+From `apps/web`:
 
 ```bash
 bunx vitest --run --browser src/lib/components/__tests__/PuzzleCompletionDialog.svelte.test.ts
 ```
 
-Expected: FAIL because the component still requires `timed`, renders `S RANK`, and does not render result/context fields.
+Expected: FAIL because the component still requires `timed`, renders `S RANK`, and lacks result/context fields.
 
-- [ ] **Step 3: Replace the `timed` presentation contract with `ResultClass` and factual derived values**
+- [ ] **Step 3: Replace `timed` with the result-oriented props and derived display values**
 
-In `PuzzleCompletionDialog.svelte`, import the existing shared result type and replace the prop interface/destructuring:
+Add the existing shared type and mappings:
 
 ```ts
 import type { ResultClass } from '@perseus/types';
@@ -170,45 +187,11 @@ const RESULT_LABELS: Record<ResultClass, string> = {
   assisted_timed: 'ASSISTED TIMED',
   relaxed: 'RELAXED'
 };
+```
 
-interface Props {
-  puzzleName: string;
-  resultClass: ResultClass;
-  elapsedSeconds: number | null;
-  pieceCount: number;
-  hintsUsed: number;
-  incorrectAttempts: number;
-  rotationEnabled: boolean;
-  rotationUsed: boolean;
-  bestTime: number | null;
-  isNewBest: boolean;
-  localStatsFailed: boolean;
-  serverSubmissionRetryable: boolean;
-  onRetryServerSubmission: () => void;
-  onPlayAgain: () => void;
-  onBackToArcade: () => void;
-  onDismiss: () => void;
-}
+Use the interface above, destructure every prop, then derive only display facts:
 
-let {
-  puzzleName,
-  resultClass,
-  elapsedSeconds,
-  pieceCount,
-  hintsUsed,
-  incorrectAttempts,
-  rotationEnabled,
-  rotationUsed,
-  bestTime,
-  isNewBest,
-  localStatsFailed,
-  serverSubmissionRetryable,
-  onRetryServerSubmission,
-  onPlayAgain,
-  onBackToArcade,
-  onDismiss
-}: Props = $props();
-
+```ts
 const resultLabel = $derived(RESULT_LABELS[resultClass]);
 const timedResult = $derived(resultClass !== 'relaxed');
 const standardTimedResult = $derived(resultClass === 'standard_timed');
@@ -218,9 +201,11 @@ const rotationSummary = $derived(
 );
 ```
 
-- [ ] **Step 4: Replace S-rank markup with the result label and compact run summary**
+Do not derive `resultClass` from hints or rotation in this component.
 
-Delete `.modal-rank` markup/CSS and its reduced-motion reference. Render the result label as metadata:
+- [ ] **Step 4: Replace the rank markup with factual result, timing, best, and context markup**
+
+Replace the giant rank with:
 
 ```svelte
 <div class="modal-tag">// MISSION COMPLETE</div>
@@ -228,32 +213,34 @@ Delete `.modal-rank` markup/CSS and its reduced-motion reference. Render the res
 <h2 id="modal-title" class="modal-title">{puzzleName.toUpperCase()}</h2>
 ```
 
-Gate competitive timing strictly by result class:
+Render timing and personal best with result-class gates:
 
 ```svelte
-{#if timedResult && elapsedSeconds !== null}
-  <div class="modal-stat">
-    <span class="mstat-label">FINAL TIME</span>
-    <span class="mstat-value">{formatTime(elapsedSeconds)}</span>
-  </div>
-{/if}
+<div class="modal-stats">
+  {#if timedResult && elapsedSeconds !== null}
+    <div class="modal-stat">
+      <span class="mstat-label">FINAL TIME</span>
+      <span class="mstat-value">{formatTime(elapsedSeconds)}</span>
+    </div>
+  {/if}
 
-{#if standardTimedResult && displayedBestTime !== null}
-  <div class: new-best={isNewBest} class="modal-stat">
-    <span class="mstat-label">PERSONAL BEST</span>
-    <span class="mstat-value" class:gold={isNewBest}>{formatTime(displayedBestTime)}</span>
-    {#if isNewBest}
-      {#if localStatsFailed}
-        <span class="new-record-badge unsaved" data-testid="new-best-unsaved">UNSAVED</span>
-      {:else}
-        <span class="new-record-badge">NEW RECORD</span>
+  {#if standardTimedResult && displayedBestTime !== null}
+    <div class="modal-stat">
+      <span class="mstat-label">PERSONAL BEST</span>
+      <span class="mstat-value" class:gold={isNewBest}>{formatTime(displayedBestTime)}</span>
+      {#if isNewBest}
+        {#if localStatsFailed}
+          <span class="new-record-badge unsaved" data-testid="new-best-unsaved">UNSAVED</span>
+        {:else}
+          <span class="new-record-badge">NEW RECORD</span>
+        {/if}
       {/if}
-    {/if}
-  </div>
-{/if}
+    </div>
+  {/if}
+</div>
 ```
 
-Use a compact factual grid/list below timing:
+Add the factual run summary:
 
 ```svelte
 <div class="completion-summary" data-testid="completion-run-summary">
@@ -276,18 +263,18 @@ Use a compact factual grid/list below timing:
 </div>
 ```
 
-Style `.modal-result`, `.completion-summary`, `.summary-item`, and `.summary-value` with the existing display/mono variables. Keep the visual hierarchy below the puzzle name/final time; do not recreate the giant `.modal-rank` treatment.
+Delete `.modal-rank` CSS and remove it from the reduced-motion selector. Add only local styles for `.modal-result`, `.completion-summary`, `.summary-item`, and `.summary-value`, using existing font/color variables; keep the result label visually smaller than the former rank.
 
-- [ ] **Step 5: Run the component test and formatting check**
+- [ ] **Step 5: Run component test and formatting check**
 
 ```bash
 bunx vitest --run --browser src/lib/components/__tests__/PuzzleCompletionDialog.svelte.test.ts
 bunx prettier --check src/lib/components/PuzzleCompletionDialog.svelte src/lib/components/__tests__/PuzzleCompletionDialog.svelte.test.ts
 ```
 
-Expected: both commands PASS.
+Expected: PASS.
 
-- [ ] **Step 6: Commit the presentational slice**
+- [ ] **Step 6: Commit Task 1**
 
 ```bash
 git add apps/web/src/lib/components/PuzzleCompletionDialog.svelte \
@@ -304,12 +291,12 @@ git commit -m "feat(web): show truthful completion summary"
 - Modify: `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts`
 
 **Interfaces:**
-- Consumes: the Task 1 dialog interface; `sessionState.sealedCompletion`, `sessionState.resultClass`, `sessionState.pieceCount`, `sessionState.counters`, `sessionState.rotationEnabled`, and `sessionState.facts.rotationUsed`.
-- Produces: no new reusable interface. The route continues to own completion-effect orchestration and passes scalar presentation facts into the dialog.
+- Consumes: Task 1 props plus `sessionState.sealedCompletion`, `sessionState.resultClass`, `sessionState.pieceCount`, `sessionState.counters`, `sessionState.rotationEnabled`, and `sessionState.facts.rotationUsed`.
+- Produces: no new reusable interface or route-local summary state.
 
-- [ ] **Step 1: Add a failing assisted-completion route test that proves real session facts reach the dialog**
+- [ ] **Step 1: Add a failing route integration test for real assisted-run facts**
 
-Use the existing `renderPuzzlePage`, `selectPiece`, `placeSelectedPieceAt`, and `placePiece` helpers. A hint makes the result assisted; a wrong-slot attempt increments the existing counter:
+Use the route test's existing helpers:
 
 ```ts
 it('shows assisted completion facts from PuzzleSession state', async () => {
@@ -319,7 +306,7 @@ it('shows assisted completion facts from PuzzleSession state', async () => {
   await page.getByLabelText('Hint').click();
 
   await selectPiece(0);
-  await placeSelectedPieceAt(1, 0); // wrong slot: counted rejection
+  await placeSelectedPieceAt(1, 0); // wrong slot; increments incorrectAttempts
   await placePiece(0, 0, 0);
   await placePiece(1, 1, 0);
 
@@ -328,20 +315,19 @@ it('shows assisted completion facts from PuzzleSession state', async () => {
   await expect.element(page.getByTestId('completion-hints-used')).toHaveTextContent('1');
   await expect.element(page.getByTestId('completion-incorrect-attempts')).toHaveTextContent('1');
   expect(page.getByText('PERSONAL BEST').query()).toBeNull();
-
   expect(recordLocalCompletion).toHaveBeenCalledTimes(1);
   expect(recordCompletion).toHaveBeenCalledTimes(1);
 });
 ```
 
-Strengthen the existing standard-new-best test with:
+Strengthen the existing standard-new-best test:
 
 ```ts
 await expect.element(page.getByTestId('completion-result-label')).toHaveTextContent('STANDARD TIMED');
 await expect.element(page.getByText('NEW RECORD')).toBeVisible();
 ```
 
-Strengthen the existing Relaxed completion test with:
+Strengthen the existing Relaxed completion test:
 
 ```ts
 await expect.element(page.getByTestId('completion-result-label')).toHaveTextContent('RELAXED');
@@ -350,21 +336,21 @@ expect(page.getByText('PERSONAL BEST').query()).toBeNull();
 await expect.element(page.getByTestId('completion-piece-count')).toHaveTextContent('2');
 ```
 
-Do not replace the existing retry or once-per-run regression tests; they remain the behavior fence for completion effects.
+Keep the existing retry and once-per-run effect tests unchanged.
 
-- [ ] **Step 2: Run the focused route test and verify the dialog-wiring contract fails**
+- [ ] **Step 2: Run the route test and verify the new dialog contract fails**
 
-Run from `apps/web`:
+From `apps/web`:
 
 ```bash
 bunx vitest --run --browser 'src/routes/puzzle/[id]/page.svelte.test.ts'
 ```
 
-Expected: FAIL because `+page.svelte` still passes `timed` and does not provide the Task 1 result/context props.
+Expected: FAIL because the route still passes `timed` and does not pass completion facts.
 
-- [ ] **Step 3: Wire the existing sealed result/time and completed state facts directly into the dialog**
+- [ ] **Step 3: Pass sealed result/time and completed session facts directly to the dialog**
 
-Replace the current `timed={showTimedPresentation}` dialog call with:
+Replace the current dialog invocation with:
 
 ```svelte
 <PuzzleCompletionDialog
@@ -391,9 +377,9 @@ Replace the current `timed={showTimedPresentation}` dialog call with:
 />
 ```
 
-Do not introduce route-local copies such as `completionCounters`, `completionResultClass`, or a `CompletionSummary` object. Do not modify `handleSessionEvent`, `handleLocalStatsEffect`, `handleServerSubmissionEffect`, `restartWithCurrentChoices`, or the completion seal.
+Do not add `completionSummary`, duplicate counters, or result-class derivation to the route. Do not modify `SealedCompletion`, `recordLocalCompletion`, `handleSessionEvent`, or server-submission logic.
 
-- [ ] **Step 4: Run both focused test files**
+- [ ] **Step 4: Run both focused browser test files**
 
 ```bash
 bunx vitest --run --browser \
@@ -403,7 +389,7 @@ bunx vitest --run --browser \
 
 Expected: PASS.
 
-- [ ] **Step 5: Run static checks and the web unit suite**
+- [ ] **Step 5: Run the web package gates**
 
 From the repository root:
 
@@ -414,24 +400,23 @@ bun run lint --filter=@perseus/web
 bun run build --filter=@perseus/web
 ```
 
-Expected: all commands PASS. The unit command retains coverage reporting but has no 95% threshold gate after HPA-563.
+Expected: PASS. HPA-563 removed the former 95% coverage threshold, but the unit command still emits coverage reports.
 
-- [ ] **Step 6: Verify the scope and stale-copy fence**
+- [ ] **Step 6: Run the stale-copy and scope fences**
 
 ```bash
 rg -n "S RANK|modal-rank" apps/web/src
-
 git diff --check main...HEAD
 git diff --name-only main...HEAD
 ```
 
 Expected:
 
-- `rg` returns no live web-source/test matches for `S RANK` or `modal-rank`;
-- whitespace check passes;
-- implementation changes are limited to the four planned web files plus the two planning documents already on the branch.
+- `rg` finds no live `S RANK` / `.modal-rank` source or test references;
+- `git diff --check` passes;
+- implementation files are limited to the four planned web files, plus the two HPA-224 planning documents already on the branch.
 
-- [ ] **Step 7: Commit the route integration**
+- [ ] **Step 7: Commit Task 2**
 
 ```bash
 git add 'apps/web/src/routes/puzzle/[id]/+page.svelte' \
@@ -441,9 +426,9 @@ git commit -m "feat(web): wire completion result facts"
 
 ---
 
-## Final verification
+## Final Verification
 
-After both tasks are committed, rerun the cheap behavior and static gates on the final tree:
+After both implementation commits, rerun the cheap final-tree gate:
 
 ```bash
 cd apps/web
@@ -457,4 +442,4 @@ bun run build --filter=@perseus/web
 git diff --check main...HEAD
 ```
 
-No new E2E test is required for HPA-224: the existing route browser test exercises real `PuzzleSession` transitions and already fences Play Again, Escape, retry, and once-per-run completion effects. Broader Playwright matrices remain pre-release coverage under HPA-215's delivery principles.
+No new Playwright E2E spec is required for HPA-224. The route browser tests already exercise real `PuzzleSession` transitions and fence completion once-per-run behavior, Escape, Play Again, retry, new-best, and Relaxed behavior; broader browser matrices remain pre-release coverage under HPA-215.
