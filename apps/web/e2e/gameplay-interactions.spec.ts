@@ -1,7 +1,7 @@
 // Rendered-UI interaction tests for the gameplay page.
 //
 // Covers correct/rejected mouse placement, Enter/Space keyboard selection and
-// placement, supported touch drag, source scoping through piece-slot-${id},
+// placement, tap placement, source scoping through piece-slot-${id},
 // and the current completion-dialog role/action/focus behavior.
 //
 // Uses e2e-square-4 (2x2, 4 pieces) for speed.
@@ -9,7 +9,7 @@
 // Tags:
 //   @extended        — mouse drag tests (dragTo unreliable on WebKit; see
 //                      webkit-drag-spike.spec.ts — 0/20 pass on webkit-mobile).
-//   @webkit-critical — keyboard, touch, and dialog tests (reliable on WebKit).
+//   @webkit-critical — keyboard, tap placement, and dialog tests (reliable on WebKit).
 import { test, expect } from './support/test';
 import { DEFAULT_GAMEPLAY_PREFERENCES } from '../src/lib/services/gameplay/session/preferences';
 
@@ -61,10 +61,15 @@ test.describe('Gameplay interactions', () => {
 		});
 	});
 
-	test('touch drag places a piece @smoke (chromium-mobile)', async ({ gameplayPage }) => {
-		test.skip(PROJECT() !== 'chromium-mobile', 'touch drag tested on chromium-mobile');
+	test('tap placement places a piece @smoke @webkit-critical', async ({ gameplayPage }) => {
+		const project = PROJECT();
+		test.skip(
+			project !== 'chromium-mobile' && project !== 'webkit-mobile',
+			'tap placement is retained on mobile Chromium and WebKit'
+		);
+
 		await gameplayPage.gotoFixture({ seedPreferences: IMMEDIATE_START });
-		await gameplayPage.dragWithTouch(0, 0, 0);
+		await gameplayPage.placeWithTap(0, 0, 0);
 		await gameplayPage.expectPiecePlaced(0, 0, 0);
 	});
 

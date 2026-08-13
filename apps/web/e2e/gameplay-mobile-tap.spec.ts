@@ -100,3 +100,58 @@ test('large mobile inventory scrolls from a swipe starting on a piece @smoke', a
 
 	await expect.poll(() => grid.evaluate((element) => element.scrollTop)).toBeGreaterThan(before);
 });
+
+test('mobile tap-to-place and drawer complete a puzzle @smoke', async ({ gameplayPage, page }) => {
+	test.skip(!isChromiumMobile(), 'HPA-219 feature flow uses chromium-mobile');
+	await gameplayPage.gotoFixture({
+		seedPreferences: IMMEDIATE_START,
+		completion: { kind: 'success' }
+	});
+
+	const toggle = page.getByTestId('inventory-drawer-toggle');
+	await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+	await expect(page.getByTestId('puzzle-board')).toBeVisible();
+
+	// Piece 0 belongs at (0, 0); reject it at (1, 1).
+	await gameplayPage.tapPiece(0);
+	const piece0 = gameplayPage.pieceSource(0).getByTestId('puzzle-piece');
+	await expect(piece0).toHaveAttribute('data-selected', 'true');
+	await gameplayPage.dropZone(1, 1).tap();
+
+	// Durable rejection contract: the slot stays and selection stays.
+	await expect(gameplayPage.pieceSource(0)).toBeVisible();
+	await expect(piece0).toHaveAttribute('data-selected', 'true');
+
+	// Retrying the selected piece at its real cell succeeds and clears selection.
+	await gameplayPage.placeWithTap(0, 0, 0);
+	await gameplayPage.expectPiecePlaced(0, 0, 0);
+	await expect(page.locator('[data-testid="puzzle-piece"][data-selected="true"]')).toHaveCount(0);
+
+	// Prove Cancel remains available in the collapsed header.
+	await gameplayPage.tapPiece(1);
+	await expect(gameplayPage.pieceSource(1).getByTestId('puzzle-piece')).toHaveAttribute(
+		'data-selected',
+		'true'
+	);
+	await page.getByRole('button', { name: 'Collapse inventory' }).click();
+	await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+	await expect(page.getByTestId('puzzle-board')).toBeVisible();
+	await page.getByRole('button', { name: 'Cancel selected piece' }).click();
+	await expect(page.locator('[data-testid="puzzle-piece"][data-selected="true"]')).toHaveCount(0);
+
+	await page.getByRole('button', { name: 'Open inventory' }).click();
+	await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+
+	const fixture = gameplayPage.fixture!;
+	for (const piece of fixture.pieces.filter((candidate) => candidate.id !== 0)) {
+		await gameplayPage.placeWithTap(piece.id, piece.correctX, piece.correctY);
+		await gameplayPage.expectPiecePlaced(piece.id, piece.correctX, piece.correctY);
+	}
+
+	await expect(page.getByTestId('celebration-modal')).toBeVisible();
+	const overflow = await page.evaluate(() => ({
+		scrollWidth: document.documentElement.scrollWidth,
+		innerWidth: window.innerWidth
+	}));
+	expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.innerWidth);
+});
