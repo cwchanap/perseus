@@ -90,7 +90,7 @@ For an unplaced `PuzzlePiece`:
 
 ## Board activation contract
 
-Every board drop zone supports three existing/related paths through one `placePiece(pieceId, x, y)` helper:
+Every board drop zone supports three paths through one `placePiece(pieceId, x, y)` helper:
 
 1. HTML5 drop;
 2. keyboard Enter/Space when a piece is selected;
@@ -100,7 +100,7 @@ When `selectedPieceId === null`, click/tap is a no-op.
 
 When selected, click/tap passes `selectedPieceId`, `x`, and `y` to `placePiece()`, which forwards directly to `onPiecePlaced`. `PuzzleBoard` does **not** check correctness, occupancy, or rotation validity before dispatch. `PuzzleSession` remains the only accept/reject authority.
 
-Replace the current delegated per-cell `onkeydown` with a small component-local `dropZoneInteractionAction(node, { x, y })` that installs native `click` and `keydown` listeners. It reads the current `selectedPieceId` and invokes `placePiece()` once per activation. The action remains private to `PuzzleBoard.svelte`; do not extract it.
+Replace the current delegated per-cell `onkeydown` with a component-local `dropZoneInteractionAction(node, { x, y })` that installs native `click` and `keydown` listeners. It reads the current `selectedPieceId` and invokes `placePiece()` once per activation. The action remains private to `PuzzleBoard.svelte`; do not extract it.
 
 ## Selection lifecycle
 
@@ -176,7 +176,7 @@ The existing gameplay modal surfaces use `z-index: 50`, so `40` keeps the drawer
 When open:
 
 - cap the panel at `max-height: min(42svh, 26rem)`;
-- keep the existing `.pieces-grid` as the scrollable flex child with `overflow-y: auto`;
+- keep the existing `.pieces-grid` as the scrollable flex child with `overflow-y: auto` and `min-height: 0`;
 - leave the header visible.
 
 When collapsed:
@@ -296,7 +296,8 @@ Update `apps/web/src/lib/components/__tests__/PuzzlePiece.svelte.test.ts` to pro
 2. clicking an already-selected piece still calls `onSelect(piece.id)` and does not call `onCancelSelection`;
 3. Enter/Space selection/deselection remains unchanged;
 4. HTML5 `dragstart` payload behavior remains;
-5. rotation-button activation does not select the piece.
+5. a cancelable `touchstart` on the piece is no longer default-prevented;
+6. rotation-button activation does not select the piece.
 
 Delete the touch-drag helper/test matrix that exercises synthetic touch movement/drop, because that behavior is intentionally removed.
 
@@ -340,7 +341,7 @@ Add `apps/web/e2e/gameplay-mobile-tap.spec.ts` using the existing `e2e-square-4`
 The single Chromium feature scenario must:
 
 1. seed the existing start-immediately gameplay preference and load a fresh standard-timed run;
-2. verify the drawer starts open and the puzzle board is visible;
+2. verify the drawer starts open, `.pieces-grid` computes to `overflow-y: auto`, and the puzzle board is visible;
 3. tap a piece and then a wrong board cell;
 4. verify the piece remains selected and current rejected presentation appears;
 5. tap its correct cell and verify the tray slot detaches / selection clears;
@@ -357,7 +358,7 @@ Extend `apps/web/e2e/support/gameplay-page.ts` with exactly one accepted-placeme
 async placeWithTap(pieceId: number, x: number, y: number): Promise<void>
 ```
 
-It taps the piece, taps the target drop zone, and waits for the accepted piece's tray slot to detach. Keep the rejected-attempt setup inline in the HPA-219 spec because rejection intentionally does not satisfy this helper's accepted-placement postcondition.
+It taps the piece, taps the target drop zone, and waits for the accepted piece's tray slot to detach. Keep the rejected-attempt setup inline in the HPA-219 feature test because rejection intentionally does not satisfy this helper's accepted-placement postcondition.
 
 Do not add a fixture, test controller, new browser matrix, or fixed sleep.
 
@@ -385,7 +386,7 @@ The touch-drag removal and click/tap selection land together. Do not keep tempor
 
 ### Inventory scrolling remains blocked
 
-**Mitigation:** remove touch listeners, touch `preventDefault()`, touch translation, and `touch-none`; the mobile E2E exercises the actual responsive surface.
+**Mitigation:** remove touch listeners, touch `preventDefault()`, touch translation, and `touch-none`; add a focused non-default-prevention test and keep the inventory body as an explicit overflow container.
 
 ### Drawer state leaks into gameplay
 
@@ -422,7 +423,7 @@ The touch-drag removal and click/tap selection land together. Do not keep tempor
 | Success clears selection once | existing accepted-placement session contract |
 | Rejection keeps selection | existing rejected-placement session contract |
 | Inventory opens/collapses | one local `drawerOpen` boolean |
-| Inventory scrolls normally | bespoke touch drag and `preventDefault()` removed |
+| Inventory scrolls normally | bespoke touch drag/default prevention removed; overflow container retained |
 | Bottom safe area respected | `env(safe-area-inset-bottom)` on mobile drawer |
 | Board session preserved | drawer changes presentation only; board remains mounted |
 | Desktop drag/keyboard/zoom/completion preserved | existing paths retained and regression-tested |
