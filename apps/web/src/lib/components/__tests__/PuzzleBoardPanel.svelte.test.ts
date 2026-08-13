@@ -236,6 +236,68 @@ describe('PuzzleBoardPanel', () => {
 		await expect.poll(() => transformOf(frame)).toBe(blockedTransform);
 	});
 
+	it('does not start pan while a piece is selected', async () => {
+		render(PuzzleBoardPanel, props({ selectedPieceId: 0 }));
+		await page.getByLabelText('Zoom in').click();
+		const board = await page.getByTestId('puzzle-board').element();
+
+		board.dispatchEvent(
+			new PointerEvent('pointerdown', {
+				bubbles: true,
+				pointerId: 30,
+				pointerType: 'touch',
+				button: 0,
+				clientX: 100,
+				clientY: 100
+			})
+		);
+
+		await expect.element(page.getByTestId('board-viewport')).not.toHaveClass(/is-panning/);
+	});
+
+	it('cancels a real active pan when selection begins', async () => {
+		const input = props();
+		const view = render(PuzzleBoardPanel, input);
+		const frame = await beginRealPan(31);
+
+		await view.rerender({ ...input, selectedPieceId: 0 });
+		await expect.element(page.getByTestId('board-viewport')).not.toHaveClass(/is-panning/);
+		const selectedTransform = transformOf(frame);
+
+		window.dispatchEvent(
+			new PointerEvent('pointermove', {
+				pointerId: 31,
+				pointerType: 'mouse',
+				clientX: 400,
+				clientY: 350
+			})
+		);
+
+		await expect.poll(() => transformOf(frame)).toBe(selectedTransform);
+	});
+
+	it('allows pan again after selection clears', async () => {
+		const input = props({ selectedPieceId: 0 });
+		const view = render(PuzzleBoardPanel, input);
+		await page.getByLabelText('Zoom in').click();
+		await view.rerender({ ...input, selectedPieceId: null });
+		const board = await page.getByTestId('puzzle-board').element();
+
+		board.dispatchEvent(
+			new PointerEvent('pointerdown', {
+				bubbles: true,
+				pointerId: 32,
+				pointerType: 'mouse',
+				button: 0,
+				clientX: 100,
+				clientY: 100
+			})
+		);
+
+		await expect.element(page.getByTestId('board-viewport')).toHaveClass(/is-panning/);
+		window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 32, pointerType: 'mouse' }));
+	});
+
 	it('reclamps on boardMetrics changes without resetting usable zoom', async () => {
 		const input = props();
 		const view = render(PuzzleBoardPanel, input);

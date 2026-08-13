@@ -82,7 +82,7 @@
 	let panOriginX = $state(0);
 	let panOriginY = $state(0);
 
-	const canPanBoard = $derived(zoom > minZoom + 0.001);
+	const canPanBoard = $derived(selectedPieceId === null && zoom > minZoom + 0.001);
 	const puzzleId = $derived(puzzle.id);
 	const viewResetSignal = $derived(viewResetVersion);
 
@@ -110,7 +110,7 @@
 	});
 
 	$effect(() => {
-		if (interactionBlocked) cancelPan();
+		if (interactionBlocked || selectedPieceId !== null) cancelPan();
 	});
 
 	function getViewportBounds(scale = zoom): ViewportBounds {
