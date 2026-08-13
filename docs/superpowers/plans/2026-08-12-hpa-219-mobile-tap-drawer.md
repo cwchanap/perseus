@@ -1,37 +1,41 @@
-# HPA-219 Mobile Tap-to-Place and Simple Inventory Drawer Implementation Plan
+# HPA-219 Mobile Tap-to-Place and In-Flow Inventory Drawer Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make puzzle play practical at a 390 × 844 phone viewport by using the existing selected-piece session state for tap-to-place and presenting the existing inventory as one binary bottom drawer.
+**Goal:** Make puzzle play practical at a 390 × 844 phone viewport using the existing selected-piece session state for tap-to-place and an in-flow binary inventory drawer.
 
-**Architecture:** `PuzzleSession` remains the only canonical gameplay state owner. `PuzzlePiece` becomes a simple native click/tap + keyboard + desktop HTML5 drag input surface; `PuzzleBoard` routes selected-piece click/tap through the same placement callback as keyboard/drop; `PuzzleBoardPanel` disables/cancels pan while selection is active; `PuzzleInventoryPanel` owns one ephemeral `drawerOpen` boolean and responsive drawer CSS. The existing deterministic E2E harness is reused; the obsolete touch-drag helper/smoke path is removed in the same change because direct touch drag is intentionally no longer supported.
+**Architecture:** `PuzzleSession` remains the only canonical gameplay state owner. `PuzzlePiece` becomes native click/tap + keyboard + desktop HTML5 drag; `PuzzleBoard` routes native cell activation through the same placement callback as keyboard/drop; `PuzzleBoardPanel` disables/cancels pan while selection is active; `PuzzleInventoryPanel` owns one ephemeral `drawerOpen` boolean. The route keeps board + inventory in the existing `.game-layout` flow below 1024px, so there is no fixed overlay/z-index system. The E2E harness replaces obsolete touch-drag support with `placeWithTap()` and keeps reliable native tap coverage in WebKit.
 
-**Tech Stack:** Svelte 5 runes/actions, TypeScript 5.9, Vitest Browser Mode, Playwright 1.57, Bun 1.3, existing `PuzzleSession` and deterministic gameplay E2E harness.
+**Tech Stack:** Svelte 5 runes/actions, TypeScript 5.9, Vitest Browser Mode, Playwright 1.57, Bun 1.3, existing `PuzzleSession`, existing deterministic gameplay E2E harness.
 
 ## Global Constraints
 
 - `PuzzleSessionState.selectedPieceId` remains the only selected-piece state.
-- Accepted placement clears the selected piece through the existing session transition; rejected placement keeps it through the existing session transition.
-- Add no route-local mobile/touch state, no new session action, no persistence field, and no shared-domain/API change.
-- `drawerOpen` is the only new state and stays private to `PuzzleInventoryPanel`.
-- Direct touch drag is removed; do not add long-press, drag thresholds, gesture arbitration, pinch zoom, two-finger pan, haptics, or a generalized input/gesture layer.
+- Accepted placement clears selection through the existing session transition; rejected placement keeps it through the existing transition.
+- Add no route-local selection/touch state, no new session action, no persistence field, and no shared-domain/API change.
+- `drawerOpen` is the only new runtime state and stays private to `PuzzleInventoryPanel`.
+- Direct touch drag is removed. Do not add drag thresholds, long-press classification, pinch zoom, two-finger pan, haptics, or an input/gesture framework.
 - Preserve desktop HTML5 mouse drag/drop, keyboard selection/placement, toolbar/wheel zoom, rotation, completion, and session controls.
-- Below 1024px, the inventory is a fixed binary bottom drawer; at/above 1024px, it remains the current static side panel.
-- Mobile drawer starts open, caps itself at `min(42svh, 26rem)`, keeps the header visible while collapsed, and respects `env(safe-area-inset-bottom)`.
-- `CANCEL` is visible whenever a piece is selected, including when the mobile drawer is collapsed.
-- Mobile inventory scrolling uses native browser scrolling; do not call `preventDefault()` from piece touch handlers or add `touch-none` to inventory pieces.
-- Reuse `e2e-square-4` and the existing `chromium-mobile` project (390 × 844, `hasTouch: true`, `isMobile: true`).
-- Use focused component tests plus one HPA-219 mobile E2E; do not add another fixture, browser project, test controller, or fixed sleep.
-- No backward-compatibility shim is required for the removed pre-release touch-drag behavior.
+- Below 1024px, board and inventory remain two rows of the existing route grid. Do not use `position: fixed`, `sticky`, absolute positioning, or gameplay z-index for the inventory.
+- Open mobile inventory max-height is `16rem`, border-box including safe-area padding. The existing 1.25rem route gap keeps tray + gap inside the small/medium board calculator's 300px/280px reserve.
+- `CANCEL` is visible whenever a piece is selected, including collapsed mobile state.
+- Extend the existing global `@media (pointer: coarse)` `.puzzle-piece` rule with `-webkit-user-drag: none`; do not add media-query JS state.
+- Reuse `e2e-square-4`, `chromium-mobile` (390 × 844), and `webkit-mobile`.
+- Native tap smoke is tagged `@smoke @webkit-critical`; the full HPA-219 completion flow remains Chromium-mobile only.
+- Update `apps/web/e2e/README.md` with the supported tap helper in the same E2E commit.
+- No fixed sleeps.
+- No backward-compatibility wrapper for removed touch-drag behavior.
 
 ## File Structure
 
-### Production components
+### Production/layout
 
-- Modify `apps/web/src/lib/components/PuzzlePiece.svelte` — remove bespoke touch drag/dead drag callbacks; add native click/tap selection while keeping keyboard + HTML5 drag.
-- Modify `apps/web/src/lib/components/PuzzleBoard.svelte` — route native click/tap on a cell through the existing `placePiece()` helper when a piece is selected.
-- Modify `apps/web/src/lib/components/PuzzleBoardPanel.svelte` — make pan unavailable while a piece is selected and cancel active pan when selection begins.
-- Modify `apps/web/src/lib/components/PuzzleInventoryPanel.svelte` — add local binary drawer state, Cancel action, responsive fixed-bottom presentation, safe-area padding, and native scrolling containment.
+- Modify `apps/web/src/lib/components/PuzzlePiece.svelte` — delete bespoke touch drag/dead callbacks; add native click selection; retain keyboard + desktop drag payload.
+- Modify `apps/web/src/routes/layout.css` — add coarse-pointer `-webkit-user-drag: none` to the existing `.puzzle-piece` media rule.
+- Modify `apps/web/src/lib/components/PuzzleBoard.svelte` — native click/keydown action reads `data-x` / `data-y` and routes through `placePiece()`.
+- Modify `apps/web/src/lib/components/PuzzleBoardPanel.svelte` — selection-aware pan eligibility/cancellation.
+- Modify `apps/web/src/lib/components/PuzzleInventoryPanel.svelte` — local drawer state, Cancel, height-capped scroll body, safe-area padding; remains in flow.
+- Modify `apps/web/src/routes/puzzle/[id]/+page.svelte` — responsive grid-row CSS only; no route script/session logic.
 
 ### Component tests
 
@@ -40,42 +44,46 @@
 - Modify `apps/web/src/lib/components/__tests__/PuzzleBoardPanel.svelte.test.ts`.
 - Modify `apps/web/src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts`.
 
-### E2E support/tests
+### E2E/support/docs
 
-- Modify `apps/web/e2e/support/gameplay-page.ts` — remove `dragWithTouch()` and add accepted-placement `placeWithTap()`.
-- Modify `apps/web/e2e/gameplay-interactions.spec.ts` — replace the obsolete touch-drag smoke with tap-placement smoke.
-- Create `apps/web/e2e/gameplay-mobile-tap.spec.ts` — HPA-219 end-to-end mobile flow.
-- Modify `apps/web/playwright.config.ts` — update only the stale chromium-mobile comment from touch-drag wording to tap/mobile-layout wording; no project behavior changes.
+- Modify `apps/web/e2e/support/gameplay-page.ts` — remove `dragWithTouch()`, retarget `tapPiece()`, add `placeWithTap()`.
+- Modify `apps/web/e2e/gameplay-interactions.spec.ts` — replace touch-drag smoke with Chromium/WebKit tap smoke.
+- Create `apps/web/e2e/gameplay-mobile-tap.spec.ts` — 390 × 844 flow including browser-level touch swipe proof.
+- Modify `apps/web/e2e/README.md` — document tap placement as supported touch interaction; remove touch-drag guidance.
+- Modify `apps/web/playwright.config.ts` — stale comment only; no project behavior change.
 
 ### Explicitly unchanged
 
-- `apps/web/src/routes/puzzle/[id]/+page.svelte`
 - `apps/web/src/lib/services/gameplay/session/**`
+- `apps/web/src/lib/services/puzzleLayout.ts`
 - persistence/statistics/API/shared-domain packages
 - deterministic fixture catalog/builders
+- route script/session orchestration
 
 ---
 
-### Task 1: Simplify `PuzzlePiece` into native tap/click + keyboard + desktop drag
+### Task 1: Simplify `PuzzlePiece` and protect coarse-pointer scrolling
 
 **Files:**
 
 - Modify: `apps/web/src/lib/components/PuzzlePiece.svelte`
 - Modify: `apps/web/src/lib/components/__tests__/PuzzlePiece.svelte.test.ts`
+- Modify: `apps/web/src/routes/layout.css`
 
 **Interfaces:**
 
-- Consumes existing controlled props: `piece`, `isPlaced`, `resolveImage`, `rotationEnabled`, `rotation`, `onRotate`, `selected`, `onSelect`, `onCancelSelection`.
-- Removes unused callback props: `onDragStart`, `onDragMove`, `onDragEnd`. Repository search shows no production consumer; their only live references are inside `PuzzlePiece` and its tests.
-- Produces native pointer contract: clicking/tapping an unplaced piece calls `onSelect(piece.id)` exactly once even when that piece is already selected.
-- Preserves keyboard contract: Enter/Space selects an unselected piece and cancels an already-selected piece.
-- Preserves HTML5 drag contract: `dragstart` writes `piece.id` to `text/plain` and sets `effectAllowed = 'move'`.
+- Consumes controlled props: `piece`, `isPlaced`, `resolveImage`, `rotationEnabled`, `rotation`, `onRotate`, `selected`, `onSelect`, `onCancelSelection`.
+- Removes unused props: `onDragStart`, `onDragMove`, `onDragEnd`.
+- Produces pointer behavior: click/tap on an unplaced piece calls `onSelect(piece.id)` exactly once, including when already selected.
+- Preserves keyboard behavior: Enter/Space selects unselected and cancels selected.
+- Preserves desktop HTML5 drag payload: `text/plain = piece.id`, `effectAllowed = 'move'`.
+- Coarse-pointer CSS disables native user drag without adding JS state.
 
-- [ ] **Step 1: Delete touch-drag-only test scaffolding and add failing native-click tests**
+- [ ] **Step 1: Delete touch-drag-only test scaffolding and add failing click tests**
 
-Remove `afterEach`, `makeTouch`, `makeTouchList`, `dispatchTouch`, `appendDropZone`, the two synthetic touch-drag tests, and any `vi.stubGlobal` cleanup that is now unused.
+Remove `makeTouch`, `makeTouchList`, `dispatchTouch`, `appendDropZone`, synthetic-touch tests, `vi.stubGlobal` touch-drag cleanup, and `onDragStart/onDragMove/onDragEnd` assertions.
 
-Add pointer tests under `selection state`:
+Add:
 
 ```ts
 it('calls onSelect exactly once on native click', async () => {
@@ -93,7 +101,7 @@ it('calls onSelect exactly once on native click', async () => {
 	expect(onSelect).toHaveBeenCalledWith(7);
 });
 
-it('keeps pointer selection explicit: clicking an already-selected piece selects again instead of cancelling', async () => {
+it('reselects an already-selected piece instead of pointer-cancelling it', async () => {
 	const onSelect = vi.fn();
 	const onCancelSelection = vi.fn();
 	render(PuzzlePiece, {
@@ -127,21 +135,7 @@ it('does not select a placed piece on click', async () => {
 });
 ```
 
-Add the native scrolling regression fence:
-
-```ts
-it('does not prevent the browser default touchstart gesture', async () => {
-	render(PuzzlePiece, { piece: mockPiece, isPlaced: false, resolveImage });
-	const piece = await page.getByTestId('puzzle-piece').element();
-	const event = new Event('touchstart', { bubbles: true, cancelable: true });
-
-	piece.dispatchEvent(event);
-
-	expect(event.defaultPrevented).toBe(false);
-});
-```
-
-Strengthen rotation activation so it cannot accidentally select:
+Strengthen rotation:
 
 ```ts
 it('rotates without selecting the piece', async () => {
@@ -163,36 +157,22 @@ it('rotates without selecting the piece', async () => {
 });
 ```
 
-- [ ] **Step 2: Update keyboard tests so focus does not trigger the new click behavior**
+- [ ] **Step 2: Update keyboard tests to focus without clicking**
 
-Every keyboard test that currently uses `await el.click()` only to obtain focus must use DOM focus instead:
+Any keyboard test that currently uses `click()` only to focus would now trigger pointer selection. Replace that setup with native focus:
 
 ```ts
-const el = await page.getByTestId('puzzle-piece').element();
-el.focus();
-el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+const element = await page.getByTestId('puzzle-piece').element();
+element.focus();
+element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
 ```
 
-Keep these assertions:
+Keep selected Enter/Space cancellation assertions. Remove dead drag-callback assertions.
+
+- [ ] **Step 3: Reduce drag tests to the actual desktop contract**
 
 ```ts
-expect(onSelect).toHaveBeenCalledWith(7);
-```
-
-For an already-selected piece, keep:
-
-```ts
-expect(onCancelSelection).toHaveBeenCalledOnce();
-```
-
-Remove all `onDragStart` expectations from keyboard tests; it has no production consumer and is not gameplay state.
-
-- [ ] **Step 3: Reduce desktop drag tests to the actual public behavior**
-
-Keep the unplaced-piece payload case but remove callback assertions:
-
-```ts
-it('starts a desktop drag with the piece id in the drag payload', async () => {
+it('starts a desktop drag with the piece id in the payload', async () => {
 	render(PuzzlePiece, { piece: mockPiece, isPlaced: false, resolveImage });
 	const dataTransfer = new DataTransfer();
 	const piece = await page.getByTestId('puzzle-piece').element();
@@ -210,9 +190,9 @@ it('starts a desktop drag with the piece id in the drag payload', async () => {
 });
 ```
 
-Keep the placed-piece case and assert only that no payload is written.
+Keep the placed-piece no-payload case.
 
-- [ ] **Step 4: Run the focused test and verify the new pointer contract fails**
+- [ ] **Step 4: Run the component test and verify pointer tests fail**
 
 From `apps/web`:
 
@@ -220,18 +200,18 @@ From `apps/web`:
 bunx vitest --run --browser src/lib/components/__tests__/PuzzlePiece.svelte.test.ts
 ```
 
-Expected: FAIL because click does not yet call `onSelect`, and the old touch handler still prevents default.
+Expected: FAIL because click is not yet wired and touch-drag implementation still exists.
 
-- [ ] **Step 5: Remove the bespoke touch-drag state, imports, helpers, and dead callback props**
+- [ ] **Step 5: Remove touch machinery and dead props**
 
-Delete these imports:
+Delete:
 
 ```ts
 import { onDestroy } from 'svelte';
 import { SvelteMap } from 'svelte/reactivity';
 ```
 
-Delete these props from `Props` and `$props()` destructuring:
+Delete props:
 
 ```ts
 onDragStart?: (piece: PuzzlePiece) => void;
@@ -239,45 +219,19 @@ onDragMove?: (piece: PuzzlePiece, x: number, y: number) => void;
 onDragEnd?: (piece: PuzzlePiece, x: number, y: number) => void;
 ```
 
-Delete all touch-drag state and helpers:
+Delete all touch-drag state/helpers/listeners/synthetic DataTransfer logic and `onDestroy` cleanup.
 
-```ts
-isTouchDragging
-touchTranslateX
-touchTranslateY
-activeTouchId
-startClientX
-startClientY
-lastClientX
-lastClientY
-activeDropZone
-touchListenersAttached
-getTouchById
-getDropZoneAtPoint
-createDataTransfer
-dispatchSyntheticDragEvent
-cleanupTouchListeners
-resetTouchDragState
-handleWindowTouchMove
-handleWindowTouchEnd
-handleTouchStart
-onDestroy(...)
-```
-
-Keep `handleDragStart`, but make it internal-only:
+Keep only internal desktop drag payload:
 
 ```ts
 function handleDragStart(event: DragEvent) {
 	if (isPlaced || !event.dataTransfer) return;
-
 	event.dataTransfer.setData('text/plain', piece.id.toString());
 	event.dataTransfer.effectAllowed = 'move';
 }
 ```
 
-- [ ] **Step 6: Replace `keydownAction` with one local non-delegated interaction action**
-
-Keep the existing keyboard semantics, but remove the dead `onDragStart` call:
+- [ ] **Step 6: Replace `keydownAction` with one non-delegated click + keydown action**
 
 ```ts
 function handleKeyDown(event: KeyboardEvent) {
@@ -290,11 +244,8 @@ function handleKeyDown(event: KeyboardEvent) {
 	if (event.key !== 'Enter' && event.key !== ' ') return;
 	event.preventDefault();
 
-	if (selected) {
-		onCancelSelection?.();
-	} else {
-		onSelect?.(piece.id);
-	}
+	if (selected) onCancelSelection?.();
+	else onSelect?.(piece.id);
 }
 
 function handleClick() {
@@ -314,7 +265,7 @@ function interactionAction(node: HTMLElement) {
 }
 ```
 
-Use the action on the piece element:
+Piece markup becomes:
 
 ```svelte
 <div
@@ -331,45 +282,51 @@ Use the action on the piece element:
 >
 ```
 
-Remove:
+Remove `ontouchstart`, `touch-none`, touch-drag classes/transforms, and `.piece-shadow-wrapper.dragging`.
 
-```svelte
-ontouchstart={handleTouchStart}
-class:cursor-grabbing={isTouchDragging}
-touch-none
+- [ ] **Step 7: Extend the existing coarse-pointer global rule**
+
+In `apps/web/src/routes/layout.css`, keep current 44px targets and add one line:
+
+```css
+@media (pointer: coarse) {
+	.puzzle-piece {
+		min-width: 44px;
+		min-height: 44px;
+		-webkit-user-drag: none;
+	}
+
+	.drop-zone {
+		min-width: 44px;
+		min-height: 44px;
+	}
+}
 ```
 
-Make the outer wrapper static again:
+Do not add `matchMedia`, pointer state, or a new global selector.
 
-```svelte
-<div class="puzzle-piece-wrapper relative h-full w-full">
-```
-
-Remove `class:dragging={isTouchDragging}` and delete the `.piece-shadow-wrapper.dragging` CSS rule.
-
-The rotate button may drop its touch-drag-only `ontouchstart={stopRotateEventPropagation}` hook; keep its existing click/keyboard behavior.
-
-- [ ] **Step 7: Run the focused test and package check**
+- [ ] **Step 8: Run focused test + package check**
 
 ```bash
 bunx vitest --run --browser src/lib/components/__tests__/PuzzlePiece.svelte.test.ts
 bun run check
 ```
 
-Expected: PASS with no Svelte warnings about removed props/listeners.
+Expected: PASS.
 
-- [ ] **Step 8: Commit the self-contained piece-input simplification**
+- [ ] **Step 9: Commit**
 
 ```bash
 git add \
   src/lib/components/PuzzlePiece.svelte \
-  src/lib/components/__tests__/PuzzlePiece.svelte.test.ts
+  src/lib/components/__tests__/PuzzlePiece.svelte.test.ts \
+  src/routes/layout.css
 git commit -m "feat(web): make puzzle pieces tap-selectable"
 ```
 
 ---
 
-### Task 2: Add board tap placement and make pan selection-aware
+### Task 2: Add native board tap placement and selection-aware pan
 
 **Files:**
 
@@ -381,17 +338,14 @@ git commit -m "feat(web): make puzzle pieces tap-selectable"
 **Interfaces:**
 
 - Consumes existing `selectedPieceId: number | null` and `onPiecePlaced(pieceId, x, y)`.
-- Produces one cell activation rule: click/tap calls `placePiece(selectedPieceId, x, y)` exactly once when selected; otherwise no-op.
-- `PuzzleBoard` still does no correctness/rotation pre-validation.
-- `PuzzleBoardPanel.canPanBoard` becomes true only when `selectedPieceId === null` and zoom exceeds fit.
-- Selection beginning during an active pan cancels that pan immediately.
+- Drop-zone native action has **no parameter**; it reads `node.dataset.x` / `node.dataset.y`.
+- One click/tap -> one `placePiece()` call when selected; no selection -> no-op.
+- `PuzzleBoardPanel.canPanBoard` requires no selection.
 
-- [ ] **Step 1: Add failing selected-cell click tests to `PuzzleBoard.svelte.test.ts`**
-
-Add a wrong-coordinate test so it proves the board does not pre-filter:
+- [ ] **Step 1: Add failing board click tests**
 
 ```ts
-it('routes a selected-piece click attempt exactly once without pre-validating correctness', async () => {
+it('routes selected click exactly once without pre-validating correctness', async () => {
 	const puzzle = createMockPuzzle(3);
 	const onPiecePlaced = vi.fn();
 	render(PuzzleBoard, {
@@ -408,7 +362,7 @@ it('routes a selected-piece click attempt exactly once without pre-validating co
 	expect(onPiecePlaced).toHaveBeenCalledWith(0, 1, 0);
 });
 
-it('does nothing on cell click when no piece is selected', async () => {
+it('does nothing on cell click without a selected piece', async () => {
 	const onPiecePlaced = vi.fn();
 	render(PuzzleBoard, {
 		puzzle: createMockPuzzle(3),
@@ -419,34 +373,43 @@ it('does nothing on cell click when no piece is selected', async () => {
 	});
 
 	await page.getByRole('button', { name: 'Drop zone at position 0, 0' }).click();
-
 	expect(onPiecePlaced).not.toHaveBeenCalled();
 });
 ```
 
-Keep the existing keyboard and drag/drop tests unchanged.
+Retain keyboard and drop tests.
 
-- [ ] **Step 2: Run the board test and verify click placement fails**
+- [ ] **Step 2: Run board suite and verify click path fails**
 
 ```bash
 bunx vitest --run --browser src/lib/components/__tests__/PuzzleBoard.svelte.test.ts
 ```
 
-Expected: FAIL because drop zones have keyboard/drop handlers only.
+Expected: FAIL on new click cases.
 
-- [ ] **Step 3: Put click + keydown on one local native drop-zone action**
+- [ ] **Step 3: Add local drop-zone action reading existing data attributes**
 
-Keep the existing `placePiece()` helper unchanged. Replace delegated per-cell `onkeydown` with a local action:
+Keep `placePiece()` and `handleKeyDown()` correctness-free. Add:
 
 ```ts
-function dropZoneInteraction(node: HTMLElement, coords: { x: number; y: number }) {
-	const handleClick = () => {
+function dropZoneInteraction(node: HTMLElement) {
+	function coordinates(): { x: number; y: number } {
+		return {
+			x: Number(node.dataset.x),
+			y: Number(node.dataset.y)
+		};
+	}
+
+	function handleClick() {
 		if (selectedPieceId === null) return;
-		placePiece(selectedPieceId, coords.x, coords.y);
-	};
-	const handleKeydown = (event: KeyboardEvent) => {
-		handleKeyDown(event, coords.x, coords.y);
-	};
+		const { x, y } = coordinates();
+		placePiece(selectedPieceId, x, y);
+	}
+
+	function handleKeydown(event: KeyboardEvent) {
+		const { x, y } = coordinates();
+		handleKeyDown(event, x, y);
+	}
 
 	node.addEventListener('click', handleClick);
 	node.addEventListener('keydown', handleKeydown);
@@ -459,33 +422,35 @@ function dropZoneInteraction(node: HTMLElement, coords: { x: number; y: number }
 }
 ```
 
-Apply it to each drop zone:
+Drop-zone markup keeps the existing attributes and uses the action without a parameter:
 
 ```svelte
 <div
 	class="drop-zone ..."
-	ondragover={(e) => handleDragOver(e, x, y)}
+	ondragover={(event) => handleDragOver(event, x, y)}
 	ondragleave={handleDragLeave}
-	ondrop={(e) => handleDrop(e, x, y)}
-	use:dropZoneInteraction={{ x, y }}
+	ondrop={(event) => handleDrop(event, x, y)}
+	use:dropZoneInteraction
 	data-testid="drop-zone"
+	data-x={x}
+	data-y={y}
 	...
 >
 ```
 
-Do not add cell correctness, occupancy, or rotation checks; session dispatch remains authoritative.
+Remove delegated `onkeydown` from the node.
 
-- [ ] **Step 4: Run the board test and verify all three input paths pass**
+- [ ] **Step 4: Run board suite**
 
 ```bash
 bunx vitest --run --browser src/lib/components/__tests__/PuzzleBoard.svelte.test.ts
 ```
 
-Expected: PASS for native click, keyboard, and desktop drop.
+Expected: PASS for click, keyboard, and desktop drop.
 
-- [ ] **Step 5: Add failing selection-aware pan tests**
+- [ ] **Step 5: Add failing pan-selection tests**
 
-Add to `PuzzleBoardPanel.svelte.test.ts`:
+Add:
 
 ```ts
 it('does not start pan while a piece is selected', async () => {
@@ -493,24 +458,18 @@ it('does not start pan while a piece is selected', async () => {
 	await page.getByLabelText('Zoom in').click();
 	const board = await page.getByTestId('puzzle-board').element();
 
-	board.dispatchEvent(
-		new PointerEvent('pointerdown', {
-			bubbles: true,
-			pointerId: 30,
-			pointerType: 'touch',
-			button: 0,
-			clientX: 100,
-			clientY: 100
-		})
-	);
+	board.dispatchEvent(new PointerEvent('pointerdown', {
+		bubbles: true,
+		pointerId: 30,
+		pointerType: 'touch',
+		button: 0,
+		clientX: 100,
+		clientY: 100
+	}));
 
 	await expect.element(page.getByTestId('board-viewport')).not.toHaveClass(/is-panning/);
 });
-```
 
-Add active-pan cancellation and stale-move fencing:
-
-```ts
 it('cancels a real active pan when selection begins', async () => {
 	const input = props();
 	const view = render(PuzzleBoardPanel, input);
@@ -518,24 +477,18 @@ it('cancels a real active pan when selection begins', async () => {
 
 	await view.rerender({ ...input, selectedPieceId: 0 });
 	await expect.element(page.getByTestId('board-viewport')).not.toHaveClass(/is-panning/);
-	const selectedTransform = transformOf(frame);
+	const transformAfterSelection = transformOf(frame);
 
-	window.dispatchEvent(
-		new PointerEvent('pointermove', {
-			pointerId: 31,
-			pointerType: 'mouse',
-			clientX: 400,
-			clientY: 350
-		})
-	);
+	window.dispatchEvent(new PointerEvent('pointermove', {
+		pointerId: 31,
+		pointerType: 'mouse',
+		clientX: 400,
+		clientY: 350
+	}));
 
-	await expect.poll(() => transformOf(frame)).toBe(selectedTransform);
+	await expect.poll(() => transformOf(frame)).toBe(transformAfterSelection);
 });
-```
 
-Add re-enable coverage:
-
-```ts
 it('allows pan again after selection clears', async () => {
 	const input = props({ selectedPieceId: 0 });
 	const view = render(PuzzleBoardPanel, input);
@@ -543,40 +496,33 @@ it('allows pan again after selection clears', async () => {
 	await view.rerender({ ...input, selectedPieceId: null });
 	const board = await page.getByTestId('puzzle-board').element();
 
-	board.dispatchEvent(
-		new PointerEvent('pointerdown', {
-			bubbles: true,
-			pointerId: 32,
-			pointerType: 'mouse',
-			button: 0,
-			clientX: 100,
-			clientY: 100
-		})
-	);
+	board.dispatchEvent(new PointerEvent('pointerdown', {
+		bubbles: true,
+		pointerId: 32,
+		pointerType: 'mouse',
+		button: 0,
+		clientX: 100,
+		clientY: 100
+	}));
 
 	await expect.element(page.getByTestId('board-viewport')).toHaveClass(/is-panning/);
-
 	window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 32, pointerType: 'mouse' }));
 });
 ```
 
-- [ ] **Step 6: Run the board-panel suite and verify the new tests fail**
+- [ ] **Step 6: Run panel suite and verify new cases fail**
 
 ```bash
 bunx vitest --run --browser src/lib/components/__tests__/PuzzleBoardPanel.svelte.test.ts
 ```
 
-Expected: the selected-piece pan cases FAIL while existing pan/reset/reclamp tests stay green.
+Expected: FAIL on selection pan cases; existing pan/reset/reclamp tests remain green.
 
-- [ ] **Step 7: Make `canPanBoard` and pan cleanup selection-aware**
-
-Change the derived pan guard:
+- [ ] **Step 7: Extend existing pan guard/effect**
 
 ```ts
 const canPanBoard = $derived(selectedPieceId === null && zoom > minZoom + 0.001);
 ```
-
-Extend the existing interaction-block effect rather than adding another ownership layer:
 
 ```ts
 $effect(() => {
@@ -584,9 +530,9 @@ $effect(() => {
 });
 ```
 
-Do not change wheel zoom, toolbar zoom, reset/reclamp, capture-phase pointer-up, blur cleanup, or viewport ownership.
+No other zoom/pan ownership changes.
 
-- [ ] **Step 8: Run both focused suites and package check**
+- [ ] **Step 8: Run both suites + check**
 
 ```bash
 bunx vitest --run --browser \
@@ -597,7 +543,7 @@ bun run check
 
 Expected: PASS.
 
-- [ ] **Step 9: Commit board tap placement and pan arbitration together**
+- [ ] **Step 9: Commit**
 
 ```bash
 git add \
@@ -610,43 +556,35 @@ git commit -m "feat(web): add tap-to-place board interaction"
 
 ---
 
-### Task 3: Turn `PuzzleInventoryPanel` into a binary mobile drawer with explicit Cancel
+### Task 3: Add the binary inventory drawer inside the existing route grid
 
 **Files:**
 
 - Modify: `apps/web/src/lib/components/PuzzleInventoryPanel.svelte`
 - Modify: `apps/web/src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts`
+- Modify: `apps/web/src/routes/puzzle/[id]/+page.svelte` (CSS only)
 
 **Interfaces:**
 
-- Consumes existing `selectedPieceId` and `onCancelSelection` props.
-- Produces one private state value: `let drawerOpen = $state(true)`.
-- Produces mobile toggle selector: `data-testid="inventory-drawer-toggle"`.
-- Produces body anchor: `id="puzzle-inventory-body"`.
-- Keeps exactly one inventory rendering tree; no separate mobile component/markup.
-- Desktop body is always visible even if mobile `drawerOpen` was previously false.
+- Consumes existing `selectedPieceId` and `onCancelSelection`.
+- Produces private `let drawerOpen = $state(true)`.
+- Produces `data-testid="inventory-drawer-toggle"`, `data-testid="puzzle-inventory-panel"`, `id="puzzle-inventory-body"`.
+- Route remains layout owner; inventory remains a normal grid item.
 
-- [ ] **Step 1: Add failing Cancel and drawer-state component tests**
-
-Add Cancel coverage:
+- [ ] **Step 1: Add failing component tests for Cancel and binary state**
 
 ```ts
-it('shows Cancel only while a piece is selected and forwards it', async () => {
+it('shows Cancel only while selected and forwards it', async () => {
 	const input = baseProps();
 	const view = render(PuzzleInventoryPanel, input);
 
 	expect(page.getByRole('button', { name: 'Cancel selected piece' }).query()).toBeNull();
-
 	await view.rerender({ ...input, selectedPieceId: 1 });
 	await page.getByRole('button', { name: 'Cancel selected piece' }).click();
 	expect(input.onCancelSelection).toHaveBeenCalledOnce();
 });
-```
 
-Add binary drawer-state coverage without depending on the component-test viewport's media-query result:
-
-```ts
-it('starts open and toggles the binary drawer state without changing tray contents', async () => {
+it('starts open and toggles without recreating tray contents', async () => {
 	render(PuzzleInventoryPanel, baseProps());
 	const toggle = await page.getByTestId('inventory-drawer-toggle').element();
 
@@ -662,40 +600,33 @@ it('starts open and toggles the binary drawer state without changing tray conten
 	await expect.poll(() => toggle.getAttribute('aria-expanded')).toBe('true');
 	expect(document.querySelectorAll('[data-testid^="piece-slot-"]')).toHaveLength(2);
 });
-```
 
-Prove Cancel remains in the header after collapse:
-
-```ts
-it('keeps Cancel available when the selected mobile drawer state is collapsed', async () => {
+it('keeps Cancel in the header while collapsed', async () => {
 	render(PuzzleInventoryPanel, { ...baseProps(), selectedPieceId: 1 });
 	const toggle = await page.getByTestId('inventory-drawer-toggle').element();
 	toggle.click();
 	await expect.poll(() => toggle.getAttribute('aria-expanded')).toBe('false');
-
 	await expect.element(page.getByRole('button', { name: 'Cancel selected piece' })).toBeInTheDocument();
 });
 ```
 
-Keep all current tray-order, placed-piece filtering, hint/rejection precedence, rotation, and all-pieces-placed tests.
+Keep tray order, placed filtering, hint/rejection, rotation, and all-placed cases.
 
-- [ ] **Step 2: Run the focused inventory test and verify the new controls fail**
+- [ ] **Step 2: Run inventory suite and verify controls fail**
 
 ```bash
 bunx vitest --run --browser src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts
 ```
 
-Expected: FAIL because there is no drawer state/toggle or header Cancel button.
+Expected: FAIL because drawer state/toggle/Cancel are absent.
 
-- [ ] **Step 3: Add the one local drawer state and header action group**
-
-Add only:
+- [ ] **Step 3: Add local drawer state and header controls**
 
 ```ts
 let drawerOpen = $state(true);
 ```
 
-Change the panel/header skeleton to:
+Root/header shape:
 
 ```svelte
 <div class="inventory-panel" class:drawer-open={drawerOpen} data-testid="puzzle-inventory-panel">
@@ -704,7 +635,6 @@ Change the panel/header skeleton to:
 			<span class="panel-tag">INVENTORY</span>
 			<span class="inv-count">{puzzle.pieceCount - placedPieces.length} LEFT</span>
 		</div>
-
 		<div class="panel-actions">
 			{#if selectedPieceId !== null}
 				<button
@@ -712,9 +642,7 @@ Change the panel/header skeleton to:
 					class="panel-action"
 					aria-label="Cancel selected piece"
 					onclick={onCancelSelection}
-				>
-					CANCEL
-				</button>
+				>CANCEL</button>
 			{/if}
 			<button
 				type="button"
@@ -724,36 +652,27 @@ Change the panel/header skeleton to:
 				aria-expanded={drawerOpen}
 				aria-controls="puzzle-inventory-body"
 				onclick={() => (drawerOpen = !drawerOpen)}
-			>
-				{drawerOpen ? 'COLLAPSE' : 'OPEN'}
-			</button>
+			>{drawerOpen ? 'COLLAPSE' : 'OPEN'}</button>
 		</div>
 	</div>
 
 	<div class="inventory-body" id="puzzle-inventory-body">
 		<div class="pieces-grid">
-			<!-- existing piece loop unchanged -->
+			<!-- existing loop unchanged -->
 		</div>
-		<!-- existing ALL PIECES PLACED block stays here -->
+		<!-- existing ALL PIECES PLACED block -->
 	</div>
 </div>
 ```
 
-Do not lift `drawerOpen` to the route and do not add a prop/callback for it.
+- [ ] **Step 4: Keep the panel in flow and cap the mobile body**
 
-- [ ] **Step 4: Add mobile-first drawer layout while preserving desktop side-panel behavior**
-
-Use the existing 1024px breakpoint. The key CSS should be:
+Component CSS:
 
 ```css
 .inventory-panel {
-	position: fixed;
-	inset-inline: 0;
-	bottom: 0;
-	z-index: 40;
 	box-sizing: border-box;
-	width: 100%;
-	max-height: min(42svh, 26rem);
+	max-height: 16rem;
 	padding-bottom: env(safe-area-inset-bottom);
 	overflow: hidden;
 	background: var(--bg-1);
@@ -803,22 +722,8 @@ Use the existing 1024px breakpoint. The key CSS should be:
 	gap: 0.5rem;
 }
 
-.panel-action {
-	border: 1px solid var(--border);
-	padding: 0.3rem 0.5rem;
-	background: var(--bg-2);
-	font-family: var(--font-mono);
-	font-size: 0.55rem;
-	letter-spacing: 0.1em;
-	color: var(--text-1);
-}
-
 @media (min-width: 1024px) {
 	.inventory-panel {
-		position: static;
-		inset: auto;
-		z-index: auto;
-		width: auto;
 		max-height: none;
 		padding-bottom: 0;
 		overflow: visible;
@@ -835,76 +740,122 @@ Use the existing 1024px breakpoint. The key CSS should be:
 }
 ```
 
-Preserve existing piece-grid sizing variables, tray order, rejected/hinted styling, and reduced-motion rules. Do not add a drag handle, transform animation, body scroll lock, or route padding compensation.
+There is **no** `position`, `inset`, or z-index rule for the inventory.
 
-- [ ] **Step 5: Run the inventory suite and warning-strict package check**
+- [ ] **Step 5: Make the existing route grid explicitly own mobile rows**
+
+In `+page.svelte` CSS, add `min-height: 0` to the existing main content rule:
+
+```css
+.puzzle-main {
+	flex: 1;
+	min-height: 0;
+	padding: 1.25rem;
+	overflow: auto;
+}
+```
+
+Update `.game-layout` mobile shape:
+
+```css
+.game-layout {
+	--piece-slot-size: 4rem;
+	--inventory-gap: 0.375rem;
+	--inventory-pad: 0.875rem;
+	display: grid;
+	grid-template-columns: 1fr;
+	grid-template-rows: minmax(0, 1fr) auto;
+	min-height: 0;
+	gap: 1.25rem;
+	max-width: min(96rem, calc(100vw - 2rem));
+	margin: 0 auto;
+}
+```
+
+Keep the existing desktop media rule's two columns and explicitly flatten the rows there:
+
+```css
+@media (min-width: 1024px) {
+	.game-layout {
+		grid-template-rows: auto;
+		grid-template-columns:
+			minmax(0, 1fr)
+			minmax(
+				17.5rem,
+				calc(var(--piece-slot-size) * 3 + var(--inventory-gap) * 2 + var(--inventory-pad) * 2 + 2px)
+			);
+	}
+}
+```
+
+Do not change route script logic or `puzzleLayout.ts` reserves.
+
+- [ ] **Step 6: Run inventory suite + check**
 
 ```bash
 bunx vitest --run --browser src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts
 bun run check
 ```
 
-Expected: PASS. `svelte-check` must report no orphaned scoped selector after wrapping the body.
+Expected: PASS with no orphaned scoped CSS warnings.
 
-- [ ] **Step 6: Commit the inventory drawer independently**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add \
   src/lib/components/PuzzleInventoryPanel.svelte \
-  src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts
-git commit -m "feat(web): add mobile puzzle inventory drawer"
+  src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts \
+  'src/routes/puzzle/[id]/+page.svelte'
+git commit -m "feat(web): add in-flow mobile inventory drawer"
 ```
 
 ---
 
-### Task 4: Replace obsolete touch-drag E2E coverage with tap placement and add the HPA-219 mobile flow
+### Task 4: Replace touch-drag E2E APIs with cross-browser tap placement
 
 **Files:**
 
 - Modify: `apps/web/e2e/support/gameplay-page.ts`
 - Modify: `apps/web/e2e/gameplay-interactions.spec.ts`
 - Create: `apps/web/e2e/gameplay-mobile-tap.spec.ts`
+- Modify: `apps/web/e2e/README.md`
 - Modify: `apps/web/playwright.config.ts` (comment only)
 
 **Interfaces:**
 
-- Removes obsolete helper: `dragWithTouch(pieceId, x, y)`.
-- Keeps `tapPiece(pieceId)` but targets the nested `puzzle-piece` control explicitly.
-- Produces accepted-placement helper:
+- Removes `dragWithTouch(pieceId, x, y)` with no deprecated wrapper.
+- Retargets `tapPiece(pieceId)` to `pieceSource(pieceId).getByTestId('puzzle-piece')`.
+- Produces:
 
 ```ts
 async placeWithTap(pieceId: number, x: number, y: number): Promise<void>
 ```
 
-- `placeWithTap` selects through the rendered UI, asserts selection, taps the target, and waits for that tray slot to detach. It is intentionally for accepted placements only.
-- Rejected placement stays inline in the HPA-219 test because rejection keeps the slot attached and selected.
-- Existing automatic `gameplayPage` teardown remains the diagnostics/fixture settlement fence.
+- One-piece tap smoke runs on `chromium-mobile` and `webkit-mobile`.
+- Full HPA-219 flow is Chromium-mobile and uses browser-level CDP touch input only for the scroll gesture; tap placement still uses public locator APIs.
 
-- [ ] **Step 1: Replace the old touch-drag smoke expectation before changing the helper**
+- [ ] **Step 1: Replace old touch-drag smoke with a failing tap smoke for both supported mobile engines**
 
-In `gameplay-interactions.spec.ts`, change the top comment from `supported touch drag` to `tap placement` and replace:
+In `gameplay-interactions.spec.ts`:
 
 ```ts
-test('touch drag places a piece @smoke (chromium-mobile)', async ({ gameplayPage }) => {
-	test.skip(PROJECT() !== 'chromium-mobile', 'touch drag tested on chromium-mobile');
-	await gameplayPage.gotoFixture({ seedPreferences: IMMEDIATE_START });
-	await gameplayPage.dragWithTouch(0, 0, 0);
-	await gameplayPage.expectPiecePlaced(0, 0, 0);
-});
+const TAP_PROJECTS = new Set(['chromium-mobile', 'webkit-mobile']);
 ```
 
-with:
+Replace touch-drag smoke with:
 
 ```ts
-test('tap placement places a piece @smoke (chromium-mobile)', async ({ gameplayPage }) => {
-	test.skip(PROJECT() !== 'chromium-mobile', 'tap placement tested on chromium-mobile');
+test('tap placement places a piece @smoke @webkit-critical', async ({ gameplayPage }) => {
+	test.skip(!TAP_PROJECTS.has(PROJECT()), 'tap placement runs on mobile Chromium/WebKit');
 	await gameplayPage.gotoFixture({ seedPreferences: IMMEDIATE_START });
 	await gameplayPage.placeWithTap(0, 0, 0);
 	await gameplayPage.expectPiecePlaced(0, 0, 0);
 });
 ```
 
-- [ ] **Step 2: Add the failing HPA-219 mobile feature test**
+Update the file comment from touch drag to tap placement.
+
+- [ ] **Step 2: Create the failing Chromium-mobile feature flow**
 
 Create `apps/web/e2e/gameplay-mobile-tap.spec.ts`:
 
@@ -915,33 +866,65 @@ import { DEFAULT_GAMEPLAY_PREFERENCES } from '../src/lib/services/gameplay/sessi
 const IMMEDIATE_START = { ...DEFAULT_GAMEPLAY_PREFERENCES, startImmediately: true };
 const PROJECT = () => test.info().project.name;
 
-test('mobile tap-to-place and inventory drawer complete a puzzle @smoke', async ({
+test('mobile tap-to-place and in-flow inventory complete a puzzle @smoke', async ({
 	gameplayPage,
 	page
 }) => {
-	test.skip(PROJECT() !== 'chromium-mobile', 'HPA-219 mobile flow requires chromium-mobile');
+	test.skip(PROJECT() !== 'chromium-mobile', 'full HPA-219 flow is chromium-mobile');
 
 	await gameplayPage.gotoFixture({
 		seedPreferences: IMMEDIATE_START,
 		completion: { kind: 'success' }
 	});
 
-	const drawer = page.getByTestId('puzzle-inventory-panel');
+	const panel = page.getByTestId('puzzle-inventory-panel');
 	const toggle = page.getByTestId('inventory-drawer-toggle');
 	const grid = page.locator('.pieces-grid');
+	const board = page.getByTestId('puzzle-board');
 
-	await expect(toggle).toBeVisible();
 	await expect(toggle).toHaveAttribute('aria-expanded', 'true');
-	await expect(page.getByTestId('puzzle-board')).toBeVisible();
-	await expect.poll(() => grid.evaluate((el) => getComputedStyle(el).overflowY)).toBe('auto');
+	await expect(board).toBeVisible();
+	await expect.poll(() => grid.evaluate((element) => getComputedStyle(element).overflowY)).toBe('auto');
 
-	const viewport = page.viewportSize();
-	expect(viewport).toEqual({ width: 390, height: 844 });
-	const drawerBox = await drawer.boundingBox();
-	expect(drawerBox).not.toBeNull();
-	expect(drawerBox!.height).toBeLessThanOrEqual(Math.min(844 * 0.42, 26 * 16) + 1);
+	const panelPosition = await panel.evaluate((element) => getComputedStyle(element).position);
+	expect(panelPosition).toBe('static');
 
-	// Piece 0 belongs at (0, 0); first try (1, 1) to prove rejection keeps selection.
+	const boardBox = await board.boundingBox();
+	const panelBox = await panel.boundingBox();
+	expect(boardBox).not.toBeNull();
+	expect(panelBox).not.toBeNull();
+	expect(panelBox!.y).toBeGreaterThanOrEqual(boardBox!.y + boardBox!.height - 1);
+
+	// Prove a browser-level touch swipe that begins on a piece scrolls the tray.
+	const source = gameplayPage.pieceSource(3).getByTestId('puzzle-piece');
+	await expect.poll(() => grid.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+	await expect.poll(() => source.evaluate((element) => getComputedStyle(element).getPropertyValue('-webkit-user-drag'))).toBe('none');
+	const sourceBox = await source.boundingBox();
+	expect(sourceBox).not.toBeNull();
+	const beforeScroll = await grid.evaluate((element) => element.scrollTop);
+	const cdp = await page.context().newCDPSession(page);
+	const x = sourceBox!.x + sourceBox!.width / 2;
+	const startY = sourceBox!.y + sourceBox!.height / 2;
+	await cdp.send('Input.dispatchTouchEvent', {
+		type: 'touchStart',
+		touchPoints: [{ x, y: startY, radiusX: 2, radiusY: 2, force: 1 }]
+	});
+	await cdp.send('Input.dispatchTouchEvent', {
+		type: 'touchMove',
+		touchPoints: [{ x, y: startY - 80, radiusX: 2, radiusY: 2, force: 1 }]
+	});
+	await cdp.send('Input.dispatchTouchEvent', {
+		type: 'touchMove',
+		touchPoints: [{ x, y: startY - 140, radiusX: 2, radiusY: 2, force: 1 }]
+	});
+	await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+	await cdp.detach();
+	await expect.poll(() => grid.evaluate((element) => element.scrollTop)).toBeGreaterThan(beforeScroll);
+
+	// Restore the tray to the top so deterministic piece taps are visible.
+	await grid.evaluate((element) => element.scrollTo({ top: 0 }));
+
+	// Piece 0 belongs at (0, 0); reject it at (1, 1) first.
 	await gameplayPage.tapPiece(0);
 	const piece0 = gameplayPage.pieceSource(0).getByTestId('puzzle-piece');
 	await expect(piece0).toHaveAttribute('data-selected', 'true');
@@ -949,25 +932,22 @@ test('mobile tap-to-place and inventory drawer complete a puzzle @smoke', async 
 	await expect(gameplayPage.pieceSource(0)).toHaveClass(/rejected/);
 	await expect(piece0).toHaveAttribute('data-selected', 'true');
 
-	// Accepted placement clears the canonical selection and removes the slot.
 	await gameplayPage.placeWithTap(0, 0, 0);
 	await expect(page.locator('[data-testid="puzzle-piece"][data-selected="true"]')).toHaveCount(0);
 
 	await page.getByRole('button', { name: 'Collapse inventory' }).click();
 	await expect(toggle).toHaveAttribute('aria-expanded', 'false');
-	await expect(page.getByTestId('puzzle-board')).toBeVisible();
+	await expect(board).toBeVisible();
 	await expect(toggle).toBeVisible();
 
 	await page.getByRole('button', { name: 'Open inventory' }).click();
 	await expect(toggle).toHaveAttribute('aria-expanded', 'true');
 
-	const fixture = gameplayPage.fixture!;
-	for (const piece of fixture.pieces.filter((candidate) => candidate.id !== 0)) {
+	for (const piece of gameplayPage.fixture!.pieces.filter((candidate) => candidate.id !== 0)) {
 		await gameplayPage.placeWithTap(piece.id, piece.correctX, piece.correctY);
 	}
 
 	await expect(page.getByTestId('celebration-modal')).toBeVisible();
-
 	const overflow = await page.evaluate(() => ({
 		scrollWidth: document.documentElement.scrollWidth,
 		innerWidth: window.innerWidth
@@ -976,11 +956,9 @@ test('mobile tap-to-place and inventory drawer complete a puzzle @smoke', async 
 });
 ```
 
-Do not call `gameplayPage.assertSettled()` manually; importing `test` from `./support/test` runs `assertSettled()` and `assertNoUnexpectedFixtureRequests()` automatically during teardown.
+This CDP block is deliberately inline and Chromium-only; do not add a general gesture helper for one test.
 
-- [ ] **Step 3: Run the two mobile specs and verify they fail on the missing tap helper/current UI**
-
-From `apps/web`:
+- [ ] **Step 3: Run new tap specs before helper implementation**
 
 ```bash
 bunx playwright test \
@@ -989,11 +967,11 @@ bunx playwright test \
   --project=chromium-mobile --grep 'tap placement|mobile tap-to-place'
 ```
 
-Expected: FAIL because `placeWithTap()` does not exist yet and the drawer UI is unavailable until Tasks 1–3 are applied.
+Expected: FAIL because `placeWithTap()` is not yet defined. The drawer/scroll UI already exists from Task 3; do not describe it as missing here.
 
-- [ ] **Step 4: Remove `dragWithTouch()` and add the minimal accepted-placement tap helper**
+- [ ] **Step 4: Replace the touch driver API**
 
-In `GameplayPage`, keep the touch section small:
+In `GameplayPage`:
 
 ```ts
 // --- Touch -----------------------------------------------------------------
@@ -1003,10 +981,7 @@ async tapPiece(pieceId: number): Promise<void> {
 	await this.pieceSource(pieceId).getByTestId('puzzle-piece').tap();
 }
 
-/**
- * Select a piece via tap and place it at (x, y). This helper is for accepted
- * placements: it waits for the tray slot to detach after tapping the target.
- */
+/** Select via tap, place at (x, y), and wait for an accepted placement. */
 async placeWithTap(pieceId: number, x: number, y: number): Promise<void> {
 	const piece = this.pieceSource(pieceId).getByTestId('puzzle-piece');
 	await piece.tap();
@@ -1016,11 +991,27 @@ async placeWithTap(pieceId: number, x: number, y: number): Promise<void> {
 }
 ```
 
-Delete the entire existing `dragWithTouch()` implementation, including its synthetic `Touch`, `TouchEvent`, and diagnostic allowlist behavior. Do not preserve a deprecated wrapper.
+Delete all of `dragWithTouch()` including synthetic touch objects/events and its diagnostic `Unable to preventDefault` allowlist. No compatibility alias.
 
-- [ ] **Step 5: Update the stale Playwright project comment only**
+- [ ] **Step 5: Update E2E README**
 
-In `apps/web/playwright.config.ts`, change:
+In `apps/web/e2e/README.md`, under **Cross-input and dialog extension rules**, document current placement helpers:
+
+```md
+Current placement helpers:
+
+- `placeWithMouse(pieceId, x, y)` — desktop HTML5 drag/drop; extended coverage.
+- `selectAndPlaceWithKeyboard(pieceId, x, y, key)` — keyboard selection/placement.
+- `placeWithTap(pieceId, x, y)` — supported mobile touch placement; kept in Chromium smoke and WebKit-critical coverage.
+
+Direct touch drag is not a supported gameplay interaction after HPA-219; do not add or call `dragWithTouch()`.
+```
+
+Keep the existing rule that new interaction methods are verified Chromium first and retained in WebKit when reliable.
+
+- [ ] **Step 6: Update stale Playwright comment only**
+
+Change:
 
 ```ts
 // Touch + mobile viewport semantics: the harness touch-drag and
@@ -1031,34 +1022,36 @@ To:
 
 ```ts
 // Touch + mobile viewport semantics: tap interaction and mobile-layout
-// paths are exercised under a touch-capable context.
+// paths run under a touch-capable context.
 ```
 
-Do not change viewport, projects, device presets, retries, or web-server configuration.
+No config behavior change.
 
-- [ ] **Step 6: Run the dedicated feature E2E**
+- [ ] **Step 7: Run Chromium feature + Chromium tap smoke**
 
 ```bash
 bunx playwright test e2e/gameplay-mobile-tap.spec.ts --project=chromium-mobile
+bunx playwright test e2e/gameplay-interactions.spec.ts --project=chromium-mobile --grep 'tap placement'
 ```
 
-Expected: PASS at 390 × 844 with rejection retention, accepted clearing, drawer collapse/open, completion, no horizontal overflow, and clean automatic diagnostics teardown.
+Expected: PASS.
 
-- [ ] **Step 7: Run the existing interaction smoke on chromium-mobile**
+- [ ] **Step 8: Run WebKit-critical tap smoke**
 
 ```bash
-bunx playwright test e2e/gameplay-interactions.spec.ts --project=chromium-mobile --grep @smoke
+bunx playwright test e2e/gameplay-interactions.spec.ts --project=webkit-mobile --grep 'tap placement'
 ```
 
-Expected: PASS with tap placement replacing the removed direct-touch-drag smoke.
+Expected: PASS without the old touch-drag console-error allowlist.
 
-- [ ] **Step 8: Commit E2E support and feature coverage**
+- [ ] **Step 9: Commit**
 
 ```bash
 git add \
   e2e/support/gameplay-page.ts \
   e2e/gameplay-interactions.spec.ts \
   e2e/gameplay-mobile-tap.spec.ts \
+  e2e/README.md \
   playwright.config.ts
 git commit -m "test(web): cover mobile tap-to-place flow"
 ```
@@ -1067,11 +1060,9 @@ git commit -m "test(web): cover mobile tap-to-place flow"
 
 ### Task 5: Run the complete HPA-219 verification fence
 
-**Files:** No source changes expected. If a verification command changes files through formatting, inspect and include only HPA-219-scope formatting fixes in the corresponding earlier commit rather than creating a generic cleanup commit.
+**Files:** No source changes expected. Formatting-only changes belong in their owning implementation commit.
 
-**Interfaces:** Verifies that the four component boundaries, tap E2E, desktop regression paths, static analysis, formatting/lint, and production build agree with the design.
-
-- [ ] **Step 1: Run all four focused component suites together**
+- [ ] **Step 1: Run all four focused component suites**
 
 From `apps/web`:
 
@@ -1085,31 +1076,39 @@ bunx vitest --run --browser \
 
 Expected: PASS.
 
-- [ ] **Step 2: Run the required gameplay smoke matrix**
+- [ ] **Step 2: Run required Chromium smoke**
 
 ```bash
 bun run test:e2e:smoke
 ```
 
-Expected: PASS. The HPA-219 scenario runs on `chromium-mobile`; desktop executions of the explicitly mobile-only case skip cleanly.
+Expected: PASS; mobile HPA-219 flow runs on chromium-mobile and skips desktop where explicitly gated.
 
-- [ ] **Step 3: Run type/Svelte validation**
+- [ ] **Step 3: Run WebKit-critical lane**
+
+```bash
+bun run test:e2e:webkit
+```
+
+Expected: PASS with tap placement included through `@webkit-critical`.
+
+- [ ] **Step 4: Run type/Svelte validation**
 
 ```bash
 bun run check
 ```
 
-Expected: PASS with no warnings/errors.
+Expected: PASS.
 
-- [ ] **Step 4: Run formatting + lint**
+- [ ] **Step 5: Run formatting + lint**
 
 ```bash
 bun run lint
 ```
 
-Expected: PASS. If Prettier reports formatting only, run `bunx prettier --write` on the listed HPA-219 files, amend the owning commit, and rerun this command.
+Expected: PASS.
 
-- [ ] **Step 5: Build the web package**
+- [ ] **Step 6: Build web package**
 
 ```bash
 bun run build
@@ -1117,7 +1116,7 @@ bun run build
 
 Expected: PASS.
 
-- [ ] **Step 6: Verify the implementation scope did not leak into route/domain/persistence/API code**
+- [ ] **Step 7: Verify diff scope**
 
 From repo root:
 
@@ -1126,13 +1125,15 @@ git diff --name-only origin/main...HEAD
 git diff --check origin/main...HEAD
 ```
 
-Expected implementation files (besides the planning docs):
+Expected implementation files, besides planning docs:
 
 ```text
 apps/web/src/lib/components/PuzzlePiece.svelte
+apps/web/src/routes/layout.css
 apps/web/src/lib/components/PuzzleBoard.svelte
 apps/web/src/lib/components/PuzzleBoardPanel.svelte
 apps/web/src/lib/components/PuzzleInventoryPanel.svelte
+apps/web/src/routes/puzzle/[id]/+page.svelte
 apps/web/src/lib/components/__tests__/PuzzlePiece.svelte.test.ts
 apps/web/src/lib/components/__tests__/PuzzleBoard.svelte.test.ts
 apps/web/src/lib/components/__tests__/PuzzleBoardPanel.svelte.test.ts
@@ -1140,78 +1141,81 @@ apps/web/src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts
 apps/web/e2e/support/gameplay-page.ts
 apps/web/e2e/gameplay-interactions.spec.ts
 apps/web/e2e/gameplay-mobile-tap.spec.ts
+apps/web/e2e/README.md
 apps/web/playwright.config.ts
 ```
 
-There must be no changes under:
+`+page.svelte` must contain CSS/layout changes only. There must be no changes under:
 
 ```text
-apps/web/src/routes/puzzle/[id]/
 apps/web/src/lib/services/gameplay/session/
 packages/
 apps/api/
 ```
 
-- [ ] **Step 7: Inspect the final diff for the KISS deletion goal**
-
-```bash
-git diff --stat origin/main...HEAD
-git diff origin/main...HEAD -- apps/web/src/lib/components/PuzzlePiece.svelte
-```
-
-Confirm `PuzzlePiece.svelte` has deleted the touch listener/synthetic drag machinery rather than adding a second touch mode. Search must return no production/test harness implementation references:
+- [ ] **Step 8: Verify deletion goal / no touch-drag compatibility remains**
 
 ```bash
 git grep -n 'dragWithTouch\|handleWindowTouchMove\|createDataTransfer\|SvelteMap' -- apps/web || true
 ```
 
-Expected: no matches, except historical planning documents if the grep scope is broadened beyond `apps/web`.
+Expected: no implementation/test-harness matches.
 
-- [ ] **Step 8: Confirm no uncommitted implementation changes remain**
+Inspect piece diff:
+
+```bash
+git diff origin/main...HEAD -- apps/web/src/lib/components/PuzzlePiece.svelte
+```
+
+Confirm touch machinery was deleted rather than replaced with a second gesture path.
+
+- [ ] **Step 9: Confirm clean worktree**
 
 ```bash
 git status --short
 ```
 
-Expected: clean working tree.
+Expected: clean.
 
 ## Plan Self-Review
 
 ### Spec coverage
 
-- Tap piece -> selected: Task 1.
-- Tap selected piece -> explicit reselect, not pointer toggle: Task 1.
-- Tap board cell -> canonical placement attempt: Task 2.
-- Reject keeps selection / success clears through existing domain: Task 4 E2E proves the live route/session path; no duplicate UI state is added.
+- Piece tap selection: Task 1.
+- Selected-piece pointer reselect + explicit Cancel: Tasks 1/3.
+- Board tap canonical placement: Task 2.
+- Rejection retains / acceptance clears: existing domain, proven Task 4.
 - Selection suppresses/cancels pan: Task 2.
-- Explicit Cancel: Task 3.
-- Binary open/collapsed inventory: Task 3.
-- Board remains mounted/visible while drawer overlays: Task 4 E2E.
-- One-finger inventory scrolling: Task 1 removes default prevention/touch-none; Task 3 preserves `overflow-y: auto`; Task 4 verifies computed overflow.
-- Bottom safe area: Task 3.
-- No horizontal overflow: Task 3 containment + Task 4 E2E assertion.
-- Desktop mouse drag, keyboard, zoom/pan, rotation, completion: Tasks 1–2 retain component regression tests; Task 5 smoke/build/check fence catches route-level regressions.
-- Completion through tap-to-place: Task 4.
-- No global state/gesture framework: all tasks stay in existing component/harness boundaries.
+- Binary in-flow inventory: Task 3.
+- No overlay/z-index second layout: Task 3 + E2E geometry assertion.
+- One-finger tray scroll: Task 1 coarse CSS + Task 4 browser-level swipe/`scrollTop` proof.
+- Safe area: Task 3.
+- No horizontal overflow: Task 4.
+- Desktop drag/keyboard/zoom/rotation/completion preserved: Tasks 1/2 + Task 5 lanes.
+- WebKit supported tap path: Task 4 + Task 5.
+- E2E documentation current: Task 4.
+- No global gameplay state/gesture framework: all state ownership unchanged.
 
-### Required cleanup discovered while planning
+### Review findings resolved
 
-The current E2E suite contains a `dragWithTouch()` smoke test/helper. Because the approved design intentionally removes direct touch drag, Task 4 removes that obsolete helper and converts the existing smoke to tap placement. Leaving it would be contradictory dead compatibility work and would guarantee a failing smoke test.
-
-`PuzzlePiece`'s optional `onDragStart`, `onDragMove`, and `onDragEnd` callbacks also have no production consumer. Task 1 removes them with the touch-drag implementation rather than preserving a dead component API.
+1. **Fixed overlay rejected:** inventory stays in route grid; route CSS is now intentionally in scope.
+2. **Scrolling proof strengthened:** coarse pointer uses the existing CSS media block to suppress native user drag, and Chromium-mobile drives browser-level touch input to prove `scrollTop` changes.
+3. **Harness contract fixed:** `placeWithTap` replaces `dragWithTouch`, tap smoke is WebKit-critical, `tapPiece` targets the real piece control, README is updated.
+4. **Duplicate coordinate channel removed:** drop-zone action has no parameter and reads existing `data-x`/`data-y`.
+5. **Stale sequencing text removed:** Task 4 assumes Tasks 1–3 are already applied; its expected pre-helper failure is only missing `placeWithTap`.
 
 ### Placeholder scan
 
-No `TBD`, `TODO`, deferred implementation placeholder, generic “handle errors,” or unspecified test step remains in this plan.
+No `TBD`, `TODO`, deferred implementation placeholder, generic “handle errors,” or unspecified test step remains.
 
 ### Type/interface consistency
 
-- `placeWithTap(pieceId: number, x: number, y: number): Promise<void>` is defined once in Task 4 and used by both mobile E2E suites.
+- `placeWithTap(pieceId: number, x: number, y: number): Promise<void>` is defined once in Task 4.
 - `selectedPieceId` remains `number | null` end to end.
-- `onPiecePlaced(pieceId: number, x: number, y: number): void` remains unchanged.
-- `drawerOpen` is private component state and is not added to any prop/domain interface.
-- `inventory-drawer-toggle`, `puzzle-inventory-panel`, and `puzzle-inventory-body` names are consistent across component tests and E2E.
+- `onPiecePlaced(pieceId: number, x: number, y: number): void` is unchanged.
+- `drawerOpen` is private component state.
+- drop-zone coordinates have one DOM source: `data-x` / `data-y`.
 
 ## Execution Handoff
 
-When implementation starts, prefer **Subagent-Driven Development** so each of the four implementation tasks receives a fresh review gate. The alternative is **Inline Execution** with `superpowers:executing-plans` and checkpoints after each task. Do not combine HPA-219 with HPA-220 filters/shuffle or HPA-217 toolbar work.
+When implementation starts, prefer **Subagent-Driven Development** so each implementation task gets a fresh review gate. Inline execution with `superpowers:executing-plans` is the alternative. Do not combine HPA-219 with HPA-220 filters/shuffle or HPA-217 toolbar work.
