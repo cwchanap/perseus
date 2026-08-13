@@ -1,5 +1,5 @@
 // Component tests for PuzzlePiece (controlled selection)
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { page, userEvent } from 'vitest/browser';
 import PuzzlePiece from '../PuzzlePiece.svelte';
@@ -17,50 +17,9 @@ const mockPiece: PuzzlePieceType = {
 	imagePath: 'pieces/7.png'
 };
 
-function makeTouch(identifier: number, clientX: number, clientY: number): Touch {
-	return {
-		identifier,
-		clientX,
-		clientY
-	} as Touch;
-}
-
-function makeTouchList(...touches: Touch[]): TouchList {
-	return Object.assign(touches, {
-		item: (index: number) => touches[index] ?? null
-	}) as unknown as TouchList;
-}
-
-function dispatchTouch(
-	target: EventTarget,
-	type: string,
-	options: { touches?: Touch[]; changedTouches?: Touch[] }
-): Event {
-	const event = new Event(type, { bubbles: true, cancelable: true });
-	Object.defineProperties(event, {
-		touches: { value: makeTouchList(...(options.touches ?? [])) },
-		changedTouches: { value: makeTouchList(...(options.changedTouches ?? [])) }
-	});
-	target.dispatchEvent(event);
-	return event;
-}
-
-function appendDropZone(id: string): HTMLElement {
-	const dropZone = document.createElement('div');
-	dropZone.className = 'drop-zone';
-	dropZone.dataset.testDropZone = id;
-	document.body.appendChild(dropZone);
-	return dropZone;
-}
-
 describe('PuzzlePiece', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
-	});
-
-	afterEach(() => {
-		vi.unstubAllGlobals();
-		document.querySelectorAll('[data-test-drop-zone]').forEach((element) => element.remove());
 	});
 
 	describe('rendering', () => {
@@ -223,6 +182,56 @@ describe('PuzzlePiece', () => {
 		});
 	});
 
+	describe('pointer interaction', () => {
+		it('calls onSelect exactly once on native click', async () => {
+			const onSelect = vi.fn();
+			render(PuzzlePiece, {
+				piece: mockPiece,
+				isPlaced: false,
+				resolveImage,
+				onSelect
+			});
+
+			await page.getByTestId('puzzle-piece').click();
+
+			expect(onSelect).toHaveBeenCalledTimes(1);
+			expect(onSelect).toHaveBeenCalledWith(7);
+		});
+
+		it('reselects an already-selected piece instead of pointer-cancelling it', async () => {
+			const onSelect = vi.fn();
+			const onCancelSelection = vi.fn();
+			render(PuzzlePiece, {
+				piece: mockPiece,
+				isPlaced: false,
+				resolveImage,
+				selected: true,
+				onSelect,
+				onCancelSelection
+			});
+
+			await page.getByTestId('puzzle-piece').click();
+
+			expect(onSelect).toHaveBeenCalledTimes(1);
+			expect(onSelect).toHaveBeenCalledWith(7);
+			expect(onCancelSelection).not.toHaveBeenCalled();
+		});
+
+		it('does not select a placed piece on click', async () => {
+			const onSelect = vi.fn();
+			render(PuzzlePiece, {
+				piece: mockPiece,
+				isPlaced: true,
+				resolveImage,
+				onSelect
+			});
+
+			await page.getByTestId('puzzle-piece').click({ force: true });
+
+			expect(onSelect).not.toHaveBeenCalled();
+		});
+	});
+
 	describe('rotation support', () => {
 		it('does not render a rotate control when rotation is disabled', async () => {
 			render(PuzzlePiece, { piece: mockPiece, isPlaced: false, resolveImage });
@@ -272,6 +281,24 @@ describe('PuzzlePiece', () => {
 			expect(pieceElement.contains(rotateButton)).toBe(false);
 		});
 
+		it('rotates without selecting the piece', async () => {
+			const onRotate = vi.fn();
+			const onSelect = vi.fn();
+			render(PuzzlePiece, {
+				piece: mockPiece,
+				isPlaced: false,
+				resolveImage,
+				rotationEnabled: true,
+				onRotate,
+				onSelect
+			});
+
+			await page.getByRole('button', { name: 'Rotate piece 7' }).click();
+
+			expect(onRotate).toHaveBeenCalledWith(7);
+			expect(onSelect).not.toHaveBeenCalled();
+		});
+
 		it('calls onRotate when r and R are pressed while the piece is focused', async () => {
 			const onRotate = vi.fn();
 
@@ -283,10 +310,10 @@ describe('PuzzlePiece', () => {
 				onRotate
 			});
 
-			const el = page.getByTestId('puzzle-piece');
-			await el.click();
-			await userEvent.keyboard('r');
-			await userEvent.keyboard('R');
+			const element = await page.getByTestId('puzzle-piece').element();
+			element.focus();
+			element.dispatchEvent(new KeyboardEvent('keydown', { key: 'r', bubbles: true }));
+			element.dispatchEvent(new KeyboardEvent('keydown', { key: 'R', bubbles: true }));
 
 			expect(onRotate).toHaveBeenCalledTimes(2);
 			expect(onRotate).toHaveBeenNthCalledWith(1, 7);
@@ -308,25 +335,22 @@ describe('PuzzlePiece', () => {
 	});
 
 	describe('keyboard interaction', () => {
-		it('calls onSelect and onDragStart on Enter when not selected', async () => {
+		it('calls onSelect on Enter when not selected', async () => {
 			const onSelect = vi.fn();
-			const onDragStart = vi.fn();
 
 			render(PuzzlePiece, {
 				piece: mockPiece,
 				isPlaced: false,
 				resolveImage,
 				selected: false,
-				onSelect,
-				onDragStart
+				onSelect
 			});
 
-			const el = page.getByTestId('puzzle-piece');
-			await el.click();
-			await userEvent.keyboard('{Enter}');
+			const element = await page.getByTestId('puzzle-piece').element();
+			element.focus();
+			element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
 
 			expect(onSelect).toHaveBeenCalledWith(7);
-			expect(onDragStart).toHaveBeenCalledWith(mockPiece);
 		});
 
 		it('calls onCancelSelection on Enter when this piece is already selected', async () => {
@@ -339,9 +363,9 @@ describe('PuzzlePiece', () => {
 				onCancelSelection
 			});
 
-			const el = page.getByTestId('puzzle-piece');
-			await el.click();
-			await userEvent.keyboard('{Enter}');
+			const element = await page.getByTestId('puzzle-piece').element();
+			element.focus();
+			element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
 
 			expect(onCancelSelection).toHaveBeenCalled();
 		});
@@ -356,43 +380,37 @@ describe('PuzzlePiece', () => {
 
 		it('responds to Space key the same as Enter', async () => {
 			const onSelect = vi.fn();
-			const onDragStart = vi.fn();
 
 			render(PuzzlePiece, {
 				piece: mockPiece,
 				isPlaced: false,
 				resolveImage,
 				selected: false,
-				onSelect,
-				onDragStart
+				onSelect
 			});
 
-			const el = page.getByTestId('puzzle-piece');
-			await el.click();
-			await userEvent.keyboard(' ');
+			const element = await page.getByTestId('puzzle-piece').element();
+			element.focus();
+			element.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
 
 			expect(onSelect).toHaveBeenCalledWith(7);
-			expect(onDragStart).toHaveBeenCalledWith(mockPiece);
 		});
 
 		it('ignores other key presses', async () => {
 			const onSelect = vi.fn();
-			const onDragStart = vi.fn();
 
 			render(PuzzlePiece, {
 				piece: mockPiece,
 				isPlaced: false,
 				resolveImage,
-				onSelect,
-				onDragStart
+				onSelect
 			});
 
-			const el = page.getByTestId('puzzle-piece');
-			await el.click();
-			await userEvent.keyboard('a');
+			const element = await page.getByTestId('puzzle-piece').element();
+			element.focus();
+			element.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }));
 
 			expect(onSelect).not.toHaveBeenCalled();
-			expect(onDragStart).not.toHaveBeenCalled();
 		});
 
 		it('does not select a placed piece via keyboard', async () => {
@@ -412,13 +430,25 @@ describe('PuzzlePiece', () => {
 	});
 
 	describe('drag interaction', () => {
-		it('starts a desktop drag with the piece id in the drag payload', async () => {
-			const onDragStart = vi.fn();
-			render(PuzzlePiece, { piece: mockPiece, isPlaced: false, resolveImage, onDragStart });
-
+		it('starts a desktop drag with the piece id in the payload', async () => {
+			render(PuzzlePiece, { piece: mockPiece, isPlaced: false, resolveImage });
 			const dataTransfer = new DataTransfer();
-			const pieceElement = await page.getByTestId('puzzle-piece').element();
-			pieceElement.dispatchEvent(
+			// Headless Chromium gates `DataTransfer.effectAllowed` to trusted
+			// drag operations only, so the setter is a no-op for synthetic
+			// DragEvents and a post-dispatch read always yields "none". Shadow
+			// it with an own property to capture the assignment the component
+			// makes during dragstart, while leaving `getData`/`setData` intact.
+			let assignedEffectAllowed: string | undefined;
+			Object.defineProperty(dataTransfer, 'effectAllowed', {
+				configurable: true,
+				get: () => assignedEffectAllowed ?? 'uninitialized',
+				set: (value: string) => {
+					assignedEffectAllowed = value;
+				}
+			});
+			const piece = await page.getByTestId('puzzle-piece').element();
+
+			piece.dispatchEvent(
 				new DragEvent('dragstart', {
 					bubbles: true,
 					cancelable: true,
@@ -427,16 +457,15 @@ describe('PuzzlePiece', () => {
 			);
 
 			expect(dataTransfer.getData('text/plain')).toBe('7');
-			expect(onDragStart).toHaveBeenCalledWith(mockPiece);
+			expect(assignedEffectAllowed).toBe('move');
 		});
 
 		it('does not start a desktop drag for a placed piece', async () => {
-			const onDragStart = vi.fn();
-			render(PuzzlePiece, { piece: mockPiece, isPlaced: true, resolveImage, onDragStart });
+			render(PuzzlePiece, { piece: mockPiece, isPlaced: true, resolveImage });
 
 			const dataTransfer = new DataTransfer();
-			const pieceElement = await page.getByTestId('puzzle-piece').element();
-			pieceElement.dispatchEvent(
+			const piece = await page.getByTestId('puzzle-piece').element();
+			piece.dispatchEvent(
 				new DragEvent('dragstart', {
 					bubbles: true,
 					cancelable: true,
@@ -445,124 +474,6 @@ describe('PuzzlePiece', () => {
 			);
 
 			expect(dataTransfer.getData('text/plain')).toBe('');
-			expect(onDragStart).not.toHaveBeenCalled();
-		});
-
-		it('moves a touch drag across drop zones and drops with a DataTransfer payload', async () => {
-			const onDragStart = vi.fn();
-			const onDragMove = vi.fn();
-			const onDragEnd = vi.fn();
-			const firstDropZone = appendDropZone('first');
-			const secondDropZone = appendDropZone('second');
-			let elementAtPoint: Element | null = firstDropZone;
-			const elementFromPointSpy = vi
-				.spyOn(document, 'elementFromPoint')
-				.mockImplementation(() => elementAtPoint);
-			const firstDragLeave = vi.fn();
-			const secondDragOver = vi.fn();
-			const dropPayloads: string[] = [];
-			firstDropZone.addEventListener('dragleave', firstDragLeave);
-			secondDropZone.addEventListener('dragover', secondDragOver);
-			secondDropZone.addEventListener('drop', (event) => {
-				dropPayloads.push((event as DragEvent).dataTransfer?.getData('text/plain') ?? '');
-			});
-
-			try {
-				render(PuzzlePiece, {
-					piece: mockPiece,
-					isPlaced: false,
-					resolveImage,
-					onDragStart,
-					onDragMove,
-					onDragEnd
-				});
-
-				const pieceElement = await page.getByTestId('puzzle-piece').element();
-				dispatchTouch(pieceElement, 'touchstart', {
-					changedTouches: [makeTouch(10, 100, 120)]
-				});
-				const firstMoveEvent = dispatchTouch(window, 'touchmove', {
-					touches: [makeTouch(10, 130, 150)]
-				});
-				elementAtPoint = secondDropZone;
-				const moveEvent = dispatchTouch(window, 'touchmove', {
-					touches: [makeTouch(10, 140, 160)]
-				});
-				dispatchTouch(window, 'touchmove', { touches: [makeTouch(10, 150, 170)] });
-				dispatchTouch(window, 'touchend', { changedTouches: [makeTouch(10, 150, 170)] });
-
-				expect(firstMoveEvent.defaultPrevented).toBe(true);
-				expect(moveEvent.defaultPrevented).toBe(true);
-				expect(onDragStart).toHaveBeenCalledWith(mockPiece);
-				expect(onDragMove).toHaveBeenCalledWith(mockPiece, 130, 150);
-				expect(onDragMove).toHaveBeenCalledWith(mockPiece, 140, 160);
-				expect(onDragMove).toHaveBeenCalledWith(mockPiece, 150, 170);
-				expect(firstDragLeave).toHaveBeenCalledOnce();
-				expect(secondDragOver).toHaveBeenCalledTimes(2);
-				expect(dropPayloads).toEqual(['7']);
-				expect(onDragEnd).toHaveBeenCalledWith(mockPiece, 150, 170);
-			} finally {
-				elementFromPointSpy.mockRestore();
-			}
-		});
-
-		it('uses synthetic drag events and fallback DataTransfer during touch drops when needed', async () => {
-			vi.stubGlobal('DataTransfer', undefined);
-			vi.stubGlobal('DragEvent', function UnsupportedDragEvent() {
-				throw new TypeError('DragEvent unsupported');
-			});
-
-			const onDragStart = vi.fn();
-			const fallbackDropZone = appendDropZone('fallback');
-			const elementFromPointSpy = vi
-				.spyOn(document, 'elementFromPoint')
-				.mockImplementation(() => fallbackDropZone);
-			const dropPayloads: string[] = [];
-			fallbackDropZone.addEventListener('drop', (event) => {
-				const dataTransfer = (event as DragEvent).dataTransfer!;
-				dropPayloads.push(dataTransfer.getData('text/plain'));
-				expect(dataTransfer.types).toEqual(['text/plain']);
-
-				const firstItem = dataTransfer.items[0];
-				expect(firstItem.kind).toBe('string');
-				expect(firstItem.type).toBe('text/plain');
-				expect(firstItem.getAsFile()).toBeNull();
-				firstItem.getAsString((value) => {
-					dropPayloads.push(value);
-				});
-
-				dataTransfer.setData('text/plain', 'updated');
-				expect(dataTransfer.getData('text/plain')).toBe('updated');
-				dataTransfer.setData('text/html', '<b>Piece</b>');
-				expect(dataTransfer.types).toEqual(['text/plain', 'text/html']);
-				dataTransfer.clearData('text/html');
-				expect(dataTransfer.types).toEqual(['text/plain']);
-				dataTransfer.clearData();
-				expect(dataTransfer.types).toEqual([]);
-			});
-
-			try {
-				render(PuzzlePiece, {
-					piece: mockPiece,
-					isPlaced: false,
-					resolveImage,
-					onDragStart
-				});
-
-				const pieceElement = await page.getByTestId('puzzle-piece').element();
-				dispatchTouch(pieceElement, 'touchstart', {
-					changedTouches: [makeTouch(1, 20, 30)]
-				});
-				dispatchTouch(pieceElement, 'touchstart', {
-					changedTouches: [makeTouch(2, 30, 40)]
-				});
-				dispatchTouch(window, 'touchend', { changedTouches: [makeTouch(2, 35, 45)] });
-
-				expect(onDragStart).toHaveBeenCalledTimes(2);
-				expect(dropPayloads).toEqual(['7', '7']);
-			} finally {
-				elementFromPointSpy.mockRestore();
-			}
 		});
 	});
 });
