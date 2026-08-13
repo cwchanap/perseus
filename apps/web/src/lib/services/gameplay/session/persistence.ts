@@ -350,7 +350,11 @@ function validateV1(
 		record.sealedCompletion,
 		runId as string,
 		source as PuzzleSourceType,
-		counters
+		counters,
+		{
+			rotationUsed: derivedFacts.rotationUsed,
+			ghostReferenceUsed: derivedFacts.ghostReferenceUsed
+		}
 	);
 	if (sealedCompletion === false) return null;
 	const seal = sealedCompletion === null ? null : (sealedCompletion as unknown as SealedCompletion);
@@ -546,7 +550,8 @@ function validateSeal(
 	raw: unknown,
 	expectedRunId: string,
 	source: PuzzleSourceType,
-	outerCounters: { incorrectAttempts: number; hintsUsed: number; referenceActivations: number }
+	outerCounters: { incorrectAttempts: number; hintsUsed: number; referenceActivations: number },
+	outerFacts: { rotationUsed: boolean; ghostReferenceUsed: boolean }
 ): SealedCompletion | null | false {
 	if (raw === null) return null;
 	if (!raw || typeof raw !== 'object') return false;
@@ -629,6 +634,48 @@ function validateSeal(
 	if (incorrectAttempts === null) return false;
 	if (typeof s.rotationEnabled !== 'boolean') return false;
 	if (typeof s.rotationUsed !== 'boolean') return false;
+
+	const sealClass = s.resultClass as ResultClass;
+	const rotationUsed = s.rotationUsed as boolean;
+
+	// Monotonic outer fact: rotationUsed only goes false → true (enabling
+	// rotation sets it true; disabling preserves it; undo/redo never
+	// restores facts; configure_setup is blocked once a seal exists). A
+	// seal capturing rotationUsed: true while the outer monotonic fact is
+	// still false is impossible — the outer fact could only have been true
+	// at seal time and must remain true.
+	if (rotationUsed && !outerFacts.rotationUsed) return false;
+
+	// Internal consistency: the sealed summary facts must explain the
+	// seal's own resultClass. The seal does not capture ghostReferenceUsed,
+	// so the monotonic outer fact stands in for it: if the outer fact is
+	// false, it was false at seal time (monotonic), so a class requiring
+	// ghost-reference absence is consistent; if true, it was true at seal
+	// time, so only assisted_timed is valid.
+	//
+	// The valid undo → hint → redo retained-seal case is preserved: the
+	// retained standard_timed seal still has hintsUsed=0 / rotationUsed=
+	// false, and the outer ghostReferenceUsed stays false, so its own facts
+	// still explain its own class even though the outer live class has
+	// recomputed (e.g. to assisted_timed via a post-completion hint).
+	// Requiring the seal's facts to explain the seal's class is strictly
+	// weaker than requiring the seal's class to match the outer class.
+	if (sealClass === 'standard_timed') {
+		if (hintsUsed > 0 || rotationUsed || outerFacts.ghostReferenceUsed) return false;
+	} else if (sealClass === 'rotation_timed') {
+		if (!rotationUsed || hintsUsed > 0 || outerFacts.ghostReferenceUsed) return false;
+	} else if (sealClass === 'assisted_timed') {
+		// assisted_timed arises from hint use OR ghost-reference use. The
+		// seal does not capture ghostReferenceUsed, so a zero-hint assisted
+		// seal is valid only when the monotonic outer ghostReferenceUsed
+		// confirms ghost-reference assistance was active at seal time.
+		// Requiring hintsUsed > 0 would reject legitimate ghost-reference
+		// assisted completions.
+		if (hintsUsed === 0 && !outerFacts.ghostReferenceUsed) return false;
+	}
+	// 'relaxed' is unconstrained: relaxed mode allows any combination of
+	// hints/rotation/ghost-reference; the class is solely mode-derived.
+
 	return {
 		runId: s.runId as string,
 		resultClass: s.resultClass as ResultClass,
