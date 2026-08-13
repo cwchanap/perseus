@@ -647,30 +647,38 @@ function validateSeal(
 	if (rotationUsed && !outerFacts.rotationUsed) return false;
 
 	// Internal consistency: the sealed summary facts must explain the
-	// seal's own resultClass. The seal does not capture ghostReferenceUsed,
-	// so the monotonic outer fact stands in for it: if the outer fact is
-	// false, it was false at seal time (monotonic), so a class requiring
-	// ghost-reference absence is consistent; if true, it was true at seal
-	// time, so only assisted_timed is valid.
+	// seal's own resultClass. The seal captures hintsUsed and rotationUsed
+	// at the completion boundary, so standard_timed and rotation_timed are
+	// validated against those captured facts alone. The seal does NOT
+	// capture ghostReferenceUsed, so the monotonic outer ghostReferenceUsed
+	// can only be used in the direction monotonicity guarantees: false now
+	// ⇒ false at seal time. The converse is unsound — true now could have
+	// become true after the seal was retained, via the legitimate sequence
+	// complete → undo → set_reference_mode('ghost') → redo (undo/redo
+	// restore only placements/rotations, never facts; the seal is retained
+	// without resealing). That produces a standard_timed or rotation_timed
+	// retained seal alongside an outer ghostReferenceUsed=true live state,
+	// and must not be rejected.
 	//
-	// The valid undo → hint → redo retained-seal case is preserved: the
-	// retained standard_timed seal still has hintsUsed=0 / rotationUsed=
-	// false, and the outer ghostReferenceUsed stays false, so its own facts
-	// still explain its own class even though the outer live class has
-	// recomputed (e.g. to assisted_timed via a post-completion hint).
-	// Requiring the seal's facts to explain the seal's class is strictly
-	// weaker than requiring the seal's class to match the outer class.
+	// For assisted_timed with hintsUsed=0, the seal's class requires
+	// ghost-reference assistance was active at seal time. Monotonicity
+	// gives the needed implication: if outer ghostReferenceUsed is false
+	// now, it was false at seal time, so a zero-hint assisted seal could
+	// not have been assisted — corruption. True now is consistent (it was
+	// true at seal time, or became true later; both are compatible with an
+	// assisted seal that already had ghost assistance at seal time).
 	if (sealClass === 'standard_timed') {
-		if (hintsUsed > 0 || rotationUsed || outerFacts.ghostReferenceUsed) return false;
+		if (hintsUsed > 0 || rotationUsed) return false;
 	} else if (sealClass === 'rotation_timed') {
-		if (!rotationUsed || hintsUsed > 0 || outerFacts.ghostReferenceUsed) return false;
+		if (!rotationUsed || hintsUsed > 0) return false;
 	} else if (sealClass === 'assisted_timed') {
 		// assisted_timed arises from hint use OR ghost-reference use. The
 		// seal does not capture ghostReferenceUsed, so a zero-hint assisted
 		// seal is valid only when the monotonic outer ghostReferenceUsed
-		// confirms ghost-reference assistance was active at seal time.
-		// Requiring hintsUsed > 0 would reject legitimate ghost-reference
-		// assisted completions.
+		// confirms ghost-reference assistance was active at seal time
+		// (false now ⇒ false at seal ⇒ could not be assisted). Requiring
+		// hintsUsed > 0 would reject legitimate ghost-reference assisted
+		// completions.
 		if (hintsUsed === 0 && !outerFacts.ghostReferenceUsed) return false;
 	}
 	// 'relaxed' is unconstrained: relaxed mode allows any combination of

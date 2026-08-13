@@ -1,6 +1,7 @@
 // Red tests for PuzzleSession lifecycle and the single injected clock.
 import { describe, it, expect } from 'vitest';
 import { createPuzzleSession } from './session';
+import { serializeSession, loadPersistedSession } from './persistence';
 import { completionRequestFromSeal } from './types';
 import type {
 	PuzzleSessionState,
@@ -9,7 +10,8 @@ import type {
 	Clock,
 	PersistedPuzzleSessionV1,
 	CompletionEffectState,
-	SealedCompletion
+	SealedCompletion,
+	SessionValidationContext
 } from './types';
 
 interface ManagedInterval {
@@ -81,6 +83,23 @@ function makeMetadata(pieceCount = 4): PuzzleMetadata {
 function makeRunIdFactory(): RunIdFactory {
 	let n = 0;
 	return { create: () => `run-${++n}` };
+}
+
+/**
+ * Build the loader's validation context from the same metadata the engine
+ * uses, so a serialize→load round-trip exercises the real validator against
+ * engine-produced state rather than a hand-rolled snapshot.
+ */
+function contextFromMetadata(metadata: PuzzleMetadata): SessionValidationContext {
+	return {
+		puzzleId: metadata.puzzleId,
+		source: metadata.source,
+		pieceIds: metadata.pieces.map((p) => p.id),
+		gridCols: metadata.gridCols,
+		gridRows: metadata.gridRows,
+		pieceCount: metadata.pieceCount,
+		pieces: metadata.pieces.map((p) => ({ id: p.id, correctX: p.correctX, correctY: p.correctY }))
+	};
 }
 
 function makeOptions(
@@ -1213,6 +1232,67 @@ describe('PuzzleSession completion sealing', () => {
 		// must paper over by reading from the seal, not live sessionState.
 		expect(session.getState().counters.hintsUsed).toBe(1);
 		expect(session.getState().resultClass).toBe('assisted_timed');
+	});
+
+	it('serialize→load accepts a post-completion ghost retained-seal state', () => {
+		// Regression: the engine legitimately produces a standard_timed
+		// retained seal alongside an outer ghostReferenceUsed=true live
+		// state via complete → undo → set_reference_mode('ghost') → redo.
+		// undo/redo restore only placements/rotations/rotationEnabled, never
+		// facts; the seal is retained without resealing. serializeSession
+		// persists this engine-produced state, and loadPersistedSession must
+		// accept it — outer ghost=true does not prove ghost was used at the
+		// original completion boundary (ghostReferenceUsed is monotonic:
+		// false→true only, so true now could have become true after the seal).
+		// Uses a UUID-format run id so the loader's isPuzzleRunId check
+		// accepts the serialized snapshot (engine-only tests use short ids
+		// that the persistence codec rejects).
+		const metadata = makeMetadata(1);
+		const runId = '11111111-1111-4111-8111-111111111111';
+		const session = createPuzzleSession({
+			metadata,
+			runIdFactory: { create: () => runId },
+			clock: new ManualClock()
+		});
+		session.dispatch({ type: 'start' });
+		session.dispatch({ type: 'attempt_placement', pieceId: 0, x: 0, y: 0 });
+		const seal = session.getState().sealedCompletion!;
+		expect(seal.resultClass).toBe('standard_timed');
+		expect(seal.hintsUsed).toBe(0);
+
+		session.dispatch({ type: 'undo' });
+		expect(session.getState().lifecycle).toBe('active');
+		expect(session.getState().sealedCompletion).toEqual(seal);
+		expect(session.getState().facts.ghostReferenceUsed).toBe(false);
+
+		const ghostOutcome = session.dispatch({ type: 'set_reference_mode', mode: 'ghost' });
+		expect(ghostOutcome.type).toBe('reference_mode_changed');
+		expect(session.getState().facts.ghostReferenceUsed).toBe(true);
+		expect(session.getState().counters.referenceActivations).toBe(1);
+		expect(session.getState().resultClass).toBe('assisted_timed');
+
+		session.dispatch({ type: 'redo' });
+		expect(session.getState().lifecycle).toBe('completed');
+		// Seal retained without resealing; outer ghost fact stays true.
+		expect(session.getState().sealedCompletion).toEqual(seal);
+		expect(session.getState().sealedCompletion?.resultClass).toBe('standard_timed');
+		expect(session.getState().facts.ghostReferenceUsed).toBe(true);
+		expect(session.getState().resultClass).toBe('assisted_timed');
+
+		// The real round-trip: serialize the engine state and load it through
+		// the validator. Before the fix this was rejected as corruption.
+		const serialized = serializeSession(session.getState(), 1_000);
+		expect(serialized).not.toBeNull();
+		const ctx = contextFromMetadata(metadata);
+		const reloaded = loadPersistedSession(JSON.stringify(serialized), ctx);
+		expect(reloaded.status).toBe('loaded');
+		if (reloaded.status === 'loaded') {
+			expect(reloaded.snapshot.lifecycle).toBe('completed');
+			expect(reloaded.snapshot.resultClass).toBe('assisted_timed');
+			expect(reloaded.snapshot.facts.ghostReferenceUsed).toBe(true);
+			expect(reloaded.snapshot.sealedCompletion?.resultClass).toBe('standard_timed');
+			expect(reloaded.snapshot.sealedCompletion?.hintsUsed).toBe(0);
+		}
 	});
 
 	it('a completed seal is restored from a hydrated snapshot without re-emitting', () => {
