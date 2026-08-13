@@ -237,6 +237,7 @@ body::after {
 	.puzzle-piece {
 		min-width: 44px;
 		min-height: 44px;
+		-webkit-user-drag: none;
 	}
 
 	.drop-zone {
