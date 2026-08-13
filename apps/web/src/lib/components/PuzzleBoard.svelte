@@ -83,6 +83,41 @@
 		placePiece(selectedPieceId, x, y);
 	}
 
+	// Native (non-delegated) action for tap/click placement. It carries no
+	// parameter and reads its coordinates from the node's existing dataset,
+	// keeping placePiece()/handleKeyDown() correctness-free: every selected
+	// click is routed to the session, which owns accept/reject.
+	function dropZoneInteraction(node: HTMLElement) {
+		function coordinates(): { x: number; y: number } | null {
+			const x = Number(node.dataset.x);
+			const y = Number(node.dataset.y);
+			if (!Number.isInteger(x) || !Number.isInteger(y)) return null;
+			return { x, y };
+		}
+
+		function handleClick() {
+			if (selectedPieceId === null) return;
+			const cell = coordinates();
+			if (!cell) return;
+			placePiece(selectedPieceId, cell.x, cell.y);
+		}
+
+		function handleNativeKeyDown(event: KeyboardEvent) {
+			const cell = coordinates();
+			if (!cell) return;
+			handleKeyDown(event, cell.x, cell.y);
+		}
+
+		node.addEventListener('click', handleClick);
+		node.addEventListener('keydown', handleNativeKeyDown);
+		return {
+			destroy() {
+				node.removeEventListener('click', handleClick);
+				node.removeEventListener('keydown', handleNativeKeyDown);
+			}
+		};
+	}
+
 	function getCellStyle(x: number, y: number): string {
 		const isOver = dragOverCell?.x === x && dragOverCell?.y === y;
 		const hasPlaced = isPiecePlaced(x, y);
@@ -122,7 +157,7 @@
 				ondragover={(e) => handleDragOver(e, x, y)}
 				ondragleave={handleDragLeave}
 				ondrop={(e) => handleDrop(e, x, y)}
-				onkeydown={(e) => handleKeyDown(e, x, y)}
+				use:dropZoneInteraction
 				data-testid="drop-zone"
 				data-x={x}
 				data-y={y}

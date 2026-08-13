@@ -178,6 +178,48 @@ describe('PuzzleBoard', () => {
 		expect(onPiecePlaced).not.toHaveBeenCalled();
 	});
 
+	it('routes selected click exactly once without pre-validating correctness', async () => {
+		const puzzle = createMockPuzzle(3);
+		const onPiecePlaced = vi.fn();
+		render(PuzzleBoard, {
+			puzzle,
+			placedPieces: [],
+			onPiecePlaced,
+			selectedPieceId: 0,
+			resolveImage
+		});
+
+		// Grid cells render 0×0 in the component-test environment (no Tailwind
+		// `grid` class), so Playwright actionability-based click cannot target
+		// them. Dispatch a real `click` event on the node, which exercises the
+		// same native click listener a tap/pointer click would trigger.
+		const dropZone = await page
+			.getByRole('button', { name: 'Drop zone at position 1, 0' })
+			.element();
+		dropZone.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+		expect(onPiecePlaced).toHaveBeenCalledTimes(1);
+		expect(onPiecePlaced).toHaveBeenCalledWith(0, 1, 0);
+	});
+
+	it('does nothing on cell click without a selected piece', async () => {
+		const onPiecePlaced = vi.fn();
+		render(PuzzleBoard, {
+			puzzle: createMockPuzzle(3),
+			placedPieces: [],
+			onPiecePlaced,
+			selectedPieceId: null,
+			resolveImage
+		});
+
+		const dropZone = await page
+			.getByRole('button', { name: 'Drop zone at position 0, 0' })
+			.element();
+		dropZone.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+		expect(onPiecePlaced).not.toHaveBeenCalled();
+	});
+
 	it('should call onBoardPointerDown when the board receives a pointerdown event', async () => {
 		const puzzle = createMockPuzzle(3);
 		const onBoardPointerDown = vi.fn();
