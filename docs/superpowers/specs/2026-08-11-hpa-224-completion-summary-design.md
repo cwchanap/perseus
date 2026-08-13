@@ -19,7 +19,7 @@ The current gameplay domain already contains the facts needed for an honest comp
 - `SealedCompletion.resultClass` and `elapsedActiveSeconds` provide the immutable result class and final timed duration;
 - local statistics already treat only `standard_timed` as eligible for `standardBestTime`.
 
-The Linear issue predates the current extracted component and says to show values when they already exist in the completion seal. Counters and rotation facts are intentionally not part of `SealedCompletion`; they already live in the completed session state and persisted session snapshot. Expanding the completion/API contract only for presentation would create unnecessary schema work.
+The Linear issue predates the current extracted component and says to show values when they already exist in the completion seal. Counters and rotation facts were originally not part of `SealedCompletion`; they lived in the completed session state and persisted session snapshot. During implementation, a completion-boundary divergence bug was discovered: after complete → dismiss → undo → hint → redo, the outer session counters/facts diverge from the values that held at the original completion boundary, while `sealedCompletion` is retained across undo/redo without resealing. Presenting the outer counters would therefore show facts that contradict the recorded run (e.g. `STANDARD TIMED` with `HINTS USED = 1`). The fix expands `SealedCompletion` with the four summary facts (`hintsUsed`, `incorrectAttempts`, `rotationEnabled`, `rotationUsed`) captured at the sealing instant, and tightens persistence validation to require them. The API/D1/server completion contract (`RecordPuzzleCompletionV1`) is unchanged — the new fields are client-only presentation facts.
 
 ## Goals
 
@@ -37,7 +37,7 @@ The Linear issue predates the current extracted component and says to show value
 - no new personal-best category for rotation, assisted, or Relaxed results;
 - no historical comparisons, charts, share cards, or Next Mission logic;
 - no new completion view-model/store/controller;
-- no `SealedCompletion`, persistence-schema, API, D1, or server changes;
+- no API, D1, or server completion-contract changes (`RecordPuzzleCompletionV1` is unchanged; the new seal fields are client-only);
 - no analytics instrumentation;
 - no profile/gallery statistics redesign;
 - no compatibility handling for removed pre-release formats;
@@ -67,17 +67,22 @@ Build a new object or helper that translates session state into display fields, 
 
 **Rejected:** there is one consumer and the mapping is tiny. A view-model abstraction would add another type and ownership layer without reducing meaningful duplication.
 
-### Option C — Expand `SealedCompletion` with counters and rotation context
+### Option C — Expand `SealedCompletion` with counters and rotation context (adopted for fact capture)
 
-Add piece count, counters, and rotation facts to the immutable completion seal and update persistence validation around it.
+Add `hintsUsed`, `incorrectAttempts`, `rotationEnabled`, and `rotationUsed` to the immutable completion seal, captured at the sealing instant, and update persistence validation to require them.
 
-**Rejected:** those facts already exist in the completed session snapshot. Expanding the seal would turn a presentation ticket into a domain/persistence contract change and would not improve current behavior.
+**Adopted (for fact capture):** the original design expected the outer session counters/facts to equal the sealed values at presentation time. They do not: `sealedCompletion` is retained across undo/redo without resealing, so after complete → dismiss → undo → hint → redo the outer counters diverge from the completion boundary. Capturing the facts in the seal at completion time is the only way to present truthful summary facts that match the recorded run. The new fields are client-only; the API/D1/server completion contract is unchanged.
+
+**Cons**
+
+- expands a domain/persistence type and its validation;
+- old snapshots persisted before the fields were added are invalidated (acceptable: HPA-556 already removed pre-release compatibility, and back-filling from outer state is unsafe for exactly the divergence case above).
 
 ## Decision
 
-Use **Option A**.
+Use **Option A** for the dialog contract and **Option C** for fact capture.
 
-HPA-224 is a presentation change over existing canonical state. `PuzzleSession` remains the sole gameplay state owner; `recordLocalCompletion` remains the sole local-best decision point; the route remains the completion-effect coordinator; `PuzzleCompletionDialog` only renders facts and invokes callbacks.
+The dialog is a presentational component that receives explicit props (Option A). The summary facts themselves are captured in `SealedCompletion` at the completion boundary (Option C) so that an undo/redo cycle after completion cannot present counters that contradict the recorded run. `PuzzleSession` remains the sole gameplay state owner; `recordLocalCompletion` remains the sole local-best decision point; the route remains the completion-effect coordinator; `PuzzleCompletionDialog` only renders facts and invokes callbacks. The route prefers sealed facts and falls back to outer state only when no seal exists.
 
 ## Component contract
 
@@ -87,22 +92,22 @@ Replace the current `timed` boolean with the authoritative result class and make
 import type { ResultClass } from '@perseus/types';
 
 interface Props {
-  puzzleName: string;
-  resultClass: ResultClass;
-  elapsedSeconds: number | null;
-  pieceCount: number;
-  hintsUsed: number;
-  incorrectAttempts: number;
-  rotationEnabled: boolean;
-  rotationUsed: boolean;
-  bestTime: number | null;
-  isNewBest: boolean;
-  localStatsFailed: boolean;
-  serverSubmissionRetryable: boolean;
-  onRetryServerSubmission: () => void;
-  onPlayAgain: () => void;
-  onBackToArcade: () => void;
-  onDismiss: () => void;
+	puzzleName: string;
+	resultClass: ResultClass;
+	elapsedSeconds: number | null;
+	pieceCount: number;
+	hintsUsed: number;
+	incorrectAttempts: number;
+	rotationEnabled: boolean;
+	rotationUsed: boolean;
+	bestTime: number | null;
+	isNewBest: boolean;
+	localStatsFailed: boolean;
+	serverSubmissionRetryable: boolean;
+	onRetryServerSubmission: () => void;
+	onPlayAgain: () => void;
+	onBackToArcade: () => void;
+	onDismiss: () => void;
 }
 ```
 
@@ -112,12 +117,12 @@ Do not introduce a grouped summary/view-model prop.
 
 The component maps the existing result classes directly:
 
-| Result class | Label | Final time | Standard personal best |
-| --- | --- | --- | --- |
-| `standard_timed` | `STANDARD TIMED` | yes | yes, when known |
-| `rotation_timed` | `ROTATION TIMED` | yes | no |
-| `assisted_timed` | `ASSISTED TIMED` | yes | no |
-| `relaxed` | `RELAXED` | no | no |
+| Result class     | Label            | Final time | Standard personal best |
+| ---------------- | ---------------- | ---------- | ---------------------- |
+| `standard_timed` | `STANDARD TIMED` | yes        | yes, when known        |
+| `rotation_timed` | `ROTATION TIMED` | yes        | no                     |
+| `assisted_timed` | `ASSISTED TIMED` | yes        | no                     |
+| `relaxed`        | `RELAXED`        | no         | no                     |
 
 The label is factual context, not a rank. It should use the existing compact display/mono visual language and must not replace `S RANK` with another oversized achievement-like treatment.
 
@@ -171,27 +176,28 @@ Presence matters for elapsed time because a sealed Relaxed completion legitimate
 
 ```svelte
 {#if showCelebration && sessionState}
-  <PuzzleCompletionDialog
-    puzzleName={puzzle?.name ?? ''}
-    resultClass={sessionState.sealedCompletion?.resultClass ?? sessionState.resultClass}
-    elapsedSeconds={sessionState.sealedCompletion
-      ? sessionState.sealedCompletion.elapsedActiveSeconds
-      : sessionState.elapsedActiveSeconds}
-    pieceCount={sessionState.pieceCount}
-    hintsUsed={sessionState.counters.hintsUsed}
-    incorrectAttempts={sessionState.counters.incorrectAttempts}
-    rotationEnabled={sessionState.rotationEnabled}
-    rotationUsed={sessionState.facts.rotationUsed}
-    {bestTime}
-    {isNewBest}
-    {localStatsFailed}
-    {serverSubmissionRetryable}
-    ...
-  />
+	<PuzzleCompletionDialog
+		puzzleName={puzzle?.name ?? ''}
+		resultClass={sessionState.sealedCompletion?.resultClass ?? sessionState.resultClass}
+		elapsedSeconds={sessionState.sealedCompletion
+			? sessionState.sealedCompletion.elapsedActiveSeconds
+			: sessionState.elapsedActiveSeconds}
+		pieceCount={sessionState.pieceCount}
+		hintsUsed={sessionState.sealedCompletion?.hintsUsed ?? sessionState.counters.hintsUsed}
+		incorrectAttempts={sessionState.sealedCompletion?.incorrectAttempts ??
+			sessionState.counters.incorrectAttempts}
+		rotationEnabled={sessionState.sealedCompletion?.rotationEnabled ?? sessionState.rotationEnabled}
+		rotationUsed={sessionState.sealedCompletion?.rotationUsed ?? sessionState.facts.rotationUsed}
+		{bestTime}
+		{isNewBest}
+		{localStatsFailed}
+		{serverSubmissionRetryable}
+		...
+	/>
 {/if}
 ```
 
-Do not copy these values into additional route-local state when completion occurs. The modal already makes the page inert, and restored completed sessions already reconstruct the same `PuzzleSessionState` from persistence. Gating on `sessionState` makes missing state an absence of UI rather than silently inventing a competitive result.
+Prefer the sealed facts and fall back to outer state only when no seal exists. The seal captures the counters/rotation at the completion boundary; the outer state may have diverged via undo/redo after completion. Do not copy these values into additional route-local state when completion occurs. The modal already makes the page inert, and restored completed sessions already reconstruct the same `PuzzleSessionState` from persistence. Gating on `sessionState` makes missing state an absence of UI rather than silently inventing a competitive result.
 
 ## Completion-effect invariants
 
@@ -278,23 +284,37 @@ TDD still proceeds in logical stages: add failing component tests, implement the
 
 ### Reconstructing completion facts differently from the domain
 
-**Mitigation:** consume `ResultClass`, counters, and facts from `PuzzleSession`; do not derive an assisted/rotation result in the component.
+**Mitigation:** consume `ResultClass`, counters, and facts from `SealedCompletion` (falling back to `PuzzleSession` only when no seal exists); do not derive an assisted/rotation result in the component.
 
 ### Turning the factual result label into another implicit rank
 
 **Mitigation:** remove `.modal-rank` and its animation; render the result label as compact metadata rather than a giant celebratory score.
 
-### Expanding the persistence/API surface for display-only data
+### Presenting outer counters that diverge from the completion boundary
 
-**Mitigation:** keep `SealedCompletion`, `RecordPuzzleCompletionV1`, session schema version, stats schema, and server code unchanged.
+**Mitigation:** capture `hintsUsed`, `incorrectAttempts`, `rotationEnabled`, and `rotationUsed` in `SealedCompletion` at the sealing instant. The route prefers sealed facts and falls back to outer state only when no seal exists. Persistence validation requires the four fields on the seal; old snapshots lacking them are invalidated rather than back-filled, because back-filling from outer state is unsafe for exactly the divergence case this mitigates (complete → dismiss → undo → hint → redo before the snapshot is loaded).
+
+### Expanding the persistence surface for display-only data
+
+**Mitigation:** the new seal fields are client-only; `RecordPuzzleCompletionV1`, the session schema version, stats schema, and server code are unchanged. The `SealedCompletion` expansion is limited to the four presentation facts and does not alter the API request shape projected by `completionRequestFromSeal`.
 
 ## Expected file scope
 
-Production/test implementation should remain limited to:
+Production/test implementation touches:
 
-- `apps/web/src/lib/components/PuzzleCompletionDialog.svelte`
-- `apps/web/src/lib/components/__tests__/PuzzleCompletionDialog.svelte.test.ts`
-- `apps/web/src/routes/puzzle/[id]/+page.svelte`
-- `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts`
+- `apps/web/src/lib/components/PuzzleCompletionDialog.svelte` — factual result/time/best/run-context presentation.
+- `apps/web/src/lib/components/__tests__/PuzzleCompletionDialog.svelte.test.ts` — result matrix with unambiguous value selectors.
+- `apps/web/src/routes/puzzle/[id]/+page.svelte` — pass sealed/session facts into the dialog, preferring the seal.
+- `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts` — route integration tests for the new wiring.
+- `apps/web/src/lib/services/gameplay/session/types.ts` — expand `SealedCompletion` with the four summary facts.
+- `apps/web/src/lib/services/gameplay/session/session.ts` — capture counters/rotation at the sealing instant.
+- `apps/web/src/lib/services/gameplay/session/persistence.ts` — require the four seal fields in `validateSeal`; reject old snapshots that lack them.
+- `apps/web/src/lib/services/gameplay/session/persistence.test-fixtures.ts` — update the `seal()` fixture to include the four fields.
+- `apps/web/src/lib/services/gameplay/session/persistence.validation-completion.test.ts` — invalidation test for old seals lacking the fields; diverged-seal regression test.
+- `apps/web/src/lib/services/gameplay/session/persistence.test.ts` — update round-trip fixtures to include the four seal fields.
+- `apps/web/src/lib/services/gameplay/session/persistence.validation-storage.test.ts` — update storage round-trip fixtures.
+- `apps/web/src/lib/services/gameplay/session/session.test.ts` — seal capture and divergence tests.
+- `apps/web/src/lib/services/gameplay/session/session.edge.test.ts` — edge-case seal tests.
+- `apps/web/src/lib/services/__tests__/stats.test.ts` — unchanged behavior, updated fixtures if needed.
 
 No new production files are expected.

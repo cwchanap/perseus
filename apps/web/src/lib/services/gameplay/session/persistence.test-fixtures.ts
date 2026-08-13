@@ -79,6 +79,10 @@ export function seal(patch: Record<string, unknown> = {}) {
 		completedAt: 1_000,
 		localStats: { status: 'succeeded' },
 		serverSubmission: { status: 'succeeded' },
+		hintsUsed: 0,
+		incorrectAttempts: 0,
+		rotationEnabled: false,
+		rotationUsed: false,
 		...patch
 	};
 }

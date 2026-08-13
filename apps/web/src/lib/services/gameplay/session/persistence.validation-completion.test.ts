@@ -5,7 +5,8 @@ import {
 	load,
 	seal,
 	validSnapshot,
-	fullBoardPlacements
+	fullBoardPlacements,
+	RUN_ID
 } from './persistence.test-fixtures';
 
 describe('PuzzleSession completion persistence validation', () => {
@@ -69,29 +70,29 @@ describe('PuzzleSession completion persistence validation', () => {
 		}
 	});
 
-	it('back-fills summary facts on the seal from outer state for an old snapshot lacking them', () => {
-		// Backward compatibility: seals persisted before hintsUsed/
-		// incorrectAttempts/rotationEnabled/rotationUsed were added to
-		// SealedCompletion must still load. The missing fields are filled
-		// from the outer session's counters/facts/rotationEnabled, which
-		// equal the sealed values at restore time (divergence only happens
-		// via undo/redo after restore, never at the persistence boundary).
+	it('rejects an old seal lacking the summary facts instead of back-filling from outer state', () => {
+		// Snapshots persisted before hintsUsed/incorrectAttempts/
+		// rotationEnabled/rotationUsed were added to SealedCompletion cannot
+		// be safely back-filled: the outer counters/facts may have diverged
+		// from the completion boundary via complete → dismiss → undo → hint
+		// → redo before the snapshot was ever loaded by this version.
+		// Requiring the fields invalidates those old snapshots cleanly rather
+		// than reconstructing contradictory facts (e.g. a standard_timed
+		// seal with hintsUsed: 1).
 		const record = JSON.parse(JSON.stringify(validSnapshot())) as Record<string, unknown>;
 		record.lifecycle = 'completed';
 		record.placedPieces = fullBoardPlacements();
-		// seal() fixture omits the four summary fields by design.
-		record.sealedCompletion = seal();
+		// Simulate a pre-upgrade seal that lacks the four summary fields.
+		record.sealedCompletion = {
+			runId: RUN_ID,
+			resultClass: 'standard_timed',
+			elapsedActiveSeconds: 5,
+			completedAt: 1_000,
+			localStats: { status: 'succeeded' },
+			serverSubmission: { status: 'succeeded' }
+		};
 
-		const result = load(record);
-
-		expect(result.status).toBe('loaded');
-		if (result.status === 'loaded') {
-			const loaded = result.snapshot.sealedCompletion!;
-			expect(loaded.hintsUsed).toBe(0);
-			expect(loaded.incorrectAttempts).toBe(0);
-			expect(loaded.rotationEnabled).toBe(false);
-			expect(loaded.rotationUsed).toBe(false);
-		}
+		expect(load(record).status).toBe('invalid');
 	});
 
 	it('rejects a seal whose hintsUsed exceeds the outer counters (corruption)', () => {

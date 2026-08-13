@@ -350,9 +350,7 @@ function validateV1(
 		record.sealedCompletion,
 		runId as string,
 		source as PuzzleSourceType,
-		counters,
-		derivedFacts as { rotationUsed: boolean; hintUsed: boolean; ghostReferenceUsed: boolean },
-		rotationEnabled
+		counters
 	);
 	if (sealedCompletion === false) return null;
 	const seal = sealedCompletion === null ? null : (sealedCompletion as unknown as SealedCompletion);
@@ -531,9 +529,14 @@ function validateEffectState(raw: unknown): CompletionEffectState | false | null
 	return false;
 }
 
-function validateSealCounter(raw: unknown, fallback: number): number | null {
-	if (raw === undefined) return fallback;
-	if (typeof raw !== 'number' || !Number.isInteger(raw) || raw < 0 || raw > fallback) {
+function validateSealCounter(raw: unknown, outerCounter: number): number | null {
+	// The field is required: snapshots persisted before the summary facts
+	// were added to SealedCompletion cannot be safely back-filled from outer
+	// state, because the outer counters may have diverged from the completion
+	// boundary via complete → dismiss → undo → hint → redo before the snapshot
+	// was ever loaded by this version. Rejecting the absent field invalidates
+	// those old snapshots cleanly rather than reconstructing contradictory facts.
+	if (typeof raw !== 'number' || !Number.isInteger(raw) || raw < 0 || raw > outerCounter) {
 		return null;
 	}
 	return raw;
@@ -543,9 +546,7 @@ function validateSeal(
 	raw: unknown,
 	expectedRunId: string,
 	source: PuzzleSourceType,
-	outerCounters: { incorrectAttempts: number; hintsUsed: number; referenceActivations: number },
-	outerFacts: { rotationUsed: boolean; hintUsed: boolean; ghostReferenceUsed: boolean },
-	outerRotationEnabled: boolean
+	outerCounters: { incorrectAttempts: number; hintsUsed: number; referenceActivations: number }
 ): SealedCompletion | null | false {
 	if (raw === null) return null;
 	if (!raw || typeof raw !== 'object') return false;
@@ -611,14 +612,14 @@ function validateSeal(
 		(serverSubmission as { code?: string }).code === 'storage_error'
 	)
 		return false;
-	// Summary facts are optional on read for backward compatibility with
-	// snapshots persisted before they were added to the seal: an absent
-	// field falls back to the outer session's value, which is equal to
-	// the sealed value at restore time (divergence only happens via
-	// undo/redo after restore). A present field is type-checked and, for
-	// counters, must agree with the monotonic outer counters that
-	// produced the seal — a stale or corrupted value would let the
-	// completion dialog present facts that contradict the recorded run.
+	// Summary facts are required on the seal. They are captured at the
+	// completion boundary and must not be inferred from outer state: a
+	// pre-upgrade snapshot can already have diverged via complete → dismiss
+	// → undo → hint → redo before it is loaded by this version, so the outer
+	// counters/facts no longer equal the sealed values. Counters must also
+	// not exceed the monotonic outer counters that produced the seal — a
+	// stale or corrupted value would let the completion dialog present facts
+	// that contradict the recorded run.
 	const hintsUsed = validateSealCounter(s.hintsUsed, outerCounters.hintsUsed);
 	if (hintsUsed === null) return false;
 	const incorrectAttempts = validateSealCounter(
@@ -626,11 +627,8 @@ function validateSeal(
 		outerCounters.incorrectAttempts
 	);
 	if (incorrectAttempts === null) return false;
-	const rotationEnabled =
-		s.rotationEnabled === undefined ? outerRotationEnabled : s.rotationEnabled;
-	if (typeof rotationEnabled !== 'boolean') return false;
-	const rotationUsed = s.rotationUsed === undefined ? outerFacts.rotationUsed : s.rotationUsed;
-	if (typeof rotationUsed !== 'boolean') return false;
+	if (typeof s.rotationEnabled !== 'boolean') return false;
+	if (typeof s.rotationUsed !== 'boolean') return false;
 	return {
 		runId: s.runId as string,
 		resultClass: s.resultClass as ResultClass,
@@ -640,8 +638,8 @@ function validateSeal(
 		serverSubmission: serverSubmission as CompletionEffectState,
 		hintsUsed,
 		incorrectAttempts,
-		rotationEnabled,
-		rotationUsed
+		rotationEnabled: s.rotationEnabled,
+		rotationUsed: s.rotationUsed
 	};
 }
 
