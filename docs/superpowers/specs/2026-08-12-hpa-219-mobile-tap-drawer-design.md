@@ -124,7 +124,7 @@ Keep that attribute for desktop/fine-pointer behavior, but extend the existing g
 -webkit-user-drag: none;
 ```
 
-This is a CSS-only coarse-pointer guard: no media-query state or input manager is added. The mobile E2E must additionally perform a real touch swipe beginning on a piece and observe inventory `scrollTop` increasing. Computed `overflow-y` alone is not acceptance proof.
+This is a CSS-only coarse-pointer guard: no media-query state or input manager is added. The mobile E2E must additionally perform a browser-level touch swipe beginning on a piece and observe inventory `scrollTop` increasing. Computed `overflow-y` alone is not acceptance proof.
 
 ### Board activation
 
@@ -361,7 +361,7 @@ At 390x844 using `e2e-square-4`:
 
 1. load a fresh start-immediately run;
 2. drawer starts open and board is visible;
-3. perform a real touch swipe beginning on an inventory piece and prove `.pieces-grid.scrollTop` increases;
+3. perform a browser-level touch swipe beginning on an inventory piece and prove `.pieces-grid.scrollTop` increases;
 4. tap a piece and wrong cell; prove rejected presentation and selection retention;
 5. tap the correct cell; prove selection clears and slot detaches;
 6. collapse the in-flow drawer; board stays mounted/visible and Cancel/toggle header remains available;
@@ -370,6 +370,8 @@ At 390x844 using `e2e-square-4`:
 9. existing completion dialog appears;
 10. document has no horizontal overflow;
 11. normal automatic fixture diagnostics pass.
+
+The swipe proof is intentionally local to the Chromium feature test; it does not become a general gesture helper.
 
 ### Documentation
 
@@ -435,7 +437,7 @@ Responsive geometry/real scrolling is E2E-owned.
 
 ### Inventory swipe starts native drag instead of scroll
 
-**Mitigation:** existing coarse-pointer CSS disables native user drag, bespoke touch prevention is removed, and mobile E2E performs an actual swipe from a piece and checks `scrollTop`.
+**Mitigation:** existing coarse-pointer CSS disables native user drag, bespoke touch prevention is removed, and mobile E2E performs a browser-level touch swipe from a piece and checks `scrollTop`.
 
 ### Drawer state leaks into gameplay
 
@@ -480,7 +482,7 @@ Explicitly unchanged:
 | Success clears selection once | existing session acceptance |
 | Rejection keeps selection | existing session rejection |
 | Inventory opens/collapses | local `drawerOpen` |
-| Inventory scrolls normally | touch machinery removed + coarse user-drag suppression + real swipe E2E |
+| Inventory scrolls normally | touch machinery removed + coarse user-drag suppression + browser-level swipe E2E |
 | Bottom safe area respected | inventory border-box safe-area padding |
 | Board session preserved | board and tray remain mounted in same route grid |
 | Desktop drag/keyboard/zoom/completion preserved | existing paths retained/tested |
