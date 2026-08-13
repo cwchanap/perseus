@@ -6,458 +6,445 @@
 
 ## Context
 
-HPA-219 is the next actionable child of HPA-215 after HPA-224. Its blocker, HPA-557, is complete and has already split the puzzle route into concrete board, inventory, and completion components. The current boundaries are therefore ready for a mobile interaction slice without another gameplay controller, store, or UI framework.
+HPA-219 is the next actionable child of HPA-215 after HPA-224. HPA-557 is complete, so the puzzle route already composes concrete board and inventory components instead of owning their markup directly.
 
-The current gameplay stack already contains most of the behavior HPA-219 needs:
+The existing gameplay domain already provides the required state transitions:
 
-- `PuzzleSessionState.selectedPieceId` is the canonical selected-piece state.
-- `select_piece` and `cancel_selection` already own selection changes.
-- `attempt_placement` already decides accepted vs. rejected placement.
-- accepted placement clears `selectedPieceId` when the selected piece was placed;
-- rejected placement increments the canonical incorrect-attempt counter and deliberately keeps the selection;
-- `PuzzleBoard` already routes keyboard and drag/drop attempts through the same `onPiecePlaced(pieceId, x, y)` callback without pre-validating correctness;
-- `PuzzleBoardPanel` already owns ephemeral zoom/pan state and pointer-driven board panning;
-- `PuzzleInventoryPanel` already owns inventory markup and receives explicit selection callbacks;
-- the deterministic gameplay E2E harness already provides phone-size fixtures, piece/drop-zone locators, and a basic `tapPiece()` helper.
+- `PuzzleSessionState.selectedPieceId` is the canonical selection;
+- `select_piece` replaces the current selection;
+- `cancel_selection` clears it;
+- `attempt_placement` is the only placement authority;
+- accepted placement clears `selectedPieceId` when that selected piece is placed;
+- rejected placement increments the canonical incorrect-attempt counter and retains selection;
+- `PuzzleBoard` already routes keyboard and HTML5 drop attempts through `onPiecePlaced(pieceId, x, y)` without pre-validating correctness;
+- `PuzzleBoardPanel` owns ephemeral zoom/pan state;
+- `PuzzleInventoryPanel` owns inventory markup and receives explicit selection callbacks.
 
-The main mismatch is the existing custom touch-drag implementation in `PuzzlePiece.svelte`. It installs window-level touch listeners, calls `preventDefault()` from `touchstart`/`touchmove`, synthesizes drag/drop events, translates the piece during touch drag, and marks the piece `touch-none`. That path competes directly with HPA-219's required one-finger inventory scrolling and is unnecessary once tap-to-place becomes the supported touch placement path.
+The main mismatch is `PuzzlePiece.svelte`'s custom touch-drag path. It installs window touch listeners, calls `preventDefault()`, synthesizes drag/drop events, translates the piece during touch drag, and applies `touch-none`. That conflicts with HPA-219's required normal one-finger inventory scrolling. Because direct touch drag is explicitly optional, this ticket removes that path instead of adding gesture arbitration.
 
 ## Goals
 
-1. Make phone-sized puzzle play practical with select-then-tap placement.
-2. Reuse the existing `PuzzleSession` selection and placement actions exactly as the source of truth.
-3. Keep selection after a rejected attempt and clear it after an accepted placement through existing session behavior.
-4. Provide one visible Cancel action for clearing selection.
-5. Replace the current mobile stacked inventory with a simple two-state bottom drawer while keeping part of the board visible.
-6. Allow normal one-finger vertical scrolling inside the mobile inventory.
-7. Preserve current desktop HTML5 mouse drag/drop, keyboard selection/placement, toolbar zoom, rotation, completion, and session behavior.
-8. Remove touch-drag complexity that is no longer needed rather than layering a gesture classifier on top of it.
+1. Make phone-sized play practical with select-then-tap placement.
+2. Reuse the existing `PuzzleSession` selection and placement actions as the only gameplay state transitions.
+3. Retain selection after rejection and clear it after successful placement through existing session behavior.
+4. Provide a visible Cancel action for pointer/touch deselection.
+5. Replace the mobile stacked inventory with one two-state bottom drawer while keeping the board visible.
+6. Allow normal one-finger vertical scrolling inside the inventory.
+7. Preserve desktop HTML5 mouse drag/drop, keyboard selection/placement, toolbar zoom, rotation, completion, and session behavior.
+8. Delete obsolete touch-drag complexity rather than supporting two touch interaction systems.
 
 ## Non-goals
 
-- pinch zoom;
-- two-finger pan;
+- pinch zoom or two-finger pan;
 - direct touch drag;
-- long-press or drag-threshold gesture classification;
-- intermediate drawer snap points;
+- long-press/movement gesture thresholds;
+- drawer drag handles, intermediate snap points, or swipe gestures;
 - a generalized bottom-sheet component;
-- a global pointer/gesture ownership framework;
+- a pointer/gesture ownership framework;
 - haptics;
-- persistence of drawer-open state;
-- new `PuzzleSession` actions or state;
+- persisted drawer state;
+- new `PuzzleSession` actions/state;
+- inventory filters or staging trays;
 - analytics, performance instrumentation, or device-lab certification;
-- inventory filters, staging trays, or other HPA-220/HPA-237 work;
-- broader accessibility navigation work owned by HPA-223.
-
-Direct touch drag is intentionally removed in this ticket. HPA-219 explicitly treats it as optional, while tap-to-place and normal inventory scrolling are required.
+- the broader HPA-223 accessibility-navigation work.
 
 ## Options considered
 
-### Option A — Tap-to-place as the primary touch path; remove custom touch drag (recommended)
+### Option A — Tap-to-place as the touch path; remove custom touch drag (selected)
 
-Use native click/tap activation to select a piece, then click/tap a board cell to call the existing placement callback. Keep HTML5 drag/drop for desktop mouse users and the existing keyboard path. Delete the custom touch-drag implementation so the browser can scroll the inventory normally.
+Native click/tap selects a piece. Native click/tap on a board cell routes the selected piece through the existing placement callback. Desktop HTML5 drag/drop and keyboard input remain.
 
-**Pros**
+**Why this wins:** it reuses canonical state, removes custom touch code, restores browser scrolling, and requires no gesture classifier.
 
-- smallest behavioral model: select, then place;
-- reuses canonical `PuzzleSession` state instead of adding touch state;
-- removes a sizeable custom touch implementation;
-- naturally fixes the current conflict between `preventDefault()`/`touch-none` and inventory scrolling;
-- keeps desktop mouse drag and keyboard behavior independent and intact;
-- easy to cover with focused component tests and one mobile E2E.
+### Option B — Preserve touch drag with thresholds
 
-**Cons**
+Distinguish tap, scroll, and drag by time or movement distance.
 
-- direct touch drag is no longer available, but it is explicitly optional and not worth preserving at the cost of gesture arbitration.
+**Rejected:** this adds gesture classification, cancellation, pointer ownership, and thresholds that HPA-219 explicitly does not need.
 
-### Option B — Keep touch drag with movement/long-press thresholds
+### Option C — Create separate mobile inventory/piece components
 
-Distinguish tap, scroll, and drag based on distance or timing, then retain synthetic touch drop behavior.
+Duplicate the interaction surface for mobile.
 
-**Rejected:** this requires a gesture classifier, thresholds, cancellation rules, and additional pointer ownership. It is exactly the kind of complexity HPA-219's guardrails exclude.
-
-### Option C — Add a separate mobile piece/inventory component
-
-Build a second interaction surface for mobile while leaving the existing inventory untouched.
-
-**Rejected:** this duplicates piece/inventory markup and creates another synchronization boundary around canonical selection state for no product benefit.
+**Rejected:** this duplicates markup and creates another synchronization boundary around the same `PuzzleSession` state.
 
 ## Decision
 
 Use **Option A**.
 
-`PuzzleSession` remains the only gameplay state owner. `PuzzlePiece` becomes a simpler input surface that supports native click/tap selection, HTML5 mouse drag, and the current keyboard behavior. `PuzzleBoard` adds native click/tap placement to its existing keyboard/drop placement path. `PuzzleBoardPanel` suppresses panning while a piece is selected so a board tap has one unambiguous meaning. `PuzzleInventoryPanel` owns one local, non-persisted `drawerOpen` boolean and its responsive presentation.
+`PuzzleSession` remains the sole gameplay state owner. The only new state is one component-local `drawerOpen` boolean inside `PuzzleInventoryPanel`. No route controller, store, context, event bus, gesture service, or drawer abstraction is added.
 
-No route controller, gesture service, drawer store, or new domain type is introduced.
+## Piece activation contract
 
-## Interaction contract
+For an unplaced `PuzzlePiece`:
 
-### Piece activation
+- a native click/tap calls `onSelect(piece.id)`;
+- tapping another piece replaces selection through `select_piece`;
+- tapping the already-selected piece calls `onSelect(piece.id)` again and leaves it selected;
+- Cancel is the explicit pointer/touch deselection path;
+- keyboard Enter/Space preserves the current behavior, including deselecting an already-selected piece;
+- the rotation button continues to stop propagation so rotate does not also select;
+- native HTML5 `dragstart` remains for desktop mouse drag/drop.
 
-For an unplaced inventory piece:
+`PuzzlePiece` already uses a non-delegated `keydownAction` because a selection-changing Svelte delegated event can be re-entered after a mid-event rerender. Rename that local action to `interactionAction` and attach both native `keydown` and native `click` listeners there. The click listener performs only the pointer/touch selection behavior above. This keeps one native activation per input event without introducing a shared event abstraction.
 
-- a native pointer click/tap calls `onSelect(piece.id)`;
-- tapping a different piece replaces the canonical selection through `select_piece`;
-- tapping the already-selected piece keeps it selected; Cancel is the explicit pointer/touch deselection action;
-- keyboard Enter/Space keeps its existing behavior, including the existing keyboard ability to deselect the currently selected piece;
-- rotation controls continue to stop propagation so rotating a piece does not also select it;
-- HTML5 `dragstart` remains available for desktop mouse drag/drop.
+## Board activation contract
 
-Use one native listener path for click/keyboard activation rather than adding another delegated toggle handler. The existing `PuzzlePiece` comment documents a Svelte 5 delegated-event re-render edge case for selection toggles; extend that local non-delegated interaction action instead of introducing a global event abstraction.
+Every board drop zone supports three existing/related paths through one `placePiece(pieceId, x, y)` helper:
 
-### Board activation
+1. HTML5 drop;
+2. keyboard Enter/Space when a piece is selected;
+3. native click/tap when a piece is selected.
 
-Every board cell gets one additional placement activation:
+When `selectedPieceId === null`, click/tap is a no-op.
 
-- when `selectedPieceId === null`, click/tap is a no-op;
-- when `selectedPieceId !== null`, click/tap routes `selectedPieceId`, `x`, and `y` through the same local `placePiece()` helper already used by keyboard/drop handling;
-- `PuzzleBoard` does not check whether the cell is correct, occupied, or rotation-valid before calling `onPiecePlaced`;
-- the session engine remains the only accept/reject authority.
+When selected, click/tap passes `selectedPieceId`, `x`, and `y` to `placePiece()`, which forwards directly to `onPiecePlaced`. `PuzzleBoard` does **not** check correctness, occupancy, or rotation validity before dispatch. `PuzzleSession` remains the only accept/reject authority.
 
-Keep keyboard Enter/Space and HTML5 drop using that same `placePiece()` function. A local per-cell native interaction action may attach click and keydown together so one DOM activation produces one session attempt even if the resulting dispatch immediately re-renders selection/rejection state. Do not extract this into a shared input framework.
+Replace the current delegated per-cell `onkeydown` with a small component-local `dropZoneInteractionAction(node, { x, y })` that installs native `click` and `keydown` listeners. It reads the current `selectedPieceId` and invokes `placePiece()` once per activation. The action remains private to `PuzzleBoard.svelte`; do not extract it.
 
-### Selection lifecycle
+## Selection lifecycle
 
-Do not add route-local selection bookkeeping.
+The UI does not duplicate selection rules:
 
-The existing session contract is the feature contract:
+1. `select_piece` stores/replaces the selected id.
+2. A rejected `attempt_placement` keeps that id.
+3. An accepted `attempt_placement` clears it when that selected piece is placed.
+4. Cancel dispatches `cancel_selection`.
 
-1. `select_piece` stores the selected id.
-2. `attempt_placement` rejection keeps the selection.
-3. `attempt_placement` acceptance clears the selection when that selected piece is accepted.
-4. explicit Cancel dispatches `cancel_selection`.
-5. selecting another piece replaces the selected id.
+No route-local or component-local selected-piece mirror is added.
 
-The UI should present this state; it must not reproduce these rules in component-local state.
+## Pan ownership while a piece is selected
 
-### Pan ownership while selected
-
-`PuzzleBoardPanel` already owns zoom and pan. Keep that ownership, but make pan availability depend on selection:
+`PuzzleBoardPanel` keeps ownership of pan/zoom. Change pan availability to:
 
 ```ts
 const canPanBoard = $derived(selectedPieceId === null && zoom > minZoom + 0.001);
 ```
 
-Consequences:
+Add one effect that cancels an active pan whenever `selectedPieceId` becomes non-null, matching the existing `interactionBlocked` cancellation style.
 
-- while a piece is selected, board pointerdown does not start pan and does not call `preventDefault()` through the pan path;
-- a tap reaches the board-cell placement handler unambiguously;
-- the `touch-none`/grab presentation attached to pannable board state is absent while selected;
-- successful placement or Cancel clears selection through the session and automatically re-enables pan when zoom permits it;
-- wheel zoom and toolbar zoom remain available; HPA-219 adds no pinch zoom.
+This guarantees:
 
-If selection becomes non-null during an active pan, cancel the current pan in the same local effect style already used for `interactionBlocked`. Do not allow a stale active pan to survive into placement mode.
+- board pointerdown does not start pan while a piece is selected;
+- the pan path does not call `preventDefault()` while selected;
+- the board's `touch-none`/grab presentation is absent while selected;
+- a board tap has one meaning: placement;
+- successful placement or Cancel automatically restores pan eligibility when zoom permits it;
+- wheel and toolbar zoom remain unchanged.
 
-## Mobile inventory drawer
+No pinch zoom or new touch-pan mode is added.
+
+## Inventory drawer design
 
 ### State ownership
 
-`PuzzleInventoryPanel` owns exactly one new local state value:
+`PuzzleInventoryPanel` owns exactly one new local value:
 
 ```ts
 let drawerOpen = $state(true);
 ```
 
-It is presentation-only:
+It is not serialized, lifted to the route, or stored in `PuzzleSession`.
 
-- not serialized;
-- not stored in `PuzzleSession`;
-- not lifted to the route;
-- not exposed through a generic drawer API.
+### Desktop behavior
 
-A fresh component starts open for discoverability.
+At `min-width: 1024px`:
 
-### Desktop presentation
+- preserve the existing static inventory side panel;
+- inventory contents are always visible regardless of `drawerOpen`;
+- hide the mobile OPEN/COLLAPSE toggle;
+- show `CANCEL` in the header whenever `selectedPieceId !== null`;
+- keep tray order, sizing, hint/rejection styling, rotation controls, and scrolling unchanged.
 
-At the existing desktop breakpoint (`min-width: 1024px`):
+### Mobile behavior
 
-- preserve the current static inventory side panel;
-- the inventory body is always visible regardless of the local mobile `drawerOpen` value;
-- hide the mobile drawer toggle;
-- show the selection Cancel action in the header whenever a piece is selected;
-- keep the current tray order, piece sizing, rotation controls, hint/rejection styling, and scrolling behavior.
+Below 1024px, the same `PuzzleInventoryPanel` becomes a fixed bottom drawer:
 
-### Mobile presentation
+```css
+position: fixed;
+inset-inline: 0;
+bottom: 0;
+z-index: 40;
+max-width: 100vw;
+box-sizing: border-box;
+overflow-x: hidden;
+padding-bottom: env(safe-area-inset-bottom);
+```
 
-Below 1024px, render the same component as a viewport-fixed bottom drawer:
+The existing gameplay modal surfaces use `z-index: 50`, so `40` keeps the drawer above normal gameplay content and below dialogs.
 
-- `position: fixed` with `inset-inline: 0` and `bottom: 0`;
-- width constrained by the viewport rather than route/grid width;
-- z-index above ordinary gameplay content but below modal surfaces;
-- open drawer `max-height: min(42svh, 26rem)` so more than half of the viewport remains uncovered by the inventory itself;
-- collapsed drawer shows only the header plus bottom safe-area space;
-- open/collapsed is binary; no drag handle, snap points, swipe-to-dismiss, or animated physics;
-- the header remains visible in both states;
-- a visible `COLLAPSE` / `OPEN` button toggles the local state;
-- the toggle exposes `aria-expanded={drawerOpen}` and `aria-controls="puzzle-inventory-body"`;
-- the inventory body keeps `overflow-y: auto` and receives a stable `id="puzzle-inventory-body"`;
-- the panel includes `env(safe-area-inset-bottom)` below its interactive content;
-- the fixed panel uses border-box sizing and clips its own horizontal overflow so it cannot increase document `scrollWidth`.
+When open:
 
-Do not resize or remount the board when the drawer toggles. The drawer overlays the lower portion of the viewport; the board session and board component remain mounted and unchanged.
+- cap the panel at `max-height: min(42svh, 26rem)`;
+- keep the existing `.pieces-grid` as the scrollable flex child with `overflow-y: auto`;
+- leave the header visible.
 
-### Header controls
+When collapsed:
 
-Keep `INVENTORY` and the existing remaining-piece count. Add a compact header action group:
+- hide the inventory body and completion message through the mobile `.collapsed` presentation class;
+- keep the header plus bottom safe-area padding visible;
+- keep `CANCEL` visible if a piece is selected.
 
-- `CANCEL` appears whenever `selectedPieceId !== null` and calls the existing `onCancelSelection` callback;
-- the drawer toggle appears only in the mobile layout;
-- both controls are ordinary buttons with visible labels; no icon-only affordance is required.
+The mobile header adds an ordinary visible `COLLAPSE` / `OPEN` button with:
 
-Cancel remains available while the drawer is collapsed so a player cannot get stuck in placement mode.
+```text
+aria-expanded=<drawerOpen>
+aria-controls="puzzle-inventory-body"
+```
 
-## Normal mobile scrolling
+The scrollable inventory body gets `id="puzzle-inventory-body"`.
 
-Remove the custom touch-drag path from `PuzzlePiece.svelte`:
+No drag handle, snap point, swipe behavior, animation physics, or persisted state is introduced.
 
+The drawer overlays the lower viewport instead of resizing/remounting the board. Toggling it therefore preserves the same `PuzzleBoardPanel` instance and session.
+
+## Normal one-finger inventory scrolling
+
+Delete the custom touch-drag implementation from `PuzzlePiece.svelte`:
+
+- remove `SvelteMap` and touch-only `DataTransfer` construction;
+- remove active-touch coordinates and touch translation state;
 - remove window `touchmove`, `touchend`, and `touchcancel` listeners;
-- remove synthetic `DataTransfer` construction and synthetic drag/drop dispatch;
-- remove touch translation state and touch-drag z-index/pointer-event classes;
-- remove `ontouchstart` and `touch-none` from the inventory piece;
-- remove touch-drag-only CSS and cleanup code;
-- keep native HTML5 `draggable`/`dragstart` for desktop mouse behavior.
+- remove synthetic `dragover`/`dragleave`/`drop` dispatch;
+- remove touch-specific `onDestroy` cleanup;
+- remove `ontouchstart`;
+- remove `touch-none` from inventory pieces;
+- remove touch-drag-only wrapper classes/styles;
+- retain native HTML5 `draggable` and `dragstart` behavior for desktop mouse input.
 
-With no touchstart/touchmove `preventDefault()`, a vertical finger movement inside `.pieces-grid` remains a native scroll gesture. A stationary tap still produces the click used for selection.
+Do not replace this with custom `touch-action` CSS. Browser-default scrolling is the intended mobile behavior.
 
-Do not add `touch-action` tuning unless a focused browser test demonstrates a concrete need; browser-default scrolling is the desired baseline.
-
-## Component boundaries
+## Component ownership
 
 ### `apps/web/src/lib/components/PuzzlePiece.svelte`
 
-Owns per-piece input and visual presentation.
-
-Changes:
-
-- delete bespoke touch-drag state/helpers/listeners;
-- retain HTML5 drag handling;
-- extend the existing native interaction action to support click/tap selection;
-- keep keyboard selection/deselection and rotation behavior unchanged;
-- selected styling still comes only from the controlled `selected` prop.
+- simplify input by deleting bespoke touch drag;
+- rename/extend the local native interaction action for click + keyboard;
+- keep controlled selected styling, rotation, and HTML5 drag.
 
 ### `apps/web/src/lib/components/PuzzleBoard.svelte`
 
-Owns cell-level placement input.
-
-Changes:
-
-- route click/tap on a cell through `placePiece(selectedPieceId, x, y)` when selected;
-- preserve keyboard and desktop drop paths;
-- keep all correctness decisions outside the component;
-- prefer one local native cell-interaction action for click + keydown rather than duplicating state-changing delegated handlers.
+- add click/tap placement through `dropZoneInteractionAction`;
+- keep keyboard/drop placement through the same `placePiece()` helper;
+- keep correctness outside the component.
 
 ### `apps/web/src/lib/components/PuzzleBoardPanel.svelte`
 
-Owns zoom/pan interaction.
-
-Changes:
-
-- include `selectedPieceId === null` in `canPanBoard`;
-- cancel an active pan when selection becomes non-null;
-- preserve all existing reset/reclamp, pointer-capture, blur, interaction-blocked, wheel, and toolbar behavior.
+- make `canPanBoard` selection-aware;
+- cancel active pan when selection becomes non-null;
+- keep current reset/reclamp, capture-phase pointer-up, blur, wheel, toolbar, and modal-blocking behavior.
 
 ### `apps/web/src/lib/components/PuzzleInventoryPanel.svelte`
 
-Owns drawer presentation.
-
-Changes:
-
-- add local `drawerOpen` state;
-- add Cancel and mobile open/collapse controls to the header;
-- make the existing panel fixed/binary below 1024px and static at/above 1024px;
-- keep one scrollable pieces grid and existing piece rendering; do not create separate mobile markup.
+- add `drawerOpen`;
+- add header Cancel and mobile OPEN/COLLAPSE controls;
+- use the existing markup as a static desktop panel and fixed binary mobile drawer;
+- keep one pieces grid rather than separate mobile markup.
 
 ### `apps/web/src/routes/puzzle/[id]/+page.svelte`
 
-No new behavior or state is planned.
-
-The route already passes canonical `selectedPieceId`, `onSelect`, `onCancelSelection`, and `onPiecePlaced` through the extracted components. HPA-219 should not lift drawer state or add another touch orchestration path to the route. Only touch the route if implementation reveals a concrete CSS containment issue that cannot be owned by the extracted component; such a change must remain presentation-only.
+No HPA-219 production changes are planned. The route already passes `selectedPieceId`, `onSelect`, `onCancelSelection`, and `onPiecePlaced` through the extracted components. If implementation proves the route must change, revise this design before adding route-owned behavior.
 
 ## Data flow
 
-Tap-to-place uses the existing chain:
-
 ```text
 PuzzlePiece click/tap
-    -> PuzzleInventoryPanel.onSelect(pieceId)
-    -> route handleSelectPiece(pieceId)
-    -> PuzzleSession select_piece
-    -> PuzzleSessionState.selectedPieceId
-    -> PuzzleBoardPanel.selectedPieceId
-    -> PuzzleBoard.selectedPieceId
+  -> PuzzleInventoryPanel.onSelect(pieceId)
+  -> route handleSelectPiece(pieceId)
+  -> PuzzleSession select_piece
+  -> PuzzleSessionState.selectedPieceId
+  -> PuzzleBoardPanel / PuzzleBoard props
 
 PuzzleBoard cell click/tap
-    -> PuzzleBoard.placePiece(selectedPieceId, x, y)
-    -> PuzzleBoardPanel.onPiecePlaced(pieceId, x, y)
-    -> route placement handler
-    -> PuzzleSession attempt_placement
-        -> rejected: selectedPieceId retained
-        -> accepted: selectedPieceId cleared
+  -> dropZoneInteractionAction
+  -> placePiece(selectedPieceId, x, y)
+  -> PuzzleBoardPanel.onPiecePlaced
+  -> route placement handler
+  -> PuzzleSession attempt_placement
+     -> rejected: selection retained
+     -> accepted: selection cleared
 ```
 
-There is no second touch-specific placement state or callback.
+There is no second touch-specific state path.
 
 ## Rejection and completion behavior
 
-A rejected mobile tap must behave exactly like existing keyboard/drop rejection:
+A rejected tap must use existing behavior:
 
-- the attempt reaches `PuzzleSession`;
+- one `attempt_placement` reaches `PuzzleSession`;
 - `incorrectAttempts` increments once for a counted rejection;
-- the route receives the existing `placement_rejected` event and drives the current temporary rejected-piece presentation;
-- selection remains on the attempted piece;
-- the player can immediately tap another board cell.
+- the route receives `placement_rejected` and drives the current rejected-piece presentation;
+- selection remains;
+- the player may immediately tap another cell.
 
-An accepted mobile tap:
+An accepted tap:
 
 - adds the canonical placement;
-- clears selection through existing session logic;
-- removes the placed piece from the inventory through existing derived rendering;
-- preserves completion sealing/effects when the final piece is placed.
+- clears selection through session logic;
+- removes the placed piece from the inventory via existing derived rendering;
+- preserves existing completion sealing/effects when the final piece is placed.
 
-Do not add mobile-specific rejection messages, retries, or completion handling.
+No mobile-specific rejection or completion state is added.
 
 ## Testing strategy
 
-### `PuzzlePiece` component tests
+### `PuzzlePiece.svelte.test.ts`
 
-Update `apps/web/src/lib/components/__tests__/PuzzlePiece.svelte.test.ts` to:
+Update `apps/web/src/lib/components/__tests__/PuzzlePiece.svelte.test.ts` to prove:
 
-1. prove native click calls `onSelect(piece.id)` for an unplaced piece;
-2. prove clicking an already-selected piece still calls `onSelect(piece.id)` and does not call `onCancelSelection`;
-3. preserve existing Enter/Space select/deselect tests;
-4. preserve HTML5 `dragstart` payload behavior;
-5. delete the touch-drag helper/test matrix that exercises synthetic touch movement/drop because that behavior is intentionally removed;
-6. keep rotation-button propagation coverage so rotate does not trigger selection.
+1. native click calls `onSelect(piece.id)` for an unplaced piece;
+2. clicking an already-selected piece still calls `onSelect(piece.id)` and does not call `onCancelSelection`;
+3. Enter/Space selection/deselection remains unchanged;
+4. HTML5 `dragstart` payload behavior remains;
+5. rotation-button activation does not select the piece.
 
-### `PuzzleBoard` component tests
+Delete the touch-drag helper/test matrix that exercises synthetic touch movement/drop, because that behavior is intentionally removed.
 
-Update `apps/web/src/lib/components/__tests__/PuzzleBoard.svelte.test.ts` to:
+### `PuzzleBoard.svelte.test.ts`
 
-1. prove a click on a drop zone routes the selected piece and coordinates to `onPiecePlaced` exactly once;
-2. use a wrong coordinate in that test to prove the board does not pre-filter correctness;
-3. prove click does nothing when no piece is selected;
-4. retain keyboard and desktop drag/drop coverage.
+Update `apps/web/src/lib/components/__tests__/PuzzleBoard.svelte.test.ts` to prove:
 
-### `PuzzleBoardPanel` component tests
+1. selected-piece click on a wrong-coordinate cell calls `onPiecePlaced(pieceId, x, y)` exactly once;
+2. click does nothing when no piece is selected;
+3. existing keyboard and desktop drag/drop paths still pass.
 
-Update `apps/web/src/lib/components/__tests__/PuzzleBoardPanel.svelte.test.ts` to:
+Using a wrong coordinate deliberately proves that the board does not pre-filter correctness.
 
-1. zoom above fit, render with a selected piece, pointerdown the board, and prove pan does not start;
-2. begin a real non-zero pan, rerender with `selectedPieceId` non-null, and prove the active pan is canceled and later pointer moves do not change the transform;
-3. rerender with selection cleared and prove normal pan can start again;
-4. retain the existing reset/reclamp, capture-phase pointer-up, blur, interaction-blocked, wheel, and toolbar tests.
+### `PuzzleBoardPanel.svelte.test.ts`
 
-### `PuzzleInventoryPanel` component tests
+Update `apps/web/src/lib/components/__tests__/PuzzleBoardPanel.svelte.test.ts` to prove:
 
-Update `apps/web/src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts` to:
+1. after zooming above fit, board pointerdown does not start pan when `selectedPieceId` is non-null;
+2. an already-active non-zero pan is canceled when rerendered with a selected piece;
+3. later pointer moves do not change the transform after that cancellation;
+4. clearing selection restores normal pan initiation.
 
-1. prove Cancel appears only when selected and calls `onCancelSelection`;
-2. prove the drawer starts open;
-3. prove the mobile toggle changes `aria-expanded` / root drawer state open -> collapsed -> open;
-4. prove collapsing does not remove or recreate the piece data model; the same tray contents remain available when reopened;
-5. retain tray order, placed-piece filtering, hint/rejection precedence, rotation, and all-pieces-placed coverage.
+Retain all existing reset/reclamp, capture-phase pointer-up, blur, interaction-blocked, wheel, and toolbar regression tests.
 
-Component tests should assert state/attributes rather than depend on a specific browser-test viewport for CSS media-query visibility. The mobile E2E owns the actual responsive-layout assertion.
+### `PuzzleInventoryPanel.svelte.test.ts`
 
-### Deterministic mobile E2E
+Update `apps/web/src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts` to prove:
 
-Add one feature-owned Chromium test, preferably `apps/web/e2e/gameplay-mobile-tap.spec.ts`, using the existing `e2e-square-4` fixture with a 390 × 844 touch-capable viewport.
+1. `CANCEL` appears only while a piece is selected and calls `onCancelSelection`;
+2. drawer state starts open;
+3. the toggle changes `aria-expanded` open -> collapsed -> open;
+4. tray contents remain the same after collapsing and reopening;
+5. existing tray-order, placed filtering, hint/rejection precedence, rotation, and completion-message tests remain.
 
-The scenario should:
+Component tests assert attributes/state rather than relying on their test browser viewport to evaluate responsive CSS. Actual mobile layout is covered by E2E.
 
-1. load a fresh standard-timed run with setup skipped through existing seeded gameplay preferences;
-2. verify the inventory drawer is open and the board remains visibly present above/behind it;
-3. tap a piece, then tap a wrong board cell;
-4. verify the piece remains selected and the rejected presentation appears;
-5. tap the correct cell and verify the piece leaves the tray / selection clears;
-6. collapse the drawer and verify the board remains usable plus the drawer header remains available;
+### Mobile E2E
+
+Add `apps/web/e2e/gameplay-mobile-tap.spec.ts` using the existing `e2e-square-4` deterministic fixture at **390 × 844** with touch enabled.
+
+The single Chromium feature scenario must:
+
+1. seed the existing start-immediately gameplay preference and load a fresh standard-timed run;
+2. verify the drawer starts open and the puzzle board is visible;
+3. tap a piece and then a wrong board cell;
+4. verify the piece remains selected and current rejected presentation appears;
+5. tap its correct cell and verify the tray slot detaches / selection clears;
+6. collapse the drawer and verify the board remains visible/usable while the drawer header remains available;
 7. reopen the drawer;
-8. complete the remaining small-fixture pieces through tap-to-place;
+8. complete the remaining three pieces through tap-to-place;
 9. verify the existing completion dialog appears;
-10. assert `document.documentElement.scrollWidth <= window.innerWidth` at the mobile viewport as the horizontal-overflow fence;
-11. call the existing diagnostics settlement checks.
+10. assert `document.documentElement.scrollWidth <= window.innerWidth`;
+11. run the existing fixture diagnostics settlement assertions.
 
-Extend `apps/web/e2e/support/gameplay-page.ts` with one small accepted-placement helper:
+Extend `apps/web/e2e/support/gameplay-page.ts` with exactly one accepted-placement helper:
 
 ```ts
 async placeWithTap(pieceId: number, x: number, y: number): Promise<void>
 ```
 
-It should tap the piece, tap the target drop zone, then wait for the accepted piece's tray slot to detach. Keep rejected-attempt setup inline in the feature test because rejection deliberately does not satisfy that helper's accepted-placement postcondition.
+It taps the piece, taps the target drop zone, and waits for the accepted piece's tray slot to detach. Keep the rejected-attempt setup inline in the HPA-219 spec because rejection intentionally does not satisfy this helper's accepted-placement postcondition.
 
-Do not add a new fixture, test controller, browser matrix, or arbitrary timeout.
+Do not add a fixture, test controller, new browser matrix, or fixed sleep.
 
-## Implementation sequencing constraints
+## Implementation sequence
 
-The implementation plan should keep the change in independently reviewable slices without creating temporary architecture:
+The implementation plan should use these reviewable slices:
 
-1. simplify `PuzzlePiece` and establish click/tap selection while preserving mouse/keyboard contracts;
-2. add board tap placement and selection-aware pan behavior;
+1. simplify `PuzzlePiece` and add native click/tap selection while retaining desktop drag and keyboard behavior;
+2. add board click/tap placement plus selection-aware pan cancellation;
 3. add the binary mobile inventory drawer and Cancel action;
-4. add the single deterministic mobile E2E and minimal accepted `placeWithTap()` helper;
-5. run focused component/E2E tests plus package typecheck/lint before final validation.
+4. add the single deterministic mobile E2E and minimal `placeWithTap()` helper;
+5. run focused component/E2E checks plus package typecheck/lint/build validation.
 
-Do not add temporary dual touch implementations merely to make intermediate commits compile. The custom touch-drag path can be removed in the same task that introduces click/tap selection.
+The touch-drag removal and click/tap selection land together. Do not keep temporary dual touch implementations between commits.
 
 ## Risks and mitigations
 
-### A tap accidentally becomes board pan
+### Tap starts board pan
 
-**Mitigation:** `canPanBoard` is false while `selectedPieceId` is non-null, and an in-progress pan is canceled when selection appears.
+**Mitigation:** `canPanBoard` requires `selectedPieceId === null`; selection also cancels any existing pan.
 
-### A rejected tap dispatches twice after a reactive rerender
+### Rejected tap dispatches twice after rerender
 
-**Mitigation:** use a local native cell listener path for click/keydown and a focused exact-once callback test; do not stack separate delegated click handlers around the same cell.
+**Mitigation:** native `dropZoneInteractionAction` installs one click listener, and the component test asserts exactly one callback.
 
-### Inventory scrolling still gets blocked by piece input
+### Inventory scrolling remains blocked
 
-**Mitigation:** remove custom touch listeners, touch `preventDefault()`, piece translation, and `touch-none`; verify real mobile scrolling/layout in the Chromium mobile E2E rather than introducing a new gesture policy.
+**Mitigation:** remove touch listeners, touch `preventDefault()`, touch translation, and `touch-none`; the mobile E2E exercises the actual responsive surface.
 
-### Drawer state leaks into gameplay state
+### Drawer state leaks into gameplay
 
-**Mitigation:** keep `drawerOpen` private to `PuzzleInventoryPanel`; no route prop/store/persistence field exists.
+**Mitigation:** `drawerOpen` stays private to `PuzzleInventoryPanel` and is neither a prop nor persisted state.
 
-### Mobile drawer covers the whole puzzle
+### Drawer hides too much board
 
-**Mitigation:** cap open height at `min(42svh, 26rem)` and verify the board remains visible in the 390 × 844 E2E.
+**Mitigation:** open height is capped at `min(42svh, 26rem)` and verified at 390 × 844.
 
-### Desktop drag or keyboard behavior regresses
+### Drawer overlays a modal
 
-**Mitigation:** keep existing HTML5 drag and non-delegated keyboard handling, and retain their focused component tests. The responsive drawer CSS only changes presentation below 1024px.
+**Mitigation:** drawer uses `z-index: 40`; existing gameplay dialogs use `z-index: 50`.
+
+### Desktop regression
+
+**Mitigation:** desktop breakpoint keeps the static side panel and focused tests retain HTML5 drag, keyboard, zoom/pan, rotation, and completion contracts.
 
 ## KISS / YAGNI guardrails
 
 - `PuzzleSession` remains the only canonical gameplay state owner.
-- One `drawerOpen` boolean is the only new state.
-- No new store, controller, context, event bus, input manager, gesture classifier, bottom-sheet primitive, or view model.
-- Remove obsolete touch-drag code instead of supporting two competing touch placement modes.
-- Reuse the existing 1024px layout breakpoint.
-- Reuse current board/inventory components and explicit callbacks.
-- Reuse the deterministic E2E fixture/harness; one feature scenario is enough.
-- No backward-compatibility path or mobile feature flag is required for this pre-release hobby project.
+- `drawerOpen` is the only new state.
+- No route state for the drawer or mobile placement.
+- No gesture classifier, bottom-sheet primitive, input manager, or event bus.
+- Remove obsolete touch drag instead of supporting two competing touch modes.
+- Reuse the existing 1024px breakpoint and extracted components.
+- Reuse the deterministic E2E fixture/harness.
+- No backward-compatibility path or feature flag is needed for this pre-release project.
 
 ## Acceptance-criteria mapping
 
 | HPA-219 criterion | Design coverage |
 | --- | --- |
-| Phone player can select and place without dragging between distant regions | native piece tap + board-cell tap-to-place |
-| Success clears selection once | existing `PuzzleSession` accepted-placement behavior |
-| Rejection keeps selection | existing `PuzzleSession` rejected-placement behavior |
-| Inventory opens/collapses | one local `drawerOpen` boolean and header toggle |
-| Inventory scrolls normally | custom touch drag / `preventDefault()` / `touch-none` removed |
-| Bottom safe area respected | mobile drawer includes `env(safe-area-inset-bottom)` |
-| Board session preserved | drawer only changes local CSS/presentation; board remains mounted |
+| Phone player selects/places without distant dragging | piece tap + board-cell tap |
+| Success clears selection once | existing accepted-placement session contract |
+| Rejection keeps selection | existing rejected-placement session contract |
+| Inventory opens/collapses | one local `drawerOpen` boolean |
+| Inventory scrolls normally | bespoke touch drag and `preventDefault()` removed |
+| Bottom safe area respected | `env(safe-area-inset-bottom)` on mobile drawer |
+| Board session preserved | drawer changes presentation only; board remains mounted |
 | Desktop drag/keyboard/zoom/completion preserved | existing paths retained and regression-tested |
-| No global state/gesture framework | explicit component-local changes only |
-| Focused component + Chromium mobile E2E | four focused component suites + one 390 × 844 feature E2E |
+| No global state/gesture framework | component-local explicit changes only |
+| Focused component + Chromium mobile E2E | four focused suites + one 390 × 844 scenario |
 
-## Expected production scope
+## Expected implementation scope
 
-The implementation should normally touch only:
+Production files:
 
 - `apps/web/src/lib/components/PuzzlePiece.svelte`
 - `apps/web/src/lib/components/PuzzleBoard.svelte`
 - `apps/web/src/lib/components/PuzzleBoardPanel.svelte`
 - `apps/web/src/lib/components/PuzzleInventoryPanel.svelte`
 
-Plus their focused tests and the feature E2E/helper files. `+page.svelte`, the session engine, persistence, API, and shared domain packages should remain unchanged unless a concrete implementation finding demonstrates that this design's existing contracts are inaccurate.
+Test/support files:
+
+- `apps/web/src/lib/components/__tests__/PuzzlePiece.svelte.test.ts`
+- `apps/web/src/lib/components/__tests__/PuzzleBoard.svelte.test.ts`
+- `apps/web/src/lib/components/__tests__/PuzzleBoardPanel.svelte.test.ts`
+- `apps/web/src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts`
+- `apps/web/e2e/support/gameplay-page.ts`
+- `apps/web/e2e/gameplay-mobile-tap.spec.ts`
+
+The session engine, persistence, API, shared domain packages, and puzzle route remain unchanged by this design.
