@@ -38,7 +38,6 @@ const puzzle: Puzzle = {
 function baseProps() {
 	return {
 		puzzle,
-		boardMetrics: null,
 		trayOrder: [1, 0],
 		placedPieces: [],
 		rotationEnabled: true,
@@ -140,5 +139,48 @@ describe('PuzzleInventoryPanel', () => {
 		await expect.element(page.getByText('ALL PIECES PLACED')).toBeVisible();
 		expect(page.getByTestId('piece-slot-0').query()).toBeNull();
 		expect(page.getByTestId('piece-slot-1').query()).toBeNull();
+	});
+
+	it('shows Cancel only while a piece is selected and forwards it', async () => {
+		const input = baseProps();
+		const view = render(PuzzleInventoryPanel, input);
+
+		expect(page.getByRole('button', { name: 'Cancel selected piece' }).query()).toBeNull();
+
+		await view.rerender({ ...input, selectedPieceId: 1 });
+		await page.getByRole('button', { name: 'Cancel selected piece' }).click();
+		expect(input.onCancelSelection).toHaveBeenCalledOnce();
+	});
+
+	it('starts open and toggles binary state without changing tray contents', async () => {
+		render(PuzzleInventoryPanel, baseProps());
+		const toggle = (await page
+			.getByTestId('inventory-drawer-toggle')
+			.element()) as HTMLButtonElement;
+
+		expect(toggle.getAttribute('aria-expanded')).toBe('true');
+		expect(toggle.getAttribute('aria-controls')).toBe('puzzle-inventory-body');
+		expect(document.querySelectorAll('[data-testid^="piece-slot-"]')).toHaveLength(2);
+
+		toggle.click();
+		await expect.poll(() => toggle.getAttribute('aria-expanded')).toBe('false');
+		expect(document.querySelectorAll('[data-testid^="piece-slot-"]')).toHaveLength(2);
+
+		toggle.click();
+		await expect.poll(() => toggle.getAttribute('aria-expanded')).toBe('true');
+		expect(document.querySelectorAll('[data-testid^="piece-slot-"]')).toHaveLength(2);
+	});
+
+	it('keeps Cancel in the header while collapsed', async () => {
+		render(PuzzleInventoryPanel, { ...baseProps(), selectedPieceId: 1 });
+		const toggle = (await page
+			.getByTestId('inventory-drawer-toggle')
+			.element()) as HTMLButtonElement;
+		toggle.click();
+		await expect.poll(() => toggle.getAttribute('aria-expanded')).toBe('false');
+
+		await expect
+			.element(page.getByRole('button', { name: 'Cancel selected piece' }))
+			.toBeInTheDocument();
 	});
 });

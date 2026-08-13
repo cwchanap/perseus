@@ -515,7 +515,17 @@ describe('Puzzle route gameplay integration', () => {
 			expect(boardCanvas!.style.width).not.toBe(`${puzzle.imageWidth}px`);
 
 			const pieceSlot = await page.getByTestId('piece-slot-0').element();
-			expect(pieceSlot.style.getPropertyValue('--piece-slot-size').trim()).toBe(cellSize);
+			// The slot inherits --piece-slot-size from .game-layout (the route's
+			// board-derived inline source) rather than carrying its own inline
+			// override, so the mobile clamp(3rem, 16vw, 4.5rem) override can take
+			// effect below 1024px. Verify the route injects the cell-matching
+			// value at the grid source; the per-tier rendered slot size is proven
+			// by the chromium-mobile E2E layout spec.
+			const gameLayout = document.querySelector<HTMLElement>('.game-layout');
+			expect(gameLayout).not.toBeNull();
+			expect(gameLayout!.style.getPropertyValue('--piece-slot-size').trim()).toBe(cellSize);
+			// The slot no longer carries its own inline override.
+			expect(pieceSlot.getAttribute('style') ?? '').not.toContain('--piece-slot-size');
 		} finally {
 			Object.defineProperty(window, 'innerWidth', {
 				configurable: true,

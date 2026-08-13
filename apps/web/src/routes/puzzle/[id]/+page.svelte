@@ -1173,7 +1173,6 @@
 				<!-- Inventory panel -->
 				<PuzzleInventoryPanel
 					puzzle={currentPuzzle}
-					boardMetrics={currentBoardMetrics}
 					trayOrder={sessionState?.trayOrder ?? []}
 					{placedPieces}
 					{rotationEnabled}
@@ -1384,6 +1383,7 @@
 
 	/* ===== MAIN CONTENT ===== */
 	.puzzle-main {
+		min-height: 0;
 		flex: 1;
 		padding: 1.25rem;
 		overflow: auto;
@@ -1460,6 +1460,8 @@
 		--inventory-pad: 0.875rem;
 		display: grid;
 		grid-template-columns: 1fr;
+		grid-template-rows: minmax(0, 1fr) auto;
+		min-height: 0;
 		gap: 1.25rem;
 		max-width: min(96rem, calc(100vw - 2rem));
 		margin: 0 auto;
