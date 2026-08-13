@@ -184,6 +184,15 @@
 		border-color: var(--accent);
 	}
 
+	/* Coarse-pointer (mobile) controls must meet the same 44px touch target as
+	   .puzzle-piece and .drop-zone (see routes/layout.css). Desktop pointers are
+	   unaffected: the buttons keep their compact sizing for mouse/trackpad use. */
+	@media (pointer: coarse) {
+		.panel-action {
+			min-height: 44px;
+		}
+	}
+
 	.panel-tag {
 		font-family: var(--font-display);
 		font-size: 0.6rem;
