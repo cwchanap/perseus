@@ -29,7 +29,7 @@ The Linear issue predates the current extracted component and says to show value
 4. Keep standard-timed **personal-best eligibility** unchanged while expanding personal-best **visibility** to any standard-timed completion with a known standard best.
 5. Show existing run context: piece count, hints used, incorrect attempts, and rotation state/use.
 6. Preserve completion effect behavior, retry UI, modal focus/Escape behavior, Play Again, and Back to Arcade.
-7. Keep the change local to the existing completion component and route wiring.
+7. Keep the change local to the existing completion component, route wiring, and session sealing/persistence (the `SealedCompletion` summary facts and their persistence validation).
 
 ## Non-goals
 

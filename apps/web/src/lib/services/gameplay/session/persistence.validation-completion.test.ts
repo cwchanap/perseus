@@ -257,6 +257,222 @@ describe('PuzzleSession completion persistence validation', () => {
 	});
 });
 
+describe('PuzzleSession seal internal consistency (sealed facts vs seal.resultClass)', () => {
+	// Helper: a completed full-board record with an explicit outer state.
+	// The outer facts/counters/resultClass must be self-consistent (the
+	// validateV1 cross-field checks catch outer corruption separately); these
+	// tests isolate the seal's own internal consistency.
+	function completedRecord(outer: {
+		counters?: Record<string, number>;
+		facts?: Record<string, boolean>;
+		resultClass?: string;
+		rotationEnabled?: boolean;
+		pieceRotations?: Record<number, number>;
+	}): Record<string, unknown> {
+		const record = JSON.parse(JSON.stringify(validSnapshot())) as Record<string, unknown>;
+		record.lifecycle = 'completed';
+		record.placedPieces = fullBoardPlacements();
+		if (outer.counters) record.counters = outer.counters;
+		if (outer.facts) record.facts = outer.facts;
+		if (outer.resultClass) record.resultClass = outer.resultClass;
+		if (outer.rotationEnabled !== undefined) record.rotationEnabled = outer.rotationEnabled;
+		if (outer.pieceRotations) record.pieceRotations = outer.pieceRotations;
+		return record;
+	}
+
+	it('rejects a standard_timed seal with hintsUsed > 0 (should be assisted_timed)', () => {
+		const record = completedRecord({
+			counters: { incorrectAttempts: 0, hintsUsed: 1, referenceActivations: 0 },
+			facts: { rotationUsed: false, hintUsed: true, ghostReferenceUsed: false },
+			resultClass: 'assisted_timed'
+		});
+		record.sealedCompletion = seal({ hintsUsed: 1, resultClass: 'standard_timed' });
+		expect(load(record).status).toBe('invalid');
+	});
+
+	it('rejects a standard_timed seal with rotationUsed: true (should be rotation_timed)', () => {
+		const record = completedRecord({
+			counters: { incorrectAttempts: 0, hintsUsed: 0, referenceActivations: 0 },
+			facts: { rotationUsed: true, hintUsed: false, ghostReferenceUsed: false },
+			resultClass: 'rotation_timed',
+			rotationEnabled: true,
+			pieceRotations: { 0: 0, 1: 0, 2: 0, 3: 0 }
+		});
+		record.sealedCompletion = seal({ rotationUsed: true, resultClass: 'standard_timed' });
+		expect(load(record).status).toBe('invalid');
+	});
+
+	it('rejects a standard_timed seal when outer ghostReferenceUsed is true (should be assisted_timed)', () => {
+		const record = completedRecord({
+			counters: { incorrectAttempts: 0, hintsUsed: 0, referenceActivations: 1 },
+			facts: { rotationUsed: false, hintUsed: false, ghostReferenceUsed: true },
+			resultClass: 'assisted_timed'
+		});
+		record.sealedCompletion = seal({
+			hintsUsed: 0,
+			rotationUsed: false,
+			resultClass: 'standard_timed'
+		});
+		expect(load(record).status).toBe('invalid');
+	});
+
+	it('rejects a rotation_timed seal with rotationUsed: false', () => {
+		const record = completedRecord({
+			counters: { incorrectAttempts: 0, hintsUsed: 0, referenceActivations: 0 },
+			facts: { rotationUsed: false, hintUsed: false, ghostReferenceUsed: false },
+			resultClass: 'standard_timed'
+		});
+		record.sealedCompletion = seal({ rotationUsed: false, resultClass: 'rotation_timed' });
+		expect(load(record).status).toBe('invalid');
+	});
+
+	it('rejects a rotation_timed seal with hintsUsed > 0 (should be assisted_timed)', () => {
+		const record = completedRecord({
+			counters: { incorrectAttempts: 0, hintsUsed: 1, referenceActivations: 0 },
+			facts: { rotationUsed: true, hintUsed: true, ghostReferenceUsed: false },
+			resultClass: 'assisted_timed',
+			rotationEnabled: true,
+			pieceRotations: { 0: 0, 1: 0, 2: 0, 3: 0 }
+		});
+		record.sealedCompletion = seal({
+			hintsUsed: 1,
+			rotationUsed: true,
+			resultClass: 'rotation_timed'
+		});
+		expect(load(record).status).toBe('invalid');
+	});
+
+	it('rejects a rotation_timed seal when outer ghostReferenceUsed is true (should be assisted_timed)', () => {
+		const record = completedRecord({
+			counters: { incorrectAttempts: 0, hintsUsed: 0, referenceActivations: 1 },
+			facts: { rotationUsed: true, hintUsed: false, ghostReferenceUsed: true },
+			resultClass: 'assisted_timed',
+			rotationEnabled: true,
+			pieceRotations: { 0: 0, 1: 0, 2: 0, 3: 0 }
+		});
+		record.sealedCompletion = seal({
+			hintsUsed: 0,
+			rotationUsed: true,
+			resultClass: 'rotation_timed'
+		});
+		expect(load(record).status).toBe('invalid');
+	});
+
+	it('rejects a seal with rotationUsed: true when the outer monotonic rotationUsed is false', () => {
+		const record = completedRecord({
+			counters: { incorrectAttempts: 0, hintsUsed: 0, referenceActivations: 0 },
+			facts: { rotationUsed: false, hintUsed: false, ghostReferenceUsed: false },
+			resultClass: 'standard_timed'
+		});
+		record.sealedCompletion = seal({
+			hintsUsed: 0,
+			rotationUsed: true,
+			resultClass: 'rotation_timed'
+		});
+		expect(load(record).status).toBe('invalid');
+	});
+
+	it('rejects an assisted_timed seal with no source of assistance (hintsUsed 0, no ghost reference)', () => {
+		const record = completedRecord({
+			counters: { incorrectAttempts: 0, hintsUsed: 0, referenceActivations: 0 },
+			facts: { rotationUsed: false, hintUsed: false, ghostReferenceUsed: false },
+			resultClass: 'standard_timed'
+		});
+		record.sealedCompletion = seal({
+			hintsUsed: 0,
+			rotationUsed: false,
+			resultClass: 'assisted_timed'
+		});
+		expect(load(record).status).toBe('invalid');
+	});
+
+	it('loads a valid assisted_timed seal with hint-based assistance (hintsUsed > 0)', () => {
+		const record = completedRecord({
+			counters: { incorrectAttempts: 0, hintsUsed: 1, referenceActivations: 0 },
+			facts: { rotationUsed: false, hintUsed: true, ghostReferenceUsed: false },
+			resultClass: 'assisted_timed'
+		});
+		record.sealedCompletion = seal({
+			hintsUsed: 1,
+			rotationUsed: false,
+			resultClass: 'assisted_timed'
+		});
+		const result = load(record);
+		expect(result.status).toBe('loaded');
+		if (result.status === 'loaded') {
+			expect(result.snapshot.sealedCompletion?.resultClass).toBe('assisted_timed');
+			expect(result.snapshot.sealedCompletion?.hintsUsed).toBe(1);
+		}
+	});
+
+	it('loads a valid assisted_timed seal with ghost-reference assistance (hintsUsed 0, outer ghostReferenceUsed true)', () => {
+		const record = completedRecord({
+			counters: { incorrectAttempts: 0, hintsUsed: 0, referenceActivations: 1 },
+			facts: { rotationUsed: false, hintUsed: false, ghostReferenceUsed: true },
+			resultClass: 'assisted_timed'
+		});
+		record.sealedCompletion = seal({
+			hintsUsed: 0,
+			rotationUsed: false,
+			resultClass: 'assisted_timed'
+		});
+		const result = load(record);
+		expect(result.status).toBe('loaded');
+		if (result.status === 'loaded') {
+			expect(result.snapshot.sealedCompletion?.resultClass).toBe('assisted_timed');
+			expect(result.snapshot.sealedCompletion?.hintsUsed).toBe(0);
+		}
+	});
+
+	it('loads a valid rotation_timed seal (rotationUsed true, no hints, no ghost reference)', () => {
+		const record = completedRecord({
+			counters: { incorrectAttempts: 0, hintsUsed: 0, referenceActivations: 0 },
+			facts: { rotationUsed: true, hintUsed: false, ghostReferenceUsed: false },
+			resultClass: 'rotation_timed',
+			rotationEnabled: true,
+			pieceRotations: { 0: 0, 1: 0, 2: 0, 3: 0 }
+		});
+		record.sealedCompletion = seal({
+			hintsUsed: 0,
+			rotationUsed: true,
+			rotationEnabled: true,
+			resultClass: 'rotation_timed'
+		});
+		const result = load(record);
+		expect(result.status).toBe('loaded');
+		if (result.status === 'loaded') {
+			expect(result.snapshot.sealedCompletion?.resultClass).toBe('rotation_timed');
+			expect(result.snapshot.sealedCompletion?.rotationUsed).toBe(true);
+		}
+	});
+
+	it('loads a valid rotation_timed seal with rotationEnabled false (rotation disabled after enabling)', () => {
+		// The user enabled rotation (rotationUsed stays true), disabled it
+		// (rotationEnabled false), then placed all pieces and completed. The
+		// seal captures rotationEnabled false + rotationUsed true, which is
+		// a legitimate rotation_timed completion.
+		const record = completedRecord({
+			counters: { incorrectAttempts: 0, hintsUsed: 0, referenceActivations: 0 },
+			facts: { rotationUsed: true, hintUsed: false, ghostReferenceUsed: false },
+			resultClass: 'rotation_timed',
+			rotationEnabled: false,
+			pieceRotations: { 0: 0, 1: 0, 2: 0, 3: 0 }
+		});
+		record.sealedCompletion = seal({
+			hintsUsed: 0,
+			rotationUsed: true,
+			rotationEnabled: false,
+			resultClass: 'rotation_timed'
+		});
+		const result = load(record);
+		expect(result.status).toBe('loaded');
+		if (result.status === 'loaded') {
+			expect(result.snapshot.sealedCompletion?.rotationEnabled).toBe(false);
+			expect(result.snapshot.sealedCompletion?.rotationUsed).toBe(true);
+		}
+	});
+});
+
 describe('PuzzleSession full-board and canonical placement validation', () => {
 	it('rejects a full board with an active lifecycle and no seal (dead state)', () => {
 		const record = JSON.parse(JSON.stringify(validSnapshot())) as Record<string, unknown>;
