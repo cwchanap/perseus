@@ -21,7 +21,9 @@ The current domain already owns the behavior needed for select-then-place:
 
 The current touch path is the mismatch. `PuzzlePiece.svelte` installs window-level touch listeners, prevents default touch movement, translates the piece, synthesizes drag/drop events, and exposes `onDragStart` / `onDragMove` / `onDragEnd` callbacks that have no production consumer. That machinery conflicts with the ticket's required one-finger inventory scrolling and is unnecessary once tap-to-place is the supported touch path.
 
-A second layout mismatch was found during review. The route already sizes small/medium boards with 300px/280px of vertical reserve and renders board + inventory in one `.game-layout` grid. Making the inventory `position: fixed` would create an independent overlay budget on top of that existing reserve and could cover board cells. HPA-219 therefore keeps the tray **in flow** and makes the existing route grid the responsive layout owner.
+The route also already owns the responsive board/inventory layout. `puzzleLayout.ts` sizes small and medium boards with fixed vertical headroom, and `+page.svelte` renders board + inventory in one `.game-layout` grid. HPA-219 therefore keeps the tray **in flow** instead of adding a fixed overlay or a second height budget.
+
+A final density constraint matters on phones: `boardMetrics.pieceSlotSize` equals the board cell size. On the 390 × 844 `e2e-square-4` fixture the board is 320px wide, so the inherited slot size is 160px. After route/panel/grid padding, two 160px slots plus the existing gap do not fit in one row; the mobile tray would show roughly one piece per row. HPA-219 therefore decouples **mobile tray preview size** from board cell size while leaving desktop inventory sizing unchanged.
 
 ## Goals
 
@@ -30,10 +32,11 @@ A second layout mismatch was found during review. The route already sizes small/
 3. Keep selection after rejection and clear it after acceptance through existing session behavior.
 4. Provide one visible Cancel action for pointer/touch users.
 5. Make the existing inventory a binary open/collapsed bottom row on mobile without creating an overlay layout.
-6. Keep the board and tray mounted together in the existing page grid.
-7. Allow a real one-finger swipe starting on a piece to scroll the mobile inventory.
-8. Preserve desktop HTML5 mouse drag/drop, keyboard selection/placement, toolbar/wheel zoom, rotation, completion, and session controls.
-9. Delete obsolete touch-drag complexity instead of adding gesture arbitration.
+6. Show a useful number of tray pieces at once on a 390px phone rather than inheriting large board-cell sizing.
+7. Keep the board and tray mounted together in the existing page grid.
+8. Allow a real one-finger swipe beginning on a piece to scroll a large mobile inventory.
+9. Preserve desktop HTML5 mouse drag/drop, keyboard selection/placement, toolbar/wheel zoom, rotation, completion, and session controls.
+10. Delete obsolete touch-drag complexity instead of adding gesture arbitration.
 
 ## Non-goals
 
@@ -56,28 +59,30 @@ Direct touch drag is intentionally removed. HPA-219 makes tap-to-place the suppo
 
 ## Options considered
 
-### Option A — Tap-to-place + in-flow binary tray (recommended)
+### Option A — Tap-to-place + in-flow binary tray + mobile preview sizing (recommended)
 
-Use native click/tap to select a piece and native click/tap on a board cell to attempt placement. Keep the tray as the second row of the existing route grid below 1024px; `PuzzleInventoryPanel` owns only open/collapsed presentation and its scroll body.
+Use native click/tap to select a piece and native click/tap on a board cell to attempt placement. Keep the tray as the second row of the existing route grid below 1024px. `PuzzleInventoryPanel` owns open/collapsed presentation, its scroll body, and a mobile-only preview-size override.
 
 **Pros**
 
 - reuses the existing `PuzzleSession` and route layout;
 - removes the bespoke touch implementation;
 - no overlay hit-testing or z-index coordination;
-- keeps the board and tray as one responsive layout budget;
+- keeps board and tray in one responsive layout budget;
+- shows multiple pieces per row on phone-sized screens;
 - preserves desktop mouse drag and keyboard independently;
 - requires only one new state value: `drawerOpen`.
 
 **Cons**
 
-- direct touch drag is removed, which is acceptable because it is explicitly optional.
+- direct touch drag is removed, which is acceptable because it is explicitly optional;
+- mobile tray previews no longer equal board cell size, which is desirable for browse density and remains presentation-only.
 
 ### Option B — Fixed bottom overlay
 
 Make `PuzzleInventoryPanel` `position: fixed` below 1024px.
 
-**Rejected:** the route and `puzzleLayout.ts` already reserve vertical space for a stacked tray. A fixed overlay would create a second, uncoordinated layout system and could cover the bottom board cells. It also introduces unnecessary z-index/modal interactions.
+**Rejected:** the route already budgets and renders a stacked board + tray. A fixed overlay would create a second, uncoordinated layout system and could cover bottom board cells. It also introduces unnecessary z-index/modal interactions.
 
 ### Option C — Keep touch drag with gesture thresholds
 
@@ -95,7 +100,7 @@ Build a second mobile interaction surface.
 
 Use **Option A**.
 
-`PuzzleSession` remains the only gameplay state owner. `PuzzlePiece` becomes a simpler native click/tap + keyboard + desktop HTML5 drag input surface. `PuzzleBoard` adds native click/tap placement to its existing keyboard/drop placement path. `PuzzleBoardPanel` suppresses/cancels pan while selection is active. `PuzzleInventoryPanel` owns one local `drawerOpen` boolean. The route remains the responsive board/inventory layout owner and keeps the mobile tray in flow.
+`PuzzleSession` remains the only gameplay state owner. `PuzzlePiece` becomes a simpler native click/tap + keyboard + desktop HTML5 drag input surface. `PuzzleBoard` adds native click/tap placement to its existing keyboard/drop placement path. `PuzzleBoardPanel` suppresses/cancels pan while selection is active. `PuzzleInventoryPanel` owns one local `drawerOpen` boolean plus mobile-only tray sizing. The route remains the responsive board/inventory layout owner and keeps the mobile tray in flow.
 
 No route controller, gesture service, bottom-sheet primitive, drawer store, or domain type is introduced.
 
@@ -116,15 +121,15 @@ Use one local non-delegated Svelte action for click + keydown. The component alr
 
 ### Coarse-pointer drag suppression
 
-Removing the custom touch handlers is not enough proof that one-finger tray scrolling works. The piece still carries `draggable={!isPlaced}` for desktop HTML5 drag.
+Removing the custom touch handlers is necessary but not sufficient proof that one-finger tray scrolling works because the piece still carries `draggable={!isPlaced}` for desktop HTML5 drag.
 
-Keep that attribute for desktop/fine-pointer behavior, but extend the existing global `@media (pointer: coarse)` `.puzzle-piece` rule in `apps/web/src/routes/layout.css` with:
+Keep the attribute for desktop/fine-pointer behavior, but extend the existing global `@media (pointer: coarse)` `.puzzle-piece` rule in `apps/web/src/routes/layout.css` with:
 
 ```css
 -webkit-user-drag: none;
 ```
 
-This is a CSS-only coarse-pointer guard: no media-query state or input manager is added. The mobile E2E must additionally perform a browser-level touch swipe beginning on a piece and observe inventory `scrollTop` increasing. Computed `overflow-y` alone is not acceptance proof.
+This is a CSS-only coarse-pointer guard: no media-query state or input manager is added. Do not add a computed-style assertion for it. The behavior proof is a real browser-level touch swipe on a large deterministic tray whose `scrollTop` must increase.
 
 ### Board activation
 
@@ -134,7 +139,9 @@ Each board cell supports one additional native activation:
 - selected piece -> click/tap calls the same local `placePiece()` helper used by keyboard/drop handling;
 - the board does not pre-check correctness, occupancy, or rotation.
 
-Use a local non-delegated action for click + keydown. Do **not** pass `{x, y}` as an action parameter; each drop-zone already has `data-x` and `data-y`. The action reads those attributes from its node and forwards them to the existing handlers. This avoids another coordinate channel and avoids action-parameter identity churn.
+Use a local non-delegated action for click + keydown. Do **not** pass `{x, y}` as an action parameter; each drop-zone already has `data-x` and `data-y`. The native click/keydown action reads those attributes from its node.
+
+Existing HTML5 `dragover`/`drop` handlers may continue using their existing closure coordinates. The design claim is intentionally narrow: **native click/keydown has no second coordinate channel**; it does not rewrite working desktop drag/drop solely for uniformity.
 
 ### Selection lifecycle
 
@@ -162,13 +169,9 @@ $effect(() => {
 });
 ```
 
-Consequences:
+This deliberately makes placement mode win over pan. On a zoomed board, reaching an off-screen cell may require **Cancel -> pan -> reselect -> place**. That is an accepted HPA-219 tradeoff: adding simultaneous pan + selected-piece gesture arbitration would reintroduce the complexity this ticket is deleting, and the rule is one local `$derived` away from revision if real use later proves the tradeoff poor.
 
-- selected-piece board taps do not start pan;
-- selection beginning during an active pan cancels it;
-- accepted placement or Cancel automatically restores pan eligibility when zoom permits;
-- wheel and toolbar zoom stay available;
-- no pinch zoom is added.
+Wheel and toolbar zoom remain available; no pinch zoom is added.
 
 ## Mobile inventory drawer
 
@@ -191,6 +194,22 @@ Keep `INVENTORY` and the remaining-piece count. Add a compact action group:
 - toggle exposes `aria-expanded` and `aria-controls="puzzle-inventory-body"`;
 - Cancel remains available when the drawer is collapsed.
 
+### Mobile tray preview size
+
+Below 1024px, inventory preview size must not inherit the board-cell size. Scope the override only to the mobile breakpoint:
+
+```css
+@media (max-width: 1023px) {
+	.inventory-panel {
+		--piece-slot-size: clamp(3rem, 16vw, 4.5rem);
+	}
+}
+```
+
+At 390px, `16vw` is 62.4px. With the current inventory gap/padding, four slots fit comfortably in the usable grid width; five need not. The exact acceptance proof is not this arithmetic—it is the rendered E2E requirement that at least four slot boxes are fully inside the open grid's visible client rectangle on `e2e-square-4`.
+
+Do not set `--piece-slot-size: initial` at the desktop breakpoint. The custom property is already supplied by the parent `.game-layout`; scoping the override to `max-width: 1023px` lets desktop inherit the existing board-derived value naturally.
+
 ### Mobile layout ownership
 
 Below 1024px the tray stays **in the existing `.game-layout` flow**.
@@ -211,9 +230,7 @@ Route-owned layout:
 
 `PuzzleInventoryPanel` does **not** use `position: fixed`, `sticky`, or absolute positioning and does not set a gameplay z-index.
 
-The open mobile panel is height-capped at `16rem` (including its safe-area padding via border-box sizing). With the existing 1.25rem grid gap, that stays within the small/medium board calculator's 300px/280px vertical reserve rather than adding a second budget.
-
-The component owns:
+The open mobile panel starts with a `16rem` maximum height (including safe-area padding via border-box sizing):
 
 ```css
 .inventory-panel {
@@ -243,6 +260,8 @@ The component owns:
 }
 ```
 
+The `16rem` value is a candidate cap, **not a proof that the complete page fits**. `getHeightReserve()` only constrains board sizing; it does not formally allocate the tray row. The authoritative target-viewport proof is rendered geometry: on 390 × 844, the open inventory panel bottom must be at or above the viewport bottom. If that fails, tighten the local tray/layout sizing in HPA-219 rather than weakening the assertion.
+
 No overlay padding compensation is needed because the tray consumes its own grid row.
 
 ### Desktop layout
@@ -253,7 +272,8 @@ At `min-width: 1024px`:
 - clear the mobile inventory max-height/safe-area padding;
 - inventory body is always visible regardless of the last mobile `drawerOpen` value;
 - hide the OPEN/COLLAPSE toggle;
-- keep Cancel visible while selected.
+- keep Cancel visible while selected;
+- keep inheriting the route's board-derived `--piece-slot-size`.
 
 ## Component boundaries
 
@@ -269,7 +289,8 @@ At `min-width: 1024px`:
 
 - route native click/tap through `placePiece()` when selected;
 - preserve keyboard and desktop drop paths;
-- use one local action that reads `data-x` / `data-y` from the drop-zone node;
+- use one local native action that reads `data-x` / `data-y` for click/keydown;
+- retain existing drag/drop closure coordinates;
 - no correctness filtering.
 
 ### `PuzzleBoardPanel.svelte`
@@ -282,16 +303,16 @@ At `min-width: 1024px`:
 
 - add local `drawerOpen`;
 - add Cancel + mobile open/collapse controls;
-- own the height-capped scroll body and safe-area padding;
+- own mobile tray preview sizing, height-capped scroll body, and safe-area padding;
 - remain in normal document/grid flow.
 
 ### `+page.svelte`
 
-The route now has one intentional presentation change: below 1024px, `.game-layout` explicitly owns board row + inventory row. Desktop columns remain unchanged. No gameplay/session orchestration changes are allowed.
+The route has one intentional presentation change: below 1024px, `.game-layout` explicitly owns board row + inventory row. Desktop columns remain unchanged. No gameplay/session orchestration changes are allowed.
 
 ### `layout.css`
 
-Extend the existing coarse-pointer `.puzzle-piece` rule with `-webkit-user-drag: none` so the supported touch path is scrolling + tap, not browser-native drag.
+Extend the existing coarse-pointer `.puzzle-piece` rule with `-webkit-user-drag: none` so supported touch behavior is scroll + tap rather than native drag.
 
 ## Data flow
 
@@ -319,9 +340,11 @@ Rejected tap:
 
 - reaches `PuzzleSession` once;
 - increments `incorrectAttempts` once for a counted rejection;
-- uses the existing rejected-piece presentation;
-- keeps selection;
+- keeps the piece in the tray;
+- keeps `data-selected="true"` on the selected piece;
 - allows immediate retry on another cell.
+
+The transient `.rejected` shake class is **not** an E2E contract. The route clears that presentation after 500ms, so mobile E2E uses durable selection/tray state instead of racing the animation timer.
 
 Accepted tap:
 
@@ -342,7 +365,7 @@ Remove `dragWithTouch()` completely. Retarget `tapPiece(pieceId)` to the actual 
 async placeWithTap(pieceId: number, x: number, y: number): Promise<void>
 ```
 
-It follows the existing `selectAndPlaceWithKeyboard` shape: activate the piece, prove selection, activate the target, and wait for an accepted piece's tray slot to detach.
+It follows the existing `selectAndPlaceWithKeyboard` shape: activate the piece, prove selection, activate the target, and wait for an accepted piece's tray slot to detach. Tests that use the helper pair it with `expectPiecePlaced(pieceId, x, y)` when verifying the final board location.
 
 ### Cross-browser smoke
 
@@ -353,25 +376,36 @@ The one-piece tap smoke is tagged both `@smoke` and `@webkit-critical`, and runs
 - `chromium-mobile`;
 - `webkit-mobile`.
 
-The broader HPA-219 390x844 flow remains Chromium-mobile for the required feature scenario; WebKit does not need the entire completion flow duplicated.
+The broader HPA-219 390 × 844 flow remains Chromium-mobile; WebKit does not need the whole completion flow duplicated.
 
-### Mobile feature flow
+### Layout proof owned by the layout task
 
-At 390x844 using `e2e-square-4`:
+Task 3 adds the geometry/scroll tests in the same commit as the in-flow drawer so layout does not ship one commit before its risk is exercised.
+
+At 390 × 844 with `e2e-square-4`:
+
+- open inventory panel bottom is `<= viewport height`;
+- at least four unplaced slot boxes are fully inside the visible `.pieces-grid` client rectangle;
+- board remains visible.
+
+A separate layout-only check uses the existing `e2e-square-100` fixture at the same Chromium-mobile viewport. It performs one browser-level touch swipe beginning on a puzzle piece and requires `.pieces-grid.scrollTop` to increase. The 100-piece fixture is used because the corrected 4-piece tray should fit without scrolling; manufacturing overflow in the completion fixture would contradict the density goal.
+
+Do not assert computed `overflow-y` or computed `-webkit-user-drag`. The swipe result is the behavior proof.
+
+### Mobile completion flow
+
+At 390 × 844 using `e2e-square-4`:
 
 1. load a fresh start-immediately run;
 2. drawer starts open and board is visible;
-3. perform a browser-level touch swipe beginning on an inventory piece and prove `.pieces-grid.scrollTop` increases;
-4. tap a piece and wrong cell; prove rejected presentation and selection retention;
-5. tap the correct cell; prove selection clears and slot detaches;
-6. collapse the in-flow drawer; board stays mounted/visible and Cancel/toggle header remains available;
-7. reopen;
-8. complete remaining pieces via `placeWithTap`;
-9. existing completion dialog appears;
-10. document has no horizontal overflow;
-11. normal automatic fixture diagnostics pass.
-
-The swipe proof is intentionally local to the Chromium feature test; it does not become a general gesture helper.
+3. tap a piece and wrong cell; prove the tray slot remains and the piece remains selected;
+4. tap the correct cell; prove selection clears, slot detaches, and the placed image is in the correct target;
+5. collapse the in-flow drawer; board stays mounted/visible and Cancel/toggle header remains available;
+6. reopen;
+7. complete remaining pieces via `placeWithTap`, pairing every placement with `expectPiecePlaced`;
+8. existing completion dialog appears;
+9. document has no horizontal overflow;
+10. normal automatic fixture diagnostics pass.
 
 ### Documentation
 
@@ -391,7 +425,7 @@ Prove:
 - rotation activation does not select;
 - obsolete touch-drag unit matrix is deleted.
 
-Coarse-pointer scrolling is proven in E2E rather than pretending a component test can validate media-query/touch scrolling semantics.
+Coarse-pointer scrolling is proven by the large-fixture E2E swipe rather than by a media-query/computed-style assertion.
 
 ### `PuzzleBoard.svelte.test.ts`
 
@@ -419,72 +453,96 @@ Prove:
 - collapsed/open state does not recreate/change tray contents;
 - existing tray order/filter/hint/rejection/rotation/completion-message behavior remains.
 
-Responsive geometry/real scrolling is E2E-owned.
+Responsive density, viewport fit, and real scrolling are E2E-owned and land with the layout task.
 
 ## Risks and mitigations
 
-### Board cell hidden by inventory
+### Mobile tray degenerates to one-piece rows
 
-**Mitigation:** inventory is an in-flow grid row, not a fixed overlay. Open height is capped inside the same vertical budget used by board sizing.
+**Mitigation:** mobile-only `--piece-slot-size: clamp(3rem, 16vw, 4.5rem)` plus rendered square-4 density assertion requiring at least four fully visible slots.
+
+### Open tray extends below the phone viewport
+
+**Mitigation:** keep tray in flow, cap it locally, and require `panelBottom <= viewportHeight` in Task 3's Chromium-mobile layout test. Treat that rendered check—not `getHeightReserve()` arithmetic—as authoritative.
+
+### Inventory swipe is stolen by drag behavior
+
+**Mitigation:** delete bespoke touch drag, add coarse-pointer `-webkit-user-drag: none`, then prove a browser-level swipe starting on a piece increases scrollTop on the 100-piece fixture.
 
 ### Tap starts board pan
 
-**Mitigation:** pan requires `selectedPieceId === null` and selection cancels active pan.
+**Mitigation:** `canPanBoard` requires `selectedPieceId === null`; selection also cancels active pan. The Cancel -> pan -> reselect tradeoff on zoomed boards is explicitly accepted for this ticket.
 
-### Rejected tap dispatches twice after rerender
+### Rejected tap is flaky in E2E
 
-**Mitigation:** board and piece click/keydown use local non-delegated actions; focused tests assert exactly one callback.
+**Mitigation:** assert durable facts—slot still present and piece still selected—instead of the 500ms `.rejected` class.
 
-### Inventory swipe starts native drag instead of scroll
+### Tap helper masks wrong-cell rendering
 
-**Mitigation:** existing coarse-pointer CSS disables native user drag, bespoke touch prevention is removed, and mobile E2E performs a browser-level touch swipe from a piece and checks `scrollTop`.
-
-### Drawer state leaks into gameplay
-
-**Mitigation:** `drawerOpen` stays private to `PuzzleInventoryPanel`.
+**Mitigation:** placement flows call `expectPiecePlaced(pieceId, x, y)` after accepted `placeWithTap()` calls.
 
 ### Desktop regression
 
-**Mitigation:** desktop route columns remain unchanged; fine-pointer HTML5 drag, keyboard, zoom/pan, rotation, and completion retain focused/smoke coverage.
+**Mitigation:** desktop breakpoint keeps the current side-panel sizing and layout; existing HTML5 drag, keyboard, zoom/pan, rotation, and completion tests remain.
+
+## KISS / YAGNI guardrails
+
+- `PuzzleSession` remains the only canonical gameplay state owner.
+- `drawerOpen` is the only new runtime state.
+- No route state for drawer or mobile placement.
+- No gesture classifier, bottom-sheet primitive, input manager, or event bus.
+- Remove obsolete touch drag instead of supporting two competing touch modes.
+- Reuse the existing route grid and 1024px breakpoint.
+- Reuse deterministic E2E fixtures; square-4 covers the completion flow and square-100 covers scroll behavior only.
+- No `puzzleLayout.ts` change is required.
+- No backward-compatibility path or feature flag is needed for this pre-release project.
+
+## Acceptance-criteria mapping
+
+| HPA-219 criterion | Design coverage |
+| --- | --- |
+| Phone player selects/places without distant dragging | native piece tap + board-cell tap |
+| Success clears selection once | existing accepted-placement session contract + mobile E2E |
+| Rejection keeps selection | existing rejection contract + durable selected/tray assertions |
+| Inventory opens/collapses | one private `drawerOpen` boolean |
+| Inventory shows useful phone density | mobile-only slot-size override + >= 4 visible square-4 slots |
+| Inventory scrolls normally | touch drag removed + coarse user-drag suppression + real 100-piece swipe |
+| Bottom safe area respected | component-owned safe-area padding |
+| Board/tray fit target viewport | in-flow grid + Task 3 panel-bottom geometry assertion |
+| Board session preserved | same component instances/domain state; presentation-only collapse |
+| Desktop drag/keyboard/zoom/completion preserved | existing paths retained and regression-tested |
+| No global state/gesture framework | local actions/state and existing grid only |
+| Focused component + Chromium mobile E2E | four focused suites + layout checks + square-4 feature flow |
+| Supported tap path retained in WebKit | `@webkit-critical` one-piece tap smoke |
 
 ## Expected implementation scope
 
-Production:
+Production/layout files:
 
 - `apps/web/src/lib/components/PuzzlePiece.svelte`
 - `apps/web/src/lib/components/PuzzleBoard.svelte`
 - `apps/web/src/lib/components/PuzzleBoardPanel.svelte`
 - `apps/web/src/lib/components/PuzzleInventoryPanel.svelte`
-- `apps/web/src/routes/puzzle/[id]/+page.svelte` (layout CSS only)
-- `apps/web/src/routes/layout.css` (existing coarse-pointer rule only)
+- `apps/web/src/routes/puzzle/[id]/+page.svelte` — CSS/layout only
+- `apps/web/src/routes/layout.css` — coarse-pointer rule only
 
-Tests/support/docs:
+Test/support/docs files:
 
-- four existing component suites for the components above;
-- `apps/web/e2e/support/gameplay-page.ts`;
-- `apps/web/e2e/gameplay-interactions.spec.ts`;
-- `apps/web/e2e/gameplay-mobile-tap.spec.ts`;
-- `apps/web/e2e/README.md`;
-- `apps/web/playwright.config.ts` (comment only).
+- `apps/web/src/lib/components/__tests__/PuzzlePiece.svelte.test.ts`
+- `apps/web/src/lib/components/__tests__/PuzzleBoard.svelte.test.ts`
+- `apps/web/src/lib/components/__tests__/PuzzleBoardPanel.svelte.test.ts`
+- `apps/web/src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts`
+- `apps/web/e2e/support/gameplay-page.ts`
+- `apps/web/e2e/gameplay-interactions.spec.ts`
+- `apps/web/e2e/gameplay-mobile-tap.spec.ts`
+- `apps/web/e2e/README.md`
+- `apps/web/playwright.config.ts` — comment only
 
 Explicitly unchanged:
 
-- `apps/web/src/lib/services/gameplay/session/**`;
-- persistence/statistics/API/shared-domain packages;
-- deterministic fixture catalog/builders;
-- route script/session orchestration.
+- `apps/web/src/lib/services/puzzleLayout.ts`
+- `apps/web/src/lib/services/gameplay/session/**`
+- persistence/statistics/API/shared-domain packages
+- deterministic fixture catalog/builders
 
-## Acceptance mapping
-
-| HPA-219 criterion | Design coverage |
-| --- | --- |
-| Select/place on phone without long-distance dragging | tap piece + tap cell while board/tray share in-flow layout |
-| Success clears selection once | existing session acceptance |
-| Rejection keeps selection | existing session rejection |
-| Inventory opens/collapses | local `drawerOpen` |
-| Inventory scrolls normally | touch machinery removed + coarse user-drag suppression + browser-level swipe E2E |
-| Bottom safe area respected | inventory border-box safe-area padding |
-| Board session preserved | board and tray remain mounted in same route grid |
-| Desktop drag/keyboard/zoom/completion preserved | existing paths retained/tested |
-| No global state/gesture framework | explicit local changes only |
-| Focused components + mobile E2E | four suites + Chromium 390x844 + WebKit tap smoke |
+The implementation deletes more interaction machinery than it adds and introduces exactly one new runtime state value.
