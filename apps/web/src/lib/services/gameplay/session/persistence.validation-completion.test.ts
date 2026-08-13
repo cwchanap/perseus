@@ -302,7 +302,17 @@ describe('PuzzleSession seal internal consistency (sealed facts vs seal.resultCl
 		expect(load(record).status).toBe('invalid');
 	});
 
-	it('rejects a standard_timed seal when outer ghostReferenceUsed is true (should be assisted_timed)', () => {
+	it('loads a standard_timed retained seal when outer ghostReferenceUsed is true (post-completion ghost)', () => {
+		// Regression: completing a standard timed run, then undoing,
+		// switching to the ghost reference mode, and redoing retains the
+		// original standard_timed seal while the outer ghostReferenceUsed
+		// fact becomes true. ghostReferenceUsed is monotonic (false → true
+		// only), so true now does NOT prove it was true at seal time — the
+		// seal was created under standard_timed with no ghost reference,
+		// and the ghost fact only became true afterwards while the seal was
+		// retained. The validator must not use outer ghostReferenceUsed to
+		// invalidate a standard seal; the seal's own captured facts
+		// (hintsUsed=0, rotationUsed=false) already explain its class.
 		const record = completedRecord({
 			counters: { incorrectAttempts: 0, hintsUsed: 0, referenceActivations: 1 },
 			facts: { rotationUsed: false, hintUsed: false, ghostReferenceUsed: true },
@@ -313,7 +323,14 @@ describe('PuzzleSession seal internal consistency (sealed facts vs seal.resultCl
 			rotationUsed: false,
 			resultClass: 'standard_timed'
 		});
-		expect(load(record).status).toBe('invalid');
+		const result = load(record);
+		expect(result.status).toBe('loaded');
+		if (result.status === 'loaded') {
+			expect(result.snapshot.sealedCompletion?.resultClass).toBe('standard_timed');
+			expect(result.snapshot.sealedCompletion?.hintsUsed).toBe(0);
+			expect(result.snapshot.resultClass).toBe('assisted_timed');
+			expect(result.snapshot.facts.ghostReferenceUsed).toBe(true);
+		}
 	});
 
 	it('rejects a rotation_timed seal with rotationUsed: false', () => {
@@ -342,7 +359,14 @@ describe('PuzzleSession seal internal consistency (sealed facts vs seal.resultCl
 		expect(load(record).status).toBe('invalid');
 	});
 
-	it('rejects a rotation_timed seal when outer ghostReferenceUsed is true (should be assisted_timed)', () => {
+	it('loads a rotation_timed retained seal when outer ghostReferenceUsed is true (post-completion ghost)', () => {
+		// Same retained-seal reasoning as the standard_timed case above,
+		// but the original completion was rotation_timed: complete a
+		// rotation run → undo → set_reference_mode('ghost') → redo. The
+		// retained rotation_timed seal still has rotationUsed=true and
+		// hintsUsed=0 (captured at seal time), while the outer
+		// ghostReferenceUsed fact became true afterwards. Outer ghost=true
+		// must not invalidate a rotation seal.
 		const record = completedRecord({
 			counters: { incorrectAttempts: 0, hintsUsed: 0, referenceActivations: 1 },
 			facts: { rotationUsed: true, hintUsed: false, ghostReferenceUsed: true },
@@ -355,7 +379,14 @@ describe('PuzzleSession seal internal consistency (sealed facts vs seal.resultCl
 			rotationUsed: true,
 			resultClass: 'rotation_timed'
 		});
-		expect(load(record).status).toBe('invalid');
+		const result = load(record);
+		expect(result.status).toBe('loaded');
+		if (result.status === 'loaded') {
+			expect(result.snapshot.sealedCompletion?.resultClass).toBe('rotation_timed');
+			expect(result.snapshot.sealedCompletion?.rotationUsed).toBe(true);
+			expect(result.snapshot.resultClass).toBe('assisted_timed');
+			expect(result.snapshot.facts.ghostReferenceUsed).toBe(true);
+		}
 	});
 
 	it('rejects a seal with rotationUsed: true when the outer monotonic rotationUsed is false', () => {
