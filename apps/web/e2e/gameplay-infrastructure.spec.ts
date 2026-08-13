@@ -326,7 +326,11 @@ test.describe('gameplay smoke @smoke', () => {
 			elapsedActiveSeconds: 5,
 			completedAt: 1710000005000,
 			localStats: { status: 'succeeded' },
-			serverSubmission: { status: 'succeeded' }
+			serverSubmission: { status: 'succeeded' },
+			hintsUsed: 0,
+			incorrectAttempts: 0,
+			rotationEnabled: false,
+			rotationUsed: false
 		};
 
 		await gameplayPage.gotoFixture({
