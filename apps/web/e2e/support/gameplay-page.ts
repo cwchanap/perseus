@@ -408,95 +408,21 @@ export class GameplayPage {
 
 	// --- Touch -----------------------------------------------------------------
 
-	/** Tap a piece in the tray (basic touch interaction). */
+	/** Tap the actual piece control in the tray. */
 	async tapPiece(pieceId: number): Promise<void> {
-		await this.pieceSource(pieceId).tap();
+		await this.pieceSource(pieceId).getByTestId('puzzle-piece').tap();
 	}
 
 	/**
-	 * Drag a piece to (x, y) using dispatched TouchEvents. The puzzle's touch
-	 * handler listens for touchstart on the piece element and touchmove/touchend
-	 * on window; this method dispatches that exact sequence from locator
-	 * coordinates so the handler's synthetic-DragEvent drop path is exercised.
+	 * Select a piece via tap and attempt accepted placement at (x, y).
+	 * The caller uses expectPiecePlaced when it needs to prove board location.
 	 */
-	async dragWithTouch(pieceId: number, x: number, y: number): Promise<void> {
-		const source = this.pieceSource(pieceId);
-		const target = this.dropZone(x, y);
-		await source.waitFor({ state: 'visible' });
-		await target.waitFor({ state: 'visible' });
-		const sourceBox = await source.boundingBox();
-		const targetBox = await target.boundingBox();
-		if (!sourceBox || !targetBox) {
-			throw new Error(
-				`dragWithTouch: missing bounds — source=${JSON.stringify(sourceBox)}, target=${JSON.stringify(targetBox)}`
-			);
-		}
-		// Dispatched touch events trigger Svelte 5's delegated ontouchstart,
-		// which Chrome treats as passive at the document level. The handler's
-		// preventDefault logs a benign console warning; allowlist it so the
-		// diagnostics teardown does not mistake it for a regression.
-		this.diagnostics.expectConsoleError('Unable to preventDefault');
-		await this.page.evaluate(
-			(data: { pieceId: number; sx: number; sy: number; tx: number; ty: number }) => {
-				const { pieceId, sx, sy, tx, ty } = data;
-				const pieceEl = document.querySelector(
-					`[data-testid="piece-slot-${pieceId}"] [data-testid="puzzle-piece"]`
-				) as HTMLElement | null;
-				if (!pieceEl) {
-					throw new Error(`dragWithTouch: piece element not found for piece ${pieceId}`);
-				}
-
-				const makeTouch = (cx: number, cy: number): Touch =>
-					new Touch({
-						identifier: 0,
-						target: pieceEl,
-						clientX: cx,
-						clientY: cy,
-						pageX: cx,
-						pageY: cy,
-						screenX: cx,
-						screenY: cy,
-						radiusX: 1,
-						radiusY: 1,
-						force: 1
-					});
-
-				const dispatch = (
-					type: 'touchstart' | 'touchmove' | 'touchend',
-					target: Element | Window,
-					cx: number,
-					cy: number
-				): void => {
-					const touch = makeTouch(cx, cy);
-					const ended = type === 'touchend';
-					const ev = new TouchEvent(type, {
-						touches: ended ? [] : [touch],
-						targetTouches: ended ? [] : [touch],
-						changedTouches: [touch],
-						bubbles: true,
-						cancelable: true
-					});
-					target.dispatchEvent(ev);
-				};
-
-				// 1. touchstart on the piece element → starts the touch drag.
-				dispatch('touchstart', pieceEl, sx, sy);
-				// 2. touchmove via window listener → tracks + highlights drop zone.
-				const midX = sx + (tx - sx) / 2;
-				const midY = sy + (ty - sy) / 2;
-				dispatch('touchmove', window, midX, midY);
-				dispatch('touchmove', window, tx, ty);
-				// 3. touchend via window listener → synthesizes drop on the zone.
-				dispatch('touchend', window, tx, ty);
-			},
-			{
-				pieceId,
-				sx: sourceBox.x + sourceBox.width / 2,
-				sy: sourceBox.y + sourceBox.height / 2,
-				tx: targetBox.x + targetBox.width / 2,
-				ty: targetBox.y + targetBox.height / 2
-			}
-		);
+	async placeWithTap(pieceId: number, x: number, y: number): Promise<void> {
+		const piece = this.pieceSource(pieceId).getByTestId('puzzle-piece');
+		await piece.tap();
+		await expect(piece).toHaveAttribute('data-selected', 'true');
+		await this.dropZone(x, y).tap();
+		await expect(this.page.getByTestId(`piece-slot-${pieceId}`)).toHaveCount(0);
 	}
 
 	// --- Placement assertions --------------------------------------------------

@@ -362,10 +362,17 @@ To add a new **interaction method** (a new input modality, a new gesture):
 2. Drive it through the existing `pieceSource(pieceId)` / `dropZone(x, y)`
    locators so source scoping stays consistent.
 3. Verify it on Chromium first, then WebKit. Keep reliable WebKit interactions
-   (keyboard, touch, dialog) in the `test:e2e:webkit` coverage and keep mouse
-   drag in `@extended` (see below).
+   (keyboard, tap placement, dialog) in the `test:e2e:webkit` coverage and keep
+   mouse drag in `@extended` (see below).
 4. Add a placement assertion via `expectPiecePlaced(pieceId, x, y)` or a new
    assertion helper in the same file.
+
+Supported touch placement uses `GameplayPage.placeWithTap(pieceId, x, y)`.
+`tapPiece(pieceId)` targets the rendered puzzle-piece control for tests that
+need to inspect rejection/selection before choosing another board cell.
+Direct synthetic touch drag is no longer a supported interaction path. New
+reliable touch methods stay in `@webkit-critical` coverage (the
+`test:e2e:webkit` lane).
 
 To extend the **completion dialog** (new action, new focus rule):
 
@@ -418,8 +425,8 @@ Action taken:
 
 - Native **mouse drag** tests are tagged `@extended` (all five projects), not
   in the manual WebKit suite.
-- **Keyboard, touch, and completion dialog** tests are included in the WebKit
-  suite (reliable on WebKit).
+- **Keyboard, tap placement, and completion dialog** tests are included in the
+  WebKit suite (reliable on WebKit).
 - `placeWithMouse` falls back to dispatching the DnD event sequence
   (`dragover` + `drop`) directly when `dragTo()` does not register a drop, so the
   helper remains usable across all browsers.

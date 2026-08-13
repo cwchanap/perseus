@@ -37,8 +37,8 @@ export default defineConfig({
 		},
 		{
 			name: 'chromium-mobile',
-			// Touch + mobile viewport semantics: the harness touch-drag and
-			// touch-layout paths only render under a touch-capable context.
+			// Touch + mobile viewport semantics: tap interaction and mobile-layout
+			// paths are exercised under a touch-capable context.
 			use: {
 				...devices['Desktop Chrome'],
 				viewport: { width: 390, height: 844 },
