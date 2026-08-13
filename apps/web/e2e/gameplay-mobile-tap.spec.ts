@@ -79,20 +79,28 @@ test('large mobile inventory scrolls from a swipe starting on a piece @smoke', a
 	const x = pieceBox!.x + pieceBox!.width / 2;
 	const startY = pieceBox!.y + pieceBox!.height / 2;
 	const endY = Math.max(gridBox!.y + 16, startY - 140);
+	// Synthesize a realistic finger swipe: many small touchMove frames spaced
+	// ~one animation frame apart. Chromium's touch→scroll gesture detector needs
+	// a fluent, temporally-spaced sequence to reliably commit a scroll under
+	// worker-parallel CPU contention; two large jumps (the old shape) can be
+	// dropped or coalesced into a tap when the lane is saturated.
 	const cdp = await page.context().newCDPSession(page);
+	const steps = 16;
+	const frameMs = 16;
 	try {
 		await cdp.send('Input.dispatchTouchEvent', {
 			type: 'touchStart',
 			touchPoints: [{ x, y: startY, id: 1, radiusX: 1, radiusY: 1, force: 1 }]
 		});
-		await cdp.send('Input.dispatchTouchEvent', {
-			type: 'touchMove',
-			touchPoints: [{ x, y: (startY + endY) / 2, id: 1, radiusX: 1, radiusY: 1, force: 1 }]
-		});
-		await cdp.send('Input.dispatchTouchEvent', {
-			type: 'touchMove',
-			touchPoints: [{ x, y: endY, id: 1, radiusX: 1, radiusY: 1, force: 1 }]
-		});
+		await page.waitForTimeout(frameMs);
+		for (let index = 1; index <= steps; index += 1) {
+			const y = startY + ((endY - startY) * index) / steps;
+			await cdp.send('Input.dispatchTouchEvent', {
+				type: 'touchMove',
+				touchPoints: [{ x, y, id: 1, radiusX: 1, radiusY: 1, force: 1 }]
+			});
+			await page.waitForTimeout(frameMs);
+		}
 		await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
 	} finally {
 		await cdp.detach();
