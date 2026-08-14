@@ -6,184 +6,204 @@
 
 ## Context
 
-HPA-220 is the next actionable child of HPA-215. HPA-224 and HPA-219 are complete, HPA-218 has already shipped, and HPA-215 places HPA-220 next in the remaining delivery order. Its structural prerequisite, HPA-557, is complete and already gives the inventory a concrete `PuzzleInventoryPanel` boundary.
-
-The repository already contains most of the domain shape this feature needs:
+HPA-220 adds four inventory filters and one Shuffle action. The repository already contains the intended seams:
 
 - `PuzzleSessionState.trayOrder` is the canonical persisted piece order;
 - `InventoryFilter` already defines `all | corners | edges | center`;
 - `PersistedTrayOrganization.filter` already stores the active filter;
-- `update_tray_organization` already accepts `set_filter` and `reorder` updates;
-- filter updates already participate in normal session persistence;
-- `reorder` deliberately returns `not_implemented`, with the engine test naming HPA-220/HPA-237 as the owner of that seam;
-- `PuzzleInventoryPanel` already receives `trayOrder`, placement state, selection state, hint state, and explicit callbacks;
-- the route already checkpoints after gameplay actions;
-- placement undo/redo owns only placement/rotation history and does not include tray organization.
+- `update_tray_organization` already accepts `set_filter` and `reorder`;
+- `reorder` deliberately returns `not_implemented` for HPA-220/HPA-237;
+- `PuzzleInventoryPanel` is already the concrete inventory presentation boundary;
+- the route already checkpoints gameplay/session actions;
+- `shuffleArray()` already implements and tests the repository's Fisher–Yates shuffle and is already used by fresh/restart tray ordering.
 
-This means HPA-220 does not need a second inventory store, a query engine, or a new persistence schema. The smallest correct design is to finish the existing tray-organization seam and add filtering controls to the existing inventory panel.
+HPA-220 should finish those seams rather than introduce a second inventory model, a second shuffle implementation, or route-only coordination for behavior that is a session invariant.
 
 ## Goals
 
-1. Add All, Corners, Edges, and Center filters derived from each piece's canonical grid coordinates.
-2. Keep the active filter in the existing `PuzzleSession` tray-organization state so it survives a normal session checkpoint/reload.
-3. Show only unplaced pieces that match the active filter.
-4. Refresh visible pieces automatically after placement, undo, and redo from existing reactive session state.
-5. Clear a selected piece atomically when a filter change would hide it.
-6. Make Hint return the inventory filter to All only when a hint is actually produced, so the hinted piece remains visible.
-7. Add one Shuffle action that reorders all currently unplaced pieces and persists the resulting canonical tray order.
-8. Keep Shuffle outside board undo/redo and leave placement, timer, rotation, counters, result class, and completion state untouched.
-9. Reuse the mobile drawer and responsive preview sizing added by HPA-219.
-10. Keep the implementation small enough to understand without introducing reusable inventory infrastructure for features that do not exist.
+1. Add **All**, **Corners**, **Edges**, and **Center** inventory filters derived from canonical piece coordinates.
+2. Show only unplaced pieces matching the active filter.
+3. Keep the active filter in the existing persisted `organization.filter` field.
+4. Clear a selected piece atomically when a filter change hides it.
+5. Reset the filter to **All** atomically when a hint succeeds so the hinted piece is visible to every `use_hint` caller.
+6. Shuffle every unplaced piece, independent of the active filter.
+7. Persist the resulting canonical `trayOrder`, preserving already-placed IDs in their current full-order positions.
+8. Guarantee that Shuffle changes order whenever at least two unplaced pieces remain.
+9. Keep filtering/shuffling outside placement undo/redo and avoid changing timing, rotations, result class, counters, placements, or completion state.
+10. Keep HPA-219 drawer behavior and mobile density intact.
 
 ## Non-goals
 
+- staging trays, named trays, manual grouping, or multi-select;
+- image-content clustering;
 - preview-size preferences;
-- staging trays or named collections;
-- manual grouping or piece membership editing;
-- multi-select;
-- automatic image/content clustering;
-- selected or hinted floating previews;
-- a generic inventory query/filter framework;
-- a generic shuffle service;
-- cloud synchronization;
-- analytics or performance instrumentation;
-- a persistence migration or schema-version bump;
-- undo/redo for filter or shuffle actions;
-- HPA-223 keyboard-navigation work;
-- HPA-237 staging-tray behavior.
-
-## Options considered
-
-### Option A — Finish the existing tray-organization seam (recommended)
-
-Use `PuzzleSessionState.organization.filter` as the active filter, implement the existing `reorder` tray-organization update for the main tray, and keep the UI inside `PuzzleInventoryPanel`. Add one small coordinate-classification helper shared by the engine and component plus one small shuffle helper for generating a candidate unplaced order.
-
-**Pros**
-
-- reuses the persistence and action contracts already created for HPA-220;
-- no duplicate state owner;
-- filter selection and selection clearing can happen atomically in the engine;
-- shuffle persists through the existing `trayOrder` field;
-- placement undo/redo remains unchanged;
-- future HPA-237 can extend tray organization without HPA-220 pre-building its UI.
-
-**Cons**
-
-- changing a filter counts as session activity under the existing tray-organization contract; this is already the repository behavior and is not redesigned here.
-
-### Option B — Keep filter local to `PuzzleInventoryPanel`
-
-Store `activeFilter` with `$state` beside `drawerOpen`, while only Shuffle touches `PuzzleSession`.
-
-**Rejected:** the domain already has a persisted `filter` field and a working `set_filter` action. Creating a second ephemeral filter would leave existing state unused and make selection clearing a UI/route coordination problem.
-
-### Option C — Add an inventory store/controller
-
-Create a separate store for filtering, selection visibility, and shuffle.
-
-**Rejected:** it duplicates canonical session state and violates the ticket's explicit KISS guardrails.
-
-### Option D — Reorder only the currently visible filtered subset
-
-Shuffle only pieces matching the active filter.
-
-**Rejected:** the ticket says Shuffle reorders unplaced pieces. Filter-dependent shuffle semantics are harder to explain and persist, and they make the same button behave differently based on an unrelated view setting.
+- a generic inventory query/action engine;
+- a new inventory store/controller/view-model;
+- a new shuffle utility or RNG abstraction;
+- persistence schema changes or compatibility migration;
+- cloud synchronization or analytics;
+- broad accessibility work owned by HPA-223.
 
 ## Decision
 
-Use **Option A**.
+Finish the existing `PuzzleSession` tray-organization seam.
 
-`PuzzleSession` remains the only gameplay-state owner. `organization.filter` is the controlled active filter. `trayOrder` remains the canonical full piece permutation. `PuzzleInventoryPanel` renders the filter controls and the filtered projection. The route forwards callbacks, produces a randomized order for all unplaced pieces, and checkpoints the resulting session state.
+The implementation has four responsibilities:
 
-Two tiny pure helpers are sufficient:
+1. one pure `matchesInventoryFilter()` helper shared by the engine and inventory panel;
+2. session-owned filter invariants, hint reveal, and main-tray reorder validation;
+3. controlled filter/Shuffle controls inside `PuzzleInventoryPanel`;
+4. route-owned randomness for Shuffle using the existing `shuffleArray()` utility.
 
-1. coordinate classification/filter matching;
-2. non-mutating Fisher-Yates shuffle of piece IDs.
+No other gameplay state owner is added.
 
-No registry, filter model, inventory view-model, query engine, second store, event bus, or new persistence type is introduced.
+## Coordinate classification
 
-## Inventory classification
+Classification uses each piece's canonical `correctX` / `correctY` plus `gridCols` / `gridRows`. Do not classify from `piece.edges`: degenerate grids such as `1 × N` can have multiple flat visual edges without being corners.
 
-Create `apps/web/src/lib/services/gameplay/inventory.ts` with one coordinate matcher:
+Use one shared helper:
 
 ```ts
 export function matchesInventoryFilter(
-	piece: Pick<PuzzlePiece, 'correctX' | 'correctY'>,
-	gridCols: number,
-	gridRows: number,
-	filter: InventoryFilter
-): boolean
+  piece: Pick<PuzzlePiece, 'correctX' | 'correctY'>,
+  gridCols: number,
+  gridRows: number,
+  filter: InventoryFilter
+): boolean;
 ```
 
-Classification is mutually exclusive for the three non-All filters:
+Definitions:
+
+- `all`: every piece;
+- `corners`: on both a horizontal and vertical boundary;
+- `edges`: on exactly the perimeter but not a corner;
+- `center`: not on the perimeter.
+
+The categories are mutually exclusive except `all`, which matches everything.
+
+Degenerate grids remain coordinate-driven:
+
+- `1 × 1`: the single piece is a corner;
+- `1 × N` / `N × 1`: endpoints are corners and interior cells are edges;
+- there is no Center cell unless a coordinate is off every perimeter boundary.
+
+## Filter ownership and atomic selection clearing
+
+The active filter remains canonical session state:
+
+```ts
+const activeFilter = sessionState?.organization?.filter ?? 'all';
+```
+
+`PuzzleInventoryPanel` receives it as a controlled prop. It does not keep a local filter copy.
+
+`doUpdateTrayOrganization({ type: 'set_filter' })` owns the visibility invariant. Before its single existing `notify()`:
+
+1. assign the new filter to the copied organization;
+2. if `selectedPieceId !== null`, resolve that piece from `pieceById`;
+3. if the selected piece does not match the new filter, set `selectedPieceId = null`;
+4. commit `state.organization`, mark activity, and notify once.
+
+Subscribers must never observe a state where the selected piece is already hidden by the active filter.
+
+Changing to a filter that still contains the selected piece keeps selection.
+
+## Hint reveal is a session invariant
+
+`doUseHint()` already owns successful hint selection, hint counters/facts, the `hint_target` event, and the single state notification. Therefore Hint-to-All belongs there, not in the route.
+
+On a successful hint, before the existing `emit()` / `notify()`:
+
+```ts
+if (state.organization?.filter !== undefined && state.organization.filter !== 'all') {
+  state.organization = { ...state.organization, filter: 'all' };
+}
+```
+
+Do not call `doUpdateTrayOrganization()` from `doUseHint()`: that would create a second notification.
+
+The route's `handleHint()` remains exactly one `use_hint` dispatch followed by the existing checkpoint.
+
+This deliberately uses the coarse rule "successful Hint returns to All." Preferring a hinted piece already visible in the current filter is deferred until demonstrated need.
+
+## Shuffle ownership
+
+### Randomness stays outside the engine
+
+The route owns the random candidate order, matching the existing split where runtime code creates fresh/restart tray orders and `PuzzleSession` validates retained state.
+
+Reuse:
+
+```ts
+import { shuffleArray } from '$lib/utils/shuffle';
+```
+
+Do not add `shufflePieceIds()` and do not change `shuffleArray()`. Changing the shared utility to force non-identity would also change fresh/restart tray behavior.
+
+### Candidate set
+
+Shuffle always uses **all current unplaced IDs in canonical tray order**, not only the pieces visible under the active filter:
+
+```ts
+const unplacedPieceIds = sessionState.trayOrder.filter((id) => !placedPieceIds.has(id));
+```
+
+For zero or one unplaced piece, the UI disables Shuffle and the handler is a no-op guard.
+
+For two or more:
+
+```ts
+const shuffled = shuffleArray(unplacedPieceIds);
+if (shuffled.every((id, index) => id === unplacedPieceIds[index])) {
+  [shuffled[0], shuffled[1]] = [shuffled[1], shuffled[0]];
+}
+```
+
+The identity fallback exists only at this HPA-220 call site.
+
+Then dispatch:
+
+```ts
+{
+  type: 'update_tray_organization',
+  update: { type: 'reorder', trayId: 'main', pieceIds: shuffled }
+}
+```
+
+No RNG seed/state is persisted.
+
+## Main-tray reorder semantics
+
+`PuzzleSession` validates; it never generates random order.
+
+For `reorder`:
+
+1. any `trayId !== 'main'` remains `tray_organization_noop / not_implemented` for HPA-237;
+2. compute the current unplaced IDs from canonical `state.trayOrder` and `state.placedPieces`;
+3. require `update.pieceIds` to be an exact permutation of those unplaced IDs: same length, no duplicates, no unknown IDs, no placed IDs, no omissions;
+4. if invalid, return `tray_organization_noop / invalid_update` without mutation or notification;
+5. if valid, rebuild `state.trayOrder` by replacing only unplaced slots with the supplied order while leaving placed IDs at their current indices;
+6. set `hasUserActivity = true`;
+7. notify once and return `tray_organization_applied`.
+
+Example:
 
 ```text
-onHorizontalBoundary = correctX === 0 || correctX === gridCols - 1
-onVerticalBoundary   = correctY === 0 || correctY === gridRows - 1
-corner                = onHorizontalBoundary && onVerticalBoundary
-perimeter             = onHorizontalBoundary || onVerticalBoundary
-
-corners -> corner
-edges   -> perimeter && !corner
-center  -> !perimeter
-all     -> true
+current full trayOrder: [0, 1, 2, 3]
+placed:                 {1}
+Shuffle candidate:      [3, 0, 2]
+next full trayOrder:    [3, 1, 0, 2]
 ```
 
-This definition handles every supported rectangular grid without depending on piece-image edge metadata.
+The placed ID `1` stays in slot 1.
 
-Degenerate grids remain deterministic:
+The reorder branch does not create or alter `state.organization`; the filter/membership/name metadata is unrelated to random ordering. The existing serializer already persists `trayOrder`.
 
-- 1x1: the only piece is a Corner;
-- 1xN or Nx1: both endpoints are Corners and interior pieces are Edges;
-- one-dimensional grids have no Center pieces.
+Shuffle does not call `pushHistory()`. Placement undo/redo state and availability remain unchanged.
 
-The same matcher is used both by `PuzzleInventoryPanel` and by `PuzzleSession` when deciding whether a filter change hides the selected piece. That prevents the UI and engine from drifting on edge/corner semantics without creating a generic filtering subsystem.
+## Inventory panel
 
-## Filter state and selection behavior
-
-### State ownership
-
-The route derives the active filter directly from session state:
-
-```ts
-const activeInventoryFilter = $derived(sessionState?.organization?.filter ?? 'all');
-```
-
-`PuzzleInventoryPanel` receives `activeFilter` as a controlled prop and emits `onFilterChange(filter)`.
-
-The route dispatches the existing action:
-
-```ts
-sessionStore.dispatch({
-	type: 'update_tray_organization',
-	update: { type: 'set_filter', filter }
-});
-checkpointSession();
-```
-
-There is no panel-local filter state and no compatibility fallback beyond the existing `organization ?? default organization` behavior in `PuzzleSession`.
-
-### Atomic selection clearing
-
-When handling `set_filter`, `PuzzleSession` updates `organization.filter` and checks the current selected piece using `matchesInventoryFilter` and the engine's canonical metadata.
-
-If the selected piece would be hidden by the new filter, set:
-
-```ts
-state.selectedPieceId = null;
-```
-
-before the single `notify()` call.
-
-If it still matches, keep the selection unchanged. All never hides a selected unplaced piece.
-
-This belongs in the session transition rather than in an after-render Svelte effect: subscribers never observe an impossible state where the filter hides a still-selected piece, and the behavior remains testable without the DOM.
-
-Placed pieces are already excluded from selection by the existing session rules, so filter logic needs no additional placed-piece special case beyond normal inventory rendering.
-
-## Filter UI
-
-`PuzzleInventoryPanel` gets three new props:
+`PuzzleInventoryPanel` gains only controlled props/callbacks:
 
 ```ts
 activeFilter: InventoryFilter;
@@ -191,345 +211,122 @@ onFilterChange: (filter: InventoryFilter) => void;
 onShuffle: () => void;
 ```
 
-Keep the existing header focused on inventory identity, remaining count, Cancel, and mobile drawer state. Put the new controls at the top of `#puzzle-inventory-body` in one compact `inventory-tools` row so the HPA-219 phone header does not become crowded.
+The panel already receives puzzle metadata, `trayOrder`, and `placedPieces`, so it derives:
 
-Render four explicit buttons rather than an action registry:
+```ts
+const unplacedPieces = orderedPieces.filter((piece) => !placedPieceIds.has(piece.id));
+const visiblePieces = unplacedPieces.filter((piece) =>
+  matchesInventoryFilter(piece, puzzle.gridCols, puzzle.gridRows, activeFilter)
+);
+```
+
+The count remains total unplaced:
+
+```text
+N LEFT
+```
+
+It does not change to the filtered result count.
+
+An empty filter renders an empty pieces grid. Do not add a special preview/pinned-result surface.
+
+### Controls
+
+Inside `#puzzle-inventory-body`, before `.pieces-grid`, add one `.inventory-tools` row containing:
 
 - ALL
 - CORNERS
 - EDGES
 - CENTER
+- SHUFFLE
 
-Each button:
+Every control reuses the existing `.panel-action` class. Do not duplicate the existing coarse-pointer `min-height: 44px` rule.
 
-- has an accessible name such as `Show all pieces` or `Show corner pieces`;
-- uses `aria-pressed={activeFilter === filter}`;
-- calls `onFilterChange()` directly;
-- uses existing CSS variables and compact visual styling;
-- reaches the existing 44px minimum target inside the coarse-pointer media query.
+Filter buttons use `aria-pressed` for the controlled active filter. Shuffle is disabled when `unplacedPieces.length <= 1`.
 
-A separate `SHUFFLE` button calls `onShuffle` and is disabled when fewer than two unplaced pieces remain.
+The tool row is one non-wrapping horizontal row:
 
-The displayed `N LEFT` count continues to mean **total unplaced pieces**, not count in the active filter. Changing the meaning of the existing progress count when switching views would be surprising and unnecessary.
+```css
+.inventory-tools {
+  display: flex;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+  gap: 0.5rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
 
-When the mobile drawer is collapsed, the body—including filter/shuffle controls—remains hidden by the existing drawer behavior. Cancel stays in the header exactly as HPA-219 designed it.
-
-## Visible-piece projection
-
-Keep the panel's current canonical ordering pipeline and make the filter explicit:
-
-```text
-trayOrder
-  -> resolve IDs to puzzle pieces
-  -> remove placed pieces
-  -> apply active filter
-  -> render
-```
-
-Do not sort by coordinates or piece IDs after filtering. Filtering preserves the current canonical `trayOrder` so Shuffle has an immediate visible effect and resume renders the same order.
-
-Because `placedPieces`, `trayOrder`, and `activeFilter` are controlled props derived from `sessionState`, placement/undo/redo automatically recompute the visible list. No placement event subscription or inventory cache is added.
-
-## Hint reveal behavior
-
-`PuzzleSession.doUseHint()` remains responsible only for selecting a hint target and counting assistance. It should not know that one UI surface has a filter.
-
-The route already owns the hint presentation bridge (`hint_target` -> `activeHintPieceId` / board target), so it also owns the minimal coordination needed to reveal that piece:
-
-1. dispatch `use_hint`;
-2. inspect the returned outcome;
-3. only when the outcome is `hint_used`, dispatch `set_filter('all')` if the active filter is not already All;
-4. checkpoint once after the action sequence.
-
-If Hint returns `hint_noop` because every piece is placed or gameplay is unavailable, leave the user's filter unchanged.
-
-Returning to All is deliberately simpler than adding a pinned hinted-piece preview or temporarily violating the active filter.
-
-## Shuffle behavior
-
-### Candidate generation
-
-Add to `inventory.ts`:
-
-```ts
-export function shufflePieceIds(
-	pieceIds: readonly number[],
-	random: () => number = Math.random
-): number[]
-```
-
-Use a non-mutating Fisher-Yates shuffle. Return a fresh array. Empty and one-item inputs retain their natural order.
-
-For two or more pieces, if the generated permutation happens to equal the input, swap the first two output entries. A user pressing Shuffle should observe a reorder when a reorder is possible, and this small deterministic fallback avoids adding retries or probabilistic tests.
-
-The route computes **all currently unplaced IDs in canonical tray order**, not only pieces visible under the active filter, then calls `shufflePieceIds()` and dispatches:
-
-```ts
-{
-	type: 'update_tray_organization',
-	update: {
-		type: 'reorder',
-		trayId: 'main',
-		pieceIds: shuffledUnplacedIds
-	}
+.inventory-tools .panel-action {
+  flex: 0 0 auto;
 }
 ```
 
-If fewer than two pieces remain, the UI disables Shuffle and no dispatch is needed.
+Horizontal scrolling is acceptable on narrow phones; vertical wrapping is not, because the HPA-219 panel is capped at 16rem and must retain useful tray space.
 
-### Canonical reorder transition
+Keep the HPA-219 header unchanged: `INVENTORY`, `N LEFT`, Cancel, and Open/Collapse stay there. Because tools live inside `#puzzle-inventory-body`, collapsing the drawer hides the tools along with the pieces.
 
-HPA-220 implements `reorder` only for `trayId === 'main'`. HPA-237 owns future tray-specific ordering semantics.
+Do not change mobile slot sizing, safe-area handling, or drawer state.
 
-The engine validates that `update.pieceIds` is an exact permutation of the current unplaced piece IDs:
+## Route wiring
 
-- same length;
-- no duplicates;
-- every ID is a known piece;
-- no placed piece is included;
-- every currently unplaced piece appears exactly once.
-
-Any mismatch returns:
+The route does only the orchestration it uniquely owns:
 
 ```ts
-{ type: 'tray_organization_noop', reason: 'invalid_update' }
+const activeInventoryFilter = $derived(sessionState?.organization?.filter ?? 'all');
 ```
 
-A non-main `trayId` continues to return `not_implemented` so HPA-220 does not invent staging-tray semantics.
+`handleFilterChange(filter)` dispatches `set_filter` and checkpoints.
 
-After validation, rebuild the full canonical `state.trayOrder` by walking the old order:
+`handleShuffle()`:
 
-- placed IDs stay in their existing full-order positions;
-- each unplaced slot consumes the next ID from the new unplaced permutation.
+1. derives all current unplaced IDs from canonical tray order;
+2. returns when fewer than two remain;
+3. calls existing `shuffleArray()`;
+4. applies the local identity swap if needed;
+5. dispatches main-tray `reorder`;
+6. checkpoints.
 
-Example:
-
-```text
-old full order:       [5, 2, 9, 1]
-placed:               {2}
-new unplaced order:   [1, 5, 9]
-new full order:       [1, 2, 5, 9]
-```
-
-This keeps `trayOrder` a complete puzzle-piece permutation, which matches the existing persistence validator and restart/session contract, while only changing the relative order the inventory can display.
-
-The reorder transition then:
-
-- sets `state.trayOrder`;
-- sets `state.hasUserActivity = true` under the existing tray-organization policy;
-- emits one normal state notification;
-- returns `tray_organization_applied`.
-
-It must **not**:
-
-- call `pushHistory()`;
-- start or checkpoint the gameplay clock;
-- alter placements;
-- alter per-piece rotations or rotation mode;
-- alter selected piece;
-- alter counters/facts/result class;
-- alter completion state;
-- change `canUndo` or `canRedo`.
-
-This is what keeps Shuffle separate from board undo/redo.
+`handleHint()` remains unchanged: one `use_hint` dispatch plus checkpoint. There is no route Hint-to-All follow-up.
 
 ## Persistence
 
-No schema work is required.
+No persistence code or schema version changes are required.
 
-`serializeSession()` already persists:
+Existing V1 persistence already serializes and validates:
 
-- `trayOrder` as a full copied array;
-- `organization` when present.
+- full `trayOrder`;
+- optional `organization.filter`.
 
-The V1 loader already validates both canonical tray order and the four organization filter values. HPA-220 therefore uses the existing current schema directly.
-
-No migration, dual-write, fallback field, compatibility adapter, or schema-version bump is added. Pre-release incompatible data may continue to be discarded by the current validator.
-
-## Component and file boundaries
-
-### `apps/web/src/lib/services/gameplay/inventory.ts`
-
-New small pure helper module:
-
-- `matchesInventoryFilter()` owns the coordinate classification rule;
-- `shufflePieceIds()` owns non-mutating candidate-order generation.
-
-It has no Svelte, storage, session, or DOM dependencies.
-
-### `apps/web/src/lib/services/gameplay/inventory.test.ts`
-
-Focused unit coverage for classification and shuffle permutations.
-
-### `apps/web/src/lib/services/gameplay/session/session.ts`
-
-Finish the existing tray-organization seam:
-
-- `set_filter` atomically clears a now-hidden selection;
-- `reorder(main, pieceIds)` validates and applies an exact unplaced permutation;
-- no placement-history integration.
-
-### `apps/web/src/lib/services/gameplay/session/session.test.ts`
-
-Extend the existing tray-organization tests with selection/filter and reorder invariants plus serialize/load persistence proof.
-
-### `apps/web/src/lib/components/PuzzleInventoryPanel.svelte`
-
-Own only presentation/projection:
-
-- controlled filter prop;
-- explicit filter buttons;
-- Shuffle button;
-- unplaced + filtered projection;
-- existing drawer and responsive sizing remain unchanged.
-
-### `apps/web/src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts`
-
-Cover filtered rendering, pressed state, callbacks, disabled Shuffle, and compatibility with the drawer/selection presentation.
-
-### `apps/web/src/routes/puzzle/[id]/+page.svelte`
-
-Small orchestration changes only:
-
-- derive current filter from `PuzzleSessionState.organization`;
-- dispatch/checkpoint filter changes;
-- generate and dispatch a shuffled unplaced order;
-- reset filter to All after a successful Hint outcome;
-- pass the controlled props/callbacks to `PuzzleInventoryPanel`.
-
-No new route state is introduced.
-
-### `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts`
-
-Add only the route-level behavior that cannot be proven below the route: successful Hint while filtered returns to All and leaves the hinted inventory piece visible. Existing component/session tests own the rest.
-
-## Data flow
-
-### Filtering
-
-```text
-Filter button
-  -> PuzzleInventoryPanel.onFilterChange(filter)
-  -> route handleInventoryFilterChange(filter)
-  -> PuzzleSession update_tray_organization(set_filter)
-      -> organization.filter = filter
-      -> clear selectedPieceId if matcher says it is hidden
-  -> session subscription
-  -> PuzzleInventoryPanel receives activeFilter + selectedPieceId
-  -> derived visible pieces update
-```
-
-### Shuffle
-
-```text
-Shuffle button
-  -> PuzzleInventoryPanel.onShuffle()
-  -> route reads sessionState.trayOrder + placedPieces
-  -> shufflePieceIds(all unplaced ids)
-  -> PuzzleSession update_tray_organization(reorder main)
-      -> validate exact unplaced permutation
-      -> rebuild canonical full trayOrder
-  -> checkpointSession()
-  -> persisted V1 trayOrder
-  -> panel rerenders in new order
-```
-
-### Hint reveal
-
-```text
-Hint toolbar action
-  -> PuzzleSession use_hint
-  -> outcome hint_used(pieceId)
-  -> route sets filter All when needed
-  -> existing hint_target event drives highlight/board target
-  -> checkpoint once
-  -> hinted piece is visible in All
-```
-
-## Error and invalid-update behavior
-
-This is local gameplay state, so failures are deterministic no-ops rather than user-facing error dialogs.
-
-- Invalid reorder permutation -> `tray_organization_noop / invalid_update`, no mutation, no notification.
-- Non-main reorder -> `tray_organization_noop / not_implemented`, preserving HPA-237's future scope.
-- Hint no-op -> filter unchanged.
-- Filter with zero matches -> valid empty inventory grid; no synthetic fallback to All.
-- Shuffle with fewer than two unplaced pieces -> disabled UI, no action.
-
-No retry, toast, telemetry, or exception layer is added.
+HPA-220 persists no random seed, RNG state, visible-subset order, alternate tray model, or compatibility data.
 
 ## Testing strategy
 
-### Pure helper tests
+Use five focused TDD slices:
 
-Prove:
+1. pure coordinate matcher tests, including rectangular and degenerate grids;
+2. `PuzzleSession` tests for atomic filter selection clearing, atomic Hint-to-All, main-tray exact-permutation validation, placed-slot preservation, persistence round-trip, and no placement-history/timing changes;
+3. `PuzzleInventoryPanel` browser tests for controlled filtering, empty filters, total `N LEFT`, callback wiring, `aria-pressed`, drawer ownership, and Shuffle disabled at 0–1 unplaced;
+4. route browser test for filter/shuffle wiring and the non-identity fallback by mocking `Math.random` so the existing Fisher–Yates returns identity;
+5. extend the existing HPA-219 390×844 mobile smoke geometry fence so the new non-wrapping tools row still leaves the panel in viewport with at least four visible tray slots.
 
-- rectangular corners, edges, and center are mutually exclusive;
-- square and non-square grids classify correctly;
-- 1x1 and 1xN/Nx1 behavior is deterministic;
-- All matches every valid piece;
-- shuffle does not mutate input;
-- shuffle returns an exact permutation;
-- 0/1-item inputs stay stable;
-- 2+ items produce a changed order even when the injected RNG would otherwise return the identity permutation.
+No new E2E framework or separate scenario is required. The existing mobile drawer test is the correct geometry regression fence.
 
-### Session tests
+## Acceptance criteria
 
-Prove:
-
-- filter update persists through `organization.filter`;
-- a matching selected piece survives filter change;
-- a hidden selected piece is cleared atomically;
-- main reorder accepts an exact permutation of current unplaced IDs;
-- duplicate/missing/unknown/placed IDs are rejected;
-- non-main reorder remains `not_implemented`;
-- placed positions in the full canonical `trayOrder` remain anchored while unplaced order changes;
-- reorder leaves placement history flags, timer fields, placements, rotations, counters, facts, result class, and completion state unchanged;
-- serialize -> load round-trip preserves the shuffled tray order and active filter.
-
-### Component tests
-
-Prove:
-
-- All/Corners/Edges/Center render the expected unplaced slots in canonical tray order;
-- placed pieces remain absent under every filter;
-- active filter exposes `aria-pressed=true`;
-- filter buttons call the explicit callback;
-- Shuffle calls its callback when at least two unplaced pieces remain;
-- Shuffle is disabled with zero or one unplaced piece;
-- remaining count still reports total unplaced pieces;
-- existing Cancel and drawer behavior remain intact.
-
-### Route test
-
-One integration fence is enough:
-
-- begin with a non-All filter;
-- invoke Hint;
-- verify the route dispatches/reflects All after a real hint and the hinted slot is present/highlighted.
-
-Do not add a new E2E scenario for this ticket unless implementation uncovers browser-only behavior. Classification, persistence, and shuffle are deterministic unit/component concerns, and HPA-219 already established the phone inventory geometry/scroll contract.
-
-## KISS / YAGNI guardrails
-
-- `PuzzleSession` stays the sole canonical gameplay state owner.
-- Reuse `InventoryFilter`, `PersistedTrayOrganization`, `TrayOrganizationUpdate`, and `trayOrder`; do not add parallel models.
-- No inventory store/controller/view-model.
-- No generic action registry for four filter buttons.
-- No generic filter/query engine.
-- No staging-tray semantics in `reorder` beyond `main`.
-- No persistence migration or compatibility layer.
-- No undo/redo integration for view filtering or shuffle.
-- No random seed/state persistence; only the resulting order is canonical and persisted.
-- No new responsive sizing preference; keep HPA-219 sizing.
-- No unrelated toolbar, board, accessibility, or visual redesign.
-
-## Acceptance mapping
-
-- **Corner, Edge, Center classification:** one shared coordinate matcher with unit tests.
-- **Only unplaced pieces and reactive refresh:** panel projection derives from controlled `placedPieces`, `trayOrder`, and filter props.
-- **Selection clearing:** atomic `set_filter` transition in `PuzzleSession`.
-- **Hint reveal:** successful route Hint returns filter to All.
-- **Shuffle persistence:** existing `reorder(main)` action updates canonical `trayOrder`; existing V1 serializer persists it.
-- **No gameplay side effects:** reorder never touches placement history, clock, rotation, result, counters, or completion.
-- **Focused tests:** pure helper + session + component + one route integration fence; no new framework or broad E2E matrix.
+- [ ] All/Corners/Edges/Center classification is coordinate-derived and mutually exclusive apart from All.
+- [ ] `1 × 1`, `1 × N`, and `N × 1` grids classify correctly.
+- [ ] Filters show only unplaced matching pieces and react naturally to placement/undo/redo state updates.
+- [ ] A filter change that hides selection clears it before the transition's single notification.
+- [ ] A successful Hint resets a non-All filter to All inside `doUseHint()` before its single notification.
+- [ ] Shuffle always targets all unplaced IDs, independent of the active filter.
+- [ ] With at least two unplaced pieces, Shuffle cannot leave the order unchanged.
+- [ ] Main-tray reorder accepts only an exact unplaced permutation and preserves placed IDs in their full-order slots.
+- [ ] Non-main reorder remains `not_implemented` for HPA-237.
+- [ ] Shuffle does not change placements, timer state, rotations, result class, counters, completion state, or placement undo/redo.
+- [ ] Active filter and canonical tray order survive the existing V1 persistence round trip.
+- [ ] `N LEFT` remains total unplaced, and empty filters remain empty.
+- [ ] Filter/Shuffle controls live inside the drawer body, reuse `.panel-action`, and do not duplicate coarse-pointer touch CSS.
+- [ ] At 390×844 the tools remain one row and the existing inventory fit/density smoke contract still passes.
+- [ ] No new store/controller/query engine, schema migration, sizing preference, or staging-tray behavior is introduced.
