@@ -35,6 +35,91 @@ const puzzle: Puzzle = {
 	]
 };
 
+const filterPuzzle: Puzzle = {
+	id: 'filter-test',
+	name: 'Filter Test',
+	pieceCount: 9,
+	gridCols: 3,
+	gridRows: 3,
+	imageWidth: 300,
+	imageHeight: 300,
+	createdAt: 1704067200000,
+	pieces: [
+		{
+			id: 0,
+			puzzleId: 'filter-test',
+			correctX: 0,
+			correctY: 0,
+			imagePath: 'pieces/0.png',
+			edges: { top: 'flat', right: 'blank', bottom: 'flat', left: 'flat' }
+		},
+		{
+			id: 1,
+			puzzleId: 'filter-test',
+			correctX: 1,
+			correctY: 0,
+			imagePath: 'pieces/1.png',
+			edges: { top: 'flat', right: 'flat', bottom: 'flat', left: 'tab' }
+		},
+		{
+			id: 2,
+			puzzleId: 'filter-test',
+			correctX: 2,
+			correctY: 0,
+			imagePath: 'pieces/2.png',
+			edges: { top: 'flat', right: 'blank', bottom: 'flat', left: 'flat' }
+		},
+		{
+			id: 3,
+			puzzleId: 'filter-test',
+			correctX: 0,
+			correctY: 1,
+			imagePath: 'pieces/3.png',
+			edges: { top: 'flat', right: 'blank', bottom: 'flat', left: 'flat' }
+		},
+		{
+			id: 4,
+			puzzleId: 'filter-test',
+			correctX: 1,
+			correctY: 1,
+			imagePath: 'pieces/4.png',
+			edges: { top: 'flat', right: 'blank', bottom: 'flat', left: 'flat' }
+		},
+		{
+			id: 5,
+			puzzleId: 'filter-test',
+			correctX: 2,
+			correctY: 1,
+			imagePath: 'pieces/5.png',
+			edges: { top: 'flat', right: 'blank', bottom: 'flat', left: 'flat' }
+		},
+		{
+			id: 6,
+			puzzleId: 'filter-test',
+			correctX: 0,
+			correctY: 2,
+			imagePath: 'pieces/6.png',
+			edges: { top: 'flat', right: 'blank', bottom: 'flat', left: 'flat' }
+		},
+		{
+			id: 7,
+			puzzleId: 'filter-test',
+			correctX: 1,
+			correctY: 2,
+			imagePath: 'pieces/7.png',
+			edges: { top: 'flat', right: 'blank', bottom: 'flat', left: 'flat' }
+		},
+		{
+			id: 8,
+			puzzleId: 'filter-test',
+			correctX: 2,
+			correctY: 2,
+			imagePath: 'pieces/8.png',
+			edges: { top: 'flat', right: 'blank', bottom: 'flat', left: 'flat' }
+		}
+	]
+};
+
 function baseProps() {
 	return {
 		puzzle,
@@ -48,7 +133,10 @@ function baseProps() {
 		resolveImage: () => image,
 		onRotate: vi.fn(),
 		onSelect: vi.fn(),
-		onCancelSelection: vi.fn()
+		onCancelSelection: vi.fn(),
+		activeFilter: 'all' as const,
+		onFilterChange: vi.fn(),
+		onShuffle: vi.fn()
 	};
 }
 
@@ -182,5 +270,79 @@ describe('PuzzleInventoryPanel', () => {
 		await expect
 			.element(page.getByRole('button', { name: 'Cancel selected piece' }))
 			.toBeInTheDocument();
+	});
+
+	it('renders only unplaced pieces matching the controlled filter while keeping total LEFT', async () => {
+		render(PuzzleInventoryPanel, {
+			...baseProps(),
+			puzzle: filterPuzzle,
+			trayOrder: filterPuzzle.pieces.map((piece) => piece.id),
+			placedPieces: [{ pieceId: 0, x: 0, y: 0 }],
+			activeFilter: 'corners'
+		});
+
+		await expect.element(page.getByText('8 LEFT')).toBeVisible();
+		expect(page.getByTestId('piece-slot-0').query()).toBeNull();
+		await expect.element(page.getByTestId('piece-slot-2')).toBeVisible();
+		await expect.element(page.getByTestId('piece-slot-6')).toBeVisible();
+		await expect.element(page.getByTestId('piece-slot-8')).toBeVisible();
+		expect(page.getByTestId('piece-slot-4').query()).toBeNull();
+	});
+
+	it('forwards all four filter values and exposes pressed state', async () => {
+		const input = baseProps();
+		render(PuzzleInventoryPanel, input);
+
+		await page.getByRole('button', { name: 'All pieces' }).click();
+		await page.getByRole('button', { name: 'Corner pieces' }).click();
+		await page.getByRole('button', { name: 'Edge pieces' }).click();
+		await page.getByRole('button', { name: 'Center pieces' }).click();
+
+		expect(input.onFilterChange.mock.calls.map(([filter]) => filter)).toEqual([
+			'all',
+			'corners',
+			'edges',
+			'center'
+		]);
+		await expect
+			.element(page.getByRole('button', { name: 'All pieces' }))
+			.toHaveAttribute('aria-pressed', 'true');
+	});
+
+	it('forwards Shuffle and disables it with fewer than two unplaced pieces', async () => {
+		const input = baseProps();
+		const view = render(PuzzleInventoryPanel, input);
+		const shuffle = page.getByRole('button', { name: 'Shuffle pieces' });
+
+		await shuffle.click();
+		expect(input.onShuffle).toHaveBeenCalledOnce();
+
+		await view.rerender({
+			...input,
+			placedPieces: [{ pieceId: 0, x: 0, y: 0 }]
+		});
+		await expect.element(shuffle).toBeDisabled();
+	});
+
+	it('shows a clear empty-filter message when unplaced pieces exist but none match', async () => {
+		render(PuzzleInventoryPanel, {
+			...baseProps(),
+			activeFilter: 'center'
+		});
+		await expect.element(page.getByText('NO PIECES MATCH')).toBeVisible();
+		expect(page.getByText('ALL PIECES PLACED').query()).toBeNull();
+	});
+
+	it('keeps the tools inside the collapsible drawer body on one non-wrapping row', async () => {
+		render(PuzzleInventoryPanel, baseProps());
+		const tools = document.querySelector<HTMLElement>('#puzzle-inventory-body .inventory-tools');
+		expect(tools).not.toBeNull();
+		const style = getComputedStyle(tools!);
+		expect(style.flexWrap).toBe('nowrap');
+		expect(style.overflowX).toBe('auto');
+
+		await page.getByRole('button', { name: 'Collapse inventory' }).click();
+		const body = document.querySelector<HTMLElement>('#puzzle-inventory-body')!;
+		await expect.poll(() => getComputedStyle(body).display).toBe('none');
 	});
 });

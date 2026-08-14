@@ -42,10 +42,12 @@
 		PuzzleSessionState,
 		PuzzleSessionEvent,
 		SealedCompletion,
-		CompletionFailureCode
+		CompletionFailureCode,
+		InventoryFilter
 	} from '$lib/services/gameplay/session/types';
 	import { completionRequestFromSeal } from '$lib/services/gameplay/session/types';
 	import { playerAuth } from '$lib/stores/playerAuth';
+	import { shuffleArray } from '$lib/utils/shuffle';
 
 	const REJECTED_DURATION_MS = 500;
 	const HINT_DURATION_MS = 1800;
@@ -251,6 +253,10 @@
 
 	const placedPieceIds = $derived.by(
 		() => new Set(placedPieces.map((placement) => placement.pieceId))
+	);
+
+	const activeInventoryFilter = $derived<InventoryFilter>(
+		sessionState?.organization?.filter ?? 'all'
 	);
 	const boardMetrics: ResponsivePuzzleBoardMetrics | null = $derived(
 		puzzle
@@ -740,6 +746,30 @@
 		checkpointSession();
 	}
 
+	function handleInventoryFilterChange(filter: InventoryFilter) {
+		if (!sessionStore) return;
+		sessionStore.dispatch({
+			type: 'update_tray_organization',
+			update: { type: 'set_filter', filter }
+		});
+		checkpointSession();
+	}
+
+	function handleInventoryShuffle() {
+		if (!sessionStore || !sessionState) return;
+		const unplacedPieceIds = sessionState.trayOrder.filter((id) => !placedPieceIds.has(id));
+		if (unplacedPieceIds.length <= 1) return;
+		sessionStore.dispatch({
+			type: 'update_tray_organization',
+			update: {
+				type: 'reorder',
+				trayId: 'main',
+				pieceIds: shuffleArray([...unplacedPieceIds])
+			}
+		});
+		checkpointSession();
+	}
+
 	function handleReferenceDown(event?: PointerEvent | KeyboardEvent) {
 		const isPointerEvent = event instanceof PointerEvent;
 		referenceHoldSource = isPointerEvent ? 'pointer' : 'keyboard';
@@ -1184,6 +1214,9 @@
 					onRotate={handlePieceRotate}
 					onSelect={handleSelectPiece}
 					onCancelSelection={handleCancelSelection}
+					activeFilter={activeInventoryFilter}
+					onFilterChange={handleInventoryFilterChange}
+					onShuffle={handleInventoryShuffle}
 				/>
 			</div>
 		{/if}

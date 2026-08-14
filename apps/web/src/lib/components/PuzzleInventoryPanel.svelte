@@ -1,5 +1,7 @@
 <script lang="ts">
 	import PuzzlePiece from '$lib/components/PuzzlePiece.svelte';
+	import { matchesInventoryFilter } from '$lib/services/gameplay/inventory';
+	import type { InventoryFilter } from '$lib/services/gameplay/session/types';
 	import type { Rotation } from '$lib/types/gameplay';
 	import type { PlacedPiece, Puzzle, PuzzlePiece as PuzzlePieceModel } from '$lib/types/puzzle';
 
@@ -16,6 +18,9 @@
 		onRotate: (pieceId: number) => void;
 		onSelect: (pieceId: number) => void;
 		onCancelSelection: () => void;
+		activeFilter: InventoryFilter;
+		onFilterChange: (filter: InventoryFilter) => void;
+		onShuffle: () => void;
 	}
 
 	let {
@@ -30,7 +35,10 @@
 		resolveImage,
 		onRotate,
 		onSelect,
-		onCancelSelection
+		onCancelSelection,
+		activeFilter,
+		onFilterChange,
+		onShuffle
 	}: Props = $props();
 
 	const placedPieceIds = $derived.by(
@@ -45,6 +53,12 @@
 		trayOrder
 			.map((id) => piecesById.get(id))
 			.filter((piece): piece is PuzzlePieceModel => piece !== undefined)
+	);
+
+	const unplacedPieces = $derived(orderedPieces.filter((piece) => !placedPieceIds.has(piece.id)));
+
+	const visiblePieces = $derived(
+		unplacedPieces.filter((piece) => matchesInventoryFilter(piece, puzzle, activeFilter))
 	);
 
 	function displayedRotation(pieceId: number): Rotation {
@@ -90,34 +104,72 @@
 	</div>
 
 	<div class="inventory-body" id="puzzle-inventory-body">
+		<div class="inventory-tools" data-testid="inventory-tools">
+			<button
+				type="button"
+				class="panel-action"
+				aria-label="All pieces"
+				aria-pressed={activeFilter === 'all'}
+				onclick={() => onFilterChange('all')}>ALL</button
+			>
+			<button
+				type="button"
+				class="panel-action"
+				aria-label="Corner pieces"
+				aria-pressed={activeFilter === 'corners'}
+				onclick={() => onFilterChange('corners')}>CORNERS</button
+			>
+			<button
+				type="button"
+				class="panel-action"
+				aria-label="Edge pieces"
+				aria-pressed={activeFilter === 'edges'}
+				onclick={() => onFilterChange('edges')}>EDGES</button
+			>
+			<button
+				type="button"
+				class="panel-action"
+				aria-label="Center pieces"
+				aria-pressed={activeFilter === 'center'}
+				onclick={() => onFilterChange('center')}>CENTER</button
+			>
+			<button
+				type="button"
+				class="panel-action"
+				aria-label="Shuffle pieces"
+				disabled={unplacedPieces.length <= 1}
+				onclick={onShuffle}>SHUFFLE</button
+			>
+		</div>
 		<div class="pieces-grid">
-			{#each orderedPieces as piece (piece.id)}
-				{#if !placedPieceIds.has(piece.id)}
-					<div
-						class={`piece-slot aspect-square border border-(--border) p-[0.2rem] transition-[border-color,box-shadow] duration-150 ${
-							activeHintPieceId === piece.id
-								? 'hinted border-(--accent) shadow-[0_0_14px_var(--accent-glow)]'
-								: rejectedPieceId === piece.id
-									? 'rejected animate-shake border-(--hot) shadow-[0_0_12px_var(--hot-glow)]'
-									: ''
-						}`}
-						data-testid={`piece-slot-${piece.id}`}
-					>
-						<PuzzlePiece
-							{piece}
-							isPlaced={false}
-							{rotationEnabled}
-							rotation={displayedRotation(piece.id)}
-							{onRotate}
-							{resolveImage}
-							selected={selectedPieceId === piece.id}
-							{onSelect}
-							{onCancelSelection}
-						/>
-					</div>
-				{/if}
+			{#each visiblePieces as piece (piece.id)}
+				<div
+					class={`piece-slot aspect-square border border-(--border) p-[0.2rem] transition-[border-color,box-shadow] duration-150 ${
+						activeHintPieceId === piece.id
+							? 'hinted border-(--accent) shadow-[0_0_14px_var(--accent-glow)]'
+							: rejectedPieceId === piece.id
+								? 'rejected animate-shake border-(--hot) shadow-[0_0_12px_var(--hot-glow)]'
+								: ''
+					}`}
+					data-testid={`piece-slot-${piece.id}`}
+				>
+					<PuzzlePiece
+						{piece}
+						isPlaced={false}
+						{rotationEnabled}
+						rotation={displayedRotation(piece.id)}
+						{onRotate}
+						{resolveImage}
+						selected={selectedPieceId === piece.id}
+						{onSelect}
+						{onCancelSelection}
+					/>
+				</div>
 			{/each}
 		</div>
+		{#if unplacedPieces.length > 0 && visiblePieces.length === 0}
+			<div class="filter-empty-msg" data-testid="inventory-filter-empty">NO PIECES MATCH</div>
+		{/if}
 		{#if placedPieces.length === puzzle.pieceCount}
 			<div class="complete-msg">
 				<span class="complete-icon">◆</span>
@@ -193,6 +245,20 @@
 		}
 	}
 
+	.inventory-tools {
+		display: flex;
+		flex-wrap: nowrap;
+		flex-shrink: 0;
+		gap: 0.5rem;
+		overflow-x: auto;
+		padding: 0.5rem 0.875rem;
+		border-bottom: 1px solid var(--border);
+	}
+
+	.inventory-tools .panel-action {
+		flex: 0 0 auto;
+	}
+
 	.panel-tag {
 		font-family: var(--font-display);
 		font-size: 0.6rem;
@@ -262,12 +328,24 @@
 		text-shadow: 0 0 8px var(--green);
 	}
 
+	.filter-empty-msg {
+		flex-shrink: 0;
+		padding: 0.75rem;
+		border-top: 1px solid var(--border);
+		font-family: var(--font-display);
+		font-size: 0.6rem;
+		letter-spacing: 0.15em;
+		text-align: center;
+		color: var(--text-2);
+	}
+
 	/* Mobile-only tray preview size. Below 1024px the tray decouples from the
 	   board-derived slot size and uses a viewport-fluid preview. Desktop
 	   inherits --piece-slot-size from .game-layout (never reset to initial). */
 	@media (max-width: 1023px) {
 		.inventory-panel {
 			--piece-slot-size: clamp(3rem, 16vw, 4.5rem);
+			max-height: 20rem;
 		}
 	}
 
