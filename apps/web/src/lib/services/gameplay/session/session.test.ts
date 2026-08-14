@@ -1075,13 +1075,14 @@ describe('PuzzleSession tray organization', () => {
 	});
 
 	it('rejects tray organization during setup so configure_setup cannot erase its activity', () => {
-		// Regression: doUpdateTrayOrganization sets hasUserActivity and
-		// mutates state.organization, but doConfigureSetup resets
-		// hasUserActivity while preserving state.organization. Allowing
-		// organization during setup would let a later configure_setup make a
-		// changed session appear unused. The guard rejects the action in the
-		// setup lifecycle, so organization stays null and a subsequent
-		// configure_setup leaves hasUserActivity false with no organization.
+		// Regression: doUpdateTrayOrganization mutates state.organization and
+		// sets hasUserActivity (except set_filter, a display preference, and
+		// no-op/identity reorder), but doConfigureSetup resets hasUserActivity
+		// while preserving state.organization. Allowing organization during
+		// setup would let a later configure_setup make a changed session appear
+		// unused. The guard rejects the action in the setup lifecycle, so
+		// organization stays null and a subsequent configure_setup leaves
+		// hasUserActivity false with no organization.
 		const session = createPuzzleSession(makeOptions());
 		expect(session.getState().lifecycle).toBe('setup');
 

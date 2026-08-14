@@ -4,11 +4,12 @@
 // inventory drawer added in this slice. Task 4 extends this file with the
 // full mobile completion flow; Task 5 is the verification fence.
 //
-// The 4-piece fixture proves density + fit (the whole panel must sit inside
-// the viewport and at least four tray slots must be fully visible). The
-// 100-piece fixture proves scroll: a corrected-density 4-piece tray no longer
-// needs scrolling, so scroll must be exercised against the large fixture via
-// a real browser-level touch swipe.
+// The 4-piece fixture proves horizontal slot density (at least four tray
+// slots fully visible) and pins the panel cap at ≤ 20rem. The 100-piece
+// fixture proves the two-row grid content budget and the same cap, plus
+// scroll: a corrected-density 4-piece tray no longer needs scrolling, so
+// scroll must be exercised against the large fixture via a real
+// browser-level touch swipe.
 import { test, expect } from './support/test';
 import { DEFAULT_GAMEPLAY_PREFERENCES } from '../src/lib/services/gameplay/session/preferences';
 
@@ -87,9 +88,10 @@ test('large mobile inventory scrolls from a swipe starting on a piece @smoke', a
 	expect(panelBox).not.toBeNull();
 	expect(firstSlotBox).not.toBeNull();
 	// The 100-piece board page is taller than the 844px viewport, so this drawer's
-	// bottom always sits below the fold regardless of the cap; the four-piece test
-	// above owns the panel-fits-viewport proof. Here, pin the mobile cap itself:
-	// the raised 20rem budget is 320px, and the old 16rem cap measured 256px.
+	// bottom always sits below the fold regardless of the cap. Pin the mobile cap
+	// itself here: the raised 20rem budget is 320px, and the old 16rem cap
+	// measured 256px. The four-piece test above owns the 4-piece cap and slot
+	// density; the grid budget below proves the 100-piece tray fits two rows.
 	expect(panelBox!.height).toBeLessThanOrEqual(20 * 16);
 
 	const gridBudget = await grid.evaluate((element) => {
