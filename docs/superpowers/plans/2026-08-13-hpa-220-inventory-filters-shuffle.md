@@ -1065,7 +1065,7 @@ bunx playwright test e2e/gameplay-mobile-tap.spec.ts \
 
 Expected: PASS, including the existing real touch-swipe scroll assertion.
 
-If the old 16rem cap does not fail the new assertion, the assertion is not sensitive enough: do not weaken the requirement or commit. Measure the actual grid content budget and make the assertion target two complete rendered rows as specified.
+If the old 16rem cap does not fail the new assertion, the assertion is not sensitive enough: do not weaken the requirement or commit. Refine the assertion so it measures the same two-row rendered content budget, then repeat the 16rem-fail/20rem-pass proof. Do not add a new layout framework or preview-size preference.
 
 - [ ] **Step 4: Run the full focused feature set**
 
