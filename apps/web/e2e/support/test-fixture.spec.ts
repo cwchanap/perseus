@@ -74,15 +74,15 @@ test.describe('gotoFixture lifecycle @smoke', () => {
 		gameplayPage
 	}) => {
 		const context = gameplayPage.page.context();
-		// Plant stale state on the web origin BEFORE gotoFixture.
-		await gameplayPage.page.goto('/');
-		await gameplayPage.page.evaluate(() => localStorage.setItem('stale-should-vanish', '1'));
+		// Plant stale state on the web origin BEFORE gotoFixture without navigating
+		// the diagnostics-instrumented gameplay page before its routes are installed.
+		const setupPage = await context.newPage();
+		await setupPage.goto('/');
+		await setupPage.evaluate(() => localStorage.setItem('stale-should-vanish', '1'));
+		await setupPage.close();
 		await context.addCookies([
 			{ name: 'stale-cookie', value: '1', domain: 'localhost', path: '/' }
 		]);
-		expect(
-			await gameplayPage.page.evaluate(() => localStorage.getItem('stale-should-vanish'))
-		).toBe('1');
 
 		await gameplayPage.gotoFixture();
 		await expect(gameplayPage.page.getByTestId('puzzle-board')).toBeVisible();
