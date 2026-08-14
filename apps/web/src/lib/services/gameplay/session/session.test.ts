@@ -80,6 +80,22 @@ function makeMetadata(pieceCount = 4): PuzzleMetadata {
 	};
 }
 
+function makeGridMetadata(gridCols: number, gridRows: number): PuzzleMetadata {
+	const pieceCount = gridCols * gridRows;
+	return {
+		puzzleId: 'pz-grid',
+		source: 'api',
+		pieceCount,
+		gridCols,
+		gridRows,
+		pieces: Array.from({ length: pieceCount }, (_, id) => ({
+			id,
+			correctX: id % gridCols,
+			correctY: Math.floor(id / gridCols)
+		}))
+	};
+}
+
 function makeRunIdFactory(): RunIdFactory {
 	let n = 0;
 	return { create: () => `run-${++n}` };
@@ -829,6 +845,27 @@ describe('PuzzleSession hints', () => {
 
 		expect(session.dispatch({ type: 'use_hint' }).type).toBe('hint_noop');
 	});
+
+	it('reveals a successful hint by resetting the filter before the single notification', () => {
+		const session = createPuzzleSession({ ...makeOptions({ metadata: makeGridMetadata(3, 3) }) });
+		session.dispatch({ type: 'start' });
+		session.dispatch({
+			type: 'update_tray_organization',
+			update: { type: 'set_filter', filter: 'corners' }
+		});
+
+		const observed: string[] = [];
+		const unsubscribe = session.subscribe(() => {
+			observed.push(session.getState().organization?.filter ?? 'all');
+		});
+
+		const outcome = session.dispatch({ type: 'use_hint' });
+		unsubscribe();
+
+		expect(outcome.type).toBe('hint_used');
+		expect(observed).toEqual(['all']);
+		expect(session.getState().organization?.filter).toBe('all');
+	});
 });
 
 describe('PuzzleSession reference modes', () => {
@@ -982,10 +1019,35 @@ describe('PuzzleSession restart', () => {
 
 		expect(session.dispatch({ type: 'restart' }).type).toBe('lifecycle_transitioned');
 	});
+
+	it('restarts with All while retaining other organization fields', () => {
+		const { session } = startedSession();
+		session.dispatch({
+			type: 'update_tray_organization',
+			update: { type: 'rename_tray', trayId: 'future', name: 'Future' }
+		});
+		session.dispatch({
+			type: 'update_tray_organization',
+			update: { type: 'set_active_tray', trayId: 'future' }
+		});
+		session.dispatch({
+			type: 'update_tray_organization',
+			update: { type: 'set_filter', filter: 'corners' }
+		});
+
+		session.dispatch({ type: 'restart' });
+
+		expect(session.getState().organization).toEqual({
+			filter: 'all',
+			activeTray: 'future',
+			membership: {},
+			names: { future: 'Future' }
+		});
+	});
 });
 
 describe('PuzzleSession tray organization', () => {
-	it('applies a valid filter update and records activity', () => {
+	it('applies a valid filter update without recording activity', () => {
 		const { session } = startedSession();
 		expect(session.getState().organization).toBeNull();
 
@@ -996,7 +1058,9 @@ describe('PuzzleSession tray organization', () => {
 
 		expect(outcome.type).toBe('tray_organization_applied');
 		expect(session.getState().organization?.filter).toBe('edges');
-		expect(session.getState().hasUserActivity).toBe(true);
+		// HPA-220: a filter is a display preference, not gameplay activity, so
+		// it must not mark the session resumable.
+		expect(session.getState().hasUserActivity).toBe(false);
 	});
 
 	it('rejects moving an unknown piece', () => {
@@ -1033,6 +1097,78 @@ describe('PuzzleSession tray organization', () => {
 		session.dispatch({ type: 'configure_setup', mode: 'relaxed', rotationEnabled: true });
 		expect(session.getState().hasUserActivity).toBe(false);
 		expect(session.getState().organization).toBeNull();
+	});
+
+	it('persists a filter change without marking gameplay activity', () => {
+		const session = createPuzzleSession({ ...makeOptions({ metadata: makeGridMetadata(3, 3) }) });
+		session.dispatch({ type: 'start' });
+
+		expect(
+			session.dispatch({
+				type: 'update_tray_organization',
+				update: { type: 'set_filter', filter: 'corners' }
+			}).type
+		).toBe('tray_organization_applied');
+
+		expect(session.getState().organization?.filter).toBe('corners');
+		expect(session.getState().hasUserActivity).toBe(false);
+	});
+
+	it('keeps selection when the new filter still contains it', () => {
+		const session = createPuzzleSession({ ...makeOptions({ metadata: makeGridMetadata(3, 3) }) });
+		session.dispatch({ type: 'start' });
+		session.dispatch({ type: 'select_piece', pieceId: 0 });
+		session.dispatch({
+			type: 'update_tray_organization',
+			update: { type: 'set_filter', filter: 'corners' }
+		});
+
+		expect(session.getState().selectedPieceId).toBe(0);
+	});
+
+	it('clears selection in the same notification when the new filter hides it', () => {
+		const session = createPuzzleSession({ ...makeOptions({ metadata: makeGridMetadata(3, 3) }) });
+		session.dispatch({ type: 'start' });
+		session.dispatch({ type: 'select_piece', pieceId: 4 });
+		const observed: Array<{ filter: string | undefined; selectedPieceId: number | null }> = [];
+		const unsubscribe = session.subscribe(() => {
+			const state = session.getState();
+			observed.push({ filter: state.organization?.filter, selectedPieceId: state.selectedPieceId });
+		});
+
+		session.dispatch({
+			type: 'update_tray_organization',
+			update: { type: 'set_filter', filter: 'corners' }
+		});
+		unsubscribe();
+
+		expect(observed).toEqual([{ filter: 'corners', selectedPieceId: null }]);
+	});
+
+	it('round-trips a filter-only organization without fabricating activity', () => {
+		const metadata = makeGridMetadata(3, 3);
+		// Use a UUID-format run id: the loader's isPuzzleRunId check rejects
+		// the short engine-test ids (run-1) that makeRunIdFactory produces.
+		const session = createPuzzleSession({
+			...makeOptions({ metadata }),
+			runIdFactory: { create: () => '11111111-1111-4111-8111-111111111111' }
+		});
+		session.dispatch({ type: 'start' });
+		session.dispatch({
+			type: 'update_tray_organization',
+			update: { type: 'set_filter', filter: 'edges' }
+		});
+
+		const snapshot = serializeSession(session.getState(), 123)!;
+		expect(snapshot.hasUserActivity).toBe(false);
+		expect(snapshot.organization?.filter).toBe('edges');
+
+		const loaded = loadPersistedSession(JSON.stringify(snapshot), contextFromMetadata(metadata));
+		expect(loaded.status).toBe('loaded');
+		if (loaded.status === 'loaded') {
+			expect(loaded.snapshot.hasUserActivity).toBe(false);
+			expect(loaded.snapshot.organization?.filter).toBe('edges');
+		}
 	});
 });
 
@@ -1737,16 +1873,91 @@ describe('PuzzleSession tray organization branches', () => {
 		expect(session.getState().organization?.membership[1]).toBe('group-b');
 	});
 
-	it('returns a not_implemented no-op for a reorder update (HPA-220/237 own tray-org UI)', () => {
+	it('reorders exactly the current unplaced pieces while keeping placed ids in their full-order slots', () => {
 		const { session } = startedSession();
-		const trayOrderBefore = session.getState().trayOrder.slice();
+		session.dispatch({ type: 'attempt_placement', pieceId: 1, x: 1, y: 0 });
+		const before = session.getState();
+
 		const outcome = session.dispatch({
 			type: 'update_tray_organization',
-			update: { type: 'reorder', trayId: 'main', pieceIds: [3, 1, 0, 2] }
+			update: { type: 'reorder', trayId: 'main', pieceIds: [3, 0, 2] }
 		});
-		expect(outcome).toEqual({ type: 'tray_organization_noop', reason: 'not_implemented' });
-		// Reorder must not mutate state or persist a misleading "applied" result.
-		expect(session.getState().trayOrder).toEqual(trayOrderBefore);
+
+		expect(outcome.type).toBe('tray_organization_applied');
+		expect(session.getState().trayOrder).toEqual([3, 1, 0, 2]);
+		expect(session.getState().placedPieces).toEqual(before.placedPieces);
+		expect(session.getState().elapsedActiveSeconds).toBe(before.elapsedActiveSeconds);
+		expect(session.getState().timerStarted).toBe(before.timerStarted);
+		expect(session.getState().pieceRotations).toEqual(before.pieceRotations);
+		expect(session.getState().counters).toEqual(before.counters);
+		expect(session.getState().facts).toEqual(before.facts);
+		expect(session.getState().resultClass).toBe(before.resultClass);
+		expect(session.getState().canUndo).toBe(before.canUndo);
+		expect(session.getState().canRedo).toBe(before.canRedo);
+	});
+
+	it.each([[[0, 2]], [[0, 2, 2]], [[0, 2, 999]], [[0, 1, 2]]])(
+		'rejects invalid main-tray reorder %j',
+		(pieceIds) => {
+			const { session } = startedSession();
+			session.dispatch({ type: 'attempt_placement', pieceId: 1, x: 1, y: 0 });
+			const before = session.getState().trayOrder.slice();
+
+			expect(
+				session.dispatch({
+					type: 'update_tray_organization',
+					update: { type: 'reorder', trayId: 'main', pieceIds }
+				})
+			).toEqual({ type: 'tray_organization_noop', reason: 'invalid_update' });
+			expect(session.getState().trayOrder).toEqual(before);
+		}
+	);
+
+	it('leaves non-main reorder for HPA-237', () => {
+		const { session } = startedSession();
+		expect(
+			session.dispatch({
+				type: 'update_tray_organization',
+				update: { type: 'reorder', trayId: 'group-a', pieceIds: [3, 2, 1, 0] }
+			})
+		).toEqual({ type: 'tray_organization_noop', reason: 'not_implemented' });
+	});
+
+	it('does not mark activity for an identity main-tray reorder', () => {
+		const { session } = startedSession();
+		expect(session.getState().hasUserActivity).toBe(false);
+
+		session.dispatch({
+			type: 'update_tray_organization',
+			update: { type: 'reorder', trayId: 'main', pieceIds: [0, 1, 2, 3] }
+		});
+
+		expect(session.getState().trayOrder).toEqual([0, 1, 2, 3]);
+		expect(session.getState().hasUserActivity).toBe(false);
+	});
+
+	it('marks activity when main-tray reorder changes the canonical order', () => {
+		const { session } = startedSession();
+		session.dispatch({
+			type: 'update_tray_organization',
+			update: { type: 'reorder', trayId: 'main', pieceIds: [3, 2, 1, 0] }
+		});
+		expect(session.getState().hasUserActivity).toBe(true);
+	});
+
+	it('does not let placement undo or redo revert a shuffled tray order', () => {
+		const { session } = startedSession();
+		session.dispatch({ type: 'attempt_placement', pieceId: 1, x: 1, y: 0 });
+		session.dispatch({
+			type: 'update_tray_organization',
+			update: { type: 'reorder', trayId: 'main', pieceIds: [3, 0, 2] }
+		});
+		const shuffled = session.getState().trayOrder.slice();
+
+		session.dispatch({ type: 'undo' });
+		expect(session.getState().trayOrder).toEqual(shuffled);
+		session.dispatch({ type: 'redo' });
+		expect(session.getState().trayOrder).toEqual(shuffled);
 	});
 });
 
