@@ -4,7 +4,7 @@
 
 **Goal:** Add persisted All/Corners/Edges/Center inventory filtering and a persisted Shuffle action for all unplaced pieces without introducing a second inventory state owner or changing board undo/redo semantics.
 
-**Architecture:** Finish the tray-organization seam already present in `PuzzleSession`. A small pure gameplay helper owns coordinate classification and candidate shuffling; `PuzzleSession` owns the controlled filter, selection-clearing invariant, validated canonical tray reorder, and persistence through existing V1 fields. `PuzzleInventoryPanel` remains presentation-only, and the puzzle route forwards filter/shuffle callbacks plus the one Hint-to-All coordination rule.
+**Architecture:** Finish the tray-organization seam already present in `PuzzleSession`. One small pure gameplay module owns coordinate matching and candidate shuffling; `PuzzleSession` owns the controlled filter, selection-clearing invariant, validated canonical reorder, and persistence through existing V1 fields. `PuzzleInventoryPanel` stays presentation-only, and the puzzle route forwards filter/shuffle callbacks plus the one Hint-to-All coordination rule.
 
 **Tech Stack:** TypeScript, Svelte 5, Vitest browser tests, existing `PuzzleSession` transition engine and V1 local-session persistence.
 
@@ -17,38 +17,38 @@
 - Shuffle reorders all currently unplaced pieces, independent of the active filter.
 - Shuffle persists only the resulting canonical order; do not persist RNG state or add a seed contract.
 - Filter/shuffle actions do not enter placement undo/redo and do not start the gameplay timer.
-- Do not add staging trays, named collections, preview sizing preferences, analytics, compatibility migrations, an inventory controller/store/view-model, or a generic query/action framework.
+- Do not add staging trays, named collections, preview-size preferences, analytics, compatibility migrations, an inventory controller/store/view-model, or a generic query/action framework.
 - Keep HPA-219's mobile drawer, safe-area behavior, and responsive piece sizing intact.
-- Add focused tests only; no new E2E scenario unless implementation exposes behavior that cannot be proven in unit/component/route tests.
+- Add focused tests only; no new E2E scenario unless implementation exposes browser-only behavior that cannot be proven below E2E.
 
 ---
 
-## File map
+## File Map
 
 **Create**
 
-- `apps/web/src/lib/services/gameplay/inventory.ts` — pure coordinate matching and non-mutating shuffle generation.
-- `apps/web/src/lib/services/gameplay/inventory.test.ts` — unit tests for classification and shuffle behavior.
+- `apps/web/src/lib/services/gameplay/inventory.ts` — coordinate matching and non-mutating shuffle generation.
+- `apps/web/src/lib/services/gameplay/inventory.test.ts` — focused pure-helper tests.
 
 **Modify**
 
-- `apps/web/src/lib/services/gameplay/session/session.ts` — make `set_filter` enforce selection visibility and implement validated `reorder` for the main tray.
-- `apps/web/src/lib/services/gameplay/session/session.test.ts` — session transition, invariant, and persistence tests.
-- `apps/web/src/lib/components/PuzzleInventoryPanel.svelte` — controlled filter controls, Shuffle control, and filtered unplaced projection.
+- `apps/web/src/lib/services/gameplay/session/session.ts` — selection-safe `set_filter` and validated main-tray `reorder`.
+- `apps/web/src/lib/services/gameplay/session/session.test.ts` — transition, invariant, and persistence tests.
+- `apps/web/src/lib/components/PuzzleInventoryPanel.svelte` — controlled filter/Shuffle controls and filtered projection.
 - `apps/web/src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts` — component behavior/accessibility tests.
-- `apps/web/src/routes/puzzle/[id]/+page.svelte` — derive filter, dispatch/checkpoint filter and shuffle, and reset to All after a successful Hint.
-- `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts` — route-level Hint/filter integration fence.
+- `apps/web/src/routes/puzzle/[id]/+page.svelte` — derive/dispatch/checkpoint filter and shuffle; Hint reveal coordination.
+- `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts` — one route-level Hint/filter integration fence.
 
 **Do not modify by default**
 
 - `apps/web/src/lib/services/gameplay/session/types.ts` — the required types/actions already exist.
-- `apps/web/src/lib/services/gameplay/session/persistence.ts` — V1 already serializes/validates `trayOrder` and organization filters.
-- `apps/web/src/lib/components/PuzzlePiece.svelte` — HPA-220 needs no piece interaction changes.
-- `apps/web/src/routes/layout.css` — HPA-219 already owns mobile piece sizing/touch behavior.
+- `apps/web/src/lib/services/gameplay/session/persistence.ts` — V1 already serializes and validates `trayOrder` plus organization filters.
+- `apps/web/src/lib/components/PuzzlePiece.svelte` — no HPA-220 interaction change is needed.
+- `apps/web/src/routes/layout.css` — HPA-219 already owns mobile inventory sizing/touch behavior.
 
 ---
 
-### Task 1: Add the pure inventory classification and shuffle helpers
+### Task 1: Add Pure Inventory Classification and Shuffle Helpers
 
 **Files:**
 - Create: `apps/web/src/lib/services/gameplay/inventory.ts`
@@ -57,24 +57,24 @@
 **Interfaces:**
 - Consumes: `InventoryFilter` from `$lib/services/gameplay/session/types` and `PuzzlePiece` from `$lib/types/puzzle`.
 - Produces:
-  ```ts
-  export function matchesInventoryFilter(
-    piece: Pick<PuzzlePiece, 'correctX' | 'correctY'>,
-    gridCols: number,
-    gridRows: number,
-    filter: InventoryFilter
-  ): boolean;
 
-  export function shufflePieceIds(
-    pieceIds: readonly number[],
-    random?: () => number
-  ): number[];
-  ```
-- Later tasks use `matchesInventoryFilter` in both the session transition and inventory component, and `shufflePieceIds` in the route.
+```ts
+export function matchesInventoryFilter(
+  piece: Pick<PuzzlePiece, 'correctX' | 'correctY'>,
+  gridCols: number,
+  gridRows: number,
+  filter: InventoryFilter
+): boolean;
+
+export function shufflePieceIds(
+  pieceIds: readonly number[],
+  random?: () => number
+): number[];
+```
 
 - [ ] **Step 1: Write failing classification tests**
 
-Create `inventory.test.ts` with table-driven cases covering square, rectangular, and degenerate grids. Use coordinate objects only; do not construct image/edge metadata that the classifier does not need.
+Create `inventory.test.ts`:
 
 ```ts
 import { describe, expect, it } from 'vitest';
@@ -87,7 +87,7 @@ function matchingFilters(x: number, y: number, cols: number, rows: number) {
 }
 
 describe('matchesInventoryFilter', () => {
-  it('classifies a rectangular perimeter into mutually exclusive corners and edges', () => {
+  it('classifies rectangular corners, edges, and center exclusively', () => {
     expect(matchingFilters(0, 0, 4, 3)).toEqual(['corners']);
     expect(matchingFilters(3, 2, 4, 3)).toEqual(['corners']);
     expect(matchingFilters(1, 0, 4, 3)).toEqual(['edges']);
@@ -99,10 +99,11 @@ describe('matchesInventoryFilter', () => {
     expect(matchingFilters(0, 0, 1, 1)).toEqual(['corners']);
   });
 
-  it('treats one-dimensional endpoints as corners and interior cells as edges', () => {
+  it('treats one-dimensional endpoints as corners and interiors as edges', () => {
     expect(matchingFilters(0, 0, 1, 4)).toEqual(['corners']);
     expect(matchingFilters(0, 1, 1, 4)).toEqual(['edges']);
     expect(matchingFilters(0, 3, 1, 4)).toEqual(['corners']);
+    expect(matchingFilters(0, 2, 1, 4)).not.toContain('center');
   });
 
   it('matches every piece for All', () => {
@@ -113,11 +114,11 @@ describe('matchesInventoryFilter', () => {
 
 - [ ] **Step 2: Write failing shuffle tests**
 
-Add deterministic tests proving no input mutation, exact permutation, stable 0/1-item behavior, and the identity-fallback rule for 2+ items.
+Append:
 
 ```ts
 describe('shufflePieceIds', () => {
-  it('returns a changed permutation without mutating the input', () => {
+  it('returns a changed exact permutation without mutating the input', () => {
     const input = [1, 2, 3, 4] as const;
     const result = shufflePieceIds(input, () => 0.999999);
 
@@ -134,17 +135,17 @@ describe('shufflePieceIds', () => {
 });
 ```
 
-- [ ] **Step 3: Run the new test file and verify it fails because the module does not exist**
+- [ ] **Step 3: Run the new test file and confirm the red state**
 
-Run from `apps/web`:
+From `apps/web`:
 
 ```bash
 bunx vitest --run --browser src/lib/services/gameplay/inventory.test.ts
 ```
 
-Expected: FAIL because `./inventory` is missing.
+Expected: FAIL because `./inventory` does not exist.
 
-- [ ] **Step 4: Implement the minimal pure helper module**
+- [ ] **Step 4: Implement the minimal helper module**
 
 Create `inventory.ts`:
 
@@ -175,6 +176,7 @@ export function shufflePieceIds(
   random: () => number = Math.random
 ): number[] {
   const shuffled = [...pieceIds];
+
   for (let index = shuffled.length - 1; index > 0; index -= 1) {
     const swapIndex = Math.floor(random() * (index + 1));
     [shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[index]];
@@ -191,18 +193,18 @@ export function shufflePieceIds(
 }
 ```
 
-Do not add grid validation here; puzzle metadata is already validated by the session/puzzle loaders.
+Do not add grid validation here; puzzle/session metadata already owns those invariants.
 
-- [ ] **Step 5: Run the helper tests and typecheck**
+- [ ] **Step 5: Run helper tests and warning-strict check**
 
 ```bash
 bunx vitest --run --browser src/lib/services/gameplay/inventory.test.ts
 bun run check
 ```
 
-Expected: helper tests PASS; Svelte/TypeScript check has 0 errors and 0 warnings.
+Expected: PASS; `svelte-check` reports 0 errors and 0 warnings.
 
-- [ ] **Step 6: Commit the pure helper slice**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add src/lib/services/gameplay/inventory.ts src/lib/services/gameplay/inventory.test.ts
@@ -211,7 +213,7 @@ git commit -m "feat(web): add inventory filtering helpers"
 
 ---
 
-### Task 2: Finish canonical filter and main-tray reorder transitions
+### Task 2: Finish Canonical Filter and Main-Tray Reorder Transitions
 
 **Files:**
 - Modify: `apps/web/src/lib/services/gameplay/session/session.ts`
@@ -220,19 +222,77 @@ git commit -m "feat(web): add inventory filtering helpers"
 **Interfaces:**
 - Consumes: `matchesInventoryFilter()` from Task 1 and the existing `update_tray_organization` action.
 - Produces:
-  - `set_filter` updates `organization.filter` and clears a selected piece only when the new filter hides it.
-  - `reorder` with `trayId: 'main'` accepts only an exact permutation of current unplaced IDs and updates canonical `state.trayOrder`.
-  - non-main reorder remains `tray_organization_noop / not_implemented`.
-  - invalid main reorder returns `tray_organization_noop / invalid_update` with no mutation/notification.
+  - `set_filter` changes `organization.filter` and clears selection only when the new filter hides it.
+  - `reorder` with `trayId: 'main'` accepts an exact permutation of current unplaced IDs and rewrites canonical `trayOrder`.
+  - non-main reorder remains `tray_organization_noop / not_implemented` for HPA-237.
+  - invalid main reorder returns `tray_organization_noop / invalid_update` without mutation.
 
-- [ ] **Step 1: Replace the old `not_implemented` reorder test with failing canonical reorder tests**
+- [ ] **Step 1: Add an explicit 3x3 metadata fixture for filter-selection tests**
 
-In the existing `PuzzleSession tray organization branches` section, replace the HPA-220 placeholder test and add these cases:
+Near `makeMetadata()` in `session.test.ts`, add:
+
+```ts
+function makeThreeByThreeMetadata(): PuzzleMetadata {
+  return {
+    puzzleId: 'pz-grid',
+    source: 'api',
+    pieceCount: 9,
+    gridCols: 3,
+    gridRows: 3,
+    pieces: Array.from({ length: 9 }, (_, id) => ({
+      id,
+      correctX: id % 3,
+      correctY: Math.floor(id / 3)
+    }))
+  };
+}
+```
+
+This fixture is required because the existing odd-count `makeMetadata()` intentionally uses one column and cannot prove a true Center piece.
+
+- [ ] **Step 2: Add failing filter-selection tests**
+
+Add beside the existing tray-organization filter test:
+
+```ts
+it('keeps selection when the new filter contains the selected piece', () => {
+  const session = createPuzzleSession(makeOptions({ metadata: makeThreeByThreeMetadata() }));
+  session.dispatch({ type: 'start' });
+  session.dispatch({ type: 'select_piece', pieceId: 0 });
+
+  session.dispatch({
+    type: 'update_tray_organization',
+    update: { type: 'set_filter', filter: 'corners' }
+  });
+
+  expect(session.getState().organization?.filter).toBe('corners');
+  expect(session.getState().selectedPieceId).toBe(0);
+});
+
+it('clears selection when the new filter hides the selected piece', () => {
+  const session = createPuzzleSession(makeOptions({ metadata: makeThreeByThreeMetadata() }));
+  session.dispatch({ type: 'start' });
+  session.dispatch({ type: 'select_piece', pieceId: 4 });
+
+  session.dispatch({
+    type: 'update_tray_organization',
+    update: { type: 'set_filter', filter: 'corners' }
+  });
+
+  expect(session.getState().organization?.filter).toBe('corners');
+  expect(session.getState().selectedPieceId).toBeNull();
+});
+```
+
+- [ ] **Step 3: Replace the existing HPA-220 `not_implemented` main-reorder test with failing canonical reorder tests**
+
+The default `startedSession()` uses four pieces in a 2x2 grid and canonical initial order `[0, 1, 2, 3]`. Piece 1's correct coordinate is `(1, 0)`.
 
 ```ts
 it('reorders exactly the current unplaced pieces in the main tray', () => {
   const { session } = startedSession();
   session.dispatch({ type: 'attempt_placement', pieceId: 1, x: 1, y: 0 });
+
   const before = session.getState();
   const invariant = {
     placedPieces: before.placedPieces,
@@ -243,6 +303,7 @@ it('reorders exactly the current unplaced pieces in the main tray', () => {
     counters: before.counters,
     facts: before.facts,
     resultClass: before.resultClass,
+    sealedCompletion: before.sealedCompletion,
     canUndo: before.canUndo,
     canRedo: before.canRedo
   };
@@ -263,9 +324,11 @@ it('reorders exactly the current unplaced pieces in the main tray', () => {
     counters: session.getState().counters,
     facts: session.getState().facts,
     resultClass: session.getState().resultClass,
+    sealedCompletion: session.getState().sealedCompletion,
     canUndo: session.getState().canUndo,
     canRedo: session.getState().canRedo
   }).toEqual(invariant);
+  expect(session.getState().hasUserActivity).toBe(true);
 });
 
 it.each([
@@ -298,46 +361,9 @@ it('leaves non-main reorder for HPA-237', () => {
 });
 ```
 
-Use the fixture's actual piece coordinates if its `startedSession()` metadata differs; do not weaken the exact-order assertions.
+- [ ] **Step 4: Add a failing serialize/load round-trip test**
 
-- [ ] **Step 2: Add failing selection/filter tests**
-
-Add tests beside the existing valid-filter test:
-
-```ts
-it('keeps selection when the new filter still contains the selected piece', () => {
-  const session = createPuzzleSession({ ...makeOptions({ metadata: makeMetadata(9) }) });
-  session.dispatch({ type: 'start' });
-  session.dispatch({ type: 'select_piece', pieceId: 0 });
-
-  session.dispatch({
-    type: 'update_tray_organization',
-    update: { type: 'set_filter', filter: 'corners' }
-  });
-
-  expect(session.getState().selectedPieceId).toBe(0);
-});
-
-it('clears selection atomically when the new filter hides the selected piece', () => {
-  const session = createPuzzleSession({ ...makeOptions({ metadata: makeMetadata(9) }) });
-  session.dispatch({ type: 'start' });
-  session.dispatch({ type: 'select_piece', pieceId: 4 });
-
-  session.dispatch({
-    type: 'update_tray_organization',
-    update: { type: 'set_filter', filter: 'corners' }
-  });
-
-  expect(session.getState().organization?.filter).toBe('corners');
-  expect(session.getState().selectedPieceId).toBeNull();
-});
-```
-
-If the existing `makeMetadata(9)` fixture uses a one-column layout, add a local explicit 3x3 `PuzzleMetadata` fixture instead. The assertion must use a true center piece; do not rely on a fixture shape that changes the semantics.
-
-- [ ] **Step 3: Add a failing serialize/load round-trip test for filter plus shuffled tray order**
-
-Use the existing `serializeSession`, `loadPersistedSession`, and `contextFromMetadata` helpers already imported in `session.test.ts`:
+Use the already imported `serializeSession`, `loadPersistedSession`, and `contextFromMetadata`:
 
 ```ts
 it('round-trips the active filter and shuffled canonical tray order', () => {
@@ -364,23 +390,23 @@ it('round-trips the active filter and shuffled canonical tray order', () => {
 });
 ```
 
-- [ ] **Step 4: Run the focused session tests and verify the new cases fail**
+- [ ] **Step 5: Run the focused session test and confirm the new red cases**
 
 ```bash
 bunx vitest --run --browser src/lib/services/gameplay/session/session.test.ts
 ```
 
-Expected: existing tests remain green; new reorder/selection tests FAIL against the current placeholder behavior.
+Expected: new selection/reorder tests FAIL against the current placeholder behavior.
 
-- [ ] **Step 5: Implement `set_filter` selection clearing and validated main reorder**
+- [ ] **Step 6: Implement atomic `set_filter` selection clearing**
 
-Import the Task 1 matcher at the top of `session.ts`:
+Import:
 
 ```ts
 import { matchesInventoryFilter } from '$lib/services/gameplay/inventory';
 ```
 
-In `doUpdateTrayOrganization`, keep the existing default organization clone. Update the relevant switch branches along this shape:
+Change the `set_filter` branch in `doUpdateTrayOrganization` to:
 
 ```ts
 case 'set_filter': {
@@ -396,6 +422,30 @@ case 'set_filter': {
   }
   break;
 }
+```
+
+Keep one existing post-switch `notify()`; do not add a second selection notification.
+
+- [ ] **Step 7: Implement exact main-tray reorder validation and mutation**
+
+Add one file-local helper near the tray-organization section:
+
+```ts
+function isExactPermutation(candidate: readonly number[], expected: readonly number[]): boolean {
+  if (candidate.length !== expected.length) return false;
+  const expectedIds = new Set(expected);
+  const candidateIds = new Set(candidate);
+  return (
+    expectedIds.size === expected.length &&
+    candidateIds.size === candidate.length &&
+    candidate.every((pieceId) => expectedIds.has(pieceId))
+  );
+}
+```
+
+Replace only the `reorder` branch:
+
+```ts
 case 'reorder': {
   if (update.trayId !== 'main') {
     return { type: 'tray_organization_noop', reason: 'not_implemented' };
@@ -415,21 +465,9 @@ case 'reorder': {
 }
 ```
 
-Add one file-local helper near the tray-organization section; do not export it or create another module:
+Leave the existing common success tail intact: assign `state.organization`, set `hasUserActivity = true`, notify once, and return `tray_organization_applied`. Do not call `pushHistory()`, `ensureTimerStarted()`, or mutate any other gameplay field.
 
-```ts
-function isExactPermutation(candidate: readonly number[], expected: readonly number[]): boolean {
-  if (candidate.length !== expected.length) return false;
-  const expectedIds = new Set(expected);
-  if (expectedIds.size !== expected.length) return false;
-  const candidateIds = new Set(candidate);
-  return candidateIds.size === candidate.length && candidate.every((pieceId) => expectedIds.has(pieceId));
-}
-```
-
-Leave the existing post-switch behavior unchanged: assign `state.organization`, set `hasUserActivity = true`, call `notify()`, and return `tray_organization_applied`. Do not call `pushHistory()` or `ensureTimerStarted()`.
-
-- [ ] **Step 6: Run session tests and persistence-focused tests**
+- [ ] **Step 8: Run session and persistence gates**
 
 ```bash
 bunx vitest --run --browser \
@@ -440,7 +478,7 @@ bunx vitest --run --browser \
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit the canonical session behavior**
+- [ ] **Step 9: Commit**
 
 ```bash
 git add src/lib/services/gameplay/session/session.ts src/lib/services/gameplay/session/session.test.ts
@@ -449,31 +487,28 @@ git commit -m "feat(web): persist inventory filter and shuffle order"
 
 ---
 
-### Task 3: Add controlled filter and Shuffle controls to `PuzzleInventoryPanel`
+### Task 3: Add Controlled Filter and Shuffle Controls to the Inventory Panel
 
 **Files:**
 - Modify: `apps/web/src/lib/components/PuzzleInventoryPanel.svelte`
 - Modify: `apps/web/src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts`
 
 **Interfaces:**
-- Consumes: `matchesInventoryFilter()` from Task 1 and `InventoryFilter` from session types.
-- New component props:
-  ```ts
-  activeFilter: InventoryFilter;
-  onFilterChange: (filter: InventoryFilter) => void;
-  onShuffle: () => void;
-  ```
-- Produces: controlled filter/shuffle presentation only; no local filter state.
+- Consumes: `matchesInventoryFilter()` and `InventoryFilter`.
+- Adds component props:
 
-- [ ] **Step 1: Expand the component test puzzle to a real 3x3 classification fixture**
+```ts
+activeFilter: InventoryFilter;
+onFilterChange: (filter: InventoryFilter) => void;
+onShuffle: () => void;
+```
 
-The current 2x1 test puzzle cannot exercise Center. Replace or add a dedicated 3x3 puzzle fixture whose IDs map row-major to coordinates `0..8`. Keep the existing two-piece fixture for tests whose exact current assumptions are useful.
+- [ ] **Step 1: Add a 3x3 component fixture and extend `baseProps()`**
 
-Add a helper:
+Keep the current two-piece fixture for existing tests. Add:
 
 ```ts
 const gridPuzzle: Puzzle = {
-  ...puzzle,
   id: 'inventory-grid-test',
   name: 'Inventory Grid Test',
   pieceCount: 9,
@@ -481,6 +516,7 @@ const gridPuzzle: Puzzle = {
   gridRows: 3,
   imageWidth: 300,
   imageHeight: 300,
+  createdAt: 1704067200000,
   pieces: Array.from({ length: 9 }, (_, id) => ({
     id,
     puzzleId: 'inventory-grid-test',
@@ -492,14 +528,18 @@ const gridPuzzle: Puzzle = {
 };
 ```
 
-Edge image metadata is intentionally irrelevant; the new classifier uses coordinates.
-
-- [ ] **Step 2: Add failing controlled-filter rendering/accessibility tests**
-
-Extend `baseProps()` with `activeFilter: 'all'`, `onFilterChange: vi.fn()`, and `onShuffle: vi.fn()` after the component interface is updated. Add tests:
+Extend `baseProps()` with:
 
 ```ts
-it('renders only unplaced pieces in the active coordinate filter and keeps tray order', async () => {
+activeFilter: 'all' as const,
+onFilterChange: vi.fn(),
+onShuffle: vi.fn()
+```
+
+- [ ] **Step 2: Add failing filtered-render and reactive-placement tests**
+
+```ts
+it('renders only unplaced pieces in the active filter while preserving tray order', async () => {
   render(PuzzleInventoryPanel, {
     ...baseProps(),
     puzzle: gridPuzzle,
@@ -515,11 +555,33 @@ it('renders only unplaced pieces in the active coordinate filter and keeps tray 
     'piece-slot-5',
     'piece-slot-7'
   ]);
-  expect(page.getByTestId('piece-slot-4').query()).toBeNull();
   await expect.element(page.getByText('8 LEFT')).toBeVisible();
 });
 
-it('exposes the active filter with aria-pressed and forwards filter changes', async () => {
+it('refreshes filtered results when placement state changes', async () => {
+  const input = {
+    ...baseProps(),
+    puzzle: gridPuzzle,
+    trayOrder: [0, 1, 2, 3, 4, 5, 6, 7, 8],
+    activeFilter: 'edges' as const
+  };
+  const view = render(PuzzleInventoryPanel, input);
+  await expect.element(page.getByTestId('piece-slot-1')).toBeInTheDocument();
+
+  await view.rerender({ ...input, placedPieces: [{ pieceId: 1, x: 1, y: 0 }] });
+  expect(page.getByTestId('piece-slot-1').query()).toBeNull();
+
+  await view.rerender({ ...input, placedPieces: [] });
+  await expect.element(page.getByTestId('piece-slot-1')).toBeInTheDocument();
+});
+```
+
+The second test represents the same prop transitions produced by placement and undo/redo; no inventory event subscription is needed.
+
+- [ ] **Step 3: Add failing filter-control and Shuffle tests**
+
+```ts
+it('exposes active filter state and forwards filter changes', async () => {
   const input = { ...baseProps(), activeFilter: 'corners' as const };
   render(PuzzleInventoryPanel, input);
 
@@ -529,53 +591,48 @@ it('exposes the active filter with aria-pressed and forwards filter changes', as
   await page.getByRole('button', { name: 'Show center pieces' }).click();
   expect(input.onFilterChange).toHaveBeenCalledWith('center');
 });
-```
 
-- [ ] **Step 3: Add failing Shuffle availability/callback tests**
-
-```ts
-it('forwards Shuffle while at least two unplaced pieces remain', async () => {
+it('forwards Shuffle with at least two unplaced pieces', async () => {
   const input = baseProps();
   render(PuzzleInventoryPanel, input);
-
   await page.getByRole('button', { name: 'Shuffle unplaced pieces' }).click();
   expect(input.onShuffle).toHaveBeenCalledOnce();
 });
 
-it('disables Shuffle with one unplaced piece regardless of active filter', async () => {
+it('disables Shuffle with one unplaced piece regardless of the active filter', async () => {
   render(PuzzleInventoryPanel, {
     ...baseProps(),
     placedPieces: [{ pieceId: 0, x: 0, y: 0 }],
     activeFilter: 'corners'
   });
-
   await expect
     .element(page.getByRole('button', { name: 'Shuffle unplaced pieces' }))
     .toBeDisabled();
 });
 ```
 
-Keep the existing drawer tests; they are a regression fence for HPA-219.
+Keep all current Cancel, rejected/hinted, rotation, and drawer tests unchanged as regressions.
 
-- [ ] **Step 4: Run the component test and verify the new props/controls fail**
+- [ ] **Step 4: Run the component test and confirm the red state**
 
 ```bash
 bunx vitest --run --browser src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts
 ```
 
-Expected: FAIL because the component has no filter/shuffle interface yet.
+Expected: FAIL because the new props/controls are not implemented.
 
-- [ ] **Step 5: Add the controlled props and filtered derived projection**
+- [ ] **Step 5: Add controlled props and derived visible pieces**
 
-In `PuzzleInventoryPanel.svelte`, import `InventoryFilter` and `matchesInventoryFilter`, then extend `Props`:
+In `PuzzleInventoryPanel.svelte`, import:
 
 ```ts
-activeFilter: InventoryFilter;
-onFilterChange: (filter: InventoryFilter) => void;
-onShuffle: () => void;
+import { matchesInventoryFilter } from '$lib/services/gameplay/inventory';
+import type { InventoryFilter } from '$lib/services/gameplay/session/types';
 ```
 
-Keep `drawerOpen` as the only local state. Replace the render-time placed-piece `#if` with explicit derived projections:
+Extend `Props` and `$props()` with `activeFilter`, `onFilterChange`, and `onShuffle`.
+
+After `orderedPieces`, add:
 
 ```ts
 const unplacedPieces = $derived(
@@ -591,29 +648,36 @@ const visiblePieces = $derived(
 const canShuffle = $derived(unplacedPieces.length > 1);
 ```
 
-Render `visiblePieces` directly. The existing total remaining count stays `puzzle.pieceCount - placedPieces.length`.
+Render `visiblePieces` directly instead of wrapping every slot in the current placed-piece `#if`.
 
-- [ ] **Step 6: Add the explicit filter and Shuffle controls**
+- [ ] **Step 6: Add one explicit tools row**
 
-At the top of `.inventory-body`, before `.pieces-grid`, add one non-generic tools row:
+At the top of `.inventory-body`, before `.pieces-grid`:
 
 ```svelte
-<div class="inventory-tools" aria-label="Inventory filter">
+<div class="inventory-tools">
   <div class="filter-actions" role="group" aria-label="Inventory filter">
     <button type="button" aria-label="Show all pieces" aria-pressed={activeFilter === 'all'} onclick={() => onFilterChange('all')}>ALL</button>
     <button type="button" aria-label="Show corner pieces" aria-pressed={activeFilter === 'corners'} onclick={() => onFilterChange('corners')}>CORNERS</button>
     <button type="button" aria-label="Show edge pieces" aria-pressed={activeFilter === 'edges'} onclick={() => onFilterChange('edges')}>EDGES</button>
     <button type="button" aria-label="Show center pieces" aria-pressed={activeFilter === 'center'} onclick={() => onFilterChange('center')}>CENTER</button>
   </div>
-  <button type="button" aria-label="Shuffle unplaced pieces" disabled={!canShuffle} onclick={onShuffle}>SHUFFLE</button>
+  <button
+    type="button"
+    aria-label="Shuffle unplaced pieces"
+    disabled={!canShuffle}
+    onclick={onShuffle}
+  >
+    SHUFFLE
+  </button>
 </div>
 ```
 
-Use a shared local class for these five buttons if desired, but do not create an action registry or new component solely to render four filters.
+Use one local class shared by these five buttons, but do not create a filter registry or a new component. Style with existing CSS variables. The row may wrap; it must not force horizontal overflow. Under the existing coarse-pointer media query, give the new buttons `min-height: 44px`.
 
-Style the tools row with existing `--bg-*`, `--border`, `--text-*`, and `--accent` variables. It must wrap rather than horizontally overflow. Under `@media (pointer: coarse)`, give tool buttons `min-height: 44px`. Preserve all existing drawer/mobile/desktop CSS.
+Keep the existing header count as total unplaced pieces and keep the existing drawer hide/show behavior unchanged.
 
-- [ ] **Step 7: Run the focused component suite and warning-strict check**
+- [ ] **Step 7: Run focused component tests and check**
 
 ```bash
 bunx vitest --run --browser src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts
@@ -622,7 +686,7 @@ bun run check
 
 Expected: PASS and 0 warnings.
 
-- [ ] **Step 8: Commit the inventory presentation slice**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add src/lib/components/PuzzleInventoryPanel.svelte src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts
@@ -631,32 +695,30 @@ git commit -m "feat(web): add inventory filter and shuffle controls"
 
 ---
 
-### Task 4: Wire controlled filters, Shuffle, and Hint reveal through the puzzle route
+### Task 4: Wire Filters, Shuffle, and Hint Reveal Through the Puzzle Route
 
 **Files:**
 - Modify: `apps/web/src/routes/puzzle/[id]/+page.svelte`
 - Modify: `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts`
 
 **Interfaces:**
-- Consumes: `InventoryFilter`, `shufflePieceIds()`, existing session dispatch/checkpoint functions, and Task 3's new `PuzzleInventoryPanel` props.
+- Consumes: `InventoryFilter`, `shufflePieceIds()`, existing session dispatch/checkpoint helpers, and Task 3's component props.
 - Produces:
-  - route-derived `activeInventoryFilter`;
+  - derived `activeInventoryFilter`;
   - `handleInventoryFilterChange(filter)`;
   - `handleShuffleInventory()`;
   - successful Hint resets a non-All filter to All before the single checkpoint.
 
-- [ ] **Step 1: Add the failing route integration test for Hint reveal**
+- [ ] **Step 1: Add the failing route Hint/filter integration test**
 
-Use the route test's default 2x1 puzzle: both pieces are Corners, so selecting Edges intentionally produces an empty inventory. Then Hint must return to All and expose the hinted piece.
+The existing `renderPuzzlePage()` helper already stubs the default 2x1 puzzle, renders, and awaits board visibility. In a 2x1 grid both pieces are Corners, so Edges produces an intentionally empty inventory.
 
-Add a test near the existing Hint route tests:
+Add near the current Hint tests:
 
 ```ts
-it('returns a filtered inventory to All after a successful hint so the hinted piece is visible', async () => {
-  vi.mocked(fetchPuzzle).mockResolvedValue(createMockPuzzle());
-  renderPuzzlePage();
+it('returns a filtered inventory to All after a successful hint', async () => {
+  await renderPuzzlePage();
 
-  await expect.element(page.getByTestId('puzzle-inventory-panel')).toBeVisible();
   await page.getByRole('button', { name: 'Show edge pieces' }).click();
   await expect
     .element(page.getByRole('button', { name: 'Show edge pieces' }))
@@ -673,19 +735,19 @@ it('returns a filtered inventory to All after a successful hint so the hinted pi
 });
 ```
 
-If the existing deterministic hint helper selects piece 1 rather than piece 0, assert the actual hinted slot. The test must prove that the inventory was empty under Edges first and visible under All after Hint; do not merely assert button callbacks.
+The current deterministic tray order is `[0, 1]`, so the existing hint service selects piece 0 first. Keep the assertion specific to piece 0.
 
-- [ ] **Step 2: Run the route test and verify it fails at the missing filter control**
+- [ ] **Step 2: Run the route test and confirm the red state**
 
 ```bash
 bunx vitest --run --browser src/routes/puzzle/[id]/page.svelte.test.ts
 ```
 
-Expected: FAIL because the route does not yet pass Task 3's required props.
+Expected: FAIL at the missing filter controls/required component props.
 
 - [ ] **Step 3: Derive the controlled filter and add the filter handler**
 
-Extend the session-type import with `InventoryFilter` and import `shufflePieceIds`:
+Extend the existing session-types import with `InventoryFilter` and add:
 
 ```ts
 import { shufflePieceIds } from '$lib/services/gameplay/inventory';
@@ -710,16 +772,19 @@ function handleInventoryFilterChange(filter: InventoryFilter) {
 }
 ```
 
-Do not add `$state` for the filter.
+Do not add route-local `$state` for the filter.
 
 - [ ] **Step 4: Add Shuffle orchestration over all unplaced IDs**
 
-Use the route's existing canonical `placedPieceIds` derived set:
+Use the route's existing `placedPieceIds` derived set:
 
 ```ts
 function handleShuffleInventory() {
   if (!sessionStore || !sessionState) return;
-  const unplacedPieceIds = sessionState.trayOrder.filter((pieceId) => !placedPieceIds.has(pieceId));
+
+  const unplacedPieceIds = sessionState.trayOrder.filter(
+    (pieceId) => !placedPieceIds.has(pieceId)
+  );
   if (unplacedPieceIds.length < 2) return;
 
   sessionStore.dispatch({
@@ -734,15 +799,16 @@ function handleShuffleInventory() {
 }
 ```
 
-Do not filter `unplacedPieceIds` by `activeInventoryFilter`.
+Do not apply `activeInventoryFilter` when building `unplacedPieceIds`.
 
 - [ ] **Step 5: Make successful Hint reveal its target through All**
 
-Change `handleHint()` from fire-and-forget dispatch to outcome-aware coordination:
+Replace the current `handleHint()` body with:
 
 ```ts
 function handleHint() {
   if (!sessionStore) return;
+
   const outcome = sessionStore.dispatch({ type: 'use_hint' });
   if (outcome.type === 'hint_used' && activeInventoryFilter !== 'all') {
     sessionStore.dispatch({
@@ -768,7 +834,7 @@ onShuffle={handleShuffleInventory}
 
 Keep existing selection/rotation/hint/rejection props unchanged.
 
-- [ ] **Step 7: Run route, component, session, and helper tests together**
+- [ ] **Step 7: Run the four focused suites together**
 
 ```bash
 bunx vitest --run --browser \
@@ -780,7 +846,7 @@ bunx vitest --run --browser \
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit the route integration slice**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add src/routes/puzzle/[id]/+page.svelte src/routes/puzzle/[id]/page.svelte.test.ts
@@ -789,76 +855,68 @@ git commit -m "feat(web): wire inventory filters and shuffle"
 
 ---
 
-### Task 5: Run the final HPA-220 validation gates
+### Task 5: Run Final HPA-220 Validation Gates
 
 **Files:**
-- No planned production changes. Only fix issues directly caused by HPA-220 if a gate fails.
+- No planned production changes. Fix only issues directly caused by HPA-220 if a gate fails.
 
 **Interfaces:**
-- Consumes: completed Tasks 1-4.
-- Produces: evidence that HPA-220 is ready for review without broadening scope.
+- Consumes: Tasks 1-4.
+- Produces: merge-readiness evidence without broadening scope.
 
 - [ ] **Step 1: Run the full web unit/browser suite**
 
+From `apps/web`:
+
+```bash
+bun run test:unit
+```
+
+Expected: PASS. Do not add unrelated tests merely to alter aggregate coverage.
+
+- [ ] **Step 2: Run check, lint, and build**
+
+```bash
+bun run check
+bun run lint
+bun run build
+```
+
+Expected: all PASS; check reports 0 errors and 0 warnings.
+
+- [ ] **Step 3: Verify diff scope and whitespace**
+
 From the repository root:
-
-```bash
-bun run test:unit --filter=@perseus/web
-```
-
-Expected: PASS with existing coverage reporting; do not add tests solely to chase unrelated global coverage.
-
-- [ ] **Step 2: Run warning-strict Svelte/TypeScript checks**
-
-```bash
-bun run check --filter=@perseus/web
-```
-
-Expected: 0 errors, 0 warnings.
-
-- [ ] **Step 3: Run lint and production build**
-
-```bash
-bun run lint --filter=@perseus/web
-bun run build --filter=@perseus/web
-```
-
-Expected: PASS.
-
-- [ ] **Step 4: Verify the implementation stayed inside the intended architecture**
-
-Run:
 
 ```bash
 git diff --check main...HEAD
 git diff --name-only main...HEAD
 ```
 
-Expected implementation file set is limited to the seven source/test files named in this plan plus these two planning documents. No session schema version, migration, new store/controller/view-model, E2E harness, staging-tray UI, or responsive-size preference should appear.
+Expected implementation scope is the eight source/test paths in this plan plus the two planning documents. No session-schema version, migration, new store/controller/view-model, E2E harness, staging-tray UI, or preview-size preference should appear.
 
-- [ ] **Step 5: Inspect the final diff for the acceptance invariants**
-
-Confirm directly from the diff/tests:
+- [ ] **Step 4: Review the acceptance invariants directly in the final diff/tests**
 
 ```text
 [ ] corners / edges / center are mutually exclusive coordinate classes
 [ ] filter state comes from PuzzleSession organization.filter
-[ ] hidden selection clears inside set_filter before notify
+[ ] hidden selection clears inside set_filter before the single notify
+[ ] placement/undo/redo refresh filtered results through controlled props
 [ ] Hint resets to All only on hint_used
 [ ] Shuffle input is every unplaced ID, not the active filtered subset
 [ ] main reorder validates an exact unplaced permutation
 [ ] placed IDs stay anchored in the full trayOrder
 [ ] reorder does not push placement history or start/checkpoint the timer
-[ ] current V1 serializer/validator is reused without schema changes
-[ ] HPA-219 drawer/responsive sizing remains intact
+[ ] V1 serializer/validator is reused without schema changes
+[ ] HPA-219 drawer and responsive sizing remain intact
 ```
 
-- [ ] **Step 6: Commit only if validation required a directly scoped correction**
+- [ ] **Step 5: Commit only a directly scoped correction if validation found one**
 
-If all gates pass with a clean worktree, do not create an empty verification commit. If a scoped fix was necessary:
+If the worktree is already clean and all gates pass, create no verification commit. If HPA-220 itself needed a correction:
 
 ```bash
-git add <only-the-HPA-220-files-that-were-fixed>
+git add <only-the-HPA-220-files-that-were-corrected>
 git commit -m "fix(web): tighten inventory filter and shuffle behavior"
 ```
 
