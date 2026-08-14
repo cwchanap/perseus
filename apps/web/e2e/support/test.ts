@@ -17,6 +17,13 @@ import { GameplayPage } from './gameplay-page';
 
 export const test = base.extend<{ gameplayPage: GameplayPage }>({
 	gameplayPage: async ({ page }, use) => {
+		// Keep gameplay E2E deterministic and offline-safe. Typography has local
+		// fallbacks, so the tests do not need Google Fonts and should not fail
+		// when its CDN is unavailable or changes a generated font URL.
+		await page.route('https://fonts.googleapis.com/**', async (route) => {
+			await route.fulfill({ status: 200, contentType: 'text/css', body: '' });
+		});
+
 		const gameplayPage = new GameplayPage(page);
 		// Capture the test body error separately so teardown post-conditions
 		// can be evaluated and reported alongside (or instead of) it, without
