@@ -147,7 +147,7 @@ A successful `use_hint` already owns candidate choice, hint counters/facts, the 
 Before the existing `hint_target` event and `notify()`:
 
 ```ts
-if (state.organization?.filter !== undefined && state.organization.filter !== 'all') {
+if (state.organization && state.organization.filter !== 'all') {
   state.organization = { ...state.organization, filter: 'all' };
 }
 ```
@@ -166,13 +166,15 @@ The route owns RNG, matching the existing boundary used for initial/restart tray
 
 ```ts
 const unplacedPieceIds = sessionState.trayOrder.filter((id) => !placedPieceIds.has(id));
-const shuffled = shuffleArray(unplacedPieceIds);
+const shuffled = shuffleArray([...unplacedPieceIds]);
 sessionStore.dispatch({
   type: 'update_tray_organization',
   update: { type: 'reorder', trayId: 'main', pieceIds: shuffled }
 });
 checkpointSession();
 ```
+
+`shuffleArray()` currently accepts a mutable-array parameter even though it returns a copy, so the route supplies a shallow copy rather than changing the shared utility signature.
 
 The route does not add another Fisher–Yates implementation, an RNG parameter, a seed, or an identity-swap fallback.
 
@@ -309,7 +311,9 @@ No preview-size preference is added.
 The route derives:
 
 ```ts
-const activeInventoryFilter = $derived(sessionState?.organization?.filter ?? 'all');
+const activeInventoryFilter = $derived<InventoryFilter>(
+  sessionState?.organization?.filter ?? 'all'
+);
 ```
 
 Filter callback:
@@ -328,7 +332,7 @@ Shuffle callback:
 
 - collect all unplaced IDs from canonical full tray order;
 - if fewer than two remain, no-op defensively;
-- call existing `shuffleArray()`;
+- pass a shallow copy to existing `shuffleArray()`;
 - dispatch one main-tray `reorder`;
 - checkpoint.
 
@@ -370,7 +374,6 @@ Focused session tests cover:
 - selection retained when visible;
 - selection cleared atomically when hidden;
 - successful Hint resets a non-All filter to All before the single subscriber notification;
-- failed/all-placed Hint leaves the filter alone;
 - restart resets filter to All while preserving the other organization fields;
 - valid main reorder preserves placed indices and non-tray state;
 - identity reorder leaves activity unchanged;
@@ -398,9 +401,9 @@ Focused component tests cover:
 Focused route tests cover only route-owned behavior:
 
 - controlled filter derived from session state;
-- filter callback dispatch + checkpoint;
-- Shuffle uses all unplaced IDs and dispatches one main-tray reorder;
-- 0–1 unplaced defensive Shuffle no-op.
+- filter callback dispatch + checkpoint without activity;
+- changed Shuffle uses all unplaced IDs and checkpoints the new order;
+- identity Shuffle leaves `hasUserActivity` false.
 
 Hint→All stays a session test, not a route coordination test.
 
@@ -420,6 +423,7 @@ Extend the existing HPA-219 Chromium-mobile test on `e2e-square-100` to assert t
 - [ ] Shuffle uses the existing `shuffleArray()` and all currently unplaced IDs, independent of the active filter.
 - [ ] Main-tray reorder accepts only an exact permutation of current unplaced IDs and preserves placed IDs at their existing full-order indices.
 - [ ] A reorder marks activity only when the full canonical tray order actually changes.
+- [ ] A random identity Shuffle is valid and does not fabricate gameplay activity.
 - [ ] Shuffle/reorder does not change placements, timer, rotations, result class, counters, completion state, or placement Undo/Redo history.
 - [ ] Non-main reorder remains `not_implemented` for HPA-237.
 - [ ] Empty filters show `NO PIECES MATCH`; all-placed state keeps its existing completion copy.
@@ -451,4 +455,4 @@ Mitigation: one non-wrapping horizontally scrolling tool row, mobile cap raised 
 
 ### Random shuffle appears unchanged
 
-Mitigation: accept standard Fisher–Yates identity as valid random behavior. Do not add filter-aware reshuffle policy until real usage demonstrates a need.
+Mitigation: accept standard Fisher–Yates identity as valid random behavior and avoid marking activity when the full canonical order is unchanged. Do not add filter-aware reshuffle policy until real usage demonstrates a need.
