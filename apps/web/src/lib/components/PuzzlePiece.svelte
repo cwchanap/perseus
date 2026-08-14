@@ -2,6 +2,7 @@
 	import type { PuzzlePiece } from '$lib/types/puzzle';
 	import type { Rotation } from '$lib/types/gameplay';
 	import { EXPANSION_FACTOR, TAB_RATIO } from '$lib/constants/puzzle';
+	import { coarsePointer } from '$lib/stores/pointer';
 
 	interface Props {
 		piece: PuzzlePiece;
@@ -106,7 +107,7 @@
 		class:cursor-not-allowed={isPlaced}
 		class:ring-2={selected}
 		class:ring-blue-400={selected}
-		draggable={!isPlaced}
+		draggable={!isPlaced && !$coarsePointer}
 		ondragstart={handleDragStart}
 		use:interactionAction
 		role="button"
