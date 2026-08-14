@@ -77,7 +77,7 @@ Rejected. Four fixed filters and one shuffle action do not justify a registry, q
 
 ### Option D — Guarantee a distinct shuffle with another helper
 
-Rejected for HPA-220. A “distinct full order” guarantee does not guarantee that a filtered projection changes, and making the guarantee filter-aware adds policy and complexity that the ticket does not require. Reuse the existing unbiased shuffle and accept the small possibility of identity.
+Rejected for HPA-220. A “distinct full order” guarantee does not guarantee that a filtered projection changes, and making the guarantee filter-aware adds policy and complexity that the ticket does not require. Reuse the existing unbiased shuffle and accept the possibility of identity.
 
 ## Decision
 
@@ -178,7 +178,7 @@ checkpointSession();
 
 The route does not add another Fisher–Yates implementation, an RNG parameter, a seed, or an identity-swap fallback.
 
-`shuffleArray()` may return the same order. HPA-220 defines Shuffle as a random permutation request, not a guarantee that every active filtered projection changes.
+`shuffleArray()` may return the same order. HPA-220 defines Shuffle as a random permutation request, not a guarantee that every active filtered projection changes. This is especially relevant under a non-All filter: the full canonical order may change while the visible subset keeps the same relative order, and HPA-220 intentionally does not add filter-aware reshuffle policy.
 
 The Shuffle control is disabled when fewer than two unplaced pieces remain.
 
