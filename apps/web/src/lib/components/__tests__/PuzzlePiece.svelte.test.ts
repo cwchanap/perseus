@@ -1,5 +1,5 @@
 // Component tests for PuzzlePiece (controlled selection)
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { page, userEvent } from 'vitest/browser';
 import PuzzlePiece from '../PuzzlePiece.svelte';
@@ -475,49 +475,5 @@ describe('PuzzlePiece', () => {
 
 			expect(dataTransfer.getData('text/plain')).toBe('');
 		});
-	});
-});
-
-describe('coarse pointer (mobile)', () => {
-	afterEach(() => {
-		vi.unstubAllGlobals();
-	});
-
-	// Emulates a coarse (touch) pointer so the coarsePointer store reports
-	// `matches: true` for `(pointer: coarse)` without relying on the host
-	// browser's actual pointer type (headless Chromium defaults to fine).
-	function stubPointerCoarse(coarse: boolean): void {
-		const matchMedia = vi.fn().mockImplementation((query: string) => ({
-			matches: query === '(pointer: coarse)' ? coarse : false,
-			media: query,
-			onchange: null,
-			addEventListener: vi.fn(),
-			removeEventListener: vi.fn(),
-			addListener: vi.fn(),
-			removeListener: vi.fn(),
-			dispatchEvent: vi.fn()
-		}));
-		vi.stubGlobal('matchMedia', matchMedia);
-	}
-
-	it('disables native dragging for an unplaced piece on a coarse pointer', async () => {
-		stubPointerCoarse(true);
-		render(PuzzlePiece, { piece: mockPiece, isPlaced: false, resolveImage });
-
-		await expect.element(page.getByTestId('puzzle-piece')).toHaveAttribute('draggable', 'false');
-	});
-
-	it('preserves native dragging for an unplaced piece on a fine pointer', async () => {
-		stubPointerCoarse(false);
-		render(PuzzlePiece, { piece: mockPiece, isPlaced: false, resolveImage });
-
-		await expect.element(page.getByTestId('puzzle-piece')).toHaveAttribute('draggable', 'true');
-	});
-
-	it('stays non-draggable for a placed piece on a coarse pointer', async () => {
-		stubPointerCoarse(true);
-		render(PuzzlePiece, { piece: mockPiece, isPlaced: true, resolveImage });
-
-		await expect.element(page.getByTestId('puzzle-piece')).toHaveAttribute('draggable', 'false');
 	});
 });

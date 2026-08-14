@@ -19,8 +19,11 @@ export const test = base.extend<{ gameplayPage: GameplayPage }>({
 	gameplayPage: async ({ page }, use) => {
 		// Keep gameplay E2E deterministic and offline-safe. Typography has local
 		// fallbacks, so the tests do not need Google Fonts and should not fail
-		// when its CDN is unavailable or changes a generated font URL.
-		await page.route('https://fonts.googleapis.com/**', async (route) => {
+		// when its CDN is unavailable or changes a generated font URL. Registered
+		// on the browser context (not the page) so the stub also covers temporary
+		// setup pages created by tests via context.newPage() (e.g. planting stale
+		// state before gotoFixture), which would otherwise hit the live CDN.
+		await page.context().route('https://fonts.googleapis.com/**', async (route) => {
 			await route.fulfill({ status: 200, contentType: 'text/css', body: '' });
 		});
 
