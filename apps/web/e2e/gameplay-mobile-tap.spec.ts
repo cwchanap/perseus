@@ -75,6 +75,34 @@ test('large mobile inventory scrolls from a swipe starting on a piece @smoke', a
 	expect(pieceBox).not.toBeNull();
 	expect(gridBox).not.toBeNull();
 
+	const panel = page.getByTestId('puzzle-inventory-panel');
+	const viewport = page.viewportSize();
+	const panelBox = await panel.boundingBox();
+	const firstSlotBox = await page.locator('[data-testid^="piece-slot-"]').first().boundingBox();
+	expect(viewport).toEqual({ width: 390, height: 844 });
+	expect(panelBox).not.toBeNull();
+	expect(firstSlotBox).not.toBeNull();
+	// The 100-piece board page is taller than the 844px viewport, so this drawer's
+	// bottom always sits below the fold regardless of the cap; the four-piece test
+	// above owns the panel-fits-viewport proof. Here, pin the mobile cap itself:
+	// the raised 20rem budget is 320px, and the old 16rem cap measured 256px.
+	expect(panelBox!.height).toBeLessThanOrEqual(20 * 16);
+
+	const gridBudget = await grid.evaluate((element) => {
+		const style = getComputedStyle(element);
+		const paddingTop = Number.parseFloat(style.paddingTop) || 0;
+		const paddingBottom = Number.parseFloat(style.paddingBottom) || 0;
+		const rowGap = Number.parseFloat(style.rowGap) || 0;
+		return {
+			contentHeight: element.clientHeight - paddingTop - paddingBottom,
+			rowGap
+		};
+	});
+
+	expect(gridBudget.contentHeight).toBeGreaterThanOrEqual(
+		firstSlotBox!.height * 2 + gridBudget.rowGap
+	);
+
 	const before = await grid.evaluate((element) => element.scrollTop);
 	const x = pieceBox!.x + pieceBox!.width / 2;
 	const startY = pieceBox!.y + pieceBox!.height / 2;
