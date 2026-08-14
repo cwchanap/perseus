@@ -493,6 +493,67 @@ describe('Puzzle route gameplay integration', () => {
 		expect(runtimeState.createRestartTrayOrder).toHaveBeenCalledTimes(1);
 	});
 
+	it('persists a filter without locking setup or creating gameplay activity', async () => {
+		await renderPuzzlePage();
+		sessionStorageSpies.saveSession.mockClear();
+
+		await page.getByRole('button', { name: 'Edge pieces' }).click();
+
+		await expect.element(page.getByText('NO PIECES MATCH')).toBeVisible();
+		await expect.element(page.getByRole('button', { name: 'Open mission setup' })).toBeVisible();
+		expect(sessionStorageSpies.saveSession).toHaveBeenCalled();
+		const snapshot = sessionStorageSpies.saveSession.mock.calls.at(-1)?.[1];
+		expect(snapshot).toMatchObject({
+			hasUserActivity: false,
+			organization: { filter: 'edges' }
+		});
+	});
+
+	it('shuffles all unplaced ids through the existing Fisher-Yates path and checkpoints', async () => {
+		const originalRandom = Math.random;
+		Math.random = () => 0;
+		try {
+			await renderPuzzlePage();
+			sessionStorageSpies.saveSession.mockClear();
+
+			const before = Array.from(
+				document.querySelectorAll<HTMLElement>('[data-testid^="piece-slot-"]')
+			).map((slot) => slot.dataset.testid);
+			expect(before).toEqual(['piece-slot-0', 'piece-slot-1']);
+
+			await page.getByRole('button', { name: 'Shuffle pieces' }).click();
+
+			await expect
+				.poll(() =>
+					Array.from(document.querySelectorAll<HTMLElement>('[data-testid^="piece-slot-"]')).map(
+						(slot) => slot.dataset.testid
+					)
+				)
+				.toEqual(['piece-slot-1', 'piece-slot-0']);
+
+			const snapshot = sessionStorageSpies.saveSession.mock.calls.at(-1)?.[1];
+			expect(snapshot).toMatchObject({ trayOrder: [1, 0], hasUserActivity: true });
+		} finally {
+			Math.random = originalRandom;
+		}
+	});
+
+	it('accepts a random identity shuffle without fabricating resumable activity', async () => {
+		const originalRandom = Math.random;
+		Math.random = () => 0.999999;
+		try {
+			await renderPuzzlePage();
+			sessionStorageSpies.saveSession.mockClear();
+
+			await page.getByRole('button', { name: 'Shuffle pieces' }).click();
+
+			const snapshot = sessionStorageSpies.saveSession.mock.calls.at(-1)?.[1];
+			expect(snapshot).toMatchObject({ trayOrder: [0, 1], hasUserActivity: false });
+		} finally {
+			Math.random = originalRandom;
+		}
+	});
+
 	it('sizes the board responsively and makes tray slots match board cells', async () => {
 		const originalInnerWidth = window.innerWidth;
 		const originalInnerHeight = window.innerHeight;
