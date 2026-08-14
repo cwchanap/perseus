@@ -851,14 +851,14 @@ function handleInventoryShuffle() {
     update: {
       type: 'reorder',
       trayId: 'main',
-      pieceIds: shuffleArray(unplacedPieceIds)
+      pieceIds: shuffleArray([...unplacedPieceIds])
     }
   });
   checkpointSession();
 }
 ```
 
-Do **not** modify `handleHint()`.
+`shuffleArray()` currently accepts a mutable array, so pass a shallow copy. Do **not** modify `handleHint()`.
 
 Pass to `PuzzleInventoryPanel`:
 
@@ -883,7 +883,7 @@ Expected: component tests PASS; check clean.
 git add \
   src/lib/components/PuzzleInventoryPanel.svelte \
   src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts \
-  src/routes/puzzle/[id]/+page.svelte
+  'src/routes/puzzle/[id]/+page.svelte'
 git commit -m "feat(web): add inventory filters and shuffle controls"
 ```
 
@@ -981,7 +981,7 @@ This test is HPA-220-specific; do not add `0.999999` behavior to the shared shuf
 
 ```bash
 bunx vitest --run --browser \
-  src/routes/puzzle/[id]/page.svelte.test.ts \
+  'src/routes/puzzle/[id]/page.svelte.test.ts' \
   src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts \
   src/lib/services/gameplay/session/session.test.ts \
   src/lib/services/gameplay/inventory.test.ts
@@ -992,7 +992,7 @@ Expected: all focused tests PASS.
 - [ ] **Step 5: Commit the route integration tests**
 
 ```bash
-git add src/routes/puzzle/[id]/page.svelte.test.ts
+git add 'src/routes/puzzle/[id]/page.svelte.test.ts'
 git commit -m "test(web): cover inventory filter and shuffle route wiring"
 ```
 
@@ -1072,7 +1072,7 @@ bunx vitest --run --browser \
   src/lib/services/gameplay/inventory.test.ts \
   src/lib/services/gameplay/session/session.test.ts \
   src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts \
-  src/routes/puzzle/[id]/page.svelte.test.ts
+  'src/routes/puzzle/[id]/page.svelte.test.ts'
 ```
 
 Expected: PASS with zero failures.
