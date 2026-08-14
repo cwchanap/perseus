@@ -7,6 +7,7 @@
 
 import { createHistory, type History } from '$lib/services/gameplay/history';
 import { getHintPieceId } from '$lib/services/gameplay/hints';
+import { matchesInventoryFilter } from '$lib/services/gameplay/inventory';
 import {
 	rotateClockwise,
 	isUpright,
@@ -398,6 +399,12 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 		state.facts = { ...state.facts, hintUsed: true };
 		state.hasUserActivity = true;
 		state.resultClass = recomputeResultClass();
+		// A successful hint must make the hinted piece visible: reset a non-All
+		// filter before the hint_target event and the single notification so
+		// subscribers observe the filter reset atomically with the hint.
+		if (state.organization && state.organization.filter !== 'all') {
+			state.organization = { ...state.organization, filter: 'all' };
+		}
 		const piece = pieceById.get(hintPieceId);
 		const target = piece ? { x: piece.correctX, y: piece.correctY } : null;
 		emit({ type: 'hint_target', pieceId: hintPieceId, target });
@@ -455,9 +462,21 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 		};
 
 		switch (update.type) {
-			case 'set_filter':
+			case 'set_filter': {
+				// A filter is a display preference: it persists without marking
+				// gameplay activity (HPA-220), and clearing a selection the new
+				// filter hides must happen in the same notification.
 				organization.filter = update.filter;
-				break;
+				if (state.selectedPieceId !== null) {
+					const selected = pieceById.get(state.selectedPieceId);
+					if (selected && !matchesInventoryFilter(selected, state, update.filter)) {
+						state.selectedPieceId = null;
+					}
+				}
+				state.organization = organization;
+				notify();
+				return { type: 'tray_organization_applied', update };
+			}
 			case 'set_active_tray':
 				organization.activeTray = update.trayId;
 				break;
@@ -479,11 +498,38 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 				}
 				organization.membership[update.pieceId] = update.toTrayId;
 				break;
-			case 'reorder':
-				// Reorder is not implemented in this HPA; tray-organization UI is
-				// owned by HPA-220/237. Return a no-op so the branch cannot be
-				// mistaken for working. Do not mutate state or notify.
-				return { type: 'tray_organization_noop', reason: 'not_implemented' };
+			case 'reorder': {
+				// Non-main trays are owned by HPA-237; keep them unimplemented.
+				if (update.trayId !== 'main') {
+					return { type: 'tray_organization_noop', reason: 'not_implemented' };
+				}
+
+				const placedIds = new Set(state.placedPieces.map((placement) => placement.pieceId));
+				const currentUnplacedIds = state.trayOrder.filter((id) => !placedIds.has(id));
+				if (update.pieceIds.length !== currentUnplacedIds.length) {
+					return { type: 'tray_organization_noop', reason: 'invalid_update' };
+				}
+
+				const expected = new Set(currentUnplacedIds);
+				for (const id of update.pieceIds) {
+					if (!expected.delete(id)) {
+						return { type: 'tray_organization_noop', reason: 'invalid_update' };
+					}
+				}
+				if (expected.size !== 0) {
+					return { type: 'tray_organization_noop', reason: 'invalid_update' };
+				}
+
+				let nextIndex = 0;
+				const nextTrayOrder = state.trayOrder.map((id) =>
+					placedIds.has(id) ? id : update.pieceIds[nextIndex++]!
+				);
+				const changed = nextTrayOrder.some((id, index) => id !== state.trayOrder[index]);
+				state.trayOrder = nextTrayOrder;
+				if (changed) state.hasUserActivity = true;
+				notify();
+				return { type: 'tray_organization_applied', update };
+			}
 		}
 		state.organization = organization;
 		state.hasUserActivity = true;
@@ -533,7 +579,9 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 		}
 		stopClock();
 		state = freshState({ ...safeOptions, mode: retainedMode }, nextRunId);
-		state.organization = retainedOrganization;
+		// Restart resets only the filter to All (HPA-220); other organization
+		// fields (active tray, membership, names) survive the new run.
+		state.organization = retainedOrganization ? { ...retainedOrganization, filter: 'all' } : null;
 		state.trayOrder = restartOrder;
 		placementHistory = makeHistoryBaseline(state);
 		emit({ type: 'lifecycle', from, to: 'setup' });
