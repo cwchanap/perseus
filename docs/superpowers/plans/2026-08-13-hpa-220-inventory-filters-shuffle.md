@@ -898,6 +898,8 @@ git commit -m "feat(web): add inventory filters and shuffle controls"
 - Consumes the production route wiring from Task 3.
 - Produces integration fences that prove filter checkpoints remain non-activity and Shuffle uses current tray order through the existing session/persistence path.
 
+The route-test `saveSession` mock receives the real serializer output because the existing persistence mock delegates `serializeSession()` to production. Assert the second positional argument of the latest `saveSession(puzzleId, snapshot)` call.
+
 - [ ] **Step 1: Add a failing filter persistence test**
 
 Use the existing two-piece route fixture; both pieces are corners, so `EDGES` gives a deterministic empty projection:
