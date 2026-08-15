@@ -127,6 +127,9 @@ describe('PuzzleToolbar', () => {
 			const onZoomIn = vi.fn();
 			renderToolbar({ onZoomIn });
 
+			// The unit surface is below 1024px, so secondary controls live
+			// behind the compact More disclosure.
+			await userEvent.click(page.getByLabelText('More puzzle actions'));
 			await userEvent.click(page.getByLabelText('Zoom in'));
 			expect(onZoomIn).toHaveBeenCalledOnce();
 		});
@@ -135,6 +138,7 @@ describe('PuzzleToolbar', () => {
 			const onZoomOut = vi.fn();
 			renderToolbar({ onZoomOut });
 
+			await userEvent.click(page.getByLabelText('More puzzle actions'));
 			await userEvent.click(page.getByLabelText('Zoom out'));
 			expect(onZoomOut).toHaveBeenCalledOnce();
 		});
@@ -143,6 +147,7 @@ describe('PuzzleToolbar', () => {
 			const onResetView = vi.fn();
 			renderToolbar({ onResetView });
 
+			await userEvent.click(page.getByLabelText('More puzzle actions'));
 			await userEvent.click(page.getByLabelText('Reset view'));
 			expect(onResetView).toHaveBeenCalledOnce();
 		});
@@ -151,6 +156,7 @@ describe('PuzzleToolbar', () => {
 			const onRotationToggle = vi.fn();
 			renderToolbar({ onRotationToggle });
 
+			await userEvent.click(page.getByLabelText('More puzzle actions'));
 			await userEvent.click(page.getByLabelText('Rotation mode'));
 			expect(onRotationToggle).toHaveBeenCalledOnce();
 		});
@@ -270,5 +276,46 @@ describe('PuzzleToolbar', () => {
 
 			await expect.poll(() => page.getByLabelText('Pause mission').query()).toBeNull();
 		});
+	});
+
+	it('shows Setup when canOpenSetup is true', async () => {
+		renderToolbar({ canOpenSetup: true });
+		await expect.element(page.getByLabelText('Open mission setup')).toBeInTheDocument();
+	});
+
+	it('hides Setup when canOpenSetup is false', async () => {
+		renderToolbar({ canOpenSetup: false });
+		await expect.poll(() => page.getByLabelText('Open mission setup').query()).toBeNull();
+	});
+
+	it('toggles the secondary controls through More with explicit DOM state', async () => {
+		renderToolbar({ canPause: true, canOpenSetup: true });
+
+		const more = page.getByLabelText('More puzzle actions');
+		const secondary = page.getByTestId('puzzle-toolbar-secondary');
+
+		await expect.element(more).toHaveAttribute('aria-expanded', 'false');
+		await expect.element(secondary).toHaveAttribute('data-open', 'false');
+
+		(more.element() as HTMLButtonElement).click();
+		await expect.element(more).toHaveAttribute('aria-expanded', 'true');
+		await expect.element(secondary).toHaveAttribute('data-open', 'true');
+
+		(more.element() as HTMLButtonElement).click();
+		await expect.element(more).toHaveAttribute('aria-expanded', 'false');
+		await expect.element(secondary).toHaveAttribute('data-open', 'false');
+	});
+
+	it('keeps a secondary callback wired through the compact container', async () => {
+		const onZoomIn = vi.fn();
+		renderToolbar({ onZoomIn });
+
+		(page.getByLabelText('More puzzle actions').element() as HTMLButtonElement).click();
+		const secondary = page.getByTestId('puzzle-toolbar-secondary').element();
+		const zoomIn = secondary.querySelector<HTMLButtonElement>('button[aria-label="Zoom in"]');
+
+		expect(zoomIn).not.toBeNull();
+		zoomIn!.click();
+		expect(onZoomIn).toHaveBeenCalledOnce();
 	});
 });

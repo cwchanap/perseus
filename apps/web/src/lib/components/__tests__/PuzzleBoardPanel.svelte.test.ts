@@ -101,6 +101,9 @@ function scaleOf(transform: string): number {
 }
 
 async function beginRealPan(pointerId: number): Promise<Element> {
+	// The unit surface is below 1024px, so toolbar zoom lives behind the
+	// compact More disclosure.
+	await page.getByLabelText('More puzzle actions').click();
 	await page.getByLabelText('Zoom in').click();
 	const board = await page.getByTestId('puzzle-board').element();
 	const frame = await page.getByTestId('zoomable-board-frame').element();
@@ -143,6 +146,7 @@ describe('PuzzleBoardPanel', () => {
 		await page.getByLabelText('Undo').click();
 		await page.getByLabelText('Redo').click();
 		await page.getByLabelText('Hint').click();
+		await page.getByLabelText('More puzzle actions').click();
 		await page.getByLabelText('Rotation mode').click();
 		await page.getByLabelText('Pause mission').click();
 		await page.getByLabelText('Open mission setup').click();
@@ -163,6 +167,7 @@ describe('PuzzleBoardPanel', () => {
 
 	it('starts panning only from the board target, not viewport padding', async () => {
 		render(PuzzleBoardPanel, props());
+		await page.getByLabelText('More puzzle actions').click();
 		await page.getByLabelText('Zoom in').click();
 		const viewport = await page.getByTestId('board-viewport').element();
 		const board = await page.getByTestId('puzzle-board').element();
@@ -238,6 +243,7 @@ describe('PuzzleBoardPanel', () => {
 
 	it('does not start pan while a piece is selected', async () => {
 		render(PuzzleBoardPanel, props({ selectedPieceId: 0 }));
+		await page.getByLabelText('More puzzle actions').click();
 		await page.getByLabelText('Zoom in').click();
 		const board = await page.getByTestId('puzzle-board').element();
 
@@ -279,6 +285,7 @@ describe('PuzzleBoardPanel', () => {
 	it('allows pan again after selection clears', async () => {
 		const input = props({ selectedPieceId: 0 });
 		const view = render(PuzzleBoardPanel, input);
+		await page.getByLabelText('More puzzle actions').click();
 		await page.getByLabelText('Zoom in').click();
 		await view.rerender({ ...input, selectedPieceId: null });
 		const board = await page.getByTestId('puzzle-board').element();
@@ -303,6 +310,7 @@ describe('PuzzleBoardPanel', () => {
 		const view = render(PuzzleBoardPanel, input);
 		const frame = await page.getByTestId('zoomable-board-frame').element();
 
+		await page.getByLabelText('More puzzle actions').click();
 		await page.getByLabelText('Zoom in').click();
 		await expect.poll(() => scaleOf(transformOf(frame))).toBeGreaterThan(0);
 		const zoomBeforeResize = scaleOf(transformOf(frame));
@@ -338,6 +346,7 @@ describe('PuzzleBoardPanel', () => {
 		render(PuzzleBoardPanel, props());
 		const frame = await page.getByTestId('zoomable-board-frame').element();
 
+		await page.getByLabelText('More puzzle actions').click();
 		await page.getByLabelText('Zoom in').click();
 		const zoomedInScale = scaleOf(transformOf(frame));
 		expect(zoomedInScale).toBeGreaterThan(0);
@@ -434,6 +443,7 @@ describe('PuzzleBoardPanel', () => {
 
 	it('does not start panning when interactionBlocked is true', async () => {
 		render(PuzzleBoardPanel, props({ interactionBlocked: true }));
+		await page.getByLabelText('More puzzle actions').click();
 		await page.getByLabelText('Zoom in').click();
 		const board = await page.getByTestId('puzzle-board').element();
 
@@ -452,6 +462,7 @@ describe('PuzzleBoardPanel', () => {
 
 	it('ignores right-click (non-primary button) for pan initiation', async () => {
 		render(PuzzleBoardPanel, props());
+		await page.getByLabelText('More puzzle actions').click();
 		await page.getByLabelText('Zoom in').click();
 		const board = await page.getByTestId('puzzle-board').element();
 
