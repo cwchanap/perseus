@@ -660,6 +660,41 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.poll(() => page.getByTestId('reference-overlay').query()).toBeNull();
 	});
 
+	it('does not end a pointer hold on a release from a different pointer id', async () => {
+		await renderPuzzlePage();
+
+		const peekButton = await page.getByLabelText('Hold to peek reference').element();
+		peekButton.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
+
+		await expect.element(page.getByTestId('reference-overlay')).toBeVisible();
+
+		// A leave/release from an unrelated pointer must not end the hold.
+		peekButton.dispatchEvent(new PointerEvent('pointerleave', { bubbles: true, pointerId: 2 }));
+		await expect.element(page.getByTestId('reference-overlay')).toBeVisible();
+
+		// The matching pointer's release ends the hold.
+		peekButton.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1 }));
+
+		await expect.poll(() => page.getByTestId('reference-overlay').query()).toBeNull();
+	});
+
+	it('does not end a keyboard hold on a pointer event, only on key release', async () => {
+		await renderPuzzlePage();
+
+		const peekButton = await page.getByLabelText('Hold to peek reference').element();
+		peekButton.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+
+		await expect.element(page.getByTestId('reference-overlay')).toBeVisible();
+
+		// A pointer leave while the keyboard hold is active must not end it.
+		peekButton.dispatchEvent(new PointerEvent('pointerleave', { bubbles: true, pointerId: 1 }));
+		await expect.element(page.getByTestId('reference-overlay')).toBeVisible();
+
+		peekButton.dispatchEvent(new KeyboardEvent('keyup', { key: ' ', bubbles: true }));
+
+		await expect.poll(() => page.getByTestId('reference-overlay').query()).toBeNull();
+	});
+
 	it('clears keyboard-held reference overlay on window blur', async () => {
 		await renderPuzzlePage();
 
