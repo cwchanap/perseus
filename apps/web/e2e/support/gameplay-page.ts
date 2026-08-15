@@ -518,9 +518,10 @@ export class GameplayPage {
 	async pauseMission(): Promise<Locator> {
 		// The compact toolbar hides Pause inside a display:none panel until
 		// 'More puzzle actions' opens it; role locators skip display:none
-		// subtrees entirely, so resolve by label with includeHidden to keep
-		// the locator attached while CSS-hidden.
-		const pause = this.page.getByLabel('Pause mission', { includeHidden: true });
+		// subtrees entirely, so resolve by role with includeHidden to keep
+		// the locator attached while CSS-hidden. getByLabel does not support
+		// includeHidden, so getByRole is required here.
+		const pause = this.page.getByRole('button', { name: 'Pause mission', includeHidden: true });
 		const more = this.page.getByRole('button', { name: 'More puzzle actions' });
 
 		await expect(pause).toBeAttached();
