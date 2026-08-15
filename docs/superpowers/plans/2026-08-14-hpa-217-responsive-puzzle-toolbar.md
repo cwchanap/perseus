@@ -2,33 +2,50 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make the existing puzzle toolbar compact and consistent on 390 × 844 phone layouts while preserving every current action through the existing `PuzzleToolbar` props/callbacks.
+**Goal:** Make the existing puzzle toolbar compact at 390 × 844 while preserving every current action and existing mobile Pause E2E caller.
 
-**Architecture:** Keep `PuzzleToolbar.svelte` as the only presentation owner. Preserve its external prop surface, add one private `moreOpen` boolean, keep Undo/Redo/Hint/Reference in the primary row, and move Zoom/Fit/Rotation/Pause/Setup into one secondary container that is inline at ≥1024px and opened by `MORE` below 1024px. Reuse the existing gameplay CSS variables and prove rendered compact behavior with the existing Chromium-mobile E2E fixture.
+**Architecture:** `PuzzleToolbar.svelte` remains the only production presentation owner. Keep its existing props/callbacks, add one private `moreOpen` boolean, keep Undo/Redo/Hint/Reference in the primary row, and put Zoom/Fit/Rotation/Pause/Setup in one secondary container that is inline at ≥1024px and opened by `MORE` below 1024px. Existing E2E Pause callers continue through the same `GameplayPage.pauseMission()` helper, which opens `MORE` only when Pause is hidden.
 
 **Tech Stack:** Svelte 5 runes, TypeScript 5.9, scoped CSS/Tailwind 4 build pipeline, Vitest Browser Mode, Playwright 1.57, Bun 1.3.
 
 ## Global Constraints
 
-- Keep the current `PuzzleToolbar` props/callback signatures unchanged.
-- Add exactly one runtime state value: `let moreOpen = $state(false)` inside `PuzzleToolbar.svelte`.
+- Keep the current `PuzzleToolbar` prop/callback signatures unchanged.
+- Add exactly one production runtime state value: `let moreOpen = $state(false)` inside `PuzzleToolbar.svelte`.
 - Keep Undo, Redo, Hint, and Reference directly reachable below 1024px.
-- Put Zoom out, Zoom in, Fit/reset, Rotation, Pause, and Setup in one secondary container; it stays inline on desktop and sits behind `MORE` below 1024px.
-- Preserve Reference pointer/keyboard hold semantics exactly; HPA-217 must not turn Reference into a toggle.
-- Preserve Rotation `aria-pressed`, disabled state, and the `rotation-lock-reason` description.
-- `MORE` is a normal button with `aria-label="More puzzle actions"`, `aria-expanded`, and `aria-controls="puzzle-toolbar-secondary"`.
-- Do not add outside-click listeners, Escape listeners, focus traps, a generic menu/popover component, action registry, command model, icon dependency, route state, store state, or shared types.
-- Reuse `--bg-1`, `--bg-2`, `--border`, `--text-2`, `--accent`, `--accent-glow`, and `--font-display`; add no design tokens.
-- Reuse the existing `max-width: 1023px` gameplay breakpoint; do not add JavaScript media-query state.
-- Coarse-pointer toolbar buttons must have at least 44 × 44px targets.
-- Reuse `e2e-square-4`, `IMMEDIATE_START`, and `chromium-mobile` at 390 × 844; add no fixture, Playwright project, or page-object helper.
+- Put Zoom out, Zoom in, Fit/reset, Rotation, Pause, and Setup in one secondary container; inline on desktop, behind `MORE` below 1024px.
+- Preserve Reference pointer/keyboard hold semantics exactly.
+- Preserve Rotation `aria-pressed`, disabled state, and `rotation-lock-reason` description.
+- Use explicit `'true' | 'false'` strings for `MORE` `aria-expanded` and secondary `data-open`.
+- Reuse the existing `max-width: 1023px` / `min-width: 1024px` breakpoint; add no JavaScript media-query state.
+- Reuse existing gameplay tokens (`--bg-1`, `--bg-2`, `--border`, `--text-2`, `--accent`, `--accent-glow`, `--font-display`); add no token or shared button abstraction.
+- Coarse-pointer toolbar buttons remain at least 44 × 44px.
+- The compact secondary panel stays absolute/in-overlay so opening it does not steal board height.
+- Keep `z-index: 20` on the secondary panel only. Do not add root toolbar z-index unless rendered hit testing proves a real stacking failure; `.board-wrap { overflow: auto }` is not a stacking context by itself.
+- Add no outside-click listener, Escape listener, focus trap, generic menu/popover, action registry, command model, icon dependency, route/store/session state, or shared type.
+- Leave `role="toolbar"` / roving tabindex to HPA-223.
+- Reuse the existing `pauseMission()` helper; do not add a separate compact/mobile Pause helper.
+- Reuse `e2e-square-4`, `IMMEDIATE_START`, `chromium-mobile`, and the existing WebKit-critical session-control case. Add no fixture or Playwright project.
 - Do not change `PuzzleBoardPanel.svelte`, route orchestration, `PuzzleSession`, persistence, inventory behavior, board zoom/pan logic, API packages, or package dependencies.
 
 ## File Structure
 
-- Modify `apps/web/src/lib/components/PuzzleToolbar.svelte` — responsive grouping, local `moreOpen`, compact secondary panel, existing-variable styling.
-- Modify `apps/web/src/lib/components/__tests__/PuzzleToolbar.svelte.test.ts` — Setup gating and compact overflow state/wiring while retaining the existing callback/Reference/Rotation coverage.
-- Modify `apps/web/e2e/gameplay-mobile-tap.spec.ts` — one 390 × 844 rendered toolbar visibility/overflow proof.
+### Production
+
+- Modify `apps/web/src/lib/components/PuzzleToolbar.svelte` — local `moreOpen`, responsive grouping, compact secondary panel, existing-token styling.
+
+### Component test
+
+- Modify `apps/web/src/lib/components/__tests__/PuzzleToolbar.svelte.test.ts` — Setup gating, explicit More state, secondary callback wiring; retain existing callback/Reference/Rotation tests.
+
+### Existing E2E callers
+
+- Modify `apps/web/e2e/support/gameplay-page.ts` — make existing `pauseMission()` open `MORE` when Pause is hidden.
+- Modify `apps/web/e2e/gameplay-session-controls.spec.ts` — make the WebKit reachability case use `pauseMission()` instead of directly assuming Pause is visible.
+
+### Rendered acceptance proof
+
+- Modify `apps/web/e2e/gameplay-mobile-tap.spec.ts` — 390 × 844 compact visibility/overflow proof and real click on an opened secondary control.
 
 ---
 
@@ -43,27 +60,25 @@
 
 - Consumes the existing `Props` interface unchanged.
 - Produces local state only: `moreOpen: boolean`.
-- Produces stable compact controls: `aria-label="More puzzle actions"` and `id="puzzle-toolbar-secondary"`.
-- Produces no new exported type, callback, store, service, or route state.
+- Produces stable compact hooks: `aria-label="More puzzle actions"`, `id="puzzle-toolbar-secondary"`, and `data-testid="puzzle-toolbar-secondary"`.
+- Produces no exported type, callback, store, service, or route state.
 
-- [ ] **Step 1: Add failing component tests for Setup gating and compact overflow state**
+- [ ] **Step 1: Add failing Setup and More-state component tests**
 
-In `PuzzleToolbar.svelte.test.ts`, keep the existing tests and add:
+Keep all existing tests. Add:
 
 ```ts
 it('shows Setup when canOpenSetup is true', async () => {
 	renderToolbar({ canOpenSetup: true });
-
 	await expect.element(page.getByLabelText('Open mission setup')).toBeInTheDocument();
 });
 
 it('hides Setup when canOpenSetup is false', async () => {
 	renderToolbar({ canOpenSetup: false });
-
 	await expect.poll(() => page.getByLabelText('Open mission setup').query()).toBeNull();
 });
 
-it('toggles the compact secondary controls through More', async () => {
+it('toggles the secondary controls through More with explicit DOM state', async () => {
 	renderToolbar({ canPause: true, canOpenSetup: true });
 
 	const more = page.getByLabelText('More puzzle actions');
@@ -83,7 +98,7 @@ it('toggles the compact secondary controls through More', async () => {
 	await expect.element(secondary).toHaveAttribute('data-open', 'false');
 });
 
-it('keeps secondary callbacks wired through the compact container', async () => {
+it('keeps a secondary callback wired through the compact container', async () => {
 	const onZoomIn = vi.fn();
 	renderToolbar({ onZoomIn });
 
@@ -97,7 +112,7 @@ it('keeps secondary callbacks wired through the compact container', async () => 
 });
 ```
 
-The direct `.element().click()` is intentional: Vitest's normal desktop viewport hides the compact `MORE` button with CSS, while this test owns the component state/markup contract. Playwright owns real compact visibility in Task 2.
+The direct `.element().click()` is intentional because Vitest's normal browser viewport is desktop-sized and CSS hides `MORE`; component tests own markup/state, not responsive layout.
 
 - [ ] **Step 2: Run the focused component test and verify the new tests fail**
 
@@ -107,43 +122,29 @@ From `apps/web`:
 bunx vitest --run --browser src/lib/components/__tests__/PuzzleToolbar.svelte.test.ts
 ```
 
-Expected: the new tests fail because `MORE`, `puzzle-toolbar-secondary`, and Setup gating coverage do not yet exist in the current shape.
+Expected: FAIL because the current component has no `MORE` or secondary state hook.
 
-- [ ] **Step 3: Add the one local presentation state and remove utility-class constants**
+- [ ] **Step 3: Add the one local presentation state**
 
-In `PuzzleToolbar.svelte`, after the existing prop destructuring add:
+In `PuzzleToolbar.svelte`, after current prop destructuring:
 
 ```ts
 let moreOpen = $state(false);
 ```
 
-Delete the current `toolbarButtonClass` and `pressedRotationButtonClass` string constants. Styling moves to the component's scoped `<style>` block so it can use the same CSS variables as the neighboring gameplay panels.
+Delete `toolbarButtonClass` and `pressedRotationButtonClass`; styling moves into the scoped style block. Do not alter the `Props` interface or destructured prop names/defaults.
 
-Do not alter the `Props` interface or destructured prop names/defaults.
+- [ ] **Step 4: Regroup the existing buttons into concrete primary and secondary containers**
 
-- [ ] **Step 4: Regroup the existing controls into one primary row and one secondary container**
-
-Use this concrete structure. Keep the Reference event handlers exactly as shown so hold-to-peek semantics do not change:
+Use one copy of each action:
 
 ```svelte
 <div data-testid="puzzle-toolbar" class="puzzle-toolbar">
 	<div class="toolbar-group" role="group" aria-label="History controls">
-		<button
-			type="button"
-			aria-label="Undo"
-			disabled={!canUndo}
-			onclick={onUndo}
-			class="toolbar-button"
-		>
+		<button type="button" aria-label="Undo" disabled={!canUndo} onclick={onUndo} class="toolbar-button">
 			UNDO
 		</button>
-		<button
-			type="button"
-			aria-label="Redo"
-			disabled={!canRedo}
-			onclick={onRedo}
-			class="toolbar-button"
-		>
+		<button type="button" aria-label="Redo" disabled={!canRedo} onclick={onRedo} class="toolbar-button">
 			REDO
 		</button>
 	</div>
@@ -182,7 +183,7 @@ Use this concrete structure. Keep the Reference event handlers exactly as shown 
 		type="button"
 		class="toolbar-button more-toggle"
 		aria-label="More puzzle actions"
-		aria-expanded={moreOpen}
+		aria-expanded={moreOpen ? 'true' : 'false'}
 		aria-controls="puzzle-toolbar-secondary"
 		onclick={() => (moreOpen = !moreOpen)}
 	>
@@ -192,7 +193,7 @@ Use this concrete structure. Keep the Reference event handlers exactly as shown 
 	<div
 		id="puzzle-toolbar-secondary"
 		data-testid="puzzle-toolbar-secondary"
-		data-open={moreOpen}
+		data-open={moreOpen ? 'true' : 'false'}
 		class="toolbar-secondary"
 	>
 		<div class="toolbar-group" role="group" aria-label="View controls">
@@ -241,22 +242,22 @@ Use this concrete structure. Keep the Reference event handlers exactly as shown 
 </div>
 ```
 
-Keep `onPause` / `onOpenSetup` optional exactly as today; the existing boolean gates guarantee the corresponding button is rendered only when the callback is meaningful.
+Do not add `role="toolbar"`; keep only ordinary groups/buttons in this ticket.
 
-- [ ] **Step 5: Add local variable-based desktop/compact styling**
+- [ ] **Step 5: Add local existing-token responsive styling**
 
-Add this scoped style and adjust only if formatter ordering requires it:
+Use the neighboring panel-action visual language without extracting a shared component:
 
 ```css
 .puzzle-toolbar {
 	position: relative;
 	display: flex;
-	min-width: 0;
 	width: 100%;
+	min-width: 0;
+	box-sizing: border-box;
 	flex-wrap: wrap;
 	align-items: center;
 	gap: 0.5rem 0.75rem;
-	box-sizing: border-box;
 	padding: 0.75rem;
 	background: var(--bg-2);
 	border: 1px solid var(--border);
@@ -269,10 +270,6 @@ Add this scoped style and adjust only if formatter ordering requires it:
 	flex-wrap: wrap;
 	align-items: center;
 	gap: 0.5rem;
-}
-
-.toolbar-secondary {
-	gap: 0.75rem;
 }
 
 .toolbar-button {
@@ -290,21 +287,15 @@ Add this scoped style and adjust only if formatter ordering requires it:
 	padding: 0.45rem 0.65rem;
 	white-space: nowrap;
 	cursor: pointer;
-	transition:
-		color 0.15s ease,
-		border-color 0.15s ease,
-		background 0.15s ease,
-		box-shadow 0.15s ease;
 }
 
-.toolbar-button:hover:not(:disabled) {
+.toolbar-button:hover:not(:disabled),
+.toolbar-button:focus-visible {
 	color: var(--accent);
 	border-color: var(--accent);
 }
 
 .toolbar-button:focus-visible {
-	color: var(--accent);
-	border-color: var(--accent);
 	outline: 2px solid var(--accent);
 	outline-offset: 2px;
 }
@@ -375,9 +366,9 @@ Add this scoped style and adjust only if formatter ordering requires it:
 }
 ```
 
-Do not move this CSS into `layout.css` or create a shared button component. The style is specific to this toolbar.
+Do **not** add `z-index` to `.puzzle-toolbar`. The current `.board-wrap` has no positioned competing z-index; Task 3's real `Zoom in` click is the regression fence for hit testing.
 
-- [ ] **Step 6: Run the focused component suite and package type check**
+- [ ] **Step 6: Run focused component verification**
 
 From `apps/web`:
 
@@ -399,7 +390,102 @@ git commit -m "feat(web): make puzzle toolbar responsive"
 
 ---
 
-### Task 2: Prove the compact toolbar at the existing 390 × 844 mobile viewport
+### Task 2: Preserve existing compact Pause callers
+
+**Files:**
+
+- Modify: `apps/web/e2e/support/gameplay-page.ts`
+- Modify: `apps/web/e2e/gameplay-session-controls.spec.ts`
+
+**Interfaces:**
+
+- Keeps the existing `pauseMission(): Promise<Locator>` signature.
+- Desktop path remains one Pause click.
+- Compact path opens existing `More puzzle actions` only when Pause is hidden.
+- Produces no new helper or page-object state.
+
+- [ ] **Step 1: Run the existing Chromium-mobile session-control suite against Task 1 and confirm the compact regression**
+
+From `apps/web`:
+
+```bash
+bunx playwright test e2e/gameplay-session-controls.spec.ts --project=chromium-mobile
+```
+
+Expected: FAIL when existing `pauseMission()` tries to click the CSS-hidden compact Pause control.
+
+- [ ] **Step 2: Extend the existing `pauseMission()` helper**
+
+Replace the current direct click with:
+
+```ts
+async pauseMission(): Promise<Locator> {
+	const pause = this.page.getByRole('button', { name: 'Pause mission' });
+	if (!(await pause.isVisible())) {
+		const more = this.page.getByRole('button', { name: 'More puzzle actions' });
+		await expect(more).toBeVisible();
+		await more.click();
+	}
+
+	await pause.click();
+	const dialog = this.page.getByRole('dialog', { name: 'Mission Paused' });
+	await expect(dialog).toBeVisible();
+	return dialog;
+}
+```
+
+Do not add a viewport check. Visibility is the presentation contract: desktop Pause is visible; compact Pause is hidden until `MORE` opens.
+
+- [ ] **Step 3: Route the WebKit-critical reachability case through the same helper**
+
+In `gameplay-session-controls.spec.ts`, replace:
+
+```ts
+const pause = page.getByRole('button', { name: 'Pause mission' });
+await expect(pause).toBeVisible();
+await pause.click();
+const paused = page.getByRole('dialog', { name: 'Mission Paused' });
+await expect(paused).toBeVisible();
+```
+
+with:
+
+```ts
+const paused = await gameplayPage.pauseMission();
+```
+
+Keep its existing Resume assertions afterward. This still proves Pause reachability on WebKit, now through the actual compact path.
+
+- [ ] **Step 4: Run the existing Chromium-mobile session-control suite**
+
+```bash
+bunx playwright test e2e/gameplay-session-controls.spec.ts --project=chromium-mobile
+```
+
+Expected: PASS.
+
+- [ ] **Step 5: Run the focused WebKit reachability case**
+
+```bash
+bunx playwright test e2e/gameplay-session-controls.spec.ts \
+  --project=webkit-mobile \
+  --grep "webkit-mobile: setup dialog and Pause action reachable"
+```
+
+Expected: PASS. This is existing targeted WebKit-critical coverage, not a new browser matrix.
+
+- [ ] **Step 6: Commit the E2E caller compatibility slice**
+
+```bash
+git add \
+  e2e/support/gameplay-page.ts \
+  e2e/gameplay-session-controls.spec.ts
+git commit -m "test(web): follow compact toolbar for pause"
+```
+
+---
+
+### Task 3: Prove compact toolbar geometry and real secondary hit testing
 
 **Files:**
 
@@ -407,11 +493,11 @@ git commit -m "feat(web): make puzzle toolbar responsive"
 
 **Interfaces:**
 
-- Consumes existing `IMMEDIATE_START`, `gameplayPage.gotoFixture()`, `chromium-mobile`, and the default `e2e-square-4` fixture.
+- Consumes existing `IMMEDIATE_START`, `gameplayPage.gotoFixture()`, `chromium-mobile`, and default `e2e-square-4` fixture.
 - Produces no helper, fixture, project, or production API.
-- Proves actual CSS visibility/geometry that Task 1's component tests intentionally do not emulate.
+- Proves actual CSS visibility/geometry and that an opened secondary control is not covered by the board.
 
-- [ ] **Step 1: Add the mobile toolbar E2E acceptance test**
+- [ ] **Step 1: Add the 390 × 844 toolbar acceptance test**
 
 Add near the top of `gameplay-mobile-tap.spec.ts`:
 
@@ -441,21 +527,23 @@ test('mobile toolbar keeps primary actions visible and secondary actions in More
 	await expect(more).toBeVisible();
 	await expect(more).toHaveAttribute('aria-expanded', 'false');
 
-	await expect(page.getByRole('button', { name: 'Zoom out' })).toBeHidden();
 	await expect(page.getByRole('button', { name: 'Zoom in' })).toBeHidden();
-	await expect(page.getByRole('button', { name: 'Reset view' })).toBeHidden();
-	await expect(page.getByRole('button', { name: 'Rotation mode' })).toBeHidden();
 	await expect(page.getByRole('button', { name: 'Pause mission' })).toBeHidden();
 	await expect(page.getByRole('button', { name: 'Open mission setup' })).toBeHidden();
 
 	await more.click();
 	await expect(more).toHaveAttribute('aria-expanded', 'true');
-	await expect(page.getByRole('button', { name: 'Zoom out' })).toBeVisible();
-	await expect(page.getByRole('button', { name: 'Zoom in' })).toBeVisible();
+
+	const zoomIn = page.getByRole('button', { name: 'Zoom in' });
+	await expect(zoomIn).toBeVisible();
 	await expect(page.getByRole('button', { name: 'Reset view' })).toBeVisible();
 	await expect(page.getByRole('button', { name: 'Rotation mode' })).toBeVisible();
 	await expect(page.getByRole('button', { name: 'Pause mission' })).toBeVisible();
 	await expect(page.getByRole('button', { name: 'Open mission setup' })).toBeVisible();
+
+	// This is intentionally a real Playwright click, not just toBeVisible().
+	// If the absolute panel paints underneath the board, actionability fails.
+	await zoomIn.click();
 
 	const secondaryBox = await page.getByTestId('puzzle-toolbar-secondary').boundingBox();
 	expect(secondaryBox).not.toBeNull();
@@ -470,15 +558,13 @@ test('mobile toolbar keeps primary actions visible and secondary actions in More
 
 	await more.click();
 	await expect(more).toHaveAttribute('aria-expanded', 'false');
-	await expect(page.getByRole('button', { name: 'Zoom in' })).toBeHidden();
+	await expect(zoomIn).toBeHidden();
 });
 ```
 
-`IMMEDIATE_START` keeps the fixture active with no user activity, so both `canPause` and `canOpenSetup` are true before the test performs any gameplay action.
+`IMMEDIATE_START` keeps the fixture active with no user activity, so `canPause` and `canOpenSetup` are both true before gameplay changes the session.
 
-- [ ] **Step 2: Run the new mobile acceptance case after Task 1**
-
-From `apps/web`:
+- [ ] **Step 2: Run the new acceptance case after Tasks 1–2**
 
 ```bash
 bunx playwright test e2e/gameplay-mobile-tap.spec.ts \
@@ -486,22 +572,24 @@ bunx playwright test e2e/gameplay-mobile-tap.spec.ts \
   --grep "mobile toolbar keeps primary actions visible"
 ```
 
-Expected: PASS with the Task 1 component implementation. The same test would fail against current `main` because `main` has no `MORE` control, which makes it a useful regression fence without requiring a deliberately red intermediate commit.
+Expected: PASS. The test also proves the opened panel's real hit target through the `Zoom in` click.
 
-- [ ] **Step 3: Run the focused HPA-217 verification set**
-
-From `apps/web`:
+- [ ] **Step 3: Run the complete focused HPA-217 verification set**
 
 ```bash
 bunx vitest --run --browser src/lib/components/__tests__/PuzzleToolbar.svelte.test.ts
 bunx playwright test e2e/gameplay-mobile-tap.spec.ts --project=chromium-mobile
+bunx playwright test e2e/gameplay-session-controls.spec.ts --project=chromium-mobile
+bunx playwright test e2e/gameplay-session-controls.spec.ts \
+  --project=webkit-mobile \
+  --grep "webkit-mobile: setup dialog and Pause action reachable"
 bun run check
 bun run lint
 ```
 
-Expected: PASS. Do not add WebKit/tablet runs solely for HPA-217; the ticket asks for one representative phone layout and the broader suites remain available on demand.
+Expected: PASS.
 
-- [ ] **Step 4: Commit the rendered mobile proof**
+- [ ] **Step 4: Commit the rendered acceptance proof**
 
 ```bash
 git add e2e/gameplay-mobile-tap.spec.ts
@@ -512,11 +600,15 @@ git commit -m "test(web): cover responsive puzzle toolbar"
 
 HPA-217 is complete when:
 
-- the `PuzzleToolbar` external prop surface is unchanged;
-- Undo/Redo/Hint/Reference remain directly visible at 390 × 844;
-- `MORE` controls one compact secondary panel below 1024px;
-- Zoom/Fit/Rotation/Pause/Setup are inline at desktop widths and hidden behind `MORE` at compact widths;
-- Reference hold behavior and Rotation pressed/disabled semantics still pass component tests;
-- the toolbar and opened secondary panel remain inside the 390px viewport with no document horizontal overflow;
-- no route/store/domain/shared API/dependency changes are present;
-- the focused Vitest, Chromium-mobile E2E, `check`, and `lint` commands pass.
+- `PuzzleToolbar`'s external prop surface is unchanged;
+- its only new production state is local `moreOpen`;
+- Undo/Redo/Hint/Reference stay directly visible at 390 × 844;
+- Zoom/Fit/Rotation/Pause/Setup are inline on desktop and behind `MORE` below 1024px;
+- `aria-expanded` and `data-open` use explicit `'true' | 'false'` strings;
+- existing desktop/mobile `pauseMission()` callers remain valid without a new helper;
+- the existing WebKit-critical Pause reachability case follows the compact path;
+- Reference hold behavior and Rotation pressed/disabled semantics remain covered;
+- the toolbar and opened panel fit the 390px viewport with no document horizontal overflow;
+- Playwright successfully clicks `Zoom in` through the opened panel, proving it is not covered;
+- no `PuzzleBoardPanel`, route/store/domain/shared API/dependency changes are present;
+- the focused Vitest, Chromium-mobile toolbar/session-control E2E, targeted WebKit case, `check`, and `lint` commands pass.
