@@ -154,6 +154,7 @@ export function createPuzzleSession(options: CreatePuzzleSessionOptions): Puzzle
 
 	function transitionToInternal(to: SessionLifecycle) {
 		const from = state.lifecycle;
+		if (to !== 'active') state.activeReferenceMode = null;
 		state.lifecycle = to;
 		emit({ type: 'lifecycle', from, to });
 	}

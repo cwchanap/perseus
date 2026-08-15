@@ -925,6 +925,36 @@ describe('PuzzleSession reference modes', () => {
 
 		expect(session.getState().resultClass).toBe('relaxed');
 	});
+
+	it('clears active reference mode when pausing', () => {
+		const session = createPuzzleSession(makeOptions());
+		session.dispatch({ type: 'start' });
+		session.dispatch({ type: 'set_reference_mode', mode: 'toggle' });
+		session.dispatch({ type: 'pause' });
+		expect(session.getState().activeReferenceMode).toBeNull();
+	});
+
+	it('clears active reference mode when the board completes', () => {
+		const session = createPuzzleSession(makeOptions({ metadata: makeMetadata(2) }));
+		session.dispatch({ type: 'start' });
+		session.dispatch({ type: 'attempt_placement', pieceId: 0, x: 0, y: 0 });
+		session.dispatch({ type: 'set_reference_mode', mode: 'toggle' });
+		session.dispatch({ type: 'attempt_placement', pieceId: 1, x: 1, y: 0 });
+		expect(session.getState().lifecycle).toBe('completed');
+		expect(session.getState().activeReferenceMode).toBeNull();
+	});
+
+	it('clears active reference mode when redo restores completed lifecycle', () => {
+		const session = createPuzzleSession(makeOptions({ metadata: makeMetadata(2) }));
+		session.dispatch({ type: 'start' });
+		session.dispatch({ type: 'attempt_placement', pieceId: 0, x: 0, y: 0 });
+		session.dispatch({ type: 'attempt_placement', pieceId: 1, x: 1, y: 0 });
+		session.dispatch({ type: 'undo' });
+		session.dispatch({ type: 'set_reference_mode', mode: 'toggle' });
+		session.dispatch({ type: 'redo' });
+		expect(session.getState().lifecycle).toBe('completed');
+		expect(session.getState().activeReferenceMode).toBeNull();
+	});
 });
 
 describe('PuzzleSession activity flag', () => {
