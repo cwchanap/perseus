@@ -12,6 +12,7 @@ function createToolbarProps(
 		onHint: vi.fn(),
 		onReferenceDown: vi.fn(),
 		onReferenceUp: vi.fn(),
+		onReferenceToggle: vi.fn(),
 		onZoomIn: vi.fn(),
 		onZoomOut: vi.fn(),
 		onResetView: vi.fn(),
@@ -20,6 +21,8 @@ function createToolbarProps(
 		canRedo: false,
 		rotationEnabled: false,
 		rotationToggleDisabled: false,
+		referenceToggled: false,
+		referenceAvailable: true,
 		...overrides
 	};
 }
@@ -42,7 +45,8 @@ describe('PuzzleToolbar', () => {
 			await expect.element(page.getByLabelText('Undo')).toBeInTheDocument();
 			await expect.element(page.getByLabelText('Redo')).toBeInTheDocument();
 			await expect.element(page.getByLabelText('Hint')).toBeInTheDocument();
-			await expect.element(page.getByLabelText('Reference')).toBeInTheDocument();
+			await expect.element(page.getByLabelText('Toggle reference')).toBeInTheDocument();
+			await expect.element(page.getByLabelText('Hold to peek reference')).toBeInTheDocument();
 			await expect.element(page.getByLabelText('Zoom out')).toBeInTheDocument();
 			await expect.element(page.getByLabelText('Zoom in')).toBeInTheDocument();
 			await expect.element(page.getByLabelText('Reset view')).toBeInTheDocument();
@@ -161,100 +165,149 @@ describe('PuzzleToolbar', () => {
 			expect(onRotationToggle).toHaveBeenCalledOnce();
 		});
 
-		it('calls onReferenceDown on reference button pointer down', async () => {
+		it('calls onReferenceDown on peek button pointer down', async () => {
 			const onReferenceDown = vi.fn();
 			renderToolbar({ onReferenceDown });
 
-			const refButton = page.getByLabelText('Reference');
-			await refButton.element().dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+			const peekButton = page.getByLabelText('Hold to peek reference');
+			await peekButton.element().dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
 			expect(onReferenceDown).toHaveBeenCalledOnce();
 		});
 
-		it('calls onReferenceUp on reference button pointer up', async () => {
+		it('calls onReferenceUp on peek button pointer up', async () => {
 			const onReferenceUp = vi.fn();
 			renderToolbar({ onReferenceUp });
 
-			const refButton = page.getByLabelText('Reference');
-			await refButton.element().dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+			const peekButton = page.getByLabelText('Hold to peek reference');
+			await peekButton.element().dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
 			expect(onReferenceUp).toHaveBeenCalledOnce();
 		});
 
-		it('calls onReferenceUp on reference button pointer leave', async () => {
+		it('calls onReferenceUp on peek button pointer leave', async () => {
 			const onReferenceUp = vi.fn();
 			renderToolbar({ onReferenceUp });
 
-			const refButton = page.getByLabelText('Reference');
-			await refButton.element().dispatchEvent(new PointerEvent('pointerleave', { bubbles: true }));
+			const peekButton = page.getByLabelText('Hold to peek reference');
+			await peekButton.element().dispatchEvent(new PointerEvent('pointerleave', { bubbles: true }));
 			expect(onReferenceUp).toHaveBeenCalledOnce();
 		});
 
-		it('calls onReferenceDown/Up on reference button Space key press', async () => {
+		it('calls onReferenceDown/Up on peek button Space key press', async () => {
 			const onReferenceDown = vi.fn();
 			const onReferenceUp = vi.fn();
 			renderToolbar({ onReferenceDown, onReferenceUp });
 
-			const refButton = page.getByLabelText('Reference');
-			await refButton
+			const peekButton = page.getByLabelText('Hold to peek reference');
+			await peekButton
 				.element()
 				.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
 			expect(onReferenceDown).toHaveBeenCalledOnce();
 
-			await refButton
+			await peekButton
 				.element()
 				.dispatchEvent(new KeyboardEvent('keyup', { key: ' ', bubbles: true }));
 			expect(onReferenceUp).toHaveBeenCalledOnce();
 		});
 
-		it('calls onReferenceDown/Up on reference button Enter key press', async () => {
+		it('calls onReferenceDown/Up on peek button Enter key press', async () => {
 			const onReferenceDown = vi.fn();
 			const onReferenceUp = vi.fn();
 			renderToolbar({ onReferenceDown, onReferenceUp });
 
-			const refButton = page.getByLabelText('Reference');
-			await refButton
+			const peekButton = page.getByLabelText('Hold to peek reference');
+			await peekButton
 				.element()
 				.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
 			expect(onReferenceDown).toHaveBeenCalledOnce();
 
-			await refButton
+			await peekButton
 				.element()
 				.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true }));
 			expect(onReferenceUp).toHaveBeenCalledOnce();
 		});
 
-		it('calls onReferenceUp when reference button loses focus during keyboard hold', async () => {
+		it('calls onReferenceUp when peek button loses focus during keyboard hold', async () => {
 			const onReferenceDown = vi.fn();
 			const onReferenceUp = vi.fn();
 			renderToolbar({ onReferenceDown, onReferenceUp });
 
-			const refButton = page.getByLabelText('Reference');
-			await refButton
+			const peekButton = page.getByLabelText('Hold to peek reference');
+			await peekButton
 				.element()
 				.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
 			expect(onReferenceDown).toHaveBeenCalledOnce();
 
-			await refButton.element().dispatchEvent(new FocusEvent('blur', { bubbles: true }));
+			await peekButton.element().dispatchEvent(new FocusEvent('blur', { bubbles: true }));
 			expect(onReferenceUp).toHaveBeenCalledOnce();
+		});
+
+		it('calls onReferenceToggle when toggle reference button is clicked', async () => {
+			const onReferenceToggle = vi.fn();
+			renderToolbar({ onReferenceToggle });
+
+			await userEvent.click(page.getByLabelText('Toggle reference'));
+			expect(onReferenceToggle).toHaveBeenCalledOnce();
 		});
 	});
 
 	describe('hasReference gating', () => {
-		it('shows Reference button when hasReference is true', async () => {
+		it('shows reference actions when hasReference is true', async () => {
 			renderToolbar({ hasReference: true });
 
-			await expect.element(page.getByLabelText('Reference')).toBeInTheDocument();
+			await expect.element(page.getByLabelText('Toggle reference')).toBeInTheDocument();
+			await expect.element(page.getByLabelText('Hold to peek reference')).toBeInTheDocument();
 		});
 
-		it('hides Reference button when hasReference is false', async () => {
+		it('hides reference actions when hasReference is false', async () => {
 			renderToolbar({ hasReference: false });
 
-			await expect.element(page.getByLabelText('Reference')).not.toBeInTheDocument();
+			await expect.poll(() => page.getByLabelText('Toggle reference').query()).toBeNull();
+			await expect.poll(() => page.getByLabelText('Hold to peek reference').query()).toBeNull();
 		});
 
-		it('shows Reference button by default when hasReference is not provided', async () => {
+		it('shows reference actions by default when hasReference is not provided', async () => {
 			renderToolbar();
 
-			await expect.element(page.getByLabelText('Reference')).toBeInTheDocument();
+			await expect.element(page.getByLabelText('Toggle reference')).toBeInTheDocument();
+			await expect.element(page.getByLabelText('Hold to peek reference')).toBeInTheDocument();
+		});
+	});
+
+	describe('reference availability', () => {
+		it('reflects referenceToggled on the toggle reference aria-pressed state', async () => {
+			renderToolbar({ referenceToggled: true });
+
+			await expect
+				.element(page.getByLabelText('Toggle reference'))
+				.toHaveAttribute('aria-pressed', 'true');
+		});
+
+		it('disables peek while reference is toggled on', async () => {
+			renderToolbar({ referenceToggled: true });
+
+			await expect.element(page.getByLabelText('Hold to peek reference')).toBeDisabled();
+			// The persistent toggle itself stays enabled so it can be turned off.
+			await expect.element(page.getByLabelText('Toggle reference')).toBeEnabled();
+		});
+
+		it('disables both reference actions when no reference URL is available', async () => {
+			renderToolbar({ referenceAvailable: false });
+
+			await expect.element(page.getByLabelText('Toggle reference')).toBeDisabled();
+			await expect.element(page.getByLabelText('Hold to peek reference')).toBeDisabled();
+		});
+
+		it('attaches the shared scoring description to Hint, Peek, and Toggle reference', async () => {
+			renderToolbar();
+
+			for (const label of ['Hint', 'Hold to peek reference', 'Toggle reference']) {
+				await expect
+					.element(page.getByLabelText(label))
+					.toHaveAttribute('aria-describedby', 'assistance-scoring-help');
+			}
+			await expect
+				.element(page.getByText('Hint affects timed results. Peek and Reference do not.'))
+				.toBeInTheDocument();
 		});
 	});
 

@@ -7,6 +7,7 @@
 		onHint: () => void;
 		onReferenceDown: (event?: ReferenceHoldEvent) => void;
 		onReferenceUp: (event?: ReferenceHoldEvent) => void;
+		onReferenceToggle: () => void;
 		onZoomIn: () => void;
 		onZoomOut: () => void;
 		onResetView: () => void;
@@ -20,6 +21,8 @@
 		rotationEnabled: boolean;
 		rotationToggleDisabled?: boolean;
 		hasReference?: boolean;
+		referenceToggled: boolean;
+		referenceAvailable: boolean;
 	}
 
 	let {
@@ -28,6 +31,7 @@
 		onHint,
 		onReferenceDown,
 		onReferenceUp,
+		onReferenceToggle,
 		onZoomIn,
 		onZoomOut,
 		onResetView,
@@ -40,7 +44,9 @@
 		canRedo,
 		rotationEnabled,
 		rotationToggleDisabled = false,
-		hasReference = true
+		hasReference = true,
+		referenceToggled,
+		referenceAvailable
 	}: Props = $props();
 
 	let moreOpen = $state(false);
@@ -72,6 +78,7 @@
 		<button
 			type="button"
 			aria-label="Hint"
+			aria-describedby="assistance-scoring-help"
 			onclick={onHint}
 			class="arcade-btn-ghost toolbar-button"
 		>
@@ -81,23 +88,11 @@
 		{#if hasReference}
 			<button
 				type="button"
-				aria-label="Reference"
-				onpointerdown={(event) => onReferenceDown(event)}
-				onpointerup={(event) => onReferenceUp(event)}
-				onpointerleave={(event) => onReferenceUp(event)}
-				onkeydown={(event) => {
-					if (event.key === ' ' || event.key === 'Enter') {
-						event.preventDefault();
-						onReferenceDown(event);
-					}
-				}}
-				onkeyup={(event) => {
-					if (event.key === ' ' || event.key === 'Enter') {
-						event.preventDefault();
-						onReferenceUp(event);
-					}
-				}}
-				onblur={() => onReferenceUp()}
+				aria-label="Toggle reference"
+				aria-pressed={referenceToggled ? 'true' : 'false'}
+				aria-describedby="assistance-scoring-help"
+				disabled={!referenceAvailable}
+				onclick={onReferenceToggle}
 				class="arcade-btn-ghost toolbar-button"
 			>
 				REF
@@ -154,6 +149,36 @@
 			</button>
 		</div>
 
+		{#if hasReference}
+			<div class="toolbar-group">
+				<button
+					type="button"
+					aria-label="Hold to peek reference"
+					aria-describedby="assistance-scoring-help"
+					disabled={!referenceAvailable || referenceToggled}
+					onpointerdown={(event) => onReferenceDown(event)}
+					onpointerup={(event) => onReferenceUp(event)}
+					onpointerleave={(event) => onReferenceUp(event)}
+					onkeydown={(event) => {
+						if (event.key === ' ' || event.key === 'Enter') {
+							event.preventDefault();
+							onReferenceDown(event);
+						}
+					}}
+					onkeyup={(event) => {
+						if (event.key === ' ' || event.key === 'Enter') {
+							event.preventDefault();
+							onReferenceUp(event);
+						}
+					}}
+					onblur={() => onReferenceUp()}
+					class="arcade-btn-ghost toolbar-button"
+				>
+					PEEK
+				</button>
+			</div>
+		{/if}
+
 		{#if canPause || canOpenSetup}
 			<div class="toolbar-group">
 				{#if canPause}
@@ -185,6 +210,10 @@
 			Rotation is locked after the first placement
 		</span>
 	{/if}
+
+	<span id="assistance-scoring-help" class="sr-only">
+		Hint affects timed results. Peek and Reference do not.
+	</span>
 </div>
 
 <style>

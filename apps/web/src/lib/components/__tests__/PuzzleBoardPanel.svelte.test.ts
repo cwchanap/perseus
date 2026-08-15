@@ -63,6 +63,7 @@ function props(overrides: Record<string, unknown> = {}) {
 		resolveImage: () => image,
 		referenceImageUrl: image,
 		referenceActive: false,
+		referenceToggled: false,
 		canUndo: true,
 		canRedo: true,
 		canOpenSetup: true,
@@ -77,6 +78,7 @@ function props(overrides: Record<string, unknown> = {}) {
 		onHint: vi.fn(),
 		onReferenceDown: vi.fn(),
 		onReferenceUp: vi.fn(),
+		onReferenceToggle: vi.fn(),
 		onRotationToggle: vi.fn(),
 		onPause: vi.fn(),
 		onOpenSetup: vi.fn(),
@@ -157,12 +159,21 @@ describe('PuzzleBoardPanel', () => {
 		expect(input.onRotationToggle).toHaveBeenCalledOnce();
 		expect(input.onPause).toHaveBeenCalledOnce();
 		expect(input.onOpenSetup).toHaveBeenCalledOnce();
-		await expect.element(page.getByLabelText('Reference')).toBeVisible();
+		await expect.element(page.getByLabelText('Toggle reference')).toBeVisible();
+		await expect.element(page.getByLabelText('Hold to peek reference')).toBeVisible();
 	});
 
 	it('hides Reference when puzzle.hasReference is not true', async () => {
 		render(PuzzleBoardPanel, props({ puzzle: { ...puzzle, hasReference: false } }));
-		expect(page.getByLabelText('Reference').query()).toBeNull();
+		expect(page.getByLabelText('Toggle reference').query()).toBeNull();
+		expect(page.getByLabelText('Hold to peek reference').query()).toBeNull();
+	});
+
+	it('disables REF and Peek when a reference is declared but the image URL is missing', async () => {
+		render(PuzzleBoardPanel, props({ referenceImageUrl: null }));
+
+		await expect.element(page.getByLabelText('Toggle reference')).toBeDisabled();
+		await expect.element(page.getByLabelText('Hold to peek reference')).toBeDisabled();
 	});
 
 	it('starts panning only from the board target, not viewport padding', async () => {

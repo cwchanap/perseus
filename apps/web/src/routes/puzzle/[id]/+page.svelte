@@ -73,7 +73,6 @@
 	let errorStatus: number | null = $state(null);
 	let showCelebration = $state(false);
 	let rejectedPiece: number | null = $state(null);
-	let showReferenceOverlay = $state(false);
 	let activeHintPieceId = $state<number | null>(null);
 	let activeHintTarget = $state<{ x: number; y: number } | null>(null);
 	let boardViewResetVersion = $state(0);
@@ -218,6 +217,11 @@
 	const currentSelectedPieceId = $derived(sessionState?.selectedPieceId ?? null);
 	const canUndo = $derived(sessionState?.canUndo ?? false);
 	const canRedo = $derived(sessionState?.canRedo ?? false);
+	// The session is the canonical owner of reference presentation; the route
+	// only mirrors it for overlay visibility and the persistent pressed state.
+	const activeReferenceMode = $derived(sessionState?.activeReferenceMode ?? null);
+	const referenceActive = $derived(activeReferenceMode !== null);
+	const referenceToggled = $derived(activeReferenceMode === 'toggle');
 	// A retryable server-submission failure surfaces a manual retry affordance
 	// in the celebration modal. The engine's retry_completion_effects action
 	// re-emits the server_submission effect request, which re-runs
@@ -535,6 +539,8 @@
 			sessionDialog = null;
 			restartConfirmation = false;
 			showCelebration = false;
+			referencePointerId = null;
+			referenceHoldSource = null;
 
 			const source = await loadPuzzleSource(id);
 			if (requestId !== activeLoadRequestId) {
@@ -581,7 +587,6 @@
 			// Fresh sessions start without the modal. (The
 			// dialog/celebration reset itself ran before the fetch above.)
 			showCelebration = restored?.lifecycle === 'completed';
-			showReferenceOverlay = false;
 			clearHintTarget();
 			if (rejectedPieceTimeout !== null) {
 				clearTimeout(rejectedPieceTimeout);
@@ -774,19 +779,36 @@
 		const isPointerEvent = event instanceof PointerEvent;
 		referenceHoldSource = isPointerEvent ? 'pointer' : 'keyboard';
 		referencePointerId = isPointerEvent ? event.pointerId : null;
-		showReferenceOverlay = true;
 		sessionStore?.dispatch({ type: 'set_reference_mode', mode: 'hold' });
 		checkpointSession();
+	}
+
+	// Hold-only cleanup: ends a hold in the session and always resets the
+	// route-local pointer/keyboard bookkeeping. The session mode is only
+	// cleared when it is still a hold, so a stale release after Hold -> Toggle
+	// cannot close the persistent reference.
+	function clearReferenceHold(): void {
+		const shouldClearMode = sessionState?.activeReferenceMode === 'hold';
+		referencePointerId = null;
+		referenceHoldSource = null;
+		if (shouldClearMode) sessionStore?.dispatch({ type: 'set_reference_mode', mode: null });
 	}
 
 	function handleReferenceUp(event?: PointerEvent | KeyboardEvent) {
 		if (referenceHoldSource === 'pointer' && !(event instanceof PointerEvent)) {
 			return;
 		}
-		showReferenceOverlay = false;
+		clearReferenceHold();
+	}
+
+	function handleReferenceToggle(): void {
+		if (!sessionStore || sessionState?.lifecycle !== 'active') return;
+		const wasInactive = sessionState.activeReferenceMode === null;
+		const nextMode = sessionState.activeReferenceMode === 'toggle' ? null : 'toggle';
 		referencePointerId = null;
 		referenceHoldSource = null;
-		sessionStore?.dispatch({ type: 'set_reference_mode', mode: null });
+		sessionStore.dispatch({ type: 'set_reference_mode', mode: nextMode });
+		if (wasInactive && nextMode === 'toggle') checkpointSession();
 	}
 
 	function handleRotationToggle() {
@@ -803,22 +825,14 @@
 
 	function handleWindowPointerUp(event: PointerEvent) {
 		if (referenceHoldSource === 'pointer' && referencePointerId === event.pointerId) {
-			showReferenceOverlay = false;
-			referencePointerId = null;
-			referenceHoldSource = null;
-			// End the reference hold in the session so a later press counts
-			// as a new inactive-to-active activation.
-			sessionStore?.dispatch({ type: 'set_reference_mode', mode: null });
+			clearReferenceHold();
 		}
 	}
 
 	function handleWindowBlur() {
-		if (referenceHoldSource !== null) {
-			sessionStore?.dispatch({ type: 'set_reference_mode', mode: null });
-		}
-		showReferenceOverlay = false;
-		referencePointerId = null;
-		referenceHoldSource = null;
+		// Hold ends on blur; the persistent Toggle survives because
+		// clearReferenceHold only clears a hold mode.
+		clearReferenceHold();
 		sessionStore?.dispatch({ type: 'cancel_selection' });
 	}
 
@@ -924,18 +938,13 @@
 	// --- Pause / resume / restart / exit composition ---------------------------
 
 	// Consolidated route-local cleanup of transient gameplay presentation
-	// (reference hold, selection, hint, rejection animation). Pan cancellation
-	// is panel-local and follows the interactionBlocked signal. Invoked before
-	// any lifecycle transition so stale overlay/interaction cannot leak into
-	// the next presentation. PuzzleSession remains the sole canonical owner of
-	// run state; this only touches route-local UI state.
+	// (selection, hint, rejection animation). Pan cancellation is panel-local
+	// and follows the interactionBlocked signal. Invoked before any lifecycle
+	// transition so stale overlay/interaction cannot leak into the next
+	// presentation. PuzzleSession remains the sole canonical owner of run
+	// state (including reference mode, which the engine clears for every
+	// non-active lifecycle target); this only touches route-local UI state.
 	function clearTransientGameplayState(): void {
-		if (referenceHoldSource !== null) {
-			sessionStore?.dispatch({ type: 'set_reference_mode', mode: null });
-		}
-		showReferenceOverlay = false;
-		referencePointerId = null;
-		referenceHoldSource = null;
 		sessionStore?.dispatch({ type: 'cancel_selection' });
 		clearHintTarget();
 		if (rejectedPieceTimeout !== null) clearTimeout(rejectedPieceTimeout);
@@ -1180,7 +1189,8 @@
 					{activeHintTarget}
 					resolveImage={source.resolvePieceImage}
 					referenceImageUrl={source.resolveReferenceImage() ?? null}
-					referenceActive={showReferenceOverlay}
+					{referenceActive}
+					{referenceToggled}
 					{canUndo}
 					{canRedo}
 					{canOpenSetup}
@@ -1195,6 +1205,7 @@
 					onHint={handleHint}
 					onReferenceDown={handleReferenceDown}
 					onReferenceUp={handleReferenceUp}
+					onReferenceToggle={handleReferenceToggle}
 					onRotationToggle={handleRotationToggle}
 					onPause={handleToolbarPause}
 					onOpenSetup={() => showMissionSetup(false)}
@@ -1257,7 +1268,7 @@
 		gridRows={puzzle?.gridRows ?? 0}
 		draft={setupDraft}
 		mandatory={setupMandatory}
-		inputHelp="Choose your mode and rotation settings before starting."
+		inputHelp="Choose your mode and rotation settings before starting. Hint affects timed results; Peek and Reference do not."
 		onDraftChange={(draft) => (setupDraft = draft)}
 		onStart={confirmMissionSetup}
 		onCancel={() => (sessionDialog = null)}
