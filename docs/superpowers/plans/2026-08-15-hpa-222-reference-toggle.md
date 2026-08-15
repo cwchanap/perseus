@@ -308,30 +308,7 @@ inputHelp="Choose your mode and rotation settings before starting. Hint affects 
 
 - [ ] **Step 5: Update route tests**
 
-Rename old Hold queries. Add:
-
-```ts
-it('keeps Reference visible until toggled off', async () => {
-	await renderPuzzlePage();
-	const toggle = page.getByLabelText('Toggle reference');
-	await toggle.click();
-	await expect.element(toggle).toHaveAttribute('aria-pressed', 'true');
-	await expect.element(page.getByTestId('reference-overlay')).toBeVisible();
-	await toggle.click();
-	await expect.poll(() => page.getByTestId('reference-overlay').query()).toBeNull();
-});
-
-it('keeps persistent Reference active across window blur', async () => {
-	await renderPuzzlePage();
-	const toggle = page.getByLabelText('Toggle reference');
-	await toggle.click();
-	window.dispatchEvent(new Event('blur'));
-	await expect.element(toggle).toHaveAttribute('aria-pressed', 'true');
-	await expect.element(page.getByTestId('reference-overlay')).toBeVisible();
-});
-```
-
-Also add Hold -> Toggle stale-release coverage: start Peek with pointer id 7, click Toggle, dispatch pointerup id 7, and assert Toggle/overlay remain active. Keep/add pause and navigation presentation tests. Do not add image-error integration; overlay behavior is unchanged.
+Rename old Hold queries. Add persistent Toggle and Toggle-survives-blur coverage. Also add Hold -> Toggle stale-release coverage: start Peek with pointer id 7, click Toggle, dispatch pointerup id 7, and assert Toggle/overlay remain active. Keep/add pause and navigation presentation tests. Do not add image-error integration; overlay behavior is unchanged.
 
 - [ ] **Step 6: Run affected Browser Mode tests and `check` before commit**
 
@@ -396,22 +373,11 @@ bun run lint
 
 - [ ] **Step 3: Scope review**
 
-Production diff should be limited to:
-
-```text
-apps/web/src/lib/services/gameplay/session/session.ts
-apps/web/src/lib/components/PuzzleToolbar.svelte
-apps/web/src/lib/components/PuzzleBoardPanel.svelte
-apps/web/src/routes/puzzle/[id]/+page.svelte
-```
-
-Tests should be limited to the four corresponding existing test files plus `apps/web/e2e/gameplay-mobile-tap.spec.ts`.
+Production diff should be limited to `session.ts`, `PuzzleToolbar.svelte`, `PuzzleBoardPanel.svelte`, and the puzzle route. Tests should be limited to their existing test files plus `gameplay-mobile-tap.spec.ts`.
 
 Confirm unchanged: `ReferenceOverlay.svelte`, persisted schema/version, API/shared types, preferences, analytics, dependencies, Playwright projects/fixtures/font stubbing, HPA-223 work.
 
 - [ ] **Step 4: Behavior review**
-
-Confirm:
 
 ```text
 Hold -> checkpoint -> release/blur ends Hold
@@ -428,3 +394,7 @@ image load error -> existing unavailable message; later activation can retry
 - [ ] **Step 5: Commit only if verification required a fix**
 
 Use a specific regression-fix message; otherwise do not create an empty commit.
+
+## Review-resolution notes
+
+The latest review was right that the prior plan overpaid for image failure, split lifecycle ownership between route and engine, and left a known broken intermediate toolbar contract. The revised plan removes the image subsystem, puts all non-active cleanup in the engine, keeps toolbar/callers atomic, moves rendered mobile verification into the feature task, and documents Hold -> Toggle explicitly. Peek remains because deleting it would violate current HPA-222 acceptance; on compact layouts it moves behind `MORE` instead of becoming a sixth permanent primary action.
