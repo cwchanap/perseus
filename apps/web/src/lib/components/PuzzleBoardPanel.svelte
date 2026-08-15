@@ -338,4 +338,27 @@
 		width: var(--board-width);
 		height: var(--board-height);
 	}
+
+	/* Mobile: the page is pinned to the viewport and .game-layout fills main,
+	   so the board's 1fr grid row gets a definite height. Turn the panel into a
+	   shrinking flex column so .board-wrap absorbs the height variance and
+	   scrolls instead of pushing the inventory drawer past the fold. Desktop is
+	   content-sized (no definite row height), so this stays inert there. */
+	@media (max-width: 1023px) {
+		.board-panel {
+			display: flex;
+			flex-direction: column;
+			min-height: 0;
+		}
+
+		.panel-header,
+		.board-toolbar {
+			flex-shrink: 0;
+		}
+
+		.board-wrap {
+			flex: 1 1 0;
+			min-height: 0;
+		}
+	}
 </style>
