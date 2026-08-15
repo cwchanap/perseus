@@ -385,12 +385,7 @@ Unchanged.
 
 ### Session tests
 
-Reuse the existing reference-mode tests for:
-
-- Hold is informational;
-- Toggle activation counts once;
-- Hold -> Toggle does not double-count;
-- Ghost remains assisted.
+Reuse the existing reference-mode tests for Hold informational scoring, Toggle activation counting, Hold -> Toggle no-double-count, and Ghost assisted scoring.
 
 Add only lifecycle coverage that does not already exist:
 
@@ -484,6 +479,10 @@ Do not add a single-row or fixed-pixel-height assertion: production already diff
 - **Transient failed load safe:** existing overlay shows unavailable and allows a later retry.
 - **Pointer and keyboard:** native Toggle + retained Hold handlers.
 - **Focused tests:** existing unit/browser/mobile smoke files only.
+
+## Review-resolution notes
+
+The latest review raised five useful pressure tests. The design accepts the engine-owned non-active lifecycle invariant, removes the duplicate image-failure subsystem, makes the toolbar/caller edit atomic, and documents Hold -> Toggle explicitly. It does not delete Peek because that would violate the current Linear scope, and it does not add a single-row E2E assertion because the current font-stubbed harness would encode a guarantee that is already false with the production font.
 
 ## YAGNI checkpoint
 
