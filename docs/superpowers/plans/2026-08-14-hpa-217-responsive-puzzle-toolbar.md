@@ -411,7 +411,7 @@ git commit -m "feat(web): make puzzle toolbar responsive"
 - Produces no helper, fixture, project, or production API.
 - Proves actual CSS visibility/geometry that Task 1's component tests intentionally do not emulate.
 
-- [ ] **Step 1: Add the failing mobile toolbar E2E test**
+- [ ] **Step 1: Add the mobile toolbar E2E acceptance test**
 
 Add near the top of `gameplay-mobile-tap.spec.ts`:
 
@@ -476,7 +476,7 @@ test('mobile toolbar keeps primary actions visible and secondary actions in More
 
 `IMMEDIATE_START` keeps the fixture active with no user activity, so both `canPause` and `canOpenSetup` are true before the test performs any gameplay action.
 
-- [ ] **Step 2: Run only the new mobile case and verify the old toolbar fails the new contract**
+- [ ] **Step 2: Run the new mobile acceptance case after Task 1**
 
 From `apps/web`:
 
@@ -486,9 +486,7 @@ bunx playwright test e2e/gameplay-mobile-tap.spec.ts \
   --grep "mobile toolbar keeps primary actions visible"
 ```
 
-Expected before Task 1 is applied: FAIL because there is no `MORE` control and all actions remain directly rendered.
-
-Expected after Task 1 is applied: PASS.
+Expected: PASS with the Task 1 component implementation. The same test would fail against current `main` because `main` has no `MORE` control, which makes it a useful regression fence without requiring a deliberately red intermediate commit.
 
 - [ ] **Step 3: Run the focused HPA-217 verification set**
 
