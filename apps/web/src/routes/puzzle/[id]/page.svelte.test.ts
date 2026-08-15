@@ -500,6 +500,7 @@ describe('Puzzle route gameplay integration', () => {
 		await page.getByRole('button', { name: 'Edge pieces' }).click();
 
 		await expect.element(page.getByText('NO PIECES MATCH')).toBeVisible();
+		await page.getByLabelText('More puzzle actions').click();
 		await expect.element(page.getByRole('button', { name: 'Open mission setup' })).toBeVisible();
 		expect(sessionStorageSpies.saveSession).toHaveBeenCalled();
 		const snapshot = sessionStorageSpies.saveSession.mock.calls.at(-1)?.[1];
@@ -716,6 +717,7 @@ describe('Puzzle route gameplay integration', () => {
 		await expect
 			.element(page.getByRole('dialog', { name: 'Mission Setup' }))
 			.not.toBeInTheDocument();
+		await page.getByLabelText('More puzzle actions').click();
 		await expect.element(page.getByRole('button', { name: 'Open mission setup' })).toBeVisible();
 	});
 
@@ -791,6 +793,7 @@ describe('Puzzle route gameplay integration', () => {
 		await renderPuzzlePage();
 
 		// Zoom in so canPanBoard becomes true
+		await page.getByLabelText('More puzzle actions').click();
 		await page.getByLabelText('Zoom in').click();
 
 		const puzzleBoard = await page.getByTestId('puzzle-board').element();
@@ -840,6 +843,7 @@ describe('Puzzle route gameplay integration', () => {
 	it('toggles rotation mode, rotates tray pieces, and blocks placement until upright', async () => {
 		await renderPuzzlePage();
 
+		await page.getByLabelText('More puzzle actions').click();
 		await page.getByLabelText('Rotation mode').click();
 		await expect
 			.element(page.getByLabelText('Rotation mode'))
@@ -916,6 +920,7 @@ describe('Puzzle route gameplay integration', () => {
 	it('records rotation-only changes as undo steps and restores them correctly', async () => {
 		await renderPuzzlePage();
 
+		await page.getByLabelText('More puzzle actions').click();
 		await page.getByLabelText('Rotation mode').click();
 		await page.getByRole('button', { name: 'Rotate piece 1' }).click();
 		await placePiece(0, 0, 0);
@@ -950,6 +955,7 @@ describe('Puzzle route gameplay integration', () => {
 	it('restores rotation mode from history snapshots during undo and redo', async () => {
 		await renderPuzzlePage();
 
+		await page.getByLabelText('More puzzle actions').click();
 		await page.getByLabelText('Rotation mode').click();
 		await page.getByRole('button', { name: 'Rotate piece 1' }).click();
 		await page.getByLabelText('Rotation mode').click();
@@ -978,6 +984,7 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.element(page.getByLabelText('Undo')).toBeDisabled();
 
 		// Toggle rotation on — should be undoable
+		await page.getByLabelText('More puzzle actions').click();
 		await page.getByLabelText('Rotation mode').click();
 		await expect
 			.element(page.getByLabelText('Rotation mode'))
@@ -1162,6 +1169,7 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.element(page.getByTestId('puzzle-board')).toBeVisible();
 
 		// Open the pause dialog on the active session.
+		await page.getByLabelText('More puzzle actions').click();
 		await page.getByRole('button', { name: 'Pause mission' }).click();
 		await expect.element(page.getByRole('dialog', { name: 'Mission Paused' })).toBeVisible();
 
@@ -1239,6 +1247,7 @@ describe('Puzzle route gameplay integration', () => {
 
 		await expect.element(page.getByTestId('game-timer')).toHaveClass('timer-block timer-off');
 
+		await page.getByLabelText('More puzzle actions').click();
 		await page.getByLabelText('Rotation mode').click();
 		await page.getByRole('button', { name: 'Rotate piece 0' }).click();
 
@@ -1501,6 +1510,7 @@ describe('Puzzle route gameplay integration', () => {
 		await renderPuzzlePage();
 
 		// Positive control: an active session shows the Pause button.
+		await page.getByLabelText('More puzzle actions').click();
 		await expect.element(page.getByLabelText('Pause mission')).toBeVisible();
 
 		await placePiece(0, 0, 0);
@@ -1538,6 +1548,7 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.element(page.getByText('1/2')).toBeVisible();
 
 		// Open the pause dialog; the route is inert while it is open.
+		await page.getByLabelText('More puzzle actions').click();
 		await page.getByRole('button', { name: 'Pause mission' }).click();
 		await expect.element(page.getByRole('dialog', { name: 'Mission Paused' })).toBeVisible();
 
@@ -1570,6 +1581,7 @@ describe('Puzzle route gameplay integration', () => {
 
 		const initialScale = await getScale();
 
+		await page.getByLabelText('More puzzle actions').click();
 		await page.getByLabelText('Zoom in').click();
 		expect(await getScale()).toBeGreaterThan(initialScale);
 
@@ -1946,6 +1958,7 @@ describe('Puzzle route gameplay integration', () => {
 
 		// The board is interactive again: pausing via the toolbar reopens the
 		// pause dialog (a real click would be intercepted while the page is inert).
+		await page.getByLabelText('More puzzle actions').click();
 		await page.getByRole('button', { name: 'Pause mission' }).click();
 		await expect.element(page.getByRole('dialog', { name: 'Mission Paused' })).toBeVisible();
 	});
@@ -1954,6 +1967,7 @@ describe('Puzzle route gameplay integration', () => {
 		await renderPuzzlePage();
 		await placePiece(0, 0, 0);
 
+		await page.getByLabelText('More puzzle actions').click();
 		await page.getByRole('button', { name: 'Pause mission' }).click();
 		await expect.element(page.getByRole('dialog', { name: 'Mission Paused' })).toBeVisible();
 
@@ -1967,6 +1981,7 @@ describe('Puzzle route gameplay integration', () => {
 	it('restarts immediately into setup when the run has no user activity', async () => {
 		await renderPuzzlePage();
 
+		await page.getByLabelText('More puzzle actions').click();
 		await page.getByRole('button', { name: 'Pause mission' }).click();
 		await page.getByRole('button', { name: 'Restart' }).click();
 
@@ -1980,6 +1995,7 @@ describe('Puzzle route gameplay integration', () => {
 		await placePiece(0, 0, 0);
 		resumableState.value = true;
 
+		await page.getByLabelText('More puzzle actions').click();
 		await page.getByRole('button', { name: 'Pause mission' }).click();
 		await page.getByRole('button', { name: 'Exit' }).click();
 		await expect.element(page.getByRole('dialog', { name: 'Exit Mission' })).toBeVisible();
@@ -1995,6 +2011,7 @@ describe('Puzzle route gameplay integration', () => {
 		await placePiece(0, 0, 0);
 		resumableState.value = true;
 
+		await page.getByLabelText('More puzzle actions').click();
 		await page.getByRole('button', { name: 'Pause mission' }).click();
 		await page.getByRole('button', { name: 'Exit' }).click();
 		await expect.element(page.getByRole('dialog', { name: 'Exit Mission' })).toBeVisible();
@@ -2018,6 +2035,7 @@ describe('Puzzle route gameplay integration', () => {
 		await placePiece(0, 0, 0);
 		resumableState.value = true;
 
+		await page.getByLabelText('More puzzle actions').click();
 		await page.getByRole('button', { name: 'Pause mission' }).click();
 		await page.getByRole('button', { name: 'Exit' }).click();
 		await expect.element(page.getByRole('dialog', { name: 'Exit Mission' })).toBeVisible();
@@ -2077,6 +2095,7 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.element(page.getByTestId('game-timer')).toBeVisible();
 
 		// Open the non-mandatory setup dialog from the toolbar.
+		await page.getByLabelText('More puzzle actions').click();
 		await page.getByRole('button', { name: 'Open mission setup' }).click();
 		await expect.element(page.getByRole('dialog', { name: 'Mission Setup' })).toBeVisible();
 
@@ -2103,6 +2122,7 @@ describe('Puzzle route gameplay integration', () => {
 		};
 		await renderPuzzlePage();
 
+		await page.getByLabelText('More puzzle actions').click();
 		await page.getByRole('button', { name: 'Open mission setup' }).click();
 		await expect.element(page.getByRole('dialog', { name: 'Mission Setup' })).toBeVisible();
 
@@ -2124,6 +2144,7 @@ describe('Puzzle route gameplay integration', () => {
 		};
 		await renderPuzzlePage();
 
+		await page.getByLabelText('More puzzle actions').click();
 		await page.getByRole('button', { name: 'Open mission setup' }).click();
 		await expect.element(page.getByRole('dialog', { name: 'Mission Setup' })).toBeVisible();
 
@@ -2147,6 +2168,7 @@ describe('Puzzle route gameplay integration', () => {
 		referenceButton.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
 		await expect.element(page.getByTestId('reference-overlay')).toBeVisible();
 
+		await page.getByLabelText('More puzzle actions').click();
 		const pauseButton = await page.getByRole('button', { name: 'Pause mission' }).element();
 		pauseButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 		await expect.element(page.getByRole('dialog', { name: 'Mission Paused' })).toBeVisible();
@@ -2160,6 +2182,7 @@ describe('Puzzle route gameplay integration', () => {
 		await renderPuzzlePage();
 		await placePiece(0, 0, 0);
 
+		await page.getByLabelText('More puzzle actions').click();
 		await page.getByRole('button', { name: 'Pause mission' }).click();
 		await page.getByRole('button', { name: 'Restart' }).click();
 		await expect.element(page.getByText('Restart this mission?')).toBeVisible();
@@ -2218,6 +2241,7 @@ describe('Puzzle page defensive guard coverage', () => {
 		await renderPuzzlePage();
 
 		// Enable rotation mode and rotate piece 0 to 90 degrees (non-upright).
+		await page.getByLabelText('More puzzle actions').click();
 		await page.getByLabelText('Rotation mode').click();
 		await page.getByRole('button', { name: 'Rotate piece 0' }).click();
 
