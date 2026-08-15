@@ -236,6 +236,21 @@
 		border-color: var(--accent);
 	}
 
+	/* Active inventory filter: aria-pressed alone is invisible to sighted
+	   users, so mirror PuzzleToolbar's pressed Rotation button and give the
+	   active filter a distinct accent border/fill. Scoped to the tools row so
+	   the CANCEL and drawer-toggle actions (no aria-pressed) are unaffected. */
+	.inventory-tools .panel-action[aria-pressed='true'] {
+		color: var(--accent);
+		border-color: var(--accent);
+		background: var(--accent-glow);
+		box-shadow: 0 0 10px var(--accent-glow);
+	}
+
+	.inventory-tools .panel-action[aria-pressed='true']:hover {
+		background: var(--accent-glow);
+	}
+
 	/* Coarse-pointer (mobile) controls must meet the same 44px touch target as
 	   .puzzle-piece and .drop-zone (see routes/layout.css). Desktop pointers are
 	   unaffected: the buttons keep their compact sizing for mouse/trackpad use. */

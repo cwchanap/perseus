@@ -4,12 +4,12 @@
 // inventory drawer added in this slice. Task 4 extends this file with the
 // full mobile completion flow; Task 5 is the verification fence.
 //
-// The 4-piece fixture proves horizontal slot density (at least four tray
-// slots fully visible) and pins the panel cap at ≤ 20rem. The 100-piece
-// fixture proves the two-row grid content budget and the same cap, plus
-// scroll: a corrected-density 4-piece tray no longer needs scrolling, so
-// scroll must be exercised against the large fixture via a real
-// browser-level touch swipe.
+// The 4-piece fixture proves the open drawer fits the 390x844 fold (HPA-219
+// invariant, restored) and shows at least four tray slots fully visible. The
+// 100-piece fixture proves the two-row grid content budget (HPA-220 fence)
+// plus scroll: a corrected-density 4-piece tray no longer needs scrolling, so
+// scroll must be exercised against the large fixture via a real browser-level
+// touch swipe.
 import { test, expect } from './support/test';
 import { DEFAULT_GAMEPLAY_PREFERENCES } from '../src/lib/services/gameplay/session/preferences';
 
@@ -37,11 +37,11 @@ test('mobile inventory fits the viewport and shows four tray slots @smoke', asyn
 	expect(viewport).toEqual({ width: 390, height: 844 });
 	expect(panelBox).not.toBeNull();
 	expect(gridBox).not.toBeNull();
-	// HPA-220's tools row plus the raised 20rem cap make the 4-piece drawer taller
-	// than the 844px fold by design; this test owns slot density, the 100-piece
-	// test owns the height budget (16rem-fail/20rem-pass proven there). Pin the
-	// mobile cap here instead of the fold fit.
-	expect(panelBox!.height).toBeLessThanOrEqual(20 * 16);
+	// HPA-219 invariant: the open drawer's bottom must stay within the 390x844
+	// fold. The mobile layout pins .puzzle-page to the viewport and lets the
+	// board panel shrink (its .board-wrap scrolls) so the tools row + 20rem cap
+	// never push the drawer past the fold.
+	expect(panelBox!.y + panelBox!.height).toBeLessThanOrEqual(viewport!.height);
 
 	const slots = page.locator('[data-testid^="piece-slot-"]');
 	const slotCount = await slots.count();
@@ -87,13 +87,10 @@ test('large mobile inventory scrolls from a swipe starting on a piece @smoke', a
 	expect(viewport).toEqual({ width: 390, height: 844 });
 	expect(panelBox).not.toBeNull();
 	expect(firstSlotBox).not.toBeNull();
-	// The 100-piece board page is taller than the 844px viewport, so this drawer's
-	// bottom always sits below the fold regardless of the cap. Pin the mobile cap
-	// itself here: the raised 20rem budget is 320px, and the old 16rem cap
-	// measured 256px. The four-piece test above owns the 4-piece cap and slot
-	// density; the grid budget below proves the 100-piece tray fits two rows.
-	expect(panelBox!.height).toBeLessThanOrEqual(20 * 16);
-
+	// HPA-220 fence: the 100-piece tray's grid content area must fit two full
+	// rows under the mobile slot size, proving the tools row did not steal the
+	// grid budget. The 4-piece test above owns the fold-fit invariant; this
+	// test owns the two-row budget and the swipe-scroll behavior below.
 	const gridBudget = await grid.evaluate((element) => {
 		const style = getComputedStyle(element);
 		const paddingTop = Number.parseFloat(style.paddingTop) || 0;

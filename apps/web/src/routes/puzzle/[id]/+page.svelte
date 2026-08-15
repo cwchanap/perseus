@@ -1297,6 +1297,19 @@
 		flex-direction: column;
 	}
 
+	/* Mobile: pin the page to the dynamic viewport so the board panel can shrink
+	   (its .board-wrap scrolls) and the open inventory drawer's bottom stays
+	   within the fold at 390x844. Desktop keeps the content-driven min-height so
+	   the sidebar layout grows with the board. */
+	@media (max-width: 1023px) {
+		.puzzle-page {
+			height: 100vh;
+			height: 100dvh;
+			min-height: 100vh;
+			min-height: 100dvh;
+		}
+	}
+
 	/* ===== HUD HEADER ===== */
 	.hud-header {
 		display: flex;
@@ -1498,6 +1511,15 @@
 		gap: 1.25rem;
 		max-width: min(96rem, calc(100vw - 2rem));
 		margin: 0 auto;
+	}
+
+	/* Mobile: fill the viewport-bound main so the board's 1fr row shrinks
+	   (instead of the grid growing past the fold) and the auto inventory row
+	   anchors to the bottom. Desktop stays content-sized. */
+	@media (max-width: 1023px) {
+		.game-layout {
+			height: 100%;
+		}
 	}
 
 	@media (min-width: 1024px) {
