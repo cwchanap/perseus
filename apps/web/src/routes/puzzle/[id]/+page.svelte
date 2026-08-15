@@ -795,10 +795,15 @@
 	}
 
 	function handleReferenceUp(event?: PointerEvent | KeyboardEvent) {
-		if (referenceHoldSource === 'pointer' && !(event instanceof PointerEvent)) {
+		if (referenceHoldSource === 'pointer') {
+			if (event instanceof PointerEvent && event.pointerId === referencePointerId) {
+				clearReferenceHold();
+			}
 			return;
 		}
-		clearReferenceHold();
+		if (referenceHoldSource === 'keyboard' && !(event instanceof PointerEvent)) {
+			clearReferenceHold();
+		}
 	}
 
 	function handleReferenceToggle(): void {
