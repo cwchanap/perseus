@@ -178,11 +178,7 @@ test.describe('mission session controls', () => {
 		await gameplayPage.startMission();
 
 		// The toolbar Pause action stays reachable and opens the pause dialog.
-		const pause = page.getByRole('button', { name: 'Pause mission' });
-		await expect(pause).toBeVisible();
-		await pause.click();
-		const paused = page.getByRole('dialog', { name: 'Mission Paused' });
-		await expect(paused).toBeVisible();
+		const paused = await gameplayPage.pauseMission();
 		await paused.getByRole('button', { name: 'Resume' }).click();
 		await expect(paused).not.toBeVisible();
 	});
