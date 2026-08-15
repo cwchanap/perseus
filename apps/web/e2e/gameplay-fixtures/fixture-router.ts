@@ -72,7 +72,9 @@ async function methodNotAllowed(route: Route, allowed: string): Promise<void> {
  * `PuzzleMetadata` — the exact shape `GET /api/puzzles/:id` returns. Pieces are
  * cloned (the frozen fixture is never serialized by reference).
  */
-export function fixtureToMetadata(fixture: ReturnType<typeof getFixture>): ReadyPuzzle {
+export function fixtureToMetadata(
+	fixture: ReturnType<typeof getFixture>
+): ReadyPuzzle & { hasReference: boolean } {
 	return {
 		id: fixture.fixtureId,
 		name: fixture.name,
@@ -85,7 +87,12 @@ export function fixtureToMetadata(fixture: ReturnType<typeof getFixture>): Ready
 		createdAt: fixture.createdAt,
 		version: 1,
 		status: 'ready',
-		pieces: fixture.pieces.map((piece) => ({ ...piece, edges: { ...piece.edges } }))
+		pieces: fixture.pieces.map((piece) => ({ ...piece, edges: { ...piece.edges } })),
+		// The real API derives hasReference from R2 presence; the harness
+		// fixtures all declare it explicitly. Advertise it so the page's
+		// `hasReference === true` gating renders the Reference button exactly
+		// as it does against the real backend.
+		hasReference: fixture.hasReference
 	};
 }
 

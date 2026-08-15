@@ -20,6 +20,90 @@ function isChromiumMobile(): boolean {
 	return PROJECT() === 'chromium-mobile';
 }
 
+test('puzzle toolbar is direct on desktop and compact on phone @smoke', async ({
+	gameplayPage,
+	page
+}) => {
+	const project = PROJECT();
+	test.skip(
+		project !== 'chromium-desktop' && project !== 'chromium-mobile',
+		'toolbar responsive proof uses Chromium desktop/mobile'
+	);
+
+	await gameplayPage.gotoFixture({ seedPreferences: IMMEDIATE_START });
+
+	const more = page.getByRole('button', { name: 'More puzzle actions' });
+	const zoomIn = page.getByRole('button', { name: 'Zoom in' });
+	const pause = page.getByRole('button', { name: 'Pause mission' });
+	const setup = page.getByRole('button', { name: 'Open mission setup' });
+
+	if (project === 'chromium-desktop') {
+		await expect(more).toBeHidden();
+		await expect(zoomIn).toBeVisible();
+		await expect(pause).toBeVisible();
+		await expect(setup).toBeVisible();
+		return;
+	}
+
+	const viewport = page.viewportSize();
+	expect(viewport).toEqual({ width: 390, height: 844 });
+
+	const toolbar = page.getByTestId('puzzle-toolbar');
+	const toolbarBox = await toolbar.boundingBox();
+	expect(toolbarBox).not.toBeNull();
+	expect(toolbarBox!.x).toBeGreaterThanOrEqual(0);
+	expect(toolbarBox!.x + toolbarBox!.width).toBeLessThanOrEqual(viewport!.width);
+
+	await expect(page.getByRole('button', { name: 'Undo' })).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Redo' })).toBeVisible();
+	const hint = page.getByRole('button', { name: 'Hint' });
+	await expect(hint).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Reference' })).toBeVisible();
+	await expect(more).toBeVisible();
+	await expect(more).toHaveAttribute('aria-expanded', 'false');
+
+	const hintBox = await hint.boundingBox();
+	expect(hintBox).not.toBeNull();
+	expect(hintBox!.width).toBeGreaterThanOrEqual(44);
+	expect(hintBox!.height).toBeGreaterThanOrEqual(44);
+
+	await expect(zoomIn).toBeHidden();
+	await expect(pause).toBeHidden();
+	await expect(setup).toBeHidden();
+
+	await more.click();
+	await expect(more).toHaveAttribute('aria-expanded', 'true');
+	await expect(zoomIn).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Reset view' })).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Rotation mode' })).toBeVisible();
+	await expect(pause).toBeVisible();
+	await expect(setup).toBeVisible();
+
+	// Actionability is the stacking proof. This fails if the board covers the panel.
+	await zoomIn.click();
+
+	const secondaryBox = await page.getByTestId('puzzle-toolbar-secondary').boundingBox();
+	expect(secondaryBox).not.toBeNull();
+	expect(secondaryBox!.x).toBeGreaterThanOrEqual(0);
+	expect(secondaryBox!.x + secondaryBox!.width).toBeLessThanOrEqual(viewport!.width);
+
+	const documentOverflow = await page.evaluate(() => ({
+		scrollWidth: document.documentElement.scrollWidth,
+		clientWidth: document.documentElement.clientWidth
+	}));
+	expect(documentOverflow.scrollWidth).toBeLessThanOrEqual(documentOverflow.clientWidth);
+
+	const mainOverflow = await page.locator('.puzzle-main').evaluate((element) => ({
+		scrollWidth: element.scrollWidth,
+		clientWidth: element.clientWidth
+	}));
+	expect(mainOverflow.scrollWidth).toBeLessThanOrEqual(mainOverflow.clientWidth);
+
+	await more.click();
+	await expect(more).toHaveAttribute('aria-expanded', 'false');
+	await expect(zoomIn).toBeHidden();
+});
+
 test('mobile inventory fits the viewport and shows four tray slots @smoke', async ({
 	gameplayPage,
 	page
