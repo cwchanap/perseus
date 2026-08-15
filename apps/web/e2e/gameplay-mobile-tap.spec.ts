@@ -36,12 +36,16 @@ test('puzzle toolbar is direct on desktop and compact on phone @smoke', async ({
 	const zoomIn = page.getByRole('button', { name: 'Zoom in' });
 	const pause = page.getByRole('button', { name: 'Pause mission' });
 	const setup = page.getByRole('button', { name: 'Open mission setup' });
+	const toggleReference = page.getByRole('button', { name: 'Toggle reference' });
+	const peekReference = page.getByRole('button', { name: 'Hold to peek reference' });
 
 	if (project === 'chromium-desktop') {
 		await expect(more).toBeHidden();
 		await expect(zoomIn).toBeVisible();
 		await expect(pause).toBeVisible();
 		await expect(setup).toBeVisible();
+		await expect(toggleReference).toBeVisible();
+		await expect(peekReference).toBeVisible();
 		return;
 	}
 
@@ -54,18 +58,24 @@ test('puzzle toolbar is direct on desktop and compact on phone @smoke', async ({
 	expect(toolbarBox!.x).toBeGreaterThanOrEqual(0);
 	expect(toolbarBox!.x + toolbarBox!.width).toBeLessThanOrEqual(viewport!.width);
 
-	await expect(page.getByRole('button', { name: 'Undo' })).toBeVisible();
-	await expect(page.getByRole('button', { name: 'Redo' })).toBeVisible();
+	const undo = page.getByRole('button', { name: 'Undo' });
+	const redo = page.getByRole('button', { name: 'Redo' });
 	const hint = page.getByRole('button', { name: 'Hint' });
+	await expect(undo).toBeVisible();
+	await expect(redo).toBeVisible();
 	await expect(hint).toBeVisible();
-	await expect(page.getByRole('button', { name: 'Reference' })).toBeVisible();
+	await expect(toggleReference).toBeVisible();
+	await expect(peekReference).toBeHidden();
 	await expect(more).toBeVisible();
 	await expect(more).toHaveAttribute('aria-expanded', 'false');
 
-	const hintBox = await hint.boundingBox();
-	expect(hintBox).not.toBeNull();
-	expect(hintBox!.width).toBeGreaterThanOrEqual(44);
-	expect(hintBox!.height).toBeGreaterThanOrEqual(44);
+	// Touch-target minimums: every visible primary action must be >= 44 px.
+	for (const control of [undo, redo, hint, toggleReference, more]) {
+		const box = await control.boundingBox();
+		expect(box).not.toBeNull();
+		expect(box!.width).toBeGreaterThanOrEqual(44);
+		expect(box!.height).toBeGreaterThanOrEqual(44);
+	}
 
 	await expect(zoomIn).toBeHidden();
 	await expect(pause).toBeHidden();
@@ -73,6 +83,7 @@ test('puzzle toolbar is direct on desktop and compact on phone @smoke', async ({
 
 	await more.click();
 	await expect(more).toHaveAttribute('aria-expanded', 'true');
+	await expect(peekReference).toBeVisible();
 	await expect(zoomIn).toBeVisible();
 	await expect(page.getByRole('button', { name: 'Reset view' })).toBeVisible();
 	await expect(page.getByRole('button', { name: 'Rotation mode' })).toBeVisible();

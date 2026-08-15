@@ -618,17 +618,15 @@ describe('Puzzle route gameplay integration', () => {
 			.toHaveAttribute('style', 'transform: rotate(180deg);');
 	});
 
-	it('shows the reference overlay only while the toolbar button is held', async () => {
+	it('shows the reference overlay only while the peek button is held', async () => {
 		await renderPuzzlePage();
 
-		const referenceButton = await page.getByLabelText('Reference').element();
-		referenceButton.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
+		const peekButton = await page.getByLabelText('Hold to peek reference').element();
+		peekButton.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
 
 		await expect.element(page.getByTestId('reference-overlay')).toBeVisible();
 
-		referenceButton.dispatchEvent(
-			new PointerEvent('pointerleave', { bubbles: true, pointerId: 1 })
-		);
+		peekButton.dispatchEvent(new PointerEvent('pointerleave', { bubbles: true, pointerId: 1 }));
 
 		await expect.poll(() => page.getByTestId('reference-overlay').query()).toBeNull();
 	});
@@ -636,8 +634,8 @@ describe('Puzzle route gameplay integration', () => {
 	it('dismisses reference overlay via global window pointerup with matching pointer id', async () => {
 		await renderPuzzlePage();
 
-		const referenceButton = await page.getByLabelText('Reference').element();
-		referenceButton.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
+		const peekButton = await page.getByLabelText('Hold to peek reference').element();
+		peekButton.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
 
 		await expect.element(page.getByTestId('reference-overlay')).toBeVisible();
 
@@ -652,8 +650,8 @@ describe('Puzzle route gameplay integration', () => {
 	it('clears reference overlay on window blur', async () => {
 		await renderPuzzlePage();
 
-		const referenceButton = await page.getByLabelText('Reference').element();
-		referenceButton.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
+		const peekButton = await page.getByLabelText('Hold to peek reference').element();
+		peekButton.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
 
 		await expect.element(page.getByTestId('reference-overlay')).toBeVisible();
 
@@ -665,14 +663,70 @@ describe('Puzzle route gameplay integration', () => {
 	it('clears keyboard-held reference overlay on window blur', async () => {
 		await renderPuzzlePage();
 
-		const referenceButton = await page.getByLabelText('Reference').element();
-		referenceButton.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+		const peekButton = await page.getByLabelText('Hold to peek reference').element();
+		peekButton.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
 
 		await expect.element(page.getByTestId('reference-overlay')).toBeVisible();
 
 		window.dispatchEvent(new Event('blur'));
 
 		await expect.poll(() => page.getByTestId('reference-overlay').query()).toBeNull();
+	});
+
+	it('persists the reference overlay while the reference toggle is on', async () => {
+		await renderPuzzlePage();
+
+		await page.getByLabelText('Toggle reference').click();
+		await expect.element(page.getByTestId('reference-overlay')).toBeVisible();
+		await expect
+			.element(page.getByLabelText('Toggle reference'))
+			.toHaveAttribute('aria-pressed', 'true');
+
+		// The overlay persists after the click interaction completes.
+		await expect.element(page.getByTestId('reference-overlay')).toBeVisible();
+
+		await page.getByLabelText('Toggle reference').click();
+		await expect.poll(() => page.getByTestId('reference-overlay').query()).toBeNull();
+		await expect
+			.element(page.getByLabelText('Toggle reference'))
+			.toHaveAttribute('aria-pressed', 'false');
+	});
+
+	it('keeps the reference toggle on across window blur', async () => {
+		await renderPuzzlePage();
+
+		await page.getByLabelText('Toggle reference').click();
+		await expect.element(page.getByTestId('reference-overlay')).toBeVisible();
+
+		window.dispatchEvent(new Event('blur'));
+
+		// Only holds end on blur; the persistent toggle survives.
+		await expect.element(page.getByTestId('reference-overlay')).toBeVisible();
+		await expect
+			.element(page.getByLabelText('Toggle reference'))
+			.toHaveAttribute('aria-pressed', 'true');
+	});
+
+	it('ignores a stale hold release after Hold -> Toggle', async () => {
+		await renderPuzzlePage();
+
+		const peekButton = await page.getByLabelText('Hold to peek reference').element();
+		peekButton.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
+		await expect.element(page.getByTestId('reference-overlay')).toBeVisible();
+
+		// Hold -> Toggle: the toggle handler clears the Hold bookkeeping, so
+		// the later release of the original pointer cannot close the toggle.
+		(page.getByLabelText('Toggle reference').element() as HTMLButtonElement).click();
+		await expect
+			.element(page.getByLabelText('Toggle reference'))
+			.toHaveAttribute('aria-pressed', 'true');
+
+		window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1 }));
+
+		await expect.element(page.getByTestId('reference-overlay')).toBeVisible();
+		await expect
+			.element(page.getByLabelText('Toggle reference'))
+			.toHaveAttribute('aria-pressed', 'true');
 	});
 
 	it('pauses a restored active session at entry and checkpoints the paused state', async () => {
@@ -1110,6 +1164,46 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.element(page.getByText('NEXT MISSION')).toBeVisible();
 		const nextSlot = await page.getByTestId('piece-slot-0').element();
 		expect(nextSlot.classList.contains('rejected')).toBe(false);
+	});
+
+	it('resets reference state when navigating to a different puzzle', async () => {
+		const nextPuzzle: Puzzle = {
+			...createMockPuzzle(),
+			id: 'next-puzzle',
+			name: 'Next Mission',
+			pieces: [
+				createPiece(0, 0, 0, { puzzleId: 'next-puzzle' }),
+				createPiece(1, 1, 0, { puzzleId: 'next-puzzle' })
+			]
+		};
+
+		vi.mocked(fetchPuzzle).mockImplementation(async (id: string) =>
+			id === 'next-puzzle' ? nextPuzzle : createMockPuzzle()
+		);
+
+		render(PuzzlePage);
+		await expect.element(page.getByTestId('puzzle-board')).toBeVisible();
+
+		// Open a reference hold on the first puzzle.
+		const peekButton = await page.getByLabelText('Hold to peek reference').element();
+		peekButton.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 5 }));
+		await expect.element(page.getByTestId('reference-overlay')).toBeVisible();
+
+		mockPageStore.set({
+			url: { pathname: '/puzzle/next-puzzle' },
+			params: { id: 'next-puzzle' },
+			route: { id: '/puzzle/[id]' },
+			status: 200,
+			error: null
+		});
+
+		await expect.element(page.getByText('NEXT MISSION')).toBeVisible();
+		// The new session starts without an active reference mode.
+		await expect.poll(() => page.getByTestId('reference-overlay').query()).toBeNull();
+
+		// A stale release of the old hold cannot reopen the overlay.
+		window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 5 }));
+		await expect.poll(() => page.getByTestId('reference-overlay').query()).toBeNull();
 	});
 
 	it('ignores stale puzzle load results after navigating to a new puzzle', async () => {
@@ -2156,21 +2250,33 @@ describe('Puzzle route gameplay integration', () => {
 	});
 
 	it('clears the reference overlay when pausing while it is held', async () => {
-		// clearTransientGameplayState dispatches set_reference_mode null when
-		// the reference hold is active (line 1126). Pausing while the overlay
-		// is open must tear it down so it does not leak behind the pause dialog.
-		// A synthetic pointerdown activates the hold; a direct click event on
-		// the Pause button (without a preceding pointerup) ensures the hold is
-		// still active when clearTransientGameplayState runs.
+		// The session engine clears activeReferenceMode for every non-active
+		// lifecycle target, so pausing while the overlay is open tears it down
+		// without route-level reference cleanup. A synthetic pointerdown
+		// activates the hold; a direct click event on the Pause button
+		// (without a preceding pointerup) ensures the hold is still active
+		// when the pause transition runs.
 		await renderPuzzlePage();
 
-		const referenceButton = await page.getByLabelText('Reference').element();
-		referenceButton.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
+		const peekButton = await page.getByLabelText('Hold to peek reference').element();
+		peekButton.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
 		await expect.element(page.getByTestId('reference-overlay')).toBeVisible();
 
 		await page.getByLabelText('More puzzle actions').click();
 		const pauseButton = await page.getByRole('button', { name: 'Pause mission' }).element();
 		pauseButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+		await expect.element(page.getByRole('dialog', { name: 'Mission Paused' })).toBeVisible();
+		await expect.poll(() => page.getByTestId('reference-overlay').query()).toBeNull();
+	});
+
+	it('clears the reference overlay when pausing while the toggle is on', async () => {
+		await renderPuzzlePage();
+
+		await page.getByLabelText('Toggle reference').click();
+		await expect.element(page.getByTestId('reference-overlay')).toBeVisible();
+
+		await page.getByLabelText('More puzzle actions').click();
+		await page.getByRole('button', { name: 'Pause mission' }).click();
 		await expect.element(page.getByRole('dialog', { name: 'Mission Paused' })).toBeVisible();
 		await expect.poll(() => page.getByTestId('reference-overlay').query()).toBeNull();
 	});

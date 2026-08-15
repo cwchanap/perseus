@@ -30,12 +30,14 @@
 		rotationToggleDisabled: boolean;
 		interactionBlocked: boolean;
 		viewResetVersion: number;
+		referenceToggled: boolean;
 		onPiecePlaced: (pieceId: number, x: number, y: number) => void;
 		onUndo: () => void;
 		onRedo: () => void;
 		onHint: () => void;
 		onReferenceDown: (event?: ReferenceHoldEvent) => void;
 		onReferenceUp: (event?: ReferenceHoldEvent) => void;
+		onReferenceToggle: () => void;
 		onRotationToggle: () => void;
 		onPause: () => void;
 		onOpenSetup: () => void;
@@ -58,12 +60,14 @@
 		rotationToggleDisabled,
 		interactionBlocked,
 		viewResetVersion,
+		referenceToggled,
 		onPiecePlaced,
 		onUndo,
 		onRedo,
 		onHint,
 		onReferenceDown,
 		onReferenceUp,
+		onReferenceToggle,
 		onRotationToggle,
 		onPause,
 		onOpenSetup
@@ -85,6 +89,9 @@
 	const canPanBoard = $derived(selectedPieceId === null && zoom > minZoom + 0.001);
 	const puzzleId = $derived(puzzle.id);
 	const viewResetSignal = $derived(viewResetVersion);
+	// A declared reference with no image URL cannot be shown: REF and Peek
+	// render (hasReference gates that) but stay disabled.
+	const referenceAvailable = $derived(puzzle.hasReference === true && referenceImageUrl !== null);
 
 	$effect(() => {
 		void puzzleId;
@@ -257,6 +264,7 @@
 			{onHint}
 			{onReferenceDown}
 			{onReferenceUp}
+			{onReferenceToggle}
 			onZoomIn={handleZoomIn}
 			onZoomOut={handleZoomOut}
 			onResetView={resetViewport}
@@ -269,6 +277,8 @@
 			{canRedo}
 			{rotationEnabled}
 			{rotationToggleDisabled}
+			{referenceToggled}
+			{referenceAvailable}
 			hasReference={puzzle.hasReference === true}
 		/>
 	</div>
