@@ -6,41 +6,54 @@
 
 ## Context
 
-HPA-222 is the next actionable child of HPA-215. The earlier gameplay slices through HPA-217 are complete, and HPA-557 already split the puzzle route into concrete board, toolbar, inventory, and dialog components.
+HPA-222 is the next actionable child of HPA-215. HPA-557 already split the puzzle route into concrete board, toolbar, inventory, and dialog components, and HPA-217 established the current responsive toolbar.
 
 The current code already contains almost all domain support this ticket needs:
 
-- `PuzzleSessionState.activeReferenceMode` is the runtime-only field intended to represent active reference presentation.
+- `PuzzleSessionState.activeReferenceMode` is runtime-only and already represents active reference presentation.
 - `ReferenceMode` already includes `hold` and `toggle`.
-- `set_reference_mode` already counts an activation when moving from inactive to active.
-- Hold and Toggle are already informational for result classification; Hint and the unused Ghost mode are the assistance paths that can make a timed run assisted.
-- `clearTransientGameplayState()` already owns route-local cleanup before pause/restart/active-session exit.
-- `ReferenceOverlay.svelte` already owns full-image presentation and local image-error state.
-- HPA-217 already compacted the toolbar and established the existing 390 × 844 browser geometry smoke test.
+- `set_reference_mode` already counts an activation only when moving from inactive to active.
+- Hold and Toggle are informational for result classification; Hint is assisted.
+- placement history snapshots exclude `activeReferenceMode`, so undo/redo cannot restore an old reference mode from history.
+- persisted session serialization excludes `activeReferenceMode`, so reload never restores an open reference.
+- `ReferenceOverlay.svelte` already shows `Reference image unavailable` for a null or failed image and retries on a later activation.
 
-The main architectural gap is that the route also maintains `showReferenceOverlay`, duplicating `PuzzleSessionState.activeReferenceMode`. Adding another route boolean for persistent reference mode would make that duplication worse. HPA-222 should instead finish the existing seam and make the session snapshot canonical.
+The main architectural gap is the route-local `showReferenceOverlay` boolean. It duplicates `PuzzleSession.activeReferenceMode`. HPA-222 should delete that duplicate and make the existing session field canonical.
+
+## Product constraints
+
+HPA-222 explicitly requires both interactions:
+
+1. preserve the existing **Hold to Peek** behavior;
+2. add one persistent **Reference** toggle.
+
+The implementation should simplify around that requirement rather than inventing a generic assistance system.
+
+At 390 px, adding Peek as another always-visible compact-toolbar action would permanently consume more board height. HPA-222 therefore keeps only the persistent `REF` action in the compact primary row and places `PEEK` in the existing `MORE` surface on compact layouts. On desktop, the same secondary container is visible inline, so Peek remains directly available without a second responsive markup tree.
 
 ## Goals
 
-1. Keep the existing press-and-hold reference interaction as **Peek**.
-2. Add one persistent **Reference** toggle that remains active until toggled off.
-3. Make `PuzzleSession.activeReferenceMode` the single source of truth for active reference presentation.
-4. Clear persistent Reference on navigation, explicit pause, restart, completion, and image failure.
-5. Let persistent Reference survive ordinary window blur; blur cancels only an in-progress Hold.
-6. Preserve current scoring: Hint makes timed results assisted; Peek and Reference do not.
-7. Explain that scoring distinction without adding permanent height to the compact toolbar.
-8. Make missing or broken reference images non-interactive without breaking gameplay.
-9. Keep pointer and keyboard behavior on native buttons with focused tests and the existing mobile toolbar geometry proof.
+1. Keep Hold-to-Peek with pointer and keyboard press/release semantics.
+2. Add one persistent Reference toggle that stays active until toggled off or gameplay leaves the active lifecycle.
+3. Make `PuzzleSession.activeReferenceMode` the only reference-presentation state.
+4. Clear active reference mode inside the session engine whenever gameplay leaves `active`.
+5. Preserve current scoring and activation-counter behavior.
+6. Keep the compact primary toolbar at its current action count by moving Peek behind `MORE` only on compact layouts.
+7. Disable reference actions when the puzzle declares a reference but no reference URL exists.
+8. Keep transient image-load failures retryable through the existing overlay error presentation rather than creating a second failure-state subsystem.
+9. Explain the scoring distinction using existing setup/help and screen-reader-description surfaces.
 
 ## Non-goals
 
-- Ghost Reference or opacity controls.
+- Ghost Reference UI or opacity controls.
 - Aligning a reference image behind the board.
 - Progressive hint tiers or an assistance-mode menu.
 - New result classes, analytics events, or preference persistence.
 - A generic lifecycle-cleanup abstraction.
-- A reusable media-loading framework.
-- A new Playwright project, fixture family, screenshot suite, or broad browser matrix.
+- A reference preload/retry service.
+- A duplicated panel-level image failure state.
+- A new Playwright project, fixture family, screenshot suite, or browser matrix.
+- Fixing HPA-217's pre-existing production-font versus E2E-font geometry mismatch.
 - Backward compatibility for pre-release UI behavior.
 
 ## Reuse survey
@@ -50,55 +63,53 @@ The main architectural gap is that the route also maintains `showReferenceOverla
 | Active reference state | `PuzzleSessionState.activeReferenceMode` | Reuse as canonical state |
 | Hold/Toggle actions | `set_reference_mode` | Reuse unchanged |
 | Activation counter | `SessionCounters.referenceActivations` | Reuse unchanged |
-| Result classification | `recomputeResultClass()` | Reuse unchanged; add focused proof |
-| Completed lifecycle entry | `transitionToInternal()` | Extend with one `to === 'completed'` runtime cleanup |
-| Pause/restart cleanup | `clearTransientGameplayState()` | Extend locally, no new framework |
-| Hold blur/release cleanup | existing route hold bookkeeping | Consolidate without clearing Toggle |
-| Full-image UI | `ReferenceOverlay.svelte` | Extend with one unavailable callback |
-| Toolbar | `PuzzleToolbar.svelte` | Add concrete Peek + pressed Reference controls |
-| Assistance explanation | `MissionSetupDialog.inputHelp` + `aria-describedby` pattern | Reuse; do not add a toolbar paragraph |
-| Board composition | `PuzzleBoardPanel.svelte` | Own image-load failure presentation state |
-| Mobile geometry proof | `e2e/gameplay-mobile-tap.spec.ts` | Update existing query/expectations and rerun |
+| Result classification | `recomputeResultClass()` | Reuse unchanged |
+| Undo/redo history | `PlacementHistoryState` excludes reference mode | Keep unchanged; history cannot resurrect reference UI |
+| Persistence | serializer excludes runtime reference mode | Keep unchanged; no schema/version work |
+| Lifecycle transition | `transitionToInternal()` | Clear reference for every non-active target |
+| Restart | `doRestart()` replaces state with `freshState()` | Already clears reference by construction |
+| Hold DOM bookkeeping | route `referencePointerId` / `referenceHoldSource` | Keep route-local |
+| Full-image UI | `ReferenceOverlay.svelte` | Reuse unchanged |
+| Missing URL | `referenceImageUrl` already available to board panel | Use as a simple disabled condition |
+| Failed image | existing overlay unavailable message | Reuse; do not permanently disable after a transient load error |
+| Responsive toolbar | existing primary + `MORE` / secondary container | Put REF primary; Peek secondary |
+| Scoring help | `MissionSetupDialog.inputHelp` + existing `aria-describedby` pattern | Extend existing surfaces |
 
-No new service, store, schema, package, or shared component is justified.
+No new service, store, schema, controller, asset-health state, package, or generic UI abstraction is justified.
 
 ## Options considered
 
-### Option A — Use `activeReferenceMode` as the single source of truth (recommended)
+### Option A — Use `activeReferenceMode` as the single source of truth (selected)
 
-Remove the route-local `showReferenceOverlay` boolean. Derive overlay visibility and Toggle pressed state from the current `PuzzleSession` snapshot. Keep only pointer/keyboard Hold bookkeeping (`referencePointerId` and `referenceHoldSource`) outside the session because those values are DOM-event details, not gameplay state.
+Delete `showReferenceOverlay`. Derive overlay visibility and persistent pressed state from the session snapshot. Keep only pointer/keyboard Hold bookkeeping outside the session.
 
 **Pros**
 
-- uses the domain seam that already exists;
-- removes duplicated assistance state;
-- Toggle needs no persistence change because active reference mode is intentionally runtime-only;
-- pause/restart cleanup continues through the existing route helper;
-- completion cleanup can be made complete with one assignment in the existing lifecycle transition primitive;
-- HPA-223 can later add Escape behavior without a second reference-state path.
+- removes duplicate state;
+- reuses the domain contract already present;
+- no persistence migration;
+- one engine lifecycle rule replaces route ordering constraints;
+- undo/redo history cannot resurrect the runtime mode because it is not part of history snapshots.
 
 **Cons**
 
-- touches the route and the session lifecycle transition primitive in addition to toolbar markup;
-- requires the existing mobile toolbar smoke caller to be updated because one primary action becomes two.
+- the route still needs DOM bookkeeping for Hold because pointer ids and keyboard press/release are presentation details.
 
-### Option B — Keep `showReferenceOverlay` and add `referenceToggled`
+### Option B — Keep `showReferenceOverlay` and add another toggle boolean
 
-Treat both values as route-local presentation state and dispatch `set_reference_mode` only for counters/result facts.
+**Rejected:** this creates three representations of the same interaction: overlay boolean, toggle boolean, and session mode.
 
-**Rejected:** two booleans plus session state create three representations of one interaction. Every lifecycle transition would need synchronization and tests against drift.
+### Option C — Add an assistance controller/menu
 
-### Option C — Add an assistance controller/menu component
+**Rejected:** two concrete reference interactions and one Hint action do not justify another abstraction.
 
-Create a reusable controller or menu for Hint, Peek, Toggle, and future modes.
+### Option D — Drop Peek and ship only Toggle
 
-**Rejected:** the ticket has two reference interactions and one Hint action. A framework adds indirection before a demonstrated second consumer exists.
+This is the smallest implementation technically, but it conflicts with HPA-222's explicit scope and acceptance criteria requiring Hold-to-Peek to remain. Do not silently change that product requirement in this design.
 
-## Decision
+## State ownership
 
-Use **Option A**.
-
-`PuzzleSession.activeReferenceMode` remains runtime-only and becomes the canonical active-mode value used by the route:
+The route derives:
 
 ```ts
 const activeReferenceMode = $derived(sessionState?.activeReferenceMode ?? null);
@@ -106,196 +117,146 @@ const referenceActive = $derived(activeReferenceMode !== null);
 const referenceToggled = $derived(activeReferenceMode === 'toggle');
 ```
 
-The route keeps only event bookkeeping needed to end a pointer/keyboard Hold safely:
+The route retains only DOM Hold bookkeeping:
 
 ```ts
 let referencePointerId = $state<number | null>(null);
 let referenceHoldSource = $state<'pointer' | 'keyboard' | null>(null);
 ```
 
-There is no new persisted field and no schema version change.
+There is no `showReferenceOverlay`, `referenceToggled` state variable, persisted reference mode, or panel-level reference failure state.
 
-## Interaction model
+## Session lifecycle cleanup
 
-### Peek
-
-The existing Reference hold button becomes clearly labeled **Peek**.
-
-- Pointer down dispatches `set_reference_mode: 'hold'`.
-- The successful Hold activation keeps the existing `checkpointSession()` call because `referenceActivations` and `hasUserActivity` are persisted evidence even though `activeReferenceMode` itself is runtime-only.
-- Matching pointer up / pointer leave / matching global pointer-up ends Hold.
-- Space/Enter keydown starts Hold; matching keyup ends it.
-- Window blur ends Hold.
-- Peek is disabled while persistent Reference is toggled on because holding an already-visible image is redundant.
-
-A Hold release only dispatches `mode: null` when the session is still in `hold`. A stale release event must never turn off a later persistent Toggle.
-
-### Persistent Reference
-
-Add one native button:
-
-```svelte
-<button
-	type="button"
-	aria-label="Toggle reference"
-	aria-pressed={referenceToggled ? 'true' : 'false'}
-	aria-describedby="puzzle-assistance-result-help"
-	disabled={!referenceAvailable}
-	onclick={onReferenceToggle}
->
-	REF
-</button>
-```
-
-Clicking it performs exactly one of two intended steady-state transitions:
-
-```text
-null -> toggle
-toggle -> null
-```
-
-Toggle-on checkpoints the session so the activation counter / activity evidence is promptly persisted. Toggle-off does not need another write because the active mode is runtime-only.
-
-The Toggle is not persisted. A restored session therefore never reopens the reference image automatically.
-
-### Blur semantics
-
-Persistent Reference means persistent across ordinary focus loss. Window blur therefore has two different responsibilities:
-
-- if a pointer/keyboard Hold is in progress, end that Hold and dispatch `set_reference_mode: null` while the session is active;
-- if `activeReferenceMode === 'toggle'`, leave it alone;
-- continue cancelling piece selection as the route does today.
-
-Do not reuse the lifecycle cleanup helper from pause/restart on blur. That helper intentionally clears both Hold and Toggle.
-
-## Assistance explanation
-
-HPA-217 intentionally keeps the primary mobile toolbar compact. Adding a wrapping paragraph beside the new fifth primary action would consume board height on every puzzle and work against that design.
-
-Reuse existing surfaces instead:
-
-1. Extend `MissionSetupDialog`'s existing visible `inputHelp` copy to include the scoring rule:
-
-   > Choose your mode and rotation settings before starting. Hints affect timed results; Peek and Reference do not.
-
-2. Add one shared screen-reader-only explanation in `PuzzleToolbar.svelte`:
-
-```svelte
-<span id="puzzle-assistance-result-help" class="sr-only">
-	Hint affects timed results. Peek and Reference do not.
-</span>
-```
-
-3. Point Hint, Peek, and persistent Reference at that text with `aria-describedby="puzzle-assistance-result-help"`.
-
-This satisfies the ticket's clear assistance labeling without permanent toolbar chrome, tooltips, or a help modal.
-
-## Result classification and counters
-
-No scoring implementation changes are required.
-
-The existing engine already computes:
-
-```ts
-if (state.mode === 'relaxed') return 'relaxed';
-if (state.facts.hintUsed || state.facts.ghostReferenceUsed) return 'assisted_timed';
-if (state.facts.rotationUsed) return 'rotation_timed';
-return 'standard_timed';
-```
-
-`hold` and `toggle` therefore remain informational. Add a regression test that exercises Hold, Toggle, and Hint together, but treat the Hold/Toggle assertions as an existing contract test rather than pretending they are newly failing behavior.
-
-`referenceActivations` keeps its current rule: entering any non-null reference mode from `null` counts one activation. Turning Toggle off does not add another activation.
-
-## Lifecycle cleanup
-
-### Navigation
-
-Puzzle navigation already tears down the prior session and sets `sessionState = null` before constructing the next one. Because overlay visibility is derived from `activeReferenceMode`, the reference disappears automatically when the prior session is removed.
-
-Also clear `referencePointerId` and `referenceHoldSource` during route reuse so stale DOM-event bookkeeping cannot cross puzzles.
-
-### Explicit pause, restart, and active-session exit
-
-Extend the existing route-local transient cleanup so it clears **any** active reference mode while the session is still active:
-
-1. clear Hold bookkeeping;
-2. if `sessionState.lifecycle === 'active'` and `activeReferenceMode !== null`, dispatch `set_reference_mode: null`;
-3. continue the existing selection/hint/rejection cleanup;
-4. only then perform the pause/restart/exit lifecycle transition.
-
-The ordering matters because `doSetReferenceMode()` rejects the action once lifecycle is no longer `active`.
-
-This remains one concrete route helper, not a lifecycle registry.
-
-### Completion
-
-`handleBoardCompletion()` is not the only path into completed lifecycle. `doRedo()` can restore a completed board with a retained completion seal and calls `transitionToInternal('completed')` directly.
-
-Therefore clear the runtime-only reference mode at the actual common lifecycle entry:
+Reference presentation is meaningful only during active gameplay. Put that invariant in the existing lifecycle primitive:
 
 ```ts
 function transitionToInternal(to: SessionLifecycle) {
 	const from = state.lifecycle;
-	if (to === 'completed') state.activeReferenceMode = null;
+	if (to !== 'active') state.activeReferenceMode = null;
 	state.lifecycle = to;
 	emit({ type: 'lifecycle', from, to });
 }
 ```
 
-That single assignment covers:
+This covers:
 
-- first completion through `doComplete()`;
-- retained-seal re-placement through `handleBoardCompletion()`;
-- redo-to-completed through `doRedo()`.
+- explicit pause (`active -> paused`);
+- first completion (`active -> completed`);
+- retained-seal recompletion (`active -> completed`);
+- redo restoring a completed board (`active -> completed`);
+- disposal (`* -> disposed`).
 
-No new lifecycle hook or observer is added.
+Restart does not call `transitionToInternal('setup')`; it replaces the state with `freshState()`, whose `activeReferenceMode` is already null. No route cleanup is needed for restart correctness.
 
-### Window blur
+This is preferable to requiring the route to dispatch `set_reference_mode: null` before pause. The engine owns the invariant and there is no ordering footgun.
 
-Blur is **not** a completed/pause/restart lifecycle transition. It only ends an in-progress Hold and leaves persistent Toggle active.
+## Hold-to-Peek interaction
 
-## Missing and failed reference images
+### Start Hold
 
-There are two distinct cases.
+`handleReferenceDown()`:
 
-### No reference exists
+1. no-ops if the persistent Toggle is already active;
+2. stores pointer/keyboard Hold bookkeeping;
+3. dispatches `set_reference_mode: 'hold'`;
+4. immediately calls `checkpointSession()`.
 
-If `puzzle.hasReference !== true`, do not render Peek/Reference actions. This preserves the current clean absence behavior.
+The checkpoint stays because entering reference mode increments `referenceActivations` and sets `hasUserActivity`, both of which are persisted.
 
-### Metadata says reference exists, but it is unavailable
+### End Hold
 
-`PuzzleBoardPanel.svelte` owns a small `referenceLoadFailed` presentation flag because it renders both overlay and toolbar. Reference availability is:
-
-```ts
-const referenceAvailable = $derived(
-	puzzle.hasReference === true && referenceImageUrl !== null && !referenceLoadFailed
-);
-```
-
-When the puzzle/reference URL changes, reset `referenceLoadFailed`.
-
-`ReferenceOverlay.svelte` gains one optional callback:
+Use one route helper for Hold cleanup only:
 
 ```ts
-onUnavailable?: () => void;
+function clearReferenceHold(): void {
+	const shouldClearMode = sessionState?.activeReferenceMode === 'hold';
+	referencePointerId = null;
+	referenceHoldSource = null;
+
+	if (shouldClearMode) {
+		sessionStore?.dispatch({ type: 'set_reference_mode', mode: null });
+	}
+}
 ```
 
-Its `<img onerror>` marks its existing local error state and calls the callback. `PuzzleBoardPanel` then:
+`handleReferenceUp()` validates the pointer source/id when required, then delegates to `clearReferenceHold()`.
 
-1. marks the current reference unavailable;
-2. disables Peek/Reference controls; and
-3. asks the route to clear the active reference mode.
+The global matching pointer-up path also delegates to `handleReferenceUp(event)` rather than duplicating cleanup.
 
-Image failure is one of the deliberate lifecycle-like cleanup cases: clear both Hold and Toggle while the session is still active.
+Window blur calls `clearReferenceHold()`. Therefore:
 
-This is intentionally not a preload service, retry system, or generalized asset-health layer. A later puzzle/reference URL gets a fresh attempt.
+- an active Hold ends on blur;
+- a persistent Toggle survives ordinary focus loss.
 
-## Component contracts
+`clearTransientGameplayState()` no longer owns reference cleanup. Pause/restart/completion/disposal are session lifecycle concerns now.
 
-### `PuzzleToolbar.svelte`
+## Persistent Reference toggle
 
-Keep the current concrete button structure. Add only:
+The Toggle handler is deliberately small:
+
+```ts
+function handleReferenceToggle(): void {
+	if (!sessionStore || sessionState?.lifecycle !== 'active') return;
+
+	const wasInactive = sessionState.activeReferenceMode === null;
+	const nextMode = sessionState.activeReferenceMode === 'toggle' ? null : 'toggle';
+
+	referencePointerId = null;
+	referenceHoldSource = null;
+	sessionStore.dispatch({ type: 'set_reference_mode', mode: nextMode });
+
+	if (wasInactive && nextMode === 'toggle') {
+		checkpointSession();
+	}
+}
+```
+
+The explicit transitions are:
+
+```text
+null   -> toggle   counts one activation and checkpoints
+toggle -> null     closes the persistent reference
+hold   -> toggle   switches mode without double-counting
+```
+
+The third transition matters for multi-pointer input: a user can hold Peek and activate Reference with another pointer. `doSetReferenceMode()` already avoids double-counting because the previous mode was non-null. Clearing the Hold bookkeeping in the Toggle handler prevents the later stale release from affecting Toggle.
+
+Peek is disabled while Toggle is already active because another Hold would be redundant.
+
+## Toolbar layout
+
+Keep one markup tree and the existing HPA-217 responsive container behavior.
+
+### Desktop
+
+The secondary container is inline, so users see:
+
+- Undo / Redo;
+- Hint / REF;
+- Peek;
+- Zoom / Fit / Rotation;
+- Pause / Setup when available.
+
+### Compact (<1024 px)
+
+Keep the primary row's action count unchanged from HPA-217:
+
+- Undo;
+- Redo;
+- Hint;
+- REF;
+- MORE.
+
+Put Peek in the existing secondary container with the other `MORE` actions. This preserves Hold-to-Peek without adding a sixth permanent compact control.
+
+Do not claim HPA-222 makes the production toolbar single-row at 390 px. The existing E2E harness stubs Google Fonts and therefore does not reproduce production Orbitron metrics exactly. That is pre-existing HPA-217 test debt, not a reason to expand this ticket.
+
+HPA-222's structural guarantee is narrower and truthful: it does not increase the compact primary action count.
+
+## Toolbar contracts
+
+`PuzzleToolbar.svelte` adds only:
 
 ```ts
 onReferenceToggle: () => void;
@@ -303,188 +264,227 @@ referenceToggled: boolean;
 referenceAvailable: boolean;
 ```
 
-Retain `hasReference` to decide whether reference actions exist at all.
+The existing Hold callbacks remain:
 
-The existing `onReferenceDown` / `onReferenceUp` callbacks remain for Peek. Add the shared `aria-describedby` help text, but no visible toolbar paragraph.
+```ts
+onReferenceDown: (event?: ReferenceHoldEvent) => void;
+onReferenceUp: (event?: ReferenceHoldEvent) => void;
+```
+
+The persistent button is primary:
+
+```svelte
+<button
+	type="button"
+	aria-label="Toggle reference"
+	aria-pressed={referenceToggled ? 'true' : 'false'}
+	aria-describedby="assistance-scoring-help"
+	disabled={!referenceAvailable}
+	onclick={onReferenceToggle}
+	class="arcade-btn-ghost toolbar-button"
+>
+	REF
+</button>
+```
+
+The Peek button keeps the existing Hold handlers and becomes part of the secondary container. It uses:
+
+```svelte
+aria-label="Hold to peek reference"
+aria-describedby="assistance-scoring-help"
+disabled={!referenceAvailable || referenceToggled}
+```
+
+Hint also references the same screen-reader description.
+
+No action registry or separate mobile markup is added.
+
+## Reference availability
+
+There are three cases.
+
+### Puzzle has no reference
+
+If `puzzle.hasReference !== true`, render neither Peek nor Reference. This is current behavior generalized to the two controls.
+
+### Puzzle declares a reference but resolver returns null
+
+This is deterministic unavailability. Keep the controls present but disabled:
+
+```ts
+const referenceAvailable = $derived(
+	puzzle.hasReference === true && referenceImageUrl !== null
+);
+```
+
+`PuzzleBoardPanel` can compute this directly because it already receives both values.
+
+### Image URL exists but the image load fails
+
+Do **not** add `onUnavailable`, `referenceLoadFailed`, a keyed `$effect`, or route cleanup.
+
+`ReferenceOverlay.svelte` already renders `Reference image unavailable` when its image fails. Keep that behavior. The user can release Peek or toggle Reference off and try again later; the overlay's existing local `imageError` reset on a later activation provides the retry.
+
+This is simpler and better for transient network failures than permanently disabling controls for the remainder of the session.
+
+## Assistance/scoring copy
+
+Do not add a wrapping paragraph to the compact toolbar.
+
+Extend the existing Mission Setup help to include the visible rule, for example:
+
+> Choose your mode and rotation settings before starting. Hint affects timed results; Peek and Reference do not.
+
+Add one shared screen-reader-only description in `PuzzleToolbar.svelte`:
+
+```svelte
+<span id="assistance-scoring-help" class="sr-only">
+	Hint affects timed results. Peek and Reference do not.
+</span>
+```
+
+Attach Hint, Peek, and Reference with `aria-describedby`.
+
+## Component boundaries
+
+### `PuzzleToolbar.svelte`
+
+- keep concrete buttons;
+- add persistent REF state/callback;
+- rename the existing Hold action to Peek;
+- put Peek in the secondary container so compact layouts keep the existing primary count;
+- reuse existing `aria-pressed` styling;
+- add shared sr-only scoring description.
 
 ### `PuzzleBoardPanel.svelte`
 
-Add:
-
-```ts
-referenceToggled: boolean;
-onReferenceToggle: () => void;
-onReferenceUnavailable: () => void;
-```
-
-Keep `referenceImageUrl` and `referenceActive` as presentation inputs. The panel owns only image-load failure state, not gameplay reference mode.
-
-### `ReferenceOverlay.svelte`
-
-Add the optional `onUnavailable` callback and invoke it on image load failure.
-
-No generic loading/error component is extracted.
+- receive `referenceToggled` and `onReferenceToggle`;
+- derive `referenceAvailable` only from `puzzle.hasReference` + `referenceImageUrl`;
+- pass Toggle/Hold props to the toolbar;
+- keep `ReferenceOverlay` unchanged.
 
 ### Puzzle route
 
-The route:
+- remove `showReferenceOverlay`;
+- derive active/toggled presentation from `sessionState.activeReferenceMode`;
+- add Toggle handler;
+- retain Hold bookkeeping and one Hold-only cleanup helper;
+- remove reference cleanup from `clearTransientGameplayState()`;
+- reset stale Hold bookkeeping during puzzle teardown/reuse;
+- extend Mission Setup help text.
 
-- removes `showReferenceOverlay`;
-- derives `referenceActive` / `referenceToggled` from the session snapshot;
-- keeps pointer/keyboard Hold bookkeeping;
-- keeps two small cleanup intents distinct: **end Hold only** vs **clear any active reference**;
-- extends Mission Setup's existing visible help text.
+### `PuzzleSession`
 
-## Accessibility and keyboard behavior
+- clear `activeReferenceMode` for every non-active lifecycle target.
 
-- Peek and Reference remain native `<button type="button">` controls.
-- Peek keeps explicit Space/Enter press-and-release behavior because its semantics are hold-based.
-- Reference uses native button activation and exposes persistent state with `aria-pressed`.
-- Hint, Peek, and Reference share concise `aria-describedby` scoring guidance.
-- Disabled reference controls use native `disabled`.
-- Existing toolbar focus styles continue to apply.
-- Escape-to-cancel and roving toolbar/grid navigation remain HPA-223 work.
+### `ReferenceOverlay.svelte`
+
+Unchanged.
 
 ## Testing strategy
 
-Use the existing pure session tests, Vitest Browser Mode tests, and the already-existing HPA-217 mobile toolbar smoke test. Do not add a new Playwright project or new geometry suite.
-
 ### Session tests
 
-Prove:
+Reuse the existing reference-mode tests for:
 
-- Hold and Toggle leave a timed run `standard_timed` while Hint changes it to `assisted_timed`; this is a contract regression and should already pass before production changes.
-- First completion clears `activeReferenceMode`.
-- Undo followed by Toggle followed by redo-to-completed also clears `activeReferenceMode`.
+- Hold is informational;
+- Toggle activation counts once;
+- Hold -> Toggle does not double-count;
+- Ghost remains assisted.
 
-The redo case is required because redo enters completed lifecycle directly through `transitionToInternal()`.
+Add only lifecycle coverage that does not already exist:
 
-### Toolbar tests
+- Toggle clears on pause;
+- Toggle clears on first completion;
+- Toggle clears when redo restores completed lifecycle.
 
-Prove:
-
-- Peek retains pointer and Space/Enter Hold callbacks.
-- persistent Reference calls its callback and exposes `aria-pressed`.
-- Peek is disabled while Toggle is active.
-- both controls are disabled when a declared reference is unavailable;
-- controls are absent when the puzzle has no reference;
-- Hint/Peek/Reference point at the shared concise assistance description;
-- HPA-217 `MORE` behavior remains unchanged.
-
-### Overlay / board-panel tests
+### Toolbar / panel tests
 
 Prove:
 
-- image error calls `onUnavailable`;
-- board-panel failure state disables reference actions;
-- a new reference URL resets failure state.
+- REF calls the new callback and exposes `aria-pressed`;
+- Peek retains pointer and Space/Enter Hold behavior;
+- Peek is disabled while Toggle is active;
+- both controls are absent when `hasReference` is false;
+- both controls are disabled when a declared reference URL is null;
+- shared scoring description is attached to Hint/Peek/Reference;
+- Peek remains in the secondary toolbar container.
+
+Do not add overlay failure callback tests because `ReferenceOverlay.svelte` is unchanged.
 
 ### Route tests
 
 Prove:
 
-- Toggle opens the overlay until toggled off;
-- Toggle survives `window.blur`;
-- Hold still ends on pointer/key release and blur;
-- navigation clears a toggled reference;
-- explicit pause clears a toggled reference;
-- image failure clears the active session mode through the board callback path;
-- the Peek activation path still checkpoints persisted activity/counter state;
-- Mission Setup contains the concise visible scoring explanation.
+- Toggle opens/closes the overlay from session state;
+- Toggle survives window blur;
+- Hold still ends on blur;
+- Hold -> Toggle keeps the Toggle active after the original Hold release;
+- pause clears Toggle through the session lifecycle rule;
+- navigation cannot carry reference presentation or Hold bookkeeping into the next puzzle.
 
-### Existing mobile toolbar smoke test
+### Existing mobile smoke
 
-Update `apps/web/e2e/gameplay-mobile-tap.spec.ts` rather than creating a new spec:
+Update `apps/web/e2e/gameplay-mobile-tap.spec.ts` in the same change as the accessible-name/layout edit:
 
-- replace the old single `Reference` query with `Hold to peek reference` and `Toggle reference`;
-- assert both primary controls are visible at 390 × 844;
-- keep the existing toolbar-width, 44 px target, secondary-panel, document-overflow, and main-overflow assertions;
-- run the existing spec in Chromium desktop and mobile during final verification.
+- replace the old single `Reference` locator with `Toggle reference`;
+- verify `Hold to peek reference` is hidden before `MORE` and visible after `MORE` opens;
+- loop the existing >=44 px target check across the visible compact primary controls;
+- keep the existing toolbar width, document overflow, secondary-panel actionability, inventory fold-fit, and inventory-row assertions.
 
-This is the geometry proof HPA-217 already paid for and protects the new fifth primary action from regressing compact layout.
+Run this smoke immediately after the toolbar/route slice, not only at final verification.
+
+Do not add a single-row or fixed-pixel-height assertion: production already differs from the font-stubbed E2E harness, so such an assertion would encode a false production guarantee. Keeping Peek out of the compact primary row avoids creating the regression structurally.
 
 ## File boundaries
 
 ### Production
 
 - `apps/web/src/lib/services/gameplay/session/session.ts`
-  - clear runtime reference mode whenever lifecycle enters `completed`.
 - `apps/web/src/routes/puzzle/[id]/+page.svelte`
-  - derive active/toggled presentation from `sessionState.activeReferenceMode`;
-  - add Toggle handler;
-  - separate Hold-only blur/release cleanup from all-mode lifecycle cleanup;
-  - preserve Peek-down checkpointing;
-  - remove `showReferenceOverlay`;
-  - extend Mission Setup's existing visible help copy.
 - `apps/web/src/lib/components/PuzzleToolbar.svelte`
-  - label Hold as Peek;
-  - add persistent Reference button;
-  - expose availability/pressed state;
-  - add shared screen-reader scoring description without a visible paragraph.
 - `apps/web/src/lib/components/PuzzleBoardPanel.svelte`
-  - track only reference image failure;
-  - pass availability/Toggle state to toolbar;
-  - forward image-unavailable cleanup.
-- `apps/web/src/lib/components/ReferenceOverlay.svelte`
-  - notify its owner when the image fails.
 
 ### Tests
 
 - `apps/web/src/lib/services/gameplay/session/session.test.ts`
 - `apps/web/src/lib/components/__tests__/PuzzleToolbar.svelte.test.ts`
 - `apps/web/src/lib/components/__tests__/PuzzleBoardPanel.svelte.test.ts`
-- `apps/web/src/lib/components/__tests__/ReferenceOverlay.svelte.test.ts`
 - `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts`
 - `apps/web/e2e/gameplay-mobile-tap.spec.ts`
 
 ### Explicitly unchanged
 
+- `ReferenceOverlay.svelte` and its tests;
 - persisted session schema/version;
-- API and completion contracts;
+- API/shared completion contracts;
 - local statistics format;
-- gameplay preferences schema;
-- inventory and board placement logic;
-- Playwright projects/fixtures;
+- gameplay preferences;
+- inventory and placement logic;
+- Playwright projects/fixtures/support font stubbing;
 - dependencies and global design tokens.
 
-## Implementation risks and verification fences
+## Risk fences
 
-### 1. Missing a completed-lifecycle entry
-
-**Risk:** clearing only inside `handleBoardCompletion()` misses redo-to-completed and can leave the canonical overlay active over the completion dialog.
-
-**Fence:** clear `activeReferenceMode` inside `transitionToInternal()` when `to === 'completed'`, and keep an explicit redo completion test.
-
-### 2. Treating blur like pause
-
-**Risk:** an all-mode cleanup helper on `window.blur` makes the persistent Toggle non-persistent across tab/app focus changes.
-
-**Fence:** blur ends Hold only; pause/restart/navigation/image failure clear any active mode.
-
-### 3. Compact toolbar regression
-
-**Risk:** Peek + REF add a fifth primary control; permanent help text would add even more height and can regress the 390 × 844 toolbar budget.
-
-**Fence:** no visible toolbar paragraph; update and run the existing mobile toolbar smoke geometry test.
-
-### 4. Losing persisted activation evidence
-
-**Risk:** removing route-local overlay state while refactoring Hold can accidentally drop the existing `checkpointSession()` after activation, so `referenceActivations` / `hasUserActivity` may lag until another checkpoint.
-
-**Fence:** keep `checkpointSession()` on Peek-down and Toggle-on; add/retain route assertions around the saved snapshot where practical.
+1. **Lifecycle invariant:** engine clears reference mode for all non-active transitions; no route ordering dependency.
+2. **History:** reference mode remains outside placement history, so undo/redo never restores an old mode.
+3. **Hold -> Toggle:** stale Hold release cannot turn off Toggle and does not double-count activation.
+4. **Persistence:** Hold-down and inactive -> Toggle activation still checkpoint immediately.
+5. **Compact layout:** Peek is secondary on compact layouts, so HPA-222 does not add a permanent primary action.
+6. **Image failure:** transient image load errors remain visible and retryable instead of becoming permanent silent disablement.
+7. **Task atomicity:** the toolbar prop/name change and every direct caller/test update land in one task so intermediate commits pass `check`.
 
 ## Acceptance mapping
 
-- **Hold to Peek continues to work:** existing Hold path retained, renamed clearly, and activation checkpoint preserved.
-- **Toggle stays open until off:** `activeReferenceMode === 'toggle'` drives overlay + pressed state and survives blur.
-- **Lifecycle cleanup:** route cleanup handles pause/restart/navigation/image failure; the session transition primitive clears every completed entry.
-- **Hint assisted, reference informational:** existing result-class implementation plus focused contract regression.
-- **Clear assistance labeling:** visible Mission Setup help plus shared screen-reader toolbar guidance, with no permanent toolbar-height cost.
-- **Missing/failed images safe:** absent controls when no reference; disabled controls and active-mode cleanup on URL/image failure.
-- **Pointer and keyboard:** native Toggle activation plus retained Hold keyboard handlers.
-- **Responsive toolbar remains safe:** existing HPA-217 browser geometry smoke test is updated and rerun.
-- **Focused scope:** existing unit/browser/E2E files only; no new framework or browser project.
+- **Hold to Peek continues to work:** existing Hold path retained; Peek is direct on desktop and under `MORE` on compact.
+- **Toggle stays open until off:** `activeReferenceMode === 'toggle'` drives overlay and pressed state.
+- **Lifecycle cleanup:** session clears reference whenever lifecycle leaves active; restart creates fresh null state.
+- **Hint assisted, reference informational:** existing result-class implementation/tests remain authoritative.
+- **Missing reference safe:** absent controls when no reference; disabled controls when declared URL is null.
+- **Transient failed load safe:** existing overlay shows unavailable and allows a later retry.
+- **Pointer and keyboard:** native Toggle + retained Hold handlers.
+- **Focused tests:** existing unit/browser/mobile smoke files only.
 
 ## YAGNI checkpoint
 
-HPA-222 should stop once Peek + one persistent Toggle work reliably, scoring is explained through existing surfaces, and the existing mobile toolbar geometry remains healthy. Ghost modes, opacity, reference preferences, generalized asset retries, assistance menus, and additional accessibility-navigation infrastructure remain deferred until a concrete product need appears.
+Stop once Peek + one persistent Toggle are reliable using the existing session mode. Do not add Ghost UI, opacity, reference preferences, image-health state, generalized retries, assistance controllers, or new responsive/testing infrastructure until there is a demonstrated need.
