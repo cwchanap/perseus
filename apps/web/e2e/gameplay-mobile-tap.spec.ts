@@ -6,10 +6,10 @@
 //
 // The 4-piece fixture proves the open drawer fits the 390x844 fold (HPA-219
 // invariant, restored) and shows at least four tray slots fully visible. The
-// 100-piece fixture proves the two-row grid content budget (HPA-220 fence)
-// plus scroll: a corrected-density 4-piece tray no longer needs scrolling, so
-// scroll must be exercised against the large fixture via a real browser-level
-// touch swipe.
+// 100-piece fixture proves the same fold fit plus the two-row grid content
+// budget (HPA-220 fence) and scroll: a corrected-density 4-piece tray no
+// longer needs scrolling, so scroll must be exercised against the large
+// fixture via a real browser-level touch swipe.
 import { test, expect } from './support/test';
 import { DEFAULT_GAMEPLAY_PREFERENCES } from '../src/lib/services/gameplay/session/preferences';
 
@@ -87,10 +87,13 @@ test('large mobile inventory scrolls from a swipe starting on a piece @smoke', a
 	expect(viewport).toEqual({ width: 390, height: 844 });
 	expect(panelBox).not.toBeNull();
 	expect(firstSlotBox).not.toBeNull();
-	// HPA-220 fence: the 100-piece tray's grid content area must fit two full
-	// rows under the mobile slot size, proving the tools row did not steal the
-	// grid budget. The 4-piece test above owns the fold-fit invariant; this
-	// test owns the two-row budget and the swipe-scroll behavior below.
+	// HPA-220 fence: the large-inventory drawer must still fit the 390x844 fold
+	// (panel bottom ≤ viewport bottom) AND retain two complete piece rows of
+	// grid content under the mobile slot size, proving the tools row did not
+	// steal the grid budget. The 4-piece test above owns horizontal slot
+	// density; this test owns the fold-fit + two-row budget and the swipe-scroll
+	// behavior below.
+	expect(panelBox!.y + panelBox!.height).toBeLessThanOrEqual(viewport!.height);
 	const gridBudget = await grid.evaluate((element) => {
 		const style = getComputedStyle(element);
 		const paddingTop = Number.parseFloat(style.paddingTop) || 0;
