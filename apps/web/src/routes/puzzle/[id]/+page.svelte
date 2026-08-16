@@ -85,9 +85,16 @@
 	// source for gameplay feedback, rendered outside the inert page subtree so
 	// screen readers hear it while a dialog or overlay holds focus.
 	let gameplayAnnouncement = $state('');
+	// Monotonic revision bumped on every announceGameplay call. The live
+	// region's content node is wrapped in a {#key} block on this value so
+	// consecutive identical messages (e.g. repeated rotations or placement
+	// rejections) replace the node and re-trigger the screen-reader
+	// announcement, which aria-live otherwise suppresses for unchanged text.
+	let gameplayAnnouncementRevision = $state(0);
 
 	function announceGameplay(message: string): void {
 		gameplayAnnouncement = message;
+		gameplayAnnouncementRevision += 1;
 	}
 
 	// Session-driven canonical state.
@@ -513,7 +520,8 @@
 		} else if (event.type === 'hint_target') {
 			if (event.pieceId !== null && event.target) {
 				announceGameplay(
-					`Hint: puzzle piece ${event.pieceId} goes to row ${event.target.y + 1}, column ${event.target.x + 1}.`
+					`Hint: puzzle piece ${event.pieceId} goes to row ${event.target.y + 1}, ` +
+						`column ${event.target.x + 1}.`
 				);
 				showHintTarget(event.pieceId, event.target);
 			} else {
@@ -1385,8 +1393,9 @@
 	aria-live="polite"
 	aria-atomic="true"
 	data-testid="gameplay-announcer"
+	data-announcement-revision={gameplayAnnouncementRevision}
 >
-	{gameplayAnnouncement}
+	{#key gameplayAnnouncementRevision}{gameplayAnnouncement}{/key}
 </div>
 
 <style>

@@ -2815,6 +2815,35 @@ describe('Puzzle page gameplay announcements and Escape priority', () => {
 			.toHaveTextContent('Puzzle piece 0 rotated.');
 	});
 
+	it('re-announces identical consecutive outcomes by bumping the live-region revision', async () => {
+		await renderPuzzlePage();
+
+		await page.getByLabelText('More puzzle actions').click();
+		await page.getByLabelText('Rotation mode').click();
+
+		const getRevision = async (): Promise<string | null> => {
+			const el = await page.getByTestId('gameplay-announcer').element();
+			return el?.getAttribute('data-announcement-revision') ?? null;
+		};
+
+		const revisionBefore = await getRevision();
+
+		await page.getByRole('button', { name: 'Rotate piece 0' }).click();
+		await expect
+			.element(page.getByTestId('gameplay-announcer'))
+			.toHaveTextContent('Puzzle piece 0 rotated.');
+		const revisionAfterFirst = await getRevision();
+
+		await page.getByRole('button', { name: 'Rotate piece 0' }).click();
+		await expect
+			.element(page.getByTestId('gameplay-announcer'))
+			.toHaveTextContent('Puzzle piece 0 rotated.');
+		const revisionAfterSecond = await getRevision();
+
+		expect(revisionAfterFirst).not.toBe(revisionBefore);
+		expect(revisionAfterSecond).not.toBe(revisionAfterFirst);
+	});
+
 	it('announces a hint with one-based row and column', async () => {
 		await renderPuzzlePage();
 

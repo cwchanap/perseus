@@ -356,13 +356,14 @@ describe('PuzzleInventoryPanel', () => {
 			expect(pieces.filter((piece) => piece.tabIndex === 0)).toHaveLength(1);
 		});
 
-		it('keeps exactly one rotate button tabbable when rotation is enabled', async () => {
+		it('keeps no rotate button sequentially tabbable when rotation is enabled', async () => {
 			render(PuzzleInventoryPanel, baseProps());
 			const rotateButtons = Array.from(
 				document.querySelectorAll<HTMLButtonElement>('[data-testid="rotate-piece-button"]')
 			);
 			expect(rotateButtons).toHaveLength(2);
-			expect(rotateButtons.filter((button) => button.tabIndex === 0)).toHaveLength(1);
+			expect(rotateButtons.filter((button) => button.tabIndex === 0)).toHaveLength(0);
+			expect(rotateButtons.every((button) => button.tabIndex === -1)).toBe(true);
 		});
 
 		it('moves the active piece exactly one slot on ArrowRight', async () => {
