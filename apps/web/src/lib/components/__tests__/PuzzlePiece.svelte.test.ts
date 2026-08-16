@@ -376,7 +376,7 @@ describe('PuzzlePiece', () => {
 				.toHaveAttribute('aria-keyshortcuts', 'R');
 			await expect
 				.element(page.getByRole('button', { name: 'Rotate piece 7' }))
-				.toHaveAttribute('tabindex', '-1');
+				.toHaveAttribute('tabindex', '0');
 			const pieceRoot = await page.getByTestId('puzzle-piece').element();
 			expect(pieceRoot?.tabIndex).toBe(0);
 		});

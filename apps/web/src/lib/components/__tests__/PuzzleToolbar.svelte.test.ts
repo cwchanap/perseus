@@ -110,6 +110,48 @@ describe('PuzzleToolbar', () => {
 			);
 			expect(tabbable).toHaveLength(1);
 		});
+		it('re-normalizes the roving tab stop when responsive visibility changes on resize', async () => {
+			// The test viewport is below 1024px (compact layout): MORE is
+			// visible, secondary actions are hidden behind the disclosure.
+			renderToolbar({ canUndo: false, canRedo: false });
+			const toolbar = await page.getByTestId('puzzle-toolbar').element();
+			const moreButton = toolbar.querySelector<HTMLButtonElement>('[data-toolbar-action="more"]')!;
+
+			// Arrow to MORE so it becomes the active roving tab stop. In
+			// compact layout the visible enabled actions are HINT, REF, MORE,
+			// so two ArrowRights are needed to reach MORE.
+			const hint = await page.getByRole('button', { name: 'Hint' }).element();
+			hint.focus();
+			hint.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+			const ref = document.activeElement as HTMLButtonElement;
+			ref.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+			expect(document.activeElement).toBe(moreButton);
+			await expect.poll(() => moreButton.tabIndex).toBe(0);
+
+			// Simulate crossing into desktop layout: CSS hides MORE and reveals
+			// the secondary actions. We hide MORE via inline style to emulate
+			// the media-query-driven display:none, then fire resize so the
+			// normalization effect re-runs.
+			moreButton.style.display = 'none';
+
+			window.dispatchEvent(new Event('resize'));
+
+			// The effect should have re-normalized to a visible enabled action,
+			// restoring the "exactly one visible enabled Tab stop" invariant.
+			await expect
+				.poll(() => {
+					const tabbable = Array.from(
+						toolbar.querySelectorAll<HTMLButtonElement>('[data-toolbar-action]')
+					).filter(
+						(button) => button.offsetParent !== null && !button.disabled && button.tabIndex === 0
+					);
+					return tabbable;
+				})
+				.toHaveLength(1);
+
+			// MORE must no longer hold the roving tab stop — it is hidden.
+			expect(moreButton.tabIndex).toBe(-1);
+		});
 	});
 
 	describe('rendering', () => {
