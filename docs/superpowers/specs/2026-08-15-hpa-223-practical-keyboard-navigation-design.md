@@ -50,23 +50,23 @@ The current Tab order does not scale because every toolbar action, board cell, v
 
 ## Reuse survey
 
-| Need | Existing seam | Decision |
-| --- | --- | --- |
-| Piece select/cancel | `select_piece` / `cancel_selection` | Reuse unchanged |
-| Placement | `attempt_placement`; `placement_accepted` / `placement_rejected` | Reuse events for every input mode |
-| Rotation | `rotate_piece`; `PuzzlePiece` native `R`; visible Rotate button | Keep both keyboard paths; make only the active piece's Rotate button sequentially tabbable |
-| Hint | `use_hint` + `hint_target` | Reuse event for announcement |
-| Pause/resume | route lifecycle composition | Keep explicit user-action announcements because HPA-223 requires them |
-| Completion | `placement_accepted.completed` + completion dialog | Combine final placement + completion in one message |
-| Undo/Redo | route global shortcut owner | Keep unchanged |
-| Modal focus | `$lib/actions/modalFocus` | Keep unchanged |
-| Persistent Reference | route `handleReferenceToggle()` + existing overlay trap | Handle Escape in the route before the persistent-reference shortcut gate; leave overlay unchanged |
-| Toolbar responsive state | CSS + local `moreOpen` | Inspect actual visible buttons with `offsetParent`; no JS breakpoint copy |
-| Inventory order/filter | `visiblePieces` | Roving state follows ordered rendered list |
-| Native keyboard handling | `PuzzlePiece.interactionAction` / `PuzzleBoard.dropZoneInteraction` | Follow the native-listener pattern locally; do not introduce a shared event-action abstraction |
-| Keyboard E2E | `gameplay-interactions.spec.ts` | Add smoke flow beside existing keyboard placement tests |
-| Axe/accessibility E2E | `gameplay-accessibility.spec.ts` + `expectLiveRegion()` | Keep accessibility file structural/axe-focused and reuse its helper |
-| Fixture completion | `GameplayPage.solveFixture()` | Extend with `skipPlaced` instead of copying the solve loop into a spec |
+| Need                     | Existing seam                                                       | Decision                                                                                          |
+| ------------------------ | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Piece select/cancel      | `select_piece` / `cancel_selection`                                 | Reuse unchanged                                                                                   |
+| Placement                | `attempt_placement`; `placement_accepted` / `placement_rejected`    | Reuse events for every input mode                                                                 |
+| Rotation                 | `rotate_piece`; `PuzzlePiece` native `R`; visible Rotate button     | Keep both keyboard paths; make only the active piece's Rotate button sequentially tabbable        |
+| Hint                     | `use_hint` + `hint_target`                                          | Reuse event for announcement                                                                      |
+| Pause/resume             | route lifecycle composition                                         | Keep explicit user-action announcements because HPA-223 requires them                             |
+| Completion               | `placement_accepted.completed` + completion dialog                  | Combine final placement + completion in one message                                               |
+| Undo/Redo                | route global shortcut owner                                         | Keep unchanged                                                                                    |
+| Modal focus              | `$lib/actions/modalFocus`                                           | Keep unchanged                                                                                    |
+| Persistent Reference     | route `handleReferenceToggle()` + existing overlay trap             | Handle Escape in the route before the persistent-reference shortcut gate; leave overlay unchanged |
+| Toolbar responsive state | CSS + local `moreOpen`                                              | Inspect actual visible buttons with `offsetParent`; no JS breakpoint copy                         |
+| Inventory order/filter   | `visiblePieces`                                                     | Roving state follows ordered rendered list                                                        |
+| Native keyboard handling | `PuzzlePiece.interactionAction` / `PuzzleBoard.dropZoneInteraction` | Follow the native-listener pattern locally; do not introduce a shared event-action abstraction    |
+| Keyboard E2E             | `gameplay-interactions.spec.ts`                                     | Add smoke flow beside existing keyboard placement tests                                           |
+| Axe/accessibility E2E    | `gameplay-accessibility.spec.ts` + `expectLiveRegion()`             | Keep accessibility file structural/axe-focused and reuse its helper                               |
+| Fixture completion       | `GameplayPage.solveFixture()`                                       | Extend with `skipPlaced` instead of copying the solve loop into a spec                            |
 
 No new domain state, persisted field, geometry engine, or shared focus abstraction is justified.
 
@@ -300,17 +300,19 @@ Do not make Escape close compact `MORE`.
 
 ### Ownership and placement
 
-Add one route-local string and direct synchronous assignment:
+Add one route-local string plus a monotonic revision counter and direct synchronous assignment:
 
 ```ts
 let gameplayAnnouncement = $state('');
+let gameplayAnnouncementRevision = $state(0);
 
 function announceGameplay(message: string): void {
 	gameplayAnnouncement = message;
+	gameplayAnnouncementRevision += 1;
 }
 ```
 
-Do not clear then restore in a microtask. HPA-223 needs deterministic current status text; repeated identical-message forcing is not an acceptance requirement and can be solved later in one place if real assistive-technology testing demonstrates the need.
+Do not clear then restore in a microtask. HPA-223 needs deterministic current status text. Repeated identical messages (e.g. consecutive rotations or placement rejections) are forced to re-announce by bumping `gameplayAnnouncementRevision` on every call and wrapping the live region's content in a `{#key}` block on that value, so Svelte replaces the content node and assistive technology re-reads it even when the text is unchanged. This keeps the forcing in one announcer seam instead of per call site.
 
 Render one atomic polite region as a sibling of `.puzzle-page` and the existing dialogs:
 
@@ -321,8 +323,9 @@ Render one atomic polite region as a sibling of `.puzzle-page` and the existing 
 	aria-live="polite"
 	aria-atomic="true"
 	data-testid="gameplay-announcer"
+	data-announcement-revision={gameplayAnnouncementRevision}
 >
-	{gameplayAnnouncement}
+	{#key gameplayAnnouncementRevision}{gameplayAnnouncement}{/key}
 </div>
 ```
 
@@ -332,18 +335,18 @@ It must be outside `.puzzle-page`, which becomes `inert` + `aria-hidden` while s
 
 Use existing outcomes/events, never DOM inference:
 
-| Source | Announcement |
-| --- | --- |
-| successful explicit `select_piece` | `Puzzle piece {id} selected.` |
-| explicit cancel | `Selection canceled.` |
-| accepted placement | `Puzzle piece {id} placed.` |
-| final accepted placement | `Puzzle piece {id} placed. Puzzle complete.` |
-| rejected `wrong_slot` | `Puzzle piece {id} does not fit there.` |
-| rejected `non_upright` | `Puzzle piece {id} must be upright.` |
-| successful `rotate_piece` | `Puzzle piece {id} rotated.` |
-| non-null `hint_target` | `Hint: puzzle piece {id} goes to row {y+1}, column {x+1}.` |
-| explicit user Pause | `Mission paused.` |
-| explicit Resume | `Mission resumed.` |
+| Source                             | Announcement                                               |
+| ---------------------------------- | ---------------------------------------------------------- |
+| successful explicit `select_piece` | `Puzzle piece {id} selected.`                              |
+| explicit cancel                    | `Selection canceled.`                                      |
+| accepted placement                 | `Puzzle piece {id} placed.`                                |
+| final accepted placement           | `Puzzle piece {id} placed. Puzzle complete.`               |
+| rejected `wrong_slot`              | `Puzzle piece {id} does not fit there.`                    |
+| rejected `non_upright`             | `Puzzle piece {id} must be upright.`                       |
+| successful `rotate_piece`          | `Puzzle piece {id} rotated.`                               |
+| non-null `hint_target`             | `Hint: puzzle piece {id} goes to row {y+1}, column {x+1}.` |
+| explicit user Pause                | `Mission paused.`                                          |
+| explicit Resume                    | `Mission resumed.`                                         |
 
 Pause/Resume remain because they are explicit HPA-223 requirements. The pause dialog is useful redundant context, not a reason to silently narrow the ticket. Formal AT timing/certification remains deferred by the issue's non-goals.
 
@@ -430,7 +433,7 @@ Keep `gameplay-accessibility.spec.ts` as axe/structural coverage. Add tab-stop c
 
 ## Risks and deliberate limits
 
-- **Repeated identical live text:** direct assignment does not force a mutation when the exact same text is already present. That is not in current acceptance; if manual AT testing later proves it matters, fix the single announcer seam with an evidence-backed technique.
+- **Repeated identical live text:** direct assignment does not force a mutation when the exact same text is already present. This is handled in the single announcer seam by bumping `gameplayAnnouncementRevision` and wrapping the content in a `{#key}` block, so consecutive identical messages replace the node and re-trigger the announcement. AT-specific timing/certification remains deferred by the issue's non-goals.
 - **Pause/Resume AT timing:** the dialog and status region provide redundant semantics. Automated coverage verifies DOM/status behavior; formal AT certification remains deferred.
 - **Viewport crossing toolbar breakpoint while a hidden secondary action is focused:** initial layouts and prop/MORE changes are covered; deterministic orientation recovery is deferred.
 - **Inventory filtering/shuffle:** retain active id when possible; otherwise choose selected/first for the next entry. Do not force-focus replacement nodes after every mutation.

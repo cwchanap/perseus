@@ -344,9 +344,7 @@ function moveCellFocus(event: KeyboardEvent, x: number, y: number): boolean {
 	const nextY = Math.max(0, Math.min(puzzle.gridRows - 1, y + delta.dy));
 	activeCell = { x: nextX, y: nextY };
 	boardElement
-		?.querySelector<HTMLElement>(
-			`[data-testid="drop-zone"][data-x="${nextX}"][data-y="${nextY}"]`
-		)
+		?.querySelector<HTMLElement>(`[data-testid="drop-zone"][data-x="${nextX}"][data-y="${nextY}"]`)
 		?.focus();
 	return true;
 }
@@ -513,9 +511,7 @@ Do not remove the visible Rotate button or change the existing native `R` branch
 Use existing `filterPuzzle` / `baseProps()`:
 
 ```ts
-const pieces = Array.from(
-	document.querySelectorAll<HTMLElement>('[data-testid="puzzle-piece"]')
-);
+const pieces = Array.from(document.querySelectorAll<HTMLElement>('[data-testid="puzzle-piece"]'));
 expect(pieces.filter((piece) => piece.tabIndex === 0)).toHaveLength(1);
 ```
 
@@ -550,9 +546,7 @@ $effect(() => {
 	const ids = visiblePieces.map((piece) => piece.id);
 	if (activePieceId !== null && ids.includes(activePieceId)) return;
 	activePieceId =
-		selectedPieceId !== null && ids.includes(selectedPieceId)
-			? selectedPieceId
-			: (ids[0] ?? null);
+		selectedPieceId !== null && ids.includes(selectedPieceId) ? selectedPieceId : (ids[0] ?? null);
 });
 
 function handlePiecesFocusIn(event: FocusEvent): void {
@@ -622,10 +616,7 @@ No Up/Down or geometry code.
 Pass:
 
 ```svelte
-<PuzzlePiece
-	...
-	tabIndex={activePieceId === piece.id ? 0 : -1}
-/>
+<PuzzlePiece ... tabIndex={activePieceId === piece.id ? 0 : -1} />
 ```
 
 - [ ] **Step 7: Verify and commit**
@@ -680,7 +671,8 @@ In `page.svelte.test.ts`, cover:
 13. persistent Reference Escape closes Reference but preserves an underlying selection;
 14. Hold Escape ends Hold before selection cancel;
 15. plain Escape cancels selection;
-16. existing Ctrl/Cmd Undo/Redo tests remain green.
+16. existing Ctrl/Cmd Undo/Redo tests remain green;
+17. two consecutive identical outcomes (e.g. repeated rotation) bump `data-announcement-revision` on `gameplay-announcer` so the live region re-announces unchanged text.
 
 Announcements are direct assignments; use ordinary awaited DOM assertions, not timing-specific microtask polling.
 
@@ -688,9 +680,11 @@ Announcements are direct assignments; use ordinary awaited DOM assertions, not t
 
 ```ts
 let gameplayAnnouncement = $state('');
+let gameplayAnnouncementRevision = $state(0);
 
 function announceGameplay(message: string): void {
 	gameplayAnnouncement = message;
+	gameplayAnnouncementRevision += 1;
 }
 ```
 
@@ -703,12 +697,13 @@ Render as a sibling of `.puzzle-page` and the existing dialogs:
 	aria-live="polite"
 	aria-atomic="true"
 	data-testid="gameplay-announcer"
+	data-announcement-revision={gameplayAnnouncementRevision}
 >
-	{gameplayAnnouncement}
+	{#key gameplayAnnouncementRevision}{gameplayAnnouncement}{/key}
 </div>
 ```
 
-Do not clear then restore via `queueMicrotask`. Repeated-identical-message forcing is deferred until real AT testing demonstrates it is needed.
+Do not clear then restore via `queueMicrotask`. Repeated identical messages are forced to re-announce by bumping `gameplayAnnouncementRevision` on every `announceGameplay` call and wrapping the content in a `{#key}` block on that value, so Svelte replaces the content node and assistive technology re-reads it even when the text is unchanged. The forcing lives in this one announcer seam; no call site needs special handling.
 
 - [ ] **Step 3: Announce explicit selection/cancel through outcomes**
 
@@ -914,7 +909,9 @@ const inventory = page.getByTestId('puzzle-inventory-panel');
 
 await expect(toolbar.locator('[data-toolbar-action][tabindex="0"]:visible')).toHaveCount(1);
 await expect(board.locator('[data-testid="drop-zone"][tabindex="0"]:visible')).toHaveCount(1);
-await expect(inventory.locator('[data-testid="puzzle-piece"][tabindex="0"]:visible')).toHaveCount(1);
+await expect(inventory.locator('[data-testid="puzzle-piece"][tabindex="0"]:visible')).toHaveCount(
+	1
+);
 ```
 
 Focus `Return to arcade`, press Tab, and assert the toolbar's one active action receives focus. Press Tab again and assert focus reaches the board's one active cell without traversing every toolbar action/cell.
@@ -1085,7 +1082,7 @@ No shared focus/native-keydown framework and no domain/persistence work
 
 The latest review was directionally correct but not every recommendation fits the current ticket:
 
-- **Accepted:** replace clear+microtask with direct announcer assignment. WAI-ARIA allows AT to combine live-region changes, so the prior microtask technique was not a reliable contract; repeated-identical-message forcing is deferred until tested evidence requires it.
+- **Accepted:** replace clear+microtask with direct announcer assignment. WAI-ARIA allows AT to combine live-region changes, so the prior microtask technique was not a reliable contract. Repeated-identical-message forcing is handled in the single announcer seam via a monotonic `gameplayAnnouncementRevision` plus a `{#key}` block on the live region's content, so consecutive identical messages re-announce without per-call-site work.
 - **Accepted:** keep rotation practically keyboard accessible. Only the active piece's Rotate button follows the roving `tabIndex`; piece names expose angle/upright state; successful rotation gets a concise announcement.
 - **Accepted:** replace the toolbar's hand-maintained effect dependency list with typed derived availability plus a table-driven invariant test.
 - **Accepted:** handle persistent Reference Escape in the existing route window-key owner before the reference gate; `ReferenceOverlay` and `PuzzleBoardPanel` stay unchanged.
