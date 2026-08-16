@@ -23,6 +23,15 @@
 	}: Props = $props();
 
 	let dragOverCell: { x: number; y: number } | null = $state(null);
+	let boardElement = $state<HTMLElement | null>(null);
+	let activeCell = $state({ x: 0, y: 0 });
+	const puzzleIdentity = $derived(puzzle.id);
+
+	// Reset the roving position whenever a different puzzle mounts.
+	$effect(() => {
+		void puzzleIdentity;
+		activeCell = { x: 0, y: 0 };
+	});
 
 	function isPiecePlaced(x: number, y: number, excludePieceId?: number): PlacedPiece | undefined {
 		return placedPieces.find((p) => p.x === x && p.y === y && p.pieceId !== excludePieceId);
@@ -74,6 +83,7 @@
 	}
 
 	function handleKeyDown(event: KeyboardEvent, x: number, y: number) {
+		if (moveCellFocus(event, x, y)) return;
 		if (event.key !== 'Enter' && event.key !== ' ') return;
 		if (selectedPieceId === null) return;
 		event.preventDefault();
@@ -81,6 +91,42 @@
 		// on rejected placements the selection is retained so the user can
 		// try another cell. placePiece routes the attempt to the session.
 		placePiece(selectedPieceId, x, y);
+	}
+
+	// Spatial roving: arrow keys move the single tab stop to a neighbor cell,
+	// clamped at the board edges (non-wrapping). Returns true when the event
+	// was an arrow key so placement handling is skipped for it.
+	function moveCellFocus(event: KeyboardEvent, x: number, y: number): boolean {
+		const delta = {
+			ArrowLeft: { dx: -1, dy: 0 },
+			ArrowRight: { dx: 1, dy: 0 },
+			ArrowUp: { dx: 0, dy: -1 },
+			ArrowDown: { dx: 0, dy: 1 }
+		}[event.key];
+		if (!delta) return false;
+
+		event.preventDefault();
+		const nextX = Math.max(0, Math.min(puzzle.gridCols - 1, x + delta.dx));
+		const nextY = Math.max(0, Math.min(puzzle.gridRows - 1, y + delta.dy));
+		activeCell = { x: nextX, y: nextY };
+		boardElement
+			?.querySelector<HTMLElement>(
+				`[data-testid="drop-zone"][data-x="${nextX}"][data-y="${nextY}"]`
+			)
+			?.focus();
+		return true;
+	}
+
+	// Track the cell that received focus so the roving tab stop follows any
+	// direct focus (click/tap/Tab into a cell).
+	function handleBoardFocusIn(event: FocusEvent): void {
+		const target = event.target;
+		if (!(target instanceof HTMLElement)) return;
+		const cell = target.closest<HTMLElement>('[data-testid="drop-zone"]');
+		if (!cell) return;
+		const x = Number(cell.dataset.x);
+		const y = Number(cell.dataset.y);
+		if (Number.isInteger(x) && Number.isInteger(y)) activeCell = { x, y };
 	}
 
 	// Native (non-delegated) action for tap/click placement. It carries no
@@ -137,14 +183,18 @@
 </script>
 
 <div
+	bind:this={boardElement}
 	class="puzzle-board grid gap-0 rounded-lg bg-gray-200 p-1"
 	style="
 		grid-template-columns: repeat({puzzle.gridCols}, 1fr);
 		grid-template-rows: repeat({puzzle.gridRows}, 1fr);
 		aspect-ratio: {puzzle.imageWidth} / {puzzle.imageHeight};
 	"
+	role="group"
+	aria-label="Puzzle board"
 	data-testid="puzzle-board"
 	onpointerdown={handleBoardPointerDown}
+	onfocusin={handleBoardFocusIn}
 >
 	{#each Array(puzzle.gridRows) as _, y (y)}
 		{#each Array(puzzle.gridCols) as _, x (x)}
@@ -162,8 +212,10 @@
 				data-x={x}
 				data-y={y}
 				role="button"
-				tabindex="0"
-				aria-label="Drop zone at position {x}, {y}"
+				tabindex={activeCell.x === x && activeCell.y === y ? 0 : -1}
+				aria-label={`Row ${y + 1}, column ${x + 1}, ${
+					placedPiece ? `occupied by puzzle piece ${placedPiece.id}` : 'empty'
+				}`}
 			>
 				{#if isHintTarget(x, y)}
 					<div

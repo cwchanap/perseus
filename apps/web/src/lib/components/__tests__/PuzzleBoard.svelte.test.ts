@@ -146,9 +146,7 @@ describe('PuzzleBoard', () => {
 			resolveImage
 		});
 
-		const dropZone = await page
-			.getByRole('button', { name: 'Drop zone at position 1, 0' })
-			.element();
+		const dropZone = await page.getByRole('button', { name: 'Row 1, column 2, empty' }).element();
 		dropZone.focus();
 		dropZone.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
 
@@ -169,13 +167,81 @@ describe('PuzzleBoard', () => {
 			resolveImage
 		});
 
-		const dropZone = await page
-			.getByRole('button', { name: 'Drop zone at position 0, 0' })
-			.element();
+		const dropZone = await page.getByRole('button', { name: 'Row 1, column 1, empty' }).element();
 		dropZone.focus();
 		dropZone.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
 
 		expect(onPiecePlaced).not.toHaveBeenCalled();
+	});
+
+	it('should expose exactly one board-cell tab stop regardless of grid size', async () => {
+		const puzzle = createMockPuzzle(10);
+		render(PuzzleBoard, {
+			puzzle,
+			placedPieces: [],
+			onPiecePlaced: vi.fn(),
+			resolveImage
+		});
+
+		const board = await page.getByTestId('puzzle-board').element();
+		const cells = Array.from(board.querySelectorAll<HTMLElement>('[data-testid="drop-zone"]'));
+		expect(cells).toHaveLength(100);
+		expect(cells.filter((cell) => cell.tabIndex === 0)).toHaveLength(1);
+	});
+
+	it('should rove focus Right then Down across board cells without wrapping', async () => {
+		const puzzle = createMockPuzzle(3);
+		render(PuzzleBoard, {
+			puzzle,
+			placedPieces: [],
+			onPiecePlaced: vi.fn(),
+			resolveImage
+		});
+
+		const start = await page.getByRole('button', { name: 'Row 1, column 1, empty' }).element();
+		start.focus();
+		start.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+
+		const right = await page.getByRole('button', { name: 'Row 1, column 2, empty' }).element();
+		expect(document.activeElement).toBe(right);
+
+		right.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+
+		const down = await page.getByRole('button', { name: 'Row 2, column 2, empty' }).element();
+		expect(document.activeElement).toBe(down);
+	});
+
+	it('should clamp arrow movement at the board edges (Left/Up on the first cell)', async () => {
+		const puzzle = createMockPuzzle(3);
+		render(PuzzleBoard, {
+			puzzle,
+			placedPieces: [],
+			onPiecePlaced: vi.fn(),
+			resolveImage
+		});
+
+		const start = await page.getByRole('button', { name: 'Row 1, column 1, empty' }).element();
+		start.focus();
+		start.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+		start.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+
+		expect(document.activeElement).toBe(start);
+	});
+
+	it('should label cells with one-based row/column names and occupancy', async () => {
+		render(PuzzleBoard, {
+			puzzle: createMockPuzzle(3),
+			placedPieces: [{ pieceId: 0, x: 0, y: 0 }],
+			onPiecePlaced: vi.fn(),
+			resolveImage: resolveImageData
+		});
+
+		await expect
+			.element(page.getByRole('button', { name: 'Row 1, column 1, occupied by puzzle piece 0' }))
+			.toBeInTheDocument();
+		await expect
+			.element(page.getByRole('button', { name: 'Row 1, column 2, empty' }))
+			.toBeInTheDocument();
 	});
 
 	it('routes selected click exactly once without pre-validating correctness', async () => {
@@ -193,9 +259,7 @@ describe('PuzzleBoard', () => {
 		// `grid` class), so Playwright actionability-based click cannot target
 		// them. Dispatch a real `click` event on the node, which exercises the
 		// same native click listener a tap/pointer click would trigger.
-		const dropZone = await page
-			.getByRole('button', { name: 'Drop zone at position 1, 0' })
-			.element();
+		const dropZone = await page.getByRole('button', { name: 'Row 1, column 2, empty' }).element();
 		dropZone.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
 		expect(onPiecePlaced).toHaveBeenCalledTimes(1);
@@ -212,9 +276,7 @@ describe('PuzzleBoard', () => {
 			resolveImage
 		});
 
-		const dropZone = await page
-			.getByRole('button', { name: 'Drop zone at position 0, 0' })
-			.element();
+		const dropZone = await page.getByRole('button', { name: 'Row 1, column 1, empty' }).element();
 		dropZone.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
 		expect(onPiecePlaced).not.toHaveBeenCalled();
@@ -252,9 +314,7 @@ describe('PuzzleBoard', () => {
 			resolveImage
 		});
 
-		const dropZone = await page
-			.getByRole('button', { name: 'Drop zone at position 0, 0' })
-			.element();
+		const dropZone = await page.getByRole('button', { name: 'Row 1, column 1, empty' }).element();
 		const dataTransfer = new DataTransfer();
 		dataTransfer.setData('text/plain', '0');
 
