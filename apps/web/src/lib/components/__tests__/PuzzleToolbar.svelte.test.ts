@@ -32,6 +32,60 @@ function renderToolbar(overrides: Parameters<typeof createToolbarProps>[0] = {})
 }
 
 describe('PuzzleToolbar', () => {
+	describe('roving focus', () => {
+		it('exposes exactly one visible enabled toolbar tab stop', async () => {
+			renderToolbar({ canUndo: false, canRedo: false });
+			const toolbar = await page.getByTestId('puzzle-toolbar').element();
+
+			expect(toolbar.getAttribute('role')).toBe('toolbar');
+			expect(toolbar.getAttribute('aria-label')).toBe('Puzzle actions');
+
+			const tabbable = Array.from(
+				toolbar.querySelectorAll<HTMLButtonElement>('[data-toolbar-action]')
+			).filter(
+				(button) => button.offsetParent !== null && !button.disabled && button.tabIndex === 0
+			);
+			expect(tabbable).toHaveLength(1);
+		});
+
+		it('ArrowRight moves to the adjacent visible enabled action exactly once', async () => {
+			renderToolbar({ canUndo: false, canRedo: false, referenceAvailable: true });
+			const hint = await page.getByRole('button', { name: 'Hint' }).element();
+			const reference = await page.getByRole('button', { name: 'Toggle reference' }).element();
+
+			hint.focus();
+			hint.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+
+			expect(document.activeElement).toBe(reference);
+		});
+
+		it.each([
+			['undo disabled', { canUndo: false }],
+			['redo disabled', { canRedo: false }],
+			['reference unavailable', { referenceAvailable: false }],
+			['reference absent', { hasReference: false }],
+			['peek disabled by toggle', { referenceToggled: true }],
+			['rotation locked', { rotationToggleDisabled: true }],
+			['pause absent', { canPause: false }],
+			['setup absent', { canOpenSetup: false }]
+		] as const)('keeps one visible enabled tab stop when %s', async (_name, overrides) => {
+			renderToolbar({
+				canUndo: true,
+				canRedo: true,
+				canPause: true,
+				canOpenSetup: true,
+				...overrides
+			});
+			const toolbar = await page.getByTestId('puzzle-toolbar').element();
+			const tabbable = Array.from(
+				toolbar.querySelectorAll<HTMLButtonElement>('[data-toolbar-action]')
+			).filter(
+				(button) => button.offsetParent !== null && !button.disabled && button.tabIndex === 0
+			);
+			expect(tabbable).toHaveLength(1);
+		});
+	});
+
 	describe('rendering', () => {
 		it('renders the toolbar container', async () => {
 			renderToolbar();
@@ -369,16 +423,28 @@ describe('PuzzleToolbar', () => {
 		const more = page.getByLabelText('More puzzle actions');
 		const secondary = page.getByTestId('puzzle-toolbar-secondary');
 
+		const tabbableActions = () => {
+			const toolbar = page.getByTestId('puzzle-toolbar').element();
+			return Array.from(
+				toolbar.querySelectorAll<HTMLButtonElement>('[data-toolbar-action]')
+			).filter(
+				(button) => button.offsetParent !== null && !button.disabled && button.tabIndex === 0
+			);
+		};
+
 		await expect.element(more).toHaveAttribute('aria-expanded', 'false');
 		await expect.element(secondary).toHaveAttribute('data-open', 'false');
+		expect(tabbableActions()).toHaveLength(1);
 
 		(more.element() as HTMLButtonElement).click();
 		await expect.element(more).toHaveAttribute('aria-expanded', 'true');
 		await expect.element(secondary).toHaveAttribute('data-open', 'true');
+		expect(tabbableActions()).toHaveLength(1);
 
 		(more.element() as HTMLButtonElement).click();
 		await expect.element(more).toHaveAttribute('aria-expanded', 'false');
 		await expect.element(secondary).toHaveAttribute('data-open', 'false');
+		expect(tabbableActions()).toHaveLength(1);
 	});
 
 	it('keeps a secondary callback wired through the compact container', async () => {
