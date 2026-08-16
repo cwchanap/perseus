@@ -396,11 +396,13 @@ export class GameplayPage {
 	/**
 	 * Solve the current fixture via keyboard: select each piece and place it in
 	 * its correct board cell, verifying each placement. The fixture must be
-	 * ready (see gotoFixture).
+	 * ready (see gotoFixture). Pass `skipPlaced` to leave already-placed pieces
+	 * in place (their tray slots have detached) instead of re-selecting them.
 	 */
-	async solveFixture(): Promise<void> {
+	async solveFixture(options: { skipPlaced?: boolean } = {}): Promise<void> {
 		const fixture = this.fixture ?? getFixture(DEFAULT_FIXTURE_ID);
 		for (const piece of fixture.pieces) {
+			if (options.skipPlaced && (await this.pieceSource(piece.id).count()) === 0) continue;
 			await this.selectAndPlaceWithKeyboard(piece.id, piece.correctX, piece.correctY);
 			await this.expectPiecePlaced(piece.id, piece.correctX, piece.correctY);
 		}
