@@ -107,7 +107,7 @@
 			class="absolute top-1 right-1 z-10 rounded-full bg-white/90 px-2 py-1 text-xs font-medium text-gray-800 shadow-sm ring-1 ring-gray-300 transition hover:bg-white focus:ring-2 focus:ring-blue-400 focus:outline-hidden"
 			aria-label="Rotate piece {piece.id}"
 			data-testid="rotate-piece-button"
-			tabindex={tabIndex}
+			tabindex="-1"
 			onclick={handleRotateClick}
 			onkeydown={stopRotateEventPropagation}
 			onpointerdown={stopRotateEventPropagation}

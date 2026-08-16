@@ -376,7 +376,9 @@ describe('PuzzlePiece', () => {
 				.toHaveAttribute('aria-keyshortcuts', 'R');
 			await expect
 				.element(page.getByRole('button', { name: 'Rotate piece 7' }))
-				.toHaveAttribute('tabindex', '0');
+				.toHaveAttribute('tabindex', '-1');
+			const pieceRoot = await page.getByTestId('puzzle-piece').element();
+			expect(pieceRoot?.tabIndex).toBe(0);
 		});
 
 		it('names a zero-rotation unplaced piece as upright', async () => {
@@ -409,6 +411,8 @@ describe('PuzzlePiece', () => {
 			await expect
 				.element(page.getByRole('button', { name: 'Rotate piece 7' }))
 				.toHaveAttribute('tabindex', '-1');
+			const pieceRoot = await page.getByTestId('puzzle-piece').element();
+			expect(pieceRoot?.tabIndex).toBe(-1);
 		});
 	});
 

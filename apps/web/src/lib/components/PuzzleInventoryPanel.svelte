@@ -70,10 +70,11 @@
 	// presentation is a purely local UI concern and is never serialized.
 	let drawerOpen = $state(true);
 
-	// Roving tab stop: exactly one unplaced piece (plus, when rotation is
-	// enabled, that piece's Rotate button) is sequentially tabbable, and
-	// Left/Right move the active piece through the visible tray. The id is
-	// panel-local presentation state — the session's selection is untouched.
+	// Roving tab stop: exactly one unplaced piece is sequentially tabbable,
+	// and Left/Right move the active piece through the visible tray. The
+	// Rotate button is removed from the tab order (tabindex -1); keyboard
+	// users rotate via the R key on the piece root. The id is panel-local
+	// presentation state — the session's selection is untouched.
 	let piecesGridElement = $state<HTMLElement | null>(null);
 	let activePieceId = $state<number | null>(null);
 
@@ -116,11 +117,11 @@
 
 		const index = visiblePieces.findIndex((piece) => piece.id === currentId);
 		if (index < 0) return;
+		event.preventDefault();
 		const nextIndex = event.key === 'ArrowRight' ? index + 1 : index - 1;
 		const nextPiece = visiblePieces[nextIndex];
 		if (!nextPiece) return;
 
-		event.preventDefault();
 		activePieceId = nextPiece.id;
 		piecesGridElement
 			?.querySelector<HTMLElement>(`[data-testid="puzzle-piece"][data-piece-id="${nextPiece.id}"]`)
