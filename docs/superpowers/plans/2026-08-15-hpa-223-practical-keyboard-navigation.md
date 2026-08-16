@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make the core puzzle flow practical with a keyboard by replacing repeated Tab stops with component-local roving focus and adding one route-owned polite announcer, while reusing existing `PuzzleSession` actions/events and modal focus behavior.
+**Goal:** Make the core puzzle flow practical with a keyboard by replacing repeated Tab stops with component-local roving focus and adding one route-owned polite announcer, while preserving visible/shortcut rotation access and reusing existing `PuzzleSession` actions/events.
 
-**Architecture:** `PuzzleToolbar`, `PuzzleBoard`, and `PuzzleInventoryPanel` each own only ephemeral roving focus. Toolbar and inventory use the repository's existing native `addEventListener('keydown', ...)` pattern for focus-changing keyboard handlers; board extends its existing native cell keydown path. Inventory is intentionally one-dimensional for this ticket: Left/Right traverses `visiblePieces`, with no DOM column measurement. The route remains the composition root for global shortcuts and announcements. Persistent Reference keeps its HPA-222 trap/restoration and only adds Escape dismissal with propagation stopped.
+**Architecture:** `PuzzleToolbar`, `PuzzleBoard`, and `PuzzleInventoryPanel` each own ephemeral focus state. Toolbar and inventory follow the repository's native `addEventListener('keydown', ...)` pattern; board extends its existing native cell keydown. Inventory is intentionally Left/Right-only. `PuzzlePiece` exposes rotation state and keeps only the active piece's Rotate button in sequential Tab order. The route owns announcements and global Escape/Undo/Redo priority. Persistent Reference Escape is handled in the existing route window-key handler; `ReferenceOverlay` remains unchanged.
 
 **Tech Stack:** Svelte 5, TypeScript, Vitest Browser Mode, Playwright, Bun.
 
@@ -13,19 +13,20 @@
 - Follow `docs/superpowers/specs/2026-08-15-hpa-223-practical-keyboard-navigation-design.md`.
 - No `PuzzleSession` state/action/event/schema/persistence changes.
 - No generic roving-focus helper/action/store/controller/context.
+- Do not add a shared `nativeKeydown` action for two small local wrappers.
 - Keep pointer/touch/click/drag paths on existing callbacks/session actions.
 - Keep responsive toolbar, inventory filters/shuffle/drawer, zoom/pan, and dialog ownership unchanged.
-- Keep `$lib/actions/modalFocus` unchanged.
-- Use native keydown listeners for toolbar/inventory focus-changing handlers, matching `PuzzlePiece.interactionAction` and `PuzzleBoard.dropZoneInteraction`.
-- Inventory uses Left/Right only; do not add `getBoundingClientRect`, computed-grid parsing, responsive column state, or partial-row rules.
-- Do not announce arrow movement, timer updates, every lifecycle transition, or Undo/Redo.
+- Keep `$lib/actions/modalFocus`, `ReferenceOverlay.svelte`, and `PuzzleBoardPanel.svelte` unchanged.
+- Inventory uses Left/Right only; no DOM column measurement, computed-grid parsing, or partial-row rules.
+- Do not announce arrow movement, timer updates, every lifecycle transition, Undo/Redo, or reference activation.
 - Keep direct lifecycle cleanup dispatches non-announcing; only explicit cancel uses the announcing cancel helper.
-- No new dependency, Playwright project, fixture family, or broad screen-reader certification gate.
+- Keep explicit Pause/Resume announcements because they are part of HPA-223 scope.
+- No dependency, Playwright project, fixture family, or broad screen-reader certification work.
 - Update current tests directly; no compatibility layer for old DOM/ARIA contracts.
 
 ---
 
-## Task 1: Make `PuzzleToolbar` one roving Tab stop
+## Task 1: Make `PuzzleToolbar` one robust roving Tab stop
 
 **Files:**
 
@@ -34,14 +35,14 @@
 
 **Interfaces:**
 
-- Produces local `ToolbarAction` union and one native toolbar keydown action.
+- Produces local `ToolbarAction` union and `Record<ToolbarAction, boolean>` availability model.
 - No prop/callback changes.
 
-**Produces:** one named toolbar Tab stop; wrapping arrows traverse actual visible/enabled actions without delegated-keydown double movement.
+**Produces:** exactly one visible enabled toolbar action in sequential Tab order; wrapping arrows traverse actual rendered actions without delegated-keydown double movement.
 
-- [ ] **Step 1: Add failing toolbar semantics/tab-stop tests**
+- [ ] **Step 1: Add failing semantics and exact-adjacent tests**
 
-Use the existing `createToolbarProps()` / `renderToolbar()` helpers:
+Use the existing `renderToolbar()` helper:
 
 ```ts
 it('exposes exactly one visible enabled toolbar tab stop', async () => {
@@ -56,11 +57,7 @@ it('exposes exactly one visible enabled toolbar tab stop', async () => {
 	).filter((button) => button.offsetParent !== null && !button.disabled && button.tabIndex === 0);
 	expect(tabbable).toHaveLength(1);
 });
-```
 
-Add an adjacent-target test. In the component browser's compact layout, Hint and Toggle Reference are both visible primary actions:
-
-```ts
 it('ArrowRight moves to the adjacent visible enabled action exactly once', async () => {
 	renderToolbar({ canUndo: false, canRedo: false, referenceAvailable: true });
 	const hint = await page.getByRole('button', { name: 'Hint' }).element();
@@ -73,18 +70,16 @@ it('ArrowRight moves to the adjacent visible enabled action exactly once', async
 });
 ```
 
-Do not assert only `document.activeElement !== hint`; that would let a double-skip regression pass.
-
-Run and expect red:
+Run:
 
 ```bash
 cd apps/web
 bunx vitest --run --browser src/lib/components/__tests__/PuzzleToolbar.svelte.test.ts
 ```
 
-- [ ] **Step 2: Add a closed toolbar action type**
+Expected before implementation: new role/tabindex/arrow assertions fail.
 
-In `PuzzleToolbar.svelte`:
+- [ ] **Step 2: Add the closed action type and typed availability**
 
 ```ts
 type ToolbarAction =
@@ -104,14 +99,29 @@ type ToolbarAction =
 let toolbarElement = $state<HTMLElement | null>(null);
 let activeToolbarAction = $state<ToolbarAction>('hint');
 
+const actionAvailable = $derived<Record<ToolbarAction, boolean>>({
+	undo: canUndo,
+	redo: canRedo,
+	hint: true,
+	reference: hasReference && referenceAvailable,
+	more: true,
+	'zoom-out': true,
+	'zoom-in': true,
+	fit: true,
+	rotation: !rotationToggleDisabled,
+	peek: hasReference && referenceAvailable && !referenceToggled,
+	pause: canPause,
+	setup: canOpenSetup
+});
+
 function toolbarTabIndex(action: ToolbarAction): 0 | -1 {
-	return activeToolbarAction === action ? 0 : -1;
+	return activeToolbarAction === action && actionAvailable[action] ? 0 : -1;
 }
 ```
 
-Every `toolbarTabIndex(...)` call must use a `ToolbarAction` literal. Treat `dataset.toolbarAction` from this component's own markup as `ToolbarAction | undefined`; do not introduce a registry.
+This replaces the old planned free-form/hand-maintained dependency shape. A newly added `ToolbarAction` now forces an availability decision at compile time.
 
-- [ ] **Step 3: Add visible/enabled lookup + focusin tracking**
+- [ ] **Step 3: Add live-DOM lookup and `focusin` tracking**
 
 ```ts
 function visibleEnabledToolbarButtons(): HTMLButtonElement[] {
@@ -130,9 +140,9 @@ function handleToolbarFocusIn(event: FocusEvent): void {
 }
 ```
 
-`focusin` is required so existing direct `.focus()` helpers and pointer clicks on `tabindex=-1` actions update the composite's next Tab entry point.
+Keep `offsetParent !== null`; do not copy the 1024px breakpoint into TypeScript.
 
-- [ ] **Step 4: Add native arrow traversal**
+- [ ] **Step 4: Add the local native arrow listener**
 
 ```ts
 function handleToolbarKeyDown(event: KeyboardEvent): void {
@@ -164,36 +174,13 @@ function toolbarKeyboardAction(node: HTMLElement) {
 }
 ```
 
-Wire the root with the native action, not delegated `onkeydown`:
+Wire `use:toolbarKeyboardAction`, `role="toolbar"`, `aria-label="Puzzle actions"`, `onfocusin={handleToolbarFocusIn}`, a stable `data-toolbar-action`, and `tabindex={toolbarTabIndex('...')}` on every action.
 
-```svelte
-<div
-	bind:this={toolbarElement}
-	use:toolbarKeyboardAction
-	role="toolbar"
-	aria-label="Puzzle actions"
-	data-testid="puzzle-toolbar"
-	onfocusin={handleToolbarFocusIn}
-	class="puzzle-toolbar"
->
-```
-
-Give every toolbar button a stable `data-toolbar-action="..."` and typed `tabindex={toolbarTabIndex('...')}`. Keep callbacks, pressed/described states, `moreOpen`, and CSS unchanged.
-
-- [ ] **Step 5: Normalize when the active action becomes unavailable**
-
-Use one local effect that depends on the states that can add/remove/disable actions:
+- [ ] **Step 5: Normalize from derived availability + live visibility**
 
 ```ts
 $effect(() => {
-	void canUndo;
-	void canRedo;
-	void rotationToggleDisabled;
-	void hasReference;
-	void referenceAvailable;
-	void referenceToggled;
-	void canPause;
-	void canOpenSetup;
+	void actionAvailable;
 	void moreOpen;
 
 	const items = visibleEnabledToolbarButtons();
@@ -203,9 +190,35 @@ $effect(() => {
 });
 ```
 
-Do not copy the 1024px breakpoint into TypeScript. Visibility stays `offsetParent !== null`, matching the existing `modalFocus` approach.
+No list of individual `void canUndo; void canRedo; ...` reads.
 
-- [ ] **Step 6: Verify and commit**
+- [ ] **Step 6: Add a table-driven prop invariant test**
+
+Use `it.each` so each current add/remove/disable condition independently proves one visible enabled Tab stop:
+
+```ts
+it.each([
+	['undo disabled', { canUndo: false }],
+	['redo disabled', { canRedo: false }],
+	['reference unavailable', { referenceAvailable: false }],
+	['reference absent', { hasReference: false }],
+	['peek disabled by toggle', { referenceToggled: true }],
+	['rotation locked', { rotationToggleDisabled: true }],
+	['pause absent', { canPause: false }],
+	['setup absent', { canOpenSetup: false }]
+] as const)('keeps one visible enabled tab stop when %s', async (_name, overrides) => {
+	renderToolbar({ canUndo: true, canRedo: true, canPause: true, canOpenSetup: true, ...overrides });
+	const toolbar = await page.getByTestId('puzzle-toolbar').element();
+	const tabbable = Array.from(
+		toolbar.querySelectorAll<HTMLButtonElement>('[data-toolbar-action]')
+	).filter((button) => button.offsetParent !== null && !button.disabled && button.tabIndex === 0);
+	expect(tabbable).toHaveLength(1);
+});
+```
+
+Keep/extend the existing `MORE` tests so opening/closing the compact secondary container also reasserts the invariant.
+
+- [ ] **Step 7: Verify and commit**
 
 ```bash
 cd apps/web
@@ -229,14 +242,12 @@ git commit -m "a11y(web): add roving puzzle toolbar focus"
 
 **Interfaces:**
 
-- Board keeps existing `onPiecePlaced` and `dropZoneInteraction` contract.
-- Accessible cell names change to `Row {1-based}, column {1-based}, empty|occupied`.
+- Board keeps existing `onPiecePlaced` and `dropZoneInteraction` contracts.
+- Accessible names become `Row N, column M, empty` or `Row N, column M, occupied by puzzle piece ID`.
 
-**Produces:** one board-cell Tab stop with spatial non-wrapping arrows; route integration tests use the new cell-name contract in the same slice.
+**Produces:** one board-cell Tab stop with non-wrapping spatial arrows; route integration uses the new name contract in the same slice.
 
-- [ ] **Step 1: Add failing board roving/name tests**
-
-Use `createMockPuzzle(10)` for the large-board count:
+- [ ] **Step 1: Add failing large-board, movement, and name tests**
 
 ```ts
 const puzzle = createMockPuzzle(10);
@@ -253,32 +264,29 @@ expect(cells).toHaveLength(100);
 expect(cells.filter((cell) => cell.tabIndex === 0)).toHaveLength(1);
 ```
 
-Use a 3x3 puzzle to prove exact spatial movement:
+For a 3x3 puzzle, prove `(0,0) -> (1,0) -> (1,1)` with Right then Down and prove Left/Up at `(0,0)` stays put.
+
+Add exact names:
 
 ```ts
-const start = await page.getByRole('button', { name: 'Row 1, column 1, empty' }).element();
-const right = await page.getByRole('button', { name: 'Row 1, column 2, empty' }).element();
-const down = await page.getByRole('button', { name: 'Row 2, column 2, empty' }).element();
-
-start.focus();
-start.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
-expect(document.activeElement).toBe(right);
-right.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
-expect(document.activeElement).toBe(down);
+await expect
+	.element(page.getByRole('button', { name: 'Row 1, column 1, empty' }))
+	.toBeInTheDocument();
 ```
 
-Also prove Left/Up at `(0,0)` stays on `(0,0)` and add an occupied-name assertion. Keep the existing wrong-cell placement test, changing only its name query.
+With `{ pieceId: 0, x: 0, y: 0 }` placed:
 
-Run and expect red:
-
-```bash
-cd apps/web
-bunx vitest --run --browser src/lib/components/__tests__/PuzzleBoard.svelte.test.ts
+```ts
+await expect
+	.element(page.getByRole('button', { name: 'Row 1, column 1, occupied by puzzle piece 0' }))
+	.toBeInTheDocument();
 ```
 
-- [ ] **Step 2: Update the route helper before implementation commit**
+Keep the existing wrong-cell placement test, changing only its name query.
 
-`page.svelte.test.ts` currently uses the old accessible name in `placeSelectedPieceAt()`. Change that helper in this task, not Task 4:
+- [ ] **Step 2: Update the route helper immediately**
+
+Change `page.svelte.test.ts::placeSelectedPieceAt()` in this task:
 
 ```ts
 async function placeSelectedPieceAt(x: number, y: number) {
@@ -292,9 +300,9 @@ async function placeSelectedPieceAt(x: number, y: number) {
 }
 ```
 
-The prefix regex preserves role/name coverage while working for both empty and occupied status. Do not defer this locator change to the announcer task.
+Do not defer this locator change to Task 4.
 
-- [ ] **Step 3: Add board-local active coordinate + focusin tracking**
+- [ ] **Step 3: Add board-local active coordinate + `focusin`**
 
 ```ts
 let boardElement = $state<HTMLElement | null>(null);
@@ -317,11 +325,9 @@ function handleBoardFocusIn(event: FocusEvent): void {
 }
 ```
 
-This keeps `GameplayPage.selectAndPlaceWithKeyboard()` and route tests that direct-focus a cell compatible with roving tabindex.
+Do not move `activeCell` when a Hint arrives.
 
-- [ ] **Step 4: Put arrows in the existing native cell keydown handler**
-
-Add a helper:
+- [ ] **Step 4: Extend the existing native cell keydown**
 
 ```ts
 function moveCellFocus(event: KeyboardEvent, x: number, y: number): boolean {
@@ -352,8 +358,6 @@ At the top of existing `handleKeyDown`:
 if (moveCellFocus(event, x, y)) return;
 ```
 
-Do not add delegated board `onkeydown`; `dropZoneInteraction` already invokes `handleKeyDown` through a native listener.
-
 - [ ] **Step 5: Wire semantics/tabindex/names**
 
 Board root:
@@ -369,16 +373,18 @@ Board root:
 >
 ```
 
-Each cell remains `role="button"`:
+Cell:
 
 ```svelte
 tabindex={activeCell.x === x && activeCell.y === y ? 0 : -1}
-aria-label={`Row ${y + 1}, column ${x + 1}, ${placedPiece ? 'occupied' : 'empty'}`}
+aria-label={`Row ${y + 1}, column ${x + 1}, ${
+	placedPiece ? `occupied by puzzle piece ${placedPiece.pieceId}` : 'empty'
+}`}
 ```
 
 Keep zero-based `data-x` / `data-y`, click, drag/drop, and Enter/Space placement unchanged.
 
-- [ ] **Step 6: Run both board and route suites, then check**
+- [ ] **Step 6: Run board + route suites before committing**
 
 ```bash
 cd apps/web
@@ -387,8 +393,6 @@ bunx vitest --run --browser \
   'src/routes/puzzle/[id]/page.svelte.test.ts'
 bun run check
 ```
-
-This gate is required before committing Task 2. The cell-name change must not leave the route suite red until Task 4.
 
 - [ ] **Step 7: Commit**
 
@@ -401,7 +405,7 @@ git commit -m "a11y(web): add roving puzzle board navigation"
 
 ---
 
-## Task 3: Make repeated inventory pieces one roving Tab stop
+## Task 3: Make inventory roving while preserving practical rotation access
 
 **Files:**
 
@@ -412,15 +416,13 @@ git commit -m "a11y(web): add roving puzzle board navigation"
 
 **Interfaces:**
 
-- `PuzzlePiece` gains optional `tabIndex?: number`.
-- Placed pieces still force `tabindex=-1` regardless of supplied value.
-- Inventory exposes no new prop/callback.
+- `PuzzlePiece` gains optional `tabIndex?: 0 | -1`.
+- Placed piece roots still force `-1`.
+- Active unplaced Rotate button uses the same supplied roving index.
 
-**Produces:** one Tab stop across visible repeated pieces; Left/Right moves to the exact adjacent visible piece; no inventory geometry engine.
+**Produces:** one active piece root, plus at most its one Rotate button, in sequential Tab order; exact Left/Right moves the active piece; rotation angle is exposed in the piece name.
 
 - [ ] **Step 1: Add failing `PuzzlePiece` tests**
-
-Use existing `mockPiece` / `resolveImage`:
 
 ```ts
 it('honors a supplied roving tab index while unplaced', async () => {
@@ -444,63 +446,86 @@ it('placed state still forces tabindex -1', async () => {
 });
 ```
 
-For rotation-enabled rendering, assert:
+For rotation mode:
 
 ```ts
+render(PuzzlePiece, {
+	piece: mockPiece,
+	isPlaced: false,
+	resolveImage,
+	rotationEnabled: true,
+	rotation: 90,
+	tabIndex: 0,
+	onRotate: vi.fn()
+});
+
+await expect
+	.element(page.getByTestId('puzzle-piece'))
+	.toHaveAttribute('aria-label', 'Puzzle piece 7, rotated 90 degrees');
 await expect.element(page.getByTestId('puzzle-piece')).toHaveAttribute('aria-keyshortcuts', 'R');
-await expect.element(page.getByRole('button', { name: 'Rotate piece 7' })).toHaveAttribute(
-	'tabindex',
-	'-1'
-);
+await expect
+	.element(page.getByRole('button', { name: 'Rotate piece 7' }))
+	.toHaveAttribute('tabindex', '0');
 ```
 
-Keep the existing `R` callback test and pointer Rotate callback test.
+Add a rotation `0` case expecting `Puzzle piece 7, upright`, and a `tabIndex: -1` case proving the Rotate button also becomes `-1`. Keep existing `R` and pointer Rotate callback tests.
 
-Run and expect red:
-
-```bash
-cd apps/web
-bunx vitest --run --browser src/lib/components/__tests__/PuzzlePiece.svelte.test.ts
-```
-
-- [ ] **Step 2: Add the presentation-only `tabIndex` prop**
+- [ ] **Step 2: Add the presentation-only roving prop and rotation name**
 
 ```ts
 interface Props {
 	// existing props...
-	tabIndex?: number;
+	tabIndex?: 0 | -1;
 }
 
 let {
 	// existing props...
 	tabIndex = 0
 }: Props = $props();
+
+const accessibleName = $derived(
+	rotationEnabled && !isPlaced
+		? rotation === 0
+			? `Puzzle piece ${piece.id}, upright`
+			: `Puzzle piece ${piece.id}, rotated ${rotation} degrees`
+		: `Puzzle piece ${piece.id}`
+);
 ```
 
-Piece root:
+Root:
 
 ```svelte
 tabindex={isPlaced ? -1 : tabIndex}
+aria-label={accessibleName}
 aria-keyshortcuts={rotationEnabled && !isPlaced ? 'R' : undefined}
 ```
 
-Rotate button:
+Existing Rotate button:
 
 ```svelte
-tabindex="-1"
+tabindex={tabIndex}
 ```
 
-Do not remove the Rotate button or change the existing native `R` branch.
+Do not remove the visible Rotate button or change the existing native `R` branch.
 
-- [ ] **Step 3: Add failing inventory roving tests**
+- [ ] **Step 3: Add failing inventory roving/O(1) tests**
 
-Use existing `filterPuzzle` / `baseProps()`. Render several visible pieces and prove exactly one piece root is tabbable:
+Use existing `filterPuzzle` / `baseProps()`:
 
 ```ts
 const pieces = Array.from(
 	document.querySelectorAll<HTMLElement>('[data-testid="puzzle-piece"]')
 );
 expect(pieces.filter((piece) => piece.tabIndex === 0)).toHaveLength(1);
+```
+
+With rotation enabled, assert only one Rotate button is sequentially tabbable:
+
+```ts
+const rotateButtons = Array.from(
+	document.querySelectorAll<HTMLButtonElement>('[data-testid="rotate-piece-button"]')
+);
+expect(rotateButtons.filter((button) => button.tabIndex === 0)).toHaveLength(1);
 ```
 
 Add exact adjacent movement:
@@ -513,23 +538,9 @@ first.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: t
 expect(document.activeElement).toBe(second);
 ```
 
-Also prove:
+Also prove first-item ArrowLeft stays put, direct focus makes a `-1` piece active, and filtering/placement that removes the active id restores exactly one active piece root.
 
-- ArrowLeft on the first visible item stays there;
-- direct focus of a `tabindex=-1` piece makes it the active Tab stop via `focusin`;
-- rerender with a filter/placement that removes the active id and assert the new visible set again has exactly one Tab stop;
-- existing tray order/filter/shuffle/drawer/Cancel/hint/rejection tests remain unchanged.
-
-No Up/Down or layout-geometry test is required.
-
-Run and expect red:
-
-```bash
-cd apps/web
-bunx vitest --run --browser src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts
-```
-
-- [ ] **Step 4: Add panel-local active id + focusin tracking**
+- [ ] **Step 4: Add panel-local active id + `focusin`**
 
 ```ts
 let piecesGridElement = $state<HTMLElement | null>(null);
@@ -547,13 +558,14 @@ $effect(() => {
 function handlePiecesFocusIn(event: FocusEvent): void {
 	const target = event.target;
 	if (!(target instanceof HTMLElement)) return;
-	const piece = target.closest<HTMLElement>('[data-testid="puzzle-piece"]');
+	const slot = target.closest<HTMLElement>('.piece-slot');
+	const piece = slot?.querySelector<HTMLElement>('[data-testid="puzzle-piece"]');
 	const id = Number(piece?.dataset.pieceId);
 	if (Number.isInteger(id)) activePieceId = id;
 }
 ```
 
-The first guard is required: do not snap back to the selected piece after every arrow press.
+Using the slot lets focus on either the active root or its sibling Rotate button keep the same active piece.
 
 - [ ] **Step 5: Add native Left/Right traversal only**
 
@@ -562,7 +574,8 @@ function handlePiecesKeyDown(event: KeyboardEvent): void {
 	if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
 	const target = event.target;
 	if (!(target instanceof HTMLElement)) return;
-	const current = target.closest<HTMLElement>('[data-testid="puzzle-piece"]');
+	const slot = target.closest<HTMLElement>('.piece-slot');
+	const current = slot?.querySelector<HTMLElement>('[data-testid="puzzle-piece"]');
 	const currentId = Number(current?.dataset.pieceId);
 	if (!Number.isInteger(currentId)) return;
 
@@ -589,9 +602,11 @@ function piecesGridKeyboardAction(node: HTMLElement) {
 }
 ```
 
-Do not add Up/Down, `getBoundingClientRect`, CSS-variable reads, or column calculations.
+The existing Rotate button stops keydown propagation, so arrow traversal is owned by focused piece roots; Tab still reaches the active Rotate button.
 
-- [ ] **Step 6: Wire group + roving prop**
+No Up/Down or geometry code.
+
+- [ ] **Step 6: Wire the group + roving prop**
 
 ```svelte
 <div
@@ -604,7 +619,7 @@ Do not add Up/Down, `getBoundingClientRect`, CSS-variable reads, or column calcu
 >
 ```
 
-Pass the roving value:
+Pass:
 
 ```svelte
 <PuzzlePiece
@@ -612,8 +627,6 @@ Pass the roving value:
 	tabIndex={activePieceId === piece.id ? 0 : -1}
 />
 ```
-
-Header/tools remain native finite controls.
 
 - [ ] **Step 7: Verify and commit**
 
@@ -628,101 +641,56 @@ git add src/lib/components/PuzzlePiece.svelte \
   src/lib/components/PuzzleInventoryPanel.svelte \
   src/lib/components/__tests__/PuzzlePiece.svelte.test.ts \
   src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts
-git commit -m "a11y(web): add roving inventory piece navigation"
+git commit -m "a11y(web): keep rotation reachable in roving inventory"
 ```
 
 ---
 
-## Task 4: Add one route announcer and Escape cancellation
+## Task 4: Add one route announcer and ordered Escape handling
 
 **Files:**
 
 - Modify: `apps/web/src/routes/puzzle/[id]/+page.svelte`
 - Modify: `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts`
-- Modify: `apps/web/src/lib/components/ReferenceOverlay.svelte`
-- Modify: `apps/web/src/lib/components/__tests__/ReferenceOverlay.svelte.test.ts`
 
 **Interfaces:**
 
-- No new session event/action.
-- Route consumes existing dispatch outcomes plus `placement_accepted`, `placement_rejected`, and `hint_target` events.
-- `ReferenceOverlay` reuses existing `onDismiss`.
+- No new session action/event.
+- Consumes existing selection/rotation dispatch outcomes plus `placement_accepted`, `placement_rejected`, and `hint_target` events.
+- Reuses existing `handleReferenceToggle()`; `ReferenceOverlay` is unchanged.
 
-**Produces:** concise announcements from existing outcomes/events; one Escape closes one active interaction layer.
+**Produces:** one synchronous status string outside the inert subtree; one Escape closes exactly the highest-priority gameplay layer.
 
-- [ ] **Step 1: Add failing Reference Escape coverage**
-
-Render persistent (`active + dismissible`) Reference with `onDismiss` plus an outer/window keydown spy. Focus Close, dispatch Escape, and assert:
-
-```ts
-expect(onDismiss).toHaveBeenCalledOnce();
-expect(outerKeydown).not.toHaveBeenCalled();
-```
-
-Keep existing Tab trap/restoration tests.
-
-Run and expect red:
-
-```bash
-cd apps/web
-bunx vitest --run --browser src/lib/components/__tests__/ReferenceOverlay.svelte.test.ts
-```
-
-- [ ] **Step 2: Extend the existing overlay keydown handler**
-
-```ts
-function handleOverlayKeyDown(event: KeyboardEvent) {
-	if (event.key === 'Escape') {
-		event.preventDefault();
-		event.stopPropagation();
-		onDismiss?.();
-		return;
-	}
-	if (event.key === 'Tab') {
-		event.preventDefault();
-		closeButtonEl?.focus();
-	}
-}
-```
-
-Stopping propagation prevents one Escape from closing persistent Reference and then canceling a still-selected piece underneath.
-
-- [ ] **Step 3: Add failing route-announcement tests**
+- [ ] **Step 1: Add failing announcer structure/message tests**
 
 In `page.svelte.test.ts`, cover:
 
 1. announcer `role=status`, `aria-live=polite`, `aria-atomic=true`;
 2. announcer is not a descendant of `.puzzle-page`;
-3. explicit select -> `Puzzle piece 0 selected.`;
+3. select -> `Puzzle piece 0 selected.`;
 4. explicit cancel -> `Selection canceled.`;
 5. accepted placement -> `Puzzle piece 0 placed.`;
 6. wrong slot -> `Puzzle piece 0 does not fit there.`;
 7. non-upright -> `Puzzle piece 0 must be upright.`;
-8. Hint -> one-based target message;
-9. explicit toolbar Pause -> `Mission paused.`;
-10. Resume -> `Mission resumed.`;
-11. final accepted placement includes `Puzzle complete.` exactly once;
-12. Escape ends Hold before canceling selection;
-13. Escape cancels selection when Hold is inactive;
-14. existing Ctrl/Cmd Undo/Redo tests stay green.
+8. successful rotation -> `Puzzle piece 0 rotated.`;
+9. Hint -> one-based target message;
+10. explicit toolbar Pause -> `Mission paused.`;
+11. Resume -> `Mission resumed.`;
+12. final accepted placement includes `Puzzle complete.` once;
+13. persistent Reference Escape closes Reference but preserves an underlying selection;
+14. Hold Escape ends Hold before selection cancel;
+15. plain Escape cancels selection;
+16. existing Ctrl/Cmd Undo/Redo tests remain green.
 
-Use polling/DOM assertions because the announcer clears then sets in a microtask; no fixed sleeps.
+Announcements are direct assignments; use ordinary awaited DOM assertions, not timing-specific microtask polling.
 
-```bash
-cd apps/web
-bunx vitest --run --browser 'src/routes/puzzle/[id]/page.svelte.test.ts'
-```
-
-- [ ] **Step 4: Add one route-local announcer outside `.puzzle-page`**
+- [ ] **Step 2: Add one direct route-local announcer outside `.puzzle-page`**
 
 ```ts
 let gameplayAnnouncement = $state('');
 
 function announceGameplay(message: string): void {
-	gameplayAnnouncement = '';
-	queueMicrotask(() => {
-		gameplayAnnouncement = message;
-	});
+	gameplayAnnouncement = message;
 }
 ```
 
@@ -740,9 +708,9 @@ Render as a sibling of `.puzzle-page` and the existing dialogs:
 </div>
 ```
 
-This must not sit inside `.puzzle-page`, which is already `inert` + `aria-hidden` while setup/pause/exit/completion UI is open.
+Do not clear then restore via `queueMicrotask`. Repeated-identical-message forcing is deferred until real AT testing demonstrates it is needed.
 
-- [ ] **Step 5: Announce explicit selection/cancel via dispatch outcomes**
+- [ ] **Step 3: Announce explicit selection/cancel through outcomes**
 
 ```ts
 function handleSelectPiece(id: number) {
@@ -761,11 +729,28 @@ function handleCancelSelection() {
 }
 ```
 
-Keep `clearTransientGameplayState()` on its existing **direct** `sessionStore?.dispatch({ type: 'cancel_selection' })`. Do not route Pause/restart/exit cleanup through `handleCancelSelection()`, or Pause can speak a misleading `Selection canceled.` before `Mission paused.`.
+Keep `clearTransientGameplayState()` on its direct non-announcing `cancel_selection` dispatch.
 
-- [ ] **Step 6: Announce placement/hint from existing session events**
+- [ ] **Step 4: Announce rotation from the existing dispatch outcome**
 
-Extend `handleSessionEvent` without changing the event contract:
+Change `handlePieceRotate` only enough to consume the existing result:
+
+```ts
+function handlePieceRotate(pieceId: number) {
+	if (!sessionStore || !rotationEnabled || isPiecePlaced(pieceId)) return;
+	const outcome = sessionStore.dispatch({ type: 'rotate_piece', pieceId });
+	if (outcome.type === 'piece_rotated') {
+		announceGameplay(`Puzzle piece ${pieceId} rotated.`);
+	}
+	checkpointSession();
+}
+```
+
+No new rotation event or angle helper. `PuzzlePiece`'s accessible name exposes the exact angle after state updates.
+
+- [ ] **Step 5: Announce placement/hint from existing session events**
+
+Extend `handleSessionEvent` without changing its event contract:
 
 ```ts
 if (event.type === 'placement_accepted') {
@@ -791,11 +776,11 @@ if (event.type === 'placement_accepted') {
 }
 ```
 
-Preserve completion-effect/lifecycle handling. Do not separately announce `completion_sealed`; the final `placement_accepted` already carries `completed: true`.
+Do not separately announce `completion_sealed`.
 
-- [ ] **Step 7: Announce explicit Pause/Resume only**
+- [ ] **Step 6: Keep explicit Pause/Resume announcements**
 
-Inside `openPauseDialog`, capture the existing pause dispatch outcome when lifecycle is active:
+Inside active user Pause:
 
 ```ts
 const outcome = sessionStore?.dispatch({ type: 'pause' });
@@ -809,24 +794,32 @@ if (
 }
 ```
 
-Keep restored-route pause orchestration unchanged and non-announcing.
+Keep restored-route pause orchestration non-announcing.
 
 In `resumeSession`:
 
 ```ts
 const outcome = sessionStore?.dispatch({ type: 'resume' });
+restartConfirmation = false;
+sessionDialog = null;
 if (outcome?.type === 'lifecycle_transitioned' && outcome.to === 'active') {
 	announceGameplay('Mission resumed.');
 }
-restartConfirmation = false;
-sessionDialog = null;
 ```
 
-- [ ] **Step 8: Add Escape before Undo/Redo detection**
+The status region is outside the inert page. HPA-223 explicitly requires pause/resume feedback; do not cut these rows merely because the dialog also supplies context.
 
-Preserve the existing `hasSessionModal` and persistent-Reference gates. Then:
+- [ ] **Step 7: Put persistent Reference Escape in `handleWindowKeyDown`**
+
+Keep the existing `hasSessionModal` gate first. Then handle Escape before the existing `if (referenceToggled) return` gate:
 
 ```ts
+if (event.key === 'Escape' && referenceToggled) {
+	event.preventDefault();
+	handleReferenceToggle();
+	return;
+}
+
 if (event.key === 'Escape') {
 	if (sessionState?.activeReferenceMode === 'hold') {
 		event.preventDefault();
@@ -839,46 +832,62 @@ if (event.key === 'Escape') {
 		return;
 	}
 }
+
+if (referenceToggled) return;
 ```
 
-Hold has priority: the first Escape ends Peek without also canceling selection. Persistent Reference handles Escape inside its overlay and stops propagation.
+This makes priority explicit and leaves `ReferenceOverlay.svelte` untouched.
 
-- [ ] **Step 9: Verify and commit**
+- [ ] **Step 8: Verify and commit**
 
 ```bash
 cd apps/web
-bunx vitest --run --browser \
-  src/lib/components/__tests__/ReferenceOverlay.svelte.test.ts \
-  'src/routes/puzzle/[id]/page.svelte.test.ts'
+bunx vitest --run --browser 'src/routes/puzzle/[id]/page.svelte.test.ts'
 bun run check
 
-git add src/lib/components/ReferenceOverlay.svelte \
-  src/lib/components/__tests__/ReferenceOverlay.svelte.test.ts \
-  'src/routes/puzzle/[id]/+page.svelte' \
+git add 'src/routes/puzzle/[id]/+page.svelte' \
   'src/routes/puzzle/[id]/page.svelte.test.ts'
 git commit -m "a11y(web): announce core puzzle interactions"
 ```
 
 ---
 
-## Task 5: Prove the real keyboard flow in the correct lane and run final gates
+## Task 5: Prove the real keyboard flow and reuse existing E2E support
 
 **Files:**
 
+- Modify: `apps/web/e2e/support/gameplay-page.ts`
 - Modify: `apps/web/e2e/gameplay-interactions.spec.ts`
 - Modify: `apps/web/e2e/gameplay-accessibility.spec.ts`
 
-**Produces:** one Chromium smoke keyboard flow beside existing keyboard interaction tests, while the existing accessibility file remains the axe/structural lane.
+**Produces:** one Chromium smoke keyboard flow beside existing keyboard interaction tests; accessibility file stays axe/structural; partial fixture completion reuses `GameplayPage.solveFixture()`.
 
-- [ ] **Step 1: Add the keyboard core flow to `gameplay-interactions.spec.ts`**
+- [ ] **Step 1: Extend `solveFixture()` instead of copying its loop**
 
-Import the deterministic fixture catalog so completion can skip already-placed pieces without hard-coding coordinates:
+Change the helper compatibly:
+
+```ts
+async solveFixture(options: { skipPlaced?: boolean } = {}): Promise<void> {
+	const fixture = this.fixture ?? getFixture(DEFAULT_FIXTURE_ID);
+	for (const piece of fixture.pieces) {
+		if (options.skipPlaced && (await this.pieceSource(piece.id).count()) === 0) continue;
+		await this.selectAndPlaceWithKeyboard(piece.id, piece.correctX, piece.correctY);
+		await this.expectPiecePlaced(piece.id, piece.correctX, piece.correctY);
+	}
+}
+```
+
+Existing callers require no changes.
+
+- [ ] **Step 2: Add the keyboard core smoke to `gameplay-interactions.spec.ts`**
+
+Import `getFixture`:
 
 ```ts
 import { getFixture } from './gameplay-fixtures/catalog';
 ```
 
-Add the new test beside, but **outside**, the existing `keyboard @webkit-critical` describe so it carries only `@smoke`:
+Add beside, but outside, the existing `keyboard @webkit-critical` describe:
 
 ```ts
 test('keyboard core flow uses logical regions and announcements @smoke', async ({
@@ -894,18 +903,9 @@ test('keyboard core flow uses logical regions and announcements @smoke', async (
 });
 ```
 
-Do not put this test under `accessibility @a11y`, and do not add `@webkit-critical` unless a later change explicitly runs/proves that lane.
+There is no Task-5 “expect red before implementation” step: Tasks 1–4 have already implemented the behavior by this point.
 
-Before implementation is complete, run and expect the old many-tab-stop behavior to fail:
-
-```bash
-cd apps/web
-bunx playwright test e2e/gameplay-interactions.spec.ts \
-  --project=chromium-desktop \
-  --grep "keyboard core flow"
-```
-
-- [ ] **Step 2: Prove tab-stop counts and exact adjacent arrows**
+- [ ] **Step 3: Prove logical Tab shape and exact arrows**
 
 ```ts
 const toolbar = page.getByTestId('puzzle-toolbar');
@@ -917,9 +917,9 @@ await expect(board.locator('[data-testid="drop-zone"][tabindex="0"]:visible')).t
 await expect(inventory.locator('[data-testid="puzzle-piece"][tabindex="0"]:visible')).toHaveCount(1);
 ```
 
-Focus `Return to arcade`, press Tab, and assert focus enters the toolbar's single tab stop. Press Tab again and assert focus enters the board's single tab stop; it must not traverse every toolbar action/cell.
+Focus `Return to arcade`, press Tab, and assert the toolbar's one active action receives focus. Press Tab again and assert focus reaches the board's one active cell without traversing every toolbar action/cell.
 
-For arrows, assert exact destinations:
+Exact arrows:
 
 ```ts
 const hint = page.getByRole('button', { name: 'Hint' });
@@ -935,41 +935,17 @@ await page.keyboard.press('ArrowRight');
 await expect(cell10).toBeFocused();
 ```
 
-For inventory, capture the visible piece roots in DOM order, focus the first, press ArrowRight, and assert the second is focused. This proves the planned one-dimensional behavior; there is no Up/Down geometry test.
+For inventory, focus the first visible piece root, press ArrowRight, and assert the second visible root receives focus. No Up/Down test.
 
-- [ ] **Step 3: Prove selection, rejection, and Escape announcements**
+- [ ] **Step 4: Prove selection, rejection, Escape, accepted placement, Undo/Redo**
 
-Direct-focus a known visible piece root, press Enter, and assert both selected state and live text:
+Use a known visible piece from `fixture.pieces`. Focus its root, press Enter, and assert selected state plus `Puzzle piece N selected.`.
 
-```ts
-const firstPiece = inventory.locator('[data-testid="puzzle-piece"]:visible').first();
-const pieceId = Number(await firstPiece.getAttribute('data-piece-id'));
-await firstPiece.focus();
-await page.keyboard.press('Enter');
-await expect(firstPiece).toHaveAttribute('data-selected', 'true');
-await expect(page.getByTestId('gameplay-announcer')).toContainText(
-	`Puzzle piece ${pieceId} selected.`
-);
-```
-
-Use `fixture.pieces` to choose a cell that is not that piece's correct coordinate, activate it with Enter, and assert the durable rejection announcement instead of the 500ms shake class.
+Activate a known wrong cell and assert `Puzzle piece N does not fit there.`; use the durable announcer, not the 500ms shake class.
 
 Press Escape and assert selection clears plus `Selection canceled.`.
 
-- [ ] **Step 4: Prove accepted placement + existing Undo/Redo**
-
-Use the chosen fixture piece's canonical coordinates:
-
-```ts
-const piece = fixture.pieces.find((candidate) => candidate.id === pieceId)!;
-await gameplayPage.selectAndPlaceWithKeyboard(piece.id, piece.correctX, piece.correctY);
-await gameplayPage.expectPiecePlaced(piece.id, piece.correctX, piece.correctY);
-await expect(page.getByTestId('gameplay-announcer')).toContainText(
-	`Puzzle piece ${piece.id} placed.`
-);
-```
-
-Then:
+Select/place the same piece at its canonical coordinates, assert placement and `Puzzle piece N placed.`. Then:
 
 ```ts
 await page.keyboard.press('Control+z');
@@ -978,54 +954,33 @@ await page.keyboard.press('Control+y');
 await gameplayPage.expectPiecePlaced(piece.id, piece.correctX, piece.correctY);
 ```
 
-Route unit tests keep the platform-specific Ctrl/Cmd variants; smoke uses the existing Chromium Ctrl path.
+Route unit tests retain Ctrl/Cmd variants.
 
-- [ ] **Step 5: Prove Hint + completion without re-solving the placed piece**
+- [ ] **Step 5: Prove Hint + completion via the extended helper**
 
-Keyboard-activate Hint and assert the announcer matches the one-based target format.
+Keyboard-activate Hint and assert the one-based target message.
 
-Complete only pieces whose tray slots remain:
-
-```ts
-for (const remaining of fixture.pieces) {
-	if ((await gameplayPage.pieceSource(remaining.id).count()) === 0) continue;
-	await gameplayPage.selectAndPlaceWithKeyboard(
-		remaining.id,
-		remaining.correctX,
-		remaining.correctY
-	);
-	await gameplayPage.expectPiecePlaced(
-		remaining.id,
-		remaining.correctX,
-		remaining.correctY
-	);
-}
-```
-
-Assert the completion dialog is visible and the announcer contains `Puzzle complete.`.
-
-- [ ] **Step 6: Keep `gameplay-accessibility.spec.ts` structural/axe-focused**
-
-In the existing active-gameplay `@a11y` test, before `assertPageAccessible(...)`, add only:
+Then:
 
 ```ts
-await expect(
-	page.getByTestId('puzzle-toolbar').locator('[data-toolbar-action][tabindex="0"]:visible')
-).toHaveCount(1);
-await expect(
-	page.getByTestId('puzzle-board').locator('[data-testid="drop-zone"][tabindex="0"]:visible')
-).toHaveCount(1);
-await expect(
-	page
-		.getByTestId('puzzle-inventory-panel')
-		.locator('[data-testid="puzzle-piece"][tabindex="0"]:visible')
-).toHaveCount(1);
-await expect(page.getByTestId('gameplay-announcer')).toHaveAttribute('aria-live', 'polite');
+await gameplayPage.solveFixture({ skipPlaced: true });
 ```
 
-Do not add `@smoke` to this file. Its parent `accessibility @a11y` describe selects Chromium desktop/tablet and WebKit-mobile in `test:e2e:a11y`; keeping the keyboard smoke elsewhere prevents an unrun WebKit obligation from being created accidentally.
+Assert the completion dialog is visible and `gameplay-announcer` contains `Puzzle complete.`.
 
-- [ ] **Step 7: Run the new smoke on both automatic Chromium targets**
+Rotation reachability/state stays in focused component + route tests; do not turn this smoke into a rotation-mode solve matrix.
+
+- [ ] **Step 6: Reuse `expectLiveRegion()` in the existing a11y test**
+
+`gameplay-accessibility.spec.ts` already imports `expectLiveRegion`. In active gameplay, add only structural counts and:
+
+```ts
+await expectLiveRegion(page.getByTestId('gameplay-announcer'), 'polite');
+```
+
+Do not hand-roll `aria-live` assertions and do not add `@smoke` to the `accessibility @a11y` describe.
+
+- [ ] **Step 7: Run the new smoke on automatic Chromium targets**
 
 ```bash
 cd apps/web
@@ -1035,9 +990,7 @@ bunx playwright test e2e/gameplay-interactions.spec.ts \
   --grep "keyboard core flow"
 ```
 
-This exercises compact-toolbar visibility filtering on Chromium mobile without creating a second test.
-
-- [ ] **Step 8: Run focused component/route suites**
+- [ ] **Step 8: Run focused suites**
 
 ```bash
 cd apps/web
@@ -1046,7 +999,6 @@ bunx vitest --run --browser \
   src/lib/components/__tests__/PuzzleBoard.svelte.test.ts \
   src/lib/components/__tests__/PuzzlePiece.svelte.test.ts \
   src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts \
-  src/lib/components/__tests__/ReferenceOverlay.svelte.test.ts \
   'src/routes/puzzle/[id]/page.svelte.test.ts'
 ```
 
@@ -1061,9 +1013,9 @@ bun run lint
 bun run build
 ```
 
-`test:e2e:a11y` remains the existing manual/pre-release lane; it is not a required HPA-223 implementation gate. The structural assertions added there will run whenever that lane is invoked.
+Do not add `test:e2e:a11y` as a per-ticket cross-browser gate. The structural a11y changes remain in its existing manual lane.
 
-- [ ] **Step 10: Scope review**
+- [ ] **Step 10: Scope review and commit**
 
 Expected production files:
 
@@ -1072,19 +1024,18 @@ apps/web/src/lib/components/PuzzleToolbar.svelte
 apps/web/src/lib/components/PuzzleBoard.svelte
 apps/web/src/lib/components/PuzzlePiece.svelte
 apps/web/src/lib/components/PuzzleInventoryPanel.svelte
-apps/web/src/lib/components/ReferenceOverlay.svelte
 apps/web/src/routes/puzzle/[id]/+page.svelte
 ```
 
-Expected test files:
+Expected test/support changes:
 
 ```text
 apps/web/src/lib/components/__tests__/PuzzleToolbar.svelte.test.ts
 apps/web/src/lib/components/__tests__/PuzzleBoard.svelte.test.ts
 apps/web/src/lib/components/__tests__/PuzzlePiece.svelte.test.ts
 apps/web/src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts
-apps/web/src/lib/components/__tests__/ReferenceOverlay.svelte.test.ts
 apps/web/src/routes/puzzle/[id]/page.svelte.test.ts
+apps/web/e2e/support/gameplay-page.ts
 apps/web/e2e/gameplay-interactions.spec.ts
 apps/web/e2e/gameplay-accessibility.spec.ts
 ```
@@ -1094,60 +1045,52 @@ Confirm unchanged:
 ```text
 PuzzleSession state/action/event contracts
 session persistence/schema/version
+ReferenceOverlay.svelte
+PuzzleBoardPanel.svelte
+modalFocus.ts
 API/shared types
 analytics/preferences
-modalFocus.ts
 Playwright projects/fixture catalog
 HPA-237 staging trays
 ```
 
-Confirm absent from the diff:
-
-```text
-renderedColumnCount
-getBoundingClientRect inventory column math
-shared roving-focus helper/action
-route accessibility/focus controller
-new accessibility session state
-```
-
-- [ ] **Step 11: Commit E2E changes**
+Commit E2E/support changes:
 
 ```bash
-git add e2e/gameplay-interactions.spec.ts e2e/gameplay-accessibility.spec.ts
+git add e2e/support/gameplay-page.ts \
+  e2e/gameplay-interactions.spec.ts \
+  e2e/gameplay-accessibility.spec.ts
 git commit -m "test(web): cover practical keyboard puzzle flow"
 ```
 
-If final verification needs a production fix, make a specific regression-fix commit instead of folding unrelated cleanup into the E2E commit.
+If final verification requires a production fix, make a specific regression-fix commit rather than folding unrelated cleanup into the E2E commit.
 
 ## Final review checklist
 
 ```text
-Toolbar: ToolbarAction union; one visible enabled Tab stop; focusin updates active
-Toolbar arrows: native listener; wrapping; exact adjacent target; disabled/hidden skipped
-Board: 100 cells => one Tab stop; existing native keydown owns spatial arrows; bounds clamp
-Board names: one-based empty/occupied; route helper updated in Task 2
-Inventory: one repeated piece Tab stop; Left/Right only; no column/row geometry engine
-Inventory arrows: native listener; exact adjacent target; active-id normalization
-Rotate: pointer button remains; tabindex=-1; R remains keyboard command
-Escape: Hold closes first; selection cancels; persistent Reference stops propagation + dismisses
-Announcements: select / cancel / accepted / rejected / hint / pause / resume / complete
-Lifecycle cleanup: direct cancel_selection remains non-announcing
-Live region: exactly one, polite + atomic, outside inert .puzzle-page
-Undo/Redo: existing Ctrl/Cmd shortcuts unchanged
-E2E lanes: keyboard @smoke in gameplay-interactions; a11y file stays axe/structural
-Dialogs: existing modalFocus unchanged
-No generic focus/accessibility framework and no domain/persistence work
+Toolbar: typed availability; one visible enabled Tab stop; exact wrapping arrows
+Board: 100 cells => one Tab stop; spatial arrows; occupant-identifying names
+Inventory: one active piece root; at most one active Rotate button; Left/Right only
+Rotation: visible Rotate remains keyboard reachable; R remains; angle in piece name; rotate announcement
+Escape: Reference Toggle -> Hold -> selection priority in route; overlay unchanged
+Announcements: select / cancel / accepted / rejected / rotation / hint / pause / resume / complete
+Live region: one direct status string, polite + atomic, outside inert .puzzle-page
+Undo/Redo: existing shortcuts unchanged
+Dialogs: modalFocus unchanged
+E2E: smoke in gameplay-interactions; a11y file uses expectLiveRegion; solveFixture reused
+No shared focus/native-keydown framework and no domain/persistence work
 ```
 
 ## Review-resolution notes
 
-The supplied review was validated against current `main` and the planning branch. All five findings are actionable:
+The latest review was directionally correct but not every recommendation fits the current ticket:
 
-1. Removed inventory Up/Down and the planned `renderedColumnCount()`/partial-row geometry. Left/Right already reaches every `visiblePieces` item and is fully testable in the component suite.
-2. Replaced delegated toolbar/inventory `onkeydown` with local native-listener actions, matching the existing `PuzzlePiece`/`PuzzleBoard` pattern. Tests now require the adjacent target, not merely a different target.
-3. Moved the route's `placeSelectedPieceAt()` accessible-name update into Task 2 and added the route suite to Task 2's gate, so the board-label commit is independently green.
-4. Moved the keyboard `@smoke` flow to `gameplay-interactions.spec.ts`. `gameplay-accessibility.spec.ts` remains the axe lane and receives only tab-stop/live-region structural assertions.
-5. Added a closed `ToolbarAction` union so the roving state/tabindex calls are type-checked rather than free-form strings.
-
-The overall architecture remains Option A: concrete component-local focus plus one route announcer, with no session/persistence work and no shared focus framework.
+- **Accepted:** replace clear+microtask with direct announcer assignment. WAI-ARIA allows AT to combine live-region changes, so the prior microtask technique was not a reliable contract; repeated-identical-message forcing is deferred until tested evidence requires it.
+- **Accepted:** keep rotation practically keyboard accessible. Only the active piece's Rotate button follows the roving `tabIndex`; piece names expose angle/upright state; successful rotation gets a concise announcement.
+- **Accepted:** replace the toolbar's hand-maintained effect dependency list with typed derived availability plus a table-driven invariant test.
+- **Accepted:** handle persistent Reference Escape in the existing route window-key owner before the reference gate; `ReferenceOverlay` and `PuzzleBoardPanel` stay unchanged.
+- **Not adopted:** deleting Pause/Resume announcements. HPA-223 explicitly includes them; the existing pause/resume dialogs are redundant context, not permission to narrow acceptance silently.
+- **Accepted:** occupied cells identify the placed piece.
+- **Deferred:** moving board roving focus to the Hint target. It changes focus-entry policy and is not needed for the announced-hint acceptance criterion.
+- **Accepted:** reuse `expectLiveRegion` and extend `solveFixture({ skipPlaced: true })`; remove the impossible Task-5 red framing.
+- **Not adopted:** new shared `nativeKeydown` action. Only two new pure-keydown wrappers share that shape, while existing native actions also own click/coordinate behavior; a shared seam would not materially simplify this ticket.
