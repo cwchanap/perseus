@@ -51,6 +51,20 @@ describe('ReferenceOverlay', () => {
 
 			await expect.poll(() => page.getByTestId('reference-overlay-close').query()).toBeNull();
 		});
+
+		it('does not trap keyboard focus (non-dismissible overlay has no keydown handler)', async () => {
+			render(ReferenceOverlay, {
+				imageUrl: '/api/puzzles/test-puzzle/reference',
+				active: true
+			});
+
+			const overlay = await page.getByTestId('reference-overlay').element();
+			// The non-dismissible (Hold-to-Peek) overlay intentionally has no
+			// keydown handler, so Tab passes through without interception.
+			const event = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+			overlay.dispatchEvent(event);
+			expect(event.defaultPrevented).toBe(false);
+		});
 	});
 
 	describe('when dismissible (persistent toggle)', () => {
@@ -155,6 +169,42 @@ describe('ReferenceOverlay', () => {
 
 			await expect.poll(() => document.activeElement).toBe(trigger);
 			trigger.remove();
+		});
+
+		it('lets non-Tab keys pass through without trapping focus', async () => {
+			render(ReferenceOverlay, {
+				imageUrl: '/api/puzzles/test-puzzle/reference',
+				active: true,
+				dismissible: true,
+				onDismiss: vi.fn()
+			});
+
+			const overlay = await page.getByTestId('reference-overlay').element();
+			// A non-Tab key (e.g. Escape) must not be intercepted: the handler
+			// only traps Tab, so other keys pass through to the route's global
+			// shortcut guard.
+			const event = new KeyboardEvent('keydown', {
+				key: 'Escape',
+				bubbles: true,
+				cancelable: true
+			});
+			overlay.dispatchEvent(event);
+			expect(event.defaultPrevented).toBe(false);
+		});
+	});
+
+	describe('when the reference image fails to load', () => {
+		it('shows the unavailable message after an image error', async () => {
+			render(ReferenceOverlay, {
+				imageUrl: '/api/puzzles/test-puzzle/reference',
+				active: true
+			});
+
+			const img = await page.getByRole('img', { name: 'Puzzle reference' }).element();
+			img.dispatchEvent(new Event('error', { bubbles: true }));
+
+			const overlay = await page.getByTestId('reference-overlay').element();
+			expect(overlay.textContent).toContain('Reference image unavailable');
 		});
 	});
 
