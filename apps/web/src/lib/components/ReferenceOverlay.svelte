@@ -22,7 +22,9 @@
 {#if active}
 	<div
 		data-testid="reference-overlay"
-		class={`fixed inset-0 z-[1000] flex items-center justify-center bg-black/80 ${dismissible ? '' : 'pointer-events-none'}`}
+		class={`fixed inset-0 z-[1000] flex items-center justify-center bg-black/80 ${
+			dismissible ? '' : 'pointer-events-none'
+		}`}
 	>
 		{#if dismissible}
 			<button
