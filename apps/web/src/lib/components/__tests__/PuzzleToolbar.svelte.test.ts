@@ -241,6 +241,28 @@ describe('PuzzleToolbar', () => {
 			expect(onReferenceUp).toHaveBeenCalledOnce();
 		});
 
+		it('ignores non-Space/Enter keydown on the peek button', async () => {
+			const onReferenceDown = vi.fn();
+			renderToolbar({ onReferenceDown });
+
+			const peekButton = page.getByLabelText('Hold to peek reference');
+			await peekButton
+				.element()
+				.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }));
+			expect(onReferenceDown).not.toHaveBeenCalled();
+		});
+
+		it('ignores non-Space/Enter keyup on the peek button', async () => {
+			const onReferenceUp = vi.fn();
+			renderToolbar({ onReferenceUp });
+
+			const peekButton = page.getByLabelText('Hold to peek reference');
+			await peekButton
+				.element()
+				.dispatchEvent(new KeyboardEvent('keyup', { key: 'a', bubbles: true }));
+			expect(onReferenceUp).not.toHaveBeenCalled();
+		});
+
 		it('calls onReferenceToggle when toggle reference button is clicked', async () => {
 			const onReferenceToggle = vi.fn();
 			renderToolbar({ onReferenceToggle });

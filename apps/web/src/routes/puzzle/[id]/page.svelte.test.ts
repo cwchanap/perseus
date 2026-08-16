@@ -808,6 +808,25 @@ describe('Puzzle route gameplay integration', () => {
 			.toHaveAttribute('aria-pressed', 'true');
 	});
 
+	it('ignores reference toggle when the session is paused', async () => {
+		await renderPuzzlePage();
+
+		// Pause the session so the lifecycle is 'paused', not 'active'.
+		await page.getByLabelText('More puzzle actions').click();
+		await page.getByRole('button', { name: 'Pause mission' }).click();
+		await expect.element(page.getByRole('dialog', { name: 'Mission Paused' })).toBeVisible();
+
+		// The puzzle page is inert while the pause dialog is open, but a
+		// direct click dispatch bypasses hit-testing to exercise the
+		// lifecycle guard in handleReferenceToggle.
+		const toggleButton = await page.getByLabelText('Toggle reference').element();
+		toggleButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+		// The overlay must not open: handleReferenceToggle returns early when
+		// the session lifecycle is not 'active'.
+		await expect.poll(() => page.getByTestId('reference-overlay').query()).toBeNull();
+	});
+
 	it('pauses a restored active session at entry and checkpoints the paused state', async () => {
 		// Restored active runs are deliberately paused at route entry so the
 		// player re-engages through the resume flow (wired in the session
