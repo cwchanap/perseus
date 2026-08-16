@@ -21,10 +21,12 @@ The key constraint is that the three sites do not have the same Workflow shape:
 - the success-path `ready` mirror already owns its own `step.do`, so Cloudflare's built-in per-step retry is the smallest correct mechanism;
 - the `failed` and already-ready mirrors execute *inside* the existing `mark-failed` step. A Workflow step cannot be nested there, and restructuring the entire failure path solely to give D1 a separate durable step would be more churn than this low-priority ticket needs. Those two sites use one tiny local bounded retry helper instead.
 
-Cloudflare documents per-step retry config on `step.do`, including `limit`, `delay`, and `backoff`, and documents catching an exhausted step outside `step.do` when that step is allowed to fail without failing the Workflow:
+Those mechanisms intentionally share only the **three-total-attempt bound**, not the delay policy. A Workflow retry can enter the durable `waiting` state between attempts, so it should use a seconds-scale delay. The in-step helper cannot nest `step.sleep` and therefore uses a small in-process delay to avoid holding the canonical `mark-failed` step for a long time.
+
+Cloudflare documents per-step retry config on `step.do`, including `limit`, `delay`, and `backoff`. Current documentation defines `retries.limit` as the total number of attempts, uses a default base retry delay of 10 seconds, and documents that waiting-for-retry instances do not consume active Workflow concurrency:
 
 - [Sleeping and retrying](https://developers.cloudflare.com/workflows/build/sleeping-and-retrying/)
-- [Build your first Workflow](https://developers.cloudflare.com/workflows/get-started/guide/)
+- [Workers API](https://developers.cloudflare.com/workflows/build/workers-api/)
 
 This ticket improves short transient failure handling. It does not promise guaranteed convergence during a prolonged D1 outage or redesign cross-store consistency.
 
@@ -33,7 +35,7 @@ This ticket improves short transient failure handling. It does not promise guara
 1. Let the existing success-path `mirror-ready-status-to-d1` step retry a transient D1 failure using Cloudflare Workflow retry config.
 2. Retry transient `failed` mirror writes inside `mark-failed` with one small shared helper.
 3. Retry transient already-ready `ready` reconciliation writes through the same helper.
-4. Bound every mirror to three total attempts with short delays.
+4. Bound every mirror to three total attempts while keeping timing mechanism-specific: seconds-scale durable Workflow retries and 100/200 ms in-step helper waits.
 5. Log one clear terminal application error with puzzle ID and target status after retries are exhausted.
 6. Keep DO/KV authoritative and preserve current workflow success/failure semantics.
 7. Keep the production change local to `apps/workflows/src/index.ts` and its existing tests.
@@ -57,14 +59,14 @@ This ticket improves short transient failure handling. It does not promise guara
 | Need | Existing seam | Decision |
 | --- | --- | --- |
 | Success-path durable retry | existing `mirror-ready-status-to-d1` `step.do` | Add retry config; let callback errors reach Workflow |
-| In-step bounded retry | existing local retry-loop pattern in `mark-failed` | Reuse its simple 3-attempt / short-backoff shape for D1 via one helper |
+| In-step bounded retry | best-effort KV retry loop in `PuzzleMetadataDO.update()` | Copy its 3-attempt, 100/200 ms, log-once, non-fatal semantics through one D1-specific helper |
 | Authoritative ready state | existing `finalize` step | Keep unchanged |
-| Authoritative failed state | existing `mark-failed` step and manual DO retry loop | Keep unchanged |
+| Authoritative failed state | existing `mark-failed` step and manual DO retry loop | Keep unchanged; do **not** copy its per-attempt canonical logging semantics into D1 mirroring |
 | D1 write | `@perseus/shared` `setPuzzleStatus()` | Reuse unchanged |
 | D1 connection | existing `getDb()` isolate cache | Reuse unchanged |
 | Fake timers | existing `mark-failed retry exhaustion` test | Reuse for manual D1 retry tests |
 | Workflow mock | existing `createMockStep()` | Extend with opt-in retry-config simulation only where needed |
-| Tests | `apps/workflows/src/index.test.ts` | Extend existing ready/failed/already-ready sections |
+| Tests | `apps/workflows/src/index.test.ts` | Add sibling cases beside existing ready/failed/already-ready coverage |
 
 No new production module is justified.
 
@@ -85,9 +87,9 @@ Keep the current orchestration structure. The success-path step stops swallowing
 
 **Cons**
 
-- two retry mechanisms exist in one file: Workflow-managed for one site, local loop for two sites.
+- two retry mechanisms exist in one file and intentionally use different delay scales.
 
-That difference is intentional and follows the existing step boundaries rather than inventing a larger abstraction.
+That difference follows the existing step boundaries. The durable Workflow step can wait across runtime execution; the local helper cannot. Unifying their timing would be configuration symmetry rather than correct reuse.
 
 ### Option B — Split `mark-failed` outcomes into new D1 Workflow steps
 
@@ -105,26 +107,28 @@ Use the same local helper for the success-path ready mirror too.
 
 **Rejected:** out of scope and disproportionate to a pre-release best-effort mirror.
 
-## Shared retry constants
+## Retry constants and timing boundary
 
-Use one small policy for both mechanisms:
+Share the attempt count, but keep separate delay constants for the two mechanisms:
 
 ```ts
 const D1_MIRROR_MAX_ATTEMPTS = 3;
-const D1_MIRROR_BASE_DELAY_MS = 100;
+const D1_MIRROR_IN_STEP_BASE_DELAY_MS = 100;
 
 const D1_MIRROR_STEP_CONFIG = {
 	retries: {
 		limit: D1_MIRROR_MAX_ATTEMPTS,
-		delay: D1_MIRROR_BASE_DELAY_MS,
+		delay: '10 seconds',
 		backoff: 'exponential'
 	}
 } as const;
 ```
 
-Cloudflare's current Workflows documentation defines `retries.limit` as the total number of attempts. `limit: 3` therefore matches the local helper's three-attempt bound.
+Cloudflare's current Workflows documentation defines `retries.limit` as the **total number of attempts**, so `limit: 3` means first attempt plus at most two retries. Current defaults use a 10-second base delay with exponential backoff. Reusing that seconds-scale base for the explicit HPA-120 config preserves the value of a durable Workflow retry rather than reducing it to a local `setTimeout`-sized blip.
 
-Use the same short 100 ms base already present in the authoritative `mark-failed` local retry pattern. With three attempts, the local helper waits 100 ms then 200 ms before the final attempt. Do not add a timeout override or dynamic delay callback.
+The in-step helper cannot use or nest another Workflow step, and `step.sleep` is not available as a nested primitive inside the existing `mark-failed` callback. It therefore waits only 100 ms then 200 ms between its three attempts. This is the accepted limitation of keeping the failure path structurally unchanged.
+
+Do not add a timeout override or dynamic delay callback.
 
 ## In-step helper
 
@@ -146,7 +150,7 @@ async function mirrorPuzzleStatusWithRetry(
 			lastError = error;
 			if (attempt < D1_MIRROR_MAX_ATTEMPTS - 1) {
 				await new Promise((resolve) =>
-					setTimeout(resolve, D1_MIRROR_BASE_DELAY_MS * Math.pow(2, attempt))
+					setTimeout(resolve, D1_MIRROR_IN_STEP_BASE_DELAY_MS * Math.pow(2, attempt))
 				);
 			}
 		}
@@ -163,7 +167,7 @@ Exact naming may change, but preserve these semantics:
 
 - at most three attempts;
 - no log for an intermediate transient failure;
-- short bounded delay between attempts;
+- 100 ms then 200 ms waits between attempts;
 - final failure is logged once with puzzle ID and target status;
 - the helper does **not** throw after exhaustion, because doing so inside `mark-failed` could turn a best-effort D1 problem into failure/retry of the containing canonical step;
 - keep it local to `index.ts`; do not export it or move it into `helpers.ts`/`@perseus/shared`.
@@ -204,7 +208,8 @@ try {
 The important boundary is the catch *around* `step.do`, not inside its callback:
 
 - transient callback throws are visible to Workflow and retried;
-- after all attempts fail, the outer catch logs once and keeps the mirror non-fatal;
+- Workflow owns the seconds-scale wait/backoff between attempts;
+- after all three total attempts fail, the outer catch logs once and keeps the mirror non-fatal;
 - the authoritative DO remains `ready`.
 
 ## Failure path: keep `mark-failed` structure
@@ -260,43 +265,45 @@ Existing authoritative `mark-failed` per-attempt/CRITICAL logs remain unchanged 
 
 ## Test strategy
 
-Keep all coverage in `apps/workflows/src/index.test.ts` and extend the existing nearby tests rather than creating a new suite/file.
+Keep all coverage in `apps/workflows/src/index.test.ts` and add sibling test cases beside the existing nearby tests rather than replacing baseline one-shot coverage or creating a new suite/file.
 
 ### Workflow-step retry test seam
 
 The current `createMockStep()` ignores retry config and runs callbacks once. Add a small opt-in mode, for example `createMockStep({ respectRetryConfig: true })`, that:
 
 1. recognizes the `(name, config, callback)` overload;
-2. runs the callback up to `config.retries.limit` total attempts when it rejects;
-3. returns on the first success;
-4. rethrows the final error after exhaustion;
-5. performs no real delay.
+2. treats `config.retries.limit` as the **total attempt count**;
+3. runs the callback up to that many attempts when it rejects;
+4. returns on the first success;
+5. rethrows the final error only after all configured attempts are exhausted;
+6. performs **no delay simulation**.
 
 Default behavior stays one attempt so unrelated existing tests do not silently gain platform-retry simulation.
 
+The mock is a focused contract model, not a second implementation of Cloudflare Workflows. Test comments/assertions must state the boundaries explicitly: `limit` means total attempts; the mock retries before the caller's outer `catch` sees exhaustion; configured delay/backoff is inspected but not slept. This pins the documented contract without adding a Miniflare Workflow harness.
+
 ### Ready success-path cases
 
-Extend `Workflow Execution - D1 ready mirror is best-effort`:
+Extend `Workflow Execution - D1 ready mirror is best-effort` with sibling cases:
 
-- normal success still calls `ready` once;
 - transient failure then success calls `ready` twice and workflow resolves;
-- permanent failure calls `ready` exactly three times, outer terminal log fires once, workflow still resolves, and the final DO status remains `ready` with no D1/canonical `failed` write.
+- permanent failure calls `ready` exactly three times, outer terminal log fires once, workflow still resolves, and the final DO status remains `ready` with no D1/canonical `failed` write;
+- the configured retry object has `limit: 3`, `delay: '10 seconds'`, and `backoff: 'exponential'`.
 
-The transient/permanent cases use the opt-in retry-aware mock step.
+The transient/permanent cases use the opt-in retry-aware mock step. Do not simulate the 10-second durable wait in unit tests.
 
 ### Failed in-step mirror cases
 
-Extend the existing failed-mirror test:
+Keep the existing `mirrors the failed status into D1 on mark-failed` one-shot success test unchanged as the baseline, then add sibling tests in the same area:
 
-- normal success remains covered;
 - transient D1 failure then success calls `failed` twice;
 - permanent D1 failure calls `failed` exactly three times, logs once with puzzle ID/status, and still rejects with the original processing error rather than the D1 error.
 
-Use `vi.useFakeTimers()` and `vi.runAllTimersAsync()` for the helper's 100/200 ms waits, following the existing authoritative retry-exhaustion test pattern. Restore real timers in `finally`.
+Use `vi.useFakeTimers()` and `vi.runAllTimersAsync()` only for the helper's 100/200 ms waits, following the existing authoritative retry-exhaustion test pattern. Restore real timers in `finally`.
 
 ### Already-ready reconciliation cases
 
-Extend the existing recognized-409 test:
+Keep the existing recognized-409 success case, then add a sibling transient case:
 
 - transient D1 `ready` failure then success calls `ready` twice;
 - no D1 `failed` write occurs;
@@ -316,7 +323,7 @@ No other production file should be necessary.
 
 | HPA-120 criterion | Design coverage |
 | --- | --- |
-| transient D1 failure within retry budget updates profile status | step-level ready retry + local helper transient tests |
+| transient D1 failure within retry budget updates profile status | seconds-scale step-level ready retry + local helper transient tests |
 | all three mirror sites covered | ready step uses Workflow retry; already-ready + failed use shared helper |
 | exhausted retries log and do not alter authoritative result | outer ready catch + non-throwing in-step helper |
 | no persistent reconciliation system | explicitly excluded; two-file implementation |
