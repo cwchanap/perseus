@@ -2838,6 +2838,11 @@ describe('Puzzle page gameplay announcements and Escape priority', () => {
 		await expect
 			.element(page.getByTestId('gameplay-announcer'))
 			.toHaveTextContent('Puzzle piece 0 rotated.');
+		// The second announcement reuses the identical text, so the text
+		// assertion above can resolve against the stale first-render content
+		// before Svelte flushes the bumped revision. Poll the revision
+		// attribute directly until it changes before reading it.
+		await expect.poll(getRevision).not.toBe(revisionAfterFirst);
 		const revisionAfterSecond = await getRevision();
 
 		expect(revisionAfterFirst).not.toBe(revisionBefore);
