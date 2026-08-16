@@ -22,6 +22,7 @@
 ## Task 1: Put lifecycle cleanup in `PuzzleSession`
 
 **Files:**
+
 - Modify: `apps/web/src/lib/services/gameplay/session/session.ts`
 - Modify: `apps/web/src/lib/services/gameplay/session/session.test.ts`
 
@@ -107,6 +108,7 @@ git commit -m "fix(web): clear reference mode outside active gameplay"
 ## Task 2: Ship Peek + persistent Reference atomically
 
 **Files:**
+
 - Modify: `apps/web/src/lib/components/PuzzleToolbar.svelte`
 - Modify: `apps/web/src/lib/components/PuzzleBoardPanel.svelte`
 - Modify: `apps/web/src/routes/puzzle/[id]/+page.svelte`
@@ -116,6 +118,7 @@ git commit -m "fix(web): clear reference mode outside active gameplay"
 - Modify: `apps/web/e2e/gameplay-mobile-tap.spec.ts`
 
 **New toolbar props:**
+
 ```ts
 onReferenceToggle: () => void;
 referenceToggled: boolean;
@@ -123,6 +126,7 @@ referenceAvailable: boolean;
 ```
 
 **New board-panel props:**
+
 ```ts
 referenceToggled: boolean;
 onReferenceToggle: () => void;
@@ -167,12 +171,10 @@ Add one sr-only description:
 Add `referenceToggled` / `onReferenceToggle` and derive:
 
 ```ts
-const referenceAvailable = $derived(
-	puzzle.hasReference === true && referenceImageUrl !== null
-);
+const referenceAvailable = $derived(puzzle.hasReference === true && referenceImageUrl !== null);
 ```
 
-Pass these to the toolbar. Keep `ReferenceOverlay` unchanged: no `onUnavailable`, `referenceLoadFailed`, or keyed effect. Add panel coverage that a declared reference with null URL disables REF and Peek.
+Pass these to the toolbar. Keep `ReferenceOverlay`'s image-failure handling unchanged: no `onUnavailable`, `referenceLoadFailed`, or keyed effect. Add `dismissible` / `onDismiss` props and a Close control (44px coarse-pointer touch target) so persistent Toggle can be dismissed from the overlay itself. Add panel coverage that a declared reference with null URL disables REF and Peek.
 
 - [ ] **Step 4: Make the route consume session state directly**
 
@@ -278,9 +280,9 @@ bun run lint
 
 - [ ] **Step 3: Scope review**
 
-Production changes stay in `session.ts`, `PuzzleToolbar.svelte`, `PuzzleBoardPanel.svelte`, and the puzzle route. Tests stay in their existing files plus `gameplay-mobile-tap.spec.ts`.
+Production changes stay in `session.ts`, `PuzzleToolbar.svelte`, `PuzzleBoardPanel.svelte`, `ReferenceOverlay.svelte` (dismissible/onDismiss + Close control), and the puzzle route. Tests stay in their existing files plus `gameplay-mobile-tap.spec.ts`.
 
-Confirm unchanged: `ReferenceOverlay.svelte`, persisted schema/version, API/shared types, preferences, analytics, dependencies, Playwright projects/fixtures/font stubbing, HPA-223 work.
+Confirm unchanged: `ReferenceOverlay` image-failure handling (no `onUnavailable`, `referenceLoadFailed`, or keyed effect), persisted schema/version, API/shared types, preferences, analytics, dependencies, Playwright projects/fixtures/font stubbing, HPA-223 work.
 
 - [ ] **Step 4: Behavior review**
 
