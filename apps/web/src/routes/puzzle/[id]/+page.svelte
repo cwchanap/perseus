@@ -81,6 +81,15 @@
 	let viewportWidth = $state(typeof window !== 'undefined' ? window.innerWidth : 1280);
 	let viewportHeight = $state(typeof window !== 'undefined' ? window.innerHeight : 900);
 
+	// Route-owned polite status region: the single synchronous announcement
+	// source for gameplay feedback, rendered outside the inert page subtree so
+	// screen readers hear it while a dialog or overlay holds focus.
+	let gameplayAnnouncement = $state('');
+
+	function announceGameplay(message: string): void {
+		gameplayAnnouncement = message;
+	}
+
 	// Session-driven canonical state.
 	let sessionStore: PuzzleSessionStore | null = $state(null);
 	let sessionState = $state<PuzzleSessionState | null>(null);
@@ -301,11 +310,18 @@
 	}
 
 	function handleSelectPiece(id: number) {
-		sessionStore?.dispatch({ type: 'select_piece', pieceId: id });
+		const outcome = sessionStore?.dispatch({ type: 'select_piece', pieceId: id });
+		if (outcome?.type === 'selection_changed' && outcome.pieceId === id) {
+			announceGameplay(`Puzzle piece ${id} selected.`);
+		}
 	}
 
 	function handleCancelSelection() {
-		sessionStore?.dispatch({ type: 'cancel_selection' });
+		const hadSelection = currentSelectedPieceId !== null;
+		const outcome = sessionStore?.dispatch({ type: 'cancel_selection' });
+		if (hadSelection && outcome?.type === 'selection_changed' && outcome.pieceId === null) {
+			announceGameplay('Selection canceled.');
+		}
 	}
 
 	// --- Persistence -------------------------------------------------------------
@@ -474,7 +490,18 @@
 			event.from !== 'completed'
 		) {
 			showCelebration = true;
+		} else if (event.type === 'placement_accepted') {
+			announceGameplay(
+				event.completed
+					? `Puzzle piece ${event.pieceId} placed. Puzzle complete.`
+					: `Puzzle piece ${event.pieceId} placed.`
+			);
 		} else if (event.type === 'placement_rejected') {
+			announceGameplay(
+				event.reason === 'non_upright'
+					? `Puzzle piece ${event.pieceId} must be upright.`
+					: `Puzzle piece ${event.pieceId} does not fit there.`
+			);
 			if (rejectedPieceTimeout !== null) {
 				clearTimeout(rejectedPieceTimeout);
 			}
@@ -485,6 +512,9 @@
 			}, REJECTED_DURATION_MS);
 		} else if (event.type === 'hint_target') {
 			if (event.pieceId !== null && event.target) {
+				announceGameplay(
+					`Hint: puzzle piece ${event.pieceId} goes to row ${event.target.y + 1}, column ${event.target.x + 1}.`
+				);
 				showHintTarget(event.pieceId, event.target);
 			} else {
 				clearHintTarget();
@@ -824,7 +854,10 @@
 
 	function handlePieceRotate(pieceId: number) {
 		if (!sessionStore || !rotationEnabled || isPiecePlaced(pieceId)) return;
-		sessionStore.dispatch({ type: 'rotate_piece', pieceId });
+		const outcome = sessionStore.dispatch({ type: 'rotate_piece', pieceId });
+		if (outcome.type === 'piece_rotated') {
+			announceGameplay(`Puzzle piece ${pieceId} rotated.`);
+		}
 		checkpointSession();
 	}
 
@@ -857,6 +890,30 @@
 		// (pause/exit/setup) — blocks gameplay shortcuts so undo/redo cannot
 		// mutate placements behind the dialog while it is open.
 		if (hasSessionModal) return;
+		// Escape closes exactly the highest-priority gameplay layer: the
+		// persistent reference overlay first (it visually obscures the board
+		// and traps focus on its Close control), then a reference hold, then
+		// the current selection. Only after those layers are exhausted do the
+		// undo/redo shortcuts run, still gated against the persistent overlay.
+		if (event.key === 'Escape' && referenceToggled) {
+			event.preventDefault();
+			handleReferenceToggle();
+			return;
+		}
+
+		if (event.key === 'Escape') {
+			if (sessionState?.activeReferenceMode === 'hold') {
+				event.preventDefault();
+				clearReferenceHold();
+				return;
+			}
+			if (currentSelectedPieceId !== null) {
+				event.preventDefault();
+				handleCancelSelection();
+				return;
+			}
+		}
+
 		// The persistent reference overlay visually obscures the board and
 		// traps keyboard focus on its Close control; gameplay shortcuts must
 		// no-op while it is active so Ctrl+Z/Ctrl+Y cannot mutate placements
@@ -971,8 +1028,15 @@
 		if (sessionState?.lifecycle !== 'active' && sessionState?.lifecycle !== 'paused') return;
 		if (sessionState?.lifecycle === 'active') {
 			clearTransientGameplayState();
-			sessionStore?.dispatch({ type: 'pause' });
+			const outcome = sessionStore?.dispatch({ type: 'pause' });
 			checkpointSession();
+			if (
+				presentation === 'paused' &&
+				outcome?.type === 'lifecycle_transitioned' &&
+				outcome.to === 'paused'
+			) {
+				announceGameplay('Mission paused.');
+			}
 		}
 		pausePresentation = presentation;
 		restartConfirmation = false;
@@ -980,9 +1044,12 @@
 	}
 
 	function resumeSession(): void {
-		sessionStore?.dispatch({ type: 'resume' });
+		const outcome = sessionStore?.dispatch({ type: 'resume' });
 		restartConfirmation = false;
 		sessionDialog = null;
+		if (outcome?.type === 'lifecycle_transitioned' && outcome.to === 'active') {
+			announceGameplay('Mission resumed.');
+		}
 	}
 
 	function restartWithCurrentChoices(): void {
@@ -1305,6 +1372,18 @@
 {#if sessionDialog === 'exit'}
 	<ExitSessionDialog onSave={saveAndExit} onDiscard={discardAndExit} onCancel={cancelExit} />
 {/if}
+
+<!-- Gameplay status announcer: a sibling of the (potentially inert) page so
+     screen readers hear announcements while a dialog or overlay holds focus. -->
+<div
+	class="sr-only"
+	role="status"
+	aria-live="polite"
+	aria-atomic="true"
+	data-testid="gameplay-announcer"
+>
+	{gameplayAnnouncement}
+</div>
 
 <style>
 	/* ===== PAGE STRUCTURE ===== */
