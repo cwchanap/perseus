@@ -89,6 +89,73 @@ describe('ReferenceOverlay', () => {
 			await page.getByLabelText('Close reference').click();
 			expect(onDismiss).toHaveBeenCalledOnce();
 		});
+
+		it('moves focus onto the Close control when opened', async () => {
+			const trigger = document.createElement('button');
+			trigger.textContent = 'REF';
+			document.body.appendChild(trigger);
+			trigger.focus();
+
+			render(ReferenceOverlay, {
+				imageUrl: '/api/puzzles/test-puzzle/reference',
+				active: true,
+				dismissible: true,
+				onDismiss: vi.fn()
+			});
+
+			const close = await page.getByLabelText('Close reference').element();
+			await expect.poll(() => document.activeElement).toBe(close);
+			trigger.remove();
+		});
+
+		it('traps Tab focus on the Close control so it cannot leave the overlay', async () => {
+			render(ReferenceOverlay, {
+				imageUrl: '/api/puzzles/test-puzzle/reference',
+				active: true,
+				dismissible: true,
+				onDismiss: vi.fn()
+			});
+
+			const close = await page.getByLabelText('Close reference').element();
+			await expect.poll(() => document.activeElement).toBe(close);
+
+			// Tab and Shift+Tab both wrap back to the single Close control.
+			// The handler is on the overlay container; events bubble up from
+			// the focused Close button.
+			close.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+			await expect.poll(() => document.activeElement).toBe(close);
+			close.dispatchEvent(
+				new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true })
+			);
+			await expect.poll(() => document.activeElement).toBe(close);
+		});
+
+		it('restores focus to the trigger when the overlay closes', async () => {
+			const trigger = document.createElement('button');
+			trigger.textContent = 'REF';
+			document.body.appendChild(trigger);
+			trigger.focus();
+
+			const { rerender } = render(ReferenceOverlay, {
+				imageUrl: '/api/puzzles/test-puzzle/reference',
+				active: true,
+				dismissible: true,
+				onDismiss: vi.fn()
+			});
+
+			const close = await page.getByLabelText('Close reference').element();
+			await expect.poll(() => document.activeElement).toBe(close);
+
+			rerender({
+				imageUrl: '/api/puzzles/test-puzzle/reference',
+				active: false,
+				dismissible: true,
+				onDismiss: vi.fn()
+			});
+
+			await expect.poll(() => document.activeElement).toBe(trigger);
+			trigger.remove();
+		});
 	});
 
 	describe('when inactive', () => {

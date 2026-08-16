@@ -761,6 +761,31 @@ describe('Puzzle route gameplay integration', () => {
 			.toHaveAttribute('aria-pressed', 'true');
 	});
 
+	it('blocks undo and redo keyboard shortcuts while the persistent reference overlay is open', async () => {
+		await renderPuzzlePage();
+		await placePiece(0, 0, 0);
+		await expect.element(page.getByText('1/2')).toBeVisible();
+
+		// Open the persistent reference overlay; it visually obscures the
+		// board and traps keyboard focus on its Close control.
+		await page.getByLabelText('Toggle reference').click();
+		await expect.element(page.getByTestId('reference-overlay')).toBeVisible();
+
+		// Ctrl+Z is blocked (the same top-of-handler guard also blocks
+		// Ctrl+Y): the placement must not be reverted behind the overlay.
+		window.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }));
+		window.dispatchEvent(new KeyboardEvent('keydown', { key: 'y', ctrlKey: true, bubbles: true }));
+		await expect.element(page.getByText('1/2')).toBeVisible();
+
+		// The undo stack was not consumed behind the overlay: after closing
+		// it, undo still reverts the placement.
+		await page.getByLabelText('Close reference').click();
+		await expect.poll(() => page.getByTestId('reference-overlay').query()).toBeNull();
+
+		await page.getByLabelText('Undo').click();
+		await expect.element(page.getByText('0/2')).toBeVisible();
+	});
+
 	it('ignores a stale hold release after Hold -> Toggle', async () => {
 		await renderPuzzlePage();
 
