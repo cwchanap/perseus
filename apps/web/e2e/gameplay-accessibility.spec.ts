@@ -89,6 +89,18 @@ test.describe('accessibility @a11y', () => {
 		await gameplayPage.selectAndPlaceWithKeyboard(0, 0, 0);
 		await gameplayPage.expectPiecePlaced(0, 0, 0);
 
+		// Roving focus keeps exactly one Tab stop per gameplay region, and the
+		// status announcer stays a polite live region.
+		const toolbar = page.getByTestId('puzzle-toolbar');
+		const board = page.getByTestId('puzzle-board');
+		const inventory = page.getByTestId('puzzle-inventory-panel');
+		await expect(toolbar.locator('[data-toolbar-action][tabindex="0"]:visible')).toHaveCount(1);
+		await expect(board.locator('[data-testid="drop-zone"][tabindex="0"]:visible')).toHaveCount(1);
+		await expect(
+			inventory.locator('[data-testid="puzzle-piece"][tabindex="0"]:visible')
+		).toHaveCount(1);
+		await expectLiveRegion(page.getByTestId('gameplay-announcer'), 'polite');
+
 		await assertPageAccessible(page, { label: 'active-gameplay' });
 	});
 
