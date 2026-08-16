@@ -58,22 +58,22 @@ At 390 px, adding Peek as another always-visible compact-toolbar action would pe
 
 ## Reuse survey
 
-| Need | Existing seam | Decision |
-| --- | --- | --- |
-| Active reference state | `PuzzleSessionState.activeReferenceMode` | Reuse as canonical state |
-| Hold/Toggle actions | `set_reference_mode` | Reuse unchanged |
-| Activation counter | `SessionCounters.referenceActivations` | Reuse unchanged |
-| Result classification | `recomputeResultClass()` | Reuse unchanged |
-| Undo/redo history | `PlacementHistoryState` excludes reference mode | Keep unchanged; history cannot resurrect reference UI |
-| Persistence | serializer excludes runtime reference mode | Keep unchanged; no schema/version work |
-| Lifecycle transition | `transitionToInternal()` | Clear reference for every non-active target |
-| Restart | `doRestart()` replaces state with `freshState()` | Already clears reference by construction |
-| Hold DOM bookkeeping | route `referencePointerId` / `referenceHoldSource` | Keep route-local |
-| Full-image UI | `ReferenceOverlay.svelte` | Reuse unchanged |
-| Missing URL | `referenceImageUrl` already available to board panel | Use as a simple disabled condition |
-| Failed image | existing overlay unavailable message | Reuse; do not permanently disable after a transient load error |
-| Responsive toolbar | existing primary + `MORE` / secondary container | Put REF primary; Peek secondary |
-| Scoring help | `MissionSetupDialog.inputHelp` + existing `aria-describedby` pattern | Extend existing surfaces |
+| Need                   | Existing seam                                                        | Decision                                                                                 |
+| ---------------------- | -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Active reference state | `PuzzleSessionState.activeReferenceMode`                             | Reuse as canonical state                                                                 |
+| Hold/Toggle actions    | `set_reference_mode`                                                 | Reuse unchanged                                                                          |
+| Activation counter     | `SessionCounters.referenceActivations`                               | Reuse unchanged                                                                          |
+| Result classification  | `recomputeResultClass()`                                             | Reuse unchanged                                                                          |
+| Undo/redo history      | `PlacementHistoryState` excludes reference mode                      | Keep unchanged; history cannot resurrect reference UI                                    |
+| Persistence            | serializer excludes runtime reference mode                           | Keep unchanged; no schema/version work                                                   |
+| Lifecycle transition   | `transitionToInternal()`                                             | Clear reference for every non-active target                                              |
+| Restart                | `doRestart()` replaces state with `freshState()`                     | Already clears reference by construction                                                 |
+| Hold DOM bookkeeping   | route `referencePointerId` / `referenceHoldSource`                   | Keep route-local                                                                         |
+| Full-image UI          | `ReferenceOverlay.svelte`                                            | Reuse; add `dismissible` / `onDismiss` + Close control for persistent Toggle (see below) |
+| Missing URL            | `referenceImageUrl` already available to board panel                 | Use as a simple disabled condition                                                       |
+| Failed image           | existing overlay unavailable message                                 | Reuse; do not permanently disable after a transient load error                           |
+| Responsive toolbar     | existing primary + `MORE` / secondary container                      | Put REF primary; Peek secondary                                                          |
+| Scoring help           | `MissionSetupDialog.inputHelp` + existing `aria-describedby` pattern | Extend existing surfaces                                                                 |
 
 No new service, store, schema, controller, asset-health state, package, or generic UI abstraction is justified.
 
@@ -210,7 +210,7 @@ Do not claim production is single-row at 390 px. The current E2E harness stubs G
 
 - No declared reference: render neither Peek nor REF.
 - Declared reference + null URL: render both disabled via `referenceAvailable = hasReference && referenceImageUrl !== null`.
-- URL load error: keep `ReferenceOverlay` unchanged. It already shows `Reference image unavailable`; release/toggle off and a later activation retries. Do not add `onUnavailable`, `referenceLoadFailed`, or a keyed reset effect.
+- URL load error: keep `ReferenceOverlay`'s image-failure handling unchanged. It already shows `Reference image unavailable`; release/toggle off and a later activation retries. Do not add `onUnavailable`, `referenceLoadFailed`, or a keyed reset effect. (The `dismissible` / `onDismiss` Close control added for persistent Toggle is dismiss UX only; it does not touch image-failure handling.)
 
 ## Assistance/scoring copy
 
@@ -223,17 +223,20 @@ Add one shared `sr-only` toolbar description with the same sentence and attach H
 ## Component boundaries
 
 ### `PuzzleToolbar.svelte`
+
 - add persistent REF callback/state;
 - rename existing Hold to Peek;
 - place Peek in secondary container;
 - add shared scoring description.
 
 ### `PuzzleBoardPanel.svelte`
+
 - receive `referenceToggled` / `onReferenceToggle`;
 - derive `referenceAvailable` from declared reference + URL only;
-- keep `ReferenceOverlay` unchanged.
+- pass `dismissible` / `onDismiss` to `ReferenceOverlay` for persistent Toggle (Close control with 44px coarse-pointer touch target).
 
 ### Puzzle route
+
 - delete `showReferenceOverlay`;
 - derive active/toggled state from session;
 - keep Hold DOM bookkeeping + one Hold-only helper;
@@ -243,25 +246,30 @@ Add one shared `sr-only` toolbar description with the same sentence and attach H
 - extend Mission Setup help.
 
 ### `PuzzleSession`
+
 - clear reference for every non-active lifecycle target.
 
 ## Testing strategy
 
 ### Session
+
 Reuse current reference tests. Add pause, first-completion, and redo-to-completed cleanup.
 
 ### Toolbar/panel
+
 Test REF callback/pressed state, retained Hold semantics, Peek disabled while toggled, no-reference absence, missing-URL disabled state, scoring description, and Peek secondary placement.
 
 ### Route
+
 Test persistent Toggle, Toggle survives blur, Hold ends on blur, Hold -> Toggle stale-release safety, pause cleanup from engine state, and navigation reset.
 
 ### Existing mobile smoke
+
 Update `gameplay-mobile-tap.spec.ts` atomically with the UI change:
 
 - old `Reference` locator -> `Toggle reference`;
 - Peek hidden before `MORE`, visible after;
-- >=44 px check loops across visible primary controls;
+- > =44 px check loops across visible primary controls;
 - existing width/overflow/secondary/inventory fold-fit/density checks remain.
 
 Run it immediately after the UI/route slice. Do not add a single-row/fixed-height assertion because the font-stubbed harness would encode a false production guarantee.
@@ -269,20 +277,25 @@ Run it immediately after the UI/route slice. Do not add a single-row/fixed-heigh
 ## File boundaries
 
 ### Production
+
 - `apps/web/src/lib/services/gameplay/session/session.ts`
 - `apps/web/src/routes/puzzle/[id]/+page.svelte`
 - `apps/web/src/lib/components/PuzzleToolbar.svelte`
 - `apps/web/src/lib/components/PuzzleBoardPanel.svelte`
+- `apps/web/src/lib/components/ReferenceOverlay.svelte` (add `dismissible` / `onDismiss` + Close control with 44px coarse-pointer touch target)
 
 ### Tests
+
 - `apps/web/src/lib/services/gameplay/session/session.test.ts`
 - `apps/web/src/lib/components/__tests__/PuzzleToolbar.svelte.test.ts`
 - `apps/web/src/lib/components/__tests__/PuzzleBoardPanel.svelte.test.ts`
+- `apps/web/src/lib/components/__tests__/ReferenceOverlay.svelte.test.ts`
 - `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts`
 - `apps/web/e2e/gameplay-mobile-tap.spec.ts`
 
 ### Explicitly unchanged
-- `ReferenceOverlay.svelte` and tests;
+
+- `ReferenceOverlay` image-failure handling (no `onUnavailable`, `referenceLoadFailed`, or keyed effect);
 - persisted schema/version;
 - API/shared completion contracts;
 - preferences/analytics/dependencies;

@@ -63,4 +63,15 @@
 		border-color: var(--accent, #fff);
 		color: var(--accent, #fff);
 	}
+
+	/* Coarse-pointer (mobile) dismiss control must meet the same 44px touch
+	   target as .toolbar-button, .puzzle-piece, and .drop-zone. The
+	   dismissible overlay intercepts all taps to the obscured toolbar, so
+	   this control is the only pointer-based way to exit Reference mode. */
+	@media (pointer: coarse) {
+		.reference-overlay-close {
+			min-width: 44px;
+			min-height: 44px;
+		}
+	}
 </style>
