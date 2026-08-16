@@ -59,6 +59,32 @@ describe('PuzzleToolbar', () => {
 			expect(document.activeElement).toBe(reference);
 		});
 
+		const visibleEnabledActions = () => {
+			const toolbar = page.getByTestId('puzzle-toolbar').element();
+			return Array.from(
+				toolbar.querySelectorAll<HTMLButtonElement>('[data-toolbar-action]')
+			).filter((button) => button.offsetParent !== null && !button.disabled);
+		};
+
+		it.each([
+			['ArrowRight', 'last', 'first'],
+			['ArrowLeft', 'first', 'last']
+		] as const)(
+			'wraps %s from the %s visible enabled action to the %s',
+			async (key, fromPos, toPos) => {
+				renderToolbar();
+				const actions = visibleEnabledActions();
+				expect(actions.length).toBeGreaterThanOrEqual(2);
+				const from = fromPos === 'last' ? actions[actions.length - 1] : actions[0];
+				const to = toPos === 'last' ? actions[actions.length - 1] : actions[0];
+
+				from.focus();
+				from.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+
+				expect(document.activeElement).toBe(to);
+			}
+		);
+
 		it.each([
 			['undo disabled', { canUndo: false }],
 			['redo disabled', { canRedo: false }],

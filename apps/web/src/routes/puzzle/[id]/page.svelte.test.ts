@@ -2865,6 +2865,45 @@ describe('Puzzle page gameplay announcements and Escape priority', () => {
 			.toHaveTextContent(/^Puzzle piece 1 placed\. Puzzle complete\.$/);
 	});
 
+	it('clears the announcement when navigating directly to a different puzzle', async () => {
+		const nextPuzzle: Puzzle = {
+			...createMockPuzzle(),
+			id: 'next-puzzle',
+			name: 'Next Mission',
+			pieces: [
+				createPiece(0, 0, 0, { puzzleId: 'next-puzzle' }),
+				createPiece(1, 1, 0, { puzzleId: 'next-puzzle' })
+			]
+		};
+
+		vi.mocked(fetchPuzzle).mockImplementation(async (id: string) =>
+			id === 'next-puzzle' ? nextPuzzle : createMockPuzzle()
+		);
+
+		render(PuzzlePage);
+		await expect.element(page.getByTestId('puzzle-board')).toBeVisible();
+
+		// Produce a route-owned announcement on the first puzzle.
+		await selectPiece(0);
+		await expect
+			.element(page.getByTestId('gameplay-announcer'))
+			.toHaveTextContent('Puzzle piece 0 selected.');
+
+		// SvelteKit reuses the route component for the new puzzle id: the
+		// stale announcement must not survive the switch.
+		mockPageStore.set({
+			url: { pathname: '/puzzle/next-puzzle' },
+			params: { id: 'next-puzzle' },
+			route: { id: '/puzzle/[id]' },
+			status: 200,
+			error: null
+		});
+
+		await expect.element(page.getByText('NEXT MISSION')).toBeVisible();
+		const announcer = await page.getByTestId('gameplay-announcer').element();
+		expect(announcer.textContent?.trim()).toBe('');
+	});
+
 	it('Escape closes the persistent reference overlay and preserves the selection', async () => {
 		await renderPuzzlePage();
 		await selectPiece(0);
