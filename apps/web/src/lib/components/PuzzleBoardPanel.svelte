@@ -251,7 +251,12 @@
 	onblur={cancelPan}
 />
 
-<ReferenceOverlay imageUrl={referenceImageUrl} active={referenceActive} />
+<ReferenceOverlay
+	imageUrl={referenceImageUrl}
+	active={referenceActive}
+	dismissible={referenceToggled}
+	onDismiss={onReferenceToggle}
+/>
 
 <div class="board-panel">
 	<div class="panel-header">
