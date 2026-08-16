@@ -1,4 +1,4 @@
-# HPA-120: Bounded Retries for Best-Effort D1 Mirrors — Design
+# HPA-120: Retry the D1 Puzzle-Status Mirror a Few Times — Design
 
 **Linear:** HPA-120  
 **Status:** Design for implementation  
@@ -6,282 +6,321 @@
 
 ## Context
 
-HPA-120 is the next standalone actionable Perseus issue after the HPA-215 gameplay children were completed. The issue is intentionally narrow: D1 is a best-effort mirror of authoritative puzzle metadata, but the three status-mirror call sites currently catch D1 errors inside their Workflow callbacks. That makes the Workflow step itself look successful, so Cloudflare Workflows never gets a chance to apply durable retry semantics.
+HPA-120 is the next standalone actionable Perseus issue after the HPA-215 gameplay children were completed. It is a low-priority pre-release reliability fix: reduce the chance that a short D1 outage leaves a player's D1-backed profile status stale after the authoritative puzzle status has already reached `ready` or `failed`.
 
-The affected paths are all in `apps/workflows/src/index.ts`:
+There are three best-effort mirror sites in `apps/workflows/src/index.ts`:
 
-1. successful generation finalizes the authoritative `PuzzleMetadataDO` to `ready`, then mirrors `ready` to D1;
-2. a genuine processing failure writes authoritative `failed` metadata and then mirrors `failed` to D1;
-3. the error path can discover that `finalize` already committed `ready`; it preserves that authoritative state and reconciles D1 back to `ready`.
+1. the recognized `already ready` branch inside `step.do('mark-failed', ...)` reconciles D1 to `ready`;
+2. the successful canonical `mark-failed` branch, in the same step, mirrors D1 to `failed`;
+3. the success path runs `step.do('mirror-ready-status-to-d1', ...)` after the authoritative DO has finalized `ready`.
 
-The authoritative-store rule is already correct and must remain unchanged: a D1 failure cannot turn a successfully finalized puzzle into `failed`.
+All three currently catch a single `setPuzzleStatus()` failure and stop. `setPuzzleStatus()` itself is already suitable for retry: it idempotently updates one puzzle row to the requested status, so retrying the same terminal value needs no new token, schema, or transaction protocol.
 
-`setPuzzleStatus()` is already idempotent for these call sites: it performs an unconditional update of the puzzle row to the supplied status. Retrying the same terminal status therefore does not need a new token, transaction, schema, or compare-and-swap contract.
+The key constraint is that the three sites do not have the same Workflow shape:
 
-Cloudflare Workflows already supplies the primitive HPA-120 needs. `step.do(name, config, callback)` can apply a bounded retry policy to a throwing callback, persists successful step results, and resumes from completed steps rather than replaying them. Cloudflare also documents catching an exhausted `step.do` outside the step when failure is intentionally non-fatal:
+- the success-path `ready` mirror already owns its own `step.do`, so Cloudflare's built-in per-step retry is the smallest correct mechanism;
+- the `failed` and already-ready mirrors execute *inside* the existing `mark-failed` step. A Workflow step cannot be nested there, and restructuring the entire failure path solely to give D1 a separate durable step would be more churn than this low-priority ticket needs. Those two sites use one tiny local bounded retry helper instead.
+
+Cloudflare documents per-step retry config on `step.do`, including `limit`, `delay`, and `backoff`, and documents catching an exhausted step outside `step.do` when that step is allowed to fail without failing the Workflow:
 
 - [Sleeping and retrying](https://developers.cloudflare.com/workflows/build/sleeping-and-retrying/)
 - [Build your first Workflow](https://developers.cloudflare.com/workflows/get-started/guide/)
 
-The missing work is therefore step placement and error boundaries, not a new retry framework.
+This ticket improves short transient failure handling. It does not promise guaranteed convergence during a prolonged D1 outage or redesign cross-store consistency.
 
 ## Goals
 
-1. Retry transient D1 `ready` mirror failures within a dedicated Workflow step.
-2. Retry transient D1 `failed` mirror failures only after the authoritative DO write has succeeded.
-3. Retry transient already-ready D1 reconciliation failures without re-running the DO transition attempt.
-4. Bound all three mirrors to the same small retry policy.
-5. Emit one clear application-level terminal error only after the mirror step exhausts its attempts.
-6. Preserve current canonical-store behavior and the original workflow error.
-7. Keep the implementation local to the existing workflow and its tests.
+1. Let the existing success-path `mirror-ready-status-to-d1` step retry a transient D1 failure using Cloudflare Workflow retry config.
+2. Retry transient `failed` mirror writes inside `mark-failed` with one small shared helper.
+3. Retry transient already-ready `ready` reconciliation writes through the same helper.
+4. Bound every mirror to three total attempts with short delays.
+5. Log one clear terminal application error with puzzle ID and target status after retries are exhausted.
+6. Keep DO/KV authoritative and preserve current workflow success/failure semantics.
+7. Keep the production change local to `apps/workflows/src/index.ts` and its existing tests.
 
 ## Non-goals
 
-- Exactly-once synchronization between the DO and D1.
-- An outbox, queue, event log, repair service, or new reaper path.
+- Exactly-once synchronization between DO/KV and D1.
+- Guaranteed eventual convergence after a prolonged D1 outage.
+- An outbox, queue, scheduled repair scan, DO alarm, reconciliation table, or new reaper path.
+- Read-time cross-checking between D1 and authoritative metadata.
 - D1 schema or migration changes.
-- Changing `setPuzzleStatus()` semantics.
-- Replacing the existing manual retry loop for the authoritative `mark-failed` DO write.
-- General-purpose retry utilities for unrelated Workers/API code.
-- Dynamic retry delays, error classification, jitter, circuit breakers, metrics infrastructure, or alerting.
-- Reworking workflow failure semantics: genuine processing failures still rethrow their original error.
-- Backward-compatibility machinery for already-running pre-change workflow instances.
+- Changing `setPuzzleStatus()` or profile-read semantics.
+- Replacing the existing authoritative `mark-failed` DO retry loop.
+- Splitting the two in-step mirrors into new Workflow steps.
+- A general retry library for the monorepo.
+- Dynamic retry-delay functions, error classification, jitter, circuit breakers, metrics infrastructure, or alerts.
+- Backward-compatibility machinery for pre-release workflow instances.
 
 ## Reuse survey
 
 | Need | Existing seam | Decision |
 | --- | --- | --- |
-| Durable retries | Cloudflare `step.do` retry config | Reuse directly; no custom sleep loop for D1 |
+| Success-path durable retry | existing `mirror-ready-status-to-d1` `step.do` | Add retry config; let callback errors reach Workflow |
+| In-step bounded retry | existing local retry-loop pattern in `mark-failed` | Reuse its simple 3-attempt / short-backoff shape for D1 via one helper |
 | Authoritative ready state | existing `finalize` step | Keep unchanged |
-| Authoritative failed state | existing `mark-failed` step | Keep its current DO retry loop and 409 handling |
-| D1 status write | `@perseus/shared` `setPuzzleStatus()` | Reuse unchanged; writes are idempotent for a terminal status |
+| Authoritative failed state | existing `mark-failed` step and manual DO retry loop | Keep unchanged |
+| D1 write | `@perseus/shared` `setPuzzleStatus()` | Reuse unchanged |
 | D1 connection | existing `getDb()` isolate cache | Reuse unchanged |
-| Ready mirror | `mirror-ready-status-to-d1` | Keep the step name and make its callback throw to Workflow |
-| Failure-path outcome | existing `doSucceeded` / `alreadyReady` branches | Return a small serializable outcome from `mark-failed` |
-| Unit coverage | `apps/workflows/src/index.test.ts` | Extend existing workflow tests and mock step; no new test file/framework |
+| Fake timers | existing `mark-failed retry exhaustion` test | Reuse for manual D1 retry tests |
+| Workflow mock | existing `createMockStep()` | Extend with opt-in retry-config simulation only where needed |
+| Tests | `apps/workflows/src/index.test.ts` | Extend existing ready/failed/already-ready sections |
 
-No new production module is justified. The three mirrors live in one orchestration file and share behavior only inside that file.
+No new production module is justified.
 
 ## Options considered
 
-### Option A — Dedicated retryable mirror steps with one local best-effort wrapper (selected)
+### Option A — Built-in retry for the existing ready step + one local helper for the two in-step mirrors (selected)
 
-Each D1 write runs in its own `step.do` whose callback is allowed to throw. A tiny local helper owns the shared retry config and catches only the final exhausted step error. The `mark-failed` step returns a serializable canonical outcome; the caller then chooses the appropriate D1 mirror step before rethrowing the original workflow error.
+Keep the current orchestration structure. The success-path step stops swallowing its callback error and gets an explicit Workflow retry config. The two D1 writes already inside `mark-failed` call one local helper that retries `setPuzzleStatus()` up to three times and swallows/logs only the final failure.
 
 **Pros**
 
-- uses Cloudflare's durable retry primitive rather than emulating it;
-- a D1 retry cannot replay a DO transition;
-- keeps canonical and mirror failure semantics explicit;
-- three call sites share one policy and one terminal-log boundary;
-- no new module, database contract, or infrastructure.
+- matches the current Linear scope exactly;
+- smallest production diff;
+- does not restructure the failure path;
+- uses the platform retry primitive where a dedicated step already exists;
+- shares the manual retry implementation only where nesting a step is not available;
+- preserves the current authoritative DO logic verbatim.
 
 **Cons**
 
-- adds two named Workflow steps on failure paths;
-- `mark-failed` must return an outcome instead of performing the D1 side effect inline.
+- two retry mechanisms exist in one file: Workflow-managed for one site, local loop for two sites.
 
-This is the smallest design that satisfies all four acceptance criteria without widening the ticket.
+That difference is intentional and follows the existing step boundaries rather than inventing a larger abstraction.
 
-### Option B — Let D1 failure retry the whole `mark-failed` step
+### Option B — Split `mark-failed` outcomes into new D1 Workflow steps
 
-Keep the D1 write inside `mark-failed`, remove its local catch, and add retry config to that step.
+Have `mark-failed` return `failed | already-ready | unreconciled`, then run dedicated D1 steps outside it.
 
-**Rejected:** a transient mirror outage would replay the authoritative DO update and its manual retry loop. Cloudflare's own guidance is to split work into separate steps when a later failure should not re-run earlier external operations. HPA-120 specifically wants mirror retries without changing canonical metadata.
+**Rejected for HPA-120:** this gives the two failure-path mirrors durable Workflow retries too, but it changes the control flow and adds new persisted step boundaries for a low-priority best-effort mirror. The current ticket explicitly prefers the smaller in-step helper. If production data later shows the helper is insufficient, stronger reconciliation can be evaluated separately.
 
-### Option C — Add a custom retry loop around `setPuzzleStatus()`
+### Option C — Hand-roll all three retries
 
-Call D1 multiple times inside the existing callback with manual sleeps/backoff.
+Use the same local helper for the success-path ready mirror too.
 
-**Rejected:** it duplicates a platform feature, makes retries less durable across workflow replay/resume, and leaves the exact step-boundary problem called out by HPA-120.
+**Rejected:** `mirror-ready-status-to-d1` already has a dedicated Workflow step. Catching inside that callback currently disables a retry facility the platform provides for free. Use Workflow retry config there instead of duplicating it.
 
-### Option D — Add an outbox/reconciliation subsystem
+### Option D — Add persistent reconciliation infrastructure
 
-Persist desired mirror writes and drain them independently.
+**Rejected:** out of scope and disproportionate to a pre-release best-effort mirror.
 
-**Rejected:** this solves a larger consistency problem than the ticket asks for. D1 remains a best-effort mirror and existing repair/admin paths remain the fallback after bounded retry exhaustion.
+## Shared retry constants
 
-## Selected retry policy
-
-Use one explicit local config for all three D1 mirror steps:
+Use one small policy for both mechanisms:
 
 ```ts
+const D1_MIRROR_MAX_ATTEMPTS = 3;
+const D1_MIRROR_BASE_DELAY_MS = 100;
+
 const D1_MIRROR_STEP_CONFIG = {
 	retries: {
-		limit: 3,
-		delay: '1 second',
+		limit: D1_MIRROR_MAX_ATTEMPTS,
+		delay: D1_MIRROR_BASE_DELAY_MS,
 		backoff: 'exponential'
 	}
 } as const;
 ```
 
-Cloudflare's current Workflows documentation defines `retries.limit` as the total number of attempts for the step. `limit: 3` therefore gives one initial attempt plus up to two retries, with short waits suitable for a transient D1 failure.
+Cloudflare's current Workflows documentation defines `retries.limit` as the total number of attempts. `limit: 3` therefore matches the local helper's three-attempt bound.
 
-Do not add a custom `timeout`; the mirror is one D1 update and the platform default is sufficient. Do not add a dynamic delay callback or classify D1 error strings in this ticket.
+Use the same short 100 ms base already present in the authoritative `mark-failed` local retry pattern. With three attempts, the local helper waits 100 ms then 200 ms before the final attempt. Do not add a timeout override or dynamic delay callback.
 
-## Local best-effort mirror boundary
+## In-step helper
 
 Add one module-local helper in `apps/workflows/src/index.ts`, conceptually:
 
 ```ts
-async function runBestEffortD1Mirror(
-	step: WorkflowStep,
-	stepName: string,
-	mirror: () => Promise<void>,
-	terminalMessage: string
+async function mirrorPuzzleStatusWithRetry(
+	db: AppDb,
+	puzzleId: string,
+	status: 'ready' | 'failed'
 ): Promise<void> {
-	try {
-		await step.do(stepName, D1_MIRROR_STEP_CONFIG, mirror);
-	} catch (error) {
-		console.error(terminalMessage, error);
+	let lastError: unknown;
+
+	for (let attempt = 0; attempt < D1_MIRROR_MAX_ATTEMPTS; attempt++) {
+		try {
+			await setPuzzleStatus(db, puzzleId, status);
+			return;
+		} catch (error) {
+			lastError = error;
+			if (attempt < D1_MIRROR_MAX_ATTEMPTS - 1) {
+				await new Promise((resolve) =>
+					setTimeout(resolve, D1_MIRROR_BASE_DELAY_MS * Math.pow(2, attempt))
+				);
+			}
+		}
 	}
+
+	console.error(
+		`Failed to mirror puzzle ${puzzleId} status ${status} to D1 after ${D1_MIRROR_MAX_ATTEMPTS} attempts:`,
+		lastError
+	);
 }
 ```
 
-The exact parameter names may change during implementation, but keep these semantics:
+Exact naming may change, but preserve these semantics:
 
-- the D1 callback contains no `try/catch`, so a transient error reaches `step.do` and triggers its retry policy;
-- the catch is outside `step.do`, so only exhausted retries reach the application terminal logger;
-- the helper never throws the mirror error back to canonical workflow logic;
-- the helper is local to `index.ts`; do not move it into `helpers.ts` or `@perseus/shared` for three call sites in one class.
+- at most three attempts;
+- no log for an intermediate transient failure;
+- short bounded delay between attempts;
+- final failure is logged once with puzzle ID and target status;
+- the helper does **not** throw after exhaustion, because doing so inside `mark-failed` could turn a best-effort D1 problem into failure/retry of the containing canonical step;
+- keep it local to `index.ts`; do not export it or move it into `helpers.ts`/`@perseus/shared`.
 
-Cloudflare may record failed attempts in Workflow history. HPA-120's “one clear terminal error” requirement applies to explicit application logging: do not `console.error` on every D1 attempt from the callback.
+This helper is only for the two mirrors already nested inside `mark-failed`.
 
-## Success path: `ready`
+## Success path: use Workflow retry
 
-Keep the authoritative `finalize` step exactly where it is:
+Keep the existing placement after the main generation `try/catch` so D1 can never trigger canonical `mark-failed` after the DO has become `ready`.
 
-```text
-finalize DO -> ready
-    |
-    v
-mirror-ready-status-to-d1 (3 attempts total, best effort)
-```
-
-Replace the current inner D1 `try/catch` with `runBestEffortD1Mirror(...)` around the existing `mirror-ready-status-to-d1` step name.
-
-If all D1 attempts fail:
-
-- log one terminal mirror error;
-- return from the workflow normally;
-- do not enter `mark-failed`;
-- leave the DO at `ready`.
-
-This preserves the existing reason the ready mirror sits after the main `try/catch`.
-
-## Failure path: separate canonical outcome from mirror work
-
-The current `mark-failed` step performs both authoritative DO work and the D1 mirror. Split only that ownership; do not rewrite its retry algorithm.
-
-Have `mark-failed` return one of three small serializable outcomes:
+Change the current shape from:
 
 ```ts
-type MarkFailedOutcome = 'failed' | 'already-ready' | 'unreconciled';
+await step.do('mirror-ready-status-to-d1', async () => {
+	try {
+		await setPuzzleStatus(..., 'ready');
+	} catch (error) {
+		console.error(...);
+	}
+});
 ```
 
-Meaning:
+to:
 
-- `failed`: the authoritative DO accepted `status: 'failed'`;
-- `already-ready`: the DO returned the existing recognized 409 guard, so canonical state is already `ready`;
-- `unreconciled`: all existing DO mark-failed attempts failed, so canonical state was not established by this path.
-
-The current warning/error/CRITICAL logging inside the DO loop stays intact.
-
-After the `mark-failed` step completes:
-
-```text
-outcome = failed
-    -> mirror-failed-status-to-d1
-    -> rethrow originalError
-
-outcome = already-ready
-    -> reconcile-already-ready-status-to-d1 (writes ready)
-    -> rethrow originalError
-
-outcome = unreconciled
-    -> no D1 mirror
-    -> rethrow originalError
+```ts
+try {
+	await step.do('mirror-ready-status-to-d1', D1_MIRROR_STEP_CONFIG, async () => {
+		await setPuzzleStatus(getDb(this.env), puzzleId, 'ready');
+	});
+} catch (error) {
+	console.error(
+		`Failed to mirror puzzle ${puzzleId} status ready to D1 after ${D1_MIRROR_MAX_ATTEMPTS} attempts:`,
+		error
+	);
+}
 ```
 
-Both D1 branches use the same local best-effort helper and retry config. A D1 failure therefore cannot cause another `updateMetadata(... status: 'failed')` call.
+The important boundary is the catch *around* `step.do`, not inside its callback:
 
-The original workflow error remains the error that escapes the catch block. Never replace it with the mirror error.
+- transient callback throws are visible to Workflow and retried;
+- after all attempts fail, the outer catch logs once and keeps the mirror non-fatal;
+- the authoritative DO remains `ready`.
 
-## Step names
+## Failure path: keep `mark-failed` structure
 
-Use explicit stable names so Workflow history describes the recovery path:
+Do not change the current authoritative retry loop, `doSucceeded`, `alreadyReady`, 409 matching, warning, or CRITICAL diagnostics.
 
-- keep `mirror-ready-status-to-d1` for the success path;
-- add `mirror-failed-status-to-d1` after a successful canonical failed transition;
-- add `reconcile-already-ready-status-to-d1` after the recognized ready/failed conflict.
+Only replace the two one-shot D1 blocks:
 
-Do not collapse all three into one dynamically status-named step. They are mutually exclusive paths but represent different operational meanings, and explicit names make the terminal log/test expectations clearer at almost no cost.
+### Already-ready branch
+
+Current:
+
+```ts
+try {
+	await setPuzzleStatus(getDb(this.env), puzzleId, 'ready');
+} catch (...) {
+	...
+}
+```
+
+Planned:
+
+```ts
+await mirrorPuzzleStatusWithRetry(getDb(this.env), puzzleId, 'ready');
+return;
+```
+
+### Canonical failed branch
+
+Planned:
+
+```ts
+await mirrorPuzzleStatusWithRetry(getDb(this.env), puzzleId, 'failed');
+return;
+```
+
+Because the helper swallows only its final mirror failure, the enclosing `mark-failed` step still completes after the authoritative outcome is established. The catch block then rethrows the same original workflow error as today.
+
+If all authoritative DO retries fail, keep the current behavior: log CRITICAL diagnostics and do not attempt a D1 terminal status that was not established canonically.
+
+## Logging
+
+For an exhausted mirror, emit one explicit application-level error containing:
+
+- puzzle ID;
+- target D1 status (`ready` or `failed`);
+- the configured attempt count;
+- the final error object.
+
+Do not log each transient D1 attempt. Cloudflare may record step-attempt failures in Workflow history for the success-path step; HPA-120's “one clear final error” requirement applies to the explicit application log after the retry budget is exhausted.
+
+Existing authoritative `mark-failed` per-attempt/CRITICAL logs remain unchanged because they cover a different, canonical failure path.
 
 ## Test strategy
 
-Keep coverage in `apps/workflows/src/index.test.ts`.
+Keep all coverage in `apps/workflows/src/index.test.ts` and extend the existing nearby tests rather than creating a new suite/file.
 
-The existing mock `WorkflowStep.do()` executes a callback once and ignores retry config. Extend that test seam with an opt-in retry-aware mode (or a similarly small dedicated helper) that:
+### Workflow-step retry test seam
+
+The current `createMockStep()` ignores retry config and runs callbacks once. Add a small opt-in mode, for example `createMockStep({ respectRetryConfig: true })`, that:
 
 1. recognizes the `(name, config, callback)` overload;
 2. runs the callback up to `config.retries.limit` total attempts when it rejects;
-3. returns immediately on success;
+3. returns on the first success;
 4. rethrows the final error after exhaustion;
-5. does not sleep in tests.
+5. performs no real delay.
 
-Keep ordinary existing tests on their current one-attempt behavior unless they specifically verify Workflow retries; avoid changing unrelated test timing/semantics globally.
+Default behavior stays one attempt so unrelated existing tests do not silently gain platform-retry simulation.
 
-Required cases:
+### Ready success-path cases
 
-### Ready mirror transient failure
+Extend `Workflow Execution - D1 ready mirror is best-effort`:
 
-- D1 rejects once, then succeeds.
-- `setPuzzleStatus(..., 'ready')` is called twice.
-- the workflow resolves successfully.
-- the canonical DO stays `ready` and receives no `failed` transition.
-- the mirror step receives the shared retry config.
+- normal success still calls `ready` once;
+- transient failure then success calls `ready` twice and workflow resolves;
+- permanent failure calls `ready` exactly three times, outer terminal log fires once, workflow still resolves, and the final DO status remains `ready` with no D1/canonical `failed` write.
 
-### Ready mirror exhaustion
+The transient/permanent cases use the opt-in retry-aware mock step.
 
-- D1 rejects for all configured attempts.
-- attempts stop at the configured bound.
-- exactly one application terminal mirror error is logged.
-- the workflow still resolves and canonical DO remains `ready`.
+### Failed in-step mirror cases
 
-### Failed mirror transient failure
+Extend the existing failed-mirror test:
 
-- create a genuine processing error.
-- the authoritative DO reaches `failed` first.
-- D1 `failed` rejects once, then succeeds in `mirror-failed-status-to-d1`.
-- D1 retry does not cause another canonical `mark-failed` transition.
-- the original processing error still rejects the workflow.
+- normal success remains covered;
+- transient D1 failure then success calls `failed` twice;
+- permanent D1 failure calls `failed` exactly three times, logs once with puzzle ID/status, and still rejects with the original processing error rather than the D1 error.
 
-### Already-ready reconciliation transient failure
+Use `vi.useFakeTimers()` and `vi.runAllTimersAsync()` for the helper's 100/200 ms waits, following the existing authoritative retry-exhaustion test pattern. Restore real timers in `finally`.
 
-- exercise the existing recognized 409 `already ready` path.
-- D1 `ready` rejects once, then succeeds in `reconcile-already-ready-status-to-d1`.
-- no D1 `failed` write occurs.
-- no CRITICAL canonical-state log occurs.
-- the original workflow error still rejects as it does today.
+### Already-ready reconciliation cases
 
-Keep the existing authoritative `mark-failed` retry-exhaustion tests. They protect a different retry loop and should not be rewritten to use the D1 helper.
+Extend the existing recognized-409 test:
+
+- transient D1 `ready` failure then success calls `ready` twice;
+- no D1 `failed` write occurs;
+- no canonical CRITICAL log occurs;
+- the original workflow error remains the rejection.
+
+A separate permanent already-ready test is optional if the helper's permanent-failure behavior is already pinned in the failed branch; the two branches call the same local helper. Do not duplicate a large workflow fixture solely to test the same loop twice.
 
 ## Files expected in the implementation PR
 
 - Modify: `apps/workflows/src/index.ts`
 - Modify: `apps/workflows/src/index.test.ts`
 
-No other production file should be necessary. If implementation discovers a required third production seam, stop and explain it in the implementation PR rather than extracting infrastructure speculatively.
+No other production file should be necessary.
 
 ## Acceptance mapping
 
 | HPA-120 criterion | Design coverage |
 | --- | --- |
-| `ready` mirror retries transient D1 failure within the workflow step | dedicated retryable `mirror-ready-status-to-d1` |
-| `failed` mirror retries after DO succeeds | `mark-failed` returns `failed`, then dedicated mirror step |
-| already-ready reconciliation retries | `mark-failed` returns `already-ready`, then dedicated reconcile step |
-| exhausted retries log one terminal error and do not change canonical metadata | callback throws to `step.do`; outer helper catches only exhaustion; canonical work is in an earlier completed step |
+| transient D1 failure within retry budget updates profile status | step-level ready retry + local helper transient tests |
+| all three mirror sites covered | ready step uses Workflow retry; already-ready + failed use shared helper |
+| exhausted retries log and do not alter authoritative result | outer ready catch + non-throwing in-step helper |
+| no persistent reconciliation system | explicitly excluded; two-file implementation |
 
 ## Deferred follow-up
 
-None required for HPA-120. If production evidence later shows frequent exhausted mirrors, that would justify separately evaluating stronger reconciliation/outbox machinery. Do not pre-build it here.
+None required. If production evidence later shows repeated exhausted mirrors or material profile drift, stronger reconciliation can be considered as a separate reliability ticket. Do not pre-build it in HPA-120.
