@@ -857,6 +857,12 @@
 		// (pause/exit/setup) — blocks gameplay shortcuts so undo/redo cannot
 		// mutate placements behind the dialog while it is open.
 		if (hasSessionModal) return;
+		// The persistent reference overlay visually obscures the board and
+		// traps keyboard focus on its Close control; gameplay shortcuts must
+		// no-op while it is active so Ctrl+Z/Ctrl+Y cannot mutate placements
+		// behind the overlay. Hold-to-Peek is transient and click-through, so
+		// it is intentionally not gated here.
+		if (referenceToggled) return;
 
 		const key = event.key.toLowerCase();
 		const modifierPressed = event.metaKey || event.ctrlKey;
