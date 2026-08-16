@@ -408,7 +408,9 @@ async function placePiece(pieceId: number, x: number, y: number) {
 
 async function placeSelectedPieceAt(x: number, y: number) {
 	const dropZone = await page
-		.getByRole('button', { name: `Drop zone at position ${x}, ${y}` })
+		.getByRole('button', {
+			name: new RegExp(`^Row ${y + 1}, column ${x + 1}, `)
+		})
 		.element();
 	dropZone.focus();
 	dropZone.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
@@ -612,7 +614,12 @@ describe('Puzzle route gameplay integration', () => {
 		await expect
 			.element(page.getByLabelText('Rotation mode'))
 			.toHaveAttribute('aria-pressed', 'true');
-		await expect.poll(() => page.getByLabelText('Puzzle piece 1').query()).toBeNull();
+		// Scoped to the tray control: the board cell's accessible name ("...,
+		// occupied by puzzle piece 1") is a substring of the tray label, so an
+		// unscoped label query would also match the placed cell.
+		await expect
+			.poll(() => page.getByTestId('puzzle-piece').getByLabelText('Puzzle piece 1').query())
+			.toBeNull();
 		await expect
 			.element(page.getByTestId('puzzle-piece-visual'))
 			.toHaveAttribute('style', 'transform: rotate(180deg);');
@@ -1430,8 +1437,12 @@ describe('Puzzle route gameplay integration', () => {
 		await page.getByLabelText('Redo').click();
 		await expect.element(page.getByText('1/2')).toBeVisible();
 
-		// Selection should be cleared since piece 0 is now on the board
-		await expect.poll(() => page.getByLabelText('Puzzle piece 0').query()).toBeNull();
+		// Selection should be cleared since piece 0 is now on the board. Scoped
+		// to the tray control: the board cell's accessible name ("...,
+		// occupied by puzzle piece 0") is a substring of the tray label.
+		await expect
+			.poll(() => page.getByTestId('puzzle-piece').getByLabelText('Puzzle piece 0').query())
+			.toBeNull();
 	});
 
 	it('starts the timer when rotating a piece before any placement', async () => {
