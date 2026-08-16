@@ -2702,3 +2702,211 @@ describe('Puzzle page defensive guard coverage', () => {
 		await expect.element(page.getByText('ALL PIECES PLACED')).toBeVisible();
 	});
 });
+
+// --- Gameplay announcements and ordered Escape handling ----------------------
+
+describe('Puzzle page gameplay announcements and Escape priority', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		runtimeState.resetRunId();
+		progressState.value = null;
+		sealedCompletionOverride.value = null;
+		puzzleSourceState.override = null;
+		preferenceState.value = {
+			mode: 'timed',
+			rotationEnabled: false,
+			startImmediately: true
+		};
+		resumableState.value = false;
+		restoredLifecycleState.value = 'active';
+		mockPageStore.set({
+			url: { pathname: '/puzzle/test-puzzle' },
+			params: { id: 'test-puzzle' },
+			route: { id: '/puzzle/[id]' },
+			status: 200,
+			error: null
+		});
+	});
+
+	it('renders the announcer as a polite atomic status region', async () => {
+		await renderPuzzlePage();
+
+		const announcer = page.getByTestId('gameplay-announcer');
+		await expect.element(announcer).toHaveAttribute('role', 'status');
+		await expect.element(announcer).toHaveAttribute('aria-live', 'polite');
+		await expect.element(announcer).toHaveAttribute('aria-atomic', 'true');
+	});
+
+	it('places the announcer outside the inert puzzle page subtree', async () => {
+		await renderPuzzlePage();
+
+		const announcer = await page.getByTestId('gameplay-announcer').element();
+		expect(announcer?.closest('.puzzle-page')).toBeNull();
+	});
+
+	it('announces a piece selection', async () => {
+		await renderPuzzlePage();
+
+		await selectPiece(0);
+
+		await expect
+			.element(page.getByTestId('gameplay-announcer'))
+			.toHaveTextContent('Puzzle piece 0 selected.');
+	});
+
+	it('announces an explicit selection cancel', async () => {
+		await renderPuzzlePage();
+		await selectPiece(0);
+
+		// Enter on the already-selected piece cancels the selection.
+		const piece = await page.getByLabelText('Puzzle piece 0').element();
+		piece.focus();
+		piece.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+
+		await expect
+			.element(page.getByTestId('gameplay-announcer'))
+			.toHaveTextContent('Selection canceled.');
+	});
+
+	it('announces an accepted placement', async () => {
+		await renderPuzzlePage();
+
+		await placePiece(0, 0, 0);
+
+		await expect
+			.element(page.getByTestId('gameplay-announcer'))
+			.toHaveTextContent('Puzzle piece 0 placed.');
+	});
+
+	it('announces a placement into the wrong slot', async () => {
+		await renderPuzzlePage();
+
+		await selectPiece(0);
+		await placeSelectedPieceAt(1, 0);
+
+		await expect
+			.element(page.getByTestId('gameplay-announcer'))
+			.toHaveTextContent('Puzzle piece 0 does not fit there.');
+	});
+
+	it('announces a non-upright placement rejection', async () => {
+		await renderPuzzlePage();
+
+		await page.getByLabelText('More puzzle actions').click();
+		await page.getByLabelText('Rotation mode').click();
+		await page.getByRole('button', { name: 'Rotate piece 0' }).click();
+		await selectPiece(0);
+		await placeSelectedPieceAt(0, 0);
+
+		await expect
+			.element(page.getByTestId('gameplay-announcer'))
+			.toHaveTextContent('Puzzle piece 0 must be upright.');
+	});
+
+	it('announces a successful rotation', async () => {
+		await renderPuzzlePage();
+
+		await page.getByLabelText('More puzzle actions').click();
+		await page.getByLabelText('Rotation mode').click();
+		await page.getByRole('button', { name: 'Rotate piece 0' }).click();
+
+		await expect
+			.element(page.getByTestId('gameplay-announcer'))
+			.toHaveTextContent('Puzzle piece 0 rotated.');
+	});
+
+	it('announces a hint with one-based row and column', async () => {
+		await renderPuzzlePage();
+
+		await selectPiece(1);
+		await page.getByLabelText('Hint').click();
+
+		// Piece 1 sits at grid (x=1, y=0): row 1, column 2.
+		await expect
+			.element(page.getByTestId('gameplay-announcer'))
+			.toHaveTextContent('Hint: puzzle piece 1 goes to row 1, column 2.');
+	});
+
+	it('announces an explicit toolbar pause', async () => {
+		await renderPuzzlePage();
+
+		await page.getByLabelText('More puzzle actions').click();
+		await page.getByRole('button', { name: 'Pause mission' }).click();
+		await expect.element(page.getByRole('dialog', { name: 'Mission Paused' })).toBeVisible();
+
+		await expect
+			.element(page.getByTestId('gameplay-announcer'))
+			.toHaveTextContent('Mission paused.');
+	});
+
+	it('announces resuming the mission', async () => {
+		await renderPuzzlePage();
+
+		await page.getByLabelText('More puzzle actions').click();
+		await page.getByRole('button', { name: 'Pause mission' }).click();
+		await page.getByRole('button', { name: 'Resume' }).click();
+
+		await expect
+			.element(page.getByTestId('gameplay-announcer'))
+			.toHaveTextContent('Mission resumed.');
+	});
+
+	it('announces the final accepted placement with Puzzle complete exactly once', async () => {
+		await renderPuzzlePage();
+
+		await placePiece(0, 0, 0);
+		await placePiece(1, 1, 0);
+		await expect.element(page.getByTestId('celebration-modal')).toBeVisible();
+
+		// The completion suffix is appended to the final placement message
+		// exactly once (no duplicate "Puzzle complete." from other events).
+		await expect
+			.element(page.getByTestId('gameplay-announcer'))
+			.toHaveTextContent(/^Puzzle piece 1 placed\. Puzzle complete\.$/);
+	});
+
+	it('Escape closes the persistent reference overlay and preserves the selection', async () => {
+		await renderPuzzlePage();
+		await selectPiece(0);
+
+		await page.getByLabelText('Toggle reference').click();
+		await expect.element(page.getByTestId('reference-overlay')).toBeVisible();
+
+		window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+		await expect.poll(() => page.getByTestId('reference-overlay').query()).toBeNull();
+		await expect
+			.element(page.getByLabelText('Puzzle piece 0'))
+			.toHaveAttribute('data-selected', 'true');
+	});
+
+	it('Escape ends a reference hold before canceling the selection', async () => {
+		await renderPuzzlePage();
+		await selectPiece(0);
+
+		const peekButton = await page.getByLabelText('Hold to peek reference').element();
+		peekButton.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
+		await expect.element(page.getByTestId('reference-overlay')).toBeVisible();
+
+		window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+		await expect.poll(() => page.getByTestId('reference-overlay').query()).toBeNull();
+		await expect
+			.element(page.getByLabelText('Puzzle piece 0'))
+			.toHaveAttribute('data-selected', 'true');
+	});
+
+	it('Escape cancels the current selection and announces it', async () => {
+		await renderPuzzlePage();
+		await selectPiece(0);
+
+		window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+		await expect
+			.element(page.getByLabelText('Puzzle piece 0'))
+			.toHaveAttribute('data-selected', 'false');
+		await expect
+			.element(page.getByTestId('gameplay-announcer'))
+			.toHaveTextContent('Selection canceled.');
+	});
+});
