@@ -2885,6 +2885,54 @@ describe('Puzzle page gameplay announcements and Escape priority', () => {
 			.toHaveTextContent('Mission resumed.');
 	});
 
+	it('does not announce a selection the session does not accept (paused run)', async () => {
+		await renderPuzzlePage();
+
+		await page.getByLabelText('More puzzle actions').click();
+		await page.getByRole('button', { name: 'Pause mission' }).click();
+		await expect.element(page.getByRole('dialog', { name: 'Mission Paused' })).toBeVisible();
+		await expect
+			.element(page.getByTestId('gameplay-announcer'))
+			.toHaveTextContent('Mission paused.');
+
+		// The page subtree is inert while the pause dialog is open, so a real
+		// user cannot reach the inventory. A keyboard event that reaches the
+		// piece anyway must not announce: the engine no-ops because the run
+		// is paused, and the route's selection-changed guard suppresses the
+		// announcement.
+		const slot = await page.getByTestId('piece-slot-0').element();
+		const piece = slot.querySelector<HTMLElement>('[data-testid="puzzle-piece"]')!;
+		piece.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+
+		await expect
+			.element(page.getByTestId('gameplay-announcer'))
+			.toHaveTextContent('Mission paused.');
+	});
+
+	it('does not announce a rotation the session does not accept (paused run)', async () => {
+		await renderPuzzlePage();
+
+		await page.getByLabelText('More puzzle actions').click();
+		await page.getByLabelText('Rotation mode').click();
+		await page.getByRole('button', { name: 'Pause mission' }).click();
+		await expect.element(page.getByRole('dialog', { name: 'Mission Paused' })).toBeVisible();
+		await expect
+			.element(page.getByTestId('gameplay-announcer'))
+			.toHaveTextContent('Mission paused.');
+
+		// The page subtree is inert while paused. A rotation shortcut that
+		// reaches the piece anyway must not announce: the engine no-ops
+		// because the run is paused, and the route's piece-rotated guard
+		// suppresses the announcement.
+		const slot = await page.getByTestId('piece-slot-0').element();
+		const piece = slot.querySelector<HTMLElement>('[data-testid="puzzle-piece"]')!;
+		piece.dispatchEvent(new KeyboardEvent('keydown', { key: 'r', bubbles: true }));
+
+		await expect
+			.element(page.getByTestId('gameplay-announcer'))
+			.toHaveTextContent('Mission paused.');
+	});
+
 	it('announces the final accepted placement with Puzzle complete exactly once', async () => {
 		await renderPuzzlePage();
 

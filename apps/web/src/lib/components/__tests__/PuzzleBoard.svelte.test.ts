@@ -336,4 +336,26 @@ describe('PuzzleBoard', () => {
 
 		expect(onPiecePlaced).toHaveBeenCalledWith(0, 0, 0);
 	});
+
+	it('ignores focusin that does not originate from a drop zone', async () => {
+		const puzzle = createMockPuzzle(3);
+		render(PuzzleBoard, {
+			puzzle,
+			placedPieces: [],
+			onPiecePlaced: vi.fn(),
+			resolveImage
+		});
+
+		const board = await page.getByTestId('puzzle-board').element();
+		const cells = Array.from(board.querySelectorAll<HTMLElement>('[data-testid="drop-zone"]'));
+		const activeBefore = cells.find((cell) => cell.tabIndex === 0)!;
+		expect(activeBefore).toBeDefined();
+
+		// A focusin bubbling up from the board container itself (not a drop
+		// zone) must not reassign the roving cell tab stop.
+		board.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+
+		const activeAfter = cells.find((cell) => cell.tabIndex === 0)!;
+		expect(activeAfter).toBe(activeBefore);
+	});
 });
