@@ -72,9 +72,10 @@
 
 	// Roving tab stop: exactly one unplaced piece is sequentially tabbable,
 	// and Left/Right move the active piece through the visible tray. The
-	// Rotate button is removed from the tab order (tabindex -1); keyboard
-	// users rotate via the R key on the piece root. The id is panel-local
-	// presentation state — the session's selection is untouched.
+	// active piece's Rotate button shares the roving tabIndex so it stays
+	// keyboard-discoverable; R remains an additional shortcut on the piece
+	// root. The id is panel-local presentation state — the session's
+	// selection is untouched.
 	let piecesGridElement = $state<HTMLElement | null>(null);
 	let activePieceId = $state<number | null>(null);
 
@@ -110,6 +111,14 @@
 		if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
 		const target = event.target;
 		if (!(target instanceof HTMLElement)) return;
+		// The Rotate button is a leaf control inside the piece slot. Arrow
+		// traversal is owned by the piece roots; when focus is on the Rotate
+		// button, let the browser handle the key (e.g. native Tab order) so
+		// the visible Rotate control stays an independent focusable element.
+		// This check is here rather than relying on the Rotate button's
+		// delegated stopPropagation, which fires after this native ancestor
+		// listener and cannot prevent it.
+		if (target.closest('[data-testid="rotate-piece-button"]')) return;
 		const slot = target.closest<HTMLElement>('.piece-slot');
 		const current = slot?.querySelector<HTMLElement>('[data-testid="puzzle-piece"]');
 		const currentId = Number(current?.dataset.pieceId);

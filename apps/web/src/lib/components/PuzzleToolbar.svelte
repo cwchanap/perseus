@@ -51,6 +51,12 @@
 
 	let moreOpen = $state(false);
 
+	// Bumped on viewport resize so the normalization effect re-runs and
+	// re-picks a visible enabled tab stop when the responsive breakpoint
+	// (1023px) hides/reveals toolbar actions via CSS alone — no prop or
+	// moreOpen change occurs in that case.
+	let viewportVersion = $state(0);
+
 	type ToolbarAction =
 		| 'undo'
 		| 'redo'
@@ -132,8 +138,17 @@
 	}
 
 	$effect(() => {
+		const onResize = () => {
+			viewportVersion++;
+		};
+		window.addEventListener('resize', onResize);
+		return () => window.removeEventListener('resize', onResize);
+	});
+
+	$effect(() => {
 		void actionAvailable;
 		void moreOpen;
+		void viewportVersion;
 
 		const items = visibleEnabledToolbarButtons();
 		if (items.some((button) => button.dataset.toolbarAction === activeToolbarAction)) return;
