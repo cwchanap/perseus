@@ -1,10 +1,10 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
 import ReferenceOverlay from '../ReferenceOverlay.svelte';
 
 describe('ReferenceOverlay', () => {
-	describe('when active', () => {
+	describe('when active (hold-to-peek, non-dismissible)', () => {
 		it('renders the overlay', async () => {
 			render(ReferenceOverlay, {
 				imageUrl: '/api/puzzles/test-puzzle/reference',
@@ -41,6 +41,53 @@ describe('ReferenceOverlay', () => {
 
 			const overlay = await page.getByTestId('reference-overlay').element();
 			expect(overlay.className).toContain('pointer-events-none');
+		});
+
+		it('does not render a close control', async () => {
+			render(ReferenceOverlay, {
+				imageUrl: '/api/puzzles/test-puzzle/reference',
+				active: true
+			});
+
+			await expect.poll(() => page.getByTestId('reference-overlay-close').query()).toBeNull();
+		});
+	});
+
+	describe('when dismissible (persistent toggle)', () => {
+		it('captures pointer events so the obscured gameplay surface is inert', async () => {
+			render(ReferenceOverlay, {
+				imageUrl: '/api/puzzles/test-puzzle/reference',
+				active: true,
+				dismissible: true,
+				onDismiss: vi.fn()
+			});
+
+			const overlay = await page.getByTestId('reference-overlay').element();
+			expect(overlay.className).not.toContain('pointer-events-none');
+		});
+
+		it('renders a visible close control', async () => {
+			render(ReferenceOverlay, {
+				imageUrl: '/api/puzzles/test-puzzle/reference',
+				active: true,
+				dismissible: true,
+				onDismiss: vi.fn()
+			});
+
+			await expect.element(page.getByLabelText('Close reference')).toBeVisible();
+		});
+
+		it('invokes onDismiss when the close control is clicked', async () => {
+			const onDismiss = vi.fn();
+			render(ReferenceOverlay, {
+				imageUrl: '/api/puzzles/test-puzzle/reference',
+				active: true,
+				dismissible: true,
+				onDismiss
+			});
+
+			await page.getByLabelText('Close reference').click();
+			expect(onDismiss).toHaveBeenCalledOnce();
 		});
 	});
 

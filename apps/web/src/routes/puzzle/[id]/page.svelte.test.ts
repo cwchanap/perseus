@@ -720,7 +720,26 @@ describe('Puzzle route gameplay integration', () => {
 		// The overlay persists after the click interaction completes.
 		await expect.element(page.getByTestId('reference-overlay')).toBeVisible();
 
+		// The persistent overlay captures pointer events, so the toolbar REF
+		// button (obscured by the overlay) can no longer turn it off; the
+		// visible close control is the dismissal path.
+		await page.getByLabelText('Close reference').click();
+		await expect.poll(() => page.getByTestId('reference-overlay').query()).toBeNull();
+		await expect
+			.element(page.getByLabelText('Toggle reference'))
+			.toHaveAttribute('aria-pressed', 'false');
+	});
+
+	it('dismisses the persistent reference overlay via its close control', async () => {
+		await renderPuzzlePage();
+
 		await page.getByLabelText('Toggle reference').click();
+		await expect.element(page.getByTestId('reference-overlay')).toBeVisible();
+
+		// The persistent overlay renders a visible close control that turns
+		// the toggle off, so the user is not trapped behind a pass-through
+		// overlay with no visible dismissal path.
+		await page.getByLabelText('Close reference').click();
 		await expect.poll(() => page.getByTestId('reference-overlay').query()).toBeNull();
 		await expect
 			.element(page.getByLabelText('Toggle reference'))
@@ -2307,11 +2326,19 @@ describe('Puzzle route gameplay integration', () => {
 	it('clears the reference overlay when pausing while the toggle is on', async () => {
 		await renderPuzzlePage();
 
+		// Expand the MORE disclosure before raising the overlay so the Pause
+		// button is in the accessibility tree. The persistent overlay then
+		// captures pointer events, so a real click on the (obscured) Pause
+		// button would be intercepted; a direct dispatch bypasses
+		// hit-testing to exercise the engine's lifecycle clear, the same
+		// technique the hold variant below uses to fire without a
+		// preceding pointerup.
+		await page.getByLabelText('More puzzle actions').click();
 		await page.getByLabelText('Toggle reference').click();
 		await expect.element(page.getByTestId('reference-overlay')).toBeVisible();
 
-		await page.getByLabelText('More puzzle actions').click();
-		await page.getByRole('button', { name: 'Pause mission' }).click();
+		const pauseButton = await page.getByRole('button', { name: 'Pause mission' }).element();
+		pauseButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 		await expect.element(page.getByRole('dialog', { name: 'Mission Paused' })).toBeVisible();
 		await expect.poll(() => page.getByTestId('reference-overlay').query()).toBeNull();
 	});
