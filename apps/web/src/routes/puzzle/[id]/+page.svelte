@@ -571,6 +571,10 @@
 			showCelebration = false;
 			referencePointerId = null;
 			referenceHoldSource = null;
+			// The route-owned announcer is route-local presentation state too:
+			// a stale status (e.g. "Puzzle complete.") must not survive direct
+			// puzzle-to-puzzle navigation, where the component is reused.
+			gameplayAnnouncement = '';
 
 			const source = await loadPuzzleSource(id);
 			if (requestId !== activeLoadRequestId) {
