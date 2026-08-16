@@ -128,6 +128,30 @@ describe('PuzzlePiece', () => {
 		});
 	});
 
+	describe('roving tab index', () => {
+		it('honors a supplied roving tab index while unplaced', async () => {
+			render(PuzzlePiece, {
+				piece: mockPiece,
+				isPlaced: false,
+				resolveImage,
+				tabIndex: -1
+			});
+
+			await expect.element(page.getByTestId('puzzle-piece')).toHaveAttribute('tabindex', '-1');
+		});
+
+		it('placed state still forces tabindex -1', async () => {
+			render(PuzzlePiece, {
+				piece: mockPiece,
+				isPlaced: true,
+				resolveImage,
+				tabIndex: 0
+			});
+
+			await expect.element(page.getByTestId('puzzle-piece')).toHaveAttribute('tabindex', '-1');
+		});
+	});
+
 	describe('selection state', () => {
 		it('shows data-selected=false when the selected prop is false', async () => {
 			render(PuzzlePiece, {
@@ -331,6 +355,60 @@ describe('PuzzlePiece', () => {
 			await expect
 				.element(page.getByTestId('puzzle-piece-visual'))
 				.toHaveAttribute('style', 'transform: rotate(90deg);');
+		});
+
+		it('exposes the rotation angle in the piece name and keeps the active rotate button tabbable', async () => {
+			render(PuzzlePiece, {
+				piece: mockPiece,
+				isPlaced: false,
+				resolveImage,
+				rotationEnabled: true,
+				rotation: 90,
+				tabIndex: 0,
+				onRotate: vi.fn()
+			});
+
+			await expect
+				.element(page.getByTestId('puzzle-piece'))
+				.toHaveAttribute('aria-label', 'Puzzle piece 7, rotated 90 degrees');
+			await expect
+				.element(page.getByTestId('puzzle-piece'))
+				.toHaveAttribute('aria-keyshortcuts', 'R');
+			await expect
+				.element(page.getByRole('button', { name: 'Rotate piece 7' }))
+				.toHaveAttribute('tabindex', '0');
+		});
+
+		it('names a zero-rotation unplaced piece as upright', async () => {
+			render(PuzzlePiece, {
+				piece: mockPiece,
+				isPlaced: false,
+				resolveImage,
+				rotationEnabled: true,
+				rotation: 0,
+				tabIndex: 0,
+				onRotate: vi.fn()
+			});
+
+			await expect
+				.element(page.getByTestId('puzzle-piece'))
+				.toHaveAttribute('aria-label', 'Puzzle piece 7, upright');
+		});
+
+		it('makes the rotate button non-tabbable when the piece is not the roving active piece', async () => {
+			render(PuzzlePiece, {
+				piece: mockPiece,
+				isPlaced: false,
+				resolveImage,
+				rotationEnabled: true,
+				rotation: 90,
+				tabIndex: -1,
+				onRotate: vi.fn()
+			});
+
+			await expect
+				.element(page.getByRole('button', { name: 'Rotate piece 7' }))
+				.toHaveAttribute('tabindex', '-1');
 		});
 	});
 

@@ -69,6 +69,72 @@
 	// session state (selectedPieceId, tray order); the drawer's open/collapsed
 	// presentation is a purely local UI concern and is never serialized.
 	let drawerOpen = $state(true);
+
+	// Roving tab stop: exactly one unplaced piece (plus, when rotation is
+	// enabled, that piece's Rotate button) is sequentially tabbable, and
+	// Left/Right move the active piece through the visible tray. The id is
+	// panel-local presentation state — the session's selection is untouched.
+	let piecesGridElement = $state<HTMLElement | null>(null);
+	let activePieceId = $state<number | null>(null);
+
+	// Keep the roving id on a visible piece: prefer the current active id,
+	// then the selected piece, then the first visible piece. Filters and
+	// placements that remove the active piece therefore restore exactly one
+	// tab stop.
+	$effect(() => {
+		const ids = visiblePieces.map((piece) => piece.id);
+		if (activePieceId !== null && ids.includes(activePieceId)) return;
+		activePieceId =
+			selectedPieceId !== null && ids.includes(selectedPieceId)
+				? selectedPieceId
+				: (ids[0] ?? null);
+	});
+
+	// Follow direct focus (click/tap/Tab) so the roving tab stop moves to the
+	// piece the user actually reached. Resolving via the slot lets focus on
+	// either the active root or its sibling Rotate button keep the same piece.
+	function handlePiecesFocusIn(event: FocusEvent): void {
+		const target = event.target;
+		if (!(target instanceof HTMLElement)) return;
+		const slot = target.closest<HTMLElement>('.piece-slot');
+		const piece = slot?.querySelector<HTMLElement>('[data-testid="puzzle-piece"]');
+		const id = Number(piece?.dataset.pieceId);
+		if (Number.isInteger(id)) activePieceId = id;
+	}
+
+	// Native (non-delegated) listener so traversal fires exactly once per
+	// keydown regardless of re-renders. Left/Right-only: no Up/Down, no
+	// geometry — the tray is a single linear list of visible pieces.
+	function handlePiecesKeyDown(event: KeyboardEvent): void {
+		if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+		const target = event.target;
+		if (!(target instanceof HTMLElement)) return;
+		const slot = target.closest<HTMLElement>('.piece-slot');
+		const current = slot?.querySelector<HTMLElement>('[data-testid="puzzle-piece"]');
+		const currentId = Number(current?.dataset.pieceId);
+		if (!Number.isInteger(currentId)) return;
+
+		const index = visiblePieces.findIndex((piece) => piece.id === currentId);
+		if (index < 0) return;
+		const nextIndex = event.key === 'ArrowRight' ? index + 1 : index - 1;
+		const nextPiece = visiblePieces[nextIndex];
+		if (!nextPiece) return;
+
+		event.preventDefault();
+		activePieceId = nextPiece.id;
+		piecesGridElement
+			?.querySelector<HTMLElement>(`[data-testid="puzzle-piece"][data-piece-id="${nextPiece.id}"]`)
+			?.focus();
+	}
+
+	function piecesGridKeyboardAction(node: HTMLElement) {
+		node.addEventListener('keydown', handlePiecesKeyDown);
+		return {
+			destroy() {
+				node.removeEventListener('keydown', handlePiecesKeyDown);
+			}
+		};
+	}
 </script>
 
 <div class="inventory-panel" class:drawer-open={drawerOpen} data-testid="puzzle-inventory-panel">
@@ -141,7 +207,14 @@
 				onclick={onShuffle}>SHUFFLE</button
 			>
 		</div>
-		<div class="pieces-grid">
+		<div
+			bind:this={piecesGridElement}
+			use:piecesGridKeyboardAction
+			class="pieces-grid"
+			role="group"
+			aria-label="Available puzzle pieces"
+			onfocusin={handlePiecesFocusIn}
+		>
 			{#each visiblePieces as piece (piece.id)}
 				<div
 					class={`piece-slot aspect-square border border-(--border) p-[0.2rem] transition-[border-color,box-shadow] duration-150 ${
@@ -163,6 +236,7 @@
 						selected={selectedPieceId === piece.id}
 						{onSelect}
 						{onCancelSelection}
+						tabIndex={activePieceId === piece.id ? 0 : -1}
 					/>
 				</div>
 			{/each}
