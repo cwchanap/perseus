@@ -110,6 +110,63 @@ describe('PuzzleToolbar', () => {
 			);
 			expect(tabbable).toHaveLength(1);
 		});
+		it('ignores focusin that does not originate from a toolbar action button', async () => {
+			renderToolbar({ canUndo: false, canRedo: false });
+			const toolbar = await page.getByTestId('puzzle-toolbar').element();
+			const tabbableBefore = Array.from(
+				toolbar.querySelectorAll<HTMLButtonElement>('[data-toolbar-action]')
+			).filter((button) => button.tabIndex === 0);
+			expect(tabbableBefore).toHaveLength(1);
+
+			// A focusin bubbling up from the toolbar container itself (not an
+			// action button) must not reassign the roving tab stop.
+			toolbar.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+
+			const tabbableAfter = Array.from(
+				toolbar.querySelectorAll<HTMLButtonElement>('[data-toolbar-action]')
+			).filter((button) => button.tabIndex === 0);
+			expect(tabbableAfter).toHaveLength(1);
+			expect(tabbableAfter[0]).toBe(tabbableBefore[0]);
+		});
+
+		it('ignores arrow keydown that does not originate from a toolbar action button', async () => {
+			renderToolbar({ canUndo: false, canRedo: false });
+			const toolbar = await page.getByTestId('puzzle-toolbar').element();
+			const tabbableBefore = Array.from(
+				toolbar.querySelectorAll<HTMLButtonElement>('[data-toolbar-action]')
+			).filter((button) => button.tabIndex === 0);
+			expect(tabbableBefore).toHaveLength(1);
+
+			// An arrow key dispatched on the toolbar container (not an action
+			// button) has no resolvable action and must early-return without
+			// moving focus or the roving tab stop.
+			toolbar.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+
+			const tabbableAfter = Array.from(
+				toolbar.querySelectorAll<HTMLButtonElement>('[data-toolbar-action]')
+			).filter((button) => button.tabIndex === 0);
+			expect(tabbableAfter).toHaveLength(1);
+			expect(tabbableAfter[0]).toBe(tabbableBefore[0]);
+		});
+
+		it('no-ops arrow traversal when the focused action is no longer enabled', async () => {
+			const view = renderToolbar({ canUndo: true, canRedo: false });
+			const undo = await page.getByLabelText('Undo').element();
+			undo.focus();
+
+			// Disable the focused button after it received focus. The roving
+			// handler must not crash or move focus when the focused action is
+			// absent from the visible-enabled list.
+			await view.rerender({ canUndo: false, canRedo: false });
+			undo.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+
+			const toolbar = await page.getByTestId('puzzle-toolbar').element();
+			const tabbable = Array.from(
+				toolbar.querySelectorAll<HTMLButtonElement>('[data-toolbar-action]')
+			).filter((button) => button.tabIndex === 0);
+			expect(tabbable).toHaveLength(1);
+		});
+
 		it('re-normalizes the roving tab stop when responsive visibility changes on resize', async () => {
 			// The test viewport is below 1024px (compact layout): MORE is
 			// visible, secondary actions are hidden behind the disclosure.

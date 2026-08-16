@@ -460,5 +460,65 @@ describe('PuzzleInventoryPanel', () => {
 			expect(tabbable).toHaveLength(1);
 			expect(tabbable[0]?.dataset.pieceId).toBe('0');
 		});
+
+		it('does not traverse when ArrowRight fires on a rotate button', async () => {
+			render(PuzzleInventoryPanel, baseProps());
+			const pieces = Array.from(
+				document.querySelectorAll<HTMLElement>('[data-testid="puzzle-piece"]')
+			);
+			const first = pieces[0]!;
+			const second = pieces[1]!;
+			first.focus();
+			await expect.poll(() => first.tabIndex).toBe(0);
+
+			// The active piece's rotate button shares the roving tab stop. Arrow
+			// traversal is owned by the piece roots; an arrow on the rotate button
+			// must NOT move the active piece so the rotate control stays an
+			// independent focusable leaf.
+			const rotateButton = document.querySelector<HTMLButtonElement>(
+				'[data-testid="rotate-piece-button"]'
+			)!;
+			rotateButton.focus();
+			rotateButton.dispatchEvent(
+				new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })
+			);
+
+			expect(document.activeElement).toBe(rotateButton);
+			await expect.poll(() => first.tabIndex).toBe(0);
+			await expect.poll(() => second.tabIndex).toBe(-1);
+		});
+
+		it('ignores focusin that does not originate from a piece slot', async () => {
+			render(PuzzleInventoryPanel, baseProps());
+			const pieces = Array.from(
+				document.querySelectorAll<HTMLElement>('[data-testid="puzzle-piece"]')
+			);
+			const activeBefore = pieces.find((piece) => piece.tabIndex === 0)!;
+
+			// A focusin bubbling up from the grid container itself (not a piece
+			// slot) must not reassign the roving tab stop.
+			const grid = document.querySelector<HTMLElement>('.pieces-grid')!;
+			grid.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+
+			const activeAfter = pieces.find((piece) => piece.tabIndex === 0)!;
+			expect(activeAfter).toBe(activeBefore);
+		});
+
+		it('ignores arrow keydown that does not originate from a piece slot', async () => {
+			render(PuzzleInventoryPanel, baseProps());
+			const pieces = Array.from(
+				document.querySelectorAll<HTMLElement>('[data-testid="puzzle-piece"]')
+			);
+			const activeBefore = pieces.find((piece) => piece.tabIndex === 0)!;
+
+			// An arrow key dispatched on the grid container (not a piece slot)
+			// has no resolvable piece id and must early-return without moving
+			// the roving tab stop.
+			const grid = document.querySelector<HTMLElement>('.pieces-grid')!;
+			grid.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+
+			const activeAfter = pieces.find((piece) => piece.tabIndex === 0)!;
+			expect(activeAfter).toBe(activeBefore);
+		});
 	});
 });
