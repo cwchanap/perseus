@@ -50,13 +50,112 @@
 	}: Props = $props();
 
 	let moreOpen = $state(false);
+
+	type ToolbarAction =
+		| 'undo'
+		| 'redo'
+		| 'hint'
+		| 'reference'
+		| 'more'
+		| 'zoom-out'
+		| 'zoom-in'
+		| 'fit'
+		| 'rotation'
+		| 'peek'
+		| 'pause'
+		| 'setup';
+
+	let toolbarElement = $state<HTMLElement | null>(null);
+	let activeToolbarAction = $state<ToolbarAction>('hint');
+
+	const actionAvailable = $derived<Record<ToolbarAction, boolean>>({
+		undo: canUndo,
+		redo: canRedo,
+		hint: true,
+		reference: hasReference && referenceAvailable,
+		more: true,
+		'zoom-out': true,
+		'zoom-in': true,
+		fit: true,
+		rotation: !rotationToggleDisabled,
+		peek: hasReference && referenceAvailable && !referenceToggled,
+		pause: canPause,
+		setup: canOpenSetup
+	});
+
+	function toolbarTabIndex(action: ToolbarAction): 0 | -1 {
+		return activeToolbarAction === action && actionAvailable[action] ? 0 : -1;
+	}
+
+	function visibleEnabledToolbarButtons(): HTMLButtonElement[] {
+		if (!toolbarElement) return [];
+		return Array.from(
+			toolbarElement.querySelectorAll<HTMLButtonElement>('[data-toolbar-action]')
+		).filter((button) => !button.disabled && button.offsetParent !== null);
+	}
+
+	function handleToolbarFocusIn(event: FocusEvent): void {
+		const target = event.target;
+		if (!(target instanceof HTMLElement)) return;
+		const button = target.closest<HTMLButtonElement>('[data-toolbar-action]');
+		const action = button?.dataset.toolbarAction as ToolbarAction | undefined;
+		if (action) activeToolbarAction = action;
+	}
+
+	function handleToolbarKeyDown(event: KeyboardEvent): void {
+		if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+		const target = event.target;
+		if (!(target instanceof HTMLElement)) return;
+		const current = target.closest<HTMLButtonElement>('[data-toolbar-action]');
+		if (!current) return;
+
+		const items = visibleEnabledToolbarButtons();
+		const index = items.indexOf(current);
+		if (index < 0 || items.length < 2) return;
+
+		event.preventDefault();
+		const delta = event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1 : -1;
+		const next = items[(index + delta + items.length) % items.length]!;
+		const nextAction = next.dataset.toolbarAction as ToolbarAction | undefined;
+		if (nextAction) activeToolbarAction = nextAction;
+		next.focus();
+	}
+
+	function toolbarKeyboardAction(node: HTMLElement) {
+		toolbarElement = node;
+		node.addEventListener('keydown', handleToolbarKeyDown);
+		return {
+			destroy() {
+				node.removeEventListener('keydown', handleToolbarKeyDown);
+			}
+		};
+	}
+
+	$effect(() => {
+		void actionAvailable;
+		void moreOpen;
+
+		const items = visibleEnabledToolbarButtons();
+		if (items.some((button) => button.dataset.toolbarAction === activeToolbarAction)) return;
+		const first = items[0]?.dataset.toolbarAction as ToolbarAction | undefined;
+		if (first) activeToolbarAction = first;
+	});
 </script>
 
-<div data-testid="puzzle-toolbar" class="puzzle-toolbar">
+<div
+	data-testid="puzzle-toolbar"
+	class="puzzle-toolbar"
+	role="toolbar"
+	aria-label="Puzzle actions"
+	use:toolbarKeyboardAction
+	onfocusin={handleToolbarFocusIn}
+>
 	<div class="toolbar-group">
 		<button
 			type="button"
 			aria-label="Undo"
+			data-toolbar-action="undo"
+			tabindex={toolbarTabIndex('undo')}
 			disabled={!canUndo}
 			onclick={onUndo}
 			class="arcade-btn-ghost toolbar-button"
@@ -66,6 +165,8 @@
 		<button
 			type="button"
 			aria-label="Redo"
+			data-toolbar-action="redo"
+			tabindex={toolbarTabIndex('redo')}
 			disabled={!canRedo}
 			onclick={onRedo}
 			class="arcade-btn-ghost toolbar-button"
@@ -79,6 +180,8 @@
 			type="button"
 			aria-label="Hint"
 			aria-describedby="assistance-scoring-help"
+			data-toolbar-action="hint"
+			tabindex={toolbarTabIndex('hint')}
 			onclick={onHint}
 			class="arcade-btn-ghost toolbar-button"
 		>
@@ -91,6 +194,8 @@
 				aria-label="Toggle reference"
 				aria-pressed={referenceToggled ? 'true' : 'false'}
 				aria-describedby="assistance-scoring-help"
+				data-toolbar-action="reference"
+				tabindex={toolbarTabIndex('reference')}
 				disabled={!referenceAvailable}
 				onclick={onReferenceToggle}
 				class="arcade-btn-ghost toolbar-button"
@@ -106,6 +211,8 @@
 		aria-label="More puzzle actions"
 		aria-expanded={moreOpen ? 'true' : 'false'}
 		aria-controls="puzzle-toolbar-secondary"
+		data-toolbar-action="more"
+		tabindex={toolbarTabIndex('more')}
 		onclick={() => (moreOpen = !moreOpen)}
 	>
 		MORE
@@ -121,18 +228,24 @@
 			<button
 				type="button"
 				aria-label="Zoom out"
+				data-toolbar-action="zoom-out"
+				tabindex={toolbarTabIndex('zoom-out')}
 				onclick={onZoomOut}
 				class="arcade-btn-ghost toolbar-button">−</button
 			>
 			<button
 				type="button"
 				aria-label="Zoom in"
+				data-toolbar-action="zoom-in"
+				tabindex={toolbarTabIndex('zoom-in')}
 				onclick={onZoomIn}
 				class="arcade-btn-ghost toolbar-button">+</button
 			>
 			<button
 				type="button"
 				aria-label="Reset view"
+				data-toolbar-action="fit"
+				tabindex={toolbarTabIndex('fit')}
 				onclick={onResetView}
 				class="arcade-btn-ghost toolbar-button">FIT</button
 			>
@@ -141,6 +254,8 @@
 				aria-label="Rotation mode"
 				aria-pressed={rotationEnabled ? 'true' : 'false'}
 				aria-describedby={rotationToggleDisabled ? 'rotation-lock-reason' : undefined}
+				data-toolbar-action="rotation"
+				tabindex={toolbarTabIndex('rotation')}
 				disabled={rotationToggleDisabled}
 				onclick={onRotationToggle}
 				class="arcade-btn-ghost toolbar-button"
@@ -155,6 +270,8 @@
 					type="button"
 					aria-label="Hold to peek reference"
 					aria-describedby="assistance-scoring-help"
+					data-toolbar-action="peek"
+					tabindex={toolbarTabIndex('peek')}
 					disabled={!referenceAvailable || referenceToggled}
 					onpointerdown={(event) => onReferenceDown(event)}
 					onpointerup={(event) => onReferenceUp(event)}
@@ -185,6 +302,8 @@
 					<button
 						type="button"
 						aria-label="Pause mission"
+						data-toolbar-action="pause"
+						tabindex={toolbarTabIndex('pause')}
 						onclick={onPause}
 						class="arcade-btn-ghost toolbar-button"
 					>
@@ -195,6 +314,8 @@
 					<button
 						type="button"
 						aria-label="Open mission setup"
+						data-toolbar-action="setup"
+						tabindex={toolbarTabIndex('setup')}
 						onclick={onOpenSetup}
 						class="arcade-btn-ghost toolbar-button"
 					>
