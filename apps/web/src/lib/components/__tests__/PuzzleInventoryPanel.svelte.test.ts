@@ -345,4 +345,111 @@ describe('PuzzleInventoryPanel', () => {
 		const body = document.querySelector<HTMLElement>('#puzzle-inventory-body')!;
 		await expect.poll(() => getComputedStyle(body).display).toBe('none');
 	});
+
+	describe('roving focus', () => {
+		it('keeps exactly one unplaced piece root tabbable', async () => {
+			render(PuzzleInventoryPanel, baseProps());
+			const pieces = Array.from(
+				document.querySelectorAll<HTMLElement>('[data-testid="puzzle-piece"]')
+			);
+			expect(pieces).toHaveLength(2);
+			expect(pieces.filter((piece) => piece.tabIndex === 0)).toHaveLength(1);
+		});
+
+		it('keeps exactly one rotate button tabbable when rotation is enabled', async () => {
+			render(PuzzleInventoryPanel, baseProps());
+			const rotateButtons = Array.from(
+				document.querySelectorAll<HTMLButtonElement>('[data-testid="rotate-piece-button"]')
+			);
+			expect(rotateButtons).toHaveLength(2);
+			expect(rotateButtons.filter((button) => button.tabIndex === 0)).toHaveLength(1);
+		});
+
+		it('moves the active piece exactly one slot on ArrowRight', async () => {
+			render(PuzzleInventoryPanel, baseProps());
+			const pieces = Array.from(
+				document.querySelectorAll<HTMLElement>('[data-testid="puzzle-piece"]')
+			);
+			const first = pieces[0]!;
+			const second = pieces[1]!;
+			first.focus();
+			first.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+			expect(document.activeElement).toBe(second);
+			await expect.poll(() => second.tabIndex).toBe(0);
+			await expect.poll(() => first.tabIndex).toBe(-1);
+		});
+
+		it('keeps the first piece active when ArrowLeft is pressed on it', async () => {
+			render(PuzzleInventoryPanel, baseProps());
+			const pieces = Array.from(
+				document.querySelectorAll<HTMLElement>('[data-testid="puzzle-piece"]')
+			);
+			const first = pieces[0]!;
+			first.focus();
+			first.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+			expect(document.activeElement).toBe(first);
+			expect(first.tabIndex).toBe(0);
+		});
+
+		it('makes a directly focused non-tabbable piece the active piece', async () => {
+			render(PuzzleInventoryPanel, baseProps());
+			const pieces = Array.from(
+				document.querySelectorAll<HTMLElement>('[data-testid="puzzle-piece"]')
+			);
+			const second = pieces[1]!;
+			expect(second.tabIndex).toBe(-1);
+			second.focus();
+			expect(document.activeElement).toBe(second);
+			await expect.poll(() => second.tabIndex).toBe(0);
+			await expect.poll(() => pieces[0]!.tabIndex).toBe(-1);
+		});
+
+		it('restores exactly one tabbable root when a filter removes the active piece', async () => {
+			const view = render(PuzzleInventoryPanel, {
+				...baseProps(),
+				puzzle: filterPuzzle,
+				trayOrder: filterPuzzle.pieces.map((piece) => piece.id)
+			});
+			const pieces = Array.from(
+				document.querySelectorAll<HTMLElement>('[data-testid="puzzle-piece"]')
+			);
+			const center = pieces.find((piece) => piece.dataset.pieceId === '4')!;
+			center.focus();
+			await expect.poll(() => center.tabIndex).toBe(0);
+
+			await view.rerender({
+				...baseProps(),
+				puzzle: filterPuzzle,
+				trayOrder: filterPuzzle.pieces.map((piece) => piece.id),
+				activeFilter: 'corners'
+			});
+			const corners = Array.from(
+				document.querySelectorAll<HTMLElement>('[data-testid="puzzle-piece"]')
+			);
+			expect(corners).toHaveLength(4);
+			const tabbable = corners.filter((piece) => piece.tabIndex === 0);
+			expect(tabbable).toHaveLength(1);
+			expect(tabbable[0]?.dataset.pieceId).toBe('0');
+		});
+
+		it('restores exactly one tabbable root when placement removes the active piece', async () => {
+			const view = render(PuzzleInventoryPanel, baseProps());
+			const pieces = Array.from(
+				document.querySelectorAll<HTMLElement>('[data-testid="puzzle-piece"]')
+			);
+			expect(pieces.filter((piece) => piece.tabIndex === 0)).toHaveLength(1);
+
+			await view.rerender({
+				...baseProps(),
+				placedPieces: [{ pieceId: 1, x: 1, y: 0 }]
+			});
+			const remaining = Array.from(
+				document.querySelectorAll<HTMLElement>('[data-testid="puzzle-piece"]')
+			);
+			expect(remaining).toHaveLength(1);
+			const tabbable = remaining.filter((piece) => piece.tabIndex === 0);
+			expect(tabbable).toHaveLength(1);
+			expect(tabbable[0]?.dataset.pieceId).toBe('0');
+		});
+	});
 });

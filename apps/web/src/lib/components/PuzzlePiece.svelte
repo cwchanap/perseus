@@ -13,6 +13,10 @@
 		selected?: boolean;
 		onSelect?: (pieceId: number) => void;
 		onCancelSelection?: () => void;
+		// Presentation-only: the inventory roves a single tab stop among its
+		// pieces and hands the active piece's index down. Placed pieces always
+		// drop out of the tab order regardless of the supplied value.
+		tabIndex?: 0 | -1;
 	}
 
 	let {
@@ -24,8 +28,19 @@
 		onRotate,
 		selected = false,
 		onSelect,
-		onCancelSelection
+		onCancelSelection,
+		tabIndex = 0
 	}: Props = $props();
+
+	// Expose the current rotation angle in the piece name so keyboard/screen
+	// reader users know the orientation before rotating or placing.
+	const accessibleName = $derived(
+		rotationEnabled && !isPlaced
+			? rotation === 0
+				? `Puzzle piece ${piece.id}, upright`
+				: `Puzzle piece ${piece.id}, rotated ${rotation} degrees`
+			: `Puzzle piece ${piece.id}`
+	);
 
 	function handleDragStart(event: DragEvent) {
 		if (isPlaced || !event.dataTransfer) return;
@@ -92,6 +107,7 @@
 			class="absolute top-1 right-1 z-10 rounded-full bg-white/90 px-2 py-1 text-xs font-medium text-gray-800 shadow-sm ring-1 ring-gray-300 transition hover:bg-white focus:ring-2 focus:ring-blue-400 focus:outline-hidden"
 			aria-label="Rotate piece {piece.id}"
 			data-testid="rotate-piece-button"
+			tabindex={tabIndex}
 			onclick={handleRotateClick}
 			onkeydown={stopRotateEventPropagation}
 			onpointerdown={stopRotateEventPropagation}
@@ -110,8 +126,9 @@
 		ondragstart={handleDragStart}
 		use:interactionAction
 		role="button"
-		tabindex={isPlaced ? -1 : 0}
-		aria-label="Puzzle piece {piece.id}"
+		tabindex={isPlaced ? -1 : tabIndex}
+		aria-label={accessibleName}
+		aria-keyshortcuts={rotationEnabled && !isPlaced ? 'R' : undefined}
 		aria-grabbed={selected}
 		aria-pressed={selected}
 		aria-disabled={isPlaced}
