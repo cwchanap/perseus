@@ -23,14 +23,14 @@ The current tab order does not scale because every toolbar action, board cell, v
 
 ## Goals
 
-1. Make the toolbar one Tab stop with arrow movement among currently visible, enabled actions.
+1. Make the toolbar one Tab stop with wrapping arrow movement among currently visible, enabled actions.
 2. Make the board one Tab stop with non-wrapping spatial arrow movement.
-3. Make the repeated inventory pieces one Tab stop with arrow movement through current visible tray order/layout.
+3. Make repeated inventory pieces one Tab stop; Left/Right moves through current `visiblePieces` order without wrapping.
 4. Preserve Enter/Space selection/placement, `R` rotation, and existing Undo/Redo shortcuts through existing `PuzzleSession` actions.
 5. Add one route-owned polite live region for selection, accepted/rejected placement, hint target, explicit pause/resume, and completion.
 6. Let Escape cancel a piece selection, end Hold-to-Peek, or dismiss persistent Reference without new interaction state.
 7. Improve concise accessible names for composite regions and board cells.
-8. Cover the changed components plus one real keyboard gameplay E2E.
+8. Cover the changed components plus one real keyboard gameplay smoke flow.
 
 ## Non-goals
 
@@ -42,6 +42,7 @@ The current tab order does not scale because every toolbar action, board cell, v
 - Reordering route DOM so inventory precedes the board.
 - Accessibility-specific gameplay state/actions/events/persistence.
 - Announcing every arrow move, timer tick, progress update, Undo/Redo mutation, or reference activation.
+- Two-dimensional inventory navigation. Left/Right already reaches every visible tray piece; Up/Down can be added later in the same local handler if real usage justifies spatial tray navigation.
 - Staging trays, advanced mobile gestures, or HPA-237 work.
 - New dependencies, Playwright projects, fixture families, or test frameworks.
 
@@ -59,10 +60,12 @@ The current tab order does not scale because every toolbar action, board cell, v
 | Modal focus | `$lib/actions/modalFocus` | Keep unchanged |
 | Persistent Reference | `ReferenceOverlay.svelte` | Keep trap/restoration; add local Escape dismissal |
 | Toolbar responsive state | CSS + local `moreOpen` | Inspect actual visible buttons; no JS breakpoint copy |
-| Inventory order/filter | `visiblePieces` | Roving state follows rendered list |
-| E2E | `gameplay-accessibility.spec.ts` + `GameplayPage` | Extend; no harness |
+| Inventory order/filter | `visiblePieces` | Roving state follows the ordered rendered list |
+| Native keyboard handling | `PuzzlePiece.interactionAction` and `PuzzleBoard.dropZoneInteraction` | Reuse native `addEventListener` pattern for focus-changing keydown handlers |
+| Keyboard E2E | `gameplay-interactions.spec.ts` | Add the smoke flow beside existing keyboard placement tests |
+| Axe/accessibility E2E | `gameplay-accessibility.spec.ts` | Keep it as the accessibility scan lane; add only structural tab-stop/announcer checks |
 
-No new domain state, persisted field, service, or shared focus abstraction is justified.
+No new domain state, persisted field, service, geometry engine, or shared focus abstraction is justified.
 
 ## Options considered
 
@@ -72,17 +75,29 @@ Toolbar, board, and inventory each own only their ephemeral focus position. The 
 
 **Pros:** matches HPA-557 boundaries, changes no domain/persistence contract, keeps keyboard/pointer/touch on the same actions, and is easy to test in existing files.
 
-**Cons:** three components contain small arrow handlers.
+**Cons:** three components contain small, intentionally different arrow handlers.
 
-That duplication is intentional. Toolbar navigation is a one-dimensional list of visible enabled actions; board navigation is a fixed coordinate grid; inventory navigation is filtered/reordered and responsive. A configurable helper would add more abstraction than reuse.
+That duplication is deliberate:
+
+- toolbar is a wrapping one-dimensional list of currently visible/enabled actions;
+- board is a fixed two-dimensional coordinate grid;
+- inventory is a filtered/reordered one-dimensional list for this ticket.
+
+A configurable helper would add more abstraction than reuse.
 
 ### Option B — Shared roving-focus helper/action
 
-**Rejected:** it would need orientation, wrapping, disabled filtering, responsive columns, active-id recovery, and callback configuration for three different consumers before any repeated abstraction exists.
+**Rejected:** it would need wrapping, disabled/visibility filtering, coordinate movement, active-id recovery, and callback configuration for different consumers before any repeated abstraction exists.
 
 ### Option C — Route-level accessibility/focus controller
 
 **Rejected:** it would couple the route to child DOM details and create another presentation-state layer beside `PuzzleSession`.
+
+### Option D — Add two-dimensional inventory geometry now
+
+Measure `.piece-slot` positions or computed grid tracks so Up/Down can move by rendered columns.
+
+**Rejected for HPA-223:** that is the only new layout/geometry engine in the earlier design, isolated component tests do not receive the route-owned `--piece-slot-size`, and Left/Right already makes every visible piece reachable. Shipping DOM geometry plus partial-row rules is more code and test cost than the first accessibility pass needs.
 
 ## Focus model
 
@@ -96,9 +111,21 @@ After HPA-223:
 - per-piece Rotate buttons remain clickable/tappable but use `tabindex="-1"`; keyboard rotation remains `R` on the piece root;
 - open dialogs keep their existing trapped native Tab order.
 
-Every composite updates its roving state on `focusin` as well as arrow movement. This matters because existing tests/helpers and pointer users may directly focus/click an item that currently has `tabindex="-1"`; that focused item must become the composite's next Tab entry point.
+Every composite updates its roving state on `focusin` as well as arrow movement. This matters because existing `GameplayPage.selectAndPlaceWithKeyboard()` and route/component tests directly call `.focus()` on nodes that may currently have `tabindex="-1"`; the directly focused item must become the composite's next Tab entry point.
 
 Arrow movement never dispatches gameplay state and never enters the live region.
+
+## Native keydown convention
+
+The repository already avoids Svelte-delegated keydown for focus-changing/re-rendering piece and board interactions. `PuzzlePiece.interactionAction` and `PuzzleBoard.dropZoneInteraction` attach native listeners with `addEventListener` because a mid-event Svelte 5 rerender can otherwise re-invoke a delegated handler.
+
+HPA-223 follows that established pattern:
+
+- toolbar root: a small local Svelte action attaches/removes native `keydown`; `focusin` still updates the active action;
+- board cells: extend the existing native `handleKeyDown` called by `dropZoneInteraction`; do not add a second board key listener;
+- inventory `.pieces-grid`: a small local Svelte action attaches/removes native `keydown`; `focusin` still updates `activePieceId`.
+
+Tests assert the **adjacent expected item**, not merely that focus changed, so a double-skip regression cannot pass unnoticed.
 
 ## Toolbar
 
@@ -108,9 +135,29 @@ Arrow movement never dispatches gameplay state and never enters the live region.
 <div role="toolbar" aria-label="Puzzle actions" data-testid="puzzle-toolbar">
 ```
 
-Keep one local active action id, initially `hint` because Hint is visible in both layouts and is not disabled by empty Undo/Redo history.
+Use a closed local action type, not untyped strings:
 
-Every toolbar button gets a stable `data-toolbar-action` plus roving `tabindex`. `focusin` updates the active id. Arrow handling queries only buttons that are enabled and actually visible (`offsetParent !== null`), then focuses the previous/next item. This naturally skips disabled history actions and compact secondary controls while `MORE` is closed without duplicating the 1024px breakpoint in TypeScript.
+```ts
+type ToolbarAction =
+	| 'undo'
+	| 'redo'
+	| 'hint'
+	| 'reference'
+	| 'more'
+	| 'zoom-out'
+	| 'zoom-in'
+	| 'fit'
+	| 'rotation'
+	| 'peek'
+	| 'pause'
+	| 'setup';
+
+let activeToolbarAction = $state<ToolbarAction>('hint');
+```
+
+Every toolbar button gets a stable `data-toolbar-action` plus roving `tabindex`. `toolbarTabIndex()` accepts only `ToolbarAction`, and values read back from `dataset.toolbarAction` are treated as that same closed union.
+
+`focusin` updates the active id. Native arrow handling queries only buttons that are enabled and actually visible (`offsetParent !== null`), then focuses the adjacent item. Left/Up move backward; Right/Down move forward; toolbar movement wraps. This naturally skips disabled history actions and compact secondary controls while `MORE` is closed without duplicating the 1024px breakpoint in TypeScript.
 
 The existing primary/secondary markup, `moreOpen`, callbacks, and CSS remain. No menu framework, focus trap, outside-click behavior, or command registry is added.
 
@@ -137,7 +184,7 @@ Up    -> y - 1 when an upper cell exists
 Down  -> y + 1 when a lower cell exists
 ```
 
-At an edge, focus stays on the current cell. Enter/Space continues through the existing `placePiece()` path with no UI-side correctness filter.
+At an edge, focus stays on the current cell. Put this branch at the top of the existing native `handleKeyDown`; Enter/Space then continues through the current `placePiece()` path with no UI-side correctness filter.
 
 Cell names become one-based/status-oriented:
 
@@ -147,6 +194,8 @@ Row 1, column 2, occupied
 ```
 
 `data-x` / `data-y` remain zero-based and unchanged for gameplay/E2E locators.
+
+The route integration helper `placeSelectedPieceAt()` currently queries `Drop zone at position {x}, {y}`. Update that locator in the same board slice as the accessible-name change so Task 2 remains independently green; announcer-specific route tests still belong to the later route slice.
 
 ## Inventory pieces
 
@@ -167,26 +216,28 @@ Do not unconditionally snap the roving id back to `selectedPieceId`; that would 
 tabIndex?: number;
 ```
 
-The root defaults to today's `0` for other consumers. Inventory passes `0` only to `activePieceId`, `-1` to other visible pieces. The Rotate button becomes `tabindex="-1"`; pointer/touch rotation remains unchanged, while the existing root `R` handler remains the keyboard command and gains `aria-keyshortcuts="R"` while rotatable.
+The root defaults to today's `0` for other consumers, while placed pieces still force `-1`. Inventory passes `0` only to `activePieceId`, `-1` to other visible pieces. The Rotate button becomes `tabindex="-1"`; pointer/touch rotation remains unchanged, while the existing root `R` handler remains the keyboard command and gains `aria-keyshortcuts="R"` while rotatable.
 
 Name `.pieces-grid` as `role="group" aria-label="Available puzzle pieces"`. Header controls and All/Corners/Edges/Center/Shuffle remain finite native controls.
 
-### Inventory arrow geometry
+Inventory arrow behavior is intentionally one-dimensional for HPA-223:
 
-- Left/Right: adjacent item in current `visiblePieces` order; no wrap.
-- Up/Down: same visual column when a corresponding row exists.
-- If the next row is partial, Down may land on that row's last item when the same column is absent.
-- If there is no row in the requested vertical direction, focus stays put.
+```text
+ArrowLeft  -> previous item in visiblePieces when one exists
+ArrowRight -> next item in visiblePieces when one exists
+```
 
-Read current rendered slot geometry/tracks at key time; do not mirror responsive breakpoints or piece-size formulas in TypeScript. Component tests own deterministic horizontal movement/normalization; rendered Playwright coverage can prove vertical movement.
+Movement does not wrap. Up/Down are ignored and remain available for a later spatial enhancement. No `getBoundingClientRect`, computed-grid parsing, responsive-column state, or partial-row rule is introduced.
 
 ## Escape behavior
 
 The route remains the global gameplay shortcut owner when no session modal is open:
 
 1. active Hold-to-Peek -> Escape calls existing `clearReferenceHold()` and leaves any selected piece selected;
-2. otherwise selected piece -> Escape dispatches existing `cancel_selection`;
+2. otherwise selected piece -> Escape dispatches existing `cancel_selection` through the explicit announcing cancel handler;
 3. otherwise no-op.
+
+`clearTransientGameplayState()` keeps its direct `cancel_selection` dispatch. It must **not** call the announcing cancel helper, because Pause/restart/exit cleanup should not speak `Selection canceled.` immediately before the actual lifecycle message.
 
 Persistent Reference is already modal-like and the route intentionally blocks gameplay shortcuts while toggled. `ReferenceOverlay.svelte` handles Escape locally, calls existing `onDismiss`, and **stops propagation** so the same Escape cannot dismiss Reference and then also cancel an underlying selected piece if route-derived `referenceToggled` updates synchronously.
 
@@ -209,7 +260,7 @@ function announceGameplay(message: string): void {
 }
 ```
 
-Render one atomic polite status region:
+Render one atomic polite status region as a sibling of `.puzzle-page` and the existing dialogs:
 
 ```svelte
 <div
@@ -223,7 +274,7 @@ Render one atomic polite status region:
 </div>
 ```
 
-**It must be outside `.puzzle-page`.** The route sets both `inert` and `aria-hidden` on `.puzzle-page` whenever setup/pause/exit/completion UI is open. A live region inside that subtree would disappear from the accessibility tree exactly when pause/completion feedback is needed.
+**It must be outside `.puzzle-page`.** The route sets both `inert` and `aria-hidden` on `.puzzle-page` whenever setup/pause/exit/completion UI is open. A live region inside that subtree would disappear from the accessibility tree exactly when pause/completion feedback is needed. HPA-557 explicitly deferred this region to HPA-223.
 
 ### Message sources
 
@@ -240,6 +291,8 @@ Use existing outcomes/events, never DOM inference:
 | non-null `hint_target` | `Hint: puzzle piece {id} goes to row {y+1}, column {x+1}.` |
 | explicit user Pause | `Mission paused.` |
 | explicit Resume | `Mission resumed.` |
+
+Selection/cancel messages come from the return value of the existing dispatch calls. Placement/hint messages come from `handleSessionEvent`; `placement_accepted` is already emitted by `PuzzleSession` and currently needs no domain change.
 
 Do not separately announce `completion_sealed`: `PuzzleSession` emits `placement_accepted` with `completed: true` before sealing, so one final message can carry both facts.
 
@@ -275,23 +328,23 @@ Pointer and touch continue through the same callbacks/session actions, so shared
 
 ### `PuzzleToolbar.svelte`
 
-Toolbar role/name, one local active action, focusin tracking, arrows over visible enabled buttons. Preserve responsive behavior and callbacks.
+Toolbar role/name, closed `ToolbarAction` union, one local active action, focusin tracking, native keydown action, wrapping arrows over visible enabled buttons. Preserve responsive behavior and callbacks.
 
 ### `PuzzleBoard.svelte`
 
-One local active coordinate, focusin tracking, spatial arrows, concise one-based names. Preserve click/drag/drop/Enter/Space and zero-based data coordinates.
+One local active coordinate, focusin tracking, spatial arrows inside the existing native cell keydown handler, concise one-based names. Preserve click/drag/drop/Enter/Space and zero-based data coordinates.
 
 ### `PuzzleInventoryPanel.svelte`
 
-One local `activePieceId`, focusin tracking, arrow movement through `visiblePieces`, DOM-derived vertical geometry, normalization only when active id disappears.
+One local `activePieceId`, focusin tracking, native grid keydown action, Left/Right through `visiblePieces`, normalization only when active id disappears. No DOM column measurement.
 
 ### `PuzzlePiece.svelte`
 
-Optional `tabIndex`; pointer Rotate removed from normal Tab order; existing `R` rotation retained/exposed via `aria-keyshortcuts`.
+Optional `tabIndex`; placed still forces `-1`; pointer Rotate removed from normal Tab order; existing `R` rotation retained/exposed via `aria-keyshortcuts`.
 
 ### Puzzle route
 
-Single announcement string/helper; selection/cancel outcomes; placement/hint events; explicit pause/resume; Escape for Hold/selection; announcer outside inert subtree; existing Undo/Redo unchanged.
+Single announcement string/helper; selection/cancel outcomes; placement/hint events; explicit pause/resume; Escape for Hold/selection; announcer outside inert subtree; existing Undo/Redo unchanged. Lifecycle cleanup keeps direct non-announcing selection cancellation.
 
 ### `ReferenceOverlay.svelte`
 
@@ -301,22 +354,23 @@ Escape -> prevent default, stop propagation, existing `onDismiss`; preserve curr
 
 ### Component/route tests
 
-- `PuzzleToolbar.svelte.test.ts`: toolbar role/name, exactly one visible enabled tab stop, arrows move/skip disabled/hidden actions, existing callbacks/MORE stay green.
-- `PuzzleBoard.svelte.test.ts`: many cells but one tab stop, focusin updates active cell, Right/Down + edge behavior, Enter/Space still routes attempts, one-based empty/occupied names.
-- `PuzzlePiece.svelte.test.ts`: supplied `tabIndex`, Rotate `tabindex=-1`, `aria-keyshortcuts=R`, existing `R` callback.
-- `PuzzleInventoryPanel.svelte.test.ts`: one repeated piece tab stop, focusin updates active id, Left/Right, active-id normalization after filtering/placement, existing filter/shuffle/drawer behavior.
+- `PuzzleToolbar.svelte.test.ts`: toolbar role/name, exactly one visible enabled tab stop, native arrows move to the **adjacent expected action** and skip disabled/hidden actions, existing callbacks/MORE stay green.
+- `PuzzleBoard.svelte.test.ts`: many cells but one tab stop, focusin updates active cell, Right/Down + edge behavior through existing native listener, Enter/Space still routes attempts, one-based empty/occupied names.
+- `page.svelte.test.ts` in the board slice: update `placeSelectedPieceAt()` to the new one-based empty-cell name so the board commit leaves the route suite green.
+- `PuzzlePiece.svelte.test.ts`: supplied `tabIndex`, placed override, Rotate `tabindex=-1`, `aria-keyshortcuts=R`, existing `R` callback.
+- `PuzzleInventoryPanel.svelte.test.ts`: one repeated piece tab stop, focusin updates active id, adjacent Left/Right, active-id normalization after filtering/placement, existing filter/shuffle/drawer behavior.
 - `ReferenceOverlay.svelte.test.ts`: Escape dismisses and does not bubble; existing Tab trap/restoration stays green.
-- puzzle route test: announcer polite/atomic/outside inert subtree; selection/cancel/accepted/rejected/hint/final completion/pause/resume; Escape selection; existing Undo/Redo.
+- puzzle route announcer tests: polite/atomic/outside inert subtree; selection/cancel/accepted/rejected/hint/final completion/pause/resume; Escape selection; existing Undo/Redo.
 
-### One real keyboard E2E
+### Keyboard smoke lane
 
-Extend `apps/web/e2e/gameplay-accessibility.spec.ts`. Put `@smoke` in the new test title while keeping it under the existing `accessibility @a11y` describe. One source test then participates in the normal Chromium smoke selection and the existing accessibility lane.
+Add one `@smoke` keyboard core-flow test to `apps/web/e2e/gameplay-interactions.spec.ts`, beside the existing keyboard placement coverage but **not** under an `@a11y` describe. It runs in the normal Chromium desktop/mobile smoke lane only.
 
 On `e2e-square-4`, prove:
 
 1. one visible toolbar action, one board cell, and one repeated inventory piece are tabbable;
 2. Tab enters toolbar then board without traversing every toolbar action/cell;
-3. toolbar, board, and inventory arrows move focus;
+3. toolbar moves to the adjacent expected action; board arrows move spatially; inventory Left/Right moves to the adjacent piece;
 4. Enter/Space selects/places through the real session;
 5. wrong placement announces rejection;
 6. Escape cancels selection;
@@ -325,24 +379,37 @@ On `e2e-square-4`, prove:
 9. existing keyboard helper completes remaining pieces;
 10. completion dialog appears and final live text includes `Puzzle complete.`.
 
-Do not emulate responsive layout in component tests or add another E2E fixture/harness.
+### Existing accessibility lane
+
+Keep `apps/web/e2e/gameplay-accessibility.spec.ts` as the axe/accessibility surface. In its current active-gameplay test, add only structural assertions that:
+
+- toolbar has one visible `tabindex="0"` action;
+- board has one visible `tabindex="0"` cell;
+- inventory has one visible `tabindex="0"` repeated piece;
+- `gameplay-announcer` exists with polite live-region semantics.
+
+Do not put the keyboard smoke flow under the `accessibility @a11y` describe; otherwise it implicitly joins the Chromium desktop/tablet + WebKit-mobile accessibility lane even when the implementation task only runs smoke.
 
 ## Risks and deliberate limits
 
 - **Viewport crosses toolbar breakpoint while a hidden secondary action is focused:** normal initial layouts and MORE changes are covered; deterministic orientation recovery is deferred by ticket scope.
-- **Inventory filter/shuffle changes visible geometry:** preserve active id when possible; otherwise choose selected/first for the next Tab entry. Do not force-focus replacement nodes after every mutation.
-- **Live-region noise:** only the explicit table above is announced.
+- **Inventory filter/shuffle removes the active piece:** preserve the active id when possible; otherwise choose selected/first for the next Tab entry. No spatial tray geometry is maintained.
+- **Svelte delegated keydown reruns after focus/state mutation:** toolbar and inventory use native listeners; board extends its existing native cell listener. Adjacent-target tests catch double-skip behavior.
+- **Route test contract changes with board names:** update `placeSelectedPieceAt()` in the same board task, not later.
+- **Live-region noise:** only the explicit table above is announced; internal cleanup retains direct dispatches.
 - **Reference Escape double action:** stop propagation in the overlay so one key closes one UI layer.
+- **Test-lane leakage:** keyboard smoke lives in `gameplay-interactions.spec.ts`; axe structural checks stay in `gameplay-accessibility.spec.ts`.
 
 ## Acceptance mapping
 
-- Keyboard select/place/cancel/undo/redo/complete: existing actions + E2E.
-- Large puzzle avoids one Tab stop per piece/cell: roving count assertions are independent of collection size; board test can use the existing 10×10 helper case for explicit 100-cell coverage.
-- Concise announcements: route tests + representative E2E.
+- Keyboard select/place/cancel/undo/redo/complete: existing actions + smoke E2E.
+- Large puzzle avoids one Tab stop per piece/cell: roving count assertions are independent of collection size; board test uses a 10×10 case for explicit 100-cell coverage.
+- Inventory keyboard reachability: Left/Right traverses every visible piece in `visiblePieces` order; spatial Up/Down is deferred under YAGNI.
+- Concise announcements: route tests + representative smoke flow.
 - Pointer/touch/keyboard share outcomes: no new domain path; shared events drive placement/hint announcements.
 - Accessible names/modal focus: named composites/cells; existing modal systems preserved.
 - Focused tests + one keyboard E2E: existing files only.
 
 ## Scope summary
 
-HPA-223 is an accessibility behavior pass over existing seams, not an accessibility architecture project. Expected production changes stay in `PuzzleToolbar`, `PuzzleBoard`, `PuzzlePiece`, `PuzzleInventoryPanel`, `ReferenceOverlay`, and the puzzle route. `PuzzleSession` needs no new action, state, event, schema, or persistence work.
+HPA-223 is an accessibility behavior pass over existing seams, not an accessibility architecture project. Expected production changes stay in `PuzzleToolbar`, `PuzzleBoard`, `PuzzlePiece`, `PuzzleInventoryPanel`, `ReferenceOverlay`, and the puzzle route. `PuzzleSession` needs no new action, state, event, schema, or persistence work. The revised design intentionally removes inventory column measurement and keeps the new keyboard smoke in the repository's existing interaction lane.
