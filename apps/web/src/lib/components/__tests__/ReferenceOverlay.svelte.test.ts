@@ -135,12 +135,26 @@ describe('ReferenceOverlay', () => {
 
 			// Tab and Shift+Tab both wrap back to the single Close control.
 			// The handler is on the overlay container; events bubble up from
-			// the focused Close button.
-			close.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+			// the focused Close button. Each event is cancelable so the test
+			// can assert the handler called preventDefault(), proving it
+			// intercepted both forward and reverse Tab navigation.
+			const forwardTab = new KeyboardEvent('keydown', {
+				key: 'Tab',
+				bubbles: true,
+				cancelable: true
+			});
+			close.dispatchEvent(forwardTab);
+			expect(forwardTab.defaultPrevented).toBe(true);
 			await expect.poll(() => document.activeElement).toBe(close);
-			close.dispatchEvent(
-				new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true })
-			);
+
+			const reverseTab = new KeyboardEvent('keydown', {
+				key: 'Tab',
+				shiftKey: true,
+				bubbles: true,
+				cancelable: true
+			});
+			close.dispatchEvent(reverseTab);
+			expect(reverseTab.defaultPrevented).toBe(true);
 			await expect.poll(() => document.activeElement).toBe(close);
 		});
 
