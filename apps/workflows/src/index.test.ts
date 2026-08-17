@@ -831,6 +831,8 @@ describe('Workflow Execution - mark-failed retry exhaustion', () => {
 		vi.useFakeTimers();
 		try {
 			const puzzleId = sampleMetadata.id;
+			const { setPuzzleStatus } = await import('@perseus/shared');
+			vi.mocked(setPuzzleStatus).mockClear();
 
 			// DO always returns 500 → updateMetadata throws on every attempt
 			const alwaysFailingDO = {
@@ -872,6 +874,10 @@ describe('Workflow Execution - mark-failed retry exhaustion', () => {
 			// Advance timers to flush the exponential-backoff sleeps (100 ms + 200 ms)
 			await vi.runAllTimersAsync();
 			await assertionPromise;
+
+			// No terminal D1 mirror is allowed when the authoritative DO status is
+			// unreconciled after mark-failed retry exhaustion.
+			expect(setPuzzleStatus).not.toHaveBeenCalled();
 
 			// CRITICAL error must have been logged after all retries failed.
 			// The log call uses a single string argument (no second arg).
