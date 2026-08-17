@@ -109,6 +109,8 @@ export interface Env {
 	DB: D1Database;
 }
 
+type MarkFailedOutcome = 'failed' | 'already-ready' | 'unreconciled';
+
 type ReservationRecord = {
 	puzzleId: string;
 	status: 'pending' | 'committed' | 'failed';
@@ -1226,93 +1228,99 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 		} catch (error) {
 			// Mark puzzle as failed with retry logic
 			const originalError = error;
-			await step.do('mark-failed', async () => {
-				const maxRetries = 3;
-				let lastError: unknown;
-				let doSucceeded = false;
-				// Set when the DO refuses ready → failed (see PuzzleMetadataDO
-				// /update): finalize already committed 'ready', so the puzzle is
-				// in the desired terminal state and must NOT be overwritten with
-				// 'failed'. We reconcile D1 to 'ready' and skip the CRITICAL log.
-				let alreadyReady = false;
+			const markFailedOutcome = await step.do(
+				'mark-failed',
+				async (): Promise<MarkFailedOutcome> => {
+					const maxRetries = 3;
+					let lastError: unknown;
+					let doSucceeded = false;
+					// Set when the DO refuses ready → failed (see PuzzleMetadataDO
+					// /update): finalize already committed 'ready', so the puzzle is
+					// in the desired terminal state and must NOT be overwritten with
+					// 'failed'. We reconcile D1 to 'ready' and skip the CRITICAL log.
+					let alreadyReady = false;
 
-				for (let attempt = 0; attempt < maxRetries; attempt++) {
-					try {
-						const message =
-							originalError instanceof Error ? originalError.message : 'Unknown error';
-						await updateMetadata(this.env.PUZZLE_METADATA_DO, puzzleId, {
-							status: 'failed',
-							error: { message }
-						});
-						doSucceeded = true;
-						break;
-					} catch (markErr) {
-						// A 409 from the metadata DO with an "already ready"
-						// message means finalize committed before this catch
-						// ran (e.g. its step retry budget exhausted after a
-						// successful DO write). That is the desired terminal
-						// state; do not retry, do not log CRITICAL, and do not
-						// mirror 'failed' to D1. Reconcile D1 to 'ready' so the
-						// owner's list doesn't stay stuck at 'processing'.
-						// Match on the message (not status alone) so a future
-						// unrelated 409 cannot be misread as already-ready.
-						const markStatus = (markErr as { status?: number })?.status;
-						const markMessage = markErr instanceof Error ? markErr.message : String(markErr ?? '');
-						if (markStatus === 409 && markMessage.includes(ALREADY_READY_CONFLICT_SUBSTRING)) {
-							console.warn(
-								`Puzzle ${puzzleId} is already ready; skipping mark-failed ` +
-									'(finalize committed before the error path).'
-							);
-							alreadyReady = true;
+					for (let attempt = 0; attempt < maxRetries; attempt++) {
+						try {
+							const message =
+								originalError instanceof Error ? originalError.message : 'Unknown error';
+							await updateMetadata(this.env.PUZZLE_METADATA_DO, puzzleId, {
+								status: 'failed',
+								error: { message }
+							});
+							doSucceeded = true;
 							break;
+						} catch (markErr) {
+							// A 409 from the metadata DO with an "already ready"
+							// message means finalize committed before this catch
+							// ran (e.g. its step retry budget exhausted after a
+							// successful DO write). That is the desired terminal
+							// state; do not retry or log CRITICAL. The result is
+							// reconciled in a separate D1 mirror step below.
+							// Match on the message (not status alone) so a future
+							// unrelated 409 cannot be misread as already-ready.
+							const markStatus = (markErr as { status?: number })?.status;
+							const markMessage =
+								markErr instanceof Error ? markErr.message : String(markErr ?? '');
+							if (markStatus === 409 && markMessage.includes(ALREADY_READY_CONFLICT_SUBSTRING)) {
+								console.warn(
+									`Puzzle ${puzzleId} is already ready; skipping mark-failed ` +
+										'(finalize committed before the error path).'
+								);
+								alreadyReady = true;
+								break;
+							}
+							lastError = markErr;
+							console.error(
+								`Failed to mark puzzle ${puzzleId} as failed (attempt ${attempt + 1}/${maxRetries}):`,
+								markErr
+							);
+
+							if (attempt < maxRetries - 1) {
+								// Exponential backoff
+								const delay = 100 * Math.pow(2, attempt);
+								await new Promise((resolve) => setTimeout(resolve, delay));
+							}
 						}
-						lastError = markErr;
-						console.error(
-							`Failed to mark puzzle ${puzzleId} as failed (attempt ${attempt + 1}/${maxRetries}):`,
-							markErr
-						);
-
-						if (attempt < maxRetries - 1) {
-							// Exponential backoff
-							const delay = 100 * Math.pow(2, attempt);
-							await new Promise((resolve) => setTimeout(resolve, delay));
-						}
 					}
-				}
 
-				if (alreadyReady) {
-					// Best-effort D1 reconciliation to 'ready' (matches the
-					// success-path mirror-ready-status-to-d1 step, which won't
-					// run because the catch block re-throws originalError).
-					try {
-						await setPuzzleStatus(getDb(this.env), puzzleId, 'ready');
-					} catch (d1Error) {
-						console.error('Failed to reconcile already-ready status in D1:', d1Error);
+					if (alreadyReady) {
+						return 'already-ready';
 					}
-					return;
-				}
 
-				if (doSucceeded) {
-					// Mirror the finalize step: keep D1 in sync with the public
-					// status so the puzzle doesn't stay stuck at 'processing' in
-					// the ownership/stats store. Best-effort and independent of the
-					// DO retry loop — a D1/DB failure must not re-run the DO update.
-					try {
-						await setPuzzleStatus(getDb(this.env), puzzleId, 'failed');
-					} catch (d1Error) {
-						console.error('Failed to update puzzle status in D1:', d1Error);
+					if (doSucceeded) {
+						return 'failed';
 					}
-					return;
-				}
 
-				// All retries failed - log extensively
-				console.error(
-					`CRITICAL: Failed to mark puzzle ${puzzleId} as failed after ${maxRetries} retries`
+					// All retries failed - log extensively
+					console.error(
+						`CRITICAL: Failed to mark puzzle ${puzzleId} as failed after ${maxRetries} retries`
+					);
+					console.error('Last error:', lastError);
+					console.error('Original workflow error:', originalError);
+					// Note: Puzzle will remain in 'processing' state - manual cleanup required
+					return 'unreconciled';
+				}
+			);
+
+			if (markFailedOutcome === 'already-ready') {
+				await mirrorPuzzleStatusToD1(
+					step,
+					this.env,
+					puzzleId,
+					'ready',
+					'reconcile-already-ready-status-to-d1'
 				);
-				console.error('Last error:', lastError);
-				console.error('Original workflow error:', originalError);
-				// Note: Puzzle will remain in 'processing' state - manual cleanup required
-			});
+			} else if (markFailedOutcome === 'failed') {
+				await mirrorPuzzleStatusToD1(
+					step,
+					this.env,
+					puzzleId,
+					'failed',
+					'mirror-failed-status-to-d1'
+				);
+			}
+
 			throw originalError;
 		}
 

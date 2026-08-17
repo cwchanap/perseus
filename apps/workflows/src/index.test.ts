@@ -649,11 +649,68 @@ describe('Workflow Execution - Resource Loading', () => {
 			instanceId: 'test-instance'
 		};
 
-		await expect(workflow.run(event, createMockStep())).rejects.toThrow(
+		const step = createMockStep();
+		await expect(workflow.run(event, step)).rejects.toThrow(
 			`Original image not found for puzzle ${puzzleId}`
 		);
 
 		expect(setPuzzleStatus).toHaveBeenCalledWith(expect.anything(), puzzleId, 'failed');
+		expect(step.do).toHaveBeenCalledWith(
+			'mirror-failed-status-to-d1',
+			{
+				retries: {
+					limit: 3,
+					delay: '10 seconds',
+					backoff: 'exponential'
+				}
+			},
+			expect.any(Function)
+		);
+	});
+
+	it('keeps the original processing error authoritative when D1 down', async () => {
+		const { setPuzzleStatus } = await import('@perseus/shared');
+		const puzzleId = sampleMetadata.id;
+		const { namespace } = createMockDurableObjectNamespace(() => {
+			return new Response(JSON.stringify({ success: true }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' }
+			});
+		});
+		const nullBucket = {
+			get: vi.fn(async () => null),
+			put: vi.fn(async () => undefined)
+		};
+		const env = {
+			PUZZLES_BUCKET: nullBucket,
+			PUZZLE_METADATA: createMockKv(sampleMetadata),
+			PUZZLE_METADATA_DO: namespace as unknown as DurableObjectNamespace,
+			PUZZLE_WORKFLOW: {} as Workflow
+		} as unknown as Env;
+
+		const workflow = new TestWorkflow();
+		workflow.setEnv(env);
+
+		const event: WorkflowEvent<WorkflowParams> = {
+			payload: { puzzleId },
+			timestamp: new Date(),
+			instanceId: 'test-instance'
+		};
+
+		const step = createMockStep();
+		vi.mocked(setPuzzleStatus).mockReset();
+		vi.mocked(setPuzzleStatus).mockRejectedValueOnce(new Error('D1 down'));
+		const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		await expect(workflow.run(event, step)).rejects.toThrow(
+			`Original image not found for puzzle ${puzzleId}`
+		);
+
+		expect(errorSpy).toHaveBeenCalledWith(
+			expect.stringContaining('D1 mirror mirror-failed-status-to-d1 failed'),
+			expect.any(Error)
+		);
+		expect(errorSpy).not.toHaveBeenCalledWith(expect.stringContaining('CRITICAL'));
 	});
 });
 
@@ -877,7 +934,8 @@ describe('Workflow Execution - mark-failed already-ready reconciliation', () => 
 		const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 		const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-		await expect(workflow.run(event, createMockStep())).rejects.toThrow(
+		const step = createMockStep();
+		await expect(workflow.run(event, step)).rejects.toThrow(
 			`Original image not found for puzzle ${puzzleId}`
 		);
 
@@ -885,6 +943,17 @@ describe('Workflow Execution - mark-failed already-ready reconciliation', () => 
 		// 'ready' (the puzzle's true terminal state), never 'failed'.
 		expect(setPuzzleStatus).toHaveBeenCalledWith(expect.anything(), puzzleId, 'ready');
 		expect(setPuzzleStatus).not.toHaveBeenCalledWith(expect.anything(), puzzleId, 'failed');
+		expect(step.do).toHaveBeenCalledWith(
+			'reconcile-already-ready-status-to-d1',
+			{
+				retries: {
+					limit: 3,
+					delay: '10 seconds',
+					backoff: 'exponential'
+				}
+			},
+			expect.any(Function)
+		);
 
 		// No CRITICAL log — the puzzle is in the desired terminal state, so
 		// the retry-exhaustion alarm must not fire.
