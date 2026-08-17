@@ -171,7 +171,29 @@ function createMockStep(): WorkflowStep {
 				typeof configOrFn === 'function'
 					? (configOrFn as () => Promise<unknown>)
 					: (maybeFn as () => Promise<unknown>);
-			return fn();
+			// Honor the retries.limit from the step config so tests exercise
+			// retry exhaustion the way the real Workflows runtime would. Only
+			// steps that pass a config object (e.g. D1 mirror steps) get
+			// retried; config-less steps (mark-failed, finalize, etc.) use
+			// their own internal retry logic and are called once here.
+			const config =
+				typeof configOrFn === 'function'
+					? undefined
+					: (configOrFn as { retries?: { limit?: number } } | undefined);
+			const retryLimit = config?.retries?.limit ?? 1;
+
+			let lastError: unknown;
+			for (let attempt = 0; attempt < retryLimit; attempt++) {
+				try {
+					return await fn();
+				} catch (error) {
+					lastError = error;
+					// No delay between retries in the mock — the delay is a
+					// Cloudflare platform concern. The retry count is what
+					// matters for test assertions.
+				}
+			}
+			throw lastError;
 		}),
 		sleep: vi.fn(async () => undefined),
 		sleepUntil: vi.fn(async () => undefined),
@@ -544,11 +566,17 @@ describe('Workflow Execution - Parameter Validation', () => {
 });
 
 describe('Workflow Execution - Resource Loading', () => {
-	afterEach(() => {
+	afterEach(async () => {
 		mockWidth = 100;
 		mockHeight = 100;
 		photonInstances = [];
 		vi.restoreAllMocks();
+		// vi.restoreAllMocks does not restore vi.fn mocks created in vi.mock
+		// factories, so a mockRejectedValue from one test leaks into the next.
+		// Reset setPuzzleStatus to its factory default (resolves undefined).
+		const { setPuzzleStatus } = await import('@perseus/shared');
+		vi.mocked(setPuzzleStatus).mockReset();
+		vi.mocked(setPuzzleStatus).mockResolvedValue(undefined);
 	});
 
 	it('marks puzzle as failed when metadata not found', async () => {
@@ -699,27 +727,46 @@ describe('Workflow Execution - Resource Loading', () => {
 
 		const step = createMockStep();
 		vi.mocked(setPuzzleStatus).mockReset();
-		vi.mocked(setPuzzleStatus).mockRejectedValueOnce(new Error('D1 down'));
+		// Always reject so all 3 retry attempts fail and the mirror step
+		// exhausts its budget — mockRejectedValueOnce would only fail the
+		// first attempt, and the retry-aware mock would succeed on attempt 2.
+		vi.mocked(setPuzzleStatus).mockRejectedValue(new Error('D1 down'));
 		const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
 		await expect(workflow.run(event, step)).rejects.toThrow(
 			`Original image not found for puzzle ${puzzleId}`
 		);
 
+		// The D1 mirror callback was attempted 3 times (the configured retry
+		// limit) before the step gave up and the error was logged.
+		expect(setPuzzleStatus).toHaveBeenCalledTimes(3);
 		expect(errorSpy).toHaveBeenCalledWith(
 			expect.stringContaining('D1 mirror mirror-failed-status-to-d1 failed'),
 			expect.any(Error)
 		);
-		expect(errorSpy).not.toHaveBeenCalledWith(expect.stringContaining('CRITICAL'));
+		// Verify no CRITICAL log fired regardless of argument count — the
+		// not.toHaveBeenCalledWith matcher only checks calls whose arg count
+		// matches the matchers, so a future multi-arg CRITICAL log would slip
+		// through. Flatten every argument of every call instead.
+		const allErrorArgs = errorSpy.mock.calls.flat() as unknown[];
+		expect(allErrorArgs.some((arg) => typeof arg === 'string' && arg.includes('CRITICAL'))).toBe(
+			false
+		);
 	});
 });
 
 describe('Workflow Execution - D1 ready mirror is best-effort', () => {
-	afterEach(() => {
+	afterEach(async () => {
 		mockWidth = 100;
 		mockHeight = 100;
 		photonInstances = [];
 		vi.restoreAllMocks();
+		// vi.restoreAllMocks does not restore vi.fn mocks created in vi.mock
+		// factories, so a mockRejectedValue from one test leaks into the next.
+		// Reset setPuzzleStatus to its factory default (resolves undefined).
+		const { setPuzzleStatus } = await import('@perseus/shared');
+		vi.mocked(setPuzzleStatus).mockReset();
+		vi.mocked(setPuzzleStatus).mockResolvedValue(undefined);
 	});
 
 	it('keeps DO status ready and does NOT mark-failed when the D1 ready mirror throws', async () => {
@@ -753,21 +800,24 @@ describe('Workflow Execution - D1 ready mirror is best-effort', () => {
 			instanceId: 'test-instance'
 		};
 
-		// Force the D1 ready mirror to fail. The old code ran the mirror inside
+		// Force the D1 ready mirror to fail on every attempt so the retry-aware
+		// mock exhausts its 3-attempt budget. The old code ran the mirror inside
 		// the finalize step.do, so this throw would land in the catch and run
 		// mark-failed, overwriting 'ready' with 'failed'. The split must keep the
 		// DO 'ready' and merely log the D1 failure.
 		const step = createMockStep();
 		const { setPuzzleStatus } = await import('@perseus/shared');
 		vi.mocked(setPuzzleStatus).mockReset();
-		vi.mocked(setPuzzleStatus).mockRejectedValueOnce(new Error('D1 down'));
+		vi.mocked(setPuzzleStatus).mockRejectedValue(new Error('D1 down'));
 
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
 		// Workflow must complete despite the D1 mirror failure.
 		await expect(workflow.run(event, step)).resolves.toBeUndefined();
 
-		// The D1 ready mirror was attempted (and failed, best-effort).
+		// The D1 ready mirror was attempted 3 times (the configured retry limit)
+		// and failed on every attempt, best-effort.
+		expect(setPuzzleStatus).toHaveBeenCalledTimes(3);
 		expect(setPuzzleStatus).toHaveBeenCalledWith(expect.anything(), puzzleId, 'ready');
 		// mark-failed must NOT have run — no 'failed' status written anywhere.
 		expect(setPuzzleStatus).not.toHaveBeenCalledWith(expect.anything(), puzzleId, 'failed');
@@ -962,8 +1012,13 @@ describe('Workflow Execution - mark-failed already-ready reconciliation', () => 
 		);
 
 		// No CRITICAL log — the puzzle is in the desired terminal state, so
-		// the retry-exhaustion alarm must not fire.
-		expect(errorSpy).not.toHaveBeenCalledWith(expect.stringContaining('CRITICAL'));
+		// the retry-exhaustion alarm must not fire. Check every argument of
+		// every call (not just single-arg calls) so a future multi-arg
+		// CRITICAL log cannot slip through the matcher.
+		const allErrorArgs = errorSpy.mock.calls.flat() as unknown[];
+		expect(allErrorArgs.some((arg) => typeof arg === 'string' && arg.includes('CRITICAL'))).toBe(
+			false
+		);
 		// A warn surfaces the already-ready skip so the race is observable.
 		expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('already ready'));
 
