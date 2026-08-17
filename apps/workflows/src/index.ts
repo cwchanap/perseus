@@ -72,6 +72,35 @@ function getDb(env: Env): AppDb {
 	return db;
 }
 
+const D1_MIRROR_MAX_ATTEMPTS = 3;
+
+const D1_MIRROR_STEP_CONFIG = {
+	retries: {
+		limit: D1_MIRROR_MAX_ATTEMPTS,
+		delay: '10 seconds',
+		backoff: 'exponential'
+	}
+} as const;
+
+async function mirrorPuzzleStatusToD1(
+	step: WorkflowStep,
+	env: Env,
+	puzzleId: string,
+	status: 'ready' | 'failed',
+	stepName: string
+): Promise<void> {
+	try {
+		await step.do(stepName, D1_MIRROR_STEP_CONFIG, async () => {
+			await setPuzzleStatus(getDb(env), puzzleId, status);
+		});
+	} catch (error) {
+		console.error(
+			`D1 mirror ${stepName} failed for puzzle ${puzzleId} status ${status} after ${D1_MIRROR_MAX_ATTEMPTS} attempts:`,
+			error
+		);
+	}
+}
+
 export interface Env {
 	PUZZLES_BUCKET: R2Bucket;
 	PUZZLE_METADATA: KVNamespace;
@@ -1293,13 +1322,7 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 		// the gallery reads from KV/DO, and a later successful mirror or direct
 		// D1 read will reconcile. This only runs on the success path because the
 		// catch block re-throws on failure.
-		await step.do('mirror-ready-status-to-d1', async () => {
-			try {
-				await setPuzzleStatus(getDb(this.env), puzzleId, 'ready');
-			} catch (d1Error) {
-				console.error('Failed to mirror ready status to D1:', d1Error);
-			}
-		});
+		await mirrorPuzzleStatusToD1(step, this.env, puzzleId, 'ready', 'mirror-ready-status-to-d1');
 	}
 }
 

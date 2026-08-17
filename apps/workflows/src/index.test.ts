@@ -700,6 +700,7 @@ describe('Workflow Execution - D1 ready mirror is best-effort', () => {
 		// the finalize step.do, so this throw would land in the catch and run
 		// mark-failed, overwriting 'ready' with 'failed'. The split must keep the
 		// DO 'ready' and merely log the D1 failure.
+		const step = createMockStep();
 		const { setPuzzleStatus } = await import('@perseus/shared');
 		vi.mocked(setPuzzleStatus).mockReset();
 		vi.mocked(setPuzzleStatus).mockRejectedValueOnce(new Error('D1 down'));
@@ -707,7 +708,7 @@ describe('Workflow Execution - D1 ready mirror is best-effort', () => {
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
 		// Workflow must complete despite the D1 mirror failure.
-		await expect(workflow.run(event, createMockStep())).resolves.toBeUndefined();
+		await expect(workflow.run(event, step)).resolves.toBeUndefined();
 
 		// The D1 ready mirror was attempted (and failed, best-effort).
 		expect(setPuzzleStatus).toHaveBeenCalledWith(expect.anything(), puzzleId, 'ready');
@@ -719,9 +720,22 @@ describe('Workflow Execution - D1 ready mirror is best-effort', () => {
 		const lastBody = JSON.parse((calls[calls.length - 1]?.[1]?.body as string | undefined) ?? '{}');
 		expect(lastBody.updates.status).toBe('ready');
 
-		// The D1 mirror failure was logged.
+		// The D1 mirror is an explicitly bounded durable step.
+		expect(step.do).toHaveBeenCalledWith(
+			'mirror-ready-status-to-d1',
+			{
+				retries: {
+					limit: 3,
+					delay: '10 seconds',
+					backoff: 'exponential'
+				}
+			},
+			expect.any(Function)
+		);
+
+		// The D1 mirror failure was logged with its site.
 		expect(consoleSpy).toHaveBeenCalledWith(
-			'Failed to mirror ready status to D1:',
+			expect.stringContaining('D1 mirror mirror-ready-status-to-d1 failed'),
 			expect.any(Error)
 		);
 		consoleSpy.mockRestore();
