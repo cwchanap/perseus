@@ -166,34 +166,15 @@ function createMockKv(metadata: PuzzleMetadata) {
 
 function createMockStep(): WorkflowStep {
 	return {
+		// One-shot: execute the callback once and propagate its result/error.
+		// Cloudflare owns the retry loop; tests assert our config and the
+		// callback/outer-catch boundary, not platform attempt counts.
 		do: vi.fn(async (_name: string, configOrFn: unknown, maybeFn?: unknown) => {
 			const fn =
 				typeof configOrFn === 'function'
 					? (configOrFn as () => Promise<unknown>)
 					: (maybeFn as () => Promise<unknown>);
-			// Honor the retries.limit from the step config so tests exercise
-			// retry exhaustion the way the real Workflows runtime would. Only
-			// steps that pass a config object (e.g. D1 mirror steps) get
-			// retried; config-less steps (mark-failed, finalize, etc.) use
-			// their own internal retry logic and are called once here.
-			const config =
-				typeof configOrFn === 'function'
-					? undefined
-					: (configOrFn as { retries?: { limit?: number } } | undefined);
-			const retryLimit = config?.retries?.limit ?? 1;
-
-			let lastError: unknown;
-			for (let attempt = 0; attempt < retryLimit; attempt++) {
-				try {
-					return await fn();
-				} catch (error) {
-					lastError = error;
-					// No delay between retries in the mock — the delay is a
-					// Cloudflare platform concern. The retry count is what
-					// matters for test assertions.
-				}
-			}
-			throw lastError;
+			return await fn();
 		}),
 		sleep: vi.fn(async () => undefined),
 		sleepUntil: vi.fn(async () => undefined),
@@ -727,9 +708,8 @@ describe('Workflow Execution - Resource Loading', () => {
 
 		const step = createMockStep();
 		vi.mocked(setPuzzleStatus).mockReset();
-		// Always reject so all 3 retry attempts fail and the mirror step
-		// exhausts its budget — mockRejectedValueOnce would only fail the
-		// first attempt, and the retry-aware mock would succeed on attempt 2.
+		// One-shot mock: the callback runs once, rejects, and step.do throws
+		// so the rejection reaches mirrorPuzzleStatusToD1()'s outer catch.
 		vi.mocked(setPuzzleStatus).mockRejectedValue(new Error('D1 down'));
 		const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
@@ -737,9 +717,10 @@ describe('Workflow Execution - Resource Loading', () => {
 			`Original image not found for puzzle ${puzzleId}`
 		);
 
-		// The D1 mirror callback was attempted 3 times (the configured retry
-		// limit) before the step gave up and the error was logged.
-		expect(setPuzzleStatus).toHaveBeenCalledTimes(3);
+		// The D1 mirror callback ran once and rejected; the outer wrapper
+		// catch logged the site-aware final error and swallowed it, so the
+		// workflow still rejects with the original processing error.
+		expect(setPuzzleStatus).toHaveBeenCalledTimes(1);
 		expect(errorSpy).toHaveBeenCalledWith(
 			expect.stringContaining('D1 mirror mirror-failed-status-to-d1 failed'),
 			expect.any(Error)
@@ -800,11 +781,12 @@ describe('Workflow Execution - D1 ready mirror is best-effort', () => {
 			instanceId: 'test-instance'
 		};
 
-		// Force the D1 ready mirror to fail on every attempt so the retry-aware
-		// mock exhausts its 3-attempt budget. The old code ran the mirror inside
-		// the finalize step.do, so this throw would land in the catch and run
-		// mark-failed, overwriting 'ready' with 'failed'. The split must keep the
-		// DO 'ready' and merely log the D1 failure.
+		// Force the D1 ready mirror to reject. The one-shot mock runs the
+		// callback once and propagates the rejection to
+		// mirrorPuzzleStatusToD1()'s outer catch. The old code ran the mirror
+		// inside the finalize step.do, so this throw would land in the catch
+		// and run mark-failed, overwriting 'ready' with 'failed'. The split
+		// must keep the DO 'ready' and merely log the D1 failure.
 		const step = createMockStep();
 		const { setPuzzleStatus } = await import('@perseus/shared');
 		vi.mocked(setPuzzleStatus).mockReset();
@@ -815,9 +797,9 @@ describe('Workflow Execution - D1 ready mirror is best-effort', () => {
 		// Workflow must complete despite the D1 mirror failure.
 		await expect(workflow.run(event, step)).resolves.toBeUndefined();
 
-		// The D1 ready mirror was attempted 3 times (the configured retry limit)
-		// and failed on every attempt, best-effort.
-		expect(setPuzzleStatus).toHaveBeenCalledTimes(3);
+		// The D1 ready mirror callback ran once and rejected; the outer
+		// wrapper catch logged and swallowed it, best-effort.
+		expect(setPuzzleStatus).toHaveBeenCalledTimes(1);
 		expect(setPuzzleStatus).toHaveBeenCalledWith(expect.anything(), puzzleId, 'ready');
 		// mark-failed must NOT have run — no 'failed' status written anywhere.
 		expect(setPuzzleStatus).not.toHaveBeenCalledWith(expect.anything(), puzzleId, 'failed');
