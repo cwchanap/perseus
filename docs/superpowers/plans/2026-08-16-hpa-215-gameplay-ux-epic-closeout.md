@@ -37,7 +37,7 @@
 
 Read HPA-215 with relations enabled. Record the current description and confirm `blockedBy` is empty.
 
-Expected: HPA-215 is still open/backlog and has no blocker.
+Expected: HPA-215 is still open (`Backlog` or `In Progress`) and has no blocker.
 
 - [ ] **Step 2: List every direct child**
 
@@ -63,9 +63,9 @@ If any listed completed item is no longer `Done`, or any new direct child is act
 
 List open pull requests for `cwchanap/perseus`.
 
-Expected: zero open PRs.
+Expected: zero implementation PRs other than this planning-only HPA-215 closeout PR.
 
-If a new open PR clearly belongs to HPA-215 or one of its children, inspect it before continuing.
+If another open PR clearly belongs to HPA-215 or one of its children, inspect it before continuing.
 
 - [ ] **Step 4: Pin the shipped evidence used by closeout**
 
@@ -123,7 +123,7 @@ All active scope in this roadmap is complete as of 2026-08-16.
 ```
 
 2. Keep the existing child list and HPA-221 baseline paragraph under that heading.
-3. Change each of the seven `## Epic acceptance criteria` lines from `- [ ]` to `- [x]` without changing the criterion text.
+3. Change each of the seven checklist items under `## Epic acceptance criteria` from `- [ ]` to `- [x]` without changing the criterion text.
 4. Leave `# Goal`, `## Delivery principles`, `## Deferred until demonstrated need`, and `## Non-goals` semantically unchanged.
 
 Do not add PR links throughout the description; evidence belongs in the closeout comment.
