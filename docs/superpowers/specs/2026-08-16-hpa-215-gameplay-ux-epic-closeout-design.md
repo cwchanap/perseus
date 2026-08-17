@@ -6,7 +6,7 @@
 
 ## Context
 
-HPA-215 is the only non-canceled, non-completed issue left in the Perseus Linear project. Every active child named by the epic is complete; HPA-237 is explicitly canceled/deferred under YAGNI. GitHub also has no open Perseus pull requests.
+HPA-215 is the only non-canceled, non-completed issue left in the Perseus Linear project. Every active child named by the epic is complete; HPA-237 is explicitly canceled/deferred under YAGNI. GitHub had no competing Perseus implementation PR when this closeout was selected; the implementation plan re-checks that invariant before execution.
 
 The active roadmap has already shipped:
 
