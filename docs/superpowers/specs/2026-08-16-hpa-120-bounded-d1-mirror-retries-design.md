@@ -1,7 +1,6 @@
 # HPA-120: Retry the D1 Puzzle-Status Mirror a Few Times — Design
 
-**Linear:** HPA-120  
-**Status:** Design for implementation  
+**Linear:** HPA-120 — **Status:** Design for implementation
 **Date:** 2026-08-16
 
 ## Context
