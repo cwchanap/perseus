@@ -11,6 +11,7 @@
 		onConfirmRestart: () => void;
 		onCancelRestart: () => void;
 		onExit: () => void;
+		onDiscard: () => void;
 	}
 
 	let {
@@ -21,7 +22,8 @@
 		onRequestRestart,
 		onConfirmRestart,
 		onCancelRestart,
-		onExit
+		onExit,
+		onDiscard
 	}: Props = $props();
 
 	const primaryButtonClass =
@@ -65,6 +67,7 @@
 				</p>
 				<div class="mt-6 flex flex-wrap justify-end gap-2">
 					<button type="button" onclick={onExit} class={secondaryButtonClass}>Exit</button>
+					<button type="button" onclick={onDiscard} class={secondaryButtonClass}>Discard</button>
 					<button type="button" onclick={onRequestRestart} class={secondaryButtonClass}>
 						Restart
 					</button>

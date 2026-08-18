@@ -3,7 +3,7 @@ import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
 import MissionSetupDialog from '../MissionSetupDialog.svelte';
 import SessionPauseDialog from '../SessionPauseDialog.svelte';
-import ExitSessionDialog from '../ExitSessionDialog.svelte';
+import DiscardSessionDialog from '../DiscardSessionDialog.svelte';
 
 const setupProps = {
 	puzzleName: 'Test Mission',
@@ -148,7 +148,8 @@ describe('SessionPauseDialog', () => {
 			onRequestRestart: vi.fn(),
 			onConfirmRestart: vi.fn(),
 			onCancelRestart: vi.fn(),
-			onExit: vi.fn()
+			onExit: vi.fn(),
+			onDiscard: vi.fn()
 		});
 		await view.rerender({
 			presentation: 'paused',
@@ -158,7 +159,8 @@ describe('SessionPauseDialog', () => {
 			onRequestRestart: vi.fn(),
 			onConfirmRestart: vi.fn(),
 			onCancelRestart: vi.fn(),
-			onExit: vi.fn()
+			onExit: vi.fn(),
+			onDiscard: vi.fn()
 		});
 		await expect.element(page.getByText('Restart this mission?')).toBeVisible();
 		expect(await page.getByRole('dialog').all()).toHaveLength(1);
@@ -173,7 +175,8 @@ describe('SessionPauseDialog', () => {
 			onRequestRestart: vi.fn(),
 			onConfirmRestart: vi.fn(),
 			onCancelRestart: vi.fn(),
-			onExit: vi.fn()
+			onExit: vi.fn(),
+			onDiscard: vi.fn()
 		});
 		await expect.element(page.getByText('Relaxed mission')).toBeVisible();
 	});
@@ -187,7 +190,8 @@ describe('SessionPauseDialog', () => {
 			onRequestRestart: vi.fn(),
 			onConfirmRestart: vi.fn(),
 			onCancelRestart: vi.fn(),
-			onExit: vi.fn()
+			onExit: vi.fn(),
+			onDiscard: vi.fn()
 		});
 		await expect.element(page.getByText('Timed mission')).toBeVisible();
 	});
@@ -204,7 +208,8 @@ describe('SessionPauseDialog', () => {
 			onRequestRestart,
 			onConfirmRestart: vi.fn(),
 			onCancelRestart: vi.fn(),
-			onExit
+			onExit,
+			onDiscard: vi.fn()
 		});
 		await page.getByRole('button', { name: 'Exit' }).click();
 		expect(onExit).toHaveBeenCalledOnce();
@@ -212,6 +217,24 @@ describe('SessionPauseDialog', () => {
 		expect(onRequestRestart).toHaveBeenCalledOnce();
 		await page.getByRole('button', { name: 'Resume' }).click();
 		expect(onResume).toHaveBeenCalledOnce();
+	});
+
+	it('forwards Discard from the pause surface', async () => {
+		const onDiscard = vi.fn();
+		render(SessionPauseDialog, {
+			presentation: 'paused',
+			mode: 'timed',
+			confirmingRestart: false,
+			onResume: vi.fn(),
+			onRequestRestart: vi.fn(),
+			onConfirmRestart: vi.fn(),
+			onCancelRestart: vi.fn(),
+			onExit: vi.fn(),
+			onDiscard
+		});
+
+		await page.getByRole('button', { name: 'Discard' }).click();
+		expect(onDiscard).toHaveBeenCalledOnce();
 	});
 
 	it('fires onConfirmRestart and onCancelRestart from the confirmation surface', async () => {
@@ -225,7 +248,8 @@ describe('SessionPauseDialog', () => {
 			onRequestRestart: vi.fn(),
 			onConfirmRestart,
 			onCancelRestart,
-			onExit: vi.fn()
+			onExit: vi.fn(),
+			onDiscard: vi.fn()
 		});
 		await page.getByRole('button', { name: 'Cancel' }).click();
 		expect(onCancelRestart).toHaveBeenCalledOnce();
@@ -242,32 +266,40 @@ describe('SessionPauseDialog', () => {
 			onRequestRestart: vi.fn(),
 			onConfirmRestart: vi.fn(),
 			onCancelRestart: vi.fn(),
-			onExit: vi.fn()
+			onExit: vi.fn(),
+			onDiscard: vi.fn()
 		});
 		await expect.element(page.getByRole('dialog', { name: 'Resume Mission' })).toBeVisible();
 	});
 });
 
-describe('ExitSessionDialog', () => {
-	it('fires the discard callback once when Discard is clicked', async () => {
-		const onDiscard = vi.fn();
-		render(ExitSessionDialog, { onSave: vi.fn(), onDiscard, onCancel: vi.fn() });
+describe('DiscardSessionDialog', () => {
+	it('keeps the full-screen shell and confirms discard', async () => {
+		const onConfirm = vi.fn();
+		render(DiscardSessionDialog, {
+			puzzleName: 'Test Mission',
+			onConfirm,
+			onCancel: vi.fn()
+		});
+
+		const dialog = await page.getByRole('dialog', { name: 'Discard saved progress' }).element();
+		expect(dialog.parentElement?.className).toContain('fixed');
+		expect(dialog.parentElement?.className).toContain('inset-0');
+
 		await page.getByRole('button', { name: 'Discard' }).click();
-		expect(onDiscard).toHaveBeenCalledOnce();
+		expect(onConfirm).toHaveBeenCalledOnce();
 	});
 
-	it('fires onCancel when Escape is pressed on the dialog', async () => {
-		// The route suppresses its global keyboard handler while a session
-		// modal is open, and modalFocus only traps Tab, so the dialog must
-		// handle Escape itself to remain dismissible.
+	it('cancels discard on Escape', async () => {
 		const onCancel = vi.fn();
-		const onSave = vi.fn();
-		const onDiscard = vi.fn();
-		render(ExitSessionDialog, { onSave, onDiscard, onCancel });
-		const dialog = await page.getByRole('dialog', { name: 'Exit Mission' }).element();
+		render(DiscardSessionDialog, {
+			puzzleName: 'Test Mission',
+			onConfirm: vi.fn(),
+			onCancel
+		});
+
+		const dialog = await page.getByRole('dialog', { name: 'Discard saved progress' }).element();
 		dialog.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
 		expect(onCancel).toHaveBeenCalledOnce();
-		expect(onSave).not.toHaveBeenCalled();
-		expect(onDiscard).not.toHaveBeenCalled();
 	});
 });
