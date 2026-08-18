@@ -379,7 +379,7 @@ Render:
 {/if}
 ```
 
-- [ ] **Step 8: Verify Task 1 and remove the stale Exit contract**
+- [ ] **Step 8: Verify Task 1 and remove the stale production Exit contract**
 
 ```bash
 cd apps/web
@@ -387,10 +387,11 @@ bunx vitest --run --browser src/lib/components/__tests__/SessionDialogs.svelte.t
 bunx vitest --run --browser 'src/routes/puzzle/[id]/page.svelte.test.ts'
 bun run check
 
-git grep -n 'ExitSessionDialog\|Save & Exit\|Exit Mission' -- src || true
+git grep -n 'ExitSessionDialog\|Save & Exit' -- src || true
+git grep -n "sessionDialog === 'exit'" -- 'src/routes/puzzle/[id]/+page.svelte' || true
 ```
 
-Expected: tests/check pass and the grep has no old production/test contract.
+Expected: tests/check pass and both greps have no output. Negative tests may still mention the accessible name `Exit Mission` to prove the removed dialog never appears.
 
 Commit:
 
@@ -1293,7 +1294,16 @@ test('Exit saves progress and returns to the arcade without a choice dialog @smo
 });
 ```
 
-If `IMMEDIATE_START` is not currently imported in this spec, define the same small preferences constant from `DEFAULT_GAMEPLAY_PREFERENCES` rather than opening setup in this test.
+`gameplay-session-controls.spec.ts` does not currently define `IMMEDIATE_START`; add the same small constant used by the large-fixture spec:
+
+```ts
+import { DEFAULT_GAMEPLAY_PREFERENCES } from '../src/lib/services/gameplay/session/preferences';
+
+const IMMEDIATE_START = {
+	...DEFAULT_GAMEPLAY_PREFERENCES,
+	startImmediately: true
+};
+```
 
 Discard:
 
@@ -1418,14 +1428,15 @@ bunx playwright test e2e/gameplay-large-fixtures.spec.ts --project=chromium-desk
   --grep 'desktop tray resizer and hint reveal'
 ```
 
-- [ ] **Step 3: Confirm stale contracts are gone**
+- [ ] **Step 3: Confirm stale production/docs contracts are gone**
 
 ```bash
-git grep -n 'ExitSessionDialog\|Save & Exit\|Exit Mission' -- apps/web/src || true
+git grep -n 'ExitSessionDialog\|Save & Exit' -- apps/web/src || true
+git grep -n "sessionDialog === 'exit'" -- 'apps/web/src/routes/puzzle/[id]/+page.svelte' || true
 git grep -n '1\.8 s\|1\.8s\|seeded random init' -- docs/PRD.md || true
 ```
 
-Expected: both commands return no stale contract.
+Expected: all three commands return no stale contract. Negative tests may still mention the accessible name `Exit Mission` to prove that dialog is absent.
 
 - [ ] **Step 4: Manually smoke one desktop flow**
 
