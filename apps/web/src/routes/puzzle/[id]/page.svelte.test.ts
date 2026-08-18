@@ -650,6 +650,102 @@ describe('Puzzle route gameplay integration', () => {
 		}
 	});
 
+	it('resizes the tray from its matching pointer and releases on cancel and blur', async () => {
+		const restoreViewport = setDesktopViewport();
+		try {
+			await renderPuzzlePage();
+			const layout = document.querySelector<HTMLElement>('.game-layout')!;
+			Object.defineProperty(layout, 'clientWidth', { configurable: true, value: 1000 });
+			window.dispatchEvent(new Event('resize'));
+
+			const separator = await page.getByTestId('tray-resizer').element();
+			separator.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
+			await expect.poll(() => layout.style.getPropertyValue('--tray-width').trim()).toBe('300px');
+
+			separator.dispatchEvent(
+				new PointerEvent('pointerdown', {
+					bubbles: true,
+					pointerId: 7,
+					pointerType: 'mouse',
+					button: 0,
+					clientX: 100
+				})
+			);
+			window.dispatchEvent(
+				new PointerEvent('pointermove', {
+					bubbles: true,
+					pointerId: 8,
+					clientX: 0
+				})
+			);
+			await expect.poll(() => layout.style.getPropertyValue('--tray-width').trim()).toBe('300px');
+
+			window.dispatchEvent(
+				new PointerEvent('pointermove', {
+					bubbles: true,
+					pointerId: 7,
+					clientX: 84
+				})
+			);
+			await expect.poll(() => layout.style.getPropertyValue('--tray-width').trim()).toBe('316px');
+
+			window.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true, pointerId: 7 }));
+			window.dispatchEvent(
+				new PointerEvent('pointermove', {
+					bubbles: true,
+					pointerId: 7,
+					clientX: 68
+				})
+			);
+			await expect.poll(() => layout.style.getPropertyValue('--tray-width').trim()).toBe('316px');
+
+			separator.dispatchEvent(
+				new PointerEvent('pointerdown', {
+					bubbles: true,
+					pointerId: 9,
+					pointerType: 'mouse',
+					button: 0,
+					clientX: 100
+				})
+			);
+			window.dispatchEvent(new Event('blur'));
+			window.dispatchEvent(
+				new PointerEvent('pointermove', {
+					bubbles: true,
+					pointerId: 9,
+					clientX: 68
+				})
+			);
+			await expect.poll(() => layout.style.getPropertyValue('--tray-width').trim()).toBe('316px');
+		} finally {
+			restoreViewport();
+		}
+	});
+
+	it('hides the tray resizer below the desktop breakpoint', async () => {
+		const originalInnerWidth = window.innerWidth;
+		const originalInnerHeight = window.innerHeight;
+		try {
+			await page.viewport(800, 900);
+			Object.defineProperty(window, 'innerWidth', { configurable: true, value: 800 });
+			Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 });
+			await renderPuzzlePage();
+
+			const separator = await page.getByTestId('tray-resizer').element();
+			expect(getComputedStyle(separator).display).toBe('none');
+		} finally {
+			await page.viewport(originalInnerWidth, originalInnerHeight);
+			Object.defineProperty(window, 'innerWidth', {
+				configurable: true,
+				value: originalInnerWidth
+			});
+			Object.defineProperty(window, 'innerHeight', {
+				configurable: true,
+				value: originalInnerHeight
+			});
+		}
+	});
+
 	it('restores the requested tray width after layout shrink and re-widen', async () => {
 		const restoreViewport = setDesktopViewport();
 		try {
