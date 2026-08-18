@@ -4,259 +4,348 @@
 
 ## Summary
 
-This is one gameplay-polish task covering five related points of friction in the existing puzzle experience:
+This is one gameplay-polish task covering five related points of friction:
 
-1. Continuing a Relaxed run resumes immediately instead of opening `Resume Mission`.
-2. Exit always saves and returns to the arcade without an exit-choice popup; destructive deletion moves to an explicit confirmed Discard action in gameplay and on the home page.
-3. The desktop puzzle tray starts wider and can be resized with a divider between the board and tray.
-4. Rotation-enabled runs receive newly shuffled piece orientations when a run starts or restarts.
-5. A hint makes the corresponding tray piece unmistakable, reveals it in the tray, and keeps the matching board destination highlighted until the hint is no longer relevant.
+1. Restored Relaxed runs resume without `Resume Mission`.
+2. Exit always saves and returns to the arcade; destructive deletion is a separate confirmed Discard action in gameplay and on the home page.
+3. The desktop puzzle tray is wider by default and resizable, while board sizing and tray sizing use one shared layout contract.
+4. Rotation-enabled runs receive a fresh orientation shuffle on setup/restart.
+5. Hints clearly reveal the corresponding tray piece and keep the matching board destination highlighted until the hint is actually resolved or gameplay leaves the active flow.
 
-The work reuses the current route-owned session orchestration, `PuzzleSession` lifecycle/actions, session storage adapter, gameplay runtime factory, inventory panel, gallery progress discovery, and existing browser/E2E suites. It does not introduce a new session schema, split-pane framework, saved-progress store, or hint algorithm.
-
-## Current Behavior
-
-The puzzle route currently treats every restored active or paused session the same: active sessions are paused and both active/paused restores open `SessionPauseDialog` with the `resume` presentation. This protects Timed runs from silently resuming, but adds unnecessary friction to Relaxed runs.
-
-Exit is currently modeled as a choice dialog. `requestReturnToArcade()` opens `ExitSessionDialog` for resumable sessions, and that dialog offers Cancel, Discard, and Save & Exit. Safe navigation therefore requires another decision while the destructive action is coupled to Exit.
-
-The desktop `.game-layout` is a fixed two-column grid. The tray width is derived from three piece columns and cannot be adjusted by the player.
-
-The gameplay runtime already owns orientation generation through `createRotations(puzzleId, pieceIds)`. Production currently derives a deterministic seed from puzzle identity, so the same puzzle and piece list receive the same orientations on every configured run.
-
-Hints already carry the exact piece ID and target coordinates. `PuzzleSession` resets the inventory filter to All, the route exposes the hinted piece ID, and the board highlights the destination. The remaining problem is presentation: the piece can be outside the tray viewport or behind the collapsed mobile drawer, the tray treatment is easy to miss, and the route clears the hint after 1.8 seconds.
+The work reuses the current puzzle route, `PuzzleSession` lifecycle/actions, session storage adapter, `puzzleLayout.ts`, gameplay runtime factory, inventory panel, gallery progress discovery, and existing tests. It does not add a session schema, split-pane framework, saved-progress store, new RNG, or hint-selection algorithm.
 
 ## Goals
 
-- Preserve explicit resume for restored Timed runs while making restored Relaxed runs enter active gameplay immediately.
-- Make Exit a consistent non-destructive action: settle the live run, checkpoint/save it, and navigate home with no choice dialog.
-- Keep Discard explicit, confirmed, and available from both the Pause/Resume surface and the home page Continue panel.
-- Improve desktop piece inspection with a wider default tray and a pointer- and keyboard-resizable divider.
-- Generate a fresh valid orientation mapping for each newly configured rotation-enabled run while preserving restored orientations and deterministic E2E overrides.
-- Make a hint visibly connect one tray piece to one board destination and reveal the tray piece without changing selection or focus.
+- Preserve explicit player-controlled resume for restored Timed runs.
+- Enter restored Relaxed active/paused runs directly into active gameplay.
+- Make Exit a single non-destructive operation: settle, save, and navigate home.
+- Keep Discard explicit, confirmed, and available only from Pause/Resume and the home Continue panel.
+- Make the desktop tray visibly wider than the old layout for the current puzzle, with dragging/keyboard resizing that reduces tray scrolling and shows more pieces at once.
+- Keep piece preview size tied to board cell size; this task does **not** introduce independently scalable tray thumbnails.
+- Keep board metrics and tray width coherent as the player resizes the split.
+- Randomize initial orientation per configured run without changing the existing runtime interface or deterministic E2E override.
+- Keep a hint active through rejected placement attempts; clear it only after the hinted piece is successfully placed, another hint replaces it, or lifecycle cleanup occurs.
+- Reveal the hinted tray piece after the drawer/filter DOM has rendered, without stealing focus or selecting it.
 
 ## Non-Goals
 
-- Persisting tray width across reloads, routes, or devices.
+- Persisting tray width across reloads, puzzles, or devices.
 - Resizing the mobile bottom drawer.
-- Adding a generic split-pane or resizable-panel package/component.
-- Changing `PuzzleSessionState`, session actions/events, persistence schema/version, lifecycle rules, completion sealing, or gallery validation rules.
-- Adding a server-side saved-progress API.
-- Adding Discard controls to every puzzle card.
-- Changing which piece the hint algorithm chooses.
-- Automatically selecting, rotating, or placing a hinted piece.
-- Broad visual redesign of the Pause dialog, home page, board, or inventory.
+- Larger independent tray thumbnails or a tray zoom control.
+- A generic splitter/resizable-pane package or component.
+- New `PuzzleSessionState`, actions/events, persistence schema/version, or lifecycle rules.
+- A new saved-progress store or server-side progress deletion API.
+- Discard controls on every puzzle card.
+- Changing which piece `getHintPieceId` chooses.
+- Automatically selecting, rotating, or placing hinted pieces.
+- A broad visual redesign.
+
+## Current Behavior and Reuse
+
+### Restore and Exit
+
+The route currently pauses every restored active run and presents both active/paused restores through `SessionPauseDialog`. Exit uses `ExitSessionDialog` to offer Cancel, Discard, and Save & Exit.
+
+The new flow stays route-local. `PuzzleSession` remains the lifecycle authority.
+
+### Tray and Board Layout
+
+Today `puzzleLayout.ts` contains the desktop board↔tray assumption:
+
+- `DESKTOP_SIDE_PANEL_COLUMNS = 3`
+- `DESKTOP_LAYOUT_RESERVE = 88`
+- `desktopWidthCap = (viewportWidthCap - reserve) / (1 + 3 / gridCols)`
+
+The CSS mirrors that model with a tray width based on three `--piece-slot-size` columns. A free `--tray-width` cannot be added without removing the old circular board-width solve; otherwise the board and CSS reserve two different side-panel widths.
+
+`PuzzleBoardPanel` already recomputes fit bounds on viewport resize. No new board controller is required.
+
+### Rotation
+
+`generateRandomRotations(ids, seed?)` already uses `Math.random` when `seed` is omitted. Production only needs to stop supplying the puzzle-derived seed. The virtual runtime override remains unchanged.
+
+### Hints
+
+`PuzzleSession` already owns hint selection and resets the filter to All. The route owns `activeHintPieceId` / `activeHintTarget`. The inventory already has drawer state, a scroll container, roving `activePieceId`, and hinted-over-rejected styling precedence.
+
+The current route clears a hint before dispatching `attempt_placement`, so a rejected attempt on the hinted piece incorrectly consumes the visible hint. That must move to the successful-placement event path.
 
 ## Product Behavior
 
 ### 1. Continue and Restore
 
-Route entry distinguishes restored runs by mode and lifecycle.
-
 | Restored state | Entry behavior |
 | --- | --- |
-| Timed + active | Dispatch `pause`, checkpoint, and show `Resume Mission`. |
-| Timed + paused | Keep paused and show `Resume Mission`. |
-| Relaxed + active | Keep active and show no popup. |
-| Relaxed + paused | Dispatch `resume`, checkpoint, and show no popup. |
+| Timed + active | Dispatch `pause`, checkpoint, show `Resume Mission`. |
+| Timed + paused | Keep paused, show `Resume Mission`. |
+| Relaxed + active | Keep active, no popup. |
+| Relaxed + paused | Dispatch `resume`, checkpoint, no popup. |
 | Setup | Keep mandatory Mission Setup. |
-| Completed | Keep existing completion restoration. |
+| Completed | Keep current completion restoration. |
 
-This is a route-entry policy in `apps/web/src/routes/puzzle/[id]/+page.svelte`. `PuzzleSession` remains the canonical lifecycle owner and gains no new action.
-
-Manual Pause remains unchanged for both modes. A player who presses Pause still sees `Mission Paused` and can Resume, Restart, Exit, or Discard.
+Manual Pause is unchanged for both modes.
 
 ### 2. Exit and Discard
 
-Exit has one meaning everywhere: save the current state and return to the arcade.
+Exit always:
 
-Before navigation, the route:
-
-1. Clears route-local transient gameplay presentation such as selection, hint, and rejection animation.
-2. If the run is active, dispatches the existing `pause` action so timer/lifecycle state is settled.
-3. Flushes the session clock and saves the latest serialized snapshot through the existing storage adapter.
+1. Clears route-local transient gameplay presentation.
+2. If active, dispatches the existing `pause`.
+3. Flushes/checkpoints the live session through the existing persistence path.
 4. Navigates to `/`.
 
-No Exit confirmation is shown. The same composition is used by:
+There is no Exit confirmation and no Save-vs-Discard choice.
 
-- The header Arcade/back action.
-- Return to Arcade from Mission Setup.
-- Exit from `SessionPauseDialog`.
-- Back to Arcade from completion.
+`SessionPauseDialog` exposes `Discard` on both `Mission Paused` and `Resume Mission`. It opens one reusable `DiscardSessionDialog`. Cancel returns to the exact prior pause presentation without changing `pausePresentation`.
 
-Discard becomes a separate destructive flow:
+Confirming gameplay discard preserves the existing defensive order:
 
-- `SessionPauseDialog` exposes `Discard` on both paused and resume presentations.
-- Pressing it opens `DiscardSessionDialog`.
-- Cancel returns to the exact prior Pause/Resume presentation without changing `pausePresentation` or resuming the run.
-- Confirm preserves the existing defensive ordering: stop the periodic checkpoint, dispose the live session, clear the route session reference, delete persisted progress, then navigate home. This prevents teardown from re-saving the discarded snapshot.
-- The home Continue panel exposes `Discard` beside `Continue`.
-- Home confirmation clears that puzzle’s persisted session and immediately reruns `discoverGalleryProgress()` so the panel disappears or switches to the next newest resumable run.
+1. Stop periodic checkpointing.
+2. Dispose the live session.
+3. Clear the route session reference.
+4. `clearSession(puzzle.id)`.
+5. Navigate home.
 
-`ExitSessionDialog.svelte` is replaced by a discard-only dialog. The new component copies the existing fixed full-screen scrim and dialog shell, including `modalFocus`, Escape-to-cancel behavior, `aria-modal`, z-index, and safe-area padding. No shared dialog framework is introduced.
+This keeps the existing unmount-after-discard regression closed.
 
-### 3. Wider, Resizable Desktop Tray
+The home Continue panel exposes the same confirmed Discard action. Home clears through the session storage adapter and recomputes through `discoverGalleryProgress()`.
 
-At the existing desktop breakpoint (`min-width: 1024px`), the layout becomes:
+### 3. Desktop Tray and Board Contract
 
-```text
-minmax(0, 1fr) | 20px resize separator | tray width
+`puzzleLayout.ts` becomes the single owner of desktop split constants and arithmetic.
+
+Export:
+
+```ts
+export const DESKTOP_TRAY_MIN_WIDTH = 300;
+export const DESKTOP_TRAY_BASE_WIDTH = 360;
+export const DESKTOP_BOARD_MIN_WIDTH = 480;
+export const DESKTOP_TRAY_SEPARATOR_WIDTH = 20;
 ```
 
-Initial constraints:
+Keep the existing three-column visual baseline only for **initial tray width**, not for board width solving.
 
-- Default tray width: `360px`.
-- Minimum tray width: `300px`.
-- Minimum preferred board column width: `480px`.
-- Separator hit area: `20px`.
-- Keyboard resize step: `16px`.
+Add:
 
-The numeric clamp is a small pure helper in the existing `apps/web/src/lib/services/puzzleLayout.ts`, covered by `puzzleLayout.test.ts`. The route owns only DOM measurement and interaction state.
-
-For a measured layout width where both minimums fit, the maximum tray width is:
-
-```text
-layoutWidth - 480 - 20
+```ts
+export function getDefaultPuzzleTrayWidth(
+  puzzle: PuzzleBoardSource,
+  viewport: PuzzleViewportSize
+): number;
 ```
 
-`clampTrayWidth(...)` clamps the requested tray width between `300` and that feasible maximum. If a synthetic/constrained layout is narrower than `300 + 480 + 20 = 800px`, the tray minimum wins and the board may fall below the preferred 480px floor. This keeps the separator ARIA range internally valid; the real desktop layout is normally wider than this conflict because resizing is only exposed at the 1024px desktop breakpoint.
+It derives the preferred board width **without** a side-panel circular solve, derives a preferred cell size, then returns at least `360px` and at least the current three-column tray footprint. This ensures the new default does not narrow coarse-grid puzzles while making dense puzzles (for example 15×15) wider than the old 17.5rem minimum.
 
-If `.game-layout.clientWidth` is zero/unavailable, the route retains the current width until it has a positive measurement instead of inventing a maximum.
+The goal is **more visible pieces / less tray scrolling**, not larger independent thumbnails. `--piece-slot-size` remains board-cell-derived.
 
-Pointer behavior:
+Add:
 
-- Pointer down on the separator records pointer ID, starting X, and starting tray width.
-- A new window `pointermove` handler ignores non-matching pointer IDs.
-- Existing route `pointerup`/`pointercancel` cleanup is extended rather than replaced, so Hold-to-Peek reference release still works.
-- Existing window `blur` cleanup is also extended to cancel tray resizing while preserving reference/selection cleanup.
-- No pointer capture is required.
-- Width changes are route-local and are not serialized.
+```ts
+export function clampTrayWidth(layoutWidth: number, requestedWidth: number): number;
+```
 
-Keyboard behavior:
+It clamps to:
 
-- `ArrowLeft`: widen by `16px`.
-- `ArrowRight`: narrow by `16px`.
-- `Home`: set the minimum width.
-- `End`: set the current measured maximum.
+```text
+min = 300
+max = max(300, layoutWidth - 480 - 20)
+```
 
-The separator uses `role="separator"`, `aria-orientation="vertical"`, an accessible label, and numeric `aria-valuemin`, `aria-valuemax`, and `aria-valuenow`.
+If a synthetic measured layout cannot fit 300 + 480 + 20, the tray minimum wins. The desktop breakpoint normally keeps production layouts outside this conflict.
 
-Below `1024px`, CSS hides the separator and the existing mobile board plus collapsible bottom inventory remains the only interactive layout. `PuzzleBoardPanel` already observes its viewport with `ResizeObserver` and recalculates fit zoom when the board column changes.
+Change board metrics to use the actual applied tray width:
 
-### 4. Fresh Rotation Shuffle
+```ts
+getResponsivePuzzleBoardMetrics(puzzle, viewport, trayWidth)
+```
 
-The existing `createRotations(puzzleId, pieceIds)` interface and virtual E2E override remain unchanged. Production changes only `buildRotations`:
+For desktop tiers:
 
-- Call `generateRandomRotations([...pieceIds])` without the puzzle-derived deterministic seed.
-- Return a cloned record containing valid `0 | 90 | 180 | 270` values for every requested piece.
-- If a non-empty generated mapping is entirely `0`, set the first requested piece to `90` so rotation-enabled play is visibly scrambled.
+```text
+desktopWidthCap = max(
+  minimum board pixel width,
+  viewportWidthCap - trayWidth - DESKTOP_TRAY_SEPARATOR_WIDTH
+)
+```
 
-`PuzzleSession` already calls this factory when setup is configured with rotation enabled and after Restart followed by setup configuration. Restored sessions keep persisted `pieceRotations`, so no session or persistence work is needed.
+Delete `DESKTOP_SIDE_PANEL_COLUMNS`, `DESKTOP_LAYOUT_RESERVE`, and the `1 + 3 / gridCols` circular solve.
 
-Production randomness is tested with a mocked `generateRandomRotations`; no test asserts on `Math.random` or probabilistic inequality.
+The route owns:
 
-### 5. Clear Hint Relationship
+- `requestedTrayWidth`: the player's preference for the current puzzle.
+- measured `gameLayoutWidth`.
+- `appliedTrayWidth`: projection of `requestedTrayWidth` through `clampTrayWidth`.
+- pointer/keyboard interaction state.
 
-Hint policy remains unchanged. A successful hint continues to use the existing `hint_target` event, piece ID, target coordinates, filter reset, and live-region announcement.
+Clamping does **not** overwrite `requestedTrayWidth`. If the viewport shrinks and then grows, the applied tray returns to the player's prior request.
 
-Presentation changes:
+On puzzle load, `requestedTrayWidth` resets to `getDefaultPuzzleTrayWidth(...)`.
 
-- The matching tray slot receives a strong `--gold` / `--gold-glow` treatment and a visible non-interactive `HINT` badge.
-- The board target uses the same gold visual language.
-- On mobile, a hint opens a collapsed inventory drawer.
-- After the drawer/filter rerender, the panel scrolls the hinted slot into view with `scrollIntoView({ block: 'nearest', inline: 'nearest' })`.
-- The hinted piece becomes the inventory roving tab-stop candidate, but the code never calls `.focus()` and never invokes selection/rotation/placement callbacks.
-- The hint remains active until the hinted piece is successfully placed, another hint replaces it, or transient gameplay state is cleared by Pause, Exit, Restart, Discard, puzzle navigation, or teardown.
-- Selection alone does not clear the hint.
+The route passes `appliedTrayWidth` to `getResponsivePuzzleBoardMetrics(...)` and always emits:
 
-The route removes `HINT_DURATION_MS`, `hintTimeout`, and all timeout cleanup. `activeHintPieceId` plus `activeHintTarget` remain route-local presentation state.
+```css
+--tray-width: <applied width>;
+```
 
-`docs/PRD.md` must be updated in the implementation change so its two 1.8-second hint descriptions and deterministic/seeded rotation wording do not contradict the new behavior.
+outside the `currentBoardMetrics ? ... : ''` conditional so the split width exists before board metrics are ready.
+
+Pointer behavior composes with the route's current global Hold-to-Peek cleanup:
+
+- add only a new window `pointermove`;
+- extend the existing capture-phase `pointerup` / `pointercancel`;
+- extend existing blur cleanup;
+- ignore non-matching pointer IDs;
+- no pointer capture.
+
+Below 1024px the separator is hidden and non-interactive.
+
+### 4. Rotation Shuffle
+
+Keep `createRotations(puzzleId, pieceIds)` unchanged.
+
+Production `buildRotations`:
+
+```ts
+function buildRotations(
+  _puzzleId: string,
+  pieceIds: readonly number[]
+): Record<number, Rotation> {
+  const rotations = generateRandomRotations([...pieceIds]);
+
+  if (pieceIds.length > 0 && pieceIds.every((id) => rotations[id] === 0)) {
+    rotations[pieceIds[0]!] = 90;
+  }
+
+  return rotations;
+}
+```
+
+No local hash/seed. No extra clone: `generateRandomRotations` already creates a fresh record and the session validates/clones factory output at its boundary.
+
+### 5. Hint Relationship and Lifetime
+
+A hint keeps the existing piece choice, filter reset, target event, counter semantics, and announcement.
+
+Presentation:
+
+- tray slot uses `--gold` / `--gold-glow`;
+- visible non-interactive `HINT` badge;
+- board target uses the same gold visual language;
+- collapsed mobile drawer opens;
+- hinted piece becomes the inventory roving candidate;
+- no `.focus()`, `onSelect`, `onRotate`, or placement callback.
+
+Reveal must happen **after DOM update**:
+
+1. set `drawerOpen = true`;
+2. set `activePieceId = pieceId`;
+3. `await tick()`;
+4. confirm `activeHintPieceId` still matches;
+5. call `scrollIntoView({ block: 'nearest', inline: 'nearest' })`.
+
+Hint lifetime:
+
+- `handlePiecePlaced` no longer clears the hint before `attempt_placement`.
+- `placement_rejected` leaves the hint intact.
+- `placement_accepted` clears the hint when `event.pieceId === activeHintPieceId`.
+- another `hint_target` replaces it;
+- Pause/Exit/Restart/Discard/navigation/teardown clear it through existing transient cleanup.
+- Undo/Redo and selection alone do not clear it.
+
+Remove `HINT_DURATION_MS`, `hintTimeout`, and all timeout scheduling/cleanup.
+
+Update `docs/PRD.md` in the implementation PR so the 1.8-second wording and seeded-rotation wording do not contradict the shipped behavior.
 
 ## Architecture and Ownership
 
-### Puzzle route
-
-`apps/web/src/routes/puzzle/[id]/+page.svelte` owns:
-
-- Restored-entry policy.
-- Direct save-and-exit composition.
-- Gameplay discard orchestration.
-- Route-local tray width and pointer/keyboard resize state.
-- Hint lifetime.
-
-The restore and exit/discard changes are implemented in one route pass so the file is not repeatedly rewritten around the same lifecycle code.
-
-### Layout helper
-
-`apps/web/src/lib/services/puzzleLayout.ts` owns the small pure `clampTrayWidth` calculation beside existing responsive puzzle metrics. This is not a split-pane abstraction; it exists only to make the numeric board/tray invariant testable without DOM event handlers.
-
-### Dialog components
-
-`SessionPauseDialog.svelte` adds `onDiscard`. `DiscardSessionDialog.svelte` owns destructive confirmation presentation and is reused by gameplay and home callers.
-
-### Home page
-
-`apps/web/src/routes/+page.svelte` owns the selected discard target. It clears progress through `createSessionStorageAdapter()` and recomputes through `discoverGalleryProgress()`. The existing `<main>` becomes inert/aria-hidden while the discard dialog is open, and `DiscardSessionDialog` renders as a sibling after `</main>` so underlying Continue/filter/card controls are not reachable.
-
-### Gameplay runtime
-
-`apps/web/src/lib/services/gameplay/runtime.ts` remains the sole production factory for tray order, run IDs, and orientations. Randomness does not enter `PuzzleSession` directly.
-
-### Inventory and board
-
-`PuzzleInventoryPanel.svelte` owns drawer opening and DOM reveal because it owns the tray scroll container and slot elements. `PuzzleBoard.svelte` only aligns destination styling.
-
-## Error Handling
-
-- Existing session serialization and storage fallback behavior remain authoritative; Exit does not create a second persistence path.
-- Discard preserves the current stop/dispose/clear ordering so unmount/page teardown cannot recreate deleted progress.
-- Clearing an already-missing home session still closes the dialog and recomputes gallery progress.
-- A missing hinted slot is a no-op; the code must not throw or steal focus.
-- Tray resize ignores unrelated pointer IDs and ignores resize requests until a positive layout measurement exists.
+- **Puzzle route:** restore/exit/discard orchestration, requested tray width, measured layout width, splitter pointer/keyboard state, hint lifetime.
+- **`puzzleLayout.ts`:** desktop split constants, default tray width, pure clamp, board metrics with actual tray reservation.
+- **`SessionPauseDialog` / `DiscardSessionDialog`:** presentation only.
+- **Home route:** discard target + existing storage/discovery calls.
+- **Gameplay runtime:** production orientation generation.
+- **Inventory:** drawer/render/scroll reveal.
+- **Board:** target styling only.
 
 ## Accessibility
 
-- Timed restore retains explicit player-controlled resume; Relaxed restore removes an unnecessary modal.
-- Discard confirmation traps focus and supports Escape cancellation.
-- Home/gameplay content is inert while discard confirmation is open.
-- The resizer is keyboard operable and exposes a coherent numeric ARIA range.
-- Hint styling is not the only cue: a visible `HINT` badge plus the existing live announcement identifies the exact piece and target coordinates.
-- Hint reveal may scroll and update roving state but never forces keyboard focus.
+- Timed restore keeps explicit resume.
+- Relaxed restore removes an unnecessary modal.
+- Discard dialog keeps the existing full-screen scrim, `modalFocus`, Escape cancellation, safe-area padding, and `aria-modal`.
+- Home/gameplay underlay is inert while confirming.
+- Separator has `role="separator"`, vertical orientation, keyboard Arrow/Home/End behavior, and coherent numeric ARIA values based on **applied** width.
+- Hint has both visual badge and existing live announcement; reveal never steals focus.
+
+## Risks and Mitigations
+
+### Board/tray sizing drift
+
+**Risk:** CSS tray width and board metrics reserve different widths, creating dead board space or unnecessary downscaling.
+
+**Mitigation:** delete the old three-column board solve, pass the applied tray width into `getResponsivePuzzleBoardMetrics`, and test board width changes as tray width changes.
+
+### Default tray regression on coarse puzzles
+
+**Risk:** a fixed 360px default can be narrower than today's three-column tray when puzzle pieces are large.
+
+**Mitigation:** derive initial requested width from the larger of 360px and the old three-column visual footprint. Keep slot size board-derived; the feature goal is reduced scrolling, not larger thumbnails.
+
+### Requested width lost on viewport shrink
+
+**Risk:** mutating stored width during clamp causes a temporary narrow viewport to permanently overwrite the player's chosen width.
+
+**Mitigation:** store `requestedTrayWidth` and derive `appliedTrayWidth`; test shrink → re-widen restores the request.
+
+### Hint reveal before drawer render
+
+**Risk:** synchronous `scrollIntoView` on a `display:none` drawer is a no-op.
+
+**Mitigation:** `await tick()` and test that the inventory body is visible when scroll is invoked.
+
+### Hint consumed by rejection
+
+**Risk:** clearing before placement dispatch removes a paid hint on an incorrect attempt.
+
+**Mitigation:** clear only from `placement_accepted`; add rejection-retains-hint coverage.
+
+### Splitter integration coverage
+
+**Risk:** pointer-ID splitter logic can regress without running in the default E2E gate.
+
+**Mitigation:** put one `@smoke` desktop-only resizer/hint test **outside** the `@extended` describe so both `test:e2e` (`--grep-invert @extended`) and the smoke gate can select it.
 
 ## Testing Strategy
 
-### Vitest / browser tests
+### Unit / browser tests
 
-- `SessionDialogs.svelte.test.ts`: migrate from `ExitSessionDialog` to discard-only confirmation; Pause forwards Discard; outer scrim/focus/Escape behavior remains covered.
-- Puzzle route test: add a `restoredModeState` because the current snapshot mock hardcodes `mode: 'timed'`; cover the full Timed/Relaxed restore table; migrate every old Exit Mission / Save & Exit test; preserve the discard-unmount regression; test direct Exit and exact cancel-discard presentation.
-- `puzzleLayout.test.ts`: cover min clamp, feasible max/board floor, and the `<800px` conflict policy.
-- Puzzle route layout tests: stub positive `.game-layout.clientWidth`, cover keyboard/pointer resizing, viewport reclamping, and mobile-hidden separator while keeping existing Hold-to-Peek pointer-release tests green.
-- `PuzzleInventoryPanel.svelte.test.ts`: drawer opening, gold hint/badge, `scrollIntoView`, roving update without focus/select, and hinted-over-rejected precedence.
-- Home route test: Continue panel Discard, inert main, cancel, clear, and rediscovery.
-- `runtime.test.ts`: mock `generateRandomRotations`, assert invocation/output cloning/all-upright correction, and keep virtual override coverage.
+- `SessionDialogs.svelte.test.ts`: migrate old Exit dialog tests; full scrim, Escape, confirm/cancel, Pause Discard callback.
+- Puzzle route tests: full restore table, migrate all five old Exit contracts, preserve discard-unmount regression, remove dead `resumableState`/`isResumable` test plumbing, hint rejection retention, successful-placement clearing.
+- `puzzleLayout.test.ts`: default tray width dense/coarse cases, clamp min/max/conflict, board width reservation using actual tray width.
+- Route layout tests: requested-vs-applied width, keyboard/pointer IDs, shrink/re-widen restoration, mobile hidden separator, Hold-to-Peek regression.
+- Inventory tests: `tick`-ordered reveal, drawer visible at scroll time, badge/gold styling state, roving update without focus/select.
+- Home tests: Discard, inert `<main>`, cancel, clear, rediscovery.
+- `runtime.test.ts`: mocked fresh calls and all-upright bump; no clone-artifact test.
 
-### Playwright
+### E2E
 
-Extend existing specs rather than creating a new fixture family:
-
-- `gameplay-session-controls.spec.ts`: Relaxed restore bypasses Resume Mission; Timed restore still requires it; direct Exit saves/navigates; Pause Discard confirms and deletes.
-- `gameplay-large-fixtures.spec.ts`: one chromium-desktop-only resizer/hint scenario using `seedPreferences: IMMEDIATE_START` so the mandatory setup dialog does not keep the page inert. The test can select a late tray piece, return the tray scroll to the top, request Hint, and verify the piece/target are revealed.
+- `gameplay-session-controls.spec.ts`: Relaxed restore no popup, Timed restore popup, direct Exit, Pause Discard.
+- `gameplay-large-fixtures.spec.ts`: keep the existing extended suite; add a **separate, non-`@extended` `@smoke` test** outside that describe, desktop-only via `test.skip`, using `IMMEDIATE_START` and a 100-piece fixture to exercise splitter drag plus offscreen hint reveal.
 
 ## Acceptance Criteria
 
-1. Restored Relaxed active or paused runs enter gameplay without `Resume Mission`.
-2. Restored Timed active or paused runs still show `Resume Mission`.
-3. Every existing Exit entry saves and returns home without an Exit Mission popup.
-4. Pause/Resume exposes Discard, which requires confirmation.
-5. Canceling gameplay discard returns to the exact prior `Mission Paused` or `Resume Mission` presentation.
-6. Confirming gameplay discard clears progress, navigates home, and cannot be undone by route teardown re-saving the snapshot.
-7. The home Continue panel exposes Discard; the underlying `<main>` is inert while confirming; confirmation recomputes gallery progress.
-8. Desktop tray defaults to `360px`, remains at least `300px`, and preserves a `480px` board floor whenever the measured layout can satisfy both minimums.
-9. For an infeasible layout below `800px`, the clamp deliberately preserves the `300px` tray minimum; the production desktop breakpoint normally avoids this state.
-10. Separator pointer/keyboard resizing works, reclamps after layout shrink, and does not disturb Hold-to-Peek pointer cleanup.
-11. The separator is non-interactive/hidden on mobile.
-12. Newly configured/restarted rotation-enabled runs request fresh orientation mappings; restored runs retain persisted orientations.
-13. A non-empty rotation-enabled run never starts entirely upright.
-14. Hint reveals and strongly marks the corresponding tray piece without selecting or focusing it, while the board target uses the same gold cue.
-15. Hint remains until placement, replacement, or lifecycle cleanup, and `docs/PRD.md` describes that lifetime accurately.
+1. Restored Relaxed active/paused runs enter gameplay without `Resume Mission`.
+2. Restored Timed active/paused runs still show `Resume Mission`.
+3. All existing Exit entry points save and return home without an Exit-choice dialog.
+4. Pause/Resume exposes confirmed Discard; cancel returns to the exact prior presentation.
+5. Gameplay discard cannot be undone by teardown re-saving the cleared snapshot.
+6. Home Continue exposes confirmed Discard and makes the underlying `<main>` inert.
+7. Desktop initial tray width is never narrower than the new 360px baseline or the prior three-column footprint for that puzzle/viewport.
+8. Tray resizing reduces scrolling by showing more board-cell-sized pieces; this task does not independently enlarge thumbnails.
+9. Board metrics reserve the **applied** tray width and no longer use the old `1 + 3/gridCols` solve.
+10. A temporary layout shrink does not overwrite requested tray width; re-widening restores the player's requested width.
+11. Separator pointer/keyboard interaction preserves Hold-to-Peek cleanup and is hidden on mobile.
+12. Rotation-enabled setup/restart gets a fresh orientation mapping; restored sessions retain persisted rotations; non-empty generated mappings are not all upright.
+13. Rejected placement of the hinted piece keeps the hint.
+14. Successful placement of the hinted piece clears it.
+15. Hint reveal occurs after the drawer/filter DOM update, scrolls the piece into view, and does not focus/select it.
+16. The default automated E2E gate runs the desktop splitter/hint smoke path.
+17. `docs/PRD.md` reflects persistent hint lifetime and fresh per-run rotation initialization.
