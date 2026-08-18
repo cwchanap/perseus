@@ -8,6 +8,16 @@ import { listQuick } from '$lib/services/quickPuzzle';
 import type { StoredQuickPuzzle } from '$lib/services/quickPuzzle/types';
 import { discoverGalleryProgress } from '$lib/services/gameplay/galleryProgress';
 
+const sessionStorageSpies = vi.hoisted(() => ({
+	clearSession: vi.fn()
+}));
+
+vi.mock('$lib/services/gameplay/session/persistence', () => ({
+	createSessionStorageAdapter: () => ({
+		clearSession: sessionStorageSpies.clearSession
+	})
+}));
+
 vi.mock('$lib/services/api', () => {
 	class MockApiError extends Error {
 		status: number;
@@ -242,6 +252,87 @@ describe('Gallery Page', () => {
 			.element(panel.getByRole('link', { name: 'CONTINUE' }))
 			.toHaveAttribute('href', '/puzzle/q-local');
 		expect(document.querySelectorAll('[data-testid="puzzle-card"]')).toHaveLength(0);
+	});
+
+	it('makes main inert while home discard confirmation is open', async () => {
+		const progress = {
+			puzzleId: 'p1',
+			name: 'Resume Me',
+			source: 'api' as const,
+			placedCount: 2,
+			pieceCount: 4,
+			lastUpdated: 2_000
+		};
+		mockedDiscoverGalleryProgress.mockReturnValue({
+			byPuzzleId: new Map([['p1', progress]]),
+			newest: progress
+		});
+
+		render(GalleryPage);
+		await page.getByRole('button', { name: 'Discard saved progress' }).click();
+
+		const main = document.querySelector('main')!;
+		expect(main.hasAttribute('inert')).toBe(true);
+		expect(main.getAttribute('aria-hidden')).toBe('true');
+		await expect
+			.element(page.getByRole('dialog', { name: 'Discard saved progress' }))
+			.toBeVisible();
+	});
+
+	it('clears and rediscovers progress after confirmed home discard', async () => {
+		const progress = {
+			puzzleId: 'p1',
+			name: 'Resume Me',
+			source: 'api' as const,
+			placedCount: 2,
+			pieceCount: 4,
+			lastUpdated: 2_000
+		};
+		mockedDiscoverGalleryProgress
+			.mockReturnValueOnce({ byPuzzleId: new Map([['p1', progress]]), newest: progress })
+			.mockReturnValue({ byPuzzleId: new Map([['p1', progress]]), newest: progress });
+
+		render(GalleryPage);
+		await expect
+			.element(page.getByRole('button', { name: 'Discard saved progress' }))
+			.toBeVisible();
+		mockedDiscoverGalleryProgress.mockReturnValue({ byPuzzleId: new Map(), newest: null });
+		await page.getByRole('button', { name: 'Discard saved progress' }).click();
+		await page
+			.getByRole('dialog', { name: 'Discard saved progress' })
+			.getByRole('button', { name: 'Discard' })
+			.click();
+
+		expect(sessionStorageSpies.clearSession).toHaveBeenCalledWith('p1');
+		await expect.poll(() => page.getByTestId('continue-on-device').query()).toBeNull();
+	});
+
+	it('cancels home discard without clearing and keeps Continue visible', async () => {
+		const progress = {
+			puzzleId: 'p1',
+			name: 'Resume Me',
+			source: 'api' as const,
+			placedCount: 2,
+			pieceCount: 4,
+			lastUpdated: 2_000
+		};
+		mockedDiscoverGalleryProgress.mockReturnValue({
+			byPuzzleId: new Map([['p1', progress]]),
+			newest: progress
+		});
+
+		render(GalleryPage);
+		await page.getByRole('button', { name: 'Discard saved progress' }).click();
+		await page
+			.getByRole('dialog', { name: 'Discard saved progress' })
+			.getByRole('button', { name: 'Cancel' })
+			.click();
+
+		expect(sessionStorageSpies.clearSession).not.toHaveBeenCalled();
+		const main = document.querySelector('main')!;
+		expect(main.hasAttribute('inert')).toBe(false);
+		expect(main.getAttribute('aria-hidden')).not.toBe('true');
+		await expect.element(page.getByTestId('continue-on-device')).toBeVisible();
 	});
 
 	it('shows empty state when total is 0 and no query is active', async () => {

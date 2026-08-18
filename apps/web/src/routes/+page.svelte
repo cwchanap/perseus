@@ -5,15 +5,20 @@
 	import PuzzleCard from '$lib/components/PuzzleCard.svelte';
 	import CategoryFilter from '$lib/components/CategoryFilter.svelte';
 	import SearchBar from '$lib/components/SearchBar.svelte';
+	import DiscardSessionDialog from '$lib/components/DiscardSessionDialog.svelte';
 	import { listQuick } from '$lib/services/quickPuzzle';
 	import type { StoredQuickPuzzle } from '$lib/services/quickPuzzle/types';
 	import {
 		discoverGalleryProgress,
+		type GalleryProgress,
 		type GalleryProgressDiscovery
 	} from '$lib/services/gameplay/galleryProgress';
+	import { createSessionStorageAdapter } from '$lib/services/gameplay/session/persistence';
 	import { CATEGORY_ALL } from '$lib/constants/categories';
 	import type { PuzzleCategory } from '$lib/constants/categories';
 	import { resolve } from '$app/paths';
+
+	const sessionStorageAdapter = createSessionStorageAdapter();
 
 	let puzzles: PuzzleSummary[] = $state([]);
 	let loading = $state(true);
@@ -28,6 +33,7 @@
 	let scrollSentinel = $state<HTMLDivElement | null>(null);
 	let nextCursor: string | undefined = $state(undefined);
 	let quickPuzzles: StoredQuickPuzzle[] = $state([]);
+	let discardTarget = $state<GalleryProgress | null>(null);
 	let localProgress: GalleryProgressDiscovery = $state({
 		byPuzzleId: new Map(),
 		newest: null
@@ -154,6 +160,18 @@
 		debouncedQuery = '';
 		selectedCategory = CATEGORY_ALL;
 	}
+
+	function confirmDiscardProgress(): void {
+		const target = discardTarget;
+		if (!target) return;
+
+		sessionStorageAdapter.clearSession(target.puzzleId);
+		discardTarget = null;
+		localProgress = discoverGalleryProgress({
+			serverPuzzles: puzzles,
+			quickPuzzles
+		});
+	}
 </script>
 
 <svelte:head>
@@ -161,6 +179,8 @@
 </svelte:head>
 
 <main
+	inert={discardTarget !== null}
+	aria-hidden={discardTarget !== null}
 	class="min-h-screen bg-(--bg-0)
 [background-image:linear-gradient(rgba(0,240,255,0.025)_1px,transparent_1px),linear-gradient(90deg,rgba(0,240,255,0.025)_1px,transparent_1px)]
 [background-size:48px_48px]"
@@ -248,6 +268,13 @@ font-black tracking-[0.06em] text-(--text-0) uppercase"
 				>
 					CONTINUE
 				</a>
+				<button
+					type="button"
+					aria-label="Discard saved progress"
+					onclick={() => (discardTarget = localProgress.newest)}
+				>
+					DISCARD
+				</button>
 			</section>
 		{/if}
 
@@ -426,3 +453,11 @@ hover:bg-[rgba(255,0,102,0.08)]"
 		{/if}
 	</div>
 </main>
+
+{#if discardTarget}
+	<DiscardSessionDialog
+		puzzleName={discardTarget.name}
+		onConfirm={confirmDiscardProgress}
+		onCancel={() => (discardTarget = null)}
+	/>
+{/if}
