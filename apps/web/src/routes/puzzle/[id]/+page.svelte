@@ -23,6 +23,11 @@
 	} from '$lib/services/gameplay/session/preferences';
 	import { resolve } from '$app/paths';
 	import {
+		DESKTOP_TRAY_BASE_WIDTH,
+		DESKTOP_TRAY_MIN_WIDTH,
+		DESKTOP_TRAY_SEPARATOR_WIDTH,
+		clampTrayWidth,
+		getDefaultPuzzleTrayWidth,
 		getResponsivePuzzleBoardMetrics,
 		type ResponsivePuzzleBoardMetrics
 	} from '$lib/services/puzzleLayout';
@@ -80,6 +85,16 @@
 	let referenceHoldSource = $state<'pointer' | 'keyboard' | null>(null);
 	let viewportWidth = $state(typeof window !== 'undefined' ? window.innerWidth : 1280);
 	let viewportHeight = $state(typeof window !== 'undefined' ? window.innerHeight : 900);
+	let gameLayoutElement = $state<HTMLElement | null>(null);
+	let gameLayoutWidth = $state(0);
+	let requestedTrayWidth = $state(DESKTOP_TRAY_BASE_WIDTH);
+	let trayResizePointerId = $state<number | null>(null);
+	let trayResizeStartX = $state(0);
+	let trayResizeStartWidth = $state(DESKTOP_TRAY_BASE_WIDTH);
+
+	const appliedTrayWidth = $derived(
+		gameLayoutWidth > 0 ? clampTrayWidth(gameLayoutWidth, requestedTrayWidth) : requestedTrayWidth
+	);
 
 	// Route-owned polite status region: the single synchronous announcement
 	// source for gameplay feedback, rendered outside the inert page subtree so
@@ -139,6 +154,7 @@
 	if (typeof window !== 'undefined') {
 		window.addEventListener('pointerup', handleWindowPointerUp, true);
 		window.addEventListener('pointercancel', handleWindowPointerUp, true);
+		window.addEventListener('pointermove', handleWindowPointerMove);
 		window.addEventListener('keydown', handleWindowKeyDown);
 		window.addEventListener('blur', handleWindowBlur);
 		window.addEventListener('resize', handleWindowResize);
@@ -202,6 +218,7 @@
 		if (typeof window !== 'undefined') {
 			window.removeEventListener('pointerup', handleWindowPointerUp, true);
 			window.removeEventListener('pointercancel', handleWindowPointerUp, true);
+			window.removeEventListener('pointermove', handleWindowPointerMove);
 			window.removeEventListener('keydown', handleWindowKeyDown);
 			window.removeEventListener('blur', handleWindowBlur);
 			window.removeEventListener('resize', handleWindowResize);
@@ -276,12 +293,27 @@
 	);
 	const boardMetrics: ResponsivePuzzleBoardMetrics | null = $derived(
 		puzzle
-			? getResponsivePuzzleBoardMetrics(puzzle, {
-					width: viewportWidth,
-					height: viewportHeight
-				})
+			? getResponsivePuzzleBoardMetrics(
+					puzzle,
+					{ width: viewportWidth, height: viewportHeight },
+					appliedTrayWidth
+				)
 			: null
 	);
+
+	$effect(() => {
+		const layout = gameLayoutElement;
+		if (!layout) return;
+
+		const update = () => {
+			gameLayoutWidth = layout.clientWidth;
+		};
+		update();
+
+		const observer = new ResizeObserver(update);
+		observer.observe(layout);
+		return () => observer.disconnect();
+	});
 
 	function requestBoardViewReset(): void {
 		boardViewResetVersion += 1;
@@ -302,6 +334,17 @@
 	function handleWindowResize() {
 		viewportWidth = window.innerWidth;
 		viewportHeight = window.innerHeight;
+		if (gameLayoutElement) gameLayoutWidth = gameLayoutElement.clientWidth;
+	}
+
+	function setRequestedTrayWidth(width: number): void {
+		if (gameLayoutWidth <= 0) return;
+		requestedTrayWidth = clampTrayWidth(gameLayoutWidth, width);
+	}
+
+	function currentMaxTrayWidth(): number {
+		if (gameLayoutWidth <= 0) return Math.max(DESKTOP_TRAY_MIN_WIDTH, appliedTrayWidth);
+		return clampTrayWidth(gameLayoutWidth, Number.POSITIVE_INFINITY);
 	}
 
 	function isPiecePlaced(pieceId: number): boolean {
@@ -620,6 +663,10 @@
 			const restored = loadResult.status === 'loaded' ? loadResult.snapshot : undefined;
 
 			puzzle = loadedPuzzle;
+			requestedTrayWidth = getDefaultPuzzleTrayWidth(loadedPuzzle, {
+				width: viewportWidth,
+				height: viewportHeight
+			});
 			// Restore the celebration modal for a previously completed session
 			// so the user retains access to Play Again and retry controls.
 			// Fresh sessions start without the modal. (The
@@ -880,12 +927,50 @@
 		if (referenceHoldSource === 'pointer' && referencePointerId === event.pointerId) {
 			clearReferenceHold();
 		}
+		if (trayResizePointerId === event.pointerId) {
+			trayResizePointerId = null;
+		}
+	}
+
+	function handleWindowPointerMove(event: PointerEvent): void {
+		if (trayResizePointerId !== event.pointerId) return;
+		const deltaX = event.clientX - trayResizeStartX;
+		setRequestedTrayWidth(trayResizeStartWidth - deltaX);
+	}
+
+	function handleTrayResizePointerDown(event: PointerEvent): void {
+		if (event.pointerType === 'mouse' && event.button !== 0) return;
+		trayResizePointerId = event.pointerId;
+		trayResizeStartX = event.clientX;
+		trayResizeStartWidth = requestedTrayWidth;
+	}
+
+	function handleTrayResizeKeyDown(event: KeyboardEvent): void {
+		switch (event.key) {
+			case 'ArrowLeft':
+				event.preventDefault();
+				setRequestedTrayWidth(appliedTrayWidth + 16);
+				break;
+			case 'ArrowRight':
+				event.preventDefault();
+				setRequestedTrayWidth(appliedTrayWidth - 16);
+				break;
+			case 'Home':
+				event.preventDefault();
+				setRequestedTrayWidth(DESKTOP_TRAY_MIN_WIDTH);
+				break;
+			case 'End':
+				event.preventDefault();
+				setRequestedTrayWidth(currentMaxTrayWidth());
+				break;
+		}
 	}
 
 	function handleWindowBlur() {
 		// Hold ends on blur; the persistent Toggle survives because
 		// clearReferenceHold only clears a hold mode.
 		clearReferenceHold();
+		trayResizePointerId = null;
 		sessionStore?.dispatch({ type: 'cancel_selection' });
 	}
 
@@ -1248,11 +1333,14 @@
 			{@const currentBoardMetrics = boardMetrics}
 			{@const source = puzzleSource!}
 			<div
+				bind:this={gameLayoutElement}
 				class="game-layout"
 				data-board-tier={currentBoardMetrics?.tier}
-				style={currentBoardMetrics
-					? `--board-width: ${currentBoardMetrics.boardWidth}px; --board-height: ${currentBoardMetrics.boardHeight}px; --board-cell-size: ${currentBoardMetrics.cellSize}px; --piece-slot-size: ${currentBoardMetrics.pieceSlotSize}px;`
-					: ''}
+				style={`--tray-width: ${appliedTrayWidth}px; --tray-resizer-width: ${DESKTOP_TRAY_SEPARATOR_WIDTH}px; ${
+					currentBoardMetrics
+						? `--board-width: ${currentBoardMetrics.boardWidth}px; --board-height: ${currentBoardMetrics.boardHeight}px; --board-cell-size: ${currentBoardMetrics.cellSize}px; --piece-slot-size: ${currentBoardMetrics.pieceSlotSize}px;`
+						: ''
+				}`}
 			>
 				<!-- Board panel -->
 				<PuzzleBoardPanel
@@ -1284,6 +1372,22 @@
 					onPause={handleToolbarPause}
 					onOpenSetup={() => showMissionSetup(false)}
 				/>
+
+				<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+				<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+				<div
+					class="tray-resizer"
+					data-testid="tray-resizer"
+					role="separator"
+					aria-label="Resize puzzle tray"
+					aria-orientation="vertical"
+					aria-valuemin={DESKTOP_TRAY_MIN_WIDTH}
+					aria-valuemax={Math.round(currentMaxTrayWidth())}
+					aria-valuenow={Math.round(appliedTrayWidth)}
+					tabindex="0"
+					onpointerdown={handleTrayResizePointerDown}
+					onkeydown={handleTrayResizeKeyDown}
+				></div>
 
 				<!-- Inventory panel -->
 				<PuzzleInventoryPanel
@@ -1629,12 +1733,21 @@
 		.game-layout {
 			grid-template-columns:
 				minmax(0, 1fr)
-				minmax(
-					17.5rem,
-					calc(
-						var(--piece-slot-size) * 3 + var(--inventory-gap) * 2 + var(--inventory-pad) * 2 + 2px
-					)
-				);
+				var(--tray-resizer-width)
+				var(--tray-width);
+			column-gap: 0;
+		}
+
+		.tray-resizer {
+			display: block;
+			cursor: col-resize;
+			touch-action: none;
+		}
+	}
+
+	@media (max-width: 1023px) {
+		.tray-resizer {
+			display: none;
 		}
 	}
 

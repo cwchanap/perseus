@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { getPuzzleBoardViewportTier, getResponsivePuzzleBoardMetrics } from './puzzleLayout';
+import {
+	DESKTOP_TRAY_BASE_WIDTH,
+	clampTrayWidth,
+	getDefaultPuzzleTrayWidth,
+	getPuzzleBoardViewportTier,
+	getResponsivePuzzleBoardMetrics
+} from './puzzleLayout';
 
 const portraitPuzzle = {
 	imageWidth: 150,
@@ -25,22 +31,38 @@ describe('puzzle layout', () => {
 	});
 
 	it('sizes the board from the viewport tier instead of source image pixels', () => {
-		const small = getResponsivePuzzleBoardMetrics(portraitPuzzle, {
-			width: 390,
-			height: 844
-		});
-		const medium = getResponsivePuzzleBoardMetrics(portraitPuzzle, {
-			width: 800,
-			height: 900
-		});
-		const large = getResponsivePuzzleBoardMetrics(portraitPuzzle, {
-			width: 1280,
-			height: 900
-		});
-		const extraLarge = getResponsivePuzzleBoardMetrics(portraitPuzzle, {
-			width: 1600,
-			height: 1000
-		});
+		const small = getResponsivePuzzleBoardMetrics(
+			portraitPuzzle,
+			{
+				width: 390,
+				height: 844
+			},
+			DESKTOP_TRAY_BASE_WIDTH
+		);
+		const medium = getResponsivePuzzleBoardMetrics(
+			portraitPuzzle,
+			{
+				width: 800,
+				height: 900
+			},
+			DESKTOP_TRAY_BASE_WIDTH
+		);
+		const large = getResponsivePuzzleBoardMetrics(
+			portraitPuzzle,
+			{
+				width: 1280,
+				height: 900
+			},
+			DESKTOP_TRAY_BASE_WIDTH
+		);
+		const extraLarge = getResponsivePuzzleBoardMetrics(
+			portraitPuzzle,
+			{
+				width: 1600,
+				height: 1000
+			},
+			DESKTOP_TRAY_BASE_WIDTH
+		);
 
 		expect(small.boardWidth).toBeGreaterThan(portraitPuzzle.imageWidth);
 		expect(medium.boardWidth).toBeGreaterThan(small.boardWidth);
@@ -49,10 +71,14 @@ describe('puzzle layout', () => {
 	});
 
 	it('keeps board cells square when image aspect matches grid aspect', () => {
-		const metrics = getResponsivePuzzleBoardMetrics(portraitPuzzle, {
-			width: 1280,
-			height: 900
-		});
+		const metrics = getResponsivePuzzleBoardMetrics(
+			portraitPuzzle,
+			{
+				width: 1280,
+				height: 900
+			},
+			DESKTOP_TRAY_BASE_WIDTH
+		);
 
 		expect(metrics.boardWidth).toBeCloseTo(metrics.cellSize * portraitPuzzle.gridCols);
 		expect(metrics.boardHeight).toBeCloseTo(metrics.cellSize * portraitPuzzle.gridRows);
@@ -60,10 +86,14 @@ describe('puzzle layout', () => {
 	});
 
 	it('preserves image-derived aspect ratio for mismatched image/grid', () => {
-		const metrics = getResponsivePuzzleBoardMetrics(mismatchedPuzzle, {
-			width: 1600,
-			height: 1000
-		});
+		const metrics = getResponsivePuzzleBoardMetrics(
+			mismatchedPuzzle,
+			{
+				width: 1600,
+				height: 1000
+			},
+			DESKTOP_TRAY_BASE_WIDTH
+		);
 
 		const expectedAspect = mismatchedPuzzle.imageWidth / mismatchedPuzzle.imageHeight;
 		const actualAspect = metrics.boardWidth / metrics.boardHeight;
@@ -71,5 +101,52 @@ describe('puzzle layout', () => {
 		expect(actualAspect).toBeCloseTo(expectedAspect, 1);
 		// Board height should NOT be equal to board width for a non-square image
 		expect(metrics.boardHeight).not.toBeCloseTo(metrics.boardWidth);
+	});
+
+	it('widens dense desktop trays beyond the old 17.5rem minimum', () => {
+		const dense = {
+			imageWidth: 1500,
+			imageHeight: 1500,
+			gridCols: 15,
+			gridRows: 15
+		};
+
+		expect(getDefaultPuzzleTrayWidth(dense, { width: 1280, height: 900 })).toBe(
+			DESKTOP_TRAY_BASE_WIDTH
+		);
+	});
+
+	it('does not narrow a coarse three-column tray to 360px', () => {
+		const coarse = {
+			imageWidth: 1200,
+			imageHeight: 900,
+			gridCols: 4,
+			gridRows: 3
+		};
+
+		// Preferred board width is 720, so preferred cell is 180.
+		// Existing tray chrome is 42px: 3 * 180 + 42 = 582.
+		expect(getDefaultPuzzleTrayWidth(coarse, { width: 1280, height: 900 })).toBe(582);
+	});
+
+	it('clamps the requested tray against board and tray minimums', () => {
+		expect(clampTrayWidth(1000, 200)).toBe(300);
+		expect(clampTrayWidth(1000, 700)).toBe(500);
+		expect(clampTrayWidth(760, 360)).toBe(300);
+	});
+
+	it('reduces board width when the applied desktop tray is wider', () => {
+		const puzzle = {
+			imageWidth: 1200,
+			imageHeight: 900,
+			gridCols: 4,
+			gridRows: 3
+		};
+		const viewport = { width: 1280, height: 900 };
+
+		const narrowTray = getResponsivePuzzleBoardMetrics(puzzle, viewport, 360);
+		const wideTray = getResponsivePuzzleBoardMetrics(puzzle, viewport, 580);
+
+		expect(wideTray.boardWidth).toBeLessThan(narrowTray.boardWidth);
 	});
 });
