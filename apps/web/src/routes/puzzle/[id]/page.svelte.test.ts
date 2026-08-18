@@ -3,7 +3,10 @@ import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
 import PuzzlePage from './+page.svelte';
 import type { GameProgress, Puzzle, PuzzlePiece } from '$lib/types/puzzle';
-import { getResponsivePuzzleBoardMetrics } from '$lib/services/puzzleLayout';
+import {
+	DESKTOP_TRAY_BASE_WIDTH,
+	getResponsivePuzzleBoardMetrics
+} from '$lib/services/puzzleLayout';
 
 const mockPageStore = vi.hoisted(() => {
 	type PageValue = {
@@ -393,6 +396,23 @@ async function renderPuzzlePage() {
 	await expect.element(page.getByTestId('puzzle-board')).toBeVisible();
 }
 
+function setDesktopViewport(): () => void {
+	const originalInnerWidth = window.innerWidth;
+	const originalInnerHeight = window.innerHeight;
+	Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1280 });
+	Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 });
+	return () => {
+		Object.defineProperty(window, 'innerWidth', {
+			configurable: true,
+			value: originalInnerWidth
+		});
+		Object.defineProperty(window, 'innerHeight', {
+			configurable: true,
+			value: originalInnerHeight
+		});
+	};
+}
+
 async function selectPiece(pieceId: number) {
 	const piece = await page.getByLabelText(`Puzzle piece ${pieceId}`).element();
 	piece.focus();
@@ -569,7 +589,11 @@ describe('Puzzle route gameplay integration', () => {
 			render(PuzzlePage);
 			await expect.element(page.getByTestId('puzzle-board')).toBeVisible();
 
-			const expected = getResponsivePuzzleBoardMetrics(puzzle, { width: 1280, height: 900 });
+			const expected = getResponsivePuzzleBoardMetrics(
+				puzzle,
+				{ width: 1280, height: 900 },
+				DESKTOP_TRAY_BASE_WIDTH
+			);
 			const boardCanvas = document.querySelector<HTMLElement>('.board-canvas');
 			expect(boardCanvas).not.toBeNull();
 
@@ -600,6 +624,87 @@ describe('Puzzle route gameplay integration', () => {
 				configurable: true,
 				value: originalInnerHeight
 			});
+		}
+	});
+
+	it('applies keyboard tray resizing against measured layout width', async () => {
+		const restoreViewport = setDesktopViewport();
+		try {
+			await renderPuzzlePage();
+			const layout = document.querySelector<HTMLElement>('.game-layout')!;
+			const separator = await page.getByTestId('tray-resizer').element();
+
+			Object.defineProperty(layout, 'clientWidth', { configurable: true, value: 1000 });
+			window.dispatchEvent(new Event('resize'));
+			await expect.poll(() => layout.style.getPropertyValue('--tray-width').trim()).not.toBe('');
+
+			separator.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
+			await expect.poll(() => layout.style.getPropertyValue('--tray-width').trim()).toBe('300px');
+			const appliedWidth = Number.parseFloat(layout.style.getPropertyValue('--tray-width').trim());
+			separator.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+			await expect
+				.poll(() => layout.style.getPropertyValue('--tray-width').trim())
+				.toBe(`${appliedWidth + 16}px`);
+		} finally {
+			restoreViewport();
+		}
+	});
+
+	it('restores the requested tray width after layout shrink and re-widen', async () => {
+		const restoreViewport = setDesktopViewport();
+		try {
+			await renderPuzzlePage();
+			const layout = document.querySelector<HTMLElement>('.game-layout')!;
+			let width = 1100;
+			Object.defineProperty(layout, 'clientWidth', {
+				configurable: true,
+				get: () => width
+			});
+
+			const separator = await page.getByTestId('tray-resizer').element();
+			window.dispatchEvent(new Event('resize'));
+			separator.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
+			await expect.poll(() => layout.style.getPropertyValue('--tray-width').trim()).toBe('600px');
+
+			width = 900;
+			window.dispatchEvent(new Event('resize'));
+			await expect.poll(() => layout.style.getPropertyValue('--tray-width').trim()).toBe('400px');
+
+			width = 1100;
+			window.dispatchEvent(new Event('resize'));
+			await expect.poll(() => layout.style.getPropertyValue('--tray-width').trim()).toBe('600px');
+		} finally {
+			restoreViewport();
+		}
+	});
+
+	it('recomputes board metrics from the applied tray width', async () => {
+		const restoreViewport = setDesktopViewport();
+		try {
+			await renderPuzzlePage();
+			const layout = document.querySelector<HTMLElement>('.game-layout')!;
+			Object.defineProperty(layout, 'clientWidth', { configurable: true, value: 1100 });
+			window.dispatchEvent(new Event('resize'));
+			const separator = await page.getByTestId('tray-resizer').element();
+
+			separator.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
+			await expect.poll(() => layout.style.getPropertyValue('--tray-width').trim()).toBe('300px');
+			const before = document
+				.querySelector<HTMLElement>('.board-canvas')!
+				.style.getPropertyValue('--board-width');
+
+			separator.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
+			await expect.poll(() => layout.style.getPropertyValue('--tray-width').trim()).toBe('600px');
+
+			await expect
+				.poll(() =>
+					document
+						.querySelector<HTMLElement>('.board-canvas')!
+						.style.getPropertyValue('--board-width')
+				)
+				.not.toBe(before);
+		} finally {
+			restoreViewport();
 		}
 	});
 
