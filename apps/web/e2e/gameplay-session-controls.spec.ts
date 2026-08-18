@@ -7,9 +7,10 @@
 //      -> final timer 00:05.
 //   2. Relaxed completion: no timed labels anywhere and a recorded request
 //      sealing `resultClass: 'relaxed'` with no elapsed time.
-//   3. A restored active Relaxed+rotation session: Resume, Restart, a fresh
-//      run id, empty placements, and the setup choices retained.
-//   4. webkit-mobile reachability of the setup dialog and Pause action,
+//   3. A restored active Relaxed+rotation session enters directly, then
+//      exercises Pause and Restart with a fresh run id and retained choices.
+//   4. A restored active Timed session still presents Resume Mission.
+//   5. webkit-mobile reachability of the setup dialog and Pause action,
 //      a dynamic-height viewport, and Shift+Tab focus wrap.
 //
 // Determinism: the timer test passes `clock: { startAt }` to gotoFixture,
@@ -26,6 +27,12 @@
 import { test, expect } from './support/test';
 import { getFixture } from './gameplay-fixtures/catalog';
 import { buildMinimalSeed } from './gameplay-fixtures/persisted-state';
+import { DEFAULT_GAMEPLAY_PREFERENCES } from '../src/lib/services/gameplay/session/preferences';
+
+const IMMEDIATE_START = {
+	...DEFAULT_GAMEPLAY_PREFERENCES,
+	startImmediately: true
+};
 
 const FIXTURE_ID = 'e2e-square-4' as const;
 const START_AT = new Date('2026-01-01T00:00:00Z');
@@ -105,8 +112,9 @@ test.describe('mission session controls', () => {
 		});
 	});
 
-	test('restored relaxed+rotation: Resume, Restart keeps choices and a fresh run @smoke @webkit-critical', async ({
-		gameplayPage
+	test('restored relaxed+rotation: Restart keeps choices and a fresh run @smoke @webkit-critical', async ({
+		gameplayPage,
+		page
 	}) => {
 		const fixture = getFixture(FIXTURE_ID);
 		// A restored ACTIVE relaxed session with rotation configured but no
@@ -123,15 +131,11 @@ test.describe('mission session controls', () => {
 
 		await gameplayPage.gotoFixture({ seedSession: seeded });
 
-		// A restored active run is paused at entry and presented for explicit
-		// re-engagement.
-		await expect(gameplayPage.page.getByRole('dialog', { name: 'Resume Mission' })).toBeVisible();
-		await gameplayPage.resumeMission();
+		await expect(page.getByRole('dialog', { name: 'Resume Mission' })).toHaveCount(0);
+		await expect(page.getByTestId('relaxed-mode-indicator')).toBeVisible();
 
-		// Pause again from the toolbar and request a restart. The run has no
-		// user activity, so Restart applies immediately (no confirmation).
 		await gameplayPage.pauseMission();
-		await gameplayPage.page
+		await page
 			.getByRole('dialog', { name: 'Mission Paused' })
 			.getByRole('button', { name: 'Restart' })
 			.click();
@@ -156,6 +160,50 @@ test.describe('mission session controls', () => {
 		expect(persisted!.mode).toBe('relaxed');
 		expect(persisted!.rotationEnabled).toBe(true);
 		expect(persisted!.trayOrder).toEqual(fixture.restartTrayOrders[0]);
+	});
+
+	test('restored timed keeps Resume Mission @smoke @webkit-critical', async ({
+		gameplayPage,
+		page
+	}) => {
+		const seeded = buildMinimalSeed(FIXTURE_ID);
+
+		await gameplayPage.gotoFixture({ seedSession: seeded });
+
+		await expect(page.getByRole('dialog', { name: 'Resume Mission' })).toBeVisible();
+	});
+
+	test('Exit saves progress and returns home without a choice dialog @smoke', async ({
+		gameplayPage,
+		page
+	}) => {
+		await gameplayPage.gotoFixture({ seedPreferences: IMMEDIATE_START });
+		await gameplayPage.selectAndPlaceWithKeyboard(0, 0, 0);
+
+		await page.getByTestId('back-to-arcade-link').click();
+
+		await expect(page).toHaveURL(/\/$/);
+		await expect(page.getByRole('dialog', { name: 'Exit Mission' })).toHaveCount(0);
+		const persisted = await gameplayPage.readPersistedSession();
+		expect(persisted?.placedPieces).toEqual([{ pieceId: 0, x: 0, y: 0 }]);
+	});
+
+	test('Pause Discard removes saved progress after confirmation @smoke', async ({
+		gameplayPage,
+		page
+	}) => {
+		await gameplayPage.gotoFixture({ seedPreferences: IMMEDIATE_START });
+		await gameplayPage.selectAndPlaceWithKeyboard(0, 0, 0);
+		await gameplayPage.pauseMission();
+
+		await page.getByRole('button', { name: 'Discard' }).click();
+		await page
+			.getByRole('dialog', { name: 'Discard saved progress' })
+			.getByRole('button', { name: 'Discard' })
+			.click();
+
+		await expect(page).toHaveURL(/\/$/);
+		expect(await gameplayPage.readPersistedSession()).toBeNull();
 	});
 
 	test('webkit-mobile: setup dialog and Pause action reachable, focus wraps @webkit-critical', async ({

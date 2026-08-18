@@ -126,3 +126,51 @@ test.describe('large fixtures @extended', () => {
 		await gameplayPage.expectPiecePlaced(0, 0, 0);
 	});
 });
+
+test.describe('gameplay workspace polish smoke', () => {
+	test('desktop tray drag and hint reveal @smoke', async ({ gameplayPage, page }, testInfo) => {
+		test.skip(testInfo.project.name !== 'chromium-desktop', 'desktop-only split layout');
+
+		await gameplayPage.gotoFixture({
+			fixtureId: 'e2e-square-100',
+			seedPreferences: IMMEDIATE_START
+		});
+
+		const layout = page.locator('.game-layout');
+		const separator = page.getByTestId('tray-resizer');
+		const before = await layout.evaluate((element) =>
+			getComputedStyle(element).getPropertyValue('--tray-width').trim()
+		);
+
+		// The 100-piece board is taller than the desktop viewport; center the
+		// separator so the prescribed bounding-box midpoint is an actual target.
+		await separator.evaluate((element) => {
+			const rect = element.getBoundingClientRect();
+			window.scrollBy(0, rect.top + rect.height / 2 - window.innerHeight / 2);
+		});
+
+		const box = await separator.boundingBox();
+		expect(box).not.toBeNull();
+		await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+		await page.mouse.down();
+		await page.mouse.move(box!.x - 80, box!.y + box!.height / 2);
+		await page.mouse.up();
+
+		const after = await layout.evaluate((element) =>
+			getComputedStyle(element).getPropertyValue('--tray-width').trim()
+		);
+		expect(after).not.toBe(before);
+
+		await page.getByLabel('Puzzle piece 99', { exact: true }).click();
+		await page.locator('.pieces-grid').evaluate((element) => {
+			element.scrollTop = 0;
+		});
+
+		await page.getByRole('button', { name: 'Hint' }).click();
+
+		const slot = page.getByTestId('piece-slot-99');
+		await expect(slot).toHaveAttribute('data-hinted', 'true');
+		await expect(slot).toBeInViewport();
+		await expect(page.getByTestId('hint-target')).toBeVisible();
+	});
+});
