@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { tick } from 'svelte';
 	import PuzzlePiece from '$lib/components/PuzzlePiece.svelte';
 	import { matchesInventoryFilter } from '$lib/services/gameplay/inventory';
 	import type { InventoryFilter } from '$lib/services/gameplay/session/types';
@@ -90,6 +91,23 @@
 			selectedPieceId !== null && ids.includes(selectedPieceId)
 				? selectedPieceId
 				: (ids[0] ?? null);
+	});
+
+	async function revealHintedPiece(pieceId: number): Promise<void> {
+		drawerOpen = true;
+		activePieceId = pieceId;
+		await tick();
+
+		if (activeHintPieceId !== pieceId) return;
+
+		piecesGridElement
+			?.querySelector<HTMLElement>(`[data-testid="piece-slot-${pieceId}"]`)
+			?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+	}
+
+	$effect(() => {
+		const pieceId = activeHintPieceId;
+		if (pieceId !== null) void revealHintedPiece(pieceId);
 	});
 
 	// Follow direct focus (click/tap/Tab) so the roving tab stop moves to the
@@ -227,15 +245,19 @@
 		>
 			{#each visiblePieces as piece (piece.id)}
 				<div
-					class={`piece-slot aspect-square border border-(--border) p-[0.2rem] transition-[border-color,box-shadow] duration-150 ${
+					class={`piece-slot relative aspect-square border border-(--border) p-[0.2rem] transition-[border-color,box-shadow] duration-150 ${
 						activeHintPieceId === piece.id
-							? 'hinted border-(--accent) shadow-[0_0_14px_var(--accent-glow)]'
+							? 'hinted border-(--gold) shadow-[0_0_14px_var(--gold-glow)]'
 							: rejectedPieceId === piece.id
 								? 'rejected animate-shake border-(--hot) shadow-[0_0_12px_var(--hot-glow)]'
 								: ''
 					}`}
 					data-testid={`piece-slot-${piece.id}`}
+					data-hinted={activeHintPieceId === piece.id ? 'true' : undefined}
 				>
+					{#if activeHintPieceId === piece.id}
+						<span class="hint-badge pointer-events-none" aria-hidden="true">HINT</span>
+					{/if}
 					<PuzzlePiece
 						{piece}
 						isPlaced={false}
@@ -404,6 +426,22 @@
 	.piece-slot {
 		width: var(--piece-slot-size);
 		height: var(--piece-slot-size);
+	}
+
+	.hint-badge {
+		position: absolute;
+		top: 0.25rem;
+		left: 0.25rem;
+		z-index: 20;
+		padding: 0.15rem 0.3rem;
+		font-family: var(--font-display);
+		font-size: 0.5rem;
+		font-weight: 700;
+		letter-spacing: 0.12em;
+		color: var(--gold);
+		background: var(--gold-glow);
+		border: 1px solid var(--gold);
+		box-shadow: 0 0 8px var(--gold-glow);
 	}
 
 	.complete-msg {

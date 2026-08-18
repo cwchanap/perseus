@@ -55,7 +55,6 @@
 	import { shuffleArray } from '$lib/utils/shuffle';
 
 	const REJECTED_DURATION_MS = 500;
-	const HINT_DURATION_MS = 1800;
 	const CHECKPOINT_INTERVAL_MS = 5_000;
 
 	function createBrowserClock(): Clock {
@@ -141,7 +140,6 @@
 	let sessionUnsubscribe: (() => void) | null = null;
 	let checkpointInterval: ReturnType<typeof setInterval> | null = null;
 	let rejectedPieceTimeout: ReturnType<typeof setTimeout> | null = null;
-	let hintTimeout: ReturnType<typeof setTimeout> | null = null;
 
 	// Track the previous player-auth status so a transition to authenticated
 	// (login or session restore) triggers a one-shot retry of any unauthorized
@@ -208,11 +206,6 @@
 		if (rejectedPieceTimeout !== null) {
 			clearTimeout(rejectedPieceTimeout);
 			rejectedPieceTimeout = null;
-		}
-
-		if (hintTimeout !== null) {
-			clearTimeout(hintTimeout);
-			hintTimeout = null;
 		}
 
 		if (typeof window !== 'undefined') {
@@ -537,6 +530,9 @@
 		) {
 			showCelebration = true;
 		} else if (event.type === 'placement_accepted') {
+			if (activeHintPieceId === event.pieceId) {
+				clearHintTarget();
+			}
 			announceGameplay(
 				event.completed
 					? `Puzzle piece ${event.pieceId} placed. Puzzle complete.`
@@ -798,31 +794,18 @@
 
 	function handlePiecePlaced(pieceId: number, x: number, y: number) {
 		if (!sessionStore) return;
-		if (activeHintPieceId === pieceId) {
-			clearHintTarget();
-		}
 		sessionStore.dispatch({ type: 'attempt_placement', pieceId, x, y });
 		checkpointSession();
 	}
 
-	function clearHintTarget() {
-		if (hintTimeout !== null) {
-			clearTimeout(hintTimeout);
-			hintTimeout = null;
-		}
+	function clearHintTarget(): void {
 		activeHintPieceId = null;
 		activeHintTarget = null;
 	}
 
-	function showHintTarget(pieceId: number, target: { x: number; y: number }) {
-		clearHintTarget();
+	function showHintTarget(pieceId: number, target: { x: number; y: number }): void {
 		activeHintPieceId = pieceId;
 		activeHintTarget = target;
-		hintTimeout = setTimeout(() => {
-			activeHintPieceId = null;
-			activeHintTarget = null;
-			hintTimeout = null;
-		}, HINT_DURATION_MS);
 	}
 
 	function handleHint() {

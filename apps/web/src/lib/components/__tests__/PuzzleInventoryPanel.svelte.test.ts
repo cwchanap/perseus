@@ -1,10 +1,22 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
 import PuzzleInventoryPanel from '../PuzzleInventoryPanel.svelte';
 import type { Puzzle } from '$lib/types/puzzle';
 
 const image = 'data:image/gif;base64,R0lGODlhAQABAAAAACw=';
+let drawerDisplayAtScroll = '';
+
+const scrollIntoView = vi.fn(function (this: HTMLElement) {
+	const body = this.closest<HTMLElement>('.inventory-body');
+	drawerDisplayAtScroll = body ? getComputedStyle(body).display : '';
+});
+
+beforeEach(() => {
+	drawerDisplayAtScroll = '';
+	scrollIntoView.mockClear();
+	HTMLElement.prototype.scrollIntoView = scrollIntoView;
+});
 
 const puzzle: Puzzle = {
 	id: 'inventory-test',
@@ -156,6 +168,8 @@ describe('PuzzleInventoryPanel', () => {
 		expect(slot).not.toBeNull();
 		expect(slot?.className).toContain('hinted');
 		expect(slot?.className).not.toContain('rejected');
+		expect(slot?.getAttribute('data-hinted')).toBe('true');
+		await expect.element(page.getByText('HINT')).toBeVisible();
 	});
 
 	it('preserves rejected presentation when no hint is active', async () => {
@@ -270,6 +284,30 @@ describe('PuzzleInventoryPanel', () => {
 		await expect
 			.element(page.getByRole('button', { name: 'Cancel selected piece' }))
 			.toBeInTheDocument();
+	});
+
+	it('opens the drawer before scrolling the hinted piece into view', async () => {
+		const input = baseProps();
+		const view = render(PuzzleInventoryPanel, input);
+
+		await page.getByRole('button', { name: 'Collapse inventory' }).click();
+		await view.rerender({ ...input, activeHintPieceId: 1 });
+
+		await expect
+			.element(page.getByTestId('inventory-drawer-toggle'))
+			.toHaveAttribute('aria-expanded', 'true');
+		await vi.waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
+
+		expect(drawerDisplayAtScroll).not.toBe('none');
+		expect(input.onSelect).not.toHaveBeenCalled();
+		expect(input.onRotate).not.toHaveBeenCalled();
+
+		const focusedBefore = document.activeElement;
+		await view.rerender({ ...input, activeHintPieceId: 0 });
+		const hinted = await page.getByLabelText('Puzzle piece 0').element();
+
+		await expect.poll(() => hinted.tabIndex).toBe(0);
+		expect(document.activeElement).toBe(focusedBefore);
 	});
 
 	it('renders only unplaced pieces matching the controlled filter while keeping total LEFT', async () => {

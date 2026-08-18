@@ -1201,6 +1201,77 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.element(page.getByTestId('piece-slot-1')).toHaveClass(/hinted/);
 	});
 
+	it('keeps the hint after a rejected placement of the hinted piece', async () => {
+		await renderPuzzlePage();
+		await selectPiece(1);
+		await page.getByLabelText('Hint').click();
+
+		await placeSelectedPieceAt(0, 0);
+
+		await expect.element(page.getByTestId('piece-slot-1')).toHaveAttribute('data-hinted', 'true');
+		await expect.element(page.getByTestId('hint-target')).toHaveAttribute('data-x', '1');
+		await expect.element(page.getByTestId('hint-target')).toHaveAttribute('data-y', '0');
+	});
+
+	it('clears the hint only after the hinted piece is accepted', async () => {
+		await renderPuzzlePage();
+		await selectPiece(1);
+		await page.getByLabelText('Hint').click();
+
+		await placeSelectedPieceAt(1, 0);
+
+		await expect.poll(() => page.getByTestId('hint-target').query()).toBeNull();
+		expect(page.getByTestId('piece-slot-1').query()).toBeNull();
+	});
+
+	it('keeps the hint beyond 1.8 seconds', async () => {
+		vi.useFakeTimers();
+		try {
+			await renderPuzzlePage();
+			await selectPiece(1);
+			await page.getByLabelText('Hint').click();
+
+			await vi.advanceTimersByTimeAsync(1_801);
+
+			await expect.element(page.getByTestId('piece-slot-1')).toHaveAttribute('data-hinted', 'true');
+			await expect.element(page.getByTestId('hint-target')).toHaveAttribute('data-x', '1');
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('replaces the active hint when a second hint is used', async () => {
+		await renderPuzzlePage();
+		await selectPiece(1);
+		await page.getByLabelText('Hint').click();
+		await expect.element(page.getByTestId('hint-target')).toHaveAttribute('data-x', '1');
+
+		await selectPiece(0);
+		await page.getByLabelText('Hint').click();
+
+		await expect.element(page.getByTestId('hint-target')).toHaveAttribute('data-x', '0');
+		await expect.element(page.getByTestId('piece-slot-0')).toHaveAttribute('data-hinted', 'true');
+		await expect
+			.element(page.getByTestId('piece-slot-1'))
+			.not.toHaveAttribute('data-hinted', 'true');
+	});
+
+	it('clears the hint when pausing the mission', async () => {
+		await renderPuzzlePage();
+		await selectPiece(1);
+		await page.getByLabelText('Hint').click();
+		await expect.element(page.getByTestId('hint-target')).toHaveAttribute('data-x', '1');
+
+		await page.getByLabelText('More puzzle actions').click();
+		await page.getByRole('button', { name: 'Pause mission' }).click();
+
+		await expect.element(page.getByRole('dialog', { name: 'Mission Paused' })).toBeVisible();
+		await expect.poll(() => page.getByTestId('hint-target').query()).toBeNull();
+		await expect
+			.element(page.getByTestId('piece-slot-1'))
+			.not.toHaveAttribute('data-hinted', 'true');
+	});
+
 	it('toggles rotation mode, rotates tray pieces, and blocks placement until upright', async () => {
 		await renderPuzzlePage();
 
