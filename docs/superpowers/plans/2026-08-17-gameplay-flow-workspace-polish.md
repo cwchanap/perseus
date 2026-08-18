@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Remove unnecessary Relaxed/Exit dialogs, add explicit saved-progress discard, make the desktop tray wider and resizable, generate fresh starting orientations for rotation-enabled runs, and clearly reveal the piece associated with a hint.
+**Goal:** Ship the five gameplay-polish changes in one implementation PR: Relaxed restore without a popup, direct save-and-exit plus explicit Discard, a coherent wider/resizable desktop tray, fresh rotation shuffle, and persistent/revealed hints.
 
-**Architecture:** Keep `PuzzleSession` and its persistence schema unchanged. Do one route-level flow pass for restore + exit + gameplay discard; reuse one discard confirmation component from gameplay and home; keep tray interaction route-local but put its numeric clamp in the existing `puzzleLayout.ts`; keep orientation generation behind the current gameplay runtime factory; let `PuzzleInventoryPanel` own drawer opening and DOM reveal; finish with E2E-only integration coverage.
+**Architecture:** Keep `PuzzleSession` and persistence unchanged. Do restore/exit/discard in one route pass; let `puzzleLayout.ts` own the complete board↔tray width contract; store requested tray width separately from applied width; keep runtime randomness behind `createRotations`; let the inventory own post-render hint reveal; finish with one default-gate desktop splitter/hint smoke test.
 
 **Tech Stack:** Svelte 5, TypeScript, Vitest Browser Mode, Playwright, Bun.
 
@@ -12,22 +12,33 @@
 
 ## Global Constraints
 
-- Ship all five product changes as one implementation PR.
-- Do not change `PuzzleSessionState`, session actions/events, persistence schema/version, lifecycle rules, completion sealing, or gallery validation rules.
-- Keep explicit `Resume Mission` for restored Timed runs.
-- Restored Relaxed active/paused runs enter active gameplay without a popup.
-- Exit always settles/saves the session and navigates to `/`; it never offers Save versus Discard.
-- Discard remains confirmed and is exposed only from the Pause/Resume surface and the home Continue panel.
-- Preserve the existing `discardAndExit()` ordering that stops checkpointing and disposes before `clearSession`.
-- Do not add per-card discard, server deletion, a saved-progress store, a generic dialog framework, or a split-pane package/component.
-- Tray width is desktop-only route-local state; do not persist it.
-- Put only the pure numeric tray clamp in `puzzleLayout.ts`; do not create a general layout manager.
-- Extend the existing route window pointer cleanup; do not replace Hold-to-Peek `pointerup`/`pointercancel` behavior and do not add pointer capture.
+- Ship all five behaviors in one implementation PR.
+- No `PuzzleSessionState`, action/event, persistence schema/version, completion-seal, or gallery-validation changes.
+- Restored Timed runs keep explicit `Resume Mission`; restored Relaxed active/paused runs enter active gameplay without it.
+- Exit always saves and navigates to `/`; it never offers Save versus Discard.
+- Discard remains confirmed and is available only from Pause/Resume and the home Continue panel.
+- Preserve `discardAndExit()` stop-checkpoint → dispose → clear ordering and its unmount regression.
+- No per-card discard, server deletion, saved-progress store, generic dialog framework, split-pane package, or generic layout manager.
+- Desktop tray goal is **more visible pieces / less scrolling**, not independently larger thumbnails.
+- `puzzleLayout.ts` owns desktop tray constants, initial width derivation, clamp, and board reservation. Do not keep the old three-column board solve in parallel.
+- Store requested tray width separately from applied width; viewport clamping must not overwrite the user's request.
+- Do not replace existing Hold-to-Peek global `pointerup` / `pointercancel` / blur cleanup and do not add pointer capture.
 - Keep `createRotations(puzzleId, pieceIds)` and the virtual E2E override unchanged.
-- Do not test randomness probabilistically; mock `generateRandomRotations`.
-- Hint reveal may open/scroll the tray and update the roving candidate, but must not call `.focus()`, `onSelect`, `onRotate`, or placement callbacks.
-- Remove the 1.8-second hint timeout and update `docs/PRD.md` so product documentation does not restore the old behavior later.
-- Update current tests directly; do not keep compatibility aliases for `ExitSessionDialog` or its old Save/Discard/Cancel contract.
+- Do not test randomness probabilistically.
+- A rejected hinted-piece placement must retain the hint; only accepted placement clears it.
+- Hint reveal must `await tick()` before `scrollIntoView`.
+- Hint reveal must not call `.focus()`, `onSelect`, `onRotate`, or placement callbacks.
+- Update `docs/PRD.md` for persistent hint lifetime and fresh rotation initialization.
+- Update current tests directly; no compatibility aliases for `ExitSessionDialog`.
+
+## Risks to Verify During Implementation
+
+- **Board/tray drift:** changing CSS width without passing the applied tray width into board metrics creates dead space/downscaling.
+- **Coarse-puzzle regression:** a fixed 360px default can narrow today's large-piece tray; initial width must preserve the old three-column footprint.
+- **Lost user width:** resize-time clamping must be a projection, not a mutation on viewport shrink.
+- **Mobile hint no-op:** scrolling before the collapsed drawer rerenders does nothing.
+- **Hint consumed by rejection:** clearing before `attempt_placement` violates the new lifetime.
+- **False E2E coverage:** an `@smoke` test nested under an `@extended` describe is still excluded by `--grep-invert @extended`.
 
 ---
 
@@ -44,23 +55,21 @@
 
 **Interfaces:**
 
-- `DiscardSessionDialog`: `{ puzzleName: string; onConfirm: () => void; onCancel: () => void }`.
-- `SessionPauseDialog` adds `onDiscard: () => void`; existing callbacks stay unchanged.
-- Route-local `SessionDialog` becomes `'setup' | 'pause' | 'discard' | null`.
-- Route uses one `exitToArcade(): void` for all non-destructive exits.
-- Route test harness adds `restoredModeState: 'timed' | 'relaxed'` so restore policy is testable instead of hard-coded Timed.
+- `DiscardSessionDialog`: `{ puzzleName: string; onConfirm: () => void; onCancel: () => void }`
+- `SessionPauseDialog` adds `onDiscard: () => void`.
+- Route `SessionDialog` becomes `'setup' | 'pause' | 'discard' | null`.
+- Route test harness adds `restoredModeState: 'timed' | 'relaxed'`.
+- Remove test-only `resumableState` / mocked `isResumable` once `currentRunIsResumable()` is deleted.
 
-**Produces:** the complete Timed/Relaxed restore table, direct save-and-exit, and a separate confirmed gameplay discard path without touching `PuzzleSession`.
+**Produces:** complete restore table, direct save-and-exit, and explicit confirmed gameplay Discard with the old Exit suite fully migrated.
 
-- [ ] **Step 1: Migrate dialog tests before changing production components**
+- [ ] **Step 1: Migrate dialog component tests**
 
 In `SessionDialogs.svelte.test.ts`:
 
 1. Replace `ExitSessionDialog` import/tests with `DiscardSessionDialog`.
-2. Add `onDiscard: vi.fn()` to every `SessionPauseDialog` fixture.
-3. Add exact tests for Pause forwarding Discard, discard confirm/cancel, Escape cancellation, and the outer full-screen overlay.
-
-Use:
+2. Add `onDiscard: vi.fn()` to every `SessionPauseDialog` render.
+3. Add exact coverage:
 
 ```ts
 it('forwards Discard from the pause surface', async () => {
@@ -81,7 +90,7 @@ it('forwards Discard from the pause surface', async () => {
 	expect(onDiscard).toHaveBeenCalledOnce();
 });
 
-it('confirms discard and keeps the full-screen dialog shell', async () => {
+it('keeps the full-screen shell and confirms discard', async () => {
 	const onConfirm = vi.fn();
 	render(DiscardSessionDialog, {
 		puzzleName: 'Test Mission',
@@ -118,11 +127,13 @@ cd apps/web
 bunx vitest --run --browser src/lib/components/__tests__/SessionDialogs.svelte.test.ts
 ```
 
-Expected before implementation: import/prop/label assertions fail.
+Expected before implementation: missing import/prop/button/dialog failures.
 
-- [ ] **Step 2: Replace `ExitSessionDialog` with an explicit discard-only copy**
+- [ ] **Step 2: Replace `ExitSessionDialog` with a discard-only copy**
 
-Delete `ExitSessionDialog.svelte`. Create `DiscardSessionDialog.svelte` by copying the existing component shell, not only its inner card. Preserve the full overlay:
+Copy the existing outer shell verbatim: fixed full-screen scrim, z-index, safe-area padding, `modalFocus`, `aria-modal`, Escape cancellation.
+
+The new component contract:
 
 ```svelte
 <script lang="ts">
@@ -136,59 +147,44 @@ Delete `ExitSessionDialog.svelte`. Create `DiscardSessionDialog.svelte` by copyi
 
 	let { puzzleName, onConfirm, onCancel }: Props = $props();
 </script>
+```
 
+The inner copy is:
+
+```svelte
 <div
-	class="fixed inset-0 z-[1000] flex items-center justify-center bg-black/60"
-	style="padding-top: max(1rem, env(safe-area-inset-top)); padding-right: max(1rem, env(safe-area-inset-right)); padding-bottom: max(1rem, env(safe-area-inset-bottom)); padding-left: max(1rem, env(safe-area-inset-left));"
+	role="dialog"
+	aria-modal="true"
+	aria-label="Discard saved progress"
+	tabindex="-1"
+	use:modalFocus
+	onkeydown={(event) => event.key === 'Escape' && onCancel()}
+	...
 >
-	<div
-		role="dialog"
-		aria-modal="true"
-		aria-label="Discard saved progress"
-		tabindex="-1"
-		use:modalFocus
-		onkeydown={(event) => event.key === 'Escape' && onCancel()}
-		class="flex max-h-[100dvh] w-full max-w-md flex-col overflow-hidden rounded-2xl bg-white shadow-xl"
-	>
-		<div class="min-h-0 flex-1 overflow-y-auto p-6">
-			<h2 class="text-lg font-semibold text-gray-900">Discard saved progress?</h2>
-			<p class="mt-2 text-sm text-gray-600">
-				This permanently removes saved progress for {puzzleName}.
-			</p>
-			<div class="mt-6 flex flex-wrap justify-end gap-2">
-				<button type="button" onclick={onCancel}>Cancel</button>
-				<button type="button" onclick={onConfirm}>Discard</button>
-			</div>
-		</div>
-	</div>
+	<h2>Discard saved progress?</h2>
+	<p>This permanently removes saved progress for {puzzleName}.</p>
+	<button type="button" onclick={onCancel}>Cancel</button>
+	<button type="button" onclick={onConfirm}>Discard</button>
 </div>
 ```
 
-Reuse the old button class constants while copying; do not introduce shared dialog/button abstractions.
+Reuse the existing button classes locally. Do not extract a generic confirm component.
 
-- [ ] **Step 3: Add Discard to `SessionPauseDialog` without changing restart/resume behavior**
+- [ ] **Step 3: Add Discard to `SessionPauseDialog`**
 
-Add the callback:
+Add `onDiscard` to `Props` and `$props()`.
 
-```ts
-interface Props {
-	presentation: 'resume' | 'paused';
-	mode: SessionMode;
-	confirmingRestart: boolean;
-	onResume: () => void;
-	onRequestRestart: () => void;
-	onConfirmRestart: () => void;
-	onCancelRestart: () => void;
-	onExit: () => void;
-	onDiscard: () => void;
-}
+Normal Pause/Resume action row becomes:
+
+```text
+Exit | Discard | Restart | Resume
 ```
 
-On the normal Pause/Resume surface render `Exit`, `Discard`, `Restart`, `Resume`. Keep restart confirmation unchanged.
+Do not add Discard to the inline Restart confirmation surface.
 
-- [ ] **Step 4: Make the route test snapshot mode configurable and add the restore-table tests**
+- [ ] **Step 4: Make restored mode configurable in the route test harness**
 
-The route test currently hardcodes `mode: 'timed'`. Add:
+Near `restoredLifecycleState`:
 
 ```ts
 const restoredModeState = vi.hoisted(() => ({
@@ -196,7 +192,7 @@ const restoredModeState = vi.hoisted(() => ({
 }));
 ```
 
-Use it in the mocked snapshot:
+Use:
 
 ```ts
 mode: restoredModeState.value,
@@ -204,13 +200,15 @@ elapsedActiveSeconds: restoredModeState.value === 'relaxed' ? null : 0,
 resultClass: restoredModeState.value === 'relaxed' ? 'relaxed' : 'standard_timed',
 ```
 
-Reset it to `timed` in both relevant `beforeEach` blocks.
+Reset to `timed` in both suite `beforeEach` blocks.
 
-Add/adjust tests:
+Remove `resumableState` and mocked `isResumable` after the production route no longer calls it.
+
+- [ ] **Step 5: Add the full restore-table tests**
 
 ```ts
 it.each(['active', 'paused'] as const)(
-	'restores a %s Relaxed run directly without Resume Mission',
+	'restores a %s Relaxed run without Resume Mission',
 	async (lifecycle) => {
 		restoredLifecycleState.value = lifecycle;
 		restoredModeState.value = 'relaxed';
@@ -218,7 +216,9 @@ it.each(['active', 'paused'] as const)(
 
 		await renderPuzzlePage();
 
-		await expect.poll(() => page.getByRole('dialog', { name: 'Resume Mission' }).query()).toBeNull();
+		await expect
+			.poll(() => page.getByRole('dialog', { name: 'Resume Mission' }).query())
+			.toBeNull();
 		await expect.element(page.getByTestId('relaxed-mode-indicator')).toBeVisible();
 	}
 );
@@ -237,9 +237,9 @@ it.each(['active', 'paused'] as const)(
 );
 ```
 
-- [ ] **Step 5: Implement restore policy in the same route pass**
+- [ ] **Step 6: Implement the route restore table**
 
-Replace the current active/paused restore branch with:
+Replace the current generic active/paused restore branch:
 
 ```ts
 } else if (restored.lifecycle === 'active') {
@@ -262,22 +262,23 @@ Replace the current active/paused restore branch with:
 
 Fresh/setup/completed handling stays unchanged.
 
-- [ ] **Step 6: Rewrite the entire old Exit Mission test block, not only three cases**
+- [ ] **Step 7: Rewrite all five old Exit Mission route tests**
 
-The current route suite around the old Exit flow contains five contracts that must be migrated together:
+Migrate the current block as a unit:
 
-1. `saves the session and navigates ... on Save & Exit` → direct Pause `Exit` saves and navigates with no `Exit Mission` dialog.
-2. `discards ... on Discard` → Pause `Discard` opens discard confirmation; confirm clears/navigates.
-3. `does not re-save ... after Discard` → keep this regression, but enter Discard directly from Pause and confirm through `DiscardSessionDialog`.
-4. `resumes the active run when canceling exit from an active origin` → delete this obsolete cancelable-Exit contract; replace with header Arcade direct save+navigate.
-5. `returns to the pause dialog when canceling exit from a paused origin` → rewrite as canceling Discard from a restored Timed `Resume Mission` and assert the dialog returns as `Resume Mission`, not `Mission Paused`.
+1. Save & Exit → Pause `Exit` saves+navigates immediately.
+2. Discard-from-Exit → Pause `Discard` → confirmation → clear+navigate.
+3. Keep the unmount-after-discard no-resave regression.
+4. Delete obsolete cancelable Arcade Exit; replace with header direct Exit.
+5. Cancel Discard from restored Timed `Resume Mission` must return to `Resume Mission`, not `Mission Paused`.
 
-Use representative replacements:
+Representative direct Exit:
 
 ```ts
 it('saves and navigates immediately when Exit is chosen from Pause', async () => {
 	await renderPuzzlePage();
 	await placePiece(0, 0, 0);
+	sessionStorageSpies.saveSession.mockClear();
 
 	await page.getByLabelText('More puzzle actions').click();
 	await page.getByRole('button', { name: 'Pause mission' }).click();
@@ -288,15 +289,20 @@ it('saves and navigates immediately when Exit is chosen from Pause', async () =>
 	expect(sessionStorageSpies.clearSession).not.toHaveBeenCalled();
 	expect(goto).toHaveBeenCalledWith('/');
 });
+```
 
-it('cancels discard back to the restored Timed Resume Mission presentation', async () => {
+Representative cancel:
+
+```ts
+it('cancels discard back to restored Timed Resume Mission', async () => {
 	restoredLifecycleState.value = 'paused';
 	restoredModeState.value = 'timed';
 	setSavedProgress({ placedPieces: [{ pieceId: 0, x: 0, y: 0 }] });
-	await renderPuzzlePage();
 
+	await renderPuzzlePage();
 	await page.getByRole('button', { name: 'Discard' }).click();
-	await page.getByRole('dialog', { name: 'Discard saved progress' })
+	await page
+		.getByRole('dialog', { name: 'Discard saved progress' })
 		.getByRole('button', { name: 'Cancel' })
 		.click();
 
@@ -304,7 +310,7 @@ it('cancels discard back to the restored Timed Resume Mission presentation', asy
 });
 ```
 
-For the unmount regression, preserve the existing post-confirm sequence exactly:
+Keep the existing regression tail unchanged:
 
 ```ts
 expect(sessionStorageSpies.clearSession).toHaveBeenCalledWith('test-puzzle');
@@ -313,17 +319,17 @@ view.unmount();
 expect(sessionStorageSpies.saveSession).not.toHaveBeenCalled();
 ```
 
-- [ ] **Step 7: Implement direct Exit and confirmed gameplay Discard**
+- [ ] **Step 8: Implement direct Exit and gameplay Discard**
 
 Remove:
 
-- `currentRunIsResumable`
+- `ExitSessionDialog` import/rendering
+- `'exit'` dialog state
 - `exitOrigin`
+- `currentRunIsResumable`
 - `requestReturnToArcade`
 - `saveAndExit`
 - `cancelExit`
-- `'exit'` from `SessionDialog`
-- `ExitSessionDialog` import/rendering
 
 Add:
 
@@ -342,30 +348,14 @@ function requestDiscard(): void {
 }
 
 function cancelDiscard(): void {
-	// Deliberately keep pausePresentation unchanged.
+	// Preserve 'resume' vs 'paused'.
 	sessionDialog = 'pause';
 }
 ```
 
-Keep the current `discardAndExit()` disposal/checkpoint ordering unchanged.
+Keep `discardAndExit()` ordering unchanged.
 
-Retarget all safe exits:
-
-```svelte
-<a
-	href={resolve('/')}
-	onclick={(event) => {
-		event.preventDefault();
-		exitToArcade();
-	}}
->
-```
-
-```svelte
-<MissionSetupDialog ... onExit={exitToArcade} />
-<SessionPauseDialog ... onExit={exitToArcade} onDiscard={requestDiscard} />
-<PuzzleCompletionDialog ... onBackToArcade={exitToArcade} />
-```
+Retarget header/setup/pause/completion safe Exit callbacks to `exitToArcade`.
 
 Render:
 
@@ -379,7 +369,7 @@ Render:
 {/if}
 ```
 
-- [ ] **Step 8: Verify Task 1 and remove the stale production Exit contract**
+- [ ] **Step 9: Verify Task 1**
 
 ```bash
 cd apps/web
@@ -391,7 +381,7 @@ git grep -n 'ExitSessionDialog\|Save & Exit' -- src || true
 git grep -n "sessionDialog === 'exit'" -- 'src/routes/puzzle/[id]/+page.svelte' || true
 ```
 
-Expected: tests/check pass and both greps have no output. Negative tests may still mention the accessible name `Exit Mission` to prove the removed dialog never appears.
+Negative tests may still mention the accessible name `Exit Mission` to prove absence.
 
 Commit:
 
@@ -417,39 +407,19 @@ git commit -m "feat(web): simplify restore exit and discard flow"
 
 **Interfaces:**
 
-- Home route adds `discardTarget: GalleryProgress | null`.
-- Home uses the existing `SessionStorageAdapter.clearSession(puzzleId)`.
-- `discoverGalleryProgress({ serverPuzzles, quickPuzzles })` remains the only progress-discovery authority.
+- `discardTarget: GalleryProgress | null`
+- Existing `createSessionStorageAdapter().clearSession`.
+- Existing `discoverGalleryProgress()` remains the progress authority.
 
-**Produces:** the currently surfaced Continue session can be explicitly discarded without entering gameplay, and underlying page controls are inaccessible while confirmation is open.
+**Produces:** home can discard the surfaced resumable run, with the underlying page inert during confirmation.
 
-- [ ] **Step 1: Add failing home discard/inert tests**
+- [ ] **Step 1: Add failing home tests**
 
-Add a persistence mock:
+Mock one storage adapter with `clearSession`.
 
-```ts
-const sessionStorageSpies = vi.hoisted(() => ({
-	clearSession: vi.fn()
-}));
-
-vi.mock('$lib/services/gameplay/session/persistence', () => ({
-	createSessionStorageAdapter: () => ({
-		clearSession: sessionStorageSpies.clearSession
-	})
-}));
-```
-
-Add tests using the existing newest-progress fixture:
+Add:
 
 ```ts
-it('offers Discard beside Continue for newest saved progress', async () => {
-	// Seed mockedDiscoverGalleryProgress with newest progress first.
-	render(GalleryPage);
-	const panel = page.getByTestId('continue-on-device');
-	await expect.element(panel.getByRole('link', { name: 'CONTINUE' })).toBeVisible();
-	await expect.element(panel.getByRole('button', { name: 'Discard saved progress' })).toBeVisible();
-});
-
 it('makes main inert while home discard confirmation is open', async () => {
 	render(GalleryPage);
 	await page.getByRole('button', { name: 'Discard saved progress' }).click();
@@ -459,7 +429,11 @@ it('makes main inert while home discard confirmation is open', async () => {
 	expect(main.getAttribute('aria-hidden')).toBe('true');
 	await expect.element(page.getByRole('dialog', { name: 'Discard saved progress' })).toBeVisible();
 });
+```
 
+Add confirm:
+
+```ts
 it('clears and rediscovers progress after confirmed home discard', async () => {
 	mockedDiscoverGalleryProgress
 		.mockReturnValueOnce({ byPuzzleId: new Map([['p1', progress]]), newest: progress })
@@ -467,7 +441,8 @@ it('clears and rediscovers progress after confirmed home discard', async () => {
 
 	render(GalleryPage);
 	await page.getByRole('button', { name: 'Discard saved progress' }).click();
-	await page.getByRole('dialog', { name: 'Discard saved progress' })
+	await page
+		.getByRole('dialog', { name: 'Discard saved progress' })
 		.getByRole('button', { name: 'Discard' })
 		.click();
 
@@ -476,23 +451,9 @@ it('clears and rediscovers progress after confirmed home discard', async () => {
 });
 ```
 
-Also cover Cancel: no clear, main becomes interactive again, Continue remains.
+Add Cancel: no clear, `<main>` loses inert/`aria-hidden`, Continue remains.
 
-- [ ] **Step 2: Add route-local target and one storage adapter**
-
-Import:
-
-```ts
-import DiscardSessionDialog from '$lib/components/DiscardSessionDialog.svelte';
-import { createSessionStorageAdapter } from '$lib/services/gameplay/session/persistence';
-import {
-	discoverGalleryProgress,
-	type GalleryProgress,
-	type GalleryProgressDiscovery
-} from '$lib/services/gameplay/galleryProgress';
-```
-
-Add:
+- [ ] **Step 2: Add route-local target and confirm handler**
 
 ```ts
 const sessionStorageAdapter = createSessionStorageAdapter();
@@ -511,34 +472,31 @@ function confirmDiscardProgress(): void {
 }
 ```
 
-Keep the existing reactive discovery effect; do not create a second store or validation path.
+Keep the existing reactive discovery effect; do not create a store.
 
-- [ ] **Step 3: Make the existing `<main>` inert and render the modal after it**
-
-Change the actual page root:
+- [ ] **Step 3: Render modal outside inert `<main>`**
 
 ```svelte
 <main
 	inert={discardTarget !== null}
 	aria-hidden={discardTarget !== null}
-	class="...existing classes..."
+	...existing classes...
 >
 ```
 
-Add beside `CONTINUE`:
+Beside `CONTINUE`:
 
 ```svelte
 <button
 	type="button"
 	aria-label="Discard saved progress"
 	onclick={() => (discardTarget = localProgress.newest)}
-	class="border border-(--hot) px-5 py-2 text-[0.65rem] font-(--font-display) font-bold tracking-[0.2em] text-(--hot) uppercase"
 >
 	DISCARD
 </button>
 ```
 
-After the closing `</main>`, not inside it:
+After `</main>`:
 
 ```svelte
 {#if discardTarget}
@@ -550,7 +508,7 @@ After the closing `</main>`, not inside it:
 {/if}
 ```
 
-- [ ] **Step 4: Verify and commit Task 2**
+- [ ] **Step 4: Verify and commit**
 
 ```bash
 cd apps/web
@@ -563,7 +521,7 @@ git commit -m "feat(web): add home progress discard"
 
 ---
 
-## Task 3: Add the desktop tray resizer with a pure clamp and composed pointer cleanup
+## Task 3: Make `puzzleLayout.ts` own one board↔tray sizing model and add the resizer
 
 **Files:**
 
@@ -574,56 +532,101 @@ git commit -m "feat(web): add home progress discard"
 
 **Interfaces:**
 
-- New pure helper:
+Export constants:
 
 ```ts
-export interface TrayWidthClampOptions {
-	layoutWidth: number;
-	requestedWidth: number;
-	minTrayWidth: number;
-	minBoardWidth: number;
-	separatorWidth: number;
-}
-
-export function clampTrayWidth(options: TrayWidthClampOptions): number;
+export const DESKTOP_TRAY_MIN_WIDTH = 300;
+export const DESKTOP_TRAY_BASE_WIDTH = 360;
+export const DESKTOP_BOARD_MIN_WIDTH = 480;
+export const DESKTOP_TRAY_SEPARATOR_WIDTH = 20;
 ```
 
-- Route constants: `DEFAULT_TRAY_WIDTH_PX = 360`, `MIN_TRAY_WIDTH_PX = 300`, `MIN_BOARD_WIDTH_PX = 480`, `TRAY_RESIZER_WIDTH_PX = 20`, `TRAY_RESIZE_STEP_PX = 16`.
-- Separator: `data-testid="tray-resizer"`, vertical `role="separator"`, numeric ARIA values.
-
-**Produces:** desktop-only pointer/keyboard resizing with explicit numeric rules, resize reclamping, and no regression to the existing Hold-to-Peek pointer-release path.
-
-- [ ] **Step 1: Add failing pure clamp tests first**
-
-In `puzzleLayout.test.ts`:
+Add:
 
 ```ts
-describe('clampTrayWidth', () => {
-	const base = {
-		minTrayWidth: 300,
-		minBoardWidth: 480,
-		separatorWidth: 20
+export function getDefaultPuzzleTrayWidth(
+	puzzle: PuzzleBoardSource,
+	viewport: PuzzleViewportSize
+): number;
+
+export function clampTrayWidth(layoutWidth: number, requestedWidth: number): number;
+```
+
+Change:
+
+```ts
+getResponsivePuzzleBoardMetrics(
+	puzzle: PuzzleBoardSource,
+	viewport: PuzzleViewportSize,
+	trayWidth: number
+): ResponsivePuzzleBoardMetrics;
+```
+
+**Produces:** initial tray is never narrower than the new 360px baseline or prior three-column footprint, applied tray width directly informs board metrics, requested width survives temporary viewport shrink, and splitter interaction composes with reference cleanup.
+
+- [ ] **Step 1: Add failing layout-helper tests**
+
+Update imports to include the new helpers/constants.
+
+Dense default:
+
+```ts
+it('widens dense desktop trays beyond the old 17.5rem minimum', () => {
+	const dense = {
+		imageWidth: 1500,
+		imageHeight: 1500,
+		gridCols: 15,
+		gridRows: 15
 	};
 
-	it('keeps the tray at least 300px', () => {
-		expect(
-			clampTrayWidth({ ...base, layoutWidth: 1000, requestedWidth: 200 })
-		).toBe(300);
-	});
+	expect(getDefaultPuzzleTrayWidth(dense, { width: 1280, height: 900 }))
+		.toBe(DESKTOP_TRAY_BASE_WIDTH);
+});
+```
 
-	it('preserves the 480px board floor when the layout can satisfy both minimums', () => {
-		// 1000 - 480 - 20 = 500 max tray.
-		expect(
-			clampTrayWidth({ ...base, layoutWidth: 1000, requestedWidth: 700 })
-		).toBe(500);
-	});
+Coarse default:
 
-	it('documents the infeasible-width policy: tray minimum wins below 800px', () => {
-		// 760 cannot satisfy 300 tray + 480 board + 20 separator.
-		expect(
-			clampTrayWidth({ ...base, layoutWidth: 760, requestedWidth: 360 })
-		).toBe(300);
-	});
+```ts
+it('does not narrow a coarse three-column tray to 360px', () => {
+	const coarse = {
+		imageWidth: 1200,
+		imageHeight: 900,
+		gridCols: 4,
+		gridRows: 3
+	};
+
+	// Preferred board width is 720, so preferred cell is 180.
+	// Existing tray chrome is 42px: 3 * 180 + 42 = 582.
+	expect(getDefaultPuzzleTrayWidth(coarse, { width: 1280, height: 900 })).toBe(582);
+});
+```
+
+Clamp:
+
+```ts
+it('clamps the requested tray against board and tray minimums', () => {
+	expect(clampTrayWidth(1000, 200)).toBe(300);
+	expect(clampTrayWidth(1000, 700)).toBe(500);
+	expect(clampTrayWidth(760, 360)).toBe(300);
+});
+```
+
+Actual reservation:
+
+```ts
+it('reduces board width when the applied desktop tray is wider', () => {
+	const puzzle = {
+		imageWidth: 1200,
+		imageHeight: 900,
+		gridCols: 4,
+		gridRows: 3
+	};
+	const viewport = { width: 1280, height: 900 };
+
+	const narrowTray = getResponsivePuzzleBoardMetrics(puzzle, viewport, 360);
+	const wideTray = getResponsivePuzzleBoardMetrics(puzzle, viewport, 580);
+
+	expect(wideTray.boardWidth).toBeLessThan(narrowTray.boardWidth);
 });
 ```
 
@@ -634,155 +637,277 @@ cd apps/web
 bunx vitest --run src/lib/services/puzzleLayout.test.ts
 ```
 
-Expected: `clampTrayWidth` does not exist.
+- [ ] **Step 2: Replace the circular desktop solve**
 
-- [ ] **Step 2: Implement the small pure helper in `puzzleLayout.ts`**
-
-Add beside existing responsive metrics:
+Add constants:
 
 ```ts
-export interface TrayWidthClampOptions {
-	layoutWidth: number;
-	requestedWidth: number;
-	minTrayWidth: number;
-	minBoardWidth: number;
-	separatorWidth: number;
-}
+export const DESKTOP_TRAY_MIN_WIDTH = 300;
+export const DESKTOP_TRAY_BASE_WIDTH = 360;
+export const DESKTOP_BOARD_MIN_WIDTH = 480;
+export const DESKTOP_TRAY_SEPARATOR_WIDTH = 20;
 
-export function clampTrayWidth({
-	layoutWidth,
-	requestedWidth,
-	minTrayWidth,
-	minBoardWidth,
-	separatorWidth
-}: TrayWidthClampOptions): number {
-	const feasibleMax = layoutWidth - minBoardWidth - separatorWidth;
-	const maxTrayWidth = Math.max(minTrayWidth, feasibleMax);
-	return Math.min(Math.max(requestedWidth, minTrayWidth), maxTrayWidth);
+const DESKTOP_TRAY_TARGET_COLUMNS = 3;
+const DESKTOP_TRAY_CHROME_WIDTH = 42;
+```
+
+Extract the existing non-side-panel preferred width calculation:
+
+```ts
+function getPreferredBoardWidth(
+	puzzle: PuzzleBoardSource,
+	viewport: PuzzleViewportSize
+): { tier: PuzzleBoardViewportTier; width: number } {
+	const tier = getPuzzleBoardViewportTier(viewport.width);
+	const gridCols = Math.max(1, puzzle.gridCols);
+	const gridRows = Math.max(1, puzzle.gridRows);
+	const imageAspect = puzzle.imageWidth / Math.max(1, puzzle.imageHeight);
+	const targetLongEdge = TIER_LONG_EDGE[tier];
+	const targetWidth = imageAspect >= 1 ? targetLongEdge : targetLongEdge * imageAspect;
+	const viewportWidthCap = Math.max(
+		MIN_BOARD_CELL_SIZE * gridCols,
+		viewport.width - getWidthReserve(tier)
+	);
+	const viewportHeightCap = Math.max(
+		MIN_BOARD_CELL_SIZE * gridRows,
+		viewport.height - getHeightReserve(tier)
+	);
+	return {
+		tier,
+		width: Math.max(
+			MIN_BOARD_CELL_SIZE * gridCols,
+			Math.min(targetWidth, viewportWidthCap, viewportHeightCap * imageAspect)
+		)
+	};
 }
 ```
 
-The route, not this helper, guards zero/unmeasured DOM width.
-
-- [ ] **Step 3: Add failing route tests for measured keyboard resize, pointer IDs, reclamp, and mobile hiding**
-
-Add near the existing responsive layout tests:
+Default tray:
 
 ```ts
-it('resizes the tray by keyboard using a measured layout width', async () => {
+export function getDefaultPuzzleTrayWidth(
+	puzzle: PuzzleBoardSource,
+	viewport: PuzzleViewportSize
+): number {
+	const { width } = getPreferredBoardWidth(puzzle, viewport);
+	const cellSize = width / Math.max(1, puzzle.gridCols);
+	return Math.max(
+		DESKTOP_TRAY_BASE_WIDTH,
+		cellSize * DESKTOP_TRAY_TARGET_COLUMNS + DESKTOP_TRAY_CHROME_WIDTH
+	);
+}
+```
+
+Clamp:
+
+```ts
+export function clampTrayWidth(layoutWidth: number, requestedWidth: number): number {
+	const maxTrayWidth = Math.max(
+		DESKTOP_TRAY_MIN_WIDTH,
+		layoutWidth - DESKTOP_BOARD_MIN_WIDTH - DESKTOP_TRAY_SEPARATOR_WIDTH
+	);
+	return Math.min(
+		Math.max(requestedWidth, DESKTOP_TRAY_MIN_WIDTH),
+		maxTrayWidth
+	);
+}
+```
+
+Board metrics:
+
+```ts
+export function getResponsivePuzzleBoardMetrics(
+	puzzle: PuzzleBoardSource,
+	viewport: PuzzleViewportSize,
+	trayWidth: number
+): ResponsivePuzzleBoardMetrics {
+	const { tier, width: preferredWidth } = getPreferredBoardWidth(puzzle, viewport);
+	const gridCols = Math.max(1, puzzle.gridCols);
+	const imageAspect = puzzle.imageWidth / Math.max(1, puzzle.imageHeight);
+
+	const viewportWidthCap = Math.max(
+		MIN_BOARD_CELL_SIZE * gridCols,
+		viewport.width - getWidthReserve(tier)
+	);
+	const desktopWidthCap =
+		tier === 'small' || tier === 'medium'
+			? Number.POSITIVE_INFINITY
+			: Math.max(
+					MIN_BOARD_CELL_SIZE * gridCols,
+					viewportWidthCap - trayWidth - DESKTOP_TRAY_SEPARATOR_WIDTH
+				);
+
+	const boardWidth = Math.max(
+		MIN_BOARD_CELL_SIZE * gridCols,
+		Math.min(preferredWidth, desktopWidthCap)
+	);
+	...
+}
+```
+
+Delete `DESKTOP_SIDE_PANEL_COLUMNS`, `DESKTOP_LAYOUT_RESERVE`, and `1 + DESKTOP_SIDE_PANEL_COLUMNS / gridCols`.
+
+Keep current rounding/height/cell return behavior.
+
+- [ ] **Step 3: Update every metrics caller/test to pass tray width**
+
+The only production caller is the puzzle route. Update `puzzleLayout.test.ts` and route tests to pass a desktop tray width explicitly.
+
+Mobile/small/medium tests can pass `DESKTOP_TRAY_BASE_WIDTH`; the function ignores it for those tiers.
+
+- [ ] **Step 4: Add failing route tests for requested/applied behavior**
+
+Add a test that stubs the layout measurement and verifies keyboard resizing:
+
+```ts
+it('applies keyboard tray resizing against measured layout width', async () => {
 	await renderPuzzlePage();
 	const layout = document.querySelector<HTMLElement>('.game-layout')!;
-	Object.defineProperty(layout, 'clientWidth', { configurable: true, value: 1000 });
 	const separator = await page.getByTestId('tray-resizer').element();
 
-	expect(layout.style.getPropertyValue('--tray-width').trim()).toBe('360px');
+	Object.defineProperty(layout, 'clientWidth', { configurable: true, value: 1000 });
+	window.dispatchEvent(new Event('resize'));
+
 	separator.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
 	await expect.poll(() => layout.style.getPropertyValue('--tray-width').trim()).toBe('376px');
-
-	separator.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
-	await expect.poll(() => layout.style.getPropertyValue('--tray-width').trim()).toBe('500px');
 });
+```
 
-it('ignores pointermove from a non-active resize pointer', async () => {
+Add request-preservation:
+
+```ts
+it('restores the requested tray width after layout shrink and re-widen', async () => {
 	await renderPuzzlePage();
 	const layout = document.querySelector<HTMLElement>('.game-layout')!;
-	Object.defineProperty(layout, 'clientWidth', { configurable: true, value: 1000 });
-	const separator = await page.getByTestId('tray-resizer').element();
-
-	separator.dispatchEvent(
-		new PointerEvent('pointerdown', { bubbles: true, pointerId: 7, clientX: 700, button: 0 })
-	);
-	window.dispatchEvent(
-		new PointerEvent('pointermove', { bubbles: true, pointerId: 8, clientX: 650 })
-	);
-
-	expect(layout.style.getPropertyValue('--tray-width').trim()).toBe('360px');
-});
-
-it('reclamps the tray when the measured layout shrinks', async () => {
-	await renderPuzzlePage();
-	const layout = document.querySelector<HTMLElement>('.game-layout')!;
-	let layoutWidth = 1100;
+	let width = 1100;
 	Object.defineProperty(layout, 'clientWidth', {
 		configurable: true,
-		get: () => layoutWidth
+		get: () => width
 	});
-	const separator = await page.getByTestId('tray-resizer').element();
 
+	const separator = await page.getByTestId('tray-resizer').element();
 	separator.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
 	await expect.poll(() => layout.style.getPropertyValue('--tray-width').trim()).toBe('600px');
 
-	layoutWidth = 900;
+	width = 900;
 	window.dispatchEvent(new Event('resize'));
 	await expect.poll(() => layout.style.getPropertyValue('--tray-width').trim()).toBe('400px');
+
+	width = 1100;
+	window.dispatchEvent(new Event('resize'));
+	await expect.poll(() => layout.style.getPropertyValue('--tray-width').trim()).toBe('600px');
 });
 ```
 
-For mobile, render with `window.innerWidth = 390`, dispatch resize, and assert the separator has `display: none`; do not add a mobile resize behavior.
-
-Keep the existing route tests that release Hold-to-Peek on matching global `pointerup`/`pointercancel`; they are regression coverage for handler composition.
-
-- [ ] **Step 4: Add route-local tray state and measurement helpers**
-
-Import `clampTrayWidth` and add:
+Add board coupling:
 
 ```ts
-const DEFAULT_TRAY_WIDTH_PX = 360;
-const MIN_TRAY_WIDTH_PX = 300;
-const MIN_BOARD_WIDTH_PX = 480;
-const TRAY_RESIZER_WIDTH_PX = 20;
-const TRAY_RESIZE_STEP_PX = 16;
+it('recomputes board metrics from the applied tray width', async () => {
+	await renderPuzzlePage();
+	const before = document.querySelector<HTMLElement>('.board-canvas')!
+		.style.getPropertyValue('--board-width');
 
+	const separator = await page.getByTestId('tray-resizer').element();
+	separator.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
+
+	await expect
+		.poll(() =>
+			document.querySelector<HTMLElement>('.board-canvas')!
+				.style.getPropertyValue('--board-width')
+		)
+		.not.toBe(before);
+});
+```
+
+Keep/add pointer-ID and mobile hidden tests. Keep existing Hold-to-Peek pointer-release tests unchanged as regression coverage.
+
+- [ ] **Step 5: Add route requested/applied state and layout measurement**
+
+Import helpers/constants.
+
+Add:
+
+```ts
 let gameLayoutElement = $state<HTMLElement | null>(null);
-let trayWidth = $state(DEFAULT_TRAY_WIDTH_PX);
+let gameLayoutWidth = $state(0);
+let requestedTrayWidth = $state(DESKTOP_TRAY_BASE_WIDTH);
 let trayResizePointerId = $state<number | null>(null);
 let trayResizeStartX = $state(0);
-let trayResizeStartWidth = $state(DEFAULT_TRAY_WIDTH_PX);
+let trayResizeStartWidth = $state(DESKTOP_TRAY_BASE_WIDTH);
 
-function measuredGameLayoutWidth(): number | null {
-	const width = gameLayoutElement?.clientWidth ?? 0;
-	return width > 0 ? width : null;
-}
-
-function maximumTrayWidth(): number {
-	const layoutWidth = measuredGameLayoutWidth();
-	if (layoutWidth === null) return Math.max(MIN_TRAY_WIDTH_PX, trayWidth);
-	return Math.max(
-		MIN_TRAY_WIDTH_PX,
-		layoutWidth - MIN_BOARD_WIDTH_PX - TRAY_RESIZER_WIDTH_PX
-	);
-}
-
-function setTrayWidth(requestedWidth: number): void {
-	const layoutWidth = measuredGameLayoutWidth();
-	if (layoutWidth === null) return;
-	trayWidth = clampTrayWidth({
-		layoutWidth,
-		requestedWidth,
-		minTrayWidth: MIN_TRAY_WIDTH_PX,
-		minBoardWidth: MIN_BOARD_WIDTH_PX,
-		separatorWidth: TRAY_RESIZER_WIDTH_PX
-	});
-}
+const appliedTrayWidth = $derived(
+	gameLayoutWidth > 0
+		? clampTrayWidth(gameLayoutWidth, requestedTrayWidth)
+		: requestedTrayWidth
+);
 ```
 
-Extend `handleWindowResize()` after viewport dimensions update:
+Observe the layout rather than mutating request state during window resize:
 
 ```ts
-setTrayWidth(trayWidth);
+$effect(() => {
+	const layout = gameLayoutElement;
+	if (!layout) return;
+
+	const update = () => {
+		gameLayoutWidth = layout.clientWidth;
+	};
+	update();
+
+	const observer = new ResizeObserver(update);
+	observer.observe(layout);
+	return () => observer.disconnect();
+});
 ```
 
-- [ ] **Step 5: Compose resize pointer state into existing window handlers**
+When a new puzzle is loaded:
 
-Add only one new global listener:
+```ts
+requestedTrayWidth = getDefaultPuzzleTrayWidth(loadedPuzzle, {
+	width: viewportWidth,
+	height: viewportHeight
+});
+```
+
+Board metrics:
+
+```ts
+const boardMetrics = $derived(
+	puzzle
+		? getResponsivePuzzleBoardMetrics(
+				puzzle,
+				{ width: viewportWidth, height: viewportHeight },
+				appliedTrayWidth
+			)
+		: null
+);
+```
+
+User-driven setters clamp **at the current measured width** but viewport measurement changes do not rewrite the request:
+
+```ts
+function setRequestedTrayWidth(width: number): void {
+	if (gameLayoutWidth <= 0) return;
+	requestedTrayWidth = clampTrayWidth(gameLayoutWidth, width);
+}
+
+function currentMaxTrayWidth(): number {
+	if (gameLayoutWidth <= 0) return Math.max(DESKTOP_TRAY_MIN_WIDTH, appliedTrayWidth);
+	return clampTrayWidth(gameLayoutWidth, Number.POSITIVE_INFINITY);
+}
+```
+
+- [ ] **Step 6: Compose splitter pointer cleanup**
+
+Add one global listener:
 
 ```ts
 window.addEventListener('pointermove', handleWindowPointerMove);
 ```
 
-Remove it in `onDestroy`.
+Remove it on destroy.
 
-Do not replace the existing capture-phase `pointerup` / `pointercancel`. Extend their handler:
+Extend existing `handleWindowPointerUp`:
 
 ```ts
 function handleWindowPointerUp(event: PointerEvent) {
@@ -801,78 +926,85 @@ Add:
 function handleWindowPointerMove(event: PointerEvent): void {
 	if (trayResizePointerId !== event.pointerId) return;
 	const deltaX = event.clientX - trayResizeStartX;
-	setTrayWidth(trayResizeStartWidth - deltaX);
+	setRequestedTrayWidth(trayResizeStartWidth - deltaX);
 }
 
 function handleTrayResizePointerDown(event: PointerEvent): void {
 	if (event.pointerType === 'mouse' && event.button !== 0) return;
 	trayResizePointerId = event.pointerId;
 	trayResizeStartX = event.clientX;
-	trayResizeStartWidth = trayWidth;
+	trayResizeStartWidth = requestedTrayWidth;
 }
 ```
 
-Extend, do not replace, `handleWindowBlur()`:
+Extend existing `handleWindowBlur()` with:
 
 ```ts
 trayResizePointerId = null;
 ```
 
-Keep existing reference-hold and selection cleanup in that function. Do not call `setPointerCapture`.
+Do not call `setPointerCapture`.
 
-- [ ] **Step 6: Render the separator and change only desktop grid sizing**
-
-Bind the layout and expose width:
-
-```svelte
-<div
-	bind:this={gameLayoutElement}
-	class="game-layout"
-	style={`--tray-width: ${trayWidth}px; --tray-resizer-width: ${TRAY_RESIZER_WIDTH_PX}px; ...existing board variables...`}
->
-	<PuzzleBoardPanel ... />
-
-	<div
-		class="tray-resizer"
-		data-testid="tray-resizer"
-		role="separator"
-		aria-label="Resize puzzle tray"
-		aria-orientation="vertical"
-		aria-valuemin={MIN_TRAY_WIDTH_PX}
-		aria-valuemax={Math.round(maximumTrayWidth())}
-		aria-valuenow={Math.round(trayWidth)}
-		tabindex="0"
-		onpointerdown={handleTrayResizePointerDown}
-		onkeydown={handleTrayResizeKeyDown}
-	></div>
-
-	<PuzzleInventoryPanel ... />
-</div>
-```
-
-Keyboard handler:
+Keyboard:
 
 ```ts
 function handleTrayResizeKeyDown(event: KeyboardEvent): void {
 	switch (event.key) {
 		case 'ArrowLeft':
 			event.preventDefault();
-			setTrayWidth(trayWidth + TRAY_RESIZE_STEP_PX);
+			setRequestedTrayWidth(appliedTrayWidth + 16);
 			break;
 		case 'ArrowRight':
 			event.preventDefault();
-			setTrayWidth(trayWidth - TRAY_RESIZE_STEP_PX);
+			setRequestedTrayWidth(appliedTrayWidth - 16);
 			break;
 		case 'Home':
 			event.preventDefault();
-			setTrayWidth(MIN_TRAY_WIDTH_PX);
+			setRequestedTrayWidth(DESKTOP_TRAY_MIN_WIDTH);
 			break;
 		case 'End':
 			event.preventDefault();
-			setTrayWidth(maximumTrayWidth());
+			setRequestedTrayWidth(currentMaxTrayWidth());
 			break;
 	}
 }
+```
+
+- [ ] **Step 7: Render the coherent split**
+
+Bind `.game-layout`.
+
+Crucially, keep tray width outside the board-metrics conditional:
+
+```svelte
+<div
+	bind:this={gameLayoutElement}
+	class="game-layout"
+	data-board-tier={currentBoardMetrics?.tier}
+	style={`--tray-width: ${appliedTrayWidth}px; --tray-resizer-width: ${DESKTOP_TRAY_SEPARATOR_WIDTH}px; ${
+		currentBoardMetrics
+			? `--board-width: ${currentBoardMetrics.boardWidth}px; --board-height: ${currentBoardMetrics.boardHeight}px; --board-cell-size: ${currentBoardMetrics.cellSize}px; --piece-slot-size: ${currentBoardMetrics.pieceSlotSize}px;`
+			: ''
+	}`}
+>
+```
+
+Between board and inventory:
+
+```svelte
+<div
+	class="tray-resizer"
+	data-testid="tray-resizer"
+	role="separator"
+	aria-label="Resize puzzle tray"
+	aria-orientation="vertical"
+	aria-valuemin={DESKTOP_TRAY_MIN_WIDTH}
+	aria-valuemax={Math.round(currentMaxTrayWidth())}
+	aria-valuenow={Math.round(appliedTrayWidth)}
+	tabindex="0"
+	onpointerdown={handleTrayResizePointerDown}
+	onkeydown={handleTrayResizeKeyDown}
+></div>
 ```
 
 Desktop CSS:
@@ -880,12 +1012,15 @@ Desktop CSS:
 ```css
 @media (min-width: 1024px) {
 	.game-layout {
-		grid-template-columns: minmax(0, 1fr) var(--tray-resizer-width) var(--tray-width);
+		grid-template-columns:
+			minmax(0, 1fr)
+			var(--tray-resizer-width)
+			var(--tray-width);
 		column-gap: 0;
 	}
 
 	.tray-resizer {
-		display: flex;
+		display: block;
 		cursor: col-resize;
 		touch-action: none;
 	}
@@ -898,21 +1033,27 @@ Desktop CSS:
 }
 ```
 
-The 20px separator is the spacing/hit area; do not leave the old desktop column gap unaccounted for in the clamp math.
+The 20px separator replaces the old 1.25rem column gap. Do not double-count a gap.
 
-- [ ] **Step 7: Verify and commit Task 3**
+Do not change `PuzzleInventoryPanel` slot-size formula in this task.
+
+- [ ] **Step 8: Verify Task 3**
 
 ```bash
 cd apps/web
 bunx vitest --run src/lib/services/puzzleLayout.test.ts
 bunx vitest --run --browser 'src/routes/puzzle/[id]/page.svelte.test.ts'
 bun run check
+```
 
+Commit:
+
+```bash
 git add src/lib/services/puzzleLayout.ts \
   src/lib/services/puzzleLayout.test.ts \
   'src/routes/puzzle/[id]/+page.svelte' \
   'src/routes/puzzle/[id]/page.svelte.test.ts'
-git commit -m "feat(web): add resizable desktop puzzle tray"
+git commit -m "feat(web): add coherent resizable puzzle tray"
 ```
 
 ---
@@ -924,16 +1065,13 @@ git commit -m "feat(web): add resizable desktop puzzle tray"
 - Modify: `apps/web/src/lib/services/gameplay/runtime.ts`
 - Modify: `apps/web/src/lib/services/gameplay/runtime.test.ts`
 
-**Interfaces:**
+**Interfaces:** `createRotations(puzzleId, pieceIds)` stays unchanged.
 
-- Keep `GameplayRuntimeDependencies.createRotations(puzzleId, pieceIds)` unchanged.
-- Production `buildRotations` still returns `Record<number, Rotation>`.
+**Produces:** each setup/restart calls the existing unseeded generator; non-empty all-upright results are bumped.
 
-**Produces:** fresh production orientation generation on each setup/restart while deterministic E2E continues through the virtual override.
+- [ ] **Step 1: Mock `generateRandomRotations`**
 
-- [ ] **Step 1: Replace deterministic-seed tests with a mocked rotation generator**
-
-Add a hoisted generator mock before importing `runtime`:
+Hoist:
 
 ```ts
 const rotationsMock = vi.hoisted(() =>
@@ -947,23 +1085,25 @@ vi.mock('$lib/services/gameplay/rotation', () => ({
 }));
 ```
 
-Reset it in `beforeEach`.
+Reset in `beforeEach`.
 
-Replace the old “same puzzle id is deterministic” test with:
+Replace the deterministic-seed assertion with:
 
 ```ts
-it('requests a fresh rotation mapping on every production call', () => {
-	const runtime = createGameplayRuntimeDependencies('puzzle-1', [0, 1, 2]);
+it('requests fresh rotations on every production call', () => {
+	const runtime = createGameplayRuntimeDependencies('puzzle-1', [0, 1]);
 
-	runtime.createRotations('puzzle-1', [0, 1, 2]);
-	runtime.createRotations('puzzle-1', [0, 1, 2]);
+	runtime.createRotations('puzzle-1', [0, 1]);
+	runtime.createRotations('puzzle-1', [0, 1]);
 
 	expect(rotationsMock).toHaveBeenCalledTimes(2);
-	expect(rotationsMock).toHaveBeenNthCalledWith(1, [0, 1, 2]);
-	expect(rotationsMock).toHaveBeenNthCalledWith(2, [0, 1, 2]);
 });
+```
 
-it('bumps the first piece to 90 when generation returns all upright', () => {
+All-upright:
+
+```ts
+it('bumps the first piece when generated rotations are all upright', () => {
 	rotationsMock.mockReturnValueOnce({ 0: 0, 1: 0, 2: 0 });
 	const runtime = createGameplayRuntimeDependencies('puzzle-1', [0, 1, 2]);
 
@@ -973,23 +1113,11 @@ it('bumps the first piece to 90 when generation returns all upright', () => {
 		2: 0
 	});
 });
-
-it('returns a clone of the generated rotation record', () => {
-	const generated = { 0: 90 as const, 1: 180 as const };
-	rotationsMock.mockReturnValueOnce(generated);
-	const runtime = createGameplayRuntimeDependencies('puzzle-1', [0, 1]);
-
-	const result = runtime.createRotations('puzzle-1', [0, 1]);
-	expect(result).toEqual(generated);
-	expect(result).not.toBe(generated);
-});
 ```
 
-Keep existing valid-rotation and override-path coverage.
+Keep valid-rotation and virtual-override tests. Do **not** add a clone-artifact test.
 
 - [ ] **Step 2: Simplify only `buildRotations`**
-
-Remove the puzzle-derived hash/seed code and implement:
 
 ```ts
 function buildRotations(
@@ -1002,13 +1130,13 @@ function buildRotations(
 		rotations[pieceIds[0]!] = 90;
 	}
 
-	return { ...rotations };
+	return rotations;
 }
 ```
 
-Do not change `runtime.types.ts`, session code, persistence, or E2E runtime override.
+Delete the hash/seed loop. Do not touch `rotation.ts`, session code, runtime types, or virtual override.
 
-- [ ] **Step 3: Verify and commit Task 4**
+- [ ] **Step 3: Verify and commit**
 
 ```bash
 cd apps/web
@@ -1021,7 +1149,7 @@ git commit -m "feat(web): randomize rotation setup per run"
 
 ---
 
-## Task 5: Keep hints visible and reveal the corresponding tray piece
+## Task 5: Keep hints until success and reveal the tray piece after render
 
 **Files:**
 
@@ -1032,185 +1160,194 @@ git commit -m "feat(web): randomize rotation setup per run"
 - Modify: `apps/web/src/lib/components/PuzzleBoard.svelte`
 - Modify: `docs/PRD.md`
 
-**Interfaces:**
+**Interfaces:** existing `activeHintPieceId` / `activeHintTarget`; no session hint action/event changes.
 
-- No session hint action/event changes.
-- `PuzzleInventoryPanel` keeps current props; `activeHintPieceId` drives drawer/reveal/roving presentation.
-- `activeHintPieceId` and `activeHintTarget` remain route-local.
+**Produces:** persistent hint survives rejection, clears on accepted placement, opens/reveals after DOM update, and uses one gold cue.
 
-**Produces:** one persistent visual relationship between the hinted tray piece and board target, with no focus/selection side effect and no stale PRD lifetime.
+- [ ] **Step 1: Add route tests that pin lifetime**
 
-- [ ] **Step 1: Add failing inventory reveal tests**
-
-Stub `scrollIntoView` in `PuzzleInventoryPanel.svelte.test.ts`:
+Rejected attempt retains hint:
 
 ```ts
-const scrollIntoView = vi.fn();
+it('keeps the hint after a rejected placement of the hinted piece', async () => {
+	await renderPuzzlePage();
+	await selectPiece(1);
+	await page.getByLabelText('Hint').click();
 
-beforeEach(() => {
-	vi.clearAllMocks();
-	HTMLElement.prototype.scrollIntoView = scrollIntoView;
-});
-```
+	await placeSelectedPieceAt(0, 0); // wrong slot for piece 1
 
-Add:
-
-```ts
-it('opens the drawer and reveals the hinted piece without selecting or focusing it', async () => {
-	const input = baseProps();
-	const view = render(PuzzleInventoryPanel, input);
-
-	await page.getByRole('button', { name: 'Collapse inventory' }).click();
-	const focusedBefore = document.activeElement;
-
-	await view.rerender({ ...input, activeHintPieceId: 1 });
-
-	await expect.element(page.getByRole('button', { name: 'Collapse inventory' })).toBeVisible();
 	await expect.element(page.getByTestId('piece-slot-1')).toHaveAttribute('data-hinted', 'true');
-	await expect.element(page.getByTestId('hint-piece-badge')).toHaveTextContent('HINT');
-	expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest', inline: 'nearest' });
-	expect(input.onSelect).not.toHaveBeenCalled();
-	expect(document.activeElement).toBe(focusedBefore);
-});
-
-it('makes the hinted piece the roving candidate without moving focus', async () => {
-	const input = baseProps();
-	const view = render(PuzzleInventoryPanel, input);
-	const first = await page.getByLabelText('Puzzle piece 1').element();
-	first.focus();
-
-	await view.rerender({ ...input, activeHintPieceId: 0 });
-	const hinted = await page.getByLabelText('Puzzle piece 0').element();
-
-	await expect.poll(() => hinted.tabIndex).toBe(0);
-	expect(document.activeElement).toBe(first);
+	await expect.element(page.getByTestId('hint-target')).toHaveAttribute('data-x', '1');
+	await expect.element(page.getByTestId('hint-target')).toHaveAttribute('data-y', '0');
 });
 ```
 
-Keep the existing hinted-over-rejected precedence test and update expected classes/data attributes.
+Accepted placement clears:
 
-- [ ] **Step 2: Remove the route timer and make hint lifetime explicit**
+```ts
+it('clears the hint only after the hinted piece is accepted', async () => {
+	await renderPuzzlePage();
+	await selectPiece(1);
+	await page.getByLabelText('Hint').click();
+
+	await placeSelectedPieceAt(1, 0);
+
+	await expect.poll(() => page.getByTestId('hint-target').query()).toBeNull();
+	expect(page.getByTestId('piece-slot-1').query()).toBeNull();
+});
+```
+
+Also assert:
+
+- hint remains beyond 1.8s with fake timers;
+- second hint replaces first;
+- Pause clears;
+- navigation clears;
+- existing Undo/Redo hint-preservation test stays green.
+
+- [ ] **Step 2: Move hint clearing from attempt to accepted event**
+
+Delete from `handlePiecePlaced`:
+
+```ts
+if (activeHintPieceId === pieceId) {
+	clearHintTarget();
+}
+```
+
+Extend `placement_accepted` event handling:
+
+```ts
+} else if (event.type === 'placement_accepted') {
+	if (activeHintPieceId === event.pieceId) {
+		clearHintTarget();
+	}
+	announceGameplay(
+		event.completed
+			? `Puzzle piece ${event.pieceId} placed. Puzzle complete.`
+			: `Puzzle piece ${event.pieceId} placed.`
+	);
+```
+
+Do not clear in `placement_rejected`.
+
+- [ ] **Step 3: Remove timeout state**
 
 Delete:
 
 - `HINT_DURATION_MS`
 - `hintTimeout`
-- all `clearTimeout(hintTimeout)` branches
-- timeout scheduling in `showHintTarget`
+- all hint `clearTimeout` branches
+- timeout scheduling from `showHintTarget`.
 
 Keep:
 
 ```ts
-function clearHintTarget() {
+function clearHintTarget(): void {
 	activeHintPieceId = null;
 	activeHintTarget = null;
 }
 
-function showHintTarget(pieceId: number, target: { x: number; y: number }) {
+function showHintTarget(pieceId: number, target: { x: number; y: number }): void {
 	activeHintPieceId = pieceId;
 	activeHintTarget = target;
 }
 ```
 
-Existing cleanup already clears the hint on successful placement of that piece, transient lifecycle cleanup, puzzle navigation, and teardown. Add/adjust route tests to prove:
+- [ ] **Step 4: Add an inventory test that proves scroll happens after the drawer is visible**
 
-- hint remains after advancing fake timers beyond 1.8 seconds;
-- a second hint replaces the first;
-- placing the hinted piece clears both tray and board markers;
-- Pause clears it;
-- navigation clears it.
-
-Do not clear hints on Undo/Redo or selection alone; existing keyboard-shortcut coverage already expects hint state to survive Undo/Redo.
-
-- [ ] **Step 3: Reveal the hinted tray slot in `PuzzleInventoryPanel`**
-
-Add an effect after the existing active-piece normalization:
+In test setup, replace `scrollIntoView` with a function that captures visibility at call time:
 
 ```ts
-$effect(() => {
-	const pieceId = activeHintPieceId;
-	if (pieceId === null) return;
+let drawerDisplayAtScroll = '';
 
+const scrollIntoView = vi.fn(function (this: HTMLElement) {
+	const body = this.closest<HTMLElement>('.inventory-body');
+	drawerDisplayAtScroll = body ? getComputedStyle(body).display : '';
+});
+```
+
+Test:
+
+```ts
+it('opens the drawer before scrolling the hinted piece into view', async () => {
+	const input = baseProps();
+	const view = render(PuzzleInventoryPanel, input);
+
+	await page.getByRole('button', { name: 'Collapse inventory' }).click();
+	await view.rerender({ ...input, activeHintPieceId: 1 });
+
+	await expect
+		.element(page.getByTestId('inventory-drawer-toggle'))
+		.toHaveAttribute('aria-expanded', 'true');
+	await vi.waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
+
+	expect(drawerDisplayAtScroll).not.toBe('none');
+	expect(input.onSelect).not.toHaveBeenCalled();
+});
+```
+
+Add/keep roving candidate without focus:
+
+```ts
+const focusedBefore = document.activeElement;
+await view.rerender({ ...input, activeHintPieceId: 0 });
+const hinted = await page.getByLabelText('Puzzle piece 0').element();
+
+await expect.poll(() => hinted.tabIndex).toBe(0);
+expect(document.activeElement).toBe(focusedBefore);
+```
+
+- [ ] **Step 5: Implement post-render reveal**
+
+In `PuzzleInventoryPanel.svelte`:
+
+```ts
+import { tick } from 'svelte';
+```
+
+Add:
+
+```ts
+async function revealHintedPiece(pieceId: number): Promise<void> {
 	drawerOpen = true;
 	activePieceId = pieceId;
+	await tick();
+
+	if (activeHintPieceId !== pieceId) return;
 
 	piecesGridElement
 		?.querySelector<HTMLElement>(`[data-testid="piece-slot-${pieceId}"]`)
 		?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
+
+$effect(() => {
+	const pieceId = activeHintPieceId;
+	if (pieceId !== null) void revealHintedPiece(pieceId);
 });
 ```
 
-Do not call `.focus()`.
+No `.focus()` and no callbacks.
 
-Update the slot markup:
+On hinted slot:
 
 ```svelte
-<div
-	class:hinted={activeHintPieceId === piece.id}
-	data-testid={`piece-slot-${piece.id}`}
-	data-hinted={activeHintPieceId === piece.id ? 'true' : undefined}
->
-	{#if activeHintPieceId === piece.id}
-		<span class="hint-piece-badge" data-testid="hint-piece-badge" aria-hidden="true">HINT</span>
-	{/if}
-	<PuzzlePiece ... />
-</div>
+data-hinted={activeHintPieceId === piece.id ? 'true' : undefined}
 ```
 
-Use existing tokens:
+Render `HINT` badge and use `var(--gold)` / `var(--gold-glow)`. Keep hinted precedence over rejected.
 
-```css
-.piece-slot.hinted {
-	border-color: var(--gold);
-	box-shadow: 0 0 14px var(--gold-glow);
-}
+- [ ] **Step 6: Align board target styling**
 
-.hint-piece-badge {
-	position: absolute;
-	top: 0.2rem;
-	right: 0.2rem;
-	z-index: 2;
-	color: var(--gold);
-	background: var(--bg-0);
-	border: 1px solid var(--gold);
-}
-```
+Keep test IDs/coordinates. Replace hard-coded amber target treatment with `--gold` / `--gold-glow`. No board hint-selection logic.
 
-Ensure `.piece-slot` is positioned for the badge.
+- [ ] **Step 7: Update PRD**
 
-- [ ] **Step 4: Align the board target to the same gold cue**
+Update both `1.8 s` hint descriptions to persistent tray-piece + board-target behavior.
 
-In `PuzzleBoard.svelte`, replace the amber-only hint target treatment with a stable class using `var(--gold)` / `var(--gold-glow)`. Keep `data-testid="hint-target"`, `data-x`, and `data-y` unchanged so route/E2E selectors remain stable.
+Replace `seeded random init` with fresh randomized setup/restart orientation while restored orientation persists.
 
-No hint-selection logic belongs in the board.
-
-- [ ] **Step 5: Update `docs/PRD.md` in the same implementation commit**
-
-Update the document date/version per the repo’s normal convention, then replace both stale 1.8-second descriptions:
-
-Current scope bullet:
-
-```text
-Hint system (highlights the target cell for the selected or next unplaced piece for 1.8 s)
-```
-
-becomes the equivalent of:
-
-```text
-Hint system (reveals/highlights the selected or next unplaced tray piece and its target cell until placement, replacement, or gameplay lifecycle cleanup)
-```
-
-Gameplay requirement row:
-
-```text
-board cell glows for 1.8 s
-```
-
-becomes the same persistent tray-piece + board-target contract.
-
-Also replace `seeded random init` in the Piece rotation row with wording that reflects fresh randomized orientation at setup/restart while restored state persists.
-
-- [ ] **Step 6: Verify and commit Task 5**
+- [ ] **Step 8: Verify and commit**
 
 ```bash
 cd apps/web
@@ -1227,8 +1364,8 @@ Commit:
 
 ```bash
 git add src/lib/components/PuzzleInventoryPanel.svelte \
-  src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts \
   src/lib/components/PuzzleBoard.svelte \
+  src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts \
   'src/routes/puzzle/[id]/+page.svelte' \
   'src/routes/puzzle/[id]/page.svelte.test.ts' \
   ../../docs/PRD.md
@@ -1237,7 +1374,7 @@ git commit -m "feat(web): reveal persistent hint relationship"
 
 ---
 
-## Task 6: Update E2E only after component/route behavior is green
+## Task 6: Add E2E coverage that actually runs in the default gate
 
 **Files:**
 
@@ -1246,15 +1383,15 @@ git commit -m "feat(web): reveal persistent hint relationship"
 
 **Interfaces:**
 
-- Reuse `GameplayPage.pauseMission()`; do not add a second Pause helper.
-- Reuse `IMMEDIATE_START` already defined in `gameplay-large-fixtures.spec.ts` for any resizer/hint interaction case.
-- Keep existing deterministic fixture/runtime overrides.
+- Reuse `GameplayPage.pauseMission()` and `readPersistedSession()`.
+- Use `IMMEDIATE_START` for any fresh interaction test.
+- Keep deterministic fixture/runtime overrides.
 
-**Produces:** integration coverage that can actually interact with the active page and verifies the changed contracts end-to-end.
+**Produces:** flow E2E plus one desktop splitter/hint smoke test selected by the automatic non-extended gate.
 
-- [ ] **Step 1: Rewrite the restored Relaxed session-control E2E**
+- [ ] **Step 1: Rewrite restored Relaxed E2E**
 
-The existing restored Relaxed + rotation test currently expects `Resume Mission`. Change it so route entry is already active:
+Existing restored Relaxed+rotation flow:
 
 ```ts
 await gameplayPage.gotoFixture({ seedSession: seeded });
@@ -1262,23 +1399,34 @@ await gameplayPage.gotoFixture({ seedSession: seeded });
 await expect(page.getByRole('dialog', { name: 'Resume Mission' })).toHaveCount(0);
 await expect(page.getByTestId('relaxed-mode-indicator')).toBeVisible();
 
-// Pause manually before exercising Restart.
 await gameplayPage.pauseMission();
-await page.getByRole('dialog', { name: 'Mission Paused' })
+await page
+	.getByRole('dialog', { name: 'Mission Paused' })
 	.getByRole('button', { name: 'Restart' })
 	.click();
 ```
 
-Keep the existing assertions that Restart retains Relaxed + rotation choices, produces a fresh run ID, clears placements, and uses the restart tray order.
+Keep Restart assertions for choices, fresh run ID, placements, and restart tray order.
 
-Keep/add a restored Timed case that still expects `Resume Mission` before play.
+Keep/add restored Timed coverage that still expects `Resume Mission`.
 
-- [ ] **Step 2: Add direct Exit and confirmed Pause Discard E2E cases**
+- [ ] **Step 2: Add direct Exit and Pause Discard smoke cases**
+
+In `gameplay-session-controls.spec.ts`, define:
+
+```ts
+import { DEFAULT_GAMEPLAY_PREFERENCES } from '../src/lib/services/gameplay/session/preferences';
+
+const IMMEDIATE_START = {
+	...DEFAULT_GAMEPLAY_PREFERENCES,
+	startImmediately: true
+};
+```
 
 Direct Exit:
 
 ```ts
-test('Exit saves progress and returns to the arcade without a choice dialog @smoke', async ({
+test('Exit saves progress and returns home without a choice dialog @smoke', async ({
 	gameplayPage,
 	page
 }) => {
@@ -1290,19 +1438,8 @@ test('Exit saves progress and returns to the arcade without a choice dialog @smo
 	await expect(page).toHaveURL(/\/$/);
 	await expect(page.getByRole('dialog', { name: 'Exit Mission' })).toHaveCount(0);
 	const persisted = await gameplayPage.readPersistedSession();
-	expect(persisted?.placedPieces).toHaveLength(1);
+	expect(persisted?.placedPieces).toEqual([{ pieceId: 0, x: 0, y: 0 }]);
 });
-```
-
-`gameplay-session-controls.spec.ts` does not currently define `IMMEDIATE_START`; add the same small constant used by the large-fixture spec:
-
-```ts
-import { DEFAULT_GAMEPLAY_PREFERENCES } from '../src/lib/services/gameplay/session/preferences';
-
-const IMMEDIATE_START = {
-	...DEFAULT_GAMEPLAY_PREFERENCES,
-	startImmediately: true
-};
 ```
 
 Discard:
@@ -1317,7 +1454,8 @@ test('Pause Discard removes saved progress after confirmation @smoke', async ({
 	await gameplayPage.pauseMission();
 
 	await page.getByRole('button', { name: 'Discard' }).click();
-	await page.getByRole('dialog', { name: 'Discard saved progress' })
+	await page
+		.getByRole('dialog', { name: 'Discard saved progress' })
 		.getByRole('button', { name: 'Discard' })
 		.click();
 
@@ -1326,65 +1464,97 @@ test('Pause Discard removes saved progress after confirmation @smoke', async ({
 });
 ```
 
-- [ ] **Step 3: Add one chromium-desktop-only large-fixture resizer + hint test that starts the run**
+- [ ] **Step 3: Add a non-extended desktop splitter/hint smoke test**
 
-Use the existing `IMMEDIATE_START`; without it, mandatory Mission Setup makes the page inert.
+`gameplay-large-fixtures.spec.ts` currently wraps its normal tests in:
 
 ```ts
-test('desktop tray resizer and hint reveal stay usable @extended', async ({
-	gameplayPage,
-	page
-}, testInfo) => {
-	test.skip(testInfo.project.name !== 'chromium-desktop', 'desktop-only resizer behavior');
+test.describe('large fixtures @extended', ...)
+```
 
-	await gameplayPage.gotoFixture({
-		fixtureId: 'e2e-square-100',
-		seedPreferences: IMMEDIATE_START
+Do **not** place the smoke test inside that describe.
+
+After the extended describe closes, add a new describe without `@extended`:
+
+```ts
+test.describe('gameplay workspace polish smoke', () => {
+	test('desktop tray drag and hint reveal @smoke', async ({
+		gameplayPage,
+		page
+	}, testInfo) => {
+		test.skip(
+			testInfo.project.name !== 'chromium-desktop',
+			'desktop-only split layout'
+		);
+
+		await gameplayPage.gotoFixture({
+			fixtureId: 'e2e-square-100',
+			seedPreferences: IMMEDIATE_START
+		});
+
+		const layout = page.locator('.game-layout');
+		const separator = page.getByTestId('tray-resizer');
+		const before = await layout.evaluate((element) =>
+			getComputedStyle(element).getPropertyValue('--tray-width').trim()
+		);
+
+		const box = await separator.boundingBox();
+		expect(box).not.toBeNull();
+		await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+		await page.mouse.down();
+		await page.mouse.move(box!.x - 80, box!.y + box!.height / 2);
+		await page.mouse.up();
+
+		const after = await layout.evaluate((element) =>
+			getComputedStyle(element).getPropertyValue('--tray-width').trim()
+		);
+		expect(after).not.toBe(before);
+
+		await page.getByLabel('Puzzle piece 99', { exact: true }).click();
+		await page.locator('.pieces-grid').evaluate((element) => {
+			element.scrollTop = 0;
+		});
+
+		await page.getByRole('button', { name: 'Hint' }).click();
+
+		const slot = page.getByTestId('piece-slot-99');
+		await expect(slot).toHaveAttribute('data-hinted', 'true');
+		await expect(slot).toBeInViewport();
+		await expect(page.getByTestId('hint-target')).toBeVisible();
 	});
-
-	const layout = page.locator('.game-layout');
-	const separator = page.getByTestId('tray-resizer');
-	const before = await layout.evaluate((element) =>
-		getComputedStyle(element).getPropertyValue('--tray-width').trim()
-	);
-
-	const box = await separator.boundingBox();
-	expect(box).not.toBeNull();
-	await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
-	await page.mouse.down();
-	await page.mouse.move(box!.x - 80, box!.y + box!.height / 2);
-	await page.mouse.up();
-
-	const after = await layout.evaluate((element) =>
-		getComputedStyle(element).getPropertyValue('--tray-width').trim()
-	);
-	expect(after).not.toBe(before);
-	await expect(page.getByTestId('puzzle-board')).toBeVisible();
-
-	// Select a late piece, then deliberately move the tray away from it.
-	await page.getByLabel('Puzzle piece 99', { exact: true }).click();
-	await page.locator('.pieces-grid').evaluate((element) => {
-		element.scrollTop = 0;
-	});
-
-	await page.getByLabel('Hint').click();
-	await expect(page.getByTestId('piece-slot-99')).toHaveAttribute('data-hinted', 'true');
-	await expect(page.getByTestId('piece-slot-99')).toBeInViewport();
-	await expect(page.getByTestId('hint-target')).toBeVisible();
 });
 ```
 
-The selected-piece hint path is existing policy; this E2E only proves reveal/presentation.
+Because the parent describe has no `@extended`, this test is selectable by:
 
-- [ ] **Step 4: Run focused E2E gates and commit**
+- `test:e2e` (`--grep-invert @extended`)
+- `test:e2e:smoke` (`--grep @smoke`)
+
+Mobile smoke projects skip it before interaction.
+
+- [ ] **Step 4: Verify and commit E2E**
 
 ```bash
 cd apps/web
 bunx playwright test e2e/gameplay-session-controls.spec.ts --project=chromium-desktop
 bunx playwright test e2e/gameplay-session-controls.spec.ts --project=chromium-mobile
-bunx playwright test e2e/gameplay-large-fixtures.spec.ts --project=chromium-desktop \
-  --grep 'desktop tray resizer and hint reveal'
 
+# Prove the non-extended automatic selection path.
+bunx playwright test e2e/gameplay-large-fixtures.spec.ts \
+  --project=chromium-desktop \
+  --grep-invert @extended \
+  --grep 'desktop tray drag and hint reveal'
+
+# Prove smoke selection too.
+bunx playwright test e2e/gameplay-large-fixtures.spec.ts \
+  --project=chromium-desktop \
+  --grep @smoke \
+  --grep 'desktop tray drag and hint reveal'
+```
+
+Commit:
+
+```bash
 git add e2e/gameplay-session-controls.spec.ts e2e/gameplay-large-fixtures.spec.ts
 git commit -m "test(web): cover gameplay polish flows"
 ```
@@ -1393,7 +1563,7 @@ git commit -m "test(web): cover gameplay polish flows"
 
 ## Final Verification
 
-- [ ] **Step 1: Review the implementation diff for scope**
+- [ ] **Step 1: Review scope**
 
 ```bash
 git status --short
@@ -1409,9 +1579,9 @@ git diff main...HEAD -- \
   docs/PRD.md
 ```
 
-Expected production changes are limited to the puzzle/home routes, discard/pause/inventory/board components, the small puzzle-layout clamp, runtime rotation factory, E2E specs, and PRD wording. There must be no session schema, backend, dependency, generic split-pane, or unrelated refactor diff.
+Expected: no session schema, backend, dependency, generic split-pane, or unrelated refactor.
 
-- [ ] **Step 2: Run the complete focused gate**
+- [ ] **Step 2: Run focused unit/browser gate**
 
 ```bash
 cd apps/web
@@ -1422,30 +1592,43 @@ bunx vitest --run --browser src/lib/components/__tests__/PuzzleInventoryPanel.sv
 bunx vitest --run --browser src/routes/page.svelte.test.ts
 bunx vitest --run --browser 'src/routes/puzzle/[id]/page.svelte.test.ts'
 bun run check
-bunx playwright test e2e/gameplay-session-controls.spec.ts --project=chromium-desktop
-bunx playwright test e2e/gameplay-session-controls.spec.ts --project=chromium-mobile
-bunx playwright test e2e/gameplay-large-fixtures.spec.ts --project=chromium-desktop \
-  --grep 'desktop tray resizer and hint reveal'
 ```
 
-- [ ] **Step 3: Confirm stale production/docs contracts are gone**
+- [ ] **Step 3: Run E2E gates**
+
+```bash
+bunx playwright test e2e/gameplay-session-controls.spec.ts --project=chromium-desktop
+bunx playwright test e2e/gameplay-session-controls.spec.ts --project=chromium-mobile
+bunx playwright test e2e/gameplay-large-fixtures.spec.ts \
+  --project=chromium-desktop \
+  --grep-invert @extended \
+  --grep 'desktop tray drag and hint reveal'
+```
+
+- [ ] **Step 4: Check stale contracts**
 
 ```bash
 git grep -n 'ExitSessionDialog\|Save & Exit' -- apps/web/src || true
 git grep -n "sessionDialog === 'exit'" -- 'apps/web/src/routes/puzzle/[id]/+page.svelte' || true
 git grep -n '1\.8 s\|1\.8s\|seeded random init' -- docs/PRD.md || true
+git grep -n 'DESKTOP_SIDE_PANEL_COLUMNS\|DESKTOP_LAYOUT_RESERVE' -- apps/web/src/lib/services/puzzleLayout.ts || true
 ```
 
-Expected: all three commands return no stale contract. Negative tests may still mention the accessible name `Exit Mission` to prove that dialog is absent.
+Expected: no output from all four.
 
-- [ ] **Step 4: Manually smoke one desktop flow**
+- [ ] **Step 5: Manual desktop smoke that catches layout coupling**
 
 ```text
-1. Start a Relaxed rotation-enabled puzzle and confirm pieces begin in mixed orientations.
-2. Place one piece, Exit, and confirm navigation home occurs without an Exit popup.
-3. Continue the Relaxed run and confirm no Resume Mission popup appears.
-4. Pause, open Discard, cancel, and confirm Mission Paused returns unchanged.
-5. Drag and keyboard-resize the tray; shrink the viewport and confirm the tray reclamps.
-6. Request a hint with an offscreen piece and confirm both tray piece and board target remain marked.
-7. Exit, use home Discard, confirm, and verify the Continue panel refreshes.
+1. Open a dense puzzle and confirm the initial tray is visibly wider than the old narrow sidebar.
+2. Open a coarse/low-piece-count puzzle and confirm the default tray is not narrower than the previous three-column presentation.
+3. Drag the separator wider and verify both tray width and board rendered width change without unused board-panel dead space.
+4. Resize the browser narrower, then wider, and confirm the tray returns to the user's requested width.
+5. Start a Relaxed rotation-enabled puzzle; confirm mixed starting orientations.
+6. Place one piece, Exit, and confirm home navigation with saved Continue state and no exit popup.
+7. Continue the Relaxed run with no Resume popup.
+8. Pause, open Discard, cancel, and confirm the same pause presentation returns.
+9. Request a hint, intentionally place that piece in a wrong cell, and confirm the hint remains.
+10. Place the hinted piece correctly and confirm both tray and board hint markers clear.
+11. Collapse the mobile drawer, request a hint, and confirm it opens and scrolls the hinted piece into view.
+12. Discard from home and confirm the Continue panel recomputes.
 ```
