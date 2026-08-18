@@ -12,12 +12,20 @@ const overrideState = vi.hoisted(() => ({
 // for the number[] piece-id usage; the production shuffleArray is generic.
 const shuffleMock = vi.hoisted(() => vi.fn((values: number[]) => [...values].reverse()));
 
+const rotationsMock = vi.hoisted(() =>
+	vi.fn((ids: number[]) => Object.fromEntries(ids.map((id, index) => [id, index === 0 ? 90 : 0])))
+);
+
 vi.mock('virtual:perseus-gameplay-runtime-override', () => ({
 	readGameplayRuntimeOverride: () => overrideState.value
 }));
 
 vi.mock('$lib/utils/shuffle', () => ({
 	shuffleArray: shuffleMock
+}));
+
+vi.mock('$lib/services/gameplay/rotation', () => ({
+	generateRandomRotations: rotationsMock
 }));
 
 import { createGameplayRuntimeDependencies } from './runtime';
@@ -30,6 +38,10 @@ describe('createGameplayRuntimeDependencies', () => {
 		overrideState.value = null;
 		shuffleMock.mockReset();
 		shuffleMock.mockImplementation((values: number[]) => [...values].reverse());
+		rotationsMock.mockReset();
+		rotationsMock.mockImplementation((ids: number[]) =>
+			Object.fromEntries(ids.map((id, index) => [id, index === 0 ? 90 : 0]))
+		);
 	});
 
 	describe('production path (no override)', () => {
@@ -61,11 +73,24 @@ describe('createGameplayRuntimeDependencies', () => {
 			}
 		});
 
-		it('createRotations is deterministic for the same puzzle id and piece ids', () => {
+		it('bumps the first piece when generated rotations are all upright', () => {
+			rotationsMock.mockReturnValueOnce({ 0: 0, 1: 0, 2: 0 });
 			const runtime = createGameplayRuntimeDependencies('puzzle-1', [0, 1, 2]);
-			const first = runtime.createRotations('puzzle-1', [0, 1, 2]);
-			const second = runtime.createRotations('puzzle-1', [0, 1, 2]);
-			expect(second).toEqual(first);
+
+			expect(runtime.createRotations('puzzle-1', [0, 1, 2])).toEqual({
+				0: 90,
+				1: 0,
+				2: 0
+			});
+		});
+
+		it('requests fresh rotations on every production call', () => {
+			const runtime = createGameplayRuntimeDependencies('puzzle-1', [0, 1]);
+
+			runtime.createRotations('puzzle-1', [0, 1]);
+			runtime.createRotations('puzzle-1', [0, 1]);
+
+			expect(rotationsMock).toHaveBeenCalledTimes(2);
 		});
 
 		it('runIdFactory produces non-empty string run ids', () => {

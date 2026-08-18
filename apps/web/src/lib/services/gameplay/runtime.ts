@@ -8,7 +8,7 @@ import type { GameplayRuntimeDependencies } from './runtime.types';
 /**
  * Build the gameplay runtime dependencies for a puzzle. In normal builds the
  * virtual module reader returns null and the production factories (browser
- * run-id, Fisher–Yates shuffle, puzzle-derived rotation seed) are used. When
+ * run-id, Fisher–Yates shuffle, and unseeded rotation generation) are used. When
  * the E2E harness supplies an override, it is returned verbatim.
  */
 export function createGameplayRuntimeDependencies(
@@ -34,13 +34,14 @@ function buildTrayOrder(pieceIds: readonly number[]): number[] {
 	return order;
 }
 
-function buildRotations(puzzleId: string, pieceIds: readonly number[]): Record<number, Rotation> {
-	let hash = 0;
-	const seedStr = `${puzzleId}:${pieceIds.join(',')}`;
-	for (const ch of seedStr) {
-		hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+function buildRotations(_puzzleId: string, pieceIds: readonly number[]): Record<number, Rotation> {
+	const rotations = generateRandomRotations([...pieceIds]);
+
+	if (pieceIds.length > 0 && pieceIds.every((pieceId) => rotations[pieceId] === 0)) {
+		rotations[pieceIds[0]!] = 90;
 	}
-	return { ...generateRandomRotations([...pieceIds], hash || 1) };
+
+	return rotations;
 }
 
 function assertCompletePermutation(pieceIds: readonly number[], order: readonly number[]): void {
