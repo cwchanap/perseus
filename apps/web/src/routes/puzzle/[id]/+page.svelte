@@ -13,7 +13,7 @@
 	import PuzzleCompletionDialog from '$lib/components/PuzzleCompletionDialog.svelte';
 	import MissionSetupDialog from '$lib/components/MissionSetupDialog.svelte';
 	import SessionPauseDialog from '$lib/components/SessionPauseDialog.svelte';
-	import ExitSessionDialog from '$lib/components/ExitSessionDialog.svelte';
+	import DiscardSessionDialog from '$lib/components/DiscardSessionDialog.svelte';
 	import GameTimer from '$lib/components/GameTimer.svelte';
 	import {
 		DEFAULT_GAMEPLAY_PREFERENCES,
@@ -104,7 +104,7 @@
 	// Route-local session-control state. This state is never serialized:
 	// it only drives dialog presentation and entry orchestration, while the
 	// PuzzleSession store remains the sole canonical owner of run state.
-	type SessionDialog = 'setup' | 'pause' | 'exit' | null;
+	type SessionDialog = 'setup' | 'pause' | 'discard' | null;
 
 	let sessionDialog = $state<SessionDialog>(null);
 	let setupMandatory = $state(false);
@@ -115,10 +115,6 @@
 	let pausePresentation = $state<'resume' | 'paused'>('paused');
 	// True while the pause dialog shows the restart confirmation view.
 	let restartConfirmation = $state(false);
-	// Which lifecycle the exit request originated from, so Cancel can restore
-	// the correct surface (active resumes the run; paused returns to pause).
-	let exitOrigin = $state<'active' | 'paused'>('active');
-
 	let bestTime: number | null = $state(null);
 	let isNewBest = $state(false);
 	// True when the local stats write failed for the current completion. The
@@ -690,13 +686,20 @@
 			} else if (restored.lifecycle === 'setup') {
 				showMissionSetup(true);
 			} else if (restored.lifecycle === 'active') {
-				store.dispatch({ type: 'pause' });
-				checkpointSession();
-				pausePresentation = 'resume';
-				sessionDialog = 'pause';
+				if (restored.mode === 'timed') {
+					store.dispatch({ type: 'pause' });
+					checkpointSession();
+					pausePresentation = 'resume';
+					sessionDialog = 'pause';
+				}
 			} else if (restored.lifecycle === 'paused') {
-				pausePresentation = 'resume';
-				sessionDialog = 'pause';
+				if (restored.mode === 'relaxed') {
+					store.dispatch({ type: 'resume' });
+					checkpointSession();
+				} else {
+					pausePresentation = 'resume';
+					sessionDialog = 'pause';
+				}
 			}
 
 			// Resume any pending completion effects that were interrupted by a
@@ -899,7 +902,7 @@
 
 	function handleWindowKeyDown(event: KeyboardEvent) {
 		// Any open modal — the celebration overlay or a session dialog
-		// (pause/exit/setup) — blocks gameplay shortcuts so undo/redo cannot
+		// (pause/discard/setup) — blocks gameplay shortcuts so undo/redo cannot
 		// mutate placements behind the dialog while it is open.
 		if (hasSessionModal) return;
 		// Escape closes exactly the highest-priority gameplay layer: the
@@ -1104,31 +1107,22 @@
 		restartWithCurrentChoices();
 	}
 
-	function currentRunIsResumable(): boolean {
-		if (!sessionState) return false;
-		const snapshot = serializeSession(sessionState);
-		return snapshot ? sessionStorageAdapter.isResumable(snapshot) : false;
-	}
-
-	function requestReturnToArcade(): void {
-		if (!currentRunIsResumable()) {
-			persistSessionFinal();
-			void goto(resolve('/'));
-			return;
-		}
-
-		exitOrigin = sessionState?.lifecycle === 'paused' ? 'paused' : 'active';
-		if (exitOrigin === 'active') {
-			clearTransientGameplayState();
+	function exitToArcade(): void {
+		clearTransientGameplayState();
+		if (sessionState?.lifecycle === 'active') {
 			sessionStore?.dispatch({ type: 'pause' });
-			checkpointSession();
 		}
-		sessionDialog = 'exit';
-	}
-
-	function saveAndExit(): void {
 		persistSessionFinal();
 		void goto(resolve('/'));
+	}
+
+	function requestDiscard(): void {
+		sessionDialog = 'discard';
+	}
+
+	function cancelDiscard(): void {
+		// Preserve 'resume' vs 'paused'.
+		sessionDialog = 'pause';
 	}
 
 	function discardAndExit(): void {
@@ -1142,16 +1136,6 @@
 		sessionState = null;
 		if (puzzle) sessionStorageAdapter.clearSession(puzzle.id);
 		void goto(resolve('/'));
-	}
-
-	function cancelExit(): void {
-		if (exitOrigin === 'active') {
-			sessionStore?.dispatch({ type: 'resume' });
-			sessionDialog = null;
-		} else {
-			pausePresentation = 'paused';
-			sessionDialog = 'pause';
-		}
 	}
 </script>
 
@@ -1170,7 +1154,7 @@
 				data-testid="back-to-arcade-link"
 				onclick={(e) => {
 					e.preventDefault();
-					requestReturnToArcade();
+					exitToArcade();
 				}}
 			>
 				<svg
@@ -1344,7 +1328,7 @@
 		{serverSubmissionRetryable}
 		onRetryServerSubmission={handleRetryServerSubmission}
 		onPlayAgain={handlePlayAgain}
-		onBackToArcade={requestReturnToArcade}
+		onBackToArcade={exitToArcade}
 		onDismiss={() => (showCelebration = false)}
 	/>
 {/if}
@@ -1362,7 +1346,7 @@
 		onDraftChange={(draft) => (setupDraft = draft)}
 		onStart={confirmMissionSetup}
 		onCancel={() => (sessionDialog = null)}
-		onExit={requestReturnToArcade}
+		onExit={exitToArcade}
 	/>
 {/if}
 
@@ -1376,13 +1360,18 @@
 		onRequestRestart={requestRestart}
 		onConfirmRestart={restartWithCurrentChoices}
 		onCancelRestart={() => (restartConfirmation = false)}
-		onExit={requestReturnToArcade}
+		onExit={exitToArcade}
+		onDiscard={requestDiscard}
 	/>
 {/if}
 
-<!-- Exit Mission Modal (outside the inert page) -->
-{#if sessionDialog === 'exit'}
-	<ExitSessionDialog onSave={saveAndExit} onDiscard={discardAndExit} onCancel={cancelExit} />
+<!-- Discard saved progress modal (outside the inert page) -->
+{#if sessionDialog === 'discard'}
+	<DiscardSessionDialog
+		puzzleName={puzzle?.name ?? 'this mission'}
+		onConfirm={discardAndExit}
+		onCancel={cancelDiscard}
+	/>
 {/if}
 
 <!-- Gameplay status announcer: a sibling of the (potentially inert) page so

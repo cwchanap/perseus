@@ -78,9 +78,11 @@ const preferenceState = vi.hoisted(() => ({
 	save: vi.fn()
 }));
 
-const resumableState = vi.hoisted(() => ({ value: false }));
 const restoredLifecycleState = vi.hoisted(() => ({
 	value: 'active' as 'setup' | 'active' | 'paused' | 'completed'
+}));
+const restoredModeState = vi.hoisted(() => ({
+	value: 'timed' as 'timed' | 'relaxed'
 }));
 
 const testRunId = (index: number) =>
@@ -177,10 +179,10 @@ vi.mock('$lib/services/gameplay/session/persistence', async (importOriginal) => 
 							puzzleId,
 							source: 'api' as const,
 							lifecycle: restoredLifecycleState.value,
-							mode: 'timed' as const,
+							mode: restoredModeState.value,
 							runId: TEST_RUN_ID,
 							origin: 'resumed' as const,
-							elapsedActiveSeconds: 0,
+							elapsedActiveSeconds: restoredModeState.value === 'relaxed' ? null : 0,
 							timerStarted: false,
 							placedPieces: progressState.value.placedPieces.map((p) => ({ ...p })),
 							trayOrder: [0, 1],
@@ -197,7 +199,7 @@ vi.mock('$lib/services/gameplay/session/persistence', async (importOriginal) => 
 								ghostReferenceUsed: false
 							},
 							hasUserActivity: false,
-							resultClass: 'standard_timed' as const,
+							resultClass: restoredModeState.value === 'relaxed' ? 'relaxed' : 'standard_timed',
 							sealedCompletion: sealedCompletionOverride.value,
 							lastUpdated: Date.now()
 						}
@@ -206,8 +208,7 @@ vi.mock('$lib/services/gameplay/session/persistence', async (importOriginal) => 
 				return { status: 'missing' as const };
 			},
 			saveSession: sessionStorageSpies.saveSession,
-			clearSession: sessionStorageSpies.clearSession,
-			isResumable: () => resumableState.value
+			clearSession: sessionStorageSpies.clearSession
 		}),
 		// Default to the real serializer so checkpoint paths persist real
 		// snapshots; individual tests may still override with mockReturnValue.
@@ -436,8 +437,8 @@ describe('Puzzle route gameplay integration', () => {
 			rotationEnabled: false,
 			startImmediately: true
 		};
-		resumableState.value = false;
 		restoredLifecycleState.value = 'active';
+		restoredModeState.value = 'timed';
 		mockPageStore.set({
 			url: { pathname: '/puzzle/test-puzzle' },
 			params: { id: 'test-puzzle' },
@@ -2139,18 +2140,38 @@ describe('Puzzle route gameplay integration', () => {
 		}
 	});
 
-	it('shows a Resume dialog for a restored active session and checkpoints the paused snapshot', async () => {
-		setSavedProgress({ placedPieces: [{ pieceId: 0, x: 0, y: 0 }] });
-		resumableState.value = true;
-		await renderPuzzlePage();
-		await expect.element(page.getByRole('dialog', { name: 'Resume Mission' })).toBeVisible();
-		expect(sessionStorageSpies.saveSession).toHaveBeenCalled();
-	});
+	it.each(['active', 'paused'] as const)(
+		'restores a %s Relaxed run without Resume Mission',
+		async (lifecycle) => {
+			restoredLifecycleState.value = lifecycle;
+			restoredModeState.value = 'relaxed';
+			setSavedProgress({ placedPieces: [{ pieceId: 0, x: 0, y: 0 }] });
+
+			await renderPuzzlePage();
+
+			await expect
+				.poll(() => page.getByRole('dialog', { name: 'Resume Mission' }).query())
+				.toBeNull();
+			await expect.element(page.getByTestId('relaxed-mode-indicator')).toBeVisible();
+		}
+	);
+
+	it.each(['active', 'paused'] as const)(
+		'keeps Resume Mission for restored %s Timed runs',
+		async (lifecycle) => {
+			restoredLifecycleState.value = lifecycle;
+			restoredModeState.value = 'timed';
+			setSavedProgress({ placedPieces: [{ pieceId: 0, x: 0, y: 0 }] });
+
+			await renderPuzzlePage();
+
+			await expect.element(page.getByRole('dialog', { name: 'Resume Mission' })).toBeVisible();
+		}
+	);
 
 	it('resumes a paused run from the Resume dialog', async () => {
 		restoredLifecycleState.value = 'paused';
 		setSavedProgress({ placedPieces: [{ pieceId: 0, x: 0, y: 0 }] });
-		resumableState.value = true;
 		await renderPuzzlePage();
 		await expect.element(page.getByRole('dialog', { name: 'Resume Mission' })).toBeVisible();
 
@@ -2193,33 +2214,37 @@ describe('Puzzle route gameplay integration', () => {
 		await expect.poll(() => page.getByText('Restart this mission?').query()).toBeNull();
 	});
 
-	it('saves the session and navigates to the arcade on Save & Exit', async () => {
+	it('saves and navigates immediately when Exit is chosen from Pause', async () => {
 		await renderPuzzlePage();
 		await placePiece(0, 0, 0);
-		resumableState.value = true;
+		sessionStorageSpies.saveSession.mockClear();
 
 		await page.getByLabelText('More puzzle actions').click();
 		await page.getByRole('button', { name: 'Pause mission' }).click();
 		await page.getByRole('button', { name: 'Exit' }).click();
-		await expect.element(page.getByRole('dialog', { name: 'Exit Mission' })).toBeVisible();
 
-		await page.getByRole('button', { name: 'Save & Exit' }).click();
-		expect(goto).toHaveBeenCalledWith('/');
+		expect(page.getByRole('dialog', { name: 'Exit Mission' }).query()).toBeNull();
 		expect(sessionStorageSpies.saveSession).toHaveBeenCalled();
 		expect(sessionStorageSpies.clearSession).not.toHaveBeenCalled();
+		expect(goto).toHaveBeenCalledWith('/');
 	});
 
-	it('discards the session and navigates to the arcade on Discard', async () => {
+	it('confirms Discard from Pause before clearing and navigating', async () => {
 		await renderPuzzlePage();
 		await placePiece(0, 0, 0);
-		resumableState.value = true;
 
 		await page.getByLabelText('More puzzle actions').click();
 		await page.getByRole('button', { name: 'Pause mission' }).click();
-		await page.getByRole('button', { name: 'Exit' }).click();
-		await expect.element(page.getByRole('dialog', { name: 'Exit Mission' })).toBeVisible();
-
 		await page.getByRole('button', { name: 'Discard' }).click();
+		await expect
+			.element(page.getByRole('dialog', { name: 'Discard saved progress' }))
+			.toBeVisible();
+		expect(sessionStorageSpies.clearSession).not.toHaveBeenCalled();
+
+		await page
+			.getByRole('dialog', { name: 'Discard saved progress' })
+			.getByRole('button', { name: 'Discard' })
+			.click();
 		expect(sessionStorageSpies.clearSession).toHaveBeenCalledWith('test-puzzle');
 		expect(goto).toHaveBeenCalledWith('/');
 	});
@@ -2236,53 +2261,50 @@ describe('Puzzle route gameplay integration', () => {
 		const view = render(PuzzlePage);
 		await expect.element(page.getByTestId('puzzle-board')).toBeVisible();
 		await placePiece(0, 0, 0);
-		resumableState.value = true;
 
 		await page.getByLabelText('More puzzle actions').click();
 		await page.getByRole('button', { name: 'Pause mission' }).click();
-		await page.getByRole('button', { name: 'Exit' }).click();
-		await expect.element(page.getByRole('dialog', { name: 'Exit Mission' })).toBeVisible();
-
 		await page.getByRole('button', { name: 'Discard' }).click();
-		expect(sessionStorageSpies.clearSession).toHaveBeenCalledWith('test-puzzle');
-		// Discard itself must not persist; clear history so any later call
-		// (e.g. from teardown) is attributable to the regression.
-		sessionStorageSpies.saveSession.mockClear();
+		await expect
+			.element(page.getByRole('dialog', { name: 'Discard saved progress' }))
+			.toBeVisible();
+		await page
+			.getByRole('dialog', { name: 'Discard saved progress' })
+			.getByRole('button', { name: 'Discard' })
+			.click();
 
+		expect(sessionStorageSpies.clearSession).toHaveBeenCalledWith('test-puzzle');
+		sessionStorageSpies.saveSession.mockClear();
 		view.unmount();
 		expect(sessionStorageSpies.saveSession).not.toHaveBeenCalled();
 	});
 
-	it('resumes the active run when canceling exit from an active origin', async () => {
+	it('saves and navigates immediately when Exit is chosen from the header', async () => {
 		await renderPuzzlePage();
 		await placePiece(0, 0, 0);
-		resumableState.value = true;
+		sessionStorageSpies.saveSession.mockClear();
 
-		// The HUD arcade link routes through requestReturnToArcade: a
-		// resumable active run pauses and asks for confirmation rather than
-		// navigating away immediately.
 		await page.getByTestId('back-to-arcade-link').click();
-		await expect.element(page.getByRole('dialog', { name: 'Exit Mission' })).toBeVisible();
 
-		await page.getByRole('button', { name: 'Cancel' }).click();
-		await expect.poll(() => page.getByRole('dialog', { name: 'Exit Mission' }).query()).toBeNull();
-
-		// Active origin resumes: the timer keeps running again.
-		await expect.element(page.getByTestId('game-timer')).toHaveClass('timer-block timer-on');
+		expect(page.getByRole('dialog', { name: 'Exit Mission' }).query()).toBeNull();
+		expect(sessionStorageSpies.saveSession).toHaveBeenCalled();
+		expect(sessionStorageSpies.clearSession).not.toHaveBeenCalled();
+		expect(goto).toHaveBeenCalledWith('/');
 	});
 
-	it('returns to the pause dialog when canceling exit from a paused origin', async () => {
+	it('cancels discard back to restored Timed Resume Mission', async () => {
 		restoredLifecycleState.value = 'paused';
+		restoredModeState.value = 'timed';
 		setSavedProgress({ placedPieces: [{ pieceId: 0, x: 0, y: 0 }] });
-		resumableState.value = true;
+
 		await renderPuzzlePage();
+		await page.getByRole('button', { name: 'Discard' }).click();
+		await page
+			.getByRole('dialog', { name: 'Discard saved progress' })
+			.getByRole('button', { name: 'Cancel' })
+			.click();
+
 		await expect.element(page.getByRole('dialog', { name: 'Resume Mission' })).toBeVisible();
-
-		await page.getByRole('button', { name: 'Exit' }).click();
-		await expect.element(page.getByRole('dialog', { name: 'Exit Mission' })).toBeVisible();
-
-		await page.getByRole('button', { name: 'Cancel' }).click();
-		await expect.element(page.getByRole('dialog', { name: 'Mission Paused' })).toBeVisible();
 	});
 
 	it('reconfigures an active pre-activity run when setup choices change', async () => {
@@ -2431,8 +2453,8 @@ describe('Puzzle page defensive guard coverage', () => {
 			rotationEnabled: false,
 			startImmediately: true
 		};
-		resumableState.value = false;
 		restoredLifecycleState.value = 'active';
+		restoredModeState.value = 'timed';
 		mockPageStore.set({
 			url: { pathname: '/puzzle/test-puzzle' },
 			params: { id: 'test-puzzle' },
@@ -2717,8 +2739,8 @@ describe('Puzzle page gameplay announcements and Escape priority', () => {
 			rotationEnabled: false,
 			startImmediately: true
 		};
-		resumableState.value = false;
 		restoredLifecycleState.value = 'active';
+		restoredModeState.value = 'timed';
 		mockPageStore.set({
 			url: { pathname: '/puzzle/test-puzzle' },
 			params: { id: 'test-puzzle' },
