@@ -219,7 +219,7 @@
 			>
 				{#if isHintTarget(x, y)}
 					<div
-						class="pointer-events-none absolute inset-1 rounded-md border-2 border-amber-400 bg-amber-200/40"
+						class="pointer-events-none absolute inset-1 rounded-md border-2 border-(--gold) bg-(--gold-glow)"
 						data-testid="hint-target"
 						data-x={x}
 						data-y={y}

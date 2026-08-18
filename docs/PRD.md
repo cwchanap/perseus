@@ -106,7 +106,7 @@ The current player product is centered on a single-player gallery and solve loop
 - Local per-puzzle personal best tracking in `localStorage`
 - Completion modal with replay flow
 - Undo / redo (in-memory move history stack, up to 50 states; Cmd/Ctrl+Z / Cmd/Ctrl+Y shortcuts)
-- Hint system (highlights the target cell for the selected or next unplaced piece for 1.8 s)
+- Hint system (keeps the hinted tray piece marked until successful placement and highlights its board target)
 - Zoom and pan (mouse wheel / toolbar buttons; pan by pointer drag when zoomed in; fit-to-viewport reset)
 - Reference image overlay (hold the Reference button or key to peek at the full source image; auto-dismisses on release or window blur)
 - Piece rotation mode (optional; toggled before first placement; pieces must be upright to place; rotation state persisted and undoable)
@@ -155,20 +155,20 @@ The deployed product architecture uses a Cloudflare-native backend:
 
 ### 2. Puzzle gameplay
 
-| Requirement                           | Status      | Notes                                                                                                                                        |
-| ------------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| Board rendering and piece tray        | Implemented | Grid board and shuffled inventory are fully wired                                                                                            |
-| Mouse drag-and-drop placement         | Implemented | Uses HTML drag and drop on board cells                                                                                                       |
-| Touch drag support                    | Implemented | Touch gestures synthesize drag/drop events                                                                                                   |
-| Keyboard placement                    | Implemented | Pieces and drop zones support keyboard interaction                                                                                           |
-| Incorrect placement feedback          | Implemented | Rejected piece gets temporary shake feedback                                                                                                 |
-| Progress bar and placed-piece counter | Implemented | Visible during play                                                                                                                          |
-| Completion modal with replay          | Implemented | Includes final time and replay/back actions                                                                                                  |
-| Hint system                           | Implemented | `getHintPieceId` selects target piece; board cell glows for 1.8 s; toolbar Hint button triggers flow                                         |
-| Undo / redo                           | Implemented | In-memory `createHistory` stack (cap 50); covers placements and rotation changes; Cmd/Ctrl+Z/Y shortcuts wired                               |
-| Zoom / pan                            | Implemented | Mouse-wheel zoom, toolbar +/− buttons, pointer-drag pan when zoomed, fit-to-viewport reset via `ZoomableBoardFrame`                          |
-| Reference image overlay               | Implemented | Hold-to-peek via `ReferenceOverlay`; served from `GET /api/puzzles/:id/reference`; hidden when no reference exists                           |
-| Piece rotation mode                   | Implemented | Optional mode toggled before first placement; 90° clockwise per click; upright required to place; seeded random init; persisted and undoable |
+| Requirement                           | Status      | Notes                                                                                                                                                                                                    |
+| ------------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Board rendering and piece tray        | Implemented | Grid board and shuffled inventory are fully wired                                                                                                                                                        |
+| Mouse drag-and-drop placement         | Implemented | Uses HTML drag and drop on board cells                                                                                                                                                                   |
+| Touch drag support                    | Implemented | Touch gestures synthesize drag/drop events                                                                                                                                                               |
+| Keyboard placement                    | Implemented | Pieces and drop zones support keyboard interaction                                                                                                                                                       |
+| Incorrect placement feedback          | Implemented | Rejected piece gets temporary shake feedback                                                                                                                                                             |
+| Progress bar and placed-piece counter | Implemented | Visible during play                                                                                                                                                                                      |
+| Completion modal with replay          | Implemented | Includes final time and replay/back actions                                                                                                                                                              |
+| Hint system                           | Implemented | `getHintPieceId` selects target piece; the tray piece stays marked until successful placement and its board target glows; toolbar Hint button triggers flow                                              |
+| Undo / redo                           | Implemented | In-memory `createHistory` stack (cap 50); covers placements and rotation changes; Cmd/Ctrl+Z/Y shortcuts wired                                                                                           |
+| Zoom / pan                            | Implemented | Mouse-wheel zoom, toolbar +/− buttons, pointer-drag pan when zoomed, fit-to-viewport reset via `ZoomableBoardFrame`                                                                                      |
+| Reference image overlay               | Implemented | Hold-to-peek via `ReferenceOverlay`; served from `GET /api/puzzles/:id/reference`; hidden when no reference exists                                                                                       |
+| Piece rotation mode                   | Implemented | Optional mode toggled before first placement; 90° clockwise per click; upright required to place; fresh randomized setup/restart orientation while restored orientation persists; persisted and undoable |
 
 **Implementation references:** `apps/web/src/routes/puzzle/[id]/+page.svelte`,
 `apps/web/src/lib/components/PuzzleBoard.svelte`,
@@ -457,7 +457,7 @@ The period from 2026-03-31 to 2026-04-25 delivered two distinct phases:
 - Zoom/pan board frame: `apps/web/src/lib/components/ZoomableBoardFrame.svelte`
 - Undo/redo history helper: `apps/web/src/lib/services/gameplay/history.ts`
 - Hint strategy helper: `apps/web/src/lib/services/gameplay/hints.ts`
-- Rotation helpers (normalize, clockwise, seeded random init): `apps/web/src/lib/services/gameplay/rotation.ts`
+- Rotation helpers (normalize, clockwise, fresh randomized setup/restart orientation, restored orientation persistence): `apps/web/src/lib/services/gameplay/rotation.ts`
 - Viewport helpers (clamp zoom/pan, fit-zoom): `apps/web/src/lib/services/gameplay/viewport.ts`
 - Timer: `apps/web/src/lib/stores/timer.ts`
 - Local progress (includes rotation state): `apps/web/src/lib/services/progress.ts`
