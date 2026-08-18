@@ -5,11 +5,12 @@
 // classes, and ONE representative piece placement on a large board — without
 // driving a full solve (solve coverage lives in gameplay-infrastructure.spec).
 //
-// All cases are tagged @extended so they run across every Playwright project
-// (chromium desktop/mobile/tablet, webkit mobile/tablet) via the
-// `test:e2e:extended` script. The usable-layout test in particular relies on
-// that matrix: it runs once per project, asserting the puzzle page fits each
-// viewport without horizontal overflow.
+// Large-fixture cases are tagged @extended so they run across every Playwright
+// project (chromium desktop/mobile/tablet, webkit mobile/tablet) via the
+// `test:e2e:extended` script. The gameplay workspace polish smoke group below
+// is not tagged @extended and runs in the default gate. The usable-layout test
+// in particular relies on the extended matrix: it runs once per project,
+// asserting the puzzle page fits each viewport without horizontal overflow.
 import type { Page } from '@playwright/test';
 import { test, expect } from './support/test';
 import { getFixture } from './gameplay-fixtures/catalog';

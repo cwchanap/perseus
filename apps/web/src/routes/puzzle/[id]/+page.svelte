@@ -711,8 +711,10 @@
 			// preferences and either started immediately or presented as a
 			// mandatory setup dialog. A restored setup session always presents
 			// setup (Start Immediately applies only to fresh route entry).
-			// Restored active/paused runs are deliberately paused at entry and
-			// presented for resume so the player re-engages explicitly.
+			// Restored timed runs retain explicit resume through the pause dialog
+			// ("Resume Mission"): active runs are paused and checkpointed, while paused
+			// runs keep the dialog. Relaxed active runs stay active; paused runs resume
+			// and checkpoint without a popup.
 			devicePreferences = loadGameplayPreferences();
 
 			if (!restored) {
