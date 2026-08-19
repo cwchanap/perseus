@@ -46,6 +46,7 @@ jobs:
         run: bun run --cwd apps/web test:e2e:assert-production-bundle
 
       - name: Install Chromium
+        timeout-minutes: 5
         run: bun run --cwd apps/web test:install-browsers:chromium
 
       - name: Run smoke E2E tests
