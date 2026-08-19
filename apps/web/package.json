@@ -22,7 +22,7 @@
 		"test:e2e:a11y": "playwright test --grep @a11y --project=chromium-desktop --project=chromium-tablet --project=webkit-mobile",
 		"test:e2e:stability": "playwright test --grep @smoke --project=chromium-desktop --repeat-each=10 --retries=0 --workers=1",
 		"test:e2e:assert-production-bundle": "bun run build && bun scripts/assert-no-e2e-harness.ts",
-		"test:install-browsers:chromium": "playwright install --with-deps --only-shell chromium",
+		"test:install-browsers:chromium": "playwright install --only-shell chromium",
 		"test:install-browsers": "playwright install --with-deps --only-shell chromium webkit"
 	},
 	"dependencies": {
