@@ -194,12 +194,19 @@ test.describe('gameplay workspace polish smoke', () => {
 			seedPreferences: IMMEDIATE_START
 		});
 
+		const layout = page.locator('.game-layout');
 		const separator = page.getByTestId('tray-resizer');
 
 		// Widen the tray substantially by dragging the separator left. The
 		// board cap must track the measured layout width, so a wider tray
 		// shrinks the board to fit the remaining board column rather than
 		// overflowing it.
+		const trayWidthBefore = await layout.evaluate((element) =>
+			parseFloat(getComputedStyle(element).getPropertyValue('--tray-width').trim())
+		);
+
+		// Center the separator so the prescribed bounding-box midpoint is an
+		// actual target (the landscape board can be taller than the viewport).
 		await separator.evaluate((element) => {
 			const rect = element.getBoundingClientRect();
 			window.scrollBy(0, rect.top + rect.height / 2 - window.innerHeight / 2);
@@ -210,6 +217,16 @@ test.describe('gameplay workspace polish smoke', () => {
 		await page.mouse.down();
 		await page.mouse.move(box!.x - 200, box!.y + box!.height / 2);
 		await page.mouse.up();
+
+		// The board-fit assertions below only mean something if the drag
+		// actually widened the tray. Verify the applied --tray-width
+		// increased before checking the board metric, so a no-op drag (e.g.
+		// a clamped or unresponsive separator) fails here instead of making
+		// the downstream assertions trivially pass.
+		const trayWidthAfter = await layout.evaluate((element) =>
+			parseFloat(getComputedStyle(element).getPropertyValue('--tray-width').trim())
+		);
+		expect(trayWidthAfter).toBeGreaterThan(trayWidthBefore);
 
 		// Wait for the board metric to settle after the resize.
 		await expect
