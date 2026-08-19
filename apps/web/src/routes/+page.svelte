@@ -271,6 +271,8 @@ font-black tracking-[0.06em] text-(--text-0) uppercase"
 				<button
 					type="button"
 					aria-label="Discard saved progress"
+					class="border border-(--border) px-5 py-2 text-[0.65rem] font-(--font-display) font-bold
+					tracking-[0.2em] text-(--text-1) uppercase transition-colors hover:bg-(--border)"
 					onclick={() => (discardTarget = localProgress.newest)}
 				>
 					DISCARD

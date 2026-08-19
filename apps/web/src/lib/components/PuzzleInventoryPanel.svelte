@@ -66,6 +66,19 @@
 		return rotationEnabled ? (pieceRotations[pieceId] ?? 0) : 0;
 	}
 
+	function pieceSlotClass(piece: PuzzlePieceModel): string {
+		const base =
+			'piece-slot relative aspect-square border border-(--border) p-[0.2rem] ' +
+			'transition-[border-color,box-shadow] duration-150';
+		if (activeHintPieceId === piece.id) {
+			return `${base} hinted border-(--gold) shadow-[0_0_14px_var(--gold-glow)]`;
+		}
+		if (rejectedPieceId === piece.id) {
+			return `${base} rejected animate-shake border-(--hot) shadow-[0_0_12px_var(--hot-glow)]`;
+		}
+		return base;
+	}
+
 	// Binary drawer state. Kept private to this panel: the route owns canonical
 	// session state (selectedPieceId, tray order); the drawer's open/collapsed
 	// presentation is a purely local UI concern and is never serialized.
@@ -95,10 +108,24 @@
 
 	async function revealHintedPiece(pieceId: number): Promise<void> {
 		drawerOpen = true;
-		activePieceId = pieceId;
+		// If the active filter excludes the hinted piece, reset to 'all' so it
+		// renders before we scroll it into view. Without this, visiblePieces
+		// omits the piece, the roving-id $effect resets activePieceId, and the
+		// slot query below resolves nothing.
+		const hintedPiece = piecesById.get(pieceId);
+		if (
+			hintedPiece &&
+			activeFilter !== 'all' &&
+			!matchesInventoryFilter(hintedPiece, puzzle, activeFilter)
+		) {
+			onFilterChange('all');
+		}
 		await tick();
 
 		if (activeHintPieceId !== pieceId) return;
+
+		activePieceId = pieceId;
+		await tick();
 
 		piecesGridElement
 			?.querySelector<HTMLElement>(`[data-testid="piece-slot-${pieceId}"]`)
@@ -245,13 +272,7 @@
 		>
 			{#each visiblePieces as piece (piece.id)}
 				<div
-					class={`piece-slot relative aspect-square border border-(--border) p-[0.2rem] transition-[border-color,box-shadow] duration-150 ${
-						activeHintPieceId === piece.id
-							? 'hinted border-(--gold) shadow-[0_0_14px_var(--gold-glow)]'
-							: rejectedPieceId === piece.id
-								? 'rejected animate-shake border-(--hot) shadow-[0_0_12px_var(--hot-glow)]'
-								: ''
-					}`}
+					class={pieceSlotClass(piece)}
 					data-testid={`piece-slot-${piece.id}`}
 					data-hinted={activeHintPieceId === piece.id ? 'true' : undefined}
 				>

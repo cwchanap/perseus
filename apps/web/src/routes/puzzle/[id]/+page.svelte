@@ -925,9 +925,10 @@
 
 	function handleTrayResizePointerDown(event: PointerEvent): void {
 		if (event.pointerType === 'mouse' && event.button !== 0) return;
+		event.preventDefault();
 		trayResizePointerId = event.pointerId;
 		trayResizeStartX = event.clientX;
-		trayResizeStartWidth = requestedTrayWidth;
+		trayResizeStartWidth = appliedTrayWidth;
 	}
 
 	function handleTrayResizeKeyDown(event: KeyboardEvent): void {

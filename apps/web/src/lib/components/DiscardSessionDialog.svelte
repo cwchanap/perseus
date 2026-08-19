@@ -26,7 +26,10 @@
 		tabindex="-1"
 		use:modalFocus
 		onkeydown={(event) => event.key === 'Escape' && onCancel()}
-		class="flex max-h-[100dvh] w-full max-w-md flex-col overflow-hidden rounded-2xl bg-white shadow-xl"
+		class="
+			flex max-h-[100dvh] w-full max-w-md flex-col overflow-hidden rounded-2xl bg-white
+			shadow-xl
+		"
 	>
 		<div class="min-h-0 flex-1 overflow-y-auto p-6">
 			<h2 class="text-lg font-semibold text-gray-900">Discard saved progress?</h2>
