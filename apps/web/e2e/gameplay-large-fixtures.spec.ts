@@ -174,4 +174,78 @@ test.describe('gameplay workspace polish smoke', () => {
 		await expect(slot).toBeInViewport();
 		await expect(page.getByTestId('hint-target')).toBeVisible();
 	});
+
+	test('wide desktop: widened tray keeps the board inside the board viewport @smoke', async ({
+		gameplayPage,
+		page
+	}, testInfo) => {
+		test.skip(testInfo.project.name !== 'chromium-desktop', 'desktop-only split layout');
+
+		// The bug this guards against: when the outer viewport exceeds the
+		// 96rem (1536px) .game-layout cap, the desktop board cap was derived
+		// from window.innerWidth instead of the measured layout width. The
+		// board metric then exceeded the actual .board-viewport and
+		// getFitZoom() silently downscaled it. Use a 1920px viewport so the
+		// layout cap (1536) is narrower than the outer viewport by 384px —
+		// the gap that produced the hidden downscaling.
+		await page.setViewportSize({ width: 1920, height: 1000 });
+		await gameplayPage.gotoFixture({
+			fixtureId: 'e2e-landscape-12',
+			seedPreferences: IMMEDIATE_START
+		});
+
+		const separator = page.getByTestId('tray-resizer');
+
+		// Widen the tray substantially by dragging the separator left. The
+		// board cap must track the measured layout width, so a wider tray
+		// shrinks the board to fit the remaining board column rather than
+		// overflowing it.
+		await separator.evaluate((element) => {
+			const rect = element.getBoundingClientRect();
+			window.scrollBy(0, rect.top + rect.height / 2 - window.innerHeight / 2);
+		});
+		const box = await separator.boundingBox();
+		expect(box).not.toBeNull();
+		await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+		await page.mouse.down();
+		await page.mouse.move(box!.x - 200, box!.y + box!.height / 2);
+		await page.mouse.up();
+
+		// Wait for the board metric to settle after the resize.
+		await expect
+			.poll(async () => {
+				const boardCanvas = page.locator('.board-canvas');
+				const w = await boardCanvas.evaluate((el) =>
+					getComputedStyle(el).getPropertyValue('--board-width').trim()
+				);
+				return w;
+			})
+			.not.toBe('');
+
+		// The board canvas width must fit inside the .board-viewport — the
+		// core invariant: the board metric cannot exceed the actual board
+		// viewport, so getFitZoom() stays at 1 (no hidden downscaling).
+		const fits = await page.evaluate(() => {
+			const viewport = document.querySelector<HTMLElement>('.board-viewport');
+			const canvas = document.querySelector<HTMLElement>('.board-canvas');
+			if (!viewport || !canvas) return null;
+			const boardWidth = parseFloat(
+				getComputedStyle(canvas).getPropertyValue('--board-width').trim()
+			);
+			return { boardWidth, viewportWidth: viewport.clientWidth };
+		});
+		expect(fits).not.toBeNull();
+		expect(fits!.boardWidth).toBeLessThanOrEqual(fits!.viewportWidth);
+
+		// The zoomable-board-frame scale is fit zoom (capped at 1). A scale
+		// below 1 means the board was downscaled to fit — exactly the hidden
+		// downscaling this layout change eliminates.
+		const frame = page.getByTestId('zoomable-board-frame');
+		const scale = await frame.evaluate((el) => {
+			const match = /scale\(([\d.]+)\)/.exec(el.style.transform ?? '');
+			return match ? parseFloat(match[1]!) : null;
+		});
+		expect(scale).not.toBeNull();
+		expect(scale!).toBeGreaterThanOrEqual(1);
+	});
 });

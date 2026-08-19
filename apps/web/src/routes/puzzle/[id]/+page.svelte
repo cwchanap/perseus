@@ -289,7 +289,12 @@
 			? getResponsivePuzzleBoardMetrics(
 					puzzle,
 					{ width: viewportWidth, height: viewportHeight },
-					appliedTrayWidth
+					appliedTrayWidth,
+					// Derive the desktop board cap from the same measured
+					// .game-layout width used to clamp the tray, so the board
+					// metric cannot exceed the actual .board-viewport. Falls
+					// back to the outer viewport until the ResizeObserver fires.
+					gameLayoutWidth > 0 ? gameLayoutWidth : undefined
 				)
 			: null
 	);

@@ -4,7 +4,8 @@ import { page } from 'vitest/browser';
 import PuzzlePage from './+page.svelte';
 import type { GameProgress, Puzzle, PuzzlePiece } from '$lib/types/puzzle';
 import {
-	DESKTOP_TRAY_BASE_WIDTH,
+	clampTrayWidth,
+	getDefaultPuzzleTrayWidth,
 	getResponsivePuzzleBoardMetrics
 } from '$lib/services/puzzleLayout';
 
@@ -589,10 +590,32 @@ describe('Puzzle route gameplay integration', () => {
 			render(PuzzlePage);
 			await expect.element(page.getByTestId('puzzle-board')).toBeVisible();
 
+			// The route derives the desktop board cap from the measured
+			// .game-layout width (the same width used to clamp the tray), so
+			// pin layout.clientWidth to a deterministic value and compute the
+			// expected metrics with that same layout width. The applied tray
+			// width mirrors the route: the default tray width for the puzzle,
+			// clamped to the measured layout.
+			const gameLayout = document.querySelector<HTMLElement>('.game-layout')!;
+			const layoutWidth = 1248;
+			Object.defineProperty(gameLayout, 'clientWidth', {
+				configurable: true,
+				value: layoutWidth
+			});
+			window.dispatchEvent(new Event('resize'));
+			await expect
+				.poll(() => gameLayout.style.getPropertyValue('--board-width').trim())
+				.not.toBe('');
+
+			const expectedTrayWidth = clampTrayWidth(
+				layoutWidth,
+				getDefaultPuzzleTrayWidth(puzzle, { width: 1280, height: 900 })
+			);
 			const expected = getResponsivePuzzleBoardMetrics(
 				puzzle,
 				{ width: 1280, height: 900 },
-				DESKTOP_TRAY_BASE_WIDTH
+				expectedTrayWidth,
+				layoutWidth
 			);
 			const boardCanvas = document.querySelector<HTMLElement>('.board-canvas');
 			expect(boardCanvas).not.toBeNull();
@@ -610,9 +633,7 @@ describe('Puzzle route gameplay integration', () => {
 			// effect below 1024px. Verify the route injects the cell-matching
 			// value at the grid source; the per-tier rendered slot size is proven
 			// by the chromium-mobile E2E layout spec.
-			const gameLayout = document.querySelector<HTMLElement>('.game-layout');
-			expect(gameLayout).not.toBeNull();
-			expect(gameLayout!.style.getPropertyValue('--piece-slot-size').trim()).toBe(cellSize);
+			expect(gameLayout.style.getPropertyValue('--piece-slot-size').trim()).toBe(cellSize);
 			// The slot no longer carries its own inline override.
 			expect(pieceSlot.getAttribute('style') ?? '').not.toContain('--piece-slot-size');
 		} finally {
