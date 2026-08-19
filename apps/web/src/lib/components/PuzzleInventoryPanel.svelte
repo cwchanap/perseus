@@ -108,18 +108,12 @@
 
 	async function revealHintedPiece(pieceId: number): Promise<void> {
 		drawerOpen = true;
-		// If the active filter excludes the hinted piece, reset to 'all' so it
-		// renders before we scroll it into view. Without this, visiblePieces
-		// omits the piece, the roving-id $effect resets activePieceId, and the
-		// slot query below resolves nothing.
-		const hintedPiece = piecesById.get(pieceId);
-		if (
-			hintedPiece &&
-			activeFilter !== 'all' &&
-			!matchesInventoryFilter(hintedPiece, puzzle, activeFilter)
-		) {
-			onFilterChange('all');
-		}
+		// PuzzleSession.doUseHint resets the canonical organization filter to
+		// 'all' before emitting hint_target and notifying subscribers, so the
+		// route observes activeFilter='all' atomically with activeHintPieceId.
+		// The hinted piece is therefore always in visiblePieces by the time
+		// this effect runs; the inventory owns only drawer open -> tick ->
+		// roving candidate -> tick -> scrollIntoView.
 		await tick();
 
 		if (activeHintPieceId !== pieceId) return;

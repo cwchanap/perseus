@@ -108,22 +108,28 @@ export function clampTrayWidth(layoutWidth: number, requestedWidth: number): num
 export function getResponsivePuzzleBoardMetrics(
 	puzzle: PuzzleBoardSource,
 	viewport: PuzzleViewportSize,
-	trayWidth: number
+	trayWidth: number,
+	layoutWidth?: number
 ): ResponsivePuzzleBoardMetrics {
 	const { tier, width: preferredWidth } = getPreferredBoardWidth(puzzle, viewport);
 	const gridCols = Math.max(1, puzzle.gridCols);
 	const imageAspect = puzzle.imageWidth / Math.max(1, puzzle.imageHeight);
 
-	const viewportWidthCap = Math.max(
-		MIN_BOARD_CELL_SIZE * gridCols,
-		viewport.width - getWidthReserve(tier)
-	);
+	// The desktop board cap must be derived from the same measured layout
+	// width used to clamp the tray (the .game-layout box, capped at 96rem),
+	// not the outer viewport. window.innerWidth can exceed the layout box by
+	// hundreds of pixels on wide displays, so capping from the outer viewport
+	// lets the board metric exceed the actual .board-viewport and forces
+	// PuzzleBoardPanel.getFitZoom() to silently downscale it. When the layout
+	// width is unavailable (pre-measurement), fall back to the viewport width
+	// to preserve the prior behavior until the ResizeObserver fires.
+	const desktopCapSource = layoutWidth ?? viewport.width;
 	const desktopWidthCap =
 		tier === 'small' || tier === 'medium'
 			? Number.POSITIVE_INFINITY
 			: Math.max(
 					MIN_BOARD_CELL_SIZE * gridCols,
-					viewportWidthCap - trayWidth - DESKTOP_TRAY_SEPARATOR_WIDTH
+					desktopCapSource - getWidthReserve(tier) - trayWidth - DESKTOP_TRAY_SEPARATOR_WIDTH
 				);
 
 	const boardWidth = Math.max(

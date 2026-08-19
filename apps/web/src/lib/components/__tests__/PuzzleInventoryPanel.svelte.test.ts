@@ -310,27 +310,6 @@ describe('PuzzleInventoryPanel', () => {
 		expect(document.activeElement).toBe(focusedBefore);
 	});
 
-	it('resets the active filter to all when a hint targets a piece the filter excludes', async () => {
-		const input = baseProps();
-		const view = render(PuzzleInventoryPanel, {
-			...input,
-			puzzle: filterPuzzle,
-			trayOrder: filterPuzzle.pieces.map((piece) => piece.id),
-			activeFilter: 'corners'
-		});
-
-		// Piece 4 is the center of a 3x3 grid; the 'corners' filter excludes it.
-		await view.rerender({
-			...input,
-			puzzle: filterPuzzle,
-			trayOrder: filterPuzzle.pieces.map((piece) => piece.id),
-			activeFilter: 'corners',
-			activeHintPieceId: 4
-		});
-
-		await vi.waitFor(() => expect(input.onFilterChange).toHaveBeenCalledWith('all'));
-	});
-
 	it('renders only unplaced pieces matching the controlled filter while keeping total LEFT', async () => {
 		render(PuzzleInventoryPanel, {
 			...baseProps(),

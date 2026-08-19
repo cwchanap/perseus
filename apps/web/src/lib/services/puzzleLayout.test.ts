@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	DESKTOP_TRAY_BASE_WIDTH,
+	DESKTOP_TRAY_SEPARATOR_WIDTH,
 	clampTrayWidth,
 	getDefaultPuzzleTrayWidth,
 	getPuzzleBoardViewportTier,
@@ -148,5 +149,43 @@ describe('puzzle layout', () => {
 		const wideTray = getResponsivePuzzleBoardMetrics(puzzle, viewport, 580);
 
 		expect(wideTray.boardWidth).toBeLessThan(narrowTray.boardWidth);
+	});
+
+	it('caps the desktop board to the measured layout width so it fits the board viewport', () => {
+		// A coarse 4x3 puzzle on a wide desktop. The outer viewport (1920)
+		// is wider than the .game-layout box, which CSS caps at 96rem (1536).
+		// With a widened tray the board column is much narrower than the
+		// outer viewport, so capping from window.innerWidth would request a
+		// board wider than the actual .board-viewport and force fit zoom < 1.
+		const coarsePuzzle = {
+			imageWidth: 1600,
+			imageHeight: 1200,
+			gridCols: 4,
+			gridRows: 3
+		};
+		const outerViewport = { width: 1920, height: 1000 };
+		const layoutWidth = 1536;
+		const trayWidth = 720;
+
+		// Without the measured layout width (prior behavior), the desktop cap
+		// is derived from the outer viewport and the board overflows the board
+		// column: boardWidth + tray + separator exceeds the layout box.
+		const uncapped = getResponsivePuzzleBoardMetrics(coarsePuzzle, outerViewport, trayWidth);
+		expect(uncapped.boardWidth + trayWidth + DESKTOP_TRAY_SEPARATOR_WIDTH).toBeGreaterThan(
+			layoutWidth
+		);
+
+		// With the measured layout width, the board fits inside the board
+		// column (layout - tray - separator), so getFitZoom() stays at 1.
+		const capped = getResponsivePuzzleBoardMetrics(
+			coarsePuzzle,
+			outerViewport,
+			trayWidth,
+			layoutWidth
+		);
+		expect(capped.boardWidth + trayWidth + DESKTOP_TRAY_SEPARATOR_WIDTH).toBeLessThanOrEqual(
+			layoutWidth
+		);
+		expect(capped.boardWidth).toBeLessThan(uncapped.boardWidth);
 	});
 });
