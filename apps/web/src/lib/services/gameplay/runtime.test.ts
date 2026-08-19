@@ -85,12 +85,19 @@ describe('createGameplayRuntimeDependencies', () => {
 		});
 
 		it('requests fresh rotations on every production call', () => {
+			rotationsMock.mockReturnValueOnce({ 0: 90, 1: 0 });
+			rotationsMock.mockReturnValueOnce({ 0: 180, 1: 270 });
 			const runtime = createGameplayRuntimeDependencies('puzzle-1', [0, 1]);
 
-			runtime.createRotations('puzzle-1', [0, 1]);
-			runtime.createRotations('puzzle-1', [0, 1]);
+			const first = runtime.createRotations('puzzle-1', [0, 1]);
+			const second = runtime.createRotations('puzzle-1', [0, 1]);
 
 			expect(rotationsMock).toHaveBeenCalledTimes(2);
+			expect(first).not.toEqual(second);
+			// Each generator invocation receives only the piece-id array, preserving
+			// the unseeded production contract (no run id or puzzle id leaks in).
+			expect(rotationsMock).toHaveBeenNthCalledWith(1, [0, 1]);
+			expect(rotationsMock).toHaveBeenNthCalledWith(2, [0, 1]);
 		});
 
 		it('runIdFactory produces non-empty string run ids', () => {
