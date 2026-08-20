@@ -89,9 +89,16 @@ import {
 	loadPersistedSession,
 	isResumable,
 	createSessionStorageAdapter,
+	listResumableSessionCandidateIds,
 	noopThrowingStorage
 } from './persistence';
-import { memoryStorage, load } from './persistence.test-fixtures';
+import {
+	memoryStorage,
+	load,
+	validSnapshot,
+	fullBoardPlacements,
+	seal
+} from './persistence.test-fixtures';
 import type {
 	PuzzleSessionState,
 	PersistedPuzzleSessionV1,
@@ -395,6 +402,68 @@ describe('isResumable sealed-active guard', () => {
 		)!;
 
 		expect(isResumable(snap)).toBe(false);
+	});
+});
+
+describe('listResumableSessionCandidateIds', () => {
+	it('returns only current-schema active/paused sessions with activity and no seal', () => {
+		const active = validSnapshot();
+		const paused = { ...validSnapshot(), puzzleId: 'paused', lifecycle: 'paused' as const };
+		const completed = {
+			...validSnapshot(),
+			puzzleId: 'complete',
+			lifecycle: 'completed' as const,
+			placedPieces: fullBoardPlacements(),
+			sealedCompletion: seal()
+		};
+		const noActivity = {
+			...validSnapshot(),
+			puzzleId: 'idle',
+			placedPieces: [],
+			timerStarted: false,
+			hasUserActivity: false
+		};
+		const sealed = { ...validSnapshot(), puzzleId: 'sealed', sealedCompletion: seal() };
+		const storage = memoryStorage({
+			'puzzle-progress-pz1': JSON.stringify(active),
+			'puzzle-progress-paused': JSON.stringify(paused),
+			'puzzle-progress-complete': JSON.stringify(completed),
+			'puzzle-progress-idle': JSON.stringify(noActivity),
+			'puzzle-progress-sealed': JSON.stringify(sealed)
+		});
+
+		expect(listResumableSessionCandidateIds(storage)).toEqual(['pz1', 'paused']);
+	});
+
+	it('ignores malformed, old-schema, mismatched, empty, and unrelated keys', () => {
+		const storage = memoryStorage({
+			'puzzle-progress-bad-json': '{',
+			'puzzle-progress-old': JSON.stringify({
+				...validSnapshot(),
+				puzzleId: 'old',
+				schemaVersion: 999
+			}),
+			'puzzle-progress-key-id': JSON.stringify({ ...validSnapshot(), puzzleId: 'other-id' }),
+			'puzzle-progress-': JSON.stringify(validSnapshot()),
+			'unrelated-setting': '1'
+		});
+
+		expect(listResumableSessionCandidateIds(storage)).toEqual([]);
+	});
+
+	it('returns an empty list when storage enumeration/read is unavailable', () => {
+		const blocked = {
+			get length(): number {
+				throw new Error('blocked');
+			},
+			key: () => null,
+			getItem: () => null,
+			setItem: () => {},
+			removeItem: () => {},
+			clear: () => {}
+		} satisfies Storage;
+
+		expect(listResumableSessionCandidateIds(blocked)).toEqual([]);
 	});
 });
 
