@@ -203,6 +203,27 @@ body::after {
 	color: var(--text-0);
 }
 
+.arcade-btn-danger {
+	display: inline-block;
+	font-family: var(--font-display);
+	font-size: 0.62rem;
+	font-weight: 700;
+	letter-spacing: 0.2em;
+	text-transform: uppercase;
+	border: 1px solid var(--hot);
+	color: var(--hot);
+	background: transparent;
+	padding: 0.625rem 1.75rem;
+	cursor: pointer;
+	transition: all 0.2s ease;
+}
+
+.arcade-btn-danger:hover {
+	background: rgba(255, 0, 102, 0.08);
+	box-shadow: 0 0 20px var(--hot-glow);
+	text-shadow: 0 0 10px var(--hot);
+}
+
 /* Skeleton loading */
 .skeleton {
 	animation: skeleton-pulse 1.5s ease-in-out infinite;

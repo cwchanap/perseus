@@ -317,6 +317,29 @@ describe('Gallery Page', () => {
 		await expect.poll(() => page.getByTestId('continue-on-device').query()).toBeNull();
 	});
 
+	it('stops loading when saved-progress discovery rejects', async () => {
+		sessionStorageSpies.listCandidates.mockReturnValue(['off-page']);
+		mockedDiscoverGalleryProgress.mockReturnValue({ byPuzzleId: new Map(), newest: null });
+		mockedDiscoverAllSavedProgress.mockRejectedValue(new Error('network down'));
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		render(GalleryPage);
+		await page.getByRole('button', { name: 'View saved progress' }).click();
+
+		// The rejection must not strand the dialog on LOADING forever: loading
+		// resets and the empty state renders in its place.
+		await expect.element(page.getByText('NO SAVED PROGRESS')).toBeVisible();
+		expect(document.body.textContent).not.toContain('LOADING SAVED PROGRESS');
+		expect(consoleSpy).toHaveBeenCalled();
+
+		// A transient discovery failure must not hide the picker affordance:
+		// the candidate ids are left intact so the user can retry.
+		await page.getByRole('button', { name: 'Close saved progress' }).click();
+		await expect.element(page.getByRole('button', { name: 'View saved progress' })).toBeVisible();
+
+		consoleSpy.mockRestore();
+	});
+
 	it('discards a stale discovery response resolved after the picker is closed', async () => {
 		sessionStorageSpies.listCandidates.mockReturnValue(['off-page']);
 		mockedDiscoverGalleryProgress.mockReturnValue({ byPuzzleId: new Map(), newest: null });

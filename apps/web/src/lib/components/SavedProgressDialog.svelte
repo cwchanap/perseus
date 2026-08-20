@@ -28,11 +28,23 @@
 		tabindex="-1"
 		use:modalFocus
 		onkeydown={(event) => event.key === 'Escape' && onClose()}
-		class="flex max-h-[min(80dvh,42rem)] w-full max-w-xl flex-col overflow-hidden rounded-2xl bg-white shadow-xl"
+		class="flex max-h-[min(80dvh,42rem)] w-full max-w-xl flex-col overflow-hidden border border-(--accent)
+		bg-(--bg-1) [box-shadow:0_0_40px_var(--accent-glow)]"
 	>
-		<header class="flex items-center justify-between gap-4 border-b border-gray-200 p-5">
-			<h2 class="text-lg font-semibold text-gray-900">Saved progress</h2>
-			<button type="button" aria-label="Close saved progress" onclick={onClose}>CLOSE</button>
+		<header class="flex items-center justify-between gap-4 border-b border-(--border) p-5">
+			<h2
+				class="text-[0.95rem] font-(--font-display) font-bold tracking-[0.12em] text-(--text-0) uppercase"
+			>
+				Saved progress
+			</h2>
+			<button
+				type="button"
+				aria-label="Close saved progress"
+				onclick={onClose}
+				class="arcade-btn-ghost"
+			>
+				CLOSE
+			</button>
 		</header>
 		<div class="min-h-0 flex-1 overflow-y-auto p-5">
 			{#if loading || progress.length === 0}
@@ -40,20 +52,34 @@
 				     LOADING mutates to NO SAVED PROGRESS in place. Result rows
 				     render outside the region and are not announced. -->
 				<div aria-live="polite">
-					<p>{loading ? 'LOADING SAVED PROGRESS...' : 'NO SAVED PROGRESS'}</p>
+					<p
+						class="text-[0.75rem] font-(--font-mono) tracking-[0.2em] uppercase {loading
+							? 'text-(--accent)'
+							: 'text-(--text-1)'}"
+					>
+						{loading ? 'LOADING SAVED PROGRESS...' : 'NO SAVED PROGRESS'}
+					</p>
 				</div>
 			{:else}
 				<ul class="flex flex-col gap-3">
 					{#each progress as item (item.puzzleId)}
 						<li
 							data-testid={`saved-progress-row-${item.puzzleId}`}
-							class="flex items-center justify-between gap-4"
+							class="flex items-center justify-between gap-4 border border-(--border) px-4 py-3"
 						>
 							<div class="min-w-0">
-								<p>{item.name}</p>
-								<p>{item.placedCount}/{item.pieceCount} PLACED</p>
+								<p class="truncate text-[0.9rem] font-(--font-display) font-bold text-(--text-0)">
+									{item.name}
+								</p>
+								<p class="text-[0.7rem] font-(--font-mono) tracking-[0.12em] text-(--text-1)">
+									{item.placedCount}/{item.pieceCount} PLACED
+								</p>
 							</div>
-							<a href={resolve(`/puzzle/${item.puzzleId}`)} aria-label={`Continue ${item.name}`}>
+							<a
+								href={resolve(`/puzzle/${item.puzzleId}`)}
+								aria-label={`Continue ${item.name}`}
+								class="arcade-btn"
+							>
 								CONTINUE
 							</a>
 						</li>

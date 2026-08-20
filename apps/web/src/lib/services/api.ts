@@ -152,8 +152,10 @@ export async function fetchPuzzles(params?: {
 	}>(response);
 }
 
-export async function fetchPuzzle(id: string): Promise<Puzzle> {
-	const response = await fetch(`${API_BASE}/api/puzzles/${id}`);
+export async function fetchPuzzle(id: string, signal?: AbortSignal): Promise<Puzzle> {
+	const response = signal
+		? await fetch(`${API_BASE}/api/puzzles/${id}`, { signal })
+		: await fetch(`${API_BASE}/api/puzzles/${id}`);
 	return handleResponse<Puzzle>(response);
 }
 

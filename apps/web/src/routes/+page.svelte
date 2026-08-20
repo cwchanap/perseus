@@ -45,6 +45,7 @@
 	let savedProgressLoading = $state(false);
 	let savedProgressItems = $state<GalleryProgress[]>([]);
 	let savedProgressRequestId = 0;
+	let savedProgressController: AbortController | null = null;
 	let hasMore = $derived(nextCursor !== undefined);
 	let queryVersion = 0;
 	let loadMoreController: AbortController | null = null;
@@ -181,23 +182,36 @@
 		savedProgressLoading = true;
 		savedProgressItems = [];
 		const requestId = ++savedProgressRequestId;
+		savedProgressController?.abort();
+		const controller = new AbortController();
+		savedProgressController = controller;
 
-		const items = await discoverAllSavedProgress({
-			puzzleIds: savedProgressCandidateIds,
-			serverPuzzles: puzzles,
-			quickPuzzles,
-			fetchPuzzleById: fetchPuzzle,
-			sessionStorage: sessionStorageAdapter
-		});
+		try {
+			const items = await discoverAllSavedProgress({
+				puzzleIds: savedProgressCandidateIds,
+				serverPuzzles: puzzles,
+				quickPuzzles,
+				fetchPuzzleById: fetchPuzzle,
+				sessionStorage: sessionStorageAdapter,
+				signal: controller.signal
+			});
 
-		if (requestId !== savedProgressRequestId) return;
-		savedProgressItems = items;
-		savedProgressLoading = false;
-		if (items.length === 0) savedProgressCandidateIds = [];
+			if (requestId !== savedProgressRequestId) return;
+			savedProgressItems = items;
+			savedProgressLoading = false;
+			if (items.length === 0) savedProgressCandidateIds = [];
+		} catch (error) {
+			console.error('Failed to discover saved progress:', error);
+			if (requestId !== savedProgressRequestId) return;
+			savedProgressItems = [];
+			savedProgressLoading = false;
+		}
 	}
 
 	function closeSavedProgress(): void {
 		savedProgressRequestId += 1;
+		savedProgressController?.abort();
+		savedProgressController = null;
 		savedProgressOpen = false;
 		savedProgressLoading = false;
 	}

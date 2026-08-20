@@ -524,7 +524,7 @@ describe('discoverAllSavedProgress', () => {
 
 		expect(rows.map((row) => row.puzzleId)).toEqual(['old', 'q-test', 'loaded']);
 		expect(fetchPuzzleById).toHaveBeenCalledTimes(1);
-		expect(fetchPuzzleById).toHaveBeenCalledWith('old');
+		expect(fetchPuzzleById).toHaveBeenCalledWith('old', undefined);
 	});
 
 	it('skips detail fetches when summary metadata is already loaded', async () => {
@@ -670,5 +670,59 @@ describe('discoverAllSavedProgress', () => {
 		});
 
 		expect(rows.map((row) => row.puzzleId)).toEqual(['a', 'b', 'q-test']);
+	});
+
+	it('forwards the abort signal to each detail fetch', async () => {
+		const base = validSnapshot();
+		const store = memoryStorage({
+			'puzzle-progress-fetched': JSON.stringify({
+				...base,
+				puzzleId: 'fetched',
+				lastUpdated: 1_000
+			})
+		});
+		const controller = new AbortController();
+		const fetchPuzzleById = vi.fn(async (_id: string, signal?: AbortSignal) => {
+			expect(signal).toBe(controller.signal);
+			return fetchedServerPuzzle('fetched', 'Fetched Save');
+		});
+
+		await discoverAllSavedProgress({
+			puzzleIds: ['fetched'],
+			serverPuzzles: [],
+			quickPuzzles: [],
+			fetchPuzzleById,
+			sessionStorage: createSessionStorageAdapter({ storage: store }),
+			signal: controller.signal
+		});
+
+		expect(fetchPuzzleById).toHaveBeenCalledWith('fetched', controller.signal);
+	});
+
+	it('stops and returns empty when the abort signal is already aborted', async () => {
+		const base = validSnapshot();
+		const store = memoryStorage({
+			'puzzle-progress-fetched': JSON.stringify({
+				...base,
+				puzzleId: 'fetched',
+				lastUpdated: 1_000
+			})
+		});
+		const controller = new AbortController();
+		controller.abort();
+		const fetchPuzzleById = vi.fn();
+
+		const rows = await discoverAllSavedProgress({
+			puzzleIds: ['fetched'],
+			serverPuzzles: [],
+			quickPuzzles: [],
+			fetchPuzzleById,
+			sessionStorage: createSessionStorageAdapter({ storage: store }),
+			signal: controller.signal
+		});
+
+		// An already-aborted signal short-circuits before any detail fetch.
+		expect(rows).toEqual([]);
+		expect(fetchPuzzleById).not.toHaveBeenCalled();
 	});
 });
