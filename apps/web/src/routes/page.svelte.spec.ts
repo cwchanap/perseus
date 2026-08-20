@@ -18,6 +18,7 @@ vi.mock('$lib/services/api', () => {
 	}
 	return {
 		fetchPuzzles: vi.fn().mockResolvedValue([]),
+		fetchPuzzle: vi.fn(),
 		ApiError: MockApiError,
 		getThumbnailUrl: vi.fn((id: string) => `/api/puzzles/${id}/thumbnail`),
 		getPieceImageUrl: vi.fn()
