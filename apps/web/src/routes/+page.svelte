@@ -1,19 +1,23 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { fetchPuzzles, ApiError } from '$lib/services/api';
+	import { fetchPuzzles, fetchPuzzle, ApiError } from '$lib/services/api';
 	import type { PuzzleSummary } from '$lib/types/puzzle';
 	import PuzzleCard from '$lib/components/PuzzleCard.svelte';
 	import CategoryFilter from '$lib/components/CategoryFilter.svelte';
 	import SearchBar from '$lib/components/SearchBar.svelte';
 	import DiscardSessionDialog from '$lib/components/DiscardSessionDialog.svelte';
+	import SavedProgressDialog from '$lib/components/SavedProgressDialog.svelte';
 	import { listQuick } from '$lib/services/quickPuzzle';
 	import type { StoredQuickPuzzle } from '$lib/services/quickPuzzle/types';
 	import {
 		discoverGalleryProgress,
-		type GalleryProgress,
-		type GalleryProgressDiscovery
+		discoverAllSavedProgress,
+		type GalleryProgress
 	} from '$lib/services/gameplay/galleryProgress';
-	import { createSessionStorageAdapter } from '$lib/services/gameplay/session/persistence';
+	import {
+		createSessionStorageAdapter,
+		listResumableSessionCandidateIds
+	} from '$lib/services/gameplay/session/persistence';
 	import { CATEGORY_ALL } from '$lib/constants/categories';
 	import type { PuzzleCategory } from '$lib/constants/categories';
 	import { resolve } from '$app/paths';
@@ -34,25 +38,36 @@
 	let nextCursor: string | undefined = $state(undefined);
 	let quickPuzzles: StoredQuickPuzzle[] = $state([]);
 	let discardTarget = $state<GalleryProgress | null>(null);
-	let localProgress: GalleryProgressDiscovery = $state({
-		byPuzzleId: new Map(),
-		newest: null
-	});
+	let cardProgressByPuzzleId = $state<ReadonlyMap<string, GalleryProgress>>(new Map());
+	let latestProgress = $state<GalleryProgress | null>(null);
+	let savedProgressCandidateIds = $state<string[]>([]);
+	let savedProgressOpen = $state(false);
+	let savedProgressLoading = $state(false);
+	let savedProgressItems = $state<GalleryProgress[]>([]);
+	let savedProgressRequestId = 0;
 	let hasMore = $derived(nextCursor !== undefined);
 	let queryVersion = 0;
 	let loadMoreController: AbortController | null = null;
 
 	onMount(() => {
 		quickPuzzles = listQuick();
+		savedProgressCandidateIds = listResumableSessionCandidateIds();
 	});
 
 	$effect(() => {
-		const serverPuzzles = puzzles;
-		const localPuzzles = quickPuzzles;
-		localProgress = discoverGalleryProgress({
-			serverPuzzles,
-			quickPuzzles: localPuzzles
+		const discovery = discoverGalleryProgress({
+			serverPuzzles: puzzles,
+			quickPuzzles
 		});
+		cardProgressByPuzzleId = discovery.byPuzzleId;
+
+		const candidate = discovery.newest;
+		if (
+			candidate &&
+			(latestProgress === null || candidate.lastUpdated > latestProgress.lastUpdated)
+		) {
+			latestProgress = candidate;
+		}
 	});
 
 	// Debounce raw input into debouncedQuery (300 ms), trimming whitespace
@@ -161,16 +176,42 @@
 		selectedCategory = CATEGORY_ALL;
 	}
 
+	async function openSavedProgress(): Promise<void> {
+		savedProgressOpen = true;
+		savedProgressLoading = true;
+		savedProgressItems = [];
+		const requestId = ++savedProgressRequestId;
+
+		const items = await discoverAllSavedProgress({
+			puzzleIds: savedProgressCandidateIds,
+			serverPuzzles: puzzles,
+			quickPuzzles,
+			fetchPuzzleById: fetchPuzzle,
+			sessionStorage: sessionStorageAdapter
+		});
+
+		if (requestId !== savedProgressRequestId) return;
+		savedProgressItems = items;
+		savedProgressLoading = false;
+		if (items.length === 0) savedProgressCandidateIds = [];
+	}
+
+	function closeSavedProgress(): void {
+		savedProgressRequestId += 1;
+		savedProgressOpen = false;
+		savedProgressLoading = false;
+	}
+
 	function confirmDiscardProgress(): void {
 		const target = discardTarget;
 		if (!target) return;
 
 		sessionStorageAdapter.clearSession(target.puzzleId);
+		const discovery = discoverGalleryProgress({ serverPuzzles: puzzles, quickPuzzles });
+		cardProgressByPuzzleId = discovery.byPuzzleId;
+		latestProgress = discovery.newest;
+		savedProgressCandidateIds = listResumableSessionCandidateIds();
 		discardTarget = null;
-		localProgress = discoverGalleryProgress({
-			serverPuzzles: puzzles,
-			quickPuzzles
-		});
 	}
 </script>
 
@@ -179,8 +220,8 @@
 </svelte:head>
 
 <main
-	inert={discardTarget !== null}
-	aria-hidden={discardTarget !== null}
+	inert={discardTarget !== null || savedProgressOpen}
+	aria-hidden={discardTarget !== null || savedProgressOpen}
 	class="min-h-screen bg-(--bg-0)
 [background-image:linear-gradient(rgba(0,240,255,0.025)_1px,transparent_1px),linear-gradient(90deg,rgba(0,240,255,0.025)_1px,transparent_1px)]
 [background-size:48px_48px]"
@@ -240,43 +281,68 @@ font-black tracking-[0.06em] text-(--text-0) uppercase"
 			{/if}
 		</header>
 
-		{#if localProgress.newest}
+		{#if latestProgress || savedProgressCandidateIds.length > 0}
 			<section
 				data-testid="continue-on-device"
 				aria-labelledby="continue-on-device-title"
 				class="mb-8 flex flex-wrap items-center gap-x-6 gap-y-3 border border-(--accent) bg-(--bg-1)
 				px-6 py-4 [box-shadow:0_0_25px_var(--accent-glow)]"
 			>
-				<div class="min-w-40">
-					<h2
-						id="continue-on-device-title"
-						class="text-[0.65rem] font-(--font-mono) tracking-[0.18em] text-(--accent) uppercase"
+				{#if latestProgress}
+					<div class="min-w-40">
+						<h2
+							id="continue-on-device-title"
+							class="text-[0.65rem] font-(--font-mono) tracking-[0.18em] text-(--accent) uppercase"
+						>
+							Continue on this device
+						</h2>
+						<p class="mt-1 truncate text-[0.9rem] font-(--font-display) font-bold text-(--text-0)">
+							{latestProgress.name}
+						</p>
+					</div>
+					<span class="text-[0.7rem] font-(--font-mono) tracking-[0.12em] text-(--text-1)">
+						{latestProgress.placedCount}/{latestProgress.pieceCount} PLACED
+					</span>
+					<a
+						href={resolve(`/puzzle/${latestProgress.puzzleId}`)}
+						class="border border-(--accent) px-5 py-2 text-[0.65rem] font-(--font-display) font-bold
+						tracking-[0.2em] text-(--accent) uppercase transition-colors hover:bg-(--accent-glow)"
 					>
-						Continue on this device
-					</h2>
-					<p class="mt-1 truncate text-[0.9rem] font-(--font-display) font-bold text-(--text-0)">
-						{localProgress.newest.name}
-					</p>
-				</div>
-				<span class="text-[0.7rem] font-(--font-mono) tracking-[0.12em] text-(--text-1)">
-					{localProgress.newest.placedCount}/{localProgress.newest.pieceCount} PLACED
-				</span>
-				<a
-					href={resolve(`/puzzle/${localProgress.newest.puzzleId}`)}
-					class="border border-(--accent) px-5 py-2 text-[0.65rem] font-(--font-display) font-bold
-					tracking-[0.2em] text-(--accent) uppercase transition-colors hover:bg-(--accent-glow)"
-				>
-					CONTINUE
-				</a>
-				<button
-					type="button"
-					aria-label="Discard saved progress"
-					class="border border-(--border) px-5 py-2 text-[0.65rem] font-(--font-display) font-bold
-					tracking-[0.2em] text-(--text-1) uppercase transition-colors hover:bg-(--border)"
-					onclick={() => (discardTarget = localProgress.newest)}
-				>
-					DISCARD
-				</button>
+						CONTINUE
+					</a>
+					<button
+						type="button"
+						aria-label="Discard saved progress"
+						class="border border-(--border) px-5 py-2 text-[0.65rem] font-(--font-display) font-bold
+						tracking-[0.2em] text-(--text-1) uppercase transition-colors hover:bg-(--border)"
+						onclick={() => (discardTarget = latestProgress)}
+					>
+						DISCARD
+					</button>
+				{:else}
+					<div class="min-w-40">
+						<h2
+							id="continue-on-device-title"
+							class="text-[0.65rem] font-(--font-mono) tracking-[0.18em] text-(--accent) uppercase"
+						>
+							Continue on this device
+						</h2>
+						<p class="mt-1 truncate text-[0.9rem] font-(--font-display) font-bold text-(--text-0)">
+							SAVED PROGRESS AVAILABLE
+						</p>
+					</div>
+				{/if}
+				{#if savedProgressCandidateIds.length > 0}
+					<button
+						type="button"
+						aria-label="View saved progress"
+						class="border border-(--accent) px-5 py-2 text-[0.65rem] font-(--font-display) font-bold
+						tracking-[0.2em] text-(--accent) uppercase transition-colors hover:bg-(--accent-glow)"
+						onclick={openSavedProgress}
+					>
+						VIEW SAVED PROGRESS
+					</button>
+				{/if}
 			</section>
 		{/if}
 
@@ -416,7 +482,7 @@ motion-reduce:animate-none sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4"
 				data-testid="puzzle-grid"
 			>
 				{#each puzzles as puzzle (puzzle.id)}
-					<PuzzleCard {puzzle} placedCount={localProgress.byPuzzleId.get(puzzle.id)?.placedCount} />
+					<PuzzleCard {puzzle} placedCount={cardProgressByPuzzleId.get(puzzle.id)?.placedCount} />
 				{/each}
 			</div>
 
@@ -461,5 +527,13 @@ hover:bg-[rgba(255,0,102,0.08)]"
 		puzzleName={discardTarget.name}
 		onConfirm={confirmDiscardProgress}
 		onCancel={() => (discardTarget = null)}
+	/>
+{/if}
+
+{#if savedProgressOpen}
+	<SavedProgressDialog
+		progress={savedProgressItems}
+		loading={savedProgressLoading}
+		onClose={closeSavedProgress}
 	/>
 {/if}
