@@ -6,16 +6,19 @@ import type { PuzzleSummary } from '$lib/types/puzzle';
 import { fetchPuzzles, ApiError } from '$lib/services/api';
 import { listQuick } from '$lib/services/quickPuzzle';
 import type { StoredQuickPuzzle } from '$lib/services/quickPuzzle/types';
-import { discoverGalleryProgress } from '$lib/services/gameplay/galleryProgress';
+import {
+	discoverGalleryProgress,
+	discoverAllSavedProgress
+} from '$lib/services/gameplay/galleryProgress';
 
 const sessionStorageSpies = vi.hoisted(() => ({
-	clearSession: vi.fn()
+	clearSession: vi.fn(),
+	listCandidates: vi.fn<() => string[]>()
 }));
 
 vi.mock('$lib/services/gameplay/session/persistence', () => ({
-	createSessionStorageAdapter: () => ({
-		clearSession: sessionStorageSpies.clearSession
-	})
+	createSessionStorageAdapter: () => ({ clearSession: sessionStorageSpies.clearSession }),
+	listResumableSessionCandidateIds: sessionStorageSpies.listCandidates
 }));
 
 vi.mock('$lib/services/api', () => {
@@ -31,6 +34,7 @@ vi.mock('$lib/services/api', () => {
 	}
 	return {
 		fetchPuzzles: vi.fn().mockResolvedValue({ puzzles: [], total: 0, offset: 0, limit: 20 }),
+		fetchPuzzle: vi.fn(),
 		getThumbnailUrl: vi.fn((id: string) => `/api/puzzles/${id}/thumbnail`),
 		ApiError: MockApiError
 	};
@@ -48,7 +52,8 @@ vi.mock('$lib/services/gameplay/galleryProgress', () => ({
 	discoverGalleryProgress: vi.fn().mockReturnValue({
 		byPuzzleId: new Map(),
 		newest: null
-	})
+	}),
+	discoverAllSavedProgress: vi.fn().mockResolvedValue([])
 }));
 
 vi.mock('$app/paths', () => ({
@@ -107,6 +112,7 @@ type FetchPuzzlesResult = Awaited<ReturnType<typeof fetchPuzzles>>;
 const mockedFetchPuzzles = vi.mocked(fetchPuzzles);
 const mockedListQuick = vi.mocked(listQuick);
 const mockedDiscoverGalleryProgress = vi.mocked(discoverGalleryProgress);
+const mockedDiscoverAllSavedProgress = vi.mocked(discoverAllSavedProgress);
 
 const observe = vi.fn();
 const disconnect = vi.fn();
@@ -129,6 +135,8 @@ describe('Gallery Page', () => {
 		mockedFetchPuzzles.mockResolvedValue({ puzzles: [], total: 0, offset: 0, limit: 20 });
 		mockedListQuick.mockReturnValue([]);
 		mockedDiscoverGalleryProgress.mockReturnValue({ byPuzzleId: new Map(), newest: null });
+		mockedDiscoverAllSavedProgress.mockResolvedValue([]);
+		sessionStorageSpies.listCandidates.mockReturnValue([]);
 	});
 
 	afterEach(() => {
@@ -252,6 +260,70 @@ describe('Gallery Page', () => {
 			.element(panel.getByRole('link', { name: 'CONTINUE' }))
 			.toHaveAttribute('href', '/puzzle/q-local');
 		expect(document.querySelectorAll('[data-testid="puzzle-card"]')).toHaveLength(0);
+	});
+
+	it('scans Quick metadata and resumable candidates once per mount', async () => {
+		sessionStorageSpies.listCandidates.mockReturnValue(['off-page']);
+		render(GalleryPage);
+		await vi.waitFor(() => expect(mockedListQuick).toHaveBeenCalledTimes(1));
+		expect(sessionStorageSpies.listCandidates).toHaveBeenCalledTimes(1);
+
+		await page.getByTestId('search-input').fill('filtered');
+		await vi.waitFor(() => expect(mockedFetchPuzzles).toHaveBeenCalledTimes(2));
+		expect(mockedListQuick).toHaveBeenCalledTimes(1);
+		expect(sessionStorageSpies.listCandidates).toHaveBeenCalledTimes(1);
+	});
+
+	it('keeps the latest Continue row when search projection no longer contains it', async () => {
+		const latest = {
+			puzzleId: 'p1',
+			name: 'Latest Save',
+			source: 'api' as const,
+			placedCount: 2,
+			pieceCount: 4,
+			lastUpdated: 2_000
+		};
+		mockedDiscoverGalleryProgress
+			.mockReturnValueOnce({ byPuzzleId: new Map([['p1', latest]]), newest: latest })
+			.mockReturnValue({ byPuzzleId: new Map(), newest: null });
+
+		render(GalleryPage);
+		await expect.element(page.getByTestId('continue-on-device')).toHaveTextContent('Latest Save');
+		await page.getByTestId('search-input').fill('other');
+		await vi.waitFor(() => expect(mockedFetchPuzzles).toHaveBeenCalledTimes(2));
+		await expect.element(page.getByTestId('continue-on-device')).toHaveTextContent('Latest Save');
+	});
+
+	it('shows picker entry for an off-page candidate with no known latest row', async () => {
+		sessionStorageSpies.listCandidates.mockReturnValue(['off-page']);
+		mockedDiscoverGalleryProgress.mockReturnValue({ byPuzzleId: new Map(), newest: null });
+		render(GalleryPage);
+		await expect
+			.element(page.getByTestId('continue-on-device'))
+			.toHaveTextContent('SAVED PROGRESS AVAILABLE');
+		await expect.element(page.getByRole('button', { name: 'View saved progress' })).toBeVisible();
+		expect(mockedDiscoverAllSavedProgress).not.toHaveBeenCalled();
+	});
+
+	it('clears the saved-progress affordance when authoritative discovery is empty', async () => {
+		sessionStorageSpies.listCandidates.mockReturnValue(['deleted-puzzle']);
+		mockedDiscoverGalleryProgress.mockReturnValue({ byPuzzleId: new Map(), newest: null });
+		mockedDiscoverAllSavedProgress.mockResolvedValue([]);
+		render(GalleryPage);
+		await page.getByRole('button', { name: 'View saved progress' }).click();
+		await expect.element(page.getByText('NO SAVED PROGRESS')).toBeVisible();
+		await page.getByRole('button', { name: 'Close saved progress' }).click();
+		await expect.poll(() => page.getByTestId('continue-on-device').query()).toBeNull();
+	});
+
+	it('marks main inert while the saved progress picker is open', async () => {
+		sessionStorageSpies.listCandidates.mockReturnValue(['off-page']);
+		mockedDiscoverGalleryProgress.mockReturnValue({ byPuzzleId: new Map(), newest: null });
+		render(GalleryPage);
+		await page.getByRole('button', { name: 'View saved progress' }).click();
+		await expect.poll(() => document.querySelector('main')?.hasAttribute('inert')).toBe(true);
+		await page.getByRole('button', { name: 'Close saved progress' }).click();
+		await expect.poll(() => document.querySelector('main')?.hasAttribute('inert')).toBe(false);
 	});
 
 	it('makes main inert while home discard confirmation is open', async () => {
