@@ -465,6 +465,41 @@ describe('listResumableSessionCandidateIds', () => {
 
 		expect(listResumableSessionCandidateIds(blocked)).toEqual([]);
 	});
+
+	it('skips null keys, vanished values, and array-valued entries', () => {
+		// Exercises the remaining defensive branches in the enumeration loop:
+		//   - resolved.key(i) returns null past the last index (optional
+		//     chaining `key?.startsWith` short-circuits),
+		//   - a progress key whose getItem value is null (e.g. evicted between
+		//     enumeration and read),
+		//   - a progress key whose parsed value is a JSON array (rejected by the
+		//     Array.isArray guard),
+		// alongside a valid resumable entry that must still surface.
+		const store = new Map<string, string>([
+			['puzzle-progress-resumable', JSON.stringify({ ...validSnapshot(), puzzleId: 'resumable' })],
+			['puzzle-progress-vanished', 'will-be-null']
+		]);
+		const storage: Storage = {
+			get length() {
+				return store.size + 1; // report one extra slot to force a null key() read
+			},
+			key: (i: number) => Array.from(store.keys())[i] ?? null,
+			getItem: (k: string) => (k === 'puzzle-progress-vanished' ? null : (store.get(k) ?? null)),
+			setItem: (k: string, v: string) => {
+				store.set(k, v);
+			},
+			removeItem: (k: string) => {
+				store.delete(k);
+			},
+			clear: () => store.clear()
+		};
+
+		// Overwrite the vanished slot's parsed shape with a JSON array to
+		// exercise the Array.isArray guard on a non-null value.
+		store.set('puzzle-progress-array', JSON.stringify([1, 2, 3]));
+
+		expect(listResumableSessionCandidateIds(storage)).toEqual(['resumable']);
+	});
 });
 
 // --- Patch coverage: validation branches, storage adapter error handling --------

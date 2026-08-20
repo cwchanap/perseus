@@ -265,6 +265,52 @@ describe('API Service - fetchPuzzle', () => {
 
 		await expect(fetchPuzzle('missing')).rejects.toMatchObject({ status: 404 });
 	});
+
+	it('forwards an abort signal to fetch when provided', async () => {
+		const controller = new AbortController();
+		const mockPuzzle = {
+			id: 'p1',
+			name: 'Test',
+			pieceCount: 9,
+			gridCols: 3,
+			gridRows: 3,
+			imageWidth: 300,
+			imageHeight: 300,
+			createdAt: 0,
+			pieces: []
+		};
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue(
+				new Response(JSON.stringify(mockPuzzle), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				})
+			)
+		);
+
+		await fetchPuzzle('p1', controller.signal);
+
+		expect(fetch).toHaveBeenCalledWith(expect.stringMatching(/\/api\/puzzles\/p1$/), {
+			signal: controller.signal
+		});
+	});
+
+	it('omits the fetch options when no abort signal is provided', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue(
+				new Response(JSON.stringify({ id: 'p1', name: 'Test', pieces: [] }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				})
+			)
+		);
+
+		await fetchPuzzle('p1');
+
+		expect(fetch).toHaveBeenCalledWith(expect.stringMatching(/\/api\/puzzles\/p1$/));
+	});
 });
 
 describe('API Service - checkSession', () => {
