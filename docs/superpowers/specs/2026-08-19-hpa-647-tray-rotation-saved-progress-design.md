@@ -6,165 +6,209 @@
 
 ## Context
 
-Two pieces of direct gameplay feedback point at presentation seams that already exist in Perseus:
+HPA-647 combines two direct puzzle UX fixes into one small shipping slice:
 
-1. the tray renders a Rotate button directly over every unplaced puzzle piece when rotation is enabled, which obscures small piece artwork; and
-2. the gallery exposes only one prominent **Continue on this device** entry, so a player cannot intentionally resume an older current-device session.
+1. the tray currently renders a Rotate button on top of every unplaced piece while rotation mode is enabled, which obscures small piece artwork; and
+2. the gallery exposes only the newest **Continue on this device** entry, so the player cannot intentionally resume an older current-device save.
 
-Current `main` already owns the underlying behavior needed for both changes:
+Current `main` already has the required domain and persistence seams:
 
-- `PuzzlePiece.svelte` owns per-piece selection, the `R` keyboard rotation shortcut, orientation presentation, and the overlaid Rotate button;
-- `PuzzleInventoryPanel.svelte` already receives `selectedPieceId`, `rotationEnabled`, and the existing `onRotate(pieceId)` callback, and already has a small header action row;
-- `PuzzleSession` owns rotation state and scoring eligibility; no new gameplay action is required;
-- `+page.svelte` already mounts Quick Puzzle metadata once, projects current gallery progress through `discoverGalleryProgress()`, and renders **Continue on this device**;
-- the persistence module already owns the `puzzle-progress-` key namespace and the read-only `peekSession()` validation path;
-- `fetchPuzzle(id)` already resolves canonical server puzzle detail;
-- `modalFocus` and `DiscardSessionDialog.svelte` establish the local modal pattern.
+- `PuzzlePiece.svelte` owns piece selection, the `R` keyboard shortcut, orientation naming, and the overlaid Rotate button;
+- `PuzzleInventoryPanel.svelte` already receives `selectedPieceId`, `rotationEnabled`, and `onRotate(pieceId)`, and already has a header action row beside `CANCEL`;
+- `PuzzleSession` owns rotation state, history, timer start, result-class facts, and selection validity;
+- `+page.svelte` already loads Quick Puzzle metadata once and projects the cheap newest/card progress view with `discoverGalleryProgress()`;
+- `persistence.ts` owns the `puzzle-progress-` namespace and read-only `peekSession()` validation path;
+- `fetchPuzzle(id)` already resolves full server puzzle metadata;
+- `modalFocus` plus `DiscardSessionDialog.svelte` establish the concrete modal pattern.
 
-The feature is therefore a small UI and discovery extension, not a new save system.
+The change is therefore UI plus a read-only save projection. It is not a new save system.
 
 ## Goals
 
-1. Remove the visual Rotate affordance from inside tray piece thumbnails.
-2. Preserve pointer/touch rotation through one selected-piece action in the inventory header.
-3. Preserve `R` rotation and orientation accessibility on the focused puzzle piece.
-4. Keep the current newest-session Continue banner as the fast gallery path.
-5. Make a saved-progress picker reachable whenever Perseus save keys exist, even if none of those saved server puzzles is in the currently loaded gallery page/filter.
-6. Load and validate the full save catalog only when the player asks for it; the mount-time work is only a cheap app-owned key scan.
-7. Reuse the current session codec and authoritative puzzle metadata validation without deleting invalid data during passive discovery.
-8. Cover the behavior with focused unit/component/page tests plus one gallery E2E flow.
+1. Remove the Rotate overlay from tray thumbnails.
+2. Preserve pointer/touch rotation through one selected-piece `ROTATE` action in the inventory header.
+3. Preserve focused-piece `R` rotation and orientation accessibility.
+4. Keep the newest **Continue on this device** path cheap and immediate.
+5. Make **VIEW SAVED PROGRESS** reachable when at least one app-owned current-schema save is plausibly resumable, even when that save is outside the current gallery page/filter.
+6. Do not show a saved-progress affordance for completed-only, no-activity, malformed, or old-schema keys.
+7. Resolve and fully validate the complete saved-progress list only when the picker opens.
+8. Reuse one explicit piece-geometry validator for Quick metadata and fetched server puzzle detail.
+9. Migrate the existing puzzle-route rotation integration tests in the same task as the overlay removal.
+10. Keep passive discovery non-destructive.
 
 ## Non-goals
 
-- A persistence schema change or migration.
+- Persistence schema changes or migrations.
 - Multiple named save slots for one puzzle.
 - Cloud or cross-device synchronization.
 - A retained save index or global progress store.
 - A new server batch endpoint.
-- Rename, delete, search, filter, sort controls, pagination, thumbnails, or other save-management UI inside the picker.
+- Save rename/delete/search/filter/pagination inside the picker.
 - A new saved-progress route.
-- A generic modal, list, or command framework.
-- Changes to rotation scoring, result classes, session actions, or session state.
+- A generic modal/list framework.
+- Changes to `PuzzleSession`, rotation scoring, result classes, or API/database contracts.
 - Backward compatibility for pre-release session formats.
 
-## Reuse survey
+## Verified reuse and breakage survey
 
 | Need | Existing seam | Decision |
 | --- | --- | --- |
-| Rotate one piece | `PuzzlePiece.onRotate` → route → `rotate_piece` | Reuse unchanged |
+| Rotate one piece | route `onRotate` → `rotate_piece` | Reuse unchanged |
 | Keyboard rotation | `PuzzlePiece` native `R` handler | Keep unchanged |
-| Selected-piece action area | `PuzzleInventoryPanel.panel-actions` | Add one concrete `ROTATE` button |
-| Rotation state/scoring | `PuzzleSession` | No domain changes |
-| Immediate Continue | `discoverGalleryProgress().newest` | Keep current cheap projection |
-| Save-key ownership | `PROGRESS_KEY_PREFIX = 'puzzle-progress-'` in persistence | Add one exported key-enumeration helper beside it |
-| Read-only validation | `SessionStorageAdapter.peekSession()` + `isResumable()` | Reuse unchanged |
-| Quick metadata | mount-time `listQuick()` | Reuse the same array for full discovery |
-| Loaded server metadata | current gallery `PuzzleSummary[]` | Reuse without a detail request |
-| Missing server metadata | `fetchPuzzle(id)` | Resolve lazily only when picker opens |
-| Dialog focus | `$lib/actions/modalFocus` | One concrete `SavedProgressDialog.svelte` |
-| Navigation | existing `/puzzle/[id]` route | Picker rows link directly to it |
+| Pointer/touch selected-piece action | `PuzzleInventoryPanel.panel-actions` | Add one concrete `ROTATE` button |
+| Rotation state/history/timer | `PuzzleSession` | No domain change |
+| Existing integration coverage | `routes/puzzle/[id]/page.svelte.test.ts` directly clicks `Rotate piece N` in rotation/history/timer/rejection/announcer tests | Migrate in the same rotation task; do not leave CI breakage for final verification |
+| Immediate newest Continue | `discoverGalleryProgress().newest` | Keep current cheap projection |
+| Save-key ownership | `PROGRESS_KEY_PREFIX = 'puzzle-progress-'` | Keep the prefix scan inside persistence |
+| Resumable predicate | `isResumable()` uses lifecycle, seal, and `hasUserActivity` | Reuse the same predicate for a geometry-free mount probe |
+| Full read-only validation | `peekSession()` + current codec | Reuse only when picker opens |
+| Quick metadata | mount-time `listQuick()` | Reuse the same array |
+| Loaded server metadata | current `PuzzleSummary[]` | Reuse without detail fetch |
+| Missing server metadata | `fetchPuzzle(id)` | Resolve lazily on picker open |
+| Explicit piece validation | Quick validation already checks ids/cells/bounds; session construction has equivalent invariant checks | Extract one nullable explicit-geometry helper for Quick + fetched detail |
+| Dialog focus | `modalFocus` | One `SavedProgressDialog.svelte` |
+| Navigation | existing `/puzzle/[id]` route | Direct Continue links |
 
-## Options considered
+## Option selected: cheap resumable-candidate probe + lazy authoritative discovery
 
-### Option A — Mount-time owned-key scan + lazy validated catalog (selected)
+The original idea of gating the picker on “any `puzzle-progress-` key exists” is too weak. Completed sessions are intentionally kept in storage, and `discoverGalleryProgress()` already excludes them from Continue. Showing **SAVED PROGRESS AVAILABLE** for a completed-only key would open an empty picker.
 
-On gallery mount, enumerate only keys beginning with `puzzle-progress-` so the UI knows whether a saved-progress entry point is needed. Do not parse the values or request missing puzzle metadata at this point.
+The selected approach has two levels of discovery:
 
-When **VIEW SAVED PROGRESS** is opened, resolve metadata from existing Quick/gallery data first, fetch missing server puzzle detail by ID, validate with the current codec, sort valid resumable rows newest-first, and render them in one modal.
+1. **Mount-time candidate probe:** scan only Perseus-owned session keys, read their local JSON, and apply a geometry-free current-schema resumability probe. No puzzle metadata and no network request.
+2. **Picker-time authoritative discovery:** resolve metadata, construct a full `SessionValidationContext`, call `peekSession()`, and include only fully valid resumable rows.
 
-**Pros**
+This adds no index and no second persistence schema. The first level answers only “is there a plausible save worth exposing a picker for?”; the second level remains authoritative.
 
-- actually satisfies “all saved progress” rather than mirroring gallery pagination;
-- keeps the picker reachable even when `localProgress.newest` is null;
-- no new persistent index to maintain or migrate;
-- no new API endpoint;
-- no server-detail request on normal gallery startup;
-- validation remains authoritative and read-only.
-
-**Cons**
-
-- gallery mount performs one small localStorage key iteration;
-- opening the picker may issue one detail request per saved server puzzle that is not already represented by loaded gallery summaries.
-
-For a local hobby-game save list, that tradeoff is simpler and cheaper than maintaining another catalog. A batch endpoint can be added only if real save counts make it necessary.
-
-### Option B — Extend HPA-218's current candidate list only
-
-**Rejected:** `discoverGalleryProgress()` intentionally knows only currently loaded server summaries plus mount-time Quick metadata. A modal built only from those candidates would silently omit older server saves hidden by pagination, search, or category filtering. It can also leave no entry point at all when every save is outside the loaded server summaries.
-
-### Option C — Persist a save index alongside sessions
-
-**Rejected:** this introduces another schema, synchronization rules on every save/clear, recovery behavior for index drift, and migration/reset questions just to make a small local picker faster. Current `Storage` already exposes the app-owned keys.
-
-### Option D — Add a server batch lookup endpoint
-
-**Rejected:** the picker is local-session UX. The existing `fetchPuzzle(id)` endpoint is sufficient for the expected small number of saves, and lazy metadata loading prevents server cost on users who never open the picker.
+A persisted index and a batch API remain rejected: both add more lifecycle and synchronization machinery than a hobby-project local save picker needs.
 
 ## Tray rotation design
 
 ### Remove the thumbnail overlay
 
-Delete the Rotate `<button>` from `PuzzlePiece.svelte` together with its click/propagation helpers. Keep the existing `onRotate` prop because the piece root still uses it for the `R` shortcut.
+Delete the per-piece Rotate `<button>` from `PuzzlePiece.svelte` and delete its click/propagation helpers.
+
+Keep `onRotate?: (pieceId: number) => void` because the piece root still uses it for `R`.
 
 The root continues to expose:
 
-- `aria-keyshortcuts="R"` when the piece is rotatable;
-- `Puzzle piece N, upright` or `Puzzle piece N, rotated X degrees` as its accessible name;
-- the current visual rotation transform.
+- `aria-keyshortcuts="R"` when rotation is enabled and the piece is unplaced;
+- `Puzzle piece N, upright` or `Puzzle piece N, rotated X degrees`;
+- the existing rotated visual transform.
 
-HPA-223's inventory roving focus becomes simpler: only the active piece root is a repeated sequential tab stop. The special-case branch that detects `[data-testid="rotate-piece-button"]` is removed because the child button no longer exists.
+`PuzzleInventoryPanel` no longer needs the child-button special case in its native arrow handler. Roving focus returns to one active piece root rather than an active root plus an overlaid Rotate leaf.
 
-### Selected-piece header action
+### Add selected-piece header ROTATE
 
-`PuzzleInventoryPanel.svelte` already owns the selected piece ID and the panel header action row. When both conditions are true:
+When:
 
 ```text
 rotationEnabled === true
 selectedPieceId !== null
 ```
 
-render one header button:
+render one inventory header action:
 
 ```text
 ROTATE
+aria-label="Rotate selected piece"
 ```
 
-with accessible name `Rotate selected piece`. Clicking it calls `onRotate(selectedPieceId)`.
-
-The button remains available while the drawer body is collapsed, matching the existing `CANCEL` behavior and ensuring a selected mobile piece can still be rotated without reopening the tray body.
-
-Do not auto-select a piece when Rotate is pressed. Do not move per-piece rotation into `PuzzleToolbar`; that toolbar action controls rotation mode, not the currently selected piece.
-
-## Saved-progress discovery design
-
-### Keep the fast path fast
-
-Gallery mount performs four existing-or-cheap operations:
-
-1. call `listQuick()` once;
-2. call `listPersistedSessionPuzzleIds()` once to collect only app-owned save IDs;
-3. fetch gallery summaries as today;
-4. call synchronous `discoverGalleryProgress()` for visible card progress and the existing newest Continue banner.
-
-The mount-time key scan does not read session values, validate snapshots, or fetch server puzzle detail. Search, category filtering, and pagination continue to update only the existing gallery projection; they do not rerun `listQuick()` or the persisted-ID scan.
-
-### Enumerate only Perseus session keys
-
-Add a small exported helper beside the persistence key function:
+Clicking it calls:
 
 ```ts
-export function listPersistedSessionPuzzleIds(storage?: Storage): string[]
+onRotate(selectedPieceId)
 ```
 
-It uses the same default storage selection as the session adapter, iterates `storage.length` / `storage.key(index)`, accepts only keys with the exact `puzzle-progress-` prefix, strips the prefix, ignores an empty suffix, de-duplicates IDs, and returns them in key-iteration order. Unrelated localStorage data is never interpreted as a session.
+`selectedPieceId !== null` is sufficient. The session already refuses selecting placed pieces and clears invalid selection through its normal transitions; the panel must not duplicate that domain rule.
 
-The helper returns an empty list if storage enumeration is unavailable. It does not parse, validate, mutate, or remove records; those responsibilities stay in the existing codec/adapter.
+The action stays visible while the inventory drawer is collapsed, like `CANCEL`.
 
-Keep `SessionStorageAdapter` unchanged so its existing production consumers and test doubles do not gain another required method.
+Do not move this action into `PuzzleToolbar`: that toolbar’s ROTATE toggles rotation mode, while this header action rotates the currently selected piece.
 
-### Resolve and validate all candidates lazily
+## Rotation test migration
 
-Add one async discovery function in `galleryProgress.ts`:
+Removing the overlay changes the interaction contract, not just the accessible name. The puzzle-route suite currently rotates pieces without selecting them in multiple tests, including rotation/history, timer start, non-upright rejection, and live-announcement cases.
+
+Those tests must be retargeted in the same implementation task:
+
+- pointer/touch path: select the intended piece, then click `Rotate selected piece`;
+- when a test already has the intended piece selected, click the header action directly;
+- remove any now-redundant later `selectPiece(id)` call that would toggle the already-selected piece off;
+- add one route assertion that the header Rotate action is absent before selection and appears after selection;
+- add one route-level `R` test proving a focused piece rotates without the overlay/header path.
+
+Component tests remain useful, but they are not sufficient because the route tests exercise timer start, history, rejection, and announcer behavior through the old button.
+
+## Mount-time save visibility probe
+
+### Why key existence alone is insufficient
+
+A completed session remains persisted. `checkpointSession()` serializes any non-disposed session, including completed state, and the existing gallery projection intentionally keeps completed snapshots stored while excluding them from resumable progress.
+
+Therefore this condition is wrong:
+
+```text
+puzzle-progress-* key exists ⇒ show saved-progress affordance
+```
+
+### Candidate probe contract
+
+Add one exported persistence helper:
+
+```ts
+export function listResumableSessionCandidateIds(storage?: Storage): string[]
+```
+
+Internally, persistence keeps a private key-enumeration helper beside `PROGRESS_KEY_PREFIX`. For each owned key:
+
+1. strip the non-empty puzzle ID suffix;
+2. `getItem()` the raw value;
+3. `JSON.parse()` it; parse failure is skipped;
+4. require an object;
+5. require `schemaVersion === CURRENT_SESSION_SCHEMA_VERSION`;
+6. require parsed `puzzleId` to equal the key suffix;
+7. apply the same resumability state predicate as `isResumable()`:
+   - lifecycle is `active` or `paused`;
+   - `sealedCompletion === null`;
+   - `hasUserActivity === true`.
+
+The shared state predicate should be factored once so `isResumable()` and the candidate probe cannot drift.
+
+This probe deliberately does **not** validate grid geometry, tray order, rotations, counters, or result-class consistency. Those checks require the authoritative puzzle context and remain lazy in `peekSession()`.
+
+Storage/parse failures produce no candidate and never remove data.
+
+### Gallery visibility
+
+On gallery mount, run exactly once:
+
+```ts
+quickPuzzles = listQuick();
+savedProgressCandidateIds = listResumableSessionCandidateIds();
+```
+
+Search, category changes, and pagination must not rerun either mount-only enumeration.
+
+Render the current-device section when either:
+
+```text
+localProgress.newest !== null
+OR
+savedProgressCandidateIds.length > 0
+```
+
+Inside the section:
+
+- if `localProgress.newest` exists, keep its current name/progress/CONTINUE/DISCARD presentation unchanged;
+- if no newest row exists but candidate IDs exist, show concise `SAVED PROGRESS AVAILABLE` copy instead of inventing a newest puzzle;
+- show **VIEW SAVED PROGRESS** only when candidate IDs exist.
+
+A completed-only or no-activity storage set yields zero candidate IDs, so the section does not appear.
+
+## Full saved-progress discovery
+
+Add:
 
 ```ts
 export async function discoverAllSavedProgress(options: {
@@ -176,33 +220,66 @@ export async function discoverAllSavedProgress(options: {
 }): Promise<GalleryProgress[]>;
 ```
 
-The function reuses the existing candidate/projection helpers instead of reimplementing the persisted session schema.
+The input IDs are the mount-time candidate IDs. Full discovery still treats them as untrusted.
 
-For each unique `puzzleId`:
+### Shared explicit-geometry validator
 
-1. If the ID is a Quick Puzzle ID, look it up in the already-mounted `quickPuzzles` array. If metadata is absent or malformed, skip it.
-2. Otherwise, first look for a ready matching server summary in `serverPuzzles`. If present, use the existing summary-to-validation-context path with no request.
-3. If the server puzzle is not currently loaded, call `fetchPuzzleById(puzzleId)` and build a validation context from its canonical `gridCols`, `gridRows`, `pieceCount`, and `pieces`.
-4. Call `sessionStorage.peekSession(puzzleId, context)`.
-5. Keep the row only when the result is `loaded` and `sessionStorage.isResumable(snapshot)` is true.
-6. Project the existing `GalleryProgress` shape.
+The original plan’s `fetchedServerCandidate()` did only shallow grid checks, while `quickValidationContext()` already validates each piece. That would create two validators that can drift.
 
-A metadata request failure skips only that server save. Passive picker discovery never calls `loadSession()` or `clearSession()`, so malformed, stale, unsupported, deleted-puzzle, or temporarily unresolved saves are not destroyed.
+Extract one nullable helper in `galleryProgress.ts`:
 
-The result is sorted by:
+```ts
+function explicitValidationContext(input: {
+  puzzleId: string;
+  source: PuzzleSourceType;
+  pieceCount: number;
+  gridCols: number;
+  gridRows: number;
+  pieces: readonly unknown[];
+}): SessionValidationContext | null
+```
+
+It validates:
+
+- non-empty puzzle ID and valid source;
+- positive integer `pieceCount`, `gridCols`, and `gridRows`;
+- `gridCols * gridRows === pieceCount`;
+- `pieces.length === pieceCount`;
+- each piece is an object;
+- integer piece ID in `[0, pieceCount)`;
+- unique piece IDs;
+- integer `correctX` / `correctY` in bounds;
+- unique canonical cells.
+
+Then:
+
+- `quickValidationContext()` keeps only Quick-specific guards such as the `q-` ID prefix, then delegates explicit geometry to this helper with `source: 'local'`;
+- fetched server `Puzzle` detail delegates to the same helper with `source: 'api'`;
+- summary-based `serverValidationContext()` remains row-major because summaries do not include canonical piece coordinates.
+
+The helper returns `null` on malformed metadata. Picker discovery skips that row; it does not throw like the session construction invariant boundary.
+
+### Candidate resolution
+
+For each unique candidate ID:
+
+1. `q-` ID: resolve only from the mount-time Quick metadata array. Missing/malformed Quick metadata is skipped; do not fetch it as a server puzzle.
+2. Server ID already in loaded summaries: build the existing summary validation context with no request.
+3. Server ID outside loaded summaries: call injected `fetchPuzzleById(id)`, require returned `puzzle.id === id`, then build the shared explicit context.
+4. Call `sessionStorage.peekSession(id, context)`.
+5. Include only `loaded` + `sessionStorage.isResumable(snapshot)`.
+6. Project `GalleryProgress`.
+
+Sort by:
 
 1. `lastUpdated` descending;
-2. `puzzleId` ascending as a deterministic tie-breaker for tests and stable rendering.
+2. `puzzleId` ascending for deterministic ties.
 
-The function returns a plain array; no retained catalog or cross-route cache is introduced.
+A deleted puzzle, failed detail request, malformed metadata, invalid session, or completed session is skipped without deletion.
 
-### Why full fetched puzzles use canonical geometry
+## SavedProgressDialog
 
-`PuzzleSummary` does not contain full piece coordinates, so the current gallery projection derives row-major coordinates from `pieceCount` and `aspectRatio`. A missing saved server puzzle resolved with `fetchPuzzle(id)` already provides `gridCols`, `gridRows`, and canonical pieces. Full-history validation should use those authoritative fields directly instead of reconstructing them again.
-
-## Saved-progress dialog
-
-Create one `SavedProgressDialog.svelte` with props:
+Create one concrete `SavedProgressDialog.svelte`:
 
 ```ts
 interface Props {
@@ -214,104 +291,124 @@ interface Props {
 
 Behavior:
 
-- fixed modal surface with `role="dialog"`, `aria-modal="true"`, `aria-label="Saved progress"`;
+- `role="dialog"`, `aria-modal="true"`, `aria-label="Saved progress"`;
 - reuse `modalFocus`;
-- Escape invokes `onClose`;
+- Escape closes;
 - visible Close button;
-- while `loading`, show a concise loading state;
-- when loaded with zero rows, show `NO SAVED PROGRESS`;
-- otherwise render every row in the order supplied;
-- row content is puzzle name plus `{placedCount}/{pieceCount} PLACED`;
-- each row has a direct Continue link to `resolve('/puzzle/{puzzleId}')`.
+- loading state while authoritative discovery is running;
+- `NO SAVED PROGRESS` if no rows survive full validation;
+- otherwise one row per supplied item, showing name and `placedCount/pieceCount PLACED`;
+- normal Continue link to `/puzzle/{puzzleId}`.
 
-Do not put discard controls in this modal. The existing newest-session Discard flow remains the only home-page deletion affordance for this ticket.
+No discard/delete controls belong in this modal for HPA-647.
 
 ## Gallery orchestration
 
-`+page.svelte` owns only route-local picker presentation state and the mount-time key IDs:
+Route-local state only:
 
 ```ts
-let persistedSessionPuzzleIds = $state<string[]>([]);
+let savedProgressCandidateIds = $state<string[]>([]);
 let savedProgressOpen = $state(false);
 let savedProgressLoading = $state(false);
 let savedProgressItems = $state<GalleryProgress[]>([]);
 let savedProgressRequestId = 0;
 ```
 
-The existing `onMount` initializes both local metadata lists exactly once:
-
-```ts
-onMount(() => {
-  quickPuzzles = listQuick();
-  persistedSessionPuzzleIds = listPersistedSessionPuzzleIds();
-});
-```
-
-Render the current **Continue on this device** content when `localProgress.newest` exists. Render **VIEW SAVED PROGRESS** whenever `persistedSessionPuzzleIds.length > 0`, including when `localProgress.newest` is null. Keep both affordances in the same current-device progress section so the picker is discoverable without creating a new page or navigation area.
-
 Opening the picker:
 
-1. marks the modal open and loading;
-2. increments the local request revision;
-3. passes the mount-time persisted IDs, the current `puzzles`, mount-time `quickPuzzles`, `fetchPuzzle`, and existing session adapter to `discoverAllSavedProgress()`;
-4. publishes the result only if the request revision is still current.
+1. open + set loading;
+2. increment request ID;
+3. call `discoverAllSavedProgress()` with candidate IDs, current loaded `puzzles`, mount-time `quickPuzzles`, `fetchPuzzle`, and the existing session adapter;
+4. publish only if the request ID is still current.
 
-Closing the dialog increments the revision so late async results cannot mutate a closed dialog's presentation state.
+Closing increments the request ID before hiding the modal so late results cannot mutate closed presentation state.
 
-The main page becomes inert when either the discard confirmation or saved-progress dialog is open. Both dialogs remain siblings outside the inert subtree.
+Recompute authoritative rows on every explicit open rather than adding cache invalidation.
 
-The full validated list is recomputed on each explicit open. That is intentionally simpler than adding cache invalidation for a catalog that is only used on demand and is expected to contain few rows.
+After confirming the existing newest-session Discard action, recompute both:
 
-After the existing newest-session Discard confirmation succeeds, refresh both `localProgress` and `persistedSessionPuzzleIds` so the save-picker entry point disappears when the discarded record was the final app-owned save key.
+- `localProgress` with `discoverGalleryProgress()`; and
+- `savedProgressCandidateIds` with the mount-probe helper,
 
-## Accessibility
+so the picker affordance reflects the cleared key.
 
-- Removing the tiny per-piece Rotate button does not remove keyboard rotation: focused pieces retain `R` and orientation naming.
-- Pointer/touch rotation moves to a larger stable header control after selection.
-- `SavedProgressDialog` follows the existing focus trap/restore pattern and has a named dialog surface.
-- Continue rows are normal links, preserving native keyboard and browser navigation behavior.
-- No new custom listbox semantics are needed; the dialog is a short list of links.
+The main page is inert when either the discard confirmation or saved-progress modal is open.
 
 ## Testing strategy
 
-### Persistence/service
+### Persistence
 
-- key enumeration includes only non-empty `puzzle-progress-` IDs and ignores unrelated keys;
-- storage enumeration failure returns an empty list without mutation;
-- existing `discoverGalleryProgress()` behavior remains unchanged;
-- full discovery returns loaded-summary server saves, fetched-detail server saves, and Quick saves;
-- a server save absent from current gallery summaries is fetched and included;
-- already-loaded server summaries do not trigger detail requests;
-- invalid/completed/unresumable records are excluded without deletion;
-- missing Quick metadata and failed server metadata resolution are skipped;
-- output is newest-first with deterministic tie ordering.
+Cover the geometry-free candidate probe:
 
-### Components
+- active/paused + activity + no seal is included;
+- completed is excluded even though the key remains;
+- no-activity is excluded;
+- sealed is excluded;
+- malformed JSON, old schema, mismatched key/puzzle ID, empty suffix, and unrelated keys are excluded;
+- storage enumeration/read failure returns no candidate and never mutates storage.
 
-- `PuzzlePiece` never renders a Rotate overlay when rotation is enabled;
-- `R` still calls `onRotate` and accessible orientation remains correct;
-- inventory header Rotate appears only for a selected piece while rotation is enabled, calls `onRotate(selectedPieceId)`, and remains present when the drawer is collapsed;
-- saved-progress dialog loading, empty, rows, links, Escape, and Close behavior are covered.
+### Saved-progress service
+
+Cover:
+
+- loaded summary, fetched server detail, and Quick candidates in one result;
+- loaded server summary avoids detail fetch;
+- off-page server save is fetched and included;
+- missing Quick metadata is skipped without server fetch;
+- failed/deleted server detail is skipped;
+- completed/invalid session is skipped without deletion;
+- malformed fetched piece IDs/cells/bounds are rejected by the shared explicit validator;
+- Quick and fetched detail use that same explicit validator;
+- newest-first ordering plus deterministic tie order.
+
+### Rotation components and route
+
+Cover:
+
+- `PuzzlePiece` never renders the old Rotate overlay when rotation is enabled;
+- `R` still calls `onRotate` and orientation naming remains correct;
+- inventory header Rotate appears only when rotation is enabled and a piece is selected;
+- it calls `onRotate(selectedPieceId)` and remains visible while collapsed;
+- inventory roving tests no longer expect child Rotate buttons;
+- migrate every `Rotate piece N` caller in `routes/puzzle/[id]/page.svelte.test.ts` to the new selected-piece pointer path where appropriate;
+- route test proves header Rotate is absent until selection;
+- route test proves focused-piece `R` rotation still works without the overlay.
 
 ### Gallery page
 
-- mount calls `listQuick()` and `listPersistedSessionPuzzleIds()` once even as server results change;
-- persisted IDs can make **VIEW SAVED PROGRESS** visible when `localProgress.newest` is null;
-- no missing-server `fetchPuzzle()` request runs until the picker opens;
-- **VIEW SAVED PROGRESS** opens an inert modal and starts full discovery;
-- returned rows are passed to the dialog;
-- closing the dialog restores the main page;
-- confirmed newest-session discard refreshes the mounted persisted-ID list;
-- existing newest Continue and Discard behavior remains intact.
+Cover:
+
+- `listQuick()` and candidate probe each run once per mount;
+- search/filter/pagination do not rerun them;
+- completed-only/no-activity candidate probe produces no current-device section;
+- off-page maybe-resumable candidate with `localProgress.newest === null` still shows **VIEW SAVED PROGRESS**;
+- no missing puzzle-detail fetch occurs before opening;
+- picker open/load/close and inert behavior;
+- stale async results are ignored after close;
+- newest Continue/Discard remains unchanged;
+- discard recomputes both current projection and candidate IDs.
 
 ### E2E
 
-Extend `e2e/gallery.spec.ts` with two deterministic persisted sessions:
+Extend `e2e/gallery.spec.ts` with two deterministic valid saved sessions:
 
-- newest: a fixture included in the gallery summary response;
-- older: a different server fixture omitted from that initial summary response.
+- newest fixture included in the gallery summary response;
+- older server fixture omitted from that response.
 
-Assert the existing banner still offers the newest session immediately, open **VIEW SAVED PROGRESS**, confirm both rows appear, select the older row, and verify navigation to its existing puzzle route. This proves the picker is not bounded by gallery pagination/filter state.
+Assert:
+
+1. newest Continue is immediately visible;
+2. **VIEW SAVED PROGRESS** opens the modal;
+3. both rows appear;
+4. choosing the older row navigates to that puzzle route.
+
+The fixture router already supplies off-page puzzle detail, so this proves the picker is independent of gallery pagination/filter state without a real backend request.
+
+## Risks and controls
+
+1. **Overlay callers outside component tests.** The route suite directly drives `Rotate piece N`; removing the overlay without migrating it causes immediate test failures and hides selection-state changes. Control: include `routes/puzzle/[id]/page.svelte.test.ts` in the rotation task and final focused suite.
+2. **Completed keys mistaken for resumable saves.** Completion remains persisted, so key existence is not a valid UI signal. Control: geometry-free current-schema resumability candidate probe at mount; full validation stays lazy.
+3. **Deleted or malformed off-page server puzzles.** Lazy `fetchPuzzle(id)` can 404 or return malformed typed-cast data. Control: shared explicit piece validator, per-candidate skip, `peekSession()` only, never passive deletion.
 
 ## Files expected to change
 
@@ -332,6 +429,7 @@ Tests:
 - `apps/web/src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts`
 - `apps/web/src/lib/components/__tests__/SavedProgressDialog.svelte.test.ts`
 - `apps/web/src/routes/page.svelte.test.ts`
+- `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts`
 - `apps/web/e2e/gallery.spec.ts`
 
-No API, database, shared types, `PuzzleSession`, or persisted schema files need to change.
+No API, database, shared-type, session-engine, package, or migration file is required.
