@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import type { PuzzleSummary } from '$lib/types/puzzle';
+import { describe, expect, it, vi } from 'vitest';
+import type { Puzzle, PuzzleSummary } from '$lib/types/puzzle';
 import type { StoredQuickPuzzle } from '$lib/services/quickPuzzle/types';
 import { createSessionStorageAdapter } from './session/persistence';
 import {
@@ -14,7 +14,7 @@ import type {
 	SessionStorageAdapter,
 	SessionValidationContext
 } from './session/types';
-import { discoverGalleryProgress } from './galleryProgress';
+import { discoverAllSavedProgress, discoverGalleryProgress } from './galleryProgress';
 
 const expectedSquare4 = [
 	{ id: 0, correctX: 0, correctY: 0 },
@@ -108,6 +108,25 @@ function quickPuzzle(): StoredQuickPuzzle {
 		],
 		createdAt: 1_000,
 		schemaVersion: 1
+	};
+}
+
+function fetchedServerPuzzle(id: string, name: string): Puzzle {
+	return {
+		id,
+		name,
+		pieceCount: 4,
+		gridCols: 2,
+		gridRows: 2,
+		imageWidth: 200,
+		imageHeight: 200,
+		createdAt: 1_000,
+		pieces: expectedSquare4.map((piece) => ({
+			...piece,
+			puzzleId: id,
+			imagePath: `pieces/${piece.id}.png`,
+			edges: { top: 'flat', right: 'flat', bottom: 'flat', left: 'flat' }
+		}))
 	};
 }
 
@@ -477,5 +496,179 @@ describe('discoverGalleryProgress', () => {
 		// Server (1000) is newer than Quick (500) → newest stays server.
 		expect(discovery.newest?.puzzleId).toBe('pz1');
 		expect(discovery.newest?.lastUpdated).toBe(1_000);
+	});
+});
+
+describe('discoverAllSavedProgress', () => {
+	it('includes loaded, fetched, and Quick saves newest first', async () => {
+		const base = validSnapshot();
+		const store = memoryStorage({
+			'puzzle-progress-loaded': JSON.stringify({ ...base, puzzleId: 'loaded', lastUpdated: 1_000 }),
+			'puzzle-progress-old': JSON.stringify({ ...base, puzzleId: 'old', lastUpdated: 3_000 }),
+			'puzzle-progress-q-test': JSON.stringify({
+				...base,
+				puzzleId: 'q-test',
+				source: 'local',
+				lastUpdated: 2_000
+			})
+		});
+		const fetchPuzzleById = vi.fn(async (id: string) => fetchedServerPuzzle(id, 'Fetched Save'));
+
+		const rows = await discoverAllSavedProgress({
+			puzzleIds: ['loaded', 'old', 'q-test'],
+			serverPuzzles: [serverPuzzle('loaded', 4, '1:1', { name: 'Loaded Save' })],
+			quickPuzzles: [quickPuzzle()],
+			fetchPuzzleById,
+			sessionStorage: createSessionStorageAdapter({ storage: store })
+		});
+
+		expect(rows.map((row) => row.puzzleId)).toEqual(['old', 'q-test', 'loaded']);
+		expect(fetchPuzzleById).toHaveBeenCalledTimes(1);
+		expect(fetchPuzzleById).toHaveBeenCalledWith('old');
+	});
+
+	it('skips detail fetches when summary metadata is already loaded', async () => {
+		const base = validSnapshot();
+		const store = memoryStorage({
+			'puzzle-progress-a': JSON.stringify({ ...base, puzzleId: 'a', lastUpdated: 1_000 }),
+			'puzzle-progress-b': JSON.stringify({ ...base, puzzleId: 'b', lastUpdated: 2_000 })
+		});
+		const fetchPuzzleById = vi.fn();
+
+		const rows = await discoverAllSavedProgress({
+			puzzleIds: ['a', 'b'],
+			serverPuzzles: [serverPuzzle('a', 4, '1:1'), serverPuzzle('b', 4, '1:1')],
+			quickPuzzles: [],
+			fetchPuzzleById,
+			sessionStorage: createSessionStorageAdapter({ storage: store })
+		});
+
+		expect(fetchPuzzleById).not.toHaveBeenCalled();
+		expect(rows.map((row) => row.puzzleId)).toEqual(['b', 'a']);
+	});
+
+	it('omits saves whose detail fetch fails without aborting the others', async () => {
+		const base = validSnapshot();
+		const store = memoryStorage({
+			'puzzle-progress-gone': JSON.stringify({ ...base, puzzleId: 'gone', lastUpdated: 5_000 }),
+			'puzzle-progress-kept': JSON.stringify({ ...base, puzzleId: 'kept', lastUpdated: 1_000 })
+		});
+		const fetchPuzzleById = vi.fn(async (id: string) => {
+			if (id === 'gone') throw new Error('not found');
+			return fetchedServerPuzzle(id, 'Fetched Save');
+		});
+
+		const rows = await discoverAllSavedProgress({
+			puzzleIds: ['gone', 'kept'],
+			serverPuzzles: [],
+			quickPuzzles: [],
+			fetchPuzzleById,
+			sessionStorage: createSessionStorageAdapter({ storage: store })
+		});
+
+		expect(rows.map((row) => row.puzzleId)).toEqual(['kept']);
+		expect(fetchPuzzleById).toHaveBeenCalledTimes(2);
+	});
+
+	it('omits Quick candidates without loaded Quick metadata instead of fetching', async () => {
+		const base = validSnapshot();
+		const store = memoryStorage({
+			'puzzle-progress-q-orphan': JSON.stringify({
+				...base,
+				puzzleId: 'q-orphan',
+				source: 'local',
+				lastUpdated: 4_000
+			})
+		});
+		const fetchPuzzleById = vi.fn();
+
+		const rows = await discoverAllSavedProgress({
+			puzzleIds: ['q-orphan'],
+			serverPuzzles: [],
+			quickPuzzles: [],
+			fetchPuzzleById,
+			sessionStorage: createSessionStorageAdapter({ storage: store })
+		});
+
+		expect(rows).toEqual([]);
+		expect(fetchPuzzleById).not.toHaveBeenCalled();
+	});
+
+	it('preserves completed fetched saves instead of surfacing them', async () => {
+		const snapshot = {
+			...validSnapshot(),
+			puzzleId: 'done',
+			lifecycle: 'completed' as const,
+			placedPieces: fullBoardPlacements(),
+			sealedCompletion: seal()
+		};
+		const raw = JSON.stringify(snapshot);
+		const store = { 'puzzle-progress-done': raw };
+		const fetchPuzzleById = vi.fn(async () => fetchedServerPuzzle('done', 'Done Save'));
+
+		const rows = await discoverAllSavedProgress({
+			puzzleIds: ['done'],
+			serverPuzzles: [],
+			quickPuzzles: [],
+			fetchPuzzleById,
+			sessionStorage: createSessionStorageAdapter({ storage: memoryStorage(store) })
+		});
+
+		expect(rows).toEqual([]);
+		expect(store['puzzle-progress-done']).toBe(raw);
+	});
+
+	it('rejects fetched details with duplicate or out-of-bounds pieces', async () => {
+		const dupIdPuzzle = fetchedServerPuzzle('dup', 'Dup Save');
+		dupIdPuzzle.pieces = [
+			dupIdPuzzle.pieces[0],
+			{ ...dupIdPuzzle.pieces[1], id: dupIdPuzzle.pieces[0].id },
+			...dupIdPuzzle.pieces.slice(2)
+		];
+		const outOfBoundsPuzzle = fetchedServerPuzzle('oob', 'Out Of Bounds Save');
+		outOfBoundsPuzzle.pieces[0] = { ...outOfBoundsPuzzle.pieces[0], correctX: 9 };
+
+		const base = validSnapshot();
+		const store = memoryStorage({
+			'puzzle-progress-dup': JSON.stringify({ ...base, puzzleId: 'dup', lastUpdated: 5_000 }),
+			'puzzle-progress-oob': JSON.stringify({ ...base, puzzleId: 'oob', lastUpdated: 4_000 })
+		});
+		const fetchPuzzleById = vi.fn(async (id: string) =>
+			id === 'dup' ? dupIdPuzzle : outOfBoundsPuzzle
+		);
+
+		const rows = await discoverAllSavedProgress({
+			puzzleIds: ['dup', 'oob'],
+			serverPuzzles: [],
+			quickPuzzles: [],
+			fetchPuzzleById,
+			sessionStorage: createSessionStorageAdapter({ storage: store })
+		});
+
+		expect(rows).toEqual([]);
+	});
+
+	it('orders same-timestamp saves deterministically by puzzle id', async () => {
+		const base = validSnapshot();
+		const store = memoryStorage({
+			'puzzle-progress-b': JSON.stringify({ ...base, puzzleId: 'b', lastUpdated: 2_000 }),
+			'puzzle-progress-a': JSON.stringify({ ...base, puzzleId: 'a', lastUpdated: 2_000 }),
+			'puzzle-progress-q-test': JSON.stringify({
+				...base,
+				puzzleId: 'q-test',
+				source: 'local',
+				lastUpdated: 2_000
+			})
+		});
+
+		const rows = await discoverAllSavedProgress({
+			puzzleIds: ['b', 'a', 'q-test'],
+			serverPuzzles: [serverPuzzle('a', 4, '1:1'), serverPuzzle('b', 4, '1:1')],
+			quickPuzzles: [quickPuzzle()],
+			fetchPuzzleById: async (id: string) => fetchedServerPuzzle(id, 'Fetched Save'),
+			sessionStorage: createSessionStorageAdapter({ storage: store })
+		});
+
+		expect(rows.map((row) => row.puzzleId)).toEqual(['a', 'b', 'q-test']);
 	});
 });
