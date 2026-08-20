@@ -40,6 +40,46 @@ describe('SavedProgressDialog', () => {
 			.toHaveAttribute('href', '/puzzle/old-save');
 	});
 
+	it('renders a just-started row with zero placed and a nullish-count row without crashing', async () => {
+		// A freshly opened puzzle has placedCount 0; the row must still render
+		// the "0/N PLACED" label rather than omitting it.
+		const zeroRow: GalleryProgress = {
+			puzzleId: 'fresh',
+			name: 'Fresh Mission',
+			source: 'api',
+			placedCount: 0,
+			pieceCount: 12,
+			lastUpdated: 1_000
+		};
+		// A defensive case: a malformed progress entry with nullish counts must
+		// not throw (Svelte renders nullish text interpolations as empty).
+		const nullishRow = {
+			puzzleId: 'corrupt',
+			name: 'Corrupt Mission',
+			source: 'api' as const,
+			placedCount: undefined as unknown as number,
+			pieceCount: undefined as unknown as number,
+			lastUpdated: 1_000
+		};
+		render(SavedProgressDialog, {
+			progress: [zeroRow, nullishRow],
+			loading: false,
+			onClose: vi.fn()
+		});
+
+		const fresh = page.getByTestId('saved-progress-row-fresh');
+		await expect.element(fresh).toHaveTextContent('0/12 PLACED');
+		await expect
+			.element(fresh.getByRole('link', { name: 'Continue Fresh Mission' }))
+			.toHaveAttribute('href', '/puzzle/fresh');
+
+		const corrupt = page.getByTestId('saved-progress-row-corrupt');
+		await expect.element(corrupt).toHaveTextContent('Corrupt Mission');
+		await expect
+			.element(corrupt.getByRole('link', { name: 'Continue Corrupt Mission' }))
+			.toHaveAttribute('href', '/puzzle/corrupt');
+	});
+
 	it('closes from Close and Escape', async () => {
 		const onClose = vi.fn();
 		render(SavedProgressDialog, { progress, loading: false, onClose });

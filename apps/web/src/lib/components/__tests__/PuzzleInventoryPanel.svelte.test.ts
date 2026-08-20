@@ -221,6 +221,20 @@ describe('PuzzleInventoryPanel', () => {
 		expect(input.onRotate).toHaveBeenCalledWith(1);
 	});
 
+	it('guards against a synthetic click on the disabled Rotate button', async () => {
+		// The ROTATE button is disabled when no piece is selected, so a real
+		// click never reaches rotateSelectedPiece. A programmatically
+		// dispatched click event bypasses the disabled gate, so the handler's
+		// null-selection guard must short-circuit without invoking onRotate.
+		const input = baseProps();
+		render(PuzzleInventoryPanel, { ...input, selectedPieceId: null });
+		const rotate = await page.getByRole('button', { name: 'Rotate selected piece' }).element();
+		expect(rotate.disabled).toBe(true);
+		rotate.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+		await Promise.resolve();
+		expect(input.onRotate).not.toHaveBeenCalled();
+	});
+
 	it('does not show header Rotate when rotation mode is disabled', async () => {
 		render(PuzzleInventoryPanel, { ...baseProps(), rotationEnabled: false });
 		expect(page.getByRole('button', { name: 'Rotate selected piece' }).query()).toBeNull();

@@ -474,6 +474,36 @@ describe('discoverGalleryProgress', () => {
 		expect(discovery.byPuzzleId.size).toBe(0);
 	});
 
+	it('rejects Quick records whose explicit geometry is individually invalid', () => {
+		// Each malformed Quick record targets a distinct guard inside
+		// explicitValidationContext (pieceCount, gridCols, gridRows, piece id
+		// range, correctY range) so every defensive return null is exercised.
+		const { adapter, contexts } = spyAdapter();
+		const base = quickPuzzle();
+		const zeroPieceCount = { ...base, id: 'q-zero-pc', pieceCount: 0 } as StoredQuickPuzzle;
+		const zeroGridCols = { ...base, id: 'q-zero-cols', gridCols: 0 } as StoredQuickPuzzle;
+		const zeroGridRows = { ...base, id: 'q-zero-rows', gridRows: 0 } as StoredQuickPuzzle;
+		const idOutOfRange: StoredQuickPuzzle = {
+			...base,
+			id: 'q-id-oob',
+			pieces: [{ ...base.pieces[0]!, id: 99 }, ...base.pieces.slice(1)]
+		};
+		const correctYOutOfRange: StoredQuickPuzzle = {
+			...base,
+			id: 'q-y-oob',
+			pieces: [{ ...base.pieces[0]!, correctY: 99 }, ...base.pieces.slice(1)]
+		};
+
+		discoverGalleryProgress({
+			serverPuzzles: [],
+			quickPuzzles: [zeroPieceCount, zeroGridCols, zeroGridRows, idOutOfRange, correctYOutOfRange],
+			sessionStorage: adapter
+		});
+
+		// Every malformed record is rejected before producing a candidate.
+		expect(contexts).toHaveLength(0);
+	});
+
 	it('keeps the newest progress when a later candidate is older', () => {
 		const serverSnapshot = validSnapshot();
 		const quickSnapshot: PersistedPuzzleSessionV1 = {
@@ -722,6 +752,122 @@ describe('discoverAllSavedProgress', () => {
 		});
 
 		// An already-aborted signal short-circuits before any detail fetch.
+		expect(rows).toEqual([]);
+		expect(fetchPuzzleById).not.toHaveBeenCalled();
+	});
+
+	it('drops a candidate whose detail fetch resolves after the signal aborts', async () => {
+		// The post-fetch `signal?.aborted` guard must drop a candidate when the
+		// signal aborts while the fetch is in flight but the fetch still resolves
+		// (e.g. a stale request the caller abandoned by opening a newer one).
+		const base = validSnapshot();
+		const store = memoryStorage({
+			'puzzle-progress-fetched': JSON.stringify({
+				...base,
+				puzzleId: 'fetched',
+				lastUpdated: 1_000
+			})
+		});
+		const controller = new AbortController();
+		const fetchPuzzleById = vi.fn(async (_id: string, signal?: AbortSignal) => {
+			// Abort mid-flight, then still resolve: the resolved value must be
+			// discarded by the post-await abort check.
+			controller.abort();
+			expect(signal).toBe(controller.signal);
+			return fetchedServerPuzzle('fetched', 'Fetched Save');
+		});
+
+		const rows = await discoverAllSavedProgress({
+			puzzleIds: ['fetched'],
+			serverPuzzles: [],
+			quickPuzzles: [],
+			fetchPuzzleById,
+			sessionStorage: createSessionStorageAdapter({ storage: store }),
+			signal: controller.signal
+		});
+
+		expect(rows).toEqual([]);
+		expect(fetchPuzzleById).toHaveBeenCalledTimes(1);
+	});
+
+	it('uses the default session storage adapter when none is provided', async () => {
+		// Exercises the `?? createSessionStorageAdapter()` fallback in
+		// discoverAllSavedProgress. With empty browser storage every
+		// peekSession returns 'missing', so no rows surface — but the
+		// fallback branch itself is exercised.
+		const fetchPuzzleById = vi.fn(async (id: string) => fetchedServerPuzzle(id, 'Fetched Save'));
+
+		const rows = await discoverAllSavedProgress({
+			puzzleIds: ['fetched'],
+			serverPuzzles: [],
+			quickPuzzles: [],
+			fetchPuzzleById
+		});
+
+		expect(rows).toEqual([]);
+	});
+
+	it('omits fetched saves whose id is empty or mismatches the requested id', async () => {
+		// `puzzle.id !== puzzleId` guard (mismatch) and the empty-puzzleId guard
+		// inside explicitValidationContext (reached only when the fetched id
+		// matches the requested empty id).
+		const fetchPuzzleById = vi.fn(async (id: string) => {
+			if (id === '') return fetchedServerPuzzle('', 'Empty Id');
+			return fetchedServerPuzzle('different', 'Mismatched Id');
+		});
+
+		const rows = await discoverAllSavedProgress({
+			puzzleIds: ['', 'mismatch'],
+			serverPuzzles: [],
+			quickPuzzles: [],
+			fetchPuzzleById,
+			sessionStorage: createSessionStorageAdapter({ storage: memoryStorage({}) })
+		});
+
+		expect(rows).toEqual([]);
+		expect(fetchPuzzleById).toHaveBeenCalledWith('', undefined);
+		expect(fetchPuzzleById).toHaveBeenCalledWith('mismatch', undefined);
+	});
+
+	it('omits candidates whose loaded summary metadata fails validation', async () => {
+		// A server summary with an invalid piece count for its aspect ratio
+		// (5 is not a perfect square for 1:1) yields a null context via
+		// serverValidationContext, exercising the summary `: null` branch.
+		// A Quick record whose grid capacity does not match its pieceCount
+		// yields a null context via quickValidationContext, exercising the
+		// Quick `: null` branch.
+		const base = validSnapshot();
+		const store = memoryStorage({
+			'puzzle-progress-bad-summary': JSON.stringify({
+				...base,
+				puzzleId: 'bad-summary',
+				lastUpdated: 1_000
+			}),
+			'puzzle-progress-q-bad-quick': JSON.stringify({
+				...base,
+				puzzleId: 'q-bad-quick',
+				source: 'local',
+				lastUpdated: 2_000
+			})
+		});
+		const mismatchedQuick: StoredQuickPuzzle = {
+			...quickPuzzle(),
+			id: 'q-bad-quick',
+			gridRows: 3,
+			gridCols: 3
+		};
+		const fetchPuzzleById = vi.fn();
+
+		const rows = await discoverAllSavedProgress({
+			puzzleIds: ['bad-summary', 'q-bad-quick'],
+			serverPuzzles: [serverPuzzle('bad-summary', 5, '1:1')],
+			quickPuzzles: [mismatchedQuick],
+			fetchPuzzleById,
+			sessionStorage: createSessionStorageAdapter({ storage: store })
+		});
+
+		// Neither invalid-summary candidate surfaces a row, and no detail
+		// fetch is needed because both ids resolve via loaded metadata.
 		expect(rows).toEqual([]);
 		expect(fetchPuzzleById).not.toHaveBeenCalled();
 	});

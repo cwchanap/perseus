@@ -238,6 +238,31 @@ describe('Gallery Page', () => {
 		await expect.element(page.getByText('CONTINUE · 2/4 PLACED')).toBeVisible();
 	});
 
+	it('renders the continue panel without crashing when progress counts are nullish', async () => {
+		// A malformed newest progress entry with nullish counts must not throw:
+		// Svelte renders nullish text interpolations as empty, so the panel
+		// still surfaces the mission name and Continue link.
+		const progress = {
+			puzzleId: 'p1',
+			name: 'Corrupt Mission',
+			source: 'api' as const,
+			placedCount: undefined as unknown as number,
+			pieceCount: undefined as unknown as number,
+			lastUpdated: 2_000
+		};
+		mockedDiscoverGalleryProgress.mockReturnValue({
+			byPuzzleId: new Map([['p1', progress]]),
+			newest: progress
+		});
+
+		render(GalleryPage);
+
+		await expect.element(page.getByTestId('continue-on-device')).toBeVisible();
+		await expect
+			.element(page.getByTestId('continue-on-device'))
+			.toHaveTextContent('Corrupt Mission');
+	});
+
 	it('links to a Quick-only newest progress without adding a Quick card', async () => {
 		const quickPuzzles = [storedQuickPuzzleFixture];
 		const progress = {
@@ -335,6 +360,41 @@ describe('Gallery Page', () => {
 		// A transient discovery failure must not hide the picker affordance:
 		// the candidate ids are left intact so the user can retry.
 		await page.getByRole('button', { name: 'Close saved progress' }).click();
+		await expect.element(page.getByRole('button', { name: 'View saved progress' })).toBeVisible();
+
+		consoleSpy.mockRestore();
+	});
+
+	it('discards a stale rejection resolved after the picker is closed', async () => {
+		sessionStorageSpies.listCandidates.mockReturnValue(['off-page']);
+		mockedDiscoverGalleryProgress.mockReturnValue({ byPuzzleId: new Map(), newest: null });
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		let rejectDiscovery!: (error: Error) => void;
+		const inFlight = new Promise<GalleryProgress[]>((_, reject) => {
+			rejectDiscovery = reject;
+		});
+		mockedDiscoverAllSavedProgress.mockReturnValueOnce(inFlight);
+
+		render(GalleryPage);
+		await page.getByRole('button', { name: 'View saved progress' }).click();
+		await expect.element(page.getByText('LOADING SAVED PROGRESS...')).toBeVisible();
+
+		// Close the picker while discovery is still pending: the request id is
+		// bumped and the in-flight controller is aborted.
+		await page.getByRole('button', { name: 'Close saved progress' }).click();
+		await expect
+			.poll(() => page.getByRole('dialog', { name: 'Saved progress' }).query())
+			.toBeNull();
+
+		// The deferred rejection resolves after close: the catch branch must
+		// hit its stale-request guard and early-return without stranding the
+		// gallery on an error state or logging past the close.
+		rejectDiscovery(new Error('aborted'));
+		await expect(() => inFlight).rejects.toThrow('aborted');
+		await Promise.resolve();
+
+		expect(document.body.textContent).not.toContain('LOADING SAVED PROGRESS');
 		await expect.element(page.getByRole('button', { name: 'View saved progress' })).toBeVisible();
 
 		consoleSpy.mockRestore();
