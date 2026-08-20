@@ -88,34 +88,9 @@
 			}
 		};
 	}
-
-	function handleRotateClick(event: MouseEvent) {
-		event.preventDefault();
-		event.stopPropagation();
-		onRotate?.(piece.id);
-	}
-
-	function stopRotateEventPropagation(event: Event) {
-		event.stopPropagation();
-	}
 </script>
 
 <div class="puzzle-piece-wrapper relative h-full w-full">
-	{#if rotationEnabled && !isPlaced}
-		<button
-			type="button"
-			class="absolute top-1 right-1 z-10 rounded-full bg-white/90 px-2 py-1 text-xs font-medium text-gray-800 shadow-sm ring-1 ring-gray-300 transition hover:bg-white focus:ring-2 focus:ring-blue-400 focus:outline-hidden"
-			aria-label="Rotate piece {piece.id}"
-			data-testid="rotate-piece-button"
-			tabindex={tabIndex}
-			onclick={handleRotateClick}
-			onkeydown={stopRotateEventPropagation}
-			onpointerdown={stopRotateEventPropagation}
-		>
-			↻
-		</button>
-	{/if}
-
 	<div
 		class="puzzle-piece h-full w-full cursor-grab transition-transform select-none hover:scale-105 focus:outline-hidden"
 		class:opacity-50={isPlaced}

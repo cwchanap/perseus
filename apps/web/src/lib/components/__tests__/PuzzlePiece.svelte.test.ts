@@ -1,7 +1,7 @@
 // Component tests for PuzzlePiece (controlled selection)
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render } from 'vitest-browser-svelte';
-import { page, userEvent } from 'vitest/browser';
+import { page } from 'vitest/browser';
 import PuzzlePiece from '../PuzzlePiece.svelte';
 import type { PuzzlePiece as PuzzlePieceType } from '$lib/types/puzzle';
 import { BASE_OFFSET, EXPANSION_FACTOR, TAB_RATIO } from '$lib/constants/puzzle';
@@ -257,70 +257,19 @@ describe('PuzzlePiece', () => {
 	});
 
 	describe('rotation support', () => {
-		it('does not render a rotate control when rotation is disabled', async () => {
-			render(PuzzlePiece, { piece: mockPiece, isPlaced: false, resolveImage });
-
-			const rotateButton = page.getByRole('button', { name: 'Rotate piece 7' });
-			await expect.poll(() => rotateButton.query()).toBeNull();
-		});
-
-		it('renders a rotate control when rotation is enabled for an unplaced piece', async () => {
-			render(PuzzlePiece, {
-				piece: mockPiece,
-				isPlaced: false,
-				resolveImage,
-				rotationEnabled: true
-			});
-
-			await expect.element(page.getByRole('button', { name: 'Rotate piece 7' })).toBeVisible();
-		});
-
-		it('calls onRotate when the rotate control is clicked', async () => {
-			const onRotate = vi.fn();
-
+		it('never renders a rotate overlay when rotation is enabled', async () => {
 			render(PuzzlePiece, {
 				piece: mockPiece,
 				isPlaced: false,
 				resolveImage,
 				rotationEnabled: true,
-				onRotate
+				onRotate: vi.fn()
 			});
 
-			await userEvent.click(page.getByRole('button', { name: 'Rotate piece 7' }));
-			expect(onRotate).toHaveBeenCalledTimes(1);
-			expect(onRotate).toHaveBeenCalledWith(7);
-		});
-
-		it('keeps the rotate control outside the piece interactive element', async () => {
-			render(PuzzlePiece, {
-				piece: mockPiece,
-				isPlaced: false,
-				resolveImage,
-				rotationEnabled: true
-			});
-
-			const pieceElement = await page.getByTestId('puzzle-piece').element();
-			const rotateButton = await page.getByRole('button', { name: 'Rotate piece 7' }).element();
-
-			expect(pieceElement.contains(rotateButton)).toBe(false);
-		});
-
-		it('rotates without selecting the piece', async () => {
-			const onRotate = vi.fn();
-			const onSelect = vi.fn();
-			render(PuzzlePiece, {
-				piece: mockPiece,
-				isPlaced: false,
-				resolveImage,
-				rotationEnabled: true,
-				onRotate,
-				onSelect
-			});
-
-			await page.getByRole('button', { name: 'Rotate piece 7' }).click();
-
-			expect(onRotate).toHaveBeenCalledWith(7);
-			expect(onSelect).not.toHaveBeenCalled();
+			expect(document.querySelector('[data-testid="rotate-piece-button"]')).toBeNull();
+			await expect
+				.element(page.getByTestId('puzzle-piece'))
+				.toHaveAttribute('aria-keyshortcuts', 'R');
 		});
 
 		it('calls onRotate when r and R are pressed while the piece is focused', async () => {
@@ -357,7 +306,7 @@ describe('PuzzlePiece', () => {
 				.toHaveAttribute('style', 'transform: rotate(90deg);');
 		});
 
-		it('exposes the rotation angle in the piece name and keeps the active rotate button tabbable', async () => {
+		it('exposes the rotation angle in the piece name while staying tabbable', async () => {
 			render(PuzzlePiece, {
 				piece: mockPiece,
 				isPlaced: false,
@@ -374,9 +323,6 @@ describe('PuzzlePiece', () => {
 			await expect
 				.element(page.getByTestId('puzzle-piece'))
 				.toHaveAttribute('aria-keyshortcuts', 'R');
-			await expect
-				.element(page.getByRole('button', { name: 'Rotate piece 7' }))
-				.toHaveAttribute('tabindex', '0');
 			const pieceRoot = await page.getByTestId('puzzle-piece').element();
 			expect(pieceRoot?.tabIndex).toBe(0);
 		});
@@ -395,24 +341,6 @@ describe('PuzzlePiece', () => {
 			await expect
 				.element(page.getByTestId('puzzle-piece'))
 				.toHaveAttribute('aria-label', 'Puzzle piece 7, upright');
-		});
-
-		it('makes the rotate button non-tabbable when the piece is not the roving active piece', async () => {
-			render(PuzzlePiece, {
-				piece: mockPiece,
-				isPlaced: false,
-				resolveImage,
-				rotationEnabled: true,
-				rotation: 90,
-				tabIndex: -1,
-				onRotate: vi.fn()
-			});
-
-			await expect
-				.element(page.getByRole('button', { name: 'Rotate piece 7' }))
-				.toHaveAttribute('tabindex', '-1');
-			const pieceRoot = await page.getByTestId('puzzle-piece').element();
-			expect(pieceRoot?.tabIndex).toBe(-1);
 		});
 	});
 
