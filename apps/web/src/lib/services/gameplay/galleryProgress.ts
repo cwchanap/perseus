@@ -27,6 +27,12 @@ export interface GalleryProgressDiscovery {
 	newest: GalleryProgress | null;
 }
 
+export interface GalleryProgressDiscoveryResult {
+	rows: GalleryProgress[];
+	/** `false` when at least one off-page detail fetch failed transiently. */
+	complete: boolean;
+}
+
 interface GalleryCandidate {
 	puzzleId: string;
 	name: string;
@@ -198,11 +204,13 @@ export async function discoverAllSavedProgress(options: {
 	fetchPuzzleById: (puzzleId: string, signal?: AbortSignal) => Promise<Puzzle>;
 	sessionStorage?: SessionStorageAdapter;
 	signal?: AbortSignal;
-}): Promise<GalleryProgress[]> {
+}): Promise<GalleryProgressDiscoveryResult> {
 	const sessionStorage = options.sessionStorage ?? createSessionStorageAdapter();
 	const serverById = new Map(options.serverPuzzles.map((puzzle) => [puzzle.id, puzzle] as const));
 	const quickById = new Map(options.quickPuzzles.map((puzzle) => [puzzle.id, puzzle] as const));
 	const signal = options.signal;
+
+	let hadFetchFailure = false;
 
 	const candidates = await Promise.all(
 		[...new Set(options.puzzleIds)].map(async (puzzleId): Promise<GalleryCandidate | null> => {
@@ -246,18 +254,21 @@ export async function discoverAllSavedProgress(options: {
 					? { puzzleId, name: puzzle.name, source: 'api', pieceCount: puzzle.pieceCount, context }
 					: null;
 			} catch {
+				hadFetchFailure = true;
 				return null;
 			}
 		})
 	);
 
-	if (signal?.aborted) return [];
+	if (signal?.aborted) return { rows: [], complete: true };
 
-	return candidates
+	const rows = candidates
 		.flatMap((candidate) => {
 			if (!candidate) return [];
 			const row = progressFromCandidate(candidate, sessionStorage);
 			return row ? [row] : [];
 		})
 		.sort((a, b) => b.lastUpdated - a.lastUpdated || a.puzzleId.localeCompare(b.puzzleId));
+
+	return { rows, complete: !hadFetchFailure };
 }

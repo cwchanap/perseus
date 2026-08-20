@@ -235,6 +235,65 @@ test.describe('Main Gallery Page', () => {
 		await expect(dialog.getByTestId(`saved-progress-row-${olderId}`)).toContainText(older.name);
 		await dialog.getByRole('link', { name: `Continue ${older.name}` }).click();
 		await expect(page).toHaveURL(new RegExp(`/puzzle/${olderId}$`));
+		// Assert the seeded session was actually restored, not just that the
+		// URL changed: a restored active timed session opens the pause dialog
+		// with the "Resume Mission" presentation. A fresh run would show
+		// Mission Setup or start immediately instead.
+		await expect(page.getByRole('dialog', { name: 'Resume Mission' })).toBeVisible();
+	});
+
+	test('keeps VIEW SAVED PROGRESS after a transient off-page detail-fetch failure', async ({
+		page
+	}) => {
+		// Regression: when every off-page detail fetch fails transiently,
+		// discoverAllSavedProgress resolves with { rows: [], complete: false }.
+		// The caller must NOT clear savedProgressCandidateIds, so the VIEW
+		// SAVED PROGRESS button remains available for retry even though the
+		// dialog shows NO SAVED PROGRESS and the local save still exists.
+		const offPageId = 'e2e-landscape-12';
+		const fixture = getFixture(offPageId);
+		const firstPiece = fixture.pieces[0]!;
+		const storage = createPersistedStateController();
+
+		// Gallery list does NOT include the off-page puzzle.
+		await mockPuzzleList(page, []);
+		// Detail fetch for the off-page puzzle fails transiently (500).
+		await page.route(`**/api/puzzles/${offPageId}`, (route) =>
+			route.fulfill({ status: 500, json: { error: 'transient_failure' } })
+		);
+
+		await page.goto('/');
+
+		await storage.seedValid(page, offPageId, {
+			...buildMinimalSeed(offPageId),
+			placedPieces: [
+				{
+					pieceId: firstPiece.id,
+					x: firstPiece.correctX,
+					y: firstPiece.correctY
+				}
+			],
+			timerStarted: true,
+			hasUserActivity: true,
+			lastUpdated: 2_000
+		});
+		await page.reload();
+
+		// The picker affordance is visible because a local save exists.
+		await expect(page.getByRole('button', { name: 'View saved progress' })).toBeVisible();
+		await page.getByRole('button', { name: 'View saved progress' }).click();
+
+		// The dialog shows NO SAVED PROGRESS because the detail fetch failed.
+		const dialog = page.getByRole('dialog', { name: 'Saved progress' });
+		await expect(dialog.getByText('NO SAVED PROGRESS')).toBeVisible();
+
+		// Close the picker.
+		await page.getByRole('button', { name: 'Close saved progress' }).click();
+		await expect.poll(() => dialog.query()).toBeNull();
+
+		// The VIEW SAVED PROGRESS button must still be visible: the transient
+		// failure must not clear savedProgressCandidateIds.
+		await expect(page.getByRole('button', { name: 'View saved progress' })).toBeVisible();
 	});
 
 	test('should show no-results state when search returns empty', async ({ page }) => {
