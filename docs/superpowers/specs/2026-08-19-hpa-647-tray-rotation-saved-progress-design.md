@@ -29,8 +29,8 @@ The feature is therefore a small UI and discovery extension, not a new save syst
 2. Preserve pointer/touch rotation through one selected-piece action in the inventory header.
 3. Preserve `R` rotation and orientation accessibility on the focused puzzle piece.
 4. Keep the current newest-session Continue banner as the fast gallery path.
-5. Add one modal that can list every valid resumable session in the app-owned current-device save namespace, even when a saved server puzzle is outside the gallery's currently loaded page or active filter.
-6. Load the full save catalog only when the player asks for it.
+5. Make a saved-progress picker reachable whenever Perseus save keys exist, even if none of those saved server puzzles is in the currently loaded gallery page/filter.
+6. Load and validate the full save catalog only when the player asks for it; the mount-time work is only a cheap app-owned key scan.
 7. Reuse the current session codec and authoritative puzzle metadata validation without deleting invalid data during passive discovery.
 8. Cover the behavior with focused unit/component/page tests plus one gallery E2E flow.
 
@@ -66,27 +66,31 @@ The feature is therefore a small UI and discovery extension, not a new save syst
 
 ## Options considered
 
-### Option A — Lazy app-owned save enumeration + existing metadata resolvers (selected)
+### Option A — Mount-time owned-key scan + lazy validated catalog (selected)
 
-Keep the current homepage projection unchanged. When **VIEW SAVED PROGRESS** is opened, enumerate only keys beginning with `puzzle-progress-`, resolve metadata from existing Quick/gallery data first, fetch missing server puzzle detail by ID, validate with the current codec, sort valid resumable rows newest-first, and render them in one modal.
+On gallery mount, enumerate only keys beginning with `puzzle-progress-` so the UI knows whether a saved-progress entry point is needed. Do not parse the values or request missing puzzle metadata at this point.
+
+When **VIEW SAVED PROGRESS** is opened, resolve metadata from existing Quick/gallery data first, fetch missing server puzzle detail by ID, validate with the current codec, sort valid resumable rows newest-first, and render them in one modal.
 
 **Pros**
 
 - actually satisfies “all saved progress” rather than mirroring gallery pagination;
+- keeps the picker reachable even when `localProgress.newest` is null;
 - no new persistent index to maintain or migrate;
 - no new API endpoint;
-- no normal-gallery network penalty;
+- no server-detail request on normal gallery startup;
 - validation remains authoritative and read-only.
 
 **Cons**
 
+- gallery mount performs one small localStorage key iteration;
 - opening the picker may issue one detail request per saved server puzzle that is not already represented by loaded gallery summaries.
 
 For a local hobby-game save list, that tradeoff is simpler and cheaper than maintaining another catalog. A batch endpoint can be added only if real save counts make it necessary.
 
 ### Option B — Extend HPA-218's current candidate list only
 
-**Rejected:** `discoverGalleryProgress()` intentionally knows only currently loaded server summaries plus mount-time Quick metadata. A modal built only from those candidates would silently omit older server saves hidden by pagination, search, or category filtering, contradicting the requested UX.
+**Rejected:** `discoverGalleryProgress()` intentionally knows only currently loaded server summaries plus mount-time Quick metadata. A modal built only from those candidates would silently omit older server saves hidden by pagination, search, or category filtering. It can also leave no entry point at all when every save is outside the loaded server summaries.
 
 ### Option C — Persist a save index alongside sessions
 
@@ -94,7 +98,7 @@ For a local hobby-game save list, that tradeoff is simpler and cheaper than main
 
 ### Option D — Add a server batch lookup endpoint
 
-**Rejected:** the picker is local-session UX. The existing `fetchPuzzle(id)` endpoint is sufficient for the expected small number of saves, and lazy loading prevents cost on users who never open the picker.
+**Rejected:** the picker is local-session UX. The existing `fetchPuzzle(id)` endpoint is sufficient for the expected small number of saves, and lazy metadata loading prevents server cost on users who never open the picker.
 
 ## Tray rotation design
 
@@ -135,13 +139,14 @@ Do not auto-select a piece when Rotate is pressed. Do not move per-piece rotatio
 
 ### Keep the fast path fast
 
-Gallery mount remains unchanged:
+Gallery mount performs four existing-or-cheap operations:
 
 1. call `listQuick()` once;
-2. fetch gallery summaries as today;
-3. call synchronous `discoverGalleryProgress()` for visible card progress and the existing newest Continue banner.
+2. call `listPersistedSessionPuzzleIds()` once to collect only app-owned save IDs;
+3. fetch gallery summaries as today;
+4. call synchronous `discoverGalleryProgress()` for visible card progress and the existing newest Continue banner.
 
-Do not enumerate the full storage namespace or fetch missing server puzzle details during normal mount, search, category filtering, or pagination.
+The mount-time key scan does not read session values, validate snapshots, or fetch server puzzle detail. Search, category filtering, and pagination continue to update only the existing gallery projection; they do not rerun `listQuick()` or the persisted-ID scan.
 
 ### Enumerate only Perseus session keys
 
@@ -151,7 +156,7 @@ Add a small exported helper beside the persistence key function:
 export function listPersistedSessionPuzzleIds(storage?: Storage): string[]
 ```
 
-It uses the same default storage selection as the session adapter, iterates `storage.length` / `storage.key(index)`, accepts only keys with the exact `puzzle-progress-` prefix, strips the prefix, ignores an empty suffix, and returns unique puzzle IDs. Unrelated localStorage data is never interpreted as a session.
+It uses the same default storage selection as the session adapter, iterates `storage.length` / `storage.key(index)`, accepts only keys with the exact `puzzle-progress-` prefix, strips the prefix, ignores an empty suffix, de-duplicates IDs, and returns them in key-iteration order. Unrelated localStorage data is never interpreted as a session.
 
 The helper returns an empty list if storage enumeration is unavailable. It does not parse, validate, mutate, or remove records; those responsibilities stay in the existing codec/adapter.
 
@@ -171,7 +176,7 @@ export async function discoverAllSavedProgress(options: {
 }): Promise<GalleryProgress[]>;
 ```
 
-The function reuses the existing internal validation helpers rather than reimplementing the persisted session schema.
+The function reuses the existing candidate/projection helpers instead of reimplementing the persisted session schema.
 
 For each unique `puzzleId`:
 
@@ -223,28 +228,41 @@ Do not put discard controls in this modal. The existing newest-session Discard f
 
 ## Gallery orchestration
 
-`+page.svelte` owns only route-local picker presentation state:
+`+page.svelte` owns only route-local picker presentation state and the mount-time key IDs:
 
 ```ts
+let persistedSessionPuzzleIds = $state<string[]>([]);
 let savedProgressOpen = $state(false);
 let savedProgressLoading = $state(false);
 let savedProgressItems = $state<GalleryProgress[]>([]);
 let savedProgressRequestId = 0;
 ```
 
-Add **VIEW SAVED PROGRESS** beside the existing Continue/Discard actions whenever `localProgress.newest` exists. Opening it:
+The existing `onMount` initializes both local metadata lists exactly once:
+
+```ts
+onMount(() => {
+  quickPuzzles = listQuick();
+  persistedSessionPuzzleIds = listPersistedSessionPuzzleIds();
+});
+```
+
+Render the current **Continue on this device** content when `localProgress.newest` exists. Render **VIEW SAVED PROGRESS** whenever `persistedSessionPuzzleIds.length > 0`, including when `localProgress.newest` is null. Keep both affordances in the same current-device progress section so the picker is discoverable without creating a new page or navigation area.
+
+Opening the picker:
 
 1. marks the modal open and loading;
 2. increments the local request revision;
-3. calls `listPersistedSessionPuzzleIds()`;
-4. passes those IDs, the current `puzzles`, the mount-time `quickPuzzles`, `fetchPuzzle`, and the existing session adapter to `discoverAllSavedProgress()`;
-5. publishes the result only if the request revision is still current.
+3. passes the mount-time persisted IDs, the current `puzzles`, mount-time `quickPuzzles`, `fetchPuzzle`, and existing session adapter to `discoverAllSavedProgress()`;
+4. publishes the result only if the request revision is still current.
 
-Closing the dialog increments the revision so late async results cannot reopen or mutate a closed dialog's presentation state.
+Closing the dialog increments the revision so late async results cannot mutate a closed dialog's presentation state.
 
 The main page becomes inert when either the discard confirmation or saved-progress dialog is open. Both dialogs remain siblings outside the inert subtree.
 
-The full list is recomputed on each explicit open. That is intentionally simpler than adding cache invalidation for a catalog that is only used on demand and is expected to contain few rows.
+The full validated list is recomputed on each explicit open. That is intentionally simpler than adding cache invalidation for a catalog that is only used on demand and is expected to contain few rows.
+
+After the existing newest-session Discard confirmation succeeds, refresh both `localProgress` and `persistedSessionPuzzleIds` so the save-picker entry point disappears when the discarded record was the final app-owned save key.
 
 ## Accessibility
 
@@ -259,8 +277,9 @@ The full list is recomputed on each explicit open. That is intentionally simpler
 ### Persistence/service
 
 - key enumeration includes only non-empty `puzzle-progress-` IDs and ignores unrelated keys;
+- storage enumeration failure returns an empty list without mutation;
 - existing `discoverGalleryProgress()` behavior remains unchanged;
-- full discovery returns both loaded-summary and fetched-detail server saves plus Quick saves;
+- full discovery returns loaded-summary server saves, fetched-detail server saves, and Quick saves;
 - a server save absent from current gallery summaries is fetched and included;
 - already-loaded server summaries do not trigger detail requests;
 - invalid/completed/unresumable records are excluded without deletion;
@@ -276,10 +295,13 @@ The full list is recomputed on each explicit open. That is intentionally simpler
 
 ### Gallery page
 
-- initial gallery rendering does not enumerate full saves or fetch missing puzzle detail;
+- mount calls `listQuick()` and `listPersistedSessionPuzzleIds()` once even as server results change;
+- persisted IDs can make **VIEW SAVED PROGRESS** visible when `localProgress.newest` is null;
+- no missing-server `fetchPuzzle()` request runs until the picker opens;
 - **VIEW SAVED PROGRESS** opens an inert modal and starts full discovery;
 - returned rows are passed to the dialog;
 - closing the dialog restores the main page;
+- confirmed newest-session discard refreshes the mounted persisted-ID list;
 - existing newest Continue and Discard behavior remains intact.
 
 ### E2E
