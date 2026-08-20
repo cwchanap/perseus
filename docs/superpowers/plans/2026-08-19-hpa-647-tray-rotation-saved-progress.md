@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Remove the tray-piece rotate overlay, preserve rotation through the selected-piece inventory action and `R` shortcut, and add a current-device saved-progress picker that can resume valid saves outside the currently loaded gallery results.
+**Goal:** Remove the tray-piece Rotate overlay, preserve rotation through the selected-piece inventory header and focused-piece `R` shortcut, and add a current-device saved-progress picker that can resume valid saves outside the currently loaded gallery results without showing false progress for completed-only keys.
 
-**Architecture:** Keep `PuzzleSession` and the current persistence schema unchanged. Add one small persistence key-enumeration helper, extend `galleryProgress.ts` with lazy full-save discovery using existing Quick/gallery metadata plus `fetchPuzzle(id)` for missing server metadata, move the pointer/touch rotate action into `PuzzleInventoryPanel`, and compose one concrete modal from the gallery route.
+**Architecture:** Keep `PuzzleSession` and `PersistedPuzzleSessionV1` unchanged. Persistence performs one cheap mount-time current-schema/resumability candidate scan over the existing `puzzle-progress-` namespace; `galleryProgress.ts` performs authoritative metadata/context validation only when the picker opens, using one shared explicit-geometry helper for Quick and fetched server puzzles. Rotation remains on existing session actions; only its pointer/touch presentation moves from each thumbnail to the selected-piece inventory header.
 
 **Tech Stack:** Svelte 5 / SvelteKit, TypeScript, browser `localStorage`, Vitest Browser Mode, Playwright, existing `modalFocus`, existing Perseus gameplay persistence and E2E fixtures.
 
@@ -12,17 +12,24 @@
 
 ## Global Constraints
 
-- Deliver HPA-647 through this single draft PR and branch; implementation commits go onto the same PR. Do not open a second PR for this ticket.
-- Do not change `PuzzleSession`, result-class rules, shared API contracts, database code, or `PersistedPuzzleSessionV1`.
-- Do not add dependencies, a save index/schema, global progress store, batch API endpoint, history route, or generic dialog/list framework.
-- Keep the current **Continue on this device** newest-session projection and existing home Discard behavior.
-- Run `listQuick()` and `listPersistedSessionPuzzleIds()` once per gallery mount; search/filter/pagination changes must not rerun them.
-- The mount-time save scan may inspect only keys beginning with the exact `puzzle-progress-` namespace; it must not parse or validate session values.
-- Do not request missing server puzzle detail until the player opens **VIEW SAVED PROGRESS**.
-- Full saved-progress discovery is read-only: use `peekSession()` and never delete invalid, completed, missing-metadata, or unresolved records.
-- Picker rows are selection-only: puzzle name, placed/total progress, and existing-route Continue navigation; no rename/delete/search/filter/pagination in the modal.
-- Remove the tray-piece Rotate overlay completely; keep the focused-piece `R` shortcut and orientation accessible name.
-- Pointer/touch per-piece rotation is exposed only for a currently selected unplaced piece while rotation mode is enabled, through `PuzzleInventoryPanel`'s header action.
+- Deliver HPA-647 through this single draft PR and branch; implementation commits go onto the same PR. Do not open a second PR.
+- Do not change `PuzzleSession`, result-class rules, API/database contracts, shared types, or `PersistedPuzzleSessionV1`.
+- Do not add dependencies, a persisted save index, global progress store, batch endpoint, saved-progress route, or generic dialog/list framework.
+- Keep the existing newest **Continue on this device** projection and newest-session Discard behavior.
+- Run `listQuick()` and the local resumable-candidate scan once per gallery mount; search/filter/pagination must not rerun either.
+- The mount probe may parse app-owned session JSON only to check current schema, key/puzzle ID match, and the same lifecycle/seal/activity state used by `isResumable()`; it must not validate geometry or fetch puzzle metadata.
+- Do not fetch missing server puzzle detail until **VIEW SAVED PROGRESS** is opened.
+- Full discovery is read-only: use `peekSession()` and never delete invalid, completed, missing-metadata, malformed-detail, or unresolved saves.
+- Picker rows are selection-only: name, placed/total progress, Continue. No in-modal delete/rename/search/filter/pagination.
+- Remove the tray-piece Rotate overlay completely; keep focused-piece `R` and orientation accessible naming.
+- Pointer/touch rotation requires the existing selected piece and uses one inventory-header action.
+- Migrate `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts` in the same task as the rotation UI; do not defer its old `Rotate piece N` callers to CI/final cleanup.
+
+## Risks to Control During Implementation
+
+1. **Old Rotate-button integration callers:** the puzzle-route test file directly clicks `Rotate piece N` across rotation history, timer start, placement rejection, and announcer coverage. Overlay removal changes selection state as well as the locator. Task 3 migrates the route file and runs it immediately.
+2. **Completed keys masquerading as saves:** completed sessions remain persisted, so raw key existence is not a valid product signal. Task 1 filters mount-time candidate IDs with a geometry-free current-schema resumability probe.
+3. **Deleted/malformed off-page puzzle metadata:** `fetchPuzzle(id)` is a typed cast and can 404 or return malformed geometry. Task 2 uses one nullable explicit-geometry validator and skips only that candidate without deleting storage.
 
 ---
 
@@ -30,41 +37,43 @@
 
 ### Existing files to modify
 
-- `apps/web/src/lib/services/gameplay/session/persistence.ts` — owns the `puzzle-progress-` namespace; add read-only ID enumeration without widening `SessionStorageAdapter`.
-- `apps/web/src/lib/services/gameplay/session/persistence.test.ts` — focused coverage for owned-key enumeration and unavailable storage.
-- `apps/web/src/lib/services/gameplay/galleryProgress.ts` — keep the cheap synchronous gallery projection and add lazy full-save metadata resolution/validation.
-- `apps/web/src/lib/services/gameplay/galleryProgress.test.ts` — prove fetched saves, loaded-summary reuse, Quick reuse, filtering, and newest-first ordering.
-- `apps/web/src/lib/components/PuzzlePiece.svelte` — remove only the visual Rotate child control; retain root keyboard rotation and orientation presentation.
-- `apps/web/src/lib/components/PuzzleInventoryPanel.svelte` — add selected-piece header Rotate and remove the obsolete child-Rotate keyboard-navigation exception.
-- `apps/web/src/lib/components/__tests__/PuzzlePiece.svelte.test.ts` — migrate rotation tests from child-button behavior to overlay absence + `R` behavior.
-- `apps/web/src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts` — cover selected header Rotate visibility/callback/collapsed state and simplify roving-focus assertions.
-- `apps/web/src/routes/+page.svelte` — mount-time save IDs, picker open/load/close state, current-device section composition, inert handling, and discard refresh.
-- `apps/web/src/routes/page.svelte.test.ts` — cover one-time key scan, picker reachability without `newest`, lazy full discovery, inert state, and discard refresh.
-- `apps/web/e2e/gallery.spec.ts` — prove an older save omitted from loaded gallery summaries is still resumable through the modal.
+- `apps/web/src/lib/services/gameplay/session/persistence.ts` — keep storage namespace ownership; add cheap resumable-candidate enumeration without widening `SessionStorageAdapter`.
+- `apps/web/src/lib/services/gameplay/session/persistence.test.ts` — candidate-probe coverage, including completed-only keys.
+- `apps/web/src/lib/services/gameplay/galleryProgress.ts` — shared explicit geometry validation plus lazy full-save discovery.
+- `apps/web/src/lib/services/gameplay/galleryProgress.test.ts` — loaded/fetched/Quick discovery, malformed detail, non-destructive exclusion, ordering.
+- `apps/web/src/lib/components/PuzzlePiece.svelte` — remove the visual Rotate child button only; retain root `R` rotation.
+- `apps/web/src/lib/components/PuzzleInventoryPanel.svelte` — add selected-piece header `ROTATE`; remove child-Rotate roving exception.
+- `apps/web/src/lib/components/__tests__/PuzzlePiece.svelte.test.ts` — overlay absence + keyboard/orientation contract.
+- `apps/web/src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts` — header Rotate + simplified roving contract.
+- `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts` — migrate all old Rotate-button route callers and add focused `R` route coverage.
+- `apps/web/src/routes/+page.svelte` — candidate IDs, picker orchestration, section gating, inert state, discard refresh.
+- `apps/web/src/routes/page.svelte.test.ts` — one-time candidate scan, completed-only invisibility, lazy discovery, modal flow.
+- `apps/web/e2e/gallery.spec.ts` — older off-page save resume flow.
 
 ### New files
 
-- `apps/web/src/lib/components/SavedProgressDialog.svelte` — one concrete modal for loading/empty/list states and Continue links.
-- `apps/web/src/lib/components/__tests__/SavedProgressDialog.svelte.test.ts` — modal behavior and navigation markup.
+- `apps/web/src/lib/components/SavedProgressDialog.svelte`
+- `apps/web/src/lib/components/__tests__/SavedProgressDialog.svelte.test.ts`
 
-No API, database, shared-type, session-engine, package, or migration file is required.
+No API, database, package, session-engine, migration, or shared-type file is required.
 
 ---
 
-### Task 1: Enumerate Perseus-Owned Session IDs
+### Task 1: Add a Geometry-Free Resumable Save Candidate Probe
 
 **Files:**
-- Modify: `apps/web/src/lib/services/gameplay/session/persistence.ts` around `PROGRESS_KEY_PREFIX` and `createSessionStorageAdapter()`
-- Modify: `apps/web/src/lib/services/gameplay/session/persistence.test.ts` in the current-schema persistence section
+- Modify: `apps/web/src/lib/services/gameplay/session/persistence.ts`
+- Modify: `apps/web/src/lib/services/gameplay/session/persistence.test.ts`
 
 **Interfaces:**
-- Consumes: private `PROGRESS_KEY_PREFIX = 'puzzle-progress-'` and DOM `Storage`.
-- Produces: `listPersistedSessionPuzzleIds(storage?: Storage): string[]`.
-- Does not change: `SessionStorageAdapter` in `session/types.ts`.
+- Produces: `listResumableSessionCandidateIds(storage?: Storage): string[]`.
+- Keeps private: raw `puzzle-progress-` key enumeration.
+- Keeps unchanged: `SessionStorageAdapter` public shape.
+- Shares one state predicate with existing `isResumable(snapshot)` so lifecycle/seal/activity rules cannot drift.
 
-- [ ] **Step 1: Write failing key-enumeration tests**
+- [ ] **Step 1: Write failing candidate-probe tests**
 
-Extend the second import block in `persistence.test.ts` to include the new function:
+Extend the persistence import block:
 
 ```ts
 import {
@@ -72,44 +81,70 @@ import {
 	loadPersistedSession,
 	isResumable,
 	createSessionStorageAdapter,
-	listPersistedSessionPuzzleIds,
+	listResumableSessionCandidateIds,
 	noopThrowingStorage
 } from './persistence';
 ```
 
-Add this describe block after the existing storage-adapter tests:
+Add:
 
 ```ts
-describe('listPersistedSessionPuzzleIds', () => {
-	it('returns only non-empty ids from the Perseus progress namespace', () => {
+describe('listResumableSessionCandidateIds', () => {
+	const raw = (puzzleId: string, overrides: Record<string, unknown> = {}) =>
+		JSON.stringify({
+			schemaVersion: 1,
+			puzzleId,
+			lifecycle: 'active',
+			sealedCompletion: null,
+			hasUserActivity: true,
+			...overrides
+		});
+
+	it('returns only current-schema app-owned records with resumable state', () => {
 		const storage = memoryStorage({
-			'puzzle-progress-pz-old': '{}',
-			'puzzle-progress-q-local': '{}',
-			'puzzle-progress-': '{}',
+			'puzzle-progress-active': raw('active'),
+			'puzzle-progress-paused': raw('paused', { lifecycle: 'paused' }),
+			'puzzle-progress-complete': raw('complete', { lifecycle: 'completed' }),
+			'puzzle-progress-unused': raw('unused', { hasUserActivity: false }),
+			'puzzle-progress-sealed': raw('sealed', { sealedCompletion: { runId: 'x' } }),
+			'puzzle-progress-old': raw('old', { schemaVersion: 999 }),
+			'puzzle-progress-mismatch': raw('different-id'),
+			'puzzle-progress-bad-json': '{',
+			'puzzle-progress-': raw(''),
 			'unrelated-setting': '1'
 		});
 
-		expect(listPersistedSessionPuzzleIds(storage)).toEqual(['pz-old', 'q-local']);
+		expect(listResumableSessionCandidateIds(storage)).toEqual(['active', 'paused']);
 	});
 
-	it('returns an empty list when storage enumeration is unavailable', () => {
+	it('returns no candidate for a completed-only storage set without deleting it', () => {
+		const value = raw('complete', { lifecycle: 'completed' });
+		const storage = memoryStorage({ 'puzzle-progress-complete': value });
+
+		expect(listResumableSessionCandidateIds(storage)).toEqual([]);
+		expect(storage.getItem('puzzle-progress-complete')).toBe(value);
+	});
+
+	it('returns an empty list when storage enumeration or reads are unavailable', () => {
 		const blockedStorage = {
 			get length() {
 				throw new Error('blocked');
 			},
 			key: () => null,
-			getItem: () => null,
+			getItem: () => {
+				throw new Error('blocked');
+			},
 			setItem: () => {},
 			removeItem: () => {},
 			clear: () => {}
 		} satisfies Storage;
 
-		expect(listPersistedSessionPuzzleIds(blockedStorage)).toEqual([]);
+		expect(listResumableSessionCandidateIds(blockedStorage)).toEqual([]);
 	});
 });
 ```
 
-The first assertion follows the deterministic insertion order of the existing `memoryStorage()` test helper. Final picker ordering comes from `lastUpdated`, not key order.
+This deliberately uses minimal records. The mount probe is not a second full codec and must not require geometry.
 
 - [ ] **Step 2: Run the focused test and verify failure**
 
@@ -118,11 +153,33 @@ cd apps/web
 bunx vitest --run --browser src/lib/services/gameplay/session/persistence.test.ts
 ```
 
-Expected: FAIL because `listPersistedSessionPuzzleIds` is not exported.
+Expected: FAIL because `listResumableSessionCandidateIds` does not exist.
 
-- [ ] **Step 3: Implement the shared storage resolver and owned-key scan**
+- [ ] **Step 3: Factor the state-only resumability predicate**
 
-Add this beside `PROGRESS_KEY_PREFIX` in `persistence.ts`:
+Replace the body-only logic of `isResumable()` with one private predicate:
+
+```ts
+function hasResumableSessionState(record: {
+	lifecycle: unknown;
+	sealedCompletion: unknown;
+	hasUserActivity: unknown;
+}): boolean {
+	if (record.lifecycle !== 'active' && record.lifecycle !== 'paused') return false;
+	if (record.sealedCompletion !== null) return false;
+	return record.hasUserActivity === true;
+}
+
+export function isResumable(snapshot: PersistedPuzzleSessionV1): boolean {
+	return hasResumableSessionState(snapshot);
+}
+```
+
+Do not move any geometry or cross-field validation into this predicate.
+
+- [ ] **Step 4: Implement the private owned-key scan and exported candidate list**
+
+Keep `PROGRESS_KEY_PREFIX` private and add the shared storage resolver plus private raw enumeration:
 
 ```ts
 function resolveSessionStorage(storage?: Storage): Storage {
@@ -133,40 +190,56 @@ function resolveSessionStorage(storage?: Storage): Storage {
 	);
 }
 
-export function listPersistedSessionPuzzleIds(storage?: Storage): string[] {
-	const resolvedStorage = resolveSessionStorage(storage);
+function listPersistedSessionPuzzleIds(storage: Storage): string[] {
 	const ids = new Set<string>();
-
-	try {
-		for (let index = 0; index < resolvedStorage.length; index += 1) {
-			const key = resolvedStorage.key(index);
-			if (!key?.startsWith(PROGRESS_KEY_PREFIX)) continue;
-
-			const puzzleId = key.slice(PROGRESS_KEY_PREFIX.length);
-			if (puzzleId.length > 0) ids.add(puzzleId);
-		}
-	} catch {
-		return [];
+	for (let index = 0; index < storage.length; index += 1) {
+		const key = storage.key(index);
+		if (!key?.startsWith(PROGRESS_KEY_PREFIX)) continue;
+		const puzzleId = key.slice(PROGRESS_KEY_PREFIX.length);
+		if (puzzleId.length > 0) ids.add(puzzleId);
 	}
-
 	return [...ids];
 }
 ```
 
-Replace only the storage initialization at the start of `createSessionStorageAdapter()`:
+Add the exported candidate probe:
 
 ```ts
-export function createSessionStorageAdapter(options?: {
-	storage?: Storage;
-	onError?: (error: SessionPersistenceError) => void;
-}): SessionStorageAdapter {
-	const storage = resolveSessionStorage(options?.storage);
-	const onError = options?.onError;
+export function listResumableSessionCandidateIds(storage?: Storage): string[] {
+	const resolvedStorage = resolveSessionStorage(storage);
+
+	try {
+		return listPersistedSessionPuzzleIds(resolvedStorage).filter((puzzleId) => {
+			const raw = resolvedStorage.getItem(progressKey(puzzleId));
+			if (raw === null) return false;
+
+			let parsed: unknown;
+			try {
+				parsed = JSON.parse(raw);
+			} catch {
+				return false;
+			}
+			if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
+
+			const record = parsed as Record<string, unknown>;
+			if (record.schemaVersion !== CURRENT_SESSION_SCHEMA_VERSION) return false;
+			if (record.puzzleId !== puzzleId) return false;
+
+			return hasResumableSessionState({
+				lifecycle: record.lifecycle,
+				sealedCompletion: record.sealedCompletion,
+				hasUserActivity: record.hasUserActivity
+			});
+		});
+	} catch {
+		return [];
+	}
+}
 ```
 
-Leave `readSession`, `peekSession`, `loadSession`, `saveSession`, `clearSession`, and the returned adapter shape unchanged.
+Update `createSessionStorageAdapter()` to use `resolveSessionStorage(options?.storage)` instead of duplicating the fallback expression. Do not add the candidate method to the adapter.
 
-- [ ] **Step 4: Run persistence coverage and verify pass**
+- [ ] **Step 5: Run persistence regression coverage**
 
 ```bash
 cd apps/web
@@ -178,24 +251,23 @@ bunx vitest --run --browser \
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit Task 1**
+- [ ] **Step 6: Commit Task 1**
 
 ```bash
 git add apps/web/src/lib/services/gameplay/session/persistence.ts \
   apps/web/src/lib/services/gameplay/session/persistence.test.ts
-git commit -m "feat(web): enumerate local puzzle save ids"
+git commit -m "feat(web): find resumable local save candidates"
 ```
 
 ---
 
-### Task 2: Discover and Validate the Full Saved-Progress List Lazily
+### Task 2: Add Shared Explicit Geometry Validation and Lazy Full Discovery
 
 **Files:**
 - Modify: `apps/web/src/lib/services/gameplay/galleryProgress.ts`
 - Modify: `apps/web/src/lib/services/gameplay/galleryProgress.test.ts`
 
 **Interfaces:**
-- Consumes: `SessionStorageAdapter.peekSession()`, `SessionStorageAdapter.isResumable()`, `PuzzleSummary`, `StoredQuickPuzzle`, `Puzzle`, and injected `fetchPuzzleById`.
 - Produces:
 
 ```ts
@@ -208,24 +280,32 @@ export async function discoverAllSavedProgress(options: {
 }): Promise<GalleryProgress[]>;
 ```
 
-- Keeps: `discoverGalleryProgress()` and `GalleryProgressDiscovery` public behavior unchanged.
+- Internal shared validator:
+
+```ts
+function explicitValidationContext(input: {
+	puzzleId: string;
+	source: PuzzleSourceType;
+	pieceCount: number;
+	gridCols: number;
+	gridRows: number;
+	pieces: unknown;
+}): SessionValidationContext | null;
+```
+
+- Keeps `discoverGalleryProgress()` public behavior unchanged.
 
 - [ ] **Step 1: Write failing full-discovery tests**
 
-Change the first Vitest import in `galleryProgress.test.ts` to:
+Change imports:
 
 ```ts
 import { describe, expect, it, vi } from 'vitest';
-```
-
-Change the puzzle and service imports to:
-
-```ts
 import type { Puzzle, PuzzleSummary } from '$lib/types/puzzle';
 import { discoverAllSavedProgress, discoverGalleryProgress } from './galleryProgress';
 ```
 
-Add this helper after `quickPuzzle()`:
+Add a full server fixture helper:
 
 ```ts
 function fetchedServerPuzzle(id: string, name: string): Puzzle {
@@ -248,32 +328,29 @@ function fetchedServerPuzzle(id: string, name: string): Puzzle {
 }
 ```
 
-Add this describe block after the existing `discoverGalleryProgress` tests:
+Add:
 
 ```ts
 describe('discoverAllSavedProgress', () => {
 	it('includes loaded, fetched, and Quick saves and sorts newest first', async () => {
 		const base = validSnapshot();
-		const loadedSnapshot: PersistedPuzzleSessionV1 = {
-			...base,
-			puzzleId: 'pz-loaded',
-			lastUpdated: 1_000
-		};
-		const fetchedSnapshot: PersistedPuzzleSessionV1 = {
-			...base,
-			puzzleId: 'pz-old',
-			lastUpdated: 3_000
-		};
-		const quickSnapshot: PersistedPuzzleSessionV1 = {
-			...base,
-			puzzleId: 'q-test',
-			source: 'local',
-			lastUpdated: 2_000
-		};
 		const store = memoryStorage({
-			'puzzle-progress-pz-loaded': JSON.stringify(loadedSnapshot),
-			'puzzle-progress-pz-old': JSON.stringify(fetchedSnapshot),
-			'puzzle-progress-q-test': JSON.stringify(quickSnapshot)
+			'puzzle-progress-pz-loaded': JSON.stringify({
+				...base,
+				puzzleId: 'pz-loaded',
+				lastUpdated: 1_000
+			}),
+			'puzzle-progress-pz-old': JSON.stringify({
+				...base,
+				puzzleId: 'pz-old',
+				lastUpdated: 3_000
+			}),
+			'puzzle-progress-q-test': JSON.stringify({
+				...base,
+				puzzleId: 'q-test',
+				source: 'local',
+				lastUpdated: 2_000
+			})
 		});
 		const fetchPuzzleById = vi.fn(async (id: string) => fetchedServerPuzzle(id, 'Fetched Save'));
 
@@ -290,25 +367,47 @@ describe('discoverAllSavedProgress', () => {
 		expect(fetchPuzzleById).toHaveBeenCalledWith('pz-old');
 	});
 
-	it('uses puzzle id as a deterministic tie breaker', async () => {
+	it('uses puzzle id as deterministic tie ordering without fetching loaded summaries', async () => {
 		const base = validSnapshot();
 		const store = memoryStorage({
 			'puzzle-progress-b': JSON.stringify({ ...base, puzzleId: 'b', lastUpdated: 2_000 }),
 			'puzzle-progress-a': JSON.stringify({ ...base, puzzleId: 'a', lastUpdated: 2_000 })
 		});
+		const fetchPuzzleById = vi.fn();
 
 		const progress = await discoverAllSavedProgress({
 			puzzleIds: ['b', 'a'],
 			serverPuzzles: [serverPuzzle('a', 4, '1:1'), serverPuzzle('b', 4, '1:1')],
 			quickPuzzles: [],
-			fetchPuzzleById: vi.fn(),
+			fetchPuzzleById,
 			sessionStorage: createSessionStorageAdapter({ storage: store })
 		});
 
 		expect(progress.map((item) => item.puzzleId)).toEqual(['a', 'b']);
+		expect(fetchPuzzleById).not.toHaveBeenCalled();
 	});
 
-	it('skips unresolved metadata and completed saves without deleting them', async () => {
+	it('rejects malformed fetched piece geometry instead of building a weaker context', async () => {
+		const base = validSnapshot();
+		const store = memoryStorage({
+			'puzzle-progress-pz-bad': JSON.stringify({ ...base, puzzleId: 'pz-bad' })
+		});
+		const malformed = fetchedServerPuzzle('pz-bad', 'Bad');
+		malformed.pieces[1] = { ...malformed.pieces[0], puzzleId: 'pz-bad' };
+
+		const progress = await discoverAllSavedProgress({
+			puzzleIds: ['pz-bad'],
+			serverPuzzles: [],
+			quickPuzzles: [],
+			fetchPuzzleById: vi.fn().mockResolvedValue(malformed),
+			sessionStorage: createSessionStorageAdapter({ storage: store })
+		});
+
+		expect(progress).toEqual([]);
+		expect(store.getItem('puzzle-progress-pz-bad')).not.toBeNull();
+	});
+
+	it('skips completed and unresolved candidates without deleting them', async () => {
 		const completed: PersistedPuzzleSessionV1 = {
 			...validSnapshot(),
 			puzzleId: 'pz-complete',
@@ -333,6 +432,8 @@ describe('discoverAllSavedProgress', () => {
 });
 ```
 
+Keep the existing malformed Quick tests; after implementation they also exercise the shared explicit validator through `quickValidationContext()`.
+
 - [ ] **Step 2: Run the service test and verify failure**
 
 ```bash
@@ -340,11 +441,11 @@ cd apps/web
 bunx vitest --run --browser src/lib/services/gameplay/galleryProgress.test.ts
 ```
 
-Expected: FAIL because `discoverAllSavedProgress` does not exist.
+Expected: FAIL because `discoverAllSavedProgress` is not exported.
 
-- [ ] **Step 3: Extract one reusable candidate-to-progress projection**
+- [ ] **Step 3: Extract the shared explicit-geometry validation helper**
 
-In `galleryProgress.ts`, change the puzzle import to:
+Change the puzzle import:
 
 ```ts
 import type { Puzzle, PuzzleSummary } from '$lib/types/puzzle';
@@ -353,6 +454,102 @@ import type { Puzzle, PuzzleSummary } from '$lib/types/puzzle';
 Add:
 
 ```ts
+function explicitValidationContext(input: {
+	puzzleId: string;
+	source: PuzzleSourceType;
+	pieceCount: number;
+	gridCols: number;
+	gridRows: number;
+	pieces: unknown;
+}): SessionValidationContext | null {
+	if (typeof input.puzzleId !== 'string' || input.puzzleId.length === 0) return null;
+	if (input.source !== 'api' && input.source !== 'local') return null;
+	if (!Number.isInteger(input.pieceCount) || input.pieceCount <= 0) return null;
+	if (!Number.isInteger(input.gridCols) || input.gridCols <= 0) return null;
+	if (!Number.isInteger(input.gridRows) || input.gridRows <= 0) return null;
+	if (input.gridCols * input.gridRows !== input.pieceCount) return null;
+	if (!Array.isArray(input.pieces) || input.pieces.length !== input.pieceCount) return null;
+
+	const pieceIds = new Set<number>();
+	const cells = new Set<string>();
+	const pieces: Array<{ id: number; correctX: number; correctY: number }> = [];
+
+	for (const rawPiece of input.pieces) {
+		if (!rawPiece || typeof rawPiece !== 'object' || Array.isArray(rawPiece)) return null;
+		const piece = rawPiece as Record<string, unknown>;
+		const id = piece.id;
+		const correctX = piece.correctX;
+		const correctY = piece.correctY;
+
+		if (!Number.isInteger(id) || (id as number) < 0 || (id as number) >= input.pieceCount) return null;
+		if (pieceIds.has(id as number)) return null;
+		if (!Number.isInteger(correctX) || (correctX as number) < 0 || (correctX as number) >= input.gridCols) return null;
+		if (!Number.isInteger(correctY) || (correctY as number) < 0 || (correctY as number) >= input.gridRows) return null;
+
+		const cell = `${correctX},${correctY}`;
+		if (cells.has(cell)) return null;
+		pieceIds.add(id as number);
+		cells.add(cell);
+		pieces.push({ id: id as number, correctX: correctX as number, correctY: correctY as number });
+	}
+
+	return {
+		puzzleId: input.puzzleId,
+		source: input.source,
+		pieceIds: pieces.map((piece) => piece.id),
+		gridCols: input.gridCols,
+		gridRows: input.gridRows,
+		pieceCount: input.pieceCount,
+		pieces
+	};
+}
+```
+
+Then reduce `quickValidationContext()` to Quick-specific identity plus delegation:
+
+```ts
+function quickValidationContext(puzzle: StoredQuickPuzzle): SessionValidationContext | null {
+	if (!puzzle || typeof puzzle !== 'object') return null;
+	if (typeof puzzle.id !== 'string' || !puzzle.id.startsWith(QUICK_PUZZLE_ID_PREFIX)) return null;
+
+	return explicitValidationContext({
+		puzzleId: puzzle.id,
+		source: 'local',
+		pieceCount: puzzle.pieceCount,
+		gridCols: puzzle.gridCols,
+		gridRows: puzzle.gridRows,
+		pieces: puzzle.pieces
+	});
+}
+```
+
+Do not change summary-based `serverValidationContext()`; summaries still need the existing row-major derivation.
+
+- [ ] **Step 4: Add shared candidate projection helpers**
+
+Add:
+
+```ts
+function candidateFromFetchedPuzzle(puzzle: Puzzle): GalleryCandidate | null {
+	const context = explicitValidationContext({
+		puzzleId: puzzle.id,
+		source: 'api',
+		pieceCount: puzzle.pieceCount,
+		gridCols: puzzle.gridCols,
+		gridRows: puzzle.gridRows,
+		pieces: puzzle.pieces
+	});
+	if (!context) return null;
+
+	return {
+		puzzleId: puzzle.id,
+		name: puzzle.name,
+		source: 'api',
+		pieceCount: puzzle.pieceCount,
+		context
+	};
+}
+
 function progressFromCandidate(
 	candidate: GalleryCandidate,
 	sessionStorage: SessionStorageAdapter
@@ -372,67 +569,9 @@ function progressFromCandidate(
 }
 ```
 
-In the existing `discoverGalleryProgress()` candidate loop, replace the inline load/projection block with:
+Refactor `discoverGalleryProgress()` to use `progressFromCandidate()` without changing its existing `byPuzzleId`/`newest` contract.
 
-```ts
-for (const candidate of candidates) {
-	const progress = progressFromCandidate(candidate, sessionStorage);
-	if (!progress) continue;
-
-	if (candidate.source === 'api') byPuzzleId.set(candidate.puzzleId, progress);
-	if (newest === null || progress.lastUpdated > newest.lastUpdated) newest = progress;
-}
-```
-
-- [ ] **Step 4: Add the fetched-server candidate builder**
-
-Add:
-
-```ts
-function fetchedServerCandidate(puzzle: Puzzle): GalleryCandidate | null {
-	if (
-		!Number.isInteger(puzzle.pieceCount) ||
-		puzzle.pieceCount <= 0 ||
-		!Number.isInteger(puzzle.gridCols) ||
-		puzzle.gridCols <= 0 ||
-		!Number.isInteger(puzzle.gridRows) ||
-		puzzle.gridRows <= 0 ||
-		puzzle.gridCols * puzzle.gridRows !== puzzle.pieceCount ||
-		!Array.isArray(puzzle.pieces) ||
-		puzzle.pieces.length !== puzzle.pieceCount
-	) {
-		return null;
-	}
-
-	const pieces = puzzle.pieces.map((piece) => ({
-		id: piece.id,
-		correctX: piece.correctX,
-		correctY: piece.correctY
-	}));
-
-	return {
-		puzzleId: puzzle.id,
-		name: puzzle.name,
-		source: 'api',
-		pieceCount: puzzle.pieceCount,
-		context: {
-			puzzleId: puzzle.id,
-			source: 'api',
-			pieceIds: pieces.map((piece) => piece.id),
-			gridCols: puzzle.gridCols,
-			gridRows: puzzle.gridRows,
-			pieceCount: puzzle.pieceCount,
-			pieces
-		}
-	};
-}
-```
-
-This only builds canonical validation context from the typed puzzle detail. Persisted-session validity still comes exclusively from `peekSession()`.
-
-- [ ] **Step 5: Implement `discoverAllSavedProgress()`**
-
-Add below `discoverGalleryProgress()`:
+- [ ] **Step 5: Implement lazy `discoverAllSavedProgress()`**
 
 ```ts
 export async function discoverAllSavedProgress(options: {
@@ -445,10 +584,10 @@ export async function discoverAllSavedProgress(options: {
 	const sessionStorage = options.sessionStorage ?? createSessionStorageAdapter();
 	const serverById = new Map(options.serverPuzzles.map((puzzle) => [puzzle.id, puzzle] as const));
 	const quickById = new Map(options.quickPuzzles.map((puzzle) => [puzzle.id, puzzle] as const));
-	const puzzleIds = [...new Set(options.puzzleIds)];
+	const ids = [...new Set(options.puzzleIds)];
 
 	const candidates = await Promise.all(
-		puzzleIds.map(async (puzzleId): Promise<GalleryCandidate | null> => {
+		ids.map(async (puzzleId): Promise<GalleryCandidate | null> => {
 			if (puzzleId.startsWith(QUICK_PUZZLE_ID_PREFIX)) {
 				const puzzle = quickById.get(puzzleId);
 				if (!puzzle) return null;
@@ -481,7 +620,7 @@ export async function discoverAllSavedProgress(options: {
 			try {
 				const puzzle = await options.fetchPuzzleById(puzzleId);
 				if (puzzle.id !== puzzleId) return null;
-				return fetchedServerCandidate(puzzle);
+				return candidateFromFetchedPuzzle(puzzle);
 			} catch {
 				return null;
 			}
@@ -498,9 +637,9 @@ export async function discoverAllSavedProgress(options: {
 }
 ```
 
-Do not call `loadSession()` or `clearSession()` anywhere in this function.
+Never call `loadSession()` or `clearSession()` in this function.
 
-- [ ] **Step 6: Run service tests and verify pass**
+- [ ] **Step 6: Run service regression coverage**
 
 ```bash
 cd apps/web
@@ -509,7 +648,7 @@ bunx vitest --run --browser \
   src/lib/services/gameplay/session/persistence.test.ts
 ```
 
-Expected: PASS, including the pre-existing HPA-218 projection tests.
+Expected: PASS.
 
 - [ ] **Step 7: Commit Task 2**
 
@@ -521,32 +660,28 @@ git commit -m "feat(web): discover all resumable puzzle saves"
 
 ---
 
-### Task 3: Move Per-Piece Rotation Out of Tray Thumbnails
+### Task 3: Move Pointer Rotation to the Inventory Header and Migrate Route Tests
 
 **Files:**
 - Modify: `apps/web/src/lib/components/PuzzlePiece.svelte`
 - Modify: `apps/web/src/lib/components/PuzzleInventoryPanel.svelte`
 - Modify: `apps/web/src/lib/components/__tests__/PuzzlePiece.svelte.test.ts`
 - Modify: `apps/web/src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts`
+- Modify: `apps/web/src/routes/puzzle/[id]/page.svelte.test.ts`
 
 **Interfaces:**
-- Consumes: existing `PuzzlePiece` props `rotationEnabled`, `rotation`, `onRotate`, and inventory props `selectedPieceId`, `rotationEnabled`, `onRotate`.
-- Produces: inventory header button with `aria-label="Rotate selected piece"` and visible text `ROTATE`.
-- Keeps: `PuzzlePiece.onRotate?: (pieceId: number) => void` because root `R` handling still uses it.
+- Keeps `PuzzlePiece.onRotate?: (pieceId: number) => void` for keyboard `R`.
+- Produces inventory header `aria-label="Rotate selected piece"` with visible text `ROTATE`.
+- No route/session production change is required.
 
-- [ ] **Step 1: Replace old child-Rotate tests with the new `PuzzlePiece` contract**
+- [ ] **Step 1: Rewrite `PuzzlePiece` tests for overlay absence**
 
-Inside the existing `describe('rotation support')`, delete these tests:
+Delete child-button tests that require `Rotate piece 7` and remove the unused `userEvent` import if no remaining test uses it.
 
-- `renders a rotate control when rotation is enabled for an unplaced piece`
-- `calls onRotate when the rotate control is clicked`
-- `keeps the rotate control outside the piece interactive element`
-- `rotates without selecting the piece`
-
-Replace the first enabled-rotation test with:
+Keep the existing `r`/`R`, visual transform, and accessible orientation tests. Add:
 
 ```ts
-it('does not overlay a rotate control when rotation is enabled', async () => {
+it('never overlays a rotate button when rotation is enabled', async () => {
 	render(PuzzlePiece, {
 		piece: mockPiece,
 		isPlaced: false,
@@ -555,60 +690,50 @@ it('does not overlay a rotate control when rotation is enabled', async () => {
 		onRotate: vi.fn()
 	});
 
-	expect(page.getByRole('button', { name: 'Rotate piece 7' }).query()).toBeNull();
-	await expect.element(page.getByTestId('puzzle-piece')).toHaveAttribute('aria-keyshortcuts', 'R');
+	expect(document.querySelector('[data-testid="rotate-piece-button"]')).toBeNull();
+	await expect
+		.element(page.getByTestId('puzzle-piece'))
+		.toHaveAttribute('aria-keyshortcuts', 'R');
 });
 ```
 
-Rename `exposes the rotation angle in the piece name and keeps the active rotate button tabbable` to `exposes the rotation angle in the piece name and keyboard shortcut`, and leave only these assertions:
+- [ ] **Step 2: Add failing inventory-header Rotate tests**
+
+Add to `PuzzleInventoryPanel.svelte.test.ts`:
 
 ```ts
-await expect
-	.element(page.getByTestId('puzzle-piece'))
-	.toHaveAttribute('aria-label', 'Puzzle piece 7, rotated 90 degrees');
-await expect
-	.element(page.getByTestId('puzzle-piece'))
-	.toHaveAttribute('aria-keyshortcuts', 'R');
-```
-
-Keep `calls onRotate when r and R are pressed while the piece is focused` unchanged. After deleting the child-button click tests, remove `userEvent` from the `vitest/browser` import if it has no remaining callers.
-
-- [ ] **Step 2: Add failing selected-piece header Rotate tests**
-
-In `PuzzleInventoryPanel.svelte.test.ts`, remove the old line from `forwards select, rotate, and cancel selection` that clicks `Rotate piece 1`; keep the existing Enter select/cancel assertions.
-
-Add:
-
-```ts
-it('rotates the selected piece from the header only while rotation is enabled', async () => {
+it('shows Rotate only for a selected piece while rotation is enabled', async () => {
 	const input = baseProps();
-	const view = render(PuzzleInventoryPanel, { ...input, selectedPieceId: 1 });
+	const view = render(PuzzleInventoryPanel, input);
 
-	await page.getByRole('button', { name: 'Rotate selected piece' }).click();
-	expect(input.onRotate).toHaveBeenCalledOnce();
-	expect(input.onRotate).toHaveBeenCalledWith(1);
-
-	await view.rerender({ ...input, selectedPieceId: null });
 	expect(page.getByRole('button', { name: 'Rotate selected piece' }).query()).toBeNull();
+
+	await view.rerender({ ...input, selectedPieceId: 1 });
+	await expect
+		.element(page.getByRole('button', { name: 'Rotate selected piece' }))
+		.toBeVisible();
 
 	await view.rerender({ ...input, selectedPieceId: 1, rotationEnabled: false });
 	expect(page.getByRole('button', { name: 'Rotate selected piece' }).query()).toBeNull();
 });
 
-it('keeps selected-piece Rotate in the header while the drawer is collapsed', async () => {
-	render(PuzzleInventoryPanel, { ...baseProps(), selectedPieceId: 1 });
+it('rotates the selected piece from the header and keeps the action while collapsed', async () => {
+	const input = baseProps();
+	render(PuzzleInventoryPanel, { ...input, selectedPieceId: 1 });
+
+	await page.getByRole('button', { name: 'Rotate selected piece' }).click();
+	expect(input.onRotate).toHaveBeenCalledWith(1);
 
 	await page.getByRole('button', { name: 'Collapse inventory' }).click();
-
 	await expect
 		.element(page.getByRole('button', { name: 'Rotate selected piece' }))
-		.toBeInTheDocument();
+		.toBeVisible();
 });
 ```
 
-In the roving-focus test that currently collects `[data-testid="rotate-piece-button"]`, delete `rotateButtons` and assert only one piece root has `tabIndex === 0`. Delete the separate block that focuses a Rotate child and dispatches `ArrowRight`; that focusable child no longer exists by design.
+Update the roving-focus tests that currently query `[data-testid="rotate-piece-button"]`: after the change, assert exactly one visible piece root has `tabIndex === 0`; remove the child-button arrow special-case test because the child no longer exists.
 
-- [ ] **Step 3: Run both component tests and verify failure**
+- [ ] **Step 3: Run component tests and verify failure**
 
 ```bash
 cd apps/web
@@ -617,27 +742,29 @@ bunx vitest --run --browser \
   src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts
 ```
 
-Expected: FAIL because the old overlay still renders and the panel header lacks `Rotate selected piece`.
+Expected: FAIL until the overlay is removed and header action is added.
 
-- [ ] **Step 4: Remove only the child Rotate control from `PuzzlePiece.svelte`**
+- [ ] **Step 4: Remove the child Rotate control from `PuzzlePiece.svelte`**
 
-Delete `handleRotateClick()` and `stopRotateEventPropagation()` and delete the complete `{#if rotationEnabled && !isPlaced}` Rotate `<button>` block carrying `data-testid="rotate-piece-button"`.
-
-Keep this root keyboard branch unchanged:
+Delete:
 
 ```ts
-if (rotationEnabled && (event.key === 'r' || event.key === 'R')) {
+function handleRotateClick(event: MouseEvent) {
 	event.preventDefault();
+	event.stopPropagation();
 	onRotate?.(piece.id);
-	return;
+}
+
+function stopRotateEventPropagation(event: Event) {
+	event.stopPropagation();
 }
 ```
 
-Update the `tabIndex` comment to state that the supplied value controls the unplaced piece root. Do not remove `onRotate` from props.
+Delete the entire conditional Rotate `<button>` block above the piece root. Keep `handleKeyDown()`'s `r`/`R` branch and `aria-keyshortcuts` unchanged.
 
-- [ ] **Step 5: Add the inventory header action and remove the obsolete child-control keyboard exception**
+- [ ] **Step 5: Add header Rotate and simplify inventory key handling**
 
-Insert this in `.panel-actions` immediately before the existing `CANCEL` button:
+In `.panel-actions`, before `CANCEL`, render:
 
 ```svelte
 {#if rotationEnabled && selectedPieceId !== null}
@@ -652,33 +779,109 @@ Insert this in `.panel-actions` immediately before the existing `CANCEL` button:
 {/if}
 ```
 
-Delete this branch from `handlePiecesKeyDown()`:
+In `handlePiecesKeyDown()`, remove the branch that checks:
 
 ```ts
-if (target.closest('[data-testid="rotate-piece-button"]')) return;
+target.closest('[data-testid="rotate-piece-button"]')
 ```
 
-Delete comments describing the child Rotate button as an independent focus leaf. Keep the existing Left/Right, Home/End, focusin, selection, filtering, and drawer behavior unchanged.
+and update its comments so Left/Right traversal is described only for piece roots.
 
-- [ ] **Step 6: Run component tests and verify pass**
+- [ ] **Step 6: Migrate every puzzle-route test that clicks `Rotate piece N`**
+
+First locate all old callers:
+
+```bash
+rg -n "Rotate piece [0-9]+" 'src/routes/puzzle/[id]/page.svelte.test.ts'
+```
+
+Add a small helper near the existing `selectPiece()` helpers:
+
+```ts
+async function rotateSelectedPiece(): Promise<void> {
+	await page.getByRole('button', { name: 'Rotate selected piece' }).click();
+}
+```
+
+Retarget each old pointer-rotation call using these state rules:
+
+- if the target piece is not selected, call `await selectPiece(id);` before `await rotateSelectedPiece();`;
+- if it is already selected, call only `await rotateSelectedPiece();`;
+- if the old test rotated first and later called `selectPiece(id)`, remove that later selection when the new pointer path already left the piece selected, otherwise Enter would toggle it off;
+- when a test changes the target piece, explicitly select the new target before rotating it.
+
+The currently verified old callers include the rotation/history block around lines 1296–1425, timer-start rotation around 1742–1749, and rejection/announcer rotation around 3107–3152. The `rg` command is the completion check: it must return no `Rotate piece N` test caller after migration.
+
+Update the main rotation route test to prove the new pointer contract:
+
+```ts
+await page.getByLabelText('More puzzle actions').click();
+await page.getByLabelText('Rotation mode').click();
+expect(page.getByRole('button', { name: 'Rotate selected piece' }).query()).toBeNull();
+
+await selectPiece(0);
+await expect
+	.element(page.getByRole('button', { name: 'Rotate selected piece' }))
+	.toBeVisible();
+await rotateSelectedPiece();
+await expect
+	.element(page.getByTestId('puzzle-piece-visual').first())
+	.toHaveAttribute('style', 'transform: rotate(90deg);');
+```
+
+- [ ] **Step 7: Add one route-level focused-piece `R` test**
+
+Add beside the pointer rotation route test:
+
+```ts
+it('rotates a focused tray piece with R without a thumbnail rotate button', async () => {
+	await renderPuzzlePage();
+	await page.getByLabelText('More puzzle actions').click();
+	await page.getByLabelText('Rotation mode').click();
+
+	expect(document.querySelector('[data-testid="rotate-piece-button"]')).toBeNull();
+	const piece = await page.getByTestId('piece-slot-0').getByTestId('puzzle-piece').element();
+	piece.focus();
+	piece.dispatchEvent(new KeyboardEvent('keydown', { key: 'R', bubbles: true }));
+
+	await expect
+		.element(page.getByTestId('puzzle-piece-visual').first())
+		.toHaveAttribute('style', 'transform: rotate(90deg);');
+	await expect
+		.element(page.getByTestId('gameplay-announcer'))
+		.toHaveTextContent('Puzzle piece 0 rotated.');
+});
+```
+
+This route test intentionally does not select the piece first; it proves keyboard rotation remains independent from the new pointer/touch selection requirement.
+
+- [ ] **Step 8: Run component and route rotation coverage immediately**
 
 ```bash
 cd apps/web
 bunx vitest --run --browser \
   src/lib/components/__tests__/PuzzlePiece.svelte.test.ts \
-  src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts
+  src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts \
+  'src/routes/puzzle/[id]/page.svelte.test.ts'
 ```
 
-Expected: PASS.
+Expected: PASS, and:
 
-- [ ] **Step 7: Commit Task 3**
+```bash
+rg -n "Rotate piece [0-9]+" 'src/routes/puzzle/[id]/page.svelte.test.ts'
+```
+
+Expected: no matches.
+
+- [ ] **Step 9: Commit Task 3**
 
 ```bash
 git add apps/web/src/lib/components/PuzzlePiece.svelte \
   apps/web/src/lib/components/PuzzleInventoryPanel.svelte \
   apps/web/src/lib/components/__tests__/PuzzlePiece.svelte.test.ts \
-  apps/web/src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts
-git commit -m "feat(web): move tray rotation to selected piece action"
+  apps/web/src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts \
+  'apps/web/src/routes/puzzle/[id]/page.svelte.test.ts'
+git commit -m "feat(web): move piece rotation out of tray thumbnails"
 ```
 
 ---
@@ -690,8 +893,6 @@ git commit -m "feat(web): move tray rotation to selected piece action"
 - Create: `apps/web/src/lib/components/__tests__/SavedProgressDialog.svelte.test.ts`
 
 **Interfaces:**
-- Consumes: `GalleryProgress`, `$app/paths.resolve`, and `$lib/actions/modalFocus`.
-- Produces:
 
 ```ts
 interface Props {
@@ -701,10 +902,7 @@ interface Props {
 }
 ```
 
-- Stable dialog name: `Saved progress`.
-- Stable row test ID: `saved-progress-${puzzleId}`.
-
-- [ ] **Step 1: Write failing dialog component tests**
+- [ ] **Step 1: Write failing dialog tests**
 
 Create `SavedProgressDialog.svelte.test.ts`:
 
@@ -713,60 +911,46 @@ import { describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
 import SavedProgressDialog from '../SavedProgressDialog.svelte';
+import type { GalleryProgress } from '$lib/services/gameplay/galleryProgress';
 
 vi.mock('$app/paths', () => ({ resolve: (path: string) => path }));
 
-const progress = [
+const progress: GalleryProgress[] = [
 	{
-		puzzleId: 'pz-new',
-		name: 'New Save',
-		source: 'api' as const,
+		puzzleId: 'old-save',
+		name: 'Older Mission',
+		source: 'api',
 		placedCount: 3,
-		pieceCount: 4,
-		lastUpdated: 3_000
-	},
-	{
-		puzzleId: 'q-old',
-		name: 'Old Quick Save',
-		source: 'local' as const,
-		placedCount: 1,
-		pieceCount: 4,
+		pieceCount: 12,
 		lastUpdated: 1_000
 	}
 ];
 
 describe('SavedProgressDialog', () => {
-	it('shows loading without save rows', async () => {
-		render(SavedProgressDialog, { progress, loading: true, onClose: vi.fn() });
-
+	it('renders loading state without rows', async () => {
+		render(SavedProgressDialog, { progress: [], loading: true, onClose: vi.fn() });
 		await expect.element(page.getByRole('dialog', { name: 'Saved progress' })).toBeVisible();
-		await expect.element(page.getByText('LOADING SAVES...')).toBeVisible();
-		expect(page.getByTestId('saved-progress-pz-new').query()).toBeNull();
+		await expect.element(page.getByText('LOADING SAVED PROGRESS...')).toBeVisible();
 	});
 
-	it('renders supplied rows and puzzle links in order', async () => {
-		render(SavedProgressDialog, { progress, loading: false, onClose: vi.fn() });
-
-		const rows = document.querySelectorAll('[data-testid^="saved-progress-"]');
-		expect(Array.from(rows, (row) => row.getAttribute('data-testid'))).toEqual([
-			'saved-progress-pz-new',
-			'saved-progress-q-old'
-		]);
-		await expect.element(page.getByText('3/4 PLACED')).toBeVisible();
-		await expect
-			.element(page.getByTestId('saved-progress-q-old').getByRole('link', { name: 'CONTINUE' }))
-			.toHaveAttribute('href', '/puzzle/q-old');
-	});
-
-	it('shows the empty state after loading', async () => {
+	it('renders empty state after loading', async () => {
 		render(SavedProgressDialog, { progress: [], loading: false, onClose: vi.fn() });
 		await expect.element(page.getByText('NO SAVED PROGRESS')).toBeVisible();
 	});
 
-	it('closes from the visible button and Escape', async () => {
-		const onClose = vi.fn();
-		render(SavedProgressDialog, { progress: [], loading: false, onClose });
+	it('renders progress rows and existing-route Continue links', async () => {
+		render(SavedProgressDialog, { progress, loading: false, onClose: vi.fn() });
+		const row = page.getByTestId('saved-progress-row-old-save');
+		await expect.element(row).toHaveTextContent('Older Mission');
+		await expect.element(row).toHaveTextContent('3/12 PLACED');
+		await expect
+			.element(row.getByRole('link', { name: 'CONTINUE' }))
+			.toHaveAttribute('href', '/puzzle/old-save');
+	});
 
+	it('closes from the Close button and Escape', async () => {
+		const onClose = vi.fn();
+		render(SavedProgressDialog, { progress, loading: false, onClose });
 		await page.getByRole('button', { name: 'Close saved progress' }).click();
 		expect(onClose).toHaveBeenCalledTimes(1);
 
@@ -777,7 +961,7 @@ describe('SavedProgressDialog', () => {
 });
 ```
 
-- [ ] **Step 2: Run the dialog test and verify failure**
+- [ ] **Step 2: Run and verify failure**
 
 ```bash
 cd apps/web
@@ -786,14 +970,14 @@ bunx vitest --run --browser src/lib/components/__tests__/SavedProgressDialog.sve
 
 Expected: FAIL because the component does not exist.
 
-- [ ] **Step 3: Implement the dialog using the existing modal focus pattern**
+- [ ] **Step 3: Implement the concrete dialog using existing modal focus**
 
-Create `SavedProgressDialog.svelte`:
+Create `SavedProgressDialog.svelte` with this structure:
 
 ```svelte
 <script lang="ts">
-	import { resolve } from '$app/paths';
 	import { modalFocus } from '$lib/actions/modalFocus';
+	import { resolve } from '$app/paths';
 	import type { GalleryProgress } from '$lib/services/gameplay/galleryProgress';
 
 	interface Props {
@@ -805,10 +989,7 @@ Create `SavedProgressDialog.svelte`:
 	let { progress, loading, onClose }: Props = $props();
 </script>
 
-<div
-	class="fixed inset-0 z-[1000] flex items-center justify-center bg-black/60"
-	style="padding-top: max(1rem, env(safe-area-inset-top)); padding-right: max(1rem, env(safe-area-inset-right)); padding-bottom: max(1rem, env(safe-area-inset-bottom)); padding-left: max(1rem, env(safe-area-inset-left));"
->
+<div class="fixed inset-0 z-[1000] flex items-center justify-center bg-black/60 p-4">
 	<div
 		role="dialog"
 		aria-modal="true"
@@ -816,56 +997,39 @@ Create `SavedProgressDialog.svelte`:
 		tabindex="-1"
 		use:modalFocus
 		onkeydown={(event) => event.key === 'Escape' && onClose()}
-		class="flex max-h-[80dvh] w-full max-w-xl flex-col overflow-hidden rounded-2xl bg-white shadow-xl"
+		class="flex max-h-[min(80dvh,42rem)] w-full max-w-xl flex-col overflow-hidden rounded-2xl bg-white shadow-xl"
 	>
-		<div class="flex items-center justify-between gap-4 border-b border-gray-200 px-6 py-4">
-			<h2 class="text-lg font-semibold text-gray-900">SAVED PROGRESS</h2>
-			<button
-				type="button"
-				aria-label="Close saved progress"
-				onclick={onClose}
-				class="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-900"
-			>
-				CLOSE
-			</button>
-		</div>
+		<header class="flex items-center justify-between gap-4 border-b border-gray-200 p-5">
+			<h2 class="text-lg font-semibold text-gray-900">Saved progress</h2>
+			<button type="button" aria-label="Close saved progress" onclick={onClose}>CLOSE</button>
+		</header>
 
-		<div class="min-h-0 flex-1 overflow-y-auto p-6">
+		<div class="min-h-0 flex-1 overflow-y-auto p-5">
 			{#if loading}
-				<p role="status" class="text-sm text-gray-600">LOADING SAVES...</p>
+				<p>LOADING SAVED PROGRESS...</p>
 			{:else if progress.length === 0}
-				<p class="text-sm text-gray-600">NO SAVED PROGRESS</p>
+				<p>NO SAVED PROGRESS</p>
 			{:else}
-				<ul class="space-y-3">
+				<div class="flex flex-col gap-3">
 					{#each progress as item (item.puzzleId)}
-						<li
-							data-testid={`saved-progress-${item.puzzleId}`}
-							class="flex items-center justify-between gap-4 rounded-lg border border-gray-200 p-4"
-						>
+						<div data-testid={`saved-progress-row-${item.puzzleId}`} class="flex items-center justify-between gap-4">
 							<div class="min-w-0">
-								<div class="truncate font-medium text-gray-900">{item.name}</div>
-								<div class="mt-1 text-sm text-gray-600">
-									{item.placedCount}/{item.pieceCount} PLACED
-								</div>
+								<p>{item.name}</p>
+								<p>{item.placedCount}/{item.pieceCount} PLACED</p>
 							</div>
-							<a
-								href={resolve(`/puzzle/${item.puzzleId}`)}
-								class="shrink-0 rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white"
-							>
-								CONTINUE
-							</a>
-						</li>
+							<a href={resolve(`/puzzle/${item.puzzleId}`)}>CONTINUE</a>
+						</div>
 					{/each}
-				</ul>
+				</div>
 			{/if}
 		</div>
 	</div>
 </div>
 ```
 
-Do not extract shared dialog chrome in this ticket.
+Use existing Perseus tokens/classes when implementing the final styling, but keep the component concrete; do not extract shared modal chrome.
 
-- [ ] **Step 4: Run the dialog test and verify pass**
+- [ ] **Step 4: Run dialog tests**
 
 ```bash
 cd apps/web
@@ -884,162 +1048,138 @@ git commit -m "feat(web): add saved progress picker dialog"
 
 ---
 
-### Task 5: Wire Saved Progress Discovery Into the Gallery
+### Task 5: Wire Candidate Visibility and Lazy Picker Loading Into the Gallery
 
 **Files:**
 - Modify: `apps/web/src/routes/+page.svelte`
 - Modify: `apps/web/src/routes/page.svelte.test.ts`
 
 **Interfaces:**
-- Consumes from Task 1: `listPersistedSessionPuzzleIds(): string[]`.
-- Consumes from Task 2: `discoverAllSavedProgress(options): Promise<GalleryProgress[]>`.
-- Consumes from Task 4: `SavedProgressDialog` props `progress`, `loading`, `onClose`.
-- Consumes existing API: `fetchPuzzle(id): Promise<Puzzle>`.
-- Produces: **VIEW SAVED PROGRESS** and route-local picker state.
+- Consumes: `listResumableSessionCandidateIds`, `discoverAllSavedProgress`, `fetchPuzzle`, `SavedProgressDialog`.
+- Keeps: synchronous `discoverGalleryProgress()` for newest/card progress.
 
-- [ ] **Step 1: Extend page mocks and write the one-time mount assertion**
+- [ ] **Step 1: Extend gallery-page mocks and add failing tests**
 
-Change the hoisted persistence spies in `page.svelte.test.ts` to:
+Update the persistence hoisted spies:
 
 ```ts
 const sessionStorageSpies = vi.hoisted(() => ({
 	clearSession: vi.fn(),
-	listPersistedSessionPuzzleIds: vi.fn((): string[] => [])
+	listCandidates: vi.fn<() => string[]>()
 }));
-```
 
-Change the persistence mock to:
-
-```ts
 vi.mock('$lib/services/gameplay/session/persistence', () => ({
 	createSessionStorageAdapter: () => ({
 		clearSession: sessionStorageSpies.clearSession
 	}),
-	listPersistedSessionPuzzleIds: sessionStorageSpies.listPersistedSessionPuzzleIds
+	listResumableSessionCandidateIds: sessionStorageSpies.listCandidates
 }));
 ```
 
-Add `fetchPuzzle: vi.fn()` to the existing `$lib/services/api` mock return object. Change imports and aliases to:
+Add `fetchPuzzle` to the API mock and `discoverAllSavedProgress` to the gallery-progress mock:
 
 ```ts
-import { fetchPuzzle, fetchPuzzles, ApiError } from '$lib/services/api';
-import {
-	discoverAllSavedProgress,
-	discoverGalleryProgress
-} from '$lib/services/gameplay/galleryProgress';
+fetchPuzzle: vi.fn(),
+```
 
-const mockedFetchPuzzle = vi.mocked(fetchPuzzle);
+```ts
+discoverAllSavedProgress: vi.fn().mockResolvedValue([])
+```
+
+Import the mocked functions and initialize before each test:
+
+```ts
 const mockedDiscoverAllSavedProgress = vi.mocked(discoverAllSavedProgress);
-```
+const mockedFetchPuzzle = vi.mocked(fetchPuzzle);
 
-Change the gallery-progress module mock to:
-
-```ts
-vi.mock('$lib/services/gameplay/galleryProgress', () => ({
-	discoverGalleryProgress: vi.fn().mockReturnValue({
-		byPuzzleId: new Map(),
-		newest: null
-	}),
-	discoverAllSavedProgress: vi.fn().mockResolvedValue([])
-}));
-```
-
-Add to `beforeEach()`:
-
-```ts
-sessionStorageSpies.listPersistedSessionPuzzleIds.mockReturnValue([]);
-mockedDiscoverAllSavedProgress.mockResolvedValue([]);
-```
-
-In `reads Quick puzzles once and reuses them when server results change`, assert after initial discovery and again after the search result change:
-
-```ts
-expect(sessionStorageSpies.listPersistedSessionPuzzleIds).toHaveBeenCalledTimes(1);
-```
-
-- [ ] **Step 2: Add the failing picker reachability/lazy-load test**
-
-Add:
-
-```ts
-it('opens saved progress from persisted ids even when newest progress is not projected', async () => {
-	const saved = {
-		puzzleId: 'pz-old',
-		name: 'Older Save',
-		source: 'api' as const,
-		placedCount: 1,
-		pieceCount: 4,
-		lastUpdated: 1_000
-	};
-	const serverPuzzles = [
-		makePuzzle('p-current', { pieceCount: 4, aspectRatio: '1:1', status: 'ready' })
-	];
-
-	sessionStorageSpies.listPersistedSessionPuzzleIds.mockReturnValue(['pz-old']);
-	mockedFetchPuzzles.mockResolvedValue({
-		puzzles: serverPuzzles,
-		total: 1,
-		offset: 0,
-		limit: 20
-	});
-	mockedDiscoverGalleryProgress.mockReturnValue({ byPuzzleId: new Map(), newest: null });
-	mockedDiscoverAllSavedProgress.mockResolvedValue([saved]);
-
-	render(GalleryPage);
-
-	expect(mockedDiscoverAllSavedProgress).not.toHaveBeenCalled();
-	expect(mockedFetchPuzzle).not.toHaveBeenCalled();
-
-	await page.getByRole('button', { name: 'View saved progress' }).click();
-
-	await expect.element(page.getByRole('dialog', { name: 'Saved progress' })).toBeVisible();
-	await expect.element(page.getByText('Older Save')).toBeVisible();
-	expect(mockedDiscoverAllSavedProgress).toHaveBeenCalledWith({
-		puzzleIds: ['pz-old'],
-		serverPuzzles,
-		quickPuzzles: [],
-		fetchPuzzleById: fetchPuzzle,
-		sessionStorage: expect.any(Object)
-	});
-
-	const main = document.querySelector('main')!;
-	expect(main.hasAttribute('inert')).toBe(true);
-
-	await page.getByRole('button', { name: 'Close saved progress' }).click();
-	expect(main.hasAttribute('inert')).toBe(false);
+beforeEach(() => {
+	// existing resets
+	sessionStorageSpies.listCandidates.mockReturnValue([]);
+	mockedDiscoverAllSavedProgress.mockResolvedValue([]);
 });
 ```
 
-- [ ] **Step 3: Extend the existing confirmed-discard test to refresh mounted save IDs**
-
-Before rendering in `clears and rediscovers progress after confirmed home discard`, add:
+Add these focused tests:
 
 ```ts
-sessionStorageSpies.listPersistedSessionPuzzleIds
-	.mockReturnValueOnce(['p1'])
-	.mockReturnValue([]);
+it('scans Quick metadata and resumable save candidates once per gallery mount', async () => {
+	sessionStorageSpies.listCandidates.mockReturnValue(['off-page']);
+	render(GalleryPage);
+
+	await vi.waitFor(() => expect(mockedListQuick).toHaveBeenCalledTimes(1));
+	expect(sessionStorageSpies.listCandidates).toHaveBeenCalledTimes(1);
+
+	await page.getByTestId('search-input').fill('filtered');
+	await vi.waitFor(() => expect(mockedFetchPuzzles).toHaveBeenCalledTimes(2));
+	expect(mockedListQuick).toHaveBeenCalledTimes(1);
+	expect(sessionStorageSpies.listCandidates).toHaveBeenCalledTimes(1);
+});
+
+it('does not show current-device progress for completed-only/no candidate storage', async () => {
+	sessionStorageSpies.listCandidates.mockReturnValue([]);
+	mockedDiscoverGalleryProgress.mockReturnValue({ byPuzzleId: new Map(), newest: null });
+	render(GalleryPage);
+
+	await expect.poll(() => page.getByTestId('continue-on-device').query()).toBeNull();
+});
+
+it('shows View Saved Progress for an off-page candidate even when newest is null', async () => {
+	sessionStorageSpies.listCandidates.mockReturnValue(['off-page']);
+	mockedDiscoverGalleryProgress.mockReturnValue({ byPuzzleId: new Map(), newest: null });
+	render(GalleryPage);
+
+	await expect.element(page.getByTestId('continue-on-device')).toHaveTextContent('SAVED PROGRESS AVAILABLE');
+	await expect.element(page.getByRole('button', { name: 'View saved progress' })).toBeVisible();
+	expect(mockedDiscoverAllSavedProgress).not.toHaveBeenCalled();
+	expect(mockedFetchPuzzle).not.toHaveBeenCalled();
+});
+
+it('loads the full picker only when requested and makes main inert', async () => {
+	const item = {
+		puzzleId: 'off-page',
+		name: 'Older Save',
+		source: 'api' as const,
+		placedCount: 2,
+		pieceCount: 4,
+		lastUpdated: 1_000
+	};
+	sessionStorageSpies.listCandidates.mockReturnValue(['off-page']);
+	mockedDiscoverAllSavedProgress.mockResolvedValue([item]);
+	render(GalleryPage);
+
+	await page.getByRole('button', { name: 'View saved progress' }).click();
+	await vi.waitFor(() => {
+		expect(mockedDiscoverAllSavedProgress).toHaveBeenCalledWith({
+			puzzleIds: ['off-page'],
+			serverPuzzles: [],
+			quickPuzzles: [],
+			fetchPuzzleById: mockedFetchPuzzle,
+			sessionStorage: expect.any(Object)
+		});
+	});
+	await expect.element(page.getByRole('dialog', { name: 'Saved progress' })).toBeVisible();
+	await expect.element(page.getByText('Older Save')).toBeVisible();
+	expect(document.querySelector('main')?.hasAttribute('inert')).toBe(true);
+
+	await page.getByRole('button', { name: 'Close saved progress' }).click();
+	expect(document.querySelector('main')?.hasAttribute('inert')).toBe(false);
+});
 ```
 
-After clicking the dialog's `Discard` button, add:
+Update the existing discard test so `listCandidates` returns the pre-discard ID first and `[]` after `clearSession`, then assert the current-device section disappears when no newest/candidate remains.
 
-```ts
-expect(sessionStorageSpies.clearSession).toHaveBeenCalledWith('p1');
-expect(sessionStorageSpies.listPersistedSessionPuzzleIds).toHaveBeenCalledTimes(2);
-expect(page.getByRole('button', { name: 'View saved progress' }).query()).toBeNull();
-```
-
-- [ ] **Step 4: Run the page test and verify failure**
+- [ ] **Step 2: Run page tests and verify failure**
 
 ```bash
 cd apps/web
 bunx vitest --run --browser src/routes/page.svelte.test.ts
 ```
 
-Expected: FAIL because the route does not enumerate IDs or render/open the picker.
+Expected: FAIL because candidate and dialog orchestration do not exist.
 
-- [ ] **Step 5: Add imports and route-local state in `+page.svelte`**
+- [ ] **Step 3: Add gallery imports and route-local state**
 
-Change API, progress, persistence, and component imports to include:
+Update imports:
 
 ```ts
 import { fetchPuzzle, fetchPuzzles, ApiError } from '$lib/services/api';
@@ -1052,44 +1192,32 @@ import {
 } from '$lib/services/gameplay/galleryProgress';
 import {
 	createSessionStorageAdapter,
-	listPersistedSessionPuzzleIds
+	listResumableSessionCandidateIds
 } from '$lib/services/gameplay/session/persistence';
 ```
 
-Keep the existing `getThumbnailUrl` import absent because `PuzzleCard` owns thumbnails; do not add it here.
-
-Add beside `quickPuzzles`, `discardTarget`, and `localProgress`:
+Add state:
 
 ```ts
-let persistedSessionPuzzleIds = $state<string[]>([]);
+let savedProgressCandidateIds = $state<string[]>([]);
 let savedProgressOpen = $state(false);
 let savedProgressLoading = $state(false);
 let savedProgressItems = $state<GalleryProgress[]>([]);
 let savedProgressRequestId = 0;
 ```
 
-- [ ] **Step 6: Enumerate IDs once on mount and refresh them after explicit discard**
-
-Replace the existing mount body with:
+Extend mount-only enumeration:
 
 ```ts
 onMount(() => {
 	quickPuzzles = listQuick();
-	persistedSessionPuzzleIds = listPersistedSessionPuzzleIds();
+	savedProgressCandidateIds = listResumableSessionCandidateIds();
 });
 ```
 
-In `confirmDiscardProgress()`, immediately after `sessionStorageAdapter.clearSession(target.puzzleId);`, add:
+Do not put candidate scanning in an effect.
 
-```ts
-persistedSessionPuzzleIds = listPersistedSessionPuzzleIds();
-```
-
-Keep `discardTarget = null` and the existing `discoverGalleryProgress({ serverPuzzles: puzzles, quickPuzzles })` refresh after those lines.
-
-- [ ] **Step 7: Add picker open/close orchestration**
-
-Add below `confirmDiscardProgress()`:
+- [ ] **Step 4: Add picker open/close functions with stale-result fencing**
 
 ```ts
 async function openSavedProgress(): Promise<void> {
@@ -1098,112 +1226,83 @@ async function openSavedProgress(): Promise<void> {
 	savedProgressLoading = true;
 	savedProgressItems = [];
 
-	try {
-		const progress = await discoverAllSavedProgress({
-			puzzleIds: persistedSessionPuzzleIds,
-			serverPuzzles: puzzles,
-			quickPuzzles,
-			fetchPuzzleById: fetchPuzzle,
-			sessionStorage: sessionStorageAdapter
-		});
-		if (requestId !== savedProgressRequestId) return;
-		savedProgressItems = progress;
-	} finally {
-		if (requestId === savedProgressRequestId) savedProgressLoading = false;
-	}
+	const items = await discoverAllSavedProgress({
+		puzzleIds: savedProgressCandidateIds,
+		serverPuzzles: puzzles,
+		quickPuzzles,
+		fetchPuzzleById: fetchPuzzle,
+		sessionStorage: sessionStorageAdapter
+	});
+	if (requestId !== savedProgressRequestId) return;
+
+	savedProgressItems = items;
+	savedProgressLoading = false;
 }
 
 function closeSavedProgress(): void {
 	savedProgressRequestId += 1;
 	savedProgressOpen = false;
 	savedProgressLoading = false;
+	savedProgressItems = [];
 }
 ```
 
-Do not add AbortController or shared async state for this modal.
+`discoverAllSavedProgress()` already converts individual metadata failures into skipped rows, so the route does not need a second per-row error model.
 
-- [ ] **Step 8: Replace the current-device section with the exact combined markup**
+- [ ] **Step 5: Update current-device section gating and actions**
 
-Replace the current `{#if localProgress.newest}` section with:
+Change the section condition to:
 
 ```svelte
-{#if localProgress.newest || persistedSessionPuzzleIds.length > 0}
-	<section
-		data-testid="continue-on-device"
-		aria-labelledby="continue-on-device-title"
-		class="mb-8 flex flex-wrap items-center gap-x-6 gap-y-3 border border-(--accent) bg-(--bg-1)
-		px-6 py-4 [box-shadow:0_0_25px_var(--accent-glow)]"
+{#if localProgress.newest || savedProgressCandidateIds.length > 0}
+```
+
+Inside the existing section:
+
+```svelte
+{#if localProgress.newest}
+	<!-- keep existing name, placed/total, CONTINUE and DISCARD markup -->
+{:else}
+	<p class="...">SAVED PROGRESS AVAILABLE</p>
+{/if}
+
+{#if savedProgressCandidateIds.length > 0}
+	<button
+		type="button"
+		aria-label="View saved progress"
+		class="..."
+		onclick={() => void openSavedProgress()}
 	>
-		<div class="min-w-40">
-			<h2
-				id="continue-on-device-title"
-				class="text-[0.65rem] font-(--font-mono) tracking-[0.18em] text-(--accent) uppercase"
-			>
-				Continue on this device
-			</h2>
-			{#if localProgress.newest}
-				<p class="mt-1 truncate text-[0.9rem] font-(--font-display) font-bold text-(--text-0)">
-					{localProgress.newest.name}
-				</p>
-			{:else}
-				<p class="mt-1 text-[0.75rem] font-(--font-mono) tracking-[0.08em] text-(--text-1)">
-					SAVED PROGRESS AVAILABLE
-				</p>
-			{/if}
-		</div>
-
-		{#if localProgress.newest}
-			<span class="text-[0.7rem] font-(--font-mono) tracking-[0.12em] text-(--text-1)">
-				{localProgress.newest.placedCount}/{localProgress.newest.pieceCount} PLACED
-			</span>
-			<a
-				href={resolve(`/puzzle/${localProgress.newest.puzzleId}`)}
-				class="border border-(--accent) px-5 py-2 text-[0.65rem] font-(--font-display) font-bold
-				tracking-[0.2em] text-(--accent) uppercase transition-colors hover:bg-(--accent-glow)"
-			>
-				CONTINUE
-			</a>
-			<button
-				type="button"
-				aria-label="Discard saved progress"
-				class="border border-(--border) px-5 py-2 text-[0.65rem] font-(--font-display) font-bold
-				tracking-[0.2em] text-(--text-1) uppercase transition-colors hover:bg-(--border)"
-				onclick={() => (discardTarget = localProgress.newest)}
-			>
-				DISCARD
-			</button>
-		{/if}
-
-		{#if persistedSessionPuzzleIds.length > 0}
-			<button
-				type="button"
-				aria-label="View saved progress"
-				class="border border-(--border) px-5 py-2 text-[0.65rem] font-(--font-display) font-bold
-				tracking-[0.2em] text-(--text-1) uppercase transition-colors hover:bg-(--border)"
-				onclick={openSavedProgress}
-			>
-				VIEW SAVED PROGRESS
-			</button>
-		{/if}
-	</section>
+		VIEW SAVED PROGRESS
+	</button>
 {/if}
 ```
 
-- [ ] **Step 9: Make the main page inert for either modal and render the picker outside it**
+Do not show Discard when `localProgress.newest` is null.
 
-Change `<main>` to:
+- [ ] **Step 6: Refresh candidate visibility after newest-session discard**
+
+At the end of `confirmDiscardProgress()` after `clearSession()` and `discoverGalleryProgress()`:
+
+```ts
+savedProgressCandidateIds = listResumableSessionCandidateIds();
+```
+
+This is an explicit user mutation, not search/filter/pagination; refreshing here is required so a removed key does not leave a stale picker affordance.
+
+- [ ] **Step 7: Compose modal and inert state**
+
+Change main inert/hidden conditions to:
 
 ```svelte
 <main
 	inert={discardTarget !== null || savedProgressOpen}
 	aria-hidden={discardTarget !== null || savedProgressOpen}
-	class="min-h-screen bg-(--bg-0)
-[background-image:linear-gradient(rgba(0,240,255,0.025)_1px,transparent_1px),linear-gradient(90deg,rgba(0,240,255,0.025)_1px,transparent_1px)]
-[background-size:48px_48px]"
+	...
 >
 ```
 
-After `</main>` and before the existing discard-dialog block, add:
+Render beside `DiscardSessionDialog`:
 
 ```svelte
 {#if savedProgressOpen}
@@ -1215,9 +1314,7 @@ After `</main>` and before the existing discard-dialog block, add:
 {/if}
 ```
 
-Keep `DiscardSessionDialog` as its existing sibling outside `<main>`.
-
-- [ ] **Step 10: Run page, dialog, persistence, and discovery tests**
+- [ ] **Step 8: Run gallery page and supporting tests**
 
 ```bash
 cd apps/web
@@ -1230,42 +1327,43 @@ bunx vitest --run --browser \
 
 Expected: PASS.
 
-- [ ] **Step 11: Commit Task 5**
+- [ ] **Step 9: Commit Task 5**
 
 ```bash
 git add apps/web/src/routes/+page.svelte \
   apps/web/src/routes/page.svelte.test.ts
-git commit -m "feat(web): open all saved puzzle progress from gallery"
+git commit -m "feat(web): open all saved puzzle progress"
 ```
 
 ---
 
-### Task 6: Prove an Older Off-Page Save Resumes End-to-End
+### Task 6: Prove an Older Off-Page Save Can Be Resumed End-to-End
 
 **Files:**
 - Modify: `apps/web/e2e/gallery.spec.ts`
 
 **Interfaces:**
-- Consumes: `mockPuzzleList()`, `getFixture()`, `createFixtureRouter()`, `buildMinimalSeed()`, `createPersistedStateController()`, and the new saved-progress modal.
-- Produces: one browser regression proving saved-progress history is independent of the gallery list response.
+- Reuses: `getFixture`, `createFixtureRouter`, `buildMinimalSeed`, `createPersistedStateController`.
+- No new fixture family or page object.
 
-- [ ] **Step 1: Replace the existing one-save Continue E2E with a two-save scenario**
+- [ ] **Step 1: Replace/extend the current newest-session E2E with two valid saves**
 
-Replace `shows current-device progress and continues the newest session` with:
+Use `e2e-square-4` as the loaded newest save and `e2e-landscape-12` as the older save omitted from the gallery list:
 
 ```ts
-test('continues the newest session and can resume an older off-page save', async ({ page }) => {
+test('continues the newest save and can choose an older off-page save', async ({ page }) => {
 	const newestId = 'e2e-square-4';
 	const olderId = 'e2e-landscape-12';
 	const newest = getFixture(newestId);
 	const older = getFixture(olderId);
-	const newestPiece = newest.pieces[0];
-	const olderPiece = older.pieces[0];
+	const newestPiece = newest.pieces[0]!;
+	const olderPiece = older.pieces[0]!;
+	const storage = createPersistedStateController();
 
 	await mockPuzzleList(page, [
 		{
 			id: newestId,
-			name: 'Newest Save',
+			name: 'Newest Resume Fixture',
 			pieceCount: newest.pieceCount,
 			aspectRatio: newest.aspectRatio,
 			status: 'ready'
@@ -1274,57 +1372,49 @@ test('continues the newest session and can resume an older off-page save', async
 	await createFixtureRouter().install(page);
 	await page.goto('/');
 
-	const persisted = createPersistedStateController();
-	await persisted.seedValid(page, newestId, {
+	await storage.seedValid(page, newestId, {
 		...buildMinimalSeed(newestId),
-		placedPieces: [
-			{
-				pieceId: newestPiece.id,
-				x: newestPiece.correctX,
-				y: newestPiece.correctY
-			}
-		],
+		placedPieces: [{
+			pieceId: newestPiece.id,
+			x: newestPiece.correctX,
+			y: newestPiece.correctY
+		}],
 		timerStarted: true,
 		hasUserActivity: true,
 		lastUpdated: 3_000
 	});
-	await persisted.seedValid(page, olderId, {
+	await storage.seedValid(page, olderId, {
 		...buildMinimalSeed(olderId),
-		placedPieces: [
-			{
-				pieceId: olderPiece.id,
-				x: olderPiece.correctX,
-				y: olderPiece.correctY
-			}
-		],
+		placedPieces: [{
+			pieceId: olderPiece.id,
+			x: olderPiece.correctX,
+			y: olderPiece.correctY
+		}],
 		timerStarted: true,
 		hasUserActivity: true,
-		lastUpdated: 1_000
+		lastUpdated: 2_000
 	});
 	await page.reload();
 
-	const current = page.getByTestId('continue-on-device');
-	await expect(current).toContainText('Newest Save');
-	await expect(current).toContainText('1/4 PLACED');
-	await expect(page.getByTestId('puzzle-card')).toContainText('CONTINUE · 1/4 PLACED');
+	await expect(page.getByTestId('continue-on-device')).toContainText('Newest Resume Fixture');
+	await expect(page.getByTestId('continue-on-device')).toContainText('1/4 PLACED');
 
-	await current.getByRole('button', { name: 'View saved progress' }).click();
+	await page.getByRole('button', { name: 'View saved progress' }).click();
 	const dialog = page.getByRole('dialog', { name: 'Saved progress' });
-	await expect(dialog.getByText('Newest Save')).toBeVisible();
-	await expect(dialog.getByText(older.name)).toBeVisible();
-	await expect(dialog.getByTestId(`saved-progress-${olderId}`)).toContainText('1/12 PLACED');
+	await expect(dialog.getByTestId(`saved-progress-row-${newestId}`)).toBeVisible();
+	await expect(dialog.getByTestId(`saved-progress-row-${olderId}`)).toContainText(older.name);
 
 	await dialog
-		.getByTestId(`saved-progress-${olderId}`)
+		.getByTestId(`saved-progress-row-${olderId}`)
 		.getByRole('link', { name: 'CONTINUE' })
 		.click();
 	await expect(page).toHaveURL(new RegExp(`/puzzle/${olderId}$`));
 });
 ```
 
-`createFixtureRouter()` already owns `GET /api/puzzles/e2e-landscape-12`, so no new test endpoint or fixture-harness code is required.
+The initial gallery response intentionally omits `olderId`; its full metadata must come from the existing fixture-router detail path only after the picker opens.
 
-- [ ] **Step 2: Run the gallery E2E and verify pass**
+- [ ] **Step 2: Run the focused E2E**
 
 ```bash
 cd apps/web
@@ -1337,22 +1427,18 @@ Expected: PASS.
 
 ```bash
 git add apps/web/e2e/gallery.spec.ts
-git commit -m "test(web): cover older saved progress resume"
+git commit -m "test(web): cover older saved puzzle resume"
 ```
 
 ---
 
-### Task 7: Final Verification and PR Readiness
+### Task 7: Final Focused Verification
 
 **Files:**
-- Verify all HPA-647 production/test files changed in Tasks 1-6.
-- Do not create another PR.
+- No production changes expected.
+- Fix only regressions caused by HPA-647 if a command below fails.
 
-**Interfaces:**
-- Consumes: completed implementation from Tasks 1-6.
-- Produces: evidence that the existing HPA-647 draft PR is ready for review.
-
-- [ ] **Step 1: Run all focused HPA-647 tests together**
+- [ ] **Step 1: Run all changed Vitest surfaces, including the puzzle route**
 
 ```bash
 cd apps/web
@@ -1364,30 +1450,33 @@ bunx vitest --run --browser \
   src/lib/components/__tests__/PuzzlePiece.svelte.test.ts \
   src/lib/components/__tests__/PuzzleInventoryPanel.svelte.test.ts \
   src/lib/components/__tests__/SavedProgressDialog.svelte.test.ts \
-  src/routes/page.svelte.test.ts
+  src/routes/page.svelte.test.ts \
+  'src/routes/puzzle/[id]/page.svelte.test.ts'
 ```
 
 Expected: PASS.
 
-- [ ] **Step 2: Run Svelte/TypeScript checks**
+- [ ] **Step 2: Confirm the obsolete per-piece Rotate locator is gone from current tests/production**
+
+```bash
+cd apps/web
+rg -n "rotate-piece-button|Rotate piece [0-9]+" \
+  src/lib/components \
+  src/routes/puzzle
+```
+
+Expected: no production/test references to the removed overlay. `aria-keyshortcuts="R"`, `onRotate`, and the new `Rotate selected piece` remain.
+
+- [ ] **Step 3: Run Svelte/TypeScript checks**
 
 ```bash
 cd apps/web
 bun run check
 ```
 
-Expected: zero errors.
-
-- [ ] **Step 3: Run formatting and lint checks**
-
-```bash
-cd apps/web
-bun run lint
-```
-
 Expected: PASS.
 
-- [ ] **Step 4: Re-run the focused gallery browser flow after static checks**
+- [ ] **Step 4: Run gallery E2E**
 
 ```bash
 cd apps/web
@@ -1396,33 +1485,26 @@ bunx playwright test e2e/gallery.spec.ts --project=chromium-desktop
 
 Expected: PASS.
 
-- [ ] **Step 5: Inspect the final diff against the guardrails**
-
-From repository root:
+- [ ] **Step 5: Inspect scope before marking the draft ready**
 
 ```bash
-git diff --check main...HEAD
-git diff --stat main...HEAD
-git diff main...HEAD -- \
-  apps/web/src/lib/services/gameplay/session/persistence.ts \
-  apps/web/src/lib/services/gameplay/galleryProgress.ts \
-  apps/web/src/lib/components/PuzzlePiece.svelte \
-  apps/web/src/lib/components/PuzzleInventoryPanel.svelte \
-  apps/web/src/lib/components/SavedProgressDialog.svelte \
-  apps/web/src/routes/+page.svelte
+git status --short
+git diff --stat origin/main...HEAD
 ```
 
-Verify directly from that diff:
+Expected production scope is limited to:
 
-- no `PersistedPuzzleSessionV1`, `PuzzleSession`, API-route, database, shared-type, or package contract changed;
-- `SessionStorageAdapter` was not widened;
-- no per-piece Rotate overlay or `rotate-piece-button` remains;
-- the `R` branch remains in `PuzzlePiece`;
-- missing server detail is requested only from `discoverAllSavedProgress()`;
-- full discovery calls `peekSession()`, never `loadSession()` or `clearSession()`;
-- `listQuick()` and `listPersistedSessionPuzzleIds()` are mount/discard-refresh work, not search/pagination reactive work;
-- **VIEW SAVED PROGRESS** can render when persisted IDs exist even if `localProgress.newest` is null.
+```text
+apps/web/src/lib/services/gameplay/session/persistence.ts
+apps/web/src/lib/services/gameplay/galleryProgress.ts
+apps/web/src/lib/components/PuzzlePiece.svelte
+apps/web/src/lib/components/PuzzleInventoryPanel.svelte
+apps/web/src/lib/components/SavedProgressDialog.svelte
+apps/web/src/routes/+page.svelte
+```
 
-- [ ] **Step 6: Update the existing draft PR for implementation review**
+plus the focused tests listed in this plan and the two HPA-647 planning docs. No API/database/shared-type/session-engine changes should appear.
 
-Keep the same HPA-647 branch and PR. Update its body from plan-only status to summarize the shipped behavior and the verification commands above; do not open a replacement or follow-up PR.
+- [ ] **Step 6: Commit verification-only fixes if needed**
+
+If verification required a scoped HPA-647 correction, stage only those paths and commit them on the same PR branch. If all commands pass without changes, do not create an empty commit.
