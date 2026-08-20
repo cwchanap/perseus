@@ -66,6 +66,11 @@
 		return rotationEnabled ? (pieceRotations[pieceId] ?? 0) : 0;
 	}
 
+	function rotateSelectedPiece(): void {
+		const pieceId = selectedPieceId;
+		if (pieceId !== null) onRotate(pieceId);
+	}
+
 	function pieceSlotClass(piece: PuzzlePieceModel): string {
 		const base =
 			'piece-slot relative aspect-square border border-(--border) p-[0.2rem] ' +
@@ -85,11 +90,10 @@
 	let drawerOpen = $state(true);
 
 	// Roving tab stop: exactly one unplaced piece is sequentially tabbable,
-	// and Left/Right move the active piece through the visible tray. The
-	// active piece's Rotate button shares the roving tabIndex so it stays
-	// keyboard-discoverable; R remains an additional shortcut on the piece
-	// root. The id is panel-local presentation state — the session's
-	// selection is untouched.
+	// and Left/Right move the active piece through the visible tray. R
+	// remains a rotation shortcut on the piece root; pointer rotation lives
+	// in the header ROTATE action. The id is panel-local presentation
+	// state — the session's selection is untouched.
 	let piecesGridElement = $state<HTMLElement | null>(null);
 	let activePieceId = $state<number | null>(null);
 
@@ -132,8 +136,8 @@
 	});
 
 	// Follow direct focus (click/tap/Tab) so the roving tab stop moves to the
-	// piece the user actually reached. Resolving via the slot lets focus on
-	// either the active root or its sibling Rotate button keep the same piece.
+	// piece the user actually reached. Resolving via the slot keeps the piece
+	// resolution independent of which piece-root descendant received focus.
 	function handlePiecesFocusIn(event: FocusEvent): void {
 		const target = event.target;
 		if (!(target instanceof HTMLElement)) return;
@@ -150,14 +154,6 @@
 		if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
 		const target = event.target;
 		if (!(target instanceof HTMLElement)) return;
-		// The Rotate button is a leaf control inside the piece slot. Arrow
-		// traversal is owned by the piece roots; when focus is on the Rotate
-		// button, let the browser handle the key (e.g. native Tab order) so
-		// the visible Rotate control stays an independent focusable element.
-		// This check is here rather than relying on the Rotate button's
-		// delegated stopPropagation, which fires after this native ancestor
-		// listener and cannot prevent it.
-		if (target.closest('[data-testid="rotate-piece-button"]')) return;
 		const slot = target.closest<HTMLElement>('.piece-slot');
 		const current = slot?.querySelector<HTMLElement>('[data-testid="puzzle-piece"]');
 		const currentId = Number(current?.dataset.pieceId);
@@ -194,6 +190,17 @@
 		</div>
 
 		<div class="panel-actions">
+			{#if rotationEnabled}
+				<button
+					type="button"
+					class="panel-action"
+					aria-label="Rotate selected piece"
+					disabled={selectedPieceId === null}
+					onclick={rotateSelectedPiece}
+				>
+					ROTATE
+				</button>
+			{/if}
 			{#if selectedPieceId !== null}
 				<button
 					type="button"

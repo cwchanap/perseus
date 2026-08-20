@@ -193,7 +193,7 @@ describe('PuzzleInventoryPanel', () => {
 		expect(slots.map((slot) => slot.dataset.testid)).toEqual(['piece-slot-1', 'piece-slot-0']);
 	});
 
-	it('forwards select, rotate, and cancel selection', async () => {
+	it('forwards select and cancel selection', async () => {
 		const input = baseProps();
 		const view = render(PuzzleInventoryPanel, input);
 
@@ -201,13 +201,29 @@ describe('PuzzleInventoryPanel', () => {
 		piece.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
 		expect(input.onSelect).toHaveBeenCalledWith(1);
 
-		await page.getByLabelText('Rotate piece 1').click();
-		expect(input.onRotate).toHaveBeenCalledWith(1);
-
 		await view.rerender({ ...input, selectedPieceId: 1 });
 		const selectedPiece = await page.getByLabelText('Puzzle piece 1').element();
 		selectedPiece.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
 		expect(input.onCancelSelection).toHaveBeenCalledOnce();
+	});
+
+	it('shows disabled header Rotate while rotation mode is enabled without a selection', async () => {
+		render(PuzzleInventoryPanel, baseProps());
+		await expect
+			.element(page.getByRole('button', { name: 'Rotate selected piece' }))
+			.toBeDisabled();
+	});
+
+	it('rotates the selected piece from the header', async () => {
+		const input = baseProps();
+		render(PuzzleInventoryPanel, { ...input, selectedPieceId: 1 });
+		await page.getByRole('button', { name: 'Rotate selected piece' }).click();
+		expect(input.onRotate).toHaveBeenCalledWith(1);
+	});
+
+	it('does not show header Rotate when rotation mode is disabled', async () => {
+		render(PuzzleInventoryPanel, { ...baseProps(), rotationEnabled: false });
+		expect(page.getByRole('button', { name: 'Rotate selected piece' }).query()).toBeNull();
 	});
 
 	it('renders pieces with zero rotation when rotation is disabled', async () => {
@@ -273,7 +289,7 @@ describe('PuzzleInventoryPanel', () => {
 		expect(document.querySelectorAll('[data-testid^="piece-slot-"]')).toHaveLength(2);
 	});
 
-	it('keeps Cancel in the header while collapsed', async () => {
+	it('keeps Cancel and an enabled Rotate in the header while collapsed', async () => {
 		render(PuzzleInventoryPanel, { ...baseProps(), selectedPieceId: 1 });
 		const toggle = (await page
 			.getByTestId('inventory-drawer-toggle')
@@ -284,6 +300,7 @@ describe('PuzzleInventoryPanel', () => {
 		await expect
 			.element(page.getByRole('button', { name: 'Cancel selected piece' }))
 			.toBeInTheDocument();
+		await expect.element(page.getByRole('button', { name: 'Rotate selected piece' })).toBeEnabled();
 	});
 
 	it('opens the drawer before scrolling the hinted piece into view', async () => {
@@ -394,24 +411,6 @@ describe('PuzzleInventoryPanel', () => {
 			expect(pieces.filter((piece) => piece.tabIndex === 0)).toHaveLength(1);
 		});
 
-		it('keeps exactly one rotate button tabbable (the active piece) when rotation is enabled', async () => {
-			render(PuzzleInventoryPanel, baseProps());
-			const pieces = Array.from(
-				document.querySelectorAll<HTMLElement>('[data-testid="puzzle-piece"]')
-			);
-			const rotateButtons = Array.from(
-				document.querySelectorAll<HTMLButtonElement>('[data-testid="rotate-piece-button"]')
-			);
-			expect(rotateButtons).toHaveLength(2);
-			const tabbableRoots = pieces.filter((piece) => piece.tabIndex === 0);
-			expect(tabbableRoots).toHaveLength(1);
-			const activePieceId = tabbableRoots[0]?.dataset.pieceId;
-			const tabbableRotate = rotateButtons.filter((button) => button.tabIndex === 0);
-			expect(tabbableRotate).toHaveLength(1);
-			expect(tabbableRotate[0]?.getAttribute('aria-label')).toBe(`Rotate piece ${activePieceId}`);
-			expect(rotateButtons.filter((button) => button.tabIndex === -1)).toHaveLength(1);
-		});
-
 		it('moves the active piece exactly one slot on ArrowRight', async () => {
 			render(PuzzleInventoryPanel, baseProps());
 			const pieces = Array.from(
@@ -497,33 +496,6 @@ describe('PuzzleInventoryPanel', () => {
 			const tabbable = remaining.filter((piece) => piece.tabIndex === 0);
 			expect(tabbable).toHaveLength(1);
 			expect(tabbable[0]?.dataset.pieceId).toBe('0');
-		});
-
-		it('does not traverse when ArrowRight fires on a rotate button', async () => {
-			render(PuzzleInventoryPanel, baseProps());
-			const pieces = Array.from(
-				document.querySelectorAll<HTMLElement>('[data-testid="puzzle-piece"]')
-			);
-			const first = pieces[0]!;
-			const second = pieces[1]!;
-			first.focus();
-			await expect.poll(() => first.tabIndex).toBe(0);
-
-			// The active piece's rotate button shares the roving tab stop. Arrow
-			// traversal is owned by the piece roots; an arrow on the rotate button
-			// must NOT move the active piece so the rotate control stays an
-			// independent focusable leaf.
-			const rotateButton = document.querySelector<HTMLButtonElement>(
-				'[data-testid="rotate-piece-button"]'
-			)!;
-			rotateButton.focus();
-			rotateButton.dispatchEvent(
-				new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })
-			);
-
-			expect(document.activeElement).toBe(rotateButton);
-			await expect.poll(() => first.tabIndex).toBe(0);
-			await expect.poll(() => second.tabIndex).toBe(-1);
 		});
 
 		it('ignores focusin that does not originate from a piece slot', async () => {

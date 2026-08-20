@@ -438,6 +438,10 @@ async function placeSelectedPieceAt(x: number, y: number) {
 	dropZone.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
 }
 
+async function rotateSelectedPiece(): Promise<void> {
+	await page.getByRole('button', { name: 'Rotate selected piece' }).click();
+}
+
 async function getPieceRotation(pieceId: number): Promise<number> {
 	const piece = await page.getByLabelText(`Puzzle piece ${pieceId}`).element();
 	const visual = piece.querySelector('[data-testid="puzzle-piece-visual"]');
@@ -1301,21 +1305,26 @@ describe('Puzzle route gameplay integration', () => {
 		await expect
 			.element(page.getByLabelText('Rotation mode'))
 			.toHaveAttribute('aria-pressed', 'true');
-		await expect.element(page.getByRole('button', { name: 'Rotate piece 0' })).toBeVisible();
+		// The header ROTATE action is discoverable immediately but stays
+		// disabled until a piece is selected.
+		await expect
+			.element(page.getByRole('button', { name: 'Rotate selected piece' }))
+			.toBeDisabled();
 		await expect.element(page.getByLabelText('Rotation mode')).toBeEnabled();
 
-		await page.getByRole('button', { name: 'Rotate piece 0' }).click();
+		await selectPiece(0);
+		await expect.element(page.getByRole('button', { name: 'Rotate selected piece' })).toBeEnabled();
+		await rotateSelectedPiece();
 		await expect
 			.element(page.getByTestId('puzzle-piece-visual').first())
 			.toHaveAttribute('style', 'transform: rotate(90deg);');
 
-		await selectPiece(0);
 		await placeSelectedPieceAt(0, 0);
 		await expect.element(page.getByText('0/2')).toBeVisible();
 
-		await page.getByRole('button', { name: 'Rotate piece 0' }).click();
-		await page.getByRole('button', { name: 'Rotate piece 0' }).click();
-		await page.getByRole('button', { name: 'Rotate piece 0' }).click();
+		await rotateSelectedPiece();
+		await rotateSelectedPiece();
+		await rotateSelectedPiece();
 		await expect
 			.element(page.getByTestId('puzzle-piece-visual').first())
 			.toHaveAttribute('style', 'transform: rotate(0deg);');
@@ -1326,6 +1335,23 @@ describe('Puzzle route gameplay integration', () => {
 		// deselects), so place the still-selected piece directly.
 		await placeSelectedPieceAt(0, 0);
 		await expect.element(page.getByText('1/2')).toBeVisible();
+	});
+
+	it('rotates a focused tray piece with R without selecting it', async () => {
+		await renderPuzzlePage();
+		await page.getByLabelText('More puzzle actions').click();
+		await page.getByLabelText('Rotation mode').click();
+
+		const piece = await page.getByTestId('piece-slot-0').getByTestId('puzzle-piece').element();
+		piece.focus();
+		piece.dispatchEvent(new KeyboardEvent('keydown', { key: 'R', bubbles: true }));
+
+		await expect
+			.element(page.getByTestId('puzzle-piece-visual').first())
+			.toHaveAttribute('style', 'transform: rotate(90deg);');
+		await expect
+			.element(page.getByTestId('gameplay-announcer'))
+			.toHaveTextContent('Puzzle piece 0 rotated.');
 	});
 
 	it('updates undo and redo controls after successful placements', async () => {
@@ -1375,12 +1401,14 @@ describe('Puzzle route gameplay integration', () => {
 
 		await page.getByLabelText('More puzzle actions').click();
 		await page.getByLabelText('Rotation mode').click();
-		await page.getByRole('button', { name: 'Rotate piece 1' }).click();
+		await selectPiece(1);
+		await rotateSelectedPiece();
 		await placePiece(0, 0, 0);
 		await expect.element(page.getByText('1/2')).toBeVisible();
 		expect(await getPieceRotation(1)).toBe(90);
 
-		await page.getByRole('button', { name: 'Rotate piece 1' }).click();
+		await selectPiece(1);
+		await rotateSelectedPiece();
 		await expect.element(page.getByText('1/2')).toBeVisible();
 		expect(await getPieceRotation(1)).toBe(180);
 
@@ -1410,7 +1438,8 @@ describe('Puzzle route gameplay integration', () => {
 
 		await page.getByLabelText('More puzzle actions').click();
 		await page.getByLabelText('Rotation mode').click();
-		await page.getByRole('button', { name: 'Rotate piece 1' }).click();
+		await selectPiece(1);
+		await rotateSelectedPiece();
 		await page.getByLabelText('Rotation mode').click();
 
 		await expect
@@ -1422,7 +1451,7 @@ describe('Puzzle route gameplay integration', () => {
 		await expect
 			.element(page.getByLabelText('Rotation mode'))
 			.toHaveAttribute('aria-pressed', 'true');
-		await expect.element(page.getByRole('button', { name: 'Rotate piece 1' })).toBeVisible();
+		await expect.element(page.getByRole('button', { name: 'Rotate selected piece' })).toBeVisible();
 
 		// Redo re-applies the rotation toggle-off
 		await page.getByLabelText('Redo').click();
@@ -1746,7 +1775,8 @@ describe('Puzzle route gameplay integration', () => {
 
 		await page.getByLabelText('More puzzle actions').click();
 		await page.getByLabelText('Rotation mode').click();
-		await page.getByRole('button', { name: 'Rotate piece 0' }).click();
+		await selectPiece(0);
+		await rotateSelectedPiece();
 
 		await expect.element(page.getByTestId('game-timer')).toHaveClass('timer-block timer-on');
 	});
@@ -2781,13 +2811,13 @@ describe('Puzzle page defensive guard coverage', () => {
 		// Enable rotation mode and rotate piece 0 to 90 degrees (non-upright).
 		await page.getByLabelText('More puzzle actions').click();
 		await page.getByLabelText('Rotation mode').click();
-		await page.getByRole('button', { name: 'Rotate piece 0' }).click();
+		await selectPiece(0);
+		await rotateSelectedPiece();
 
 		// Attempt to place the non-upright piece at its correct position.
 		// The PuzzleBoard sees correct coordinates and calls onPiecePlaced,
 		// which dispatches attempt_placement to the session. The session
 		// rejects it (non_upright) and emits a placement_rejected event.
-		await selectPiece(0);
 		await placeSelectedPieceAt(0, 0);
 
 		// The placement_rejected event handler sets rejectedPiece, which
@@ -3109,8 +3139,8 @@ describe('Puzzle page gameplay announcements and Escape priority', () => {
 
 		await page.getByLabelText('More puzzle actions').click();
 		await page.getByLabelText('Rotation mode').click();
-		await page.getByRole('button', { name: 'Rotate piece 0' }).click();
 		await selectPiece(0);
+		await rotateSelectedPiece();
 		await placeSelectedPieceAt(0, 0);
 
 		await expect
@@ -3123,7 +3153,8 @@ describe('Puzzle page gameplay announcements and Escape priority', () => {
 
 		await page.getByLabelText('More puzzle actions').click();
 		await page.getByLabelText('Rotation mode').click();
-		await page.getByRole('button', { name: 'Rotate piece 0' }).click();
+		await selectPiece(0);
+		await rotateSelectedPiece();
 
 		await expect
 			.element(page.getByTestId('gameplay-announcer'))
@@ -3143,13 +3174,14 @@ describe('Puzzle page gameplay announcements and Escape priority', () => {
 
 		const revisionBefore = await getRevision();
 
-		await page.getByRole('button', { name: 'Rotate piece 0' }).click();
+		await selectPiece(0);
+		await rotateSelectedPiece();
 		await expect
 			.element(page.getByTestId('gameplay-announcer'))
 			.toHaveTextContent('Puzzle piece 0 rotated.');
 		const revisionAfterFirst = await getRevision();
 
-		await page.getByRole('button', { name: 'Rotate piece 0' }).click();
+		await rotateSelectedPiece();
 		await expect
 			.element(page.getByTestId('gameplay-announcer'))
 			.toHaveTextContent('Puzzle piece 0 rotated.');
