@@ -10,6 +10,7 @@ import {
 	discoverGalleryProgress,
 	discoverAllSavedProgress
 } from '$lib/services/gameplay/galleryProgress';
+import type { GalleryProgress } from '$lib/services/gameplay/galleryProgress';
 
 const sessionStorageSpies = vi.hoisted(() => ({
 	clearSession: vi.fn(),
@@ -314,6 +315,77 @@ describe('Gallery Page', () => {
 		await expect.element(page.getByText('NO SAVED PROGRESS')).toBeVisible();
 		await page.getByRole('button', { name: 'Close saved progress' }).click();
 		await expect.poll(() => page.getByTestId('continue-on-device').query()).toBeNull();
+	});
+
+	it('discards a stale discovery response resolved after the picker is closed', async () => {
+		sessionStorageSpies.listCandidates.mockReturnValue(['off-page']);
+		mockedDiscoverGalleryProgress.mockReturnValue({ byPuzzleId: new Map(), newest: null });
+
+		function deferredProgress(): {
+			promise: Promise<GalleryProgress[]>;
+			resolve: (rows: GalleryProgress[]) => void;
+		} {
+			let resolve!: (rows: GalleryProgress[]) => void;
+			const promise = new Promise<GalleryProgress[]>((res) => {
+				resolve = res;
+			});
+			return { promise, resolve };
+		}
+
+		const rows: GalleryProgress[] = [
+			{
+				puzzleId: 'off-page',
+				name: 'Stale Mission',
+				source: 'api',
+				placedCount: 1,
+				pieceCount: 4,
+				lastUpdated: 2_000
+			}
+		];
+		const first = deferredProgress();
+		const second = deferredProgress();
+		mockedDiscoverAllSavedProgress
+			.mockReturnValueOnce(first.promise)
+			.mockReturnValueOnce(second.promise);
+
+		render(GalleryPage);
+		await page.getByRole('button', { name: 'View saved progress' }).click();
+		await expect.element(page.getByText('LOADING SAVED PROGRESS...')).toBeVisible();
+
+		// Close while the first discovery is still in flight: loading stops.
+		await page.getByRole('button', { name: 'Close saved progress' }).click();
+		await expect
+			.poll(() => page.getByRole('dialog', { name: 'Saved progress' }).query())
+			.toBeNull();
+		expect(document.body.textContent).not.toContain('LOADING SAVED PROGRESS');
+
+		// Reopen (second request in flight), then resolve the abandoned first
+		// request with rows: the stale rows must not publish and must not stop
+		// the fresh request's loading state.
+		await page.getByRole('button', { name: 'View saved progress' }).click();
+		await expect.element(page.getByText('LOADING SAVED PROGRESS...')).toBeVisible();
+		first.resolve(rows);
+		await first.promise;
+		await Promise.resolve();
+		expect(document.body.textContent).not.toContain('Stale Mission');
+		await expect.element(page.getByText('LOADING SAVED PROGRESS...')).toBeVisible();
+
+		// Close again, then resolve the now-stale second request as empty: the
+		// resume candidates must survive (an unfenced empty result would hide
+		// the picker entry).
+		await page.getByRole('button', { name: 'Close saved progress' }).click();
+		await expect
+			.poll(() => page.getByRole('dialog', { name: 'Saved progress' }).query())
+			.toBeNull();
+		second.resolve([]);
+		await second.promise;
+		await Promise.resolve();
+		await expect.element(page.getByRole('button', { name: 'View saved progress' })).toBeVisible();
+
+		// A fresh open still discovers and renders rows.
+		mockedDiscoverAllSavedProgress.mockResolvedValue(rows);
+		await page.getByRole('button', { name: 'View saved progress' }).click();
+		await expect.element(page.getByText('Stale Mission')).toBeVisible();
 	});
 
 	it('marks main inert while the saved progress picker is open', async () => {

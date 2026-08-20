@@ -35,10 +35,13 @@
 			<button type="button" aria-label="Close saved progress" onclick={onClose}>CLOSE</button>
 		</header>
 		<div class="min-h-0 flex-1 overflow-y-auto p-5">
-			{#if loading}
-				<p>LOADING SAVED PROGRESS...</p>
-			{:else if progress.length === 0}
-				<p>NO SAVED PROGRESS</p>
+			{#if loading || progress.length === 0}
+				<!-- Polite live region so screen readers hear discovery complete:
+				     LOADING mutates to NO SAVED PROGRESS in place. Result rows
+				     render outside the region and are not announced. -->
+				<div aria-live="polite">
+					<p>{loading ? 'LOADING SAVED PROGRESS...' : 'NO SAVED PROGRESS'}</p>
+				</div>
 			{:else}
 				<ul class="flex flex-col gap-3">
 					{#each progress as item (item.puzzleId)}

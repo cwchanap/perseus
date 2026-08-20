@@ -23,6 +23,9 @@ describe('SavedProgressDialog', () => {
 		await expect.element(page.getByText('LOADING SAVED PROGRESS...')).toBeVisible();
 		await view.rerender({ progress: [], loading: false, onClose: vi.fn() });
 		await expect.element(page.getByText('NO SAVED PROGRESS')).toBeVisible();
+		const live = document.querySelector('[aria-live="polite"]');
+		expect(live).not.toBeNull();
+		expect(live?.textContent).toContain('NO SAVED PROGRESS');
 	});
 
 	it('renders a semantic row with a distinguishable Continue link', async () => {
