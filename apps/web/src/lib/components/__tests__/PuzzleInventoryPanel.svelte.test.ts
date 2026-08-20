@@ -228,7 +228,9 @@ describe('PuzzleInventoryPanel', () => {
 		// null-selection guard must short-circuit without invoking onRotate.
 		const input = baseProps();
 		render(PuzzleInventoryPanel, { ...input, selectedPieceId: null });
-		const rotate = await page.getByRole('button', { name: 'Rotate selected piece' }).element();
+		const rotate = (await page
+			.getByRole('button', { name: 'Rotate selected piece' })
+			.element()) as HTMLButtonElement;
 		expect(rotate.disabled).toBe(true);
 		rotate.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 		await Promise.resolve();
