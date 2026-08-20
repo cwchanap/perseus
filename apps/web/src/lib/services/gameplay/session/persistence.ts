@@ -101,6 +101,46 @@ function progressKey(puzzleId: string): string {
 	return `${PROGRESS_KEY_PREFIX}${puzzleId}`;
 }
 
+function resolveSessionStorage(storage?: Storage): Storage {
+	return (
+		storage ??
+		(typeof localStorage !== 'undefined' ? localStorage : undefined) ??
+		noopThrowingStorage
+	);
+}
+
+export function listResumableSessionCandidateIds(storage?: Storage): string[] {
+	const resolved = resolveSessionStorage(storage);
+	const ids = new Set<string>();
+
+	try {
+		for (let index = 0; index < resolved.length; index += 1) {
+			const key = resolved.key(index);
+			if (!key?.startsWith(PROGRESS_KEY_PREFIX)) continue;
+			const puzzleId = key.slice(PROGRESS_KEY_PREFIX.length);
+			if (!puzzleId) continue;
+
+			const raw = resolved.getItem(key);
+			if (raw === null) continue;
+			let parsed: unknown;
+			try {
+				parsed = JSON.parse(raw);
+			} catch {
+				continue;
+			}
+			if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
+			const record = parsed as Record<string, unknown>;
+			if (record.schemaVersion !== CURRENT_SESSION_SCHEMA_VERSION) continue;
+			if (record.puzzleId !== puzzleId) continue;
+			if (hasResumableSessionState(record)) ids.add(puzzleId);
+		}
+	} catch {
+		return [];
+	}
+
+	return [...ids];
+}
+
 /**
  * Allowlisted projection of runtime state to the persisted schema. Fields are
  * constructed explicitly — runtime state is never spread. Returns null for a
@@ -181,10 +221,16 @@ export function loadPersistedSession(
  * Resumable only when there is real progress to continue: active or paused,
  * the player has begun interacting, and the run has not sealed completion.
  */
+function hasResumableSessionState(record: Record<string, unknown>): boolean {
+	return (
+		(record.lifecycle === 'active' || record.lifecycle === 'paused') &&
+		record.sealedCompletion === null &&
+		record.hasUserActivity === true
+	);
+}
+
 export function isResumable(snapshot: PersistedPuzzleSessionV1): boolean {
-	if (snapshot.lifecycle !== 'active' && snapshot.lifecycle !== 'paused') return false;
-	if (snapshot.sealedCompletion !== null) return false;
-	return snapshot.hasUserActivity;
+	return hasResumableSessionState(snapshot as unknown as Record<string, unknown>);
 }
 
 // --- V1 validation ------------------------------------------------------------
@@ -776,10 +822,7 @@ export function createSessionStorageAdapter(options?: {
 	storage?: Storage;
 	onError?: (error: SessionPersistenceError) => void;
 }): SessionStorageAdapter {
-	const storage =
-		options?.storage ??
-		(typeof localStorage !== 'undefined' ? localStorage : undefined) ??
-		noopThrowingStorage;
+	const storage = resolveSessionStorage(options?.storage);
 	const onError = options?.onError;
 
 	function readSession(puzzleId: string, context: SessionValidationContext): SessionLoadResult {
