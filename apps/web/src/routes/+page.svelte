@@ -187,7 +187,7 @@
 		savedProgressController = controller;
 
 		try {
-			const items = await discoverAllSavedProgress({
+			const { rows: items, complete } = await discoverAllSavedProgress({
 				puzzleIds: savedProgressCandidateIds,
 				serverPuzzles: puzzles,
 				quickPuzzles,
@@ -199,7 +199,7 @@
 			if (requestId !== savedProgressRequestId) return;
 			savedProgressItems = items;
 			savedProgressLoading = false;
-			if (items.length === 0) savedProgressCandidateIds = [];
+			if (items.length === 0 && complete) savedProgressCandidateIds = [];
 		} catch (error) {
 			console.error('Failed to discover saved progress:', error);
 			if (requestId !== savedProgressRequestId) return;

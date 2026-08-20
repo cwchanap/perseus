@@ -10,7 +10,10 @@ import {
 	discoverGalleryProgress,
 	discoverAllSavedProgress
 } from '$lib/services/gameplay/galleryProgress';
-import type { GalleryProgress } from '$lib/services/gameplay/galleryProgress';
+import type {
+	GalleryProgress,
+	GalleryProgressDiscoveryResult
+} from '$lib/services/gameplay/galleryProgress';
 
 const sessionStorageSpies = vi.hoisted(() => ({
 	clearSession: vi.fn(),
@@ -54,7 +57,7 @@ vi.mock('$lib/services/gameplay/galleryProgress', () => ({
 		byPuzzleId: new Map(),
 		newest: null
 	}),
-	discoverAllSavedProgress: vi.fn().mockResolvedValue([])
+	discoverAllSavedProgress: vi.fn().mockResolvedValue({ rows: [], complete: true })
 }));
 
 vi.mock('$app/paths', () => ({
@@ -136,7 +139,7 @@ describe('Gallery Page', () => {
 		mockedFetchPuzzles.mockResolvedValue({ puzzles: [], total: 0, offset: 0, limit: 20 });
 		mockedListQuick.mockReturnValue([]);
 		mockedDiscoverGalleryProgress.mockReturnValue({ byPuzzleId: new Map(), newest: null });
-		mockedDiscoverAllSavedProgress.mockResolvedValue([]);
+		mockedDiscoverAllSavedProgress.mockResolvedValue({ rows: [], complete: true });
 		sessionStorageSpies.listCandidates.mockReturnValue([]);
 	});
 
@@ -334,12 +337,28 @@ describe('Gallery Page', () => {
 	it('clears the saved-progress affordance when authoritative discovery is empty', async () => {
 		sessionStorageSpies.listCandidates.mockReturnValue(['deleted-puzzle']);
 		mockedDiscoverGalleryProgress.mockReturnValue({ byPuzzleId: new Map(), newest: null });
-		mockedDiscoverAllSavedProgress.mockResolvedValue([]);
+		mockedDiscoverAllSavedProgress.mockResolvedValue({ rows: [], complete: true });
 		render(GalleryPage);
 		await page.getByRole('button', { name: 'View saved progress' }).click();
 		await expect.element(page.getByText('NO SAVED PROGRESS')).toBeVisible();
 		await page.getByRole('button', { name: 'Close saved progress' }).click();
 		await expect.poll(() => page.getByTestId('continue-on-device').query()).toBeNull();
+	});
+
+	it('keeps the saved-progress affordance when discovery is incomplete', async () => {
+		// Regression: when every off-page detail fetch fails transiently,
+		// discoverAllSavedProgress resolves with { rows: [], complete: false }.
+		// The caller must NOT clear savedProgressCandidateIds, so the VIEW
+		// SAVED PROGRESS button remains available for retry even though the
+		// dialog shows NO SAVED PROGRESS.
+		sessionStorageSpies.listCandidates.mockReturnValue(['off-page-a', 'off-page-b']);
+		mockedDiscoverGalleryProgress.mockReturnValue({ byPuzzleId: new Map(), newest: null });
+		mockedDiscoverAllSavedProgress.mockResolvedValue({ rows: [], complete: false });
+		render(GalleryPage);
+		await page.getByRole('button', { name: 'View saved progress' }).click();
+		await expect.element(page.getByText('NO SAVED PROGRESS')).toBeVisible();
+		await page.getByRole('button', { name: 'Close saved progress' }).click();
+		await expect.element(page.getByRole('button', { name: 'View saved progress' })).toBeVisible();
 	});
 
 	it('stops loading when saved-progress discovery rejects', async () => {
@@ -371,7 +390,7 @@ describe('Gallery Page', () => {
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
 		let rejectDiscovery!: (error: Error) => void;
-		const inFlight = new Promise<GalleryProgress[]>((_, reject) => {
+		const inFlight = new Promise<GalleryProgressDiscoveryResult>((_, reject) => {
 			rejectDiscovery = reject;
 		});
 		mockedDiscoverAllSavedProgress.mockReturnValueOnce(inFlight);
@@ -405,11 +424,11 @@ describe('Gallery Page', () => {
 		mockedDiscoverGalleryProgress.mockReturnValue({ byPuzzleId: new Map(), newest: null });
 
 		function deferredProgress(): {
-			promise: Promise<GalleryProgress[]>;
-			resolve: (rows: GalleryProgress[]) => void;
+			promise: Promise<GalleryProgressDiscoveryResult>;
+			resolve: (value: GalleryProgressDiscoveryResult) => void;
 		} {
-			let resolve!: (rows: GalleryProgress[]) => void;
-			const promise = new Promise<GalleryProgress[]>((res) => {
+			let resolve!: (value: GalleryProgressDiscoveryResult) => void;
+			const promise = new Promise<GalleryProgressDiscoveryResult>((res) => {
 				resolve = res;
 			});
 			return { promise, resolve };
@@ -447,7 +466,7 @@ describe('Gallery Page', () => {
 		// the fresh request's loading state.
 		await page.getByRole('button', { name: 'View saved progress' }).click();
 		await expect.element(page.getByText('LOADING SAVED PROGRESS...')).toBeVisible();
-		first.resolve(rows);
+		first.resolve({ rows, complete: true });
 		await first.promise;
 		await Promise.resolve();
 		expect(document.body.textContent).not.toContain('Stale Mission');
@@ -460,13 +479,13 @@ describe('Gallery Page', () => {
 		await expect
 			.poll(() => page.getByRole('dialog', { name: 'Saved progress' }).query())
 			.toBeNull();
-		second.resolve([]);
+		second.resolve({ rows: [], complete: true });
 		await second.promise;
 		await Promise.resolve();
 		await expect.element(page.getByRole('button', { name: 'View saved progress' })).toBeVisible();
 
 		// A fresh open still discovers and renders rows.
-		mockedDiscoverAllSavedProgress.mockResolvedValue(rows);
+		mockedDiscoverAllSavedProgress.mockResolvedValue({ rows, complete: true });
 		await page.getByRole('button', { name: 'View saved progress' }).click();
 		await expect.element(page.getByText('Stale Mission')).toBeVisible();
 	});

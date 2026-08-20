@@ -544,7 +544,7 @@ describe('discoverAllSavedProgress', () => {
 		});
 		const fetchPuzzleById = vi.fn(async (id: string) => fetchedServerPuzzle(id, 'Fetched Save'));
 
-		const rows = await discoverAllSavedProgress({
+		const { rows } = await discoverAllSavedProgress({
 			puzzleIds: ['loaded', 'old', 'q-test'],
 			serverPuzzles: [serverPuzzle('loaded', 4, '1:1', { name: 'Loaded Save' })],
 			quickPuzzles: [quickPuzzle()],
@@ -565,7 +565,7 @@ describe('discoverAllSavedProgress', () => {
 		});
 		const fetchPuzzleById = vi.fn();
 
-		const rows = await discoverAllSavedProgress({
+		const { rows } = await discoverAllSavedProgress({
 			puzzleIds: ['a', 'b'],
 			serverPuzzles: [serverPuzzle('a', 4, '1:1'), serverPuzzle('b', 4, '1:1')],
 			quickPuzzles: [],
@@ -588,7 +588,7 @@ describe('discoverAllSavedProgress', () => {
 			return fetchedServerPuzzle(id, 'Fetched Save');
 		});
 
-		const rows = await discoverAllSavedProgress({
+		const { rows, complete } = await discoverAllSavedProgress({
 			puzzleIds: ['gone', 'kept'],
 			serverPuzzles: [],
 			quickPuzzles: [],
@@ -597,6 +597,36 @@ describe('discoverAllSavedProgress', () => {
 		});
 
 		expect(rows.map((row) => row.puzzleId)).toEqual(['kept']);
+		// A transient fetch failure marks discovery incomplete so the caller
+		// does not clear saved-progress candidate ids on a partial result.
+		expect(complete).toBe(false);
+		expect(fetchPuzzleById).toHaveBeenCalledTimes(2);
+	});
+
+	it('marks discovery incomplete when every off-page detail fetch fails transiently', async () => {
+		// Regression: if all candidates are off-page and their detail requests
+		// fail transiently (network blip, 5xx), the result must be empty rows
+		// BUT complete=false so the caller does not clear savedProgressCandidateIds
+		// and hide the VIEW SAVED PROGRESS affordance while local saves persist.
+		const base = validSnapshot();
+		const store = memoryStorage({
+			'puzzle-progress-off-a': JSON.stringify({ ...base, puzzleId: 'off-a', lastUpdated: 5_000 }),
+			'puzzle-progress-off-b': JSON.stringify({ ...base, puzzleId: 'off-b', lastUpdated: 3_000 })
+		});
+		const fetchPuzzleById = vi.fn(async () => {
+			throw new Error('network down');
+		});
+
+		const { rows, complete } = await discoverAllSavedProgress({
+			puzzleIds: ['off-a', 'off-b'],
+			serverPuzzles: [],
+			quickPuzzles: [],
+			fetchPuzzleById,
+			sessionStorage: createSessionStorageAdapter({ storage: store })
+		});
+
+		expect(rows).toEqual([]);
+		expect(complete).toBe(false);
 		expect(fetchPuzzleById).toHaveBeenCalledTimes(2);
 	});
 
@@ -612,7 +642,7 @@ describe('discoverAllSavedProgress', () => {
 		});
 		const fetchPuzzleById = vi.fn();
 
-		const rows = await discoverAllSavedProgress({
+		const { rows } = await discoverAllSavedProgress({
 			puzzleIds: ['q-orphan'],
 			serverPuzzles: [],
 			quickPuzzles: [],
@@ -636,7 +666,7 @@ describe('discoverAllSavedProgress', () => {
 		const store = { 'puzzle-progress-done': raw };
 		const fetchPuzzleById = vi.fn(async () => fetchedServerPuzzle('done', 'Done Save'));
 
-		const rows = await discoverAllSavedProgress({
+		const { rows } = await discoverAllSavedProgress({
 			puzzleIds: ['done'],
 			serverPuzzles: [],
 			quickPuzzles: [],
@@ -667,7 +697,7 @@ describe('discoverAllSavedProgress', () => {
 			id === 'dup' ? dupIdPuzzle : outOfBoundsPuzzle
 		);
 
-		const rows = await discoverAllSavedProgress({
+		const { rows } = await discoverAllSavedProgress({
 			puzzleIds: ['dup', 'oob'],
 			serverPuzzles: [],
 			quickPuzzles: [],
@@ -691,7 +721,7 @@ describe('discoverAllSavedProgress', () => {
 			})
 		});
 
-		const rows = await discoverAllSavedProgress({
+		const { rows } = await discoverAllSavedProgress({
 			puzzleIds: ['b', 'a', 'q-test'],
 			serverPuzzles: [serverPuzzle('a', 4, '1:1'), serverPuzzle('b', 4, '1:1')],
 			quickPuzzles: [quickPuzzle()],
@@ -742,7 +772,7 @@ describe('discoverAllSavedProgress', () => {
 		controller.abort();
 		const fetchPuzzleById = vi.fn();
 
-		const rows = await discoverAllSavedProgress({
+		const { rows } = await discoverAllSavedProgress({
 			puzzleIds: ['fetched'],
 			serverPuzzles: [],
 			quickPuzzles: [],
@@ -777,7 +807,7 @@ describe('discoverAllSavedProgress', () => {
 			return fetchedServerPuzzle('fetched', 'Fetched Save');
 		});
 
-		const rows = await discoverAllSavedProgress({
+		const { rows } = await discoverAllSavedProgress({
 			puzzleIds: ['fetched'],
 			serverPuzzles: [],
 			quickPuzzles: [],
@@ -797,7 +827,7 @@ describe('discoverAllSavedProgress', () => {
 		// fallback branch itself is exercised.
 		const fetchPuzzleById = vi.fn(async (id: string) => fetchedServerPuzzle(id, 'Fetched Save'));
 
-		const rows = await discoverAllSavedProgress({
+		const { rows } = await discoverAllSavedProgress({
 			puzzleIds: ['fetched'],
 			serverPuzzles: [],
 			quickPuzzles: [],
@@ -816,7 +846,7 @@ describe('discoverAllSavedProgress', () => {
 			return fetchedServerPuzzle('different', 'Mismatched Id');
 		});
 
-		const rows = await discoverAllSavedProgress({
+		const { rows } = await discoverAllSavedProgress({
 			puzzleIds: ['', 'mismatch'],
 			serverPuzzles: [],
 			quickPuzzles: [],
@@ -858,7 +888,7 @@ describe('discoverAllSavedProgress', () => {
 		};
 		const fetchPuzzleById = vi.fn();
 
-		const rows = await discoverAllSavedProgress({
+		const { rows } = await discoverAllSavedProgress({
 			puzzleIds: ['bad-summary', 'q-bad-quick'],
 			serverPuzzles: [serverPuzzle('bad-summary', 5, '1:1')],
 			quickPuzzles: [mismatchedQuick],
