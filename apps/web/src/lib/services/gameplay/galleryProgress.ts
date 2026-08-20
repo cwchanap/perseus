@@ -195,15 +195,18 @@ export async function discoverAllSavedProgress(options: {
 	puzzleIds: readonly string[];
 	serverPuzzles: readonly PuzzleSummary[];
 	quickPuzzles: readonly StoredQuickPuzzle[];
-	fetchPuzzleById: (puzzleId: string) => Promise<Puzzle>;
+	fetchPuzzleById: (puzzleId: string, signal?: AbortSignal) => Promise<Puzzle>;
 	sessionStorage?: SessionStorageAdapter;
+	signal?: AbortSignal;
 }): Promise<GalleryProgress[]> {
 	const sessionStorage = options.sessionStorage ?? createSessionStorageAdapter();
 	const serverById = new Map(options.serverPuzzles.map((puzzle) => [puzzle.id, puzzle] as const));
 	const quickById = new Map(options.quickPuzzles.map((puzzle) => [puzzle.id, puzzle] as const));
+	const signal = options.signal;
 
 	const candidates = await Promise.all(
 		[...new Set(options.puzzleIds)].map(async (puzzleId): Promise<GalleryCandidate | null> => {
+			if (signal?.aborted) return null;
 			if (puzzleId.startsWith(QUICK_PUZZLE_ID_PREFIX)) {
 				const puzzle = quickById.get(puzzleId);
 				if (!puzzle) return null;
@@ -228,7 +231,8 @@ export async function discoverAllSavedProgress(options: {
 			}
 
 			try {
-				const puzzle = await options.fetchPuzzleById(puzzleId);
+				const puzzle = await options.fetchPuzzleById(puzzleId, signal);
+				if (signal?.aborted) return null;
 				if (puzzle.id !== puzzleId) return null;
 				const context = explicitValidationContext({
 					puzzleId: puzzle.id,
@@ -246,6 +250,8 @@ export async function discoverAllSavedProgress(options: {
 			}
 		})
 	);
+
+	if (signal?.aborted) return [];
 
 	return candidates
 		.flatMap((candidate) => {

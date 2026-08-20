@@ -8,11 +8,6 @@
 	}
 
 	let { puzzleName, onConfirm, onCancel }: Props = $props();
-
-	const primaryButtonClass =
-		'rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors cursor-pointer hover:bg-indigo-500';
-	const secondaryButtonClass =
-		'rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-900 shadow-sm transition-colors cursor-pointer hover:bg-gray-100';
 </script>
 
 <div
@@ -26,19 +21,21 @@
 		tabindex="-1"
 		use:modalFocus
 		onkeydown={(event) => event.key === 'Escape' && onCancel()}
-		class="
-			flex max-h-[100dvh] w-full max-w-md flex-col overflow-hidden rounded-2xl bg-white
-			shadow-xl
-		"
+		class="flex max-h-[100dvh] w-full max-w-md flex-col overflow-hidden border border-(--hot)
+		bg-(--bg-1) [box-shadow:0_0_40px_var(--hot-glow)]"
 	>
 		<div class="min-h-0 flex-1 overflow-y-auto p-6">
-			<h2 class="text-lg font-semibold text-gray-900">Discard saved progress?</h2>
-			<p class="mt-2 text-sm text-gray-600">
+			<h2
+				class="text-[0.95rem] font-(--font-display) font-bold tracking-[0.12em] text-(--text-0) uppercase"
+			>
+				Discard saved progress?
+			</h2>
+			<p class="mt-2 text-[0.8rem] font-(--font-mono) tracking-[0.05em] text-(--text-2)">
 				This permanently removes saved progress for {puzzleName}.
 			</p>
 			<div class="mt-6 flex flex-wrap justify-end gap-2">
-				<button type="button" onclick={onCancel} class={secondaryButtonClass}>Cancel</button>
-				<button type="button" onclick={onConfirm} class={primaryButtonClass}>Discard</button>
+				<button type="button" onclick={onCancel} class="arcade-btn-ghost">Cancel</button>
+				<button type="button" onclick={onConfirm} class="arcade-btn-danger">Discard</button>
 			</div>
 		</div>
 	</div>

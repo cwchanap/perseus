@@ -1,6 +1,11 @@
-import { test, expect, type Page } from '@playwright/test';
+import type { Page } from '@playwright/test';
+import { test, expect } from './support/test';
 import type { PuzzleSummary } from '@perseus/types';
-import { getFixture } from './gameplay-fixtures/catalog';
+import {
+	buildGameplayConfig,
+	getFixture,
+	type GameplayFixtureId
+} from './gameplay-fixtures/catalog';
 import { createFixtureRouter } from './gameplay-fixtures/fixture-router';
 import {
 	buildMinimalSeed,
@@ -32,7 +37,7 @@ const samplePuzzle = {
 	createdAt: 0,
 	pieces: [
 		{
-			id: 1,
+			id: 0,
 			puzzleId: 'puzzle-1',
 			correctX: 0,
 			correctY: 0,
@@ -50,6 +55,41 @@ async function mockPuzzleList(page: Page, puzzles: PuzzleSummary[]) {
 
 async function mockPuzzleDetail(page: Page, puzzle: typeof samplePuzzle) {
 	await page.route(`**/api/puzzles/${puzzle.id}`, (route) => route.fulfill({ json: puzzle }));
+}
+
+// Plant the frozen gameplay config global for a fixture so a navigation into
+// /puzzle/<e2e-*> loads cleanly under the harness runtime reader. Registered
+// as an init script so it runs before the puzzle page's app scripts; guarded
+// so repeated navigations (the global persists across same-origin loads) do
+// not attempt to redefine the non-configurable property.
+async function plantGameplayConfig(page: Page, fixtureId: GameplayFixtureId): Promise<void> {
+	const configJson = JSON.stringify(buildGameplayConfig(getFixture(fixtureId)));
+	await page.addInitScript(
+		(args: { configJson: string; configGlobal: string }) => {
+			const w = window as unknown as Record<string, unknown>;
+			if (w[args.configGlobal]) return;
+			const deepFreeze = (value: unknown): void => {
+				if (value === null || typeof value !== 'object') return;
+				Object.freeze(value);
+				if (Array.isArray(value)) {
+					for (const item of value) deepFreeze(item);
+				} else {
+					for (const child of Object.values(value as Record<string, unknown>)) {
+						deepFreeze(child);
+					}
+				}
+			};
+			const config = JSON.parse(args.configJson);
+			deepFreeze(config);
+			Object.defineProperty(w, args.configGlobal, {
+				value: config,
+				writable: false,
+				configurable: false,
+				enumerable: true
+			});
+		},
+		{ configJson, configGlobal: '__PERSEUS_E2E_GAMEPLAY_V1__' }
+	);
 }
 
 test.describe('Main Gallery Page', () => {
@@ -132,7 +172,8 @@ test.describe('Main Gallery Page', () => {
 		await expect(page).toHaveURL(/\/puzzle\/e2e-square-4/);
 	});
 
-	test('opens saved progress and resumes an older off-page save', async ({ page }) => {
+	test('opens saved progress and resumes an older off-page save', async ({ gameplayPage }) => {
+		const page = gameplayPage.page;
 		const newestId = 'e2e-square-4';
 		const olderId = 'e2e-landscape-12';
 		const newest = getFixture(newestId);
@@ -151,6 +192,11 @@ test.describe('Main Gallery Page', () => {
 			}
 		]);
 		await createFixtureRouter().install(page);
+		// Plant the gameplay config for the off-page save before any navigation
+		// so the eventual CONTINUE click into /puzzle/e2e-landscape-12 loads
+		// cleanly under the harness runtime reader (an unconfigured e2e-* puzzle
+		// is a hard PERSEUS_E2E_CONFIG error otherwise).
+		await plantGameplayConfig(page, olderId);
 		await page.goto('/');
 
 		await storage.seedValid(page, newestId, {

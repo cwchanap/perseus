@@ -37,10 +37,8 @@
 		}
 	}
 
-	const primaryButtonClass =
-		'rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors cursor-pointer hover:bg-indigo-500';
-	const secondaryButtonClass =
-		'rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-900 shadow-sm transition-colors cursor-pointer hover:bg-gray-100';
+	const primaryButtonClass = 'arcade-btn';
+	const secondaryButtonClass = 'arcade-btn-ghost';
 </script>
 
 <div
@@ -55,18 +53,27 @@
 		tabindex="-1"
 		use:modalFocus={mandatory}
 		onkeydown={handleKeydown}
-		class="flex max-h-[100dvh] w-full max-w-md flex-col overflow-hidden rounded-2xl bg-white shadow-xl"
+		class="flex max-h-[100dvh] w-full max-w-md flex-col overflow-hidden border border-(--accent)
+		bg-(--bg-1) [box-shadow:0_0_40px_var(--accent-glow)]"
 	>
 		<div class="min-h-0 flex-1 overflow-y-auto p-6">
-			<h2 class="text-lg font-semibold text-gray-900">Mission Setup</h2>
-			<p class="mt-1 text-sm text-gray-600">
+			<h2
+				class="text-[0.95rem] font-(--font-display) font-bold tracking-[0.12em] text-(--text-0) uppercase"
+			>
+				Mission Setup
+			</h2>
+			<p class="mt-1 text-[0.8rem] font-(--font-mono) tracking-[0.05em] text-(--text-2)">
 				{puzzleName} · {pieceCount} pieces · {gridCols} × {gridRows} grid
 			</p>
 
 			<fieldset class="mt-4">
-				<legend class="text-sm font-medium text-gray-900">Mode</legend>
+				<legend
+					class="text-[0.7rem] font-(--font-mono) tracking-[0.18em] text-(--accent) uppercase"
+				>
+					Mode
+				</legend>
 				<div class="mt-2 flex flex-wrap gap-4">
-					<label class="flex items-center gap-2 text-sm text-gray-800">
+					<label class="flex items-center gap-2 text-[0.8rem] text-(--text-1)">
 						<input
 							type="radio"
 							name="mission-mode"
@@ -76,7 +83,7 @@
 						/>
 						Timed
 					</label>
-					<label class="flex items-center gap-2 text-sm text-gray-800">
+					<label class="flex items-center gap-2 text-[0.8rem] text-(--text-1)">
 						<input
 							type="radio"
 							name="mission-mode"
@@ -89,7 +96,7 @@
 				</div>
 			</fieldset>
 
-			<label class="mt-4 flex items-center gap-2 text-sm text-gray-800">
+			<label class="mt-4 flex items-center gap-2 text-[0.8rem] text-(--text-1)">
 				<input
 					type="checkbox"
 					checked={draft.rotationEnabled}
@@ -98,7 +105,7 @@
 				Enable rotation
 			</label>
 
-			<label class="mt-3 flex items-center gap-2 text-sm text-gray-800">
+			<label class="mt-3 flex items-center gap-2 text-[0.8rem] text-(--text-1)">
 				<input
 					type="checkbox"
 					checked={draft.startImmediately}
@@ -107,7 +114,9 @@
 				Start immediately next time
 			</label>
 
-			<p id="mission-setup-help" class="mt-4 text-xs text-gray-500">{inputHelp}</p>
+			<p id="mission-setup-help" class="mt-4 text-[0.7rem] font-(--font-mono) text-(--text-2)">
+				{inputHelp}
+			</p>
 
 			<div class="mt-6 flex flex-wrap justify-end gap-2">
 				{#if !mandatory}
