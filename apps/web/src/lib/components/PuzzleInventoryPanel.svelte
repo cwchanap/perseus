@@ -364,6 +364,19 @@
 		border-color: var(--accent);
 	}
 
+	/* Mirrors PuzzleToolbar's disabled toolbar buttons: dim + not-allowed
+	   cursor, and no hover accent while disabled (ROTATE without a selection,
+	   SHUFFLE with <= 1 unplaced piece). */
+	.panel-action:disabled {
+		cursor: not-allowed;
+		opacity: 0.45;
+	}
+
+	.panel-action:disabled:hover {
+		color: var(--text-2);
+		border-color: var(--border);
+	}
+
 	/* Active inventory filter: aria-pressed alone is invisible to sighted
 	   users, so mirror PuzzleToolbar's pressed Rotation button and give the
 	   active filter a distinct accent border/fill. Scoped to the tools row so
