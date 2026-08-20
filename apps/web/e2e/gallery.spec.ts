@@ -132,6 +132,65 @@ test.describe('Main Gallery Page', () => {
 		await expect(page).toHaveURL(/\/puzzle\/e2e-square-4/);
 	});
 
+	test('opens saved progress and resumes an older off-page save', async ({ page }) => {
+		const newestId = 'e2e-square-4';
+		const olderId = 'e2e-landscape-12';
+		const newest = getFixture(newestId);
+		const older = getFixture(olderId);
+		const newestPiece = newest.pieces[0]!;
+		const olderPiece = older.pieces[0]!;
+		const storage = createPersistedStateController();
+
+		await mockPuzzleList(page, [
+			{
+				id: newestId,
+				name: 'Newest Resume Fixture',
+				pieceCount: newest.pieceCount,
+				aspectRatio: newest.aspectRatio,
+				status: 'ready'
+			}
+		]);
+		await createFixtureRouter().install(page);
+		await page.goto('/');
+
+		await storage.seedValid(page, newestId, {
+			...buildMinimalSeed(newestId),
+			placedPieces: [
+				{
+					pieceId: newestPiece.id,
+					x: newestPiece.correctX,
+					y: newestPiece.correctY
+				}
+			],
+			timerStarted: true,
+			hasUserActivity: true,
+			lastUpdated: 3_000
+		});
+		await storage.seedValid(page, olderId, {
+			...buildMinimalSeed(olderId),
+			placedPieces: [
+				{
+					pieceId: olderPiece.id,
+					x: olderPiece.correctX,
+					y: olderPiece.correctY
+				}
+			],
+			timerStarted: true,
+			hasUserActivity: true,
+			lastUpdated: 2_000
+		});
+		await page.reload();
+
+		await expect(page.getByTestId('continue-on-device')).toContainText('Newest Resume Fixture');
+		await page.getByRole('button', { name: 'View saved progress' }).click();
+
+		const dialog = page.getByRole('dialog', { name: 'Saved progress' });
+		await expect(dialog.getByTestId(`saved-progress-row-${newestId}`)).toBeVisible();
+		await expect(dialog.getByTestId(`saved-progress-row-${olderId}`)).toContainText(older.name);
+		await dialog.getByRole('link', { name: `Continue ${older.name}` }).click();
+		await expect(page).toHaveURL(new RegExp(`/puzzle/${olderId}$`));
+	});
+
 	test('should show no-results state when search returns empty', async ({ page }) => {
 		// First load with puzzles, then search returns empty
 		await page.route(/\/api\/puzzles(?:\?.*)?$/, async (route) => {
