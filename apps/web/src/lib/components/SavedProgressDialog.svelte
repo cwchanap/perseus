@@ -82,7 +82,8 @@
 					<p
 						data-testid="saved-progress-partial-warning"
 						role="status"
-						class="mb-3 border border-(--hot)/60 bg-(--hot)/10 px-3 py-2 text-[0.7rem] font-(--font-mono) tracking-[0.18em] text-(--hot) uppercase"
+						class="mb-3 border border-(--hot)/60 bg-(--hot)/10 px-3 py-2 text-[0.7rem] font-(--font-mono)
+						tracking-[0.18em] text-(--hot) uppercase"
 					>
 						Some saved progress could not be loaded — try again
 					</p>
