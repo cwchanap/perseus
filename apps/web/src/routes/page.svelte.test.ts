@@ -335,7 +335,11 @@ describe('Gallery Page', () => {
 	});
 
 	it('clears the saved-progress affordance when authoritative discovery is empty', async () => {
-		sessionStorageSpies.listCandidates.mockReturnValue(['deleted-puzzle']);
+		// The first listResumableSessionCandidateIds call (onMount) returns the
+		// stale candidate. After discoverAllSavedProgress purges it via
+		// clearSession on a 400/404, the post-discovery refresh call returns
+		// [] — simulating the real storage state after the purge.
+		sessionStorageSpies.listCandidates.mockReturnValueOnce(['deleted-puzzle']).mockReturnValue([]);
 		mockedDiscoverGalleryProgress.mockReturnValue({ byPuzzleId: new Map(), newest: null });
 		mockedDiscoverAllSavedProgress.mockResolvedValue({ rows: [], complete: true });
 		render(GalleryPage);
@@ -361,6 +365,50 @@ describe('Gallery Page', () => {
 		expect(document.body.textContent).not.toContain('NO SAVED PROGRESS');
 		await page.getByRole('button', { name: 'Close saved progress' }).click();
 		await expect.element(page.getByRole('button', { name: 'View saved progress' })).toBeVisible();
+	});
+
+	it('refreshes candidate ids after a complete mixed discovery and on remount', async () => {
+		// Mixed discovery: 'valid' surfaces as a row, 'gone' is purged (404).
+		// After a complete discovery, savedProgressCandidateIds is refreshed
+		// from listResumableSessionCandidateIds so the stale 'gone' id is
+		// removed in-memory. On remount, onMount reads fresh from storage —
+		// the purged id does not reappear.
+		const validRow: GalleryProgress = {
+			puzzleId: 'valid',
+			name: 'Valid Save',
+			source: 'api',
+			placedCount: 1,
+			pieceCount: 4,
+			lastUpdated: 2_000
+		};
+		// First call: onMount returns both ids. Second call: post-discovery
+		// refresh returns only the surviving id (purged 'gone' is gone).
+		// Third call: remount onMount reads the same post-purge state.
+		sessionStorageSpies.listCandidates
+			.mockReturnValueOnce(['valid', 'gone'])
+			.mockReturnValueOnce(['valid'])
+			.mockReturnValueOnce(['valid']);
+		mockedDiscoverGalleryProgress.mockReturnValue({ byPuzzleId: new Map(), newest: null });
+		mockedDiscoverAllSavedProgress.mockResolvedValue({ rows: [validRow], complete: true });
+
+		const { unmount } = render(GalleryPage);
+		await page.getByRole('button', { name: 'View saved progress' }).click();
+		await expect.element(page.getByText('Valid Save')).toBeVisible();
+		await page.getByRole('button', { name: 'Close saved progress' }).click();
+
+		// After discovery+refresh, only 'valid' remains — the affordance
+		// survives because a valid candidate is still in the list.
+		await expect.element(page.getByRole('button', { name: 'View saved progress' })).toBeVisible();
+		// listResumableSessionCandidateIds was called twice: once on mount,
+		// once after the complete discovery to refresh stale ids.
+		expect(sessionStorageSpies.listCandidates).toHaveBeenCalledTimes(2);
+
+		// Remount: onMount reads the post-purge storage state, so 'gone' does
+		// not resurface as a candidate.
+		unmount();
+		render(GalleryPage);
+		await expect.element(page.getByRole('button', { name: 'View saved progress' })).toBeVisible();
+		expect(sessionStorageSpies.listCandidates).toHaveBeenCalledTimes(3);
 	});
 
 	it('stops loading when saved-progress discovery rejects', async () => {
@@ -420,6 +468,9 @@ describe('Gallery Page', () => {
 
 		expect(document.body.textContent).not.toContain('LOADING SAVED PROGRESS');
 		await expect.element(page.getByRole('button', { name: 'View saved progress' })).toBeVisible();
+		// The stale/aborted rejection must early-return before console.error,
+		// so no error is logged for an intentionally aborted request.
+		expect(consoleSpy).not.toHaveBeenCalled();
 
 		consoleSpy.mockRestore();
 	});

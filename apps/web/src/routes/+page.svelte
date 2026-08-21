@@ -206,10 +206,19 @@
 			savedProgressItems = items;
 			savedProgressComplete = complete;
 			savedProgressLoading = false;
-			if (items.length === 0 && complete) savedProgressCandidateIds = [];
+			// After a complete discovery, refresh candidate ids from storage so
+			// stale entries purged by discoverAllSavedProgress (400/404) or
+			// filtered by listResumableSessionCandidateIds (completed/invalid
+			// sessions) are removed. An incomplete discovery keeps the existing
+			// ids intact for retry.
+			if (complete) savedProgressCandidateIds = listResumableSessionCandidateIds();
 		} catch (error) {
+			// Stale or intentionally aborted requests (picker closed, newer
+			// request superseded) must not log or mutate state — the abort is
+			// expected, not an error. Only current, non-aborted failures publish
+			// the retryable outage state and preserve candidate ids for retry.
+			if (requestId !== savedProgressRequestId || controller.signal.aborted) return;
 			console.error('Failed to discover saved progress:', error);
-			if (requestId !== savedProgressRequestId) return;
 			savedProgressItems = [];
 			// A rejection means discovery never completed — treat as incomplete
 			// so the dialog shows the retryable outage state, not "NO SAVED

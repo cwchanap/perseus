@@ -267,9 +267,15 @@ export async function discoverAllSavedProgress(options: {
 					? { puzzleId, name: puzzle.name, source: 'api', pieceCount: puzzle.pieceCount, context }
 					: null;
 			} catch (error) {
-				// 400/404 are authoritative: the puzzle is gone, so this candidate
-				// is permanently skippable and must not keep discovery incomplete.
-				if (!isAuthoritativeFetchFailure(error)) hadFetchFailure = true;
+				// 400/404 are authoritative: the puzzle is gone for good, so purge
+				// the dead persisted session and keep discovery complete. Transient
+				// failures (network/5xx) leave the session intact and mark
+				// discovery incomplete so the caller can retry.
+				if (isAuthoritativeFetchFailure(error)) {
+					sessionStorage.clearSession(puzzleId);
+				} else {
+					hadFetchFailure = true;
+				}
 				return null;
 			}
 		})

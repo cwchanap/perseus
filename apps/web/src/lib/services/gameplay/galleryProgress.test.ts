@@ -725,6 +725,67 @@ describe('discoverAllSavedProgress', () => {
 		expect(fetchPuzzleById).toHaveBeenCalledTimes(2);
 	});
 
+	it('purges persisted sessions on 404 while keeping valid candidates', async () => {
+		// Mixed discovery: one candidate fetches successfully and surfaces as a
+		// row, another 404s (puzzle deleted). The 404 is authoritative, so the
+		// dead persisted session must be purged from storage (not just
+		// skipped) — otherwise it survives forever and reappears on every
+		// remount via listResumableSessionCandidateIds. Discovery stays
+		// complete so the caller refreshes candidate ids.
+		const base = validSnapshot();
+		const store: Record<string, string> = {
+			'puzzle-progress-valid': JSON.stringify({ ...base, puzzleId: 'valid', lastUpdated: 2_000 }),
+			'puzzle-progress-gone': JSON.stringify({ ...base, puzzleId: 'gone', lastUpdated: 5_000 })
+		};
+		const fetchPuzzleById = vi.fn(async (id: string) => {
+			if (id === 'gone')
+				throw Object.assign(new Error('Puzzle not found'), { status: 404, name: 'ApiError' });
+			return fetchedServerPuzzle(id, 'Valid Save');
+		});
+
+		const { rows, complete } = await discoverAllSavedProgress({
+			puzzleIds: ['valid', 'gone'],
+			serverPuzzles: [],
+			quickPuzzles: [],
+			fetchPuzzleById,
+			sessionStorage: createSessionStorageAdapter({ storage: memoryStorage(store) })
+		});
+
+		// The valid candidate surfaces; the 404 candidate is omitted.
+		expect(rows.map((row) => row.puzzleId)).toEqual(['valid']);
+		expect(complete).toBe(true);
+		// The 404 candidate's persisted session is purged from storage.
+		expect(store['puzzle-progress-gone']).toBeUndefined();
+		// The valid candidate's session is preserved.
+		expect(store['puzzle-progress-valid']).toBeDefined();
+	});
+
+	it('does not purge persisted sessions on transient (5xx) failures', async () => {
+		// A transient failure must not purge the session — the puzzle may
+		// recover on retry, and deleting the save would lose real progress.
+		const base = validSnapshot();
+		const store: Record<string, string> = {
+			'puzzle-progress-flaky': JSON.stringify({ ...base, puzzleId: 'flaky', lastUpdated: 5_000 })
+		};
+		const fetchPuzzleById = vi.fn(async () => {
+			throw Object.assign(new Error('Failed to retrieve puzzle'), {
+				status: 500,
+				name: 'ApiError'
+			});
+		});
+
+		await discoverAllSavedProgress({
+			puzzleIds: ['flaky'],
+			serverPuzzles: [],
+			quickPuzzles: [],
+			fetchPuzzleById,
+			sessionStorage: createSessionStorageAdapter({ storage: memoryStorage(store) })
+		});
+
+		// The session survives a transient failure for retry.
+		expect(store['puzzle-progress-flaky']).toBeDefined();
+	});
+
 	it('omits Quick candidates without loaded Quick metadata instead of fetching', async () => {
 		const base = validSnapshot();
 		const store = memoryStorage({
