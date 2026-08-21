@@ -349,38 +349,43 @@ describe('Gallery Page', () => {
 		await expect.poll(() => page.getByTestId('continue-on-device').query()).toBeNull();
 	});
 
-	it('clears the affordance when a shallow-passing save fails deep validation', async () => {
+	it('clears the affordance when a shallow-passing save fails deep validation and stays gone on remount', async () => {
 		// Regression: listResumableSessionCandidateIds is a shallow probe
 		// (schema version, puzzle-id match, lifecycle active/paused,
 		// unsealed, hasUserActivity). A current-schema active save can pass
 		// the shallow probe but fail full peekSession() validation (malformed
 		// tray order, counters, result-class state, etc.). In that case
-		// discoverAllSavedProgress returns { rows: [], complete: true }
-		// WITHOUT purging the session from storage — so the shallow probe
-		// would re-list the same id on every call.
+		// discoverAllSavedProgress purges the structurally invalid session
+		// from storage (like 400/404) and returns { rows: [], complete: true }.
 		//
-		// The post-discovery refresh must use the authoritative discovery
-		// result (items.map(item => item.puzzleId)), not a shallow
-		// re-probe. Otherwise the dialog says NO SAVED PROGRESS but closing
-		// it leaves VIEW SAVED PROGRESS visible forever, because the shallow
-		// re-probe re-adds the rejected id.
+		// Two things must happen for the dead affordance to stay gone:
+		//   1. The in-memory refresh sets savedProgressCandidateIds from the
+		//      authoritative result (items.map(item => item.puzzleId)), so
+		//      the affordance disappears immediately on the current mount.
+		//   2. The purge removes the session from storage, so onMount's
+		//      shallow re-probe on remount does not re-add the dead id.
 		//
-		// Here listCandidates returns ['stale-id'] on EVERY call to
-		// simulate the session surviving in storage through the shallow
-		// probe. The old code (listResumableSessionCandidateIds() refresh)
-		// would re-add 'stale-id' after discovery, leaving the affordance
-		// visible. The fix (items.map(item => item.puzzleId)) sets
-		// savedProgressCandidateIds to [] and removes the affordance.
-		sessionStorageSpies.listCandidates.mockReturnValue(['stale-id']);
+		// Here listCandidates returns ['stale-id'] on the first call (mount)
+		// and [] on the second call (remount), simulating the purge having
+		// removed the session from storage during authoritative discovery.
+		sessionStorageSpies.listCandidates.mockReturnValueOnce(['stale-id']).mockReturnValue([]);
 		mockedDiscoverGalleryProgress.mockReturnValue({ byPuzzleId: new Map(), newest: null });
 		mockedDiscoverAllSavedProgress.mockResolvedValue({ rows: [], complete: true });
-		render(GalleryPage);
+
+		const { unmount } = render(GalleryPage);
 		await page.getByRole('button', { name: 'View saved progress' }).click();
 		await expect.element(page.getByText('NO SAVED PROGRESS')).toBeVisible();
 		await page.getByRole('button', { name: 'Close saved progress' }).click();
 		// The affordance must be gone: the authoritative result was empty,
 		// so savedProgressCandidateIds is [] regardless of what the shallow
 		// probe still returns from storage.
+		await expect.poll(() => page.getByTestId('continue-on-device').query()).toBeNull();
+
+		// Remount: onMount re-probes shallow storage. The session was purged
+		// during authoritative discovery, so listResumableSessionCandidateIds
+		// returns [] and the dead affordance does not reappear.
+		unmount();
+		render(GalleryPage);
 		await expect.poll(() => page.getByTestId('continue-on-device').query()).toBeNull();
 	});
 
