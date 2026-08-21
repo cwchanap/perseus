@@ -243,8 +243,9 @@ test.describe('Main Gallery Page', () => {
 	});
 
 	test('keeps VIEW SAVED PROGRESS after a transient off-page detail-fetch failure', async ({
-		page
+		gameplayPage
 	}) => {
+		const page = gameplayPage.page;
 		// Regression: when every off-page detail fetch fails transiently,
 		// discoverAllSavedProgress resolves with { rows: [], complete: false }.
 		// The caller must NOT clear savedProgressCandidateIds, so the VIEW
@@ -289,7 +290,7 @@ test.describe('Main Gallery Page', () => {
 
 		// Close the picker.
 		await page.getByRole('button', { name: 'Close saved progress' }).click();
-		await expect.poll(() => dialog.query()).toBeNull();
+		await expect(dialog).toHaveCount(0);
 
 		// The VIEW SAVED PROGRESS button must still be visible: the transient
 		// failure must not clear savedProgressCandidateIds.
