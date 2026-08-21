@@ -349,6 +349,41 @@ describe('Gallery Page', () => {
 		await expect.poll(() => page.getByTestId('continue-on-device').query()).toBeNull();
 	});
 
+	it('clears the affordance when a shallow-passing save fails deep validation', async () => {
+		// Regression: listResumableSessionCandidateIds is a shallow probe
+		// (schema version, puzzle-id match, lifecycle active/paused,
+		// unsealed, hasUserActivity). A current-schema active save can pass
+		// the shallow probe but fail full peekSession() validation (malformed
+		// tray order, counters, result-class state, etc.). In that case
+		// discoverAllSavedProgress returns { rows: [], complete: true }
+		// WITHOUT purging the session from storage — so the shallow probe
+		// would re-list the same id on every call.
+		//
+		// The post-discovery refresh must use the authoritative discovery
+		// result (items.map(item => item.puzzleId)), not a shallow
+		// re-probe. Otherwise the dialog says NO SAVED PROGRESS but closing
+		// it leaves VIEW SAVED PROGRESS visible forever, because the shallow
+		// re-probe re-adds the rejected id.
+		//
+		// Here listCandidates returns ['stale-id'] on EVERY call to
+		// simulate the session surviving in storage through the shallow
+		// probe. The old code (listResumableSessionCandidateIds() refresh)
+		// would re-add 'stale-id' after discovery, leaving the affordance
+		// visible. The fix (items.map(item => item.puzzleId)) sets
+		// savedProgressCandidateIds to [] and removes the affordance.
+		sessionStorageSpies.listCandidates.mockReturnValue(['stale-id']);
+		mockedDiscoverGalleryProgress.mockReturnValue({ byPuzzleId: new Map(), newest: null });
+		mockedDiscoverAllSavedProgress.mockResolvedValue({ rows: [], complete: true });
+		render(GalleryPage);
+		await page.getByRole('button', { name: 'View saved progress' }).click();
+		await expect.element(page.getByText('NO SAVED PROGRESS')).toBeVisible();
+		await page.getByRole('button', { name: 'Close saved progress' }).click();
+		// The affordance must be gone: the authoritative result was empty,
+		// so savedProgressCandidateIds is [] regardless of what the shallow
+		// probe still returns from storage.
+		await expect.poll(() => page.getByTestId('continue-on-device').query()).toBeNull();
+	});
+
 	it('keeps the saved-progress affordance when discovery is incomplete', async () => {
 		// Regression: when every off-page detail fetch fails transiently,
 		// discoverAllSavedProgress resolves with { rows: [], complete: false }.
@@ -369,9 +404,10 @@ describe('Gallery Page', () => {
 
 	it('refreshes candidate ids after a complete mixed discovery and on remount', async () => {
 		// Mixed discovery: 'valid' surfaces as a row, 'gone' is purged (404).
-		// After a complete discovery, savedProgressCandidateIds is refreshed
-		// from listResumableSessionCandidateIds so the stale 'gone' id is
-		// removed in-memory. On remount, onMount reads fresh from storage —
+		// After a complete discovery, savedProgressCandidateIds is set from
+		// the authoritative discovery result (items.map(item => item.puzzleId))
+		// so the stale 'gone' id is removed in-memory without re-probing
+		// shallow storage. On remount, onMount reads fresh from storage —
 		// the purged id does not reappear.
 		const validRow: GalleryProgress = {
 			puzzleId: 'valid',
@@ -381,12 +417,12 @@ describe('Gallery Page', () => {
 			pieceCount: 4,
 			lastUpdated: 2_000
 		};
-		// First call: onMount returns both ids. Second call: post-discovery
-		// refresh returns only the surviving id (purged 'gone' is gone).
-		// Third call: remount onMount reads the same post-purge state.
+		// First call: onMount returns both ids. The post-discovery refresh
+		// no longer calls listResumableSessionCandidateIds — it uses the
+		// authoritative result instead. Second call: remount onMount reads
+		// the post-purge storage state.
 		sessionStorageSpies.listCandidates
 			.mockReturnValueOnce(['valid', 'gone'])
-			.mockReturnValueOnce(['valid'])
 			.mockReturnValueOnce(['valid']);
 		mockedDiscoverGalleryProgress.mockReturnValue({ byPuzzleId: new Map(), newest: null });
 		mockedDiscoverAllSavedProgress.mockResolvedValue({ rows: [validRow], complete: true });
@@ -396,19 +432,20 @@ describe('Gallery Page', () => {
 		await expect.element(page.getByText('Valid Save')).toBeVisible();
 		await page.getByRole('button', { name: 'Close saved progress' }).click();
 
-		// After discovery+refresh, only 'valid' remains — the affordance
-		// survives because a valid candidate is still in the list.
+		// After discovery, only 'valid' remains — the affordance survives
+		// because a valid candidate is still in the list. The stale 'gone'
+		// id was dropped by the authoritative result, not a shallow re-probe.
 		await expect.element(page.getByRole('button', { name: 'View saved progress' })).toBeVisible();
-		// listResumableSessionCandidateIds was called twice: once on mount,
-		// once after the complete discovery to refresh stale ids.
-		expect(sessionStorageSpies.listCandidates).toHaveBeenCalledTimes(2);
+		// listResumableSessionCandidateIds was called once: on mount only.
+		// The post-discovery refresh uses the authoritative result instead.
+		expect(sessionStorageSpies.listCandidates).toHaveBeenCalledTimes(1);
 
 		// Remount: onMount reads the post-purge storage state, so 'gone' does
 		// not resurface as a candidate.
 		unmount();
 		render(GalleryPage);
 		await expect.element(page.getByRole('button', { name: 'View saved progress' })).toBeVisible();
-		expect(sessionStorageSpies.listCandidates).toHaveBeenCalledTimes(3);
+		expect(sessionStorageSpies.listCandidates).toHaveBeenCalledTimes(2);
 	});
 
 	it('stops loading when saved-progress discovery rejects', async () => {

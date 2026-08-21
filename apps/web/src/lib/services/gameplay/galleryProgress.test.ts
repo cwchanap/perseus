@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Puzzle, PuzzleSummary } from '$lib/types/puzzle';
 import type { StoredQuickPuzzle } from '$lib/services/quickPuzzle/types';
-import { createSessionStorageAdapter } from './session/persistence';
+import {
+	createSessionStorageAdapter,
+	listResumableSessionCandidateIds
+} from './session/persistence';
 import {
 	fullBoardPlacements,
 	memoryStorage,
@@ -1056,5 +1059,59 @@ describe('discoverAllSavedProgress', () => {
 		// fetch is needed because both ids resolve via loaded metadata.
 		expect(rows).toEqual([]);
 		expect(fetchPuzzleById).not.toHaveBeenCalled();
+	});
+
+	it('returns complete empty when a shallow-passing save fails deep peekSession validation', async () => {
+		// Regression: listResumableSessionCandidateIds is intentionally a
+		// shallow probe (schema version, puzzle-id match, lifecycle
+		// active/paused, unsealed, hasUserActivity). It does NOT validate
+		// tray order, rotations, counters, result-class, or geometry. A
+		// current-schema active save can therefore pass the shallow probe
+		// while failing full peekSession() validation via validateV1.
+		//
+		// discoverAllSavedProgress must return { rows: [], complete: true }
+		// for such a save — the failure is not a transient fetch error, so
+		// discovery is complete. The session is NOT purged (unlike 400/404),
+		// so it survives in storage and listResumableSessionCandidateIds
+		// would re-list it on a shallow re-probe. Callers must use the
+		// authoritative discovery result, not a shallow re-probe, to set
+		// savedProgressCandidateIds after a complete discovery.
+		const snapshot = {
+			...validSnapshot(),
+			puzzleId: 'pz1',
+			// Corrupt tray order: wrong length (2 instead of 4). The shallow
+			// probe never inspects trayOrder, but validateTrayOrder rejects
+			// a length mismatch against knownPieceIds.size.
+			trayOrder: [0, 1]
+		};
+		const store = memoryStorage({
+			'puzzle-progress-pz1': JSON.stringify(snapshot)
+		});
+
+		// The shallow probe passes: current schema, matching puzzle id,
+		// active lifecycle, unsealed, hasUserActivity true.
+		expect(listResumableSessionCandidateIds(store)).toEqual(['pz1']);
+
+		const fetchPuzzleById = vi.fn();
+
+		const { rows, complete } = await discoverAllSavedProgress({
+			puzzleIds: ['pz1'],
+			serverPuzzles: [serverPuzzle('pz1', 4, '1:1')],
+			quickPuzzles: [],
+			fetchPuzzleById,
+			sessionStorage: createSessionStorageAdapter({ storage: store })
+		});
+
+		// Deep validation fails — no row surfaces, but discovery is
+		// complete (no transient fetch failure occurred).
+		expect(rows).toEqual([]);
+		expect(complete).toBe(true);
+		expect(fetchPuzzleById).not.toHaveBeenCalled();
+		// The session is NOT purged — deep validation failure is not a
+		// 400/404. The save survives in storage, so a shallow re-probe
+		// would re-list it. This is why the caller must use the
+		// authoritative result instead of re-probing shallow.
+		expect(store.getItem('puzzle-progress-pz1')).not.toBeNull();
+		expect(listResumableSessionCandidateIds(store)).toEqual(['pz1']);
 	});
 });
