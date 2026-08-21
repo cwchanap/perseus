@@ -206,12 +206,19 @@
 			savedProgressItems = items;
 			savedProgressComplete = complete;
 			savedProgressLoading = false;
-			// After a complete discovery, refresh candidate ids from storage so
-			// stale entries purged by discoverAllSavedProgress (400/404) or
-			// filtered by listResumableSessionCandidateIds (completed/invalid
-			// sessions) are removed. An incomplete discovery keeps the existing
-			// ids intact for retry.
-			if (complete) savedProgressCandidateIds = listResumableSessionCandidateIds();
+			// After a complete discovery, the authoritative result is the source
+			// of truth for which candidates survived full peekSession()
+			// validation — not a shallow listResumableSessionCandidateIds()
+			// re-probe. A current-schema active save can pass the shallow
+			// lifecycle/activity probe but fail deep validation (malformed tray
+			// order, counters, result-class state, etc.), returning
+			// { rows: [], complete: true } without being purged from storage.
+			// Re-probing shallow would re-add that same id, leaving VIEW SAVED
+			// PROGRESS visible forever after the dialog said NO SAVED PROGRESS.
+			// The 400/404 purge is handled separately inside
+			// discoverAllSavedProgress via clearSession; an incomplete discovery
+			// keeps the existing ids intact for retry.
+			if (complete) savedProgressCandidateIds = items.map((item) => item.puzzleId);
 		} catch (error) {
 			// Stale or intentionally aborted requests (picker closed, newer
 			// request superseded) must not log or mutate state — the abort is
