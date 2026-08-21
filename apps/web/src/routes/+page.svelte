@@ -211,13 +211,14 @@
 			// validation — not a shallow listResumableSessionCandidateIds()
 			// re-probe. A current-schema active save can pass the shallow
 			// lifecycle/activity probe but fail deep validation (malformed tray
-			// order, counters, result-class state, etc.), returning
-			// { rows: [], complete: true } without being purged from storage.
-			// Re-probing shallow would re-add that same id, leaving VIEW SAVED
-			// PROGRESS visible forever after the dialog said NO SAVED PROGRESS.
-			// The 400/404 purge is handled separately inside
-			// discoverAllSavedProgress via clearSession; an incomplete discovery
-			// keeps the existing ids intact for retry.
+			// order, counters, result-class state, etc.). In that case
+			// discoverAllSavedProgress purges the structurally invalid session
+			// from storage (like 400/404) and returns { rows: [], complete: true }.
+			// Using the authoritative result here clears the affordance on the
+			// current mount; the storage purge ensures onMount's shallow re-probe
+			// on remount does not re-add the dead id. Valid-but-non-resumable
+			// snapshots (e.g. completed sessions) are NOT purged. An incomplete
+			// discovery keeps the existing ids intact for retry.
 			if (complete) savedProgressCandidateIds = items.map((item) => item.puzzleId);
 		} catch (error) {
 			// Stale or intentionally aborted requests (picker closed, newer

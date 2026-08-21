@@ -286,8 +286,33 @@ export async function discoverAllSavedProgress(options: {
 	const rows = candidates
 		.flatMap((candidate) => {
 			if (!candidate) return [];
-			const row = progressFromCandidate(candidate, sessionStorage);
-			return row ? [row] : [];
+			const result = sessionStorage.peekSession(candidate.puzzleId, candidate.context);
+			// Structurally corrupt snapshot (malformed tray order, counters,
+			// result-class, geometry, etc.). Unlike a valid-but-non-resumable
+			// snapshot (e.g. a completed session), an invalid record can
+			// never be resumed and would re-surface on every shallow mount
+			// probe via listResumableSessionCandidateIds. Purge it during
+			// authoritative discovery so the shallow probe stays cheap and
+			// the dead VIEW SAVED PROGRESS affordance does not reappear
+			// after reload. Valid-but-non-resumable snapshots (status
+			// 'loaded' + !isResumable, e.g. completed sessions) are kept.
+			if (result.status === 'invalid') {
+				sessionStorage.clearSession(candidate.puzzleId);
+				return [];
+			}
+			if (result.status !== 'loaded' || !sessionStorage.isResumable(result.snapshot)) {
+				return [];
+			}
+			return [
+				{
+					puzzleId: candidate.puzzleId,
+					name: candidate.name,
+					source: candidate.source,
+					placedCount: result.snapshot.placedPieces.length,
+					pieceCount: candidate.pieceCount,
+					lastUpdated: result.snapshot.lastUpdated
+				}
+			];
 		})
 		.sort((a, b) => b.lastUpdated - a.lastUpdated || a.puzzleId.localeCompare(b.puzzleId));
 
