@@ -6,10 +6,15 @@
 	interface Props {
 		progress: readonly GalleryProgress[];
 		loading: boolean;
+		// true when saved-progress discovery ran to completion (no transient
+		// 5xx/network failures). false means rows may be empty because a
+		// detail fetch failed mid-discovery — the dialog should signal a
+		// retryable outage rather than claiming progress is gone.
+		complete?: boolean;
 		onClose: () => void;
 	}
 
-	let { progress, loading, onClose }: Props = $props();
+	let { progress, loading, complete = true, onClose }: Props = $props();
 </script>
 
 <div
@@ -48,16 +53,24 @@
 		</header>
 		<div class="min-h-0 flex-1 overflow-y-auto p-5">
 			{#if loading || progress.length === 0}
-				<!-- Polite live region so screen readers hear discovery complete:
-				     LOADING mutates to NO SAVED PROGRESS in place. Result rows
-				     render outside the region and are not announced. -->
+				<!-- Polite live region so screen readers hear discovery settle:
+				     LOADING mutates to NO SAVED PROGRESS (discovery complete,
+				     nothing found) or UNABLE TO LOAD SAVED PROGRESS (discovery
+				     was interrupted by a transient outage — retry by reopening).
+				     Result rows render outside the region and are not announced. -->
 				<div aria-live="polite">
 					<p
 						class="text-[0.75rem] font-(--font-mono) tracking-[0.2em] uppercase {loading
 							? 'text-(--accent)'
-							: 'text-(--text-1)'}"
+							: complete
+								? 'text-(--text-1)'
+								: 'text-(--hot)'}"
 					>
-						{loading ? 'LOADING SAVED PROGRESS...' : 'NO SAVED PROGRESS'}
+						{loading
+							? 'LOADING SAVED PROGRESS...'
+							: complete
+								? 'NO SAVED PROGRESS'
+								: 'UNABLE TO LOAD SAVED PROGRESS — TRY AGAIN'}
 					</p>
 				</div>
 			{:else}

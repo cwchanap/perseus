@@ -249,8 +249,10 @@ test.describe('Main Gallery Page', () => {
 		// Regression: when every off-page detail fetch fails transiently,
 		// discoverAllSavedProgress resolves with { rows: [], complete: false }.
 		// The caller must NOT clear savedProgressCandidateIds, so the VIEW
-		// SAVED PROGRESS button remains available for retry even though the
-		// dialog shows NO SAVED PROGRESS and the local save still exists.
+		// SAVED PROGRESS button remains available for retry. The dialog must
+		// surface the retryable outage state — not "NO SAVED PROGRESS" —
+		// because the local save still exists and discovery was interrupted
+		// by a temporary 5xx, not actually empty.
 		const offPageId = 'e2e-landscape-12';
 		const fixture = getFixture(offPageId);
 		const firstPiece = fixture.pieces[0]!;
@@ -284,9 +286,12 @@ test.describe('Main Gallery Page', () => {
 		await expect(page.getByRole('button', { name: 'View saved progress' })).toBeVisible();
 		await page.getByRole('button', { name: 'View saved progress' }).click();
 
-		// The dialog shows NO SAVED PROGRESS because the detail fetch failed.
+		// The dialog surfaces the retryable outage state, not "NO SAVED
+		// PROGRESS": discovery was incomplete because the detail fetch 500'd,
+		// but the local save still exists.
 		const dialog = page.getByRole('dialog', { name: 'Saved progress' });
-		await expect(dialog.getByText('NO SAVED PROGRESS')).toBeVisible();
+		await expect(dialog.getByText('UNABLE TO LOAD SAVED PROGRESS — TRY AGAIN')).toBeVisible();
+		await expect(dialog.getByText('NO SAVED PROGRESS')).toHaveCount(0);
 
 		// Close the picker.
 		await page.getByRole('button', { name: 'Close saved progress' }).click();
