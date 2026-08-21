@@ -213,7 +213,7 @@
 			// lifecycle/activity probe but fail deep validation (malformed tray
 			// order, counters, result-class state, etc.). In that case
 			// discoverAllSavedProgress purges the structurally invalid session
-			// from storage (like 400/404) and returns { rows: [], complete: true }.
+			// from storage (like the 400 malformed-id case) and returns { rows: [], complete: true }.
 			// Using the authoritative result here clears the affordance on the
 			// current mount; the storage purge ensures onMount's shallow re-probe
 			// on remount does not re-add the dead id. Valid-but-non-resumable

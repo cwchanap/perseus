@@ -633,14 +633,16 @@ describe('discoverAllSavedProgress', () => {
 		expect(fetchPuzzleById).toHaveBeenCalledTimes(2);
 	});
 
-	it('treats 404 detail failures as authoritative so stale candidates can be cleared', async () => {
-		// Complement to the transient-failure regression above: when the detail
-		// endpoint returns 404 (puzzle deleted or no longer ready), the failure
-		// is permanent — discovery must be complete so the caller clears
-		// savedProgressCandidateIds and the dead VIEW SAVED PROGRESS affordance
-		// disappears instead of surviving forever on every reload.
+	it('preserves persisted sessions and stays incomplete when detail returns 404', async () => {
+		// Regression: the public detail endpoint reads metadata from KV and
+		// returns the same 404 for a missing record, a non-ready record, and a
+		// stale eventually-consistent read where the metadata DO has already
+		// committed `ready` (the reaper uses a separate strongly consistent DO
+		// lookup for exactly this). Clearing the session on 404 would
+		// irreversibly delete a valid local save over a stale KV read, so the
+		// session must survive and discovery must be incomplete (retryable).
 		const base = validSnapshot();
-		const store = memoryStorage({
+		const records: Record<string, string> = {
 			'puzzle-progress-deleted-a': JSON.stringify({
 				...base,
 				puzzleId: 'deleted-a',
@@ -651,7 +653,7 @@ describe('discoverAllSavedProgress', () => {
 				puzzleId: 'deleted-b',
 				lastUpdated: 3_000
 			})
-		});
+		};
 		const fetchPuzzleById = vi.fn(async () => {
 			throw Object.assign(new Error('Puzzle not found'), { status: 404, name: 'ApiError' });
 		});
@@ -661,12 +663,15 @@ describe('discoverAllSavedProgress', () => {
 			serverPuzzles: [],
 			quickPuzzles: [],
 			fetchPuzzleById,
-			sessionStorage: createSessionStorageAdapter({ storage: store })
+			sessionStorage: createSessionStorageAdapter({ storage: memoryStorage(records) })
 		});
 
 		expect(rows).toEqual([]);
-		expect(complete).toBe(true);
+		expect(complete).toBe(false);
 		expect(fetchPuzzleById).toHaveBeenCalledTimes(2);
+		// Both persisted sessions survive the 404s for retry.
+		expect(records['puzzle-progress-deleted-a']).toBeDefined();
+		expect(records['puzzle-progress-deleted-b']).toBeDefined();
 	});
 
 	it('treats 400 detail failures as authoritative for malformed candidate ids', async () => {
@@ -698,9 +703,9 @@ describe('discoverAllSavedProgress', () => {
 	});
 
 	it('treats 5xx detail failures as transient even alongside a 404', async () => {
-		// A mix of permanent (404) and transient (500) failures must keep
-		// discovery incomplete — the 500 could recover on retry, so the caller
-		// must not clear candidates while any transient failure is unresolved.
+		// A mix of 404 and 500 failures keeps discovery incomplete — 404 is
+		// not authoritative (stale KV reads), and the 500 could recover on
+		// retry, so the caller must not clear candidates.
 		const base = validSnapshot();
 		const store = memoryStorage({
 			'puzzle-progress-gone': JSON.stringify({ ...base, puzzleId: 'gone', lastUpdated: 5_000 }),
@@ -728,15 +733,15 @@ describe('discoverAllSavedProgress', () => {
 		expect(fetchPuzzleById).toHaveBeenCalledTimes(2);
 	});
 
-	it('purges persisted sessions on 404 while keeping valid candidates', async () => {
+	it('preserves 404 sessions while surfacing valid candidates', async () => {
 		// Mixed discovery: one candidate fetches successfully and surfaces as a
-		// row, another 404s (puzzle deleted). The 404 is authoritative, so the
-		// dead persisted session must be purged from storage (not just
-		// skipped) — otherwise it survives forever and reappears on every
-		// remount via listResumableSessionCandidateIds. Discovery stays
-		// complete so the caller refreshes candidate ids.
+		// row, another 404s. The 404 is NOT authoritative (the detail endpoint
+		// serves missing and non-ready KV records — including stale reads —
+		// as the same 404), so the persisted session must be kept for retry
+		// and discovery marked incomplete so the caller does not clear
+		// candidate ids.
 		const base = validSnapshot();
-		const store: Record<string, string> = {
+		const records: Record<string, string> = {
 			'puzzle-progress-valid': JSON.stringify({ ...base, puzzleId: 'valid', lastUpdated: 2_000 }),
 			'puzzle-progress-gone': JSON.stringify({ ...base, puzzleId: 'gone', lastUpdated: 5_000 })
 		};
@@ -751,16 +756,15 @@ describe('discoverAllSavedProgress', () => {
 			serverPuzzles: [],
 			quickPuzzles: [],
 			fetchPuzzleById,
-			sessionStorage: createSessionStorageAdapter({ storage: memoryStorage(store) })
+			sessionStorage: createSessionStorageAdapter({ storage: memoryStorage(records) })
 		});
 
-		// The valid candidate surfaces; the 404 candidate is omitted.
+		// The valid candidate surfaces; the 404 candidate is omitted but kept.
 		expect(rows.map((row) => row.puzzleId)).toEqual(['valid']);
-		expect(complete).toBe(true);
-		// The 404 candidate's persisted session is purged from storage.
-		expect(store['puzzle-progress-gone']).toBeUndefined();
-		// The valid candidate's session is preserved.
-		expect(store['puzzle-progress-valid']).toBeDefined();
+		expect(complete).toBe(false);
+		// Both persisted sessions survive (the 404 is not authoritative).
+		expect(records['puzzle-progress-gone']).toBeDefined();
+		expect(records['puzzle-progress-valid']).toBeDefined();
 	});
 
 	it('does not purge persisted sessions on transient (5xx) failures', async () => {
@@ -1072,7 +1076,8 @@ describe('discoverAllSavedProgress', () => {
 		// discoverAllSavedProgress must return { rows: [], complete: true }
 		// for such a save — the failure is not a transient fetch error, so
 		// discovery is complete. The structurally invalid session is purged
-		// from storage (like 400/404) so it does not re-surface on every
+		// from storage (local validation is authoritative, like the 400
+		// malformed-id case) so it does not re-surface on every
 		// shallow mount probe via listResumableSessionCandidateIds after
 		// reload. Valid-but-non-resumable snapshots (e.g. completed
 		// sessions) are NOT purged — only structurally invalid records.
