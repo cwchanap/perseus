@@ -44,6 +44,11 @@
 	let savedProgressOpen = $state(false);
 	let savedProgressLoading = $state(false);
 	let savedProgressItems = $state<GalleryProgress[]>([]);
+	// Whether the most recent saved-progress discovery ran to completion.
+	// false means a transient 5xx/network failure interrupted discovery, so
+	// an empty result list does NOT imply progress is gone — the dialog
+	// surfaces a retryable outage instead of "NO SAVED PROGRESS".
+	let savedProgressComplete = $state(true);
 	let savedProgressRequestId = 0;
 	let savedProgressController: AbortController | null = null;
 	let hasMore = $derived(nextCursor !== undefined);
@@ -181,6 +186,7 @@
 		savedProgressOpen = true;
 		savedProgressLoading = true;
 		savedProgressItems = [];
+		savedProgressComplete = true;
 		const requestId = ++savedProgressRequestId;
 		savedProgressController?.abort();
 		const controller = new AbortController();
@@ -198,12 +204,17 @@
 
 			if (requestId !== savedProgressRequestId) return;
 			savedProgressItems = items;
+			savedProgressComplete = complete;
 			savedProgressLoading = false;
 			if (items.length === 0 && complete) savedProgressCandidateIds = [];
 		} catch (error) {
 			console.error('Failed to discover saved progress:', error);
 			if (requestId !== savedProgressRequestId) return;
 			savedProgressItems = [];
+			// A rejection means discovery never completed — treat as incomplete
+			// so the dialog shows the retryable outage state, not "NO SAVED
+			// PROGRESS", and the candidate ids are preserved for retry.
+			savedProgressComplete = false;
 			savedProgressLoading = false;
 		}
 	}
@@ -548,6 +559,7 @@ hover:bg-[rgba(255,0,102,0.08)]"
 	<SavedProgressDialog
 		progress={savedProgressItems}
 		loading={savedProgressLoading}
+		complete={savedProgressComplete}
 		onClose={closeSavedProgress}
 	/>
 {/if}

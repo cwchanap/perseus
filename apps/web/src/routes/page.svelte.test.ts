@@ -349,14 +349,16 @@ describe('Gallery Page', () => {
 		// Regression: when every off-page detail fetch fails transiently,
 		// discoverAllSavedProgress resolves with { rows: [], complete: false }.
 		// The caller must NOT clear savedProgressCandidateIds, so the VIEW
-		// SAVED PROGRESS button remains available for retry even though the
-		// dialog shows NO SAVED PROGRESS.
+		// SAVED PROGRESS button remains available for retry. The dialog must
+		// surface the retryable outage state, not "NO SAVED PROGRESS" — the
+		// local save still exists and discovery was interrupted, not empty.
 		sessionStorageSpies.listCandidates.mockReturnValue(['off-page-a', 'off-page-b']);
 		mockedDiscoverGalleryProgress.mockReturnValue({ byPuzzleId: new Map(), newest: null });
 		mockedDiscoverAllSavedProgress.mockResolvedValue({ rows: [], complete: false });
 		render(GalleryPage);
 		await page.getByRole('button', { name: 'View saved progress' }).click();
-		await expect.element(page.getByText('NO SAVED PROGRESS')).toBeVisible();
+		await expect.element(page.getByText('UNABLE TO LOAD SAVED PROGRESS — TRY AGAIN')).toBeVisible();
+		expect(document.body.textContent).not.toContain('NO SAVED PROGRESS');
 		await page.getByRole('button', { name: 'Close saved progress' }).click();
 		await expect.element(page.getByRole('button', { name: 'View saved progress' })).toBeVisible();
 	});
@@ -371,9 +373,12 @@ describe('Gallery Page', () => {
 		await page.getByRole('button', { name: 'View saved progress' }).click();
 
 		// The rejection must not strand the dialog on LOADING forever: loading
-		// resets and the empty state renders in its place.
-		await expect.element(page.getByText('NO SAVED PROGRESS')).toBeVisible();
+		// resets and the retryable-outage state renders in its place. A
+		// rejection means discovery never completed, so the dialog must NOT
+		// claim progress is gone.
+		await expect.element(page.getByText('UNABLE TO LOAD SAVED PROGRESS — TRY AGAIN')).toBeVisible();
 		expect(document.body.textContent).not.toContain('LOADING SAVED PROGRESS');
+		expect(document.body.textContent).not.toContain('NO SAVED PROGRESS');
 		expect(consoleSpy).toHaveBeenCalled();
 
 		// A transient discovery failure must not hide the picker affordance:
