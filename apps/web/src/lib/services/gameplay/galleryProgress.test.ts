@@ -630,6 +630,101 @@ describe('discoverAllSavedProgress', () => {
 		expect(fetchPuzzleById).toHaveBeenCalledTimes(2);
 	});
 
+	it('treats 404 detail failures as authoritative so stale candidates can be cleared', async () => {
+		// Complement to the transient-failure regression above: when the detail
+		// endpoint returns 404 (puzzle deleted or no longer ready), the failure
+		// is permanent — discovery must be complete so the caller clears
+		// savedProgressCandidateIds and the dead VIEW SAVED PROGRESS affordance
+		// disappears instead of surviving forever on every reload.
+		const base = validSnapshot();
+		const store = memoryStorage({
+			'puzzle-progress-deleted-a': JSON.stringify({
+				...base,
+				puzzleId: 'deleted-a',
+				lastUpdated: 5_000
+			}),
+			'puzzle-progress-deleted-b': JSON.stringify({
+				...base,
+				puzzleId: 'deleted-b',
+				lastUpdated: 3_000
+			})
+		});
+		const fetchPuzzleById = vi.fn(async () => {
+			throw Object.assign(new Error('Puzzle not found'), { status: 404, name: 'ApiError' });
+		});
+
+		const { rows, complete } = await discoverAllSavedProgress({
+			puzzleIds: ['deleted-a', 'deleted-b'],
+			serverPuzzles: [],
+			quickPuzzles: [],
+			fetchPuzzleById,
+			sessionStorage: createSessionStorageAdapter({ storage: store })
+		});
+
+		expect(rows).toEqual([]);
+		expect(complete).toBe(true);
+		expect(fetchPuzzleById).toHaveBeenCalledTimes(2);
+	});
+
+	it('treats 400 detail failures as authoritative for malformed candidate ids', async () => {
+		// Invalid puzzle ID format yields 400 from the detail endpoint — also
+		// permanent, so discovery stays complete and the stale candidate is
+		// cleared rather than retried on every load.
+		const base = validSnapshot();
+		const store = memoryStorage({
+			'puzzle-progress-bad-id': JSON.stringify({ ...base, puzzleId: 'bad-id', lastUpdated: 1_000 })
+		});
+		const fetchPuzzleById = vi.fn(async () => {
+			throw Object.assign(new Error('Invalid puzzle ID format'), {
+				status: 400,
+				name: 'ApiError'
+			});
+		});
+
+		const { rows, complete } = await discoverAllSavedProgress({
+			puzzleIds: ['bad-id'],
+			serverPuzzles: [],
+			quickPuzzles: [],
+			fetchPuzzleById,
+			sessionStorage: createSessionStorageAdapter({ storage: store })
+		});
+
+		expect(rows).toEqual([]);
+		expect(complete).toBe(true);
+		expect(fetchPuzzleById).toHaveBeenCalledTimes(1);
+	});
+
+	it('treats 5xx detail failures as transient even alongside a 404', async () => {
+		// A mix of permanent (404) and transient (500) failures must keep
+		// discovery incomplete — the 500 could recover on retry, so the caller
+		// must not clear candidates while any transient failure is unresolved.
+		const base = validSnapshot();
+		const store = memoryStorage({
+			'puzzle-progress-gone': JSON.stringify({ ...base, puzzleId: 'gone', lastUpdated: 5_000 }),
+			'puzzle-progress-flaky': JSON.stringify({ ...base, puzzleId: 'flaky', lastUpdated: 3_000 })
+		});
+		const fetchPuzzleById = vi.fn(async (id: string) => {
+			if (id === 'gone')
+				throw Object.assign(new Error('Puzzle not found'), { status: 404, name: 'ApiError' });
+			throw Object.assign(new Error('Failed to retrieve puzzle'), {
+				status: 500,
+				name: 'ApiError'
+			});
+		});
+
+		const { rows, complete } = await discoverAllSavedProgress({
+			puzzleIds: ['gone', 'flaky'],
+			serverPuzzles: [],
+			quickPuzzles: [],
+			fetchPuzzleById,
+			sessionStorage: createSessionStorageAdapter({ storage: store })
+		});
+
+		expect(rows).toEqual([]);
+		expect(complete).toBe(false);
+		expect(fetchPuzzleById).toHaveBeenCalledTimes(2);
+	});
+
 	it('omits Quick candidates without loaded Quick metadata instead of fetching', async () => {
 		const base = validSnapshot();
 		const store = memoryStorage({
