@@ -42,6 +42,26 @@ describe('SavedProgressDialog', () => {
 		expect(document.body.textContent).not.toContain('LOADING SAVED PROGRESS');
 	});
 
+	it('renders partial rows alongside an incomplete-discovery warning', async () => {
+		// complete=false can coexist with a non-empty progress list: one
+		// off-page detail fetch succeeded while another transiently failed.
+		// The usable row must still render, and a warning must signal that
+		// the list is not the full saved-progress set.
+		render(SavedProgressDialog, {
+			progress,
+			loading: false,
+			complete: false,
+			onClose: vi.fn()
+		});
+		const row = page.getByTestId('saved-progress-row-old-save');
+		await expect.element(row).toBeVisible();
+		await expect.element(row).toHaveTextContent('Older Mission');
+		await expect.element(row).toHaveTextContent('3/12 PLACED');
+		await expect.element(page.getByTestId('saved-progress-partial-warning')).toBeVisible();
+		// The full-outage message must NOT appear when rows are present.
+		expect(document.body.textContent).not.toContain('UNABLE TO LOAD SAVED PROGRESS');
+	});
+
 	it('renders a semantic row with a distinguishable Continue link', async () => {
 		render(SavedProgressDialog, { progress, loading: false, onClose: vi.fn() });
 		const list = page.getByRole('list');
