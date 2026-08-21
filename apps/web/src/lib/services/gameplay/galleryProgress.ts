@@ -35,15 +35,20 @@ export interface GalleryProgressDiscoveryResult {
 
 /**
  * Determines whether a failed detail fetch is authoritative (permanent) rather
- * than transient. The puzzle detail endpoint returns 400 for malformed IDs and
- * 404 for missing/non-ready puzzles — both mean the puzzle is gone for good, so
- * the caller should treat discovery as complete and clear stale candidate ids.
- * Network errors and 5xx responses are retryable and must keep `complete=false`.
+ * than transient. Only 400 (malformed puzzle id) qualifies — id format is
+ * locally verifiable and permanent. 404 does NOT: the public detail endpoint
+ * reads puzzle metadata from KV, which is eventually consistent. The same 404
+ * is returned for a missing record, a non-ready record, and a stale KV read
+ * where the metadata DO has already committed `ready` (the reaper uses a
+ * separate strongly consistent DO lookup for exactly this reason). Purging a
+ * persisted session on 404 would irreversibly delete a valid local save over
+ * a stale read, so 404 is treated as retryable: the session is kept and
+ * discovery is marked incomplete.
  */
 function isAuthoritativeFetchFailure(error: unknown): boolean {
 	if (!error || typeof error !== 'object') return false;
 	const status = (error as { status?: unknown }).status;
-	return status === 400 || status === 404;
+	return status === 400;
 }
 
 interface GalleryCandidate {
@@ -267,10 +272,12 @@ export async function discoverAllSavedProgress(options: {
 					? { puzzleId, name: puzzle.name, source: 'api', pieceCount: puzzle.pieceCount, context }
 					: null;
 			} catch (error) {
-				// 400/404 are authoritative: the puzzle is gone for good, so purge
-				// the dead persisted session and keep discovery complete. Transient
-				// failures (network/5xx) leave the session intact and mark
-				// discovery incomplete so the caller can retry.
+				// 400 (malformed id) is authoritative: purge the dead persisted
+				// session and keep discovery complete. Everything else — network
+				// errors, 5xx, and 404 — is retryable. A 404 can be a stale
+				// eventually-consistent KV read (detail endpoint serves both
+				// missing and non-ready records as 404), so it must not delete
+				// the save; it marks discovery incomplete so the caller retries.
 				if (isAuthoritativeFetchFailure(error)) {
 					sessionStorage.clearSession(puzzleId);
 				} else {

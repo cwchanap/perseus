@@ -337,8 +337,9 @@ describe('Gallery Page', () => {
 	it('clears the saved-progress affordance when authoritative discovery is empty', async () => {
 		// The first listResumableSessionCandidateIds call (onMount) returns the
 		// stale candidate. After discoverAllSavedProgress purges it via
-		// clearSession on a 400/404, the post-discovery refresh call returns
-		// [] — simulating the real storage state after the purge.
+		// clearSession on a 400 or invalid-session discovery, the post-discovery
+		// refresh call returns [] — simulating the real storage state after the
+		// purge.
 		sessionStorageSpies.listCandidates.mockReturnValueOnce(['deleted-puzzle']).mockReturnValue([]);
 		mockedDiscoverGalleryProgress.mockReturnValue({ byPuzzleId: new Map(), newest: null });
 		mockedDiscoverAllSavedProgress.mockResolvedValue({ rows: [], complete: true });
@@ -356,7 +357,8 @@ describe('Gallery Page', () => {
 		// the shallow probe but fail full peekSession() validation (malformed
 		// tray order, counters, result-class state, etc.). In that case
 		// discoverAllSavedProgress purges the structurally invalid session
-		// from storage (like 400/404) and returns { rows: [], complete: true }.
+		// from storage (local validation is authoritative, like the 400
+		// malformed-id case) and returns { rows: [], complete: true }.
 		//
 		// Two things must happen for the dead affordance to stay gone:
 		//   1. The in-memory refresh sets savedProgressCandidateIds from the
