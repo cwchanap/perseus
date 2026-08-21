@@ -29,8 +29,21 @@ export interface GalleryProgressDiscovery {
 
 export interface GalleryProgressDiscoveryResult {
 	rows: GalleryProgress[];
-	/** `false` when at least one off-page detail fetch failed transiently. */
+	/** `false` when at least one off-page detail fetch failed transiently (network/5xx). */
 	complete: boolean;
+}
+
+/**
+ * Determines whether a failed detail fetch is authoritative (permanent) rather
+ * than transient. The puzzle detail endpoint returns 400 for malformed IDs and
+ * 404 for missing/non-ready puzzles — both mean the puzzle is gone for good, so
+ * the caller should treat discovery as complete and clear stale candidate ids.
+ * Network errors and 5xx responses are retryable and must keep `complete=false`.
+ */
+function isAuthoritativeFetchFailure(error: unknown): boolean {
+	if (!error || typeof error !== 'object') return false;
+	const status = (error as { status?: unknown }).status;
+	return status === 400 || status === 404;
 }
 
 interface GalleryCandidate {
@@ -253,8 +266,10 @@ export async function discoverAllSavedProgress(options: {
 				return context
 					? { puzzleId, name: puzzle.name, source: 'api', pieceCount: puzzle.pieceCount, context }
 					: null;
-			} catch {
-				hadFetchFailure = true;
+			} catch (error) {
+				// 400/404 are authoritative: the puzzle is gone, so this candidate
+				// is permanently skippable and must not keep discovery incomplete.
+				if (!isAuthoritativeFetchFailure(error)) hadFetchFailure = true;
 				return null;
 			}
 		})
