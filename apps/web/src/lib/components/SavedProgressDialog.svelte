@@ -74,6 +74,19 @@
 					</p>
 				</div>
 			{:else}
+				{#if !complete}
+					<!-- Partial discovery: some off-page detail fetches succeeded
+					     while others transiently failed. The rows below are usable,
+					     but the list is not the full saved-progress set — reopening
+					     the picker may recover the missing entries. -->
+					<p
+						data-testid="saved-progress-partial-warning"
+						role="status"
+						class="mb-3 border border-(--hot)/60 bg-(--hot)/10 px-3 py-2 text-[0.7rem] font-(--font-mono) tracking-[0.18em] text-(--hot) uppercase"
+					>
+						Some saved progress could not be loaded — try again
+					</p>
+				{/if}
 				<ul class="flex flex-col gap-3">
 					{#each progress as item (item.puzzleId)}
 						<li
