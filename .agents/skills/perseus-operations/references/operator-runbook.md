@@ -26,8 +26,15 @@ Also available via `workflow_dispatch`.
 - **Deploy order (first deploy):** `pulumi up` creates the D1 database AND
   publishes the Worker in the same step, so the Worker is live before
   `wrangler d1 migrations apply` runs (see the first-deploy gap below).
-- **Preview job** inherits the `production` environment's protection rules.
-  TODO: create a `pulumi-preview` GitHub Environment to avoid deadlocks.
+- **Preview job** inherits the `production` environment's protection rules
+  (required reviewers, wait timers). A stuck or pending preview blocks
+  deploys because the deploy job has `needs: [build, preview]`.
+  **Workaround until resolved:** operators must approve the pending preview
+  review for deploys to proceed. Tracked in
+  [issue #67](https://github.com/cwchanap/perseus/issues/67) — create a
+  `pulumi-preview` GitHub Environment that mirrors production secrets but
+  has no required reviewers, then switch the preview job to
+  `environment: pulumi-preview`.
 
 **First-deploy D1 gap (zero-downtime):**
 On the first-ever production deploy, the D1 database does not exist yet, so
@@ -44,7 +51,9 @@ until migrations complete:
 **Zero-downtime first deploy (optional):**
 
 ```bash
-pulumi stack output d1DatabaseId --cwd packages/infrastructure
+PULUMI_CONFIG_PASSPHRASE='' pulumi stack output d1DatabaseId \
+  -s cwchanap/perseus-infrastructure/production \
+  -C packages/infrastructure
 sed -i "s/^database_id = .*/database_id = \"<ID>\"/" apps/api/wrangler.production.toml
 bunx wrangler d1 migrations apply perseus-player-data --remote \
   --config apps/api/wrangler.production.toml
@@ -118,14 +127,27 @@ new UUID and lose all data). Instead, re-adopt the existing database:
    ```typescript
    import: `${accountId}/${existingUuid}`,
    ```
-3. Set a Pulumi config value with the existing UUID.
-4. Run `pulumi up` to adopt the resource back into state.
+3. Set a Pulumi config value with the existing UUID:
+   ```bash
+   PULUMI_CONFIG_PASSPHRASE='' pulumi config set existingD1Uuid <UUID> \
+     -s cwchanap/perseus-infrastructure/production \
+     -C packages/infrastructure
+   ```
+4. Run `pulumi up` to adopt the resource back into state:
+   ```bash
+   PULUMI_CONFIG_PASSPHRASE='' pulumi up \
+     -s cwchanap/perseus-infrastructure/production \
+     -C packages/infrastructure
+   ```
 5. Remove the `import:` line and config so Pulumi fully owns the resource
    going forward.
 
 **D1 and R2 are `protect: true`** — `pulumi destroy` or a destructive
 replacement will refuse without first running
-`pulumi state unprotect <resource-urn>` (URNs via `pulumi stack export`).
+`PULUMI_CONFIG_PASSPHRASE='' pulumi state unprotect <resource-urn> \
+-s cwchanap/perseus-infrastructure/production -C packages/infrastructure`
+(URNs via `PULUMI_CONFIG_PASSPHRASE='' pulumi stack export -s \
+cwchanap/perseus-infrastructure/production -C packages/infrastructure`).
 This is intentional: it prevents a typo or wrong-cwd `pulumi destroy` from
 nuking prod data. Re-protect after any legitimate destructive operation.
 
@@ -174,14 +196,27 @@ a puzzle create dies mid-flight or a workflow errors/terminates.
 `apps/api/wrangler.production.toml` `[triggers]`.
 
 **Threshold:** Puzzles stuck in `processing` status for > 2 hours are
-candidates. The reaper checks the workflow status; if the workflow is
-dead (`errored`, `terminated`, or `unknown`/never-created), it deletes the
-KV metadata, R2 assets, D1 ownership row, and (best-effort) the DO
-idempotency reservation. A workflow in `complete` status is explicitly
-**skipped** — `complete` means every step succeeded including finalize, so
-a KV read that still shows `processing` is eventual-consistency lag, not an
-orphan. Reaping would destroy a valid completed puzzle. If KV never catches
-up, operator force-delete (§7) is the escape hatch.
+candidates. The stuck-processing scan (`reapStuckPuzzles`) checks the
+workflow status; if the workflow is dead (`errored`, `terminated`, or
+`unknown`/never-created), it deletes the KV metadata, R2 assets, D1
+ownership row, and (best-effort) the DO idempotency reservation. A workflow
+in `complete` status is explicitly **skipped** in this scan — `complete`
+means every step succeeded including finalize, so a KV read that still
+shows `processing` is eventual-consistency lag, not an orphan. Reaping
+would destroy a valid completed puzzle. If KV never catches up, operator
+force-delete (§7) is the escape hatch.
+
+**Cleanup-record scan (`reapCleanupRecords`):** A separate reaper processes
+durable cleanup records persisted by the commit-conflict path
+(`cleanupOrphanedWorkflow` in the admin route). Unlike the stuck-processing
+scan, this scan **does** process `complete` workflows: the durable cleanup
+record confirms the puzzle's idempotency reservation was reclaimed by a
+retry, so a completed workflow behind a reclaimed reservation is a
+duplicate that must be removed. The `complete`-skip above applies
+exclusively to the stuck-processing scan, where no durable record vouches
+for duplication. (The reclaimed-reservation reaper `reapOrphanedReservations`
+also processes `complete` workflows, using an idempotency-key ownership
+mismatch as its durable orphan signal — see `reaper.ts` for details.)
 
 **Safety:**
 
@@ -271,7 +306,7 @@ If a puzzle is stuck in `processing` and the reaper hasn't cleaned it up
 (e.g. the workflow status check is failing), an operator can manually
 force-delete it via the admin API:
 
-```
+```http
 POST /api/admin/puzzle-delete/:id?force=true
 ```
 
@@ -385,7 +420,9 @@ counters need repair.** The reconciliation rebuilds
 3. Execute the checked-in maintenance SQL as one atomic D1 execution:
 
    ```bash
-   rtk bunx wrangler d1 execute perseus-player-data --remote --config apps/api/wrangler.production.toml --file packages/shared/drizzle/maintenance/reconcile_completion_usage.sql
+   bunx wrangler d1 execute perseus-player-data --remote \
+     --config apps/api/wrangler.production.toml \
+     --file packages/shared/drizzle/maintenance/reconcile_completion_usage.sql
    ```
 
 4. Verify that the following mismatch query returns no rows before resuming
@@ -622,16 +659,19 @@ The service token expires after 90 days
 (`DEFAULT_ADMIN_CLI_SERVICE_TOKEN_DURATION = '2160h'`). To adjust the
 expiration:
 
-1. `cd packages/infrastructure && pulumi config set adminCliServiceTokenDuration 4380h` (6 months, or leave unset for the default `2160h` / 90 days)
-2. `pulumi up` — Pulumi updates the token's expiration in-place (client_id/secret stay the same)
+1. `cd packages/infrastructure && PULUMI_CONFIG_PASSPHRASE='' pulumi config set adminCliServiceTokenDuration 4380h -s cwchanap/perseus-infrastructure/production` (6 months, or leave unset for the default `2160h` / 90 days)
+2. `PULUMI_CONFIG_PASSPHRASE='' pulumi up -s cwchanap/perseus-infrastructure/production -C packages/infrastructure` — Pulumi updates the token's expiration in-place (client_id/secret stay the same)
 
 To rotate credentials (new client_id + client_secret):
 
-1. `cd packages/infrastructure && pulumi up --target-replace "urn:pulumi:production::perseus-infrastructure::cloudflare:index/zeroTrustAccessServiceToken:ZeroTrustAccessServiceToken::admin-access-cli-service-token"`
+1. `cd packages/infrastructure && PULUMI_CONFIG_PASSPHRASE='' pulumi up --target-replace "urn:pulumi:production::perseus-infrastructure::cloudflare:index/zeroTrustAccessServiceToken:ZeroTrustAccessServiceToken::admin-access-cli-service-token" -s cwchanap/perseus-infrastructure/production`
 2. The CI seed workflow (`seed-startup-puzzles.yml`) reads the new outputs automatically at runtime — no GitHub secret update needed. For local CLI use, update `apps/api/.env` (or your shell env):
    ```bash
-   CF_ACCESS_CLIENT_ID=$(cd packages/infrastructure && pulumi stack output adminCliAccessClientId)
-   CF_ACCESS_CLIENT_SECRET=$(cd packages/infrastructure && pulumi stack output --show-secrets adminCliAccessClientSecret)
+   CF_ACCESS_CLIENT_ID=$(PULUMI_CONFIG_PASSPHRASE='' pulumi stack output adminCliAccessClientId \
+     -s cwchanap/perseus-infrastructure/production -C packages/infrastructure)
+   CF_ACCESS_CLIENT_SECRET=$(PULUMI_CONFIG_PASSPHRASE='' pulumi stack output --show-secrets \
+     adminCliAccessClientSecret \
+     -s cwchanap/perseus-infrastructure/production -C packages/infrastructure)
    ```
 3. Verify: `bun run admin:startup:status`
 
