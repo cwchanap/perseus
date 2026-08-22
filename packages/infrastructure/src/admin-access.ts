@@ -38,8 +38,10 @@ export const ADMIN_ACCESS_PATHS = ['/admin', '/admin/*', '/api/admin', '/api/adm
  *   1. The CLI script (admin-bulk-upload-startup.ts) only calls POST
  *      /api/admin/puzzles (create) and POST /api/admin/login; it never
  *      calls /api/admin/puzzle-delete/:id.
- *   2. The service token expires after
- *      DEFAULT_ADMIN_CLI_SERVICE_TOKEN_DURATION (90 days).
+ *   2. The service token's lifetime is set by cliServiceTokenDuration in
+ *      index.ts (production override: 8760h / 1 year); the in-code default
+ *      DEFAULT_ADMIN_CLI_SERVICE_TOKEN_DURATION (2160h / 90 days) applies
+ *      only when no override is passed.
  *   3. The session cookie has a limited duration
  *      (DEFAULT_ADMIN_ACCESS_SESSION_DURATION = 12h).
  */
