@@ -45,3 +45,6 @@ vite.config.ts.timestamp-*
 sample.png
 coverage/
 data/
+
+# Local puzzle image assets
+/assets/
