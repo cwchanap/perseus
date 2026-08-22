@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Perseus Operations'
+  short_description: 'Operate Perseus production and admin workflows'
+  default_prompt: 'Use $perseus-operations to carry out this Perseus production operation safely.'

@@ -153,5 +153,6 @@ New gameplay tests must import `test` and `expect` from `e2e/support/test`, whic
 
 Production operations procedures (deploy, D1 migrations, state-loss recovery,
 seed uploads, orphan reaper, force-delete, Access gate, legacy key removal)
-are consolidated in [`docs/OPERATOR_RUNBOOK.md`](docs/OPERATOR_RUNBOOK.md).
-The sections below are brief pointers; consult the runbook for full detail.
+are consolidated in the repo-local
+[`perseus-operations`](.agents/skills/perseus-operations/SKILL.md) skill.
+The sections below are brief pointers; use the skill for full detail.
