@@ -50,16 +50,22 @@ until migrations complete:
 
 **Zero-downtime first deploy (optional):**
 
+With the production stack/config initialized, build the apps and pre-provision
+only the D1 resource before triggering the workflow:
+
 ```bash
-PULUMI_CONFIG_PASSPHRASE='' pulumi stack output d1DatabaseId \
+bun run build
+PULUMI_CONFIG_PASSPHRASE='' pulumi up \
+  --target 'urn:pulumi:production::perseus-infrastructure::cloudflare:index/d1Database:D1Database::player-data' \
   -s cwchanap/perseus-infrastructure/production \
   -C packages/infrastructure
-sed -i "s/^database_id = .*/database_id = \"<ID>\"/" apps/api/wrangler.production.toml
-bunx wrangler d1 migrations apply perseus-player-data --remote \
-  --config apps/api/wrangler.production.toml
 ```
 
-Then trigger the workflow. Subsequent deploys are unaffected.
+Then trigger the workflow. **Read existing D1 database ID from stack** reads
+`d1DatabaseId`; **Apply D1 migrations (before Worker publish)** synchronizes
+`database_id` in both `apps/api/wrangler.production.toml` and
+`apps/workflows/wrangler.production.toml`, then applies migrations before
+**Pulumi Up** publishes either Worker. Subsequent deploys are unaffected.
 
 **Source:** `deploy-infrastructure.yml` (Apply D1 migrations step comment),
 `CLAUDE.md` → First-deploy D1 gap.
@@ -122,24 +128,19 @@ Cloudflare, do NOT let `pulumi up` create a fresh database (it would get a
 new UUID and lose all data). Instead, re-adopt the existing database:
 
 1. Find the existing UUID: `wrangler d1 list` or the Cloudflare dashboard.
-2. Temporarily restore the `import:` line in `createD1Database`
-   (`packages/infrastructure/src/resources.ts`):
+2. Temporarily add an `import:` option to the existing resource-options
+   object in `createD1Database` (`packages/infrastructure/src/resources.ts`),
+   replacing `<UUID>` with the UUID from step 1:
    ```typescript
-   import: `${accountId}/${existingUuid}`,
+   import: `${accountId}/<UUID>`,
    ```
-3. Set a Pulumi config value with the existing UUID:
-   ```bash
-   PULUMI_CONFIG_PASSPHRASE='' pulumi config set existingD1Uuid <UUID> \
-     -s cwchanap/perseus-infrastructure/production \
-     -C packages/infrastructure
-   ```
-4. Run `pulumi up` to adopt the resource back into state:
+3. Run `pulumi up` to adopt the resource back into state:
    ```bash
    PULUMI_CONFIG_PASSPHRASE='' pulumi up \
      -s cwchanap/perseus-infrastructure/production \
      -C packages/infrastructure
    ```
-5. Remove the `import:` line and config so Pulumi fully owns the resource
+4. Remove the temporary `import:` option so Pulumi fully owns the resource
    going forward.
 
 **D1 and R2 are `protect: true`** — `pulumi destroy` or a destructive
@@ -667,9 +668,9 @@ To rotate credentials (new client_id + client_secret):
 1. `cd packages/infrastructure && PULUMI_CONFIG_PASSPHRASE='' pulumi up --target-replace "urn:pulumi:production::perseus-infrastructure::cloudflare:index/zeroTrustAccessServiceToken:ZeroTrustAccessServiceToken::admin-access-cli-service-token" -s cwchanap/perseus-infrastructure/production`
 2. The CI seed workflow (`seed-startup-puzzles.yml`) reads the new outputs automatically at runtime — no GitHub secret update needed. For local CLI use, update `apps/api/.env` (or your shell env):
    ```bash
-   CF_ACCESS_CLIENT_ID=$(PULUMI_CONFIG_PASSPHRASE='' pulumi stack output adminCliAccessClientId \
+   export CF_ACCESS_CLIENT_ID=$(PULUMI_CONFIG_PASSPHRASE='' pulumi stack output adminCliAccessClientId \
      -s cwchanap/perseus-infrastructure/production -C packages/infrastructure)
-   CF_ACCESS_CLIENT_SECRET=$(PULUMI_CONFIG_PASSPHRASE='' pulumi stack output --show-secrets \
+   export CF_ACCESS_CLIENT_SECRET=$(PULUMI_CONFIG_PASSPHRASE='' pulumi stack output --show-secrets \
      adminCliAccessClientSecret \
      -s cwchanap/perseus-infrastructure/production -C packages/infrastructure)
    ```
