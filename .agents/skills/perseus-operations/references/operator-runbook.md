@@ -676,7 +676,7 @@ a live token.
 
 To rotate credentials (new client_id + client_secret):
 
-1. `cd packages/infrastructure && PULUMI_CONFIG_PASSPHRASE='' pulumi up --target-replace "urn:pulumi:production::perseus-infrastructure::cloudflare:index/zeroTrustAccessServiceToken:ZeroTrustAccessServiceToken::admin-access-cli-service-token" --target-dependents -s cwchanap/perseus-infrastructure/production`
+1. `PULUMI_CONFIG_PASSPHRASE='' pulumi up --target-replace "urn:pulumi:production::perseus-infrastructure::cloudflare:index/zeroTrustAccessServiceToken:ZeroTrustAccessServiceToken::admin-access-cli-service-token" --target-dependents -s cwchanap/perseus-infrastructure/production -C packages/infrastructure`
    - **`--target-dependents` is required.** The narrow CLI Access application
      (`admin-access-cli-application`) declares
      `dependsOn: [devicePostureRule, cliServiceToken]` and its Service Auth
