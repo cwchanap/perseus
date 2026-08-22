@@ -54,7 +54,7 @@ Options:
 
 Production Access (automated):
   Set CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET env vars (from Pulumi
-  stack outputs) — same as the bulk uploader. See docs/OPERATOR_RUNBOOK.md §11 (Admin CLI Uploads).
+  stack outputs) — same as the bulk uploader. See the perseus-operations skill §11.
 `);
 	process.exit(exitCode);
 }

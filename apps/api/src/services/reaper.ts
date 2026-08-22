@@ -23,7 +23,7 @@
 // consistency lag (the DO's KV sync retries can exhaust), not an orphan.
 // Reaping would destroy a valid completed puzzle, so we skip and let KV
 // catch up. If KV never catches up, operator force-delete is the escape
-// hatch (see docs/OPERATOR_RUNBOOK.md).
+// hatch (see the perseus-operations skill's operator runbook).
 
 import {
 	deletePuzzleAssets,

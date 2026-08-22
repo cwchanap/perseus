@@ -14,4 +14,4 @@ bun run dev --filter=@perseus/api
 
 The normal local API port is `4690`. Local D1, KV, R2, Durable Object, and Workflow bindings are provided by Wrangler.
 
-For repository layout, environment variables, testing, and contributor conventions, see [`../../CLAUDE.md`](../../CLAUDE.md). For deployment and admin procedures, see [`../../docs/OPERATOR_RUNBOOK.md`](../../docs/OPERATOR_RUNBOOK.md).
+For repository layout, environment variables, testing, and contributor conventions, see [`../../CLAUDE.md`](../../CLAUDE.md). For deployment and admin procedures, use the [`perseus-operations`](../../.agents/skills/perseus-operations/SKILL.md) skill.
