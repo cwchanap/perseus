@@ -654,18 +654,38 @@ other admin endpoints, and why no `/api/admin/puzzles/*` wildcard is used —
 is in **§8 Cloudflare Access (Admin Gate)** and
 `packages/infrastructure/src/admin-access.ts` (`CLI_ACCESS_PATHS`).
 
+### Token lifetime
+
+The deployed CLI service token has a **one-year lifetime** (`8760h`).
+`packages/infrastructure/src/index.ts` passes `cliServiceTokenDuration: '8760h'`
+directly into `createAdminAccessResources`; the `adminCliServiceTokenDuration`
+Pulumi config key is **not read** in production, so `pulumi config set
+adminCliServiceTokenDuration` has no effect on the deployed token. The `2160h`
+(90-day) value in `DEFAULT_ADMIN_CLI_SERVICE_TOKEN_DURATION` is only the in-code
+default, which the production override bypasses.
+
+Cloudflare rejects shortening an existing service token's expiration in place,
+so changing the lifetime requires editing `cliServiceTokenDuration` in
+`index.ts` and then rotating the token (see below) so new credentials carry the
+new lifetime. To make the duration configurable via Pulumi config instead, wire
+`config.get('adminCliServiceTokenDuration')` into `createAdminAccessResources`
+and pair it with the rotation step — do not assume a `config set` alone changes
+a live token.
+
 ### Token rotation
-
-The service token expires after 90 days
-(`DEFAULT_ADMIN_CLI_SERVICE_TOKEN_DURATION = '2160h'`). To adjust the
-expiration:
-
-1. `cd packages/infrastructure && PULUMI_CONFIG_PASSPHRASE='' pulumi config set adminCliServiceTokenDuration 4380h -s cwchanap/perseus-infrastructure/production` (6 months, or leave unset for the default `2160h` / 90 days)
-2. `PULUMI_CONFIG_PASSPHRASE='' pulumi up -s cwchanap/perseus-infrastructure/production -C packages/infrastructure` — Pulumi updates the token's expiration in-place (client_id/secret stay the same)
 
 To rotate credentials (new client_id + client_secret):
 
-1. `cd packages/infrastructure && PULUMI_CONFIG_PASSPHRASE='' pulumi up --target-replace "urn:pulumi:production::perseus-infrastructure::cloudflare:index/zeroTrustAccessServiceToken:ZeroTrustAccessServiceToken::admin-access-cli-service-token" -s cwchanap/perseus-infrastructure/production`
+1. `cd packages/infrastructure && PULUMI_CONFIG_PASSPHRASE='' pulumi up --target-replace "urn:pulumi:production::perseus-infrastructure::cloudflare:index/zeroTrustAccessServiceToken:ZeroTrustAccessServiceToken::admin-access-cli-service-token" --target-dependents -s cwchanap/perseus-infrastructure/production`
+   - **`--target-dependents` is required.** The narrow CLI Access application
+     (`admin-access-cli-application`) declares
+     `dependsOn: [devicePostureRule, cliServiceToken]` and its Service Auth
+     policy embeds `cliServiceToken.id`. A bare `--target-replace` replaces only
+     the token and leaves the dependent application bound to the old token ID, so
+     the new client_id/secret would be rejected at the Access gate.
+     `--target-dependents` forces Pulumi to update the CLI application so its
+     policy references the new token ID. If you omit it, follow with a full
+     `pulumi up` to reconcile the application before using the new credentials.
 2. The CI seed workflow (`seed-startup-puzzles.yml`) reads the new outputs automatically at runtime — no GitHub secret update needed. For local CLI use, update `apps/api/.env` (or your shell env):
    ```bash
    export CF_ACCESS_CLIENT_ID=$(PULUMI_CONFIG_PASSPHRASE='' pulumi stack output adminCliAccessClientId \
