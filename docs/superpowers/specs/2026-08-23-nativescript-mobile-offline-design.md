@@ -22,6 +22,7 @@ The mobile client should reuse Perseus gameplay rules instead of reimplementing 
 - Support both drag-and-drop and tap-piece/tap-cell placement.
 - Optional Google login is included for TestFlight/personal distribution. App Store-specific Sign in with Apple and provider-neutral identity migration are deferred.
 - Queue server completion submission only for runs completed while an account was already signed in.
+- Signing in does not upload/download gameplay sessions or turn local saves into cloud saves in the MVP.
 
 ## Architecture
 
@@ -66,7 +67,9 @@ Move or adapt these pure concerns into `packages/game-core`:
 
 Do not move browser storage enumeration or `localStorage` handling into game-core. Split the current persistence module so the portable codec lives in game-core while the web keeps its concrete `Storage` adapter.
 
-The mobile app implements the same `SessionStorageAdapter` contract with JSON files.
+Keep the existing synchronous `SessionStorageAdapter` contract. The mobile adapter can use NativeScript's synchronous text-file APIs for the small session JSON records, avoiding a second async session abstraction. Network downloads and large binary asset writes remain asynchronous and are separate from session persistence.
+
+A downloaded server puzzle remains `source: 'api'` in `PersistedPuzzleSessionV1`; download status describes local asset availability, not puzzle identity/origin. Do not add a new `downloaded` session source variant.
 
 ## Mobile Application Shape
 
@@ -163,7 +166,7 @@ Keep these operations independent:
 - **Remove Download** deletes local puzzle assets and manifest but keeps session progress.
 - **Discard Progress** deletes the persisted gameplay session.
 
-If the same stable puzzle ID is downloaded again later, valid retained progress can resume.
+If the same stable puzzle ID is downloaded again later, retained progress is revalidated against the freshly downloaded canonical piece/grid metadata before it can resume. A mismatched or invalid session is rejected rather than partially restored.
 
 ### Session persistence
 
@@ -171,7 +174,7 @@ Mobile uses the same persisted session schema and validation rules as web. Only 
 
 Save after meaningful persisted state changes and at lifecycle boundaries, including placement attempts that change counters, accepted placements, undo/redo, rotation changes, tray organization changes, pause, app backgrounding, and leaving gameplay.
 
-Session writes are small JSON replacements; avoid adding a complex debounce/write-behind system in the MVP.
+Session writes are small JSON replacements; avoid adding a complex debounce/write-behind system in the MVP. Write through a temporary file and rename/replace it so an interrupted write cannot expose truncated JSON as the current save.
 
 Invalid or corrupt sessions are never partially hydrated. The shared codec rejects them and the mobile UI offers discard/start-over behavior.
 
@@ -268,6 +271,8 @@ Protected API middleware should accept either the existing web session cookie or
 
 `/api/auth/session` and logout should gain equivalent bearer-token handling, or mobile-specific thin session/logout endpoints may wrap the same session service. Prefer the smaller change with one canonical token-validation path.
 
+Authentication affects account completion submission only in the MVP. It does not synchronize downloaded assets, gameplay sessions, tray state, viewport state, or local completion history between devices.
+
 App Store release is out of scope. Sign in with Apple and provider-neutral account identity are deferred until App Store distribution is planned.
 
 ## Completion and Offline Outbox
@@ -296,7 +301,7 @@ On app activation/connectivity restoration, process pending items sequentially. 
 
 Do not create outbox entries for runs completed while logged out. A later login must not retroactively assign anonymous runs to that account.
 
-Outbox records remain tagged to the account active at completion time. Logging into another account must never submit another account's pending records.
+Outbox records remain tagged to the account active at completion time. Logging out or switching accounts leaves those records untouched; they are eligible for submission only when that same account is authenticated again.
 
 The existing sealed completion/run ID remains the idempotency boundary for retries.
 
@@ -324,7 +329,7 @@ Run normal TypeScript tests for:
 
 - download staging/finalization and cleanup;
 - manifest validation;
-- filesystem session adapter;
+- filesystem session adapter and atomic replacement;
 - index rebuilds;
 - completion persistence;
 - account-bound outbox behavior;
@@ -391,19 +396,52 @@ Do not block the MVP on reproducing the web Playwright suite in a native E2E fra
 
 ## Delivery Strategy
 
-Implement as a vertical slice rather than extracting every web gameplay file before proving NativeScript rendering:
+This document is the architecture-level design for the mobile MVP, not a request to land the entire mobile app in one oversized PR. Implement it as three substantial tracked tasks. Each task should use one PR; do not split a task into separate refactor/UI PRs.
+
+### Task 1 — Shared core + offline vertical slice
+
+Prove the architecture with the smallest end-to-end playable path:
 
 ```text
 minimal game-core extraction
   -> NativeScript/Svelte Native shell
-  -> small downloaded/fixture puzzle
+  -> one local fixture/download-package-shaped puzzle
   -> Canvas rendering
   -> tap + drag placement
+  -> filesystem session adapter
   -> save
   -> terminate/relaunch
   -> offline resume
 ```
 
-Once that path works, layer in remaining toolbar/session features, gallery/download management, portrait behavior, and finally optional account/outbox support.
+This task establishes package boundaries, the synchronous mobile session adapter, board transforms/input, and the NativeScript Canvas integration. It deliberately does not need the online gallery, full toolbar parity, portrait polish, or authentication.
 
-The first implementation should remain one coherent PR/workstream unless the scope is deliberately decomposed into separate tracked tasks first. Avoid creating multiple PRs for one task merely to separate refactoring from mobile code.
+### Task 2 — Offline library + gameplay parity
+
+Build the user-facing offline product on the proven slice:
+
+- public Gallery and explicit downloads;
+- atomic staging/finalization and Downloaded library;
+- remove-download/discard-progress behavior;
+- timed/relaxed setup;
+- rotation, undo/redo, hints, reference modes;
+- tray filters/shuffle/organization;
+- viewport persistence, pause/resume, completion sheet;
+- landscape-primary and portrait tray layouts;
+- local completion history.
+
+This remains offline-capable without an account.
+
+### Task 3 — Optional account completion sync
+
+Add only the account functionality required by the chosen TestFlight MVP:
+
+- native Google sign-in;
+- mobile token-exchange endpoint;
+- bearer support through the existing player-session validation path;
+- secure token storage/session/logout;
+- account-bound completion outbox and retry-on-activation/connectivity behavior.
+
+Do not add save sync, asset sync, Sign in with Apple, or provider-neutral account migration in this task.
+
+This decomposition keeps each task coherent and testable without fragmenting the feature into tiny tickets. The implementation plan following this architecture spec should start with **Task 1**.
