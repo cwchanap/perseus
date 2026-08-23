@@ -17,8 +17,9 @@ The mobile client should reuse Perseus gameplay rules instead of reimplementing 
 - Offline play is available only for puzzles the player explicitly downloads.
 - Mobile storage is local-first and file-backed; no SQLite in the MVP.
 - Use stable puzzle/run IDs and the existing persisted session schema so future cloud sync is possible without redesigning gameplay state.
-- Preserve touch-oriented gameplay parity: timed/relaxed play, rotation, undo/redo, hints, reference modes, tray filtering/shuffle/organization, pause/resume, saved progress, and completion summary.
-- Optimize gameplay for landscape, but support portrait with a bottom tray panel.
+- Preserve touch-oriented gameplay parity for the current shipped puzzle loop: timed/relaxed play, rotation, undo/redo, hints, reference modes, tray filters/shuffle, pause/resume, saved progress, and completion summary.
+- Do not revive persisted manual tray organization in the mobile MVP. Existing optional organization fields may remain tolerated by the shared codec, but the mobile app does not expose or produce named trays, tray membership, renaming, or movement between trays.
+- Optimize gameplay for landscape. Portrait support follows as a separate adaptive-tablet task rather than expanding the main landscape gameplay PR.
 - Support both drag-and-drop and tap-piece/tap-cell placement.
 - Optional Google login is included for TestFlight/personal distribution. App Store-specific Sign in with Apple and provider-neutral identity migration are deferred.
 - Queue server completion submission only for runs completed while an account was already signed in.
@@ -70,6 +71,21 @@ Do not move browser storage enumeration or `localStorage` handling into game-cor
 Keep the existing synchronous `SessionStorageAdapter` contract. The mobile adapter can use NativeScript's synchronous text-file APIs for the small session JSON records, avoiding a second async session abstraction. Network downloads and large binary asset writes remain asynchronous and are separate from session persistence.
 
 A downloaded server puzzle remains `source: 'api'` in `PersistedPuzzleSessionV1`; download status describes local asset availability, not puzzle identity/origin. Do not add a new `downloaded` session source variant.
+
+### Canvas feasibility gate
+
+The highest-risk assumption is the NativeScript + Svelte Native + native-backed Canvas combination, not moving pure TypeScript files. The first implementation ticket must prove that stack before performing the game-core extraction.
+
+The gate is deliberately small:
+
+1. Scaffold `apps/mobile` with NativeScript + Svelte Native.
+2. Build and launch on an iPad simulator/device.
+3. Register the selected Canvas component.
+4. Load and draw one real Perseus puzzle-piece PNG.
+5. Receive tap and drag coordinates over the Canvas.
+6. Redraw the piece after a simple transform/position change.
+
+If this gate cannot be made reliable with the chosen stack, stop that ticket and revisit the rendering/UI choice before moving web gameplay code. Do not complete a speculative package extraction without a working native consumer.
 
 ## Mobile Application Shape
 
@@ -150,12 +166,9 @@ Documents/perseus/
     <runId>.json
   outbox/
     <runId>.json
-  indexes/
-    downloads.json
-    sessions.json
 ```
 
-Indexes are rebuildable caches only. If an index is absent or corrupt, reconstruct it from authoritative manifests/session files.
+Do not add a downloads/sessions index in the MVP. On launch or library refresh, derive the local library by scanning completed `downloads/*/manifest.json` packages and relevant session/completion files. Add an index only if measurement later shows directory scanning is a real problem.
 
 Use NativeScript `ApplicationSettings` only for small preferences such as last-opened section or sort order.
 
@@ -172,7 +185,7 @@ If the same stable puzzle ID is downloaded again later, retained progress is rev
 
 Mobile uses the same persisted session schema and validation rules as web. Only the storage adapter differs.
 
-Save after meaningful persisted state changes and at lifecycle boundaries, including placement attempts that change counters, accepted placements, undo/redo, rotation changes, tray organization changes, pause, app backgrounding, and leaving gameplay.
+Save after meaningful persisted state changes and at lifecycle boundaries, including placement attempts that change counters, accepted placements, undo/redo, rotation changes, filter/tray-order changes, pause, app backgrounding, and leaving gameplay.
 
 Session writes are small JSON replacements; avoid adding a complex debounce/write-behind system in the MVP. Write through a temporary file and rename/replace it so an interrupted write cannot expose truncated JSON as the current save.
 
@@ -182,7 +195,7 @@ Invalid or corrupt sessions are never partially hydrated. The shared codec rejec
 
 ### Landscape
 
-Landscape is the primary layout:
+Landscape is the primary gameplay target:
 
 ```text
 +---------------------------------------------------------------+
@@ -201,7 +214,9 @@ The board gets most of the screen. The tray is a persistent right-side panel siz
 
 ### Portrait
 
-Portrait keeps the board primary and moves the tray into a bottom panel/drawer. Expanding the tray changes the viewport size, not canonical puzzle coordinates.
+Portrait support is a separate follow-up after the landscape gameplay path is stable. It keeps the board primary and moves the tray into a bottom panel/drawer. Expanding the tray changes the viewport size, not canonical puzzle coordinates.
+
+The portrait task owns orientation changes during an active session, viewport preservation across layout changes, portrait toolbar/overflow behavior, and a focused portrait smoke path. It must not fork gameplay rules or create a second board implementation.
 
 ### Board input
 
@@ -212,7 +227,7 @@ Both interaction methods feed one placement path in the gameplay view model:
 
 Placement validity remains entirely owned by `PuzzleSession`.
 
-Board gestures:
+Board gestures in the production landscape gameplay task:
 
 - pinch to zoom;
 - two-finger drag to pan;
@@ -220,6 +235,8 @@ Board gestures:
 - one-finger drag on a piece is piece placement, not board panning.
 
 Persist viewport zoom/pan using the session schema's existing optional viewport fields.
+
+The first vertical-slice ticket only proves basic tap/drag placement with a fixed or fit-only viewport. It does not need production pinch/pan gesture arbitration or polished placement animation.
 
 ### Rendering boundary
 
@@ -236,6 +253,17 @@ The Canvas draws placed pieces, active/dragged piece, placement feedback, board/
 ### Rotation
 
 Do not place a Rotate icon over every tray piece. When rotation is enabled, selecting a piece enables a single Rotate action in the tray/toolbar area. All rotation rules still dispatch through `PuzzleSession`.
+
+### Tray behavior
+
+Carry over only the proven simple inventory behavior:
+
+- All / Corners / Edges / Center filters;
+- shuffle of unplaced pieces;
+- current selection and selected-piece Rotate action;
+- remaining-piece count.
+
+Do not add named/staging trays, manual grouping, multi-select, piece-to-tray membership, tray renaming/removal, or automatic clustering in the mobile MVP.
 
 ### Toolbar
 
@@ -330,7 +358,7 @@ Run normal TypeScript tests for:
 - download staging/finalization and cleanup;
 - manifest validation;
 - filesystem session adapter and atomic replacement;
-- index rebuilds;
+- direct filesystem library discovery;
 - completion persistence;
 - account-bound outbox behavior;
 - retry/terminal completion handling;
@@ -340,20 +368,13 @@ Use temp directories and fakes; do not require an iOS simulator for pure service
 
 ### iPad smoke coverage
 
-Keep the first native UI smoke surface small:
+Keep native UI smoke coverage small and aligned with the ticket boundary.
 
-1. launch app;
-2. load gallery;
-3. download a small fixture puzzle;
-4. disable network;
-5. start puzzle;
-6. place pieces using drag and tap;
-7. exercise zoom/pan;
-8. background and restore;
-9. kill/relaunch and resume;
-10. complete offline and verify local completion state.
+The first vertical slice proves: launch, draw a fixture, tap/drag placement, terminate/relaunch, and offline resume.
 
-Do not block the MVP on reproducing the web Playwright suite in a native E2E framework. Add native UI automation when it proves reliable and cost-effective; keep a short TestFlight/manual smoke checklist until then.
+The landscape gameplay ticket extends that to: download a small puzzle, disable networking, start it, exercise zoom/pan/Fit, background/restore, complete offline, and verify local completion state.
+
+The portrait task adds one focused orientation/portrait journey. Do not block the MVP on reproducing the web Playwright suite in a native E2E framework. Add native UI automation when it proves reliable and cost-effective; keep a short TestFlight/manual smoke checklist until then.
 
 ## MVP Scope
 
@@ -362,7 +383,7 @@ Do not block the MVP on reproducing the web Playwright suite in a native E2E fra
 - `apps/mobile` NativeScript + Svelte Native app.
 - `packages/game-core` extraction.
 - iPad-first layout with later Android-tablet-compatible core.
-- Landscape-primary and portrait-supported gameplay.
+- Landscape-primary gameplay plus a separate portrait/adaptive tablet follow-up.
 - Public online gallery.
 - Explicit downloads and Downloaded library.
 - Fully offline gameplay for installed puzzles.
@@ -371,10 +392,10 @@ Do not block the MVP on reproducing the web Playwright suite in a native E2E fra
 - Zoom, pan, and fit.
 - Timed and relaxed modes.
 - Rotation, undo/redo, hints, reference modes.
-- Existing tray filtering/shuffle/organization behavior represented by the shared session.
+- Existing simple tray filters and shuffle.
 - Pause/resume and local saved progress.
 - Completion summary and local completion history.
-- File-backed persistence.
+- File-backed persistence without a database or derived index.
 - Optional Google login for TestFlight/personal distribution.
 - Account-bound completion outbox.
 
@@ -382,6 +403,7 @@ Do not block the MVP on reproducing the web Playwright suite in a native E2E fra
 
 - Local-photo puzzle creation.
 - Implicit caching/automatic downloads.
+- Manual/staging/named tray organization.
 - Web/mobile session sync or cloud save.
 - Android release polish.
 - Phone-sized UI optimization.
@@ -396,45 +418,86 @@ Do not block the MVP on reproducing the web Playwright suite in a native E2E fra
 
 ## Delivery Strategy
 
-This document is the architecture-level design for the mobile MVP, not a request to land the entire mobile app in one oversized PR. Implement it as three substantial tracked tasks. Each task should use one PR; do not split a task into separate refactor/UI PRs.
-
-### Task 1 — Shared core + offline vertical slice
-
-Prove the architecture with the smallest end-to-end playable path:
+This document is the architecture-level design for the mobile work, not a request to land the entire app in one oversized PR. The roadmap uses five substantial Linear tickets. Each ticket gets one coherent PR; do not split a ticket into separate refactor/UI PRs unless the scope is explicitly redesigned first.
 
 ```text
-minimal game-core extraction
-  -> NativeScript/Svelte Native shell
+HPA-1  Shared core + offline proof
+   |
+   v
+HPA-2  Explicit downloads + offline library
+   |
+   v
+HPA-3  Production landscape iPad gameplay parity
+   |\
+   | \
+   v  v
+HPA-46 Portrait/adaptive tablet UX     HPA-4 Optional account completion sync
+```
+
+HPA-1 through HPA-3 produce a usable landscape-first offline mobile MVP. HPA-46 completes the originally desired portrait/adaptive tablet support. HPA-4 is optional account functionality and may proceed independently of HPA-46 once HPA-3 is complete.
+
+### HPA-1 — Shared core + offline vertical slice
+
+Start with the Canvas feasibility gate. Only after it passes, prove the smallest end-to-end playable architecture:
+
+```text
+NativeScript/Svelte Native + Canvas feasibility
+  -> minimal game-core extraction
   -> one local fixture/download-package-shaped puzzle
   -> Canvas rendering
-  -> tap + drag placement
+  -> basic tap + drag placement
   -> filesystem session adapter
   -> save
   -> terminate/relaunch
   -> offline resume
 ```
 
-This task establishes package boundaries, the synchronous mobile session adapter, board transforms/input, and the NativeScript Canvas integration. It deliberately does not need the online gallery, full toolbar parity, portrait polish, or authentication.
+The basic placement proof may use a fixed or fit-only viewport. Production pinch/pan, gesture conflict rules, polished snap/reject feedback, online gallery/downloads, full toolbar parity, portrait layout, and authentication belong to later tickets.
 
-### Task 2 — Offline library + gameplay parity
+### HPA-2 — Explicit downloads + offline library
 
-Build the user-facing offline product on the proven slice:
+Build the downloadable offline product on the proven slice:
 
-- public Gallery and explicit downloads;
-- atomic staging/finalization and Downloaded library;
+- public Gallery and explicit downloads using the existing API;
+- atomic staging/finalization and local manifests;
+- direct filesystem discovery of completed packages;
 - remove-download/discard-progress behavior;
+- corrupt/incomplete package handling;
+- retained session revalidation after re-download.
+
+Do not add a library index, resumable chunk downloader, ZIP endpoint, SQLite, or generic offline framework.
+
+### HPA-3 — Production landscape iPad gameplay parity
+
+Turn the offline library into the real landscape gameplay experience:
+
+- production Canvas transforms and hit testing;
+- pinch zoom, two-finger pan, Fit, drag and tap placement;
+- landscape board + persistent right-side tray;
 - timed/relaxed setup;
 - rotation, undo/redo, hints, reference modes;
-- tray filters/shuffle/organization;
-- viewport persistence, pause/resume, completion sheet;
-- landscape-primary and portrait tray layouts;
-- local completion history.
+- All/Corners/Edges/Center filters and shuffle;
+- viewport persistence, pause/resume, background lifecycle;
+- restart/discard and completion sheet;
+- representative offline completion smoke path.
 
-This remains offline-capable without an account.
+Do not add portrait layout or manual tray organization in this PR.
 
-### Task 3 — Optional account completion sync
+### HPA-46 — Portrait and adaptive tablet UX
 
-Add only the account functionality required by the chosen TestFlight MVP:
+Add the second tablet layout without changing game rules:
+
+- portrait bottom tray panel/drawer;
+- orientation changes during an active session;
+- viewport preservation across layout changes;
+- portrait toolbar/overflow behavior;
+- focused portrait smoke verification and small UX polish required by the adaptive layout.
+
+Do not fork the board renderer, `PuzzleSession`, storage schema, or toolbar framework.
+
+### HPA-4 — Optional account completion sync
+
+Add only the account functionality required by the chosen TestFlight distribution:
 
 - native Google sign-in;
 - mobile token-exchange endpoint;
@@ -442,6 +505,4 @@ Add only the account functionality required by the chosen TestFlight MVP:
 - secure token storage/session/logout;
 - account-bound completion outbox and retry-on-activation/connectivity behavior.
 
-Do not add save sync, asset sync, Sign in with Apple, or provider-neutral account migration in this task.
-
-This decomposition keeps each task coherent and testable without fragmenting the feature into tiny tickets. The implementation plan following this architecture spec should start with **Task 1**.
+Do not add save sync, asset sync, Sign in with Apple, provider-neutral account migration, or a generic synchronization system.
