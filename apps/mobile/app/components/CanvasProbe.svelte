@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { File, knownFolders, path } from '@nativescript/core';
 	import { ImageAsset } from '@nativescript/canvas';
+	import { rotateClockwise } from '@perseus/game-core';
 
 	let canvas: any;
 	let piece: any;
@@ -12,6 +13,12 @@
 	let originY = y;
 	let status = 'waiting';
 	let replaceStatus = 'replace: waiting';
+
+	// HPA-1 Task 3: runtime (not type-only) import of the workspace package.
+	// Evaluated at component init so bundling AND execution are both proven.
+	const gameCoreProbe = rotateClockwise(0);
+	let gameCoreStatus = `game-core: rotateClockwise(0)=${gameCoreProbe} pass=${gameCoreProbe === 90}`;
+	console.log(`[game-core probe] ${gameCoreStatus}`);
 
 	function runtimeStatus(): string {
 		const hasClock = typeof globalThis.performance?.now === 'function';
@@ -128,12 +135,13 @@
 </script>
 
 <page>
-	<gridLayout rows="auto,auto,auto,*">
+	<gridLayout rows="auto,auto,auto,auto,*">
 		<label row="0" text="HPA-1 Canvas Probe" fontSize="24" margin="12" />
 		<label row="1" text={status} textWrap="true" margin="4,12" />
 		<label row="2" text={replaceStatus} textWrap="true" margin="4,12" />
+		<label row="3" text={gameCoreStatus} textWrap="true" margin="4,12" />
 		<canvas
-			row="3"
+			row="4"
 			bind:this={canvas}
 			on:tap={onTap}
 			on:pan={onPan}
