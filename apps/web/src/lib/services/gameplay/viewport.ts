@@ -1,4 +1,6 @@
-// Viewport helper for zoom and pan constraints
+// Viewport helper for zoom and pan constraints. The portable fit-zoom
+// formula lives in @perseus/game-core (geometry); only app-side clamping is
+// owned here.
 
 export interface ViewportBounds {
 	minX: number;
@@ -32,31 +34,4 @@ export function clampPan(x: number, y: number, bounds: ViewportBounds): { x: num
 		x: Math.max(bounds.minX, Math.min(bounds.maxX, x)),
 		y: Math.max(bounds.minY, Math.min(bounds.maxY, y))
 	};
-}
-
-/**
- * Calculates the zoom level needed to fit the puzzle in the viewport.
- *
- * @param puzzleWidth - Width of the puzzle canvas
- * @param puzzleHeight - Height of the puzzle canvas
- * @param viewportWidth - Width of the viewport
- * @param viewportHeight - Height of the viewport
- * @param paddingFactor - Factor to add padding (0.9 = 10% padding, default)
- * @returns Zoom level to fit puzzle in viewport
- */
-export function calculateFitZoom(
-	puzzleWidth: number,
-	puzzleHeight: number,
-	viewportWidth: number,
-	viewportHeight: number,
-	paddingFactor = 0.9
-): number {
-	if (puzzleWidth <= 0 || puzzleHeight <= 0) {
-		return 0;
-	}
-
-	const widthRatio = viewportWidth / puzzleWidth;
-	const heightRatio = viewportHeight / puzzleHeight;
-	const baseZoom = Math.min(widthRatio, heightRatio);
-	return baseZoom * paddingFactor;
 }

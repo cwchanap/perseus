@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { getStats, getBestTime, recordLocalCompletion, clearStats } from '../stats';
-import type { SealedCompletion } from '../gameplay/session/types';
+import type { SealedCompletion } from '@perseus/game-core';
 
 function makeSeal(overrides: Partial<SealedCompletion> = {}): SealedCompletion {
 	return {

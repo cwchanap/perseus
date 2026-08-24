@@ -83,6 +83,7 @@
       "name": "@perseus/web",
       "version": "0.0.1",
       "dependencies": {
+        "@perseus/game-core": "workspace:*",
         "@perseus/types": "workspace:*",
       },
       "devDependencies": {

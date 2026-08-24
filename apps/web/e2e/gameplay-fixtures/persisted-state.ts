@@ -15,11 +15,13 @@
 // clears cookies plus both browser stores for the rarer case where a test must
 // reuse one context, and `freshContext` opens a brand-new isolated context.
 import type { Browser, BrowserContext, Page } from '@playwright/test';
-import type {
-	PersistedPuzzleSessionV1,
-	SessionValidationContext
-} from '../../src/lib/services/gameplay/session/types';
-import { loadPersistedSession } from '../../src/lib/services/gameplay/session/persistence';
+import {
+	loadPersistedSession,
+	validationContextFrom,
+	type PersistedPuzzleSessionV1,
+	type SessionPuzzleSpec,
+	type SessionValidationContext
+} from '@perseus/game-core';
 import { getFixture, type GameplayFixtureId } from './catalog';
 
 /** Canonical localStorage key prefix used by the production persistence layer. */
@@ -38,19 +40,19 @@ export function buildSessionValidationContext(
 	fixtureId: GameplayFixtureId
 ): SessionValidationContext {
 	const fixture = getFixture(fixtureId);
-	return {
+	const spec: SessionPuzzleSpec = {
 		puzzleId: fixture.fixtureId,
 		source: 'api',
-		pieceIds: fixture.pieces.map((piece) => piece.id),
+		pieceCount: fixture.pieceCount,
 		gridCols: fixture.cols,
 		gridRows: fixture.rows,
-		pieceCount: fixture.pieceCount,
 		pieces: fixture.pieces.map((piece) => ({
 			id: piece.id,
 			correctX: piece.correctX,
 			correctY: piece.correctY
 		}))
 	};
+	return validationContextFrom(spec);
 }
 
 /**

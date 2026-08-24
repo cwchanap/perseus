@@ -3,7 +3,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
 import PuzzleBoard from '../PuzzleBoard.svelte';
-import type { Puzzle, PlacedPiece, PuzzlePiece } from '$lib/types/puzzle';
+import type { Puzzle, PuzzlePiece } from '$lib/types/puzzle';
+import type { PlacedPiece } from '@perseus/game-core';
 import { BASE_OFFSET, EXPANSION_FACTOR, TAB_RATIO } from '$lib/constants/puzzle';
 
 const resolveImage = (piece: { id: number }) => `/test/${piece.id}.png`;

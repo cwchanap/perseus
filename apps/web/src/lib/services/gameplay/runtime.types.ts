@@ -1,5 +1,4 @@
-import type { RunIdFactory } from '$lib/services/gameplay/session/types';
-import type { Rotation } from '$lib/types/gameplay';
+import type { RunIdFactory, Rotation } from '@perseus/game-core';
 
 /**
  * Runtime gameplay dependencies that may be overridden by the E2E harness for

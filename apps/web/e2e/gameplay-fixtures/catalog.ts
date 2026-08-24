@@ -11,7 +11,7 @@
 // shuffle for the larger layouts, so the catalog is byte-stable across runs.
 // Rotations are non-zero only on the rotation-enabled completion fixture.
 import type { PerseusE2EGameplayConfigV1 } from '../../src/lib/testing/e2e-gameplay-runtime';
-import type { Rotation } from '../../src/lib/types/gameplay';
+import type { Rotation } from '@perseus/game-core';
 import { buildFixture, type GameplayFixture } from './builder';
 
 export type GameplayFixtureId =

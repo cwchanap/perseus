@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { modalFocus } from '$lib/actions/modalFocus';
-	import type { SessionMode } from '$lib/services/gameplay/session/types';
+	import type { SessionMode } from '@perseus/game-core';
 
 	interface Props {
 		presentation: 'resume' | 'paused';

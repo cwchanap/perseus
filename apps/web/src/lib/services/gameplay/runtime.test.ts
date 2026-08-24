@@ -24,12 +24,19 @@ vi.mock('$lib/utils/shuffle', () => ({
 	shuffleArray: shuffleMock
 }));
 
-vi.mock('$lib/services/gameplay/rotation', () => ({
-	generateRandomRotations: rotationsMock
-}));
+// runtime.ts imports generateRandomRotations from @perseus/game-core; mock
+// just that export while keeping the rest of the package real (persistence
+// in this graph also consumes game-core at runtime).
+vi.mock('@perseus/game-core', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('@perseus/game-core')>();
+	return {
+		...actual,
+		generateRandomRotations: rotationsMock
+	};
+});
 
 import { createGameplayRuntimeDependencies } from './runtime';
-import type { Rotation } from '$lib/types/gameplay';
+import type { Rotation } from '@perseus/game-core';
 
 const VALID_ROTATIONS: ReadonlyArray<Rotation> = [0, 90, 180, 270];
 

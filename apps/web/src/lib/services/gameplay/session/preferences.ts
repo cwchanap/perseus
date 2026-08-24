@@ -1,4 +1,4 @@
-import type { SessionMode } from './types';
+import type { SessionMode } from '@perseus/game-core';
 
 export const GAMEPLAY_PREFERENCES_KEY = 'perseus-gameplay-preferences-v1';
 

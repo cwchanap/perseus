@@ -19,7 +19,7 @@
 //   - Arrays/objects are cloned at return boundaries so callers cannot mutate
 //     the frozen config.
 
-import type { Rotation } from '$lib/types/gameplay';
+import type { Rotation } from '@perseus/game-core';
 import type {
 	GameplayRuntimeDependencies,
 	GameplayRuntimeOverrideContext

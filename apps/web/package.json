@@ -26,6 +26,7 @@
 		"test:install-browsers": "playwright install --with-deps --only-shell chromium webkit"
 	},
 	"dependencies": {
+		"@perseus/game-core": "workspace:*",
 		"@perseus/types": "workspace:*"
 	},
 	"devDependencies": {

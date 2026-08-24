@@ -1,5 +1,6 @@
 <script lang="ts">
-	import type { Puzzle, PuzzlePiece, PlacedPiece } from '$lib/types/puzzle';
+	import type { Puzzle, PuzzlePiece } from '$lib/types/puzzle';
+	import type { PlacedPiece } from '@perseus/game-core';
 	import { EXPANSION_FACTOR, TAB_RATIO } from '$lib/constants/puzzle';
 
 	interface Props {

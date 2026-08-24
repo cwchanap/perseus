@@ -6,8 +6,7 @@
 	import { loadPuzzleSource, type LoadedPuzzleSource } from '$lib/services/puzzleSource';
 	import { getBestTime, recordLocalCompletion } from '$lib/services/stats';
 	import type { TimerState } from '$lib/stores/timer';
-	import type { Puzzle, PlacedPiece } from '$lib/types/puzzle';
-	import type { Rotation } from '$lib/types/gameplay';
+	import type { Puzzle } from '$lib/types/puzzle';
 	import PuzzleBoardPanel from '$lib/components/PuzzleBoardPanel.svelte';
 	import PuzzleInventoryPanel from '$lib/components/PuzzleInventoryPanel.svelte';
 	import PuzzleCompletionDialog from '$lib/components/PuzzleCompletionDialog.svelte';
@@ -36,39 +35,30 @@
 		createPuzzleSessionStore,
 		type PuzzleSessionStore
 	} from '$lib/services/gameplay/session/store';
+	import { createSessionStorageAdapter } from '$lib/services/gameplay/session/persistence';
 	import {
-		createSessionStorageAdapter,
+		completionRequestFromSeal,
+		createDefaultClock,
+		isFailureRetryable,
 		serializeSession,
-		isFailureRetryable
-	} from '$lib/services/gameplay/session/persistence';
-	import type {
-		Clock,
-		PuzzleMetadata,
-		PuzzleSessionState,
-		PuzzleSessionEvent,
-		SealedCompletion,
-		CompletionFailureCode,
-		InventoryFilter
-	} from '$lib/services/gameplay/session/types';
-	import { completionRequestFromSeal } from '$lib/services/gameplay/session/types';
+		validationContextFrom,
+		type CompletionFailureCode,
+		type InventoryFilter,
+		type PlacedPiece,
+		type PuzzleSessionEvent,
+		type PuzzleSessionState,
+		type Rotation,
+		type SealedCompletion,
+		type SessionPuzzleSpec
+	} from '@perseus/game-core';
 	import { playerAuth } from '$lib/stores/playerAuth';
 	import { shuffleArray } from '$lib/utils/shuffle';
 
 	const REJECTED_DURATION_MS = 500;
 	const CHECKPOINT_INTERVAL_MS = 5_000;
 
-	function createBrowserClock(): Clock {
-		return {
-			monotonicNow: () => performance.now(),
-			wallNow: () => Date.now(),
-			setInterval: (cb: () => void, ms: number) => globalThis.setInterval(cb, ms),
-			clearInterval: (handle: unknown) =>
-				globalThis.clearInterval(handle as ReturnType<typeof setInterval>)
-		};
-	}
-
 	const sessionStorageAdapter = createSessionStorageAdapter();
-	const clock = createBrowserClock();
+	const clock = createDefaultClock();
 
 	let puzzle: Puzzle | null = $state(null);
 	let puzzleSource: LoadedPuzzleSource | null = $state(null);
@@ -633,7 +623,7 @@
 			puzzleSource = source;
 
 			// Build session metadata and validation context.
-			const metadata: PuzzleMetadata = {
+			const metadata: SessionPuzzleSpec = {
 				puzzleId: loadedPuzzle.id,
 				source: source.source,
 				pieceCount: loadedPuzzle.pieceCount,
@@ -647,19 +637,10 @@
 			};
 
 			// Load and validate the current persisted session.
-			const loadResult = sessionStorageAdapter.loadSession(loadedPuzzle.id, {
-				puzzleId: loadedPuzzle.id,
-				source: source.source,
-				pieceIds: loadedPuzzle.pieces.map((p) => p.id),
-				gridCols: loadedPuzzle.gridCols,
-				gridRows: loadedPuzzle.gridRows,
-				pieceCount: loadedPuzzle.pieceCount,
-				pieces: loadedPuzzle.pieces.map((p) => ({
-					id: p.id,
-					correctX: p.correctX,
-					correctY: p.correctY
-				}))
-			});
+			const loadResult = sessionStorageAdapter.loadSession(
+				loadedPuzzle.id,
+				validationContextFrom(metadata)
+			);
 
 			const restored = loadResult.status === 'loaded' ? loadResult.snapshot : undefined;
 
