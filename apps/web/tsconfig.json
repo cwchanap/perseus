@@ -10,7 +10,13 @@
 		"skipLibCheck": true,
 		"sourceMap": true,
 		"strict": true,
-		"moduleResolution": "bundler"
+		"moduleResolution": "bundler",
+		// With apps/mobile (@nativescript-community/svelte-native) in the bun
+		// workspace, svelte-check auto-detects svelte-native and switches the JSX
+		// namespace to svelteNative.JSX, which drops typing for DOM event handlers.
+		// A jsxFactory starting with "svelte" disables that switch (diagnostics
+		// only; vite/svelte emit is unaffected by this setting).
+		"jsxFactory": "svelte"
 	}
 	// Path aliases are handled by https://svelte.dev/docs/kit/configuration#alias
 	// except $lib which is handled by https://svelte.dev/docs/kit/configuration#files
