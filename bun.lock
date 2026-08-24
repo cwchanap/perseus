@@ -138,6 +138,18 @@
         "wrangler": "4.60.0",
       },
     },
+    "packages/game-core": {
+      "name": "@perseus/game-core",
+      "version": "0.0.1",
+      "dependencies": {
+        "@perseus/types": "workspace:*",
+      },
+      "devDependencies": {
+        "@vitest/coverage-v8": "^4.0.18",
+        "typescript": "^5.9.0",
+        "vitest": "^4.0.18",
+      },
+    },
     "packages/infrastructure": {
       "name": "@perseus/infrastructure",
       "version": "0.0.1",
@@ -521,6 +533,8 @@
     "@parcel/watcher-win32-x64": ["@parcel/watcher-win32-x64@2.6.0", "", { "os": "win32", "cpu": "x64" }, "sha512-cA+/pXV2YkfxlIcXOQ5fSWqAzzPyD78/x5qbK/I0vUkrlYHA8TIz+MXjAbGouguKVSI4bOmkTSJ1/poVSsgt+A=="],
 
     "@perseus/api": ["@perseus/api@workspace:apps/api"],
+
+    "@perseus/game-core": ["@perseus/game-core@workspace:packages/game-core"],
 
     "@perseus/infrastructure": ["@perseus/infrastructure@workspace:packages/infrastructure"],
 
