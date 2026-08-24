@@ -8,96 +8,63 @@
 
 HPA-1 is the first implementation ticket in the reviewed Perseus mobile roadmap. It has no blocker, blocks HPA-2, and exists to answer the highest-risk architectural question before the mobile product grows: can an iPad-first NativeScript + Svelte Native client render and interact with a Perseus puzzle through a native-backed Canvas while reusing the existing gameplay engine and persistence contract?
 
-The broader mobile architecture was already reviewed in `docs/superpowers/specs/2026-08-23-nativescript-mobile-offline-design.md` at commit `c69875ba6ff75b19a4bfd3817bdb2e654a0729ca`. HPA-1 intentionally implements only the first bounded proof from that roadmap.
+The broader mobile architecture already lives in `docs/superpowers/specs/2026-08-23-nativescript-mobile-offline-design.md`. HPA-1 implements only the first proof from that roadmap.
 
-Current `main` already contains most of the domain seam we need:
+Current `main` already contains most of the domain seam:
 
-- `apps/web/src/lib/services/gameplay/session/session.ts` explicitly describes `PuzzleSession` as framework-independent. Its only coupling is through web-local import paths.
-- `session/types.ts` contains the portable session contract, but currently imports the tiny `Rotation` and `PlacedPiece` types from web-local files.
-- `history.ts`, `hints.ts`, and rotation logic are pure TypeScript already.
-- `inventory.ts` is pure logic but its type signature imports web-only `Puzzle` / `PuzzlePiece` wrappers.
-- `session/persistence.ts` currently mixes two concerns: the portable session codec/validator and browser-specific `localStorage` mechanics.
-- `session/store.ts` is deliberately a thin Svelte adapter and should remain web-only.
-- `runtime.ts` owns browser-only runtime wiring such as the browser UUID factory and web E2E override; it should remain web-only while consuming shared rotation behavior.
+- `apps/web/src/lib/services/gameplay/session/session.ts` is framework-independent apart from web-local import paths.
+- `session/types.ts` contains the portable session contract, but imports tiny web-local `Rotation` and `PlacedPiece` types.
+- `history.ts`, `hints.ts`, `rotation.ts`, and the logic in `inventory.ts` are pure TypeScript.
+- `session/persistence.ts` mixes the portable codec/validator with browser `Storage` mechanics.
+- `session/store.ts` is a thin Svelte adapter and must remain web-only.
+- `runtime.ts` owns browser-specific run-ID/randomization/E2E wiring and must remain web-only.
 
-The implementation should therefore be an extraction and native proof, not a gameplay rewrite.
-
-## Current external feasibility evidence
-
-The selected native surface is the maintained official `@nativescript/canvas` package, not the old unsupported `NativeScript/nativescript-canvas` project and not the community Android-Canvas wrapper.
-
-As of this design:
-
-- NativeScript's official project guide supports `ns create <name> --svelte` for Svelte Native projects.
-- `@nativescript/canvas` 2.x is the current native Canvas line; v2 is backed by Rust/Skia/WebGPU and provides a native iOS/Android rendering surface.
-- the package ships `@nativescript/canvas/svelte`, which registers `<canvas>` with Svelte Native through `registerNativeViewElement`.
-- NativeScript core exposes native-backed `Crypto.randomUUID()` and `getRandomValues()` for iOS and Android, so the mobile app does not need a UUID dependency.
-
-HPA-1 still treats runtime viability as unproven until the real iPad simulator/device gate passes. Documentation evidence is not a substitute for executing the gate.
+The implementation is therefore an extraction and native proof, not a gameplay rewrite.
 
 ## Goals
 
-1. Prove NativeScript + Svelte Native + official Canvas can build and launch on an iPad simulator/device.
-2. Draw a real Perseus puzzle-piece PNG, receive tap/drag coordinates, and redraw it after a transform before touching the web gameplay engine.
-3. Extract only the framework-independent gameplay/session code into `@perseus/game-core`.
-4. Keep `@perseus/game-core` free of Svelte, NativeScript, DOM, storage, filesystem, fetch, Cloudflare, and analytics APIs.
-5. Keep the web app behavior unchanged while it consumes the new game-core package.
-6. Render a deterministic local 2x2 fixture through a minimal Canvas renderer and a small board view model.
-7. Route both tap-piece/tap-cell and drag placement through the same shared `PuzzleSession` `attempt_placement` action.
-8. Persist the session to app-private files synchronously and atomically.
-9. Prove a partially played puzzle survives app termination/relaunch and resumes with networking unavailable.
-10. Keep HPA-1 in one implementation PR; the feasibility gate is a stop condition inside that PR, not a separate extraction PR.
+1. Prove NativeScript + Svelte Native + official `@nativescript/canvas` can build and launch on an iPad simulator/device.
+2. Draw a real Perseus puzzle-piece PNG, receive tap/drag coordinates, and redraw it after movement before creating `packages/game-core`.
+3. Extract the existing engine, pure helpers, portable codec, and their full parity tests into `@perseus/game-core` as one green extraction unit.
+4. Keep `@perseus/game-core` free of Svelte, NativeScript, DOM, browser storage, filesystem, fetch, Cloudflare, and analytics APIs.
+5. Keep the Svelte store and browser `Storage` adapter in `apps/web`.
+6. Keep `apps/mobile` out of NativeScript/Xcode work in root Turbo/Ubuntu CI while still running its pure unit tests there.
+7. Prove NativeScript webpack can consume the real `workspace:*` game-core package before building the full mobile slice.
+8. Render one deterministic local 2x2 fixture through a concrete Canvas renderer and small board view model.
+9. Route tap and drag placement through the same shared `PuzzleSession` `attempt_placement` action.
+10. Persist the session synchronously through app-private files using temp-then-atomic-replace semantics.
+11. Prove a partially played puzzle survives termination/relaunch and resumes with networking unavailable.
+12. Deliver HPA-1 through one implementation PR, staged so the Canvas gate is the first implementation commit and no extraction commit exists until it passes.
 
 ## Non-goals
 
 - Public gallery or puzzle downloads.
-- Download manifests, staging directories, library discovery, remove-download behavior, or HPA-2 work.
-- Production pinch zoom, two-finger pan, gesture arbitration, animated snap/reject feedback, or HPA-3 gameplay polish.
-- Full toolbar, inventory drawer, reference UI, hint UI, pause dialogs, completion sheet, or landscape product layout parity.
-- Portrait layout or orientation-change handling.
-- Google login, secure token storage, completion submission, account outbox, or cloud save.
-- SQLite, a generic repository layer, a Redux-style store, dependency-injection container, generic renderer framework, or game-engine integration.
-- PixiJS, Phaser, Three.js, `@nativescript/canvas-polyfill`, or another canvas abstraction for this proof.
-- Backward-compatibility aliases for the old web-local gameplay import paths. Update consumers cleanly in this pre-release codebase.
+- Download manifests, staging directories, library discovery, or HPA-2 work.
+- Production pinch zoom, two-finger pan, gesture arbitration, persisted viewport, or HPA-3 polish.
+- Full toolbar/tray/reference/hint/pause/completion UI parity.
+- Portrait layout or orientation-change behavior.
+- Google login, secure token storage, completion submission, outbox, or cloud save.
+- SQLite, repository/DI/global-store frameworks, or generic renderer interfaces.
+- PixiJS, Phaser, Three.js, `@nativescript/canvas-polyfill`, or a second Canvas stack.
+- Backward-compatibility aliases for old web-local gameplay import paths.
+- A native E2E framework for this proof.
 
-## Options considered
+## Delivery and gate strategy
 
-### Option A — Gate first, then extract the existing engine (selected)
+HPA-1 remains one implementation PR because the ticket is one coherent task: the native playable is the evidence that the shared extraction boundary is useful. The PR must still preserve the gate operationally:
 
-Create the minimal NativeScript/Svelte Native shell and prove official Canvas on iPad first. Once the Canvas proof passes, extract the already-pure engine, codec, and helper code into `@perseus/game-core`, update web imports, then replace the throwaway Canvas probe with the real shared-session vertical slice.
+1. Open the implementation PR as a draft with the Canvas probe/scaffold work first.
+2. Do not create `packages/game-core` before the probe passes on iPad.
+3. If the probe fails, stop the ticket and close/retain that draft PR as failure evidence; do not add an extraction commit.
+4. If the probe passes, continue on the same PR with the green extraction, web migration, and offline vertical slice.
 
-**Pros**
-
-- fails cheaply on the riskiest technology assumption;
-- avoids creating a shared package with no viable native consumer;
-- reuses existing gameplay rules rather than porting them;
-- keeps the mobile proof small enough to debug;
-- produces a real reusable boundary for HPA-2/HPA-3.
-
-**Cons**
-
-- the implementation PR has a hard mid-PR stop gate;
-- some initial Canvas probe code is intentionally replaced once the gate passes.
-
-### Option B — Extract `game-core` first, then try NativeScript
-
-**Rejected:** the extraction itself is low risk and would create speculative architecture if Canvas/Svelte Native proves unreliable.
-
-### Option C — Keep the web engine in place and duplicate only the minimal mobile rules
-
-**Rejected:** duplicated placement, lifecycle, validation, and persistence rules would become the long-term parity problem HPA-1 exists to avoid.
-
-### Option D — Use a WebView or game engine wrapper for the first proof
-
-**Rejected:** WebView gameplay defeats the native-client goal; adding Pixi/Phaser/polyfills before raw Canvas is proven adds dependencies without solving a current need.
+This makes “gate before extract” a commit/branch invariant without turning one Linear ticket into multiple PRs.
 
 ## Hard feasibility gate
 
-The implementation must begin here and must not create `packages/game-core` before the gate passes.
-
 ### Minimal scaffold
 
-Create `apps/mobile` from the official Svelte Native template and keep the generated project structure unless a change is required for the monorepo. Add only the official `@nativescript/canvas` plugin.
+Create `apps/mobile` from the official Svelte Native template and add only official `@nativescript/canvas` for rendering.
 
 The proof screen has one responsibility:
 
@@ -106,39 +73,50 @@ Svelte Native Page
   -> <canvas>
      -> draw one checked-in real Perseus piece PNG
      -> tap reports local canvas coordinates
-     -> pan/drag reports local canvas coordinates
+     -> drag reports local canvas coordinates
      -> moved piece is redrawn at the new position
 ```
 
-Use the plugin's Svelte registration entry (`@nativescript/canvas/svelte`) rather than maintaining a local registration wrapper unless the official entry demonstrably fails.
+Use `@nativescript/canvas/svelte` for element registration. Do not maintain a local Canvas registration wrapper unless the official entry demonstrably fails.
 
-The gate fixture must be an actual generated Perseus puzzle-piece PNG, not a colored square or system icon. It may be copied into `apps/mobile/app/assets/hpa-1/` solely for this checked-in fixture.
+The gate fixture must be a real generated Perseus piece PNG with transparency, not a synthetic square or system image.
+
+### Mobile workspace / CI isolation starts at scaffold time
+
+The repository has `apps/*` as workspaces and Turbo task names such as `build`, `check`, `lint`, and `test:unit`. The generated mobile app must not accidentally make Ubuntu CI invoke NativeScript iOS/Xcode work.
+
+After scaffolding:
+
+- retain the template ignore rules for generated `platforms/`, `hooks/`, and other NativeScript build output;
+- do not expose a package `build`, `check`, or `lint` script that shells out to `ns build ios`, Xcode, or another macOS-only step;
+- keep native execution behind an explicit app-local command such as `ios: ns run ios` or direct `ns run ios`;
+- once pure tests exist, expose only a Linux-safe `test:unit` task for the mobile package;
+- root Turbo `build/check/lint` may skip the mobile package when it has no matching host-neutral script.
+
+Native correctness is proven by the explicit iPad smoke path, not by pretending an Ubuntu worker can build iOS.
 
 ### Pass criteria
 
 On an iPad simulator or physical iPad:
 
 1. `apps/mobile` builds and launches.
-2. the native Canvas is visible and sized predictably inside the Svelte Native page.
+2. Canvas is visible and sized predictably.
 3. the real piece PNG renders with transparency intact.
-4. a tap produces coordinates that line up with the visible Canvas.
-5. a one-finger drag/pan produces changing local coordinates.
-6. updating the simple piece position and redrawing visibly moves the PNG.
-7. relaunching the app repeats the proof without one-off Xcode project edits.
+4. tap coordinates line up with the Canvas.
+5. one-finger drag coordinates update correctly.
+6. redraw visibly moves the PNG.
+7. a clean relaunch repeats the proof without editing `platforms/` or the generated Xcode project.
+8. generated platform/hook output remains ignored and untracked.
 
-Record the simulator/device model + iOS version and the exact dependency versions in the implementation PR's validation section.
+Record the NativeScript CLI version, resolved Canvas version, iPad model, and iOS version in the implementation PR.
 
 ### Stop condition
 
-If the selected stack cannot satisfy the seven pass criteria reliably, stop HPA-1 implementation at the gate. Do not create `packages/game-core`, do not move web files, and do not substitute another renderer inside the same ticket without redesigning the Linear scope.
-
-A failed gate should leave only the minimal probe/scaffold evidence needed to explain the failure; the next decision is a rendering/UI architecture decision, not more extraction work.
+If the selected stack cannot satisfy the gate reliably, stop HPA-1. Do not create `packages/game-core`, do not move web files, and do not substitute another renderer inside the ticket without redesigning the Linear scope.
 
 ## `@perseus/game-core` boundary after the gate
 
 ### Package responsibility
-
-`packages/game-core` owns framework-independent gameplay state transitions and the portable persisted-session contract:
 
 ```text
 @perseus/types
@@ -148,25 +126,41 @@ A failed gate should leave only the minimal probe/scaffold evidence needed to ex
 @perseus/game-core
   session contracts
   PuzzleSession
-  history
-  hints
-  rotation
-  inventory filtering
+  history / hints / rotation / inventory
   session codec + validation
        |
        +----------------+
        v                v
 apps/web             apps/mobile
-Svelte adapter       Svelte Native view
+Svelte adapter       Svelte Native UI
 localStorage         filesystem adapter
 browser runtime      native runtime
 ```
 
-The package may depend on `@perseus/types` for `ResultClass`, `RecordPuzzleCompletionV1`, UUID/run-id validation, completion limits, and result-class constants already shared with the API. It must not absorb general API/client types.
+`@perseus/game-core` may depend on `@perseus/types` for existing completion/result/run-ID wire primitives. It must not absorb general API/client types.
+
+### Avoid the `PuzzleMetadata` collision
+
+`@perseus/types` already exports API `PuzzleMetadata`. The engine currently has a different internal `PuzzleMetadata` contract with only puzzle identity/source/grid/canonical placement fields.
+
+Rename the engine-facing contract during extraction:
+
+```ts
+export interface SessionPuzzleSpec {
+  puzzleId: string;
+  source: PuzzleSourceType;
+  pieceCount: number;
+  gridCols: number;
+  gridRows: number;
+  pieces: ReadonlyArray<{ id: number; correctX: number; correctY: number }>;
+}
+```
+
+`CreatePuzzleSessionOptions.metadata` becomes `SessionPuzzleSpec`. Do not publicly export two unrelated `PuzzleMetadata` names from the packages consumed together by HPA-2.
 
 ### Portable primitive types
 
-Move the gameplay primitives currently stranded in web-local type files into game-core:
+Game-core owns the gameplay primitives currently stranded in web-local files:
 
 ```ts
 export type Rotation = 0 | 90 | 180 | 270;
@@ -178,121 +172,134 @@ export interface PlacedPiece {
 }
 ```
 
-Web `apps/web/src/lib/types/gameplay.ts` and `PlacedPiece` in `apps/web/src/lib/types/puzzle.ts` should be removed or updated at their consumers rather than retained as compatibility aliases.
+Update consumers and delete the old web-local definitions. Do not leave compatibility aliases.
 
-### Pure helpers
+### Helpers and engine
 
-Move these existing implementations substantially unchanged:
+Move substantially unchanged:
 
 - `history.ts`
 - `hints.ts`
 - `rotation.ts`
 - `inventory.ts`
+- `session/session.ts`
+- `session/types.ts`
 
-Narrow `matchesInventoryFilter()` so it consumes only the coordinates/grid fields it actually needs:
+`matchesInventoryFilter()` already needs only placement/grid geometry. At the package boundary, replace the web `Pick<PuzzlePiece>` / `Pick<Puzzle>` type dependencies with equivalent structural fields; do not redesign its behavior.
 
-```ts
-export function matchesInventoryFilter(
-  piece: Readonly<{ correctX: number; correctY: number }>,
-  grid: Readonly<{ gridCols: number; gridRows: number }>,
-  filter: InventoryFilter
-): boolean;
-```
+### Codec is part of the same green extraction unit
 
-Do not move web `Puzzle` presentation types into game-core just to preserve the old signature.
+The session tests already exercise persisted-session round trips. Therefore the first green game-core package must contain both the engine and portable codec; the codec cannot be deferred to a later task.
 
-### Session engine
-
-Move `session/session.ts` and `session/types.ts` to game-core and replace `$lib/...` imports with local package imports. Preserve the existing public behavior and action/outcome/event contracts.
-
-The Svelte `session/store.ts` remains in `apps/web`; it becomes a consumer of `createPuzzleSession` and session types from `@perseus/game-core`.
-
-### Split the persistence module by responsibility
-
-The current `apps/web/.../session/persistence.ts` is the main extraction seam.
-
-Move to game-core:
+Move in the same extraction commit:
 
 - `serializeSession()`
 - `loadPersistedSession()`
 - `isResumable()`
 - `isFailureRetryable()`
-- V1 shape/cross-field validation and clone helpers used by those functions
+- all private validators/clone helpers used by them
+- every existing pure assertion covering serialization, hydration, activity, completion, rotation, tray organization, viewport, retryability, and cross-field validation
 
 Keep in web:
 
-- `PROGRESS_KEY_PREFIX` and key construction
+- `PROGRESS_KEY_PREFIX` / key enumeration
 - `resolveSessionStorage()`
-- `createBrowserRunIdFactory()`
-- browser UUID fallback behavior
-- `listResumableSessionCandidateIds()` because it enumerates browser `Storage`
-- `createSessionStorageAdapter()` because it owns `Storage` / `localStorage`
+- `createBrowserRunIdFactory()` and browser crypto fallback
+- `listResumableSessionCandidateIds()`
+- `createSessionStorageAdapter()`
 - `noopThrowingStorage`
+- tests whose behavior depends on browser `Storage`, destructive browser load, storage errors, candidate enumeration, or browser crypto
 
-The browser adapter imports the portable codec functions from `@perseus/game-core`. `peekSession()` stays read-only; `loadSession()` keeps its existing behavior of deleting an invalid browser record and returning `missing`.
+Some existing persistence test files mix pure codec and browser adapter cases. Split by behavior, not filename, and preserve every existing assertion rather than replacing the validation suite with a few representative examples.
 
-Do not create an abstract persistence repository or storage base class. `SessionStorageAdapter` is already the required seam.
+### Testing configuration moves with the package
 
-### Tests move with ownership
+Create `packages/game-core/vitest.config.ts` using the same small Vitest/coverage pattern as `packages/types/vitest.config.ts`, along with the package `tsconfig.json`. The package should be independently runnable with `bun --filter @perseus/game-core test:unit`.
 
-Move deterministic unit tests with the code they validate:
+## Web migration
 
-- session engine tests -> game-core;
-- history/hints/rotation/inventory tests -> game-core;
-- codec and validation tests -> game-core;
-- browser-storage failure/enumeration/adapter tests -> remain under `apps/web`.
+After game-core is independently green while web still uses its original copies:
 
-Web route/component/E2E tests remain web tests and must still pass after import migration.
+1. add `@perseus/game-core: workspace:*` to web;
+2. point `session/store.ts` at the shared engine/contracts while keeping its Svelte `Readable` behavior local;
+3. reduce web `session/persistence.ts` to browser run-ID/key/storage mechanics over imported codec functions/types;
+4. update route/components/runtime/tests to import engine types/helpers/codecs from game-core;
+5. delete the duplicated web pure source/test files in that same migration commit;
+6. do not leave re-export aliases.
 
-## Mobile vertical slice after extraction
+Completeness searches must cover both the old helper/session paths and codec call sites such as `serializeSession`, `loadPersistedSession`, `isResumable`, and `isFailureRetryable`. Direct route/test imports are updated rather than hidden behind the old persistence module.
+
+Run web unit tests and the existing deterministic `e2e/gameplay-session-controls.spec.ts` Chromium-desktop flow after migration.
+
+## NativeScript workspace-package compile gate
+
+The first mobile runtime import from `@perseus/game-core` is a second explicit technical gate. Web/Vite consuming workspace TypeScript does not prove NativeScript webpack will consume the same symlinked `workspace:*` source.
+
+Before building the rest of the mobile gameplay screen:
+
+1. add `@perseus/game-core: workspace:*` to `apps/mobile`;
+2. import and execute one small runtime export such as `rotateClockwise(0)` or `createHistory()` from game-core;
+3. run `ns run ios` and verify the app launches with that runtime import bundled;
+4. remove the temporary probe once the real gameplay screen imports game-core.
+
+If the generated webpack configuration excludes the workspace TypeScript source, inspect the resolved config with `ns prepare ios --env.verbose` and make one targeted `webpack.chainWebpack()` adjustment so the existing TypeScript rule includes the resolved `packages/game-core/src` directory. Do not add a second TypeScript loader, copy shared sources into the app, or change rendering architecture.
+
+A custom webpack change is allowed for workspace compilation only when this gate demonstrates it is required. The existing prohibition is against renderer alias/framework work, not a necessary monorepo include.
+
+## Mobile vertical slice
 
 ### Fixture
 
-Use one checked-in deterministic 2x2 fixture. It contains:
+Use one checked-in deterministic 2x2 fixture:
 
-- stable fixture puzzle ID;
-- four pieces with IDs and canonical `correctX` / `correctY` positions;
-- four real generated piece PNGs with local asset paths;
-- fixed grid size and board dimensions suitable for landscape iPad.
+- stable puzzle ID;
+- four canonical pieces with IDs and `correctX` / `correctY`;
+- four real generated piece PNGs;
+- local asset paths only.
 
-No HTTP request, gallery API, download manifest, or remote asset path is involved.
-
-This is test/proof content, not the HPA-2 download-package format. HPA-2 may later introduce a manifest without migrating HPA-1's fixture contract.
+The fixture is typed as `SessionPuzzleSpec`. It is proof content, not an HPA-2 download manifest.
 
 ### Native runtime adapters
 
-Keep platform/runtime concerns in `apps/mobile`:
+Keep runtime concerns app-local:
 
-- `createMobileClock()` supplies `monotonicNow`, `wallNow`, interval scheduling, and cancellation through NativeScript/JavaScript runtime APIs.
-- `createMobileRunIdFactory()` supplies a lowercase UUID v4 through NativeScript core's native-backed Crypto surface.
-- the fixture supplies deterministic tray order and fixed rotations where needed; HPA-1 does not need a configurable RNG service.
+- `createMobileClock()` implements the existing `Clock` contract;
+- `createMobileRunIdFactory()` implements `RunIdFactory` using NativeScript core crypto;
+- fixed tray order/rotations are sufficient for the proof.
 
-Do not place these adapters in game-core.
+Do not add a runtime container.
 
 ### Board view model
 
-Add one small `BoardViewModel` in the mobile app. It translates canonical puzzle/session state into Canvas coordinates and vice versa for the fixed/fit-only viewport.
+`BoardViewModel` stays in `apps/mobile`; web `viewport.ts` solves DOM board zoom/pan and is not the Canvas fit/hit-test seam.
 
-It owns only presentation geometry:
+HPA-1 needs only:
 
 ```ts
+interface BoardCell {
+  x: number;
+  y: number;
+}
+
 interface BoardViewModel {
-  state(): BoardRenderState;
-  cellAt(canvasX: number, canvasY: number): { x: number; y: number } | null;
-  pieceAt(canvasX: number, canvasY: number): number | null;
+  state(session: Readonly<PuzzleSessionState>): BoardRenderState;
+  cellAt(canvasX: number, canvasY: number): BoardCell | null;
+  pieceAt(
+    canvasX: number,
+    canvasY: number,
+    session: Readonly<PuzzleSessionState>
+  ): number | null;
 }
 ```
 
-`BoardRenderState` contains board bounds and draw records for placed/unplaced/active pieces. It must not decide whether a placement is correct.
-
-For HPA-1, one fit transform computed from Canvas size is enough. No persisted zoom/pan and no multi-touch gesture state are needed.
+The view model computes one centered fit transform, cell hit testing, and piece draw records. It never decides placement correctness.
 
 ### One placement path
 
-Both input modes terminate at one function owned by the mobile gameplay screen/controller:
+Both input modes terminate at one mobile function:
 
 ```ts
-function attemptPlacement(pieceId: number, cell: { x: number; y: number }): PuzzleSessionOutcome {
+function attemptPlacement(pieceId: number, cell: BoardCell): PuzzleSessionOutcome {
   return session.dispatch({
     type: 'attempt_placement',
     pieceId,
@@ -302,30 +309,13 @@ function attemptPlacement(pieceId: number, cell: { x: number; y: number }): Puzz
 }
 ```
 
-Tap flow:
+Tap: `select_piece -> cellAt -> attemptPlacement`.
 
-```text
-tap piece -> select_piece
-          -> tap board -> BoardViewModel.cellAt()
-                       -> attemptPlacement()
-```
+Drag: `pieceAt -> transient drag position -> cellAt on release -> attemptPlacement`.
 
-Drag flow:
+Transient drag position is view state only.
 
-```text
-drag starts on piece -> remember dragged piece id
-move -> renderer shows transient drag position
-release -> BoardViewModel.cellAt()
-        -> attemptPlacement()
-```
-
-Transient drag position is view state only. It is not added to `PuzzleSession` or persisted.
-
-A rejected placement remains rejected because of `PuzzleSession`; the Canvas view merely redraws from the resulting state.
-
-## Canvas rendering boundary
-
-Keep rendering concrete:
+### Concrete Canvas renderer
 
 ```text
 PuzzleSession snapshot
@@ -340,210 +330,107 @@ PuzzleCanvas.svelte
 CanvasRenderingContext2D
 ```
 
-`PuzzleCanvas.svelte` owns the plugin Canvas reference, image loading/cache for the four local fixture assets, drawing order, and native pointer/gesture event translation.
-
-Do not create a renderer interface with multiple implementations. There is one native Canvas renderer in this ticket.
-
-The renderer redraws on:
-
-- Canvas ready/size change;
-- session state change;
-- selection change;
-- transient drag movement;
-- resume hydration.
+There is one renderer. `PuzzleCanvas.svelte` owns Canvas/image cache/draw order/gesture translation. No renderer interface is needed.
 
 ## Filesystem session adapter
 
 ### Storage shape
 
-HPA-1 needs only session files:
-
 ```text
 <app documents>/perseus/sessions/<puzzleId>.json
 ```
 
-Do not create downloads, completion, outbox, or index directories yet.
+No downloads/completions/outbox/index directories exist in HPA-1.
+
+### Small filesystem seam
+
+NativeScript filesystem calls cannot be meaningfully executed in the normal Vitest process. Use one narrow test seam:
+
+```ts
+export interface SessionFileOps {
+  readText(path: string): string | null;
+  writeText(path: string, content: string): void;
+  replace(fromPath: string, toPath: string): void;
+  remove(path: string): void;
+  ensureDirectory(path: string): void;
+}
+```
+
+This exists only to test one session adapter; it is not a repository/filesystem framework.
 
 ### Adapter semantics
 
-Implement the existing synchronous `SessionStorageAdapter` in `apps/mobile`:
+Implement the existing synchronous `SessionStorageAdapter`:
 
-- `peekSession()` reads and validates without deleting invalid data;
-- `loadSession()` reads and validates; when invalid, remove the invalid session and return `missing`, matching the web adapter's current semantics;
-- `saveSession()` writes JSON to a sibling temporary file and atomically replaces/renames it to `<puzzleId>.json`;
-- `clearSession()` removes the file when present;
+- `peekSession()` validates without deleting;
+- `loadSession()` removes invalid canonical data and returns `missing`, matching web behavior;
+- `saveSession()` writes a sibling `.tmp` file then atomically replaces the canonical file;
+- `clearSession()` removes the canonical file;
 - `isResumable()` delegates to game-core.
 
-The temporary filename can be deterministic because writes are synchronous and single-process for this MVP, for example `<puzzleId>.json.tmp`. Do not add a write queue, lock file, journal, debounce scheduler, or database.
+The concrete iOS `replace()` uses the platform-supported same-volume atomic replacement/move primitive behind `SessionFileOps`; do not implement replacement as `remove(target)` followed by `rename(temp)`.
 
-### Save ownership
+### Save and lifecycle ownership
 
-The mobile gameplay screen owns the same simple policy as the web route: after a meaningful persisted state change, serialize the current state and write it through the adapter.
+The gameplay screen checkpoints and persists after meaningful persisted state changes and on application suspension/backgrounding. Selection and drag coordinates remain transient.
 
-For the vertical slice, persist after:
+At suspension:
 
-- accepted/rejected placement if state/counters changed;
-- selection-independent persisted rotation change if used by the fixture;
-- lifecycle checkpoint/background event;
-- explicit exit/relaunch preparation.
+1. `checkpointTime()`;
+2. serialize/save;
+3. `setDocumentHidden(true)` so timed active play stops accumulating.
 
-Selection and transient drag coordinates are runtime-only and need not trigger writes.
+At resume, call `setDocumentHidden(false)`. HPA-1 does not add a Pause dialog.
 
-Before serialization at an application lifecycle boundary, call `checkpointTime()` so timed state is current.
+## Testing and evidence
 
-## Resume flow
+### Game-core
 
-At mobile gameplay startup:
+The extracted package owns the existing deterministic engine/helper/codec validation coverage. No existing pure validation assertion is intentionally dropped.
 
-1. load the checked-in fixture metadata;
-2. construct `SessionValidationContext` from that canonical fixture;
-3. call the filesystem adapter's `loadSession()`;
-4. if loaded and resumable/restorable, pass the snapshot to `createPuzzleSession({ restored })`;
-5. otherwise create a fresh session;
-6. subscribe the board view to session changes and draw the resulting snapshot.
+### Web
 
-The proof does not need a resume chooser. With one fixture, automatic restore is sufficient.
+After migration run:
 
-The acceptance journey is:
-
-```text
-launch -> place at least one piece -> persist
-       -> terminate app
-       -> disable network / keep network unavailable
-       -> relaunch
-       -> same fixture and placed-piece/session state restored
-```
-
-## Application lifecycle
-
-Wire the minimal NativeScript background/resume events needed to preserve timer correctness:
-
-- before suspension/background: `checkpointTime()`, save current snapshot, `setDocumentHidden(true)`;
-- on resume: `setDocumentHidden(false)` and redraw.
-
-The acceptance criterion is termination/relaunch offline resume. HPA-1 does not need a Pause dialog or polished background UI, but it should not knowingly allow the timed clock to accumulate while the app is backgrounded.
-
-## Error handling
-
-Keep errors explicit and local:
-
-- Canvas/plugin build or runtime failure: gate fails; stop ticket.
-- fixture image load failure: show a simple debug/error label and fail the gate/vertical-slice smoke; do not silently substitute an icon.
-- invalid session: shared codec rejects it; `loadSession()` removes it and starts fresh.
-- filesystem read/write/remove failure: surface through a small `onError(SessionPersistenceError)` callback and keep the app usable for the proof; do not build a notification framework.
-- rejected placement: redraw from session state; no separate mobile correctness rules.
-
-## Testing strategy
-
-### Game-core unit tests
-
-The extracted deterministic tests are the parity contract. Run them in their own workspace package and keep coverage focused on:
-
-- session lifecycle and clock behavior;
-- placement and completion rules;
-- undo/redo;
-- hints;
-- rotation;
-- inventory filters;
-- serialization;
-- V1 validation/cross-field invariants;
-- resumability and retryability policy.
-
-### Web regression tests
-
-Run the existing web unit suite after the import/storage split. Browser-specific persistence tests continue to pin localStorage failure, destructive `loadSession()`, non-destructive `peekSession()`, and candidate enumeration behavior.
-
-The existing web gameplay smoke remains the highest-value integration fence that the extracted engine still behaves the same in its original consumer.
+- `bun --filter @perseus/web test:unit`;
+- root `bun check`, `bun lint`, and `bun build`;
+- `bunx playwright test e2e/gameplay-session-controls.spec.ts --project=chromium-desktop` from `apps/web`.
 
 ### Mobile pure tests
 
-Use ordinary TypeScript tests for code that does not need native UI:
+Expose a Linux-safe mobile `test:unit` only after pure tests exist. It covers:
 
-- `BoardViewModel` coordinate-to-cell and render projection;
-- filesystem adapter read/save/load/clear using an injectable minimal file-ops seam or temporary directory helper;
-- atomic write ordering (`tmp write` before replace);
-- resume hydration against the fixture.
+- board fit + cell/piece hit testing;
+- one-path placement orchestration where useful without NativeScript UI;
+- filesystem adapter semantics through `SessionFileOps`;
+- temp-before-replace ordering;
+- shared codec hydration / invalid cleanup behavior.
 
-Keep the filesystem seam concrete and tiny; it exists only so pure adapter behavior can be tested without booting iOS.
+Do not add a mobile `build/check/lint` Turbo task that invokes iOS/Xcode.
 
-### Native iPad smoke
+### Native smoke
 
-Do not create a native E2E framework in HPA-1. Record a short manual/simulator smoke in the PR:
+Record PASS/FAIL for:
 
-1. gate proof (real PNG, tap, drag, redraw);
-2. launch the final 2x2 vertical slice;
-3. place one piece by tap;
-4. place/reject one piece by drag;
-5. terminate;
-6. disable networking;
-7. relaunch and verify saved state;
-8. optionally finish the 2x2 puzzle to prove completion still comes from game-core.
-
-Automated native UI testing is deferred until a reliable, cost-effective harness is justified.
-
-## File ownership
-
-### New game-core package
-
-- `packages/game-core/package.json`
-- `packages/game-core/tsconfig.json`
-- `packages/game-core/src/index.ts`
-- `packages/game-core/src/history.ts`
-- `packages/game-core/src/hints.ts`
-- `packages/game-core/src/inventory.ts`
-- `packages/game-core/src/rotation.ts`
-- `packages/game-core/src/session/types.ts`
-- `packages/game-core/src/session/session.ts`
-- `packages/game-core/src/session/codec.ts`
-- corresponding moved unit tests
-
-### Web files changed by extraction
-
-- browser session persistence module/tests
-- Svelte session store/tests
-- gameplay runtime/tests
-- routes/components/tests that import moved gameplay/session types/helpers
-- `apps/web/package.json` to depend on `@perseus/game-core`
-
-No API, workflow, database, infrastructure, or shared wire-contract behavior should change.
-
-### Mobile proof
-
-The NativeScript generated scaffold stays under `apps/mobile`. HPA-1 adds only the concrete proof/runtime/gameplay files needed for:
-
-- Canvas registration/probe;
-- fixture + assets;
-- session runtime adapters;
-- board view model;
-- Canvas gameplay view;
-- filesystem session adapter;
-- minimal lifecycle wiring.
-
-Do not pre-create Gallery, Downloaded, Account, outbox, download store, or future navigation modules.
+1. Canvas real-PNG gate;
+2. game-core runtime workspace import bundled by NativeScript;
+3. 2x2 render;
+4. tap placement;
+5. drag placement;
+6. wrong placement rejected/counted by shared `PuzzleSession`;
+7. background timer checkpoint behavior;
+8. terminate/relaunch with networking unavailable restoring placed pieces/counters.
 
 ## Acceptance mapping
 
-| HPA-1 acceptance criterion | Design evidence |
-| --- | --- |
-| Canvas gate passes before extraction | Hard feasibility gate and stop condition |
-| game-core is runtime/framework pure | Explicit package boundary + import rules |
-| web behavior stays green | clean import migration + existing web regression gates |
-| mobile renders fixture | 2x2 fixture + concrete Canvas renderer |
-| tap and drag placement | one shared `attemptPlacement()` path |
-| placement/completion come from PuzzleSession | BoardViewModel restricted to geometry; session owns rules |
-| termination/relaunch offline resume | synchronous filesystem adapter + resume flow |
-| tests cover extraction/codec/adapter | game-core unit move + mobile pure tests + iPad smoke |
+- Canvas gate before shared extraction: hard gate section.
+- Pure `@perseus/game-core`: package boundary + purity test.
+- Existing web behavior preserved: green pre-migration copy, then unit/build/E2E migration gates.
+- Mobile fixture rendered and interactive: workspace compile gate + mobile slice.
+- Tap/drag share placement rules: one `attemptPlacement` path.
+- Offline relaunch resume: synchronous filesystem adapter + native smoke.
+- Game-core/mobile service tests: package parity tests + Linux-safe mobile unit tests.
 
-## Review checklist
+## Explicit scope fences
 
-Before implementation begins, reject any plan change that does one of the following without a demonstrated need:
-
-- extracts game-core before the Canvas gate passes;
-- moves Svelte store/browser storage into game-core;
-- adds a generic storage/repository abstraction;
-- adds a second rendering engine or Canvas wrapper;
-- expands the fixture into a download/library contract;
-- implements production gestures or HPA-3 UI;
-- introduces portrait/auth/sync work;
-- duplicates placement or validation rules in the mobile client;
-- splits HPA-1 across multiple implementation PRs.
+HPA-1 does not add downloads/gallery, production pinch/pan, portrait, auth/sync, SQLite, WebView, Pixi/Phaser/Three/polyfill, named/manual tray organization, native E2E infrastructure, generic persistence repositories, or cross-platform renderer abstractions.
