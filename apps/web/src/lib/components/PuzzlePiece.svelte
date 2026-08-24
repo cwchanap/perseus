@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { PuzzlePiece } from '$lib/types/puzzle';
-	import type { Rotation } from '$lib/types/gameplay';
+	import type { Rotation } from '@perseus/game-core';
 	import { EXPANSION_FACTOR, TAB_RATIO } from '$lib/constants/puzzle';
 
 	interface Props {

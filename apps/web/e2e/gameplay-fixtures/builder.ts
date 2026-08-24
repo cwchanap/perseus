@@ -26,7 +26,7 @@ import {
 	isPuzzleAspectRatio
 } from '@perseus/types';
 import { EXPANSION_FACTOR } from '../../src/lib/constants/puzzle';
-import type { Rotation } from '../../src/lib/types/gameplay';
+import type { Rotation } from '@perseus/game-core';
 
 export const VALID_ROTATIONS: readonly Rotation[] = [0, 90, 180, 270];
 

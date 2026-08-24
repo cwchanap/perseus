@@ -1,7 +1,6 @@
 import { shuffleArray } from '$lib/utils/shuffle';
 import { createBrowserRunIdFactory } from '$lib/services/gameplay/session/persistence';
-import { generateRandomRotations } from '$lib/services/gameplay/rotation';
-import type { Rotation } from '$lib/types/gameplay';
+import { generateRandomRotations, type Rotation } from '@perseus/game-core';
 import { readGameplayRuntimeOverride } from 'virtual:perseus-gameplay-runtime-override';
 import type { GameplayRuntimeDependencies } from './runtime.types';
 

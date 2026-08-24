@@ -25,7 +25,7 @@ import type {
 	PuzzleCategory,
 	PuzzleAspectRatio
 } from '@perseus/types';
-import type { Rotation } from '$lib/types/gameplay';
+import type { PlacedPiece, Rotation } from '@perseus/game-core';
 
 // Re-export shared types for convenience
 export type {
@@ -68,12 +68,6 @@ export interface Puzzle {
 	pieces: PuzzlePiece[];
 	category?: PuzzleCategory;
 	hasReference?: boolean;
-}
-
-export interface PlacedPiece {
-	pieceId: number;
-	x: number;
-	y: number;
 }
 
 /** Game-play progress tracking (local to the web app). */

@@ -11,7 +11,7 @@ import type {
 	PuzzleSourceType,
 	SessionStorageAdapter,
 	SessionValidationContext
-} from './session/types';
+} from '@perseus/game-core';
 
 export interface GalleryProgress {
 	puzzleId: string;

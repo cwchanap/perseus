@@ -1,6 +1,7 @@
-import { expect } from 'vitest';
-import { loadPersistedSession } from './persistence';
-import type { PersistedPuzzleSessionV1, SessionValidationContext } from './types';
+// Shared fixtures for the web-local browser persistence wrapper tests.
+// Snapshot shape and the loader come from @perseus/game-core; only the
+// Storage-facing helpers (memoryStorage) are web-specific.
+import type { PersistedPuzzleSessionV1, SessionValidationContext } from '@perseus/game-core';
 
 export const RUN_ID = '11111111-1111-4111-8111-111111111111';
 
@@ -59,16 +60,6 @@ export function fullBoardPlacements() {
 		{ pieceId: 2, x: 0, y: 1 },
 		{ pieceId: 3, x: 1, y: 1 }
 	];
-}
-
-export function load(value: unknown, ctx: SessionValidationContext = context) {
-	return loadPersistedSession(JSON.stringify(value) ?? null, ctx);
-}
-
-export function expectInvalid(mutator: (record: Record<string, unknown>) => void): void {
-	const record = JSON.parse(JSON.stringify(validSnapshot())) as Record<string, unknown>;
-	mutator(record);
-	expect(load(record).status).toBe('invalid');
 }
 
 export function seal(patch: Record<string, unknown> = {}) {

@@ -1,10 +1,13 @@
 <script lang="ts">
 	import { tick } from 'svelte';
 	import PuzzlePiece from '$lib/components/PuzzlePiece.svelte';
-	import { matchesInventoryFilter } from '$lib/services/gameplay/inventory';
-	import type { InventoryFilter } from '$lib/services/gameplay/session/types';
-	import type { Rotation } from '$lib/types/gameplay';
-	import type { PlacedPiece, Puzzle, PuzzlePiece as PuzzlePieceModel } from '$lib/types/puzzle';
+	import {
+		matchesInventoryFilter,
+		type InventoryFilter,
+		type PlacedPiece,
+		type Rotation
+	} from '@perseus/game-core';
+	import type { Puzzle, PuzzlePiece as PuzzlePieceModel } from '$lib/types/puzzle';
 
 	interface Props {
 		puzzle: Puzzle;

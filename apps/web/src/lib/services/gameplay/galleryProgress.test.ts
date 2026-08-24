@@ -16,7 +16,7 @@ import type {
 	SessionLoadResult,
 	SessionStorageAdapter,
 	SessionValidationContext
-} from './session/types';
+} from '@perseus/game-core';
 import { discoverAllSavedProgress, discoverGalleryProgress } from './galleryProgress';
 
 const expectedSquare4 = [

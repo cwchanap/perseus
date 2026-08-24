@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { get } from 'svelte/store';
 import { createPuzzleSessionStore } from './store';
-import type { Clock, PuzzleMetadata, RunIdFactory } from './types';
+import type { Clock, RunIdFactory, SessionPuzzleSpec } from '@perseus/game-core';
 
 class ManualClock implements Clock {
 	monotonic = 0;
@@ -22,7 +22,7 @@ class ManualClock implements Clock {
 	}
 }
 
-function makeMetadata(pieceCount = 4): PuzzleMetadata {
+function makeMetadata(pieceCount = 4): SessionPuzzleSpec {
 	return {
 		puzzleId: 'pz1',
 		source: 'api',

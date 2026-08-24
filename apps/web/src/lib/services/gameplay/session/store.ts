@@ -13,13 +13,14 @@
 // stale-handler double-fire.
 
 import { type Readable } from 'svelte/store';
-import { createPuzzleSession, type PuzzleSession } from './session';
-import type {
-	CreatePuzzleSessionOptions,
-	PuzzleSessionAction,
-	PuzzleSessionOutcome,
-	PuzzleSessionState
-} from './types';
+import {
+	createPuzzleSession,
+	type CreatePuzzleSessionOptions,
+	type PuzzleSession,
+	type PuzzleSessionAction,
+	type PuzzleSessionOutcome,
+	type PuzzleSessionState
+} from '@perseus/game-core';
 
 export interface PuzzleSessionStore extends Readable<Readonly<PuzzleSessionState>> {
 	dispatch(action: PuzzleSessionAction): PuzzleSessionOutcome;

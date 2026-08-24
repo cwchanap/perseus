@@ -4,10 +4,11 @@
 	import PuzzleToolbar from '$lib/components/PuzzleToolbar.svelte';
 	import ReferenceOverlay from '$lib/components/ReferenceOverlay.svelte';
 	import ZoomableBoardFrame from '$lib/components/ZoomableBoardFrame.svelte';
-	import { calculateFitZoom, clampPan, clampZoom } from '$lib/services/gameplay/viewport';
+	import { calculateFitZoom, type PlacedPiece } from '@perseus/game-core';
+	import { clampPan, clampZoom } from '$lib/services/gameplay/viewport';
 	import type { ViewportBounds } from '$lib/services/gameplay/viewport';
 	import type { ResponsivePuzzleBoardMetrics } from '$lib/services/puzzleLayout';
-	import type { PlacedPiece, Puzzle, PuzzlePiece } from '$lib/types/puzzle';
+	import type { Puzzle, PuzzlePiece } from '$lib/types/puzzle';
 
 	const ZOOM_STEP = 0.2;
 

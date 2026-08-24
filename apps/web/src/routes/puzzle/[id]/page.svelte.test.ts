@@ -213,9 +213,17 @@ vi.mock('$lib/services/gameplay/session/persistence', async (importOriginal) => 
 			},
 			saveSession: sessionStorageSpies.saveSession,
 			clearSession: sessionStorageSpies.clearSession
-		}),
-		// Default to the real serializer so checkpoint paths persist real
-		// snapshots; individual tests may still override with mockReturnValue.
+		})
+	};
+});
+
+// The page imports serializeSession from @perseus/game-core. Default to the
+// real serializer so checkpoint paths persist real snapshots; individual
+// tests may still override with mockReturnValue.
+vi.mock('@perseus/game-core', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('@perseus/game-core')>();
+	return {
+		...actual,
 		serializeSession: vi.fn((state) => actual.serializeSession(state))
 	};
 });
@@ -329,7 +337,7 @@ import {
 } from '$lib/services/api';
 import type { LoadedPuzzleSource } from '$lib/services/puzzleSource';
 import { recordLocalCompletion, getBestTime } from '$lib/services/stats';
-import { serializeSession } from '$lib/services/gameplay/session/persistence';
+import { serializeSession } from '@perseus/game-core';
 import { goto } from '$app/navigation';
 
 function createPiece(

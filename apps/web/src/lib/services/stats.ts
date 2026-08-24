@@ -4,7 +4,7 @@
 // with an elapsed time. Rotation, assisted, and relaxed runs count toward
 // totalCompletions but never create or overwrite the standard best.
 
-import type { SealedCompletion } from './gameplay/session/types';
+import type { SealedCompletion } from '@perseus/game-core';
 import { isPuzzleRunId } from '@perseus/types';
 
 export interface PuzzleStatsV1 {

@@ -18,8 +18,7 @@
 // clear -> seed -> freeze-config, synchronously, before any app script runs.
 import type { Locator, Page } from '@playwright/test';
 import { expect } from '@playwright/test';
-import type { PersistedPuzzleSessionV1 } from '../../src/lib/services/gameplay/session/types';
-import { loadPersistedSession } from '../../src/lib/services/gameplay/session/persistence';
+import { loadPersistedSession, type PersistedPuzzleSessionV1 } from '@perseus/game-core';
 import {
 	buildGameplayConfig,
 	DEFAULT_FIXTURE_ID,
