@@ -2,98 +2,46 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Prove the iPad NativeScript/Svelte Native/Canvas stack first, then extract Perseus's existing framework-neutral gameplay engine and portable session codec into `@perseus/game-core`, migrate web to it, and prove a deterministic local puzzle can save and resume completely offline on iPad.
+**Goal:** Prove the iPad NativeScript/Svelte Native/Canvas stack and host/runtime assumptions first, then extract one shared Perseus gameplay/session core, prove NativeScript can consume it, migrate web, and ship a deterministic offline native puzzle that survives terminate/relaunch.
 
-**Architecture:** Keep the Canvas proof as a hard first-commit gate inside one HPA-1 draft PR. After it passes, create one independently green game-core package containing the engine, helpers, codec, and full pure validation parity; then migrate web/delete duplicates; finally make NativeScript consume the real workspace package and add the small Canvas/persistence vertical slice. `apps/mobile` participates in root CI only through Linux-safe pure tests, never through an iOS/Xcode Turbo build.
+**Architecture:** The implementation PR starts with a mobile feasibility commit and does not create `packages/game-core` until Canvas, runtime primitives, file replacement, and Ubuntu workspace installation are proven. Game-core then owns the existing engine, codec, generic session-adapter semantics, portable runtime/math helpers, and full pure test parity; web and mobile provide only platform storage/runtime presentation wiring.
 
-**Tech Stack:** Bun 1.3.14 workspaces + Turborepo, TypeScript 5.9, Vitest 4, existing `@perseus/types`, NativeScript + Svelte Native from the current official Svelte template, official `@nativescript/canvas` 2.x, iOS/iPad simulator or device.
+**Tech Stack:** Bun 1.3.14 workspaces + Turborepo, TypeScript 5.9, Vitest 4, existing `@perseus/types`, NativeScript/Svelte Native from the official template, official `@nativescript/canvas` 2.x, iOS/iPad simulator or device.
 
 **Spec:** `docs/superpowers/specs/2026-08-23-hpa-1-nativescript-offline-vertical-slice-design.md`
 
 ## Global Constraints
 
-- Deliver HPA-1 through one implementation PR. Keep it draft while the Canvas gate is unresolved; if the gate fails, close/retain that PR with only the probe evidence and do not add game-core extraction commits.
-- **Do not create `packages/game-core` until Task 1's iPad Canvas gate passes.**
-- Use official `@nativescript/canvas`; do not add PixiJS, Phaser, Three.js, `@nativescript/canvas-polyfill`, WebView gameplay, or a renderer abstraction.
-- `@perseus/game-core` may depend on `@perseus/types`, but may not import Svelte, NativeScript, DOM, browser `Storage`, filesystem, fetch, Cloudflare, or analytics APIs.
-- Keep `@perseus/types` focused on API/wire contracts.
-- Rename the engine-facing metadata contract to `SessionPuzzleSpec`; do not export a second unrelated `PuzzleMetadata` name beside `@perseus/types.PuzzleMetadata`.
-- Extract the engine + helpers + portable codec + all pure validation assertions together in Task 2. A copied `session.test.ts` must never exist in a supposedly green game-core without its codec dependency.
-- Keep Svelte `PuzzleSessionStore`, browser run-ID logic, browser storage-key enumeration, and `createSessionStorageAdapter()` in `apps/web`.
-- Keep `SessionStorageAdapter` synchronous. Do not add an async repository, SQLite, write queue, database, or persistence index.
-- Do not leave compatibility aliases/re-exports at the old web-local gameplay paths after Task 3.
-- `apps/mobile` must not expose Turbo `build/check/lint` tasks that invoke NativeScript/iOS/Xcode. Add only Linux-safe pure `test:unit` participation once those tests exist.
-- Retain NativeScript template ignore rules so `platforms/`, `hooks/`, generated Xcode output, and other build artifacts are never committed.
-- Use one checked-in deterministic 2x2 local fixture. No network API, download manifest, Gallery, Downloaded library, or HPA-2 behavior.
-- HPA-1 uses a fixed/fit-only viewport. No production pinch/pan, gesture framework, or persisted viewport.
-- Tap and drag must end at the same shared `PuzzleSession` `attempt_placement` action.
-- `BoardViewModel` stays in `apps/mobile`; do not move/repurpose the web DOM viewport helpers.
-- Use one five-operation `SessionFileOps` seam only to unit-test the NativeScript file adapter.
-- No portrait, authentication, completion sync, cloud save, native E2E framework, or generic state-management framework.
+- One implementation PR for HPA-1. Review it by commit; do not split the ticket unless its scope is explicitly redesigned first.
+- Do not create `packages/game-core` until Task 1 passes every native and Ubuntu gate.
+- Do not migrate/delete web copies until Task 3 proves NativeScript can execute a real runtime import from game-core.
+- Use only official `@nativescript/canvas`; no polyfill, PixiJS, Phaser, Three.js, WebView renderer, or renderer abstraction.
+- `@perseus/game-core` may depend on `@perseus/types` but imports no Svelte, NativeScript, DOM `Storage`, filesystem, fetch, Cloudflare, or analytics API.
+- Keep `SessionStorageAdapter` synchronous and implement its semantics once in game-core over a three-method `SessionKeyValueStore`.
+- Keep browser storage namespace/enumeration and the Svelte `Readable` wrapper in `apps/web`.
+- Keep Canvas hit testing/render projection in `apps/mobile`; move only the existing pure `calculateFitZoom()` math to game-core.
+- Use one deterministic checked-in 2×2 local fixture. No HPA-2 gallery/download/manifest/library behavior.
+- Both tap and drag terminate at the same shared `attempt_placement` action. Mobile code never decides placement correctness.
+- Fixed/fit-only viewport. No production pinch/pan/gesture framework or persisted viewport behavior in the native UI.
+- `apps/mobile` must not define Turbo `build`, `check`, or `lint` scripts that invoke Xcode/NativeScript. Its root-CI participation is Linux-safe pure tests only.
+- Prefer clean same-volume atomic replacement for mobile session files when Task 1 proves it is readily usable; a documented temp-write + remove-target + rename-temp fallback is acceptable for this pre-release proof.
+- No compatibility re-export files after web migration.
 
 ---
 
-## File Structure
+## Task 1: Prove Canvas, Runtime Primitives, File Replacement, and Ubuntu Workspace Safety
 
-### Task 1: Native gate + workspace safety
-
-- Generate: `apps/mobile/**` from the official NativeScript Svelte template.
+**Files:**
+- Create: generated `apps/mobile/**` Svelte Native scaffold
 - Create: `apps/mobile/app/components/CanvasProbe.svelte`
 - Create: `apps/mobile/app/assets/hpa-1/probe-piece.png`
 - Modify: `apps/mobile/app/app.ts`
 - Modify: `apps/mobile/app/App.svelte`
+- Modify: `apps/mobile/package.json`
 - Verify/retain: `apps/mobile/.gitignore`
-- Normalize: `apps/mobile/package.json` so no Turbo task name invokes iOS/Xcode.
+- Modify: root `bun.lock` when workspace dependency resolution changes it
 
-### Task 2: complete green game-core copy
-
-- Create: `packages/game-core/package.json`
-- Create: `packages/game-core/tsconfig.json`
-- Create: `packages/game-core/vitest.config.ts`
-- Create: `packages/game-core/src/index.ts`
-- Copy/adapt: history, hints, inventory, rotation + their tests.
-- Copy/adapt: session contracts/engine + session tests.
-- Create from portable persistence code: `packages/game-core/src/session/codec.ts`
-- Move/copy all pure codec/validation assertions into game-core tests.
-
-### Task 3: web migration/deletion
-
-- Modify: `apps/web/package.json`
-- Modify: web `session/persistence.ts` and browser-only persistence tests.
-- Modify: web `session/store.ts` + test.
-- Modify: gameplay runtime/types/E2E runtime wiring.
-- Modify: components/routes/tests importing moved types/helpers/codecs.
-- Modify: `apps/web/src/lib/types/puzzle.ts` to stop owning `PlacedPiece`.
-- Delete: web pure helper/session/type copies and their migrated pure tests.
-
-### Task 4: real workspace consumer + native 2x2 slice
-
-- Create: `apps/mobile/vitest.config.ts`
-- Modify: `apps/mobile/package.json` to add `@perseus/game-core: workspace:*` and Linux-safe `test:unit`.
-- Create temporary: `apps/mobile/app/gameplay/coreBundleProbe.ts` for the webpack workspace gate; delete after real gameplay imports game-core.
-- Create: `apps/mobile/app/gameplay/fixture.ts`
-- Create: four real piece PNGs under `apps/mobile/app/assets/hpa-1/`.
-- Create: `runtime.ts`, `boardViewModel.ts`, `boardViewModel.test.ts`, `PuzzleCanvas.svelte`, `Gameplay.svelte`.
-- Modify only if the workspace gate proves necessary: `apps/mobile/webpack.config.js`.
-
-### Task 5: file persistence + relaunch
-
-- Create: `apps/mobile/app/gameplay/sessionFiles.ts`
-- Create: `apps/mobile/app/gameplay/sessionStorage.ts`
-- Create: `apps/mobile/app/gameplay/sessionStorage.test.ts`
-- Modify: `apps/mobile/app/gameplay/Gameplay.svelte`
-
----
-
-## Task 1: Prove NativeScript + Svelte Native + Canvas on iPad Without Polluting Turbo/CI
-
-**Files:**
-- Generate/modify: `apps/mobile/**`
-- Create: `apps/mobile/app/components/CanvasProbe.svelte`
-- Create: `apps/mobile/app/assets/hpa-1/probe-piece.png`
-- Modify: root `bun.lock` after workspace install.
-
-**Interfaces:** No reusable gameplay interface. Output is gate evidence only.
+**Interfaces:** None survive as shared architecture. This task produces gate evidence only: Canvas works, required JS runtime primitives exist, one file replacement mode works, generated native output is ignored, and existing Ubuntu workflows accept the scaffold.
 
 - [ ] **Step 1: Verify the local iOS toolchain**
 
@@ -102,9 +50,9 @@ ns --version
 ns doctor ios
 ```
 
-Expected: no blocking Xcode/CocoaPods/iOS runtime error. Host setup failures are environment work, not reasons to redesign Perseus.
+Expected: NativeScript CLI, Xcode, CocoaPods, and an iOS simulator/device are usable. Fix host setup only; do not change Perseus architecture to work around a broken local toolchain.
 
-- [ ] **Step 2: Scaffold the mobile shell and install only Canvas**
+- [ ] **Step 2: Scaffold the mobile app and install only official Canvas**
 
 ```bash
 cd apps
@@ -115,17 +63,11 @@ cd ../..
 bun install
 ```
 
-Confirm the resolved package is official `@nativescript/canvas` 2.x. Do not add the polyfill package.
+Keep the template's mutually compatible NativeScript/Svelte versions. `apps/mobile/package.json` must not add Pixi/Phaser/Three/polyfill dependencies.
 
-- [ ] **Step 3: Keep the new `apps/*` workspace Linux-safe**
+- [ ] **Step 3: Make Turbo-facing scripts host-safe**
 
-Inspect the generated package scripts:
-
-```bash
-cat apps/mobile/package.json
-```
-
-The committed result must not define Turbo task names such as `build`, `check`, or `lint` when they invoke `ns build ios`, Xcode, or any macOS-only native build. Keep native execution explicit, for example:
+Keep an explicit native command but remove any generated root-task names that would make Turbo invoke an iOS build on Ubuntu. The relevant `scripts` shape is:
 
 ```json
 {
@@ -135,165 +77,234 @@ The committed result must not define Turbo task names such as `build`, `check`, 
 }
 ```
 
-If the template already omits those task names, do not add them. Do not add `test:unit` until Task 4 has pure tests.
+Other template-local scripts may remain when they are not named `build`, `check`, or `lint`; later tasks add `test:unit`. Do not add a fake no-op `build` script.
 
-Retain template ignore coverage for generated native output. Before the gate commit, verify:
+Verify generated native output is ignored:
 
 ```bash
-rg '^(platforms|hooks)/|platforms/|hooks/' apps/mobile/.gitignore .gitignore
+git check-ignore apps/mobile/platforms apps/mobile/hooks || true
+git status --short apps/mobile
 ```
 
-If the template places those patterns elsewhere, preserve the equivalent ignore behavior; do not weaken it.
+`platforms/`, `hooks/`, and generated Xcode/native build output must not appear as staged/untracked product files.
 
 - [ ] **Step 4: Register the official Svelte Canvas element**
 
-At app bootstrap before mounting the root:
+At the top of `apps/mobile/app/app.ts` before mounting the root component:
 
 ```ts
 import '@nativescript/canvas/svelte';
 ```
 
-Do not copy the package's internal registration code.
+Do not copy `registerNativeViewElement()` into Perseus.
 
-- [ ] **Step 5: Check in one real Perseus piece PNG**
+- [ ] **Step 5: Add one real Perseus piece PNG**
 
-Create:
+Copy one generated puzzle piece with a transparent jigsaw boundary to:
 
 ```text
 apps/mobile/app/assets/hpa-1/probe-piece.png
 ```
 
-Use a real generated piece with transparent jigsaw edges.
+Do not use a rectangle, emoji, or system icon for this gate.
 
-- [ ] **Step 6: Implement the one-screen probe**
+- [ ] **Step 6: Implement the one-screen Canvas/runtime probe**
 
-`CanvasProbe.svelte` should contain only the Canvas, one status label, one image position, and tap/pan handlers. Equivalent behavior:
+`CanvasProbe.svelte` keeps the Canvas proof concrete and reports runtime capability in the same screen:
+
+```svelte
+<script lang="ts">
+  import { File, knownFolders, path } from '@nativescript/core';
+
+  let canvas: any;
+  let piece: any;
+  let x = 80;
+  let y = 80;
+  let dragStartX = 0;
+  let dragStartY = 0;
+  let originX = x;
+  let originY = y;
+  let status = 'waiting';
+
+  function runtimeStatus(): string {
+    const hasClock = typeof globalThis.performance?.now === 'function';
+    const cryptoSource = (globalThis as any).crypto;
+    const hasCrypto =
+      typeof cryptoSource?.randomUUID === 'function' ||
+      typeof cryptoSource?.getRandomValues === 'function';
+    return `clock=${hasClock} crypto=${hasCrypto}`;
+  }
+
+  function draw(): void {
+    if (!canvas || !piece) return;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(piece, x, y, 128, 128);
+  }
+
+  function onTap(event: any): void {
+    status = `${runtimeStatus()} tap=${Math.round(event.getX())},${Math.round(event.getY())}`;
+  }
+
+  function onPan(event: any): void {
+    if (event.state === 1) {
+      dragStartX = event.getX();
+      dragStartY = event.getY();
+      originX = x;
+      originY = y;
+    }
+    if (event.state === 2) {
+      x = originX + event.getX() - dragStartX;
+      y = originY + event.getY() - dragStartY;
+      status = `${runtimeStatus()} drag=${Math.round(event.getX())},${Math.round(event.getY())}`;
+      draw();
+    }
+  }
+</script>
+```
+
+Use the concrete image-loading API provided by the installed Canvas/NativeScript versions, but keep it in this one probe file; do not add a renderer wrapper.
+
+- [ ] **Step 7: Add a temporary file-replacement probe to the same screen**
+
+Use app-private documents storage and record which strategy succeeds:
 
 ```ts
-let canvas: any;
-let piece: ImageSource | null = null;
-let x = 80;
-let y = 80;
-let dragStart = { x: 0, y: 0 };
-let origin = { x, y };
+function probeRemoveThenRename(): boolean {
+  const root = path.join(knownFolders.documents().path, 'perseus-hpa1-probe');
+  const targetPath = path.join(root, 'session.json');
+  const tempPath = `${targetPath}.tmp`;
+  const target = File.fromPath(targetPath);
+  const temp = File.fromPath(tempPath);
 
-function draw(): void {
-  if (!canvas || !piece) return;
-  const ctx = canvas.getContext('2d');
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.drawImage(piece, x, y, 128, 128);
-}
-
-function onTap(event: any): void {
-  status = `tap ${Math.round(event.getX())},${Math.round(event.getY())}`;
-}
-
-function onPan(event: any): void {
-  if (event.state === 1) {
-    dragStart = { x: event.getX(), y: event.getY() };
-    origin = { x, y };
-  } else if (event.state === 2) {
-    x = origin.x + event.getX() - dragStart.x;
-    y = origin.y + event.getY() - dragStart.y;
-    draw();
-  }
+  target.writeTextSync('old');
+  temp.writeTextSync('new');
+  target.removeSync();
+  temp.renameSync('session.json');
+  return File.fromPath(targetPath).readTextSync() === 'new';
 }
 ```
 
-Use the concrete image/event APIs exposed by the installed 2.x package; do not add a wrapper.
+Before accepting that fallback, attempt the clean same-volume replacement primitive exposed by the installed iOS/NativeScript runtime. If it works reliably, record `atomic` and use it in Task 6. If the bridge/API is absent or awkward enough to fail this gate, run the exact fallback above, record `remove_then_rename`, and continue when the read-back is `new`.
 
-- [ ] **Step 7: Run root host-neutral gates before native launch**
+Do not create game-core based on an unexecuted replacement assumption.
 
-```bash
-bun run check
-bun run lint
-bun run build
-```
-
-Expected: the new workspace does not make Turbo attempt an iOS build.
-
-- [ ] **Step 8: Run the hard iPad gate**
+- [ ] **Step 8: Launch on an iPad and record every local gate**
 
 ```bash
 cd apps/mobile
 ns run ios
 ```
 
-Record NativeScript CLI version, resolved Canvas version, iPad model, and iOS version. Verify:
+Record in the implementation PR:
 
 ```text
-Canvas visible
-real piece transparency intact
-tap coordinates line up
-drag coordinates change
-redraw moves the piece
+NativeScript CLI: <actual output from ns --version>
+@nativescript/canvas: <actual resolved version>
+iPad/iOS: <actual simulator or device>
+PNG transparency: PASS/FAIL
+Tap coordinates: PASS/FAIL
+Drag coordinates: PASS/FAIL
+Redraw movement: PASS/FAIL
+performance.now: PASS/FAIL
+crypto random source: PASS/FAIL
+replacement mode: atomic | remove_then_rename | FAIL
+clean relaunch without generated-project edits: PASS/FAIL
 ```
 
-- [ ] **Step 9: Repeat a clean relaunch and inspect generated-file hygiene**
+The implementation PR must contain actual values, not the angle-bracket labels above; they are the evidence fields to fill from the just-run commands.
 
-Stop/re-run `ns run ios` without manual edits under `platforms/` or Xcode project files. Then:
+- [ ] **Step 9: Repeat a clean relaunch**
+
+Stop the app and rerun:
 
 ```bash
-git status --short apps/mobile
-git ls-files 'apps/mobile/platforms/**' 'apps/mobile/hooks/**'
+cd apps/mobile
+ns run ios
 ```
 
-Expected: no generated platform/hook file is tracked.
+The gate fails if it requires manual edits under `platforms/` or the generated Xcode project.
 
-**STOP HERE if the gate is unreliable.** Do not execute Task 2. The draft implementation PR ends with probe evidence only.
-
-- [ ] **Step 10: Commit the gate only after it passes**
+- [ ] **Step 10: Commit the scaffold/gate code only after native checks pass**
 
 ```bash
 git add apps/mobile bun.lock
-git commit -m "feat: prove NativeScript Canvas on iPad"
+git commit -m "feat: prove NativeScript mobile feasibility"
 ```
+
+**STOP HERE** if any required native gate is red. Do not create `packages/game-core`.
+
+- [ ] **Step 11: Push and trigger the existing Ubuntu workflows before extraction**
+
+```bash
+git push
+
+gh pr ready
+gh pr checks --watch
+```
+
+Require both current **Build & Lint** and **Unit Tests** jobs green. This is the actual proof that root Ubuntu `bun install` accepts the NativeScript workspace and Turbo does not try to run Xcode.
+
+**STOP HERE** if either workflow is red because of the mobile scaffold. Fix only workspace/package integration and rerun before Task 2.
 
 ---
 
-## Task 2: Create One Green `@perseus/game-core` With Engine + Codec + Full Pure Validation
+## Task 2: Create One Green `@perseus/game-core` With Engine, Codec, Adapter Semantics, and Portable Helpers
 
-**Precondition:** Task 1 passed on iPad.
+**Precondition:** Task 1 native gate and both Ubuntu workflows are green.
 
 **Files:**
 - Create: `packages/game-core/package.json`
 - Create: `packages/game-core/tsconfig.json`
 - Create: `packages/game-core/vitest.config.ts`
 - Create: `packages/game-core/src/index.ts`
-- Copy/adapt: helper sources/tests.
-- Copy/adapt: `session/types.ts`, `session/session.ts`, `session.test.ts`, `session.edge.test.ts`.
-- Create: `session/codec.ts` and codec tests from current persistence behavior.
+- Copy/adapt: web `history.ts`, `hints.ts`, `rotation.ts`, `inventory.ts` and tests
+- Copy/adapt: web `session/types.ts`, `session/session.ts` and session tests
+- Create: `packages/game-core/src/session/codec.ts`
+- Create: `packages/game-core/src/session/storage.ts`
+- Create: `packages/game-core/src/session/runId.ts`
+- Create: `packages/game-core/src/runtime.ts`
+- Create: `packages/game-core/src/geometry.ts`
+- Create/move: corresponding pure tests
+- Modify: `.github/workflows/unit-test.yml`
+- Modify: root `bun.lock`
+- Keep untouched for now: existing web pure source copies and web consumers
 
 **Interfaces produced:**
 
 ```ts
-export type Rotation = 0 | 90 | 180 | 270;
-
-export interface PlacedPiece {
-  pieceId: number;
-  x: number;
-  y: number;
+export interface SessionKeyValueStore {
+  getItem(puzzleId: string): string | null;
+  setItem(puzzleId: string, value: string): void;
+  removeItem(puzzleId: string): void;
 }
 
-export interface SessionPuzzleSpec {
-  puzzleId: string;
-  source: PuzzleSourceType;
-  pieceCount: number;
-  gridCols: number;
-  gridRows: number;
-  pieces: ReadonlyArray<{ id: number; correctX: number; correctY: number }>;
+export function createSessionStorageAdapter(options: {
+  store: SessionKeyValueStore;
+  onError?: (error: SessionPersistenceError) => void;
+}): SessionStorageAdapter;
+
+export function createDefaultClock(): Clock;
+
+export interface RunIdCrypto {
+  randomUUID?(): string;
+  getRandomValues(array: Uint8Array): Uint8Array;
 }
 
-export function createPuzzleSession(options: CreatePuzzleSessionOptions): PuzzleSession;
-export function serializeSession(state: PuzzleSessionState, now?: number): PersistedPuzzleSessionV1 | null;
-export function loadPersistedSession(raw: string | null, context: SessionValidationContext): SessionLoadResult;
-export function isResumable(snapshot: PersistedPuzzleSessionV1): boolean;
-export function isFailureRetryable(code: CompletionFailureCode): boolean;
+export function createRunIdFactory(source: RunIdCrypto): RunIdFactory;
+export function calculateFitZoom(
+  puzzleWidth: number,
+  puzzleHeight: number,
+  viewportWidth: number,
+  viewportHeight: number,
+  paddingFactor?: number
+): number;
+export function validationContextFrom(spec: SessionPuzzleSpec): SessionValidationContext;
 ```
 
-- [ ] **Step 1: Create the package config and copy the existing test configuration**
+- [ ] **Step 1: Create the package and assertion-strict Vitest config**
 
-`packages/game-core/package.json`:
+`packages/game-core/package.json` starts source-first so web and the first NativeScript gate can test direct workspace consumption:
 
 ```json
 {
@@ -324,73 +335,48 @@ export function isFailureRetryable(code: CompletionFailureCode): boolean;
 }
 ```
 
-Copy both:
-
-```bash
-cp packages/types/tsconfig.json packages/game-core/tsconfig.json
-cp packages/types/vitest.config.ts packages/game-core/vitest.config.ts
-```
-
-- [ ] **Step 2: Copy the engine/helpers/tests without deleting web originals**
-
-Use copy/editor operations, not `git mv`, for:
-
-```text
-history.ts + history.test.ts
-hints.ts + hints.test.ts
-inventory.ts + inventory.test.ts
-rotation.ts + rotation.test.ts
-session/types.ts
-session/session.ts
-session/session.test.ts
-session/session.edge.test.ts
-```
-
-Web remains untouched in this task.
-
-- [ ] **Step 3: Copy the portable codec before trying to make session tests green**
-
-Create `packages/game-core/src/session/codec.ts` from the pure sections of current web `session/persistence.ts`:
+Copy `packages/types/tsconfig.json`. Copy its Vitest config but add the assertion contract web currently supplies:
 
 ```ts
-serializeSession
-loadPersistedSession
-isResumable
-isFailureRetryable
+import { defineConfig } from 'vitest/config';
+
+export default defineConfig({
+  test: {
+    globals: true,
+    include: ['src/**/*.test.ts'],
+    expect: { requireAssertions: true },
+    coverage: {
+      provider: 'v8',
+      reporter: ['lcov', 'text', 'html'],
+      reportsDirectory: './coverage'
+    }
+  }
+});
 ```
 
-Move/copy every private validator and clone helper required by those functions.
+- [ ] **Step 2: Copy rather than move the pure engine/helper sources and tests**
 
-Do **not** copy:
-
-```text
-PROGRESS_KEY_PREFIX / progressKey
-resolveSessionStorage
-createBrowserRunIdFactory / fallback browser UUID behavior
-listResumableSessionCandidateIds
-createSessionStorageAdapter
-noopThrowingStorage
+```bash
+mkdir -p packages/game-core/src/session
+cp apps/web/src/lib/services/gameplay/history.ts packages/game-core/src/history.ts
+cp apps/web/src/lib/services/gameplay/history.test.ts packages/game-core/src/history.test.ts
+cp apps/web/src/lib/services/gameplay/hints.ts packages/game-core/src/hints.ts
+cp apps/web/src/lib/services/gameplay/hints.test.ts packages/game-core/src/hints.test.ts
+cp apps/web/src/lib/services/gameplay/rotation.ts packages/game-core/src/rotation.ts
+cp apps/web/src/lib/services/gameplay/rotation.test.ts packages/game-core/src/rotation.test.ts
+cp apps/web/src/lib/services/gameplay/inventory.ts packages/game-core/src/inventory.ts
+cp apps/web/src/lib/services/gameplay/inventory.test.ts packages/game-core/src/inventory.test.ts
+cp apps/web/src/lib/services/gameplay/session/types.ts packages/game-core/src/session/types.ts
+cp apps/web/src/lib/services/gameplay/session/session.ts packages/game-core/src/session/session.ts
+cp apps/web/src/lib/services/gameplay/session/session.test.ts packages/game-core/src/session/session.test.ts
+cp apps/web/src/lib/services/gameplay/session/session.edge.test.ts packages/game-core/src/session/session.edge.test.ts
 ```
 
-- [ ] **Step 4: Preserve the full pure persistence parity contract**
+Do not delete the originals yet.
 
-Create game-core codec fixtures/tests from all existing assertions that exercise the portable functions, including the current cases in:
+- [ ] **Step 3: Make package-local primitives and rename engine metadata**
 
-```text
-apps/web/src/lib/services/gameplay/session/persistence.test.ts
-apps/web/src/lib/services/gameplay/session/persistence.validation-activity.test.ts
-apps/web/src/lib/services/gameplay/session/persistence.validation-completion.test.ts
-apps/web/src/lib/services/gameplay/session/persistence.validation-fields.test.ts
-apps/web/src/lib/services/gameplay/session/persistence.validation-storage.test.ts
-```
-
-For mixed files such as `persistence.validation-storage.test.ts`, move/copy serializer/cloning/validator assertions into game-core and leave `Storage` adapter/error/destructive-load assertions for Task 3's web suite. Do not replace the existing matrix with two representative tests.
-
-Also copy `persistence.test-fixtures.ts` into a game-core-owned codec fixture module, stripping browser-only `Storage` helpers if they are unused there.
-
-- [ ] **Step 5: Remove web-local type dependencies in the copied package**
-
-In copied session types:
+In game-core `session/types.ts`:
 
 ```ts
 export type Rotation = 0 | 90 | 180 | 270;
@@ -411,82 +397,379 @@ export interface SessionPuzzleSpec {
 }
 ```
 
-Change:
+Change only the copied engine contract name: `CreatePuzzleSessionOptions.metadata: SessionPuzzleSpec`. Do not change action/outcome/lifecycle names.
+
+- [ ] **Step 4: Remove `$lib` type dependencies from copied helpers/engine**
+
+`inventory.ts` becomes structurally typed:
 
 ```ts
-interface CreatePuzzleSessionOptions {
-  metadata: SessionPuzzleSpec;
-  // existing fields unchanged
+import type { InventoryFilter } from './session/types';
+
+export function matchesInventoryFilter(
+  piece: Readonly<{ correctX: number; correctY: number }>,
+  grid: Readonly<{ gridCols: number; gridRows: number }>,
+  filter: InventoryFilter
+): boolean {
+  if (filter === 'all') return true;
+  const horizontal = piece.correctX === 0 || piece.correctX === grid.gridCols - 1;
+  const vertical = piece.correctY === 0 || piece.correctY === grid.gridRows - 1;
+  const corner = horizontal && vertical;
+  const perimeter = horizontal || vertical;
+  if (filter === 'corners') return corner;
+  if (filter === 'edges') return perimeter && !corner;
+  return !perimeter;
 }
 ```
 
-Update copied session tests from `PuzzleMetadata` to `SessionPuzzleSpec`. Do not rename actions, outcomes, clocks, or runtime method names.
+The copied `session.ts` imports helpers through `../history`, `../hints`, `../inventory`, `../rotation`, and `./types` only.
 
-- [ ] **Step 6: Make copied helper imports package-local**
+- [ ] **Step 5: Extract the entire portable codec before running session tests**
 
-`session/session.ts` should use relative imports:
-
-```ts
-import { createHistory, type History } from '../history';
-import { getHintPieceId } from '../hints';
-import { matchesInventoryFilter } from '../inventory';
-import { generateRandomRotations, isUpright, rotateClockwise } from '../rotation';
-```
-
-For `inventory.ts`, keep the current behavior but replace web `Pick<>` dependencies with structural coordinates/grid fields.
-
-- [ ] **Step 7: Export the complete package surface**
-
-`src/index.ts`:
+Create `packages/game-core/src/session/codec.ts` from the pure region of web persistence and keep the signatures:
 
 ```ts
-export * from './history';
-export * from './hints';
-export * from './inventory';
-export * from './rotation';
-export * from './session/types';
-export * from './session/session';
-export * from './session/codec';
+export function serializeSession(
+  state: PuzzleSessionState,
+  now: number = Date.now()
+): PersistedPuzzleSessionV1 | null;
+
+export function loadPersistedSession(
+  raw: string | null,
+  context: SessionValidationContext
+): SessionLoadResult;
+
+export function isResumable(snapshot: PersistedPuzzleSessionV1): boolean;
+export function isFailureRetryable(code: CompletionFailureCode): boolean;
 ```
 
-- [ ] **Step 8: Run the independently green package and unchanged web**
+Move all private V1 validators and clone helpers used by those functions. Update copied `session.test.ts` to import `serializeSession/loadPersistedSession` from `./codec`, not a nonexistent copied `persistence.ts`.
+
+- [ ] **Step 6: Move the existing adapter semantics once over `SessionKeyValueStore`**
+
+Create `session/storage.ts`:
+
+```ts
+export interface SessionKeyValueStore {
+  getItem(puzzleId: string): string | null;
+  setItem(puzzleId: string, value: string): void;
+  removeItem(puzzleId: string): void;
+}
+
+export function createSessionStorageAdapter(options: {
+  store: SessionKeyValueStore;
+  onError?: (error: SessionPersistenceError) => void;
+}): SessionStorageAdapter {
+  const { store, onError } = options;
+
+  function readSession(puzzleId: string, context: SessionValidationContext): SessionLoadResult {
+    try {
+      return loadPersistedSession(store.getItem(puzzleId), context);
+    } catch (cause) {
+      onError?.({ kind: 'read_error', puzzleId, cause });
+      return { status: 'missing' };
+    }
+  }
+
+  return {
+    peekSession: readSession,
+    loadSession(puzzleId, context) {
+      const result = readSession(puzzleId, context);
+      if (result.status !== 'invalid') return result;
+      try {
+        store.removeItem(puzzleId);
+      } catch (cause) {
+        onError?.({ kind: 'remove_error', puzzleId, cause });
+      }
+      return { status: 'missing' };
+    },
+    saveSession(puzzleId, snapshot) {
+      try {
+        store.setItem(puzzleId, JSON.stringify(snapshot));
+      } catch (cause) {
+        onError?.({ kind: 'write_error', puzzleId, cause });
+      }
+    },
+    clearSession(puzzleId) {
+      try {
+        store.removeItem(puzzleId);
+      } catch (cause) {
+        onError?.({ kind: 'remove_error', puzzleId, cause });
+      }
+    },
+    isResumable
+  };
+}
+```
+
+This is the existing behavior with browser key construction removed; do not add a repository base class.
+
+- [ ] **Step 7: Split persistence tests by actual ownership**
+
+Move/adapt these pure suites wholesale:
+
+```text
+persistence.validation-activity.test.ts
+persistence.validation-completion.test.ts
+persistence.validation-fields.test.ts
+```
+
+Move `persistence.validation-storage.test.ts` assertions that cover generic adapter/error behavior and serializer cloning into game-core tests, replacing the broad `Storage` fake with a three-method `SessionKeyValueStore` fake.
+
+Split the large `persistence.test.ts` by describe-block behavior:
+
+```text
+MOVE: serialize/load/isResumable/retryability/cross-field codec tests
+MOVE: generic peek/load/save/clear/error semantics
+MOVE: UUID formatting/factory tests that inject an explicit crypto source
+KEEP WEB: browser global crypto resolution
+KEEP WEB: listResumableSessionCandidateIds Storage.length/key enumeration
+KEEP WEB: noopThrowingStorage/browser fallback behavior
+```
+
+Keep `persistence.fallback-storage.test.ts` web-local. No pure assertion is intentionally deleted.
+
+- [ ] **Step 8: Move the reusable runtime/math helpers**
+
+Create `runtime.ts`:
+
+```ts
+export function createDefaultClock(): Clock {
+  return {
+    monotonicNow: () => performance.now(),
+    wallNow: () => Date.now(),
+    setInterval: (callback, milliseconds) => globalThis.setInterval(callback, milliseconds),
+    clearInterval: (handle) => globalThis.clearInterval(handle as ReturnType<typeof setInterval>)
+  };
+}
+```
+
+Create `session/runId.ts` by moving the existing UUID-v4 byte formatting behind a structural source:
+
+```ts
+export interface RunIdCrypto {
+  randomUUID?(): string;
+  getRandomValues(array: Uint8Array): Uint8Array;
+}
+
+export function createRunIdFactory(source: RunIdCrypto): RunIdFactory {
+  return {
+    create: () =>
+      typeof source.randomUUID === 'function'
+        ? source.randomUUID().toLowerCase()
+        : fallbackUuidV4(source)
+  };
+}
+```
+
+`fallbackUuidV4()` keeps the existing version/variant-bit logic; do not introduce `Math.random`.
+
+Move only `calculateFitZoom()` from web `viewport.ts` into `geometry.ts`, preserving its existing formula and fit tests. Leave `clampZoom()` and `clampPan()` in web.
+
+Add to `session/types.ts` or a focused helper module:
+
+```ts
+export function validationContextFrom(spec: SessionPuzzleSpec): SessionValidationContext {
+  return {
+    puzzleId: spec.puzzleId,
+    source: spec.source,
+    pieceIds: spec.pieces.map((piece) => piece.id),
+    gridCols: spec.gridCols,
+    gridRows: spec.gridRows,
+    pieceCount: spec.pieceCount,
+    pieces: spec.pieces
+  };
+}
+```
+
+- [ ] **Step 9: Export only the shared public surface**
+
+`src/index.ts` exports the engine/contracts/helpers/codec/storage/runtime/run-ID/fit/context helper. It does not export browser globals or NativeScript code.
+
+- [ ] **Step 10: Update Unit Tests coverage ownership**
+
+In `.github/workflows/unit-test.yml`, retain current app coverage and add game-core explicitly.
+
+Artifact step:
+
+```yaml
+path: |
+  apps/*/coverage/lcov.info
+  packages/game-core/coverage/lcov.info
+```
+
+Codecov step:
+
+```yaml
+files: ./apps/*/coverage/lcov.info,./packages/game-core/coverage/lcov.info
+```
+
+Do not broaden this into a CI redesign.
+
+- [ ] **Step 11: Install and run the new package before touching web consumers**
 
 ```bash
+bun install
 bun --filter @perseus/game-core test:unit
+bun --filter @perseus/game-core build
 bun --filter @perseus/web test:unit
 ```
 
-Expected: both pass before any web import migration/deletion.
+Expected: game-core is green and web remains green because original web copies still exist.
 
-- [ ] **Step 9: Verify package purity**
+- [ ] **Step 12: Run the purity fence**
 
 ```bash
 rg "from ['\"](svelte|@nativescript|\$lib)|localStorage|\bStorage\b|fetch\(|Cloudflare|analytics" packages/game-core/src
 ```
 
-Expected: no prohibited runtime/platform dependency.
+Expected: no prohibited platform/framework dependency. `SessionKeyValueStore` is allowed because it is not the DOM `Storage` type; if the literal `Storage` regex matches that identifier, inspect the match rather than renaming a clear domain type solely for grep.
 
-- [ ] **Step 10: Commit the complete green copy**
+- [ ] **Step 13: Commit the independently green extraction**
 
 ```bash
-git add packages/game-core bun.lock
-git commit -m "refactor: add shared Perseus game core"
+git add packages/game-core .github/workflows/unit-test.yml bun.lock
+git commit -m "refactor: extract shared Perseus game core"
 ```
+
+The large copied source is temporary duplication by design. Review the boundary/tests in this commit; Task 4 is where deletion/import migration carries the meaningful cross-app diff.
 
 ---
 
-## Task 3: Migrate Web to Game-Core and Delete Duplicates in the Same Commit
+## Task 3: Prove NativeScript Can Execute the Real Workspace Game-Core Package
+
+**Precondition:** Task 2 is green; web still uses old copies.
+
+**Files:**
+- Modify: `apps/mobile/package.json`
+- Modify: `apps/mobile/app/App.svelte` or the existing probe component
+- Conditionally modify only if demonstrated necessary: `apps/mobile/webpack.config.js`
+- Conditionally modify only if source bundling still fails: `packages/game-core/package.json`
+
+**Interfaces:** None new. This is a package-consumption gate.
+
+- [ ] **Step 1: Add the real workspace dependency**
+
+```json
+{
+  "dependencies": {
+    "@perseus/game-core": "workspace:*"
+  }
+}
+```
+
+Merge it into the generated dependency list rather than replacing NativeScript dependencies.
+
+- [ ] **Step 2: Execute a runtime export, not a type-only import**
+
+In the probe screen:
+
+```ts
+import { rotateClockwise } from '@perseus/game-core';
+
+const gameCoreProbe = rotateClockwise(0);
+```
+
+Render/log `gameCoreProbe === 90` so the runtime module must actually bundle.
+
+- [ ] **Step 3: Run the direct source-package gate**
+
+```bash
+bun install
+cd apps/mobile
+ns run ios
+```
+
+PASS means the app launches and reports the runtime result `90`.
+
+- [ ] **Step 4: If direct source bundling fails, allow one targeted webpack correction**
+
+First inspect:
+
+```bash
+cd apps/mobile
+ns prepare ios --env.verbose
+```
+
+If the demonstrated failure is that the existing TS rule/resolution excludes the symlinked workspace source, extend only that existing rule/resolve behavior to include the resolved `packages/game-core/src` path. Do not add another loader or copy source files.
+
+Then rerun:
+
+```bash
+ns run ios
+```
+
+- [ ] **Step 5: If the targeted correction still fails, use the already-supported `dist/` fallback**
+
+```bash
+cd ../..
+bun --filter @perseus/game-core build
+```
+
+Change game-core package runtime/type exports to:
+
+```json
+{
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  }
+}
+```
+
+Then:
+
+```bash
+bun install
+cd apps/mobile
+ns run ios
+```
+
+- [ ] **Step 6: Stop before web migration if both supported paths fail**
+
+If direct source consumption (with at most one targeted webpack correction) and the built `dist/` package both fail, **STOP HPA-1 here**. Keep web on its old implementation and report the package-consumption failure. Do not copy `packages/game-core/src` into mobile.
+
+- [ ] **Step 7: Commit only the successful package-consumption path**
+
+```bash
+git add apps/mobile packages/game-core/package.json bun.lock
+git commit -m "build: prove mobile consumes shared game core"
+```
+
+If `packages/game-core/package.json` did not change, omit it from `git add`.
+
+---
+
+## Task 4: Migrate Web to Game-Core and Delete the Temporary Copies
+
+**Precondition:** Task 3 proves NativeScript can execute game-core.
 
 **Files:**
 - Modify: `apps/web/package.json`
-- Modify: web persistence/store/runtime/components/routes/tests.
-- Delete: old pure helpers/session/type owners and migrated pure tests.
+- Modify: `apps/web/src/lib/services/gameplay/session/persistence.ts`
+- Modify: `apps/web/src/lib/services/gameplay/session/store.ts`
+- Modify: `apps/web/src/lib/services/gameplay/runtime.ts`
+- Modify: `apps/web/src/lib/services/gameplay/runtime.types.ts`
+- Modify: `apps/web/src/lib/services/gameplay/viewport.ts`
+- Modify: route/components/tests importing moved engine/helpers/types/codec
+- Delete: old web copies of history/hints/inventory/rotation/session engine/contracts and their pure tests
+- Delete or narrow: web-local `types/gameplay.ts` and local `PlacedPiece` owner after consumers move
+- Modify: root `bun.lock`
 
-**Interfaces:** Web browser adapter signatures remain unchanged. Pure codec imports come from `@perseus/game-core`.
+**Interfaces:** Web keeps its current public browser adapter signature so current call sites do not need a storage API migration:
+
+```ts
+export function createSessionStorageAdapter(options?: {
+  storage?: Storage;
+  onError?: (error: SessionPersistenceError) => void;
+}): SessionStorageAdapter;
+```
 
 - [ ] **Step 1: Add the workspace dependency**
-
-In web dependencies:
 
 ```json
 "@perseus/game-core": "workspace:*"
@@ -494,75 +777,64 @@ In web dependencies:
 
 Run `bun install`.
 
-- [ ] **Step 2: Reduce web persistence to browser concerns over the shared codec**
+- [ ] **Step 2: Make browser persistence a namespace/global wrapper over shared semantics**
 
-Keep browser-only behavior in `apps/web/src/lib/services/gameplay/session/persistence.ts` and import shared types/functions:
+Keep browser `PROGRESS_KEY_PREFIX`, `progressKey()`, storage resolution, fallback storage, and candidate enumeration. Delegate session semantics:
 
 ```ts
 import {
-  isFailureRetryable,
-  isResumable,
-  loadPersistedSession,
-  type PersistedPuzzleSessionV1,
-  type RunIdFactory,
-  type SessionLoadResult,
+  createSessionStorageAdapter as createPortableSessionStorageAdapter,
+  createRunIdFactory,
+  type SessionKeyValueStore,
   type SessionPersistenceError,
-  type SessionStorageAdapter,
-  type SessionValidationContext
+  type SessionStorageAdapter
 } from '@perseus/game-core';
+
+export function createSessionStorageAdapter(options?: {
+  storage?: Storage;
+  onError?: (error: SessionPersistenceError) => void;
+}): SessionStorageAdapter {
+  const storage = resolveSessionStorage(options?.storage);
+  const store: SessionKeyValueStore = {
+    getItem: (puzzleId) => storage.getItem(progressKey(puzzleId)),
+    setItem: (puzzleId, value) => storage.setItem(progressKey(puzzleId), value),
+    removeItem: (puzzleId) => storage.removeItem(progressKey(puzzleId))
+  };
+  return createPortableSessionStorageAdapter({ store, onError: options?.onError });
+}
 ```
 
-Keep `createBrowserRunIdFactory`, candidate key enumeration, `createSessionStorageAdapter`, and fallback storage local.
-
-Do not re-export `serializeSession`/`loadPersistedSession` from the old module solely for compatibility.
+`createBrowserRunIdFactory(cryptoSource?: Crypto)` resolves browser/global crypto exactly as today and returns `createRunIdFactory(resolvedSource)`.
 
 - [ ] **Step 3: Keep the Svelte store web-only**
 
-Change the engine import in `session/store.ts` to game-core while preserving the existing direct-subscriber batching behavior:
+`session/store.ts` imports `createPuzzleSession` and its types from game-core while keeping the current subscriber/batching implementation unchanged.
 
-```ts
-import {
-  createPuzzleSession,
-  type CreatePuzzleSessionOptions,
-  type PuzzleSession,
-  type PuzzleSessionAction,
-  type PuzzleSessionOutcome,
-  type PuzzleSessionState
-} from '@perseus/game-core';
-```
+- [ ] **Step 4: Reuse portable runtime/math/context helpers**
 
-- [ ] **Step 4: Migrate all remaining domain/helper/codec imports**
+Replace the route-local default clock body with `createDefaultClock()`.
 
-Update runtime, components, route, gallery progress, E2E support, and tests so moved types/helpers/codecs come from game-core.
+Move web callers of `calculateFitZoom()` to `@perseus/game-core`; keep `clampZoom()` and `clampPan()` in `viewport.ts`.
 
-Run these completeness searches while editing:
+Use `validationContextFrom()` where web is currently hand-deriving the same session validation shape. Do not expand the helper to API/network metadata.
+
+- [ ] **Step 5: Migrate all domain imports**
+
+Update `Rotation`, `PlacedPiece`, `SessionPuzzleSpec`, `PuzzleSession*`, history/hints/inventory/rotation helpers, codec functions, and related tests to import from `@perseus/game-core`.
+
+Run completeness searches before deleting anything:
 
 ```bash
-rg "\$lib/services/gameplay/(history|hints|inventory|rotation)" apps/web/src
-rg "\$lib/services/gameplay/session/(types|session)" apps/web/src
-rg "\$lib/types/gameplay" apps/web/src
+rg "\$lib/services/gameplay/(history|hints|inventory|rotation)|\$lib/services/gameplay/session/(types|session)|\$lib/types/gameplay" apps/web/src
+rg "from ['\"].*session/persistence['\"]" apps/web/src
 rg "serializeSession|loadPersistedSession|isResumable|isFailureRetryable" apps/web/src
 ```
 
-For the last search, inspect every match: codec consumers such as the puzzle route/tests must import the pure function from game-core rather than depending on a compatibility re-export from web persistence. The browser persistence adapter itself may import/use the shared functions.
+Every first search hit must be migrated. For the persistence/function searches, inspect each hit: browser namespace/crypto/candidate wrappers may remain in `persistence.ts`, but direct portable codec semantics should import game-core rather than the old owner.
 
-- [ ] **Step 5: Split mixed persistence tests without dropping assertions**
+- [ ] **Step 6: Delete temporary duplicate pure files and moved tests**
 
-Leave web tests covering:
-
-```text
-browser Storage read/write/remove errors
-peek vs destructive load behavior
-candidate key enumeration
-browser run-ID/crypto fallback
-noop/fallback Storage behavior
-```
-
-Remove only pure codec assertions already copied into game-core. Keep the overall assertion behavior parity between the two packages.
-
-- [ ] **Step 6: Delete web-local pure duplicates**
-
-Delete after consumers compile against game-core:
+Delete the old web source/test owners after no consumer imports them:
 
 ```text
 apps/web/src/lib/services/gameplay/history.ts
@@ -577,12 +849,11 @@ apps/web/src/lib/services/gameplay/session/session.ts
 apps/web/src/lib/services/gameplay/session/session.test.ts
 apps/web/src/lib/services/gameplay/session/session.edge.test.ts
 apps/web/src/lib/services/gameplay/session/types.ts
-apps/web/src/lib/types/gameplay.ts
 ```
 
-Remove local `PlacedPiece` from `apps/web/src/lib/types/puzzle.ts`. Do not create aliases.
+Remove the old `Rotation` / `PlacedPiece` definitions when no web-local consumer owns them. Do not leave compatibility re-export files.
 
-- [ ] **Step 7: Run web and root gates**
+- [ ] **Step 7: Run the cross-consumer regression gate**
 
 ```bash
 bun --filter @perseus/game-core test:unit
@@ -592,39 +863,41 @@ bun run lint
 bun run build
 ```
 
-- [ ] **Step 8: Run representative gameplay E2E**
+Fix import/ownership mistakes rather than restoring aliases.
+
+- [ ] **Step 8: Run the existing gameplay session-control E2E**
 
 ```bash
 cd apps/web
 bunx playwright test e2e/gameplay-session-controls.spec.ts --project=chromium-desktop
-cd ../..
 ```
 
-- [ ] **Step 9: Re-run import/purity fences and commit**
+Expected: unchanged web gameplay behavior.
+
+- [ ] **Step 9: Commit migration + deletion atomically**
 
 ```bash
-rg "\$lib/services/gameplay/(history|hints|inventory|rotation)|\$lib/services/gameplay/session/(types|session)|\$lib/types/gameplay" apps/web/src
-rg "from ['\"](svelte|@nativescript|\$lib)|localStorage|\bStorage\b|fetch\(|Cloudflare|analytics" packages/game-core/src
+git add apps/web packages/game-core bun.lock
+git commit -m "refactor: migrate web to shared game core"
 ```
 
-Expected: no old web-local gameplay imports and no prohibited game-core dependency.
-
-```bash
-git add packages/game-core apps/web bun.lock
-git commit -m "refactor: consume shared game core on web"
-```
+Review this commit closely: unlike Task 2's copy noise, this is the semantic ownership/import migration.
 
 ---
 
-## Task 4: Prove NativeScript Can Bundle the Workspace Package, Then Build the 2x2 Shared-Session Slice
+## Task 5: Run One Deterministic 2×2 Puzzle Through Shared `PuzzleSession`
 
 **Files:**
-- Create: `apps/mobile/vitest.config.ts`
-- Modify: `apps/mobile/package.json`
-- Create/delete temporary: `app/gameplay/coreBundleProbe.ts`
-- Create: `fixture.ts`, `runtime.ts`, `boardViewModel.ts`, `boardViewModel.test.ts`, `PuzzleCanvas.svelte`, `Gameplay.svelte`.
-- Create: four real piece PNGs.
-- Modify only if required by the bundle gate: `apps/mobile/webpack.config.js`.
+- Replace/remove: temporary `CanvasProbe.svelte` after its evidence is recorded
+- Create: `apps/mobile/app/gameplay/fixture.ts`
+- Create: `apps/mobile/app/assets/hpa-1/piece-0.png` through `piece-3.png`
+- Create: `apps/mobile/app/gameplay/boardViewModel.ts`
+- Create: `apps/mobile/app/gameplay/boardViewModel.test.ts`
+- Create: `apps/mobile/app/gameplay/PuzzleCanvas.svelte`
+- Create: `apps/mobile/app/gameplay/Gameplay.svelte`
+- Create: `apps/mobile/app/gameplay/runtime.ts` only for NativeScript crypto-source resolution
+- Modify: `apps/mobile/app/App.svelte`
+- Modify: `apps/mobile/package.json` to add Linux-safe `test:unit`
 
 **Interfaces:**
 
@@ -632,65 +905,15 @@ git commit -m "refactor: consume shared game core on web"
 export interface BoardCell { x: number; y: number }
 
 export interface BoardViewModel {
-  state(session: Readonly<PuzzleSessionState>): BoardRenderState;
   cellAt(canvasX: number, canvasY: number): BoardCell | null;
-  pieceAt(canvasX: number, canvasY: number, session: Readonly<PuzzleSessionState>): number | null;
+  pieceAt(canvasX: number, canvasY: number, state: Readonly<PuzzleSessionState>): number | null;
+  state(session: Readonly<PuzzleSessionState>): BoardRenderState;
 }
 ```
 
-- [ ] **Step 1: Add the real workspace dependency and Linux-safe mobile unit task**
+- [ ] **Step 1: Add the deterministic fixture and real assets**
 
-Add:
-
-```json
-"@perseus/game-core": "workspace:*"
-```
-
-to dependencies.
-
-Once pure tests exist, mobile's Turbo-facing script is only:
-
-```json
-"test:unit": "vitest run --coverage"
-```
-
-Do not add root-task `build/check/lint` scripts that invoke NativeScript. Native iOS remains `ios: ns run ios` or direct `ns run ios`.
-
-Create `apps/mobile/vitest.config.ts` with the same basic V8 coverage shape as the other pure packages, scoped to `app/**/*.test.ts`.
-
-- [ ] **Step 2: Add a minimal runtime import probe before building gameplay**
-
-Create:
-
-```ts
-// app/gameplay/coreBundleProbe.ts
-import { rotateClockwise } from '@perseus/game-core';
-
-export const CORE_BUNDLE_PROBE = rotateClockwise(0);
-```
-
-Import `CORE_BUNDLE_PROBE` into the current probe screen and show/use the value so webpack must include the runtime module.
-
-- [ ] **Step 3: Run the workspace-package bundling gate**
-
-```bash
-cd apps/mobile
-ns run ios
-```
-
-Expected: the app launches with the runtime export from `@perseus/game-core` bundled.
-
-If it fails specifically because the generated webpack TypeScript rule excludes the symlinked workspace source:
-
-```bash
-ns prepare ios --env.verbose
-```
-
-Inspect the resolved TypeScript rule, then use the documented `webpack.chainWebpack()` hook in the generated `webpack.config.js` to add the resolved `../../packages/game-core/src` directory to that existing rule's include set. Do not add another TypeScript loader, copy game-core into the app, or change game-core into a mobile-specific build.
-
-Re-run `ns run ios` immediately after the one config change. If the failure is not a workspace-source transpilation/resolution issue, diagnose the actual error rather than applying this fallback blindly.
-
-- [ ] **Step 4: Add deterministic fixture typed with `SessionPuzzleSpec`**
+`fixture.ts`:
 
 ```ts
 import type { SessionPuzzleSpec } from '@perseus/game-core';
@@ -710,13 +933,19 @@ export const HPA1_FIXTURE: SessionPuzzleSpec = {
 };
 ```
 
-Create four real local piece images and a small `pieceId -> asset path` map. No manifest.
+Add four real generated piece PNGs under `app/assets/hpa-1/`. Asset mapping stays app-local; do not create a manifest schema.
 
-Delete `coreBundleProbe.ts` once real gameplay runtime imports game-core.
+- [ ] **Step 2: Add a Linux-safe pure unit test command**
 
-- [ ] **Step 5: Write RED BoardViewModel tests**
+Merge into mobile scripts:
 
-For an 800x600 Canvas with a centered square 2x2 board:
+```json
+"test:unit": "vitest run app/**/*.test.ts"
+```
+
+Add Vitest as a dev dependency only if the generated app does not already resolve the workspace tool.
+
+- [ ] **Step 3: Write RED BoardViewModel tests using shared fit math**
 
 ```ts
 it('maps fitted canvas points to canonical cells', () => {
@@ -733,65 +962,62 @@ it('maps fitted canvas points to canonical cells', () => {
 });
 ```
 
-Also pin `pieceAt()` and placed-piece projection from a session snapshot. Test only geometry/projection; no placement correctness.
+The implementation calls shared `calculateFitZoom()`; it does not copy that formula.
 
-Run:
+- [ ] **Step 4: Run RED then implement the minimal fit/hit-test projection**
 
 ```bash
 cd apps/mobile
 bunx vitest run app/gameplay/boardViewModel.test.ts
 ```
 
-Expected: RED before implementation.
+Implement centered board bounds, `cellAt()`, `pieceAt()`, and draw records. No zoom state, pan state, transform framework, or placement validation.
 
-- [ ] **Step 6: Implement one centered fit transform**
+- [ ] **Step 5: Run BoardViewModel tests green**
 
-Core cell mapping:
+```bash
+bunx vitest run app/gameplay/boardViewModel.test.ts
+```
+
+- [ ] **Step 6: Resolve native crypto only; reuse shared clock/run-ID factory**
+
+`runtime.ts` exports only the platform resolver proven in Task 1:
 
 ```ts
-function cellAt(canvasX: number, canvasY: number): BoardCell | null {
-  if (canvasX < board.x || canvasY < board.y) return null;
-  if (canvasX >= board.x + board.width || canvasY >= board.y + board.height) return null;
-  return {
-    x: Math.floor((canvasX - board.x) / cellWidth),
-    y: Math.floor((canvasY - board.y) / cellHeight)
-  };
+import type { RunIdCrypto } from '@perseus/game-core';
+
+export function resolveMobileCrypto(): RunIdCrypto {
+  const source = (globalThis as any).crypto;
+  if (
+    !source ||
+    (typeof source.randomUUID !== 'function' && typeof source.getRandomValues !== 'function')
+  ) {
+    throw new Error('native_crypto_unavailable');
+  }
+  return source as RunIdCrypto;
 }
 ```
 
-No zoom/pan/matrix framework.
+Do not implement another UUID formatter or clock.
 
-- [ ] **Step 7: Add app-local runtime adapters**
-
-```ts
-export function createMobileRunIdFactory(): RunIdFactory {
-  return { create: () => getNativeCrypto().randomUUID().toLowerCase() };
-}
-
-export function createMobileClock(): Clock {
-  return {
-    monotonicNow: () => performance.now(),
-    wallNow: () => Date.now(),
-    setInterval: (callback, ms) => globalThis.setInterval(callback, ms),
-    clearInterval: (handle) => globalThis.clearInterval(handle as ReturnType<typeof setInterval>)
-  };
-}
-```
-
-Use the public crypto surface provided by the installed NativeScript version. No UUID dependency.
-
-- [ ] **Step 8: Create one shared session and one placement function**
+- [ ] **Step 7: Create the shared session with existing contracts**
 
 ```ts
 const session = createPuzzleSession({
   metadata: HPA1_FIXTURE,
-  runIdFactory: createMobileRunIdFactory(),
-  clock: createMobileClock(),
+  clock: createDefaultClock(),
+  runIdFactory: createRunIdFactory(resolveMobileCrypto()),
   initialTrayOrder: [0, 1, 2, 3],
   createTrayOrder: () => [0, 1, 2, 3],
   createRotations: (ids) => Object.fromEntries(ids.map((id) => [id, 0])) as Record<number, Rotation>
 });
+```
 
+No controller/store framework is added.
+
+- [ ] **Step 8: Route tap and drag through one placement function**
+
+```ts
 function attemptPlacement(pieceId: number, cell: BoardCell): PuzzleSessionOutcome {
   return session.dispatch({
     type: 'attempt_placement',
@@ -802,29 +1028,34 @@ function attemptPlacement(pieceId: number, cell: BoardCell): PuzzleSessionOutcom
 }
 ```
 
-Tap: `select_piece -> cellAt -> attemptPlacement`.
+Tap flow: `select_piece -> board cellAt -> attemptPlacement`.
 
-Drag: `pieceAt -> transient Canvas drag -> cellAt on release -> attemptPlacement`.
+Drag flow: `pieceAt -> transient draw position -> cellAt on release -> attemptPlacement`.
+
+Wrong-cell/non-upright rejection comes only from `PuzzleSession`.
 
 - [ ] **Step 9: Replace the probe with one concrete Canvas renderer**
 
-`PuzzleCanvas.svelte` owns Canvas reference, image cache, draw order, transient drag position, and native gesture translation. It redraws from `BoardViewModel.state(sessionState)`; it never duplicates correctness rules.
+`PuzzleCanvas.svelte` owns the Canvas reference, four-image cache, drawing order, transient drag position, and native gesture translation. It redraws from `BoardViewModel.state(sessionState)` after shared-session notifications.
 
-- [ ] **Step 10: Run mobile pure tests and native shared-session smoke**
+No renderer interface or second implementation is created.
+
+- [ ] **Step 10: Run pure tests and native gameplay smoke**
 
 ```bash
-bunx vitest run app/gameplay/boardViewModel.test.ts
+cd apps/mobile
+bun run test:unit
 ns run ios
 ```
 
 Verify:
 
 ```text
-2x2 renders
-piece tap selection works
+2×2 fixture renders
+piece selection works
 correct tap placement accepted
 wrong tap placement rejected/counted by PuzzleSession
-correct drag placement accepted through same attemptPlacement()
+correct drag placement accepted through same attempt_placement action
 ```
 
 - [ ] **Step 11: Commit**
@@ -836,13 +1067,13 @@ git commit -m "feat: run shared puzzle session on native Canvas"
 
 ---
 
-## Task 5: Add Synchronous Atomic File Persistence and Offline Relaunch Resume
+## Task 6: Add the File-Backed Key/Value Store and Prove Offline Relaunch Resume
 
 **Files:**
-- Create: `sessionFiles.ts`
-- Create: `sessionStorage.ts`
-- Create: `sessionStorage.test.ts`
-- Modify: `Gameplay.svelte`
+- Create: `apps/mobile/app/gameplay/sessionFiles.ts`
+- Create: `apps/mobile/app/gameplay/sessionStore.ts`
+- Create: `apps/mobile/app/gameplay/sessionStore.test.ts`
+- Modify: `apps/mobile/app/gameplay/Gameplay.svelte`
 
 **Interfaces:**
 
@@ -852,116 +1083,121 @@ export interface SessionFileOps {
   writeText(path: string, content: string): void;
   replace(fromPath: string, toPath: string): void;
   remove(path: string): void;
-  ensureDirectory(path: string): void;
 }
 
-export function createNativeSessionFileOps(): SessionFileOps;
-export function createFileSessionStorageAdapter(options?: {
-  fileOps?: SessionFileOps;
-  rootPath?: string;
-  onError?: (error: SessionPersistenceError) => void;
-}): SessionStorageAdapter;
+export function createFileSessionKeyValueStore(options: {
+  rootPath: string;
+  fileOps: SessionFileOps;
+}): SessionKeyValueStore;
 ```
 
-- [ ] **Step 1: Write RED adapter tests with one in-memory `SessionFileOps` fake**
-
-Pin temp-before-replace order:
+- [ ] **Step 1: Write RED tests for file mechanics only**
 
 ```ts
-expect(operations).toEqual([
-  'mkdir:/docs/perseus/sessions',
-  'write:/docs/perseus/sessions/hpa-1-offline-fixture.json.tmp',
-  'replace:/docs/perseus/sessions/hpa-1-offline-fixture.json.tmp->/docs/perseus/sessions/hpa-1-offline-fixture.json'
-]);
+it('returns null when the canonical session file is missing', () => {
+  const store = createFileSessionKeyValueStore({
+    rootPath: '/sessions',
+    fileOps: fakeFileOps()
+  });
+  expect(store.getItem('p1')).toBeNull();
+});
+
+it('writes a complete temp file before replacing the canonical file', () => {
+  const operations: string[] = [];
+  const store = createFileSessionKeyValueStore({
+    rootPath: '/sessions',
+    fileOps: fakeFileOps(operations)
+  });
+
+  store.setItem('p1', '{"ok":true}');
+
+  expect(operations).toEqual([
+    'write:/sessions/p1.json.tmp:{"ok":true}',
+    'replace:/sessions/p1.json.tmp->/sessions/p1.json'
+  ]);
+});
 ```
 
-Also test:
+Do not retest `peekSession/loadSession/clearSession/isResumable` here; those semantics are owned by game-core Task 2 tests.
 
-```text
-valid shared-codec load
-peek invalid is non-destructive
-load invalid removes canonical file and returns missing
-clear missing is harmless
-read/write/remove errors call onError with existing error kinds
-```
-
-Run:
+- [ ] **Step 2: Run RED**
 
 ```bash
 cd apps/mobile
-bunx vitest run app/gameplay/sessionStorage.test.ts
+bunx vitest run app/gameplay/sessionStore.test.ts
 ```
 
-- [ ] **Step 2: Implement concrete synchronous file operations**
+- [ ] **Step 3: Implement the four-operation file seam using the Task 1 replacement mode**
 
-Root:
+At native construction time, create the session root once:
 
 ```ts
 const rootPath = path.join(knownFolders.documents().path, 'perseus', 'sessions');
+Folder.fromPath(rootPath);
 ```
 
-Use NativeScript synchronous read/write/remove APIs. `replace(temp, target)` must use a same-volume atomic replacement/move primitive on iOS; do not implement atomicity as `remove(target)` then `rename(temp)`.
+`createNativeSessionFileOps()` uses synchronous NativeScript `File` operations. Its `replace()` implements exactly the mode recorded in Task 1:
 
-Keep platform detail inside `sessionFiles.ts`. Do not add a filesystem dependency/framework.
+- `atomic`: use the proven same-volume replacement bridge/API;
+- `remove_then_rename`: remove an existing canonical file, then rename the complete sibling temp file.
 
-- [ ] **Step 3: Implement the adapter over game-core codec**
+Do not add journaling or retry queues.
 
-Read:
+- [ ] **Step 4: Implement only the file-backed `SessionKeyValueStore`**
 
 ```ts
-function readSession(puzzleId: string, context: SessionValidationContext): SessionLoadResult {
-  try {
-    return loadPersistedSession(fileOps.readText(canonicalPath(puzzleId)), context);
-  } catch (cause) {
-    onError?.({ kind: 'read_error', puzzleId, cause });
-    return { status: 'missing' };
-  }
+export function createFileSessionKeyValueStore(options: {
+  rootPath: string;
+  fileOps: SessionFileOps;
+}): SessionKeyValueStore {
+  const canonical = (id: string) => path.join(options.rootPath, `${id}.json`);
+
+  return {
+    getItem(id) {
+      return options.fileOps.readText(canonical(id));
+    },
+    setItem(id, value) {
+      const target = canonical(id);
+      const temp = `${target}.tmp`;
+      options.fileOps.writeText(temp, value);
+      options.fileOps.replace(temp, target);
+    },
+    removeItem(id) {
+      options.fileOps.remove(canonical(id));
+    }
+  };
 }
 ```
 
-Save:
+The shared game-core `createSessionStorageAdapter({ store })` supplies all session semantics.
 
-```ts
-function saveSession(puzzleId: string, snapshot: PersistedPuzzleSessionV1): void {
-  try {
-    fileOps.ensureDirectory(rootPath);
-    const target = canonicalPath(puzzleId);
-    const temp = `${target}.tmp`;
-    fileOps.writeText(temp, JSON.stringify(snapshot));
-    fileOps.replace(temp, target);
-  } catch (cause) {
-    onError?.({ kind: 'write_error', puzzleId, cause });
-  }
-}
-```
-
-`isResumable()` delegates to game-core.
-
-- [ ] **Step 4: Run adapter tests GREEN**
+- [ ] **Step 5: Run file-store tests green**
 
 ```bash
-bunx vitest run app/gameplay/sessionStorage.test.ts
+bunx vitest run app/gameplay/sessionStore.test.ts
 ```
 
-- [ ] **Step 5: Hydrate before session creation**
+- [ ] **Step 6: Hydrate through the shared context/adapter path**
 
 ```ts
-const validationContext: SessionValidationContext = {
-  puzzleId: HPA1_FIXTURE.puzzleId,
-  source: HPA1_FIXTURE.source,
-  pieceIds: HPA1_FIXTURE.pieces.map((piece) => piece.id),
-  gridCols: HPA1_FIXTURE.gridCols,
-  gridRows: HPA1_FIXTURE.gridRows,
-  pieceCount: HPA1_FIXTURE.pieceCount,
-  pieces: HPA1_FIXTURE.pieces
-};
+const fileStore = createFileSessionKeyValueStore({ rootPath, fileOps });
+const storage = createSessionStorageAdapter({ store: fileStore });
+const context = validationContextFrom(HPA1_FIXTURE);
+const restored = storage.loadSession(HPA1_FIXTURE.puzzleId, context);
 
-const restored = storage.loadSession(HPA1_FIXTURE.puzzleId, validationContext);
+const session = createPuzzleSession({
+  metadata: HPA1_FIXTURE,
+  clock: createDefaultClock(),
+  runIdFactory: createRunIdFactory(resolveMobileCrypto()),
+  restored: restored.status === 'loaded' ? restored.snapshot : undefined,
+  initialTrayOrder: [0, 1, 2, 3],
+  createTrayOrder: () => [0, 1, 2, 3]
+});
 ```
 
-Pass `restored.snapshot` only for `status === 'loaded'`.
+- [ ] **Step 7: Persist meaningful mutations and lifecycle checkpoints**
 
-- [ ] **Step 6: Persist meaningful state and lifecycle checkpoints**
+Use one helper:
 
 ```ts
 function persist(): void {
@@ -971,13 +1207,12 @@ function persist(): void {
 }
 ```
 
-Persist after accepted/rejected placement when persisted state/counters change, relevant persisted rotation changes, and lifecycle suspension/exit boundaries. Do not save selection/drag coordinates.
+Call it after persisted placement/counter/rotation changes and on suspension/exit boundaries. Selection and drag coordinates do not trigger writes.
 
-- [ ] **Step 7: Wire app suspension/resume through existing clock APIs**
+- [ ] **Step 8: Wire background timing with the existing engine methods**
 
 ```ts
 function onSuspend(): void {
-  session.checkpointTime();
   persist();
   session.setDocumentHidden(true);
 }
@@ -987,135 +1222,66 @@ function onResume(): void {
 }
 ```
 
-Register/unregister NativeScript app listeners with the gameplay owner lifecycle. No Pause dialog.
+Register/unregister the NativeScript application listeners with the gameplay screen lifecycle. Do not add a Pause dialog.
 
-- [ ] **Step 8: Prove terminate/relaunch offline**
+- [ ] **Step 9: Prove terminate/relaunch offline resume on iPad**
 
-Manual sequence:
+Manual native sequence:
 
 ```text
-1. Launch fixture.
+1. Launch the 2×2 fixture.
 2. Place piece 0 correctly.
-3. Make one wrong placement so a counter changes.
-4. Terminate app.
-5. Disable networking / ensure no API dependency is available.
+3. Make one wrong placement so a persisted counter changes.
+4. Terminate the app.
+5. Disable networking / make no API dependency available.
 6. Relaunch.
-7. Verify piece 0 + counter/session state restored.
-8. Place another piece by drag.
+7. Verify piece 0 and the counter/session state are restored.
+8. Place another piece by drag and continue.
+9. Background/resume a timed run and verify hidden time does not accumulate as active time.
 ```
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 10: Run final automated gates**
 
 ```bash
-git add apps/mobile
-git commit -m "feat: resume mobile puzzle sessions offline"
-```
-
----
-
-## Task 6: Final Cross-Consumer Verification and PR Evidence
-
-**Files:** No planned production files; fix only HPA-1 defects discovered by these gates and update PR validation evidence.
-
-- [ ] **Step 1: Run all Linux-safe unit tasks**
-
-```bash
+cd ../../..
+bun --filter @perseus/game-core test:unit
+bun --filter @perseus/web test:unit
 bun run test:unit
-```
-
-Expected: includes game-core and mobile pure tests. It must not invoke an iOS/native build.
-
-- [ ] **Step 2: Run root host-neutral gates**
-
-```bash
 bun run check
 bun run lint
 bun run build
-```
-
-Expected: mobile has no native/Xcode Turbo task for these names, so Ubuntu-equivalent root commands remain host-safe.
-
-- [ ] **Step 3: Run game-core purity and old-import fences**
-
-```bash
-rg "from ['\"](svelte|@nativescript|\$lib)|localStorage|\bStorage\b|fetch\(|Cloudflare|analytics" packages/game-core/src
-rg "\$lib/services/gameplay/(history|hints|inventory|rotation)|\$lib/services/gameplay/session/(types|session)|\$lib/types/gameplay" apps/web/src
-```
-
-Expected: no matches requiring remediation.
-
-- [ ] **Step 4: Re-run representative web gameplay E2E**
-
-```bash
 cd apps/web
 bunx playwright test e2e/gameplay-session-controls.spec.ts --project=chromium-desktop
-cd ../..
+cd ../mobile
+bun run test:unit
 ```
 
-- [ ] **Step 5: Verify no generated NativeScript output is tracked**
-
-```bash
-git ls-files 'apps/mobile/platforms/**' 'apps/mobile/hooks/**'
-git status --short
-```
-
-Expected: no generated platform/hook files and only intended HPA-1 changes.
-
-- [ ] **Step 6: Run final iPad smoke**
+- [ ] **Step 11: Re-run the final native app smoke**
 
 ```bash
 cd apps/mobile
 ns run ios
 ```
 
-Record actual versions/device and PASS/FAIL for:
+Record the actual NativeScript/Canvas/iPad versions and PASS/FAIL evidence for Canvas, runtime primitives, selected file replacement mode, workspace game-core import, tap/drag, shared rejection behavior, background timer behavior, and offline terminate/relaunch resume.
 
-```text
-real PNG Canvas gate
-workspace @perseus/game-core runtime import
-2x2 render
-tap placement
-drag placement
-wrong-placement rejection from shared PuzzleSession
-background timer checkpoint
-terminate/relaunch offline resume
-```
-
-- [ ] **Step 7: Inspect scope**
+- [ ] **Step 12: Re-run current PR checks**
 
 ```bash
-git diff main...HEAD --stat
-git diff main...HEAD -- packages/game-core apps/mobile apps/web
+git push
+gh pr checks --watch
 ```
 
-Remove accidental Gallery/download, portrait, pinch/pan framework, auth/sync, SQLite, WebView, alternate renderer, generic repository/DI/global-store, or manual tray work.
+Require current required workflows green.
 
-- [ ] **Step 8: Update the implementation PR body with observed evidence**
+- [ ] **Step 13: Commit only implementation/verification changes**
 
-Use concrete values, not placeholders:
-
-```markdown
-## Canvas feasibility gate
-- NativeScript CLI: <actual>
-- @nativescript/canvas: <actual>
-- Device: <actual iPad/iOS>
-- Real-piece draw/tap/drag/redraw: PASS
-
-## Automated
-- bun run test:unit — PASS
-- bun run check — PASS
-- bun run lint — PASS
-- bun run build — PASS
-- gameplay-session-controls Chromium desktop — PASS
-
-## Native smoke
-- workspace game-core bundle: PASS
-- 2x2 tap + drag: PASS
-- shared-session rejection behavior: PASS
-- terminate/relaunch offline resume: PASS
+```bash
+git add apps/mobile
+git commit -m "feat: resume mobile puzzle sessions offline"
 ```
 
-If verification changes no code, do not create an empty commit.
+If final verification required fixes outside mobile, include only those HPA-1 verification fixes in the commit and describe them in the implementation PR body.
 
 ---
 
@@ -1123,19 +1289,16 @@ If verification changes no code, do not create an empty commit.
 
 ### Spec coverage
 
-- Hard Canvas gate before game-core: Task 1.
-- Mobile workspace CI isolation from the first scaffold: Task 1 + Task 6.
-- Complete green engine + codec + validation package: Task 2.
-- `SessionPuzzleSpec` naming boundary: Task 2 + Task 4.
-- Web migration with explicit persistence/codecs search and deletion: Task 3.
-- NativeScript `workspace:*` runtime bundle gate with targeted webpack fallback only if demonstrated: Task 4.
-- One placement path and app-local BoardViewModel: Task 4.
-- Five-operation file seam, atomic save, lifecycle checkpoint, offline resume: Task 5.
-- Root/web/native final evidence: Task 6.
+- Task 1 proves all cheap native/host assumptions before extraction: Canvas, gestures/redraw, clock/crypto, replacement strategy, ignored native output, Ubuntu root install/workflows.
+- Task 2 creates one green shared package with engine + codec + generic adapter + existing pure tests, preserves `requireAssertions`, moves fit/runtime/run-ID/context helpers, and keeps coverage reporting truthful.
+- Task 3 proves NativeScript runtime consumption before web migration, with source -> targeted webpack -> built `dist/` fallback and a hard stop.
+- Task 4 migrates web and deletes duplicates atomically.
+- Task 5 proves one shared-session 2×2 Canvas gameplay path with both interaction modes.
+- Task 6 adds only file mechanics, composes them with the shared adapter, and proves offline relaunch/background behavior.
 
 ### Scope check
 
-This remains one HPA-1 implementation PR. The tasks are sequential commits/review gates inside that PR, not separate tickets or PRs. HPA-2/HPA-3/HPA-46/HPA-4 remain separate roadmap work.
+No task adds gallery/downloads, portrait, auth/sync, SQLite, cloud save, renderer frameworks, a second session adapter, native E2E infrastructure, or production pinch/pan behavior.
 
 ### Type consistency
 
@@ -1143,16 +1306,19 @@ The plan consistently uses:
 
 ```ts
 SessionPuzzleSpec
+SessionKeyValueStore
+SessionStorageAdapter
+SessionFileOps
+RunIdCrypto
+createRunIdFactory
+createDefaultClock
+validationContextFrom
+calculateFitZoom
 PuzzleSession
 PuzzleSessionState
 PuzzleSessionOutcome
-Clock
-RunIdFactory
-SessionStorageAdapter
-SessionValidationContext
-PersistedPuzzleSessionV1
-Rotation
-PlacedPiece
 ```
 
-No remaining plan step intentionally uses the engine-local name `PuzzleMetadata`.
+### Reviewability
+
+Review the implementation PR by commit. Task 2 is intentionally a large mechanical copy/extraction; Task 4's migration/deletion commit is the informative ownership diff. The single-PR decision remains unchanged.
