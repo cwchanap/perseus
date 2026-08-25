@@ -1,26 +1,26 @@
 # HPA-2 Explicit Downloads and Offline Library Design
 
-**Date:** 2026-08-25
-**Linear:** HPA-2 — [Perseus Mobile] Add explicit puzzle downloads and the offline library
-**Depends on:** HPA-1 (Done)
+**Date:** 2026-08-25  
+**Linear:** HPA-2 — [Perseus Mobile] Add explicit puzzle downloads and the offline library  
+**Depends on:** HPA-1 (Done)  
 **Blocks:** HPA-3
 
 ## Goal
 
 Turn the HPA-1 NativeScript proof into the smallest usable offline mobile library: browse ready Perseus puzzles online, explicitly download one complete puzzle package, reconstruct installed puzzles from files after relaunch, and start or resume those puzzles with networking unavailable.
 
-This ticket replaces the HPA-1 fixture boundary. It does not expand the gameplay feature set, introduce synchronization infrastructure, or change the server API.
+This ticket replaces the HPA-1 fixture boundary. It does not expand the gameplay feature set, introduce synchronization infrastructure, or add a mobile-specific backend.
 
 ## Current State
 
-HPA-1 has already proven the risky foundations on iPad:
+HPA-1 already proved the high-risk gameplay foundations on iPad:
 
 - NativeScript + Svelte Native + `@nativescript/canvas` renders real Perseus piece images and handles tap/drag input.
 - `@perseus/game-core` owns `PuzzleSession`, session codec/validation, history, hints, rotation, inventory helpers, clocks, and run IDs.
-- Mobile session persistence is already file-backed under `Documents/perseus/sessions` and writes JSON through a temp-file replacement path.
-- The mobile app currently boots directly into one hard-coded `HPA1_FIXTURE` and `PuzzleCanvas.svelte` loads four bundled `~/assets/hpa-1/piece-N.png` files.
+- Mobile session persistence is file-backed under `Documents/perseus/sessions` and replaces the canonical JSON through a temp-file path.
+- The mobile app still boots directly into one hard-coded `HPA1_FIXTURE`, and `PuzzleCanvas.svelte` loads four bundled `~/assets/hpa-1/piece-N.png` files.
 
-The existing public API already supplies everything HPA-2 needs:
+The public API already exposes every HPA-2 asset:
 
 - `GET /api/puzzles`
 - `GET /api/puzzles/:id`
@@ -28,55 +28,40 @@ The existing public API already supplies everything HPA-2 needs:
 - `GET /api/puzzles/:id/reference`
 - `GET /api/puzzles/:id/pieces/:pieceId/image`
 
-No backend endpoint or wire-contract change is required.
+No new API route, ZIP endpoint, Workflow output, D1 schema, or R2 layout is required.
 
 ## Product Decisions
 
-- Offline play is explicit. Viewing a gallery row or playing an online preview never marks a puzzle as downloaded.
+- Offline play is explicit. Viewing a Gallery row or relying on HTTP/image caching never makes a puzzle installed.
 - The **Downloaded** view is the only source of offline-playable puzzles.
-- One puzzle may download at a time. There is no download queue or background download service in HPA-2.
-- Use a fixed asset concurrency of **5** requests inside that one download.
-- A puzzle becomes installed only after every required asset is present, `manifest.json` has been written last, and the staging directory has been moved to the finalized package path.
+- One puzzle may download at a time. There is no queue or background-transfer service in HPA-2.
+- One download uses exactly **5** concurrent asset requests.
+- A puzzle becomes installed only after every required asset is present, `manifest.json` is written last, and staging is finalized on the same app-private volume.
 - Downloads and gameplay progress are independent. **Remove Download** deletes assets only; **Discard Progress** deletes the session only.
-- Unknown manifest schemas are treated as corrupt. This pre-release project does not migrate old mobile download manifests.
-- Retained progress is never partially repaired. It is revalidated through the existing game-core session codec against the currently downloaded puzzle metadata.
-- HPA-1 fixture code/assets are deleted once the real downloaded-package path replaces them. There is no compatibility fallback.
-- HPA-2 does not add search, category filters, account state, completion sync, portrait layout, production gesture parity, or a generic navigation/state framework.
+- Unknown download-manifest schema versions are corrupt. This pre-release project does not migrate old mobile manifests.
+- Retained progress is never partially repaired. It is validated through the existing game-core session codec against the currently downloaded canonical metadata.
+- HPA-1 fixture code/assets are deleted once downloaded local paths feed the same Canvas path. There is no compatibility fallback.
+- HPA-2 does not add search/category parity, account state, completion sync, portrait layout, production gesture parity, SQLite, a download index, or a generic navigation/state framework.
 
-## Approaches Considered
+## Selected Approach
 
-### Option A — Direct filesystem packages and concrete mobile services — selected
-
-Add one thin public API client, one mobile-local manifest codec, one concrete download store, and one direct filesystem library scan. Keep screen state in `App.svelte` and pass a resolved installed package into the existing gameplay view.
-
-This follows the current HPA-2 contract exactly, reuses the HPA-1 file/session seams, has no server cost, and leaves clear ownership boundaries for later gameplay work.
-
-### Option B — SQLite/repository-backed offline catalog — rejected
-
-A database could make querying downloads and sessions convenient, but it would duplicate facts already present in finalized manifests and session files. It also creates schema/migration/index maintenance before the expected library size justifies it.
-
-### Option C — Server-generated ZIP or generalized sync/cache layer — rejected
-
-A ZIP endpoint would add workflow/API/storage work only to save client orchestration that is straightforward with the existing asset endpoints. A generalized cache/sync layer would conflate explicit offline installs, HTTP caching, account sync, and progress persistence. None is required for this ticket.
-
-## Architecture
-
-HPA-2 stays mobile-local except for adding `@perseus/types` as an existing workspace dependency:
+Use direct app-private filesystem packages and concrete mobile-local services.
 
 ```text
 existing public Perseus API
         |
         v
-puzzleApi.ts <--- nativePuzzleHttp.ts
+apps/mobile/app/api/puzzleApi.ts
         |
         v
-downloadStore.ts <--- nativeDownloadFiles.ts
+apps/mobile/app/library/downloadStore.ts
   + downloadManifest.ts
+  + nativeDownloadFiles.ts
         |
         v
 Documents/perseus/downloads/
         |
-        +--> direct scan --> downloadedLibrary.ts --> Downloaded UI
+        +--> read-only scan --> downloadedLibrary.ts --> Downloaded UI
         |
         +--> installed package --> Gameplay.svelte --> PuzzleSession
                                                     |
@@ -84,41 +69,84 @@ Documents/perseus/downloads/
                                          existing sessions/<id>.json
 ```
 
-`puzzleApi.ts` and `downloadStore.ts` expose only product-specific seams. The two `native*` files isolate `@nativescript/core` so the existing Node/Vitest mobile service tests can use tiny fakes without loading a device runtime.
+There is deliberately no repository interface, global store, dependency-injection container, SQLite catalog, generalized cache, sync engine, or download worker.
 
-There is deliberately no repository interface, global store, dependency-injection container, index database, sync engine, or download worker.
+## Shared API Contract
 
-## API Boundary
-
-### Build-time API base
-
-`apps/mobile/webpack.config.js` injects one global string constant from `PERSEUS_MOBILE_API_BASE` using the existing webpack `DefinePlugin`. When the environment variable is absent, development builds use `http://localhost:4690`, matching the repository's local Worker API.
-
-A small declaration under `apps/mobile/types/` gives TypeScript the global constant type. The app does not add runtime environment/settings plumbing.
-
-### `PuzzleApi`
-
-`apps/mobile/app/api/puzzleApi.ts` owns URL construction, pagination, and response validation over one narrow injected JSON-request function. `apps/mobile/app/api/nativePuzzleHttp.ts` supplies that function with NativeScript `Http.request` in production. This mirrors HPA-1's existing `sessionStore.ts` / `sessionFiles.ts` split and is a test seam, not a transport framework.
-
-The product service exposes only HPA-2 operations:
+The full public puzzle-detail response is an API wire contract, so HPA-2 adds one small type to `@perseus/types` instead of creating another mobile-only fork:
 
 ```ts
-interface PublicReadyPuzzle extends ReadyPuzzle {
-  hasReference?: boolean;
-}
-
-interface PuzzleApi {
-  listPuzzles(cursor?: string): Promise<PuzzleListResponse>;
-  getPuzzle(puzzleId: string): Promise<PublicReadyPuzzle>;
-  thumbnailUrl(puzzleId: string): string;
-  referenceUrl(puzzleId: string): string;
-  pieceImageUrl(puzzleId: string, pieceId: number): string;
+export interface ReadyPuzzleDetail extends ReadyPuzzle {
+	hasReference: boolean;
 }
 ```
 
-`getPuzzle()` rejects non-ready or malformed responses before a download starts. The gallery can render the first page and append the existing `nextCursor`; no mobile search/filter contract is introduced.
+The server already returns `hasReference` on ready detail reads. The existing web-local flat `Puzzle` presentation type does not need to be migrated in HPA-2.
 
-Asset transfer itself stays in the download filesystem adapter so the API client does not become a repository/downloader abstraction.
+### HTTP-boundary validation
+
+`PuzzleApi.getPuzzle()` must reuse the existing `validatePuzzleMetadata()` before any asset requests are scheduled. After shared validation succeeds, it additionally requires:
+
+- `status === 'ready'`;
+- response `id` equals the requested puzzle ID;
+- `hasReference` is a boolean.
+
+Only then is the value returned as `ReadyPuzzleDetail`.
+
+This prevents malformed ready metadata from causing a full set of piece downloads before failure. The mobile manifest codec still validates the disk contract independently because it has local-only filenames and omits server-only piece fields.
+
+`PuzzleApi.listPuzzles()` remains a small client for the existing `PuzzleListResponse` cursor contract. HPA-2 does not copy the web auth/admin client.
+
+## Mobile API Base and iOS Local Development
+
+`apps/mobile/webpack.config.js` injects one build-time `__PERSEUS_API_BASE__` string from `PERSEUS_MOBILE_API_BASE` using the existing NativeScript webpack `DefinePlugin`. The development fallback remains `http://localhost:4690`, matching the local Worker API.
+
+Remote/TestFlight builds must use HTTPS.
+
+For simulator/LAN development, `apps/mobile/App_Resources/iOS/Info.plist` declares only the narrow local-network intent:
+
+```xml
+<key>NSAppTransportSecurity</key>
+<dict>
+	<key>NSAllowsLocalNetworking</key>
+	<true/>
+</dict>
+<key>NSLocalNetworkUsageDescription</key>
+<string>Connect to a local Perseus development server.</string>
+```
+
+Do not add `NSAllowsArbitraryLoads` or a production-wide insecure HTTP exception.
+
+## Early Native Gates
+
+HPA-1 gated its unproven filesystem replacement before depending on it. HPA-2 applies the same rule to new native boundaries rather than waiting until final acceptance.
+
+### Gate A — JSON transport and local-network policy
+
+At the end of the API-client task, before download/store work proceeds:
+
+1. start a reachable Perseus API;
+2. run the iOS app with `PERSEUS_MOBILE_API_BASE` pointed at it;
+3. temporarily call the real `nativePuzzleJsonRequest()` against `/api/puzzles` from the app;
+4. prove a 2xx JSON response reaches JavaScript on the target simulator/iPad;
+5. remove the temporary probe before the task commit.
+
+Failure here stops HPA-2 before manifest/download UI work.
+
+### Gate B — binary `toFile` and directory finalization
+
+Immediately after `nativeDownloadFiles.ts` exists, before Downloaded/Gallery call sites:
+
+1. download one real thumbnail through `Http.request()` + `response.content.toFile()`;
+2. verify the resulting file is non-empty;
+3. create a staging directory with a sentinel file;
+4. move that directory to a sibling finalized location on the same app-private volume;
+5. verify the sentinel exists at the destination and staging is gone;
+6. clean the probe files.
+
+For iOS directory movement, try the direct `NSFileManager.moveItemAtPath...` bridge first. If that bridge shape is unavailable, use the equivalent URL-based `moveItemAtURL...` API. Both preserve the same same-volume move contract. If neither works reliably, stop before Task 4/UI and revise the finalization design; do not silently fall back to a non-atomic copy/delete package install.
+
+The final HPA-2 smoke remains necessary, but it is no longer the first proof of these native assumptions.
 
 ## Download Manifest
 
@@ -126,54 +154,58 @@ Asset transfer itself stays in the download filesystem adapter so the API client
 
 ```ts
 interface DownloadManifestV1 {
-  schemaVersion: 1;
-  puzzleId: string;
-  name: string;
-  category?: PuzzleCategory;
-  aspectRatio?: PuzzleAspectRatio;
-  pieceCount: number;
-  gridCols: number;
-  gridRows: number;
-  imageWidth: number;
-  imageHeight: number;
-  pieces: Array<{
-    id: number;
-    correctX: number;
-    correctY: number;
-  }>;
-  thumbnailFile: string;
-  referenceFile?: string;
-  pieceFiles: Record<string, string>;
-  downloadedAt: number;
+	schemaVersion: 1;
+	puzzleId: string;
+	name: string;
+	category?: PuzzleCategory;
+	aspectRatio?: PuzzleAspectRatio;
+	pieceCount: number;
+	gridCols: number;
+	gridRows: number;
+	imageWidth: number;
+	imageHeight: number;
+	pieces: Array<{
+		id: number;
+		correctX: number;
+		correctY: number;
+	}>;
+	thumbnailFile: string;
+	referenceFile?: string;
+	pieceFiles: Record<string, string>;
+	downloadedAt: number;
 }
 ```
 
-The manifest intentionally omits:
+The manifest intentionally omits remote `imagePath`, piece edge geometry, server status/version/idempotency fields, session state, checksums, and index/cache metadata.
 
-- remote `imagePath` values;
-- server status/version/idempotency fields;
-- session state;
-- checksums;
-- cache/index metadata.
+The disk codec validates:
 
-The local codec validates schema version, puzzle identity, positive/grid-consistent counts, unique piece IDs, in-bounds canonical coordinates, an exact piece-file mapping, and safe relative filenames. It then derives the existing game-core shape:
+- schema version;
+- stable puzzle identity;
+- positive dimensions and exact grid/piece count consistency;
+- piece IDs exactly `0..pieceCount - 1`;
+- unique, in-bounds canonical coordinates;
+- exact piece-file mapping;
+- safe relative thumbnail/reference/piece filenames.
+
+It then projects the existing game-core shape:
 
 ```ts
 SessionPuzzleSpec {
-  puzzleId: manifest.puzzleId,
-  source: 'api',
-  pieceCount,
-  gridCols,
-  gridRows,
-  pieces
+	puzzleId: manifest.puzzleId,
+	source: 'api',
+	pieceCount,
+	gridCols,
+	gridRows,
+	pieces
 }
 ```
 
-A downloaded server puzzle remains `source: 'api'`; “downloaded” is asset availability, not puzzle origin.
+A downloaded server puzzle remains `source: 'api'`; “downloaded” is local asset availability, not puzzle origin.
 
 ## Filesystem Layout
 
-The source of truth remains app-private Documents storage:
+The app-private Documents directory remains the source of truth:
 
 ```text
 Documents/perseus/
@@ -194,159 +226,221 @@ Documents/perseus/
 
 No `downloads.json`, session index, SQLite table, or derived cache is written.
 
-## Atomic Download Lifecycle
+## Download Lifecycle
 
-`DownloadStore.downloadPuzzle()` owns one deterministic lifecycle:
+`DownloadStore.downloadPuzzle()` owns one lifecycle:
 
-1. Remove stale staging data for that `puzzleId`.
-2. Create `downloads/.staging/<puzzleId>/pieces/`.
-3. Download thumbnail, optional reference, and all piece images with at most 5 active asset requests.
-4. Require every HTTP response to be 2xx and map supported image Content-Types to `.png`, `.jpg`, or `.webp` filenames.
-5. Require every expected local file to exist and be non-empty.
-6. Build and validate `DownloadManifestV1` from the canonical ready-puzzle response and returned local filenames.
-7. Write `manifest.json` **last** inside staging.
-8. Move the complete staging directory to `downloads/<puzzleId>` on the same app-private volume.
-9. Only then report the puzzle as installed.
+1. reject if the finalized package already exists;
+2. remove stale staging for the same puzzle ID;
+3. create `downloads/.staging/<puzzleId>/pieces/`;
+4. download thumbnail, optional reference, and every piece using at most 5 active requests;
+5. stop scheduling new work after the first error/cancel request, but wait for already-started writes to settle;
+6. require every expected file to exist and be non-empty;
+7. build and validate `DownloadManifestV1`;
+8. write `manifest.json` **last** in staging;
+9. move the complete staging directory to `downloads/<puzzleId>` on the same app-private volume;
+10. only then report the package as installed.
 
-NativeScript's documented `Http.request`/response-content APIs handle the binary fetch; a tiny `nativeDownloadFiles.ts` adapter owns NativeScript `File`/`Folder` operations and the platform directory move needed to move `.staging/<id>` into the finalized directory.
+Any request/validation/write/move failure removes that puzzle's staging directory only after in-flight writes have settled. Retry restarts from zero.
 
-HPA-2 does not decode every downloaded image or add hashes. HTTP completion plus non-empty required files and manifest-last finalization are the integrity boundary for this MVP.
+The UI exposes one cooperative **Cancel** action. Already-started native requests may finish, but no additional assets are scheduled, no final package is created, and staging is removed before the operation returns.
 
-### Failure and cancellation
+## Staging Cleanup Is Separate from Discovery
 
-Any request/validation/write/move failure removes that puzzle's staging directory and returns an error. Retry begins from zero.
+`scanDownloads()` is read-only. It never removes staging and never depends on every UI caller remembering whether a download is active.
 
-The UI exposes one cooperative **Cancel** action while a download is active. It marks the job cancelled; already-started requests may finish, but no new work is scheduled, the package is never finalized, and staging is removed before the operation returns.
+`cleanupStaleStaging()` is a separate `DownloadStore` operation and is called once during application/library startup before any HPA-2 download can begin. It removes abandoned direct children of `.staging` left by a terminated/failed previous process.
 
-No resumable/chunk download state survives app termination. On library startup/refresh, stale children under `.staging` are deleted.
+Manual/tab refreshes call only `scanDownloads()`.
+
+This keeps filesystem discovery safe even if future call sites refresh while a download is running.
 
 ## Direct Library Discovery
 
-`DownloadStore.scanDownloads()` enumerates direct children of `downloads/` every time the Downloaded view loads or refreshes.
+`scanDownloads()` enumerates finalized direct child directories of `downloads/` and ignores `.staging`.
 
-For each finalized child directory:
+For each finalized child:
 
 - missing/unparseable/unsupported `manifest.json` => corrupt package;
 - valid manifest with missing/empty required assets => corrupt package;
+- folder-name/manifest-ID mismatch => corrupt package;
 - valid manifest with all required assets => installed package with absolute local asset paths.
 
-The scan returns enough information to render both valid and corrupt rows. It never invents an index and never opens a corrupt package as gameplay input.
+The scan returns valid and corrupt entries. It never creates an index and never opens a corrupt package as gameplay input.
 
-A corrupt row exposes **Remove & Download Again**. The action removes the unusable package, fetches fresh canonical metadata through `PuzzleApi`, and starts a clean download. There is no in-place repair.
+A corrupt row exposes **Remove & Download Again**. That removes the unusable finalized package, fetches fresh canonical detail through `PuzzleApi`, and runs the normal clean download path. There is no in-place repair.
 
-## Progress Revalidation
+## Progress Revalidation and Ownership
 
-`downloadedLibrary.ts` combines a valid installed package with the existing `SessionStorageAdapter`:
+`downloadedLibrary.ts` combines an installed package with the existing `SessionStorageAdapter` using only `peekSession()` and `isResumable()`.
 
 ```ts
 type ProgressState =
-  | { kind: 'none' }
-  | { kind: 'resumable' }
-  | { kind: 'invalid'; reason: string };
+	| { kind: 'none' }
+	| { kind: 'resumable' }
+	| { kind: 'present' }
+	| { kind: 'invalid'; reason: string };
 ```
 
-For each installed manifest:
+Interpretation:
 
-1. derive `SessionPuzzleSpec`;
-2. derive `validationContextFrom(spec)`;
-3. call `peekSession(puzzleId, context)`;
-4. expose **Resume** only for a loaded snapshot for which `storage.isResumable()` is true;
-5. expose invalid retained progress as invalid instead of deleting or partially hydrating it.
+- `none` — no session file exists;
+- `resumable` — valid loaded session and `storage.isResumable(snapshot)` is true;
+- `present` — a valid session exists but is not resumable, including completed or no-activity states;
+- `invalid` — the file exists but fails the shared codec against current canonical metadata.
 
-**Discard Progress** calls the existing session adapter's `clearSession(puzzleId)`.
+A valid non-resumable file must never collapse to `none`; otherwise a completed save can be silently overwritten by a fresh run.
 
-**Remove Download** never calls `clearSession`. Therefore removing assets can leave a valid session file behind. After the same stable puzzle ID is downloaded again, the exact same validation path determines whether that retained snapshot is resumable against the new canonical metadata.
+### Downloaded actions
 
-If the puzzle's piece/grid metadata changed, the old session is rejected. The player may discard it and start a fresh run; HPA-2 does not migrate it.
+- `none` => **Start**, **Remove Download**.
+- `resumable` => **Resume**, **Discard Progress**, **Remove Download**.
+- `present` => **Discard Progress**, **Remove Download**. After explicit discard, the row becomes `none` and **Start** appears.
+- `invalid` => **Discard Progress**, **Remove Download**; never Start/Resume until the invalid file is explicitly discarded.
+
+Only **Discard Progress** calls `SessionStorageAdapter.clearSession()`.
+
+**Remove Download** has no session dependency and never calls `clearSession()`.
+
+After the same stable puzzle ID is downloaded again, the retained session is re-evaluated against the freshly downloaded canonical metadata and can become resumable again.
+
+## Gameplay Resume Must Be Non-Destructive
+
+`Gameplay.svelte` receives a concrete `GameplayLaunch` containing one installed package and `mode: 'start' | 'resume'`.
+
+For resume, gameplay derives the current validation context and calls `storage.peekSession()` again. It never calls `loadSession()` because `loadSession()` intentionally deletes invalid session data.
+
+If the second peek is loaded and resumable, construct `PuzzleSession` from that snapshot. If it is missing, invalid, or no longer resumable, show “Saved progress is no longer resumable” and return to the library without creating a fresh run or deleting the file.
+
+Fresh start is only reachable from a `ProgressState.none` row, so it cannot silently overwrite a completed/invalid retained session.
 
 ## Application UI and Navigation
 
-`App.svelte` remains the composition root and owns a tiny discriminated local screen state:
+`App.svelte` remains the composition root with one local discriminated screen state:
 
 ```ts
 type MobileScreen =
-  | { kind: 'library' }
-  | { kind: 'gameplay'; launch: GameplayLaunch };
+	| { kind: 'library' }
+	| { kind: 'gameplay'; launch: GameplayLaunch };
 ```
 
 No navigation library or global store is added.
 
-### Library page
+`Library.svelte` owns the concrete service orchestration and two sections:
 
-`Library.svelte` provides two concrete sections:
+- **Gallery** — ready server puzzles with explicit Download/Downloaded state and existing cursor pagination only;
+- **Downloaded** — installed and corrupt disk-derived packages with progress-derived actions.
 
-- **Gallery** — paginated ready server puzzles, remote thumbnail/name/piece count, and Download/Downloaded state.
-- **Downloaded** — valid installed packages plus corrupt package rows.
+Online Gallery failure must not clear or block disk-derived Downloaded state.
 
-The gallery is an online view. Native HTTP/image caching does not count as an installed puzzle; only a finalized manifest/package makes the Downloaded action state true.
+## Gameplay Asset Handoff
 
-The Downloaded view offers only the actions needed by this ticket:
+`Gameplay.svelte` no longer imports `HPA1_FIXTURE`. It derives `SessionPuzzleSpec` from the installed manifest and keeps the HPA-1 lifecycle/persistence behavior.
 
-- **Start** for an installed puzzle without resumable progress;
-- **Resume** for validated resumable progress;
-- **Remove Download**;
-- **Discard Progress** when a session exists/invalidates;
-- **Remove & Download Again** for corrupt packages.
+`PuzzleCanvas.svelte` receives:
 
-### Gameplay handoff
+```ts
+piecePaths: Record<number, string>
+```
 
-`Gameplay.svelte` receives a concrete `GameplayLaunch` containing a resolved installed package and `mode: 'start' | 'resume'`.
+It dynamically loads piece images from finalized local files. Piece IDs come from the manifest/session, not a `[0, 1, 2, 3]` constant.
 
-It no longer imports `HPA1_FIXTURE` or bundled puzzle assets. It derives the session spec from the manifest and keeps all current HPA-1 session lifecycle/persistence behavior.
+HPA-2 deliberately keeps the HPA-1 board interaction/layout. HPA-3 owns production landscape tray, toolbar, gestures, and gameplay parity.
 
-For resume, the existing session adapter must load a validated resumable snapshot before constructing `PuzzleSession`. For start, a fresh session is created from the downloaded canonical metadata.
+## Fixture Deletion
 
-`PuzzleCanvas.svelte` receives the installed `piecePaths: Record<number, string>` and loads every unplaced/placed image dynamically. Piece IDs come from the session/manifest rather than `[0, 1, 2, 3]`.
-
-This ticket deliberately keeps the HPA-1 board interaction/layout. HPA-3 owns production landscape tray/toolbar/gesture parity.
-
-## Deletions
-
-Once downloaded assets drive the same native Canvas path, delete:
+Once a downloaded package drives the same Canvas path, delete:
 
 - `apps/mobile/app/gameplay/fixture.ts`;
-- the four `apps/mobile/app/assets/hpa-1/piece-*.png` fixture files;
-- all fixture-specific labels/constants in `Gameplay.svelte` and `PuzzleCanvas.svelte`.
+- `apps/mobile/app/assets/hpa-1/piece-0.png` through `piece-3.png`;
+- fixture-specific labels/constants in `Gameplay.svelte` and `PuzzleCanvas.svelte`.
 
 No compatibility branch remains.
+
+## Risks and Stop Gates
+
+### 1. Native JSON transport / local networking
+
+Risk: this app has not previously used NativeScript HTTP, and iOS local development has transport/privacy policy requirements.
+
+Gate: Task 1 proves a real JSON GET after adding the narrow local-network plist declarations. Failure stops HPA-2 before download-store work.
+
+### 2. Native binary response → file
+
+Risk: HPA-1 did not exercise `Http.request().content.toFile()`.
+
+Gate: Task 3 downloads a real thumbnail to a non-empty app-private file before UI integration.
+
+### 3. Same-volume directory move bridge
+
+Risk: HPA-1 proved file replacement, not directory movement.
+
+Gate: Task 3 moves a real staging directory on the target iOS runtime. Path-based and URL-based `NSFileManager` move APIs are the only planned bridge variants. Failure after both is a design stop, not permission to add a silent copy/delete install.
+
+### 4. Session deletion semantics
+
+Risk: `SessionStorageAdapter.loadSession()` removes invalid saves.
+
+Fence: HPA-2 library and gameplay resume use `peekSession()` only. Explicit Discard remains the owner of `clearSession()`.
+
+### 5. Completed/non-resumable saves
+
+Risk: `isResumable()` is intentionally false for completed/no-activity snapshots.
+
+Fence: valid loaded non-resumable saves map to `ProgressState.present`, not `none`; fresh Start is unavailable until explicit discard.
 
 ## Testing Strategy
 
 ### Unit/service tests
 
-HPA-2 adds focused Vitest tests under `apps/mobile/app/` for:
+Focused Vitest tests cover:
 
+- `validatePuzzleMetadata()` reuse and detail `hasReference` validation at the HTTP boundary;
+- cursor propagation;
 - manifest creation/validation and `SessionPuzzleSpec` projection;
-- bounded scheduling and manifest-last/finalize ordering;
-- failed/cancelled download staging cleanup;
-- stale staging cleanup on scan;
+- five-way scheduling and manifest-last/finalize ordering;
+- failure/cancel cleanup waiting for in-flight writes;
+- `scanDownloads()` being read-only while staging exists;
+- startup-only stale staging cleanup;
 - corrupt/missing manifest and missing-asset detection;
 - direct filesystem discovery without an index;
 - Remove Download preserving session state;
+- `none` / `resumable` / `present` / `invalid` progress projection using the real codec;
 - retained session becoming resumable after a matching re-download;
-- retained session becoming invalid after canonical piece/grid mismatch;
-- public API ready-response validation and cursor propagation.
+- retained session becoming invalid after canonical metadata mismatch;
+- resume using non-destructive `peekSession()` semantics.
 
-Tests use small in-memory/file-operation fakes around the concrete service seams. They do not reimplement NativeScript itself.
+Tests use small in-memory/file-operation fakes around concrete seams and do not reimplement NativeScript.
 
-### Native iPad smoke
+### Native gates
 
-A final simulator/device smoke is the acceptance proof for platform boundaries:
+Task 1 proves real JSON transport/local-network configuration. Task 3 proves binary `toFile` and directory movement before library/gameplay integration.
 
-1. Build with `PERSEUS_MOBILE_API_BASE` targeting a reachable Perseus API.
-2. Browse Gallery and download one ready puzzle.
-3. Verify a finalized package and no `.staging/<id>` residue.
-4. Terminate/relaunch the app and verify Downloaded is reconstructed from disk.
-5. Disable networking (or stop the local API), start the downloaded puzzle, place at least one piece, terminate/relaunch, and resume it offline with the placement retained.
-6. Remove Download and verify the session file remains while the puzzle disappears from playable Downloaded rows.
-7. Re-enable networking, re-download the same puzzle ID, and verify Resume becomes available again after validation.
-8. Delete one finalized piece file, relaunch/refresh, and verify the package is blocked as corrupt and offers Remove & Download Again.
+### Final iPad smoke
+
+The implementation PR still proves the complete product path:
+
+1. browse Gallery and download one ready puzzle;
+2. verify finalized package/no staging residue;
+3. terminate/relaunch and reconstruct Downloaded from disk;
+4. disable networking and start a downloaded puzzle;
+5. create progress, terminate/relaunch, and resume offline;
+6. Remove Download and verify the session file remains;
+7. re-download the same ID and verify Resume returns after validation;
+8. corrupt one finalized asset and verify Start/Resume is blocked with Remove & Download Again.
 
 No native E2E framework is added for HPA-2.
 
 ## Implementation Boundary
 
-Expected production scope is `apps/mobile` plus the existing workspace dependency declaration. No changes are expected in:
+Expected production scope is:
+
+- `apps/mobile` API/config/library/gameplay files;
+- `apps/mobile/App_Resources/iOS/Info.plist` for narrow local-development networking intent;
+- one small `ReadyPuzzleDetail` API wire type in `packages/types`;
+- workspace dependency/lockfile updates.
+
+No production changes are expected in:
 
 - `apps/api`;
 - `apps/workflows`;
@@ -354,7 +448,7 @@ Expected production scope is `apps/mobile` plus the existing workspace dependenc
 - database schemas/migrations;
 - Cloudflare infrastructure.
 
-If implementation discovers that the existing public puzzle endpoints cannot supply one of the required assets or canonical metadata, stop and revise the design rather than adding a parallel mobile backend ad hoc.
+If the existing public endpoints or shared game-core contract prove insufficient, stop and revise HPA-2 rather than adding a parallel mobile backend or shared framework ad hoc.
 
 ## Non-Goals
 
@@ -365,8 +459,9 @@ If implementation discovers that the existing public puzzle endpoints cannot sup
 - ZIP/bundle endpoints.
 - Automatic cache-to-offline promotion.
 - Local-photo puzzle creation.
-- Search/category gallery parity.
+- Search/category Gallery parity.
 - Portrait/adaptive-tablet work.
 - Production pinch/pan/toolbar/tray parity.
 - Account login, cloud session sync, or completion outbox.
 - Backward-compatible mobile manifest migrations.
+- Broad ATS disablement or arbitrary insecure remote HTTP.
