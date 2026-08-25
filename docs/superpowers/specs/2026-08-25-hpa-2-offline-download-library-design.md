@@ -410,6 +410,10 @@ No expected production changes in:
 
 If existing endpoints or game-core contracts prove insufficient, stop and revise HPA-2 rather than adding a parallel backend/framework ad hoc.
 
+## Review Trade-off Kept Deliberately
+
+The supplied review suggested verifying only manifest + thumbnail during Library scan and moving missing-piece detection to gameplay entry. That change is **not** adopted in HPA-2. The ticket explicitly requires malformed/missing-file packages to be detected and offered a clean re-download path, while the existing scan is already the single corruption boundary. Moving the check would add a second error state and redirect path to save unmeasured filesystem work. Keep the simple bounded scan now; optimize only if device measurement demonstrates a problem.
+
 ## Non-Goals
 
 - SQLite/index/cache catalog.
