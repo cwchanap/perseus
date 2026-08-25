@@ -77,6 +77,7 @@
         "svelte-preprocess": "^6.0.3",
         "ts-loader": "^9.5.2",
         "typescript": "~5.9.2",
+        "vitest": "^4.0.18",
       },
     },
     "apps/web": {
