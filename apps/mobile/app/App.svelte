@@ -1,7 +1,7 @@
 <script lang="ts">
-	import CanvasProbe from './components/CanvasProbe.svelte';
+	import Gameplay from './gameplay/Gameplay.svelte';
 </script>
 
 <frame>
-	<CanvasProbe />
+	<Gameplay />
 </frame>

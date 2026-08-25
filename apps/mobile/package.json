@@ -4,7 +4,8 @@
 	"version": "1.0.0",
 	"private": true,
 	"scripts": {
-		"ios": "ns run ios"
+		"ios": "ns run ios",
+		"test:unit": "vitest run app/**/*.test.ts"
 	},
 	"dependencies": {
 		"@nativescript-community/svelte-native": "~1.0.30",
@@ -27,7 +28,8 @@
 		"svelte-loader": "^3.2.4",
 		"svelte-preprocess": "^6.0.3",
 		"ts-loader": "^9.5.2",
-		"typescript": "~5.9.2"
+		"typescript": "~5.9.2",
+		"vitest": "^4.0.18"
 	},
 	"overrides": {
 		"@nativescript/core": "^9.0.0",
