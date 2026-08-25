@@ -1,5 +1,6 @@
 {
   "lockfileVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "perseus",
@@ -64,9 +65,11 @@
       },
       "devDependencies": {
         "@nativescript-community/svelte-native-preprocessor": "^1.0.1",
+        "@nativescript/android": "9.0.5",
         "@nativescript/ios": "9.0.3",
         "@nativescript/types": "~9.0.0",
         "@nativescript/webpack": "~5.0.28",
+        "@types/node": "^22",
         "babel-loader": "^10.0.0",
         "css-loader": "^7.0.0",
         "postcss-loader": "^8.0.0",
@@ -436,6 +439,8 @@
     "@nativescript-community/svelte-native": ["@nativescript-community/svelte-native@1.0.32", "", { "peerDependencies": { "@nativescript/core": "8.9.9", "svelte": "4.2.20" } }, "sha512-gdfZATz/A5pY8MVJ0+kCUujO88k4dtKlyD/6BA2wHAjoxDVlUnxOZl4YkPQhLNp8hZxXGRYnKStdKhtTCTXx0w=="],
 
     "@nativescript-community/svelte-native-preprocessor": ["@nativescript-community/svelte-native-preprocessor@1.0.1", "", { "peerDependencies": { "svelte": ">= 3.37.0 < 5" } }, "sha512-U8ePExwC8m93mIJ5k0WLqPsf8Gx7CBcQYLGLxy1rJid5xurvDbPPXpurP9fOO+lngDat2OTQPfWV0Is4Wt+GlQ=="],
+
+    "@nativescript/android": ["@nativescript/android@9.0.5", "", {}, "sha512-X68BZJDZtnSU3NL13k3giUriCDvZPCS5rRcRBM77RyTKbK78bHsyP9Yl6REg4L35xORK2cX2HOl1NCec7lS2eA=="],
 
     "@nativescript/canvas": ["@nativescript/canvas@2.1.18", "", { "dependencies": { "@nativescript/font-manager": "*" } }, "sha512-wj4gbG+YW6GXTAc5zKW6D7CBjIywLKBryWIbhERjSI7+9reFdnyWjtof4Bp7J1uieQn+6e7IlQdJUuO0ZJt0jA=="],
 
