@@ -16,9 +16,11 @@
 	},
 	"devDependencies": {
 		"@nativescript-community/svelte-native-preprocessor": "^1.0.1",
+		"@nativescript/android": "9.0.5",
 		"@nativescript/ios": "9.0.3",
 		"@nativescript/types": "~9.0.0",
 		"@nativescript/webpack": "~5.0.28",
+		"@types/node": "^22",
 		"babel-loader": "^10.0.0",
 		"css-loader": "^7.0.0",
 		"postcss-loader": "^8.0.0",

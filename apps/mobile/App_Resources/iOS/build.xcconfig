@@ -4,3 +4,5 @@
 // To build for device with XCode you need to specify your development team.
 // DEVELOPMENT_TEAM = YOUR_TEAM_ID;
 ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+// Build number (CFBundleVersion); override per release via xcodebuild or an included xcconfig.
+CURRENT_PROJECT_VERSION = 1;
