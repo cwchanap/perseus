@@ -192,8 +192,17 @@
 			draw();
 			return;
 		}
-		if (event.state === 0 || event.state === 3) {
-			const release = point ?? { x: dragStartX + event.deltaX, y: dragStartY + event.deltaY };
+		if (event.state === 0) {
+			draggingPieceId = null;
+			draw();
+			return;
+		}
+		if (event.state === 3) {
+			const scale = Screen.mainScreen.scale || 1;
+			const release = point ?? {
+				x: dragStartX + event.deltaX * scale,
+				y: dragStartY + event.deltaY * scale
+			};
 			const cell = viewModel.cellAt(release.x, release.y);
 			const pieceId = draggingPieceId;
 			draggingPieceId = null;
