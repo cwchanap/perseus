@@ -38,13 +38,15 @@ No new route, ZIP bundle, Workflow output, DB schema, or R2 layout is required.
 
 - Offline play is explicit; HTTP/image caching never counts as installed.
 - Downloaded is the only offline-playable library.
-- One puzzle download at a time, with exactly 5 active asset requests inside it.
+- One puzzle download at a time, with fixed-size chunks of at most **5** active asset requests.
+- Show simple `done / total` download progress; no queue, background transfer, or resumable chunks.
 - Manifest-last + same-volume directory move is the install boundary.
 - Remove Download deletes assets only; Discard Progress deletes session only.
 - Unknown manifest schemas are corrupt; no pre-release migration compatibility.
 - Retained progress is validated against freshly downloaded canonical metadata through the existing game-core codec.
+- A valid zero-activity save is disposable implementation residue and behaves as no progress; meaningful activity or a sealed completion is protected until explicit Discard.
 - HPA-1 fixture code/assets are deleted after the real package path works; no fallback branch.
-- No SQLite/index, queue/background transfer, resumable chunks, checksum system, search/category parity, account sync, portrait work, or HPA-3 gameplay parity.
+- No SQLite/index, checksum system, search/category parity, account sync, portrait work, or HPA-3 gameplay parity.
 
 ## Architecture
 
@@ -68,35 +70,36 @@ Documents/perseus/downloads/
                                       existing sessions/<id>.json
 ```
 
-No repository interface, DI container, global store, generic cache, sync engine, or database catalog is added.
+`App.svelte` remains the composition root. It owns the concrete API/download/session services and the single active download job. `Library.svelte` owns only gallery/downloaded presentation and disk/network reads.
 
-## Shared Puzzle Detail Contract
+No repository interface, DI container, generic cache, sync engine, or database catalog is added.
 
-The ready detail response is a wire contract and already includes `hasReference`, so HPA-2 adds one type to `@perseus/types`:
+## Public Puzzle Boundary
 
-```ts
-export interface ReadyPuzzleDetail extends ReadyPuzzle {
-	hasReference: boolean;
-}
-```
-
-The existing web-local flat `Puzzle` presentation type remains unchanged in this ticket.
-
-### HTTP-boundary validation
+`PuzzleApi` is mobile-local. It copies the public URL pattern from the web client rather than importing the SvelteKit-bound web service.
 
 `PuzzleApi.getPuzzle()` calls existing `validatePuzzleMetadata()` before any asset scheduling, then requires:
 
 - `status === 'ready'`;
-- returned ID equals requested ID;
-- `hasReference` is boolean.
+- returned ID equals the requested ID.
 
-Only then does mobile receive `ReadyPuzzleDetail`.
+It returns a clean `ReadyPuzzle` projection containing only the existing shared metadata fields. HPA-2 does **not** add `ReadyPuzzleDetail` or change web/E2E types just to model `hasReference`.
 
-This prevents malformed ready metadata from downloading a full asset set before failing. The local manifest still performs its own disk-boundary validation because it stores a different local shape.
+The server's `hasReference` field is display-only and can degrade to false when its R2 head check fails. Mobile therefore does not persist or trust it as the install contract.
+
+### Reference download
+
+Every download attempts `GET /api/puzzles/:id/reference` once:
+
+- `2xx` => save the reference and record `referenceFile`;
+- `404` => reference is absent; continue the install;
+- any other HTTP/transport/write error => fail the download like another asset error.
+
+This avoids baking a transient `hasReference: false` into an otherwise permanent offline package.
 
 ## API Base and iOS Local Development
 
-`apps/mobile/webpack.config.js` injects `__PERSEUS_API_BASE__` from `PERSEUS_MOBILE_API_BASE`. Development fallback is `http://localhost:4690`; remote/TestFlight bases use HTTPS.
+`apps/mobile/webpack.config.js` injects `__PERSEUS_API_BASE__` from `PERSEUS_MOBILE_API_BASE`. The constructor strips trailing `/` characters before building URLs. Development fallback is `http://localhost:4690`; remote/TestFlight bases use HTTPS.
 
 For local simulator/LAN development, iOS declares only narrow local-network intent:
 
@@ -114,7 +117,7 @@ Do not set `NSAllowsArbitraryLoads`.
 
 ## Native Stop Gates
 
-HPA-1 gated unproven native assumptions before depending on them; HPA-2 does the same.
+HPA-1 gated unproven native assumptions before depending on them; HPA-2 keeps that sequencing.
 
 ### Gate A — JSON transport
 
@@ -130,51 +133,60 @@ Immediately after native download files exist:
 2. prove the file is non-empty;
 3. create a staging directory with a sentinel;
 4. move the staging directory to a sibling finalized path on the same app-private volume;
-5. prove staging is gone and sentinel is at destination;
+5. prove staging is gone and the sentinel is at destination;
 6. remove probe data.
 
-For iOS movement, try the path-based `NSFileManager` bridge first and equivalent URL-based move second. If both fail, stop before UI and revise finalization. Do not silently replace the contract with copy/delete.
+HPA-1 already proved the iOS `NSFileManager` URL bridge exists through `replaceItemAtURL...`, so the HPA-2 move uses the same `(globalThis as any)` bridge style and tries the URL-form move first, with path-form move as one fallback. If neither directory move works, stop before UI and revise finalization; copy/delete is not silently substituted for the install boundary.
 
-Final HPA-2 smoke still proves the complete feature, but it is no longer the first native proof.
+Android directory finalization is out of scope for this iPad ticket. The native adapter throws `download_directory_move_unsupported` outside iOS rather than shipping an untested `java.io.File.renameTo()` branch.
+
+Final HPA-2 smoke still proves the complete feature, but it is not the first native proof.
 
 ## Download Manifest
 
-`manifest.json` is mobile-local:
+`manifest.json` is a small mobile-local wrapper around metadata already validated by shared code:
 
 ```ts
 interface DownloadManifestV1 {
 	schemaVersion: 1;
-	puzzleId: string;
-	name: string;
-	category?: PuzzleCategory;
-	aspectRatio?: PuzzleAspectRatio;
-	pieceCount: number;
-	gridCols: number;
-	gridRows: number;
-	imageWidth: number;
-	imageHeight: number;
-	pieces: Array<{ id: number; correctX: number; correctY: number }>;
-	thumbnailFile: string;
-	referenceFile?: string;
-	pieceFiles: Record<string, string>;
+	puzzle: ReadyPuzzle;
+	files: {
+		thumbnailFile: string;
+		referenceFile?: string;
+		pieceFiles: Record<string, string>;
+	};
 	downloadedAt: number;
 }
 ```
 
-It omits remote `imagePath`, edges, server status/version/idempotency, session state, checksums, and index metadata.
+`puzzle` retains the validated server metadata, including `version`, `createdAt`, edges, and remote `imagePath` strings. Those remote paths are never used for local asset resolution; only `files` resolves installed assets.
 
-The codec validates schema version, identity, positive dimensions, exact grid/piece count, IDs `0..pieceCount - 1`, unique in-bounds canonical cells, exact file mappings, and safe relative filenames.
+The manifest parser owns only local/disk concerns plus delegation to existing validators:
 
-It projects:
+1. require `schemaVersion === 1`;
+2. require `validatePuzzleMetadata(puzzle)` and `puzzle.status === 'ready'`;
+3. require a finite `downloadedAt`;
+4. require safe relative thumbnail/reference filenames;
+5. require `pieceFiles` to contain exactly one safe relative filename for every piece ID present in `puzzle.pieces`, with no extra keys.
+
+It does **not** reimplement grid math, aspect-ratio rules, coordinate bounds, unique piece IDs, or unique canonical cells. `validatePuzzleMetadata()` owns the shared wire checks and `createPuzzleSession()` remains the documented game-core invariant boundary for the stronger gameplay geometry checks.
+
+The manifest does not invent the stricter rule that piece IDs must be `0..pieceCount - 1`; download requests use the IDs actually present in `puzzle.pieces`.
+
+`sessionSpecFromManifest()` is only a projection:
 
 ```ts
 SessionPuzzleSpec {
-	puzzleId,
+	puzzleId: manifest.puzzle.id,
 	source: 'api',
-	pieceCount,
-	gridCols,
-	gridRows,
-	pieces
+	pieceCount: manifest.puzzle.pieceCount,
+	gridCols: manifest.puzzle.gridCols,
+	gridRows: manifest.puzzle.gridRows,
+	pieces: manifest.puzzle.pieces.map(({ id, correctX, correctY }) => ({
+		id,
+		correctX,
+		correctY
+	}))
 }
 ```
 
@@ -204,37 +216,41 @@ No downloads/session index is written.
 
 `DownloadStore.downloadPuzzle()`:
 
-1. reject existing finalized package;
+1. reject an existing finalized package;
 2. remove stale staging for this same ID only;
 3. create `.staging/<id>/pieces`;
-4. schedule thumbnail, optional reference, and every piece with five workers;
-5. after first error/cancel, schedule no new work but wait for already-started writes to settle;
-6. verify every required file is non-empty;
-7. create/validate manifest;
-8. write `manifest.json` last;
-9. move complete staging directory to finalized package;
-10. return installed package only after move succeeds.
+4. build thumbnail, reference, and piece requests from the validated puzzle detail;
+5. process requests in sequential chunks of at most 5 using `Promise.allSettled()`;
+6. after each settled request, advance optional `onProgress(done, total)`;
+7. after a chunk, stop before scheduling another chunk if cancellation or any required asset failure occurred;
+8. require every required local file to be non-empty;
+9. create/validate the manifest;
+10. write `manifest.json` **last**;
+11. move complete staging directory to finalized package;
+12. return installed package only after the move succeeds.
 
-Failure/cancel cleans this job's staging only after in-flight writes settle. Retry starts from zero.
+Chunking copies the bounded-concurrency pattern already used by `apps/api/src/services/reaper.ts`. Per-chunk head-of-line blocking is acceptable for one explicit install and removes the custom worker-pool state machine.
+
+`Promise.allSettled()` makes cleanup ordering structural: all already-started writes in the current chunk settle before a failure/cancel escapes and staging is removed. Retry starts from zero.
 
 ## Cleanup and Discovery Are Separate
 
 `scanDownloads()` is read-only. It never creates directories and never removes staging.
 
-`cleanupStaleStaging()` is separate and runs **once from persistent `App.svelte` startup**, before `Library.svelte` is mounted. It is not called from Library mount, gameplay return, refresh, tab changes, download completion, or remove actions.
+`cleanupStaleStaging()` is separate and runs once from persistent `App.svelte` startup, before downloads can begin. It is not called from Library mount, gameplay return, refresh, tab changes, download completion, or remove actions.
 
-This matters because `Library.svelte` remounts after gameplay; putting cleanup there would turn a later remount into a destructive “startup” operation.
-
-Manual/tab refresh calls only `scanDownloads()` and is safe even while an active download is writing under `.staging`.
+Manual/tab refresh calls only `scanDownloads()` and is safe while an active download writes under `.staging`.
 
 ## Direct Library Discovery
 
 `scanDownloads()` ignores `.staging` and inspects finalized direct child directories only.
 
 - missing/unparseable/unsupported manifest => corrupt;
-- folder/manifest ID mismatch => corrupt;
-- missing/empty referenced asset => corrupt;
+- folder name not equal to `manifest.puzzle.id` => corrupt;
+- missing/empty referenced thumbnail/reference/piece asset => corrupt;
 - valid manifest + all assets => installed package with absolute local paths.
+
+The full required-asset verification stays in the scan for HPA-2. It is a simple, bounded correctness fence for the ticket's explicit “missing files are corrupt” acceptance behavior and keeps corruption handling in one place. Moving piece verification to gameplay would require a second launch-time corruption state/redirect path. If filesystem measurement later shows scanning at most `MAX_PIECES` files per installed puzzle is a real UI problem, optimize that proven hotspot then.
 
 Corrupt rows cannot launch. **Remove & Download Again** removes the corrupt package then runs the normal validated clean download path. No in-place repair.
 
@@ -246,23 +262,27 @@ Corrupt rows cannot launch. **Remove & Download Again** removes the corrupt pack
 type ProgressState =
 	| { kind: 'none' }
 	| { kind: 'resumable' }
-	| { kind: 'present' }
+	| { kind: 'protected' }
 	| { kind: 'invalid'; reason: string };
 ```
 
-- `none`: no session file.
-- `resumable`: valid loaded session and `isResumable()` true.
-- `present`: valid loaded session but not resumable, including completed/no-activity states.
-- `invalid`: file exists but shared codec rejects it against current canonical metadata.
+Interpretation:
 
-A completed/valid non-resumable save must not collapse to `none`, because Start would silently overwrite it.
+- `none` — no save, or a valid loaded snapshot with neither `hasUserActivity` nor a sealed completion;
+- `resumable` — valid loaded snapshot and `storage.isResumable(snapshot)` is true;
+- `protected` — valid non-resumable snapshot with `hasUserActivity === true` or `sealedCompletion !== null`;
+- `invalid` — file exists but shared codec rejects it against current canonical metadata.
+
+This deliberately treats HPA-1's immediately persisted zero-activity snapshot as `none`, so opening a puzzle and leaving without interacting does not force a pointless Discard before Start. Completed/meaningful state remains protected from silent overwrite.
 
 ### Actions
 
-- `none` => Start, Remove Download.
-- `resumable` => Resume, Discard Progress, Remove Download.
-- `present` => Discard Progress, Remove Download; Start appears only after explicit discard.
-- `invalid` => Discard Progress, Remove Download; never Start/Resume before discard.
+A pure `actionsForProgress()` function owns the action matrix and is table-tested:
+
+- `none` => Start, Remove Download;
+- `resumable` => Resume, Discard Progress, Remove Download;
+- `protected` => Discard Progress, Remove Download;
+- `invalid` => Discard Progress, Remove Download.
 
 Only Discard calls `clearSession()`.
 
@@ -273,10 +293,12 @@ Remove Download never touches session storage. Re-downloading the same stable ID
 Gameplay derives the manifest spec/context and calls `peekSession()` again at entry.
 
 - Resume proceeds only from loaded + resumable.
-- Start proceeds only when the persisted result is still missing.
-- A stale/unavailable launch returns to Library without creating a fresh session or deleting/overwriting the file.
+- Start proceeds when the current persisted result is missing **or** is a valid zero-activity snapshot with no sealed completion.
+- `protected`, invalid, or stale/non-resumable Resume entry returns to Library without creating a fresh session or deleting/overwriting the file.
 
-HPA-2 mobile code does not call `loadSession()`.
+HPA-2 mobile code never calls `loadSession()`.
+
+For Start over a zero-activity snapshot, the fresh session simply replaces that no-activity record at the existing persistence checkpoint; there is no user progress to preserve.
 
 ## Application Ownership
 
@@ -288,13 +310,18 @@ type MobileScreen =
 	| { kind: 'gameplay'; launch: GameplayLaunch };
 ```
 
-It owns concrete `PuzzleApi`, `DownloadStore`, `SessionStorageAdapter`, and one-shot stale-staging cleanup.
+It owns:
 
-`Library.svelte` owns Gallery/Downloaded presentation and one active download job.
+- `PuzzleApi`;
+- `DownloadStore`;
+- `SessionStorageAdapter`;
+- one-shot stale-staging cleanup;
+- the one active download job (`puzzleId`, cancellation flag, `done`, `total`);
+- `startDownload()` / `cancelDownload()`.
 
-While a Library-owned download promise is active, Start/Resume is disabled. This prevents navigating to gameplay from destroying the component that owns the cooperative cancellation/job state and avoids introducing a global download manager.
+`Library.svelte` receives job state and callbacks as props. Moving these few fields to the existing composition root is not a download manager; it merely keeps the promise/cancellation owner alive across Library → Gameplay navigation.
 
-Once the job settles or is cancelled, launch controls are available again.
+Start/Resume therefore remain available while another puzzle downloads. If the user enters gameplay, the active download continues under `App.svelte`; returning to Library re-reads disk state. A small monotonically increasing `downloadRevision` lets a mounted Library refresh after a job settles without adding a store/event bus.
 
 ## Gameplay Asset Handoff
 
@@ -310,6 +337,8 @@ It loads finalized local paths dynamically rather than fixed `[0,1,2,3]` bundled
 
 HPA-2 keeps HPA-1 board/layout behavior. HPA-3 owns the production tablet tray, toolbar, gestures, and control parity.
 
+The Gallery/Downloaded wiring and dynamic Gameplay conversion land in one implementation task/commit so no intermediate checkpoint renders `<Gameplay launch={...}>` against the old fixture-only component.
+
 ## Fixture Deletion
 
 Delete:
@@ -324,33 +353,40 @@ No compatibility branch.
 
 1. **Native JSON/local networking** — Task 1 gate before download design is depended on.
 2. **Binary response to file** — Task 3 thumbnail gate.
-3. **Directory move bridge** — Task 3 path/URL move probe; both failing is a design stop.
-4. **Staging race** — cleanup is one-shot at persistent app root; scans are read-only.
-5. **Orphan Library job** — gameplay launch disabled while the Library-owned download promise exists.
+3. **Directory move bridge** — Task 3 URL-first/path-fallback iOS move probe; both failing is a design stop.
+4. **Staging race** — cleanup is one-shot at persistent app root; scans are read-only; failed chunks settle before cleanup.
+5. **Download-job lifetime** — job state lives at the composition root, so navigation cannot orphan it.
 6. **Invalid-save deletion** — mobile library/gameplay uses `peekSession()`, never `loadSession()`.
-7. **Completed-save overwrite** — valid non-resumable state is `present`, not `none`.
+7. **Zero-activity lockout** — zero-activity loaded snapshots map to `none`; table tests pin actions.
+8. **Completed-save overwrite** — activity/sealed non-resumable snapshots map to `protected`, not `none`.
+9. **Android false support** — iOS-only move implementation; other platforms fail explicitly.
 
 ## Testing
 
 Focused Vitest tests cover:
 
-- shared `validatePuzzleMetadata()` reuse + `hasReference` detail validation;
-- cursor URL behavior;
-- manifest codec/projection;
-- exactly five active asset workers;
-- failure/cancel waiting for in-flight writes before cleanup;
+- shared `validatePuzzleMetadata()` reuse + cursor/base-URL behavior;
+- manifest schema/file-map/safe-path checks and `SessionPuzzleSpec` projection;
+- chunking never starts request 6 before the first chunk settles;
+- per-request progress accounting;
+- failure/cancel waiting for the current chunk before cleanup;
 - scan being read-only while staging exists;
 - one-shot cleanup behavior at store level;
-- corrupt package detection;
+- corrupt package detection, including missing assets;
 - direct filesystem discovery without index;
 - Remove Download preserving progress;
-- `none/resumable/present/invalid` using the real game-core codec;
+- `none/resumable/protected/invalid` using the real game-core codec;
+- zero-activity snapshot => `none`;
+- completed snapshot => `protected`;
+- pure action matrix for every progress arm;
 - retained progress after matching re-download;
 - canonical mismatch becoming invalid.
 
 Native gates prove JSON transport and binary/move boundaries before UI integration.
 
-Final iPad smoke proves download, finalize, read-only refresh during active download, relaunch discovery, offline start/resume, completed-save non-overwrite, Remove Download preservation, matching re-download, and corrupt-package recovery.
+The combined Library/Gameplay integration task ends with a real iOS app launch, not only `tsc`, so Svelte prop wiring is compiled before the task commit.
+
+Final iPad smoke proves download progress, finalize, read-only refresh during active download, navigation while a download continues, relaunch discovery, offline start/resume, zero-activity reopen, completed-save non-overwrite, Remove Download preservation, matching re-download, and corrupt-package recovery.
 
 No new native E2E framework.
 
@@ -360,14 +396,14 @@ Expected production changes:
 
 - mobile API/config/library/gameplay files;
 - iOS `Info.plist` local-network intent;
-- one `ReadyPuzzleDetail` wire type in `packages/types`;
-- workspace dependency/lockfile;
+- mobile `@perseus/types` workspace dependency/lockfile;
 - HPA-1 fixture deletions.
 
 No expected production changes in:
 
 - `apps/api`;
 - `apps/workflows`;
+- `packages/types`;
 - `packages/game-core`;
 - DB migrations;
 - Cloudflare infrastructure.
@@ -389,3 +425,4 @@ If existing endpoints or game-core contracts prove insufficient, stop and revise
 - Account/cloud-session/completion sync.
 - Backward-compatible mobile manifest migrations.
 - Broad ATS disablement or arbitrary insecure remote HTTP.
+- Unrelated web/E2E `hasReference` type cleanup.
