@@ -2,56 +2,68 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the HPA-1 bundled fixture with an explicit-download mobile gallery and filesystem-derived Downloaded library that can start and resume finalized puzzle packages completely offline.
+**Goal:** Replace the HPA-1 bundled fixture with an explicit-download mobile Gallery and filesystem-derived Downloaded library that can start and resume finalized puzzle packages completely offline.
 
-**Architecture:** Keep all new behavior mobile-local. A narrow API service fetches existing public puzzle contracts, a versioned mobile manifest describes one finalized package, `DownloadStore` stages/finalizes assets with five-way bounded concurrency, and the Downloaded view is rebuilt by scanning manifests plus the existing session adapter. `App.svelte` owns only local screen/service composition; downloaded packages feed the existing HPA-1 Canvas/PuzzleSession path.
+**Architecture:** Keep the feature mobile-local except for one API-detail wire type in `@perseus/types`. Reuse the existing public puzzle endpoints, shared metadata validator, HPA-1 file/session seams, and `PuzzleSession`. A versioned local manifest describes finalized assets, `DownloadStore` owns staging/finalization, `scanDownloads()` is read-only, and saved-progress state is derived with non-destructive `peekSession()`.
 
-**Tech Stack:** NativeScript 9, Svelte Native 4, TypeScript 5.9, `@nativescript/core` `Http`/FileSystem, `@perseus/types`, `@perseus/game-core`, Vitest 4, Bun 1.3.14.
+**Tech Stack:** NativeScript 9, Svelte Native 4, TypeScript 5.9, `@nativescript/core` HTTP/FileSystem, `@perseus/types`, `@perseus/game-core`, Vitest 4, Bun 1.3.14.
 
 **Spec:** `docs/superpowers/specs/2026-08-25-hpa-2-offline-download-library-design.md`
 
 ## Global Constraints
 
-- Deliver HPA-2 as **one implementation PR**. The commits below are review checkpoints inside that PR, not separate PRs.
-- Use only the existing public `/api/puzzles` and asset endpoints. Do not change `apps/api`, `apps/workflows`, Cloudflare infrastructure, or a database schema.
-- Add no new third-party runtime dependency. `@perseus/types` is an existing workspace package and is the only dependency addition expected in `apps/mobile/package.json`.
-- Keep `@perseus/game-core` unchanged unless implementation proves an existing exported contract is unusable; stop and revise the design before expanding shared-core scope.
-- One puzzle download at a time; exactly **5** concurrent asset requests inside that download when at least five assets remain.
-- `manifest.json` is written last in staging; only a successful same-volume directory move makes a package installed.
-- A failed/cancelled batch waits for already-started requests to settle before staging cleanup; no request may write into a directory being removed.
-- Unknown manifest schema versions are corrupt; do not add compatibility migration code.
-- The Downloaded library is derived by scanning files every load/refresh. Do not add SQLite, `downloads.json`, a session index, or another derived catalog.
-- Download removal never deletes progress. Progress deletion uses the existing `SessionStorageAdapter.clearSession()` explicitly.
+- Deliver HPA-2 as **one implementation PR**. Task commits are review checkpoints inside that PR, not separate PRs.
+- Use only the existing public `/api/puzzles` and asset endpoints. Do not change `apps/api`, `apps/workflows`, database schemas, or Cloudflare infrastructure.
+- `packages/types` may gain only the small public ready-detail wire type needed to stop duplicating `hasReference`; do not expand shared gameplay behavior there.
+- Keep `@perseus/game-core` unchanged. If an existing exported contract proves unusable, stop and revise the design before expanding shared-core scope.
+- Add no third-party runtime dependency. `@perseus/types` is an existing workspace package and is the only expected mobile dependency addition.
+- One puzzle download at a time; exactly **5** concurrent asset requests inside that download.
+- `manifest.json` is written last in staging; only a successful same-volume directory move makes the package installed.
+- `scanDownloads()` is read-only. Stale staging cleanup is a separate startup-only operation.
+- Unknown manifest schemas are corrupt; do not add compatibility migration code.
+- Download removal never deletes progress. Only explicit Discard calls `SessionStorageAdapter.clearSession()`.
+- HPA-2 mobile library/gameplay code must not use `SessionStorageAdapter.loadSession()` because it deletes invalid saves. Use `peekSession()`.
+- Valid loaded but non-resumable sessions are `present`, not `none`; do not silently overwrite them with a fresh run.
 - Downloaded server puzzles keep `SessionPuzzleSpec.source = 'api'`.
-- No resumable partial downloads, ZIP endpoint, background download service, search/category parity, auth/sync, portrait work, or HPA-3 production gameplay parity.
-- Keep the existing HPA-1 board interaction/layout during this ticket; delete the HPA-1 fixture code/assets once dynamic installed-package assets work.
+- Keep the HPA-1 board interaction/layout during this ticket; HPA-3 owns production landscape gameplay parity.
+- Delete the HPA-1 fixture code/assets once dynamic installed-package assets work; retain no compatibility fallback.
+- Remote/TestFlight API bases use HTTPS. iOS local development uses the narrow local-network plist declarations; do not set `NSAllowsArbitraryLoads`.
+- Native JSON transport is gated in Task 1. Binary `toFile` and same-volume directory movement are gated in Task 3 before Gallery/Downloaded integration.
 
 ---
 
-### Task 1: Add the mobile public-puzzle API boundary
+### Task 1: Reuse the shared puzzle validator and prove NativeScript JSON transport
 
 **Files:**
+- Modify: `packages/types/src/core.ts`
 - Modify: `apps/mobile/package.json`
-- Modify: `apps/mobile/webpack.config.js`
 - Modify: `bun.lock`
+- Modify: `apps/mobile/webpack.config.js`
+- Modify: `apps/mobile/App_Resources/iOS/Info.plist`
 - Create: `apps/mobile/types/globals.d.ts`
 - Create: `apps/mobile/app/api/puzzleApi.ts`
 - Create: `apps/mobile/app/api/puzzleApi.test.ts`
 - Create: `apps/mobile/app/api/nativePuzzleHttp.ts`
+- Temporary only, reverted before commit: `apps/mobile/app/App.svelte`
 
 **Interfaces:**
-- Produces:
+
+`@perseus/types` produces:
 
 ```ts
-export interface PublicReadyPuzzle extends ReadyPuzzle {
-	hasReference?: boolean;
+export interface ReadyPuzzleDetail extends ReadyPuzzle {
+	hasReference: boolean;
 }
+```
 
+Mobile produces:
+
+```ts
 export type PuzzleJsonRequest = (url: string) => Promise<unknown>;
 
 export interface PuzzleApi {
 	listPuzzles(cursor?: string): Promise<PuzzleListResponse>;
-	getPuzzle(puzzleId: string): Promise<PublicReadyPuzzle>;
+	getPuzzle(puzzleId: string): Promise<ReadyPuzzleDetail>;
 	thumbnailUrl(puzzleId: string): string;
 	referenceUrl(puzzleId: string): string;
 	pieceImageUrl(puzzleId: string, pieceId: number): string;
@@ -65,17 +77,31 @@ export function createPuzzleApi(options: {
 export const nativePuzzleJsonRequest: PuzzleJsonRequest;
 ```
 
-- Later tasks consume `PuzzleApi`, `PublicReadyPuzzle`, and `__PERSEUS_API_BASE__`.
+- [ ] **Step 1: Add the shared ready-detail wire type**
 
-- [ ] **Step 1: Add the shared API type dependency and build-time API base**
+In `packages/types/src/core.ts`, immediately after `ReadyPuzzle`:
 
-Add `"@perseus/types": "workspace:*"` next to `@perseus/game-core` in `apps/mobile/package.json`, then run:
+```ts
+export interface ReadyPuzzleDetail extends ReadyPuzzle {
+	hasReference: boolean;
+}
+```
+
+Do not modify the web-local flat `Puzzle` presentation type in this ticket.
+
+- [ ] **Step 2: Add the mobile shared-type dependency and API-base declaration**
+
+Add to `apps/mobile/package.json`:
+
+```json
+"@perseus/types": "workspace:*"
+```
+
+Run from repo root:
 
 ```bash
 bun install
 ```
-
-Commit the resulting `bun.lock` change with this task.
 
 Create `apps/mobile/types/globals.d.ts`:
 
@@ -83,7 +109,7 @@ Create `apps/mobile/types/globals.d.ts`:
 declare const __PERSEUS_API_BASE__: string;
 ```
 
-Extend the existing `apps/mobile/webpack.config.js` after `webpack.init(env)` without replacing its current aliases:
+In `apps/mobile/webpack.config.js`, keep the existing aliases and add:
 
 ```js
 const apiBase = process.env.PERSEUS_MOBILE_API_BASE ?? 'http://localhost:4690';
@@ -96,25 +122,34 @@ webpack.chainWebpack((config) => {
 });
 ```
 
-Do not add runtime settings, dotenv, or another configuration service.
+Do not add dotenv/runtime settings plumbing.
 
-- [ ] **Step 2: Write failing API service tests**
+- [ ] **Step 3: Declare narrow iOS local-network intent**
 
-Create `apps/mobile/app/api/puzzleApi.test.ts` with this typed fixture and the three behavioral cases below:
+Add to the top-level `<dict>` in `apps/mobile/App_Resources/iOS/Info.plist`:
+
+```xml
+<key>NSAppTransportSecurity</key>
+<dict>
+	<key>NSAllowsLocalNetworking</key>
+	<true/>
+</dict>
+<key>NSLocalNetworkUsageDescription</key>
+<string>Connect to a local Perseus development server.</string>
+```
+
+Do not add `NSAllowsArbitraryLoads` or remote-domain insecure exceptions. Production/TestFlight configuration must point `PERSEUS_MOBILE_API_BASE` at HTTPS.
+
+- [ ] **Step 4: Write RED API tests using a fully valid shared puzzle fixture**
+
+Create `apps/mobile/app/api/puzzleApi.test.ts`. Use complete `EdgeConfig` objects and string `imagePath` fields so the fixture genuinely passes `validatePuzzleMetadata()`.
+
+Core fixture:
 
 ```ts
-import { describe, expect, it } from 'vitest';
-import type { ReadyPuzzle } from '@perseus/types';
-import { createPuzzleApi } from './puzzleApi';
+import type { ReadyPuzzleDetail } from '@perseus/types';
 
-const flatEdges = {
-	top: 'flat',
-	right: 'flat',
-	bottom: 'flat',
-	left: 'flat'
-} as const;
-
-function readyPuzzle(id = 'p1'): ReadyPuzzle & { hasReference: boolean } {
+export function readyPuzzle(id = 'p1'): ReadyPuzzleDetail {
 	return {
 		id,
 		name: 'Test Puzzle',
@@ -124,141 +159,143 @@ function readyPuzzle(id = 'p1'): ReadyPuzzle & { hasReference: boolean } {
 		imageWidth: 800,
 		imageHeight: 800,
 		createdAt: 1,
-		pieces: [
-			{ id: 0, puzzleId: id, correctX: 0, correctY: 0, edges: flatEdges, imagePath: 'ignored/0' },
-			{ id: 1, puzzleId: id, correctX: 1, correctY: 0, edges: flatEdges, imagePath: 'ignored/1' },
-			{ id: 2, puzzleId: id, correctX: 0, correctY: 1, edges: flatEdges, imagePath: 'ignored/2' },
-			{ id: 3, puzzleId: id, correctX: 1, correctY: 1, edges: flatEdges, imagePath: 'ignored/3' }
-		],
 		version: 1,
 		status: 'ready',
-		hasReference: true
+		hasReference: true,
+		pieces: [
+			{
+				id: 0,
+				puzzleId: id,
+				correctX: 0,
+				correctY: 0,
+				edges: { top: 'flat', right: 'tab', bottom: 'blank', left: 'flat' },
+				imagePath: 'pieces/0.png'
+			},
+			{
+				id: 1,
+				puzzleId: id,
+				correctX: 1,
+				correctY: 0,
+				edges: { top: 'flat', right: 'flat', bottom: 'tab', left: 'blank' },
+				imagePath: 'pieces/1.png'
+			},
+			{
+				id: 2,
+				puzzleId: id,
+				correctX: 0,
+				correctY: 1,
+				edges: { top: 'tab', right: 'blank', bottom: 'flat', left: 'flat' },
+				imagePath: 'pieces/2.png'
+			},
+			{
+				id: 3,
+				puzzleId: id,
+				correctX: 1,
+				correctY: 1,
+				edges: { top: 'blank', right: 'flat', bottom: 'flat', left: 'tab' },
+				imagePath: 'pieces/3.png'
+			}
+		]
 	};
 }
+```
 
-describe('createPuzzleApi', () => {
-	it('uses the existing cursor without inventing mobile pagination state', async () => {
-		const urls: string[] = [];
-		const api = createPuzzleApi({
-			baseUrl: 'https://api.example.test/',
-			requestJson: async (url) => {
-				urls.push(url);
-				return { puzzles: [], total: 20, offset: 0, limit: 20, nextCursor: 'next-1' };
-			}
-		});
+Pin these behaviors:
 
-		const page = await api.listPuzzles('cursor-1');
-		expect(urls).toEqual(['https://api.example.test/api/puzzles?cursor=cursor-1']);
-		expect(page.nextCursor).toBe('next-1');
+```ts
+it('propagates the existing cursor contract', async () => {
+	const urls: string[] = [];
+	const api = createPuzzleApi({
+		baseUrl: 'https://api.example.test/',
+		requestJson: async (url) => {
+			urls.push(url);
+			return { puzzles: [], total: 0, offset: 0, limit: 20, nextCursor: 'next' };
+		}
 	});
+	await api.listPuzzles('cursor-1');
+	expect(urls).toEqual(['https://api.example.test/api/puzzles?cursor=cursor-1']);
+});
 
-	it('accepts a ready puzzle detail response', async () => {
-		const api = createPuzzleApi({
-			baseUrl: 'https://api.example.test',
-			requestJson: async () => readyPuzzle()
-		});
-		await expect(api.getPuzzle('p1')).resolves.toMatchObject({ id: 'p1', status: 'ready' });
+it('rejects malformed ready metadata through validatePuzzleMetadata', async () => {
+	const malformed = readyPuzzle();
+	(malformed.pieces[0] as unknown as Record<string, unknown>).imagePath = 42;
+	const api = createPuzzleApi({
+		baseUrl: 'https://api.example.test',
+		requestJson: async () => malformed
 	});
+	await expect(api.getPuzzle('p1')).rejects.toThrow('invalid_puzzle_response');
+});
 
-	it('rejects a non-ready puzzle before download orchestration', async () => {
-		const api = createPuzzleApi({
-			baseUrl: 'https://api.example.test',
-			requestJson: async () => ({ ...readyPuzzle(), status: 'processing' })
-		});
-		await expect(api.getPuzzle('p1')).rejects.toThrow('puzzle_not_ready');
+it('requires the public detail hasReference field', async () => {
+	const { hasReference: _, ...withoutReference } = readyPuzzle();
+	void _;
+	const api = createPuzzleApi({
+		baseUrl: 'https://api.example.test',
+		requestJson: async () => withoutReference
 	});
+	await expect(api.getPuzzle('p1')).rejects.toThrow('invalid_puzzle_response');
+});
+
+it('rejects a valid non-ready puzzle before download orchestration', async () => {
+	const ready = readyPuzzle();
+	const processing = {
+		...ready,
+		status: 'processing' as const,
+		pieces: [],
+		progress: { totalPieces: 4, generatedPieces: 0, updatedAt: 1 }
+	};
+	delete (processing as Record<string, unknown>).hasReference;
+	const api = createPuzzleApi({
+		baseUrl: 'https://api.example.test',
+		requestJson: async () => processing
+	});
+	await expect(api.getPuzzle('p1')).rejects.toThrow('puzzle_not_ready');
 });
 ```
 
-- [ ] **Step 3: Run the focused test and verify RED**
+Also test requested-ID mismatch.
+
+- [ ] **Step 5: Verify RED**
 
 ```bash
 cd apps/mobile
 bunx vitest run app/api/puzzleApi.test.ts
 ```
 
-Expected: FAIL because `./puzzleApi` does not exist.
+Expected: FAIL because `puzzleApi.ts` does not exist.
 
-- [ ] **Step 4: Implement the API service**
+- [ ] **Step 6: Implement `PuzzleApi` with the shared validator**
 
-Create `puzzleApi.ts` with bounded runtime validation for only the fields HPA-2 uses:
+Core `getPuzzle()` behavior:
 
 ```ts
-import type { PuzzleListResponse, PuzzleSummary, ReadyPuzzle } from '@perseus/types';
+import {
+	validatePuzzleMetadata,
+	type PuzzleListResponse,
+	type ReadyPuzzleDetail
+} from '@perseus/types';
 
-export interface PublicReadyPuzzle extends ReadyPuzzle {
-	hasReference?: boolean;
-}
-
-export type PuzzleJsonRequest = (url: string) => Promise<unknown>;
-
-export interface PuzzleApi {
-	listPuzzles(cursor?: string): Promise<PuzzleListResponse>;
-	getPuzzle(puzzleId: string): Promise<PublicReadyPuzzle>;
-	thumbnailUrl(puzzleId: string): string;
-	referenceUrl(puzzleId: string): string;
-	pieceImageUrl(puzzleId: string, pieceId: number): string;
-}
-
-function record(value: unknown): Record<string, unknown> | null {
-	return value !== null && typeof value === 'object' && !Array.isArray(value)
-		? (value as Record<string, unknown>)
-		: null;
-}
-
-function isReadySummary(value: unknown): value is PuzzleSummary {
-	const item = record(value);
-	return !!item &&
-		typeof item.id === 'string' &&
-		typeof item.name === 'string' &&
-		typeof item.pieceCount === 'number' &&
-		item.status === 'ready';
-}
-
-export function createPuzzleApi(options: {
-	baseUrl: string;
-	requestJson: PuzzleJsonRequest;
-}): PuzzleApi {
-	const baseUrl = options.baseUrl.replace(/\/$/, '');
-
-	return {
-		async listPuzzles(cursor) {
-			const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : '';
-			const value = record(await options.requestJson(`${baseUrl}/api/puzzles${query}`));
-			if (
-				!value ||
-				!Array.isArray(value.puzzles) ||
-				!value.puzzles.every(isReadySummary) ||
-				typeof value.total !== 'number' ||
-				typeof value.offset !== 'number' ||
-				typeof value.limit !== 'number' ||
-				(value.nextCursor !== undefined && typeof value.nextCursor !== 'string')
-			) {
-				throw new Error('invalid_puzzle_list_response');
-			}
-			return value as unknown as PuzzleListResponse;
-		},
-		async getPuzzle(puzzleId) {
-			const value = record(
-				await options.requestJson(`${baseUrl}/api/puzzles/${encodeURIComponent(puzzleId)}`)
-			);
-			if (!value || value.status !== 'ready') throw new Error('puzzle_not_ready');
-			if (value.id !== puzzleId || !Array.isArray(value.pieces)) {
-				throw new Error('invalid_puzzle_response');
-			}
-			return value as unknown as PublicReadyPuzzle;
-		},
-		thumbnailUrl: (puzzleId) => `${baseUrl}/api/puzzles/${encodeURIComponent(puzzleId)}/thumbnail`,
-		referenceUrl: (puzzleId) => `${baseUrl}/api/puzzles/${encodeURIComponent(puzzleId)}/reference`,
-		pieceImageUrl: (puzzleId, pieceId) =>
-			`${baseUrl}/api/puzzles/${encodeURIComponent(puzzleId)}/pieces/${pieceId}/image`
-	};
+async function getPuzzle(puzzleId: string): Promise<ReadyPuzzleDetail> {
+	const value = await options.requestJson(
+		`${baseUrl}/api/puzzles/${encodeURIComponent(puzzleId)}`
+	);
+	if (!validatePuzzleMetadata(value)) {
+		throw new Error('invalid_puzzle_response');
+	}
+	if (value.status !== 'ready') {
+		throw new Error('puzzle_not_ready');
+	}
+	const detail = value as unknown as Record<string, unknown>;
+	if (value.id !== puzzleId || typeof detail.hasReference !== 'boolean') {
+		throw new Error('invalid_puzzle_response');
+	}
+	return value as ReadyPuzzleDetail;
 }
 ```
 
-The deeper grid/piece/file validation belongs to the mobile manifest in Task 2. Do not copy web auth/admin/error-client machinery.
+`listPuzzles()` validates only the list envelope fields HPA-2 uses (`puzzles`, `total`, `offset`, `limit`, optional `nextCursor`). URL helpers follow the existing web endpoint pattern but are mobile-local.
 
-- [ ] **Step 5: Implement the NativeScript JSON adapter**
+- [ ] **Step 7: Implement NativeScript JSON transport**
 
 Create `nativePuzzleHttp.ts`:
 
@@ -276,22 +313,68 @@ export const nativePuzzleJsonRequest: PuzzleJsonRequest = async (url) => {
 };
 ```
 
-- [ ] **Step 6: Run GREEN checks**
+No auth, retry, or download behavior belongs here.
+
+- [ ] **Step 8: Run unit/type gates**
 
 ```bash
+bun run --cwd packages/types test:unit
 cd apps/mobile
 bunx vitest run app/api/puzzleApi.test.ts
+bun run test:unit
 cd ../..
 bunx tsc --project apps/mobile/tsconfig.json --noEmit
 ```
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 9: Run Native Gate A before proceeding**
+
+Start a reachable API with at least one ready puzzle:
 
 ```bash
-git add apps/mobile/package.json apps/mobile/webpack.config.js apps/mobile/types/globals.d.ts apps/mobile/app/api bun.lock
-git commit -m "feat(mobile): add public puzzle API client"
+bun run dev --filter=@perseus/api
+```
+
+Temporarily add this to `apps/mobile/app/App.svelte`:
+
+```ts
+import { onMount } from 'svelte';
+import { nativePuzzleJsonRequest } from './api/nativePuzzleHttp';
+
+onMount(async () => {
+	const result = await nativePuzzleJsonRequest(`${__PERSEUS_API_BASE__}/api/puzzles`);
+	console.log('HPA2_JSON_PROBE', JSON.stringify(result));
+});
+```
+
+Run on the iPad simulator:
+
+```bash
+cd apps/mobile
+PERSEUS_MOBILE_API_BASE=http://localhost:4690 ns run ios --no-hmr
+```
+
+Pass condition: the console contains `HPA2_JSON_PROBE` with the real list response and no ATS/local-network transport error.
+
+Revert the temporary `App.svelte` probe before committing:
+
+```bash
+git checkout -- apps/mobile/app/App.svelte
+rg "HPA2_JSON_PROBE" apps/mobile/app/App.svelte
+```
+
+Expected: `rg` returns no match.
+
+If this gate fails after the plist declaration, stop HPA-2 and resolve the real iOS transport/configuration issue before Task 2.
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add packages/types/src/core.ts apps/mobile/package.json bun.lock \
+	apps/mobile/webpack.config.js apps/mobile/App_Resources/iOS/Info.plist \
+	apps/mobile/types/globals.d.ts apps/mobile/app/api
+git commit -m "feat(mobile): add validated public puzzle API client"
 ```
 
 ---
@@ -303,8 +386,6 @@ git commit -m "feat(mobile): add public puzzle API client"
 - Create: `apps/mobile/app/library/downloadManifest.test.ts`
 
 **Interfaces:**
-- Consumes: `PublicReadyPuzzle` from Task 1.
-- Produces:
 
 ```ts
 export interface DownloadManifestV1 {
@@ -332,7 +413,7 @@ export interface DownloadedAssetFiles {
 }
 
 export function createDownloadManifest(
-	puzzle: PublicReadyPuzzle,
+	puzzle: ReadyPuzzleDetail,
 	files: DownloadedAssetFiles,
 	downloadedAt: number
 ): DownloadManifestV1;
@@ -343,44 +424,49 @@ export function sessionSpecFromManifest(manifest: DownloadManifestV1): SessionPu
 
 - [ ] **Step 1: Write manifest RED tests**
 
-Create a 2x2 test detail using the same typed `ReadyPuzzle` shape from Task 1 and assert:
+Use the valid Task 1 ready fixture and assert the manifest drops server-only fields and projects an API-origin session spec:
 
 ```ts
-it('drops remote image paths and projects an api SessionPuzzleSpec', () => {
-	const manifest = createDownloadManifest(
-		readyPuzzle(),
-		{
-			thumbnailFile: 'thumbnail.webp',
-			referenceFile: 'reference.jpg',
-			pieceFiles: {
-				'0': 'pieces/0.png',
-				'1': 'pieces/1.png',
-				'2': 'pieces/2.png',
-				'3': 'pieces/3.png'
-			}
-		},
-		1234
-	);
+const manifest = createDownloadManifest(
+	readyPuzzle(),
+	{
+		thumbnailFile: 'thumbnail.webp',
+		referenceFile: 'reference.jpg',
+		pieceFiles: {
+			'0': 'pieces/0.png',
+			'1': 'pieces/1.png',
+			'2': 'pieces/2.png',
+			'3': 'pieces/3.png'
+		}
+	},
+	1234
+);
 
-	expect(manifest.schemaVersion).toBe(1);
-	expect(JSON.stringify(manifest)).not.toContain('imagePath');
-	expect(sessionSpecFromManifest(manifest)).toEqual({
-		puzzleId: 'p1',
-		source: 'api',
-		pieceCount: 4,
-		gridCols: 2,
-		gridRows: 2,
-		pieces: [
-			{ id: 0, correctX: 0, correctY: 0 },
-			{ id: 1, correctX: 1, correctY: 0 },
-			{ id: 2, correctX: 0, correctY: 1 },
-			{ id: 3, correctX: 1, correctY: 1 }
-		]
-	});
+expect(JSON.stringify(manifest)).not.toContain('imagePath');
+expect(sessionSpecFromManifest(manifest)).toEqual({
+	puzzleId: 'p1',
+	source: 'api',
+	pieceCount: 4,
+	gridCols: 2,
+	gridRows: 2,
+	pieces: [
+		{ id: 0, correctX: 0, correctY: 0 },
+		{ id: 1, correctX: 1, correctY: 0 },
+		{ id: 2, correctX: 0, correctY: 1 },
+		{ id: 3, correctX: 1, correctY: 1 }
+	]
 });
 ```
 
-Add separate rejection tests for schema version 2, non-positive dimensions, `pieceCount !== gridCols * gridRows`, duplicate/missing IDs, duplicate/out-of-bounds cells, incomplete `pieceFiles`, and unsafe relative paths (`/absolute.png`, `../piece.png`, `pieces\\0.png`, `pieces/../0.png`).
+Add rejection tests for:
+
+- `schemaVersion: 2`;
+- non-positive image dimensions;
+- `pieceCount !== gridCols * gridRows`;
+- duplicate/missing piece IDs;
+- duplicate or out-of-bounds canonical cells;
+- missing/extra piece-file mapping;
+- `/absolute.png`, `../piece.png`, `pieces\\0.png`, and `pieces/../0.png`.
 
 - [ ] **Step 2: Verify RED**
 
@@ -391,11 +477,9 @@ bunx vitest run app/library/downloadManifest.test.ts
 
 Expected: FAIL because `downloadManifest.ts` does not exist.
 
-- [ ] **Step 3: Implement the manifest codec**
+- [ ] **Step 3: Implement the disk-only codec**
 
-Import `PUZZLE_CATEGORIES`, `isPuzzleAspectRatio`, and the shared types from `@perseus/types`; import `SessionPuzzleSpec` from `@perseus/game-core`.
-
-Use this safe-path rule:
+Use a strict local path rule:
 
 ```ts
 function isSafeRelativeFile(value: unknown): value is string {
@@ -413,29 +497,11 @@ function isSafeRelativeFile(value: unknown): value is string {
 }
 ```
 
-`parseDownloadManifest()` must require all of these invariants before returning a fresh typed object:
+Require IDs exactly `0..pieceCount - 1`, one unique in-bounds canonical cell per piece, exact piece-file keys, optional valid category/aspect ratio, and safe local filenames. `createDownloadManifest()` constructs only local fields and immediately calls `parseDownloadManifest()`.
 
-```ts
-manifest.schemaVersion === 1
-manifest.pieceCount === manifest.gridCols * manifest.gridRows
-manifest.pieces.length === manifest.pieceCount
-new Set(manifest.pieces.map((piece) => piece.id)).size === manifest.pieceCount
-new Set(manifest.pieces.map((piece) => `${piece.correctX}:${piece.correctY}`)).size === manifest.pieceCount
-Object.keys(manifest.pieceFiles).length === manifest.pieceCount
-```
+Do not persist server `status`, `version`, `idempotencyKey`, `edges`, or remote `imagePath` values.
 
-Also require:
-
-- integer IDs exactly `0..pieceCount - 1`;
-- integer `correctX/correctY` inside the grid;
-- finite positive `imageWidth`/`imageHeight`;
-- optional category in `PUZZLE_CATEGORIES`;
-- optional aspect ratio accepted by `isPuzzleAspectRatio()`;
-- a safe thumbnail/reference path and one safe `pieceFiles[String(id)]` for every piece.
-
-`createDownloadManifest()` constructs only the local fields from `PublicReadyPuzzle` plus downloaded filenames and immediately validates the result by calling `parseDownloadManifest()`.
-
-- [ ] **Step 4: Implement the game-core projection**
+- [ ] **Step 4: Implement `SessionPuzzleSpec` projection**
 
 ```ts
 export function sessionSpecFromManifest(manifest: DownloadManifestV1): SessionPuzzleSpec {
@@ -450,8 +516,6 @@ export function sessionSpecFromManifest(manifest: DownloadManifestV1): SessionPu
 }
 ```
 
-Do not persist server `status`, `version`, `idempotencyKey`, `edges`, or remote `imagePath` values.
-
 - [ ] **Step 5: Run GREEN checks and commit**
 
 ```bash
@@ -464,20 +528,17 @@ git add apps/mobile/app/library/downloadManifest.ts apps/mobile/app/library/down
 git commit -m "feat(mobile): define offline download manifest"
 ```
 
-Expected: all checks PASS.
-
 ---
 
-### Task 3: Stage, finalize, scan, and remove filesystem packages
+### Task 3: Add atomic downloads, read-only discovery, startup cleanup, and prove native file transfer/finalization
 
 **Files:**
 - Create: `apps/mobile/app/library/downloadStore.ts`
 - Create: `apps/mobile/app/library/downloadStore.test.ts`
 - Create: `apps/mobile/app/library/nativeDownloadFiles.ts`
+- Temporary only, reverted before commit: `apps/mobile/app/App.svelte`
 
 **Interfaces:**
-- Consumes: `PuzzleApi`, `PublicReadyPuzzle`, and Task 2 manifest helpers.
-- Produces:
 
 ```ts
 export interface DownloadCancellation {
@@ -525,8 +586,9 @@ export interface CorruptDownload {
 export type DownloadScanEntry = InstalledDownload | CorruptDownload;
 
 export interface DownloadStore {
+	cleanupStaleStaging(): Promise<void>;
 	downloadPuzzle(
-		puzzle: PublicReadyPuzzle,
+		puzzle: ReadyPuzzleDetail,
 		cancellation?: DownloadCancellation
 	): Promise<InstalledDownload>;
 	scanDownloads(): Promise<DownloadScanEntry[]>;
@@ -534,56 +596,45 @@ export interface DownloadStore {
 }
 ```
 
-- [ ] **Step 1: Write RED tests for atomic download ordering and concurrency**
+- [ ] **Step 1: Write RED tests for bounded download ordering and failure cleanup**
 
-Create an in-memory `DownloadFileOps` plus `AssetDownloader` that records operations and tracks active calls. Pin these behaviors:
+Use an in-memory `DownloadFileOps` and controllable `AssetDownloader`. Pin:
 
-```ts
-it('writes manifest last and moves staging only after every asset verifies', async () => {
-	const operations: string[] = [];
-	const store = createDownloadStore(fixtureDependencies(operations));
+- maximum active asset calls is exactly 5 for a 12+ piece fixture;
+- all asset writes finish before manifest write;
+- manifest write precedes final move;
+- failed/cancelled/zero-byte/move-failed downloads have no finalized package;
+- after one request rejects while another request remains in-flight, `.staging/p1` is not removed until the in-flight request settles.
 
-	await store.downloadPuzzle(readyPuzzle());
-
-	const manifestWrite = operations.findIndex(
-		(entry) => entry.startsWith('write:') && entry.endsWith('/manifest.json')
-	);
-	const finalMove = operations.findIndex(
-		(entry) => entry.startsWith('move:') && entry.includes('/.staging/p1->')
-	);
-	const lastAsset = Math.max(
-		...operations.map((entry, index) => (entry.startsWith('asset:') ? index : -1))
-	);
-
-	expect(lastAsset).toBeLessThan(manifestWrite);
-	expect(manifestWrite).toBeLessThan(finalMove);
-});
-```
-
-With a puzzle containing at least 12 pieces, block the downloader promises until five calls are active, then release them. Assert `maxActive === 5` and never greater than 5.
-
-Add tests that any asset rejection, cooperative cancellation, zero-byte file, or failed move leaves no finalized package and removes `.staging/p1`.
-
-For the failure case, deliberately keep another asset promise in flight after the first one rejects and assert the staging `removeDir` operation occurs only after that second promise settles. This fences the cleanup race.
-
-- [ ] **Step 2: Write RED tests for scan/corrupt/remove behavior**
-
-Seed the fake filesystem directly, without an index. Assert:
+Ordering assertion:
 
 ```ts
-it('derives installed downloads from finalized manifests', async () => {
-	const entries = await store.scanDownloads();
-	expect(entries).toEqual([
-		expect.objectContaining({
-			kind: 'installed',
-			manifest: expect.objectContaining({ puzzleId: 'p1' })
-		})
-	]);
-	expect(fake.readPaths.some((value) => value.includes('downloads.json'))).toBe(false);
-});
+expect(lastAssetOperation).toBeLessThan(manifestWriteOperation);
+expect(manifestWriteOperation).toBeLessThan(finalMoveOperation);
 ```
 
-Add cases for stale `.staging/p1` cleanup, missing manifest, malformed/unsupported manifest, missing/zero-byte referenced piece, folder-name/manifest-ID mismatch, and `removeDownload('p1')` touching only `downloads/p1`.
+- [ ] **Step 2: Write RED tests proving scan is read-only and cleanup is separate**
+
+Seed both `.staging/in-progress` and finalized package directories.
+
+Assert:
+
+```ts
+await store.scanDownloads();
+expect(fileOps.removedDirectories).not.toContain('/downloads/.staging/in-progress');
+
+await store.cleanupStaleStaging();
+expect(fileOps.removedDirectories).toContain('/downloads/.staging/in-progress');
+```
+
+Also test:
+
+- missing downloads root => `scanDownloads()` returns `[]` without creating it;
+- valid finalized manifest => installed row;
+- missing/malformed/unsupported manifest => corrupt row;
+- missing/zero-byte referenced asset => corrupt row;
+- folder-name/manifest-ID mismatch => corrupt row;
+- `removeDownload('p1')` touches only finalized `downloads/p1`.
 
 - [ ] **Step 3: Verify RED**
 
@@ -594,16 +645,15 @@ bunx vitest run app/library/downloadStore.test.ts
 
 Expected: FAIL because `downloadStore.ts` does not exist.
 
-- [ ] **Step 4: Implement a bounded scheduler that settles in-flight work before throwing**
+- [ ] **Step 4: Implement the five-worker scheduler so in-flight writes settle before failure escapes**
 
-Use exactly this control shape so the outer `finally` cannot remove staging while another started request is still writing:
+Use this shape:
 
 ```ts
 const ASSET_CONCURRENCY = 5;
 
 async function mapWithConcurrency<T, R>(
 	items: readonly T[],
-	limit: number,
 	worker: (item: T) => Promise<R>,
 	isCancelled: () => boolean
 ): Promise<R[]> {
@@ -619,10 +669,8 @@ async function mapWithConcurrency<T, R>(
 				stopped = true;
 				return;
 			}
-
 			const index = nextIndex++;
 			if (index >= items.length) return;
-
 			try {
 				results[index] = await worker(items[index]!);
 			} catch (error) {
@@ -633,16 +681,15 @@ async function mapWithConcurrency<T, R>(
 	}
 
 	await Promise.all(
-		Array.from({ length: Math.min(limit, items.length) }, () => runWorker())
+		Array.from({ length: Math.min(ASSET_CONCURRENCY, items.length) }, () => runWorker())
 	);
-
 	if (isCancelled()) firstError ??= new Error('download_cancelled');
 	if (firstError !== null) throw firstError;
 	return results;
 }
 ```
 
-Already-started requests finish before `Promise.all()` resolves; no new work is scheduled after the first error/cancel flag.
+Already-started work finishes before the outer `finally` can clean staging; no new work is scheduled after the first error/cancel observation.
 
 - [ ] **Step 5: Implement `downloadPuzzle()`**
 
@@ -660,61 +707,42 @@ Already-started requests finish before `Promise.all()` resolves; no new work is 
 
 For one puzzle:
 
-1. validate `puzzle.id` is one non-empty path segment with no `/`, `\\`, `.`, or `..`;
-2. reject with `download_already_installed` if `downloads/<id>` already exists;
-3. remove stale `downloads/.staging/<id>` and create its `pieces` child;
-4. build one asset work list for thumbnail, optional reference when `hasReference === true`, and every piece ID;
-5. run the list through `mapWithConcurrency(..., 5, ...)`;
-6. turn returned extensions into relative names (`thumbnail.png`, `reference.jpg`, `pieces/0.webp`, etc.);
-7. verify `fileSize(path) > 0` for every expected file;
-8. create/validate the manifest and write `manifest.json` last;
-9. move `.staging/<id>` to `downloads/<id>`;
-10. mark `finalized = true` and return resolved absolute paths.
+1. validate `puzzle.id` as one safe path segment;
+2. reject `download_already_installed` if `downloads/<id>` exists;
+3. remove stale staging for **that same ID only** and create `.staging/<id>/pieces`;
+4. build thumbnail + optional reference + all piece asset work;
+5. run through the five-worker scheduler;
+6. map Content-Type extensions into relative names;
+7. verify every expected file is non-empty;
+8. create/validate manifest;
+9. write `manifest.json` last;
+10. move `.staging/<id>` to finalized `downloads/<id>`;
+11. return resolved installed paths.
 
-Wrap steps 3-9 in `try/finally`; if `finalized` is false, remove only that puzzle's staging directory after the scheduler has settled.
+In `finally`, remove only `.staging/<id>` when finalization did not succeed.
 
-- [ ] **Step 6: Implement direct scan and removal**
+- [ ] **Step 6: Implement separate startup cleanup and read-only scan**
 
-`scanDownloads()` must:
+`cleanupStaleStaging()`:
 
-- ensure `downloads/` and `.staging/` exist;
-- remove every direct child directory of `.staging/` before scanning finalized packages;
-- enumerate only direct child directories of `downloads/` except `.staging`;
-- parse each `manifest.json` and require the folder name equals `manifest.puzzleId`;
-- verify every referenced file is present and non-empty;
-- resolve `thumbnailPath`, optional `referencePath`, and `piecePaths` with `fileOps.join()`;
-- catch errors per package and return `CorruptDownload` without aborting other rows.
+- return if `.staging` does not exist;
+- list only direct children of `.staging`;
+- remove those abandoned child directories;
+- never inspect finalized packages.
 
-`removeDownload(puzzleId)` validates the single segment and removes only `downloads/<puzzleId>`. It has no session dependency by design.
+`scanDownloads()`:
 
-- [ ] **Step 7: Implement the NativeScript filesystem and asset adapter**
+- return `[]` if `downloads/` does not exist;
+- never call `ensureDir`, `removeDir`, or `cleanupStaleStaging`;
+- enumerate finalized direct child directories and skip `.staging`;
+- parse each manifest and verify required files are non-empty;
+- catch corruption per package so one bad package does not abort the list.
 
-Create `nativeDownloadFiles.ts` with `File`, `Folder`, `Http`, `isAndroid`, `isIOS`, and `path` from `@nativescript/core`.
+`removeDownload()` removes only the finalized package and has no session dependency.
 
-Use exact image mapping:
+- [ ] **Step 7: Implement NativeScript binary/file operations**
 
-```ts
-function header(
-	headers: Record<string, string> | undefined,
-	name: string
-): string | undefined {
-	const target = name.toLowerCase();
-	return Object.entries(headers ?? {}).find(([key]) => key.toLowerCase() === target)?.[1];
-}
-
-function imageExtension(contentType: string | undefined): DownloadedAsset['extension'] {
-	switch (contentType?.split(';', 1)[0]?.trim().toLowerCase()) {
-		case 'image/png': return '.png';
-		case 'image/jpeg': return '.jpg';
-		case 'image/webp': return '.webp';
-		default: throw new Error('unsupported_download_image_type');
-	}
-}
-```
-
-If NativeScript's header value type is wider than `string`, normalize it to `String(value)` at this boundary rather than weakening `DownloadStore` types.
-
-`downloadNativeAsset(url, destinationBasePath)`:
+`downloadNativeAsset()` uses the real response Content-Type:
 
 ```ts
 const response = await Http.request({ url, method: 'GET' });
@@ -722,31 +750,46 @@ if (response.statusCode < 200 || response.statusCode >= 300) {
 	throw new Error(`download_http_${response.statusCode}`);
 }
 if (!response.content) throw new Error('download_empty_response');
-const extension = imageExtension(header(response.headers as Record<string, string>, 'content-type'));
+const extension = imageExtension(readHeader(response.headers, 'content-type'));
 const file = response.content.toFile(destinationBasePath + extension);
 if (!file || file.size <= 0) throw new Error('download_empty_file');
 return { extension, bytes: file.size };
 ```
 
-For `moveDir(fromPath, toPath)`, use one same-volume native move:
+Content-Type mapping is only:
 
 ```ts
-if (isIOS) {
-	const moved = NSFileManager.defaultManager.moveItemAtPathToPathError(fromPath, toPath, null);
-	if (!moved || !Folder.exists(toPath)) throw new Error('download_directory_move_failed');
-	return;
-}
-if (isAndroid) {
-	const moved = new java.io.File(fromPath).renameTo(new java.io.File(toPath));
-	if (!moved || !Folder.exists(toPath)) throw new Error('download_directory_move_failed');
-	return;
-}
-throw new Error('download_directory_move_unsupported');
+'image/png'  -> '.png'
+'image/jpeg' -> '.jpg'
+'image/webp' -> '.webp'
 ```
 
-Implement the remaining `DownloadFileOps` directly with `Folder.fromPath()/exists()/getEntities()/remove()`, `File.fromPath()/exists()/readText()/writeText()`, and `path.join()`. Do not add a filesystem package or copy/delete finalization path.
+For iOS `moveDir()`, preserve one same-volume native move. Try the path bridge first and the URL bridge second:
 
-- [ ] **Step 8: Run GREEN checks and commit**
+```ts
+function moveIOSDirectory(fromPath: string, toPath: string): void {
+	const manager = NSFileManager.defaultManager;
+	try {
+		const moved = manager.moveItemAtPathToPathError(fromPath, toPath, null);
+		if (moved && Folder.exists(toPath)) return;
+	} catch {
+		// Probe the equivalent URL bridge below.
+	}
+
+	const moved = manager.moveItemAtURLToURLError(
+		NSURL.fileURLWithPath(fromPath),
+		NSURL.fileURLWithPath(toPath),
+		null
+	);
+	if (!moved || !Folder.exists(toPath)) {
+		throw new Error('download_directory_move_failed');
+	}
+}
+```
+
+Android keeps the direct same-volume `java.io.File.renameTo()` path. Do not add copy/delete finalization.
+
+- [ ] **Step 8: Run unit/type gates**
 
 ```bash
 cd apps/mobile
@@ -754,28 +797,92 @@ bunx vitest run app/library/downloadStore.test.ts
 bun run test:unit
 cd ../..
 bunx tsc --project apps/mobile/tsconfig.json --noEmit
-git add apps/mobile/app/library/downloadStore.ts apps/mobile/app/library/downloadStore.test.ts apps/mobile/app/library/nativeDownloadFiles.ts
-git commit -m "feat(mobile): add atomic puzzle downloads"
 ```
 
 Expected: PASS.
 
+- [ ] **Step 9: Run Native Gate B before Task 4/UI**
+
+Use a reachable API containing a ready puzzle. Temporarily add an `onMount` probe to `App.svelte` that:
+
+```ts
+const api = createPuzzleApi({
+	baseUrl: __PERSEUS_API_BASE__,
+	requestJson: nativePuzzleJsonRequest
+});
+const list = await api.listPuzzles();
+const first = list.puzzles.find((puzzle) => puzzle.status === 'ready');
+if (!first) throw new Error('hpa2_probe_needs_ready_puzzle');
+const puzzle = await api.getPuzzle(first.id);
+
+const root = path.join(knownFolders.documents().path, 'perseus', 'hpa2-native-probe');
+const staging = path.join(root, 'staging');
+const finalized = path.join(root, 'finalized');
+const fileOps = createNativeDownloadFileOps();
+await fileOps.removeDir(root);
+await fileOps.ensureDir(staging);
+await fileOps.writeText(path.join(staging, 'sentinel.txt'), 'ok');
+
+const asset = await downloadNativeAsset(api.thumbnailUrl(puzzle.id), path.join(staging, 'thumbnail'));
+if (asset.bytes <= 0) throw new Error('hpa2_probe_empty_thumbnail');
+
+await fileOps.moveDir(staging, finalized);
+if ((await fileOps.readText(path.join(finalized, 'sentinel.txt'))) !== 'ok') {
+	throw new Error('hpa2_probe_move_failed');
+}
+console.log('HPA2_FILE_PROBE', puzzle.id, asset.extension, asset.bytes);
+await fileOps.removeDir(root);
+```
+
+Run on the same iPad simulator/device used for HPA-1:
+
+```bash
+cd apps/mobile
+PERSEUS_MOBILE_API_BASE=http://localhost:4690 ns run ios --no-hmr
+```
+
+Pass conditions:
+
+- `HPA2_FILE_PROBE` logs a non-zero byte count;
+- the staging directory moved successfully;
+- cleanup succeeds;
+- no temporary probe remains in the commit.
+
+Revert temporary `App.svelte` edits and verify:
+
+```bash
+git checkout -- apps/mobile/app/App.svelte
+rg "HPA2_FILE_PROBE|hpa2-native-probe" apps/mobile/app/App.svelte
+```
+
+Expected: no matches.
+
+If both iOS move bridge forms fail, stop HPA-2 here and revise finalization. Do not continue into UI with an unproven move or silently add copy/delete semantics.
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add apps/mobile/app/library/downloadStore.ts \
+	apps/mobile/app/library/downloadStore.test.ts \
+	apps/mobile/app/library/nativeDownloadFiles.ts
+git commit -m "feat(mobile): add atomic puzzle downloads"
+```
+
 ---
 
-### Task 4: Revalidate retained progress against downloaded metadata
+### Task 4: Derive all four saved-progress states without destructive reads
 
 **Files:**
 - Create: `apps/mobile/app/library/downloadedLibrary.ts`
 - Create: `apps/mobile/app/library/downloadedLibrary.test.ts`
 
 **Interfaces:**
-- Consumes: `InstalledDownload`, `SessionStorageAdapter`, `sessionSpecFromManifest()`, `validationContextFrom()`.
-- Produces:
 
 ```ts
 export type ProgressState =
 	| { kind: 'none' }
 	| { kind: 'resumable' }
+	| { kind: 'present' }
 	| { kind: 'invalid'; reason: string };
 
 export interface DownloadedPuzzleRow {
@@ -794,30 +901,19 @@ export function buildDownloadedRows(
 ): DownloadedPuzzleRow[];
 ```
 
-- [ ] **Step 1: Write RED integration tests with the real game-core validator**
+- [ ] **Step 1: Write RED integration tests using the real game-core codec**
 
-Use `createSessionStorageAdapter()` over an in-memory `SessionKeyValueStore`. Create a real 2x2 `PuzzleSession` with a fixed clock/run-ID factory, dispatch `start`, place piece 0 at `(0, 0)`, call `serializeSession()`, and save the snapshot through the adapter.
+Use `createSessionStorageAdapter()` over an in-memory `SessionKeyValueStore`.
 
-Assert the matching installed manifest is resumable:
+Cover:
 
-```ts
-expect(buildDownloadedRows([matchingInstall], storage)[0]?.progress).toEqual({
-	kind: 'resumable'
-});
-```
+1. no key => `{ kind: 'none' }`;
+2. active session with real user activity => `{ kind: 'resumable' }`;
+3. valid completed session => `{ kind: 'present' }`;
+4. valid loaded session without resumable activity => `{ kind: 'present' }`;
+5. same puzzle ID with changed canonical coordinates => `{ kind: 'invalid', reason: 'cross_field_violation' }`.
 
-With an empty storage adapter, assert `kind: 'none'`.
-
-Keep the same stable puzzle ID but change piece 0's canonical coordinate in a second manifest; assert the retained snapshot yields:
-
-```ts
-expect(buildDownloadedRows([changedInstall], storage)[0]?.progress).toEqual({
-	kind: 'invalid',
-	reason: 'cross_field_violation'
-});
-```
-
-This proves re-download validation is based on canonical metadata, not only puzzle ID.
+Build the completed case with a real `PuzzleSession`: start, place every piece correctly, serialize, and save through the real adapter. This specifically fences the old bug where `isResumable() === false` collapsed a completed save into `none`.
 
 - [ ] **Step 2: Verify RED**
 
@@ -828,45 +924,44 @@ bunx vitest run app/library/downloadedLibrary.test.ts
 
 Expected: FAIL because `downloadedLibrary.ts` does not exist.
 
-- [ ] **Step 3: Implement progress projection using game-core only**
+- [ ] **Step 3: Implement four-arm projection with `peekSession()` only**
 
 ```ts
-import { validationContextFrom, type SessionStorageAdapter } from '@perseus/game-core';
-import type { InstalledDownload } from './downloadStore';
-import { sessionSpecFromManifest } from './downloadManifest';
-
 export function buildDownloadedRows(
 	installed: readonly InstalledDownload[],
 	storage: SessionStorageAdapter
 ): DownloadedPuzzleRow[] {
 	return installed.map((install) => {
 		const context = validationContextFrom(sessionSpecFromManifest(install.manifest));
-		const loaded = storage.peekSession(install.manifest.puzzleId, context);
+		const result = storage.peekSession(install.manifest.puzzleId, context);
 
-		if (loaded.status === 'invalid') {
-			return { install, progress: { kind: 'invalid', reason: loaded.reason } };
+		if (result.status === 'missing') {
+			return { install, progress: { kind: 'none' } };
 		}
-		if (loaded.status === 'loaded' && storage.isResumable(loaded.snapshot)) {
+		if (result.status === 'invalid') {
+			return { install, progress: { kind: 'invalid', reason: result.reason } };
+		}
+		if (storage.isResumable(result.snapshot)) {
 			return { install, progress: { kind: 'resumable' } };
 		}
-		return { install, progress: { kind: 'none' } };
+		return { install, progress: { kind: 'present' } };
 	});
 }
 ```
 
-Do not call `loadSession()` here: `loadSession()` deletes invalid saves, while the Downloaded view must surface invalid retained progress for an explicit Discard action.
+Do not call `loadSession()`; invalid/present files remain owned by explicit Discard.
 
-- [ ] **Step 4: Prove download/progress independence**
+- [ ] **Step 4: Prove download/progress independence and matching re-download**
 
-Extend the integration test:
+Extend the test:
 
-1. save the resumable snapshot;
-2. call `downloadStore.removeDownload('p1')` on the Task 3 filesystem fake;
-3. assert the session key still exists;
-4. seed a newly finalized matching package with puzzle ID `p1`;
+1. save a resumable session;
+2. call `downloadStore.removeDownload('p1')` on the Task 3 fake;
+3. assert the session key remains;
+4. seed a newly finalized matching package with the same ID;
 5. assert `buildDownloadedRows()` returns `resumable` again.
 
-No production code should connect `DownloadStore` to session storage.
+No production code connects `DownloadStore` to session storage.
 
 - [ ] **Step 5: Run GREEN checks and commit**
 
@@ -879,11 +974,9 @@ git add apps/mobile/app/library/downloadedLibrary.ts apps/mobile/app/library/dow
 git commit -m "feat(mobile): derive downloaded progress state"
 ```
 
-Expected: PASS.
-
 ---
 
-### Task 5: Add the concrete Gallery / Downloaded page and app composition
+### Task 5: Add concrete Gallery / Downloaded UI and startup-only staging cleanup
 
 **Files:**
 - Modify: `apps/mobile/app/App.svelte`
@@ -893,7 +986,16 @@ Expected: PASS.
 - Create: `apps/mobile/app/library/Downloaded.svelte`
 
 **Interfaces:**
-- `Library.svelte` consumes:
+
+`App.svelte` owns only:
+
+```ts
+type MobileScreen =
+	| { kind: 'library' }
+	| { kind: 'gameplay'; launch: GameplayLaunch };
+```
+
+`Library.svelte` receives:
 
 ```ts
 export let puzzleApi: PuzzleApi;
@@ -902,17 +1004,9 @@ export let sessionStorage: SessionStorageAdapter;
 export let onLaunch: (launch: GameplayLaunch) => void;
 ```
 
-- `App.svelte` owns only:
+- [ ] **Step 1: Move concrete service composition into `App.svelte`**
 
-```ts
-type MobileScreen =
-	| { kind: 'library' }
-	| { kind: 'gameplay'; launch: GameplayLaunch };
-```
-
-- [ ] **Step 1: Move concrete service construction to `App.svelte`**
-
-Reuse the HPA-1 session path/adapter rather than recreating persistence:
+Reuse HPA-1 persistence:
 
 ```ts
 const perseusRoot = path.join(knownFolders.documents().path, 'perseus');
@@ -943,64 +1037,53 @@ const downloadStore = createDownloadStore({
 });
 ```
 
-Keep these values local to `App.svelte`; do not add Svelte context, a service container, or global store.
+Keep these concrete values local; no Svelte context/service container/global store.
 
-- [ ] **Step 2: Implement `Gallery.svelte` as presentation only**
+- [ ] **Step 2: Implement startup exactly once: cleanup, then read-only scan**
 
-Props are `puzzles`, `nextCursor`, `installedIds`, `downloadingPuzzleId`, `thumbnailUrl`, `onDownload`, and `onLoadMore`.
+In `Library.svelte` mount logic:
 
-Use the existing lower-case Svelte Native element style:
+```ts
+onMount(() => {
+	void initialize();
+});
 
-```svelte
-<scrollView>
-	<stackLayout>
-		{#each puzzles as puzzle (puzzle.id)}
-			<gridLayout columns="96,*,auto" rows="auto,auto" class="library-row">
-				<image
-					rowSpan="2"
-					width="88"
-					height="88"
-					stretch="aspectFill"
-					src={thumbnailUrl(puzzle.id)}
-				/>
-				<label col="1" text={puzzle.name} class="library-title" />
-				<label col="1" row="1" text={`${puzzle.pieceCount} pieces`} class="library-meta" />
-				<button
-					col="2"
-					rowSpan="2"
-					text={installedIds.has(puzzle.id)
-						? 'DOWNLOADED'
-						: downloadingPuzzleId === puzzle.id
-							? 'DOWNLOADING…'
-							: 'DOWNLOAD'}
-					isEnabled={!installedIds.has(puzzle.id) && downloadingPuzzleId === null}
-					on:tap={() => onDownload(puzzle.id)}
-				/>
-			</gridLayout>
-		{/each}
-		{#if nextCursor}
-			<button text="LOAD MORE" on:tap={onLoadMore} />
-		{/if}
-	</stackLayout>
-</scrollView>
+async function initialize(): Promise<void> {
+	await downloadStore.cleanupStaleStaging();
+	await Promise.all([refreshDownloads(), loadGallery(false)]);
+}
 ```
 
-Do not add search/category UI.
+`cleanupStaleStaging()` is not called from `refreshDownloads()`, tab changes, manual refresh, download completion, or Remove actions.
 
-- [ ] **Step 3: Implement `Downloaded.svelte` as presentation only**
+- [ ] **Step 3: Implement `Gallery.svelte` as presentation only**
 
-For each `DownloadedPuzzleRow`:
+Render name, piece count, remote thumbnail, and one Download state. Keep the existing cursor/load-more contract only.
 
-- show local thumbnail/name/piece count;
-- `resumable` => **RESUME**, **DISCARD PROGRESS**, **REMOVE DOWNLOAD**;
+Installed IDs are computed from **all finalized scan entries**, including corrupt packages, so Gallery cannot start a normal download over an existing corrupt directory.
+
+One active download disables other Download buttons. Cancel only flips the current `DownloadCancellation.cancelled` flag.
+
+- [ ] **Step 4: Implement all Downloaded progress actions explicitly**
+
+For valid installed rows:
+
 - `none` => **START**, **REMOVE DOWNLOAD**;
-- `invalid` => no Start/Resume; show **DISCARD PROGRESS** and **REMOVE DOWNLOAD**.
+- `resumable` => **RESUME**, **DISCARD PROGRESS**, **REMOVE DOWNLOAD**;
+- `present` => **DISCARD PROGRESS**, **REMOVE DOWNLOAD**; no Start/Resume until discard changes the state to `none`;
+- `invalid` => **DISCARD PROGRESS**, **REMOVE DOWNLOAD**; no Start/Resume.
 
-For each `CorruptDownload`, show the puzzle ID/reason and only **REMOVE & DOWNLOAD AGAIN** / **REMOVE DOWNLOAD**. Never construct a `GameplayLaunch` from a corrupt row.
+For corrupt rows:
 
-- [ ] **Step 4: Implement `Library.svelte` orchestration with one active job**
+- **REMOVE & DOWNLOAD AGAIN**;
+- **REMOVE DOWNLOAD**;
+- never construct a gameplay launch.
 
-Use only local component state:
+This makes explicit Discard the only way a present/invalid save is removed before a fresh Start.
+
+- [ ] **Step 5: Implement library orchestration with read-only refreshes**
+
+Local state only:
 
 ```ts
 let section: 'gallery' | 'downloaded' = 'gallery';
@@ -1013,11 +1096,11 @@ let cancellation: DownloadCancellation | null = null;
 let errorMessage: string | null = null;
 ```
 
-On mount, call `refreshDownloads()` and `loadGallery(false)` as separate operations. A failed online Gallery request sets an online error but must not clear disk-derived Downloaded state.
+`refreshDownloads()` calls only `scanDownloads()` and `buildDownloadedRows()`.
 
-`refreshDownloads()` calls `scanDownloads()`, splits valid/corrupt entries, and maps valid entries through `buildDownloadedRows()`. Compute `installedIds` from **all** scan entries, including corrupt packages, so Gallery cannot start a second normal download over an existing corrupt final directory.
+Because scan is read-only, a manual/tab refresh is safe even while an asset request is active; do not rely on UI comments or disabled refresh controls to protect staging.
 
-The one download path is:
+Download path:
 
 ```ts
 async function downloadPuzzle(puzzleId: string): Promise<void> {
@@ -1039,48 +1122,31 @@ async function downloadPuzzle(puzzleId: string): Promise<void> {
 }
 ```
 
-`cancelDownload()` sets only `cancellation.cancelled = true`.
+`discardProgress(id)` calls only `sessionStorage.clearSession(id)`, then read-only refresh.
 
-`discardProgress(id)` calls only `sessionStorage.clearSession(id)`, then refreshes.
+`removeDownload(id)` calls only `downloadStore.removeDownload(id)`, then read-only refresh.
 
-`removeDownload(id)` calls only `downloadStore.removeDownload(id)`, then refreshes.
+`removeAndDownloadAgain(id)` removes the corrupt finalized package, refreshes, then runs the normal `downloadPuzzle(id)` path.
 
-`removeAndDownloadAgain(id)` removes the corrupt package, refreshes, then calls the same `downloadPuzzle(id)` function. Do not add repair logic.
+A failed online Gallery request reports an online error but must not clear disk-derived Downloaded state.
 
-Do not call `scanDownloads()` from a manual/tab refresh while a download is active because startup scan removes stale staging. If a Refresh button exists, disable it when `downloadingPuzzleId !== null`.
+- [ ] **Step 6: Render the two sections and screen handoff**
 
-- [ ] **Step 5: Render the two sections with concrete controls**
+Keep the UI concrete: Gallery/Downloaded toggle buttons plus the two presentation components. Do not add a router or generic tab framework.
 
-Use one `<page>` with top buttons **GALLERY** / **DOWNLOADED** and a body that selects `Gallery.svelte` or `Downloaded.svelte`. While a job is active, show one **CANCEL DOWNLOAD** button. Show `errorMessage` as a text-wrapped label without modal/error framework extraction.
+`onLaunch` only receives:
 
-- [ ] **Step 6: Add only the CSS these components consume**
-
-Append a small set of classes in `app.css`, reusing the HPA-1 palette:
-
-```css
-.library-page {
-	background-color: #111820;
-	color: #f7fafc;
-}
-.library-row {
-	padding: 10;
-	margin: 4 8;
-	background-color: #1f2b38;
-}
-.library-title {
-	font-size: 18;
-	color: #f7fafc;
-}
-.library-meta,
-.library-error {
-	color: #cbd5e0;
-}
-.library-error {
-	padding: 8 12;
-}
+```ts
+{ install, mode: 'start' }
 ```
 
-Do not create a component library or responsive system.
+from a `none` row, or:
+
+```ts
+{ install, mode: 'resume' }
+```
+
+from a `resumable` row.
 
 - [ ] **Step 7: Run checks and commit**
 
@@ -1091,14 +1157,12 @@ cd ../..
 bunx tsc --project apps/mobile/tsconfig.json --noEmit
 bunx prettier --check apps/mobile/app apps/mobile/types apps/mobile/webpack.config.js apps/mobile/package.json
 git add apps/mobile/app/App.svelte apps/mobile/app/app.css apps/mobile/app/library
-git commit -m "feat(mobile): add gallery and downloaded library"
+git commit -m "feat(mobile): add explicit download library"
 ```
-
-Expected: PASS.
 
 ---
 
-### Task 6: Feed finalized package assets into gameplay and delete the HPA-1 fixture
+### Task 6: Replace the HPA-1 fixture with downloaded assets and non-destructive resume
 
 **Files:**
 - Modify: `apps/mobile/app/gameplay/Gameplay.svelte`
@@ -1110,7 +1174,8 @@ Expected: PASS.
 - Delete: `apps/mobile/app/assets/hpa-1/piece-3.png`
 
 **Interfaces:**
-- `Gameplay.svelte` props:
+
+`Gameplay.svelte` receives:
 
 ```ts
 export let launch: GameplayLaunch;
@@ -1118,7 +1183,7 @@ export let storage: SessionStorageAdapter;
 export let onExit: () => void;
 ```
 
-- `PuzzleCanvas.svelte` gains:
+`PuzzleCanvas.svelte` gains:
 
 ```ts
 export let piecePaths: Record<number, string>;
@@ -1126,7 +1191,7 @@ export let piecePaths: Record<number, string>;
 
 - [ ] **Step 1: Make Canvas image loading dynamic**
 
-Delete `PIECE_IDS` and `~/assets/hpa-1/...` from `PuzzleCanvas.svelte`. Replace `loadPieces()` with:
+Delete the fixed `PIECE_IDS` and `~/assets/hpa-1/...` path. Load every installed path:
 
 ```ts
 function loadPieces(): void {
@@ -1141,52 +1206,55 @@ function loadPieces(): void {
 }
 ```
 
-Leave `boardViewModel.ts`, fit sizing, hit testing, density conversion, and tap/drag placement unchanged. Its simple horizontal tray is HPA-1 proof UI; HPA-3 owns production landscape inventory behavior.
+Leave `boardViewModel.ts`, fit sizing, hit testing, density conversion, and HPA-1 tap/drag behavior unchanged.
 
-- [ ] **Step 2: Replace fixture session construction with `GameplayLaunch`**
-
-Move session storage construction out of Gameplay (Task 5 now owns it in `App.svelte`). In Gameplay:
+- [ ] **Step 2: Derive one validation context and use `peekSession()` for both launch modes**
 
 ```ts
 const spec = sessionSpecFromManifest(launch.install.manifest);
 const context = validationContextFrom(spec);
-const loaded = launch.mode === 'resume'
-	? storage.loadSession(spec.puzzleId, context)
-	: { status: 'missing' as const };
-
-const restored =
-	loaded.status === 'loaded' && storage.isResumable(loaded.snapshot)
-		? loaded.snapshot
-		: undefined;
-
-const resumeUnavailable = launch.mode === 'resume' && restored === undefined;
+const persisted = storage.peekSession(spec.puzzleId, context);
 ```
 
-Use nullable runtime state so an invalid resume does not construct a fresh session silently:
+For resume:
 
 ```ts
-type MobilePuzzleSession = ReturnType<typeof createPuzzleSession>;
-let session: MobilePuzzleSession | null = null;
-let sessionState: PuzzleSessionState | null = null;
-let unsubscribe: (() => void) | null = null;
+const restored =
+	launch.mode === 'resume' &&
+	persisted.status === 'loaded' &&
+	storage.isResumable(persisted.snapshot)
+		? persisted.snapshot
+		: undefined;
+
+const launchUnavailable = launch.mode === 'resume' && restored === undefined;
 ```
 
-When `resumeUnavailable` is false, create the session with:
+For start, require the disk state is still missing at launch time:
+
+```ts
+const startBlockedBySavedState = launch.mode === 'start' && persisted.status !== 'missing';
+```
+
+If either `launchUnavailable` or `startBlockedBySavedState` is true, render a concise saved-progress-unavailable/present message plus **BACK TO LIBRARY**. Do not create a fresh session and do not delete/overwrite the file.
+
+Never call `storage.loadSession()` in HPA-2 mobile code.
+
+- [ ] **Step 3: Construct the dynamic session only for an allowed launch**
+
+Use:
 
 - `metadata: spec`;
-- HPA-1 `createDefaultClock()`, `createRunIdFactory(resolveMobileCrypto())`;
-- `restored` above;
+- HPA-1 `createDefaultClock()` and `createRunIdFactory(resolveMobileCrypto())`;
+- `restored` only for Resume;
 - `initialTrayOrder: spec.pieces.map((piece) => piece.id)`;
 - `createTrayOrder: () => spec.pieces.map((piece) => piece.id)`;
 - the existing zero-rotation generator.
 
 Dispatch `start` only after construction. All persistence uses `spec.puzzleId`.
 
-When `resumeUnavailable` is true, render “Saved progress is no longer resumable” plus **BACK TO LIBRARY**. Do not call `loadSession()` a second time or create a fresh run.
+- [ ] **Step 4: Preserve HPA-1 lifecycle persistence with nullable runtime state**
 
-- [ ] **Step 3: Preserve HPA-1 lifecycle persistence for the dynamic session**
-
-Keep suspend/resume/exit listeners, but guard nullable `session`:
+Keep suspend/resume/exit listeners and the same checkpoint behavior, guarding nullable `session`:
 
 ```ts
 function persist(): void {
@@ -1202,11 +1270,9 @@ function leaveGameplay(): void {
 }
 ```
 
-`onDestroy` persists, unsubscribes, and disposes only when those values exist.
+Do not introduce another session controller/store.
 
-- [ ] **Step 4: Pass resolved local piece paths to Canvas**
-
-When `sessionState` exists:
+- [ ] **Step 5: Pass finalized local piece paths to Canvas**
 
 ```svelte
 <PuzzleCanvas
@@ -1217,19 +1283,22 @@ When `sessionState` exists:
 />
 ```
 
-Change the title from `HPA-1 Offline 2x2` to `launch.install.manifest.name` and use `${sessionState.placedPieces.length}/${sessionState.pieceCount}`. Add one **LIBRARY** button wired to `leaveGameplay()`; do not add HPA-3 toolbar/tray controls.
+Use the manifest name in the title and `sessionState.pieceCount` in progress copy. Add only one **LIBRARY** exit action; HPA-3 owns production controls.
 
-- [ ] **Step 5: Delete the fixture path completely**
+- [ ] **Step 6: Delete the fixture path and fence destructive reads**
 
-Delete `fixture.ts` and all four HPA-1 PNGs, then run:
+Delete `fixture.ts` and all four bundled HPA-1 PNGs.
+
+Run:
 
 ```bash
 rg "HPA1_FIXTURE|assets/hpa-1|PIECE_IDS|HPA-1 Offline" apps/mobile
+rg "\.loadSession\(" apps/mobile/app
 ```
 
-Expected: no matches. Do not retain a fallback asset bundle.
+Expected: no matches for either command.
 
-- [ ] **Step 6: Run checks and commit**
+- [ ] **Step 7: Run checks and commit**
 
 ```bash
 cd apps/mobile
@@ -1241,23 +1310,23 @@ git add -A apps/mobile/app
 git commit -m "feat(mobile): launch downloaded puzzles offline"
 ```
 
-Expected: PASS.
-
 ---
 
-### Task 7: Prove the HPA-2 native boundary and finish the one implementation PR
+### Task 7: Prove the complete HPA-2 path and finish the single implementation PR
 
 **Files:**
-- No production file is expected.
-- Update the implementation PR body with the exact smoke evidence/environment; do not create a second HPA-2 PR.
+- No new production file is planned.
+- If the smoke exposes a real defect, fix it in the existing owning Task 1-6 file before recording evidence.
+- Update the same implementation PR body with exact commands/environment/evidence.
 
 **Interfaces:**
 - Consumes the complete Tasks 1-6 implementation.
-- Produces acceptance evidence for real API transfer, native directory finalization, disk reconstruction, offline gameplay/resume, progress independence, and corrupt-package recovery.
+- Produces final acceptance evidence for transfer, finalization, disk reconstruction, offline gameplay/resume, progress independence, and corrupt-package recovery.
 
-- [ ] **Step 1: Run repository-level non-native gates**
+- [ ] **Step 1: Run repository-level gates**
 
 ```bash
+bun run --cwd packages/types test:unit
 bun run --cwd apps/mobile test:unit
 bunx tsc --project apps/mobile/tsconfig.json --noEmit
 bunx prettier --check apps/mobile/app apps/mobile/types apps/mobile/webpack.config.js apps/mobile/package.json
@@ -1265,96 +1334,143 @@ bun run check
 bun run lint
 ```
 
-Expected: all commands PASS. If an unrelated aggregate host test is blocked by a pre-existing environment issue, record the command/error in the PR; do not weaken the focused mobile tests.
+Expected: all PASS. Record any unrelated pre-existing aggregate environment failure without weakening focused mobile/type tests.
 
-- [ ] **Step 2: Start a reachable API and run iOS**
+- [ ] **Step 2: Launch against a reachable API**
 
-Local simulator setup:
+For simulator/local development:
 
 ```bash
 bun run dev --filter=@perseus/api
 ```
 
-In another shell:
+Then:
 
 ```bash
 cd apps/mobile
 PERSEUS_MOBILE_API_BASE=http://localhost:4690 ns run ios --no-hmr
 ```
 
-For a physical iPad, use a LAN/HTTPS API base reachable by the device instead of localhost. Record NativeScript CLI, `@nativescript/core`, `@nativescript/canvas`, Xcode, simulator/device, and iOS versions in the implementation PR body.
+For physical iPad/TestFlight-like verification, use a reachable HTTPS API unless intentionally exercising the declared local-network development path.
 
-- [ ] **Step 3: Prove finalization and relaunch discovery**
+Record NativeScript CLI, `@nativescript/core`, `@nativescript/canvas`, Xcode, simulator/device, and iOS versions.
 
-Download one ready Gallery puzzle. Inspect the app Documents container and verify:
+- [ ] **Step 3: Prove explicit finalization and relaunch discovery**
+
+Download one ready Gallery puzzle and inspect the app container:
 
 ```text
 perseus/downloads/<puzzle-id>/manifest.json
-perseus/downloads/<puzzle-id>/thumbnail.<image-extension>
-perseus/downloads/<puzzle-id>/pieces/0.<image-extension>
+perseus/downloads/<puzzle-id>/thumbnail.<ext>
+perseus/downloads/<puzzle-id>/pieces/0.<ext>
 ```
 
-Verify `perseus/downloads/.staging/<puzzle-id>` does not remain after success. Terminate/relaunch the app without downloading again and confirm the same Downloaded row is reconstructed from disk.
+Require:
 
-- [ ] **Step 4: Prove start/resume while networking is unavailable**
+- finalized package exists;
+- `.staging/<puzzle-id>` does not remain;
+- terminate/relaunch reconstructs the same Downloaded row from disk without downloading again.
 
-Stop the local API or otherwise disable networking **after** finalization. From Downloaded:
+- [ ] **Step 4: Prove read-only scan is safe during an active download**
 
-1. start the installed puzzle;
-2. place at least one piece;
-3. leave/terminate so the existing session checkpoint runs;
-4. relaunch while the API remains unavailable;
-5. confirm Downloaded still loads and offers **Resume**;
-6. resume and confirm the placement/counters are retained.
+Start a sufficiently large download, trigger the Downloaded/manual refresh while it is still active, and confirm:
 
-A Gallery request failure must not clear or block the Downloaded section.
+- the active `.staging/<puzzle-id>` directory remains;
+- the download continues/finalizes normally;
+- refresh does not perform staging cleanup.
 
-- [ ] **Step 5: Prove Remove Download preserves the session**
+This is the native integration fence for the split `cleanupStaleStaging()` / `scanDownloads()` contract.
 
-With the session still resumable:
+- [ ] **Step 5: Prove offline start and resume**
 
-1. tap **Remove Download**;
-2. verify `perseus/downloads/<puzzle-id>` is gone;
-3. verify `perseus/sessions/<puzzle-id>.json` still exists;
+After finalization, stop the local API or otherwise disable networking.
+
+1. Start from a `none` row.
+2. Place at least one piece.
+3. Leave/terminate so HPA-1 checkpoint logic runs.
+4. Relaunch with API still unavailable.
+5. Confirm Downloaded loads from disk and shows **Resume**.
+6. Resume and confirm placement/counters persist.
+
+Gallery failure must not clear/block Downloaded.
+
+- [ ] **Step 6: Prove a valid completed/non-resumable save is not collapsed to Start**
+
+Complete a small downloaded puzzle or seed a real completed session through gameplay, return to Downloaded, and verify:
+
+- row is not treated as `none`;
+- **START** is not offered while the valid session file is present;
+- **DISCARD PROGRESS** is available;
+- after explicit discard, row becomes `none` and **START** appears.
+
+This proves a completed session cannot be silently overwritten by starting again.
+
+- [ ] **Step 7: Prove Remove Download preserves resumable progress and re-download restores Resume**
+
+With resumable progress:
+
+1. **Remove Download**;
+2. verify `downloads/<id>` is gone;
+3. verify `sessions/<id>.json` remains;
 4. restore networking;
-5. download the same stable puzzle ID again;
-6. confirm **Resume** returns after validation;
-7. resume and confirm the retained placement remains.
+5. re-download the same stable ID;
+6. confirm **Resume** returns after codec validation;
+7. resume and confirm retained placement.
 
-- [ ] **Step 6: Prove corrupt-package blocking and clean re-download**
+- [ ] **Step 8: Prove corrupt-package blocking and clean replacement**
 
-Delete one finalized piece file from the app container, then refresh/relaunch. Verify:
+Delete one finalized piece file and refresh/relaunch. Require:
 
-- the package is shown as corrupt and cannot Start/Resume;
+- package is corrupt;
+- no Start/Resume;
 - **Remove & Download Again** is available;
-- activating it removes the corrupt final package and uses the normal clean download path;
-- the package returns to installed state only after finalization.
+- clean re-download uses the normal staging/finalize path;
+- package returns to installed only after manifest-last finalization.
 
-- [ ] **Step 7: Run the final scope fence**
+- [ ] **Step 9: Run final scope/destructive-read fences**
 
 ```bash
 git diff --name-only main...HEAD
 rg "HPA1_FIXTURE|assets/hpa-1|downloads\.json" apps/mobile
+rg "\.loadSession\(" apps/mobile/app
 ```
 
 Expected:
 
-- no HPA-1 fixture or download index matches;
+- no fixture/index/destructive mobile load matches;
 - no `apps/api`, `apps/workflows`, database migration, infrastructure, or `packages/game-core` production file in the diff;
-- only the intended mobile API/download/library/gameplay/config/lockfile changes plus the deletion of fixture assets.
+- `packages/types/src/core.ts` changes only for `ReadyPuzzleDetail`;
+- intended mobile API/library/gameplay/config/plist/lockfile changes plus fixture deletions only.
 
-If the existing public API proves insufficient during the smoke test, do not add a mobile-only backend workaround in this PR; return to the HPA-2 design.
+If the existing public API or game-core contract proves insufficient, stop and revise HPA-2; do not add a mobile-only backend workaround or shared framework ad hoc.
 
-- [ ] **Step 8: Update the implementation PR body only**
+- [ ] **Step 10: Update the implementation PR body**
 
-Record the commands/results and native smoke evidence in the same HPA-2 implementation PR. No verification-only repository file or second PR is required.
+Record:
+
+- Task 1 JSON native-gate evidence;
+- Task 3 binary `toFile` + directory-move gate evidence;
+- unit/type/lint/check results;
+- final offline/relaunch/remove/re-download/corruption evidence;
+- exact environment versions.
+
+Keep all implementation in the same HPA-2 PR.
+
+## Risks and Gates Summary
+
+1. **Native JSON/local networking** — gated before Task 2; narrow iOS local-network declarations only, remote builds HTTPS.
+2. **Binary response → file** — gated in Task 3 before UI integration.
+3. **Same-volume directory move** — path and URL `NSFileManager` bridge variants are probed; failure after both stops the design rather than introducing silent copy/delete semantics.
+4. **Staging cleanup race** — startup cleanup is a separate method; `scanDownloads()` is read-only and safe from any later call site.
+5. **Invalid-save deletion** — HPA-2 uses `peekSession()` only; `.loadSession(` is fenced out of mobile app code.
+6. **Completed/non-resumable save overwrite** — four-arm progress state keeps valid loaded non-resumable sessions as `present`; fresh Start is unavailable until explicit discard.
 
 ## Self-Review Results
 
-- **Spec coverage:** Tasks 1-7 cover existing public API use, explicit staging/finalization, bounded concurrency, failed/cancelled cleanup, direct disk discovery, offline start/resume, independent asset/progress removal, matching re-download validation, corrupt-package blocking/re-download, service tests, and native iPad proof.
-- **Scope:** No API, Workflow, database, game-core, index, ZIP, auth, sync, portrait, or production-gameplay expansion is planned.
-- **Atomicity:** Asset verification precedes manifest write; manifest write precedes the staging-to-final move; failed/cancelled work waits for in-flight requests to settle before cleanup.
-- **Type consistency:** `PublicReadyPuzzle` feeds `createDownloadManifest`; `DownloadManifestV1` feeds `InstalledDownload`; `InstalledDownload` feeds `DownloadedPuzzleRow`/`GameplayLaunch`; the same manifest projects `SessionPuzzleSpec` for both validation and gameplay.
-- **Progress ownership:** `DownloadStore` has no session dependency. Only the explicit Discard action calls `SessionStorageAdapter.clearSession()`.
+- **Spec coverage:** Tasks 1-7 cover existing public API use, shared metadata validation, local-network/native gates, explicit staging/finalization, bounded concurrency, failed/cancelled cleanup, read-only discovery, startup cleanup, offline start/resume, independent asset/progress removal, matching re-download validation, non-resumable saved state, corrupt-package recovery, service tests, and native iPad proof.
+- **Scope:** No API route, Workflow, database, game-core, index, ZIP, auth, sync, portrait, or HPA-3 gameplay expansion is planned.
+- **Atomicity:** In-flight writes settle before failure cleanup; assets verify before manifest write; manifest write precedes same-volume finalization.
+- **Type consistency:** `ReadyPuzzleDetail` feeds `createDownloadManifest`; `DownloadManifestV1` feeds `InstalledDownload`; `InstalledDownload` feeds `DownloadedPuzzleRow`/`GameplayLaunch`; the same manifest projects `SessionPuzzleSpec` for validation and gameplay.
+- **Progress ownership:** `DownloadStore` has no session dependency. Only explicit Discard calls `clearSession()`. Library and gameplay use `peekSession()`.
 - **Fixture removal:** Dynamic `piecePaths` replaces the only HPA-1 bundled-asset dependency, so no compatibility fixture path remains.
-- **No placeholders:** File paths, exported signatures, critical algorithms, failure ordering, test assertions, commands, and the API-insufficiency stop condition are specified explicitly.
+- **No placeholders:** File paths, interfaces, native stop gates, failure ordering, test assertions, commands, and stop conditions are explicit.
