@@ -32,6 +32,21 @@
 - Native JSON is gated in Task 1; binary `toFile` + iOS directory move are gated in Task 3 before UI integration.
 - Native directory finalization is iOS-only in HPA-2. Non-iOS throws unsupported rather than shipping an unverified Android branch.
 
+## Review Decisions Locked by This Plan
+
+- **Accepted:** zero-activity snapshots must remain Start-able; meaningful/completed saves remain protected.
+- **Accepted:** the manifest delegates puzzle geometry validation to `validatePuzzleMetadata()` and `createPuzzleSession()` instead of copying those rules.
+- **Accepted:** the app root owns the active download promise/cancellation/progress so navigation does not orphan it.
+- **Accepted:** fixed-size chunks + `Promise.allSettled()` replace the custom worker-pool scheduler.
+- **Accepted:** reference download is attempted directly; 404 means absent. No HPA-2 `ReadyPuzzleDetail` shared cleanup.
+- **Not adopted:** moving piece-file corruption detection from scan to gameplay entry. Keep one bounded corruption boundary until measurement justifies another state path.
+- **Accepted:** Library + dynamic Gameplay wiring land in one runnable task; no broken intermediate checkpoint.
+- **Accepted:** action derivation is a pure table-tested function.
+- **Accepted:** iOS-only move branch; no speculative Android `renameTo()`.
+- **Accepted:** simple `done / total` download progress.
+- **Accepted:** constructor strips trailing API-base slashes.
+- **Partially accepted:** Gate B is simplified to HPA-1's established `(globalThis as any)` URL-first bridge style, but directory-move failure remains a stop because atomic finalization depends on it.
+
 ---
 
 ### Task 1: Validated mobile puzzle API + real iOS JSON gate
@@ -1461,4 +1476,5 @@ No verification-only repository file and no second HPA-2 PR.
 - **Job lifetime:** Download state lives in `App.svelte`, so navigation does not orphan the promise and Start/Resume need no download lockout.
 - **Native scope:** iOS move only; URL bridge first using the HPA-1 global bridge convention; directory-move failure remains a design stop because finalization depends on it.
 - **Runnable checkpoints:** Tasks 1 and 3 contain early native gates; Task 5 combines Library and Gameplay prop changes and ends with a real NativeScript launch, eliminating the previous non-runnable intermediate commit.
+- **Review trade-off:** Full scan-time required-asset verification is intentionally retained; moving it to gameplay would add a second corruption path for an unmeasured optimization.
 - **No placeholders:** All new interfaces, critical control flow, failure semantics, test matrices, commands, and stop conditions are explicit.
