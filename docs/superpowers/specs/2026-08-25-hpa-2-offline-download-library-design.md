@@ -67,12 +67,11 @@ HPA-2 stays mobile-local except for adding `@perseus/types` as an existing works
 existing public Perseus API
         |
         v
-apps/mobile/app/api/puzzleApi.ts
+puzzleApi.ts <--- nativePuzzleHttp.ts
         |
         v
-apps/mobile/app/library/downloadStore.ts
+downloadStore.ts <--- nativeDownloadFiles.ts
   + downloadManifest.ts
-  + nativeDownloadFiles.ts
         |
         v
 Documents/perseus/downloads/
@@ -84,6 +83,8 @@ Documents/perseus/downloads/
                                                     v
                                          existing sessions/<id>.json
 ```
+
+`puzzleApi.ts` and `downloadStore.ts` expose only product-specific seams. The two `native*` files isolate `@nativescript/core` so the existing Node/Vitest mobile service tests can use tiny fakes without loading a device runtime.
 
 There is deliberately no repository interface, global store, dependency-injection container, index database, sync engine, or download worker.
 
@@ -97,9 +98,9 @@ A small declaration under `apps/mobile/types/` gives TypeScript the global const
 
 ### `PuzzleApi`
 
-`apps/mobile/app/api/puzzleApi.ts` is a concrete client over NativeScript `Http.request` and shared `@perseus/types` contracts.
+`apps/mobile/app/api/puzzleApi.ts` owns URL construction, pagination, and response validation over one narrow injected JSON-request function. `apps/mobile/app/api/nativePuzzleHttp.ts` supplies that function with NativeScript `Http.request` in production. This mirrors HPA-1's existing `sessionStore.ts` / `sessionFiles.ts` split and is a test seam, not a transport framework.
 
-It exposes only HPA-2 operations:
+The product service exposes only HPA-2 operations:
 
 ```ts
 interface PublicReadyPuzzle extends ReadyPuzzle {
