@@ -85,6 +85,7 @@
 				}
 			});
 		} catch (error) {
+			if (error instanceof Error && error.message === 'download_cancelled') return;
 			downloadError = error instanceof Error ? error.message : 'download_failed';
 		} finally {
 			downloadJob = null;
