@@ -3,7 +3,7 @@ import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
 import AdminPuzzlesPanel from './AdminPuzzlesPanel.svelte';
 import type { PuzzleSummary } from '$lib/types/puzzle';
-import { ApiError, deletePuzzle, fetchAdminPuzzles } from '$lib/services/api';
+import { ApiError, deletePuzzle, fetchAdminPuzzles, getReferenceImageUrl } from '$lib/services/api';
 
 vi.mock('$lib/services/api', () => {
 	class MockApiError extends Error {
@@ -19,7 +19,9 @@ vi.mock('$lib/services/api', () => {
 	return {
 		deletePuzzle: vi.fn(),
 		fetchAdminPuzzles: vi.fn().mockResolvedValue([]),
-		getReferenceImageUrl: vi.fn((puzzleId: string) => `/api/puzzles/${puzzleId}/reference`),
+		getReferenceImageUrl: vi.fn(
+			() => 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
+		),
 		getThumbnailUrl: vi.fn(() => 'data:image/gif;base64,R0lGODlhAQABAAAAACw='),
 		ApiError: MockApiError
 	};
@@ -92,9 +94,13 @@ describe('AdminPuzzlesPanel', () => {
 		await page.getByRole('button', { name: 'View full image for Forest Scene' }).click();
 
 		await expect.element(page.getByRole('dialog', { name: 'Reference image' })).toBeVisible();
+		expect(vi.mocked(getReferenceImageUrl)).toHaveBeenCalledWith('p1');
 		await expect
 			.element(page.getByRole('img', { name: 'Puzzle reference' }))
-			.toHaveAttribute('src', '/api/puzzles/p1/reference');
+			.toHaveAttribute(
+				'src',
+				'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
+			);
 
 		await page.getByRole('button', { name: 'Close reference' }).click();
 		await expect
