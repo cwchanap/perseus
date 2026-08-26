@@ -355,7 +355,7 @@ Correct current CLI credential documentation:
 - list/create automation is authenticated by the Access service token only after this change;
 - there is no app passkey second factor;
 - current configured lifetime is `8760h` (one year), not the stale 90-day wording;
-- incident response can disable, rotate, revoke/delete the service token or remove/disable its Service Auth policy.
+- incident response can temporarily disable the service token, rotate it, revoke/delete it, or remove/disable the Service Auth policy.
 
 Modify `CLAUDE.md` only. Verify `AGENTS.md` remains a symlink:
 
@@ -819,9 +819,9 @@ bun run lint:scripts
 The repo cannot prove production custom-domain/route attachment. Before shipping the auth deletion:
 
 1. Open Cloudflare Workers & Pages for the deployed API Worker.
-2. Inspect **Settings -> Domains & Routes** (or an equivalent account-level API/CLI listing).
-3. Enumerate every live route/custom domain pointing at the Worker.
-4. Confirm `workers.dev` and previews are disabled.
+2. Inspect the Worker's **Domains / Domains & Routes** view (the exact dashboard label may vary).
+3. Enumerate every live Route and Custom Domain pointing at the Worker.
+4. Confirm `workers.dev` and Preview URLs are disabled.
 5. For each live hostname, verify a Cloudflare Access application covers `/admin*` and `/api/admin*`.
 6. Stop deployment if any alternate hostname can reach admin paths without Access.
 
@@ -854,4 +854,4 @@ pulumi config --stack <production-stack>
 
 Confirm `adminPasskey` is absent.
 
-Document/verify that the Access service token is now the sole list/create credential. If compromised, use the available Cloudflare control appropriate to the incident: disable the token, rotate its secret, revoke/delete it, or remove/disable the Service Auth policy. There is no longer an application passkey second factor.
+Document/verify that the Access service token is now the sole list/create credential. If compromised, temporarily disable the token to contain access, rotate its secret when appropriate, revoke/delete it when replacement is required, or remove/disable the Service Auth policy. There is no longer an application passkey second factor.
