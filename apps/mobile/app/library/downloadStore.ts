@@ -239,15 +239,15 @@ export function createDownloadStore(options: {
 			let finalized = false;
 			let stagingPrepared = false;
 			try {
+				if (new Set(puzzle.pieces.map((piece) => piece.id)).size !== puzzle.pieces.length) {
+					throw new Error('duplicate_piece_ids');
+				}
+
 				if (await fileOps.directoryExists(stagingPath)) {
 					await fileOps.removeDir(stagingPath);
 				}
 				stagingPrepared = true;
 				await fileOps.ensureDir(piecesDirPath);
-
-				if (new Set(puzzle.pieces.map((piece) => piece.id)).size !== puzzle.pieces.length) {
-					throw new Error('duplicate_piece_ids');
-				}
 
 				const requests: AssetRequest[] = [
 					{
