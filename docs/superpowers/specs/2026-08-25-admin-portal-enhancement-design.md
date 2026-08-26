@@ -32,7 +32,7 @@ This remains one implementation slice and one PR. It does not add a new auth mec
 
 ## Current Context
 
-Cloudflare Access already protects `/admin`, `/admin/*`, `/api/admin`, and `/api/admin/*`. A more-specific CLI Access application covers the exact admin puzzle endpoint and adds a Service Auth policy for the upload automation.
+Cloudflare Access already protects `/admin`, `/admin/*`, `/api/admin`, and `/api/admin/*`. A more-specific CLI Access application covers the exact admin puzzle endpoint and adds a Service Auth policy for upload automation.
 
 The Pulumi-managed API Worker already has:
 
@@ -42,16 +42,16 @@ subdomain: { enabled: false, previewsEnabled: false }
 
 That blocks the normal `workers.dev` and preview entry points. After `requireAuth` is removed, this origin-isolation setting is no longer merely defense in depth: any other live hostname/route that reaches the Worker without an Access application would expose the admin API without an application auth gate.
 
-The repository does **not** declare the production Worker custom domain/route. `createWorkerRoute()` is exported but unused, and the production Wrangler config contains no route/custom-domain declaration. Therefore the repo cannot prove that `AUTH_REDIRECT_BASE_URL` is the Worker's only live hostname. The implementation rollout must explicitly inspect the deployed Worker's Domains & Routes before shipping the auth removal.
+The repository does **not** declare the production Worker Custom Domain/Route. `createWorkerRoute()` is exported but unused, and the production Wrangler config contains no route/custom-domain declaration. Therefore the repo cannot prove that `AUTH_REDIRECT_BASE_URL` is the Worker's only live hostname. The implementation rollout must explicitly inspect the deployed Worker's Domains/Routes before shipping the auth removal.
 
-The current application adds a second admin layer: `/api/admin/login` validates `ADMIN_PASSKEY`, creates `perseus_session`, the admin layout checks it, and admin handlers use `requireAuth`. Startup/one-off upload CLIs also obtain that session after passing Cloudflare Access.
+The current application adds a second admin-auth layer: `/api/admin/login` validates `ADMIN_PASSKEY`, creates `perseus_session`, the admin layout checks it, and admin handlers use `requireAuth`. Startup/one-off upload CLIs also obtain that session after passing Cloudflare Access.
 
 `GET /api/admin/puzzles` intentionally returns the full fresh all-status list. Processing polling and startup deduplication depend on that behavior. The public gallery paginator cannot be reused because it filters to `ready` and is backed by the gallery cache.
 
 The web app already provides:
 - `SearchBar.svelte` for the exact search input chrome/accessibility.
 - `$lib/constants/categories` for category values/types.
-- `ReferenceOverlay.svelte` for a full-screen reference dialog with focus trapping/restoration, close control, coarse-pointer sizing, and an image-error fallback.
+- `ReferenceOverlay.svelte` for a full-screen reference dialog with focus trapping/restoration, close control, coarse-pointer sizing, and image-error fallback.
 - `getReferenceImageUrl(puzzleId)` for the existing reference endpoint.
 
 ## Design
@@ -82,7 +82,7 @@ Admin upload automation
 
 The sibling destructive endpoint stays `POST /api/admin/puzzle-delete/:id`, outside the CLI Service Auth path.
 
-Browser admin fetches keep `credentials: 'include'` so the Cloudflare Access cookie continues to ride with requests.
+Browser admin fetches keep `credentials: 'include'` so the Access cookie continues to ride with requests.
 
 Local development intentionally has no admin auth after this change.
 
@@ -90,10 +90,10 @@ Local development intentionally has no admin auth after this change.
 
 Before deploying the auth removal:
 
-1. Open the deployed API Worker in Cloudflare **Workers & Pages -> Settings -> Domains & Routes** (or use an equivalent account-level API/CLI inspection).
-2. Enumerate every live route/custom domain for the Worker.
-3. Confirm `workers.dev` and previews are disabled.
-4. For every live hostname/route, verify an Access application covers `/admin*` and `/api/admin*`.
+1. Open the deployed API Worker in Cloudflare Workers & Pages and inspect its Domains/Routes view (the exact dashboard label may vary).
+2. Enumerate every live Route and Custom Domain for the Worker.
+3. Confirm `workers.dev` and Preview URLs are disabled.
+4. For every live hostname, verify an Access application covers `/admin*` and `/api/admin*`.
 5. Stop the rollout if any reachable hostname bypasses Access.
 
 Do not add new routing IaC merely to satisfy this ticket; the check documents the current external assumption cheaply.
@@ -105,8 +105,8 @@ Task 1 is a deletion/refactor, not new behavioral logic. Do not spend multiple s
 Within the isolated Task 1 commit:
 
 1. Record a green baseline for affected suites.
-2. Delete the production/session/CLI/config surface.
-3. Repair the directly-owned tests/fixtures/mocks to match the deletion.
+2. Delete production/session/CLI/config surface.
+3. Repair directly-owned tests/fixtures/mocks to match the deletion.
 4. Run the full case-insensitive repository sweep and verification gate.
 
 Tasks 3 and 4 remain test-first because they add new behavior whose contract benefits from red/green development.
@@ -173,7 +173,7 @@ other/network -> error
 
 The seed workflow keeps only `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET`.
 
-This changes automation from two application-layer credentials (Access service token + passkey) to one Cloudflare Access service token for list/create. Document that explicitly. If that credential is suspected compromised, disable, rotate, or revoke/delete the service token (or remove its Service Auth policy); there is no longer a passkey second factor.
+This changes automation from two credentials (Access service token + app passkey) to one Access service token for list/create. Document that explicitly. If that credential is suspected compromised, temporarily disable it, rotate it, revoke/delete it, or remove/disable its Service Auth policy. There is no longer a passkey second factor.
 
 The currently configured token lifetime is one year (`8760h`), so current docs that still claim a 90-day default must be corrected.
 
@@ -196,7 +196,7 @@ Known live deletion/repair surface includes:
 
 `AGENTS.md` is a symlink to `CLAUDE.md`, not a second document. Modify `CLAUDE.md` only and verify the symlink remains `AGENTS.md -> CLAUDE.md`.
 
-`packages/infrastructure/Pulumi.production.yaml` is not tracked; stack files are gitignored. After the deployed code no longer consumes `adminPasskey`, remove the orphan key from the Pulumi stack configuration operationally rather than adding a nonexistent repo file to the change list.
+`packages/infrastructure/Pulumi.production.yaml` is not tracked; stack files are gitignored. After deployed code no longer consumes `adminPasskey`, remove the orphan key from the actual Pulumi stack configuration operationally rather than adding a nonexistent repo file to the change list.
 
 Historical completed docs under `docs/superpowers/**` remain unchanged.
 
@@ -271,7 +271,7 @@ For a ready row:
 - thumbnail button sets `previewPuzzle`;
 - `ReferenceOverlay` receives `imageUrl={getReferenceImageUrl(previewPuzzle.id)}`, `active`, `dismissible`, and `onDismiss`.
 
-The existing component already handles focus trapping/restoration, Close, coarse-pointer target size, and `"Reference image unavailable"` on image load failure. That fallback matters for legacy rows because `PuzzleSummary` cannot tell the admin whether a reference asset exists.
+The existing component already handles focus trapping/restoration, Close, coarse-pointer target size, and `Reference image unavailable` on image load failure. That fallback matters for legacy rows because `PuzzleSummary` cannot tell the admin whether a reference asset exists.
 
 Keep Escape handling route-local in `AdminPuzzlesPanel`, mirroring the gameplay route:
 
@@ -312,7 +312,7 @@ Processing/failed placeholders remain non-interactive.
 - Pure helper tests: trim/case/AND/uncategorized/page boundaries/clamp.
 - Panel tests: SearchBar/select/Reset wiring, filtered-empty/count, hidden-processing polling, one 21-row pagination wiring case.
 - Preview tests: ready thumbnail opens existing `ReferenceOverlay`, Close + Escape dismiss, failed image shows existing unavailable fallback, processing/failed placeholders do not open preview.
-- Existing `ReferenceOverlay` component tests remain the owner of focus/touch/error behavior.
+- Existing `ReferenceOverlay` tests remain the owner of focus/touch/error behavior.
 
 ## Delivery Shape
 
@@ -320,15 +320,15 @@ Keep one implementation PR for this ticket unless explicitly approved otherwise.
 
 Task 1 remains the first isolated commit and must pass its complete verification + diff-review gate before UI commits begin. The Task 1 internal sequence is **baseline -> delete -> repair tests -> sweep -> verify**, not a long deletion-specific red phase.
 
-Production ingress verification and service-token smoke happen at rollout, after the single PR is deployed.
+Production ingress verification and service-token smoke happen at rollout after the single PR is deployed.
 
 ## Rollout
 
 Before deploying the auth removal:
 
-1. Enumerate every live Domain & Route for the deployed API Worker.
-2. Confirm `workers.dev` and previews are disabled.
-3. Confirm every live hostname that reaches the Worker is protected by an Access application for `/admin*` and `/api/admin*`.
+1. Enumerate every live Route and Custom Domain for the deployed API Worker from its Cloudflare Domains/Routes view or equivalent account API/CLI listing.
+2. Confirm `workers.dev` and Preview URLs are disabled.
+3. Confirm every live hostname that reaches the Worker is protected by Access for `/admin*` and `/api/admin*`.
 4. Stop if any alternate hostname bypasses Access.
 
 After deployment:
@@ -344,18 +344,18 @@ After deployment:
 9. Ready thumbnail opens the existing reference overlay; Close/Escape work; missing reference shows the unavailable fallback.
 10. Public player routes remain unaffected.
 11. Local dev opens admin without a passkey.
-12. Remove the now-unused `adminPasskey` from Pulumi stack config.
-13. Update/verify the service-token incident procedure: disable/rotate/revoke the token if compromised.
+12. Remove the now-unused `adminPasskey` from the actual Pulumi stack config.
+13. Verify the service-token incident procedure: temporarily disable, rotate, revoke/delete, or remove/disable Service Auth if compromised.
 
 ## Review Decisions
 
 The latest review was checked against the tree:
 
-1. **Accepted: live ingress enumeration before rollout.** The production route/custom-domain binding is external to this repo, so the Access-only assumption needs an operator check.
+1. **Accepted: live ingress enumeration before rollout.** Production route/custom-domain binding is external to this repo, so the Access-only assumption needs an operator check.
 2. **Accepted: invert Task 1.** For a pure deletion, delete first and repair owned tests immediately afterward; keep TDD for new Tasks 3/4.
 3. **Accepted: add `scripts/startup/upload.test.ts` and `reaper.test.ts`; widen the sweep.**
-4. **Corrected: no tracked `Pulumi.production.yaml`.** Stack files are gitignored; remove `adminPasskey` from stack config operationally after deploy.
+4. **Corrected: no tracked `Pulumi.production.yaml`.** Stack files are gitignored; remove `adminPasskey` from actual stack config operationally after deploy.
 5. **Accepted: preserve `AGENTS.md` symlink.** Modify `CLAUDE.md` only.
-6. **Accepted with a smaller implementation: reuse `ReferenceOverlay` unchanged.** Admin mirrors gameplay's route-level Escape handling instead of adding props or duplicating modal markup.
+6. **Accepted with a smaller implementation: reuse `ReferenceOverlay` unchanged.** Admin mirrors gameplay route-level Escape handling instead of adding props or duplicating modal markup.
 7. **Accepted invariant, not lifecycle assumption: block children until the document-navigation decision.**
-8. **Accepted: document automation-factor change.** The Access service token becomes the sole credential for list/create; current emergency controls include disable/rotate/revoke rather than only rotation.
+8. **Accepted: document automation-factor change.** The Access service token becomes the sole list/create credential; current emergency controls include temporary disable, rotation, revoke/delete, and policy removal rather than only rotation.
