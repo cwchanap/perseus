@@ -19,6 +19,7 @@ vi.mock('$lib/services/api', () => {
 	return {
 		deletePuzzle: vi.fn(),
 		fetchAdminPuzzles: vi.fn().mockResolvedValue([]),
+		getReferenceImageUrl: vi.fn((puzzleId: string) => `/api/puzzles/${puzzleId}/reference`),
 		getThumbnailUrl: vi.fn(() => 'data:image/gif;base64,R0lGODlhAQABAAAAACw='),
 		ApiError: MockApiError
 	};
@@ -77,6 +78,65 @@ describe('AdminPuzzlesPanel', () => {
 		await expect.element(page.getByText('Broken Puzzle')).toBeVisible();
 		await expect.element(page.getByText('PROCESSING').nth(1)).toBeVisible();
 		await expect.element(page.getByText('FAILED').nth(1)).toBeVisible();
+	});
+
+	it('opens and closes the reference preview for a ready puzzle', async () => {
+		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
+
+		render(AdminPuzzlesPanel);
+
+		await page.getByRole('button', { name: 'View full image for Forest Scene' }).click();
+
+		await expect.element(page.getByRole('dialog', { name: 'Reference image' })).toBeVisible();
+		await expect
+			.element(page.getByRole('img', { name: 'Puzzle reference' }))
+			.toHaveAttribute('src', '/api/puzzles/p1/reference');
+
+		await page.getByRole('button', { name: 'Close reference' }).click();
+		await expect
+			.poll(() => page.getByRole('dialog', { name: 'Reference image' }).query())
+			.toBeNull();
+	});
+
+	it('dismisses the reference preview with Escape', async () => {
+		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
+
+		render(AdminPuzzlesPanel);
+
+		await page.getByRole('button', { name: 'View full image for Forest Scene' }).click();
+		await expect.element(page.getByRole('dialog', { name: 'Reference image' })).toBeVisible();
+
+		window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+
+		await expect
+			.poll(() => page.getByRole('dialog', { name: 'Reference image' }).query())
+			.toBeNull();
+	});
+
+	it('shows the unavailable state when the reference image fails', async () => {
+		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
+
+		render(AdminPuzzlesPanel);
+
+		await page.getByRole('button', { name: 'View full image for Forest Scene' }).click();
+		const image = await page.getByRole('img', { name: 'Puzzle reference' }).element();
+		image.dispatchEvent(new Event('error', { bubbles: true }));
+
+		await expect.element(page.getByText('Reference image unavailable')).toBeVisible();
+	});
+
+	it('does not offer reference previews for processing or failed puzzles', async () => {
+		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
+
+		render(AdminPuzzlesPanel);
+
+		await expect.element(page.getByText('City Lights')).toBeVisible();
+		await expect
+			.poll(() => page.getByRole('button', { name: 'View full image for City Lights' }).query())
+			.toBeNull();
+		await expect
+			.poll(() => page.getByRole('button', { name: 'View full image for Broken Puzzle' }).query())
+			.toBeNull();
 	});
 
 	it('filters puzzles through the SearchBar value callback', async () => {
