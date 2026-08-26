@@ -47,6 +47,7 @@
 	}
 
 	function startPollingIfNeeded() {
+		if (!mounted) return;
 		const hasProcessing = puzzles.some((puzzle) => puzzle.status === 'processing');
 		if (hasProcessing && pollInterval === null) {
 			pollInterval = setInterval(async () => {

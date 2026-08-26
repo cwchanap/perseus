@@ -6,6 +6,30 @@
 	type AdminTab = 'puzzles' | 'players';
 
 	let activeTab: AdminTab = $state('puzzles');
+
+	function handleTabKeydown(event: KeyboardEvent, currentTab: AdminTab) {
+		let nextTab: AdminTab;
+		switch (event.key) {
+			case 'ArrowRight':
+				nextTab = currentTab === 'puzzles' ? 'players' : 'puzzles';
+				break;
+			case 'ArrowLeft':
+				nextTab = currentTab === 'puzzles' ? 'players' : 'puzzles';
+				break;
+			case 'Home':
+				nextTab = 'puzzles';
+				break;
+			case 'End':
+				nextTab = 'players';
+				break;
+			default:
+				return;
+		}
+
+		event.preventDefault();
+		activeTab = nextTab;
+		document.getElementById(`admin-tab-${nextTab}`)?.focus();
+	}
 </script>
 
 <svelte:head>
@@ -62,6 +86,7 @@ transition-colors duration-150 hover:text-(--accent)"
 				aria-controls="admin-panel-puzzles"
 				tabindex={activeTab === 'puzzles' ? 0 : -1}
 				onclick={() => (activeTab = 'puzzles')}
+				onkeydown={(event) => handleTabKeydown(event, 'puzzles')}
 				class="border-b-2 border-transparent px-4 py-3 text-[0.6rem]
 font-(--font-display) font-semibold tracking-[0.2em] text-(--text-2)
 transition-colors duration-150 hover:text-(--accent)
@@ -77,6 +102,7 @@ transition-colors duration-150 hover:text-(--accent)
 				aria-controls="admin-panel-players"
 				tabindex={activeTab === 'players' ? 0 : -1}
 				onclick={() => (activeTab = 'players')}
+				onkeydown={(event) => handleTabKeydown(event, 'players')}
 				class="border-b-2 border-transparent px-4 py-3 text-[0.6rem]
 font-(--font-display) font-semibold tracking-[0.2em] text-(--text-2)
 transition-colors duration-150 hover:text-(--accent)

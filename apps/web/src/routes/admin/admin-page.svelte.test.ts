@@ -71,4 +71,34 @@ describe('Admin Page', () => {
 		await expect.poll(() => page.getByText('CREATE MISSION', { exact: true }).query()).toBeNull();
 		await expect.poll(() => page.getByLabelText('CLICK TO UPLOAD').query()).toBeNull();
 	});
+
+	it('supports standard keyboard navigation between tabs', async () => {
+		render(AdminPage);
+
+		const puzzlesTab = page.getByRole('tab', { name: 'PUZZLES' });
+		const playersTab = page.getByRole('tab', { name: 'PLAYER ACCESS' });
+		const puzzlesButton = await puzzlesTab.element();
+		const playersButton = await playersTab.element();
+
+		puzzlesButton.focus();
+		puzzlesButton.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+		expect(document.activeElement).toBe(playersButton);
+		await expect.element(playersTab).toHaveAttribute('aria-selected', 'true');
+
+		playersButton.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+		expect(document.activeElement).toBe(puzzlesButton);
+		await expect.element(puzzlesTab).toHaveAttribute('aria-selected', 'true');
+
+		puzzlesButton.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+		expect(document.activeElement).toBe(playersButton);
+		await expect.element(playersTab).toHaveAttribute('aria-selected', 'true');
+
+		playersButton.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
+		expect(document.activeElement).toBe(puzzlesButton);
+		await expect.element(puzzlesTab).toHaveAttribute('aria-selected', 'true');
+
+		puzzlesButton.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
+		expect(document.activeElement).toBe(playersButton);
+		await expect.element(playersTab).toHaveAttribute('aria-selected', 'true');
+	});
 });
