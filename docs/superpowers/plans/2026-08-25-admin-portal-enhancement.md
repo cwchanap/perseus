@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the Perseus admin passkey/session layer with the existing Cloudflare Access boundary and improve the admin portal with tabs, 20-row client-side pagination, and enlarged reference-image viewing.
+**Goal:** Replace the Perseus admin passkey/session layer with the existing Cloudflare Access boundary and improve the admin portal with tabs, puzzle search/filtering, fixed 20-row client-side pagination, and enlarged reference-image viewing.
 
-**Architecture:** Remove the redundant application admin session across browser, API, CLI, and deployment config while preserving the current Cloudflare Access path policies and forced admin document navigation. Keep `GET /api/admin/puzzles` as the existing fresh full-list API; pagination stays in the admin Svelte panel so processing polling and startup-upload deduplication keep their current semantics. Split the route into puzzle and player-access panels and reuse the existing reference-image endpoint plus `modalFocus` for enlargement.
+**Architecture:** Remove the redundant application admin session across browser, API, CLI, and deployment configuration while preserving the current Cloudflare Access policies and forced admin document navigation. Keep `GET /api/admin/puzzles` as the existing fresh full-list API; the puzzle panel derives `filteredPuzzles` from that full list, then paginates the filtered result locally. Split the route into puzzle and player-access panels and reuse the existing reference-image endpoint plus `modalFocus` for enlargement.
 
 **Tech Stack:** Svelte 5 / SvelteKit static adapter, TypeScript, Hono on Cloudflare Workers, Cloudflare Access + Pulumi, Bun, Vitest browser tests.
 
@@ -17,12 +17,15 @@
 - Preserve `packages/infrastructure/src/workers.ts` behavior that disables both the Worker public subdomain and preview URLs; Pulumi remains the production source of truth.
 - Preserve the forced full-document navigation seam for client-routed entry into `/admin`.
 - Do not add Worker-side Access JWT validation or replacement local-dev admin auth.
-- Do not add backend/storage pagination for `GET /api/admin/puzzles`.
+- Do not add backend/storage search, filtering, or pagination for `GET /api/admin/puzzles`.
 - Keep the startup uploader's full-list deduplication behavior intact.
-- Admin puzzle page size is fixed at 20.
-- `PUZZLES` is the default admin tab; tab state stays local to the route.
+- Admin search is case-insensitive substring matching on puzzle name.
+- Admin filters are category + status with AND semantics.
+- Admin puzzle page size is fixed at 20 and pagination runs after filtering.
+- Search/filter changes reset the puzzle page to page 1.
+- `PUZZLES` is the default admin tab; tab/search/filter/page state stays route-local.
 - Reuse `GET /api/puzzles/:id/reference` through `getReferenceImageUrl()` for enlarged images.
-- Do not add generic tab, pagination, dialog, or lightbox abstractions.
+- Do not add generic auth, tab, filter, pagination, dialog, or lightbox abstractions.
 - Delete obsolete passkey/session compatibility paths instead of preserving backward compatibility.
 - Keep player auth (`JWT_SECRET`, `PlayerSessionResponse`, Google auth, OAuth/avatar rate limiting) unchanged.
 
@@ -189,12 +192,12 @@ Expected before implementation: the new Access-only expectations fail against th
 
 In `apps/api/src/routes/admin.worker.ts`:
 
-- delete the imports from `../middleware/auth.worker`;
+- delete imports from `../middleware/auth.worker`;
 - delete the `loginRateLimit` import;
 - delete `/login`, `/session`, and `/logout` handlers;
-- remove `requireAuth` from every operational admin handler while leaving each handler body unchanged.
+- remove `requireAuth` from every operational admin handler while leaving handler bodies unchanged.
 
-A puzzle-list handler should become:
+Keep the list response exactly `{ puzzles: PuzzleSummary[] }`:
 
 ```ts
 admin.get('/puzzles', async (c) => {
@@ -208,7 +211,7 @@ admin.get('/puzzles', async (c) => {
 });
 ```
 
-Apply only the middleware removal to create, allowlist, and delete handlers; do not rewrite their business logic.
+Apply only middleware removal to create, allowlist, and delete handlers; do not rewrite their business logic.
 
 In `apps/api/src/worker.ts`, remove `ADMIN_PASSKEY: string` from `Env` and remove the production `missingEnv` check for `ADMIN_PASSKEY`. Keep `JWT_SECRET` validation.
 
@@ -218,7 +221,7 @@ Delete `apps/api/src/middleware/auth.worker.ts` and its three dedicated test fil
 
 In `apps/api/src/middleware/rate-limit.worker.ts`, delete `loginRateLimit()` and `resetLoginAttempts()`. Remove `MAX_LOGIN_ATTEMPTS` and the login-key helper only if they become unused.
 
-Keep `oauthRateLimit()`, `avatarRateLimit()`, `resetAvatarAttempts()`, and the shared KV helpers unchanged. Delete only login-oriented cases from `rate-limit.worker.test.ts` / `rate-limit-coverage.worker.test.ts`; keep OAuth/avatar coverage.
+Keep `oauthRateLimit()`, `avatarRateLimit()`, `resetAvatarAttempts()`, and the shared KV helpers unchanged. Delete only login-oriented cases from rate-limit tests; keep OAuth/avatar coverage.
 
 - [ ] **Step 7: Remove the browser login/session surface but keep forced document navigation**
 
@@ -253,9 +256,9 @@ Reduce `apps/web/src/routes/admin/+layout.svelte` to:
 {/if}
 ```
 
-Update `adminNavigation.ts` comments to say Cloudflare Access is the security boundary. Keep the helper logic unchanged.
+Update `adminNavigation.ts` comments to say Cloudflare Access is the security boundary. Keep helper logic unchanged.
 
-Remove the Perseus `LOGOUT` button and its state/handler/imports from `apps/web/src/routes/admin/+page.svelte`; keep Upload and View Arcade.
+Remove the Perseus `LOGOUT` button and its state/handler/imports from the current admin page; keep Upload and View Arcade.
 
 - [ ] **Step 8: Remove admin-only shared auth contracts**
 
@@ -293,7 +296,7 @@ In `scripts/startup/token.ts`, delete `WORKER_AUTH_ERROR_CODE` and `isWorkerAuth
 
 In `scripts/admin-upload-puzzle.ts`, remove its passkey option/env lookup and `/api/admin/login` call, then POST directly with `accessHeaders(options)`.
 
-Update `scripts/admin-bulk-upload-startup.ts` operator comments so they no longer mention `ADMIN_PASSKEY`.
+Update `scripts/admin-bulk-upload-startup.ts` comments so they no longer mention `ADMIN_PASSKEY`.
 
 - [ ] **Step 10: Remove passkey deployment/config inputs and keep the existing ingress guard**
 
@@ -309,7 +312,7 @@ In `packages/infrastructure/src/index.ts`, remove the `ADMIN_PASSKEY: config.req
 
 Remove `adminPasskey` from both Pulumi config maps in `.github/workflows/deploy-infrastructure.yml`.
 
-Remove the local/E2E `ADMIN_PASSKEY` values from `apps/api/wrangler.toml` and `apps/api/package.json`.
+Remove local/E2E `ADMIN_PASSKEY` values from `apps/api/wrangler.toml` and `apps/api/package.json`.
 
 Update `packages/infrastructure/src/workers.ts` comments but preserve exactly:
 
@@ -368,7 +371,7 @@ git commit -m "refactor: rely on Cloudflare Access for admin auth"
 **Ownership:**
 
 - `+page.svelte`: page header, Upload/View Arcade links, local active-tab state.
-- `AdminPuzzlesPanel.svelte`: puzzle loading, polling, deletion, success/error state.
+- `AdminPuzzlesPanel.svelte`: puzzle loading, polling, deletion, success/error state; later tasks add search/filter/page/preview state here.
 - `PlayerAccessPanel.svelte`: allowlist loading, add/remove, stale-response guard, error state.
 
 - [ ] **Step 1: Add a failing shell test for default tab and lazy Player Access loading**
@@ -397,7 +400,7 @@ Keep shell assertions for the Control Panel heading, Upload, and View Arcade.
 bun run test:unit --filter=@perseus/web
 ```
 
-Expected before implementation: the tab/lazy-load assertions fail.
+Expected before implementation: tab/lazy-load assertions fail.
 
 - [ ] **Step 3: Extract puzzle behavior into `AdminPuzzlesPanel.svelte`**
 
@@ -479,7 +482,7 @@ git commit -m "refactor: split admin portal into tabs"
 
 ---
 
-## Task 3: Add fixed 20-row client-side puzzle pagination
+## Task 3: Add puzzle search, category/status filtering, and 20-row pagination
 
 **Files:**
 
@@ -488,46 +491,200 @@ git commit -m "refactor: split admin portal into tabs"
 
 **Contract:** `fetchAdminPuzzles(): Promise<PuzzleSummary[]>` and `GET /api/admin/puzzles` stay unchanged.
 
-- [ ] **Step 1: Add failing pagination tests with 21 puzzles**
+**Resulting local state:**
 
-Create 21 ready `PuzzleSummary` rows. Assert page 1 shows rows 1-20, row 21 is absent, Previous is disabled, and `PAGE 1 / 2` is shown. Click Next and assert row 21 is visible, row 1 is absent, Next is disabled, and Previous returns to page 1.
+```ts
+import { PUZZLE_CATEGORIES } from '@perseus/types';
+import type { PuzzleCategory, PuzzleStatus } from '@perseus/types';
 
-Add a second case: navigate to page 2, delete its only row, have the reload return 20 rows, and assert the component clamps back to the valid first page.
+const PAGE_SIZE = 20;
+type StatusFilter = 'all' | PuzzleStatus;
+type CategoryFilter = 'all' | PuzzleCategory;
 
-- [ ] **Step 2: Run the web unit suite and confirm pagination is red**
+let searchQuery = $state('');
+let categoryFilter: CategoryFilter = $state('all');
+let statusFilter: StatusFilter = $state('all');
+let pageIndex = $state(0);
+```
+
+- [ ] **Step 1: Add failing name-search tests**
+
+Use rows such as `Forest Scene`, `Night Forest`, and `City Lights`.
+
+Assert filling `Search puzzles` with `forest` shows both forest rows and hides `City Lights`. Repeat with mixed-case and surrounding whitespace (`  FoReSt  `) and expect the same matches.
+
+Also assert clearing the search returns all rows.
+
+- [ ] **Step 2: Add failing category/status filter tests**
+
+Use rows spanning categories/statuses, for example:
+
+```ts
+[
+  { id: 'p1', name: 'Forest Ready', category: 'Nature', status: 'ready', pieceCount: 48 },
+  { id: 'p2', name: 'Forest Build', category: 'Nature', status: 'processing', pieceCount: 48, progress: ... },
+  { id: 'p3', name: 'Gallery Failure', category: 'Art', status: 'failed', pieceCount: 48 }
+]
+```
+
+Assert:
+
+- selecting `Nature` hides the Art row;
+- selecting `PROCESSING` hides ready/failed rows;
+- selecting both Nature + Processing returns only `Forest Build`;
+- adding search `forest` keeps AND semantics;
+- a puzzle without `category` remains visible under `ALL CATEGORIES` but is excluded from a concrete category;
+- `RESET` clears search + category + status.
+
+- [ ] **Step 3: Add failing filtered-empty and count tests**
+
+With a non-empty backing list, choose criteria that match nothing and assert:
+
+```text
+No missions match the current search and filters.
+```
+
+Do not show the base `No missions found.` text in that case.
+
+When filters are active, assert the database count exposes matches relative to total (exact styling/casing can follow the existing UI; pin semantic text such as `1 OF 3`).
+
+- [ ] **Step 4: Add failing pagination-after-filtering tests**
+
+Create at least 25 rows where only 21 match `Nature`.
+
+Assert:
+
+- with Nature selected, page 1 shows exactly the first 20 matching rows;
+- the non-matching rows never consume page slots;
+- `PAGE 1 / 2` is shown;
+- Next shows only the 21st match;
+- changing search/category/status while on page 2 returns to page 1.
+
+Add a case where polling/deletion causes the current filtered page to disappear and assert page index clamps to the final valid page.
+
+- [ ] **Step 5: Add a failing polling test for hidden processing rows**
+
+Set status filter to `READY` while the backing list contains one ready puzzle and one processing puzzle. Advance the existing three-second timer and assert `fetchAdminPuzzles()` still polls even though the processing row is filtered out.
+
+This pins the required distinction:
+
+```ts
+// polling uses full backing list
+puzzles.some((p) => p.status === 'processing')
+
+// rendering uses filtered/paginated list
+visiblePuzzles
+```
+
+- [ ] **Step 6: Run the web unit suite and confirm Task 3 is red**
 
 ```bash
 bun run test:unit --filter=@perseus/web
 ```
 
-Expected before implementation: the pagination controls/visibility assertions fail.
+Expected before implementation: search/filter/pagination controls and derived-list assertions fail.
 
-- [ ] **Step 3: Add route-local pagination state**
+- [ ] **Step 7: Implement the filtered derivation**
 
 In `AdminPuzzlesPanel.svelte`:
 
 ```ts
-const PAGE_SIZE = 20;
-let pageIndex = $state(0);
+const filteredPuzzles = $derived.by(() => {
+  const query = searchQuery.trim().toLowerCase();
 
-const totalPages = $derived(Math.max(1, Math.ceil(puzzles.length / PAGE_SIZE)));
+  return puzzles.filter((puzzle) => {
+    if (query && !puzzle.name.toLowerCase().includes(query)) return false;
+    if (categoryFilter !== 'all' && puzzle.category !== categoryFilter) return false;
+    if (statusFilter !== 'all' && puzzle.status !== statusFilter) return false;
+    return true;
+  });
+});
+```
+
+Do not call the backend from search/filter handlers.
+
+- [ ] **Step 8: Implement page derivation from `filteredPuzzles`**
+
+```ts
+const totalPages = $derived(Math.max(1, Math.ceil(filteredPuzzles.length / PAGE_SIZE)));
 const visiblePuzzles = $derived(
-  puzzles.slice(pageIndex * PAGE_SIZE, pageIndex * PAGE_SIZE + PAGE_SIZE)
+  filteredPuzzles.slice(pageIndex * PAGE_SIZE, pageIndex * PAGE_SIZE + PAGE_SIZE)
 );
 
-function clampPageIndex() {
-  const maxPageIndex = Math.max(0, Math.ceil(puzzles.length / PAGE_SIZE) - 1);
-  pageIndex = Math.min(pageIndex, maxPageIndex);
+$effect(() => {
+  const maxPageIndex = Math.max(0, totalPages - 1);
+  if (pageIndex > maxPageIndex) pageIndex = maxPageIndex;
+});
+```
+
+Render `visiblePuzzles` instead of `puzzles`.
+
+Keep processing polling based on the unfiltered `puzzles` array.
+
+- [ ] **Step 9: Add minimal search/filter controls**
+
+Above the rows, render:
+
+```svelte
+<input
+  aria-label="Search puzzles"
+  type="search"
+  value={searchQuery}
+  oninput={(event) => {
+    searchQuery = event.currentTarget.value;
+    pageIndex = 0;
+  }}
+/>
+
+<select
+  aria-label="Puzzle category"
+  value={categoryFilter}
+  onchange={(event) => {
+    categoryFilter = event.currentTarget.value as CategoryFilter;
+    pageIndex = 0;
+  }}
+>
+  <option value="all">ALL CATEGORIES</option>
+  {#each PUZZLE_CATEGORIES as category}
+    <option value={category}>{category}</option>
+  {/each}
+</select>
+
+<select
+  aria-label="Puzzle status"
+  value={statusFilter}
+  onchange={(event) => {
+    statusFilter = event.currentTarget.value as StatusFilter;
+    pageIndex = 0;
+  }}
+>
+  <option value="all">ALL STATUS</option>
+  <option value="ready">READY</option>
+  <option value="processing">PROCESSING</option>
+  <option value="failed">FAILED</option>
+</select>
+```
+
+Add route-local helpers:
+
+```ts
+const hasActiveFilters = $derived(
+  searchQuery.trim().length > 0 || categoryFilter !== 'all' || statusFilter !== 'all'
+);
+
+function resetFilters() {
+  searchQuery = '';
+  categoryFilter = 'all';
+  statusFilter = 'all';
+  pageIndex = 0;
 }
 ```
 
-Call `clampPageIndex()` after a successful `loadPuzzles()` assignment. Render `visiblePuzzles` instead of `puzzles`.
+Show a `RESET` button only while `hasActiveFilters` is true.
 
-Keep processing polling based on `puzzles.some((p) => p.status === 'processing')` so processing work on a non-visible page still keeps polling active.
+- [ ] **Step 10: Add minimal pagination controls**
 
-- [ ] **Step 4: Add minimal Previous/Next controls**
-
-Render controls only when `puzzles.length > PAGE_SIZE`:
+Render controls only when `filteredPuzzles.length > PAGE_SIZE`:
 
 ```svelte
 <nav aria-label="Puzzle pages">
@@ -545,9 +702,21 @@ Render controls only when `puzzles.length > PAGE_SIZE`:
 </nav>
 ```
 
-Use existing admin styling. Do not add page-number buttons or a page-size selector.
+Do not add page-number buttons or a page-size selector.
 
-- [ ] **Step 5: Verify Task 3 and confirm the API did not change**
+For empty states:
+
+```svelte
+{#if puzzles.length === 0}
+  <p>No missions found.</p>
+{:else if filteredPuzzles.length === 0}
+  <p>No missions match the current search and filters.</p>
+{:else}
+  <!-- rows + pagination -->
+{/if}
+```
+
+- [ ] **Step 11: Verify Task 3 and confirm the API did not change**
 
 ```bash
 bun run test:unit --filter=@perseus/web
@@ -555,13 +724,13 @@ bun run check --filter=@perseus/web
 git diff -- apps/api/src/routes/admin.worker.ts apps/web/src/lib/services/api.ts
 ```
 
-Expected: tests/check exit 0; Task 3 has no API-client or API-route diff.
+Expected: tests/check exit 0; Task 3 has no API-client or API-route diff beyond Task 1's auth removal.
 
-- [ ] **Step 6: Commit Task 3**
+- [ ] **Step 12: Commit Task 3**
 
 ```bash
 git add apps/web/src/routes/admin/AdminPuzzlesPanel.svelte apps/web/src/routes/admin/AdminPuzzlesPanel.svelte.test.ts
-git commit -m "feat: paginate admin puzzle list"
+git commit -m "feat: search and filter admin puzzles"
 ```
 
 ---
@@ -621,8 +790,6 @@ Wrap only a ready thumbnail in:
 Keep processing and failed placeholders non-interactive.
 
 - [ ] **Step 4: Add the route-local modal using the existing focus pattern**
-
-Render the preview inside the same component:
 
 ```svelte
 {#if previewPuzzle}
@@ -697,7 +864,22 @@ Confirm:
 - `CLI_ACCESS_PATHS` contains only `/api/admin/puzzles`.
 - destructive deletion remains at `/api/admin/puzzle-delete/:id`.
 
-- [ ] **Step 3: Run the complete affected verification set**
+- [ ] **Step 3: Verify search/filter/pagination remains client-side**
+
+```bash
+rg -n "fetchAdminPuzzles|Search puzzles|Puzzle category|Puzzle status|PAGE_SIZE|filteredPuzzles" \
+  apps/web/src/routes/admin apps/web/src/lib/services/api.ts apps/api/src/routes/admin.worker.ts
+```
+
+Confirm:
+
+- `fetchAdminPuzzles()` still has no search/category/status/page parameters;
+- admin API still returns the full puzzle list;
+- `AdminPuzzlesPanel.svelte` owns search/filter/page state;
+- filtering occurs before the page slice;
+- polling checks the unfiltered `puzzles` array.
+
+- [ ] **Step 4: Run the complete affected verification set**
 
 ```bash
 bun run test:unit --filter=@perseus/types
@@ -713,27 +895,34 @@ bun run lint:scripts
 
 Expected: every command exits 0.
 
-- [ ] **Step 4: Audit the final diff against the four requested outcomes**
+- [ ] **Step 5: Audit the final diff against requested outcomes**
 
 ```text
 [ ] Passkey/session removed; existing Cloudflare Access boundary retained
 [ ] Player Access is a separate tab and does not load on the initial Puzzles tab
-[ ] Puzzle list paginates in-memory at exactly 20 rows without changing the admin list API
+[ ] Puzzle name search is case-insensitive substring matching
+[ ] Category + status filters combine with search using AND semantics
+[ ] Reset clears all puzzle criteria
+[ ] Search/filter changes reset pagination to page 1
+[ ] Filtered puzzle list paginates at exactly 20 rows without changing the admin list API
+[ ] Hidden processing rows still keep polling active
 [ ] Ready puzzle thumbnail opens the existing reference image in a focused modal
 [ ] Forced admin document navigation remains
 [ ] CLI service-token upload still works without application login
-[ ] No generic auth/tab/pagination/lightbox framework was introduced
+[ ] No generic auth/tab/filter/pagination/lightbox framework was introduced
 ```
 
 Fix mismatches in the owning task rather than adding compensating abstractions.
 
-- [ ] **Step 5: Perform the deployment smoke check after merge/deploy**
+- [ ] **Step 6: Perform the deployment smoke check after merge/deploy**
 
 1. Allowed browser identity/device opens `/admin` without a Perseus passkey prompt.
-2. `PUZZLES` is selected initially and shows at most 20 rows.
-3. `PLAYER ACCESS` loads when selected and add/remove still works.
-4. Ready thumbnail opens the enlarged reference image; Close and Escape dismiss it.
-5. `bun run admin:startup:status` with the existing CLI service-token environment reports readiness without asking for a passkey.
-6. A bounded upload using the service token can list/create through `/api/admin/puzzles`.
-7. The CLI service token cannot reach `/api/admin/puzzle-delete/:id` through Cloudflare Access.
-8. A browser/device outside the Access policy cannot reach `/admin`.
+2. `PUZZLES` is selected initially.
+3. Name search, category filter, status filter, combined filtering, and Reset work.
+4. Filtered results paginate at 20 rows and changing criteria returns to page 1.
+5. `PLAYER ACCESS` loads when selected and add/remove still works.
+6. Ready thumbnail opens the enlarged reference image; Close and Escape dismiss it.
+7. `bun run admin:startup:status` with the existing CLI service-token environment reports readiness without asking for a passkey.
+8. A bounded upload using the service token can list/create through `/api/admin/puzzles`.
+9. The CLI service token cannot reach `/api/admin/puzzle-delete/:id` through Cloudflare Access.
+10. A browser/device outside the Access policy cannot reach `/admin`.
