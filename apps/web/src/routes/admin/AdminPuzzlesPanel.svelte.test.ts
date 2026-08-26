@@ -195,4 +195,29 @@ describe('AdminPuzzlesPanel', () => {
 		});
 		vi.useRealTimers();
 	});
+
+	it('does not start polling when unmounted during the initial request', async () => {
+		let resolveInitialRequest!: (puzzles: PuzzleSummary[]) => void;
+		vi.mocked(fetchAdminPuzzles).mockReturnValueOnce(
+			new Promise((resolve) => {
+				resolveInitialRequest = resolve;
+			})
+		);
+
+		const { unmount } = render(AdminPuzzlesPanel);
+		await vi.waitFor(() => {
+			expect(fetchAdminPuzzles).toHaveBeenCalledTimes(1);
+		});
+
+		unmount();
+		const setIntervalSpy = vi.spyOn(window, 'setInterval');
+		try {
+			resolveInitialRequest(mockPuzzles);
+			await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+			expect(setIntervalSpy).not.toHaveBeenCalled();
+		} finally {
+			setIntervalSpy.mockRestore();
+		}
+	});
 });
