@@ -46,9 +46,10 @@ export function createPuzzleApi(options: {
 
 	return {
 		async listPuzzles(cursor?: string): Promise<PuzzleListResponse> {
-			const url = cursor
-				? `${baseUrl}/api/puzzles?cursor=${encodeURIComponent(cursor)}`
-				: `${baseUrl}/api/puzzles`;
+			const url =
+				cursor !== undefined && cursor !== null
+					? `${baseUrl}/api/puzzles?cursor=${encodeURIComponent(cursor)}`
+					: `${baseUrl}/api/puzzles`;
 			const raw = await options.requestJson(url);
 			if (!isPuzzleListResponse(raw)) throw new Error('invalid_puzzle_list_response');
 			return raw;
