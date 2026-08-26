@@ -1,9 +1,16 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
+	import ReferenceOverlay from '$lib/components/ReferenceOverlay.svelte';
 	import SearchBar from '$lib/components/SearchBar.svelte';
 	import { PUZZLE_CATEGORIES } from '$lib/constants/categories';
 	import type { PuzzleCategory } from '$lib/constants/categories';
-	import { ApiError, deletePuzzle, fetchAdminPuzzles, getThumbnailUrl } from '$lib/services/api';
+	import {
+		ApiError,
+		deletePuzzle,
+		fetchAdminPuzzles,
+		getReferenceImageUrl,
+		getThumbnailUrl
+	} from '$lib/services/api';
 	import { createSessionStorageAdapter } from '$lib/services/gameplay/session/persistence';
 	import type { PuzzleStatus, PuzzleSummary } from '$lib/types/puzzle';
 	import { filterAdminPuzzles, pageSlice } from './adminPuzzleList';
@@ -27,6 +34,7 @@
 	let categoryFilter = $state<'all' | PuzzleCategory>('all');
 	let statusFilter = $state<'all' | PuzzleStatus>('all');
 	let pageIndex = $state(0);
+	let previewPuzzle: PuzzleSummary | null = $state(null);
 	const hasActiveCriteria = $derived(
 		searchQuery.trim().length > 0 || categoryFilter !== 'all' || statusFilter !== 'all'
 	);
@@ -141,7 +149,26 @@
 		statusFilter = 'all';
 		pageIndex = 0;
 	}
+
+	function dismissPreview() {
+		previewPuzzle = null;
+	}
+
+	function handlePreviewKeyDown(event: KeyboardEvent) {
+		if (event.key !== 'Escape' || previewPuzzle === null) return;
+		event.preventDefault();
+		dismissPreview();
+	}
 </script>
+
+<svelte:window onkeydown={handlePreviewKeyDown} />
+
+<ReferenceOverlay
+	imageUrl={previewPuzzle ? getReferenceImageUrl(previewPuzzle.id) : null}
+	active={previewPuzzle !== null}
+	dismissible
+	onDismiss={dismissPreview}
+/>
 
 {#if successMessage}
 	<div
@@ -282,11 +309,19 @@ bg-(--bg-2)"
 								<span class="text-(--hot)">x</span>
 							</div>
 						{:else}
-							<img
-								src={getThumbnailUrl(puzzle.id)}
-								alt={puzzle.name}
-								class="h-12 w-12 shrink-0 object-cover"
-							/>
+							<button
+								type="button"
+								aria-label={`View full image for ${puzzle.name}`}
+								onclick={() => (previewPuzzle = puzzle)}
+								class="h-12 w-12 shrink-0 cursor-zoom-in focus-visible:outline-2
+focus-visible:outline-offset-2 focus-visible:outline-(--accent)"
+							>
+								<img
+									src={getThumbnailUrl(puzzle.id)}
+									alt={puzzle.name}
+									class="h-full w-full object-cover"
+								/>
+							</button>
 						{/if}
 
 						<div class="flex min-w-0 flex-col gap-[0.2rem]">
