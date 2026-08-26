@@ -1,5 +1,7 @@
 const webpack = require('@nativescript/webpack');
 
+const apiBase = process.env.PERSEUS_MOBILE_API_BASE ?? 'http://localhost:4690';
+
 module.exports = (env) => {
 	webpack.init(env);
 
@@ -15,6 +17,13 @@ module.exports = (env) => {
 				'svelte-native': '@nativescript-community/svelte-native'
 			}
 		}
+	});
+
+	webpack.chainWebpack((config) => {
+		config.plugin('DefinePlugin').tap((args) => {
+			args[0].__PERSEUS_API_BASE__ = JSON.stringify(apiBase);
+			return args;
+		});
 	});
 
 	return webpack.resolveConfig();
