@@ -2,332 +2,360 @@
 
 ## Summary
 
-Simplify the Perseus admin portal around the Cloudflare Zero Trust boundary that already protects the production admin surface, then improve the existing admin UI with tab separation, client-side puzzle search/filtering + pagination, and an enlarged puzzle-image preview.
+Simplify the Perseus admin portal around the Cloudflare Zero Trust boundary that already protects production, then improve the existing admin UI with tab separation, client-side puzzle search/filtering + pagination, and enlarged reference-image viewing.
 
-This remains one implementation slice and one PR. It does not introduce a new admin framework, a new storage/indexing path, or another authentication mechanism.
+This remains one implementation slice and one PR. It does not add a new auth mechanism, backend admin query API, storage index, tab framework, or pagination library.
 
 ## Goals
 
-- Remove the Perseus admin passkey and `perseus_session` authentication layer.
+- Remove the Perseus admin passkey and `perseus_session` layer.
 - Keep Cloudflare Access as the production admin security boundary.
-- Preserve the existing forced full-document navigation when entering `/admin` from the public SPA so Cloudflare Access receives a document request and can challenge it.
-- Preserve the existing narrow Cloudflare Access service-token path for admin upload automation, but remove its dependency on the Perseus passkey/session flow.
+- Preserve the existing full-document navigation seam for client-routed entry into `/admin`.
+- Preserve the narrow Access service-token path for admin upload automation, without the app passkey/session step.
 - Separate puzzle management and player allowlist management into `PUZZLES` and `PLAYER ACCESS` tabs.
-- Add admin puzzle search by name.
-- Add admin puzzle filtering by category and processing status.
-- Show the filtered puzzle list in fixed pages of 20 rows.
-- Allow a ready puzzle thumbnail to open the existing reference image in an enlarged modal view.
+- Search puzzles by name and filter by category/status.
+- Paginate filtered puzzle results at a fixed 20 rows.
+- Open ready puzzle reference images in the existing full-screen reference overlay.
 
 ## Non-Goals
 
-- No Worker-side Cloudflare Access JWT validation.
-- No replacement local-dev admin authentication.
+- No Worker-side Access JWT validation or replacement local-dev admin auth.
 - No role/permission system.
-- No new backend search/filter/pagination API.
-- No server-side admin search index.
-- No admin sorting or page-size selector.
-- No player-access search/filtering or pagination.
+- No backend admin search/filter/pagination API or server-side admin search index.
+- No admin sorting/page-size selector.
+- No Player Access search/filtering/pagination.
 - No URL-backed search/filter/tab state or nested admin routes.
-- No generic tab, filter, pagination, dialog, or lightbox framework.
+- No generic tab/filter/pagination/dialog/lightbox framework.
 - No new image endpoint or raw-original download path.
-- No compatibility path for the deleted passkey/session API.
+- No compatibility path for deleted passkey/session APIs.
+- No new Worker route/custom-domain IaC in this task.
 
 ## Current Context
 
-Production admin traffic is already protected by Cloudflare Access. `packages/infrastructure/src/admin-access.ts` covers `/admin`, `/admin/*`, `/api/admin`, and `/api/admin/*` with the configured browser identity/device-posture policy. A more-specific CLI Access application covers the admin puzzle endpoint and adds a service-token policy for automation.
+Cloudflare Access already protects `/admin`, `/admin/*`, `/api/admin`, and `/api/admin/*`. A more-specific CLI Access application covers the exact admin puzzle endpoint and adds a Service Auth policy for the upload automation.
 
-The Pulumi-managed API Worker in `packages/infrastructure/src/workers.ts` already disables both the `workers.dev` subdomain and preview URLs with:
+The Pulumi-managed API Worker already has:
 
 ```ts
 subdomain: { enabled: false, previewsEnabled: false }
 ```
 
-Pulumi is the production source of truth. After application `requireAuth` is removed, this origin-isolation setting is a critical part of the admin security boundary and must remain intact rather than being duplicated in Wrangler configuration.
+That blocks the normal `workers.dev` and preview entry points. After `requireAuth` is removed, this origin-isolation setting is no longer merely defense in depth: any other live hostname/route that reaches the Worker without an Access application would expose the admin API without an application auth gate.
 
-The application currently adds a second admin-auth layer: `/api/admin/login` validates `ADMIN_PASSKEY`, creates `perseus_session`, the admin Svelte layout checks that session, and all admin API handlers use `requireAuth`. Startup and one-off upload CLIs also obtain the same session after passing Cloudflare Access.
+The repository does **not** declare the production Worker custom domain/route. `createWorkerRoute()` is exported but unused, and the production Wrangler config contains no route/custom-domain declaration. Therefore the repo cannot prove that `AUTH_REDIRECT_BASE_URL` is the Worker's only live hostname. The implementation rollout must explicitly inspect the deployed Worker's Domains & Routes before shipping the auth removal.
 
-The current admin page loads puzzle management and player access together. Puzzle processing is polled every three seconds. `GET /api/admin/puzzles` returns the full freshly-read admin puzzle list, including `processing` and `failed` records. Startup upload tooling also consumes that full list for its preflight deduplication snapshot.
+The current application adds a second admin layer: `/api/admin/login` validates `ADMIN_PASSKEY`, creates `perseus_session`, the admin layout checks it, and admin handlers use `requireAuth`. Startup/one-off upload CLIs also obtain that session after passing Cloudflare Access.
 
-The public gallery already has the exact search control we need in `SearchBar.svelte`, while admin uniquely needs status visibility for `ready`, `processing`, and `failed`. The admin already receives all metadata needed to filter locally, so adding another API query contract is unnecessary for the current scale.
+`GET /api/admin/puzzles` intentionally returns the full fresh all-status list. Processing polling and startup deduplication depend on that behavior. The public gallery paginator cannot be reused because it filters to `ready` and is backed by the gallery cache.
 
-The web client already exposes `getReferenceImageUrl(puzzleId)`, backed by `GET /api/puzzles/:id/reference`, so enlarged image viewing does not require a new asset/API path.
+The web app already provides:
+- `SearchBar.svelte` for the exact search input chrome/accessibility.
+- `$lib/constants/categories` for category values/types.
+- `ReferenceOverlay.svelte` for a full-screen reference dialog with focus trapping/restoration, close control, coarse-pointer sizing, and an image-error fallback.
+- `getReferenceImageUrl(puzzleId)` for the existing reference endpoint.
 
 ## Design
 
-### 1. Cloudflare Access becomes the sole production admin gate
+### 1. Cloudflare Access becomes the only production admin authentication gate
 
-Delete the Perseus admin login/session feature rather than leaving a dormant compatibility layer:
+Delete the application admin auth feature completely:
 
-- Remove `/api/admin/login`, `/api/admin/session`, and `/api/admin/logout`.
-- Remove `requireAuth` from admin API handlers.
-- Delete the admin-session middleware once all production and test references are gone.
-- Remove `ADMIN_PASSKEY` from the Worker environment, Pulumi bindings, GitHub Actions deployment and seed workflows, local development configuration, and current operator/product documentation.
-- Remove admin-only `LoginResponse`, `SessionResponse`, and `WORKER_AUTH_ERROR_CODE` contracts once their callers are gone.
-- Remove the `/admin/login` Svelte route and the admin page's Perseus `LOGOUT` button.
-
-`JWT_SECRET` stays because player authentication still uses it.
+- Remove `/api/admin/login`, `/api/admin/session`, `/api/admin/logout`.
+- Remove `requireAuth` from operational admin handlers without changing handler bodies.
+- Delete the admin-session middleware and dedicated tests after all live/test references are removed.
+- Remove `ADMIN_PASSKEY` from Worker `Env`, runtime validation, Pulumi bindings, GitHub Actions deployment/seed inputs, local/E2E config, CLI options, and current docs.
+- Remove admin-only `LoginResponse`, `SessionResponse`, and `WORKER_AUTH_ERROR_CODE`.
+- Delete `/admin/login` and the Perseus `LOGOUT` control.
+- Keep `JWT_SECRET` and all player auth unchanged.
 
 Production authorization becomes:
 
 ```text
 Browser admin
-  -> Cloudflare Access: email + device posture
+  -> Cloudflare Access identity + device posture
   -> /admin and /api/admin/*
 
 Admin upload automation
-  -> Cloudflare Access: service token
-  -> exact /api/admin/puzzles path only
+  -> Cloudflare Access service token
+  -> exact /api/admin/puzzles only
 ```
 
-The more-specific CLI Access app keeps browser email/posture access as well, so browser administration continues to work on `/api/admin/puzzles`.
+The sibling destructive endpoint stays `POST /api/admin/puzzle-delete/:id`, outside the CLI Service Auth path.
 
-The destructive delete route remains `POST /api/admin/puzzle-delete/:id`, outside the CLI service-token application's exact `/api/admin/puzzles` destination. Do not broaden `CLI_ACCESS_PATHS`.
+Browser admin fetches keep `credentials: 'include'` so the Cloudflare Access cookie continues to ride with requests.
 
-Local development intentionally has no admin auth after this change. Local `/admin` and `/api/admin/*` are developer-only surfaces; do not add a replacement dev passkey or feature flag.
+Local development intentionally has no admin auth after this change.
 
-Browser admin fetches keep `credentials: 'include'`. The Perseus session cookie disappears, but the browser still needs to carry the Cloudflare Access cookie in production and cross-origin local API behavior should not be casually changed as part of this refactor.
+### 2. Treat ingress coverage as a rollout precondition
 
-### 2. Treat the auth deletion sweep as a contract, not a fallback
+Before deploying the auth removal:
 
-The passkey/session feature currently appears across runtime code, test mocks, CLIs, workflows, and current documentation. Task 1 must enumerate the known live surface and also finish with a repository-wide sweep.
+1. Open the deployed API Worker in Cloudflare **Workers & Pages -> Settings -> Domains & Routes** (or use an equivalent account-level API/CLI inspection).
+2. Enumerate every live route/custom domain for the Worker.
+3. Confirm `workers.dev` and previews are disabled.
+4. For every live hostname/route, verify an Access application covers `/admin*` and `/api/admin*`.
+5. Stop the rollout if any reachable hostname bypasses Access.
 
-The inventory explicitly includes current files that are easy to miss:
+Do not add new routing IaC merely to satisfy this ticket; the check documents the current external assumption cheaply.
 
-- `AGENTS.md` and `CLAUDE.md` environment-variable guidance;
-- `docs/PRD.md` current admin journey;
-- `.github/workflows/seed-startup-puzzles.yml` production `ADMIN_PASSKEY` injection;
-- `apps/web/src/lib/services/__tests__/api.test.ts` login/logout/session tests and the admin-list 401 case;
-- `apps/api/src/__tests__/worker-extra.worker.test.ts` admin-session route mock and `ADMIN_PASSKEY` fixture;
-- `apps/api/src/middleware/rate-limit-post-tracking.worker.test.ts` login limiter import;
-- every `apps/api/src/routes/__tests__/admin-*.worker.test.ts` file that mocks `../../middleware/auth.worker`.
+### 3. Remove first, then repair deletion-owned tests
 
-Those test mocks must be removed when the middleware disappears. Leaving a fake `requireAuth: (_c, next) => next()` behind would make tests describe a security layer that production no longer has.
+Task 1 is a deletion/refactor, not new behavioral logic. Do not spend multiple steps rewriting ~30 tests against APIs that still exist just to manufacture a long red phase.
 
-Historical completed documents under `docs/superpowers/` may remain historical records. Current product/runbook/config documentation must be updated.
+Within the isolated Task 1 commit:
 
-### 3. Preserve the admin document-navigation seam
+1. Record a green baseline for affected suites.
+2. Delete the production/session/CLI/config surface.
+3. Repair the directly-owned tests/fixtures/mocks to match the deletion.
+4. Run the full case-insensitive repository sweep and verification gate.
 
-`apps/web/src/lib/services/adminNavigation.ts` and the document-navigation branch in `apps/web/src/routes/admin/+layout.svelte` remain.
+Tasks 3 and 4 remain test-first because they add new behavior whose contract benefits from red/green development.
 
-A client-side navigation from a public page to `/admin` does not inherently make a new document request. The existing layout detects that case and calls `window.location.assign(...)`; this must remain so the browser reaches Cloudflare Access before rendering the admin document.
+### 4. Preserve the admin document-navigation gate without mounting children first
 
-The layout is otherwise simplified: no session fetch, login-page special case, loading spinner, redirect-to-login state, or route-change session rechecks. On a direct admin document load that already passed Access, it renders its children immediately.
+Client-side navigation from a public page to `/admin` must still become a full document navigation so Cloudflare Access can challenge it.
 
-Update comments so they describe Cloudflare Access and origin isolation as the security boundary rather than referring to deleted application auth.
+After session checking is removed, the layout must **not render admin children until it has decided whether a full-document redirect is required**. Do not rely on parent/child `onMount` ordering.
 
-### 4. Simplify the admin upload CLIs instead of replacing auth
+Use a blocked-by-default state:
 
-Keep the existing Cloudflare Access credential support:
+```svelte
+<script lang="ts">
+  import { onMount } from 'svelte';
+  import { page } from '$app/stores';
+  import {
+    forceAdminDocumentNavigation,
+    isClientRoutedAdminPath
+  } from '$lib/services/adminNavigation';
 
-- service tokens remain the preferred automation path;
-- browser `CF_Authorization` JWT support may remain for operator use;
-- `--skip-access` remains valid only for loopback/local targets.
+  let { children } = $props();
+  let redirecting = $state(true);
 
-Delete the Perseus login/session step. Once Access credentials are probed successfully, CLI GET/POST requests go directly to `/api/admin/puzzles` with the Access headers.
+  onMount(() => {
+    const shouldRedirect = isClientRoutedAdminPath($page.url.pathname);
+    redirecting = shouldRedirect;
 
-The startup CLI readiness check becomes an Access/backend-health check only. Remove `--passkey`, `ADMIN_PASSKEY`, `passkey-missing`, session-cookie parsing, and `/api/admin/login` calls.
+    if (shouldRedirect) {
+      forceAdminDocumentNavigation($page.url);
+    }
+  });
+</script>
 
-Because the Worker no longer emits a `requireAuth` 401, Access probes no longer need `WORKER_AUTH_ERROR_CODE` to distinguish Worker 401 from Access 401. Probe semantics become simple:
+{#if !redirecting}
+  {@render children()}
+{/if}
+```
 
-- `200` -> Access accepted and backend is healthy;
-- `401`, `302`, or `403` -> Access blocked;
-- `5xx` -> Access reached the backend, but backend is unhealthy;
-- network/unexpected response -> probe error.
+This preserves the Access challenge seam and prevents puzzle/allowlist fetches from starting before that decision.
 
-### 5. Split the admin page by responsibility
+### 5. Simplify the upload CLIs to Access-only authentication
 
-Use three route-local components:
+Keep:
+- service token as the preferred automation credential;
+- optional `CF_Authorization` JWT path for operator use;
+- `--skip-access` only for loopback/local targets.
+
+Delete:
+- `--passkey` / `ADMIN_PASSKEY`;
+- `/api/admin/login`;
+- app session-cookie parsing;
+- `passkey-missing`;
+- `WORKER_AUTH_ERROR_CODE` / Worker-401 disambiguation.
+
+Probe mapping becomes:
+
+```text
+200           -> ok
+401/302/403   -> Access blocked
+5xx           -> backend unhealthy
+other/network -> error
+```
+
+The seed workflow keeps only `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET`.
+
+This changes automation from two application-layer credentials (Access service token + passkey) to one Cloudflare Access service token for list/create. Document that explicitly. If that credential is suspected compromised, disable, rotate, or revoke/delete the service token (or remove its Service Auth policy); there is no longer a passkey second factor.
+
+The currently configured token lifetime is one year (`8760h`), so current docs that still claim a 90-day default must be corrected.
+
+### 6. Make the auth deletion inventory complete but symlink-safe
+
+Known live deletion/repair surface includes:
+
+- API admin route/Worker env and admin session middleware.
+- Login-only rate limiter exports and login cases in all three rate-limit test owners, including `rate-limit-post-tracking.worker.test.ts`.
+- Every admin route test that mocks `../../middleware/auth.worker`; delete those mocks rather than replacing them with pass-through fakes.
+- `apps/web/src/lib/services/__tests__/api.test.ts`.
+- `apps/api/src/__tests__/worker-extra.worker.test.ts`.
+- `apps/api/src/services/__tests__/reaper.test.ts`.
+- `scripts/startup/upload.test.ts`.
+- CLI files/tests.
+- `.github/workflows/deploy-infrastructure.yml`.
+- `.github/workflows/seed-startup-puzzles.yml`.
+- Pulumi `adminPasskey` binding and current operator docs.
+- `CLAUDE.md`, `docs/PRD.md`, and pending `docs/follow_up/**` text.
+
+`AGENTS.md` is a symlink to `CLAUDE.md`, not a second document. Modify `CLAUDE.md` only and verify the symlink remains `AGENTS.md -> CLAUDE.md`.
+
+`packages/infrastructure/Pulumi.production.yaml` is not tracked; stack files are gitignored. After the deployed code no longer consumes `adminPasskey`, remove the orphan key from the Pulumi stack configuration operationally rather than adding a nonexistent repo file to the change list.
+
+Historical completed docs under `docs/superpowers/**` remain unchanged.
+
+### 7. Split the admin page by responsibility
+
+Keep route-local composition:
 
 ```text
 apps/web/src/routes/admin/
   +page.svelte
   AdminPuzzlesPanel.svelte
   PlayerAccessPanel.svelte
+  adminPuzzleList.ts
+  adminPuzzleList.test.ts
 ```
 
-`+page.svelte` owns only:
+`+page.svelte` owns only the header, Upload/View Arcade links, active tab, and two accessible tab buttons.
 
-- page header;
-- Upload and View Arcade links;
-- local `puzzles | players` active-tab state;
-- accessible tab buttons and conditional panel mount.
+`AdminPuzzlesPanel` owns puzzle fetch/poll/delete, search/filter/page state, and preview state.
 
-`AdminPuzzlesPanel.svelte` owns puzzle loading, processing polling, deletion, partial-success message, search/filter state, pagination state, and image-preview state.
+`PlayerAccessPanel` owns allowlist load/add/remove/error state.
 
-`PlayerAccessPanel.svelte` owns the existing allowlist load/add/remove/error state.
+Mount only the active panel. `PUZZLES` is the default. No tab framework or URL state.
 
-The default tab is `PUZZLES`. Use normal accessible tab semantics (`tablist`, `tab`, `aria-selected`, `tabpanel`) but no reusable tab abstraction.
+### 8. Reuse SearchBar and web category constants
 
-Mount only the active panel. This means Player Access is not fetched on initial admin load, processing polling stops while the puzzle panel is unmounted, and returning to a tab reloads that panel's data and local state. That reset is acceptable for this private admin tool.
+Use `SearchBar` unchanged. Admin search is immediate client-side filtering, so no debounce.
 
-### 6. Reuse existing web search/category seams
+Use `PUZZLE_CATEGORIES` / `PuzzleCategory` from `$lib/constants/categories`.
 
-Do not create a second hand-rolled search field. Reuse:
+Use simple route-local `<select>` controls for:
+- `ALL CATEGORIES` + categories
+- `ALL STATUS`, `READY`, `PROCESSING`, `FAILED`
 
-```svelte
-<SearchBar
-  value={searchQuery}
-  onInput={(value) => {
-    searchQuery = value;
-    pageIndex = 0;
-  }}
-/>
-```
+Do not reuse gallery `CategoryFilter.svelte`; its chip UI is not suitable here.
 
-`SearchBar.svelte` already owns the `Search puzzles` accessible name, `SEARCH MISSIONS...` placeholder, focus styling, and component tests. Do not add debounce: gallery debounce belongs to the gallery route because it drives network requests; admin filtering is in-memory.
+### 9. Keep filter/page arithmetic in two pure route-local helpers
 
-For the category `<select>`, import `PUZZLE_CATEGORIES` / `PuzzleCategory` through `$lib/constants/categories`, matching existing web conventions. Do not reuse `CategoryFilter.svelte`; its gallery chip UI is not appropriate for this admin toolbar.
-
-Status remains a small route-local `<select>` with `ALL STATUS`, `READY`, `PROCESSING`, and `FAILED`.
-
-### 7. Keep filter/page arithmetic pure and route-local
-
-Do not bury all list math in Svelte `$derived` / write-back `$effect` code or force browser tests to prove array arithmetic through 20+ DOM rows.
-
-Add one tiny route-local helper file, not a pagination framework:
-
-```text
-apps/web/src/routes/admin/adminPuzzleList.ts
-apps/web/src/routes/admin/adminPuzzleList.test.ts
-```
-
-It owns two pure functions:
+Add only:
 
 ```ts
-export function filterAdminPuzzles(
-  puzzles: readonly PuzzleSummary[],
-  filters: {
-    query: string;
-    category: 'all' | PuzzleCategory;
-    status: 'all' | PuzzleStatus;
-  }
-): PuzzleSummary[];
-
-export function pageSlice<T>(
-  items: readonly T[],
-  pageIndex: number,
-  pageSize: number
-): {
-  page: T[];
-  totalPages: number;
-  clampedIndex: number;
-};
+filterAdminPuzzles(puzzles, { query, category, status })
+pageSlice(items, pageIndex, pageSize)
 ```
 
-`filterAdminPuzzles` uses the same name rule as gallery listing: trim query, lowercase, substring match. Category/status combine with AND semantics. A puzzle without category matches only `all` category.
+`filterAdminPuzzles`:
+- trims/lowercases query;
+- uses case-insensitive substring name matching;
+- combines name/category/status with AND semantics;
+- excludes uncategorized puzzles from concrete category filters.
 
-`pageSlice` clamps without writing back into Svelte state. The panel derives the visible page from `clampedIndex`; criteria-change callbacks explicitly reset `pageIndex = 0`. If polling/deletion shrinks the current result set, the helper immediately renders the final valid page without a state-writing `$effect`.
+`pageSlice` returns `{ page, totalPages, clampedIndex }`. Criteria handlers explicitly reset `pageIndex = 0`. Poll/deletion shrinkage uses `clampedIndex` for rendering/navigation; do not introduce a `$effect` that reads and writes page state.
 
-Pure helper tests own:
+Pure tests own filter/page arithmetic. Browser tests own only UI wiring plus one 21-row pagination wiring case.
 
-- case-insensitive/trimmed name matching;
-- category + status AND behavior;
-- uncategorized behavior;
-- empty result;
-- page boundaries and out-of-range clamping.
-
-Browser component tests own only wiring that needs the DOM: SearchBar callback, selects, Reset, filtered-empty copy/count, polling while a processing row is hidden, and one minimal pagination-control wiring case.
-
-### 8. Search/filter before fixed 20-row pagination
-
-`GET /api/admin/puzzles` and `fetchAdminPuzzles()` stay full-list contracts. The UI pipeline is:
+Pipeline:
 
 ```text
 fresh full list
-  -> filterAdminPuzzles(name + category + status)
+  -> filterAdminPuzzles(...)
   -> pageSlice(..., 20)
-  -> rendered rows
+  -> render
 ```
 
-Filters combine with AND semantics. Missing category metadata matches only `ALL CATEGORIES`; do not invent an `Uncategorized` category.
+Polling still inspects the unfiltered full list so hidden `processing` rows keep status refreshes active.
 
-Provide `RESET` only while any criterion is active. Reset clears search/category/status and returns to page 1.
+### 10. Reuse ReferenceOverlay unchanged for enlarged images
 
-Empty states stay distinct:
+Do not hand-roll a weaker modal.
 
-- full list empty -> `No missions found.`
-- full list non-empty but filtered list empty -> `No missions match the current search and filters.`
+For a ready row:
+- thumbnail button sets `previewPuzzle`;
+- `ReferenceOverlay` receives `imageUrl={getReferenceImageUrl(previewPuzzle.id)}`, `active`, `dismissible`, and `onDismiss`.
 
-Keep polling based on the unfiltered `puzzles` array so a processing puzzle hidden by status/category/search still causes status refreshes.
+The existing component already handles focus trapping/restoration, Close, coarse-pointer target size, and `"Reference image unavailable"` on image load failure. That fallback matters for legacy rows because `PuzzleSummary` cannot tell the admin whether a reference asset exists.
 
-Show Previous/Next only when filtered results exceed 20 rows. When filters are active, show the match count relative to total (for example `7 OF 127`).
+Keep Escape handling route-local in `AdminPuzzlesPanel`, mirroring the gameplay route:
 
-No API/wire-contract or storage-service change is part of search/filter/pagination.
+```svelte
+<svelte:window onkeydown={handlePreviewKeyDown} />
+```
 
-### 9. Reuse the reference image for enlargement
+```ts
+function handlePreviewKeyDown(event: KeyboardEvent) {
+  if (event.key !== 'Escape' || previewPuzzle === null) return;
+  event.preventDefault();
+  previewPuzzle = null;
+}
+```
 
-For ready puzzles, make the existing thumbnail a button labelled `View full image for <puzzle name>`. Clicking it sets route-local `previewPuzzle` state.
+`ReferenceOverlay` already lets non-Tab keys bubble, so it requires no new props or behavior changes for this task. Its existing accessible name `Reference image` is sufficient; do not invent a puzzle-specific dialog API solely for admin.
 
-Render a small modal directly in `AdminPuzzlesPanel.svelte` using the existing `modalFocus` action pattern:
+Processing/failed placeholders remain non-interactive.
 
-- `role="dialog"` and `aria-modal="true"`;
-- focusable dialog container using `modalFocus`;
-- Escape closes;
-- visible Close button;
-- `<img src={getReferenceImageUrl(previewPuzzle.id)} ...>` constrained to the viewport with `object-contain`.
+## Testing Strategy
 
-Processing and failed placeholders are not clickable. Do not add a lightbox dependency or generic dialog component.
+### Auth deletion
+
+- Start from a green baseline.
+- Delete runtime/config first, then repair directly-owned tests.
+- Admin routes succeed locally without `perseus_session`; deleted login/session/logout routes are absent.
+- No admin test retains an `auth.worker`/`requireAuth` mock.
+- Web API tests retain `credentials: 'include'` and treat a synthetic 401 only as generic error handling.
+- Worker/reaper fixtures no longer contain `ADMIN_PASSKEY`.
+- CLI tests cover Access-only probes/requests.
+- Seed/deploy workflow tests/config no longer require the passkey.
+- Case-insensitive sweep covers `apps`, `packages`, `scripts`, `.github`, `.agents`, `CLAUDE.md`, and `docs` except historical `docs/superpowers/**`.
+- Symlink check proves `AGENTS.md -> CLAUDE.md`.
+
+### Admin UI
+
+- Shell tests: default `PUZZLES`, lazy `PLAYER ACCESS`.
+- Pure helper tests: trim/case/AND/uncategorized/page boundaries/clamp.
+- Panel tests: SearchBar/select/Reset wiring, filtered-empty/count, hidden-processing polling, one 21-row pagination wiring case.
+- Preview tests: ready thumbnail opens existing `ReferenceOverlay`, Close + Escape dismiss, failed image shows existing unavailable fallback, processing/failed placeholders do not open preview.
+- Existing `ReferenceOverlay` component tests remain the owner of focus/touch/error behavior.
 
 ## Delivery Shape
 
 Keep one implementation PR for this ticket unless explicitly approved otherwise.
 
-The auth cut is the highest-risk part, so it must be the **first isolated implementation commit**. Before adding tab/search/filter/preview commits, run the complete Task 1 verification set and review the Task 1 diff on its own. This is an intra-PR review checkpoint only; it is not a second PR and does not imply a pre-merge production deploy.
+Task 1 remains the first isolated commit and must pass its complete verification + diff-review gate before UI commits begin. The Task 1 internal sequence is **baseline -> delete -> repair tests -> sweep -> verify**, not a long deletion-specific red phase.
 
-The final production Access/seed smoke occurs after the single PR deploy. If a later decision explicitly approves splitting the ticket, Task 1 is already structured so it can be separated mechanically without redesign.
-
-## Testing Strategy
-
-### Admin authentication removal
-
-- API route tests prove admin operations no longer require `perseus_session` and deleted login/session/logout routes are absent.
-- All admin route test mocks of `auth.worker` are deleted.
-- Worker environment fixtures no longer require `ADMIN_PASSKEY`.
-- Admin layout tests prove direct admin loads render immediately and client-routed entry still forces a document navigation.
-- Infrastructure/verification checks pin the existing `subdomain.enabled = false` and `previewsEnabled = false` behavior and narrow CLI path.
-- Script tests prove status/upload work with Access credentials alone and no passkey/session-cookie step.
-- Current seed workflow no longer injects `ADMIN_PASSKEY`.
-
-### Admin UI
-
-- Shell tests prove `PUZZLES` is default and Player Access loads only after selecting its tab.
-- Puzzle-panel tests retain ready/processing/failed rendering, delete/force-delete/error behavior, and three-second polling.
-- Pure helper tests own filter and page arithmetic.
-- Panel tests cover control wiring, Reset, filtered-empty copy/count, polling while filtered, pagination-button wiring, and preview.
-- Player-access tests retain linked-player display plus add/remove/error behavior after extraction.
-
-## Documentation Cleanup
-
-Update current operational/product documentation and comments that instruct operators to set an admin passkey or describe `perseus_session` as a live security layer, including `AGENTS.md`, `CLAUDE.md`, `docs/PRD.md`, infrastructure README, and the operator runbook.
-
-Historical completed design/plan documents under `docs/superpowers/` may remain historical records.
+Production ingress verification and service-token smoke happen at rollout, after the single PR is deployed.
 
 ## Rollout
 
-This is intentionally a breaking auth change with no compatibility window.
+Before deploying the auth removal:
 
-After deployment, manually verify:
+1. Enumerate every live Domain & Route for the deployed API Worker.
+2. Confirm `workers.dev` and previews are disabled.
+3. Confirm every live hostname that reaches the Worker is protected by an Access application for `/admin*` and `/api/admin*`.
+4. Stop if any alternate hostname bypasses Access.
+
+After deployment:
 
 1. Allowed browser identity/device opens `/admin` without a Perseus passkey prompt.
-2. A browser/device denied by Cloudflare Access cannot reach `/admin` or broad admin API paths.
-3. Direct public Worker subdomain/preview access remains disabled.
-4. CLI service token can list/create through exact `/api/admin/puzzles`.
-5. CLI service token cannot reach `/api/admin/puzzle-delete/:id` through Access.
-6. Production startup seed workflow runs without `ADMIN_PASSKEY`.
-7. `PUZZLES` supports name search, category/status filtering, Reset, and 20-row filtered pagination.
-8. `PLAYER ACCESS` remains separately managed in its own tab.
-9. Ready puzzle thumbnails open the enlarged reference image.
+2. Denied browser/device cannot reach `/admin` or broad admin API paths.
+3. Browser navigation from the public SPA to `/admin` performs the full-document Access path before admin panels mount/fetch.
+4. Service-token CLI can list/create through exact `/api/admin/puzzles`.
+5. Service token cannot reach `/api/admin/puzzle-delete/:id`.
+6. Production seed workflow succeeds with no `ADMIN_PASSKEY`.
+7. `PUZZLES` search/category/status/Reset/20-row filtered pagination work.
+8. `PLAYER ACCESS` add/remove still works.
+9. Ready thumbnail opens the existing reference overlay; Close/Escape work; missing reference shows the unavailable fallback.
 10. Public player routes remain unaffected.
-11. Local development opens the admin portal without a passkey.
+11. Local dev opens admin without a passkey.
+12. Remove the now-unused `adminPasskey` from Pulumi stack config.
+13. Update/verify the service-token incident procedure: disable/rotate/revoke the token if compromised.
 
 ## Review Decisions
 
-The external design review was applied selectively after checking the tree:
+The latest review was checked against the tree:
 
-1. **Accepted: complete auth deletion inventory.** The review identified live files missing from the plan: `AGENTS.md`, `docs/PRD.md`, seed workflow, API client tests, worker-extra fixtures, rate-limit post-tracking tests, and admin-route auth mocks.
-2. **Accepted: pure list helpers.** Filter/page arithmetic moves to two tiny route-local pure functions; no framework is introduced.
-3. **Accepted: reuse `SearchBar` and web category constants.** This removes duplicate search markup and follows existing web imports.
-4. **Partially accepted: auth review isolation.** The risk is real, but splitting one ticket into two PRs conflicts with the project delivery constraint. Task 1 remains an isolated first commit with a hard verification/review checkpoint inside the single PR; production smoke stays post-deploy.
-5. **Accepted: remove stale auth mocks, not just production middleware.** Tests must stop pretending `requireAuth` exists after the feature is deleted.
-6. **Kept from prior review: no backend admin query layer.** Full-list admin API remains necessary for processing polling and startup deduplication.
-7. **Kept from prior review: no duplicate Wrangler ingress flags.** Pulumi remains the ingress source of truth.
+1. **Accepted: live ingress enumeration before rollout.** The production route/custom-domain binding is external to this repo, so the Access-only assumption needs an operator check.
+2. **Accepted: invert Task 1.** For a pure deletion, delete first and repair owned tests immediately afterward; keep TDD for new Tasks 3/4.
+3. **Accepted: add `scripts/startup/upload.test.ts` and `reaper.test.ts`; widen the sweep.**
+4. **Corrected: no tracked `Pulumi.production.yaml`.** Stack files are gitignored; remove `adminPasskey` from stack config operationally after deploy.
+5. **Accepted: preserve `AGENTS.md` symlink.** Modify `CLAUDE.md` only.
+6. **Accepted with a smaller implementation: reuse `ReferenceOverlay` unchanged.** Admin mirrors gameplay's route-level Escape handling instead of adding props or duplicating modal markup.
+7. **Accepted invariant, not lifecycle assumption: block children until the document-navigation decision.**
+8. **Accepted: document automation-factor change.** The Access service token becomes the sole credential for list/create; current emergency controls include disable/rotate/revoke rather than only rotation.
