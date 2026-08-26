@@ -1,6 +1,5 @@
 {
   "lockfileVersion": 1,
-  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "perseus",
@@ -61,6 +60,7 @@
         "@nativescript/canvas": "^2.1.18",
         "@nativescript/core": "^9.0.0",
         "@perseus/game-core": "workspace:*",
+        "@perseus/types": "workspace:*",
         "tslib": "^2.8.1",
       },
       "devDependencies": {
