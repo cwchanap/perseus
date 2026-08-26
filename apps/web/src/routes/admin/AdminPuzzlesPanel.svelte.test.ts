@@ -31,16 +31,35 @@ vi.mock('$lib/services/gameplay/session/persistence', () => ({
 }));
 
 const mockPuzzles: PuzzleSummary[] = [
-	{ id: 'p1', name: 'Forest Scene', pieceCount: 225, status: 'ready' },
+	{
+		id: 'p1',
+		name: 'Forest Scene',
+		pieceCount: 225,
+		status: 'ready',
+		category: 'Nature'
+	},
 	{
 		id: 'p2',
 		name: 'City Lights',
 		pieceCount: 225,
 		status: 'processing',
+		category: 'Architecture',
 		progress: { generatedPieces: 10, totalPieces: 225, updatedAt: 0 }
 	},
-	{ id: 'p3', name: 'Broken Puzzle', pieceCount: 225, status: 'failed' }
+	{
+		id: 'p3',
+		name: 'Broken Puzzle',
+		pieceCount: 225,
+		status: 'failed',
+		category: 'Nature'
+	}
 ];
+
+async function selectFilter(label: string, value: string) {
+	const select = (await page.getByLabelText(label).element()) as HTMLSelectElement;
+	select.value = value;
+	select.dispatchEvent(new Event('change', { bubbles: true }));
+}
 
 describe('AdminPuzzlesPanel', () => {
 	beforeEach(() => {
@@ -56,8 +75,107 @@ describe('AdminPuzzlesPanel', () => {
 		await expect.element(page.getByText('Forest Scene')).toBeVisible();
 		await expect.element(page.getByText('City Lights')).toBeVisible();
 		await expect.element(page.getByText('Broken Puzzle')).toBeVisible();
-		await expect.element(page.getByText('PROCESSING')).toBeVisible();
-		await expect.element(page.getByText('FAILED')).toBeVisible();
+		await expect.element(page.getByText('PROCESSING').nth(1)).toBeVisible();
+		await expect.element(page.getByText('FAILED').nth(1)).toBeVisible();
+	});
+
+	it('filters puzzles through the SearchBar value callback', async () => {
+		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
+
+		render(AdminPuzzlesPanel);
+
+		await expect.element(page.getByText('Forest Scene')).toBeVisible();
+		await page.getByLabelText('Search puzzles').fill('City');
+
+		await expect.element(page.getByText('City Lights')).toBeVisible();
+		await expect.poll(() => page.getByText('Forest Scene').query()).toBeNull();
+		await expect.poll(() => page.getByText('Broken Puzzle').query()).toBeNull();
+	});
+
+	it('filters puzzles by category', async () => {
+		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
+
+		render(AdminPuzzlesPanel);
+
+		await expect.element(page.getByText('Forest Scene')).toBeVisible();
+		await selectFilter('Filter by category', 'Nature');
+
+		await expect.element(page.getByText('Forest Scene')).toBeVisible();
+		await expect.element(page.getByText('Broken Puzzle')).toBeVisible();
+		await expect.poll(() => page.getByText('City Lights').query()).toBeNull();
+	});
+
+	it('filters puzzles by status', async () => {
+		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
+
+		render(AdminPuzzlesPanel);
+
+		await expect.element(page.getByText('Forest Scene')).toBeVisible();
+		await selectFilter('Filter by status', 'processing');
+
+		await expect.element(page.getByText('City Lights')).toBeVisible();
+		await expect.poll(() => page.getByText('Forest Scene').query()).toBeNull();
+		await expect.poll(() => page.getByText('Broken Puzzle').query()).toBeNull();
+	});
+
+	it('combines the search, category, and status controls', async () => {
+		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
+
+		render(AdminPuzzlesPanel);
+
+		await expect.element(page.getByText('Forest Scene')).toBeVisible();
+		await page.getByLabelText('Search puzzles').fill('Puzzle');
+		await selectFilter('Filter by category', 'Nature');
+		await selectFilter('Filter by status', 'failed');
+
+		await expect.element(page.getByText('Broken Puzzle')).toBeVisible();
+		await expect.poll(() => page.getByText('Forest Scene').query()).toBeNull();
+		await expect.poll(() => page.getByText('City Lights').query()).toBeNull();
+	});
+
+	it('resets all active criteria', async () => {
+		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
+
+		render(AdminPuzzlesPanel);
+
+		await expect.element(page.getByText('Forest Scene')).toBeVisible();
+		await expect.poll(() => page.getByRole('button', { name: 'RESET' }).query()).toBeNull();
+		await page.getByLabelText('Search puzzles').fill('Puzzle');
+		await selectFilter('Filter by category', 'Nature');
+		await selectFilter('Filter by status', 'failed');
+		await page.getByRole('button', { name: 'RESET' }).click();
+
+		await expect.element(page.getByLabelText('Search puzzles')).toHaveValue('');
+		await expect.element(page.getByLabelText('Filter by category')).toHaveValue('all');
+		await expect.element(page.getByLabelText('Filter by status')).toHaveValue('all');
+		await expect.element(page.getByText('Forest Scene')).toBeVisible();
+		await expect.element(page.getByText('City Lights')).toBeVisible();
+		await expect.element(page.getByText('Broken Puzzle')).toBeVisible();
+		await expect.poll(() => page.getByRole('button', { name: 'RESET' }).query()).toBeNull();
+	});
+
+	it('shows filtered-empty copy when criteria match no puzzles', async () => {
+		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
+
+		render(AdminPuzzlesPanel);
+
+		await expect.element(page.getByText('Forest Scene')).toBeVisible();
+		await page.getByLabelText('Search puzzles').fill('Ocean');
+
+		await expect
+			.element(page.getByText('No missions match the current search and filters.'))
+			.toBeVisible();
+	});
+
+	it('shows the filtered and total count while criteria are active', async () => {
+		vi.mocked(fetchAdminPuzzles).mockResolvedValue(mockPuzzles);
+
+		render(AdminPuzzlesPanel);
+
+		await expect.element(page.getByText('3 TOTAL')).toBeVisible();
+		await page.getByLabelText('Search puzzles').fill('Forest');
+
+		await expect.element(page.getByText('1 OF 3')).toBeVisible();
 	});
 
 	it('shows an API error when loading admin puzzles fails', async () => {
@@ -174,10 +292,16 @@ describe('AdminPuzzlesPanel', () => {
 		vi.useRealTimers();
 	});
 
-	it('polls for puzzle status updates when puzzles are processing', async () => {
+	it('polls for a hidden processing puzzle after three seconds', async () => {
 		vi.useFakeTimers({ shouldAdvanceTime: true });
 		const readyPuzzles: PuzzleSummary[] = [
-			{ id: 'p2', name: 'City Lights', pieceCount: 225, status: 'ready' }
+			{
+				id: 'p2',
+				name: 'City Lights',
+				pieceCount: 225,
+				status: 'ready',
+				category: 'Architecture'
+			}
 		];
 		vi.mocked(fetchAdminPuzzles)
 			.mockResolvedValueOnce(mockPuzzles)
@@ -186,7 +310,8 @@ describe('AdminPuzzlesPanel', () => {
 		render(AdminPuzzlesPanel);
 
 		await expect.element(page.getByText('City Lights')).toBeVisible();
-		await expect.element(page.getByText('PROCESSING')).toBeVisible();
+		await selectFilter('Filter by category', 'Nature');
+		await expect.poll(() => page.getByText('City Lights').query()).toBeNull();
 
 		await vi.advanceTimersByTimeAsync(3000);
 
@@ -219,5 +344,30 @@ describe('AdminPuzzlesPanel', () => {
 		} finally {
 			setIntervalSpy.mockRestore();
 		}
+	});
+
+	it('paginates 21 rows using a fixed page size of 20', async () => {
+		const manyPuzzles: PuzzleSummary[] = Array.from({ length: 21 }, (_, index) => ({
+			id: `p${index + 1}`,
+			name: `Mission ${String(index + 1).padStart(2, '0')}`,
+			pieceCount: 100,
+			status: 'ready'
+		}));
+		vi.mocked(fetchAdminPuzzles).mockResolvedValue(manyPuzzles);
+
+		render(AdminPuzzlesPanel);
+
+		await expect.element(page.getByText('Mission 01')).toBeVisible();
+		await expect.element(page.getByText('Mission 20')).toBeVisible();
+		await expect.poll(() => page.getByText('Mission 21').query()).toBeNull();
+		await expect.element(page.getByRole('button', { name: 'Previous page' })).toBeDisabled();
+		await expect.element(page.getByRole('button', { name: 'Next page' })).toBeEnabled();
+
+		await page.getByRole('button', { name: 'Next page' }).click();
+
+		await expect.element(page.getByText('Mission 21')).toBeVisible();
+		await expect.poll(() => page.getByText('Mission 01').query()).toBeNull();
+		await expect.element(page.getByRole('button', { name: 'Previous page' })).toBeEnabled();
+		await expect.element(page.getByRole('button', { name: 'Next page' })).toBeDisabled();
 	});
 });
