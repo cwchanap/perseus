@@ -245,6 +245,10 @@ export function createDownloadStore(options: {
 				stagingPrepared = true;
 				await fileOps.ensureDir(piecesDirPath);
 
+				if (new Set(puzzle.pieces.map((piece) => piece.id)).size !== puzzle.pieces.length) {
+					throw new Error('duplicate_piece_ids');
+				}
+
 				const requests: AssetRequest[] = [
 					{
 						url: options.assetUrls.thumbnailUrl(puzzle.id),
@@ -271,9 +275,6 @@ export function createDownloadStore(options: {
 				const thumbnailFile = `thumbnail${thumbnail.extension}`;
 				const referenceFile =
 					reference.kind === 'downloaded' ? `reference${reference.extension}` : undefined;
-				if (new Set(puzzle.pieces.map((piece) => piece.id)).size !== puzzle.pieces.length) {
-					throw new Error('duplicate_piece_ids');
-				}
 				const pieceFiles: Record<string, string> = {};
 				const piecePaths: Record<number, string> = {};
 				for (let index = 0; index < puzzle.pieces.length; index += 1) {

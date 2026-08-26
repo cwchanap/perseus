@@ -64,7 +64,7 @@ describe('createSessionStorageAdapter', () => {
 		const store = memoryStore(map);
 		const adapter = createSessionStorageAdapter({ store });
 		adapter.saveSession('pz1', validSnapshot());
-		adapter.clearSession('pz1');
+		expect(adapter.clearSession('pz1')).toBe(true);
 		expect(map['pz1']).toBeUndefined();
 	});
 
@@ -101,6 +101,7 @@ describe('createSessionStorageAdapter', () => {
 		const adapter = createSessionStorageAdapter({ store, onError: (e) => errors.push(e.kind) });
 
 		expect(() => adapter.clearSession('pz1')).not.toThrow();
+		expect(adapter.clearSession('pz1')).toBe(false);
 		expect(errors).toContain('remove_error');
 	});
 
@@ -141,7 +142,7 @@ describe('createSessionStorageAdapter', () => {
 		});
 
 		expect(adapter.loadSession('pz1', ctx).status).toBe('missing');
-		expect(() => adapter.clearSession('pz1')).not.toThrow();
+		expect(adapter.clearSession('pz1')).toBe(false);
 		expect(errors.map((error) => error.kind)).toEqual(['read_error', 'remove_error']);
 	});
 });
@@ -175,5 +176,6 @@ describe('createSessionStorageAdapter error paths without onError', () => {
 		const adapter = createSessionStorageAdapter({ store });
 
 		expect(() => adapter.clearSession('pz1')).not.toThrow();
+		expect(adapter.clearSession('pz1')).toBe(false);
 	});
 });

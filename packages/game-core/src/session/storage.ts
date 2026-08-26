@@ -57,7 +57,9 @@ export function createSessionStorageAdapter(options: {
 				store.removeItem(puzzleId);
 			} catch (cause) {
 				onError?.({ kind: 'remove_error', puzzleId, cause });
+				return false;
 			}
+			return true;
 		},
 		isResumable
 	};

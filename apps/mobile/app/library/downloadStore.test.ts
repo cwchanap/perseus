@@ -389,6 +389,7 @@ describe('downloadStore.downloadPuzzle', () => {
 	it('rejects duplicate piece ids before building piece mappings', async () => {
 		const h = makeHarness([1, 1, 2]);
 		await expect(h.store.downloadPuzzle(h.puzzle)).rejects.toThrow('duplicate_piece_ids');
+		expect(h.calls).toHaveLength(0);
 		expect(h.fileOps.removedDirectories).toContain(`${ROOT}/.staging/p1`);
 		expect(await h.fileOps.directoryExists(`${ROOT}/p1`)).toBe(false);
 	});

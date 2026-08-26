@@ -87,12 +87,11 @@
 	}
 
 	async function discardProgress(id: string): Promise<void> {
-		try {
-			sessionStorage.clearSession(id);
-			await refreshDownloads();
-		} catch (error) {
-			downloadedError = error instanceof Error ? error.message : 'progress_discard_failed';
+		if (!sessionStorage.clearSession(id)) {
+			downloadedError = 'progress_discard_failed';
+			return;
 		}
+		await refreshDownloads();
 	}
 
 	async function removeDownload(id: string): Promise<void> {

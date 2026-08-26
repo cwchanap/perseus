@@ -145,7 +145,7 @@ function spyAdapter(): {
 		},
 		loadSession: () => ({ status: 'missing' }),
 		saveSession: () => {},
-		clearSession: () => {},
+		clearSession: () => true,
 		isResumable: () => false
 	};
 	return { adapter, contexts };
