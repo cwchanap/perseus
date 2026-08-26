@@ -100,10 +100,10 @@ export class FatalError extends Error {
 /**
  * Derive the Cloudflare Access app URL for the CLI Access application.
  *
- * Must target a path matched by `Perseus Admin CLI` (`/api/admin/puzzles` or
- * `/api/admin/login`), not the broad `Perseus Admin` app root (`/api/admin`).
- * Those apps have different audiences; a JWT issued for the broad app is
- * rejected by the CLI paths the uploader actually hits (probe + upload).
+ * Must target the path matched by `Perseus Admin CLI` (`/api/admin/puzzles`),
+ * not the broad `Perseus Admin` app root (`/api/admin`). Those apps have
+ * different audiences; a JWT issued for the broad app is rejected by the
+ * CLI path the uploader actually hits (probe + upload).
  */
 export function accessAppFor(server: string): string {
 	return `${server.replace(/\/+$/, '')}/api/admin/puzzles`;
@@ -166,7 +166,6 @@ export interface AccessCredentials {
 export interface Options extends AccessCredentials {
 	command: 'login' | 'set-token' | 'upload' | 'status';
 	server: string;
-	passkey: string;
 	catalogPath: string;
 	imagesDir: string;
 	tokenCachePath: string;

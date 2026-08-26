@@ -1,10 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * Additional coverage tests for rate-limit.worker.ts
- * Covers KV write/delete failure paths and post-auth tracking errors.
+ * Covers shared KV fallback, merge, cleanup, and client-IP paths.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { loginRateLimit, resetLoginAttempts, __resetRateLimitStore } from './rate-limit.worker';
+import { oauthRateLimit, __resetRateLimitStore } from './rate-limit.worker';
 
 function createFailingPutKV() {
 	return {
@@ -13,16 +13,6 @@ function createFailingPutKV() {
 			throw new Error('KV put failed');
 		}),
 		delete: vi.fn(async () => {})
-	};
-}
-
-function createFailingDeleteKV() {
-	return {
-		get: vi.fn(async () => null),
-		put: vi.fn(async () => {}),
-		delete: vi.fn(() => {
-			throw new Error('KV delete failed');
-		})
 	};
 }
 
@@ -58,7 +48,7 @@ describe('rate-limit KV write failure', () => {
 
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-		await loginRateLimit(ctx, next);
+		await oauthRateLimit(ctx, next);
 
 		expect(next).toHaveBeenCalled();
 		// KV put was attempted but failed; no throw
@@ -75,7 +65,7 @@ describe('rate-limit KV write failure', () => {
 
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-		await loginRateLimit(ctx, next);
+		await oauthRateLimit(ctx, next);
 
 		expect(next).toHaveBeenCalled();
 		expect(kv.put).toHaveBeenCalled();
@@ -88,108 +78,37 @@ describe('rate-limit KV write failure', () => {
 	});
 });
 
-describe('rate-limit KV delete failure', () => {
-	beforeEach(() => {
-		__resetRateLimitStore();
-	});
-
-	it('logs error but does not throw when KV delete fails in development on successful login', async () => {
-		const kv = createFailingDeleteKV();
-		const ctx = createContext('5.6.7.8', kv, 'development');
-		const next = vi.fn(async () => {
-			ctx.res.status = 200; // successful login
-		});
-
-		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-
-		const response = await loginRateLimit(ctx, next);
-
-		expect(next).toHaveBeenCalled();
-		expect(response.status).toBe(200);
-		expect(kv.delete).toHaveBeenCalled();
-		// Dev: logs without critical prefix
-		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining('KV delete failed'),
-			expect.any(Error)
-		);
-		consoleSpy.mockRestore();
-	});
-
-	it('logs critical error when KV delete fails in production on successful login', async () => {
-		const kv = createFailingDeleteKV();
-		const ctx = createContext('5.6.7.8', kv, 'production');
-		const next = vi.fn(async () => {
-			ctx.res.status = 200; // successful login
-		});
-
-		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-
-		const response = await loginRateLimit(ctx, next);
-
-		expect(next).toHaveBeenCalled();
-		expect(response.status).toBe(200);
-		expect(kv.delete).toHaveBeenCalled();
-		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining('[CRITICAL] KV delete failed'),
-			expect.any(Error)
-		);
-		consoleSpy.mockRestore();
-	});
-
-	it('does not throw when KV delete fails via resetLoginAttempts in development', async () => {
-		const kv = createFailingDeleteKV();
-		const ctx = createContext('9.9.9.9', kv, 'development');
-
-		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-
-		await expect(resetLoginAttempts(ctx)).resolves.toBeUndefined();
-
-		consoleSpy.mockRestore();
-	});
-
-	it('does not throw when KV delete fails via resetLoginAttempts in production', async () => {
-		const kv = createFailingDeleteKV();
-		const ctx = createContext('9.9.9.9', kv, 'production');
-
-		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-
-		await expect(resetLoginAttempts(ctx)).resolves.toBeUndefined();
-
-		consoleSpy.mockRestore();
-	});
-});
-
 describe('rate-limit in-memory with prior entry', () => {
 	beforeEach(() => {
 		__resetRateLimitStore();
 	});
 
-	it('accumulates in-memory attempts and blocks after MAX_LOGIN_ATTEMPTS (covers !kv && memEntry path)', async () => {
+	it('accumulates in-memory attempts and blocks after OAUTH_MAX_ATTEMPTS (covers !kv && memEntry path)', async () => {
 		const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-		// Exhaust all 5 allowed attempts (MAX_LOGIN_ATTEMPTS = 5) via failed logins
-		for (let i = 1; i <= 5; i++) {
+		// Exhaust all ten allowed OAuth attempts.
+		for (let i = 1; i <= 10; i++) {
 			const ctx = createContext('1.1.1.1', undefined, 'development');
 			const next = vi.fn(async () => {
-				ctx.res.status = 401; // each failed login increments in-memory counter
+				ctx.res.status = 401; // each OAuth request increments in-memory counter
 			});
-			await loginRateLimit(ctx, next);
+			await oauthRateLimit(ctx, next);
 		}
 
 		consoleSpy.mockRestore();
 
-		// The 6th request for the same IP (no KV) must hit the !kv && memEntry branch
+		// The 11th request for the same IP (no KV) must hit the !kv && memEntry branch
 		// and find the locked-out entry — next should NOT be called and the returned
-		// response must carry status 429 (loginRateLimit returns c.json(..., 429) directly).
-		const ctx6 = createContext('1.1.1.1', undefined, 'development');
-		const next6 = vi.fn();
+		// response must carry status 429 (oauthRateLimit returns c.json(..., 429) directly).
+		const ctx11 = createContext('1.1.1.1', undefined, 'development');
+		const next11 = vi.fn();
 		const consoleSpy2 = vi.spyOn(console, 'warn').mockImplementation(() => {});
-		const response6 = await loginRateLimit(ctx6, next6);
+		const response11 = await oauthRateLimit(ctx11, next11);
 		consoleSpy2.mockRestore();
 
-		expect(next6).not.toHaveBeenCalled();
+		expect(next11).not.toHaveBeenCalled();
 		// c.json() in the mock returns { body, status } — status must be 429
-		expect((response6 as any).status).toBe(429);
+		expect((response11 as any).status).toBe(429);
 	});
 
 	it('logs production critical error when KV not configured', async () => {
@@ -198,7 +117,7 @@ describe('rate-limit in-memory with prior entry', () => {
 		const ctx = createContext('2.2.2.2', undefined, 'production');
 		const next = vi.fn();
 
-		await loginRateLimit(ctx, next);
+		await oauthRateLimit(ctx, next);
 
 		expect(consoleSpy).toHaveBeenCalledWith(
 			expect.stringContaining('[CRITICAL] Rate limiting using in-memory storage in production')
@@ -233,12 +152,12 @@ describe('rate-limit KV read failure in production', () => {
 			},
 			json: vi.fn((body: unknown, status: number) => ({ body, status })),
 			res: { status: 200 }
-		} as unknown as Parameters<typeof loginRateLimit>[0];
+		} as unknown as Parameters<typeof oauthRateLimit>[0];
 
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
 		const next = vi.fn();
-		await loginRateLimit(ctx, next);
+		await oauthRateLimit(ctx, next);
 
 		expect(next).toHaveBeenCalled();
 		expect(consoleSpy).toHaveBeenCalledWith(
@@ -257,7 +176,7 @@ describe('rate-limit KV and in-memory entry merge', () => {
 	it('merges KV and in-memory entries when both exist for the same IP', async () => {
 		const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-		// Step 1: populate in-memory store via a failed login with no KV
+		// Step 1: populate in-memory store via a OAuth request with no KV
 		const ctx1 = {
 			env: { PUZZLE_METADATA: undefined, NODE_ENV: 'development' },
 			req: {
@@ -268,11 +187,11 @@ describe('rate-limit KV and in-memory entry merge', () => {
 			},
 			json: vi.fn((body: unknown, status: number) => ({ body, status })),
 			res: { status: 200 }
-		} as unknown as Parameters<typeof loginRateLimit>[0];
+		} as unknown as Parameters<typeof oauthRateLimit>[0];
 		const next1 = vi.fn(async () => {
 			(ctx1.res as { status: number }).status = 401;
 		});
-		await loginRateLimit(ctx1, next1);
+		await oauthRateLimit(ctx1, next1);
 		warnSpy.mockRestore();
 
 		// Step 2: call again with KV that also has an entry — triggers merge path
@@ -292,12 +211,12 @@ describe('rate-limit KV and in-memory entry merge', () => {
 			},
 			json: vi.fn((body: unknown, status: number) => ({ body, status })),
 			res: { status: 200 }
-		} as unknown as Parameters<typeof loginRateLimit>[0];
+		} as unknown as Parameters<typeof oauthRateLimit>[0];
 		const next2 = vi.fn();
-		await loginRateLimit(ctx2, next2);
+		await oauthRateLimit(ctx2, next2);
 
 		// Merge should have run; KV entry (3 attempts) wins over memory (1 attempt).
-		// 3 < 5 so not blocked — next still called.
+		// Three attempts is below the OAuth limit, so next is still called.
 		expect(next2).toHaveBeenCalled();
 		expect(kv.get).toHaveBeenCalled();
 	});
@@ -331,12 +250,12 @@ describe('rate-limit trusted proxy with TRUSTED_PROXY_LIST', () => {
 			},
 			json: vi.fn((body: unknown, status: number) => ({ body, status })),
 			res: { status: 200 }
-		} as unknown as Parameters<typeof loginRateLimit>[0];
+		} as unknown as Parameters<typeof oauthRateLimit>[0];
 
 		const next = vi.fn(async () => {
 			(ctx.res as { status: number }).status = 401;
 		});
-		await loginRateLimit(ctx, next);
+		await oauthRateLimit(ctx, next);
 
 		expect(next).toHaveBeenCalled();
 		// The KV key should include the real client IP from X-Forwarded-For
@@ -369,10 +288,10 @@ describe('rate-limit trusted proxy with TRUSTED_PROXY_LIST', () => {
 			},
 			json: vi.fn((body: unknown, status: number) => ({ body, status })),
 			res: { status: 200 }
-		} as unknown as Parameters<typeof loginRateLimit>[0];
+		} as unknown as Parameters<typeof oauthRateLimit>[0];
 
 		const next = vi.fn();
-		await loginRateLimit(ctx, next);
+		await oauthRateLimit(ctx, next);
 
 		expect(next).toHaveBeenCalled();
 		expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('X-Forwarded-For rejected'));
@@ -409,13 +328,13 @@ describe('rate-limit trusted proxy backward-compat (no TRUSTED_PROXY_LIST, line 
 			},
 			json: vi.fn((body: unknown, status: number) => ({ body, status })),
 			res: { status: 200 }
-		} as unknown as Parameters<typeof loginRateLimit>[0];
+		} as unknown as Parameters<typeof oauthRateLimit>[0];
 
 		const next = vi.fn(async () => {
 			(ctx.res as { status: number }).status = 401;
 		});
 
-		await loginRateLimit(ctx, next);
+		await oauthRateLimit(ctx, next);
 
 		expect(next).toHaveBeenCalled();
 		// The XFF IP (10.20.30.40) should have been used in the KV key
@@ -427,50 +346,6 @@ describe('rate-limit trusted proxy backward-compat (no TRUSTED_PROXY_LIST, line 
 	});
 });
 
-describe('rate-limit post-auth tracking - 403 response', () => {
-	beforeEach(() => {
-		__resetRateLimitStore();
-	});
-
-	it('increments failed attempts for 403 responses (same as 401)', async () => {
-		const kv = {
-			get: vi.fn(async () => null),
-			put: vi.fn(async () => {}),
-			delete: vi.fn(async () => {})
-		};
-		const ctx = createContext('10.0.0.1', kv, 'development');
-		const next = vi.fn(async () => {
-			ctx.res.status = 403; // 403 also triggers post-auth increment
-		});
-
-		const response = await loginRateLimit(ctx, next);
-
-		expect(next).toHaveBeenCalled();
-		expect(response.status).toBe(403);
-		// KV put should have been called to record the attempt
-		expect(kv.put).toHaveBeenCalled();
-	});
-
-	it('does not track for non-auth status codes (e.g. 500)', async () => {
-		const kv = {
-			get: vi.fn(async () => null),
-			put: vi.fn(async () => {}),
-			delete: vi.fn(async () => {})
-		};
-		const ctx = createContext('10.0.0.3', kv, 'development');
-		const next = vi.fn(async () => {
-			ctx.res.status = 500; // 500 should not trigger rate limit increment or reset
-		});
-
-		await loginRateLimit(ctx, next);
-
-		expect(next).toHaveBeenCalled();
-		// No KV put or delete for non-auth responses
-		expect(kv.put).not.toHaveBeenCalled();
-		expect(kv.delete).not.toHaveBeenCalled();
-	});
-});
-
 describe('mergeRateLimitEntries - both locked (line 173)', () => {
 	beforeEach(() => {
 		__resetRateLimitStore();
@@ -479,25 +354,25 @@ describe('mergeRateLimitEntries - both locked (line 173)', () => {
 	it('returns KV entry when both KV and memory entries are locked (KV lockedUntil >= mem lockedUntil)', async () => {
 		const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-		// Step 1: Trigger 5 failed logins with no KV → in-memory store gets locked entry
-		for (let i = 0; i < 5; i++) {
+		// Step 1: Trigger ten OAuth requests with no KV → in-memory store gets locked entry
+		for (let i = 0; i < 10; i++) {
 			const ctx = {
 				env: { PUZZLE_METADATA: undefined, NODE_ENV: 'development' },
 				req: { header: vi.fn((name: string) => (name === 'cf-connecting-ip' ? '7.7.7.7' : null)) },
 				json: vi.fn((body: unknown, status: number) => ({ body, status })),
 				res: { status: 200 }
-			} as unknown as Parameters<typeof loginRateLimit>[0];
+			} as unknown as Parameters<typeof oauthRateLimit>[0];
 			const next = vi.fn(async () => {
 				(ctx.res as { status: number }).status = 401;
 			});
-			await loginRateLimit(ctx, next);
+			await oauthRateLimit(ctx, next);
 		}
 		consoleSpy.mockRestore();
 
 		// Memory is now locked. Step 2: Provide a KV that also returns a locked entry.
 		// KV's lockedUntil is further in the future, so KV entry wins.
 		const kvLockedUntil = Date.now() + 30 * 60 * 1000;
-		const lockedKvEntry = { attempts: 5, lockedUntil: kvLockedUntil, lastAttemptAt: Date.now() };
+		const lockedKvEntry = { attempts: 10, lockedUntil: kvLockedUntil, lastAttemptAt: Date.now() };
 		const kv = {
 			get: vi.fn(async (_key: string, type: string) =>
 				type === 'json' ? lockedKvEntry : JSON.stringify(lockedKvEntry)
@@ -512,11 +387,11 @@ describe('mergeRateLimitEntries - both locked (line 173)', () => {
 			json: vi.fn((body: unknown, status: number) => ({ body, status })),
 			header: vi.fn(),
 			res: { status: 200 }
-		} as unknown as Parameters<typeof loginRateLimit>[0];
+		} as unknown as Parameters<typeof oauthRateLimit>[0];
 		const next = vi.fn();
 
 		const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-		await loginRateLimit(ctx, next);
+		await oauthRateLimit(ctx, next);
 
 		// Both are locked → merge picks the one with later lockedUntil (KV)
 		// The request should be blocked (429) since both entries are locked
@@ -539,17 +414,17 @@ describe('mergeRateLimitEntries - same attempts, use most recent lastAttemptAt (
 		try {
 			const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-			// Step 1: make 1 failed login with no KV → memory gets entry with attempts=1, lastAttemptAt=T
+			// Step 1: make 1 OAuth request with no KV → memory gets entry with attempts=1, lastAttemptAt=T
 			const ctx1 = {
 				env: { PUZZLE_METADATA: undefined, NODE_ENV: 'development' },
 				req: { header: vi.fn((name: string) => (name === 'cf-connecting-ip' ? '8.8.8.8' : null)) },
 				json: vi.fn((body: unknown, status: number) => ({ body, status })),
 				res: { status: 200 }
-			} as unknown as Parameters<typeof loginRateLimit>[0];
+			} as unknown as Parameters<typeof oauthRateLimit>[0];
 			const next1 = vi.fn(async () => {
 				(ctx1.res as { status: number }).status = 401;
 			});
-			await loginRateLimit(ctx1, next1);
+			await oauthRateLimit(ctx1, next1);
 
 			// Advance time by 1 second so KV entry's lastAttemptAt will be more recent
 			vi.advanceTimersByTime(1000);
@@ -569,12 +444,12 @@ describe('mergeRateLimitEntries - same attempts, use most recent lastAttemptAt (
 				req: { header: vi.fn((name: string) => (name === 'cf-connecting-ip' ? '8.8.8.8' : null)) },
 				json: vi.fn((body: unknown, status: number) => ({ body, status })),
 				res: { status: 200 }
-			} as unknown as Parameters<typeof loginRateLimit>[0];
+			} as unknown as Parameters<typeof oauthRateLimit>[0];
 			const next2 = vi.fn(async () => {
 				(ctx2.res as { status: number }).status = 401;
 			});
 
-			await loginRateLimit(ctx2, next2);
+			await oauthRateLimit(ctx2, next2);
 			warnSpy.mockRestore();
 
 			// Not locked yet (only 2 total attempts across both calls), so next is called
@@ -599,8 +474,8 @@ describe('cleanupExpiredEntries - expired locked entry (line 37)', () => {
 		vi.useFakeTimers();
 		const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-		// Trigger 5 failed logins with no KV → memory gets locked entry
-		for (let i = 0; i < 5; i++) {
+		// Trigger ten OAuth requests with no KV → memory gets locked entry
+		for (let i = 0; i < 10; i++) {
 			const ctx = {
 				env: { PUZZLE_METADATA: undefined, NODE_ENV: 'development' },
 				req: {
@@ -608,11 +483,11 @@ describe('cleanupExpiredEntries - expired locked entry (line 37)', () => {
 				},
 				json: vi.fn((body: unknown, status: number) => ({ body, status })),
 				res: { status: 200 }
-			} as unknown as Parameters<typeof loginRateLimit>[0];
+			} as unknown as Parameters<typeof oauthRateLimit>[0];
 			const next = vi.fn(async () => {
 				(ctx.res as { status: number }).status = 401;
 			});
-			await loginRateLimit(ctx, next);
+			await oauthRateLimit(ctx, next);
 		}
 
 		// Advance time past lockout (15 min) AND past LOCKOUT_DURATION_MS for stale cleanup
@@ -626,11 +501,11 @@ describe('cleanupExpiredEntries - expired locked entry (line 37)', () => {
 			},
 			json: vi.fn((body: unknown, status: number) => ({ body, status })),
 			res: { status: 200 }
-		} as unknown as Parameters<typeof loginRateLimit>[0];
+		} as unknown as Parameters<typeof oauthRateLimit>[0];
 		const freshNext = vi.fn(async () => {
 			(freshCtx.res as { status: number }).status = 401;
 		});
-		await loginRateLimit(freshCtx, freshNext);
+		await oauthRateLimit(freshCtx, freshNext);
 		warnSpy.mockRestore();
 
 		// After cleanup and the new (single) failed attempt, should NOT be blocked
@@ -641,7 +516,7 @@ describe('cleanupExpiredEntries - expired locked entry (line 37)', () => {
 		vi.useFakeTimers();
 		const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-		// Single failed login with no KV → memory gets unlocked entry with 1 attempt
+		// Single OAuth request with no KV → memory gets unlocked entry with 1 attempt
 		const ctx = {
 			env: { PUZZLE_METADATA: undefined, NODE_ENV: 'development' },
 			req: {
@@ -649,11 +524,11 @@ describe('cleanupExpiredEntries - expired locked entry (line 37)', () => {
 			},
 			json: vi.fn((body: unknown, status: number) => ({ body, status })),
 			res: { status: 200 }
-		} as unknown as Parameters<typeof loginRateLimit>[0];
+		} as unknown as Parameters<typeof oauthRateLimit>[0];
 		const next = vi.fn(async () => {
 			(ctx.res as { status: number }).status = 401;
 		});
-		await loginRateLimit(ctx, next);
+		await oauthRateLimit(ctx, next);
 
 		// Advance time past LOCKOUT_DURATION_MS (15 min) for stale entry cleanup
 		vi.advanceTimersByTime(16 * 60 * 1000);
@@ -666,11 +541,11 @@ describe('cleanupExpiredEntries - expired locked entry (line 37)', () => {
 			},
 			json: vi.fn((body: unknown, status: number) => ({ body, status })),
 			res: { status: 200 }
-		} as unknown as Parameters<typeof loginRateLimit>[0];
+		} as unknown as Parameters<typeof oauthRateLimit>[0];
 		const freshNext = vi.fn(async () => {
 			(freshCtx.res as { status: number }).status = 401;
 		});
-		await loginRateLimit(freshCtx, freshNext);
+		await oauthRateLimit(freshCtx, freshNext);
 		warnSpy.mockRestore();
 
 		// Entry was cleaned up; this is the first fresh attempt, so not blocked
@@ -703,9 +578,9 @@ describe('isRateLimitEntry - invalid lockedUntil (line 54)', () => {
 			},
 			json: vi.fn((body: unknown, status: number) => ({ body, status })),
 			res: { status: 200 }
-		} as unknown as Parameters<typeof loginRateLimit>[0];
+		} as unknown as Parameters<typeof oauthRateLimit>[0];
 		const next = vi.fn();
-		await loginRateLimit(ctx, next);
+		await oauthRateLimit(ctx, next);
 		warnSpy.mockRestore();
 
 		// Invalid entry → warning logged, treated as no entry → not blocked

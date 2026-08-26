@@ -74,7 +74,7 @@ cd apps/api && bun run test:watch
 
 ### API (`@perseus/api`)
 
-The API is Hono on Cloudflare Workers for both local development and production. `src/worker.ts` is the HTTP entry; the route, service, and middleware implementations live in `*.worker.ts` files (e.g. `src/routes/puzzles.worker.ts`, `src/routes/admin.worker.ts`, `src/services/storage.worker.ts`, `src/middleware/auth.worker.ts`). Local development runs via Wrangler (`bun run dev --filter=@perseus/api`) on `http://localhost:4690`, with local D1, KV, R2, Durable Object, and Workflow bindings — no second runtime.
+The API is Hono on Cloudflare Workers for both local development and production. `src/worker.ts` is the HTTP entry; the route, service, and middleware implementations live in `*.worker.ts` files (e.g. `src/routes/puzzles.worker.ts`, `src/routes/admin.worker.ts`, `src/services/storage.worker.ts`, `src/middleware/player-auth.worker.ts`). Local development runs via Wrangler (`bun run dev --filter=@perseus/api`) on `http://localhost:4690`, with local D1, KV, R2, Durable Object, and Workflow bindings — no second runtime.
 
 The **Worker** (`src/worker.ts`) also serves static web assets via `env.ASSETS` (Cloudflare Workers Assets binding), acting as a combined API + static file server in production.
 
@@ -121,7 +121,7 @@ Pulumi TypeScript program for Cloudflare deployment. `packages/infrastructure/sr
 
 **API Worker** bindings (Cloudflare):
 
-- `JWT_SECRET`, `ADMIN_PASSKEY` — required in production
+- `JWT_SECRET` — required in production for player sessions
 - `ALLOWED_ORIGINS` — comma-separated CORS origins (required in production)
 - `NODE_ENV` — controls dev/prod behavior; unset NODE_ENV is treated as production
 - `TRUSTED_PROXY`, `TRUSTED_PROXY_LIST` — optional IP spoofing protection

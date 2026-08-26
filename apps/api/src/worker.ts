@@ -29,7 +29,6 @@ export interface Env {
 	PUZZLE_WORKFLOW: WorkflowBinding<WorkflowParams>;
 	DB: D1Database;
 	JWT_SECRET: string;
-	ADMIN_PASSKEY: string;
 	GOOGLE_CLIENT_ID: string;
 	GOOGLE_CLIENT_SECRET: string;
 	AUTH_REDIRECT_BASE_URL: string;
@@ -82,7 +81,6 @@ app.use('*', async (c, next) => {
 		const missingEnv = [];
 		if (allowedOrigins.length === 0) missingEnv.push('ALLOWED_ORIGINS');
 		if (!env.JWT_SECRET) missingEnv.push('JWT_SECRET');
-		if (!env.ADMIN_PASSKEY) missingEnv.push('ADMIN_PASSKEY');
 
 		if (missingEnv.length > 0) {
 			console.error(`Missing required env vars in production: ${missingEnv.join(', ')}`);

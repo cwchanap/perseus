@@ -1,10 +1,10 @@
 /**
  * HTTP helpers and upload logic.
  *
- * accessHeaders / hasAccessCredentials / sessionCookieFrom / readError are the
- * shared HTTP utilities used by both the upload command and the token probe
- * flow. fetchExistingKeys is used for idempotency (skip already-uploaded
- * puzzles) and for retry verification (detect silent successes).
+ * accessHeaders / hasAccessCredentials / readError are the shared HTTP
+ * utilities used by both the upload command and the token probe flow.
+ * fetchExistingKeys is used for idempotency (skip already-uploaded puzzles)
+ * and for retry verification (detect silent successes).
  *
  * uploadWithRetry wraps the POST with bounded retry for transient failures
  * (5xx, network errors). 4xx responses are not retried — they are
@@ -57,34 +57,6 @@ export function hasAccessCredentials(options: AccessCredentials): boolean {
 	return false;
 }
 
-export function sessionCookieFrom(response: Response, priorCookie?: string): string {
-	const multi =
-		typeof response.headers.getSetCookie === 'function' ? response.headers.getSetCookie() : [];
-	// Select the API session cookie by name — Cloudflare Access can add a
-	// CF_Authorization cookie alongside perseus_session in the response, so
-	// taking multi[0] may return the Access cookie instead.
-	const sessionCookie =
-		multi.find((c) => c.startsWith('perseus_session=')) ?? response.headers.get('set-cookie');
-	if (!sessionCookie) {
-		throw new Error('Admin login did not return a session cookie');
-	}
-	const session = sessionCookie.split(';', 1)[0];
-	// Preserve a CF_Authorization cookie (from the response or the prior
-	// request cookie) so subsequent requests carry both cookies.
-	const accessFromResponse = multi.find((c) => c.startsWith('CF_Authorization='));
-	if (accessFromResponse) {
-		return `${session}; ${accessFromResponse.split(';', 1)[0]}`;
-	}
-	if (priorCookie?.includes('CF_Authorization=')) {
-		const accessPart = priorCookie
-			.split(';')
-			.map((p) => p.trim())
-			.find((p) => p.startsWith('CF_Authorization='));
-		if (accessPart) return `${session}; ${accessPart}`;
-	}
-	return session;
-}
-
 export async function readError(response: Response, usingServiceToken = false): Promise<string> {
 	const payload = await response
 		.clone()
@@ -133,12 +105,11 @@ export function idempotencyKeyHeader(dedupKey: string): string {
 export async function fetchExistingKeys(
 	server: string,
 	baseHeaders: Record<string, string>,
-	cookie: string,
 	requireReady = false
 ): Promise<Set<string>> {
 	const res = await fetch(`${server}/api/admin/puzzles`, {
 		method: 'GET',
-		headers: { ...baseHeaders, Cookie: cookie },
+		headers: baseHeaders,
 		redirect: 'manual',
 		signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
 	});
@@ -214,7 +185,6 @@ export const retryConfig = {
 export async function pollForExistingKey(
 	server: string,
 	baseHeaders: Record<string, string>,
-	cookie: string,
 	dedupKey: string,
 	requireReady = false
 ): Promise<boolean> {
@@ -222,7 +192,7 @@ export async function pollForExistingKey(
 	const baseDelayMs = retryConfig.verifyPollBaseDelayMs;
 	for (let i = 0; i < attempts; i++) {
 		await retryConfig.sleepFn(baseDelayMs * 2 ** i);
-		const existing = await fetchExistingKeys(server, baseHeaders, cookie, requireReady);
+		const existing = await fetchExistingKeys(server, baseHeaders, requireReady);
 		if (existing.has(dedupKey)) return true;
 	}
 	return false;
@@ -253,7 +223,6 @@ export async function pollForExistingKey(
 export async function uploadWithRetry(
 	server: string,
 	baseHeaders: Record<string, string>,
-	cookie: string,
 	formData: FormData,
 	entryName: string,
 	dedupKey: string
@@ -271,7 +240,6 @@ export async function uploadWithRetry(
 				method: 'POST',
 				headers: {
 					...baseHeaders,
-					Cookie: cookie,
 					'Idempotency-Key': idempotencyHeader
 				},
 				body: formData,
@@ -427,28 +395,6 @@ Or add those two keys to apps/api/.env, then:
 	}
 }
 
-/**
- * Log in to the admin API and return the session cookie. Throws FatalError on
- * login failure so the upload aborts before processing any entries.
- */
-async function adminLogin(options: Options, baseHeaders: Record<string, string>): Promise<string> {
-	const loginResponse = await fetch(`${options.server}/api/admin/login`, {
-		method: 'POST',
-		headers: { ...baseHeaders, 'Content-Type': 'application/json' },
-		body: JSON.stringify({ passkey: options.passkey }),
-		redirect: 'manual',
-		signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
-	});
-	if (!loginResponse.ok) {
-		throw new FatalError(
-			`Admin login failed: ${await readError(loginResponse, !!(options.cfClientId && options.cfClientSecret))}`
-		);
-	}
-	const cookie = sessionCookieFrom(loginResponse, baseHeaders.Cookie);
-	console.log('Admin session OK\n');
-	return cookie;
-}
-
 type ImageValidation =
 	| { ok: true; image: Bun.BunFile; imagePath: string; detectedMime: string }
 	| { ok: false; detail: string };
@@ -538,7 +484,6 @@ async function processEntry(
 	entry: CatalogEntry,
 	options: Options,
 	baseHeaders: Record<string, string>,
-	cookie: string,
 	existingKeys: Set<string>
 ): Promise<UploadResult> {
 	const dedupKey = idempotencyKey(entry.name, entry.pieceCount, entry.aspectRatio);
@@ -574,7 +519,6 @@ async function processEntry(
 		const uploadResponse = await uploadWithRetry(
 			options.server,
 			baseHeaders,
-			cookie,
 			formData,
 			entry.name,
 			dedupKey
@@ -609,10 +553,6 @@ async function processEntry(
 }
 
 export async function cmdUpload(options: Options): Promise<void> {
-	if (!options.dryRun && !options.passkey) {
-		throw new FatalError('Missing admin passkey. Set ADMIN_PASSKEY or use --passkey.');
-	}
-
 	await resolveAndProbeAccess(options);
 
 	const catalogRaw = await Bun.file(options.catalogPath).json();
@@ -647,7 +587,6 @@ export async function cmdUpload(options: Options): Promise<void> {
 	}
 
 	const baseHeaders = accessHeaders(options);
-	const cookie = await adminLogin(options, baseHeaders);
 
 	// Idempotency preflight: skip catalog entries already on the server.
 	// Complements server-side Idempotency-Key (which handles in-flight
@@ -663,7 +602,7 @@ export async function cmdUpload(options: Options): Promise<void> {
 	// authoritative guard for in-flight retries; this preflight is a
 	// latency-saving hint, not a concurrency guarantee. Do not run
 	// concurrent seed uploads against one server.
-	const existingKeys = await fetchExistingKeys(options.server, baseHeaders, cookie);
+	const existingKeys = await fetchExistingKeys(options.server, baseHeaders);
 	if (existingKeys.size > 0) {
 		console.log(
 			`Idempotency: ${existingKeys.size} existing puzzle(s) on server — duplicates will be skipped.\n`
@@ -674,7 +613,7 @@ export async function cmdUpload(options: Options): Promise<void> {
 	let skipped = 0;
 
 	for (const entry of selected) {
-		const result = await processEntry(entry, options, baseHeaders, cookie, existingKeys);
+		const result = await processEntry(entry, options, baseHeaders, existingKeys);
 		results.push(result);
 		if (result.skipped) skipped++;
 		if (options.delayMs > 0) await sleep(options.delayMs);

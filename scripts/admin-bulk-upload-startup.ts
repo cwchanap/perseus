@@ -15,7 +15,7 @@
  *   export CF_ACCESS_CLIENT_SECRET="$(cd packages/infrastructure && pulumi stack output --show-secrets adminCliAccessClientSecret)"
  *   bun run admin:startup:upload -- --limit 5
  *
- * Or put CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET next to ADMIN_PASSKEY in apps/api/.env.
+ * Or put CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET in apps/api/.env.
  *
  * This file is the entry point. Implementation lives in scripts/startup/ modules:
  *   types.ts   — shared types, constants, URL helpers

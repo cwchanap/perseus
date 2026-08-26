@@ -1,14 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import {
-	loginRateLimit,
-	resetLoginAttempts,
-	oauthRateLimit,
-	__resetRateLimitStore
-} from './rate-limit.worker';
-import type { Context, Next } from 'hono';
+import { oauthRateLimit, __resetRateLimitStore } from './rate-limit.worker';
+import type { Context } from 'hono';
 
-// Mock KV namespace
 function createMockKV() {
 	const store = new Map<string, string>();
 	return {
@@ -28,7 +22,7 @@ function createMockKV() {
 	};
 }
 
-function createMockContext(ip: string = '127.0.0.1', kv?: any): Context<any> {
+function createMockContext(ip = '127.0.0.1', kv?: any): Context<any> {
 	return {
 		env: {
 			PUZZLE_METADATA: kv
@@ -46,467 +40,157 @@ function createMockContext(ip: string = '127.0.0.1', kv?: any): Context<any> {
 	} as any;
 }
 
-describe('Rate Limit Middleware', () => {
+describe('oauthRateLimit', () => {
 	beforeEach(() => {
 		__resetRateLimitStore();
 	});
 
-	describe('loginRateLimit', () => {
-		it('should allow request when no previous attempts', async () => {
-			const mockKV = createMockKV();
-			const mockContext = createMockContext('127.0.0.1', mockKV);
-			const next = vi.fn();
+	it('allows a request when no previous attempts exist', async () => {
+		const mockKV = createMockKV();
+		const mockContext = createMockContext('127.0.0.1', mockKV);
+		const next = vi.fn();
 
-			await loginRateLimit(mockContext, next);
+		await oauthRateLimit(mockContext, next);
 
-			expect(next).toHaveBeenCalled();
-		});
-
-		it('should reset invalid rate limit entry from KV', async () => {
-			const mockKV = createMockKV();
-			const key = 'ratelimit:login:127.0.0.1';
-			mockKV._store.set(
-				key,
-				JSON.stringify({
-					attempts: 'invalid',
-					lockedUntil: 'invalid'
-				})
-			);
-			const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-			const mockContext = createMockContext('127.0.0.1', mockKV);
-			const next = vi.fn(async () => {
-				(mockContext.res as any).status = 401;
-			});
-
-			await loginRateLimit(mockContext, next);
-
-			expect(next).toHaveBeenCalled();
-			const savedEntry = JSON.parse(mockKV._store.get(key) ?? '{}');
-			expect(savedEntry.attempts).toBe(1);
-			expect(savedEntry.lockedUntil).toBeNull();
-			consoleWarnSpy.mockRestore();
-		});
-
-		it('should allow request with less than 5 failed attempts', async () => {
-			const mockKV = createMockKV();
-			const key = 'ratelimit:login:127.0.0.1';
-			mockKV._store.set(
-				key,
-				JSON.stringify({
-					attempts: 3,
-					lockedUntil: null,
-					lastAttemptAt: Date.now()
-				})
-			);
-
-			const mockContext = createMockContext('127.0.0.1', mockKV);
-			const next = vi.fn();
-
-			await loginRateLimit(mockContext, next);
-
-			expect(next).toHaveBeenCalled();
-		});
-
-		it('should lock out when attempts reaches the limit on failure', async () => {
-			const mockKV = createMockKV();
-			const key = 'ratelimit:login:127.0.0.1';
-			mockKV._store.set(
-				key,
-				JSON.stringify({
-					attempts: 4,
-					lockedUntil: null,
-					lastAttemptAt: Date.now()
-				})
-			);
-
-			const mockContext = createMockContext('127.0.0.1', mockKV);
-			const next = vi.fn(async () => {
-				(mockContext.res as any).status = 401;
-			});
-
-			const response = await loginRateLimit(mockContext, next);
-
-			expect(next).toHaveBeenCalled();
-			expect(response.status).toBe(401);
-			const savedEntry = JSON.parse(mockKV._store.get(key) ?? '{}');
-			expect(savedEntry.attempts).toBe(5);
-			expect(savedEntry.lockedUntil).not.toBeNull();
-		});
-
-		it('should allow correct credentials on 5th attempt and reset attempts', async () => {
-			const mockKV = createMockKV();
-			const key = 'ratelimit:login:127.0.0.1';
-			mockKV._store.set(
-				key,
-				JSON.stringify({
-					attempts: 4,
-					lockedUntil: null,
-					lastAttemptAt: Date.now()
-				})
-			);
-
-			const mockContext = createMockContext('127.0.0.1', mockKV);
-			const next = vi.fn(async () => {
-				(mockContext.res as any).status = 200;
-			});
-
-			const response = await loginRateLimit(mockContext, next);
-
-			expect(next).toHaveBeenCalled();
-			expect(response.status).toBe(200);
-			expect(mockKV._store.get(key)).toBeUndefined();
-		});
-
-		it('should block request after 5 failed attempts', async () => {
-			const mockKV = createMockKV();
-			const key = 'ratelimit:login:127.0.0.1';
-			const lockoutUntil = Date.now() + 15 * 60 * 1000; // 15 minutes from now
-
-			mockKV._store.set(
-				key,
-				JSON.stringify({
-					attempts: 5,
-					lockedUntil: lockoutUntil,
-					lastAttemptAt: Date.now()
-				})
-			);
-
-			const mockContext = createMockContext('127.0.0.1', mockKV);
-			const next = vi.fn();
-
-			const response = await loginRateLimit(mockContext, next);
-
-			expect(next).not.toHaveBeenCalled();
-			expect(response.status).toBe(429);
-			expect((response.body as any).error).toBe('too_many_requests');
-		});
-
-		it('should use cf-connecting-ip header for client identification', async () => {
-			const mockKV = createMockKV();
-			const mockContext = createMockContext('192.168.1.1', mockKV);
-			const next = vi.fn(async () => {
-				(mockContext.res as any).status = 401;
-			});
-
-			await loginRateLimit(mockContext, next);
-
-			expect(next).toHaveBeenCalled();
-			// Verify KV key includes IP
-			expect(mockKV.put).toHaveBeenCalled();
-			const key = mockKV.put.mock.calls[0][0];
-			expect(key).toContain('192.168.1.1');
-		});
-
-		it('should use in-memory storage when KV is undefined', async () => {
-			const mockContext = createMockContext('127.0.0.1', undefined);
-			const next = vi.fn();
-
-			await loginRateLimit(mockContext, next);
-
-			expect(next).toHaveBeenCalled();
-		});
+		expect(next).toHaveBeenCalled();
 	});
 
-	describe('resetLoginAttempts', () => {
-		it('should delete rate limit entry on successful login', async () => {
-			const mockKV = createMockKV();
-			const key = 'ratelimit:login:127.0.0.1';
-			mockKV._store.set(
-				key,
-				JSON.stringify({
-					attempts: 3,
-					lockedUntil: null,
-					lastAttemptAt: Date.now()
-				})
-			);
+	it('increments the counter on each request', async () => {
+		const mockKV = createMockKV();
+		const key = 'ratelimit:oauth:127.0.0.1';
+		const mockContext = createMockContext('127.0.0.1', mockKV);
+		const next = vi.fn();
 
-			const mockContext = createMockContext('127.0.0.1', mockKV);
+		await oauthRateLimit(mockContext, next);
 
-			await resetLoginAttempts(mockContext);
-
-			expect(mockKV.delete).toHaveBeenCalledWith(expect.stringContaining('127.0.0.1'));
-		});
-
-		it('should handle missing KV gracefully', async () => {
-			const mockContext = createMockContext('127.0.0.1', undefined);
-
-			// Should not throw when KV is undefined - verify promise resolves
-			await expect(resetLoginAttempts(mockContext)).resolves.toBeUndefined();
-		});
+		expect(next).toHaveBeenCalled();
+		const savedEntry = JSON.parse(mockKV._store.get(key) ?? '{}');
+		expect(savedEntry.attempts).toBe(1);
 	});
 
-	describe('KV failure handling', () => {
-		it('should fail open when KV read throws', async () => {
-			const failingKV = {
-				get: vi.fn(() => {
-					throw new Error('KV outage');
-				}),
-				put: vi.fn(async () => {}),
-				delete: vi.fn(async () => {})
-			};
-			const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-			const mockContext = createMockContext('127.0.0.1', failingKV);
-			const next = vi.fn();
+	it('allows requests below the OAuth limit', async () => {
+		const mockKV = createMockKV();
+		const key = 'ratelimit:oauth:127.0.0.1';
+		mockKV._store.set(
+			key,
+			JSON.stringify({
+				attempts: 8,
+				lockedUntil: null,
+				lastAttemptAt: Date.now()
+			})
+		);
+		const mockContext = createMockContext('127.0.0.1', mockKV);
+		const next = vi.fn();
 
-			await loginRateLimit(mockContext, next);
+		await oauthRateLimit(mockContext, next);
 
-			expect(next).toHaveBeenCalled();
-			expect(consoleWarnSpy).toHaveBeenCalledWith(
-				expect.stringContaining('KV read failed'),
-				expect.any(Error)
-			);
-			consoleWarnSpy.mockRestore();
-		});
+		expect(next).toHaveBeenCalled();
 	});
 
-	describe('IP detection edge cases', () => {
-		it('should use UUID fallback when cf-connecting-ip is null and XFF is untrusted', async () => {
-			const mockKV = createMockKV();
-			const mockContext = {
-				env: {
-					PUZZLE_METADATA: mockKV,
-					TRUSTED_PROXY: undefined
-				},
-				req: {
-					header: vi.fn((name: string) => {
-						if (name === 'cf-connecting-ip') return null;
-						if (name === 'x-forwarded-for') return '10.0.0.1';
-						return null;
-					})
-				},
-				json: vi.fn((body, status) => ({ body, status })),
-				res: { status: 200 } as any
-			} as any;
-			const next = vi.fn();
+	it('blocks a request when OAuth attempts reach the limit', async () => {
+		const mockKV = createMockKV();
+		const key = 'ratelimit:oauth:127.0.0.1';
+		mockKV._store.set(
+			key,
+			JSON.stringify({
+				attempts: 10,
+				lockedUntil: Date.now() + 15 * 60 * 1000,
+				lastAttemptAt: Date.now()
+			})
+		);
+		const mockContext = createMockContext('127.0.0.1', mockKV);
+		const next = vi.fn();
 
-			const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const response = await oauthRateLimit(mockContext, next);
 
-			await loginRateLimit(mockContext, next);
-
-			expect(next).toHaveBeenCalled();
-			// Each request gets a unique UUID key, so no rate state accumulates
-			consoleWarnSpy.mockRestore();
-		});
+		expect(next).not.toHaveBeenCalled();
+		expect(response.status).toBe(429);
+		expect((response.body as any).error).toBe('too_many_requests');
 	});
 
-	describe('successful login reset', () => {
-		it('should reset rate limit state on 200 response', async () => {
-			const mockKV = createMockKV();
-			const key = 'ratelimit:login:127.0.0.1';
-			mockKV._store.set(
-				key,
-				JSON.stringify({
-					attempts: 3,
-					lockedUntil: null,
-					lastAttemptAt: Date.now()
-				})
-			);
+	it('stores attempts under an OAuth-specific KV key', async () => {
+		const mockKV = createMockKV();
+		const mockContext = createMockContext('192.168.1.1', mockKV);
+		const next = vi.fn();
 
-			const mockContext = createMockContext('127.0.0.1', mockKV);
-			const next = vi.fn(async () => {
-				(mockContext.res as any).status = 200;
-			});
+		await oauthRateLimit(mockContext, next);
 
-			await loginRateLimit(mockContext, next);
-
-			expect(next).toHaveBeenCalled();
-			// Rate limit entry should be deleted after successful login
-			expect(mockKV.delete).toHaveBeenCalledWith(expect.stringContaining('127.0.0.1'));
-		});
+		expect(mockKV.put).toHaveBeenCalled();
+		expect(mockKV.put.mock.calls[0][0]).toContain('oauth:');
 	});
 
-	describe('lockout expiry', () => {
-		it('should reset attempts after lockout expires', async () => {
-			const mockKV = createMockKV();
-			const key = 'ratelimit:login:127.0.0.1';
-			const expiredLockout = Date.now() - 1000; // 1 second ago
+	it('allows a request after lockout expires', async () => {
+		const mockKV = createMockKV();
+		const key = 'ratelimit:oauth:127.0.0.1';
+		mockKV._store.set(
+			key,
+			JSON.stringify({
+				attempts: 10,
+				lockedUntil: Date.now() - 1000,
+				lastAttemptAt: Date.now() - 2000
+			})
+		);
+		const mockContext = createMockContext('127.0.0.1', mockKV);
+		const next = vi.fn();
 
-			mockKV._store.set(
-				key,
-				JSON.stringify({
-					attempts: 5,
-					lockedUntil: expiredLockout,
-					lastAttemptAt: Date.now() - 2000
-				})
-			);
+		await oauthRateLimit(mockContext, next);
 
-			const mockContext = createMockContext('127.0.0.1', mockKV);
-			const next = vi.fn(async () => {
-				(mockContext.res as any).status = 401; // Simulate failed login
-			});
-
-			await loginRateLimit(mockContext, next);
-
-			expect(next).toHaveBeenCalled();
-
-			// Verify attempts were reset to 1 (not accumulated past lockout)
-			expect(mockKV.put).toHaveBeenCalled();
-			const putCall = mockKV.put.mock.calls[0];
-			const savedEntry = JSON.parse(putCall[1]);
-			expect(savedEntry.attempts).toBe(1);
-			expect(savedEntry.lockedUntil).toBeNull();
-		});
+		expect(next).toHaveBeenCalled();
+		const savedEntry = JSON.parse(mockKV._store.get(key) ?? '{}');
+		expect(savedEntry.attempts).toBe(1);
 	});
 
-	describe('oauthRateLimit', () => {
-		it('should allow request when no previous attempts', async () => {
-			const mockKV = createMockKV();
+	it('uses in-memory storage when KV is undefined', async () => {
+		const mockContext = createMockContext('127.0.0.1');
+		const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const next = vi.fn();
+
+		await oauthRateLimit(mockContext, next);
+
+		expect(next).toHaveBeenCalled();
+		consoleWarnSpy.mockRestore();
+	});
+
+	it('includes remaining seconds in a blocked response', async () => {
+		const mockKV = createMockKV();
+		mockKV._store.set(
+			'ratelimit:oauth:127.0.0.1',
+			JSON.stringify({
+				attempts: 10,
+				lockedUntil: Date.now() + 10 * 60 * 1000,
+				lastAttemptAt: Date.now()
+			})
+		);
+		const mockContext = createMockContext('127.0.0.1', mockKV);
+		const next = vi.fn();
+
+		const response = await oauthRateLimit(mockContext, next);
+
+		expect((response.body as any).message).toContain('Try again in');
+	});
+
+	it('allows exactly ten requests and blocks the eleventh', async () => {
+		const mockKV = createMockKV();
+		const key = 'ratelimit:oauth:127.0.0.1';
+
+		for (let i = 0; i < 10; i++) {
 			const mockContext = createMockContext('127.0.0.1', mockKV);
 			const next = vi.fn();
 
 			await oauthRateLimit(mockContext, next);
 
 			expect(next).toHaveBeenCalled();
-		});
+		}
 
-		it('should increment counter on each request', async () => {
-			const mockKV = createMockKV();
-			const key = 'ratelimit:oauth:127.0.0.1';
-			const mockContext = createMockContext('127.0.0.1', mockKV);
-			const next = vi.fn();
+		const entry = JSON.parse(mockKV._store.get(key) ?? '{}');
+		expect(entry.attempts).toBe(10);
+		expect(entry.lockedUntil).not.toBeNull();
 
-			await oauthRateLimit(mockContext, next);
+		const mockContext = createMockContext('127.0.0.1', mockKV);
+		const next = vi.fn();
+		const response = await oauthRateLimit(mockContext, next);
 
-			expect(next).toHaveBeenCalled();
-			const savedEntry = JSON.parse(mockKV._store.get(key) ?? '{}');
-			expect(savedEntry.attempts).toBe(1);
-		});
-
-		it('should allow requests under the OAuth limit (10)', async () => {
-			const mockKV = createMockKV();
-			const key = 'ratelimit:oauth:127.0.0.1';
-			mockKV._store.set(
-				key,
-				JSON.stringify({
-					attempts: 8,
-					lockedUntil: null,
-					lastAttemptAt: Date.now()
-				})
-			);
-
-			const mockContext = createMockContext('127.0.0.1', mockKV);
-			const next = vi.fn();
-
-			await oauthRateLimit(mockContext, next);
-
-			expect(next).toHaveBeenCalled();
-		});
-
-		it('should block request when OAuth attempts reach the limit', async () => {
-			const mockKV = createMockKV();
-			const key = 'ratelimit:oauth:127.0.0.1';
-			mockKV._store.set(
-				key,
-				JSON.stringify({
-					attempts: 10,
-					lockedUntil: Date.now() + 15 * 60 * 1000,
-					lastAttemptAt: Date.now()
-				})
-			);
-
-			const mockContext = createMockContext('127.0.0.1', mockKV);
-			const next = vi.fn();
-
-			const response = await oauthRateLimit(mockContext, next);
-
-			expect(next).not.toHaveBeenCalled();
-			expect(response.status).toBe(429);
-			expect((response.body as any).error).toBe('too_many_requests');
-		});
-
-		it('should use separate KV key from login rate limiter', async () => {
-			const mockKV = createMockKV();
-			const mockContext = createMockContext('192.168.1.1', mockKV);
-			const next = vi.fn();
-
-			await oauthRateLimit(mockContext, next);
-
-			expect(mockKV.put).toHaveBeenCalled();
-			const key = mockKV.put.mock.calls[0][0];
-			expect(key).toContain('oauth:');
-			expect(key).not.toContain('login:');
-		});
-
-		it('should allow request after lockout expires', async () => {
-			const mockKV = createMockKV();
-			const key = 'ratelimit:oauth:127.0.0.1';
-			mockKV._store.set(
-				key,
-				JSON.stringify({
-					attempts: 10,
-					lockedUntil: Date.now() - 1000,
-					lastAttemptAt: Date.now() - 2000
-				})
-			);
-
-			const mockContext = createMockContext('127.0.0.1', mockKV);
-			const next = vi.fn();
-
-			await oauthRateLimit(mockContext, next);
-
-			expect(next).toHaveBeenCalled();
-			const savedEntry = JSON.parse(mockKV._store.get(key) ?? '{}');
-			expect(savedEntry.attempts).toBe(1);
-		});
-
-		it('should use in-memory storage when KV is undefined', async () => {
-			const mockContext = createMockContext('127.0.0.1', undefined);
-			const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-			const next = vi.fn();
-
-			await oauthRateLimit(mockContext, next);
-
-			expect(next).toHaveBeenCalled();
-			consoleWarnSpy.mockRestore();
-		});
-
-		it('should include remaining seconds in blocked response', async () => {
-			const mockKV = createMockKV();
-			const lockoutUntil = Date.now() + 10 * 60 * 1000;
-			mockKV._store.set(
-				'ratelimit:oauth:127.0.0.1',
-				JSON.stringify({
-					attempts: 10,
-					lockedUntil: lockoutUntil,
-					lastAttemptAt: Date.now()
-				})
-			);
-
-			const mockContext = createMockContext('127.0.0.1', mockKV);
-			const next = vi.fn();
-
-			const response = await oauthRateLimit(mockContext, next);
-
-			expect((response.body as any).message).toContain('Try again in');
-		});
-
-		it('should allow exactly OAUTH_MAX_ATTEMPTS (10) requests and block the 11th', async () => {
-			const mockKV = createMockKV();
-			const key = 'ratelimit:oauth:127.0.0.1';
-
-			// First 10 requests should all be allowed
-			for (let i = 0; i < 10; i++) {
-				const mockContext = createMockContext('127.0.0.1', mockKV);
-				const next = vi.fn();
-
-				await oauthRateLimit(mockContext, next);
-
-				expect(next).toHaveBeenCalled();
-			}
-
-			// Verify counter reached 10 and is locked
-			const entry = JSON.parse(mockKV._store.get(key) ?? '{}');
-			expect(entry.attempts).toBe(10);
-			expect(entry.lockedUntil).not.toBeNull();
-
-			// 11th request should be blocked
-			const mockContext = createMockContext('127.0.0.1', mockKV);
-			const next = vi.fn();
-
-			const response = await oauthRateLimit(mockContext, next);
-
-			expect(next).not.toHaveBeenCalled();
-			expect(response.status).toBe(429);
-		});
+		expect(next).not.toHaveBeenCalled();
+		expect(response.status).toBe(429);
 	});
 });

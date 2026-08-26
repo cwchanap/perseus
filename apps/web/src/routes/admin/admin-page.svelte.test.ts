@@ -9,10 +9,8 @@ import {
 	deletePuzzle,
 	fetchAdminPuzzles,
 	fetchPlayerAllowlist,
-	logout,
 	removePlayerAllowlistEntry
 } from '$lib/services/api';
-import { goto } from '$app/navigation';
 
 vi.mock('$lib/services/api', () => {
 	class MockApiError extends Error {
@@ -26,7 +24,6 @@ vi.mock('$lib/services/api', () => {
 		}
 	}
 	return {
-		logout: vi.fn(),
 		deletePuzzle: vi.fn(),
 		fetchAdminPuzzles: vi.fn().mockResolvedValue([]),
 		fetchPlayerAllowlist: vi.fn().mockResolvedValue([]),
@@ -41,10 +38,6 @@ vi.mock('$lib/services/gameplay/session/persistence', () => ({
 	createSessionStorageAdapter: () => ({
 		clearSession: vi.fn()
 	})
-}));
-
-vi.mock('$app/navigation', () => ({
-	goto: vi.fn()
 }));
 
 vi.mock('$app/paths', () => ({
@@ -307,30 +300,6 @@ describe('Admin Page', () => {
 		await page.getByRole('button', { name: 'REMOVE' }).first().click();
 
 		await expect.element(page.getByText('Could not remove player')).toBeVisible();
-	});
-
-	it('logs out and navigates to the admin login page', async () => {
-		vi.mocked(logout).mockResolvedValue(undefined);
-
-		render(AdminPage);
-
-		await page.getByRole('button', { name: /logout/i }).click();
-
-		await vi.waitFor(() => {
-			expect(logout).toHaveBeenCalledOnce();
-			expect(goto).toHaveBeenCalledWith('/admin/login');
-		});
-	});
-
-	it('shows an error when logout fails', async () => {
-		vi.mocked(logout).mockRejectedValue(new Error('network failure'));
-
-		render(AdminPage);
-
-		await page.getByRole('button', { name: /logout/i }).click();
-
-		await expect.element(page.getByText('Failed to logout')).toBeVisible();
-		expect(goto).not.toHaveBeenCalled();
 	});
 
 	it('polls for puzzle status updates when puzzles are processing', async () => {

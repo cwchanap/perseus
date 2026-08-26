@@ -29,7 +29,6 @@ function makeOptions(overrides: Partial<Options> = {}): Options {
 	return {
 		command: 'upload',
 		server: 'http://localhost:3000',
-		passkey: 'test-passkey',
 		catalogPath: '/dev/null',
 		imagesDir: '/dev/null',
 		tokenCachePath: '/dev/null',
@@ -394,7 +393,7 @@ describe('fetchExistingKeys', () => {
 				)
 		) as unknown as typeof fetch;
 
-		const keys = await fetchExistingKeys('http://localhost', {}, 'session=1');
+		const keys = await fetchExistingKeys('http://localhost', {});
 		expect(keys.has(idempotencyKey('Alpha', 100, '1:1'))).toBe(true);
 		expect(keys.has(idempotencyKey('Beta', 108, '3:4'))).toBe(true);
 		expect(keys.has(idempotencyKey('Gamma', 121, '1:1'))).toBe(true);
@@ -406,7 +405,7 @@ describe('fetchExistingKeys', () => {
 			async () => new Response('nope', { status: 401 })
 		) as unknown as typeof fetch;
 
-		await expect(fetchExistingKeys('http://localhost', {}, 'session=1')).rejects.toThrow(
+		await expect(fetchExistingKeys('http://localhost', {})).rejects.toThrow(
 			/Could not fetch existing puzzles/
 		);
 	});
@@ -416,9 +415,7 @@ describe('fetchExistingKeys', () => {
 			throw new Error('connection refused');
 		}) as unknown as typeof fetch;
 
-		await expect(fetchExistingKeys('http://localhost', {}, 'session=1')).rejects.toThrow(
-			/connection refused/
-		);
+		await expect(fetchExistingKeys('http://localhost', {})).rejects.toThrow(/connection refused/);
 	});
 
 	it('skips entries with non-string or empty names', async () => {
@@ -437,7 +434,7 @@ describe('fetchExistingKeys', () => {
 				)
 		) as unknown as typeof fetch;
 
-		const keys = await fetchExistingKeys('http://localhost', {}, 'session=1');
+		const keys = await fetchExistingKeys('http://localhost', {});
 		expect(keys.size).toBe(1);
 		// Missing aspectRatio is normalized to the server default (1:1).
 		expect(keys.has(idempotencyKey('Alpha', 100, DEFAULT_PUZZLE_ASPECT_RATIO))).toBe(true);
@@ -458,7 +455,7 @@ describe('fetchExistingKeys', () => {
 				)
 		) as unknown as typeof fetch;
 
-		const keys = await fetchExistingKeys('http://localhost', {}, 'session=1');
+		const keys = await fetchExistingKeys('http://localhost', {});
 		// ready and processing are retained for dedup; failed is excluded so it
 		// gets retried on the next seed run instead of being permanently skipped.
 		expect(keys.has(idempotencyKey('Ready', 100, '1:1'))).toBe(true);
@@ -512,7 +509,6 @@ describe('uploadWithRetry', () => {
 		const res = await uploadWithRetry(
 			'http://localhost',
 			{},
-			's=1',
 			new FormData(),
 			'Test',
 			idempotencyKey('Test')
@@ -530,7 +526,6 @@ describe('uploadWithRetry', () => {
 		const res = await uploadWithRetry(
 			'http://localhost',
 			{},
-			's=1',
 			new FormData(),
 			'Test',
 			idempotencyKey('Test')
@@ -549,7 +544,6 @@ describe('uploadWithRetry', () => {
 		const res = await uploadWithRetry(
 			'http://localhost',
 			{},
-			's=1',
 			new FormData(),
 			'Test',
 			idempotencyKey('Test')
@@ -565,7 +559,7 @@ describe('uploadWithRetry', () => {
 		globalThis.fetch = fn;
 
 		await expect(
-			uploadWithRetry('http://localhost', {}, 's=1', new FormData(), 'Test', idempotencyKey('Test'))
+			uploadWithRetry('http://localhost', {}, new FormData(), 'Test', idempotencyKey('Test'))
 		).rejects.toThrow();
 		expect(getPostCalls()).toBe(3);
 	});
@@ -580,7 +574,6 @@ describe('uploadWithRetry', () => {
 		const res = await uploadWithRetry(
 			'http://localhost',
 			{},
-			's=1',
 			new FormData(),
 			'Test',
 			idempotencyKey('Test')
@@ -756,12 +749,6 @@ describe('cmdUpload', () => {
 		// cannot verify and must record a failure (FatalError).
 		globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
 			const url = String(input);
-			if (url.endsWith('/api/admin/login')) {
-				return new Response('{"ok":true}', {
-					status: 200,
-					headers: { 'set-cookie': 'perseus_session=abc; Path=/' }
-				});
-			}
 			if (init?.method === 'GET' && url.endsWith('/api/admin/puzzles')) {
 				return new Response(JSON.stringify({ puzzles: [] }), {
 					status: 200,
@@ -798,12 +785,6 @@ describe('cmdUpload', () => {
 		let postCalled = false;
 		globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
 			const url = String(input);
-			if (url.endsWith('/api/admin/login')) {
-				return new Response('{"ok":true}', {
-					status: 200,
-					headers: { 'set-cookie': 'perseus_session=abc; Path=/' }
-				});
-			}
 			if (init?.method === 'GET' && url.endsWith('/api/admin/puzzles')) {
 				return new Response(JSON.stringify({ puzzles: [] }), {
 					status: 200,
@@ -834,7 +815,7 @@ describe('cmdUpload', () => {
 
 	it('rejects oversized image locally before uploading (file size preflight)', async () => {
 		// Create an 11MB file — exceeds the 10MB server limit. Should fail
-		// pre-validation without hitting the network (no POST, no login).
+		// pre-validation without issuing an upload POST.
 		const entry = makeEntry('01', 'BigImage');
 		const catalogPath = join(tmpDir, 'catalog.json');
 		writeFileSync(catalogPath, JSON.stringify([entry]));
@@ -849,12 +830,6 @@ describe('cmdUpload', () => {
 		let postCalled = false;
 		globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
 			const url = String(input);
-			if (url.endsWith('/api/admin/login')) {
-				return new Response('{"ok":true}', {
-					status: 200,
-					headers: { 'set-cookie': 'perseus_session=abc; Path=/' }
-				});
-			}
 			if (init?.method === 'GET' && url.endsWith('/api/admin/puzzles')) {
 				return new Response(JSON.stringify({ puzzles: [] }), {
 					status: 200,
@@ -880,8 +855,7 @@ describe('cmdUpload', () => {
 		// cmdUpload throws FatalError when fail > 0.
 		await expect(cmdUpload(options)).rejects.toBeInstanceOf(FatalError);
 
-		// Login still happens (it runs before per-entry processing), but the
-		// oversized image must NOT be POSTed — preflight caught it.
+		// The oversized image must NOT be POSTed — preflight caught it.
 		expect(postCalled).toBe(false);
 	});
 
@@ -898,12 +872,6 @@ describe('cmdUpload', () => {
 		let postBody: FormData | undefined;
 		globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
 			const url = String(input);
-			if (url.endsWith('/api/admin/login')) {
-				return new Response('{"ok":true}', {
-					status: 200,
-					headers: { 'set-cookie': 'perseus_session=abc; Path=/' }
-				});
-			}
 			if (init?.method === 'GET' && url.endsWith('/api/admin/puzzles')) {
 				// Initial fetch returns Alpha as existing; Beta is not yet there.
 				// Include pieceCount/aspectRatio so the composite idempotency key
@@ -945,7 +913,7 @@ describe('cmdUpload', () => {
 		expect(postedName).toBe('Beta');
 	});
 
-	it('dry-run lists entries without logging in or uploading', async () => {
+	it('dry-run lists entries without fetching or uploading', async () => {
 		const catalog = [makeEntry('01', 'Alpha'), makeEntry('02', 'Beta')];
 		const catalogPath = join(tmpDir, 'catalog.json');
 		writeFileSync(catalogPath, JSON.stringify(catalog));
@@ -971,41 +939,8 @@ describe('cmdUpload', () => {
 		// Should NOT throw — dry-run does not upload, so no failures.
 		await cmdUpload(options);
 
-		// Dry-run must not make any network requests (no login, no fetch, no upload).
+		// Dry-run must not make any network requests.
 		expect(fetchCalled).toBe(false);
-	});
-
-	it('throws FatalError when admin login fails', async () => {
-		const entry = makeEntry('01', 'Alpha');
-		const catalogPath = join(tmpDir, 'catalog.json');
-		writeFileSync(catalogPath, JSON.stringify([entry]));
-		writeFileSync(join(tmpDir, '01-alpha.jpg'), minimalPng(400, 400));
-
-		globalThis.fetch = mock(async (input: string | URL | Request) => {
-			const url = String(input);
-			if (url.endsWith('/api/admin/login')) {
-				return new Response(JSON.stringify({ message: 'Invalid passkey' }), {
-					status: 401,
-					headers: { 'Content-Type': 'application/json' }
-				});
-			}
-			return new Response('not found', { status: 404 });
-		}) as unknown as typeof fetch;
-
-		const options = makeOptions({
-			catalogPath,
-			imagesDir: tmpDir,
-			from: 1,
-			to: 1,
-			skipAccess: true,
-			delayMs: 0
-		});
-
-		// Login failure throws FatalError so main() maps it to the right exit
-		// code consistently with the other cmdUpload failure paths.
-		const result = cmdUpload(options);
-		await expect(result).rejects.toThrow(/Admin login failed/);
-		await expect(result).rejects.toBeInstanceOf(FatalError);
 	});
 
 	it('sends CF-Access-Client-Id/Secret headers on all requests when using service tokens', async () => {
@@ -1026,12 +961,6 @@ describe('cmdUpload', () => {
 			const headers = init?.headers as Record<string, string>;
 			if (headers) capturedHeaders.push({ ...headers });
 
-			if (url.endsWith('/api/admin/login')) {
-				return new Response('{"ok":true}', {
-					status: 200,
-					headers: { 'set-cookie': 'perseus_session=abc; Path=/' }
-				});
-			}
 			if (init?.method === 'GET' && url.endsWith('/api/admin/puzzles')) {
 				return new Response(JSON.stringify({ puzzles: [] }), {
 					status: 200,
@@ -1060,8 +989,7 @@ describe('cmdUpload', () => {
 
 		await cmdUpload(options);
 
-		// Every request (login POST, GET puzzles, upload POST) must carry
-		// the service token headers.
+		// Every list/probe/upload request must carry the service token headers.
 		expect(capturedHeaders.length).toBeGreaterThanOrEqual(2);
 		for (const h of capturedHeaders) {
 			expect(h['CF-Access-Client-Id']).toBe('test-client-id');

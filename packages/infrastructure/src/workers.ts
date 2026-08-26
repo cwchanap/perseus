@@ -300,11 +300,9 @@ export function createApiWorker(
 		// via the custom domain fronted by Cloudflare Access. Without this,
 		// Cloudflare defaults workers_dev to true, exposing the Worker at
 		// <name>.<account>.workers.dev — which bypasses Access policies
-		// (Access only protects custom domains/routes). The Worker's
-		// requireAuth still demands a perseus_session cookie, so forged
-		// CF-Access-Client-Id/Secret headers cannot bypass auth, but the
-		// passkey-gated /api/admin/login endpoint would be reachable without
-		// Access protection. Defense in depth: disable the subdomain.
+		// (Access only protects custom domains/routes). Access is the sole
+		// production admin gate, so disabling the public subdomain and preview
+		// URLs prevents those alternate origins from bypassing it.
 		subdomain: { enabled: false, previewsEnabled: false },
 		observability: {
 			enabled: true,

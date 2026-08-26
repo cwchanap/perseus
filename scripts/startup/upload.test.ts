@@ -16,7 +16,6 @@ function makeOptions(overrides: Partial<Options> = {}): Options {
 	return {
 		command: 'upload',
 		server: 'http://localhost:3000',
-		passkey: 'test-passkey',
 		catalogPath: '/dev/null',
 		imagesDir: '/dev/null',
 		tokenCachePath: '/dev/null',
@@ -248,7 +247,6 @@ describe('uploadWithRetry', () => {
 			uploadWithRetry(
 				'http://localhost:3000',
 				{},
-				'session=abc',
 				new FormData(),
 				'test-puzzle',
 				'test-puzzle\u000048\u00001:1'
@@ -274,7 +272,6 @@ describe('uploadWithRetry', () => {
 			uploadWithRetry(
 				'http://localhost:3000',
 				{},
-				'session=abc',
 				new FormData(),
 				'test-puzzle',
 				'test-puzzle\u000048\u00001:1'
@@ -300,7 +297,6 @@ describe('uploadWithRetry', () => {
 			uploadWithRetry(
 				'http://localhost:3000',
 				{},
-				'session=abc',
 				new FormData(),
 				'test-puzzle',
 				'test-puzzle\u000048\u00001:1'
@@ -325,7 +321,6 @@ describe('uploadWithRetry', () => {
 			uploadWithRetry(
 				'http://localhost:3000',
 				{},
-				'session=abc',
 				new FormData(),
 				'test-puzzle',
 				'test-puzzle\u000048\u00001:1'
@@ -358,7 +353,6 @@ describe('uploadWithRetry', () => {
 		const res = await uploadWithRetry(
 			'http://localhost:3000',
 			{},
-			'session=abc',
 			new FormData(),
 			'test-puzzle',
 			'test-puzzle\u000048\u00001:1'
@@ -382,7 +376,6 @@ describe('uploadWithRetry', () => {
 		const res = await uploadWithRetry(
 			'http://localhost:3000',
 			{},
-			'session=abc',
 			new FormData(),
 			'test-puzzle',
 			'test-puzzle\u000048\u00001:1'
@@ -414,7 +407,6 @@ describe('uploadWithRetry', () => {
 		const res = await uploadWithRetry(
 			'http://localhost:3000',
 			{},
-			'session=abc',
 			new FormData(),
 			'test-puzzle',
 			'test-puzzle\u000048\u00001:1'
@@ -439,7 +431,6 @@ describe('uploadWithRetry', () => {
 			uploadWithRetry(
 				'http://localhost:3000',
 				{},
-				'session=abc',
 				new FormData(),
 				'test-puzzle',
 				'test-puzzle\u000048\u00001:1'
@@ -473,14 +464,7 @@ describe('uploadWithRetry', () => {
 		}) as unknown as typeof fetch;
 
 		const dedupKey = 'test-puzzle\u000048\u00001:1';
-		await uploadWithRetry(
-			'http://localhost:3000',
-			{},
-			'session=abc',
-			new FormData(),
-			'test-puzzle',
-			dedupKey
-		);
+		await uploadWithRetry('http://localhost:3000', {}, new FormData(), 'test-puzzle', dedupKey);
 
 		expect(capturedHeaders['Idempotency-Key']).toBeDefined();
 		// Header should be a hex SHA-256 hash (64 chars), not the raw key

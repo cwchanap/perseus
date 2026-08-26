@@ -137,9 +137,6 @@ jobs:
             jwtSecret:
               value: ${{ secrets.JWT_SECRET }}
               secret: true
-            adminPasskey:
-              value: ${{ secrets.ADMIN_PASSKEY }}
-              secret: true
             googleClientSecret:
               value: ${{ secrets.GOOGLE_CLIENT_SECRET }}
               secret: true
@@ -334,9 +331,6 @@ jobs:
               value: ${{ vars.GOOGLE_CLIENT_ID }}
             jwtSecret:
               value: ${{ secrets.JWT_SECRET }}
-              secret: true
-            adminPasskey:
-              value: ${{ secrets.ADMIN_PASSKEY }}
               secret: true
             googleClientSecret:
               value: ${{ secrets.GOOGLE_CLIENT_SECRET }}

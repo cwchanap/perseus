@@ -356,18 +356,18 @@ Two Access applications protect admin routes:
 
 1. **Perseus Admin** (broad): covers `/admin`, `/admin/*`, `/api/admin`,
    `/api/admin/*`. Policy: email + device posture (browser admin).
-2. **Perseus Admin CLI** (narrow): covers `/api/admin/login` and
-   `/api/admin/puzzles`. Policies: email + device posture (browser admin
-   still works) AND Service Auth (CLI service token).
+2. **Perseus Admin CLI** (narrow): covers the exact `/api/admin/puzzles`
+   path. Policies: email + device posture (browser admin still works) AND
+   Service Auth (CLI service token).
 
 **Path scoping (resolved):** Cloudflare Access is path-based, not
 method-based. The delete route lives at `POST /api/admin/puzzle-delete/:id`,
 which is a sibling of (not a sub-path of) the narrow CLI app's exact path
 `/api/admin/puzzles`. It therefore inherits only the broad admin app's
 email+posture policy — a service-token holder cannot reach the delete
-endpoint at the Access gate even after obtaining a session cookie. See the
-full analysis in `packages/infrastructure/src/admin-access.ts` (the
-`CLI_ACCESS_PATHS` comment).
+endpoint at the Access gate. See the full analysis in
+`packages/infrastructure/src/admin-access.ts` (the `CLI_ACCESS_PATHS`
+comment).
 
 **Source:** `packages/infrastructure/src/admin-access.ts`.
 
@@ -462,24 +462,25 @@ counters need repair.** The reconciliation rebuilds
 
 Production admin routes (`/api/admin/*`) sit behind **Cloudflare Access**.
 Interactive browser login is for humans; scripts should use an **Access
-service token** (Client ID + Client Secret) plus the app admin passkey. The
-single-upload CLI is `bun run admin:upload`; the bulk/startup catalog uploader
-is `bun run admin:startup:upload`.
+service token** (Client ID + Client Secret). This is the sole credential for
+automated list/create requests.
+The single-upload CLI is `bun run admin:upload`; the bulk/startup catalog
+uploader is `bun run admin:startup:upload`.
 
 ### Credentials
 
 | Variable                  | Purpose                                                    |
 | ------------------------- | ---------------------------------------------------------- |
-| `ADMIN_PASSKEY`           | Perseus admin passkey (same as admin UI login)             |
 | `CF_ACCESS_CLIENT_ID`     | Access service token client id → `CF-Access-Client-Id`     |
 | `CF_ACCESS_CLIENT_SECRET` | Access service token secret → `CF-Access-Client-Secret`    |
 | `CF_ACCESS_TOKEN`         | Alternative: pre-obtained Access JWT → `--cf-access-token` |
 
-**Local API** (`http://127.0.0.1:4690`): only `ADMIN_PASSKEY` is required.
-Use `--skip-access` if needed.
+**Local API** (`http://127.0.0.1:4690`): admin routes have no application
+authentication. Loopback targets skip Access automatically; `--skip-access`
+is also available for explicit local use.
 
-**Production** (`https://perseus.cwchanap.dev`): `ADMIN_PASSKEY` is always
-required, plus **one** of the two Access auth methods:
+**Production** (`https://perseus.cwchanap.dev`): use **one** of the two Access
+authentication methods:
 
 1. **Service token (preferred):** `CF_ACCESS_CLIENT_ID` +
    `CF_ACCESS_CLIENT_SECRET` from Pulumi stack outputs.
@@ -492,8 +493,8 @@ request itself.
 
 ### Local production authentication bootstrap
 
-Keep `ADMIN_PASSKEY` in `apps/api/.env`. Load the Access service-token values
-into the current shell without printing them.
+Load the Access service-token values into the current shell without printing
+them.
 
 First, verify that Pulumi is using the cloud backend:
 
@@ -567,7 +568,7 @@ bun run admin:upload -- \
   --aspect 1:1 \
   --category Nature
 
-# Production (requires ADMIN_PASSKEY + CF_ACCESS_CLIENT_ID/SECRET, or --cf-access-token)
+# Production (requires CF_ACCESS_CLIENT_ID/SECRET, or --cf-access-token)
 bun run admin:upload -- \
   --server https://perseus.cwchanap.dev \
   --image ./my-puzzle.jpg \
@@ -580,7 +581,6 @@ bun run admin:upload -- \
 | Flag                | Description                                                          |
 | ------------------- | -------------------------------------------------------------------- |
 | `--server`          | API base URL (default `http://127.0.0.1:4690`)                       |
-| `--passkey`         | Admin passkey (or `ADMIN_PASSKEY`)                                   |
 | `--image`           | Path to JPEG/PNG/WebP                                                |
 | `--name`            | Puzzle display name                                                  |
 | `--pieces`          | Piece count (must be valid for the aspect ratio)                     |
@@ -630,10 +630,10 @@ bun run admin:startup:upload -- \
   --limit 5
 ```
 
-| Command                        | Description                        |
-| ------------------------------ | ---------------------------------- |
-| `bun run admin:startup:status` | Check Access credentials + passkey |
-| `bun run admin:startup:upload` | Upload catalog entries             |
+| Command                        | Description              |
+| ------------------------------ | ------------------------ |
+| `bun run admin:startup:status` | Check Access credentials |
+| `bun run admin:startup:upload` | Upload catalog entries   |
 
 Useful options: `--from`, `--to`, `--limit`, `--delay-ms`, `--dry-run`,
 `--skip-access` (local only).
@@ -673,6 +673,9 @@ and pair it with the rotation step — do not assume a `config set` alone change
 a live token.
 
 ### Token rotation
+
+If credentials may be compromised, temporarily disable the service token,
+rotate it, revoke/delete it, or remove/disable the Service Auth policy.
 
 To rotate credentials (new client_id + client_secret):
 

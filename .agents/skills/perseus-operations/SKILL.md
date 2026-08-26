@@ -26,7 +26,7 @@ reference; read only the sections relevant to the requested operation.
 2. Read the matching runbook section, then inspect its linked workflow, config, or source when
    the operation mutates production or the documented facts could have drifted.
 3. Start with read-only status or dry-run commands where the workflow provides them.
-4. Never print, paste, or commit passkeys, Access client secrets, JWTs, or Pulumi secrets.
+4. Never print, paste, or commit Access client secrets, JWTs, or Pulumi secrets.
 5. Resolve exact targets before destructive work. Obtain user confirmation immediately before a
    production deletion, replacement, or other destructive mutation unless that exact action was
    already explicitly authorized.

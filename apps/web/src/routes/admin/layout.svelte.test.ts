@@ -3,8 +3,6 @@ import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
 import { createRawSnippet } from 'svelte';
 import AdminLayout from './+layout.svelte';
-import { checkSession } from '$lib/services/api';
-import { goto } from '$app/navigation';
 import {
 	forceAdminDocumentNavigation,
 	isClientRoutedAdminPath
@@ -39,17 +37,9 @@ vi.mock('$app/stores', () => ({
 	page: mockPage
 }));
 
-vi.mock('$app/navigation', () => ({
-	goto: vi.fn()
-}));
-
 vi.mock('$app/paths', () => ({
 	base: '',
 	resolve: (p: string) => p
-}));
-
-vi.mock('$lib/services/api', () => ({
-	checkSession: vi.fn()
 }));
 
 vi.mock('$lib/services/adminNavigation', async (importOriginal) => {
@@ -75,34 +65,16 @@ describe('Admin Layout', () => {
 		mockPage.set({ url: { pathname: '/admin' }, status: 200, error: null });
 	});
 
-	it('renders children immediately on the login page without checking session', async () => {
-		mockPage.set({ url: { pathname: '/admin/login' }, status: 200, error: null });
+	it('renders children after deciding no document navigation is needed', async () => {
 		render(AdminLayout, { children: makeChildren() });
 
 		await expect.element(page.getByTestId('child-content')).toBeVisible();
+		expect(isClientRoutedAdminPath).toHaveBeenCalledWith('/admin');
+		expect(forceAdminDocumentNavigation).not.toHaveBeenCalled();
 	});
 
-	it('shows checking/loading state while session check is in flight', async () => {
-		// Never resolves during this test
-		vi.mocked(checkSession).mockReturnValue(new Promise(() => {}));
-
-		render(AdminLayout, { children: makeChildren() });
-
-		await expect.element(page.getByRole('status')).toBeVisible();
-		await expect.element(page.getByText(/VERIFYING ACCESS/i)).toBeVisible();
-	});
-
-	it('renders children after session check confirms authentication', async () => {
-		vi.mocked(checkSession).mockResolvedValue(true);
-
-		render(AdminLayout, { children: makeChildren() });
-
-		await expect.element(page.getByTestId('child-content')).toBeVisible();
-	});
-
-	it('forces a document navigation when the admin route was entered client-side', async () => {
+	it('keeps children blocked while forcing a client-routed document navigation', async () => {
 		vi.mocked(isClientRoutedAdminPath).mockReturnValue(true);
-		vi.mocked(checkSession).mockResolvedValue(true);
 
 		render(AdminLayout, { children: makeChildren() });
 
@@ -111,94 +83,6 @@ describe('Admin Layout', () => {
 				expect.objectContaining({ pathname: '/admin' })
 			);
 		});
-		expect(checkSession).not.toHaveBeenCalled();
-	});
-
-	it('redirects to /admin/login when session check returns false', async () => {
-		vi.mocked(checkSession).mockResolvedValue(false);
-
-		render(AdminLayout, { children: makeChildren() });
-
-		await vi.waitFor(() => {
-			expect(goto).toHaveBeenCalledWith('/admin/login');
-		});
-	});
-
-	it('redirects to /admin/login when session check throws', async () => {
-		vi.mocked(checkSession).mockRejectedValue(new Error('Network error'));
-
-		render(AdminLayout, { children: makeChildren() });
-
-		await vi.waitFor(() => {
-			expect(goto).toHaveBeenCalledWith('/admin/login');
-		});
-	});
-
-	it('shows redirecting state after unauthenticated session check', async () => {
-		vi.mocked(checkSession).mockResolvedValue(false);
-
-		render(AdminLayout, { children: makeChildren() });
-
-		await vi.waitFor(async () => {
-			await expect.element(page.getByText(/REDIRECTING/i)).toBeVisible();
-		});
-	});
-
-	it('re-checks session when navigating to a new admin route', async () => {
-		vi.mocked(checkSession).mockResolvedValue(true);
-
-		render(AdminLayout, { children: makeChildren() });
-
-		await expect.element(page.getByTestId('child-content')).toBeVisible();
-
-		vi.mocked(checkSession).mockResolvedValue(true);
-		mockPage.set({ url: { pathname: '/admin/puzzles' }, status: 200, error: null });
-
-		await vi.waitFor(() => {
-			expect(checkSession).toHaveBeenCalledTimes(2);
-		});
-	});
-
-	it('queues a session check when a route change occurs while one is in flight', async () => {
-		let resolveFirst!: (v: boolean) => void;
-		const firstCheck = new Promise<boolean>((r) => {
-			resolveFirst = r;
-		});
-		vi.mocked(checkSession).mockReturnValueOnce(firstCheck);
-		vi.mocked(checkSession).mockResolvedValueOnce(true);
-
-		render(AdminLayout, { children: makeChildren() });
-
-		await vi.waitFor(() => {
-			expect(checkSession).toHaveBeenCalledTimes(1);
-		});
-
-		mockPage.set({ url: { pathname: '/admin/settings' }, status: 200, error: null });
-
-		await vi.waitFor(() => {
-			expect(checkSession).toHaveBeenCalledTimes(1);
-		});
-
-		resolveFirst(true);
-
-		await vi.waitFor(() => {
-			expect(checkSession).toHaveBeenCalledTimes(2);
-		});
-
-		await expect.element(page.getByTestId('child-content')).toBeVisible();
-	});
-
-	it('does not re-check session on the login page', async () => {
-		mockPage.set({ url: { pathname: '/admin/login' }, status: 200, error: null });
-
-		render(AdminLayout, { children: makeChildren() });
-
-		await expect.element(page.getByTestId('child-content')).toBeVisible();
-
-		mockPage.set({ url: { pathname: '/admin/login' }, status: 200, error: null });
-
-		await vi.waitFor(() => {
-			expect(checkSession).not.toHaveBeenCalled();
-		});
+		await expect.poll(() => page.getByTestId('child-content').query()).toBeNull();
 	});
 });

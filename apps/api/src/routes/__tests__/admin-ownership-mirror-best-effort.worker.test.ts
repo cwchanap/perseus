@@ -34,19 +34,6 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	return { ...original, ...sharedMockOverrides };
 });
 
-vi.mock('../../middleware/auth.worker', () => ({
-	verifySession: vi.fn(),
-	requireAuth: async (c: any, next: any) => {
-		c.set('session', { userId: 'admin', username: 'admin', role: 'admin' });
-		return next();
-	},
-	createSession: vi.fn(),
-	setSessionCookie: vi.fn(),
-	clearSessionCookie: vi.fn(),
-	getSessionToken: vi.fn(() => 'valid-token'),
-	revokeSession: vi.fn()
-}));
-
 import admin from '../admin.worker';
 import { insertPuzzleOwnership } from '@perseus/shared';
 import { __resetRateLimitStore } from '../../middleware/rate-limit.worker';
@@ -58,7 +45,6 @@ const PNG_HEADER = new Uint8Array([
 ]);
 
 const baseEnv = {
-	ADMIN_PASSKEY: 'test-passkey',
 	JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
 	PUZZLE_METADATA: {} as KVNamespace,
 	PUZZLES_BUCKET: {} as R2Bucket,

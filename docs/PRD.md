@@ -35,8 +35,8 @@ features.
 
 As implemented today, Perseus lets anonymous players browse ready puzzles, filter them by
 category, solve them with mouse, touch, or keyboard input, and track personal bests and
-in-progress boards locally in the browser. Admins can authenticate with a passkey, upload
-source images, monitor asynchronous processing, and delete puzzles when needed.
+in-progress boards locally in the browser. Cloudflare Access-authorized admins can upload source
+images, monitor asynchronous processing, and delete puzzles when needed.
 
 In the production architecture, Perseus runs on Cloudflare Workers and uses Cloudflare
 Workflows, R2, KV, and a Durable Object to generate and store puzzle assets.
@@ -80,8 +80,8 @@ Workflows, R2, KV, and a Durable Object to generate and store puzzle assets.
 
 ### Core admin journey
 
-1. Log in via passkey at `/admin/login`
-2. Open the protected admin panel at `/admin`
+1. Open the Cloudflare Access-protected admin panel at `/admin`
+2. Complete the Access identity and device-posture challenge when prompted
 3. Upload an image with name and optional category
 4. Wait while the cloud workflow generates puzzle assets
 5. Monitor progress, failure, or ready status
@@ -115,8 +115,8 @@ The current player product is centered on a single-player gallery and solve loop
 
 The current admin product supports content creation and moderation:
 
-- Passkey-based authentication
-- Session-protected admin routes
+- Cloudflare Access identity and device-posture protection in production
+- Access-protected admin UI and API routes
 - Upload flow with client-side image preview
 - Optional category assignment
 - Async cloud generation with progress polling
@@ -219,19 +219,16 @@ storage is cleared.
 
 ### 5. Admin authentication and route protection
 
-| Requirement                        | Status          | Notes                                                                 |
-| ---------------------------------- | --------------- | --------------------------------------------------------------------- |
-| Passkey login                      | Implemented     | Admin login posts to `/api/admin/login`                               |
-| Protected admin routes             | Implemented     | Client checks session before rendering protected routes               |
-| Logout                             | Implemented     | Session cookie is cleared; Worker variant also revokes stored session |
-| Login rate limiting                | Implemented     | 5 attempts per window with lockout behavior                           |
-| Player accounts                    | Not implemented | Admin is the only authenticated role                                  |
-| Multiple admin roles / permissions | Not implemented | Single admin role only                                                |
+| Requirement                        | Status          | Notes                                                                  |
+| ---------------------------------- | --------------- | ---------------------------------------------------------------------- |
+| Cloudflare Access gate             | Implemented     | Identity + device posture protect `/admin*` and `/api/admin*`          |
+| Client-routed admin entry          | Implemented     | Full-document navigation lets Access challenge SPA transitions         |
+| CLI Service Auth scope             | Implemented     | Service token reaches exact `/api/admin/puzzles` list/create path only |
+| Multiple admin roles / permissions | Not implemented | Access policy grants one configured admin identity                     |
 
-**Implementation references:** `apps/web/src/routes/admin/login/+page.svelte`,
-`apps/web/src/routes/admin/+layout.svelte`, `apps/api/src/routes/admin.worker.ts`,
-`apps/api/src/middleware/auth.worker.ts`,
-`apps/api/src/middleware/rate-limit.worker.ts`
+**Implementation references:** `apps/web/src/routes/admin/+layout.svelte`,
+`apps/web/src/lib/services/adminNavigation.ts`, `apps/api/src/routes/admin.worker.ts`,
+`packages/infrastructure/src/admin-access.ts`
 
 ### 6. Admin content management
 
@@ -467,7 +464,7 @@ The period from 2026-03-31 to 2026-04-25 delivered two distinct phases:
 - API Worker entry: `apps/api/src/worker.ts`
 - Public puzzle routes (includes reference endpoint): `apps/api/src/routes/puzzles.worker.ts`
 - Admin routes: `apps/api/src/routes/admin.worker.ts`
-- Worker auth: `apps/api/src/middleware/auth.worker.ts`
+- Player auth: `apps/api/src/middleware/player-auth.worker.ts`
 - Worker rate limit: `apps/api/src/middleware/rate-limit.worker.ts`
 - Workflow and Durable Object: `apps/workflows/src/index.ts`
 - Shared product types: `packages/types/src/index.ts`

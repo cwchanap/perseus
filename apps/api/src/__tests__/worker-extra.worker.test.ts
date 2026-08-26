@@ -14,7 +14,6 @@ vi.mock('../routes/puzzles.worker', () => {
 
 vi.mock('../routes/admin.worker', () => {
 	const app = new Hono();
-	app.get('/session', (c: any) => c.json({ authenticated: false }));
 	return { default: app };
 });
 
@@ -36,7 +35,6 @@ function createMockCtx(): ExecutionContext {
 const validEnv = {
 	NODE_ENV: 'development',
 	JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
-	ADMIN_PASSKEY: 'test-passkey',
 	GOOGLE_CLIENT_ID: 'google-client-id',
 	GOOGLE_CLIENT_SECRET: 'google-client-secret',
 	AUTH_REDIRECT_BASE_URL: 'http://localhost:5173',
@@ -105,7 +103,6 @@ describe('Worker - CORS middleware branches', () => {
 		const env = {
 			NODE_ENV: 'development',
 			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
-			ADMIN_PASSKEY: 'test-passkey',
 			GOOGLE_CLIENT_ID: 'google-client-id',
 			GOOGLE_CLIENT_SECRET: 'google-client-secret',
 			AUTH_REDIRECT_BASE_URL: 'http://localhost:5173',
@@ -126,7 +123,6 @@ describe('Worker - CORS middleware branches', () => {
 		const env = {
 			NODE_ENV: 'production',
 			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
-			ADMIN_PASSKEY: 'test-passkey',
 			GOOGLE_CLIENT_ID: '',
 			GOOGLE_CLIENT_SECRET: '',
 			AUTH_REDIRECT_BASE_URL: '',
@@ -146,7 +142,6 @@ describe('Worker - CORS middleware branches', () => {
 		const env = {
 			NODE_ENV: 'production',
 			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
-			ADMIN_PASSKEY: 'test-passkey',
 			GOOGLE_CLIENT_ID: '',
 			GOOGLE_CLIENT_SECRET: '',
 			AUTH_REDIRECT_BASE_URL: '',
@@ -166,7 +161,6 @@ describe('Worker - CORS middleware branches', () => {
 		const env = {
 			NODE_ENV: 'production',
 			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
-			ADMIN_PASSKEY: 'test-passkey',
 			GOOGLE_CLIENT_ID: 'google-client-id',
 			GOOGLE_CLIENT_SECRET: 'google-client-secret',
 			AUTH_REDIRECT_BASE_URL: 'http://myapp.example.com',
@@ -193,7 +187,6 @@ describe('Worker - error handler CORS branches', () => {
 		const env = {
 			NODE_ENV: 'development',
 			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
-			ADMIN_PASSKEY: 'test-passkey',
 			ALLOWED_ORIGINS: 'https://allowed.example.com',
 			ASSETS: {
 				fetch: vi.fn(() => {
@@ -215,7 +208,6 @@ describe('Worker - error handler CORS branches', () => {
 		const env = {
 			NODE_ENV: 'development',
 			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
-			ADMIN_PASSKEY: 'test-passkey',
 			ALLOWED_ORIGINS: 'https://allowed.example.com',
 			ASSETS: {
 				fetch: vi.fn(() => {
@@ -238,7 +230,6 @@ describe('Worker - error handler CORS branches', () => {
 		const env = {
 			NODE_ENV: 'development',
 			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
-			ADMIN_PASSKEY: 'test-passkey',
 			ALLOWED_ORIGINS: '', // empty → envOrigins.length === 0 → use DEFAULT_ALLOWED_ORIGINS
 			ASSETS: {
 				fetch: vi.fn(() => {

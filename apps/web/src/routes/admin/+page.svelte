@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
-	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import {
 		ApiError,
@@ -9,7 +8,6 @@
 		fetchAdminPuzzles,
 		fetchPlayerAllowlist,
 		getThumbnailUrl,
-		logout,
 		removePlayerAllowlistEntry
 	} from '$lib/services/api';
 	import { createSessionStorageAdapter } from '$lib/services/gameplay/session/persistence';
@@ -20,8 +18,6 @@
 	// best-effort clear after a delete; no session-awareness required.
 	const sessionStorageAdapter = createSessionStorageAdapter();
 
-	let loggingOut = $state(false);
-	let logoutError: string | null = $state(null);
 	let puzzles: PuzzleSummary[] = $state([]);
 	let loadingPuzzles = $state(true);
 	let puzzlesError: string | null = $state(null);
@@ -167,20 +163,6 @@
 		}
 	}
 
-	async function handleLogout() {
-		loggingOut = true;
-		logoutError = null;
-		try {
-			await logout();
-			goto(resolve('/admin/login'));
-		} catch (e) {
-			console.error('Failed to logout', e);
-			logoutError = 'Failed to logout';
-		} finally {
-			loggingOut = false;
-		}
-	}
-
 	async function handleDelete(puzzleId: string, isProcessing: boolean = false) {
 		const confirmMessage = isProcessing
 			? 'This puzzle is still processing. Force delete may leave orphaned assets. Continue?'
@@ -242,32 +224,12 @@ transition-colors duration-150 hover:text-(--accent)"
 				>
 					VIEW ARCADE
 				</a>
-				<button
-					onclick={handleLogout}
-					disabled={loggingOut}
-					class="border border-(--hot-dim) px-[0.875rem] py-[0.4rem] text-[0.58rem]
-font-(--font-display) font-semibold tracking-[0.15em] text-(--hot)
-transition-all duration-200 hover:border-(--hot) hover:bg-(--hot-glow)
-disabled:cursor-not-allowed disabled:opacity-50"
-				>
-					{loggingOut ? 'LOGGING OUT...' : 'LOGOUT'}
-				</button>
 			</div>
 		</header>
 
 		<div
 			class="mb-8 h-px bg-[linear-gradient(90deg,transparent,var(--accent),transparent)] opacity-30"
 		></div>
-
-		{#if logoutError}
-			<div
-				class="mb-4 border border-(--hot-dim) bg-[rgba(255,0,102,0.06)] px-4 py-3
-text-[0.72rem] font-(--font-mono) tracking-[0.05em] text-(--hot)"
-				role="alert"
-			>
-				{logoutError}
-			</div>
-		{/if}
 
 		{#if successMessage}
 			<div

@@ -2,12 +2,7 @@
 
 import { basename, extname, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import {
-	accessHeaders,
-	hasAccessCredentials,
-	sessionCookieFrom,
-	throwOnProbeFailure
-} from './startup/upload';
+import { accessHeaders, hasAccessCredentials, throwOnProbeFailure } from './startup/upload';
 import {
 	resolveAccessToken,
 	probeAccessToken,
@@ -29,7 +24,6 @@ const LOCAL_SERVER = 'http://127.0.0.1:4690';
 
 interface Options extends AccessCredentials {
 	server: string;
-	passkey: string;
 	imagePath: string;
 	name: string;
 	pieceCount: number;
@@ -43,7 +37,6 @@ function usage(exitCode = 1): never {
 
 Options:
   --server <url>              API server base URL (default: http://127.0.0.1:4690)
-  --passkey <value>           Admin passkey (or set ADMIN_PASSKEY)
   --image <path>              Image file to upload
   --name <value>              Puzzle name
   --pieces <count>            Piece count
@@ -89,7 +82,6 @@ async function parseOptions(): Promise<Options> {
 	const dotenv = await loadDotEnvMap(root);
 	applyDotenvOverrides(dotenv);
 
-	const passkey = readArg(args, '--passkey') ?? process.env.ADMIN_PASSKEY ?? dotenv.ADMIN_PASSKEY;
 	const server = (readArg(args, '--server') ?? dotenv.PERSEUS_SERVER ?? LOCAL_SERVER).replace(
 		/\/+$/,
 		''
@@ -109,7 +101,7 @@ async function parseOptions(): Promise<Options> {
 	}
 	const skipAccess = wantSkipAccess || isLocalServer(server);
 
-	if (!imagePath || !name || !pieceCountRaw || !passkey) usage();
+	if (!imagePath || !name || !pieceCountRaw) usage();
 
 	const pieceCount = Number.parseInt(pieceCountRaw, 10);
 	if (!Number.isInteger(pieceCount) || String(pieceCount) !== pieceCountRaw) {
@@ -119,7 +111,6 @@ async function parseOptions(): Promise<Options> {
 
 	return {
 		server,
-		passkey,
 		imagePath,
 		name,
 		pieceCount,
@@ -212,17 +203,6 @@ async function main() {
 
 	const baseHeaders = accessHeaders(options);
 
-	const loginResponse = await fetch(`${options.server}/api/admin/login`, {
-		method: 'POST',
-		headers: { ...baseHeaders, 'Content-Type': 'application/json' },
-		body: JSON.stringify({ passkey: options.passkey }),
-		redirect: 'manual'
-	});
-	if (!loginResponse.ok) {
-		throw new Error(`Admin login failed: ${await readError(loginResponse)}`);
-	}
-	const cookie = sessionCookieFrom(loginResponse, baseHeaders.Cookie);
-
 	const formData = new FormData();
 	formData.append('name', options.name);
 	formData.append('pieceCount', String(options.pieceCount));
@@ -232,7 +212,7 @@ async function main() {
 
 	const uploadResponse = await fetch(`${options.server}/api/admin/puzzles`, {
 		method: 'POST',
-		headers: { ...baseHeaders, Cookie: cookie },
+		headers: baseHeaders,
 		body: formData,
 		redirect: 'manual'
 	});

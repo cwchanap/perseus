@@ -151,7 +151,6 @@ For sensitive environment variables (secrets), use Pulumi config with secrets:
 
 ```bash
 pulumi config set --secret jwtSecret YOUR_JWT_SECRET
-pulumi config set --secret adminPasskey YOUR_ADMIN_PASSKEY
 pulumi config set --secret googleClientId YOUR_GOOGLE_CLIENT_ID
 pulumi config set --secret googleClientSecret YOUR_GOOGLE_CLIENT_SECRET
 ```
@@ -206,42 +205,33 @@ GitHub Actions deploys require these repository secrets:
 
 Manual verification after deploy:
 
-- Allowed WARP-enrolled device and matching identity: `/admin` reaches the existing
-  Perseus passkey page.
+- Allowed WARP-enrolled device and matching identity: `/admin` reaches the admin portal.
 - Device without passing the serial-number posture check: `/admin` is denied by
   Cloudflare Access before Perseus loads.
 - `/`, `/api/puzzles`, and `/api/auth/session` remain reachable without Cloudflare Access.
-- After Access allows the request, the existing Perseus admin passkey still rejects
-  invalid login attempts.
 
 ### CLI Service Token Rotation
 
-The non-interactive CLI service token (`Perseus Admin CLI`) has a default lifetime
-of **90 days** (`2160h`). Override it at deploy time:
-
-```bash
-cd packages/infrastructure
-pulumi config set adminCliServiceTokenDuration 720h   # e.g. 30 days
-```
+The deployed non-interactive CLI service token (`Perseus Admin CLI`) has a
+**one-year lifetime** (`8760h`). The `2160h` constant is only the in-code fallback;
+production passes the one-year duration explicitly.
 
 Cloudflare Access expires the token automatically once the duration elapses —
 requests using the stale `CF-Access-Client-Id` / `CF-Access-Client-Secret` pair
 will start receiving 403. Rotate **before** expiry to avoid an outage:
 
 ```bash
-cd packages/infrastructure
-
-# 1. Taint the token resource so Pulumi recreates it with a fresh client_id + secret
-pulumi state taint "$(pulumi stack export --json | jq -r \
-  '.deployment.resources[] | select(.type=="cloudflare:index:zeroTrustAccessServiceToken") | .urn')"
-
-# 2. Recreate the token
-pulumi up
-
-# 3. Read the new credentials (client_secret is masked unless --show-secrets is passed)
-pulumi stack output --show-secrets adminCliAccessClientId
-pulumi stack output --show-secrets adminCliAccessClientSecret
+PULUMI_CONFIG_PASSPHRASE='' pulumi up \
+  --target-replace \
+  "urn:pulumi:production::perseus-infrastructure::cloudflare:index/zeroTrustAccessServiceToken:ZeroTrustAccessServiceToken::admin-access-cli-service-token" \
+  --target-dependents \
+  -s cwchanap/perseus-infrastructure/production \
+  -C packages/infrastructure
 ```
+
+`--target-dependents` updates the narrow Access application's Service Auth policy
+to the replacement token ID. If a token may be compromised, temporarily disable
+it, rotate it, revoke/delete it, or remove/disable the Service Auth policy.
 
 Update downstream consumers with the new values:
 

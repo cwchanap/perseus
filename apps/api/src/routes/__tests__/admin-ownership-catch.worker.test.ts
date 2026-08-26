@@ -37,19 +37,6 @@ vi.mock('../../db.worker', () => ({
 	getWorkerDbContext: vi.fn(() => dbContextMock)
 }));
 
-vi.mock('../../middleware/auth.worker', () => ({
-	verifySession: vi.fn(),
-	requireAuth: async (c: any, next: any) => {
-		c.set('session', { userId: 'admin', username: 'admin', role: 'admin' });
-		return next();
-	},
-	createSession: vi.fn(),
-	setSessionCookie: vi.fn(),
-	clearSessionCookie: vi.fn(),
-	getSessionToken: vi.fn(() => 'valid-token'),
-	revokeSession: vi.fn()
-}));
-
 vi.mock('@perseus/shared', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('@perseus/shared')>();
 	return {
@@ -65,7 +52,6 @@ import { deletePuzzleOwnership } from '@perseus/shared';
 import { __resetRateLimitStore } from '../../middleware/rate-limit.worker';
 
 const baseEnv = {
-	ADMIN_PASSKEY: 'test-passkey',
 	JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
 	PUZZLE_METADATA: {} as KVNamespace,
 	PUZZLE_METADATA_DO: {} as DurableObjectNamespace,

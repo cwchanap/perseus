@@ -3,15 +3,8 @@ import * as pulumi from '@pulumi/pulumi';
 
 export const ADMIN_ACCESS_PATHS = ['/admin', '/admin/*', '/api/admin', '/api/admin/*'] as const;
 /**
- * Path prefixes the narrow CLI Access application protects. This is a
- * defense-in-depth FIRST layer: it limits which paths a service-token holder
- * can reach at the Cloudflare Access (network) gate. Because the Worker's
- * requireAuth middleware only validates the generic perseus_session cookie
- * (issued by /api/admin/login after the ADMIN_PASSKEY check) and does NOT
- * read CF-Access-Client-Id/Secret headers, it cannot distinguish a
- * service-token (non_identity) caller from a browser admin once both have a
- * session cookie. The Access path list below is therefore the ONLY layer that
- * scopes what a service-token holder can reach after authenticating.
+ * Paths the narrow CLI Access application protects. This list limits which
+ * paths a service-token holder can reach at the Cloudflare Access gate.
  *
  * CLOUDFLARE ACCESS PATH SEMANTICS (verified against official docs:
  * https://developers.cloudflare.com/cloudflare-one/access-controls/policies/app-paths/):
@@ -29,23 +22,12 @@ export const ADMIN_ACCESS_PATHS = ['/admin', '/admin/*', '/api/admin', '/api/adm
  * route lives at POST /api/admin/puzzle-delete/:id — a SIBLING of (not a
  * sub-path of) '/api/admin/puzzles' — so it does NOT inherit the CLI app's
  * policies. It inherits only the broad admin app's email+posture policy,
- * which has no Service Auth policy, so a service-token holder cannot reach
- * the delete endpoint at the Access gate even after obtaining a session
- * cookie via /api/admin/login. Cloudflare Access is path-based, not
- * method-based, which is why the delete route was moved off the inherited
- * sub-path rather than scoped by HTTP method.
- * Defense-in-depth backstops that remain in place:
- *   1. The CLI script (admin-bulk-upload-startup.ts) only calls POST
- *      /api/admin/puzzles (create) and POST /api/admin/login; it never
- *      calls /api/admin/puzzle-delete/:id.
- *   2. The service token's lifetime is set by cliServiceTokenDuration in
- *      index.ts (production override: 8760h / 1 year); the in-code default
- *      DEFAULT_ADMIN_CLI_SERVICE_TOKEN_DURATION (2160h / 90 days) applies
- *      only when no override is passed.
- *   3. The session cookie has a limited duration
- *      (DEFAULT_ADMIN_ACCESS_SESSION_DURATION = 12h).
+ * which has no Service Auth policy, so a service-token holder cannot reach the
+ * delete endpoint. Cloudflare Access is path-based, not method-based, which is
+ * why the delete route was moved off the inherited sub-path rather than scoped
+ * by HTTP method.
  */
-export const CLI_ACCESS_PATHS = ['/api/admin/login', '/api/admin/puzzles'] as const;
+export const CLI_ACCESS_PATHS = ['/api/admin/puzzles'] as const;
 export const DEFAULT_ADMIN_ACCESS_SESSION_DURATION = '12h';
 /** Default lifetime for the non-interactive CLI service token (90 days). */
 export const DEFAULT_ADMIN_CLI_SERVICE_TOKEN_DURATION = '2160h';
@@ -91,7 +73,7 @@ export interface AdminAccessResources {
 	deviceSerialList: cloudflare.ZeroTrustList;
 	devicePostureRule: cloudflare.ZeroTrustDevicePostureRule;
 	application: cloudflare.ZeroTrustAccessApplication;
-	/** Narrow Access app for CLI paths (login + puzzle list/create) with Service Auth. */
+	/** Narrow Access app for puzzle list/create with Service Auth. */
 	cliApplication: cloudflare.ZeroTrustAccessApplication;
 	/** Non-interactive service token for CLI/admin automation (client_id + client_secret). */
 	cliServiceToken: cloudflare.ZeroTrustAccessServiceToken;
@@ -377,14 +359,10 @@ export function createAdminAccessResources(
 		{ dependsOn: [devicePostureRule] }
 	);
 
-	// Narrow app: protects the exact CLI path prefixes (login + puzzle
-	// list/create) with both email+posture (browser admin still works) and
-	// Service Auth (CLI token). Because the Worker's requireAuth only checks
-	// the generic perseus_session cookie and cannot distinguish a
-	// service-token caller from a browser admin, this Access path list IS the
-	// scoping boundary for what a service-token holder can reach after
-	// authenticating — keep it restricted to the two exact endpoints above.
-	// More specific Access paths take precedence over the broad admin app.
+	// Narrow app: protects the exact puzzle list/create path with both
+	// email+posture (browser admin still works) and Service Auth (CLI token).
+	// More specific Access paths take precedence over the broad admin app, so
+	// keep this restricted to the one exact endpoint above.
 	const cliApplication = new cloudflare.ZeroTrustAccessApplication(
 		'admin-access-cli-application',
 		buildCliAccessApplicationArgs({
