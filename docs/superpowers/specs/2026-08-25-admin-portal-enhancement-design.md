@@ -226,7 +226,7 @@ Pure helper tests own:
 - empty result;
 - page boundaries and out-of-range clamping.
 
-Browser component tests own only wiring that needs the DOM: SearchBar callback, selects, Reset, filtered-empty copy/count, polling while a processing row is hidden, and pagination controls using a small fixture.
+Browser component tests own only wiring that needs the DOM: SearchBar callback, selects, Reset, filtered-empty copy/count, polling while a processing row is hidden, and one minimal pagination-control wiring case.
 
 ### 8. Search/filter before fixed 20-row pagination
 
@@ -272,9 +272,9 @@ Processing and failed placeholders are not clickable. Do not add a lightbox depe
 
 Keep one implementation PR for this ticket unless explicitly approved otherwise.
 
-The auth cut is the highest-risk part, so it must be the **first isolated implementation commit**. Before adding tab/search/filter/preview commits, run the complete Task 1 verification set and review the Task 1 diff on its own. This preserves a calm review boundary inside the single PR without turning one ticket into multiple PRs.
+The auth cut is the highest-risk part, so it must be the **first isolated implementation commit**. Before adding tab/search/filter/preview commits, run the complete Task 1 verification set and review the Task 1 diff on its own. This is an intra-PR review checkpoint only; it is not a second PR and does not imply a pre-merge production deploy.
 
-The final production smoke occurs after the single PR deploy. If a later decision explicitly approves splitting the ticket, Task 1 is already structured so it can be separated mechanically without redesign.
+The final production Access/seed smoke occurs after the single PR deploy. If a later decision explicitly approves splitting the ticket, Task 1 is already structured so it can be separated mechanically without redesign.
 
 ## Testing Strategy
 
@@ -327,7 +327,7 @@ The external design review was applied selectively after checking the tree:
 1. **Accepted: complete auth deletion inventory.** The review identified live files missing from the plan: `AGENTS.md`, `docs/PRD.md`, seed workflow, API client tests, worker-extra fixtures, rate-limit post-tracking tests, and admin-route auth mocks.
 2. **Accepted: pure list helpers.** Filter/page arithmetic moves to two tiny route-local pure functions; no framework is introduced.
 3. **Accepted: reuse `SearchBar` and web category constants.** This removes duplicate search markup and follows existing web imports.
-4. **Partially accepted: auth review isolation.** The risk is real, but splitting one ticket into two PRs conflicts with the project delivery constraint. Task 1 remains an isolated first commit with a hard verification/review checkpoint inside the single PR.
+4. **Partially accepted: auth review isolation.** The risk is real, but splitting one ticket into two PRs conflicts with the project delivery constraint. Task 1 remains an isolated first commit with a hard verification/review checkpoint inside the single PR; production smoke stays post-deploy.
 5. **Accepted: remove stale auth mocks, not just production middleware.** Tests must stop pretending `requireAuth` exists after the feature is deleted.
 6. **Kept from prior review: no backend admin query layer.** Full-list admin API remains necessary for processing polling and startup deduplication.
 7. **Kept from prior review: no duplicate Wrangler ingress flags.** Pulumi remains the ingress source of truth.
