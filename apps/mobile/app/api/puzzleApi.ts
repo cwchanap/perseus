@@ -1,4 +1,9 @@
-import { validatePuzzleMetadata, type PuzzleListResponse, type ReadyPuzzle } from '@perseus/types';
+import {
+	validatePuzzleMetadata,
+	type PuzzleListResponse,
+	type PuzzleSummary,
+	type ReadyPuzzle
+} from '@perseus/types';
 
 export type PuzzleJsonRequest = (url: string) => Promise<unknown>;
 
@@ -8,6 +13,29 @@ export interface PuzzleApi {
 	thumbnailUrl(puzzleId: string): string;
 	referenceUrl(puzzleId: string): string;
 	pieceImageUrl(puzzleId: string, pieceId: number): string;
+}
+
+function isPuzzleSummary(value: unknown): value is PuzzleSummary {
+	if (typeof value !== 'object' || value === null) return false;
+	const s = value as Record<string, unknown>;
+	return (
+		typeof s.id === 'string' &&
+		typeof s.name === 'string' &&
+		typeof s.pieceCount === 'number' &&
+		Number.isFinite(s.pieceCount) &&
+		typeof s.status === 'string'
+	);
+}
+
+function isPuzzleListResponse(value: unknown): value is PuzzleListResponse {
+	if (typeof value !== 'object' || value === null) return false;
+	const r = value as Record<string, unknown>;
+	if (!Array.isArray(r.puzzles) || !r.puzzles.every(isPuzzleSummary)) return false;
+	if (typeof r.total !== 'number' || !Number.isFinite(r.total)) return false;
+	if (typeof r.offset !== 'number' || !Number.isFinite(r.offset)) return false;
+	if (typeof r.limit !== 'number' || !Number.isFinite(r.limit)) return false;
+	if (r.nextCursor !== undefined && typeof r.nextCursor !== 'string') return false;
+	return true;
 }
 
 export function createPuzzleApi(options: {
@@ -21,7 +49,9 @@ export function createPuzzleApi(options: {
 			const url = cursor
 				? `${baseUrl}/api/puzzles?cursor=${encodeURIComponent(cursor)}`
 				: `${baseUrl}/api/puzzles`;
-			return (await options.requestJson(url)) as PuzzleListResponse;
+			const raw = await options.requestJson(url);
+			if (!isPuzzleListResponse(raw)) throw new Error('invalid_puzzle_list_response');
+			return raw;
 		},
 
 		async getPuzzle(puzzleId: string): Promise<ReadyPuzzle> {
@@ -53,15 +83,15 @@ export function createPuzzleApi(options: {
 		},
 
 		thumbnailUrl(puzzleId: string): string {
-			return `${baseUrl}/api/puzzles/${puzzleId}/thumbnail`;
+			return `${baseUrl}/api/puzzles/${encodeURIComponent(puzzleId)}/thumbnail`;
 		},
 
 		referenceUrl(puzzleId: string): string {
-			return `${baseUrl}/api/puzzles/${puzzleId}/reference`;
+			return `${baseUrl}/api/puzzles/${encodeURIComponent(puzzleId)}/reference`;
 		},
 
 		pieceImageUrl(puzzleId: string, pieceId: number): string {
-			return `${baseUrl}/api/puzzles/${puzzleId}/pieces/${pieceId}/image`;
+			return `${baseUrl}/api/puzzles/${encodeURIComponent(puzzleId)}/pieces/${pieceId}/image`;
 		}
 	};
 }

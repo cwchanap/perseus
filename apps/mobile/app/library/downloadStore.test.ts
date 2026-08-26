@@ -58,7 +58,9 @@ class FakeFileOps implements DownloadFileOps {
 
 	async removeDir(dirPath: string): Promise<void> {
 		this.removedDirectories.push(dirPath);
-		this.directories.delete(dirPath);
+		for (const dir of [...this.directories]) {
+			if (dir === dirPath || dir.startsWith(`${dirPath}/`)) this.directories.delete(dir);
+		}
 		for (const key of [...this.files.keys()]) {
 			if (key === dirPath || key.startsWith(`${dirPath}/`)) this.files.delete(key);
 		}
@@ -383,6 +385,13 @@ describe('downloadStore.downloadPuzzle', () => {
 		expect(h.fileOps.removedDirectories).toContain(`${ROOT}/.staging/p1`);
 		expect(await h.fileOps.readText(`${ROOT}/p1/leftover.txt`)).toBeNull();
 	});
+
+	it('rejects duplicate piece ids before building piece mappings', async () => {
+		const h = makeHarness([1, 1, 2]);
+		await expect(h.store.downloadPuzzle(h.puzzle)).rejects.toThrow('duplicate_piece_ids');
+		expect(h.fileOps.removedDirectories).toContain(`${ROOT}/.staging/p1`);
+		expect(await h.fileOps.directoryExists(`${ROOT}/p1`)).toBe(false);
+	});
 });
 
 describe('downloadStore opportunistic reference', () => {
@@ -597,6 +606,19 @@ describe('downloadStore.removeDownload', () => {
 
 		await h.store.removeDownload('p1');
 
+		expect(h.fileOps.removedDirectories).toEqual([`${ROOT}/p1`]);
+	});
+
+	it('removes nested directories beneath the package directory', async () => {
+		const h = makeHarness([1, 2, 3]);
+		await seedValidPackage(h, h.puzzle);
+
+		expect(await h.fileOps.directoryExists(`${ROOT}/p1/pieces`)).toBe(true);
+
+		await h.store.removeDownload('p1');
+
+		expect(await h.fileOps.directoryExists(`${ROOT}/p1`)).toBe(false);
+		expect(await h.fileOps.directoryExists(`${ROOT}/p1/pieces`)).toBe(false);
 		expect(h.fileOps.removedDirectories).toEqual([`${ROOT}/p1`]);
 	});
 

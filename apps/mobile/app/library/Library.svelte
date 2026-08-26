@@ -43,10 +43,13 @@
 	let installedIds = new Set<string>();
 	let corruptRows: CorruptDownload[] = [];
 	let observedDownloadRevision = downloadRevision;
+	let scanGeneration = 0;
 
 	async function refreshDownloads(): Promise<boolean> {
+		const generation = ++scanGeneration;
 		try {
 			const entries = await downloadStore.scanDownloads();
+			if (generation !== scanGeneration) return false;
 			const installed = entries.filter(
 				(entry): entry is InstalledDownload => entry.kind === 'installed'
 			);
@@ -55,6 +58,7 @@
 			downloadedError = null;
 			return true;
 		} catch (error) {
+			if (generation !== scanGeneration) return false;
 			downloadedError = error instanceof Error ? error.message : 'download_scan_failed';
 			return false;
 		}

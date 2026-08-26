@@ -66,7 +66,7 @@
 			sessionState = session.getState();
 		});
 
-		session.dispatch({ type: 'start' });
+		session.dispatch({ type: restored?.lifecycle === 'paused' ? 'resume' : 'start' });
 		sessionState = session.getState();
 		persist();
 	}
@@ -107,6 +107,10 @@
 		if (!session) return;
 		const outcome = session.dispatch({ type: 'select_piece', pieceId });
 		lastAction = outcome.type === 'selection_changed' ? `selected piece-${pieceId}` : outcome.type;
+	}
+
+	function handlePieceLoadError(failedPieceIds: number[]): void {
+		lastAction = `piece load failed: ${failedPieceIds.length} piece(s)`;
 	}
 
 	function attemptPlacement(pieceId: number, cell: BoardCell): PuzzleSessionOutcome {
@@ -186,6 +190,7 @@
 				piecePaths={launch.install.piecePaths}
 				onSelectPiece={selectPiece}
 				onAttemptPlacement={attemptPlacement}
+				onLoadError={handlePieceLoadError}
 			/>
 		</gridLayout>
 		<button row="5" text="LIBRARY" class="library-button" on:tap={exitToLibrary} />

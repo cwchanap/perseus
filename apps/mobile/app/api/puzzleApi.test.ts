@@ -69,6 +69,74 @@ describe('createPuzzleApi', () => {
 		expect(urls).toEqual(['https://api.example.test/api/puzzles']);
 	});
 
+	it('returns a populated, validated list envelope', async () => {
+		const envelope = {
+			puzzles: [
+				{ id: 'p1', name: 'Puzzle 1', pieceCount: 4, status: 'ready' },
+				{ id: 'p2', name: 'Puzzle 2', pieceCount: 9, status: 'processing' }
+			],
+			total: 2,
+			offset: 0,
+			limit: 20
+		};
+		const api = createPuzzleApi({
+			baseUrl: 'https://api.example.test',
+			requestJson: async () => envelope
+		});
+
+		await expect(api.listPuzzles()).resolves.toEqual(envelope);
+	});
+
+	it('rejects a non-array puzzles field', async () => {
+		const api = createPuzzleApi({
+			baseUrl: 'https://api.example.test',
+			requestJson: async () => ({ puzzles: 'not-an-array', total: 0, offset: 0, limit: 20 })
+		});
+
+		await expect(api.listPuzzles()).rejects.toThrow('invalid_puzzle_list_response');
+	});
+
+	it('rejects a puzzle summary with a missing id', async () => {
+		const api = createPuzzleApi({
+			baseUrl: 'https://api.example.test',
+			requestJson: async () => ({
+				puzzles: [{ name: 'No ID', pieceCount: 4, status: 'ready' }],
+				total: 1,
+				offset: 0,
+				limit: 20
+			})
+		});
+
+		await expect(api.listPuzzles()).rejects.toThrow('invalid_puzzle_list_response');
+	});
+
+	it('rejects a non-number total', async () => {
+		const api = createPuzzleApi({
+			baseUrl: 'https://api.example.test',
+			requestJson: async () => ({ puzzles: [], total: '0', offset: 0, limit: 20 })
+		});
+
+		await expect(api.listPuzzles()).rejects.toThrow('invalid_puzzle_list_response');
+	});
+
+	it('rejects a non-string nextCursor', async () => {
+		const api = createPuzzleApi({
+			baseUrl: 'https://api.example.test',
+			requestJson: async () => ({ puzzles: [], total: 0, offset: 0, limit: 20, nextCursor: 42 })
+		});
+
+		await expect(api.listPuzzles()).rejects.toThrow('invalid_puzzle_list_response');
+	});
+
+	it('rejects a non-object response body', async () => {
+		const api = createPuzzleApi({
+			baseUrl: 'https://api.example.test',
+			requestJson: async () => 'oops'
+		});
+
+		await expect(api.listPuzzles()).rejects.toThrow('invalid_puzzle_list_response');
+	});
+
 	it('rejects malformed metadata through validatePuzzleMetadata', async () => {
 		const api = createPuzzleApi({
 			baseUrl: 'https://api.example.test',
@@ -115,6 +183,23 @@ describe('createPuzzleApi', () => {
 		expect(api.referenceUrl('p1')).toBe('https://api.example.test/api/puzzles/p1/reference');
 		expect(api.pieceImageUrl('p1', 2)).toBe(
 			'https://api.example.test/api/puzzles/p1/pieces/2/image'
+		);
+	});
+
+	it('encodes puzzle ids with url-special characters in asset urls', () => {
+		const api = createPuzzleApi({
+			baseUrl: 'https://api.example.test',
+			requestJson: async () => null
+		});
+
+		expect(api.thumbnailUrl('a/b c')).toBe(
+			'https://api.example.test/api/puzzles/a%2Fb%20c/thumbnail'
+		);
+		expect(api.referenceUrl('a/b c')).toBe(
+			'https://api.example.test/api/puzzles/a%2Fb%20c/reference'
+		);
+		expect(api.pieceImageUrl('a/b c', 2)).toBe(
+			'https://api.example.test/api/puzzles/a%2Fb%20c/pieces/2/image'
 		);
 	});
 });

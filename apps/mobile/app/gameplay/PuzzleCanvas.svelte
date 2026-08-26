@@ -13,6 +13,7 @@
 	export let piecePaths: Record<number, string>;
 	export let onSelectPiece: (pieceId: number) => void;
 	export let onAttemptPlacement: (pieceId: number, cell: BoardCell) => PuzzleSessionOutcome;
+	export let onLoadError: ((failedPieceIds: number[]) => void) | undefined = undefined;
 
 	const CANVAS_WIDTH = 700;
 	const CANVAS_HEIGHT = 800;
@@ -33,12 +34,22 @@
 
 	function loadPieces(): void {
 		pieceImages = {};
+		const failedPieceIds: number[] = [];
 		for (const [rawPieceId, imagePath] of Object.entries(piecePaths)) {
 			const pieceId = Number(rawPieceId);
-			const image = new ImageAsset();
-			if (Number.isInteger(pieceId) && image.fromFileSync(imagePath)) {
-				pieceImages[pieceId] = image;
+			if (!Number.isInteger(pieceId)) {
+				failedPieceIds.push(pieceId);
+				continue;
 			}
+			const image = new ImageAsset();
+			if (image.fromFileSync(imagePath)) {
+				pieceImages[pieceId] = image;
+			} else {
+				failedPieceIds.push(pieceId);
+			}
+		}
+		if (failedPieceIds.length > 0 && onLoadError) {
+			onLoadError(failedPieceIds);
 		}
 	}
 
