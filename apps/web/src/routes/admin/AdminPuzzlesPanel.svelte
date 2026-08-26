@@ -1,13 +1,18 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
+	import SearchBar from '$lib/components/SearchBar.svelte';
+	import { PUZZLE_CATEGORIES } from '$lib/constants/categories';
+	import type { PuzzleCategory } from '$lib/constants/categories';
 	import { ApiError, deletePuzzle, fetchAdminPuzzles, getThumbnailUrl } from '$lib/services/api';
 	import { createSessionStorageAdapter } from '$lib/services/gameplay/session/persistence';
-	import type { PuzzleSummary } from '$lib/types/puzzle';
+	import type { PuzzleStatus, PuzzleSummary } from '$lib/types/puzzle';
+	import { filterAdminPuzzles, pageSlice } from './adminPuzzleList';
 
 	// Reuses the session persistence adapter so the localStorage key prefix
 	// (puzzle-progress-) stays encapsulated in one place. Admin only needs the
 	// best-effort clear after a delete; no session-awareness required.
 	const sessionStorageAdapter = createSessionStorageAdapter();
+	const PAGE_SIZE = 20;
 
 	let puzzles: PuzzleSummary[] = $state([]);
 	let loadingPuzzles = $state(true);
@@ -18,6 +23,22 @@
 	let deletingId: string | null = $state(null);
 	let pollInterval: ReturnType<typeof setInterval> | null = null;
 	let mounted = false;
+	let searchQuery = $state('');
+	let categoryFilter = $state<'all' | PuzzleCategory>('all');
+	let statusFilter = $state<'all' | PuzzleStatus>('all');
+	let pageIndex = $state(0);
+	const hasActiveCriteria = $derived(
+		searchQuery.trim().length > 0 || categoryFilter !== 'all' || statusFilter !== 'all'
+	);
+	const filteredPuzzles = $derived(
+		filterAdminPuzzles(puzzles, {
+			query: searchQuery,
+			category: categoryFilter,
+			status: statusFilter
+		})
+	);
+	const pageResult = $derived(pageSlice(filteredPuzzles, pageIndex, PAGE_SIZE));
+	const visiblePuzzles = $derived(pageResult.page);
 
 	onMount(async () => {
 		mounted = true;
@@ -113,6 +134,13 @@
 			deletingId = null;
 		}
 	}
+
+	function resetCriteria() {
+		searchQuery = '';
+		categoryFilter = 'all';
+		statusFilter = 'all';
+		pageIndex = 0;
+	}
 </script>
 
 {#if successMessage}
@@ -133,8 +161,66 @@ text-[0.72rem] font-(--font-mono) tracking-[0.05em] text-(--green)"
 			MISSION DATABASE
 		</span>
 		<span class="text-[0.6rem] font-(--font-mono) tracking-[0.1em] text-(--accent)">
-			{puzzles.length} TOTAL
+			{#if hasActiveCriteria}
+				{filteredPuzzles.length} OF {puzzles.length}
+			{:else}
+				{puzzles.length} TOTAL
+			{/if}
 		</span>
+	</div>
+
+	<div class="flex flex-col gap-2 border-b border-(--border) p-4 sm:flex-row">
+		<SearchBar
+			value={searchQuery}
+			onInput={(value) => {
+				searchQuery = value;
+				pageIndex = 0;
+			}}
+		/>
+		<div class="flex gap-2">
+			<select
+				aria-label="Filter by category"
+				value={categoryFilter}
+				onchange={(event) => {
+					categoryFilter = event.currentTarget.value as 'all' | PuzzleCategory;
+					pageIndex = 0;
+				}}
+				class="min-w-0 flex-1 border border-(--border) bg-(--bg-1) px-3 py-2.5
+text-[0.6rem] font-(--font-mono) tracking-[0.1em] text-(--text-1)
+focus:border-(--accent) focus:outline-none sm:w-40"
+			>
+				<option value="all">ALL CATEGORIES</option>
+				{#each PUZZLE_CATEGORIES as category}
+					<option value={category}>{category.toUpperCase()}</option>
+				{/each}
+			</select>
+			<select
+				aria-label="Filter by status"
+				value={statusFilter}
+				onchange={(event) => {
+					statusFilter = event.currentTarget.value as 'all' | PuzzleStatus;
+					pageIndex = 0;
+				}}
+				class="min-w-0 flex-1 border border-(--border) bg-(--bg-1) px-3 py-2.5
+text-[0.6rem] font-(--font-mono) tracking-[0.1em] text-(--text-1)
+focus:border-(--accent) focus:outline-none sm:w-36"
+			>
+				<option value="all">ALL STATUS</option>
+				<option value="ready">READY</option>
+				<option value="processing">PROCESSING</option>
+				<option value="failed">FAILED</option>
+			</select>
+			{#if hasActiveCriteria}
+				<button
+					onclick={resetCriteria}
+					class="shrink-0 border border-(--accent-dim) px-3 py-2.5 text-[0.55rem]
+font-(--font-display) font-semibold tracking-[0.15em] text-(--accent)
+transition-colors hover:border-(--accent) hover:bg-(--accent-glow)"
+				>
+					RESET
+				</button>
+			{/if}
+		</div>
 	</div>
 
 	{#if loadingPuzzles}
@@ -159,9 +245,15 @@ text-[0.72rem] font-(--font-mono) tracking-[0.05em] text-(--hot)"
 		>
 			<p>No missions found.</p>
 		</div>
+	{:else if filteredPuzzles.length === 0}
+		<div
+			class="px-4 py-10 text-center text-[0.72rem] font-(--font-mono) tracking-[0.08em] text-(--text-2)"
+		>
+			<p>No missions match the current search and filters.</p>
+		</div>
 	{:else}
 		<div class="flex flex-col">
-			{#each puzzles as puzzle (puzzle.id)}
+			{#each visiblePuzzles as puzzle (puzzle.id)}
 				<div
 					class="flex items-center justify-between gap-3 border-b border-(--border) px-4 py-3
 transition-colors duration-150 last:border-b-0 hover:bg-(--bg-2)"
@@ -260,6 +352,38 @@ hover:bg-(--hot-glow) disabled:cursor-not-allowed disabled:opacity-40"
 					</button>
 				</div>
 			{/each}
+			{#if pageResult.totalPages > 1}
+				<div
+					class="flex items-center justify-between border-t border-(--border) bg-(--bg-2)
+px-4 py-3"
+				>
+					<button
+						aria-label="Previous page"
+						disabled={pageResult.clampedIndex === 0}
+						onclick={() => (pageIndex = pageResult.clampedIndex - 1)}
+						class="border border-(--border) px-3 py-2 text-[0.55rem] font-(--font-display)
+font-semibold tracking-[0.12em] text-(--text-1) transition-colors
+hover:border-(--accent) hover:text-(--accent)
+disabled:cursor-not-allowed disabled:opacity-35"
+					>
+						PREVIOUS
+					</button>
+					<span class="text-[0.6rem] font-(--font-mono) tracking-[0.1em] text-(--text-2)">
+						PAGE {pageResult.clampedIndex + 1} OF {pageResult.totalPages}
+					</span>
+					<button
+						aria-label="Next page"
+						disabled={pageResult.clampedIndex === pageResult.totalPages - 1}
+						onclick={() => (pageIndex = pageResult.clampedIndex + 1)}
+						class="border border-(--border) px-3 py-2 text-[0.55rem] font-(--font-display)
+font-semibold tracking-[0.12em] text-(--text-1) transition-colors
+hover:border-(--accent) hover:text-(--accent)
+disabled:cursor-not-allowed disabled:opacity-35"
+					>
+						NEXT
+					</button>
+				</div>
+			{/if}
 		</div>
 	{/if}
 </div>
