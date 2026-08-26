@@ -10,12 +10,12 @@
 	} from './boardViewModel';
 
 	export let sessionState: Readonly<PuzzleSessionState>;
+	export let piecePaths: Record<number, string>;
 	export let onSelectPiece: (pieceId: number) => void;
 	export let onAttemptPlacement: (pieceId: number, cell: BoardCell) => PuzzleSessionOutcome;
 
 	const CANVAS_WIDTH = 700;
 	const CANVAS_HEIGHT = 800;
-	const PIECE_IDS = [0, 1, 2, 3];
 
 	let canvas: any;
 	let viewModel: BoardViewModel | null = null;
@@ -32,9 +32,11 @@
 	$: if (surfaceReady && viewModel && sessionState) draw();
 
 	function loadPieces(): void {
-		for (const pieceId of PIECE_IDS) {
+		pieceImages = {};
+		for (const [rawPieceId, imagePath] of Object.entries(piecePaths)) {
+			const pieceId = Number(rawPieceId);
 			const image = new ImageAsset();
-			if (image.fromFileSync(`~/assets/hpa-1/piece-${pieceId}.png`)) {
+			if (Number.isInteger(pieceId) && image.fromFileSync(imagePath)) {
 				pieceImages[pieceId] = image;
 			}
 		}

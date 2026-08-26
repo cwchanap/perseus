@@ -12,3 +12,83 @@
 	font-family: 'Font Awesome 5 Free', 'fa-regular-400';
 	font-weight: 400;
 }
+
+.library-page {
+	background-color: #111820;
+}
+
+.library-title {
+	color: #f7fafc;
+	font-size: 26;
+	font-weight: 700;
+	margin: 16 12 8 12;
+}
+
+.library-section {
+	padding: 0 12 16 12;
+}
+
+.library-section-title {
+	color: #f6e05e;
+	font-size: 20;
+	font-weight: 700;
+	margin: 12 0 8 0;
+}
+
+.library-card {
+	background-color: #1f2b38;
+	margin: 4 0;
+	padding: 6;
+}
+
+.library-thumbnail {
+	background-color: #273548;
+}
+
+.library-card-copy {
+	margin: 0 8;
+}
+
+.library-card-title {
+	color: #f7fafc;
+	font-size: 18;
+}
+
+.library-card-detail {
+	color: #cbd5e0;
+	font-size: 14;
+}
+
+.library-card-actions {
+	margin-left: 4;
+}
+
+.library-button {
+	background-color: #2b6cb0;
+	color: #f7fafc;
+	font-size: 13;
+	margin: 3;
+	padding: 6 10;
+}
+
+.library-progress {
+	color: #f6e05e;
+	font-size: 14;
+}
+
+.library-error {
+	color: #fc8181;
+	font-size: 14;
+	margin: 4 0;
+}
+
+.library-empty,
+.library-loading {
+	color: #cbd5e0;
+	font-size: 16;
+	margin: 8 0;
+}
+
+.library-load-more {
+	margin-top: 12;
+}
