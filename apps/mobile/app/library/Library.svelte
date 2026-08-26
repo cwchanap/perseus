@@ -45,22 +45,24 @@
 	let observedDownloadRevision = downloadRevision;
 	let scanGeneration = 0;
 
-	async function refreshDownloads(): Promise<boolean> {
+	type ScanOutcome = 'ok' | 'superseded' | 'failed';
+
+	async function refreshDownloads(): Promise<ScanOutcome> {
 		const generation = ++scanGeneration;
 		try {
 			const entries = await downloadStore.scanDownloads();
-			if (generation !== scanGeneration) return false;
+			if (generation !== scanGeneration) return 'superseded';
 			const installed = entries.filter(
 				(entry): entry is InstalledDownload => entry.kind === 'installed'
 			);
 			downloadedEntries = entries;
 			downloadedRows = buildDownloadedRows(installed, sessionStorage);
 			downloadedError = null;
-			return true;
+			return 'ok';
 		} catch (error) {
-			if (generation !== scanGeneration) return false;
+			if (generation !== scanGeneration) return 'superseded';
 			downloadedError = error instanceof Error ? error.message : 'download_scan_failed';
-			return false;
+			return 'failed';
 		}
 	}
 
@@ -105,11 +107,11 @@
 	async function removeAndDownloadAgain(id: string): Promise<void> {
 		try {
 			await downloadStore.removeDownload(id);
-			if (!(await refreshDownloads())) return;
 		} catch (error) {
 			downloadedError = error instanceof Error ? error.message : 'download_remove_failed';
 			return;
 		}
+		if ((await refreshDownloads()) === 'failed') return;
 		onDownload(id);
 	}
 

@@ -54,6 +54,21 @@ describe('createPuzzleApi', () => {
 		expect(urls).toEqual(['https://api.example.test/api/puzzles?cursor=cursor-1']);
 	});
 
+	it('preserves an empty-string cursor as a cursor parameter', async () => {
+		const urls: string[] = [];
+		const api = createPuzzleApi({
+			baseUrl: 'https://api.example.test',
+			requestJson: async (url) => {
+				urls.push(url);
+				return { puzzles: [], total: 0, offset: 0, limit: 20 };
+			}
+		});
+
+		await api.listPuzzles('');
+
+		expect(urls).toEqual(['https://api.example.test/api/puzzles?cursor=']);
+	});
+
 	it('returns the list envelope when no cursor is given', async () => {
 		const urls: string[] = [];
 		const envelope = { puzzles: [], total: 0, offset: 0, limit: 20, nextCursor: 'next' };
