@@ -539,7 +539,7 @@ Review checklist:
 [ ] No tab/search/filter/preview refactor is mixed into this commit
 ```
 
-Do not begin Task 2 until this checkpoint is clean.
+This is a required intra-PR review checkpoint, not a second PR or a pre-merge production deploy. Do not begin Task 2 until the Task 1 diff and verification are clean. Production Access/seed smoke remains a final post-deploy check for the single PR.
 
 ---
 
