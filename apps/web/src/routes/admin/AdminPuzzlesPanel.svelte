@@ -217,7 +217,7 @@ text-[0.6rem] font-(--font-mono) tracking-[0.1em] text-(--text-1)
 focus:border-(--accent) focus:outline-none sm:w-40"
 			>
 				<option value="all">ALL CATEGORIES</option>
-				{#each PUZZLE_CATEGORIES as category}
+				{#each PUZZLE_CATEGORIES as category (category)}
 					<option value={category}>{category.toUpperCase()}</option>
 				{/each}
 			</select>
