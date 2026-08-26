@@ -233,7 +233,13 @@ export interface SessionStorageAdapter {
 	peekSession(puzzleId: string, context: SessionValidationContext): SessionLoadResult;
 	loadSession(puzzleId: string, context: SessionValidationContext): SessionLoadResult;
 	saveSession(puzzleId: string, snapshot: PersistedPuzzleSessionV1): void;
-	clearSession(puzzleId: string): void;
+	/**
+	 * Removes the persisted session. Returns false when the underlying store
+	 * failed to remove the key (the failure is also reported via onError), so
+	 * callers that need to observe removal — e.g. an explicit discard action —
+	 * can surface it instead of silently keeping the save.
+	 */
+	clearSession(puzzleId: string): boolean;
 	isResumable(snapshot: PersistedPuzzleSessionV1): boolean;
 }
 
