@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the Perseus admin passkey/session layer with the existing Cloudflare Access boundary and improve the admin portal with tabs, puzzle search/filtering, fixed 20-row client-side pagination, and enlarged reference-image viewing.
+**Goal:** Remove the Perseus application admin passkey/session layer in favor of the existing Cloudflare Access boundary, then improve the admin portal with tabs, puzzle search/filtering, fixed 20-row client-side pagination, and enlarged reference-image viewing.
 
-**Architecture:** Remove the redundant application admin session across browser, API, CLI, workflows, and deployment configuration while preserving Cloudflare Access, origin isolation, forced admin document navigation, and the full-list `GET /api/admin/puzzles` contract. Split the route into puzzle/player panels; reuse `SearchBar` and web category constants; keep filter/page arithmetic in two tiny pure route-local helpers; reuse the existing reference-image endpoint plus `modalFocus` for enlargement.
+**Architecture:** Keep `GET /api/admin/puzzles` as the fresh full-list all-status contract. Task 1 removes the redundant app auth across API/web/CLI/config and is reviewed as an isolated first commit. The UI then splits puzzle/player concerns; puzzle list math lives in two tiny pure route-local helpers; existing `SearchBar`, category constants, `ReferenceOverlay`, and reference-image endpoint are reused.
 
 **Tech Stack:** Svelte 5 / SvelteKit static adapter, TypeScript, Hono on Cloudflare Workers, Cloudflare Access + Pulumi, Bun, Vitest browser tests.
 
@@ -13,33 +13,34 @@
 ## Global Constraints
 
 - Deliver all implementation work in one PR unless the user explicitly approves a split.
-- Task 1 (auth/CLI/infra/docs) must be the first isolated implementation commit and pass its own verification/review gate before UI commits begin.
-- Cloudflare Access is the sole production admin authentication boundary after this change.
-- Preserve `packages/infrastructure/src/workers.ts` `subdomain: { enabled: false, previewsEnabled: false }`; Pulumi remains the production ingress source of truth.
-- Preserve forced full-document navigation for client-routed entry into `/admin`.
+- Task 1 is the first isolated implementation commit and must pass its own verification + diff-review gate before UI commits begin.
+- Cloudflare Access is the sole production admin authentication gate after Task 1.
+- Preserve `packages/infrastructure/src/workers.ts` `subdomain: { enabled: false, previewsEnabled: false }` exactly.
+- Before rollout, enumerate the deployed API Worker's actual Domains & Routes and verify every reachable hostname is covered by Access for `/admin*` and `/api/admin*`.
+- Preserve forced full-document navigation for client-routed entry into `/admin`; do not mount admin children before deciding whether that navigation is required.
 - Do not add Worker-side Access JWT validation or replacement local-dev admin auth.
 - Do not add backend/storage search, filtering, or pagination for `GET /api/admin/puzzles`.
-- Keep the startup uploader's full-list deduplication behavior intact.
-- Keep `credentials: 'include'` on browser admin API fetches.
-- Admin search is case-insensitive substring matching on trimmed puzzle name.
-- Admin filters are category + status with AND semantics.
-- Admin puzzle page size is fixed at 20 and pagination runs after filtering.
-- Search/filter changes reset page state to page 1.
-- `PUZZLES` is the default admin tab; tab/search/filter/page state stays route-local.
-- Reuse `SearchBar.svelte`, `$lib/constants/categories`, `getReferenceImageUrl()`, and `modalFocus`.
-- Do not add generic auth, tab, filter, pagination, dialog, or lightbox abstractions.
+- Keep startup uploader full-list dedup behavior intact.
+- Keep `credentials: 'include'` on browser admin API calls.
+- Search is trimmed, case-insensitive substring matching on puzzle name.
+- Category + status + search combine with AND semantics.
+- Pagination runs after filtering with fixed `PAGE_SIZE = 20`.
+- Criteria changes reset the requested page to page 1.
+- Reuse `SearchBar.svelte`, `$lib/constants/categories`, `ReferenceOverlay.svelte`, and `getReferenceImageUrl()`.
+- Do not add generic auth/tab/filter/pagination/dialog/lightbox abstractions.
+- Preserve `AGENTS.md` as a symlink to `CLAUDE.md`; modify only `CLAUDE.md`.
 - Delete obsolete passkey/session compatibility paths instead of preserving backward compatibility.
-- Keep player auth (`JWT_SECRET`, `PlayerSessionResponse`, Google auth, OAuth/avatar rate limiting) unchanged.
+- Keep player auth (`JWT_SECRET`, `PlayerSessionResponse`, Google OAuth, OAuth/avatar rate limiting) unchanged.
 
 ---
 
-## Task 1: Retire the application admin passkey/session end-to-end
+# Task 1: Retire the application admin passkey/session end-to-end
 
-This task is deliberately broad but mechanical: delete one authentication layer completely while preserving Cloudflare Access and player auth. Do not mix admin UX refactors into this commit.
+This is a deletion/refactor. Use the sequence **green baseline -> delete runtime/config -> repair directly-owned tests -> sweep -> verify**. Do not manufacture a long test-first red phase for APIs whose only intended behavior is deletion.
 
-### Files
+## Task 1 file inventory
 
-**API runtime:**
+### API runtime
 
 - Modify: `apps/api/src/routes/admin.worker.ts`
 - Modify: `apps/api/src/worker.ts`
@@ -48,32 +49,38 @@ This task is deliberately broad but mechanical: delete one authentication layer 
 - Delete: `apps/api/src/middleware/auth-extra.worker.test.ts`
 - Delete: `apps/api/src/middleware/auth-coverage.worker.test.ts`
 - Modify: `apps/api/src/middleware/rate-limit.worker.ts`
+
+### API tests/fixtures that directly own deleted auth behavior
+
 - Modify: `apps/api/src/middleware/rate-limit.worker.test.ts`
 - Modify: `apps/api/src/middleware/rate-limit-coverage.worker.test.ts`
 - Modify: `apps/api/src/middleware/rate-limit-post-tracking.worker.test.ts`
 - Modify: `apps/api/src/__tests__/worker.test.ts`
 - Modify: `apps/api/src/__tests__/worker-extra.worker.test.ts`
+- Modify: `apps/api/src/services/__tests__/reaper.test.ts`
 
-**Admin route tests that currently mock `../../middleware/auth.worker` and must remove the mock entirely:**
+Remove the `../../middleware/auth.worker` mock entirely from every current admin route test that has one, including:
 
-- Modify: `apps/api/src/routes/__tests__/admin.worker.test.ts`
-- Modify: `apps/api/src/routes/__tests__/admin-coverage.worker.test.ts`
-- Modify: `apps/api/src/routes/__tests__/admin-ownership-catch.worker.test.ts`
-- Modify: `apps/api/src/routes/__tests__/admin-fail-reservation.worker.test.ts`
-- Modify: `apps/api/src/routes/__tests__/admin-cleanup-final.worker.test.ts`
-- Modify: `apps/api/src/routes/__tests__/admin-dead-pending-failure.worker.test.ts`
-- Modify: `apps/api/src/routes/__tests__/admin-idempotency-errors.worker.test.ts`
-- Modify: `apps/api/src/routes/__tests__/admin-ownership-mirror-best-effort.worker.test.ts`
-- Modify: `apps/api/src/routes/__tests__/admin-worker-extra.worker.test.ts`
-- Modify: `apps/api/src/routes/__tests__/admin-extra-coverage.worker.test.ts`
-- Modify: `apps/api/src/routes/__tests__/admin-idempotency-commit.worker.test.ts`
-- Modify: `apps/api/src/routes/__tests__/admin-aspect-ratio.worker.test.ts`
-- Modify: `apps/api/src/routes/__tests__/admin-ownership-db-init.worker.test.ts`
-- Modify: `apps/api/src/routes/__tests__/admin-idempotency.worker.test.ts`
-- Modify: `apps/api/src/routes/__tests__/admin-idempotency-race.worker.test.ts`
-- Modify: `apps/api/src/routes/__tests__/admin-coverage-gaps.worker.test.ts`
+- `apps/api/src/routes/__tests__/admin.worker.test.ts`
+- `apps/api/src/routes/__tests__/admin-coverage.worker.test.ts`
+- `apps/api/src/routes/__tests__/admin-ownership-catch.worker.test.ts`
+- `apps/api/src/routes/__tests__/admin-fail-reservation.worker.test.ts`
+- `apps/api/src/routes/__tests__/admin-cleanup-final.worker.test.ts`
+- `apps/api/src/routes/__tests__/admin-dead-pending-failure.worker.test.ts`
+- `apps/api/src/routes/__tests__/admin-idempotency-errors.worker.test.ts`
+- `apps/api/src/routes/__tests__/admin-ownership-mirror-best-effort.worker.test.ts`
+- `apps/api/src/routes/__tests__/admin-worker-extra.worker.test.ts`
+- `apps/api/src/routes/__tests__/admin-extra-coverage.worker.test.ts`
+- `apps/api/src/routes/__tests__/admin-idempotency-commit.worker.test.ts`
+- `apps/api/src/routes/__tests__/admin-aspect-ratio.worker.test.ts`
+- `apps/api/src/routes/__tests__/admin-ownership-db-init.worker.test.ts`
+- `apps/api/src/routes/__tests__/admin-idempotency.worker.test.ts`
+- `apps/api/src/routes/__tests__/admin-idempotency-race.worker.test.ts`
+- `apps/api/src/routes/__tests__/admin-coverage-gaps.worker.test.ts`
 
-**Shared/web contracts:**
+Do not replace those mocks with a pass-through `requireAuth` fake.
+
+### Shared/web auth contracts
 
 - Modify: `packages/types/src/core.ts`
 - Modify: `apps/web/src/lib/types/puzzle.ts`
@@ -87,23 +94,24 @@ This task is deliberately broad but mechanical: delete one authentication layer 
 - Modify: `apps/web/src/routes/admin/+page.svelte`
 - Modify: `apps/web/src/routes/admin/admin-page.svelte.test.ts`
 
-**CLI:**
+### CLI
 
 - Modify: `scripts/startup/types.ts`
 - Modify: `scripts/startup/cli.ts`
 - Modify: `scripts/startup/upload.ts`
+- Modify: `scripts/startup/upload.test.ts`
 - Modify: `scripts/startup/token.ts`
-- Modify: `scripts/admin-upload-puzzle.ts`
-- Modify: `scripts/admin-bulk-upload-startup.ts`
 - Modify: `scripts/startup/cli.test.ts`
 - Modify: `scripts/startup/token.test.ts`
+- Modify: `scripts/admin-upload-puzzle.ts`
+- Modify: `scripts/admin-bulk-upload-startup.ts`
 - Modify: `scripts/admin-bulk-upload-startup.test.ts`
 
-**Infrastructure/workflows/config/docs:**
+### Infrastructure/workflows/current docs
 
 - Modify: `packages/infrastructure/src/admin-access.ts`
 - Modify: `packages/infrastructure/src/admin-access.test.ts`
-- Modify: `packages/infrastructure/src/workers.ts` comments only; preserve origin isolation exactly.
+- Modify: `packages/infrastructure/src/workers.ts` comments only; preserve the origin-isolation setting exactly.
 - Modify: `packages/infrastructure/src/index.ts`
 - Modify: `packages/infrastructure/src/deploy-workflow.test.ts`
 - Modify: `.github/workflows/deploy-infrastructure.yml`
@@ -113,11 +121,15 @@ This task is deliberately broad but mechanical: delete one authentication layer 
 - Modify: `apps/api/.env.example`
 - Modify: `packages/infrastructure/README.md`
 - Modify: `.agents/skills/perseus-operations/references/operator-runbook.md`
-- Modify: `AGENTS.md`
 - Modify: `CLAUDE.md`
 - Modify: `docs/PRD.md`
+- Modify other **current/pending** `docs/**` hits found by the final sweep, including `docs/follow_up/**` when they describe the old admin passkey/login as current behavior.
 
-### Resulting interfaces
+`AGENTS.md` is **not** a separate modification target. It is a symlink to `CLAUDE.md` and must remain one.
+
+`packages/infrastructure/Pulumi.production.yaml` is **not tracked**; `Pulumi.*.yaml` is gitignored. Remove the orphan `adminPasskey` from the real Pulumi stack configuration operationally after deployment rather than adding a nonexistent file to this PR.
+
+## Resulting CLI interfaces
 
 ```ts
 export type ReadinessOutcome =
@@ -133,6 +145,8 @@ export function evaluateReadiness(args: {
   probeResult: string | undefined;
 }): ReadinessOutcome;
 ```
+
+Session-cookie parameters disappear:
 
 ```ts
 export async function fetchExistingKeys(
@@ -157,177 +171,64 @@ export async function uploadWithRetry(
 ): Promise<Response>;
 ```
 
-### Steps
+## Task 1 steps
 
-- [ ] **Step 1: Rewrite admin layout tests around the Access document boundary**
-
-In `apps/web/src/routes/admin/layout.svelte.test.ts`, delete mocks/assertions for `checkSession`, `goto('/admin/login')`, login-page special casing, loading/redirecting-by-session, and route-change session rechecks.
-
-Pin only the two behaviors that remain:
-
-```ts
-it('renders children immediately for a direct admin document load', async () => {
-  vi.mocked(isClientRoutedAdminPath).mockReturnValue(false);
-  render(AdminLayout, { children: makeChildren() });
-
-  await expect.element(page.getByTestId('child-content')).toBeVisible();
-  expect(forceAdminDocumentNavigation).not.toHaveBeenCalled();
-});
-
-it('forces document navigation when admin was entered through client routing', async () => {
-  vi.mocked(isClientRoutedAdminPath).mockReturnValue(true);
-  render(AdminLayout, { children: makeChildren() });
-
-  await vi.waitFor(() => {
-    expect(forceAdminDocumentNavigation).toHaveBeenCalledWith(
-      expect.objectContaining({ pathname: '/admin' })
-    );
-  });
-});
-```
-
-- [ ] **Step 2: Rewrite web API tests so admin auth is no longer a client contract**
-
-In `apps/web/src/lib/services/__tests__/api.test.ts`:
-
-- delete `login`, `logout`, and `checkSession` imports and their suites;
-- keep `fetchAdminPuzzles()` success coverage and its `credentials: 'include'` assertion;
-- change the current test named like `throws ApiError when not authenticated` into a generic error-propagation fixture, e.g. `throws ApiError for a 401 response`, without describing 401 as the expected admin-auth contract.
-
-Example retained assertion:
-
-```ts
-expect(fetch).toHaveBeenCalledWith(
-  expect.stringMatching(/\/api\/admin\/puzzles$/),
-  expect.objectContaining({ credentials: 'include' })
-);
-```
-
-- [ ] **Step 3: Rewrite API route/worker tests before deleting middleware**
-
-In `apps/api/src/routes/__tests__/admin.worker.test.ts`, use its existing route harness to assert `GET /puzzles` succeeds without a `perseus_session`.
-
-Replace login/session/logout success behavior with deleted-route expectations:
-
-```ts
-expect((await admin.request('/login', { method: 'POST' }, env)).status).toBe(404);
-expect((await admin.request('/session', {}, env)).status).toBe(404);
-expect((await admin.request('/logout', { method: 'POST' }, env)).status).toBe(404);
-```
-
-Use the existing test harness signature in that file; do not introduce a second Hono app just for these checks.
-
-For every admin route test listed above, remove the entire `vi.mock('../../middleware/auth.worker', ...)` block. Do **not** replace it with a pass-through `requireAuth` fake.
-
-In `apps/api/src/__tests__/worker-extra.worker.test.ts`:
-
-- remove `ADMIN_PASSKEY` from `validEnv`;
-- remove the fake admin `/session` route; the mocked admin router only needs routes used by that worker test.
-
-In `apps/api/src/__tests__/worker.test.ts`, remove assertions that production requires `ADMIN_PASSKEY`; keep `JWT_SECRET` and CORS validation.
-
-- [ ] **Step 4: Rewrite login-rate-limit tests to keep only player-facing behavior**
-
-In `rate-limit.worker.test.ts`, `rate-limit-coverage.worker.test.ts`, and `rate-limit-post-tracking.worker.test.ts`:
-
-- delete login-only imports/cases for `loginRateLimit` / `resetLoginAttempts`;
-- preserve OAuth and avatar tests;
-- preserve the shared KV helper behavior those paths still exercise.
-
-`rate-limit-post-tracking.worker.test.ts` must stop importing `loginRateLimit`, otherwise deleting the export will break compilation.
-
-- [ ] **Step 5: Rewrite CLI and infrastructure tests to Access-only semantics**
-
-In `scripts/startup/cli.test.ts`, remove `passkey-missing` and make accepted Access credentials sufficient:
-
-```ts
-expect(
-  evaluateReadiness({
-    skipAccess: false,
-    hasToken: false,
-    hasServiceToken: true,
-    probeResult: 'ok'
-  })
-).toEqual({ ready: true });
-```
-
-In token tests, pin simplified probe behavior:
-
-```text
-200 -> ok
-401/302/403 -> blocked
-5xx -> unhealthy
-network/unexpected -> error
-```
-
-In upload tests, no request should call `/api/admin/login` or require a `perseus_session` cookie.
-
-In `packages/infrastructure/src/admin-access.test.ts`:
-
-```ts
-expect(CLI_ACCESS_PATHS).toEqual(['/api/admin/puzzles']);
-```
-
-In `packages/infrastructure/src/deploy-workflow.test.ts`, assert `adminPasskey` is absent while Access, JWT, and Google configuration remain.
-
-- [ ] **Step 6: Run the focused tests and confirm the new contract is red**
+- [ ] **Step 1: Record a green baseline**
 
 ```bash
-bun run test:unit --filter=@perseus/web
+bun run test:unit --filter=@perseus/types
 bun run test:unit --filter=@perseus/api
+bun run test:unit --filter=@perseus/web
 bun run test:scripts
 bun run test:unit --filter=@perseus/infrastructure
+bun run check:scripts
+bun run check --filter=@perseus/api --filter=@perseus/web --filter=@perseus/infrastructure
 ```
 
-Expected before implementation: failures are specifically caused by still-present passkey/session behavior, auth mocks, login limiter exports, CLI login flow, or `adminPasskey` configuration.
+If baseline is not green, separate pre-existing failures from this task before deleting auth.
 
-- [ ] **Step 7: Remove the API admin session layer**
+- [ ] **Step 2: Delete the API admin session layer**
 
 In `apps/api/src/routes/admin.worker.ts`:
 
-- delete imports from `../middleware/auth.worker`;
-- delete the `loginRateLimit` import;
-- delete `/login`, `/session`, and `/logout` handlers;
-- remove `requireAuth` from every operational admin handler while leaving handler bodies unchanged.
+- remove imports from `../middleware/auth.worker`;
+- remove `loginRateLimit` import;
+- delete `/login`, `/session`, `/logout` handlers;
+- remove `requireAuth` from all operational admin handlers;
+- leave every handler body otherwise unchanged.
 
-Keep the full-list response unchanged:
+Keep the list contract full and fresh:
 
 ```ts
 admin.get('/puzzles', async (c) => {
-  try {
-    const { puzzles: puzzleList } = await listPuzzles(c.env.PUZZLE_METADATA);
-    return c.json({ puzzles: puzzleList });
-  } catch (error) {
-    console.error('Failed to list puzzles for admin', error);
-    return c.json({ error: 'internal_error', message: 'Failed to list puzzles' }, 500);
-  }
+  const { puzzles } = await listPuzzles(c.env.PUZZLE_METADATA);
+  return c.json({ puzzles });
 });
 ```
 
-In `apps/api/src/worker.ts`, remove `ADMIN_PASSKEY: string` from `Env` and remove only the production `missingEnv` check for `ADMIN_PASSKEY`. Keep `JWT_SECRET` validation.
+In `apps/api/src/worker.ts`:
 
-Delete `apps/api/src/middleware/auth.worker.ts` and its three dedicated tests once every route/test reference has been removed.
+- remove `ADMIN_PASSKEY` from `Env`;
+- remove only the production missing-env validation for `ADMIN_PASSKEY`;
+- keep `JWT_SECRET` validation.
 
-- [ ] **Step 8: Remove only login-specific rate limiting**
+Delete `apps/api/src/middleware/auth.worker.ts` after production imports are gone.
 
-In `apps/api/src/middleware/rate-limit.worker.ts`, delete `loginRateLimit()` and `resetLoginAttempts()`. Remove `MAX_LOGIN_ATTEMPTS` and the login-key helper if they become unused.
+- [ ] **Step 3: Delete only login-specific rate limiting**
 
-Keep `oauthRateLimit()`, `avatarRateLimit()`, `resetAvatarAttempts()`, and shared KV/read-modify-write helpers unchanged.
+From `rate-limit.worker.ts`, remove `loginRateLimit()`, `resetLoginAttempts()`, and login-only constants/helpers if unused.
 
-- [ ] **Step 9: Remove the browser login/session surface while preserving Access navigation**
+Keep `oauthRateLimit()`, `avatarRateLimit()`, `resetAvatarAttempts()`, and shared KV logic unchanged.
 
-Delete:
+- [ ] **Step 4: Remove the browser admin login/session surface and keep the document gate blocked by default**
 
-```text
-apps/web/src/routes/admin/login/+page.svelte
-apps/web/src/routes/admin/login/page.svelte.test.ts
-```
+Delete the two `/admin/login` files.
 
-Remove `login()`, `logout()`, and `checkSession()` from `apps/web/src/lib/services/api.ts`.
+Remove `login()`, `logout()`, `checkSession()` from the web API service and remove the admin `LOGOUT` UI.
 
-Do **not** remove `credentials: 'include'` from `fetchAdminPuzzles`, allowlist mutations, or delete requests.
+Do **not** remove `credentials: 'include'` from admin puzzle/allowlist/delete calls.
 
-Reduce `apps/web/src/routes/admin/+layout.svelte` to the document-navigation guard plus child rendering:
+Simplify `+layout.svelte` without rendering children before the document-navigation decision:
 
 ```svelte
 <script lang="ts">
@@ -339,11 +240,13 @@ Reduce `apps/web/src/routes/admin/+layout.svelte` to the document-navigation gua
   } from '$lib/services/adminNavigation';
 
   let { children } = $props();
-  let redirecting = $state(false);
+  let redirecting = $state(true);
 
   onMount(() => {
-    if (isClientRoutedAdminPath($page.url.pathname)) {
-      redirecting = true;
+    const shouldRedirect = isClientRoutedAdminPath($page.url.pathname);
+    redirecting = shouldRedirect;
+
+    if (shouldRedirect) {
       forceAdminDocumentNavigation($page.url);
     }
   });
@@ -354,57 +257,37 @@ Reduce `apps/web/src/routes/admin/+layout.svelte` to the document-navigation gua
 {/if}
 ```
 
-Update `adminNavigation.ts` comments so Cloudflare Access + origin isolation are described as the security boundary.
+Do not rely on parent/child `onMount` ordering.
 
-Remove the Perseus `LOGOUT` button, handler, state, `goto`, and `logout` import from the current admin page/test. Keep Upload and View Arcade.
+- [ ] **Step 5: Remove admin-only shared auth contracts**
 
-- [ ] **Step 10: Remove admin-only shared auth contracts**
-
-From `packages/types/src/core.ts`, delete:
-
-```ts
-export interface LoginResponse { /* deleted */ }
-export interface SessionResponse { /* deleted */ }
-export const WORKER_AUTH_ERROR_CODE = 'unauthorized';
-```
+Delete `LoginResponse`, admin `SessionResponse`, and `WORKER_AUTH_ERROR_CODE` from shared types and their web/CLI imports.
 
 Do not change `PlayerSessionResponse`.
 
-Remove matching imports/re-exports from `apps/web/src/lib/types/puzzle.ts` and imports from web/CLI code.
+- [ ] **Step 6: Simplify both upload CLIs to Access-only auth**
 
-- [ ] **Step 11: Remove the passkey/session step from both upload CLIs**
+Remove:
 
-In `scripts/startup/types.ts`, remove `passkey` from `Options`; update the CLI Access comment to name only `/api/admin/puzzles`.
+- `--passkey` option/value flag;
+- `ADMIN_PASSKEY` env loading;
+- passkey readiness output/reason;
+- `/api/admin/login` requests;
+- `sessionCookieFrom()` and app-session cookie parameters;
+- `WORKER_AUTH_ERROR_CODE` / `isWorkerAuth401()`.
 
-In `scripts/startup/cli.ts`:
+Probe behavior:
 
-- remove `--passkey` from usage/value flags;
-- stop reading `ADMIN_PASSKEY`;
-- remove passkey status output;
-- use the new four-outcome `ReadinessOutcome`.
-
-In `scripts/startup/upload.ts`:
-
-- delete `sessionCookieFrom()` and `adminLogin()`;
-- remove cookie parameters from `fetchExistingKeys()`, `pollForExistingKey()`, `uploadWithRetry()`, and `processEntry()`;
-- after `resolveAndProbeAccess()`, call list/upload directly with `accessHeaders(options)`.
-
-POST stays:
-
-```ts
-headers: {
-  ...baseHeaders,
-  'Idempotency-Key': idempotencyHeader
-}
+```text
+200           -> ok
+401/302/403   -> blocked
+5xx           -> unhealthy
+other/network -> error
 ```
 
-In `scripts/startup/token.ts`, remove `WORKER_AUTH_ERROR_CODE` / `isWorkerAuth401()` and use the simplified probe status mapping.
+Direct list/create requests use only `accessHeaders(options)` plus existing request headers such as `Idempotency-Key`.
 
-In `scripts/admin-upload-puzzle.ts`, remove passkey option/env lookup and `/api/admin/login`; POST directly with Access headers.
-
-Update `scripts/admin-bulk-upload-startup.ts` comments to remove `ADMIN_PASSKEY` instructions.
-
-- [ ] **Step 12: Remove passkey config from deployment and seed workflows**
+- [ ] **Step 7: Remove passkey deployment/seed inputs while preserving Access scope**
 
 In `packages/infrastructure/src/admin-access.ts`:
 
@@ -412,71 +295,97 @@ In `packages/infrastructure/src/admin-access.ts`:
 export const CLI_ACCESS_PATHS = ['/api/admin/puzzles'] as const;
 ```
 
-Preserve the exact sibling delete boundary.
+Do not broaden it to the sibling delete endpoint.
 
-In `packages/infrastructure/src/index.ts`, remove:
+Remove `ADMIN_PASSKEY: config.requireSecret('adminPasskey')` from `packages/infrastructure/src/index.ts`.
 
-```ts
-ADMIN_PASSKEY: config.requireSecret('adminPasskey')
-```
+Remove `adminPasskey` from deploy workflow Pulumi config maps.
 
-Remove `adminPasskey` from both config maps in `.github/workflows/deploy-infrastructure.yml`.
+Remove `ADMIN_PASSKEY` from `.github/workflows/seed-startup-puzzles.yml`; keep the service-token stack outputs and `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET`.
 
-In `.github/workflows/seed-startup-puzzles.yml`, remove:
+Remove local/E2E `ADMIN_PASSKEY` variables from `apps/api/wrangler.toml` and `apps/api/package.json`.
 
-```yaml
-ADMIN_PASSKEY: ${{ secrets.ADMIN_PASSKEY }}
-```
-
-Keep `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET`, and the existing service-token stack-output resolution.
-
-Remove local/E2E `ADMIN_PASSKEY` values from `apps/api/wrangler.toml` and `apps/api/package.json`.
-
-- [ ] **Step 13: Update origin-isolation comments and current documentation**
-
-In `packages/infrastructure/src/workers.ts`, preserve exactly:
+Update the `workers.ts` comment around:
 
 ```ts
 subdomain: { enabled: false, previewsEnabled: false }
 ```
 
-Rewrite the nearby comment so it no longer calls application `requireAuth` a backstop; state that disabling public Worker subdomain/preview access prevents bypassing the custom-domain Access policy.
+so it describes this as origin isolation preventing a bypass of custom-domain Access, not a backstop for deleted `requireAuth`.
 
-Update current docs/config examples:
+- [ ] **Step 8: Repair tests/fixtures directly owned by the deletion**
 
-- `apps/api/.env.example`
-- `packages/infrastructure/README.md`
-- `.agents/skills/perseus-operations/references/operator-runbook.md`
-- `AGENTS.md`
-- `CLAUDE.md`
-- `docs/PRD.md`
+After production code/config is removed, repair the affected tests in one pass:
 
-`docs/PRD.md` admin journey should start with reaching the Cloudflare Access-protected `/admin`, not `/admin/login`.
+**Admin route tests**
+- delete every `vi.mock('../../middleware/auth.worker', ...)` block;
+- do not add pass-through `requireAuth` fakes;
+- assert `GET /puzzles` succeeds locally without a `perseus_session`;
+- assert deleted `/login`, `/session`, `/logout` routes return 404 where the existing route harness owns those tests.
 
-Do not rewrite completed historical `docs/superpowers/**` files.
+**Worker/reaper fixtures**
+- remove `ADMIN_PASSKEY` from `worker-extra.worker.test.ts` fixtures;
+- remove its fake admin `/session` route if unused;
+- remove `ADMIN_PASSKEY` from `services/__tests__/reaper.test.ts` `Env` fixture.
 
-- [ ] **Step 14: Make the repository sweep the deletion source of truth**
+**Rate-limit tests**
+- remove login-only imports/cases from all three rate-limit test owners;
+- preserve OAuth/avatar coverage.
 
-Run after implementation:
+**Web API tests**
+- remove `login/logout/checkSession` imports and suites;
+- retain `fetchAdminPuzzles()` `credentials: 'include'` assertion;
+- rename the current admin-list 401 test to generic error propagation rather than describing 401 as the expected app-auth contract.
+
+**CLI tests**
+- update `scripts/startup/upload.test.ts` option fixtures to remove `passkey`;
+- remove `'session=abc'` arguments from upload helper calls;
+- update readiness/probe/upload tests for Access-only signatures.
+
+**Infrastructure tests**
+- assert no `adminPasskey` config input;
+- assert narrow `CLI_ACCESS_PATHS`;
+- keep Worker subdomain/previews-disabled assertion.
+
+- [ ] **Step 9: Update current docs and preserve the symlink**
+
+Update current instructions so admin flow starts at the Access-protected `/admin` rather than `/admin/login`.
+
+Correct current CLI credential documentation:
+- list/create automation is authenticated by the Access service token only after this change;
+- there is no app passkey second factor;
+- current configured lifetime is `8760h` (one year), not the stale 90-day wording;
+- incident response can disable, rotate, revoke/delete the service token or remove/disable its Service Auth policy.
+
+Modify `CLAUDE.md` only. Verify `AGENTS.md` remains a symlink:
 
 ```bash
-rg -n \
-  "ADMIN_PASSKEY|adminPasskey|/api/admin/login|/api/admin/session|/api/admin/logout|checkSession\(|WORKER_AUTH_ERROR_CODE|perseus_session|middleware/auth\.worker|loginRateLimit|resetLoginAttempts" \
-  apps packages scripts .github .agents AGENTS.md CLAUDE.md docs/PRD.md \
+test -L AGENTS.md
+test "$(readlink AGENTS.md)" = "CLAUDE.md"
+```
+
+Update `docs/PRD.md`, runbook/infrastructure README, and any current/pending docs hit by the final sweep. Leave completed `docs/superpowers/**` historical.
+
+- [ ] **Step 10: Make a case-insensitive repository sweep the deletion source of truth**
+
+```bash
+rg -ni \
+  "passkey|/admin/login|/api/admin/(login|session|logout)|checkSession\(|WORKER_AUTH_ERROR_CODE|perseus_session|middleware/auth\.worker|loginRateLimit|resetLoginAttempts" \
+  apps packages scripts .github .agents CLAUDE.md docs \
   --glob '!docs/superpowers/**'
 ```
 
-Expected: no active admin passkey/session references remain. Any hit outside explicitly historical text must be resolved before Task 1 is considered complete.
+Expected: no active admin passkey/session references remain. Resolve every non-historical hit before Task 1 closes.
 
-Also verify browser Access cookies are still carried:
+Also verify the Access cookie and symlink invariants:
 
 ```bash
 rg -n "credentials: 'include'" apps/web/src/lib/services/api.ts
+test -L AGENTS.md
+test "$(readlink AGENTS.md)" = "CLAUDE.md"
 ```
 
-Expected: admin puzzle/allowlist/delete fetches still retain credentials.
-
-- [ ] **Step 15: Verify Task 1 completely**
+- [ ] **Step 11: Verify Task 1 completely**
 
 ```bash
 bun run test:unit --filter=@perseus/types
@@ -490,29 +399,29 @@ bun run lint --filter=@perseus/api --filter=@perseus/web
 bun run lint:scripts
 ```
 
-Expected: every command exits 0.
-
-Verify security/scoping textually:
+Security/scoping check:
 
 ```bash
-rg -n "subdomain:|previewsEnabled|CLI_ACCESS_PATHS|puzzle-delete" \
-  packages/infrastructure/src apps/api/src/routes/admin.worker.ts
+rg -n "subdomain:|previewsEnabled|CLI_ACCESS_PATHS|puzzle-delete|credentials: 'include'" \
+  packages/infrastructure/src \
+  apps/api/src/routes/admin.worker.ts \
+  apps/web/src/lib/services/api.ts
 ```
 
 Confirm:
+- public Worker subdomain + preview URLs remain disabled;
+- CLI Access path is exact `/api/admin/puzzles`;
+- destructive delete remains sibling `/api/admin/puzzle-delete/:id`;
+- browser admin requests retain credentials.
 
-- API Worker still disables subdomain + preview URLs;
-- `CLI_ACCESS_PATHS` contains only `/api/admin/puzzles`;
-- destructive delete remains `POST /api/admin/puzzle-delete/:id`.
-
-- [ ] **Step 16: Commit Task 1 as one isolated auth commit**
+- [ ] **Step 12: Commit and review Task 1 before any UI work**
 
 ```bash
-git add apps packages scripts .github .agents AGENTS.md CLAUDE.md docs/PRD.md
+git add apps packages scripts .github .agents CLAUDE.md docs
 git commit -m "refactor: rely on Cloudflare Access for admin auth"
 ```
 
-- [ ] **Step 17: Stop and review the Task 1 commit before UI work**
+Then review the isolated commit:
 
 ```bash
 git show --stat --oneline HEAD
@@ -522,30 +431,33 @@ git diff HEAD^..HEAD -- \
   apps/web/src/lib/services \
   scripts \
   packages/infrastructure \
-  .github
+  .github \
+  CLAUDE.md \
+  docs
 ```
 
-Review checklist:
+Checklist:
 
 ```text
 [ ] No application admin login/session middleware remains
-[ ] No admin route test still mocks requireAuth
-[ ] Browser admin API calls still include credentials
-[ ] Worker public subdomain + preview URLs remain disabled
-[ ] CLI Access path is still exact /api/admin/puzzles
-[ ] Delete endpoint remains outside CLI Access path
-[ ] Seed workflow uses only Access service-token credentials
+[ ] No admin route test still mocks auth.worker/requireAuth
+[ ] Browser admin fetches still include credentials
+[ ] Worker subdomain + previews remain disabled
+[ ] CLI Access path is exact /api/admin/puzzles
+[ ] Delete endpoint remains outside CLI Service Auth path
+[ ] Seed workflow uses Access service-token credentials only
 [ ] Player auth/JWT/OAuth/avatar behavior is untouched
+[ ] AGENTS.md is still a symlink to CLAUDE.md
 [ ] No tab/search/filter/preview refactor is mixed into this commit
 ```
 
-This is a required intra-PR review checkpoint, not a second PR or a pre-merge production deploy. Do not begin Task 2 until the Task 1 diff and verification are clean. Production Access/seed smoke remains a final post-deploy check for the single PR.
+Do not begin Task 2 until this commit and verification are clean.
 
 ---
 
-## Task 2: Split puzzle management and Player Access into route-local tabs
+# Task 2: Split puzzle management and Player Access into route-local tabs
 
-### Files
+## Files
 
 - Modify: `apps/web/src/routes/admin/+page.svelte`
 - Create: `apps/web/src/routes/admin/AdminPuzzlesPanel.svelte`
@@ -554,126 +466,62 @@ This is a required intra-PR review checkpoint, not a second PR or a pre-merge pr
 - Create: `apps/web/src/routes/admin/AdminPuzzlesPanel.svelte.test.ts`
 - Create: `apps/web/src/routes/admin/PlayerAccessPanel.svelte.test.ts`
 
-### Ownership
+## Ownership
 
-- `+page.svelte`: page header, Upload/View Arcade links, local active tab.
+- `+page.svelte`: header, Upload/View Arcade, active tab.
 - `AdminPuzzlesPanel.svelte`: puzzle load/poll/delete/success/error behavior.
 - `PlayerAccessPanel.svelte`: allowlist load/add/remove/stale-response/error behavior.
 
-### Steps
+## Steps
 
 - [ ] **Step 1: Add a failing shell test for default tab and lazy Player Access loading**
 
-Mock the two panel-facing service calls and assert:
+Pin:
+- `PUZZLES` is selected initially;
+- puzzle panel loads initially;
+- allowlist is not fetched until `PLAYER ACCESS` is selected;
+- Control Panel / Upload / View Arcade remain.
 
-```ts
-render(AdminPage);
-
-await expect.element(page.getByRole('tab', { name: 'PUZZLES' })).toHaveAttribute(
-  'aria-selected',
-  'true'
-);
-expect(fetchAdminPuzzles).toHaveBeenCalledOnce();
-expect(fetchPlayerAllowlist).not.toHaveBeenCalled();
-
-await page.getByRole('tab', { name: 'PLAYER ACCESS' }).click();
-await vi.waitFor(() => expect(fetchPlayerAllowlist).toHaveBeenCalledOnce());
-```
-
-Keep shell assertions for Control Panel, Upload, and View Arcade.
-
-- [ ] **Step 2: Run web tests and confirm the tab contract is red**
+- [ ] **Step 2: Run web unit tests and confirm the tab contract is red**
 
 ```bash
 bun run test:unit --filter=@perseus/web
 ```
 
-Expected: tab/lazy-mount assertions fail before extraction.
+- [ ] **Step 3: Extract puzzle behavior unchanged**
 
-- [ ] **Step 3: Extract existing puzzle behavior without product changes**
+Move current puzzle state/functions/markup into `AdminPuzzlesPanel.svelte`, including existing ready/processing/failed rendering, deletion/force-delete/partial-warning/error behavior, success timer, and 3-second processing polling.
 
-Move puzzle-owned state/functions/markup from `+page.svelte` into `AdminPuzzlesPanel.svelte`:
-
-```text
-puzzles
-loadingPuzzles
-puzzlesError
-puzzlesFetchInFlight
-successMessage / successTimeout
-deletingId
-pollInterval
-mounted
-sessionStorageAdapter
-showSuccess()
-startPollingIfNeeded()
-loadPuzzles()
-handleDelete()
-puzzle onMount/onDestroy lifecycle
-MISSION DATABASE markup
-```
-
-Move the existing puzzle tests into `AdminPuzzlesPanel.svelte.test.ts`: ready/processing/failed rendering, load error, ready delete, force delete, delete error, partial warning, warning timer replacement, and three-second polling.
+Move those existing tests to the new panel test owner.
 
 Do not add search/filter/pagination yet.
 
-- [ ] **Step 4: Extract existing Player Access behavior without product changes**
+- [ ] **Step 4: Extract Player Access behavior unchanged**
 
-Move allowlist-owned state/functions/markup into `PlayerAccessPanel.svelte`:
+Move allowlist load/add/remove/stale-response/error state into `PlayerAccessPanel.svelte`. Its `onMount` loads only the allowlist.
 
-```text
-allowlist
-allowlistEmail
-loadingAllowlist
-allowlistError
-allowlistSaving
-removingAllowlistEmail
-allowlistLoadSequence
-loadAllowlist()
-handleAllowlistSubmit()
-handleAllowlistRemove()
-```
+Move allowlist tests to the new panel test owner.
 
-Its `onMount` calls only `loadAllowlist()`.
+- [ ] **Step 5: Reduce `+page.svelte` to shell + two accessible tabs**
 
-Move linked/pending display, load error, add/error, remove/error, and stale-response tests into `PlayerAccessPanel.svelte.test.ts`.
+Use local `puzzles | players` state, normal `tablist/tab/tabpanel` semantics, and conditional mount of exactly one panel.
 
-- [ ] **Step 5: Reduce `+page.svelte` to shell + accessible tabs**
+No tab framework, URL state, or nested admin routes.
 
-```svelte
-<script lang="ts">
-  import AdminPuzzlesPanel from './AdminPuzzlesPanel.svelte';
-  import PlayerAccessPanel from './PlayerAccessPanel.svelte';
-
-  type AdminTab = 'puzzles' | 'players';
-  let activeTab: AdminTab = $state('puzzles');
-</script>
-```
-
-Render two buttons in `role="tablist"`, set `role="tab"`, `aria-selected`, and `aria-controls`, and conditionally mount one `role="tabpanel"`.
-
-Do not add URL/query synchronization.
-
-- [ ] **Step 6: Verify Task 2**
+- [ ] **Step 6: Verify and commit Task 2**
 
 ```bash
 bun run test:unit --filter=@perseus/web
 bun run check --filter=@perseus/web
-```
-
-Expected: both commands exit 0.
-
-- [ ] **Step 7: Commit Task 2**
-
-```bash
 git add apps/web/src/routes/admin
 git commit -m "refactor: split admin portal into tabs"
 ```
 
 ---
 
-## Task 3: Add pure admin list helpers, search/filter controls, and filtered pagination
+# Task 3: Add pure admin list helpers, search/filter controls, and filtered pagination
 
-### Files
+## Files
 
 - Create: `apps/web/src/routes/admin/adminPuzzleList.ts`
 - Create: `apps/web/src/routes/admin/adminPuzzleList.test.ts`
@@ -682,7 +530,7 @@ git commit -m "refactor: split admin portal into tabs"
 - Reuse unchanged: `apps/web/src/lib/components/SearchBar.svelte`
 - Reuse unchanged: `apps/web/src/lib/constants/categories.ts`
 
-### Interfaces
+## Interfaces
 
 ```ts
 import type { PuzzleCategory } from '$lib/constants/categories';
@@ -710,81 +558,20 @@ export function pageSlice<T>(
 };
 ```
 
-### Steps
+## Steps
 
-- [ ] **Step 1: Write failing pure tests for name/category/status filtering**
+- [ ] **Step 1: Write failing pure filter tests**
 
-In `adminPuzzleList.test.ts`, use a small fixture:
+Use four small puzzle fixtures and pin:
+- `  FoReSt  ` matches Forest names case-insensitively;
+- Nature + processing + `forest` returns only the AND match;
+- concrete category excludes an uncategorized legacy row;
+- `all` category includes it;
+- empty match returns `[]`.
 
-```ts
-const puzzles: PuzzleSummary[] = [
-  { id: 'p1', name: 'Forest Ready', category: 'Nature', status: 'ready', pieceCount: 48 },
-  {
-    id: 'p2',
-    name: 'Night Forest',
-    category: 'Nature',
-    status: 'processing',
-    pieceCount: 48,
-    progress: { generatedPieces: 4, totalPieces: 48, updatedAt: 1 }
-  },
-  { id: 'p3', name: 'Gallery Failure', category: 'Art', status: 'failed', pieceCount: 48 },
-  { id: 'p4', name: 'Legacy Ready', status: 'ready', pieceCount: 48 }
-];
-```
+- [ ] **Step 2: Write failing pure page tests**
 
-Pin these cases:
-
-```ts
-expect(filterAdminPuzzles(puzzles, {
-  query: '  FoReSt  ',
-  category: 'all',
-  status: 'all'
-}).map((p) => p.id)).toEqual(['p1', 'p2']);
-
-expect(filterAdminPuzzles(puzzles, {
-  query: 'forest',
-  category: 'Nature',
-  status: 'processing'
-}).map((p) => p.id)).toEqual(['p2']);
-
-expect(filterAdminPuzzles(puzzles, {
-  query: '',
-  category: 'Art',
-  status: 'all'
-}).map((p) => p.id)).toEqual(['p3']);
-```
-
-Also assert uncategorized `p4` appears for category `all` and not for a concrete category.
-
-- [ ] **Step 2: Write failing pure tests for page slicing and clamping**
-
-Use integers instead of DOM rows:
-
-```ts
-expect(pageSlice([1, 2, 3, 4, 5], 0, 2)).toEqual({
-  page: [1, 2],
-  totalPages: 3,
-  clampedIndex: 0
-});
-
-expect(pageSlice([1, 2, 3, 4, 5], 9, 2)).toEqual({
-  page: [5],
-  totalPages: 3,
-  clampedIndex: 2
-});
-
-expect(pageSlice([], 4, 20)).toEqual({
-  page: [],
-  totalPages: 1,
-  clampedIndex: 0
-});
-```
-
-Also pin non-positive page size as programmer error:
-
-```ts
-expect(() => pageSlice([1], 0, 0)).toThrow('pageSize must be greater than 0');
-```
+Use integers, not DOM rows. Pin first page, final page, out-of-range clamp, empty list, negative page clamp, and `pageSize <= 0` programmer error.
 
 - [ ] **Step 3: Run web tests and confirm helper tests are red**
 
@@ -792,111 +579,57 @@ expect(() => pageSlice([1], 0, 0)).toThrow('pageSize must be greater than 0');
 bun run test:unit --filter=@perseus/web
 ```
 
-Expected: failure because `adminPuzzleList.ts` does not exist yet.
+- [ ] **Step 4: Implement only `filterAdminPuzzles()` and `pageSlice()`**
 
-- [ ] **Step 4: Implement the two pure helpers**
+`filterAdminPuzzles` trims/lowercases query, does substring match, then category/status AND filtering.
 
-Create `adminPuzzleList.ts`:
+`pageSlice` returns `{ page, totalPages, clampedIndex }`; do not write clamped state back from a Svelte `$effect`.
+
+Keep this helper beside the admin route; do not promote it into a generic pagination package.
+
+- [ ] **Step 5: Add failing panel tests for UI wiring**
+
+With small fixtures cover:
+- SearchBar value callback;
+- category select;
+- status select;
+- combined controls;
+- `RESET`;
+- filtered-empty copy;
+- match/total count;
+- hidden `processing` row still causes polling after 3 seconds.
+
+Pure tests own trim/case/AND/page-boundary permutations.
+
+- [ ] **Step 6: Add one 21-row browser pagination wiring test**
+
+Only prove that fixed 20-row controls are connected:
+- page 1 shows first 20, Previous disabled, Next enabled;
+- Next shows row 21, Previous enabled, Next disabled.
+
+- [ ] **Step 7: Wire route-local state using existing seams**
+
+Reuse:
+
+```svelte
+<SearchBar
+  value={searchQuery}
+  onInput={(value) => {
+    searchQuery = value;
+    pageIndex = 0;
+  }}
+/>
+```
+
+Import `PUZZLE_CATEGORIES` / `PuzzleCategory` via `$lib/constants/categories`.
+
+Use simple `<select>` controls for `ALL CATEGORIES` and `ALL STATUS | READY | PROCESSING | FAILED`.
+
+Do not debounce and do not reuse gallery chip-style `CategoryFilter.svelte`.
+
+Derive:
 
 ```ts
-import type { PuzzleCategory } from '$lib/constants/categories';
-import type { PuzzleStatus, PuzzleSummary } from '$lib/types/puzzle';
-
-export type AdminPuzzleFilters = {
-  query: string;
-  category: 'all' | PuzzleCategory;
-  status: 'all' | PuzzleStatus;
-};
-
-export function filterAdminPuzzles(
-  puzzles: readonly PuzzleSummary[],
-  filters: AdminPuzzleFilters
-): PuzzleSummary[] {
-  const query = filters.query.trim().toLowerCase();
-
-  return puzzles.filter((puzzle) => {
-    if (query && !puzzle.name.toLowerCase().includes(query)) return false;
-    if (filters.category !== 'all' && puzzle.category !== filters.category) return false;
-    if (filters.status !== 'all' && puzzle.status !== filters.status) return false;
-    return true;
-  });
-}
-
-export function pageSlice<T>(
-  items: readonly T[],
-  pageIndex: number,
-  pageSize: number
-): { page: T[]; totalPages: number; clampedIndex: number } {
-  if (pageSize <= 0) throw new Error('pageSize must be greater than 0');
-
-  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
-  const clampedIndex = Math.min(Math.max(0, pageIndex), totalPages - 1);
-  const start = clampedIndex * pageSize;
-
-  return {
-    page: items.slice(start, start + pageSize),
-    totalPages,
-    clampedIndex
-  };
-}
-```
-
-This file stays beside the admin route. Do not move it to `$lib` or turn it into a generic pagination package.
-
-- [ ] **Step 5: Add failing panel tests for control wiring, not list arithmetic**
-
-In `AdminPuzzlesPanel.svelte.test.ts`, add small-fixture browser tests for:
-
-1. `SearchBar`: enter `forest`, assert matching/non-matching rows respond.
-2. Category select: select `Nature`, assert Art row hides.
-3. Status select: select `PROCESSING`, assert ready row hides.
-4. Combined controls: search + category + status produce expected one row.
-5. Reset: clear all criteria and restore rows.
-6. Filtered empty: backing list non-empty but criteria match none -> `No missions match the current search and filters.`
-7. Count copy: active filters expose semantic match/total text such as `1 OF 3`.
-8. Hidden processing polling: status filter `READY` hides a processing row, advance three seconds, assert `fetchAdminPuzzles()` still runs again.
-
-The pure helper tests own trim/case/AND/page-boundary details; do not duplicate those permutations through browser DOM tests.
-
-- [ ] **Step 6: Add one minimal browser pagination-wiring test**
-
-Use 21 ready rows only to prove the UI controls are connected to `PAGE_SIZE = 20`:
-
-```text
-page 1 -> first 20 visible, NEXT enabled, PREVIOUS disabled
-click NEXT -> 21st visible, NEXT disabled, PREVIOUS enabled
-```
-
-Do not repeat search/category/status arithmetic across 20+ row fixtures.
-
-- [ ] **Step 7: Run web tests and confirm panel wiring is red**
-
-```bash
-bun run test:unit --filter=@perseus/web
-```
-
-Expected: missing SearchBar/select/reset/pagination UI causes the new panel tests to fail; pure helper tests pass.
-
-- [ ] **Step 8: Wire route-local state using existing web seams**
-
-In `AdminPuzzlesPanel.svelte`:
-
-```ts
-import SearchBar from '$lib/components/SearchBar.svelte';
-import { PUZZLE_CATEGORIES } from '$lib/constants/categories';
-import type { PuzzleCategory } from '$lib/constants/categories';
-import type { PuzzleStatus } from '$lib/types/puzzle';
-import { filterAdminPuzzles, pageSlice } from './adminPuzzleList';
-
-const PAGE_SIZE = 20;
-type CategoryFilter = 'all' | PuzzleCategory;
-type StatusFilter = 'all' | PuzzleStatus;
-
-let searchQuery = $state('');
-let categoryFilter: CategoryFilter = $state('all');
-let statusFilter: StatusFilter = $state('all');
-let pageIndex = $state(0);
-
 const filteredPuzzles = $derived(
   filterAdminPuzzles(puzzles, {
     query: searchQuery,
@@ -907,117 +640,26 @@ const filteredPuzzles = $derived(
 
 const pageResult = $derived(pageSlice(filteredPuzzles, pageIndex, PAGE_SIZE));
 const visiblePuzzles = $derived(pageResult.page);
-const hasActiveFilters = $derived(
-  searchQuery.trim().length > 0 || categoryFilter !== 'all' || statusFilter !== 'all'
-);
 ```
 
-No `$effect` writes to `pageIndex`. `pageResult.clampedIndex` is the authoritative rendered page when polling/deletion shrinks results.
+Use `pageResult.clampedIndex` in the rendered page label/buttons. Criteria callbacks reset `pageIndex = 0`.
 
-- [ ] **Step 9: Reuse `SearchBar` and add simple selects/Reset**
+Polling remains based on raw `puzzles.some((p) => p.status === 'processing')`.
 
-```svelte
-<SearchBar
-  value={searchQuery}
-  onInput={(value) => {
-    searchQuery = value;
-    pageIndex = 0;
-  }}
-/>
+- [ ] **Step 8: Add Reset, empty copy, count, and minimal paging controls**
 
-<select
-  aria-label="Puzzle category"
-  value={categoryFilter}
-  onchange={(event) => {
-    categoryFilter = event.currentTarget.value as CategoryFilter;
-    pageIndex = 0;
-  }}
->
-  <option value="all">ALL CATEGORIES</option>
-  {#each PUZZLE_CATEGORIES as category}
-    <option value={category}>{category}</option>
-  {/each}
-</select>
+`RESET` appears only while criteria are active.
 
-<select
-  aria-label="Puzzle status"
-  value={statusFilter}
-  onchange={(event) => {
-    statusFilter = event.currentTarget.value as StatusFilter;
-    pageIndex = 0;
-  }}
->
-  <option value="all">ALL STATUS</option>
-  <option value="ready">READY</option>
-  <option value="processing">PROCESSING</option>
-  <option value="failed">FAILED</option>
-</select>
+Empty states:
+
+```text
+raw list empty                     -> No missions found.
+raw non-empty + zero filtered rows -> No missions match the current search and filters.
 ```
 
-Add:
+Active criteria show `{filteredCount} OF {totalCount}` using existing admin header styling.
 
-```ts
-function resetFilters() {
-  searchQuery = '';
-  categoryFilter = 'all';
-  statusFilter = 'all';
-  pageIndex = 0;
-}
-```
-
-Show `RESET` only while `hasActiveFilters` is true.
-
-Do not reuse gallery `CategoryFilter.svelte` and do not add debounce.
-
-- [ ] **Step 10: Render the clamped page and minimal pagination controls**
-
-Render `visiblePuzzles` instead of raw `puzzles`.
-
-Keep processing polling based on:
-
-```ts
-puzzles.some((puzzle) => puzzle.status === 'processing')
-```
-
-Use `pageResult.clampedIndex` in controls:
-
-```svelte
-{#if filteredPuzzles.length > PAGE_SIZE}
-  <nav aria-label="Puzzle pages">
-    <button
-      type="button"
-      disabled={pageResult.clampedIndex === 0}
-      onclick={() => (pageIndex = pageResult.clampedIndex - 1)}
-    >
-      PREVIOUS
-    </button>
-    <span>PAGE {pageResult.clampedIndex + 1} / {pageResult.totalPages}</span>
-    <button
-      type="button"
-      disabled={pageResult.clampedIndex >= pageResult.totalPages - 1}
-      onclick={() => (pageIndex = pageResult.clampedIndex + 1)}
-    >
-      NEXT
-    </button>
-  </nav>
-{/if}
-```
-
-Empty copy:
-
-```svelte
-{#if puzzles.length === 0}
-  <p>No missions found.</p>
-{:else if filteredPuzzles.length === 0}
-  <p>No missions match the current search and filters.</p>
-{:else}
-  <!-- visiblePuzzles -->
-{/if}
-```
-
-When filters are active, expose match/total count (`{filteredPuzzles.length} OF {puzzles.length}`) in the existing database header style.
-
-- [ ] **Step 11: Verify Task 3 and confirm no API query layer was added**
+- [ ] **Step 9: Verify and commit Task 3**
 
 ```bash
 bun run test:unit --filter=@perseus/web
@@ -1025,9 +667,7 @@ bun run check --filter=@perseus/web
 git diff HEAD -- apps/api/src/routes/admin.worker.ts apps/web/src/lib/services/api.ts
 ```
 
-Expected: web tests/check exit 0; Task 3 introduces no search/filter/pagination API changes.
-
-- [ ] **Step 12: Commit Task 3**
+Expected: no search/filter/pagination API change.
 
 ```bash
 git add \
@@ -1040,144 +680,103 @@ git commit -m "feat: filter and paginate admin puzzles"
 
 ---
 
-## Task 4: Add enlarged reference-image preview for ready puzzles
+# Task 4: Reuse ReferenceOverlay for enlarged ready-puzzle images
 
-### Files
+## Files
 
 - Modify: `apps/web/src/routes/admin/AdminPuzzlesPanel.svelte`
 - Modify: `apps/web/src/routes/admin/AdminPuzzlesPanel.svelte.test.ts`
+- Reuse unchanged: `apps/web/src/lib/components/ReferenceOverlay.svelte`
+- Reuse unchanged: `apps/web/src/lib/components/__tests__/ReferenceOverlay.svelte.test.ts`
 
-### Dependencies already present
+## Steps
 
-- `getReferenceImageUrl(puzzleId)`
-- `$lib/actions/modalFocus`
+- [ ] **Step 1: Add failing admin-panel preview tests**
 
-### Steps
+For a ready `Forest Scene`:
+- click `View full image for Forest Scene`;
+- assert dialog `Reference image` appears;
+- assert image URL uses `/api/puzzles/<id>/reference`;
+- Close dismisses;
+- Escape dismisses;
+- dispatch image `error` and assert `Reference image unavailable`;
+- processing/failed placeholders have no preview trigger.
 
-- [ ] **Step 1: Add failing preview tests**
+Do not duplicate existing `ReferenceOverlay` focus-trap/touch-target tests in the admin panel.
 
-Mock:
-
-```ts
-getReferenceImageUrl: vi.fn((id: string) => `/api/puzzles/${id}/reference`)
-```
-
-For a ready `Forest Scene`, click `View full image for Forest Scene` and assert:
-
-```text
-dialog accessible name: Forest Scene image preview
-image src: /api/puzzles/p1/reference
-```
-
-Add Close-button and Escape cases. Assert processing/failed placeholders expose no `View full image` button.
-
-- [ ] **Step 2: Run web tests and confirm preview is red**
+- [ ] **Step 2: Run web tests and confirm preview wiring is red**
 
 ```bash
 bun run test:unit --filter=@perseus/web
 ```
 
-Expected: preview button/dialog assertions fail before implementation.
-
-- [ ] **Step 3: Make only ready thumbnails interactive**
+- [ ] **Step 3: Make only ready thumbnails interactive and render the existing overlay**
 
 ```ts
-import { getReferenceImageUrl, getThumbnailUrl } from '$lib/services/api';
-import { modalFocus } from '$lib/actions/modalFocus';
+import ReferenceOverlay from '$lib/components/ReferenceOverlay.svelte';
+import { getReferenceImageUrl } from '$lib/services/api';
 
 let previewPuzzle: PuzzleSummary | null = $state(null);
-```
 
-Ready thumbnail:
+function dismissPreview() {
+  previewPuzzle = null;
+}
+
+function handlePreviewKeyDown(event: KeyboardEvent) {
+  if (event.key !== 'Escape' || previewPuzzle === null) return;
+  event.preventDefault();
+  dismissPreview();
+}
+```
 
 ```svelte
-<button
-  type="button"
-  aria-label={`View full image for ${puzzle.name}`}
-  onclick={() => (previewPuzzle = puzzle)}
->
-  <img src={getThumbnailUrl(puzzle.id)} alt="" />
-</button>
+<svelte:window onkeydown={handlePreviewKeyDown} />
+
+<ReferenceOverlay
+  imageUrl={previewPuzzle ? getReferenceImageUrl(previewPuzzle.id) : null}
+  active={previewPuzzle !== null}
+  dismissible
+  onDismiss={dismissPreview}
+/>
 ```
 
-Keep processing/failed placeholders non-interactive.
+This mirrors gameplay's route-level Escape ownership. `ReferenceOverlay` remains unchanged and continues to own focus restoration, Close control, touch size, and image-error fallback.
 
-- [ ] **Step 4: Add the route-local modal using the existing focus pattern**
-
-```svelte
-{#if previewPuzzle}
-  <div class="fixed inset-0 z-[1000] flex items-center justify-center bg-black/70 p-4">
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label={`${previewPuzzle.name} image preview`}
-      tabindex="-1"
-      use:modalFocus
-      onkeydown={(event) => event.key === 'Escape' && (previewPuzzle = null)}
-      class="flex max-h-[calc(100dvh-2rem)] max-w-[calc(100vw-2rem)] flex-col border border-(--accent) bg-(--bg-1)"
-    >
-      <div class="flex items-center justify-between gap-4 border-b border-(--border) p-3">
-        <span>{previewPuzzle.name}</span>
-        <button type="button" onclick={() => (previewPuzzle = null)}>CLOSE</button>
-      </div>
-      <img
-        src={getReferenceImageUrl(previewPuzzle.id)}
-        alt={previewPuzzle.name}
-        class="min-h-0 max-h-[calc(100dvh-6rem)] max-w-full object-contain"
-      />
-    </div>
-  </div>
-{/if}
-```
-
-Adjust only styling needed to fit the admin visual language. Do not add zoom, pan, download, carousel, backdrop-click behavior, or a lightbox dependency.
-
-- [ ] **Step 5: Verify Task 4**
+- [ ] **Step 4: Verify and commit Task 4**
 
 ```bash
 bun run test:unit --filter=@perseus/web
 bun run check --filter=@perseus/web
-```
-
-Expected: both commands exit 0.
-
-- [ ] **Step 6: Commit Task 4**
-
-```bash
 git add apps/web/src/routes/admin/AdminPuzzlesPanel.svelte apps/web/src/routes/admin/AdminPuzzlesPanel.svelte.test.ts
 git commit -m "feat: preview admin puzzle images"
 ```
 
 ---
 
-## Task 5: Final integration verification and scope audit
+# Task 5: Final verification, ingress precondition, and rollout
 
-- [ ] **Step 1: Repeat the auth-deletion sweep**
+- [ ] **Step 1: Repeat the case-insensitive auth-deletion sweep**
 
 ```bash
-rg -n \
-  "ADMIN_PASSKEY|adminPasskey|/api/admin/login|/api/admin/session|/api/admin/logout|checkSession\(|WORKER_AUTH_ERROR_CODE|perseus_session|middleware/auth\.worker|loginRateLimit|resetLoginAttempts" \
-  apps packages scripts .github .agents AGENTS.md CLAUDE.md docs/PRD.md \
+rg -ni \
+  "passkey|/admin/login|/api/admin/(login|session|logout)|checkSession\(|WORKER_AUTH_ERROR_CODE|perseus_session|middleware/auth\.worker|loginRateLimit|resetLoginAttempts" \
+  apps packages scripts .github .agents CLAUDE.md docs \
   --glob '!docs/superpowers/**'
 ```
 
-Expected: no active admin passkey/session references remain.
+Expected: no active old admin-auth references remain.
 
-- [ ] **Step 2: Re-check security/scoping invariants**
+- [ ] **Step 2: Re-check code-level security/scoping invariants**
 
 ```bash
 rg -n "subdomain:|previewsEnabled|CLI_ACCESS_PATHS|puzzle-delete|credentials: 'include'" \
   packages/infrastructure/src \
   apps/api/src/routes/admin.worker.ts \
   apps/web/src/lib/services/api.ts
+
+test -L AGENTS.md
+test "$(readlink AGENTS.md)" = "CLAUDE.md"
 ```
-
-Confirm:
-
-- API Worker still has `subdomain: { enabled: false, previewsEnabled: false }`;
-- `CLI_ACCESS_PATHS` is only `/api/admin/puzzles`;
-- destructive delete remains `/api/admin/puzzle-delete/:id`;
-- browser admin API fetches still carry credentials.
 
 - [ ] **Step 3: Run the complete affected verification set**
 
@@ -1193,37 +792,66 @@ bun run lint --filter=@perseus/api --filter=@perseus/web
 bun run lint:scripts
 ```
 
-Expected: every command exits 0.
-
-- [ ] **Step 4: Audit the final diff against requested outcomes and review constraints**
+- [ ] **Step 4: Audit the final diff against scope**
 
 ```text
-[ ] Passkey/session removed; Cloudflare Access + Worker origin isolation retained
-[ ] Seed/upload CLIs use Access headers only; seed workflow has no ADMIN_PASSKEY
-[ ] No admin test still mocks requireAuth
-[ ] Forced admin document navigation remains
-[ ] Player Access is a separate tab and lazy-loads
+[ ] Access-only app auth cut is complete
+[ ] Worker origin isolation is retained
+[ ] No auth.worker/requireAuth mocks remain in admin tests
+[ ] Browser admin API calls retain credentials
+[ ] Forced document navigation blocks children until redirect decision
+[ ] CLI service token path stays exact /api/admin/puzzles
+[ ] Delete remains outside CLI Service Auth path
+[ ] Seed workflow has no ADMIN_PASSKEY dependency
+[ ] AGENTS.md is still a symlink to CLAUDE.md
+[ ] Player Access is a separate lazy tab
 [ ] Search reuses SearchBar
-[ ] Category values come through $lib/constants/categories
-[ ] Name/category/status filter math lives in route-local pure helper tests
-[ ] Filtered results paginate at exactly 20 rows
-[ ] Hidden processing rows still keep polling active
-[ ] Ready thumbnail opens existing reference image via modalFocus
-[ ] No backend admin query API or generic UI framework was introduced
+[ ] Categories come through web constants
+[ ] Pure helper tests own filter/page math
+[ ] Filtered results page at exactly 20 rows
+[ ] Hidden processing rows keep polling alive
+[ ] Preview reuses ReferenceOverlay unchanged
+[ ] No backend admin query layer or generic UI framework was added
 ```
 
-Fix mismatches in the owning task rather than adding compensating abstractions.
+- [ ] **Step 5: Before deployment, verify the real Worker ingress inventory**
 
-- [ ] **Step 5: Perform the production smoke check after merge/deploy**
+The repo cannot prove production custom-domain/route attachment. Before shipping the auth deletion:
 
-1. Allowed browser identity/device opens `/admin` without a Perseus passkey prompt.
-2. Denied browser/device cannot reach `/admin` or broad admin API paths.
-3. Public Worker subdomain/preview access remains disabled.
-4. `bun run admin:startup:status` with service-token credentials reports readiness without a passkey.
-5. A bounded seed/upload run can list/create through `/api/admin/puzzles`.
-6. The production seed workflow succeeds with no `ADMIN_PASSKEY` secret dependency.
-7. CLI service token cannot reach `/api/admin/puzzle-delete/:id` through Access.
-8. `PUZZLES` search/category/status/Reset/pagination behave as specified.
-9. `PLAYER ACCESS` add/remove still works.
-10. Ready thumbnail preview opens and Close/Escape dismiss it.
+1. Open Cloudflare Workers & Pages for the deployed API Worker.
+2. Inspect **Settings -> Domains & Routes** (or an equivalent account-level API/CLI listing).
+3. Enumerate every live route/custom domain pointing at the Worker.
+4. Confirm `workers.dev` and previews are disabled.
+5. For each live hostname, verify a Cloudflare Access application covers `/admin*` and `/api/admin*`.
+6. Stop deployment if any alternate hostname can reach admin paths without Access.
+
+Do not add new routing IaC merely for this ticket.
+
+- [ ] **Step 6: Post-deploy admin/CLI smoke**
+
+1. Allowed identity/device opens `/admin` without a Perseus passkey.
+2. Denied identity/device cannot reach `/admin` or broad admin API paths.
+3. Public-SPA navigation into `/admin` reaches the full-document Access path before admin panel fetches start.
+4. `admin:startup:status` succeeds with service-token credentials and no passkey.
+5. Bounded list/create works through exact `/api/admin/puzzles`.
+6. Seed workflow succeeds with no `ADMIN_PASSKEY` secret dependency.
+7. CLI service token cannot reach `/api/admin/puzzle-delete/:id`.
+8. Puzzle search/category/status/Reset/20-row paging behave as specified.
+9. Player Access add/remove still works.
+10. Ready image preview opens; Close/Escape dismiss; missing reference shows unavailable fallback.
 11. Public player routes remain unaffected.
+12. Local dev admin remains open without app auth.
+
+- [ ] **Step 7: Remove stale Pulumi stack config and verify the service-token incident path**
+
+Because `Pulumi.*.yaml` stack files are untracked, remove the orphan config from the actual production stack after the deployed program no longer consumes it:
+
+```bash
+cd packages/infrastructure
+pulumi config rm adminPasskey --stack <production-stack>
+pulumi config --stack <production-stack>
+```
+
+Confirm `adminPasskey` is absent.
+
+Document/verify that the Access service token is now the sole list/create credential. If compromised, use the available Cloudflare control appropriate to the incident: disable the token, rotate its secret, revoke/delete it, or remove/disable the Service Auth policy. There is no longer an application passkey second factor.
