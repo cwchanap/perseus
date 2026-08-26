@@ -390,7 +390,8 @@ describe('downloadStore.downloadPuzzle', () => {
 		const h = makeHarness([1, 1, 2]);
 		await expect(h.store.downloadPuzzle(h.puzzle)).rejects.toThrow('duplicate_piece_ids');
 		expect(h.calls).toHaveLength(0);
-		expect(h.fileOps.removedDirectories).toContain(`${ROOT}/.staging/p1`);
+		expect(h.fileOps.removedDirectories).toEqual([]);
+		expect(await h.fileOps.directoryExists(`${ROOT}/.staging/p1`)).toBe(false);
 		expect(await h.fileOps.directoryExists(`${ROOT}/p1`)).toBe(false);
 	});
 });
