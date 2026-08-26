@@ -16,7 +16,7 @@ describe('admin navigation guard', () => {
 	it('does not force reloads for direct admin document requests or intra-admin navigation', () => {
 		expect(isClientRoutedAdminPath('/admin', '/admin')).toBe(false);
 		expect(isClientRoutedAdminPath('/admin/settings', '/admin')).toBe(false);
-		expect(isClientRoutedAdminPath('/admin/settings', '/admin/login')).toBe(false);
+		expect(isClientRoutedAdminPath('/admin/settings', '/admin/puzzles')).toBe(false);
 	});
 
 	it('does not treat non-admin paths as admin routes', () => {
@@ -88,7 +88,7 @@ describe('admin navigation guard', () => {
 	describe('stripBase (no base configured)', () => {
 		it('returns pathname unchanged when no base is configured', () => {
 			expect(stripBase('/admin')).toBe('/admin');
-			expect(stripBase('/admin/login')).toBe('/admin/login');
+			expect(stripBase('/admin/puzzles')).toBe('/admin/puzzles');
 			expect(stripBase('/')).toBe('/');
 		});
 	});

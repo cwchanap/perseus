@@ -1,4 +1,4 @@
-// Worker-compatible admin routes for authentication and puzzle management
+// Worker-compatible admin routes for puzzle management
 
 import { Hono } from 'hono';
 import {
@@ -43,16 +43,6 @@ import {
 	ensureWorkerPuzzleDeletionFence,
 	finishWorkerPuzzleDeletion
 } from '../services/puzzle-deletion.worker';
-import {
-	createSession,
-	setSessionCookie,
-	clearSessionCookie,
-	getSessionToken,
-	revokeSession,
-	verifySession,
-	requireAuth
-} from '../middleware/auth.worker';
-import { loginRateLimit } from '../middleware/rate-limit.worker';
 import {
 	addAllowlistEntry,
 	deleteAllowlistEntry,
@@ -723,122 +713,8 @@ async function cleanupOrphanedWorkflow(
 	);
 }
 
-// POST /api/admin/login - Admin login
-admin.post('/login', loginRateLimit, async (c) => {
-	try {
-		let body;
-		try {
-			body = await c.req.json();
-		} catch {
-			return c.json({ error: 'bad_request', message: 'Invalid JSON body' }, 400);
-		}
-
-		const { passkey } = body as { passkey?: string };
-
-		if (!passkey || typeof passkey !== 'string') {
-			return c.json({ error: 'bad_request', message: 'Passkey is required' }, 400);
-		}
-
-		// Validate ADMIN_PASSKEY is configured
-		if (!c.env.ADMIN_PASSKEY) {
-			console.error('ADMIN_PASSKEY environment variable is not configured');
-			return c.json({ error: 'internal_error', message: 'Server configuration error' }, 500);
-		}
-
-		// Use WebCrypto for constant-time comparison
-		const encoder = new TextEncoder();
-		const passkeyBytes = encoder.encode(passkey);
-		const expectedBytes = encoder.encode(c.env.ADMIN_PASSKEY);
-
-		// Hash both for constant-time comparison
-		const passkeyHash = await crypto.subtle.digest('SHA-256', passkeyBytes);
-		const expectedHash = await crypto.subtle.digest('SHA-256', expectedBytes);
-
-		// Constant-time comparison via XOR over fixed-length SHA-256 hashes
-		const passkeyArr = new Uint8Array(passkeyHash);
-		const expectedArr = new Uint8Array(expectedHash);
-
-		let diff = passkeyArr.length ^ expectedArr.length;
-		const maxLength = Math.max(passkeyArr.length, expectedArr.length);
-		for (let i = 0; i < maxLength; i++) {
-			const a = i < passkeyArr.length ? passkeyArr[i] : 0;
-			const b = i < expectedArr.length ? expectedArr[i] : 0;
-			diff |= a ^ b;
-		}
-		const isValid = diff === 0;
-
-		if (!isValid) {
-			return c.json({ error: 'unauthorized', message: 'Invalid passkey' }, 401);
-		}
-
-		const token = await createSession(c.env, {
-			userId: 'admin',
-			username: 'admin',
-			role: 'admin'
-		});
-		setSessionCookie(c, token);
-		// Rate limit reset is handled by loginRateLimit middleware on 200 response
-
-		return c.json({ success: true });
-	} catch (error) {
-		console.error('Failed to process admin login', error);
-		return c.json({ error: 'internal_error', message: 'Failed to process login' }, 500);
-	}
-});
-
-// POST /api/admin/logout - Admin logout
-admin.post('/logout', async (c) => {
-	const token = getSessionToken(c);
-	if (token) {
-		try {
-			await revokeSession(c.env, token);
-		} catch (error) {
-			// In production, session revocation failure is a security concern.
-			// We must not silently suppress this - the client needs to know and retry.
-			console.error('Failed to revoke session server-side:', error);
-			// In production, return an error so the client can retry
-			if (c.env.NODE_ENV !== 'development') {
-				return c.json(
-					{
-						error: 'internal_error',
-						message: 'Failed to revoke session. Please try again.'
-					},
-					500
-				);
-			}
-			// In development, fall through to clear cookie for debugging convenience
-		}
-	}
-	clearSessionCookie(c);
-	return c.json({ success: true });
-});
-
-// GET /api/admin/session - Check admin session
-admin.get('/session', async (c) => {
-	try {
-		const token = getSessionToken(c);
-
-		if (!token) {
-			return c.json({ authenticated: false });
-		}
-
-		const session = await verifySession(c.env, token);
-
-		if (!session) {
-			clearSessionCookie(c);
-			return c.json({ authenticated: false });
-		}
-
-		return c.json({ authenticated: true });
-	} catch (error) {
-		// Unexpected error during session verification (e.g., JWT_SECRET misconfiguration)
-		console.error('Session verification failed unexpectedly:', error);
-		return c.json({ error: 'internal_error', message: 'Session verification failed' }, 500);
-	}
-});
-
-// GET /api/admin/player-allowlist - List player allowlist entries (protected)
-admin.get('/player-allowlist', requireAuth, async (c) => {
+// GET /api/admin/player-allowlist - List player allowlist entries
+admin.get('/player-allowlist', async (c) => {
 	try {
 		const allowlistEntries = await listAllowlistEntries(c.env.PUZZLE_METADATA);
 		const entries = await Promise.all(
@@ -855,8 +731,8 @@ admin.get('/player-allowlist', requireAuth, async (c) => {
 	}
 });
 
-// POST /api/admin/player-allowlist - Add a player allowlist entry (protected)
-admin.post('/player-allowlist', requireAuth, async (c) => {
+// POST /api/admin/player-allowlist - Add a player allowlist entry
+admin.post('/player-allowlist', async (c) => {
 	let body: unknown;
 	try {
 		body = await c.req.json();
@@ -885,8 +761,8 @@ admin.post('/player-allowlist', requireAuth, async (c) => {
 	}
 });
 
-// DELETE /api/admin/player-allowlist/:email - Remove a player allowlist entry (protected)
-admin.delete('/player-allowlist/:email', requireAuth, async (c) => {
+// DELETE /api/admin/player-allowlist/:email - Remove a player allowlist entry
+admin.delete('/player-allowlist/:email', async (c) => {
 	const email = c.req.param('email');
 
 	try {
@@ -907,14 +783,9 @@ admin.delete('/player-allowlist/:email', requireAuth, async (c) => {
 });
 
 // GET /api/admin/puzzles - List all puzzles for admin (includes processing/failed)
-admin.get('/puzzles', requireAuth, async (c) => {
-	try {
-		const { puzzles: puzzleList } = await listPuzzles(c.env.PUZZLE_METADATA);
-		return c.json({ puzzles: puzzleList });
-	} catch (error) {
-		console.error('Failed to list puzzles for admin', error);
-		return c.json({ error: 'internal_error', message: 'Failed to list puzzles' }, 500);
-	}
+admin.get('/puzzles', async (c) => {
+	const { puzzles } = await listPuzzles(c.env.PUZZLE_METADATA);
+	return c.json({ puzzles });
 });
 
 // Bounded retry/backoff for the idempotency commit transition. The commit is a
@@ -954,8 +825,8 @@ function jitteredDelay(baseMs: number): number {
 	return baseMs * (0.8 + Math.random() * 0.4);
 }
 
-// POST /api/admin/puzzles - Create new puzzle (protected)
-admin.post('/puzzles', requireAuth, async (c) => {
+// POST /api/admin/puzzles - Create new puzzle
+admin.post('/puzzles', async (c) => {
 	let id = '';
 	let reservedIdempotencyKey: string | undefined;
 	// Set to true after PUZZLE_WORKFLOW.create() succeeds. The outer catch
@@ -1941,15 +1812,13 @@ admin.post('/puzzles', requireAuth, async (c) => {
 	}
 });
 
-// POST /api/admin/puzzle-delete/:id - Delete puzzle (protected)
+// POST /api/admin/puzzle-delete/:id - Delete puzzle
 // Moved off the /api/admin/puzzles sub-path so the narrow CLI Access app's
 // exact path '/api/admin/puzzles' no longer inherits to the delete route.
-// The CLI Access app covers only '/api/admin/login' and '/api/admin/puzzles'
-// (POST create + GET list); '/api/admin/puzzle-delete/:id' is a sibling path
-// that inherits the broad admin app's email+posture policy only (no service
-// token), so a service-token holder cannot reach the delete endpoint at the
-// Access gate even after obtaining a session cookie.
-admin.post('/puzzle-delete/:id', requireAuth, async (c) => {
+// '/api/admin/puzzle-delete/:id' is a sibling path that inherits the broad
+// admin app's email+posture policy only (no service token), so a service-token
+// holder cannot reach the delete endpoint at the Access gate.
+admin.post('/puzzle-delete/:id', async (c) => {
 	const id = c.req.param('id');
 	const force = c.req.query('force') === 'true';
 

@@ -42,7 +42,6 @@ const apiBindings = {
 	},
 	secretVars: {
 		JWT_SECRET: config.requireSecret('jwtSecret'),
-		ADMIN_PASSKEY: config.requireSecret('adminPasskey'),
 		GOOGLE_CLIENT_SECRET: config.requireSecret('googleClientSecret')
 	}
 };

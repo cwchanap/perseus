@@ -15,7 +15,6 @@ import { existsSync, readFileSync, unlinkSync, writeFileSync, mkdirSync, chmodSy
 import { homedir } from 'node:os';
 import { createInterface } from 'node:readline';
 import { $ } from 'bun';
-import { WORKER_AUTH_ERROR_CODE } from '@perseus/types';
 import { ACCESS_AUD, PROBE_TIMEOUT_MS, accessAppFor, tokenBasenameFor } from './types';
 
 function homeCloudflaredDir(): string {
@@ -227,7 +226,7 @@ async function promptLine(question: string): Promise<string> {
 
 export async function promptTokenInteractive(server: string): Promise<string> {
 	// Open the CLI Access app path (not /admin): JWT audience must match
-	// `Perseus Admin CLI`, which protects /api/admin/puzzles and /api/admin/login.
+	// `Perseus Admin CLI`, which protects /api/admin/puzzles.
 	const accessApp = accessAppFor(server);
 	console.log(`
 ────────────────────────────────────────────────────────────
@@ -254,35 +253,8 @@ export async function promptTokenInteractive(server: string): Promise<string> {
 }
 
 /**
- * Check whether a 401 response originated from the worker's requireAuth
- * middleware (JSON body `{"error":"unauthorized",...}`) rather than from
- * Cloudflare Access. Access can return 401 for rejected tokens when the
- * policy's "respond with 401" toggle is enabled — without this check, an
- * invalid/expired token would be indistinguishable from a valid one that
- * reached the worker without a Perseus session.
- */
-async function isWorkerAuth401(res: Response): Promise<boolean> {
-	try {
-		const body = await res.text();
-		const parsed = JSON.parse(body) as { error?: unknown };
-		return parsed?.error === WORKER_AUTH_ERROR_CODE;
-	} catch {
-		return false;
-	}
-}
-
-/**
- * Probe whether Access accepts this JWT by hitting an admin endpoint that does
- * NOT require a passkey (GET /api/admin/puzzles). Avoids POSTing to /login,
- * which would trip the loginRateLimit middleware and block the real upload.
- * 302/403 = Access blocked; 200 = passed Access; 401 = ambiguous (see below).
- *
- * 401 is disambiguated by inspecting the body: the worker's requireAuth
- * middleware returns JSON `{"error":"unauthorized",...}`, while Access
- * returns its own error page. A 401 with a non-worker body is treated as
- * 'blocked' (Access rejected the token), or 'unhealthy' (Access accepted
- * the token but the backend returned 5xx — the probe reached the worker,
- * meaning Access works, but the app itself is broken and uploads will fail).
+ * Probe whether Access accepts this JWT by hitting GET /api/admin/puzzles.
+ * 401/302/403 = Access blocked; 200 = passed Access.
  *
  * 5xx is treated as 'unhealthy' (not 'ok') because while it confirms Access
  * accepted the token, the readiness gate's purpose is to determine whether
@@ -303,13 +275,8 @@ export async function probeAccessToken(
 			redirect: 'manual',
 			signal: AbortSignal.timeout(PROBE_TIMEOUT_MS)
 		});
-		if (res.status === 302 || res.status === 403) return 'blocked';
+		if (res.status === 401 || res.status === 302 || res.status === 403) return 'blocked';
 		if (res.status === 200) return 'ok';
-		if (res.status === 401) {
-			// Distinguish worker 401 (Access accepted, no session) from
-			// Access 401 (token rejected with 401 toggle enabled).
-			return (await isWorkerAuth401(res)) ? 'ok' : 'blocked';
-		}
 		// 5xx means we reached the worker — Access accepted the token — but
 		// the backend is unhealthy. The readiness gate must reject this so
 		// the operator investigates before attempting an upload that will
@@ -330,20 +297,10 @@ export async function probeAccessToken(
 
 /**
  * Probe whether Cloudflare Access accepts a service token (CF-Access-Client-Id
- * / CF-Access-Client-Secret) by hitting an admin endpoint that does NOT require
- * a passkey (GET /api/admin/puzzles). Mirrors probeAccessToken so the
- * service-token path gets the same live smoke check as the JWT path — without
- * it, an expired/invalid service token only surfaces as an opaque login
- * failure after the upload has already begun.
- *
- * 302/403 = Access blocked; 200 = reached the worker; 401 = ambiguous (see
- * below). 401 is disambiguated by inspecting the body: the worker's
- * requireAuth returns JSON `{"error":"unauthorized",...}`, while Access
- * returns its own error page. A 401 with a non-worker body is treated as
- * 'blocked' (Access rejected the service token, e.g. with the 401 toggle).
- * 5xx = Access accepted the service token but the backend is unhealthy.
- *
- * Avoids POSTing to /login, which would trip the loginRateLimit middleware.
+ * / CF-Access-Client-Secret) by hitting GET /api/admin/puzzles. Mirrors
+ * probeAccessToken so the service-token path gets the same live smoke check.
+ * 401/302/403 = Access blocked; 200 = reached the worker; 5xx = Access accepted
+ * the service token but the backend is unhealthy.
  */
 export async function probeServiceToken(
 	server: string,
@@ -360,11 +317,8 @@ export async function probeServiceToken(
 			redirect: 'manual',
 			signal: AbortSignal.timeout(PROBE_TIMEOUT_MS)
 		});
-		if (res.status === 302 || res.status === 403) return 'blocked';
+		if (res.status === 401 || res.status === 302 || res.status === 403) return 'blocked';
 		if (res.status === 200) return 'ok';
-		if (res.status === 401) {
-			return (await isWorkerAuth401(res)) ? 'ok' : 'blocked';
-		}
 		// See probeAccessToken for the rationale on treating 5xx as
 		// 'unhealthy': Access accepted the service token, but the backend
 		// is broken and uploads will fail until it recovers.

@@ -41,12 +41,11 @@ function usage(exitCode = 1): never {
 Commands:
   set-token   Paste CF_Authorization JWT (recommended for prod)
   login       Try cloudflared Access login, then fall back to set-token
-  status      Check token + passkey readiness
+  status      Check Access readiness
   upload      Upload catalog images
 
 Options:
   --server <url>           API base (default: ${DEFAULT_SERVER})
-  --passkey <value>        Admin passkey (or ADMIN_PASSKEY / apps/api/.env)
   --cf-access-token <jwt>  Access JWT (or CF_ACCESS_TOKEN / cached set-token)
   --catalog <path>         Catalog JSON (default: scripts/startup-seed/catalog.json)
   --images <dir>           Image directory (default: scripts/startup-seed/images)
@@ -121,8 +120,6 @@ async function parseOptions(): Promise<Options> {
 	// Warn about hardcoded defaults using the resolved dotenv map so values
 	// provided in apps/api/.env are recognized and don't trigger false warnings.
 	warnHardcodedDefaults(dotenv);
-	const passkey =
-		readArg(args, '--passkey') ?? process.env.ADMIN_PASSKEY ?? dotenv.ADMIN_PASSKEY ?? '';
 
 	const server = (readArg(args, '--server') ?? dotenv.PERSEUS_SERVER ?? DEFAULT_SERVER).replace(
 		/\/+$/,
@@ -156,7 +153,6 @@ async function parseOptions(): Promise<Options> {
 	return {
 		command,
 		server,
-		passkey,
 		catalogPath: readArg(args, '--catalog') ?? join(root, 'scripts/startup-seed/catalog.json'),
 		imagesDir: readArg(args, '--images') ?? join(root, 'scripts/startup-seed/images'),
 		tokenCachePath,
@@ -174,7 +170,6 @@ async function parseOptions(): Promise<Options> {
 
 const VALUE_FLAGS = new Set([
 	'--server',
-	'--passkey',
 	'--cf-access-token',
 	'--catalog',
 	'--images',
@@ -286,8 +281,7 @@ export type ReadinessOutcome =
 	| { ready: true }
 	| { ready: false; reason: 'access-probe-failed' }
 	| { ready: false; reason: 'backend-unhealthy' }
-	| { ready: false; reason: 'access-missing' }
-	| { ready: false; reason: 'passkey-missing' };
+	| { ready: false; reason: 'access-missing' };
 
 /**
  * Pure readiness decision for `bun run admin:startup:status`. Extracted from
@@ -306,7 +300,6 @@ export function evaluateReadiness(args: {
 	hasToken: boolean;
 	hasServiceToken: boolean;
 	probeResult: string | undefined;
-	passkey: string;
 }): ReadinessOutcome {
 	if (args.probeResult === 'unhealthy') {
 		return { ready: false, reason: 'backend-unhealthy' };
@@ -317,9 +310,6 @@ export function evaluateReadiness(args: {
 	const hasAnyAccess = args.skipAccess || args.hasToken || args.hasServiceToken;
 	if (!hasAnyAccess) {
 		return { ready: false, reason: 'access-missing' };
-	}
-	if (!args.passkey) {
-		return { ready: false, reason: 'passkey-missing' };
 	}
 	return { ready: true };
 }
@@ -362,9 +352,6 @@ async function cmdStatus(options: Options): Promise<void> {
 		: 'n/a (CF_ACCESS_AUD not set)';
 	console.log(`  lock file:        ${cfLockStatus}`);
 	console.log(`Service token:     ${options.cfClientId && options.cfClientSecret ? 'yes' : 'no'}`);
-	console.log(
-		`Admin passkey:     ${options.passkey ? `yes (${options.passkey.length} chars)` : 'no'}`
-	);
 
 	// Track probe outcome so the readiness check below does not print "Ready"
 	// when Access credentials are present but rejected/expired. Without this,
@@ -394,13 +381,9 @@ async function cmdStatus(options: Options): Promise<void> {
 		skipAccess: options.skipAccess,
 		hasToken: !!token,
 		hasServiceToken,
-		probeResult,
-		passkey: options.passkey
+		probeResult
 	});
 
-	// Check Access probe failures before the passkey hint. Otherwise a blocked
-	// service token / JWT with ADMIN_PASSKEY unset prints only the passkey
-	// message and exits 0, so readiness callers treat rejected credentials as valid.
 	if (outcome.ready) {
 		console.log('\nReady: bun run admin:startup:upload -- --limit 5');
 		return;
@@ -424,9 +407,6 @@ async function cmdStatus(options: Options): Promise<void> {
 		console.log('  3. bun run admin:startup:upload -- --limit 5');
 		throw new FatalError('Access credentials missing — not ready for upload.');
 	}
-	// outcome.reason === 'passkey-missing'
-	console.log('\nSet ADMIN_PASSKEY (or apps/api/.env).');
-	throw new FatalError('Admin passkey missing — not ready for upload.');
 }
 
 export async function main(): Promise<void> {

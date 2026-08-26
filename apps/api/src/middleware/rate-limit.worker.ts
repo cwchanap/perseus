@@ -4,7 +4,6 @@
 import type { Context, Next } from 'hono';
 import type { Env } from '../worker';
 
-const MAX_LOGIN_ATTEMPTS = 5;
 const OAUTH_MAX_ATTEMPTS = 10;
 const AVATAR_MAX_ATTEMPTS = 20;
 const LOCKOUT_DURATION_MS = 15 * 60 * 1000; // 15 minutes
@@ -148,10 +147,6 @@ function getClientIP(c: Context): string {
 		);
 	}
 	return crypto.randomUUID();
-}
-
-function getRateLimitKey(c: Context): string {
-	return `login:${getClientIP(c)}`;
 }
 
 function getKVKey(key: string): string {
@@ -303,15 +298,15 @@ async function deleteRateLimitEntry(
 // Check lockout status and optionally increment attempts in a single read-modify-write.
 // Note: KV does not support atomic compare-and-set, so there is an inherent TOCTOU window
 // between get and put. For strict atomicity under high concurrency, use a Durable Object
-// with an atomic incrementAndGet(key, ...) method. For login rate limiting, the small
-// race window is acceptable — worst case an extra attempt slips through before lockout.
+// with an atomic incrementAndGet(key, ...) method. The small race window is acceptable —
+// worst case an extra attempt slips through before lockout.
 async function checkAndIncrement(
 	kv: KVNamespace | undefined,
 	key: string,
 	now: number,
-	env?: string,
-	increment = false,
-	maxAttempts = MAX_LOGIN_ATTEMPTS
+	env: string | undefined,
+	increment: boolean,
+	maxAttempts: number
 ): Promise<{ shouldBlock: boolean; remainingSeconds?: number }> {
 	const entry = await getRateLimitEntry(kv, key, env);
 
@@ -352,62 +347,13 @@ async function checkAndIncrement(
 	return { shouldBlock: false };
 }
 
-export async function loginRateLimit(c: Context<{ Bindings: Env }>, next: Next): Promise<Response> {
-	const key = getRateLimitKey(c);
-	const kv = c.env.PUZZLE_METADATA;
-	const env = c.env.NODE_ENV;
-
-	// Check current lockout status before auth handler runs.
-	const result = await checkAndIncrement(kv, key, Date.now(), env, false);
-	if (result.shouldBlock) {
-		if (result.remainingSeconds !== undefined) {
-			c.header('Retry-After', result.remainingSeconds.toString());
-		}
-		return c.json(
-			{
-				error: 'too_many_requests',
-				message:
-					result.remainingSeconds !== undefined
-						? `Too many login attempts. Try again in ${result.remainingSeconds} seconds`
-						: 'Too many login attempts. Please try again later'
-			},
-			429
-		);
-	}
-
-	// Let request proceed
-	await next();
-
-	// Post-auth rate limit tracking — wrapped in try-catch so KV failures
-	// don't mask the original auth response
-	try {
-		if (c.res.status === 200) {
-			await deleteRateLimitEntry(kv, key, env);
-		} else if (c.res.status === 401 || c.res.status === 403) {
-			// Only count failed authentication attempts.
-			await checkAndIncrement(kv, key, Date.now(), env, true);
-		}
-	} catch (error) {
-		console.error('Rate limit post-auth tracking failed:', error);
-	}
-
-	return c.res;
-}
-
-export async function resetLoginAttempts(c: Context<{ Bindings: Env }>): Promise<void> {
-	const key = getRateLimitKey(c);
-	const kv = c.env.PUZZLE_METADATA;
-	const env = c.env.NODE_ENV;
-	await deleteRateLimitEntry(kv, key, env);
-}
-
 export async function oauthRateLimit(c: Context<{ Bindings: Env }>, next: Next): Promise<Response> {
 	const key = `oauth:${getClientIP(c)}`;
 	const kv = c.env.PUZZLE_METADATA;
 	const env = c.env.NODE_ENV;
 
 	// Check current lockout status before handler runs (no increment)
-	const lockCheck = await checkAndIncrement(kv, key, Date.now(), env, false);
+	const lockCheck = await checkAndIncrement(kv, key, Date.now(), env, false, OAUTH_MAX_ATTEMPTS);
 	if (lockCheck.shouldBlock) {
 		if (lockCheck.remainingSeconds !== undefined) {
 			c.header('Retry-After', lockCheck.remainingSeconds.toString());
@@ -473,7 +419,7 @@ export async function avatarRateLimit(
 	// already-incremented counter is deleted, and no post-request write
 	// recreates it. Incrementing after `next()` would undo the reset.
 	// Pass AVATAR_MAX_ATTEMPTS + 1 because checkAndIncrement uses >= (correct
-	// for the post-increment login/oauth pattern but off-by-one for this
+	// for the post-increment OAuth pattern but off-by-one for this
 	// pre-increment pattern). +1 makes >= equivalent to >, matching the Bun
 	// middleware which allows exactly AVATAR_MAX_ATTEMPTS requests before
 	// blocking the (N+1)th.

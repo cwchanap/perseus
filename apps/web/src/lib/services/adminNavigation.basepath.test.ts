@@ -11,7 +11,7 @@ describe('admin navigation with non-empty base path', () => {
 	describe('stripBase', () => {
 		it('strips the configured base prefix', () => {
 			expect(stripBase('/myapp/admin')).toBe('/admin');
-			expect(stripBase('/myapp/admin/login')).toBe('/admin/login');
+			expect(stripBase('/myapp/admin/puzzles')).toBe('/admin/puzzles');
 			expect(stripBase('/myapp/puzzle/abc')).toBe('/puzzle/abc');
 		});
 
@@ -35,7 +35,7 @@ describe('admin navigation with non-empty base path', () => {
 		it('does not force reloads for intra-admin navigation with base prefix', () => {
 			expect(isClientRoutedAdminPath('/myapp/admin', '/myapp/admin')).toBe(false);
 			expect(isClientRoutedAdminPath('/myapp/admin/settings', '/myapp/admin')).toBe(false);
-			expect(isClientRoutedAdminPath('/myapp/admin/settings', '/myapp/admin/login')).toBe(false);
+			expect(isClientRoutedAdminPath('/myapp/admin/settings', '/myapp/admin/puzzles')).toBe(false);
 		});
 
 		it('does not treat non-admin paths with base prefix as admin routes', () => {

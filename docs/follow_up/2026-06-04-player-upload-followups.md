@@ -139,10 +139,10 @@ be a pure refactor with no observable difference to clients.
 ### Problem
 
 `POST /api/puzzles` has no rate limiting. Admin upload also lacks upload
-rate limiting (only `/api/admin/login` is limited), but the player audience
-is broader than the admin audience, and each successful upload triggers an
-expensive Cloudflare Workflow (image processing, KV writes, piece
-generation).
+rate limiting, but its production audience is constrained by Cloudflare
+Access. The player audience is broader than the admin audience, and each
+successful upload triggers an expensive Cloudflare Workflow (image
+processing, KV writes, piece generation).
 
 A misbehaving or compromised session can:
 

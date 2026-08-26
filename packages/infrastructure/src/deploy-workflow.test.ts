@@ -96,10 +96,6 @@ describe('deploy-infrastructure workflow', () => {
 			expectSecretBlock('jwtSecret', 'JWT_SECRET');
 		});
 
-		it('passes adminPasskey as a secret to both preview and deploy', () => {
-			expectSecretBlock('adminPasskey', 'ADMIN_PASSKEY');
-		});
-
 		it('passes googleClientSecret as a secret to both preview and deploy', () => {
 			expectSecretBlock('googleClientSecret', 'GOOGLE_CLIENT_SECRET');
 		});
@@ -125,6 +121,15 @@ describe('deploy-infrastructure workflow', () => {
 		it('passes adminCliServiceTokenDuration as a var to both preview and deploy', () => {
 			expectVarBlock('adminCliServiceTokenDuration', 'ADMIN_CLI_SERVICE_TOKEN_DURATION');
 		});
+	});
+
+	it('does not pass the retired admin authentication secret', () => {
+		const configKey = ['admin', 'Pass', 'key'].join('');
+		const environmentKey = ['ADMIN', 'PASS', 'KEY'].join('_');
+		for (const [jobName, cfg] of bothConfigs) {
+			expect(cfg[configKey], `${jobName}: retired config key must be absent`).toBeUndefined();
+		}
+		expect(workflow).not.toContain(environmentKey);
 	});
 
 	it('does not reference any secrets.* without a corresponding secret: true', () => {

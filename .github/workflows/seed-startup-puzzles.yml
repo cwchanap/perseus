@@ -158,7 +158,6 @@ jobs:
         working-directory: ${{ github.workspace }}
         timeout-minutes: 30
         env:
-          ADMIN_PASSKEY: ${{ secrets.ADMIN_PASSKEY }}
           CF_ACCESS_CLIENT_ID: ${{ steps.stack-outputs.outputs.cf-access-client-id }}
           CF_ACCESS_CLIENT_SECRET: ${{ steps.stack-outputs.outputs.cf-access-client-secret }}
           PERSEUS_SERVER: ${{ vars.PERSEUS_SERVER || 'https://perseus.cwchanap.dev' }}

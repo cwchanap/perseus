@@ -17,23 +17,6 @@ vi.mock('../../services/storage.worker', () => ({
 	uploadOriginalImage: vi.fn()
 }));
 
-vi.mock('../../middleware/auth.worker', () => ({
-	clearSessionCookie: vi.fn(),
-	createSession: vi.fn(),
-	getSessionToken: vi.fn(() => 'valid-token'),
-	requireAuth: async (c: any, next: any) => {
-		c.set('session', { userId: 'admin', username: 'admin', role: 'admin' });
-		return next();
-	},
-	revokeSession: vi.fn(),
-	setSessionCookie: vi.fn(),
-	verifySession: vi.fn()
-}));
-
-vi.mock('../../middleware/rate-limit.worker', () => ({
-	loginRateLimit: async (_c: any, next: any) => next()
-}));
-
 vi.mock('../../services/player-auth.worker', () => ({
 	addAllowlistEntry: vi.fn(),
 	deleteAllowlistEntry: vi.fn(),
@@ -74,7 +57,6 @@ const PNG_HEADER = new Uint8Array([
 
 function createEnv() {
 	return {
-		ADMIN_PASSKEY: 'test-passkey',
 		JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
 		NODE_ENV: 'development',
 		PUZZLE_METADATA: {} as KVNamespace,

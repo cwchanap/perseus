@@ -30,10 +30,9 @@ function fakeJwt(): string {
 
 // ─── probeAccessToken ───────────────────────────────────────────────
 // Covers all code paths:
-//   302/403 → 'blocked'
+//   401/302/403 → 'blocked'
 //   200     → 'ok'
-//   401     → 'ok' if body is worker requireAuth JSON, else 'blocked'
-//   5xx     → 'ok' (reached the worker — Access accepted the token)
+//   5xx     → 'unhealthy' (Access accepted the token, backend failed)
 //   other   → 'error'
 //   catch   → 'error' (network failure / timeout)
 
@@ -58,24 +57,14 @@ describe('probeAccessToken', () => {
 		expect(await probeAccessToken('https://example.com', 'jwt-token')).toBe('blocked');
 	});
 
-	it('returns "ok" on 200 (reached the app, admin session present)', async () => {
+	it('returns "ok" on 200 (reached the app)', async () => {
 		globalThis.fetch = mock(
 			async () => new Response('[]', { status: 200 })
 		) as unknown as typeof fetch;
 		expect(await probeAccessToken('https://example.com', 'jwt-token')).toBe('ok');
 	});
 
-	it('returns "ok" on 401 with worker requireAuth body (reached the app, no session)', async () => {
-		globalThis.fetch = mock(
-			async () =>
-				new Response('{"error":"unauthorized","message":"Authentication required"}', {
-					status: 401
-				})
-		) as unknown as typeof fetch;
-		expect(await probeAccessToken('https://example.com', 'jwt-token')).toBe('ok');
-	});
-
-	it('returns "blocked" on 401 with non-worker body (Access rejected with 401 toggle)', async () => {
+	it('returns "blocked" on 401 (Access rejected with 401 toggle)', async () => {
 		globalThis.fetch = mock(
 			async () => new Response('<html>Cloudflare Access</html>', { status: 401 })
 		) as unknown as typeof fetch;
@@ -174,17 +163,7 @@ describe('probeServiceToken', () => {
 		expect(await probeServiceToken('https://example.com', 'cid', 'csec')).toBe('ok');
 	});
 
-	it('returns "ok" on 401 with worker requireAuth body (reached the app, no session)', async () => {
-		globalThis.fetch = mock(
-			async () =>
-				new Response('{"error":"unauthorized","message":"Authentication required"}', {
-					status: 401
-				})
-		) as unknown as typeof fetch;
-		expect(await probeServiceToken('https://example.com', 'cid', 'csec')).toBe('ok');
-	});
-
-	it('returns "blocked" on 401 with non-worker body (Access rejected with 401 toggle)', async () => {
+	it('returns "blocked" on 401 (Access rejected with 401 toggle)', async () => {
 		globalThis.fetch = mock(
 			async () => new Response('<html>Cloudflare Access</html>', { status: 401 })
 		) as unknown as typeof fetch;
@@ -490,22 +469,25 @@ describe('loadDotEnvMap', () => {
 		const apiDir = join(tmpDir, 'apps', 'api');
 		const { mkdirSync } = await import('node:fs');
 		mkdirSync(apiDir, { recursive: true });
-		writeFileSync(join(apiDir, '.env'), 'ADMIN_PASSKEY=secret123\nCF_ACCESS_CLIENT_ID=abc\n');
+		writeFileSync(
+			join(apiDir, '.env'),
+			'CF_ACCESS_CLIENT_ID=abc\nCF_ACCESS_CLIENT_SECRET=secret123\n'
+		);
 
 		const map = await loadDotEnvMap(tmpDir);
-		expect(map.ADMIN_PASSKEY).toBe('secret123');
 		expect(map.CF_ACCESS_CLIENT_ID).toBe('abc');
+		expect(map.CF_ACCESS_CLIENT_SECRET).toBe('secret123');
 	});
 
 	it('skips comments and blank lines', async () => {
 		const apiDir = join(tmpDir, 'apps', 'api');
 		const { mkdirSync } = await import('node:fs');
 		mkdirSync(apiDir, { recursive: true });
-		writeFileSync(join(apiDir, '.env'), '# comment\n\nADMIN_PASSKEY=secret\n');
+		writeFileSync(join(apiDir, '.env'), '# comment\n\nCF_ACCESS_CLIENT_ID=abc\n');
 
 		const map = await loadDotEnvMap(tmpDir);
-		expect(Object.keys(map)).toEqual(['ADMIN_PASSKEY']);
-		expect(map.ADMIN_PASSKEY).toBe('secret');
+		expect(Object.keys(map)).toEqual(['CF_ACCESS_CLIENT_ID']);
+		expect(map.CF_ACCESS_CLIENT_ID).toBe('abc');
 	});
 
 	it('strips surrounding quotes from values', async () => {

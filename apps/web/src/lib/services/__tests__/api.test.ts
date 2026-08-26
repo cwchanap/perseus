@@ -5,9 +5,6 @@ import {
 	deletePuzzle,
 	fetchPuzzles,
 	fetchPuzzle,
-	checkSession,
-	login,
-	logout,
 	fetchAdminPuzzles,
 	getThumbnailUrl,
 	getPieceImageUrl,
@@ -313,40 +310,6 @@ describe('API Service - fetchPuzzle', () => {
 	});
 });
 
-describe('API Service - checkSession', () => {
-	it('returns true when session is authenticated', async () => {
-		vi.stubGlobal(
-			'fetch',
-			vi.fn().mockResolvedValue(
-				new Response(JSON.stringify({ authenticated: true }), {
-					status: 200,
-					headers: { 'Content-Type': 'application/json' }
-				})
-			)
-		);
-
-		const result = await checkSession();
-		expect(result).toBe(true);
-		expect(fetch).toHaveBeenCalledWith(expect.stringMatching(/\/api\/admin\/session$/), {
-			credentials: 'include'
-		});
-	});
-
-	it('returns false when response is not ok', async () => {
-		vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 401 })));
-
-		const result = await checkSession();
-		expect(result).toBe(false);
-	});
-
-	it('returns false when fetch throws', async () => {
-		vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Network error')));
-
-		const result = await checkSession();
-		expect(result).toBe(false);
-	});
-});
-
 describe('API Service - createPuzzle', () => {
 	const mockPuzzleMetadata = {
 		id: 'p1',
@@ -543,75 +506,6 @@ describe('API Service - getReferenceImageUrl', () => {
 	});
 });
 
-// ─── login ───────────────────────────────────────────────────────────────────
-
-describe('API Service - login', () => {
-	it('returns login response on success', async () => {
-		vi.stubGlobal(
-			'fetch',
-			vi.fn().mockResolvedValue(
-				new Response(JSON.stringify({ success: true }), {
-					status: 200,
-					headers: { 'Content-Type': 'application/json' }
-				})
-			)
-		);
-
-		const result = await login('my-passkey');
-		expect(result).toEqual({ success: true });
-		expect(fetch).toHaveBeenCalledWith(
-			expect.stringMatching(/\/api\/admin\/login$/),
-			expect.objectContaining({
-				method: 'POST',
-				credentials: 'include',
-				body: JSON.stringify({ passkey: 'my-passkey' })
-			})
-		);
-	});
-
-	it('throws ApiError on failed login', async () => {
-		vi.stubGlobal(
-			'fetch',
-			vi.fn().mockResolvedValue(
-				new Response(JSON.stringify({ error: 'unauthorized', message: 'Invalid passkey' }), {
-					status: 401,
-					headers: { 'Content-Type': 'application/json' }
-				})
-			)
-		);
-
-		await expect(login('wrong')).rejects.toMatchObject({ status: 401 });
-	});
-});
-
-// ─── logout ──────────────────────────────────────────────────────────────────
-
-describe('API Service - logout', () => {
-	it('resolves successfully on 204 response', async () => {
-		vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 204 })));
-
-		await expect(logout()).resolves.toBeUndefined();
-		expect(fetch).toHaveBeenCalledWith(
-			expect.stringMatching(/\/api\/admin\/logout$/),
-			expect.objectContaining({ method: 'POST', credentials: 'include' })
-		);
-	});
-
-	it('throws ApiError when logout fails', async () => {
-		vi.stubGlobal(
-			'fetch',
-			vi.fn().mockResolvedValue(
-				new Response(JSON.stringify({ error: 'server_error', message: 'Internal error' }), {
-					status: 500,
-					headers: { 'Content-Type': 'application/json' }
-				})
-			)
-		);
-
-		await expect(logout()).rejects.toBeInstanceOf(ApiError);
-	});
-});
-
 // ─── player auth ─────────────────────────────────────────────────────────────
 
 describe('API Service - player auth', () => {
@@ -784,7 +678,7 @@ describe('API Service - fetchAdminPuzzles', () => {
 		);
 	});
 
-	it('throws ApiError when not authenticated', async () => {
+	it('propagates non-success responses as ApiError', async () => {
 		vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 401 })));
 
 		await expect(fetchAdminPuzzles()).rejects.toMatchObject({ status: 401 });
@@ -891,7 +785,7 @@ describe('API Service - handleResponse edge cases (via fetchPuzzle)', () => {
 
 // ─── handleVoidResponse edge cases ───────────────────────────────────────────
 
-describe('API Service - handleVoidResponse edge cases (via logout)', () => {
+describe('API Service - handleVoidResponse edge cases (via player logout)', () => {
 	it('resolves when response has content-length 0', async () => {
 		vi.stubGlobal(
 			'fetch',
@@ -903,7 +797,7 @@ describe('API Service - handleVoidResponse edge cases (via logout)', () => {
 			)
 		);
 
-		await expect(logout()).resolves.toBeUndefined();
+		await expect(logoutPlayer()).resolves.toBeUndefined();
 	});
 
 	it('resolves when response has no content-type header', async () => {
@@ -916,7 +810,7 @@ describe('API Service - handleVoidResponse edge cases (via logout)', () => {
 			)
 		);
 
-		await expect(logout()).resolves.toBeUndefined();
+		await expect(logoutPlayer()).resolves.toBeUndefined();
 	});
 
 	it('resolves when response has non-JSON content-type', async () => {
@@ -930,7 +824,7 @@ describe('API Service - handleVoidResponse edge cases (via logout)', () => {
 			)
 		);
 
-		await expect(logout()).resolves.toBeUndefined();
+		await expect(logoutPlayer()).resolves.toBeUndefined();
 	});
 
 	it('resolves after best-effort JSON parse for JSON content-type', async () => {
@@ -944,7 +838,7 @@ describe('API Service - handleVoidResponse edge cases (via logout)', () => {
 			)
 		);
 
-		await expect(logout()).resolves.toBeUndefined();
+		await expect(logoutPlayer()).resolves.toBeUndefined();
 	});
 });
 

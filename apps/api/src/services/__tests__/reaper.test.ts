@@ -115,7 +115,6 @@ function makeEnv(workflowStatuses: Record<string, string> = {}) {
 		PUZZLE_METADATA_DO: {} as DurableObjectNamespace,
 		DB: {} as D1Database,
 		JWT_SECRET: 'test',
-		ADMIN_PASSKEY: 'test',
 		GOOGLE_CLIENT_ID: '',
 		GOOGLE_CLIENT_SECRET: '',
 		AUTH_REDIRECT_BASE_URL: '',

@@ -4,7 +4,7 @@
  * Covers: invalid aspect ratio, outer catch block in POST /puzzles,
  * parseImageDimensions error catch, JPEG/WebP dimension parsing,
  * aspectRatiosMatch, non-integer piece count, DELETE metadata failure,
- * logout with no token, and true outer catch in POST.
+ * and true outer catch in POST.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -50,22 +50,8 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	};
 });
 
-vi.mock('../../middleware/auth.worker', () => ({
-	verifySession: vi.fn(),
-	requireAuth: async (c: any, next: any) => {
-		c.set('session', { userId: 'admin', username: 'admin', role: 'admin' });
-		return next();
-	},
-	createSession: vi.fn(),
-	setSessionCookie: vi.fn(),
-	clearSessionCookie: vi.fn(),
-	getSessionToken: vi.fn(() => 'valid-token'),
-	revokeSession: vi.fn()
-}));
-
 import admin from '../admin.worker';
 import * as storage from '../../services/storage.worker';
-import * as auth from '../../middleware/auth.worker';
 import { __resetRateLimitStore } from '../../middleware/rate-limit.worker';
 
 const PNG_HEADER = new Uint8Array([
@@ -102,7 +88,6 @@ const WEBP_VP8X_300X300 = new Uint8Array([
 ]);
 
 const baseEnv = {
-	ADMIN_PASSKEY: 'test-passkey',
 	JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
 	PUZZLE_METADATA: {} as KVNamespace,
 	PUZZLE_METADATA_DO: {} as DurableObjectNamespace,
@@ -467,30 +452,6 @@ describe('Admin Worker - DELETE metadata deletion failure', () => {
 		);
 		expect(dbContextMock.completionWrites.finishPuzzleDeletion).not.toHaveBeenCalled();
 		vi.restoreAllMocks();
-	});
-});
-
-describe('Admin Worker - logout with no token', () => {
-	beforeEach(() => {
-		vi.clearAllMocks();
-		__resetRateLimitStore();
-	});
-
-	it('clears cookie and returns success when no session token is present', async () => {
-		vi.mocked(auth.getSessionToken).mockReturnValue(null as any);
-
-		const req = new Request('http://localhost/logout', {
-			method: 'POST',
-			headers: { cookie: '' }
-		});
-
-		const res = await admin.fetch(req, baseEnv as any);
-
-		expect(res.status).toBe(200);
-		const body = (await res.json()) as any;
-		expect(body.success).toBe(true);
-		expect(auth.revokeSession).not.toHaveBeenCalled();
-		expect(auth.clearSessionCookie).toHaveBeenCalled();
 	});
 });
 

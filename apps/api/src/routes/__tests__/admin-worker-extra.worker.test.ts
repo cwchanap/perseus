@@ -34,19 +34,6 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	return { ...original, ...sharedMockOverrides };
 });
 
-vi.mock('../../middleware/auth.worker', () => ({
-	verifySession: vi.fn(),
-	requireAuth: async (c: any, next: any) => {
-		c.set('session', { userId: 'admin', username: 'admin', role: 'admin' });
-		return next();
-	},
-	createSession: vi.fn(),
-	setSessionCookie: vi.fn(),
-	clearSessionCookie: vi.fn(),
-	getSessionToken: vi.fn(() => 'valid-token'),
-	revokeSession: vi.fn()
-}));
-
 import admin from '../admin.worker';
 import * as storage from '../../services/storage.worker';
 import { __resetRateLimitStore } from '../../middleware/rate-limit.worker';
@@ -59,7 +46,6 @@ const PNG_HEADER = new Uint8Array([
 ]);
 
 const baseEnv = {
-	ADMIN_PASSKEY: 'test-passkey',
 	JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
 	PUZZLE_METADATA: {} as KVNamespace,
 	PUZZLES_BUCKET: {} as R2Bucket
@@ -73,74 +59,6 @@ function buildFormData(): FormData {
 	formData.append('image', blob, 'test.png');
 	return formData;
 }
-
-import * as authWorker from '../../middleware/auth.worker';
-
-describe('Admin Worker - GET /session error catch (lines 204-205)', () => {
-	beforeEach(() => {
-		vi.clearAllMocks();
-		__resetRateLimitStore();
-		vi.spyOn(console, 'error').mockImplementation(() => {});
-	});
-
-	afterEach(() => {
-		vi.restoreAllMocks();
-	});
-
-	it('returns 500 when verifySession throws unexpectedly', async () => {
-		vi.mocked(authWorker.verifySession).mockRejectedValue(new Error('JWT_SECRET misconfigured'));
-
-		const mockEnv = {
-			...baseEnv,
-			PUZZLE_WORKFLOW: { create: vi.fn() }
-		};
-
-		const req = new Request('http://localhost/session', {
-			method: 'GET',
-			headers: { cookie: 'session=valid.token' }
-		});
-
-		const res = await admin.fetch(req, mockEnv as any);
-		expect(res.status).toBe(500);
-		const body = (await res.json()) as any;
-		expect(body.error).toBe('internal_error');
-		expect(body.message).toBe('Session verification failed');
-	});
-});
-
-describe('Admin Worker - POST /login error catch (lines 153-154)', () => {
-	beforeEach(() => {
-		vi.clearAllMocks();
-		__resetRateLimitStore();
-		vi.spyOn(console, 'error').mockImplementation(() => {});
-		vi.spyOn(console, 'warn').mockImplementation(() => {});
-	});
-
-	afterEach(() => {
-		vi.restoreAllMocks();
-	});
-
-	it('returns 500 when createSession throws unexpectedly after valid passkey', async () => {
-		vi.mocked(authWorker.createSession).mockRejectedValue(new Error('KV write failed'));
-
-		const mockEnv = {
-			...baseEnv,
-			PUZZLE_WORKFLOW: { create: vi.fn() }
-		};
-
-		const req = new Request('http://localhost/login', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ passkey: 'test-passkey' })
-		});
-
-		const res = await admin.fetch(req, mockEnv as any);
-		expect(res.status).toBe(500);
-		const body = (await res.json()) as any;
-		expect(body.error).toBe('internal_error');
-		expect(body.message).toBe('Failed to process login');
-	});
-});
 
 describe('Admin Worker - POST /puzzles cleanup failure branches', () => {
 	beforeEach(() => {

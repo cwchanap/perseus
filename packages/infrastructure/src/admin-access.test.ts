@@ -151,10 +151,9 @@ describe('buildAdminAccessDestinations', () => {
 });
 
 describe('buildCliAccessDestinations', () => {
-	it('builds only the CLI-needed paths (login + puzzle list/create)', () => {
-		expect(CLI_ACCESS_PATHS).toEqual(['/api/admin/login', '/api/admin/puzzles']);
+	it('builds only the exact puzzle list/create path needed by the CLI', () => {
+		expect(CLI_ACCESS_PATHS).toEqual(['/api/admin/puzzles']);
 		expect(buildCliAccessDestinations('perseus.cwchanap.dev')).toEqual([
-			{ type: 'public', uri: 'perseus.cwchanap.dev/api/admin/login' },
 			{ type: 'public', uri: 'perseus.cwchanap.dev/api/admin/puzzles' }
 		]);
 	});
@@ -358,7 +357,6 @@ describe('buildCliAccessApplicationArgs', () => {
 		expect(args.name).toBe('Perseus Admin CLI');
 		expect(args.domain).toBe('perseus.cwchanap.dev/api/admin/puzzles');
 		expect(args.destinations).toEqual([
-			{ type: 'public', uri: 'perseus.cwchanap.dev/api/admin/login' },
 			{ type: 'public', uri: 'perseus.cwchanap.dev/api/admin/puzzles' }
 		]);
 		expect(args.policies).toHaveLength(2);

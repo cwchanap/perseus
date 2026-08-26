@@ -3,8 +3,6 @@ import type {
 	Puzzle,
 	PuzzleMetadata,
 	PuzzleSummary,
-	LoginResponse,
-	SessionResponse,
 	DeletePuzzleResponse,
 	PuzzleCategory,
 	PlayerSessionResponse,
@@ -171,39 +169,6 @@ export function getReferenceImageUrl(puzzleId: string): string {
 	return `${API_BASE}/api/puzzles/${puzzleId}/reference`;
 }
 
-// Admin auth endpoints
-export async function login(passkey: string): Promise<LoginResponse> {
-	const response = await fetch(`${API_BASE}/api/admin/login`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		credentials: 'include',
-		body: JSON.stringify({ passkey })
-	});
-	return handleResponse<LoginResponse>(response);
-}
-
-export async function logout(): Promise<void> {
-	const response = await fetch(`${API_BASE}/api/admin/logout`, {
-		method: 'POST',
-		credentials: 'include'
-	});
-
-	await handleVoidResponse(response);
-}
-
-export async function checkSession(): Promise<boolean> {
-	try {
-		const response = await fetch(`${API_BASE}/api/admin/session`, {
-			credentials: 'include'
-		});
-		if (!response.ok) return false;
-		const data = await handleResponse<SessionResponse>(response);
-		return data.authenticated;
-	} catch {
-		return false;
-	}
-}
-
 export async function getPlayerSession(): Promise<PlayerSessionResponse> {
 	const response = await fetch(`${API_BASE}/api/auth/session`, {
 		credentials: 'include'
@@ -341,7 +306,7 @@ export async function deletePuzzle(
 	// Uses POST /api/admin/puzzle-delete/:id (not DELETE /api/admin/puzzles/:id)
 	// so the delete route is NOT a sub-path of the narrow CLI Access app's
 	// '/api/admin/puzzles' exact path — a service-token holder cannot reach it
-	// at the Access gate even after obtaining a session cookie.
+	// at the Access gate.
 	let urlString = `${API_BASE}/api/admin/puzzle-delete/${id}`;
 	if (options?.force) {
 		urlString += '?force=true';
