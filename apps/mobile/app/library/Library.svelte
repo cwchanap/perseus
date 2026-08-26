@@ -44,7 +44,7 @@
 	let corruptRows: CorruptDownload[] = [];
 	let observedDownloadRevision = downloadRevision;
 
-	async function refreshDownloads(): Promise<void> {
+	async function refreshDownloads(): Promise<boolean> {
 		try {
 			const entries = await downloadStore.scanDownloads();
 			const installed = entries.filter(
@@ -53,8 +53,10 @@
 			downloadedEntries = entries;
 			downloadedRows = buildDownloadedRows(installed, sessionStorage);
 			downloadedError = null;
+			return true;
 		} catch (error) {
 			downloadedError = error instanceof Error ? error.message : 'download_scan_failed';
+			return false;
 		}
 	}
 
@@ -79,18 +81,31 @@
 	}
 
 	async function discardProgress(id: string): Promise<void> {
-		sessionStorage.clearSession(id);
-		await refreshDownloads();
+		try {
+			sessionStorage.clearSession(id);
+			await refreshDownloads();
+		} catch (error) {
+			downloadedError = error instanceof Error ? error.message : 'progress_discard_failed';
+		}
 	}
 
 	async function removeDownload(id: string): Promise<void> {
-		await downloadStore.removeDownload(id);
-		await refreshDownloads();
+		try {
+			await downloadStore.removeDownload(id);
+			await refreshDownloads();
+		} catch (error) {
+			downloadedError = error instanceof Error ? error.message : 'download_remove_failed';
+		}
 	}
 
 	async function removeAndDownloadAgain(id: string): Promise<void> {
-		await downloadStore.removeDownload(id);
-		await refreshDownloads();
+		try {
+			await downloadStore.removeDownload(id);
+			if (!(await refreshDownloads())) return;
+		} catch (error) {
+			downloadedError = error instanceof Error ? error.message : 'download_remove_failed';
+			return;
+		}
 		onDownload(id);
 	}
 
@@ -145,6 +160,7 @@
 			/>
 			<Downloaded
 				rows={downloadedRows}
+				{downloadJob}
 				{corruptRows}
 				{onLaunch}
 				onDiscardProgress={discardProgress}

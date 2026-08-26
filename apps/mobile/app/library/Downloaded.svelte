@@ -7,7 +7,14 @@
 	} from './downloadedLibrary';
 	import type { CorruptDownload } from './downloadStore';
 
+	type DownloadJobView = {
+		puzzleId: string;
+		done: number;
+		total: number;
+	};
+
 	export let rows: readonly DownloadedPuzzleRow[] = [];
+	export let downloadJob: DownloadJobView | null = null;
 	export let corruptRows: readonly CorruptDownload[] = [];
 	export let onLaunch: (launch: GameplayLaunch) => void;
 	export let onDiscardProgress: (puzzleId: string) => void;
@@ -107,6 +114,7 @@
 				<button
 					text="REMOVE & DOWNLOAD AGAIN"
 					class="library-button"
+					isEnabled={downloadJob === null}
 					on:tap={() => onRemoveAndDownloadAgain(corrupt.puzzleId)}
 				/>
 				<button
