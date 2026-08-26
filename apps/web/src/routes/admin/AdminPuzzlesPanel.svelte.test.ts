@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
 import AdminPuzzlesPanel from './AdminPuzzlesPanel.svelte';
@@ -66,6 +66,10 @@ describe('AdminPuzzlesPanel', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		vi.mocked(fetchAdminPuzzles).mockResolvedValue([]);
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
 	});
 
 	it('shows admin puzzles including processing and failed states', async () => {
@@ -349,7 +353,6 @@ describe('AdminPuzzlesPanel', () => {
 
 		await vi.advanceTimersByTimeAsync(5000);
 		await expect.poll(() => page.getByText('Second warning').query()).toBeNull();
-		vi.useRealTimers();
 	});
 
 	it('polls for a hidden processing puzzle after three seconds', async () => {
@@ -378,7 +381,6 @@ describe('AdminPuzzlesPanel', () => {
 		await vi.waitFor(() => {
 			expect(fetchAdminPuzzles).toHaveBeenCalledTimes(2);
 		});
-		vi.useRealTimers();
 	});
 
 	it('does not start polling when unmounted during the initial request', async () => {
