@@ -46,5 +46,8 @@ sample.png
 coverage/
 data/
 
+# One-shot puzzle family migration artifacts (operator tooling)
+.migration/
+
 # Local puzzle image assets
 /assets/

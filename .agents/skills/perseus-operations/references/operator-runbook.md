@@ -725,3 +725,92 @@ is covered in **§9 Idempotency Key Handling**.
 
 **Source:** `scripts/admin-upload-puzzle.ts`, `scripts/startup/` (bulk
 uploader); originally in root `README.md`.
+
+---
+
+## 12. Puzzle Family Production Cutover
+
+**Use this one-shot operator sequence when migrating legacy single-count server
+puzzles to puzzle families.** These scripts are operator tooling only — they are
+not runtime fallbacks in the Worker.
+
+### Rollout order
+
+```text
+PRE-MERGE: D1 export -> legacy content export -> verify backups
+MERGE/DEPLOY: migrations + family code
+POST-DEPLOY: import families -> wait all ready -> verify -> cleanup old objects
+```
+
+### Step 0 — mandatory D1 backup (before merge)
+
+```bash
+mkdir -p .migration/puzzle-families
+bunx wrangler d1 export perseus-player-data \
+  --remote \
+  --output .migration/puzzle-families/d1-before-family-cutover.sql \
+  --config apps/api/wrangler.production.toml
+```
+
+Verify the SQL file is non-empty before proceeding.
+
+### Step 1 — legacy content export (before merge)
+
+Against the **current** production API (still serving `GET /api/puzzles` and
+legacy `puzzles/<oldId>/` R2 keys):
+
+```bash
+bun scripts/export-legacy-puzzles.ts
+```
+
+This writes `.migration/puzzle-families/manifest.json` and
+`.migration/puzzle-families/originals/*`. The export is read-only and fails if
+any **ready** puzzle cannot export metadata, owner ID (from production D1), or
+original bytes.
+
+Verify manifest entry count matches expected ready puzzle count and every
+`originals/` file is non-empty.
+
+### Step 2 — merge/deploy
+
+Merge the implementation PR to `main` and let deploy apply D1 migrations plus
+family code.
+
+### Accepted empty-gallery window
+
+After family-only code deploys and **before** imported families finish all three
+variants, the production gallery is empty. This is accepted pre-release downtime
+— not an unnoticed failure mode. Run import immediately after deploy.
+
+### Step 3 — import families (post-deploy)
+
+```bash
+bun scripts/import-puzzle-families.ts
+```
+
+Each original is POSTed to `/api/admin/puzzle-families` (same Access service
+token as other admin CLIs). Admin create inserts `SYSTEM_OWNER_ID`; the
+importer then sets `puzzle_families.owner_id` to the exported owner via
+`wrangler d1 execute --remote`. The script polls until every imported family is
+`ready` or `failed`.
+
+### Step 4 — verify replacements
+
+Confirm `import-results.json` shows every family `ready`, spot-check family
+thumbnails/reference assets, and verify gallery counts before cleanup.
+
+### Step 5 — cleanup legacy objects (post-verify only)
+
+```bash
+bun scripts/cleanup-legacy-puzzles.ts
+```
+
+Deletes legacy `puzzle:*` KV keys and `puzzles/<oldId>/` R2 original/thumbnail/
+piece objects. Cleanup refuses to run until every replacement family verifies
+`ready` on `GET /api/admin/puzzle-families`. Do **not** call family-delete on
+the new families.
+
+Use `--dry-run` to print the wrangler delete plan without mutating remote state.
+
+**Source:** `scripts/export-legacy-puzzles.ts`, `scripts/import-puzzle-families.ts`,
+`scripts/cleanup-legacy-puzzles.ts`.
