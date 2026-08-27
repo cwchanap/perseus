@@ -39,7 +39,7 @@ const FIXTURE_ID = 'e2e-square-4' as const;
  * FixtureRouter never intercepts it.
  */
 async function gotoApiOrigin(page: Page): Promise<void> {
-	await page.goto(`${API_ORIGIN}/api/puzzles`);
+	await page.goto(`${API_ORIGIN}/api/puzzle-families`);
 }
 
 /** Same-origin fetch (page is already on API_ORIGIN) returning a plain record. */
@@ -168,7 +168,7 @@ test.describe('FixtureRouter @smoke', () => {
 		await gotoApiOrigin(page);
 
 		// The gallery list path has no e2e id, so the router must not match it.
-		const res = await fetchApi(page, `/api/puzzles`);
+		const res = await fetchApi(page, `/api/puzzle-families`);
 
 		// Whatever the real backend answered, the router did NOT fulfill it —
 		// and the backend must have answered, not errored.
@@ -366,10 +366,12 @@ test.describe('AuthPersona @smoke', () => {
 // --- ApiScenarioController ---------------------------------------------------
 
 const COMPLETION_BODY = {
-	version: 1 as const,
+	version: 2 as const,
 	runId: '00000000-0000-4000-8000-000000000001',
 	resultClass: 'standard_timed' as const,
-	elapsedActiveSeconds: 5
+	elapsedActiveSeconds: 5,
+	hintsUsed: 0,
+	incorrectAttempts: 0
 };
 
 async function postCompletion(

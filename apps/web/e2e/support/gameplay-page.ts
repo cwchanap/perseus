@@ -446,6 +446,16 @@ export class GameplayPage {
 		return dialog;
 	}
 
+	/** Celebration modal shown after a sealed completion. */
+	celebrationModal(): Locator {
+		return this.page.getByTestId('celebration-modal');
+	}
+
+	/** Start a fresh run from the celebration modal. */
+	async playAgainFromCelebration(): Promise<void> {
+		await this.celebrationModal().getByRole('button', { name: 'PLAY AGAIN' }).click();
+	}
+
 	/** Assert the dialog's initial focus landed on the target element. */
 	async expectDialogInitialFocus(dialog: Locator, target: Locator): Promise<void> {
 		await expect(target).toBeFocused();

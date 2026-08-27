@@ -15,7 +15,7 @@
 // The returned fixture is deeply frozen. Consumers that need a mutable copy
 // (e.g. a Playwright route handler about to serialize it) must clone at their
 // boundary.
-import type { EdgeType, PuzzleAspectRatio, PuzzlePiece } from '@perseus/types';
+import type { EdgeType, PuzzleAspectRatio, PuzzleDifficulty, PuzzlePiece } from '@perseus/types';
 import {
 	aspectRatiosMatch,
 	getBottomEdge,
@@ -46,6 +46,8 @@ const UUID_V4_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}
 
 export interface GameplayFixtureDefinition {
 	fixtureId: string;
+	familyId: string;
+	difficulty: PuzzleDifficulty;
 	name: string;
 	aspectRatio: PuzzleAspectRatio;
 	pieceCount: number;
@@ -70,6 +72,8 @@ export interface GameplayFixtureDefinition {
 
 export interface GameplayFixture {
 	readonly fixtureId: string;
+	readonly familyId: string;
+	readonly difficulty: PuzzleDifficulty;
 	readonly name: string;
 	readonly aspectRatio: PuzzleAspectRatio;
 	readonly pieceCount: number;
@@ -230,6 +234,9 @@ function deepFreeze<T>(value: T): T {
 
 export function buildFixture(def: GameplayFixtureDefinition): GameplayFixture {
 	if (def.fixtureId.length === 0) fail('fixtureId must be a non-empty string');
+	if (!UUID_V4_PATTERN.test(def.familyId)) {
+		fail(`familyId is not a valid UUIDv4: "${def.familyId}"`);
+	}
 	if (!isPuzzleAspectRatio(def.aspectRatio)) {
 		fail(`aspectRatio "${def.aspectRatio}" is not a supported ratio`);
 	}
@@ -283,6 +290,8 @@ export function buildFixture(def: GameplayFixtureDefinition): GameplayFixture {
 
 	const fixture: GameplayFixture = {
 		fixtureId: def.fixtureId,
+		familyId: def.familyId,
+		difficulty: def.difficulty,
 		name: def.name,
 		aspectRatio: def.aspectRatio,
 		pieceCount: def.pieceCount,

@@ -20,6 +20,7 @@
 // so a future client-side change that appends query parameters does not bypass
 // the controller and fall through to the fixture router's 403 default.
 import type { Page, Route } from '@playwright/test';
+import type { CompletionAwards } from '@perseus/types';
 import { FIXTURE_ROUTER_HEADER, HARNESS_VIOLATION_HEADER } from './fixture-router';
 
 /** Provenance value stamped on every scenario-fulfilled completion response. */
@@ -38,11 +39,16 @@ function violationHeaders(violation: string): Record<string, string> {
  * concrete route behavior.
  */
 export type CompletionScenario =
-	| { kind: 'success' }
-	| { kind: 'deferred-success' }
+	| { kind: 'success'; awards?: CompletionAwards }
+	| { kind: 'awarded-success-once'; awards: CompletionAwards }
+	| { kind: 'deferred-success'; awards?: CompletionAwards }
 	| { kind: 'network-abort' }
 	| { kind: 'http-failure'; status: 400 | 401 | 404 | 409 | 429 | 500 }
-	| { kind: 'retry-sequence'; failureStatus: 400 | 401 | 404 | 409 | 429 | 500 };
+	| {
+			kind: 'retry-sequence';
+			failureStatus: 400 | 401 | 404 | 409 | 429 | 500;
+			awards?: CompletionAwards;
+	  };
 
 export interface RecordedRequest {
 	url: string;
@@ -167,7 +173,14 @@ export function createApiScenarioController(): ApiScenarioController {
 	): Promise<void> {
 		switch (scenario.kind) {
 			case 'success': {
-				await route.fulfill({ status: 200, json: { ok: true }, headers: scenarioHeaders() });
+				const json =
+					scenario.awards !== undefined ? { ok: true, awards: scenario.awards } : { ok: true };
+				await route.fulfill({ status: 200, json, headers: scenarioHeaders() });
+				return;
+			}
+			case 'awarded-success-once': {
+				const json = attempt === 1 ? { ok: true, awards: scenario.awards } : { ok: true };
+				await route.fulfill({ status: 200, json, headers: scenarioHeaders() });
 				return;
 			}
 			case 'http-failure': {
@@ -189,9 +202,14 @@ export function createApiScenarioController(): ApiScenarioController {
 				// (not a custom route) handled each attempt.
 				const failed = attempt === 1;
 				const status = failed ? scenario.failureStatus : 200;
+				const json = failed
+					? { error: 'http_failure', status }
+					: scenario.awards !== undefined
+						? { ok: true, awards: scenario.awards }
+						: { ok: true };
 				await route.fulfill({
 					status,
-					json: failed ? { error: 'http_failure', status } : { ok: true },
+					json,
 					headers: scenarioHeaders()
 				});
 				return;
