@@ -26,7 +26,6 @@ import {
 } from './types';
 import {
 	generateJigsawSvgMask,
-	getGridDimensions,
 	getGridDimensionsForAspectRatio,
 	getTopEdge,
 	getRightEdge,
@@ -44,7 +43,6 @@ import {
 import type { AppDb } from '@perseus/shared';
 import {
 	MAX_IMAGE_BYTES,
-	getMetadata,
 	getFamilyMetadata,
 	updateMetadata,
 	updateFamilyMetadata,
@@ -1302,8 +1300,6 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 
 					for (let attempt = 0; attempt < maxRetries; attempt++) {
 						try {
-							const message =
-								originalError instanceof Error ? originalError.message : 'Unknown error';
 							await updateFamilyMetadata(this.env.PUZZLE_METADATA_DO, familyId, {
 								status: 'failed'
 							});

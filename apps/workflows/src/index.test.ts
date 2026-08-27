@@ -161,12 +161,6 @@ function createMockBucket(bytes: ArrayBuffer) {
 	};
 }
 
-function createMockKv(metadata: PuzzleMetadata) {
-	return {
-		get: vi.fn(async () => metadata)
-	};
-}
-
 function createMockStep(): WorkflowStep {
 	return {
 		// One-shot: execute the callback once and propagate its result/error.
@@ -213,27 +207,6 @@ const sampleFamilyMetadata = {
 	createdAt: 1700000000000,
 	status: 'processing' as const,
 	variants: variantIds
-};
-
-const sampleMetadata: PuzzleMetadata = {
-	id: variantIds.easy,
-	familyId,
-	difficulty: 'easy',
-	name: 'Test Puzzle',
-	pieceCount: 4,
-	gridCols: 2,
-	gridRows: 2,
-	imageWidth: 100,
-	imageHeight: 100,
-	createdAt: 1700000000000,
-	status: 'processing',
-	version: 0,
-	pieces: [],
-	progress: {
-		totalPieces: 4,
-		generatedPieces: 0,
-		updatedAt: 1700000000000
-	}
 };
 
 function createFamilyMockKv(options?: { aspectRatio?: PuzzleAspectRatio }) {
@@ -348,13 +321,6 @@ describe('updateMetadata', () => {
 	});
 
 	it('frees the source image after generating a row of pieces', async () => {
-		const workflowFamilyId = familyId;
-		const minimalMetadata: PuzzleMetadata = {
-			...sampleMetadata,
-			pieceCount: 1,
-			gridCols: 1,
-			gridRows: 1
-		};
 		const { namespace } = createMockDurableObjectNamespace(() => {
 			return new Response(JSON.stringify({ success: true }), {
 				status: 200,
@@ -415,7 +381,6 @@ describe('Workflow Execution - Image Validation', () => {
 	});
 
 	it('should reject images exceeding MAX_IMAGE_BYTES', async () => {
-		const workflowFamilyId = familyId;
 		const oversizedBytes = new ArrayBuffer(MAX_IMAGE_BYTES + 1);
 		const { namespace, stub } = createMockDurableObjectNamespace(() => {
 			return new Response(JSON.stringify({ success: true }), {
@@ -456,7 +421,6 @@ describe('Workflow Execution - Image Validation', () => {
 	});
 
 	it('should reject images exceeding MAX_IMAGE_DIMENSION', async () => {
-		const workflowFamilyId = familyId;
 		mockWidth = MAX_IMAGE_DIMENSION + 1;
 		mockHeight = MAX_IMAGE_DIMENSION + 2;
 		const { namespace, stub } = createMockDurableObjectNamespace(() => {
@@ -506,7 +470,6 @@ describe('Workflow Execution - Image Validation', () => {
 		// would NOT reject — if this test throws with the header dimensions
 		// (5000x5000), the pre-check caught it. PhotonImage.new_from_byteslice
 		// must not have been called.
-		const workflowFamilyId = familyId;
 		// PNG with width=5000 (0x1388), height=5000 — exceeds MAX_IMAGE_DIMENSION (4096).
 		// Signature (8) + IHDR length (4) + "IHDR" (4) + width (4) + height (4) = 24 bytes.
 		const oversizedPngHeader = new Uint8Array([
@@ -635,7 +598,6 @@ describe('Workflow Execution - Resource Loading', () => {
 	});
 
 	it('marks puzzle as failed when metadata not found', async () => {
-		const workflowFamilyId = familyId;
 		const { namespace, stub } = createMockDurableObjectNamespace(() => {
 			return new Response(JSON.stringify({ success: true }), {
 				status: 200,
