@@ -302,8 +302,10 @@ puzzles.post('/', requirePlayerAuth, async (c) => {
 			...(category ? { category } : {})
 		});
 
+		let familyMetadataWritten = false;
 		try {
 			await createFamilyMetadata(c.env.PUZZLE_METADATA, familyMetadata);
+			familyMetadataWritten = true;
 			for (const difficulty of PUZZLE_DIFFICULTIES) {
 				const variantMetadata = buildVariantMetadata({
 					variantId: variantIds[difficulty],
@@ -318,6 +320,18 @@ puzzles.post('/', requirePlayerAuth, async (c) => {
 			}
 		} catch (error) {
 			console.error('Failed to create puzzle metadata:', error);
+			if (familyMetadataWritten) {
+				const familyMetadataCleanup = await deleteFamilyMetadata(c.env.PUZZLE_METADATA, familyId);
+				if (!familyMetadataCleanup.success) {
+					console.error(
+						'Failed to cleanup puzzle family metadata after metadata creation failure:',
+						familyMetadataCleanup.error
+					);
+				}
+				for (const difficulty of PUZZLE_DIFFICULTIES) {
+					await deletePuzzleMetadata(c.env.PUZZLE_METADATA, variantIds[difficulty]);
+				}
+			}
 			const cleanupResult = await deleteOriginalImage(c.env.PUZZLES_BUCKET, familyId);
 			if (!cleanupResult.success) {
 				console.error(

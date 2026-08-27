@@ -562,6 +562,29 @@ describe('Puzzle Routes - UUID Validation', () => {
 			consoleSpy.mockRestore();
 		});
 
+		it('rolls back family and written variants when a later createPuzzleMetadata throws', async () => {
+			vi.mocked(storage.createPuzzleMetadata)
+				.mockResolvedValueOnce(undefined)
+				.mockRejectedValueOnce(new Error('KV write failed'));
+			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+			const res = await post(buildForm());
+
+			expect(res.status).toBe(500);
+			expect(((await res.json()) as any).message).toBe('Failed to create puzzle metadata');
+			expect(storage.deleteFamilyMetadata).toHaveBeenCalledWith(
+				mockEnv.PUZZLE_METADATA,
+				expect.any(String)
+			);
+			expect(storage.deletePuzzleMetadata).toHaveBeenCalledTimes(3);
+			expect(storage.deleteOriginalImage).toHaveBeenCalledWith(
+				mockEnv.PUZZLES_BUCKET,
+				expect.any(String)
+			);
+			expect(mockEnv.PUZZLE_WORKFLOW.create).not.toHaveBeenCalled();
+			consoleSpy.mockRestore();
+		});
+
 		it('returns 500 and rolls back when ownership insert fails (before workflow)', async () => {
 			vi.mocked(insertPuzzleFamilyOwnership).mockRejectedValueOnce(new Error('D1 down'));
 			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});

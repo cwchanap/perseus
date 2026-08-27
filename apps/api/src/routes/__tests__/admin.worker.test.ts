@@ -871,7 +871,7 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 			);
 			expect(storage.createFamilyMetadata).toHaveBeenCalledWith(
 				mockEnv.PUZZLE_METADATA,
-				expect.objectContaining({ id: 'new-uuid' })
+				expect.objectContaining({ id: 'new-uuid', idempotencyKey: 'abc123def456' })
 			);
 			expect(storage.createPuzzleMetadata).toHaveBeenCalledTimes(3);
 		});
@@ -2106,6 +2106,11 @@ describe('Admin Routes - Metadata Creation Failure Cleanup', () => {
 		const res = await admin.fetch(req, mockEnv as any);
 
 		expect(res.status).toBe(500);
+		expect(storage.deleteFamilyMetadata).toHaveBeenCalledWith(
+			mockEnv.PUZZLE_METADATA,
+			'reserved-uuid'
+		);
+		expect(storage.deletePuzzleMetadata).toHaveBeenCalledTimes(3);
 		// R2 cleanup attempted.
 		expect(storage.deleteOriginalImage).toHaveBeenCalledTimes(1);
 		// Reservation FAILED (not released) because R2 cleanup failed.
@@ -2162,6 +2167,11 @@ describe('Admin Routes - Metadata Creation Failure Cleanup', () => {
 		const res = await admin.fetch(req, mockEnv as any);
 
 		expect(res.status).toBe(500);
+		expect(storage.deleteFamilyMetadata).toHaveBeenCalledWith(
+			mockEnv.PUZZLE_METADATA,
+			'reserved-uuid'
+		);
+		expect(storage.deletePuzzleMetadata).toHaveBeenCalledTimes(3);
 		// Reservation released (cleanup succeeded, no orphan).
 		expect(storage.releaseIdempotencyKey).toHaveBeenCalledWith(
 			mockEnv.PUZZLE_METADATA_DO,

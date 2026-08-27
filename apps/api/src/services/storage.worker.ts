@@ -140,6 +140,7 @@ export function buildFamilyMetadata(params: {
 	createdAt: number;
 	variantIds: Record<PuzzleDifficulty, string>;
 	category?: PuzzleCategory;
+	idempotencyKey?: string;
 }): PuzzleFamilyMetadata {
 	return {
 		id: params.familyId,
@@ -148,7 +149,8 @@ export function buildFamilyMetadata(params: {
 		createdAt: params.createdAt,
 		status: 'processing',
 		variants: params.variantIds,
-		...(params.category ? { category: params.category } : {})
+		...(params.category ? { category: params.category } : {}),
+		...(params.idempotencyKey ? { idempotencyKey: params.idempotencyKey } : {})
 	};
 }
 
