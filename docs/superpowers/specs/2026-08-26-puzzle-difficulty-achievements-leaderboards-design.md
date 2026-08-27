@@ -131,14 +131,14 @@ This preserves the existing validation rule that a puzzle ID uniquely identifies
 
 ### 3.1 KV and Durable Object metadata
 
-Keep the current variant metadata path and Durable Object consistency model for concrete puzzles:
+Keep separate keys for the player-facing family and concrete variants:
 
 ```text
-family:<familyId>        -> puzzle family metadata
-puzzle:<variantId>       -> concrete variant metadata
+family:<familyId>        -> puzzle family metadata read model
+puzzle:<variantId>       -> concrete variant metadata read model
 ```
 
-The existing metadata Durable Object machinery remains the consistency primitive for mutable processing metadata. Do not introduce a second generic coordination framework.
+Reuse the existing `PUZZLE_METADATA_DO` namespace as the only strong-consistency binding. The same Durable Object class/namespace is addressed by family ID for family status/variant-map mutations and by variant ID for concrete variant mutations. Generalize its stored entity/update contract as needed rather than adding a second Durable Object binding or coordination subsystem. KV remains the public/listing read model synced from those authoritative DO writes.
 
 The family is considered player-ready only when all three variants are ready:
 
@@ -217,10 +217,10 @@ upload image
    +-- allocate family ID
    +-- allocate Easy/Normal/Hard variant IDs
    +-- store original once
-   +-- create shared thumbnail once
    +-- create family + ownership records
    +-- start one family workflow
             |
+            +-- create shared thumbnail once
             +-- generate Easy pieces
             +-- generate Normal pieces
             +-- generate Hard pieces
@@ -242,7 +242,7 @@ If any variant generation fails:
 - retry only missing/failed work where the existing workflow retry structure makes that straightforward
 - never publish the family to the playable gallery until all three variants are ready
 
-Existing cleanup/reaper behavior should be extended to family/variant assets rather than replaced with a new transaction system.
+Existing cleanup/reaper/tombstone behavior should be extended to family/variant assets rather than replaced with a new transaction system.
 
 ### 4.3 Upload UI and seed catalog
 
@@ -345,7 +345,7 @@ puzzle_completion_runs
 PRIMARY KEY (player_id, run_id)
 ```
 
-Keep the current run-ID idempotency/conflict semantics.
+Keep the current run-ID idempotency/conflict semantics and retained-run quota policy. If the existing `player_completion_usage` counter remains the quota implementation, keep it as infrastructure state rather than folding quota into the new progression model.
 
 ### 7.2 Competitive best times
 
@@ -669,6 +669,7 @@ Reset/rebuild these puzzle-progression tables:
 
 - `puzzle_completion_runs`
 - old `puzzle_stats`
+- `player_completion_usage` when retained-run quota counters remain in use
 - new `puzzle_best_times`
 - `player_difficulty_completions`
 - `player_achievements`
@@ -723,7 +724,7 @@ Keep tests focused on the existing ownership boundaries.
 - one failed variant keeps the family out of the playable gallery
 - retries reuse allocated variant IDs rather than minting duplicate variants
 - shared original/thumbnail are family-scoped; piece assets are variant-scoped
-- family deletion cleans family and variant assets/metadata
+- family deletion cleans family and variant assets/metadata through the existing tombstone/reaper boundary
 
 ### Completion/progression repository
 
@@ -735,6 +736,7 @@ Keep tests focused on the existing ownership boundaries.
 - mastery inserts are idempotent
 - each fixed achievement unlocks at its exact predicate boundary
 - run-ID retries remain idempotent/conflicting exactly as specified
+- breaking reset clears retained-run quota usage together with old completion runs
 
 ### Leaderboards
 
@@ -758,6 +760,7 @@ Keep tests focused on the existing ownership boundaries.
 - representative old arbitrary-piece-count puzzle regenerates into all three fixed tiers
 - old save namespace is ignored after cutover
 - old completion history is not assigned to new difficulties
+- old retained-run quota counters are reset with old completion history
 - no runtime code path accepts a `legacy` difficulty
 
 ## 20. Acceptance Criteria
