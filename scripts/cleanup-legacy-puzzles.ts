@@ -105,12 +105,32 @@ export function verifyManifestImportsCoverage(
 	}
 }
 
-export async function verifyReplacementsReady(
+type AdminPuzzleFamily = {
+	id: string;
+	status: string;
+	variants?: {
+		easy?: { id: string };
+		normal?: { id: string };
+		hard?: { id: string };
+	};
+};
+
+export function collectVariantIdsFromFamilies(families: AdminPuzzleFamily[]): Set<string> {
+	const variantIds = new Set<string>();
+	for (const family of families) {
+		for (const difficulty of ['easy', 'normal', 'hard'] as const) {
+			const variantId = family.variants?.[difficulty]?.id;
+			if (variantId) variantIds.add(variantId);
+		}
+	}
+	return variantIds;
+}
+
+async function fetchAdminPuzzleFamilies(
 	server: string,
-	families: ImportedFamily[],
 	headers: Record<string, string>,
 	fetchFn: typeof fetch
-): Promise<void> {
+): Promise<AdminPuzzleFamily[]> {
 	const response = await fetchFn(`${server.replace(/\/+$/, '')}/api/admin/puzzle-families`, {
 		method: 'GET',
 		headers,
@@ -122,8 +142,18 @@ export async function verifyReplacementsReady(
 			`Failed to verify imported families (${response.status} ${response.statusText})`
 		);
 	}
-	const payload = (await response.json()) as { families?: Array<{ id: string; status: string }> };
-	const byId = new Map((payload.families ?? []).map((family) => [family.id, family.status]));
+	const payload = (await response.json()) as { families?: AdminPuzzleFamily[] };
+	return payload.families ?? [];
+}
+
+export async function verifyReplacementsReady(
+	server: string,
+	families: ImportedFamily[],
+	headers: Record<string, string>,
+	fetchFn: typeof fetch
+): Promise<AdminPuzzleFamily[]> {
+	const adminFamilies = await fetchAdminPuzzleFamilies(server, headers, fetchFn);
+	const byId = new Map(adminFamilies.map((family) => [family.id, family.status]));
 
 	for (const family of families) {
 		const status = byId.get(family.familyId);
@@ -133,6 +163,7 @@ export async function verifyReplacementsReady(
 			);
 		}
 	}
+	return adminFamilies;
 }
 
 function parseKvKeyList(stdout: string): string[] {
@@ -162,9 +193,12 @@ function parseKvKeyList(stdout: string): string[] {
 	return keys;
 }
 
-function parsePieceCountFromKvValue(stdout: string): number | null {
+function parsePuzzleKvMetadata(stdout: string): {
+	pieceCount: number | null;
+	familyId: string | null;
+} {
 	const trimmed = stdout.trim();
-	if (!trimmed) return null;
+	if (!trimmed) return { pieceCount: null, familyId: null };
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(trimmed);
@@ -173,11 +207,17 @@ function parsePieceCountFromKvValue(stdout: string): number | null {
 			`Failed to parse KV metadata JSON: ${error instanceof Error ? error.message : String(error)}`
 		);
 	}
-	if (!parsed || typeof parsed !== 'object') return null;
-	const pieceCount = (parsed as { pieceCount?: unknown }).pieceCount;
-	return typeof pieceCount === 'number' && Number.isInteger(pieceCount) && pieceCount >= 0
-		? pieceCount
-		: null;
+	if (!parsed || typeof parsed !== 'object') return { pieceCount: null, familyId: null };
+	const record = parsed as { pieceCount?: unknown; familyId?: unknown };
+	const pieceCount = record.pieceCount;
+	const familyId = record.familyId;
+	return {
+		pieceCount:
+			typeof pieceCount === 'number' && Number.isInteger(pieceCount) && pieceCount >= 0
+				? pieceCount
+				: null,
+		familyId: typeof familyId === 'string' && familyId.length > 0 ? familyId : null
+	};
 }
 
 function legacyIdFromPuzzleKvKey(key: string): string | null {
@@ -252,15 +292,15 @@ async function listLeftoverPuzzleKvKeys(runWrangler: RunWrangler): Promise<strin
 	return parseKvKeyList(result.stdout);
 }
 
-async function fetchPieceCountFromKv(
-	legacyId: string,
+async function fetchPuzzleKvMetadata(
+	puzzleId: string,
 	runWrangler: RunWrangler
-): Promise<number | null> {
+): Promise<{ pieceCount: number | null; familyId: string | null }> {
 	const result = await runWrangler([
 		'kv',
 		'key',
 		'get',
-		`puzzle:${legacyId}`,
+		`puzzle:${puzzleId}`,
 		'--binding',
 		KV_BINDING,
 		'--remote',
@@ -269,10 +309,10 @@ async function fetchPieceCountFromKv(
 	]);
 	if (result.exitCode !== 0) {
 		throw new FatalError(
-			`Failed to read KV metadata for puzzle:${legacyId}:\n${result.stderr || result.stdout}`
+			`Failed to read KV metadata for puzzle:${puzzleId}:\n${result.stderr || result.stdout}`
 		);
 	}
-	return parsePieceCountFromKvValue(result.stdout);
+	return parsePuzzleKvMetadata(result.stdout);
 }
 
 async function deleteKvKey(key: string, runWrangler: RunWrangler): Promise<void> {
@@ -341,7 +381,13 @@ export async function cleanupLegacyPuzzles(options: CleanupOptions): Promise<voi
 	const headers = await resolveAccess(options);
 
 	verifyManifestImportsCoverage(manifest, importResults);
-	await verifyReplacementsReady(options.server, importResults.families, headers, fetchFn);
+	const adminFamilies = await verifyReplacementsReady(
+		options.server,
+		importResults.families,
+		headers,
+		fetchFn
+	);
+	const excludedVariantIds = collectVariantIdsFromFamilies(adminFamilies);
 
 	const manifestLegacyIds = new Set(manifest.puzzles.map((entry) => entry.legacyId));
 	const leftoverKvKeys = await listLeftoverPuzzleKvKeys(runWrangler);
@@ -350,11 +396,20 @@ export async function cleanupLegacyPuzzles(options: CleanupOptions): Promise<voi
 	for (const kvKey of leftoverKvKeys) {
 		const legacyId = legacyIdFromPuzzleKvKey(kvKey);
 		if (!legacyId || manifestLegacyIds.has(legacyId)) continue;
-		const pieceCount = await fetchPieceCountFromKv(legacyId, runWrangler);
-		if (pieceCount !== null) leftoverPieceCounts.set(legacyId, pieceCount);
+		if (excludedVariantIds.has(legacyId)) continue;
+		const metadata = await fetchPuzzleKvMetadata(legacyId, runWrangler);
+		if (metadata.familyId) continue;
+		if (metadata.pieceCount !== null) leftoverPieceCounts.set(legacyId, metadata.pieceCount);
 	}
 
-	const plan = buildCleanupPlan(manifest, leftoverKvKeys, leftoverPieceCounts);
+	const plan = buildCleanupPlan(
+		manifest,
+		leftoverKvKeys.filter((kvKey) => {
+			const legacyId = legacyIdFromPuzzleKvKey(kvKey);
+			return legacyId !== null && leftoverPieceCounts.has(legacyId);
+		}),
+		leftoverPieceCounts
+	);
 
 	if (options.dryRun) {
 		printCleanupPlan(plan);
