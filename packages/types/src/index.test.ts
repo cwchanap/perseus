@@ -21,7 +21,7 @@ import {
 	isPlayerStatRow,
 	isPuzzleId,
 	isPuzzleRunId,
-	isRecordPuzzleCompletionV1,
+	isValidCompletionRunFields,
 	isRecordPuzzleCompletionV2,
 	type PlayerSessionResponse,
 	type PlayerAllowlistEntry,
@@ -125,46 +125,40 @@ describe('coercePuzzleStatus', () => {
 describe('versioned puzzle completion contract', () => {
 	const currentRunId = '223e4567-e89b-42d3-a456-426614174000';
 
-	describe('current four-field request', () => {
+	describe('version-neutral completion run fields', () => {
 		const timed = {
-			version: 1,
 			runId: currentRunId,
 			resultClass: 'standard_timed' as const,
 			elapsedActiveSeconds: 90
 		};
 		const relaxed = {
-			version: 1,
 			runId: currentRunId,
 			resultClass: 'relaxed' as const,
 			elapsedActiveSeconds: null
 		};
 
-		it('accepts timed and relaxed four-field requests', () => {
-			expect(isRecordPuzzleCompletionV1(timed, 86_400)).toBe(true);
-			expect(isRecordPuzzleCompletionV1(relaxed, 86_400)).toBe(true);
+		it('accepts timed and relaxed run fields', () => {
+			expect(isValidCompletionRunFields(timed, 86_400)).toBe(true);
+			expect(isValidCompletionRunFields(relaxed, 86_400)).toBe(true);
 		});
 
-		it('rejects timed requests without elapsed seconds', () => {
-			expect(isRecordPuzzleCompletionV1({ ...timed, elapsedActiveSeconds: null }, 86_400)).toBe(
+		it('rejects timed run fields without elapsed seconds', () => {
+			expect(isValidCompletionRunFields({ ...timed, elapsedActiveSeconds: null }, 86_400)).toBe(
 				false
 			);
 		});
 
-		it('rejects relaxed requests with elapsed seconds', () => {
-			expect(isRecordPuzzleCompletionV1({ ...relaxed, elapsedActiveSeconds: 90 }, 86_400)).toBe(
+		it('rejects relaxed run fields with elapsed seconds', () => {
+			expect(isValidCompletionRunFields({ ...relaxed, elapsedActiveSeconds: 90 }, 86_400)).toBe(
 				false
 			);
-		});
-
-		it('rejects unexpected extra fields', () => {
-			expect(isRecordPuzzleCompletionV1({ ...timed, obsoleteField: true }, 86_400)).toBe(false);
 		});
 
 		it('rejects hash-shaped non-UUID run IDs while accepting UUID-v4 run IDs', () => {
 			const hashRunId = `legacy-${'a'.repeat(64)}`;
 
 			expect(isPuzzleRunId(hashRunId)).toBe(false);
-			expect(isRecordPuzzleCompletionV1({ ...timed, runId: hashRunId }, 86_400)).toBe(false);
+			expect(isValidCompletionRunFields({ ...timed, runId: hashRunId }, 86_400)).toBe(false);
 			expect(isPuzzleRunId(currentRunId)).toBe(true);
 		});
 	});
@@ -202,9 +196,8 @@ describe('versioned puzzle completion contract', () => {
 		'accepts %s completions with a positive whole-second elapsed time',
 		(resultClass) => {
 			expect(
-				isRecordPuzzleCompletionV1(
+				isValidCompletionRunFields(
 					{
-						version: 1,
 						runId: validRunId,
 						resultClass,
 						elapsedActiveSeconds: 1
@@ -217,9 +210,8 @@ describe('versioned puzzle completion contract', () => {
 
 	it('accepts relaxed completions with no elapsed time', () => {
 		expect(
-			isRecordPuzzleCompletionV1(
+			isValidCompletionRunFields(
 				{
-					version: 1,
 					runId: validRunId,
 					resultClass: 'relaxed',
 					elapsedActiveSeconds: null
@@ -233,9 +225,8 @@ describe('versioned puzzle completion contract', () => {
 		'rejects an otherwise valid timed completion when maxElapsedActiveSeconds is %s',
 		(maxElapsed) => {
 			expect(
-				isRecordPuzzleCompletionV1(
+				isValidCompletionRunFields(
 					{
-						version: 1,
 						runId: validRunId,
 						resultClass: 'standard_timed',
 						elapsedActiveSeconds: 1
@@ -249,7 +240,6 @@ describe('versioned puzzle completion contract', () => {
 	it.each([
 		[
 			{
-				version: 1,
 				runId: validRunId,
 				resultClass: 'standard_timed',
 				elapsedActiveSeconds: null
@@ -258,7 +248,6 @@ describe('versioned puzzle completion contract', () => {
 		],
 		[
 			{
-				version: 1,
 				runId: validRunId,
 				resultClass: 'relaxed',
 				elapsedActiveSeconds: 1
@@ -267,7 +256,6 @@ describe('versioned puzzle completion contract', () => {
 		],
 		[
 			{
-				version: 1,
 				runId: validRunId,
 				resultClass: 'standard_timed',
 				elapsedActiveSeconds: 0
@@ -276,7 +264,6 @@ describe('versioned puzzle completion contract', () => {
 		],
 		[
 			{
-				version: 1,
 				runId: validRunId,
 				resultClass: 'standard_timed',
 				elapsedActiveSeconds: -1
@@ -285,7 +272,6 @@ describe('versioned puzzle completion contract', () => {
 		],
 		[
 			{
-				version: 1,
 				runId: validRunId,
 				resultClass: 'standard_timed',
 				elapsedActiveSeconds: 1.5
@@ -294,7 +280,6 @@ describe('versioned puzzle completion contract', () => {
 		],
 		[
 			{
-				version: 1,
 				runId: validRunId,
 				resultClass: 'standard_timed',
 				elapsedActiveSeconds: Infinity
@@ -303,7 +288,6 @@ describe('versioned puzzle completion contract', () => {
 		],
 		[
 			{
-				version: 1,
 				runId: validRunId,
 				resultClass: 'standard_timed',
 				elapsedActiveSeconds: 86_401
@@ -312,43 +296,22 @@ describe('versioned puzzle completion contract', () => {
 		],
 		[
 			{
-				version: 1,
 				resultClass: 'standard_timed',
 				elapsedActiveSeconds: 1
 			},
 			false
 		],
-		[{ version: 1, runId: validRunId, resultClass: 'standard_timed' }, false],
+		[{ runId: validRunId, resultClass: 'standard_timed' }, false],
 		[
 			{
-				version: 1,
 				runId: validRunId,
 				resultClass: 'invalid',
 				elapsedActiveSeconds: 1
 			},
 			false
-		],
-		[
-			{
-				version: 2,
-				runId: validRunId,
-				resultClass: 'standard_timed',
-				elapsedActiveSeconds: 1
-			},
-			false
-		],
-		[
-			{
-				version: 1,
-				runId: validRunId,
-				resultClass: 'standard_timed',
-				elapsedActiveSeconds: 1,
-				ignored: true
-			},
-			false
 		]
-	])('rejects invalid completion request %j', (candidate, expected) => {
-		expect(isRecordPuzzleCompletionV1(candidate, 86_400)).toBe(expected);
+	])('rejects invalid completion run fields %j', (candidate, expected) => {
+		expect(isValidCompletionRunFields(candidate, 86_400)).toBe(expected);
 	});
 
 	describe('V2 six-field request', () => {
