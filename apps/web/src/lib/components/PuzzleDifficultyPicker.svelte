@@ -13,9 +13,11 @@
 	interface Props {
 		family: PuzzleFamilySummary;
 		progressByVariantId?: ReadonlyMap<string, VariantProgress>;
+		/** When false, ready rows are informational only (no play links). */
+		playableLinks?: boolean;
 	}
 
-	let { family, progressByVariantId }: Props = $props();
+	let { family, progressByVariantId, playableLinks = true }: Props = $props();
 
 	const difficultyLabels: Record<string, string> = {
 		easy: 'Easy',
@@ -36,9 +38,10 @@
 	{#each PUZZLE_DIFFICULTIES as difficulty (difficulty)}
 		{@const variant = family.variants[difficulty]}
 		{@const progress = variantProgress(variant)}
-		{@const bestTime = variant.status === 'ready' ? variantBestTime(variant.id) : null}
-		{@const hasProgress = variant.status === 'ready' && progress !== undefined}
-		{#if variant.status === 'ready'}
+		{@const bestTime =
+			playableLinks && variant.status === 'ready' ? variantBestTime(variant.id) : null}
+		{@const hasProgress = playableLinks && variant.status === 'ready' && progress !== undefined}
+		{#if variant.status === 'ready' && playableLinks}
 			<a
 				href={resolve(`/puzzle/${variant.id}`)}
 				class="group/diff flex items-center justify-between gap-3 border border-(--border) bg-(--bg-0)

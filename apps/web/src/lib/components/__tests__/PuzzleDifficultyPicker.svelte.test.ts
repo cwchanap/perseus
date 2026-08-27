@@ -65,4 +65,11 @@ describe('PuzzleDifficultyPicker', () => {
 
 		await expect.element(page.getByText('◆ 03:12')).toBeVisible();
 	});
+
+	it('renders non-link rows when playableLinks is false', async () => {
+		render(PuzzleDifficultyPicker, { family: familySummary(), playableLinks: false });
+
+		const easy = page.getByTestId('difficulty-action').filter({ hasText: 'Easy' });
+		await expect.element(easy).not.toHaveAttribute('href');
+	});
 });

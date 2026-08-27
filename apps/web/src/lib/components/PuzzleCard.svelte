@@ -12,9 +12,10 @@
 	interface Props {
 		family: PuzzleFamilySummary;
 		progressByVariantId?: ReadonlyMap<string, VariantProgress>;
+		playableLinks?: boolean;
 	}
 
-	let { family, progressByVariantId }: Props = $props();
+	let { family, progressByVariantId, playableLinks = true }: Props = $props();
 
 	let thumbnailError = $state(false);
 
@@ -69,7 +70,7 @@
 			{family.name}
 		</h3>
 		<div class="mt-3">
-			<PuzzleDifficultyPicker {family} {progressByVariantId} />
+			<PuzzleDifficultyPicker {family} {progressByVariantId} {playableLinks} />
 		</div>
 	</div>
 </div>
