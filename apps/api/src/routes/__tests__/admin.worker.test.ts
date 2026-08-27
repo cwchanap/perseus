@@ -20,6 +20,7 @@ vi.mock('../../services/storage.worker', async (importOriginal) => {
 		getPuzzle: vi.fn(),
 		getFamily: vi.fn(),
 		deletePuzzleAssets: vi.fn(),
+		deleteFamilyCleanupAssets: vi.fn().mockResolvedValue({ success: true, failedKeys: [] }),
 		deletePuzzleMetadata: vi.fn().mockResolvedValue({ success: true }),
 		createPuzzleMetadata: vi.fn().mockResolvedValue(undefined),
 		createFamilyMetadata: vi.fn().mockResolvedValue(undefined),
@@ -65,6 +66,13 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	};
 });
 
+import {
+	cleanupRecordMatcher,
+	makeFamilyMetadata,
+	PIECE_COUNTS_1_1,
+	variantIdsForFamily,
+	DELETE_FAMILY_ID
+} from './helpers/family-fixtures';
 import admin from '../admin.worker';
 import * as storage from '../../services/storage.worker';
 import * as playerAuth from '../../services/player-auth.worker';
@@ -315,30 +323,13 @@ describe('Admin Routes - Puzzle Deletion', () => {
 
 	describe('DELETE /puzzles/:id', () => {
 		it('should return 500 when some assets fail to delete', async () => {
-			// Mock getPuzzle to return a valid puzzle
-			(storage.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
-				id: '550e8400-e29b-41d4-a716-446655440000',
-				name: 'Test Puzzle',
-				pieceCount: 4,
-				gridCols: 2,
-				gridRows: 2,
-				imageWidth: 100,
-				imageHeight: 100,
-				createdAt: Date.now(),
-				status: 'ready',
-				pieces: [],
-				version: 0
-			});
-
-			// Mock deletePuzzleAssets to return partial failure
-			(storage.deletePuzzleAssets as ReturnType<typeof vi.fn>).mockResolvedValue({
+			const familyId = DELETE_FAMILY_ID;
+			(storage.getFamily as ReturnType<typeof vi.fn>).mockResolvedValue(
+				makeFamilyMetadata(familyId, 'ready')
+			);
+			(storage.deleteFamilyCleanupAssets as ReturnType<typeof vi.fn>).mockResolvedValue({
 				success: false,
 				failedKeys: ['puzzles/test-puzzle/pieces/0.png', 'puzzles/test-puzzle/pieces/1.png']
-			});
-
-			// Mock deletePuzzleMetadata to return success
-			(storage.deletePuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue({
-				success: true
 			});
 
 			const mockEnv = {
@@ -347,51 +338,31 @@ describe('Admin Routes - Puzzle Deletion', () => {
 				PUZZLES_BUCKET: {} as R2Bucket
 			};
 
-			const req = new Request(
-				'http://localhost/puzzle-delete/550e8400-e29b-41d4-a716-446655440000',
-				{
-					method: 'POST',
-					headers: {
-						cookie: 'session=valid.token'
-					}
-				}
-			);
+			const req = new Request(`http://localhost/puzzle-delete/${familyId}`, {
+				method: 'POST',
+				headers: { cookie: 'session=valid.token' }
+			});
 
 			const res = await admin.fetch(req, mockEnv);
 
-			// Should return 500 with {error, message} — conforms to the same
-			// envelope as every other failure branch and the sibling
-			// cleanupOrphanedWorkflow path.
 			expect(res.status).toBe(500);
-
 			const body = (await res.json()) as any;
 			expect(body.error).toBe('internal_error');
 			expect(body.message).toContain('R2 cleanup partial');
-			// The non-conformant {success, partialSuccess, warning, failedAssets}
-			// body shape is gone — failed keys are logged, not in the response.
 			expect(body).not.toHaveProperty('partialSuccess');
 			expect(body).not.toHaveProperty('failedAssets');
-
-			// Safe ordering: KV metadata is NOT deleted when R2 deletion fails
-			// partially — the failed R2 keys would become invisible orphans
-			// with no metadata to discover them. KV is preserved so the reaper
-			// can retry R2 cleanup on its next run.
-			expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
-
-			// A cleanup record is written so the reaper picks this puzzle up
-			// even if the operator never retries.
+			expect(storage.deleteFamilyMetadata).not.toHaveBeenCalled();
 			expect(storage.writeCleanupRecord).toHaveBeenCalledWith(
 				mockEnv.PUZZLE_METADATA,
-				expect.objectContaining({ puzzleId: '550e8400-e29b-41d4-a716-446655440000' })
+				cleanupRecordMatcher(familyId)
 			);
-			expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledWith(
-				'550e8400-e29b-41d4-a716-446655440000',
-				expect.any(Number)
-			);
+			for (const difficulty of ['easy', 'normal', 'hard'] as const) {
+				expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledWith(
+					`${familyId}-${difficulty}`,
+					expect.any(Number)
+				);
+			}
 			expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
-
-			// D1 ownership cleanup is NOT reached on R2 partial failure — the
-			// reaper handles D1 cleanup after R2/KV succeed on retry.
 			const { deletePuzzleFamilyOwnership } = await import('@perseus/shared');
 			expect(deletePuzzleFamilyOwnership).not.toHaveBeenCalled();
 		});
@@ -1626,7 +1597,7 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 			expect(body.message).toBe('Failed to commit idempotency reservation; retry');
 			expect(storage.commitIdempotencyKey).toHaveBeenCalledTimes(3);
 			expect(terminateFn).not.toHaveBeenCalled();
-			expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
+			expect(storage.deleteFamilyMetadata).not.toHaveBeenCalled();
 			expect(storage.deleteOriginalImage).not.toHaveBeenCalled();
 		});
 
@@ -1642,13 +1613,13 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 			(storage.commitIdempotencyKey as ReturnType<typeof vi.fn>).mockRejectedValue(
 				new Error('Cannot committed reservation in status failed')
 			);
-			(storage.deletePuzzleAssets as ReturnType<typeof vi.fn>).mockResolvedValue({
+			(storage.deleteFamilyCleanupAssets as ReturnType<typeof vi.fn>).mockResolvedValue({
 				success: true,
 				failedKeys: []
 			});
-			(storage.deletePuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue({
-				success: true
-			});
+			(storage.getFamily as ReturnType<typeof vi.fn>).mockResolvedValue(
+				makeFamilyMetadata('losing-uuid', 'processing')
+			);
 
 			const mockEnv = {
 				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
@@ -1681,13 +1652,15 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 			);
 
 			expect(response.status).toBe(500);
-			expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledWith(
-				'losing-uuid',
-				expect.any(Number)
-			);
-			expect(dbContextMock.completionWrites.finishPuzzleDeletion).toHaveBeenCalledWith(
-				'losing-uuid'
-			);
+			for (const difficulty of ['easy', 'normal', 'hard'] as const) {
+				expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledWith(
+					`losing-uuid-${difficulty}`,
+					expect.any(Number)
+				);
+				expect(dbContextMock.completionWrites.finishPuzzleDeletion).toHaveBeenCalledWith(
+					`losing-uuid-${difficulty}`
+				);
+			}
 			expect(
 				dbContextMock.completionWrites.beginPuzzleDeletion.mock.invocationCallOrder[0]
 			).toBeLessThan(
@@ -1710,11 +1683,11 @@ describe('Admin Routes - Delete Puzzle Cases', () => {
 		dbContextMock.completionWrites.finishPuzzleDeletion.mockResolvedValue(undefined);
 	});
 
-	const mockEnv = {
-		JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
-		PUZZLE_METADATA: {} as KVNamespace,
-		PUZZLES_BUCKET: {} as R2Bucket
-	};
+	const familyId = DELETE_FAMILY_ID;
+
+	function metadataKvWithRaw(raw: string | null): KVNamespace {
+		return { get: vi.fn().mockResolvedValue(raw) } as unknown as KVNamespace;
+	}
 
 	it('should return 400 for invalid UUID', async () => {
 		const req = new Request('http://localhost/puzzle-delete/not-a-uuid', {
@@ -1722,7 +1695,11 @@ describe('Admin Routes - Delete Puzzle Cases', () => {
 			headers: { cookie: 'session=valid.token' }
 		});
 
-		const res = await admin.fetch(req, mockEnv as any);
+		const res = await admin.fetch(req, {
+			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+			PUZZLE_METADATA: {} as KVNamespace,
+			PUZZLES_BUCKET: {} as R2Bucket
+		} as any);
 
 		expect(res.status).toBe(400);
 		const body = (await res.json()) as any;
@@ -1730,10 +1707,14 @@ describe('Admin Routes - Delete Puzzle Cases', () => {
 	});
 
 	it('should return 404 when puzzle not found', async () => {
-		(storage.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(null);
-		(storage.puzzleExists as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+		(storage.getFamily as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+		const mockEnv = {
+			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+			PUZZLE_METADATA: metadataKvWithRaw(null),
+			PUZZLES_BUCKET: {} as R2Bucket
+		};
 
-		const req = new Request('http://localhost/puzzle-delete/550e8400-e29b-41d4-a716-446655440000', {
+		const req = new Request(`http://localhost/puzzle-delete/${familyId}`, {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' }
 		});
@@ -1745,52 +1726,38 @@ describe('Admin Routes - Delete Puzzle Cases', () => {
 		expect(body.error).toBe('not_found');
 	});
 
-	it('should delete puzzle with corrupt metadata via puzzleExists fallback', async () => {
-		// When getPuzzle throws (corrupt metadata that fails validation),
-		// the DELETE route must fall back to puzzleExists and still delete
-		// the puzzle instead of 500-ing. pieceCount is 0 in this case so
-		// only original + thumbnail are deleted from R2.
-		(storage.getPuzzle as ReturnType<typeof vi.fn>).mockRejectedValue(
-			new Error('Corrupt puzzle metadata: data exists but fails validation')
-		);
-		(storage.puzzleExists as ReturnType<typeof vi.fn>).mockResolvedValue(true);
-		(storage.deletePuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue({
-			success: true
-		});
-		(storage.deletePuzzleAssets as ReturnType<typeof vi.fn>).mockResolvedValue({
-			success: true,
-			failedKeys: []
-		});
+	it('should return 500 when family metadata is corrupt', async () => {
+		(storage.getFamily as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+		const mockEnv = {
+			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+			PUZZLE_METADATA: metadataKvWithRaw('{"invalid": true}'),
+			PUZZLES_BUCKET: {} as R2Bucket
+		};
 
-		const req = new Request('http://localhost/puzzle-delete/550e8400-e29b-41d4-a716-446655440000', {
+		const req = new Request(`http://localhost/puzzle-delete/${familyId}`, {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' }
 		});
 
 		const res = await admin.fetch(req, mockEnv as any);
 
-		expect(res.status).toBe(204);
-		// KV metadata deleted (source of truth).
-		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(
-			mockEnv.PUZZLE_METADATA,
-			'550e8400-e29b-41d4-a716-446655440000'
-		);
-		// R2 assets deleted with pieceCount=0 (corrupt metadata → unknown).
-		expect(storage.deletePuzzleAssets).toHaveBeenCalledWith(
-			mockEnv.PUZZLES_BUCKET,
-			'550e8400-e29b-41d4-a716-446655440000',
-			0
-		);
+		expect(res.status).toBe(500);
+		const body = (await res.json()) as any;
+		expect(body.message).toContain('corrupt');
+		expect(storage.deleteFamilyCleanupAssets).not.toHaveBeenCalled();
 	});
 
-	it('should return 404 when puzzle not found and metadata is corrupt but key absent', async () => {
-		// getPuzzle throws AND puzzleExists returns false → genuinely gone.
-		(storage.getPuzzle as ReturnType<typeof vi.fn>).mockRejectedValue(
+	it('should return 404 when family metadata key is absent', async () => {
+		(storage.getFamily as ReturnType<typeof vi.fn>).mockRejectedValue(
 			new Error('Corrupt puzzle metadata')
 		);
-		(storage.puzzleExists as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+		const mockEnv = {
+			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+			PUZZLE_METADATA: metadataKvWithRaw(null),
+			PUZZLES_BUCKET: {} as R2Bucket
+		};
 
-		const req = new Request('http://localhost/puzzle-delete/550e8400-e29b-41d4-a716-446655440000', {
+		const req = new Request(`http://localhost/puzzle-delete/${familyId}`, {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' }
 		});
@@ -1803,18 +1770,16 @@ describe('Admin Routes - Delete Puzzle Cases', () => {
 	});
 
 	it('should return 409 when puzzle is processing', async () => {
-		(storage.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
-			id: '550e8400-e29b-41d4-a716-446655440000',
-			familyId: '223e4567-e89b-42d3-a456-426614174000',
-			difficulty: 'easy',
-			name: 'Test',
-			pieceCount: 4,
-			status: 'processing',
-			pieces: [],
-			version: 0
-		});
+		(storage.getFamily as ReturnType<typeof vi.fn>).mockResolvedValue(
+			makeFamilyMetadata(familyId, 'processing')
+		);
+		const mockEnv = {
+			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+			PUZZLE_METADATA: {} as KVNamespace,
+			PUZZLES_BUCKET: {} as R2Bucket
+		};
 
-		const req = new Request('http://localhost/puzzle-delete/550e8400-e29b-41d4-a716-446655440000', {
+		const req = new Request(`http://localhost/puzzle-delete/${familyId}`, {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' }
 		});
@@ -1827,30 +1792,16 @@ describe('Admin Routes - Delete Puzzle Cases', () => {
 	});
 
 	it('should return 204 on successful deletion', async () => {
-		(storage.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
-			id: '550e8400-e29b-41d4-a716-446655440000',
-			familyId: '223e4567-e89b-42d3-a456-426614174000',
-			difficulty: 'easy',
-			name: 'Test',
-			pieceCount: 4,
-			gridCols: 2,
-			gridRows: 2,
-			imageWidth: 100,
-			imageHeight: 100,
-			createdAt: 1000,
-			status: 'ready',
-			pieces: [],
-			version: 0
-		});
-		(storage.deletePuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue({
-			success: true
-		});
-		(storage.deletePuzzleAssets as ReturnType<typeof vi.fn>).mockResolvedValue({
-			success: true,
-			failedKeys: []
-		});
+		(storage.getFamily as ReturnType<typeof vi.fn>).mockResolvedValue(
+			makeFamilyMetadata(familyId, 'ready')
+		);
+		const mockEnv = {
+			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+			PUZZLE_METADATA: {} as KVNamespace,
+			PUZZLES_BUCKET: {} as R2Bucket
+		};
 
-		const req = new Request('http://localhost/puzzle-delete/550e8400-e29b-41d4-a716-446655440000', {
+		const req = new Request(`http://localhost/puzzle-delete/${familyId}`, {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' }
 		});
@@ -1860,24 +1811,23 @@ describe('Admin Routes - Delete Puzzle Cases', () => {
 		expect(res.status).toBe(204);
 		const { getWorkerDbContext } = await import('../../db.worker');
 		expect(getWorkerDbContext).toHaveBeenCalledWith(mockEnv);
-		expect(deletePuzzleFamilyOwnership).toHaveBeenCalledWith(
-			dbContextMock.db,
-			'223e4567-e89b-42d3-a456-426614174000'
-		);
-		expect(dbContextMock.completionWrites.finishPuzzleDeletion).toHaveBeenCalledWith(
-			'550e8400-e29b-41d4-a716-446655440000'
-		);
-		expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledWith(
-			'550e8400-e29b-41d4-a716-446655440000',
-			expect.any(Number)
-		);
+		expect(deletePuzzleFamilyOwnership).toHaveBeenCalledWith(dbContextMock.db, familyId);
+		for (const difficulty of ['easy', 'normal', 'hard'] as const) {
+			expect(dbContextMock.completionWrites.finishPuzzleDeletion).toHaveBeenCalledWith(
+				`${familyId}-${difficulty}`
+			);
+			expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledWith(
+				`${familyId}-${difficulty}`,
+				expect.any(Number)
+			);
+		}
 		expect(
 			dbContextMock.completionWrites.beginPuzzleDeletion.mock.invocationCallOrder[0]
 		).toBeLessThan(
 			(storage.deleteMetadataDO as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]
 		);
 		expect(
-			(storage.deletePuzzleMetadata as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]
+			(storage.deleteFamilyMetadata as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]
 		).toBeLessThan(dbContextMock.completionWrites.finishPuzzleDeletion.mock.invocationCallOrder[0]);
 		expect(
 			dbContextMock.completionWrites.finishPuzzleDeletion.mock.invocationCallOrder[0]
@@ -1887,34 +1837,20 @@ describe('Admin Routes - Delete Puzzle Cases', () => {
 	});
 
 	it('returns retriable 500 and retains the fence when completion cleanup fails', async () => {
-		(storage.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
-			id: '550e8400-e29b-41d4-a716-446655440000',
-			familyId: '223e4567-e89b-42d3-a456-426614174000',
-			difficulty: 'easy',
-			name: 'Test',
-			pieceCount: 4,
-			gridCols: 2,
-			gridRows: 2,
-			imageWidth: 100,
-			imageHeight: 100,
-			createdAt: 1000,
-			status: 'ready',
-			pieces: [],
-			version: 0
-		});
-		(storage.deletePuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue({
-			success: true
-		});
-		(storage.deletePuzzleAssets as ReturnType<typeof vi.fn>).mockResolvedValue({
-			success: true,
-			failedKeys: []
-		});
+		(storage.getFamily as ReturnType<typeof vi.fn>).mockResolvedValue(
+			makeFamilyMetadata(familyId, 'ready')
+		);
 		dbContextMock.completionWrites.finishPuzzleDeletion.mockRejectedValueOnce(
 			new Error('D1 completion cleanup failed')
 		);
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const mockEnv = {
+			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+			PUZZLE_METADATA: {} as KVNamespace,
+			PUZZLES_BUCKET: {} as R2Bucket
+		};
 
-		const req = new Request('http://localhost/puzzle-delete/550e8400-e29b-41d4-a716-446655440000', {
+		const req = new Request(`http://localhost/puzzle-delete/${familyId}`, {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' }
 		});
@@ -1923,35 +1859,28 @@ describe('Admin Routes - Delete Puzzle Cases', () => {
 
 		expect(res.status).toBe(500);
 		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
-		expect(deletePuzzleFamilyOwnership).not.toHaveBeenCalled();
+		expect(deletePuzzleFamilyOwnership).toHaveBeenCalledWith(dbContextMock.db, familyId);
 		expect(
-			(storage.deletePuzzleMetadata as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]
+			(storage.deleteFamilyMetadata as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]
 		).toBeLessThan(dbContextMock.completionWrites.finishPuzzleDeletion.mock.invocationCallOrder[0]);
 		consoleSpy.mockRestore();
 	});
 
 	it('prevents DO, R2, and KV mutation when beginning the D1 fence fails', async () => {
-		(storage.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
-			id: '550e8400-e29b-41d4-a716-446655440000',
-			familyId: '223e4567-e89b-42d3-a456-426614174000',
-			difficulty: 'easy',
-			name: 'Test',
-			pieceCount: 4,
-			gridCols: 2,
-			gridRows: 2,
-			imageWidth: 100,
-			imageHeight: 100,
-			createdAt: 1000,
-			status: 'ready',
-			pieces: [],
-			version: 0
-		});
+		(storage.getFamily as ReturnType<typeof vi.fn>).mockResolvedValue(
+			makeFamilyMetadata(familyId, 'ready')
+		);
 		dbContextMock.completionWrites.beginPuzzleDeletion.mockRejectedValueOnce(
 			new Error('D1 unavailable')
 		);
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const mockEnv = {
+			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+			PUZZLE_METADATA: {} as KVNamespace,
+			PUZZLES_BUCKET: {} as R2Bucket
+		};
 
-		const req = new Request('http://localhost/puzzle-delete/550e8400-e29b-41d4-a716-446655440000', {
+		const req = new Request(`http://localhost/puzzle-delete/${familyId}`, {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' }
 		});
@@ -1961,41 +1890,27 @@ describe('Admin Routes - Delete Puzzle Cases', () => {
 		expect(res.status).toBe(500);
 		expect(storage.writeCleanupRecord).toHaveBeenCalled();
 		expect(storage.deleteMetadataDO).not.toHaveBeenCalled();
-		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
-		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
+		expect(storage.deleteFamilyCleanupAssets).not.toHaveBeenCalled();
+		expect(storage.deleteFamilyMetadata).not.toHaveBeenCalled();
 		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
 		consoleSpy.mockRestore();
 	});
 
 	it('returns retriable 500 and retains the record when ownership cleanup fails', async () => {
-		(storage.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
-			id: '550e8400-e29b-41d4-a716-446655440000',
-			familyId: '223e4567-e89b-42d3-a456-426614174000',
-			difficulty: 'easy',
-			name: 'Test',
-			pieceCount: 4,
-			gridCols: 2,
-			gridRows: 2,
-			imageWidth: 100,
-			imageHeight: 100,
-			createdAt: 1000,
-			status: 'ready',
-			pieces: [],
-			version: 0
-		});
-		(storage.deletePuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue({
-			success: true
-		});
-		(storage.deletePuzzleAssets as ReturnType<typeof vi.fn>).mockResolvedValue({
-			success: true,
-			failedKeys: []
-		});
+		(storage.getFamily as ReturnType<typeof vi.fn>).mockResolvedValue(
+			makeFamilyMetadata(familyId, 'ready')
+		);
 		(deletePuzzleFamilyOwnership as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
 			new Error('ownership cleanup failed')
 		);
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const mockEnv = {
+			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+			PUZZLE_METADATA: {} as KVNamespace,
+			PUZZLES_BUCKET: {} as R2Bucket
+		};
 
-		const req = new Request('http://localhost/puzzle-delete/550e8400-e29b-41d4-a716-446655440000', {
+		const req = new Request(`http://localhost/puzzle-delete/${familyId}`, {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' }
 		});
@@ -2003,8 +1918,14 @@ describe('Admin Routes - Delete Puzzle Cases', () => {
 		const res = await admin.fetch(req, mockEnv as any);
 
 		expect(res.status).toBe(500);
-		expect(dbContextMock.completionWrites.finishPuzzleDeletion).toHaveBeenCalledOnce();
+		expect(dbContextMock.completionWrites.finishPuzzleDeletion).not.toHaveBeenCalled();
 		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
+		expect(deletePuzzleFamilyOwnership).toHaveBeenCalledTimes(1);
+		expect(consoleSpy).toHaveBeenCalledWith(
+			`Failed to finish fenced cleanup for ${familyId}:`,
+			expect.any(Error)
+		);
+		expect(storage.deleteFamilyCleanupAssets).toHaveBeenCalledTimes(1);
 		consoleSpy.mockRestore();
 	});
 });
@@ -2244,69 +2165,66 @@ describe('Admin Routes - Force Delete', () => {
 	};
 
 	it('should allow force deletion of processing puzzle with force=true', async () => {
-		(storage.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
-			id: '550e8400-e29b-41d4-a716-446655440000',
-			familyId: '223e4567-e89b-42d3-a456-426614174000',
-			difficulty: 'easy',
-			name: 'Stuck Puzzle',
-			pieceCount: 4,
-			status: 'processing',
-			pieces: [],
-			version: 0
-		});
-		(storage.deletePuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue({
-			success: true
-		});
-		(storage.deletePuzzleAssets as ReturnType<typeof vi.fn>).mockResolvedValue({
-			success: true,
-			failedKeys: []
-		});
-
-		const req = new Request(
-			'http://localhost/puzzle-delete/550e8400-e29b-41d4-a716-446655440000?force=true',
-			{
-				method: 'POST',
-				headers: { cookie: 'session=valid.token' }
-			}
+		const forceFamilyId = DELETE_FAMILY_ID;
+		(storage.getFamily as ReturnType<typeof vi.fn>).mockResolvedValue(
+			makeFamilyMetadata(forceFamilyId, 'processing')
 		);
+		const mockEnv = {
+			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+			PUZZLE_METADATA: {} as KVNamespace,
+			PUZZLE_METADATA_DO: {} as DurableObjectNamespace,
+			PUZZLES_BUCKET: {} as R2Bucket,
+			PUZZLE_WORKFLOW: {
+				get: vi.fn().mockResolvedValue({
+					status: vi.fn().mockResolvedValue({ status: 'errored' }),
+					terminate: vi.fn()
+				})
+			}
+		};
+
+		const req = new Request(`http://localhost/puzzle-delete/${forceFamilyId}?force=true`, {
+			method: 'POST',
+			headers: { cookie: 'session=valid.token' }
+		});
 
 		const res = await admin.fetch(req, mockEnv as any);
 
 		expect(res.status).toBe(204);
-		// Safe lifecycle: workflow terminated (confirmed stopped), DO
-		// tombstoned, R2 deleted, then KV deleted — not the old KV-first
-		// ordering that could resurrect a deleted processing puzzle.
 		expect(storage.deleteMetadataDO).toHaveBeenCalledWith(
 			mockEnv.PUZZLE_METADATA_DO,
-			'550e8400-e29b-41d4-a716-446655440000'
+			forceFamilyId
 		);
-		expect(storage.deletePuzzleAssets).toHaveBeenCalledWith(
+		expect(storage.deleteFamilyCleanupAssets).toHaveBeenCalledWith(
 			mockEnv.PUZZLES_BUCKET,
-			'550e8400-e29b-41d4-a716-446655440000',
-			4
+			forceFamilyId,
+			variantIdsForFamily(forceFamilyId),
+			PIECE_COUNTS_1_1
 		);
-		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(
+		expect(storage.deleteFamilyMetadata).toHaveBeenCalledWith(
 			mockEnv.PUZZLE_METADATA,
-			'550e8400-e29b-41d4-a716-446655440000'
+			forceFamilyId
 		);
 	});
 
 	it('should defer to reaper when force-delete cannot confirm workflow stopped', async () => {
-		// Workflow status read fails — terminateAndAwaitStopped returns false,
-		// so the route retains the cleanup record but does not establish the D1
-		// fence or mutate DO/R2/KV source state while liveness is unconfirmed.
-		(storage.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
-			id: '550e8400-e29b-41d4-a716-446655440000',
-			familyId: '223e4567-e89b-42d3-a456-426614174000',
-			difficulty: 'easy',
-			name: 'Stuck Puzzle',
-			pieceCount: 4,
-			status: 'processing',
-			pieces: [],
-			version: 0
-		});
+		const forceFamilyId = DELETE_FAMILY_ID;
+		(storage.getFamily as ReturnType<typeof vi.fn>).mockResolvedValue(
+			makeFamilyMetadata(forceFamilyId, 'processing')
+		);
+		const baseForceEnv = {
+			JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+			PUZZLE_METADATA: {} as KVNamespace,
+			PUZZLE_METADATA_DO: {} as DurableObjectNamespace,
+			PUZZLES_BUCKET: {} as R2Bucket,
+			PUZZLE_WORKFLOW: {
+				get: vi.fn().mockResolvedValue({
+					status: vi.fn().mockResolvedValue({ status: 'errored' }),
+					terminate: vi.fn()
+				})
+			}
+		};
 		const failingEnv = {
-			...mockEnv,
+			...baseForceEnv,
 			PUZZLE_WORKFLOW: {
 				get: vi.fn().mockResolvedValue({
 					status: vi.fn().mockRejectedValue(new Error('workflow API unavailable')),
@@ -2315,13 +2233,10 @@ describe('Admin Routes - Force Delete', () => {
 			}
 		};
 
-		const req = new Request(
-			'http://localhost/puzzle-delete/550e8400-e29b-41d4-a716-446655440000?force=true',
-			{
-				method: 'POST',
-				headers: { cookie: 'session=valid.token' }
-			}
-		);
+		const req = new Request(`http://localhost/puzzle-delete/${forceFamilyId}?force=true`, {
+			method: 'POST',
+			headers: { cookie: 'session=valid.token' }
+		});
 
 		const res = await admin.fetch(req, failingEnv as any);
 
@@ -2334,7 +2249,7 @@ describe('Admin Routes - Force Delete', () => {
 		// finally terminates.
 		expect(storage.writeCleanupRecord).toHaveBeenCalledWith(
 			mockEnv.PUZZLE_METADATA,
-			expect.objectContaining({ puzzleId: '550e8400-e29b-41d4-a716-446655440000' })
+			cleanupRecordMatcher('550e8400-e29b-41d4-a716-446655440000')
 		);
 		const workflow = await failingEnv.PUZZLE_WORKFLOW.get();
 		expect(vi.mocked(storage.writeCleanupRecord).mock.invocationCallOrder[0]).toBeLessThan(
@@ -2342,8 +2257,8 @@ describe('Admin Routes - Force Delete', () => {
 		);
 		// R2 and KV are NOT touched — the workflow may still write R2
 		// objects, and KV must remain so the reaper can discover the puzzle.
-		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
-		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
+		expect(storage.deleteFamilyCleanupAssets).not.toHaveBeenCalled();
+		expect(storage.deleteFamilyMetadata).not.toHaveBeenCalled();
 	});
 });
 

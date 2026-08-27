@@ -25,7 +25,6 @@ import {
 	createPuzzleMetadata,
 	deleteFamilyMetadata,
 	deletePuzzleMetadata,
-	deletePuzzleAssets,
 	deleteMetadataDO,
 	getAuthoritativeStatus,
 	failIdempotencyKey,
@@ -35,20 +34,17 @@ import {
 	getFamily,
 	getPuzzle,
 	listPuzzles,
-	puzzleExists,
 	releaseIdempotencyKey,
 	reserveIdempotencyKey,
 	writeCleanupRecord,
 	buildFamilyMetadata,
 	buildVariantMetadata,
+	buildCleanupRecordFromFamily,
 	type CleanupRecord,
 	type PuzzleMetadata
 } from '../services/storage.worker';
 import { isIdempotencyCommitConflict } from '../services/idempotency-conflict';
-import {
-	ensureWorkerPuzzleDeletionFence,
-	finishWorkerPuzzleDeletion
-} from '../services/puzzle-deletion.worker';
+import { executeFencedFamilySourceDeletion } from '../services/puzzle-deletion.worker';
 import {
 	addAllowlistEntry,
 	deleteAllowlistEntry,
@@ -524,93 +520,48 @@ async function executeFencedSourceDeletion(
 	beforeFinish?: () => Promise<void>,
 	logContext = ''
 ): Promise<{ ok: true } | { ok: false; response: Response }> {
-	const puzzleId = cleanupRecord.puzzleId;
-	const pieceCount = cleanupRecord.pieceCount;
+	const familyId = cleanupRecord.familyId;
 	const logCtx = logContext ? ` ${logContext}` : '';
-	// Step 1: Re-establish the fence (idempotent). Insert the D1
-	// tombstone immediately before the first source mutation. Pass the
-	// caller's exact cleanup record through so an optional idempotencyKey
-	// (and original createdAt) survives the re-write — writeCleanupRecord
-	// is a KV.put replacement, not a merge, so rebuilding a reduced record
-	// here would drop the key and leave the reaper unable to release the
-	// reservation if a later step fails.
-	try {
-		await ensureWorkerPuzzleDeletionFence(env, cleanupRecord);
-	} catch (fenceErr) {
-		console.error(`Failed to begin fenced cleanup for ${puzzleId}${logCtx}:`, fenceErr);
+	const result = await executeFencedFamilySourceDeletion(env, cleanupRecord, beforeFinish);
+	if (result.ok) {
+		return { ok: true };
+	}
+	if (result.step === 'fence') {
+		console.error(`Failed to begin fenced cleanup for ${familyId}${logCtx}:`, result.error);
 		return {
 			ok: false,
 			response: responder(`${messagePrefix}deletion fence failed, reaper will retry`)
 		};
 	}
-	// Step 2: Tombstone the DO BEFORE deleting R2/KV. Prevents a (dead)
-	// workflow's post-termination step from resurrecting stale metadata
-	// in KV via the DO's KV sync. deleteMetadataDO is idempotent.
-	try {
-		await deleteMetadataDO(env.PUZZLE_METADATA_DO, puzzleId);
-	} catch (doErr) {
-		console.error(`Failed to tombstone metadata DO for ${puzzleId}${logCtx}:`, doErr);
+	if (result.step === 'do-tombstone') {
+		console.error(`Failed to tombstone metadata DO for ${familyId}${logCtx}:`, result.error);
 		return {
 			ok: false,
 			response: responder(`${messagePrefix}DO tombstone failed, reaper will clean up`)
 		};
 	}
-	// Step 3: Delete R2 assets. If deletion fails partially, do NOT
-	// delete KV or D1 — the failed R2 keys would become invisible
-	// orphans with no metadata to discover them. Preserve KV and the
-	// cleanup record so the reaper can retry R2 cleanup on its next run.
-	const assetsCleanup = await deletePuzzleAssets(env.PUZZLES_BUCKET, puzzleId, pieceCount);
-	if (!assetsCleanup.success) {
+	if (result.step === 'r2') {
 		console.error(
-			`Failed to delete some R2 assets for ${puzzleId}${logCtx}:`,
-			assetsCleanup.failedKeys
+			`Failed to delete some R2 assets for ${familyId}${logCtx}:`,
+			result.failedKeys ?? result.error
 		);
 		return {
 			ok: false,
 			response: responder(`${messagePrefix}R2 cleanup partial, reaper will retry`)
 		};
 	}
-	// Step 4: R2 fully deleted — safe to delete KV metadata. If KV
-	// deletion fails, preserve the cleanup record so the reaper retries.
-	const metadataCleanup = await deletePuzzleMetadata(env.PUZZLE_METADATA, puzzleId);
-	if (!metadataCleanup.success) {
-		console.error(`Failed to delete metadata for ${puzzleId}${logCtx}:`, metadataCleanup.error);
+	if (result.step === 'kv-family' || result.step === 'kv-variant') {
+		console.error(`Failed to delete metadata for ${familyId}${logCtx}:`, result.error);
 		return {
 			ok: false,
 			response: responder(`${messagePrefix}KV metadata cleanup failed, reaper will retry`)
 		};
 	}
-	// Optional caller-specific step between KV deletion and the
-	// required D1 finish (e.g. idempotency key release in the
-	// force-delete path). Documented as non-fatal: errors here must
-	// not abort the sequence or skip the required D1 finish below.
-	// The helper enforces this contract itself so a caller that
-	// forgets to catch internally cannot leave the puzzle half-
-	// deleted (R2+KV gone, D1 finish never run).
-	if (beforeFinish) {
-		try {
-			await beforeFinish();
-		} catch (hookErr) {
-			console.error(
-				`Non-fatal beforeFinish hook failed for ${puzzleId}${logCtx}; continuing to required finish:`,
-				hookErr
-			);
-		}
-	}
-	// Step 5: Completion and ownership cleanup are required. The
-	// helper deletes the durable cleanup record only after both D1
-	// operations succeed. Any failure rejects so the record and
-	// tombstone remain for a retriable cleanup pass.
-	try {
-		await finishWorkerPuzzleDeletion(env, puzzleId, cleanupRecord.familyId);
-	} catch (finishErr) {
-		console.error(`Failed to finish fenced cleanup for ${puzzleId}${logCtx}:`, finishErr);
-		return {
-			ok: false,
-			response: responder(`${messagePrefix}required cleanup failed, reaper will retry`)
-		};
-	}
-	return { ok: true };
+	console.error(`Failed to finish fenced cleanup for ${familyId}${logCtx}:`, result.error);
+	return {
+		ok: false,
+		response: responder(`${messagePrefix}required cleanup failed, reaper will retry`)
+	};
 }
 
 /**
@@ -648,22 +599,26 @@ async function executeFencedSourceDeletion(
  */
 async function cleanupOrphanedWorkflow(
 	env: Env,
-	puzzleId: string,
-	pieceCount: number,
+	familyId: string,
 	context: string
 ): Promise<Response> {
-	// Step 1: Write the cleanup record first. This is the ONLY durable
-	// retry path for partial failures in this branch.
-	const cleanupRecord = {
-		puzzleId,
-		pieceCount,
-		createdAt: Date.now()
-	};
+	const family = await getFamily(env.PUZZLE_METADATA, familyId);
+	if (!family) {
+		return Response.json(
+			{
+				error: ErrorCode.InternalError,
+				message:
+					'Idempotency reservation was reclaimed by a retry; family metadata missing, reaper will clean up'
+			},
+			{ status: 500 }
+		);
+	}
+	const cleanupRecord = buildCleanupRecordFromFamily(family);
 	try {
 		await writeCleanupRecord(env.PUZZLE_METADATA, cleanupRecord);
 	} catch (cleanupErr) {
 		console.error(
-			`Failed to write cleanup record for ${puzzleId} ${context}; aborting cleanup:`,
+			`Failed to write cleanup record for ${familyId} ${context}; aborting cleanup:`,
 			cleanupErr
 		);
 		return Response.json(
@@ -676,15 +631,10 @@ async function cleanupOrphanedWorkflow(
 		);
 	}
 
-	// Step 2: Terminate and wait for the workflow to stop before deleting
-	// R2 assets. A live workflow writes thumbnails and pieces directly to
-	// R2 (not through the DO), so deleting assets before the workflow is
-	// stopped leaves orphaned R2 objects the reaper cannot find (KV
-	// metadata already deleted).
-	const stopped = await terminateAndAwaitStopped(env.PUZZLE_WORKFLOW, puzzleId);
+	const stopped = await terminateAndAwaitStopped(env.PUZZLE_WORKFLOW, familyId);
 	if (!stopped) {
 		console.error(
-			`Workflow ${puzzleId} not stopped after terminate() ${context}; deferring fenced cleanup to reaper`
+			`Workflow ${familyId} not stopped after terminate() ${context}; deferring fenced cleanup to reaper`
 		);
 		return Response.json(
 			{
@@ -696,9 +646,6 @@ async function cleanupOrphanedWorkflow(
 		);
 	}
 
-	// Step 3: Commit deletion only after the workflow-liveness gate.
-	// The shared helper runs fence -> DO tombstone -> R2 -> KV -> finish,
-	// returning a 500 {error, message} on any step failure.
 	const result = await executeFencedSourceDeletion(
 		env,
 		cleanupRecord,
@@ -1669,7 +1616,6 @@ admin.post('/puzzles', async (c) => {
 							const cleanupResponse = await cleanupOrphanedWorkflow(
 								c.env,
 								id,
-								pieceCount,
 								'after ambiguous-create commit conflict'
 							);
 							reservedIdempotencyKey = undefined;
@@ -1808,12 +1754,7 @@ admin.post('/puzzles', async (c) => {
 				console.error(
 					`Commit failed for puzzle ${id} — reservation was reclaimed by a retry. Terminating orphaned workflow.`
 				);
-				const cleanupResponse = await cleanupOrphanedWorkflow(
-					c.env,
-					id,
-					pieceCount,
-					'after commit conflict'
-				);
+				const cleanupResponse = await cleanupOrphanedWorkflow(c.env, id, 'after commit conflict');
 				reservedIdempotencyKey = undefined;
 				return cleanupResponse;
 			}
@@ -1855,47 +1796,31 @@ admin.post('/puzzle-delete/:id', async (c) => {
 	}
 
 	try {
-		// Get puzzle to check status before deletion
-		// Note: There is a small TOCTOU window between getPuzzle and deletePuzzleMetadata
-		// where the puzzle status could change. This endpoint accepts that risk for simplicity.
-		// The status check prevents deletion of processing puzzles, but a race could still occur
-		// if processing completes between the check and the delete.
-		//
-		// Best-effort read: if metadata is corrupt/unreadable (getPuzzle
-		// throws on validation failure), fall back to puzzleExists so an
-		// existing puzzle can still be deleted instead of 500-ing. The
-		// processing-status check and idempotency release are skipped (no
-		// status/key available); piece cleanup uses pieceCount=0 so only the
-		// original + thumbnail are deleted (pieces may be orphaned — rare
-		// corrupt-metadata case, operator can clean up via R2 console).
-		let puzzle: Awaited<ReturnType<typeof getPuzzle>> = null;
-		let pieceCount = 0;
+		let family: PuzzleFamilyMetadata | null = null;
 		try {
-			puzzle = await getPuzzle(c.env.PUZZLE_METADATA, id);
-			if (puzzle) pieceCount = puzzle.pieceCount;
+			family = await getFamily(c.env.PUZZLE_METADATA, id);
 		} catch (err) {
 			console.error(
-				`Failed to read metadata for puzzle ${id}, attempting best-effort cleanup:`,
+				`Failed to read metadata for family ${id}, attempting best-effort cleanup:`,
 				err
 			);
 		}
 
-		if (puzzle === null) {
-			// Either getPuzzle returned null (truly missing) or threw (corrupt).
-			// Fall back to puzzleExists so a corrupt-but-present puzzle can
-			// still be deleted instead of 500-ing.
-			const exists = await puzzleExists(c.env.PUZZLE_METADATA, id);
-			if (!exists) {
+		if (family === null) {
+			const rawFamily = await c.env.PUZZLE_METADATA.get(`family:${id}`);
+			if (!rawFamily) {
 				return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
 			}
-			// puzzle stays null — proceed with deletion; processing-status
-			// check and idempotency release are skipped. pieceCount stays 0.
+			return c.json(
+				{
+					error: 'internal_error',
+					message: 'Family metadata is corrupt; cannot build family cleanup record'
+				},
+				500
+			);
 		}
 
-		// Block deletion if puzzle is still processing unless force=true
-		// Force delete allows cleanup of stuck puzzles where workflow failed to mark them as failed
-		// Skipped when metadata was corrupt (status unknown — allow deletion).
-		if (puzzle?.status === 'processing' && !force) {
+		if (family.status === 'processing' && !force) {
 			return c.json(
 				{
 					error: 'conflict',
@@ -1906,29 +1831,11 @@ admin.post('/puzzle-delete/:id', async (c) => {
 			);
 		}
 
-		// Safe deletion lifecycle, mirroring cleanupOrphanedWorkflow and the
-		// reaper's safety policy. The cleanup record is written FIRST, before
-		// any destructive work (terminate, tombstone, R2 delete, KV delete).
-		// If the record cannot be persisted — e.g. during a KV outage that
-		// would also cause the later KV metadata delete to fail — the route
-		// aborts with 500 and no destructive work is performed. This closes
-		// the gap where a correlated KV failure left the puzzle with all R2
-		// assets deleted, KV metadata still present, and no cleanup record:
-		// unreachable by the stuck-processing reaper (status not processing),
-		// the cleanup-record reaper (no record), and the orphan reconciler
-		// (reservation still points at this puzzle, so it looks like the
-		// current owner). The record is deleted only after full success.
-		const cleanupRecord = {
-			puzzleId: id,
-			pieceCount,
-			...(puzzle?.familyId ? { familyId: puzzle.familyId } : {}),
-			...(puzzle?.idempotencyKey ? { idempotencyKey: puzzle.idempotencyKey } : {}),
-			createdAt: Date.now()
-		};
+		const cleanupRecord = buildCleanupRecordFromFamily(family);
 		try {
 			await writeCleanupRecord(c.env.PUZZLE_METADATA, cleanupRecord);
 		} catch (recordErr) {
-			console.error(`Failed to write cleanup record for puzzle ${id}, aborting:`, recordErr);
+			console.error(`Failed to write cleanup record for family ${id}, aborting:`, recordErr);
 			return c.json(
 				{
 					error: 'internal_error',
@@ -1938,15 +1845,7 @@ admin.post('/puzzle-delete/:id', async (c) => {
 			);
 		}
 
-		// Step 1: For a processing puzzle (force=true), terminate the workflow
-		// and wait for a confirmed stopped state before touching R2. A live
-		// workflow writes thumbnails and pieces directly to R2, so deleting
-		// assets before it stops leaves orphaned R2 objects the reaper cannot
-		// find (KV metadata already deleted). Skipped for non-processing
-		// puzzles (no live workflow writes) and the corrupt-metadata case
-		// (status unknown — operator has accepted the orphan risk; the DO
-		// tombstone below still prevents metadata resurrection).
-		if (puzzle?.status === 'processing') {
+		if (family.status === 'processing') {
 			const stopped = await terminateAndAwaitStopped(c.env.PUZZLE_WORKFLOW, id);
 			if (!stopped) {
 				console.error(
@@ -1963,28 +1862,17 @@ admin.post('/puzzle-delete/:id', async (c) => {
 			}
 		}
 
-		// Deletion commits here, after all read-only and workflow-liveness
-		// gates. The shared helper runs fence -> DO tombstone -> R2 -> KV ->
-		// idempotency release -> finish, returning a 500 {error, message} on
-		// any step failure.
 		const deletionResult = await executeFencedSourceDeletion(
 			c.env,
 			cleanupRecord,
 			'',
 			(message) => c.json({ error: ErrorCode.InternalError, message }, 500),
 			async () => {
-				// Best-effort release of the idempotency reservation so the
-				// key can be reused after deletion. Without this, a deleted
-				// seeded puzzle permanently maps its key to the deleted ID,
-				// and the next upload with the same key gets a permanent 409.
-				// Owner-checked and 404-tolerant. Logged, not fatal — KV
-				// deletion above is the source of truth for puzzle existence.
-				// Skipped when metadata was corrupt.
-				if (puzzle?.idempotencyKey) {
+				if (family.idempotencyKey) {
 					try {
-						await releaseIdempotencyKey(c.env.PUZZLE_METADATA_DO, puzzle.idempotencyKey, id);
+						await releaseIdempotencyKey(c.env.PUZZLE_METADATA_DO, family.idempotencyKey, id);
 					} catch (err) {
-						console.error(`Failed to release idempotency reservation for puzzle ${id}:`, err);
+						console.error(`Failed to release idempotency reservation for family ${id}:`, err);
 					}
 				}
 			}

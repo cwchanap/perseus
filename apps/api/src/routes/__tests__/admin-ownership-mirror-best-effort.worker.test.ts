@@ -15,6 +15,7 @@ vi.mock('../../services/storage.worker', async (importOriginal) => {
 		getPuzzle: vi.fn(),
 		getFamily: vi.fn(),
 		deletePuzzleAssets: vi.fn(),
+		deleteFamilyCleanupAssets: vi.fn().mockResolvedValue({ success: true, failedKeys: [] }),
 		deletePuzzleMetadata: vi.fn().mockResolvedValue({ success: true }),
 		createPuzzleMetadata: vi.fn().mockResolvedValue(undefined).mockResolvedValue(undefined),
 		createFamilyMetadata: vi.fn().mockResolvedValue(undefined),

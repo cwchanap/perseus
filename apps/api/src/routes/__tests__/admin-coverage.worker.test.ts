@@ -20,6 +20,7 @@ vi.mock('../../services/storage.worker', async (importOriginal) => {
 		getPuzzle: vi.fn(),
 		getFamily: vi.fn(),
 		deletePuzzleAssets: vi.fn(),
+		deleteFamilyCleanupAssets: vi.fn().mockResolvedValue({ success: true, failedKeys: [] }),
 		deletePuzzleMetadata: vi.fn().mockResolvedValue({ success: true }),
 		createPuzzleMetadata: vi.fn().mockResolvedValue(undefined),
 		createFamilyMetadata: vi.fn().mockResolvedValue(undefined),
@@ -47,6 +48,12 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	return { ...original, ...sharedMockOverrides };
 });
 
+import {
+	cleanupRecordMatcher,
+	makeFamilyMetadata,
+	PIECE_COUNTS_1_1,
+	variantIdsForFamily
+} from './helpers/family-fixtures';
 import admin from '../admin.worker';
 import * as storage from '../../services/storage.worker';
 import { __resetRateLimitStore } from '../../middleware/rate-limit.worker';
@@ -68,27 +75,13 @@ describe('Admin Routes - Puzzle deletion error paths', () => {
 	});
 
 	it('returns 500 when metadata deletion fails', async () => {
-		vi.mocked(storage.getPuzzle).mockResolvedValue({
-			id: VALID_UUID,
-			name: 'Test Puzzle',
-			status: 'ready',
-			pieceCount: 4,
-			gridCols: 2,
-			gridRows: 2,
-			imageWidth: 100,
-			imageHeight: 100,
-			createdAt: Date.now(),
-			pieces: [],
-			version: 0
-		} as any);
+		vi.mocked(storage.getFamily).mockResolvedValue(makeFamilyMetadata(VALID_UUID, 'ready'));
 
-		// Safe lifecycle: DO tombstone and R2 deletion succeed, then KV
-		// deletion fails. The route writes a cleanup record and defers to
-		// the reaper instead of returning a generic 'Failed to delete'.
-		vi.mocked(storage.deletePuzzleAssets).mockResolvedValue({
+		vi.mocked(storage.deleteFamilyCleanupAssets).mockResolvedValue({
 			success: true,
 			failedKeys: []
 		});
+		vi.mocked(storage.deleteFamilyMetadata).mockResolvedValue({ success: true });
 		vi.mocked(storage.deletePuzzleMetadata).mockResolvedValue({
 			success: false,
 			error: new Error('KV delete failed')
@@ -115,7 +108,7 @@ describe('Admin Routes - Puzzle deletion error paths', () => {
 		// Cleanup record written so the reaper retries KV deletion.
 		expect(storage.writeCleanupRecord).toHaveBeenCalledWith(
 			mockEnv.PUZZLE_METADATA,
-			expect.objectContaining({ puzzleId: VALID_UUID })
+			cleanupRecordMatcher(VALID_UUID)
 		);
 		consoleSpy.mockRestore();
 	});
@@ -135,7 +128,7 @@ describe('Admin Routes - Puzzle deletion error paths', () => {
 			version: 0
 		} as any);
 
-		vi.mocked(storage.deletePuzzleAssets).mockResolvedValue({
+		vi.mocked(storage.deleteFamilyCleanupAssets).mockResolvedValue({
 			success: true,
 			failedKeys: []
 		});

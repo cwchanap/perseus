@@ -23,6 +23,7 @@ vi.mock('../../services/storage.worker', async (importOriginal) => {
 		getPuzzle: vi.fn(),
 		getFamily: vi.fn(),
 		deletePuzzleAssets: vi.fn(),
+		deleteFamilyCleanupAssets: vi.fn().mockResolvedValue({ success: true, failedKeys: [] }),
 		deletePuzzleMetadata: vi.fn().mockResolvedValue({ success: true }),
 		createPuzzleMetadata: vi.fn().mockResolvedValue(undefined),
 		createFamilyMetadata: vi.fn().mockResolvedValue(undefined),
@@ -53,6 +54,12 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	};
 });
 
+import {
+	cleanupRecordMatcher,
+	makeFamilyMetadata,
+	PIECE_COUNTS_1_1,
+	variantIdsForFamily
+} from './helpers/family-fixtures';
 import admin from '../admin.worker';
 import * as storage from '../../services/storage.worker';
 import { deletePuzzleFamilyOwnership } from '@perseus/shared';
@@ -77,14 +84,9 @@ describe('Admin Worker - DELETE /puzzles/:id required ownership cleanup', () => 
 	});
 
 	it('returns retriable 500 and retains the cleanup record when ownership rejects', async () => {
-		vi.mocked(storage.getPuzzle).mockResolvedValue({
-			id: VALID_UUID,
-			name: 'Ready Puzzle',
-			status: 'ready',
-			pieceCount: 4
-		} as any);
+		vi.mocked(storage.getFamily).mockResolvedValue(makeFamilyMetadata(VALID_UUID, 'ready'));
 		vi.mocked(storage.deletePuzzleMetadata).mockResolvedValue({ success: true } as any);
-		vi.mocked(storage.deletePuzzleAssets).mockResolvedValue({
+		vi.mocked(storage.deleteFamilyCleanupAssets).mockResolvedValue({
 			success: true,
 			failedKeys: []
 		} as any);
@@ -101,17 +103,19 @@ describe('Admin Worker - DELETE /puzzles/:id required ownership cleanup', () => 
 		const res = await admin.fetch(req, mockEnv as any);
 
 		expect(res.status).toBe(500);
-		expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledWith(
-			VALID_UUID,
-			expect.any(Number)
-		);
-		expect(dbContextMock.completionWrites.finishPuzzleDeletion).toHaveBeenCalledWith(VALID_UUID);
+		for (const difficulty of ['easy', 'normal', 'hard'] as const) {
+			expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledWith(
+				`${VALID_UUID}-${difficulty}`,
+				expect.any(Number)
+			);
+		}
+		expect(dbContextMock.completionWrites.finishPuzzleDeletion).not.toHaveBeenCalled();
 		expect(deletePuzzleFamilyOwnership).toHaveBeenCalledTimes(1);
 		expect(consoleSpy).toHaveBeenCalledWith(
 			`Failed to finish fenced cleanup for ${VALID_UUID}:`,
 			expect.any(Error)
 		);
-		expect(storage.deletePuzzleAssets).toHaveBeenCalledTimes(1);
+		expect(storage.deleteFamilyCleanupAssets).toHaveBeenCalledTimes(1);
 		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
 		consoleSpy.mockRestore();
 	});

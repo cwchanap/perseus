@@ -785,37 +785,50 @@ describe('invalidateGalleryIndex', () => {
 	});
 });
 
+function makeCleanupRecord(
+	familyId = 'f1e4567-e89b-42d3-a456-426614174000',
+	overrides: Partial<{
+		variantIds: Record<'easy' | 'normal' | 'hard', string>;
+		pieceCounts: Record<'easy' | 'normal' | 'hard', number>;
+		idempotencyKey: string;
+		createdAt: number;
+	}> = {}
+) {
+	return {
+		familyId,
+		variantIds: overrides.variantIds ?? FAMILY_VARIANT_IDS,
+		pieceCounts: overrides.pieceCounts ?? { easy: 16, normal: 49, hard: 100 },
+		createdAt: overrides.createdAt ?? 1700000000000,
+		...(overrides.idempotencyKey ? { idempotencyKey: overrides.idempotencyKey } : {})
+	};
+}
+
 describe('cleanup records', () => {
 	it('writeCleanupRecord writes JSON to the cleanup: prefix key', async () => {
 		const kv = createMockKV();
-		const record = { puzzleId: 'p-1', pieceCount: 50, createdAt: 1700000000000 };
+		const record = makeCleanupRecord();
 		await writeCleanupRecord(kv as unknown as KVNamespace, record);
-		expect(kv.put).toHaveBeenCalledWith('cleanup:p-1', JSON.stringify(record));
+		expect(kv.put).toHaveBeenCalledWith(`cleanup:${record.familyId}`, JSON.stringify(record));
 	});
 
 	it('writeCleanupRecord writes with idempotencyKey when provided', async () => {
 		const kv = createMockKV();
-		const record = {
-			puzzleId: 'p-2',
-			pieceCount: 100,
-			idempotencyKey: 'key-1',
-			createdAt: 1700000000000
-		};
+		const record = makeCleanupRecord('f2e4567-e89b-42d3-a456-426614174001', {
+			idempotencyKey: 'key-1'
+		});
 		await writeCleanupRecord(kv as unknown as KVNamespace, record);
-		expect(kv.put).toHaveBeenCalledWith('cleanup:p-2', JSON.stringify(record));
+		expect(kv.put).toHaveBeenCalledWith(`cleanup:${record.familyId}`, JSON.stringify(record));
 	});
 
 	it('listCleanupRecords returns all cleanup records', async () => {
 		const kv = createMockKV();
-		const record1 = { puzzleId: 'p-1', pieceCount: 50, createdAt: 1700000000000 };
-		const record2 = {
-			puzzleId: 'p-2',
-			pieceCount: 100,
+		const record1 = makeCleanupRecord('f1e4567-e89b-42d3-a456-426614174010');
+		const record2 = makeCleanupRecord('f2e4567-e89b-42d3-a456-426614174011', {
 			idempotencyKey: 'key-1',
 			createdAt: 1700000000001
-		};
-		kv._store.set('cleanup:p-1', JSON.stringify(record1));
-		kv._store.set('cleanup:p-2', JSON.stringify(record2));
+		});
+		kv._store.set(`cleanup:${record1.familyId}`, JSON.stringify(record1));
+		kv._store.set(`cleanup:${record2.familyId}`, JSON.stringify(record2));
 
 		const records = await listCleanupRecords(kv as unknown as KVNamespace);
 		expect(records).toHaveLength(2);
@@ -823,68 +836,90 @@ describe('cleanup records', () => {
 		expect(records).toContainEqual(record2);
 	});
 
-	it('listCleanupRecords skips entries without puzzleId', async () => {
+	it('listCleanupRecords skips entries without familyId', async () => {
 		const kv = createMockKV();
-		kv._store.set('cleanup:p-1', JSON.stringify({ puzzleId: 'p-1', pieceCount: 50, createdAt: 0 }));
+		const good = makeCleanupRecord();
+		kv._store.set(`cleanup:${good.familyId}`, JSON.stringify(good));
 		kv._store.set('cleanup:bad', JSON.stringify({ foo: 'bar' }));
 
 		const records = await listCleanupRecords(kv as unknown as KVNamespace);
 		expect(records).toHaveLength(1);
-		expect(records[0].puzzleId).toBe('p-1');
+		expect(records[0].familyId).toBe(good.familyId);
 	});
 
-	it('listCleanupRecords rejects non-string puzzleId (number/object/null)', async () => {
+	it('listCleanupRecords rejects missing variant IDs or invalid familyId', async () => {
 		const kv = createMockKV();
+		const good = makeCleanupRecord('a1e4567-e89b-42d3-a456-426614174020');
+		kv._store.set(`cleanup:${good.familyId}`, JSON.stringify(good));
 		kv._store.set(
-			'cleanup:good',
-			JSON.stringify({ puzzleId: 'good', pieceCount: 50, createdAt: 0 })
+			'cleanup:num',
+			JSON.stringify({
+				familyId: 123,
+				variantIds: FAMILY_VARIANT_IDS,
+				pieceCounts: { easy: 16, normal: 49, hard: 100 },
+				createdAt: 0
+			})
 		);
-		// Numeric puzzleId — must be rejected (would flow into asset deletion).
-		kv._store.set('cleanup:num', JSON.stringify({ puzzleId: 123, pieceCount: 50, createdAt: 0 }));
-		// Object puzzleId — must be rejected.
 		kv._store.set(
-			'cleanup:obj',
-			JSON.stringify({ puzzleId: { x: 1 }, pieceCount: 50, createdAt: 0 })
+			'cleanup:partial',
+			JSON.stringify({
+				familyId: 'b1e4567-e89b-42d3-a456-426614174021',
+				variantIds: { easy: FAMILY_VARIANT_IDS.easy },
+				pieceCounts: { easy: 16, normal: 49, hard: 100 },
+				createdAt: 0
+			})
 		);
-		// Empty-string puzzleId — must be rejected.
-		kv._store.set('cleanup:empty', JSON.stringify({ puzzleId: '', pieceCount: 50, createdAt: 0 }));
+		kv._store.set(
+			'cleanup:empty',
+			JSON.stringify({
+				familyId: '',
+				variantIds: FAMILY_VARIANT_IDS,
+				pieceCounts: { easy: 16, normal: 49, hard: 100 },
+				createdAt: 0
+			})
+		);
 
 		const records = await listCleanupRecords(kv as unknown as KVNamespace);
 		expect(records).toHaveLength(1);
-		expect(records[0].puzzleId).toBe('good');
+		expect(records[0].familyId).toBe(good.familyId);
 	});
 
-	it('listCleanupRecords rejects non-finite pieceCount (NaN/Infinity/string)', async () => {
+	it('listCleanupRecords rejects non-finite pieceCounts per difficulty', async () => {
 		const kv = createMockKV();
-		kv._store.set(
-			'cleanup:good',
-			JSON.stringify({ puzzleId: 'good', pieceCount: 50, createdAt: 0 })
-		);
-		// NaN pieceCount — must be rejected.
+		const good = makeCleanupRecord('c1e4567-e89b-42d3-a456-426614174030');
+		kv._store.set(`cleanup:${good.familyId}`, JSON.stringify(good));
 		kv._store.set(
 			'cleanup:nan',
-			JSON.stringify({ puzzleId: 'nan', pieceCount: NaN, createdAt: 0 })
+			JSON.stringify({
+				familyId: 'd1e4567-e89b-42d3-a456-426614174031',
+				variantIds: FAMILY_VARIANT_IDS,
+				pieceCounts: { easy: NaN, normal: 49, hard: 100 },
+				createdAt: 0
+			})
 		);
-		// Infinity pieceCount — must be rejected.
-		kv._store.set(
-			'cleanup:inf',
-			JSON.stringify({ puzzleId: 'inf', pieceCount: Infinity, createdAt: 0 })
-		);
-		// String pieceCount — must be rejected (typeof check).
 		kv._store.set(
 			'cleanup:str',
-			JSON.stringify({ puzzleId: 'str', pieceCount: '50', createdAt: 0 })
+			JSON.stringify({
+				familyId: 'e1e4567-e89b-42d3-a456-426614174032',
+				variantIds: FAMILY_VARIANT_IDS,
+				pieceCounts: { easy: '16', normal: 49, hard: 100 },
+				createdAt: 0
+			})
 		);
 
 		const records = await listCleanupRecords(kv as unknown as KVNamespace);
 		expect(records).toHaveLength(1);
-		expect(records[0].puzzleId).toBe('good');
+		expect(records[0].familyId).toBe(good.familyId);
 	});
 
 	it('listCleanupRecords handles paginated KV list results', async () => {
+		const record1 = makeCleanupRecord('f1e4567-e89b-42d3-a456-426614174040');
+		const record2 = makeCleanupRecord('f2e4567-e89b-42d3-a456-426614174041', {
+			createdAt: 1
+		});
 		const store = new Map<string, string>();
-		store.set('cleanup:p-1', JSON.stringify({ puzzleId: 'p-1', pieceCount: 50, createdAt: 0 }));
-		store.set('cleanup:p-2', JSON.stringify({ puzzleId: 'p-2', pieceCount: 60, createdAt: 1 }));
+		store.set(`cleanup:${record1.familyId}`, JSON.stringify(record1));
+		store.set(`cleanup:${record2.familyId}`, JSON.stringify(record2));
 
 		let listCall = 0;
 		const kv = {
@@ -902,12 +937,12 @@ describe('cleanup records', () => {
 					listCall++;
 					if (listCall === 1) {
 						return {
-							keys: [{ name: 'cleanup:p-1' }],
+							keys: [{ name: `cleanup:${record1.familyId}` }],
 							list_complete: false,
 							cursor: 'next-page'
 						};
 					}
-					return { keys: [{ name: 'cleanup:p-2' }], list_complete: true };
+					return { keys: [{ name: `cleanup:${record2.familyId}` }], list_complete: true };
 				}
 			)
 		} as unknown as KVNamespace;
@@ -919,11 +954,12 @@ describe('cleanup records', () => {
 
 	it('deleteCleanupRecord deletes the cleanup: prefix key', async () => {
 		const kv = createMockKV();
-		kv._store.set('cleanup:p-1', JSON.stringify({ puzzleId: 'p-1', pieceCount: 50, createdAt: 0 }));
+		const record = makeCleanupRecord();
+		kv._store.set(`cleanup:${record.familyId}`, JSON.stringify(record));
 
-		await deleteCleanupRecord(kv as unknown as KVNamespace, 'p-1');
-		expect(kv.delete).toHaveBeenCalledWith('cleanup:p-1');
-		expect(kv._store.has('cleanup:p-1')).toBe(false);
+		await deleteCleanupRecord(kv as unknown as KVNamespace, record.familyId);
+		expect(kv.delete).toHaveBeenCalledWith(`cleanup:${record.familyId}`);
+		expect(kv._store.has(`cleanup:${record.familyId}`)).toBe(false);
 	});
 });
 
