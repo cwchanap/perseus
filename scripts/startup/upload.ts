@@ -70,7 +70,12 @@ export async function readError(response: Response, usingServiceToken = false): 
 		.clone()
 		.text()
 		.catch(() => '');
-	if (text.includes('Cloudflare Access') || response.status === 302 || response.status === 403) {
+	if (
+		text.includes('Cloudflare Access') ||
+		response.status === 401 ||
+		response.status === 302 ||
+		response.status === 403
+	) {
 		const hint = usingServiceToken
 			? 'Check CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET are valid and not expired.'
 			: 'Run: bun run admin:startup:set-token';
