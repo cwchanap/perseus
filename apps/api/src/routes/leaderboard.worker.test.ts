@@ -78,6 +78,59 @@ describe('GET /api/leaderboard', () => {
 		expect(body.entries[0].player).not.toHaveProperty('email');
 	});
 
+	it('normalizes external avatar URLs and preserves API avatar paths', async () => {
+		mocks.listOverallLeaderboard.mockResolvedValue({
+			entries: [
+				{
+					rank: 1,
+					playerId: 'external',
+					score: 500,
+					easyClears: 2,
+					normalClears: 1,
+					hardClears: 0
+				},
+				{
+					rank: 2,
+					playerId: 'path',
+					score: 400,
+					easyClears: 1,
+					normalClears: 1,
+					hardClears: 0
+				}
+			]
+		});
+		mocks.resolveLeaderboardIdentities.mockResolvedValue(
+			new Map([
+				[
+					'external',
+					{ id: 'external', name: 'External', avatarUrl: 'https://cdn.example/avatar.png' }
+				],
+				['path', { id: 'path', name: 'Path', avatarUrl: '/api/player/path/avatar?v=2' }]
+			])
+		);
+
+		const response = await leaderboard.fetch(new Request('http://localhost/'), TEST_ENV);
+		const body = (await response.json()) as OverallLeaderboardResponse;
+
+		expect(response.status).toBe(200);
+		expect(body.entries[0].player.avatarUrl).toBe('/api/player/external/avatar');
+		expect(body.entries[1].player.avatarUrl).toBe('/api/player/path/avatar?v=2');
+	});
+
+	it('returns 500 when a leaderboard entry fails validation', async () => {
+		mocks.resolveLeaderboardIdentities.mockResolvedValue(
+			new Map([['p1', { id: 'p1', name: '', avatarUrl: null }]])
+		);
+
+		const response = await leaderboard.fetch(new Request('http://localhost/'), TEST_ENV);
+
+		expect(response.status).toBe(500);
+		expect(await response.json()).toEqual({
+			error: 'internal_error',
+			message: 'Failed to build leaderboard'
+		});
+	});
+
 	it('includes viewer row when outside top 50', async () => {
 		vi.mocked(playerAuth.getPlayerSession).mockResolvedValue(VIEWER_SESSION);
 		mocks.listOverallLeaderboard.mockResolvedValue({

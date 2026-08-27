@@ -233,6 +233,18 @@ function jsonHeaders() {
 	return { 'Content-Type': 'application/json', ...AUTH_COOKIE };
 }
 
+function requestStandardCompletion() {
+	return buildApp().request(
+		`/api/puzzles/${PUZZLE_ID}/complete`,
+		{
+			method: 'POST',
+			headers: jsonHeaders(),
+			body: JSON.stringify(VERSIONED_CASES[0].request)
+		},
+		DUMMY_ENV
+	);
+}
+
 describe('POST /api/puzzles/:id/complete (Worker)', () => {
 	beforeEach(() => {
 		vi.mocked(dbModule.getWorkerDb).mockReset();
@@ -433,6 +445,21 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 		consoleSpy.mockRestore();
 	});
 
+	it('returns 500 when parent family resolution fails', async () => {
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		vi.mocked(storage.getFamily).mockRejectedValueOnce(new Error('Corrupt family metadata'));
+
+		const res = await requestStandardCompletion();
+
+		expect(res.status).toBe(500);
+		expect(await res.json()).toEqual({
+			error: 'internal_error',
+			message: 'Failed to retrieve puzzle'
+		});
+		expect(recordVersionedCompletion).not.toHaveBeenCalled();
+		consoleSpy.mockRestore();
+	});
+
 	it('rejects invalid JSON body with 400', async () => {
 		const res = await buildApp().request(
 			`/api/puzzles/${PUZZLE_ID}/complete`,
@@ -481,6 +508,96 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 			request,
 			{ familyId: FAMILY_ID, difficulty: 'easy' }
 		);
+	});
+
+	it('returns { ok: true } when the completion result has no awards', async () => {
+		vi.mocked(recordVersionedCompletion).mockResolvedValueOnce({
+			status: 'recorded',
+			completedAt: 100
+		});
+
+		const res = await requestStandardCompletion();
+
+		expect(res.status).toBe(200);
+		expect(await res.json()).toEqual({ ok: true });
+	});
+
+	it('omits awards when the completion result has an empty awards object', async () => {
+		vi.mocked(recordVersionedCompletion).mockResolvedValueOnce({
+			status: 'recorded',
+			completedAt: 100,
+			awards: {}
+		});
+
+		const res = await requestStandardCompletion();
+
+		expect(res.status).toBe(200);
+		expect(await res.json()).toEqual({ ok: true });
+	});
+
+	it('serializes clear points in completion awards', async () => {
+		vi.mocked(recordVersionedCompletion).mockResolvedValueOnce({
+			status: 'recorded',
+			completedAt: 100,
+			awards: { clearPoints: 100 }
+		});
+
+		const res = await requestStandardCompletion();
+
+		expect(res.status).toBe(200);
+		expect(await res.json()).toEqual({ ok: true, awards: { clearPoints: 100 } });
+	});
+
+	it('omits empty achievement and mastery awards while serializing personal best and rank', async () => {
+		vi.mocked(recordVersionedCompletion).mockResolvedValueOnce({
+			status: 'recorded',
+			completedAt: 100,
+			awards: {
+				achievements: [],
+				mastery: [],
+				personalBest: { bestTimeSeconds: 120, isNew: true },
+				puzzleRank: 3
+			}
+		});
+
+		const res = await requestStandardCompletion();
+
+		expect(res.status).toBe(200);
+		expect(await res.json()).toEqual({
+			ok: true,
+			awards: {
+				personalBest: { bestTimeSeconds: 120, isNew: true },
+				puzzleRank: 3
+			}
+		});
+	});
+
+	it('serializes every populated completion award field', async () => {
+		vi.mocked(recordVersionedCompletion).mockResolvedValueOnce({
+			status: 'recorded',
+			completedAt: 100,
+			awards: {
+				clearPoints: 100,
+				achievements: ['first_clear'],
+				mastery: ['hintless', 'flawless', 'rotation_clear'],
+				personalBest: { bestTimeSeconds: 120, isNew: true },
+				puzzleRank: 3
+			}
+		});
+
+		const res = await requestStandardCompletion();
+
+		expect(res.status).toBe(200);
+		expect(await res.json()).toEqual({
+			ok: true,
+			awards: {
+				clearPoints: 100,
+				achievements: ['first_clear'],
+				mastery: ['hintless', 'flawless', 'rotation_clear'],
+				personalBest: { bestTimeSeconds: 120, isNew: true },
+				puzzleRank: 3
+			}
+		});
 	});
 
 	it('returns 200 for an exact versioned replay', async () => {
