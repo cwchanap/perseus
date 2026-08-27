@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import leaderboard from './leaderboard.worker';
 import * as playerAuth from '../services/player-auth.worker';
+import type { Env } from '../worker';
+import type { PlayerSessionRecord } from '../services/player-auth.worker';
+import type { OverallLeaderboardResponse } from '@perseus/types';
 
 const mocks = vi.hoisted(() => ({
 	listOverallLeaderboard: vi.fn(),
@@ -25,6 +28,21 @@ vi.mock('../services/player-auth.worker', () => ({
 	PLAYER_SESSION_COOKIE: 'perseus_player_session'
 }));
 
+const TEST_ENV = { PUZZLE_METADATA: {} as KVNamespace } as unknown as Env;
+
+const VIEWER_SESSION: PlayerSessionRecord = {
+	sessionHash: 'tok',
+	user: {
+		id: 'viewer',
+		email: 'viewer@example.com',
+		name: 'Viewer',
+		createdAt: 1,
+		lastLoginAt: 2
+	},
+	createdAt: 1,
+	expiresAt: 9999999999999
+};
+
 describe('GET /api/leaderboard', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -46,11 +64,9 @@ describe('GET /api/leaderboard', () => {
 	});
 
 	it('returns overall leaderboard entries without email', async () => {
-		const response = await leaderboard.fetch(new Request('http://localhost/'), {
-			PUZZLE_METADATA: {} as KVNamespace
-		} as any);
+		const response = await leaderboard.fetch(new Request('http://localhost/'), TEST_ENV);
 		expect(response.status).toBe(200);
-		const body = await response.json();
+		const body = (await response.json()) as OverallLeaderboardResponse;
 		expect(body.entries[0]).toEqual({
 			rank: 1,
 			player: { id: 'p1', name: 'Ace', avatarUrl: null },
@@ -59,20 +75,11 @@ describe('GET /api/leaderboard', () => {
 			normalClears: 1,
 			hardClears: 0
 		});
-		expect(body.entries[0].player.email).toBeUndefined();
+		expect(body.entries[0].player).not.toHaveProperty('email');
 	});
 
 	it('includes viewer row when outside top 50', async () => {
-		vi.mocked(playerAuth.getPlayerSession).mockResolvedValue({
-			token: 'tok',
-			user: {
-				id: 'viewer',
-				email: 'viewer@example.com',
-				name: 'Viewer',
-				createdAt: 1,
-				lastLoginAt: 2
-			}
-		} as any);
+		vi.mocked(playerAuth.getPlayerSession).mockResolvedValue(VIEWER_SESSION);
 		mocks.listOverallLeaderboard.mockResolvedValue({
 			entries: [],
 			me: {
@@ -91,13 +98,11 @@ describe('GET /api/leaderboard', () => {
 			new Request('http://localhost/', {
 				headers: { Cookie: 'perseus_player_session=tok' }
 			}),
-			{
-				PUZZLE_METADATA: {} as KVNamespace
-			} as any
+			TEST_ENV
 		);
-		const body = await response.json();
-		expect(body.me.rank).toBe(51);
-		expect(body.me.player.email).toBeUndefined();
+		const body = (await response.json()) as OverallLeaderboardResponse;
+		expect(body.me?.rank).toBe(51);
+		expect(body.me?.player).not.toHaveProperty('email');
 		expect(mocks.listOverallLeaderboard).toHaveBeenCalledWith({}, { viewerPlayerId: 'viewer' });
 	});
 });

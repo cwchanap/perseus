@@ -11,9 +11,13 @@ import {
 	isPuzzleAspectRatio,
 	isPuzzleId,
 	stripIdempotencyKey,
-	type PuzzleCategory
+	type PuzzleCategory,
+	PUZZLE_DIFFICULTIES,
+	type PuzzleDifficulty,
+	isPuzzleLeaderboardEntry,
+	type PuzzleLeaderboardEntry,
+	type PuzzleLeaderboardResponse
 } from '@perseus/types';
-import { PUZZLE_DIFFICULTIES, type PuzzleDifficulty } from '@perseus/types';
 import type { Env } from '../worker';
 import {
 	createFamilyMetadata,
@@ -43,13 +47,6 @@ import {
 	resolveLeaderboardIdentities
 } from '@perseus/shared';
 import { optionalPlayerAuth } from '../middleware/optional-player-auth.worker';
-import {
-	isPuzzleLeaderboardEntry,
-	type PuzzleLeaderboardEntry,
-	type PuzzleLeaderboardResponse,
-	PUZZLE_DIFFICULTIES,
-	type PuzzleDifficulty
-} from '@perseus/types';
 
 const DECIMAL_INT_REGEX = /^\d+$/;
 

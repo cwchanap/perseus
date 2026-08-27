@@ -22,14 +22,12 @@ import {
 	createPuzzleMetadata,
 	deleteFamilyMetadata,
 	deletePuzzleMetadata,
-	deleteMetadataDO,
 	getAuthoritativeStatus,
 	failIdempotencyKey,
 	uploadOriginalImage,
 	deleteOriginalImage,
 	originalImageExists,
 	getFamily,
-	getPuzzle,
 	listFamilies,
 	enrichFamilySummary,
 	releaseIdempotencyKey,
@@ -38,8 +36,7 @@ import {
 	buildFamilyMetadata,
 	buildVariantMetadata,
 	buildCleanupRecordFromFamily,
-	type CleanupRecord,
-	type PuzzleMetadata
+	type CleanupRecord
 } from '../services/storage.worker';
 import { isIdempotencyCommitConflict } from '../services/idempotency-conflict';
 import { executeFencedFamilySourceDeletion } from '../services/puzzle-deletion.worker';

@@ -58,7 +58,6 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 });
 
 import {
-	cleanupRecordMatcher,
 	makeFamilyMetadata,
 	PIECE_COUNTS_1_1,
 	variantIdsForFamily

@@ -65,12 +65,7 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	return { ...original, ...sharedMockOverrides };
 });
 
-import {
-	cleanupRecordMatcher,
-	makeFamilyMetadata,
-	PIECE_COUNTS_1_1,
-	variantIdsForFamily
-} from './helpers/family-fixtures';
+import { makeFamilyMetadata } from './helpers/family-fixtures';
 import admin from '../admin.worker';
 import { getWorkerDb, getWorkerDbContext } from '../../db.worker';
 import { deletePuzzleFamilyOwnership } from '@perseus/shared';
