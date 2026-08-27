@@ -52,7 +52,7 @@ export const puzzleCompletionRuns = sqliteTable(
 					${t.resultClass} IN ('standard_timed', 'rotation_timed', 'assisted_timed')
 					AND ${t.elapsedActiveSeconds} IS NOT NULL
 					AND typeof(${t.elapsedActiveSeconds}) = 'integer'
-					AND ${t.elapsedActiveSeconds} BETWEEN 1 AND ${MAX_COMPLETION_TIME_SECONDS}
+					AND ${t.elapsedActiveSeconds} BETWEEN 1 AND ${sql.raw(String(MAX_COMPLETION_TIME_SECONDS))}
 				)
 			)`
 		)
@@ -84,7 +84,7 @@ export const puzzleBestTimes = sqliteTable(
 		),
 		bestTimeSecondsCheck: check(
 			'pbt_best_time_seconds_check',
-			sql`${t.bestTimeSeconds} BETWEEN 1 AND ${MAX_COMPLETION_TIME_SECONDS}`
+			sql`${t.bestTimeSeconds} BETWEEN 1 AND ${sql.raw(String(MAX_COMPLETION_TIME_SECONDS))}`
 		)
 	})
 );
