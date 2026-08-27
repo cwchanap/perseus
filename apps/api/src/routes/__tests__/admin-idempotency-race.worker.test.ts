@@ -225,6 +225,40 @@ describe('Admin Worker idempotency reclaim races', () => {
 		expect(storage.uploadOriginalImage).not.toHaveBeenCalled();
 	});
 
+	it('returns 409 when the authoritative DO status check itself fails for a dead reclaim winner', async () => {
+		vi.mocked(storage.reserveIdempotencyKey)
+			.mockResolvedValueOnce({
+				existing: true,
+				familyId: 'failed-puzzle',
+				status: 'committed'
+			})
+			.mockResolvedValueOnce({
+				existing: true,
+				familyId: 'do-down-winner',
+				status: 'committed'
+			});
+		vi.mocked(storage.getFamily)
+			.mockResolvedValueOnce({ id: 'failed-puzzle', status: 'failed' } as any)
+			.mockResolvedValueOnce({
+				id: 'do-down-winner',
+				status: 'processing',
+				idempotencyKey: 'do-down-key'
+			} as any);
+		vi.mocked(storage.getAuthoritativeStatus).mockRejectedValue(new Error('DO fetch failed'));
+		const workflow = createWorkflow('errored');
+
+		const response = await admin.fetch(createRequest('do-down-key'), createEnv(workflow) as any);
+
+		expect(response.status).toBe(409);
+		const body = await response.json();
+		expect(body).toMatchObject({
+			error: 'conflict',
+			message:
+				'Idempotency key reclaimed by a request whose workflow is dead; status could not be verified, retry'
+		});
+		expect(storage.uploadOriginalImage).not.toHaveBeenCalled();
+	});
+
 	it('returns 200 for a committed reclaim winner whose workflow is dead but DO says ready', async () => {
 		// The workflow is dead but the DO (source of truth) says 'ready' —
 		// KV is just lagging. The puzzle is valid; return 200. Mirrors the

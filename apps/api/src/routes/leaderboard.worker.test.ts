@@ -131,6 +131,22 @@ describe('GET /api/leaderboard', () => {
 		});
 	});
 
+	it('treats a cookie with an unrecognized session as anonymous', async () => {
+		vi.mocked(playerAuth.getPlayerSession).mockResolvedValue(null);
+
+		const response = await leaderboard.fetch(
+			new Request('http://localhost/', {
+				headers: { Cookie: 'perseus_player_session=stale-token' }
+			}),
+			TEST_ENV
+		);
+
+		expect(response.status).toBe(200);
+		expect(mocks.listOverallLeaderboard).toHaveBeenCalledWith(expect.anything(), {
+			viewerPlayerId: undefined
+		});
+	});
+
 	it('includes viewer row when outside top 50', async () => {
 		vi.mocked(playerAuth.getPlayerSession).mockResolvedValue(VIEWER_SESSION);
 		mocks.listOverallLeaderboard.mockResolvedValue({

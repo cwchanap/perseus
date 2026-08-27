@@ -478,5 +478,43 @@ describe('Worker Entry Point', () => {
 				expect.stringContaining('Reaper avatar GC: scanned=2 candidates=1')
 			);
 		});
+
+		it('should log avatar GC failure when the run rejects', async () => {
+			const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			(reapStuckPuzzles as any).mockResolvedValue({
+				scanned: 0,
+				candidates: 0,
+				reaped: 0,
+				errors: 0,
+				details: []
+			});
+			(reapCleanupRecords as any).mockResolvedValue({
+				scanned: 0,
+				reaped: 0,
+				errors: 0,
+				details: []
+			});
+			(reapOrphanedReservations as any).mockResolvedValue({
+				scanned: 0,
+				candidates: 0,
+				reaped: 0,
+				errors: 0,
+				details: []
+			});
+			(reapOrphanedAvatars as any).mockRejectedValue(new Error('avatar GC failed'));
+			const ctx = createMockCtx();
+			const env = { PUZZLE_METADATA: {} } as any;
+
+			await worker.scheduled!(undefined as any, env, ctx);
+			const waitUntilCall = (ctx.waitUntil as any).mock.calls[0][0];
+			await waitUntilCall;
+
+			expect(reapOrphanedAvatars).toHaveBeenCalledWith(env);
+			expect(errorSpy).toHaveBeenCalledWith(
+				'Reaper avatar GC: scheduled run failed:',
+				expect.any(Error)
+			);
+			errorSpy.mockRestore();
+		});
 	});
 });

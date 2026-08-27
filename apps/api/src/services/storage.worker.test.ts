@@ -570,6 +570,16 @@ describe('Family metadata operations', () => {
 		);
 	});
 
+	it('stores a valid family and exposes it to getFamily', async () => {
+		const kv = createMockKV();
+		const family = makeReadyFamily({ id: pageFamilyId(73) });
+
+		await createFamilyMetadata(kv as unknown as KVNamespace, family);
+
+		expect(kv._store.get(`family:${family.id}`)).toBe(JSON.stringify(family));
+		await expect(getFamily(kv as unknown as KVNamespace, family.id)).resolves.toEqual(family);
+	});
+
 	it('deletes family metadata and invalidates the gallery index', async () => {
 		const kv = createMockKV();
 		storeFamily(kv, { id: TEST_FAMILY_ID });

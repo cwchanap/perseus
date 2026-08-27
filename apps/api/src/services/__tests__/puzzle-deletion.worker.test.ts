@@ -223,4 +223,19 @@ describe('executeFamilySourceDeletion reservation release order', () => {
 		expect(mocks.finishPuzzleDeletion).toHaveBeenCalledTimes(PUZZLE_DIFFICULTIES.length);
 		expect(mocks.deleteCleanupRecord).not.toHaveBeenCalled();
 	});
+
+	it('reports a kv-family failure when family metadata deletion fails', async () => {
+		const kvError = new Error('family KV delete failed');
+		mocks.deleteFamilyMetadata.mockResolvedValueOnce({ success: false, error: kvError });
+
+		const result = await executeFamilySourceDeletion(
+			env,
+			record,
+			vi.fn(async () => undefined)
+		);
+
+		expect(result).toEqual({ ok: false, step: 'kv-family', error: kvError });
+		expect(mocks.deletePuzzleMetadata).not.toHaveBeenCalled();
+		expect(mocks.deleteCleanupRecord).not.toHaveBeenCalled();
+	});
 });
