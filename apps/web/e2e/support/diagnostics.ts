@@ -413,6 +413,8 @@ function completionStatuses(scenario: CompletionScenario): number[] | 'no-respon
 	switch (scenario.kind) {
 		case 'success':
 			return [200];
+		case 'awarded-success-once':
+			return [200];
 		case 'http-failure':
 			return [scenario.status];
 		case 'retry-sequence':

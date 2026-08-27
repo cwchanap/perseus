@@ -23,12 +23,19 @@ import {
 	type SessionPuzzleSpec,
 	type SessionValidationContext
 } from '@perseus/game-core';
+import type { PuzzleAspectRatio } from '@perseus/types';
+import { getGridDimensionsForAspectRatio } from '@perseus/types';
 import { QUICK_PUZZLE_ID_PREFIX } from '$lib/services/quickPuzzle/types';
 import { SERVER_PROGRESS_KEY_PREFIX } from '$lib/services/gameplay/session/persistence';
 import { getFixture, type GameplayFixtureId } from './catalog';
 
 /** Canonical localStorage key prefix for server variant progress. */
 export const PROGRESS_KEY_PREFIX = SERVER_PROGRESS_KEY_PREFIX;
+
+/** Legacy server progress key before the v2 namespace cutover (ignored by the app). */
+export function legacyProgressKey(puzzleId: string): string {
+	return `puzzle-progress-${puzzleId}`;
+}
 
 /** The exact localStorage key the puzzle page reads for `puzzleId`. */
 export function progressKey(puzzleId: string): string {
@@ -112,6 +119,74 @@ export interface PersistedStateController {
 	resetSameContext(page: Page): Promise<void>;
 	/** Open a brand-new isolated browser context. */
 	freshContext(browser: Browser): Promise<BrowserContext>;
+}
+
+/**
+ * Seed a valid API-variant session for gallery progress discovery. Uses the
+ * production grid contract for `pieceCount` + `aspectRatio` so family cards
+ * with standard difficulty counts accept the snapshot.
+ */
+export async function seedApiVariantProgress(
+	page: Page,
+	variantId: string,
+	aspectRatio: PuzzleAspectRatio,
+	pieceCount: number,
+	options: { placedPieceId?: number; lastUpdated?: number } = {}
+): Promise<void> {
+	const { rows, cols } = getGridDimensionsForAspectRatio(pieceCount, aspectRatio);
+	const placedPieceId = options.placedPieceId ?? 0;
+	const trayOrder = Array.from({ length: pieceCount }, (_, id) => id);
+
+	const snapshot: PersistedPuzzleSessionV1 = {
+		schemaVersion: 1,
+		puzzleId: variantId,
+		source: 'api',
+		lifecycle: 'active',
+		mode: 'timed',
+		runId: '00000000-0000-4000-8000-0000000000aa',
+		origin: 'new',
+		elapsedActiveSeconds: 0,
+		timerStarted: false,
+		placedPieces: [
+			{
+				pieceId: placedPieceId,
+				x: placedPieceId % cols,
+				y: Math.floor(placedPieceId / cols)
+			}
+		],
+		trayOrder,
+		rotationEnabled: false,
+		pieceRotations: {},
+		counters: { incorrectAttempts: 0, hintsUsed: 0, referenceActivations: 0 },
+		facts: { rotationUsed: false, hintUsed: false, ghostReferenceUsed: false },
+		hasUserActivity: true,
+		resultClass: 'standard_timed',
+		sealedCompletion: null,
+		lastUpdated: options.lastUpdated ?? 1710000000000
+	};
+
+	const spec: SessionPuzzleSpec = {
+		puzzleId: variantId,
+		source: 'api',
+		pieceCount,
+		gridCols: cols,
+		gridRows: rows,
+		pieces: Array.from({ length: pieceCount }, (_, id) => ({
+			id,
+			correctX: id % cols,
+			correctY: Math.floor(id / cols)
+		}))
+	};
+	const context = validationContextFrom(spec);
+	const json = JSON.stringify(snapshot);
+	const result = loadPersistedSession(json, context);
+	if (result.status !== 'loaded') {
+		throw new Error(`seedApiVariantProgress: invalid snapshot (${result.status})`);
+	}
+	await page.evaluate(({ key, value }) => localStorage.setItem(key, value), {
+		key: progressKey(variantId),
+		value: json
+	});
 }
 
 export function createPersistedStateController(): PersistedStateController {

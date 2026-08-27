@@ -12,6 +12,7 @@
 // Rotations are non-zero only on the rotation-enabled completion fixture.
 import type { PerseusE2EGameplayConfigV1 } from '../../src/lib/testing/e2e-gameplay-runtime';
 import type { Rotation } from '@perseus/game-core';
+import type { PuzzleDifficulty } from '@perseus/types';
 import { buildFixture, type GameplayFixture } from './builder';
 
 export type GameplayFixtureId =
@@ -30,6 +31,16 @@ export const FIXTURE_IDS: readonly GameplayFixtureId[] = [
 ];
 
 export const DEFAULT_FIXTURE_ID: GameplayFixtureId = 'e2e-square-4';
+
+/** Deterministic family id for the square-4 progression fixture (harness + E2E). */
+export function familyIdForFixtureIndex(fixtureIndex: number): string {
+	const tail = (fixtureIndex + 1).toString(16).padStart(12, '0');
+	return `00000000-0000-4000-8000-${tail}`;
+}
+
+export const E2E_PROGRESSION_FAMILY_ID = familyIdForFixtureIndex(0);
+
+const FIXTURE_DIFFICULTY: PuzzleDifficulty = 'easy';
 
 /** Run IDs consumed per Play Again (one for the initial solve, plus a margin). */
 const RUN_ID_COUNT = 4;
@@ -84,6 +95,8 @@ function allZeroRotations(n: number): Record<number, Rotation> {
 
 const square4 = buildFixture({
 	fixtureId: 'e2e-square-4',
+	familyId: familyIdForFixtureIndex(0),
+	difficulty: FIXTURE_DIFFICULTY,
 	name: 'E2E Square 4 (completion)',
 	aspectRatio: '1:1',
 	pieceCount: 4,
@@ -103,6 +116,8 @@ const square4 = buildFixture({
 
 const landscape12 = buildFixture({
 	fixtureId: 'e2e-landscape-12',
+	familyId: familyIdForFixtureIndex(1),
+	difficulty: FIXTURE_DIFFICULTY,
 	name: 'E2E Landscape 12',
 	aspectRatio: '4:3',
 	pieceCount: 12,
@@ -119,6 +134,8 @@ const landscape12 = buildFixture({
 
 const portrait12 = buildFixture({
 	fixtureId: 'e2e-portrait-12',
+	familyId: familyIdForFixtureIndex(2),
+	difficulty: FIXTURE_DIFFICULTY,
 	name: 'E2E Portrait 12',
 	aspectRatio: '3:4',
 	pieceCount: 12,
@@ -135,6 +152,8 @@ const portrait12 = buildFixture({
 
 const square100 = buildFixture({
 	fixtureId: 'e2e-square-100',
+	familyId: familyIdForFixtureIndex(3),
+	difficulty: FIXTURE_DIFFICULTY,
 	name: 'E2E Square 100 (layout)',
 	aspectRatio: '1:1',
 	pieceCount: 100,
@@ -151,6 +170,8 @@ const square100 = buildFixture({
 
 const square225 = buildFixture({
 	fixtureId: 'e2e-square-225',
+	familyId: familyIdForFixtureIndex(4),
+	difficulty: FIXTURE_DIFFICULTY,
 	name: 'E2E Square 225 (large layout)',
 	aspectRatio: '1:1',
 	pieceCount: 225,

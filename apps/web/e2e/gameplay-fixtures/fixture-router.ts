@@ -77,6 +77,8 @@ export function fixtureToMetadata(
 ): ReadyPuzzle & { hasReference: boolean } {
 	return {
 		id: fixture.fixtureId,
+		familyId: fixture.familyId,
+		difficulty: fixture.difficulty,
 		name: fixture.name,
 		aspectRatio: fixture.aspectRatio,
 		pieceCount: fixture.pieceCount,
