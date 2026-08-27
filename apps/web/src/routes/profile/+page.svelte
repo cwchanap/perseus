@@ -9,18 +9,13 @@
 		uploadPlayerAvatar,
 		resolveAssetUrl
 	} from '$lib/services/api';
-	import type {
-		PlayerProfile,
-		PlayerPuzzleSummary,
-		PuzzleSummary,
-		PlayerStatRow
-	} from '$lib/types/puzzle';
+	import type { PlayerProfile, PlayerOwnedFamilySummary, PlayerStatRow } from '$lib/types/puzzle';
 	import PuzzleCard from '$lib/components/PuzzleCard.svelte';
-	import { PUZZLE_CATEGORIES } from '$lib/constants/categories';
+	import { ownedFamilyToGalleryFamily } from '$lib/utils/familyCard';
 	import { formatTime } from '$lib/stores/timer';
 
 	let profile = $state<PlayerProfile | null>(null);
-	let puzzles = $state<PlayerPuzzleSummary[]>([]);
+	let families = $state<PlayerOwnedFamilySummary[]>([]);
 	let stats = $state<PlayerStatRow[]>([]);
 	let loading = $state(true);
 	let loadError = $state(false);
@@ -55,22 +50,8 @@
 			.toUpperCase() || '?'
 	);
 
-	function toCard(p: PlayerPuzzleSummary): PuzzleSummary {
-		// p.category is a free-text D1 string (no CHECK constraint on the
-		// column, and isPlayerPuzzleSummary only checks it's non-empty).
-		// Drop it unless it's a known PuzzleCategory so bogus values don't
-		// reach CategoryBadge as an out-of-union string.
-		const category =
-			p.category && PUZZLE_CATEGORIES.includes(p.category as never)
-				? (p.category as PuzzleSummary['category'])
-				: undefined;
-		return {
-			id: p.id,
-			name: p.name,
-			pieceCount: p.pieceCount,
-			status: p.status,
-			...(category ? { category } : {})
-		};
+	function toGalleryFamily(p: PlayerOwnedFamilySummary) {
+		return ownedFamilyToGalleryFamily(p);
 	}
 
 	onMount(() => {
@@ -108,10 +89,10 @@
 			loadError = true;
 		}
 		if (puzzlesRes.status === 'fulfilled') {
-			puzzles = puzzlesRes.value.puzzles;
+			families = puzzlesRes.value.families;
 			puzzlesCursor = puzzlesRes.value.nextCursor;
 		} else {
-			puzzles = [];
+			families = [];
 			puzzlesCursor = undefined;
 			// Degrade non-essential failures noisily but without blocking the UI.
 			console.error('Failed to load puzzles:', puzzlesRes.reason);
@@ -138,7 +119,7 @@
 		try {
 			const r = await getPlayerPuzzles({ cursor, signal });
 			if (signal?.aborted) return;
-			puzzles = [...puzzles, ...r.puzzles];
+			families = [...families, ...r.families];
 			puzzlesCursor = r.nextCursor;
 		} catch (error) {
 			if (signal?.aborted) return;
@@ -354,12 +335,12 @@
 		</button>
 
 		<h2 class="mt-8 font-(--font-display) text-(--text-0)">My Puzzles</h2>
-		{#if puzzles.length === 0}
+		{#if families.length === 0}
 			<p class="text-sm text-(--text-2)">You haven't uploaded any puzzles yet.</p>
 		{:else}
 			<div class="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-3">
-				{#each puzzles as p (p.id)}
-					<PuzzleCard puzzle={toCard(p)} />
+				{#each families as p (p.id)}
+					<PuzzleCard family={toGalleryFamily(p)} />
 				{/each}
 			</div>
 			{#if puzzlesCursor !== undefined}

@@ -21,7 +21,11 @@ import type {
 	PuzzleListResponse,
 	ErrorResponse,
 	PuzzleCategory,
-	PuzzleAspectRatio
+	PuzzleAspectRatio,
+	PuzzleFamilySummary,
+	PuzzleVariantSummary,
+	PuzzleFamilyMetadata,
+	PuzzleFamilyListResponse
 } from '@perseus/types';
 import type { PlacedPiece, Rotation } from '@perseus/game-core';
 
@@ -46,8 +50,22 @@ export type {
 	PuzzleListResponse,
 	ErrorResponse,
 	PuzzleCategory,
-	PuzzleAspectRatio
+	PuzzleAspectRatio,
+	PuzzleFamilySummary,
+	PuzzleVariantSummary,
+	PuzzleFamilyMetadata,
+	PuzzleFamilyListResponse
 };
+
+/** Player-owned family row from GET /api/player/puzzle-families (no variant ids). */
+export interface PlayerOwnedFamilySummary {
+	id: string;
+	name: string;
+	category?: PuzzleCategory;
+	aspectRatio: PuzzleAspectRatio;
+	status: PuzzleStatus;
+	createdAt: number;
+}
 
 /**
  * Flat puzzle shape for component props (no status/version fields).

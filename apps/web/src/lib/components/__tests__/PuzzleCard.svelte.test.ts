@@ -1,139 +1,97 @@
-// Component test for PuzzleCard
+// Component test for PuzzleCard (family catalog card)
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
 import PuzzleCard from '../PuzzleCard.svelte';
-import { getThumbnailUrl } from '$lib/services/api';
-import { getBestTime } from '$lib/services/stats';
-import type { PuzzleSummary } from '$lib/types/puzzle';
-
-vi.mock('$lib/services/stats', () => ({
-	getBestTime: vi.fn().mockReturnValue(null)
-}));
+import { getFamilyThumbnailUrl } from '$lib/services/api';
+import type { PuzzleFamilySummary } from '@perseus/types';
 
 describe('PuzzleCard', () => {
-	const mockPuzzle: PuzzleSummary = {
-		id: 'test-puzzle-123',
+	const mockFamily: PuzzleFamilySummary = {
+		id: 'fam-test',
 		name: 'Test Puzzle',
-		pieceCount: 25,
-		status: 'ready'
+		aspectRatio: '1:1',
+		status: 'ready',
+		createdAt: 1000,
+		variants: {
+			easy: { id: 'var-e', difficulty: 'easy', pieceCount: 16, status: 'ready' },
+			normal: { id: 'var-n', difficulty: 'normal', pieceCount: 49, status: 'ready' },
+			hard: { id: 'var-h', difficulty: 'hard', pieceCount: 100, status: 'ready' }
+		}
 	};
 
 	beforeEach(() => {
 		vi.clearAllMocks();
-		vi.mocked(getBestTime).mockReturnValue(null);
 	});
 
 	it('should render puzzle name', async () => {
-		render(PuzzleCard, { puzzle: mockPuzzle });
+		render(PuzzleCard, { family: mockFamily });
 
 		await expect.element(page.getByText('Test Puzzle')).toBeVisible();
 	});
 
-	it('keeps the normal piece count without progress', async () => {
-		render(PuzzleCard, { puzzle: mockPuzzle });
+	it('shows difficulty picker with three actions', async () => {
+		render(PuzzleCard, { family: mockFamily });
 
-		await expect.element(page.getByText('25 PCS')).toBeVisible();
+		await expect.element(page.getByTestId('difficulty-picker')).toBeVisible();
+		await expect.element(page.getByTestId('difficulty-action').nth(2)).toBeVisible();
 	});
 
-	it('shows always-visible Continue progress for a resumable card', async () => {
-		render(PuzzleCard, { puzzle: mockPuzzle, placedCount: 7 });
+	it('shows Continue on a difficulty with saved progress', async () => {
+		const progress = new Map([['var-e', { placedCount: 7, pieceCount: 16 }]]);
+		render(PuzzleCard, { family: mockFamily, progressByVariantId: progress });
 
-		await expect.element(page.getByText('CONTINUE · 7/25 PLACED')).toBeVisible();
-		await expect
-			.element(page.getByTestId('puzzle-card'))
-			.toHaveAttribute('href', '/puzzle/test-puzzle-123');
-	});
-
-	it('should link to puzzle page', async () => {
-		render(PuzzleCard, { puzzle: mockPuzzle });
-
-		const link = page.getByTestId('puzzle-card');
-		await expect.element(link).toHaveAttribute('href', '/puzzle/test-puzzle-123');
+		await expect.element(page.getByText('CONTINUE 7/16')).toBeVisible();
 	});
 
 	it('should render thumbnail image with correct alt text', async () => {
-		render(PuzzleCard, { puzzle: mockPuzzle });
+		render(PuzzleCard, { family: mockFamily });
 
 		const img = page.getByRole('img');
 		await expect.element(img).toHaveAttribute('alt', 'Test Puzzle');
-		await expect.element(img).toHaveAttribute('src', getThumbnailUrl(mockPuzzle.id));
+		await expect.element(img).toHaveAttribute('src', getFamilyThumbnailUrl(mockFamily.id));
 	});
 
-	it('should mark overlay play label as decorative', async () => {
-		render(PuzzleCard, { puzzle: mockPuzzle });
-
-		const overlay = page.getByTestId('card-overlay');
-		await expect.element(overlay).toHaveAttribute('aria-hidden', 'true');
-	});
-
-	it('should not show best time badge when no best time exists', async () => {
-		vi.mocked(getBestTime).mockReturnValue(null);
-		render(PuzzleCard, { puzzle: mockPuzzle });
-
-		const bestTimeBadge = page.getByTestId('card-best-time');
-		await expect.element(bestTimeBadge).not.toBeInTheDocument();
-	});
-
-	it('should display best time when a personal best exists', async () => {
-		vi.mocked(getBestTime).mockReturnValue(125); // 02:05
-		render(PuzzleCard, { puzzle: mockPuzzle });
-
-		const bestTimeBadge = page.getByTestId('card-best-time');
-		await expect.element(bestTimeBadge).toBeVisible();
-		await expect.element(page.getByText('◆ 02:05')).toBeVisible();
-	});
-
-	it('should render category badge when puzzle has a category', async () => {
-		const puzzleWithCategory: PuzzleSummary = {
-			...mockPuzzle,
+	it('should render category badge when family has a category', async () => {
+		const familyWithCategory: PuzzleFamilySummary = {
+			...mockFamily,
 			category: 'Animals'
 		};
-		render(PuzzleCard, { puzzle: puzzleWithCategory });
+		render(PuzzleCard, { family: familyWithCategory });
 
 		const badge = page.getByTestId('category-badge');
 		await expect.element(badge).toBeVisible();
 		await expect.element(badge).toHaveTextContent('Animals');
 	});
 
-	it('should not render category badge when puzzle has no category', async () => {
-		render(PuzzleCard, { puzzle: mockPuzzle });
-
-		const badge = page.getByTestId('category-badge');
-		await expect.element(badge).not.toBeInTheDocument();
-	});
-
-	it('should render a non-clickable card with status overlay for processing puzzles', async () => {
-		const processingPuzzle: PuzzleSummary = {
-			...mockPuzzle,
-			status: 'processing'
+	it('should render a non-clickable card with status overlay for processing families', async () => {
+		const processingFamily: PuzzleFamilySummary = {
+			...mockFamily,
+			status: 'processing',
+			variants: {
+				easy: { ...mockFamily.variants.easy, status: 'processing' },
+				normal: { ...mockFamily.variants.normal, status: 'processing' },
+				hard: { ...mockFamily.variants.hard, status: 'processing' }
+			}
 		};
-		render(PuzzleCard, { puzzle: processingPuzzle });
+		render(PuzzleCard, { family: processingFamily });
 
-		const card = page.getByTestId('puzzle-card');
-		await expect.element(card).not.toHaveAttribute('href');
 		await expect.element(page.getByTestId('card-status-overlay')).toBeVisible();
-		await expect.element(page.getByTestId('card-overlay')).not.toBeInTheDocument();
+		await expect.element(page.getByText('PROCESSING…')).toBeVisible();
 	});
 
-	it('does not expose Continue progress for non-ready cards', async () => {
-		render(PuzzleCard, {
-			puzzle: { ...mockPuzzle, status: 'processing' },
-			placedCount: 7
-		});
-
-		await expect.element(page.getByText(/CONTINUE/)).not.toBeInTheDocument();
-	});
-
-	it('should render a non-clickable card with FAILED label for failed puzzles', async () => {
-		const failedPuzzle: PuzzleSummary = {
-			...mockPuzzle,
-			status: 'failed'
+	it('should render FAILED label for failed families', async () => {
+		const failedFamily: PuzzleFamilySummary = {
+			...mockFamily,
+			status: 'failed',
+			variants: {
+				easy: { ...mockFamily.variants.easy, status: 'failed' },
+				normal: { ...mockFamily.variants.normal, status: 'failed' },
+				hard: { ...mockFamily.variants.hard, status: 'failed' }
+			}
 		};
-		render(PuzzleCard, { puzzle: failedPuzzle });
+		render(PuzzleCard, { family: failedFamily });
 
-		const card = page.getByTestId('puzzle-card');
-		await expect.element(card).not.toHaveAttribute('href');
 		await expect.element(page.getByTestId('card-status-overlay')).toBeVisible();
 		await expect.element(page.getByText('FAILED')).toBeVisible();
 	});

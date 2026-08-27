@@ -1,11 +1,11 @@
 // Browser session persistence: the web-owned storage namespace and global
 // resolution wrapped around the shared game-core session semantics.
 //
-// Web-local here: the `puzzle-progress-` key prefix, localStorage resolution
-// with a throwing fallback, browser-global crypto resolution, and resumable
-// candidate enumeration. The session codec (serialize/load/validate/resume)
-// and the adapter semantics live in @perseus/game-core and are never
-// re-implemented here.
+// Web-local here: the `puzzle-progress-v2-` / `puzzle-progress-q-` key prefixes,
+// localStorage resolution with a throwing fallback, browser-global crypto
+// resolution, and resumable candidate enumeration. The session codec
+// (serialize/load/validate/resume) and the adapter semantics live in
+// @perseus/game-core and are never re-implemented here.
 import {
 	CURRENT_SESSION_SCHEMA_VERSION,
 	createRunIdFactory,
@@ -18,6 +18,7 @@ import {
 	type SessionPersistenceError,
 	type SessionStorageAdapter
 } from '@perseus/game-core';
+import { QUICK_PUZZLE_ID_PREFIX } from '$lib/services/quickPuzzle/types';
 
 /**
  * Factory for fresh canonical lowercase UUID v4 run ids. Resolves the
@@ -38,10 +39,32 @@ export function createBrowserRunIdFactory(cryptoSource?: Crypto): RunIdFactory {
 	return createRunIdFactory(source as RunIdCrypto);
 }
 
-const PROGRESS_KEY_PREFIX = 'puzzle-progress-';
+/** Server concrete-variant saves use the v2 namespace after the family cutover. */
+export const SERVER_PROGRESS_KEY_PREFIX = 'puzzle-progress-v2-';
+/** Quick puzzle saves: `puzzle-progress-` + puzzleId where puzzleId is `q-*`. */
+export const QUICK_PROGRESS_KEY_PREFIX = 'puzzle-progress-q-';
 
 function progressKey(puzzleId: string): string {
-	return `${PROGRESS_KEY_PREFIX}${puzzleId}`;
+	if (puzzleId.startsWith(QUICK_PUZZLE_ID_PREFIX)) {
+		return `puzzle-progress-${puzzleId}`;
+	}
+	return `${SERVER_PROGRESS_KEY_PREFIX}${puzzleId}`;
+}
+
+function puzzleIdFromProgressKey(key: string): string | null {
+	if (key.startsWith(SERVER_PROGRESS_KEY_PREFIX)) {
+		const variantId = key.slice(SERVER_PROGRESS_KEY_PREFIX.length);
+		return variantId || null;
+	}
+	if (key.startsWith(QUICK_PROGRESS_KEY_PREFIX)) {
+		const quickSuffix = key.slice(QUICK_PROGRESS_KEY_PREFIX.length);
+		return quickSuffix ? `${QUICK_PUZZLE_ID_PREFIX}${quickSuffix}` : null;
+	}
+	return null;
+}
+
+function isRecognizedProgressKey(key: string): boolean {
+	return key.startsWith(SERVER_PROGRESS_KEY_PREFIX) || key.startsWith(QUICK_PROGRESS_KEY_PREFIX);
 }
 
 function resolveSessionStorage(storage?: Storage): Storage {
@@ -59,8 +82,8 @@ export function listResumableSessionCandidateIds(storage?: Storage): string[] {
 	try {
 		for (let index = 0; index < resolved.length; index += 1) {
 			const key = resolved.key(index);
-			if (!key?.startsWith(PROGRESS_KEY_PREFIX)) continue;
-			const puzzleId = key.slice(PROGRESS_KEY_PREFIX.length);
+			if (!key || !isRecognizedProgressKey(key)) continue;
+			const puzzleId = puzzleIdFromProgressKey(key);
 			if (!puzzleId) continue;
 
 			const raw = resolved.getItem(key);

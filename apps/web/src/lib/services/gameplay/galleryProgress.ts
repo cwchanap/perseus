@@ -1,9 +1,13 @@
 import {
 	getGridDimensionsForAspectRatio,
+	getDifficultyPieceCount,
 	isPuzzleAspectRatio,
-	isValidPieceCountForAspectRatio
+	isValidPieceCountForAspectRatio,
+	PUZZLE_DIFFICULTIES,
+	type PuzzleFamilySummary,
+	type PuzzleVariantSummary
 } from '@perseus/types';
-import type { Puzzle, PuzzleSummary } from '$lib/types/puzzle';
+import type { Puzzle } from '$lib/types/puzzle';
 import type { StoredQuickPuzzle } from '$lib/services/quickPuzzle/types';
 import { QUICK_PUZZLE_ID_PREFIX } from '$lib/services/quickPuzzle/types';
 import { createSessionStorageAdapter } from './session/persistence';
@@ -23,7 +27,7 @@ export interface GalleryProgress {
 }
 
 export interface GalleryProgressDiscovery {
-	byPuzzleId: ReadonlyMap<string, GalleryProgress>;
+	byVariantId: ReadonlyMap<string, GalleryProgress>;
 	newest: GalleryProgress | null;
 }
 
@@ -59,25 +63,30 @@ interface GalleryCandidate {
 	context: SessionValidationContext;
 }
 
-function serverValidationContext(puzzle: PuzzleSummary): SessionValidationContext | null {
-	if (puzzle.status !== 'ready') return null;
-	if (!isPuzzleAspectRatio(puzzle.aspectRatio)) return null;
-	if (!isValidPieceCountForAspectRatio(puzzle.pieceCount, puzzle.aspectRatio)) return null;
+function variantValidationContext(
+	family: PuzzleFamilySummary,
+	variant: PuzzleVariantSummary
+): SessionValidationContext | null {
+	if (variant.status !== 'ready') return null;
+	const aspectRatio = family.aspectRatio;
+	if (!isPuzzleAspectRatio(aspectRatio)) return null;
+	if (!isValidPieceCountForAspectRatio(variant.pieceCount, aspectRatio)) return null;
+	if (variant.pieceCount !== getDifficultyPieceCount(aspectRatio, variant.difficulty)) return null;
 
-	const { rows, cols } = getGridDimensionsForAspectRatio(puzzle.pieceCount, puzzle.aspectRatio);
-	const pieces = Array.from({ length: puzzle.pieceCount }, (_, id) => ({
+	const { rows, cols } = getGridDimensionsForAspectRatio(variant.pieceCount, aspectRatio);
+	const pieces = Array.from({ length: variant.pieceCount }, (_, id) => ({
 		id,
 		correctX: id % cols,
 		correctY: Math.floor(id / cols)
 	}));
 
 	return {
-		puzzleId: puzzle.id,
+		puzzleId: variant.id,
 		source: 'api',
 		pieceIds: pieces.map((piece) => piece.id),
 		gridCols: cols,
 		gridRows: rows,
-		pieceCount: puzzle.pieceCount,
+		pieceCount: variant.pieceCount,
 		pieces
 	};
 }
@@ -171,26 +180,36 @@ function progressFromCandidate(
 	};
 }
 
+function familyCandidates(family: PuzzleFamilySummary): GalleryCandidate[] {
+	const candidates: GalleryCandidate[] = [];
+	for (const difficulty of PUZZLE_DIFFICULTIES) {
+		const variant = family.variants[difficulty];
+		if (!variant) continue;
+		const context = variantValidationContext(family, variant);
+		if (!context) continue;
+		candidates.push({
+			puzzleId: variant.id,
+			name: family.name,
+			source: 'api',
+			pieceCount: variant.pieceCount,
+			context
+		});
+	}
+	return candidates;
+}
+
 export function discoverGalleryProgress(options: {
-	serverPuzzles: readonly PuzzleSummary[];
+	serverFamilies: readonly PuzzleFamilySummary[];
 	quickPuzzles: readonly StoredQuickPuzzle[];
 	sessionStorage?: SessionStorageAdapter;
 }): GalleryProgressDiscovery {
 	const sessionStorage = options.sessionStorage ?? createSessionStorageAdapter();
-	const byPuzzleId = new Map<string, GalleryProgress>();
+	const byVariantId = new Map<string, GalleryProgress>();
 	let newest: GalleryProgress | null = null;
 
 	const candidates: GalleryCandidate[] = [];
-	for (const puzzle of options.serverPuzzles) {
-		const context = serverValidationContext(puzzle);
-		if (!context) continue;
-		candidates.push({
-			puzzleId: puzzle.id,
-			name: puzzle.name,
-			source: 'api',
-			pieceCount: puzzle.pieceCount,
-			context
-		});
+	for (const family of options.serverFamilies) {
+		candidates.push(...familyCandidates(family));
 	}
 	for (const puzzle of options.quickPuzzles) {
 		const context = quickValidationContext(puzzle);
@@ -208,23 +227,32 @@ export function discoverGalleryProgress(options: {
 		const progress = progressFromCandidate(candidate, sessionStorage);
 		if (!progress) continue;
 
-		if (candidate.source === 'api') byPuzzleId.set(candidate.puzzleId, progress);
+		if (candidate.source === 'api') byVariantId.set(candidate.puzzleId, progress);
 		if (newest === null || progress.lastUpdated > newest.lastUpdated) newest = progress;
 	}
 
-	return { byPuzzleId, newest };
+	return { byVariantId, newest };
 }
 
 export async function discoverAllSavedProgress(options: {
 	puzzleIds: readonly string[];
-	serverPuzzles: readonly PuzzleSummary[];
+	serverFamilies: readonly PuzzleFamilySummary[];
 	quickPuzzles: readonly StoredQuickPuzzle[];
 	fetchPuzzleById: (puzzleId: string, signal?: AbortSignal) => Promise<Puzzle>;
 	sessionStorage?: SessionStorageAdapter;
 	signal?: AbortSignal;
 }): Promise<GalleryProgressDiscoveryResult> {
 	const sessionStorage = options.sessionStorage ?? createSessionStorageAdapter();
-	const serverById = new Map(options.serverPuzzles.map((puzzle) => [puzzle.id, puzzle] as const));
+	const variantById = new Map<
+		string,
+		{ family: PuzzleFamilySummary; variant: PuzzleVariantSummary }
+	>();
+	for (const family of options.serverFamilies) {
+		for (const difficulty of PUZZLE_DIFFICULTIES) {
+			const variant = family.variants[difficulty];
+			variantById.set(variant.id, { family, variant });
+		}
+	}
 	const quickById = new Map(options.quickPuzzles.map((puzzle) => [puzzle.id, puzzle] as const));
 	const signal = options.signal;
 
@@ -242,15 +270,15 @@ export async function discoverAllSavedProgress(options: {
 					: null;
 			}
 
-			const summary = serverById.get(puzzleId);
-			if (summary) {
-				const context = serverValidationContext(summary);
+			const catalogMatch = variantById.get(puzzleId);
+			if (catalogMatch) {
+				const context = variantValidationContext(catalogMatch.family, catalogMatch.variant);
 				return context
 					? {
 							puzzleId,
-							name: summary.name,
+							name: catalogMatch.family.name,
 							source: 'api',
-							pieceCount: summary.pieceCount,
+							pieceCount: catalogMatch.variant.pieceCount,
 							context
 						}
 					: null;

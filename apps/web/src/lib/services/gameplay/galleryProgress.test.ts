@@ -1,6 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { Puzzle, PuzzleSummary } from '$lib/types/puzzle';
+import type { Puzzle } from '$lib/types/puzzle';
 import type { StoredQuickPuzzle } from '$lib/services/quickPuzzle/types';
+import {
+	getDifficultyPieceCount,
+	PUZZLE_DIFFICULTIES,
+	type PuzzleAspectRatio,
+	type PuzzleDifficulty,
+	type PuzzleFamilySummary,
+	type PuzzleStatus
+} from '@perseus/types';
 import {
 	createSessionStorageAdapter,
 	listResumableSessionCandidateIds
@@ -19,12 +27,11 @@ import type {
 } from '@perseus/game-core';
 import { discoverAllSavedProgress, discoverGalleryProgress } from './galleryProgress';
 
-const expectedSquare4 = [
-	{ id: 0, correctX: 0, correctY: 0 },
-	{ id: 1, correctX: 1, correctY: 0 },
-	{ id: 2, correctX: 0, correctY: 1 },
-	{ id: 3, correctX: 1, correctY: 1 }
-];
+const expectedSquare16 = Array.from({ length: 16 }, (_, id) => ({
+	id,
+	correctX: id % 4,
+	correctY: Math.floor(id / 4)
+}));
 
 const expectedLandscape12 = [
 	{ id: 0, correctX: 0, correctY: 0 },
@@ -56,20 +63,62 @@ const expectedPortrait12 = [
 	{ id: 11, correctX: 2, correctY: 3 }
 ];
 
-function serverPuzzle(
-	id: string,
-	pieceCount: number,
-	aspectRatio: string,
-	overrides: Partial<PuzzleSummary> = {}
-): PuzzleSummary {
+function serverFamily(
+	easyVariantId: string,
+	aspectRatio: PuzzleAspectRatio,
+	overrides: Partial<PuzzleFamilySummary> = {},
+	variantStatus: Partial<Record<PuzzleDifficulty, PuzzleStatus>> = {}
+): PuzzleFamilySummary {
+	const familyStatus = overrides.status ?? 'ready';
+	const variants = {} as PuzzleFamilySummary['variants'];
+	for (const difficulty of PUZZLE_DIFFICULTIES) {
+		const pieceCount = getDifficultyPieceCount(aspectRatio, difficulty);
+		const id =
+			difficulty === 'easy'
+				? easyVariantId
+				: `${easyVariantId}-${difficulty === 'normal' ? 'n' : 'h'}`;
+		variants[difficulty] = {
+			id,
+			difficulty,
+			pieceCount,
+			status: variantStatus[difficulty] ?? familyStatus
+		};
+	}
 	return {
-		id,
-		name: id,
-		pieceCount,
-		status: 'ready',
-		aspectRatio: aspectRatio as PuzzleSummary['aspectRatio'],
+		id: overrides.id ?? `fam-${easyVariantId}`,
+		name: overrides.name ?? easyVariantId,
+		aspectRatio,
+		status: familyStatus,
+		createdAt: 1000,
+		variants,
 		...overrides
 	};
+}
+
+function variantSnapshot(variantId: string, pieceCount: number): PersistedPuzzleSessionV1 {
+	return {
+		...validSnapshot(),
+		puzzleId: variantId,
+		trayOrder: Array.from({ length: pieceCount }, (_, index) => index)
+	};
+}
+
+function apiProgressSnapshot(
+	variantId: string,
+	overrides: Partial<PersistedPuzzleSessionV1> = {}
+): PersistedPuzzleSessionV1 {
+	return {
+		...variantSnapshot(variantId, 16),
+		...overrides
+	};
+}
+
+function fullBoard16Placements() {
+	return Array.from({ length: 16 }, (_, pieceId) => ({
+		pieceId,
+		x: pieceId % 4,
+		y: Math.floor(pieceId / 4)
+	}));
 }
 
 function quickPuzzle(): StoredQuickPuzzle {
@@ -118,13 +167,13 @@ function fetchedServerPuzzle(id: string, name: string): Puzzle {
 	return {
 		id,
 		name,
-		pieceCount: 4,
-		gridCols: 2,
-		gridRows: 2,
+		pieceCount: 16,
+		gridCols: 4,
+		gridRows: 4,
 		imageWidth: 200,
 		imageHeight: 200,
 		createdAt: 1_000,
-		pieces: expectedSquare4.map((piece) => ({
+		pieces: expectedSquare16.map((piece) => ({
 			...piece,
 			puzzleId: id,
 			imagePath: `pieces/${piece.id}.png`,
@@ -155,26 +204,30 @@ describe('discoverGalleryProgress', () => {
 	it('derives canonical server geometry for representative aspect ratios', () => {
 		const { adapter, contexts } = spyAdapter();
 		const corrupt = {
-			id: 'bad',
+			id: 'bad-fam',
 			name: 'Bad',
-			pieceCount: 4,
+			aspectRatio: '16:9',
 			status: 'ready',
-			aspectRatio: '16:9'
-		} as unknown as PuzzleSummary;
+			createdAt: 1000,
+			variants: {}
+		} as unknown as PuzzleFamilySummary;
 
 		discoverGalleryProgress({
-			serverPuzzles: [
-				serverPuzzle('square', 4, '1:1'),
-				serverPuzzle('landscape', 12, '4:3'),
-				serverPuzzle('portrait', 12, '3:4'),
+			serverFamilies: [
+				serverFamily('square', '1:1'),
+				serverFamily('landscape', '4:3'),
+				serverFamily('portrait', '3:4'),
 				corrupt
 			],
 			quickPuzzles: [],
 			sessionStorage: adapter
 		});
 
-		expect(contexts.map((captured) => captured.pieces)).toEqual([
-			expectedSquare4,
+		const easyContexts = contexts.filter((captured) =>
+			['square', 'landscape', 'portrait'].includes(captured.puzzleId)
+		);
+		expect(easyContexts.map((captured) => captured.pieces)).toEqual([
+			expectedSquare16,
 			expectedLandscape12,
 			expectedPortrait12
 		]);
@@ -182,20 +235,20 @@ describe('discoverGalleryProgress', () => {
 	});
 
 	it('selects the greatest lastUpdated resumable current candidate', () => {
-		const serverSnapshot = validSnapshot();
+		const serverSnapshot = variantSnapshot('pz1', 16);
 		const quickSnapshot: PersistedPuzzleSessionV1 = {
-			...serverSnapshot,
+			...validSnapshot(),
 			puzzleId: 'q-test',
 			source: 'local',
 			lastUpdated: 2_000
 		};
 		const serverRaw = JSON.stringify({ ...serverSnapshot, lastUpdated: 1_000 });
 		const store = {
-			'puzzle-progress-pz1': serverRaw,
+			'puzzle-progress-v2-pz1': serverRaw,
 			'puzzle-progress-q-test': JSON.stringify(quickSnapshot)
 		};
 		const discovery = discoverGalleryProgress({
-			serverPuzzles: [serverPuzzle('pz1', 4, '1:1')],
+			serverFamilies: [serverFamily('pz1', '1:1')],
 			quickPuzzles: [quickPuzzle()],
 			sessionStorage: createSessionStorageAdapter({ storage: memoryStorage(store) })
 		});
@@ -204,63 +257,63 @@ describe('discoverGalleryProgress', () => {
 	});
 
 	it('returns placed counts for matching ready server cards', () => {
-		const snapshot = validSnapshot();
-		const store = { 'puzzle-progress-pz1': JSON.stringify(snapshot) };
+		const snapshot = variantSnapshot('pz1', 16);
+		const store = { 'puzzle-progress-v2-pz1': JSON.stringify(snapshot) };
 		const discovery = discoverGalleryProgress({
-			serverPuzzles: [serverPuzzle('pz1', 4, '1:1', { name: 'Server Puzzle' })],
+			serverFamilies: [serverFamily('pz1', '1:1', { name: 'Server Puzzle' })],
 			quickPuzzles: [],
 			sessionStorage: createSessionStorageAdapter({ storage: memoryStorage(store) })
 		});
 
-		expect(discovery.byPuzzleId.get('pz1')?.placedCount).toBe(2);
-		expect(discovery.byPuzzleId.get('pz1')).toMatchObject({
+		expect(discovery.byVariantId.get('pz1')?.placedCount).toBe(2);
+		expect(discovery.byVariantId.get('pz1')).toMatchObject({
 			puzzleId: 'pz1',
 			name: 'Server Puzzle',
 			source: 'api',
-			pieceCount: 4,
+			pieceCount: 16,
 			lastUpdated: 1_000
 		});
 	});
 
 	it('ignores completed snapshots without deleting them', () => {
 		const snapshot = {
-			...validSnapshot(),
+			...variantSnapshot('pz1', 16),
 			lifecycle: 'completed' as const,
-			placedPieces: fullBoardPlacements(),
+			placedPieces: fullBoard16Placements(),
 			sealedCompletion: seal()
 		};
 		const raw = JSON.stringify(snapshot);
-		const store = { 'puzzle-progress-pz1': raw };
+		const store = { 'puzzle-progress-v2-pz1': raw };
 		const discovery = discoverGalleryProgress({
-			serverPuzzles: [serverPuzzle('pz1', 4, '1:1')],
+			serverFamilies: [serverFamily('pz1', '1:1')],
 			quickPuzzles: [],
 			sessionStorage: createSessionStorageAdapter({ storage: memoryStorage(store) })
 		});
 
-		expect(discovery.byPuzzleId.has('pz1')).toBe(false);
+		expect(discovery.byVariantId.has('pz1')).toBe(false);
 		expect(discovery.newest).toBeNull();
-		expect(store['puzzle-progress-pz1']).toBe(raw);
+		expect(store['puzzle-progress-v2-pz1']).toBe(raw);
 	});
 
 	it('ignores invalid snapshots without deleting them', () => {
-		const snapshot = validSnapshot();
+		const snapshot = variantSnapshot('pz1', 16);
 		const raw = JSON.stringify({ ...snapshot, schemaVersion: 999 });
-		const store = { 'puzzle-progress-pz1': raw };
+		const store = { 'puzzle-progress-v2-pz1': raw };
 		const discovery = discoverGalleryProgress({
-			serverPuzzles: [serverPuzzle('pz1', 4, '1:1')],
+			serverFamilies: [serverFamily('pz1', '1:1')],
 			quickPuzzles: [],
 			sessionStorage: createSessionStorageAdapter({ storage: memoryStorage(store) })
 		});
 
-		expect(discovery.byPuzzleId.has('pz1')).toBe(false);
+		expect(discovery.byVariantId.has('pz1')).toBe(false);
 		expect(discovery.newest).toBeNull();
-		expect(store['puzzle-progress-pz1']).toBe(raw);
+		expect(store['puzzle-progress-v2-pz1']).toBe(raw);
 	});
 
 	it('skips malformed current-schema Quick records without aborting valid candidates', () => {
-		const serverSnapshot = validSnapshot();
+		const serverSnapshot = variantSnapshot('pz1', 16);
 		const quickSnapshot: PersistedPuzzleSessionV1 = {
-			...serverSnapshot,
+			...validSnapshot(),
 			puzzleId: 'q-test',
 			source: 'local',
 			lastUpdated: 2_000
@@ -271,17 +324,17 @@ describe('discoverGalleryProgress', () => {
 			pieces: undefined
 		} as unknown as StoredQuickPuzzle;
 		const store = {
-			'puzzle-progress-pz1': JSON.stringify(serverSnapshot),
+			'puzzle-progress-v2-pz1': JSON.stringify(serverSnapshot),
 			'puzzle-progress-q-test': JSON.stringify(quickSnapshot)
 		};
 
 		const discovery = discoverGalleryProgress({
-			serverPuzzles: [serverPuzzle('pz1', 4, '1:1')],
+			serverFamilies: [serverFamily('pz1', '1:1')],
 			quickPuzzles: [malformedQuick, quickPuzzle()],
 			sessionStorage: createSessionStorageAdapter({ storage: memoryStorage(store) })
 		});
 
-		expect(discovery.byPuzzleId.get('pz1')?.placedCount).toBe(2);
+		expect(discovery.byVariantId.get('pz1')?.placedCount).toBe(2);
 		expect(discovery.newest?.puzzleId).toBe('q-test');
 	});
 
@@ -334,13 +387,13 @@ describe('discoverGalleryProgress', () => {
 		};
 
 		const discovery = discoverGalleryProgress({
-			serverPuzzles: [],
+			serverFamilies: [],
 			quickPuzzles: [mismatchedQuick],
 			sessionStorage: createSessionStorageAdapter({ storage: memoryStorage(store) })
 		});
 
 		expect(discovery.newest).toBeNull();
-		expect(discovery.byPuzzleId.has('q-mismatch')).toBe(false);
+		expect(discovery.byVariantId.has('q-mismatch')).toBe(false);
 	});
 
 	it('rejects Quick records whose id lacks the QUICK_PUZZLE_ID_PREFIX', () => {
@@ -359,25 +412,25 @@ describe('discoverGalleryProgress', () => {
 			lastUpdated: 5_000
 		};
 		const store = {
-			'puzzle-progress-server-looking-id': JSON.stringify(quickSnapshot)
+			'puzzle-progress-v2-server-looking-id': JSON.stringify(quickSnapshot)
 		};
 
 		const discovery = discoverGalleryProgress({
-			serverPuzzles: [],
+			serverFamilies: [],
 			quickPuzzles: [nonQuickIdQuick],
 			sessionStorage: createSessionStorageAdapter({ storage: memoryStorage(store) })
 		});
 
 		expect(discovery.newest).toBeNull();
-		expect(discovery.byPuzzleId.has('server-looking-id')).toBe(false);
+		expect(discovery.byVariantId.has('server-looking-id')).toBe(false);
 	});
 
 	it('skips server puzzles that are not ready', () => {
 		const { adapter, contexts } = spyAdapter();
 		discoverGalleryProgress({
-			serverPuzzles: [
-				serverPuzzle('processing', 4, '1:1', { status: 'processing' }),
-				serverPuzzle('failed', 4, '1:1', { status: 'failed' })
+			serverFamilies: [
+				serverFamily('processing', '1:1', { status: 'processing' }),
+				serverFamily('failed', '1:1', { status: 'failed' })
 			],
 			quickPuzzles: [],
 			sessionStorage: adapter
@@ -386,22 +439,24 @@ describe('discoverGalleryProgress', () => {
 		expect(contexts).toHaveLength(0);
 	});
 
-	it('skips server puzzles with valid aspect ratio but invalid piece count', () => {
+	it('skips server families with a variant whose piece count does not match difficulty', () => {
 		const { adapter, contexts } = spyAdapter();
-		// 1:1 requires a perfect-square piece count; 5 is not a perfect square.
+		const badFamily = serverFamily('bad-count', '1:1');
+		badFamily.variants.easy = { ...badFamily.variants.easy, pieceCount: 5 };
 		discoverGalleryProgress({
-			serverPuzzles: [serverPuzzle('bad-count', 5, '1:1')],
+			serverFamilies: [badFamily],
 			quickPuzzles: [],
 			sessionStorage: adapter
 		});
 
-		expect(contexts).toHaveLength(0);
+		expect(contexts.some((captured) => captured.puzzleId === 'bad-count')).toBe(false);
+		expect(contexts.length).toBe(2);
 	});
 
 	it('skips null or non-object Quick records', () => {
 		const { adapter, contexts } = spyAdapter();
 		discoverGalleryProgress({
-			serverPuzzles: [],
+			serverFamilies: [],
 			quickPuzzles: [null as unknown as StoredQuickPuzzle, 42 as unknown as StoredQuickPuzzle],
 			sessionStorage: adapter
 		});
@@ -416,7 +471,7 @@ describe('discoverGalleryProgress', () => {
 			pieces: [null as unknown as StoredQuickPuzzle['pieces'][0], ...quickPuzzle().pieces.slice(1)]
 		};
 		discoverGalleryProgress({
-			serverPuzzles: [],
+			serverFamilies: [],
 			quickPuzzles: [withNullPiece],
 			sessionStorage: adapter
 		});
@@ -436,7 +491,7 @@ describe('discoverGalleryProgress', () => {
 			]
 		};
 		discoverGalleryProgress({
-			serverPuzzles: [],
+			serverFamilies: [],
 			quickPuzzles: [withDupId],
 			sessionStorage: adapter
 		});
@@ -456,7 +511,7 @@ describe('discoverGalleryProgress', () => {
 			]
 		};
 		discoverGalleryProgress({
-			serverPuzzles: [],
+			serverFamilies: [],
 			quickPuzzles: [withDupCell],
 			sessionStorage: adapter
 		});
@@ -469,12 +524,12 @@ describe('discoverGalleryProgress', () => {
 		// empty browser storage every peekSession returns 'missing', so no
 		// progress is discovered — but the fallback branch itself is exercised.
 		const discovery = discoverGalleryProgress({
-			serverPuzzles: [serverPuzzle('pz1', 4, '1:1')],
+			serverFamilies: [serverFamily('pz1', '1:1')],
 			quickPuzzles: [quickPuzzle()]
 		});
 
 		expect(discovery.newest).toBeNull();
-		expect(discovery.byPuzzleId.size).toBe(0);
+		expect(discovery.byVariantId.size).toBe(0);
 	});
 
 	it('rejects Quick records whose explicit geometry is individually invalid', () => {
@@ -498,7 +553,7 @@ describe('discoverGalleryProgress', () => {
 		};
 
 		discoverGalleryProgress({
-			serverPuzzles: [],
+			serverFamilies: [],
 			quickPuzzles: [zeroPieceCount, zeroGridCols, zeroGridRows, idOutOfRange, correctYOutOfRange],
 			sessionStorage: adapter
 		});
@@ -508,7 +563,7 @@ describe('discoverGalleryProgress', () => {
 	});
 
 	it('keeps the newest progress when a later candidate is older', () => {
-		const serverSnapshot = validSnapshot();
+		const serverSnapshot = variantSnapshot('pz1', 16);
 		const quickSnapshot: PersistedPuzzleSessionV1 = {
 			...serverSnapshot,
 			puzzleId: 'q-test',
@@ -516,12 +571,12 @@ describe('discoverGalleryProgress', () => {
 			lastUpdated: 500
 		};
 		const store = {
-			'puzzle-progress-pz1': JSON.stringify({ ...serverSnapshot, lastUpdated: 1_000 }),
+			'puzzle-progress-v2-pz1': JSON.stringify({ ...serverSnapshot, lastUpdated: 1_000 }),
 			'puzzle-progress-q-test': JSON.stringify(quickSnapshot)
 		};
 
 		const discovery = discoverGalleryProgress({
-			serverPuzzles: [serverPuzzle('pz1', 4, '1:1')],
+			serverFamilies: [serverFamily('pz1', '1:1')],
 			quickPuzzles: [quickPuzzle()],
 			sessionStorage: createSessionStorageAdapter({ storage: memoryStorage(store) })
 		});
@@ -534,12 +589,14 @@ describe('discoverGalleryProgress', () => {
 
 describe('discoverAllSavedProgress', () => {
 	it('includes loaded, fetched, and Quick saves newest first', async () => {
-		const base = validSnapshot();
+		const quickBase = validSnapshot();
 		const store = memoryStorage({
-			'puzzle-progress-loaded': JSON.stringify({ ...base, puzzleId: 'loaded', lastUpdated: 1_000 }),
-			'puzzle-progress-old': JSON.stringify({ ...base, puzzleId: 'old', lastUpdated: 3_000 }),
+			'puzzle-progress-v2-loaded': JSON.stringify(
+				apiProgressSnapshot('loaded', { lastUpdated: 1_000 })
+			),
+			'puzzle-progress-v2-old': JSON.stringify(apiProgressSnapshot('old', { lastUpdated: 3_000 })),
 			'puzzle-progress-q-test': JSON.stringify({
-				...base,
+				...quickBase,
 				puzzleId: 'q-test',
 				source: 'local',
 				lastUpdated: 2_000
@@ -549,7 +606,7 @@ describe('discoverAllSavedProgress', () => {
 
 		const { rows } = await discoverAllSavedProgress({
 			puzzleIds: ['loaded', 'old', 'q-test'],
-			serverPuzzles: [serverPuzzle('loaded', 4, '1:1', { name: 'Loaded Save' })],
+			serverFamilies: [serverFamily('loaded', '1:1', { name: 'Loaded Save' })],
 			quickPuzzles: [quickPuzzle()],
 			fetchPuzzleById,
 			sessionStorage: createSessionStorageAdapter({ storage: store })
@@ -561,16 +618,15 @@ describe('discoverAllSavedProgress', () => {
 	});
 
 	it('skips detail fetches when summary metadata is already loaded', async () => {
-		const base = validSnapshot();
 		const store = memoryStorage({
-			'puzzle-progress-a': JSON.stringify({ ...base, puzzleId: 'a', lastUpdated: 1_000 }),
-			'puzzle-progress-b': JSON.stringify({ ...base, puzzleId: 'b', lastUpdated: 2_000 })
+			'puzzle-progress-v2-a': JSON.stringify(apiProgressSnapshot('a', { lastUpdated: 1_000 })),
+			'puzzle-progress-v2-b': JSON.stringify(apiProgressSnapshot('b', { lastUpdated: 2_000 }))
 		});
 		const fetchPuzzleById = vi.fn();
 
 		const { rows } = await discoverAllSavedProgress({
 			puzzleIds: ['a', 'b'],
-			serverPuzzles: [serverPuzzle('a', 4, '1:1'), serverPuzzle('b', 4, '1:1')],
+			serverFamilies: [serverFamily('a', '1:1'), serverFamily('b', '1:1')],
 			quickPuzzles: [],
 			fetchPuzzleById,
 			sessionStorage: createSessionStorageAdapter({ storage: store })
@@ -581,10 +637,11 @@ describe('discoverAllSavedProgress', () => {
 	});
 
 	it('omits saves whose detail fetch fails without aborting the others', async () => {
-		const base = validSnapshot();
 		const store = memoryStorage({
-			'puzzle-progress-gone': JSON.stringify({ ...base, puzzleId: 'gone', lastUpdated: 5_000 }),
-			'puzzle-progress-kept': JSON.stringify({ ...base, puzzleId: 'kept', lastUpdated: 1_000 })
+			'puzzle-progress-v2-gone': JSON.stringify(
+				apiProgressSnapshot('gone', { lastUpdated: 5_000 })
+			),
+			'puzzle-progress-v2-kept': JSON.stringify(apiProgressSnapshot('kept', { lastUpdated: 1_000 }))
 		});
 		const fetchPuzzleById = vi.fn(async (id: string) => {
 			if (id === 'gone') throw new Error('not found');
@@ -593,7 +650,7 @@ describe('discoverAllSavedProgress', () => {
 
 		const { rows, complete } = await discoverAllSavedProgress({
 			puzzleIds: ['gone', 'kept'],
-			serverPuzzles: [],
+			serverFamilies: [],
 			quickPuzzles: [],
 			fetchPuzzleById,
 			sessionStorage: createSessionStorageAdapter({ storage: store })
@@ -611,10 +668,13 @@ describe('discoverAllSavedProgress', () => {
 		// fail transiently (network blip, 5xx), the result must be empty rows
 		// BUT complete=false so the caller does not clear savedProgressCandidateIds
 		// and hide the VIEW SAVED PROGRESS affordance while local saves persist.
-		const base = validSnapshot();
 		const store = memoryStorage({
-			'puzzle-progress-off-a': JSON.stringify({ ...base, puzzleId: 'off-a', lastUpdated: 5_000 }),
-			'puzzle-progress-off-b': JSON.stringify({ ...base, puzzleId: 'off-b', lastUpdated: 3_000 })
+			'puzzle-progress-v2-off-a': JSON.stringify(
+				apiProgressSnapshot('off-a', { lastUpdated: 5_000 })
+			),
+			'puzzle-progress-v2-off-b': JSON.stringify(
+				apiProgressSnapshot('off-b', { lastUpdated: 3_000 })
+			)
 		});
 		const fetchPuzzleById = vi.fn(async () => {
 			throw new Error('network down');
@@ -622,7 +682,7 @@ describe('discoverAllSavedProgress', () => {
 
 		const { rows, complete } = await discoverAllSavedProgress({
 			puzzleIds: ['off-a', 'off-b'],
-			serverPuzzles: [],
+			serverFamilies: [],
 			quickPuzzles: [],
 			fetchPuzzleById,
 			sessionStorage: createSessionStorageAdapter({ storage: store })
@@ -641,18 +701,13 @@ describe('discoverAllSavedProgress', () => {
 		// lookup for exactly this). Clearing the session on 404 would
 		// irreversibly delete a valid local save over a stale KV read, so the
 		// session must survive and discovery must be incomplete (retryable).
-		const base = validSnapshot();
 		const records: Record<string, string> = {
-			'puzzle-progress-deleted-a': JSON.stringify({
-				...base,
-				puzzleId: 'deleted-a',
-				lastUpdated: 5_000
-			}),
-			'puzzle-progress-deleted-b': JSON.stringify({
-				...base,
-				puzzleId: 'deleted-b',
-				lastUpdated: 3_000
-			})
+			'puzzle-progress-v2-deleted-a': JSON.stringify(
+				apiProgressSnapshot('deleted-a', { lastUpdated: 5_000 })
+			),
+			'puzzle-progress-v2-deleted-b': JSON.stringify(
+				apiProgressSnapshot('deleted-b', { lastUpdated: 3_000 })
+			)
 		};
 		const fetchPuzzleById = vi.fn(async () => {
 			throw Object.assign(new Error('Puzzle not found'), { status: 404, name: 'ApiError' });
@@ -660,7 +715,7 @@ describe('discoverAllSavedProgress', () => {
 
 		const { rows, complete } = await discoverAllSavedProgress({
 			puzzleIds: ['deleted-a', 'deleted-b'],
-			serverPuzzles: [],
+			serverFamilies: [],
 			quickPuzzles: [],
 			fetchPuzzleById,
 			sessionStorage: createSessionStorageAdapter({ storage: memoryStorage(records) })
@@ -670,17 +725,18 @@ describe('discoverAllSavedProgress', () => {
 		expect(complete).toBe(false);
 		expect(fetchPuzzleById).toHaveBeenCalledTimes(2);
 		// Both persisted sessions survive the 404s for retry.
-		expect(records['puzzle-progress-deleted-a']).toBeDefined();
-		expect(records['puzzle-progress-deleted-b']).toBeDefined();
+		expect(records['puzzle-progress-v2-deleted-a']).toBeDefined();
+		expect(records['puzzle-progress-v2-deleted-b']).toBeDefined();
 	});
 
 	it('treats 400 detail failures as authoritative for malformed candidate ids', async () => {
 		// Invalid puzzle ID format yields 400 from the detail endpoint — also
 		// permanent, so discovery stays complete and the stale candidate is
 		// cleared rather than retried on every load.
-		const base = validSnapshot();
 		const store = memoryStorage({
-			'puzzle-progress-bad-id': JSON.stringify({ ...base, puzzleId: 'bad-id', lastUpdated: 1_000 })
+			'puzzle-progress-v2-bad-id': JSON.stringify(
+				apiProgressSnapshot('bad-id', { lastUpdated: 1_000 })
+			)
 		});
 		const fetchPuzzleById = vi.fn(async () => {
 			throw Object.assign(new Error('Invalid puzzle ID format'), {
@@ -691,7 +747,7 @@ describe('discoverAllSavedProgress', () => {
 
 		const { rows, complete } = await discoverAllSavedProgress({
 			puzzleIds: ['bad-id'],
-			serverPuzzles: [],
+			serverFamilies: [],
 			quickPuzzles: [],
 			fetchPuzzleById,
 			sessionStorage: createSessionStorageAdapter({ storage: store })
@@ -706,10 +762,13 @@ describe('discoverAllSavedProgress', () => {
 		// A mix of 404 and 500 failures keeps discovery incomplete — 404 is
 		// not authoritative (stale KV reads), and the 500 could recover on
 		// retry, so the caller must not clear candidates.
-		const base = validSnapshot();
 		const store = memoryStorage({
-			'puzzle-progress-gone': JSON.stringify({ ...base, puzzleId: 'gone', lastUpdated: 5_000 }),
-			'puzzle-progress-flaky': JSON.stringify({ ...base, puzzleId: 'flaky', lastUpdated: 3_000 })
+			'puzzle-progress-v2-gone': JSON.stringify(
+				apiProgressSnapshot('gone', { lastUpdated: 5_000 })
+			),
+			'puzzle-progress-v2-flaky': JSON.stringify(
+				apiProgressSnapshot('flaky', { lastUpdated: 3_000 })
+			)
 		});
 		const fetchPuzzleById = vi.fn(async (id: string) => {
 			if (id === 'gone')
@@ -722,7 +781,7 @@ describe('discoverAllSavedProgress', () => {
 
 		const { rows, complete } = await discoverAllSavedProgress({
 			puzzleIds: ['gone', 'flaky'],
-			serverPuzzles: [],
+			serverFamilies: [],
 			quickPuzzles: [],
 			fetchPuzzleById,
 			sessionStorage: createSessionStorageAdapter({ storage: store })
@@ -740,10 +799,11 @@ describe('discoverAllSavedProgress', () => {
 		// as the same 404), so the persisted session must be kept for retry
 		// and discovery marked incomplete so the caller does not clear
 		// candidate ids.
-		const base = validSnapshot();
 		const records: Record<string, string> = {
-			'puzzle-progress-valid': JSON.stringify({ ...base, puzzleId: 'valid', lastUpdated: 2_000 }),
-			'puzzle-progress-gone': JSON.stringify({ ...base, puzzleId: 'gone', lastUpdated: 5_000 })
+			'puzzle-progress-v2-valid': JSON.stringify(
+				apiProgressSnapshot('valid', { lastUpdated: 2_000 })
+			),
+			'puzzle-progress-v2-gone': JSON.stringify(apiProgressSnapshot('gone', { lastUpdated: 5_000 }))
 		};
 		const fetchPuzzleById = vi.fn(async (id: string) => {
 			if (id === 'gone')
@@ -753,7 +813,7 @@ describe('discoverAllSavedProgress', () => {
 
 		const { rows, complete } = await discoverAllSavedProgress({
 			puzzleIds: ['valid', 'gone'],
-			serverPuzzles: [],
+			serverFamilies: [],
 			quickPuzzles: [],
 			fetchPuzzleById,
 			sessionStorage: createSessionStorageAdapter({ storage: memoryStorage(records) })
@@ -763,16 +823,17 @@ describe('discoverAllSavedProgress', () => {
 		expect(rows.map((row) => row.puzzleId)).toEqual(['valid']);
 		expect(complete).toBe(false);
 		// Both persisted sessions survive (the 404 is not authoritative).
-		expect(records['puzzle-progress-gone']).toBeDefined();
-		expect(records['puzzle-progress-valid']).toBeDefined();
+		expect(records['puzzle-progress-v2-gone']).toBeDefined();
+		expect(records['puzzle-progress-v2-valid']).toBeDefined();
 	});
 
 	it('does not purge persisted sessions on transient (5xx) failures', async () => {
 		// A transient failure must not purge the session — the puzzle may
 		// recover on retry, and deleting the save would lose real progress.
-		const base = validSnapshot();
 		const store: Record<string, string> = {
-			'puzzle-progress-flaky': JSON.stringify({ ...base, puzzleId: 'flaky', lastUpdated: 5_000 })
+			'puzzle-progress-v2-flaky': JSON.stringify(
+				apiProgressSnapshot('flaky', { lastUpdated: 5_000 })
+			)
 		};
 		const fetchPuzzleById = vi.fn(async () => {
 			throw Object.assign(new Error('Failed to retrieve puzzle'), {
@@ -783,21 +844,21 @@ describe('discoverAllSavedProgress', () => {
 
 		await discoverAllSavedProgress({
 			puzzleIds: ['flaky'],
-			serverPuzzles: [],
+			serverFamilies: [],
 			quickPuzzles: [],
 			fetchPuzzleById,
 			sessionStorage: createSessionStorageAdapter({ storage: memoryStorage(store) })
 		});
 
 		// The session survives a transient failure for retry.
-		expect(store['puzzle-progress-flaky']).toBeDefined();
+		expect(store['puzzle-progress-v2-flaky']).toBeDefined();
 	});
 
 	it('omits Quick candidates without loaded Quick metadata instead of fetching', async () => {
-		const base = validSnapshot();
+		const quickBase = validSnapshot();
 		const store = memoryStorage({
 			'puzzle-progress-q-orphan': JSON.stringify({
-				...base,
+				...quickBase,
 				puzzleId: 'q-orphan',
 				source: 'local',
 				lastUpdated: 4_000
@@ -807,7 +868,7 @@ describe('discoverAllSavedProgress', () => {
 
 		const { rows } = await discoverAllSavedProgress({
 			puzzleIds: ['q-orphan'],
-			serverPuzzles: [],
+			serverFamilies: [],
 			quickPuzzles: [],
 			fetchPuzzleById,
 			sessionStorage: createSessionStorageAdapter({ storage: store })
@@ -819,26 +880,25 @@ describe('discoverAllSavedProgress', () => {
 
 	it('preserves completed fetched saves instead of surfacing them', async () => {
 		const snapshot = {
-			...validSnapshot(),
-			puzzleId: 'done',
+			...apiProgressSnapshot('done'),
 			lifecycle: 'completed' as const,
-			placedPieces: fullBoardPlacements(),
+			placedPieces: fullBoard16Placements(),
 			sealedCompletion: seal()
 		};
 		const raw = JSON.stringify(snapshot);
-		const store = { 'puzzle-progress-done': raw };
+		const store = { 'puzzle-progress-v2-done': raw };
 		const fetchPuzzleById = vi.fn(async () => fetchedServerPuzzle('done', 'Done Save'));
 
 		const { rows } = await discoverAllSavedProgress({
 			puzzleIds: ['done'],
-			serverPuzzles: [],
+			serverFamilies: [],
 			quickPuzzles: [],
 			fetchPuzzleById,
 			sessionStorage: createSessionStorageAdapter({ storage: memoryStorage(store) })
 		});
 
 		expect(rows).toEqual([]);
-		expect(store['puzzle-progress-done']).toBe(raw);
+		expect(store['puzzle-progress-v2-done']).toBe(raw);
 	});
 
 	it('rejects fetched details with duplicate or out-of-bounds pieces', async () => {
@@ -851,10 +911,9 @@ describe('discoverAllSavedProgress', () => {
 		const outOfBoundsPuzzle = fetchedServerPuzzle('oob', 'Out Of Bounds Save');
 		outOfBoundsPuzzle.pieces[0] = { ...outOfBoundsPuzzle.pieces[0], correctX: 9 };
 
-		const base = validSnapshot();
 		const store = memoryStorage({
-			'puzzle-progress-dup': JSON.stringify({ ...base, puzzleId: 'dup', lastUpdated: 5_000 }),
-			'puzzle-progress-oob': JSON.stringify({ ...base, puzzleId: 'oob', lastUpdated: 4_000 })
+			'puzzle-progress-v2-dup': JSON.stringify(apiProgressSnapshot('dup', { lastUpdated: 5_000 })),
+			'puzzle-progress-v2-oob': JSON.stringify(apiProgressSnapshot('oob', { lastUpdated: 4_000 }))
 		});
 		const fetchPuzzleById = vi.fn(async (id: string) =>
 			id === 'dup' ? dupIdPuzzle : outOfBoundsPuzzle
@@ -862,7 +921,7 @@ describe('discoverAllSavedProgress', () => {
 
 		const { rows } = await discoverAllSavedProgress({
 			puzzleIds: ['dup', 'oob'],
-			serverPuzzles: [],
+			serverFamilies: [],
 			quickPuzzles: [],
 			fetchPuzzleById,
 			sessionStorage: createSessionStorageAdapter({ storage: store })
@@ -872,12 +931,12 @@ describe('discoverAllSavedProgress', () => {
 	});
 
 	it('orders same-timestamp saves deterministically by puzzle id', async () => {
-		const base = validSnapshot();
+		const quickBase = validSnapshot();
 		const store = memoryStorage({
-			'puzzle-progress-b': JSON.stringify({ ...base, puzzleId: 'b', lastUpdated: 2_000 }),
-			'puzzle-progress-a': JSON.stringify({ ...base, puzzleId: 'a', lastUpdated: 2_000 }),
+			'puzzle-progress-v2-b': JSON.stringify(apiProgressSnapshot('b', { lastUpdated: 2_000 })),
+			'puzzle-progress-v2-a': JSON.stringify(apiProgressSnapshot('a', { lastUpdated: 2_000 })),
 			'puzzle-progress-q-test': JSON.stringify({
-				...base,
+				...quickBase,
 				puzzleId: 'q-test',
 				source: 'local',
 				lastUpdated: 2_000
@@ -886,7 +945,7 @@ describe('discoverAllSavedProgress', () => {
 
 		const { rows } = await discoverAllSavedProgress({
 			puzzleIds: ['b', 'a', 'q-test'],
-			serverPuzzles: [serverPuzzle('a', 4, '1:1'), serverPuzzle('b', 4, '1:1')],
+			serverFamilies: [serverFamily('a', '1:1'), serverFamily('b', '1:1')],
 			quickPuzzles: [quickPuzzle()],
 			fetchPuzzleById: async (id: string) => fetchedServerPuzzle(id, 'Fetched Save'),
 			sessionStorage: createSessionStorageAdapter({ storage: store })
@@ -896,13 +955,10 @@ describe('discoverAllSavedProgress', () => {
 	});
 
 	it('forwards the abort signal to each detail fetch', async () => {
-		const base = validSnapshot();
 		const store = memoryStorage({
-			'puzzle-progress-fetched': JSON.stringify({
-				...base,
-				puzzleId: 'fetched',
-				lastUpdated: 1_000
-			})
+			'puzzle-progress-v2-fetched': JSON.stringify(
+				apiProgressSnapshot('fetched', { lastUpdated: 1_000 })
+			)
 		});
 		const controller = new AbortController();
 		const fetchPuzzleById = vi.fn(async (_id: string, signal?: AbortSignal) => {
@@ -912,7 +968,7 @@ describe('discoverAllSavedProgress', () => {
 
 		await discoverAllSavedProgress({
 			puzzleIds: ['fetched'],
-			serverPuzzles: [],
+			serverFamilies: [],
 			quickPuzzles: [],
 			fetchPuzzleById,
 			sessionStorage: createSessionStorageAdapter({ storage: store }),
@@ -923,13 +979,10 @@ describe('discoverAllSavedProgress', () => {
 	});
 
 	it('stops and returns empty when the abort signal is already aborted', async () => {
-		const base = validSnapshot();
 		const store = memoryStorage({
-			'puzzle-progress-fetched': JSON.stringify({
-				...base,
-				puzzleId: 'fetched',
-				lastUpdated: 1_000
-			})
+			'puzzle-progress-v2-fetched': JSON.stringify(
+				apiProgressSnapshot('fetched', { lastUpdated: 1_000 })
+			)
 		});
 		const controller = new AbortController();
 		controller.abort();
@@ -937,7 +990,7 @@ describe('discoverAllSavedProgress', () => {
 
 		const { rows } = await discoverAllSavedProgress({
 			puzzleIds: ['fetched'],
-			serverPuzzles: [],
+			serverFamilies: [],
 			quickPuzzles: [],
 			fetchPuzzleById,
 			sessionStorage: createSessionStorageAdapter({ storage: store }),
@@ -953,13 +1006,10 @@ describe('discoverAllSavedProgress', () => {
 		// The post-fetch `signal?.aborted` guard must drop a candidate when the
 		// signal aborts while the fetch is in flight but the fetch still resolves
 		// (e.g. a stale request the caller abandoned by opening a newer one).
-		const base = validSnapshot();
 		const store = memoryStorage({
-			'puzzle-progress-fetched': JSON.stringify({
-				...base,
-				puzzleId: 'fetched',
-				lastUpdated: 1_000
-			})
+			'puzzle-progress-v2-fetched': JSON.stringify(
+				apiProgressSnapshot('fetched', { lastUpdated: 1_000 })
+			)
 		});
 		const controller = new AbortController();
 		const fetchPuzzleById = vi.fn(async (_id: string, signal?: AbortSignal) => {
@@ -972,7 +1022,7 @@ describe('discoverAllSavedProgress', () => {
 
 		const { rows } = await discoverAllSavedProgress({
 			puzzleIds: ['fetched'],
-			serverPuzzles: [],
+			serverFamilies: [],
 			quickPuzzles: [],
 			fetchPuzzleById,
 			sessionStorage: createSessionStorageAdapter({ storage: store }),
@@ -992,7 +1042,7 @@ describe('discoverAllSavedProgress', () => {
 
 		const { rows } = await discoverAllSavedProgress({
 			puzzleIds: ['fetched'],
-			serverPuzzles: [],
+			serverFamilies: [],
 			quickPuzzles: [],
 			fetchPuzzleById
 		});
@@ -1011,7 +1061,7 @@ describe('discoverAllSavedProgress', () => {
 
 		const { rows } = await discoverAllSavedProgress({
 			puzzleIds: ['', 'mismatch'],
-			serverPuzzles: [],
+			serverFamilies: [],
 			quickPuzzles: [],
 			fetchPuzzleById,
 			sessionStorage: createSessionStorageAdapter({ storage: memoryStorage({}) })
@@ -1029,15 +1079,13 @@ describe('discoverAllSavedProgress', () => {
 		// A Quick record whose grid capacity does not match its pieceCount
 		// yields a null context via quickValidationContext, exercising the
 		// Quick `: null` branch.
-		const base = validSnapshot();
+		const quickBase = validSnapshot();
 		const store = memoryStorage({
-			'puzzle-progress-bad-summary': JSON.stringify({
-				...base,
-				puzzleId: 'bad-summary',
-				lastUpdated: 1_000
-			}),
+			'puzzle-progress-v2-bad-summary': JSON.stringify(
+				apiProgressSnapshot('bad-summary', { lastUpdated: 1_000 })
+			),
 			'puzzle-progress-q-bad-quick': JSON.stringify({
-				...base,
+				...quickBase,
 				puzzleId: 'q-bad-quick',
 				source: 'local',
 				lastUpdated: 2_000
@@ -1053,7 +1101,13 @@ describe('discoverAllSavedProgress', () => {
 
 		const { rows } = await discoverAllSavedProgress({
 			puzzleIds: ['bad-summary', 'q-bad-quick'],
-			serverPuzzles: [serverPuzzle('bad-summary', 5, '1:1')],
+			serverFamilies: [
+				(() => {
+					const bad = serverFamily('bad-summary', '1:1');
+					bad.variants.easy = { ...bad.variants.easy, pieceCount: 5 };
+					return bad;
+				})()
+			],
 			quickPuzzles: [mismatchedQuick],
 			fetchPuzzleById,
 			sessionStorage: createSessionStorageAdapter({ storage: store })
@@ -1090,7 +1144,7 @@ describe('discoverAllSavedProgress', () => {
 			trayOrder: [0, 1]
 		};
 		const store = memoryStorage({
-			'puzzle-progress-pz1': JSON.stringify(snapshot)
+			'puzzle-progress-v2-pz1': JSON.stringify(snapshot)
 		});
 
 		// The shallow probe passes: current schema, matching puzzle id,
@@ -1101,7 +1155,7 @@ describe('discoverAllSavedProgress', () => {
 
 		const { rows, complete } = await discoverAllSavedProgress({
 			puzzleIds: ['pz1'],
-			serverPuzzles: [serverPuzzle('pz1', 4, '1:1')],
+			serverFamilies: [serverFamily('pz1', '1:1')],
 			quickPuzzles: [],
 			fetchPuzzleById,
 			sessionStorage: createSessionStorageAdapter({ storage: store })
@@ -1115,31 +1169,26 @@ describe('discoverAllSavedProgress', () => {
 		// The structurally invalid session is purged from storage, so a
 		// shallow re-probe no longer lists it. This prevents the dead
 		// VIEW SAVED PROGRESS affordance from reappearing after reload.
-		expect(store.getItem('puzzle-progress-pz1')).toBeNull();
+		expect(store.getItem('puzzle-progress-v2-pz1')).toBeNull();
 		expect(listResumableSessionCandidateIds(store)).toEqual([]);
 	});
 
 	it('keeps valid-but-non-resumable (completed) sessions through deep validation', async () => {
-		// A completed session passes full peekSession() validation
-		// (status 'loaded') but is not resumable (isResumable is false).
-		// It must NOT be purged — only structurally invalid records are
-		// purged. Completed sessions are valid data the user may want to
-		// see in history, and purging them would lose real completion state.
 		const snapshot = {
-			...validSnapshot(),
+			...variantSnapshot('pz1', 16),
 			lifecycle: 'completed' as const,
-			placedPieces: fullBoardPlacements(),
+			placedPieces: fullBoard16Placements(),
 			sealedCompletion: seal()
 		};
 		const store = memoryStorage({
-			'puzzle-progress-pz1': JSON.stringify(snapshot)
+			'puzzle-progress-v2-pz1': JSON.stringify(snapshot)
 		});
 
 		const fetchPuzzleById = vi.fn();
 
 		const { rows, complete } = await discoverAllSavedProgress({
 			puzzleIds: ['pz1'],
-			serverPuzzles: [serverPuzzle('pz1', 4, '1:1')],
+			serverFamilies: [serverFamily('pz1', '1:1')],
 			quickPuzzles: [],
 			fetchPuzzleById,
 			sessionStorage: createSessionStorageAdapter({ storage: store })
@@ -1149,6 +1198,6 @@ describe('discoverAllSavedProgress', () => {
 		// discovery is complete and the session survives in storage.
 		expect(rows).toEqual([]);
 		expect(complete).toBe(true);
-		expect(store.getItem('puzzle-progress-pz1')).not.toBeNull();
+		expect(store.getItem('puzzle-progress-v2-pz1')).not.toBeNull();
 	});
 });

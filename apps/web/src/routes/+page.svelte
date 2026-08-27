@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { fetchPuzzles, fetchPuzzle, ApiError } from '$lib/services/api';
-	import type { PuzzleSummary } from '$lib/types/puzzle';
+	import type { PuzzleFamilySummary } from '@perseus/types';
 	import PuzzleCard from '$lib/components/PuzzleCard.svelte';
 	import CategoryFilter from '$lib/components/CategoryFilter.svelte';
 	import SearchBar from '$lib/components/SearchBar.svelte';
@@ -24,7 +24,7 @@
 
 	const sessionStorageAdapter = createSessionStorageAdapter();
 
-	let puzzles: PuzzleSummary[] = $state([]);
+	let families: PuzzleFamilySummary[] = $state([]);
 	let loading = $state(true);
 	let initialLoadComplete = $state(false);
 	let error: string | null = $state(null);
@@ -38,7 +38,7 @@
 	let nextCursor: string | undefined = $state(undefined);
 	let quickPuzzles: StoredQuickPuzzle[] = $state([]);
 	let discardTarget = $state<GalleryProgress | null>(null);
-	let cardProgressByPuzzleId = $state<ReadonlyMap<string, GalleryProgress>>(new Map());
+	let cardProgressByVariantId = $state<ReadonlyMap<string, GalleryProgress>>(new Map());
 	let latestProgress = $state<GalleryProgress | null>(null);
 	let savedProgressCandidateIds = $state<string[]>([]);
 	let savedProgressOpen = $state(false);
@@ -62,10 +62,10 @@
 
 	$effect(() => {
 		const discovery = discoverGalleryProgress({
-			serverPuzzles: puzzles,
+			serverFamilies: families,
 			quickPuzzles
 		});
-		cardProgressByPuzzleId = discovery.byPuzzleId;
+		cardProgressByVariantId = discovery.byVariantId;
 
 		const candidate = discovery.newest;
 		if (
@@ -106,7 +106,7 @@
 		fetchPuzzles({ q: q || undefined, category: catParam, offset: 0, signal: controller.signal })
 			.then((result) => {
 				if (controller.signal.aborted || version !== queryVersion) return;
-				puzzles = result.puzzles;
+				families = result.families;
 				total = result.total;
 				nextCursor = result.nextCursor;
 			})
@@ -156,7 +156,7 @@
 				signal: controller.signal
 			});
 			if (controller.signal.aborted || version !== queryVersion) return;
-			puzzles = [...puzzles, ...result.puzzles];
+			families = [...families, ...result.families];
 			total = result.total;
 			nextCursor = result.nextCursor;
 		} catch (e) {
@@ -195,7 +195,7 @@
 		try {
 			const { rows: items, complete } = await discoverAllSavedProgress({
 				puzzleIds: savedProgressCandidateIds,
-				serverPuzzles: puzzles,
+				serverFamilies: families,
 				quickPuzzles,
 				fetchPuzzleById: fetchPuzzle,
 				sessionStorage: sessionStorageAdapter,
@@ -249,8 +249,8 @@
 		if (!target) return;
 
 		sessionStorageAdapter.clearSession(target.puzzleId);
-		const discovery = discoverGalleryProgress({ serverPuzzles: puzzles, quickPuzzles });
-		cardProgressByPuzzleId = discovery.byPuzzleId;
+		const discovery = discoverGalleryProgress({ serverFamilies: families, quickPuzzles });
+		cardProgressByVariantId = discovery.byVariantId;
 		latestProgress = discovery.newest;
 		savedProgressCandidateIds = listResumableSessionCandidateIds();
 		discardTarget = null;
@@ -523,8 +523,8 @@ hover:[text-shadow:0_0_10px_var(--accent)] hover:before:opacity-100"
 motion-reduce:animate-none sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4"
 				data-testid="puzzle-grid"
 			>
-				{#each puzzles as puzzle (puzzle.id)}
-					<PuzzleCard {puzzle} placedCount={cardProgressByPuzzleId.get(puzzle.id)?.placedCount} />
+				{#each families as family (family.id)}
+					<PuzzleCard {family} progressByVariantId={cardProgressByVariantId} />
 				{/each}
 			</div>
 
