@@ -1,13 +1,13 @@
 import {
-	isRecordPuzzleCompletionV1,
+	isRecordPuzzleCompletionV2,
 	MAX_COMPLETION_TIME_SECONDS,
 	type RecordPuzzleCompletionResponse,
-	type RecordPuzzleCompletionV1
+	type RecordPuzzleCompletionV2
 } from '@perseus/types';
 import type { VersionedCompletionResult } from '@perseus/shared';
 
 export type CompletionRequestParseResult =
-	| { ok: true; value: RecordPuzzleCompletionV1 }
+	| { ok: true; value: RecordPuzzleCompletionV2 }
 	| { ok: false; body: RecordPuzzleCompletionResponse; status: 400 };
 
 type CompletionResultResponse = {
@@ -29,7 +29,7 @@ function badRequest(message: string): CompletionRequestParseResult {
 }
 
 export function parseCompletionRequest(value: unknown): CompletionRequestParseResult {
-	if (!isRecordPuzzleCompletionV1(value, MAX_COMPLETION_TIME_SECONDS)) {
+	if (!isRecordPuzzleCompletionV2(value, MAX_COMPLETION_TIME_SECONDS)) {
 		return badRequest('Invalid completion request');
 	}
 	return { ok: true, value };

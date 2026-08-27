@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { Miniflare } from 'miniflare';
-import type { RecordPuzzleCompletionV1 } from '@perseus/types';
+import type { PuzzleDifficulty, RecordPuzzleCompletionV2 } from '@perseus/types';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -16,6 +16,8 @@ import {
 	clearProfileAvatarUrlIfOwned,
 	getAvatarTokensByPlayerIds,
 	recordVersionedCompletion,
+	reconcileAchievements,
+	readAchievementSnapshot,
 	listPlayerStats,
 	getPlayerSummary,
 	InvalidPlayerStatsCursorError,
@@ -28,7 +30,11 @@ import {
 	SYSTEM_OWNER_ID
 } from '../repositories';
 
-const PLACEHOLDER_FAMILY_ID = '00000000-0000-4000-8000-000000000001';
+import { ACHIEVEMENT_IDS } from '../progression';
+
+const FAMILY_ID = '223e4567-e89b-42d3-a456-426614174001';
+const DIFFICULTY = 'easy' as PuzzleDifficulty;
+const VARIANT_IDENTITY = { familyId: FAMILY_ID, difficulty: DIFFICULTY };
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const migrationsDir = join(__dirname, '../../drizzle');
@@ -79,14 +85,27 @@ beforeEach(async () => {
 	await d1.prepare('DELETE FROM puzzle_deletion_tombstones').run();
 });
 
-function completion(overrides: Partial<RecordPuzzleCompletionV1> = {}): RecordPuzzleCompletionV1 {
+function completion(overrides: Partial<RecordPuzzleCompletionV2> = {}): RecordPuzzleCompletionV2 {
 	return {
-		version: 1,
+		version: 2,
 		runId: 'run-1',
 		resultClass: 'standard_timed',
 		elapsedActiveSeconds: 100,
+		hintsUsed: 0,
+		incorrectAttempts: 0,
 		...overrides
 	};
+}
+
+function recordCompletion(
+	executor: ReturnType<typeof createD1CompletionWriteExecutor>,
+	playerId: string,
+	puzzleId: string,
+	request: RecordPuzzleCompletionV2,
+	receivedAt: number,
+	identity = VARIANT_IDENTITY
+) {
+	return recordVersionedCompletion(db, executor, playerId, puzzleId, request, identity, receivedAt);
 }
 
 type StoredRunFixture = {
@@ -103,7 +122,7 @@ async function insertStoredRun(db: D1AppDb, row: StoredRunFixture) {
 		INSERT INTO puzzle_completion_runs
 			(player_id, run_id, puzzle_id, family_id, difficulty, result_class,
 			 elapsed_active_seconds, hints_used, incorrect_attempts, completed_at)
-		VALUES (${row.playerId}, ${row.runId}, ${row.puzzleId}, ${PLACEHOLDER_FAMILY_ID}, 'easy',
+		VALUES (${row.playerId}, ${row.runId}, ${row.puzzleId}, ${FAMILY_ID}, 'easy',
 			${row.resultClass}, ${row.elapsedActiveSeconds}, 0, 0, ${row.completedAt})
 	`);
 }
@@ -117,7 +136,7 @@ function standardBest(row: {
 	return {
 		playerId: row.playerId,
 		puzzleId: row.puzzleId,
-		familyId: PLACEHOLDER_FAMILY_ID,
+		familyId: FAMILY_ID,
 		difficulty: 'easy',
 		resultClass: 'standard_timed' as const,
 		bestTimeSeconds: row.bestTimeSeconds,
@@ -266,9 +285,13 @@ describe('tombstone-guarded table protection against real D1', () => {
 		await executor.write({
 			playerId: 'p1',
 			puzzleId: 'pz1',
+			familyId: FAMILY_ID,
+			difficulty: DIFFICULTY,
 			runId: 'run-1',
 			resultClass: 'standard_timed',
 			elapsedActiveSeconds: 100,
+			hintsUsed: 0,
+			incorrectAttempts: 0,
 			receivedAt: 1_000
 		});
 		await db.insert(schema.playerVariantMastery).values({
@@ -283,7 +306,7 @@ describe('tombstone-guarded table protection against real D1', () => {
 			db.insert(schema.puzzleBestTimes).values({
 				playerId: 'p2',
 				puzzleId: 'pz1',
-				familyId: PLACEHOLDER_FAMILY_ID,
+				familyId: FAMILY_ID,
 				difficulty: 'easy',
 				resultClass: 'standard_timed',
 				bestTimeSeconds: 80,
@@ -332,7 +355,7 @@ describe('tombstone-guarded table protection against real D1', () => {
 					) VALUES ('p2', 'run-2', 'pz1', ?, 'easy', 'standard_timed', 80, 0, 0, 2000)
 				`
 				)
-				.bind(PLACEHOLDER_FAMILY_ID)
+				.bind(FAMILY_ID)
 				.run()
 		).rejects.toThrow('puzzle_deleted');
 		await expect(
@@ -355,9 +378,13 @@ describe('completionFactsMatch', () => {
 		const input: VersionedCompletionWrite = {
 			playerId: 'p1',
 			puzzleId: 'pz1',
+			familyId: FAMILY_ID,
+			difficulty: DIFFICULTY,
 			runId: 'run-1',
 			resultClass: 'standard_timed',
 			elapsedActiveSeconds: 100,
+			hintsUsed: 0,
+			incorrectAttempts: 0,
 			receivedAt: 1_000
 		};
 
@@ -367,8 +394,12 @@ describe('completionFactsMatch', () => {
 		expect(
 			completionFactsMatch(input, {
 				puzzleId: 'pz1',
+				familyId: FAMILY_ID,
+				difficulty: DIFFICULTY,
 				resultClass: 'standard_timed',
 				elapsedActiveSeconds: 100,
+				hintsUsed: 0,
+				incorrectAttempts: 0,
 				completedAt: 1_000
 			})
 		).toBe(true);
@@ -381,9 +412,13 @@ describe('recordVersionedCompletion against real D1', () => {
 		const input: VersionedCompletionWrite = {
 			playerId: 'p1',
 			puzzleId: 'pz1',
+			familyId: FAMILY_ID,
+			difficulty: DIFFICULTY,
 			runId: 'run-1',
 			resultClass: 'standard_timed',
 			elapsedActiveSeconds: 100,
+			hintsUsed: 0,
+			incorrectAttempts: 0,
 			receivedAt: 1_000
 		};
 
@@ -391,8 +426,12 @@ describe('recordVersionedCompletion against real D1', () => {
 			status: 'stored',
 			stored: {
 				puzzleId: 'pz1',
+				familyId: FAMILY_ID,
+				difficulty: DIFFICULTY,
 				resultClass: 'standard_timed',
 				elapsedActiveSeconds: 100,
+				hintsUsed: 0,
+				incorrectAttempts: 0,
 				completedAt: 1_000
 			},
 			inserted: true
@@ -405,14 +444,18 @@ describe('recordVersionedCompletion against real D1', () => {
 			status: 'stored',
 			stored: {
 				puzzleId: 'pz1',
+				familyId: FAMILY_ID,
+				difficulty: DIFFICULTY,
 				resultClass: 'standard_timed',
 				elapsedActiveSeconds: 100,
+				hintsUsed: 0,
+				incorrectAttempts: 0,
 				completedAt: 1_000
 			},
 			inserted: false
 		});
 		expect(
-			await recordVersionedCompletion(
+			await recordCompletion(
 				executor,
 				'p1',
 				'pz1',
@@ -432,7 +475,7 @@ describe('recordVersionedCompletion against real D1', () => {
 		const executor = createD1CompletionWriteExecutor(db, 3);
 		for (let index = 1; index <= 3; index++) {
 			expect(
-				await recordVersionedCompletion(
+				await recordCompletion(
 					executor,
 					'p1',
 					'pz1',
@@ -446,7 +489,7 @@ describe('recordVersionedCompletion against real D1', () => {
 		}
 
 		expect(
-			await recordVersionedCompletion(
+			await recordCompletion(
 				executor,
 				'p1',
 				'pz1',
@@ -455,7 +498,7 @@ describe('recordVersionedCompletion against real D1', () => {
 			)
 		).toEqual({ status: 'quota_exceeded' });
 		expect(
-			await recordVersionedCompletion(
+			await recordCompletion(
 				executor,
 				'p1',
 				'pz1',
@@ -464,7 +507,7 @@ describe('recordVersionedCompletion against real D1', () => {
 			)
 		).toEqual({ status: 'replayed', completedAt: 3_000 });
 		expect(
-			await recordVersionedCompletion(
+			await recordCompletion(
 				executor,
 				'p1',
 				'pz1',
@@ -486,20 +529,14 @@ describe('recordVersionedCompletion against real D1', () => {
 			.values({ puzzleId: 'pz1', deletedAt: 500 })
 			.run();
 
-		expect(await recordVersionedCompletion(executor, 'p1', 'pz1', completion(), 1_000)).toEqual({
+		expect(await recordCompletion(executor, 'p1', 'pz1', completion(), 1_000)).toEqual({
 			status: 'tombstoned'
 		});
-		expect(await recordVersionedCompletion(executor, 'p1', 'pz1', completion(), 2_000)).toEqual({
+		expect(await recordCompletion(executor, 'p1', 'pz1', completion(), 2_000)).toEqual({
 			status: 'tombstoned'
 		});
 		expect(
-			await recordVersionedCompletion(
-				executor,
-				'p1',
-				'pz1',
-				completion({ elapsedActiveSeconds: 50 }),
-				3_000
-			)
+			await recordCompletion(executor, 'p1', 'pz1', completion({ elapsedActiveSeconds: 50 }), 3_000)
 		).toEqual({ status: 'tombstoned' });
 		expect(await db.select().from(schema.puzzleCompletionRuns)).toHaveLength(0);
 		expect(await db.select().from(schema.playerCompletionUsage)).toHaveLength(0);
@@ -508,13 +545,13 @@ describe('recordVersionedCompletion against real D1', () => {
 
 	it('leaves the canonical best unchanged when an exact replay is tombstoned', async () => {
 		const executor = createD1CompletionWriteExecutor(db, 3);
-		await recordVersionedCompletion(executor, 'p1', 'pz1', completion(), 1_000);
+		await recordCompletion(executor, 'p1', 'pz1', completion(), 1_000);
 		await db
 			.insert(schema.puzzleDeletionTombstones)
 			.values({ puzzleId: 'pz1', deletedAt: 2_000 })
 			.run();
 
-		expect(await recordVersionedCompletion(executor, 'p1', 'pz1', completion(), 9_000)).toEqual({
+		expect(await recordCompletion(executor, 'p1', 'pz1', completion(), 9_000)).toEqual({
 			status: 'tombstoned'
 		});
 		expect(await db.select().from(schema.puzzleBestTimes)).toEqual([
@@ -527,17 +564,25 @@ describe('recordVersionedCompletion against real D1', () => {
 		await executor.write({
 			playerId: 'p1',
 			puzzleId: 'pz1',
+			familyId: FAMILY_ID,
+			difficulty: DIFFICULTY,
 			runId: 'run-1',
 			resultClass: 'standard_timed',
 			elapsedActiveSeconds: 100,
+			hintsUsed: 0,
+			incorrectAttempts: 0,
 			receivedAt: 1_000
 		});
 		await executor.write({
 			playerId: 'p1',
 			puzzleId: 'pz1',
+			familyId: FAMILY_ID,
+			difficulty: DIFFICULTY,
 			runId: 'run-2',
 			resultClass: 'standard_timed',
 			elapsedActiveSeconds: 90,
+			hintsUsed: 0,
+			incorrectAttempts: 0,
 			receivedAt: 2_000
 		});
 
@@ -545,17 +590,25 @@ describe('recordVersionedCompletion against real D1', () => {
 			executor.write({
 				playerId: 'p1',
 				puzzleId: 'pz1',
+				familyId: FAMILY_ID,
+				difficulty: DIFFICULTY,
 				runId: 'run-3',
 				resultClass: 'standard_timed',
 				elapsedActiveSeconds: 80,
+				hintsUsed: 0,
+				incorrectAttempts: 0,
 				receivedAt: 3_000
 			}),
 			executor.write({
 				playerId: 'p1',
 				puzzleId: 'pz1',
+				familyId: FAMILY_ID,
+				difficulty: DIFFICULTY,
 				runId: 'run-4',
 				resultClass: 'standard_timed',
 				elapsedActiveSeconds: 70,
+				hintsUsed: 0,
+				incorrectAttempts: 0,
 				receivedAt: 4_000
 			})
 		]);
@@ -569,7 +622,7 @@ describe('recordVersionedCompletion against real D1', () => {
 
 	it('records the first standard timed run in the ledger and creates a zero-baseline best', async () => {
 		const executor = createD1CompletionWriteExecutor(db);
-		const result = await recordVersionedCompletion(executor, 'p1', 'pz1', completion(), 1_000);
+		const result = await recordCompletion(executor, 'p1', 'pz1', completion(), 1_000);
 
 		expect(result).toEqual({ status: 'recorded', completedAt: 1_000 });
 		expect(await selectRunFacts(db)).toEqual([
@@ -589,10 +642,10 @@ describe('recordVersionedCompletion against real D1', () => {
 
 	it('replays exactly once and repairs a missing best from the original ledger timestamp', async () => {
 		const executor = createD1CompletionWriteExecutor(db);
-		await recordVersionedCompletion(executor, 'p1', 'pz1', completion(), 1_000);
+		await recordCompletion(executor, 'p1', 'pz1', completion(), 1_000);
 		await d1.prepare('DELETE FROM puzzle_best_times').run();
 
-		const result = await recordVersionedCompletion(executor, 'p1', 'pz1', completion(), 9_000);
+		const result = await recordCompletion(executor, 'p1', 'pz1', completion(), 9_000);
 
 		expect(result).toEqual({ status: 'replayed', completedAt: 1_000 });
 		expect(await db.select().from(schema.puzzleCompletionRuns)).toHaveLength(1);
@@ -616,14 +669,24 @@ describe('recordVersionedCompletion against real D1', () => {
 			name: 'elapsed value',
 			puzzleId: 'pz1',
 			request: completion({ elapsedActiveSeconds: 101 })
+		},
+		{
+			name: 'hints used',
+			puzzleId: 'pz1',
+			request: completion({ hintsUsed: 1 })
+		},
+		{
+			name: 'incorrect attempts',
+			puzzleId: 'pz1',
+			request: completion({ incorrectAttempts: 1 })
 		}
 	])(
 		'rejects a replay with a different $name without changing stats',
 		async ({ puzzleId, request }) => {
 			const executor = createD1CompletionWriteExecutor(db);
-			await recordVersionedCompletion(executor, 'p1', 'pz1', completion(), 1_000);
+			await recordCompletion(executor, 'p1', 'pz1', completion(), 1_000);
 
-			const result = await recordVersionedCompletion(executor, 'p1', puzzleId, request, 2_000);
+			const result = await recordCompletion(executor, 'p1', puzzleId, request, 2_000);
 
 			expect(result).toEqual({ status: 'conflict' });
 			expect(await selectRunFacts(db)).toEqual([
@@ -644,11 +707,6 @@ describe('recordVersionedCompletion against real D1', () => {
 
 	it.each([
 		completion({
-			runId: 'rotation',
-			resultClass: 'rotation_timed',
-			elapsedActiveSeconds: 110
-		}),
-		completion({
 			runId: 'assisted',
 			resultClass: 'assisted_timed',
 			elapsedActiveSeconds: 120
@@ -658,10 +716,10 @@ describe('recordVersionedCompletion against real D1', () => {
 			resultClass: 'relaxed',
 			elapsedActiveSeconds: null
 		})
-	])('keeps non-canonical run $runId in the ledger only', async (request) => {
+	])('keeps assisted and relaxed runs out of personal-best tables', async (request) => {
 		const executor = createD1CompletionWriteExecutor(db);
 
-		expect(await recordVersionedCompletion(executor, 'p1', 'pz1', request, 1_000)).toEqual({
+		expect(await recordCompletion(executor, 'p1', 'pz1', request, 1_000)).toEqual({
 			status: 'recorded',
 			completedAt: 1_000
 		});
@@ -669,11 +727,36 @@ describe('recordVersionedCompletion against real D1', () => {
 		expect(await db.select().from(schema.puzzleBestTimes)).toHaveLength(0);
 	});
 
+	it('records a rotation timed personal best separately from standard', async () => {
+		const executor = createD1CompletionWriteExecutor(db);
+		const request = completion({
+			runId: 'rotation',
+			resultClass: 'rotation_timed',
+			elapsedActiveSeconds: 110
+		});
+
+		expect(await recordCompletion(executor, 'p1', 'pz1', request, 1_000)).toEqual({
+			status: 'recorded',
+			completedAt: 1_000
+		});
+		expect(await db.select().from(schema.puzzleBestTimes)).toEqual([
+			{
+				playerId: 'p1',
+				puzzleId: 'pz1',
+				familyId: FAMILY_ID,
+				difficulty: DIFFICULTY,
+				resultClass: 'rotation_timed',
+				bestTimeSeconds: 110,
+				achievedAt: 1_000
+			}
+		]);
+	});
+
 	it('records distinct run IDs independently while preserving the zero legacy baseline', async () => {
 		const executor = createD1CompletionWriteExecutor(db);
 
-		await recordVersionedCompletion(executor, 'p1', 'pz1', completion(), 1_000);
-		await recordVersionedCompletion(
+		await recordCompletion(executor, 'p1', 'pz1', completion(), 1_000);
+		await recordCompletion(
 			executor,
 			'p1',
 			'pz1',
@@ -691,7 +774,7 @@ describe('recordVersionedCompletion against real D1', () => {
 		await db.insert(schema.puzzleBestTimes).values({
 			playerId: 'p1',
 			puzzleId: 'pz1',
-			familyId: PLACEHOLDER_FAMILY_ID,
+			familyId: FAMILY_ID,
 			difficulty: 'easy',
 			resultClass: 'standard_timed',
 			bestTimeSeconds: 120,
@@ -699,8 +782,8 @@ describe('recordVersionedCompletion against real D1', () => {
 		});
 		const executor = createD1CompletionWriteExecutor(db);
 
-		await recordVersionedCompletion(executor, 'p1', 'pz1', completion(), 1_000);
-		await recordVersionedCompletion(
+		await recordCompletion(executor, 'p1', 'pz1', completion(), 1_000);
+		await recordCompletion(
 			executor,
 			'p1',
 			'pz1',
@@ -721,9 +804,7 @@ describe('recordVersionedCompletion against real D1', () => {
 			)
 			.run();
 		try {
-			await expect(
-				recordVersionedCompletion(executor, 'p1', 'pz1', completion(), 1_000)
-			).rejects.toThrow();
+			await expect(recordCompletion(executor, 'p1', 'pz1', completion(), 1_000)).rejects.toThrow();
 		} finally {
 			await d1.prepare('DROP TRIGGER fail_puzzle_best_times_insert').run();
 		}
@@ -741,9 +822,7 @@ describe('recordVersionedCompletion against real D1', () => {
 			)
 			.run();
 		try {
-			await expect(
-				recordVersionedCompletion(executor, 'p1', 'pz1', completion(), 1_000)
-			).rejects.toThrow(
+			await expect(recordCompletion(executor, 'p1', 'pz1', completion(), 1_000)).rejects.toThrow(
 				'Completion ledger write returned no stored row without tombstone or quota'
 			);
 		} finally {
@@ -758,8 +837,8 @@ describe('recordVersionedCompletion against real D1', () => {
 
 	it('decrements usage on deletion and never creates a negative missing or zero row', async () => {
 		const executor = createD1CompletionWriteExecutor(db, 3);
-		await recordVersionedCompletion(executor, 'p1', 'pz1', completion({ runId: 'p1-pz1' }), 1_000);
-		await recordVersionedCompletion(executor, 'p1', 'pz2', completion({ runId: 'p1-pz2' }), 2_000);
+		await recordCompletion(executor, 'p1', 'pz1', completion({ runId: 'p1-pz1' }), 1_000);
+		await recordCompletion(executor, 'p1', 'pz2', completion({ runId: 'p1-pz2' }), 2_000);
 
 		await deletePuzzleStats(executor, 'pz1');
 		expect(await db.select().from(schema.playerCompletionUsage)).toEqual([
@@ -770,7 +849,7 @@ describe('recordVersionedCompletion against real D1', () => {
 		await deletePuzzleStats(executor, 'pz2');
 		expect(await db.select().from(schema.playerCompletionUsage)).toHaveLength(0);
 
-		await recordVersionedCompletion(executor, 'p2', 'pz3', completion({ runId: 'p2-pz3' }), 3_000);
+		await recordCompletion(executor, 'p2', 'pz3', completion({ runId: 'p2-pz3' }), 3_000);
 		await d1
 			.prepare("UPDATE player_completion_usage SET retained_runs = 0 WHERE player_id = 'p2'")
 			.run();
@@ -784,7 +863,7 @@ describe('recordVersionedCompletion against real D1', () => {
 			{
 				playerId: 'p1',
 				puzzleId: 'pz1',
-				familyId: PLACEHOLDER_FAMILY_ID,
+				familyId: FAMILY_ID,
 				difficulty: 'easy',
 				resultClass: 'standard_timed',
 				bestTimeSeconds: 50,
@@ -793,7 +872,7 @@ describe('recordVersionedCompletion against real D1', () => {
 			{
 				playerId: 'p2',
 				puzzleId: 'pz1',
-				familyId: PLACEHOLDER_FAMILY_ID,
+				familyId: FAMILY_ID,
 				difficulty: 'easy',
 				resultClass: 'standard_timed',
 				bestTimeSeconds: 30,
@@ -802,7 +881,7 @@ describe('recordVersionedCompletion against real D1', () => {
 			{
 				playerId: 'p1',
 				puzzleId: 'pz2',
-				familyId: PLACEHOLDER_FAMILY_ID,
+				familyId: FAMILY_ID,
 				difficulty: 'easy',
 				resultClass: 'standard_timed',
 				bestTimeSeconds: 40,
@@ -856,7 +935,7 @@ describe('recordVersionedCompletion against real D1', () => {
 		await db.insert(schema.puzzleBestTimes).values({
 			playerId: 'p1',
 			puzzleId: 'pz1',
-			familyId: PLACEHOLDER_FAMILY_ID,
+			familyId: FAMILY_ID,
 			difficulty: 'easy',
 			resultClass: 'standard_timed',
 			bestTimeSeconds: 50,
@@ -886,13 +965,194 @@ describe('recordVersionedCompletion against real D1', () => {
 		expect(await db.select().from(schema.puzzleBestTimes)).toHaveLength(1);
 		expect(await db.select().from(schema.puzzleCompletionRuns)).toHaveLength(1);
 	});
+
+	it('records the first family+difficulty clear exactly once', async () => {
+		const executor = createD1CompletionWriteExecutor(db);
+		await recordCompletion(executor, 'p1', 'pz1', completion(), 1_000);
+
+		expect(await db.select().from(schema.playerDifficultyCompletions)).toEqual([
+			{
+				playerId: 'p1',
+				familyId: FAMILY_ID,
+				difficulty: DIFFICULTY,
+				firstCompletedAt: 1_000
+			}
+		]);
+
+		await recordCompletion(executor, 'p1', 'pz2', completion({ runId: 'run-2' }), 2_000);
+		expect(await db.select().from(schema.playerDifficultyCompletions)).toHaveLength(1);
+	});
+
+	it('rejects a replay with changed hints or incorrect attempts', async () => {
+		const executor = createD1CompletionWriteExecutor(db);
+		await recordCompletion(executor, 'p1', 'pz1', completion(), 1_000);
+
+		expect(
+			await recordCompletion(executor, 'p1', 'pz1', completion({ hintsUsed: 1 }), 2_000)
+		).toEqual({ status: 'conflict' });
+		expect(
+			await recordCompletion(executor, 'p1', 'pz1', completion({ incorrectAttempts: 1 }), 3_000)
+		).toEqual({ status: 'conflict' });
+		expect(await db.select().from(schema.playerVariantMastery)).toHaveLength(2);
+	});
+
+	it('keeps Standard and Rotation personal bests isolated', async () => {
+		const executor = createD1CompletionWriteExecutor(db);
+		await recordCompletion(
+			executor,
+			'p1',
+			'pz1',
+			completion({ runId: 'std', resultClass: 'standard_timed', elapsedActiveSeconds: 100 }),
+			1_000
+		);
+		await recordCompletion(
+			executor,
+			'p1',
+			'pz1',
+			completion({
+				runId: 'rot',
+				resultClass: 'rotation_timed',
+				elapsedActiveSeconds: 90
+			}),
+			2_000
+		);
+
+		expect(await db.select().from(schema.puzzleBestTimes)).toEqual([
+			standardBest({ playerId: 'p1', puzzleId: 'pz1', bestTimeSeconds: 100, achievedAt: 1_000 }),
+			{
+				playerId: 'p1',
+				puzzleId: 'pz1',
+				familyId: FAMILY_ID,
+				difficulty: DIFFICULTY,
+				resultClass: 'rotation_timed',
+				bestTimeSeconds: 90,
+				achievedAt: 2_000
+			}
+		]);
+	});
+
+	it('inserts current-run mastery atomically and idempotently on replay', async () => {
+		const executor = createD1CompletionWriteExecutor(db);
+		const request = completion({
+			resultClass: 'rotation_timed',
+			elapsedActiveSeconds: 88,
+			hintsUsed: 0,
+			incorrectAttempts: 0
+		});
+
+		await recordCompletion(executor, 'p1', 'pz1', request, 1_000);
+		expect(await db.select().from(schema.playerVariantMastery)).toEqual([
+			{ playerId: 'p1', puzzleId: 'pz1', badge: 'hintless', earnedAt: 1_000 },
+			{ playerId: 'p1', puzzleId: 'pz1', badge: 'flawless', earnedAt: 1_000 },
+			{ playerId: 'p1', puzzleId: 'pz1', badge: 'rotation_clear', earnedAt: 1_000 }
+		]);
+
+		await recordCompletion(executor, 'p1', 'pz1', request, 9_000);
+		expect(await db.select().from(schema.playerVariantMastery)).toHaveLength(3);
+	});
+
+	it('preserves achievedAt on a worse replay and replaces it on a better replay', async () => {
+		const executor = createD1CompletionWriteExecutor(db);
+		await recordCompletion(
+			executor,
+			'p1',
+			'pz1',
+			completion({ runId: 'fast', elapsedActiveSeconds: 80 }),
+			1_000
+		);
+		await recordCompletion(
+			executor,
+			'p1',
+			'pz1',
+			completion({ runId: 'slow', elapsedActiveSeconds: 120 }),
+			2_000
+		);
+		expect(await db.select().from(schema.puzzleBestTimes)).toEqual([
+			standardBest({ playerId: 'p1', puzzleId: 'pz1', bestTimeSeconds: 80, achievedAt: 1_000 })
+		]);
+
+		await recordCompletion(
+			executor,
+			'p1',
+			'pz1',
+			completion({ runId: 'faster', elapsedActiveSeconds: 60 }),
+			3_000
+		);
+		expect(await db.select().from(schema.puzzleBestTimes)).toEqual([
+			standardBest({ playerId: 'p1', puzzleId: 'pz1', bestTimeSeconds: 60, achievedAt: 3_000 })
+		]);
+	});
+
+	it('reconciles achievements after record and repairs missing rows on exact replay', async () => {
+		const executor = createD1CompletionWriteExecutor(db);
+		const request = completion();
+
+		await recordCompletion(executor, 'p1', 'pz1', request, 1_000);
+		expect(await db.select().from(schema.playerAchievements)).toEqual([
+			{
+				playerId: 'p1',
+				achievementId: ACHIEVEMENT_IDS.first_clear,
+				unlockedAt: 1_000
+			},
+			{
+				playerId: 'p1',
+				achievementId: ACHIEVEMENT_IDS.hintless,
+				unlockedAt: 1_000
+			},
+			{
+				playerId: 'p1',
+				achievementId: ACHIEVEMENT_IDS.flawless,
+				unlockedAt: 1_000
+			}
+		]);
+
+		await d1.prepare("DELETE FROM player_achievements WHERE player_id = 'p1'").run();
+		expect(await db.select().from(schema.playerAchievements)).toHaveLength(0);
+
+		await recordCompletion(executor, 'p1', 'pz1', request, 9_000);
+		expect(await db.select().from(schema.playerAchievements)).toHaveLength(3);
+	});
+
+	it('reads a bounded achievement snapshot for reconciliation', async () => {
+		const executor = createD1CompletionWriteExecutor(db);
+		const hardFamily = '323e4567-e89b-42d3-a456-426614174002';
+		await recordCompletion(executor, 'p1', 'pz-easy', completion({ runId: 'easy' }), 1_000, {
+			familyId: hardFamily,
+			difficulty: 'easy'
+		});
+		await recordCompletion(executor, 'p1', 'pz-normal', completion({ runId: 'normal' }), 2_000, {
+			familyId: hardFamily,
+			difficulty: 'normal'
+		});
+		await recordCompletion(executor, 'p1', 'pz-hard', completion({ runId: 'hard' }), 3_000, {
+			familyId: hardFamily,
+			difficulty: 'hard'
+		});
+
+		expect(await readAchievementSnapshot(db, 'p1')).toEqual({
+			uniqueClears: 3,
+			hardClears: 1,
+			hasFullSetOnAnyFamily: true,
+			hasHintlessMastery: true,
+			hasFlawlessMastery: true,
+			hasRotationClearMastery: false
+		});
+		await d1.prepare("DELETE FROM player_achievements WHERE player_id = 'p1'").run();
+		expect(await reconcileAchievements(db, 'p1', 4_000)).toEqual([
+			ACHIEVEMENT_IDS.first_clear,
+			ACHIEVEMENT_IDS.full_set,
+			ACHIEVEMENT_IDS.hard_mode,
+			ACHIEVEMENT_IDS.hintless,
+			ACHIEVEMENT_IDS.flawless
+		]);
+	});
 });
 
 describe('listPlayerStats composite cursor against real D1', () => {
 	it('paginates with (bestTimeSeconds, puzzleId) cursor without skipping rows', async () => {
 		// Insert 5 current completions with distinct best times.
 		for (let i = 0; i < 5; i++) {
-			await recordVersionedCompletion(
+			await recordCompletion(
 				createD1CompletionWriteExecutor(db),
 				'p1',
 				`pz${i}`,
@@ -929,21 +1189,21 @@ describe('listPlayerStats composite cursor against real D1', () => {
 		// Two puzzles with the same best time — cursor must use puzzleId
 		// as the tiebreaker to avoid skipping or duplicating rows.
 		const executor = createD1CompletionWriteExecutor(db);
-		await recordVersionedCompletion(
+		await recordCompletion(
 			executor,
 			'p1',
 			'pzB',
 			completion({ runId: 'tie-b', elapsedActiveSeconds: 100 }),
 			1_000
 		);
-		await recordVersionedCompletion(
+		await recordCompletion(
 			executor,
 			'p1',
 			'pzA',
 			completion({ runId: 'tie-a', elapsedActiveSeconds: 100 }),
 			2_000
 		);
-		await recordVersionedCompletion(
+		await recordCompletion(
 			executor,
 			'p1',
 			'pzC',
@@ -982,7 +1242,7 @@ describe('player stats against real D1', () => {
 			{
 				playerId: 'p1',
 				puzzleId: 'standard',
-				familyId: PLACEHOLDER_FAMILY_ID,
+				familyId: FAMILY_ID,
 				difficulty: 'easy',
 				resultClass: 'standard_timed',
 				bestTimeSeconds: 40,
@@ -991,7 +1251,7 @@ describe('player stats against real D1', () => {
 			{
 				playerId: 'p1',
 				puzzleId: 'overlap',
-				familyId: PLACEHOLDER_FAMILY_ID,
+				familyId: FAMILY_ID,
 				difficulty: 'easy',
 				resultClass: 'standard_timed',
 				bestTimeSeconds: 60,
@@ -1110,7 +1370,7 @@ describe('player stats against real D1', () => {
 			{
 				playerId: 'p1',
 				puzzleId: 'pz-a',
-				familyId: PLACEHOLDER_FAMILY_ID,
+				familyId: FAMILY_ID,
 				difficulty: 'easy',
 				resultClass: 'standard_timed',
 				bestTimeSeconds: 10,
@@ -1119,7 +1379,7 @@ describe('player stats against real D1', () => {
 			{
 				playerId: 'p1',
 				puzzleId: 'pz-b',
-				familyId: PLACEHOLDER_FAMILY_ID,
+				familyId: FAMILY_ID,
 				difficulty: 'easy',
 				resultClass: 'standard_timed',
 				bestTimeSeconds: 10,
@@ -1128,7 +1388,7 @@ describe('player stats against real D1', () => {
 			{
 				playerId: 'p1',
 				puzzleId: 'pz-c',
-				familyId: PLACEHOLDER_FAMILY_ID,
+				familyId: FAMILY_ID,
 				difficulty: 'easy',
 				resultClass: 'standard_timed',
 				bestTimeSeconds: 20,

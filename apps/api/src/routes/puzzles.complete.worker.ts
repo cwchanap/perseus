@@ -1,7 +1,11 @@
 import { Hono } from 'hono';
 import type { Env } from '../worker';
 import { getWorkerDbContext } from '../db.worker';
-import { recordVersionedCompletion, ensurePuzzleOwnership, SYSTEM_OWNER_ID } from '@perseus/shared';
+import {
+	recordVersionedCompletion,
+	ensurePuzzleFamilyOwnership,
+	SYSTEM_OWNER_ID
+} from '@perseus/shared';
 import { isPuzzleId } from '@perseus/types';
 import { getPuzzle } from '../services/storage.worker';
 import { requirePlayerAuth } from '../middleware/player-auth.worker';
@@ -54,30 +58,32 @@ router.post('/:id/complete', requirePlayerAuth, async (c) => {
 	}
 
 	const session = c.get('playerSession');
-	const ownershipRow = {
-		id: puzzleId,
+	const familyOwnershipRow = {
+		id: puzzle.familyId,
 		ownerId: SYSTEM_OWNER_ID,
 		name: puzzle.name,
-		pieceCount: puzzle.pieceCount,
+		aspectRatio: puzzle.aspectRatio ?? '4:3',
 		...(puzzle.category ? { category: puzzle.category } : {}),
-		status: 'ready',
+		status: 'ready' as const,
 		createdAt: puzzle.createdAt
-	} as const;
+	};
 
 	try {
 		const { db, completionWrites } = getWorkerDbContext(c.env);
 		const result = await recordVersionedCompletion(
+			db,
 			completionWrites,
 			session.user.id,
 			puzzleId,
-			parsed.value
+			parsed.value,
+			{ familyId: puzzle.familyId, difficulty: puzzle.difficulty }
 		);
 		const response = completionResultToResponse(result);
 		if (result.status !== 'tombstoned') {
-			// Lazily backfill a system-owned row for puzzles that predate the DB
+			// Lazily backfill a system-owned row for families that predate the DB
 			// mirror. Tombstones skip this so deletion cannot recreate ownership.
-			await ensurePuzzleOwnership(db, ownershipRow).catch((err) =>
-				console.error(`Failed to backfill puzzle ownership for ${puzzleId}:`, err)
+			await ensurePuzzleFamilyOwnership(db, familyOwnershipRow).catch((err) =>
+				console.error(`Failed to backfill puzzle family ownership for ${puzzle.familyId}:`, err)
 			);
 		}
 		return c.json(response.body, response.status);

@@ -1,18 +1,14 @@
 import { eq, lt, desc, asc, count, sql, and, inArray } from 'drizzle-orm';
-import type { RecordPuzzleCompletionV1 } from '@perseus/types';
-import type {
-	AppDb,
-	LegacyPuzzleOwnershipRow,
-	NewPuzzleFamilyRow,
-	PlayerProfileRow
-} from './types';
-import { puzzleFamilies, playerProfiles } from './schema';
+import type { PuzzleDifficulty, RecordPuzzleCompletionV2 } from '@perseus/types';
+import type { AppDb, NewPuzzleFamilyRow, PlayerProfileRow } from './types';
+import { puzzleFamilies, playerProfiles, playerAchievements } from './schema';
 import {
 	interpretVersionedCompletionWrite,
 	type CompletionWriteExecutor,
 	type VersionedCompletionResult,
 	type VersionedCompletionWrite
 } from './completion-writes';
+import { evaluateAchievements, type AchievementId, type AchievementSnapshot } from './progression';
 
 const VISIBLE_PLAYER_PUZZLE_FAMILY_STATUSES = ['ready', 'failed', 'processing'] as const;
 
@@ -125,11 +121,87 @@ export async function getAvatarTokensByPlayerIds(
 	return result;
 }
 
-/** @deprecated puzzles table removed in migration 0006; no-op until Task 11. */
-export async function ensurePuzzleOwnership(
-	_db: AppDb,
-	_row: LegacyPuzzleOwnershipRow
-): Promise<void> {}
+/** @deprecated puzzles table removed in migration 0006; use ensurePuzzleFamilyOwnership. */
+export async function ensurePuzzleOwnership(_db: AppDb, _row: { id: string }): Promise<void> {}
+
+export interface TrustedVariantIdentity {
+	familyId: string;
+	difficulty: PuzzleDifficulty;
+}
+
+export async function readAchievementSnapshot(
+	db: AppDb,
+	playerId: string
+): Promise<AchievementSnapshot> {
+	const rows = await db.all<{
+		uniqueClears: number;
+		hardClears: number;
+		hasFullSetOnAnyFamily: number;
+		hasHintlessMastery: number;
+		hasFlawlessMastery: number;
+		hasRotationClearMastery: number;
+	}>(sql`
+		SELECT
+			(
+				SELECT COUNT(*) FROM player_difficulty_completions
+				WHERE player_id = ${playerId}
+			) AS "uniqueClears",
+			(
+				SELECT COUNT(*) FROM player_difficulty_completions
+				WHERE player_id = ${playerId} AND difficulty = 'hard'
+			) AS "hardClears",
+			(
+				SELECT COUNT(*) FROM (
+					SELECT family_id FROM player_difficulty_completions
+					WHERE player_id = ${playerId}
+					GROUP BY family_id
+					HAVING COUNT(DISTINCT difficulty) = 3
+				)
+			) AS "hasFullSetOnAnyFamily",
+			(
+				SELECT COUNT(*) FROM player_variant_mastery
+				WHERE player_id = ${playerId} AND badge = 'hintless'
+			) AS "hasHintlessMastery",
+			(
+				SELECT COUNT(*) FROM player_variant_mastery
+				WHERE player_id = ${playerId} AND badge = 'flawless'
+			) AS "hasFlawlessMastery",
+			(
+				SELECT COUNT(*) FROM player_variant_mastery
+				WHERE player_id = ${playerId} AND badge = 'rotation_clear'
+			) AS "hasRotationClearMastery"
+	`);
+	const row = rows[0];
+	return {
+		uniqueClears: Number(row?.uniqueClears ?? 0),
+		hardClears: Number(row?.hardClears ?? 0),
+		hasFullSetOnAnyFamily: Number(row?.hasFullSetOnAnyFamily ?? 0) > 0,
+		hasHintlessMastery: Number(row?.hasHintlessMastery ?? 0) > 0,
+		hasFlawlessMastery: Number(row?.hasFlawlessMastery ?? 0) > 0,
+		hasRotationClearMastery: Number(row?.hasRotationClearMastery ?? 0) > 0
+	};
+}
+
+export async function reconcileAchievements(
+	db: AppDb,
+	playerId: string,
+	unlockedAt: number
+): Promise<AchievementId[]> {
+	const snapshot = await readAchievementSnapshot(db, playerId);
+	const candidates = evaluateAchievements(snapshot);
+	const awarded: AchievementId[] = [];
+	for (const achievementId of candidates) {
+		const inserted = await db
+			.insert(playerAchievements)
+			.values({ playerId, achievementId, unlockedAt })
+			.onConflictDoNothing({
+				target: [playerAchievements.playerId, playerAchievements.achievementId]
+			})
+			.returning({ achievementId: playerAchievements.achievementId });
+		if (inserted[0]) awarded.push(inserted[0].achievementId as AchievementId);
+	}
+	return awarded;
+}
 
 export async function deletePuzzleStats(
 	executor: CompletionWriteExecutor,
@@ -211,22 +283,32 @@ function parsePlayerPuzzleFamilyCursor(cursor: string) {
 }
 
 export async function recordVersionedCompletion(
+	db: AppDb,
 	executor: CompletionWriteExecutor,
 	playerId: string,
 	puzzleId: string,
-	request: RecordPuzzleCompletionV1,
+	request: RecordPuzzleCompletionV2,
+	identity: TrustedVariantIdentity,
 	receivedAt = Date.now()
 ): Promise<VersionedCompletionResult> {
 	const input: VersionedCompletionWrite = {
 		playerId,
 		puzzleId,
+		familyId: identity.familyId,
+		difficulty: identity.difficulty,
 		runId: request.runId,
 		resultClass: request.resultClass,
 		elapsedActiveSeconds: request.elapsedActiveSeconds,
+		hintsUsed: request.hintsUsed,
+		incorrectAttempts: request.incorrectAttempts,
 		receivedAt
 	};
 	const execution = await executor.write(input);
-	return interpretVersionedCompletionWrite(input, execution);
+	const result = interpretVersionedCompletionWrite(input, execution);
+	if (result.status === 'recorded' || result.status === 'replayed') {
+		await reconcileAchievements(db, playerId, result.completedAt);
+	}
+	return result;
 }
 
 export type PlayerStatsCursor =
