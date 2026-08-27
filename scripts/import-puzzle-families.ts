@@ -25,6 +25,7 @@ import {
 	MIGRATION_DIR,
 	WRANGLER_CONFIG,
 	D1_DATABASE,
+	parseD1Changes,
 	type LegacyExportManifest,
 	type RunWrangler
 } from './export-legacy-puzzles';
@@ -101,14 +102,22 @@ async function updateFamilyOwner(
 		'execute',
 		D1_DATABASE,
 		'--remote',
+		'--yes',
 		'--config',
 		WRANGLER_CONFIG,
+		'--json',
 		'--command',
 		command
 	]);
 	if (result.exitCode !== 0) {
 		throw new FatalError(
 			`Failed to update owner_id for family ${familyId}:\n${result.stderr || result.stdout}`
+		);
+	}
+	const changes = parseD1Changes(result.stdout);
+	if (changes === 0) {
+		throw new FatalError(
+			`Owner update for family ${familyId} changed zero rows — verify family id and D1 state`
 		);
 	}
 }
@@ -188,7 +197,7 @@ export async function importPuzzleFamilies(options: ImportOptions): Promise<Impo
 		const formData = new FormData();
 		formData.append('name', entry.name);
 		formData.append('aspectRatio', entry.aspectRatio);
-		formData.append('category', entry.category);
+		if (entry.category) formData.append('category', entry.category);
 		formData.append(
 			'image',
 			new File([image], basename(entry.originalFile), { type: entry.contentType })
