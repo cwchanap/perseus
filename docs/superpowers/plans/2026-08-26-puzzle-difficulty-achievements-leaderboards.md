@@ -745,42 +745,55 @@ Commit: `feat(web): make puzzle catalog family-aware`
 **Files:**
 - Modify: `apps/mobile/app/api/puzzleApi.ts`
 - Modify: `apps/mobile/app/api/puzzleApi.test.ts`
+- Create: `apps/mobile/app/library/familyGallery.ts`
+- Create: `apps/mobile/app/library/familyGallery.test.ts`
 - Modify: `apps/mobile/app/library/Gallery.svelte`
-- Modify: `apps/mobile/app/library/Gallery.test.ts`
 - Modify: `apps/mobile/app/library/Library.svelte`
-- Modify: `apps/mobile/app/library/Library.test.ts`
-- Modify: `apps/mobile/app/App.svelte` if callback typing needs family/difficulty context only at selection boundary
-- Modify: `apps/mobile/app/library/downloadedLibrary.ts` only if display copy needs variant difficulty
-- Modify: `apps/mobile/app/library/downloadedLibrary.test.ts` only with the corresponding display change
+- Modify: `apps/mobile/app/library/downloadedLibrary.ts`
+- Modify: `apps/mobile/app/library/downloadedLibrary.test.ts`
+- Modify: `apps/mobile/app/library/Downloaded.svelte`
 
 **Interfaces:**
 - `PuzzleApi.listPuzzleFamilies(cursor?)` calls `/api/puzzle-families`.
 - `familyThumbnailUrl(familyId)` uses family thumbnail route.
 - Detail/reference/piece methods remain concrete `variantId` APIs.
+- `familyDownloadOptions(family)` returns exactly Easy/Normal/Hard `{ difficulty, variantId, pieceCount }` rows in tier order.
 - Gallery difficulty tap calls existing `onDownload(variantId)`; downloaded packages/sessions remain variant IDs.
 
 - [ ] **Step 1: Write API RED tests**
 
-Assert family list decoding accepts variant summaries and that no code calls `GET /api/puzzles` for catalog listing.
+Assert family list decoding accepts three variant summaries and that no catalog request calls `GET /api/puzzles`:
 
 ```ts
 await api.listPuzzleFamilies();
 expect(requestJson).toHaveBeenCalledWith(`${baseUrl}/api/puzzle-families`);
 ```
 
-- [ ] **Step 2: Write Gallery RED tests**
+Keep concrete `getPuzzle(variantId)`, `referenceUrl(variantId)`, and `pieceImageUrl(variantId, pieceId)` behavior.
 
-One family row shows shared thumbnail/name and three difficulty actions with counts. Tapping Normal passes `family.variants.normal.id` to `onDownload`.
+- [ ] **Step 2: Write the pure family-gallery RED tests**
 
-- [ ] **Step 3: Write installed-state RED tests**
+```ts
+expect(familyDownloadOptions(family)).toEqual([
+  { difficulty: 'easy', variantId: family.variants.easy.id, pieceCount: 16 },
+  { difficulty: 'normal', variantId: family.variants.normal.id, pieceCount: 49 },
+  { difficulty: 'hard', variantId: family.variants.hard.id, pieceCount: 100 }
+]);
+```
 
-Installed IDs remain variant IDs. Installing Easy must not mark Normal/Hard installed; multiple variants from one family may coexist in Downloaded.
+This keeps selection logic testable with the mobile package's existing Vitest-only setup instead of adding Svelte-Native component test infrastructure.
 
-- [ ] **Step 4: Implement minimal mobile cutover**
+- [ ] **Step 3: Update Gallery/Library to consume the pure projection**
 
-Do not add account achievements/leaderboard UI. Change browsing/selection only, then reuse current concrete download/detail/package/session pipeline.
+`Library.svelte` stores `PuzzleFamilySummary[]`. `Gallery.svelte` renders one family thumbnail/name and the three `familyDownloadOptions()` rows; tapping a row calls `onDownload(option.variantId)`.
 
-- [ ] **Step 5: Verify and commit**
+Installed/download-job state remains a `Set<string>`/ID keyed by variant. Installing Easy therefore does not mark Normal/Hard installed.
+
+- [ ] **Step 4: Make Downloaded rows distinguish sibling variants**
+
+Extend `downloadedLibrary.ts` to carry `difficulty` from installed variant metadata and render it in `Downloaded.svelte` beside piece count. This avoids two installed difficulties of the same family appearing as indistinguishable same-name rows while preserving variant-keyed launch/remove/progress behavior.
+
+- [ ] **Step 5: Run the mobile unit suite and commit**
 
 Run: `bun --cwd apps/mobile run test:unit`
 
@@ -878,9 +891,9 @@ gallery shows one family
 
 Also select Normal and prove it navigates to a different variant ID/piece count.
 
-- [ ] **Step 3: Add family cleanup/admin regression path where existing E2E harness supports it**
+- [ ] **Step 3: Pin family cleanup/admin integration**
 
-At minimum pin API/unit integration that one admin family delete removes all three variant gameplay identities and no variant remains independently catalogued.
+Use existing API/admin integration tests to prove one family delete fences/removes all three variant gameplay identities and no variant remains independently catalogued. Do not add a new browser E2E seam solely for deletion when unit/worker coverage already owns the protocol.
 
 - [ ] **Step 4: Add Quick Puzzle regression assertions**
 
