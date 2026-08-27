@@ -2,13 +2,13 @@
 // These are NOT exported from the main entry point because workerd
 // restricts top-level imports in modules that export Durable Objects.
 
-import type { PuzzleMetadata } from './types';
+import type { PuzzleMetadata, PuzzleFamilyMetadata } from './types';
 
 // Maximum image size in bytes (50MB)
 // This is a safety limit to prevent workflow step payload issues
 export const MAX_IMAGE_BYTES = 50 * 1024 * 1024;
 
-// Helper to get puzzle metadata from KV
+// Helper to get variant puzzle metadata from KV
 export async function getMetadata(
 	kv: KVNamespace,
 	puzzleId: string
@@ -22,6 +22,18 @@ export async function getMetadata(
 		);
 	}
 	return data as PuzzleMetadata;
+}
+
+export async function getFamilyMetadata(
+	kv: KVNamespace,
+	familyId: string
+): Promise<PuzzleFamilyMetadata | null> {
+	const data = await kv.get(`family:${familyId}`, 'json');
+	if (data === null) return null;
+	if (!validatePuzzleFamilyMetadata(data)) {
+		throw new Error(`Corrupt family metadata for ${familyId}: data exists but fails validation`);
+	}
+	return data as PuzzleFamilyMetadata;
 }
 
 function getValidationDiagnostics(meta: unknown): string {
@@ -52,8 +64,7 @@ function getValidationDiagnostics(meta: unknown): string {
 	return issues.length > 0 ? issues.join(', ') : 'unknown validation failure';
 }
 
-// Import the validation function from types (needed for the helper)
-import { validatePuzzleMetadata } from './types';
+import { validatePuzzleMetadata, validatePuzzleFamilyMetadata } from './types';
 
 export async function updateMetadata(
 	metadataDO: DurableObjectNamespace,
@@ -72,12 +83,35 @@ export async function updateMetadata(
 
 	if (!response.ok) {
 		const payload = (await response.json().catch(() => null)) as { message?: string } | null;
-		// Attach the HTTP status so callers can branch on it (e.g. mark-failed
-		// treats a 409 "already ready" refusal distinctly from a transient 5xx).
-		// Existing callers that only inspect the message are unaffected.
 		throw Object.assign(
 			new Error(
 				payload?.message ?? `Failed to update puzzle ${puzzleId} (HTTP ${response.status})`
+			),
+			{ status: response.status }
+		);
+	}
+}
+
+export async function updateFamilyMetadata(
+	metadataDO: DurableObjectNamespace,
+	familyId: string,
+	updates: Partial<PuzzleFamilyMetadata>
+): Promise<void> {
+	const id = metadataDO.idFromName(familyId);
+	const stub = metadataDO.get(id);
+	const response = await stub.fetch('https://puzzle-metadata/update', {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json'
+		},
+		body: JSON.stringify({ puzzleId: familyId, updates })
+	});
+
+	if (!response.ok) {
+		const payload = (await response.json().catch(() => null)) as { message?: string } | null;
+		throw Object.assign(
+			new Error(
+				payload?.message ?? `Failed to update family ${familyId} (HTTP ${response.status})`
 			),
 			{ status: response.status }
 		);
@@ -93,14 +127,12 @@ export function padPixelsToTarget(
 	offsetX: number,
 	offsetY: number
 ): Uint8Array {
-	// Validate offsetX and offsetY are non-negative
 	if (offsetX < 0 || offsetY < 0) {
 		throw new RangeError(
 			`padPixelsToTarget: offsets must be non-negative, got offsetX=${offsetX}, offsetY=${offsetY}`
 		);
 	}
 
-	// Validate source fits within target at the given offset
 	if (offsetX + sourceWidth > targetWidth) {
 		throw new RangeError(
 			`padPixelsToTarget: source width (${sourceWidth}) at offsetX (${offsetX}) exceeds target width (${targetWidth}): ` +
@@ -114,7 +146,6 @@ export function padPixelsToTarget(
 		);
 	}
 
-	// Validate sourcePixels length matches expected dimensions
 	const expectedSourceLength = sourceWidth * sourceHeight * 4;
 	if (sourcePixels.length !== expectedSourceLength) {
 		throw new TypeError(
@@ -134,7 +165,6 @@ export function padPixelsToTarget(
 }
 
 export function applyMaskAlpha(piecePixels: Uint8Array, maskPixels: Uint8Array): void {
-	// Validate that maskPixels has enough data for all RGBA quads in piecePixels
 	if (maskPixels.length < piecePixels.length) {
 		throw new RangeError(
 			`applyMaskAlpha: maskPixels length (${maskPixels.length}) is less than piecePixels length (${piecePixels.length}). ` +
@@ -142,7 +172,6 @@ export function applyMaskAlpha(piecePixels: Uint8Array, maskPixels: Uint8Array):
 		);
 	}
 
-	// Only iterate up to the safe bound to avoid reading past the end of either array
 	const safeLength = Math.min(piecePixels.length, maskPixels.length);
 	for (let i = 0; i < safeLength; i += 4) {
 		piecePixels[i + 3] = maskPixels[i + 3];

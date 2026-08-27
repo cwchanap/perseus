@@ -6,9 +6,13 @@ import { describe, it, expect, vi } from 'vitest';
 import { listPuzzles, deletePuzzleAssets, getImage } from './storage.worker';
 import type { PuzzleMetadata } from '@perseus/types';
 
+const TEST_FAMILY_ID = '223e4567-e89b-42d3-a456-426614174000';
+
 function makePuzzleMetadata(id: string): PuzzleMetadata {
 	return {
 		id,
+		familyId: TEST_FAMILY_ID,
+		difficulty: 'easy',
 		name: 'Test Puzzle',
 		status: 'ready',
 		pieceCount: 1,

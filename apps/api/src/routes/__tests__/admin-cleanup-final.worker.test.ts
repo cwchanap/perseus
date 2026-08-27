@@ -1,21 +1,28 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('../../services/storage.worker', () => ({
-	commitIdempotencyKey: vi.fn(),
-	createPuzzleMetadata: vi.fn(),
-	deletePuzzleAssets: vi.fn(),
-	deletePuzzleMetadata: vi.fn(),
-	deleteOriginalImage: vi.fn(),
-	failIdempotencyKey: vi.fn(),
-	getPuzzle: vi.fn(),
-	listPuzzles: vi.fn(),
-	originalImageExists: vi.fn(),
-	puzzleExists: vi.fn(),
-	releaseIdempotencyKey: vi.fn(),
-	reserveIdempotencyKey: vi.fn(),
-	uploadOriginalImage: vi.fn()
-}));
+vi.mock('../../services/storage.worker', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../services/storage.worker')>();
+	return {
+		...actual,
+		commitIdempotencyKey: vi.fn(),
+		createPuzzleMetadata: vi.fn().mockResolvedValue(undefined),
+		createFamilyMetadata: vi.fn().mockResolvedValue(undefined),
+		deleteFamilyMetadata: vi.fn().mockResolvedValue({ success: true }),
+		deletePuzzleAssets: vi.fn(),
+		deletePuzzleMetadata: vi.fn().mockResolvedValue({ success: true }),
+		deleteOriginalImage: vi.fn().mockResolvedValue({ success: true }),
+		failIdempotencyKey: vi.fn(),
+		getPuzzle: vi.fn(),
+		getFamily: vi.fn(),
+		listPuzzles: vi.fn(),
+		originalImageExists: vi.fn(),
+		puzzleExists: vi.fn(),
+		releaseIdempotencyKey: vi.fn(),
+		reserveIdempotencyKey: vi.fn(),
+		uploadOriginalImage: vi.fn().mockResolvedValue(undefined)
+	};
+});
 
 vi.mock('../../services/player-auth.worker', () => ({
 	addAllowlistEntry: vi.fn(),
@@ -38,16 +45,16 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	return {
 		...original,
 		validateImageEndMarker: vi.fn().mockResolvedValue(true),
-		deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined),
+		deletePuzzleFamilyOwnership: vi.fn().mockResolvedValue(undefined),
 		deletePuzzleStats: vi.fn().mockResolvedValue(undefined),
-		insertPuzzleOwnership: vi.fn(),
+		insertPuzzleFamilyOwnership: vi.fn(),
 		SYSTEM_OWNER_ID: 'system'
 	};
 });
 
 import admin from '../admin.worker';
 import * as storage from '../../services/storage.worker';
-import { insertPuzzleOwnership } from '@perseus/shared';
+import { insertPuzzleFamilyOwnership } from '@perseus/shared';
 
 const PNG_HEADER = new Uint8Array([
 	0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
@@ -88,7 +95,7 @@ describe('Admin Worker final cleanup coverage', () => {
 		vi.clearAllMocks();
 		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
 			existing: false,
-			puzzleId: 'new-puzzle',
+			familyId: 'new-puzzle',
 			status: 'pending'
 		});
 		vi.mocked(storage.uploadOriginalImage).mockResolvedValue(undefined);
@@ -96,11 +103,11 @@ describe('Admin Worker final cleanup coverage', () => {
 		vi.mocked(storage.commitIdempotencyKey).mockResolvedValue(undefined);
 		vi.mocked(storage.releaseIdempotencyKey).mockResolvedValue(undefined);
 		vi.mocked(storage.failIdempotencyKey).mockResolvedValue(undefined);
-		vi.mocked(insertPuzzleOwnership as any).mockResolvedValue(undefined);
+		vi.mocked(insertPuzzleFamilyOwnership as any).mockResolvedValue(undefined);
 	});
 
 	it('keeps puzzle creation successful when the best-effort D1 insert rejects', async () => {
-		vi.mocked(insertPuzzleOwnership as any).mockRejectedValue(new Error('D1 unavailable'));
+		vi.mocked(insertPuzzleFamilyOwnership as any).mockRejectedValue(new Error('D1 unavailable'));
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
 		const response = await admin.fetch(createRequest('d1-key'), createEnv() as any);

@@ -1,21 +1,28 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('../../services/storage.worker', () => ({
-	commitIdempotencyKey: vi.fn(),
-	createPuzzleMetadata: vi.fn(),
-	deletePuzzleAssets: vi.fn(),
-	deletePuzzleMetadata: vi.fn(),
-	deleteOriginalImage: vi.fn(),
-	failIdempotencyKey: vi.fn(),
-	getPuzzle: vi.fn(),
-	listPuzzles: vi.fn(),
-	originalImageExists: vi.fn(),
-	puzzleExists: vi.fn(),
-	releaseIdempotencyKey: vi.fn(),
-	reserveIdempotencyKey: vi.fn(),
-	uploadOriginalImage: vi.fn()
-}));
+vi.mock('../../services/storage.worker', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../services/storage.worker')>();
+	return {
+		...actual,
+		commitIdempotencyKey: vi.fn(),
+		createPuzzleMetadata: vi.fn().mockResolvedValue(undefined),
+		createFamilyMetadata: vi.fn().mockResolvedValue(undefined),
+		deleteFamilyMetadata: vi.fn().mockResolvedValue({ success: true }),
+		deletePuzzleAssets: vi.fn(),
+		deletePuzzleMetadata: vi.fn().mockResolvedValue({ success: true }),
+		deleteOriginalImage: vi.fn().mockResolvedValue({ success: true }),
+		failIdempotencyKey: vi.fn(),
+		getPuzzle: vi.fn(),
+		getFamily: vi.fn(),
+		listPuzzles: vi.fn(),
+		originalImageExists: vi.fn(),
+		puzzleExists: vi.fn(),
+		releaseIdempotencyKey: vi.fn(),
+		reserveIdempotencyKey: vi.fn(),
+		uploadOriginalImage: vi.fn().mockResolvedValue(undefined)
+	};
+});
 
 vi.mock('../../services/player-auth.worker', () => ({
 	addAllowlistEntry: vi.fn(),
@@ -38,9 +45,9 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	return {
 		...original,
 		validateImageEndMarker: vi.fn().mockResolvedValue(true),
-		deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined),
+		deletePuzzleFamilyOwnership: vi.fn().mockResolvedValue(undefined),
 		deletePuzzleStats: vi.fn().mockResolvedValue(undefined),
-		insertPuzzleOwnership: vi.fn().mockResolvedValue(undefined),
+		insertPuzzleFamilyOwnership: vi.fn().mockResolvedValue(undefined),
 		SYSTEM_OWNER_ID: 'system'
 	};
 });
@@ -119,13 +126,20 @@ describe('Admin Worker idempotency commit handling', () => {
 	it('returns an existing processing puzzle when its pending workflow is alive', async () => {
 		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
 			existing: true,
-			puzzleId: 'existing-puzzle',
+			familyId: 'existing-puzzle',
 			status: 'pending'
 		});
-		vi.mocked(storage.getPuzzle).mockResolvedValue({
+		vi.mocked(storage.getFamily).mockResolvedValue({
 			id: 'existing-puzzle',
+			name: 'Test Family',
+			aspectRatio: '1:1',
 			status: 'processing',
-			idempotencyKey: 'alive-key'
+			variants: {
+				easy: '423e4567-e89b-42d3-a456-426614174010',
+				normal: '523e4567-e89b-42d3-a456-426614174011',
+				hard: '623e4567-e89b-42d3-a456-426614174012'
+			},
+			createdAt: 1000
 		} as any);
 		vi.mocked(storage.commitIdempotencyKey).mockResolvedValue(undefined);
 		vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -153,7 +167,7 @@ describe('Admin Worker idempotency commit handling', () => {
 		vi.useFakeTimers();
 		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
 			existing: false,
-			puzzleId: 'new-puzzle',
+			familyId: 'new-puzzle',
 			status: 'pending'
 		});
 		vi.mocked(storage.commitIdempotencyKey).mockRejectedValue(new Error('commit unavailable'));
@@ -170,7 +184,7 @@ describe('Admin Worker idempotency commit handling', () => {
 		expect(storage.commitIdempotencyKey).toHaveBeenCalledTimes(3);
 		expect(workflow.create).toHaveBeenCalledWith({
 			id: 'new-puzzle',
-			params: { puzzleId: 'new-puzzle' }
+			params: { familyId: 'new-puzzle' }
 		});
 		// Transient failure: retain workflow and assets for client retry
 		expect(workflow.get).not.toHaveBeenCalled();
@@ -186,7 +200,7 @@ describe('Admin Worker idempotency commit handling', () => {
 		// workflow alongside the already-started one.
 		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
 			existing: false,
-			puzzleId: 'guard-puzzle',
+			familyId: 'guard-puzzle',
 			status: 'pending'
 		});
 		vi.mocked(storage.commitIdempotencyKey).mockRejectedValue(new Error('commit unavailable'));

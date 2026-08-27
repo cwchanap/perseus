@@ -4,9 +4,10 @@
 import {
 	isPuzzleAspectRatio,
 	isValidPieceCountForAspectRatio,
-	getGridDimensionsForAspectRatio
+	getGridDimensionsForAspectRatio,
+	PUZZLE_DIFFICULTIES
 } from './grid';
-import type { PuzzleAspectRatio } from './grid';
+import type { PuzzleAspectRatio, PuzzleDifficulty } from './grid';
 
 export type EdgeType = 'flat' | 'tab' | 'blank';
 
@@ -84,6 +85,8 @@ export interface PuzzleProgress {
 
 interface PuzzleMetadataBase {
 	id: string;
+	familyId: string;
+	difficulty: PuzzleDifficulty;
 	name: string;
 	category?: PuzzleCategory;
 	aspectRatio?: PuzzleAspectRatio;
@@ -247,7 +250,7 @@ export type RecordPuzzleCompletionResponse =
 	  };
 
 export interface WorkflowParams {
-	puzzleId: string;
+	familyId: string;
 }
 
 // Puzzle piece sizing constants
@@ -436,7 +439,11 @@ export function isRecordPuzzleCompletionV1(
 export function validateWorkflowParams(params: unknown): params is WorkflowParams {
 	if (typeof params !== 'object' || params === null) return false;
 	const p = params as Record<string, unknown>;
-	return isPuzzleId(p.puzzleId);
+	return isPuzzleId(p.familyId);
+}
+
+function isPuzzleDifficulty(value: unknown): value is PuzzleDifficulty {
+	return typeof value === 'string' && (PUZZLE_DIFFICULTIES as readonly string[]).includes(value);
 }
 
 export function createPuzzleProgress(totalPieces: number, generatedPieces: number): PuzzleProgress {
@@ -489,6 +496,7 @@ function validatePuzzleMetadataImpl(
 
 	// Check required fields exist
 	if (typeof m.id !== 'string' || typeof m.name !== 'string') return false;
+	if (!isPuzzleId(m.familyId) || !isPuzzleDifficulty(m.difficulty)) return false;
 	if (!isNumber(m.pieceCount) || !isNumber(m.gridCols) || !isNumber(m.gridRows)) return false;
 	if (!isNumber(m.imageWidth) || !isNumber(m.imageHeight)) return false;
 	if (!isNumber(m.createdAt) || !isNumber(m.version)) return false;

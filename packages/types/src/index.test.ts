@@ -58,7 +58,9 @@ function makePiece(overrides: Record<string, unknown> = {}): unknown {
 // Helper to create a valid base metadata
 function makeMeta(overrides: Record<string, unknown> = {}): unknown {
 	return {
-		id: 'some-id',
+		id: '123e4567-e89b-42d3-a456-426614174000',
+		familyId: '223e4567-e89b-42d3-a456-426614174001',
+		difficulty: 'easy',
 		name: 'Test Puzzle',
 		pieceCount: 1,
 		gridCols: 1,
@@ -579,11 +581,11 @@ describe('isPuzzlePiece', () => {
 
 describe('validateWorkflowParams', () => {
 	it('returns true for valid UUIDv4', () => {
-		expect(validateWorkflowParams({ puzzleId: '123e4567-e89b-42d3-a456-426614174000' })).toBe(true);
+		expect(validateWorkflowParams({ familyId: '123e4567-e89b-42d3-a456-426614174000' })).toBe(true);
 	});
 
 	it('returns true for uppercase UUIDv4', () => {
-		expect(validateWorkflowParams({ puzzleId: '123E4567-E89B-42D3-A456-426614174000' })).toBe(true);
+		expect(validateWorkflowParams({ familyId: '123E4567-E89B-42D3-A456-426614174000' })).toBe(true);
 	});
 
 	it('returns false for null', () => {
@@ -594,22 +596,22 @@ describe('validateWorkflowParams', () => {
 		expect(validateWorkflowParams('string')).toBe(false);
 	});
 
-	it('returns false when puzzleId is not a string', () => {
-		expect(validateWorkflowParams({ puzzleId: 123 })).toBe(false);
+	it('returns false when familyId is not a string', () => {
+		expect(validateWorkflowParams({ familyId: 123 })).toBe(false);
 	});
 
 	it('returns false for non-UUID string', () => {
-		expect(validateWorkflowParams({ puzzleId: 'not-a-uuid' })).toBe(false);
+		expect(validateWorkflowParams({ familyId: 'not-a-uuid' })).toBe(false);
 	});
 
 	it('returns false for UUIDv1 format (wrong version digit)', () => {
-		expect(validateWorkflowParams({ puzzleId: '123e4567-e89b-12d3-a456-426614174000' })).toBe(
+		expect(validateWorkflowParams({ familyId: '123e4567-e89b-12d3-a456-426614174000' })).toBe(
 			false
 		);
 	});
 
-	it('returns false for empty string puzzleId', () => {
-		expect(validateWorkflowParams({ puzzleId: '' })).toBe(false);
+	it('returns false for empty string familyId', () => {
+		expect(validateWorkflowParams({ familyId: '' })).toBe(false);
 	});
 });
 

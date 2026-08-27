@@ -13,7 +13,8 @@ vi.mock('../../services/storage.worker', async () => {
 		...actual,
 		getPuzzle: vi.fn(),
 		listPuzzles: vi.fn(),
-		getImage: vi.fn()
+		getImage: vi.fn(),
+		resolveVariantReferenceKey: vi.fn()
 	};
 });
 
@@ -23,10 +24,13 @@ const mockEnv = {
 };
 
 const VALID_UUID = '550e8400-e29b-41d4-a716-446655440001';
+const TEST_FAMILY_ID = '223e4567-e89b-42d3-a456-426614174000';
 
 function makeReadyPuzzle(pieceCount = 4): any {
 	return {
 		id: VALID_UUID,
+		familyId: TEST_FAMILY_ID,
+		difficulty: 'easy',
 		name: 'Ready Puzzle',
 		status: 'ready',
 		pieceCount,
@@ -113,6 +117,9 @@ describe('GET /:id - hasReference derived from R2 head', () => {
 			PUZZLES_BUCKET: { head: mockHead } as unknown as R2Bucket
 		};
 		vi.mocked(storage.getPuzzle).mockResolvedValue(makeReadyPuzzle(4));
+		vi.mocked(storage.resolveVariantReferenceKey).mockResolvedValue(
+			`families/${TEST_FAMILY_ID}/original`
+		);
 
 		const req = new Request(`http://localhost/${VALID_UUID}`);
 		const res = await puzzles.fetch(req, env);
@@ -120,7 +127,7 @@ describe('GET /:id - hasReference derived from R2 head', () => {
 
 		expect(res.status).toBe(200);
 		expect(body.hasReference).toBe(true);
-		expect(mockHead).toHaveBeenCalledWith(`puzzles/${VALID_UUID}/original`);
+		expect(mockHead).toHaveBeenCalledWith(`families/${TEST_FAMILY_ID}/original`);
 	});
 
 	it('returns hasReference false when original image is missing from R2', async () => {
@@ -130,6 +137,9 @@ describe('GET /:id - hasReference derived from R2 head', () => {
 			PUZZLES_BUCKET: { head: mockHead } as unknown as R2Bucket
 		};
 		vi.mocked(storage.getPuzzle).mockResolvedValue(makeReadyPuzzle(4));
+		vi.mocked(storage.resolveVariantReferenceKey).mockResolvedValue(
+			`families/${TEST_FAMILY_ID}/original`
+		);
 
 		const req = new Request(`http://localhost/${VALID_UUID}`);
 		const res = await puzzles.fetch(req, env);
@@ -137,7 +147,7 @@ describe('GET /:id - hasReference derived from R2 head', () => {
 
 		expect(res.status).toBe(200);
 		expect(body.hasReference).toBe(false);
-		expect(mockHead).toHaveBeenCalledWith(`puzzles/${VALID_UUID}/original`);
+		expect(mockHead).toHaveBeenCalledWith(`families/${TEST_FAMILY_ID}/original`);
 	});
 
 	it('returns hasReference false when R2 head throws (graceful degradation)', async () => {

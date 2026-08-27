@@ -16,8 +16,8 @@ import { vi } from 'vitest';
  * parseImageDimensions, etc.) are preserved by the spread in each factory.
  */
 export const sharedMockOverrides = {
-	insertPuzzleOwnership: vi.fn().mockResolvedValue(undefined),
-	deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined),
+	insertPuzzleFamilyOwnership: vi.fn().mockResolvedValue(undefined),
+	deletePuzzleFamilyOwnership: vi.fn().mockResolvedValue(undefined),
 	deletePuzzleStats: vi.fn().mockResolvedValue(undefined),
 	SYSTEM_OWNER_ID: 'system',
 	// Mock validateImageEndMarker so minimal test PNG/JPEG headers (which

@@ -5,17 +5,24 @@ import { DurableObject, WorkflowEntrypoint, WorkflowStep, WorkflowEvent } from '
 import type {
 	WorkflowParams,
 	PuzzleMetadata,
+	PuzzleFamilyMetadata,
 	PuzzlePiece,
 	EdgeConfig,
 	ReadyPuzzle,
-	FailedPuzzle
+	FailedPuzzle,
+	PuzzleDifficulty,
+	PuzzleStatus
 } from './types';
 import {
 	TAB_RATIO,
 	THUMBNAIL_SIZE,
 	MAX_IMAGE_DIMENSION,
 	validateWorkflowParams,
-	createPuzzleProgress
+	createPuzzleProgress,
+	PUZZLE_DIFFICULTIES,
+	getDifficultyPieceCount,
+	validatePuzzleMetadata,
+	validatePuzzleFamilyMetadata
 } from './types';
 import {
 	generateJigsawSvgMask,
@@ -28,7 +35,7 @@ import {
 } from '@perseus/types';
 import { createD1Db } from '@perseus/shared/d1';
 import {
-	setPuzzleStatus,
+	setPuzzleFamilyStatus,
 	sniffImageType,
 	parseImageDimensions,
 	isWorkflowNotFoundError,
@@ -38,7 +45,9 @@ import type { AppDb } from '@perseus/shared';
 import {
 	MAX_IMAGE_BYTES,
 	getMetadata,
+	getFamilyMetadata,
 	updateMetadata,
+	updateFamilyMetadata,
 	padPixelsToTarget,
 	applyMaskAlpha
 } from './helpers';
@@ -59,8 +68,37 @@ const dbCache = new WeakMap<Env, AppDb>();
  */
 const ALREADY_READY_CONFLICT_SUBSTRING = 'already ready; refusing transition to failed';
 
-function alreadyReadyConflictMessage(puzzleId: string): string {
-	return `Puzzle ${puzzleId} is ${ALREADY_READY_CONFLICT_SUBSTRING}`;
+function alreadyReadyConflictMessage(entityId: string): string {
+	return `Puzzle ${entityId} is ${ALREADY_READY_CONFLICT_SUBSTRING}`;
+}
+
+type StoredFamilyMetadata = PuzzleFamilyMetadata & { kind: 'family' };
+type StoredVariantMetadata = PuzzleMetadata & { kind: 'variant' };
+type StoredMetadata = StoredFamilyMetadata | StoredVariantMetadata;
+
+function isStoredFamilyMetadata(meta: unknown): meta is StoredFamilyMetadata {
+	return (
+		typeof meta === 'object' &&
+		meta !== null &&
+		(meta as Record<string, unknown>).kind === 'family' &&
+		'variants' in meta
+	);
+}
+
+function isStoredVariantMetadata(meta: unknown): meta is StoredVariantMetadata {
+	return (
+		typeof meta === 'object' &&
+		meta !== null &&
+		(meta as Record<string, unknown>).kind === 'variant'
+	);
+}
+
+function inferMetadataKind(meta: unknown): 'family' | 'variant' | null {
+	if (isStoredFamilyMetadata(meta)) return 'family';
+	if (isStoredVariantMetadata(meta)) return 'variant';
+	if (typeof meta === 'object' && meta !== null && 'variants' in meta) return 'family';
+	if (typeof meta === 'object' && meta !== null && 'pieceCount' in meta) return 'variant';
+	return null;
 }
 
 function getDb(env: Env): AppDb {
@@ -82,20 +120,20 @@ const D1_MIRROR_STEP_CONFIG = {
 	}
 } as const;
 
-async function mirrorPuzzleStatusToD1(
+async function mirrorFamilyStatusToD1(
 	step: WorkflowStep,
 	env: Env,
-	puzzleId: string,
+	familyId: string,
 	status: 'ready' | 'failed',
 	stepName: string
 ): Promise<void> {
 	try {
 		await step.do(stepName, D1_MIRROR_STEP_CONFIG, async () => {
-			await setPuzzleStatus(getDb(env), puzzleId, status);
+			await setPuzzleFamilyStatus(getDb(env), familyId, status);
 		});
 	} catch (error) {
 		console.error(
-			`D1 mirror ${stepName} failed for puzzle ${puzzleId} status ${status} after ${D1_MIRROR_MAX_ATTEMPTS} attempts:`,
+			`D1 mirror ${stepName} failed for family ${familyId} status ${status} after ${D1_MIRROR_MAX_ATTEMPTS} attempts:`,
 			error
 		);
 	}
@@ -112,7 +150,7 @@ export interface Env {
 type MarkFailedOutcome = 'failed' | 'already-ready' | 'unreconciled';
 
 type ReservationRecord = {
-	puzzleId: string;
+	familyId: string;
 	status: 'pending' | 'committed' | 'failed';
 	/** Epoch ms when the pending claim was created. Absent on legacy records. */
 	reservedAt?: number;
@@ -235,10 +273,18 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 		// transaction and re-read storage under the txn for the
 		// authoritative current value. Mirrors the handleReserve liveness-
 		// check-then-revalidate pattern at lines ~369-469.
-		const storedProbe = await this.ctx.storage.get<PuzzleMetadata>('metadata');
-		let kvFallback: Awaited<ReturnType<typeof getMetadata>> = null;
+		const storedProbe = await this.ctx.storage.get<StoredMetadata>('metadata');
+		let kvFallback: PuzzleFamilyMetadata | PuzzleMetadata | null = null;
 		if (!storedProbe) {
-			kvFallback = await getMetadata(this.env.PUZZLE_METADATA, puzzleId);
+			const variantRaw = await this.env.PUZZLE_METADATA.get(`puzzle:${puzzleId}`, 'json');
+			if (variantRaw !== null && validatePuzzleMetadata(variantRaw)) {
+				kvFallback = variantRaw as PuzzleMetadata;
+			} else {
+				const familyRaw = await this.env.PUZZLE_METADATA.get(`family:${puzzleId}`, 'json');
+				if (familyRaw !== null && validatePuzzleFamilyMetadata(familyRaw)) {
+					kvFallback = familyRaw as PuzzleFamilyMetadata;
+				}
+			}
 		}
 		if (!storedProbe && !kvFallback) {
 			return Response.json(
@@ -247,17 +293,11 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 			);
 		}
 
-		let updated: PuzzleMetadata;
+		let updated: StoredMetadata;
 		let deletionEpochAtCommit: number;
 		try {
 			const result = await this.ctx.storage.transaction(async () => {
-				const stored = await this.ctx.storage.get<PuzzleMetadata>('metadata');
-				// Re-check the tombstone inside the transaction. The outer check
-				// (before storedProbe) is a fast-path early return, but a /delete
-				// can run between that check and this transaction. Without this
-				// re-check, a kvFallback value (read when storedProbe was null —
-				// the DO-storage-empty migration case) would be written back into
-				// DO storage, resurrecting metadata the reaper just tombstoned.
+				const stored = await this.ctx.storage.get<StoredMetadata>('metadata');
 				const tombstoned = await this.ctx.storage.get<boolean>('deleted');
 				if (tombstoned) {
 					return {
@@ -268,9 +308,6 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 				}
 				const existing = stored ?? kvFallback;
 				if (!existing) {
-					// KV had metadata at probe time but storage is still empty and
-					// KV has since been deleted (e.g. reaper ran between the probe
-					// and the transaction). Fail closed with 404.
 					return {
 						ok: false as const,
 						status: 404,
@@ -278,17 +315,6 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 					};
 				}
 
-				// A 'ready' puzzle is terminal-good: all pieces are generated and in
-				// R2, so no remaining processing can legitimately fail. Refusing
-				// ready → failed prevents the workflow's mark-failed step from
-				// clobbering a good 'ready' state when its updateMetadata call races
-				// with a successful finalize — e.g. finalize committed the DO write
-				// but the step's retry budget then exhausted, dropping control into
-				// the catch block. The only writer of 'failed' here is mark-failed;
-				// no admin path ever transitions ready → failed (verified across
-				// admin.worker.ts). Idempotent re-writes of the same status (ready →
-				// ready, failed → failed) and the forward transition processing →
-				// failed remain allowed.
 				if (updates.status === 'failed' && existing.status === 'ready') {
 					return {
 						ok: false as const,
@@ -297,58 +323,96 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 					};
 				}
 
-				const currentVersion = existing.version ?? 0;
+				const kind = inferMetadataKind(existing);
+				if (kind === 'family') {
+					const familyExisting = existing as PuzzleFamilyMetadata;
+					const familyUpdates = updates as Partial<PuzzleFamilyMetadata>;
+					let nextFamily: StoredFamilyMetadata;
+					if (familyUpdates.status === 'ready') {
+						nextFamily = {
+							kind: 'family',
+							...familyExisting,
+							...familyUpdates,
+							id: familyExisting.id,
+							status: 'ready'
+						};
+					} else if (familyUpdates.status === 'failed') {
+						nextFamily = {
+							kind: 'family',
+							...familyExisting,
+							...familyUpdates,
+							id: familyExisting.id,
+							status: 'failed'
+						};
+					} else {
+						nextFamily = {
+							kind: 'family',
+							...familyExisting,
+							...familyUpdates,
+							id: familyExisting.id
+						};
+					}
+					const deletionEpochAtCommit = (await this.ctx.storage.get<number>('deletionEpoch')) ?? 0;
+					await this.ctx.storage.put('metadata', nextFamily);
+					return { ok: true as const, updated: nextFamily, deletionEpoch: deletionEpochAtCommit };
+				}
 
-				// Merge pieces arrays to avoid overwriting with stale data
-				// This handles the case where workflow sends only new row pieces
-				let mergedPieces = existing.pieces || [];
-				if (updates.pieces && Array.isArray(updates.pieces) && updates.pieces.length > 0) {
+				const variantExisting = existing as PuzzleMetadata;
+				const variantUpdates = updates as Partial<PuzzleMetadata>;
+				const currentVersion = variantExisting.version ?? 0;
+				let mergedPieces = variantExisting.pieces || [];
+				if (
+					variantUpdates.pieces &&
+					Array.isArray(variantUpdates.pieces) &&
+					variantUpdates.pieces.length > 0
+				) {
 					const existingIds = new Set(mergedPieces.map((p: PuzzlePiece) => p.id));
-					const newPieces = updates.pieces.filter((p: PuzzlePiece) => !existingIds.has(p.id));
+					const newPieces = variantUpdates.pieces.filter(
+						(p: PuzzlePiece) => !existingIds.has(p.id)
+					);
 					if (newPieces.length > 0) {
 						mergedPieces = [...mergedPieces, ...newPieces];
 					}
 				}
 
-				// Apply updates while maintaining discriminated union invariants
-				let next: PuzzleMetadata;
-				if (updates.status === 'ready') {
-					// ReadyPuzzle has progress?: never, error?: never
-					next = {
-						...existing,
-						...updates,
-						id: existing.id,
+				let nextVariant: StoredVariantMetadata;
+				if (variantUpdates.status === 'ready') {
+					nextVariant = {
+						kind: 'variant',
+						...variantExisting,
+						...variantUpdates,
+						id: variantExisting.id,
 						status: 'ready',
 						version: currentVersion + 1,
 						pieces: mergedPieces,
 						progress: undefined,
 						error: undefined
-					} as ReadyPuzzle;
-				} else if (updates.status === 'failed') {
-					// FailedPuzzle has progress?: never
-					next = {
-						...existing,
-						...updates,
-						id: existing.id,
+					} as ReadyPuzzle & { kind: 'variant' };
+				} else if (variantUpdates.status === 'failed') {
+					nextVariant = {
+						kind: 'variant',
+						...variantExisting,
+						...variantUpdates,
+						id: variantExisting.id,
 						status: 'failed',
 						version: currentVersion + 1,
 						pieces: mergedPieces,
 						progress: undefined
-					} as FailedPuzzle;
+					} as FailedPuzzle & { kind: 'variant' };
 				} else {
-					// ProcessingPuzzle or no status change - merge pieces
-					next = {
-						...existing,
-						...updates,
-						id: existing.id,
+					nextVariant = {
+						kind: 'variant',
+						...variantExisting,
+						...variantUpdates,
+						id: variantExisting.id,
 						version: currentVersion + 1,
 						pieces: mergedPieces
-					} as PuzzleMetadata;
+					} as StoredVariantMetadata;
 				}
 
 				const deletionEpochAtCommit = (await this.ctx.storage.get<number>('deletionEpoch')) ?? 0;
-				await this.ctx.storage.put('metadata', next);
-				return { ok: true as const, updated: next, deletionEpoch: deletionEpochAtCommit };
+				await this.ctx.storage.put('metadata', nextVariant);
+				return { ok: true as const, updated: nextVariant, deletionEpoch: deletionEpochAtCommit };
 			});
 			if (!result.ok) {
 				return Response.json({ message: result.message }, { status: result.status });
@@ -368,22 +432,23 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 		// bumps the epoch between the transaction commit and this write. Without the
 		// fence, stale metadata would be written back to KV after R2 assets were
 		// deleted. If the epoch changes during the put, undo the write.
+		const kvKey = updated.kind === 'family' ? `family:${puzzleId}` : `puzzle:${puzzleId}`;
 		const epochBeforeSync = deletionEpochAtCommit;
 		const epochNow = (await this.ctx.storage.get<number>('deletionEpoch')) ?? 0;
 		if (epochNow === epochBeforeSync) {
 			const kvMaxRetries = 3;
 			for (let attempt = 0; attempt < kvMaxRetries; attempt++) {
 				try {
-					await this.env.PUZZLE_METADATA.put(`puzzle:${puzzleId}`, JSON.stringify(updated));
+					await this.env.PUZZLE_METADATA.put(kvKey, JSON.stringify(updated));
 					const epochAfterPut = (await this.ctx.storage.get<number>('deletionEpoch')) ?? 0;
 					if (epochAfterPut !== epochBeforeSync) {
 						try {
-							await this.env.PUZZLE_METADATA.delete(`puzzle:${puzzleId}`);
+							await this.env.PUZZLE_METADATA.delete(kvKey);
 						} catch (undoErr) {
 							console.error(`Failed to undo KV write for tombstoned puzzle ${puzzleId}:`, undoErr);
 						}
 					}
-					break; // Success (or undone after concurrent tombstone)
+					break;
 				} catch (kvError) {
 					if (attempt < kvMaxRetries - 1) {
 						const delay = 100 * Math.pow(2, attempt);
@@ -398,9 +463,6 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 			}
 		}
 
-		// Invalidate gallery index cache when visibility-affecting mutations occur
-		// (status transitions to ready/failed) so the gallery reflects changes
-		// immediately instead of waiting for TTL expiry.
 		if (updates.status === 'ready' || updates.status === 'failed') {
 			try {
 				await this.env.PUZZLE_METADATA.delete('gallery:sorted-index');
@@ -409,7 +471,12 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 			}
 		}
 
-		return Response.json({ success: true, version: updated.version });
+		const responseVersion =
+			updated.kind === 'variant' ? (updated as StoredVariantMetadata).version : undefined;
+		return Response.json({
+			success: true,
+			...(responseVersion !== undefined ? { version: responseVersion } : {})
+		});
 	}
 
 	/**
@@ -439,19 +506,21 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 	async handleReserve(request: Request): Promise<Response> {
 		const body = (await request.json().catch(() => null)) as {
 			idempotencyKey?: string;
+			familyId?: string;
 			puzzleId?: string;
 		} | null;
+		const proposedFamilyId = body?.familyId ?? body?.puzzleId;
 		if (
 			!body ||
 			typeof body.idempotencyKey !== 'string' ||
-			typeof body.puzzleId !== 'string' ||
+			typeof proposedFamilyId !== 'string' ||
 			!body.idempotencyKey.trim() ||
-			!body.puzzleId.trim()
+			!proposedFamilyId.trim()
 		) {
 			return Response.json({ message: 'Invalid reserve payload' }, { status: 400 });
 		}
 
-		const { puzzleId } = body;
+		const familyId = proposedFamilyId;
 		// idempotencyKey is not used directly — this DO instance is already
 		// keyed by it via idFromName(idempotencyKey) in the caller.
 		//
@@ -479,12 +548,12 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 			// helper throws on corrupt data); for corrupt data the 409 persists
 			// until an operator force-deletes the puzzle, which is safer than
 			// silently minting a replacement.
-			let live: Awaited<ReturnType<typeof getMetadata>>;
+			let live: Awaited<ReturnType<typeof getFamilyMetadata>>;
 			try {
-				live = await getMetadata(this.env.PUZZLE_METADATA, preReserve.puzzleId);
+				live = await getFamilyMetadata(this.env.PUZZLE_METADATA, preReserve.familyId);
 			} catch (err) {
 				console.error(
-					`Stale-pending metadata lookup failed for puzzle ${preReserve.puzzleId}:`,
+					`Stale-pending metadata lookup failed for puzzle ${preReserve.familyId}:`,
 					err
 				);
 				return Response.json(
@@ -529,7 +598,7 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 				// "processing" for operator force-delete cleanup.
 				let workflowStatus: InstanceStatus['status'];
 				try {
-					const instance = await this.env.PUZZLE_WORKFLOW.get(preReserve.puzzleId);
+					const instance = await this.env.PUZZLE_WORKFLOW.get(preReserve.familyId);
 					workflowStatus = (await instance.status()).status;
 				} catch (wfErr) {
 					if (isWorkflowNotFoundError(wfErr)) {
@@ -541,7 +610,7 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 						workflowStatus = 'errored';
 					} else {
 						console.error(
-							`Workflow liveness check failed for puzzle ${preReserve.puzzleId}:`,
+							`Workflow liveness check failed for puzzle ${preReserve.familyId}:`,
 							wfErr
 						);
 						return Response.json(
@@ -569,13 +638,13 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 								const reservation = await this.readReservation();
 								if (
 									!reservation ||
-									reservation.puzzleId !== preReserve.puzzleId ||
+									reservation.familyId !== preReserve.familyId ||
 									!isStalePending(reservation)
 								) {
 									return;
 								}
 								const next: ReservationRecord = {
-									puzzleId: reservation.puzzleId,
+									familyId: reservation.familyId,
 									status: 'failed',
 									schemaVersion: CURRENT_RESERVATION_SCHEMA
 								};
@@ -583,7 +652,7 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 							});
 						} catch (failErr) {
 							console.error(
-								`Failed to mark stale-pending reservation failed for puzzle ${preReserve.puzzleId}:`,
+								`Failed to mark stale-pending reservation failed for puzzle ${preReserve.familyId}:`,
 								failErr
 							);
 							return Response.json(
@@ -616,19 +685,20 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 					// already promoted or reclaimed.
 					if (
 						!reservation ||
-						reservation.puzzleId !== preReserve.puzzleId ||
+						reservation.familyId !== preReserve.familyId ||
 						!isStalePending(reservation)
 					) {
 						return reservation && reservation.status !== 'failed'
 							? {
 									existing: true as const,
-									puzzleId: reservation.puzzleId,
+									familyId: reservation.familyId,
+									puzzleId: reservation.familyId,
 									status: reservation.status
 								}
 							: null;
 					}
 					const next: ReservationRecord = {
-						puzzleId: reservation.puzzleId,
+						familyId: reservation.familyId,
 						status: 'committed',
 						...(reservation.reservedAt !== undefined ? { reservedAt: reservation.reservedAt } : {}),
 						schemaVersion: CURRENT_RESERVATION_SCHEMA
@@ -636,7 +706,8 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 					await this.ctx.storage.put('reservation', next);
 					return {
 						existing: true as const,
-						puzzleId: reservation.puzzleId,
+						familyId: reservation.familyId,
+						puzzleId: reservation.familyId,
 						status: 'committed' as const
 					};
 				});
@@ -670,19 +741,20 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 			if (reservation && reservation.status !== 'failed' && !isStalePending(reservation)) {
 				return {
 					existing: true as const,
-					puzzleId: reservation.puzzleId,
+					familyId: reservation.familyId,
+					puzzleId: reservation.familyId,
 					status: reservation.status,
 					...(reservation.reservedAt !== undefined ? { reservedAt: reservation.reservedAt } : {})
 				};
 			}
 			const next: ReservationRecord = {
-				puzzleId,
+				familyId,
 				status: 'pending',
 				reservedAt: Date.now(),
 				schemaVersion: CURRENT_RESERVATION_SCHEMA
 			};
 			await this.ctx.storage.put('reservation', next);
-			return { existing: false as const, puzzleId, status: 'pending' as const };
+			return { existing: false as const, familyId, puzzleId: familyId, status: 'pending' as const };
 		});
 		return Response.json(result);
 	}
@@ -704,20 +776,21 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 		action: 'committed' | 'failed' | 'released'
 	): Promise<Response> {
 		const body = (await request.json().catch(() => null)) as {
+			familyId?: string;
 			puzzleId?: string;
 		} | null;
-		if (!body || typeof body.puzzleId !== 'string' || !body.puzzleId.trim()) {
+		const familyId = body?.familyId ?? body?.puzzleId;
+		if (!body || typeof familyId !== 'string' || !familyId.trim()) {
 			return Response.json({ message: 'Invalid reservation transition payload' }, { status: 400 });
 		}
 
-		const { puzzleId } = body;
 		const result = await this.ctx.storage.transaction(async () => {
 			const reservation = await this.readReservation();
 			if (!reservation) {
 				return { ok: false as const, status: 404, message: 'No reservation found' };
 			}
-			if (reservation.puzzleId !== puzzleId) {
-				return { ok: false as const, status: 409, message: 'Reservation owned by another puzzle' };
+			if (reservation.familyId !== familyId) {
+				return { ok: false as const, status: 409, message: 'Reservation owned by another family' };
 			}
 			// Allowed transitions:
 			//   pending → {committed, failed, released}  — normal lifecycle
@@ -747,7 +820,7 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 			}
 
 			const next: ReservationRecord = {
-				puzzleId,
+				familyId,
 				status: action,
 				schemaVersion: CURRENT_RESERVATION_SCHEMA
 			};
@@ -869,7 +942,8 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 		}
 		return Response.json({
 			reservation: {
-				puzzleId: record.puzzleId,
+				familyId: record.familyId,
+				puzzleId: record.familyId,
 				status: record.status,
 				...(record.reservedAt !== undefined ? { reservedAt: record.reservedAt } : {})
 			}
@@ -878,22 +952,22 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 
 	private async readReservation(): Promise<ReservationRecord | null> {
 		const stored = await this.ctx.storage.get<{
+			familyId?: string;
 			puzzleId?: string;
 			status?: string;
 			reservedAt?: number;
 			schemaVersion?: number;
 		}>('reservation');
+		const familyId = stored?.familyId ?? stored?.puzzleId;
 		if (
 			stored &&
-			typeof stored.puzzleId === 'string' &&
+			typeof familyId === 'string' &&
 			(stored.status === 'pending' || stored.status === 'committed' || stored.status === 'failed')
 		) {
 			return {
-				puzzleId: stored.puzzleId,
+				familyId,
 				status: stored.status,
 				...(typeof stored.reservedAt === 'number' ? { reservedAt: stored.reservedAt } : {}),
-				// Default missing schemaVersion to 0 (pre-schema records). A
-				// future migration can branch on this to transform old records.
 				schemaVersion: typeof stored.schemaVersion === 'number' ? stored.schemaVersion : 0
 			};
 		}
@@ -901,10 +975,10 @@ export class PuzzleMetadataDO extends DurableObject<Env> {
 	}
 }
 
-async function loadOriginalImageBytes(env: Env, puzzleId: string): Promise<Uint8Array> {
-	const imageObj = await env.PUZZLES_BUCKET.get(`puzzles/${puzzleId}/original`);
+async function loadFamilyOriginalImageBytes(env: Env, familyId: string): Promise<Uint8Array> {
+	const imageObj = await env.PUZZLES_BUCKET.get(`families/${familyId}/original`);
 	if (!imageObj) {
-		throw new Error(`Original image not found for puzzle ${puzzleId}`);
+		throw new Error(`Original image not found for family ${familyId}`);
 	}
 
 	const bytes = await imageObj.arrayBuffer();
@@ -917,6 +991,119 @@ async function loadOriginalImageBytes(env: Env, puzzleId: string): Promise<Uint8
 	return new Uint8Array(bytes);
 }
 
+async function generateVariantRowPieces(
+	env: Env,
+	familyId: string,
+	variantId: string,
+	row: number,
+	rows: number,
+	cols: number,
+	totalPieces: number
+): Promise<PuzzlePiece[]> {
+	const { PhotonImage, crop } = await import('@cf-wasm/photon');
+	const { Resvg } = await import('@cf-wasm/resvg');
+	const bytes = await loadFamilyOriginalImageBytes(env, familyId);
+	const srcImage = PhotonImage.new_from_byteslice(bytes);
+	const pieces: PuzzlePiece[] = [];
+
+	try {
+		const srcW = srcImage.get_width();
+		const srcH = srcImage.get_height();
+		const basePieceWidth = Math.floor(srcW / cols);
+		const extraWidth = srcW % cols;
+		const basePieceHeight = Math.floor(srcH / rows);
+		const extraHeight = srcH % rows;
+
+		for (let col = 0; col < cols; col++) {
+			const pieceId = row * cols + col;
+			if (pieceId >= totalPieces) break;
+
+			const baseWidth = basePieceWidth + (col === cols - 1 ? extraWidth : 0);
+			const baseHeight = basePieceHeight + (row === rows - 1 ? extraHeight : 0);
+			const overlapX = Math.floor(baseWidth * TAB_RATIO);
+			const overlapY = Math.floor(baseHeight * TAB_RATIO);
+			const targetWidth = baseWidth + 2 * overlapX;
+			const targetHeight = baseHeight + 2 * overlapY;
+			const baseLeft = col * basePieceWidth;
+			const baseTop = row * basePieceHeight;
+			const idealLeft = baseLeft - overlapX;
+			const idealTop = baseTop - overlapY;
+			const extractLeft = Math.max(0, idealLeft);
+			const extractTop = Math.max(0, idealTop);
+			const extractRight = Math.min(srcW, idealLeft + targetWidth);
+			const extractBottom = Math.min(srcH, idealTop + targetHeight);
+			const extractWidth = extractRight - extractLeft;
+			const extractHeight = extractBottom - extractTop;
+			const offsetX = extractLeft - idealLeft;
+			const offsetY = extractTop - idealTop;
+			const edges: EdgeConfig = {
+				top: getTopEdge(row, col, rows),
+				right: getRightEdge(row, col, cols),
+				bottom: getBottomEdge(row, col, rows),
+				left: getLeftEdge(row, col, cols)
+			};
+
+			let pieceImage = null;
+			let maskImage = null;
+			let maskedPiece = null;
+
+			try {
+				pieceImage = crop(
+					srcImage,
+					extractLeft,
+					extractTop,
+					extractLeft + extractWidth,
+					extractTop + extractHeight
+				);
+				const maskSvg = generateJigsawSvgMask(edges, targetWidth, targetHeight);
+				const resvg = new Resvg(maskSvg, { fitTo: { mode: 'width', value: targetWidth } });
+				const maskPng = resvg.render().asPng();
+				maskImage = PhotonImage.new_from_byteslice(maskPng);
+				const maskPixels = maskImage.get_raw_pixels();
+				const piecePixels = pieceImage.get_raw_pixels();
+				const paddedPiecePixels = padPixelsToTarget(
+					piecePixels,
+					extractWidth,
+					extractHeight,
+					targetWidth,
+					targetHeight,
+					offsetX,
+					offsetY
+				);
+				if (maskPixels.length !== paddedPiecePixels.length) {
+					throw new Error(
+						`Mask and piece image pixel count mismatch for piece ${pieceId}: ` +
+							`mask=${maskPixels.length} pixels, piece=${paddedPiecePixels.length} pixels`
+					);
+				}
+				applyMaskAlpha(paddedPiecePixels, maskPixels);
+				maskedPiece = new PhotonImage(paddedPiecePixels, targetWidth, targetHeight);
+				const pngBytes = maskedPiece.get_bytes();
+				await env.PUZZLES_BUCKET.put(`puzzles/${variantId}/pieces/${pieceId}.png`, pngBytes, {
+					httpMetadata: { contentType: 'image/png' }
+				});
+			} finally {
+				if (maskedPiece) maskedPiece.free();
+				if (maskImage) maskImage.free();
+				if (pieceImage) pieceImage.free();
+			}
+
+			pieces.push({
+				id: pieceId,
+				puzzleId: variantId,
+				correctX: col,
+				correctY: row,
+				edges,
+				imagePath: `pieces/${pieceId}.png`
+			});
+		}
+	} finally {
+		srcImage.free();
+	}
+
+	return pieces;
+}
+
 export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 	// Test seam: allows tests to set environment without accessing private fields
 	protected setEnvOnWorkflow(env: Env): void {
@@ -924,43 +1111,28 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 	}
 
 	async run(event: WorkflowEvent<WorkflowParams>, step: WorkflowStep): Promise<void> {
-		// Validate workflow parameters
 		if (!validateWorkflowParams(event.payload)) {
-			throw new Error('Invalid workflow parameters: puzzleId must be a valid UUID');
+			throw new Error('Invalid workflow parameters: familyId must be a valid UUID');
 		}
 
-		const { puzzleId } = event.payload;
+		const { familyId } = event.payload;
+		const variantStatuses: Record<PuzzleDifficulty, PuzzleStatus | undefined> = {
+			easy: undefined,
+			normal: undefined,
+			hard: undefined
+		};
 
 		try {
-			// Step 1: Load metadata and original image
-			const metadata = await step.do('load-image', async () => {
-				const meta = await getMetadata(this.env.PUZZLE_METADATA, puzzleId);
+			const family = await step.do('load-image', async () => {
+				const meta = await getFamilyMetadata(this.env.PUZZLE_METADATA, familyId);
 				if (!meta) {
-					throw new Error(`Puzzle ${puzzleId} not found`);
+					throw new Error(`Family ${familyId} not found`);
 				}
-
 				return meta;
 			});
 
-			// Step 2: Decode image and validate dimensions using Photon
 			const { width, height } = await step.do('decode-validate', async () => {
-				const bytes = await loadOriginalImageBytes(this.env, puzzleId);
-
-				// Best-effort pre-check: parse dimensions from the image header
-				// BEFORE decoding the full bitmap with Photon.
-				// PhotonImage.new_from_byteslice allocates the entire decoded
-				// pixel buffer in WASM memory — a pathologically large image
-				// (e.g. one that bypassed upload validation and landed in R2)
-				// would OOM the worker before the post-decode dimension check
-				// below could reject it. parseImageDimensions reads only header
-				// bytes, so this guard is cheap. When the header is parseable
-				// and reports oversized dimensions, reject without decoding.
-				// When the header is unparseable (corrupt bytes, or a format
-				// sniffImageType doesn't recognize), skip the pre-check and let
-				// Photon's own decode + the post-decode guard below handle it —
-				// matching the pre-guard behavior. This catches the realistic
-				// threat (a valid-header image that exceeds the cap) without
-				// regressing on bytes that lack a parseable header.
+				const bytes = await loadFamilyOriginalImageBytes(this.env, familyId);
 				const detected = sniffImageType(bytes);
 				if (detected) {
 					const headerDims = await parseImageDimensions(new Blob([bytes]), detected);
@@ -978,7 +1150,6 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 
 				const { PhotonImage } = await import('@cf-wasm/photon');
 				const image = PhotonImage.new_from_byteslice(bytes);
-
 				const w = image.get_width();
 				const h = image.get_height();
 				image.free();
@@ -990,34 +1161,35 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 				return { width: w, height: h };
 			});
 
-			// Update metadata with image dimensions
 			await step.do('update-dimensions', async () => {
-				await updateMetadata(this.env.PUZZLE_METADATA_DO, puzzleId, {
+				await updateFamilyMetadata(this.env.PUZZLE_METADATA_DO, familyId, {
 					imageWidth: width,
 					imageHeight: height
 				});
+				for (const difficulty of PUZZLE_DIFFICULTIES) {
+					const variantId = family.variants[difficulty];
+					await updateMetadata(this.env.PUZZLE_METADATA_DO, variantId, {
+						imageWidth: width,
+						imageHeight: height
+					});
+				}
 			});
 
-			// Step 3: Generate thumbnail
 			await step.do('generate-thumbnail', async () => {
 				const { PhotonImage, resize, crop, SamplingFilter } = await import('@cf-wasm/photon');
-				const bytes = await loadOriginalImageBytes(this.env, puzzleId);
+				const bytes = await loadFamilyOriginalImageBytes(this.env, familyId);
 				const image = PhotonImage.new_from_byteslice(bytes);
 
 				let resized = null;
 				try {
-					// Calculate thumbnail dimensions (cover fit)
 					const srcW = image.get_width();
 					const srcH = image.get_height();
 					const scale = Math.max(THUMBNAIL_SIZE / srcW, THUMBNAIL_SIZE / srcH);
 					const newW = Math.round(srcW * scale);
 					const newH = Math.round(srcH * scale);
-
-					// Resize
 					resized = resize(image, newW, newH, SamplingFilter.Lanczos3);
 
 					try {
-						// Center crop to exact thumbnail size
 						const cropX = Math.floor((newW - THUMBNAIL_SIZE) / 2);
 						const cropY = Math.floor((newH - THUMBNAIL_SIZE) / 2);
 						const cropped = crop(
@@ -1029,11 +1201,8 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 						);
 
 						try {
-							// Encode as JPEG
 							const jpegBytes = cropped.get_bytes_jpeg(80);
-
-							// Upload to R2
-							await this.env.PUZZLES_BUCKET.put(`puzzles/${puzzleId}/thumbnail.jpg`, jpegBytes, {
+							await this.env.PUZZLES_BUCKET.put(`families/${familyId}/thumbnail.jpg`, jpegBytes, {
 								httpMetadata: { contentType: 'image/jpeg' }
 							});
 						} finally {
@@ -1043,228 +1212,110 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 						if (resized) resized.free();
 					}
 				} finally {
-					// Always free the original image, even if resize() throws
 					image.free();
 				}
 			});
 
-			// Step 4: Generate pieces
-			const { rows, cols } = metadata.aspectRatio
-				? getGridDimensionsForAspectRatio(metadata.pieceCount, metadata.aspectRatio)
-				: getGridDimensions(metadata.pieceCount);
-			if (rows <= 0 || cols <= 0 || rows * cols !== metadata.pieceCount) {
-				throw new Error(
-					`Invalid grid dimensions for puzzle ${puzzleId}: pieceCount=${metadata.pieceCount}, aspectRatio=${metadata.aspectRatio ?? 'default'}, rows=${rows}, cols=${cols}`
-				);
-			}
-			const totalPieces = metadata.pieceCount;
+			for (const difficulty of PUZZLE_DIFFICULTIES) {
+				const variantId = family.variants[difficulty];
+				const pieceCount = getDifficultyPieceCount(family.aspectRatio, difficulty);
+				const { rows, cols } = getGridDimensionsForAspectRatio(pieceCount, family.aspectRatio);
+				if (rows <= 0 || cols <= 0 || rows * cols !== pieceCount) {
+					throw new Error(
+						`Invalid grid dimensions for variant ${variantId}: pieceCount=${pieceCount}, aspectRatio=${family.aspectRatio}, rows=${rows}, cols=${cols}`
+					);
+				}
 
-			// Process pieces in batches (rows) to checkpoint progress
-			for (let row = 0; row < rows; row++) {
-				await step.do(`generate-row-${row}`, async () => {
-					const { PhotonImage, crop } = await import('@cf-wasm/photon');
-					const { Resvg } = await import('@cf-wasm/resvg');
-					const bytes = await loadOriginalImageBytes(this.env, puzzleId);
-					const srcImage = PhotonImage.new_from_byteslice(bytes);
-
-					const pieces: PuzzlePiece[] = [];
-
-					try {
-						const srcW = srcImage.get_width();
-						const srcH = srcImage.get_height();
-
-						const basePieceWidth = Math.floor(srcW / cols);
-						const extraWidth = srcW % cols;
-						const basePieceHeight = Math.floor(srcH / rows);
-						const extraHeight = srcH % rows;
-
-						for (let col = 0; col < cols; col++) {
-							const pieceId = row * cols + col;
-							if (pieceId >= totalPieces) {
-								break;
-							}
-
-							// Calculate base piece dimensions
-							const baseWidth = basePieceWidth + (col === cols - 1 ? extraWidth : 0);
-							const baseHeight = basePieceHeight + (row === rows - 1 ? extraHeight : 0);
-
-							// Calculate overlap for jigsaw tabs
-							const overlapX = Math.floor(baseWidth * TAB_RATIO);
-							const overlapY = Math.floor(baseHeight * TAB_RATIO);
-
-							// Target size: base piece + overlap on all sides (140% of base)
-							const targetWidth = baseWidth + 2 * overlapX;
-							const targetHeight = baseHeight + 2 * overlapY;
-
-							// Calculate extraction bounds
-							const baseLeft = col * basePieceWidth;
-							const baseTop = row * basePieceHeight;
-							const idealLeft = baseLeft - overlapX;
-							const idealTop = baseTop - overlapY;
-
-							// Clamp extraction to image boundaries
-							const extractLeft = Math.max(0, idealLeft);
-							const extractTop = Math.max(0, idealTop);
-							const extractRight = Math.min(srcW, idealLeft + targetWidth);
-							const extractBottom = Math.min(srcH, idealTop + targetHeight);
-
-							const extractWidth = extractRight - extractLeft;
-							const extractHeight = extractBottom - extractTop;
-							const offsetX = extractLeft - idealLeft;
-							const offsetY = extractTop - idealTop;
-
-							// Determine edge types using deterministic calculation
-							// This ensures edges are consistent across workflow steps
-							const edges: EdgeConfig = {
-								top: getTopEdge(row, col, rows),
-								right: getRightEdge(row, col, cols),
-								bottom: getBottomEdge(row, col, rows),
-								left: getLeftEdge(row, col, cols)
-							};
-
-							// Extract piece region from source image using crop function
-							let pieceImage = null;
-							let maskImage = null;
-							let maskedPiece = null;
-
-							try {
-								pieceImage = crop(
-									srcImage,
-									extractLeft,
-									extractTop,
-									extractLeft + extractWidth,
-									extractTop + extractHeight
-								);
-
-								// Generate jigsaw mask SVG using target dimensions
-								const maskSvg = generateJigsawSvgMask(edges, targetWidth, targetHeight);
-
-								// Render SVG mask to PNG using Resvg
-								const resvg = new Resvg(maskSvg, {
-									fitTo: { mode: 'width', value: targetWidth }
-								});
-								const maskPng = resvg.render().asPng();
-
-								// Load mask as PhotonImage
-								maskImage = PhotonImage.new_from_byteslice(maskPng);
-
-								// Get raw RGBA pixel data for both images
-								const maskPixels = maskImage.get_raw_pixels();
-								const piecePixels = pieceImage.get_raw_pixels();
-								const paddedPiecePixels = padPixelsToTarget(
-									piecePixels,
-									extractWidth,
-									extractHeight,
-									targetWidth,
-									targetHeight,
-									offsetX,
-									offsetY
-								);
-
-								// Validate sizes match before copying alpha channel
-								if (maskPixels.length !== paddedPiecePixels.length) {
-									throw new Error(
-										`Mask and piece image pixel count mismatch for piece ${pieceId}: ` +
-											`mask=${maskPixels.length} pixels, piece=${paddedPiecePixels.length} pixels`
-									);
-								}
-
-								// Copy alpha channel from mask to piece (4th byte in each RGBA pixel)
-								applyMaskAlpha(paddedPiecePixels, maskPixels);
-
-								// Create new PhotonImage from modified raw RGBA bytes
-								maskedPiece = new PhotonImage(paddedPiecePixels, targetWidth, targetHeight);
-
-								// Encode masked piece as PNG
-								const pngBytes = maskedPiece.get_bytes();
-
-								// Upload piece to R2
-								await this.env.PUZZLES_BUCKET.put(
-									`puzzles/${puzzleId}/pieces/${pieceId}.png`,
-									pngBytes,
-									{ httpMetadata: { contentType: 'image/png' } }
-								);
-							} finally {
-								if (maskedPiece) maskedPiece.free();
-								if (maskImage) maskImage.free();
-								if (pieceImage) pieceImage.free();
-							}
-
-							pieces.push({
-								id: pieceId,
-								puzzleId,
-								correctX: col,
-								correctY: row,
-								edges,
-								imagePath: `pieces/${pieceId}.png`
+				try {
+					for (let row = 0; row < rows; row++) {
+						await step.do(`generate-${difficulty}-row-${row}`, async () => {
+							const pieces = await generateVariantRowPieces(
+								this.env,
+								familyId,
+								variantId,
+								row,
+								rows,
+								cols,
+								pieceCount
+							);
+							const generatedPieces = Math.min((row + 1) * cols, pieceCount);
+							const progress = createPuzzleProgress(pieceCount, generatedPieces);
+							await updateMetadata(this.env.PUZZLE_METADATA_DO, variantId, {
+								progress,
+								pieces
 							});
-						}
-					} finally {
-						srcImage.free();
+						});
 					}
 
-					// Update progress in metadata
-					const generatedPieces = Math.min((row + 1) * cols, totalPieces);
-					const progress = createPuzzleProgress(totalPieces, generatedPieces);
-
-					// Send new pieces to DO - DO merges with stored state to avoid stale KV issues
-					await updateMetadata(this.env.PUZZLE_METADATA_DO, puzzleId, {
-						progress,
-						pieces
+					await step.do(`finalize-${difficulty}`, async () => {
+						await updateMetadata(this.env.PUZZLE_METADATA_DO, variantId, {
+							status: 'ready'
+						});
 					});
-				});
+					variantStatuses[difficulty] = 'ready';
+				} catch (variantError) {
+					await step.do(`mark-${difficulty}-failed`, async () => {
+						const message = variantError instanceof Error ? variantError.message : 'Unknown error';
+						await updateMetadata(this.env.PUZZLE_METADATA_DO, variantId, {
+							status: 'failed',
+							error: { message }
+						});
+					});
+					variantStatuses[difficulty] = 'failed';
+				}
 			}
 
-			// Step 5: Mark puzzle as ready in the authoritative DO store. Only the
-			// DO write lives in this step so a failure here (genuine processing
-			// failure) correctly triggers mark-failed below. The D1 mirror is a
-			// separate best-effort step after the try/catch — a D1 outage must not
-			// overwrite a successful 'ready' DO write with 'failed'.
-			await step.do('finalize', async () => {
-				await updateMetadata(this.env.PUZZLE_METADATA_DO, puzzleId, {
-					status: 'ready'
-				});
+			const familyStatus = await step.do('finalize-family', async (): Promise<PuzzleStatus> => {
+				const allReady = PUZZLE_DIFFICULTIES.every((d) => variantStatuses[d] === 'ready');
+				const anyFailed = PUZZLE_DIFFICULTIES.some((d) => variantStatuses[d] === 'failed');
+				const status: PuzzleStatus = allReady ? 'ready' : anyFailed ? 'failed' : 'processing';
+				await updateFamilyMetadata(this.env.PUZZLE_METADATA_DO, familyId, { status });
+				return status;
 			});
+
+			if (familyStatus === 'ready') {
+				await mirrorFamilyStatusToD1(
+					step,
+					this.env,
+					familyId,
+					'ready',
+					'mirror-family-ready-status-to-d1'
+				);
+			} else if (familyStatus === 'failed') {
+				await mirrorFamilyStatusToD1(
+					step,
+					this.env,
+					familyId,
+					'failed',
+					'mirror-family-failed-status-to-d1'
+				);
+			}
 		} catch (error) {
-			// Mark puzzle as failed with retry logic
 			const originalError = error;
 			const markFailedOutcome = await step.do(
-				'mark-failed',
+				'mark-family-failed',
 				async (): Promise<MarkFailedOutcome> => {
 					const maxRetries = 3;
 					let lastError: unknown;
 					let doSucceeded = false;
-					// Set when the DO refuses ready → failed (see PuzzleMetadataDO
-					// /update): finalize already committed 'ready', so the puzzle is
-					// in the desired terminal state and must NOT be overwritten with
-					// 'failed'. We reconcile D1 to 'ready' and skip the CRITICAL log.
 					let alreadyReady = false;
 
 					for (let attempt = 0; attempt < maxRetries; attempt++) {
 						try {
 							const message =
 								originalError instanceof Error ? originalError.message : 'Unknown error';
-							await updateMetadata(this.env.PUZZLE_METADATA_DO, puzzleId, {
-								status: 'failed',
-								error: { message }
+							await updateFamilyMetadata(this.env.PUZZLE_METADATA_DO, familyId, {
+								status: 'failed'
 							});
 							doSucceeded = true;
 							break;
 						} catch (markErr) {
-							// A 409 from the metadata DO with an "already ready"
-							// message means finalize committed before this catch
-							// ran (e.g. its step retry budget exhausted after a
-							// successful DO write). That is the desired terminal
-							// state; do not retry or log CRITICAL. The result is
-							// reconciled in a separate D1 mirror step below.
-							// Match on the message (not status alone) so a future
-							// unrelated 409 cannot be misread as already-ready.
 							const markStatus = (markErr as { status?: number })?.status;
 							const markMessage =
 								markErr instanceof Error ? markErr.message : String(markErr ?? '');
 							if (markStatus === 409 && markMessage.includes(ALREADY_READY_CONFLICT_SUBSTRING)) {
 								console.warn(
-									`Puzzle ${puzzleId} is already ready; skipping mark-failed ` +
+									`Family ${familyId} is already ready; skipping mark-family-failed ` +
 										'(finalize committed before the error path).'
 								);
 								alreadyReady = true;
@@ -1272,65 +1323,47 @@ export class PerseusWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
 							}
 							lastError = markErr;
 							console.error(
-								`Failed to mark puzzle ${puzzleId} as failed (attempt ${attempt + 1}/${maxRetries}):`,
+								`Failed to mark family ${familyId} as failed (attempt ${attempt + 1}/${maxRetries}):`,
 								markErr
 							);
-
 							if (attempt < maxRetries - 1) {
-								// Exponential backoff
 								const delay = 100 * Math.pow(2, attempt);
 								await new Promise((resolve) => setTimeout(resolve, delay));
 							}
 						}
 					}
 
-					if (alreadyReady) {
-						return 'already-ready';
-					}
-
-					if (doSucceeded) {
-						return 'failed';
-					}
-
-					// All retries failed - log extensively
+					if (alreadyReady) return 'already-ready';
+					if (doSucceeded) return 'failed';
 					console.error(
-						`CRITICAL: Failed to mark puzzle ${puzzleId} as failed after ${maxRetries} retries`
+						`CRITICAL: Failed to mark family ${familyId} as failed after ${maxRetries} retries`
 					);
 					console.error('Last error:', lastError);
 					console.error('Original workflow error:', originalError);
-					// Note: Puzzle will remain in 'processing' state - manual cleanup required
 					return 'unreconciled';
 				}
 			);
 
 			if (markFailedOutcome === 'already-ready') {
-				await mirrorPuzzleStatusToD1(
+				await mirrorFamilyStatusToD1(
 					step,
 					this.env,
-					puzzleId,
+					familyId,
 					'ready',
-					'reconcile-already-ready-status-to-d1'
+					'reconcile-family-already-ready-status-to-d1'
 				);
 			} else if (markFailedOutcome === 'failed') {
-				await mirrorPuzzleStatusToD1(
+				await mirrorFamilyStatusToD1(
 					step,
 					this.env,
-					puzzleId,
+					familyId,
 					'failed',
-					'mirror-failed-status-to-d1'
+					'mirror-family-failed-status-to-d1'
 				);
 			}
 
 			throw originalError;
 		}
-
-		// Best-effort D1 mirror of the ready status. Placed after the try/catch
-		// so a D1 failure can never trigger mark-failed (the DO already says
-		// 'ready'). The D1 mirror is idempotent; on failure we log and move on —
-		// the gallery reads from KV/DO, and a later successful mirror or direct
-		// D1 read will reconcile. This only runs on the success path because the
-		// catch block re-throws on failure.
-		await mirrorPuzzleStatusToD1(step, this.env, puzzleId, 'ready', 'mirror-ready-status-to-d1');
 	}
 }
 

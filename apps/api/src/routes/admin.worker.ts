@@ -14,13 +14,16 @@ import {
 	isPuzzleAspectRatio,
 	isPuzzleId,
 	isValidPieceCountForAspectRatio,
-	stripIdempotencyKey
+	stripIdempotencyKey,
+	PUZZLE_DIFFICULTIES
 } from '@perseus/types';
-import type { PuzzleCategory } from '@perseus/types';
+import type { PuzzleCategory, PuzzleFamilyMetadata, PuzzleDifficulty } from '@perseus/types';
 import type { Env, WorkflowBinding } from '../worker';
 import {
 	commitIdempotencyKey,
+	createFamilyMetadata,
 	createPuzzleMetadata,
+	deleteFamilyMetadata,
 	deletePuzzleMetadata,
 	deletePuzzleAssets,
 	deleteMetadataDO,
@@ -29,12 +32,15 @@ import {
 	uploadOriginalImage,
 	deleteOriginalImage,
 	originalImageExists,
+	getFamily,
 	getPuzzle,
 	listPuzzles,
 	puzzleExists,
 	releaseIdempotencyKey,
 	reserveIdempotencyKey,
 	writeCleanupRecord,
+	buildFamilyMetadata,
+	buildVariantMetadata,
 	type CleanupRecord,
 	type PuzzleMetadata
 } from '../services/storage.worker';
@@ -52,9 +58,9 @@ import {
 } from '../services/player-auth.worker';
 import { getWorkerDb, getWorkerDbContext } from '../db.worker';
 import {
-	deletePuzzleOwnership,
+	deletePuzzleFamilyOwnership,
 	detectImageType,
-	insertPuzzleOwnership,
+	insertPuzzleFamilyOwnership,
 	isAliveWorkflowStatus,
 	isDeadWorkflowStatus,
 	isStalePendingReservation,
@@ -97,7 +103,7 @@ async function withDbBestEffort(
 // the caller can either return the Response directly or continue with the
 // won puzzleId.
 
-type ReclaimOutcome = { kind: 'won'; puzzleId: string } | { kind: 'return'; response: Response };
+type ReclaimOutcome = { kind: 'won'; familyId: string } | { kind: 'return'; response: Response };
 
 // Canonical error-response helpers. Reference ErrorCode from @perseus/types
 // so the wire-format strings stay centralized — new codes go in the enum,
@@ -151,11 +157,11 @@ async function reclaimReservationOrFail(
 	}
 
 	if (!reclaimed.existing) {
-		return { kind: 'won', puzzleId: reclaimed.puzzleId };
+		return { kind: 'won', familyId: reclaimed.familyId };
 	}
 
 	// Someone else won the reclaim — check if their puzzle is live.
-	const raceExisting = await getPuzzle(kv, reclaimed.puzzleId);
+	const raceExisting = await getFamily(kv, reclaimed.familyId);
 	if (raceExisting && raceExisting.status !== 'failed') {
 		// Only acknowledge a committed winner. A pending winner has not
 		// committed its reservation yet — it may still fail between
@@ -186,7 +192,7 @@ async function reclaimReservationOrFail(
 		// recognises that a committed puzzle can remain processing after
 		// its workflow has died.
 		if (raceExisting.status === 'processing') {
-			const liveness = await probeWorkflowLiveness(workflow, reclaimed.puzzleId);
+			const liveness = await probeWorkflowLiveness(workflow, reclaimed.familyId);
 			if (liveness === 'dead') {
 				// Workflow is dead. The DO is the source of truth: if it
 				// says 'ready', KV is just lagging and the puzzle is valid
@@ -195,10 +201,10 @@ async function reclaimReservationOrFail(
 				// client does not treat a disappearing puzzle as success.
 				let authoritative: string | null = null;
 				try {
-					authoritative = await getAuthoritativeStatus(doNs, reclaimed.puzzleId);
+					authoritative = await getAuthoritativeStatus(doNs, reclaimed.familyId);
 				} catch (doErr) {
 					console.error(
-						`DO status check failed for committed processing reclaim winner ${reclaimed.puzzleId} ${context}:`,
+						`DO status check failed for committed processing reclaim winner ${reclaimed.familyId} ${context}:`,
 						doErr
 					);
 					return {
@@ -211,7 +217,7 @@ async function reclaimReservationOrFail(
 				if (authoritative === 'ready') {
 					return {
 						kind: 'return',
-						response: Response.json(stripIdempotencyKey(raceExisting), { status: 200 })
+						response: Response.json(raceExisting, { status: 200 })
 					};
 				}
 				return {
@@ -236,7 +242,7 @@ async function reclaimReservationOrFail(
 		// and must never leak in a response body (mirrors the 201 path below).
 		return {
 			kind: 'return',
-			response: Response.json(stripIdempotencyKey(raceExisting), { status: 200 })
+			response: Response.json(raceExisting, { status: 200 })
 		};
 	}
 
@@ -251,7 +257,7 @@ async function reclaimReservationOrFail(
 			kv,
 			workflow,
 			idempotencyKey,
-			reclaimed.puzzleId,
+			reclaimed.familyId,
 			newPuzzleId,
 			context
 		);
@@ -596,7 +602,7 @@ async function executeFencedSourceDeletion(
 	// operations succeed. Any failure rejects so the record and
 	// tombstone remain for a retriable cleanup pass.
 	try {
-		await finishWorkerPuzzleDeletion(env, puzzleId);
+		await finishWorkerPuzzleDeletion(env, puzzleId, cleanupRecord.familyId);
 	} catch (finishErr) {
 		console.error(`Failed to finish fenced cleanup for ${puzzleId}${logCtx}:`, finishErr);
 		return {
@@ -1096,7 +1102,7 @@ admin.post('/puzzles', async (c) => {
 					// the key isn't permanently bricked mapping to a deleted
 					// puzzle (which would 409 every future upload with that
 					// key).
-					let existing = await getPuzzle(c.env.PUZZLE_METADATA, reserved.puzzleId);
+					let existing = await getFamily(c.env.PUZZLE_METADATA, reserved.familyId);
 					// A committed reservation should have metadata (commit
 					// runs after the KV write). A missing first read is usually
 					// KV propagation lag — retry with backoff before concluding
@@ -1106,7 +1112,7 @@ admin.post('/puzzles', async (c) => {
 						await new Promise((resolve) =>
 							setTimeout(resolve, jitteredDelay(IDEMPOTENCY_KV_RETRY_MS))
 						);
-						existing = await getPuzzle(c.env.PUZZLE_METADATA, reserved.puzzleId);
+						existing = await getFamily(c.env.PUZZLE_METADATA, reserved.familyId);
 						for (let attempt = 0; !existing && attempt < IDEMPOTENCY_KV_EXTRA_RETRIES; attempt++) {
 							// Cumulative budget cap — stop probing once we've spent
 							// the configured wall-clock budget, even if attempts
@@ -1121,7 +1127,7 @@ admin.post('/puzzles', async (c) => {
 									jitteredDelay(IDEMPOTENCY_KV_EXTRA_BASE_DELAY_MS * 2 ** attempt)
 								)
 							);
-							existing = await getPuzzle(c.env.PUZZLE_METADATA, reserved.puzzleId);
+							existing = await getFamily(c.env.PUZZLE_METADATA, reserved.familyId);
 						}
 					}
 					if (existing) {
@@ -1130,7 +1136,7 @@ admin.post('/puzzles', async (c) => {
 								await failIdempotencyKey(
 									c.env.PUZZLE_METADATA_DO,
 									idempotencyKey,
-									reserved.puzzleId
+									reserved.familyId
 								);
 							} catch (err) {
 								console.error('Failed to reclaim failed idempotency reservation:', err);
@@ -1156,7 +1162,7 @@ admin.post('/puzzles', async (c) => {
 								'on reclaim'
 							);
 							if (reclaim.kind === 'return') return reclaim.response;
-							id = reclaim.puzzleId;
+							id = reclaim.familyId;
 							reservedIdempotencyKey = idempotencyKey;
 							// Fall through to normal create flow to build a
 							// replacement puzzle under the won puzzleId.
@@ -1200,7 +1206,7 @@ admin.post('/puzzles', async (c) => {
 								// Stale pending — probe liveness before reclaiming.
 								const liveness = await probeWorkflowLiveness(
 									c.env.PUZZLE_WORKFLOW,
-									reserved.puzzleId
+									reserved.familyId
 								);
 								if (liveness === 'dead') {
 									// Original died before/during the workflow.
@@ -1211,7 +1217,7 @@ admin.post('/puzzles', async (c) => {
 										await failIdempotencyKey(
 											c.env.PUZZLE_METADATA_DO,
 											idempotencyKey,
-											reserved.puzzleId
+											reserved.familyId
 										);
 									} catch (err) {
 										console.error('Failed to fail dead pending reservation on retry:', err);
@@ -1233,7 +1239,7 @@ admin.post('/puzzles', async (c) => {
 										'on dead-pending reclaim'
 									);
 									if (reclaim.kind === 'return') return reclaim.response;
-									id = reclaim.puzzleId;
+									id = reclaim.familyId;
 									reservedIdempotencyKey = idempotencyKey;
 									// Fall through to normal create flow to
 									// build a replacement puzzle. The stale
@@ -1263,7 +1269,7 @@ admin.post('/puzzles', async (c) => {
 										await commitIdempotencyKey(
 											c.env.PUZZLE_METADATA_DO,
 											idempotencyKey,
-											reserved.puzzleId
+											reserved.familyId
 										);
 									} catch (err) {
 										// The commit failed (transient DO error or
@@ -1304,7 +1310,7 @@ admin.post('/puzzles', async (c) => {
 								// instead of 200 for a puzzle that is about to disappear.
 								const committedLiveness = await probeWorkflowLiveness(
 									c.env.PUZZLE_WORKFLOW,
-									reserved.puzzleId
+									reserved.familyId
 								);
 								if (committedLiveness === 'dead') {
 									// Workflow is dead. The DO is the source of truth: if it
@@ -1317,11 +1323,11 @@ admin.post('/puzzles', async (c) => {
 									try {
 										authoritative = await getAuthoritativeStatus(
 											c.env.PUZZLE_METADATA_DO,
-											reserved.puzzleId
+											reserved.familyId
 										);
 									} catch (doErr) {
 										console.error(
-											`DO status check failed for committed processing reservation ${reserved.puzzleId}:`,
+											`DO status check failed for committed processing reservation ${reserved.familyId}:`,
 											doErr
 										);
 										return c.json(
@@ -1334,7 +1340,7 @@ admin.post('/puzzles', async (c) => {
 										);
 									}
 									if (authoritative === 'ready') {
-										return c.json(stripIdempotencyKey(existing), 200);
+										return c.json(existing, 200);
 									}
 									return c.json(
 										{
@@ -1365,7 +1371,7 @@ admin.post('/puzzles', async (c) => {
 								// the live puzzle; the key is a server-side dedup
 								// secret and must not leak (matches 201 path and
 								// the reclaim race branch above).
-								return c.json(stripIdempotencyKey(existing), 200);
+								return c.json(existing, 200);
 							}
 							// Fall through to normal create flow.
 						}
@@ -1387,12 +1393,12 @@ admin.post('/puzzles', async (c) => {
 								c.env.PUZZLE_METADATA,
 								c.env.PUZZLE_WORKFLOW,
 								idempotencyKey,
-								reserved.puzzleId,
+								reserved.familyId,
 								id,
 								'during stale reservation release'
 							);
 							if (reclaim.kind === 'return') return reclaim.response;
-							id = reclaim.puzzleId;
+							id = reclaim.familyId;
 							reservedIdempotencyKey = idempotencyKey;
 							// Fall through to normal create flow.
 						} else {
@@ -1407,7 +1413,7 @@ admin.post('/puzzles', async (c) => {
 					}
 				} else {
 					// First caller — use our minted UUID.
-					id = reserved.puzzleId;
+					id = reserved.familyId;
 					reservedIdempotencyKey = idempotencyKey;
 				}
 			} catch (error) {
@@ -1419,18 +1425,18 @@ admin.post('/puzzles', async (c) => {
 			}
 		}
 
-		// Calculate grid dimensions (must match workflow calculation)
-		const { rows: gridRows, cols: gridCols } = getGridDimensionsForAspectRatio(
-			pieceCount,
-			aspectRatio
-		);
+		const familyId = id;
+		const variantIds = Object.fromEntries(
+			PUZZLE_DIFFICULTIES.map((difficulty) => [difficulty, crypto.randomUUID()])
+		) as Record<PuzzleDifficulty, string>;
+		const createdAt = Date.now();
 
 		// Prepare image buffer
 		const imageBuffer = await image.arrayBuffer();
 
 		// Step 1: Upload original image to R2 first
 		try {
-			await uploadOriginalImage(c.env.PUZZLES_BUCKET, id, imageBuffer, detectedType);
+			await uploadOriginalImage(c.env.PUZZLES_BUCKET, familyId, imageBuffer, detectedType);
 		} catch (error) {
 			console.error('Failed to upload original image:', error);
 			// R2 put is ambiguous on a lost/thrown response: the object may
@@ -1444,12 +1450,12 @@ admin.post('/puzzles', async (c) => {
 			// path instead of minting a duplicate alongside the orphan.
 			let originalCommitted = false;
 			try {
-				originalCommitted = await originalImageExists(c.env.PUZZLES_BUCKET, id);
+				originalCommitted = await originalImageExists(c.env.PUZZLES_BUCKET, familyId);
 			} catch (probeErr) {
 				console.error(`R2 probe failed after upload error for ${id}:`, probeErr);
 			}
 			if (originalCommitted) {
-				const cleanup = await deleteOriginalImage(c.env.PUZZLES_BUCKET, id);
+				const cleanup = await deleteOriginalImage(c.env.PUZZLES_BUCKET, familyId);
 				if (!cleanup.success) {
 					console.error(
 						`Failed to delete committed original after ambiguous upload for ${id}:`,
@@ -1465,41 +1471,33 @@ admin.post('/puzzles', async (c) => {
 			return c.json({ error: 'internal_error', message: 'Failed to upload image' }, 500);
 		}
 
-		// Step 2: Create puzzle metadata with processing status
-		const puzzleMetadata: PuzzleMetadata = {
-			id,
+		// Step 2: Create family + variant metadata with processing status
+		const familyMetadata = buildFamilyMetadata({
+			familyId,
 			name: trimmedName,
-			...(category && { category }),
 			aspectRatio,
-			pieceCount,
-			gridCols,
-			gridRows,
-			imageWidth: 0, // Will be set by workflow
-			imageHeight: 0, // Will be set by workflow
-			createdAt: Date.now(),
-			status: 'processing',
-			progress: {
-				totalPieces: pieceCount,
-				generatedPieces: 0,
-				updatedAt: Date.now()
-			},
-			pieces: [],
-			version: 0, // Initial version for optimistic concurrency
-			...(idempotencyKey && { idempotencyKey })
-		};
+			createdAt,
+			variantIds,
+			...(category ? { category } : {})
+		});
 
 		try {
-			// Store metadata in KV
-			await createPuzzleMetadata(c.env.PUZZLE_METADATA, puzzleMetadata);
+			await createFamilyMetadata(c.env.PUZZLE_METADATA, familyMetadata);
+			for (const difficulty of PUZZLE_DIFFICULTIES) {
+				const variantMetadata = buildVariantMetadata({
+					variantId: variantIds[difficulty],
+					familyId,
+					difficulty,
+					name: trimmedName,
+					aspectRatio,
+					createdAt,
+					...(category ? { category } : {})
+				});
+				await createPuzzleMetadata(c.env.PUZZLE_METADATA, variantMetadata);
+			}
 		} catch (error) {
 			console.error('Failed to create puzzle metadata:', error);
-			// Clean up the uploaded image. If cleanup SUCCEEDS, release the
-			// reservation so a retry can create a fresh puzzle (no orphan).
-			// If cleanup FAILS, fail the reservation instead of releasing —
-			// the orphaned R2 original remains, and releasing would let a
-			// retry mint a replacement alongside the orphan. Failing keeps
-			// the key in a recoverable state for operator force-delete.
-			const cleanupResult = await deleteOriginalImage(c.env.PUZZLES_BUCKET, id);
+			const cleanupResult = await deleteOriginalImage(c.env.PUZZLES_BUCKET, familyId);
 			if (!cleanupResult.success) {
 				console.error(
 					'Failed to cleanup original image after metadata creation failure:',
@@ -1529,20 +1527,20 @@ admin.post('/puzzles', async (c) => {
 			`Failed to record admin puzzle ownership for ${id}:`,
 			`Failed to init DB for ownership insert of puzzle ${id}:`,
 			(db) =>
-				insertPuzzleOwnership(db, {
-					id,
+				insertPuzzleFamilyOwnership(db, {
+					id: familyId,
 					ownerId: SYSTEM_OWNER_ID,
 					name: trimmedName,
-					pieceCount,
+					aspectRatio,
 					...(category ? { category } : {}),
 					status: 'processing',
-					createdAt: puzzleMetadata.createdAt
+					createdAt
 				})
 		);
 
 		// Step 3: Trigger workflow for puzzle generation
 		if (!c.env.PUZZLE_WORKFLOW || typeof c.env.PUZZLE_WORKFLOW.create !== 'function') {
-			const metadataCleanup = await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
+			const metadataCleanup = await deleteFamilyMetadata(c.env.PUZZLE_METADATA, familyId);
 			if (!metadataCleanup.success) {
 				// Metadata cleanup failed — the processing metadata remains in
 				// KV as an orphan. Fail (not release) the reservation so a
@@ -1564,7 +1562,10 @@ admin.post('/puzzles', async (c) => {
 					500
 				);
 			}
-			const imageCleanup = await deleteOriginalImage(c.env.PUZZLES_BUCKET, id);
+			for (const difficulty of PUZZLE_DIFFICULTIES) {
+				await deletePuzzleMetadata(c.env.PUZZLE_METADATA, variantIds[difficulty]);
+			}
+			const imageCleanup = await deleteOriginalImage(c.env.PUZZLES_BUCKET, familyId);
 			if (!imageCleanup.success) {
 				// Image cleanup failed — the original R2 object remains as an
 				// orphan. Fail (not release) the reservation so a retry reclaims
@@ -1588,7 +1589,7 @@ admin.post('/puzzles', async (c) => {
 				c.env,
 				'Failed to cleanup ownership after missing workflow binding:',
 				`Failed to init DB for ownership cleanup of puzzle ${id}:`,
-				(db) => deletePuzzleOwnership(db, id)
+				(db) => deletePuzzleFamilyOwnership(db, familyId)
 			);
 			await releaseReservation();
 			return c.json(
@@ -1602,8 +1603,8 @@ admin.post('/puzzles', async (c) => {
 
 		try {
 			await c.env.PUZZLE_WORKFLOW.create({
-				id,
-				params: { puzzleId: id }
+				id: familyId,
+				params: { familyId }
 			});
 			workflowStarted = true;
 		} catch (error) {
@@ -1691,10 +1692,10 @@ admin.post('/puzzles', async (c) => {
 
 			// liveness === 'dead' — workflow was not created. Clean up and
 			// release as before.
-			const metadataCleanup = await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
+			const metadataCleanup = await deleteFamilyMetadata(c.env.PUZZLE_METADATA, familyId);
 			if (!metadataCleanup.success) {
 				console.error(
-					'Failed to cleanup puzzle metadata after workflow trigger failure:',
+					'Failed to cleanup puzzle family metadata after workflow trigger failure:',
 					metadataCleanup.error
 				);
 				await failReservation();
@@ -1707,7 +1708,10 @@ admin.post('/puzzles', async (c) => {
 					500
 				);
 			}
-			const imageCleanup = await deleteOriginalImage(c.env.PUZZLES_BUCKET, id);
+			for (const difficulty of PUZZLE_DIFFICULTIES) {
+				await deletePuzzleMetadata(c.env.PUZZLE_METADATA, variantIds[difficulty]);
+			}
+			const imageCleanup = await deleteOriginalImage(c.env.PUZZLES_BUCKET, familyId);
 			if (!imageCleanup.success) {
 				console.error(
 					'Failed to cleanup original image after workflow trigger failure:',
@@ -1727,7 +1731,7 @@ admin.post('/puzzles', async (c) => {
 				c.env,
 				'Failed to cleanup ownership after workflow trigger failure:',
 				`Failed to init DB for ownership cleanup of puzzle ${id}:`,
-				(db) => deletePuzzleOwnership(db, id)
+				(db) => deletePuzzleFamilyOwnership(db, familyId)
 			);
 			await releaseReservation();
 			return c.json({ error: 'internal_error', message: 'Failed to start puzzle processing' }, 500);
@@ -1798,7 +1802,7 @@ admin.post('/puzzles', async (c) => {
 			reservedIdempotencyKey = undefined;
 		}
 
-		return c.json(stripIdempotencyKey(puzzleMetadata), 201);
+		return c.json(familyMetadata, 201);
 	} catch (error) {
 		console.error('Error creating puzzle:', error);
 		// If the workflow already started, FAIL (not release) the reservation.
@@ -1899,6 +1903,7 @@ admin.post('/puzzle-delete/:id', async (c) => {
 		const cleanupRecord = {
 			puzzleId: id,
 			pieceCount,
+			...(puzzle?.familyId ? { familyId: puzzle.familyId } : {}),
 			...(puzzle?.idempotencyKey ? { idempotencyKey: puzzle.idempotencyKey } : {}),
 			createdAt: Date.now()
 		};

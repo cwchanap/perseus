@@ -1,4 +1,4 @@
-import { deletePuzzleOwnership } from '@perseus/shared';
+import { deletePuzzleFamilyOwnership } from '@perseus/shared';
 import { getWorkerDbContext } from '../db.worker';
 import type { Env } from '../worker';
 import { deleteCleanupRecord, writeCleanupRecord, type CleanupRecord } from './storage.worker';
@@ -12,9 +12,13 @@ export async function ensureWorkerPuzzleDeletionFence(
 	await getWorkerDbContext(env).completionWrites.beginPuzzleDeletion(record.puzzleId, deletedAt);
 }
 
-export async function finishWorkerPuzzleDeletion(env: Env, puzzleId: string): Promise<void> {
+export async function finishWorkerPuzzleDeletion(
+	env: Env,
+	puzzleId: string,
+	ownershipId?: string
+): Promise<void> {
 	const { db, completionWrites } = getWorkerDbContext(env);
 	await completionWrites.finishPuzzleDeletion(puzzleId);
-	await deletePuzzleOwnership(db, puzzleId);
+	await deletePuzzleFamilyOwnership(db, ownershipId ?? puzzleId);
 	await deleteCleanupRecord(env.PUZZLE_METADATA, puzzleId);
 }

@@ -16,21 +16,28 @@ const dbContextMock = vi.hoisted(() => ({
 	}
 }));
 
-vi.mock('../../services/storage.worker', () => ({
-	getPuzzle: vi.fn(),
-	deletePuzzleAssets: vi.fn(),
-	deletePuzzleMetadata: vi.fn(),
-	createPuzzleMetadata: vi.fn(),
-	uploadOriginalImage: vi.fn(),
-	deleteOriginalImage: vi.fn(),
-	listPuzzles: vi.fn(),
-	originalImageExists: vi.fn().mockResolvedValue(false),
-	puzzleExists: vi.fn().mockResolvedValue(false),
-	releaseIdempotencyKey: vi.fn(),
-	deleteMetadataDO: vi.fn().mockResolvedValue(undefined),
-	writeCleanupRecord: vi.fn().mockResolvedValue(undefined),
-	deleteCleanupRecord: vi.fn().mockResolvedValue(undefined)
-}));
+vi.mock('../../services/storage.worker', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../services/storage.worker')>();
+	return {
+		...actual,
+		getPuzzle: vi.fn(),
+		getFamily: vi.fn(),
+		deletePuzzleAssets: vi.fn(),
+		deletePuzzleMetadata: vi.fn().mockResolvedValue({ success: true }),
+		createPuzzleMetadata: vi.fn().mockResolvedValue(undefined),
+		createFamilyMetadata: vi.fn().mockResolvedValue(undefined),
+		deleteFamilyMetadata: vi.fn().mockResolvedValue({ success: true }),
+		uploadOriginalImage: vi.fn().mockResolvedValue(undefined),
+		deleteOriginalImage: vi.fn().mockResolvedValue({ success: true }),
+		listPuzzles: vi.fn(),
+		originalImageExists: vi.fn().mockResolvedValue(false),
+		puzzleExists: vi.fn().mockResolvedValue(false),
+		releaseIdempotencyKey: vi.fn(),
+		deleteMetadataDO: vi.fn().mockResolvedValue(undefined),
+		writeCleanupRecord: vi.fn().mockResolvedValue(undefined),
+		deleteCleanupRecord: vi.fn().mockResolvedValue(undefined)
+	};
+});
 
 vi.mock('../../db.worker', () => ({
 	getWorkerDb: vi.fn(() => dbContextMock.db),
@@ -42,13 +49,13 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	return {
 		...actual,
 		validateImageEndMarker: vi.fn().mockResolvedValue(true),
-		deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined)
+		deletePuzzleFamilyOwnership: vi.fn().mockResolvedValue(undefined)
 	};
 });
 
 import admin from '../admin.worker';
 import * as storage from '../../services/storage.worker';
-import { deletePuzzleOwnership } from '@perseus/shared';
+import { deletePuzzleFamilyOwnership } from '@perseus/shared';
 import { __resetRateLimitStore } from '../../middleware/rate-limit.worker';
 
 const baseEnv = {
@@ -81,7 +88,7 @@ describe('Admin Worker - DELETE /puzzles/:id required ownership cleanup', () => 
 			success: true,
 			failedKeys: []
 		} as any);
-		vi.mocked(deletePuzzleOwnership).mockRejectedValueOnce(new Error('D1 unavailable'));
+		vi.mocked(deletePuzzleFamilyOwnership).mockRejectedValueOnce(new Error('D1 unavailable'));
 
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
@@ -99,7 +106,7 @@ describe('Admin Worker - DELETE /puzzles/:id required ownership cleanup', () => 
 			expect.any(Number)
 		);
 		expect(dbContextMock.completionWrites.finishPuzzleDeletion).toHaveBeenCalledWith(VALID_UUID);
-		expect(deletePuzzleOwnership).toHaveBeenCalledTimes(1);
+		expect(deletePuzzleFamilyOwnership).toHaveBeenCalledTimes(1);
 		expect(consoleSpy).toHaveBeenCalledWith(
 			`Failed to finish fenced cleanup for ${VALID_UUID}:`,
 			expect.any(Error)

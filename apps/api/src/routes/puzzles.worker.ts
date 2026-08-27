@@ -15,27 +15,33 @@ import {
 	stripIdempotencyKey,
 	type PuzzleCategory
 } from '@perseus/types';
+import { PUZZLE_DIFFICULTIES, type PuzzleDifficulty } from '@perseus/types';
 import type { Env } from '../worker';
 import {
+	createFamilyMetadata,
 	createPuzzleMetadata,
+	deleteFamilyMetadata,
 	deleteOriginalImage,
 	deletePuzzleMetadata,
 	getPuzzle,
 	listPuzzlesPage,
 	getThumbnailKey,
 	getPieceKey,
-	getOriginalKey,
 	getImage,
 	uploadOriginalImage,
-	type PuzzleMetadata
+	buildFamilyMetadata,
+	buildVariantMetadata,
+	resolveVariantReferenceKey,
+	type PuzzleMetadata,
+	type PuzzleFamilyMetadata
 } from '../services/storage.worker';
 import { requirePlayerAuth } from '../middleware/player-auth.worker';
 import type { PlayerSessionRecord } from '../services/player-auth.worker';
 import { getWorkerDbContext } from '../db.worker';
 import {
-	deletePuzzleOwnership,
+	deletePuzzleFamilyOwnership,
 	detectImageType,
-	insertPuzzleOwnership,
+	insertPuzzleFamilyOwnership,
 	parseImageDimensions,
 	validateImageEndMarker
 } from '@perseus/shared';
@@ -266,50 +272,53 @@ puzzles.post('/', requirePlayerAuth, async (c) => {
 			return c.json({ error: 'bad_request', message: 'Image is corrupted or truncated' }, 400);
 		}
 
-		const id = crypto.randomUUID();
+		const familyId = crypto.randomUUID();
+		const variantIds = Object.fromEntries(
+			PUZZLE_DIFFICULTIES.map((difficulty) => [difficulty, crypto.randomUUID()])
+		) as Record<PuzzleDifficulty, string>;
 		const dbContext = getWorkerDbContext(c.env);
-		if (await dbContext.completionWrites.isPuzzleTombstoned(id)) {
-			return c.json({ error: 'internal_error', message: 'Failed to allocate puzzle ID' }, 500);
+		if (await dbContext.completionWrites.isPuzzleTombstoned(familyId)) {
+			return c.json(
+				{ error: 'internal_error', message: 'Failed to allocate puzzle family ID' },
+				500
+			);
 		}
-		const { rows: gridRows, cols: gridCols } = getGridDimensionsForAspectRatio(
-			pieceCount,
-			aspectRatio
-		);
+		const createdAt = Date.now();
 		const imageBuffer = await image.arrayBuffer();
 
 		try {
-			await uploadOriginalImage(c.env.PUZZLES_BUCKET, id, imageBuffer, detectedType);
+			await uploadOriginalImage(c.env.PUZZLES_BUCKET, familyId, imageBuffer, detectedType);
 		} catch (error) {
 			console.error('Failed to upload original image:', error);
 			return c.json({ error: 'internal_error', message: 'Failed to upload image' }, 500);
 		}
 
-		const puzzleMetadata: PuzzleMetadata = {
-			id,
+		const familyMetadata = buildFamilyMetadata({
+			familyId,
 			name: trimmedName,
-			...(category && { category }),
 			aspectRatio,
-			pieceCount,
-			gridCols,
-			gridRows,
-			imageWidth: 0,
-			imageHeight: 0,
-			createdAt: Date.now(),
-			status: 'processing',
-			progress: {
-				totalPieces: pieceCount,
-				generatedPieces: 0,
-				updatedAt: Date.now()
-			},
-			pieces: [],
-			version: 0
-		};
+			createdAt,
+			variantIds,
+			...(category ? { category } : {})
+		});
 
 		try {
-			await createPuzzleMetadata(c.env.PUZZLE_METADATA, puzzleMetadata);
+			await createFamilyMetadata(c.env.PUZZLE_METADATA, familyMetadata);
+			for (const difficulty of PUZZLE_DIFFICULTIES) {
+				const variantMetadata = buildVariantMetadata({
+					variantId: variantIds[difficulty],
+					familyId,
+					difficulty,
+					name: trimmedName,
+					aspectRatio,
+					createdAt,
+					...(category ? { category } : {})
+				});
+				await createPuzzleMetadata(c.env.PUZZLE_METADATA, variantMetadata);
+			}
 		} catch (error) {
 			console.error('Failed to create puzzle metadata:', error);
-			const cleanupResult = await deleteOriginalImage(c.env.PUZZLES_BUCKET, id);
+			const cleanupResult = await deleteOriginalImage(c.env.PUZZLES_BUCKET, familyId);
 			if (!cleanupResult.success) {
 				console.error(
 					'Failed to cleanup original image after metadata creation failure:',
@@ -319,29 +328,29 @@ puzzles.post('/', requirePlayerAuth, async (c) => {
 			return c.json({ error: 'internal_error', message: 'Failed to create puzzle metadata' }, 500);
 		}
 
-		// Record ownership before kicking off the workflow so the puzzle is
-		// always visible to its owner. A committed puzzle without an ownership
-		// row would process silently and never appear in the player's list.
 		try {
-			await insertPuzzleOwnership(dbContext.db, {
-				id,
+			await insertPuzzleFamilyOwnership(dbContext.db, {
+				id: familyId,
 				ownerId: c.get('playerSession').user.id,
 				name: trimmedName,
-				pieceCount,
+				aspectRatio,
 				...(category ? { category } : {}),
 				status: 'processing',
-				createdAt: puzzleMetadata.createdAt
+				createdAt
 			});
 		} catch (error) {
-			console.error('Failed to record puzzle ownership:', error);
-			const metadataCleanup = await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
-			if (!metadataCleanup.success) {
+			console.error('Failed to record puzzle family ownership:', error);
+			const familyMetadataCleanup = await deleteFamilyMetadata(c.env.PUZZLE_METADATA, familyId);
+			if (!familyMetadataCleanup.success) {
 				console.error(
-					'Failed to cleanup puzzle metadata after ownership insert failure:',
-					metadataCleanup.error
+					'Failed to cleanup puzzle family metadata after ownership insert failure:',
+					familyMetadataCleanup.error
 				);
 			}
-			const imageCleanup = await deleteOriginalImage(c.env.PUZZLES_BUCKET, id);
+			for (const difficulty of PUZZLE_DIFFICULTIES) {
+				await deletePuzzleMetadata(c.env.PUZZLE_METADATA, variantIds[difficulty]);
+			}
+			const imageCleanup = await deleteOriginalImage(c.env.PUZZLES_BUCKET, familyId);
 			if (!imageCleanup.success) {
 				console.error(
 					'Failed to cleanup original image after ownership insert failure:',
@@ -352,17 +361,20 @@ puzzles.post('/', requirePlayerAuth, async (c) => {
 		}
 
 		if (!c.env.PUZZLE_WORKFLOW || typeof c.env.PUZZLE_WORKFLOW.create !== 'function') {
-			await deletePuzzleOwnership(dbContext.db, id).catch((err) =>
+			await deletePuzzleFamilyOwnership(dbContext.db, familyId).catch((err) =>
 				console.error('Failed to cleanup ownership after missing workflow binding:', err)
 			);
-			const metadataCleanup = await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
-			if (!metadataCleanup.success) {
+			const familyMetadataCleanup = await deleteFamilyMetadata(c.env.PUZZLE_METADATA, familyId);
+			if (!familyMetadataCleanup.success) {
 				console.error(
-					'Failed to cleanup puzzle metadata after missing workflow binding:',
-					metadataCleanup.error
+					'Failed to cleanup puzzle family metadata after missing workflow binding:',
+					familyMetadataCleanup.error
 				);
 			}
-			const imageCleanup = await deleteOriginalImage(c.env.PUZZLES_BUCKET, id);
+			for (const difficulty of PUZZLE_DIFFICULTIES) {
+				await deletePuzzleMetadata(c.env.PUZZLE_METADATA, variantIds[difficulty]);
+			}
+			const imageCleanup = await deleteOriginalImage(c.env.PUZZLES_BUCKET, familyId);
 			if (!imageCleanup.success) {
 				console.error(
 					'Failed to cleanup original image after missing workflow binding:',
@@ -380,22 +392,25 @@ puzzles.post('/', requirePlayerAuth, async (c) => {
 
 		try {
 			await c.env.PUZZLE_WORKFLOW.create({
-				id,
-				params: { puzzleId: id }
+				id: familyId,
+				params: { familyId }
 			});
 		} catch (error) {
 			console.error('Failed to trigger workflow:', error);
-			await deletePuzzleOwnership(dbContext.db, id).catch((err) =>
+			await deletePuzzleFamilyOwnership(dbContext.db, familyId).catch((err) =>
 				console.error('Failed to cleanup ownership after workflow trigger failure:', err)
 			);
-			const metadataCleanup = await deletePuzzleMetadata(c.env.PUZZLE_METADATA, id);
-			if (!metadataCleanup.success) {
+			const familyMetadataCleanup = await deleteFamilyMetadata(c.env.PUZZLE_METADATA, familyId);
+			if (!familyMetadataCleanup.success) {
 				console.error(
-					'Failed to cleanup puzzle metadata after workflow trigger failure:',
-					metadataCleanup.error
+					'Failed to cleanup puzzle family metadata after workflow trigger failure:',
+					familyMetadataCleanup.error
 				);
 			}
-			const imageCleanup = await deleteOriginalImage(c.env.PUZZLES_BUCKET, id);
+			for (const difficulty of PUZZLE_DIFFICULTIES) {
+				await deletePuzzleMetadata(c.env.PUZZLE_METADATA, variantIds[difficulty]);
+			}
+			const imageCleanup = await deleteOriginalImage(c.env.PUZZLES_BUCKET, familyId);
 			if (!imageCleanup.success) {
 				console.error(
 					'Failed to cleanup original image after workflow trigger failure:',
@@ -405,7 +420,7 @@ puzzles.post('/', requirePlayerAuth, async (c) => {
 			return c.json({ error: 'internal_error', message: 'Failed to start puzzle processing' }, 500);
 		}
 
-		return c.json(puzzleMetadata, 201);
+		return c.json(familyMetadata, 201);
 	} catch (error) {
 		console.error('Error creating puzzle:', error);
 		return c.json({ error: 'internal_error', message: 'Failed to create puzzle' }, 500);
@@ -436,8 +451,11 @@ puzzles.get('/:id', async (c) => {
 		// Degrade gracefully if R2 is unavailable — hasReference is display-only.
 		let hasReference = false;
 		try {
-			const originalObj = await c.env.PUZZLES_BUCKET.head(getOriginalKey(id));
-			hasReference = originalObj !== null;
+			const referenceKey = await resolveVariantReferenceKey(c.env.PUZZLE_METADATA, id);
+			if (referenceKey) {
+				const originalObj = await c.env.PUZZLES_BUCKET.head(referenceKey);
+				hasReference = originalObj !== null;
+			}
 		} catch (r2Error) {
 			console.error(`Failed to check R2 reference for puzzle ${id}:`, r2Error);
 		}
@@ -470,7 +488,7 @@ puzzles.get('/:id/thumbnail', async (c) => {
 			return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
 		}
 
-		const image = await getImage(c.env.PUZZLES_BUCKET, getThumbnailKey(id));
+		const image = await getImage(c.env.PUZZLES_BUCKET, getThumbnailKey(puzzle.familyId));
 
 		if (!image) {
 			// Thumbnail missing for puzzle marked ready — inconsistent state / asset missing
@@ -509,7 +527,12 @@ puzzles.get('/:id/reference', async (c) => {
 			return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
 		}
 
-		const image = await getImage(c.env.PUZZLES_BUCKET, getOriginalKey(id));
+		const referenceKey = await resolveVariantReferenceKey(c.env.PUZZLE_METADATA, id);
+		if (!referenceKey) {
+			return c.json({ error: 'not_found', message: 'Reference image not found' }, 404);
+		}
+
+		const image = await getImage(c.env.PUZZLES_BUCKET, referenceKey);
 
 		if (!image) {
 			return c.json({ error: 'not_found', message: 'Reference image not found' }, 404);
