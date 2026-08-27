@@ -27,6 +27,30 @@ const OWNER_A = 'player-a';
 const OWNER_B = 'player-b';
 const FAMILY_A = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
 const FAMILY_B = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+const VARIANT_EASY = '11111111-1111-4111-8111-111111111111';
+const VARIANT_NORMAL = '22222222-2222-4222-8222-222222222222';
+const VARIANT_HARD = '33333333-3333-4333-8333-333333333333';
+
+function readyFamilyResponse(
+	familyId: string,
+	name: string,
+	variantIds = {
+		easy: VARIANT_EASY,
+		normal: VARIANT_NORMAL,
+		hard: VARIANT_HARD
+	}
+) {
+	return {
+		id: familyId,
+		name,
+		status: 'ready',
+		variants: {
+			easy: { id: variantIds.easy, difficulty: 'easy', pieceCount: 16, status: 'ready' },
+			normal: { id: variantIds.normal, difficulty: 'normal', pieceCount: 48, status: 'ready' },
+			hard: { id: variantIds.hard, difficulty: 'hard', pieceCount: 100, status: 'ready' }
+		}
+	};
+}
 
 function makePng(): Uint8Array {
 	const buf = new Uint8Array(24);
@@ -757,6 +781,135 @@ describe('cleanupLegacyPuzzles', () => {
 				runWrangler
 			})
 		).resolves.toBeUndefined();
+		globalThis.fetch = originalFetch;
+	});
+
+	it('does not delete leftover puzzle: keys that are imported family variant ids', async () => {
+		makeManifest(dir, 1);
+		writeFileSync(
+			join(dir, 'import-results.json'),
+			JSON.stringify({
+				importedAt: '2026-08-27T00:00:00.000Z',
+				families: [
+					{
+						legacyId: PUZZLE_A,
+						familyId: FAMILY_A,
+						name: 'Alpha',
+						ownerId: OWNER_A,
+						status: 'ready'
+					}
+				]
+			})
+		);
+
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = mock(
+			async () =>
+				new Response(JSON.stringify({ families: [readyFamilyResponse(FAMILY_A, 'Alpha')] }), {
+					status: 200
+				})
+		) as unknown as typeof fetch;
+
+		const runWrangler: RunWrangler = async (args) => {
+			wranglerCalls.push([...args]);
+			if (args.includes('kv') && args.includes('list')) {
+				return {
+					exitCode: 0,
+					stdout: JSON.stringify([{ name: `puzzle:${VARIANT_EASY}` }]),
+					stderr: ''
+				};
+			}
+			return { exitCode: 0, stdout: '', stderr: '' };
+		};
+
+		await cleanupLegacyPuzzles({
+			migrationDir: dir,
+			server: SERVER,
+			skipAccess: true,
+			fetchFn: globalThis.fetch,
+			runWrangler
+		});
+
+		expect(
+			wranglerCalls.some(
+				(args) =>
+					args.includes('kv') && args.includes('delete') && args.includes(`puzzle:${VARIANT_EASY}`)
+			)
+		).toBe(false);
+		expect(
+			wranglerCalls.some((args) => args[3] === `${R2_BUCKET}/puzzles/${VARIANT_EASY}/original`)
+		).toBe(false);
+		expect(wranglerCalls.some((args) => args.includes(`puzzle:${PUZZLE_A}`))).toBe(true);
+		globalThis.fetch = originalFetch;
+	});
+
+	it('does not delete leftover puzzle: keys whose KV metadata includes familyId', async () => {
+		makeManifest(dir, 1);
+		writeFileSync(
+			join(dir, 'import-results.json'),
+			JSON.stringify({
+				importedAt: '2026-08-27T00:00:00.000Z',
+				families: [
+					{
+						legacyId: PUZZLE_A,
+						familyId: FAMILY_A,
+						name: 'Alpha',
+						ownerId: OWNER_A,
+						status: 'ready'
+					}
+				]
+			})
+		);
+
+		const orphanVariant = '44444444-4444-4444-8444-444444444444';
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = mock(
+			async () =>
+				new Response(JSON.stringify({ families: [readyFamilyResponse(FAMILY_A, 'Alpha')] }), {
+					status: 200
+				})
+		) as unknown as typeof fetch;
+
+		const runWrangler: RunWrangler = async (args) => {
+			wranglerCalls.push([...args]);
+			if (args.includes('kv') && args.includes('list')) {
+				return {
+					exitCode: 0,
+					stdout: JSON.stringify([{ name: `puzzle:${orphanVariant}` }]),
+					stderr: ''
+				};
+			}
+			if (args.includes('kv') && args.includes('get') && args.includes(`puzzle:${orphanVariant}`)) {
+				return {
+					exitCode: 0,
+					stdout: JSON.stringify({
+						pieceCount: 48,
+						status: 'ready',
+						familyId: FAMILY_A
+					}),
+					stderr: ''
+				};
+			}
+			return { exitCode: 0, stdout: '', stderr: '' };
+		};
+
+		await cleanupLegacyPuzzles({
+			migrationDir: dir,
+			server: SERVER,
+			skipAccess: true,
+			fetchFn: globalThis.fetch,
+			runWrangler
+		});
+
+		expect(
+			wranglerCalls.some(
+				(args) =>
+					args.includes('kv') && args.includes('delete') && args.includes(`puzzle:${orphanVariant}`)
+			)
+		).toBe(false);
+		expect(
+			wranglerCalls.some((args) => args[3] === `${R2_BUCKET}/puzzles/${orphanVariant}/original`)
+		).toBe(false);
 		globalThis.fetch = originalFetch;
 	});
 
