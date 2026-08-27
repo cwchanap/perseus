@@ -458,7 +458,12 @@ describe('recordVersionedCompletion against real D1', () => {
 				incorrectAttempts: 0,
 				completedAt: 1_000
 			},
-			inserted: true
+			inserted: true,
+			mutations: {
+				firstClearInserted: true,
+				masteryInserted: ['hintless', 'flawless'],
+				personalBestImproved: { standard: true, rotation: false }
+			}
 		});
 		expect(await db.select().from(schema.playerCompletionUsage)).toEqual([
 			{ playerId: 'p1', retainedRuns: 1 }
@@ -476,7 +481,12 @@ describe('recordVersionedCompletion against real D1', () => {
 				incorrectAttempts: 0,
 				completedAt: 1_000
 			},
-			inserted: false
+			inserted: false,
+			mutations: {
+				firstClearInserted: false,
+				masteryInserted: [],
+				personalBestImproved: { standard: false, rotation: false }
+			}
 		});
 		expect(
 			await recordCompletion(
@@ -988,6 +998,71 @@ describe('recordVersionedCompletion against real D1', () => {
 
 		expect(await db.select().from(schema.puzzleBestTimes)).toHaveLength(1);
 		expect(await db.select().from(schema.puzzleCompletionRuns)).toHaveLength(1);
+	});
+
+	it('deletes family first-clears after variant cleanup while keeping achievements', async () => {
+		const executor = createD1CompletionWriteExecutor(db);
+		const familyId = '323e4567-e89b-42d3-a456-426614174010';
+		const variants = {
+			easy: 'pz-easy',
+			normal: 'pz-normal',
+			hard: 'pz-hard'
+		};
+		for (const [difficulty, puzzleId] of Object.entries(variants)) {
+			await recordCompletion(
+				executor,
+				'p1',
+				puzzleId,
+				completion({ runId: `run-${difficulty}` }),
+				1_000,
+				{ familyId, difficulty: difficulty as PuzzleDifficulty }
+			);
+		}
+		expect(await db.select().from(schema.playerDifficultyCompletions)).toHaveLength(3);
+		expect(await db.select().from(schema.playerAchievements).all()).not.toHaveLength(0);
+
+		for (const puzzleId of Object.values(variants)) {
+			await executor.finishPuzzleDeletion(puzzleId);
+		}
+		await executor.finishFamilyFirstClears(familyId);
+
+		expect(await db.select().from(schema.playerDifficultyCompletions)).toHaveLength(0);
+		expect(await db.select().from(schema.playerAchievements).all()).not.toHaveLength(0);
+		expect(await db.select().from(schema.playerCompletionUsage)).toEqual([]);
+
+		await executor.finishFamilyFirstClears(familyId);
+		expect(await db.select().from(schema.playerDifficultyCompletions)).toHaveLength(0);
+	});
+
+	it('does not steal first-clear, mastery, or personal best on a same-millisecond second recorded run', async () => {
+		const executor = createD1CompletionWriteExecutor(db);
+		const timestamp = 1_700_000_000_000;
+		const first = await recordCompletion(
+			executor,
+			'p1',
+			'pz1',
+			completion({ runId: 'run-a', elapsedActiveSeconds: 100 }),
+			timestamp
+		);
+		const second = await recordCompletion(
+			executor,
+			'p1',
+			'pz1',
+			completion({ runId: 'run-b', elapsedActiveSeconds: 100 }),
+			timestamp
+		);
+
+		expect(first.awards).toMatchObject({
+			clearPoints: UNIQUE_CLEAR_POINTS.easy,
+			mastery: expect.arrayContaining(['hintless', 'flawless']),
+			personalBest: { bestTimeSeconds: 100, isNew: true }
+		});
+		expect(second.awards?.clearPoints).toBeUndefined();
+		expect(second.awards?.mastery).toBeUndefined();
+		expect(second.awards?.personalBest).toBeUndefined();
+		expect(await db.select().from(schema.puzzleBestTimes)).toEqual([
+			standardBest({ playerId: 'p1', puzzleId: 'pz1', bestTimeSeconds: 100, achievedAt: timestamp })
+		]);
 	});
 
 	it('records the first family+difficulty clear exactly once', async () => {
@@ -1762,6 +1837,13 @@ describe('leaderboard queries against real D1', () => {
 		});
 		expect(identities.get('no-profile')?.name).toBe('Player no-profi');
 		expect(identities.get('no-profile')?.name).not.toContain('@');
+	});
+
+	it('falls back when a stored display name is email-shaped', async () => {
+		await updateProfileDisplayName(db, 'leaky', 'player@example.com');
+		const identities = await resolveLeaderboardIdentities(db, ['leaky']);
+		expect(identities.get('leaky')?.name).toBe('Player leaky');
+		expect(identities.get('leaky')?.name).not.toContain('@');
 	});
 
 	it('summarizes player progression with rank and counts', async () => {

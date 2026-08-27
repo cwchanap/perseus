@@ -215,7 +215,8 @@ export function createD1CompletionWriteExecutor(
 								THEN excluded.achieved_at
 							ELSE ${puzzleBestTimes.achievedAt}
 						END`
-					}
+					},
+					setWhere: sql`excluded.best_time_seconds < ${puzzleBestTimes.bestTimeSeconds}`
 				});
 			const upsertRotationBest = db
 				.insert(puzzleBestTimes)
@@ -250,7 +251,8 @@ export function createD1CompletionWriteExecutor(
 								THEN excluded.achieved_at
 							ELSE ${puzzleBestTimes.achievedAt}
 						END`
-					}
+					},
+					setWhere: sql`excluded.best_time_seconds < ${puzzleBestTimes.bestTimeSeconds}`
 				});
 			const insertHintlessMastery = db
 				.insert(playerVariantMastery)
@@ -315,7 +317,18 @@ export function createD1CompletionWriteExecutor(
 					]
 				});
 
-			const [insertResult, tombstoneRows, storedRows, usageRows] = await db.batch([
+			const [
+				insertResult,
+				tombstoneRows,
+				storedRows,
+				usageRows,
+				firstClearResult,
+				standardBestResult,
+				rotationBestResult,
+				hintlessMasteryResult,
+				flawlessMasteryResult,
+				rotationClearMasteryResult
+			] = await db.batch([
 				insertRun,
 				readTombstone,
 				readStored,
@@ -329,10 +342,24 @@ export function createD1CompletionWriteExecutor(
 			]);
 			if (tombstoneRows.length > 0) return { status: 'tombstoned' };
 			if (storedRows[0]) {
+				const masteryInserted: Array<'hintless' | 'flawless' | 'rotation_clear'> = [];
+				if (hintlessMasteryResult.meta.changes > 0) masteryInserted.push('hintless');
+				if (flawlessMasteryResult.meta.changes > 0) masteryInserted.push('flawless');
+				if (rotationClearMasteryResult.meta.changes > 0) {
+					masteryInserted.push('rotation_clear');
+				}
 				return {
 					status: 'stored',
 					stored: toStoredFacts(storedRows[0]),
-					inserted: insertResult.meta.changes > 0
+					inserted: insertResult.meta.changes > 0,
+					mutations: {
+						firstClearInserted: firstClearResult.meta.changes > 0,
+						masteryInserted,
+						personalBestImproved: {
+							standard: standardBestResult.meta.changes > 0,
+							rotation: rotationBestResult.meta.changes > 0
+						}
+					}
 				};
 			}
 			if ((usageRows[0]?.retainedRuns ?? 0) >= retainedRunLimit) {
@@ -355,6 +382,12 @@ export function createD1CompletionWriteExecutor(
 				db.delete(playerVariantMastery).where(eq(playerVariantMastery.puzzleId, puzzleId)),
 				db.delete(puzzleCompletionRuns).where(eq(puzzleCompletionRuns.puzzleId, puzzleId))
 			]);
+		},
+
+		async finishFamilyFirstClears(familyId: string) {
+			await db
+				.delete(playerDifficultyCompletions)
+				.where(eq(playerDifficultyCompletions.familyId, familyId));
 		},
 
 		async isPuzzleTombstoned(puzzleId: string) {

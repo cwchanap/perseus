@@ -26,8 +26,22 @@ export interface StoredCompletionFacts {
 
 export const MAX_RETAINED_COMPLETION_RUNS = 100_000;
 
+export interface CompletionMutationFacts {
+	firstClearInserted: boolean;
+	masteryInserted: Array<'hintless' | 'flawless' | 'rotation_clear'>;
+	personalBestImproved: {
+		standard: boolean;
+		rotation: boolean;
+	};
+}
+
 export type VersionedCompletionWriteExecution =
-	| { status: 'stored'; stored: StoredCompletionFacts; inserted: boolean }
+	| {
+			status: 'stored';
+			stored: StoredCompletionFacts;
+			inserted: boolean;
+			mutations: CompletionMutationFacts;
+	  }
 	| { status: 'tombstoned' }
 	| { status: 'quota_exceeded' };
 
@@ -35,6 +49,7 @@ export interface CompletionWriteExecutor {
 	write(input: VersionedCompletionWrite): Promise<VersionedCompletionWriteExecution>;
 	beginPuzzleDeletion(puzzleId: string, deletedAt: number): Promise<void>;
 	finishPuzzleDeletion(puzzleId: string): Promise<void>;
+	finishFamilyFirstClears(familyId: string): Promise<void>;
 	isPuzzleTombstoned(puzzleId: string): Promise<boolean>;
 }
 

@@ -8,6 +8,7 @@ const dbContextMock = vi.hoisted(() => ({
 		deletePuzzleCompletionData: vi.fn(async () => undefined),
 		beginPuzzleDeletion: vi.fn(async () => undefined),
 		finishPuzzleDeletion: vi.fn(async () => undefined),
+		finishFamilyFirstClears: vi.fn(async () => undefined),
 		isPuzzleTombstoned: vi.fn().mockResolvedValue(false)
 	}
 }));

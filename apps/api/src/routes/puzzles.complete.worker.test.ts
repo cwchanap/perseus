@@ -8,6 +8,7 @@ const { workerDb, completionWrites } = vi.hoisted(() => ({
 		write: vi.fn(),
 		beginPuzzleDeletion: vi.fn(),
 		finishPuzzleDeletion: vi.fn(),
+		finishFamilyFirstClears: vi.fn(),
 		isPuzzleTombstoned: vi.fn()
 	} as unknown as CompletionWriteExecutor
 }));
@@ -40,7 +41,19 @@ vi.mock('../services/storage.worker', () => ({
 		aspectRatio: '4:3',
 		createdAt: 100,
 		status: 'ready'
-	} as never)
+	} as never),
+	getFamily: vi.fn().mockResolvedValue({
+		id: '323e4567-e89b-42d3-a456-426614174001',
+		name: 'Test Family',
+		aspectRatio: '4:3',
+		status: 'ready',
+		createdAt: 100,
+		variants: {
+			easy: 'pz',
+			normal: 'pz-normal',
+			hard: 'pz-hard'
+		}
+	})
 }));
 
 vi.mock('../services/player-auth.worker', () => ({
@@ -525,6 +538,31 @@ describe('POST /api/puzzles/:id/complete (Worker)', () => {
 			message: 'Completion history limit reached'
 		});
 		expect(ensurePuzzleFamilyOwnership).toHaveBeenCalledOnce();
+	});
+
+	it('returns structured 404 when variant is ready but parent family failed', async () => {
+		vi.mocked(storage.getFamily).mockResolvedValueOnce({
+			id: FAMILY_ID,
+			name: 'Failed Family',
+			aspectRatio: '4:3',
+			status: 'failed',
+			createdAt: 100,
+			variants: { easy: PUZZLE_ID, normal: 'pz-normal', hard: 'pz-hard' }
+		} as never);
+
+		const res = await buildApp().request(
+			`/api/puzzles/${PUZZLE_ID}/complete`,
+			{
+				method: 'POST',
+				headers: jsonHeaders(),
+				body: JSON.stringify(VERSIONED_CASES[0].request)
+			},
+			DUMMY_ENV
+		);
+
+		expect(res.status).toBe(404);
+		expect(await res.json()).toEqual({ error: 'not_found', message: 'Puzzle not found' });
+		expect(recordVersionedCompletion).not.toHaveBeenCalled();
 	});
 
 	it('returns structured 404 for a versioned replay fenced by a tombstone', async () => {
