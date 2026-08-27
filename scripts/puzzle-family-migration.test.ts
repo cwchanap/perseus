@@ -913,6 +913,70 @@ describe('cleanupLegacyPuzzles', () => {
 		globalThis.fetch = originalFetch;
 	});
 
+	it('fails closed when a leftover puzzle: key lacks a usable pieceCount', async () => {
+		makeManifest(dir, 1);
+		writeFileSync(
+			join(dir, 'import-results.json'),
+			JSON.stringify({
+				importedAt: '2026-08-27T00:00:00.000Z',
+				families: [
+					{
+						legacyId: PUZZLE_A,
+						familyId: FAMILY_A,
+						name: 'Alpha',
+						ownerId: OWNER_A,
+						status: 'ready'
+					}
+				]
+			})
+		);
+
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = mock(
+			async () =>
+				new Response(
+					JSON.stringify({
+						families: [{ id: FAMILY_A, name: 'Alpha', status: 'ready' }]
+					}),
+					{ status: 200 }
+				)
+		) as unknown as typeof fetch;
+
+		const runWrangler: RunWrangler = async (args) => {
+			wranglerCalls.push([...args]);
+			if (args.includes('kv') && args.includes('list')) {
+				return {
+					exitCode: 0,
+					stdout: JSON.stringify([{ name: `puzzle:${PUZZLE_C}` }]),
+					stderr: ''
+				};
+			}
+			if (args.includes('kv') && args.includes('get') && args.includes(`puzzle:${PUZZLE_C}`)) {
+				return {
+					exitCode: 0,
+					stdout: JSON.stringify({ status: 'ready' }),
+					stderr: ''
+				};
+			}
+			return { exitCode: 0, stdout: '', stderr: '' };
+		};
+
+		await expect(
+			cleanupLegacyPuzzles({
+				migrationDir: dir,
+				server: SERVER,
+				skipAccess: true,
+				fetchFn: globalThis.fetch,
+				runWrangler
+			})
+		).rejects.toThrow(
+			`Cannot delete leftover legacy puzzle ${PUZZLE_C}: pieceCount unknown (not in manifest and KV metadata lacked pieceCount)`
+		);
+
+		expect(wranglerCalls.some((args) => args.includes('delete'))).toBe(false);
+		globalThis.fetch = originalFetch;
+	});
+
 	it('deletes leftover puzzle: KV keys not covered by the manifest', async () => {
 		makeManifest(dir, 1);
 		writeFileSync(

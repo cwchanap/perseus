@@ -392,6 +392,7 @@ export async function cleanupLegacyPuzzles(options: CleanupOptions): Promise<voi
 	const manifestLegacyIds = new Set(manifest.puzzles.map((entry) => entry.legacyId));
 	const leftoverKvKeys = await listLeftoverPuzzleKvKeys(runWrangler);
 	const leftoverPieceCounts = new Map<string, number>();
+	const leftoverCandidateKvKeys: string[] = [];
 
 	for (const kvKey of leftoverKvKeys) {
 		const legacyId = legacyIdFromPuzzleKvKey(kvKey);
@@ -399,17 +400,11 @@ export async function cleanupLegacyPuzzles(options: CleanupOptions): Promise<voi
 		if (excludedVariantIds.has(legacyId)) continue;
 		const metadata = await fetchPuzzleKvMetadata(legacyId, runWrangler);
 		if (metadata.familyId) continue;
+		leftoverCandidateKvKeys.push(kvKey);
 		if (metadata.pieceCount !== null) leftoverPieceCounts.set(legacyId, metadata.pieceCount);
 	}
 
-	const plan = buildCleanupPlan(
-		manifest,
-		leftoverKvKeys.filter((kvKey) => {
-			const legacyId = legacyIdFromPuzzleKvKey(kvKey);
-			return legacyId !== null && leftoverPieceCounts.has(legacyId);
-		}),
-		leftoverPieceCounts
-	);
+	const plan = buildCleanupPlan(manifest, leftoverCandidateKvKeys, leftoverPieceCounts);
 
 	if (options.dryRun) {
 		printCleanupPlan(plan);
