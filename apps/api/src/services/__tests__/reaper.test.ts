@@ -2329,6 +2329,30 @@ describe('reapOrphanedAvatars', () => {
 		expect(result.reaped).toBe(0);
 	});
 
+	it('continues when avatar cursor read and persistence fail', async () => {
+		const env = makeAvatarEnv([]);
+		const kv = env.PUZZLE_METADATA as any;
+		kv.get.mockRejectedValueOnce(new Error('KV cursor read failed'));
+		kv.delete.mockRejectedValueOnce(new Error('KV cursor delete failed'));
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const result = await reapOrphanedAvatars(env, NOW);
+
+		expect(result.scanned).toBe(0);
+		expect(result.candidates).toBe(0);
+		expect(result.reaped).toBe(0);
+		expect(env.PUZZLES_BUCKET.list).toHaveBeenCalledWith({
+			prefix: 'avatars/',
+			cursor: undefined,
+			limit: AVATAR_GC_BATCH_LIMIT
+		});
+		expect(consoleSpy).toHaveBeenCalledWith(
+			'Reaper: failed to persist string cursor for orphaned-avatars-r2:',
+			expect.any(Error)
+		);
+		consoleSpy.mockRestore();
+	});
+
 	it('skips legacy unversioned keys (avatars/{playerId})', async () => {
 		const env = makeAvatarEnv([{ key: 'avatars/player-1', uploaded: OLD }]);
 		(getAvatarTokensByPlayerIds as any).mockResolvedValue(new Map());

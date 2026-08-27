@@ -7,6 +7,14 @@ vi.mock('../db.worker', () => ({
 	getWorkerDb: vi.fn(() => ({}))
 }));
 
+vi.mock('@perseus/types', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('@perseus/types')>();
+	return {
+		...actual,
+		coercePuzzleStatus: vi.fn(actual.coercePuzzleStatus)
+	};
+});
+
 // Mock the shared repositories with an in-memory store so the route's
 // override-preservation logic (PATCH keeps existing avatarUrl) is exercised.
 vi.mock('@perseus/shared', async (importOriginal) => {
@@ -574,6 +582,104 @@ describe('player avatar route (Worker)', () => {
 		expect(stagingKeys).toHaveLength(0);
 	});
 
+	it('deletes the losing versioned object when a later upload wins after a prior token', async () => {
+		const { bucket } = createMockBucket();
+		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
+		const shared = await import('@perseus/shared');
+		const profileStore = (shared as any).__store as Map<string, any>;
+		const priorToken = 'prior-token';
+		profileStore.set('p1', {
+			displayName: null,
+			avatarUrl: '/api/player/p1/avatar',
+			avatarUpdateToken: priorToken
+		});
+		vi.mocked(shared.updateProfileAvatarUrl).mockImplementationOnce(
+			async (_db, playerId, avatarUrl, updatedAt) => {
+				profileStore.set(playerId, {
+					displayName: null,
+					avatarUrl,
+					updatedAt,
+					avatarUpdateToken: 'winning-token'
+				});
+			}
+		);
+
+		const form = new FormData();
+		form.append('avatar', new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' }), 'a.png');
+		const res = await buildApp().request(
+			'/api/player/avatar',
+			{ method: 'POST', headers: AUTH_COOKIE, body: form },
+			env
+		);
+
+		expect(res.status).toBe(200);
+		expect(bucket.put).toHaveBeenCalledTimes(1);
+		const versionedKey = vi.mocked(bucket.put).mock.calls[0][0];
+		expect(bucket.delete).toHaveBeenCalledWith(versionedKey);
+		expect(bucket.delete).not.toHaveBeenCalledWith(`avatars/p1/${priorToken}`);
+	});
+
+	it('deletes the losing versioned object when a later upload wins from no prior token', async () => {
+		const { bucket } = createMockBucket();
+		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
+		const shared = await import('@perseus/shared');
+		const profileStore = (shared as any).__store as Map<string, any>;
+		vi.mocked(shared.updateProfileAvatarUrl).mockImplementationOnce(
+			async (_db, playerId, avatarUrl, updatedAt) => {
+				profileStore.set(playerId, {
+					displayName: null,
+					avatarUrl,
+					updatedAt,
+					avatarUpdateToken: 'winning-token'
+				});
+			}
+		);
+
+		const form = new FormData();
+		form.append('avatar', new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' }), 'a.png');
+		const res = await buildApp().request(
+			'/api/player/avatar',
+			{ method: 'POST', headers: AUTH_COOKIE, body: form },
+			env
+		);
+
+		expect(res.status).toBe(200);
+		expect(bucket.put).toHaveBeenCalledTimes(1);
+		const versionedKey = vi.mocked(bucket.put).mock.calls[0][0];
+		expect(bucket.delete).toHaveBeenCalledWith(versionedKey);
+	});
+
+	it('logs and continues when the avatar cleanup re-read throws', async () => {
+		const { bucket } = createMockBucket();
+		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
+		const shared = await import('@perseus/shared');
+		const priorToken = 'prior-token';
+		vi.mocked(shared.getProfileOverride)
+			.mockResolvedValueOnce({
+				displayName: null,
+				avatarUrl: '/api/player/p1/avatar',
+				avatarUpdateToken: priorToken
+			} as any)
+			.mockRejectedValueOnce(new Error('D1 re-read down'));
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const form = new FormData();
+		form.append('avatar', new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' }), 'a.png');
+		const res = await buildApp().request(
+			'/api/player/avatar',
+			{ method: 'POST', headers: AUTH_COOKIE, body: form },
+			env
+		);
+
+		expect(res.status).toBe(200);
+		expect(bucket.delete).not.toHaveBeenCalled();
+		expect(consoleSpy).toHaveBeenCalledWith(
+			'Avatar upload: failed to re-read override for cleanup:',
+			expect.any(Error)
+		);
+		consoleSpy.mockRestore();
+	});
+
 	it('GET avatar serves the stored image from R2', async () => {
 		const { bucket } = createMockBucket();
 		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
@@ -667,6 +773,27 @@ describe('player avatar route (Worker)', () => {
 		expect(res.status).toBe(400);
 		const body = (await res.json()) as any;
 		expect(body.message).toBe('Image is corrupted or truncated');
+		expect(bucket.put).not.toHaveBeenCalled();
+	});
+
+	it('POST avatar rejects dimensions exceeding the maximum with 400', async () => {
+		const { bucket } = createMockBucket();
+		const env = { PUZZLES_BUCKET: bucket } as unknown as Env;
+		const oversizedPng = new Uint8Array(PNG_BYTES);
+		// MAX_AVATAR_DIMENSION is 512 in the route; use 513x1 to reach the
+		// dimension guard before the structural end-marker check.
+		new DataView(oversizedPng.buffer).setUint32(16, 513);
+		const form = new FormData();
+		form.append('avatar', new Blob([oversizedPng], { type: 'image/png' }), 'a.png');
+
+		const res = await buildApp().request(
+			'/api/player/avatar',
+			{ method: 'POST', headers: AUTH_COOKIE, body: form },
+			env
+		);
+
+		expect(res.status).toBe(400);
+		expect(((await res.json()) as any).message).toContain('dimensions must be');
 		expect(bucket.put).not.toHaveBeenCalled();
 	});
 
@@ -1375,6 +1502,25 @@ describe('player response validation (Worker)', () => {
 		expect(((await res.json()) as any).error).toBe('internal_error');
 	});
 
+	it('GET progression returns 500 when the summary fails validation', async () => {
+		const shared = await import('@perseus/shared');
+		vi.mocked(shared.getPlayerProgressionSummary).mockResolvedValueOnce({ score: 0 } as any);
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const res = await buildApp().request(
+			'/api/player/progression',
+			{ headers: AUTH_COOKIE },
+			DUMMY_ENV
+		);
+
+		expect(res.status).toBe(500);
+		expect(await res.json()).toEqual({
+			error: 'internal_error',
+			message: 'Failed to build progression summary'
+		});
+		consoleSpy.mockRestore();
+	});
+
 	it('GET puzzle-families returns 500 when a projected row fails validation', async () => {
 		const shared = await import('@perseus/shared');
 		(shared as any).__familiesStore.set('p1', [
@@ -1392,6 +1538,46 @@ describe('player response validation (Worker)', () => {
 		);
 		expect(res.status).toBe(500);
 		expect(((await res.json()) as any).error).toBe('internal_error');
+	});
+
+	it.each([
+		['a non-string category', { category: 123 }],
+		['an invalid category string', { category: 'Unknown' }],
+		['an invalid status', { status: 'Unknown' }]
+	])('GET puzzle-families rejects a good row alongside %s', async (_description, invalidFields) => {
+		const shared = await import('@perseus/shared');
+		if ('status' in invalidFields) {
+			const types = await import('@perseus/types');
+			vi.mocked(types.coercePuzzleStatus).mockReturnValueOnce('invalid' as any);
+		}
+		const goodFamily = {
+			id: 'a0000000-0000-4000-8000-000000000002',
+			name: 'Good family',
+			aspectRatio: '1:1',
+			status: 'ready',
+			createdAt: 1
+		};
+		(shared as any).__familiesStore.set('p1', [
+			{
+				...goodFamily,
+				id: 'a0000000-0000-4000-8000-000000000001',
+				name: 'Bad family',
+				...invalidFields
+			},
+			goodFamily
+		]);
+
+		const res = await buildApp().request(
+			'/api/player/puzzle-families',
+			{ headers: AUTH_COOKIE },
+			DUMMY_ENV
+		);
+
+		expect(res.status).toBe(500);
+		expect(await res.json()).toEqual({
+			error: 'internal_error',
+			message: 'Failed to list puzzle families'
+		});
 	});
 
 	it('GET stats returns 500 when a projected row fails validation', async () => {

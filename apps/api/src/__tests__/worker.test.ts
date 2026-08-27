@@ -2,6 +2,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Hono } from 'hono';
 
+const consoleLogSpy = vi.hoisted(() => vi.spyOn(console, 'log').mockImplementation(() => {}));
+
 vi.mock('../routes/puzzles.worker', () => {
 	const app = new Hono();
 	app.get('/', (c: any) => c.json({ puzzles: [] }));
@@ -22,11 +24,17 @@ vi.mock('../routes/auth.worker', () => {
 vi.mock('../services/reaper', () => ({
 	reapStuckPuzzles: vi.fn(),
 	reapCleanupRecords: vi.fn(),
-	reapOrphanedReservations: vi.fn()
+	reapOrphanedReservations: vi.fn(),
+	reapOrphanedAvatars: vi.fn()
 }));
 
 import worker from '../worker';
-import { reapStuckPuzzles, reapCleanupRecords, reapOrphanedReservations } from '../services/reaper';
+import {
+	reapStuckPuzzles,
+	reapCleanupRecords,
+	reapOrphanedReservations,
+	reapOrphanedAvatars
+} from '../services/reaper';
 
 function createMockCtx(): ExecutionContext {
 	return {
@@ -117,6 +125,27 @@ describe('Worker Entry Point', () => {
 			expect(validEnv.ASSETS.fetch).not.toHaveBeenCalled();
 		});
 
+		it('should skip request logging for the OAuth callback path', async () => {
+			const logSpy = consoleLogSpy;
+			logSpy.mockClear();
+
+			const callbackRes = await worker.fetch(
+				new Request('http://localhost/api/auth/google/callback'),
+				validEnv as any,
+				createMockCtx()
+			);
+			expect(callbackRes.status).not.toBe(500);
+			expect(logSpy).not.toHaveBeenCalled();
+
+			const normalRes = await worker.fetch(
+				new Request('http://localhost/api/health'),
+				validEnv as any,
+				createMockCtx()
+			);
+			expect(normalRes.status).toBe(200);
+			expect(logSpy).toHaveBeenCalled();
+		});
+
 		it('should route /health to Hono', async () => {
 			const req = new Request('http://localhost/health');
 			const res = await worker.fetch(req, validEnv as any, createMockCtx());
@@ -162,6 +191,13 @@ describe('Worker Entry Point', () => {
 	describe('scheduled handler (reaper)', () => {
 		beforeEach(() => {
 			(reapOrphanedReservations as any).mockResolvedValue({
+				scanned: 0,
+				candidates: 0,
+				reaped: 0,
+				errors: 0,
+				details: []
+			});
+			(reapOrphanedAvatars as any).mockResolvedValue({
 				scanned: 0,
 				candidates: 0,
 				reaped: 0,
@@ -353,6 +389,94 @@ describe('Worker Entry Point', () => {
 			await waitUntilCall;
 
 			expect(reapOrphanedReservations).toHaveBeenCalledWith(env);
+		});
+
+		it('should log avatar GC results when candidates are found', async () => {
+			const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+			logSpy.mockClear();
+			(reapStuckPuzzles as any).mockResolvedValue({
+				scanned: 0,
+				candidates: 0,
+				reaped: 0,
+				errors: 0,
+				details: []
+			});
+			(reapCleanupRecords as any).mockResolvedValue({
+				scanned: 0,
+				reaped: 0,
+				errors: 0,
+				details: []
+			});
+			(reapOrphanedReservations as any).mockResolvedValue({
+				scanned: 0,
+				candidates: 0,
+				reaped: 0,
+				errors: 0,
+				details: []
+			});
+			(reapOrphanedAvatars as any).mockResolvedValue({
+				scanned: 2,
+				candidates: 1,
+				reaped: 1,
+				errors: 0,
+				details: [{ puzzleId: 'avatar-player', action: 'avatar-gc-reaped' }]
+			});
+			const ctx = createMockCtx();
+			const env = { PUZZLE_METADATA: {} } as any;
+
+			await worker.scheduled!(undefined as any, env, ctx);
+			const waitUntilCall = (ctx.waitUntil as any).mock.calls[0][0];
+			await waitUntilCall;
+
+			expect(reapOrphanedAvatars).toHaveBeenCalledWith(env);
+			expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Reaper avatar GC'));
+			expect(logSpy).toHaveBeenCalledWith(
+				'Reaper avatar GC details:',
+				expect.stringContaining('avatar-player')
+			);
+		});
+
+		it('should log avatar GC summary without details when details are empty', async () => {
+			const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+			logSpy.mockClear();
+			(reapStuckPuzzles as any).mockResolvedValue({
+				scanned: 0,
+				candidates: 0,
+				reaped: 0,
+				errors: 0,
+				details: []
+			});
+			(reapCleanupRecords as any).mockResolvedValue({
+				scanned: 0,
+				reaped: 0,
+				errors: 0,
+				details: []
+			});
+			(reapOrphanedReservations as any).mockResolvedValue({
+				scanned: 0,
+				candidates: 0,
+				reaped: 0,
+				errors: 0,
+				details: []
+			});
+			(reapOrphanedAvatars as any).mockResolvedValue({
+				scanned: 2,
+				candidates: 1,
+				reaped: 0,
+				errors: 1,
+				details: []
+			});
+			const ctx = createMockCtx();
+			const env = { PUZZLE_METADATA: {} } as any;
+
+			await worker.scheduled!(undefined as any, env, ctx);
+			const waitUntilCall = (ctx.waitUntil as any).mock.calls[0][0];
+			await waitUntilCall;
+
+			expect(reapOrphanedAvatars).toHaveBeenCalledWith(env);
+			expect(logSpy).toHaveBeenCalledWith(
+				expect.stringContaining('Reaper avatar GC: scanned=2 candidates=1')
+			);
 		});
 	});
 });
