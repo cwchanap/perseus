@@ -1,18 +1,26 @@
-import type { ResultClass } from '@perseus/types';
+import type { PuzzleDifficulty, ResultClass } from '@perseus/types';
 
 export interface VersionedCompletionWrite {
 	playerId: string;
 	puzzleId: string;
+	familyId: string;
+	difficulty: PuzzleDifficulty;
 	runId: string;
 	resultClass: ResultClass;
 	elapsedActiveSeconds: number | null;
+	hintsUsed: number;
+	incorrectAttempts: number;
 	receivedAt: number;
 }
 
 export interface StoredCompletionFacts {
 	puzzleId: string;
+	familyId: string;
+	difficulty: PuzzleDifficulty;
 	resultClass: ResultClass;
 	elapsedActiveSeconds: number | null;
+	hintsUsed: number;
+	incorrectAttempts: number;
 	completedAt: number;
 }
 
@@ -38,7 +46,10 @@ export type VersionedCompletionResult =
 	| { status: 'quota_exceeded' };
 
 export function isCanonicalBest(input: VersionedCompletionWrite): boolean {
-	return input.resultClass === 'standard_timed' && input.elapsedActiveSeconds !== null;
+	return (
+		(input.resultClass === 'standard_timed' || input.resultClass === 'rotation_timed') &&
+		input.elapsedActiveSeconds !== null
+	);
 }
 
 export function completionFactsMatch(
@@ -47,8 +58,12 @@ export function completionFactsMatch(
 ): boolean {
 	return (
 		input.puzzleId === stored.puzzleId &&
+		input.familyId === stored.familyId &&
+		input.difficulty === stored.difficulty &&
 		input.resultClass === stored.resultClass &&
-		input.elapsedActiveSeconds === stored.elapsedActiveSeconds
+		input.elapsedActiveSeconds === stored.elapsedActiveSeconds &&
+		input.hintsUsed === stored.hintsUsed &&
+		input.incorrectAttempts === stored.incorrectAttempts
 	);
 }
 

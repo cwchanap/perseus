@@ -1,13 +1,14 @@
-import { and, eq, isNotNull, isNull, sql } from 'drizzle-orm';
+import { and, eq, isNotNull, isNull, sql, type SQL } from 'drizzle-orm';
 import { drizzle, type DrizzleD1Database } from 'drizzle-orm/d1';
 import type { ResultClass } from '@perseus/types';
 import * as schema from '../schema';
 import {
 	playerCompletionUsage,
+	playerDifficultyCompletions,
+	playerVariantMastery,
 	puzzleBestTimes,
 	puzzleCompletionRuns,
-	puzzleDeletionTombstones,
-	playerVariantMastery
+	puzzleDeletionTombstones
 } from '../schema';
 import type {
 	CompletionWriteExecutor,
@@ -23,10 +24,6 @@ interface D1Env {
 
 export type D1AppDb = DrizzleD1Database<typeof schema>;
 
-// Placeholder identity until Task 11 derives family/difficulty from trusted metadata.
-const PLACEHOLDER_FAMILY_ID = '00000000-0000-4000-8000-000000000001';
-const PLACEHOLDER_DIFFICULTY = 'easy';
-
 export function createD1Db(env: D1Env): D1AppDb {
 	// Migrations live in packages/shared/drizzle and are applied by:
 	//   - CI:  the "Apply D1 migrations" step in deploy-infrastructure.yml
@@ -37,16 +34,46 @@ export function createD1Db(env: D1Env): D1AppDb {
 
 function toStoredFacts(row: {
 	puzzleId: string;
+	familyId: string;
+	difficulty: string;
 	resultClass: string;
 	elapsedActiveSeconds: number | null;
+	hintsUsed: number;
+	incorrectAttempts: number;
 	completedAt: number;
 }): StoredCompletionFacts {
 	return {
 		puzzleId: row.puzzleId,
+		familyId: row.familyId,
+		difficulty: row.difficulty as StoredCompletionFacts['difficulty'],
 		resultClass: row.resultClass as ResultClass,
 		elapsedActiveSeconds: row.elapsedActiveSeconds,
+		hintsUsed: row.hintsUsed,
+		incorrectAttempts: row.incorrectAttempts,
 		completedAt: row.completedAt
 	};
+}
+
+function runFactsMatchWhere(input: VersionedCompletionWrite): SQL {
+	const elapsedMatches =
+		input.elapsedActiveSeconds === null
+			? isNull(puzzleCompletionRuns.elapsedActiveSeconds)
+			: eq(puzzleCompletionRuns.elapsedActiveSeconds, input.elapsedActiveSeconds);
+	return and(
+		eq(puzzleCompletionRuns.playerId, input.playerId),
+		eq(puzzleCompletionRuns.runId, input.runId),
+		eq(puzzleCompletionRuns.puzzleId, input.puzzleId),
+		eq(puzzleCompletionRuns.familyId, input.familyId),
+		eq(puzzleCompletionRuns.difficulty, input.difficulty),
+		eq(puzzleCompletionRuns.resultClass, input.resultClass),
+		elapsedMatches,
+		eq(puzzleCompletionRuns.hintsUsed, input.hintsUsed),
+		eq(puzzleCompletionRuns.incorrectAttempts, input.incorrectAttempts),
+		sql`NOT EXISTS (
+			SELECT 1 FROM puzzle_deletion_tombstones
+			WHERE puzzle_id = ${input.puzzleId}
+		)`
+	)!;
 }
 
 export function createD1CompletionWriteExecutor(
@@ -65,10 +92,6 @@ export function createD1CompletionWriteExecutor(
 
 	return {
 		async write(input: VersionedCompletionWrite): Promise<VersionedCompletionWriteExecution> {
-			const elapsedMatches =
-				input.elapsedActiveSeconds === null
-					? isNull(puzzleCompletionRuns.elapsedActiveSeconds)
-					: eq(puzzleCompletionRuns.elapsedActiveSeconds, input.elapsedActiveSeconds);
 			const insertRun = db
 				.insert(puzzleCompletionRuns)
 				.select(
@@ -77,15 +100,15 @@ export function createD1CompletionWriteExecutor(
 							playerId: sql<string>`${input.playerId}`.as('player_id'),
 							runId: sql<string>`${input.runId}`.as('run_id'),
 							puzzleId: sql<string>`${input.puzzleId}`.as('puzzle_id'),
-							familyId: sql<string>`${PLACEHOLDER_FAMILY_ID}`.as('family_id'),
-							difficulty: sql<string>`${PLACEHOLDER_DIFFICULTY}`.as('difficulty'),
+							familyId: sql<string>`${input.familyId}`.as('family_id'),
+							difficulty: sql<string>`${input.difficulty}`.as('difficulty'),
 							resultClass: sql<ResultClass>`${input.resultClass}`.as('result_class'),
 							elapsedActiveSeconds:
 								input.elapsedActiveSeconds === null
 									? sql<null>`NULL`.as('elapsed_active_seconds')
 									: sql<number>`${input.elapsedActiveSeconds}`.as('elapsed_active_seconds'),
-							hintsUsed: sql<number>`0`.as('hints_used'),
-							incorrectAttempts: sql<number>`0`.as('incorrect_attempts'),
+							hintsUsed: sql<number>`${input.hintsUsed}`.as('hints_used'),
+							incorrectAttempts: sql<number>`${input.incorrectAttempts}`.as('incorrect_attempts'),
 							completedAt: sql<number>`${input.receivedAt}`.as('completed_at')
 						})
 						.from(sql`(SELECT 1)`).where(sql`
@@ -118,8 +141,12 @@ export function createD1CompletionWriteExecutor(
 			const readStored = db
 				.select({
 					puzzleId: puzzleCompletionRuns.puzzleId,
+					familyId: puzzleCompletionRuns.familyId,
+					difficulty: puzzleCompletionRuns.difficulty,
 					resultClass: puzzleCompletionRuns.resultClass,
 					elapsedActiveSeconds: puzzleCompletionRuns.elapsedActiveSeconds,
+					hintsUsed: puzzleCompletionRuns.hintsUsed,
+					incorrectAttempts: puzzleCompletionRuns.incorrectAttempts,
 					completedAt: puzzleCompletionRuns.completedAt
 				})
 				.from(puzzleCompletionRuns)
@@ -135,7 +162,27 @@ export function createD1CompletionWriteExecutor(
 				.from(playerCompletionUsage)
 				.where(eq(playerCompletionUsage.playerId, input.playerId))
 				.limit(1);
-			const upsertBest = db
+			const insertFirstClear = db
+				.insert(playerDifficultyCompletions)
+				.select(
+					db
+						.select({
+							playerId: puzzleCompletionRuns.playerId,
+							familyId: puzzleCompletionRuns.familyId,
+							difficulty: puzzleCompletionRuns.difficulty,
+							firstCompletedAt: puzzleCompletionRuns.completedAt
+						})
+						.from(puzzleCompletionRuns)
+						.where(runFactsMatchWhere(input))
+				)
+				.onConflictDoNothing({
+					target: [
+						playerDifficultyCompletions.playerId,
+						playerDifficultyCompletions.familyId,
+						playerDifficultyCompletions.difficulty
+					]
+				});
+			const upsertStandardBest = db
 				.insert(puzzleBestTimes)
 				.select(
 					db
@@ -153,17 +200,9 @@ export function createD1CompletionWriteExecutor(
 						.from(puzzleCompletionRuns)
 						.where(
 							and(
-								eq(puzzleCompletionRuns.playerId, input.playerId),
-								eq(puzzleCompletionRuns.runId, input.runId),
-								eq(puzzleCompletionRuns.puzzleId, input.puzzleId),
-								eq(puzzleCompletionRuns.resultClass, input.resultClass),
-								elapsedMatches,
+								runFactsMatchWhere(input),
 								eq(puzzleCompletionRuns.resultClass, 'standard_timed'),
-								isNotNull(puzzleCompletionRuns.elapsedActiveSeconds),
-								sql`NOT EXISTS (
-									SELECT 1 FROM puzzle_deletion_tombstones
-									WHERE puzzle_id = ${input.puzzleId}
-								)`
+								isNotNull(puzzleCompletionRuns.elapsedActiveSeconds)
 							)
 						)
 				)
@@ -178,13 +217,115 @@ export function createD1CompletionWriteExecutor(
 						END`
 					}
 				});
+			const upsertRotationBest = db
+				.insert(puzzleBestTimes)
+				.select(
+					db
+						.select({
+							playerId: puzzleCompletionRuns.playerId,
+							puzzleId: puzzleCompletionRuns.puzzleId,
+							familyId: puzzleCompletionRuns.familyId,
+							difficulty: puzzleCompletionRuns.difficulty,
+							resultClass: sql<'rotation_timed'>`'rotation_timed'`.as('result_class'),
+							bestTimeSeconds: sql<number>`${puzzleCompletionRuns.elapsedActiveSeconds}`.as(
+								'best_time_seconds'
+							),
+							achievedAt: puzzleCompletionRuns.completedAt
+						})
+						.from(puzzleCompletionRuns)
+						.where(
+							and(
+								runFactsMatchWhere(input),
+								eq(puzzleCompletionRuns.resultClass, 'rotation_timed'),
+								isNotNull(puzzleCompletionRuns.elapsedActiveSeconds)
+							)
+						)
+				)
+				.onConflictDoUpdate({
+					target: [puzzleBestTimes.playerId, puzzleBestTimes.puzzleId, puzzleBestTimes.resultClass],
+					set: {
+						bestTimeSeconds: sql`MIN(${puzzleBestTimes.bestTimeSeconds}, excluded.best_time_seconds)`,
+						achievedAt: sql`CASE
+							WHEN excluded.best_time_seconds < ${puzzleBestTimes.bestTimeSeconds}
+								THEN excluded.achieved_at
+							ELSE ${puzzleBestTimes.achievedAt}
+						END`
+					}
+				});
+			const insertHintlessMastery = db
+				.insert(playerVariantMastery)
+				.select(
+					db
+						.select({
+							playerId: puzzleCompletionRuns.playerId,
+							puzzleId: puzzleCompletionRuns.puzzleId,
+							badge: sql<'hintless'>`'hintless'`.as('badge'),
+							earnedAt: puzzleCompletionRuns.completedAt
+						})
+						.from(puzzleCompletionRuns)
+						.where(and(runFactsMatchWhere(input), eq(puzzleCompletionRuns.hintsUsed, 0)))
+				)
+				.onConflictDoNothing({
+					target: [
+						playerVariantMastery.playerId,
+						playerVariantMastery.puzzleId,
+						playerVariantMastery.badge
+					]
+				});
+			const insertFlawlessMastery = db
+				.insert(playerVariantMastery)
+				.select(
+					db
+						.select({
+							playerId: puzzleCompletionRuns.playerId,
+							puzzleId: puzzleCompletionRuns.puzzleId,
+							badge: sql<'flawless'>`'flawless'`.as('badge'),
+							earnedAt: puzzleCompletionRuns.completedAt
+						})
+						.from(puzzleCompletionRuns)
+						.where(and(runFactsMatchWhere(input), eq(puzzleCompletionRuns.incorrectAttempts, 0)))
+				)
+				.onConflictDoNothing({
+					target: [
+						playerVariantMastery.playerId,
+						playerVariantMastery.puzzleId,
+						playerVariantMastery.badge
+					]
+				});
+			const insertRotationClearMastery = db
+				.insert(playerVariantMastery)
+				.select(
+					db
+						.select({
+							playerId: puzzleCompletionRuns.playerId,
+							puzzleId: puzzleCompletionRuns.puzzleId,
+							badge: sql<'rotation_clear'>`'rotation_clear'`.as('badge'),
+							earnedAt: puzzleCompletionRuns.completedAt
+						})
+						.from(puzzleCompletionRuns)
+						.where(
+							and(runFactsMatchWhere(input), eq(puzzleCompletionRuns.resultClass, 'rotation_timed'))
+						)
+				)
+				.onConflictDoNothing({
+					target: [
+						playerVariantMastery.playerId,
+						playerVariantMastery.puzzleId,
+						playerVariantMastery.badge
+					]
+				});
 
 			const [insertResult, tombstoneRows, storedRows, usageRows] = await db.batch([
 				insertRun,
 				readTombstone,
 				readStored,
 				readUsage,
-				upsertBest
+				insertFirstClear,
+				upsertStandardBest,
+				upsertRotationBest,
+				insertHintlessMastery,
+				insertFlawlessMastery,
+				insertRotationClearMastery
 			]);
 			if (tombstoneRows.length > 0) return { status: 'tombstoned' };
 			if (storedRows[0]) {
