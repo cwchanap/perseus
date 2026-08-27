@@ -309,19 +309,7 @@ export async function reapStuckPuzzles(env: Env, now = Date.now()): Promise<Reap
 
 				const deletion = await executeFamilySourceDeletion(env, record, async () => {
 					if (record.idempotencyKey) {
-						try {
-							await releaseIdempotencyKey(env.PUZZLE_METADATA_DO, record.idempotencyKey, familyId);
-						} catch (releaseErr) {
-							console.error(
-								`Reaper: failed to release DO reservation for ${familyId}:`,
-								releaseErr
-							);
-							result.details.push({
-								puzzleId: familyId,
-								action: 'do-release-failed',
-								error: String(releaseErr)
-							});
-						}
+						await releaseIdempotencyKey(env.PUZZLE_METADATA_DO, record.idempotencyKey, familyId);
 					}
 				});
 
@@ -337,7 +325,9 @@ export async function reapStuckPuzzles(env: Env, now = Date.now()): Promise<Reap
 									? 'kv-delete-failed'
 									: deletion.step === 'kv-variant'
 										? 'kv-delete-failed'
-										: 'd1-finish-failed';
+										: deletion.step === 'release'
+											? 'do-release-failed'
+											: 'd1-finish-failed';
 					console.error(
 						`Reaper: family cleanup failed for ${familyId} at ${deletion.step}:`,
 						deletion
@@ -384,6 +374,7 @@ function familyDeletionFailureAction(step: string, hasFailedKeys?: boolean): str
 	if (step === 'r2')
 		return hasFailedKeys ? 'cleanup-r2-delete-partial' : 'cleanup-r2-delete-failed';
 	if (step === 'kv-family' || step === 'kv-variant') return 'cleanup-kv-delete-failed';
+	if (step === 'release') return 'cleanup-do-release-failed';
 	return 'cleanup-d1-finish-failed';
 }
 
@@ -458,14 +449,7 @@ export async function reapCleanupRecords(env: Env): Promise<ReapResult> {
 
 				const deletion = await executeFamilySourceDeletion(env, record, async () => {
 					if (record.idempotencyKey) {
-						try {
-							await releaseIdempotencyKey(env.PUZZLE_METADATA_DO, record.idempotencyKey, familyId);
-						} catch (releaseErr) {
-							console.error(
-								`Reaper cleanup: failed to release DO reservation for ${familyId}:`,
-								releaseErr
-							);
-						}
+						await releaseIdempotencyKey(env.PUZZLE_METADATA_DO, record.idempotencyKey, familyId);
 					}
 				});
 
@@ -698,14 +682,7 @@ export async function reapOrphanedReservations(env: Env): Promise<ReapResult> {
 				await ensureWorkerPuzzleDeletionFence(env, record);
 
 				const deletion = await executeFamilySourceDeletion(env, record, async () => {
-					try {
-						await releaseIdempotencyKey(env.PUZZLE_METADATA_DO, candidate.idempotencyKey, familyId);
-					} catch (releaseErr) {
-						console.error(
-							`Reaper orphan: failed to release DO reservation for ${familyId}:`,
-							releaseErr
-						);
-					}
+					await releaseIdempotencyKey(env.PUZZLE_METADATA_DO, candidate.idempotencyKey, familyId);
 				});
 
 				if (!deletion.ok) {
@@ -718,7 +695,9 @@ export async function reapOrphanedReservations(env: Env): Promise<ReapResult> {
 									: 'orphan-r2-delete-failed'
 								: deletion.step === 'kv-family' || deletion.step === 'kv-variant'
 									? 'orphan-kv-delete-failed'
-									: 'orphan-d1-finish-failed';
+									: deletion.step === 'release'
+										? 'orphan-do-release-failed'
+										: 'orphan-d1-finish-failed';
 					console.error(`Reaper orphan: family cleanup failed for ${familyId}:`, deletion);
 					result.errors++;
 					result.details.push({

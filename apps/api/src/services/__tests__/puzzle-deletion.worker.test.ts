@@ -7,12 +7,20 @@ const mocks = vi.hoisted(() => ({
 	beginPuzzleDeletion: vi.fn(),
 	finishPuzzleDeletion: vi.fn(),
 	deletePuzzleFamilyOwnership: vi.fn(),
+	deleteMetadataDO: vi.fn(),
+	deleteFamilyCleanupAssets: vi.fn(),
+	deleteFamilyMetadata: vi.fn(),
+	deletePuzzleMetadata: vi.fn(),
 	db: {}
 }));
 
 vi.mock('../storage.worker', () => ({
 	writeCleanupRecord: mocks.writeCleanupRecord,
-	deleteCleanupRecord: mocks.deleteCleanupRecord
+	deleteCleanupRecord: mocks.deleteCleanupRecord,
+	deleteMetadataDO: mocks.deleteMetadataDO,
+	deleteFamilyCleanupAssets: mocks.deleteFamilyCleanupAssets,
+	deleteFamilyMetadata: mocks.deleteFamilyMetadata,
+	deletePuzzleMetadata: mocks.deletePuzzleMetadata
 }));
 
 vi.mock('../../db.worker', () => ({
@@ -31,13 +39,16 @@ vi.mock('@perseus/shared', () => ({
 
 import {
 	ensureWorkerPuzzleDeletionFence,
-	finishWorkerPuzzleDeletion
+	finishWorkerPuzzleDeletion,
+	executeFamilySourceDeletion
 } from '../puzzle-deletion.worker';
 import type { Env } from '../../worker';
 import type { CleanupRecord } from '../storage.worker';
 
 const env = {
-	PUZZLE_METADATA: {}
+	PUZZLE_METADATA: {},
+	PUZZLES_BUCKET: {},
+	PUZZLE_METADATA_DO: {}
 } as Env;
 
 const record: CleanupRecord = {
@@ -64,6 +75,10 @@ describe('Worker puzzle deletion lifecycle', () => {
 		mocks.beginPuzzleDeletion.mockResolvedValue(undefined);
 		mocks.finishPuzzleDeletion.mockResolvedValue(undefined);
 		mocks.deletePuzzleFamilyOwnership.mockResolvedValue(undefined);
+		mocks.deleteMetadataDO.mockResolvedValue(undefined);
+		mocks.deleteFamilyCleanupAssets.mockResolvedValue({ success: true, failedKeys: [] });
+		mocks.deleteFamilyMetadata.mockResolvedValue({ success: true });
+		mocks.deletePuzzleMetadata.mockResolvedValue({ success: true });
 	});
 
 	it('writes the cleanup record before beginning D1 deletion fences for all variants', async () => {
@@ -155,5 +170,48 @@ describe('Worker puzzle deletion lifecycle', () => {
 
 		expect(mocks.deletePuzzleFamilyOwnership).toHaveBeenCalledOnce();
 		expect(mocks.finishPuzzleDeletion).toHaveBeenCalledTimes(PUZZLE_DIFFICULTIES.length);
+	});
+});
+
+describe('executeFamilySourceDeletion reservation release order', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		mocks.deleteCleanupRecord.mockResolvedValue(undefined);
+		mocks.finishPuzzleDeletion.mockResolvedValue(undefined);
+		mocks.deletePuzzleFamilyOwnership.mockResolvedValue(undefined);
+		mocks.deleteMetadataDO.mockResolvedValue(undefined);
+		mocks.deleteFamilyCleanupAssets.mockResolvedValue({ success: true, failedKeys: [] });
+		mocks.deleteFamilyMetadata.mockResolvedValue({ success: true });
+		mocks.deletePuzzleMetadata.mockResolvedValue({ success: true });
+	});
+
+	it('finishes all variants before reservation release and record deletion', async () => {
+		const release = vi.fn(async () => undefined);
+
+		const result = await executeFamilySourceDeletion(env, record, release);
+
+		expect(result).toEqual({ ok: true });
+		for (const difficulty of PUZZLE_DIFFICULTIES) {
+			expect(mocks.finishPuzzleDeletion).toHaveBeenCalledWith(record.variantIds[difficulty]);
+		}
+		expect(release).toHaveBeenCalledOnce();
+		expect(mocks.finishPuzzleDeletion.mock.invocationCallOrder.at(-1)).toBeLessThan(
+			release.mock.invocationCallOrder[0]
+		);
+		expect(release.mock.invocationCallOrder[0]).toBeLessThan(
+			mocks.deleteCleanupRecord.mock.invocationCallOrder[0]
+		);
+	});
+
+	it('retains the cleanup record when reservation release fails', async () => {
+		const release = vi.fn(async () => {
+			throw new Error('DO unavailable');
+		});
+
+		const result = await executeFamilySourceDeletion(env, record, release);
+
+		expect(result).toEqual({ ok: false, step: 'release', error: expect.any(Error) });
+		expect(mocks.finishPuzzleDeletion).toHaveBeenCalledTimes(PUZZLE_DIFFICULTIES.length);
+		expect(mocks.deleteCleanupRecord).not.toHaveBeenCalled();
 	});
 });

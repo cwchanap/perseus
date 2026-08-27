@@ -886,7 +886,7 @@ describe('Admin Worker — DELETE /puzzles/:id idempotency release failure', () 
 		vi.restoreAllMocks();
 	});
 
-	it('logs but returns 204 when idempotency key release fails', async () => {
+	it('returns 500 and retains cleanup record when idempotency key release fails', async () => {
 		const familyId = '550e8400-e29b-41d4-a716-446655440000';
 		vi.mocked(storage.getFamily).mockResolvedValue(
 			makeFamilyMetadata(familyId, 'ready', { idempotencyKey: 'idem-key-1' })
@@ -904,7 +904,7 @@ describe('Admin Worker — DELETE /puzzles/:id idempotency release failure', () 
 			headers: { cookie: 'session=valid.token' }
 		});
 		const res = await admin.fetch(req, { ...baseEnv } as any);
-		expect(res.status).toBe(204);
+		expect(res.status).toBe(500);
 		expect(storage.releaseIdempotencyKey).toHaveBeenCalledWith(
 			baseEnv.PUZZLE_METADATA_DO,
 			'idem-key-1',
@@ -917,12 +917,13 @@ describe('Admin Worker — DELETE /puzzles/:id idempotency release failure', () 
 		expect(vi.mocked(storage.deleteMetadataDO).mock.invocationCallOrder[0]).toBeGreaterThan(
 			dbContextMock.completionWrites.beginPuzzleDeletion.mock.invocationCallOrder[0]
 		);
-		expect(vi.mocked(storage.releaseIdempotencyKey).mock.invocationCallOrder[0]).toBeLessThan(
-			dbContextMock.completionWrites.finishPuzzleDeletion.mock.invocationCallOrder[0]
-		);
 		expect(
 			dbContextMock.completionWrites.finishPuzzleDeletion.mock.invocationCallOrder[0]
-		).toBeLessThan(vi.mocked(storage.deleteCleanupRecord).mock.invocationCallOrder[0]);
+		).toBeLessThan(vi.mocked(storage.releaseIdempotencyKey).mock.invocationCallOrder[0]);
+		expect(vi.mocked(storage.releaseIdempotencyKey).mock.invocationCallOrder[0]).toBeLessThan(
+			vi.mocked(storage.deleteCleanupRecord).mock.invocationCallOrder[0] ?? Number.MAX_SAFE_INTEGER
+		);
+		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
 	});
 });
 

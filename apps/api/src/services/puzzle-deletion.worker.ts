@@ -24,18 +24,22 @@ export async function ensureWorkerPuzzleDeletionFence(
 	}
 }
 
-export async function finishWorkerPuzzleDeletion(env: Env, record: CleanupRecord): Promise<void> {
+export async function completeWorkerPuzzleDeletion(env: Env, record: CleanupRecord): Promise<void> {
 	const { db, completionWrites } = getWorkerDbContext(env);
 	await deletePuzzleFamilyOwnership(db, record.familyId);
 	for (const difficulty of PUZZLE_DIFFICULTIES) {
 		await completionWrites.finishPuzzleDeletion(record.variantIds[difficulty]);
 	}
+}
+
+export async function finishWorkerPuzzleDeletion(env: Env, record: CleanupRecord): Promise<void> {
+	await completeWorkerPuzzleDeletion(env, record);
 	await deleteCleanupRecord(env.PUZZLE_METADATA, record.familyId);
 }
 
 export type FamilySourceDeletionStepFailure = {
 	ok: false;
-	step: 'do-tombstone' | 'r2' | 'kv-family' | 'kv-variant' | 'finish';
+	step: 'do-tombstone' | 'r2' | 'kv-family' | 'kv-variant' | 'finish' | 'release';
 	error?: unknown;
 	failedKeys?: string[];
 };
@@ -43,7 +47,7 @@ export type FamilySourceDeletionStepFailure = {
 export async function executeFamilySourceDeletion(
 	env: Env,
 	record: CleanupRecord,
-	beforeFinish?: () => Promise<void>
+	beforeRecordDelete?: () => Promise<void>
 ): Promise<{ ok: true } | FamilySourceDeletionStepFailure> {
 	const doIds = [
 		record.familyId,
@@ -84,21 +88,24 @@ export async function executeFamilySourceDeletion(
 		}
 	}
 
-	if (beforeFinish) {
+	try {
+		await completeWorkerPuzzleDeletion(env, record);
+	} catch (finishErr) {
+		return { ok: false, step: 'finish', error: finishErr };
+	}
+
+	if (beforeRecordDelete) {
 		try {
-			await beforeFinish();
-		} catch (hookErr) {
-			console.error(
-				`Non-fatal beforeFinish hook failed for family ${record.familyId}; continuing to required finish:`,
-				hookErr
-			);
+			await beforeRecordDelete();
+		} catch (releaseErr) {
+			return { ok: false, step: 'release', error: releaseErr };
 		}
 	}
 
 	try {
-		await finishWorkerPuzzleDeletion(env, record);
-	} catch (finishErr) {
-		return { ok: false, step: 'finish', error: finishErr };
+		await deleteCleanupRecord(env.PUZZLE_METADATA, record.familyId);
+	} catch (recordErr) {
+		return { ok: false, step: 'finish', error: recordErr };
 	}
 
 	return { ok: true };
@@ -107,7 +114,7 @@ export async function executeFamilySourceDeletion(
 export async function executeFencedFamilySourceDeletion(
 	env: Env,
 	record: CleanupRecord,
-	beforeFinish?: () => Promise<void>
+	beforeRecordDelete?: () => Promise<void>
 ): Promise<
 	{ ok: true } | FamilySourceDeletionStepFailure | { ok: false; step: 'fence'; error?: unknown }
 > {
@@ -116,5 +123,5 @@ export async function executeFencedFamilySourceDeletion(
 	} catch (fenceErr) {
 		return { ok: false, step: 'fence', error: fenceErr };
 	}
-	return executeFamilySourceDeletion(env, record, beforeFinish);
+	return executeFamilySourceDeletion(env, record, beforeRecordDelete);
 }

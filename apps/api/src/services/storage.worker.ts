@@ -918,36 +918,6 @@ export async function getImage(
 	}
 }
 
-// Delete all puzzle assets from R2
-export async function deletePuzzleAssets(
-	bucket: R2Bucket,
-	puzzleId: string,
-	pieceCount: number
-): Promise<{ success: boolean; failedKeys: string[] }> {
-	const keysToDelete: string[] = [getOriginalKey(puzzleId), getThumbnailKey(puzzleId)];
-
-	// Add all piece keys
-	for (let i = 0; i < pieceCount; i++) {
-		keysToDelete.push(getPieceKey(puzzleId, i));
-	}
-
-	const failedKeys: string[] = [];
-
-	// Delete in batches (R2 supports up to 1000 keys per delete)
-	const batchSize = 1000;
-	for (let i = 0; i < keysToDelete.length; i += batchSize) {
-		const batch = keysToDelete.slice(i, i + batchSize);
-		try {
-			await bucket.delete(batch);
-		} catch (error) {
-			console.error(`Failed to delete batch for puzzle ${puzzleId}:`, batch, error);
-			failedKeys.push(...batch);
-		}
-	}
-
-	return { success: failedKeys.length === 0, failedKeys };
-}
-
 async function deleteR2Keys(
 	bucket: R2Bucket,
 	keys: string[],
