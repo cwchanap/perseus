@@ -8,6 +8,23 @@ export const PUZZLE_ASPECT_RATIOS = ['1:1', '4:3', '3:4'] as const;
 
 export type PuzzleAspectRatio = (typeof PUZZLE_ASPECT_RATIOS)[number];
 
+export const PUZZLE_DIFFICULTIES = ['easy', 'normal', 'hard'] as const;
+
+export type PuzzleDifficulty = (typeof PUZZLE_DIFFICULTIES)[number];
+
+export const DIFFICULTY_PIECE_COUNTS = {
+	easy: { '1:1': 16, '4:3': 12, '3:4': 12 },
+	normal: { '1:1': 49, '4:3': 48, '3:4': 48 },
+	hard: { '1:1': 100, '4:3': 108, '3:4': 108 }
+} as const;
+
+export function getDifficultyPieceCount(
+	aspectRatio: PuzzleAspectRatio,
+	difficulty: PuzzleDifficulty
+): number {
+	return DIFFICULTY_PIECE_COUNTS[difficulty][aspectRatio];
+}
+
 export const DEFAULT_PUZZLE_ASPECT_RATIO: PuzzleAspectRatio = '1:1';
 
 /**

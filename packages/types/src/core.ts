@@ -19,9 +19,13 @@ export {
 	aspectRatiosMatch,
 	getGridDimensionsForAspectRatio,
 	isValidPieceCountForAspectRatio,
-	getAllowedPieceCountsForAspectRatio
+	getAllowedPieceCountsForAspectRatio,
+	PUZZLE_DIFFICULTIES,
+	DIFFICULTY_PIECE_COUNTS,
+	getDifficultyPieceCount
 } from './grid';
 export { isPuzzleAspectRatio };
+export type { PuzzleDifficulty } from './grid';
 
 export { ErrorCode, ERROR_HTTP_STATUS } from './errors';
 export type { ApiErrorResponse } from './errors';
