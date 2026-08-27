@@ -317,7 +317,7 @@
 				},
 				"pbt_best_time_seconds_check": {
 					"name": "pbt_best_time_seconds_check",
-					"value": "\"puzzle_best_times\".\"best_time_seconds\" BETWEEN 1 AND ?"
+					"value": "\"puzzle_best_times\".\"best_time_seconds\" BETWEEN 1 AND 86400"
 				}
 			}
 		},
@@ -439,7 +439,7 @@
 				},
 				"pcr_elapsed_active_seconds_check": {
 					"name": "pcr_elapsed_active_seconds_check",
-					"value": "(\n\t\t\t\t(\"puzzle_completion_runs\".\"result_class\" = 'relaxed' AND \"puzzle_completion_runs\".\"elapsed_active_seconds\" IS NULL)\n\t\t\t\tOR (\n\t\t\t\t\t\"puzzle_completion_runs\".\"result_class\" IN ('standard_timed', 'rotation_timed', 'assisted_timed')\n\t\t\t\t\tAND \"puzzle_completion_runs\".\"elapsed_active_seconds\" IS NOT NULL\n\t\t\t\t\tAND typeof(\"puzzle_completion_runs\".\"elapsed_active_seconds\") = 'integer'\n\t\t\t\t\tAND \"puzzle_completion_runs\".\"elapsed_active_seconds\" BETWEEN 1 AND ?\n\t\t\t\t)\n\t\t\t)"
+					"value": "(\n\t\t\t\t(\"puzzle_completion_runs\".\"result_class\" = 'relaxed' AND \"puzzle_completion_runs\".\"elapsed_active_seconds\" IS NULL)\n\t\t\t\tOR (\n\t\t\t\t\t\"puzzle_completion_runs\".\"result_class\" IN ('standard_timed', 'rotation_timed', 'assisted_timed')\n\t\t\t\t\tAND \"puzzle_completion_runs\".\"elapsed_active_seconds\" IS NOT NULL\n\t\t\t\t\tAND typeof(\"puzzle_completion_runs\".\"elapsed_active_seconds\") = 'integer'\n\t\t\t\t\tAND \"puzzle_completion_runs\".\"elapsed_active_seconds\" BETWEEN 1 AND 86400\n\t\t\t\t)\n\t\t\t)"
 				}
 			}
 		},
