@@ -13,10 +13,6 @@
 		"./d1": {
 			"types": "./src/drivers/d1.ts",
 			"default": "./src/drivers/d1.ts"
-		},
-		"./bun": {
-			"types": "./src/drivers/bun.ts",
-			"default": "./src/drivers/bun.ts"
 		}
 	},
 	"scripts": {

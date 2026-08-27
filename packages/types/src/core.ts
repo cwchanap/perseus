@@ -234,6 +234,15 @@ export interface RecordPuzzleCompletionV1 {
 	elapsedActiveSeconds: number | null;
 }
 
+export interface RecordPuzzleCompletionV2 {
+	version: 2;
+	runId: string;
+	resultClass: ResultClass;
+	elapsedActiveSeconds: number | null;
+	hintsUsed: number;
+	incorrectAttempts: number;
+}
+
 export const MAX_COMPLETION_TIME_SECONDS = 24 * 60 * 60;
 
 export type RecordPuzzleCompletionResponse =
@@ -406,6 +415,22 @@ export function isPuzzleRunId(value: unknown): value is string {
 	return typeof value === 'string' && PUZZLE_RUN_ID_REGEX.test(value);
 }
 
+function isNonNegativeInteger(value: unknown): value is number {
+	return typeof value === 'number' && Number.isInteger(value) && value >= 0;
+}
+
+function isValidTimedElapsedSeconds(
+	elapsedActiveSeconds: unknown,
+	maxElapsedActiveSeconds: number
+): boolean {
+	return (
+		typeof elapsedActiveSeconds === 'number' &&
+		Number.isInteger(elapsedActiveSeconds) &&
+		elapsedActiveSeconds > 0 &&
+		elapsedActiveSeconds <= maxElapsedActiveSeconds
+	);
+}
+
 export function isRecordPuzzleCompletionV1(
 	value: unknown,
 	maxElapsedActiveSeconds: number
@@ -428,12 +453,41 @@ export function isRecordPuzzleCompletionV1(
 	if (!RESULT_CLASSES.includes(completion.resultClass as ResultClass)) return false;
 	if (completion.resultClass === 'relaxed') return completion.elapsedActiveSeconds === null;
 
-	return (
-		typeof completion.elapsedActiveSeconds === 'number' &&
-		Number.isInteger(completion.elapsedActiveSeconds) &&
-		completion.elapsedActiveSeconds > 0 &&
-		completion.elapsedActiveSeconds <= maxElapsedActiveSeconds
-	);
+	return isValidTimedElapsedSeconds(completion.elapsedActiveSeconds, maxElapsedActiveSeconds);
+}
+
+export function isRecordPuzzleCompletionV2(
+	value: unknown,
+	maxElapsedActiveSeconds: number
+): value is RecordPuzzleCompletionV2 {
+	if (typeof value !== 'object' || value === null) return false;
+	if (!Number.isInteger(maxElapsedActiveSeconds) || maxElapsedActiveSeconds <= 0) {
+		return false;
+	}
+
+	const completion = value as Record<string, unknown>;
+	const fields = [
+		'version',
+		'runId',
+		'resultClass',
+		'elapsedActiveSeconds',
+		'hintsUsed',
+		'incorrectAttempts'
+	];
+	const completionKeys = Object.keys(completion);
+	if (
+		completionKeys.length !== fields.length ||
+		!completionKeys.every((field) => fields.includes(field))
+	) {
+		return false;
+	}
+	if (completion.version !== 2 || !isPuzzleRunId(completion.runId)) return false;
+	if (!RESULT_CLASSES.includes(completion.resultClass as ResultClass)) return false;
+	if (!isNonNegativeInteger(completion.hintsUsed)) return false;
+	if (!isNonNegativeInteger(completion.incorrectAttempts)) return false;
+	if (completion.resultClass === 'relaxed') return completion.elapsedActiveSeconds === null;
+
+	return isValidTimedElapsedSeconds(completion.elapsedActiveSeconds, maxElapsedActiveSeconds);
 }
 
 export function validateWorkflowParams(params: unknown): params is WorkflowParams {

@@ -22,6 +22,7 @@ import {
 	isPuzzleId,
 	isPuzzleRunId,
 	isRecordPuzzleCompletionV1,
+	isRecordPuzzleCompletionV2,
 	type PlayerSessionResponse,
 	type PlayerAllowlistEntry,
 	type PlayerProfile,
@@ -348,6 +349,53 @@ describe('versioned puzzle completion contract', () => {
 		]
 	])('rejects invalid completion request %j', (candidate, expected) => {
 		expect(isRecordPuzzleCompletionV1(candidate, 86_400)).toBe(expected);
+	});
+
+	describe('V2 six-field request', () => {
+		const timed = {
+			version: 2,
+			runId: currentRunId,
+			resultClass: 'standard_timed' as const,
+			elapsedActiveSeconds: 90,
+			hintsUsed: 2,
+			incorrectAttempts: 1
+		};
+		const relaxed = {
+			version: 2,
+			runId: currentRunId,
+			resultClass: 'relaxed' as const,
+			elapsedActiveSeconds: null,
+			hintsUsed: 0,
+			incorrectAttempts: 0
+		};
+
+		it('accepts timed and relaxed V2 requests with hints and incorrect attempts', () => {
+			expect(isRecordPuzzleCompletionV2(timed, 86_400)).toBe(true);
+			expect(isRecordPuzzleCompletionV2(relaxed, 86_400)).toBe(true);
+		});
+
+		it('rejects V2 requests with negative hints or incorrect attempts', () => {
+			expect(isRecordPuzzleCompletionV2({ ...timed, hintsUsed: -1 }, 86_400)).toBe(false);
+			expect(isRecordPuzzleCompletionV2({ ...timed, incorrectAttempts: -1 }, 86_400)).toBe(false);
+		});
+
+		it('rejects V2 requests with unexpected extra fields', () => {
+			expect(isRecordPuzzleCompletionV2({ ...timed, obsoleteField: true }, 86_400)).toBe(false);
+		});
+
+		it('rejects V1-shaped requests as V2', () => {
+			expect(
+				isRecordPuzzleCompletionV2(
+					{
+						version: 1,
+						runId: currentRunId,
+						resultClass: 'standard_timed',
+						elapsedActiveSeconds: 90
+					},
+					86_400
+				)
+			).toBe(false);
+		});
 	});
 });
 
