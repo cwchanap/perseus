@@ -58,6 +58,12 @@ export function hasAccessCredentials(options: AccessCredentials): boolean {
 }
 
 export async function readError(response: Response, usingServiceToken = false): Promise<string> {
+	const accessHint = usingServiceToken
+		? 'Check CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET are valid and not expired.'
+		: 'Run: bun run admin:startup:set-token';
+	if (response.status === 401 || response.status === 302 || response.status === 403) {
+		return `${response.status} Cloudflare Access blocked — ${accessHint}`;
+	}
 	const payload = await response
 		.clone()
 		.json()
@@ -70,16 +76,8 @@ export async function readError(response: Response, usingServiceToken = false): 
 		.clone()
 		.text()
 		.catch(() => '');
-	if (
-		text.includes('Cloudflare Access') ||
-		response.status === 401 ||
-		response.status === 302 ||
-		response.status === 403
-	) {
-		const hint = usingServiceToken
-			? 'Check CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET are valid and not expired.'
-			: 'Run: bun run admin:startup:set-token';
-		return `${response.status} Cloudflare Access blocked — ${hint}`;
+	if (text.includes('Cloudflare Access')) {
+		return `${response.status} Cloudflare Access blocked — ${accessHint}`;
 	}
 	return `${response.status} ${response.statusText}`;
 }
