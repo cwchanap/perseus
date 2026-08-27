@@ -151,11 +151,17 @@ describe('buildAdminAccessDestinations', () => {
 });
 
 describe('buildCliAccessDestinations', () => {
-	it('builds only the exact puzzle list/create path needed by the CLI', () => {
-		expect(CLI_ACCESS_PATHS).toEqual(['/api/admin/puzzles']);
+	it('builds only the exact puzzle family list/create path needed by the CLI', () => {
+		expect(CLI_ACCESS_PATHS).toEqual(['/api/admin/puzzle-families']);
 		expect(buildCliAccessDestinations('perseus.cwchanap.dev')).toEqual([
-			{ type: 'public', uri: 'perseus.cwchanap.dev/api/admin/puzzles' }
+			{ type: 'public', uri: 'perseus.cwchanap.dev/api/admin/puzzle-families' }
 		]);
+	});
+
+	it('does not include the sibling family-delete route in CLI paths', () => {
+		const cliPaths = CLI_ACCESS_PATHS.join(' ');
+		expect(cliPaths).not.toContain('puzzle-family-delete');
+		expect(ADMIN_ACCESS_PATHS.some((path) => path.includes('/api/admin/*'))).toBe(true);
 	});
 });
 
@@ -356,9 +362,9 @@ describe('buildCliAccessApplicationArgs', () => {
 		});
 
 		expect(args.name).toBe('Perseus Admin CLI');
-		expect(args.domain).toBe('perseus.cwchanap.dev/api/admin/puzzles');
+		expect(args.domain).toBe('perseus.cwchanap.dev/api/admin/puzzle-families');
 		expect(args.destinations).toEqual([
-			{ type: 'public', uri: 'perseus.cwchanap.dev/api/admin/puzzles' }
+			{ type: 'public', uri: 'perseus.cwchanap.dev/api/admin/puzzle-families' }
 		]);
 		expect(args.sameSiteCookieAttribute).toBe('lax');
 		expect(args.policies).toHaveLength(2);

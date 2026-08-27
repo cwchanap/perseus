@@ -120,11 +120,13 @@ app.get('/api', (c) => {
 });
 
 import puzzles from './routes/puzzles.worker';
+import puzzleFamilies from './routes/puzzle-families.worker';
 import admin from './routes/admin.worker';
 import auth from './routes/auth.worker';
 import player from './routes/player.worker';
 
 app.route('/api/puzzles', puzzles);
+app.route('/api/puzzle-families', puzzleFamilies);
 app.route('/api/admin', admin);
 app.route('/api/auth', auth);
 app.route('/api/player', player);

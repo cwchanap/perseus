@@ -12,7 +12,7 @@ vi.mock('../../services/storage.worker', async () => {
 	return {
 		...actual,
 		getPuzzle: vi.fn(),
-		listPuzzles: vi.fn(),
+		listFamilies: vi.fn(),
 		getImage: vi.fn(),
 		resolveVariantReferenceKey: vi.fn()
 	};

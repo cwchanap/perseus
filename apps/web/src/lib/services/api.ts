@@ -14,7 +14,7 @@ import type {
 	PlayerPuzzleSummary,
 	PlayerStatRow
 } from '$lib/types/puzzle';
-import type { PuzzleAspectRatio } from '@perseus/types';
+import type { PuzzleAspectRatio, PuzzleFamilySummary, PuzzleFamilyMetadata } from '@perseus/types';
 import type { RecordPuzzleCompletionV1 } from '@perseus/types';
 // NOTE: This app is built with adapter-static, so public env vars are embedded at build time.
 // Set PUBLIC_API_BASE before building to target a different API.
@@ -237,25 +237,27 @@ export async function removePlayerAllowlistEntry(email: string): Promise<void> {
 	await handleVoidResponse(response);
 }
 
-// Admin puzzle management
-export async function fetchAdminPuzzles(): Promise<PuzzleSummary[]> {
-	const response = await fetch(`${API_BASE}/api/admin/puzzles`, {
+export function getFamilyThumbnailUrl(familyId: string): string {
+	return `${API_BASE}/api/puzzle-families/${familyId}/thumbnail`;
+}
+
+// Admin puzzle family management
+export async function fetchAdminPuzzles(): Promise<PuzzleFamilySummary[]> {
+	const response = await fetch(`${API_BASE}/api/admin/puzzle-families`, {
 		credentials: 'include'
 	});
-	const data = await handleResponse<{ puzzles: PuzzleSummary[] }>(response);
-	return data.puzzles;
+	const data = await handleResponse<{ families: PuzzleFamilySummary[] }>(response);
+	return data.families;
 }
 
 export async function createPuzzle(
 	name: string,
-	pieceCount: number,
 	image: File,
 	category?: PuzzleCategory,
 	aspectRatio?: PuzzleAspectRatio
-): Promise<PuzzleMetadata> {
+): Promise<PuzzleFamilyMetadata> {
 	const formData = new FormData();
 	formData.append('name', name);
-	formData.append('pieceCount', pieceCount.toString());
 	if (aspectRatio) {
 		formData.append('aspectRatio', aspectRatio);
 	}
@@ -264,12 +266,12 @@ export async function createPuzzle(
 		formData.append('category', category);
 	}
 
-	const response = await fetch(`${API_BASE}/api/admin/puzzles`, {
+	const response = await fetch(`${API_BASE}/api/admin/puzzle-families`, {
 		method: 'POST',
 		credentials: 'include',
 		body: formData
 	});
-	return handleResponse<PuzzleMetadata>(response);
+	return handleResponse<PuzzleFamilyMetadata>(response);
 }
 
 export async function createPlayerPuzzle(
@@ -303,11 +305,11 @@ export async function deletePuzzle(
 	options?: { force?: boolean }
 ): Promise<DeletePuzzleResponse | null> {
 	// Build URL as string to avoid new URL() throwing when API_BASE is empty.
-	// Uses POST /api/admin/puzzle-delete/:id (not DELETE /api/admin/puzzles/:id)
+	// Uses POST /api/admin/puzzle-family-delete/:familyId (not DELETE under the collection path)
 	// so the delete route is NOT a sub-path of the narrow CLI Access app's
-	// '/api/admin/puzzles' exact path — a service-token holder cannot reach it
+	// '/api/admin/puzzle-families' exact path — a service-token holder cannot reach it
 	// at the Access gate.
-	let urlString = `${API_BASE}/api/admin/puzzle-delete/${id}`;
+	let urlString = `${API_BASE}/api/admin/puzzle-family-delete/${id}`;
 	if (options?.force) {
 		urlString += '?force=true';
 	}

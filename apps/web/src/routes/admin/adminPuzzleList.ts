@@ -1,5 +1,7 @@
 import type { PuzzleCategory } from '$lib/constants/categories';
-import type { PuzzleStatus, PuzzleSummary } from '$lib/types/puzzle';
+import type { PuzzleStatus } from '$lib/types/puzzle';
+import type { PuzzleFamilySummary } from '@perseus/types';
+import { PUZZLE_DIFFICULTIES } from '@perseus/types';
 
 export type AdminPuzzleFilters = {
 	query: string;
@@ -8,18 +10,24 @@ export type AdminPuzzleFilters = {
 };
 
 export function filterAdminPuzzles(
-	puzzles: readonly PuzzleSummary[],
+	families: readonly PuzzleFamilySummary[],
 	filters: AdminPuzzleFilters
-): PuzzleSummary[] {
+): PuzzleFamilySummary[] {
 	const query = filters.query.trim().toLowerCase();
 
-	return puzzles.filter((puzzle) => {
-		const matchesQuery = puzzle.name.toLowerCase().includes(query);
-		const matchesCategory = filters.category === 'all' || puzzle.category === filters.category;
-		const matchesStatus = filters.status === 'all' || puzzle.status === filters.status;
+	return families.filter((family) => {
+		const matchesQuery = family.name.toLowerCase().includes(query);
+		const matchesCategory = filters.category === 'all' || family.category === filters.category;
+		const matchesStatus = filters.status === 'all' || family.status === filters.status;
 
 		return matchesQuery && matchesCategory && matchesStatus;
 	});
+}
+
+export function formatFamilyPieceCounts(family: PuzzleFamilySummary): string {
+	return PUZZLE_DIFFICULTIES.map((difficulty) => family.variants[difficulty].pieceCount).join(
+		' / '
+	);
 }
 
 export function pageSlice<T>(

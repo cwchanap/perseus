@@ -83,15 +83,13 @@ export async function readError(response: Response, usingServiceToken = false): 
 }
 
 /**
- * Composite idempotency key: name + pieceCount + aspectRatio. Matching on name
+ * Composite idempotency key: normalized name + aspectRatio. Matching on name
  * alone is fragile because the API does not enforce unique names — a manually
- * uploaded puzzle sharing a seed entry's name (but with a different piece count
- * or aspect ratio) would wrongly cause the seed entry to be skipped. Including
- * pieceCount and aspectRatio makes the dedup key specific to the puzzle
- * configuration the catalog entry describes.
+ * uploaded family sharing a seed entry's name (but with a different aspect
+ * ratio) would wrongly cause the seed entry to be skipped.
  */
-export function idempotencyKey(name: string, pieceCount?: number, aspectRatio?: string): string {
-	return `${name.trim()}\u0000${pieceCount ?? ''}\u0000${aspectRatio ?? ''}`;
+export function idempotencyKey(name: string, aspectRatio?: string): string {
+	return `${name.trim()}\u0000${aspectRatio ?? ''}`;
 }
 
 /**
@@ -110,7 +108,7 @@ export async function fetchExistingKeys(
 	baseHeaders: Record<string, string>,
 	requireReady = false
 ): Promise<Set<string>> {
-	const res = await fetch(`${server}/api/admin/puzzles`, {
+	const res = await fetch(`${server}/api/admin/puzzle-families`, {
 		method: 'GET',
 		headers: baseHeaders,
 		redirect: 'manual',
@@ -123,19 +121,18 @@ export async function fetchExistingKeys(
 		);
 	}
 	const payload = (await res.json()) as {
-		puzzles?: Array<{
+		families?: Array<{
 			name?: string;
-			pieceCount?: number;
 			aspectRatio?: string;
 			status?: string;
 		}>;
 	};
 	const keys = new Set<string>();
-	for (const p of payload.puzzles ?? []) {
+	for (const family of payload.families ?? []) {
 		// Exclude failed puzzles so a subsequent seed run retries them instead
 		// of skipping permanently. processing and ready puzzles are retained
 		// for deduplication — they represent successful (or in-flight) uploads.
-		if (p.status === 'failed') continue;
+		if (family.status === 'failed') continue;
 		// When requireReady is set (used after an HTTP 409 idempotency
 		// conflict), only a 'ready' puzzle is sufficient evidence of a
 		// committed, fully-generated upload. A 'processing' record means
@@ -145,14 +142,9 @@ export async function fetchExistingKeys(
 		// 'ready' implies the workflow completed, which can only happen
 		// after the reservation was committed, so it is safe to treat as
 		// a final idempotent result.
-		if (requireReady && p.status !== 'ready') continue;
-		if (typeof p.name === 'string' && p.name.trim()) {
-			// Normalize missing aspectRatio to the server default (1:1). Legacy
-			// puzzles may omit aspectRatio in their summary; the API treats a
-			// missing value as 1:1, but the dedup key would encode it as an
-			// empty field while catalog entries use '1:1' — causing a duplicate
-			// upload on the next seed run.
-			keys.add(idempotencyKey(p.name, p.pieceCount, p.aspectRatio ?? DEFAULT_PUZZLE_ASPECT_RATIO));
+		if (requireReady && family.status !== 'ready') continue;
+		if (typeof family.name === 'string' && family.name.trim()) {
+			keys.add(idempotencyKey(family.name, family.aspectRatio ?? DEFAULT_PUZZLE_ASPECT_RATIO));
 		}
 	}
 	return keys;
@@ -170,7 +162,7 @@ export const retryConfig = {
 	maxAttempts: MAX_RETRY_ATTEMPTS,
 	baseDelayMs: RETRY_BASE_DELAY_MS,
 	// Poll count / base delay for post-failure existence checks. Production
-	// GET /api/admin/puzzles reads eventually consistent KV; a single GET can
+	// GET /api/admin/puzzle-families reads eventually consistent KV; a single GET can
 	// omit a just-created puzzle and cause a duplicate re-POST.
 	verifyPollAttempts: 4,
 	verifyPollBaseDelayMs: 250,
@@ -178,7 +170,7 @@ export const retryConfig = {
 };
 
 /**
- * Poll GET /api/admin/puzzles until `dedupKey` appears or the attempt budget
+ * Poll GET /api/admin/puzzle-families until `dedupKey` appears or the attempt budget
  * is exhausted. Used after a transient POST failure (and after final-attempt
  * failure) so KV lag does not cause a duplicate re-POST or a false FAIL.
  *
@@ -239,7 +231,7 @@ export async function uploadWithRetry(
 	const idempotencyHeader = idempotencyKeyHeader(dedupKey);
 	for (let attempt = 1; attempt <= maxAttempts; attempt++) {
 		try {
-			const response = await fetch(`${server}/api/admin/puzzles`, {
+			const response = await fetch(`${server}/api/admin/puzzle-families`, {
 				method: 'POST',
 				headers: {
 					...baseHeaders,
@@ -374,7 +366,7 @@ Or add those two keys to apps/api/.env, then:
 	}
 
 	// Live smoke check for the service-token path (the primary CI method).
-	// Mirrors the JWT probe above: hit GET /api/admin/puzzles with the service
+	// Mirrors the JWT probe above: hit GET /api/admin/puzzle-families with the service
 	// token headers and fail fast if Access rejects them (401/302/403). Without
 	// this, an expired/invalid CF-Access-Client-Id/Secret pair only surfaces as
 	// an opaque login failure after the upload has already started.
@@ -489,7 +481,7 @@ async function processEntry(
 	baseHeaders: Record<string, string>,
 	existingKeys: Set<string>
 ): Promise<UploadResult> {
-	const dedupKey = idempotencyKey(entry.name, entry.pieceCount, entry.aspectRatio);
+	const dedupKey = idempotencyKey(entry.name, entry.aspectRatio);
 	if (existingKeys.has(dedupKey)) {
 		console.log(`SKIP ${entry.id} ${entry.name}: already exists on server`);
 		return {
@@ -510,7 +502,6 @@ async function processEntry(
 	const { image, imagePath, detectedMime } = validation;
 	const formData = new FormData();
 	formData.append('name', entry.name);
-	formData.append('pieceCount', String(entry.pieceCount));
 	formData.append('aspectRatio', entry.aspectRatio);
 	formData.append('category', entry.category);
 	// Use magic-byte MIME (not extension) so a JPEG with a .png name still
@@ -579,7 +570,7 @@ export async function cmdUpload(options: Options): Promise<void> {
 			const validation = await validateEntryImage(entry, options.imagesDir);
 			const status = validation.ok ? 'OK' : `FAIL: ${validation.detail}`;
 			console.log(
-				`[dry-run] ${entry.id} ${entry.name} ${entry.pieceCount}pcs ${entry.aspectRatio} ${entry.category} -> ${status}`
+				`[dry-run] ${entry.id} ${entry.name} ${entry.aspectRatio} ${entry.category} -> ${status}`
 			);
 			if (!validation.ok) validationFailures++;
 		}
@@ -593,7 +584,7 @@ export async function cmdUpload(options: Options): Promise<void> {
 
 	// Idempotency preflight: skip catalog entries already on the server.
 	// Complements server-side Idempotency-Key (which handles in-flight
-	// retries). Key is name + pieceCount + aspectRatio so a same-named
+	// retries). Key is normalized name + aspectRatio so a same-named
 	// but differently-configured puzzle does not cause a wrongful skip.
 	//
 	// OPERATOR NOTE: `existingKeys` is a point-in-time snapshot taken once

@@ -11,6 +11,8 @@ import type {
 	PuzzleCategory,
 	PuzzleAspectRatio,
 	PuzzleFamilyMetadata,
+	PuzzleFamilySummary,
+	PuzzleVariantSummary,
 	PuzzleDifficulty
 } from '@perseus/types';
 import {
@@ -35,6 +37,8 @@ export type {
 	PuzzleCategory,
 	PuzzleAspectRatio,
 	PuzzleFamilyMetadata,
+	PuzzleFamilySummary,
+	PuzzleVariantSummary,
 	PuzzleDifficulty
 };
 
@@ -727,6 +731,124 @@ function isAfterCursor(entry: GalleryIndexEntry, cursor: PageCursor): boolean {
 	return entry.id > cursor.id;
 }
 
+function variantSummaryFromMetadata(variant: PuzzleMetadata): PuzzleVariantSummary {
+	return {
+		id: variant.id,
+		difficulty: variant.difficulty,
+		pieceCount: variant.pieceCount,
+		status: variant.status
+	};
+}
+
+function synthesizeVariantSummary(
+	family: PuzzleFamilyMetadata,
+	difficulty: PuzzleDifficulty,
+	status: PuzzleStatus
+): PuzzleVariantSummary {
+	return {
+		id: family.variants[difficulty],
+		difficulty,
+		pieceCount: getDifficultyPieceCount(family.aspectRatio, difficulty),
+		status
+	};
+}
+
+export async function enrichFamilySummary(
+	kv: KVNamespace,
+	family: PuzzleFamilyMetadata
+): Promise<PuzzleFamilySummary> {
+	const variants = {} as Record<PuzzleDifficulty, PuzzleVariantSummary>;
+	for (const difficulty of PUZZLE_DIFFICULTIES) {
+		if (family.status === 'ready') {
+			variants[difficulty] = synthesizeVariantSummary(family, difficulty, 'ready');
+			continue;
+		}
+		const variant = await getPuzzle(kv, family.variants[difficulty]);
+		variants[difficulty] = variant
+			? variantSummaryFromMetadata(variant)
+			: synthesizeVariantSummary(family, difficulty, family.status);
+	}
+	return {
+		id: family.id,
+		name: family.name,
+		aspectRatio: family.aspectRatio,
+		status: family.status,
+		createdAt: family.createdAt,
+		variants,
+		...(family.category ? { category: family.category } : {})
+	};
+}
+
+export async function listFamiliesPage(
+	kv: KVNamespace,
+	params: {
+		q?: string;
+		category?: PuzzleCategory;
+		offset: number;
+		limit: number;
+		cursor?: string;
+		readyOnly?: boolean;
+	}
+): Promise<{
+	families: PuzzleFamilySummary[];
+	total: number;
+	offset: number;
+	limit: number;
+	nextCursor?: string;
+}> {
+	const entries = await getGalleryIndex(kv);
+
+	let filtered = params.readyOnly === false ? entries : entries.filter((p) => p.status === 'ready');
+
+	if (params.category) {
+		filtered = filtered.filter((p) => p.category === params.category);
+	}
+
+	if (params.q) {
+		const q = params.q.toLowerCase();
+		filtered = filtered.filter((p) => p.name.toLowerCase().includes(q));
+	}
+
+	const total = filtered.length;
+
+	if (params.cursor) {
+		const parsed = decodeCursor(params.cursor);
+		if (parsed) {
+			const cursorIndex = filtered.findIndex(
+				(e) => e.createdAt === parsed.createdAt && e.id === parsed.id
+			);
+			if (cursorIndex >= 0) {
+				filtered = filtered.slice(cursorIndex + 1);
+			} else {
+				filtered = filtered.filter((e) => isAfterCursor(e, parsed));
+			}
+		}
+	} else {
+		filtered = filtered.slice(params.offset);
+	}
+
+	const page = filtered.slice(0, params.limit);
+
+	const families: PuzzleFamilySummary[] = [];
+	for (const entry of page) {
+		const family = await getFamily(kv, entry.id);
+		if (!family) continue;
+		families.push(await enrichFamilySummary(kv, family));
+	}
+
+	const nextCursor =
+		filtered.length > params.limit ? encodeCursor(page[page.length - 1]) : undefined;
+
+	return {
+		families,
+		total,
+		offset: params.cursor ? 0 : params.offset,
+		limit: params.limit,
+		...(nextCursor ? { nextCursor } : {})
+	};
+}
+
+/** @deprecated Use listFamiliesPage — public catalog is family-scoped after cutover. */
 export async function listPuzzlesPage(
 	kv: KVNamespace,
 	params: {
@@ -743,66 +865,20 @@ export async function listPuzzlesPage(
 	limit: number;
 	nextCursor?: string;
 }> {
-	const entries = await getGalleryIndex(kv);
-
-	let filtered = entries.filter((p) => p.status === 'ready');
-
-	if (params.category) {
-		filtered = filtered.filter((p) => p.category === params.category);
-	}
-
-	if (params.q) {
-		const q = params.q.toLowerCase();
-		filtered = filtered.filter((p) => p.name.toLowerCase().includes(q));
-	}
-
-	const total = filtered.length;
-
-	// When a cursor is provided, skip items up to and including the cursor
-	// position. This is more stable than offset when items are inserted/removed
-	// between pages.
-	if (params.cursor) {
-		const parsed = decodeCursor(params.cursor);
-		if (parsed) {
-			const cursorIndex = filtered.findIndex(
-				(e) => e.createdAt === parsed.createdAt && e.id === parsed.id
-			);
-			if (cursorIndex >= 0) {
-				filtered = filtered.slice(cursorIndex + 1);
-			} else {
-				// Cursor item no longer in filtered set (e.g. deleted or changed
-				// status). Fall back to returning everything after the cursor's
-				// sort position.
-				filtered = filtered.filter((e) => isAfterCursor(e, parsed));
-			}
-		}
-		// If cursor is invalid, treat as offset 0
-	} else {
-		filtered = filtered.slice(params.offset);
-	}
-
-	const page = filtered.slice(0, params.limit);
-
-	const summaries = page.map((p) => ({
-		id: p.id,
-		name: p.name,
-		pieceCount: p.pieceCount,
-		aspectRatio: p.aspectRatio,
-		status: p.status,
-		progress: p.progress,
-		category: p.category
-	}));
-
-	// Attach nextCursor only when more items remain beyond this page
-	const nextCursor =
-		filtered.length > params.limit ? encodeCursor(page[page.length - 1]) : undefined;
-
+	const result = await listFamiliesPage(kv, { ...params, readyOnly: true });
 	return {
-		puzzles: summaries,
-		total,
-		offset: params.cursor ? 0 : params.offset,
-		limit: params.limit,
-		...(nextCursor ? { nextCursor } : {})
+		puzzles: result.families.map((family) => ({
+			id: family.id,
+			name: family.name,
+			pieceCount: family.variants.easy.pieceCount,
+			aspectRatio: family.aspectRatio,
+			status: family.status,
+			category: family.category
+		})),
+		total: result.total,
+		offset: result.offset,
+		limit: result.limit,
+		...(result.nextCursor ? { nextCursor: result.nextCursor } : {})
 	};
 }
 

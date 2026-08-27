@@ -24,7 +24,7 @@ vi.mock('../../services/storage.worker', async (importOriginal) => {
 		deleteOriginalImage: vi.fn().mockResolvedValue({ success: true }),
 		originalImageExists: vi.fn().mockResolvedValue(false).mockResolvedValue({ success: true }),
 		puzzleExists: vi.fn().mockResolvedValue(false),
-		listPuzzles: vi.fn()
+		listFamilies: vi.fn()
 	};
 });
 
@@ -62,7 +62,6 @@ const baseEnv = {
 function buildFormData(): FormData {
 	const formData = new FormData();
 	formData.append('name', 'Mirror Puzzle');
-	formData.append('pieceCount', '225');
 	const blob = new Blob([PNG_HEADER], { type: 'image/png' });
 	formData.append('image', blob, 'test.png');
 	return formData;
@@ -81,7 +80,7 @@ describe('Admin Worker - POST /puzzles D1 ownership mirror is best-effort', () =
 	it('succeeds (201) when the D1 ownership mirror insert fails', async () => {
 		vi.mocked(insertPuzzleFamilyOwnership).mockRejectedValueOnce(new Error('D1 unavailable'));
 
-		const req = new Request('http://localhost/puzzles', {
+		const req = new Request('http://localhost/puzzle-families', {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' },
 			body: buildFormData()

@@ -3,490 +3,420 @@
 		"id": "01",
 		"name": "Alpine Lake Mirror",
 		"category": "Nature",
-		"aspectRatio": "1:1",
-		"pieceCount": 100
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "02",
 		"name": "Misty Redwood Path",
 		"category": "Nature",
-		"aspectRatio": "3:4",
-		"pieceCount": 108
+		"aspectRatio": "3:4"
 	},
 	{
 		"id": "03",
 		"name": "Coral Reef Kaleidoscope",
 		"category": "Nature",
-		"aspectRatio": "4:3",
-		"pieceCount": 108
+		"aspectRatio": "4:3"
 	},
 	{
 		"id": "04",
 		"name": "Autumn Maple Canopy",
 		"category": "Nature",
-		"aspectRatio": "1:1",
-		"pieceCount": 121
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "05",
 		"name": "Icelandic Waterfall",
 		"category": "Nature",
-		"aspectRatio": "3:4",
-		"pieceCount": 48
+		"aspectRatio": "3:4"
 	},
 	{
 		"id": "06",
 		"name": "Lavender Fields Provence",
 		"category": "Nature",
-		"aspectRatio": "4:3",
-		"pieceCount": 192
+		"aspectRatio": "4:3"
 	},
 	{
 		"id": "07",
 		"name": "Northern Lights Tundra",
 		"category": "Nature",
-		"aspectRatio": "1:1",
-		"pieceCount": 144
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "08",
 		"name": "Desert Slot Canyon",
 		"category": "Nature",
-		"aspectRatio": "3:4",
-		"pieceCount": 108
+		"aspectRatio": "3:4"
 	},
 	{
 		"id": "09",
 		"name": "Cherry Blossom Park",
 		"category": "Nature",
-		"aspectRatio": "1:1",
-		"pieceCount": 81
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "10",
 		"name": "Mountain Goat Ridge",
 		"category": "Animals",
-		"aspectRatio": "1:1",
-		"pieceCount": 100
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "11",
 		"name": "Fox in Snow",
 		"category": "Animals",
-		"aspectRatio": "1:1",
-		"pieceCount": 64
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "12",
 		"name": "Hummingbird Garden",
 		"category": "Animals",
-		"aspectRatio": "3:4",
-		"pieceCount": 108
+		"aspectRatio": "3:4"
 	},
 	{
 		"id": "13",
 		"name": "Elephant Herd Savanna",
 		"category": "Animals",
-		"aspectRatio": "4:3",
-		"pieceCount": 108
+		"aspectRatio": "4:3"
 	},
 	{
 		"id": "14",
 		"name": "Owl in Moonlight",
 		"category": "Animals",
-		"aspectRatio": "1:1",
-		"pieceCount": 121
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "15",
 		"name": "Koi Pond Harmony",
 		"category": "Animals",
-		"aspectRatio": "1:1",
-		"pieceCount": 144
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "16",
 		"name": "Panda Bamboo Grove",
 		"category": "Animals",
-		"aspectRatio": "3:4",
-		"pieceCount": 48
+		"aspectRatio": "3:4"
 	},
 	{
 		"id": "17",
 		"name": "Macaw Jungle Canopy",
 		"category": "Animals",
-		"aspectRatio": "4:3",
-		"pieceCount": 192
+		"aspectRatio": "4:3"
 	},
 	{
 		"id": "18",
 		"name": "Starry Night Harbor",
 		"category": "Art",
-		"aspectRatio": "1:1",
-		"pieceCount": 100
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "19",
 		"name": "Glass Garden Still Life",
 		"category": "Art",
-		"aspectRatio": "1:1",
-		"pieceCount": 81
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "20",
 		"name": "Art Nouveau Peacock",
 		"category": "Art",
-		"aspectRatio": "3:4",
-		"pieceCount": 108
+		"aspectRatio": "3:4"
 	},
 	{
 		"id": "21",
 		"name": "Ukiyo-e Wave Market",
 		"category": "Art",
-		"aspectRatio": "4:3",
-		"pieceCount": 108
+		"aspectRatio": "4:3"
 	},
 	{
 		"id": "22",
 		"name": "Surreal Floating Islands",
 		"category": "Art",
-		"aspectRatio": "1:1",
-		"pieceCount": 169
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "23",
 		"name": "Stained Glass Cathedral",
 		"category": "Art",
-		"aspectRatio": "3:4",
-		"pieceCount": 192
+		"aspectRatio": "3:4"
 	},
 	{
 		"id": "24",
 		"name": "Cubist City Morning",
 		"category": "Art",
-		"aspectRatio": "1:1",
-		"pieceCount": 121
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "25",
 		"name": "Watercolor Market Street",
 		"category": "Art",
-		"aspectRatio": "4:3",
-		"pieceCount": 48
+		"aspectRatio": "4:3"
 	},
 	{
 		"id": "26",
 		"name": "Santorini Blue Domes",
 		"category": "Architecture",
-		"aspectRatio": "1:1",
-		"pieceCount": 100
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "27",
 		"name": "Gothic Cathedral Spire",
 		"category": "Architecture",
-		"aspectRatio": "3:4",
-		"pieceCount": 108
+		"aspectRatio": "3:4"
 	},
 	{
 		"id": "28",
 		"name": "Tokyo Neon Crossing",
 		"category": "Architecture",
-		"aspectRatio": "4:3",
-		"pieceCount": 192
+		"aspectRatio": "4:3"
 	},
 	{
 		"id": "29",
 		"name": "Moroccan Courtyard",
 		"category": "Architecture",
-		"aspectRatio": "1:1",
-		"pieceCount": 144
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "30",
 		"name": "Venetian Canal Dawn",
 		"category": "Architecture",
-		"aspectRatio": "4:3",
-		"pieceCount": 108
+		"aspectRatio": "4:3"
 	},
 	{
 		"id": "31",
 		"name": "Art Deco Lobby",
 		"category": "Architecture",
-		"aspectRatio": "1:1",
-		"pieceCount": 121
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "32",
 		"name": "Pagoda Mountain Mist",
 		"category": "Architecture",
-		"aspectRatio": "3:4",
-		"pieceCount": 48
+		"aspectRatio": "3:4"
 	},
 	{
 		"id": "33",
 		"name": "Glass Skyline Sunset",
 		"category": "Architecture",
-		"aspectRatio": "1:1",
-		"pieceCount": 169
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "34",
 		"name": "Geometric Nebula",
 		"category": "Abstract",
-		"aspectRatio": "1:1",
-		"pieceCount": 100
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "35",
 		"name": "Liquid Marble Flow",
 		"category": "Abstract",
-		"aspectRatio": "1:1",
-		"pieceCount": 144
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "36",
 		"name": "Kaleidoscope Crystals",
 		"category": "Abstract",
-		"aspectRatio": "1:1",
-		"pieceCount": 225
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "37",
 		"name": "Ink Bloom on Paper",
 		"category": "Abstract",
-		"aspectRatio": "3:4",
-		"pieceCount": 108
+		"aspectRatio": "3:4"
 	},
 	{
 		"id": "38",
 		"name": "Neon Grid Horizon",
 		"category": "Abstract",
-		"aspectRatio": "4:3",
-		"pieceCount": 108
+		"aspectRatio": "4:3"
 	},
 	{
 		"id": "39",
 		"name": "Paper Cut Forest",
 		"category": "Abstract",
-		"aspectRatio": "1:1",
-		"pieceCount": 81
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "40",
 		"name": "Origami Crane Swarm",
 		"category": "Abstract",
-		"aspectRatio": "1:1",
-		"pieceCount": 121
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "41",
 		"name": "Parisian Pastry Counter",
 		"category": "Food",
-		"aspectRatio": "1:1",
-		"pieceCount": 100
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "42",
 		"name": "Sushi Chef Board",
 		"category": "Food",
-		"aspectRatio": "4:3",
-		"pieceCount": 108
+		"aspectRatio": "4:3"
 	},
 	{
 		"id": "43",
 		"name": "Farmers Market Abundance",
 		"category": "Food",
-		"aspectRatio": "1:1",
-		"pieceCount": 144
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "44",
 		"name": "Italian Pasta Table",
 		"category": "Food",
-		"aspectRatio": "3:4",
-		"pieceCount": 48
+		"aspectRatio": "3:4"
 	},
 	{
 		"id": "45",
 		"name": "Ice Cream Parlor Dreams",
 		"category": "Food",
-		"aspectRatio": "1:1",
-		"pieceCount": 81
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "46",
 		"name": "Spice Market Souk",
 		"category": "Food",
-		"aspectRatio": "4:3",
-		"pieceCount": 192
+		"aspectRatio": "4:3"
 	},
 	{
 		"id": "47",
 		"name": "Hot Air Balloons Cappadocia",
 		"category": "Travel",
-		"aspectRatio": "1:1",
-		"pieceCount": 100
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "48",
 		"name": "Machu Picchu Morning",
 		"category": "Travel",
-		"aspectRatio": "4:3",
-		"pieceCount": 108
+		"aspectRatio": "4:3"
 	},
 	{
 		"id": "49",
 		"name": "Amalfi Coast Drive",
 		"category": "Travel",
-		"aspectRatio": "3:4",
-		"pieceCount": 108
+		"aspectRatio": "3:4"
 	},
 	{
 		"id": "50",
 		"name": "Kyoto Night Lanterns",
 		"category": "Travel",
-		"aspectRatio": "1:1",
-		"pieceCount": 121
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "51",
 		"name": "Anime Summer Festival",
 		"category": "Art",
-		"aspectRatio": "1:1",
-		"pieceCount": 100
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "52",
 		"name": "Anime Mountain Journey",
 		"category": "Travel",
-		"aspectRatio": "1:1",
-		"pieceCount": 121
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "53",
 		"name": "Anime School Sakura",
 		"category": "Art",
-		"aspectRatio": "1:1",
-		"pieceCount": 100
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "54",
-		"name": "Anime Café Study Date",
+		"name": "Anime Caf\u00e9 Study Date",
 		"category": "Art",
-		"aspectRatio": "1:1",
-		"pieceCount": 81
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "55",
 		"name": "Anime Coastal Road Trip",
 		"category": "Travel",
-		"aspectRatio": "1:1",
-		"pieceCount": 100
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "56",
 		"name": "Anime Neon City Night",
 		"category": "Art",
-		"aspectRatio": "1:1",
-		"pieceCount": 100
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "57",
 		"name": "Anime Rooftop Hangout",
 		"category": "Art",
-		"aspectRatio": "1:1",
-		"pieceCount": 100
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "58",
 		"name": "Anime Modern Classroom",
 		"category": "Art",
-		"aspectRatio": "1:1",
-		"pieceCount": 100
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "59",
 		"name": "Anime Shinkansen Hub",
 		"category": "Travel",
-		"aspectRatio": "1:1",
-		"pieceCount": 100
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "60",
 		"name": "Anime Beach Day Squad",
 		"category": "Art",
-		"aspectRatio": "1:1",
-		"pieceCount": 100
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "61",
 		"name": "Chibi Summer Festival",
 		"category": "Art",
-		"aspectRatio": "1:1",
-		"pieceCount": 81
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "62",
 		"name": "Chibi School Picnic",
 		"category": "Art",
-		"aspectRatio": "1:1",
-		"pieceCount": 64
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "63",
 		"name": "Chibi Adventure Train",
 		"category": "Travel",
-		"aspectRatio": "1:1",
-		"pieceCount": 81
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "64",
 		"name": "Chibi Beach Castle",
 		"category": "Art",
-		"aspectRatio": "1:1",
-		"pieceCount": 64
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "65",
-		"name": "Chibi Cozy Cocoa Café",
+		"name": "Chibi Cozy Cocoa Caf\u00e9",
 		"category": "Art",
-		"aspectRatio": "1:1",
-		"pieceCount": 81
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "66",
 		"name": "Shojo Moonlit Rose Garden",
 		"category": "Art",
-		"aspectRatio": "1:1",
-		"pieceCount": 100
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "67",
 		"name": "Shojo Wisteria Letter",
 		"category": "Art",
-		"aspectRatio": "1:1",
-		"pieceCount": 100
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "68",
 		"name": "Shojo Balcony Twilight",
 		"category": "Art",
-		"aspectRatio": "1:1",
-		"pieceCount": 121
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "69",
 		"name": "Shojo Crystal Waltz",
 		"category": "Art",
-		"aspectRatio": "1:1",
-		"pieceCount": 100
+		"aspectRatio": "1:1"
 	},
 	{
 		"id": "70",
 		"name": "Shojo Conservatory Reader",
 		"category": "Art",
-		"aspectRatio": "1:1",
-		"pieceCount": 100
+		"aspectRatio": "1:1"
 	}
 ]

@@ -46,7 +46,7 @@ vi.mock('../../services/player-auth.worker', () => ({
 	getPlayerSession: vi.fn()
 }));
 
-import puzzles from '../puzzles.worker';
+import puzzleFamilies from '../puzzle-families.worker';
 import * as storage from '../../services/storage.worker';
 import * as playerAuth from '../../services/player-auth.worker';
 import { deletePuzzleFamilyOwnership, insertPuzzleFamilyOwnership } from '@perseus/shared';
@@ -69,14 +69,13 @@ const mockEnv = {
 function buildForm(): FormData {
 	const fd = new FormData();
 	fd.append('name', 'Coverage Puzzle');
-	fd.append('pieceCount', '48');
 	fd.append('aspectRatio', '3:4');
 	fd.append('image', new Blob([PNG_HEADER], { type: 'image/png' }), 'test.png');
 	return fd;
 }
 
 async function post(fd: FormData, env: any = mockEnv): Promise<Response> {
-	return puzzles.fetch(
+	return puzzleFamilies.fetch(
 		new Request('http://localhost/', {
 			method: 'POST',
 			headers: { Cookie: 'perseus_player_session=player-token' },
@@ -320,8 +319,8 @@ describe('POST / - outer catch block (lines 504-505)', () => {
 		expect(res.status).toBe(500);
 		const body = (await res.json()) as any;
 		expect(body.error).toBe('internal_error');
-		expect(body.message).toBe('Failed to create puzzle');
-		expect(consoleSpy).toHaveBeenCalledWith('Error creating puzzle:', expect.any(Error));
+		expect(body.message).toBe('Failed to create puzzle family');
+		expect(consoleSpy).toHaveBeenCalledWith('Error creating puzzle family:', expect.any(Error));
 		consoleSpy.mockRestore();
 		uuidSpy.mockRestore();
 	});
