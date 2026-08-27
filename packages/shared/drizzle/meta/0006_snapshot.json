@@ -1,0 +1,557 @@
+{
+	"version": "6",
+	"dialect": "sqlite",
+	"tables": {
+		"player_achievements": {
+			"name": "player_achievements",
+			"columns": {
+				"player_id": {
+					"name": "player_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"achievement_id": {
+					"name": "achievement_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"unlocked_at": {
+					"name": "unlocked_at",
+					"type": "integer",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				}
+			},
+			"indexes": {
+				"idx_pa_player": {
+					"name": "idx_pa_player",
+					"columns": ["player_id"],
+					"isUnique": false
+				}
+			},
+			"foreignKeys": {},
+			"compositePrimaryKeys": {
+				"player_achievements_player_id_achievement_id_pk": {
+					"columns": ["player_id", "achievement_id"],
+					"name": "player_achievements_player_id_achievement_id_pk"
+				}
+			},
+			"uniqueConstraints": {},
+			"checkConstraints": {}
+		},
+		"player_completion_usage": {
+			"name": "player_completion_usage",
+			"columns": {
+				"player_id": {
+					"name": "player_id",
+					"type": "text",
+					"primaryKey": true,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"retained_runs": {
+					"name": "retained_runs",
+					"type": "integer",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				}
+			},
+			"indexes": {},
+			"foreignKeys": {},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {},
+			"checkConstraints": {
+				"pcu_retained_runs_check": {
+					"name": "pcu_retained_runs_check",
+					"value": "\"player_completion_usage\".\"retained_runs\" BETWEEN 0 AND 100000"
+				}
+			}
+		},
+		"player_difficulty_completions": {
+			"name": "player_difficulty_completions",
+			"columns": {
+				"player_id": {
+					"name": "player_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"family_id": {
+					"name": "family_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"difficulty": {
+					"name": "difficulty",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"first_completed_at": {
+					"name": "first_completed_at",
+					"type": "integer",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				}
+			},
+			"indexes": {
+				"idx_pdc_player": {
+					"name": "idx_pdc_player",
+					"columns": ["player_id"],
+					"isUnique": false
+				}
+			},
+			"foreignKeys": {},
+			"compositePrimaryKeys": {
+				"player_difficulty_completions_player_id_family_id_difficulty_pk": {
+					"columns": ["player_id", "family_id", "difficulty"],
+					"name": "player_difficulty_completions_player_id_family_id_difficulty_pk"
+				}
+			},
+			"uniqueConstraints": {},
+			"checkConstraints": {
+				"pdc_difficulty_check": {
+					"name": "pdc_difficulty_check",
+					"value": "\"player_difficulty_completions\".\"difficulty\" IN ('easy', 'normal', 'hard')"
+				}
+			}
+		},
+		"player_profiles": {
+			"name": "player_profiles",
+			"columns": {
+				"player_id": {
+					"name": "player_id",
+					"type": "text",
+					"primaryKey": true,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"display_name": {
+					"name": "display_name",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false,
+					"autoincrement": false
+				},
+				"avatar_url": {
+					"name": "avatar_url",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false,
+					"autoincrement": false
+				},
+				"avatar_updated_at": {
+					"name": "avatar_updated_at",
+					"type": "integer",
+					"primaryKey": false,
+					"notNull": false,
+					"autoincrement": false
+				},
+				"avatar_update_token": {
+					"name": "avatar_update_token",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false,
+					"autoincrement": false
+				},
+				"updated_at": {
+					"name": "updated_at",
+					"type": "integer",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				}
+			},
+			"indexes": {},
+			"foreignKeys": {},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {},
+			"checkConstraints": {}
+		},
+		"player_variant_mastery": {
+			"name": "player_variant_mastery",
+			"columns": {
+				"player_id": {
+					"name": "player_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"puzzle_id": {
+					"name": "puzzle_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"badge": {
+					"name": "badge",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"earned_at": {
+					"name": "earned_at",
+					"type": "integer",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				}
+			},
+			"indexes": {
+				"idx_pvm_player": {
+					"name": "idx_pvm_player",
+					"columns": ["player_id"],
+					"isUnique": false
+				},
+				"idx_pvm_puzzle": {
+					"name": "idx_pvm_puzzle",
+					"columns": ["puzzle_id"],
+					"isUnique": false
+				}
+			},
+			"foreignKeys": {},
+			"compositePrimaryKeys": {
+				"player_variant_mastery_player_id_puzzle_id_badge_pk": {
+					"columns": ["player_id", "puzzle_id", "badge"],
+					"name": "player_variant_mastery_player_id_puzzle_id_badge_pk"
+				}
+			},
+			"uniqueConstraints": {},
+			"checkConstraints": {}
+		},
+		"puzzle_best_times": {
+			"name": "puzzle_best_times",
+			"columns": {
+				"player_id": {
+					"name": "player_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"puzzle_id": {
+					"name": "puzzle_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"family_id": {
+					"name": "family_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"difficulty": {
+					"name": "difficulty",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"result_class": {
+					"name": "result_class",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"best_time_seconds": {
+					"name": "best_time_seconds",
+					"type": "integer",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"achieved_at": {
+					"name": "achieved_at",
+					"type": "integer",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				}
+			},
+			"indexes": {
+				"idx_pbt_player": {
+					"name": "idx_pbt_player",
+					"columns": ["player_id"],
+					"isUnique": false
+				},
+				"idx_pbt_family": {
+					"name": "idx_pbt_family",
+					"columns": ["family_id"],
+					"isUnique": false
+				}
+			},
+			"foreignKeys": {},
+			"compositePrimaryKeys": {
+				"puzzle_best_times_player_id_puzzle_id_result_class_pk": {
+					"columns": ["player_id", "puzzle_id", "result_class"],
+					"name": "puzzle_best_times_player_id_puzzle_id_result_class_pk"
+				}
+			},
+			"uniqueConstraints": {},
+			"checkConstraints": {
+				"pbt_result_class_check": {
+					"name": "pbt_result_class_check",
+					"value": "\"puzzle_best_times\".\"result_class\" IN ('standard_timed', 'rotation_timed')"
+				},
+				"pbt_difficulty_check": {
+					"name": "pbt_difficulty_check",
+					"value": "\"puzzle_best_times\".\"difficulty\" IN ('easy', 'normal', 'hard')"
+				},
+				"pbt_best_time_seconds_check": {
+					"name": "pbt_best_time_seconds_check",
+					"value": "\"puzzle_best_times\".\"best_time_seconds\" BETWEEN 1 AND ?"
+				}
+			}
+		},
+		"puzzle_completion_runs": {
+			"name": "puzzle_completion_runs",
+			"columns": {
+				"player_id": {
+					"name": "player_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"run_id": {
+					"name": "run_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"puzzle_id": {
+					"name": "puzzle_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"family_id": {
+					"name": "family_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"difficulty": {
+					"name": "difficulty",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"result_class": {
+					"name": "result_class",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"elapsed_active_seconds": {
+					"name": "elapsed_active_seconds",
+					"type": "integer",
+					"primaryKey": false,
+					"notNull": false,
+					"autoincrement": false
+				},
+				"hints_used": {
+					"name": "hints_used",
+					"type": "integer",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"incorrect_attempts": {
+					"name": "incorrect_attempts",
+					"type": "integer",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"completed_at": {
+					"name": "completed_at",
+					"type": "integer",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				}
+			},
+			"indexes": {
+				"idx_pcr_player_puzzle_completed": {
+					"name": "idx_pcr_player_puzzle_completed",
+					"columns": ["player_id", "puzzle_id", "completed_at"],
+					"isUnique": false
+				},
+				"idx_pcr_puzzle": {
+					"name": "idx_pcr_puzzle",
+					"columns": ["puzzle_id"],
+					"isUnique": false
+				},
+				"idx_pcr_family": {
+					"name": "idx_pcr_family",
+					"columns": ["family_id"],
+					"isUnique": false
+				}
+			},
+			"foreignKeys": {},
+			"compositePrimaryKeys": {
+				"puzzle_completion_runs_player_id_run_id_pk": {
+					"columns": ["player_id", "run_id"],
+					"name": "puzzle_completion_runs_player_id_run_id_pk"
+				}
+			},
+			"uniqueConstraints": {},
+			"checkConstraints": {
+				"pcr_result_class_check": {
+					"name": "pcr_result_class_check",
+					"value": "\"puzzle_completion_runs\".\"result_class\" IN ('standard_timed', 'rotation_timed', 'assisted_timed', 'relaxed')"
+				},
+				"pcr_difficulty_check": {
+					"name": "pcr_difficulty_check",
+					"value": "\"puzzle_completion_runs\".\"difficulty\" IN ('easy', 'normal', 'hard')"
+				},
+				"pcr_hints_used_check": {
+					"name": "pcr_hints_used_check",
+					"value": "\"puzzle_completion_runs\".\"hints_used\" >= 0"
+				},
+				"pcr_incorrect_attempts_check": {
+					"name": "pcr_incorrect_attempts_check",
+					"value": "\"puzzle_completion_runs\".\"incorrect_attempts\" >= 0"
+				},
+				"pcr_elapsed_active_seconds_check": {
+					"name": "pcr_elapsed_active_seconds_check",
+					"value": "(\n\t\t\t\t(\"puzzle_completion_runs\".\"result_class\" = 'relaxed' AND \"puzzle_completion_runs\".\"elapsed_active_seconds\" IS NULL)\n\t\t\t\tOR (\n\t\t\t\t\t\"puzzle_completion_runs\".\"result_class\" IN ('standard_timed', 'rotation_timed', 'assisted_timed')\n\t\t\t\t\tAND \"puzzle_completion_runs\".\"elapsed_active_seconds\" IS NOT NULL\n\t\t\t\t\tAND typeof(\"puzzle_completion_runs\".\"elapsed_active_seconds\") = 'integer'\n\t\t\t\t\tAND \"puzzle_completion_runs\".\"elapsed_active_seconds\" BETWEEN 1 AND ?\n\t\t\t\t)\n\t\t\t)"
+				}
+			}
+		},
+		"puzzle_deletion_tombstones": {
+			"name": "puzzle_deletion_tombstones",
+			"columns": {
+				"puzzle_id": {
+					"name": "puzzle_id",
+					"type": "text",
+					"primaryKey": true,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"deleted_at": {
+					"name": "deleted_at",
+					"type": "integer",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				}
+			},
+			"indexes": {},
+			"foreignKeys": {},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {},
+			"checkConstraints": {}
+		},
+		"puzzle_families": {
+			"name": "puzzle_families",
+			"columns": {
+				"id": {
+					"name": "id",
+					"type": "text",
+					"primaryKey": true,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"owner_id": {
+					"name": "owner_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"name": {
+					"name": "name",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"category": {
+					"name": "category",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false,
+					"autoincrement": false
+				},
+				"aspect_ratio": {
+					"name": "aspect_ratio",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"status": {
+					"name": "status",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false,
+					"default": "'processing'"
+				},
+				"created_at": {
+					"name": "created_at",
+					"type": "integer",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				}
+			},
+			"indexes": {
+				"idx_puzzle_families_owner": {
+					"name": "idx_puzzle_families_owner",
+					"columns": ["owner_id", "created_at"],
+					"isUnique": false
+				}
+			},
+			"foreignKeys": {},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {},
+			"checkConstraints": {
+				"puzzle_families_status_check": {
+					"name": "puzzle_families_status_check",
+					"value": "\"puzzle_families\".\"status\" IN ('processing', 'ready', 'failed')"
+				},
+				"puzzle_families_aspect_ratio_check": {
+					"name": "puzzle_families_aspect_ratio_check",
+					"value": "\"puzzle_families\".\"aspect_ratio\" IN ('1:1', '4:3', '3:4')"
+				}
+			}
+		}
+	},
+	"views": {},
+	"enums": {},
+	"_meta": {
+		"tables": {},
+		"columns": {}
+	},
+	"internal": {
+		"indexes": {}
+	},
+	"id": "8132d99d-c2c8-4126-874e-a66bab6226ad",
+	"prevId": "ab96c73b-93fc-437f-a4e4-fc8cd203a9b7"
+}

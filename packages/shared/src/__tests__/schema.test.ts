@@ -3,7 +3,15 @@ import { Database } from 'bun:sqlite';
 import { drizzle } from 'drizzle-orm/bun-sqlite';
 import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
 import { eq } from 'drizzle-orm';
-import { cpSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+	cpSync,
+	existsSync,
+	mkdtempSync,
+	mkdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -19,6 +27,29 @@ import {
 } from '../schema';
 
 describe('schema tables', () => {
+	it('keeps a drizzle snapshot for every journal entry', () => {
+		const journal = JSON.parse(readFileSync('./drizzle/meta/_journal.json', 'utf8')) as {
+			entries: Array<{ idx: number; tag: string }>;
+		};
+		for (const entry of journal.entries) {
+			const snapshotPath = `./drizzle/meta/${String(entry.idx).padStart(4, '0')}_snapshot.json`;
+			expect(existsSync(snapshotPath)).toBe(true);
+		}
+		const latest = journal.entries[journal.entries.length - 1];
+		expect(latest.tag).toBe('0006_puzzle_progression_reset');
+		const latestSnapshot = JSON.parse(
+			readFileSync('./drizzle/meta/0006_snapshot.json', 'utf8')
+		) as {
+			prevId: string;
+		};
+		const previousSnapshot = JSON.parse(
+			readFileSync('./drizzle/meta/0005_snapshot.json', 'utf8')
+		) as {
+			id: string;
+		};
+		expect(latestSnapshot.prevId).toBe(previousSnapshot.id);
+	});
+
 	function makeDb() {
 		const sqlite = new Database(':memory:');
 		const db = drizzle(sqlite);
