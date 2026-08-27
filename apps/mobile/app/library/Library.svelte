@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import type { SessionStorageAdapter } from '@perseus/game-core';
-	import type { PuzzleSummary } from '@perseus/types';
+	import type { PuzzleFamilySummary } from '@perseus/types';
 	import type { PuzzleApi } from '../api/puzzleApi';
 	import Downloaded from './Downloaded.svelte';
 	import {
@@ -33,7 +33,7 @@
 	export let onCancelDownload: () => void;
 	export let onLaunch: (launch: GameplayLaunch) => void;
 
-	let galleryRows: PuzzleSummary[] = [];
+	let galleryRows: PuzzleFamilySummary[] = [];
 	let galleryCursor: string | undefined;
 	let galleryLoading = false;
 	let galleryError: string | null = null;
@@ -75,8 +75,8 @@
 		galleryLoading = true;
 		galleryError = null;
 		try {
-			const response = await puzzleApi.listPuzzles(reset ? undefined : galleryCursor);
-			const ready = response.puzzles.filter((puzzle) => puzzle.status === 'ready');
+			const response = await puzzleApi.listPuzzleFamilies(reset ? undefined : galleryCursor);
+			const ready = response.families.filter((family) => family.status === 'ready');
 			galleryRows = reset ? ready : [...galleryRows, ...ready];
 			galleryCursor = response.nextCursor;
 		} catch (error) {
@@ -152,10 +152,10 @@
 				/>
 			{/if}
 			<Gallery
-				puzzles={galleryRows}
+				families={galleryRows}
 				{installedIds}
 				{downloadJob}
-				thumbnailUrl={puzzleApi.thumbnailUrl}
+				familyThumbnailUrl={puzzleApi.familyThumbnailUrl}
 				{onDownload}
 				onLoadMore={loadMore}
 				{onCancelDownload}

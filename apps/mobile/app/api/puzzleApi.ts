@@ -1,41 +1,19 @@
 import {
+	isPuzzleFamilyListResponse,
 	validatePuzzleMetadata,
-	type PuzzleListResponse,
-	type PuzzleSummary,
+	type PuzzleFamilyListResponse,
 	type ReadyPuzzle
 } from '@perseus/types';
 
 export type PuzzleJsonRequest = (url: string) => Promise<unknown>;
 
 export interface PuzzleApi {
-	listPuzzles(cursor?: string): Promise<PuzzleListResponse>;
+	listPuzzleFamilies(cursor?: string): Promise<PuzzleFamilyListResponse>;
 	getPuzzle(puzzleId: string): Promise<ReadyPuzzle>;
+	familyThumbnailUrl(familyId: string): string;
 	thumbnailUrl(puzzleId: string): string;
 	referenceUrl(puzzleId: string): string;
 	pieceImageUrl(puzzleId: string, pieceId: number): string;
-}
-
-function isPuzzleSummary(value: unknown): value is PuzzleSummary {
-	if (typeof value !== 'object' || value === null) return false;
-	const s = value as Record<string, unknown>;
-	return (
-		typeof s.id === 'string' &&
-		typeof s.name === 'string' &&
-		typeof s.pieceCount === 'number' &&
-		Number.isFinite(s.pieceCount) &&
-		typeof s.status === 'string'
-	);
-}
-
-function isPuzzleListResponse(value: unknown): value is PuzzleListResponse {
-	if (typeof value !== 'object' || value === null) return false;
-	const r = value as Record<string, unknown>;
-	if (!Array.isArray(r.puzzles) || !r.puzzles.every(isPuzzleSummary)) return false;
-	if (typeof r.total !== 'number' || !Number.isFinite(r.total)) return false;
-	if (typeof r.offset !== 'number' || !Number.isFinite(r.offset)) return false;
-	if (typeof r.limit !== 'number' || !Number.isFinite(r.limit)) return false;
-	if (r.nextCursor !== undefined && typeof r.nextCursor !== 'string') return false;
-	return true;
 }
 
 export function createPuzzleApi(options: {
@@ -45,13 +23,13 @@ export function createPuzzleApi(options: {
 	const baseUrl = options.baseUrl.replace(/\/+$/, '');
 
 	return {
-		async listPuzzles(cursor?: string): Promise<PuzzleListResponse> {
+		async listPuzzleFamilies(cursor?: string): Promise<PuzzleFamilyListResponse> {
 			const url =
 				cursor !== undefined && cursor !== null
-					? `${baseUrl}/api/puzzles?cursor=${encodeURIComponent(cursor)}`
-					: `${baseUrl}/api/puzzles`;
+					? `${baseUrl}/api/puzzle-families?cursor=${encodeURIComponent(cursor)}`
+					: `${baseUrl}/api/puzzle-families`;
 			const raw = await options.requestJson(url);
-			if (!isPuzzleListResponse(raw)) throw new Error('invalid_puzzle_list_response');
+			if (!isPuzzleFamilyListResponse(raw)) throw new Error('invalid_puzzle_family_list_response');
 			return raw;
 		},
 
@@ -65,6 +43,8 @@ export function createPuzzleApi(options: {
 
 			return {
 				id: raw.id,
+				familyId: raw.familyId,
+				difficulty: raw.difficulty,
 				name: raw.name,
 				...(raw.category ? { category: raw.category } : {}),
 				...(raw.aspectRatio ? { aspectRatio: raw.aspectRatio } : {}),
@@ -81,6 +61,10 @@ export function createPuzzleApi(options: {
 				version: raw.version,
 				status: 'ready'
 			};
+		},
+
+		familyThumbnailUrl(familyId: string): string {
+			return `${baseUrl}/api/puzzle-families/${encodeURIComponent(familyId)}/thumbnail`;
 		},
 
 		thumbnailUrl(puzzleId: string): string {
