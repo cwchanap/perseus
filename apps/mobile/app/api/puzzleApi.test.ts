@@ -1,21 +1,27 @@
 import { describe, expect, it } from 'vitest';
 import type { PuzzleMetadata, PuzzlePiece, ReadyPuzzle } from '@perseus/types';
+import { getDifficultyPieceCount } from '@perseus/types';
 import { createPuzzleApi } from './puzzleApi';
+
+const FAMILY_ID = '123e4567-e89b-42d3-a456-426614174000';
+const VARIANT_ID = '223e4567-e89b-42d3-a456-426614174001';
 
 function makePiece(id: number): PuzzlePiece {
 	return {
 		id,
-		puzzleId: 'p1',
+		puzzleId: VARIANT_ID,
 		correctX: id % 2,
 		correctY: Math.floor(id / 2),
 		edges: { top: 'flat', right: 'tab', bottom: 'blank', left: 'flat' },
-		imagePath: `pieces/p1/${id}.png`
+		imagePath: `pieces/${VARIANT_ID}/${id}.png`
 	};
 }
 
 function readyPuzzle(): ReadyPuzzle {
 	return {
-		id: 'p1',
+		id: VARIANT_ID,
+		familyId: FAMILY_ID,
+		difficulty: 'normal',
 		name: 'Test Puzzle',
 		category: 'Nature',
 		pieceCount: 4,
@@ -38,6 +44,44 @@ function processingPuzzle(): PuzzleMetadata {
 	};
 }
 
+function makeFamilyEnvelope() {
+	const aspectRatio = '4:3' as const;
+	return {
+		families: [
+			{
+				id: FAMILY_ID,
+				name: 'Mountain Vista',
+				aspectRatio,
+				status: 'ready',
+				createdAt: 1716500000000,
+				variants: {
+					easy: {
+						id: VARIANT_ID,
+						difficulty: 'easy',
+						pieceCount: getDifficultyPieceCount(aspectRatio, 'easy'),
+						status: 'ready'
+					},
+					normal: {
+						id: '323e4567-e89b-42d3-a456-426614174002',
+						difficulty: 'normal',
+						pieceCount: getDifficultyPieceCount(aspectRatio, 'normal'),
+						status: 'ready'
+					},
+					hard: {
+						id: '423e4567-e89b-42d3-a456-426614174003',
+						difficulty: 'hard',
+						pieceCount: getDifficultyPieceCount(aspectRatio, 'hard'),
+						status: 'ready'
+					}
+				}
+			}
+		],
+		total: 1,
+		offset: 0,
+		limit: 20
+	};
+}
+
 describe('createPuzzleApi', () => {
 	it('normalizes a trailing base slash and propagates the existing cursor', async () => {
 		const urls: string[] = [];
@@ -45,13 +89,13 @@ describe('createPuzzleApi', () => {
 			baseUrl: 'https://api.example.test/',
 			requestJson: async (url) => {
 				urls.push(url);
-				return { puzzles: [], total: 0, offset: 0, limit: 20, nextCursor: 'next' };
+				return { families: [], total: 0, offset: 0, limit: 20, nextCursor: 'next' };
 			}
 		});
 
-		await api.listPuzzles('cursor-1');
+		await api.listPuzzleFamilies('cursor-1');
 
-		expect(urls).toEqual(['https://api.example.test/api/puzzles?cursor=cursor-1']);
+		expect(urls).toEqual(['https://api.example.test/api/puzzle-families?cursor=cursor-1']);
 	});
 
 	it('preserves an empty-string cursor as a cursor parameter', async () => {
@@ -60,18 +104,18 @@ describe('createPuzzleApi', () => {
 			baseUrl: 'https://api.example.test',
 			requestJson: async (url) => {
 				urls.push(url);
-				return { puzzles: [], total: 0, offset: 0, limit: 20 };
+				return { families: [], total: 0, offset: 0, limit: 20 };
 			}
 		});
 
-		await api.listPuzzles('');
+		await api.listPuzzleFamilies('');
 
-		expect(urls).toEqual(['https://api.example.test/api/puzzles?cursor=']);
+		expect(urls).toEqual(['https://api.example.test/api/puzzle-families?cursor=']);
 	});
 
 	it('returns the list envelope when no cursor is given', async () => {
 		const urls: string[] = [];
-		const envelope = { puzzles: [], total: 0, offset: 0, limit: 20, nextCursor: 'next' };
+		const envelope = { families: [], total: 0, offset: 0, limit: 20, nextCursor: 'next' };
 		const api = createPuzzleApi({
 			baseUrl: 'https://api.example.test',
 			requestJson: async (url) => {
@@ -80,67 +124,61 @@ describe('createPuzzleApi', () => {
 			}
 		});
 
-		await expect(api.listPuzzles()).resolves.toEqual(envelope);
-		expect(urls).toEqual(['https://api.example.test/api/puzzles']);
+		await expect(api.listPuzzleFamilies()).resolves.toEqual(envelope);
+		expect(urls).toEqual(['https://api.example.test/api/puzzle-families']);
 	});
 
 	it('returns a populated, validated list envelope', async () => {
-		const envelope = {
-			puzzles: [
-				{ id: 'p1', name: 'Puzzle 1', pieceCount: 4, status: 'ready' },
-				{ id: 'p2', name: 'Puzzle 2', pieceCount: 9, status: 'processing' }
-			],
-			total: 2,
-			offset: 0,
-			limit: 20
-		};
+		const envelope = makeFamilyEnvelope();
 		const api = createPuzzleApi({
 			baseUrl: 'https://api.example.test',
 			requestJson: async () => envelope
 		});
 
-		await expect(api.listPuzzles()).resolves.toEqual(envelope);
+		await expect(api.listPuzzleFamilies()).resolves.toEqual(envelope);
 	});
 
-	it('rejects a non-array puzzles field', async () => {
+	it('rejects a non-array families field', async () => {
 		const api = createPuzzleApi({
 			baseUrl: 'https://api.example.test',
-			requestJson: async () => ({ puzzles: 'not-an-array', total: 0, offset: 0, limit: 20 })
+			requestJson: async () => ({ families: 'not-an-array', total: 0, offset: 0, limit: 20 })
 		});
 
-		await expect(api.listPuzzles()).rejects.toThrow('invalid_puzzle_list_response');
+		await expect(api.listPuzzleFamilies()).rejects.toThrow('invalid_puzzle_family_list_response');
 	});
 
-	it('rejects a puzzle summary with a missing id', async () => {
+	it('rejects a family summary with a missing id', async () => {
 		const api = createPuzzleApi({
 			baseUrl: 'https://api.example.test',
 			requestJson: async () => ({
-				puzzles: [{ name: 'No ID', pieceCount: 4, status: 'ready' }],
+				families: [
+					{ name: 'No ID', aspectRatio: '4:3', status: 'ready', createdAt: 1, variants: {} }
+				],
 				total: 1,
 				offset: 0,
 				limit: 20
 			})
 		});
 
-		await expect(api.listPuzzles()).rejects.toThrow('invalid_puzzle_list_response');
+		await expect(api.listPuzzleFamilies()).rejects.toThrow('invalid_puzzle_family_list_response');
 	});
 
 	it('rejects a non-number total', async () => {
 		const api = createPuzzleApi({
 			baseUrl: 'https://api.example.test',
-			requestJson: async () => ({ puzzles: [], total: '0', offset: 0, limit: 20 })
+			requestJson: async () => ({ families: [], total: '0', offset: 0, limit: 20 })
 		});
 
-		await expect(api.listPuzzles()).rejects.toThrow('invalid_puzzle_list_response');
+		await expect(api.listPuzzleFamilies()).rejects.toThrow('invalid_puzzle_family_list_response');
 	});
 
 	it('rejects a non-string nextCursor', async () => {
 		const api = createPuzzleApi({
 			baseUrl: 'https://api.example.test',
-			requestJson: async () => ({ puzzles: [], total: 0, offset: 0, limit: 20, nextCursor: 42 })
+			requestJson: async () => ({ families: [], total: 0, offset: 0, limit: 20, nextCursor: 42 })
 		});
 
-		await expect(api.listPuzzles()).rejects.toThrow('invalid_puzzle_list_response');
+		await expect(api.listPuzzleFamilies()).rejects.toThrow('invalid_puzzle_family_list_response');
 	});
 
 	it('rejects a non-object response body', async () => {
@@ -149,7 +187,7 @@ describe('createPuzzleApi', () => {
 			requestJson: async () => 'oops'
 		});
 
-		await expect(api.listPuzzles()).rejects.toThrow('invalid_puzzle_list_response');
+		await expect(api.listPuzzleFamilies()).rejects.toThrow('invalid_puzzle_family_list_response');
 	});
 
 	it('rejects malformed metadata through validatePuzzleMetadata', async () => {
@@ -158,7 +196,7 @@ describe('createPuzzleApi', () => {
 			requestJson: async () => ({ ...readyPuzzle(), gridCols: 3 })
 		});
 
-		await expect(api.getPuzzle('p1')).rejects.toThrow('invalid_puzzle_response');
+		await expect(api.getPuzzle(VARIANT_ID)).rejects.toThrow('invalid_puzzle_response');
 	});
 
 	it('rejects a valid non-ready detail before assets are scheduled', async () => {
@@ -167,7 +205,7 @@ describe('createPuzzleApi', () => {
 			requestJson: async () => processingPuzzle()
 		});
 
-		await expect(api.getPuzzle('p1')).rejects.toThrow('puzzle_not_ready');
+		await expect(api.getPuzzle(VARIANT_ID)).rejects.toThrow('puzzle_not_ready');
 	});
 
 	it('rejects a requested/detail id mismatch', async () => {
@@ -185,23 +223,27 @@ describe('createPuzzleApi', () => {
 			requestJson: async () => readyPuzzle()
 		});
 
-		await expect(api.getPuzzle('p1')).resolves.toEqual(readyPuzzle());
+		await expect(api.getPuzzle(VARIANT_ID)).resolves.toEqual(readyPuzzle());
 	});
 
-	it('builds asset urls against the normalized base', () => {
+	it('builds variant asset urls against the normalized base', () => {
 		const api = createPuzzleApi({
 			baseUrl: 'https://api.example.test///',
 			requestJson: async () => null
 		});
 
-		expect(api.thumbnailUrl('p1')).toBe('https://api.example.test/api/puzzles/p1/thumbnail');
-		expect(api.referenceUrl('p1')).toBe('https://api.example.test/api/puzzles/p1/reference');
-		expect(api.pieceImageUrl('p1', 2)).toBe(
-			'https://api.example.test/api/puzzles/p1/pieces/2/image'
+		expect(api.thumbnailUrl(VARIANT_ID)).toBe(
+			`https://api.example.test/api/puzzles/${VARIANT_ID}/thumbnail`
+		);
+		expect(api.referenceUrl(VARIANT_ID)).toBe(
+			`https://api.example.test/api/puzzles/${VARIANT_ID}/reference`
+		);
+		expect(api.pieceImageUrl(VARIANT_ID, 2)).toBe(
+			`https://api.example.test/api/puzzles/${VARIANT_ID}/pieces/2/image`
 		);
 	});
 
-	it('encodes puzzle ids with url-special characters in asset urls', () => {
+	it('encodes puzzle ids with url-special characters in variant asset urls', () => {
 		const api = createPuzzleApi({
 			baseUrl: 'https://api.example.test',
 			requestJson: async () => null
@@ -215,6 +257,28 @@ describe('createPuzzleApi', () => {
 		);
 		expect(api.pieceImageUrl('a/b c', 2)).toBe(
 			'https://api.example.test/api/puzzles/a%2Fb%20c/pieces/2/image'
+		);
+	});
+
+	it('builds family thumbnail urls against the normalized base', () => {
+		const api = createPuzzleApi({
+			baseUrl: 'https://api.example.test///',
+			requestJson: async () => null
+		});
+
+		expect(api.familyThumbnailUrl(FAMILY_ID)).toBe(
+			'https://api.example.test/api/puzzle-families/123e4567-e89b-42d3-a456-426614174000/thumbnail'
+		);
+	});
+
+	it('encodes family ids with url-special characters in thumbnail urls', () => {
+		const api = createPuzzleApi({
+			baseUrl: 'https://api.example.test',
+			requestJson: async () => null
+		});
+
+		expect(api.familyThumbnailUrl('a/b c')).toBe(
+			'https://api.example.test/api/puzzle-families/a%2Fb%20c/thumbnail'
 		);
 	});
 });
