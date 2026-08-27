@@ -1327,9 +1327,11 @@ describe('player profile validators', () => {
 	});
 
 	const stat: PlayerStatRow = {
-		puzzleId: 'pz1',
-		puzzleName: 'Cat',
-		bestTimeSeconds: 90,
+		familyId: 'fam1',
+		familyName: 'Cat',
+		difficulty: 'easy',
+		standardBestTimeSeconds: 90,
+		rotationBestTimeSeconds: null,
 		totalCompletions: 2,
 		firstCompletedAt: 10,
 		lastCompletedAt: 20
@@ -1340,23 +1342,23 @@ describe('player profile validators', () => {
 	});
 
 	it('validates a stat row without a standard best time', () => {
-		const nullableStat: PlayerStatRow = { ...stat, bestTimeSeconds: null };
+		const nullableStat: PlayerStatRow = { ...stat, standardBestTimeSeconds: null };
 
 		expect(isPlayerStatRow(nullableStat)).toBe(true);
 	});
 
 	it('rejects a stat row with a missing standard best time', () => {
-		const { bestTimeSeconds: _bestTimeSeconds, ...missingBest } = stat;
+		const { standardBestTimeSeconds: _standardBestTimeSeconds, ...missingBest } = stat;
 
 		expect(isPlayerStatRow(missingBest)).toBe(false);
 	});
 
 	it.each([
-		['undefined', { ...stat, bestTimeSeconds: undefined }],
-		['string', { ...stat, bestTimeSeconds: '90' }],
-		['NaN', { ...stat, bestTimeSeconds: NaN }],
-		['positive infinity', { ...stat, bestTimeSeconds: Infinity }],
-		['negative infinity', { ...stat, bestTimeSeconds: -Infinity }]
+		['undefined', { ...stat, standardBestTimeSeconds: undefined }],
+		['string', { ...stat, standardBestTimeSeconds: '90' }],
+		['NaN', { ...stat, standardBestTimeSeconds: NaN }],
+		['positive infinity', { ...stat, standardBestTimeSeconds: Infinity }],
+		['negative infinity', { ...stat, standardBestTimeSeconds: -Infinity }]
 	])('rejects a stat row with a %s standard best time', (_case, value) => {
 		expect(isPlayerStatRow(value)).toBe(false);
 	});
@@ -1416,8 +1418,8 @@ describe('player profile validators', () => {
 		expect(isPlayerStatRow(null)).toBe(false);
 	});
 
-	it('rejects stat row with blank puzzleId', () => {
-		expect(isPlayerStatRow({ ...stat, puzzleId: '' })).toBe(false);
+	it('rejects stat row with blank familyId', () => {
+		expect(isPlayerStatRow({ ...stat, familyId: '' })).toBe(false);
 	});
 
 	it('rejects stat row with non-finite totalCompletions', () => {

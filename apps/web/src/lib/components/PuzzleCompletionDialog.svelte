@@ -2,6 +2,25 @@
 	import { modalFocus } from '$lib/actions/modalFocus';
 	import { formatTime } from '$lib/stores/timer';
 	import type { ResultClass } from '@perseus/types';
+	import type { CompletionAwards } from '$lib/types/puzzle';
+
+	const ACHIEVEMENT_LABELS: Record<string, string> = {
+		first_clear: 'First Clear',
+		getting_started: 'Getting Started',
+		puzzle_regular: 'Puzzle Regular',
+		full_set: 'Full Set',
+		hard_mode: 'Hard Mode',
+		hard_veteran: 'Hard Veteran',
+		hintless: 'Hintless',
+		flawless: 'Flawless',
+		rotation_clear: 'Rotation Clear'
+	};
+
+	const MASTERY_LABELS: Record<string, string> = {
+		hintless: 'Hintless',
+		flawless: 'Flawless',
+		rotation_clear: 'Rotation Clear'
+	};
 
 	const RESULT_LABELS: Record<ResultClass, string> = {
 		standard_timed: 'STANDARD TIMED',
@@ -23,6 +42,7 @@
 		isNewBest: boolean;
 		localStatsFailed: boolean;
 		serverSubmissionRetryable: boolean;
+		awards?: CompletionAwards;
 		onRetryServerSubmission: () => void;
 		onPlayAgain: () => void;
 		onBackToArcade: () => void;
@@ -42,6 +62,7 @@
 		isNewBest,
 		localStatsFailed,
 		serverSubmissionRetryable,
+		awards,
 		onRetryServerSubmission,
 		onPlayAgain,
 		onBackToArcade,
@@ -125,6 +146,40 @@
 				<span class="summary-value" data-testid="completion-rotation">{rotationSummary}</span>
 			</div>
 		</div>
+
+		{#if awards?.clearPoints}
+			<div class="award-banner" data-testid="completion-clear-points">
+				+{awards.clearPoints} SCORE
+			</div>
+		{/if}
+
+		{#if awards?.achievements?.length}
+			<div class="award-section" data-testid="completion-achievements">
+				<div class="award-heading">NEW ACHIEVEMENTS</div>
+				<ul class="award-list">
+					{#each awards.achievements as achievement (achievement)}
+						<li>{ACHIEVEMENT_LABELS[achievement] ?? achievement}</li>
+					{/each}
+				</ul>
+			</div>
+		{/if}
+
+		{#if awards?.mastery?.length}
+			<div class="award-section" data-testid="completion-mastery">
+				<div class="award-heading">MASTERY EARNED</div>
+				<ul class="award-list">
+					{#each awards.mastery as badge (badge)}
+						<li>{MASTERY_LABELS[badge] ?? badge}</li>
+					{/each}
+				</ul>
+			</div>
+		{/if}
+
+		{#if awards?.puzzleRank}
+			<div class="award-banner" data-testid="completion-puzzle-rank">
+				FAMILY RANK #{awards.puzzleRank}
+			</div>
+		{/if}
 
 		<div class="modal-bottom-line"></div>
 
@@ -293,6 +348,35 @@
 		font-size: 1rem;
 		letter-spacing: 0.1em;
 		color: var(--text-0);
+	}
+
+	.award-banner {
+		margin-top: 0.75rem;
+		font-family: var(--font-display);
+		font-size: 0.7rem;
+		letter-spacing: 0.18em;
+		color: var(--gold);
+	}
+
+	.award-section {
+		margin-top: 0.75rem;
+		text-align: left;
+	}
+
+	.award-heading {
+		font-family: var(--font-mono);
+		font-size: 0.55rem;
+		letter-spacing: 0.2em;
+		color: var(--text-2);
+		margin-bottom: 0.35rem;
+	}
+
+	.award-list {
+		margin: 0;
+		padding-left: 1rem;
+		font-family: var(--font-mono);
+		font-size: 0.68rem;
+		color: var(--text-1);
 	}
 
 	.new-record-badge {

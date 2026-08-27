@@ -5,17 +5,26 @@
 		getPlayerProfile,
 		getPlayerPuzzles,
 		getPlayerStats,
+		getPlayerProgression,
+		fetchFamilyDetail,
 		updatePlayerProfile,
 		uploadPlayerAvatar,
 		resolveAssetUrl
 	} from '$lib/services/api';
-	import type { PlayerProfile, PlayerOwnedFamilySummary, PlayerStatRow } from '$lib/types/puzzle';
+	import type {
+		PlayerProfile,
+		PlayerOwnedFamilySummary,
+		PlayerStatRow,
+		PlayerProgressionSummary
+	} from '$lib/types/puzzle';
+	import type { PuzzleFamilySummary } from '@perseus/types';
 	import PuzzleCard from '$lib/components/PuzzleCard.svelte';
 	import { ownedFamilyToGalleryFamily } from '$lib/utils/familyCard';
 	import { formatTime } from '$lib/stores/timer';
 
 	let profile = $state<PlayerProfile | null>(null);
-	let families = $state<PlayerOwnedFamilySummary[]>([]);
+	let progression = $state<PlayerProgressionSummary | null>(null);
+	let families = $state<PuzzleFamilySummary[]>([]);
 	let stats = $state<PlayerStatRow[]>([]);
 	let loading = $state(true);
 	let loadError = $state(false);
@@ -50,8 +59,32 @@
 			.toUpperCase() || '?'
 	);
 
-	function toGalleryFamily(p: PlayerOwnedFamilySummary) {
+	function toGalleryFamily(p: PlayerOwnedFamilySummary): PuzzleFamilySummary {
 		return ownedFamilyToGalleryFamily(p);
+	}
+
+	async function enrichOwnedFamilies(
+		owned: PlayerOwnedFamilySummary[],
+		signal?: AbortSignal
+	): Promise<PuzzleFamilySummary[]> {
+		const results = await Promise.all(
+			owned.map(async (family) => {
+				if (family.status !== 'ready') return toGalleryFamily(family);
+				try {
+					const base = toGalleryFamily(family);
+					const detail = await fetchFamilyDetail(family.id, signal);
+					return {
+						...detail,
+						name: family.name,
+						...(base.category ? { category: base.category } : {})
+					};
+				} catch (error) {
+					console.error(`Failed to load family detail for ${family.id}`, error);
+					return toGalleryFamily(family);
+				}
+			})
+		);
+		return results;
 	}
 
 	onMount(() => {
@@ -71,10 +104,11 @@
 		// Use allSettled so a failure in puzzles/stats doesn't hide a successfully
 		// loaded profile: the profile is essential (its failure surfaces the error
 		// screen), while puzzle/stat failures degrade gracefully to empty lists.
-		const [profileRes, puzzlesRes, statsRes] = await Promise.allSettled([
+		const [profileRes, puzzlesRes, statsRes, progressionRes] = await Promise.allSettled([
 			getPlayerProfile(signal),
 			getPlayerPuzzles({ signal }),
-			getPlayerStats({ signal })
+			getPlayerStats({ signal }),
+			getPlayerProgression(signal)
 		]);
 		// If the component unmounted while fetches were in flight, bail before
 		// writing state to a dead component.
@@ -89,7 +123,7 @@
 			loadError = true;
 		}
 		if (puzzlesRes.status === 'fulfilled') {
-			families = puzzlesRes.value.families;
+			families = await enrichOwnedFamilies(puzzlesRes.value.families, signal);
 			puzzlesCursor = puzzlesRes.value.nextCursor;
 		} else {
 			families = [];
@@ -105,6 +139,12 @@
 			statsCursor = undefined;
 			console.error('Failed to load stats:', statsRes.reason);
 		}
+		if (progressionRes.status === 'fulfilled') {
+			progression = progressionRes.value;
+		} else {
+			progression = null;
+			console.error('Failed to load progression:', progressionRes.reason);
+		}
 		loading = false;
 	}
 
@@ -119,7 +159,7 @@
 		try {
 			const r = await getPlayerPuzzles({ cursor, signal });
 			if (signal?.aborted) return;
-			families = [...families, ...r.families];
+			families = [...families, ...(await enrichOwnedFamilies(r.families, signal))];
 			puzzlesCursor = r.nextCursor;
 		} catch (error) {
 			if (signal?.aborted) return;
@@ -307,6 +347,57 @@
 
 		<div class="mt-6 grid grid-cols-3 gap-3 text-center">
 			<div class="border border-(--border) bg-(--bg-1) p-4">
+				<div class="text-xl font-bold text-(--accent)" data-testid="profile-progression-score">
+					{progression?.score ?? 0}
+				</div>
+				<div class="text-xs tracking-wider text-(--text-2) uppercase">Score</div>
+			</div>
+			<div class="border border-(--border) bg-(--bg-1) p-4">
+				<div class="text-xl font-bold text-(--accent)" data-testid="profile-progression-rank">
+					{progression?.rank ?? '—'}
+				</div>
+				<div class="text-xs tracking-wider text-(--text-2) uppercase">Rank</div>
+			</div>
+			<div class="border border-(--border) bg-(--bg-1) p-4">
+				<div
+					class="text-xl font-bold text-(--accent)"
+					data-testid="profile-progression-achievements"
+				>
+					{progression?.achievementsUnlocked ?? 0}/{progression?.achievementsTotal ?? 9}
+				</div>
+				<div class="text-xs tracking-wider text-(--text-2) uppercase">Achievements</div>
+			</div>
+		</div>
+
+		<div class="mt-3 grid grid-cols-4 gap-3 text-center">
+			<div class="border border-(--border) bg-(--bg-1) p-3">
+				<div class="text-lg font-bold text-(--accent)" data-testid="profile-difficulty-easy">
+					{progression?.easyClears ?? 0}
+				</div>
+				<div class="text-xs tracking-wider text-(--text-2) uppercase">Easy</div>
+			</div>
+			<div class="border border-(--border) bg-(--bg-1) p-3">
+				<div class="text-lg font-bold text-(--accent)" data-testid="profile-difficulty-normal">
+					{progression?.normalClears ?? 0}
+				</div>
+				<div class="text-xs tracking-wider text-(--text-2) uppercase">Normal</div>
+			</div>
+			<div class="border border-(--border) bg-(--bg-1) p-3">
+				<div class="text-lg font-bold text-(--accent)" data-testid="profile-difficulty-hard">
+					{progression?.hardClears ?? 0}
+				</div>
+				<div class="text-xs tracking-wider text-(--text-2) uppercase">Hard</div>
+			</div>
+			<div class="border border-(--border) bg-(--bg-1) p-3">
+				<div class="text-lg font-bold text-(--accent)" data-testid="profile-mastery-earned">
+					{progression?.masteryEarned ?? 0}
+				</div>
+				<div class="text-xs tracking-wider text-(--text-2) uppercase">Mastery</div>
+			</div>
+		</div>
+
+		<div class="mt-6 grid grid-cols-3 gap-3 text-center">
+			<div class="border border-(--border) bg-(--bg-1) p-4">
 				<div class="text-xl font-bold text-(--accent)" data-testid="profile-summary-uploaded">
 					{profile.summary.puzzlesUploaded}
 				</div>
@@ -340,7 +431,7 @@
 		{:else}
 			<div class="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-3">
 				{#each families as p (p.id)}
-					<PuzzleCard family={toGalleryFamily(p)} playableLinks={false} />
+					<PuzzleCard family={p} playableLinks={p.status === 'ready'} />
 				{/each}
 			</div>
 			{#if puzzlesCursor !== undefined}
@@ -361,27 +452,32 @@
 			<p class="text-sm text-(--text-2)">No solves recorded yet.</p>
 		{:else}
 			<ul class="mt-3 divide-y divide-(--border)" data-testid="best-times-list">
-				{#each stats as s (s.puzzleId)}
+				{#each stats as s (`${s.familyId}-${s.difficulty}`)}
 					<li class="flex items-center justify-between gap-3 py-2 text-sm">
-						{#if s.puzzleName}
-							<a href={resolve(`/puzzle/${s.puzzleId}`)} class="min-w-0 truncate text-(--text-1)">
-								{s.puzzleName}
-							</a>
-						{:else}
-							<span class="min-w-0 truncate text-(--text-2)">
-								{s.puzzleId}
+						<div class="min-w-0">
+							{#if s.familyName}
+								<span class="truncate text-(--text-1)">{s.familyName}</span>
+							{:else}
+								<span class="truncate text-(--text-2)">{s.familyId}</span>
+							{/if}
+							<span class="ml-2 text-xs tracking-wider text-(--text-2) uppercase">
+								{s.difficulty}
 							</span>
-						{/if}
+						</div>
 						<span class="shrink-0 text-xs text-(--text-2)">
 							{s.totalCompletions}×
 						</span>
-						{#if s.bestTimeSeconds === null}
-							<span class="shrink-0 text-xs text-(--text-2)">No standard time</span>
-						{:else}
-							<span class="shrink-0 font-(--font-mono) text-(--gold)">
-								{formatTime(s.bestTimeSeconds)}
-							</span>
-						{/if}
+						<div class="shrink-0 text-right text-xs font-(--font-mono)">
+							{#if s.standardBestTimeSeconds !== null}
+								<div class="text-(--gold)">S {formatTime(s.standardBestTimeSeconds)}</div>
+							{/if}
+							{#if s.rotationBestTimeSeconds !== null}
+								<div class="text-(--accent)">R {formatTime(s.rotationBestTimeSeconds)}</div>
+							{/if}
+							{#if s.standardBestTimeSeconds === null && s.rotationBestTimeSeconds === null}
+								<span class="text-(--text-2)">No timed bests</span>
+							{/if}
+						</div>
 					</li>
 				{/each}
 			</ul>

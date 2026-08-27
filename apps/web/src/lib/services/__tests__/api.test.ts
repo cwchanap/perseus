@@ -1002,13 +1002,15 @@ describe('player profile service functions', () => {
 		expect(stats).toEqual([]);
 	});
 
-	it('recordCompletion POSTs the versioned v1 body', async () => {
+	it('recordCompletion POSTs the versioned v2 body', async () => {
 		vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}', { status: 200 })));
 		const request = {
-			version: 1 as const,
+			version: 2 as const,
 			runId: '11111111-1111-4111-8111-111111111111',
 			resultClass: 'standard_timed' as const,
-			elapsedActiveSeconds: 90
+			elapsedActiveSeconds: 90,
+			hintsUsed: 0,
+			incorrectAttempts: 0
 		};
 		await recordCompletion('pz1', request);
 		const calls = vi.mocked(fetch).mock.calls;

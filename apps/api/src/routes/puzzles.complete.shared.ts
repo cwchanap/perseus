@@ -36,7 +36,7 @@ export function parseCompletionRequest(value: unknown): CompletionRequestParseRe
 }
 
 export function completionResultToResponse(
-	result: VersionedCompletionResult
+	result: VersionedCompletionResult & { awards?: import('@perseus/shared').CompletionAwardsResult }
 ): CompletionResultResponse {
 	if (result.status === 'tombstoned') {
 		return {
@@ -62,7 +62,31 @@ export function completionResultToResponse(
 			status: 409
 		};
 	}
-	return { body: { ok: true }, status: 200 };
+	const awards =
+		result.awards &&
+		(result.awards.clearPoints !== undefined ||
+			(result.awards.achievements?.length ?? 0) > 0 ||
+			(result.awards.mastery?.length ?? 0) > 0 ||
+			result.awards.personalBest !== undefined ||
+			result.awards.puzzleRank !== undefined)
+			? {
+					...(result.awards.clearPoints !== undefined
+						? { clearPoints: result.awards.clearPoints }
+						: {}),
+					...(result.awards.achievements?.length
+						? { achievements: result.awards.achievements }
+						: {}),
+					...(result.awards.mastery?.length ? { mastery: result.awards.mastery } : {}),
+					...(result.awards.personalBest ? { personalBest: result.awards.personalBest } : {}),
+					...(result.awards.puzzleRank !== undefined
+						? { puzzleRank: result.awards.puzzleRank }
+						: {})
+				}
+			: undefined;
+	return {
+		body: awards ? { ok: true, awards } : { ok: true },
+		status: 200
+	};
 }
 
 export function completionInternalErrorResponse(message: string): CompletionInternalErrorResponse {

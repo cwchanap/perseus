@@ -6,6 +6,7 @@ import {
 	updateProfileDisplayName,
 	updateProfileAvatarUrl,
 	getPlayerSummary,
+	getPlayerProgressionSummary,
 	listPlayerPuzzleFamilies,
 	listPlayerStats,
 	InvalidPlayerStatsCursorError,
@@ -13,11 +14,12 @@ import {
 	parseImageDimensions,
 	validateImageEndMarker
 } from '@perseus/shared';
-import type { PlayerProfile, PlayerStatRow } from '@perseus/types';
+import type { PlayerProfile, PlayerStatRow, PlayerProgressionSummary } from '@perseus/types';
 import {
 	coercePuzzleStatus,
 	isPlayerProfile,
 	isPlayerStatRow,
+	isPlayerProgressionSummary,
 	isPuzzleAspectRatio,
 	isPuzzleId,
 	PUZZLE_CATEGORIES,
@@ -107,6 +109,17 @@ player.get('/profile', requirePlayerAuth, async (c) => {
 		return c.json({ error: 'internal_error', message: 'Failed to build profile' }, 500);
 	}
 	return c.json(profile);
+});
+
+player.get('/progression', requirePlayerAuth, async (c) => {
+	const db = getWorkerDb(c.env);
+	const session = c.get('playerSession');
+	const summary = await getPlayerProgressionSummary(db, session.user.id);
+	if (!isPlayerProgressionSummary(summary)) {
+		console.error(`Player progression response failed validation for player ${session.user.id}`);
+		return c.json({ error: 'internal_error', message: 'Failed to build progression summary' }, 500);
+	}
+	return c.json(summary satisfies PlayerProgressionSummary);
 });
 
 player.patch('/profile', requirePlayerAuth, async (c) => {
@@ -426,9 +439,11 @@ player.get('/stats', requirePlayerAuth, async (c) => {
 	// Project DB rows to the public PlayerStatRow contract, stripping playerId
 	// (the client already knows its own ID from the auth session).
 	const stats: PlayerStatRow[] = rows.map((r) => ({
-		puzzleId: r.puzzleId,
-		puzzleName: r.puzzleName,
-		bestTimeSeconds: r.bestTimeSeconds,
+		familyId: r.familyId,
+		familyName: r.familyName,
+		difficulty: r.difficulty,
+		standardBestTimeSeconds: r.standardBestTimeSeconds,
+		rotationBestTimeSeconds: r.rotationBestTimeSeconds,
 		totalCompletions: r.totalCompletions,
 		firstCompletedAt: r.firstCompletedAt,
 		lastCompletedAt: r.lastCompletedAt

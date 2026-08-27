@@ -124,9 +124,11 @@ import puzzleFamilies from './routes/puzzle-families.worker';
 import admin from './routes/admin.worker';
 import auth from './routes/auth.worker';
 import player from './routes/player.worker';
+import leaderboard from './routes/leaderboard.worker';
 
 app.route('/api/puzzles', puzzles);
 app.route('/api/puzzle-families', puzzleFamilies);
+app.route('/api/leaderboard', leaderboard);
 app.route('/api/admin', admin);
 app.route('/api/auth', auth);
 app.route('/api/player', player);

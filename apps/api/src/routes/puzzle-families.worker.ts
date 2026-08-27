@@ -38,8 +38,18 @@ import {
 	detectImageType,
 	insertPuzzleFamilyOwnership,
 	parseImageDimensions,
-	validateImageEndMarker
+	validateImageEndMarker,
+	listPuzzleLeaderboard,
+	resolveLeaderboardIdentities
 } from '@perseus/shared';
+import { optionalPlayerAuth } from '../middleware/optional-player-auth.worker';
+import {
+	isPuzzleLeaderboardEntry,
+	type PuzzleLeaderboardEntry,
+	type PuzzleLeaderboardResponse,
+	PUZZLE_DIFFICULTIES,
+	type PuzzleDifficulty
+} from '@perseus/types';
 
 const DECIMAL_INT_REGEX = /^\d+$/;
 
@@ -70,7 +80,7 @@ function parseCategory(value: string | null | undefined): PuzzleCategory | undef
 
 const puzzleFamilies = new Hono<{
 	Bindings: Env;
-	Variables: { playerSession: PlayerSessionRecord };
+	Variables: { playerSession?: PlayerSessionRecord };
 }>();
 
 // GET /api/puzzle-families — ready families with pagination
@@ -411,6 +421,78 @@ puzzleFamilies.get('/:familyId/thumbnail', async (c) => {
 		console.error(`Failed to retrieve thumbnail for family ${familyId}:`, error);
 		return c.json({ error: 'internal_error', message: 'Failed to retrieve thumbnail' }, 500);
 	}
+});
+
+function isPuzzleDifficultyParam(value: string): value is PuzzleDifficulty {
+	return (PUZZLE_DIFFICULTIES as readonly string[]).includes(value);
+}
+
+// GET /api/puzzle-families/:familyId/leaderboard
+puzzleFamilies.get('/:familyId/leaderboard', optionalPlayerAuth, async (c) => {
+	const familyId = c.req.param('familyId');
+	if (!isPuzzleId(familyId)) {
+		return c.json({ error: 'bad_request', message: 'Invalid family ID format' }, 400);
+	}
+	const difficultyParam = c.req.query('difficulty') ?? 'normal';
+	if (!isPuzzleDifficultyParam(difficultyParam)) {
+		return c.json({ error: 'bad_request', message: 'Invalid difficulty' }, 400);
+	}
+	const modeParam = c.req.query('mode') ?? 'standard';
+	if (modeParam !== 'standard' && modeParam !== 'rotation') {
+		return c.json({ error: 'bad_request', message: 'Invalid mode' }, 400);
+	}
+	const db = getWorkerDbContext(c.env).db;
+	const viewerPlayerId = c.get('playerSession')?.user.id;
+	const raw = await listPuzzleLeaderboard(db, {
+		familyId,
+		difficulty: difficultyParam,
+		mode: modeParam,
+		viewerPlayerId
+	});
+	const playerIds = [
+		...raw.entries.map((entry) => entry.playerId),
+		...(raw.me ? [raw.me.playerId] : [])
+	];
+	const identities = await resolveLeaderboardIdentities(db, playerIds);
+	const entries: PuzzleLeaderboardEntry[] = raw.entries.map((entry) => {
+		const identity = identities.get(entry.playerId)!;
+		return {
+			rank: entry.rank,
+			player: {
+				id: identity.id,
+				name: identity.name,
+				avatarUrl: identity.avatarUrl?.startsWith('/')
+					? identity.avatarUrl
+					: identity.avatarUrl
+						? `/api/player/${identity.id}/avatar`
+						: null
+			},
+			bestTimeSeconds: entry.bestTimeSeconds,
+			achievedAt: entry.achievedAt
+		};
+	});
+	const response: PuzzleLeaderboardResponse = { entries };
+	if (raw.me) {
+		const identity = identities.get(raw.me.playerId)!;
+		response.me = {
+			rank: raw.me.rank,
+			player: {
+				id: identity.id,
+				name: identity.name,
+				avatarUrl: identity.avatarUrl?.startsWith('/')
+					? identity.avatarUrl
+					: identity.avatarUrl
+						? `/api/player/${identity.id}/avatar`
+						: null
+			},
+			bestTimeSeconds: raw.me.bestTimeSeconds,
+			achievedAt: raw.me.achievedAt
+		};
+	}
+	if (!entries.every(isPuzzleLeaderboardEntry)) {
+		return c.json({ error: 'internal_error', message: 'Failed to build leaderboard' }, 500);
+	}
+	return c.json(response);
 });
 
 // GET /api/puzzle-families/:familyId — family detail with variant summaries

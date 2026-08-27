@@ -195,14 +195,68 @@ export interface PlayerPuzzleSummary {
 }
 
 export interface PlayerStatRow {
-	puzzleId: string;
-	// Joined from the puzzles table; null when the puzzle has been deleted
-	// but the stat row remains (no FK enforcement in D1/SQLite here).
-	puzzleName: string | null;
-	bestTimeSeconds: number | null;
+	familyId: string;
+	familyName: string | null;
+	difficulty: PuzzleDifficulty;
+	standardBestTimeSeconds: number | null;
+	rotationBestTimeSeconds: number | null;
 	totalCompletions: number;
 	firstCompletedAt: number;
 	lastCompletedAt: number;
+}
+
+export interface LeaderboardIdentity {
+	id: string;
+	name: string;
+	avatarUrl: string | null;
+}
+
+export interface PuzzleLeaderboardEntry {
+	rank: number;
+	player: LeaderboardIdentity;
+	bestTimeSeconds: number;
+	achievedAt: number;
+}
+
+export interface OverallLeaderboardEntry {
+	rank: number;
+	player: LeaderboardIdentity;
+	score: number;
+	easyClears: number;
+	normalClears: number;
+	hardClears: number;
+}
+
+export interface PuzzleLeaderboardResponse {
+	entries: PuzzleLeaderboardEntry[];
+	me?: PuzzleLeaderboardEntry;
+}
+
+export interface OverallLeaderboardResponse {
+	entries: OverallLeaderboardEntry[];
+	me?: OverallLeaderboardEntry;
+}
+
+export interface PlayerProgressionSummary {
+	score: number;
+	rank: number | null;
+	easyClears: number;
+	normalClears: number;
+	hardClears: number;
+	achievementsUnlocked: number;
+	achievementsTotal: number;
+	masteryEarned: number;
+}
+
+export interface CompletionAwards {
+	clearPoints?: number;
+	achievements?: string[];
+	mastery?: string[];
+	personalBest?: {
+		bestTimeSeconds: number;
+		isNew: boolean;
+	};
+	puzzleRank?: number;
 }
 
 export interface PuzzleListResponse {
@@ -246,7 +300,7 @@ export interface RecordPuzzleCompletionV2 {
 export const MAX_COMPLETION_TIME_SECONDS = 24 * 60 * 60;
 
 export type RecordPuzzleCompletionResponse =
-	| { ok: true }
+	| { ok: true; awards?: CompletionAwards }
 	| {
 			error:
 				| 'bad_request'
@@ -357,12 +411,63 @@ export function isPlayerStatRow(value: unknown): value is PlayerStatRow {
 	if (typeof value !== 'object' || value === null) return false;
 	const v = value as Record<string, unknown>;
 	return (
-		isNonEmptyString(v.puzzleId) &&
-		(v.puzzleName === null || isNonEmptyString(v.puzzleName)) &&
-		(v.bestTimeSeconds === null || isFiniteNumber(v.bestTimeSeconds)) &&
+		isNonEmptyString(v.familyId) &&
+		(v.familyName === null || isNonEmptyString(v.familyName)) &&
+		isPuzzleDifficulty(v.difficulty) &&
+		(v.standardBestTimeSeconds === null || isFiniteNumber(v.standardBestTimeSeconds)) &&
+		(v.rotationBestTimeSeconds === null || isFiniteNumber(v.rotationBestTimeSeconds)) &&
 		isFiniteNumber(v.totalCompletions) &&
 		isFiniteNumber(v.firstCompletedAt) &&
 		isFiniteNumber(v.lastCompletedAt)
+	);
+}
+
+export function isLeaderboardIdentity(value: unknown): value is LeaderboardIdentity {
+	if (typeof value !== 'object' || value === null) return false;
+	const v = value as Record<string, unknown>;
+	return (
+		isNonEmptyString(v.id) &&
+		isNonEmptyString(v.name) &&
+		(v.avatarUrl === null || isNonEmptyString(v.avatarUrl))
+	);
+}
+
+export function isPuzzleLeaderboardEntry(value: unknown): value is PuzzleLeaderboardEntry {
+	if (typeof value !== 'object' || value === null) return false;
+	const v = value as Record<string, unknown>;
+	return (
+		isFiniteNumber(v.rank) &&
+		isLeaderboardIdentity(v.player) &&
+		isFiniteNumber(v.bestTimeSeconds) &&
+		isFiniteNumber(v.achievedAt)
+	);
+}
+
+export function isOverallLeaderboardEntry(value: unknown): value is OverallLeaderboardEntry {
+	if (typeof value !== 'object' || value === null) return false;
+	const v = value as Record<string, unknown>;
+	return (
+		isFiniteNumber(v.rank) &&
+		isLeaderboardIdentity(v.player) &&
+		isFiniteNumber(v.score) &&
+		isFiniteNumber(v.easyClears) &&
+		isFiniteNumber(v.normalClears) &&
+		isFiniteNumber(v.hardClears)
+	);
+}
+
+export function isPlayerProgressionSummary(value: unknown): value is PlayerProgressionSummary {
+	if (typeof value !== 'object' || value === null) return false;
+	const v = value as Record<string, unknown>;
+	return (
+		isFiniteNumber(v.score) &&
+		(v.rank === null || isFiniteNumber(v.rank)) &&
+		isFiniteNumber(v.easyClears) &&
+		isFiniteNumber(v.normalClears) &&
+		isFiniteNumber(v.hardClears) &&
+		isFiniteNumber(v.achievementsUnlocked) &&
+		isFiniteNumber(v.achievementsTotal) &&
+		isFiniteNumber(v.masteryEarned)
 	);
 }
 

@@ -3,6 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { onDestroy, untrack } from 'svelte';
 	import { ApiError, recordCompletion } from '$lib/services/api';
+	import type { CompletionAwards } from '$lib/types/puzzle';
 	import { loadPuzzleSource, type LoadedPuzzleSource } from '$lib/services/puzzleSource';
 	import { getBestTime, recordLocalCompletion } from '$lib/services/stats';
 	import type { TimerState } from '$lib/stores/timer';
@@ -10,6 +11,7 @@
 	import PuzzleBoardPanel from '$lib/components/PuzzleBoardPanel.svelte';
 	import PuzzleInventoryPanel from '$lib/components/PuzzleInventoryPanel.svelte';
 	import PuzzleCompletionDialog from '$lib/components/PuzzleCompletionDialog.svelte';
+	import PuzzleLeaderboardDialog from '$lib/components/PuzzleLeaderboardDialog.svelte';
 	import MissionSetupDialog from '$lib/components/MissionSetupDialog.svelte';
 	import SessionPauseDialog from '$lib/components/SessionPauseDialog.svelte';
 	import DiscardSessionDialog from '$lib/components/DiscardSessionDialog.svelte';
@@ -125,6 +127,8 @@
 	// in-memory new-best presentation is still shown, but the persisted-best
 	// wording (NEW RECORD) is suppressed until the write succeeds.
 	let localStatsFailed = $state(false);
+	let completionAwards = $state<CompletionAwards | undefined>(undefined);
+	let showFamilyLeaderboard = $state(false);
 	let activeLoadRequestId = 0;
 
 	let sessionUnsubscribe: (() => void) | null = null;
@@ -478,7 +482,8 @@
 		if (!puzzle || puzzleSource?.source !== 'api') return;
 
 		try {
-			await recordCompletion(puzzle.id, completionRequestFromSeal(seal));
+			const awards = await recordCompletion(puzzle.id, completionRequestFromSeal(seal));
+			completionAwards = awards;
 			sessionStore?.dispatch({
 				type: 'acknowledge_completion_effect',
 				runId: seal.runId,
@@ -607,6 +612,8 @@
 			sessionDialog = null;
 			restartConfirmation = false;
 			showCelebration = false;
+			showFamilyLeaderboard = false;
+			completionAwards = undefined;
 			referencePointerId = null;
 			referenceHoldSource = null;
 			// The route-owned announcer is route-local presentation state too:
@@ -1239,6 +1246,17 @@
 			</div>
 
 			<div class="hud-right">
+				{#if puzzle.familyId && puzzleSource?.source === 'api'}
+					<button
+						type="button"
+						class="leaderboard-btn"
+						data-testid="open-family-leaderboard"
+						onclick={() => (showFamilyLeaderboard = true)}
+					>
+						LEADERBOARD
+					</button>
+					<div class="hud-divider"></div>
+				{/if}
 				<div class="progress-stat">
 					<span class="stat-label">PIECES</span>
 					<span class="stat-value"
@@ -1402,10 +1420,21 @@
 		{isNewBest}
 		{localStatsFailed}
 		{serverSubmissionRetryable}
+		awards={completionAwards}
 		onRetryServerSubmission={handleRetryServerSubmission}
 		onPlayAgain={handlePlayAgain}
 		onBackToArcade={exitToArcade}
 		onDismiss={() => (showCelebration = false)}
+	/>
+{/if}
+
+{#if showFamilyLeaderboard && puzzle?.familyId}
+	<PuzzleLeaderboardDialog
+		familyId={puzzle.familyId}
+		familyName={puzzle.name}
+		initialDifficulty={puzzle.difficulty ?? 'normal'}
+		initialMode={sessionState?.resultClass === 'rotation_timed' ? 'rotation' : 'standard'}
+		onDismiss={() => (showFamilyLeaderboard = false)}
 	/>
 {/if}
 
@@ -1558,6 +1587,16 @@
 		align-items: center;
 		gap: 0.875rem;
 		flex-shrink: 0;
+	}
+
+	.leaderboard-btn {
+		font-family: var(--font-mono);
+		font-size: 0.55rem;
+		letter-spacing: 0.14em;
+		color: var(--accent);
+		background: transparent;
+		border: 1px solid var(--accent-dim);
+		padding: 0.25rem 0.45rem;
 	}
 
 	.progress-stat {

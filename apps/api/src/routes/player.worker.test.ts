@@ -74,6 +74,16 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 			puzzlesSolved: 0,
 			totalCompletions: 0
 		})),
+		getPlayerProgressionSummary: vi.fn(() => ({
+			score: 0,
+			rank: null,
+			easyClears: 0,
+			normalClears: 0,
+			hardClears: 0,
+			achievementsUnlocked: 0,
+			achievementsTotal: 9,
+			masteryEarned: 0
+		})),
 		listPlayerPuzzles: vi.fn(
 			async (db: unknown, playerId: string): Promise<{ rows: unknown[]; nextCursor?: string }> => ({
 				rows: puzzlesStore.get(playerId) ?? [],
@@ -1149,9 +1159,11 @@ describe('player lists (Worker)', () => {
 		const shared = await import('@perseus/shared');
 		(shared as any).__statsStore.set('p1', [
 			{
-				puzzleId: 'pz1',
-				puzzleName: 'Cat',
-				bestTimeSeconds: 90,
+				familyId: 'fam-1',
+				familyName: 'Cat',
+				difficulty: 'easy',
+				standardBestTimeSeconds: 90,
+				rotationBestTimeSeconds: null,
 				totalCompletions: 1,
 				firstCompletedAt: 1,
 				lastCompletedAt: 1
@@ -1161,16 +1173,18 @@ describe('player lists (Worker)', () => {
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as any;
 		expect(body.stats).toHaveLength(1);
-		expect(body.stats[0].bestTimeSeconds).toBe(90);
+		expect(body.stats[0].standardBestTimeSeconds).toBe(90);
 	});
 
 	it('GET stats returns a variant-only row and profile totals from the combined model', async () => {
 		const shared = await import('@perseus/shared');
 		(shared as any).__statsStore.set('p1', [
 			{
-				puzzleId: 'variant-only',
-				puzzleName: 'Variant Result',
-				bestTimeSeconds: null,
+				familyId: 'fam-variant',
+				familyName: 'Variant Result',
+				difficulty: 'normal',
+				standardBestTimeSeconds: null,
+				rotationBestTimeSeconds: null,
 				totalCompletions: 2,
 				firstCompletedAt: 100,
 				lastCompletedAt: 200
@@ -1191,9 +1205,11 @@ describe('player lists (Worker)', () => {
 		expect(await statsResponse.json()).toEqual({
 			stats: [
 				{
-					puzzleId: 'variant-only',
-					puzzleName: 'Variant Result',
-					bestTimeSeconds: null,
+					familyId: 'fam-variant',
+					familyName: 'Variant Result',
+					difficulty: 'normal',
+					standardBestTimeSeconds: null,
+					rotationBestTimeSeconds: null,
 					totalCompletions: 2,
 					firstCompletedAt: 100,
 					lastCompletedAt: 200
@@ -1211,13 +1227,13 @@ describe('player lists (Worker)', () => {
 	it('GET stats forwards limit and v2 cursor query params', async () => {
 		const { listPlayerStats } = await import('@perseus/shared');
 		await buildApp().request(
-			'/api/player/stats?limit=10&cursor=v2%7C1%7C%7Cvariant-only',
+			'/api/player/stats?limit=10&cursor=v3%7C1%7C%7Cfam-variant%7Cnormal',
 			{ headers: AUTH_COOKIE },
 			DUMMY_ENV
 		);
 		expect(listPlayerStats).toHaveBeenCalledWith(expect.anything(), 'p1', {
 			limit: 10,
-			cursor: 'v2|1||variant-only'
+			cursor: 'v3|1||fam-variant|normal'
 		});
 	});
 
@@ -1327,8 +1343,8 @@ describe('player response validation (Worker)', () => {
 		const shared = await import('@perseus/shared');
 		(shared as any).__statsStore.set('p1', [
 			{
-				puzzleId: 'pz1',
-				bestTimeSeconds: 90,
+				familyId: 'pz1',
+				standardBestTimeSeconds: 90,
 				totalCompletions: 1,
 				firstCompletedAt: 1,
 				lastCompletedAt: 1
