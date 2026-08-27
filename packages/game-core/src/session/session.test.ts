@@ -159,10 +159,12 @@ describe('PuzzleSession lifecycle', () => {
 		};
 
 		expect(completionRequestFromSeal(seal)).toEqual({
-			version: 1,
+			version: 2,
 			runId: 'run-1',
 			resultClass: 'standard_timed',
-			elapsedActiveSeconds: 90
+			elapsedActiveSeconds: 90,
+			hintsUsed: 0,
+			incorrectAttempts: 0
 		});
 	});
 

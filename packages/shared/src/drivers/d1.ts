@@ -4,9 +4,10 @@ import type { ResultClass } from '@perseus/types';
 import * as schema from '../schema';
 import {
 	playerCompletionUsage,
+	puzzleBestTimes,
 	puzzleCompletionRuns,
 	puzzleDeletionTombstones,
-	puzzleStats
+	playerVariantMastery
 } from '../schema';
 import type {
 	CompletionWriteExecutor,
@@ -21,6 +22,10 @@ interface D1Env {
 }
 
 export type D1AppDb = DrizzleD1Database<typeof schema>;
+
+// Placeholder identity until Task 11 derives family/difficulty from trusted metadata.
+const PLACEHOLDER_FAMILY_ID = '00000000-0000-4000-8000-000000000001';
+const PLACEHOLDER_DIFFICULTY = 'easy';
 
 export function createD1Db(env: D1Env): D1AppDb {
 	// Migrations live in packages/shared/drizzle and are applied by:
@@ -72,12 +77,15 @@ export function createD1CompletionWriteExecutor(
 							playerId: sql<string>`${input.playerId}`.as('player_id'),
 							runId: sql<string>`${input.runId}`.as('run_id'),
 							puzzleId: sql<string>`${input.puzzleId}`.as('puzzle_id'),
+							familyId: sql<string>`${PLACEHOLDER_FAMILY_ID}`.as('family_id'),
+							difficulty: sql<string>`${PLACEHOLDER_DIFFICULTY}`.as('difficulty'),
 							resultClass: sql<ResultClass>`${input.resultClass}`.as('result_class'),
-							timingQuality: sql<'known'>`'known'`.as('timing_quality'),
 							elapsedActiveSeconds:
 								input.elapsedActiveSeconds === null
 									? sql<null>`NULL`.as('elapsed_active_seconds')
 									: sql<number>`${input.elapsedActiveSeconds}`.as('elapsed_active_seconds'),
+							hintsUsed: sql<number>`0`.as('hints_used'),
+							incorrectAttempts: sql<number>`0`.as('incorrect_attempts'),
 							completedAt: sql<number>`${input.receivedAt}`.as('completed_at')
 						})
 						.from(sql`(SELECT 1)`).where(sql`
@@ -128,18 +136,19 @@ export function createD1CompletionWriteExecutor(
 				.where(eq(playerCompletionUsage.playerId, input.playerId))
 				.limit(1);
 			const upsertBest = db
-				.insert(puzzleStats)
+				.insert(puzzleBestTimes)
 				.select(
 					db
 						.select({
 							playerId: puzzleCompletionRuns.playerId,
 							puzzleId: puzzleCompletionRuns.puzzleId,
+							familyId: puzzleCompletionRuns.familyId,
+							difficulty: puzzleCompletionRuns.difficulty,
+							resultClass: sql<'standard_timed'>`'standard_timed'`.as('result_class'),
 							bestTimeSeconds: sql<number>`${puzzleCompletionRuns.elapsedActiveSeconds}`.as(
 								'best_time_seconds'
 							),
-							totalCompletions: sql<number>`0`.as('total_completions'),
-							firstCompletedAt: puzzleCompletionRuns.completedAt,
-							lastCompletedAt: puzzleCompletionRuns.completedAt
+							achievedAt: puzzleCompletionRuns.completedAt
 						})
 						.from(puzzleCompletionRuns)
 						.where(
@@ -151,11 +160,6 @@ export function createD1CompletionWriteExecutor(
 								elapsedMatches,
 								eq(puzzleCompletionRuns.resultClass, 'standard_timed'),
 								isNotNull(puzzleCompletionRuns.elapsedActiveSeconds),
-								// Required: without this predicate, a tombstone inserted
-								// between insertRun and upsertBest would let the upsert
-								// match a row, hit the puzzle_stats tombstone guard
-								// trigger, and ABORT as a 500 instead of the typed
-								// 'tombstoned' result returned below.
 								sql`NOT EXISTS (
 									SELECT 1 FROM puzzle_deletion_tombstones
 									WHERE puzzle_id = ${input.puzzleId}
@@ -164,9 +168,14 @@ export function createD1CompletionWriteExecutor(
 						)
 				)
 				.onConflictDoUpdate({
-					target: [puzzleStats.playerId, puzzleStats.puzzleId],
+					target: [puzzleBestTimes.playerId, puzzleBestTimes.puzzleId, puzzleBestTimes.resultClass],
 					set: {
-						bestTimeSeconds: sql`MIN(${puzzleStats.bestTimeSeconds}, excluded.best_time_seconds)`
+						bestTimeSeconds: sql`MIN(${puzzleBestTimes.bestTimeSeconds}, excluded.best_time_seconds)`,
+						achievedAt: sql`CASE
+							WHEN excluded.best_time_seconds < ${puzzleBestTimes.bestTimeSeconds}
+								THEN excluded.achieved_at
+							ELSE ${puzzleBestTimes.achievedAt}
+						END`
 					}
 				});
 
@@ -201,7 +210,8 @@ export function createD1CompletionWriteExecutor(
 
 		async finishPuzzleDeletion(puzzleId: string) {
 			await db.batch([
-				db.delete(puzzleStats).where(eq(puzzleStats.puzzleId, puzzleId)),
+				db.delete(puzzleBestTimes).where(eq(puzzleBestTimes.puzzleId, puzzleId)),
+				db.delete(playerVariantMastery).where(eq(playerVariantMastery.puzzleId, puzzleId)),
 				db.delete(puzzleCompletionRuns).where(eq(puzzleCompletionRuns.puzzleId, puzzleId))
 			]);
 		},

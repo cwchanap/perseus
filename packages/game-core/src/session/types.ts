@@ -4,9 +4,9 @@
 // storage, fetch, or analytics. Cross-runtime completion types come from
 // @perseus/types so the client shares one contract with both API runtimes.
 
-import type { ResultClass, RecordPuzzleCompletionV1 } from '@perseus/types';
+import type { ResultClass, RecordPuzzleCompletionV2 } from '@perseus/types';
 
-export type { ResultClass, RecordPuzzleCompletionV1 };
+export type { ResultClass, RecordPuzzleCompletionV2 };
 
 // --- Package-local gameplay primitives ---------------------------------------
 
@@ -430,12 +430,14 @@ export interface CreatePuzzleSessionOptions {
  * Project an immutable sealed completion into the v1 API request shape.
  * Excludes client-only fields like `completedAt`.
  */
-export function completionRequestFromSeal(seal: SealedCompletion): RecordPuzzleCompletionV1 {
+export function completionRequestFromSeal(seal: SealedCompletion): RecordPuzzleCompletionV2 {
 	return {
-		version: 1,
+		version: 2,
 		runId: seal.runId,
 		resultClass: seal.resultClass,
-		elapsedActiveSeconds: seal.elapsedActiveSeconds
+		elapsedActiveSeconds: seal.elapsedActiveSeconds,
+		hintsUsed: seal.hintsUsed,
+		incorrectAttempts: seal.incorrectAttempts
 	};
 }
 
