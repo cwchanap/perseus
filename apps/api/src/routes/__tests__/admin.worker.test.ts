@@ -2148,14 +2148,13 @@ describe('Admin Routes - GET /puzzles', () => {
 	it('should return 500 when listPuzzles throws', async () => {
 		(storage.listPuzzles as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('KV error'));
 
-		const req = new Request('http://localhost/puzzles', {
-			method: 'GET',
-			headers: { cookie: 'session=valid.token' }
-		});
+		const req = new Request('http://localhost/puzzles');
 
 		const res = await admin.fetch(req, mockEnv as any);
 
 		expect(res.status).toBe(500);
+		const body = (await res.json()) as { error: string; message: string };
+		expect(body).toEqual({ error: 'internal_error', message: 'Failed to list puzzles' });
 	});
 });
 

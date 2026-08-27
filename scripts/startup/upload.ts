@@ -358,7 +358,7 @@ Or add those two keys to apps/api/.env, then:
 	if (options.cfAccessToken && !hasServiceToken) {
 		await throwOnProbeFailure(probeAccessToken(options.server, options.cfAccessToken), {
 			blocked:
-				'Access JWT is present but rejected by Cloudflare Access (302/403).\n' +
+				'Access JWT is present but rejected by Cloudflare Access (401/302/403).\n' +
 				'Run: bun run admin:startup:set-token',
 			unhealthy:
 				'Access accepted the JWT, but the backend returned 5xx.\n' +
@@ -372,7 +372,7 @@ Or add those two keys to apps/api/.env, then:
 
 	// Live smoke check for the service-token path (the primary CI method).
 	// Mirrors the JWT probe above: hit GET /api/admin/puzzles with the service
-	// token headers and fail fast if Access rejects them (302/403). Without
+	// token headers and fail fast if Access rejects them (401/302/403). Without
 	// this, an expired/invalid CF-Access-Client-Id/Secret pair only surfaces as
 	// an opaque login failure after the upload has already started.
 	if (hasServiceToken) {
@@ -380,7 +380,7 @@ Or add those two keys to apps/api/.env, then:
 			probeServiceToken(options.server, options.cfClientId!, options.cfClientSecret!),
 			{
 				blocked:
-					'Cloudflare Access service token rejected (302/403).\n' +
+					'Cloudflare Access service token rejected (401/302/403).\n' +
 					'Check CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET are valid and not expired.\n' +
 					'To rotate: see "CLI Service Token Rotation" in packages/infrastructure/README.md.',
 				unhealthy:

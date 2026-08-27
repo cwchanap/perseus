@@ -69,8 +69,8 @@ describe('Admin Page', () => {
 		await vi.waitFor(() => {
 			expect(fetchPlayerAllowlist).toHaveBeenCalledTimes(1);
 		});
-		await expect.poll(() => page.getByText('CREATE MISSION', { exact: true }).query()).toBeNull();
-		await expect.poll(() => page.getByLabelText('CLICK TO UPLOAD').query()).toBeNull();
+		await expect.poll(() => page.getByText('MISSION DATABASE', { exact: true }).query()).toBeNull();
+		await expect.poll(() => page.getByLabelText('Filter by category').query()).toBeNull();
 	});
 
 	it('supports standard keyboard navigation between tabs', async () => {

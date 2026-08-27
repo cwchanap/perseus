@@ -784,8 +784,13 @@ admin.delete('/player-allowlist/:email', async (c) => {
 
 // GET /api/admin/puzzles - List all puzzles for admin (includes processing/failed)
 admin.get('/puzzles', async (c) => {
-	const { puzzles } = await listPuzzles(c.env.PUZZLE_METADATA);
-	return c.json({ puzzles });
+	try {
+		const { puzzles } = await listPuzzles(c.env.PUZZLE_METADATA);
+		return c.json({ puzzles });
+	} catch (error) {
+		console.error('Failed to list puzzles for admin', error);
+		return c.json({ error: 'internal_error', message: 'Failed to list puzzles' }, 500);
+	}
 });
 
 // Bounded retry/backoff for the idempotency commit transition. The commit is a

@@ -163,7 +163,7 @@ For local API, use --skip-access or a localhost --server URL.`);
 	if (options.cfAccessToken && !hasServiceToken) {
 		await throwOnProbeFailure(probeAccessToken(options.server, options.cfAccessToken), {
 			blocked:
-				'Access JWT is present but rejected by Cloudflare Access (302/403).\n' +
+				'Access JWT is present but rejected by Cloudflare Access (401/302/403).\n' +
 				'Run: bun run admin:startup:set-token',
 			unhealthy:
 				'Access accepted the JWT, but the backend returned 5xx.\n' +
@@ -179,7 +179,7 @@ For local API, use --skip-access or a localhost --server URL.`);
 			probeServiceToken(options.server, options.cfClientId!, options.cfClientSecret!),
 			{
 				blocked:
-					'Cloudflare Access service token rejected (302/403).\n' +
+					'Cloudflare Access service token rejected (401/302/403).\n' +
 					'Check CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET are valid and not expired.',
 				unhealthy:
 					'Access accepted the service token, but the backend returned 5xx.\n' +
