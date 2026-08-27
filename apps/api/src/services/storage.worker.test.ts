@@ -1,12 +1,17 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
 	getPuzzle,
+	getFamily,
 	createPuzzleMetadata,
+	createFamilyMetadata,
 	updatePuzzleMetadata,
 	deletePuzzleMetadata,
+	deleteFamilyMetadata,
 	listPuzzles,
 	listPuzzlesPage,
+	listFamiliesPage,
 	listFamilies,
+	enrichFamilySummary,
 	puzzleExists,
 	getOriginalKey,
 	getThumbnailKey,
@@ -15,9 +20,12 @@ import {
 	getFamilyThumbnailKey,
 	uploadOriginalImage,
 	deleteOriginalImage,
+	deleteFamilySharedAssets,
+	deleteVariantPieceAssets,
 	getImage,
 	deleteFamilyCleanupAssets,
 	invalidateGalleryIndex,
+	resolveVariantReferenceKey,
 	writeCleanupRecord,
 	listCleanupRecords,
 	deleteCleanupRecord,
@@ -501,6 +509,100 @@ describe('KV Metadata Operations', () => {
 	});
 });
 
+describe('Family metadata operations', () => {
+	it('throws when family metadata is corrupt', async () => {
+		const kv = createMockKV();
+		kv._store.set(
+			`family:${TEST_FAMILY_ID}`,
+			JSON.stringify({ id: TEST_FAMILY_ID, name: 'Corrupt' })
+		);
+
+		await expect(getFamily(kv as unknown as KVNamespace, TEST_FAMILY_ID)).rejects.toThrow(
+			`Corrupt family metadata for ${TEST_FAMILY_ID}`
+		);
+	});
+
+	it('throws for an empty family ID', async () => {
+		const kv = createMockKV();
+		const family = makeReadyFamily({ id: '' });
+
+		await expect(createFamilyMetadata(kv as unknown as KVNamespace, family)).rejects.toThrow(
+			'Family ID is required and must be a non-empty string'
+		);
+	});
+
+	it('throws for a whitespace-only family ID', async () => {
+		const kv = createMockKV();
+		const family = makeReadyFamily({ id: '   ' });
+
+		await expect(createFamilyMetadata(kv as unknown as KVNamespace, family)).rejects.toThrow(
+			'Family ID is required and must be a non-empty string'
+		);
+	});
+
+	it('throws for an empty family name', async () => {
+		const kv = createMockKV();
+		const family = makeReadyFamily({ id: pageFamilyId(70), name: '' });
+
+		await expect(createFamilyMetadata(kv as unknown as KVNamespace, family)).rejects.toThrow(
+			'Family name is required and must be a non-empty string'
+		);
+	});
+
+	it('throws when a family ID already exists', async () => {
+		const kv = createMockKV();
+		const family = storeFamily(kv, { id: pageFamilyId(71) });
+
+		await expect(createFamilyMetadata(kv as unknown as KVNamespace, family)).rejects.toThrow(
+			`Family with ID "${family.id}" already exists`
+		);
+	});
+
+	it('throws for invalid family metadata structure', async () => {
+		const kv = createMockKV();
+		const family = makeReadyFamily({
+			id: pageFamilyId(72),
+			variants: { ...FAMILY_VARIANT_IDS, hard: 'not-a-uuid' }
+		});
+
+		await expect(createFamilyMetadata(kv as unknown as KVNamespace, family)).rejects.toThrow(
+			'Invalid family metadata structure'
+		);
+	});
+
+	it('deletes family metadata and invalidates the gallery index', async () => {
+		const kv = createMockKV();
+		storeFamily(kv, { id: TEST_FAMILY_ID });
+		kv._store.set('gallery:sorted-index', JSON.stringify([{ id: TEST_FAMILY_ID }]));
+
+		const result = await deleteFamilyMetadata(kv as unknown as KVNamespace, TEST_FAMILY_ID);
+
+		expect(result).toEqual({ success: true });
+		expect(kv.delete).toHaveBeenNthCalledWith(1, `family:${TEST_FAMILY_ID}`);
+		expect(kv.delete).toHaveBeenNthCalledWith(2, 'gallery:sorted-index');
+		expect(kv._store.has(`family:${TEST_FAMILY_ID}`)).toBe(false);
+		expect(kv._store.has('gallery:sorted-index')).toBe(false);
+	});
+
+	it('returns a failure when deleting family metadata fails', async () => {
+		const kv = createMockKV();
+		const deleteError = new Error('KV delete failed');
+		kv.delete.mockRejectedValueOnce(deleteError);
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const result = await deleteFamilyMetadata(kv as unknown as KVNamespace, TEST_FAMILY_ID);
+
+		expect(result.success).toBe(false);
+		expect(result.error).toBeInstanceOf(Error);
+		expect(result.error).toBe(deleteError);
+		expect(consoleSpy).toHaveBeenCalledWith(
+			expect.stringContaining(`Failed to delete family metadata for ${TEST_FAMILY_ID}`),
+			deleteError
+		);
+		consoleSpy.mockRestore();
+	});
+});
+
 // Mock R2Bucket
 function createMockR2Bucket() {
 	const store = new Map<string, { data: ArrayBuffer; contentType: string }>();
@@ -623,6 +725,58 @@ describe('R2 Asset Operations', () => {
 		});
 	});
 
+	describe('deleteFamilySharedAssets', () => {
+		it('deletes the family original and thumbnail assets', async () => {
+			const mockBucket = createMockR2Bucket();
+			const familyId = 'family-shared';
+			const keys = [getFamilyOriginalKey(familyId), getFamilyThumbnailKey(familyId)];
+
+			const result = await deleteFamilySharedAssets(mockBucket as unknown as R2Bucket, familyId);
+
+			expect(result).toEqual({ success: true, failedKeys: [] });
+			expect(mockBucket.delete).toHaveBeenCalledWith(keys);
+		});
+	});
+
+	describe('deleteVariantPieceAssets', () => {
+		it('deletes every piece key from zero through the piece count', async () => {
+			const mockBucket = createMockR2Bucket();
+			const variantId = 'variant-pieces';
+			const keys = [
+				getPieceKey(variantId, 0),
+				getPieceKey(variantId, 1),
+				getPieceKey(variantId, 2)
+			];
+
+			const result = await deleteVariantPieceAssets(
+				mockBucket as unknown as R2Bucket,
+				variantId,
+				3
+			);
+
+			expect(result).toEqual({ success: true, failedKeys: [] });
+			expect(mockBucket.delete).toHaveBeenCalledWith(keys);
+		});
+
+		it('returns failed piece keys when R2 deletion fails', async () => {
+			const mockBucket = createMockR2Bucket();
+			const variantId = 'variant-failure';
+			const keys = [getPieceKey(variantId, 0), getPieceKey(variantId, 1)];
+			mockBucket.delete.mockRejectedValueOnce(new Error('R2 delete failed'));
+			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+			const result = await deleteVariantPieceAssets(
+				mockBucket as unknown as R2Bucket,
+				variantId,
+				2
+			);
+
+			expect(result).toEqual({ success: false, failedKeys: keys });
+			expect(mockBucket.delete).toHaveBeenCalledWith(keys);
+			consoleSpy.mockRestore();
+		});
+	});
+
 	describe('deleteFamilyCleanupAssets', () => {
 		it('deletes family original/thumbnail under familyId and pieces under each variant id', async () => {
 			const mockBucket = createMockR2Bucket();
@@ -693,6 +847,44 @@ describe('listFamilies', () => {
 		expect(result.families).toHaveLength(2);
 		expect(result.families.map((f) => f.id)).toEqual([familyA, familyB]);
 		expect(result.invalidCount).toBe(0);
+	});
+
+	it('handles paginated results, null entries, invalid metadata, and tied timestamps', async () => {
+		const kv = createMockKV();
+		const familyA = pageFamilyId(60);
+		const familyB = pageFamilyId(61);
+		const nullKey = 'family:missing';
+		const invalidKey = 'family:invalid';
+		storeFamily(kv, { id: familyA, name: 'Alpha', createdAt: 5000 });
+		storeFamily(kv, { id: familyB, name: 'Beta', createdAt: 5000 });
+		kv._store.set(invalidKey, JSON.stringify({ id: 'invalid', name: 'Invalid' }));
+		kv.list.mockImplementation(async (options) => {
+			if (options?.cursor === 'page-2') {
+				return {
+					keys: [{ name: invalidKey }, { name: `family:${familyB}` }],
+					list_complete: true
+				};
+			}
+			return {
+				keys: [{ name: `family:${familyA}` }, { name: nullKey }],
+				list_complete: false,
+				cursor: 'page-2'
+			};
+		});
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const result = await listFamilies(kv as unknown as KVNamespace);
+
+		expect(kv.list).toHaveBeenCalledTimes(2);
+		expect(result.families.map((family) => family.id)).toEqual([familyA, familyB]);
+		expect(result.invalidCount).toBe(2);
+		expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('keys returned null'));
+		expect(consoleSpy).toHaveBeenCalledWith(
+			expect.stringContaining('Invalid family metadata'),
+			expect.objectContaining({ id: 'invalid' })
+		);
+		expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('2 invalid entries out of 4'));
+		consoleSpy.mockRestore();
 	});
 });
 
@@ -793,6 +985,108 @@ describe('listPuzzlesPage', () => {
 		});
 		expect(result.puzzles).toHaveLength(2);
 		expect(result.nextCursor).toBeDefined();
+	});
+
+	it('returns families when rebuilding a paginated index and its cache write fails', async () => {
+		const kv = createMockKV();
+		const familyA = pageFamilyId(80);
+		const familyB = pageFamilyId(81);
+		const nullKey = 'family:missing-gallery';
+		const invalidKey = 'family:invalid-gallery';
+		storeFamily(kv, { id: familyA, name: 'Alpha', createdAt: 2000 });
+		storeFamily(kv, { id: familyB, name: 'Beta', createdAt: 1000 });
+		kv._store.set(invalidKey, JSON.stringify({ id: 'invalid-gallery', name: 'Invalid' }));
+		kv.list.mockImplementation(async (options) => {
+			if (options?.cursor === 'gallery-page-2') {
+				return {
+					keys: [{ name: invalidKey }, { name: `family:${familyB}` }],
+					list_complete: true
+				};
+			}
+			return {
+				keys: [{ name: `family:${familyA}` }, { name: nullKey }],
+				list_complete: false,
+				cursor: 'gallery-page-2'
+			};
+		});
+		await invalidateGalleryIndex(kv as unknown as KVNamespace);
+		kv.put.mockImplementation(async (key, value) => {
+			if (key === 'gallery:sorted-index') throw new Error('KV cache write failed');
+			kv._store.set(key, value);
+		});
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const result = await listFamiliesPage(kv as unknown as KVNamespace, {
+			offset: 0,
+			limit: 20
+		});
+
+		expect(kv.list).toHaveBeenCalledTimes(2);
+		expect(result.total).toBe(2);
+		expect(result.families.map((family) => family.id)).toEqual([familyA, familyB]);
+		expect(kv.put).toHaveBeenCalledWith(
+			'gallery:sorted-index',
+			expect.any(String),
+			expect.objectContaining({ expirationTtl: 60 })
+		);
+		expect(consoleSpy).toHaveBeenCalledWith(
+			expect.stringContaining('buildGalleryIndex: 1 keys returned null')
+		);
+		expect(consoleSpy).toHaveBeenCalledWith(
+			expect.stringContaining('buildGalleryIndex: 1 invalid metadata entries')
+		);
+		expect(consoleSpy).toHaveBeenCalledWith(
+			'Failed to write gallery index cache:',
+			expect.any(Error)
+		);
+		consoleSpy.mockRestore();
+	});
+});
+
+describe('Family summaries and variant references', () => {
+	it('mixes stored and synthesized variants for a processing family', async () => {
+		const kv = createMockKV();
+		const family = makeReadyFamily({ id: TEST_FAMILY_ID, status: 'processing' });
+		const realVariant = {
+			...makeVariantMeta(family.variants.hard, 2000),
+			familyId: family.id,
+			status: 'processing' as const
+		};
+		kv._store.set(`puzzle:${realVariant.id}`, JSON.stringify(realVariant));
+
+		const summary = await enrichFamilySummary(kv as unknown as KVNamespace, family);
+
+		expect(summary.variants.hard).toEqual({
+			id: family.variants.hard,
+			difficulty: 'hard',
+			pieceCount: 100,
+			status: 'processing'
+		});
+		expect(summary.variants.normal).toEqual({
+			id: family.variants.normal,
+			difficulty: 'normal',
+			pieceCount: 49,
+			status: 'processing'
+		});
+		expect(summary.variants.easy).toEqual({
+			id: family.variants.easy,
+			difficulty: 'easy',
+			pieceCount: 16,
+			status: 'processing'
+		});
+	});
+
+	it('resolves a stored variant to its family original and unknown variants to null', async () => {
+		const kv = createMockKV();
+		const variant = makeVariantMeta(TEST_VARIANT_ID, 1000);
+		kv._store.set(`puzzle:${variant.id}`, JSON.stringify(variant));
+
+		expect(await resolveVariantReferenceKey(kv as unknown as KVNamespace, TEST_VARIANT_ID)).toBe(
+			`families/${TEST_FAMILY_ID}/original`
+		);
+		expect(
+			await resolveVariantReferenceKey(kv as unknown as KVNamespace, 'unknown-variant')
+		).toBeNull();
 	});
 });
 
@@ -989,6 +1283,26 @@ describe('cleanup records', () => {
 		expect(kv.list).toHaveBeenCalledTimes(2);
 	});
 
+	it('listCleanupRecords filters a record with a non-string idempotency key', async () => {
+		const kv = createMockKV();
+		const invalidRecord = makeCleanupRecord('f3e4567-e89b-42d3-a456-426614174050', {
+			idempotencyKey: 'key-to-corrupt'
+		});
+		const validRecord = makeCleanupRecord('f4e4567-e89b-42d3-a456-426614174051');
+		await writeCleanupRecord(kv as unknown as KVNamespace, invalidRecord);
+		await writeCleanupRecord(kv as unknown as KVNamespace, validRecord);
+
+		const stored = JSON.parse(kv._store.get(`cleanup:${invalidRecord.familyId}`) ?? '{}') as {
+			idempotencyKey?: unknown;
+		};
+		stored.idempotencyKey = 42;
+		kv._store.set(`cleanup:${invalidRecord.familyId}`, JSON.stringify(stored));
+
+		const records = await listCleanupRecords(kv as unknown as KVNamespace);
+
+		expect(records).toEqual([validRecord]);
+	});
+
 	it('deleteCleanupRecord deletes the cleanup: prefix key', async () => {
 		const kv = createMockKV();
 		const record = makeCleanupRecord();
@@ -1021,6 +1335,90 @@ describe('listPuzzlesPage — cursor fallback', () => {
 		expect(ids).toContain(p2);
 		expect(ids).toContain(p3);
 		expect(ids).not.toContain(p1);
+	});
+});
+
+describe('listFamiliesPage — cursor handling', () => {
+	it('continues after a valid cursor for an existing family', async () => {
+		const kv = createMockKV();
+		const firstId = pageFamilyId(90);
+		const middleId = pageFamilyId(91);
+		const lastId = pageFamilyId(92);
+		storeFamily(kv, { id: firstId, createdAt: 5000 });
+		storeFamily(kv, { id: middleId, createdAt: 5000 });
+		storeFamily(kv, { id: lastId, createdAt: 5000 });
+		await invalidateGalleryIndex(kv as unknown as KVNamespace);
+		const cursor = btoa(JSON.stringify({ createdAt: 5000, id: middleId }))
+			.replace(/\+/g, '-')
+			.replace(/\//g, '_')
+			.replace(/=+$/, '');
+
+		const result = await listFamiliesPage(kv as unknown as KVNamespace, {
+			offset: 0,
+			limit: 20,
+			cursor
+		});
+
+		expect(result.total).toBe(3);
+		expect(result.families.map((family) => family.id)).toEqual([lastId]);
+	});
+
+	it('uses the ID tie-break when a same-time cursor is filtered out', async () => {
+		const kv = createMockKV();
+		const firstId = pageFamilyId(93);
+		const cursorId = pageFamilyId(94);
+		const lastId = pageFamilyId(95);
+		storeFamily(kv, { id: firstId, createdAt: 6000, status: 'ready' });
+		storeFamily(kv, { id: cursorId, createdAt: 6000, status: 'processing' });
+		storeFamily(kv, { id: lastId, createdAt: 6000, status: 'ready' });
+		await invalidateGalleryIndex(kv as unknown as KVNamespace);
+		const cursor = btoa(JSON.stringify({ createdAt: 6000, id: cursorId }))
+			.replace(/\+/g, '-')
+			.replace(/\//g, '_')
+			.replace(/=+$/, '');
+
+		const result = await listFamiliesPage(kv as unknown as KVNamespace, {
+			offset: 0,
+			limit: 20,
+			cursor
+		});
+
+		expect(result.total).toBe(2);
+		expect(result.families.map((family) => family.id)).toEqual([lastId]);
+	});
+
+	it('treats a cursor with an invalid JSON shape as no cursor', async () => {
+		const kv = createMockKV();
+		const firstId = pageFamilyId(96);
+		storeFamily(kv, { id: firstId, createdAt: 2000 });
+		storeFamily(kv, { id: pageFamilyId(97), createdAt: 1000 });
+		await invalidateGalleryIndex(kv as unknown as KVNamespace);
+		const cursor = btoa('{"x":12}').replace(/=+$/, '');
+		expect(cursor.length % 4).toBe(3);
+
+		const result = await listFamiliesPage(kv as unknown as KVNamespace, {
+			offset: 0,
+			limit: 1,
+			cursor
+		});
+
+		expect(result.families.map((family) => family.id)).toEqual([firstId]);
+	});
+
+	it('treats an undecodable cursor as no cursor', async () => {
+		const kv = createMockKV();
+		const firstId = pageFamilyId(98);
+		storeFamily(kv, { id: firstId, createdAt: 2000 });
+		storeFamily(kv, { id: pageFamilyId(99), createdAt: 1000 });
+		await invalidateGalleryIndex(kv as unknown as KVNamespace);
+
+		const result = await listFamiliesPage(kv as unknown as KVNamespace, {
+			offset: 0,
+			limit: 1,
+			cursor: 'not-base64!'
+		});
+
+		expect(result.families.map((family) => family.id)).toEqual([firstId]);
 	});
 });
 
