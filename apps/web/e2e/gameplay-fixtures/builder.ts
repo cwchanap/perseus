@@ -23,7 +23,8 @@ import {
 	getLeftEdge,
 	getRightEdge,
 	getTopEdge,
-	isPuzzleAspectRatio
+	isPuzzleAspectRatio,
+	PUZZLE_DIFFICULTIES
 } from '@perseus/types';
 import { EXPANSION_FACTOR } from '../../src/lib/constants/puzzle';
 import type { Rotation } from '@perseus/game-core';
@@ -236,6 +237,9 @@ export function buildFixture(def: GameplayFixtureDefinition): GameplayFixture {
 	if (def.fixtureId.length === 0) fail('fixtureId must be a non-empty string');
 	if (!UUID_V4_PATTERN.test(def.familyId)) {
 		fail(`familyId is not a valid UUIDv4: "${def.familyId}"`);
+	}
+	if (!(PUZZLE_DIFFICULTIES as readonly string[]).includes(def.difficulty)) {
+		fail(`difficulty "${def.difficulty}" is not a supported difficulty`);
 	}
 	if (!isPuzzleAspectRatio(def.aspectRatio)) {
 		fail(`aspectRatio "${def.aspectRatio}" is not a supported ratio`);
