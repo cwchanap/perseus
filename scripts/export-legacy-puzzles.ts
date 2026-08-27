@@ -2,7 +2,14 @@
 
 import { join } from 'node:path';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import type { PuzzleAspectRatio, PuzzleCategory, PuzzleListResponse } from '@perseus/types';
+import {
+	aspectRatiosMatch,
+	PUZZLE_ASPECT_RATIOS,
+	type PuzzleAspectRatio,
+	type PuzzleCategory,
+	type PuzzleListResponse
+} from '@perseus/types';
+import { detectImageType, parseImageDimensions, type BlobLike } from '@perseus/shared';
 import { accessHeaders, hasAccessCredentials } from './startup/upload';
 import { resolveAccessToken, probeAccessToken, probeServiceToken } from './startup/token';
 import {
@@ -31,9 +38,10 @@ export type RunWrangler = (args: string[]) => Promise<WranglerResult>;
 export type LegacyExportEntry = {
 	legacyId: string;
 	name: string;
-	category: PuzzleCategory;
+	category?: PuzzleCategory;
 	aspectRatio: PuzzleAspectRatio;
 	ownerId: string;
+	pieceCount: number;
 	originalFile: string;
 	contentType: string;
 	byteLength: number;
@@ -117,30 +125,78 @@ export async function fetchAllReadyPuzzles(
 	return puzzles;
 }
 
-function parseD1Results(stdout: string): Array<Record<string, unknown>> {
+export function parseD1Results(stdout: string): Array<Record<string, unknown>> {
 	const trimmed = stdout.trim();
 	if (!trimmed) return [];
+	let parsed: unknown;
 	try {
-		const parsed = JSON.parse(trimmed) as unknown;
-		if (Array.isArray(parsed)) {
-			const rows: Array<Record<string, unknown>> = [];
-			for (const batch of parsed) {
-				if (
-					batch &&
-					typeof batch === 'object' &&
-					Array.isArray((batch as { results?: unknown }).results)
-				) {
-					for (const row of (batch as { results: Array<Record<string, unknown>> }).results) {
-						rows.push(row);
-					}
-				}
-			}
-			return rows;
-		}
-	} catch {
-		// Fall through to empty result.
+		parsed = JSON.parse(trimmed);
+	} catch (error) {
+		throw new FatalError(
+			`Failed to parse D1 execute JSON: ${error instanceof Error ? error.message : String(error)}`
+		);
 	}
-	return [];
+	if (!Array.isArray(parsed)) {
+		throw new FatalError('Unexpected D1 execute response shape');
+	}
+	const rows: Array<Record<string, unknown>> = [];
+	for (const batch of parsed) {
+		if (
+			batch &&
+			typeof batch === 'object' &&
+			Array.isArray((batch as { results?: unknown }).results)
+		) {
+			for (const row of (batch as { results: Array<Record<string, unknown>> }).results) {
+				rows.push(row);
+			}
+		}
+	}
+	return rows;
+}
+
+export function parseD1Changes(stdout: string): number {
+	const trimmed = stdout.trim();
+	if (!trimmed) {
+		throw new FatalError('Empty D1 execute response');
+	}
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(trimmed);
+	} catch (error) {
+		throw new FatalError(
+			`Failed to parse D1 execute JSON: ${error instanceof Error ? error.message : String(error)}`
+		);
+	}
+	if (!Array.isArray(parsed) || parsed.length === 0) {
+		throw new FatalError('Unexpected D1 execute response shape');
+	}
+	const batch = parsed[0];
+	if (!batch || typeof batch !== 'object') {
+		throw new FatalError('Unexpected D1 execute batch');
+	}
+	const meta = (batch as { meta?: { changes?: number } }).meta;
+	return typeof meta?.changes === 'number' ? meta.changes : 0;
+}
+
+export async function deriveAspectRatioFromBytes(
+	bytes: Uint8Array,
+	contentType: string
+): Promise<PuzzleAspectRatio> {
+	const blob = new Blob([bytes]) as unknown as BlobLike;
+	const detected = await detectImageType(blob);
+	const mime = detected ?? contentType;
+	const dimensions = await parseImageDimensions(blob, mime);
+	if (!dimensions) {
+		throw new FatalError('Cannot derive aspectRatio: image dimensions could not be parsed');
+	}
+	for (const ratio of PUZZLE_ASPECT_RATIOS) {
+		if (aspectRatiosMatch(dimensions.width, dimensions.height, ratio)) {
+			return ratio;
+		}
+	}
+	throw new FatalError(
+		`Cannot derive aspectRatio: image ${dimensions.width}x${dimensions.height} matches no supported ratio`
+	);
 }
 
 export async function fetchOwnerIds(
@@ -251,30 +307,30 @@ export async function exportLegacyPuzzles(options: ExportOptions): Promise<Legac
 		if (!ownerId) {
 			throw new FatalError(`Cannot export ready puzzle ${puzzle.id}: missing owner_id in D1`);
 		}
-		if (!puzzle.category || !puzzle.aspectRatio) {
-			throw new FatalError(`Cannot export ready puzzle ${puzzle.id}: missing category/aspectRatio`);
-		}
-
 		const { bytes, contentType } = await downloadOriginal(
 			options.server,
 			puzzle.id,
 			headers,
 			fetchFn
 		);
+		const aspectRatio =
+			puzzle.aspectRatio ?? (await deriveAspectRatioFromBytes(bytes, contentType));
 		const ext = extensionForContentType(contentType);
 		const originalFile = join('originals', `${puzzle.id}.${ext}`);
 		writeFileSync(join(options.outputDir, originalFile), bytes);
 
-		manifest.puzzles.push({
+		const entry: LegacyExportEntry = {
 			legacyId: puzzle.id,
 			name: puzzle.name,
-			category: puzzle.category,
-			aspectRatio: puzzle.aspectRatio,
+			aspectRatio,
 			ownerId,
+			pieceCount: puzzle.pieceCount,
 			originalFile,
 			contentType,
 			byteLength: bytes.byteLength
-		});
+		};
+		if (puzzle.category) entry.category = puzzle.category;
+		manifest.puzzles.push(entry);
 	}
 
 	writeFileSync(join(options.outputDir, MANIFEST_FILE), JSON.stringify(manifest, null, 2));

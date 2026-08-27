@@ -35,9 +35,9 @@ export type CleanupOptions = AccessCredentials & {
 	dryRun?: boolean;
 };
 
-type R2ListResponse = {
-	objects?: Array<{ key: string }>;
-};
+export type CleanupPlanAction =
+	| { type: 'kv-delete'; key: string }
+	| { type: 'r2-delete'; key: string; objectPath: string };
 
 function readManifest(migrationDir: string): LegacyExportManifest {
 	return JSON.parse(
@@ -75,6 +75,36 @@ async function resolveAccess(options: CleanupOptions): Promise<Record<string, st
 	return accessHeaders(options);
 }
 
+export function getLegacyR2Keys(legacyId: string, pieceCount: number): string[] {
+	const keys = [`puzzles/${legacyId}/original`, `puzzles/${legacyId}/thumbnail.jpg`];
+	for (let pieceId = 0; pieceId < pieceCount; pieceId++) {
+		keys.push(`puzzles/${legacyId}/pieces/${pieceId}.png`);
+	}
+	return keys;
+}
+
+export function verifyManifestImportsCoverage(
+	manifest: LegacyExportManifest,
+	importResults: ImportResults
+): void {
+	const importedByLegacy = new Map(
+		importResults.families.map((family) => [family.legacyId, family])
+	);
+	for (const entry of manifest.puzzles) {
+		const imported = importedByLegacy.get(entry.legacyId);
+		if (!imported) {
+			throw new FatalError(
+				`Missing imported family for manifest legacyId ${entry.legacyId}; refusing cleanup`
+			);
+		}
+		if (imported.status !== 'ready') {
+			throw new FatalError(
+				`Imported family for ${entry.legacyId} is not ready (status=${imported.status})`
+			);
+		}
+	}
+}
+
 export async function verifyReplacementsReady(
 	server: string,
 	families: ImportedFamily[],
@@ -105,64 +135,201 @@ export async function verifyReplacementsReady(
 	}
 }
 
-async function listLegacyR2Keys(legacyId: string, runWrangler: RunWrangler): Promise<string[]> {
-	const prefix = `puzzles/${legacyId}/`;
+function parseKvKeyList(stdout: string): string[] {
+	const trimmed = stdout.trim();
+	if (!trimmed) return [];
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(trimmed);
+	} catch (error) {
+		throw new FatalError(
+			`Failed to parse KV key list JSON: ${error instanceof Error ? error.message : String(error)}`
+		);
+	}
+	if (!Array.isArray(parsed)) {
+		throw new FatalError('Unexpected KV key list response shape');
+	}
+	const keys: string[] = [];
+	for (const entry of parsed) {
+		if (
+			entry &&
+			typeof entry === 'object' &&
+			typeof (entry as { name?: unknown }).name === 'string'
+		) {
+			keys.push((entry as { name: string }).name);
+		}
+	}
+	return keys;
+}
+
+function parsePieceCountFromKvValue(stdout: string): number | null {
+	const trimmed = stdout.trim();
+	if (!trimmed) return null;
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(trimmed);
+	} catch (error) {
+		throw new FatalError(
+			`Failed to parse KV metadata JSON: ${error instanceof Error ? error.message : String(error)}`
+		);
+	}
+	if (!parsed || typeof parsed !== 'object') return null;
+	const pieceCount = (parsed as { pieceCount?: unknown }).pieceCount;
+	return typeof pieceCount === 'number' && Number.isInteger(pieceCount) && pieceCount >= 0
+		? pieceCount
+		: null;
+}
+
+function legacyIdFromPuzzleKvKey(key: string): string | null {
+	if (!key.startsWith('puzzle:')) return null;
+	const legacyId = key.slice('puzzle:'.length);
+	return legacyId.length > 0 ? legacyId : null;
+}
+
+function isR2NotFoundError(result: { stdout: string; stderr: string }): boolean {
+	const output = `${result.stderr}\n${result.stdout}`.toLowerCase();
+	return (
+		output.includes('not found') ||
+		output.includes('does not exist') ||
+		output.includes('no such key') ||
+		output.includes('10009')
+	);
+}
+
+function buildDeletePlanForLegacyId(legacyId: string, pieceCount: number): CleanupPlanAction[] {
+	const actions: CleanupPlanAction[] = [{ type: 'kv-delete', key: `puzzle:${legacyId}` }];
+	for (const key of getLegacyR2Keys(legacyId, pieceCount)) {
+		actions.push({ type: 'r2-delete', key, objectPath: `${R2_BUCKET}/${key}` });
+	}
+	return actions;
+}
+
+export function buildCleanupPlan(
+	manifest: LegacyExportManifest,
+	leftoverKvKeys: string[],
+	leftoverPieceCounts: Map<string, number>
+): CleanupPlanAction[] {
+	const actions: CleanupPlanAction[] = [];
+	const manifestByLegacy = new Map(manifest.puzzles.map((entry) => [entry.legacyId, entry]));
+
+	for (const entry of manifest.puzzles) {
+		actions.push(...buildDeletePlanForLegacyId(entry.legacyId, entry.pieceCount));
+	}
+
+	for (const kvKey of leftoverKvKeys) {
+		const legacyId = legacyIdFromPuzzleKvKey(kvKey);
+		if (!legacyId || manifestByLegacy.has(legacyId)) continue;
+		const pieceCount = leftoverPieceCounts.get(legacyId);
+		if (pieceCount === undefined) {
+			throw new FatalError(
+				`Cannot delete leftover legacy puzzle ${legacyId}: pieceCount unknown (not in manifest and KV metadata lacked pieceCount)`
+			);
+		}
+		actions.push(...buildDeletePlanForLegacyId(legacyId, pieceCount));
+	}
+
+	return actions;
+}
+
+async function listLeftoverPuzzleKvKeys(runWrangler: RunWrangler): Promise<string[]> {
 	const result = await runWrangler([
-		'r2',
-		'object',
+		'kv',
+		'key',
 		'list',
-		R2_BUCKET,
+		'--binding',
+		KV_BINDING,
 		'--prefix',
-		prefix,
+		'puzzle:',
 		'--remote',
 		'--config',
-		WRANGLER_CONFIG,
-		'--json'
+		WRANGLER_CONFIG
 	]);
 	if (result.exitCode !== 0) {
 		throw new FatalError(
-			`Failed to list R2 objects for ${legacyId}:\n${result.stderr || result.stdout}`
+			`Failed to list leftover puzzle:* KV keys:\n${result.stderr || result.stdout}`
 		);
 	}
-	try {
-		const parsed = JSON.parse(result.stdout) as R2ListResponse;
-		return (parsed.objects ?? []).map((object) => object.key);
-	} catch {
-		return [];
-	}
+	return parseKvKeyList(result.stdout);
 }
 
-async function deleteKvKey(
+async function fetchPieceCountFromKv(
 	legacyId: string,
-	runWrangler: RunWrangler,
-	dryRun: boolean
-): Promise<void> {
-	const args = [
+	runWrangler: RunWrangler
+): Promise<number | null> {
+	const result = await runWrangler([
 		'kv',
 		'key',
-		'delete',
+		'get',
 		`puzzle:${legacyId}`,
 		'--binding',
 		KV_BINDING,
 		'--remote',
 		'--config',
 		WRANGLER_CONFIG
-	];
-	if (dryRun) return;
-	const result = await runWrangler(args);
+	]);
 	if (result.exitCode !== 0) {
 		throw new FatalError(
-			`Failed to delete KV key puzzle:${legacyId}:\n${result.stderr || result.stdout}`
+			`Failed to read KV metadata for puzzle:${legacyId}:\n${result.stderr || result.stdout}`
+		);
+	}
+	return parsePieceCountFromKvValue(result.stdout);
+}
+
+async function deleteKvKey(key: string, runWrangler: RunWrangler): Promise<void> {
+	const result = await runWrangler([
+		'kv',
+		'key',
+		'delete',
+		key,
+		'--binding',
+		KV_BINDING,
+		'--remote',
+		'--config',
+		WRANGLER_CONFIG
+	]);
+	if (result.exitCode !== 0) {
+		throw new FatalError(`Failed to delete KV key ${key}:\n${result.stderr || result.stdout}`);
+	}
+}
+
+async function deleteR2Key(objectPath: string, runWrangler: RunWrangler): Promise<void> {
+	const result = await runWrangler([
+		'r2',
+		'object',
+		'delete',
+		objectPath,
+		'--remote',
+		'--config',
+		WRANGLER_CONFIG
+	]);
+	if (result.exitCode !== 0 && !isR2NotFoundError(result)) {
+		throw new FatalError(
+			`Failed to delete R2 object ${objectPath}:\n${result.stderr || result.stdout}`
 		);
 	}
 }
 
-async function deleteR2Key(key: string, runWrangler: RunWrangler, dryRun: boolean): Promise<void> {
-	const args = ['r2', 'object', 'delete', R2_BUCKET, key, '--remote', '--config', WRANGLER_CONFIG];
-	if (dryRun) return;
-	const result = await runWrangler(args);
-	if (result.exitCode !== 0) {
-		throw new FatalError(`Failed to delete R2 object ${key}:\n${result.stderr || result.stdout}`);
+function printCleanupPlan(actions: CleanupPlanAction[]): void {
+	console.log('Legacy puzzle cleanup dry-run plan:');
+	for (const action of actions) {
+		if (action.type === 'kv-delete') {
+			console.log(`  kv key delete ${action.key}`);
+		} else {
+			console.log(`  r2 object delete ${action.objectPath}`);
+		}
+	}
+}
+
+async function executeCleanupPlan(
+	actions: CleanupPlanAction[],
+	runWrangler: RunWrangler
+): Promise<void> {
+	for (const action of actions) {
+		if (action.type === 'kv-delete') {
+			await deleteKvKey(action.key, runWrangler);
+		} else {
+			await deleteR2Key(action.objectPath, runWrangler);
+		}
 	}
 }
 
@@ -173,15 +340,28 @@ export async function cleanupLegacyPuzzles(options: CleanupOptions): Promise<voi
 	const importResults = readImportResults(options.migrationDir);
 	const headers = await resolveAccess(options);
 
+	verifyManifestImportsCoverage(manifest, importResults);
 	await verifyReplacementsReady(options.server, importResults.families, headers, fetchFn);
 
-	for (const entry of manifest.puzzles) {
-		await deleteKvKey(entry.legacyId, runWrangler, !!options.dryRun);
-		const keys = await listLegacyR2Keys(entry.legacyId, runWrangler);
-		for (const key of keys) {
-			await deleteR2Key(key, runWrangler, !!options.dryRun);
-		}
+	const manifestLegacyIds = new Set(manifest.puzzles.map((entry) => entry.legacyId));
+	const leftoverKvKeys = await listLeftoverPuzzleKvKeys(runWrangler);
+	const leftoverPieceCounts = new Map<string, number>();
+
+	for (const kvKey of leftoverKvKeys) {
+		const legacyId = legacyIdFromPuzzleKvKey(kvKey);
+		if (!legacyId || manifestLegacyIds.has(legacyId)) continue;
+		const pieceCount = await fetchPieceCountFromKv(legacyId, runWrangler);
+		if (pieceCount !== null) leftoverPieceCounts.set(legacyId, pieceCount);
 	}
+
+	const plan = buildCleanupPlan(manifest, leftoverKvKeys, leftoverPieceCounts);
+
+	if (options.dryRun) {
+		printCleanupPlan(plan);
+		return;
+	}
+
+	await executeCleanupPlan(plan, runWrangler);
 }
 
 function readArg(args: string[], name: string): string | undefined {
@@ -247,7 +427,9 @@ if (import.meta.main) {
 	parseCliOptions()
 		.then((options) => cleanupLegacyPuzzles(options))
 		.then(() => {
-			console.log('Legacy puzzle cleanup complete');
+			if (!Bun.argv.includes('--dry-run')) {
+				console.log('Legacy puzzle cleanup complete');
+			}
 		})
 		.catch((error) => {
 			if (error instanceof FatalError) {

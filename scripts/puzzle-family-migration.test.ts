@@ -8,19 +8,25 @@ import {
 	fetchAllReadyPuzzles,
 	fetchOwnerIds,
 	MANIFEST_FILE,
+	R2_BUCKET,
 	type LegacyExportManifest,
 	type RunWrangler
 } from './export-legacy-puzzles';
 import { importPuzzleFamilies, pollImportedFamilies } from './import-puzzle-families';
-import { cleanupLegacyPuzzles, verifyReplacementsReady } from './cleanup-legacy-puzzles';
+import {
+	cleanupLegacyPuzzles,
+	getLegacyR2Keys,
+	verifyReplacementsReady
+} from './cleanup-legacy-puzzles';
 
 const SERVER = 'https://example.test';
 const PUZZLE_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const PUZZLE_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const PUZZLE_C = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 const OWNER_A = 'player-a';
 const OWNER_B = 'player-b';
-const FAMILY_A = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
-const FAMILY_B = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+const FAMILY_A = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+const FAMILY_B = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
 
 function makePng(): Uint8Array {
 	const buf = new Uint8Array(24);
@@ -41,6 +47,7 @@ function makeManifest(dir: string, entries = 2): LegacyExportManifest {
 			category: 'Nature' as PuzzleCategory,
 			aspectRatio: '1:1' as const,
 			ownerId: OWNER_A,
+			pieceCount: 100,
 			originalFile: `originals/${PUZZLE_A}.png`,
 			contentType: 'image/png',
 			byteLength: makePng().byteLength
@@ -51,6 +58,7 @@ function makeManifest(dir: string, entries = 2): LegacyExportManifest {
 			category: 'Animals' as PuzzleCategory,
 			aspectRatio: '4:3' as const,
 			ownerId: OWNER_B,
+			pieceCount: 48,
 			originalFile: `originals/${PUZZLE_B}.png`,
 			contentType: 'image/png',
 			byteLength: makePng().byteLength
@@ -70,6 +78,19 @@ function makeManifest(dir: string, entries = 2): LegacyExportManifest {
 	writeFileSync(join(dir, MANIFEST_FILE), JSON.stringify(manifest, null, 2));
 	return manifest;
 }
+
+describe('getLegacyR2Keys', () => {
+	it('enumerates original, thumbnail, and piece keys from pieceCount', () => {
+		const keys = getLegacyR2Keys(PUZZLE_A, 3);
+		expect(keys).toEqual([
+			`puzzles/${PUZZLE_A}/original`,
+			`puzzles/${PUZZLE_A}/thumbnail.jpg`,
+			`puzzles/${PUZZLE_A}/pieces/0.png`,
+			`puzzles/${PUZZLE_A}/pieces/1.png`,
+			`puzzles/${PUZZLE_A}/pieces/2.png`
+		]);
+	});
+});
 
 describe('fetchAllReadyPuzzles', () => {
 	const originalFetch = globalThis.fetch;
@@ -240,15 +261,65 @@ describe('exportLegacyPuzzles', () => {
 
 		expect(manifest.puzzles).toHaveLength(1);
 		expect(manifest.puzzles[0]?.ownerId).toBe(OWNER_A);
+		expect(manifest.puzzles[0]?.pieceCount).toBe(100);
 		const saved = readFileSync(join(dir, manifest.puzzles[0]!.originalFile));
 		expect(saved.byteLength).toBe(png.byteLength);
+	});
+
+	it('derives aspectRatio from original bytes when API omits it', async () => {
+		const png = makePng();
+		globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
+			const url = String(input);
+			if (url.includes('/api/puzzles?')) {
+				return new Response(
+					JSON.stringify({
+						puzzles: [
+							{
+								id: PUZZLE_A,
+								name: 'Alpha',
+								status: 'ready',
+								pieceCount: 100
+							}
+						],
+						total: 1,
+						offset: 0,
+						limit: 100
+					}),
+					{ status: 200 }
+				);
+			}
+			if (url.endsWith(`/api/puzzles/${PUZZLE_A}/reference`)) {
+				return new Response(png, {
+					status: 200,
+					headers: { 'Content-Type': 'image/png' }
+				});
+			}
+			throw new Error(`unexpected fetch ${url} ${init?.method ?? 'GET'}`);
+		}) as unknown as typeof fetch;
+
+		const runWrangler: RunWrangler = async () => ({
+			exitCode: 0,
+			stdout: JSON.stringify([{ results: [{ id: PUZZLE_A, owner_id: OWNER_A }], success: true }]),
+			stderr: ''
+		});
+
+		const manifest = await exportLegacyPuzzles({
+			server: SERVER,
+			outputDir: dir,
+			skipAccess: true,
+			fetchFn: globalThis.fetch,
+			runWrangler
+		});
+
+		expect(manifest.puzzles[0]?.aspectRatio).toBe('1:1');
+		expect(manifest.puzzles[0]?.category).toBeUndefined();
 	});
 });
 
 describe('importPuzzleFamilies', () => {
 	const originalFetch = globalThis.fetch;
 	let dir: string;
-	const wranglerCalls: string[] = [];
+	const wranglerCalls: string[][] = [];
 
 	beforeEach(() => {
 		dir = mkdtempSync(join(tmpdir(), 'perseus-import-'));
@@ -260,7 +331,7 @@ describe('importPuzzleFamilies', () => {
 		rmSync(dir, { recursive: true, force: true });
 	});
 
-	it('POSTs each original, updates owner_id, and polls to ready/failed', async () => {
+	it('POSTs each original, updates owner_id with --yes --json, and polls to ready/failed', async () => {
 		makeManifest(dir);
 		const posts: string[] = [];
 		let pollCount = 0;
@@ -290,8 +361,12 @@ describe('importPuzzleFamilies', () => {
 		}) as unknown as typeof fetch;
 
 		const runWrangler: RunWrangler = async (args) => {
-			wranglerCalls.push(args.join(' '));
-			return { exitCode: 0, stdout: '[]', stderr: '' };
+			wranglerCalls.push([...args]);
+			return {
+				exitCode: 0,
+				stdout: JSON.stringify([{ results: [], success: true, meta: { changes: 1 } }]),
+				stderr: ''
+			};
 		};
 
 		const results = await importPuzzleFamilies({
@@ -304,8 +379,83 @@ describe('importPuzzleFamilies', () => {
 		});
 
 		expect(posts).toEqual(['Alpha', 'Beta']);
-		expect(wranglerCalls.some((call) => call.includes('UPDATE puzzle_families'))).toBe(true);
+		const updateCall = wranglerCalls.find((args) =>
+			args.some((arg) => arg.includes('UPDATE puzzle_families'))
+		);
+		expect(updateCall).toBeDefined();
+		expect(updateCall).toContain('--yes');
+		expect(updateCall).toContain('--json');
 		expect(results.every((r) => r.status === 'ready')).toBe(true);
+	});
+
+	it('omits category from FormData when manifest entry has no category', async () => {
+		const manifest = makeManifest(dir, 1);
+		delete (manifest.puzzles[0] as { category?: PuzzleCategory }).category;
+		writeFileSync(join(dir, MANIFEST_FILE), JSON.stringify(manifest, null, 2));
+
+		globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
+			const url = String(input);
+			if (init?.method === 'POST' && url.endsWith('/api/admin/puzzle-families')) {
+				const body = init.body as FormData;
+				expect(body.has('category')).toBe(false);
+				return new Response(JSON.stringify({ id: FAMILY_A, status: 'ready' }), { status: 201 });
+			}
+			if (init?.method === 'GET' && url.endsWith('/api/admin/puzzle-families')) {
+				return new Response(
+					JSON.stringify({
+						families: [{ id: FAMILY_A, name: 'Alpha', status: 'ready' }]
+					}),
+					{ status: 200 }
+				);
+			}
+			throw new Error(`unexpected fetch ${url} ${init?.method ?? 'GET'}`);
+		}) as unknown as typeof fetch;
+
+		const runWrangler: RunWrangler = async () => ({
+			exitCode: 0,
+			stdout: JSON.stringify([{ results: [], success: true, meta: { changes: 1 } }]),
+			stderr: ''
+		});
+
+		await importPuzzleFamilies({
+			server: SERVER,
+			migrationDir: dir,
+			skipAccess: true,
+			fetchFn: globalThis.fetch,
+			runWrangler,
+			sleepFn: async () => {}
+		});
+	});
+
+	it('fails owner update when D1 reports zero changes', async () => {
+		makeManifest(dir, 1);
+
+		globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
+			const url = String(input);
+			if (init?.method === 'POST' && url.endsWith('/api/admin/puzzle-families')) {
+				return new Response(JSON.stringify({ id: FAMILY_A, status: 'processing' }), {
+					status: 201
+				});
+			}
+			throw new Error(`unexpected fetch ${url} ${init?.method ?? 'GET'}`);
+		}) as unknown as typeof fetch;
+
+		const runWrangler: RunWrangler = async () => ({
+			exitCode: 0,
+			stdout: JSON.stringify([{ results: [], success: true, meta: { changes: 0 } }]),
+			stderr: ''
+		});
+
+		await expect(
+			importPuzzleFamilies({
+				server: SERVER,
+				migrationDir: dir,
+				skipAccess: true,
+				fetchFn: globalThis.fetch,
+				runWrangler,
+				sleepFn: async () => {}
+			})
+		).rejects.toThrow(/changed zero rows/i);
 	});
 });
 
@@ -387,14 +537,21 @@ describe('verifyReplacementsReady', () => {
 
 describe('cleanupLegacyPuzzles', () => {
 	let dir: string;
-	const wranglerCalls: string[] = [];
+	const wranglerCalls: string[][] = [];
+	const logs: string[] = [];
+	const originalLog = console.log;
 
 	beforeEach(() => {
 		dir = mkdtempSync(join(tmpdir(), 'perseus-cleanup-'));
 		wranglerCalls.length = 0;
+		logs.length = 0;
+		console.log = (...args: unknown[]) => {
+			logs.push(args.map(String).join(' '));
+		};
 	});
 
 	afterEach(() => {
+		console.log = originalLog;
 		rmSync(dir, { recursive: true, force: true });
 	});
 
@@ -428,7 +585,7 @@ describe('cleanupLegacyPuzzles', () => {
 		) as unknown as typeof fetch;
 
 		const runWrangler: RunWrangler = async (args) => {
-			wranglerCalls.push(args.join(' '));
+			wranglerCalls.push([...args]);
 			return { exitCode: 0, stdout: '[]', stderr: '' };
 		};
 
@@ -442,11 +599,59 @@ describe('cleanupLegacyPuzzles', () => {
 			})
 		).rejects.toThrow(/not ready/i);
 
-		expect(wranglerCalls.some((call) => call.includes('kv key delete'))).toBe(false);
+		expect(wranglerCalls.some((args) => args.includes('delete'))).toBe(false);
 		globalThis.fetch = originalFetch;
 	});
 
-	it('deletes legacy KV and R2 objects only after verify succeeds', async () => {
+	it('refuses cleanup when manifest legacyIds lack ready imported families', async () => {
+		makeManifest(dir, 2);
+		writeFileSync(
+			join(dir, 'import-results.json'),
+			JSON.stringify({
+				importedAt: '2026-08-27T00:00:00.000Z',
+				families: [
+					{
+						legacyId: PUZZLE_A,
+						familyId: FAMILY_A,
+						name: 'Alpha',
+						ownerId: OWNER_A,
+						status: 'ready'
+					}
+				]
+			})
+		);
+
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = mock(
+			async () =>
+				new Response(
+					JSON.stringify({
+						families: [{ id: FAMILY_A, name: 'Alpha', status: 'ready' }]
+					}),
+					{ status: 200 }
+				)
+		) as unknown as typeof fetch;
+
+		const runWrangler: RunWrangler = async (args) => {
+			wranglerCalls.push([...args]);
+			return { exitCode: 0, stdout: '[]', stderr: '' };
+		};
+
+		await expect(
+			cleanupLegacyPuzzles({
+				migrationDir: dir,
+				server: SERVER,
+				skipAccess: true,
+				fetchFn: globalThis.fetch,
+				runWrangler
+			})
+		).rejects.toThrow(/missing imported family/i);
+
+		expect(wranglerCalls.some((args) => args.includes('delete'))).toBe(false);
+		globalThis.fetch = originalFetch;
+	});
+
+	it('deletes legacy KV and R2 objects with bucket/key delete argv after verify succeeds', async () => {
 		makeManifest(dir, 1);
 		writeFileSync(
 			join(dir, 'import-results.json'),
@@ -476,21 +681,11 @@ describe('cleanupLegacyPuzzles', () => {
 		) as unknown as typeof fetch;
 
 		const runWrangler: RunWrangler = async (args) => {
-			wranglerCalls.push(args.join(' '));
-			if (args.includes('r2') && args.includes('list')) {
-				return {
-					exitCode: 0,
-					stdout: JSON.stringify({
-						objects: [
-							{ key: `puzzles/${PUZZLE_A}/original` },
-							{ key: `puzzles/${PUZZLE_A}/thumbnail.jpg` },
-							{ key: `puzzles/${PUZZLE_A}/pieces/0.png` }
-						]
-					}),
-					stderr: ''
-				};
+			wranglerCalls.push([...args]);
+			if (args.includes('kv') && args.includes('list')) {
+				return { exitCode: 0, stdout: '[]', stderr: '' };
 			}
-			return { exitCode: 0, stdout: '[]', stderr: '' };
+			return { exitCode: 0, stdout: '', stderr: '' };
 		};
 
 		await cleanupLegacyPuzzles({
@@ -501,8 +696,183 @@ describe('cleanupLegacyPuzzles', () => {
 			runWrangler
 		});
 
-		expect(wranglerCalls.some((call) => call.includes(`puzzle:${PUZZLE_A}`))).toBe(true);
-		expect(wranglerCalls.some((call) => call.includes(`puzzles/${PUZZLE_A}/original`))).toBe(true);
+		expect(wranglerCalls.some((args) => args.includes(`puzzle:${PUZZLE_A}`))).toBe(true);
+		const r2Delete = wranglerCalls.find(
+			(args) => args[0] === 'r2' && args[1] === 'object' && args[2] === 'delete'
+		);
+		expect(r2Delete).toBeDefined();
+		expect(r2Delete?.[3]).toBe(`${R2_BUCKET}/puzzles/${PUZZLE_A}/original`);
+		expect(
+			wranglerCalls.some((args) => args[3] === `${R2_BUCKET}/puzzles/${PUZZLE_A}/pieces/0.png`)
+		).toBe(true);
+		globalThis.fetch = originalFetch;
+	});
+
+	it('treats R2 not-found delete errors as success', async () => {
+		makeManifest(dir, 1);
+		writeFileSync(
+			join(dir, 'import-results.json'),
+			JSON.stringify({
+				importedAt: '2026-08-27T00:00:00.000Z',
+				families: [
+					{
+						legacyId: PUZZLE_A,
+						familyId: FAMILY_A,
+						name: 'Alpha',
+						ownerId: OWNER_A,
+						status: 'ready'
+					}
+				]
+			})
+		);
+
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = mock(
+			async () =>
+				new Response(
+					JSON.stringify({
+						families: [{ id: FAMILY_A, name: 'Alpha', status: 'ready' }]
+					}),
+					{ status: 200 }
+				)
+		) as unknown as typeof fetch;
+
+		const runWrangler: RunWrangler = async (args) => {
+			wranglerCalls.push([...args]);
+			if (args.includes('r2') && args.includes('delete')) {
+				return { exitCode: 1, stdout: '', stderr: 'Object not found' };
+			}
+			if (args.includes('kv') && args.includes('list')) {
+				return { exitCode: 0, stdout: '[]', stderr: '' };
+			}
+			return { exitCode: 0, stdout: '', stderr: '' };
+		};
+
+		await expect(
+			cleanupLegacyPuzzles({
+				migrationDir: dir,
+				server: SERVER,
+				skipAccess: true,
+				fetchFn: globalThis.fetch,
+				runWrangler
+			})
+		).resolves.toBeUndefined();
+		globalThis.fetch = originalFetch;
+	});
+
+	it('deletes leftover puzzle: KV keys not covered by the manifest', async () => {
+		makeManifest(dir, 1);
+		writeFileSync(
+			join(dir, 'import-results.json'),
+			JSON.stringify({
+				importedAt: '2026-08-27T00:00:00.000Z',
+				families: [
+					{
+						legacyId: PUZZLE_A,
+						familyId: FAMILY_A,
+						name: 'Alpha',
+						ownerId: OWNER_A,
+						status: 'ready'
+					}
+				]
+			})
+		);
+
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = mock(
+			async () =>
+				new Response(
+					JSON.stringify({
+						families: [{ id: FAMILY_A, name: 'Alpha', status: 'ready' }]
+					}),
+					{ status: 200 }
+				)
+		) as unknown as typeof fetch;
+
+		const runWrangler: RunWrangler = async (args) => {
+			wranglerCalls.push([...args]);
+			if (args.includes('kv') && args.includes('list')) {
+				return {
+					exitCode: 0,
+					stdout: JSON.stringify([{ name: `puzzle:${PUZZLE_C}` }]),
+					stderr: ''
+				};
+			}
+			if (args.includes('kv') && args.includes('get') && args.includes(`puzzle:${PUZZLE_C}`)) {
+				return {
+					exitCode: 0,
+					stdout: JSON.stringify({ pieceCount: 2, status: 'ready' }),
+					stderr: ''
+				};
+			}
+			return { exitCode: 0, stdout: '', stderr: '' };
+		};
+
+		await cleanupLegacyPuzzles({
+			migrationDir: dir,
+			server: SERVER,
+			skipAccess: true,
+			fetchFn: globalThis.fetch,
+			runWrangler
+		});
+
+		expect(wranglerCalls.some((args) => args.includes(`puzzle:${PUZZLE_C}`))).toBe(true);
+		expect(
+			wranglerCalls.some((args) => args[3] === `${R2_BUCKET}/puzzles/${PUZZLE_C}/original`)
+		).toBe(true);
+		globalThis.fetch = originalFetch;
+	});
+
+	it('prints delete plan on --dry-run without invoking wrangler mutations', async () => {
+		makeManifest(dir, 1);
+		writeFileSync(
+			join(dir, 'import-results.json'),
+			JSON.stringify({
+				importedAt: '2026-08-27T00:00:00.000Z',
+				families: [
+					{
+						legacyId: PUZZLE_A,
+						familyId: FAMILY_A,
+						name: 'Alpha',
+						ownerId: OWNER_A,
+						status: 'ready'
+					}
+				]
+			})
+		);
+
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = mock(
+			async () =>
+				new Response(
+					JSON.stringify({
+						families: [{ id: FAMILY_A, name: 'Alpha', status: 'ready' }]
+					}),
+					{ status: 200 }
+				)
+		) as unknown as typeof fetch;
+
+		const runWrangler: RunWrangler = async (args) => {
+			wranglerCalls.push([...args]);
+			if (args.includes('kv') && args.includes('list')) {
+				return { exitCode: 0, stdout: '[]', stderr: '' };
+			}
+			return { exitCode: 0, stdout: '[]', stderr: '' };
+		};
+
+		await cleanupLegacyPuzzles({
+			migrationDir: dir,
+			server: SERVER,
+			skipAccess: true,
+			dryRun: true,
+			fetchFn: globalThis.fetch,
+			runWrangler
+		});
+
+		expect(wranglerCalls.some((args) => args.includes('delete'))).toBe(false);
+		expect(wranglerCalls.some((args) => args.includes('list'))).toBe(true);
+		expect(logs.some((line) => line.includes('dry-run'))).toBe(true);
+		expect(logs.some((line) => line.includes(`puzzle:${PUZZLE_A}`))).toBe(true);
 		globalThis.fetch = originalFetch;
 	});
 });
