@@ -25,9 +25,14 @@ import type {
 	PuzzleFamilySummary,
 	PuzzleVariantSummary,
 	PuzzleFamilyMetadata,
-	PuzzleFamilyListResponse
+	PuzzleFamilyListResponse,
+	PlayerProgressionSummary,
+	PuzzleLeaderboardResponse,
+	OverallLeaderboardResponse,
+	CompletionAwards
 } from '@perseus/types';
 import type { PlacedPiece, Rotation } from '@perseus/game-core';
+import type { PuzzleDifficulty } from '@perseus/types';
 
 // Re-export shared types for convenience
 export type {
@@ -54,7 +59,11 @@ export type {
 	PuzzleFamilySummary,
 	PuzzleVariantSummary,
 	PuzzleFamilyMetadata,
-	PuzzleFamilyListResponse
+	PuzzleFamilyListResponse,
+	PlayerProgressionSummary,
+	PuzzleLeaderboardResponse,
+	OverallLeaderboardResponse,
+	CompletionAwards
 };
 
 /** Player-owned family row from GET /api/player/puzzle-families (no variant ids). */
@@ -82,6 +91,8 @@ export interface Puzzle {
 	pieces: PuzzlePiece[];
 	category?: PuzzleCategory;
 	hasReference?: boolean;
+	familyId?: string;
+	difficulty?: PuzzleDifficulty;
 }
 
 /** Game-play progress tracking (local to the web app). */

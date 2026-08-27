@@ -8,6 +8,8 @@ vi.mock('$lib/services/api', () => ({
 	getPlayerProfile: vi.fn(),
 	getPlayerPuzzles: vi.fn(),
 	getPlayerStats: vi.fn(),
+	getPlayerProgression: vi.fn(),
+	fetchFamilyDetail: vi.fn(),
 	updatePlayerProfile: vi.fn(),
 	uploadPlayerAvatar: vi.fn(),
 	getAvatarUrl: vi.fn((id: string) => `/api/player/${id}/avatar`),
@@ -31,7 +33,13 @@ vi.mock('$lib/stores/timer', async (importOriginal) => {
 	};
 });
 
-import { getPlayerProfile, getPlayerPuzzles, getPlayerStats } from '$lib/services/api';
+import {
+	getPlayerProfile,
+	getPlayerPuzzles,
+	getPlayerStats,
+	getPlayerProgression,
+	fetchFamilyDetail
+} from '$lib/services/api';
 import { uploadPlayerAvatar, resolveAssetUrl } from '$lib/services/api';
 import { formatTime } from '$lib/stores/timer';
 
@@ -63,30 +71,55 @@ function ownedFamily(
 
 const stats: PlayerStatRow[] = [
 	{
-		puzzleId: 'pz-1',
-		puzzleName: 'Test Puzzle',
-		bestTimeSeconds: 42,
+		familyId: 'fam-1',
+		familyName: 'Test Puzzle',
+		difficulty: 'easy',
+		standardBestTimeSeconds: 42,
+		rotationBestTimeSeconds: null,
 		totalCompletions: 1,
 		firstCompletedAt: 1,
 		lastCompletedAt: 2
 	},
 	{
-		puzzleId: 'variant-only',
-		puzzleName: 'Variant Result',
-		bestTimeSeconds: null,
+		familyId: 'fam-variant',
+		familyName: 'Variant Result',
+		difficulty: 'normal',
+		standardBestTimeSeconds: null,
+		rotationBestTimeSeconds: null,
 		totalCompletions: 2,
 		firstCompletedAt: 100,
 		lastCompletedAt: 200
 	}
 ];
 
+const progression = {
+	score: 142,
+	rank: 3,
+	easyClears: 1,
+	normalClears: 0,
+	hardClears: 0,
+	achievementsUnlocked: 1,
+	achievementsTotal: 9,
+	masteryEarned: 2
+};
+
 describe('profile page', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
-		// clearAllMocks clears call/instance state but not implementations
-		// set via mockImplementation; restore the identity default so a
-		// per-test override (e.g. the cross-origin avatar test) doesn't leak.
 		vi.mocked(resolveAssetUrl).mockImplementation((url) => url ?? null);
+		vi.mocked(getPlayerProgression).mockResolvedValue(progression);
+		vi.mocked(fetchFamilyDetail).mockImplementation(async (familyId) => ({
+			id: familyId,
+			name: 'Detail Family',
+			aspectRatio: '1:1',
+			status: 'ready',
+			createdAt: 1,
+			variants: {
+				easy: { id: `${familyId}-e`, difficulty: 'easy', pieceCount: 16, status: 'ready' },
+				normal: { id: `${familyId}-n`, difficulty: 'normal', pieceCount: 49, status: 'ready' },
+				hard: { id: `${familyId}-h`, difficulty: 'hard', pieceCount: 100, status: 'ready' }
+			}
+		}));
 	});
 
 	it('renders identity card with effective name', async () => {
@@ -141,7 +174,7 @@ describe('profile page', () => {
 		render(ProfilePage);
 
 		await expect.element(page.getByRole('heading', { name: 'Puzzle Results' })).toBeVisible();
-		await expect.element(page.getByText('No standard time')).toBeVisible();
+		await expect.element(page.getByText('No timed bests')).toBeVisible();
 		await expect.element(page.getByText('00:42')).toBeVisible();
 		await expect.element(page.getByText('2×')).toBeVisible();
 		await expect.element(page.getByTestId('card-best-time')).not.toBeInTheDocument();
@@ -414,17 +447,21 @@ describe('profile page', () => {
 		});
 		vi.mocked(getPlayerPuzzles).mockResolvedValue({ families, nextCursor: undefined });
 		const stat1: PlayerStatRow = {
-			puzzleId: 'pz-a',
-			puzzleName: 'Alpha Stat',
-			bestTimeSeconds: 10,
+			familyId: 'fam-a',
+			familyName: 'Alpha Stat',
+			difficulty: 'easy',
+			standardBestTimeSeconds: 10,
+			rotationBestTimeSeconds: null,
 			totalCompletions: 1,
 			firstCompletedAt: 1,
 			lastCompletedAt: 2
 		};
 		const stat2: PlayerStatRow = {
-			puzzleId: 'pz-b',
-			puzzleName: 'Beta Stat',
-			bestTimeSeconds: 20,
+			familyId: 'fam-b',
+			familyName: 'Beta Stat',
+			difficulty: 'normal',
+			standardBestTimeSeconds: 20,
+			rotationBestTimeSeconds: null,
 			totalCompletions: 1,
 			firstCompletedAt: 1,
 			lastCompletedAt: 2
@@ -514,7 +551,7 @@ describe('profile page', () => {
 		expect(updatePlayerProfile).toHaveBeenCalledWith({ displayName: 'New Name' });
 	});
 
-	it('shows puzzleId when a stat row has no puzzleName', async () => {
+	it('shows familyId when a stat row has no familyName', async () => {
 		vi.mocked(getPlayerProfile).mockResolvedValue({
 			id: 'p1',
 			email: 'e',
@@ -526,9 +563,11 @@ describe('profile page', () => {
 		});
 		vi.mocked(getPlayerPuzzles).mockResolvedValue({ families: [], nextCursor: undefined });
 		const statNoName: PlayerStatRow = {
-			puzzleId: 'pz-anon',
-			puzzleName: '',
-			bestTimeSeconds: 30,
+			familyId: 'fam-anon',
+			familyName: null,
+			difficulty: 'easy',
+			standardBestTimeSeconds: 30,
+			rotationBestTimeSeconds: null,
 			totalCompletions: 2,
 			firstCompletedAt: 1,
 			lastCompletedAt: 2
@@ -537,8 +576,7 @@ describe('profile page', () => {
 
 		render(ProfilePage);
 		await expect.element(page.getByText('Stat Player')).toBeVisible();
-		// When puzzleName is empty, the puzzleId is shown instead
-		await expect.element(page.getByText('pz-anon')).toBeVisible();
+		await expect.element(page.getByText('fam-anon')).toBeVisible();
 	});
 
 	it('logs error when load more puzzles fails', async () => {
@@ -593,9 +631,11 @@ describe('profile page', () => {
 			return {
 				stats: [
 					{
-						puzzleId: 'pz-a',
-						puzzleName: 'Alpha Stat',
-						bestTimeSeconds: 10,
+						familyId: 'fam-a',
+						familyName: 'Alpha Stat',
+						difficulty: 'easy',
+						standardBestTimeSeconds: 10,
+						rotationBestTimeSeconds: null,
 						totalCompletions: 1,
 						firstCompletedAt: 1,
 						lastCompletedAt: 2
@@ -829,7 +869,7 @@ describe('profile page', () => {
 		consoleSpy.mockRestore();
 	});
 
-	it('does not render three identical play links for a ready owned family', async () => {
+	it('renders distinct play links for a ready owned family after detail enrichment', async () => {
 		vi.mocked(getPlayerProfile).mockResolvedValue({
 			id: 'p1',
 			email: 'e',
@@ -843,13 +883,25 @@ describe('profile page', () => {
 			families: [ownedFamily('fam-owned', 'Owned Puzzle', { status: 'ready', createdAt: 2 })],
 			nextCursor: undefined
 		});
+		vi.mocked(fetchFamilyDetail).mockResolvedValueOnce({
+			id: 'fam-owned',
+			name: 'Owned Puzzle',
+			aspectRatio: '1:1',
+			status: 'ready',
+			createdAt: 2,
+			variants: {
+				easy: { id: 'fam-owned-e', difficulty: 'easy', pieceCount: 16, status: 'ready' },
+				normal: { id: 'fam-owned-n', difficulty: 'normal', pieceCount: 49, status: 'ready' },
+				hard: { id: 'fam-owned-h', difficulty: 'hard', pieceCount: 100, status: 'ready' }
+			}
+		});
 		vi.mocked(getPlayerStats).mockResolvedValue({ stats: [], nextCursor: undefined });
 
 		render(ProfilePage);
 		await expect.element(page.getByRole('heading', { name: 'Owned Puzzle' })).toBeVisible();
 
 		const playLinks = page.getByRole('link').filter({ hasText: /Easy|Normal|Hard/ });
-		await expect.element(playLinks.first()).not.toBeInTheDocument();
+		await expect.element(playLinks).toHaveLength(3);
 	});
 
 	it('drops a bogus puzzle category that is not in the known category list', async () => {
@@ -876,6 +928,18 @@ describe('profile page', () => {
 			nextCursor: undefined
 		});
 		vi.mocked(getPlayerStats).mockResolvedValue({ stats: [], nextCursor: undefined });
+		vi.mocked(fetchFamilyDetail).mockResolvedValueOnce({
+			id: 'pz-bogus',
+			name: 'Bogus Category Puzzle',
+			aspectRatio: '1:1',
+			status: 'ready',
+			createdAt: 2,
+			variants: {
+				easy: { id: 'pz-bogus-e', difficulty: 'easy', pieceCount: 16, status: 'ready' },
+				normal: { id: 'pz-bogus-n', difficulty: 'normal', pieceCount: 49, status: 'ready' },
+				hard: { id: 'pz-bogus-h', difficulty: 'hard', pieceCount: 100, status: 'ready' }
+			}
+		});
 
 		render(ProfilePage);
 		await expect

@@ -34,6 +34,13 @@
 			max-sm:gap-2 max-sm:text-[0.52rem]"
 	>
 		<a
+			href={resolve('/leaderboard')}
+			class="shrink-0 text-(--accent) opacity-70 transition-opacity duration-150 hover:opacity-100"
+			data-testid="leaderboard-link"
+		>
+			LEADERBOARD
+		</a>
+		<a
 			href={resolve('/quick')}
 			class="shrink-0 text-(--accent) opacity-70 transition-opacity duration-150 hover:opacity-100"
 			data-testid="quick-puzzle-link"

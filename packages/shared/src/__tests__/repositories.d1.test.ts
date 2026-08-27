@@ -20,6 +20,9 @@ import {
 	readAchievementSnapshot,
 	listPlayerStats,
 	getPlayerSummary,
+	listPuzzleLeaderboard,
+	listOverallLeaderboard,
+	getPlayerProgressionSummary,
 	InvalidPlayerStatsCursorError,
 	deletePuzzleStats,
 	insertPuzzleFamilyOwnership,
@@ -30,7 +33,7 @@ import {
 	SYSTEM_OWNER_ID
 } from '../repositories';
 
-import { ACHIEVEMENT_IDS } from '../progression';
+import { ACHIEVEMENT_IDS, UNIQUE_CLEAR_POINTS } from '../progression';
 
 const FAMILY_ID = '223e4567-e89b-42d3-a456-426614174001';
 const DIFFICULTY = 'easy' as PuzzleDifficulty;
@@ -485,7 +488,7 @@ describe('recordVersionedCompletion against real D1', () => {
 					}),
 					index * 1_000
 				)
-			).toEqual({ status: 'recorded', completedAt: index * 1_000 });
+			).toMatchObject({ status: 'recorded', completedAt: index * 1_000 });
 		}
 
 		expect(
@@ -505,7 +508,7 @@ describe('recordVersionedCompletion against real D1', () => {
 				completion({ runId: 'run-3', elapsedActiveSeconds: 97 }),
 				9_000
 			)
-		).toEqual({ status: 'replayed', completedAt: 3_000 });
+		).toMatchObject({ status: 'replayed', completedAt: 3_000 });
 		expect(
 			await recordCompletion(
 				executor,
@@ -624,7 +627,7 @@ describe('recordVersionedCompletion against real D1', () => {
 		const executor = createD1CompletionWriteExecutor(db);
 		const result = await recordCompletion(executor, 'p1', 'pz1', completion(), 1_000);
 
-		expect(result).toEqual({ status: 'recorded', completedAt: 1_000 });
+		expect(result).toMatchObject({ status: 'recorded', completedAt: 1_000 });
 		expect(await selectRunFacts(db)).toEqual([
 			{
 				playerId: 'p1',
@@ -647,7 +650,7 @@ describe('recordVersionedCompletion against real D1', () => {
 
 		const result = await recordCompletion(executor, 'p1', 'pz1', completion(), 9_000);
 
-		expect(result).toEqual({ status: 'replayed', completedAt: 1_000 });
+		expect(result).toMatchObject({ status: 'replayed', completedAt: 1_000 });
 		expect(await db.select().from(schema.puzzleCompletionRuns)).toHaveLength(1);
 		expect(await db.select().from(schema.puzzleBestTimes)).toEqual([
 			standardBest({ playerId: 'p1', puzzleId: 'pz1', bestTimeSeconds: 100, achievedAt: 1_000 })
@@ -719,7 +722,7 @@ describe('recordVersionedCompletion against real D1', () => {
 	])('keeps assisted and relaxed runs out of personal-best tables', async (request) => {
 		const executor = createD1CompletionWriteExecutor(db);
 
-		expect(await recordCompletion(executor, 'p1', 'pz1', request, 1_000)).toEqual({
+		expect(await recordCompletion(executor, 'p1', 'pz1', request, 1_000)).toMatchObject({
 			status: 'recorded',
 			completedAt: 1_000
 		});
@@ -735,7 +738,7 @@ describe('recordVersionedCompletion against real D1', () => {
 			elapsedActiveSeconds: 110
 		});
 
-		expect(await recordCompletion(executor, 'p1', 'pz1', request, 1_000)).toEqual({
+		expect(await recordCompletion(executor, 'p1', 'pz1', request, 1_000)).toMatchObject({
 			status: 'recorded',
 			completedAt: 1_000
 		});
@@ -1149,23 +1152,32 @@ describe('recordVersionedCompletion against real D1', () => {
 });
 
 describe('listPlayerStats composite cursor against real D1', () => {
-	it('paginates with (bestTimeSeconds, puzzleId) cursor without skipping rows', async () => {
-		// Insert 5 current completions with distinct best times.
-		for (let i = 0; i < 5; i++) {
+	it('paginates family+difficulty rows by standard best without skipping', async () => {
+		const executor = createD1CompletionWriteExecutor(db);
+		const families = ['fam-a', 'fam-b', 'fam-c', 'fam-d', 'fam-e'] as const;
+		for (let i = 0; i < families.length; i++) {
+			await insertPuzzleFamilyOwnership(db, {
+				id: families[i],
+				ownerId: 'p1',
+				name: `Family ${i}`,
+				aspectRatio: '1:1',
+				status: 'ready',
+				createdAt: i
+			});
 			await recordCompletion(
-				createD1CompletionWriteExecutor(db),
+				executor,
 				'p1',
-				`pz${i}`,
+				`pz-${i}`,
 				completion({ runId: `cursor-${i}`, elapsedActiveSeconds: 100 + i * 10 }),
-				1_000 + i
+				1_000 + i,
+				{ familyId: families[i], difficulty: 'easy' }
 			);
 		}
 		const page1 = await listPlayerStats(db, 'p1', { limit: 2 });
 		expect(page1.rows).toHaveLength(2);
 		expect(page1.nextCursor).toBeDefined();
-		// Ordered by bestTimeSeconds ASC
-		expect(page1.rows[0].bestTimeSeconds).toBe(100);
-		expect(page1.rows[1].bestTimeSeconds).toBe(110);
+		expect(page1.rows[0].standardBestTimeSeconds).toBe(100);
+		expect(page1.rows[1].standardBestTimeSeconds).toBe(110);
 
 		const page2 = await listPlayerStats(db, 'p1', {
 			limit: 2,
@@ -1173,8 +1185,8 @@ describe('listPlayerStats composite cursor against real D1', () => {
 		});
 		expect(page2.rows).toHaveLength(2);
 		expect(page2.nextCursor).toBeDefined();
-		expect(page2.rows[0].bestTimeSeconds).toBe(120);
-		expect(page2.rows[1].bestTimeSeconds).toBe(130);
+		expect(page2.rows[0].standardBestTimeSeconds).toBe(120);
+		expect(page2.rows[1].standardBestTimeSeconds).toBe(130);
 
 		const page3 = await listPlayerStats(db, 'p1', {
 			limit: 2,
@@ -1182,48 +1194,58 @@ describe('listPlayerStats composite cursor against real D1', () => {
 		});
 		expect(page3.rows).toHaveLength(1);
 		expect(page3.nextCursor).toBeUndefined();
-		expect(page3.rows[0].bestTimeSeconds).toBe(140);
+		expect(page3.rows[0].standardBestTimeSeconds).toBe(140);
 	});
 
-	it('handles tie-break on equal bestTimeSeconds via puzzleId', async () => {
-		// Two puzzles with the same best time — cursor must use puzzleId
-		// as the tiebreaker to avoid skipping or duplicating rows.
+	it('handles tie-break on equal standard bests via familyId', async () => {
 		const executor = createD1CompletionWriteExecutor(db);
+		for (const familyId of ['fam-b', 'fam-a', 'fam-c'] as const) {
+			await insertPuzzleFamilyOwnership(db, {
+				id: familyId,
+				ownerId: 'p1',
+				name: familyId,
+				aspectRatio: '1:1',
+				status: 'ready',
+				createdAt: 1
+			});
+		}
 		await recordCompletion(
 			executor,
 			'p1',
 			'pzB',
 			completion({ runId: 'tie-b', elapsedActiveSeconds: 100 }),
-			1_000
+			1_000,
+			{ familyId: 'fam-b', difficulty: 'easy' }
 		);
 		await recordCompletion(
 			executor,
 			'p1',
 			'pzA',
 			completion({ runId: 'tie-a', elapsedActiveSeconds: 100 }),
-			2_000
+			2_000,
+			{ familyId: 'fam-a', difficulty: 'easy' }
 		);
 		await recordCompletion(
 			executor,
 			'p1',
 			'pzC',
 			completion({ runId: 'tie-c', elapsedActiveSeconds: 100 }),
-			3_000
+			3_000,
+			{ familyId: 'fam-c', difficulty: 'easy' }
 		);
 
 		const page1 = await listPlayerStats(db, 'p1', { limit: 2 });
 		expect(page1.rows).toHaveLength(2);
 		expect(page1.nextCursor).toBeDefined();
-		// Ordered by bestTimeSeconds ASC, puzzleId ASC
-		expect(page1.rows[0].puzzleId).toBe('pzA');
-		expect(page1.rows[1].puzzleId).toBe('pzB');
+		expect(page1.rows[0].familyId).toBe('fam-a');
+		expect(page1.rows[1].familyId).toBe('fam-b');
 
 		const page2 = await listPlayerStats(db, 'p1', {
 			limit: 2,
 			cursor: page1.nextCursor!
 		});
 		expect(page2.rows).toHaveLength(1);
-		expect(page2.rows[0].puzzleId).toBe('pzC');
+		expect(page2.rows[0].familyId).toBe('fam-c');
 		expect(page2.nextCursor).toBeUndefined();
 	});
 });
@@ -1237,6 +1259,12 @@ describe('player stats against real D1', () => {
 			aspectRatio: '1:1',
 			status: 'ready',
 			createdAt: 1
+		});
+		await db.insert(schema.playerDifficultyCompletions).values({
+			playerId: 'p1',
+			familyId: FAMILY_ID,
+			difficulty: 'easy',
+			firstCompletedAt: 100
 		});
 		await db.insert(schema.puzzleBestTimes).values([
 			{
@@ -1303,9 +1331,19 @@ describe('player stats against real D1', () => {
 
 		expect(
 			result.rows.map(
-				({ puzzleId, bestTimeSeconds, totalCompletions, firstCompletedAt, lastCompletedAt }) => ({
-					puzzleId,
-					bestTimeSeconds,
+				({
+					familyId,
+					difficulty,
+					standardBestTimeSeconds,
+					rotationBestTimeSeconds,
+					totalCompletions,
+					firstCompletedAt,
+					lastCompletedAt
+				}) => ({
+					familyId,
+					difficulty,
+					standardBestTimeSeconds,
+					rotationBestTimeSeconds,
 					totalCompletions,
 					firstCompletedAt,
 					lastCompletedAt
@@ -1313,64 +1351,68 @@ describe('player stats against real D1', () => {
 			)
 		).toEqual([
 			{
-				puzzleId: 'standard',
-				bestTimeSeconds: 40,
-				totalCompletions: 1,
-				firstCompletedAt: 300,
-				lastCompletedAt: 300
-			},
-			{
-				puzzleId: 'overlap',
-				bestTimeSeconds: 60,
-				totalCompletions: 2,
+				familyId: FAMILY_ID,
+				difficulty: 'easy',
+				standardBestTimeSeconds: 40,
+				rotationBestTimeSeconds: null,
+				totalCompletions: 5,
 				firstCompletedAt: 100,
 				lastCompletedAt: 900
-			},
-			{
-				puzzleId: 'variant',
-				bestTimeSeconds: null,
-				totalCompletions: 2,
-				firstCompletedAt: 400,
-				lastCompletedAt: 800
 			}
 		]);
 		expect(await getPlayerSummary(db, 'p1')).toEqual({
 			puzzlesUploaded: 1,
-			puzzlesSolved: 3,
+			puzzlesSolved: 1,
 			totalCompletions: 5
 		});
 	});
 
-	it('paginates numeric ties and null-best rows with v2 and legacy cursors', async () => {
-		await insertStoredRun(db, {
-			playerId: 'p1',
-			runId: 'timed-a',
-			puzzleId: 'pz-a',
-			resultClass: 'standard_timed',
-			elapsedActiveSeconds: 10,
-			completedAt: 100
+	it('paginates numeric ties and null-best rows with v3 cursors', async () => {
+		await insertPuzzleFamilyOwnership(db, {
+			id: 'fam-a',
+			ownerId: 'p1',
+			name: 'A',
+			aspectRatio: '1:1',
+			status: 'ready',
+			createdAt: 1
 		});
-		await insertStoredRun(db, {
-			playerId: 'p1',
-			runId: 'timed-b',
-			puzzleId: 'pz-b',
-			resultClass: 'standard_timed',
-			elapsedActiveSeconds: 10,
-			completedAt: 200
+		await insertPuzzleFamilyOwnership(db, {
+			id: 'fam-b',
+			ownerId: 'p1',
+			name: 'B',
+			aspectRatio: '1:1',
+			status: 'ready',
+			createdAt: 2
 		});
-		await insertStoredRun(db, {
-			playerId: 'p1',
-			runId: 'timed-c',
-			puzzleId: 'pz-c',
-			resultClass: 'standard_timed',
-			elapsedActiveSeconds: 20,
-			completedAt: 300
+		await insertPuzzleFamilyOwnership(db, {
+			id: 'fam-c',
+			ownerId: 'p1',
+			name: 'C',
+			aspectRatio: '1:1',
+			status: 'ready',
+			createdAt: 3
+		});
+		await insertPuzzleFamilyOwnership(db, {
+			id: 'fam-null-1',
+			ownerId: 'p1',
+			name: 'N1',
+			aspectRatio: '1:1',
+			status: 'ready',
+			createdAt: 4
+		});
+		await insertPuzzleFamilyOwnership(db, {
+			id: 'fam-null-2',
+			ownerId: 'p1',
+			name: 'N2',
+			aspectRatio: '1:1',
+			status: 'ready',
+			createdAt: 5
 		});
 		await db.insert(schema.puzzleBestTimes).values([
 			{
 				playerId: 'p1',
 				puzzleId: 'pz-a',
-				familyId: FAMILY_ID,
+				familyId: 'fam-a',
 				difficulty: 'easy',
 				resultClass: 'standard_timed',
 				bestTimeSeconds: 10,
@@ -1379,7 +1421,7 @@ describe('player stats against real D1', () => {
 			{
 				playerId: 'p1',
 				puzzleId: 'pz-b',
-				familyId: FAMILY_ID,
+				familyId: 'fam-b',
 				difficulty: 'easy',
 				resultClass: 'standard_timed',
 				bestTimeSeconds: 10,
@@ -1388,95 +1430,85 @@ describe('player stats against real D1', () => {
 			{
 				playerId: 'p1',
 				puzzleId: 'pz-c',
-				familyId: FAMILY_ID,
+				familyId: 'fam-c',
 				difficulty: 'easy',
 				resultClass: 'standard_timed',
 				bestTimeSeconds: 20,
 				achievedAt: 300
 			}
 		]);
-		await insertStoredRun(db, {
-			playerId: 'p1',
-			runId: 'null-1',
-			puzzleId: 'pz-n1',
-			resultClass: 'relaxed',
-			elapsedActiveSeconds: null,
-			completedAt: 400
-		});
-		await insertStoredRun(db, {
-			playerId: 'p1',
-			runId: 'null-2',
-			puzzleId: 'pz-n2',
-			resultClass: 'relaxed',
-			elapsedActiveSeconds: null,
-			completedAt: 500
-		});
+		for (const [familyId, puzzleId, runId, completedAt] of [
+			['fam-a', 'pz-a', 'run-a', 100],
+			['fam-b', 'pz-b', 'run-b', 200],
+			['fam-c', 'pz-c', 'run-c', 300],
+			['fam-null-1', 'pz-n1', 'null-1', 400],
+			['fam-null-2', 'pz-n2', 'null-2', 500]
+		] as const) {
+			await insertStoredRun(db, {
+				playerId: 'p1',
+				runId,
+				puzzleId,
+				resultClass: familyId.startsWith('fam-null') ? 'relaxed' : 'standard_timed',
+				elapsedActiveSeconds: familyId.startsWith('fam-null') ? null : 10,
+				completedAt
+			});
+			await d1
+				.prepare(
+					`UPDATE puzzle_completion_runs SET family_id = ? WHERE player_id = 'p1' AND run_id = ?`
+				)
+				.bind(familyId, runId)
+				.run();
+		}
 
 		const first = await listPlayerStats(db, 'p1', { limit: 1 });
-		expect(first.rows.map((row) => row.puzzleId)).toEqual(['pz-a']);
-		expect(first.nextCursor).toBe('v2|0|10|pz-a');
+		expect(first.rows.map((row) => row.familyId)).toEqual(['fam-a']);
+		expect(first.nextCursor).toBe('v3|0|10|fam-a|easy');
 		expect(
 			(
 				await listPlayerStats(db, 'p1', {
 					limit: 10,
 					cursor: first.nextCursor
 				})
-			).rows.map((row) => row.puzzleId)
-		).toEqual(['pz-b', 'pz-c', 'pz-n1', 'pz-n2']);
+			).rows.map((row) => row.familyId)
+		).toEqual(['fam-b', 'fam-c', 'fam-null-1', 'fam-null-2']);
 		expect(
 			(
 				await listPlayerStats(db, 'p1', {
 					limit: 10,
-					cursor: 'v2|0|20|pz-c'
+					cursor: 'v3|0|20|fam-c|easy'
 				})
-			).rows.map((row) => row.puzzleId)
-		).toEqual(['pz-n1', 'pz-n2']);
+			).rows.map((row) => row.familyId)
+		).toEqual(['fam-null-1', 'fam-null-2']);
 		expect(
 			(
 				await listPlayerStats(db, 'p1', {
 					limit: 10,
-					cursor: 'v2|1||pz-n1'
+					cursor: 'v3|1||fam-null-1|easy'
 				})
-			).rows.map((row) => row.puzzleId)
-		).toEqual(['pz-n2']);
-		expect(
-			(
-				await listPlayerStats(db, 'p1', {
-					limit: 10,
-					cursor: '10|pz-a'
-				})
-			).rows.map((row) => row.puzzleId)
-		).toEqual(['pz-b', 'pz-c', 'pz-n1', 'pz-n2']);
-		expect(
-			(
-				await listPlayerStats(db, 'p1', {
-					limit: 10,
-					cursor: '10'
-				})
-			).rows.map((row) => row.puzzleId)
-		).toEqual(['pz-c', 'pz-n1', 'pz-n2']);
-		expect((await listPlayerStats(db, 'p1', { limit: 4 })).nextCursor).toBe('v2|1||pz-n1');
-	});
-
-	it.each([
-		['v2 group-0', 'v2|0|9007199254740991|pz-a'],
-		['legacy composite', '9007199254740991|pz-a'],
-		['legacy bare', '9007199254740991']
-	])('accepts Number.MAX_SAFE_INTEGER in a %s cursor against D1', async (_kind, cursor) => {
-		const result = await listPlayerStats(db, 'p1', { limit: 10, cursor });
-
-		expect(result.rows).toEqual([]);
-	});
-
-	it.each([
-		['v2 group-0', 'v2|0|9007199254740992|pz-a'],
-		['legacy composite', '9007199254740992|pz-a'],
-		['legacy bare', '9007199254740992']
-	])('rejects Number.MAX_SAFE_INTEGER + 1 in a %s cursor against D1', async (_kind, cursor) => {
-		await expect(listPlayerStats(db, 'p1', { limit: 10, cursor })).rejects.toBeInstanceOf(
-			InvalidPlayerStatsCursorError
+			).rows.map((row) => row.familyId)
+		).toEqual(['fam-null-2']);
+		expect((await listPlayerStats(db, 'p1', { limit: 4 })).nextCursor).toBe(
+			'v3|1||fam-null-1|easy'
 		);
 	});
+
+	it.each([['v3 group-0', 'v3|0|9007199254740991|fam-a|easy']])(
+		'accepts Number.MAX_SAFE_INTEGER in a %s cursor against D1',
+		async (_kind, cursor) => {
+			const result = await listPlayerStats(db, 'p1', { limit: 10, cursor });
+
+			expect(result.rows).toEqual([]);
+		}
+	);
+
+	it.each([['v3 group-0', 'v3|0|9007199254740992|fam-a|easy']])(
+		'rejects Number.MAX_SAFE_INTEGER + 1 in a %s cursor against D1',
+		async (_kind, cursor) => {
+			await expect(listPlayerStats(db, 'p1', { limit: 10, cursor })).rejects.toBeInstanceOf(
+				InvalidPlayerStatsCursorError
+			);
+		}
+	);
 
 	it.each([
 		'',
@@ -1485,18 +1517,137 @@ describe('player stats against real D1', () => {
 		'-1',
 		'1.5',
 		'1e2',
-		'10|',
-		'10|pz-a|extra',
-		'v3|0|10|pz-a',
-		'v2|2||pz-a',
-		'v2|0||pz-a',
-		'v2|0|10|',
-		'v2|1|10|pz-a',
-		'v2|1||'
+		'v3|0|10|fam-a',
+		'v3|2||fam-a|easy',
+		'v3|0||fam-a|easy',
+		'v3|0|10|',
+		'v3|1|10|fam-a|easy',
+		'v3|1||fam-a',
+		'v2|0|10|pz-a',
+		'10|pz-a'
 	])('rejects malformed player stats cursor %j against D1', async (cursor) => {
 		await expect(listPlayerStats(db, 'p1', { limit: 10, cursor })).rejects.toBeInstanceOf(
 			InvalidPlayerStatsCursorError
 		);
+	});
+});
+
+describe('leaderboard queries against real D1', () => {
+	const BOARD_FAMILY = '323e4567-e89b-42d3-a456-426614174010';
+
+	async function seedBest(
+		playerId: string,
+		puzzleId: string,
+		seconds: number,
+		achievedAt: number,
+		resultClass: 'standard_timed' | 'rotation_timed' = 'standard_timed'
+	) {
+		await db.insert(schema.puzzleBestTimes).values({
+			playerId,
+			puzzleId,
+			familyId: BOARD_FAMILY,
+			difficulty: 'normal',
+			resultClass,
+			bestTimeSeconds: seconds,
+			achievedAt
+		});
+	}
+
+	beforeEach(async () => {
+		await insertPuzzleFamilyOwnership(db, {
+			id: BOARD_FAMILY,
+			ownerId: SYSTEM_OWNER_ID,
+			name: 'Board Family',
+			aspectRatio: '1:1',
+			status: 'ready',
+			createdAt: 1
+		});
+	});
+
+	it('orders puzzle leaderboard by time, achievedAt, and playerId', async () => {
+		await seedBest('p-c', 'pz-c', 90, 300);
+		await seedBest('p-a', 'pz-a', 100, 100);
+		await seedBest('p-b', 'pz-b', 100, 200);
+		const board = await listPuzzleLeaderboard(db, {
+			familyId: BOARD_FAMILY,
+			difficulty: 'normal',
+			mode: 'standard'
+		});
+		expect(board.entries.map((entry) => entry.playerId)).toEqual(['p-c', 'p-a', 'p-b']);
+		expect(board.entries[1].rank).toBe(2);
+	});
+
+	it('returns viewer row when outside top 50', async () => {
+		for (let i = 0; i < 51; i++) {
+			await seedBest(`player-${String(i).padStart(2, '0')}`, `pz-${i}`, 10 + i, 1_000 + i);
+		}
+		await seedBest('viewer', 'pz-viewer', 500, 9_000);
+		const board = await listPuzzleLeaderboard(db, {
+			familyId: BOARD_FAMILY,
+			difficulty: 'normal',
+			mode: 'standard',
+			viewerPlayerId: 'viewer'
+		});
+		expect(board.entries).toHaveLength(50);
+		expect(board.me?.playerId).toBe('viewer');
+		expect(board.me?.rank).toBe(52);
+	});
+
+	it('excludes assisted runs from puzzle leaderboard', async () => {
+		await seedBest('p1', 'pz-1', 100, 100);
+		await db.run(sql`
+			INSERT INTO puzzle_completion_runs
+				(player_id, run_id, puzzle_id, family_id, difficulty, result_class,
+				 elapsed_active_seconds, hints_used, incorrect_attempts, completed_at)
+			VALUES ('p2', 'assisted', 'pz-2', ${BOARD_FAMILY}, 'normal', 'assisted_timed', 50, 0, 0, 200)
+		`);
+		const board = await listPuzzleLeaderboard(db, {
+			familyId: BOARD_FAMILY,
+			difficulty: 'normal',
+			mode: 'standard'
+		});
+		expect(board.entries).toHaveLength(1);
+		expect(board.entries[0].playerId).toBe('p1');
+	});
+
+	it('orders overall leaderboard by score and tie-breakers', async () => {
+		await db.insert(schema.playerDifficultyCompletions).values([
+			{ playerId: 'low', familyId: 'f1', difficulty: 'easy', firstCompletedAt: 100 },
+			{ playerId: 'high', familyId: 'f2', difficulty: 'hard', firstCompletedAt: 200 },
+			{ playerId: 'tie-a', familyId: 'f3', difficulty: 'hard', firstCompletedAt: 300 },
+			{ playerId: 'tie-b', familyId: 'f4', difficulty: 'normal', firstCompletedAt: 400 }
+		]);
+		await db
+			.insert(schema.playerAchievements)
+			.values([{ playerId: 'tie-b', achievementId: ACHIEVEMENT_IDS.first_clear, unlockedAt: 500 }]);
+		const board = await listOverallLeaderboard(db, {});
+		expect(board.entries.map((entry) => entry.playerId)).toEqual(['high', 'tie-a', 'tie-b', 'low']);
+		expect(board.entries[0].score).toBe(UNIQUE_CLEAR_POINTS.hard);
+		expect(board.entries[3].score).toBe(UNIQUE_CLEAR_POINTS.easy);
+	});
+
+	it('summarizes player progression with rank and counts', async () => {
+		await db.insert(schema.playerDifficultyCompletions).values([
+			{ playerId: 'p1', familyId: 'f1', difficulty: 'easy', firstCompletedAt: 100 },
+			{ playerId: 'p1', familyId: 'f2', difficulty: 'normal', firstCompletedAt: 200 },
+			{ playerId: 'p2', familyId: 'f3', difficulty: 'hard', firstCompletedAt: 300 }
+		]);
+		await db
+			.insert(schema.playerAchievements)
+			.values([{ playerId: 'p1', achievementId: ACHIEVEMENT_IDS.first_clear, unlockedAt: 400 }]);
+		await db
+			.insert(schema.playerVariantMastery)
+			.values([{ playerId: 'p1', puzzleId: 'pz1', badge: 'hintless', earnedAt: 500 }]);
+		const summary = await getPlayerProgressionSummary(db, 'p1');
+		expect(summary).toMatchObject({
+			score: UNIQUE_CLEAR_POINTS.easy + UNIQUE_CLEAR_POINTS.normal + 25,
+			rank: 1,
+			easyClears: 1,
+			normalClears: 1,
+			hardClears: 0,
+			achievementsUnlocked: 1,
+			masteryEarned: 1
+		});
 	});
 });
 

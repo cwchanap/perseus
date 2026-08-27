@@ -16,8 +16,15 @@ import type {
 	PuzzleFamilyListResponse,
 	PuzzleFamilyMetadata
 } from '$lib/types/puzzle';
-import type { PuzzleAspectRatio, PuzzleFamilySummary } from '@perseus/types';
-import type { RecordPuzzleCompletionV1 } from '@perseus/types';
+import type { PuzzleAspectRatio, PuzzleFamilySummary, PuzzleDifficulty } from '@perseus/types';
+import type {
+	RecordPuzzleCompletionV2,
+	PlayerProgressionSummary,
+	PuzzleLeaderboardResponse,
+	OverallLeaderboardResponse,
+	CompletionAwards,
+	RecordPuzzleCompletionResponse
+} from '@perseus/types';
 // NOTE: This app is built with adapter-static, so public env vars are embedded at build time.
 // Set PUBLIC_API_BASE before building to target a different API.
 import { PUBLIC_API_BASE } from '$env/static/public';
@@ -398,19 +405,110 @@ export async function getPlayerStats(params?: {
 	return handleResponse<{ stats: PlayerStatRow[]; nextCursor?: string }>(response);
 }
 
-async function postCompletion(puzzleId: string, body: unknown): Promise<void> {
+export async function getPlayerProgression(
+	signal?: AbortSignal
+): Promise<PlayerProgressionSummary> {
+	const response = await fetch(`${API_BASE}/api/player/progression`, {
+		credentials: 'include',
+		signal
+	});
+	return handleResponse<PlayerProgressionSummary>(response);
+}
+
+export async function fetchOverallLeaderboard(
+	signal?: AbortSignal
+): Promise<OverallLeaderboardResponse> {
+	const response = await fetch(`${API_BASE}/api/leaderboard`, {
+		credentials: 'include',
+		signal
+	});
+	const data = await handleResponse<OverallLeaderboardResponse>(response);
+	return {
+		...data,
+		entries: data.entries.map((entry) => ({
+			...entry,
+			player: {
+				...entry.player,
+				avatarUrl: resolveAssetUrl(entry.player.avatarUrl)
+			}
+		})),
+		...(data.me
+			? {
+					me: {
+						...data.me,
+						player: {
+							...data.me.player,
+							avatarUrl: resolveAssetUrl(data.me.player.avatarUrl)
+						}
+					}
+				}
+			: {})
+	};
+}
+
+export async function fetchFamilyLeaderboard(
+	familyId: string,
+	params: { difficulty: PuzzleDifficulty; mode: 'standard' | 'rotation' },
+	signal?: AbortSignal
+): Promise<PuzzleLeaderboardResponse> {
+	const searchParams = new URLSearchParams({
+		difficulty: params.difficulty,
+		mode: params.mode
+	});
+	const response = await fetch(
+		`${API_BASE}/api/puzzle-families/${familyId}/leaderboard?${searchParams.toString()}`,
+		{ credentials: 'include', signal }
+	);
+	const data = await handleResponse<PuzzleLeaderboardResponse>(response);
+	return {
+		...data,
+		entries: data.entries.map((entry) => ({
+			...entry,
+			player: {
+				...entry.player,
+				avatarUrl: resolveAssetUrl(entry.player.avatarUrl)
+			}
+		})),
+		...(data.me
+			? {
+					me: {
+						...data.me,
+						player: {
+							...data.me.player,
+							avatarUrl: resolveAssetUrl(data.me.player.avatarUrl)
+						}
+					}
+				}
+			: {})
+	};
+}
+
+export async function fetchFamilyDetail(
+	familyId: string,
+	signal?: AbortSignal
+): Promise<PuzzleFamilySummary> {
+	const response = await fetch(`${API_BASE}/api/puzzle-families/${familyId}`, { signal });
+	return handleResponse<PuzzleFamilySummary>(response);
+}
+
+async function postCompletion(
+	puzzleId: string,
+	body: unknown
+): Promise<CompletionAwards | undefined> {
 	const response = await fetch(`${API_BASE}/api/puzzles/${puzzleId}/complete`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		credentials: 'include',
 		body: JSON.stringify(body)
 	});
-	await handleVoidResponse(response);
+	const data = await handleResponse<RecordPuzzleCompletionResponse>(response);
+	if ('ok' in data && data.ok) return data.awards;
+	return undefined;
 }
 
 export async function recordCompletion(
 	puzzleId: string,
-	request: RecordPuzzleCompletionV1
-): Promise<void> {
+	request: RecordPuzzleCompletionV2
+): Promise<CompletionAwards | undefined> {
 	return postCompletion(puzzleId, request);
 }

@@ -261,6 +261,7 @@ vi.mock('$lib/services/api', () => {
 		getPieceImageUrl: vi.fn(() => imageSrc),
 		getReferenceImageUrl: vi.fn(() => imageSrc),
 		recordCompletion: vi.fn(() => Promise.resolve()),
+		fetchFamilyLeaderboard: vi.fn(() => Promise.resolve({ entries: [] })),
 		getPlayerSession: vi.fn(() => Promise.resolve({ authenticated: false })),
 		logoutPlayer: vi.fn(() => Promise.resolve()),
 		ApiError: MockApiError
@@ -1818,7 +1819,7 @@ describe('Puzzle route gameplay integration', () => {
 		// causing the second solve to skip both the local best-time save and
 		// the server completion POST. The sealed-completion run ID guards the
 		// callback so only the active run's seal can be acknowledged.
-		const firstPost = createDeferred<void>();
+		const firstPost = createDeferred<import('$lib/types/puzzle').CompletionAwards | undefined>();
 		vi.mocked(recordCompletion).mockImplementationOnce(() => firstPost.promise);
 		await renderPuzzlePage();
 
@@ -1840,7 +1841,7 @@ describe('Puzzle route gameplay integration', () => {
 		// The stale first POST now resolves. Its acknowledge_completion_effect
 		// dispatch carries the old run ID, which no longer matches the active
 		// seal's run ID, so it is rejected as a run_id_mismatch no-op.
-		firstPost.resolve();
+		firstPost.resolve(undefined);
 		await Promise.resolve();
 		await Promise.resolve();
 

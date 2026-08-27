@@ -16,6 +16,12 @@ export const ACHIEVEMENT_IDS = {
 
 export type AchievementId = (typeof ACHIEVEMENT_IDS)[keyof typeof ACHIEVEMENT_IDS];
 
+export const UNIQUE_CLEAR_POINTS = {
+	easy: 100,
+	normal: 200,
+	hard: 300
+} as const;
+
 export const ACHIEVEMENT_POINTS: Record<AchievementId, number> = {
 	first_clear: 25,
 	getting_started: 50,
@@ -27,6 +33,8 @@ export const ACHIEVEMENT_POINTS: Record<AchievementId, number> = {
 	flawless: 25,
 	rotation_clear: 25
 };
+
+export const ACHIEVEMENT_COUNT = Object.keys(ACHIEVEMENT_POINTS).length;
 
 export interface AchievementSnapshot {
 	uniqueClears: number;
