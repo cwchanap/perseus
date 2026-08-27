@@ -665,4 +665,37 @@ describe('schema tables', () => {
 		expect(db.select().from(playerCompletionUsage).all()).toEqual([]);
 		sqlite.close();
 	});
+
+	it('keeps migration 0005 additive and pins puzzle_families ownership schema', () => {
+		const migrationSql = readFileSync('./drizzle/0005_puzzle_families.sql', 'utf8');
+		const statements = migrationSql
+			.split('--> statement-breakpoint')
+			.map((statement) => statement.trim())
+			.filter(Boolean);
+
+		expect(migrationSql).toContain('puzzle_families');
+		expect(migrationSql).toContain('owner_id');
+		expect(migrationSql).toContain('aspect_ratio');
+		expect(migrationSql).not.toContain('piece_count');
+		expect(migrationSql).not.toContain('puzzle_variants');
+		const destructiveMatches =
+			migrationSql.match(/\b(?:ALTER|DROP|RENAME)\s+(?:TABLE|INDEX|TRIGGER)\b/gi) ?? [];
+		expect(destructiveMatches).toEqual([]);
+
+		const journal = JSON.parse(readFileSync('./drizzle/meta/_journal.json', 'utf8')) as {
+			entries: { idx: number; tag: string }[];
+		};
+		const snapshot = JSON.parse(readFileSync('./drizzle/meta/0005_snapshot.json', 'utf8')) as {
+			tables: Record<string, unknown>;
+		};
+		expect(journal.entries).toContainEqual({
+			idx: 5,
+			version: '6',
+			when: expect.any(Number),
+			tag: '0005_puzzle_families',
+			breakpoints: true
+		});
+		expect(snapshot.tables).toHaveProperty('puzzle_families');
+		expect(statements.length).toBeGreaterThan(0);
+	});
 });

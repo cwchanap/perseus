@@ -1,7 +1,7 @@
 import { eq, lt, desc, asc, count, sql, and, inArray } from 'drizzle-orm';
 import type { RecordPuzzleCompletionV1 } from '@perseus/types';
-import type { AppDb, NewPuzzleRow, PlayerProfileRow } from './types';
-import { puzzles, playerProfiles, puzzleStats } from './schema';
+import type { AppDb, NewPuzzleRow, NewPuzzleFamilyRow, PlayerProfileRow } from './types';
+import { puzzles, puzzleFamilies, playerProfiles, puzzleStats } from './schema';
 import {
 	interpretVersionedCompletionWrite,
 	type CompletionWriteExecutor,
@@ -18,6 +18,7 @@ import {
 // link. The list and the count share this filter so the tile always matches
 // the visible cards.
 const VISIBLE_PLAYER_PUZZLE_STATUSES = ['ready', 'failed', 'processing'] as const;
+const VISIBLE_PLAYER_PUZZLE_FAMILY_STATUSES = ['ready', 'failed', 'processing'] as const;
 
 // Sentinel ownerId for admin-created puzzles, which have no player owner.
 // Player profile lists/counts filter by a real player's ownerId, so a
@@ -274,6 +275,78 @@ function parsePlayerPuzzleCursor(cursor: string) {
 	const createdAt = Number(createdAtStr);
 	if (!Number.isFinite(createdAt)) return sql`false`;
 	return sql`(${puzzles.createdAt} < ${createdAt} OR (${puzzles.createdAt} = ${createdAt} AND ${puzzles.id} < ${idStr}))`;
+}
+
+export async function insertPuzzleFamilyOwnership(
+	db: AppDb,
+	row: NewPuzzleFamilyRow
+): Promise<void> {
+	await db.insert(puzzleFamilies).values(row).run();
+}
+
+export async function ensurePuzzleFamilyOwnership(
+	db: AppDb,
+	row: NewPuzzleFamilyRow
+): Promise<void> {
+	await db
+		.insert(puzzleFamilies)
+		.values(row)
+		.onConflictDoNothing({ target: puzzleFamilies.id })
+		.run();
+}
+
+export async function deletePuzzleFamilyOwnership(db: AppDb, id: string): Promise<void> {
+	await db.delete(puzzleFamilies).where(eq(puzzleFamilies.id, id)).run();
+}
+
+export async function setPuzzleFamilyStatus(db: AppDb, id: string, status: string): Promise<void> {
+	await db.update(puzzleFamilies).set({ status }).where(eq(puzzleFamilies.id, id)).run();
+}
+
+export async function listPlayerPuzzleFamilies(
+	db: AppDb,
+	playerId: string,
+	opts: { limit: number; cursor?: string }
+): Promise<{ rows: (typeof puzzleFamilies.$inferSelect)[]; nextCursor?: string }> {
+	const limit = Math.floor(
+		Math.min(Math.max(Number.isFinite(opts.limit) ? opts.limit : 1, 1), 100)
+	);
+	const ownerCond = and(
+		eq(puzzleFamilies.ownerId, playerId),
+		inArray(puzzleFamilies.status, [...VISIBLE_PLAYER_PUZZLE_FAMILY_STATUSES])
+	);
+	const cond =
+		opts.cursor !== undefined
+			? and(ownerCond, parsePlayerPuzzleFamilyCursor(opts.cursor))
+			: ownerCond;
+	const all = await db
+		.select()
+		.from(puzzleFamilies)
+		.where(cond)
+		.orderBy(desc(puzzleFamilies.createdAt), desc(puzzleFamilies.id))
+		.limit(limit + 1)
+		.all();
+	const rows = all.slice(0, limit);
+	const nextCursor =
+		all.length > limit ? encodePlayerPuzzleFamilyCursor(rows[rows.length - 1]) : undefined;
+	return { rows, nextCursor };
+}
+
+function encodePlayerPuzzleFamilyCursor(row: { createdAt: number; id: string }): string {
+	return `${row.createdAt}|${row.id}`;
+}
+
+function parsePlayerPuzzleFamilyCursor(cursor: string) {
+	const sep = cursor.lastIndexOf('|');
+	if (sep <= 0) {
+		const ts = Number(cursor);
+		return Number.isFinite(ts) ? lt(puzzleFamilies.createdAt, ts) : sql`false`;
+	}
+	const createdAtStr = cursor.slice(0, sep);
+	const idStr = cursor.slice(sep + 1);
+	const createdAt = Number(createdAtStr);
+	if (!Number.isFinite(createdAt)) return sql`false`;
+	return sql`(${puzzleFamilies.createdAt} < ${createdAt} OR (${puzzleFamilies.createdAt} = ${createdAt} AND ${puzzleFamilies.id} < ${idStr}))`;
 }
 
 export async function recordVersionedCompletion(

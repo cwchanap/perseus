@@ -6,19 +6,24 @@ import {
 	updateProfileDisplayName,
 	updateProfileAvatarUrl,
 	getPlayerSummary,
-	listPlayerPuzzles,
+	listPlayerPuzzleFamilies,
 	listPlayerStats,
 	InvalidPlayerStatsCursorError,
 	sniffImageType,
 	parseImageDimensions,
 	validateImageEndMarker
 } from '@perseus/shared';
-import type { PlayerProfile, PlayerPuzzleSummary, PlayerStatRow } from '@perseus/types';
+import type { PlayerProfile, PlayerStatRow } from '@perseus/types';
 import {
 	coercePuzzleStatus,
 	isPlayerProfile,
-	isPlayerPuzzleSummary,
-	isPlayerStatRow
+	isPlayerStatRow,
+	isPuzzleAspectRatio,
+	isPuzzleId,
+	PUZZLE_CATEGORIES,
+	type PuzzleAspectRatio,
+	type PuzzleCategory,
+	type PuzzleStatus
 } from '@perseus/types';
 import { requirePlayerAuth } from '../middleware/player-auth.worker';
 import { avatarRateLimit, resetAvatarAttempts } from '../middleware/rate-limit.worker';
@@ -39,6 +44,40 @@ const MAX_AVATAR_DIMENSION = 512;
 // Matches the puzzle-name cap (admin routes). Bounds storage and prevents
 // trivially large payloads from reaching D1.
 const MAX_DISPLAY_NAME_LENGTH = 255;
+
+const VALID_PUZZLE_STATUSES: readonly PuzzleStatus[] = ['processing', 'ready', 'failed'];
+
+interface PlayerOwnedFamilySummary {
+	id: string;
+	name: string;
+	category?: PuzzleCategory;
+	aspectRatio: PuzzleAspectRatio;
+	status: PuzzleStatus;
+	createdAt: number;
+}
+
+function isValidOptionalCategory(category: unknown): category is PuzzleCategory | undefined {
+	if (category === undefined) return true;
+	if (typeof category !== 'string') return false;
+	return PUZZLE_CATEGORIES.includes(category as PuzzleCategory);
+}
+
+function isPlayerOwnedFamilySummary(value: unknown): value is PlayerOwnedFamilySummary {
+	if (typeof value !== 'object' || value === null) return false;
+	const family = value as Record<string, unknown>;
+	if ('pieceCount' in family || 'variants' in family) return false;
+	if (!isPuzzleId(family.id)) return false;
+	if (typeof family.name !== 'string' || family.name.trim().length === 0) return false;
+	if (!isPuzzleAspectRatio(family.aspectRatio)) return false;
+	if (typeof family.createdAt !== 'number' || !Number.isFinite(family.createdAt)) return false;
+	if (
+		typeof family.status !== 'string' ||
+		!VALID_PUZZLE_STATUSES.includes(family.status as PuzzleStatus)
+	) {
+		return false;
+	}
+	return isValidOptionalCategory(family.category);
+}
 
 player.get('/profile', requirePlayerAuth, async (c) => {
 	const db = getWorkerDb(c.env);
@@ -340,32 +379,30 @@ player.get('/:playerId/avatar', async (c) => {
 	return new Response(obj.body, { headers });
 });
 
-player.get('/puzzles', requirePlayerAuth, async (c) => {
+player.get('/puzzle-families', requirePlayerAuth, async (c) => {
 	const db = getWorkerDb(c.env);
 	const session = c.get('playerSession');
 	const limit = Number(c.req.query('limit') ?? '20');
 	const cursor = c.req.query('cursor') || undefined;
-	const { rows, nextCursor } = await listPlayerPuzzles(db, session.user.id, {
+	const { rows, nextCursor } = await listPlayerPuzzleFamilies(db, session.user.id, {
 		limit: Number.isFinite(limit) ? limit : 20,
 		cursor
 	});
-	// Project DB rows to the public PlayerPuzzleSummary contract, stripping
-	// internal columns (e.g. ownerId) that the client doesn't need.
-	const puzzles: PlayerPuzzleSummary[] = rows.map((r) => ({
+	const families: PlayerOwnedFamilySummary[] = rows.map((r) => ({
 		id: r.id,
 		name: r.name,
-		pieceCount: r.pieceCount,
+		aspectRatio: r.aspectRatio as PuzzleAspectRatio,
 		status: coercePuzzleStatus(r.status),
 		createdAt: r.createdAt,
-		...(r.category ? { category: r.category } : {})
+		...(r.category ? { category: r.category as PuzzleCategory } : {})
 	}));
-	// Validate each projected row so a schema/contract drift surfaces as a 500
-	// rather than silently serving malformed data to the client.
-	if (!puzzles.every(isPlayerPuzzleSummary)) {
-		console.error(`Player puzzles response failed validation for player ${session.user.id}`);
-		return c.json({ error: 'internal_error', message: 'Failed to list puzzles' }, 500);
+	if (!families.every(isPlayerOwnedFamilySummary)) {
+		console.error(
+			`Player puzzle families response failed validation for player ${session.user.id}`
+		);
+		return c.json({ error: 'internal_error', message: 'Failed to list puzzle families' }, 500);
 	}
-	return c.json({ puzzles, nextCursor });
+	return c.json({ families, nextCursor });
 });
 
 player.get('/stats', requirePlayerAuth, async (c) => {

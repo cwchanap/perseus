@@ -131,3 +131,27 @@ export const puzzles = sqliteTable(
 		)
 	})
 );
+
+export const puzzleFamilies = sqliteTable(
+	'puzzle_families',
+	{
+		id: text('id').primaryKey(),
+		ownerId: text('owner_id').notNull(),
+		name: text('name').notNull(),
+		category: text('category'),
+		aspectRatio: text('aspect_ratio').notNull(),
+		status: text('status').notNull().default('processing'),
+		createdAt: integer('created_at').notNull()
+	},
+	(t) => ({
+		ownerIdx: index('idx_puzzle_families_owner').on(t.ownerId, t.createdAt),
+		statusCheck: check(
+			'puzzle_families_status_check',
+			sql`${t.status} IN ('processing', 'ready', 'failed')`
+		),
+		aspectRatioCheck: check(
+			'puzzle_families_aspect_ratio_check',
+			sql`${t.aspectRatio} IN ('1:1', '4:3', '3:4')`
+		)
+	})
+);
