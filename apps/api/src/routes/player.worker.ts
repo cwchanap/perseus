@@ -6,6 +6,7 @@ import {
 	updateProfileDisplayName,
 	updateProfileAvatarUrl,
 	ensurePublicDisplayName,
+	isPublicSafeDisplayName,
 	getPlayerSummary,
 	getPlayerProgressionSummary,
 	listPlayerPuzzleFamilies,
@@ -160,6 +161,9 @@ player.patch('/profile', requirePlayerAuth, async (c) => {
 				{ error: 'bad_request', message: 'displayName must be 255 characters or fewer' },
 				400
 			);
+		}
+		if (!isPublicSafeDisplayName(displayName)) {
+			return c.json({ error: 'bad_request', message: 'displayName is not allowed' }, 400);
 		}
 	}
 	// Field-specific update writes only displayName and preserves avatarUrl,

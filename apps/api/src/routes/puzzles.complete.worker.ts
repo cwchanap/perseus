@@ -8,7 +8,7 @@ import {
 	SYSTEM_OWNER_ID
 } from '@perseus/shared';
 import { isPuzzleId } from '@perseus/types';
-import { getPuzzle } from '../services/storage.worker';
+import { resolvePlayableVariant } from '../services/variant-playability.worker';
 import { requirePlayerAuth } from '../middleware/player-auth.worker';
 import type { PlayerSessionRecord } from '../services/player-auth.worker';
 import {
@@ -42,21 +42,27 @@ router.post('/:id/complete', requirePlayerAuth, async (c) => {
 
 	// Confirm the puzzle exists and is ready before recording, so puzzle_stats
 	// can't accumulate rows for non-existent or not-yet-generated puzzles.
-	// Mirrors GET /api/puzzles/:id, which 404s non-ready puzzles. getPuzzle
-	// re-throws on corrupt metadata (validation failure); catch those and
+	// Mirrors GET /api/puzzles/:id, which 404s non-ready puzzles. resolvePlayableVariant
+	// re-throws on corrupt family metadata (validation failure); catch those and
 	// return a deliberate 500 instead of letting Hono emit a generic
 	// unstructured 500 (no app.onError is defined).
-	let puzzle: Awaited<ReturnType<typeof getPuzzle>>;
+	let resolved: Awaited<ReturnType<typeof resolvePlayableVariant>>;
 	try {
-		puzzle = await getPuzzle(c.env.PUZZLE_METADATA, puzzleId);
+		resolved = await resolvePlayableVariant(c.env.PUZZLE_METADATA, puzzleId);
 	} catch (error) {
 		console.error(`Failed to retrieve puzzle ${puzzleId}:`, error);
 		const response = completionInternalErrorResponse('Failed to retrieve puzzle');
 		return c.json(response.body, response.status);
 	}
-	if (!puzzle || puzzle.status !== 'ready') {
+	if (!resolved.playable) {
+		if (resolved.status === 500) {
+			console.error(`Failed to resolve family for puzzle ${puzzleId}:`, resolved.error);
+			const response = completionInternalErrorResponse('Failed to retrieve puzzle');
+			return c.json(response.body, response.status);
+		}
 		return c.json({ error: 'not_found', message: 'Puzzle not found' }, 404);
 	}
+	const { puzzle } = resolved;
 
 	const session = c.get('playerSession');
 	const familyOwnershipRow = {

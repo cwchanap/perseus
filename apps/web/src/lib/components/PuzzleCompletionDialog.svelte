@@ -71,8 +71,18 @@
 
 	const resultLabel = $derived(RESULT_LABELS[resultClass]);
 	const timedResult = $derived(resultClass !== 'relaxed');
+	const competitiveTimedResult = $derived(
+		resultClass === 'standard_timed' || resultClass === 'rotation_timed'
+	);
 	const standardTimedResult = $derived(resultClass === 'standard_timed');
-	const displayedBestTime = $derived(bestTime ?? (isNewBest ? elapsedSeconds : null));
+	const serverPersonalBest = $derived(awards?.personalBest);
+	const displayedBestTime = $derived(
+		serverPersonalBest?.bestTimeSeconds ??
+			(standardTimedResult ? (bestTime ?? (isNewBest ? elapsedSeconds : null)) : null)
+	);
+	const displayedIsNewBest = $derived(
+		serverPersonalBest?.isNew ?? (standardTimedResult && isNewBest)
+	);
 	const rotationSummary = $derived(
 		`${rotationEnabled ? 'ON' : 'OFF'} · ${rotationUsed ? 'USED' : 'NOT USED'}`
 	);
@@ -109,14 +119,18 @@
 				</div>
 			{/if}
 
-			{#if standardTimedResult && displayedBestTime !== null}
+			{#if competitiveTimedResult && displayedBestTime !== null}
 				<div class="modal-stat">
 					<span class="mstat-label">PERSONAL BEST</span>
-					<span class="mstat-value" class:gold={isNewBest} data-testid="completion-best-time">
+					<span
+						class="mstat-value"
+						class:gold={displayedIsNewBest}
+						data-testid="completion-best-time"
+					>
 						{formatTime(displayedBestTime)}
 					</span>
-					{#if isNewBest}
-						{#if localStatsFailed}
+					{#if displayedIsNewBest}
+						{#if localStatsFailed && !serverPersonalBest}
 							<span class="new-record-badge unsaved" data-testid="new-best-unsaved">UNSAVED</span>
 						{:else}
 							<span class="new-record-badge">NEW RECORD</span>

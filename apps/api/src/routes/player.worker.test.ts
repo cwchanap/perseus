@@ -345,6 +345,22 @@ describe('player profile routes (Worker)', () => {
 		expect(((await res.json()) as any).error).toBe('bad_request');
 	});
 
+	it('PATCH rejects an email-shaped displayName with 400', async () => {
+		const res = await buildApp().request(
+			'/api/player/profile',
+			{
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json', ...AUTH_COOKIE },
+				body: JSON.stringify({ displayName: 'player@example.com' })
+			},
+			DUMMY_ENV
+		);
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as any;
+		expect(body.error).toBe('bad_request');
+		expect(body.message).toBe('displayName is not allowed');
+	});
+
 	it('PATCH rejects a body without displayName with 400 (no silent reset)', async () => {
 		const res = await buildApp().request(
 			'/api/player/profile',
