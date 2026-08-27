@@ -10,6 +10,7 @@ vi.mock('../../services/storage.worker', async (importOriginal) => {
 		createFamilyMetadata: vi.fn().mockResolvedValue(undefined),
 		deleteFamilyMetadata: vi.fn().mockResolvedValue({ success: true }),
 		deletePuzzleAssets: vi.fn(),
+		deleteFamilyCleanupAssets: vi.fn().mockResolvedValue({ success: true, failedKeys: [] }),
 		deletePuzzleMetadata: vi.fn().mockResolvedValue({ success: true }),
 		deleteMetadataDO: vi.fn(),
 		failIdempotencyKey: vi.fn(),
@@ -55,6 +56,12 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	return { ...original, ...sharedMockOverrides };
 });
 
+import {
+	cleanupRecordMatcher,
+	makeFamilyMetadata,
+	PIECE_COUNTS_1_1,
+	variantIdsForFamily
+} from './helpers/family-fixtures';
 import admin from '../admin.worker';
 import * as storage from '../../services/storage.worker';
 
@@ -111,6 +118,10 @@ function mockSuccessfulCreate() {
 	vi.mocked(storage.deleteOriginalImage).mockResolvedValue({ success: true });
 	vi.mocked(storage.deleteFamilyMetadata).mockResolvedValue({ success: true });
 	vi.mocked(storage.deletePuzzleMetadata).mockResolvedValue({ success: true });
+	vi.mocked(storage.deleteFamilyCleanupAssets).mockResolvedValue({ success: true, failedKeys: [] });
+	vi.mocked(storage.getFamily).mockImplementation(async (_kv, id: string) =>
+		makeFamilyMetadata(id, 'processing')
+	);
 }
 
 describe('Admin Worker idempotency recovery', () => {
@@ -565,7 +576,7 @@ describe('Admin Worker idempotency recovery', () => {
 			new Error('Cannot committed reservation in status failed')
 		);
 		(storage.deletePuzzleMetadata as any).mockResolvedValue({ success: true });
-		(storage.deletePuzzleAssets as any).mockResolvedValue({ success: true, failedKeys: [] });
+		(storage.deleteFamilyCleanupAssets as any).mockResolvedValue({ success: true, failedKeys: [] });
 		(storage.deleteMetadataDO as any).mockResolvedValue(undefined);
 
 		const response = await admin.fetch(createRequest('fence-key-1'), env as any);
@@ -577,8 +588,13 @@ describe('Admin Worker idempotency recovery', () => {
 		// Metadata and all R2 assets (original + thumbnail + pieces) must
 		// be cleaned up — not just the original, since the workflow may
 		// have already produced a thumbnail or partial pieces.
-		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'puzzle-1');
-		expect(storage.deletePuzzleAssets).toHaveBeenCalledWith(env.PUZZLES_BUCKET, 'puzzle-1', 225);
+		expect(storage.deleteFamilyMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'puzzle-1');
+		expect(storage.deleteFamilyCleanupAssets).toHaveBeenCalledWith(
+			env.PUZZLES_BUCKET,
+			'puzzle-1',
+			variantIdsForFamily('puzzle-1'),
+			PIECE_COUNTS_1_1
+		);
 	});
 
 	it('does not mutate source state when terminate() fails — defers to reaper instead', async () => {
@@ -607,7 +623,7 @@ describe('Admin Worker idempotency recovery', () => {
 			new Error('Cannot committed reservation in status failed')
 		);
 		(storage.deletePuzzleMetadata as any).mockResolvedValue({ success: true });
-		(storage.deletePuzzleAssets as any).mockResolvedValue({ success: true, failedKeys: [] });
+		(storage.deleteFamilyCleanupAssets as any).mockResolvedValue({ success: true, failedKeys: [] });
 		(storage.deleteMetadataDO as any).mockResolvedValue(undefined);
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 
@@ -617,9 +633,9 @@ describe('Admin Worker idempotency recovery', () => {
 		const body = (await response.json()) as any;
 		expect(body.message).toContain('workflow termination pending');
 		// R2 assets must NOT be deleted — the workflow is still live
-		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
+		expect(storage.deleteFamilyCleanupAssets).not.toHaveBeenCalled();
 		// KV metadata must NOT be deleted — the reaper needs it to find the puzzle
-		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
+		expect(storage.deleteFamilyMetadata).not.toHaveBeenCalled();
 		expect(dbContextMock.completionWrites.beginPuzzleDeletion).not.toHaveBeenCalled();
 		expect(storage.deleteMetadataDO).not.toHaveBeenCalled();
 		expect(dbContextMock.completionWrites.finishPuzzleDeletion).not.toHaveBeenCalled();
@@ -658,7 +674,10 @@ describe('Admin Worker idempotency recovery', () => {
 				new Error('Cannot committed reservation in status failed')
 			);
 			(storage.deletePuzzleMetadata as any).mockResolvedValue({ success: true });
-			(storage.deletePuzzleAssets as any).mockResolvedValue({ success: true, failedKeys: [] });
+			(storage.deleteFamilyCleanupAssets as any).mockResolvedValue({
+				success: true,
+				failedKeys: []
+			});
 			(storage.deleteMetadataDO as any).mockResolvedValue(undefined);
 			vi.spyOn(console, 'error').mockImplementation(() => {});
 
@@ -670,8 +689,13 @@ describe('Admin Worker idempotency recovery', () => {
 			// Status was read once (the pre-check) and returned true immediately
 			expect(statusFn).toHaveBeenCalledTimes(1);
 			// Cleanup proceeds — R2 and KV are deleted
-			expect(storage.deletePuzzleAssets).toHaveBeenCalledWith(env.PUZZLES_BUCKET, 'puzzle-1', 225);
-			expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'puzzle-1');
+			expect(storage.deleteFamilyCleanupAssets).toHaveBeenCalledWith(
+				env.PUZZLES_BUCKET,
+				'puzzle-1',
+				variantIdsForFamily('puzzle-1'),
+				PIECE_COUNTS_1_1
+			);
+			expect(storage.deleteFamilyMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'puzzle-1');
 		}
 	);
 
@@ -705,7 +729,7 @@ describe('Admin Worker idempotency recovery', () => {
 			new Error('Cannot committed reservation in status failed')
 		);
 		(storage.deletePuzzleMetadata as any).mockResolvedValue({ success: true });
-		(storage.deletePuzzleAssets as any).mockResolvedValue({ success: true, failedKeys: [] });
+		(storage.deleteFamilyCleanupAssets as any).mockResolvedValue({ success: true, failedKeys: [] });
 		(storage.deleteMetadataDO as any).mockResolvedValue(undefined);
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 
@@ -717,8 +741,13 @@ describe('Admin Worker idempotency recovery', () => {
 		// Status was read twice: pre-check + re-read after throw
 		expect(statusFn).toHaveBeenCalledTimes(2);
 		// Cleanup proceeds — the re-read confirmed terminal
-		expect(storage.deletePuzzleAssets).toHaveBeenCalledWith(env.PUZZLES_BUCKET, 'puzzle-1', 225);
-		expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'puzzle-1');
+		expect(storage.deleteFamilyCleanupAssets).toHaveBeenCalledWith(
+			env.PUZZLES_BUCKET,
+			'puzzle-1',
+			variantIdsForFamily('puzzle-1'),
+			PIECE_COUNTS_1_1
+		);
+		expect(storage.deleteFamilyMetadata).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'puzzle-1');
 	});
 
 	it('preserves KV when R2 deletion fails in commit-conflict cleanup (reaper retries)', async () => {
@@ -752,7 +781,7 @@ describe('Admin Worker idempotency recovery', () => {
 		);
 		(storage.deleteMetadataDO as any).mockResolvedValue(undefined);
 		// R2 deletion partially fails
-		(storage.deletePuzzleAssets as any).mockResolvedValue({
+		(storage.deleteFamilyCleanupAssets as any).mockResolvedValue({
 			success: false,
 			failedKeys: ['puzzles/puzzle-1/pieces/0.png']
 		});
@@ -767,9 +796,14 @@ describe('Admin Worker idempotency recovery', () => {
 		// DO is tombstoned (first step)
 		expect(storage.deleteMetadataDO).toHaveBeenCalledWith(env.PUZZLE_METADATA_DO, 'puzzle-1');
 		// R2 deletion was attempted
-		expect(storage.deletePuzzleAssets).toHaveBeenCalledWith(env.PUZZLES_BUCKET, 'puzzle-1', 225);
+		expect(storage.deleteFamilyCleanupAssets).toHaveBeenCalledWith(
+			env.PUZZLES_BUCKET,
+			'puzzle-1',
+			variantIdsForFamily('puzzle-1'),
+			PIECE_COUNTS_1_1
+		);
 		// KV metadata must NOT be deleted — preserved for reaper retry
-		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
+		expect(storage.deleteFamilyMetadata).not.toHaveBeenCalled();
 	});
 
 	it('retains metadata and reservation when workflow create fails but workflow is alive (ambiguous failure)', async () => {
@@ -799,7 +833,7 @@ describe('Admin Worker idempotency recovery', () => {
 		// Should return 500 (client retries, hits existing-puzzle branch)
 		expect(response.status).toBe(500);
 		// Must NOT delete metadata or image — workflow is alive
-		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
+		expect(storage.deleteFamilyMetadata).not.toHaveBeenCalled();
 		expect(storage.deleteOriginalImage).not.toHaveBeenCalled();
 		// Must NOT release the reservation — commit it instead
 		expect(storage.releaseIdempotencyKey).not.toHaveBeenCalled();
@@ -863,7 +897,7 @@ describe('Admin Worker idempotency recovery', () => {
 
 		expect(response.status).toBe(500);
 		// Must NOT clean up — liveness unknown, fail closed
-		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
+		expect(storage.deleteFamilyMetadata).not.toHaveBeenCalled();
 		expect(storage.deleteOriginalImage).not.toHaveBeenCalled();
 		expect(storage.releaseIdempotencyKey).not.toHaveBeenCalled();
 	});

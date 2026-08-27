@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PUZZLE_DIFFICULTIES } from '@perseus/types';
 
 const mocks = vi.hoisted(() => ({
 	writeCleanupRecord: vi.fn(),
@@ -40,8 +41,17 @@ const env = {
 } as Env;
 
 const record: CleanupRecord = {
-	puzzleId: 'puzzle-1',
-	pieceCount: 16,
+	familyId: 'family-1',
+	variantIds: {
+		easy: 'variant-easy',
+		normal: 'variant-normal',
+		hard: 'variant-hard'
+	},
+	pieceCounts: {
+		easy: 16,
+		normal: 49,
+		hard: 100
+	},
 	idempotencyKey: 'upload-1',
 	createdAt: 1_700_000_000_000
 };
@@ -56,11 +66,16 @@ describe('Worker puzzle deletion lifecycle', () => {
 		mocks.deletePuzzleFamilyOwnership.mockResolvedValue(undefined);
 	});
 
-	it('writes the cleanup record before beginning the D1 deletion fence', async () => {
+	it('writes the cleanup record before beginning D1 deletion fences for all variants', async () => {
 		await ensureWorkerPuzzleDeletionFence(env, record, 1_700_000_000_123);
 
 		expect(mocks.writeCleanupRecord).toHaveBeenCalledWith(env.PUZZLE_METADATA, record);
-		expect(mocks.beginPuzzleDeletion).toHaveBeenCalledWith('puzzle-1', 1_700_000_000_123);
+		for (const difficulty of PUZZLE_DIFFICULTIES) {
+			expect(mocks.beginPuzzleDeletion).toHaveBeenCalledWith(
+				record.variantIds[difficulty],
+				1_700_000_000_123
+			);
+		}
 		expect(mocks.writeCleanupRecord.mock.invocationCallOrder[0]).toBeLessThan(
 			mocks.beginPuzzleDeletion.mock.invocationCallOrder[0]
 		);
@@ -92,61 +107,53 @@ describe('Worker puzzle deletion lifecycle', () => {
 		await ensureWorkerPuzzleDeletionFence(env, record, 1_700_000_000_123);
 
 		expect(mocks.writeCleanupRecord).toHaveBeenCalledTimes(2);
-		expect(mocks.beginPuzzleDeletion).toHaveBeenCalledTimes(2);
-		expect(mocks.writeCleanupRecord).toHaveBeenNthCalledWith(2, env.PUZZLE_METADATA, record);
-		expect(mocks.beginPuzzleDeletion).toHaveBeenNthCalledWith(2, 'puzzle-1', 1_700_000_000_123);
+		expect(mocks.beginPuzzleDeletion).toHaveBeenCalledTimes(PUZZLE_DIFFICULTIES.length * 2);
 	});
 
-	it('finishes completion data, ownership, then the cleanup record', async () => {
-		await finishWorkerPuzzleDeletion(env, 'puzzle-1');
-
-		expect(mocks.finishPuzzleDeletion).toHaveBeenCalledWith('puzzle-1');
-		expect(mocks.deletePuzzleFamilyOwnership).toHaveBeenCalledWith(mocks.db, 'puzzle-1');
-		expect(mocks.deleteCleanupRecord).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'puzzle-1');
-		expect(mocks.finishPuzzleDeletion.mock.invocationCallOrder[0]).toBeLessThan(
-			mocks.deletePuzzleFamilyOwnership.mock.invocationCallOrder[0]
-		);
-		expect(mocks.deletePuzzleFamilyOwnership.mock.invocationCallOrder[0]).toBeLessThan(
-			mocks.deleteCleanupRecord.mock.invocationCallOrder[0]
-		);
-	});
-
-	it('deletes family ownership when ownershipId is provided', async () => {
-		await finishWorkerPuzzleDeletion(env, 'variant-1', 'family-1');
+	it('deletes family ownership, finishes all variant fences, then the cleanup record', async () => {
+		await finishWorkerPuzzleDeletion(env, record);
 
 		expect(mocks.deletePuzzleFamilyOwnership).toHaveBeenCalledWith(mocks.db, 'family-1');
+		for (const difficulty of PUZZLE_DIFFICULTIES) {
+			expect(mocks.finishPuzzleDeletion).toHaveBeenCalledWith(record.variantIds[difficulty]);
+		}
+		expect(mocks.deleteCleanupRecord).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'family-1');
+		expect(mocks.deletePuzzleFamilyOwnership.mock.invocationCallOrder[0]).toBeLessThan(
+			mocks.finishPuzzleDeletion.mock.invocationCallOrder[0]
+		);
+		expect(
+			mocks.finishPuzzleDeletion.mock.invocationCallOrder[PUZZLE_DIFFICULTIES.length - 1]
+		).toBeLessThan(mocks.deleteCleanupRecord.mock.invocationCallOrder[0]);
 	});
 
-	it('does not delete ownership or the record when completion cleanup fails', async () => {
+	it('does not delete the record when variant completion cleanup fails after ownership', async () => {
 		mocks.finishPuzzleDeletion.mockRejectedValueOnce(new Error('completion cleanup failed'));
 
-		await expect(finishWorkerPuzzleDeletion(env, 'puzzle-1')).rejects.toThrow(
+		await expect(finishWorkerPuzzleDeletion(env, record)).rejects.toThrow(
 			'completion cleanup failed'
 		);
 
-		expect(mocks.deletePuzzleFamilyOwnership).not.toHaveBeenCalled();
+		expect(mocks.deletePuzzleFamilyOwnership).toHaveBeenCalledOnce();
 		expect(mocks.deleteCleanupRecord).not.toHaveBeenCalled();
 	});
 
 	it('does not delete the record when ownership cleanup fails', async () => {
 		mocks.deletePuzzleFamilyOwnership.mockRejectedValueOnce(new Error('ownership cleanup failed'));
 
-		await expect(finishWorkerPuzzleDeletion(env, 'puzzle-1')).rejects.toThrow(
+		await expect(finishWorkerPuzzleDeletion(env, record)).rejects.toThrow(
 			'ownership cleanup failed'
 		);
 
-		expect(mocks.finishPuzzleDeletion).toHaveBeenCalledOnce();
+		expect(mocks.finishPuzzleDeletion).not.toHaveBeenCalled();
 		expect(mocks.deleteCleanupRecord).not.toHaveBeenCalled();
 	});
 
-	it('rejects record deletion failure after both database cleanups complete', async () => {
+	it('rejects record deletion failure after database cleanups complete', async () => {
 		mocks.deleteCleanupRecord.mockRejectedValueOnce(new Error('record delete failed'));
 
-		await expect(finishWorkerPuzzleDeletion(env, 'puzzle-1')).rejects.toThrow(
-			'record delete failed'
-		);
+		await expect(finishWorkerPuzzleDeletion(env, record)).rejects.toThrow('record delete failed');
 
-		expect(mocks.finishPuzzleDeletion).toHaveBeenCalledOnce();
 		expect(mocks.deletePuzzleFamilyOwnership).toHaveBeenCalledOnce();
+		expect(mocks.finishPuzzleDeletion).toHaveBeenCalledTimes(PUZZLE_DIFFICULTIES.length);
 	});
 });

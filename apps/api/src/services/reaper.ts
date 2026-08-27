@@ -26,15 +26,14 @@
 // hatch (see the perseus-operations skill's operator runbook).
 
 import {
-	deletePuzzleAssets,
 	deleteMetadataDO,
-	deletePuzzleMetadata,
 	getAuthoritativeStatus,
 	getIdempotencyReservation,
-	getPuzzle,
-	listPuzzles,
+	getFamily,
+	listFamilies,
 	listCleanupRecords,
-	releaseIdempotencyKey
+	releaseIdempotencyKey,
+	buildCleanupRecordFromFamily
 } from './storage.worker';
 import { getWorkerDb } from '../db.worker';
 import {
@@ -44,9 +43,10 @@ import {
 	isWorkflowNotFoundError
 } from '@perseus/shared';
 import type { Env } from '../worker';
+import type { PuzzleFamilyMetadata } from '@perseus/types';
 import {
 	ensureWorkerPuzzleDeletionFence,
-	finishWorkerPuzzleDeletion
+	executeFamilySourceDeletion
 } from './puzzle-deletion.worker';
 
 /** Reap puzzles stuck in processing for longer than this. */
@@ -184,7 +184,7 @@ export interface ReapResult {
 }
 
 /**
- * Scan KV for stuck "processing" puzzles and clean up those whose workflows
+ * Scan KV for stuck "processing" families and clean up those whose workflows
  * are dead (errored, terminated, or never-created/not-found). Returns a
  * summary of what was done. Safe to run concurrently — deletions are
  * idempotent.
@@ -198,23 +198,23 @@ export async function reapStuckPuzzles(env: Env, now = Date.now()): Promise<Reap
 		details: []
 	};
 
-	// TODO(scale): listPuzzles scans the entire KV catalog on every run. This
-	// is fine while puzzle counts are small, but becomes the dominant cost as
+	// TODO(scale): listFamilies scans the entire KV catalog on every run. This
+	// is fine while family counts are small, but becomes the dominant cost as
 	// the catalog grows. When this scan shows up in tail-CPU profiles, add a
-	// `processing:<puzzleId>` KV index written at create time and deleted on
-	// finalize/fail, so the reaper can list only in-flight puzzles via a KV
+	// `processing:<familyId>` KV index written at create time and deleted on
+	// finalize/fail, so the reaper can list only in-flight families via a KV
 	// prefix scan instead of the full catalog. The index is advisory (KV is
 	// eventually consistent) — the workflow-status check below remains the
 	// authoritative liveness signal, so a stale/missing index entry only
 	// causes a skipped reap, never a wrong reap.
-	const { puzzles } = await listPuzzles(env.PUZZLE_METADATA);
-	result.scanned = puzzles.length;
+	const { families } = await listFamilies(env.PUZZLE_METADATA);
+	result.scanned = families.length;
 
-	const stuck = puzzles.filter(
-		(p) =>
-			p.status === 'processing' &&
-			typeof p.createdAt === 'number' &&
-			now - p.createdAt > REAP_AFTER_MS
+	const stuck = families.filter(
+		(f) =>
+			f.status === 'processing' &&
+			typeof f.createdAt === 'number' &&
+			now - f.createdAt > REAP_AFTER_MS
 	);
 	result.candidates = stuck.length;
 
@@ -222,47 +222,30 @@ export async function reapStuckPuzzles(env: Env, now = Date.now()): Promise<Reap
 		return result;
 	}
 
-	// Process a rotating page starting at the persisted cursor. The cursor
-	// advances by the page size regardless of individual success, so
-	// persistently-failing candidates don't starve later ones. See the
-	// cursor persistence comment above for the full rationale.
 	const cursor = await readReaperCursor(env.PUZZLE_METADATA, 'stuck-puzzles');
 	const batch = rotateSlice(stuck, cursor, REAP_BATCH_LIMIT);
 
 	await Promise.all(
-		batch.map(async (puzzle) => {
+		batch.map(async (familySummary) => {
+			const familyId = familySummary.id;
 			try {
-				// Re-read full metadata (listPuzzles returns summaries).
-				const meta = await getPuzzle(env.PUZZLE_METADATA, puzzle.id);
-				if (!meta || meta.status !== 'processing') {
-					// Status changed since the list — skip.
+				const family = await getFamily(env.PUZZLE_METADATA, familyId);
+				if (!family || family.status !== 'processing') {
 					return;
 				}
 
-				// Check if the workflow is dead.
 				let workflowStatus: string;
 				try {
-					const instance = await env.PUZZLE_WORKFLOW.get(puzzle.id);
+					const instance = await env.PUZZLE_WORKFLOW.get(familyId);
 					workflowStatus = (await instance.status()).status;
 				} catch (wfErr) {
-					// A not-found error means the instance was never created (or
-					// was deleted) — the puzzle is orphaned, so reap it. Map to
-					// 'errored' (a confirmed-dead status) rather than 'unknown'
-					// (which is NOT dead — it means liveness cannot be
-					// established, and the workflow may still be running).
-					// Other errors are transient (workflow API unreachable);
-					// skip to avoid reaping a puzzle whose workflow might
-					// still be live.
 					if (isWorkflowNotFoundError(wfErr)) {
 						workflowStatus = 'errored';
 					} else {
-						console.error(
-							`Reaper: workflow status check failed for ${puzzle.id}, skipping:`,
-							wfErr
-						);
+						console.error(`Reaper: workflow status check failed for ${familyId}, skipping:`, wfErr);
 						result.errors++;
 						result.details.push({
-							puzzleId: puzzle.id,
+							puzzleId: familyId,
 							action: 'skip',
 							error: 'workflow status check failed'
 						});
@@ -270,217 +253,116 @@ export async function reapStuckPuzzles(env: Env, now = Date.now()): Promise<Reap
 					}
 				}
 
-				// 'complete' means every workflow step succeeded, including
-				// finalize (which writes status 'ready' to the authoritative
-				// PuzzleMetadataDO). A KV read that still shows 'processing'
-				// is eventual-consistency lag, not an orphan — reaping would
-				// destroy a valid completed puzzle. Skip and let KV catch up.
 				if (workflowStatus === 'complete') {
 					console.warn(
-						`Reaper: workflow for ${puzzle.id} is complete but KV still shows processing (lag); skipping`
+						`Reaper: workflow for ${familyId} is complete but KV still shows processing (lag); skipping`
 					);
 					result.details.push({
-						puzzleId: puzzle.id,
+						puzzleId: familyId,
 						action: 'skip-complete-kv-lag'
 					});
 					return;
 				}
 
-				// Any other non-terminal active status (queued, running,
-				// paused, waiting, waitingForPause, rollingBack) means the
-				// workflow may still make progress — don't reap.
 				if (isAliveWorkflowStatus(workflowStatus)) {
-					// Workflow is still alive — don't reap.
 					return;
 				}
 
-				// Workflow is dead (errored, terminated, or never-created/
-				// not-found — mapped to 'errored' above). Reap it.
 				if (!isDeadWorkflowStatus(workflowStatus)) {
-					// Unrecognized or unverifiable status (e.g. 'unknown' —
-					// liveness cannot be established). Skip to be safe; the
-					// workflow may still be running.
 					console.warn(
-						`Reaper: unrecognized or unverifiable workflow status '${workflowStatus}' for ${puzzle.id}, skipping`
+						`Reaper: unrecognized or unverifiable workflow status '${workflowStatus}' for ${familyId}, skipping`
 					);
 					return;
 				}
 
-				// Before reaping, verify the authoritative DO status. A workflow can
-				// report 'errored' after finalize already committed 'ready' to the DO
-				// (e.g. the mark-failed step's retry budget exhausted after a successful
-				// finalize DO write, or a post-finalize step threw). The DO is the source
-				// of truth — if it says 'ready', the puzzle is valid and must NOT be
-				// reaped. A stale KV read showing 'processing' is eventual-consistency
-				// lag, not an orphan.
 				try {
 					const authoritativeStatus = await getAuthoritativeStatus(
 						env.PUZZLE_METADATA_DO,
-						puzzle.id
+						familyId
 					);
 					if (authoritativeStatus === 'ready') {
 						console.warn(
-							`Reaper: DO authoritative status is 'ready' for ${puzzle.id} but workflow is dead and KV shows processing; skipping (finalize committed before workflow errored)`
+							`Reaper: DO authoritative status is 'ready' for ${familyId} but workflow is dead and KV shows processing; skipping (finalize committed before workflow errored)`
 						);
 						result.details.push({
-							puzzleId: puzzle.id,
+							puzzleId: familyId,
 							action: 'skip-do-ready'
 						});
 						return;
 					}
-					// null = DO has no metadata (truly orphaned) → proceed with reaping.
-					// Any other status (processing, failed) → proceed with reaping.
 				} catch (doErr) {
-					// DO unreachable — fail closed. Reaping a valid puzzle is
-					// irreversible (deletes R2 assets); skipping a dead one is
-					// recoverable (next reaper run, or operator force-delete).
 					console.error(
-						`Reaper: DO status check failed for ${puzzle.id}, skipping (fail closed):`,
+						`Reaper: DO status check failed for ${familyId}, skipping (fail closed):`,
 						doErr
 					);
 					result.errors++;
 					result.details.push({
-						puzzleId: puzzle.id,
+						puzzleId: familyId,
 						action: 'do-status-check-failed',
 						error: String(doErr)
 					});
 					return;
 				}
 
-				const pieceCount = typeof meta.pieceCount === 'number' ? meta.pieceCount : 0;
-				await ensureWorkerPuzzleDeletionFence(env, {
-					puzzleId: puzzle.id,
-					pieceCount,
-					...(meta.idempotencyKey ? { idempotencyKey: meta.idempotencyKey } : {}),
-					createdAt: Date.now()
-				});
+				const record = buildCleanupRecordFromFamily(family);
+				await ensureWorkerPuzzleDeletionFence(env, record);
 
-				// Tombstone the DO BEFORE deleting R2 assets and KV metadata.
-				// The DO tombstone prevents a (dead) workflow's post-termination
-				// step from resurrecting stale metadata in KV via the DO's KV
-				// sync. Doing this first means a tombstone failure leaves the
-				// puzzle fully discoverable for the next reaper run (KV intact,
-				// DO live — the reaper re-checks both). Without this ordering, a
-				// KV delete with a failed tombstone bricks the retry path: the DO
-				// stays live and a later workflow update can repopulate stale
-				// metadata.
-				try {
-					await deleteMetadataDO(env.PUZZLE_METADATA_DO, puzzle.id);
-				} catch (doErr) {
-					console.error(`Reaper: failed to tombstone metadata DO for ${puzzle.id}:`, doErr);
-					result.errors++;
-					result.details.push({
-						puzzleId: puzzle.id,
-						action: 'do-tombstone-failed',
-						error: String(doErr)
-					});
-					return;
-				}
-
-				// Delete all R2 assets (original + thumbnail + generated
-				// pieces). Uses pieceCount from metadata; R2 deletes on non-
-				// existent keys are no-ops, so partial generation is covered.
-				// CRITICAL: if R2 deletion fails (partially or totally), do NOT
-				// delete KV or D1 metadata — the failed R2 keys would become
-				// invisible orphans with no metadata to discover them. Preserve
-				// KV so the next reaper run retries R2 cleanup. The DO is
-				// already tombstoned, so getAuthoritativeStatus returns null on
-				// the next run, which means "truly orphaned → proceed."
-				try {
-					const r2Result = await deletePuzzleAssets(env.PUZZLES_BUCKET, puzzle.id, pieceCount);
-					if (!r2Result.success) {
-						console.error(
-							`Reaper: failed to delete some R2 assets for ${puzzle.id}, preserving KV for retry:`,
-							r2Result.failedKeys
-						);
-						result.errors++;
-						result.details.push({
-							puzzleId: puzzle.id,
-							action: 'r2-delete-partial',
-							error: `failed keys: ${r2Result.failedKeys.join(', ')}`
-						});
-						return;
-					}
-				} catch (r2Err) {
-					// R2 deletion threw — preserve KV for the next reaper run.
-					console.error(
-						`Reaper: failed to delete R2 assets for ${puzzle.id}, preserving KV for retry:`,
-						r2Err
-					);
-					result.errors++;
-					result.details.push({
-						puzzleId: puzzle.id,
-						action: 'r2-delete-failed',
-						error: String(r2Err)
-					});
-					return;
-				}
-
-				// R2 deletion fully succeeded — safe to delete KV and D1
-				// metadata. deletePuzzleMetadata never throws — it returns
-				// { success, error } so a KV failure is observable here
-				// without a try/catch around a non-throwing call. Branching on
-				// .success keeps reaped++ honest (only increments when the KV
-				// delete actually succeeded) and emits a kv-delete-failed detail
-				// on failure so operators see the failure in the run summary.
-				const kvResult = await deletePuzzleMetadata(env.PUZZLE_METADATA, puzzle.id);
-				if (kvResult.success) {
-					// Best-effort DO idempotency reservation release. Without
-					// this, a reaped puzzle leaves its reservation pointing at
-					// the dead puzzleId indefinitely — a same-key re-upload
-					// would reclaim into a 404 and require a second reap pass.
-					// Only puzzles created with an Idempotency-Key header
-					// carry meta.idempotencyKey. Best-effort: a DO failure is
-					// logged, not fatal — the reservation TTL (if any) and
-					// operator force-release are the backstops.
-					if (meta.idempotencyKey) {
+				const deletion = await executeFamilySourceDeletion(env, record, async () => {
+					if (record.idempotencyKey) {
 						try {
-							await releaseIdempotencyKey(env.PUZZLE_METADATA_DO, meta.idempotencyKey, puzzle.id);
+							await releaseIdempotencyKey(env.PUZZLE_METADATA_DO, record.idempotencyKey, familyId);
 						} catch (releaseErr) {
 							console.error(
-								`Reaper: failed to release DO reservation for ${puzzle.id}:`,
+								`Reaper: failed to release DO reservation for ${familyId}:`,
 								releaseErr
 							);
 							result.details.push({
-								puzzleId: puzzle.id,
+								puzzleId: familyId,
 								action: 'do-release-failed',
 								error: String(releaseErr)
 							});
 						}
 					}
+				});
 
-					try {
-						await finishWorkerPuzzleDeletion(env, puzzle.id);
-					} catch (finishErr) {
-						console.error(`Reaper: required D1 finish failed for ${puzzle.id}:`, finishErr);
-						result.errors++;
-						result.details.push({
-							puzzleId: puzzle.id,
-							action: 'd1-finish-failed',
-							error: String(finishErr)
-						});
-						return;
-					}
-
-					result.reaped++;
-					result.details.push({
-						puzzleId: puzzle.id,
-						action: 'reaped'
-					});
-				} else {
-					console.error(`Reaper: failed to delete KV metadata for ${puzzle.id}:`, kvResult.error);
+				if (!deletion.ok) {
+					const action =
+						deletion.step === 'do-tombstone'
+							? 'do-tombstone-failed'
+							: deletion.step === 'r2'
+								? deletion.failedKeys
+									? 'r2-delete-partial'
+									: 'r2-delete-failed'
+								: deletion.step === 'kv-family'
+									? 'kv-delete-failed'
+									: deletion.step === 'kv-variant'
+										? 'kv-delete-failed'
+										: 'd1-finish-failed';
+					console.error(
+						`Reaper: family cleanup failed for ${familyId} at ${deletion.step}:`,
+						deletion
+					);
 					result.errors++;
 					result.details.push({
-						puzzleId: puzzle.id,
-						action: 'kv-delete-failed',
-						error: String(kvResult.error)
+						puzzleId: familyId,
+						action,
+						error: deletion.failedKeys
+							? `failed keys: ${deletion.failedKeys.join(', ')}`
+							: String(deletion.error ?? deletion.step)
 					});
+					return;
 				}
+
+				result.reaped++;
+				result.details.push({
+					puzzleId: familyId,
+					action: 'reaped'
+				});
 			} catch (err) {
-				console.error(`Reaper: unexpected error for ${puzzle.id}:`, err);
+				console.error(`Reaper: unexpected error for ${familyId}:`, err);
 				result.errors++;
 				result.details.push({
-					puzzleId: puzzle.id,
+					puzzleId: familyId,
 					action: 'error',
 					error: String(err)
 				});
@@ -488,7 +370,6 @@ export async function reapStuckPuzzles(env: Env, now = Date.now()): Promise<Reap
 		})
 	);
 
-	// Advance the cursor by the page size regardless of individual success.
 	await writeReaperCursor(
 		env.PUZZLE_METADATA,
 		'stuck-puzzles',
@@ -496,6 +377,14 @@ export async function reapStuckPuzzles(env: Env, now = Date.now()): Promise<Reap
 	);
 
 	return result;
+}
+
+function familyDeletionFailureAction(step: string, hasFailedKeys?: boolean): string {
+	if (step === 'do-tombstone') return 'cleanup-do-tombstone-failed';
+	if (step === 'r2')
+		return hasFailedKeys ? 'cleanup-r2-delete-partial' : 'cleanup-r2-delete-failed';
+	if (step === 'kv-family' || step === 'kv-variant') return 'cleanup-kv-delete-failed';
+	return 'cleanup-d1-finish-failed';
 }
 
 /**
@@ -530,29 +419,23 @@ export async function reapCleanupRecords(env: Env): Promise<ReapResult> {
 
 	await Promise.all(
 		batch.map(async (record) => {
+			const familyId = record.familyId;
 			try {
-				// Check if the workflow has stopped. Unlike the stuck-
-				// processing reaper, we DO clean up 'complete' workflows
-				// here — the cleanup record proves the puzzle lost its
-				// idempotency reservation (reclaimed by a retry), so the
-				// completed puzzle is a duplicate that must be removed.
 				let workflowStatus: string;
 				try {
-					const instance = await env.PUZZLE_WORKFLOW.get(record.puzzleId);
+					const instance = await env.PUZZLE_WORKFLOW.get(familyId);
 					workflowStatus = (await instance.status()).status;
 				} catch (wfErr) {
 					if (isWorkflowNotFoundError(wfErr)) {
-						// Instance never created or already deleted — safe
-						// to clean up.
 						workflowStatus = 'errored';
 					} else {
 						console.error(
-							`Reaper cleanup: workflow status check failed for ${record.puzzleId}, skipping:`,
+							`Reaper cleanup: workflow status check failed for ${familyId}, skipping:`,
 							wfErr
 						);
 						result.errors++;
 						result.details.push({
-							puzzleId: record.puzzleId,
+							puzzleId: familyId,
 							action: 'cleanup-skip',
 							error: 'workflow status check failed'
 						});
@@ -560,140 +443,61 @@ export async function reapCleanupRecords(env: Env): Promise<ReapResult> {
 					}
 				}
 
-				// Only clean up if the workflow has stopped (dead or
-				// complete). Unlike the stuck-processing reaper, we DO
-				// clean up 'complete' workflows here — the cleanup record
-				// proves the puzzle lost its idempotency reservation
-				// (reclaimed by a retry), so the completed puzzle is a
-				// duplicate that must be removed. Note: 'complete' is in
-				// ACTIVE_WORKFLOW_STATUSES (it means success), so we check
-				// it BEFORE the alive check.
 				if (workflowStatus === 'complete' || isDeadWorkflowStatus(workflowStatus)) {
 					// Workflow has stopped — proceed with cleanup below.
 				} else if (isAliveWorkflowStatus(workflowStatus)) {
-					// Workflow is still running — skip and retry next run.
 					return;
 				} else {
-					// 'unknown' or unrecognized — skip to be safe.
 					console.warn(
-						`Reaper cleanup: workflow status '${workflowStatus}' for ${record.puzzleId} is not confirmed stopped, skipping`
+						`Reaper cleanup: workflow status '${workflowStatus}' for ${familyId} is not confirmed stopped, skipping`
 					);
 					return;
 				}
 
 				await ensureWorkerPuzzleDeletionFence(env, record);
 
-				// The cleanup record and permanent D1 fence now precede the
-				// first source mutation. Tombstone the DO before deleting
-				// R2/KV so it cannot resurrect stale metadata. If this or any
-				// later required step fails, preserve the record for retry.
-				try {
-					await deleteMetadataDO(env.PUZZLE_METADATA_DO, record.puzzleId);
-				} catch (doErr) {
-					console.error(
-						`Reaper cleanup: failed to tombstone metadata DO for ${record.puzzleId}:`,
-						doErr
-					);
-					result.errors++;
-					result.details.push({
-						puzzleId: record.puzzleId,
-						action: 'cleanup-do-tombstone-failed',
-						error: String(doErr)
-					});
-					return;
-				}
-
-				// DO tombstoned — safe to delete R2 assets.
-				try {
-					const r2Result = await deletePuzzleAssets(
-						env.PUZZLES_BUCKET,
-						record.puzzleId,
-						record.pieceCount
-					);
-					if (!r2Result.success) {
-						console.error(
-							`Reaper cleanup: failed to delete some R2 assets for ${record.puzzleId}, preserving KV for retry:`,
-							r2Result.failedKeys
-						);
-						result.errors++;
-						result.details.push({
-							puzzleId: record.puzzleId,
-							action: 'cleanup-r2-delete-partial',
-							error: `failed keys: ${r2Result.failedKeys.join(', ')}`
-						});
-						return;
-					}
-				} catch (r2Err) {
-					console.error(
-						`Reaper cleanup: failed to delete R2 assets for ${record.puzzleId}, preserving KV for retry:`,
-						r2Err
-					);
-					result.errors++;
-					result.details.push({
-						puzzleId: record.puzzleId,
-						action: 'cleanup-r2-delete-failed',
-						error: String(r2Err)
-					});
-					return;
-				}
-
-				// R2 deletion succeeded — delete KV metadata and D1.
-				const kvResult = await deletePuzzleMetadata(env.PUZZLE_METADATA, record.puzzleId);
-				if (kvResult.success) {
-					// Best-effort idempotency reservation release.
+				const deletion = await executeFamilySourceDeletion(env, record, async () => {
 					if (record.idempotencyKey) {
 						try {
-							await releaseIdempotencyKey(
-								env.PUZZLE_METADATA_DO,
-								record.idempotencyKey,
-								record.puzzleId
-							);
+							await releaseIdempotencyKey(env.PUZZLE_METADATA_DO, record.idempotencyKey, familyId);
 						} catch (releaseErr) {
 							console.error(
-								`Reaper cleanup: failed to release DO reservation for ${record.puzzleId}:`,
+								`Reaper cleanup: failed to release DO reservation for ${familyId}:`,
 								releaseErr
 							);
 						}
 					}
+				});
 
-					try {
-						await finishWorkerPuzzleDeletion(env, record.puzzleId);
-					} catch (finishErr) {
-						console.error(
-							`Reaper cleanup: required D1 finish failed for ${record.puzzleId}:`,
-							finishErr
-						);
-						result.errors++;
-						result.details.push({
-							puzzleId: record.puzzleId,
-							action: 'cleanup-d1-finish-failed',
-							error: String(finishErr)
-						});
-						return;
-					}
-
-					result.reaped++;
-					result.details.push({
-						puzzleId: record.puzzleId,
-						action: 'cleanup-reaped'
-					});
-				} else {
+				if (!deletion.ok) {
 					console.error(
-						`Reaper cleanup: failed to delete KV metadata for ${record.puzzleId}:`,
-						kvResult.error
+						`Reaper cleanup: family cleanup failed for ${familyId} at ${deletion.step}:`,
+						deletion
 					);
 					result.errors++;
 					result.details.push({
-						puzzleId: record.puzzleId,
-						action: 'cleanup-kv-delete-failed',
-						error: String(kvResult.error)
+						puzzleId: familyId,
+						action: familyDeletionFailureAction(
+							deletion.step,
+							deletion.failedKeys !== undefined && deletion.failedKeys.length > 0
+						),
+						error: deletion.failedKeys
+							? `failed keys: ${deletion.failedKeys.join(', ')}`
+							: String(deletion.error ?? deletion.step)
 					});
+					return;
 				}
+
+				result.reaped++;
+				result.details.push({
+					puzzleId: familyId,
+					action: 'cleanup-reaped'
+				});
 			} catch (err) {
-				console.error(`Reaper cleanup: unexpected error for ${record.puzzleId}:`, err);
+				console.error(`Reaper cleanup: unexpected error for ${familyId}:`, err);
 				result.errors++;
 				result.details.push({
-					puzzleId: record.puzzleId,
+					puzzleId: familyId,
 					action: 'cleanup-error',
 					error: String(err)
 				});
@@ -764,53 +568,40 @@ export async function reapOrphanedReservations(env: Env): Promise<ReapResult> {
 		details: []
 	};
 
-	const { puzzles } = await listPuzzles(env.PUZZLE_METADATA);
-	result.scanned = puzzles.length;
+	const { families } = await listFamilies(env.PUZZLE_METADATA);
+	result.scanned = families.length;
 
-	// listPuzzles returns summaries without idempotencyKey; re-read full
-	// metadata to obtain it. Only puzzles created with an Idempotency-Key
-	// header carry meta.idempotencyKey — the rest are skipped (no key to
-	// reconcile). Reuse the same full-catalog scan the stuck-processing
-	// reaper performs; the scale TODO at reapStuckPuzzles applies here too.
-	const candidates: Array<{ id: string; pieceCount: number; idempotencyKey: string }> = [];
-	// Read full metadata concurrently in bounded chunks to avoid exceeding
-	// Worker subrequest/CPU budgets while preserving input-order candidate
-	// collection (chunks processed sequentially; Promise.all preserves order
-	// within each chunk). Per-puzzle error accounting/details are preserved.
+	const candidates: Array<{ family: PuzzleFamilyMetadata; idempotencyKey: string }> = [];
 	const META_CHUNK_SIZE = 10;
-	for (let i = 0; i < puzzles.length; i += META_CHUNK_SIZE) {
-		const chunk = puzzles.slice(i, i + META_CHUNK_SIZE);
+	for (let i = 0; i < families.length; i += META_CHUNK_SIZE) {
+		const chunk = families.slice(i, i + META_CHUNK_SIZE);
 		const metas = await Promise.all(
-			chunk.map(async (puzzle) => {
+			chunk.map(async (familySummary) => {
 				try {
-					const meta = await getPuzzle(env.PUZZLE_METADATA, puzzle.id);
-					return { puzzle, meta };
+					const family = await getFamily(env.PUZZLE_METADATA, familySummary.id);
+					return { familySummary, family };
 				} catch (err) {
-					return { puzzle, err };
+					return { familySummary, err };
 				}
 			})
 		);
 		for (const entry of metas) {
 			if ('err' in entry) {
 				console.error(
-					`Reaper orphan: failed to read metadata for ${entry.puzzle.id}, skipping:`,
+					`Reaper orphan: failed to read metadata for ${entry.familySummary.id}, skipping:`,
 					entry.err
 				);
 				result.errors++;
 				result.details.push({
-					puzzleId: entry.puzzle.id,
+					puzzleId: entry.familySummary.id,
 					action: 'orphan-meta-read-failed',
 					error: String(entry.err)
 				});
 				continue;
 			}
-			const { puzzle, meta } = entry;
-			if (meta && typeof meta.idempotencyKey === 'string' && meta.idempotencyKey) {
-				candidates.push({
-					id: puzzle.id,
-					pieceCount: typeof meta.pieceCount === 'number' ? meta.pieceCount : 0,
-					idempotencyKey: meta.idempotencyKey
-				});
+			const { family } = entry;
+			if (family && typeof family.idempotencyKey === 'string' && family.idempotencyKey) {
+				candidates.push({ family, idempotencyKey: family.idempotencyKey });
 			}
 		}
 	}
@@ -820,22 +611,6 @@ export async function reapOrphanedReservations(env: Env): Promise<ReapResult> {
 		return result;
 	}
 
-	// Determine ownership mismatches BEFORE applying REAP_BATCH_LIMIT. The
-	// source catalog is sorted newest-first (listPuzzles), so batching before
-	// the mismatch check would select the same newest N candidates every run
-	// and permanently starve older orphans behind newer healthy owners.
-	// Querying every candidate's reservation DO is the dominant cost as the
-	// catalog grows, but the full-catalog scan TODO at reapStuckPuzzles
-	// applies here too; a persisted cursor or rotating page is the scale fix.
-	//
-	// Mismatches are collected in deterministic input (catalog) order via
-	// Promise.all's positional result array, NOT in asynchronous completion
-	// order. Async-order collection (pushing into a shared array as each DO
-	// call resolves) lets a fast subset that repeatedly fails cleanup occupy
-	// the first REAP_BATCH_LIMIT slots on every run while slower mismatches
-	// remain unprocessed — starving them behind the same noisy candidates.
-	// Input-order collection rotates which mismatches land in the batch as
-	// earlier ones are reaped and drop out of the catalog.
 	const mismatches = (
 		await Promise.all(
 			candidates.map(async (candidate) => {
@@ -845,47 +620,27 @@ export async function reapOrphanedReservations(env: Env): Promise<ReapResult> {
 						candidate.idempotencyKey
 					);
 					if (reservation === null) {
-						// No reservation record. This is NOT treated as an
-						// orphan signal: the absence of a record can result
-						// from DO state loss, a release that followed KV
-						// deletion (the codebase's normal deletion ordering),
-						// or an operational action. Reaping on null alone
-						// risks destroying a healthy completed puzzle whose
-						// reservation record is simply absent — an
-						// irreversible mistake. Skip and log a distinct
-						// action so operators can review and force-delete
-						// true orphans via the runbook. A positive ownership
-						// mismatch (below) remains sufficient evidence.
 						console.warn(
-							`Reaper orphan: no reservation record for ${candidate.id} (key ${candidate.idempotencyKey}); skipping — verify and force-delete if orphaned`
+							`Reaper orphan: no reservation record for ${candidate.family.id} (key ${candidate.idempotencyKey}); skipping — verify and force-delete if orphaned`
 						);
 						result.details.push({
-							puzzleId: candidate.id,
+							puzzleId: candidate.family.id,
 							action: 'skip-null-reservation'
 						});
 						return null;
 					}
-					if (reservation.familyId === candidate.id) {
-						// This puzzle IS the current reservation owner — not an orphan.
+					if (reservation.familyId === candidate.family.id) {
 						return null;
 					}
-
-					// Ownership mismatch: the idempotency key now belongs to a
-					// different puzzleId. This puzzle lost its reservation (reclaimed
-					// by a retry that minted a replacement) and is a durable orphan.
-					// This catches the gap where writeCleanupRecord failed AND the
-					// workflow later completed — neither the stuck-processing reaper
-					// (skips 'complete'/'ready') nor the cleanup-record reaper (no
-					// record) would otherwise reach it.
 					return candidate;
 				} catch (err) {
 					console.error(
-						`Reaper orphan: reservation check failed for ${candidate.id}, skipping:`,
+						`Reaper orphan: reservation check failed for ${candidate.family.id}, skipping:`,
 						err
 					);
 					result.errors++;
 					result.details.push({
-						puzzleId: candidate.id,
+						puzzleId: candidate.family.id,
 						action: 'orphan-reservation-check-failed',
 						error: String(err)
 					});
@@ -893,43 +648,34 @@ export async function reapOrphanedReservations(env: Env): Promise<ReapResult> {
 				}
 			})
 		)
-	).filter((c): c is { id: string; pieceCount: number; idempotencyKey: string } => c !== null);
+	).filter((c): c is { family: PuzzleFamilyMetadata; idempotencyKey: string } => c !== null);
 
 	if (mismatches.length === 0) {
 		return result;
 	}
 
-	// Process a rotating page starting at the persisted cursor. The
-	// deterministic input-order collection above ensures the candidate list
-	// is stable across runs (modulo reaped items dropping out), and the
-	// advancing cursor ensures persistently-failing mismatches don't starve
-	// later ones — the gap left by the old `slice(0, REAP_BATCH_LIMIT)`.
 	const cursor = await readReaperCursor(env.PUZZLE_METADATA, 'orphaned-reservations');
 	const batch = rotateSlice(mismatches, cursor, REAP_BATCH_LIMIT);
 
 	await Promise.all(
 		batch.map(async (candidate) => {
+			const familyId = candidate.family.id;
 			try {
-				// Check the workflow has stopped before deleting R2 assets. A
-				// live workflow writes thumbnails and pieces directly to R2, so
-				// deleting assets before it stops leaves orphaned R2 objects the
-				// reaper cannot find (KV metadata already deleted). Mirrors the
-				// cleanup-record reaper's gating.
 				let workflowStatus: string;
 				try {
-					const instance = await env.PUZZLE_WORKFLOW.get(candidate.id);
+					const instance = await env.PUZZLE_WORKFLOW.get(familyId);
 					workflowStatus = (await instance.status()).status;
 				} catch (wfErr) {
 					if (isWorkflowNotFoundError(wfErr)) {
 						workflowStatus = 'errored';
 					} else {
 						console.error(
-							`Reaper orphan: workflow status check failed for ${candidate.id}, skipping:`,
+							`Reaper orphan: workflow status check failed for ${familyId}, skipping:`,
 							wfErr
 						);
 						result.errors++;
 						result.details.push({
-							puzzleId: candidate.id,
+							puzzleId: familyId,
 							action: 'orphan-skip',
 							error: 'workflow status check failed'
 						});
@@ -940,135 +686,61 @@ export async function reapOrphanedReservations(env: Env): Promise<ReapResult> {
 				if (workflowStatus === 'complete' || isDeadWorkflowStatus(workflowStatus)) {
 					// Workflow has stopped — proceed with cleanup below.
 				} else if (isAliveWorkflowStatus(workflowStatus)) {
-					// Workflow is still running — skip and retry next run.
 					return;
 				} else {
 					console.warn(
-						`Reaper orphan: workflow status '${workflowStatus}' for ${candidate.id} is not confirmed stopped, skipping`
+						`Reaper orphan: workflow status '${workflowStatus}' for ${familyId} is not confirmed stopped, skipping`
 					);
 					return;
 				}
 
-				await ensureWorkerPuzzleDeletionFence(env, {
-					puzzleId: candidate.id,
-					pieceCount: candidate.pieceCount,
-					idempotencyKey: candidate.idempotencyKey,
-					createdAt: Date.now()
+				const record = buildCleanupRecordFromFamily(candidate.family);
+				await ensureWorkerPuzzleDeletionFence(env, record);
+
+				const deletion = await executeFamilySourceDeletion(env, record, async () => {
+					try {
+						await releaseIdempotencyKey(env.PUZZLE_METADATA_DO, candidate.idempotencyKey, familyId);
+					} catch (releaseErr) {
+						console.error(
+							`Reaper orphan: failed to release DO reservation for ${familyId}:`,
+							releaseErr
+						);
+					}
 				});
 
-				// Tombstone the DO BEFORE deleting R2/KV — prevents a (dead)
-				// workflow's post-termination step from resurrecting stale
-				// metadata in KV via the DO's KV sync. Idempotent (no-op on an
-				// already-tombstoned DO). On failure, preserve KV and defer to
-				// the next run.
-				try {
-					await deleteMetadataDO(env.PUZZLE_METADATA_DO, candidate.id);
-				} catch (doErr) {
-					console.error(
-						`Reaper orphan: failed to tombstone metadata DO for ${candidate.id}:`,
-						doErr
-					);
+				if (!deletion.ok) {
+					const action =
+						deletion.step === 'do-tombstone'
+							? 'orphan-do-tombstone-failed'
+							: deletion.step === 'r2'
+								? deletion.failedKeys
+									? 'orphan-r2-delete-partial'
+									: 'orphan-r2-delete-failed'
+								: deletion.step === 'kv-family' || deletion.step === 'kv-variant'
+									? 'orphan-kv-delete-failed'
+									: 'orphan-d1-finish-failed';
+					console.error(`Reaper orphan: family cleanup failed for ${familyId}:`, deletion);
 					result.errors++;
 					result.details.push({
-						puzzleId: candidate.id,
-						action: 'orphan-do-tombstone-failed',
-						error: String(doErr)
-					});
-					return;
-				}
-
-				// Delete R2 assets. On partial/total failure, preserve KV so the
-				// next reaper run retries R2 cleanup (failed R2 keys with no KV
-				// are invisible orphans).
-				try {
-					const r2Result = await deletePuzzleAssets(
-						env.PUZZLES_BUCKET,
-						candidate.id,
-						candidate.pieceCount
-					);
-					if (!r2Result.success) {
-						console.error(
-							`Reaper orphan: failed to delete some R2 assets for ${candidate.id}, preserving KV for retry:`,
-							r2Result.failedKeys
-						);
-						result.errors++;
-						result.details.push({
-							puzzleId: candidate.id,
-							action: 'orphan-r2-delete-partial',
-							error: `failed keys: ${r2Result.failedKeys.join(', ')}`
-						});
-						return;
-					}
-				} catch (r2Err) {
-					console.error(
-						`Reaper orphan: failed to delete R2 assets for ${candidate.id}, preserving KV for retry:`,
-						r2Err
-					);
-					result.errors++;
-					result.details.push({
-						puzzleId: candidate.id,
-						action: 'orphan-r2-delete-failed',
-						error: String(r2Err)
-					});
-					return;
-				}
-
-				// R2 deletion succeeded — delete KV metadata.
-				const kvResult = await deletePuzzleMetadata(env.PUZZLE_METADATA, candidate.id);
-				if (!kvResult.success) {
-					console.error(
-						`Reaper orphan: failed to delete KV metadata for ${candidate.id}:`,
-						kvResult.error
-					);
-					result.errors++;
-					result.details.push({
-						puzzleId: candidate.id,
-						action: 'orphan-kv-delete-failed',
-						error: String(kvResult.error)
-					});
-					return;
-				}
-
-				// Best-effort idempotency reservation release. The mismatch
-				// already proves the key belongs to a different puzzleId, so
-				// this release targets (key, orphanId) — a 404 (owner mismatch)
-				// is expected and harmless. Logged, not fatal.
-				try {
-					await releaseIdempotencyKey(
-						env.PUZZLE_METADATA_DO,
-						candidate.idempotencyKey,
-						candidate.id
-					);
-				} catch (releaseErr) {
-					console.error(
-						`Reaper orphan: failed to release DO reservation for ${candidate.id}:`,
-						releaseErr
-					);
-				}
-
-				try {
-					await finishWorkerPuzzleDeletion(env, candidate.id);
-				} catch (finishErr) {
-					console.error(`Reaper orphan: required D1 finish failed for ${candidate.id}:`, finishErr);
-					result.errors++;
-					result.details.push({
-						puzzleId: candidate.id,
-						action: 'orphan-d1-finish-failed',
-						error: String(finishErr)
+						puzzleId: familyId,
+						action,
+						error: deletion.failedKeys
+							? `failed keys: ${deletion.failedKeys.join(', ')}`
+							: String(deletion.error ?? deletion.step)
 					});
 					return;
 				}
 
 				result.reaped++;
 				result.details.push({
-					puzzleId: candidate.id,
+					puzzleId: familyId,
 					action: 'orphan-reaped'
 				});
 			} catch (err) {
-				console.error(`Reaper orphan: unexpected error for ${candidate.id}:`, err);
+				console.error(`Reaper orphan: unexpected error for ${familyId}:`, err);
 				result.errors++;
 				result.details.push({
-					puzzleId: candidate.id,
+					puzzleId: familyId,
 					action: 'orphan-error',
 					error: String(err)
 				});

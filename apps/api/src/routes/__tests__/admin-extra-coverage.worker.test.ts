@@ -24,6 +24,7 @@ vi.mock('../../services/storage.worker', async (importOriginal) => {
 		getPuzzle: vi.fn(),
 		getFamily: vi.fn(),
 		deletePuzzleAssets: vi.fn(),
+		deleteFamilyCleanupAssets: vi.fn().mockResolvedValue({ success: true, failedKeys: [] }),
 		deletePuzzleMetadata: vi.fn().mockResolvedValue({ success: true }),
 		createPuzzleMetadata: vi.fn().mockResolvedValue(undefined),
 		createFamilyMetadata: vi.fn().mockResolvedValue(undefined),
@@ -57,6 +58,12 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	};
 });
 
+import {
+	cleanupRecordMatcher,
+	makeFamilyMetadata,
+	PIECE_COUNTS_1_1,
+	variantIdsForFamily
+} from './helpers/family-fixtures';
 import admin from '../admin.worker';
 import * as storage from '../../services/storage.worker';
 import { __resetRateLimitStore } from '../../middleware/rate-limit.worker';
@@ -411,34 +418,19 @@ describe('Admin Worker - DELETE metadata deletion failure', () => {
 	});
 
 	it('returns 500 when deletePuzzleMetadata fails', async () => {
-		vi.mocked(storage.getPuzzle).mockResolvedValue({
-			id: 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d',
-			name: 'Test',
-			status: 'completed',
-			pieceCount: 100,
-			aspectRatio: '1:1',
-			gridCols: 10,
-			gridRows: 10,
-			imageWidth: 300,
-			imageHeight: 300,
-			createdAt: Date.now(),
-			progress: { totalPieces: 100, generatedPieces: 100, updatedAt: Date.now() },
-			pieces: [],
-			version: 0
-		} as any);
-		// Safe lifecycle: DO tombstone and R2 deletion succeed, then KV
-		// deletion fails. The route writes a cleanup record and defers to
-		// the reaper.
-		vi.mocked(storage.deletePuzzleAssets).mockResolvedValue({
+		const familyId = 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d';
+		vi.mocked(storage.getFamily).mockResolvedValue(makeFamilyMetadata(familyId, 'ready'));
+		vi.mocked(storage.deleteFamilyCleanupAssets).mockResolvedValue({
 			success: true,
 			failedKeys: []
 		} as any);
+		vi.mocked(storage.deleteFamilyMetadata).mockResolvedValue({ success: true });
 		vi.mocked(storage.deletePuzzleMetadata).mockResolvedValue({
 			success: false,
 			error: new Error('KV delete failed')
 		} as any);
 
-		const req = new Request('http://localhost/puzzle-delete/a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d', {
+		const req = new Request(`http://localhost/puzzle-delete/${familyId}`, {
 			method: 'POST',
 			headers: { cookie: 'session=valid.token' }
 		});
@@ -451,10 +443,10 @@ describe('Admin Worker - DELETE metadata deletion failure', () => {
 		expect(body.message).toBe('KV metadata cleanup failed, reaper will retry');
 		expect(storage.writeCleanupRecord).toHaveBeenCalledWith(
 			baseEnv.PUZZLE_METADATA,
-			expect.objectContaining({ puzzleId: 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d' })
+			cleanupRecordMatcher(familyId)
 		);
 		expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledWith(
-			'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d',
+			`${familyId}-easy`,
 			expect.any(Number)
 		);
 		expect(dbContextMock.completionWrites.finishPuzzleDeletion).not.toHaveBeenCalled();

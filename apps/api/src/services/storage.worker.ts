@@ -519,6 +519,73 @@ export async function listPuzzles(
 	};
 }
 
+export type FamilySummary = {
+	id: string;
+	name: string;
+	status: PuzzleStatus;
+	createdAt: number;
+	category?: PuzzleCategory;
+	aspectRatio: PuzzleAspectRatio;
+};
+
+// List all puzzle families from KV (sorted by createdAt desc)
+export async function listFamilies(
+	kv: KVNamespace
+): Promise<{ families: FamilySummary[]; invalidCount: number }> {
+	const keys: { name: string }[] = [];
+	let cursor: string | undefined;
+
+	while (true) {
+		const list = await kv.list({ prefix: 'family:', cursor });
+		keys.push(...list.keys);
+		if (list.list_complete) {
+			break;
+		}
+		cursor = list.cursor;
+	}
+
+	const fetched = await Promise.all(keys.map((k) => kv.get(k.name, 'json')));
+	const nullCount = fetched.filter((f) => f === null).length;
+	if (nullCount > 0) {
+		console.error(
+			`listFamilies: ${nullCount} keys returned null (data corruption or eventual consistency)`
+		);
+	}
+	let invalidCount = nullCount;
+	const families: PuzzleFamilyMetadata[] = [];
+	fetched.forEach((family, index) => {
+		if (family === null) return;
+		if (!validatePuzzleFamilyMetadata(family)) {
+			invalidCount++;
+			console.error(`Invalid family metadata for ${keys[index].name}:`, family);
+			return;
+		}
+		families.push(family as PuzzleFamilyMetadata);
+	});
+
+	if (invalidCount > 0) {
+		console.error(`listFamilies: ${invalidCount} invalid entries out of ${keys.length} total keys`);
+	}
+
+	families.sort((a, b) => {
+		const dateDiff = b.createdAt - a.createdAt;
+		if (dateDiff !== 0) return dateDiff;
+		return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+	});
+
+	return {
+		families: families.map((f) => ({
+			id: f.id,
+			name: f.name,
+			status: f.status,
+			createdAt: f.createdAt,
+			category: f.category,
+			aspectRatio: f.aspectRatio
+		})),
+		invalidCount
+	};
+}
+
 // Cached sorted index for gallery listing — avoids a full KV scan + fan-out on every request.
 // The index stores lightweight entries (no pieces array) sorted by createdAt desc and is
 // rebuilt from scratch on cache miss. A short TTL means changes propagate within seconds.
@@ -881,6 +948,65 @@ export async function deletePuzzleAssets(
 	return { success: failedKeys.length === 0, failedKeys };
 }
 
+async function deleteR2Keys(
+	bucket: R2Bucket,
+	keys: string[],
+	context: string
+): Promise<{ success: boolean; failedKeys: string[] }> {
+	const failedKeys: string[] = [];
+	const batchSize = 1000;
+	for (let i = 0; i < keys.length; i += batchSize) {
+		const batch = keys.slice(i, i + batchSize);
+		try {
+			await bucket.delete(batch);
+		} catch (error) {
+			console.error(`Failed to delete R2 batch (${context}):`, batch, error);
+			failedKeys.push(...batch);
+		}
+	}
+	return { success: failedKeys.length === 0, failedKeys };
+}
+
+export async function deleteFamilySharedAssets(
+	bucket: R2Bucket,
+	familyId: string
+): Promise<{ success: boolean; failedKeys: string[] }> {
+	return deleteR2Keys(
+		bucket,
+		[getFamilyOriginalKey(familyId), getFamilyThumbnailKey(familyId)],
+		`family shared assets ${familyId}`
+	);
+}
+
+export async function deleteVariantPieceAssets(
+	bucket: R2Bucket,
+	variantId: string,
+	pieceCount: number
+): Promise<{ success: boolean; failedKeys: string[] }> {
+	const keys: string[] = [];
+	for (let i = 0; i < pieceCount; i++) {
+		keys.push(getPieceKey(variantId, i));
+	}
+	return deleteR2Keys(bucket, keys, `variant pieces ${variantId}`);
+}
+
+export async function deleteFamilyCleanupAssets(
+	bucket: R2Bucket,
+	familyId: string,
+	variantIds: Record<PuzzleDifficulty, string>,
+	pieceCounts: Record<PuzzleDifficulty, number>
+): Promise<{ success: boolean; failedKeys: string[] }> {
+	const keys: string[] = [getFamilyOriginalKey(familyId), getFamilyThumbnailKey(familyId)];
+	for (const difficulty of PUZZLE_DIFFICULTIES) {
+		const variantId = variantIds[difficulty];
+		const pieceCount = pieceCounts[difficulty];
+		for (let i = 0; i < pieceCount; i++) {
+			keys.push(getPieceKey(variantId, i));
+		}
+	}
+	return deleteR2Keys(bucket, keys, `family cleanup ${familyId}`);
+}
+
 // --- Cleanup records for deferred reaper processing ---
 //
 // Cleanup records are durable retry state once deletion is chosen. Eligibility
@@ -892,19 +1018,68 @@ export async function deletePuzzleAssets(
 // retain the record for a later reaper pass.
 
 export interface CleanupRecord {
-	puzzleId: string;
-	pieceCount: number;
-	familyId?: string;
+	familyId: string;
+	variantIds: Record<PuzzleDifficulty, string>;
+	pieceCounts: Record<PuzzleDifficulty, number>;
 	idempotencyKey?: string;
 	createdAt: number;
 }
 
-function cleanupKey(puzzleId: string): string {
-	return `cleanup:${puzzleId}`;
+function hasExactDifficultyVariantIds(value: unknown): value is Record<PuzzleDifficulty, string> {
+	if (typeof value !== 'object' || value === null) return false;
+	return PUZZLE_DIFFICULTIES.every(
+		(difficulty) =>
+			typeof (value as Record<string, unknown>)[difficulty] === 'string' &&
+			(value as Record<string, string>)[difficulty].length > 0
+	);
+}
+
+function hasExactDifficultyPieceCounts(value: unknown): value is Record<PuzzleDifficulty, number> {
+	if (typeof value !== 'object' || value === null) return false;
+	return PUZZLE_DIFFICULTIES.every(
+		(difficulty) =>
+			typeof (value as Record<string, unknown>)[difficulty] === 'number' &&
+			Number.isFinite((value as Record<string, number>)[difficulty])
+	);
+}
+
+function isValidCleanupRecord(data: unknown): data is CleanupRecord {
+	if (!data || typeof data !== 'object') return false;
+	const record = data as Record<string, unknown>;
+	if (typeof record.familyId !== 'string' || record.familyId.length === 0) return false;
+	if (!hasExactDifficultyVariantIds(record.variantIds)) return false;
+	if (!hasExactDifficultyPieceCounts(record.pieceCounts)) return false;
+	if (typeof record.createdAt !== 'number' || !Number.isFinite(record.createdAt)) return false;
+	if (record.idempotencyKey !== undefined && typeof record.idempotencyKey !== 'string') {
+		return false;
+	}
+	return true;
+}
+
+export function buildCleanupRecordFromFamily(
+	family: PuzzleFamilyMetadata,
+	createdAt = Date.now()
+): CleanupRecord {
+	const pieceCounts = {
+		easy: getDifficultyPieceCount(family.aspectRatio, 'easy'),
+		normal: getDifficultyPieceCount(family.aspectRatio, 'normal'),
+		hard: getDifficultyPieceCount(family.aspectRatio, 'hard')
+	};
+	return {
+		familyId: family.id,
+		variantIds: { ...family.variants },
+		pieceCounts,
+		...(family.idempotencyKey ? { idempotencyKey: family.idempotencyKey } : {}),
+		createdAt
+	};
+}
+
+function cleanupKey(familyId: string): string {
+	return `cleanup:${familyId}`;
 }
 
 export async function writeCleanupRecord(kv: KVNamespace, record: CleanupRecord): Promise<void> {
-	await kv.put(cleanupKey(record.puzzleId), JSON.stringify(record));
+	await kv.put(cleanupKey(record.familyId), JSON.stringify(record));
 }
 
 export async function listCleanupRecords(kv: KVNamespace): Promise<CleanupRecord[]> {
@@ -919,22 +1094,13 @@ export async function listCleanupRecords(kv: KVNamespace): Promise<CleanupRecord
 	const fetched = await Promise.all(keys.map((k) => kv.get(k.name, 'json')));
 	const records: CleanupRecord[] = [];
 	for (const data of fetched) {
-		if (
-			data &&
-			typeof data === 'object' &&
-			'puzzleId' in data &&
-			'pieceCount' in data &&
-			typeof data.puzzleId === 'string' &&
-			data.puzzleId.length > 0 &&
-			typeof data.pieceCount === 'number' &&
-			Number.isFinite(data.pieceCount)
-		) {
-			records.push(data as CleanupRecord);
+		if (isValidCleanupRecord(data)) {
+			records.push(data);
 		}
 	}
 	return records;
 }
 
-export async function deleteCleanupRecord(kv: KVNamespace, puzzleId: string): Promise<void> {
-	await kv.delete(cleanupKey(puzzleId));
+export async function deleteCleanupRecord(kv: KVNamespace, familyId: string): Promise<void> {
+	await kv.delete(cleanupKey(familyId));
 }

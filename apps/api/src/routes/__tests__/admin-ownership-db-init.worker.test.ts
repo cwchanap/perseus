@@ -31,6 +31,7 @@ vi.mock('../../services/storage.worker', async (importOriginal) => {
 		getPuzzle: vi.fn(),
 		getFamily: vi.fn(),
 		deletePuzzleAssets: vi.fn(),
+		deleteFamilyCleanupAssets: vi.fn().mockResolvedValue({ success: true, failedKeys: [] }),
 		deletePuzzleMetadata: vi
 			.fn()
 			.mockResolvedValue({ success: true })
@@ -63,6 +64,12 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	return { ...original, ...sharedMockOverrides };
 });
 
+import {
+	cleanupRecordMatcher,
+	makeFamilyMetadata,
+	PIECE_COUNTS_1_1,
+	variantIdsForFamily
+} from './helpers/family-fixtures';
 import admin from '../admin.worker';
 import { getWorkerDb, getWorkerDbContext } from '../../db.worker';
 import { deletePuzzleFamilyOwnership } from '@perseus/shared';
@@ -232,14 +239,9 @@ describe('Admin Worker - D1 ownership best-effort catch blocks', () => {
 		vi.mocked(getWorkerDbContext).mockImplementation(() => {
 			throw new Error('DB init failed');
 		});
-		vi.mocked(storage.getPuzzle).mockResolvedValue({
-			id: VALID_UUID,
-			name: 'Ready Puzzle',
-			status: 'ready',
-			pieceCount: 4
-		} as any);
+		vi.mocked(storage.getFamily).mockResolvedValue(makeFamilyMetadata(VALID_UUID, 'ready'));
 		vi.mocked(storage.deletePuzzleMetadata).mockResolvedValue({ success: true } as any);
-		vi.mocked(storage.deletePuzzleAssets).mockResolvedValue({
+		vi.mocked(storage.deleteFamilyCleanupAssets).mockResolvedValue({
 			success: true,
 			failedKeys: []
 		} as any);
@@ -257,19 +259,14 @@ describe('Admin Worker - D1 ownership best-effort catch blocks', () => {
 		);
 		expect(storage.writeCleanupRecord).toHaveBeenCalled();
 		expect(storage.deleteMetadataDO).not.toHaveBeenCalled();
-		expect(storage.deletePuzzleAssets).not.toHaveBeenCalled();
-		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
+		expect(storage.deleteFamilyCleanupAssets).not.toHaveBeenCalled();
+		expect(storage.deleteFamilyMetadata).not.toHaveBeenCalled();
 	});
 
 	it('returns 500 and retains the record when required completion cleanup rejects', async () => {
-		vi.mocked(storage.getPuzzle).mockResolvedValue({
-			id: VALID_UUID,
-			name: 'Ready Puzzle',
-			status: 'ready',
-			pieceCount: 4
-		} as any);
+		vi.mocked(storage.getFamily).mockResolvedValue(makeFamilyMetadata(VALID_UUID, 'ready'));
 		vi.mocked(storage.deletePuzzleMetadata).mockResolvedValue({ success: true } as any);
-		vi.mocked(storage.deletePuzzleAssets).mockResolvedValue({
+		vi.mocked(storage.deleteFamilyCleanupAssets).mockResolvedValue({
 			success: true,
 			failedKeys: []
 		} as any);
@@ -288,8 +285,7 @@ describe('Admin Worker - D1 ownership best-effort catch blocks', () => {
 			expect.stringContaining(`Failed to finish fenced cleanup for ${VALID_UUID}`),
 			expect.any(Error)
 		);
-		expect(storage.deletePuzzleAssets).toHaveBeenCalledTimes(1);
-		expect(deletePuzzleFamilyOwnership).not.toHaveBeenCalled();
+		expect(deletePuzzleFamilyOwnership).toHaveBeenCalledWith(dbContextMock.db, VALID_UUID);
 		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
 	});
 });
