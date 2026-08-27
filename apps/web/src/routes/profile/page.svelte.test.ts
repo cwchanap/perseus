@@ -139,6 +139,32 @@ describe('profile page', () => {
 		await expect.element(page.getByText('Player One')).toBeVisible();
 	});
 
+	it('renders progression score, rank, difficulty counts, achievements, and mastery', async () => {
+		vi.mocked(getPlayerProfile).mockResolvedValue({
+			id: 'p1',
+			email: 'e',
+			name: 'Player One',
+			picture: null,
+			createdAt: 1,
+			lastLoginAt: 2,
+			summary: { puzzlesUploaded: 1, puzzlesSolved: 2, totalCompletions: 3 }
+		});
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({ families, nextCursor: undefined });
+		vi.mocked(getPlayerStats).mockResolvedValue({ stats });
+
+		render(ProfilePage);
+
+		await expect.element(page.getByTestId('profile-progression-score')).toHaveTextContent('142');
+		await expect.element(page.getByTestId('profile-progression-rank')).toHaveTextContent('3');
+		await expect
+			.element(page.getByTestId('profile-progression-achievements'))
+			.toHaveTextContent('1/9');
+		await expect.element(page.getByTestId('profile-difficulty-easy')).toHaveTextContent('1');
+		await expect.element(page.getByTestId('profile-difficulty-normal')).toHaveTextContent('0');
+		await expect.element(page.getByTestId('profile-difficulty-hard')).toHaveTextContent('0');
+		await expect.element(page.getByTestId('profile-mastery-earned')).toHaveTextContent('2');
+	});
+
 	it('shows summary counts', async () => {
 		vi.mocked(getPlayerProfile).mockResolvedValue({
 			id: 'p1',
@@ -902,6 +928,30 @@ describe('profile page', () => {
 
 		const playLinks = page.getByRole('link').filter({ hasText: /Easy|Normal|Hard/ });
 		await expect.element(playLinks).toHaveLength(3);
+	});
+
+	it('does not render play links when family detail enrichment fails', async () => {
+		vi.mocked(getPlayerProfile).mockResolvedValue({
+			id: 'p1',
+			email: 'e',
+			name: 'Player One',
+			picture: null,
+			createdAt: 1,
+			lastLoginAt: 2,
+			summary: { puzzlesUploaded: 1, puzzlesSolved: 0, totalCompletions: 0 }
+		});
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({
+			families: [ownedFamily('fam-owned', 'Owned Puzzle', { status: 'ready', createdAt: 2 })],
+			nextCursor: undefined
+		});
+		vi.mocked(fetchFamilyDetail).mockRejectedValueOnce(new Error('detail down'));
+		vi.mocked(getPlayerStats).mockResolvedValue({ stats: [], nextCursor: undefined });
+
+		render(ProfilePage);
+		await expect.element(page.getByRole('heading', { name: 'Owned Puzzle' })).toBeVisible();
+		await expect
+			.element(page.getByRole('link').filter({ hasText: /Easy|Normal|Hard/ }))
+			.toHaveLength(0);
 	});
 
 	it('drops a bogus puzzle category that is not in the known category list', async () => {

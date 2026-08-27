@@ -98,5 +98,6 @@ describe('GET /api/leaderboard', () => {
 		const body = await response.json();
 		expect(body.me.rank).toBe(51);
 		expect(body.me.player.email).toBeUndefined();
+		expect(mocks.listOverallLeaderboard).toHaveBeenCalledWith({}, { viewerPlayerId: 'viewer' });
 	});
 });

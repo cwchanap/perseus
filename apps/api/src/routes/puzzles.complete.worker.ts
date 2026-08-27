@@ -4,6 +4,7 @@ import { getWorkerDbContext } from '../db.worker';
 import {
 	recordVersionedCompletion,
 	ensurePuzzleFamilyOwnership,
+	ensurePublicDisplayName,
 	SYSTEM_OWNER_ID
 } from '@perseus/shared';
 import { isPuzzleId } from '@perseus/types';
@@ -78,6 +79,11 @@ router.post('/:id/complete', requirePlayerAuth, async (c) => {
 			parsed.value,
 			{ familyId: puzzle.familyId, difficulty: puzzle.difficulty }
 		);
+		if (result.status === 'recorded' || result.status === 'replayed') {
+			await ensurePublicDisplayName(db, session.user.id, session.user.name).catch((err) =>
+				console.error(`Failed to persist public display name for ${session.user.id}:`, err)
+			);
+		}
 		const response = completionResultToResponse(result);
 		if (result.status !== 'tombstoned') {
 			// Lazily backfill a system-owned row for families that predate the DB

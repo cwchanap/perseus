@@ -84,6 +84,7 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 			achievementsTotal: 9,
 			masteryEarned: 0
 		})),
+		ensurePublicDisplayName: vi.fn().mockResolvedValue(undefined),
 		listPlayerPuzzles: vi.fn(
 			async (db: unknown, playerId: string): Promise<{ rows: unknown[]; nextCursor?: string }> => ({
 				rows: puzzlesStore.get(playerId) ?? [],
@@ -215,6 +216,44 @@ describe('player profile routes (Worker)', () => {
 			await buildApp().request('/api/player/profile', { headers: AUTH_COOKIE }, DUMMY_ENV)
 		).json()) as any;
 		expect(body.name).toBe('Google Name');
+	});
+
+	it('GET progression returns the authenticated player summary', async () => {
+		const shared = await import('@perseus/shared');
+		vi.mocked(shared.getPlayerProgressionSummary).mockResolvedValueOnce({
+			score: 325,
+			rank: 2,
+			easyClears: 1,
+			normalClears: 1,
+			hardClears: 0,
+			achievementsUnlocked: 2,
+			achievementsTotal: 9,
+			masteryEarned: 3
+		});
+
+		const res = await buildApp().request(
+			'/api/player/progression',
+			{ headers: AUTH_COOKIE },
+			DUMMY_ENV
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as any;
+		expect(body).toEqual({
+			score: 325,
+			rank: 2,
+			easyClears: 1,
+			normalClears: 1,
+			hardClears: 0,
+			achievementsUnlocked: 2,
+			achievementsTotal: 9,
+			masteryEarned: 3
+		});
+		expect(shared.getPlayerProgressionSummary).toHaveBeenCalledWith({}, 'p1');
+	});
+
+	it('GET progression returns 401 without auth', async () => {
+		const res = await buildApp().request('/api/player/progression', {}, DUMMY_ENV);
+		expect(res.status).toBe(401);
 	});
 
 	it('PATCH rejects non-string displayName with 400', async () => {

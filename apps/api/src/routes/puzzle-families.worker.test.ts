@@ -13,6 +13,11 @@ const dbContextMock = vi.hoisted(() => ({
 	}
 }));
 
+const leaderboardMocks = vi.hoisted(() => ({
+	listPuzzleLeaderboard: vi.fn(),
+	resolveLeaderboardIdentities: vi.fn()
+}));
+
 vi.mock('../db.worker', () => ({
 	getWorkerDb: vi.fn(() => dbContextMock.db),
 	getWorkerDbContext: vi.fn(() => dbContextMock)
@@ -24,7 +29,9 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 		...actual,
 		validateImageEndMarker: vi.fn().mockResolvedValue(true),
 		insertPuzzleFamilyOwnership: vi.fn().mockResolvedValue(undefined),
-		deletePuzzleFamilyOwnership: vi.fn().mockResolvedValue(undefined)
+		deletePuzzleFamilyOwnership: vi.fn().mockResolvedValue(undefined),
+		listPuzzleLeaderboard: leaderboardMocks.listPuzzleLeaderboard,
+		resolveLeaderboardIdentities: leaderboardMocks.resolveLeaderboardIdentities
 	};
 });
 
@@ -283,6 +290,110 @@ describe('Puzzle Family Routes', () => {
 
 			expect(res.status).toBe(200);
 			expect(res.headers.get('Content-Type')).toBe('image/jpeg');
+		});
+	});
+
+	describe('GET /:familyId/leaderboard', () => {
+		beforeEach(() => {
+			leaderboardMocks.listPuzzleLeaderboard.mockResolvedValue({
+				entries: [
+					{
+						rank: 1,
+						playerId: 'p1',
+						bestTimeSeconds: 65,
+						achievedAt: 1_000
+					}
+				]
+			});
+			leaderboardMocks.resolveLeaderboardIdentities.mockResolvedValue(
+				new Map([['p1', { id: 'p1', name: 'Ace', avatarUrl: null }]])
+			);
+		});
+
+		it('returns family leaderboard entries without email', async () => {
+			const res = await puzzleFamilies.fetch(
+				new Request(`http://localhost/${FAMILY_ID}/leaderboard?difficulty=normal&mode=standard`),
+				mockEnv as any
+			);
+			expect(res.status).toBe(200);
+			const body = (await res.json()) as any;
+			expect(body.entries[0]).toEqual({
+				rank: 1,
+				player: { id: 'p1', name: 'Ace', avatarUrl: null },
+				bestTimeSeconds: 65,
+				achievedAt: 1_000
+			});
+			expect(body.entries[0].player.email).toBeUndefined();
+			expect(leaderboardMocks.listPuzzleLeaderboard).toHaveBeenCalledWith(
+				dbContextMock.db,
+				expect.objectContaining({
+					familyId: FAMILY_ID,
+					difficulty: 'normal',
+					mode: 'standard',
+					viewerPlayerId: undefined
+				})
+			);
+		});
+
+		it('forwards viewerPlayerId from optional auth', async () => {
+			vi.mocked(playerAuth.getPlayerSession).mockResolvedValue({
+				sessionHash: 'session-hash',
+				user: {
+					id: 'viewer',
+					email: 'viewer@example.com',
+					name: 'Viewer',
+					createdAt: 1,
+					lastLoginAt: 2
+				},
+				createdAt: 1,
+				expiresAt: Date.now() + 1000
+			});
+			leaderboardMocks.listPuzzleLeaderboard.mockResolvedValue({
+				entries: [],
+				me: {
+					rank: 3,
+					playerId: 'viewer',
+					bestTimeSeconds: 90,
+					achievedAt: 2_000
+				}
+			});
+			leaderboardMocks.resolveLeaderboardIdentities.mockResolvedValue(
+				new Map([['viewer', { id: 'viewer', name: 'Viewer', avatarUrl: null }]])
+			);
+
+			const res = await puzzleFamilies.fetch(
+				new Request(`http://localhost/${FAMILY_ID}/leaderboard`, {
+					headers: { Cookie: 'perseus_player_session=player-token' }
+				}),
+				mockEnv as any
+			);
+			const body = (await res.json()) as any;
+			expect(body.me.rank).toBe(3);
+			expect(body.me.player.email).toBeUndefined();
+			expect(leaderboardMocks.listPuzzleLeaderboard).toHaveBeenCalledWith(
+				dbContextMock.db,
+				expect.objectContaining({ viewerPlayerId: 'viewer' })
+			);
+		});
+
+		it('rejects invalid familyId, difficulty, and mode', async () => {
+			const badFamily = await puzzleFamilies.fetch(
+				new Request('http://localhost/not-a-uuid/leaderboard'),
+				mockEnv as any
+			);
+			expect(badFamily.status).toBe(400);
+
+			const badDifficulty = await puzzleFamilies.fetch(
+				new Request(`http://localhost/${FAMILY_ID}/leaderboard?difficulty=extreme`),
+				mockEnv as any
+			);
+			expect(badDifficulty.status).toBe(400);
+
+			const badMode = await puzzleFamilies.fetch(
+				new Request(`http://localhost/${FAMILY_ID}/leaderboard?mode=assisted`),
+				mockEnv as any
+			);
+			expect(badMode.status).toBe(400);
 		});
 	});
 });
