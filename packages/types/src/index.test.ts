@@ -29,7 +29,17 @@ import {
 	type PlayerStatRow,
 	type ResultClass,
 	type RecordPuzzleCompletionResponse,
-	coercePuzzleStatus
+	coercePuzzleStatus,
+	validatePuzzleFamilyMetadata,
+	isPuzzleFamilySummary,
+	isPuzzleFamilyListResponse,
+	isPuzzleVariantSummary,
+	PUZZLE_DIFFICULTIES,
+	getDifficultyPieceCount,
+	type PuzzleFamilyMetadata,
+	type PuzzleFamilySummary,
+	type PuzzleFamilyListResponse,
+	type PuzzleVariantSummary
 } from './index';
 
 // Helper to create a valid piece
@@ -1398,5 +1408,155 @@ describe('player profile validators', () => {
 
 	it('accepts player puzzle summary with valid category', () => {
 		expect(isPlayerPuzzleSummary({ ...puzzle, category: 'Animals' })).toBe(true);
+	});
+});
+
+const FAMILY_ID = '123e4567-e89b-42d3-a456-426614174000';
+const EASY_VARIANT_ID = '223e4567-e89b-42d3-a456-426614174001';
+const NORMAL_VARIANT_ID = '323e4567-e89b-42d3-a456-426614174002';
+const HARD_VARIANT_ID = '423e4567-e89b-42d3-a456-426614174003';
+
+function makeFamilyMetadata(overrides: Record<string, unknown> = {}): PuzzleFamilyMetadata {
+	return {
+		id: FAMILY_ID,
+		name: 'Mountain Vista',
+		category: 'Nature',
+		aspectRatio: '4:3',
+		createdAt: 1716500000000,
+		status: 'ready',
+		variants: {
+			easy: EASY_VARIANT_ID,
+			normal: NORMAL_VARIANT_ID,
+			hard: HARD_VARIANT_ID
+		},
+		...overrides
+	};
+}
+
+function makeVariantSummary(
+	difficulty: 'easy' | 'normal' | 'hard',
+	overrides: Record<string, unknown> = {}
+): PuzzleVariantSummary {
+	const ids = { easy: EASY_VARIANT_ID, normal: NORMAL_VARIANT_ID, hard: HARD_VARIANT_ID };
+	return {
+		id: ids[difficulty],
+		difficulty,
+		pieceCount: getDifficultyPieceCount('4:3', difficulty),
+		status: 'ready',
+		...overrides
+	};
+}
+
+function makeFamilySummary(overrides: Record<string, unknown> = {}): PuzzleFamilySummary {
+	return {
+		id: FAMILY_ID,
+		name: 'Mountain Vista',
+		category: 'Nature',
+		aspectRatio: '4:3',
+		status: 'ready',
+		createdAt: 1716500000000,
+		variants: {
+			easy: makeVariantSummary('easy'),
+			normal: makeVariantSummary('normal'),
+			hard: makeVariantSummary('hard')
+		},
+		...overrides
+	};
+}
+
+describe('puzzle family contracts', () => {
+	it('validates family metadata with exactly three UUID variant IDs', () => {
+		expect(validatePuzzleFamilyMetadata(makeFamilyMetadata())).toBe(true);
+	});
+
+	it('rejects family metadata missing a difficulty variant', () => {
+		const { hard: _, ...variants } = makeFamilyMetadata().variants;
+		void _;
+		expect(validatePuzzleFamilyMetadata(makeFamilyMetadata({ variants }))).toBe(false);
+	});
+
+	it('rejects family metadata with non-UUID variant IDs', () => {
+		expect(
+			validatePuzzleFamilyMetadata(
+				makeFamilyMetadata({
+					variants: {
+						easy: 'not-a-uuid',
+						normal: NORMAL_VARIANT_ID,
+						hard: HARD_VARIANT_ID
+					}
+				})
+			)
+		).toBe(false);
+	});
+
+	it('rejects family metadata with an invalid aspect ratio', () => {
+		expect(validatePuzzleFamilyMetadata(makeFamilyMetadata({ aspectRatio: '16:9' }))).toBe(false);
+	});
+
+	it('rejects family metadata with an invalid status', () => {
+		expect(validatePuzzleFamilyMetadata(makeFamilyMetadata({ status: 'unknown' }))).toBe(false);
+	});
+
+	it('validates a family summary without a scalar pieceCount', () => {
+		const summary = makeFamilySummary();
+		expect('pieceCount' in summary).toBe(false);
+		expect(isPuzzleFamilySummary(summary)).toBe(true);
+	});
+
+	it('rejects a family summary that includes a scalar pieceCount', () => {
+		expect(isPuzzleFamilySummary({ ...makeFamilySummary(), pieceCount: 48 })).toBe(false);
+	});
+
+	it('rejects a family summary when variant pieceCount does not match difficulty grid', () => {
+		expect(
+			isPuzzleFamilySummary(
+				makeFamilySummary({
+					variants: {
+						easy: makeVariantSummary('easy'),
+						normal: makeVariantSummary('normal', { pieceCount: 99 }),
+						hard: makeVariantSummary('hard')
+					}
+				})
+			)
+		).toBe(false);
+	});
+
+	it('validates variant summaries for each fixed difficulty', () => {
+		for (const difficulty of PUZZLE_DIFFICULTIES) {
+			expect(isPuzzleVariantSummary(makeVariantSummary(difficulty), '4:3')).toBe(true);
+		}
+	});
+
+	it('validates a family list response mirroring puzzle list pagination', () => {
+		const response: PuzzleFamilyListResponse = {
+			families: [makeFamilySummary()],
+			total: 1,
+			offset: 0,
+			limit: 20
+		};
+		expect(isPuzzleFamilyListResponse(response)).toBe(true);
+	});
+
+	it('validates a family list response with nextCursor', () => {
+		expect(
+			isPuzzleFamilyListResponse({
+				families: [],
+				total: 0,
+				offset: 0,
+				limit: 20,
+				nextCursor: 'cursor-1'
+			})
+		).toBe(true);
+	});
+
+	it('rejects a family list response with invalid families', () => {
+		expect(
+			isPuzzleFamilyListResponse({
+				families: [{ ...makeFamilySummary(), pieceCount: 12 }],
+				total: 1,
+				offset: 0,
+				limit: 20
+			})
+		).toBe(false);
 	});
 });

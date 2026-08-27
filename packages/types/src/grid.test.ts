@@ -10,7 +10,12 @@ import {
 	isValidPieceCountForAspectRatio,
 	isPuzzleAspectRatio,
 	aspectRatiosMatch,
-	ASPECT_RATIO_TOLERANCE
+	ASPECT_RATIO_TOLERANCE,
+	PUZZLE_DIFFICULTIES,
+	DIFFICULTY_PIECE_COUNTS,
+	getDifficultyPieceCount,
+	type PuzzleAspectRatio,
+	type PuzzleDifficulty
 } from './grid';
 
 describe('getGridDimensions', () => {
@@ -112,6 +117,54 @@ describe('edge helpers', () => {
 				if (bottom === 'tab') expect(topOfNext).toBe('blank');
 				else if (bottom === 'blank') expect(topOfNext).toBe('tab');
 				else expect(topOfNext).toBe('flat');
+			}
+		}
+	});
+});
+
+describe('difficulty piece counts', () => {
+	const expectedGrids: Record<
+		PuzzleDifficulty,
+		Record<PuzzleAspectRatio, { count: number; rows: number; cols: number }>
+	> = {
+		easy: {
+			'1:1': { count: 16, rows: 4, cols: 4 },
+			'4:3': { count: 12, rows: 3, cols: 4 },
+			'3:4': { count: 12, rows: 4, cols: 3 }
+		},
+		normal: {
+			'1:1': { count: 49, rows: 7, cols: 7 },
+			'4:3': { count: 48, rows: 6, cols: 8 },
+			'3:4': { count: 48, rows: 8, cols: 6 }
+		},
+		hard: {
+			'1:1': { count: 100, rows: 10, cols: 10 },
+			'4:3': { count: 108, rows: 9, cols: 12 },
+			'3:4': { count: 108, rows: 12, cols: 9 }
+		}
+	};
+
+	it('exposes the fixed difficulty catalog', () => {
+		expect(PUZZLE_DIFFICULTIES).toEqual(['easy', 'normal', 'hard']);
+		expect(DIFFICULTY_PIECE_COUNTS).toEqual({
+			easy: { '1:1': 16, '4:3': 12, '3:4': 12 },
+			normal: { '1:1': 49, '4:3': 48, '3:4': 48 },
+			hard: { '1:1': 100, '4:3': 108, '3:4': 108 }
+		});
+	});
+
+	it('matches the design-spec rows×cols grid for every difficulty and aspect ratio', () => {
+		expect(getDifficultyPieceCount('4:3', 'easy')).toBe(12);
+		expect(getGridDimensionsForAspectRatio(12, '4:3')).toEqual({ rows: 3, cols: 4 });
+		expect(getDifficultyPieceCount('3:4', 'hard')).toBe(108);
+		expect(getGridDimensionsForAspectRatio(108, '3:4')).toEqual({ rows: 12, cols: 9 });
+
+		for (const difficulty of PUZZLE_DIFFICULTIES) {
+			for (const aspectRatio of ['1:1', '4:3', '3:4'] as const) {
+				const { count, rows, cols } = expectedGrids[difficulty][aspectRatio];
+				expect(getDifficultyPieceCount(aspectRatio, difficulty)).toBe(count);
+				expect(getGridDimensionsForAspectRatio(count, aspectRatio)).toEqual({ rows, cols });
+				expect(isValidPieceCountForAspectRatio(count, aspectRatio)).toBe(true);
 			}
 		}
 	});
