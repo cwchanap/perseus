@@ -782,6 +782,25 @@ After family-only code deploys and **before** imported families finish all three
 variants, the production gallery is empty. This is accepted pre-release downtime
 — not an unnoticed failure mode. Run import immediately after deploy.
 
+### Accepted schema/code mismatch window (`0006_puzzle_progression_reset`)
+
+Deploy applies `0006_puzzle_progression_reset` automatically before `pulumi up`
+publishes the new Worker (non-additive exception to the additive-only safety
+comment in `.github/workflows/deploy-infrastructure.yml`). From the moment
+`0006` finishes until the new Worker version is live, the still-running Worker
+expects the dropped legacy tables (`puzzles`, `puzzle_stats`,
+`puzzle_completion_runs`) and D1-backed routes can 500:
+
+- `POST /api/puzzles/:id/complete`
+- `/api/player/*` (profile, stats, progression, avatar metadata)
+- `/api/admin/*` D1 paths (ownership mirror, admin stats)
+- Workflow status mirrors that read D1
+
+The window ends when the new Worker version is live. This is accepted alongside
+the empty-gallery window above — not an unnoticed failure mode. Production D1
+export (Step 0) and legacy content export (Step 1) remain mandatory operator
+pre-merge gates; do not merge without verified backups.
+
 ### Step 3 — import families (post-deploy)
 
 ```bash
