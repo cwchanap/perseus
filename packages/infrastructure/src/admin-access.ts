@@ -43,7 +43,8 @@ const ADMIN_ACCESS_APP_FLAGS = {
 	allowAuthenticateViaWarp: false,
 	enableBindingCookie: true,
 	httpOnlyCookieAttribute: true,
-	pathCookieAttribute: false
+	pathCookieAttribute: false,
+	sameSiteCookieAttribute: 'lax'
 } as const;
 
 type AdminAccessDestination = cloudflare.types.input.ZeroTrustAccessApplicationDestination;

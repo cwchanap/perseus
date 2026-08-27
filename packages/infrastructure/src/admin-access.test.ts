@@ -290,6 +290,7 @@ describe('buildAdminAccessApplicationArgs', () => {
 			enableBindingCookie: true,
 			httpOnlyCookieAttribute: true,
 			pathCookieAttribute: false,
+			sameSiteCookieAttribute: 'lax',
 			policies: [
 				{
 					name: 'Allow configured admin on trusted device',
