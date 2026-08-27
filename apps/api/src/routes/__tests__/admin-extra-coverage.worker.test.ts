@@ -59,12 +59,7 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	};
 });
 
-import {
-	cleanupRecordMatcher,
-	makeFamilyMetadata,
-	PIECE_COUNTS_1_1,
-	variantIdsForFamily
-} from './helpers/family-fixtures';
+import { cleanupRecordMatcher, makeFamilyMetadata } from './helpers/family-fixtures';
 import admin from '../admin.worker';
 import * as storage from '../../services/storage.worker';
 import { __resetRateLimitStore } from '../../middleware/rate-limit.worker';

@@ -3,13 +3,7 @@ import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
 import AdminPuzzlesPanel from './AdminPuzzlesPanel.svelte';
 import type { PuzzleFamilySummary } from '@perseus/types';
-import {
-	ApiError,
-	deletePuzzle,
-	fetchAdminPuzzles,
-	getFamilyThumbnailUrl,
-	getReferenceImageUrl
-} from '$lib/services/api';
+import { ApiError, deletePuzzle, fetchAdminPuzzles, getReferenceImageUrl } from '$lib/services/api';
 
 vi.mock('$lib/services/api', () => {
 	class MockApiError extends Error {

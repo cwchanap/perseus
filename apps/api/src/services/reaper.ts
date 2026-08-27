@@ -26,7 +26,6 @@
 // hatch (see the perseus-operations skill's operator runbook).
 
 import {
-	deleteMetadataDO,
 	getAuthoritativeStatus,
 	getIdempotencyReservation,
 	getFamily,

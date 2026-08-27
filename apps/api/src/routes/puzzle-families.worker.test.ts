@@ -4,7 +4,7 @@ import puzzleFamilies from './puzzle-families.worker';
 import * as storage from '../services/storage.worker';
 import * as playerAuth from '../services/player-auth.worker';
 import { insertPuzzleFamilyOwnership } from '@perseus/shared';
-import { makeFamilyMetadata, variantIdsForFamily } from './__tests__/helpers/family-fixtures';
+import { makeFamilyMetadata } from './__tests__/helpers/family-fixtures';
 
 const dbContextMock = vi.hoisted(() => ({
 	db: {},

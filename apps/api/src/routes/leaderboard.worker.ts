@@ -1,11 +1,7 @@
 import { Hono } from 'hono';
 import type { Env } from '../worker';
 import { getWorkerDb } from '../db.worker';
-import {
-	listOverallLeaderboard,
-	resolveLeaderboardIdentities,
-	type LeaderboardIdentityRow
-} from '@perseus/shared';
+import { listOverallLeaderboard, resolveLeaderboardIdentities } from '@perseus/shared';
 import {
 	isOverallLeaderboardEntry,
 	type OverallLeaderboardEntry,
@@ -18,18 +14,6 @@ const leaderboard = new Hono<{
 	Bindings: Env;
 	Variables: { playerSession?: PlayerSessionRecord };
 }>();
-
-function toPublicIdentity(row: LeaderboardIdentityRow) {
-	return {
-		id: row.id,
-		name: row.name,
-		avatarUrl: row.avatarUrl
-			? row.avatarUrl.startsWith('/')
-				? row.avatarUrl
-				: row.avatarUrl
-			: null
-	};
-}
 
 function resolveAvatarUrl(playerId: string, avatarUrl: string | null): string | null {
 	if (!avatarUrl) return null;

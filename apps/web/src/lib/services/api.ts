@@ -1,8 +1,6 @@
 // API client service for Jigsaw Puzzle Web App
 import type {
 	Puzzle,
-	PuzzleMetadata,
-	PuzzleSummary,
 	DeletePuzzleResponse,
 	PuzzleCategory,
 	PlayerSessionResponse,

@@ -13,12 +13,7 @@ import {
 	createSessionStorageAdapter,
 	listResumableSessionCandidateIds
 } from './session/persistence';
-import {
-	fullBoardPlacements,
-	memoryStorage,
-	seal,
-	validSnapshot
-} from './session/persistence.test-fixtures';
+import { memoryStorage, seal, validSnapshot } from './session/persistence.test-fixtures';
 import type {
 	PersistedPuzzleSessionV1,
 	SessionLoadResult,
