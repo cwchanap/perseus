@@ -41,6 +41,10 @@ describe('schema tables', () => {
 			readFileSync('./drizzle/meta/0006_snapshot.json', 'utf8')
 		) as {
 			prevId: string;
+			tables: {
+				puzzle_best_times: { checkConstraints: Record<string, { value: string }> };
+				puzzle_completion_runs: { checkConstraints: Record<string, { value: string }> };
+			};
 		};
 		const previousSnapshot = JSON.parse(
 			readFileSync('./drizzle/meta/0005_snapshot.json', 'utf8')
@@ -48,17 +52,11 @@ describe('schema tables', () => {
 			id: string;
 		};
 		expect(latestSnapshot.prevId).toBe(previousSnapshot.id);
-		const snapshotChecks = latestSnapshot as {
-			tables: {
-				puzzle_best_times: { checkConstraints: Record<string, { value: string }> };
-				puzzle_completion_runs: { checkConstraints: Record<string, { value: string }> };
-			};
-		};
 		expect(
-			snapshotChecks.tables.puzzle_best_times.checkConstraints.pbt_best_time_seconds_check.value
+			latestSnapshot.tables.puzzle_best_times.checkConstraints.pbt_best_time_seconds_check.value
 		).toBe('"puzzle_best_times"."best_time_seconds" BETWEEN 1 AND 86400');
 		expect(
-			snapshotChecks.tables.puzzle_completion_runs.checkConstraints.pcr_elapsed_active_seconds_check
+			latestSnapshot.tables.puzzle_completion_runs.checkConstraints.pcr_elapsed_active_seconds_check
 				.value
 		).toContain('BETWEEN 1 AND 86400');
 	});

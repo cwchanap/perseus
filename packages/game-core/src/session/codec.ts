@@ -24,7 +24,7 @@ import type {
 import { CURRENT_SESSION_SCHEMA_VERSION } from './types';
 import {
 	isPuzzleRunId,
-	isRecordPuzzleCompletionV1,
+	isValidCompletionRunFields,
 	MAX_COMPLETION_TIME_SECONDS,
 	RESULT_CLASSES
 } from '@perseus/types';
@@ -540,19 +540,21 @@ function validateSeal(
 	) {
 		return false;
 	}
-	// Validate the projected completion request against the same contract the
-	// server enforces (isRecordPuzzleCompletionV1). Without this, a persisted
-	// seal with e.g. elapsed 0, a fractional value, or a null-for-timed
-	// value would pass local validation but be rejected by the server when
-	// hydration replays the pending submission — permanently losing it as a
+	// Validate sealed run timing against the same bounded rules the server enforces.
+	// Without this, a persisted seal with e.g. elapsed 0, a fractional value, or a
+	// null-for-timed value would pass local validation but be rejected by the server
+	// when hydration replays the pending submission — permanently losing it as a
 	// terminal bad_request.
-	const projectedRequest = {
-		version: 1,
-		runId: s.runId,
-		resultClass: s.resultClass,
-		elapsedActiveSeconds: elapsed
-	};
-	if (!isRecordPuzzleCompletionV1(projectedRequest, MAX_COMPLETION_TIME_SECONDS)) {
+	if (
+		!isValidCompletionRunFields(
+			{
+				runId: s.runId,
+				resultClass: s.resultClass,
+				elapsedActiveSeconds: elapsed
+			},
+			MAX_COMPLETION_TIME_SECONDS
+		)
+	) {
 		return false;
 	}
 	// Completion effects must be present and applicable. A missing/null

@@ -427,7 +427,7 @@ export interface CreatePuzzleSessionOptions {
 // --- Seal projection ----------------------------------------------------------
 
 /**
- * Project an immutable sealed completion into the v1 API request shape.
+ * Project an immutable sealed completion into the V2 API request shape.
  * Excludes client-only fields like `completedAt`.
  */
 export function completionRequestFromSeal(seal: SealedCompletion): RecordPuzzleCompletionV2 {

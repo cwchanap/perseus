@@ -281,13 +281,6 @@ export const RESULT_CLASSES = [
 
 export type ResultClass = (typeof RESULT_CLASSES)[number];
 
-export interface RecordPuzzleCompletionV1 {
-	version: 1;
-	runId: string;
-	resultClass: ResultClass;
-	elapsedActiveSeconds: number | null;
-}
-
 export interface RecordPuzzleCompletionV2 {
 	version: 2;
 	runId: string;
@@ -536,25 +529,23 @@ function isValidTimedElapsedSeconds(
 	);
 }
 
-export function isRecordPuzzleCompletionV1(
+export type CompletionRunFields = {
+	runId: string;
+	resultClass: ResultClass;
+	elapsedActiveSeconds: number | null;
+};
+
+export function isValidCompletionRunFields(
 	value: unknown,
 	maxElapsedActiveSeconds: number
-): value is RecordPuzzleCompletionV1 {
+): value is CompletionRunFields {
 	if (typeof value !== 'object' || value === null) return false;
 	if (!Number.isInteger(maxElapsedActiveSeconds) || maxElapsedActiveSeconds <= 0) {
 		return false;
 	}
 
 	const completion = value as Record<string, unknown>;
-	const fields = ['version', 'runId', 'resultClass', 'elapsedActiveSeconds'];
-	const completionKeys = Object.keys(completion);
-	if (
-		completionKeys.length !== fields.length ||
-		!completionKeys.every((field) => fields.includes(field))
-	) {
-		return false;
-	}
-	if (completion.version !== 1 || !isPuzzleRunId(completion.runId)) return false;
+	if (!isPuzzleRunId(completion.runId)) return false;
 	if (!RESULT_CLASSES.includes(completion.resultClass as ResultClass)) return false;
 	if (completion.resultClass === 'relaxed') return completion.elapsedActiveSeconds === null;
 
@@ -586,13 +577,22 @@ export function isRecordPuzzleCompletionV2(
 	) {
 		return false;
 	}
-	if (completion.version !== 2 || !isPuzzleRunId(completion.runId)) return false;
-	if (!RESULT_CLASSES.includes(completion.resultClass as ResultClass)) return false;
+	if (completion.version !== 2) return false;
+	if (
+		!isValidCompletionRunFields(
+			{
+				runId: completion.runId,
+				resultClass: completion.resultClass,
+				elapsedActiveSeconds: completion.elapsedActiveSeconds
+			},
+			maxElapsedActiveSeconds
+		)
+	) {
+		return false;
+	}
 	if (!isNonNegativeInteger(completion.hintsUsed)) return false;
 	if (!isNonNegativeInteger(completion.incorrectAttempts)) return false;
-	if (completion.resultClass === 'relaxed') return completion.elapsedActiveSeconds === null;
-
-	return isValidTimedElapsedSeconds(completion.elapsedActiveSeconds, maxElapsedActiveSeconds);
+	return true;
 }
 
 export function validateWorkflowParams(params: unknown): params is WorkflowParams {
