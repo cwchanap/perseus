@@ -113,9 +113,11 @@ export function isPuzzleFamilySummary(value: unknown): value is PuzzleFamilySumm
 	if (!hasExactDifficultyKeys(family.variants)) return false;
 	const aspectRatio = family.aspectRatio as PuzzleAspectRatio;
 	const variants = family.variants as Record<PuzzleDifficulty, unknown>;
-	return PUZZLE_DIFFICULTIES.every((difficulty) =>
-		isPuzzleVariantSummary(variants[difficulty], aspectRatio)
-	);
+	return PUZZLE_DIFFICULTIES.every((difficulty) => {
+		const variant = variants[difficulty];
+		if (!isPuzzleVariantSummary(variant, aspectRatio)) return false;
+		return variant.difficulty === difficulty;
+	});
 }
 
 export function isPuzzleFamilyListResponse(value: unknown): value is PuzzleFamilyListResponse {
