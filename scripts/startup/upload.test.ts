@@ -191,6 +191,14 @@ describe('readError', () => {
 		expect(msg).toContain('CF_ACCESS_CLIENT_ID');
 	});
 
+	it('detects Cloudflare Access block (401) with service token hint', async () => {
+		const res = new Response('Unauthorized', { status: 401 });
+		const msg = await readError(res, true);
+		expect(msg).toContain('401');
+		expect(msg).toContain('Cloudflare Access blocked');
+		expect(msg).toContain('CF_ACCESS_CLIENT_ID');
+	});
+
 	it('detects Cloudflare Access block (302) with cookie-based hint', async () => {
 		const res = new Response('Cloudflare Access', { status: 302 });
 		const msg = await readError(res, false);
