@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { page } from 'vitest/browser';
 import ProfilePage from './+page.svelte';
-import type { PlayerPuzzleSummary, PlayerStatRow } from '$lib/types/puzzle';
+import type { PlayerOwnedFamilySummary, PlayerStatRow } from '$lib/types/puzzle';
 
 vi.mock('$lib/services/api', () => ({
 	getPlayerProfile: vi.fn(),
@@ -11,7 +11,7 @@ vi.mock('$lib/services/api', () => ({
 	updatePlayerProfile: vi.fn(),
 	uploadPlayerAvatar: vi.fn(),
 	getAvatarUrl: vi.fn((id: string) => `/api/player/${id}/avatar`),
-	getThumbnailUrl: vi.fn(),
+	getFamilyThumbnailUrl: vi.fn((id: string) => `/api/puzzle-families/${id}/thumbnail`),
 	resolveAssetUrl: vi.fn((url: string | null | undefined) => url ?? null)
 }));
 
@@ -35,16 +35,31 @@ import { getPlayerProfile, getPlayerPuzzles, getPlayerStats } from '$lib/service
 import { uploadPlayerAvatar, resolveAssetUrl } from '$lib/services/api';
 import { formatTime } from '$lib/stores/timer';
 
-const puzzles: PlayerPuzzleSummary[] = [
+const families: PlayerOwnedFamilySummary[] = [
 	{
 		id: 'pz-1',
 		name: 'Test Puzzle',
-		pieceCount: 100,
+		aspectRatio: '1:1',
 		status: 'ready',
-		category: 'nature',
+		category: 'Nature',
 		createdAt: 1
 	}
 ];
+
+function ownedFamily(
+	id: string,
+	name: string,
+	overrides?: Partial<PlayerOwnedFamilySummary>
+): PlayerOwnedFamilySummary {
+	return {
+		id,
+		name,
+		aspectRatio: '1:1',
+		status: 'ready',
+		createdAt: 1,
+		...overrides
+	};
+}
 
 const stats: PlayerStatRow[] = [
 	{
@@ -84,7 +99,7 @@ describe('profile page', () => {
 			lastLoginAt: 2,
 			summary: { puzzlesUploaded: 1, puzzlesSolved: 2, totalCompletions: 3 }
 		});
-		vi.mocked(getPlayerPuzzles).mockResolvedValue({ puzzles, nextCursor: undefined });
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({ families, nextCursor: undefined });
 		vi.mocked(getPlayerStats).mockResolvedValue({ stats });
 
 		render(ProfilePage);
@@ -101,7 +116,7 @@ describe('profile page', () => {
 			lastLoginAt: 2,
 			summary: { puzzlesUploaded: 5, puzzlesSolved: 3, totalCompletions: 7 }
 		});
-		vi.mocked(getPlayerPuzzles).mockResolvedValue({ puzzles, nextCursor: undefined });
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({ families, nextCursor: undefined });
 		vi.mocked(getPlayerStats).mockResolvedValue({ stats });
 
 		render(ProfilePage);
@@ -120,7 +135,7 @@ describe('profile page', () => {
 			lastLoginAt: 2,
 			summary: { puzzlesUploaded: 1, puzzlesSolved: 2, totalCompletions: 3 }
 		});
-		vi.mocked(getPlayerPuzzles).mockResolvedValue({ puzzles, nextCursor: undefined });
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({ families, nextCursor: undefined });
 		vi.mocked(getPlayerStats).mockResolvedValue({ stats });
 
 		render(ProfilePage);
@@ -136,7 +151,7 @@ describe('profile page', () => {
 
 	it('shows an error with retry when loading the profile fails', async () => {
 		vi.mocked(getPlayerProfile).mockRejectedValueOnce(new Error('Network error'));
-		vi.mocked(getPlayerPuzzles).mockResolvedValue({ puzzles, nextCursor: undefined });
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({ families, nextCursor: undefined });
 		vi.mocked(getPlayerStats).mockResolvedValue({ stats });
 
 		render(ProfilePage);
@@ -167,7 +182,7 @@ describe('profile page', () => {
 			lastLoginAt: 2,
 			summary: { puzzlesUploaded: 0, puzzlesSolved: 0, totalCompletions: 0 }
 		});
-		vi.mocked(getPlayerPuzzles).mockResolvedValue({ puzzles, nextCursor: undefined });
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({ families, nextCursor: undefined });
 		vi.mocked(getPlayerStats).mockResolvedValue({ stats });
 
 		render(ProfilePage);
@@ -193,7 +208,7 @@ describe('profile page', () => {
 			lastLoginAt: 2,
 			summary: { puzzlesUploaded: 0, puzzlesSolved: 0, totalCompletions: 0 }
 		});
-		vi.mocked(getPlayerPuzzles).mockResolvedValue({ puzzles, nextCursor: undefined });
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({ families, nextCursor: undefined });
 		vi.mocked(getPlayerStats).mockResolvedValue({ stats });
 		vi.mocked(uploadPlayerAvatar).mockResolvedValue({ avatarUrl: '/api/player/p1/avatar' });
 
@@ -229,7 +244,7 @@ describe('profile page', () => {
 			lastLoginAt: 2,
 			summary: { puzzlesUploaded: 0, puzzlesSolved: 0, totalCompletions: 0 }
 		});
-		vi.mocked(getPlayerPuzzles).mockResolvedValue({ puzzles: [], nextCursor: undefined });
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({ families: [], nextCursor: undefined });
 		vi.mocked(getPlayerStats).mockResolvedValue({ stats: [], nextCursor: undefined });
 		vi.mocked(uploadPlayerAvatar).mockResolvedValue({ avatarUrl: avatarPath });
 
@@ -274,7 +289,7 @@ describe('profile page', () => {
 			lastLoginAt: 2,
 			summary: { puzzlesUploaded: 0, puzzlesSolved: 0, totalCompletions: 0 }
 		});
-		vi.mocked(getPlayerPuzzles).mockResolvedValue({ puzzles: [], nextCursor: undefined });
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({ families: [], nextCursor: undefined });
 		vi.mocked(getPlayerStats).mockResolvedValue({ stats: [], nextCursor: undefined });
 		vi.mocked(uploadPlayerAvatar).mockResolvedValue({ avatarUrl: avatarPath });
 
@@ -334,9 +349,7 @@ describe('profile page', () => {
 		});
 		// Page 1 returns a cursor (more puzzles exist).
 		vi.mocked(getPlayerPuzzles).mockResolvedValue({
-			puzzles: [
-				{ id: 'pz-1', name: 'Forest Puzzle', pieceCount: 4, status: 'ready', createdAt: 2 }
-			],
+			families: [ownedFamily('pz-1', 'Forest Puzzle', { createdAt: 2 })],
 			nextCursor: 'puz-cursor'
 		});
 		// Stats return no cursor → no stats Load more control.
@@ -366,16 +379,12 @@ describe('profile page', () => {
 		vi.mocked(getPlayerPuzzles).mockImplementation(async (params) => {
 			if (params?.cursor === 'puz-cursor') {
 				return {
-					puzzles: [
-						{ id: 'pz-2', name: 'Ocean Puzzle', pieceCount: 9, status: 'ready', createdAt: 1 }
-					],
+					families: [ownedFamily('pz-2', 'Ocean Puzzle', { createdAt: 1 })],
 					nextCursor: undefined
 				};
 			}
 			return {
-				puzzles: [
-					{ id: 'pz-1', name: 'Forest Puzzle', pieceCount: 4, status: 'ready', createdAt: 2 }
-				],
+				families: [ownedFamily('pz-1', 'Forest Puzzle', { createdAt: 2 })],
 				nextCursor: 'puz-cursor'
 			};
 		});
@@ -403,7 +412,7 @@ describe('profile page', () => {
 			lastLoginAt: 2,
 			summary: { puzzlesUploaded: 2, puzzlesSolved: 1, totalCompletions: 3 }
 		});
-		vi.mocked(getPlayerPuzzles).mockResolvedValue({ puzzles, nextCursor: undefined });
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({ families, nextCursor: undefined });
 		const stat1: PlayerStatRow = {
 			puzzleId: 'pz-a',
 			puzzleName: 'Alpha Stat',
@@ -450,7 +459,7 @@ describe('profile page', () => {
 			lastLoginAt: 2,
 			summary: { puzzlesUploaded: 0, puzzlesSolved: 0, totalCompletions: 0 }
 		});
-		vi.mocked(getPlayerPuzzles).mockResolvedValue({ puzzles, nextCursor: undefined });
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({ families, nextCursor: undefined });
 		vi.mocked(getPlayerStats).mockRejectedValue(new Error('stats down'));
 
 		render(ProfilePage);
@@ -468,7 +477,7 @@ describe('profile page', () => {
 			lastLoginAt: 2,
 			summary: { puzzlesUploaded: 0, puzzlesSolved: 0, totalCompletions: 0 }
 		});
-		vi.mocked(getPlayerPuzzles).mockResolvedValue({ puzzles: [], nextCursor: undefined });
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({ families: [], nextCursor: undefined });
 		vi.mocked(getPlayerStats).mockResolvedValue({ stats, nextCursor: undefined });
 
 		render(ProfilePage);
@@ -488,7 +497,7 @@ describe('profile page', () => {
 			lastLoginAt: 2,
 			summary: { puzzlesUploaded: 0, puzzlesSolved: 0, totalCompletions: 0 }
 		});
-		vi.mocked(getPlayerPuzzles).mockResolvedValue({ puzzles: [], nextCursor: undefined });
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({ families: [], nextCursor: undefined });
 		vi.mocked(getPlayerStats).mockResolvedValue({ stats: [], nextCursor: undefined });
 
 		const { updatePlayerProfile } = await import('$lib/services/api');
@@ -515,7 +524,7 @@ describe('profile page', () => {
 			lastLoginAt: 2,
 			summary: { puzzlesUploaded: 0, puzzlesSolved: 0, totalCompletions: 0 }
 		});
-		vi.mocked(getPlayerPuzzles).mockResolvedValue({ puzzles: [], nextCursor: undefined });
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({ families: [], nextCursor: undefined });
 		const statNoName: PlayerStatRow = {
 			puzzleId: 'pz-anon',
 			puzzleName: '',
@@ -547,9 +556,7 @@ describe('profile page', () => {
 				throw new Error('pagination down');
 			}
 			return {
-				puzzles: [
-					{ id: 'pz-1', name: 'Forest Puzzle', pieceCount: 4, status: 'ready', createdAt: 2 }
-				],
+				families: [ownedFamily('pz-1', 'Forest Puzzle', { createdAt: 2 })],
 				nextCursor: 'puz-cursor'
 			};
 		});
@@ -578,7 +585,7 @@ describe('profile page', () => {
 			lastLoginAt: 2,
 			summary: { puzzlesUploaded: 2, puzzlesSolved: 1, totalCompletions: 3 }
 		});
-		vi.mocked(getPlayerPuzzles).mockResolvedValue({ puzzles, nextCursor: undefined });
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({ families, nextCursor: undefined });
 		vi.mocked(getPlayerStats).mockImplementation(async (params) => {
 			if (params?.cursor === 'stat-cursor') {
 				throw new Error('stats pagination down');
@@ -622,7 +629,7 @@ describe('profile page', () => {
 			lastLoginAt: 2,
 			summary: { puzzlesUploaded: 0, puzzlesSolved: 0, totalCompletions: 0 }
 		});
-		vi.mocked(getPlayerPuzzles).mockResolvedValue({ puzzles: [], nextCursor: undefined });
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({ families: [], nextCursor: undefined });
 		vi.mocked(getPlayerStats).mockResolvedValue({ stats: [], nextCursor: undefined });
 
 		const { updatePlayerProfile } = await import('$lib/services/api');
@@ -654,7 +661,7 @@ describe('profile page', () => {
 			lastLoginAt: 2,
 			summary: { puzzlesUploaded: 0, puzzlesSolved: 0, totalCompletions: 0 }
 		});
-		vi.mocked(getPlayerPuzzles).mockResolvedValue({ puzzles, nextCursor: undefined });
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({ families, nextCursor: undefined });
 		vi.mocked(getPlayerStats).mockResolvedValue({ stats });
 		vi.mocked(uploadPlayerAvatar).mockRejectedValueOnce(new Error('upload failed'));
 
@@ -689,7 +696,7 @@ describe('profile page', () => {
 			lastLoginAt: 1_700_000_100_000,
 			summary: { puzzlesUploaded: 0, puzzlesSolved: 0, totalCompletions: 0 }
 		});
-		vi.mocked(getPlayerPuzzles).mockResolvedValue({ puzzles: [], nextCursor: undefined });
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({ families: [], nextCursor: undefined });
 		vi.mocked(getPlayerStats).mockResolvedValue({ stats: [], nextCursor: undefined });
 
 		render(ProfilePage);
@@ -708,7 +715,7 @@ describe('profile page', () => {
 			lastLoginAt: 2,
 			summary: { puzzlesUploaded: 0, puzzlesSolved: 0, totalCompletions: 0 }
 		});
-		vi.mocked(getPlayerPuzzles).mockResolvedValue({ puzzles: [], nextCursor: undefined });
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({ families: [], nextCursor: undefined });
 		vi.mocked(getPlayerStats).mockResolvedValue({ stats: [], nextCursor: undefined });
 
 		const { updatePlayerProfile } = await import('$lib/services/api');
@@ -734,14 +741,8 @@ describe('profile page', () => {
 			summary: { puzzlesUploaded: 1, puzzlesSolved: 0, totalCompletions: 0 }
 		});
 		vi.mocked(getPlayerPuzzles).mockResolvedValue({
-			puzzles: [
-				{
-					id: 'pz-proc',
-					name: 'Processing Puzzle',
-					pieceCount: 4,
-					status: 'processing',
-					createdAt: 2
-				}
+			families: [
+				ownedFamily('pz-proc', 'Processing Puzzle', { status: 'processing', createdAt: 2 })
 			],
 			nextCursor: undefined
 		});
@@ -772,7 +773,7 @@ describe('profile page', () => {
 				summary: { puzzlesUploaded: 0, puzzlesSolved: 0, totalCompletions: 0 }
 			})
 			.mockRejectedValueOnce(new Error('reload down'));
-		vi.mocked(getPlayerPuzzles).mockResolvedValue({ puzzles: [], nextCursor: undefined });
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({ families: [], nextCursor: undefined });
 		vi.mocked(getPlayerStats).mockResolvedValue({ stats: [], nextCursor: undefined });
 
 		const { updatePlayerProfile } = await import('$lib/services/api');
@@ -807,7 +808,7 @@ describe('profile page', () => {
 			lastLoginAt: 2,
 			summary: { puzzlesUploaded: 0, puzzlesSolved: 0, totalCompletions: 0 }
 		});
-		vi.mocked(getPlayerPuzzles).mockResolvedValue({ puzzles: [], nextCursor: undefined });
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({ families: [], nextCursor: undefined });
 		vi.mocked(getPlayerStats).mockResolvedValue({ stats: [], nextCursor: undefined });
 
 		const { updatePlayerProfile } = await import('$lib/services/api');
@@ -842,15 +843,12 @@ describe('profile page', () => {
 			summary: { puzzlesUploaded: 1, puzzlesSolved: 0, totalCompletions: 0 }
 		});
 		vi.mocked(getPlayerPuzzles).mockResolvedValue({
-			puzzles: [
-				{
-					id: 'pz-bogus',
-					name: 'Bogus Category Puzzle',
-					pieceCount: 4,
+			families: [
+				ownedFamily('pz-bogus', 'Bogus Category Puzzle', {
 					status: 'ready',
-					category: 'not-a-real-category',
+					category: 'not-a-real-category' as never,
 					createdAt: 2
-				}
+				})
 			],
 			nextCursor: undefined
 		});

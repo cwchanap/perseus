@@ -1,9 +1,10 @@
 // Persistence controls for deterministic gameplay E2E.
 //
-// The puzzle page stores resumable progress in `localStorage` under the
-// production key `puzzle-progress-<puzzleId>` (see
-// `src/lib/services/gameplay/session/persistence.ts`). The PersistedStateController
-// seeds that store deterministically:
+// The puzzle page stores resumable progress in `localStorage` under
+// `puzzle-progress-v2-<variantId>` for server variants (see
+// `src/lib/services/gameplay/session/persistence.ts`). Quick puzzles keep
+// `puzzle-progress-q-<...>`. The PersistedStateController seeds that store
+// deterministically:
 //
 //   - `seedValid` runs the snapshot through the PRODUCTION codec
 //     (`loadPersistedSession`) and refuses to write anything the codec rejects,
@@ -22,14 +23,19 @@ import {
 	type SessionPuzzleSpec,
 	type SessionValidationContext
 } from '@perseus/game-core';
+import { QUICK_PUZZLE_ID_PREFIX } from '$lib/services/quickPuzzle/types';
+import { SERVER_PROGRESS_KEY_PREFIX } from '$lib/services/gameplay/session/persistence';
 import { getFixture, type GameplayFixtureId } from './catalog';
 
-/** Canonical localStorage key prefix used by the production persistence layer. */
-export const PROGRESS_KEY_PREFIX = 'puzzle-progress-';
+/** Canonical localStorage key prefix for server variant progress. */
+export const PROGRESS_KEY_PREFIX = SERVER_PROGRESS_KEY_PREFIX;
 
 /** The exact localStorage key the puzzle page reads for `puzzleId`. */
 export function progressKey(puzzleId: string): string {
-	return `${PROGRESS_KEY_PREFIX}${puzzleId}`;
+	if (puzzleId.startsWith(QUICK_PUZZLE_ID_PREFIX)) {
+		return `puzzle-progress-${puzzleId}`;
+	}
+	return `${SERVER_PROGRESS_KEY_PREFIX}${puzzleId}`;
 }
 
 /**

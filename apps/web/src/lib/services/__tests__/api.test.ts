@@ -96,13 +96,23 @@ describe('API Service - deletePuzzle', () => {
 });
 
 describe('API Service - fetchPuzzles', () => {
-	it('returns paginated puzzle response on success', async () => {
+	it('returns paginated family response on success', async () => {
 		const responseBody = {
-			puzzles: [
-				{ id: 'p1', name: 'Puzzle 1', pieceCount: 25, status: 'ready' },
-				{ id: 'p2', name: 'Puzzle 2', pieceCount: 100, status: 'ready' }
+			families: [
+				{
+					id: 'fam-1',
+					name: 'Puzzle 1',
+					aspectRatio: '1:1',
+					status: 'ready',
+					createdAt: 1000,
+					variants: {
+						easy: { id: 'p1-e', difficulty: 'easy', pieceCount: 16, status: 'ready' },
+						normal: { id: 'p1-n', difficulty: 'normal', pieceCount: 49, status: 'ready' },
+						hard: { id: 'p1-h', difficulty: 'hard', pieceCount: 100, status: 'ready' }
+					}
+				}
 			],
-			total: 2,
+			total: 1,
 			offset: 0,
 			limit: 20
 		};
@@ -119,7 +129,7 @@ describe('API Service - fetchPuzzles', () => {
 		const result = await fetchPuzzles();
 
 		expect(result).toEqual(responseBody);
-		expect(fetch).toHaveBeenCalledWith(expect.stringMatching(/\/api\/puzzles$/));
+		expect(fetch).toHaveBeenCalledWith(expect.stringMatching(/\/api\/puzzle-families$/));
 	});
 
 	it('forwards an abort signal to fetch when provided', async () => {
@@ -145,7 +155,7 @@ describe('API Service - fetchPuzzles', () => {
 		await fetchPuzzles({ signal: controller.signal });
 
 		expect(fetch).toHaveBeenCalledWith(
-			expect.stringMatching(/\/api\/puzzles$/),
+			expect.stringMatching(/\/api\/puzzle-families$/),
 			expect.objectContaining({ signal: controller.signal })
 		);
 	});
@@ -172,16 +182,16 @@ describe('API Service - fetchPuzzles', () => {
 		await fetchPuzzles({ q: 'cats', category: 'Animals', offset: 10, limit: 5 });
 
 		expect(fetch).toHaveBeenCalledWith(
-			expect.stringMatching(/\/api\/puzzles\?(.+&)?q=cats(&.+)?$/)
+			expect.stringMatching(/\/api\/puzzle-families\?(.+&)?q=cats(&.+)?$/)
 		);
 		expect(fetch).toHaveBeenCalledWith(
-			expect.stringMatching(/\/api\/puzzles\?(.+&)?category=Animals(&.+)?$/)
+			expect.stringMatching(/\/api\/puzzle-families\?(.+&)?category=Animals(&.+)?$/)
 		);
 		expect(fetch).toHaveBeenCalledWith(
-			expect.stringMatching(/\/api\/puzzles\?(.+&)?offset=10(&.+)?$/)
+			expect.stringMatching(/\/api\/puzzle-families\?(.+&)?offset=10(&.+)?$/)
 		);
 		expect(fetch).toHaveBeenCalledWith(
-			expect.stringMatching(/\/api\/puzzles\?(.+&)?limit=5(&.+)?$/)
+			expect.stringMatching(/\/api\/puzzle-families\?(.+&)?limit=5(&.+)?$/)
 		);
 	});
 
@@ -206,7 +216,7 @@ describe('API Service - fetchPuzzles', () => {
 
 		await fetchPuzzles({ offset: 0, limit: 20, q: undefined, category: undefined });
 
-		expect(fetch).toHaveBeenCalledWith(expect.stringMatching(/\/api\/puzzles$/));
+		expect(fetch).toHaveBeenCalledWith(expect.stringMatching(/\/api\/puzzle-families$/));
 	});
 
 	it('throws ApiError on non-ok response', async () => {
@@ -402,7 +412,7 @@ describe('API Service - createPlayerPuzzle', () => {
 		createdAt: 0
 	};
 
-	it('posts player uploads to /api/puzzles with credentials', async () => {
+	it('posts player uploads to /api/puzzle-families with credentials', async () => {
 		let capturedUrl = '';
 		let capturedOptions: RequestInit | undefined;
 		vi.stubGlobal(
@@ -420,15 +430,15 @@ describe('API Service - createPlayerPuzzle', () => {
 		);
 
 		const image = new File(['data'], 'test.png', { type: 'image/png' });
-		await createPlayerPuzzle('Player Puzzle', 48, image, 'Art', '3:4');
+		await createPlayerPuzzle('Player Puzzle', image, 'Art', '3:4');
 
-		expect(capturedUrl).toMatch(/\/api\/puzzles$/);
+		expect(capturedUrl).toMatch(/\/api\/puzzle-families$/);
 		expect(capturedOptions?.method).toBe('POST');
 		expect(capturedOptions?.credentials).toBe('include');
 		expect(capturedOptions?.body).toBeInstanceOf(FormData);
 		const body = capturedOptions!.body as FormData;
 		expect(body.get('name')).toBe('Player Puzzle');
-		expect(body.get('pieceCount')).toBe('48');
+		expect(body.has('pieceCount')).toBe(false);
 		expect(body.get('aspectRatio')).toBe('3:4');
 		expect(body.get('category')).toBe('Art');
 		expect(body.get('image')).toBe(image);
@@ -450,11 +460,11 @@ describe('API Service - createPlayerPuzzle', () => {
 		);
 
 		const image = new File(['data'], 'test.png', { type: 'image/png' });
-		await createPlayerPuzzle('Minimal Puzzle', 16, image);
+		await createPlayerPuzzle('Minimal Puzzle', image);
 
 		const body = capturedOptions!.body as FormData;
 		expect(body.get('name')).toBe('Minimal Puzzle');
-		expect(body.get('pieceCount')).toBe('16');
+		expect(body.has('pieceCount')).toBe(false);
 		expect(body.has('aspectRatio')).toBe(false);
 		expect(body.has('category')).toBe(false);
 		expect(body.get('image')).toBe(image);
@@ -476,7 +486,7 @@ describe('API Service - createPlayerPuzzle', () => {
 		);
 
 		const image = new File(['data'], 'test.png', { type: 'image/png' });
-		await createPlayerPuzzle('Aspect Only', 100, image, undefined, '4:3');
+		await createPlayerPuzzle('Aspect Only', image, undefined, '4:3');
 
 		const body = capturedOptions!.body as FormData;
 		expect(body.get('aspectRatio')).toBe('4:3');
@@ -905,7 +915,7 @@ describe('player profile service functions', () => {
 		vi.stubGlobal(
 			'fetch',
 			vi.fn().mockResolvedValue(
-				new Response(JSON.stringify({ puzzles: [], nextCursor: undefined }), {
+				new Response(JSON.stringify({ families: [], nextCursor: undefined }), {
 					status: 200
 				})
 			)
@@ -919,7 +929,7 @@ describe('player profile service functions', () => {
 		vi.stubGlobal(
 			'fetch',
 			vi.fn().mockResolvedValue(
-				new Response(JSON.stringify({ puzzles: [], nextCursor: undefined }), {
+				new Response(JSON.stringify({ families: [], nextCursor: undefined }), {
 					status: 200
 				})
 			)
@@ -932,14 +942,14 @@ describe('player profile service functions', () => {
 		vi.stubGlobal(
 			'fetch',
 			vi.fn().mockResolvedValue(
-				new Response(JSON.stringify({ puzzles: [], nextCursor: undefined }), {
+				new Response(JSON.stringify({ families: [], nextCursor: undefined }), {
 					status: 200
 				})
 			)
 		);
 		await getPlayerPuzzles();
-		// No query string appended — the URL ends at /api/player/puzzles
-		expect(vi.mocked(fetch).mock.calls[0]?.[0]).toMatch(/\/api\/player\/puzzles$/);
+		// No query string appended — the URL ends at /api/player/puzzle-families
+		expect(vi.mocked(fetch).mock.calls[0]?.[0]).toMatch(/\/api\/player\/puzzle-families$/);
 		expect(vi.mocked(fetch).mock.calls[0]?.[0]).not.toMatch(/\?/);
 	});
 
@@ -947,7 +957,7 @@ describe('player profile service functions', () => {
 		vi.stubGlobal(
 			'fetch',
 			vi.fn().mockResolvedValue(
-				new Response(JSON.stringify({ puzzles: [], nextCursor: undefined }), {
+				new Response(JSON.stringify({ families: [], nextCursor: undefined }), {
 					status: 200
 				})
 			)
@@ -961,7 +971,7 @@ describe('player profile service functions', () => {
 		vi.stubGlobal(
 			'fetch',
 			vi.fn().mockResolvedValue(
-				new Response(JSON.stringify({ puzzles: [], nextCursor: undefined }), {
+				new Response(JSON.stringify({ families: [], nextCursor: undefined }), {
 					status: 200
 				})
 			)

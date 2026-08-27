@@ -164,27 +164,11 @@ describe('Upload Page', () => {
 		await vi.waitFor(() => {
 			expect(createPlayerPuzzle).toHaveBeenCalledWith(
 				'Square Puzzle',
-				225,
 				normalized,
 				undefined,
 				'1:1'
 			);
 		});
-	});
-
-	it('shows validation error for an invalid piece count selection', async () => {
-		setAuthenticatedPlayer();
-		render(UploadPage);
-
-		const pieceSelect = page.getByLabelText(/piece count/i).element() as HTMLSelectElement;
-		pieceSelect.value = '0';
-		pieceSelect.dispatchEvent(new Event('change', { bubbles: true }));
-
-		await page.getByPlaceholder('Enter puzzle name').fill('Invalid Pieces');
-		await uploadTestImage();
-		await page.getByRole('button', { name: /upload puzzle/i }).click();
-
-		await expect.element(page.getByText('Choose a valid 1:1 piece count')).toBeVisible();
 	});
 
 	it('uploads a normalized puzzle for an authenticated player', async () => {
@@ -200,19 +184,24 @@ describe('Upload Page', () => {
 		await page.getByRole('button', { name: /upload puzzle/i }).click();
 
 		await vi.waitFor(() => {
-			expect(normalizePuzzleImageFile).toHaveBeenCalled();
+			expect(normalizePuzzleImageFile).toHaveBeenCalledWith(
+				expect.any(File),
+				expect.objectContaining({
+					aspectRatio: '1:1',
+					pieceCount: 100
+				})
+			);
 			expect(createPlayerPuzzle).toHaveBeenCalledWith(
 				'My Player Puzzle',
-				225,
 				normalized,
 				undefined,
 				'1:1'
 			);
 		});
-		await expect.element(page.getByText(/Puzzle uploaded/)).toBeVisible();
+		await expect.element(page.getByText(/Puzzle family uploaded/)).toBeVisible();
 	});
 
-	it('submits selected aspect ratio, piece count, and category', async () => {
+	it('submits selected aspect ratio and category', async () => {
 		setAuthenticatedPlayer();
 		const normalized = new File(['normalized'], 'norm.jpg', { type: 'image/jpeg' });
 		vi.mocked(normalizePuzzleImageFile).mockResolvedValue(normalized);
@@ -236,16 +225,10 @@ describe('Upload Page', () => {
 				expect.any(File),
 				expect.objectContaining({
 					aspectRatio: '3:4',
-					pieceCount: 192
+					pieceCount: 108
 				})
 			);
-			expect(createPlayerPuzzle).toHaveBeenCalledWith(
-				'Portrait Puzzle',
-				192,
-				normalized,
-				'Art',
-				'3:4'
-			);
+			expect(createPlayerPuzzle).toHaveBeenCalledWith('Portrait Puzzle', normalized, 'Art', '3:4');
 		});
 	});
 
@@ -350,15 +333,9 @@ describe('Upload Page', () => {
 		await page.getByRole('button', { name: /upload puzzle/i }).click();
 
 		await vi.waitFor(() => {
-			expect(createPlayerPuzzle).toHaveBeenCalledWith(
-				'First Upload',
-				225,
-				normalized,
-				undefined,
-				'1:1'
-			);
+			expect(createPlayerPuzzle).toHaveBeenCalledWith('First Upload', normalized, undefined, '1:1');
 		});
-		await expect.element(page.getByText(/Puzzle uploaded/)).toBeVisible();
+		await expect.element(page.getByText(/Puzzle family uploaded/)).toBeVisible();
 
 		// Trigger a second upload while the success message is still visible
 		vi.mocked(createPlayerPuzzle).mockClear();
@@ -369,7 +346,6 @@ describe('Upload Page', () => {
 		await vi.waitFor(() => {
 			expect(createPlayerPuzzle).toHaveBeenCalledWith(
 				'Second Upload',
-				225,
 				normalized,
 				undefined,
 				'1:1'
@@ -393,11 +369,11 @@ describe('Upload Page', () => {
 		await vi.waitFor(() => {
 			expect(createPlayerPuzzle).toHaveBeenCalled();
 		});
-		await expect.element(page.getByText(/Puzzle uploaded/)).toBeVisible();
+		await expect.element(page.getByText(/Puzzle family uploaded/)).toBeVisible();
 
 		await vi.advanceTimersByTimeAsync(3000);
 
-		await expect.poll(() => page.getByText(/Puzzle uploaded/).query()).toBeNull();
+		await expect.poll(() => page.getByText(/Puzzle family uploaded/).query()).toBeNull();
 		vi.useRealTimers();
 	});
 });

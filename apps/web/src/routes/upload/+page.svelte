@@ -8,18 +8,11 @@
 	import {
 		DEFAULT_PUZZLE_ASPECT_RATIO,
 		MAX_IMAGE_DIMENSION,
-		getAllowedPieceCountsForAspectRatio,
+		getDifficultyPieceCount,
 		isPuzzleAspectRatio,
 		type PuzzleAspectRatio
 	} from '@perseus/types';
 
-	const MIN_UPLOAD_PIECES = 4;
-	const MAX_UPLOAD_PIECES = 250;
-	const DEFAULT_PIECES_BY_ASPECT: Record<PuzzleAspectRatio, number> = {
-		'1:1': 225,
-		'4:3': 192,
-		'3:4': 192
-	};
 	const ASPECT_LABELS: Record<PuzzleAspectRatio, string> = {
 		'1:1': '1:1 Square',
 		'4:3': '4:3 Landscape',
@@ -34,7 +27,6 @@
 	let name = $state('');
 	let category: PuzzleCategory | '' = $state('');
 	let aspectRatio = $state<PuzzleAspectRatio>(DEFAULT_PUZZLE_ASPECT_RATIO);
-	let pieceCount = $state(DEFAULT_PIECES_BY_ASPECT[DEFAULT_PUZZLE_ASPECT_RATIO]);
 	let imageFile: File | null = $state(null);
 	let imagePreview: string | null = $state(null);
 	let imageInput: HTMLInputElement | null = $state(null);
@@ -43,10 +35,8 @@
 	let successMessage: string | null = $state(null);
 	let successTimeout: ReturnType<typeof setTimeout> | null = null;
 
-	const allowedPieceCounts = $derived(
-		getAllowedPieceCountsForAspectRatio(aspectRatio, MIN_UPLOAD_PIECES, MAX_UPLOAD_PIECES)
-	);
 	const previewAspectStyle = $derived(ASPECT_STYLE[aspectRatio]);
+	const normalizePieceCount = $derived(getDifficultyPieceCount(aspectRatio, 'hard'));
 	const googleLoginUrl = $derived(getGoogleLoginUrl('/upload'));
 
 	onMount(() => {
@@ -95,29 +85,13 @@
 	function handleAspectChange(event: Event) {
 		const input = event.target as HTMLSelectElement;
 		if (!isPuzzleAspectRatio(input.value)) return;
-
 		aspectRatio = input.value;
-		const nextAllowed = getAllowedPieceCountsForAspectRatio(
-			aspectRatio,
-			MIN_UPLOAD_PIECES,
-			MAX_UPLOAD_PIECES
-		);
-		if (!nextAllowed.includes(pieceCount)) {
-			pieceCount = DEFAULT_PIECES_BY_ASPECT[aspectRatio] ?? nextAllowed[0] ?? 0;
-		}
-	}
-
-	function handlePieceCountChange(event: Event) {
-		const input = event.target as HTMLSelectElement;
-		const parsed = Number.parseInt(input.value, 10);
-		pieceCount = Number.isFinite(parsed) ? parsed : 0;
 	}
 
 	function clearForm() {
 		name = '';
 		category = '';
 		aspectRatio = DEFAULT_PUZZLE_ASPECT_RATIO;
-		pieceCount = DEFAULT_PIECES_BY_ASPECT[DEFAULT_PUZZLE_ASPECT_RATIO];
 		clearSelectedImage();
 		formError = null;
 	}
@@ -137,29 +111,19 @@
 			return;
 		}
 
-		if (!allowedPieceCounts.includes(pieceCount)) {
-			formError = `Choose a valid ${aspectRatio} piece count`;
-			return;
-		}
-
 		uploading = true;
 
 		try {
 			const normalizedImage = await normalizePuzzleImageFile(imageFile, {
 				aspectRatio,
-				pieceCount,
+				pieceCount: normalizePieceCount,
 				maxDimension: MAX_IMAGE_DIMENSION,
 				type: 'image/jpeg',
 				quality: 0.88
 			});
-			await createPlayerPuzzle(
-				name.trim(),
-				pieceCount,
-				normalizedImage,
-				category || undefined,
-				aspectRatio
-			);
-			successMessage = 'Puzzle uploaded. It will appear in the gallery shortly.';
+			await createPlayerPuzzle(name.trim(), normalizedImage, category || undefined, aspectRatio);
+			successMessage =
+				'Puzzle family uploaded. Easy, Normal, and Hard variants will appear in the gallery shortly.';
 			clearForm();
 
 			if (successTimeout !== null) clearTimeout(successTimeout);
@@ -254,6 +218,9 @@ transition-all duration-200 hover:bg-(--accent-glow)"
 					>
 						SERVER UPLOAD
 					</span>
+					<span class="text-[0.55rem] font-(--font-mono) tracking-[0.08em] text-(--text-2)">
+						Easy · Normal · Hard generated automatically
+					</span>
 				</div>
 
 				{#if successMessage}
@@ -299,50 +266,26 @@ focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
 						/>
 					</div>
 
-					<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-						<div class="flex flex-col gap-1.5">
-							<label
-								for="aspect-ratio"
-								class="text-[0.55rem] font-(--font-display) font-semibold tracking-[0.2em]
-								text-(--text-2)"
-							>
-								ASPECT RATIO
-							</label>
-							<select
-								id="aspect-ratio"
-								value={aspectRatio}
-								onchange={handleAspectChange}
-								disabled={uploading}
-								class="w-full appearance-none border border-(--border) bg-(--bg-0) px-3.5 py-2.5
-								text-[0.8rem] font-(--font-mono) text-(--text-0)"
-							>
-								{#each Object.entries(ASPECT_LABELS) as [value, label] (value)}
-									<option {value}>{label}</option>
-								{/each}
-							</select>
-						</div>
-
-						<div class="flex flex-col gap-1.5">
-							<label
-								for="piece-count"
-								class="text-[0.55rem] font-(--font-display) font-semibold tracking-[0.2em]
-								text-(--text-2)"
-							>
-								PIECE COUNT
-							</label>
-							<select
-								id="piece-count"
-								value={pieceCount}
-								onchange={handlePieceCountChange}
-								disabled={uploading}
-								class="w-full appearance-none border border-(--border) bg-(--bg-0) px-3.5 py-2.5
-								text-[0.8rem] font-(--font-mono) text-(--text-0)"
-							>
-								{#each allowedPieceCounts as count (count)}
-									<option value={count}>{count} pieces</option>
-								{/each}
-							</select>
-						</div>
+					<div class="flex flex-col gap-1.5">
+						<label
+							for="aspect-ratio"
+							class="text-[0.55rem] font-(--font-display) font-semibold tracking-[0.2em]
+							text-(--text-2)"
+						>
+							ASPECT RATIO
+						</label>
+						<select
+							id="aspect-ratio"
+							value={aspectRatio}
+							onchange={handleAspectChange}
+							disabled={uploading}
+							class="w-full appearance-none border border-(--border) bg-(--bg-0) px-3.5 py-2.5
+							text-[0.8rem] font-(--font-mono) text-(--text-0)"
+						>
+							{#each Object.entries(ASPECT_LABELS) as [value, label] (value)}
+								<option {value}>{label}</option>
+							{/each}
+						</select>
 					</div>
 
 					<div class="flex flex-col gap-1.5">

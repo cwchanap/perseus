@@ -11,10 +11,12 @@ import type {
 	PlayerAllowlistMutationResponse,
 	PlayerProfile,
 	PlayerProfileUpdate,
-	PlayerPuzzleSummary,
-	PlayerStatRow
+	PlayerOwnedFamilySummary,
+	PlayerStatRow,
+	PuzzleFamilyListResponse,
+	PuzzleFamilyMetadata
 } from '$lib/types/puzzle';
-import type { PuzzleAspectRatio, PuzzleFamilySummary, PuzzleFamilyMetadata } from '@perseus/types';
+import type { PuzzleAspectRatio, PuzzleFamilySummary } from '@perseus/types';
 import type { RecordPuzzleCompletionV1 } from '@perseus/types';
 // NOTE: This app is built with adapter-static, so public env vars are embedded at build time.
 // Set PUBLIC_API_BASE before building to target a different API.
@@ -116,7 +118,7 @@ async function handleVoidResponse(response: Response): Promise<void> {
 	await parseJsonSafely(response);
 }
 
-// Puzzle endpoints
+// Puzzle family catalog (public gallery)
 export async function fetchPuzzles(params?: {
 	q?: string;
 	category?: PuzzleCategory;
@@ -124,13 +126,7 @@ export async function fetchPuzzles(params?: {
 	limit?: number;
 	cursor?: string;
 	signal?: AbortSignal;
-}): Promise<{
-	puzzles: PuzzleSummary[];
-	total: number;
-	offset: number;
-	limit: number;
-	nextCursor?: string;
-}> {
+}): Promise<PuzzleFamilyListResponse> {
 	const searchParams = new URLSearchParams();
 	if (params?.q) searchParams.set('q', params.q);
 	if (params?.category) searchParams.set('category', params.category);
@@ -139,15 +135,11 @@ export async function fetchPuzzles(params?: {
 		searchParams.set('offset', String(params.offset));
 	if (params?.limit && params.limit !== 20) searchParams.set('limit', String(params.limit));
 	const query = searchParams.toString();
-	const url = query ? `${API_BASE}/api/puzzles?${query}` : `${API_BASE}/api/puzzles`;
+	const url = query
+		? `${API_BASE}/api/puzzle-families?${query}`
+		: `${API_BASE}/api/puzzle-families`;
 	const response = params?.signal ? await fetch(url, { signal: params.signal }) : await fetch(url);
-	return handleResponse<{
-		puzzles: PuzzleSummary[];
-		total: number;
-		offset: number;
-		limit: number;
-		nextCursor?: string;
-	}>(response);
+	return handleResponse<PuzzleFamilyListResponse>(response);
 }
 
 export async function fetchPuzzle(id: string, signal?: AbortSignal): Promise<Puzzle> {
@@ -276,14 +268,12 @@ export async function createPuzzle(
 
 export async function createPlayerPuzzle(
 	name: string,
-	pieceCount: number,
 	image: File,
 	category?: PuzzleCategory,
 	aspectRatio?: PuzzleAspectRatio
-): Promise<PuzzleMetadata> {
+): Promise<PuzzleFamilyMetadata> {
 	const formData = new FormData();
 	formData.append('name', name);
-	formData.append('pieceCount', pieceCount.toString());
 	if (aspectRatio) {
 		formData.append('aspectRatio', aspectRatio);
 	}
@@ -292,12 +282,12 @@ export async function createPlayerPuzzle(
 		formData.append('category', category);
 	}
 
-	const response = await fetch(`${API_BASE}/api/puzzles`, {
+	const response = await fetch(`${API_BASE}/api/puzzle-families`, {
 		method: 'POST',
 		credentials: 'include',
 		body: formData
 	});
-	return handleResponse<PuzzleMetadata>(response);
+	return handleResponse<PuzzleFamilyMetadata>(response);
 }
 
 export async function deletePuzzle(
@@ -382,14 +372,16 @@ export async function getPlayerPuzzles(params?: {
 	limit?: number;
 	cursor?: string;
 	signal?: AbortSignal;
-}): Promise<{ puzzles: PlayerPuzzleSummary[]; nextCursor?: string }> {
+}): Promise<{ families: PlayerOwnedFamilySummary[]; nextCursor?: string }> {
 	const searchParams = new URLSearchParams();
 	if (params?.limit !== undefined) searchParams.set('limit', String(params.limit));
 	if (params?.cursor !== undefined) searchParams.set('cursor', params.cursor);
 	const query = searchParams.toString();
-	const url = query ? `${API_BASE}/api/player/puzzles?${query}` : `${API_BASE}/api/player/puzzles`;
+	const url = query
+		? `${API_BASE}/api/player/puzzle-families?${query}`
+		: `${API_BASE}/api/player/puzzle-families`;
 	const response = await fetch(url, { credentials: 'include', signal: params?.signal });
-	return handleResponse<{ puzzles: PlayerPuzzleSummary[]; nextCursor?: string }>(response);
+	return handleResponse<{ families: PlayerOwnedFamilySummary[]; nextCursor?: string }>(response);
 }
 
 export async function getPlayerStats(params?: {
