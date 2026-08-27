@@ -829,6 +829,29 @@ describe('profile page', () => {
 		consoleSpy.mockRestore();
 	});
 
+	it('does not render three identical play links for a ready owned family', async () => {
+		vi.mocked(getPlayerProfile).mockResolvedValue({
+			id: 'p1',
+			email: 'e',
+			name: 'Player One',
+			picture: null,
+			createdAt: 1,
+			lastLoginAt: 2,
+			summary: { puzzlesUploaded: 1, puzzlesSolved: 0, totalCompletions: 0 }
+		});
+		vi.mocked(getPlayerPuzzles).mockResolvedValue({
+			families: [ownedFamily('fam-owned', 'Owned Puzzle', { status: 'ready', createdAt: 2 })],
+			nextCursor: undefined
+		});
+		vi.mocked(getPlayerStats).mockResolvedValue({ stats: [], nextCursor: undefined });
+
+		render(ProfilePage);
+		await expect.element(page.getByRole('heading', { name: 'Owned Puzzle' })).toBeVisible();
+
+		const playLinks = page.getByRole('link').filter({ hasText: /Easy|Normal|Hard/ });
+		await expect.element(playLinks.first()).not.toBeInTheDocument();
+	});
+
 	it('drops a bogus puzzle category that is not in the known category list', async () => {
 		// Covers the toCard category-guard false branch: a free-text D1
 		// category that isn't a known PuzzleCategory must be dropped so it

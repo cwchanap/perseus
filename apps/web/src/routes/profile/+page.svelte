@@ -340,7 +340,7 @@
 		{:else}
 			<div class="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-3">
 				{#each families as p (p.id)}
-					<PuzzleCard family={toGalleryFamily(p)} />
+					<PuzzleCard family={toGalleryFamily(p)} playableLinks={false} />
 				{/each}
 			</div>
 			{#if puzzlesCursor !== undefined}

@@ -15,7 +15,7 @@ export function ownedFamilyToGalleryFamily(family: PlayerOwnedFamilySummary): Pu
 	const variants = {} as PuzzleFamilySummary['variants'];
 	for (const difficulty of PUZZLE_DIFFICULTIES) {
 		variants[difficulty] = {
-			id: family.id,
+			id: '',
 			difficulty,
 			pieceCount: getDifficultyPieceCount(family.aspectRatio, difficulty),
 			status: family.status
