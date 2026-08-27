@@ -10,6 +10,13 @@ function isKnownCategory(category: string): boolean {
 	return (PUZZLE_CATEGORIES as readonly string[]).includes(category);
 }
 
+export function hasPlayableVariantIds(family: PuzzleFamilySummary): boolean {
+	return PUZZLE_DIFFICULTIES.every((difficulty) => {
+		const variantId = family.variants[difficulty]?.id;
+		return typeof variantId === 'string' && variantId.length > 0;
+	});
+}
+
 /** Build a gallery card family from a player-owned row (no variant ids from API). */
 export function ownedFamilyToGalleryFamily(family: PlayerOwnedFamilySummary): PuzzleFamilySummary {
 	const variants = {} as PuzzleFamilySummary['variants'];

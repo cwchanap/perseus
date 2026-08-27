@@ -16,7 +16,8 @@ describe('PuzzleLeaderboardDialog', () => {
 				{
 					rank: 1,
 					player: { id: 'p1', name: 'Ace', avatarUrl: null },
-					bestTimeSeconds: 65
+					bestTimeSeconds: 65,
+					achievedAt: 1_000
 				}
 			]
 		});

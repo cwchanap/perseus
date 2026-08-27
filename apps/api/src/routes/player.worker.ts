@@ -5,6 +5,7 @@ import {
 	getProfileOverride,
 	updateProfileDisplayName,
 	updateProfileAvatarUrl,
+	ensurePublicDisplayName,
 	getPlayerSummary,
 	getPlayerProgressionSummary,
 	listPlayerPuzzleFamilies,
@@ -91,6 +92,7 @@ player.get('/profile', requirePlayerAuth, async (c) => {
 		getProfileOverride(db, playerId),
 		getPlayerSummary(db, playerId)
 	]);
+	await ensurePublicDisplayName(db, playerId, session.user.name);
 
 	const profile: PlayerProfile = {
 		id: session.user.id,

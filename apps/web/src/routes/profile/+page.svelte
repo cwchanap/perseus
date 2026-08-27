@@ -19,7 +19,7 @@
 	} from '$lib/types/puzzle';
 	import type { PuzzleFamilySummary } from '@perseus/types';
 	import PuzzleCard from '$lib/components/PuzzleCard.svelte';
-	import { ownedFamilyToGalleryFamily } from '$lib/utils/familyCard';
+	import { ownedFamilyToGalleryFamily, hasPlayableVariantIds } from '$lib/utils/familyCard';
 	import { formatTime } from '$lib/stores/timer';
 
 	let profile = $state<PlayerProfile | null>(null);
@@ -431,7 +431,7 @@
 		{:else}
 			<div class="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-3">
 				{#each families as p (p.id)}
-					<PuzzleCard family={p} playableLinks={p.status === 'ready'} />
+					<PuzzleCard family={p} playableLinks={p.status === 'ready' && hasPlayableVariantIds(p)} />
 				{/each}
 			</div>
 			{#if puzzlesCursor !== undefined}

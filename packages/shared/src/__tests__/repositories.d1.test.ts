@@ -15,6 +15,8 @@ import {
 	clearProfileAvatarUrl,
 	clearProfileAvatarUrlIfOwned,
 	getAvatarTokensByPlayerIds,
+	ensurePublicDisplayName,
+	resolveLeaderboardIdentities,
 	recordVersionedCompletion,
 	reconcileAchievements,
 	readAchievementSnapshot,
@@ -188,6 +190,25 @@ describe('player profiles against real D1', () => {
 		const row = await getProfileOverride(db, 'p1');
 		expect(row?.displayName).toBeNull();
 		expect(row?.avatarUrl).toBe('u');
+	});
+
+	it('ensurePublicDisplayName persists OAuth name only when unset', async () => {
+		await ensurePublicDisplayName(db, 'p1', 'OAuth Player');
+		expect((await getProfileOverride(db, 'p1'))?.displayName).toBe('OAuth Player');
+
+		await ensurePublicDisplayName(db, 'p1', 'Different Name');
+		expect((await getProfileOverride(db, 'p1'))?.displayName).toBe('OAuth Player');
+	});
+
+	it('ensurePublicDisplayName ignores email-like candidates', async () => {
+		await ensurePublicDisplayName(db, 'p1', 'player@example.com');
+		expect(await getProfileOverride(db, 'p1')).toBeNull();
+	});
+
+	it('ensurePublicDisplayName fills null override from OAuth name', async () => {
+		await updateProfileDisplayName(db, 'p1', null);
+		await ensurePublicDisplayName(db, 'p1', 'OAuth Player');
+		expect((await getProfileOverride(db, 'p1'))?.displayName).toBe('OAuth Player');
 	});
 
 	it('clearProfileAvatarUrl nulls avatarUrl while preserving displayName', async () => {
@@ -1116,6 +1137,90 @@ describe('recordVersionedCompletion against real D1', () => {
 		expect(await db.select().from(schema.playerAchievements)).toHaveLength(3);
 	});
 
+	it('awards first-clear points, mastery, personal best, and rank on a recorded standard run', async () => {
+		const executor = createD1CompletionWriteExecutor(db);
+		const result = await recordCompletion(executor, 'p1', 'pz1', completion(), 1_000);
+
+		expect(result).toEqual({
+			status: 'recorded',
+			completedAt: 1_000,
+			awards: expect.objectContaining({
+				clearPoints: UNIQUE_CLEAR_POINTS.easy,
+				achievements: [
+					ACHIEVEMENT_IDS.first_clear,
+					ACHIEVEMENT_IDS.hintless,
+					ACHIEVEMENT_IDS.flawless
+				],
+				mastery: expect.arrayContaining(['hintless', 'flawless']),
+				personalBest: { bestTimeSeconds: 100, isNew: true },
+				puzzleRank: 1
+			})
+		});
+	});
+
+	it('does not award clear points again when replaying the same family and difficulty', async () => {
+		const executor = createD1CompletionWriteExecutor(db);
+		await recordCompletion(executor, 'p1', 'pz1', completion(), 1_000);
+
+		const replay = await recordCompletion(executor, 'p1', 'pz1', completion(), 9_000);
+
+		expect(replay).toEqual({
+			status: 'replayed',
+			completedAt: 1_000,
+			awards: {}
+		});
+		expect(replay.awards?.clearPoints).toBeUndefined();
+		expect(replay.awards?.personalBest).toBeUndefined();
+		expect(replay.awards?.puzzleRank).toBeUndefined();
+	});
+
+	it('does not award a new family clear when solving another variant in the same family', async () => {
+		const executor = createD1CompletionWriteExecutor(db);
+		await recordCompletion(executor, 'p1', 'pz1', completion(), 1_000);
+
+		const secondVariant = await recordCompletion(
+			executor,
+			'p1',
+			'pz2',
+			completion({ runId: 'run-2' }),
+			2_000
+		);
+
+		expect(secondVariant.awards?.clearPoints).toBeUndefined();
+	});
+
+	it('never awards personal best or puzzle rank for assisted or relaxed runs', async () => {
+		const executor = createD1CompletionWriteExecutor(db);
+		const assisted = await recordCompletion(
+			executor,
+			'p1',
+			'pz1',
+			completion({
+				runId: 'assisted',
+				resultClass: 'assisted_timed',
+				elapsedActiveSeconds: 120
+			}),
+			1_000
+		);
+		const relaxed = await recordCompletion(
+			executor,
+			'p2',
+			'pz2',
+			completion({
+				runId: 'relaxed',
+				resultClass: 'relaxed',
+				elapsedActiveSeconds: null
+			}),
+			1_000,
+			{ familyId: FAMILY_ID, difficulty: 'normal' }
+		);
+
+		expect(assisted.awards?.personalBest).toBeUndefined();
+		expect(assisted.awards?.puzzleRank).toBeUndefined();
+		expect(relaxed.awards?.personalBest).toBeUndefined();
+		expect(relaxed.awards?.puzzleRank).toBeUndefined();
+	});
+
 	it('reads a bounded achievement snapshot for reconciliation', async () => {
 		const executor = createD1CompletionWriteExecutor(db);
 		const hardFamily = '323e4567-e89b-42d3-a456-426614174002';
@@ -1624,6 +1729,39 @@ describe('leaderboard queries against real D1', () => {
 		expect(board.entries.map((entry) => entry.playerId)).toEqual(['high', 'tie-a', 'tie-b', 'low']);
 		expect(board.entries[0].score).toBe(UNIQUE_CLEAR_POINTS.hard);
 		expect(board.entries[3].score).toBe(UNIQUE_CLEAR_POINTS.easy);
+	});
+
+	it('returns overall viewer row when outside top 50', async () => {
+		for (let i = 0; i < 51; i++) {
+			await db.insert(schema.playerDifficultyCompletions).values({
+				playerId: `player-${String(i).padStart(2, '0')}`,
+				familyId: `f-${i}`,
+				difficulty: 'easy',
+				firstCompletedAt: 1_000 + i
+			});
+		}
+		await db.insert(schema.playerDifficultyCompletions).values({
+			playerId: 'viewer',
+			familyId: 'f-viewer',
+			difficulty: 'easy',
+			firstCompletedAt: 9_000
+		});
+		const board = await listOverallLeaderboard(db, { viewerPlayerId: 'viewer' });
+		expect(board.entries).toHaveLength(50);
+		expect(board.me?.playerId).toBe('viewer');
+		expect(board.me?.rank).toBe(52);
+	});
+
+	it('resolves leaderboard identities from overrides and safe fallbacks', async () => {
+		await updateProfileDisplayName(db, 'named', 'Ace Player');
+		const identities = await resolveLeaderboardIdentities(db, ['named', 'no-profile']);
+		expect(identities.get('named')).toEqual({
+			id: 'named',
+			name: 'Ace Player',
+			avatarUrl: null
+		});
+		expect(identities.get('no-profile')?.name).toBe('Player no-profi');
+		expect(identities.get('no-profile')?.name).not.toContain('@');
 	});
 
 	it('summarizes player progression with rank and counts', async () => {
