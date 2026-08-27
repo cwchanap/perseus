@@ -79,14 +79,24 @@ function createRequest(): Request {
 describe('Admin Worker dead pending reclaim failure', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		const staleAt = Date.now() - 10 * 60 * 1000;
 		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
 			existing: true,
 			familyId: 'dead-pending-puzzle',
-			status: 'pending'
+			status: 'pending',
+			reservedAt: staleAt
 		});
-		vi.mocked(storage.getPuzzle).mockResolvedValue({
+		vi.mocked(storage.getFamily).mockResolvedValue({
 			id: 'dead-pending-puzzle',
-			status: 'processing'
+			name: 'Dead Pending Family',
+			aspectRatio: '1:1',
+			status: 'processing',
+			variants: {
+				easy: '423e4567-e89b-42d3-a456-426614174010',
+				normal: '523e4567-e89b-42d3-a456-426614174011',
+				hard: '623e4567-e89b-42d3-a456-426614174012'
+			},
+			createdAt: 1000
 		} as any);
 		vi.mocked(storage.failIdempotencyKey).mockRejectedValue(new Error('DO unavailable'));
 	});

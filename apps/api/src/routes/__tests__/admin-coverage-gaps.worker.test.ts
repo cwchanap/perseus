@@ -888,17 +888,22 @@ describe('Admin Worker — DELETE /puzzles/:id idempotency release failure', () 
 
 	it('logs but returns 204 when idempotency key release fails', async () => {
 		const puzzleId = '550e8400-e29b-41d4-a716-446655440000';
-		vi.mocked(storage.getFamily).mockResolvedValue({
-			id: 'family-id',
-			name: 'Test Family',
-			aspectRatio: '1:1',
+		vi.mocked(storage.getPuzzle).mockResolvedValue({
+			id: puzzleId,
+			name: 'Test Variant',
+			pieceCount: 225,
 			status: 'ready',
-			variants: {
-				easy: '423e4567-e89b-42d3-a456-426614174010',
-				normal: '523e4567-e89b-42d3-a456-426614174011',
-				hard: '623e4567-e89b-42d3-a456-426614174012'
-			},
-			createdAt: 1000
+			aspectRatio: '1:1',
+			gridCols: 15,
+			gridRows: 15,
+			imageWidth: 3840,
+			imageHeight: 3840,
+			createdAt: 1000,
+			pieces: [],
+			version: 1,
+			progress: { totalPieces: 225, generatedPieces: 225, updatedAt: 1000 },
+			familyId: 'family-id',
+			idempotencyKey: 'idem-key-1'
 		} as any);
 		vi.mocked(storage.deleteFamilyMetadata).mockResolvedValue({ success: true });
 		vi.mocked(storage.deletePuzzleMetadata).mockResolvedValue({ success: true });
