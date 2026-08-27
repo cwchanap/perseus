@@ -360,6 +360,7 @@ describe('buildCliAccessApplicationArgs', () => {
 		expect(args.destinations).toEqual([
 			{ type: 'public', uri: 'perseus.cwchanap.dev/api/admin/puzzles' }
 		]);
+		expect(args.sameSiteCookieAttribute).toBe('lax');
 		expect(args.policies).toHaveLength(2);
 		// Policy 1: email + posture (browser admin still works on these paths)
 		expect(args.policies?.[0]).toEqual(
