@@ -254,7 +254,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
       - name: Apply D1 migrations (before Worker publish)
-        # Apply additive migrations to the EXISTING D1 database BEFORE
+        # Apply pending migrations to the EXISTING D1 database BEFORE
         # `pulumi up` publishes the new Worker code. This ensures new columns
         # and tables are present by the time the new Worker version goes live.
         # Only runs when the D1 database already exists (subsequent deploys).
@@ -266,6 +266,16 @@ jobs:
         # ship the expand migration + backward-compatible Worker code first,
         # then ship the contract migration after the old Worker version is no
         # longer live.
+        #
+        # NON-ADDITIVE EXCEPTION — `0006_puzzle_progression_reset`: this deploy
+        # applies that migration automatically (do not skip it). From the moment
+        # `0006` finishes until the new Worker version publishes, the live
+        # Worker still expects the dropped legacy tables (`puzzles`, `puzzle_stats`,
+        # `puzzle_completion_runs`) and D1-backed routes can 500:
+        # `/api/puzzles/:id/complete`, `/api/player/*`, `/api/admin/*` D1 paths,
+        # and workflow status mirrors. The window ends when the new Worker is
+        # live. Production D1/content export remains a mandatory operator
+        # pre-merge gate (see operator runbook §12).
         if: steps.read-db-id.outputs.db_id != ''
         run: |
           set -euo pipefail
