@@ -1,332 +1,155 @@
 # Puzzle Difficulty, Achievements, and Leaderboards Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: use `superpowers:subagent-driven-development` or `superpowers:executing-plans`. Keep every task in this document on one implementation PR.
 
-**Goal:** Cut server puzzles over to one family with three fixed concrete variants, then add idempotent progression/mastery and Standard/Rotation plus overall leaderboards without making `PuzzleSession` difficulty-mutable.
+**Goal:** Cut server puzzles over to family + fixed Easy/Normal/Hard variants, prove that lifecycle locally, then layer V2 progression, mastery, achievements, and leaderboards onto the existing completion path.
 
-**Architecture:** Family is the catalog/image/workflow/deletion identity; variant puzzle ID is the board/session/completion/local-stat identity. One Cloudflare Workflow generates all three variants using difficulty-qualified checkpoints. The existing completion executor remains the single transaction boundary for retained runs, first clears, mode-specific best times, mastery, and achievements. Web, admin, and NativeScript browse families and resolve a difficulty to a concrete variant before gameplay/download.
-
-**Tech Stack:** TypeScript, SvelteKit/Svelte 5, NativeScript + Svelte Native, Cloudflare Workers/Workflows/Durable Objects/KV/R2/D1/Access, Drizzle ORM, Vitest, Playwright, Bun/Turbo, Pulumi.
+**Architecture:** family = catalog/image/workflow/ownership/deletion identity; variant = board/session/download/completion/local-stat identity. One family Workflow eagerly generates three concrete variants. D1 owns family ownership plus progression; KV/DO owns live family/variant metadata; R2 stores one family original/thumbnail plus variant pieces. D1 is the only completion-write runtime after this change.
 
 **Spec:** `docs/superpowers/specs/2026-08-26-puzzle-difficulty-achievements-leaderboards-design.md`
 
-**Freshness baseline:** Reviewed against `main` at `67be5f3e28ab78c186e100e53cd09c6dc7f37f57` after the NativeScript offline-library and Access-only admin changes landed.
+## Delivery Rules
 
-## Global Constraints
+- One implementation PR for this task. Phase A and Phase B below are internal green checkpoints, not separate PRs.
+- The earlier claim that progression is architecturally inseparable from family cutover is withdrawn; it could be deferred technically. It remains in this PR because difficulty + achievements + leaderboards are one approved task and this project defaults to one PR per task.
+- Keep Phase A runnable before adding Phase B.
+- No second metadata DO, child workflows, generic progression service, achievement DSL, score ledger, materialized board, V1 parser, or legacy difficulty.
+- Quick Puzzles remain local and arbitrary-count.
 
-- Implement this entire cutover in **one PR**. Task commits below are checkpoints, not separate PRs.
-- Fixed server tiers are code-owned: `1:1` = Easy 16, Normal 49, Hard 100; `4:3` / `3:4` = Easy 12, Normal 48, Hard 108.
-- Difficulty is piece count only. Rotation, hints, reference modes, and timed/relaxed modes stay independent.
-- `PuzzleSession` remains keyed by one concrete variant ID. Do not add mutable difficulty to game-core state/schema.
-- Family is the only catalog/workflow/deletion/reaper grain. Variant is the gameplay/session/completion/local-stat grain.
-- Generate all three variants eagerly in **one family Workflow**. Do not create child workflows or a coordinator service.
-- Every repeated Workflow checkpoint inside the difficulty loop includes difficulty in its step name (`generate-${difficulty}-row-${row}`, `finalize-${difficulty}`, etc.).
-- Reuse `PUZZLE_METADATA_DO` with a `family | variant` discriminator; do not add another metadata binding.
-- Shared original/thumbnail are family-owned; only piece assets live under `puzzles/<variantId>/pieces/`.
-- Reuse the existing completion deletion fence once per variant during family cleanup. Do not create a second deletion protocol.
-- Completion points are award-once per family+difficulty: Easy 100, Normal 200, Hard 300. Replays award zero completion points.
-- Score is derived from unique clears + achievement rows. No score ledger, event ledger, mutable total, rule engine, or materialized overall leaderboard.
-- Competitive best times are only `standard_timed` and `rotation_timed`, stored/queryable separately.
-- Assisted/relaxed completions still earn unique-clear progression and factual Hintless/Flawless mastery; they never enter time boards.
-- Initial mastery is exactly `hintless`, `flawless`, `rotation_clear`, and mastery is non-scoring.
-- Achievement IDs/requirements/points are exactly the nine entries in the spec; predicates are ordinary code/queries.
-- Puzzle board order: `bestTimeSeconds ASC, achievedAt ASC, playerId ASC`.
-- Overall board order: `score DESC, hard DESC, normal DESC, easy DESC, scoreReachedAt ASC, playerId ASC`.
-- Return top 50 plus the signed-in player's row if outside the top 50. Never expose email in leaderboard projections.
-- The shipped Profile → Puzzle Results list must survive the `puzzle_stats` drop; rewrite it at family+difficulty grain.
-- Web family cards resolve Continue/progress/local Standard best independently for each variant; there is no single family piece count/progress/best.
-- New server saves use `puzzle-progress-v2-<variantId>`. Quick Puzzle `q-*` saves stay on existing `puzzle-progress-q-*` keys.
-- Quick Puzzles remain arbitrary-count/local and outside account progression/leaderboards.
-- Public `GET /api/puzzles` catalog listing is removed; both web and mobile browse `/api/puzzle-families`.
-- NativeScript downloads remain concrete variant packages after family+difficulty selection.
-- Admin remains Cloudflare-Access-only; do not reintroduce passkeys.
-- Rename the narrow admin CLI collection path to `/api/admin/puzzle-families` and update its Pulumi Access destination/token helpers in the same PR. Do not keep the old path alias.
-- Breaking cutover is read-only export -> deploy -> import/verify families -> one-shot cleanup of old KV/R2 objects. Do not purge source objects before replacement families are ready.
-- No runtime V1 completion parser, old server catalog path, legacy difficulty, or legacy metadata/save compatibility branch remains.
-- Preserve retained-run quota behavior; destructive history reset clears `player_completion_usage`.
+## Global Invariants
+
+- Difficulty rows×cols/counts:
+  - Easy: `1:1 4×4=16`, `4:3 3×4=12`, `3:4 4×3=12`
+  - Normal: `1:1 7×7=49`, `4:3 6×8=48`, `3:4 8×6=48`
+  - Hard: `1:1 10×10=100`, `4:3 9×12=108`, `3:4 12×9=108`
+- `PuzzleSession` remains concrete-variant only.
+- Family Workflow checkpoints are difficulty-qualified.
+- Family is the only catalog/delete/reaper grain; reuse deletion fences once per variant.
+- No D1 `puzzle_variants` table.
+- Completion runs and best-time rows carry server-derived `familyId + difficulty`.
+- `player_difficulty_completions` stays as the award-once/score index.
+- Atomic completion batch: run + first clear + PB + factual mastery. Achievement thresholds reconcile after the batch from a bounded snapshot.
+- Standard/Rotation boards stay separate. Assisted/relaxed progress but do not rank by time.
+- New server saves use `puzzle-progress-v2-<variantId>`; Quick saves remain `puzzle-progress-q-*`.
+- Admin create/list uses `/api/admin/puzzle-families`; browser-only delete uses sibling `/api/admin/puzzle-family-delete/:familyId`.
 
 ---
 
-## Task 1: Add difficulty/family contracts and make game-core emit V2 completions
+# Phase A — Family Cutover
 
-**Files:**
-- Create: `packages/types/src/progression.ts`
+## Task 1: Add fixed difficulty and family contracts
+
+**Files**
+- Create: `packages/types/src/puzzle-family.ts`
 - Modify: `packages/types/src/grid.ts`
 - Modify: `packages/types/src/core.ts`
 - Modify: `packages/types/src/index.ts`
 - Test: `packages/types/src/grid.test.ts`
 - Test: `packages/types/src/index.test.ts`
-- Modify: `packages/game-core/src/session/types.ts`
-- Test: `packages/game-core/src/session/session.test.ts`
 
-**Interfaces:**
-- Produces `PuzzleDifficulty`, `PUZZLE_DIFFICULTIES`, `DIFFICULTY_PIECE_COUNTS`, `getDifficultyPieceCount()`.
-- Produces `PuzzleFamilyMetadata`, `PuzzleFamilySummary`, `PuzzleVariantSummary`, `AchievementId`, `MasteryBadge`.
-- Produces `RecordPuzzleCompletionV2`, `RecordPuzzleCompletionResponseV2`, leaderboard/profile contracts.
-- `completionRequestFromSeal(seal)` becomes the only client projection to `RecordPuzzleCompletionV2`.
+**Produces**
+- `PuzzleDifficulty`, `PUZZLE_DIFFICULTIES`, `DIFFICULTY_PIECE_COUNTS`
+- `getDifficultyPieceCount(aspectRatio, difficulty)`
+- `PuzzleFamilyMetadata`, `PuzzleFamilySummary`, `PuzzleFamilyListResponse`, `PuzzleVariantSummary`
 
-- [ ] **Step 1: Write RED tests for all fixed grids**
+- [ ] **1. Write RED grid tests**
+
+Assert both count and rows/cols, using code orientation explicitly:
 
 ```ts
-expect(getDifficultyPieceCount('1:1', 'easy')).toBe(16);
-expect(getDifficultyPieceCount('1:1', 'normal')).toBe(49);
-expect(getDifficultyPieceCount('1:1', 'hard')).toBe(100);
 expect(getDifficultyPieceCount('4:3', 'easy')).toBe(12);
-expect(getDifficultyPieceCount('4:3', 'normal')).toBe(48);
-expect(getDifficultyPieceCount('4:3', 'hard')).toBe(108);
-expect(getDifficultyPieceCount('3:4', 'easy')).toBe(12);
-expect(getDifficultyPieceCount('3:4', 'normal')).toBe(48);
+expect(getGridDimensionsForAspectRatio(12, '4:3')).toEqual({ rows: 3, cols: 4 });
 expect(getDifficultyPieceCount('3:4', 'hard')).toBe(108);
+expect(getGridDimensionsForAspectRatio(108, '3:4')).toEqual({ rows: 12, cols: 9 });
 ```
 
-For each entry also assert `isValidPieceCountForAspectRatio(count, ratio) === true` and that `getGridDimensionsForAspectRatio()` returns the approved row/column orientation.
+Cover all nine combinations and assert `isValidPieceCountForAspectRatio(...)` for each.
 
-- [ ] **Step 2: Write RED tests for family/V2 validation**
+- [ ] **2. Write RED family validation tests**
 
-Pin exactly one variant ID per difficulty and exact V2 fields. Reject V1, missing `hintsUsed`, missing `incorrectAttempts`, invalid negative counters, relaxed with non-null time, and timed with null/non-integer time.
+A family has exactly `easy|normal|hard` variant IDs, one valid aspect ratio, one family status, and no scalar `pieceCount`.
 
-```ts
-expect(isRecordPuzzleCompletionV2({
-  version: 2,
-  runId,
-  resultClass: 'rotation_timed',
-  elapsedActiveSeconds: 42,
-  hintsUsed: 0,
-  incorrectAttempts: 1
-}, MAX_COMPLETION_TIME_SECONDS)).toBe(true);
+- [ ] **3. Run RED**
+
+```bash
+bun --cwd packages/types run test:unit
 ```
 
-- [ ] **Step 3: Write RED game-core projection test**
+- [ ] **4. Implement contracts**
 
-Use a sealed completion whose hints/wrong attempts are non-zero and assert:
+Keep the difficulty map code-owned. Add family summary/detail response types used by web/mobile/admin.
 
-```ts
-expect(completionRequestFromSeal(seal)).toEqual({
-  version: 2,
-  runId: seal.runId,
-  resultClass: seal.resultClass,
-  elapsedActiveSeconds: seal.elapsedActiveSeconds,
-  hintsUsed: seal.hintsUsed,
-  incorrectAttempts: seal.incorrectAttempts
-});
+- [ ] **5. Verify**
+
+```bash
+bun --cwd packages/types run test:unit
+bun --cwd packages/types run build
 ```
 
-The projection must not include `completedAt`, `rotationEnabled`, or `rotationUsed`.
-
-- [ ] **Step 4: Run RED**
-
-Run:
-- `bun --cwd packages/types run test:unit`
-- `bun --cwd packages/game-core run test:unit`
-
-Expected: FAIL on missing difficulty/family/V2 symbols and V1 projection.
-
-- [ ] **Step 5: Implement minimal contracts and projection**
-
-In `grid.ts` define the fixed mapping. In `progression.ts` define public family/progression/leaderboard contracts. Replace the active V1 completion request export with V2.
-
-Update game-core imports/exports and `completionRequestFromSeal()` only; do not change `PuzzleSessionState`, `PersistedPuzzleSessionV1`, or the session schema version because difficulty is not session state.
-
-- [ ] **Step 6: Verify and commit**
-
-Run:
-- `bun --cwd packages/types run test:unit`
-- `bun --cwd packages/types run build`
-- `bun --cwd packages/game-core run test:unit`
-- `bun --cwd packages/game-core run build`
-
-Commit: `feat(core): add puzzle family and V2 completion contracts`
+Commit: `feat(types): add puzzle family difficulty contracts`
 
 ---
 
-## Task 2: Replace standalone D1 puzzle/stat schema with family/progression tables
+## Task 2: Add family D1 ownership and replace the player uploads query
 
-**Files:**
+**Files**
 - Modify: `packages/shared/src/schema.ts`
 - Modify: `packages/shared/src/types.ts`
-- Create: `packages/shared/drizzle/0005_puzzle_families_progression.sql`
-- Create: `packages/shared/drizzle/meta/0005_snapshot.json`
-- Modify: `packages/shared/drizzle/meta/_journal.json`
+- Modify: `packages/shared/src/repositories.ts`
+- Create: `packages/shared/drizzle/0005_puzzle_families.sql`
+- Create/modify corresponding Drizzle metadata
 - Test: `packages/shared/src/__tests__/schema.test.ts`
+- Test: `packages/shared/src/__tests__/repositories.d1.test.ts`
+- Modify: `apps/api/src/routes/player.worker.ts`
+- Test: `apps/api/src/routes/player.worker.test.ts`
 
-**Interfaces:**
-- Produces `puzzleFamilies`, `puzzleVariants`, revised `puzzleCompletionRuns`, `puzzleBestTimes`, `playerDifficultyCompletions`, `playerAchievements`, `playerVariantMastery`.
-- Retains infrastructure tables `playerProfiles`, `puzzleDeletionTombstones`, `playerCompletionUsage`.
-- Drops new-code use of `puzzles`, `puzzleStats`, `timingQuality`, and `legacy_unknown`.
+**Important:** this Phase-A migration is additive. Keep legacy completion tables and the old `puzzles` table temporarily so this checkpoint is runnable. They are removed in Phase B's destructive reset before the final PR is complete.
 
-- [ ] **Step 1: Write RED schema tests**
+**Produces**
+- `puzzleFamilies` only; **no `puzzleVariants` table**
+- `insertPuzzleFamilyOwnership`
+- `ensurePuzzleFamilyOwnership`
+- `deletePuzzleFamilyOwnership`
+- `setPuzzleFamilyStatus`
+- `listPlayerPuzzleFamilies` with the existing `(createdAt, id)` cursor
 
-Assert new table exports and inspect SQL for:
-- unique `(family_id, difficulty)`
-- `puzzle_best_times` PK `(player_id, puzzle_id, result_class)`
-- ranking index `(puzzle_id, result_class, best_time_seconds, achieved_at)`
-- first-clear PK `(player_id, family_id, difficulty)`
-- mastery PK `(player_id, puzzle_id, badge)`
-- achievement PK `(player_id, achievement_id)`
-- closed checks for difficulty, competitive result class, and mastery badge.
+- [ ] **1. Write RED schema/repository tests**
 
-- [ ] **Step 2: Run RED**
+Pin family ownership/status columns and the existing cursor semantics for ready/processing/failed owned families.
 
-Run: `bun --cwd packages/shared run test:unit -- src/__tests__/schema.test.ts`
+- [ ] **2. Run RED**
 
-- [ ] **Step 3: Implement Drizzle schema**
+```bash
+bun --cwd packages/shared run test:unit -- src/__tests__/repositories.d1.test.ts
+```
 
-`puzzle_completion_runs` keeps all four result classes and stores:
+- [ ] **3. Add `0005_puzzle_families.sql` and repository helpers**
+
+Do not create a D1 variant catalog mirror.
+
+- [ ] **4. Rename the player-owned uploads endpoint**
 
 ```text
-player_id, run_id, puzzle_id, result_class,
-elapsed_active_seconds, hints_used, incorrect_attempts, completed_at
+GET /api/player/puzzle-families
 ```
 
-Remove `timing_quality`; relaxed timing nullability is represented directly by result class.
+Return family summaries. Keep pagination behavior; update profile/web API consumers later in Phase A.
 
-- [ ] **Step 4: Write destructive migration**
+- [ ] **5. Verify**
 
-The migration deliberately resets old puzzle history/ownership:
-
-```sql
-DROP TABLE IF EXISTS puzzle_stats;
-DROP TABLE IF EXISTS puzzle_completion_runs;
-DELETE FROM player_completion_usage;
-DROP TABLE IF EXISTS puzzles;
+```bash
+bun --cwd packages/shared run test:unit
+bun --cwd packages/shared run check
+bun --cwd apps/api run test:unit -- src/routes/player.worker.test.ts
 ```
 
-Then create the family/variant/progression tables and revised completion ledger. Preserve profiles, deletion-fence table, and quota table definition.
-
-- [ ] **Step 5: Verify and commit**
-
-Run:
-- `bun --cwd packages/shared run test:unit -- src/__tests__/schema.test.ts`
-- `bun --cwd packages/shared run check`
-
-Commit: `feat(db): add family progression schema`
+Commit: `feat(db): add puzzle family ownership model`
 
 ---
 
-## Task 3: Extend the existing completion executor and rewrite Profile Puzzle Results
+## Task 3: Convert metadata/storage and Workflow to one family with three variants
 
-**Files:**
-- Create: `packages/shared/src/progression.ts`
-- Modify: `packages/shared/src/completion-writes.ts`
-- Modify: `packages/shared/src/drivers/d1.ts`
-- Modify: `packages/shared/src/drivers/bun.ts`
-- Modify: `packages/shared/src/repositories.ts`
-- Modify: `packages/shared/src/index.ts`
-- Test: `packages/shared/src/__tests__/drivers.test.ts`
-- Test: `packages/shared/src/__tests__/repositories.test.ts`
-- Test: `packages/shared/src/__tests__/repositories.d1.test.ts`
-
-**Interfaces:**
-- Consumes trusted server-derived `{ playerId, puzzleId, familyId, difficulty }` plus V2 facts.
-- `StoredCompletionFacts` stores/compares `hintsUsed` and `incorrectAttempts` in addition to puzzle/result/time.
-- Produces `listPuzzleLeaderboard()`, `listOverallLeaderboard()`, `getPlayerProgressionSummary()`.
-- Replaces old `listPlayerStats()` internals with family+difficulty rows containing Standard and Rotation bests while retaining cursor pagination.
-
-- [ ] **Step 1: Write scoring/mastery RED tests**
-
-```ts
-expect(completionPointsForDifficulty('easy')).toBe(100);
-expect(completionPointsForDifficulty('normal')).toBe(200);
-expect(completionPointsForDifficulty('hard')).toBe(300);
-expect(masteryForCompletion({
-  hintsUsed: 0,
-  incorrectAttempts: 0,
-  resultClass: 'rotation_timed'
-})).toEqual(['hintless', 'flawless', 'rotation_clear']);
-```
-
-Define the exact nine achievement constants in code, not D1.
-
-- [ ] **Step 2: Write completion executor RED tests**
-
-Cover in both driver suites:
-- first family+difficulty clear inserts/scores once
-- exact V2 run replay returns replay semantics and no duplicate delta
-- same run ID with changed `hintsUsed` or `incorrectAttempts` conflicts
-- Standard updates only Standard PB
-- Rotation updates only Rotation PB
-- assisted/relaxed create no best-time row
-- worse repeat keeps original PB/`achievedAt`; better repeat replaces both
-- mastery inserts idempotently
-- achievements unlock exactly at 1/5/15 unique clears, one full set, 1/5 Hard clears, and first mastery of each type
-- retained-run quota remains enforced.
-
-- [ ] **Step 3: Write Profile Puzzle Results RED tests**
-
-Pin the new row grain:
-
-```ts
-{
-  familyId,
-  familyName,
-  difficulty: 'normal',
-  variantId,
-  standardBestTimeSeconds: 90,
-  rotationBestTimeSeconds: 120,
-  totalCompletions: 4,
-  firstCompletedAt,
-  lastCompletedAt
-}
-```
-
-Preserve bounded cursor pagination. Timed rows sort before rows with no competitive best; use the minimum non-null Standard/Rotation best as the profile-list sort value, then `variantId`. Verify this sort does not affect leaderboard mode separation.
-
-- [ ] **Step 4: Run RED**
-
-Run: `bun --cwd packages/shared run test:unit`
-
-- [ ] **Step 5: Extend `CompletionWriteExecutor.write()` as the single transaction**
-
-```ts
-interface VersionedCompletionWrite {
-  playerId: string;
-  puzzleId: string;
-  familyId: string;
-  difficulty: PuzzleDifficulty;
-  runId: string;
-  resultClass: ResultClass;
-  elapsedActiveSeconds: number | null;
-  hintsUsed: number;
-  incorrectAttempts: number;
-  receivedAt: number;
-}
-```
-
-Transaction order:
-1. tombstone/quota checks
-2. insert/find run and compare full V2 stored facts
-3. on newly inserted run only, first-clear insert
-4. mode-specific PB upsert when competitive
-5. mastery inserts
-6. achievement inserts
-7. return durable progression delta.
-
-Replace Standard-only `isCanonicalBest` with competitive eligibility for Standard/Rotation; keep the result-class key in the PB table.
-
-- [ ] **Step 6: Implement ranking/profile queries**
-
-```ts
-listPuzzleLeaderboard(db, { puzzleId, resultClass, playerId, limit: 50 })
-listOverallLeaderboard(db, { playerId, limit: 50 })
-getPlayerProgressionSummary(db, playerId)
-listPlayerStats(db, playerId, { limit, cursor })
-```
-
-Derive overall score with SQL CASE expressions from unique clears + achievement constants. Derive `scoreReachedAt` from the latest contributing row; do not store a score aggregate.
-
-- [ ] **Step 7: Verify and commit**
-
-Run:
-- `bun --cwd packages/shared run test:unit`
-- `bun --cwd packages/shared run check`
-
-Commit: `feat(shared): add progression rankings and family results`
-
----
-
-## Task 4: Add family metadata/storage and one retry-safe three-variant Workflow
-
-**Files:**
+**Files**
 - Modify: `apps/workflows/src/types.ts`
 - Modify: `apps/workflows/src/helpers.ts`
 - Modify: `apps/workflows/src/index.ts`
@@ -338,329 +161,191 @@ Commit: `feat(shared): add progression rankings and family results`
 - Test: `apps/api/src/services/storage.worker.test.ts`
 - Test: `apps/api/src/services/__tests__/storage-worker-do.test.ts`
 
-**Interfaces:**
-- Workflow input becomes `WorkflowParams { familyId: string }`.
-- Same metadata DO class stores `{ kind: 'family' | 'variant', metadata }` by family/variant ID.
-- Storage exposes `getFamily()`, family create/update, `getPuzzle()` variant reads, `listPuzzleFamiliesPage()`.
-- R2 keys are family original/thumbnail + variant piece paths.
+**Produces**
+- one `WorkflowParams { familyId }`
+- `family:*` read model + `puzzle:*` variant read model
+- family R2 original/thumbnail helpers
+- variant piece helpers
+- family listing/indexing
 
-- [ ] **Step 1: Write family/variant metadata RED tests**
+- [ ] **1. Write RED metadata tests**
 
-Assert:
-- one family entity and three variant entities use the existing DO namespace
-- family/variant identity mismatch is rejected
-- gallery index scans only `family:*`
-- public family summary includes all three variant IDs/counts.
+Use the same `PUZZLE_METADATA_DO` namespace but discriminate `family | variant` and address by the corresponding ID.
 
-- [ ] **Step 2: Write Workflow checkpoint RED tests**
+- [ ] **2. Write RED Workflow tests**
 
-One family run must use names equivalent to:
+One family execution must reuse preallocated IDs and generate the approved counts.
+
+Pin checkpoint names exactly enough to catch the current collision bug:
 
 ```text
-generate-easy-row-0 ... finalize-easy
-generate-normal-row-0 ... finalize-normal
-generate-hard-row-0 ... finalize-hard
+generate-easy-row-0
+finalize-easy
+generate-normal-row-0
+finalize-normal
+generate-hard-row-0
+finalize-hard
 finalize-family
 ```
 
-Pin that Normal row 0 cannot reuse Easy row 0's cached checkpoint and that retrying after a later variant failure reuses completed earlier checkpoints without minting IDs.
+Repeated per-difficulty status/mirror steps must also contain difficulty.
 
-- [ ] **Step 3: Run RED**
+- [ ] **3. Run RED**
 
-Run:
-- `bun --cwd apps/workflows run test:unit`
-- `bun --cwd apps/api run test:unit -- src/services/storage.worker.test.ts src/services/__tests__/storage-worker-do.test.ts`
-
-- [ ] **Step 4: Generalize metadata DO**
-
-```ts
-type MetadataEntity =
-  | { kind: 'family'; metadata: PuzzleFamilyMetadata }
-  | { kind: 'variant'; metadata: PuzzleMetadata };
+```bash
+bun --cwd apps/workflows run test:unit
+bun --cwd apps/api run test:unit -- src/services/storage.worker.test.ts
 ```
 
-Keep idempotency reservations separate and map upload idempotency keys to the family ID.
+- [ ] **4. Generalize `PuzzleMetadataDO`**
 
-- [ ] **Step 5: Move shared R2/storage helpers to family scope**
+Keep reservation logic separate. Reservations now map the upload idempotency key to `familyId`.
 
-Implement focused helpers:
+- [ ] **5. Move shared assets to family scope**
 
-```ts
-getFamilyOriginalKey(familyId)
-getFamilyThumbnailKey(familyId)
-getPieceKey(variantId, pieceId)
-getFamily(kv, familyId)
-listPuzzleFamiliesPage(kv, params)
+```text
+families/<familyId>/original
+families/<familyId>/thumbnail.jpg
+puzzles/<variantId>/pieces/<pieceId>.png
 ```
 
-Variant reference resolves variant metadata then serves family original.
+Variant reference resolves family original.
 
-- [ ] **Step 6: Rewrite Workflow around preallocated variants**
+- [ ] **6. Rewrite Workflow loop**
 
-```ts
-for (const difficulty of PUZZLE_DIFFICULTIES) {
-  const variantId = family.variants[difficulty];
-  const pieceCount = getDifficultyPieceCount(family.aspectRatio, difficulty);
-  // every step.do inside this loop includes `difficulty`
-}
+Retain row checkpoints; qualify each by difficulty. Only mirror family status into D1 `puzzle_families`.
+
+- [ ] **7. Verify**
+
+```bash
+bun --cwd apps/workflows run test:unit
+bun --cwd apps/workflows run check
+bun --cwd apps/api run test:unit
+bun --cwd apps/api run check
 ```
 
-Generate thumbnail once, preserve row-level checkpoints, finalize each variant separately, then `finalize-family` only after all three are ready.
-
-- [ ] **Step 7: Verify and commit**
-
-Run:
-- `bun --cwd apps/workflows run test:unit`
-- `bun --cwd apps/workflows run check`
-- `bun --cwd apps/api run test:unit -- src/services/storage.worker.test.ts src/services/__tests__/storage-worker-do.test.ts`
-
-Commit: `feat(workflow): generate puzzle families with stable variants`
+Commit: `feat(workflow): generate three puzzle variants per family`
 
 ---
 
-## Task 5: Move deletion/reaper/cleanup ownership to family grain
+## Task 4: Make deletion/reaper family-scoped
 
-**Files:**
+**Files**
 - Modify: `apps/api/src/services/storage.worker.ts`
 - Modify: `apps/api/src/services/puzzle-deletion.worker.ts`
 - Modify: `apps/api/src/services/reaper.ts`
 - Test: `apps/api/src/services/__tests__/puzzle-deletion.worker.test.ts`
 - Test: `apps/api/src/services/__tests__/reaper.test.ts`
 - Test: `apps/api/src/services/__tests__/reaper-d1-coverage.test.ts`
-- Test: `apps/api/src/services/storage.worker.test.ts`
-- Modify: `packages/shared/src/repositories.ts`
-- Test: `packages/shared/src/__tests__/repositories.d1.test.ts`
+- Test: `apps/api/src/services/storage-worker-extra.worker.test.ts`
 
-**Interfaces:**
-- `CleanupRecord` becomes family-scoped with family ID, all three variant IDs, and all three piece counts.
-- Reaper enumerates family records/workflow IDs only.
-- Existing completion deletion fence is invoked once per variant ID; there is no family completion fence.
+**Produces**
+- family-scoped `CleanupRecord`
+- family stuck-workflow scan
+- family cleanup orchestration over three existing variant fences
 
-- [ ] **Step 1: Write cleanup-record RED tests**
+- [ ] **1. Write RED cleanup-record tests**
 
-Pin:
+Record immutable `familyId`, three variant IDs, three piece counts, and reservation identity needed for retries.
 
-```ts
-{
-  familyId,
-  variantIds: { easy: easyId, normal: normalId, hard: hardId },
-  pieceCounts: { easy: 16, normal: 49, hard: 100 },
-  createdAt
-}
+- [ ] **2. Write RED reaper tests**
+
+Pin that the stuck scan lists `family:*`, never independently reaps `puzzle:*`, and checks the one family workflow.
+
+- [ ] **3. Write RED deletion-order tests**
+
+Before shared assets are removed, call `beginPuzzleDeletion()` for all three variant IDs. Complete all variant tombstones/assets/data before cleanup record removal.
+
+- [ ] **4. Implement family cleanup by composing existing fences**
+
+Do not add a second DB deletion protocol. Keep cleanup idempotent/retryable.
+
+- [ ] **5. Verify**
+
+```bash
+bun --cwd apps/api run test:unit -- src/services/__tests__/puzzle-deletion.worker.test.ts src/services/__tests__/reaper.test.ts
+bun --cwd apps/api run check
 ```
 
-A cleanup record must contain everything needed to retry shared/variant asset cleanup after family metadata disappears.
-
-- [ ] **Step 2: Write reaper RED tests**
-
-Cover:
-- reaper scans `family:*`, not `puzzle:*`
-- workflow lookup uses `familyId`
-- a stuck family with one already-ready variant is still one cleanup unit
-- no sibling variant is independently fenced/deleted before family cleanup is chosen
-- stale KV family status is revalidated through authoritative family DO status before cleanup, preserving current fail-closed behavior.
-
-- [ ] **Step 3: Write deletion fence/order RED tests**
-
-Before any destructive shared/variant asset deletion, assert `beginPuzzleDeletion()` succeeded for Easy, Normal, and Hard variant IDs. After cleanup, assert `finishPuzzleDeletion()` runs for each variant and retained-run usage is reconciled.
-
-Family-specific first-clear/mastery/PB/run rows are deleted. Global achievement rows remain.
-
-- [ ] **Step 4: Run RED**
-
-Run:
-- `bun --cwd apps/api run test:unit -- src/services/__tests__/puzzle-deletion.worker.test.ts src/services/__tests__/reaper.test.ts src/services/__tests__/reaper-d1-coverage.test.ts`
-- `bun --cwd packages/shared run test:unit -- src/__tests__/repositories.d1.test.ts`
-
-- [ ] **Step 5: Implement family cleanup orchestration**
-
-Cleanup sequence:
-
-```text
-write family CleanupRecord
-begin fence easy
-begin fence normal
-begin fence hard
-tombstone family + variant metadata DOs
-delete families/<familyId>/original + thumbnail
-delete each puzzles/<variantId>/pieces/*
-delete family + variant KV/D1 catalog rows
-finish each variant deletion
-delete CleanupRecord
-```
-
-Do not call old puzzle-scoped `deletePuzzleAssets()` against a variant because it must no longer own original/thumbnail.
-
-- [ ] **Step 6: Verify and commit**
-
-Run:
-- `bun --cwd apps/api run test:unit`
-- `bun --cwd apps/api run check`
-- `bun --cwd packages/shared run test:unit`
-
-Commit: `refactor(api): make family the puzzle deletion grain`
+Commit: `feat(api): make puzzle cleanup family scoped`
 
 ---
 
-## Task 6: Cut API/admin/Access surfaces over to families and V2 completion
+## Task 5: Cut public/admin/upload APIs and Access to family identity
 
-**Files:**
+**Files**
 - Create: `apps/api/src/routes/puzzle-families.worker.ts`
 - Create: `apps/api/src/routes/puzzle-families.worker.test.ts`
-- Create: `apps/api/src/routes/leaderboard.worker.ts`
-- Create: `apps/api/src/routes/leaderboard.worker.test.ts`
 - Modify: `apps/api/src/routes/puzzles.worker.ts`
-- Modify: `apps/api/src/routes/puzzles.complete.shared.ts`
-- Modify: `apps/api/src/routes/puzzles.complete.worker.ts`
-- Modify: `apps/api/src/routes/puzzles.complete.worker.test.ts`
-- Modify: `apps/api/src/routes/player.worker.ts`
-- Modify: `apps/api/src/routes/player.worker.test.ts`
 - Modify: `apps/api/src/routes/admin.worker.ts`
 - Modify: `apps/api/src/worker.ts`
+- Modify: `apps/web/src/routes/admin/AdminPuzzlesPanel.svelte`
+- Modify: `apps/web/src/routes/admin/AdminPuzzlesPanel.svelte.test.ts`
+- Modify: `apps/web/src/routes/admin/adminPuzzleList.ts`
+- Modify: `apps/web/src/routes/admin/adminPuzzleList.test.ts`
 - Modify: `packages/infrastructure/src/admin-access.ts`
 - Modify: `packages/infrastructure/src/admin-access.test.ts`
-
-**Interfaces:**
-- Public family list/create/detail/thumbnail and per-family leaderboard.
-- Concrete variant detail/piece/reference/complete only under `/api/puzzles/:variantId`.
-- No public `GET /api/puzzles` list.
-- Admin list/create collection is `/api/admin/puzzle-families`.
-- V2 route resolves `variantId -> familyId+difficulty` before executor call.
-
-- [ ] **Step 1: Write family API RED tests**
-
-Create accepts `name`, optional category, aspect ratio, image. It allocates one family + three stable variant UUIDs, stores one family original, inserts family/variant ownership rows, and starts one workflow with `{ familyId }`.
-
-List/detail returns family summaries; `pieceCount` is per variant, not family scalar.
-
-- [ ] **Step 2: Write V2 completion RED tests**
-
-Parser rejects V1. Handler loads variant metadata and passes trusted `familyId`/`difficulty` plus parsed V2 facts to the executor. Exact replay remains idempotent; mismatched mastery facts conflict.
-
-Response can project:
-
-```ts
-{
-  ok: true,
-  progression: {
-    firstDifficultyCompletion: true,
-    completionPointsAwarded: 200,
-    newAchievementIds: ['first_clear'],
-    newMasteryBadges: ['flawless'],
-    competitive: { personalBest: true, bestTimeSeconds: 90, rank: 4 }
-  }
-}
-```
-
-- [ ] **Step 3: Write leaderboard/profile RED tests**
-
-Family leaderboard validates difficulty/mode and resolves one variant. Overall leaderboard uses exact tie-break order. Profile returns progression summary plus paginated rewritten Puzzle Results. Public leaderboard player projection never includes email.
-
-- [ ] **Step 4: Write Access path RED tests**
-
-Change the narrow CLI path expectation from `/api/admin/puzzles` to `/api/admin/puzzle-families`. Verify broad browser admin remains `/api/admin/*` and delete stays outside the narrow service-token collection path.
-
-- [ ] **Step 5: Implement route cutover**
-
-Move list/create from `puzzles.worker.ts` to family route. Keep detail/piece/reference concrete. Update admin list/create/delete semantics to families. Register family/leaderboard routers. Do not retain the old catalog list as a mobile compatibility route.
-
-- [ ] **Step 6: Verify and commit**
-
-Run:
-- `bun --cwd apps/api run test:unit`
-- `bun --cwd apps/api run check`
-- `bun --cwd apps/api run lint`
-- `bun --cwd packages/infrastructure run test:unit`
-- `bun --cwd packages/infrastructure run check`
-
-Commit: `feat(api): expose family catalog progression endpoints`
-
----
-
-## Task 7: Update seed/admin tooling and implement import-before-cleanup migration
-
-**Files:**
 - Modify: `scripts/startup/types.ts`
 - Modify: `scripts/startup/catalog.ts`
 - Modify: `scripts/startup/upload.ts`
-- Modify: `scripts/startup/token.ts`
 - Modify: `scripts/admin-bulk-upload-startup.ts`
-- Modify: `scripts/admin-upload-puzzle.ts`
 - Modify: `scripts/admin-bulk-upload-startup.test.ts`
-- Create: `scripts/export-legacy-puzzles.ts`
-- Create: `scripts/import-puzzle-families.ts`
-- Create: `scripts/cleanup-legacy-puzzles.ts`
-- Create: `scripts/puzzle-family-migration.test.ts`
-- Modify: `.gitignore`
-- Modify: `.agents/skills/perseus-operations/references/operator-runbook.md`
+- Modify: `scripts/admin-upload-puzzle.ts`
+- Modify relevant script tests
 
-**Interfaces:**
-- Seed/admin family upload sends image/name/category/aspect ratio only.
-- Access helpers target `/api/admin/puzzle-families` and continue supporting current service-token/JWT modes; no passkey field returns.
-- Export writes ignored local manifest/images.
-- Import uses new family create with operator `ownerId` seam.
-- Cleanup removes only old exported KV/R2 objects after replacements are ready; no legacy HTTP route remains.
-
-- [ ] **Step 1: Write seed/tooling RED tests**
-
-Remove catalog `pieceCount` and change idempotency identity to content identity without a mutable count, e.g. stable catalog `id` + aspect ratio. Assert generated `FormData` contains no `pieceCount` and CLI URL is `/api/admin/puzzle-families`.
-
-- [ ] **Step 2: Write migration-manifest RED tests**
-
-```ts
-interface LegacyPuzzleExport {
-  oldPuzzleId: string;
-  name: string;
-  category?: string;
-  aspectRatio: PuzzleAspectRatio;
-  pieceCount: number;
-  ownerId: string;
-  imageFile: string;
-}
-```
-
-Store under ignored `.migration/puzzle-families/`.
-
-- [ ] **Step 3: Implement read-only pre-deploy export**
-
-Use current Access helpers to enumerate old catalog/ownership and download every ready puzzle reference image. Fail if any ready source image/owner metadata cannot be captured. Perform no delete.
-
-- [ ] **Step 4: Implement post-deploy import**
-
-Read the manifest, POST each source to `/api/admin/puzzle-families` with preserved `ownerId`, poll family status, and require all three variants ready before marking that manifest entry imported.
-
-- [ ] **Step 5: Implement post-import orphan cleanup**
-
-After all replacement families are verified, use one-shot Cloudflare/operator tooling to delete each exported old `puzzle:<oldId>` KV record and `puzzles/<oldId>/...` R2 objects. Do not add an application runtime endpoint/parser for old puzzle records.
-
-- [ ] **Step 6: Update runbook sequence**
+**Public routes**
 
 ```text
-1. export old metadata/ownership/originals (read-only)
-2. verify export count/files
-3. deploy new schema/API/workflow/web/mobile
-4. import families through Access-protected family create
-5. wait until every family has 3 ready variants
-6. clean old exported KV/R2 objects
-7. archive/delete local export
+GET  /api/puzzle-families
+GET  /api/puzzle-families/:familyId
+POST /api/puzzle-families
+GET  /api/puzzle-families/:familyId/thumbnail
 ```
 
-Document that D1 completion history/quota is intentionally reset at deploy.
+Concrete variant detail/assets remain under `/api/puzzles/:variantId/...`; remove public `GET /api/puzzles` list.
 
-- [ ] **Step 7: Verify and commit**
+**Admin routes**
 
-Run:
-- `bun run test:scripts`
-- `bun run check:scripts`
-- `bun run lint:scripts`
+```text
+GET  /api/admin/puzzle-families
+POST /api/admin/puzzle-families
+POST /api/admin/puzzle-family-delete/:familyId
+```
 
-Commit: `feat(scripts): migrate standalone puzzles to families`
+- [ ] **1. Write RED create/list/detail tests**
+
+Create accepts name/category/aspect/image only and allocates 1 family + 3 variant UUIDs.
+
+- [ ] **2. Write RED Access tests**
+
+`CLI_ACCESS_PATHS` becomes exact `/api/admin/puzzle-families`. Assert the sibling delete route is not in the CLI app and remains under broad browser admin policy.
+
+- [ ] **3. Update `AdminPuzzlesPanel`**
+
+One family row, family preview/status/polling, three fixed counts shown together, whole-family delete.
+
+- [ ] **4. Update upload CLIs**
+
+Remove `--pieces` / catalog `pieceCount`. Idempotency key becomes image-level family identity such as normalized `name + aspectRatio` (preserve the existing hashed header mechanism).
+
+- [ ] **5. Verify**
+
+```bash
+bun --cwd apps/api run test:unit
+bun --cwd apps/api run check
+bun --cwd apps/web run test:unit -- src/routes/admin
+bun --cwd packages/infrastructure run test:unit
+bun run test:scripts
+bun run check:scripts
+```
+
+Commit: `feat(api): expose family catalog and admin endpoints`
 
 ---
 
-## Task 8: Cut web gallery/progress/local-stats/admin UX over to family + variant resolution
+## Task 6: Cut web gallery/progress/upload to family identity
 
-**Files:**
+**Files**
 - Modify: `apps/web/src/lib/types/puzzle.ts`
 - Modify: `apps/web/src/lib/services/api.ts`
 - Modify: `apps/web/src/lib/services/__tests__/api.test.ts`
@@ -672,243 +357,447 @@ Commit: `feat(scripts): migrate standalone puzzles to families`
 - Modify: `apps/web/src/lib/services/gameplay/galleryProgress.test.ts`
 - Modify: `apps/web/src/lib/services/gameplay/session/persistence.ts`
 - Modify: `apps/web/src/lib/services/gameplay/session/persistence.test.ts`
-- Test: `apps/web/src/lib/services/stats.test.ts`
+- Modify: `apps/web/src/lib/services/stats.ts`
+- Modify relevant stats tests
 - Modify: `apps/web/src/routes/+page.svelte`
-- Modify: `apps/web/src/routes/page.svelte.spec.ts`
+- Modify: `apps/web/src/routes/page.svelte.test.ts`
 - Modify: `apps/web/src/routes/upload/+page.svelte`
-- Modify: `apps/web/src/routes/admin/AdminPuzzlesPanel.svelte`
-- Modify: `apps/web/src/routes/admin/AdminPuzzlesPanel.svelte.test.ts`
-- Modify: `apps/web/src/routes/admin/adminPuzzleList.ts`
-- Modify: `apps/web/src/routes/admin/adminPuzzleList.test.ts`
 - Modify: `apps/web/e2e/gameplay-fixtures/persisted-state.ts`
 
-**Interfaces:**
-- Family card has three variant summaries, not scalar `pieceCount`/progress.
-- `galleryProgress` remains variant-ID keyed and resolves three variants per visible family.
-- `stats.ts` remains variant-ID keyed; no family aggregate is introduced.
-- Server and Quick save key families coexist as specified.
-- Admin panel lists/deletes/previews families.
+- [ ] **1. Write family-card RED tests**
 
-- [ ] **Step 1: Write family-card RED tests**
+One card must render three difficulty states independently. Multiple difficulties may simultaneously show Continue.
 
-For a square family assert three actions:
+- [ ] **2. Keep progress/local stats variant keyed**
 
-```text
-Easy · 16 pieces
-Normal · 49 pieces
-Hard · 100 pieces
-```
+Resolve family variants before calling existing session/stat helpers. No family aggregate stat object.
 
-No single card `href=/puzzle/<familyId>` exists; each action points to its variant ID.
-
-- [ ] **Step 2: Write per-difficulty progress/best RED tests**
-
-Seed Easy and Hard resumable saves with different `placedCount` values and Normal with none. Assert Easy/Hard show their own Continue counters and Normal shows Play.
-
-Seed local Standard bests for different variant IDs and assert the card reads each independently. Do not modify local stats into a family key.
-
-- [ ] **Step 3: Write off-page discovery and save-prefix RED tests**
-
-Pin:
+- [ ] **3. Pin save namespaces**
 
 ```ts
-server UUID -> puzzle-progress-v2-<uuid>
-q-123       -> puzzle-progress-q-123
-old server puzzle-progress-<uuid> -> ignored
+server variant -> puzzle-progress-v2-<uuid>
+q-*            -> puzzle-progress-q-*
 ```
 
-Off-page saved variant discovery loads concrete variant metadata and can surface family name+difficulty without requiring a family save key.
+Enumeration accepts only the new server namespace plus existing Quick keys. It intentionally ignores old server `puzzle-progress-<uuid>` without changing retryable-404 behavior.
 
-- [ ] **Step 4: Write admin family-panel RED tests**
+- [ ] **4. Remove server piece-count upload input**
 
-Admin lists one family, shows E/N/H counts, family preview, family status polling, and deletes the family. On delete, best-effort clear all three web variant sessions. Player Access panel stays unchanged.
+Keep Quick Puzzle uploader unchanged.
 
-- [ ] **Step 5: Implement web catalog/session changes**
+- [ ] **5. Verify**
 
-Flatten family variants only where a concrete session validation context is needed. Keep `@perseus/game-core` storage adapter unchanged.
+```bash
+bun --cwd apps/web run test:unit
+bun --cwd apps/web run check
+```
 
-Remove server piece-count selection from player upload. Leave `QuickPuzzleUploader.svelte` untouched.
-
-- [ ] **Step 6: Verify and commit**
-
-Run:
-- `bun --cwd apps/web run test:unit`
-- `bun --cwd apps/web run check`
-- `bun --cwd apps/web run lint`
-
-Commit: `feat(web): make puzzle catalog family-aware`
+Commit: `feat(web): add family difficulty gallery`
 
 ---
 
-## Task 9: Cut NativeScript gallery/download selection over to family summaries
+## Task 7: Move NativeScript to the family catalog without changing download packages
 
-**Files:**
+**Files**
 - Modify: `apps/mobile/app/api/puzzleApi.ts`
 - Modify: `apps/mobile/app/api/puzzleApi.test.ts`
-- Create: `apps/mobile/app/library/familyGallery.ts`
-- Create: `apps/mobile/app/library/familyGallery.test.ts`
 - Modify: `apps/mobile/app/library/Gallery.svelte`
 - Modify: `apps/mobile/app/library/Library.svelte`
-- Modify: `apps/mobile/app/library/downloadedLibrary.ts`
-- Modify: `apps/mobile/app/library/downloadedLibrary.test.ts`
-- Modify: `apps/mobile/app/library/Downloaded.svelte`
+- Create: `apps/mobile/app/library/familyGallery.ts`
+- Create: `apps/mobile/app/library/familyGallery.test.ts`
+- Modify only download-store/manifest tests if shared type changes require fixture updates
 
-**Interfaces:**
-- `PuzzleApi.listPuzzleFamilies(cursor?)` calls `/api/puzzle-families`.
-- `familyThumbnailUrl(familyId)` uses family thumbnail route.
-- Detail/reference/piece methods remain concrete `variantId` APIs.
-- `familyDownloadOptions(family)` returns exactly Easy/Normal/Hard `{ difficulty, variantId, pieceCount }` rows in tier order.
-- Gallery difficulty tap calls existing `onDownload(variantId)`; downloaded packages/sessions remain variant IDs.
+- [ ] **1. Write API RED tests**
 
-- [ ] **Step 1: Write API RED tests**
+`listPuzzles()` becomes `listPuzzleFamilies()` against `/api/puzzle-families`. Variant detail/asset URL methods remain concrete-variant based.
 
-Assert family list decoding accepts three variant summaries and that no catalog request calls `GET /api/puzzles`:
+- [ ] **2. Write pure family-gallery RED tests**
 
-```ts
-await api.listPuzzleFamilies();
-expect(requestJson).toHaveBeenCalledWith(`${baseUrl}/api/puzzle-families`);
+Test difficulty labels and `family + difficulty -> variantId` selection in `familyGallery.ts`; do not invent Svelte-Native component-test infrastructure.
+
+- [ ] **3. Update Gallery/Library**
+
+Render one family with Easy/Normal/Hard download actions. `onDownload` still receives the selected concrete variant ID.
+
+- [ ] **4. Preserve downloaded package/session model**
+
+No family bundle and no filesystem schema change beyond fixture type adjustments genuinely required by the API contract.
+
+- [ ] **5. Verify**
+
+```bash
+bun --cwd apps/mobile run test:unit
+cd apps/mobile && bunx tsc --noEmit
 ```
 
-Keep concrete `getPuzzle(variantId)`, `referenceUrl(variantId)`, and `pieceImageUrl(variantId, pieceId)` behavior.
-
-- [ ] **Step 2: Write the pure family-gallery RED tests**
-
-```ts
-expect(familyDownloadOptions(family)).toEqual([
-  { difficulty: 'easy', variantId: family.variants.easy.id, pieceCount: 16 },
-  { difficulty: 'normal', variantId: family.variants.normal.id, pieceCount: 49 },
-  { difficulty: 'hard', variantId: family.variants.hard.id, pieceCount: 100 }
-]);
-```
-
-This keeps selection logic testable with the mobile package's existing Vitest-only setup instead of adding Svelte-Native component test infrastructure.
-
-- [ ] **Step 3: Update Gallery/Library to consume the pure projection**
-
-`Library.svelte` stores `PuzzleFamilySummary[]`. `Gallery.svelte` renders one family thumbnail/name and the three `familyDownloadOptions()` rows; tapping a row calls `onDownload(option.variantId)`.
-
-Installed/download-job state remains a `Set<string>`/ID keyed by variant. Installing Easy therefore does not mark Normal/Hard installed.
-
-- [ ] **Step 4: Make Downloaded rows distinguish sibling variants**
-
-Extend `downloadedLibrary.ts` to carry `difficulty` from installed variant metadata and render it in `Downloaded.svelte` beside piece count. This avoids two installed difficulties of the same family appearing as indistinguishable same-name rows while preserving variant-keyed launch/remove/progress behavior.
-
-- [ ] **Step 5: Run the mobile unit suite and commit**
-
-Run: `bun --cwd apps/mobile run test:unit`
-
-Commit: `feat(mobile): select puzzle difficulty before download`
+Commit: `feat(mobile): select puzzle difficulty from family catalog`
 
 ---
 
-## Task 10: Add completion feedback, family boards, overall leaderboard, and progression profile UI
+## Task 8: Run a real local family create/delete gate
 
-**Files:**
+This gate happens **before** production migration tooling is considered ready.
+
+- [ ] **1. Apply local D1 migrations**
+
+```bash
+bun --cwd apps/api run db:migrate:local
+```
+
+- [ ] **2. Start the real API + Workflow dev runtime**
+
+```bash
+bun --cwd apps/api run dev
+```
+
+- [ ] **3. Upload one square family with the updated local admin CLI**
+
+Use a small checked-in/test image or disposable local image. Wait until the family is `ready`.
+
+- [ ] **4. Verify generated identity/assets**
+
+Assert:
+
+```text
+Easy   16 pieces  4×4
+Normal 49 pieces  7×7
+Hard   100 pieces 10×10
+```
+
+Probe family thumbnail/reference plus representative piece assets from all three variants.
+
+- [ ] **5. Delete via family delete path**
+
+Verify family original/thumbnail, all three piece prefixes, family/variant KV/DO metadata, D1 family row, and cleanup record are gone. Verify all three variant deletion fences finish.
+
+- [ ] **6. Record the gate result in the implementation PR body/task report**
+
+No production code change is required solely to record this evidence.
+
+Commit only if the gate exposed and fixed a real issue.
+
+---
+
+## Task 9: Add safe one-shot production export/import/cleanup tooling and runbook
+
+**Files**
+- Create: `scripts/export-legacy-puzzles.ts`
+- Create: `scripts/import-puzzle-families.ts`
+- Create: `scripts/cleanup-legacy-puzzles.ts`
+- Create: `scripts/puzzle-family-migration.test.ts`
+- Modify: `.gitignore`
+- Modify: `.agents/skills/perseus-operations/references/operator-runbook.md`
+
+**Important:** merge to `main` triggers deployment. The production D1/content export must therefore be completed and verified **before merging the implementation PR**.
+
+- [ ] **1. Add read-only legacy export**
+
+Against the old production API, capture old puzzle ID, name, category, aspect, owner ID, and retained original bytes into ignored `.migration/puzzle-families/` artifacts. Fail if any ready puzzle cannot be exported.
+
+- [ ] **2. Add new-family importer**
+
+Post originals to `/api/admin/puzzle-families`, preserve owner ID through the operator seam, and poll until every imported family is ready/failed.
+
+- [ ] **3. Add post-import old-object cleanup**
+
+Only after replacements are verified, delete legacy `puzzle:*` KV and old `puzzles/<oldId>/` R2 original/thumbnail/piece objects. This is one-shot tooling, not runtime fallback.
+
+- [ ] **4. Document mandatory D1 backup as rollout step 0**
+
+Use current Wrangler syntax:
+
+```bash
+mkdir -p .migration/puzzle-families
+bunx wrangler d1 export perseus-player-data \
+  --remote \
+  --output .migration/puzzle-families/d1-before-family-cutover.sql \
+  --config apps/api/wrangler.production.toml
+```
+
+Verify the file is non-empty before proceeding.
+
+- [ ] **5. Document the accepted empty-gallery window**
+
+After family-only code deploys and before imported families finish all three variants, production gallery is empty. This is accepted pre-release downtime and must be explicit.
+
+- [ ] **6. Document final order**
+
+```text
+PRE-MERGE: D1 export -> legacy content export -> verify backups
+MERGE/DEPLOY: migrations + family code
+POST-DEPLOY: import families -> wait all ready -> verify -> cleanup old objects
+```
+
+- [ ] **7. Verify**
+
+```bash
+bun run test:scripts
+bun run check:scripts
+bun run lint:scripts
+```
+
+Commit: `feat(scripts): add puzzle family cutover tooling`
+
+---
+
+# Phase B — Completion Progression and Leaderboards
+
+## Task 10: Remove the duplicate Bun completion driver and add V2/progression schema
+
+**Files**
+- Delete: `packages/shared/src/drivers/bun.ts`
+- Delete or fold: `packages/shared/src/__tests__/drivers.test.ts`
+- Modify: `packages/shared/package.json` (remove `./bun` export)
+- Move uniquely valuable repository/driver assertions into `packages/shared/src/__tests__/repositories.d1.test.ts`
+- Modify: `packages/types/src/*` for V2/progression contracts
+- Modify: `packages/game-core/src/session/types.ts`
+- Modify: `packages/game-core/src/session/session.test.ts`
+- Modify: `packages/shared/src/schema.ts`
+- Create: `packages/shared/drizzle/0006_puzzle_progression_reset.sql`
+- Create/modify corresponding Drizzle metadata
+- Test: `packages/shared/src/__tests__/schema.test.ts`
+
+**Final schema**
+
+```text
+puzzle_families
+puzzle_completion_runs (+ family_id, difficulty, hints_used, incorrect_attempts; no timing_quality)
+puzzle_best_times (+ family_id, difficulty, result_class)
+player_difficulty_completions
+player_achievements
+player_variant_mastery
+player_profiles
+player_completion_usage
+puzzle_deletion_tombstones
+```
+
+No `puzzle_variants`, old `puzzles`, or old `puzzle_stats` in final schema.
+
+- [ ] **1. Prove Bun driver is unused outside tests**
+
+Repeat repository search before deleting. If a production importer appears on current main, stop and revise this task; do not delete blindly.
+
+- [ ] **2. Delete Bun driver/export and migrate unique tests to D1/Miniflare**
+
+D1 is the behavior contract for completion writes.
+
+- [ ] **3. Add V2 request/projection tests**
+
+`completionRequestFromSeal()` must emit `version:2`, hints, and incorrect attempts; route code will reuse this helper.
+
+- [ ] **4. Write final schema RED tests**
+
+Pin no `puzzle_variants`, no `timing_quality`, run family/difficulty facts, best-time mode key, award-once/achievement/mastery keys, and quota reset.
+
+- [ ] **5. Implement destructive `0006` reset**
+
+Reset old completion/stat data and `player_completion_usage`; preserve profile identity and family rows. Remove old `puzzles`/`puzzle_stats` final schema.
+
+- [ ] **6. Verify**
+
+```bash
+bun --cwd packages/types run test:unit
+bun --cwd packages/game-core run test:unit
+bun --cwd packages/shared run test:unit
+bun --cwd packages/shared run check
+bun --cwd apps/api run db:migrate:local
+```
+
+Commit: `feat(db): add V2 puzzle progression schema`
+
+---
+
+## Task 11: Extend the D1 completion executor; reconcile achievements after the atomic batch
+
+**Files**
+- Create: `packages/shared/src/progression.ts`
+- Modify: `packages/shared/src/completion-writes.ts`
+- Modify: `packages/shared/src/drivers/d1.ts`
+- Modify: `packages/shared/src/repositories.ts`
+- Modify: `packages/shared/src/index.ts`
+- Test: `packages/shared/src/__tests__/repositories.d1.test.ts`
+- Add focused pure progression tests
+- Modify: `apps/api/src/routes/puzzles.complete.shared.ts`
+- Modify: `apps/api/src/routes/puzzles.complete.worker.ts`
+- Modify corresponding API tests
+
+- [ ] **1. Write pure mastery/achievement RED tests**
+
+```ts
+masteryForCompletion({ hintsUsed: 0, incorrectAttempts: 0, resultClass: 'rotation_timed' })
+// -> hintless, flawless, rotation_clear
+```
+
+Define an `AchievementSnapshot` containing only bounded counts/booleans required by the nine predicates. `evaluateAchievements(snapshot)` is pure and table-tested at every threshold boundary.
+
+- [ ] **2. Write D1 transaction RED tests**
+
+Cover:
+- first family+difficulty clear once
+- exact replay idempotent
+- same run with changed hint/wrong facts conflicts
+- Standard and Rotation PBs isolated
+- assisted/relaxed no PB
+- worse replay preserves PB achievedAt; better replay replaces it
+- current-run mastery inserted atomically/idempotently
+- quota/tombstone race behavior remains typed
+
+- [ ] **3. Extend `VersionedCompletionWrite`/stored facts**
+
+Include trusted `familyId`, `difficulty`, hints, wrong attempts.
+
+- [ ] **4. Keep atomic batch narrow**
+
+The D1 batch handles run/fence/quota, first-clear, PB, and factual mastery only. Conditional statements must verify full stored run facts so a run-ID conflict cannot award progression.
+
+- [ ] **5. Reconcile achievements after the batch**
+
+For a facts-matching newly stored **or exact replayed** run:
+1. read one bounded achievement snapshot
+2. run pure predicates
+3. insert missing achievement IDs with `ON CONFLICT DO NOTHING ... RETURNING`
+
+A failure after the run batch makes the request retryable; exact replay performs the same reconciliation and repairs missing achievements.
+
+- [ ] **6. Server derives family+difficulty**
+
+Completion route reads variant metadata and passes trusted identity into shared code. Client does not submit it.
+
+- [ ] **7. Verify**
+
+```bash
+bun --cwd packages/shared run test:unit
+bun --cwd apps/api run test:unit -- src/routes/puzzles.complete.worker.test.ts
+bun --cwd packages/shared run check
+bun --cwd apps/api run check
+```
+
+Commit: `feat(shared): add completion progression and mastery`
+
+---
+
+## Task 12: Add ranking/profile queries and web progression UI
+
+**Files**
+- Modify: `packages/shared/src/repositories.ts`
+- Test: `packages/shared/src/__tests__/repositories.d1.test.ts`
+- Create: `apps/api/src/routes/leaderboard.worker.ts`
+- Create: `apps/api/src/routes/leaderboard.worker.test.ts`
+- Modify: `apps/api/src/routes/puzzle-families.worker.ts`
+- Modify: `apps/api/src/routes/player.worker.ts`
+- Modify corresponding API tests
 - Modify: `apps/web/src/routes/puzzle/[id]/+page.svelte`
 - Modify: `apps/web/src/lib/components/PuzzleCompletionDialog.svelte`
-- Modify: `apps/web/src/lib/components/__tests__/PuzzleCompletionDialog.svelte.test.ts`
+- Modify component tests
 - Create: `apps/web/src/lib/components/PuzzleLeaderboardDialog.svelte`
-- Create: `apps/web/src/lib/components/__tests__/PuzzleLeaderboardDialog.svelte.test.ts`
+- Create tests
 - Create: `apps/web/src/routes/leaderboard/+page.svelte`
-- Create: `apps/web/src/routes/leaderboard/page.svelte.test.ts`
+- Create tests
 - Modify: `apps/web/src/routes/profile/+page.svelte`
-- Modify: `apps/web/src/routes/profile/page.svelte.test.ts`
+- Modify profile tests
 - Modify: `apps/web/src/routes/+layout.svelte`
 - Modify: `apps/web/src/lib/services/api.ts`
 
-**Interfaces:**
-- Puzzle route obtains V2 by calling `completionRequestFromSeal(seal)`; it does not construct the request object manually.
-- Completion UI consumes `CompletionProgressionDelta`.
-- Profile consumes progression summary + rewritten paginated family+difficulty Puzzle Results.
+**Queries**
 
-- [ ] **Step 1: Write completion-dialog RED tests**
+```ts
+listPuzzleLeaderboard(...)
+listOverallLeaderboard(...)
+listPlayerStats(...)          // rewritten family+difficulty grain
+getPlayerSummary(...)
+getPlayerProgressionSummary(...)
+```
 
-Cover:
-- `+200 First Normal Clear`
-- new achievement + point value
-- new mastery badges
-- competitive PB + rank
-- non-PB current vs best
-- submission failure still leaves local completion UI usable.
+- [ ] **1. Write leaderboard ordering RED tests**
 
-Route test spies on `completionRequestFromSeal`/API call and verifies hints/incorrect attempts come from the seal through the canonical helper.
+Puzzle: time ASC, achievedAt ASC, playerId ASC.
 
-- [ ] **Step 2: Write family/overall leaderboard RED tests**
+Overall: score DESC, Hard DESC, Normal DESC, Easy DESC, scoreReachedAt ASC, playerId ASC.
 
-Family dialog defaults to current difficulty + Standard, toggles Standard/Rotation without mixing rows, and renders top 50 + separate `YOU · #N` when needed.
+Top 50 + `me`; never email.
 
-Overall page renders score + E/N/H counts and public profile identity without email.
+- [ ] **2. Preserve Puzzle Results**
 
-- [ ] **Step 3: Write profile RED tests**
+Rewrite `listPlayerStats()` against new rows. Row grain is family+difficulty and includes Standard best, Rotation best, total runs, first/last completion. Preserve bounded cursor pagination style.
 
-Assert score/rank, E/N/H counts, achievement progress, mastery count, and retained Puzzle Results rows showing difficulty plus separate Standard/Rotation bests. Keep current private email/name/avatar editing behavior.
+- [ ] **3. Rewrite summary semantics**
 
-- [ ] **Step 4: Implement UI using existing composition patterns**
+`puzzlesUploaded` = families; `puzzlesSolved` = distinct families; `totalCompletions` = run count.
 
-Use current modal focus/action behavior for family leaderboard; do not extract a generic dialog framework. Add `Leaderboard` beside existing navigation entries.
+- [ ] **4. Update completion UI**
 
-- [ ] **Step 5: Verify and commit**
+Route uses `completionRequestFromSeal()` V2. Completion dialog displays only this run's newly awarded clear points, achievements, mastery, PB/rank feedback when available. Submission failure never blocks local completion.
 
-Run:
-- `bun --cwd apps/web run test:unit`
-- `bun --cwd apps/web run check`
-- `bun --cwd apps/web run lint`
+- [ ] **5. Add family + overall leaderboard UI**
+
+Family dialog: difficulty selector + Standard/Rotation selector. Overall page: score and E/N/H counts. Add one top-level Leaderboard nav entry.
+
+- [ ] **6. Extend Profile instead of adding a separate achievements app**
+
+Show score/rank, difficulty counts, achievement progress, mastery progress, and preserved Puzzle Results.
+
+- [ ] **7. Verify**
+
+```bash
+bun --cwd packages/shared run test:unit
+bun --cwd apps/api run test:unit
+bun --cwd apps/web run test:unit
+bun --cwd apps/web run check
+```
 
 Commit: `feat(web): add puzzle progression and leaderboards`
 
 ---
 
-## Task 11: Update E2E fixtures and run the full single-PR verification gate
+## Task 13: Integrated E2E and final single-PR gate
 
-**Files:**
+**Files**
 - Modify: `apps/web/e2e/gallery.spec.ts`
 - Modify: `apps/web/e2e/support/gameplay-page.ts`
 - Modify: `apps/web/e2e/gameplay-fixtures/catalog.ts`
 - Modify: `apps/web/e2e/gameplay-fixtures/persisted-state.ts`
 - Create: `apps/web/e2e/progression-leaderboard.spec.ts`
-- Modify: `apps/api/src/__tests__/worker-extra.worker.test.ts` only if route-registration assertions live there
-- Modify: `docs/superpowers/plans/2026-08-26-puzzle-difficulty-achievements-leaderboards.md` only for a real execution-discovered correction, not as an implementation diary
+- Modify only additional fixtures/tests required by the final API shape
 
-**Interfaces:**
-- Verifies the full family -> variant -> completion -> ranking flow while preserving Quick Puzzle and mobile unit coverage.
-
-- [ ] **Step 1: Convert deterministic E2E catalog fixtures to family + three variants**
-
-Each family has stable family ID and three stable variant IDs/counts. Gameplay page object remains variant-oriented once URL reaches `/puzzle/<variantId>`.
-
-- [ ] **Step 2: Add critical authenticated E2E path**
+- [ ] **1. Family difficulty E2E**
 
 ```text
-gallery shows one family
- -> Easy shows its own Continue/Play state
- -> choose Easy concrete variant
- -> complete Standard timed run
- -> dialog shows first-clear/progression delta
- -> family Easy/Standard leaderboard shows player
- -> overall leaderboard reflects score
- -> profile shows Easy clear + achievement/mastery + Puzzle Results row
+one family card
+ -> Easy + Normal + Hard have distinct variant IDs/counts
+ -> resume state belongs to the selected difficulty
+ -> old server save namespace is ignored
+ -> Quick Puzzle resume still works
 ```
 
-Also select Normal and prove it navigates to a different variant ID/piece count.
+- [ ] **2. Progression E2E**
 
-- [ ] **Step 3: Pin family cleanup/admin integration**
+Authenticated eligible completion:
 
-Use existing API/admin integration tests to prove one family delete fences/removes all three variant gameplay identities and no variant remains independently catalogued. Do not add a new browser E2E seam solely for deletion when unit/worker coverage already owns the protocol.
+```text
+complete Easy
+ -> +100 once
+ -> mastery/achievement deltas
+ -> Standard family board row
+ -> overall score/rank
+ -> profile counts + family+difficulty Puzzle Results
+```
 
-- [ ] **Step 4: Add Quick Puzzle regression assertions**
+Replay same difficulty and verify no additional clear points.
 
-Custom piece count and local resume remain functional; `q-*` has no family/account leaderboard UI.
+- [ ] **3. Family cleanup regression**
 
-- [ ] **Step 5: Run focused suites**
+Keep the Task 8 real-runtime create/delete gate as mandatory evidence; do not substitute mocks at final review.
 
-Run:
-- `bun --cwd apps/web run test:e2e -- gallery.spec.ts progression-leaderboard.spec.ts`
-- `bun --cwd apps/web run test:e2e:smoke`
-- `bun --cwd apps/mobile run test:unit`
+- [ ] **4. Mobile regression**
 
-- [ ] **Step 6: Run full repository gate**
+```bash
+bun --cwd apps/mobile run test:unit
+cd apps/mobile && bunx tsc --noEmit
+```
 
-From repo root:
+Where a macOS/iOS simulator is available, run one `ns run ios --no-hmr --justlaunch` compile/launch smoke after the family API changes. Do not block non-mac CI on this manual smoke.
+
+- [ ] **5. Full repository gate**
 
 ```bash
 bun run check
@@ -916,35 +805,42 @@ bun run lint
 bun run test:unit
 bun run test:scripts
 bun run check:scripts
-bun run test:e2e
+bun run lint:scripts
 bun run build
+bun run test:e2e
 bun --cwd apps/web run test:e2e:assert-production-bundle
-bun --cwd apps/mobile run test:unit
 ```
 
-- [ ] **Step 7: Final spec/diff audit and commit**
+- [ ] **6. Final diff review**
 
-Verify explicitly:
-- no mutable difficulty in `PuzzleSession`
-- no V1 completion parser/export
-- `completionRequestFromSeal` owns V2 projection
-- run replay equality includes hint/wrong-attempt facts
-- no public `GET /api/puzzles` catalog list
-- web/mobile/admin all browse families
-- family reaper/deletion owns shared assets and fences all three variants
-- every repeated Workflow step name includes difficulty
-- Profile Puzzle Results still exists at family+difficulty grain
-- server save prefix v2 and Quick `q-*` prefix coexist
-- admin CLI Access protects `/api/admin/puzzle-families`
-- migration does not delete old source objects before replacement verification
-- no second DO, child workflow, score ledger, achievement engine, generic ranking API, or legacy difficulty was introduced.
+Explicitly verify:
+- one implementation PR
+- no D1 `puzzle_variants`
+- no `@perseus/shared/bun`
+- no V1 completion parser
+- no generic achievement/ranking engine
+- one family Workflow with difficulty-qualified checkpoints
+- family-only cleanup/reaper
+- player upload list preserved at family grain
+- Puzzle Results preserved at family+difficulty grain
+- server v2 save namespace + unchanged Quick keys
+- sibling admin delete route outside CLI Access policy
+- production runbook begins with D1 + content exports
 
-Commit: `test: cover family difficulty progression cutover`
+Commit: `test: cover puzzle family progression cutover`
 
 ---
 
-## PR Completion Gate
+## Production Cutover Gate Before Merge
 
-This remains one cohesive implementation PR. Family identity is required to define difficulty, shared-asset ownership, and deletion correctly; variant identity is required for saves/downloads/completions; those identities in turn define progression and leaderboard keys. Splitting the cutover would require temporary catalog/completion compatibility paths that this pre-release project deliberately avoids.
+Because merge to `main` triggers deployment, do **not** merge the implementation PR until all of these are complete:
 
-Before marking the PR ready, all eleven tasks must be complete and the full gate above must pass.
+```text
+local Task 8 create/delete gate PASS
+full automated PR gate PASS
+production D1 export created and verified
+legacy production content/owner export created and verified
+operator has the import/cleanup commands and Access credentials ready
+```
+
+After merge/deploy, run import immediately, wait for every family to become ready, verify counts/assets, then execute the one-shot old-object cleanup. The temporary empty-gallery window is an accepted pre-release trade-off, not an unnoticed failure mode.
