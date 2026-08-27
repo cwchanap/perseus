@@ -217,7 +217,7 @@ async function reclaimReservationOrFail(
 				if (authoritative === 'ready') {
 					return {
 						kind: 'return',
-						response: Response.json(raceExisting, { status: 200 })
+						response: Response.json(stripIdempotencyKey(raceExisting), { status: 200 })
 					};
 				}
 				return {
@@ -242,7 +242,7 @@ async function reclaimReservationOrFail(
 		// and must never leak in a response body (mirrors the 201 path below).
 		return {
 			kind: 'return',
-			response: Response.json(raceExisting, { status: 200 })
+			response: Response.json(stripIdempotencyKey(raceExisting), { status: 200 })
 		};
 	}
 
@@ -1340,7 +1340,7 @@ admin.post('/puzzles', async (c) => {
 										);
 									}
 									if (authoritative === 'ready') {
-										return c.json(existing, 200);
+										return c.json(stripIdempotencyKey(existing), 200);
 									}
 									return c.json(
 										{
@@ -1371,7 +1371,7 @@ admin.post('/puzzles', async (c) => {
 								// the live puzzle; the key is a server-side dedup
 								// secret and must not leak (matches 201 path and
 								// the reclaim race branch above).
-								return c.json(existing, 200);
+								return c.json(stripIdempotencyKey(existing), 200);
 							}
 							// Fall through to normal create flow.
 						}
