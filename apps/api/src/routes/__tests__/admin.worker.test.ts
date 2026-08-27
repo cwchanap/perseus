@@ -13,6 +13,14 @@ const dbContextMock = vi.hoisted(() => ({
 	}
 }));
 
+vi.mock('@perseus/types', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('@perseus/types')>();
+	return {
+		...actual,
+		aspectRatiosMatch: vi.fn(actual.aspectRatiosMatch)
+	};
+});
+
 // Mock storage before importing admin
 vi.mock('../../services/storage.worker', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('../../services/storage.worker')>();
@@ -81,8 +89,10 @@ import * as playerAuth from '../../services/player-auth.worker';
 import {
 	insertPuzzleFamilyOwnership,
 	deletePuzzleFamilyOwnership,
-	SYSTEM_OWNER_ID
+	SYSTEM_OWNER_ID,
+	validateImageEndMarker
 } from '@perseus/shared';
+import { MAX_IMAGE_DIMENSION } from '@perseus/types';
 
 // Valid PNG magic bytes header for test blobs
 const PNG_HEADER = new Uint8Array([
@@ -705,6 +715,62 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 
 			// Should successfully accept the valid JPEG
 			expect(res.status).toBe(201);
+		});
+
+		it('should reject PNG dimensions exceeding the maximum', async () => {
+			const mockEnv = {
+				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+				PUZZLE_METADATA: {} as KVNamespace,
+				PUZZLES_BUCKET: {} as R2Bucket,
+				PUZZLE_WORKFLOW: { create: vi.fn() }
+			};
+			const types = await import('@perseus/types');
+			vi.mocked(types.aspectRatiosMatch).mockReturnValueOnce(true);
+			const oversizedPng = new Uint8Array(PNG_HEADER);
+			const oversizedDimension = MAX_IMAGE_DIMENSION + 1;
+			new DataView(oversizedPng.buffer).setUint32(16, oversizedDimension);
+			const formData = new FormData();
+			formData.append('name', 'Oversized Puzzle');
+			formData.append('image', new Blob([oversizedPng], { type: 'image/png' }), 'test.png');
+
+			const res = await admin.fetch(
+				new Request('http://localhost/puzzle-families', {
+					method: 'POST',
+					headers: { cookie: 'session=valid.token' },
+					body: formData
+				}),
+				mockEnv as any
+			);
+
+			expect(res.status).toBe(400);
+			expect(((await res.json()) as any).message).toContain('exceed maximum');
+			expect(storage.uploadOriginalImage).not.toHaveBeenCalled();
+		});
+
+		it('should reject a PNG when the end marker is invalid', async () => {
+			vi.mocked(validateImageEndMarker).mockResolvedValueOnce(false);
+			const mockEnv = {
+				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
+				PUZZLE_METADATA: {} as KVNamespace,
+				PUZZLES_BUCKET: {} as R2Bucket,
+				PUZZLE_WORKFLOW: { create: vi.fn() }
+			};
+			const formData = new FormData();
+			formData.append('name', 'Corrupt Puzzle');
+			formData.append('image', new Blob([PNG_HEADER], { type: 'image/png' }), 'test.png');
+
+			const res = await admin.fetch(
+				new Request('http://localhost/puzzle-families', {
+					method: 'POST',
+					headers: { cookie: 'session=valid.token' },
+					body: formData
+				}),
+				mockEnv as any
+			);
+
+			expect(res.status).toBe(400);
+			expect(((await res.json()) as any).message).toBe('Image is corrupted or truncated');
+			expect(storage.uploadOriginalImage).not.toHaveBeenCalled();
 		});
 
 		it('should return existing puzzle when Idempotency-Key already reserved', async () => {
