@@ -221,7 +221,7 @@ async function cmdSetToken(options: Options): Promise<void> {
 		// a known-bad JWT and fail the same way (or worse, skip re-prompting).
 		console.error(
 			probe === 'blocked'
-				? 'Access still blocks requests (302/403). Token was NOT cached.\n' +
+				? 'Access still blocks requests (401/302/403). Token was NOT cached.\n' +
 						'Make sure you copied CF_Authorization after a successful Access login with WARP connected.'
 				: `Access probe failed (${probe}). Token was NOT cached.`
 		);
