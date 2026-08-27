@@ -6,14 +6,17 @@ import {
 	deletePuzzleMetadata,
 	listPuzzles,
 	listPuzzlesPage,
+	listFamilies,
 	puzzleExists,
 	getOriginalKey,
 	getThumbnailKey,
 	getPieceKey,
+	getFamilyOriginalKey,
+	getFamilyThumbnailKey,
 	uploadOriginalImage,
 	deleteOriginalImage,
 	getImage,
-	deletePuzzleAssets,
+	deleteFamilyCleanupAssets,
 	invalidateGalleryIndex,
 	writeCleanupRecord,
 	listCleanupRecords,
@@ -620,42 +623,76 @@ describe('R2 Asset Operations', () => {
 		});
 	});
 
-	describe('deletePuzzleAssets', () => {
-		it('should delete original, thumbnail, and all piece images', async () => {
+	describe('deleteFamilyCleanupAssets', () => {
+		it('deletes family original/thumbnail under familyId and pieces under each variant id', async () => {
 			const mockBucket = createMockR2Bucket();
-			const pieceCount = 4;
+			const familyId = 'family-abc';
+			const variantIds = {
+				easy: 'variant-easy',
+				normal: 'variant-normal',
+				hard: 'variant-hard'
+			};
+			const pieceCounts = { easy: 2, normal: 1, hard: 1 };
 
-			await deletePuzzleAssets(mockBucket as unknown as R2Bucket, 'puzzle-123', pieceCount);
+			await deleteFamilyCleanupAssets(
+				mockBucket as unknown as R2Bucket,
+				familyId,
+				variantIds,
+				pieceCounts
+			);
 
-			// Should have been called with all keys
 			expect(mockBucket.delete).toHaveBeenCalled();
 			const deleteCall = mockBucket.delete.mock.calls[0][0] as string[];
-			expect(deleteCall).toContain('families/puzzle-123/original');
-			expect(deleteCall).toContain('families/puzzle-123/thumbnail.jpg');
-			expect(deleteCall).toContain('puzzles/puzzle-123/pieces/0.png');
-			expect(deleteCall).toContain('puzzles/puzzle-123/pieces/1.png');
-			expect(deleteCall).toContain('puzzles/puzzle-123/pieces/2.png');
-			expect(deleteCall).toContain('puzzles/puzzle-123/pieces/3.png');
+			expect(deleteCall).toContain(getFamilyOriginalKey(familyId));
+			expect(deleteCall).toContain(getFamilyThumbnailKey(familyId));
+			expect(deleteCall).not.toContain(getFamilyOriginalKey(variantIds.easy));
+			expect(deleteCall).not.toContain(getFamilyThumbnailKey(variantIds.easy));
+			expect(deleteCall).toContain(getPieceKey(variantIds.easy, 0));
+			expect(deleteCall).toContain(getPieceKey(variantIds.easy, 1));
+			expect(deleteCall).toContain(getPieceKey(variantIds.normal, 0));
+			expect(deleteCall).toContain(getPieceKey(variantIds.hard, 0));
 		});
 
-		it('should batch delete when piece count exceeds 1000', async () => {
+		it('should batch delete when total key count exceeds 1000', async () => {
 			const mockBucket = createMockR2Bucket();
-			const pieceCount = 1500; // Will need 2 batches
+			const variantIds = {
+				easy: 'variant-easy',
+				normal: 'variant-normal',
+				hard: 'variant-hard'
+			};
+			const pieceCounts = { easy: 500, normal: 500, hard: 2 };
 
-			await deletePuzzleAssets(mockBucket as unknown as R2Bucket, 'puzzle-123', pieceCount);
+			await deleteFamilyCleanupAssets(
+				mockBucket as unknown as R2Bucket,
+				'family-abc',
+				variantIds,
+				pieceCounts
+			);
 
-			// Should have been called twice (2 batches)
 			expect(mockBucket.delete).toHaveBeenCalledTimes(2);
-
-			// First batch should have 1000 items
 			const firstBatch = mockBucket.delete.mock.calls[0][0] as string[];
 			expect(firstBatch.length).toBe(1000);
-
-			// Second batch should have remaining items (1502 total - 1000 = 502)
-			// 1500 pieces + original + thumbnail = 1502 total
 			const secondBatch = mockBucket.delete.mock.calls[1][0] as string[];
-			expect(secondBatch.length).toBe(502);
+			expect(secondBatch.length).toBe(4);
 		});
+	});
+});
+
+describe('listFamilies', () => {
+	it('scans the family: KV prefix (not puzzle:)', async () => {
+		const kv = createMockKV();
+		const familyA = pageFamilyId(1);
+		const familyB = pageFamilyId(2);
+		storeFamily(kv, { id: familyA, name: 'Alpha', createdAt: 2000 });
+		storeFamily(kv, { id: familyB, name: 'Beta', createdAt: 1000 });
+		kv._store.set('puzzle:orphan-variant', JSON.stringify(makeVariantMeta('orphan-variant', 3000)));
+
+		const result = await listFamilies(kv as unknown as KVNamespace);
+
+		expect(kv.list).toHaveBeenCalledWith(expect.objectContaining({ prefix: 'family:' }));
+		expect(result.families).toHaveLength(2);
+		expect(result.families.map((f) => f.id)).toEqual([familyA, familyB]);
+		expect(result.invalidCount).toBe(0);
 	});
 });
 

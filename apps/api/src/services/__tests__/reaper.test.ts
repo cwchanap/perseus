@@ -145,6 +145,15 @@ const OLD_PROCESSING = NOW - REAP_AFTER_MS - 1;
 const RECENT_PROCESSING = NOW - 1000;
 const OLD_READY = NOW - REAP_AFTER_MS - 1;
 
+function expectBeginPuzzleDeletionForAllVariants(familyId: string) {
+	for (const difficulty of ['easy', 'normal', 'hard'] as const) {
+		expect(dbContextMock.completionWrites.beginPuzzleDeletion).toHaveBeenCalledWith(
+			`${familyId}-${difficulty}`,
+			expect.any(Number)
+		);
+	}
+}
+
 function familySummary(id: string, status: string, createdAt: number) {
 	return {
 		id,
@@ -270,6 +279,7 @@ describe('reapStuckPuzzles', () => {
 			'stuck-1-easy',
 			expect.any(Number)
 		);
+		expectBeginPuzzleDeletionForAllVariants('stuck-1');
 		expect(storage.deleteFamilyCleanupAssets).toHaveBeenCalledWith(
 			env.PUZZLES_BUCKET,
 			'stuck-1',
@@ -405,8 +415,7 @@ describe('reapStuckPuzzles', () => {
 				createdAt: expect.any(Number)
 			})
 		);
-		// Regression: best-effort release after KV delete so the reservation
-		// doesn't dangle on the dead puzzleId forever.
+		// Regression: release runs after finish; failure retains the cleanup record.
 		expect(storage.releaseIdempotencyKey).toHaveBeenCalledWith(
 			env.PUZZLE_METADATA_DO,
 			'reap-key',
@@ -414,7 +423,7 @@ describe('reapStuckPuzzles', () => {
 		);
 	});
 
-	it('continues reaping when the DO reservation release throws (best-effort)', async () => {
+	it('retains cleanup record when the DO reservation release throws', async () => {
 		(storage.listFamilies as any).mockResolvedValue({
 			families: [familySummary('stuck-1', 'processing', OLD_PROCESSING)],
 			invalidCount: 0
@@ -429,9 +438,9 @@ describe('reapStuckPuzzles', () => {
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 		const env = makeEnv({ 'stuck-1': 'errored' });
 		const result = await reapStuckPuzzles(env, NOW);
-		// KV delete still counts as reaped; DO release failure is logged,
-		// not fatal — operator force-release is the backstop.
-		expect(result.reaped).toBe(1);
+		expect(result.reaped).toBe(0);
+		expect(result.errors).toBe(1);
+		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
 		expect(result.details).toContainEqual(
 			expect.objectContaining({ puzzleId: 'stuck-1', action: 'do-release-failed' })
 		);
@@ -990,6 +999,7 @@ describe('reapCleanupRecords', () => {
 			'dup-1-easy',
 			expect.any(Number)
 		);
+		expectBeginPuzzleDeletionForAllVariants('dup-1');
 		expect(storage.deleteFamilyCleanupAssets).toHaveBeenCalledWith(
 			env.PUZZLES_BUCKET,
 			'dup-1',
@@ -1044,6 +1054,7 @@ describe('reapCleanupRecords', () => {
 			'dup-1-easy',
 			expect.any(Number)
 		);
+		expectBeginPuzzleDeletionForAllVariants('dup-1');
 		expect((storage.deletePuzzleMetadata as any).mock.invocationCallOrder[0]).toBeLessThan(
 			dbContextMock.completionWrites.finishPuzzleDeletion.mock.invocationCallOrder[0]
 		);
@@ -1117,6 +1128,7 @@ describe('reapCleanupRecords', () => {
 			'dup-1-easy',
 			expect.any(Number)
 		);
+		expectBeginPuzzleDeletionForAllVariants('dup-1');
 		expect(storage.deleteCleanupRecord).toHaveBeenCalledWith(env.PUZZLE_METADATA, 'dup-1');
 	});
 
@@ -1292,7 +1304,7 @@ describe('reapCleanupRecords', () => {
 		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
 	});
 
-	it('logs but still reaps when idempotency key release fails', async () => {
+	it('retains cleanup record when idempotency key release fails', async () => {
 		(storage.listCleanupRecords as any).mockResolvedValue([
 			{
 				familyId: 'dup-1',
@@ -1306,11 +1318,16 @@ describe('reapCleanupRecords', () => {
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 		const env = makeEnv({ 'dup-1': 'complete' });
 		const result = await reapCleanupRecords(env);
-		expect(result.reaped).toBe(1);
+		expect(result.reaped).toBe(0);
+		expect(result.errors).toBe(1);
 		expect(storage.releaseIdempotencyKey).toHaveBeenCalledWith(
 			env.PUZZLE_METADATA_DO,
 			'idem-1',
 			'dup-1'
+		);
+		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
+		expect(result.details).toContainEqual(
+			expect.objectContaining({ puzzleId: 'dup-1', action: 'cleanup-do-release-failed' })
 		);
 	});
 
@@ -1336,6 +1353,7 @@ describe('reapCleanupRecords', () => {
 			'dup-1-easy',
 			expect.any(Number)
 		);
+		expectBeginPuzzleDeletionForAllVariants('dup-1');
 		expect(result.details).toContainEqual(
 			expect.objectContaining({ puzzleId: 'dup-1', action: 'cleanup-d1-finish-failed' })
 		);
@@ -1453,6 +1471,7 @@ describe('reapCleanupRecords', () => {
 			'dup-1-easy',
 			expect.any(Number)
 		);
+		expectBeginPuzzleDeletionForAllVariants('dup-1');
 		// R2 and KV must NOT be deleted — a live DO can resurrect metadata.
 		expect(storage.deleteFamilyCleanupAssets).not.toHaveBeenCalled();
 		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
@@ -1617,6 +1636,7 @@ describe('reapOrphanedReservations', () => {
 			'a-easy',
 			expect.any(Number)
 		);
+		expectBeginPuzzleDeletionForAllVariants('a');
 		expect(storage.deleteMetadataDO).toHaveBeenCalledWith(env.PUZZLE_METADATA_DO, 'a');
 		expect(storage.deleteFamilyCleanupAssets).toHaveBeenCalledWith(
 			env.PUZZLES_BUCKET,
@@ -1680,6 +1700,7 @@ describe('reapOrphanedReservations', () => {
 			'a-easy',
 			expect.any(Number)
 		);
+		expectBeginPuzzleDeletionForAllVariants('a');
 		expect((storage.deletePuzzleMetadata as any).mock.invocationCallOrder[0]).toBeLessThan(
 			dbContextMock.completionWrites.finishPuzzleDeletion.mock.invocationCallOrder[0]
 		);
@@ -1818,6 +1839,7 @@ describe('reapOrphanedReservations', () => {
 			'a-easy',
 			expect.any(Number)
 		);
+		expectBeginPuzzleDeletionForAllVariants('a');
 		expect(storage.deleteFamilyCleanupAssets).not.toHaveBeenCalled();
 		expect(storage.deletePuzzleMetadata).not.toHaveBeenCalled();
 		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
@@ -2074,7 +2096,7 @@ describe('reapOrphanedReservations', () => {
 		expect(result.details.some((d) => d.action === 'orphan-kv-delete-failed')).toBe(true);
 	});
 
-	it('still reaps when idempotency key release fails (best-effort)', async () => {
+	it('retains orphan cleanup record when idempotency key release fails', async () => {
 		(storage.listFamilies as any).mockResolvedValue({
 			families: [familySummary('a', 'ready', OLD_READY)],
 			invalidCount: 0
@@ -2090,8 +2112,12 @@ describe('reapOrphanedReservations', () => {
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 		const env = makeEnv({ a: 'complete' });
 		const result = await reapOrphanedReservations(env);
-		expect(result.reaped).toBe(1);
-		expect(result.details.some((d) => d.action === 'orphan-reaped')).toBe(true);
+		expect(result.reaped).toBe(0);
+		expect(result.errors).toBe(1);
+		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
+		expect(result.details).toContainEqual(
+			expect.objectContaining({ puzzleId: 'a', action: 'orphan-do-release-failed' })
+		);
 	});
 
 	it('retains orphan record and tombstone when required ownership cleanup fails', async () => {
@@ -2117,6 +2143,7 @@ describe('reapOrphanedReservations', () => {
 			'a-easy',
 			expect.any(Number)
 		);
+		expectBeginPuzzleDeletionForAllVariants('a');
 		expect(result.details).toContainEqual(
 			expect.objectContaining({ puzzleId: 'a', action: 'orphan-d1-finish-failed' })
 		);

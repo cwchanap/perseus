@@ -502,7 +502,8 @@ async function terminateAndAwaitStopped(
 /**
  * Execute the fenced source-deletion sequence shared by the force-delete
  * route and cleanupOrphanedWorkflow: fence -> DO tombstone -> R2 delete ->
- * KV delete -> (optional pre-finish hook) -> required D1 finish.
+ * KV delete -> required D1 finish -> (optional pre-record-delete hook) ->
+ * delete cleanup record.
  *
  * Each failing step returns a 500 {error, message} Response via the
  * caller-supplied responder, which abstracts Response.json vs c.json so
@@ -517,12 +518,12 @@ async function executeFencedSourceDeletion(
 	cleanupRecord: CleanupRecord,
 	messagePrefix: string,
 	responder: FencedDeletionResponder,
-	beforeFinish?: () => Promise<void>,
+	beforeRecordDelete?: () => Promise<void>,
 	logContext = ''
 ): Promise<{ ok: true } | { ok: false; response: Response }> {
 	const familyId = cleanupRecord.familyId;
 	const logCtx = logContext ? ` ${logContext}` : '';
-	const result = await executeFencedFamilySourceDeletion(env, cleanupRecord, beforeFinish);
+	const result = await executeFencedFamilySourceDeletion(env, cleanupRecord, beforeRecordDelete);
 	if (result.ok) {
 		return { ok: true };
 	}
@@ -555,6 +556,16 @@ async function executeFencedSourceDeletion(
 		return {
 			ok: false,
 			response: responder(`${messagePrefix}KV metadata cleanup failed, reaper will retry`)
+		};
+	}
+	if (result.step === 'release') {
+		console.error(
+			`Failed to release idempotency reservation for ${familyId}${logCtx}:`,
+			result.error
+		);
+		return {
+			ok: false,
+			response: responder(`${messagePrefix}reservation release failed, reaper will retry`)
 		};
 	}
 	console.error(`Failed to finish fenced cleanup for ${familyId}${logCtx}:`, result.error);
@@ -1869,11 +1880,7 @@ admin.post('/puzzle-delete/:id', async (c) => {
 			(message) => c.json({ error: ErrorCode.InternalError, message }, 500),
 			async () => {
 				if (family.idempotencyKey) {
-					try {
-						await releaseIdempotencyKey(c.env.PUZZLE_METADATA_DO, family.idempotencyKey, id);
-					} catch (err) {
-						console.error(`Failed to release idempotency reservation for family ${id}:`, err);
-					}
+					await releaseIdempotencyKey(c.env.PUZZLE_METADATA_DO, family.idempotencyKey, id);
 				}
 			}
 		);
