@@ -21,25 +21,32 @@ const dbContextMock = vi.hoisted(() => ({
 	}
 }));
 
-vi.mock('../../services/storage.worker', () => ({
-	commitIdempotencyKey: vi.fn(),
-	createPuzzleMetadata: vi.fn(),
-	deletePuzzleMetadata: vi.fn(),
-	deletePuzzleAssets: vi.fn(),
-	deleteMetadataDO: vi.fn(),
-	failIdempotencyKey: vi.fn(),
-	getAuthoritativeStatus: vi.fn(),
-	getPuzzle: vi.fn(),
-	listPuzzles: vi.fn(),
-	originalImageExists: vi.fn().mockResolvedValue(false),
-	puzzleExists: vi.fn().mockResolvedValue(false),
-	releaseIdempotencyKey: vi.fn(),
-	reserveIdempotencyKey: vi.fn(),
-	uploadOriginalImage: vi.fn(),
-	deleteOriginalImage: vi.fn(),
-	writeCleanupRecord: vi.fn().mockResolvedValue(undefined),
-	deleteCleanupRecord: vi.fn().mockResolvedValue(undefined)
-}));
+vi.mock('../../services/storage.worker', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../services/storage.worker')>();
+	return {
+		...actual,
+		commitIdempotencyKey: vi.fn(),
+		createPuzzleMetadata: vi.fn().mockResolvedValue(undefined),
+		createFamilyMetadata: vi.fn().mockResolvedValue(undefined),
+		deleteFamilyMetadata: vi.fn().mockResolvedValue({ success: true }),
+		deletePuzzleMetadata: vi.fn().mockResolvedValue({ success: true }),
+		deletePuzzleAssets: vi.fn(),
+		deleteMetadataDO: vi.fn(),
+		failIdempotencyKey: vi.fn(),
+		getAuthoritativeStatus: vi.fn(),
+		getPuzzle: vi.fn(),
+		getFamily: vi.fn(),
+		listPuzzles: vi.fn(),
+		originalImageExists: vi.fn().mockResolvedValue(false),
+		puzzleExists: vi.fn().mockResolvedValue(false),
+		releaseIdempotencyKey: vi.fn(),
+		reserveIdempotencyKey: vi.fn(),
+		uploadOriginalImage: vi.fn().mockResolvedValue(undefined),
+		deleteOriginalImage: vi.fn().mockResolvedValue({ success: true }),
+		writeCleanupRecord: vi.fn().mockResolvedValue(undefined),
+		deleteCleanupRecord: vi.fn().mockResolvedValue(undefined)
+	};
+});
 
 vi.mock('../../middleware/rate-limit.worker', () => ({
 	__resetRateLimitStore: vi.fn()
@@ -108,9 +115,11 @@ function createRequest(idempotencyKey?: string): Request {
 
 function mockSuccessfulCreate() {
 	vi.mocked(storage.uploadOriginalImage).mockResolvedValue(undefined);
+	vi.mocked(storage.createFamilyMetadata).mockResolvedValue(undefined);
 	vi.mocked(storage.createPuzzleMetadata).mockResolvedValue(undefined);
 	vi.mocked(storage.commitIdempotencyKey).mockResolvedValue(undefined);
 	vi.mocked(storage.deleteOriginalImage).mockResolvedValue({ success: true });
+	vi.mocked(storage.deleteFamilyMetadata).mockResolvedValue({ success: true });
 	vi.mocked(storage.deletePuzzleMetadata).mockResolvedValue({ success: true });
 	vi.mocked(storage.deletePuzzleAssets).mockResolvedValue({ success: true, failedKeys: [] });
 	vi.mocked(storage.deleteMetadataDO).mockResolvedValue(undefined);
@@ -235,7 +244,7 @@ describe('Admin Worker — terminateAndAwaitStopped error paths via dead-commit 
 	) {
 		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
 			existing: false,
-			puzzleId: 'conflict-puzzle'
+			familyId: 'conflict-puzzle'
 		} as any);
 		const workflow = {
 			create: vi.fn().mockResolvedValue(undefined),
@@ -340,10 +349,10 @@ describe('Admin Worker — committed processing reservation DO status check', ()
 	function setupCommittedProcessing(workflowStatus: string) {
 		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
 			existing: true,
-			puzzleId: 'committed-puzzle',
+			familyId: 'committed-puzzle',
 			status: 'committed'
 		} as any);
-		vi.mocked(storage.getPuzzle).mockResolvedValue(makeProcessingPuzzle('committed-puzzle'));
+		vi.mocked(storage.getFamily).mockResolvedValue(makeProcessingPuzzle('committed-puzzle'));
 		const workflow = {
 			get: vi.fn(async () => ({
 				status: vi.fn().mockResolvedValue({ status: workflowStatus }),
@@ -417,7 +426,7 @@ describe('Admin Worker — R2 probe after upload error', () => {
 		// which makes the fail/release reservation cleanup paths reachable.
 		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
 			existing: false,
-			puzzleId: 'r2-probe-puzzle'
+			familyId: 'r2-probe-puzzle'
 		} as any);
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 	});
@@ -490,7 +499,7 @@ describe('Admin Worker — alive-commit conflict cleanup', () => {
 	) {
 		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
 			existing: false,
-			puzzleId: 'alive-puzzle'
+			familyId: 'alive-puzzle'
 		} as any);
 		// create() throws (ambiguous), but workflow is alive
 		const workflow = {
@@ -703,7 +712,7 @@ describe('Admin Worker — dead-commit conflict cleanup error paths', () => {
 	) {
 		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
 			existing: false,
-			puzzleId: 'dead-puzzle'
+			familyId: 'dead-puzzle'
 		} as any);
 		// create() succeeds
 		const workflow = {
@@ -879,13 +888,19 @@ describe('Admin Worker — DELETE /puzzles/:id idempotency release failure', () 
 
 	it('logs but returns 204 when idempotency key release fails', async () => {
 		const puzzleId = '550e8400-e29b-41d4-a716-446655440000';
-		vi.mocked(storage.getPuzzle).mockResolvedValue({
-			id: puzzleId,
-			name: 'Test',
-			pieceCount: 4,
+		vi.mocked(storage.getFamily).mockResolvedValue({
+			id: 'family-id',
+			name: 'Test Family',
+			aspectRatio: '1:1',
 			status: 'ready',
-			idempotencyKey: 'idem-key-1'
+			variants: {
+				easy: '423e4567-e89b-42d3-a456-426614174010',
+				normal: '523e4567-e89b-42d3-a456-426614174011',
+				hard: '623e4567-e89b-42d3-a456-426614174012'
+			},
+			createdAt: 1000
 		} as any);
+		vi.mocked(storage.deleteFamilyMetadata).mockResolvedValue({ success: true });
 		vi.mocked(storage.deletePuzzleMetadata).mockResolvedValue({ success: true });
 		vi.mocked(storage.deletePuzzleAssets).mockResolvedValue({ success: true, failedKeys: [] });
 		vi.mocked(storage.releaseIdempotencyKey).mockRejectedValue(new Error('DO unavailable'));
@@ -935,7 +950,7 @@ describe('Admin Worker — terminateAndAwaitStopped workflow.get() throws', () =
 	function setupDeadCommitConflictWithGetThrow(getErr: Error) {
 		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
 			existing: false,
-			puzzleId: 'get-throw-puzzle'
+			familyId: 'get-throw-puzzle'
 		} as any);
 		const workflow = {
 			create: vi.fn().mockResolvedValue(undefined),
@@ -1016,7 +1031,7 @@ describe('Admin Worker — required cleanup record delete failure retains retry 
 	it('retains retry state when deleteCleanupRecord throws', async () => {
 		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
 			existing: false,
-			puzzleId: 'record-del-puzzle'
+			familyId: 'record-del-puzzle'
 		} as any);
 		const workflow = {
 			create: vi.fn().mockResolvedValue(undefined),
@@ -1075,7 +1090,7 @@ describe('Admin Worker — R2 probe releaseReservation after cleanup success', (
 	it('releases reservation when originalImageExists is true and deleteOriginalImage succeeds', async () => {
 		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
 			existing: false,
-			puzzleId: 'probe-release-puzzle'
+			familyId: 'probe-release-puzzle'
 		} as any);
 		vi.mocked(storage.originalImageExists).mockResolvedValue(true);
 		vi.mocked(storage.deleteOriginalImage).mockResolvedValue({ success: true });
@@ -1114,7 +1129,7 @@ describe('Admin Worker — ambiguous alive create transient commit failure', () 
 	it('logs and returns 500 when commit fails with non-conflict error after ambiguous alive create', async () => {
 		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
 			existing: false,
-			puzzleId: 'alive-transient-puzzle'
+			familyId: 'alive-transient-puzzle'
 		} as any);
 		const workflow = {
 			create: vi.fn().mockRejectedValue(new Error('RPC timeout')),
@@ -1166,13 +1181,13 @@ describe('Admin Worker — idempotency KV retry budget exceeded', () => {
 		// with a failed release). getPuzzle always returns null.
 		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
 			existing: true,
-			puzzleId: 'deleted-puzzle',
+			familyId: 'deleted-puzzle',
 			status: 'committed'
 		} as any);
 		// getPuzzle returns null AND jumps the system clock forward by
 		// 5000ms on each call, so the budget check (3000ms) triggers on
 		// the first iteration of the retry loop.
-		vi.mocked(storage.getPuzzle).mockImplementation(async () => {
+		vi.mocked(storage.getFamily).mockImplementation(async () => {
 			vi.setSystemTime(Date.now() + 5000);
 			return null;
 		});
@@ -1181,14 +1196,15 @@ describe('Admin Worker — idempotency KV retry budget exceeded', () => {
 		// The re-reserve (probeReleaseAndRereclaimOrFail) wins.
 		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValueOnce({
 			existing: true,
-			puzzleId: 'deleted-puzzle',
+			familyId: 'deleted-puzzle',
 			status: 'committed'
 		} as any);
 		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValueOnce({
 			existing: false,
-			puzzleId: 'budget-puzzle'
+			familyId: 'budget-puzzle'
 		} as any);
 		vi.mocked(storage.uploadOriginalImage).mockResolvedValue(undefined);
+		vi.mocked(storage.createFamilyMetadata).mockResolvedValue(undefined);
 		vi.mocked(storage.createPuzzleMetadata).mockResolvedValue(undefined);
 		vi.mocked(storage.commitIdempotencyKey).mockResolvedValue(undefined);
 		const workflow = {

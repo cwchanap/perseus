@@ -865,7 +865,7 @@ export async function reapOrphanedReservations(env: Env): Promise<ReapResult> {
 						});
 						return null;
 					}
-					if (reservation.puzzleId === candidate.id) {
+					if (reservation.familyId === candidate.id) {
 						// This puzzle IS the current reservation owner — not an orphan.
 						return null;
 					}

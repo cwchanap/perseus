@@ -8,9 +8,11 @@ export type {
 	PuzzleMetadata,
 	PuzzleSummary,
 	PuzzleAspectRatio,
+	PuzzleFamilyMetadata,
 	ReadyPuzzle,
 	FailedPuzzle,
-	WorkflowParams
+	WorkflowParams,
+	PuzzleDifficulty
 } from '@perseus/types';
 
 export {
@@ -28,5 +30,8 @@ export {
 	THUMBNAIL_SIZE,
 	validateWorkflowParams,
 	validatePuzzleMetadata,
-	createPuzzleProgress
+	createPuzzleProgress,
+	PUZZLE_DIFFICULTIES,
+	getDifficultyPieceCount,
+	validatePuzzleFamilyMetadata
 } from '@perseus/types';

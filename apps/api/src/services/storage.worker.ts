@@ -9,12 +9,18 @@ import type {
 	PuzzleProgress,
 	PuzzleSummary,
 	PuzzleCategory,
-	PuzzleAspectRatio
+	PuzzleAspectRatio,
+	PuzzleFamilyMetadata,
+	PuzzleDifficulty
 } from '@perseus/types';
 import {
 	validatePuzzleMetadata,
 	validatePuzzleMetadataLight,
-	PUZZLE_CATEGORIES
+	validatePuzzleFamilyMetadata,
+	PUZZLE_CATEGORIES,
+	PUZZLE_DIFFICULTIES,
+	getDifficultyPieceCount,
+	getGridDimensionsForAspectRatio
 } from '@perseus/types';
 
 // Re-export types so consumers don't need to import from @perseus/types directly
@@ -27,7 +33,9 @@ export type {
 	PuzzleProgress,
 	PuzzleSummary,
 	PuzzleCategory,
-	PuzzleAspectRatio
+	PuzzleAspectRatio,
+	PuzzleFamilyMetadata,
+	PuzzleDifficulty
 };
 
 export { PUZZLE_CATEGORIES };
@@ -35,6 +43,113 @@ export { PUZZLE_CATEGORIES };
 // KV key helpers
 function puzzleKey(id: string): string {
 	return `puzzle:${id}`;
+}
+
+function familyKey(id: string): string {
+	return `family:${id}`;
+}
+
+export async function getFamily(
+	kv: KVNamespace,
+	familyId: string
+): Promise<PuzzleFamilyMetadata | null> {
+	const data = await kv.get(familyKey(familyId), 'json');
+	if (data === null) return null;
+	if (!validatePuzzleFamilyMetadata(data)) {
+		throw new Error(`Corrupt family metadata for ${familyId}: data exists but fails validation`);
+	}
+	return data as PuzzleFamilyMetadata;
+}
+
+export async function createFamilyMetadata(
+	kv: KVNamespace,
+	family: PuzzleFamilyMetadata
+): Promise<void> {
+	if (!family.id || typeof family.id !== 'string' || family.id.trim() === '') {
+		throw new Error('Family ID is required and must be a non-empty string');
+	}
+	if (!family.name || typeof family.name !== 'string' || family.name.trim() === '') {
+		throw new Error('Family name is required and must be a non-empty string');
+	}
+	const existing = await kv.get(familyKey(family.id));
+	if (existing !== null) {
+		throw new Error(`Family with ID "${family.id}" already exists`);
+	}
+	if (!validatePuzzleFamilyMetadata(family)) {
+		throw new Error('Invalid family metadata structure');
+	}
+	await kv.put(familyKey(family.id), JSON.stringify(family));
+}
+
+export async function deleteFamilyMetadata(
+	kv: KVNamespace,
+	familyId: string
+): Promise<{ success: boolean; error?: Error }> {
+	try {
+		await kv.delete(familyKey(familyId));
+		await invalidateGalleryIndex(kv);
+		return { success: true };
+	} catch (error) {
+		const normalizedError = error instanceof Error ? error : new Error(String(error));
+		console.error(`Failed to delete family metadata for ${familyId}:`, normalizedError);
+		return { success: false, error: normalizedError };
+	}
+}
+
+export function buildVariantMetadata(params: {
+	variantId: string;
+	familyId: string;
+	difficulty: PuzzleDifficulty;
+	name: string;
+	aspectRatio: PuzzleAspectRatio;
+	category?: PuzzleCategory;
+	createdAt: number;
+	idempotencyKey?: string;
+}): PuzzleMetadata {
+	const pieceCount = getDifficultyPieceCount(params.aspectRatio, params.difficulty);
+	const { rows, cols } = getGridDimensionsForAspectRatio(pieceCount, params.aspectRatio);
+	return {
+		id: params.variantId,
+		familyId: params.familyId,
+		difficulty: params.difficulty,
+		name: params.name,
+		...(params.category ? { category: params.category } : {}),
+		aspectRatio: params.aspectRatio,
+		pieceCount,
+		gridCols: cols,
+		gridRows: rows,
+		imageWidth: 0,
+		imageHeight: 0,
+		createdAt: params.createdAt,
+		status: 'processing',
+		progress: {
+			totalPieces: pieceCount,
+			generatedPieces: 0,
+			updatedAt: params.createdAt
+		},
+		pieces: [],
+		version: 0,
+		...(params.idempotencyKey ? { idempotencyKey: params.idempotencyKey } : {})
+	};
+}
+
+export function buildFamilyMetadata(params: {
+	familyId: string;
+	name: string;
+	aspectRatio: PuzzleAspectRatio;
+	createdAt: number;
+	variantIds: Record<PuzzleDifficulty, string>;
+	category?: PuzzleCategory;
+}): PuzzleFamilyMetadata {
+	return {
+		id: params.familyId,
+		name: params.name,
+		aspectRatio: params.aspectRatio,
+		createdAt: params.createdAt,
+		status: 'processing',
+		variants: params.variantIds,
+		...(params.category ? { category: params.category } : {})
+	};
 }
 
 export async function getPuzzle(kv: KVNamespace, puzzleId: string): Promise<PuzzleMetadata | null> {
@@ -186,10 +301,10 @@ export type IdempotencyReservationStatus = 'pending' | 'committed' | 'failed' | 
 export async function reserveIdempotencyKey(
 	metadataDO: DurableObjectNamespace,
 	idempotencyKey: string,
-	proposedPuzzleId: string
+	proposedFamilyId: string
 ): Promise<{
 	existing: boolean;
-	puzzleId: string;
+	familyId: string;
 	status?: IdempotencyReservationStatus;
 	reservedAt?: number;
 }> {
@@ -198,7 +313,7 @@ export async function reserveIdempotencyKey(
 	const response = await stub.fetch('https://puzzle-metadata/reserve', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ idempotencyKey, puzzleId: proposedPuzzleId })
+		body: JSON.stringify({ idempotencyKey, familyId: proposedFamilyId })
 	});
 	if (!response.ok) {
 		const payload = (await response.json().catch(() => null)) as { message?: string } | null;
@@ -208,16 +323,18 @@ export async function reserveIdempotencyKey(
 	}
 	const result = (await response.json()) as {
 		existing?: boolean;
+		familyId?: string;
 		puzzleId?: string;
 		status?: IdempotencyReservationStatus;
 		reservedAt?: number;
 	};
-	if (typeof result.puzzleId !== 'string') {
-		throw new Error('Reserve response missing puzzleId');
+	const familyId = result.familyId ?? result.puzzleId;
+	if (typeof familyId !== 'string') {
+		throw new Error('Reserve response missing familyId');
 	}
 	return {
 		existing: !!result.existing,
-		puzzleId: result.puzzleId,
+		familyId,
 		...(result.status ? { status: result.status } : {}),
 		...(typeof result.reservedAt === 'number' ? { reservedAt: result.reservedAt } : {})
 	};
@@ -226,7 +343,7 @@ export async function reserveIdempotencyKey(
 async function transitionIdempotencyKey(
 	metadataDO: DurableObjectNamespace,
 	idempotencyKey: string,
-	puzzleId: string,
+	familyId: string,
 	action: 'commit' | 'fail' | 'release'
 ): Promise<void> {
 	const id = metadataDO.idFromName(idempotencyKey);
@@ -234,7 +351,7 @@ async function transitionIdempotencyKey(
 	const response = await stub.fetch(`https://puzzle-metadata/${action}`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ puzzleId })
+		body: JSON.stringify({ familyId })
 	});
 	// release and fail are cleanup operations — a missing reservation (404) is
 	// already in the desired state, so 404 is not an error. commit is not: a 404
@@ -252,27 +369,27 @@ async function transitionIdempotencyKey(
 export async function commitIdempotencyKey(
 	metadataDO: DurableObjectNamespace,
 	idempotencyKey: string,
-	puzzleId: string
+	familyId: string
 ): Promise<void> {
-	await transitionIdempotencyKey(metadataDO, idempotencyKey, puzzleId, 'commit');
+	await transitionIdempotencyKey(metadataDO, idempotencyKey, familyId, 'commit');
 }
 
 /** Mark a pending reservation as failed so a later reserve can reclaim the key. */
 export async function failIdempotencyKey(
 	metadataDO: DurableObjectNamespace,
 	idempotencyKey: string,
-	puzzleId: string
+	familyId: string
 ): Promise<void> {
-	await transitionIdempotencyKey(metadataDO, idempotencyKey, puzzleId, 'fail');
+	await transitionIdempotencyKey(metadataDO, idempotencyKey, familyId, 'fail');
 }
 
 /** Delete a pending reservation (owner-checked) so the key is free immediately. */
 export async function releaseIdempotencyKey(
 	metadataDO: DurableObjectNamespace,
 	idempotencyKey: string,
-	puzzleId: string
+	familyId: string
 ): Promise<void> {
-	await transitionIdempotencyKey(metadataDO, idempotencyKey, puzzleId, 'release');
+	await transitionIdempotencyKey(metadataDO, idempotencyKey, familyId, 'release');
 }
 
 /**
@@ -291,7 +408,7 @@ export async function releaseIdempotencyKey(
 export async function getIdempotencyReservation(
 	metadataDO: DurableObjectNamespace,
 	idempotencyKey: string
-): Promise<{ puzzleId: string; status: string; reservedAt?: number } | null> {
+): Promise<{ familyId: string; status: string; reservedAt?: number } | null> {
 	const id = metadataDO.idFromName(idempotencyKey);
 	const stub = metadataDO.get(id);
 	const response = await stub.fetch('https://puzzle-metadata/reservation', {
@@ -306,13 +423,14 @@ export async function getIdempotencyReservation(
 		);
 	}
 	const result = (await response.json().catch(() => null)) as {
-		reservation?: { puzzleId?: string; status?: string; reservedAt?: number };
+		reservation?: { familyId?: string; puzzleId?: string; status?: string; reservedAt?: number };
 	} | null;
-	if (!result?.reservation || typeof result.reservation.puzzleId !== 'string') {
+	const familyId = result?.reservation?.familyId ?? result?.reservation?.puzzleId;
+	if (!result?.reservation || typeof familyId !== 'string') {
 		return null;
 	}
 	return {
-		puzzleId: result.reservation.puzzleId,
+		familyId,
 		status: typeof result.reservation.status === 'string' ? result.reservation.status : 'unknown',
 		...(typeof result.reservation.reservedAt === 'number'
 			? { reservedAt: result.reservation.reservedAt }
@@ -421,7 +539,7 @@ async function buildGalleryIndex(kv: KVNamespace): Promise<GalleryIndexEntry[]> 
 	let cursor: string | undefined;
 
 	while (true) {
-		const list = await kv.list({ prefix: 'puzzle:', cursor });
+		const list = await kv.list({ prefix: 'family:', cursor });
 		keys.push(...list.keys);
 		if (list.list_complete) break;
 		cursor = list.cursor;
@@ -432,25 +550,24 @@ async function buildGalleryIndex(kv: KVNamespace): Promise<GalleryIndexEntry[]> 
 	let nullCount = 0;
 	let invalidCount = 0;
 
-	fetched.forEach((puzzle) => {
-		if (puzzle === null) {
+	fetched.forEach((family) => {
+		if (family === null) {
 			nullCount++;
 			return;
 		}
-		if (!validatePuzzleMetadataLight(puzzle)) {
+		if (!validatePuzzleFamilyMetadata(family)) {
 			invalidCount++;
 			return;
 		}
-		const p = puzzle as PuzzleMetadata;
+		const f = family as PuzzleFamilyMetadata;
 		entries.push({
-			id: p.id,
-			name: p.name,
-			pieceCount: p.pieceCount,
-			aspectRatio: p.aspectRatio,
-			status: p.status,
-			progress: p.progress,
-			category: p.category,
-			createdAt: p.createdAt
+			id: f.id,
+			name: f.name,
+			pieceCount: getDifficultyPieceCount(f.aspectRatio, 'easy'),
+			aspectRatio: f.aspectRatio,
+			status: f.status,
+			category: f.category,
+			createdAt: f.createdAt
 		});
 	});
 
@@ -627,28 +744,54 @@ export async function puzzleExists(kv: KVNamespace, puzzleId: string): Promise<b
 }
 
 // R2 key helpers
-export function getOriginalKey(puzzleId: string): string {
-	return `puzzles/${puzzleId}/original`;
+export function getFamilyOriginalKey(familyId: string): string {
+	return `families/${familyId}/original`;
+}
+
+export function getFamilyThumbnailKey(familyId: string): string {
+	return `families/${familyId}/thumbnail.jpg`;
+}
+
+export function getOriginalKey(familyId: string): string {
+	return getFamilyOriginalKey(familyId);
 }
 
 export function getThumbnailKey(puzzleId: string): string {
-	return `puzzles/${puzzleId}/thumbnail.jpg`;
+	return getFamilyThumbnailKey(puzzleId);
 }
 
 export function getPieceKey(puzzleId: string, pieceId: number): string {
 	return `puzzles/${puzzleId}/pieces/${pieceId}.png`;
 }
 
-// Upload original image to R2
-export async function uploadOriginalImage(
+export async function uploadFamilyOriginalImage(
 	bucket: R2Bucket,
-	puzzleId: string,
+	familyId: string,
 	data: ArrayBuffer,
 	contentType: string
 ): Promise<void> {
-	await bucket.put(getOriginalKey(puzzleId), data, {
+	await bucket.put(getFamilyOriginalKey(familyId), data, {
 		httpMetadata: { contentType }
 	});
+}
+
+// Upload original image to R2 (family-scoped)
+export async function uploadOriginalImage(
+	bucket: R2Bucket,
+	familyId: string,
+	data: ArrayBuffer,
+	contentType: string
+): Promise<void> {
+	await uploadFamilyOriginalImage(bucket, familyId, data, contentType);
+}
+
+export async function resolveVariantReferenceKey(
+	kv: KVNamespace,
+	variantId: string
+): Promise<string | null> {
+	const variant = await getPuzzle(kv, variantId);
+	if (!variant) return null;
+	return getFamilyOriginalKey(variant.familyId);
 }
 
 /**
@@ -660,24 +803,31 @@ export async function uploadOriginalImage(
  * duplicate of a live puzzle. Callers wrap in try/catch and return 409
  * (transient) on error so the client retries.
  */
-export async function originalImageExists(bucket: R2Bucket, puzzleId: string): Promise<boolean> {
-	const obj = await bucket.head(getOriginalKey(puzzleId));
+export async function originalImageExists(bucket: R2Bucket, familyId: string): Promise<boolean> {
+	const obj = await bucket.head(getFamilyOriginalKey(familyId));
 	return obj !== null;
 }
 
 // Delete original image from R2
-export async function deleteOriginalImage(
+export async function deleteFamilyOriginalImage(
 	bucket: R2Bucket,
-	puzzleId: string
+	familyId: string
 ): Promise<{ success: boolean; error?: Error }> {
 	try {
-		await bucket.delete(getOriginalKey(puzzleId));
+		await bucket.delete(getFamilyOriginalKey(familyId));
 		return { success: true };
 	} catch (error) {
 		const normalizedError = error instanceof Error ? error : new Error(String(error));
-		console.error(`Failed to delete original image for puzzle ${puzzleId}:`, normalizedError);
+		console.error(`Failed to delete original image for family ${familyId}:`, normalizedError);
 		return { success: false, error: normalizedError };
 	}
+}
+
+export async function deleteOriginalImage(
+	bucket: R2Bucket,
+	familyId: string
+): Promise<{ success: boolean; error?: Error }> {
+	return deleteFamilyOriginalImage(bucket, familyId);
 }
 
 // Get image from R2
@@ -742,6 +892,7 @@ export async function deletePuzzleAssets(
 export interface CleanupRecord {
 	puzzleId: string;
 	pieceCount: number;
+	familyId?: string;
 	idempotencyKey?: string;
 	createdAt: number;
 }

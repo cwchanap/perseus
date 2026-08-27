@@ -13,24 +13,31 @@ const dbContextMock = vi.hoisted(() => ({
 }));
 
 // Mock storage before importing admin
-vi.mock('../../services/storage.worker', () => ({
-	getPuzzle: vi.fn(),
-	deletePuzzleAssets: vi.fn(),
-	deletePuzzleMetadata: vi.fn(),
-	createPuzzleMetadata: vi.fn(),
-	uploadOriginalImage: vi.fn(),
-	deleteOriginalImage: vi.fn(),
-	originalImageExists: vi.fn().mockResolvedValue(false),
-	puzzleExists: vi.fn().mockResolvedValue(false),
-	listPuzzles: vi.fn(),
-	reserveIdempotencyKey: vi.fn(),
-	commitIdempotencyKey: vi.fn(),
-	failIdempotencyKey: vi.fn(),
-	releaseIdempotencyKey: vi.fn(),
-	deleteMetadataDO: vi.fn().mockResolvedValue(undefined),
-	writeCleanupRecord: vi.fn().mockResolvedValue(undefined),
-	deleteCleanupRecord: vi.fn().mockResolvedValue(undefined)
-}));
+vi.mock('../../services/storage.worker', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../services/storage.worker')>();
+	return {
+		...actual,
+		getPuzzle: vi.fn(),
+		getFamily: vi.fn(),
+		deletePuzzleAssets: vi.fn(),
+		deletePuzzleMetadata: vi.fn().mockResolvedValue({ success: true }),
+		createPuzzleMetadata: vi.fn().mockResolvedValue(undefined),
+		createFamilyMetadata: vi.fn().mockResolvedValue(undefined),
+		deleteFamilyMetadata: vi.fn().mockResolvedValue({ success: true }),
+		uploadOriginalImage: vi.fn().mockResolvedValue(undefined),
+		deleteOriginalImage: vi.fn().mockResolvedValue({ success: true }),
+		originalImageExists: vi.fn().mockResolvedValue(false),
+		puzzleExists: vi.fn().mockResolvedValue(false),
+		listPuzzles: vi.fn(),
+		reserveIdempotencyKey: vi.fn(),
+		commitIdempotencyKey: vi.fn(),
+		failIdempotencyKey: vi.fn(),
+		releaseIdempotencyKey: vi.fn(),
+		deleteMetadataDO: vi.fn().mockResolvedValue(undefined),
+		writeCleanupRecord: vi.fn().mockResolvedValue(undefined),
+		deleteCleanupRecord: vi.fn().mockResolvedValue(undefined)
+	};
+});
 
 vi.mock('../../services/player-auth.worker', () => ({
 	addAllowlistEntry: vi.fn(),
@@ -61,7 +68,11 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 import admin from '../admin.worker';
 import * as storage from '../../services/storage.worker';
 import * as playerAuth from '../../services/player-auth.worker';
-import { insertPuzzleOwnership, deletePuzzleOwnership, SYSTEM_OWNER_ID } from '@perseus/shared';
+import {
+	insertPuzzleFamilyOwnership,
+	deletePuzzleFamilyOwnership,
+	SYSTEM_OWNER_ID
+} from '@perseus/shared';
 
 // Valid PNG magic bytes header for test blobs
 const PNG_HEADER = new Uint8Array([
@@ -381,8 +392,8 @@ describe('Admin Routes - Puzzle Deletion', () => {
 
 			// D1 ownership cleanup is NOT reached on R2 partial failure — the
 			// reaper handles D1 cleanup after R2/KV succeed on retry.
-			const { deletePuzzleOwnership } = await import('@perseus/shared');
-			expect(deletePuzzleOwnership).not.toHaveBeenCalled();
+			const { deletePuzzleFamilyOwnership } = await import('@perseus/shared');
+			expect(deletePuzzleFamilyOwnership).not.toHaveBeenCalled();
 		});
 	});
 });
@@ -460,24 +471,22 @@ describe('Admin Routes - Workflow Trigger Cleanup', () => {
 			const res = await admin.fetch(req, mockEnv as any);
 
 			expect(res.status).toBe(201);
-			expect(storage.createPuzzleMetadata).toHaveBeenCalledWith(
+			expect(storage.createFamilyMetadata).toHaveBeenCalledWith(
 				mockEnv.PUZZLE_METADATA,
 				expect.objectContaining({
 					name: 'Portrait Puzzle',
-					pieceCount: 48,
-					aspectRatio: '3:4',
-					gridCols: 6,
-					gridRows: 8
+					aspectRatio: '3:4'
 				})
 			);
+			expect(storage.createPuzzleMetadata).toHaveBeenCalledTimes(3);
 			// Admin-created puzzles are mirrored into D1 with a system sentinel
 			// owner so listPlayerStats can resolve their names.
-			expect(insertPuzzleOwnership).toHaveBeenCalledWith(
+			expect(insertPuzzleFamilyOwnership).toHaveBeenCalledWith(
 				expect.anything(),
 				expect.objectContaining({
 					ownerId: SYSTEM_OWNER_ID,
 					name: 'Portrait Puzzle',
-					pieceCount: 48,
+					aspectRatio: '3:4',
 					status: 'processing'
 				})
 			);
@@ -519,7 +528,7 @@ describe('Admin Routes - Workflow Trigger Cleanup', () => {
 				expect(dbContextMock.completionWrites.isPuzzleTombstoned).toHaveBeenCalledWith(generatedId);
 				expect(storage.uploadOriginalImage).not.toHaveBeenCalled();
 				expect(storage.createPuzzleMetadata).not.toHaveBeenCalled();
-				expect(insertPuzzleOwnership).not.toHaveBeenCalled();
+				expect(insertPuzzleFamilyOwnership).not.toHaveBeenCalled();
 				expect(mockEnv.PUZZLE_WORKFLOW.create).not.toHaveBeenCalled();
 			} finally {
 				uuidSpy.mockRestore();
@@ -579,21 +588,22 @@ describe('Admin Routes - Workflow Trigger Cleanup', () => {
 			expect(body.error).toBe('internal_error');
 			expect(body.message).toBe('Failed to start puzzle processing');
 
-			const createdPuzzleMetadata = (storage.createPuzzleMetadata as ReturnType<typeof vi.fn>).mock
+			const createdFamilyMetadata = (storage.createFamilyMetadata as ReturnType<typeof vi.fn>).mock
 				.calls[0][1];
 
-			expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(
+			expect(storage.deleteFamilyMetadata).toHaveBeenCalledWith(
 				mockEnv.PUZZLE_METADATA,
-				createdPuzzleMetadata.id
+				createdFamilyMetadata.id
 			);
+			expect(storage.deletePuzzleMetadata).toHaveBeenCalledTimes(3);
 			expect(storage.deleteOriginalImage).toHaveBeenCalledWith(
 				mockEnv.PUZZLES_BUCKET,
-				createdPuzzleMetadata.id
+				createdFamilyMetadata.id
 			);
 			// Ownership row inserted before the workflow trigger must also be cleaned up.
-			expect(deletePuzzleOwnership).toHaveBeenCalledWith(
+			expect(deletePuzzleFamilyOwnership).toHaveBeenCalledWith(
 				expect.anything(),
-				createdPuzzleMetadata.id
+				createdFamilyMetadata.id
 			);
 		});
 
@@ -633,21 +643,22 @@ describe('Admin Routes - Workflow Trigger Cleanup', () => {
 			const body = (await res.json()) as any;
 			expect(body.error).toBe('service_unavailable');
 			expect(body.message).toContain('not configured');
-			const createdPuzzleMetadata = (storage.createPuzzleMetadata as ReturnType<typeof vi.fn>).mock
+			const createdFamilyMetadata = (storage.createFamilyMetadata as ReturnType<typeof vi.fn>).mock
 				.calls[0][1];
 
-			expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(
+			expect(storage.deleteFamilyMetadata).toHaveBeenCalledWith(
 				mockEnv.PUZZLE_METADATA,
-				createdPuzzleMetadata.id
+				createdFamilyMetadata.id
 			);
+			expect(storage.deletePuzzleMetadata).toHaveBeenCalledTimes(3);
 			expect(storage.deleteOriginalImage).toHaveBeenCalledWith(
 				mockEnv.PUZZLES_BUCKET,
-				createdPuzzleMetadata.id
+				createdFamilyMetadata.id
 			);
 			// Ownership row inserted before the workflow binding check must also be cleaned up.
-			expect(deletePuzzleOwnership).toHaveBeenCalledWith(
+			expect(deletePuzzleFamilyOwnership).toHaveBeenCalledWith(
 				expect.anything(),
-				createdPuzzleMetadata.id
+				createdFamilyMetadata.id
 			);
 		});
 	});
@@ -749,7 +760,7 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 				existing: true,
 				puzzleId: 'original-uuid'
 			});
-			(storage.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(existingPuzzle);
+			(storage.getFamily as ReturnType<typeof vi.fn>).mockResolvedValue(existingPuzzle);
 
 			const mockEnv = {
 				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
@@ -878,7 +889,7 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 			});
 			(storage.uploadOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 			(storage.createPuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
-			(storage.deletePuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue({
+			(storage.deleteFamilyMetadata as ReturnType<typeof vi.fn>).mockResolvedValue({
 				success: false,
 				error: new Error('KV delete failed')
 			});
@@ -1069,7 +1080,7 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 				puzzleId: 'original-uuid',
 				status: 'pending'
 			});
-			(storage.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+			(storage.getFamily as ReturnType<typeof vi.fn>).mockResolvedValue(null);
 
 			const mockEnv = {
 				JWT_SECRET: 'test-secret-key-for-testing-purposes-1234567890',
@@ -1126,7 +1137,7 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 				progress: { totalPieces: 225, generatedPieces: 0, updatedAt: 1700000000000 }
 			};
 			// First read: null (KV lag). Retry: finds the puzzle.
-			(storage.getPuzzle as ReturnType<typeof vi.fn>)
+			(storage.getFamily as ReturnType<typeof vi.fn>)
 				.mockResolvedValueOnce(null)
 				.mockResolvedValue(existingPuzzle);
 
@@ -1189,7 +1200,7 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 					status: 'pending'
 				});
 			// Both reads (initial + retry) return null — puzzle is gone.
-			(storage.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+			(storage.getFamily as ReturnType<typeof vi.fn>).mockResolvedValue(null);
 			(storage.releaseIdempotencyKey as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 			(storage.uploadOriginalImage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 			(storage.createPuzzleMetadata as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
@@ -1243,7 +1254,7 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 				puzzleId: 'live-uuid',
 				status: 'committed'
 			});
-			(storage.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+			(storage.getFamily as ReturnType<typeof vi.fn>).mockResolvedValue(null);
 			(storage.originalImageExists as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
 				new Error('R2 internal error')
 			);
@@ -1297,7 +1308,7 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 					puzzleId: 'replacement-uuid',
 					status: 'pending'
 				});
-			(storage.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
+			(storage.getFamily as ReturnType<typeof vi.fn>).mockResolvedValue({
 				id: 'failed-uuid',
 				name: 'Test Puzzle',
 				pieceCount: 225,
@@ -1400,7 +1411,7 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 				});
 			// First getPuzzle ('failed-uuid') returns failed metadata; second
 			// ('deleted-uuid') returns null (puzzle was deleted).
-			(storage.getPuzzle as ReturnType<typeof vi.fn>)
+			(storage.getFamily as ReturnType<typeof vi.fn>)
 				.mockResolvedValueOnce({
 					id: 'failed-uuid',
 					name: 'Test Puzzle',
@@ -1495,7 +1506,7 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 				puzzleId: 'original-uuid',
 				status: 'pending'
 			});
-			(storage.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
+			(storage.getFamily as ReturnType<typeof vi.fn>).mockResolvedValue({
 				id: 'original-uuid',
 				name: 'Test Puzzle',
 				pieceCount: 225,
@@ -1677,7 +1688,7 @@ describe('Admin Routes - Magic Bytes Validation', () => {
 			).toBeLessThan(
 				(storage.deleteCleanupRecord as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]
 			);
-			expect(deletePuzzleOwnership).toHaveBeenCalledWith(dbContextMock.db, 'losing-uuid');
+			expect(deletePuzzleFamilyOwnership).toHaveBeenCalledWith(dbContextMock.db, 'losing-uuid');
 		});
 	});
 });
@@ -1784,6 +1795,8 @@ describe('Admin Routes - Delete Puzzle Cases', () => {
 	it('should return 409 when puzzle is processing', async () => {
 		(storage.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
 			id: '550e8400-e29b-41d4-a716-446655440000',
+			familyId: '223e4567-e89b-42d3-a456-426614174000',
+			difficulty: 'easy',
 			name: 'Test',
 			pieceCount: 4,
 			status: 'processing',
@@ -1806,8 +1819,15 @@ describe('Admin Routes - Delete Puzzle Cases', () => {
 	it('should return 204 on successful deletion', async () => {
 		(storage.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
 			id: '550e8400-e29b-41d4-a716-446655440000',
+			familyId: '223e4567-e89b-42d3-a456-426614174000',
+			difficulty: 'easy',
 			name: 'Test',
 			pieceCount: 4,
+			gridCols: 2,
+			gridRows: 2,
+			imageWidth: 100,
+			imageHeight: 100,
+			createdAt: 1000,
 			status: 'ready',
 			pieces: [],
 			version: 0
@@ -1830,9 +1850,9 @@ describe('Admin Routes - Delete Puzzle Cases', () => {
 		expect(res.status).toBe(204);
 		const { getWorkerDbContext } = await import('../../db.worker');
 		expect(getWorkerDbContext).toHaveBeenCalledWith(mockEnv);
-		expect(deletePuzzleOwnership).toHaveBeenCalledWith(
+		expect(deletePuzzleFamilyOwnership).toHaveBeenCalledWith(
 			dbContextMock.db,
-			'550e8400-e29b-41d4-a716-446655440000'
+			'223e4567-e89b-42d3-a456-426614174000'
 		);
 		expect(dbContextMock.completionWrites.finishPuzzleDeletion).toHaveBeenCalledWith(
 			'550e8400-e29b-41d4-a716-446655440000'
@@ -1859,8 +1879,15 @@ describe('Admin Routes - Delete Puzzle Cases', () => {
 	it('returns retriable 500 and retains the fence when completion cleanup fails', async () => {
 		(storage.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
 			id: '550e8400-e29b-41d4-a716-446655440000',
+			familyId: '223e4567-e89b-42d3-a456-426614174000',
+			difficulty: 'easy',
 			name: 'Test',
 			pieceCount: 4,
+			gridCols: 2,
+			gridRows: 2,
+			imageWidth: 100,
+			imageHeight: 100,
+			createdAt: 1000,
 			status: 'ready',
 			pieces: [],
 			version: 0
@@ -1886,7 +1913,7 @@ describe('Admin Routes - Delete Puzzle Cases', () => {
 
 		expect(res.status).toBe(500);
 		expect(storage.deleteCleanupRecord).not.toHaveBeenCalled();
-		expect(deletePuzzleOwnership).not.toHaveBeenCalled();
+		expect(deletePuzzleFamilyOwnership).not.toHaveBeenCalled();
 		expect(
 			(storage.deletePuzzleMetadata as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]
 		).toBeLessThan(dbContextMock.completionWrites.finishPuzzleDeletion.mock.invocationCallOrder[0]);
@@ -1896,8 +1923,15 @@ describe('Admin Routes - Delete Puzzle Cases', () => {
 	it('prevents DO, R2, and KV mutation when beginning the D1 fence fails', async () => {
 		(storage.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
 			id: '550e8400-e29b-41d4-a716-446655440000',
+			familyId: '223e4567-e89b-42d3-a456-426614174000',
+			difficulty: 'easy',
 			name: 'Test',
 			pieceCount: 4,
+			gridCols: 2,
+			gridRows: 2,
+			imageWidth: 100,
+			imageHeight: 100,
+			createdAt: 1000,
 			status: 'ready',
 			pieces: [],
 			version: 0
@@ -1926,8 +1960,15 @@ describe('Admin Routes - Delete Puzzle Cases', () => {
 	it('returns retriable 500 and retains the record when ownership cleanup fails', async () => {
 		(storage.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
 			id: '550e8400-e29b-41d4-a716-446655440000',
+			familyId: '223e4567-e89b-42d3-a456-426614174000',
+			difficulty: 'easy',
 			name: 'Test',
 			pieceCount: 4,
+			gridCols: 2,
+			gridRows: 2,
+			imageWidth: 100,
+			imageHeight: 100,
+			createdAt: 1000,
 			status: 'ready',
 			pieces: [],
 			version: 0
@@ -1939,7 +1980,7 @@ describe('Admin Routes - Delete Puzzle Cases', () => {
 			success: true,
 			failedKeys: []
 		});
-		(deletePuzzleOwnership as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+		(deletePuzzleFamilyOwnership as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
 			new Error('ownership cleanup failed')
 		);
 		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -2182,6 +2223,8 @@ describe('Admin Routes - Force Delete', () => {
 	it('should allow force deletion of processing puzzle with force=true', async () => {
 		(storage.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
 			id: '550e8400-e29b-41d4-a716-446655440000',
+			familyId: '223e4567-e89b-42d3-a456-426614174000',
+			difficulty: 'easy',
 			name: 'Stuck Puzzle',
 			pieceCount: 4,
 			status: 'processing',
@@ -2231,6 +2274,8 @@ describe('Admin Routes - Force Delete', () => {
 		// fence or mutate DO/R2/KV source state while liveness is unconfirmed.
 		(storage.getPuzzle as ReturnType<typeof vi.fn>).mockResolvedValue({
 			id: '550e8400-e29b-41d4-a716-446655440000',
+			familyId: '223e4567-e89b-42d3-a456-426614174000',
+			difficulty: 'easy',
 			name: 'Stuck Puzzle',
 			pieceCount: 4,
 			status: 'processing',

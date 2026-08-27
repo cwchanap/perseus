@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import puzzles from '../puzzles.worker';
 import * as storage from '../../services/storage.worker';
 import * as playerAuth from '../../services/player-auth.worker';
-import { insertPuzzleOwnership } from '@perseus/shared';
+import { insertPuzzleFamilyOwnership } from '@perseus/shared';
 
 const dbContextMock = vi.hoisted(() => ({
 	db: {},
@@ -22,12 +22,29 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	return {
 		...actual,
 		validateImageEndMarker: vi.fn().mockResolvedValue(true),
+		insertPuzzleFamilyOwnership: vi.fn().mockResolvedValue(undefined),
+		deletePuzzleFamilyOwnership: vi.fn().mockResolvedValue(undefined),
 		insertPuzzleOwnership: vi.fn().mockResolvedValue(undefined),
 		deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined)
 	};
 });
 
-vi.mock('../../services/storage.worker');
+vi.mock('../../services/storage.worker', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../services/storage.worker')>();
+	return {
+		...actual,
+		uploadOriginalImage: vi.fn(),
+		createFamilyMetadata: vi.fn(),
+		createPuzzleMetadata: vi.fn(),
+		deleteFamilyMetadata: vi.fn(),
+		deletePuzzleMetadata: vi.fn(),
+		deleteOriginalImage: vi.fn(),
+		getPuzzle: vi.fn(),
+		listPuzzlesPage: vi.fn(),
+		getImage: vi.fn(),
+		resolveVariantReferenceKey: vi.fn()
+	};
+});
 vi.mock('../../services/player-auth.worker', () => ({
 	getPlayerSession: vi.fn()
 }));
@@ -108,7 +125,7 @@ describe('Puzzle Routes - UUID Validation', () => {
 			expect(storage.createPuzzleMetadata).not.toHaveBeenCalled();
 		});
 
-		it('creates a processing puzzle when the player session is valid', async () => {
+		it('creates a processing puzzle family when the player session is valid', async () => {
 			vi.mocked(playerAuth.getPlayerSession).mockResolvedValue({
 				sessionHash: 'session-hash',
 				user: {
@@ -121,6 +138,7 @@ describe('Puzzle Routes - UUID Validation', () => {
 				expiresAt: Date.now() + 1000
 			});
 			vi.mocked(storage.uploadOriginalImage).mockResolvedValue(undefined);
+			vi.mocked(storage.createFamilyMetadata).mockResolvedValue(undefined);
 			vi.mocked(storage.createPuzzleMetadata).mockResolvedValue(undefined);
 
 			const formData = new FormData();
@@ -145,30 +163,30 @@ describe('Puzzle Routes - UUID Validation', () => {
 				mockEnv.PUZZLE_METADATA,
 				'player-token'
 			);
-			expect(storage.createPuzzleMetadata).toHaveBeenCalledWith(
+			expect(storage.createFamilyMetadata).toHaveBeenCalledWith(
 				mockEnv.PUZZLE_METADATA,
 				expect.objectContaining({
 					name: 'Player Puzzle',
-					pieceCount: 48,
 					aspectRatio: '3:4',
 					category: 'Art',
 					status: 'processing'
 				})
 			);
+			expect(storage.createPuzzleMetadata).toHaveBeenCalledTimes(3);
 			expect(mockEnv.PUZZLE_WORKFLOW.create).toHaveBeenCalledWith({
 				id: body.id,
-				params: { puzzleId: body.id }
+				params: { familyId: body.id }
 			});
-			// Ownership must be recorded, and before the workflow is kicked off so
-			// the puzzle is visible to its owner even before processing completes.
-			expect(insertPuzzleOwnership).toHaveBeenCalledWith(
+			expect(insertPuzzleFamilyOwnership).toHaveBeenCalledWith(
 				expect.anything(),
 				expect.objectContaining({
 					ownerId: 'player-1',
 					status: 'processing'
 				})
 			);
-			expect(insertPuzzleOwnership).toHaveBeenCalledBefore(mockEnv.PUZZLE_WORKFLOW.create as any);
+			expect(insertPuzzleFamilyOwnership).toHaveBeenCalledBefore(
+				mockEnv.PUZZLE_WORKFLOW.create as any
+			);
 		});
 
 		it('rejects a tombstoned generated ID before publishing Worker data', async () => {
@@ -206,12 +224,12 @@ describe('Puzzle Routes - UUID Validation', () => {
 				expect(res.status).toBe(500);
 				expect(await res.json()).toEqual({
 					error: 'internal_error',
-					message: 'Failed to allocate puzzle ID'
+					message: 'Failed to allocate puzzle family ID'
 				});
 				expect(dbContextMock.completionWrites.isPuzzleTombstoned).toHaveBeenCalledWith(generatedId);
 				expect(storage.uploadOriginalImage).not.toHaveBeenCalled();
-				expect(storage.createPuzzleMetadata).not.toHaveBeenCalled();
-				expect(insertPuzzleOwnership).not.toHaveBeenCalled();
+				expect(storage.createFamilyMetadata).not.toHaveBeenCalled();
+				expect(insertPuzzleFamilyOwnership).not.toHaveBeenCalled();
 				expect(mockEnv.PUZZLE_WORKFLOW.create).not.toHaveBeenCalled();
 			} finally {
 				uuidSpy.mockRestore();
@@ -487,7 +505,9 @@ describe('Puzzle Routes - UUID Validation', () => {
 				expiresAt: Date.now() + 1000
 			});
 			vi.mocked(storage.uploadOriginalImage).mockResolvedValue(undefined);
+			vi.mocked(storage.createFamilyMetadata).mockResolvedValue(undefined);
 			vi.mocked(storage.createPuzzleMetadata).mockResolvedValue(undefined);
+			vi.mocked(storage.deleteFamilyMetadata).mockResolvedValue({ success: true });
 			vi.mocked(storage.deleteOriginalImage).mockResolvedValue({ success: true });
 			vi.mocked(storage.deletePuzzleMetadata).mockResolvedValue({ success: true });
 			mockEnv.PUZZLE_WORKFLOW.create = vi.fn().mockResolvedValue({ id: 'workflow-id' });
@@ -525,8 +545,8 @@ describe('Puzzle Routes - UUID Validation', () => {
 			consoleSpy.mockRestore();
 		});
 
-		it('rolls back R2 image when createPuzzleMetadata throws', async () => {
-			vi.mocked(storage.createPuzzleMetadata).mockRejectedValue(new Error('KV down'));
+		it('rolls back R2 image when createFamilyMetadata throws', async () => {
+			vi.mocked(storage.createFamilyMetadata).mockRejectedValue(new Error('KV down'));
 			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
 			const res = await post(buildForm());
@@ -543,17 +563,18 @@ describe('Puzzle Routes - UUID Validation', () => {
 		});
 
 		it('returns 500 and rolls back when ownership insert fails (before workflow)', async () => {
-			vi.mocked(insertPuzzleOwnership).mockRejectedValueOnce(new Error('D1 down'));
+			vi.mocked(insertPuzzleFamilyOwnership).mockRejectedValueOnce(new Error('D1 down'));
 			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
 			const res = await post(buildForm());
 
 			expect(res.status).toBe(500);
 			expect(((await res.json()) as any).message).toBe('Failed to record puzzle ownership');
-			expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(
+			expect(storage.deleteFamilyMetadata).toHaveBeenCalledWith(
 				mockEnv.PUZZLE_METADATA,
 				expect.any(String)
 			);
+			expect(storage.deletePuzzleMetadata).toHaveBeenCalled();
 			expect(storage.deleteOriginalImage).toHaveBeenCalledWith(
 				mockEnv.PUZZLES_BUCKET,
 				expect.any(String)
@@ -577,10 +598,11 @@ describe('Puzzle Routes - UUID Validation', () => {
 				mockEnv.PUZZLES_BUCKET,
 				expect.any(String)
 			);
-			expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(
+			expect(storage.deleteFamilyMetadata).toHaveBeenCalledWith(
 				mockEnv.PUZZLE_METADATA,
 				expect.any(String)
 			);
+			expect(storage.deletePuzzleMetadata).toHaveBeenCalled();
 			consoleSpy.mockRestore();
 		});
 
@@ -611,15 +633,16 @@ describe('Puzzle Routes - UUID Validation', () => {
 				mockEnv.PUZZLES_BUCKET,
 				expect.any(String)
 			);
-			expect(storage.deletePuzzleMetadata).toHaveBeenCalledWith(
+			expect(storage.deleteFamilyMetadata).toHaveBeenCalledWith(
 				mockEnv.PUZZLE_METADATA,
 				expect.any(String)
 			);
+			expect(storage.deletePuzzleMetadata).toHaveBeenCalled();
 			consoleSpy.mockRestore();
 		});
 
 		it('logs cleanup failures but still returns 500 when rollback fails', async () => {
-			vi.mocked(storage.createPuzzleMetadata).mockRejectedValue(new Error('KV down'));
+			vi.mocked(storage.createFamilyMetadata).mockRejectedValue(new Error('KV down'));
 			vi.mocked(storage.deleteOriginalImage).mockResolvedValue({
 				success: false,
 				error: new Error('R2 also down')
@@ -1058,6 +1081,12 @@ describe('Puzzle Routes - UUID Validation', () => {
 	});
 
 	describe('GET /:id/reference', () => {
+		beforeEach(() => {
+			vi.mocked(storage.getPuzzle).mockReset();
+			vi.mocked(storage.getImage).mockReset();
+			vi.mocked(storage.resolveVariantReferenceKey).mockReset();
+		});
+
 		it('should return 400 for invalid UUID format', async () => {
 			const req = new Request('http://localhost/invalid-uuid/reference');
 			const res = await puzzles.fetch(req, mockEnv);
@@ -1100,6 +1129,8 @@ describe('Puzzle Routes - UUID Validation', () => {
 			const validUuid = '550e8400-e29b-41d4-a716-446655440000';
 			vi.mocked(storage.getPuzzle).mockResolvedValueOnce({
 				id: validUuid,
+				familyId: '223e4567-e89b-42d3-a456-426614174000',
+				difficulty: 'easy',
 				name: 'Test',
 				pieceCount: 4,
 				gridCols: 2,
@@ -1111,6 +1142,9 @@ describe('Puzzle Routes - UUID Validation', () => {
 				pieces: [],
 				version: 0
 			} as any);
+			vi.mocked(storage.resolveVariantReferenceKey).mockResolvedValueOnce(
+				'families/223e4567-e89b-42d3-a456-426614174000/original'
+			);
 			vi.mocked(storage.getImage).mockResolvedValueOnce(null);
 
 			const req = new Request(`http://localhost/${validUuid}/reference`);
@@ -1124,14 +1158,17 @@ describe('Puzzle Routes - UUID Validation', () => {
 	});
 
 	describe('GET /:id/reference - success path', () => {
+		const familyId = '223e4567-e89b-42d3-a456-426614174000';
 		it('should return image with correct Content-Type and Cache-Control', async () => {
 			const validUuid = '550e8400-e29b-41d4-a716-446655440000';
 			vi.mocked(storage.getPuzzle).mockResolvedValueOnce({
 				id: validUuid,
+				familyId,
+				difficulty: 'easy',
 				name: 'Test',
-				pieceCount: 4,
-				gridCols: 2,
-				gridRows: 2,
+				pieceCount: 16,
+				gridCols: 4,
+				gridRows: 4,
 				imageWidth: 100,
 				imageHeight: 100,
 				createdAt: Date.now(),
@@ -1139,6 +1176,9 @@ describe('Puzzle Routes - UUID Validation', () => {
 				pieces: [],
 				version: 0
 			} as any);
+			vi.mocked(storage.resolveVariantReferenceKey).mockResolvedValueOnce(
+				`families/${familyId}/original`
+			);
 			vi.mocked(storage.getImage).mockResolvedValueOnce({
 				data: new ArrayBuffer(8),
 				contentType: 'image/jpeg'
@@ -1184,14 +1224,23 @@ describe('Puzzle Routes - UUID Validation', () => {
 	});
 
 	describe('GET /:id/thumbnail - success path', () => {
+		const familyId = '223e4567-e89b-42d3-a456-426614174000';
+
+		beforeEach(() => {
+			vi.mocked(storage.getPuzzle).mockReset();
+			vi.mocked(storage.getImage).mockReset();
+		});
+
 		it('should return image with correct Content-Type and Cache-Control', async () => {
 			const validUuid = '550e8400-e29b-41d4-a716-446655440000';
 			vi.mocked(storage.getPuzzle).mockResolvedValueOnce({
 				id: validUuid,
+				familyId,
+				difficulty: 'easy',
 				name: 'Test',
-				pieceCount: 4,
-				gridCols: 2,
-				gridRows: 2,
+				pieceCount: 16,
+				gridCols: 4,
+				gridRows: 4,
 				imageWidth: 100,
 				imageHeight: 100,
 				createdAt: Date.now(),
@@ -1214,14 +1263,21 @@ describe('Puzzle Routes - UUID Validation', () => {
 	});
 
 	describe('GET /:id/pieces/:pieceId/image - success path', () => {
+		beforeEach(() => {
+			vi.mocked(storage.getPuzzle).mockReset();
+			vi.mocked(storage.getImage).mockReset();
+		});
+
 		it('should return image data on success', async () => {
 			const validUuid = '550e8400-e29b-41d4-a716-446655440000';
 			vi.mocked(storage.getPuzzle).mockResolvedValueOnce({
 				id: validUuid,
+				familyId: '223e4567-e89b-42d3-a456-426614174000',
+				difficulty: 'easy',
 				name: 'Test',
-				pieceCount: 4,
-				gridCols: 2,
-				gridRows: 2,
+				pieceCount: 16,
+				gridCols: 4,
+				gridRows: 4,
 				imageWidth: 100,
 				imageHeight: 100,
 				createdAt: Date.now(),

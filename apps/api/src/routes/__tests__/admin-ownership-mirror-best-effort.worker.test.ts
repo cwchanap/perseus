@@ -8,17 +8,24 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-vi.mock('../../services/storage.worker', () => ({
-	getPuzzle: vi.fn(),
-	deletePuzzleAssets: vi.fn(),
-	deletePuzzleMetadata: vi.fn(),
-	createPuzzleMetadata: vi.fn().mockResolvedValue(undefined),
-	uploadOriginalImage: vi.fn().mockResolvedValue(undefined),
-	deleteOriginalImage: vi.fn(),
-	originalImageExists: vi.fn().mockResolvedValue(false).mockResolvedValue({ success: true }),
-	puzzleExists: vi.fn().mockResolvedValue(false),
-	listPuzzles: vi.fn()
-}));
+vi.mock('../../services/storage.worker', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../services/storage.worker')>();
+	return {
+		...actual,
+		getPuzzle: vi.fn(),
+		getFamily: vi.fn(),
+		deletePuzzleAssets: vi.fn(),
+		deletePuzzleMetadata: vi.fn().mockResolvedValue({ success: true }),
+		createPuzzleMetadata: vi.fn().mockResolvedValue(undefined).mockResolvedValue(undefined),
+		createFamilyMetadata: vi.fn().mockResolvedValue(undefined),
+		deleteFamilyMetadata: vi.fn().mockResolvedValue({ success: true }),
+		uploadOriginalImage: vi.fn().mockResolvedValue(undefined).mockResolvedValue(undefined),
+		deleteOriginalImage: vi.fn().mockResolvedValue({ success: true }),
+		originalImageExists: vi.fn().mockResolvedValue(false).mockResolvedValue({ success: true }),
+		puzzleExists: vi.fn().mockResolvedValue(false),
+		listPuzzles: vi.fn()
+	};
+});
 
 vi.mock('../../db.worker', () => ({
 	getWorkerDb: vi.fn(() => ({})),
@@ -35,7 +42,7 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 });
 
 import admin from '../admin.worker';
-import { insertPuzzleOwnership } from '@perseus/shared';
+import { insertPuzzleFamilyOwnership } from '@perseus/shared';
 import { __resetRateLimitStore } from '../../middleware/rate-limit.worker';
 
 const PNG_HEADER = new Uint8Array([
@@ -71,7 +78,7 @@ describe('Admin Worker - POST /puzzles D1 ownership mirror is best-effort', () =
 	});
 
 	it('succeeds (201) when the D1 ownership mirror insert fails', async () => {
-		vi.mocked(insertPuzzleOwnership).mockRejectedValueOnce(new Error('D1 unavailable'));
+		vi.mocked(insertPuzzleFamilyOwnership).mockRejectedValueOnce(new Error('D1 unavailable'));
 
 		const req = new Request('http://localhost/puzzles', {
 			method: 'POST',
@@ -84,7 +91,7 @@ describe('Admin Worker - POST /puzzles D1 ownership mirror is best-effort', () =
 		// Upload must still succeed: KV metadata is the source of truth for
 		// admin puzzles, and the D1 row is only a naming mirror.
 		expect(res.status).toBe(201);
-		expect(insertPuzzleOwnership).toHaveBeenCalledTimes(1);
+		expect(insertPuzzleFamilyOwnership).toHaveBeenCalledTimes(1);
 		// The workflow still kicks off despite the mirror failure.
 		expect(baseEnv.PUZZLE_WORKFLOW.create).toHaveBeenCalledTimes(1);
 	});

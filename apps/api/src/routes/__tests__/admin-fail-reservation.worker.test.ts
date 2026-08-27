@@ -1,21 +1,28 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('../../services/storage.worker', () => ({
-	commitIdempotencyKey: vi.fn(),
-	createPuzzleMetadata: vi.fn(),
-	deletePuzzleAssets: vi.fn(),
-	deletePuzzleMetadata: vi.fn(),
-	deleteOriginalImage: vi.fn(),
-	failIdempotencyKey: vi.fn(),
-	getPuzzle: vi.fn(),
-	listPuzzles: vi.fn(),
-	originalImageExists: vi.fn(),
-	puzzleExists: vi.fn(),
-	releaseIdempotencyKey: vi.fn(),
-	reserveIdempotencyKey: vi.fn(),
-	uploadOriginalImage: vi.fn()
-}));
+vi.mock('../../services/storage.worker', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../services/storage.worker')>();
+	return {
+		...actual,
+		commitIdempotencyKey: vi.fn(),
+		createPuzzleMetadata: vi.fn().mockResolvedValue(undefined),
+		createFamilyMetadata: vi.fn().mockResolvedValue(undefined),
+		deleteFamilyMetadata: vi.fn().mockResolvedValue({ success: true }),
+		deletePuzzleAssets: vi.fn(),
+		deletePuzzleMetadata: vi.fn().mockResolvedValue({ success: true }),
+		deleteOriginalImage: vi.fn().mockResolvedValue({ success: true }),
+		failIdempotencyKey: vi.fn(),
+		getPuzzle: vi.fn(),
+		getFamily: vi.fn(),
+		listPuzzles: vi.fn(),
+		originalImageExists: vi.fn(),
+		puzzleExists: vi.fn(),
+		releaseIdempotencyKey: vi.fn(),
+		reserveIdempotencyKey: vi.fn(),
+		uploadOriginalImage: vi.fn().mockResolvedValue(undefined)
+	};
+});
 
 vi.mock('../../services/player-auth.worker', () => ({
 	addAllowlistEntry: vi.fn(),
@@ -38,9 +45,9 @@ vi.mock('@perseus/shared', async (importOriginal) => {
 	return {
 		...original,
 		validateImageEndMarker: vi.fn().mockResolvedValue(true),
-		deletePuzzleOwnership: vi.fn().mockResolvedValue(undefined),
+		deletePuzzleFamilyOwnership: vi.fn().mockResolvedValue(undefined),
 		deletePuzzleStats: vi.fn().mockResolvedValue(undefined),
-		insertPuzzleOwnership: vi.fn().mockResolvedValue(undefined),
+		insertPuzzleFamilyOwnership: vi.fn().mockResolvedValue(undefined),
 		SYSTEM_OWNER_ID: 'system'
 	};
 });
@@ -74,7 +81,7 @@ describe('Admin Worker failed reservation fallback', () => {
 		vi.clearAllMocks();
 		vi.mocked(storage.reserveIdempotencyKey).mockResolvedValue({
 			existing: false,
-			puzzleId: 'orphan-puzzle',
+			familyId: 'orphan-puzzle',
 			status: 'pending'
 		});
 		vi.mocked(storage.uploadOriginalImage).mockResolvedValue(undefined);

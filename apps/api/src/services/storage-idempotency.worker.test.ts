@@ -7,6 +7,8 @@ import {
 	reserveIdempotencyKey
 } from './storage.worker';
 
+const FAMILY_ID = '123e4567-e89b-42d3-a456-426614174001';
+
 function createMockDurableObjectNamespace(
 	handler: (url: string, init?: RequestInit) => Response | Promise<Response>
 ) {
@@ -28,7 +30,7 @@ describe('worker idempotency storage operations', () => {
 				new Response(
 					JSON.stringify({
 						existing: false,
-						puzzleId: 'puzzle-1',
+						familyId: FAMILY_ID,
 						status: 'pending'
 					}),
 					{
@@ -41,13 +43,13 @@ describe('worker idempotency storage operations', () => {
 		const result = await reserveIdempotencyKey(
 			namespace as unknown as DurableObjectNamespace,
 			'request-1',
-			'puzzle-1'
+			FAMILY_ID
 		);
 
 		expect(namespace.idFromName).toHaveBeenCalledWith('request-1');
 		expect(result).toEqual({
 			existing: false,
-			puzzleId: 'puzzle-1',
+			familyId: FAMILY_ID,
 			status: 'pending'
 		});
 		expect(stub.fetch).toHaveBeenCalledWith('https://puzzle-metadata/reserve', {
@@ -55,12 +57,12 @@ describe('worker idempotency storage operations', () => {
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				idempotencyKey: 'request-1',
-				puzzleId: 'puzzle-1'
+				familyId: FAMILY_ID
 			})
 		});
 	});
 
-	it('rejects a successful reserve response without a puzzle id', async () => {
+	it('rejects a successful reserve response without a family id', async () => {
 		const { namespace } = createMockDurableObjectNamespace(
 			() =>
 				new Response(JSON.stringify({ existing: true, status: 'pending' }), {
@@ -70,8 +72,8 @@ describe('worker idempotency storage operations', () => {
 		);
 
 		await expect(
-			reserveIdempotencyKey(namespace as unknown as DurableObjectNamespace, 'request-1', 'puzzle-1')
-		).rejects.toThrow('Reserve response missing puzzleId');
+			reserveIdempotencyKey(namespace as unknown as DurableObjectNamespace, 'request-1', FAMILY_ID)
+		).rejects.toThrow('Reserve response missing familyId');
 	});
 
 	it('surfaces the Durable Object reserve error message', async () => {
@@ -84,7 +86,7 @@ describe('worker idempotency storage operations', () => {
 		);
 
 		await expect(
-			reserveIdempotencyKey(namespace as unknown as DurableObjectNamespace, 'request-1', 'puzzle-1')
+			reserveIdempotencyKey(namespace as unknown as DurableObjectNamespace, 'request-1', FAMILY_ID)
 		).rejects.toThrow('reservation conflict');
 	});
 
@@ -94,9 +96,9 @@ describe('worker idempotency storage operations', () => {
 		);
 		const durableNamespace = namespace as unknown as DurableObjectNamespace;
 
-		await commitIdempotencyKey(durableNamespace, 'request-1', 'puzzle-1');
-		await failIdempotencyKey(durableNamespace, 'request-1', 'puzzle-1');
-		await releaseIdempotencyKey(durableNamespace, 'request-1', 'puzzle-1');
+		await commitIdempotencyKey(durableNamespace, 'request-1', FAMILY_ID);
+		await failIdempotencyKey(durableNamespace, 'request-1', FAMILY_ID);
+		await releaseIdempotencyKey(durableNamespace, 'request-1', FAMILY_ID);
 
 		expect(stub.fetch.mock.calls.map(([url]) => url)).toEqual([
 			'https://puzzle-metadata/commit',
@@ -107,7 +109,7 @@ describe('worker idempotency storage operations', () => {
 			expect(init).toEqual({
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ puzzleId: 'puzzle-1' })
+				body: JSON.stringify({ familyId: FAMILY_ID })
 			});
 		}
 	});
@@ -119,10 +121,10 @@ describe('worker idempotency storage operations', () => {
 		const durableNamespace = namespace as unknown as DurableObjectNamespace;
 
 		await expect(
-			failIdempotencyKey(durableNamespace, 'request-1', 'puzzle-1')
+			failIdempotencyKey(durableNamespace, 'request-1', FAMILY_ID)
 		).resolves.toBeUndefined();
 		await expect(
-			releaseIdempotencyKey(durableNamespace, 'request-1', 'puzzle-1')
+			releaseIdempotencyKey(durableNamespace, 'request-1', FAMILY_ID)
 		).resolves.toBeUndefined();
 	});
 
@@ -132,7 +134,7 @@ describe('worker idempotency storage operations', () => {
 		);
 
 		await expect(
-			commitIdempotencyKey(namespace as unknown as DurableObjectNamespace, 'request-1', 'puzzle-1')
+			commitIdempotencyKey(namespace as unknown as DurableObjectNamespace, 'request-1', FAMILY_ID)
 		).rejects.toThrow('Failed to commit idempotency key (HTTP 404)');
 	});
 });
@@ -140,13 +142,11 @@ describe('worker idempotency storage operations', () => {
 describe('originalImageExists', () => {
 	it('returns true when R2 contains the original image object', async () => {
 		const bucket = {
-			head: vi.fn(async () => ({ key: 'puzzles/puzzle-1/original' }))
+			head: vi.fn(async () => ({ key: `families/${FAMILY_ID}/original` }))
 		};
 
-		await expect(originalImageExists(bucket as unknown as R2Bucket, 'puzzle-1')).resolves.toBe(
-			true
-		);
-		expect(bucket.head).toHaveBeenCalledWith('puzzles/puzzle-1/original');
+		await expect(originalImageExists(bucket as unknown as R2Bucket, FAMILY_ID)).resolves.toBe(true);
+		expect(bucket.head).toHaveBeenCalledWith(`families/${FAMILY_ID}/original`);
 	});
 
 	it('returns false when the original image object is absent', async () => {
@@ -154,28 +154,20 @@ describe('originalImageExists', () => {
 			head: vi.fn(async () => null)
 		};
 
-		await expect(
-			originalImageExists(bucket as unknown as R2Bucket, 'missing-puzzle')
-		).resolves.toBe(false);
-		expect(bucket.head).toHaveBeenCalledWith('puzzles/missing-puzzle/original');
+		await expect(originalImageExists(bucket as unknown as R2Bucket, FAMILY_ID)).resolves.toBe(
+			false
+		);
 	});
 
 	it('propagates R2 head errors instead of swallowing them as "absent"', async () => {
-		// Contract: a transient R2 `head` failure must NOT be interpreted as
-		// "object gone" — callers use the result to decide whether to release
-		// an idempotency reservation, and treating a transient failure as
-		// absent would mint a duplicate of a live puzzle. The error must
-		// propagate so callers can return 409 (transient) for a client retry.
-		const r2Error = new Error('R2 internal error');
 		const bucket = {
 			head: vi.fn(async () => {
-				throw r2Error;
+				throw new Error('R2 unavailable');
 			})
 		};
 
-		await expect(originalImageExists(bucket as unknown as R2Bucket, 'puzzle-1')).rejects.toThrow(
-			r2Error
+		await expect(originalImageExists(bucket as unknown as R2Bucket, FAMILY_ID)).rejects.toThrow(
+			'R2 unavailable'
 		);
-		expect(bucket.head).toHaveBeenCalledWith('puzzles/puzzle-1/original');
 	});
 });

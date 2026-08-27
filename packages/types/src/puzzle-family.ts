@@ -22,6 +22,8 @@ export interface PuzzleFamilyMetadata {
 	createdAt: number;
 	status: PuzzleStatus;
 	variants: Record<PuzzleDifficulty, string>;
+	imageWidth?: number;
+	imageHeight?: number;
 }
 
 export interface PuzzleFamilySummary {
@@ -97,7 +99,10 @@ export function validatePuzzleFamilyMetadata(meta: unknown): meta is PuzzleFamil
 	if (!isValidOptionalCategory(family.category)) return false;
 	if (!hasExactDifficultyKeys(family.variants)) return false;
 	const variants = family.variants as Record<PuzzleDifficulty, unknown>;
-	return PUZZLE_DIFFICULTIES.every((difficulty) => isPuzzleId(variants[difficulty]));
+	if (!PUZZLE_DIFFICULTIES.every((difficulty) => isPuzzleId(variants[difficulty]))) return false;
+	if (family.imageWidth !== undefined && !isFiniteNumber(family.imageWidth)) return false;
+	if (family.imageHeight !== undefined && !isFiniteNumber(family.imageHeight)) return false;
+	return true;
 }
 
 export function isPuzzleFamilySummary(value: unknown): value is PuzzleFamilySummary {
