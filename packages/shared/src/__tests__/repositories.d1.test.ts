@@ -4,11 +4,17 @@ import type { RecordPuzzleCompletionV1 } from '@perseus/types';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import * as schema from '../schema';
 import { createD1CompletionWriteExecutor, createD1Db, type D1AppDb } from '../drivers/d1';
 import { completionFactsMatch, type VersionedCompletionWrite } from '../completion-writes';
 import {
+	getProfileOverride,
+	updateProfileDisplayName,
+	updateProfileAvatarUrl,
+	clearProfileAvatarUrl,
+	clearProfileAvatarUrlIfOwned,
+	getAvatarTokensByPlayerIds,
 	recordVersionedCompletion,
 	listPlayerStats,
 	getPlayerSummary,
@@ -131,6 +137,218 @@ async function selectRunFacts(db: D1AppDb) {
 		})
 		.from(schema.puzzleCompletionRuns);
 }
+
+describe('player profiles against real D1', () => {
+	it('getProfileOverride returns null when absent', async () => {
+		expect(await getProfileOverride(db, 'p1')).toBeNull();
+	});
+
+	it('updateProfileDisplayName preserves an existing avatarUrl', async () => {
+		await updateProfileAvatarUrl(db, 'p1', 'avatar-url');
+		await updateProfileDisplayName(db, 'p1', 'Name');
+		const row = await getProfileOverride(db, 'p1');
+		expect(row?.displayName).toBe('Name');
+		expect(row?.avatarUrl).toBe('avatar-url');
+	});
+
+	it('updateProfileAvatarUrl preserves an existing displayName', async () => {
+		await updateProfileDisplayName(db, 'p1', 'Name');
+		await updateProfileAvatarUrl(db, 'p1', 'avatar-url');
+		const row = await getProfileOverride(db, 'p1');
+		expect(row?.displayName).toBe('Name');
+		expect(row?.avatarUrl).toBe('avatar-url');
+	});
+
+	it('updateProfileDisplayName resets to null when passed null', async () => {
+		await updateProfileDisplayName(db, 'p1', 'A');
+		await updateProfileAvatarUrl(db, 'p1', 'u');
+		await updateProfileDisplayName(db, 'p1', null);
+		const row = await getProfileOverride(db, 'p1');
+		expect(row?.displayName).toBeNull();
+		expect(row?.avatarUrl).toBe('u');
+	});
+
+	it('clearProfileAvatarUrl nulls avatarUrl while preserving displayName', async () => {
+		await updateProfileDisplayName(db, 'p1', 'Name');
+		await updateProfileAvatarUrl(db, 'p1', 'avatar-url');
+		await clearProfileAvatarUrl(db, 'p1');
+		const row = await getProfileOverride(db, 'p1');
+		expect(row?.avatarUrl).toBeNull();
+		expect(row?.displayName).toBe('Name');
+	});
+
+	it('clearProfileAvatarUrl on a fresh profile inserts a null-avatar row', async () => {
+		await clearProfileAvatarUrl(db, 'p1');
+		const row = await getProfileOverride(db, 'p1');
+		expect(row).toBeDefined();
+		expect(row?.avatarUrl).toBeNull();
+	});
+
+	it('clearProfileAvatarUrlIfOwned nulls avatarUrl when avatarUpdateToken matches', async () => {
+		await updateProfileAvatarUrl(db, 'p1', 'avatar-url', 1000, 'token-A');
+		await clearProfileAvatarUrlIfOwned(db, 'p1', 'token-A');
+		const row = await getProfileOverride(db, 'p1');
+		expect(row?.avatarUrl).toBeNull();
+	});
+
+	it('clearProfileAvatarUrlIfOwned is a no-op when avatarUpdateToken differs (concurrent overwrite)', async () => {
+		await updateProfileAvatarUrl(db, 'p1', 'avatar-B', 1000, 'token-B');
+		await updateProfileAvatarUrl(db, 'p1', 'avatar-C', 2000, 'token-C');
+		await clearProfileAvatarUrlIfOwned(db, 'p1', 'token-B');
+		const row = await getProfileOverride(db, 'p1');
+		expect(row?.avatarUrl).toBe('avatar-C');
+	});
+
+	it('clearProfileAvatarUrlIfOwned is a no-op when two uploads share the same millisecond but different tokens', async () => {
+		await updateProfileAvatarUrl(db, 'p1', 'avatar-A', 1000, 'token-A');
+		await updateProfileAvatarUrl(db, 'p1', 'avatar-B', 1000, 'token-B');
+		await clearProfileAvatarUrlIfOwned(db, 'p1', 'token-A');
+		const row = await getProfileOverride(db, 'p1');
+		expect(row?.avatarUrl).toBe('avatar-B');
+	});
+
+	it('clearProfileAvatarUrlIfOwned clears avatar after displayName update changed updatedAt', async () => {
+		await updateProfileAvatarUrl(db, 'p1', 'avatar-url', 1000, 'token-X');
+		await updateProfileDisplayName(db, 'p1', 'New Name');
+		await clearProfileAvatarUrlIfOwned(db, 'p1', 'token-X');
+		const row = await getProfileOverride(db, 'p1');
+		expect(row?.avatarUrl).toBeNull();
+		expect(row?.displayName).toBe('New Name');
+	});
+
+	it('clearProfileAvatarUrlIfOwned is a no-op when no row exists', async () => {
+		await clearProfileAvatarUrlIfOwned(db, 'p1', 'token-none');
+		const row = await getProfileOverride(db, 'p1');
+		expect(row).toBeNull();
+	});
+
+	it('getAvatarTokensByPlayerIds returns empty Map for empty input', async () => {
+		const result = await getAvatarTokensByPlayerIds(db, []);
+		expect(result.size).toBe(0);
+	});
+
+	it('getAvatarTokensByPlayerIds returns tokens for players with profiles', async () => {
+		await updateProfileAvatarUrl(db, 'p1', 'url-1', 1000, 'token-A');
+		await updateProfileAvatarUrl(db, 'p2', 'url-2', 2000, 'token-B');
+		const result = await getAvatarTokensByPlayerIds(db, ['p1', 'p2', 'p3']);
+		expect(result.get('p1')).toBe('token-A');
+		expect(result.get('p2')).toBe('token-B');
+		expect(result.has('p3')).toBe(false);
+	});
+
+	it('getAvatarTokensByPlayerIds returns null for players with null token', async () => {
+		await updateProfileDisplayName(db, 'p1', 'Name');
+		const result = await getAvatarTokensByPlayerIds(db, ['p1']);
+		expect(result.get('p1')).toBeNull();
+	});
+
+	it('getAvatarTokensByPlayerIds chunks >100 players to stay under D1 bound param limit', async () => {
+		const playerIds: string[] = [];
+		for (let i = 0; i < 120; i++) {
+			const id = `player-${i}`;
+			playerIds.push(id);
+			await updateProfileAvatarUrl(db, id, `url-${i}`, i * 1000, `token-${i}`);
+		}
+		playerIds.push('no-profile-1', 'no-profile-2');
+		const result = await getAvatarTokensByPlayerIds(db, playerIds);
+		expect(result.size).toBe(120);
+		for (let i = 0; i < 120; i++) {
+			expect(result.get(`player-${i}`)).toBe(`token-${i}`);
+		}
+		expect(result.has('no-profile-1')).toBe(false);
+		expect(result.has('no-profile-2')).toBe(false);
+	});
+});
+
+describe('tombstone-guarded table protection against real D1', () => {
+	it('rejects direct inserts and updates for every tombstone-guarded table', async () => {
+		const executor = createD1CompletionWriteExecutor(db);
+		await executor.write({
+			playerId: 'p1',
+			puzzleId: 'pz1',
+			runId: 'run-1',
+			resultClass: 'standard_timed',
+			elapsedActiveSeconds: 100,
+			receivedAt: 1_000
+		});
+		await db.insert(schema.playerVariantMastery).values({
+			playerId: 'p1',
+			puzzleId: 'pz1',
+			badge: 'speed',
+			earnedAt: 1_500
+		});
+		await executor.beginPuzzleDeletion('pz1', 2_000);
+
+		await expect(
+			db.insert(schema.puzzleBestTimes).values({
+				playerId: 'p2',
+				puzzleId: 'pz1',
+				familyId: PLACEHOLDER_FAMILY_ID,
+				difficulty: 'easy',
+				resultClass: 'standard_timed',
+				bestTimeSeconds: 80,
+				achievedAt: 2_000
+			})
+		).rejects.toThrow('puzzle_deleted');
+		await expect(
+			db
+				.update(schema.puzzleBestTimes)
+				.set({ bestTimeSeconds: 50 })
+				.where(eq(schema.puzzleBestTimes.puzzleId, 'pz1'))
+		).rejects.toThrow('puzzle_deleted');
+		await expect(
+			db
+				.update(schema.puzzleBestTimes)
+				.set({ puzzleId: 'pz2' })
+				.where(eq(schema.puzzleBestTimes.puzzleId, 'pz1'))
+		).rejects.toThrow('puzzle_deleted');
+		await expect(
+			db.insert(schema.playerVariantMastery).values({
+				playerId: 'p2',
+				puzzleId: 'pz1',
+				badge: 'speed',
+				earnedAt: 2_000
+			})
+		).rejects.toThrow('puzzle_deleted');
+		await expect(
+			db
+				.update(schema.playerVariantMastery)
+				.set({ earnedAt: 3_000 })
+				.where(eq(schema.playerVariantMastery.puzzleId, 'pz1'))
+		).rejects.toThrow('puzzle_deleted');
+		await expect(
+			db
+				.update(schema.playerVariantMastery)
+				.set({ puzzleId: 'pz2' })
+				.where(eq(schema.playerVariantMastery.puzzleId, 'pz1'))
+		).rejects.toThrow('puzzle_deleted');
+		await expect(
+			d1
+				.prepare(
+					`
+					INSERT INTO puzzle_completion_runs (
+						player_id, run_id, puzzle_id, family_id, difficulty, result_class,
+						elapsed_active_seconds, hints_used, incorrect_attempts, completed_at
+					) VALUES ('p2', 'run-2', 'pz1', ?, 'easy', 'standard_timed', 80, 0, 0, 2000)
+				`
+				)
+				.bind(PLACEHOLDER_FAMILY_ID)
+				.run()
+		).rejects.toThrow('puzzle_deleted');
+		await expect(
+			db
+				.update(schema.puzzleCompletionRuns)
+				.set({ completedAt: 3_000 })
+				.where(eq(schema.puzzleCompletionRuns.puzzleId, 'pz1'))
+		).rejects.toThrow('puzzle_deleted');
+		await expect(
+			db
+				.update(schema.puzzleCompletionRuns)
+				.set({ puzzleId: 'pz2' })
+				.where(eq(schema.puzzleCompletionRuns.puzzleId, 'pz1'))
+		).rejects.toThrow('puzzle_deleted');
+	});
+});
 
 describe('completionFactsMatch', () => {
 	it('matches stored facts without timing quality', () => {
