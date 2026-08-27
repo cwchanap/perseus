@@ -1345,3 +1345,171 @@ describe('Family workflow checkpoint names', () => {
 		expect(uniqueRowNames.size).toBe(rowNames.length);
 	});
 });
+
+describe('Family workflow status rollup when one difficulty fails', () => {
+	const familyId = '550e8400-e29b-41d4-a716-446655440000';
+	const variantIds = {
+		easy: '550e8400-e29b-41d4-a716-446655440001',
+		normal: '550e8400-e29b-41d4-a716-446655440002',
+		hard: '550e8400-e29b-41d4-a716-446655440003'
+	};
+
+	const familyMetadata = {
+		id: familyId,
+		name: 'Test Family',
+		aspectRatio: '1:1' as const,
+		createdAt: 1700000000000,
+		status: 'processing' as const,
+		variants: variantIds
+	};
+
+	function createFamilyKv() {
+		const variantStore: Record<string, PuzzleMetadata> = {};
+		for (const difficulty of ['easy', 'normal', 'hard'] as const) {
+			const variantId = variantIds[difficulty];
+			const pieceCount = getDifficultyPieceCount('1:1', difficulty);
+			const { rows, cols } = getGridDimensionsForAspectRatio(pieceCount, '1:1');
+			variantStore[variantId] = {
+				id: variantId,
+				familyId,
+				difficulty,
+				name: 'Test Family',
+				aspectRatio: '1:1',
+				pieceCount,
+				gridCols: cols,
+				gridRows: rows,
+				imageWidth: 0,
+				imageHeight: 0,
+				createdAt: 1700000000000,
+				status: 'processing',
+				version: 0,
+				pieces: [],
+				progress: {
+					totalPieces: pieceCount,
+					generatedPieces: 0,
+					updatedAt: 1700000000000
+				}
+			};
+		}
+		return {
+			get: vi.fn(async (key: string, type?: string) => {
+				if (key === `family:${familyId}`) {
+					const value = JSON.stringify(familyMetadata);
+					return type === 'json' ? JSON.parse(value) : value;
+				}
+				if (key.startsWith('puzzle:')) {
+					const id = key.slice('puzzle:'.length);
+					const meta = variantStore[id];
+					if (!meta) return null;
+					return type === 'json' ? meta : JSON.stringify(meta);
+				}
+				return null;
+			}),
+			put: vi.fn(async () => undefined)
+		};
+	}
+
+	afterEach(() => {
+		mockWidth = 100;
+		mockHeight = 100;
+		photonInstances = [];
+		vi.restoreAllMocks();
+	});
+
+	it('continues sibling difficulties, keeps their assets, and marks family failed', async () => {
+		const { setPuzzleFamilyStatus } = await import('@perseus/shared');
+		vi.mocked(setPuzzleFamilyStatus).mockClear();
+
+		const putKeys: string[] = [];
+		const bucket = createMockBucket(new ArrayBuffer(8));
+		bucket.put = vi.fn(async (...args: unknown[]) => {
+			putKeys.push(String(args[0]));
+		});
+
+		const { namespace, stub } = createMockDurableObjectNamespace(() => {
+			return new Response(JSON.stringify({ success: true }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' }
+			});
+		});
+
+		const env = {
+			PUZZLES_BUCKET: bucket,
+			PUZZLE_METADATA: createFamilyKv(),
+			PUZZLE_METADATA_DO: namespace as unknown as DurableObjectNamespace,
+			PUZZLE_WORKFLOW: {} as Workflow,
+			DB: {} as D1Database
+		} as unknown as Env;
+
+		const stepNames: string[] = [];
+		const step = {
+			do: vi.fn(async (name: string, configOrFn: unknown, maybeFn?: unknown) => {
+				stepNames.push(name);
+				if (name === 'generate-easy-row-0') {
+					throw new Error('easy generation failed');
+				}
+				const fn =
+					typeof configOrFn === 'function'
+						? (configOrFn as () => Promise<unknown>)
+						: (maybeFn as () => Promise<unknown>);
+				return await fn();
+			}),
+			sleep: vi.fn(async () => undefined),
+			sleepUntil: vi.fn(async () => undefined),
+			waitForEvent: vi.fn(async () => ({
+				payload: {},
+				timestamp: new Date(),
+				type: 'event'
+			}))
+		} as WorkflowStep;
+
+		const workflow = new TestWorkflow();
+		workflow.setEnv(env);
+
+		const event: WorkflowEvent<WorkflowParams> = {
+			payload: { familyId },
+			timestamp: new Date(),
+			instanceId: 'test-family-rollup'
+		};
+
+		await expect(workflow.run(event, step)).resolves.toBeUndefined();
+
+		expect(stepNames).toContain('mark-easy-failed');
+		expect(stepNames).toContain('generate-normal-row-0');
+		expect(stepNames).toContain('finalize-normal');
+		expect(stepNames).toContain('generate-hard-row-0');
+		expect(stepNames).toContain('finalize-hard');
+		expect(stepNames).toContain('finalize-family');
+		expect(stepNames).not.toContain('finalize-easy');
+
+		const familyFinalizeBody = JSON.parse(
+			(stub.fetch.mock.calls.find((c: [string, RequestInit?]) => {
+				const body = JSON.parse((c[1]?.body as string | undefined) ?? '{}');
+				return body.puzzleId === familyId && body.updates?.status === 'failed';
+			})?.[1]?.body as string | undefined) ?? '{}'
+		);
+		expect(familyFinalizeBody.updates.status).toBe('failed');
+
+		const normalPiecePuts = putKeys.filter(
+			(key) => key.includes(`/pieces/`) && key.includes(variantIds.normal)
+		);
+		const hardPiecePuts = putKeys.filter(
+			(key) => key.includes(`/pieces/`) && key.includes(variantIds.hard)
+		);
+		expect(normalPiecePuts.length).toBeGreaterThan(0);
+		expect(hardPiecePuts.length).toBeGreaterThan(0);
+
+		expect(setPuzzleFamilyStatus).toHaveBeenCalledWith(expect.anything(), familyId, 'failed');
+		expect(step.do).toHaveBeenCalledWith(
+			'mirror-family-failed-status-to-d1',
+			{
+				retries: {
+					limit: 3,
+					delay: '10 seconds',
+					backoff: 'exponential'
+				}
+			},
+			expect.any(Function)
+		);
+	});
+});

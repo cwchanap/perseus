@@ -18,6 +18,7 @@ import {
 	writeCleanupRecord,
 	listCleanupRecords,
 	deleteCleanupRecord,
+	buildFamilyMetadata,
 	type PuzzleMetadata
 } from './storage.worker';
 import type { PuzzleFamilyMetadata } from '@perseus/types';
@@ -964,5 +965,32 @@ describe('listPuzzles — invalid metadata in gallery index', () => {
 		expect(result.puzzles[0].id).toBe(validId);
 		expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('invalid entries'));
 		consoleSpy.mockRestore();
+	});
+});
+
+describe('buildFamilyMetadata', () => {
+	it('includes idempotencyKey on the family record when provided', () => {
+		const family = buildFamilyMetadata({
+			familyId: TEST_FAMILY_ID,
+			name: 'Test Family',
+			aspectRatio: '1:1',
+			createdAt: 1000,
+			variantIds: FAMILY_VARIANT_IDS,
+			idempotencyKey: 'upload-key-1'
+		});
+
+		expect(family.idempotencyKey).toBe('upload-key-1');
+	});
+
+	it('omits idempotencyKey when not provided', () => {
+		const family = buildFamilyMetadata({
+			familyId: TEST_FAMILY_ID,
+			name: 'Test Family',
+			aspectRatio: '1:1',
+			createdAt: 1000,
+			variantIds: FAMILY_VARIANT_IDS
+		});
+
+		expect('idempotencyKey' in family).toBe(false);
 	});
 });

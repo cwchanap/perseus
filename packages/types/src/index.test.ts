@@ -1499,6 +1499,16 @@ describe('puzzle family contracts', () => {
 		expect(validatePuzzleFamilyMetadata(makeFamilyMetadata({ status: 'unknown' }))).toBe(false);
 	});
 
+	it('accepts family metadata with an idempotencyKey string', () => {
+		expect(validatePuzzleFamilyMetadata(makeFamilyMetadata({ idempotencyKey: 'abc123' }))).toBe(
+			true
+		);
+	});
+
+	it('rejects family metadata with a non-string idempotencyKey', () => {
+		expect(validatePuzzleFamilyMetadata(makeFamilyMetadata({ idempotencyKey: 42 }))).toBe(false);
+	});
+
 	it('validates a family summary without a scalar pieceCount', () => {
 		const summary = makeFamilySummary();
 		expect('pieceCount' in summary).toBe(false);

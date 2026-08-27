@@ -24,6 +24,7 @@ export interface PuzzleFamilyMetadata {
 	variants: Record<PuzzleDifficulty, string>;
 	imageWidth?: number;
 	imageHeight?: number;
+	idempotencyKey?: string;
 }
 
 export interface PuzzleFamilySummary {
@@ -102,6 +103,8 @@ export function validatePuzzleFamilyMetadata(meta: unknown): meta is PuzzleFamil
 	if (!PUZZLE_DIFFICULTIES.every((difficulty) => isPuzzleId(variants[difficulty]))) return false;
 	if (family.imageWidth !== undefined && !isFiniteNumber(family.imageWidth)) return false;
 	if (family.imageHeight !== undefined && !isFiniteNumber(family.imageHeight)) return false;
+	const idempotencyKeyValue = family.idempotencyKey;
+	if (idempotencyKeyValue !== undefined && typeof idempotencyKeyValue !== 'string') return false;
 	return true;
 }
 

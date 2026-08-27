@@ -1478,11 +1478,14 @@ admin.post('/puzzles', async (c) => {
 			aspectRatio,
 			createdAt,
 			variantIds,
-			...(category ? { category } : {})
+			...(category ? { category } : {}),
+			...(idempotencyKey ? { idempotencyKey } : {})
 		});
 
+		let familyMetadataWritten = false;
 		try {
 			await createFamilyMetadata(c.env.PUZZLE_METADATA, familyMetadata);
+			familyMetadataWritten = true;
 			for (const difficulty of PUZZLE_DIFFICULTIES) {
 				const variantMetadata = buildVariantMetadata({
 					variantId: variantIds[difficulty],
@@ -1497,12 +1500,27 @@ admin.post('/puzzles', async (c) => {
 			}
 		} catch (error) {
 			console.error('Failed to create puzzle metadata:', error);
+			let metadataCleanup: { success: boolean; error?: Error } = { success: true };
+			if (familyMetadataWritten) {
+				metadataCleanup = await deleteFamilyMetadata(c.env.PUZZLE_METADATA, familyId);
+				if (!metadataCleanup.success) {
+					console.error(
+						'Failed to cleanup puzzle family metadata after metadata creation failure:',
+						metadataCleanup.error
+					);
+				}
+				for (const difficulty of PUZZLE_DIFFICULTIES) {
+					await deletePuzzleMetadata(c.env.PUZZLE_METADATA, variantIds[difficulty]);
+				}
+			}
 			const cleanupResult = await deleteOriginalImage(c.env.PUZZLES_BUCKET, familyId);
-			if (!cleanupResult.success) {
-				console.error(
-					'Failed to cleanup original image after metadata creation failure:',
-					cleanupResult.error
-				);
+			if (!metadataCleanup.success || !cleanupResult.success) {
+				if (!cleanupResult.success) {
+					console.error(
+						'Failed to cleanup original image after metadata creation failure:',
+						cleanupResult.error
+					);
+				}
 				await failReservation();
 			} else {
 				await releaseReservation();
